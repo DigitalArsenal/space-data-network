@@ -90,8 +90,13 @@
   // check the node's fingerprint against our own hash of it.
   /** @type {{name?: string, trustLevel: string, fingerprint: string, xpub: string, identity: any} | null} */
   let session = $state(null);
+  // §14.1: the node derives its accepted admin keys from its own seed, so its
+  // root recovery phrase always signs in as admin. `admin_configured` now
+  // means "an admin can sign in at all" and is true on a fresh node, so it
+  // drives nothing here; `root_admin_available` is what the dialog says out
+  // loud, and `users_configured` is the only "has anyone enrolled" signal.
   /** @type {boolean|null} null until /api/auth/status answers. */
-  let adminConfigured = $state(null);
+  let rootAdminAvailable = $state(null);
   let signInOpen = $state(false);
   let editing = $state(false);
   /** Post-save profile echo, held until the status feed catches up. */
@@ -169,13 +174,23 @@
     session = {
       name: result.user?.name ?? '',
       trustLevel: result.user?.trust_level ?? '',
-      fingerprint: result.user?.xpub_fingerprint ?? result.localFingerprint ?? '',
-      xpub: result.identity.xpub,
+      // The node's fingerprint is authoritative and is all we have: the
+      // wallet's own xpub is a MASTER key that never leaves the wallet (§13.1).
+      fingerprint: result.user?.xpub_fingerprint ?? '',
+      xpub: '',
       identity: result.identity,
     };
-    apiFetch('/api/auth/status')
-      .then((s) => (adminConfigured = Boolean(s?.admin_configured)))
-      .catch(() => {});
+    readAuthStatus();
+  }
+
+  function readAuthStatus() {
+    return apiFetch('/api/auth/status')
+      .then((s) => {
+        rootAdminAvailable = Boolean(s?.root_admin_available);
+      })
+      .catch(() => {
+        rootAdminAvailable = null;
+      });
   }
 
   async function signOut() {
@@ -282,12 +297,10 @@
       unsub = g.subscribe((v) => (view = v));
     };
     attach();
-    // Restore any live session and learn whether this node has an admin yet
-    // (drives the first-admin bootstrap notice in the sign-in dialog).
+    // Restore any live session, and learn whether this node's own root phrase
+    // is an admin sign-in path (§14.1) so the dialog can say so.
     refreshSession();
-    apiFetch('/api/auth/status')
-      .then((s) => (adminConfigured = Boolean(s?.admin_configured)))
-      .catch(() => (adminConfigured = null));
+    readAuthStatus();
     const clock = setInterval(() => (now = Date.now()), 1000);
     // Warm the semantic model shortly after first paint (fail-open).
     const warm = setTimeout(() => engine.init(), 800);
@@ -329,7 +342,7 @@
               label={`${shortFingerprint(session.fingerprint) || session.name || 'SIGNED IN'} · ${sessionTier.toUpperCase()}`}
               color={sessionTierColor}
               dot={Boolean(session.identity)}
-              title={`KEY ${session.fingerprint || 'unknown'}${session.name ? ` · ${session.name}` : ''}${session.identity ? ' · unlocked in this page' : ' · session restored (key locked)'}`}
+              title={`KEY ${session.fingerprint || 'unknown'}${session.name ? ` · ${session.name}` : ''}${session.identity ? ' · signed in from this page' : ' · session restored from the cookie'}`}
             />
             <GBtn title="End this session" onclick={signOut}>SIGN OUT</GBtn>
           {:else}
@@ -343,7 +356,7 @@
       <!-- PERMISSIONS reads the node's own APIs, not the status feed, so it
            renders before the feed-connection gate. -->
       {#if route === 'permissions'}
-        <Permissions {session} {nodes} onRequestSignIn={() => (signInOpen = true)} />
+        <Permissions {session} {nodes} {rootAdminAvailable} onRequestSignIn={() => (signInOpen = true)} />
       {:else if !connected}
         <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
           <span class="glyph" style="color:{theme.cyan};">◍</span>
@@ -490,7 +503,12 @@
   {/if}
 
   {#if signInOpen}
-    <SignInModal {adminConfigured} onClose={() => (signInOpen = false)} onSignedIn={onSignedIn} />
+    <SignInModal
+      {rootAdminAvailable}
+      nodeName={selfTitle}
+      onClose={() => (signInOpen = false)}
+      onSignedIn={onSignedIn}
+    />
   {/if}
 </div>
 

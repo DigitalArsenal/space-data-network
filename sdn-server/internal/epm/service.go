@@ -1377,6 +1377,23 @@ func derivePublicIdentityKeysFromXPub(xpub string, account uint32) (*xpubDerived
 	}, true
 }
 
+// AccountPublicKeyFromXPub returns the 33-byte compressed secp256k1 public key
+// that a BIP-32 account xpub serializes.
+//
+// This is the key internal/wasm.DeriveIdentity turns into the node's own libp2p
+// PeerID, so it is also the canonical binding for deriving a PRR PEER_ID from
+// an operator's account xpub (Themis ruling 2026-07-27: PRR.PEER_ID is required
+// and SDS has no xpub-keyed identity space).
+//
+// ok is false for anything that is not a checksum-valid xpub.
+func AccountPublicKeyFromXPub(xpub string) ([]byte, bool) {
+	node, err := parseXPub(strings.TrimSpace(xpub))
+	if err != nil || node == nil || len(node.publicKey) == 0 {
+		return nil, false
+	}
+	return append([]byte(nil), node.publicKey...), true
+}
+
 // PublicIdentityKeysFromXPub derives the public signing/encryption identity
 // keys that EPM service rebuilds from an xpub.
 func PublicIdentityKeysFromXPub(xpub string, account uint32) (PublicIdentityKeys, bool) {

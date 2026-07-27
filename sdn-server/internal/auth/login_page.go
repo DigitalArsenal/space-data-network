@@ -321,10 +321,16 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, host s
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Space Data Network — Login</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
+    /* Typography is served SAME-ORIGIN by this node at /fonts/*.woff2
+       (makeFontsHandler) — the same faces the dashboard uses. This page
+       formerly loaded webfonts from a third-party CDN, which owner law
+       2026-07-27 forbids and which leaked every sign-in page view. */
+    @font-face{font-family:'Chakra Petch';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/chakra-400.woff2') format('woff2')}
+    @font-face{font-family:'Chakra Petch';font-style:normal;font-weight:500;font-display:swap;src:url('/fonts/chakra-500.woff2') format('woff2')}
+    @font-face{font-family:'Chakra Petch';font-style:normal;font-weight:700;font-display:swap;src:url('/fonts/chakra-700.woff2') format('woff2')}
+    @font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/plex-400.woff2') format('woff2')}
+    @font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;font-display:swap;src:url('/fonts/plex-500.woff2') format('woff2')}
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     :root{
       --bg:#04131f;
@@ -336,7 +342,7 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, host s
       --cyan:#65c2cb;
       --teal:#378085;
       --danger:#ff7a9f;
-      --font-sans:'Space Grotesk','Avenir Next','Helvetica Neue',sans-serif;
+      --font-sans:'Chakra Petch','Avenir Next','Helvetica Neue',sans-serif;
       --font-mono:'IBM Plex Mono','SFMono-Regular','Consolas',monospace;
     }
     html,body{height:100%}
@@ -1078,16 +1084,92 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, host s
 func serveFallbackLogin(w http.ResponseWriter, r *http.Request, status tlsmgr.Status) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Content-Security-Policy", walletUnavailableCSP)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Write([]byte(buildFallbackLoginPage(loginPageHost(r), status)))
 }
 
-const (
-	fallbackWalletUIModuleURL = "https://unpkg.com/hd-wallet-ui@2.0.6/src/app.js?module"
-	fallbackWalletUICSSURL    = "https://unpkg.com/hd-wallet-ui@2.0.6/styles/widget.css"
-)
-
+// OWNER LAW 2026-07-27, verbatim: "we do NOT load anything from a site."
+//
+// This page previously fell back to
+// https://unpkg.com/hd-wallet-ui@2.0.6/src/app.js?module (+ its widget.css)
+// whenever no local wallet-ui dist was configured. That was a live external
+// load on the AUTHENTICATION surface, and it was version-skewed besides: the
+// repo pins hd-wallet-ui 2.0.28 (sdn-js/package.json), so an operator served
+// the fallback ran a different wallet from the audited one, fetched from a
+// third party at sign-in time. Both facts are disqualifying; the constants are
+// deleted rather than repointed.
+//
+// Repointing them at the node's own /wallet-ui/* staged tree would NOT work
+// either: this page's script expects hd-wallet-ui 2.0.x's window.__sdnWalletUI
+// / __sdnOnLogin contract, which 2.0.28 does not provide (its start() requires
+// a /transaction/<64hex> location and rejects otherwise — see §11.4 of
+// graph/tasks/nst-node-admin-contract.md). Serving 2.0.28 here would render a
+// broken page that merely fails later.
+//
+// So the honest fallback is to state that wallet sign-in is unavailable and
+// tell the operator how to fix it. This is the same fail-open posture every
+// other staged surface uses (/embedding/*, /wallet-wasm/*, /wallet-ui/*):
+// absent assets degrade visibly, never off-origin.
 func buildFallbackLoginPage(host string, status tlsmgr.Status) string {
-	return buildWalletLoginPage(fallbackWalletUIModuleURL, fallbackWalletUICSSURL, false, host, status)
+	return buildWalletUnavailablePage(host, status)
+}
+
+// walletUnavailableCSP locks the unavailable page to itself: no scripts, no
+// external fetches of any kind. It is the placeholder-grade policy, matching
+// placeholderCSP on the root surface.
+const walletUnavailableCSP = "default-src 'none'; " +
+	"style-src 'unsafe-inline'; " +
+	"font-src 'self'; " +
+	"base-uri 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'none'"
+
+// buildWalletUnavailablePage is what this node serves when no local wallet-ui
+// dist is configured. It states the situation and how an operator fixes it,
+// and it loads NOTHING from anywhere (owner law 2026-07-27).
+func buildWalletUnavailablePage(host string, status tlsmgr.Status) string {
+	hostLabel := strings.TrimSpace(host)
+	if hostLabel == "" {
+		hostLabel = "this node"
+	}
+	return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Space Data Network — Sign-in unavailable</title>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    @font-face{font-family:'Chakra Petch';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/chakra-400.woff2') format('woff2')}
+    @font-face{font-family:'Chakra Petch';font-style:normal;font-weight:700;font-display:swap;src:url('/fonts/chakra-700.woff2') format('woff2')}
+    @font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/plex-400.woff2') format('woff2')}
+    body{min-height:100vh;display:grid;place-items:center;padding:1.5rem;
+      background:radial-gradient(circle at top,#0b3a53,#04131f 62%);
+      color:#e6f4f7;font-family:'Chakra Petch','Avenir Next','Helvetica Neue',sans-serif}
+    main{width:min(34rem,100%);padding:1.75rem;border-radius:1rem;
+      border:1px solid rgba(101,194,203,.42);background:rgba(11,58,83,.38)}
+    h1{font-size:1.35rem;font-weight:700;margin-bottom:.75rem}
+    p{line-height:1.55;margin-bottom:.85rem;color:#bcd9df}
+    code{font-family:'IBM Plex Mono','SFMono-Regular','Consolas',monospace;
+      font-size:.9em;padding:.1rem .35rem;border-radius:.25rem;background:rgba(4,19,31,.6)}
+    .host{font-family:'IBM Plex Mono','SFMono-Regular','Consolas',monospace;
+      font-size:.85rem;color:#7fb6c0}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Wallet sign-in is unavailable</h1>
+    <p>This node has no wallet interface staged, so there is nothing to sign in
+       with yet. Nothing is loaded from anywhere else &mdash; the wallet is
+       served by this node or not at all.</p>
+    <p>An operator can stage it by running
+       <code>deployment/wallet-wasm/stage-wallet-wasm.sh</code> and restarting
+       the daemon.</p>
+    <p class="host">` + html.EscapeString(hostLabel) + `</p>
+  </main>
+</body>
+</html>`
 }
 
 func buildTLSStatusMarkup(status tlsmgr.Status, showLocalTLSInfo bool) string {

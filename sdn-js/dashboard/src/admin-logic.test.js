@@ -6,7 +6,25 @@
  * "## Contract (final)" — if one of these fails, the UI and the node
  * disagree about the wire.
  */
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+
+import {
+  WALLET_UI_ENTRY,
+  WALLET_UI_COMPAT,
+  LEGACY_PROFILES,
+  base64ToBase64Url,
+  buildRawChallengeTransaction,
+  buildRegistryBinding,
+  canonicalJson,
+  createInProcessRelay,
+  createRegistry,
+  isoMillis,
+  randomHex,
+  randomResultToken,
+  readIdentity,
+  readSignature,
+} from './walletui.js';
 
 import {
   accountPaths,
@@ -87,27 +105,27 @@ describe('wallet wire encodings (contract §1–§4, §7)', () => {
       clientPubKeyHex: '0D80E1FD',
       challenge,
       signatureHex: 'AABB',
-      xpub: ' xpub661 ',
     });
     expect(body.challenge).toBe(challenge);
     expect(body.challenge).not.toContain('=');
     expect(body.client_pubkey_hex).toBe('0d80e1fd');
     expect(body.signature_hex).toBe('aabb');
-    expect(body.xpub).toBe('xpub661');
+    // §4: an xpub is echoed at verify ONLY if one was sent at challenge —
+    // and on the wallet path none ever is (§13.1).
+    expect('xpub' in body).toBe(false);
   });
 
-  it('sends ts in SECONDS and always carries the xpub (§4, §5.1)', () => {
-    const body = challengeRequestBody({
-      clientPubKeyHex: 'AB',
-      xpub: 'xpub661MyMwAqRbcF',
-      nowMs: 1_785_000_000_123,
-    });
+  it('sends ts in SECONDS and NO xpub — the node resolves by signing key (§13.1)', () => {
+    const body = challengeRequestBody({ clientPubKeyHex: 'AB', nowMs: 1_785_000_000_123 });
     expect(body.ts).toBe(1_785_000_000);
-    expect(body.xpub).toBe('xpub661MyMwAqRbcF');
     expect(body.client_pubkey_hex).toBe('ab');
-    // No xpub to send ⇒ the key is simply absent, never an empty string
-    // (the node caps it at 256 chars and resolves by signing key instead).
+    // The key is ABSENT, never an empty string: presence is what switches the
+    // node from GetUserBySigningPubKey to xpub resolution.
+    expect('xpub' in body).toBe(false);
     expect('xpub' in challengeRequestBody({ clientPubKeyHex: 'ab', xpub: '' })).toBe(false);
+    // The field still exists for a future v2 identity with a real ACCOUNT
+    // xpub; it is simply never populated on the legacy wallet path.
+    expect(challengeRequestBody({ clientPubKeyHex: 'ab', xpub: 'xpub6Account' }).xpub).toBe('xpub6Account');
   });
 
   it('builds the length-prefixed attestation preimage (§7, big-endian)', () => {
@@ -177,6 +195,136 @@ describe('xpub_fingerprint — naming the signed-in key (contract §4, §6b)', (
     expect(shortFingerprint('bbaaf6d6889092c8')).toBe('bbaaf6d6…');
     expect(shortFingerprint('abc')).toBe('abc');
     expect(shortFingerprint('')).toBe('');
+  });
+});
+
+describe('hd-wallet-ui transaction plumbing (contract §11)', () => {
+  it('loads BOTH wallet trees from this node only — never a site', () => {
+    for (const url of [WALLET_ENTRY, WALLET_UI_ENTRY, WALLET_UI_COMPAT]) {
+      expect(url.startsWith('/')).toBe(true);
+      expect(url).not.toMatch(/^https?:/);
+      expect(url).not.toContain('//');
+    }
+    expect(WALLET_UI_ENTRY).toBe('/wallet-ui/wallet-origin/index.js');
+  });
+
+  it('re-spells the node challenge into the wallet alphabet, same bytes', () => {
+    // 32 bytes chosen to exercise every + and / in the standard alphabet.
+    const raw = Uint8Array.from({ length: 32 }, (_, i) => (i * 251) % 256);
+    const std = Buffer.from(raw).toString('base64').replace(/=+$/, '');
+    const url = base64ToBase64Url(std);
+    expect(url).toMatch(/^[A-Za-z0-9_-]{43}$/); // the wallet's own guard
+    expect(url).not.toContain('+');
+    expect(url).not.toContain('/');
+    expect(Buffer.from(url, 'base64url')).toEqual(Buffer.from(raw));
+  });
+
+  it('canonicalizes exactly like the wallet (sorted keys, no whitespace)', () => {
+    expect(canonicalJson({ protocolVersion: 1, challengeBase64url: 'abc' })).toBe(
+      '{"challengeBase64url":"abc","protocolVersion":1}'
+    );
+    expect(canonicalJson({ b: [1, { d: 2, c: 3 }], a: null })).toBe('{"a":null,"b":[1,{"c":3,"d":2}]}');
+  });
+
+  it('mints identifiers in the shapes the wallet validates', () => {
+    expect(randomHex(32)).toMatch(/^[0-9a-f]{64}$/);
+    expect(randomResultToken()).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(isoMillis(1_785_000_000_000)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(randomHex(32)).not.toBe(randomHex(32));
+  });
+
+  it('builds a transaction with EXACTLY the 13 permitted keys', async () => {
+    const binding = await buildRegistryBinding('http://127.0.0.1:5001', 'Local Test Node');
+    const tx = await buildRawChallengeTransaction({
+      binding,
+      challengeBase64url: 'A'.repeat(43),
+      nowMs: 1_785_000_000_000,
+    });
+    expect(Object.keys(tx).sort()).toEqual([
+      'callbackUri', 'clientDisplayName', 'clientId', 'expiresAt', 'operation',
+      'registryVersion', 'request', 'requestOrigin', 'requestSha256',
+      'resultToken', 'schemaVersion', 'state', 'transactionId',
+    ]);
+    // Every field the wallet cross-checks against the binding.
+    expect(tx.clientId).toBe(binding.clientId);
+    expect(tx.operation).toBe('sdn.auth.raw-challenge.v1');
+    expect(tx.requestOrigin).toBe(binding.requestOrigin);
+    expect(tx.callbackUri).toBe(binding.callbackUri);
+    expect(tx.clientDisplayName).toBe(binding.clientDisplayName);
+    expect(tx.registryVersion).toBe(binding.registryReleaseSha256);
+    expect(tx.request).toEqual({ challengeBase64url: 'A'.repeat(43), protocolVersion: 1 });
+    // requestSha256 must be SHA-256 over the CANONICAL request, or the
+    // wallet answers REQUEST_HASH_MISMATCH.
+    const expected = createHash('sha256').update(canonicalJson(tx.request), 'utf8').digest('hex');
+    expect(tx.requestSha256).toBe(expected);
+    // Alive, and inside the binding's lifetime ceiling.
+    const life = Date.parse(tx.expiresAt) - 1_785_000_000_000;
+    expect(life).toBeGreaterThan(0);
+    expect(life).toBeLessThanOrEqual(binding.maxLifetimeSeconds * 1000);
+  });
+
+  it('binds the registry to THIS origin and refuses any other', async () => {
+    const binding = await buildRegistryBinding('http://127.0.0.1:5001', '');
+    expect(binding.requestOrigin).toBe('http://127.0.0.1:5001');
+    expect(binding.clientDisplayName).toBe('127.0.0.1:5001'); // factual, not invented
+    expect(binding.registryReleaseSha256).toMatch(/^[0-9a-f]{64}$/);
+    const registry = createRegistry(binding);
+    expect(registry.resolveRegistryBinding({
+      clientId: binding.clientId, operation: binding.operation, requestOrigin: binding.requestOrigin,
+    })).toBe(binding);
+    expect(() => registry.resolveRegistryBinding({
+      clientId: binding.clientId, operation: binding.operation, requestOrigin: 'https://evil.example',
+    })).toThrow();
+    expect(() => registry.resolveRegistryBinding({
+      clientId: binding.clientId, operation: 'sdn.auth.jcs-envelope.v2', requestOrigin: binding.requestOrigin,
+    })).toThrow();
+  });
+
+  it('the injected relay performs NO network I/O and hands back the result', async () => {
+    const bridge = createInProcessRelay();
+    const { relay } = bridge;
+    // Omitting fetchTransaction is what makes prepare(obj) take our object;
+    // omitting navigate is what stops the app redirecting anywhere (§11.4).
+    expect(relay.fetchTransaction).toBeUndefined();
+    expect(relay.navigate).toBeUndefined();
+    expect(bridge.read()).toBeNull();
+    await relay.publishResult({}, { signatureHex: 'ab' });
+    expect(bridge.read()).toEqual({ signatureHex: 'ab' });
+  });
+
+  it('reads ONLY the signing key — the master xpub is dropped (§13.1)', () => {
+    const identity = {
+      // Depth-0 MASTER xpub: what both raw-32-capable legacy profiles report.
+      accountXpub: 'xpub661MyMwAqRbcH5EbKFAfEyc2osNwCbsTSgiZwpXudjG524wn1UuwUY',
+      accountPeerId: '16Uiu2HAmExample',
+      keys: [{ publicKeyHex: 'AB'.repeat(32), keyId: `sha256:${'c'.repeat(64)}`, path: "m/44'/0'/0'/0/0" }],
+    };
+    const read = readIdentity(identity);
+    expect(read.clientPubKeyHex).toBe('ab'.repeat(32));
+    // The master xpub must not survive into page state at all — it enumerates
+    // every account and address under the wallet.
+    expect(read).not.toHaveProperty('xpub');
+    expect(read).not.toHaveProperty('peerId');
+    expect(JSON.stringify(read)).not.toContain('xpub');
+    // §11.2/§13.1: raw-challenge signs with the LEGACY non-hardened path, a
+    // different key from §2's SLIP-10 path for the same phrase.
+    expect(read.derivationPath).toBe("m/44'/0'/0'/0/0");
+    // An identity with no usable auth key is refused; a missing xpub is fine.
+    expect(() => readIdentity({ accountXpub: 'x', keys: [{}] })).toThrow();
+    expect(readIdentity({ keys: [{ publicKeyHex: 'ab'.repeat(32) }] }).clientPubKeyHex).toBe('ab'.repeat(32));
+  });
+
+  it('reads the raw-32 signature, and refuses anything else', () => {
+    expect(readSignature({ signatureHex: 'AB'.repeat(64), keyId: 'sha256:x' }).signatureHex).toBe('ab'.repeat(64));
+    expect(() => readSignature({})).toThrow();
+    expect(() => readSignature({ signatureHex: 'abcd' })).toThrow();
+  });
+
+  it('offers both legacy profiles the operation forces, and nothing else', () => {
+    expect(LEGACY_PROFILES.map((p) => p.id)).toEqual([
+      'bip39-mnemonic-v1-legacy',
+      'password-fast-v1-legacy',
+    ]);
   });
 });
 

@@ -41,9 +41,9 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/adminui"
 	"github.com/spacedatanetwork/sdn-server/internal/api"
-	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/assetpin"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/credstore"
@@ -1365,7 +1365,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if cfg.Admin.RequireAuth {
 				// The user store owns the private auth database; the session
 				// store shares that same handle via userStore.DB().
-				authDBPath := filepath.Join(cfg.Storage.Path, "auth.db")
+				// Owner law 2026-07-27: the auth store is SQLite in its OWN
+				// file, kept out of the standards store. resolveAuthDBPath
+				// applies the default and refuses a path inside the record
+				// store rather than silently co-locating them.
+				authDBPath, aerr := resolveAuthDBPath(cfg)
+				if aerr != nil {
+					return fmt.Errorf("admin authentication required: %w", aerr)
+				}
 				userStore, err := auth.NewUserStore(authDBPath, cfg.Users)
 				if err != nil {
 					return fmt.Errorf("admin authentication required: create user store: %w", err)
@@ -1393,6 +1400,23 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				legacyWalletUIPath := legacyWalletUIPathForMode(frontendUIMode, cfg.Admin.WalletUIPath)
 				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, legacyWalletUIPath, cfgDisplayPath)
 				authHandler.SetTLSManager(tlsManager)
+				// OWNER DIRECTIVE 2026-07-27: the node's own root account is
+				// always accepted as the admin sign-in, with no error and no
+				// config seeding. The handler recognises it by comparing the
+				// presented key against keys derived HERE from the node's own
+				// seed — nothing client-supplied participates. Both the
+				// SLIP-10 (§2 / v2) and the legacy bip32-scalar key are
+				// registered, because the wallet's identity scheme decides
+				// which one signs.
+				if rootXPub, rootKeys, rerr := n.RootAuthPublicKeys(); rerr != nil {
+					log.Warnf("Node root admin sign-in unavailable: %v", rerr)
+				} else {
+					authHandler.SetNodeRootIdentity(&auth.RootIdentity{
+						XPub:        rootXPub,
+						Name:        "Node Root",
+						SigningKeys: rootKeys,
+					})
+				}
 				if epmSvc := n.EPMService(); epmSvc != nil {
 					if att := epmSvc.GetIdentityAttestation(); att != nil {
 						authHandler.SetNodeSigningAttestation(att)
@@ -1789,6 +1813,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// absent assets 404 and the dashboard reports sign-in
 			// unavailable rather than reaching a CDN.
 			adminMux.Handle("/wallet-wasm/", makeWalletWasmHandler(cfg.WalletWasm.AssetsDir))
+			// hd-wallet-ui — the actual wallet sign-in experience, mounted
+			// IN-PAGE by the dashboard. Owner law 2026-07-27: "we do NOT load
+			// anything from a site", so it is served from here, never from
+			// wallet.spacedatanetwork.org. Same fail-open terms.
+			adminMux.Handle("/wallet-ui/", makeWalletUIHandler(cfg.WalletWasm.UIAssetsDir))
 			// Anonymous identity downloads for the dashboard modal:
 			// /identity/<peerId>.vcf|.epm — the same data the public
 			// status feed already streams (vCards) or that peers publish
@@ -2943,6 +2972,60 @@ func isAnyTierAuthenticatedAPIPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+// authStoreFileName is the default SQLite file for operator trust-matrix
+// entries and sessions.
+const authStoreFileName = "auth.db"
+
+// resolveAuthDBPath returns the SQLite file the auth store must use.
+//
+// OWNER DIRECTIVE 2026-07-27: "use the entries in an sqlite database to handle
+// that. Also I think it should probably be in a separate database file that the
+// other standards for safety." The default has always satisfied that — a
+// distinct auth.db file beside the record store — so the default is UNCHANGED
+// and no deployed node's store moves. What is new is that the location is now
+// configurable and that co-locating it with the standards store is refused
+// rather than silently accepted.
+func resolveAuthDBPath(cfg *config.Config) (string, error) {
+	if cfg == nil {
+		return "", fmt.Errorf("resolve auth db path: nil config")
+	}
+	storagePath := strings.TrimSpace(cfg.Storage.Path)
+	configured := strings.TrimSpace(cfg.Admin.AuthDBPath)
+	if configured == "" {
+		return filepath.Join(storagePath, authStoreFileName), nil
+	}
+	if !filepath.IsAbs(configured) {
+		configured = filepath.Join(storagePath, configured)
+	}
+	if err := validateAuthDBPathSeparation(configured, storagePath); err != nil {
+		return "", err
+	}
+	return configured, nil
+}
+
+// validateAuthDBPathSeparation refuses an auth database that would live inside
+// the standards / FlatSQL record store directory. "Separate database file ...
+// for safety" is only true if a record-store rebuild cannot take the auth
+// database with it.
+func validateAuthDBPathSeparation(authPath, storagePath string) error {
+	storagePath = strings.TrimSpace(storagePath)
+	if storagePath == "" {
+		return nil
+	}
+	recordStore := filepath.Clean(filepath.Join(storagePath, "store"))
+	cleanAuth := filepath.Clean(authPath)
+	rel, err := filepath.Rel(recordStore, cleanAuth)
+	if err != nil {
+		return nil
+	}
+	if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf(
+			"admin.auth_db_path %q is inside the standards record store %q; the auth database must be a separate file so a record-store rebuild cannot take operator credentials with it",
+			authPath, recordStore)
+	}
+	return nil
 }
 
 func isAdminOnlyAPIPath(path string) bool {

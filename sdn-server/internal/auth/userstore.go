@@ -30,6 +30,20 @@ type User struct {
 	Source           string           `json:"source"` // "config" or "database"
 	CreatedAt        time.Time        `json:"created_at"`
 	LastLogin        *time.Time       `json:"last_login,omitempty"`
+
+	// PRR projection fields (owner directive 2026-07-27: operator sign-ins are
+	// stored the same way peers are stored in the trust matrix). These mirror
+	// internal/peers.TrustedPeer, which is itself a projection of the SDS PRR
+	// record — see trust_matrix.go for the full ruling.
+	Organization string `json:"organization,omitempty"`
+	Groups       string `json:"groups,omitempty"` // comma-separated, as PRR GROUPS
+	Notes        string `json:"notes,omitempty"`
+	// SignInCount is PRR.CONNECTION_COUNT for an operator: a sign-in is an
+	// operator's connection.
+	SignInCount int64 `json:"connection_count"`
+	// EPMData is PRR.EPM_DATA, VCardData is PRR.VCARD_DATA.
+	EPMData   []byte `json:"epm_data,omitempty"`
+	VCardData string `json:"vcard_data,omitempty"`
 }
 
 // UserStore manages xpub-to-trust-level mappings from config and database.
@@ -109,16 +123,50 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 }
 
 func (s *UserStore) initDB() error {
+	// The operator table is the PRR projection (schema/PRR/main.fbs) in this
+	// store's OWN SQLite file — Themis rules the shape, the owner rules the
+	// location. Column names are the snake_case projection internal/peers
+	// already uses for the same record; PRR's IDL capitalization applies to
+	// serialized records, not to local columns.
 	_, err := s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
 			xpub TEXT PRIMARY KEY,
+			peer_id TEXT DEFAULT '',
 			name TEXT DEFAULT '',
+			organization TEXT DEFAULT '',
 			trust_level INTEGER NOT NULL DEFAULT 2,
+			groups TEXT DEFAULT '',
+			notes TEXT DEFAULT '',
 			signing_pubkey_hex TEXT DEFAULT '',
+			epm_data BLOB,
+			vcard_data TEXT DEFAULT '',
 			created_at INTEGER NOT NULL,
-			last_login_at INTEGER
+			last_login_at INTEGER,
+			connection_count INTEGER NOT NULL DEFAULT 0
 		)
 	`)
+	if err != nil {
+		return err
+	}
+	// Columns added when operator entries became trust-matrix entries. Existing
+	// auth.db files predate them, and this store opens real files in place, so
+	// additive ALTERs are required — unlike the standards store, whose engine
+	// databases are always created fresh. A duplicate-column error means the
+	// migration already ran.
+	for _, stmt := range []string{
+		`ALTER TABLE users ADD COLUMN peer_id TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN organization TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN groups TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN notes TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN epm_data BLOB`,
+		`ALTER TABLE users ADD COLUMN vcard_data TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN connection_count INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, aerr := s.db.Exec(stmt); aerr != nil &&
+			!strings.Contains(strings.ToLower(aerr.Error()), "duplicate column") {
+			log.Debugf("user store migration %q: %v", stmt, aerr)
+		}
+	}
 	// No ALTER TABLE migration needed: engine databases are always created
 	// with the current schema (legacy sqlite files are imported by the
 	// dedicated migration CLI, not opened here).
@@ -141,13 +189,26 @@ func (s *UserStore) GetUser(xpub string) (*User, error) {
 	var u User
 	var createdAt int64
 	var lastLogin sql.NullInt64
+	var org, groups, notes, vcard sql.NullString
+	var epmData []byte
+	var signInCount sql.NullInt64
 	err := s.db.QueryRow(
-		"SELECT xpub, name, trust_level, signing_pubkey_hex, created_at, last_login_at FROM users WHERE xpub = ?",
+		`SELECT xpub, name, organization, trust_level, groups, notes,
+		        signing_pubkey_hex, epm_data, vcard_data, created_at,
+		        last_login_at, connection_count
+		 FROM users WHERE xpub = ?`,
 		xpub,
-	).Scan(&u.XPub, &u.Name, &u.TrustLevel, &u.SigningPubKeyHex, &createdAt, &lastLogin)
+	).Scan(&u.XPub, &u.Name, &org, &u.TrustLevel, &groups, &notes,
+		&u.SigningPubKeyHex, &epmData, &vcard, &createdAt, &lastLogin, &signInCount)
 
 	if err == nil {
 		u.Source = "database"
+		u.Organization = org.String
+		u.Groups = groups.String
+		u.Notes = notes.String
+		u.VCardData = vcard.String
+		u.EPMData = epmData
+		u.SignInCount = signInCount.Int64
 		u.CreatedAt = time.Unix(createdAt, 0)
 		if lastLogin.Valid {
 			t := time.Unix(lastLogin.Int64, 0)
@@ -206,7 +267,10 @@ func (s *UserStore) ListUsers() ([]User, error) {
 	var users []User
 
 	// Database users first (higher precedence)
-	rows, err := s.db.Query("SELECT xpub, name, trust_level, signing_pubkey_hex, created_at, last_login_at FROM users ORDER BY created_at")
+	rows, err := s.db.Query(`SELECT xpub, name, organization, trust_level, groups, notes,
+	                                signing_pubkey_hex, epm_data, vcard_data, created_at,
+	                                last_login_at, connection_count
+	                         FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("database error: %w", err)
 	}
@@ -216,10 +280,20 @@ func (s *UserStore) ListUsers() ([]User, error) {
 		var u User
 		var createdAt int64
 		var lastLogin sql.NullInt64
-		if err := rows.Scan(&u.XPub, &u.Name, &u.TrustLevel, &u.SigningPubKeyHex, &createdAt, &lastLogin); err != nil {
+		var org, groups, notes, vcard sql.NullString
+		var epmData []byte
+		var signInCount sql.NullInt64
+		if err := rows.Scan(&u.XPub, &u.Name, &org, &u.TrustLevel, &groups, &notes,
+			&u.SigningPubKeyHex, &epmData, &vcard, &createdAt, &lastLogin, &signInCount); err != nil {
 			continue
 		}
 		u.Source = "database"
+		u.Organization = org.String
+		u.Groups = groups.String
+		u.Notes = notes.String
+		u.VCardData = vcard.String
+		u.EPMData = epmData
+		u.SignInCount = signInCount.Int64
 		u.CreatedAt = time.Unix(createdAt, 0)
 		if lastLogin.Valid {
 			t := time.Unix(lastLogin.Int64, 0)
@@ -285,9 +359,15 @@ func (s *UserStore) AddUser(xpub, name string, trust peers.TrustLevel, signingPu
 	// Signing key is optional at creation — it gets bound on first login (TOFU).
 	// If provided, it's already validated above.
 
+	// PRR.PEER_ID for the new operator, derived from the account xpub's
+	// secp256k1 key (Themis binding). Empty when the identifier is not a
+	// parseable xpub — a fabricated peer ID would collide with a real
+	// identity's key space.
+	peerID, _ := OperatorPeerID(xpub)
 	_, err = s.db.Exec(
-		"INSERT INTO users (xpub, name, trust_level, signing_pubkey_hex, created_at) VALUES (?, ?, ?, ?, ?)",
-		xpub, name, int(trust), signingHex, time.Now().Unix(),
+		`INSERT INTO users (xpub, peer_id, name, trust_level, signing_pubkey_hex, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		xpub, peerID, name, int(trust), signingHex, time.Now().Unix(),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to add user: %w", err)
@@ -316,6 +396,49 @@ func (s *UserStore) applyConfigOverrides(u *User) {
 	if strings.TrimSpace(cu.SigningPubKeyHex) != "" {
 		u.SigningPubKeyHex = cu.SigningPubKeyHex
 	}
+}
+
+// RecordRootSignIn upserts the trust-matrix entry for the node's OWN root
+// account and counts the sign-in (PRR CONNECTION_COUNT / LAST_CONNECTED).
+//
+// The row is a RECORD, never the authorization: completeRootSignIn admits the
+// node's owner on the strength of the derived-key match alone, so a failure
+// here is logged and ignored rather than propagated. Losing an audit row must
+// never lock the owner out of their own node.
+//
+// The trust level is forced to the caller's value on every sign-in — this row
+// describes the node's own account, and it must not drift if someone edits it.
+func (s *UserStore) RecordRootSignIn(xpub, name string, trust peers.TrustLevel, signingPubKeyHex string) error {
+	trimmed := strings.TrimSpace(xpub)
+	if trimmed == "" {
+		return fmt.Errorf("root sign-in requires an xpub")
+	}
+	normalized, err := normalizeEd25519PubKeyHex(signingPubKeyHex)
+	if err != nil {
+		return fmt.Errorf("invalid signing_pubkey_hex: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	peerID, _ := OperatorPeerID(trimmed)
+	now := time.Now().Unix()
+	_, err = s.db.Exec(`
+		INSERT INTO users (xpub, peer_id, name, trust_level, signing_pubkey_hex,
+		                   created_at, last_login_at, connection_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+		ON CONFLICT(xpub) DO UPDATE SET
+			peer_id = excluded.peer_id,
+			name = excluded.name,
+			trust_level = excluded.trust_level,
+			signing_pubkey_hex = excluded.signing_pubkey_hex,
+			last_login_at = excluded.last_login_at,
+			connection_count = users.connection_count + 1
+	`, trimmed, peerID, strings.TrimSpace(name), int(trust), normalized, now, now)
+	if err != nil {
+		return fmt.Errorf("record root sign-in: %w", err)
+	}
+	return nil
 }
 
 // UpdateSigningPubKey sets/overrides the signing public key for a user.
@@ -408,8 +531,13 @@ func (s *UserStore) RecordLogin(xpub string) error {
 
 	now := time.Now().Unix()
 
-	// Try to update existing database user
-	result, err := s.db.Exec("UPDATE users SET last_login_at = ? WHERE xpub = ?", now, xpub)
+	// Try to update existing database user. connection_count is PRR's
+	// CONNECTION_COUNT for an operator — a sign-in IS an operator's
+	// connection — so it advances on every recorded login, exactly as the peer
+	// registry counts peer connections.
+	result, err := s.db.Exec(
+		"UPDATE users SET last_login_at = ?, connection_count = connection_count + 1 WHERE xpub = ?",
+		now, xpub)
 	if err != nil {
 		return err
 	}
@@ -418,9 +546,12 @@ func (s *UserStore) RecordLogin(xpub string) error {
 	if affected == 0 {
 		// Config user — create a database entry to track login
 		if cu, ok := s.configUsers[xpub]; ok {
+			peerID, _ := OperatorPeerID(xpub)
 			_, err := s.db.Exec(
-				"INSERT INTO users (xpub, name, trust_level, signing_pubkey_hex, created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?)",
-				xpub, cu.Name, int(cu.TrustLevel), cu.SigningPubKeyHex, now, now,
+				`INSERT INTO users (xpub, peer_id, name, trust_level, signing_pubkey_hex,
+				                    created_at, last_login_at, connection_count)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+				xpub, peerID, cu.Name, int(cu.TrustLevel), cu.SigningPubKeyHex, now, now,
 			)
 			return err
 		}

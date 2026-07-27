@@ -3,6 +3,8 @@ package wasm
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"fmt"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -26,6 +28,19 @@ const (
 	// EncryptionKeyPath is the derivation path for X25519 encryption keys.
 	// Format: m/44'/0'/account'/1'/0'
 	EncryptionKeyPath = "m/44'/0'/%d'/1'/0'"
+
+	// LegacyAuthKeyPath is the derivation path hd-wallet-ui's LEGACY identity
+	// schemes (sdn-bip39-auth-v1-legacy, sdn-fast-password-auth-v1-legacy) use
+	// for their sdn-authentication key. Format: m/44'/0'/account'/0/0 — note
+	// the last two components are NON-hardened, unlike SigningKeyPath.
+	//
+	// This is NOT a path this node derives for its own use. It exists solely
+	// so the node can RECOGNISE its own root account when an operator signs in
+	// through hd-wallet-ui: those legacy schemes are the only ones that can
+	// produce the raw-32 Ed25519 signature the admit point verifies today (see
+	// §11.2 of graph/tasks/nst-node-admin-contract.md), and they derive their
+	// auth key here rather than at SigningKeyPath.
+	LegacyAuthKeyPath = "m/44'/0'/%d'/0/0"
 )
 
 // DerivedIdentity represents a libp2p identity derived from an HD seed.
@@ -83,6 +98,39 @@ type DerivedIdentity struct {
 
 	// Addresses holds derived standard blockchain addresses (BTC, ETH, SOL)
 	Addresses *CoinAddresses
+}
+
+// DeriveLegacyAuthPublicKey derives the Ed25519 public key that hd-wallet-ui's
+// LEGACY identity schemes present as their sdn-authentication key for this
+// seed and account.
+//
+// The scheme, verified empirically against hd-wallet-wasm 2.0.28 (probe run
+// 2026-07-27, both account 0 and account 1): derive the secp256k1 BIP-32 node
+// at LegacyAuthKeyPath, then use the resulting 32-byte private SCALAR directly
+// as an Ed25519 seed. hd-wallet-wasm labels this derivation
+// "bip32-scalar-as-ed25519-seed". It is deliberately different from
+// DeriveIdentity's SigningKeyPath key, which is SLIP-10 over a fully hardened
+// path — for the same mnemonic the two keys DIFFER.
+//
+// Only the PUBLIC key is returned. The node needs this to recognise its own
+// root account at sign-in; it never signs with this key.
+func (hw *HDWalletModule) DeriveLegacyAuthPublicKey(ctx context.Context, seed []byte, account uint32) (ed25519.PublicKey, error) {
+	if len(seed) != 64 {
+		return nil, ErrHDWalletInvalidSeed
+	}
+	derived, err := hw.DeriveSecp256k1Key(ctx, seed, fmt.Sprintf(LegacyAuthKeyPath, account))
+	if err != nil {
+		return nil, fmt.Errorf("derive legacy auth key: %w", err)
+	}
+	if len(derived.PrivateKey) != ed25519.SeedSize {
+		return nil, fmt.Errorf("derive legacy auth key: scalar is %d bytes, want %d", len(derived.PrivateKey), ed25519.SeedSize)
+	}
+	priv := ed25519.NewKeyFromSeed(derived.PrivateKey)
+	pub, ok := priv.Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, errors.New("derive legacy auth key: unexpected public key type")
+	}
+	return pub, nil
 }
 
 // DeriveIdentity derives a libp2p identity from an HD wallet seed.
@@ -168,14 +216,14 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 	}
 
 	return &DerivedIdentity{
-		Account:           account,
-		IdentityPrivKey:   identityPrivKey,
-		IdentityPubKey:    identityPubKey,
-		SigningPrivKey:    signingPrivKey,
-		SigningPubKey:     signingPubKey,
-		EncryptionKey:     encryptionDerived.PrivateKey,
-		EncryptionPub:     encryptionPub,
-		PeerID:           peerID,
+		Account:            account,
+		IdentityPrivKey:    identityPrivKey,
+		IdentityPubKey:     identityPubKey,
+		SigningPrivKey:     signingPrivKey,
+		SigningPubKey:      signingPubKey,
+		EncryptionKey:      encryptionDerived.PrivateKey,
+		EncryptionPub:      encryptionPub,
+		PeerID:             peerID,
 		IdentityKeyPath:    identityPath,
 		SigningKeyPath:     signingPath,
 		EncryptionKeyPath:  encryptionPath,
@@ -279,9 +327,9 @@ func (id *DerivedIdentity) Info() IdentityInfo {
 		SigningPubKeyHex:  fmt.Sprintf("%x", signingPubBytes),
 		EncryptionPubHex:  fmt.Sprintf("%x", id.EncryptionPub),
 		IdentityKeyPath:   id.IdentityKeyPath,
-		SigningKeyPath:     id.SigningKeyPath,
-		EncryptionKeyPath:  id.EncryptionKeyPath,
-		Addresses:          id.Addresses,
+		SigningKeyPath:    id.SigningKeyPath,
+		EncryptionKeyPath: id.EncryptionKeyPath,
+		Addresses:         id.Addresses,
 	}
 }
 

@@ -203,10 +203,29 @@ var walletWasmAssetExts = map[string]string{
 	".wasm": "application/wasm",
 }
 
-// walletWasmMaxDepth bounds how deep under the staged root a request may
-// reach. The hd-wallet-wasm dist tree is at most dist/runtime/generated/aligned
-// /<file> — three directories. Anything deeper is not part of the package and
-// is refused rather than walked.
+// walletUIAssetExts allow-lists the file types the /wallet-ui/* surface may
+// serve: the hd-wallet-ui ES modules (.js/.mjs) and the package's reference
+// stylesheet (.css).
+//
+// .html is deliberately ABSENT. hd-wallet-ui also ships dist/wallet-origin-host
+// — a complete standalone wallet DOCUMENT (index.html + hashed js/css/wasm).
+// Serving operator-staged HTML from this node's own origin is a materially
+// different surface from serving modules the dashboard imports: a wrong or
+// swapped staged file would become same-origin executable page content rather
+// than a module the page chose to import. Hosting that document is a separate
+// decision (see §11 of graph/tasks/nst-node-admin-contract.md); until it is
+// taken, this route serves modules and styles only.
+var walletUIAssetExts = map[string]string{
+	".js":   "text/javascript; charset=utf-8",
+	".mjs":  "text/javascript; charset=utf-8",
+	".css":  "text/css; charset=utf-8",
+	".wasm": "application/wasm",
+}
+
+// walletWasmMaxDepth bounds how deep under a staged root a request may reach.
+// The hd-wallet-wasm dist tree is at most dist/runtime/generated/aligned/<file>
+// — three directories; hd-wallet-ui's is shallower. Anything deeper is not part
+// of either package and is refused rather than walked.
 const walletWasmMaxDepth = 4
 
 // makeWalletWasmHandler serves the hd-wallet-wasm package's dist tree at
@@ -223,12 +242,41 @@ const walletWasmMaxDepth = 4
 // off-origin. Responses are cacheable for a day — operators replace assets by
 // re-running deployment/wallet-wasm/stage-wallet-wasm.sh, not live-swapping.
 func makeWalletWasmHandler(assetsDir string) http.Handler {
+	return makeStagedModuleTreeHandler("/wallet-wasm/", assetsDir, walletWasmAssetExts)
+}
+
+// makeWalletUIHandler serves the hd-wallet-ui package's dist tree at
+// /wallet-ui/<relative-path>, on exactly the same terms as /wallet-wasm/*.
+//
+// OWNER LAW 2026-07-27: "we do NOT load anything from a site." The wallet
+// sign-in experience must therefore come from THIS node and nowhere else —
+// hd-wallet-ui's registered-site client (dist/client, dist/client/sdn) opens
+// https://wallet.spacedatanetwork.org and is inadmissible. What the dashboard
+// imports instead is the in-page application (dist/compat + dist/wallet-origin),
+// which this route serves.
+//
+// Both trees are staged from the SAME pinned npm version, and the module tree
+// depends on it: dist/compat/index.js and dist/wallet-origin/index.js each
+// import the BARE specifier "hd-wallet-wasm", which the page resolves to this
+// node's /wallet-wasm/runtime/index.mjs through an import map. Staging the two
+// at mismatched versions would silently pair a UI with a different wallet core,
+// so deployment/wallet-wasm/stage-wallet-wasm.sh stages both together and
+// refuses to stage a mismatch.
+func makeWalletUIHandler(assetsDir string) http.Handler {
+	return makeStagedModuleTreeHandler("/wallet-ui/", assetsDir, walletUIAssetExts)
+}
+
+// makeStagedModuleTreeHandler is the shared implementation behind the staged
+// same-origin module surfaces. It serves prefix+<relative-path> from assetsDir
+// under a fixed policy: GET/HEAD only, an extension allow-list, no traversal,
+// no dot-files, bounded depth, and fail-open 404 when the tree is unstaged.
+func makeStagedModuleTreeHandler(prefix, assetsDir string, exts map[string]string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		name, mediaType, ok := walletWasmAssetPath(assetsDir, strings.TrimPrefix(r.URL.Path, "/wallet-wasm/"))
+		name, mediaType, ok := stagedAssetPath(assetsDir, strings.TrimPrefix(r.URL.Path, prefix), exts)
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -251,12 +299,18 @@ func makeWalletWasmHandler(assetsDir string) http.Handler {
 	})
 }
 
-// walletWasmAssetPath validates a /wallet-wasm/ request suffix and returns the
+// walletWasmAssetPath validates a /wallet-wasm/ request suffix against the
+// hd-wallet-wasm extension allow-list.
+func walletWasmAssetPath(assetsDir, raw string) (string, string, bool) {
+	return stagedAssetPath(assetsDir, raw, walletWasmAssetExts)
+}
+
+// stagedAssetPath validates a staged-tree request suffix and returns the
 // cleaned slash-relative asset name plus its media type. It refuses anything
 // that is not a plain, bounded, forward-only relative path with an allow-listed
 // extension — no absolute paths, no "..", no dot-files, no backslashes (which
 // Windows path handling would treat as separators), no empty segments.
-func walletWasmAssetPath(assetsDir, raw string) (string, string, bool) {
+func stagedAssetPath(assetsDir, raw string, exts map[string]string) (string, string, bool) {
 	if assetsDir == "" || raw == "" || strings.Contains(raw, "\\") {
 		return "", "", false
 	}
@@ -273,7 +327,7 @@ func walletWasmAssetPath(assetsDir, raw string) (string, string, bool) {
 			return "", "", false
 		}
 	}
-	mediaType, allowed := walletWasmAssetExts[strings.ToLower(path.Ext(cleaned))]
+	mediaType, allowed := exts[strings.ToLower(path.Ext(cleaned))]
 	if !allowed {
 		return "", "", false
 	}

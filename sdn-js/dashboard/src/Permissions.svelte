@@ -10,9 +10,11 @@
    *
    * At Admin+ it manages both registries the node actually has:
    *   · OPERATOR KEYS  — the xpub user store (/api/auth/users). Adding an
-   *     xpub here IS "approved by an already approved key"; the holder then
-   *     proves possession with /api/auth/attest, and their first successful
-   *     sign-in binds the signing key (TOFU).
+   *     xpub here IS "approved by an already approved key"; the holder's
+   *     first successful sign-in binds the signing key (TOFU). There is no
+   *     attest affordance: §13.2 rules /api/auth/attest CLI/API-only, since
+   *     hd-wallet-ui cannot sign a variable-length §7 preimage and keeps no
+   *     signer alive after a login operation.
    *   · NETWORK PEERS  — the libp2p trust registry (/api/peers). NOTE this
    *     is a different endpoint from the anonymous /api/v1/peers swarm read.
    *
@@ -27,10 +29,9 @@
   import { apiFetch, apiPostText, describeApiError } from './api.js';
   import { normalizeTrust, trustRank, TRUST_COLOR_TOKEN, TRUST_TIERS } from './trust.js';
   import { shortId } from './format.js';
-  import { attest, peerIdFromXpub, shortFingerprint } from './wallet.js';
+  import { peerIdFromXpub, shortFingerprint } from './wallet.js';
   import {
     canManagePermissions,
-    canAttest,
     assignableUserTiers,
     assignablePeerTiers,
     tiersHighestFirst,
@@ -41,8 +42,8 @@
     userNeedsKeyProof,
   } from './permissions.js';
 
-  /** @type {{ session: any, nodes: any[], onRequestSignIn: () => void }} */
-  let { session, nodes, onRequestSignIn } = $props();
+  /** @type {{ session: any, nodes: any[], rootAdminAvailable?: boolean|null, onRequestSignIn: () => void }} */
+  let { session, nodes, rootAdminAvailable = null, onRequestSignIn } = $props();
 
   const level = $derived(session?.trustLevel ?? '');
   const admin = $derived(canManagePermissions(level));
@@ -76,8 +77,6 @@
   let peerOrg = $state('');
   let peerNotes = $state('');
   let peerTier = $state('standard');
-  let attestClaim = $state('self');
-  let attestResult = $state('');
 
   const peerKind = $derived(classifyPeerInput(peerInput).kind);
   const userKind = $derived(classifyPeerInput(userInput).kind);
@@ -235,20 +234,6 @@
     });
   }
 
-  function runAttest(e) {
-    e?.preventDefault?.();
-    attestResult = '';
-    return run('attest', async () => {
-      const res = await attest({
-        identity: session.identity,
-        claim: attestClaim.trim() || 'self',
-        post: (path, body) => apiFetch(path, { method: 'POST', body }),
-      });
-      attestResult = res?.verified
-        ? `VERIFIED · ${res.name || 'unnamed'} · ${String(res.trust_level ?? '').toUpperCase()}`
-        : 'NOT VERIFIED';
-    });
-  }
 </script>
 
 <div class="page">
@@ -325,14 +310,19 @@
           <table>
             <thead>
               <tr style="border-color:{theme.divider};color:{theme.textMuted};">
-                <th>XPUB</th><th>NAME</th><th>TRUST</th><th>KEY</th><th>SOURCE</th><th></th>
+                <th>XPUB</th><th>PEER ID</th><th>NAME</th><th>ORG</th><th>TRUST</th>
+                <th>KEY</th><th>SIGN-INS</th><th>SOURCE</th><th></th>
               </tr>
             </thead>
             <tbody>
               {#each users as user (user.xpub)}
                 <tr style="border-color:{theme.divider};">
                   <td class="mono" style="color:{theme.ice};" title={user.xpub}>{shortId(user.xpub)}</td>
+                  <td class="mono" style="color:{theme.textDim};" title={user.peer_id || 'no peer id — this row is not xpub-keyed'}>
+                    {user.peer_id ? shortId(user.peer_id) : '—'}
+                  </td>
                   <td style="color:{theme.textBody};">{user.name || '—'}</td>
+                  <td style="color:{theme.textDim};">{user.organization || '—'}</td>
                   <td>
                     <select
                       value={normalizeTrust(user.trust_level)}
@@ -356,6 +346,9 @@
                       <span class="mono" style="color:{theme.green};">BOUND</span>
                     {/if}
                   </td>
+                  <td class="mono" style="color:{theme.textDim};" title={user.last_connected ? `last sign-in ${user.last_connected}` : 'never signed in'}>
+                    {user.connection_count ?? 0}
+                  </td>
                   <td style="color:{theme.textFaint};">{(user.source || '').toUpperCase()}</td>
                   <td class="right">
                     {#if user.source !== 'config'}
@@ -369,7 +362,9 @@
                   </td>
                 </tr>
               {:else}
-                <tr><td colspan="6" class="none" style="color:{theme.textFaint};">No operator keys registered.</td></tr>
+                <tr><td colspan="9" class="none" style="color:{theme.textFaint};">
+                  No operator keys enrolled.{#if rootAdminAvailable} This node's own root recovery phrase signs in as admin.{/if}
+                </td></tr>
               {/each}
             </tbody>
           </table>
@@ -515,47 +510,6 @@
       </div>
     </Panel>
 
-    <!-- ---------------------------------------------------------------- -->
-    {#if session?.identity && canAttest(level)}
-      <Panel variant="raised" pad="0">
-        <div class="head" style="border-color:{theme.divider};">
-          <div>
-            <Kicker text="PROOF OF POSSESSION · /api/auth/attest" />
-            <div class="ttl" style="color:{theme.textBright};">ATTEST THIS KEY</div>
-          </div>
-          <div class="chips">
-            {#if attestResult}
-              <StatusChip
-                label={attestResult}
-                color={attestResult.startsWith('VERIFIED') ? theme.green : theme.red}
-                dot={false}
-              />
-            {/if}
-          </div>
-        </div>
-        <div class="pad">
-          <form class="add" onsubmit={runAttest}>
-            <div class="add-row">
-              <input
-                type="text"
-                bind:value={attestClaim}
-                placeholder="claim"
-                style="color:{theme.textBright};border-color:{theme.hairline};background:{theme.inputWell};"
-              />
-              <GBtn title="Sign an attestation with the key in this page" variant="primary" disabled={busy === 'attest'}>
-                {busy === 'attest' ? 'SIGNING…' : 'ATTEST'}
-              </GBtn>
-            </div>
-            <div class="hint" style="color:{theme.textFaint};">
-              Signs a claim with the key this browser holds and asks the node to check it
-              against the key on file for <span class="mono">{shortId(session.xpub)}</span>.
-              It grants nothing and changes no trust level — it answers whether the approved
-              xpub and this key are the same identity.
-            </div>
-          </form>
-        </div>
-      </Panel>
-    {/if}
   {/if}
 </div>
 

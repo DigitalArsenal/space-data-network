@@ -54,6 +54,26 @@ if (hashes.length === 0) {
   process.exit(1);
 }
 
+// The import map is an INLINE script too (contract §11.4): hd-wallet-ui's
+// modules import the bare specifier "hd-wallet-wasm" and only the map can
+// resolve it. Its hash is in `hashes` above by construction — this asserts it,
+// because a map dropped by a future bundler change would break sign-in at
+// runtime with a CSP refusal and nothing else.
+const importMap = /<script[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i.exec(html);
+if (!importMap) {
+  console.error('[build-dashboard] the hd-wallet-wasm import map is missing from the built page');
+  process.exit(1);
+}
+if (!/"hd-wallet-wasm"\s*:\s*"\/wallet-wasm\/runtime\/index\.mjs"/.test(importMap[1])) {
+  console.error('[build-dashboard] the import map must resolve hd-wallet-wasm to this node, not an external origin');
+  process.exit(1);
+}
+const mapHash = `'sha256-${createHash('sha256').update(importMap[1], 'utf8').digest('base64')}'`;
+if (!hashes.includes(mapHash)) {
+  console.error('[build-dashboard] the import map hash is not in script-src — it would be blocked');
+  process.exit(1);
+}
+
 // --- 3. Compose the CSP -----------------------------------------------------
 // appSurfaceCSP-grade (Iris ruling in graph/tasks/nst-dashboard-serve.md), with
 // the built page's inline-script hash(es) so a strict script-src 'self' can run
