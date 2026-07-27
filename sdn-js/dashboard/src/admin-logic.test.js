@@ -628,6 +628,30 @@ describe('ACCOUNTS — one list for nodes and logins (contract §16)', async () 
     expect(rows[0]).toMatchObject({ key: 'wallet_storage_metadata', bytes: 7 });
     // A clean origin yields NOTHING — the widget then renders nothing at all.
     expect(readQuarantinedRecords({ getItem: () => null })).toEqual([]);
-    expect(QUARANTINE_KEYS).toContain('wallet_storage_passkey_credential');
+  });
+
+  it('covers ALL SIX quarantine keys, including the pre-2.0.6 vintage', () => {
+    // Byte-identical to the wallet's LEGACY_WALLET_QUARANTINE_KEYS. A missing
+    // name is a record the operator can neither see nor delete.
+    expect(QUARANTINE_KEYS).toEqual([
+      'wallet_storage_metadata',
+      'wallet_storage_encrypted',
+      'wallet_storage_passkey_credential',
+      'encrypted_wallet',
+      'passkey_credential',
+      'passkey_wallet',
+    ]);
+  });
+
+  it('finds a LEGACY-vintage record that the wallet_storage_* scan missed', () => {
+    // An operator whose records predate the 2.0.6 CDN page holds ONLY these.
+    const store = new Map([
+      ['encrypted_wallet', 'LEGACYBLOB'],
+      ['passkey_wallet', '{"id":"abc"}'],
+    ]);
+    const rows = readQuarantinedRecords({ getItem: (k) => (store.has(k) ? store.get(k) : null) });
+    expect(rows.map((r) => r.key)).toEqual(['encrypted_wallet', 'passkey_wallet']);
+    expect(rows[0].bytes).toBe(10);
+    expect(rows[1].bytes).toBe(12);
   });
 });
