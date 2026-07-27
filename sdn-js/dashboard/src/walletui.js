@@ -299,7 +299,13 @@ export async function collectLegacyCredentials({ profile, controller, mount, tit
   if (profile === 'password-fast-v1-legacy') {
     const { createPasswordCredentialPrompt } = await loadWalletUI();
     const prompt = createPasswordCredentialPrompt({
-      controller,
+      // §15.1/§15.4: the SIGN-IN mount declines the quarantine capability, so
+      // the wallet's own `installQuarantineManager` returns null at its first
+      // line and renders nothing. This is a capability decision, NOT
+      // `display:none` — the records are a real encrypted store and their
+      // export/delete affordance lives on the stored-wallets surface instead
+      // (see StoredWallets.svelte), never inside a sign-in transaction.
+      controller: withoutQuarantine(controller),
       document: doc,
       mount,
       offerRememberedUnlock: false,
@@ -354,6 +360,59 @@ export async function collectLegacyCredentials({ profile, controller, mount, tit
   });
   cancel.addEventListener('click', () => settle.reject(new Error('USER_CANCELLED')));
   return { controls: await promise, cancel: () => settle.reject(new Error('USER_CANCELLED')) };
+}
+
+/**
+ * The controller as the SIGN-IN prompt may see it: everything the prompt
+ * legitimately needs, minus `listQuarantinedWalletRecords`.
+ *
+ * A plain object rather than a Proxy so the absence is literal: the wallet
+ * checks `typeof controller.listQuarantinedWalletRecords !== 'function'` and
+ * bails. Methods are bound to the real controller so behaviour is unchanged.
+ */
+export function withoutQuarantine(controller) {
+  if (!controller || typeof controller !== 'object') return controller;
+  const shim = {};
+  for (const name of [
+    'registerCredentialControls',
+    'supportsRememberedWallet',
+    'canRestoreRememberedWallet',
+    'unlockRemembered',
+    'unlockPassword',
+    'unlockLegacy',
+    'forgetStoredWallet',
+  ]) {
+    if (typeof controller[name] === 'function') shim[name] = controller[name].bind(controller);
+  }
+  return shim;
+}
+
+/** The localStorage keys hd-wallet-ui quarantines (contract §15.1). */
+export const QUARANTINE_KEYS = [
+  'wallet_storage_metadata',
+  'wallet_storage_encrypted',
+  'wallet_storage_passkey_credential',
+];
+
+/**
+ * Read the orphaned wallet records this origin still holds (§15.1): the
+ * node's removed 2.0.6 `/login` page wrote a REAL encrypted wallet and a REAL
+ * passkey credential here, and §12.1 orphaned them. Presence-based, exactly
+ * like the wallet's own detector — a key that is absent yields no row.
+ */
+export function readQuarantinedRecords(storage = globalThis.localStorage) {
+  const rows = [];
+  for (const key of QUARANTINE_KEYS) {
+    let value = null;
+    try {
+      value = storage?.getItem(key) ?? null;
+    } catch {
+      value = null;
+    }
+    if (value === null) continue;
+    rows.push({ key, bytes: new TextEncoder().encode(value).length, value });
+  }
+  return rows;
 }
 
 /**

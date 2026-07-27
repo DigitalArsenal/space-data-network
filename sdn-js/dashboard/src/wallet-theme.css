@@ -195,6 +195,28 @@
   margin-top: 4px;
 }
 
+/* ---- the remember checkbox goes inline (contract §15.3) ----------------
+   appendLabelledControl emits <label><span>text</span><input></label> for every
+   field, and stacked is right for the text inputs. Only the checkbox row is
+   re-laid-out, by targeting the control's own data hook — row-reverse puts the
+   box before its text without touching the DOM order the wallet emits. */
+label:has([data-wallet-remember]) {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+/* Same stylesheet gap the ruling notes: the wallet's small buttons wrap. */
+[data-wallet-action] {
+  white-space: nowrap;
+}
+/* Passkey stays visibly disabled until the upstream rp.id fix lands (§15.2). */
+[data-wallet-remember]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ---- status / data rows ------------------------------------------------ */
 [data-wallet-remember-status],
 [data-wallet-forget-status],

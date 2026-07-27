@@ -1,0 +1,172 @@
+# hd-wallet-ui 2.0.29 — host-injectable, origin-validated WebAuthn rp.id
+#
+# BASE: tag v2.0.28 (d1ed47f3777c08fc68170bbf0692e8c5313f9f81) — the commit the
+#       published 2.0.28 dist was built from. NOT the local main (66b5c41), which
+#       is an ANCESTOR of the tag; branching from main would regress the package.
+#       Apply with:  git checkout -b passkey-rpid v2.0.28 && git apply <this>
+#
+# WHY: RP_ID was hard-coded to wallet.spacedatanetwork.org, so the remembered-
+#      wallet passkey path threw SecurityError on every other origin, including
+#      every self-hosted SDN node. See §15.2 of graph/tasks/nst-node-admin-contract.md.
+#
+# Validation is enforced in-library, not left to the browser: a free-form
+# host-settable rp.id is a phishing primitive.
+#
+--- a/wallet-ui/origin-app/remember-wallet.mjs
++++ b/wallet-ui/origin-app/remember-wallet.mjs
+@@ -27,8 +27,7 @@
+ const PROFILE = 'webauthn-prf-hkdf-sha256-aes256gcm-v2';
+ const IDENTITY_SCHEME = 'sdn-bip32-slip10-purpose-v1';
+ const SEED_PROFILE = 'password-scrypt-v2';
+-const RP_ID = 'wallet.spacedatanetwork.org';
+-const RP_NAME = 'Space Data Network Wallet';
++const DEFAULT_RP_NAME = 'Space Data Network Wallet';
+ const REQUEST_TIMEOUT = 120000;
+ 
+ export class RememberedWalletError extends Error {
+@@ -43,6 +42,47 @@
+   throw new RememberedWalletError(code);
+ }
+ 
++// WebAuthn Relying Party ID resolution.
++//
++// A passkey is bound to an rp.id, and the browser refuses any call whose rp.id
++// is not the document origin's effective domain or a registrable suffix of it.
++// This used to be the hard-coded constant 'wallet.spacedatanetwork.org', which
++// made the remembered-wallet path work on exactly one deployment and throw
++// SecurityError everywhere else — including every self-hosted SDN node.
++//
++// The rp.id is now HOST-INJECTABLE, defaulting to the serving origin, and it is
++// VALIDATED against the current document origin before use. The validation is
++// not defensive politeness: an rp.id the host may set to an arbitrary string is
++// a phishing primitive. It would let a page served from one origin mint or
++// assert credentials scoped to a domain it does not control, which is precisely
++// the attack WebAuthn's origin binding exists to prevent. The browser would
++// reject it too, but a library must not depend on a downstream check for a
++// property it can enforce itself — refusing here means a misconfiguration fails
++// loudly at the wallet boundary instead of surfacing as an opaque
++// SecurityError deep inside a credential ceremony.
++//
++// Accepted: the current hostname, or a registrable suffix of it (app.example.com
++// may use 'app.example.com' or 'example.com'). Refused: anything else, including
++// a bare public suffix — the browser applies the public-suffix list on top of
++// this, and we do not duplicate that list here.
++function normalizeHostname(value) {
++  if (typeof value !== 'string') return '';
++  const trimmed = value.trim().toLowerCase();
++  return trimmed.endsWith('.') ? trimmed.slice(0, -1) : trimmed;
++}
++
++export function resolveRelyingPartyId(requested, hostname) {
++  const current = normalizeHostname(hostname);
++  if (current === '') fail('INVALID_RP_ID');
++  if (requested === undefined || requested === null || requested === '') return current;
++  const candidate = normalizeHostname(requested);
++  if (candidate === '') fail('INVALID_RP_ID');
++  if (candidate === current) return candidate;
++  if (current.endsWith(`.${candidate}`)) return candidate;
++  fail('INVALID_RP_ID');
++  return '';
++}
++
+ function wipe(bytes) {
+   if (!(bytes instanceof Uint8Array)) return;
+   try { intrinsicFill.call(bytes, 0); } catch { /* detached secret bytes are unusable */ }
+@@ -219,7 +259,7 @@
+   return copy;
+ }
+ 
+-function makeAssertionRequest({ challenge, credentialId, prfInput, signal }) {
++function makeAssertionRequest({ challenge, credentialId, prfInput, rpId, signal }) {
+   return {
+     publicKey: {
+       allowCredentials: [{
+@@ -228,7 +268,7 @@
+       }],
+       challenge,
+       extensions: { prf: { eval: { first: prfInput } } },
+-      rpId: RP_ID,
++      rpId,
+       timeout: REQUEST_TIMEOUT,
+       userVerification: 'required',
+     },
+@@ -236,7 +276,7 @@
+   };
+ }
+ 
+-async function requestAssertion({ assertCurrent, credentials, credentialId, fillRandom, prfInput, signal }) {
++async function requestAssertion({ assertCurrent, credentials, credentialId, fillRandom, prfInput, rpId, signal }) {
+   const challenge = randomBytes(fillRandom, 32);
+   let assertion;
+   try {
+@@ -244,6 +284,7 @@
+       challenge,
+       credentialId,
+       prfInput,
++      rpId,
+       signal,
+     }));
+   } catch (error) {
+@@ -326,6 +367,16 @@
+   const destroyHandle = configuration?.destroyHandle;
+   const ownedHandlesClean = configuration?.ownedHandlesClean;
+   const now = configuration?.now ?? (() => new Date());
++  // Resolved ONCE, at coordinator construction, against the serving origin —
++  // so a bad rpId fails at wiring time rather than mid-ceremony, and cannot be
++  // swapped between the create and assert halves of a single flow.
++  const rpHostname = configuration?.rpHostname
++    ?? configuration?.window?.location?.hostname
++    ?? globalThis?.location?.hostname;
++  const rpId = resolveRelyingPartyId(configuration?.rpId, rpHostname);
++  const rpName = typeof configuration?.rpName === 'string' && configuration.rpName !== ''
++    ? configuration.rpName
++    : DEFAULT_RP_NAME;
+ 
+   const supported = () => typeof credentials?.create === 'function'
+     && typeof credentials?.get === 'function';
+@@ -421,7 +472,7 @@
+               { alg: -7, type: 'public-key' },
+               { alg: -257, type: 'public-key' },
+             ],
+-            rp: { id: RP_ID, name: RP_NAME },
++            rp: { id: rpId, name: rpName },
+             timeout: REQUEST_TIMEOUT,
+             user: {
+               displayName: canonicalUsername,
+@@ -445,6 +496,7 @@
+         credentials,
+         fillRandom,
+         prfInput,
++        rpId,
+         signal: requestController.signal,
+       });
+       sealingPrf = rawPrf.slice();
+@@ -613,6 +665,7 @@
+         credentials,
+         fillRandom,
+         prfInput,
++        rpId,
+         signal: requestController.signal,
+       });
+       assertCurrent();
+--- a/wallet-ui/origin-app/controller.mjs
++++ b/wallet-ui/origin-app/controller.mjs
+@@ -158,6 +158,8 @@
+     registry,
+     relay,
+     rng,
++    rpId,
++    rpName,
+     storage,
+     wasm,
+     window,
+@@ -179,6 +181,9 @@
+         return controller;
+       },
+       credentials: credentials ?? window?.navigator?.credentials ?? globalThis.navigator?.credentials,
++      rpHostname: window?.location?.hostname ?? globalThis?.location?.hostname,
++      rpId,
++      rpName,
+       destroyHandle: (handle) => this.#destroyHandle(handle),
+       module: wasm,
+       now,

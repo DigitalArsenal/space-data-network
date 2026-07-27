@@ -525,3 +525,109 @@ describe('add-by-key-or-vcard (contract §8)', () => {
     ).toBe('0d80e1fd');
   });
 });
+
+describe('ACCOUNTS — one list for nodes and logins (contract §16)', async () => {
+  const {
+    accountFromNode, accountFromEntry, mergeAccounts, accountDisplayName,
+    isUnnamed, accountIdentifier, kindLabel, editTargets, sortAccounts,
+  } = await import('./accounts.js');
+  const { withoutQuarantine, readQuarantinedRecords, QUARANTINE_KEYS } = await import('./walletui.js');
+
+  const feed = [
+    { peerId: '12D3KooWAlpha', dn: 'Alpha Node', org: 'Ops', trustLevel: 'full', online: true, isSelf: false },
+    { peerId: '12D3KooWSelf', dn: '', org: '', trustLevel: 'ultimate', online: true, isSelf: true },
+  ];
+
+  it('the anonymous tier is the feed, verbatim', () => {
+    const rows = feed.map(accountFromNode);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ peerId: '12D3KooWAlpha', kind: 'peer', name: 'Alpha Node', canSignIn: false, xpub: '' });
+    // Nothing operator-shaped is invented for an anonymous row.
+    expect(rows[0].source).toBe('');
+    expect(rows[0].connectionCount).toBe(0);
+  });
+
+  it('merges the Admin overlay onto feed rows by peer id', () => {
+    const merged = mergeAccounts(feed.map(accountFromNode), [
+      { peer_id: '12D3KooWAlpha', xpub: 'xpub6Alpha', kind: 'both', name: 'Alpha Node',
+        trust_level: 'admin', can_sign_in: true, source: 'config', connection_count: 7, last_connected: 1785000000 },
+    ]);
+    expect(merged).toHaveLength(2); // merged, not appended
+    const alpha = merged.find((r) => r.peerId === '12D3KooWAlpha');
+    expect(alpha).toMatchObject({ kind: 'both', xpub: 'xpub6Alpha', canSignIn: true, connectionCount: 7 });
+    // §16.2: the server already reconciled to the higher tier; take its word.
+    expect(alpha.trustLevel).toBe('admin');
+    // Live presence stays the feed's.
+    expect(alpha.online).toBe(true);
+  });
+
+  it('appends an operator with no peer presence, and never merges on an EMPTY id', () => {
+    const merged = mergeAccounts(feed.map(accountFromNode), [
+      { peer_id: '', xpub: 'xpub6Orphan', kind: 'operator', name: 'Config Label', trust_level: 'standard', can_sign_in: true },
+      { peer_id: '16Uiu2HAmOperator', xpub: 'xpub6Op', kind: 'operator', name: 'Remote Op', trust_level: 'full', can_sign_in: true },
+    ]);
+    expect(merged).toHaveLength(4);
+    expect(merged.filter((r) => r.kind === 'operator')).toHaveLength(2);
+    // An empty peer id matched nothing, rather than folding into a real row.
+    expect(merged.find((r) => r.xpub === 'xpub6Orphan').peerId).toBe('');
+  });
+
+  it('NAME is always a primary line — "unknown" when there is none', () => {
+    expect(accountDisplayName({ name: 'Alpha Node' })).toBe('Alpha Node');
+    expect(accountDisplayName({ name: '', organization: 'Ops' })).toBe('Ops');
+    expect(accountDisplayName({ name: '  ', organization: '' })).toBe('unknown');
+    expect(accountDisplayName({})).toBe('unknown');
+    // An identifier is NEVER promoted to look like a name.
+    expect(accountDisplayName({ peerId: '12D3KooWAlpha' })).toBe('unknown');
+    expect(isUnnamed({ peerId: '12D3KooWAlpha' })).toBe(true);
+    expect(isUnnamed({ name: 'Alpha' })).toBe(false);
+    // ...but it is still shown, underneath.
+    expect(accountIdentifier({ peerId: '12D3KooWAlpha' })).toBe('12D3KooWAlpha');
+    expect(accountIdentifier({ peerId: '', xpub: 'xpub6Op' })).toBe('xpub6Op');
+  });
+
+  it('names the two facets a `both` row can edit (§16.4.5)', () => {
+    const both = editTargets({ kind: 'both', peerId: '12D3KooWAlpha', xpub: 'xpub6Alpha' });
+    expect(both.map((t) => t.facet)).toEqual(['peer', 'operator']);
+    expect(both[0].path).toBe('/api/peers/12D3KooWAlpha/trust');
+    expect(both[1].path).toBe('/api/auth/users/xpub6Alpha');
+    // A single-facet row offers exactly one target — no guessing.
+    expect(editTargets({ kind: 'peer', peerId: '12D3KooWAlpha' })).toHaveLength(1);
+    expect(editTargets({ kind: 'operator', xpub: 'xpub6Op' })).toHaveLength(1);
+    expect(kindLabel('both')).toBe('NODE + LOGIN');
+    expect(kindLabel('operator')).toBe('LOGIN');
+  });
+
+  it('sorts this node first, then by trust', () => {
+    const rows = sortAccounts(mergeAccounts(feed.map(accountFromNode), []));
+    expect(rows[0].isSelf).toBe(true);
+  });
+
+  it('the sign-in controller declines the quarantine capability (§15.1)', () => {
+    const real = {
+      listQuarantinedWalletRecords: () => [{ key: 'x' }],
+      registerCredentialControls: () => 'registered',
+      supportsRememberedWallet: () => true,
+      unlockLegacy: () => 'unlocked',
+    };
+    const shim = withoutQuarantine(real);
+    // The wallet bails on exactly this check — so the block never renders.
+    expect(typeof shim.listQuarantinedWalletRecords).not.toBe('function');
+    expect('listQuarantinedWalletRecords' in shim).toBe(false);
+    // Everything the prompt legitimately needs still works.
+    expect(shim.registerCredentialControls()).toBe('registered');
+    expect(shim.supportsRememberedWallet()).toBe(true);
+    expect(shim.unlockLegacy()).toBe('unlocked');
+  });
+
+  it('reads orphaned wallet records presence-based, like the wallet does', () => {
+    const store = new Map([['wallet_storage_metadata', '{"a":1}']]);
+    const fake = { getItem: (k) => (store.has(k) ? store.get(k) : null) };
+    const rows = readQuarantinedRecords(fake);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ key: 'wallet_storage_metadata', bytes: 7 });
+    // A clean origin yields NOTHING — the widget then renders nothing at all.
+    expect(readQuarantinedRecords({ getItem: () => null })).toEqual([]);
+    expect(QUARANTINE_KEYS).toContain('wallet_storage_passkey_credential');
+  });
+});
