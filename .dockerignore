@@ -27,6 +27,11 @@ coverage.txt
 # Node modules (use npm ci in Docker)
 sdn-js/node_modules
 node_modules
+# ...except the pure-WASI HD wallet artifact. The node cannot derive a
+# mnemonic-backed identity without it (internal/node/node.go:1472-1479 search
+# list), and without a mnemonic identity there is no root admin sign-in either
+# ("node identity bundle not loaded"). It ships to /usr/local/lib in the image.
+!sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm
 
 # Legacy code
 legacy/
