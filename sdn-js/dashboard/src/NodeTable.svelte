@@ -24,7 +24,7 @@
   // wide: hidden on narrow screens (<=760px) so the remaining columns fit a
   // phone without a nested horizontal scroller swallowing taps.
   const COLS = [
-    { key: 'node', label: 'NODE' },
+    { key: 'node', label: 'NAME' },
     { key: 'org', label: 'ORGANIZATION', wide: true },
     { key: 'trust', label: 'TRUST' },
     { key: 'status', label: 'STATUS' },
