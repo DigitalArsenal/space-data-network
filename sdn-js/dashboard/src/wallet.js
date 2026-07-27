@@ -252,12 +252,13 @@ export function loadWallet() {
  *
  * @returns {Promise<{user: object, identity: object, localFingerprint: string, expiresAt: number}>}
  */
-export async function signInWithWalletUI({ mount, profile, post, displayName, document: doc = globalThis.document }) {
+export async function signInWithWalletUI({ mount, profile, post, displayName, document: doc = globalThis.document, onCancelHandle }) {
   const { identity, controller, published, binding, close } = await unlockWithWalletUI({
     mount,
     profile,
     displayName,
     document: doc,
+    onCancelHandle,
   });
   try {
     // NO `xpub` ON THE WIRE — ruled 2026-07-27 (§13.1(i)). The node resolves
@@ -318,21 +319,39 @@ export async function signInWithWalletUI({ mount, profile, post, displayName, do
  * Mount the wallet and unlock it — the half of sign-in that touches no
  * network at all: credentials in, public identity out, nothing transmitted.
  */
-async function unlockWithWalletUI({ mount, profile, displayName, document: doc }) {
+async function unlockWithWalletUI({ mount, profile, displayName, document: doc, onCancelHandle }) {
   const { mod } = await loadWallet();
   const origin = globalThis.location?.origin ?? '';
   const binding = await buildRegistryBinding(origin, displayName);
   const { app, controller, published } = await createWalletApp({ mount, wasm: mod, binding, document: doc });
+  // Close/Esc must work on EVERY wallet screen, and must cancel through the
+  // wallet's OWN path (app.stop → controller.destroy) rather than just
+  // unmounting DOM, or the transaction stays live and the next open inherits
+  // TRANSACTION_IN_PROGRESS.
+  let cancelPrompt = () => {};
   const close = () => {
+    try {
+      cancelPrompt();
+    } catch {
+      /* the prompt may already be settled */
+    }
     try {
       app.stop('close');
     } catch {
       /* the controller self-destroys on completion; stop() is belt-and-braces */
     }
+    try {
+      mount?.replaceChildren?.();
+    } catch {
+      /* detached */
+    }
   };
+  onCancelHandle?.(close);
   try {
     const title = `Sign in to ${binding.clientDisplayName}`;
-    const { controls } = await collectLegacyCredentials({ profile, controller, mount, title, document: doc });
+    const collected = await collectLegacyCredentials({ profile, controller, mount, title, document: doc });
+    cancelPrompt = collected.cancel ?? cancelPrompt;
+    const { controls } = collected;
     const identity = readIdentity(
       await controller.unlockLegacy({ ...controls, operation: RAW_CHALLENGE_OPERATION, profile })
     );

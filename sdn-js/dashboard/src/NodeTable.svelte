@@ -7,6 +7,7 @@
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { shortId, formatLastSeen, formatUptime } from './format.js';
+  import { accountDisplayName, accountFromNode, isUnnamed, kindLabel } from './accounts.js';
 
   /**
    * @type {{
@@ -58,7 +59,17 @@
           tabindex="0"
         >
           <td>
-            <span class="dn" style="color:{theme.textBright};">{n.dn?.trim() || n.org?.trim() || shortId(n.peerId)}</span>
+            <!-- NAME first, always a primary line: an account with no name
+                 reads "unknown" rather than promoting an identifier to look
+                 like one (§16.4.3). The id lives underneath. -->
+            <span
+              class="dn"
+              class:unnamed={isUnnamed(n.account ?? accountFromNode(n))}
+              style="color:{isUnnamed(n.account ?? accountFromNode(n)) ? theme.textMuted : theme.textBright};"
+            >{accountDisplayName(n.account ?? accountFromNode(n))}</span>
+            {#if (n.account?.kind ?? 'peer') !== 'peer'}
+              <span class="kind" style="color:{theme.cyan};border-color:{theme.cyan};">{kindLabel(n.account.kind)}</span>
+            {/if}
             {#if n.isSelf}<span class="tag" style="color:{theme.cyan};border-color:{theme.cyan};">SELF</span>{/if}
             <div class="pid" style="color:{theme.textFaint};">{shortId(n.peerId)}</div>
           </td>
@@ -135,6 +146,15 @@
     letter-spacing: 0.04em;
   }
   .pid { font-size: 13px; margin-top: 2px; }
+  .dn.unnamed { font-style: italic; }
+  .kind {
+    border: 1px solid;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    padding: 1px 5px;
+    margin-left: 7px;
+    white-space: nowrap;
+  }
   .tag {
     font-size: 10.5px;
     letter-spacing: 0.16em;

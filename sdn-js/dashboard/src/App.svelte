@@ -25,13 +25,15 @@
   import NodeModal from './NodeModal.svelte';
   import NodeDetail from './NodeDetail.svelte';
   import NodeWidgets from './NodeWidgets.svelte';
+  import StoredWallets from './StoredWallets.svelte';
   import NodeEditForm from './NodeEditForm.svelte';
-  import Permissions from './Permissions.svelte';
+  import AccountAdmin from './AccountAdmin.svelte';
   import SignInModal from './SignInModal.svelte';
   import Globe from './Globe.svelte';
   import { shortId } from './format.js';
   import { TRUST_TIERS, normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
-  import { canEditNodeProfile } from './permissions.js';
+  import { canEditNodeProfile, canManagePermissions } from './permissions.js';
+  import { accountFromNode, mergeAccounts, sortAccounts } from './accounts.js';
   import { apiFetch } from './api.js';
   import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
   import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
@@ -42,16 +44,16 @@
       label: 'NETWORK',
       items: [
         { id: 'self', label: 'THIS NODE', glyph: '◉', fkey: 'N1' },
-        { id: 'nodes', label: 'NODES', glyph: '◍', fkey: 'N2' },
-        { id: 'permissions', label: 'PERMISSIONS', glyph: '◈', fkey: 'N3' },
+        { id: 'accounts', label: 'ACCOUNTS', glyph: '◍', fkey: 'N2' },
       ],
     },
   ];
 
+  // One list for nodes and logins (§16): the owner does not differentiate
+  // between a node running somewhere and an account that logs in here.
   const ROUTE_TITLE = {
     self: ['THIS NODE', '· NODE IDENTITY & STATUS'],
-    nodes: ['NETWORK NODES', '· LIVE NODE STATUS'],
-    permissions: ['PERMISSIONS', '· OPERATOR KEYS & PEER TRUST'],
+    accounts: ['ACCOUNTS', '· NODES & LOGINS'],
   };
 
   const HIDE_KEY = 'sdn.dashboard.hideUntrustedOffline';
@@ -68,6 +70,8 @@
   let view = $state(null);
   let now = $state(Date.now());
   let route = $state('self');
+  /** Admin-only enrichment rows from GET /api/accounts (§16.5). */
+  let accountEntries = $state([]);
   let query = $state('');
   let trustTier = $state('all');
   let hideUntrustedOffline = $state(readHidePref());
@@ -184,6 +188,30 @@
     readAuthStatus();
   }
 
+  /**
+   * §16.5: the ACCOUNTS page renders from the PUBLIC feed for everyone. The
+   * Admin overlay is fetched ONLY once /api/auth/me has already succeeded, so
+   * a signed-out visitor never triggers a 401 and never sees an empty table.
+   */
+  async function readAccounts() {
+    if (!session || !canManagePermissions(session.trustLevel)) {
+      accountEntries = [];
+      return;
+    }
+    try {
+      const rows = await apiFetch('/api/accounts');
+      accountEntries = Array.isArray(rows) ? rows : [];
+    } catch {
+      // Enrichment only — the public tier stands on its own.
+      accountEntries = [];
+    }
+  }
+
+  $effect(() => {
+    void session;
+    readAccounts();
+  });
+
   function readAuthStatus() {
     return apiFetch('/api/auth/status')
       .then((s) => {
@@ -210,7 +238,16 @@
     view ? Math.max(0, Math.round((now - view.generatedAt) / 1000)) : null
   );
 
-  const visible = $derived(applySettings(nodes, { trustTier, hideUntrustedOffline }));
+  // Anonymous tier first: every row the public feed knows about. The Admin
+  // overlay merges operator facets in on top when there is a session.
+  const accountRows = $derived(sortAccounts(mergeAccounts(nodes.map(accountFromNode), accountEntries)));
+  const accountNodes = $derived(accountRows.map((r) => r.node ?? {
+    peerId: r.peerId, dn: r.name, org: r.organization, vcard: '', lat: 0, lon: 0,
+    geoLabel: '', online: false, isSelf: false, agent: '', uptimeS: 0, lastSeen: r.lastConnected,
+    addrs: [], trustLevel: r.trustLevel, role: '', latencyMs: 0, suiteVersion: '',
+    standardsVersion: '', account: r,
+  }));
+  const visible = $derived(applySettings(accountNodes, { trustTier, hideUntrustedOffline }));
   const searching = $derived(Boolean(query.trim()));
   const semanticActive = $derived(searching && semStatus === 'ready' && semScores !== null);
 
@@ -354,11 +391,7 @@
     </ConsoleHeader>
 
     <div class="body">
-      <!-- PERMISSIONS reads the node's own APIs, not the status feed, so it
-           renders before the feed-connection gate. -->
-      {#if route === 'permissions'}
-        <Permissions {session} {nodes} {rootAdminAvailable} onRequestSignIn={() => (signInOpen = true)} />
-      {:else if !connected}
+      {#if !connected}
         <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
           <span class="glyph" style="color:{theme.cyan};">◍</span>
           Connecting to the node status feed (/ws/status)…
@@ -399,6 +432,9 @@
               </Panel>
             {:else}
               <NodeWidgets node={selfNode} {now} />
+              {#if session}
+                <div class="stored-wallets"><StoredWallets /></div>
+              {/if}
             {/if}
           </div>
         {:else}
@@ -499,6 +535,13 @@
             </div>
           </Panel>
         </div>
+
+        {#if session && canManagePermissions(session.trustLevel)}
+          <!-- §16.3/§16.4: management folded into ACCOUNTS, existing APIs. -->
+          <div class="account-admin">
+            <AccountAdmin {session} nodes={accountNodes} {rootAdminAvailable} onRequestSignIn={() => (signInOpen = true)} />
+          </div>
+        {/if}
       {/if}
     </div>
   </main>
@@ -755,6 +798,8 @@
     gap: 16px;
     padding-bottom: 8px;
   }
+  .stored-wallets { display: grid; }
+  .account-admin { margin-top: 16px; flex: none; }
   .page-head {
     display: flex;
     align-items: flex-start;

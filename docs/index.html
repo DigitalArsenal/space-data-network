@@ -10,9 +10,6 @@
   <meta property="og:type" content="website">
   <title>Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <!-- SDN_CONSUMER_ASSETS_START -->
 <link rel="stylesheet" href="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.c3f68d1cfd88478f10d836a5e829d1dfc6a10157972cf0f7d4d319d0636f2cc4.css" integrity="sha384-fICuhN4I9xqOK1F5vGGzl26opuO+xQIvTZXMSV76lWTBiQ6AfzztMGLLDw8yRT8i" crossorigin="anonymous">
 <script defer src="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.f611e7e151a3b5c38384272f8894a4c6634f0a29bf925b0e02e0e27f8db0bfff.js" integrity="sha384-R+QqsKoWJIS7iWrtPmgJ49DVnb1hSGjZokupbLInJd1PLp8RwQhtF/hnaerc33ci" crossorigin="anonymous" data-sdn-wallet-public-client="v1"></script>
@@ -38,8 +35,16 @@
       --ui-border: rgba(134, 134, 139, 0.3);
       --ui-border-hover: rgba(134, 134, 139, 0.5);
       --nav-bg: rgba(22, 22, 23, 0.95);
-      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      /* OWNER LAW 2026-07-27: "we do NOT load anything from a site."
+         This page used to pull Inter + JetBrains Mono from a third-party
+         webfont CDN, which handed that third party a request — and an IP, a
+         User-Agent and a Referer — for every visitor to spacedatanetwork.org.
+         The webfonts are DELETED rather than self-hosted: this is a no-build
+         GitHub Pages site, so self-hosting would mean committing binary font
+         blobs, and the system stacks below render the same design intent with
+         zero bytes and zero third parties. */
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
       --radius: 28px;
       --radius-sm: 16px;
       --sdn-stack-footer-height: 40px;

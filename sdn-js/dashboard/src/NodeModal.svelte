@@ -9,13 +9,18 @@
   import NodeDetail from './NodeDetail.svelte';
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { shortId } from './format.js';
+  import { accountDisplayName, accountFromNode, isUnnamed } from './accounts.js';
 
   /** @type {{ node: any, now: number, onClose: () => void }} */
   let { node, now, onClose } = $props();
 
   const tier = $derived(normalizeTrust(node.trustLevel));
   const tierColor = $derived(theme[TRUST_COLOR_TOKEN[tier]] ?? theme.textMuted);
-  const title = $derived(node.dn?.trim() || node.org?.trim() || shortId(node.peerId));
+  // Same NAME rule as the ACCOUNTS table (§16.4.3): "unknown", never an id
+  // dressed up as a name.
+  const acct = $derived(node.account ?? accountFromNode(node));
+  const title = $derived(accountDisplayName(acct));
+  const unnamed = $derived(isUnnamed(acct));
 
   function onKeydown(e) {
     if (e.key === 'Escape') onClose();
@@ -30,7 +35,7 @@
     style="background:{theme.panelRaised};border-color:{theme.panelBorder};color:{theme.textBody};">
     <div class="head" style="border-color:{theme.divider};">
       <div class="titles">
-        <div class="dn" style="color:{theme.textBright};">{title}</div>
+        <div class="dn" class:unnamed style="color:{unnamed ? theme.textMuted : theme.textBright};">{title}</div>
         {#if node.org?.trim() && node.org.trim() !== title}
           <div class="org" style="color:{theme.textDim};">{node.org}</div>
         {/if}
@@ -84,6 +89,7 @@
     overflow-wrap: anywhere;
   }
   .org { font-size: 15px; letter-spacing: 0.04em; margin-top: 3px; }
+  .dn.unnamed { font-style: italic; }
   .chips { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
   .close {
     background: transparent;

@@ -31,6 +31,8 @@
   let walletMount = $state(null);
   let stage = $state('checking'); // checking | unavailable | choose | running
   let error = $state('');
+  /** Cancels an in-flight wallet transaction through the wallet's own path. */
+  let cancelWallet = null;
 
   // There is no first-run dead end any more (§14.1): the node derives the
   // accepted admin keys from its OWN seed, so its root recovery phrase always
@@ -62,9 +64,12 @@
         profile,
         displayName: nodeName,
         post: (path, body) => apiFetch(path, { method: 'POST', body }),
+        onCancelHandle: (fn) => (cancelWallet = fn),
       });
+      cancelWallet = null;
       onSignedIn(result);
     } catch (err) {
+      cancelWallet = null;
       walletMount?.replaceChildren?.();
       error =
         err?.message === 'USER_CANCELLED' || err?.code === 'USER_CANCELLED'
@@ -74,15 +79,34 @@
     }
   }
 
+  /**
+   * Close/Esc work on EVERY wallet screen, including mid-transaction. The
+   * in-flight wallet operation is cancelled through its own path first
+   * (app.stop → controller.destroy), so the next open starts clean instead of
+   * inheriting TRANSACTION_IN_PROGRESS or a STALE_CONTROLLER rejection.
+   */
+  function dismiss() {
+    try {
+      cancelWallet?.();
+    } catch {
+      /* the wallet may already have torn itself down */
+    }
+    cancelWallet = null;
+    walletMount?.replaceChildren?.();
+    stage = stage === 'unavailable' ? 'unavailable' : 'choose';
+    error = '';
+    onClose();
+  }
+
   function onKeydown(e) {
-    if (e.key === 'Escape' && !busy) onClose();
+    if (e.key === 'Escape') dismiss();
   }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="overlay" onclick={(e) => e.target === e.currentTarget && !busy && onClose()}>
+<div class="overlay" onclick={(e) => e.target === e.currentTarget && dismiss()}>
   <div
     class="modal"
     role="dialog"
@@ -104,8 +128,7 @@
           type="button"
           class="close"
           style="color:{theme.textMuted};border-color:{theme.hairline};"
-          onclick={onClose}
-          disabled={busy}
+          onclick={dismiss}
           aria-label="Close"
         >✕</button>
       </div>

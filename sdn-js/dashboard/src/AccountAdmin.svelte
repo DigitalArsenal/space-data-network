@@ -1,12 +1,11 @@
 <script>
   /**
-   * PERMISSIONS sub-page (graph task nst-node-edit-permissions-ui
-   * deliverable 3; wire contract nst-node-admin-contract §7, §8, §9.4).
+   * ACCOUNT MANAGEMENT — folded into the ACCOUNTS page (contract §16.3/§16.4).
    *
-   * Below Admin (or signed out) this is a read-only summary: what the trust
-   * scale means and what this node currently asserts about its peers, read
-   * from the PUBLIC status feed — no privileged call is attempted, so a
-   * visitor never sees a wall of 401s.
+   * The PERMISSIONS page is gone; these affordances moved here unchanged and
+   * still call the EXISTING APIs, which are gated by PATH and so need nothing
+   * from the UI beyond an Admin session. Rendered only for an Admin session —
+   * the anonymous tier of the ACCOUNTS page is the public table itself (§16.5).
    *
    * At Admin+ it manages both registries the node actually has:
    *   · OPERATOR KEYS  — the xpub user store (/api/auth/users). Adding an
@@ -237,59 +236,7 @@
 </script>
 
 <div class="page">
-  {#if !admin}
-    <Panel variant="raised" pad="0" style="max-width:880px;">
-      <div class="head" style="border-color:{theme.divider};">
-        <div>
-          <Kicker text="READ-ONLY VIEW" />
-          <div class="ttl" style="color:{theme.textBright};">NODE PERMISSIONS</div>
-        </div>
-        <div class="chips">
-          {#if session}
-            {#if session.fingerprint}
-              <StatusChip label={`KEY ${shortFingerprint(session.fingerprint)}`} color={theme.ice} dot={false} title={session.fingerprint} />
-            {/if}
-            <StatusChip label={`SESSION ${String(level).toUpperCase()}`} color={tierColor(level)} dot={false} />
-          {:else}
-            <StatusChip label="SIGNED OUT" color={theme.textMuted} dot={false} />
-          {/if}
-        </div>
-      </div>
-      <div class="pad">
-        <p class="prose" style="color:{theme.textDim};">
-          Managing operator keys and peer trust requires a session at
-          <span class="mono" style="color:{theme.cyan};">ADMIN</span> or above. What follows is
-          the public picture: the trust scale this node uses, and the tiers it currently
-          asserts for the peers on its status feed.
-        </p>
-
-        <div class="k" style="color:{theme.textMuted};">TRUST SCALE</div>
-        <ul class="legend">
-          {#each TRUST_TIERS as tier (tier)}
-            <li style="border-color:{theme.divider};">
-              <span class="tier" style="color:{tierColor(tier)};">{tier.toUpperCase()}</span>
-              <span class="count" style="color:{theme.textFaint};">
-                {tier === 'ultimate' ? 'reserved for this node itself' : `${tierCounts.get(tier) ?? 0} peer${(tierCounts.get(tier) ?? 0) === 1 ? '' : 's'}`}
-              </span>
-            </li>
-          {/each}
-        </ul>
-
-        <div class="signin-row">
-          {#if session}
-            <GBtn title="Sign in with a different wallet key" onclick={onRequestSignIn}>SWITCH KEY</GBtn>
-            <span class="hint" style="color:{theme.textFaint};">
-              Signed in at {String(level).toUpperCase()}. This key is registered on this node but is
-              below ADMIN, so the registries stay read-only for it.
-            </span>
-          {:else}
-            <GBtn title="Sign in with your wallet key" variant="primary" onclick={onRequestSignIn}>SIGN IN</GBtn>
-            <span class="hint" style="color:{theme.textFaint};">Sign in with a registered operator key.</span>
-          {/if}
-        </div>
-      </div>
-    </Panel>
-  {:else}
+  {#if admin}
     {#if error}
       <div class="err" style="color:{theme.red};border-color:{theme.red};">{error}</div>
     {/if}
