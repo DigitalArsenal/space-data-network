@@ -189,6 +189,11 @@ type Store struct {
 	mu         sync.Mutex
 	path       string
 	passphrase []byte
+	// fallbacks are passphrases derived from OLDER machine-derivation
+	// generations, tried only when the current one fails to open an existing
+	// keystore. On success the keystore is re-sealed under passphrase, so the
+	// fallbacks are used at most once per upgrade. See keys.CandidatePasswords.
+	fallbacks [][]byte
 }
 
 // rootHKDFInfo domain-separates the three-input root derivation. Bumping the
@@ -271,11 +276,53 @@ func appendField(dst, b []byte) []byte {
 // nodePrivKey is the unlocked identity private key's raw bytes; it is zeroized
 // during resolution.
 func OpenStore(storageDir string, nodePrivKey []byte) (*Store, error) {
+	// Keep a copy: ResolveRoot zeroizes what it is given, and the older
+	// generations need the same input.
+	keyCopy := append([]byte(nil), nodePrivKey...)
 	root, err := ResolveRoot(nodePrivKey)
 	if err != nil {
+		zero(keyCopy)
 		return nil, err
 	}
-	return NewStore(storageDir, root)
+	store, err := NewStore(storageDir, root)
+	if err != nil {
+		zero(keyCopy)
+		return nil, err
+	}
+	// An explicit operator passphrase does not depend on machine state, so
+	// there is nothing to migrate from.
+	if os.Getenv("SDN_KEY_PASSWORD") == "" {
+		store.attachLegacyRoots(keyCopy)
+	}
+	zero(keyCopy)
+	return store, nil
+}
+
+// attachLegacyRoots derives the keystore passphrases for OLDER machine
+// derivation generations, so credentials sealed before the derivation upgrade
+// still open (and are then re-sealed under the current generation).
+//
+// Without this, changing keys.DeriveDefaultPassword silently orphans every
+// node's stored credentials.
+func (s *Store) attachLegacyRoots(nodePrivKey []byte) {
+	hostname, err := os.Hostname()
+	if err != nil || strings.TrimSpace(hostname) == "" {
+		return
+	}
+	for _, cand := range keys.CandidatePasswords() {
+		if cand.Scheme == keys.SchemeV3 {
+			continue // already the primary
+		}
+		root, derr := DeriveRootKey(cand.Password, append([]byte(nil), nodePrivKey...), hostname)
+		if derr != nil {
+			continue
+		}
+		pass, perr := derivePassphrase(root)
+		if perr != nil {
+			continue
+		}
+		s.fallbacks = append(s.fallbacks, pass)
+	}
 }
 
 // derivePassphrase domain-separates the root password for credential-keystore use.
@@ -344,7 +391,20 @@ func (s *Store) load() (map[string]Credential, error) {
 		// Fail closed. We never guess at an unrecognized keystore.
 		return nil, errors.New("credential store: unrecognized file format")
 	}
-	plain, err := keys.DecryptSecret(raw[len(credFileMagic):], string(s.passphrase))
+	body := raw[len(credFileMagic):]
+	plain, err := keys.DecryptSecret(body, string(s.passphrase))
+	migrated := false
+	if err != nil {
+		// Try older machine-derivation generations before failing. This is the
+		// upgrade path for a node whose credentials were sealed under the
+		// previous derivation; without it the upgrade loses the credentials.
+		for _, fb := range s.fallbacks {
+			if alt, aerr := keys.DecryptSecret(body, string(fb)); aerr == nil {
+				plain, err, migrated = alt, nil, true
+				break
+			}
+		}
+	}
 	if err != nil {
 		// Deliberately does not echo any file bytes.
 		return nil, fmt.Errorf("credential store: decrypt failed (wrong node key or corrupted file)")
@@ -354,6 +414,14 @@ func (s *Store) load() (map[string]Credential, error) {
 	creds := map[string]Credential{}
 	if err := json.Unmarshal(plain, &creds); err != nil {
 		return nil, fmt.Errorf("credential store: malformed contents")
+	}
+	if migrated {
+		// Re-seal under the current derivation so the fallback is needed only
+		// once. A write failure is not fatal — the credentials were recovered
+		// and the fallback will simply run again next boot.
+		if serr := s.save(creds); serr != nil {
+			return creds, nil
+		}
 	}
 	return creds, nil
 }

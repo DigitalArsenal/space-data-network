@@ -101,26 +101,65 @@ func IsMnemonicEncrypted(data []byte) bool {
 	return false
 }
 
-// machineKeySalt is the fixed Argon2id salt for the hardware-derived password.
-// It is a domain-separation constant, not a secret; the per-file random salt in
-// EncryptMnemonic provides the actual cryptographic salting.
+// machineKeySalt is the fixed Argon2id salt for the v2 hardware-derived
+// password. It is a domain-separation constant, not a secret; the per-file
+// random salt in EncryptMnemonic provides the actual cryptographic salting.
 var machineKeySalt = []byte("sdn-mnemonic-machine-key/v2")
 
-// DeriveDefaultPassword derives a deterministic password from STABLE hardware
-// attributes (machine-id, total RAM, CPU model, CPU count, arch, OS) using
-// Argon2id, so the server can start unattended without a stored password.
-//
-// The hostname is deliberately excluded — see hardwareFingerprint. Renaming the
-// host must not change this key (that would lock the node out of its own
-// encrypted mnemonic); hostname changes are surfaced separately via
-// CheckAndUpdateHostnameCanary.
+// machineKeySaltV3 is the v3 domain-separation constant. A distinct salt keeps
+// v2 and v3 keys unrelated even where their fingerprint inputs overlap.
+var machineKeySaltV3 = []byte("sdn-mnemonic-machine-key/v3")
+
+// DeriveDefaultPassword derives the deterministic at-rest password from machine
+// attributes that survive an OS rebuild AND an instance resize — the machine
+// name plus, when readable, the platform UUID (see machine_fingerprint.go for
+// the measured stability table and the accepted security tradeoff).
 //
 // This is NOT a substitute for a strong explicit password (SDN_KEY_PASSWORD);
-// it merely prevents trivial offline reads of the mnemonic file if the disk is
+// it merely prevents trivial offline reads of key material if the disk is
 // copied off the machine.
 func DeriveDefaultPassword() string {
+	pw, _ := DeriveDefaultPasswordWithSources()
+	return pw
+}
+
+// DeriveDefaultPasswordWithSources is DeriveDefaultPassword plus the list of
+// source keys that fed the derivation, for recording alongside the sealed file
+// so a later decrypt failure names what changed instead of failing blind.
+func DeriveDefaultPasswordWithSources() (password string, sources []string) {
+	fingerprint, sources := machineFingerprintV3()
+	derived := argon2.IDKey([]byte(fingerprint), machineKeySaltV3, 1, 64*1024, 4, 32)
+	return string(derived), sources
+}
+
+// DeriveV2Password reproduces the v2 hardware-derived password (machine-id,
+// MemTotal, CPU model, NumCPU, arch, OS). Retained ONLY so secrets sealed under
+// v2 can be opened and re-sealed under v3; never used for new writes.
+func DeriveV2Password() string {
 	derived := argon2.IDKey([]byte(hardwareFingerprint()), machineKeySalt, 1, 64*1024, 4, 32)
 	return string(derived)
+}
+
+// PasswordCandidate is one derivation generation to try when opening an
+// existing sealed secret.
+type PasswordCandidate struct {
+	Scheme   FingerprintScheme
+	Password string
+}
+
+// CandidatePasswords returns every machine-derived password to try when
+// opening an existing secret, newest scheme first. A caller that succeeds with
+// any scheme other than SchemeV3 SHOULD re-seal the secret under
+// DeriveDefaultPassword so the node converges onto the stable derivation.
+//
+// This is the single place the migration ladder is defined; callers must not
+// hardcode individual generations.
+func CandidatePasswords() []PasswordCandidate {
+	return []PasswordCandidate{
+		{SchemeV3, DeriveDefaultPassword()},
+		{SchemeV2, DeriveV2Password()},
+		{SchemeLegacy, DeriveLegacyPassword()},
+	}
 }
 
 // DeriveLegacyPassword reproduces the pre-v2 hostname-based derivation. It is

@@ -124,25 +124,31 @@ func (n *Node) loadOrCreateMnemonic(mnemonicPath, keyDir string) (string, error)
 		if keys.IsMnemonicEncrypted(data) {
 			mnemonic, err := keys.DecryptMnemonic(data, keyPassword)
 			if err != nil {
-				// Migration path: a mnemonic encrypted under the pre-v2
-				// hostname-based key. Decrypt with the legacy password and
-				// re-encrypt with the hardware-derived key so the node keeps
-				// its identity. Only attempt when no explicit password is set
-				// (explicit password takes precedence and must match).
+				// Migration path: a mnemonic sealed under an OLDER derivation
+				// generation (v2 hardware attributes, or the pre-v2 hostname
+				// key). Try every known generation newest-first, then re-seal
+				// under the current one so the node converges onto the
+				// rebuild/resize-stable derivation and keeps its identity.
+				// Only attempted when no explicit password is set — an
+				// explicit password takes precedence and must match.
 				if n.usingDerivedKeyPassword() {
-					if legacy, lerr := keys.DecryptMnemonic(data, keys.DeriveLegacyPassword()); lerr == nil {
-						log.Warnf("Migrating mnemonic at %s from legacy hostname-derived key to hardware-derived key", mnemonicPath)
-						if reenc, eerr := keys.EncryptMnemonic(strings.TrimSpace(legacy), keyPassword); eerr == nil {
+					if recovered, scheme, rerr := keys.DecryptMnemonicAnyScheme(data); rerr == nil {
+						log.Warnf("Migrating mnemonic at %s from %s-derived key to the current stable derivation", mnemonicPath, scheme)
+						if reenc, eerr := keys.EncryptMnemonic(strings.TrimSpace(recovered), keyPassword); eerr == nil {
 							if werr := os.WriteFile(mnemonicPath, reenc, 0o600); werr != nil {
 								log.Warnf("Mnemonic migration re-encrypt write failed (continuing with decrypted value): %v", werr)
 							} else {
-								log.Infof("Mnemonic re-encrypted with hardware-derived key at %s", mnemonicPath)
+								log.Infof("Mnemonic re-encrypted with the current stable derivation at %s", mnemonicPath)
+								n.recordKeyDerivation(keyDir)
 							}
 						}
-						return strings.TrimSpace(legacy), nil
+						return strings.TrimSpace(recovered), nil
 					}
 				}
-				return "", fmt.Errorf("failed to decrypt mnemonic from %s: %w", mnemonicPath, err)
+				// Fail closed, but say WHY and how to recover. Never fall
+				// through to minting a fresh identity.
+				return "", fmt.Errorf("failed to decrypt mnemonic from %s: %w\n%s",
+					mnemonicPath, err, keys.DerivationFailureHint(keyDir))
 			}
 			log.Infof("Loaded encrypted mnemonic from %s", mnemonicPath)
 			return strings.TrimSpace(mnemonic), nil
@@ -161,6 +167,7 @@ func (n *Node) loadOrCreateMnemonic(mnemonicPath, keyDir string) (string, error)
 			return "", fmt.Errorf("failed to write encrypted mnemonic: %w", err)
 		}
 		log.Infof("Mnemonic migrated to encrypted storage at %s", mnemonicPath)
+		n.recordKeyDerivation(keyDir)
 		return mnemonic, nil
 	}
 
@@ -180,6 +187,7 @@ func (n *Node) loadOrCreateMnemonic(mnemonicPath, keyDir string) (string, error)
 		return "", fmt.Errorf("failed to save encrypted mnemonic: %w", err)
 	}
 	log.Infof("Generated and saved encrypted mnemonic to %s", mnemonicPath)
+	n.recordKeyDerivation(keyDir)
 	return strings.TrimSpace(newMnemonic), nil
 }
 
