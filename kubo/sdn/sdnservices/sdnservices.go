@@ -33,6 +33,10 @@ package sdnservices
 import (
 	"errors"
 	"fmt"
+	"log"
+	"os"
+	"strings"
+	"time"
 
 	blockstore "github.com/ipfs/boxo/blockstore"
 	ds "github.com/ipfs/go-datastore"
@@ -45,6 +49,51 @@ import (
 	"github.com/ipfs/kubo/sdn/sdncron"
 	"github.com/ipfs/kubo/sdn/sdnstore"
 )
+
+// SchedInvokeTimeoutEnv is the operator override for the per-call wall-clock
+// budget of a SCHEDULED invocation (cron/wakeup/flow-handler), e.g. "45m".
+//
+// WHY THIS EXISTS (prod incident, 2026-07-28; full forensics in the graph
+// task record). A scheduled flow that legitimately computes for hours handed
+// its results to a store handler in one call — and that call hit modulert's
+// 10m default budget:
+//
+//	flowrt: handler <store-module>:append_records for node N failed:
+//	plugin_invoke_stream(append_records) ... exceeded 10m0s
+//
+// so every run threw away its own completed results. The knob to raise that
+// budget was documented in modulert and wired in the sdn-server sidecar's
+// config — but scheduled flows also run in THIS binary, where
+// NodeContext.ScheduledInvokeTimeout was never set. The override existed
+// everywhere except the one process that needed it.
+//
+// This also contradicted a standing owner rule: prod does its own work and
+// "takes as long as it takes" — duration is not a gate. A host connector must
+// not impose a wall-clock ceiling that silently discards a completed run.
+//
+// Env rather than config because that is how this daemon is already tuned
+// (the unit sets role/module-path variables the same way), so an operator can
+// change it without a config-schema migration. Unset or unparseable leaves the
+// modulert default (10m) in force — this widens a limit, it never removes one,
+// and the fuel budget scales with it so a longer window keeps the same
+// instructions-per-second ceiling instead of trading a timeout for fuel death.
+const SchedInvokeTimeoutEnv = "SDN_SCHEDULED_INVOKE_TIMEOUT"
+
+// scheduledInvokeTimeoutFromEnv reads the override. Zero means "use modulert's
+// default", so a bad value is never a new way for the node to misbehave.
+func scheduledInvokeTimeoutFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(SchedInvokeTimeoutEnv))
+	if raw == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("sdnservices: ignoring %s=%q (%v); using the default scheduled-invoke budget",
+			SchedInvokeTimeoutEnv, raw, err)
+		return 0
+	}
+	return d
+}
 
 // Deps are the raw inputs BuildServices wires together. The plugin fills these
 // from a *core.IpfsNode; the test fills them from in-memory/localhost fixtures.
@@ -162,10 +211,11 @@ func BuildServices(deps Deps) (*Services, error) {
 	}
 
 	nodeCtx := &modulert.NodeContext{
-		PeerID:           deps.PeerID,
-		PublicKeyHex:     deps.PublicKeyHex,
-		Config:           deps.Config,
-		CapabilityPolicy: deps.Policy,
+		PeerID:                 deps.PeerID,
+		PublicKeyHex:           deps.PublicKeyHex,
+		Config:                 deps.Config,
+		CapabilityPolicy:       deps.Policy,
+		ScheduledInvokeTimeout: scheduledInvokeTimeoutFromEnv(),
 	}
 
 	// Optional pubsub fan-out. When enabled, wire the store's OnStore hook to

@@ -50,8 +50,15 @@ build_linux(){ # <arch: amd64|arm64>
   command -v docker >/dev/null || die "docker required for linux builds"
   log "linux/$arch via docker buildx (WasmEdge $WASMEDGE_VER, Go $GO_VER)"
   rm -rf "$DIST/linux-$arch"
+  # --target artifact is REQUIRED, not optional. Dockerfile.linux ends with a
+  # `test-env` stage that was appended AFTER the `FROM scratch AS artifact`
+  # export stage, so without an explicit target buildx builds the LAST stage and
+  # exports its whole ~900MB golang filesystem into dist/ (bin, boot, dev, …)
+  # instead of the two files a release is. The release then has no ipfs binary
+  # where the packager expects one. Name the stage.
   docker buildx build --platform "linux/$arch" \
     -f "$KUBO_ROOT/sdn/build/release/Dockerfile.linux" \
+    --target artifact \
     --build-arg WASMEDGE_VER="$WASMEDGE_VER" \
     --build-arg WASMEDGE_BUILD_ARCH="$wasmedge_build_arch" \
     --build-arg GO_VER="$GO_VER" \
