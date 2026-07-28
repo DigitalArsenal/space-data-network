@@ -1,42 +1,48 @@
-# sdn-retriever.service — the CelesTrak retriever/producer daemon on host-01.
+# sdn-retriever.service — the CelesTrak retriever/producer on host-02 (sfo2).
 #
-# OWNED BY: Hephaestus (unit, ports, volume, enrolment). Hermes-2 owns the flow
-# runtime and the daemon's config/identity. Settled 2026-07-28.
+# OWNED BY: Hephaestus (unit, ports, enrolment). Hermes owns the flow runtime and
+# the daemon's config/identity. Migrated from host-01 on 2026-07-28 by owner
+# ruling: "the celestrak.eth box is for the celestrak shit, the sdn.spaceaware.io
+# is for serving the encrypted modules." The host-01-flavored unit this file used
+# to hold (paths under /mnt/volume_nyc3_01, ports 4003/5003, Nice/CPUWeight
+# tuned to share the box with the sidecar) never actually ran there — the role
+# was migrated to host-02 before cutover. This is now the one canonical unit,
+# adopted from Hermes-3's live-staged host-02 copy 2026-07-28, with the systemd
+# Conflicts= belt restored (present on the retired host-01 draft, absent from
+# the staged copy) and updated to name host-02's actual retired units.
 #
-# WHY THIS IS A SEPARATE DAEMON, AND NOT sdn-kubo RE-IDENTIFIED
-# ------------------------------------------------------------
-# A mid-flight directive briefly proposed running the ingest under the existing
-# kubo peer 12D3KooWKh3diob…. That was corrected: that peer is the supplemental-
-# OMM OD PRODUCER, its OD bundle is deliberately paused, and its identity must
-# not move. The ingest therefore gets its OWN HD-derived identity here.
+# ONE NODE PER BOX (owner law, 2026-07-28). The legacy kubo.service and
+# sdn-kubo.service on this host were escrowed, stopped and disabled so this can
+# be the only SDN daemon here. The daemon enforces the same rule itself and will
+# refuse to start if another one appears; Conflicts= below is the systemd-level
+# belt, and deployment/lib/sdn-preflight-single-instance.sh is the deploy-time
+# check every install path runs before touching this host.
 #
 # ############################################################################
 # # DO NOT ADD Environment=IPFS_PATH TO THIS UNIT. EVER.                     #
 # ############################################################################
 # sdn-server calls EnsureManagedIPFSRepoIdentity unconditionally whenever
-# IPFS_PATH is set (internal/node/node.go:1339-1343) and rewrites
-# Identity.PrivKey IN PLACE (internal/node/ipfs_repo_identity.go:96-117). On an
-# already-`sdnenc1:` field there is no PeerID guard, and the kubo binary cannot
-# read `sdnenc1:` back. Pointing this unit at /opt/sdn-kubo/repo would silently
-# destroy the paused OD producer's peer identity. The key types are incompatible
-# anyway: sdn-server is secp256k1 HD-derived, kubo is Ed25519.
+# IPFS_PATH is set and rewrites Identity.PrivKey IN PLACE. Pointing this unit at
+# a kubo repo would destroy that repo's peer identity, and the key types are
+# incompatible anyway (secp256k1 HD-derived here, Ed25519 there).
 #
-# PORTS (allocated by Hephaestus, verified free on host-01 2026-07-28)
-#   4003  libp2p            (4004/4005 reserved for this daemon)
-#   5003  admin, LOOPBACK ONLY — this daemon serves no public surface.
-# Already taken on this host, do not reuse: 443 + 18080 (sidecar), 4001 + 5020
-# (sdn-kubo), 4002 + 5002 + 8080 + 8091 (ipfs.service), 5001, 8081.
+# HARDWARE: 1 vCPU / 2 GB. Everything below is sized for that, not copied from
+# the 2-vCPU host. Owner law: prod does its own work and takes as long as it
+# takes — duration is NOT a gate, so nothing here trades correctness for speed.
 #
-# STORE lives on /mnt/volume_nyc3_01 (248G) and NOT on / (96G at 85%, 15G free).
-# BindsTo/RequiresMountsFor below make the unit fail closed if that volume is
-# not mounted, rather than silently filling the root filesystem.
+# PORTS
+#   4001  libp2p, PUBLIC. Inherited from the kubo this box used to run, so it is
+#         a port already proven reachable from the outside.
+#   5003  admin, LOOPBACK ONLY — this daemon serves no public HTTP surface.
+#
+# DIAL DIRECTION: host-01's sidecar dials US. Its own libp2p listener is
+# loopback-only, so it cannot be dialled back; see the config's bootstrap note.
 
 [Unit]
-Description=SDN CelesTrak retriever/producer (host-01)
+Description=SDN CelesTrak retriever/producer (host-02, celestrak.eth box)
 Documentation=file:///Users/tj/software/spacedatanetwork-stack/deployment/topology.json
-After=network-online.target mnt-volume_nyc3_01.mount
+After=network-online.target
 Wants=network-online.target
-RequiresMountsFor=/mnt/volume_nyc3_01
 
 # ONE BOX, ONE NODE — owner law 2026-07-28, verbatim: "never ever have more than
 # one instance running on a box from here on out with our current deployment."
@@ -46,36 +52,39 @@ RequiresMountsFor=/mnt/volume_nyc3_01
 # even when a human runs `systemctl start` by hand, or on a boot race where two
 # units are both enabled. The scripts refuse to install a second instance; this
 # guarantees that even if two unit files coexist on a box, only one ever runs.
-Conflicts=sdn-kubo.service space-data-network-module-delivery.service spacedatanetwork.service
+Conflicts=kubo.service sdn-kubo.service spacedatanetwork.service
 
 [Service]
 Type=simple
-# Identity + at-rest key password are fed by file, never by environment.
+# Identity + at-rest key password are fed by file, never by environment. The
+# file is what makes this identity portable between machines.
 Environment=SDN_KEY_PASSWORD_FILE=/etc/spacedatanetwork/retriever/key_password
+Environment=WASMEDGE_DIR=/opt/sdn-retriever/.wasmedge
+Environment=LD_LIBRARY_PATH=/opt/sdn-retriever/.wasmedge/lib
+# A persistent, writable AOT cache. Without this the daemon resolves a
+# PrivateTmp path that is wiped on every restart, and every flow runs
+# INTERPRETED forever — which on this box is the difference between a SATCAT
+# parse finishing and a SATCAT parse never finishing.
+Environment=XDG_CACHE_HOME=/var/lib/sdn-retriever/cache
 # Deliberately ABSENT: IPFS_PATH. See the banner above.
 ExecStart=/opt/sdn-retriever/spacedatanetwork daemon --config /etc/spacedatanetwork/retriever/config.yaml
 Restart=on-failure
-RestartSec=10
+RestartSec=15
 LimitNOFILE=65536
 
 # The ingest holds a whole fetched catalog, its base64 hostcall envelope, every
 # normalized record stream and the raw archive copy in ONE linear memory. A
-# SATCAT run measured ~670MB RSS; leave real headroom or a run dies AFTER a
-# successful fetch, throwing away its own work.
-MemoryHigh=2G
-MemoryMax=3G
-
-# This box also serves the public site from the sidecar. Keep the retriever from
-# starving it: it may use the machine, but it yields.
-Nice=10
-CPUWeight=50
-IOWeight=50
+# SATCAT run measured ~670MB RSS on host-01. This box has 2GB total, so the
+# ceiling is set below the box and above the measurement, and swap exists to
+# absorb the peak rather than the OOM killer taking the run.
+MemoryHigh=1200M
+MemoryMax=1600M
 
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/mnt/volume_nyc3_01 /etc/spacedatanetwork/retriever
+ReadWritePaths=/var/lib/sdn-retriever /etc/spacedatanetwork/retriever
 
 [Install]
 WantedBy=multi-user.target

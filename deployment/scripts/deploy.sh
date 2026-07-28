@@ -392,6 +392,38 @@ assert_prod_config_excludes_tracked_dev_wallet() {
     fi
 }
 
+# preflight_single_instance — OWNER LAW 2026-07-28, verbatim: "never ever have
+# more than one instance running on a box from here on out with our current
+# deployment." Mirrors deployment/remote/sdn-remote-deploy.sh's check byte-for-
+# byte (same shared script, same override, same reasoning) so this older path
+# cannot ship a weaker guarantee. Runs BEFORE any mkdir/rsync/build/systemctl
+# step, so a refusal leaves the target untouched. --expect NAME means an
+# existing instance under that name is an in-place upgrade, not a violation.
+preflight_single_instance() {
+    local ip=$1
+    local expect=$2
+    local pf="${PROJECT_ROOT}/deployment/lib/sdn-preflight-single-instance.sh"
+    [[ -x "$pf" ]] || { log_error "missing preflight ${pf} — refusing to deploy without the one-box-one-node check"; exit 1; }
+
+    if "$pf" --target "${SSH_USER}@${ip}" --expect "$expect"; then
+        return 0
+    fi
+    local rc=$?
+    if [[ $rc -eq 1 ]]; then
+        log_error "preflight could not reach ${ip}"
+        exit 1
+    fi
+
+    if [[ "${SDN_ALLOW_MULTI_INSTANCE:-0}" == "1" ]]; then
+        log_warn "SDN_ALLOW_MULTI_INSTANCE=1 — OVERRIDING the one-box-one-node law on ${ip}"
+        log_warn "DEV-ONLY. Never on a cluster host: two nodes on one box contend for"
+        log_warn "ports, storage and peer identity — exactly what the law prevents."
+        return 0
+    fi
+    log_error "refusing to deploy a second SDN instance to ${ip} (owner law, 2026-07-28)"
+    exit 1
+}
+
 # Deploy Docker container to server
 deploy_docker() {
     local ip=$1
@@ -399,6 +431,7 @@ deploy_docker() {
     local name=$3
 
     log_info "Deploying $type to $ip ($name)..."
+    preflight_single_instance "$ip" "sdn-${type}"
 
     if [[ "$type" == "full" || "$type" == "edge" ]]; then
         prepare_full_node_assets
@@ -490,6 +523,7 @@ deploy_binary() {
         full_service="$(full_node_service_name "$ip")"
         config_dir="$(full_node_config_dir "$ip" "$full_service")"
         spaceaware_migration_hardening="$(spaceaware_migration_hardening_command)"
+        preflight_single_instance "$ip" "$full_service"
 
         ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/bin /opt/spacedatanetwork/admin-ui /opt/spacedatanetwork/webui /opt/spacedatanetwork/sdn-server /opt/spacedatanetwork/scripts ${config_dir} /var/lib/spacedatanetwork/frontend /var/lib/spacedatanetwork/data && id -u sdn >/dev/null 2>&1 || useradd --system --home /var/lib/spacedatanetwork --shell /usr/sbin/nologin sdn"
         deploy_spaceaware_migration_script "$ip"
@@ -525,6 +559,7 @@ deploy_binary() {
     esac
 
     log_info "Deploying $binary to $ip ($name)..."
+    preflight_single_instance "$ip" "sdn-${type}"
 
     # Build binary for Linux
     log_info "Building $binary for linux/amd64..."
