@@ -473,6 +473,7 @@ deploy() {
   fi
   ok "config rendered (no secrets are in any of these files)"
 
+  preflight_single_instance
   ensure_key_password
   feed_mnemonic
 
@@ -554,6 +555,34 @@ refresh_vm_orbit_det() {
   else
     warn "vm-orbit-det-01 refresh FAILED — the host deploy above still succeeded"
   fi
+}
+
+# preflight_single_instance — OWNER LAW 2026-07-28, verbatim: "never ever have
+# more than one instance running on a box from here on out with our current
+# deployment."
+#
+# Runs BEFORE any key material is staged or any container is created, so a
+# refused deploy leaves the target exactly as it was. `--expect sdn-node` means
+# an existing sdn-node container is an UPGRADE of this same deployment, not a
+# violation; anything else on the box is.
+preflight_single_instance() {
+  local pf="${PROJECT_ROOT}/deployment/lib/sdn-preflight-single-instance.sh"
+  [[ -x "$pf" ]] || die "missing preflight ${pf} — refusing to deploy without the one-box-one-node check"
+
+  if "$pf" --target "$HOST" --expect sdn-node; then
+    return 0
+  fi
+  local rc=$?
+  [[ $rc -eq 1 ]] && die "preflight could not reach ${HOST}"
+
+  if [[ "${SDN_ALLOW_MULTI_INSTANCE:-0}" == "1" ]]; then
+    warn "SDN_ALLOW_MULTI_INSTANCE=1 — OVERRIDING the one-box-one-node law on ${HOST}"
+    warn "This is DEV-ONLY. Never do this on a cluster host: two nodes on one box"
+    warn "contend for ports, storage and peer identity, which is exactly what the"
+    warn "law exists to prevent."
+    return 0
+  fi
+  die "refusing to deploy a second SDN instance to ${HOST} (owner law, 2026-07-28)"
 }
 
 # refresh_local_test_node — owner directive 2026-07-28: "the local machine

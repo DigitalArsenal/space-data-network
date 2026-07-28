@@ -38,6 +38,16 @@ After=network-online.target mnt-volume_nyc3_01.mount
 Wants=network-online.target
 RequiresMountsFor=/mnt/volume_nyc3_01
 
+# ONE BOX, ONE NODE — owner law 2026-07-28, verbatim: "never ever have more than
+# one instance running on a box from here on out with our current deployment."
+#
+# Conflicts= is the systemd-level belt for the deploy scripts' braces: starting
+# this unit STOPS the others rather than joining them, and systemd enforces it
+# even when a human runs `systemctl start` by hand, or on a boot race where two
+# units are both enabled. The scripts refuse to install a second instance; this
+# guarantees that even if two unit files coexist on a box, only one ever runs.
+Conflicts=sdn-kubo.service space-data-network-module-delivery.service spacedatanetwork.service
+
 [Service]
 Type=simple
 # Identity + at-rest key password are fed by file, never by environment.
