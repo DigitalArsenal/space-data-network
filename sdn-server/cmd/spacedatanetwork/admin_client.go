@@ -63,6 +63,10 @@ type adminClient struct {
 	http    *http.Client
 	cfg     *config.Config
 	res     config.Resolution
+	// certPath/certServerName record the daemon certificate used as the trust
+	// anchor, so a failure can name what was tried instead of only what broke.
+	certPath       string
+	certServerName string
 }
 
 // sessionTokenOverride reads the operator-supplied token: the --session-token
@@ -92,8 +96,26 @@ func newAdminClient(cmd *cobra.Command) (*adminClient, error) {
 	}
 
 	if token := sessionTokenOverride(cmd); token != "" {
+		// REMOTE TARGET. An operator-supplied token means the CLI may be
+		// pointed at another node, so verification stays on system roots —
+		// the daemon-cert anchor below is for our own node only.
 		c.token = token
 		return c, nil
+	}
+
+	// LOCAL NODE. Anchor verification to the certificate this daemon's own
+	// config declares; system roots cannot vouch for an origin/self-signed
+	// cert, which is what "signed by unknown authority" was reporting.
+	if tlsCfg, certPath, err := daemonTLSConfig(cfg, res); err != nil {
+		return nil, err
+	} else if tlsCfg != nil {
+		if name := serverNameForCert(certPath, ExpectedCertHostFor(
+			strings.TrimPrefix(strings.TrimPrefix(c.baseURL, "https://"), "http://"))); name != "" {
+			tlsCfg.ServerName = name
+		}
+		c.certPath = certPath
+		c.certServerName = tlsCfg.ServerName
+		c.http.Transport = &http.Transport{TLSClientConfig: tlsCfg}
 	}
 
 	ctx := cmd.Context()
@@ -256,7 +278,8 @@ func (c *adminClient) do(ctx context.Context, method, path string, body any, out
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("%s %s: daemon unavailable at %s (config: %s)%s: %w",
-			method, path, c.baseURL, c.res.Describe(), certHostHint(c.baseURL, err), err)
+			method, path, c.baseURL, c.res.Describe(),
+			certHostHint(c.baseURL, err)+certAnchorHint(c.certPath, c.certServerName, err), err)
 	}
 	defer resp.Body.Close()
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
