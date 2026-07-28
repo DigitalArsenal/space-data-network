@@ -41,7 +41,7 @@
         {/if}
       </div>
       <div class="chips">
-        {#if node.isSelf}<StatusChip label="THIS NODE" color={theme.cyan} dot={false} />{/if}
+        {#if node.isSelf}<StatusChip label="SELF" color={theme.cyan} dot={false} />{/if}
         <StatusChip label={tier.toUpperCase()} color={tierColor} dot={false} />
         <StatusChip label={node.online ? 'ONLINE' : 'OFFLINE'} color={node.online ? theme.green : theme.textMuted} />
         <button class="close" style="color:{theme.textMuted};border-color:{theme.hairline};" onclick={onClose} aria-label="Close">✕</button>

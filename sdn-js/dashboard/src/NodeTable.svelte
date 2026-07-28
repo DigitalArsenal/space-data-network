@@ -70,10 +70,11 @@
             {#if (n.account?.kind ?? 'peer') !== 'peer'}
               <span class="kind" style="color:{theme.cyan};border-color:{theme.cyan};">{kindLabel(n.account.kind)}</span>
             {/if}
-            <!-- The node you are looking at is a row like any other (owner,
-                 2026-07-28) — the badge is what says which one it is, and it
-                 reads exactly as the nav item does: THIS NODE. -->
-            {#if n.isSelf}<span class="tag" style="color:{theme.cyan};border-color:{theme.cyan};">THIS NODE</span>{/if}
+            <!-- Defensive only: the ACCOUNTS listing never contains this node
+                 (accounts.js withoutSelf, owner rule). The table is reused by
+                 no other surface today, and the tag stays so a future caller
+                 passing a self row cannot render it unlabelled. -->
+            {#if n.isSelf}<span class="tag" style="color:{theme.cyan};border-color:{theme.cyan};">SELF</span>{/if}
             <div class="pid" style="color:{theme.textFaint};">{shortId(n.peerId)}</div>
           </td>
           <td class="wide" style="color:{theme.textBody};">{n.org?.trim() || '—'}</td>

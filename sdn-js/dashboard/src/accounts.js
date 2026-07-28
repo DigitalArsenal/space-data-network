@@ -24,9 +24,10 @@ import { parseVCard } from './vcard.js';
 
 /**
  * The name the FEED published for a row, read from its vCard's FN — used when
- * the feed's DN field is empty, which is the normal case for this node itself
- * (the snapshot ships SelfVCard and leaves SelfDN blank, so "SpaceAware.io"
- * lives in FN and nowhere else).
+ * the feed's DN field is empty, which is the normal case for a peer whose EPM
+ * carries a name the registry never got, and for this node itself (the
+ * snapshot ships SelfVCard and leaves SelfDN blank, so "SpaceAware.io" lives
+ * in FN and nowhere else — that is what THIS NODE's page title reads).
  *
  * Two values are refused, both identifiers rather than names: the placeholder
  * card the node synthesizes for a peer it knows nothing about, whose FN is
@@ -160,27 +161,26 @@ export function editTargets(row) {
 }
 
 /**
- * SELF IS A ROW (owner, 2026-07-28, verbatim): "we should have the
- * celestrak.eth box, the sdn.spaceaware.io box, and the local machine getting
- * updated every deployment." This SUPERSEDES the earlier same-day rule that
- * stripped SELF from the listing — a board that omits the node you are looking
- * at cannot show that node updating. The self row is an ordinary account row
- * built from the feed's own self entry (name, org and vCard all come from that
- * entry; nothing is invented) and is marked THIS NODE in the NAME cell.
+ * STANDING RULE (owner, 2026-07-28, restated after an agent re-admitted the
+ * row: "as I said before but you apparently ignored, the self node should not
+ * be in this table"): the ACCOUNTS listing NEVER contains this node itself.
+ * SELF has its own page — THIS NODE — and a duplicate row there is noise, not
+ * information. Applied at the source so no caller can reintroduce it, and so
+ * counts/pagination derive from the same filtered set.
  *
- * `withoutSelf` is deliberately NOT reintroduced: the filter is what made the
- * row disappear, and re-adding it as an unused export invites the next caller
- * to re-apply the repealed rule.
+ * The peer id argument closes the one hole the `isSelf` flag leaves: an Admin
+ * `/api/accounts` entry for this node carries no live-presence flag, so with
+ * the feed's self row already dropped it matched nothing and was APPENDED as a
+ * fresh row. Filtering the id as well means the rule holds signed in too.
  */
+export function withoutSelf(rows, selfPeerId = '') {
+  const self = (selfPeerId ?? '').trim();
+  return (rows ?? []).filter((r) => !r?.isSelf && !(self && (r?.peerId ?? '').trim() === self));
+}
 
-/**
- * Sort: THIS NODE first, then most-trusted, then by display name. Self leads
- * because the board's first question is always "what is this node doing?" —
- * the same reason filters.js sortNodes pins it ahead of every column sort.
- */
+/** Sort: most-trusted first, then by display name. */
 export function sortAccounts(rows) {
   return [...rows].sort((a, b) => {
-    if (Boolean(a.isSelf) !== Boolean(b.isSelf)) return a.isSelf ? -1 : 1;
     const t = trustRank(b.trustLevel) - trustRank(a.trustLevel);
     if (t) return t;
     return accountDisplayName(a).localeCompare(accountDisplayName(b));

@@ -33,7 +33,7 @@
   import { shortId } from './format.js';
   import { TRUST_TIERS, normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { canEditNodeProfile, canManagePermissions } from './permissions.js';
-  import { accountFromNode, mergeAccounts, sortAccounts, vcardDisplayName } from './accounts.js';
+  import { accountFromNode, mergeAccounts, sortAccounts, vcardDisplayName, withoutSelf } from './accounts.js';
   import { apiFetch } from './api.js';
   import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
   import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
@@ -247,14 +247,16 @@
     view ? Math.max(0, Math.round((now - view.generatedAt) / 1000)) : null
   );
 
-  // Anonymous tier first: every row the public feed knows about — INCLUDING
-  // this node's own entry, which the feed carries and which the owner's
-  // 2026-07-28 ruling puts back on the board (accounts.js). The Admin overlay
-  // merges operator facets in on top when there is a session; sortAccounts
-  // pins THIS NODE first.
-  const accountRows = $derived(
-    sortAccounts(mergeAccounts(nodes.map(accountFromNode), accountEntries))
-  );
+  // Anonymous tier first: every row the public feed knows about. The Admin
+  // overlay merges operator facets in on top when there is a session.
+  // The self row is removed BEFORE the merge, so it can never come back via
+  // an /api/accounts overlay either (standing rule, accounts.js).
+  const accountRows = $derived.by(() => {
+    const selfId = feedSelfNode?.peerId ?? '';
+    return sortAccounts(
+      withoutSelf(mergeAccounts(withoutSelf(nodes.map(accountFromNode), selfId), accountEntries), selfId)
+    );
+  });
   const accountNodes = $derived(accountRows.map((r) => r.node ?? {
     peerId: r.peerId, dn: r.name, org: r.organization, vcard: '', lat: 0, lon: 0,
     geoLabel: '', online: false, isSelf: false, agent: '', uptimeS: 0, lastSeen: r.lastConnected,
