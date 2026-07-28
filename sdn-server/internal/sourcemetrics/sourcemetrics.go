@@ -257,15 +257,42 @@ func (s *Store) initTables() error {
 		CREATE TABLE IF NOT EXISTS app_attempts (
 			app_id          TEXT PRIMARY KEY,
 			last_attempt_at INTEGER NOT NULL DEFAULT 0,
-			attempt_count   INTEGER NOT NULL DEFAULT 0
+			attempt_count   INTEGER NOT NULL DEFAULT 0,
+			-- consecutive_failures counts attempts since the last SUCCESSFUL
+			-- ingest. It drives an escalating backoff: a publisher that has
+			-- started refusing us is telling us to ask less often, and retrying
+			-- a refusing endpoint on the same cadence forever is how a node
+			-- earns a longer ban rather than a shorter one.
+			consecutive_failures INTEGER NOT NULL DEFAULT 0
 		)`); err != nil {
 		return fmt.Errorf("sourcemetrics: create app_attempts: %w", err)
 	}
 	return nil
 }
 
-// RecordAttempt stamps that an app was allowed to start a retrieval, whether or
-// not it goes on to succeed.
+// MaxDebounceHours caps the escalating backoff. Past a day of refusals the
+// problem is not cadence, and a node should still check daily rather than give
+// up on a source forever.
+const MaxDebounceHours = 24.0
+
+// EffectiveDebounceHours returns the window a source is owed after
+// consecutiveFailures failed attempts: the base window doubled per failure,
+// capped at MaxDebounceHours.
+func EffectiveDebounceHours(consecutiveFailures int) float64 {
+	hours := DefaultDebounceHours
+	for i := 0; i < consecutiveFailures && hours < MaxDebounceHours; i++ {
+		hours *= 2
+	}
+	if hours > MaxDebounceHours {
+		hours = MaxDebounceHours
+	}
+	return hours
+}
+
+// RecordAttempt stamps that an app was allowed to start a retrieval, and counts
+// it as a failure until an ingest proves otherwise. Assuming failure is the
+// safe direction: if the run never lands anything, the window has already
+// widened without anyone having to notice.
 func (s *Store) RecordAttempt(appID string) {
 	if s == nil || s.db == nil {
 		return
@@ -277,14 +304,52 @@ func (s *Store) RecordAttempt(appID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.db.Exec(`
-		INSERT INTO app_attempts (app_id, last_attempt_at, attempt_count)
-		VALUES (?, ?, 1)
+		INSERT INTO app_attempts (app_id, last_attempt_at, attempt_count, consecutive_failures)
+		VALUES (?, ?, 1, 1)
 		ON CONFLICT(app_id) DO UPDATE SET
-			last_attempt_at = excluded.last_attempt_at,
-			attempt_count   = app_attempts.attempt_count + 1`,
+			last_attempt_at      = excluded.last_attempt_at,
+			attempt_count        = app_attempts.attempt_count + 1,
+			consecutive_failures = app_attempts.consecutive_failures + 1`,
 		appID, unixOrZero(s.now())); err != nil {
 		log.Debugf("record attempt %s: %v", appID, err)
 	}
+}
+
+// clearAppFailuresLocked resets an app's failure streak. Called when a batch
+// actually lands, which is the only evidence of success the host has.
+func (s *Store) clearAppFailuresLocked(appID string) {
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return
+	}
+	if _, err := s.db.Exec(
+		`UPDATE app_attempts SET consecutive_failures = 0 WHERE app_id = ?`, appID); err != nil {
+		log.Debugf("clear failures %s: %v", appID, err)
+	}
+}
+
+// AttemptState reports when an app last started a retrieval and how many
+// attempts have failed since its last success.
+func (s *Store) AttemptState(appID string) (*time.Time, int) {
+	if s == nil || s.db == nil {
+		return nil, 0
+	}
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return nil, 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var (
+		at       int64
+		failures int
+	)
+	if err := s.db.QueryRow(
+		`SELECT last_attempt_at, consecutive_failures FROM app_attempts WHERE app_id = ?`,
+		appID).Scan(&at, &failures); err != nil {
+		return nil, 0
+	}
+	return timeOrNil(at), failures
 }
 
 // LastAttempt returns when an app last started a retrieval, or nil if never.
@@ -520,7 +585,13 @@ func (s *Store) RecordIngest(in Ingest) {
 		schemas, records, inserted,
 		unixOrZero(s.now())); err != nil {
 		log.Debugf("record ingest %s: %v", id, err)
+		return
 	}
+
+	// A batch landed: whatever the app was struggling with, it is working now.
+	// Reset the escalating backoff so a recovered source returns to its normal
+	// cadence immediately rather than serving out a punishment window.
+	s.clearAppFailuresLocked(in.AppID)
 }
 
 // RecordPNM books the latest publication notification for a source. The

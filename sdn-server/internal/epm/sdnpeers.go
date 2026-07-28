@@ -47,6 +47,25 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 			continue
 		}
 
+		// MEMBERSHIP (owner rule 2026-07-28): this board shows Space Data
+		// Network nodes, and nothing else. Speaking an SDN protocol is not the
+		// same as BEING an SDN node — an upstream kubo build can talk to us
+		// fluently while identifying itself as "kubo/0.40.0-dev/", and such a
+		// peer was appearing on the accounts board as a row nobody could
+		// explain.
+		//
+		// So membership is decided by IDENTITY (the libp2p identify
+		// agent-version), not by protocol participation. This is enforced here,
+		// server-side, because the feed is the contract: a client-side filter
+		// would leave every other consumer of this projection showing the row.
+		//
+		// A peer that has gone offline keeps whatever agent-version the
+		// registry recorded, so a known SDN node that is merely unreachable
+		// still belongs on the board.
+		if !identifiesAsSDNAgent(node, registryByID[peerID], flags) {
+			continue
+		}
+
 		decodedPeerID, err := peer.Decode(peerID)
 		if err != nil {
 			continue
@@ -163,6 +182,29 @@ func isConnectedSDNPeer(node PeerNode, protocols []string, registryPeer *peers.T
 		}
 	}
 	return false
+}
+
+// identifiesAsSDNAgent reports whether a peer PRESENTS as a Space Data Network
+// node. Evidence, in order: the live identify agent-version, the agent-version
+// the registry recorded when the peer was last seen (so an offline SDN node
+// keeps its seat), and finally the SDN advertisement flags it published.
+//
+// Deliberately NOT evidence: speaking an SDN protocol. A foreign
+// implementation can do that and still not be one of our nodes; if we want its
+// box on the board, it should say so in its own agent string.
+func identifiesAsSDNAgent(node PeerNode, registryPeer *peers.TrustedPeer, flags []string) bool {
+	if isSDNAgentVersion(node.AgentVersion) {
+		return true
+	}
+	if registryPeer != nil && isSDNAgentVersion(registryPeer.Metadata["agent_version"]) {
+		return true
+	}
+	// An SDN ADVERTISEMENT is itself a self-declaration of membership: it is
+	// our own discovery mechanism, published deliberately, and a foreign
+	// implementation does not emit one incidentally the way it can speak a
+	// protocol. Any advertisement therefore admits the peer regardless of the
+	// flag's spelling ("sdn/1.0.3" and friends).
+	return len(flags) > 0
 }
 
 func isSDNAgentVersion(agentVersion string) bool {
