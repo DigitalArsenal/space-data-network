@@ -219,9 +219,33 @@ let walletPromise = null;
  * Rejects (and forgets the attempt, so a later retry re-tries) when the
  * assets are unstaged.
  */
+/**
+ * The wallet core must be ONE module instance.
+ *
+ * hd-wallet-ui imports the bare specifier `hd-wallet-wasm`, which the page's
+ * import map resolves. If we import a DIFFERENT URL for the same file — and a
+ * cache stamp like `?v=2.0.29` on the map is enough — the browser instantiates
+ * the module twice, and the instance we hand to `createWalletOriginApp` is not
+ * the one its controller validates against. It rejects ours with
+ * `WalletOriginError: WASM_UNAVAILABLE`, which is what broke sign-in.
+ *
+ * So resolve the entry from the import map itself: whatever the map says, we
+ * import byte-identically, cache stamp and all.
+ */
+function resolveWalletEntry() {
+  try {
+    const el = globalThis.document?.querySelector('script[type="importmap"]');
+    const mapped = JSON.parse(el?.textContent ?? '{}')?.imports?.['hd-wallet-wasm'];
+    if (typeof mapped === 'string' && mapped.startsWith('/')) return mapped;
+  } catch {
+    /* no map, or malformed — fall back to the canonical path */
+  }
+  return WALLET_ENTRY;
+}
+
 export function loadWallet() {
   if (!walletPromise) {
-    const entry = WALLET_ENTRY;
+    const entry = resolveWalletEntry();
     walletPromise = (async () => {
       const ns = await import(/* @vite-ignore */ entry);
       if (typeof ns.default !== 'function') throw new Error('wallet entry point has no init()');

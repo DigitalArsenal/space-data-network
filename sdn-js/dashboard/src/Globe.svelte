@@ -295,7 +295,12 @@
     position: relative;
     width: 100%;
     height: 100%;
-    min-height: 260px;
+    /* A hard min-height made the globe TALLER than a short panel and it spilled
+       out the bottom. The canvas already scales to the container in both
+       dimensions (radius = min(w,h)/2 - 18), so the wrap just has to be
+       allowed to shrink — and clip, so nothing can escape at any height. */
+    min-height: 0;
+    overflow: hidden;
   }
   canvas {
     position: absolute;

@@ -434,15 +434,20 @@ export class EPMResolver {
       if (matching) return matching;
     }
 
-    // Return first encryption key (typically X25519 is preferred default)
-    // Sort by algorithm preference: x25519 > secp256k1 > p256
+    // Owner rule 2026-07-28 (contract §18): records advertise exactly ONE
+    // encryption key — secp256k1 at the non-hardened path, the only slot an
+    // xpub holder can independently re-derive and verify. Older records may
+    // still carry an X25519 entry, so preference order is secp256k1 first.
+    // A caller that asked for an algorithm the record does not carry gets
+    // this fallback — ALWAYS check `.algorithm` on the returned key before
+    // doing key exchange; the curves are not interchangeable.
     const sorted = encryptionKeys.sort((a, b) => {
       const order: Record<KeyExchangeAlgorithm, number> = {
-        'x25519': 0,
-        'secp256k1': 1,
+        'secp256k1': 0,
+        'x25519': 1,
         'p256': 2,
       };
-      return (order[a.algorithm || 'secp256k1'] || 1) - (order[b.algorithm || 'secp256k1'] || 1);
+      return (order[a.algorithm || 'secp256k1'] || 0) - (order[b.algorithm || 'secp256k1'] || 0);
     });
 
     return sorted[0];

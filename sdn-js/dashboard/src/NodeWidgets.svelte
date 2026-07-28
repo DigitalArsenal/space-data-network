@@ -175,7 +175,10 @@
     [
       ['PEER ID', node.peerId || '—', theme.ice],
       ['ROLE', node.role ? node.role.toUpperCase() : '', theme.textBody],
-      ['GEO', node.geoLabel || (coords ? '' : ''), theme.textBody],
+      ['GEO', node.geoLabel || '', theme.textBody],
+      // Owner: lat/lon STACKED, not an inline run-on that wraps mid-number.
+      ['LAT', Number.isFinite(node.lat) && (node.lat || node.lon) ? node.lat.toFixed(4) : '', theme.textDim],
+      ['LON', Number.isFinite(node.lon) && (node.lat || node.lon) ? node.lon.toFixed(4) : '', theme.textDim],
       ['AGENT', node.agent || '—', theme.textBody],
       ['SDS · SUITE', node.standardsVersion || node.suiteVersion ? `${node.standardsVersion || '—'} · ${node.suiteVersion || '—'}` : '', theme.textDim],
       ['LATENCY', node.latencyMs ? `${node.latencyMs.toFixed(0)} ms` : '', theme.textBody],
@@ -324,6 +327,7 @@
   </div>
 
   <!-- STATUS & IDENTITY ------------------------------------------------- -->
+  <div class="status">
   <Panel variant="raised" pad="0">
     <div class="w">
       <div class="whead" style="border-color:{theme.divider};">
@@ -340,7 +344,7 @@
             <div class="row">
               <dt style="color:{theme.textMuted};">{label}</dt>
               <dd class="mono wrap" class:machine={label === 'PEER ID'} style="color:{color};">
-                {value}{#if label === 'GEO' && coords}<span style="color:{theme.textFaint};"> · {coords}</span>{/if}
+                {value}
               </dd>
             </div>
           {/each}
@@ -354,6 +358,7 @@
       </div>
     </div>
   </Panel>
+  </div>
 
   <!-- VERIFICATION KEYS — xpub + the EDITABLE derivation paths ---------- -->
   <div>
@@ -524,6 +529,10 @@
   .grid :global(> * > section) { height: 100%; }
   /* The contact card prefers two columns' worth, but still grows/shrinks. */
   .contact { flex-basis: 620px; }
+  /* Owner: give STATUS & IDENTITY room to breathe — it holds the longest
+     single token on the page (the peer id) plus the stacked geo rows. */
+  .status { flex-basis: 460px; }
+  .status :global(> section) { height: 100%; }
   .contact :global(> section) { height: 100%; }
   .contact .contact-fields { columns: 2; column-gap: 24px; }
   .contact .contact-fields .row { break-inside: avoid; }

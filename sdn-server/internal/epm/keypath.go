@@ -233,6 +233,27 @@ func NextKeyPath(path string, slot KeyPathSlot) (string, error) {
 // Empty means UNSET, never "delete". PUT /api/node/epm is a whole-profile
 // replace (§6), so a client that omits these fields must not thereby wipe the
 // node's key layout.
+// AdvertisedEncryptionKey returns the ONE encryption key this node publishes:
+// the xpub-derivable secp256k1 key at the profile's effective encryption path.
+//
+// OWNER RULE (2026-07-27): one encrypt path, everywhere it is shown. The card,
+// the QR, the API slot list and the CLI must all name the SAME key — the whole
+// point of the rule is that an operator never sees two and wonders which is
+// real. So this is the single accessor: it composes EffectiveKeyPaths with the
+// same derivation the EPM builder uses, and callers display what it returns
+// rather than reaching into the identity for the hardened X25519 key (which is
+// an internal decryption detail and, being hardened, is not xpub-verifiable).
+//
+// A nil profile yields the default account path, exactly as EffectiveKeyPaths.
+func AdvertisedEncryptionKey(xpub string, account uint32, profile *Profile) (publicKey string, path string, ok bool) {
+	signingPath, encryptionPath := EffectiveKeyPaths(profile, account)
+	derived, derivedOK := derivePublicIdentityKeysAtPaths(xpub, signingPath, encryptionPath)
+	if !derivedOK || derived == nil {
+		return "", encryptionPath, false
+	}
+	return derived.EncryptionPublicKey, derived.EncryptionKeyPath, true
+}
+
 func EffectiveKeyPaths(profile *Profile, account uint32) (signing string, encryption string) {
 	signing = xpubSigningKeyPath(account)
 	encryption = xpubEncryptionKeyPath(account)
