@@ -169,6 +169,26 @@ func FindRunningDaemons() []DaemonProcess {
 	return found
 }
 
+// SourceRunningDaemonPrefix begins every running-daemon provenance string.
+const SourceRunningDaemonPrefix = "running daemon"
+
+// IsOwnDaemonConfig reports whether this resolution came from THE LOCAL NODE'S
+// OWN configuration — read off the running daemon's command line, or found in a
+// system location that only a deployed daemon writes.
+//
+// It is the precondition for trusting the certificate that config declares. A
+// `-c` path or SDN_CONFIG can point anywhere, including at a config describing
+// someone else's node, so those tiers do NOT qualify: pinning trust to a cert
+// named by an arbitrary file would let a config choose the CLI's trust anchor.
+// Here the config IS the daemon we are talking to, so its cert is definitionally
+// the right anchor.
+func (r Resolution) IsOwnDaemonConfig() bool {
+	if r.Source == SourceSystem {
+		return true
+	}
+	return strings.HasPrefix(string(r.Source), SourceRunningDaemonPrefix)
+}
+
 // resolveFromRunningDaemon applies the running-daemon tier.
 //
 // Exactly one daemon with an explicit config: that config wins, whatever the
