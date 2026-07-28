@@ -56,6 +56,43 @@ type ModulesConfig struct {
 	// budget scales proportionally with this value. YAML:
 	// modules.scheduled_invoke_timeout, e.g. "10m", "20m".
 	ScheduledInvokeTimeout time.Duration `yaml:"scheduled_invoke_timeout"`
+
+	// EgressMinInterval is the minimum spacing between OUTBOUND module HTTP
+	// requests to a destination host (hostname → Go duration string, e.g.
+	// "celestrak.org": "5s"). This is host egress policy, not application
+	// configuration: the host owns the network hook, so the host decides how
+	// hard that hook may hit a third party, and a wasm module can neither see
+	// nor bypass it.
+	//
+	// Compiled-in floors always apply on top, so this setting can only make a
+	// node POLITER, never ruder — in particular the binding CelesTrak fetch
+	// policy (2.5 s serial) is enforced whether or not it is configured here.
+	// YAML: modules.egress_min_interval.
+	EgressMinInterval map[string]string `yaml:"egress_min_interval,omitempty"`
+}
+
+// EffectiveEgressMinIntervals parses the configured per-host egress spacing,
+// skipping entries that do not parse (they are logged by the caller). Compiled
+// -in floors are applied by the pacer itself, not here.
+func (c ModulesConfig) EffectiveEgressMinIntervals() (map[string]time.Duration, []string) {
+	if len(c.EgressMinInterval) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]time.Duration, len(c.EgressMinInterval))
+	var invalid []string
+	for host, raw := range c.EgressMinInterval {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host == "" {
+			continue
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil || d <= 0 {
+			invalid = append(invalid, host)
+			continue
+		}
+		out[host] = d
+	}
+	return out, invalid
 }
 
 // AssetPinConfig controls the opt-in GitHub Actions asset pin capability.
@@ -1215,9 +1252,38 @@ func Default() *Config {
 					MemoryPages: 8192, // 512MB per instance: bulk streams + JSON encode live in flow memory
 				},
 			},
+			// CelesTrak retrieval, as flows. Every decision — which URL, how to
+			// parse it, what provenance to stamp, which reconcile mode — lives
+			// in the wasm nodes; the host contributes the timer, the HTTP
+			// egress hook and guarded persistence. There is deliberately NO Go
+			// CelesTrak fetcher: the ingest runner carries credentialed sources
+			// (Space-Track, UDL) only, and cmd's
+			// TestIngestCommandHasNoDirectCelesTrakSourceFlags keeps it that way.
+			//
+			// Declaring a service here is not the same as running it:
+			// LoadFlowServices SKIPS any flow whose bundle is not installed in
+			// flows.storage_path, so a node pulls from CelesTrak only after an
+			// operator deliberately installs the bundle. Intervals are the
+			// flow.json defaults (GP 3 h, SATCAT 24 h, space weather 3 h) — the
+			// 3 h GP cadence IS the CelesTrak fetch-policy debounce window.
+			Services: []FlowService{
+				{Flow: CelesTrakGPIngestFlowID},
+				{Flow: CelesTrakSatcatIngestFlowID},
+				{Flow: CelesTrakSpaceWeatherIngestFlowID},
+			},
 		},
 	}
 }
+
+// Program IDs of the CelesTrak retrieval flow bundles
+// (space-data-network-modules flows/celestrak-ingest). GP yields OMM + MPE,
+// SATCAT yields CAT (both the legacy fixed-width and the CSV snapshot), and
+// SPW yields space weather.
+const (
+	CelesTrakGPIngestFlowID           = "com.digitalarsenal.flows.celestrak-gp-ingest"
+	CelesTrakSatcatIngestFlowID       = "com.digitalarsenal.flows.celestrak-satcat-ingest"
+	CelesTrakSpaceWeatherIngestFlowID = "com.digitalarsenal.flows.celestrak-spw-ingest"
+)
 
 // DataRetrievalFlowID is the program ID of the flow bundle serving
 // /api/v1/data/* (space-data-network-modules flows/data-retrieval).

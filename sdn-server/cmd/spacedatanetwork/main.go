@@ -60,6 +60,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/sourcemetrics"
 	nodestatus "github.com/spacedatanetwork/sdn-server/internal/status"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storefront"
@@ -1706,6 +1707,33 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				})
 				log.Infof("Core API available at %s://%s/api/v1/{id,version,stats,peers,pubsub}", adminScheme, adminAddr)
 
+				// $APPS feed (anonymous read): what apps this node runs and
+				// what each has retrieved. Apps are read from the FLOW SERVICE
+				// registry — timer-served flow bundles registered with the
+				// plugin manager — not the legacy module list, which is empty
+				// on a flow-only node. Retrieval metrics come from the node's
+				// operational ledger; last-PNM is refreshed from the record
+				// store's dataset-publication index and written back through.
+				{
+					metricsStore := n.SourceMetrics()
+					var (
+						metricsSource api.AppsMetricsSource
+						pnmSink       func(string, string, sourcemetrics.PNM)
+					)
+					if metricsStore != nil {
+						metricsSource = metricsStore.Sources
+						pnmSink = metricsStore.RecordPNM
+					}
+					appsAPI := api.NewAppsHandler(
+						n.PluginManager().RuntimeSnapshot,
+						metricsSource,
+						n.Store(),
+						pnmSink,
+					)
+					appsAPI.RegisterRoutes(adminMux)
+					log.Infof("Apps feed available at %s://%s/api/apps (anonymous read)", adminScheme, adminAddr)
+				}
+
 				// WebSocket bridge (gap B10.3): /ws lives outside the /api/
 				// and /orbpro-key-broker/ prefixes the top-level auth
 				// wall's isAPIOrPlugin check inspects, and an anonymous
@@ -2760,6 +2788,11 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/node/epm/qr",
 		"/api/relay/status",
 		"/api/auth/status",
+		// $APPS feed: which apps this node runs and what each has retrieved
+		// (last_retrieved_at, debounce window, last pull size, last PNM). Every
+		// field is an operational fact about PUBLIC data retrieval — the same
+		// class of disclosure as /api/v1/stats, which is already anonymous.
+		"/api/apps",
 		"/api/storefront/listings",
 		"/api/v1/catalog",
 		"/api/v1/data/health",
