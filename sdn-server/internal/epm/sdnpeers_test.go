@@ -208,7 +208,9 @@ func TestCountSDNPeersSplitsConnectedFromKnown(t *testing.T) {
 		LocalPeerID: localID.String(),
 		Nodes: []PeerNode{
 			{PeerID: localID.String(), IsOnline: true, AgentVersion: "spacedatanetwork/1.0.3"},
-			{PeerID: sdnConnectedID.String(), IsOnline: true},
+			// Identity, not protocol, is what admits a peer (owner rule
+			// 2026-07-28). This peer both speaks SDN and says it is one.
+			{PeerID: sdnConnectedID.String(), IsOnline: true, AgentVersion: "spacedatanetwork/1.0.4"},
 			{PeerID: ipfsOnlyID.String(), IsOnline: true, AgentVersion: "kubo/0.28.0"},
 			{PeerID: sdnOfflineID.String(), IsOnline: false},
 		},
@@ -235,7 +237,7 @@ func TestCountSDNPeersSplitsConnectedFromKnown(t *testing.T) {
 	)
 
 	if counts.Connected != 1 {
-		t.Fatalf("Connected = %d, want 1 (only the SDN-protocol peer; the IPFS-only peer must not count)", counts.Connected)
+		t.Fatalf("Connected = %d, want 1 (only the peer identifying as SDN; the IPFS-only peer must not count)", counts.Connected)
 	}
 	if counts.Known != 2 {
 		t.Fatalf("Known = %d, want 2 (connected SDN peer + advertisement-discovered offline SDN peer)", counts.Known)
@@ -268,4 +270,60 @@ func mustPeerID(t *testing.T) peer.ID {
 		t.Fatalf("peer.IDFromPublicKey failed: %v", err)
 	}
 	return pid
+}
+
+// The board shows Space Data Network nodes and nothing else (owner rule,
+// 2026-07-28). Speaking an SDN protocol fluently is not the same as BEING one
+// of our nodes: an upstream kubo build can talk to us perfectly while
+// identifying as "kubo/0.40.0-dev/", and such a peer was showing up on the
+// accounts board as a row nobody could account for.
+func TestObservedSDNPeersAdmitsBySDNIdentityNotByProtocol(t *testing.T) {
+	t.Parallel()
+
+	localID := mustPeerID(t)
+	kuboID := mustPeerID(t)         // talks SDN, identifies as kubo
+	sdnID := mustPeerID(t)          // talks SDN, identifies as SDN
+	staleOfflineID := mustPeerID(t) // known SDN node, currently unreachable
+
+	sdnProtocol := []string{"/spacedatanetwork/sds-exchange/1.0.0"}
+	snapshot := &PeerGraphSnapshot{
+		LocalPeerID: localID.String(),
+		Nodes: []PeerNode{
+			{PeerID: localID.String(), IsOnline: true, AgentVersion: "spacedatanetwork/1.0.4"},
+			{PeerID: kuboID.String(), IsOnline: true, AgentVersion: "kubo/0.40.0-dev/"},
+			{PeerID: sdnID.String(), IsOnline: true, AgentVersion: "spacedatanetwork/1.0.4"},
+			{PeerID: staleOfflineID.String(), IsOnline: false},
+		},
+		Edges: []PeerEdge{
+			{SourcePeerID: localID.String(), TargetPeerID: kuboID.String(), Protocols: sdnProtocol},
+			{SourcePeerID: localID.String(), TargetPeerID: sdnID.String(), Protocols: sdnProtocol},
+		},
+	}
+
+	// The stale peer is offline but the registry remembers it as an SDN node.
+	staleRegistry := &peers.TrustedPeer{
+		ID:       staleOfflineID,
+		Metadata: map[string]string{"agent_version": "spacedatanetwork/1.0.0"},
+	}
+
+	// Discovered the same way a real offline SDN node is: by its advertisement.
+	staleFlags := map[string][]string{staleOfflineID.String(): {"sdn/1.0.0"}}
+	observed := BuildObservedSDNPeers(snapshot, []*peers.TrustedPeer{staleRegistry}, staleFlags, nil)
+	got := map[string]bool{}
+	for _, entry := range observed {
+		got[entry.ID.String()] = true
+	}
+
+	if got[kuboID.String()] {
+		t.Fatalf("a peer identifying as kubo was admitted to the SDN board: %v", got)
+	}
+	if !got[sdnID.String()] {
+		t.Fatalf("a peer identifying as spacedatanetwork was excluded: %v", got)
+	}
+	if !got[staleOfflineID.String()] {
+		t.Fatal("a known-but-offline SDN node lost its seat; unreachable is not the same as foreign")
+	}
+	if got[localID.String()] {
+		t.Fatal("the local node must never appear as a row on its own board")
+	}
 }
