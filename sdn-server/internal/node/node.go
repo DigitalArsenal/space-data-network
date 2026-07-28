@@ -1856,6 +1856,11 @@ func (n *Node) setupSchemaPubSubTopics(ctx context.Context) {
 	log.Infof("Schema PubSub setup complete: schema_topics=%d dataset_feed_topics=%d", joined, feedJoined)
 }
 
+// flowServiceFirstFireDelay lets the node finish coming up before a due
+// retrieval starts pulling. Long enough that a boot is not also a fetch, short
+// enough that "install the bundle, get data" stays true.
+const flowServiceFirstFireDelay = 20 * time.Second
+
 // startFlowServices loads the config-declared timer-served flows (loop C.8a
 // ingest-as-flow) and registers them with the plugin manager so the cron
 // scheduler drives their timer triggers. The host contributes timers +
@@ -1888,8 +1893,135 @@ func (n *Node) startFlowServices() error {
 		if err := n.plugins.Register(sf); err != nil {
 			return fmt.Errorf("register flow service %q: %w", sf.ID(), err)
 		}
+		// Registration alone does NOT schedule anything: the plugin manager
+		// wires cron tickers inside StartAll, which has already run by the time
+		// flow services are loaded from config. Without this, an ingest flow
+		// sits at "registered"/"never-run" forever — its timer is never
+		// attached to a ticker, so it does not fire late, it never fires at
+		// all. Observed live on host-01: three CelesTrak flows registered,
+		// run_count 0, while modules present at StartAll showed "running".
+		started, err := n.plugins.StartLateRegistered(sf)
+		if err != nil {
+			log.Warnf("Flow service %q failed to start: %v", sf.ID(), err)
+			continue
+		}
+		// Publisher fetch policy, ENFORCED. Every pull — cron tick or admin
+		// run-now — passes this gate, so the debounce window the node
+		// advertises on /api/apps is the window it actually honours.
+		serviceID := sf.ID()
+		sf.SetRetrievalGate(func() (bool, string) {
+			allowed, reason := n.flowServiceRetrievalDue(serviceID)
+			if allowed && n.sourceMetrics != nil {
+				// Stamp the ATTEMPT, not just the success. A flow whose pulls
+				// keep failing writes no source row, so without this it stays
+				// permanently "due" and retries on every restart.
+				n.sourceMetrics.RecordAttempt(serviceID)
+			}
+			return allowed, reason
+		})
+
+		if !started {
+			// Manager not started yet; StartAll will pick it up normally.
+			continue
+		}
+		log.Infof("Flow service %q started and scheduled (%d timers)", sf.ID(), len(sf.Triggers()))
+		n.firstFireFlowServiceIfDue(sf)
 	}
 	return nil
+}
+
+// firstFireFlowServiceIfDue runs a newly started ingest flow's timers NOW when
+// the operational ledger says the node owes its sources a pull.
+//
+// A cron ticker fires one interval AFTER it starts, so a node that boots with a
+// 3 h GP timer serves nothing for three hours, and a node restarted every hour
+// would serve nothing ever. Firing unconditionally on boot is the opposite
+// failure: a crash-looping node would hammer the publisher on every restart.
+//
+// So the gate is the debounce window this node already publishes and already
+// persists: fire only when every source the flow feeds is past its
+// debounce_hours, or has never been retrieved at all. That makes debounce_hours
+// load-bearing rather than decorative, and it is honest — a node that pulled
+// five minutes before a restart will NOT pull again.
+func (n *Node) firstFireFlowServiceIfDue(sf *flowrt.ServiceFlow) {
+	if sf == nil {
+		return
+	}
+	if !n.config.Flows.FirstFireWhenDue {
+		return
+	}
+	due, reason := n.flowServiceRetrievalDue(sf.ID())
+	if !due {
+		log.Infof("Flow service %q first fire skipped: %s", sf.ID(), reason)
+		return
+	}
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		// A short settle delay keeps boot cheap on a small host and keeps a
+		// restart storm from turning into a fetch storm.
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-time.After(flowServiceFirstFireDelay):
+		}
+		for _, trigger := range sf.Triggers() {
+			if n.ctx.Err() != nil {
+				return
+			}
+			log.Infof("Flow service %q: first-fire trigger %q (%s)", sf.ID(), trigger.TriggerID, reason)
+			if _, err := sf.InvokeCron(n.ctx, trigger.TriggerID, nil); err != nil {
+				log.Warnf("Flow service %q first-fire trigger %q failed: %v", sf.ID(), trigger.TriggerID, err)
+			}
+		}
+	}()
+}
+
+// flowServiceRetrievalDue reports whether a flow's sources are past their
+// debounce window. A flow with no ledger rows has never retrieved anything and
+// is due by definition.
+func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
+	if n.sourceMetrics == nil {
+		// No ledger, no evidence of a recent pull — allow rather than
+		// silently stall retrieval on a node whose metrics failed to open.
+		return true, "retrieval ledger unavailable"
+	}
+	sources, err := n.sourceMetrics.Sources()
+	if err != nil {
+		return true, "retrieval ledger unreadable; treating as never retrieved"
+	}
+	// An attempt inside the debounce window bars another one regardless of how
+	// it went. This is what a publisher is actually owed.
+	if last := n.sourceMetrics.LastAttempt(appID); last != nil {
+		window := time.Duration(sourcemetrics.DefaultDebounceHours * float64(time.Hour))
+		if age := time.Since(*last); age < window {
+			return false, fmt.Sprintf("last attempt %s ago is inside the %s debounce window",
+				age.Round(time.Second), window)
+		}
+	}
+
+	seen := 0
+	for _, src := range sources {
+		if src.AppID != appID {
+			continue
+		}
+		seen++
+		if src.LastRetrievedAt == nil {
+			return true, "a source has never been retrieved"
+		}
+		window := time.Duration(src.DebounceHours * float64(time.Hour))
+		if window <= 0 {
+			window = time.Duration(sourcemetrics.DefaultDebounceHours * float64(time.Hour))
+		}
+		if age := time.Since(*src.LastRetrievedAt); age >= window {
+			return true, fmt.Sprintf("source %s last retrieved %s ago (debounce %s)",
+				src.SourceID, age.Round(time.Minute), window)
+		}
+	}
+	if seen == 0 {
+		return true, "no source has ever been retrieved by this flow"
+	}
+	return false, "every source is inside its debounce window"
 }
 
 func (n *Node) runDatasetPublicationPNMCatchup() {

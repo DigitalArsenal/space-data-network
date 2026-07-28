@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sourcemetrics"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
 
@@ -212,5 +214,70 @@ func TestAppsFeedEmptyNode(t *testing.T) {
 	}
 	if _, ok := feed["generated_at"].(string); !ok {
 		t.Fatalf("generated_at missing: %v", feed)
+	}
+}
+
+// slowPublicationStore stands in for the record store while a large ingest
+// holds it: every lookup takes far longer than the feed's budget.
+type slowPublicationStore struct {
+	delay time.Duration
+	calls int32
+}
+
+func (s *slowPublicationStore) ListDatasetShardPublications(
+	storage.DatasetShardPublicationQuery) ([]storage.DatasetShardPublication, error) {
+	atomic.AddInt32(&s.calls, 1)
+	time.Sleep(s.delay)
+	return nil, nil
+}
+
+// The $APPS feed must answer even when the record store does not.
+//
+// Measured on host-01 during a full CelesTrak SATCAT ingest: /api/v1/id
+// answered in 10 ms, /api/v1/stats in 2.4 s, and this feed — which queried the
+// store once per source with no bound — did not answer at all. "Is the
+// retriever working?" is asked PRECISELY while it is working, so the status
+// surface may never be the thing that blocks.
+func TestAppsFeedAnswersWhileTheStoreIsBusy(t *testing.T) {
+	ledger, err := sourcemetrics.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("sourcemetrics.Open: %v", err)
+	}
+	defer ledger.Close()
+
+	for _, name := range []string{"celestrak-gp", "celestrak-satcat", "celestrak-satcat-csv"} {
+		ledger.RecordIngest(sourcemetrics.Ingest{
+			AppID: "app", ProviderID: "p", SourceName: name,
+			SourceURL: "https://celestrak.org/" + name, Schema: "OMM.fbs",
+			BatchID: "b-" + name, PullBytes: 4_750_985, Records: 13000, Inserted: 13000,
+		})
+		// A PNM already persisted in the ledger must still be served when the
+		// authoritative refresh is abandoned.
+		ledger.RecordPNM("p", name, sourcemetrics.PNM{CID: "bafy-" + name, Schema: "OMM.fbs"})
+	}
+
+	h := NewAppsHandler(nil, ledger.Sources, nil, ledger.RecordPNM)
+	h.store = &slowPublicationStore{delay: 5 * time.Second}
+
+	start := time.Now()
+	feed := appsFeed(t, h)
+	elapsed := time.Since(start)
+
+	if elapsed > 3*time.Second {
+		t.Fatalf("feed took %s with a blocked store; it must abandon the refresh at its budget", elapsed)
+	}
+	srcs, _ := feed["sources"].([]interface{})
+	if len(srcs) != 3 {
+		t.Fatalf("sources = %d, want 3 served from the ledger", len(srcs))
+	}
+	for _, raw := range srcs {
+		src := raw.(map[string]interface{})
+		if src["last_pull_size_bytes"] != float64(4_750_985) {
+			t.Fatalf("ledger metrics lost under a slow store: %v", src["last_pull_size_bytes"])
+		}
+		pnm, _ := src["last_pnm"].(map[string]interface{})
+		if pnm == nil || pnm["cid"] == "" {
+			t.Fatalf("persisted last_pnm not served when the refresh was abandoned: %v", src["last_pnm"])
+		}
 	}
 }
