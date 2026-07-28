@@ -140,6 +140,14 @@ type Source struct {
 	LastRecords  int      `json:"last_records,omitempty"`
 	LastInserted int      `json:"last_inserted,omitempty"`
 
+	// Invalidated is set when boot reconciliation found this row claiming
+	// records the record store does not hold. The row is kept (source_url,
+	// app_id and the fetch counter are still true) but its SUCCESS claim is
+	// withdrawn, so the source reads as never-successfully-ingested.
+	Invalidated       bool       `json:"invalidated,omitempty"`
+	InvalidatedAt     *time.Time `json:"invalidated_at,omitempty"`
+	InvalidatedReason string     `json:"invalidated_reason,omitempty"`
+
 	FetchCount  int64 `json:"fetch_count"`
 	IngestCount int64 `json:"ingest_count"`
 
@@ -276,17 +284,42 @@ func (s *Store) initTables() error {
 	if err := s.ensureAppAttemptsColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureSourceMetricsColumns(); err != nil {
+		return err
+	}
 	return nil
 }
 
-// ensureAppAttemptsColumns adds columns the current build expects but an older
-// ledger does not have. Additive only: it never drops or rewrites a column, so
-// a rollback to the previous binary still reads the table fine.
-func (s *Store) ensureAppAttemptsColumns() error {
-	existing := map[string]bool{}
-	rows, err := s.db.Query(`PRAGMA table_info(app_attempts)`)
+// ensureSourceMetricsColumns adds columns the current build expects but an
+// older ledger does not have — same additive-only contract as
+// ensureAppAttemptsColumns, and for the same reason: CREATE TABLE IF NOT EXISTS
+// adds nothing to a table that already exists, so a column introduced later
+// never reaches a deployed node.
+func (s *Store) ensureSourceMetricsColumns() error {
+	existing, err := s.columnSet("source_metrics")
 	if err != nil {
-		return fmt.Errorf("sourcemetrics: inspect app_attempts: %w", err)
+		return err
+	}
+	for _, col := range []struct{ name, ddl string }{
+		{"invalidated_at", `ALTER TABLE source_metrics ADD COLUMN invalidated_at INTEGER NOT NULL DEFAULT 0`},
+		{"invalidated_reason", `ALTER TABLE source_metrics ADD COLUMN invalidated_reason TEXT NOT NULL DEFAULT ''`},
+	} {
+		if existing[col.name] {
+			continue
+		}
+		if _, err := s.db.Exec(col.ddl); err != nil {
+			return fmt.Errorf("sourcemetrics: add source_metrics.%s: %w", col.name, err)
+		}
+	}
+	return nil
+}
+
+// columnSet returns the column names of a table.
+func (s *Store) columnSet(table string) (map[string]bool, error) {
+	existing := map[string]bool{}
+	rows, err := s.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return nil, fmt.Errorf("sourcemetrics: inspect %s: %w", table, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -298,12 +331,23 @@ func (s *Store) ensureAppAttemptsColumns() error {
 			pk         int
 		)
 		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultVal, &pk); err != nil {
-			return fmt.Errorf("sourcemetrics: scan app_attempts columns: %w", err)
+			return nil, fmt.Errorf("sourcemetrics: scan %s columns: %w", table, err)
 		}
 		existing[name] = true
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("sourcemetrics: iterate app_attempts columns: %w", err)
+		return nil, fmt.Errorf("sourcemetrics: iterate %s columns: %w", table, err)
+	}
+	return existing, nil
+}
+
+// ensureAppAttemptsColumns adds columns the current build expects but an older
+// ledger does not have. Additive only: it never drops or rewrites a column, so
+// a rollback to the previous binary still reads the table fine.
+func (s *Store) ensureAppAttemptsColumns() error {
+	existing, err := s.columnSet("app_attempts")
+	if err != nil {
+		return err
 	}
 
 	if !existing["consecutive_failures"] {
@@ -638,6 +682,148 @@ func (s *Store) RecordIngest(in Ingest) {
 	// Reset the escalating backoff so a recovered source returns to its normal
 	// cadence immediately rather than serving out a punishment window.
 	s.clearAppFailuresLocked(in.AppID)
+	// Records reached the store for this source, so any withdrawn claim is
+	// answered. Lift the invalidation rather than leaving a recovered source
+	// permanently flagged on the $APPS feed.
+	s.clearInvalidationLocked(id)
+}
+
+// Invalidation is one ledger row whose success claim the record store could not
+// corroborate. It is returned so the caller can log it by name and decide
+// whether a flow's first fire has become due again.
+type Invalidation struct {
+	SourceID        string
+	AppID           string
+	ClaimedRecords  int
+	ClaimedInserted int
+	ClaimedSchemas  []string
+	// LastRetrievedAt is the timestamp the row USED to carry, kept for the log
+	// line so an operator can see which pull is being withdrawn.
+	LastRetrievedAt *time.Time
+}
+
+// ReconcileAgainstStore withdraws every ledger success claim the record store
+// cannot corroborate, and returns what it withdrew.
+//
+// THE DEFECT CLASS. This ledger and the record store are deliberately separate
+// databases (see the package doc), which means they can be moved, restored, or
+// lost INDEPENDENTLY. When a ledger arrives somewhere its records did not —
+// exactly what a node migration that copies source-metrics.db but not the store
+// produces — every row in it is a lie that the debounce gate then enforces: the
+// node believes it holds 68k SATCAT rows, refuses to re-fetch for 24 h, and
+// serves nothing. The ledger gates retrieval, so a ledger that outlives its
+// records is not a reporting glitch, it is a retrieval outage.
+//
+// THE RULE. A row claiming records for a source the store holds NO payload for
+// is INVALID. Its success fields are cleared — last_retrieved_at, the batch
+// identity, the schema/record/inserted totals, the ingest counter — so the
+// debounce gate reads the source as never-successfully-ingested and lets a
+// fresh, paced pull happen. Everything that is still TRUE is kept: the source
+// URL, the owning app, the fetch counter, the publication projection.
+//
+// WHAT IS DELIBERATELY NOT TOUCHED. app_attempts. Attempt stamps are what stop
+// a restart loop from becoming a fetch storm against a publisher, and they are
+// true regardless of whether the records survived — this node DID ask. A
+// reconciliation that also cleared them would turn every migration into a
+// stampede. So an invalidated source becomes due only once its ATTEMPT window
+// has also passed, which is the pacing the publisher is actually owed.
+//
+// held maps "<provider_id>/<source_name>" to the number of records the store
+// holds for it (storage.FlatSQLStore.SourceRecordCounts). The caller must only
+// pass evidence from a HYDRATED store: an empty map from a store that has not
+// finished replaying its catalog would invalidate a healthy ledger.
+func (s *Store) ReconcileAgainstStore(held map[string]int64) ([]Invalidation, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.Query(`
+		SELECT source_id, app_id, last_retrieved_at, last_schemas, last_records, last_inserted, ingest_count
+		FROM source_metrics
+		WHERE (last_records > 0 OR last_inserted > 0 OR ingest_count > 0)
+		  AND invalidated_at = 0
+		ORDER BY source_id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("sourcemetrics: list claims to reconcile: %w", err)
+	}
+	var suspect []Invalidation
+	for rows.Next() {
+		var (
+			inv         Invalidation
+			retrieved   int64
+			schemas     string
+			ingestCount int64
+		)
+		if err := rows.Scan(&inv.SourceID, &inv.AppID, &retrieved, &schemas,
+			&inv.ClaimedRecords, &inv.ClaimedInserted, &ingestCount); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("sourcemetrics: scan claim to reconcile: %w", err)
+		}
+		if held[inv.SourceID] > 0 {
+			continue
+		}
+		inv.ClaimedSchemas = splitSchemas(schemas)
+		inv.LastRetrievedAt = timeOrNil(retrieved)
+		suspect = append(suspect, inv)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("sourcemetrics: iterate claims to reconcile: %w", err)
+	}
+	rows.Close()
+	if len(suspect) == 0 {
+		return nil, nil
+	}
+
+	now := unixOrZero(s.now())
+	invalidated := make([]Invalidation, 0, len(suspect))
+	for _, inv := range suspect {
+		reason := fmt.Sprintf("ledger claimed %d record(s) (%d inserted) the record store does not hold",
+			inv.ClaimedRecords, inv.ClaimedInserted)
+		if _, err := s.db.Exec(`
+			UPDATE source_metrics SET
+				last_retrieved_at   = 0,
+				last_batch_id       = '',
+				last_batch_repeated = 0,
+				last_fetch_seq      = 0,
+				last_schemas        = '',
+				last_records        = 0,
+				last_inserted       = 0,
+				ingest_count        = 0,
+				invalidated_at      = ?,
+				invalidated_reason  = ?,
+				updated_at          = ?
+			WHERE source_id = ?`, now, reason, now, inv.SourceID); err != nil {
+			log.Warnf("sourcemetrics: could not invalidate ledger row %s: %v", inv.SourceID, err)
+			continue
+		}
+		log.Warnf("sourcemetrics: ledger row %s (app %s) claimed %d record(s) / %d inserted%s that the record store does not hold; withdrawing the claim — the source now reads as never successfully ingested and its debounce gate is open (attempt stamps kept)",
+			inv.SourceID, inv.AppID, inv.ClaimedRecords, inv.ClaimedInserted, formatSchemaSuffix(inv.ClaimedSchemas))
+		invalidated = append(invalidated, inv)
+	}
+	return invalidated, nil
+}
+
+// formatSchemaSuffix renders " [CAT.fbs,OMM.fbs]" for a log line, or "" when
+// the row never recorded which schemas it produced.
+func formatSchemaSuffix(schemas []string) string {
+	if len(schemas) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(schemas, ",") + "]"
+}
+
+// clearInvalidationLocked lifts an invalidation once a real batch lands for the
+// source. Without this the row would carry a stale "invalid" marker forever and
+// the $APPS feed would keep reporting a source that has since recovered.
+func (s *Store) clearInvalidationLocked(sourceID string) {
+	if _, err := s.db.Exec(
+		`UPDATE source_metrics SET invalidated_at = 0, invalidated_reason = '' WHERE source_id = ? AND invalidated_at <> 0`,
+		sourceID); err != nil {
+		log.Debugf("clear invalidation %s: %v", sourceID, err)
+	}
 }
 
 // RecordPNM books the latest publication notification for a source. The
@@ -692,7 +878,8 @@ func (s *Store) Sources() ([]Source, error) {
 		       last_batch_id, last_batch_repeated,
 		       last_schemas, last_records, last_inserted,
 		       fetch_count, ingest_count,
-		       last_pnm_id, last_pnm_cid, last_pnm_schema, last_pnm_feed_head, last_pnm_records, last_pnm_at
+		       last_pnm_id, last_pnm_cid, last_pnm_schema, last_pnm_feed_head, last_pnm_records, last_pnm_at,
+		       invalidated_at, invalidated_reason
 		FROM source_metrics
 		ORDER BY last_retrieved_at DESC, source_id ASC`)
 	if err != nil {
@@ -713,6 +900,7 @@ func (s *Store) Sources() ([]Source, error) {
 			pnmFeedHead string
 			pnmRecords  int
 			pnmAt       int64
+			invalidated int64
 		)
 		if err := rows.Scan(&src.SourceID, &src.AppID, &src.ProviderID, &src.SourceName, &src.SourceURL,
 			&retrieved, &src.DebounceHours, &src.LastPullSizeBytes,
@@ -720,10 +908,16 @@ func (s *Store) Sources() ([]Source, error) {
 			&src.LastBatchID, &repeated,
 			&schemas, &src.LastRecords, &src.LastInserted,
 			&src.FetchCount, &src.IngestCount,
-			&pnmID, &pnmCID, &pnmSchema, &pnmFeedHead, &pnmRecords, &pnmAt); err != nil {
+			&pnmID, &pnmCID, &pnmSchema, &pnmFeedHead, &pnmRecords, &pnmAt,
+			&invalidated, &src.InvalidatedReason); err != nil {
 			return nil, fmt.Errorf("sourcemetrics: scan source: %w", err)
 		}
 		src.Origin = "retrieved"
+		src.Invalidated = invalidated > 0
+		src.InvalidatedAt = timeOrNil(invalidated)
+		if !src.Invalidated {
+			src.InvalidatedReason = ""
+		}
 		src.LastSchemas = splitSchemas(schemas)
 		src.LastRetrievedAt = timeOrNil(retrieved)
 		src.LastBatchRepeated = repeated == 1

@@ -1880,6 +1880,13 @@ func (n *Node) hydrateFullRecordCatalog(ctx context.Context) {
 	}
 	log.Infof("FlatSQL full record-catalog hydration complete: replayed=%d sources=%d total_records=%d in %s",
 		replayed, sources, total, time.Since(start).Round(time.Millisecond))
+
+	// The store can now answer "do I hold this source's records?" honestly, so
+	// this is the first moment the retrieval ledger can be reconciled against
+	// it. Flow services may already have registered against the unreconciled
+	// ledger and skipped their first fire on a claim that has just been
+	// withdrawn — hence refire.
+	n.reconcileRetrievalLedger(true)
 }
 
 func (n *Node) setupSchemaPubSubTopics(ctx context.Context) {
@@ -1948,6 +1955,12 @@ func (n *Node) startFlowServices() error {
 	if len(services) == 0 {
 		return nil
 	}
+	// Before ANY first-fire decision: make sure the ledger those decisions read
+	// still describes records this node actually holds. A ledger that outlived
+	// its record store would otherwise gate every lane shut on the strength of
+	// a pull whose data is gone.
+	n.reconcileRetrievalLedger(false)
+
 	nodeCtx, err := n.buildModuleNodeContextWithPolicy()
 	if err != nil {
 		return fmt.Errorf("build module node context: %w", err)
@@ -2053,6 +2066,68 @@ func (n *Node) firstFireFlowServiceIfDue(sf *flowrt.ServiceFlow) {
 			}
 		}
 	}()
+}
+
+// reconcileRetrievalLedger withdraws every retrieval-ledger success claim this
+// node's record store cannot corroborate, and — when refire is set — lets the
+// lanes it freed re-evaluate their first fire.
+//
+// The two databases are deliberately separate (a record-store rebuild must not
+// take the operator's retrieval history with it), which also means they can be
+// migrated, restored, or lost independently. A ledger that arrives on a box its
+// records did not is not a reporting glitch: the ledger is what GATES
+// re-fetch, so every stale row shuts a lane that has no data to serve.
+//
+// SAFETY. The evidence is only trustworthy once the compact record catalog has
+// been replayed — on a node that deferred that replay the provenance tables are
+// legitimately empty, and treating that as data loss would send this node back
+// to a publisher it does not owe a pull. So an unhydrated (or mid-hydration)
+// store means SKIP, not invalidate; hydrateFullRecordCatalog calls this again
+// when the evidence is real.
+func (n *Node) reconcileRetrievalLedger(refire bool) {
+	if n == nil || n.sourceMetrics == nil || n.store == nil {
+		return
+	}
+	if n.store.RecordCatalogHydrating() || !n.store.RecordCatalogHydrated() {
+		log.Infof("Retrieval ledger reconciliation deferred: the compact record catalog is not hydrated yet, so an empty store is not yet evidence of an empty store")
+		return
+	}
+	held, err := n.store.SourceRecordCounts()
+	if err != nil {
+		log.Warnf("Retrieval ledger reconciliation skipped: could not count stored records per source: %v", err)
+		return
+	}
+	invalidated, err := n.sourceMetrics.ReconcileAgainstStore(held)
+	if err != nil {
+		log.Warnf("Retrieval ledger reconciliation failed: %v", err)
+		return
+	}
+	if len(invalidated) == 0 {
+		return
+	}
+	apps := make(map[string]bool, len(invalidated))
+	for _, inv := range invalidated {
+		if inv.AppID != "" {
+			apps[inv.AppID] = true
+		}
+	}
+	log.Warnf("Retrieval ledger reconciliation withdrew %d unsupported claim(s) across %d flow(s); those sources now read as never successfully ingested",
+		len(invalidated), len(apps))
+	if !refire {
+		return
+	}
+	// The ledger is honest again, so re-run the ordinary first-fire question
+	// for the lanes it unblocked. This is NOT a forced fire: it goes through
+	// flowServiceRetrievalDue like every other pull, and the attempt stamps
+	// this reconciliation deliberately preserved still hold the line.
+	for appID := range apps {
+		plugin := n.plugins.Get(appID)
+		sf, ok := plugin.(*flowrt.ServiceFlow)
+		if !ok || sf == nil {
+			continue
+		}
+		n.firstFireFlowServiceIfDue(sf)
+	}
 }
 
 // flowServiceRetrievalDue reports whether a flow's sources are past their
