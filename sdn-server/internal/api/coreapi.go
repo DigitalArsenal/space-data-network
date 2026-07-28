@@ -61,6 +61,10 @@ type CoreAPIHandler struct {
 	// node (epm.CountSDNPeers) so this package stays free of a node import.
 	// nil = SDN peer state unavailable; the stats surface then reports 0.
 	sdnPeerCounter func() SDNPeerCounts
+
+	// statsCache bounds the two store reads behind /api/v1/stats so an
+	// anonymous poll never queues behind the ingest writer. See boundedread.go.
+	statsCache *boundedReader
 }
 
 // SDNPeerCounts mirrors epm.SDNPeerCounts for the /api/v1/stats peers block:
@@ -101,6 +105,9 @@ func NewCoreAPIHandler(
 		authHandler: authHandler,
 		rl:          newRateLimiter(),
 		listenAddrs: listenAddrs,
+		// Two fixed keys ("summary", "source_batch_progress"); the ceiling is
+		// nominal, this surface takes no parameters.
+		statsCache: newBoundedReader(8),
 	}
 }
 
@@ -268,25 +275,59 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 		"sources":       []interface{}{},
 	}
 
+	// The peers block above is host state and is always instantaneous. The two
+	// store-derived blocks below are NOT: they take the record store's read
+	// lock, which a running ingest holds for minutes. They are therefore read
+	// under a budget and served from the last-known-good answer when the store
+	// is busy — the peers block, and this endpoint's role as the pipeline's
+	// progress heartbeat, must survive a busy writer.
+	//
+	// stale/as_of are API-synthesized fields and stay lowercase (SDS record
+	// keys keep their IDL capitalization; these are not record fields).
+	stale := false
+	var asOf time.Time
 	if h.store != nil {
-		if summary, err := h.store.DataSummary(); err == nil {
-			schemaList := make([]map[string]interface{}, 0, len(summary.Schemas))
-			for _, sc := range summary.Schemas {
-				schemaList = append(schemaList, map[string]interface{}{
-					"schema":      sc.SchemaName,
-					"count":       sc.Count,
-					"total_bytes": sc.TotalBytes,
-				})
+		// ONE budget for the whole response: the two reads are independent and
+		// wait together. Serving them sequentially doubled the worst case for
+		// no benefit (measured live mid-ingest: 1.55 s vs 0.79 s).
+		results := h.statsCache.readAll(storeReadBudget, storeReadMinRefresh,
+			boundedRequest{Key: "summary", Load: func() (interface{}, error) {
+				return h.store.DataSummary()
+			}},
+			boundedRequest{Key: "source_batch_progress", Load: func() (interface{}, error) {
+				return h.store.SourceBatchProgress()
+			}},
+		)
+		summaryRes := results["summary"]
+		progressRes := results["source_batch_progress"]
+
+		if summaryRes.OK {
+			if summary, _ := summaryRes.Value.(*storage.DataSummary); summary != nil {
+				schemaList := make([]map[string]interface{}, 0, len(summary.Schemas))
+				for _, sc := range summary.Schemas {
+					schemaList = append(schemaList, map[string]interface{}{
+						"schema":      sc.SchemaName,
+						"count":       sc.Count,
+						"total_bytes": sc.TotalBytes,
+					})
+				}
+				resp["total_records"] = summary.TotalRecords
+				resp["total_bytes"] = summary.TotalBytes
+				resp["schemas"] = schemaList
 			}
-			resp["total_records"] = summary.TotalRecords
-			resp["total_bytes"] = summary.TotalBytes
-			resp["schemas"] = schemaList
+		}
+		if !summaryRes.Fresh {
+			stale = true
+		}
+		if summaryRes.OK {
+			asOf = summaryRes.AsOf
 		}
 
 		// Per-(schema, provider, source, batch) live pipeline progress. This
 		// schema-neutral read-only aggregate reports counts, bytes, and arrival
 		// timestamps without interpreting application records.
-		if progress, err := h.store.SourceBatchProgress(); err == nil {
+		if progressRes.OK {
+			progress, _ := progressRes.Value.([]storage.SourceBatchProgress)
 			sources := make([]map[string]interface{}, 0, len(progress))
 			for _, p := range progress {
 				row := map[string]interface{}{
@@ -310,6 +351,17 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 			}
 			resp["sources"] = sources
 		}
+		if !progressRes.Fresh {
+			stale = true
+		}
+		if progressRes.OK && (asOf.IsZero() || progressRes.AsOf.Before(asOf)) {
+			asOf = progressRes.AsOf
+		}
+	}
+
+	resp["stale"] = stale
+	if !asOf.IsZero() {
+		resp["as_of"] = asOf.UTC().Format(time.RFC3339)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

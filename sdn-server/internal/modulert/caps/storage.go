@@ -51,6 +51,22 @@ type StorageCapOptions struct {
 	// unavailable (compiled flow bundles use the plugin id when present).
 	FallbackProducer string
 
+	// NodePeerID is THIS node's libp2p identity, stamped as the
+	// producer_peer_id of every record ingested through
+	// storage.ingest_with_source.
+	//
+	// Provenance, not decoration. A record's producer is the NODE that pulled
+	// it, and only the host knows that identity — a module is not asked for
+	// it and cannot supply it, so it cannot claim to be another node. Without
+	// this the flow-ingest path left producer_peer_id empty, the store
+	// back-filled it with provider_id (flatsql.go:1984), and the $APPS feed
+	// then correctly refused the row as "not a peer" (apps.go:435). The
+	// consequence was total: a receiving node could import a producer's shard
+	// and STILL show nothing under via:"pubsub", because every imported row
+	// carried a provider name where a peer id belonged. Empty is tolerated
+	// (the old fallback stands) so an unwired caller degrades, never panics.
+	NodePeerID string
+
 	// RawRoot is the raw-archive root directory used by
 	// storage.ingest_with_source archive/provenance segments (the same
 	// layout the in-daemon ingest runner writes: <raw>/<source>/<day>/<name>
@@ -112,6 +128,7 @@ func NewStorageCapFactoryWithOptions(store *storage.FlatSQLStore, opts StorageCa
 		s := &storageCapAdapter{
 			store:            store,
 			producerID:       producer,
+			nodePeerID:       strings.TrimSpace(opts.NodePeerID),
 			bridge:           bridge,
 			rawRoot:          strings.TrimSpace(opts.RawRoot),
 			minFreeDiskBytes: opts.MinFreeDiskBytes,
@@ -124,6 +141,9 @@ func NewStorageCapFactoryWithOptions(store *storage.FlatSQLStore, opts StorageCa
 type storageCapAdapter struct {
 	store      *storage.FlatSQLStore
 	producerID string
+	// nodePeerID is this node's libp2p identity — the producer of every
+	// record ingested through this adapter. See StorageCapOptions.NodePeerID.
+	nodePeerID string
 	// bridge is the calling instance's hostcall bridge — the registry for
 	// "deliver":"ref" body references (loop C.5c). May be nil on legacy
 	// provisioning paths; ref delivery then degrades to byte delivery.
@@ -491,6 +511,10 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 		SourceURL:    str("source_url"),
 		BatchID:      str("batch_id"),
 		ContentKeyID: str("content_key_id"),
+		// The HOST supplies the producer identity. It is deliberately not
+		// read from the payload: a module must not be able to attribute its
+		// writes to another node.
+		ProducerPeerID: s.nodePeerID,
 	}
 	if strings.TrimSpace(tags.ProviderID) == "" || strings.TrimSpace(tags.SourceName) == "" || strings.TrimSpace(tags.BatchID) == "" {
 		return errCapJSON("provider_id, source_name and batch_id are required for provenance attribution")

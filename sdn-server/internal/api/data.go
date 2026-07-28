@@ -24,6 +24,10 @@ import (
 // DataQueryHandler serves read-only, cache-friendly schema query APIs.
 type DataQueryHandler struct {
 	store *storage.FlatSQLStore
+	// indexCache bounds the anonymous /api/v1/data/index read so it can never
+	// queue behind the ingest writer. Keyed by the full query. See
+	// boundedread.go.
+	indexCache *boundedReader
 }
 
 const (
@@ -36,7 +40,7 @@ const (
 
 // NewDataQueryHandler creates a new data query handler.
 func NewDataQueryHandler(store *storage.FlatSQLStore) *DataQueryHandler {
-	return &DataQueryHandler{store: store}
+	return &DataQueryHandler{store: store, indexCache: newBoundedReader(boundedReaderDefaultKeys)}
 }
 
 // RegisterRoutes registers the NATIVE data API routes: health/summary
@@ -115,7 +119,7 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		limit = recordIndexMaxLimit
 	}
 
-	rows, total, err := h.store.RecordIndexPage(storage.RecordIndexPageQuery{
+	query := storage.RecordIndexPageQuery{
 		SchemaName: schema,
 		ProviderID: firstNonEmptyDataString(values.Get("provider_id"), values.Get("providerId")),
 		SourceName: firstNonEmptyDataString(values.Get("source_name"), values.Get("sourceName")),
@@ -123,14 +127,46 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		NoradLike:  digitsOnly(values.Get("norad")),
 		Limit:      limit,
 		Offset:     (page - 1) * limit,
+	}
+
+	// BOUNDED. This is an anonymous read of the single-writer record store: a
+	// running ingest holds the write lock for minutes and every reader queues
+	// behind it. Measured on host-01 mid-ingest 2026-07-28, this endpoint did
+	// not answer within 30 s. It now answers from the last page it served for
+	// this exact query, and refreshes off the hot path. See boundedread.go.
+	res := h.indexCache.read(recordIndexCacheKey(query), storeReadBudget, storeReadMinRefresh, func() (interface{}, error) {
+		rows, total, err := h.store.RecordIndexPage(query)
+		if err != nil {
+			return nil, err
+		}
+		return &recordIndexPage{Rows: rows, Total: total}, nil
 	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+
+	if !res.OK {
+		// Never read successfully: the store has been busy since boot for this
+		// query. Say so. Returning an empty page would be a lie indistinguishable
+		// from "this schema holds no records", and a UI would render "none".
+		w.Header().Set("Retry-After", "1")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]string{
+				"code":    "STORE_BUSY",
+				"message": "record store is busy; no cached page for this query yet",
+			},
+			"schema": schema,
+			"page":   page,
+			"limit":  limit,
+			"stale":  true,
+		})
 		return
 	}
 
-	out := make([]map[string]interface{}, 0, len(rows))
-	for _, rr := range rows {
+	pageData, _ := res.Value.(*recordIndexPage)
+	if pageData == nil {
+		pageData = &recordIndexPage{}
+	}
+
+	out := make([]map[string]interface{}, 0, len(pageData.Rows))
+	for _, rr := range pageData.Rows {
 		m := map[string]interface{}{"cid": rr.CID}
 		if rr.NoradCatID != nil {
 			m["norad"] = *rr.NoradCatID
@@ -144,13 +180,38 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		}
 		out = append(out, m)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	payload := map[string]interface{}{
 		"schema": schema,
-		"total":  total,
+		"total":  pageData.Total,
 		"page":   page,
 		"limit":  limit,
 		"rows":   out,
-	})
+		// stale/as_of are API-synthesized fields: lowercase, unlike SDS record
+		// keys which keep their IDL capitalization.
+		"stale": !res.Fresh,
+	}
+	if !res.AsOf.IsZero() {
+		payload["as_of"] = res.AsOf.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+// recordIndexPage is one cached answer of the index surface: the page and the
+// total it was counted against, kept together so a stale answer is internally
+// consistent.
+type recordIndexPage struct {
+	Rows  []storage.RecordIndexRow
+	Total int64
+}
+
+// recordIndexCacheKey identifies one index query. Every filter participates —
+// two different filters are two different answers, and sharing a cache slot
+// between them would serve one query's rows under another's parameters.
+func recordIndexCacheKey(q storage.RecordIndexPageQuery) string {
+	return strings.Join([]string{
+		q.SchemaName, q.ProviderID, q.SourceName, q.BatchID, q.NoradLike,
+		strconv.Itoa(q.Limit), strconv.Itoa(q.Offset),
+	}, "\x00")
 }
 
 // normalizeRecordIndexSchema maps a caller schema alias to the canonical stored
