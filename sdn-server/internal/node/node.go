@@ -974,6 +974,15 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 		storageFac := caps.NewStorageCapFactoryWithOptions(n.store, caps.StorageCapOptions{
 			RawRoot:          rawRoot,
 			MinFreeDiskBytes: minFreeDiskBytes,
+			// This node's own identity, stamped as the producer of everything
+			// its flows ingest. A peer that later imports these records reads
+			// a real peer id here, which is what makes received data
+			// distinguishable from data the receiver pulled itself.
+			// buildCapRegistry is reachable before the libp2p host exists on
+			// some construction paths, so the identity is read defensively:
+			// an unknown identity degrades attribution, it must not panic
+			// the daemon.
+			NodePeerID: nodePeerIDOrEmpty(n),
 			// Sandboxed public query caps (gateway loop G.5) — config
 			// gateway.query with built-in defense defaults.
 			QueryCaps: flatsqlrt.SandboxCaps{
@@ -1641,6 +1650,20 @@ func (n *Node) Start(ctx context.Context) error {
 	if usedFallback {
 		log.Warn("Configured bootstrap peers were empty or invalid; falling back to built-in defaults")
 	}
+
+	// Bootstrap says WHO WE DIAL; trusted_peers says WHOSE DATA WE ACCEPT.
+	// They are independent settings, and when they disagree the node behaves
+	// perfectly while doing nothing: it connects to the producer, subscribes
+	// to every schema topic, receives its dataset PNMs — and silently drops
+	// each one, because materializeDatasetPublicationPNM refuses a
+	// non-trusted sender (see below in this file) and says so only at DEBUG.
+	//
+	// That combination cost a day of live debugging on 2026-07-28: host-01's
+	// bootstrap entry named the CelesTrak retriever's real peer id while its
+	// trusted_peers entry named a stale one, so a correctly-linked pair of
+	// nodes transferred nothing and neither log said why. A peer we
+	// deliberately dial and then refuse is never intentional configuration.
+	n.warnOnUntrustedBootstrapPeers(pinnedPeers)
 
 	// Connect to bootstrap peers asynchronously with peer ID verification
 	for _, p := range pinnedPeers {
@@ -4433,4 +4456,56 @@ func validateModuleDeliveryProviderPublicKey(providerPublicKey []byte) error {
 		return fmt.Errorf("provider public key must use compressed secp256k1 prefix 0x02/0x03")
 	}
 	return nil
+}
+
+// nodePeerIDOrEmpty reads this node's libp2p identity without assuming the
+// host is already up. Capability registries are built on several paths, not
+// all of which run after libp2p construction; an empty answer costs record
+// attribution on that path, a nil dereference would cost the daemon.
+func nodePeerIDOrEmpty(n *Node) string {
+	if n == nil || n.host == nil {
+		return ""
+	}
+	return n.host.ID().String()
+}
+
+// warnOnUntrustedBootstrapPeers reports every bootstrap peer this node dials
+// but does not trust.
+//
+// This is pure observability over an existing policy — it changes no trust
+// decision and grants nothing. It exists because the failure it names is
+// SILENT: an untrusted sender's dataset PNMs are dropped at DEBUG level, so a
+// node with a stale trusted_peers entry looks healthy, stays connected, and
+// receives nothing forever. Boot is the right moment to say so, because that
+// is when the operator can still act on it.
+func (n *Node) warnOnUntrustedBootstrapPeers(pinned []bootstrap.PeerInfo) {
+	for _, id := range n.untrustedBootstrapPeers(pinned) {
+		log.Warnf("Bootstrap peer %s is NOT in peers.trusted_peers: this node will dial it and "+
+			"then DISCARD its dataset publications (trust gates record acceptance, bootstrap does not). "+
+			"If this peer is a data producer for this node, add its full multiaddr to peers.trusted_peers.", id)
+	}
+}
+
+// untrustedBootstrapPeers is the decision behind that warning, separated so it
+// can be asserted on directly.
+func (n *Node) untrustedBootstrapPeers(pinned []bootstrap.PeerInfo) []peer.ID {
+	if n == nil || n.peerRegistry == nil {
+		return nil
+	}
+	// One peer reached at several multiaddrs is ONE peer. Without this the
+	// warning repeats per address and buries itself in its own noise.
+	seen := make(map[peer.ID]struct{}, len(pinned))
+	var out []peer.ID
+	for _, p := range pinned {
+		id := p.AddrInfo.ID
+		if id == "" || n.peerRegistry.IsTrusted(id) {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }

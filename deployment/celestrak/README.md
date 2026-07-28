@@ -1,14 +1,5 @@
 # CelesTrak Provider Node Deployment
 
-> **STALE, 2026-07-28 — DO NOT USE FOR INSTALL.** This directory describes a
-> two-daemon shape (`spacedatanetwork.service` + `kubo.service`) that
-> `install-host.sh` would install on the same box. That now VIOLATES owner law
-> ("never ever have more than one instance running on a box"). The box's live,
-> canonical shape is `deployment/systemd/sdn-retriever.service` — ONE daemon,
-> escrowed+disabled legacy units — recorded in `deployment/topology.json` under
-> `cluster["celestrak.eth"]`. Treat this file as historical background only
-> until it is rewritten to match.
-
 This directory contains host-specific, non-secret deployment assets for
 `space-data-network-02` / `celestrak.eth`.
 
