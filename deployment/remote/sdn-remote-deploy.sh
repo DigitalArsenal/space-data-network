@@ -519,6 +519,41 @@ deploy() {
   printf '%s============================================================%s\n' "$GRN" "$NC"
 
   refresh_local_test_node
+  refresh_vm_orbit_det
+}
+
+# refresh_vm_orbit_det — owner's LAN dev VM (ssh alias vm-orbit-det-01).
+#
+# Same opt-in pattern and same reasoning as refresh_local_test_node: this script
+# is also the OPERATOR/third-party path, and a third party must never have
+# machines on their network touched as a side effect of deploying to a server.
+# The owner's machine sets SDN_REFRESH_VM_ORBIT_DET=1.
+#
+# This VM was rebuilt on 2026-07-24 and its whole install was lost, and nobody
+# noticed because it was in no truth file and no deploy path. This hook is that
+# path. It installs a CLI ONLY — no unit, no schedule, and no identity (a node
+# identity there is an owner decision, still open).
+#
+# The refresh script keeps the binary and libwasmedge.so in step by extracting
+# BOTH from the same release image; it is idempotent and skips the transfer when
+# already current. Never fatal: the VM is on a private LAN and may be powered
+# off, which must not fail a good production deploy.
+refresh_vm_orbit_det() {
+  [[ "${SDN_REFRESH_VM_ORBIT_DET:-0}" == "1" ]] || return 0
+  local vm_script="${PROJECT_ROOT}/deployment/local/sdn-refresh-vm-orbit-det.sh"
+  if [[ ! -x "$vm_script" ]]; then
+    warn "SDN_REFRESH_VM_ORBIT_DET=1 but ${vm_script} is missing or not executable — skipping"
+    return 0
+  fi
+  printf '\n'
+  info "refreshing vm-orbit-det-01 CLI (SDN_REFRESH_VM_ORBIT_DET=1)…"
+  # The image this deploy just shipped is the release, so the VM gets exactly
+  # the same bytes. It is linux/amd64 by default here, which the VM requires.
+  if "$vm_script" --image "$IMAGE_TAG"; then
+    ok "vm-orbit-det-01 CLI refreshed to the release that just deployed"
+  else
+    warn "vm-orbit-det-01 refresh FAILED — the host deploy above still succeeded"
+  fi
 }
 
 # refresh_local_test_node — owner directive 2026-07-28: "the local machine
