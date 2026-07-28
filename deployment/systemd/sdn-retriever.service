@@ -1,0 +1,71 @@
+# sdn-retriever.service — the CelesTrak retriever/producer daemon on host-01.
+#
+# OWNED BY: Hephaestus (unit, ports, volume, enrolment). Hermes-2 owns the flow
+# runtime and the daemon's config/identity. Settled 2026-07-28.
+#
+# WHY THIS IS A SEPARATE DAEMON, AND NOT sdn-kubo RE-IDENTIFIED
+# ------------------------------------------------------------
+# A mid-flight directive briefly proposed running the ingest under the existing
+# kubo peer 12D3KooWKh3diob…. That was corrected: that peer is the supplemental-
+# OMM OD PRODUCER, its OD bundle is deliberately paused, and its identity must
+# not move. The ingest therefore gets its OWN HD-derived identity here.
+#
+# ############################################################################
+# # DO NOT ADD Environment=IPFS_PATH TO THIS UNIT. EVER.                     #
+# ############################################################################
+# sdn-server calls EnsureManagedIPFSRepoIdentity unconditionally whenever
+# IPFS_PATH is set (internal/node/node.go:1339-1343) and rewrites
+# Identity.PrivKey IN PLACE (internal/node/ipfs_repo_identity.go:96-117). On an
+# already-`sdnenc1:` field there is no PeerID guard, and the kubo binary cannot
+# read `sdnenc1:` back. Pointing this unit at /opt/sdn-kubo/repo would silently
+# destroy the paused OD producer's peer identity. The key types are incompatible
+# anyway: sdn-server is secp256k1 HD-derived, kubo is Ed25519.
+#
+# PORTS (allocated by Hephaestus, verified free on host-01 2026-07-28)
+#   4003  libp2p            (4004/4005 reserved for this daemon)
+#   5003  admin, LOOPBACK ONLY — this daemon serves no public surface.
+# Already taken on this host, do not reuse: 443 + 18080 (sidecar), 4001 + 5020
+# (sdn-kubo), 4002 + 5002 + 8080 + 8091 (ipfs.service), 5001, 8081.
+#
+# STORE lives on /mnt/volume_nyc3_01 (248G) and NOT on / (96G at 85%, 15G free).
+# BindsTo/RequiresMountsFor below make the unit fail closed if that volume is
+# not mounted, rather than silently filling the root filesystem.
+
+[Unit]
+Description=SDN CelesTrak retriever/producer (host-01)
+Documentation=file:///Users/tj/software/spacedatanetwork-stack/deployment/topology.json
+After=network-online.target mnt-volume_nyc3_01.mount
+Wants=network-online.target
+RequiresMountsFor=/mnt/volume_nyc3_01
+
+[Service]
+Type=simple
+# Identity + at-rest key password are fed by file, never by environment.
+Environment=SDN_KEY_PASSWORD_FILE=/etc/spacedatanetwork/retriever/key_password
+# Deliberately ABSENT: IPFS_PATH. See the banner above.
+ExecStart=/opt/sdn-retriever/spacedatanetwork daemon --config /etc/spacedatanetwork/retriever/config.yaml
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+
+# The ingest holds a whole fetched catalog, its base64 hostcall envelope, every
+# normalized record stream and the raw archive copy in ONE linear memory. A
+# SATCAT run measured ~670MB RSS; leave real headroom or a run dies AFTER a
+# successful fetch, throwing away its own work.
+MemoryHigh=2G
+MemoryMax=3G
+
+# This box also serves the public site from the sidecar. Keep the retriever from
+# starving it: it may use the machine, but it yields.
+Nice=10
+CPUWeight=50
+IOWeight=50
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/mnt/volume_nyc3_01 /etc/spacedatanetwork/retriever
+
+[Install]
+WantedBy=multi-user.target
