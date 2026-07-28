@@ -517,6 +517,37 @@ deploy() {
   printf 'from this node itself (/wallet-wasm, /wallet-ui) — never from a website.\n'
   printf 'Grant any additional operators afterwards by xpub.\n'
   printf '%s============================================================%s\n' "$GRN" "$NC"
+
+  refresh_local_test_node
+}
+
+# refresh_local_test_node — owner directive 2026-07-28: "the local machine
+# getting updated every deployment, with the local machine running on docker".
+#
+# Every release that reaches a host also refreshes the developer machine's local
+# docker TEST node, so the bytes that just shipped are always running somewhere
+# we can inspect without touching a live box.
+#
+# OPT-IN, deliberately. This script is also the OPERATOR/third-party deploy path,
+# and a third party running it must never have their own machine mutated as a
+# side effect of deploying to their server. The owner's machine sets
+# SDN_REFRESH_LOCAL_TEST_NODE=1 (see deployment/local/sdn-local-node.sh).
+#
+# Never fatal: a local-node problem must not fail an otherwise-good host deploy.
+refresh_local_test_node() {
+  [[ "${SDN_REFRESH_LOCAL_TEST_NODE:-0}" == "1" ]] || return 0
+  local local_script="${PROJECT_ROOT}/deployment/local/sdn-local-node.sh"
+  if [[ ! -x "$local_script" ]]; then
+    warn "SDN_REFRESH_LOCAL_TEST_NODE=1 but ${local_script} is missing or not executable — skipping"
+    return 0
+  fi
+  printf '\n'
+  info "refreshing the local docker TEST node (SDN_REFRESH_LOCAL_TEST_NODE=1)…"
+  if "$local_script" refresh; then
+    ok "local docker test node refreshed to the release that just deployed"
+  else
+    warn "local test node refresh FAILED — the host deploy above still succeeded"
+  fi
 }
 
 status() {
