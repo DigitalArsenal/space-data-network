@@ -217,8 +217,22 @@ verify_identity_isolation() {
   fi
 }
 
+# OWNER LAW 2026-07-28: one box, one node. The developer machine is a box too —
+# if a real SDN node is already running here, this test peer must not join it.
+# --expect names this container, so restarting it is an upgrade, not a violation.
+preflight_single_instance() {
+  local pf="${PROJECT_ROOT}/deployment/lib/sdn-preflight-single-instance.sh"
+  [[ -x "$pf" ]] || die "missing preflight ${pf} — refusing to start without the one-box-one-node check"
+  "$pf" --target local --expect "$CONTAINER_NAME" && return 0
+  if [[ "${SDN_ALLOW_MULTI_INSTANCE:-0}" == "1" ]]; then
+    warn "SDN_ALLOW_MULTI_INSTANCE=1 — overriding the one-box-one-node law locally (dev only)"
+    return 0
+  fi
+  die "another SDN instance is already running on this machine (owner law, 2026-07-28)"
+}
+
 cmd_up() {
-  need_docker; ensure_key_password; render_config
+  need_docker; preflight_single_instance; ensure_key_password; render_config
   [[ "${SDN_LOCAL_SKIP_BUILD:-0}" == "1" ]] || build_image
   start_container; wait_ready || true; verify_identity_isolation
 }
