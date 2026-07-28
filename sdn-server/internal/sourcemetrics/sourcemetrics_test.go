@@ -293,3 +293,73 @@ func TestAttemptLogIgnoresBlankAppAndNilStore(t *testing.T) {
 		t.Fatal("nil store must report no attempt")
 	}
 }
+
+// A publisher that has started refusing us is asking to be asked LESS often.
+// Retrying a refusing endpoint on the same cadence forever is how a node earns
+// a longer ban rather than a shorter one — CelesTrak went 403 then 503 while we
+// kept knocking at 3h.
+func TestBackoffDoublesPerFailureAndCaps(t *testing.T) {
+	cases := map[int]float64{
+		0:  3,  // healthy
+		1:  6,  // one failed attempt
+		2:  12, //
+		3:  24, // cap
+		4:  24, // stays capped
+		99: 24, //
+	}
+	for failures, want := range cases {
+		if got := EffectiveDebounceHours(failures); got != want {
+			t.Fatalf("EffectiveDebounceHours(%d) = %v, want %v", failures, got, want)
+		}
+	}
+	if MaxDebounceHours <= DefaultDebounceHours {
+		t.Fatal("the cap must be wider than the base window")
+	}
+}
+
+// The streak advances on attempts and resets the moment a batch lands.
+func TestFailureStreakAdvancesAndResetsOnSuccess(t *testing.T) {
+	store := openLedger(t)
+	const appID = "com.digitalarsenal.flows.celestrak-gp-ingest"
+
+	if _, failures := store.AttemptState(appID); failures != 0 {
+		t.Fatalf("fresh app has %d failures, want 0", failures)
+	}
+
+	store.RecordAttempt(appID)
+	if _, f := store.AttemptState(appID); f != 1 {
+		t.Fatalf("after one attempt failures = %d, want 1 (failure assumed until proven)", f)
+	}
+	if got := EffectiveDebounceHours(1); got != 6 {
+		t.Fatalf("window after 1 failure = %vh, want 6h", got)
+	}
+
+	store.RecordAttempt(appID)
+	store.RecordAttempt(appID)
+	if _, f := store.AttemptState(appID); f != 3 {
+		t.Fatalf("failures = %d, want 3", f)
+	}
+
+	// A batch lands: back to the normal cadence at once, not after serving out
+	// a punishment window.
+	store.RecordIngest(Ingest{
+		AppID: appID, ProviderID: "p", SourceName: "celestrak-gp",
+		SourceURL: "https://celestrak.org/x", Schema: "OMM.fbs", BatchID: "b", Records: 10, Inserted: 10,
+	})
+	if _, f := store.AttemptState(appID); f != 0 {
+		t.Fatalf("failures after a successful ingest = %d, want 0", f)
+	}
+	if got := EffectiveDebounceHours(0); got != DefaultDebounceHours {
+		t.Fatalf("recovered window = %vh, want the base %vh", got, DefaultDebounceHours)
+	}
+
+	// A DIFFERENT app's success must not clear this one's streak.
+	store.RecordAttempt(appID)
+	store.RecordIngest(Ingest{
+		AppID: "other.app", ProviderID: "p", SourceName: "other",
+		SourceURL: "https://example.com/x", Schema: "OMM.fbs", BatchID: "b2",
+	})
+	if _, f := store.AttemptState(appID); f != 1 {
+		t.Fatalf("another app's success cleared this app's streak: failures = %d, want 1", f)
+	}
+}
