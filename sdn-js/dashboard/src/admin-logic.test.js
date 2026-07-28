@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   WALLET_UI_ENTRY,
   WALLET_UI_COMPAT,
+  WALLET_UI_VERSION,
   LEGACY_PROFILES,
   base64ToBase64Url,
   buildRawChallengeTransaction,
@@ -205,7 +206,11 @@ describe('hd-wallet-ui transaction plumbing (contract §11)', () => {
       expect(url).not.toMatch(/^https?:/);
       expect(url).not.toContain('//');
     }
-    expect(WALLET_UI_ENTRY).toBe('/wallet-ui/wallet-origin/index.js');
+    // The ?v= stamp is the pinned wallet version: it changes the CDN-edge
+    // cache key on every restage so a proxy can never serve a prior
+    // staging's bytes (the path itself stays same-origin).
+    expect(WALLET_UI_ENTRY).toBe(`/wallet-ui/wallet-origin/index.js?v=${WALLET_UI_VERSION}`);
+    expect(WALLET_UI_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
   it('re-spells the node challenge into the wallet alphabet, same bytes', () => {

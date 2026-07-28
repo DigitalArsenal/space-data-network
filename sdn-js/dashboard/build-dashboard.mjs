@@ -64,7 +64,9 @@ if (!importMap) {
   console.error('[build-dashboard] the hd-wallet-wasm import map is missing from the built page');
   process.exit(1);
 }
-if (!/"hd-wallet-wasm"\s*:\s*"\/wallet-wasm\/runtime\/index\.mjs"/.test(importMap[1])) {
+// A cache-busting query (?v=2.0.29 on a restage) is fine; an absolute URL is
+// not. The point of the check is the ORIGIN, not the exact string.
+if (!/"hd-wallet-wasm"\s*:\s*"\/wallet-wasm\/runtime\/index\.mjs(\?[^"]*)?"/.test(importMap[1])) {
   console.error('[build-dashboard] the import map must resolve hd-wallet-wasm to this node, not an external origin');
   process.exit(1);
 }

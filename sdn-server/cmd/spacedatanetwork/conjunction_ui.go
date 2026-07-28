@@ -188,7 +188,7 @@ func makeEmbeddingHandler(assetsDir string) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", mediaType)
-		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("Cache-Control", "public, no-cache")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		http.ServeContent(w, r, name, info.ModTime(), f)
 	})
@@ -293,7 +293,7 @@ func makeStagedModuleTreeHandler(prefix, assetsDir string, exts map[string]strin
 			return
 		}
 		w.Header().Set("Content-Type", mediaType)
-		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("Cache-Control", "public, no-cache")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		http.ServeContent(w, r, name, info.ModTime(), f)
 	})
