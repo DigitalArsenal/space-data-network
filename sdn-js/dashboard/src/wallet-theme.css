@@ -211,10 +211,22 @@ label:has([data-wallet-remember]) {
 [data-wallet-action] {
   white-space: nowrap;
 }
-/* Passkey stays visibly disabled until the upstream rp.id fix lands (§15.2). */
+/* The capability is wired (2.0.29), but only the MODERN unlock registers a
+   passkey — so on this node's legacy-only sign-in the control is disabled
+   with its reason beside it, never merely hidden. */
 [data-wallet-remember]:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+label:has([data-wallet-remember]:disabled) {
+  opacity: 0.55;
+}
+.wallet-remember-blocked {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #ffb24d;
+  letter-spacing: 0.03em;
 }
 
 /* ---- status / data rows ------------------------------------------------ */

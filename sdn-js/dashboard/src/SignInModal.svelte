@@ -40,6 +40,7 @@
   // is the flag for "has anyone been enrolled"; it changes nothing here,
   // because the chooser is the same either way.
   const busy = $derived(stage === 'running');
+  const nodeHost = typeof location !== 'undefined' ? location.host : 'this node';
 
   onMount(() => {
     let cancelled = false;
@@ -169,6 +170,12 @@
             <p class="hint" style="color:{theme.textFaint};">
               Your phrase or password is read by the wallet in this page, used to derive
               your key, and wiped. It is never sent anywhere.
+            </p>
+            <p class="hint" style="color:{theme.textFaint};">
+              Remembering a wallet with a passkey is coming with the modern sign-in.
+              When it arrives the passkey will be tied to this node alone — one passkey
+              per node, so a wallet remembered on <span class="mono">{nodeHost}</span>
+              can only be unlocked here.
             </p>
           </section>
         {/if}
