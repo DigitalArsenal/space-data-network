@@ -46,6 +46,13 @@ type AppsHandler struct {
 	// the "this feed always answers" property can be tested against a store
 	// that is deliberately slow.
 	store datasetPublicationReader
+	// producers reports what OTHER nodes have contributed to this node's store.
+	// Nil is fine — the feed then reports only what this node pulled itself.
+	producers producerProgressReader
+	// selfPeerID is this node's own libp2p identity, used to tell records this
+	// node published from records a peer sent it. Empty is fine: the feed then
+	// relies on the ledger check alone, which is already the primary filter.
+	selfPeerID string
 	// pnmSink write-through-persists a refreshed PNM so the value survives a
 	// restart and stays available when the store is busy. May be nil.
 	pnmSink func(providerID, sourceName string, pnm sourcemetrics.PNM)
@@ -61,13 +68,30 @@ func NewAppsHandler(runtime AppsRuntimeSource, metrics AppsMetricsSource, store 
 	// real store; otherwise the nil-store path below would never be taken.
 	if store != nil {
 		h.store = store
+		h.producers = store
 	}
+	return h
+}
+
+// WithSelfPeerID tells the feed which producer identity is this node's own, so
+// records this node published are never reported as received from a peer.
+// Optional: an unset id only costs precision in that one distinction.
+func (h *AppsHandler) WithSelfPeerID(peerID string) *AppsHandler {
+	h.selfPeerID = strings.TrimSpace(peerID)
 	return h
 }
 
 // datasetPublicationReader is the one store capability this feed needs.
 type datasetPublicationReader interface {
 	ListDatasetShardPublications(storage.DatasetShardPublicationQuery) ([]storage.DatasetShardPublication, error)
+}
+
+// producerProgressReader supplies per-producer contribution to each source
+// lane, so the feed can report data this node RECEIVED as well as data it
+// pulled. Separate from datasetPublicationReader so a test can be slow in one
+// and fast in the other.
+type producerProgressReader interface {
+	ProducerSourceProgress() ([]storage.ProducerSourceProgress, error)
 }
 
 // RegisterRoutes registers the public $APPS route.
@@ -87,9 +111,30 @@ type appSourceView struct {
 	ProviderID string `json:"provider_id"`
 	SourceName string `json:"source_name"`
 	SourceURL  string `json:"source_url,omitempty"`
-	// Origin is always "retrieved" for this ledger: these records were PULLED
-	// from a publisher, never fitted or otherwise derived by this node.
+	// Origin is "retrieved" for every row here: these records were PULLED from a
+	// publisher — by this node, or by the peer that sent them — never fitted or
+	// otherwise derived.
 	Origin string `json:"origin"`
+	// Via says HOW the records reached this node: "local" when this node pulled
+	// them and has a retrieval ledger row to prove it, "pubsub" when they
+	// arrived from another producer over the network. A node that showed only
+	// its own pulls looked idle while a peer was filling its store.
+	Via string `json:"via,omitempty"`
+	// ProducerPeerID attributes a received row to the peer that produced it.
+	// Empty on local rows: this node is the producer, and its own identity is
+	// already published elsewhere on this surface.
+	ProducerPeerID string `json:"producer_peer_id,omitempty"`
+	// SchemaName is the record type a received row carries. Local rows report
+	// their schemas per pull in last_schemas instead.
+	SchemaName string `json:"schema_name,omitempty"`
+	// RecordCount / TotalBytes are cumulative for a received row: what this
+	// producer has contributed to this lane in total, not "the last pull",
+	// because a receiver never sees pulls — only records arriving.
+	RecordCount int64  `json:"record_count,omitempty"`
+	TotalBytes  int64  `json:"total_bytes,omitempty"`
+	BatchCount  int64  `json:"batch_count,omitempty"`
+	FirstSeenAt string `json:"first_seen_at,omitempty"`
+	LastSeenAt  string `json:"last_seen_at,omitempty"`
 
 	LastRetrievedAt string  `json:"last_retrieved_at,omitempty"`
 	DebounceHours   float64 `json:"debounce_hours"`
@@ -167,6 +212,11 @@ func (h *AppsHandler) handleApps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sources := h.sourceViews()
+	// Data this node RECEIVED from other producers belongs on the same board as
+	// data it pulled: the question "is this node getting the catalog?" has the
+	// same answer either way. Appended after the ledger rows and bounded by the
+	// same rule — the feed always answers, even mid-ingest.
+	sources = append(sources, h.remoteProducerViews()...)
 
 	// Group sources under the app that produced them. Attribution comes from
 	// the producing module/flow id the storage connector recorded — the host
@@ -283,6 +333,7 @@ func (h *AppsHandler) sourceViews() []appSourceView {
 		if view.Origin == "" {
 			view.Origin = "retrieved"
 		}
+		view.Via = viaLocal
 		if row.LastRetrievedAt != nil {
 			view.LastRetrievedAt = row.LastRetrievedAt.UTC().Format(time.RFC3339)
 			if row.DebounceHours > 0 {
@@ -312,6 +363,107 @@ func (h *AppsHandler) sourceViews() []appSourceView {
 	}
 	return out
 }
+
+// Via values. Lowercase, like every other field this API synthesizes (SDS
+// record keys keep their IDL capitalization; these are not record fields).
+const (
+	viaLocal  = "local"
+	viaPubsub = "pubsub"
+)
+
+// remoteProducerBudget bounds the received-data read for the WHOLE feed, for
+// the same reason pnmRefreshBudget bounds the PNM refresh: this query touches
+// the single-writer record store, which a full ingest occupies for tens of
+// minutes on a small host. Received rows are valuable, but not more valuable
+// than the endpoint answering at all.
+const remoteProducerBudget = 750 * time.Millisecond
+
+// remoteProducerViews reports what OTHER producers have contributed to this
+// node's store — records that arrived over the network rather than from a pull
+// this node performed.
+//
+// Attribution is by PRODUCER IDENTITY, not by lane. Two nodes pulling the same
+// public source is normal and expected, so "this node has a ledger row for that
+// lane" does not mean a peer's records are a duplicate: they are a different
+// fact about a different producer, and hiding them would make a receiving node
+// look idle while its store filled — and would keep hiding them after the node
+// stopped pulling that lane itself, since the ledger row survives. So both rows
+// stand, told apart by via and producer_peer_id.
+//
+// This node's own records are excluded: a local publish is never reported as
+// somebody else's.
+func (h *AppsHandler) remoteProducerViews() []appSourceView {
+	out := make([]appSourceView, 0, 4)
+	if h.producers == nil {
+		return out
+	}
+
+	type result struct {
+		rows []storage.ProducerSourceProgress
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		rows, err := h.producers.ProducerSourceProgress()
+		done <- result{rows: rows, err: err}
+	}()
+
+	var rows []storage.ProducerSourceProgress
+	select {
+	case r := <-done:
+		if r.err != nil {
+			log.Warnf("apps feed: read producer source progress: %v", r.err)
+			return out
+		}
+		rows = r.rows
+	case <-time.After(remoteProducerBudget):
+		// The store is busy — almost certainly ingesting, which is exactly when
+		// this endpoint gets asked whether the node is working. Answer with the
+		// ledger alone rather than not at all.
+		log.Debugf("apps feed: producer source progress exceeded %s budget; serving local ledger only", remoteProducerBudget)
+		return out
+	}
+
+	for _, row := range rows {
+		producer := strings.TrimSpace(row.ProducerPeerID)
+		if producer == "" || producer == h.selfPeerID {
+			continue
+		}
+		// The store back-fills an absent producer with the provider id, and
+		// stamps locally synthesized rows with a non-peer marker. Neither is a
+		// remote producer, and reporting them as one would invent a peer.
+		if producer == strings.TrimSpace(row.ProviderID) || producer == localProducerMarker {
+			continue
+		}
+		view := appSourceView{
+			SourceID:       strings.Join([]string{producer, row.ProviderID, row.SourceName, row.SchemaName}, "/"),
+			ProviderID:     row.ProviderID,
+			SourceName:     row.SourceName,
+			Origin:         "retrieved",
+			Via:            viaPubsub,
+			ProducerPeerID: producer,
+			SchemaName:     row.SchemaName,
+			RecordCount:    row.Count,
+			TotalBytes:     row.TotalBytes,
+			BatchCount:     row.BatchCount,
+			LastBatchID:    row.LastBatchID,
+		}
+		if row.FirstSeenUnix > 0 {
+			view.FirstSeenAt = time.Unix(row.FirstSeenUnix, 0).UTC().Format(time.RFC3339)
+		}
+		if row.LastSeenUnix > 0 {
+			view.LastSeenAt = time.Unix(row.LastSeenUnix, 0).UTC().Format(time.RFC3339)
+			view.LastRetrievedAt = view.LastSeenAt
+		}
+		out = append(out, view)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].SourceID < out[j].SourceID })
+	return out
+}
+
+// localProducerMarker is what the store stamps on rows it synthesized locally
+// (see storage's local-EPM row); it is not a peer identity.
+const localProducerMarker = "local-node"
 
 // refreshPNMsWithinBudget looks up the authoritative last PNM for each source,
 // abandoning the whole effort once pnmRefreshBudget expires. Results that do

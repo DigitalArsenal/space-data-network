@@ -113,9 +113,9 @@ func LoadFlowService(flowRef string, intervals map[string]string, deps FlowMount
 		var compiled []byte
 		var aotErr error
 		if deps.AOTCompileOnMiss {
-			compiled, aotErr = flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes)
+			compiled, aotErr = flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, flowAOTPrefix(flowRef), wasmBytes)
 		} else {
-			compiled, aotErr = flatsqlrt.LoadAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes)
+			compiled, aotErr = flatsqlrt.LoadAOTArtifact(deps.AOTCacheDir, flowAOTPrefix(flowRef), wasmBytes)
 		}
 		if aotErr == nil {
 			runBytes = compiled

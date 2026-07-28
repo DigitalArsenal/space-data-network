@@ -146,6 +146,14 @@ func EnsureAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
+// AOTArtifactPath reports where an artifact for these wasm bytes lives under
+// this prefix, without compiling or reading anything. Operator tooling uses it
+// to prove a cache is primed for the daemon that will read it — a cache primed
+// under a different HOME looks identical from the outside.
+func AOTArtifactPath(cacheDir, prefix string, wasm []byte) string {
+	return aotArtifactPath(cacheDir, prefix, wasm)
+}
+
 func aotArtifactPath(cacheDir, prefix string, wasm []byte) string {
 	sum := sha256.Sum256(wasm)
 	ver := strings.Map(func(r rune) rune {

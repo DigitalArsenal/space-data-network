@@ -44,8 +44,11 @@ import (
 // configure one.
 const DefaultMountPool = 4
 
-// flowAOTCachePrefix names flow-mount AOT artifacts inside a shared AOT
-// cache directory (distinct from the engine's "flatsql-" prefix).
+// flowAOTCachePrefix is the NAMESPACE for flow-mount AOT artifacts inside a
+// shared AOT cache directory (distinct from the engine's "flatsql-" prefix).
+// It is never used as a cache key on its own: the cache prunes by prefix, and
+// many flows share this namespace, so keys are built per flow by flowAOTPrefix
+// (see prewarm.go).
 const flowAOTCachePrefix = "flowmount"
 
 // ErrFlowNotInstalled reports a flow reference that resolves to neither a
@@ -456,9 +459,9 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 		var compiled []byte
 		var aotErr error
 		if deps.AOTCompileOnMiss {
-			compiled, aotErr = flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes)
+			compiled, aotErr = flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, flowAOTPrefix(flowRef), wasmBytes)
 		} else {
-			compiled, aotErr = flatsqlrt.LoadAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes)
+			compiled, aotErr = flatsqlrt.LoadAOTArtifact(deps.AOTCacheDir, flowAOTPrefix(flowRef), wasmBytes)
 		}
 		if aotErr == nil {
 			runBytes = compiled
