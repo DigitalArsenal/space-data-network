@@ -610,7 +610,10 @@ func adminURL(cfg *config.Config) string {
 	scheme := "http"
 	if cfg != nil {
 		if strings.TrimSpace(cfg.Admin.ListenAddr) != "" {
-			addr = cfg.Admin.ListenAddr
+			// The config holds a BIND address. A wildcard bind (0.0.0.0, ::)
+			// is not a destination and no cert can be valid for it, so map it
+			// to loopback before it becomes a URL. See DialAddrForListenAddr.
+			addr = DialAddrForListenAddr(cfg.Admin.ListenAddr)
 		}
 		if cfg.Admin.EffectiveTLSMode() != tlsmgr.ModeDisabled {
 			scheme = "https"

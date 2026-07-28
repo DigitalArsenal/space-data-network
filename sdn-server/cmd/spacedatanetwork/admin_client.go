@@ -255,8 +255,8 @@ func (c *adminClient) do(ctx context.Context, method, path string, body any, out
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: daemon unavailable at %s (config: %s): %w",
-			method, path, c.baseURL, c.res.Describe(), err)
+		return fmt.Errorf("%s %s: daemon unavailable at %s (config: %s)%s: %w",
+			method, path, c.baseURL, c.res.Describe(), certHostHint(c.baseURL, err), err)
 	}
 	defer resp.Body.Close()
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
