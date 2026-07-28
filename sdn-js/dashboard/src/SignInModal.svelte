@@ -147,7 +147,10 @@
                wallet-theme.css styles this identically. -->
           <section class="wallet-login wallet-legacy-profile">
             <h1>Choose how to unlock</h1>
-            <p>Account 0 · this node verifies the legacy signature profile</p>
+            <!-- Plain instruction, not our internal vocabulary: the operator
+                 needs to know WHICH credential to reach for, not the wallet's
+                 account index or which signature profile the node admits. -->
+            <p>Choose how you want to unlock your wallet on this device.</p>
             <div class="wallet-login-actions">
               {#each LEGACY_PROFILES as p (p.id)}
                 <GBtn
