@@ -313,7 +313,7 @@ func providersQueryBaseURL(explicit string) (string, error) {
 	if value := strings.TrimSpace(explicit); value != "" {
 		return value, nil
 	}
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return "", err
 	}

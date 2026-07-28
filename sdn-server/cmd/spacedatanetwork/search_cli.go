@@ -482,7 +482,7 @@ func searchAPIBaseURL(explicit string) (string, error) {
 	if value := strings.TrimSpace(os.Getenv("SDN_API_URL")); value != "" {
 		return value, nil
 	}
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return "", err
 	}
@@ -565,7 +565,7 @@ func searchStandardDirectMatch(row map[string]any, query string) bool {
 }
 
 func openSearchStore() (*storage.FlatSQLStore, error) {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}

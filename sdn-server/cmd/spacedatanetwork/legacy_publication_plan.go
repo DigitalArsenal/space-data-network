@@ -224,7 +224,7 @@ func (p *legacyArtifactPublisher) appendPublicationPlan(export *storage.DatasetE
 }
 
 func registerLegacyPublicationPlan(ctx context.Context, options legacyPublicationPlanRegistrationOptions) (*legacyPublicationPlanRegistrationResult, error) {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
@@ -405,7 +405,7 @@ func registerLegacyPublicationPlan(ctx context.Context, options legacyPublicatio
 }
 
 func rebuildDatasetPublicationShardGroupCARBundles(ctx context.Context, options datasetPublicationCARRebuildOptions) (*datasetPublicationCARRebuildResult, error) {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil && strings.TrimSpace(options.StoragePath) == "" {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}

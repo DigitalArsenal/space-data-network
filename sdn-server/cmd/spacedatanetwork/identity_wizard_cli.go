@@ -72,7 +72,7 @@ var identityWizardCmd = &cobra.Command{
 }
 
 func runIdentityWizard(ctx context.Context, in io.Reader, out io.Writer, options identityWizardOptions) error {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}

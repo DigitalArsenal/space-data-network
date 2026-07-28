@@ -37,8 +37,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"os/user"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -218,7 +220,7 @@ func keyManagerForConfig(cfg *config.Config) (*keys.Manager, string, error) {
 	if cfg == nil {
 		return nil, "", errors.New("config is required")
 	}
-	keyDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys")
+	keyDir := config.KeyDir(cfg)
 	mgr, err := keys.NewManager(keyDir)
 	if err != nil {
 		return nil, keyDir, fmt.Errorf("open key manager at %s: %w", keyDir, err)
@@ -262,7 +264,7 @@ func runKeyExport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(configPath)
+	cfg, cfgRes, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -286,7 +288,7 @@ func runKeyExport(cmd *cobra.Command, _ []string) error {
 	case keyFormatBackup:
 		payload, err = mgr.ExportEncrypted(password)
 	default:
-		payload, err = exportPublicKeyMaterial(cmd, cfg, format)
+		payload, err = exportPublicKeyMaterial(cmd, cfg, cfgRes, format)
 	}
 	if err != nil {
 		return fmt.Errorf("export %s: %w", format, err)
@@ -311,7 +313,7 @@ func runKeyImport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(configPath)
+	cfg, cfgRes, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -323,17 +325,17 @@ func runKeyImport(cmd *cobra.Command, _ []string) error {
 	// Refuse to clobber an existing identity by accident. The mnemonic file is
 	// the authoritative marker: if it exists, this node already HAS an
 	// identity, and importing replaces who it is.
-	mnemonicPath := filepath.Join(keyDir, "mnemonic")
+	mnemonicPath := config.MnemonicPath(cfg)
 	if _, statErr := os.Stat(mnemonicPath); statErr == nil && !keyImportForce {
 		return fmt.Errorf(
-			"this node already has an identity at %s.\n"+
+			"this node already has an identity at %s (config: %s).\n"+
 				"Importing REPLACES it: the PeerID changes, peers must re-trust this node,\n"+
 				"previously published records stay signed by the old key, and root-admin\n"+
 				"sign-in will follow the NEW seed — so the operator must hold the imported\n"+
 				"phrase in their wallet or they will be locked out of the console.\n"+
 				"Export a backup first (`key export --format backup -o backup.txt`), then\n"+
 				"re-run with --force if that is genuinely what you intend",
-			mnemonicPath)
+			mnemonicPath, cfgRes.Describe())
 	}
 
 	raw, err := readKeyImportInput(cmd)
@@ -393,7 +395,7 @@ func readKeyImportInput(cmd *cobra.Command) (string, error) {
 // running EPM service owns, and re-deriving them from the key store would
 // produce an unsigned lookalike. The error points at the surface that already
 // serves them.
-func exportPublicKeyMaterial(cmd *cobra.Command, cfg *config.Config, format keyFormat) (string, error) {
+func exportPublicKeyMaterial(cmd *cobra.Command, cfg *config.Config, res config.Resolution, format keyFormat) (string, error) {
 	switch format {
 	case keyFormatEPM:
 		return "", errors.New(
@@ -408,7 +410,7 @@ func exportPublicKeyMaterial(cmd *cobra.Command, cfg *config.Config, format keyF
 		return "", fmt.Errorf("format %q has no public exporter", format)
 	}
 
-	mnemonic, _, err := loadStoredMnemonic(cfg)
+	mnemonic, _, err := loadStoredMnemonic(cfg, res)
 	if err != nil {
 		return "", err
 	}
@@ -458,12 +460,18 @@ func exportPublicKeyMaterial(cmd *cobra.Command, cfg *config.Config, format keyF
 
 // loadStoredMnemonic reads and decrypts the node's stored mnemonic, using the
 // same path and password precedence as show-identity.
-func loadStoredMnemonic(cfg *config.Config) (mnemonic string, path string, err error) {
-	keyDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys")
-	path = filepath.Join(keyDir, "mnemonic")
+func loadStoredMnemonic(cfg *config.Config, res config.Resolution) (mnemonic string, path string, err error) {
+	keyDir := config.KeyDir(cfg)
+	path = config.MnemonicPath(cfg)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", path, fmt.Errorf("read %s: %w", path, err)
+		if os.IsNotExist(err) {
+			return "", path, config.DescribeMissingNodeState("node identity (mnemonic)", path, res)
+		}
+		if os.IsPermission(err) {
+			return "", path, config.DescribePermissionDenied("the node mnemonic", path, keyDirOwner(keyDir), res)
+		}
+		return "", path, fmt.Errorf("read %s (config: %s): %w", path, res.Describe(), err)
 	}
 	if keys.IsMnemonicEncrypted(data) {
 		mnemonic, err = keys.DecryptMnemonic(data, resolveKeyCLIPassword(cfg))
@@ -473,4 +481,41 @@ func loadStoredMnemonic(cfg *config.Config) (mnemonic string, path string, err e
 		return mnemonic, path, nil
 	}
 	return string(data), path, nil
+}
+
+// mustLoadResolved is the non-error-returning shape a few call sites use
+// (`cfg, _ := ...`). It applies the SAME resolution order as LoadResolved and
+// falls back to defaults rather than failing, matching the previous
+// config.Load behaviour for those sites.
+func mustLoadResolved(explicit string) (*config.Config, error) {
+	cfg, _, err := config.LoadResolved(explicit)
+	if err != nil {
+		return config.Default(), err
+	}
+	return cfg, nil
+}
+
+// resolvedConfig loads the config AND returns the resolution, for commands that
+// need to name the config in an error. This is the shape every command touching
+// node state should use.
+func resolvedConfig() (*config.Config, config.Resolution, error) {
+	return config.LoadResolved(configPath)
+}
+
+// keyDirOwner returns the owning username of a key directory, for the
+// permission-denied message. Best effort: an unknown owner still yields a
+// useful error, it just says "the service user".
+func keyDirOwner(dir string) string {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return ""
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	if u, err := user.LookupId(strconv.FormatUint(uint64(stat.Uid), 10)); err == nil {
+		return u.Username
+	}
+	return "uid " + strconv.FormatUint(uint64(stat.Uid), 10)
 }
