@@ -35,6 +35,19 @@ func platformHardwareAttributes() []hwAttr {
 	return attrs
 }
 
+// platformStableIdentifiers returns identifiers that survive both an OS
+// reinstall and a hardware/resource change. On macOS (development and local
+// Docker hosts) that is the IOPlatformUUID; hw.memsize / CPU brand are
+// deliberately excluded because they are exactly the resize-volatile class
+// that orphaned v2 secrets.
+func platformStableIdentifiers() []hwAttr {
+	attrs := make([]hwAttr, 0, 1)
+	if id := ioPlatformUUID(); id != "" {
+		attrs = append(attrs, hwAttr{"platuuid", id})
+	}
+	return attrs
+}
+
 // ioPlatformUUID returns the stable per-machine IOPlatformUUID via ioreg.
 func ioPlatformUUID() string {
 	out, err := exec.Command("/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice").Output()
