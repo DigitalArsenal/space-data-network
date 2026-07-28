@@ -64,6 +64,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/sourcemetrics"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
@@ -123,6 +124,14 @@ type Node struct {
 	mountedFlows   []*flowrt.MountedFlow
 	config         *config.Config
 	identityBundle *IdentityBundle
+
+	// sourceMetrics is the node's OPERATIONAL retrieval ledger — its own
+	// sqlite file beside (never inside) the record store, holding what the
+	// host's connectors did: last fetch per URL, last provenance-tagged batch
+	// per source id, last publication notification. It feeds the anonymous
+	// $APPS feed. Nil when the store is unavailable; every write path
+	// tolerates nil.
+	sourceMetrics *sourcemetrics.Store
 
 	// startedAt is captured once, at New(), for the node_status_read
 	// capability's uptime_seconds (caps/nodestatus.go, M1 node-status
@@ -344,6 +353,18 @@ func (n *Node) init() error {
 			storage.WithDeferredRecordCatalogReplay())
 		if err != nil {
 			return fmt.Errorf("failed to create storage: %w", err)
+		}
+
+		// Operational retrieval ledger. Its own database file beside the
+		// record store — a record-store rebuild must not take the node's
+		// retrieval history with it, and metric writes must never contend
+		// with the single-writer standards store. A failure here is never
+		// fatal: the node runs, the $APPS feed simply has nothing to report.
+		if metricsStore, mErr := sourcemetrics.Open(filepath.Dir(n.store.Path())); mErr != nil {
+			log.Warnf("Source metrics ledger unavailable (retrieval metrics will not be recorded): %v", mErr)
+		} else {
+			n.sourceMetrics = metricsStore
+			n.installSourceMetricsObservers()
 		}
 	}
 
@@ -967,7 +988,16 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 		reg.RegisterBridgeAware("storage_ingest", storageFac)
 	}
 
-	// HTTP outbound capability — always available
+	// HTTP outbound capability — always available. Egress pacing is host
+	// policy applied inside the connector: operator-configured per-host
+	// spacing, with compiled-in floors (the binding 2.5 s CelesTrak serial
+	// interval) that configuration can raise but never lower.
+	if intervals, invalid := n.config.Modules.EffectiveEgressMinIntervals(); len(intervals) > 0 || len(invalid) > 0 {
+		for _, host := range invalid {
+			log.Warnf("Ignoring unparseable modules.egress_min_interval entry for %q", host)
+		}
+		caps.SetEgressMinIntervals(intervals)
+	}
 	reg.Register("http", caps.NewHTTPCapFactory())
 
 	// Crypto capabilities — always available (pure Go stdlib)
@@ -3754,6 +3784,16 @@ func (n *Node) Stop() error {
 			log.Warnf("Error closing storage: %v", err)
 		}
 	}
+	if n.sourceMetrics != nil {
+		// Detach the connector hooks before closing the ledger so a fetch
+		// still in flight during shutdown cannot write to a closed handle.
+		caps.SetFetchObserver(nil)
+		caps.SetIngestObserver(nil)
+		if err := n.sourceMetrics.Close(); err != nil {
+			log.Warnf("Error closing source metrics ledger: %v", err)
+		}
+		n.sourceMetrics = nil
+	}
 	for _, mf := range n.mountedFlows {
 		mf.Close()
 	}
@@ -3772,6 +3812,46 @@ func (n *Node) Stop() error {
 	}
 
 	return nil
+}
+
+// installSourceMetricsObservers attaches the operational ledger to the host's
+// own connectors. Both hooks are pure observers: they see what the connector
+// did (a URL fetched, a provenance-tagged batch stored) and never influence it.
+// No application meaning is derived here — the wasm flow supplies the
+// provenance, the host merely books it.
+func (n *Node) installSourceMetricsObservers() {
+	metricsStore := n.sourceMetrics
+	if metricsStore == nil {
+		return
+	}
+	caps.SetFetchObserver(func(url string, status int, bytes, durationMs int64, errMsg string) {
+		metricsStore.RecordFetch(sourcemetrics.Fetch{
+			URL:        url,
+			Status:     status,
+			Bytes:      bytes,
+			DurationMs: durationMs,
+			Err:        errMsg,
+		})
+	})
+	caps.SetIngestObserver(func(obs caps.IngestObservation) {
+		metricsStore.RecordIngest(sourcemetrics.Ingest{
+			AppID:      obs.ProducerID,
+			ProviderID: obs.ProviderID,
+			SourceName: obs.SourceName,
+			SourceURL:  obs.SourceURL,
+			Schema:     obs.Schema,
+			BatchID:    obs.BatchID,
+			PullBytes:  obs.PullBytes,
+			Records:    obs.Records,
+			Inserted:   obs.Inserted,
+		})
+	})
+}
+
+// SourceMetrics returns the operational retrieval ledger, or nil when it is
+// unavailable. The $APPS feed reads it.
+func (n *Node) SourceMetrics() *sourcemetrics.Store {
+	return n.sourceMetrics
 }
 
 // FlowManager returns the flow runtime manager, or nil if flows are disabled.

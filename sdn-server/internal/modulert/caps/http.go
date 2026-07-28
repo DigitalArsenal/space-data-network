@@ -8,10 +8,40 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
+
+// FetchObserver books one completed outbound retrieval in the node's
+// operational ledger (internal/sourcemetrics). It is a pure observer: it sees
+// url/status/bytes/duration and NOTHING about what the payload means. Nil
+// disables the ledger. Never returns an error — bookkeeping must not be able
+// to fail a fetch.
+type FetchObserver func(url string, status int, bytes int64, durationMs int64, errMsg string)
+
+var (
+	fetchObserverMu sync.RWMutex
+	fetchObserver   FetchObserver
+)
+
+// SetFetchObserver installs the process-wide fetch ledger hook. Pass nil to
+// disable.
+func SetFetchObserver(observer FetchObserver) {
+	fetchObserverMu.Lock()
+	fetchObserver = observer
+	fetchObserverMu.Unlock()
+}
+
+func observeFetch(url string, status int, bytes, durationMs int64, errMsg string) {
+	fetchObserverMu.RLock()
+	observer := fetchObserver
+	fetchObserverMu.RUnlock()
+	if observer != nil {
+		observer(url, status, bytes, durationMs, errMsg)
+	}
+}
 
 // NewHTTPCapFactory returns a CapFactory for the "http" capability.
 // It allows modules to make outbound HTTP requests.
@@ -74,6 +104,24 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 		req.TimeoutMs = 30000
 	}
 
+	// Host egress pacing (see http_egress.go): serialize per destination host
+	// and honour the minimum spacing that host is owed. Pure connector policy —
+	// the calling module neither sees nor controls it. Waiting for the slot is
+	// bounded by the caller's own timeout budget so a jammed destination can
+	// never hold a flow instance open indefinitely.
+	destHost := egressHostKey(req.URL)
+	paceCtx, paceCancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMs)*time.Millisecond)
+	release, paceWait, paceErr := sharedEgressPacer.acquire(paceCtx, destHost)
+	paceCancel()
+	if paceErr != nil {
+		msg := fmt.Sprintf("egress pacing for %s timed out after %s waiting for the request slot", destHost, paceWait.Round(time.Millisecond))
+		observeFetch(req.URL, 0, 0, paceWait.Milliseconds(), msg)
+		return errCapJSON(msg), nil
+	}
+	defer release()
+
+	started := time.Now()
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
@@ -100,6 +148,7 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	client := &http.Client{Timeout: time.Duration(req.TimeoutMs) * time.Millisecond}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		observeFetch(req.URL, 0, 0, time.Since(started).Milliseconds(), err.Error())
 		return errCapJSON("request failed: " + err.Error()), nil
 	}
 	defer resp.Body.Close()
@@ -110,11 +159,15 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
+		observeFetch(req.URL, resp.StatusCode, int64(len(respBody)), time.Since(started).Milliseconds(), err.Error())
 		return errCapJSON("failed to read response body: " + err.Error()), nil
 	}
 	if int64(len(respBody)) > limit {
-		return errCapJSON(fmt.Sprintf("response body exceeds the %d-byte limit — refusing to deliver a truncated payload", limit)), nil
+		msg := fmt.Sprintf("response body exceeds the %d-byte limit — refusing to deliver a truncated payload", limit)
+		observeFetch(req.URL, resp.StatusCode, int64(len(respBody)), time.Since(started).Milliseconds(), msg)
+		return errCapJSON(msg), nil
 	}
+	observeFetch(req.URL, resp.StatusCode, int64(len(respBody)), time.Since(started).Milliseconds(), "")
 
 	// Collect response headers
 	respHeaders := make(map[string]string)

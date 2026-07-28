@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -101,6 +102,12 @@ func NewStorageCapFactoryWithOptions(store *storage.FlatSQLStore, opts StorageCa
 			if id := strings.TrimSpace(mod.ID()); id != "" && id != "unknown-module" {
 				producer = id
 			}
+		} else if id := strings.TrimSpace(bridge.ProducerID()); id != "" {
+			// Flow bundles provision with mod == nil; the bridge carries the
+			// flow's program id. Without this a flow-ingested record was
+			// stamped with an EMPTY producer ("module:"), which is a
+			// provenance defect, not a cosmetic one.
+			producer = id
 		}
 		s := &storageCapAdapter{
 			store:            store,
@@ -550,6 +557,11 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 		return errCapJSON("ingest failed: " + err.Error())
 	}
 
+	// pullBytes is filled in by the optional raw-archive block below; when the
+	// flow archives nothing, the ledger falls back to the byte count the egress
+	// connector recorded for this source_url.
+	var pullBytes int64
+
 	result := map[string]interface{}{
 		"schema":   schema,
 		"inserted": inserted,
@@ -589,6 +601,9 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 			return errCapJSON("archive requires source, name and raw bytes")
 		}
 		raw := decodeBase64Cap(rawB64)
+		// The raw archive IS the retrieved payload, so its length is the
+		// honest "last pull size" for this source's operational ledger.
+		pullBytes = int64(len(raw))
 		day := time.Now().UTC().Format("2006-01-02")
 		dir := filepath.Join(s.rawRoot, source, day)
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -629,7 +644,66 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 		result["provenance"] = provPath
 	}
 
+	// Book the batch in the node's operational ledger (internal/sourcemetrics).
+	// Observation only: the host records THAT a provenance-tagged batch landed
+	// for this source, never what it meant.
+	observeIngest(IngestObservation{
+		ProducerID: s.producerID,
+		ProviderID: tags.ProviderID,
+		SourceName: tags.SourceName,
+		SourceURL:  tags.SourceURL,
+		Schema:     schema,
+		BatchID:    tags.BatchID,
+		PullBytes:  pullBytes,
+		Records:    len(records),
+		Inserted:   inserted,
+	})
+
 	return okCapJSON(result)
+}
+
+// IngestObservation is one provenance-tagged batch as seen by the host's
+// storage connector, for the operational ledger.
+type IngestObservation struct {
+	// ProducerID is the module/flow instance that drove the ingest — a runtime
+	// identity the host already tracks, which is what lets the $APPS feed
+	// attribute a source to a running app WITHOUT the host knowing anything
+	// about what that app does.
+	ProducerID string
+	ProviderID string
+	SourceName string
+	SourceURL  string
+	Schema     string
+	BatchID    string
+	PullBytes  int64
+	Records    int
+	Inserted   int
+}
+
+// IngestObserver books an ingest batch in the operational ledger. Nil disables
+// it; it must never fail the ingest.
+type IngestObserver func(IngestObservation)
+
+var (
+	ingestObserverMu sync.RWMutex
+	ingestObserver   IngestObserver
+)
+
+// SetIngestObserver installs the process-wide ingest ledger hook. Pass nil to
+// disable.
+func SetIngestObserver(observer IngestObserver) {
+	ingestObserverMu.Lock()
+	ingestObserver = observer
+	ingestObserverMu.Unlock()
+}
+
+func observeIngest(obs IngestObservation) {
+	ingestObserverMu.RLock()
+	observer := ingestObserver
+	ingestObserverMu.RUnlock()
+	if observer != nil {
+		observer(obs)
+	}
 }
 
 // splitSizePrefixedStream parses a [u32le len][bytes]... record stream into

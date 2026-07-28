@@ -1,6 +1,7 @@
 package modulert
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
@@ -82,6 +83,12 @@ type HostBridge struct {
 	capHandlers map[string]CapHandler // capability prefix → handler
 	nodeCtx     *NodeContext
 
+	// producerID identifies the artifact this bridge serves — a module's
+	// manifest plugin id, or a flow bundle's program id. Set by
+	// ProvisionBridge. Capability handlers use it for record provenance, never
+	// for an access decision (the grant set above is the only authority).
+	producerID string
+
 	// Response buffer for the sync hostcall protocol.
 	lastStatus  int32
 	responseBuf []byte
@@ -95,6 +102,15 @@ type HostBridge struct {
 	bodyRefMu   sync.Mutex
 	bodyRefs    map[uint64][]byte
 	bodyRefNext uint64
+}
+
+// ProducerID returns the artifact identity this bridge serves (module plugin
+// id or flow program id), or "" when the bridge was provisioned without one.
+func (hb *HostBridge) ProducerID() string {
+	if hb == nil {
+		return ""
+	}
+	return hb.producerID
 }
 
 // PutBodyRef registers a byte buffer for out-of-band body delivery and
@@ -564,8 +580,17 @@ func detachHostcallBinaryValues(value interface{}, segments *[][]byte) interface
 	}
 }
 
+// encodeHostcallEnvelope frames the hostcall response the guest reads:
+// [u32 metaLen][meta JSON][u32 segCount]([u32 segLen][segment])*
+//
+// The meta JSON is encoded WITHOUT HTML escaping. This is the final encoder on
+// every hostcall response — encodeHostcallJSONResponse re-marshals through it
+// after detaching binary segments — so escaping here would re-corrupt values
+// that Dispatch already encoded correctly. A guest reading a config URL must
+// receive the operator's bytes, not a browser-safe transcription of them; see
+// hostbridge_config_escaping_test.go.
 func encodeHostcallEnvelope(meta interface{}, segments [][]byte) []byte {
-	metaBytes, _ := json.Marshal(meta)
+	metaBytes := marshalJSONNoHTMLEscape(meta)
 	total := 4 + len(metaBytes) + 4
 	for _, segment := range segments {
 		total += 4 + len(segment)
@@ -589,9 +614,45 @@ func encodeHostcallEnvelope(meta interface{}, segments [][]byte) []byte {
 
 // JSON helpers
 
+// okJSON encodes a successful hostcall response.
+//
+// HTML escaping is DISABLED. encoding/json escapes &, < and > as & etc.
+// by default — a browser-safety measure that is meaningless on a wasm hostcall
+// and actively harmful on it: a guest reading a config value would receive
+// "GROUP=stations&FORMAT=csv" where the host holds
+// "GROUP=stations&FORMAT=csv". That silently corrupted every configured source
+// URL carrying a query string with more than one parameter — the exact shape
+// of a CelesTrak GP request — turning an operator's URL override into a
+// request for a host that does not exist.
 func okJSON(result interface{}) []byte {
-	r, _ := json.Marshal(map[string]interface{}{"ok": true, "result": result})
-	return r
+	return marshalJSONNoHTMLEscape(map[string]interface{}{"ok": true, "result": result})
+}
+
+// marshalJSONNoHTMLEscape encodes v as JSON with HTML escaping DISABLED.
+//
+// encoding/json escapes &, < and > by default — a browser-safety measure that
+// is meaningless on a wasm hostcall and actively harmful on it. A guest reading
+// a configured value would receive the HTML entity form where the host holds
+// the raw character, which silently corrupted every source URL carrying a
+// multi-parameter query string (the exact shape of a CelesTrak GP request):
+// "GROUP=stations&FORMAT=csv" reached the guest as
+// "GROUP=stationsu0026FORMAT=csv" — the guest's minimal JSON reader does not
+// decode \u escapes — and the node then spent its whole timeout dialling a
+// host that does not exist.
+func marshalJSONNoHTMLEscape(v interface{}) []byte {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(v); err != nil {
+		fallback, _ := json.Marshal(map[string]interface{}{
+			"ok":    false,
+			"error": map[string]string{"message": "failed to encode response: " + err.Error()},
+		})
+		return fallback
+	}
+	// Encode appends a newline; hostcall payloads are length-prefixed, so trim
+	// it rather than shipping a stray byte to the guest.
+	return bytes.TrimRight(buf.Bytes(), "\n")
 }
 
 func errJSON(msg string) []byte {

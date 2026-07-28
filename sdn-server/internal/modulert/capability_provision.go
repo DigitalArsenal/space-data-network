@@ -92,6 +92,13 @@ func ProvisionBridge(bridge *HostBridge, reg *CapabilityRegistry, capabilities [
 		return err
 	}
 
+	// Producer identity for provenance. Capability handlers that stamp who
+	// produced a record (caps/storage.go) read this off the bridge, so a FLOW
+	// bundle attributes its records to its own program id instead of an empty
+	// producer. mod != nil already carries its manifest id; mod == nil (the
+	// flow-bundle path) is exactly the case that used to have none.
+	bridge.producerID = pluginID
+
 	granted := make(map[string]bool, len(capabilities))
 	for _, c := range capabilities {
 		granted[c] = true
