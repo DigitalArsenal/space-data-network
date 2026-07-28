@@ -4426,6 +4426,105 @@ func (s *FlatSQLStore) SourceBatchProgress() ([]SourceBatchProgress, error) {
 	return out, nil
 }
 
+// ProducerSourceProgress is what ONE PRODUCER has contributed to one
+// (schema, provider, source) lane on this node.
+//
+// SourceBatchProgress deliberately aggregates across producer identities: it
+// answers "how much data is here", which is the anonymous progress question.
+// This answers the other one — "who sent it" — which is what a node needs to
+// show data it did not pull itself. Records that arrive over pubsub carry their
+// producer's peer id in the source tags; a node that only ever reported its own
+// retrieval ledger could receive a full catalog from a peer and still show an
+// empty board.
+type ProducerSourceProgress struct {
+	ProducerPeerID string
+	SchemaName     string
+	ProviderID     string
+	SourceName     string
+	// LastBatchID is the most recently updated batch in this lane, and
+	// BatchCount is how many distinct batches this producer has contributed.
+	LastBatchID   string
+	BatchCount    int64
+	Count         int64
+	TotalBytes    int64
+	FirstSeenUnix int64
+	LastSeenUnix  int64
+	UpdatedAtUnix int64
+}
+
+// ProducerSourceProgress reports per-producer contribution to each source lane,
+// most recently updated first. Read-only; no side effects.
+func (s *FlatSQLStore) ProducerSourceProgress() ([]ProducerSourceProgress, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT ss.producer_peer_id, ss.schema_name, ss.provider_id, ss.source_name,
+		       COUNT(DISTINCT ss.batch_id) AS batch_count,
+		       SUM(ss.record_count) AS count,
+		       SUM(ss.total_bytes) AS total_bytes,
+		       MAX(ss.updated_at) AS updated_at,
+		       MIN(t.first_seen) AS first_seen,
+		       MAX(t.last_seen) AS last_seen
+		FROM sdn_record_source_summary ss
+		LEFT JOIN (
+			SELECT tg.schema_name, tg.provider_id, tg.source_name, tg.producer_peer_id,
+			       MIN(tg.created_at) AS first_seen, MAX(tg.created_at) AS last_seen
+			FROM sdn_record_source_tags tg
+			GROUP BY tg.schema_name, tg.provider_id, tg.source_name, tg.producer_peer_id
+		) t
+		  ON t.schema_name      = ss.schema_name
+		 AND t.provider_id      = ss.provider_id
+		 AND t.source_name      = ss.source_name
+		 AND t.producer_peer_id = ss.producer_peer_id
+		GROUP BY ss.producer_peer_id, ss.schema_name, ss.provider_id, ss.source_name
+		HAVING SUM(ss.record_count) > 0
+		ORDER BY updated_at DESC, ss.producer_peer_id ASC, ss.schema_name ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query producer source progress: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]ProducerSourceProgress, 0)
+	for rows.Next() {
+		var p ProducerSourceProgress
+		var updatedAt, firstSeen, lastSeen sql.NullInt64
+		if err := rows.Scan(
+			&p.ProducerPeerID, &p.SchemaName, &p.ProviderID, &p.SourceName,
+			&p.BatchCount, &p.Count, &p.TotalBytes, &updatedAt, &firstSeen, &lastSeen,
+		); err != nil {
+			return nil, fmt.Errorf("scan producer source progress: %w", err)
+		}
+		p.UpdatedAtUnix = updatedAt.Int64
+		p.FirstSeenUnix = firstSeen.Int64
+		p.LastSeenUnix = lastSeen.Int64
+		p.LastBatchID = s.latestBatchForProducerLocked(p.ProducerPeerID, p.SchemaName, p.ProviderID, p.SourceName)
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate producer source progress: %w", err)
+	}
+	return out, nil
+}
+
+// latestBatchForProducerLocked names the most recently updated batch in one
+// producer's lane. Best-effort: an empty answer costs a label, never a row.
+// Caller holds s.mu.
+func (s *FlatSQLStore) latestBatchForProducerLocked(producerPeerID, schemaName, providerID, sourceName string) string {
+	var batchID string
+	err := s.db.QueryRow(`
+		SELECT batch_id FROM sdn_record_source_summary
+		WHERE producer_peer_id = ? AND schema_name = ? AND provider_id = ? AND source_name = ?
+		ORDER BY updated_at DESC, batch_id DESC
+		LIMIT 1`,
+		producerPeerID, schemaName, providerID, sourceName).Scan(&batchID)
+	if err != nil {
+		return ""
+	}
+	return batchID
+}
+
 // RecordIndexPageQuery filters the anonymous per-record index-page surface
 // (/api/v1/data/index): one indexed record per row, optionally restricted to a
 // source lane (provider/source/batch) and/or a NORAD substring.

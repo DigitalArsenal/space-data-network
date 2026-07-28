@@ -1729,7 +1729,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						metricsSource,
 						n.Store(),
 						pnmSink,
-					)
+					).WithSelfPeerID(n.PeerID().String())
 					appsAPI.RegisterRoutes(adminMux)
 					log.Infof("Apps feed available at %s://%s/api/apps (anonymous read)", adminScheme, adminAddr)
 				}
