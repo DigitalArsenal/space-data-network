@@ -85,6 +85,51 @@ var rootCmd = &cobra.Command{
 	Long: `spacedatanetwork is a specialized fork of IPFS tailored for the Space Data Network.
 It replaces generic content-addressed storage with FlatBuffer-native data handling
 and SQLite-based structured storage, optimized for space data standards.`,
+	PersistentPreRun: func(cmd *cobra.Command, _ []string) { configureCLILogging(cmd) },
+}
+
+// longRunningCommands are the ones an operator EXPECTS to narrate themselves:
+// they run until stopped, and their progress log IS the output.
+var longRunningCommands = map[string]bool{
+	"daemon": true, "start": true, "restart": true, "service": true,
+	"ingest": true, "sync": true, "monitor": true, "stream": true, "watch": true,
+}
+
+// configureCLILogging picks the library log level AFTER cobra has parsed flags.
+//
+// Two bugs are fixed here. First, this used to run in main() before parsing, so
+// `debug` was always false and --debug did nothing. Second, everything ran at
+// Info, which spilled library noise like
+//
+//	2026-07-28T06:32:51Z WARN storage storage/flatsql.go:275 FlatSQL engine ...
+//
+// into the output of one-shot commands. That is jargon leaking into an
+// operator-facing surface: `key export --format xpub` should print an xpub and
+// nothing else, so it can be piped.
+//
+// A long-running command still narrates at Info — its log IS its output. A
+// one-shot command is quiet unless something actually failed, and --debug
+// always wins.
+func configureCLILogging(cmd *cobra.Command) {
+	if debug {
+		logging.SetAllLoggers(logging.LevelDebug)
+		return
+	}
+	name := ""
+	if cmd != nil {
+		name = cmd.Name()
+		for c := cmd; c != nil; c = c.Parent() {
+			if longRunningCommands[c.Name()] {
+				name = c.Name()
+				break
+			}
+		}
+	}
+	if longRunningCommands[name] {
+		logging.SetAllLoggers(logging.LevelInfo)
+		return
+	}
+	logging.SetAllLoggers(logging.LevelError)
 }
 
 var daemonCmd = &cobra.Command{
@@ -232,12 +277,9 @@ func init() {
 }
 
 func main() {
-	if debug {
-		logging.SetAllLoggers(logging.LevelDebug)
-	} else {
-		logging.SetAllLoggers(logging.LevelInfo)
-	}
-
+	// Log level is set in rootCmd's PersistentPreRun, NOT here: at this point
+	// cobra has not parsed flags yet, so `debug` is always false and --debug
+	// never took effect. See configureCLILogging.
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -636,7 +678,17 @@ func resolveHDWalletWasmPathFromInputs(explicit, envPath string, layout bundle.L
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("hd-wallet-wasi.wasm not found; set --wasm or HD_WALLET_WASM_PATH")
+	// Say WHERE we looked. "not found" without a search list makes the
+	// operator guess, and on a service host the answer is rarely obvious —
+	// the same honesty rule as the config resolver's errors (§20).
+	searched := make([]string, 0, len(candidates)+1)
+	if layout.HDWalletWASM != "" {
+		searched = append(searched, layout.HDWalletWASM+"  (bundle layout)")
+	}
+	searched = append(searched, candidates...)
+	return "", fmt.Errorf(
+		"hd-wallet-wasi.wasm not found.\nSearched:\n  %s\nSet --wasm <path> or HD_WALLET_WASM_PATH to point at it",
+		strings.Join(searched, "\n  "))
 }
 
 func defaultHDWalletWasmCandidates() []string {
