@@ -454,7 +454,7 @@ func shouldDelegateInstallToHelper() bool {
 	if runtime.GOOS == "windows" {
 		return true
 	}
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return false
 	}
@@ -483,7 +483,7 @@ func prepareUpdateHelper(paths update.Paths, updateID string, token string) (*up
 	if resolved, err := filepath.EvalSymlinks(source); err == nil {
 		source = resolved
 	}
-	cfg, _ := config.Load(configPath)
+	cfg, _ := mustLoadResolved(configPath)
 	return update.PrepareHelperPlan(update.HelperPlanOptions{
 		Paths:            paths,
 		SourceExecutable: source,

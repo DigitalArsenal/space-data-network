@@ -180,7 +180,7 @@ func loadSyncStatusSnapshot(ctx context.Context, options syncStatusOptions) (syn
 	default:
 	}
 
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return syncStatusSnapshot{}, fmt.Errorf("failed to load config: %w", err)
 	}

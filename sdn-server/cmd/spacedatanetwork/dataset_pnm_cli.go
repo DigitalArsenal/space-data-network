@@ -156,7 +156,7 @@ func runDatasetPNMsImport(cmd *cobra.Command, args []string) error {
 }
 
 func openDatasetPNMStore() (*storage.FlatSQLStore, error) {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}

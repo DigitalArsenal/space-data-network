@@ -115,11 +115,21 @@ var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Print the SDN configuration path",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		path := strings.TrimSpace(configPath)
-		if path == "" {
-			path = config.DefaultPath()
+		// This command's ENTIRE JOB is to say which config is in use. Printing
+		// the home default while the daemon runs from /etc was the most
+		// misleading output in the whole CLI — it answered the operator's
+		// question wrongly and confidently.
+		res, err := config.ResolvePath(configPath)
+		if err != nil {
+			return err
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), path)
+		fmt.Fprintln(cmd.OutOrStdout(), res.Path)
+		fmt.Fprintf(cmd.ErrOrStderr(), "resolved from: %s\n", res.Source)
+		if !res.Exists {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"warning: this file does not exist; defaults are in use. %s\n",
+				config.OverrideHint)
+		}
 		return nil
 	},
 }
@@ -136,7 +146,7 @@ var openCmd = &cobra.Command{
 	Use:   "open",
 	Short: "Print the local SDN UI URL",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(configPath)
+		cfg, _, err := config.LoadResolved(configPath)
 		if err != nil {
 			return err
 		}
@@ -235,7 +245,7 @@ func main() {
 }
 
 func runStatus(cmd *cobra.Command) error {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return err
 	}
@@ -302,7 +312,7 @@ func writeStatusDetail(out io.Writer, key string, value any) {
 }
 
 func runIdentityExport(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return err
 	}
@@ -668,7 +678,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	updateShutdown := make(chan struct{}, 1)
 
 	// Load configuration
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -4566,7 +4576,7 @@ var defaultFaviconPNG = []byte{
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -4674,7 +4684,7 @@ func newHDWalletMnemonicGenerator(wp string) func(context.Context) (string, erro
 }
 
 func runReindex(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -4766,10 +4776,11 @@ func runDeriveXPub(cmd *cobra.Command, args []string) error {
 
 func runShowIdentity(cmd *cobra.Command, args []string) error {
 	// Load config for storage path and key password
-	cfg, err := config.Load(configPath)
+	cfg, cfgRes, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "config: %s\n", cfgRes.Describe())
 
 	// Resolve key password: env > config > machine default
 	keyPassword := os.Getenv("SDN_KEY_PASSWORD")
@@ -4781,12 +4792,20 @@ func runShowIdentity(cmd *cobra.Command, args []string) error {
 	}
 
 	// Locate mnemonic file
-	keyDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys")
-	mnemonicPath := filepath.Join(keyDir, "mnemonic")
+	// Shared derivation — the same functions internal/node uses, so the CLI
+	// can never look somewhere the daemon does not write.
+	keyDir := config.KeyDir(cfg)
+	mnemonicPath := config.MnemonicPath(cfg)
 
 	data, err := os.ReadFile(mnemonicPath)
 	if err != nil {
-		return fmt.Errorf("failed to read mnemonic file %s: %w", mnemonicPath, err)
+		if os.IsNotExist(err) {
+			return config.DescribeMissingNodeState("node identity (mnemonic)", mnemonicPath, cfgRes)
+		}
+		if os.IsPermission(err) {
+			return config.DescribePermissionDenied("the node mnemonic", mnemonicPath, keyDirOwner(keyDir), cfgRes)
+		}
+		return fmt.Errorf("read mnemonic %s (config: %s): %w", mnemonicPath, cfgRes.Describe(), err)
 	}
 
 	// Decrypt if encrypted, otherwise use as-is

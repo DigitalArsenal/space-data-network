@@ -84,7 +84,7 @@ func init() {
 }
 
 func runIngest(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(configPath)
+	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
