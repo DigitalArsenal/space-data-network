@@ -1414,7 +1414,12 @@ func (n *Node) readNodeKeyFile(keyPath string) (crypto.PrivKey, error) {
 			// Try older machine-derivation generations before giving up, and
 			// re-seal under the current one on success, so a node whose
 			// machine-id/RAM/CPU changed (rebuild or resize) is not orphaned
-			// from its own identity. Skipped when an explicit password is set.
+			// from its own identity.
+			//
+			// Skipped when a password is pinned: an explicit password must not
+			// be silently bypassed by a machine-derived one. Moving a node to a
+			// different BOX is a different problem with a different answer —
+			// `key reseal`, an explicit operator action, not a silent one.
 			if n.usingDerivedKeyPassword() {
 				if recovered, scheme, rerr := keys.DecryptSecretAnyScheme(body); rerr == nil {
 					log.Warnf("migrating node identity key at %s from %s-derived key to the current stable derivation", keyPath, scheme)
@@ -1446,11 +1451,25 @@ func (n *Node) readNodeKeyFile(keyPath string) (crypto.PrivKey, error) {
 // resolveKeyPassword returns the password for mnemonic encryption/decryption.
 // Priority: SDN_KEY_PASSWORD env var > config security.key_password > machine-derived default.
 func (n *Node) resolveKeyPassword() string {
-	if envPw := os.Getenv("SDN_KEY_PASSWORD"); envPw != "" {
-		return envPw
+	// Routed through config.KeyPassword so SDN_KEY_PASSWORD_FILE — a mounted
+	// secret file — is honoured by the DAEMON and not only by the CLI.
+	//
+	// It was not, and the gap was expensive: a unit that set
+	// SDN_KEY_PASSWORD_FILE looked like it had a portable, file-fed identity,
+	// while the daemon quietly sealed everything under the machine-derived
+	// default instead. The mismatch is invisible until the node moves to
+	// another box — the exact moment the file was supposed to save it — and
+	// then the mnemonic will not open anywhere. The CLI and the daemon must
+	// resolve this the same way or the file is a lie.
+	password, err := config.KeyPassword(n.config)
+	if err != nil {
+		// Configured-but-unreadable: shout, because the cause is a missing
+		// mount and the symptom is going to look like a corrupt mnemonic.
+		log.Errorf("key password file is configured but unreadable (%v); falling back to the machine-derived default", err)
+		return keys.DeriveDefaultPassword()
 	}
-	if n.config.Security.KeyPassword != "" {
-		return n.config.Security.KeyPassword
+	if password != "" {
+		return password
 	}
 	return keys.DeriveDefaultPassword()
 }
@@ -1471,11 +1490,16 @@ func (n *Node) recordKeyDerivation(keyDir string) {
 	}
 }
 
-// usingDerivedKeyPassword reports whether the mnemonic key password comes from
-// the machine-derived default (no explicit SDN_KEY_PASSWORD / config password).
-// Legacy-key migration is only attempted in that case.
+// usingDerivedKeyPassword reports whether the key password comes from the
+// machine-derived default — no inline SDN_KEY_PASSWORD, no mounted
+// SDN_KEY_PASSWORD_FILE, no config password.
+//
+// It no longer gates recovery (see recoverSecretUnderAnyPassword): a node with
+// an explicit password may still be holding material sealed under an older
+// derived one, which is precisely what a node MOVED to a new box looks like.
 func (n *Node) usingDerivedKeyPassword() bool {
-	return os.Getenv("SDN_KEY_PASSWORD") == "" && n.config.Security.KeyPassword == ""
+	password, err := config.KeyPassword(n.config)
+	return err == nil && password == ""
 }
 
 func (n *Node) generateRandomKey(keyDir, keyPath string) (crypto.PrivKey, error) {

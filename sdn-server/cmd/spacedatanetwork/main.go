@@ -251,6 +251,8 @@ var (
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path")
+	daemonCmd.Flags().BoolVar(&allowMultiDaemonFlag, "allow-multi-daemon", false,
+		"DEVELOPMENT ONLY: start even if another SDN daemon is running on this box (owner law: one instance per box)")
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug logging")
 
 	daemonCmd.Flags().StringVarP(&listenAddr, "listen", "l", "", "override listen address")
@@ -729,6 +731,13 @@ func validateAssetPinAdminUIAvailability(cfg *config.Config, available bool) err
 }
 
 func runDaemon(cmd *cobra.Command, args []string) error {
+	// One node per box (owner law 2026-07-28). Checked BEFORE any config load,
+	// port bind or store open, so a second daemon fails immediately and without
+	// touching the running node's files.
+	if err := enforceSingleDaemonPerBox(); err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	updateShutdown := make(chan struct{}, 1)
