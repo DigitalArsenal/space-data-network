@@ -67,8 +67,12 @@ say() { [[ "$QUIET" == "yes" ]] || printf '%s\n' "$*"; }
 read -r -d '' PROBE <<'PROBE_EOF' || true
 # --- systemd units actively RUNNING an SDN daemon -----------------------------
 if command -v systemctl >/dev/null 2>&1; then
+  # Candidate units are matched on NAME only to keep the loop cheap, but the name
+  # is NOT the decision — ExecStart below is. host-02's kubo.service is an SDN
+  # node yet carries neither 'sdn' nor 'spacedata' in its name, so 'kubo|ipfs'
+  # must be candidates too or a real instance goes unseen.
   for unit in $(systemctl list-units --type=service --state=running --no-legend --plain 2>/dev/null \
-                | awk '{print $1}' | grep -Ei 'sdn|spacedata' || true); do
+                | awk '{print $1}' | grep -Ei 'sdn|spacedata|kubo|ipfs' || true); do
     exec_line=$(systemctl show "$unit" -p ExecStart --no-pager 2>/dev/null)
     # A plain kubo blockstore is NOT an instance. An SDN-patched kubo IS.
     case "$exec_line" in
@@ -76,9 +80,14 @@ if command -v systemctl >/dev/null 2>&1; then
         cfg=$(printf '%s' "$exec_line" | grep -oE '\-\-config [^ "]+' | head -1 | cut -d' ' -f2)
         printf 'UNIT\t%s\t%s\n' "$unit" "${cfg:-no --config}" ;;
       *ipfs*daemon*)
-        # only if it runs out of an SDN install root
+        # A kubo daemon counts as an SDN instance if EITHER it runs out of an SDN
+        # install root, OR it advertises itself to the network as one via
+        # --agent-version-suffix=sdn… . host-02's kubo.service is /usr/local/bin/ipfs
+        # with --agent-version-suffix=sdn-celestrak: path alone would have missed it,
+        # yet every peer on the network sees it as an SDN node.
         case "$exec_line" in
-          */opt/sdn*|*/opt/spacedatanetwork*) printf 'UNIT\t%s\t%s\n' "$unit" "SDN-rooted kubo" ;;
+          */opt/sdn*|*/opt/spacedatanetwork*|*agent-version-suffix=sdn*)
+            printf 'UNIT\t%s\t%s\n' "$unit" "SDN kubo node" ;;
         esac ;;
     esac
   done
@@ -94,9 +103,11 @@ ps axo pid=,args= 2>/dev/null \
   | while read -r pid rest; do
       case "$rest" in
         *ipfs*daemon*)
-          # a plain kubo blockstore is not an instance; only an SDN-rooted one is
+          # a plain kubo blockstore is not an instance; an SDN-rooted one is, and
+          # so is one advertising --agent-version-suffix=sdn… (see the unit probe)
           case "$rest" in
-            */opt/sdn*|*/opt/spacedatanetwork*) printf 'PROC\tpid=%s\t%s\n' "$pid" "$rest" ;;
+            */opt/sdn*|*/opt/spacedatanetwork*|*agent-version-suffix=sdn*)
+              printf 'PROC\tpid=%s\t%s\n' "$pid" "$rest" ;;
           esac ;;
         *) printf 'PROC\tpid=%s\t%s\n' "$pid" "$rest" ;;
       esac
