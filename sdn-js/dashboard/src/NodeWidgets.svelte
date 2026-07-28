@@ -499,31 +499,36 @@
 
 <style>
   .grid {
-    display: grid;
-    /* auto-FIT, not auto-fill: auto-fill keeps the empty trailing track it
-       created, which is the gap on the right at wide viewports. auto-fit
-       collapses unfilled tracks and hands their width back to the real
-       widgets, so the row always spans the full width equally. */
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    /* dense: a short widget backfills the hole a tall one leaves, so the page
-       fills upper-left -> lower-right instead of stranding one column. */
-    grid-auto-flow: row dense;
+    /* FLEX, not grid: grid tracks are fixed for the whole container, so a
+       partial final row leaves unfilled tracks — CHAIN ADDRESSES alone on
+       row 2 with a void beside it. Flex lines distribute leftover space
+       across the items ON THAT LINE, so every row spans edge-to-edge at any
+       viewport and any widget count, including a single-widget row. */
+    display: flex;
+    flex-wrap: wrap;
     gap: 16px;
-    /* Owner: every widget in a row is the SAME HEIGHT — the grid reads as
-       uniform cards instead of leaving dead space under the short ones. */
+    /* Items stretch to the tallest in THEIR OWN line — equal heights per row. */
     align-items: stretch;
+    align-content: flex-start;
     min-width: 0;
   }
-  .grid > * { min-width: 0; display: grid; }
+  /* :global is REQUIRED here. Widgets that are a bare <Panel> render a
+     <section> carrying PANEL's scope class, not this component's, so a scoped
+     `.grid > *` silently skipped them — they kept flex defaults and refused to
+     grow, which is what left a 944px void on a partial row at 1920. */
+  .grid > :global(*) {
+    /* grow AND shrink from a preferred basis: the grow is what closes the gap. */
+    flex: 1 1 300px;
+    min-width: 0;
+  }
   .grid :global(> * > section) { height: 100%; }
-  /* The contact card is the first and widest widget: two columns where there
-     is room, so its labelled rows are readable rather than squeezed. */
-  .contact { grid-column: span 2; min-width: 0; }
+  /* The contact card prefers two columns' worth, but still grows/shrinks. */
+  .contact { flex-basis: 620px; }
   .contact :global(> section) { height: 100%; }
   .contact .contact-fields { columns: 2; column-gap: 24px; }
   .contact .contact-fields .row { break-inside: avoid; }
-  /* Addresses are long strings; give them the full row. */
-  .wide { grid-column: 1 / -1; min-width: 0; }
+  /* Long-string widgets take a whole line to themselves. */
+  .wide { flex-basis: 100%; min-width: 0; }
   .wide :global(> section) { height: 100%; }
   .w { display: flex; flex-direction: column; height: 100%; min-width: 0; }
   .whead {
@@ -632,8 +637,9 @@
   .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
 
   @media (max-width: 760px) {
-    .grid { grid-template-columns: 1fr; gap: 12px; }
-    .contact { grid-column: 1 / -1; }
+    .grid { gap: 12px; }
+    .grid > :global(*) { flex-basis: 100%; }
+    .contact { flex-basis: 100%; }
     .contact .contact-fields { columns: 1; }
     dl.cols { columns: 1; }
     .row { flex-direction: column; gap: 2px; align-items: stretch; }
