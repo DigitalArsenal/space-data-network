@@ -500,7 +500,11 @@
 <style>
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    /* auto-FIT, not auto-fill: auto-fill keeps the empty trailing track it
+       created, which is the gap on the right at wide viewports. auto-fit
+       collapses unfilled tracks and hands their width back to the real
+       widgets, so the row always spans the full width equally. */
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     /* dense: a short widget backfills the hole a tall one leaves, so the page
        fills upper-left -> lower-right instead of stranding one column. */
     grid-auto-flow: row dense;
