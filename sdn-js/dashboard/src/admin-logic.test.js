@@ -608,6 +608,44 @@ describe('ACCOUNTS — one list for nodes and logins (contract §16)', async () 
     expect(rows[0].isSelf).toBe(true);
   });
 
+  // Owner ruling 2026-07-28 (supersedes the same-day "no SELF row" rule):
+  // "we should have the celestrak.eth box, the sdn.spaceaware.io box, and the
+  // local machine getting updated every deployment."
+  it('THIS NODE is a row like any other, and it leads even at the lowest trust', () => {
+    const lowTrustSelf = [
+      { peerId: '12D3KooWAlpha', dn: 'Alpha Node', org: 'Ops', trustLevel: 'ultimate', online: true, isSelf: false },
+      { peerId: '12D3KooWSelf', dn: 'SpaceAware.io', org: '', trustLevel: 'unknown', online: true, isSelf: true },
+    ];
+    const rows = sortAccounts(mergeAccounts(lowTrustSelf.map(accountFromNode), []));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ isSelf: true, name: 'SpaceAware.io' });
+    // The name is the feed's own vCard-derived DN — nothing is invented for it.
+    expect(accountDisplayName(rows[0])).toBe('SpaceAware.io');
+  });
+
+  it('no filter may strip SELF back out of the listing', async () => {
+    const mod = await import('./accounts.js');
+    expect(mod.withoutSelf).toBeUndefined();
+  });
+
+  it('reads the published vCard FN when the feed carries no DN, but never a placeholder', async () => {
+    const { vcardDisplayName } = await import('./accounts.js');
+    const card = (fn) => `BEGIN:VCARD\r\nVERSION:4.0\r\nFN:${fn}\r\nEND:VCARD\r\n`;
+    // This node's own entry: the snapshot ships SelfVCard and no SelfDN.
+    const selfRow = accountFromNode({ peerId: '16Uiu2HAmSelf', dn: '', org: '', vcard: card('SpaceAware.io'), isSelf: true });
+    expect(accountDisplayName(selfRow)).toBe('SpaceAware.io');
+    // The node's synthesized card for a peer it knows nothing about carries
+    // the peer id in ShortString form — an identifier, so it stays "unknown".
+    const placeholder = accountFromNode({ peerId: '16Uiu2HAmQMSobG4', dn: '', org: '', vcard: card('<peer.ID 16*cuvDMv>') });
+    expect(accountDisplayName(placeholder)).toBe('unknown');
+    expect(isUnnamed(placeholder)).toBe(true);
+    // A verbatim peer id is refused for the same reason.
+    expect(vcardDisplayName(card('16Uiu2HAmQMSobG4'), '16Uiu2HAmQMSobG4')).toBe('');
+    // DN still wins when the feed has one.
+    expect(accountFromNode({ peerId: 'p', dn: 'Config Trusted Peer', vcard: card('Other') }).name).toBe('Config Trusted Peer');
+    expect(vcardDisplayName('', 'p')).toBe('');
+  });
+
   it('the sign-in controller declines the quarantine capability (§15.1)', () => {
     const real = {
       listQuarantinedWalletRecords: () => [{ key: 'x' }],
