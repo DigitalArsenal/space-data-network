@@ -46,6 +46,8 @@ REMOTE_BIN='$HOME/.local/bin/spacedatanetwork'
 IMAGE=""
 FROM_HOST=""
 DRY_RUN="no"
+ALLOW_WALLET_CHANGE="no"
+IGNORE_PIN="no"
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; BLU=$'\033[34m'; NC=$'\033[0m'
 info() { printf '%s==>%s %s\n' "$BLU" "$NC" "$*"; }
@@ -59,6 +61,8 @@ while [[ $# -gt 0 ]]; do
     --from-host) FROM_HOST="$2"; shift 2 ;;
     --target)    TARGET="$2"; shift 2 ;;
     --dry-run)   DRY_RUN="yes"; shift ;;
+    --allow-wallet-wasm-change) ALLOW_WALLET_CHANGE="yes"; shift ;;
+    --ignore-pin) IGNORE_PIN="yes"; shift ;;
     -h|--help)   sed -n '3,12p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -89,6 +93,7 @@ extract_from_image() {
   trap "docker rm -f '$cid' >/dev/null 2>&1 || true; rm -rf '$STAGE'" EXIT
   docker cp "${cid}:/app/spacedatanetwork" "${STAGE}/spacedatanetwork"
   docker cp "${cid}:/opt/wasmedge/lib/libwasmedge.so.0.1.0" "${STAGE}/libwasmedge.so.0.1.0"
+  docker cp "${cid}:/usr/local/lib/hd-wallet-wasi.wasm" "${STAGE}/hd-wallet-wasi.wasm"
   docker rm -f "$cid" >/dev/null 2>&1 || true
 }
 
@@ -96,12 +101,14 @@ extract_from_host() {
   info "copying the LIVE artifacts from ${FROM_HOST} (parity with what is actually running)"
   scp -q "${FROM_HOST}:/opt/spacedatanetwork/bin/spacedatanetwork" "${STAGE}/spacedatanetwork"
   scp -q "${FROM_HOST}:/opt/spacedatanetwork/.wasmedge/lib/libwasmedge.so.0.1.0" "${STAGE}/libwasmedge.so.0.1.0"
+  scp -q "${FROM_HOST}:/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm" "${STAGE}/hd-wallet-wasi.wasm"
 }
 
 if [[ -n "$IMAGE" ]]; then extract_from_image; else extract_from_host; fi
 
 [[ -s "${STAGE}/spacedatanetwork" ]]      || die "no binary extracted"
 [[ -s "${STAGE}/libwasmedge.so.0.1.0" ]]  || die "no libwasmedge extracted"
+[[ -s "${STAGE}/hd-wallet-wasi.wasm" ]]   || die "no hd-wallet-wasi.wasm extracted"
 
 # Refuse to ship anything that is not a linux/x86-64 ELF. This is the check that
 # would have caught the Mach-O arm64 artifacts sitting in the source tree.
@@ -112,8 +119,10 @@ fi
 
 BIN_SHA="$(shasum -a 256 "${STAGE}/spacedatanetwork" | cut -d' ' -f1)"
 LIB_SHA="$(shasum -a 256 "${STAGE}/libwasmedge.so.0.1.0" | cut -d' ' -f1)"
-ok "binary     sha256 ${BIN_SHA:0:16}…"
-ok "libwasmedge sha256 ${LIB_SHA:0:16}…"
+WALLET_SHA="$(shasum -a 256 "${STAGE}/hd-wallet-wasi.wasm" | cut -d' ' -f1)"
+ok "binary          sha256 ${BIN_SHA:0:16}…"
+ok "libwasmedge     sha256 ${LIB_SHA:0:16}…"
+ok "hd-wallet-wasi  sha256 ${WALLET_SHA:0:16}…"
 
 if [[ "$DRY_RUN" == "yes" ]]; then
   info "[dry-run] would refresh ${TARGET}; stopping here"
@@ -126,19 +135,78 @@ if ! ssh -o ConnectTimeout=10 -o BatchMode=yes "$TARGET" true 2>/dev/null; then
   exit 0
 fi
 
+# ---- PIN: a node whose identity only one binary can read --------------------
+# Learned the hard way on 2026-07-28: binary bf498aee could NOT decrypt a
+# mnemonic written by bf53e36b ("chacha20poly1305: message authentication
+# failed"), because the machine-derived at-rest key is not stable across builds.
+# Refreshing the binary silently stranded a freshly created node identity — the
+# PeerID is derived at runtime and stored nowhere, so nothing on disk showed it.
+#
+# A PIN file records "this node's identity is only readable by THIS binary".
+# Honour it by default; overriding is an explicit, logged act.
+PIN_STATE="$(ssh -o ConnectTimeout=10 "$TARGET" \
+  "[ -s ${REMOTE_LIB_DIR}/PIN ] && grep -m1 '^binary_sha256=' ${REMOTE_LIB_DIR}/PIN | cut -d= -f2 || echo none" 2>/dev/null || echo none)"
+if [[ "$PIN_STATE" != "none" && -n "$PIN_STATE" ]]; then
+  if [[ "$PIN_STATE" == "$BIN_SHA" ]]; then
+    ok "PIN present and matches the incoming binary — safe to proceed"
+  elif [[ "$IGNORE_PIN" == "yes" ]]; then
+    warn "--ignore-pin: overriding a binary PIN on ${TARGET}"
+    warn "  pinned:   ${PIN_STATE:0:16}…"
+    warn "  incoming: ${BIN_SHA:0:16}…"
+    warn "if this node holds an identity, CAPTURE ITS PeerID FIRST:"
+    warn "  ssh ${TARGET} 'spacedatanetwork key export --format peerid'"
+  else
+    warn "${TARGET} is PINNED to binary ${PIN_STATE:0:16}… — refusing to ship ${BIN_SHA:0:16}…"
+    ssh -o ConnectTimeout=10 "$TARGET" "cat ${REMOTE_LIB_DIR}/PIN" 2>/dev/null | sed 's/^/     /'
+    warn "Nothing was changed. Resolve the pin reason, then re-run with --ignore-pin."
+    exit 0
+  fi
+fi
+
 # ---- idempotence: skip the 85MB push when already in step -------------------
 # Default each side to the literal "none" so a MISSING artifact cannot shift the
 # fields and make the other one's sha get reported as its own.
 REMOTE_STATE="$(ssh -o ConnectTimeout=10 "$TARGET" "
   b=\$(sha256sum ${REMOTE_LIB_DIR}/spacedatanetwork 2>/dev/null | cut -d' ' -f1)
   l=\$(sha256sum ${REMOTE_LIB_DIR}/wasmedge/libwasmedge.so.0.1.0 2>/dev/null | cut -d' ' -f1)
-  echo \"\${b:-none} \${l:-none}\"" 2>/dev/null || echo "none none")"
+  w=\$(sha256sum ${REMOTE_LIB_DIR}/hd-wallet-wasi.wasm 2>/dev/null | cut -d' ' -f1)
+  i=no; [ -s \$HOME/.spacedatanetwork/keys/mnemonic ] && i=yes
+  echo \"\${b:-none} \${l:-none} \${w:-none} \$i\"" 2>/dev/null || echo "none none none no")"
 REMOTE_BIN_SHA="$(awk '{print $1}' <<<"$REMOTE_STATE")"
 REMOTE_LIB_SHA="$(awk '{print $2}' <<<"$REMOTE_STATE")"
+REMOTE_WALLET_SHA="$(awk '{print $3}' <<<"$REMOTE_STATE")"
+REMOTE_HAS_IDENTITY="$(awk '{print $4}' <<<"$REMOTE_STATE")"
 
-if [[ "$REMOTE_BIN_SHA" == "$BIN_SHA" && "$REMOTE_LIB_SHA" == "$LIB_SHA" ]]; then
+if [[ "$REMOTE_BIN_SHA" == "$BIN_SHA" && "$REMOTE_LIB_SHA" == "$LIB_SHA" && "$REMOTE_WALLET_SHA" == "$WALLET_SHA" ]]; then
   ok "${TARGET} already in step with this release — nothing to do"
   exit 0
+fi
+
+# ---- IDENTITY GUARD ----------------------------------------------------------
+# The node's PeerID is NOT stored anywhere on disk. It is DERIVED at runtime from
+# ~/.spacedatanetwork/keys/mnemonic THROUGH hd-wallet-wasi.wasm. So swapping that
+# wasm under an existing identity can silently change the node's PeerID, with
+# nothing on disk to compare against afterwards.
+#
+# This is not hypothetical: the wasm shipped on host-01 (3495017 B) and the one
+# baked into the release image (3049366 B) are DIFFERENT files today.
+#
+# So: if this VM already holds an identity and the incoming wallet wasm differs,
+# refuse and make a human decide. Everything else still refreshes normally when
+# the operator re-runs with the override.
+if [[ "$REMOTE_HAS_IDENTITY" == "yes" && "$REMOTE_WALLET_SHA" != "none" && "$REMOTE_WALLET_SHA" != "$WALLET_SHA" ]]; then
+  if [[ "$ALLOW_WALLET_CHANGE" != "yes" ]]; then
+    warn "REFUSING to swap hd-wallet-wasi.wasm under an existing node identity."
+    warn "  on ${TARGET}: ${REMOTE_WALLET_SHA:0:16}…"
+    warn "  incoming:    ${WALLET_SHA:0:16}…"
+    warn "The PeerID is derived from the mnemonic THROUGH this wasm and is stored"
+    warn "nowhere, so a derivation change would silently re-identify the node."
+    warn "If this change is intended, re-run with --allow-wallet-wasm-change and"
+    warn "capture the PeerID before and after. Binary/lib were NOT touched."
+    exit 0
+  fi
+  warn "--allow-wallet-wasm-change: swapping the wallet wasm under an existing identity"
+  warn "verify the node's PeerID after this completes"
 fi
 if [[ "$REMOTE_BIN_SHA" == "none" ]]; then
   info "remote binary ABSENT -> installing ${BIN_SHA:0:16}…"
@@ -154,6 +222,7 @@ info "shipping to ${TARGET} (no sudo required; user-local layout under ~/.local)
 ssh -o ConnectTimeout=15 "$TARGET" "mkdir -p ${REMOTE_LIB_DIR}/wasmedge ${REMOTE_LIB_DIR}/.staging \$HOME/.local/bin"
 scp -q "${STAGE}/spacedatanetwork"     "${TARGET}:.local/lib/spacedatanetwork/.staging/spacedatanetwork"
 scp -q "${STAGE}/libwasmedge.so.0.1.0" "${TARGET}:.local/lib/spacedatanetwork/.staging/libwasmedge.so.0.1.0"
+scp -q "${STAGE}/hd-wallet-wasi.wasm"  "${TARGET}:.local/lib/spacedatanetwork/.staging/hd-wallet-wasi.wasm"
 
 ssh -o ConnectTimeout=20 "$TARGET" "set -e
 L=${REMOTE_LIB_DIR}
@@ -162,9 +231,14 @@ L=${REMOTE_LIB_DIR}
 chmod 755 \$L/.staging/spacedatanetwork
 mv -f \$L/.staging/spacedatanetwork      \$L/spacedatanetwork
 mv -f \$L/.staging/libwasmedge.so.0.1.0  \$L/wasmedge/libwasmedge.so.0.1.0
+mv -f \$L/.staging/hd-wallet-wasi.wasm   \$L/hd-wallet-wasi.wasm
 ln -sf libwasmedge.so.0.1.0 \$L/wasmedge/libwasmedge.so.0
 ln -sf libwasmedge.so.0.1.0 \$L/wasmedge/libwasmedge.so
 rmdir \$L/.staging 2>/dev/null || true
+
+# NOTE: ~/.spacedatanetwork (config.yaml + keys/mnemonic) is NEVER touched by
+# this script. Identity lifecycle on this VM is an OWNER decision; this path
+# only moves executable artifacts.
 
 # Launcher shim — rewritten every refresh so it can never drift from the layout.
 cat > ${REMOTE_BIN} <<'SHIM'
@@ -178,6 +252,15 @@ cat > ${REMOTE_BIN} <<'SHIM'
 LIBDIR=\"\$HOME/.local/lib/spacedatanetwork\"
 LD_LIBRARY_PATH=\"\$LIBDIR/wasmedge\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\"
 export LD_LIBRARY_PATH
+
+# The node derives its identity (mnemonic -> PeerID) through this wasm. The
+# binary's built-in search paths do NOT include ~/.local, so for a user-local
+# install the env var is the ONLY mechanism that finds it — without this,
+# 'init' and every identity-dependent command fail. Tracked as a code
+# follow-up on the graph: sdn-cli-user-local-wasm-search-path.
+HD_WALLET_WASM_PATH=\"\$LIBDIR/hd-wallet-wasi.wasm\"
+export HD_WALLET_WASM_PATH
+
 exec \"\$LIBDIR/spacedatanetwork\" \"\$@\"
 SHIM
 chmod 755 ${REMOTE_BIN}
@@ -208,7 +291,10 @@ refreshed_at=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
 source=${IMAGE:-${FROM_HOST}}
 binary_sha256=${BIN_SHA}
 libwasmedge_sha256=${LIB_SHA}
-note=binary and libwasmedge are extracted from ONE source and swapped together
+hd_wallet_wasi_sha256=${WALLET_SHA}
+note=all three artifacts are extracted from ONE source and swapped together
+note=hd-wallet-wasi.wasm derives the node PeerID from the mnemonic; changing it
+note=under an existing identity is gated behind --allow-wallet-wasm-change
 MAN
 "
 
