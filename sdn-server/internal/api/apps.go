@@ -161,6 +161,15 @@ type appSourceView struct {
 	FetchCount  int64 `json:"fetch_count"`
 	IngestCount int64 `json:"ingest_count"`
 
+	// Invalidated marks a lane whose recorded success this node's record store
+	// could not corroborate at boot — the ledger travelled somewhere its
+	// records did not. The claim has been withdrawn, so the lane is retrievable
+	// again; the flag exists so the board says "this node lost that data"
+	// rather than silently showing a source that never retrieved anything.
+	Invalidated       bool   `json:"invalidated,omitempty"`
+	InvalidatedAt     string `json:"invalidated_at,omitempty"`
+	InvalidatedReason string `json:"invalidated_reason,omitempty"`
+
 	LastPNM *appPNMView `json:"last_pnm,omitempty"`
 }
 
@@ -329,6 +338,11 @@ func (h *AppsHandler) sourceViews() []appSourceView {
 			LastInserted:      row.LastInserted,
 			FetchCount:        row.FetchCount,
 			IngestCount:       row.IngestCount,
+			Invalidated:       row.Invalidated,
+			InvalidatedReason: row.InvalidatedReason,
+		}
+		if row.InvalidatedAt != nil {
+			view.InvalidatedAt = row.InvalidatedAt.UTC().Format(time.RFC3339)
 		}
 		if view.Origin == "" {
 			view.Origin = "retrieved"
