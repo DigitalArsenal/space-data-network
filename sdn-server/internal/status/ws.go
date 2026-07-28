@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -38,6 +39,22 @@ type Broadcaster struct {
 	snapshot       SnapshotFunc
 	allowedOrigins []string
 	upgrader       websocket.Upgrader
+
+	// lastFrame is the most recent frame the builder produced, served to new
+	// clients immediately. The builder reads live subsystems — the peer
+	// registry, the EPM service, the record store — and ANY of them can be slow
+	// while the node is busy ingesting. Building on the connect path made that
+	// slowness fatal: the client completed its upgrade and then sat receiving
+	// nothing, which is exactly what the dashboard showed
+	// ("Connecting to the node status feed…", forever, for everyone).
+	//
+	// A status feed that stops answering while the node is busy is worthless,
+	// because "is it working?" is asked precisely then. So the frame is built
+	// OFF the hot path and cached: a slow node costs freshness, never the feed.
+	lastFrame atomic.Pointer[[]byte]
+	// building guards against overlapping builds when one takes longer than the
+	// tick: a slow build must not queue up more of itself.
+	building atomic.Bool
 
 	mu      sync.Mutex
 	clients map[*wsClient]struct{}
@@ -77,8 +94,43 @@ func NewBroadcaster(snapshot SnapshotFunc, allowedOrigins []string) *Broadcaster
 // Start launches the 5s broadcast loop. Idempotent.
 func (b *Broadcaster) Start() {
 	b.startOnce.Do(func() {
+		// Warm the cache immediately so the first client to arrive — which, on
+		// a node that boots straight into an ingest, may arrive before the
+		// first tick — has something real to receive.
+		go b.refresh()
 		go b.run()
 	})
+}
+
+// refresh builds one frame and caches it, then fans it out. It is the ONLY
+// caller of the snapshot function, and it never runs on a connection's
+// goroutine or inside the ticker loop.
+func (b *Broadcaster) refresh() {
+	if b.snapshot == nil {
+		return
+	}
+	if !b.building.CompareAndSwap(false, true) {
+		// A previous build is still running against a busy subsystem. Skipping
+		// is correct: clients keep receiving the cached frame, and one slow
+		// build cannot pile up behind another.
+		return
+	}
+	defer b.building.Store(false)
+
+	frame := b.snapshot()
+	if frame == nil {
+		return
+	}
+	b.lastFrame.Store(&frame)
+	b.broadcast(frame)
+}
+
+// cachedFrame returns the last built frame, or nil before the first build.
+func (b *Broadcaster) cachedFrame() []byte {
+	if p := b.lastFrame.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 // Stop halts the broadcast loop and closes all clients. Idempotent.
@@ -97,14 +149,9 @@ func (b *Broadcaster) run() {
 			b.closeAll()
 			return
 		case <-ticker.C:
-			if b.snapshot == nil {
-				continue
-			}
-			frame := b.snapshot()
-			if frame == nil {
-				continue
-			}
-			b.broadcast(frame)
+			// Off the loop's goroutine: a build that blocks on a busy store
+			// must not stop the loop from servicing stop/closeAll either.
+			go b.refresh()
 		}
 	}
 }
@@ -165,14 +212,18 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := &wsClient{conn: conn, send: make(chan []byte, clientSendBuffer), done: make(chan struct{})}
 	b.addClient(c)
 
-	// Immediate push so a fresh connection does not wait a full tick.
-	if b.snapshot != nil {
-		if frame := b.snapshot(); frame != nil {
-			select {
-			case c.send <- frame:
-			default:
-			}
+	// Immediate push from the CACHE so a fresh connection does not wait a full
+	// tick — and, more importantly, never waits on a subsystem this connection
+	// has no business waiting for. If the cache is still cold, the client gets
+	// the next built frame; a refresh is kicked off here so that arrives at the
+	// earliest possible moment rather than at the next tick.
+	if frame := b.cachedFrame(); frame != nil {
+		select {
+		case c.send <- frame:
+		default:
 		}
+	} else {
+		go b.refresh()
 	}
 
 	go b.writePump(c)
