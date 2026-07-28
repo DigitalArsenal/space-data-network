@@ -286,7 +286,7 @@
     <span><i style="background:{theme.green};"></i>ONLINE</span>
     <span><i style="background:{theme.amber};"></i>OFFLINE·TRUSTED</span>
     <span><i style="background:{theme.textMuted};"></i>OFFLINE</span>
-    <span><i class="ring" style="border-color:{theme.cyan};"></i>SELF</span>
+    <span><i class="ring" style="border-color:{theme.cyan};"></i>THIS NODE</span>
   </div>
 </div>
 
