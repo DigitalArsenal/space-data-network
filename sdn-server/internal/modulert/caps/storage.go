@@ -183,7 +183,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		// access, so this checks storage_query specifically rather than
 		// "any storage_* grant".
 		if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
-			return errCapJSON("storage.query requires the storage_query capability grant"), nil
+			return refuseCapJSON("storage.query", "requires the storage_query capability grant"), nil
 		}
 		schema := str("schema")
 		if schema == "" {
@@ -221,7 +221,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		// capabilities must be checked individually despite sharing one
 		// handler.
 		if s.bridge == nil || !s.bridge.HasCapability("storage_write") {
-			return errCapJSON("storage.write requires the storage_write capability grant"), nil
+			return refuseCapJSON("storage.write", "requires the storage_write capability grant"), nil
 		}
 		schema := str("schema")
 		if schema == "" {
@@ -250,7 +250,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		// manifest.go / capability_policy.go sensitiveCapabilities);
 		// storage_write is the write/delete tier.
 		if s.bridge == nil || !s.bridge.HasCapability("storage_write") {
-			return errCapJSON("storage.delete requires the storage_write capability grant"), nil
+			return refuseCapJSON("storage.delete", "requires the storage_write capability grant"), nil
 		}
 		schema := str("schema")
 		cid := str("cid")
@@ -272,7 +272,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 	case "storage.flatsql_query_stream":
 		// POLICY: read-tier gate, same rationale as storage.query above.
 		if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
-			return errCapJSON("storage.flatsql_query_stream requires the storage_query capability grant"), nil
+			return refuseCapJSON("storage.flatsql_query_stream", "requires the storage_query capability grant"), nil
 		}
 		sqlText := str("sql")
 		if sqlText == "" {
@@ -291,7 +291,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 	case "storage.flatsql_epoch_stream":
 		// POLICY: read-tier gate, same rationale as storage.query above.
 		if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
-			return errCapJSON("storage.flatsql_epoch_stream requires the storage_query capability grant"), nil
+			return refuseCapJSON("storage.flatsql_epoch_stream", "requires the storage_query capability grant"), nil
 		}
 		schema := str("schema")
 		if schema == "" {
@@ -389,7 +389,7 @@ func errSandboxCapJSON(code, msg string) []byte {
 // BLOB-only (one extra bounded execution; every execution wears the caps).
 func (s *storageCapAdapter) handleQuerySandboxed(p map[string]interface{}, str func(string) string) []byte {
 	if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
-		return errCapJSON("storage.query_sandboxed requires the storage_query capability grant")
+		return refuseCapJSON("storage.query_sandboxed", "requires the storage_query capability grant")
 	}
 	sqlText := str("sql")
 	if sqlText == "" {
@@ -448,7 +448,7 @@ func (s *storageCapAdapter) handleQuerySandboxed(p map[string]interface{}, str f
 // effective caps, so /api/v1/query is self-documenting.
 func (s *storageCapAdapter) handleQuerySurface() []byte {
 	if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
-		return errCapJSON("storage.query_surface requires the storage_query capability grant")
+		return refuseCapJSON("storage.query_surface", "requires the storage_query capability grant")
 	}
 	surface, err := s.store.PublicQuerySurface()
 	if err != nil {
@@ -498,7 +498,8 @@ const defaultIngestMinFreeDiskBytes = 5 * 1024 * 1024 * 1024
 //	}
 func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str func(string) string) []byte {
 	if s.bridge == nil || !s.bridge.HasCapability("storage_ingest") {
-		return errCapJSON("storage.ingest_with_source requires the storage_ingest capability grant")
+		return refuseCapJSON("storage.ingest_with_source",
+			"requires the storage_ingest capability grant")
 	}
 
 	schema := str("schema")
@@ -550,10 +551,18 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 	for _, path := range guardPaths {
 		free, err := ingest.AvailableDiskBytes(existingDirOrParent(path))
 		if err != nil {
-			return errCapJSON("free-disk check failed for " + path + ": " + err.Error())
+			return refuseCapJSON("storage.ingest_with_source",
+				"free-disk check failed for "+path+": "+err.Error())
 		}
 		if int64(free) < minFree {
-			return errCapJSON(fmt.Sprintf("ingest requires at least %d free bytes at %s; only %d available", minFree, path, free))
+			// This refusal discards a batch the node already paid a publisher
+			// to fetch, so it is reported in the units an operator acts on.
+			return refuseCapJSON("storage.ingest_with_source", fmt.Sprintf(
+				"ingest requires at least %d free bytes at %s; only %d available "+
+					"(%.1f GiB floor, %.1f GiB free) — schema %s, source %s/%s: the whole batch is being dropped",
+				minFree, path, free,
+				float64(minFree)/(1024*1024*1024), float64(free)/(1024*1024*1024),
+				schema, tags.ProviderID, tags.SourceName))
 		}
 	}
 

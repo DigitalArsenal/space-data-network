@@ -91,7 +91,7 @@ func handleSecretsGet(store *credstore.Store, bridge *modulert.HostBridge, paylo
 	// asking for "edc_cpf" is denied here.
 	capability := CapabilityForID(id)
 	if bridge == nil || !bridge.HasCapability(capability) {
-		return errCapJSON(fmt.Sprintf("secrets.get requires the %s capability grant", capability))
+		return refuseCapJSON("secrets.get", fmt.Sprintf("requires the %s capability grant", capability))
 	}
 
 	if store == nil {
@@ -134,7 +134,7 @@ func handleSecretsStatus(store *credstore.Store, bridge *modulert.HostBridge, pa
 
 	capability := CapabilityForID(id)
 	if bridge == nil || !bridge.HasCapability(capability) {
-		return errCapJSON(fmt.Sprintf("secrets.status requires the %s capability grant", capability))
+		return refuseCapJSON("secrets.status", fmt.Sprintf("requires the %s capability grant", capability))
 	}
 	if store == nil {
 		return errCapJSON("credential store is not available on this node")
