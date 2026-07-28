@@ -31,8 +31,13 @@
  */
 
 /** Same-origin entry points (contract §11.3/§11.4). */
-export const WALLET_UI_ENTRY = '/wallet-ui/wallet-origin/index.js';
-export const WALLET_UI_COMPAT = '/wallet-ui/compat/index.js';
+// The ?v= stamp matches the pinned hd-wallet-ui version. It exists because a
+// CDN/proxy edge (Cloudflare) may hold a prior staging's bytes for up to its
+// TTL — a version-stamped URL is a different cache key, so a restage under a
+// new pin can never be masked by a stale edge entry. Bump with the pin.
+export const WALLET_UI_VERSION = '2.0.29';
+export const WALLET_UI_ENTRY = `/wallet-ui/wallet-origin/index.js?v=${WALLET_UI_VERSION}`;
+export const WALLET_UI_COMPAT = `/wallet-ui/compat/index.js?v=${WALLET_UI_VERSION}`;
 
 /** The only operation this node can verify today (§11.4 / §12). */
 export const RAW_CHALLENGE_OPERATION = 'sdn.auth.raw-challenge.v1';
