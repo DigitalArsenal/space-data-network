@@ -14,8 +14,15 @@ import (
 	"strings"
 	"time"
 
+	logging "github.com/ipfs/go-log/v2"
+
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
+
+// log carries host-side capability decisions. Cap errors travel back to wasm as
+// return values, so anything the HOST decides — a refusal, a resource floor —
+// has to be logged here or it happens invisibly.
+var log = logging.Logger("modulert-caps")
 
 // NewIPFSCapFactory returns a CapFactory for the "ipfs" capability.
 // It proxies IPFS operations to the Kubo RPC API at apiURL.
@@ -284,6 +291,26 @@ func errCapJSON(msg string) []byte {
 		"error": map[string]string{"message": msg},
 	})
 	return r
+}
+
+// refuseCapJSON is errCapJSON for a refusal the HOST decided: a capability the
+// module does not hold, or a resource floor the host is enforcing. It logs.
+//
+// WHY THIS EXISTS. A cap error is a RETURN VALUE to wasm, not a host event, so
+// a host that declines work leaves no trace of having declined it — and if the
+// flow swallows the error (a module bug, but one the host cannot prevent) the
+// run reports success and stores nothing. That is not theoretical: host-02 sat
+// under the 5 GB ingest disk floor for hours, refused every batch, logged
+// nothing, and reported `ok` on every run. Three separate investigations read
+// "fetch 200, store empty, no error anywhere" and concluded the flow had
+// silently trapped.
+//
+// A module's own mistakes (missing field, bad base64) stay silent here: the
+// module is told, and that is the right audience. What must always be visible
+// is the host saying no.
+func refuseCapJSON(op, msg string) []byte {
+	log.Warnf("capability refused: %s: %s", op, msg)
+	return errCapJSON(msg)
 }
 
 // encodeBase64Cap encodes data using standard base64 (no stdlib import needed).
