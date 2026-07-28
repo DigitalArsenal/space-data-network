@@ -1992,9 +1992,19 @@ func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
 	}
 	// An attempt inside the debounce window bars another one regardless of how
 	// it went. This is what a publisher is actually owed.
-	if last := n.sourceMetrics.LastAttempt(appID); last != nil {
-		window := time.Duration(sourcemetrics.DefaultDebounceHours * float64(time.Hour))
+	if last, failures := n.sourceMetrics.AttemptState(appID); last != nil {
+		// Escalating backoff: each consecutive failed attempt doubles the
+		// window (capped). A publisher that has started refusing us is asking
+		// to be asked less often, and retrying on the same cadence is how a
+		// node earns a longer ban instead of a shorter one.
+		hours := sourcemetrics.EffectiveDebounceHours(failures)
+		window := time.Duration(hours * float64(time.Hour))
 		if age := time.Since(*last); age < window {
+			if failures > 1 {
+				return false, fmt.Sprintf(
+					"last attempt %s ago is inside the %s backoff window (%d consecutive failures)",
+					age.Round(time.Second), window, failures)
+			}
 			return false, fmt.Sprintf("last attempt %s ago is inside the %s debounce window",
 				age.Round(time.Second), window)
 		}
