@@ -38,6 +38,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/spacedatanetwork/sdn-server/internal/keys"
 )
 
 // ConfigSource records HOW a config path was chosen, so errors can tell the
@@ -254,7 +256,14 @@ const (
 // readSecretFile reads a secret from a file, trimming exactly one trailing
 // newline. Secrets written by `echo` or a heredoc pick one up, and a trailing
 // newline silently changes a password.
+//
+// The at-rest key password is the thing that opens the mnemonic, so it is key
+// material and gets ssh-parity treatment: a file anyone but its owner can read
+// is refused, not read (owner ruling 2026-07-28, keys.EnforceKeyFilePermissions).
 func readSecretFile(path string) (string, error) {
+	if err := keys.EnforceKeyFilePermissions(path); err != nil {
+		return "", err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err

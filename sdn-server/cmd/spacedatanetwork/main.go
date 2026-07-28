@@ -4718,7 +4718,11 @@ func ensureNodeMnemonic(ctx context.Context, cfg *config.Config, generateMnemoni
 	}
 
 	keyDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys")
+	keys.WarnKeyDirPermissions(keyDir)
 	mnemonicPath := filepath.Join(keyDir, "mnemonic")
+	if err := keys.EnforceKeyFilePermissions(mnemonicPath); err != nil {
+		return nodeMnemonicInitResult{}, err
+	}
 	if data, err := os.ReadFile(mnemonicPath); err == nil {
 		if strings.TrimSpace(string(data)) == "" {
 			return nodeMnemonicInitResult{}, fmt.Errorf("mnemonic file %s is empty", mnemonicPath)
@@ -4894,6 +4898,10 @@ func runShowIdentity(cmd *cobra.Command, args []string) error {
 	keyDir := config.KeyDir(cfg)
 	mnemonicPath := config.MnemonicPathResolved(cfg)
 
+	keys.WarnKeyDirPermissions(keyDir)
+	if err := keys.EnforceKeyFilePermissions(mnemonicPath); err != nil {
+		return err
+	}
 	data, err := os.ReadFile(mnemonicPath)
 	if err != nil {
 		if os.IsNotExist(err) {

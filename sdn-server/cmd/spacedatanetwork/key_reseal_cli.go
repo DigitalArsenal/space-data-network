@@ -106,6 +106,9 @@ func runKeyReseal(cmd *cobra.Command, args []string) error {
 	resealed := 0
 
 	// MNEMONIC — the root of the identity.
+	if perr := keys.EnforceKeyFilePermissions(mnemonicPath); perr != nil {
+		return perr
+	}
 	if data, rerr := os.ReadFile(mnemonicPath); rerr == nil && keys.IsMnemonicEncrypted(data) {
 		if _, derr := keys.DecryptMnemonic(data, target); derr == nil {
 			fmt.Fprintf(out, "  mnemonic: already sealed under the configured password (%s)\n", mnemonicPath)

@@ -318,9 +318,13 @@ func (m *Manager) PublicKeyFingerprint() string {
 	return hex.EncodeToString(hash[:8])
 }
 
-// loadKey loads a key from disk.
+// loadKey loads a key from disk, refusing any key file the filesystem lets
+// somebody other than its owner read (ssh parity — see permissions.go).
 func (m *Manager) loadKey(filename string) ([]byte, error) {
 	path := filepath.Join(m.basePath, filename)
+	if err := EnforceKeyFilePermissions(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

@@ -114,6 +114,9 @@ func loadIdentityWizardNodeIdentity(ctx context.Context, cfg *config.Config) (id
 	}
 
 	mnemonicPath := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys", "mnemonic")
+	if err := keys.EnforceKeyFilePermissions(mnemonicPath); err != nil {
+		return identityWizardNodeIdentity{}, err
+	}
 	data, err := os.ReadFile(mnemonicPath)
 	if err != nil {
 		return identityWizardNodeIdentity{}, fmt.Errorf("failed to read mnemonic file %s: %w; run spacedatanetwork init first", mnemonicPath, err)
