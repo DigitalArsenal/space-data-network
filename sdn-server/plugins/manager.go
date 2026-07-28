@@ -448,6 +448,12 @@ type Manager struct {
 	cronWg     sync.WaitGroup
 	runtimeCtx context.Context
 	runtime    RuntimeContext
+	// cronMu guards runtimeCtx/lateCronCtx against a plugin registered (and
+	// started) concurrently with StartAll. lateCronCtx is the same cancellable
+	// context StartAll's scheduled methods run under, retained so a
+	// LATE-registered plugin's timers stop with everything else.
+	cronMu      sync.Mutex
+	lateCronCtx context.Context
 
 	// Per-plugin cron config (plugin ID → method → schedule).
 	// Set via SetCronConfig before StartAll, or updated at runtime via API.
@@ -536,7 +542,10 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 	// Start cron methods in a shared cancellable context.
 	cronCtx, cancel := context.WithCancel(ctx)
 	m.cronCancel = cancel
+	m.cronMu.Lock()
 	m.runtimeCtx = ctx
+	m.lateCronCtx = cronCtx
+	m.cronMu.Unlock()
 
 	for _, plugin := range registered {
 		if status, _ := m.pluginStatus(plugin.ID()); status != "running" {
@@ -550,6 +559,42 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// StartLateRegistered starts and schedules a plugin registered AFTER StartAll.
+//
+// StartAll only ever sees the plugins present when it runs. Flow services are
+// registered later by design — they are loaded from config after the node is
+// up (node.StartConfiguredFlowServices) — so before this existed they were
+// never started and their cron methods were never scheduled. A timer-served
+// ingest flow would sit at status "registered"/"never-run" FOREVER: not late,
+// not waiting out its first interval, simply never wired to a ticker.
+//
+// Returns false when the manager has not started yet; the caller can leave the
+// plugin for StartAll to pick up normally.
+func (m *Manager) StartLateRegistered(plugin Plugin) (bool, error) {
+	if m == nil || plugin == nil {
+		return false, nil
+	}
+	m.cronMu.Lock()
+	started := m.runtimeCtx != nil
+	cronCtx := m.lateCronCtx
+	m.cronMu.Unlock()
+	if !started {
+		return false, nil
+	}
+
+	id := plugin.ID()
+	if err := plugin.Start(m.runtimeCtx, m.runtime); err != nil {
+		m.setPluginState(id, "error", err.Error(), time.Time{})
+		return true, fmt.Errorf("%s: %w", id, err)
+	}
+	m.setPluginState(id, "running", "", time.Now().UTC())
+
+	if cp, ok := plugin.(CronProvider); ok && cronCtx != nil {
+		m.scheduleCronMethods(cronCtx, id, cp)
+	}
+	return true, nil
 }
 
 // scheduleCronMethods reads a plugin's declared cron methods and starts
@@ -1617,7 +1662,10 @@ func (m *Manager) restartCron(ctx context.Context) {
 	}
 	cronCtx, cancel := context.WithCancel(ctx)
 	m.cronCancel = cancel
+	m.cronMu.Lock()
 	m.runtimeCtx = ctx
+	m.lateCronCtx = cronCtx
+	m.cronMu.Unlock()
 	for _, plugin := range m.registeredPlugins() {
 		if status, _ := m.pluginStatus(plugin.ID()); status != "running" {
 			continue

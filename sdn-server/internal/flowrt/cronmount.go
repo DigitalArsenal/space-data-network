@@ -51,6 +51,7 @@ type ServiceFlow struct {
 	inst *flowInstance
 
 	statsMu         sync.Mutex
+	retrievalGate   RetrievalGate
 	startedAt       time.Time
 	timerRunCount   uint64
 	errorCount      uint64
@@ -255,13 +256,71 @@ func (sf *ServiceFlow) CronMethods() []plugins.CronMethodSpec {
 	return specs
 }
 
+// RetrievalGate reports whether this service may pull from its sources right
+// now, and why not when it may not. It is host egress policy — the same family
+// as the per-host request pacer — expressed against the node's own retrieval
+// ledger. nil means ungated.
+type RetrievalGate func() (allowed bool, reason string)
+
+// SetRetrievalGate installs the debounce gate. Injected by the node so this
+// package never learns what a "source" is.
+func (sf *ServiceFlow) SetRetrievalGate(gate RetrievalGate) {
+	sf.statsMu.Lock()
+	sf.retrievalGate = gate
+	sf.statsMu.Unlock()
+}
+
 // InvokeCron fires one timer trigger: a tick JSON frame enters the bound
 // port, the flow drains, and every egress result frame is collected into the
 // returned summary.
-func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, _ []byte) ([]byte, error) {
+//
+// DEBOUNCE. Every entry point that can start a pull comes through here — the
+// cron ticker AND the admin run-now route. A publisher's fetch policy is a
+// promise about how often this node asks it for the same bytes, and a promise
+// only a ticker keeps is not kept at all: firing run-now twice in three minutes
+// pulled the CelesTrak full catalog twice and earned a 403, which is precisely
+// the outcome the 3 h window exists to prevent. So the window is ENFORCED here,
+// not merely reported on the board.
+//
+// An operator who genuinely needs a pull inside the window passes
+// {"force":true} — deliberate, visible in the result, and never the default.
+func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []byte) ([]byte, error) {
+	if !cronInvokeForced(input) {
+		sf.statsMu.Lock()
+		gate := sf.retrievalGate
+		sf.statsMu.Unlock()
+		if gate != nil {
+			if allowed, reason := gate(); !allowed {
+				log.Infof("Flow service %q: trigger %q skipped (%s)", sf.programID, method, reason)
+				summary, _ := json.Marshal(map[string]interface{}{
+					"trigger": method,
+					"skipped": true,
+					"reason":  reason,
+					"results": []interface{}{},
+				})
+				sf.recordTimerResult(nil)
+				return summary, nil
+			}
+		}
+	}
 	out, err := sf.FireTrigger(ctx, method)
 	sf.recordTimerResult(err)
 	return out, err
+}
+
+// cronInvokeForced reads the optional {"force":true} escape from a cron
+// invocation payload. Anything unparseable is NOT a force.
+func cronInvokeForced(input []byte) bool {
+	if len(input) == 0 {
+		return false
+	}
+	var payload struct {
+		Force bool `json:"force"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return false
+	}
+	return payload.Force
 }
 
 // FireTrigger runs one named timer trigger to completion (also the direct
@@ -410,16 +469,27 @@ func (sf *ServiceFlow) RuntimeDescriptor() plugins.RuntimeModuleDescriptor {
 		descriptor.Stats.LastInvokeAt = sf.lastInvokeAt.UTC().Format(time.RFC3339)
 	}
 	sf.statsMu.Unlock()
-	sf.mu.Lock()
-	if sf.inst != nil && sf.inst.rt != nil && sf.inst.rt.Module() != nil {
-		if stats, err := sf.inst.rt.Module().MemoryStats(); err == nil {
-			descriptor.Stats.MemoryPages = stats.Pages
-			descriptor.Stats.MemoryBytes = stats.Bytes
-			descriptor.Stats.MaxMemoryPages = stats.MaxPages
-			descriptor.Stats.MaxMemoryBytes = stats.MaxBytes
+	// Memory stats need the RUN mutex, which FireTrigger holds for the WHOLE
+	// duration of a flow run — tens of minutes for a full CelesTrak SATCAT
+	// ingest on a small host. Blocking here made the node's entire runtime
+	// snapshot (and with it /api/apps and the dashboard's module list)
+	// unavailable for exactly as long as an app was busy, which is precisely
+	// when an operator asks whether it is working. Memory stats are a nicety;
+	// answering is not. Take them only if the flow is idle.
+	if sf.mu.TryLock() {
+		if sf.inst != nil && sf.inst.rt != nil && sf.inst.rt.Module() != nil {
+			if stats, err := sf.inst.rt.Module().MemoryStats(); err == nil {
+				descriptor.Stats.MemoryPages = stats.Pages
+				descriptor.Stats.MemoryBytes = stats.Bytes
+				descriptor.Stats.MaxMemoryPages = stats.MaxPages
+				descriptor.Stats.MaxMemoryBytes = stats.MaxBytes
+			}
 		}
+		sf.mu.Unlock()
+	} else {
+		// Busy is itself status worth reporting.
+		descriptor.Stats.LastTimerStatus = "running"
 	}
-	sf.mu.Unlock()
 	return descriptor
 }
 

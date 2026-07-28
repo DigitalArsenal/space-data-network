@@ -431,3 +431,75 @@ func TestCelesTrakIngestFlowsDeclareOnlyConnectorCapabilities(t *testing.T) {
 		}
 	}
 }
+
+// TestCelesTrakIngestRespectsTheDebounceGate proves the publisher's fetch
+// policy is ENFORCED on every path that can start a pull, not merely reported.
+//
+// This exists because reporting alone was not enough: firing the admin
+// run-now route twice within three minutes pulled the real CelesTrak full
+// catalog twice and earned a 403 from the publisher. A window only a ticker
+// respects is not a window.
+func TestCelesTrakIngestRespectsTheDebounceGate(t *testing.T) {
+	dist := celestrakFlowDist(t, "gp")
+	fixture := celestrakFixture(t, "celestrak-gp-omm.csv")
+	h := newCelestrakIngestHarness(t)
+
+	var fetches int
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetches++
+		w.Header().Set("Content-Type", "text/csv")
+		w.Write(fixture)
+	}))
+	defer origin.Close()
+
+	policy := approvedCapabilityPolicy(t, dist, "http", "storage_ingest")
+	loaded, err := LoadFlowServices([]config.FlowService{{
+		Flow:        dist,
+		MemoryPages: 4096,
+		Config: map[string]interface{}{
+			"celestrak_gp_url":          origin.URL + "/gp.php?GROUP=stations&FORMAT=csv",
+			"celestrak_provider_id":     "space-data-network-02",
+			"celestrak_http_timeout_ms": 20000,
+		},
+	}}, FlowMountDeps{
+		CapRegistry:    h.reg,
+		NodeCtx:        &modulert.NodeContext{CapabilityPolicy: policy},
+		MaxMemoryPages: 4096,
+	})
+	if err != nil {
+		t.Fatalf("LoadFlowServices: %v", err)
+	}
+	service := loaded[0]
+	defer service.Close()
+
+	// Gate closed: the pull must not reach the publisher at all.
+	service.SetRetrievalGate(func() (bool, string) { return false, "inside the 3h debounce window" })
+	summary, err := service.InvokeCron(t.Context(), "timer-gp", nil)
+	if err != nil {
+		t.Fatalf("InvokeCron (gated): %v", err)
+	}
+	if fetches != 0 {
+		t.Fatalf("a gated pull still hit the publisher %d time(s)", fetches)
+	}
+	if !strings.Contains(string(summary), `"skipped":true`) ||
+		!strings.Contains(string(summary), "debounce") {
+		t.Fatalf("gated run must report why it was skipped: %s", summary)
+	}
+
+	// An explicit force is the ONLY way through a closed gate.
+	if _, err := service.InvokeCron(t.Context(), "timer-gp", []byte(`{"force":true}`)); err != nil {
+		t.Fatalf("InvokeCron (forced): %v", err)
+	}
+	if fetches != 1 {
+		t.Fatalf("forced pull fetched %d times, want exactly 1", fetches)
+	}
+
+	// Gate open: normal operation is unaffected.
+	service.SetRetrievalGate(func() (bool, string) { return true, "" })
+	if _, err := service.InvokeCron(t.Context(), "timer-gp", nil); err != nil {
+		t.Fatalf("InvokeCron (open): %v", err)
+	}
+	if fetches != 2 {
+		t.Fatalf("open-gate pull fetched %d times, want 2 total", fetches)
+	}
+}

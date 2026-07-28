@@ -238,3 +238,58 @@ func TestNilStoreIsInert(t *testing.T) {
 		t.Fatalf("nil Close: %v", err)
 	}
 }
+
+// A flow whose pulls keep FAILING writes no source row, so a
+// success-only debounce left it permanently "due" and it retried on every
+// restart. Observed live: a CelesTrak endpoint that had already returned 403
+// was hit again on boot. What a publisher is owed is a limit on ATTEMPTS.
+func TestAttemptLogBoundsRetriesThatNeverSucceed(t *testing.T) {
+	store := openLedger(t)
+	const appID = "com.digitalarsenal.flows.celestrak-gp-ingest"
+
+	if last := store.LastAttempt(appID); last != nil {
+		t.Fatalf("a never-run app reported an attempt at %v", last)
+	}
+
+	store.RecordAttempt(appID)
+	first := store.LastAttempt(appID)
+	if first == nil {
+		t.Fatal("attempt was not recorded")
+	}
+	if time.Since(*first) > time.Minute {
+		t.Fatalf("recorded attempt timestamp is wrong: %v", first)
+	}
+
+	// No source row is ever written (the pull kept failing) — the attempt log
+	// is the ONLY thing standing between a restart loop and a retry storm.
+	rows, err := store.Sources()
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("failing pulls must not write source rows; got %+v", rows)
+	}
+
+	store.RecordAttempt(appID)
+	if second := store.LastAttempt(appID); second == nil || second.Before(*first) {
+		t.Fatalf("second attempt did not advance the marker: %v -> %v", first, second)
+	}
+
+	// Survives a restart: otherwise every reboot is a fresh licence to retry.
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestAttemptLogIgnoresBlankAppAndNilStore(t *testing.T) {
+	store := openLedger(t)
+	store.RecordAttempt("   ")
+	if last := store.LastAttempt("   "); last != nil {
+		t.Fatal("a blank app id must not create an attempt row")
+	}
+	var nilStore *Store
+	nilStore.RecordAttempt("x")
+	if last := nilStore.LastAttempt("x"); last != nil {
+		t.Fatal("nil store must report no attempt")
+	}
+}

@@ -246,7 +246,64 @@ func (s *Store) initTables() error {
 		`CREATE INDEX IF NOT EXISTS idx_source_metrics_retrieved ON source_metrics(last_retrieved_at DESC)`); err != nil {
 		return fmt.Errorf("sourcemetrics: create source_metrics index: %w", err)
 	}
+
+	// Attempt log, keyed by APP. A source row only exists once an ingest has
+	// SUCCEEDED, so a flow whose pulls keep failing has no row at all and reads
+	// as "never retrieved" — which made it due on every single restart and
+	// turned a restart loop into a retry storm against an endpoint that was
+	// already refusing us. Observed live: a 403'd CelesTrak endpoint re-hit on
+	// boot. What a publisher is owed is a limit on ATTEMPTS, not on successes.
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS app_attempts (
+			app_id          TEXT PRIMARY KEY,
+			last_attempt_at INTEGER NOT NULL DEFAULT 0,
+			attempt_count   INTEGER NOT NULL DEFAULT 0
+		)`); err != nil {
+		return fmt.Errorf("sourcemetrics: create app_attempts: %w", err)
+	}
 	return nil
+}
+
+// RecordAttempt stamps that an app was allowed to start a retrieval, whether or
+// not it goes on to succeed.
+func (s *Store) RecordAttempt(appID string) {
+	if s == nil || s.db == nil {
+		return
+	}
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec(`
+		INSERT INTO app_attempts (app_id, last_attempt_at, attempt_count)
+		VALUES (?, ?, 1)
+		ON CONFLICT(app_id) DO UPDATE SET
+			last_attempt_at = excluded.last_attempt_at,
+			attempt_count   = app_attempts.attempt_count + 1`,
+		appID, unixOrZero(s.now())); err != nil {
+		log.Debugf("record attempt %s: %v", appID, err)
+	}
+}
+
+// LastAttempt returns when an app last started a retrieval, or nil if never.
+func (s *Store) LastAttempt(appID string) *time.Time {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var at int64
+	if err := s.db.QueryRow(
+		`SELECT last_attempt_at FROM app_attempts WHERE app_id = ?`, appID).Scan(&at); err != nil {
+		return nil
+	}
+	return timeOrNil(at)
 }
 
 func unixOrZero(t time.Time) int64 {

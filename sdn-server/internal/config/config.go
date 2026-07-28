@@ -417,6 +417,18 @@ type FlowsConfig struct {
 	// request-level decisions in the host.
 	Mounts []FlowMount `yaml:"mounts,omitempty"`
 
+	// FirstFireWhenDue runs a timer-served flow's triggers once shortly after
+	// it starts, but ONLY when the node's retrieval ledger says its sources are
+	// past their debounce window (or have never been retrieved).
+	//
+	// A cron ticker fires one interval AFTER it starts, so without this a node
+	// that boots with a 3 h GP timer publishes nothing for three hours — and a
+	// node restarted more often than its interval publishes nothing ever.
+	// Firing unconditionally would be the opposite failure (a crash loop
+	// becomes a fetch storm), which is why the debounce ledger is the gate.
+	// YAML: flows.first_fire_when_due. Default true.
+	FirstFireWhenDue bool `yaml:"first_fire_when_due"`
+
 	// Services are timer-served flows (loop C.8a ingest-as-flow): each entry
 	// loads a compiled flow bundle whose triggers are cron timers and
 	// registers it with the plugin manager's cron scheduler. Which flow runs
@@ -1235,6 +1247,10 @@ func Default() *Config {
 			MaxMemoryPages: 1024, // 64MB per flow
 			EditorEnabled:  false,
 			EditorPath:     "/flow-editor",
+			// Ingest flows should serve data on the day they are installed,
+			// not one full interval later; the debounce ledger keeps that
+			// honest. See FirstFireWhenDue.
+			FirstFireWhenDue: true,
 			// The public /api/v1/data/* record-retrieval surface is served by
 			// the data-retrieval FLOW module (loop C.4 cutover): all routing,
 			// param parsing, profile resolution, format selection and
@@ -1266,10 +1282,21 @@ func Default() *Config {
 			// operator deliberately installs the bundle. Intervals are the
 			// flow.json defaults (GP 3 h, SATCAT 24 h, space weather 3 h) — the
 			// 3 h GP cadence IS the CelesTrak fetch-policy debounce window.
+			//
+			// MEMORY: a retrieval flow holds the whole fetched payload, its
+			// base64 hostcall envelope, every normalized record stream and the
+			// raw archive copy in ONE linear memory. The real CelesTrak GP full
+			// catalog is ~4.75 MB of CSV that normalizes into ~13k OMM plus
+			// ~13k MPE records, and the 64 MB global default trapped it on
+			// host-01 with "Memory grow page failed -- exceeded limit page
+			// size: 1024" AFTER a successful 200/4,750,985-byte fetch: the pull
+			// reported a clean run and stored nothing. These ceilings are not
+			// reservations — WasmEdge grows on demand — so sizing them for the
+			// real catalog costs an idle node nothing.
 			Services: []FlowService{
-				{Flow: CelesTrakGPIngestFlowID},
-				{Flow: CelesTrakSatcatIngestFlowID},
-				{Flow: CelesTrakSpaceWeatherIngestFlowID},
+				{Flow: CelesTrakGPIngestFlowID, MemoryPages: 8192},
+				{Flow: CelesTrakSatcatIngestFlowID, MemoryPages: 8192},
+				{Flow: CelesTrakSpaceWeatherIngestFlowID, MemoryPages: 2048},
 			},
 		},
 	}

@@ -42,8 +42,10 @@ type AppsHandler struct {
 	metrics AppsMetricsSource
 	// store is used ONLY to refresh each source's last PNM from the
 	// authoritative dataset-publication index. Nil is fine — the feed then
-	// reports the last PNM the ledger already persisted.
-	store *storage.FlatSQLStore
+	// reports the last PNM the ledger already persisted. It is an interface so
+	// the "this feed always answers" property can be tested against a store
+	// that is deliberately slow.
+	store datasetPublicationReader
 	// pnmSink write-through-persists a refreshed PNM so the value survives a
 	// restart and stays available when the store is busy. May be nil.
 	pnmSink func(providerID, sourceName string, pnm sourcemetrics.PNM)
@@ -54,7 +56,18 @@ type AppsHandler struct {
 // feed degrades to whatever it can honestly report.
 func NewAppsHandler(runtime AppsRuntimeSource, metrics AppsMetricsSource, store *storage.FlatSQLStore,
 	pnmSink func(providerID, sourceName string, pnm sourcemetrics.PNM)) *AppsHandler {
-	return &AppsHandler{runtime: runtime, metrics: metrics, store: store, pnmSink: pnmSink, rl: newRateLimiter()}
+	h := &AppsHandler{runtime: runtime, metrics: metrics, pnmSink: pnmSink, rl: newRateLimiter()}
+	// A typed-nil *FlatSQLStore in an interface is not == nil, so only attach a
+	// real store; otherwise the nil-store path below would never be taken.
+	if store != nil {
+		h.store = store
+	}
+	return h
+}
+
+// datasetPublicationReader is the one store capability this feed needs.
+type datasetPublicationReader interface {
+	ListDatasetShardPublications(storage.DatasetShardPublicationQuery) ([]storage.DatasetShardPublication, error)
 }
 
 // RegisterRoutes registers the public $APPS route.
@@ -215,8 +228,19 @@ func (h *AppsHandler) handleApps(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// pnmRefreshBudget bounds the OPTIONAL authoritative PNM lookup for the WHOLE
+// feed. The record store is single-writer and a full CelesTrak SATCAT ingest
+// occupies it for tens of minutes on a small host; measured on host-01
+// mid-ingest, /api/v1/id answered in 10 ms, /api/v1/stats in 2.4 s, and this
+// feed — which queried the store once per source with no bound — did not answer
+// at all. A status surface that stops answering exactly when the node is busiest
+// is worse than useless: "is it working?" is asked PRECISELY then. So the
+// durable ledger is the answer, and the store refresh is a best-effort garnish
+// that is abandoned the moment it is slow.
+const pnmRefreshBudget = 750 * time.Millisecond
+
 // sourceViews reads the ledger and refreshes each row's last PNM from the
-// authoritative dataset-publication index.
+// authoritative dataset-publication index, within a strict overall budget.
 func (h *AppsHandler) sourceViews() []appSourceView {
 	out := make([]appSourceView, 0, 8)
 	if h.metrics == nil {
@@ -227,6 +251,14 @@ func (h *AppsHandler) sourceViews() []appSourceView {
 		log.Warnf("apps feed: read source metrics: %v", err)
 		return out
 	}
+
+	// Best-effort authoritative PNM refresh, bounded for the whole feed. The
+	// lookup runs on its own goroutine so a store blocked behind an ingest
+	// cannot hold the response: when the budget expires the ledger's persisted
+	// values are served instead, and the abandoned goroutine's late result is
+	// simply discarded.
+	refreshed := h.refreshPNMsWithinBudget(rows)
+
 	for _, row := range rows {
 		view := appSourceView{
 			SourceID:          row.SourceID,
@@ -260,11 +292,8 @@ func (h *AppsHandler) sourceViews() []appSourceView {
 		}
 
 		pnm := row.LastPNM
-		if refreshed := h.latestPNM(row.ProviderID, row.SourceName); refreshed != nil {
-			pnm = refreshed
-			if h.pnmSink != nil {
-				h.pnmSink(row.ProviderID, row.SourceName, *refreshed)
-			}
+		if fresh, ok := refreshed[row.SourceID]; ok && fresh != nil {
+			pnm = fresh
 		}
 		if pnm != nil && pnm.CID != "" {
 			pv := &appPNMView{
@@ -280,6 +309,51 @@ func (h *AppsHandler) sourceViews() []appSourceView {
 			view.LastPNM = pv
 		}
 		out = append(out, view)
+	}
+	return out
+}
+
+// refreshPNMsWithinBudget looks up the authoritative last PNM for each source,
+// abandoning the whole effort once pnmRefreshBudget expires. Results that do
+// arrive are written back to the ledger so the next request has them durably
+// even if the store is busy again.
+func (h *AppsHandler) refreshPNMsWithinBudget(rows []sourcemetrics.Source) map[string]*sourcemetrics.PNM {
+	out := map[string]*sourcemetrics.PNM{}
+	if h.store == nil || len(rows) == 0 {
+		return out
+	}
+	type result struct {
+		sourceID   string
+		providerID string
+		sourceName string
+		pnm        *sourcemetrics.PNM
+	}
+	results := make(chan result, len(rows))
+	go func() {
+		for _, row := range rows {
+			results <- result{
+				sourceID:   row.SourceID,
+				providerID: row.ProviderID,
+				sourceName: row.SourceName,
+				pnm:        h.latestPNM(row.ProviderID, row.SourceName),
+			}
+		}
+	}()
+
+	deadline := time.After(pnmRefreshBudget)
+	for range rows {
+		select {
+		case r := <-results:
+			if r.pnm == nil {
+				continue
+			}
+			out[r.sourceID] = r.pnm
+			if h.pnmSink != nil {
+				h.pnmSink(r.providerID, r.sourceName, *r.pnm)
+			}
+		case <-deadline:
+			return out
+		}
 	}
 	return out
 }
