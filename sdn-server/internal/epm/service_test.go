@@ -64,7 +64,7 @@ func TestGetNodeEPMJSONIncludesSecp256k1IdentitySigningKey(t *testing.T) {
 	t.Fatal("expected secp256k1 signing key in EPM keys")
 }
 
-func TestNodeEPMCarriesBothEncryptionKeys(t *testing.T) {
+func TestNodeEPMCarriesExactlyOneEncryptionKey(t *testing.T) {
 	t.Parallel()
 
 	identity, err := testDerivedIdentity()
@@ -83,24 +83,115 @@ func TestNodeEPMCarriesBothEncryptionKeys(t *testing.T) {
 	}
 	root := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
 
-	encCurves := map[string]bool{}
+	var encCurves []string
+	var encPaths []string
 	var key EPM.CryptoKey
 	for i := 0; i < root.KEYSLength(); i++ {
 		if !root.KEYS(&key, i) {
 			continue
 		}
 		if key.KEY_TYPE() == EPM.KeyTypeEncryption {
-			encCurves[strings.ToLower(string(key.ADDRESS_TYPE()))] = true
+			encCurves = append(encCurves, strings.ToLower(string(key.ADDRESS_TYPE())))
+			encPaths = append(encPaths, string(key.KEY_ADDRESS()))
 		}
 	}
 
-	// The published EPM must advertise both encryption curves so a sender can
-	// wrap a content key via X25519 (default) or secp256k1 ECIES (WS2b).
-	if !encCurves["x25519"] {
-		t.Errorf("EPM missing x25519 encryption key; encryption curves = %v", encCurves)
+	// OWNER RULE: ONE encryption path on the card/QR/EPM. The advertised key is
+	// the secp256k1 one at a NON-hardened path, because that is the only
+	// encryption key a holder of the XPUB can re-derive (BIP-32 CKDpub) and
+	// therefore verify. The identity's X25519 key sits at a HARDENED path,
+	// is structurally underivable from an xpub, and must NOT be advertised.
+	if len(encCurves) != 1 {
+		t.Fatalf("EPM encryption key count = %d, want exactly 1: curves=%v paths=%v",
+			len(encCurves), encCurves, encPaths)
 	}
-	if !encCurves["secp256k1"] {
-		t.Errorf("EPM missing secp256k1 encryption key; encryption curves = %v", encCurves)
+	if encCurves[0] != "secp256k1" {
+		t.Errorf("EPM encryption curve = %q, want secp256k1", encCurves[0])
+	}
+	if strings.Contains(strings.TrimSuffix(encPaths[0], "'"), "'/") &&
+		strings.HasSuffix(encPaths[0], "'") {
+		t.Errorf("advertised encryption path %q is fully hardened; it must be xpub-derivable", encPaths[0])
+	}
+	if encPaths[0] == identity.EncryptionKeyPath {
+		t.Errorf("EPM advertises the hardened X25519 path %q; expected the xpub-derivable secp256k1 path",
+			encPaths[0])
+	}
+}
+
+// The CLI must name the SAME encryption key the card advertises. One encrypt
+// path is only true if it is true everywhere it is shown: a node whose card
+// says one path and whose `show-identity` says another still looks to an
+// operator like it has two. AdvertisedEncryptionKey is the shared accessor the
+// CLI displays, so it is locked against the EPM the node actually publishes.
+func TestAdvertisedEncryptionKeyMatchesTheCard(t *testing.T) {
+	t.Parallel()
+
+	const xpub = "xpub6DEcA45Z68pwH3NrnV1Tee1pLNfJYruoQkKZJxmeRdBaQAtZg9Vf5LzHVZoBR5dGpmHxWzUXTGo8w1nRS13AvmhbRcBVzduCL3TGsCsj9Mm"
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, xpub, t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	var cardPub, cardPath string
+	root := EPM.GetSizePrefixedRootAsEPM(service.GetNodeEPM(), 0)
+	var key EPM.CryptoKey
+	for i := 0; i < root.KEYSLength(); i++ {
+		if root.KEYS(&key, i) && key.KEY_TYPE() == EPM.KeyTypeEncryption {
+			cardPub = string(key.PUBLIC_KEY())
+			cardPath = string(key.KEY_ADDRESS())
+			break
+		}
+	}
+	if cardPath == "" {
+		t.Fatal("EPM advertises no encryption key")
+	}
+
+	gotPub, gotPath, ok := AdvertisedEncryptionKey(xpub, 0, nil)
+	if !ok {
+		t.Fatal("AdvertisedEncryptionKey could not derive the advertised key")
+	}
+	if gotPub != cardPub {
+		t.Errorf("CLI would show encryption key %q; the card advertises %q", gotPub, cardPub)
+	}
+	if gotPath != cardPath {
+		t.Errorf("CLI would show encryption path %q; the card advertises %q", gotPath, cardPath)
+	}
+	if gotPath == identity.EncryptionKeyPath {
+		t.Errorf("CLI would show the hardened X25519 path %q", gotPath)
+	}
+}
+
+// A rotated encryption path (§18) must follow through to the CLI too, or the
+// rule breaks again the first time an operator rotates a key.
+func TestAdvertisedEncryptionKeyFollowsRotatedPath(t *testing.T) {
+	t.Parallel()
+
+	const xpub = "xpub6DEcA45Z68pwH3NrnV1Tee1pLNfJYruoQkKZJxmeRdBaQAtZg9Vf5LzHVZoBR5dGpmHxWzUXTGo8w1nRS13AvmhbRcBVzduCL3TGsCsj9Mm"
+
+	defaultPub, defaultPath, ok := AdvertisedEncryptionKey(xpub, 0, nil)
+	if !ok {
+		t.Fatal("could not derive the default advertised key")
+	}
+
+	rotated, err := NextKeyPath(defaultPath, SlotXPubDerivable)
+	if err != nil {
+		t.Fatalf("NextKeyPath(%q): %v", defaultPath, err)
+	}
+
+	gotPub, gotPath, ok := AdvertisedEncryptionKey(xpub, 0, &Profile{EncryptionKeyPath: rotated})
+	if !ok {
+		t.Fatal("could not derive the rotated advertised key")
+	}
+	if gotPath != rotated {
+		t.Errorf("advertised path = %q, want the rotated path %q", gotPath, rotated)
+	}
+	if gotPub == defaultPub {
+		t.Errorf("rotated path %q still yields the pre-rotation key %q", rotated, gotPub)
 	}
 }
 
@@ -529,15 +620,44 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 	// the COMPLETE verification chain as email aliases — the keys' HD
 	// derivation paths (base64url of the EPM KEYS' KEY_ADDRESS), the EPM
 	// record's embedded signature + timestamp, and the record CID.
-	for kind, path := range map[string]string{
-		"sign":    identity.SigningKeyPath,
-		"encrypt": identity.EncryptionKeyPath,
-	} {
-		alias := "EMAIL;type=INTERNET;type=" + kind + ":" +
-			base64.RawURLEncoding.EncodeToString([]byte(path)) + "@" + kind + ".spacedatanetwork.org"
-		if got := strings.Count(unfolded, alias); got != 1 {
-			t.Fatalf("QR vCard %s alias count = %d, want 1: %s", kind, got, qrVCard)
+	// The ed25519 signing key rides the card at its hardened path: it produces
+	// the EPM self-signature, so a verifier needs those exact bytes.
+	signAlias := "EMAIL;type=INTERNET;type=sign:" +
+		base64.RawURLEncoding.EncodeToString([]byte(identity.SigningKeyPath)) +
+		"@sign.spacedatanetwork.org"
+	if got := strings.Count(unfolded, signAlias); got != 1 {
+		t.Fatalf("QR vCard sign alias count = %d, want 1: %s", got, qrVCard)
+	}
+
+	// OWNER RULE: exactly ONE encrypt alias, carrying the EPM's single
+	// advertised (xpub-derivable secp256k1) encryption path — never the
+	// hardened X25519 path, which no xpub holder could verify.
+	advertisedEncPath := ""
+	encAliasCount := strings.Count(unfolded, "@encrypt.spacedatanetwork.org")
+	{
+		root := EPM.GetSizePrefixedRootAsEPM(service.GetNodeEPM(), 0)
+		var k EPM.CryptoKey
+		for i := 0; i < root.KEYSLength(); i++ {
+			if root.KEYS(&k, i) && k.KEY_TYPE() == EPM.KeyTypeEncryption {
+				advertisedEncPath = string(k.KEY_ADDRESS())
+				break
+			}
 		}
+	}
+	if advertisedEncPath == "" {
+		t.Fatal("EPM advertises no encryption key")
+	}
+	if advertisedEncPath == identity.EncryptionKeyPath {
+		t.Errorf("card carries the hardened X25519 path %q", advertisedEncPath)
+	}
+	encAlias := "EMAIL;type=INTERNET;type=encrypt:" +
+		base64.RawURLEncoding.EncodeToString([]byte(advertisedEncPath)) +
+		"@encrypt.spacedatanetwork.org"
+	if got := strings.Count(unfolded, encAlias); got != 1 {
+		t.Fatalf("QR vCard encrypt alias count = %d, want 1: %s", got, qrVCard)
+	}
+	if encAliasCount != 1 {
+		t.Fatalf("QR vCard has %d encrypt aliases, want exactly 1: %s", encAliasCount, qrVCard)
 	}
 	epmBytes := service.GetNodeEPM()
 	epmRecord := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)

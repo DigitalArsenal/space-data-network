@@ -33,7 +33,7 @@
   import { shortId } from './format.js';
   import { TRUST_TIERS, normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { canEditNodeProfile, canManagePermissions } from './permissions.js';
-  import { accountFromNode, mergeAccounts, sortAccounts } from './accounts.js';
+  import { accountFromNode, mergeAccounts, sortAccounts, withoutSelf } from './accounts.js';
   import { apiFetch } from './api.js';
   import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
   import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
@@ -240,7 +240,11 @@
 
   // Anonymous tier first: every row the public feed knows about. The Admin
   // overlay merges operator facets in on top when there is a session.
-  const accountRows = $derived(sortAccounts(mergeAccounts(nodes.map(accountFromNode), accountEntries)));
+  // The self row is removed BEFORE the merge, so it can never come back via
+  // an /api/accounts overlay either (standing rule, accounts.js).
+  const accountRows = $derived(
+    sortAccounts(withoutSelf(mergeAccounts(withoutSelf(nodes.map(accountFromNode)), accountEntries)))
+  );
   const accountNodes = $derived(accountRows.map((r) => r.node ?? {
     peerId: r.peerId, dn: r.name, org: r.organization, vcard: '', lat: 0, lon: 0,
     geoLabel: '', online: false, isSelf: false, agent: '', uptimeS: 0, lastSeen: r.lastConnected,
@@ -497,7 +501,7 @@
         </div>
 
         <div class="meta" style="color:{theme.textMuted};">
-          <span>{rows.length}/{nodes.length} NODE{nodes.length === 1 ? '' : 'S'}</span>
+          <span>{rows.length}/{accountRows.length} ACCOUNT{accountRows.length === 1 ? '' : 'S'}</span>
           <span class="dot">·</span>
           <span>SOURCE {shortId(view?.sourcePeerId ?? '')}</span>
           <span class="dot">·</span>
@@ -719,7 +723,7 @@
     flex-direction: column;
     gap: 16px;
   }
-  .globe-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .globe-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
   .globe-panel .k {
     font-size: 12.5px;
     letter-spacing: 0.18em;

@@ -204,11 +204,19 @@ func init() {
 // resolveKeyPassword mirrors the precedence show-identity uses: env, then
 // config, then the machine-derived default.
 func resolveKeyCLIPassword(cfg *config.Config) string {
-	if p := os.Getenv("SDN_KEY_PASSWORD"); p != "" {
-		return p
+	// Routed through config.KeyPassword so SDN_KEY_PASSWORD_FILE — the mounted
+	// secret the remote deploy script feeds containers — is honoured everywhere
+	// the CLI touches key material, not just in one command.
+	password, err := config.KeyPassword(cfg)
+	if err != nil {
+		// A configured-but-unreadable secret file must not silently fall back to
+		// the machine default: that would report "wrong password" and send the
+		// operator hunting for a corrupt mnemonic instead of a missing mount.
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		return ""
 	}
-	if cfg != nil && cfg.Security.KeyPassword != "" {
-		return cfg.Security.KeyPassword
+	if password != "" {
+		return password
 	}
 	return keys.DeriveDefaultPassword()
 }
@@ -462,7 +470,7 @@ func exportPublicKeyMaterial(cmd *cobra.Command, cfg *config.Config, res config.
 // same path and password precedence as show-identity.
 func loadStoredMnemonic(cfg *config.Config, res config.Resolution) (mnemonic string, path string, err error) {
 	keyDir := config.KeyDir(cfg)
-	path = config.MnemonicPath(cfg)
+	path = config.MnemonicPathResolved(cfg)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -70,6 +70,10 @@
       cancelWallet = null;
       onSignedIn(result);
     } catch (err) {
+      // A silent revert to the chooser cost a full round to diagnose. The
+      // operator still gets the friendly line below; this puts the real
+      // exception somewhere a developer can actually read it.
+      console.error('[sdn] wallet sign-in failed:', err);
       cancelWallet = null;
       walletMount?.replaceChildren?.();
       error =

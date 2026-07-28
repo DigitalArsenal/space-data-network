@@ -4847,7 +4847,7 @@ func runShowIdentity(cmd *cobra.Command, args []string) error {
 	// Shared derivation — the same functions internal/node uses, so the CLI
 	// can never look somewhere the daemon does not write.
 	keyDir := config.KeyDir(cfg)
-	mnemonicPath := config.MnemonicPath(cfg)
+	mnemonicPath := config.MnemonicPathResolved(cfg)
 
 	data, err := os.ReadFile(mnemonicPath)
 	if err != nil {
@@ -4908,7 +4908,23 @@ func runShowIdentity(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "PeerID:         %s\n", info.PeerID)
 	fmt.Fprintf(os.Stderr, "XPub:           %s\n", xpubStr)
 	fmt.Fprintf(os.Stderr, "Signing Key:    %s  (path: %s)\n", info.SigningPubKeyHex, info.SigningKeyPath)
-	fmt.Fprintf(os.Stderr, "Encryption Key: %s  (path: %s)\n", info.EncryptionPubHex, info.EncryptionKeyPath)
+
+	// ONE encryption path, everywhere (owner rule). Show the key the node
+	// actually ADVERTISES on its card/QR — the xpub-derivable secp256k1 key at
+	// the effective path — not the identity's hardened X25519 key. Printing the
+	// hardened one here is what made a single node look like it had two
+	// encryption paths depending on where you looked. The X25519 key stays an
+	// internal decryption detail.
+	var profile *epm.Profile
+	if p, err := epm.LoadProfile(cfg.Storage.Path); err == nil {
+		profile = p
+	}
+	if encPub, encPath, ok := epm.AdvertisedEncryptionKey(xpubStr, 0, profile); ok {
+		fmt.Fprintf(os.Stderr, "Encryption Key: %s  (path: %s)\n", encPub, encPath)
+	} else {
+		// Never invent a key: say plainly that it could not be derived.
+		fmt.Fprintf(os.Stderr, "Encryption Key: (could not derive from xpub)\n")
+	}
 	fmt.Fprintf(os.Stderr, "Identity Path:  %s\n", info.IdentityKeyPath)
 	fmt.Fprintf(os.Stderr, "Mnemonic File:  %s\n", mnemonicPath)
 

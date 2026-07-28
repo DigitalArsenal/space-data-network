@@ -135,10 +135,19 @@ export function editTargets(row) {
   return targets;
 }
 
-/** Sort: this node first, then most-trusted, then by display name. */
+/**
+ * STANDING RULE (owner, 2026-07-28): the ACCOUNTS listing NEVER contains this
+ * node itself. SELF has its own page — THIS NODE — and a duplicate row there
+ * is noise, not information. Applied at the source so no caller can
+ * reintroduce it, and so counts/pagination derive from the same filtered set.
+ */
+export function withoutSelf(rows) {
+  return (rows ?? []).filter((r) => !r?.isSelf);
+}
+
+/** Sort: most-trusted first, then by display name. */
 export function sortAccounts(rows) {
   return [...rows].sort((a, b) => {
-    if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
     const t = trustRank(b.trustLevel) - trustRank(a.trustLevel);
     if (t) return t;
     return accountDisplayName(a).localeCompare(accountDisplayName(b));

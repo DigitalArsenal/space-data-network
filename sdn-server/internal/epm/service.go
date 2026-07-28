@@ -1583,15 +1583,9 @@ func runtimeIdentityKeys(info wasm.IdentityInfo, xpub string) []map[string]inter
 			"key_type":        "encryption",
 			"xpub":            derived.XPub,
 		})
-		// X25519 encryption key, mirroring the wire EPM key set (WS2b).
-		if strings.TrimSpace(info.EncryptionPubHex) != "" {
-			keys = append(keys, map[string]interface{}{
-				"public_key":   info.EncryptionPubHex,
-				"address_type": "x25519",
-				"key_address":  info.EncryptionKeyPath,
-				"key_type":     "encryption",
-			})
-		}
+		// ONE ENCRYPTION PATH (owner rule): the xpub-derivable secp256k1 key
+		// above is the only advertised encryption key, mirroring the wire EPM.
+		// The hardened X25519 key is not emitted — see the wire builder.
 		return keys
 	}
 
@@ -1907,22 +1901,21 @@ func (s *Service) buildEPMBytesLocked(signatureHex string, signatureTimestamp in
 			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
 			keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
 
-			// Also advertise the X25519 encryption key alongside the secp256k1
-			// one, so a sender can wrap a content key to either curve (X25519
-			// default, or secp256k1 ECIES). The EPM carries both encryption keys
-			// (WS2b). The identity's X25519 encryption key is always available
-			// here since s.identity is non-nil.
-			if len(s.identity.EncryptionPub) > 0 {
-				x25519PubOff := builder.CreateString(hex.EncodeToString(s.identity.EncryptionPub))
-				x25519AddrOff := builder.CreateString("x25519")
-				x25519PathOff := builder.CreateString(s.identity.EncryptionKeyPath)
-				EPM.CryptoKeyStart(builder)
-				EPM.CryptoKeyAddPUBLIC_KEY(builder, x25519PubOff)
-				EPM.CryptoKeyAddADDRESS_TYPE(builder, x25519AddrOff)
-				EPM.CryptoKeyAddKEY_ADDRESS(builder, x25519PathOff)
-				EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
-				keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
-			}
+			// ONE ENCRYPTION PATH (owner rule). The card advertises exactly one
+			// encryption key: the secp256k1 key above, at a NON-hardened path
+			// below the account, so a holder of the XPUB can re-derive it with
+			// BIP-32 CKDpub and verify the advertised bytes. The identity's
+			// X25519 key lives at a HARDENED path and is therefore structurally
+			// underivable from an xpub — advertising it would put an
+			// unverifiable key on the card. It is deliberately NOT emitted.
+			//
+			// This costs no decryptability: nothing reads an encryption key back
+			// OUT of an EPM. Every consumer takes the X25519 PRIVATE key straight
+			// from the local identity (license.PluginRegistry.DecryptBundle,
+			// deliveryclient.UnwrapContentKey), so envelopes already wrapped to it
+			// still open. New wraps target the secp256k1 key, which the ECIES
+			// one-to-many primitive already supports (channelkeys.Member accepts
+			// secp256k1 compressed as well as X25519).
 		} else {
 			// Identity key (secp256k1) for provider descriptor and direct EPM parsing.
 			identityPubBytes, _ := s.identity.IdentityPubKey.Raw()
