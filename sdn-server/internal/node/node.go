@@ -1408,9 +1408,24 @@ func (n *Node) readNodeKeyFile(keyPath string) (crypto.PrivKey, error) {
 		return nil, err
 	}
 	if bytes.HasPrefix(raw, nodeKeyEncMagic) {
-		keyData, derr := keys.DecryptSecret(raw[len(nodeKeyEncMagic):], n.resolveKeyPassword())
+		body := raw[len(nodeKeyEncMagic):]
+		keyData, derr := keys.DecryptSecret(body, n.resolveKeyPassword())
 		if derr != nil {
-			return nil, fmt.Errorf("%w at %s (check SDN_KEY_PASSWORD): %v", errNodeKeyUndecryptable, keyPath, derr)
+			// Try older machine-derivation generations before giving up, and
+			// re-seal under the current one on success, so a node whose
+			// machine-id/RAM/CPU changed (rebuild or resize) is not orphaned
+			// from its own identity. Skipped when an explicit password is set.
+			if n.usingDerivedKeyPassword() {
+				if recovered, scheme, rerr := keys.DecryptSecretAnyScheme(body); rerr == nil {
+					log.Warnf("migrating node identity key at %s from %s-derived key to the current stable derivation", keyPath, scheme)
+					if werr := n.writeEncryptedNodeKey(keyPath, recovered); werr != nil {
+						log.Warnf("node identity key re-seal failed (continuing with decrypted key): %v", werr)
+					}
+					return crypto.UnmarshalPrivateKey(recovered)
+				}
+			}
+			return nil, fmt.Errorf("%w at %s (check SDN_KEY_PASSWORD): %v\n%s",
+				errNodeKeyUndecryptable, keyPath, derr, keys.DerivationFailureHint(filepath.Dir(keyPath)))
 		}
 		return crypto.UnmarshalPrivateKey(keyData)
 	}
@@ -1438,6 +1453,22 @@ func (n *Node) resolveKeyPassword() string {
 		return n.config.Security.KeyPassword
 	}
 	return keys.DeriveDefaultPassword()
+}
+
+// recordKeyDerivation writes the diagnostic record naming which machine
+// sources fed the at-rest key, so a future decrypt failure can be explained.
+// Best-effort and never fatal: the record is not an input to any key.
+//
+// Nothing is recorded when an explicit password is configured — the key then
+// does not depend on machine sources at all.
+func (n *Node) recordKeyDerivation(keyDir string) {
+	if !n.usingDerivedKeyPassword() {
+		return
+	}
+	_, sources := keys.DeriveDefaultPasswordWithSources()
+	if err := keys.WriteDerivationRecord(keyDir, keys.SchemeV3, sources); err != nil {
+		log.Warnf("unable to record key-derivation sources in %s: %v", keyDir, err)
+	}
 }
 
 // usingDerivedKeyPassword reports whether the mnemonic key password comes from
