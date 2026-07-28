@@ -1,6 +1,7 @@
 package sourcemetrics
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -361,5 +362,56 @@ func TestFailureStreakAdvancesAndResetsOnSuccess(t *testing.T) {
 	})
 	if _, f := store.AttemptState(appID); f != 1 {
 		t.Fatalf("another app's success cleared this app's streak: failures = %d, want 1", f)
+	}
+}
+
+// A ledger created by an older build has app_attempts WITHOUT
+// consecutive_failures. CREATE TABLE IF NOT EXISTS does not add it, so the
+// escalating backoff shipped inert on every existing host: AttemptState's
+// SELECT failed, the caller read "never attempted", and the debounce it was
+// meant to widen was skipped entirely.
+func TestOpenAddsBackoffColumnToAnOlderLedger(t *testing.T) {
+	dir := t.TempDir()
+
+	// Build the OLD schema by hand, exactly as the previous build left it.
+	old, err := sql.Open("sqlite", filepath.Join(dir, DBFileName))
+	if err != nil {
+		t.Fatalf("open legacy ledger: %v", err)
+	}
+	if _, err := old.Exec(`CREATE TABLE app_attempts (
+		app_id          TEXT PRIMARY KEY,
+		last_attempt_at INTEGER NOT NULL DEFAULT 0,
+		attempt_count   INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatalf("create legacy app_attempts: %v", err)
+	}
+	if _, err := old.Exec(
+		`INSERT INTO app_attempts (app_id, last_attempt_at, attempt_count) VALUES (?, ?, ?)`,
+		"com.digitalarsenal.flows.celestrak-satcat-ingest", time.Now().Add(-30*time.Minute).Unix(), 4); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatalf("close legacy ledger: %v", err)
+	}
+
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open over a legacy ledger: %v", err)
+	}
+	defer store.Close()
+
+	// The pre-existing attempt must still be readable — a migration that lost
+	// the retrieval history would let a moved node re-hammer the publisher.
+	last, failures := store.AttemptState("com.digitalarsenal.flows.celestrak-satcat-ingest")
+	if last == nil {
+		t.Fatal("legacy attempt history lost: the node would treat the source as never fetched and pull immediately")
+	}
+	if failures != 0 {
+		t.Fatalf("failures = %d, want 0 for a migrated row", failures)
+	}
+
+	// And the backoff must now actually work on this ledger.
+	store.RecordAttempt("com.digitalarsenal.flows.celestrak-satcat-ingest")
+	if _, failures = store.AttemptState("com.digitalarsenal.flows.celestrak-satcat-ingest"); failures != 1 {
+		t.Fatalf("failures after one attempt = %d, want 1 — the backoff is still inert", failures)
 	}
 }

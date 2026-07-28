@@ -267,6 +267,52 @@ func (s *Store) initTables() error {
 		)`); err != nil {
 		return fmt.Errorf("sourcemetrics: create app_attempts: %w", err)
 	}
+	// CREATE TABLE IF NOT EXISTS adds nothing to a table that already exists, so
+	// a column introduced later never reaches a deployed node — the ledger keeps
+	// its original shape and the feature that needs the column is silently inert.
+	// That is exactly what happened to the escalating backoff: it shipped, and on
+	// every existing host AttemptState's SELECT failed, reported "never
+	// attempted", and disabled the very debounce it was meant to widen.
+	if err := s.ensureAppAttemptsColumns(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureAppAttemptsColumns adds columns the current build expects but an older
+// ledger does not have. Additive only: it never drops or rewrites a column, so
+// a rollback to the previous binary still reads the table fine.
+func (s *Store) ensureAppAttemptsColumns() error {
+	existing := map[string]bool{}
+	rows, err := s.db.Query(`PRAGMA table_info(app_attempts)`)
+	if err != nil {
+		return fmt.Errorf("sourcemetrics: inspect app_attempts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name, typ  string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultVal, &pk); err != nil {
+			return fmt.Errorf("sourcemetrics: scan app_attempts columns: %w", err)
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sourcemetrics: iterate app_attempts columns: %w", err)
+	}
+
+	if !existing["consecutive_failures"] {
+		if _, err := s.db.Exec(
+			`ALTER TABLE app_attempts ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("sourcemetrics: add app_attempts.consecutive_failures: %w", err)
+		}
+		log.Infof("sourcemetrics: added app_attempts.consecutive_failures to an existing ledger (escalating backoff was inert without it)")
+	}
 	return nil
 }
 
