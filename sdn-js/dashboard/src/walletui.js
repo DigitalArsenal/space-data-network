@@ -280,9 +280,18 @@ export async function createWalletApp({ mount, wasm, binding, document: doc = gl
     relay: bridge.relay,
     wasm,
     window: globalThis.window,
-    // credentialPrompt is deliberately NOT injected: the package's WebAuthn
-    // rp.id is wallet.spacedatanetwork.org, which no node origin matches, so
-    // the passkey path is inert here (§11.4). Nothing is loaded from it.
+    // §15.2, unblocked by hd-wallet-ui 2.0.29: the WebAuthn container is
+    // injected so "remember on this device" actually works.
+    //
+    // rpId is deliberately NOT passed. 2.0.29 falls back to the WebAuthn spec
+    // default — the caller's own effective domain — which is correct on every
+    // node origin. Passing a hostname would be strictly worse: get it wrong
+    // and the browser throws SecurityError; get it "clever" and the wallet
+    // becomes a phishing primitive. The browser deciding is the whole point.
+    //
+    // This issues no network request: WebAuthn is a browser API, so the
+    // zero-external-bytes law is untouched.
+    credentials: doc?.defaultView?.navigator?.credentials ?? globalThis.navigator?.credentials,
   });
   return { app, controller: app.controller, published: bridge };
 }
@@ -308,9 +317,19 @@ export async function collectLegacyCredentials({ profile, controller, mount, tit
       controller: withoutQuarantine(controller),
       document: doc,
       mount,
+      // Nothing can be remembered on this path (see below), so there is
+      // nothing to offer unlocking FROM.
       offerRememberedUnlock: false,
       title,
     });
+    // The capability IS injected (createWalletApp) and works — but only the
+    // MODERN unlock path registers a passkey: 2.0.29's `unlockLegacy` has no
+    // remember step at all, while `unlockPassword` does. This node admits only
+    // the raw-challenge legacy profile today, so a ticked box here would
+    // silently remember nothing. Disable it and say why, rather than let the
+    // operator trust a promise the flow cannot keep. Deleting these six lines
+    // is all that is needed once the v2 admit point lands.
+    disableRememberForLegacy(mount, doc);
     const value = prompt?.promise ? await prompt.promise : await prompt;
     return { controls: value, cancel: () => prompt?.cancel?.() };
   }
@@ -428,6 +447,25 @@ export function readQuarantinedRecords(storage = globalThis.localStorage) {
     rows.push({ key, bytes: new TextEncoder().encode(value).length, value });
   }
   return rows;
+}
+
+/**
+ * Turn off "remember on this device" for the legacy sign-in profile, with the
+ * reason attached. Not a style hide: the control is genuinely disabled,
+ * because on this path it genuinely cannot work.
+ */
+export function disableRememberForLegacy(mount, doc = globalThis.document) {
+  const box = mount?.querySelector?.('[data-wallet-remember]');
+  if (!box) return false;
+  box.disabled = true;
+  box.checked = false;
+  const label = box.closest?.('label');
+  const note = doc.createElement('p');
+  note.dataset.walletRememberStatus = 'true';
+  note.className = 'wallet-remember-blocked';
+  note.textContent = 'Remembering this wallet needs the modern sign-in, coming with v2.';
+  (label?.parentNode ?? mount).insertBefore(note, (label ?? mount).nextSibling);
+  return true;
 }
 
 /**
