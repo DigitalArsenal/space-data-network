@@ -280,10 +280,53 @@ func (rt *FlowRuntime) readRequiredCString(ptr uint32, field string) (string, er
 	return value, nil
 }
 
+// assertDescriptorABIGeneration refuses an artifact whose descriptor table is
+// not the generation this package decodes.
+//
+// It must run BEFORE the first edge is read, because a stride mismatch is
+// silent: the table pointer and the edge count are identical across
+// generations, so every check inside the read loop (node ranges, flag domains,
+// pointer/size sanity) is applied to fields decoded at the wrong offsets. The
+// loop would either accept nonsense or reject a perfectly good artifact for the
+// wrong reason.
+//
+// A missing export is generation 1, not a waiver — every generation-1 bundle
+// predates the export, so treating absence as "close enough" would admit
+// exactly the artifacts this gate exists to refuse. The SDK's JS host applies
+// the same rule; a Go host that read on regardless would misroute where the
+// browser fails closed, which is the tri-runtime divergence class that produced
+// the alignment=0 defect.
+func (rt *FlowRuntime) assertDescriptorABIGeneration() error {
+	generation := uint32(1)
+	if rt.mod.HasFunction(runtimeExportDescriptorABIGeneration) ||
+		rt.mod.HasFunction(underscoreRuntimeExportName(runtimeExportDescriptorABIGeneration)) {
+		reported, err := rt.executeUint32(runtimeExportDescriptorABIGeneration)
+		if err != nil {
+			return fmt.Errorf("read descriptor ABI generation: %w", err)
+		}
+		generation = reported
+	}
+	return checkDescriptorABIGeneration(generation)
+}
+
+// checkDescriptorABIGeneration is the decision, split from the module call so
+// it can be pinned without a compiled artifact.
+func checkDescriptorABIGeneration(generation uint32) error {
+	if generation != flowEdgeDescriptorABIGeneration {
+		return fmt.Errorf(
+			"flow artifact declares descriptor ABI generation %d, this host decodes generation %d (%d-byte FlowEdge) — refusing to read the edge table rather than misread it; rebuild the bundle against the current SDK",
+			generation, flowEdgeDescriptorABIGeneration, flowEdgeDescriptorSize)
+	}
+	return nil
+}
+
 func (rt *FlowRuntime) cacheFlowEdges() error {
 	if rt.EdgeCount == 0 {
 		rt.edgeInfo = nil
 		return nil
+	}
+	if err := rt.assertDescriptorABIGeneration(); err != nil {
+		return err
 	}
 	basePtr, err := rt.executeUint32(runtimeExportEdgeDescriptors)
 	if err != nil {
