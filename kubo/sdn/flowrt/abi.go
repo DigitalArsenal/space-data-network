@@ -25,6 +25,7 @@ const (
 	runtimeExportEnqueueTriggerFrames        = "space_data_module_runtime_enqueue_trigger_frames"
 	runtimeExportEnqueueTriggerFrame         = "space_data_module_runtime_enqueue_trigger_frame"
 	runtimeExportEdgeDescriptors             = "space_data_module_runtime_get_edge_descriptors"
+	runtimeExportDescriptorABIGeneration     = "space_data_module_runtime_get_descriptor_abi_generation"
 	runtimeExportRoutingState                = "space_data_module_runtime_get_routing_state"
 	runtimeExportCurrentInvocationGeneration = "space_data_module_runtime_get_current_invocation_generation"
 	runtimeExportNodeDispatchDescriptors     = "space_data_module_runtime_get_node_dispatch_descriptors"
@@ -155,7 +156,10 @@ func writeFrameDescriptor(mod *wasmrt.Module, ptr uint32, fd *FlowFrameDescripto
 }
 
 // ---------------------------------------------------------------------------
-// FlowEdge — 64 bytes, alignment 4 (wasm32 pointer fields)
+// FlowEdge — 68 bytes, alignment 4 (wasm32 pointer fields), generation 2.
+// It was 64 bytes in generation 1; the trailing Opaque u32 at offset 64 is the
+// difference. This comment said 64 long after the struct moved — the stale
+// number is why the stride bump read as safe.
 // ---------------------------------------------------------------------------
 
 // FlowEdgeDescriptor is the exact signed edge/type table compiled into the
@@ -186,6 +190,20 @@ type FlowEdgeDescriptor struct {
 }
 
 const flowEdgeDescriptorSize = 68
+
+// flowEdgeDescriptorABIGeneration is the descriptor-table generation this
+// package's 68-byte stride belongs to. Generation 1 was 64 bytes with no
+// Opaque field.
+//
+// A stride change is INVISIBLE from outside: same table pointer, same count,
+// every field past the first edge read at the wrong offset — and believed. So
+// the artifact states its generation and the host asserts it before reading a
+// single edge. A MISSING export means generation 1; absence is never
+// permission. The SDK's JS host already refuses a mismatch
+// (flowRuntimeHost.js), and a host that reads garbage where the browser fails
+// closed is a tri-runtime divergence of exactly the class that produced the
+// alignment=0 bug.
+const flowEdgeDescriptorABIGeneration = 2
 
 func decodeFlowEdgeDescriptorBytes(buf []byte) (*FlowEdgeDescriptor, error) {
 	if len(buf) != flowEdgeDescriptorSize {
