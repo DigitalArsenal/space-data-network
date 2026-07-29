@@ -357,6 +357,24 @@ func (s *Store) ensureAppAttemptsColumns() error {
 		}
 		log.Infof("sourcemetrics: added app_attempts.consecutive_failures to an existing ledger (escalating backoff was inert without it)")
 	}
+	// A streak that widens a publisher's window to 12 or 24 hours is an
+	// operational decision this node makes about itself, and until now it made
+	// it without recording a single reason: the counter said "2 consecutive
+	// failures" and nothing anywhere said what failed. A backoff nobody can
+	// explain cannot be trusted or cleared on evidence.
+	if !existing["last_failure_reason"] {
+		if _, err := s.db.Exec(
+			`ALTER TABLE app_attempts ADD COLUMN last_failure_reason TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("sourcemetrics: add app_attempts.last_failure_reason: %w", err)
+		}
+		log.Infof("sourcemetrics: added app_attempts.last_failure_reason to an existing ledger (a backoff streak had no recorded cause)")
+	}
+	if !existing["last_failure_at"] {
+		if _, err := s.db.Exec(
+			`ALTER TABLE app_attempts ADD COLUMN last_failure_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("sourcemetrics: add app_attempts.last_failure_at: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -413,9 +431,77 @@ func (s *Store) clearAppFailuresLocked(appID string) {
 		return
 	}
 	if _, err := s.db.Exec(
-		`UPDATE app_attempts SET consecutive_failures = 0 WHERE app_id = ?`, appID); err != nil {
+		`UPDATE app_attempts SET consecutive_failures = 0, last_failure_reason = '' WHERE app_id = ?`,
+		appID); err != nil {
 		log.Debugf("clear failures %s: %v", appID, err)
 	}
+}
+
+// RecordAttemptOutcome closes the loop RecordAttempt opens. RecordAttempt
+// counts every started retrieval as a failure and an ingest clears it, so a
+// streak that is still standing when the run returns is a real failure — and
+// its cause was, until this existed, written down nowhere at all. The reason is
+// persisted beside the counter and logged at the moment it is earned, because
+// the next thing that reads the counter is a 12- or 24-hour window that will
+// otherwise look arbitrary.
+//
+// runErr is the flow's own error, when it had one. A run that returns cleanly
+// and still lands nothing is the harder case and the more common one — a
+// storage guardrail refusing a batch, a source serving bytes that parse to zero
+// records — so it is named explicitly rather than left blank.
+func (s *Store) RecordAttemptOutcome(appID string, runErr error) {
+	if s == nil || s.db == nil {
+		return
+	}
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var failures int
+	if err := s.db.QueryRow(
+		`SELECT consecutive_failures FROM app_attempts WHERE app_id = ?`, appID).Scan(&failures); err != nil {
+		log.Debugf("attempt outcome %s: %v", appID, err)
+		return
+	}
+	if failures == 0 {
+		// A batch landed and already cleared the streak: nothing to explain.
+		return
+	}
+
+	reason := "run completed but landed no batch"
+	if runErr != nil {
+		reason = runErr.Error()
+	}
+	if _, err := s.db.Exec(
+		`UPDATE app_attempts SET last_failure_reason = ?, last_failure_at = ? WHERE app_id = ?`,
+		reason, unixOrZero(s.now()), appID); err != nil {
+		log.Debugf("record attempt outcome %s: %v", appID, err)
+	}
+	log.Warnf("Retrieval attempt failed for %s (%d consecutive; next window %.0fh): %s",
+		appID, failures, EffectiveDebounceHours(failures), reason)
+}
+
+// AttemptFailureReason names the cause recorded for an app's current failure
+// streak, or "" when there is none.
+func (s *Store) AttemptFailureReason(appID string) string {
+	if s == nil || s.db == nil {
+		return ""
+	}
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var reason string
+	if err := s.db.QueryRow(
+		`SELECT last_failure_reason FROM app_attempts WHERE app_id = ?`, appID).Scan(&reason); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(reason)
 }
 
 // AttemptState reports when an app last started a retrieval and how many

@@ -1074,6 +1074,16 @@ func (s *FlatSQLStore) initSourceSummaryTable() error {
 	if err := s.ensureColumn("sdn_record_source_summary", "max_rowid", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// first_seen lives on the summary because the read that needs it — the
+	// per-producer progress feed — must not have to group the whole
+	// sdn_record_source_tags table to find it. On a node holding a real
+	// catalog that join costs more than the feed's read budget, and a producer
+	// lane that cannot be read inside the budget is a producer that never
+	// appears at all. Legacy rows carry 0 and are reported as unknown rather
+	// than as 1970.
+	if err := s.ensureColumn("sdn_record_source_summary", "first_seen", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := s.createStartupIndexNoJournal("sdn_record_source_summary", "idx_sdn_record_source_summary_schema", sourceSummaryExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_summary_schema
 		ON sdn_record_source_summary (schema_name)
@@ -1095,6 +1105,7 @@ func sourceSummaryTableSQL(tableName string) string {
 			record_count INTEGER NOT NULL,
 			total_bytes INTEGER NOT NULL,
 			max_rowid INTEGER NOT NULL DEFAULT 0,
+			first_seen INTEGER NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL DEFAULT (strftime('%%s', 'now')),
 			PRIMARY KEY (
 				schema_name, provider_id, source_name, batch_id,
@@ -1812,7 +1823,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName strin
 	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
-			producer_public_key, record_count, total_bytes, max_rowid, updated_at
+			producer_public_key, record_count, total_bytes, max_rowid, first_seen, updated_at
 		)
 		SELECT
 			tags.schema_name,
@@ -1824,6 +1835,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName strin
 			COUNT(*),
 			COALESCE(SUM(records.record_length), 0),
 			COALESCE(MAX(records.rowid), 0),
+			COALESCE(MIN(tags.created_at), strftime('%%s', 'now')),
 			strftime('%%s', 'now')
 		FROM sdn_record_source_tags tags
 		INNER JOIN %s records ON records.cid = tags.cid
@@ -1853,7 +1865,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName,
 	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
-			producer_public_key, record_count, total_bytes, max_rowid, updated_at
+			producer_public_key, record_count, total_bytes, max_rowid, first_seen, updated_at
 		)
 		SELECT
 			tags.schema_name,
@@ -1865,6 +1877,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName,
 			COUNT(*),
 			COALESCE(SUM(records.record_length), 0),
 			COALESCE(MAX(records.rowid), 0),
+			COALESCE(MIN(tags.created_at), strftime('%%s', 'now')),
 			strftime('%%s', 'now')
 		FROM sdn_record_source_tags tags
 		INNER JOIN %s records ON records.cid = tags.cid
@@ -1914,13 +1927,14 @@ func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, reco
 	_, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
-			producer_public_key, record_count, total_bytes, max_rowid, updated_at
+			producer_public_key, record_count, total_bytes, max_rowid, first_seen, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, strftime('%s', 'now'))
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
 		ON CONFLICT(schema_name, provider_id, source_name, batch_id, producer_peer_id, producer_public_key) DO UPDATE SET
 			record_count = record_count + 1,
 			total_bytes = total_bytes + excluded.total_bytes,
 			max_rowid = MAX(max_rowid, excluded.max_rowid),
+			first_seen = CASE WHEN first_seen > 0 THEN first_seen ELSE excluded.first_seen END,
 			updated_at = excluded.updated_at
 	`), schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey, recordBytes, recordRowID)
 	if err != nil {
@@ -4458,25 +4472,35 @@ func (s *FlatSQLStore) ProducerSourceProgress() ([]ProducerSourceProgress, error
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// One grouped scan of the summary, which is ALREADY the per-lane aggregate:
+	// one row per (schema, provider, source, batch, producer). The previous
+	// shape joined a GROUP BY over the whole sdn_record_source_tags table —
+	// one row per RECORD — purely to recover first/last seen. On a node holding
+	// a real catalog that join never finished inside the feed's read budget, so
+	// the endpoint silently fell back to local-only rows and every peer filling
+	// this node's store was invisible. first_seen now lives on the summary, and
+	// the newest batch comes from the same scan instead of a per-row follow-up
+	// query.
 	rows, err := s.db.Query(`
 		SELECT ss.producer_peer_id, ss.schema_name, ss.provider_id, ss.source_name,
 		       COUNT(DISTINCT ss.batch_id) AS batch_count,
 		       SUM(ss.record_count) AS count,
 		       SUM(ss.total_bytes) AS total_bytes,
 		       MAX(ss.updated_at) AS updated_at,
-		       MIN(t.first_seen) AS first_seen,
-		       MAX(t.last_seen) AS last_seen
+		       MIN(NULLIF(ss.first_seen, 0)) AS first_seen,
+		       MAX(ss.updated_at) AS last_seen,
+		       (
+		         SELECT b.batch_id
+		         FROM sdn_record_source_summary b
+		         WHERE b.producer_peer_id = ss.producer_peer_id
+		           AND b.schema_name      = ss.schema_name
+		           AND b.provider_id      = ss.provider_id
+		           AND b.source_name      = ss.source_name
+		           AND b.record_count     > 0
+		         ORDER BY b.updated_at DESC, b.max_rowid DESC
+		         LIMIT 1
+		       ) AS last_batch_id
 		FROM sdn_record_source_summary ss
-		LEFT JOIN (
-			SELECT tg.schema_name, tg.provider_id, tg.source_name, tg.producer_peer_id,
-			       MIN(tg.created_at) AS first_seen, MAX(tg.created_at) AS last_seen
-			FROM sdn_record_source_tags tg
-			GROUP BY tg.schema_name, tg.provider_id, tg.source_name, tg.producer_peer_id
-		) t
-		  ON t.schema_name      = ss.schema_name
-		 AND t.provider_id      = ss.provider_id
-		 AND t.source_name      = ss.source_name
-		 AND t.producer_peer_id = ss.producer_peer_id
 		GROUP BY ss.producer_peer_id, ss.schema_name, ss.provider_id, ss.source_name
 		HAVING SUM(ss.record_count) > 0
 		ORDER BY updated_at DESC, ss.producer_peer_id ASC, ss.schema_name ASC
@@ -4490,16 +4514,18 @@ func (s *FlatSQLStore) ProducerSourceProgress() ([]ProducerSourceProgress, error
 	for rows.Next() {
 		var p ProducerSourceProgress
 		var updatedAt, firstSeen, lastSeen sql.NullInt64
+		var lastBatchID sql.NullString
 		if err := rows.Scan(
 			&p.ProducerPeerID, &p.SchemaName, &p.ProviderID, &p.SourceName,
 			&p.BatchCount, &p.Count, &p.TotalBytes, &updatedAt, &firstSeen, &lastSeen,
+			&lastBatchID,
 		); err != nil {
 			return nil, fmt.Errorf("scan producer source progress: %w", err)
 		}
 		p.UpdatedAtUnix = updatedAt.Int64
 		p.FirstSeenUnix = firstSeen.Int64
 		p.LastSeenUnix = lastSeen.Int64
-		p.LastBatchID = s.latestBatchForProducerLocked(p.ProducerPeerID, p.SchemaName, p.ProviderID, p.SourceName)
+		p.LastBatchID = strings.TrimSpace(lastBatchID.String)
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {

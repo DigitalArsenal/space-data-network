@@ -2053,6 +2053,15 @@ func (n *Node) startFlowServices() error {
 			}
 			return allowed, reason
 		})
+		// ...and record how the attempt it just stamped actually ended. Without
+		// this the counter that widens a publisher's window carries no cause at
+		// all, and an operator reading "2 consecutive failures" has nothing to
+		// act on.
+		sf.SetRetrievalOutcome(func(runErr error) {
+			if n.sourceMetrics != nil {
+				n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
+			}
+		})
 
 		if !started {
 			// Manager not started yet; StartAll will pick it up normally.
@@ -2197,8 +2206,15 @@ func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
 		window := time.Duration(hours * float64(time.Hour))
 		if age := time.Since(*last); age < window {
 			if failures > 1 {
+				// Name the cause. A widened window whose reason lives nowhere
+				// cannot be judged stale, cleared on evidence, or acted on.
+				if cause := n.sourceMetrics.AttemptFailureReason(appID); cause != "" {
+					return false, fmt.Sprintf(
+						"last attempt %s ago is inside the %s backoff window (%d consecutive failures; last: %s)",
+						age.Round(time.Second), window, failures, cause)
+				}
 				return false, fmt.Sprintf(
-					"last attempt %s ago is inside the %s backoff window (%d consecutive failures)",
+					"last attempt %s ago is inside the %s backoff window (%d consecutive failures; no cause recorded)",
 					age.Round(time.Second), window, failures)
 			}
 			return false, fmt.Sprintf("last attempt %s ago is inside the %s debounce window",

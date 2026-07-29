@@ -266,7 +266,16 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	if activeReq.AnnounceExisting {
 		return activeService.announceExistingDatasetPublications(ctx, activeReq, schema)
 	}
-	if activeReq.FullCatalog || activeReq.ChunkSize > 0 {
+	// A request that NAMES a batch has already stated its scope, and the
+	// batch filter is what bounds the export. Truncating it to
+	// defaultDatasetPublicationLimit published 250 of a 32,141-record batch —
+	// and because a publication is idempotent, republishing the same batch
+	// returned identical CIDs, so a consumer received the same 250 records
+	// forever and its catalog never grew. That is not a default, it is a
+	// silent discard of the caller's stated scope. An explicit Limit still
+	// wins: asking for a head is a legitimate request, guessing one is not.
+	if activeReq.FullCatalog || activeReq.ChunkSize > 0 ||
+		datasetPublicationScopedToWholeBatch(activeReq) {
 		return activeService.publishDatasetUpdateSeries(ctx, activeReq, schema)
 	}
 	limit := activeReq.Limit
@@ -469,6 +478,14 @@ func datasetPublicationExportFilter(req DatasetPublicationRequest, schema string
 	return filter
 }
 
+// datasetPublicationScopedToWholeBatch reports a request whose scope is already
+// stated by an explicit batch id and which asked for no head. Its export is
+// bounded by the batch filter, so the head limit has nothing left to protect
+// and only truncates what the caller asked to publish.
+func datasetPublicationScopedToWholeBatch(req DatasetPublicationRequest) bool {
+	return strings.TrimSpace(req.BatchID) != "" && req.Limit <= 0
+}
+
 func datasetPublicationSourceIdentityFromRequest(req DatasetPublicationRequest) datasetPublicationSourceIdentity {
 	return datasetPublicationSourceIdentity{
 		ProviderID: strings.TrimSpace(req.ProviderID),
@@ -480,7 +497,10 @@ func datasetPublicationSourceIdentityFromRequest(req DatasetPublicationRequest) 
 func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, error) {
 	chunkSize := req.ChunkSize
 	if chunkSize <= 0 {
-		if req.FullCatalog {
+		// A whole-batch publication is a sync payload, not a feed head: chunk
+		// it like one. At the 250 default a 32k batch would be announced as 129
+		// separate signed publications.
+		if req.FullCatalog || datasetPublicationScopedToWholeBatch(req) {
 			chunkSize = defaultFullCatalogPublicationChunkSize
 		} else {
 			chunkSize = defaultDatasetPublicationLimit
