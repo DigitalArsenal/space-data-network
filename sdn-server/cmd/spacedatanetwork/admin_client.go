@@ -130,6 +130,43 @@ func newAdminClient(cmd *cobra.Command) (*adminClient, error) {
 	return c, nil
 }
 
+// newAnonymousAdminClient builds a client with NO session, for the node's
+// public read surface. It exists so an operator can inspect a node whose seed
+// this process cannot read — the anonymous feed is anonymous for everyone, and
+// a CLI that refused to read it would be inventing a gate the daemon does not
+// have.
+func newAnonymousAdminClient() (*adminClient, error) {
+	cfg, res, err := config.LoadResolved(configPath)
+	if err != nil {
+		return nil, err
+	}
+	c := &adminClient{
+		baseURL: strings.TrimRight(adminURL(cfg), "/"),
+		http:    &http.Client{Timeout: 60 * time.Second},
+		cfg:     cfg,
+		res:     res,
+	}
+	if tlsCfg, certPath, terr := daemonTLSConfig(cfg, res); terr == nil && tlsCfg != nil {
+		if name := serverNameForCert(certPath, ExpectedCertHostFor(
+			strings.TrimPrefix(strings.TrimPrefix(c.baseURL, "https://"), "http://"))); name != "" {
+			tlsCfg.ServerName = name
+		}
+		c.certPath = certPath
+		c.certServerName = tlsCfg.ServerName
+		c.http.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+	}
+	return c, nil
+}
+
+// firstLine trims a multi-line CLI error down to its headline, for use inside a
+// one-line note.
+func firstLine(s string) string {
+	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+		return strings.TrimSpace(s[:idx])
+	}
+	return strings.TrimSpace(s)
+}
+
 // signInWithNodeRootKey performs the §14 root-account ceremony: load the node's
 // own root key, then run the wire half.
 func (c *adminClient) signInWithNodeRootKey(ctx context.Context) (string, error) {
