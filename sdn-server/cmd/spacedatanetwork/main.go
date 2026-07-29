@@ -720,8 +720,26 @@ func executableRelativeHDWalletCandidates() []string {
 	}
 }
 
+// userLocalHDWalletCandidates covers the only layout an UNPRIVILEGED operator
+// can install: ~/.local. On a host with no passwordless sudo there is nowhere
+// else to put the artifact, and without these entries every identity-dependent
+// command failed unless HD_WALLET_WASM_PATH was exported by a wrapper script —
+// which made the bare binary unusable on its own (sdn-cli-user-local-wasm-search-path).
+func userLocalHDWalletCandidates() []string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(home, ".local", "lib", "spacedatanetwork", "hd-wallet-wasi.wasm"),
+		filepath.Join(home, ".local", "lib", "hd-wallet-wasi.wasm"),
+	}
+}
+
 func defaultHDWalletWasmCandidates() []string {
-	return append(executableRelativeHDWalletCandidates(),
+	candidates := executableRelativeHDWalletCandidates()
+	candidates = append(candidates, userLocalHDWalletCandidates()...)
+	return append(candidates,
 		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"../../sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",

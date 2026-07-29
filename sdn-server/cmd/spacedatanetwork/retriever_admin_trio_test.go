@@ -477,3 +477,48 @@ func TestStateChangingMethodsAreGatedOnAuthDisabledNodes(t *testing.T) {
 		}
 	}
 }
+
+// TestUserLocalHDWalletCandidatesAreSearched closes
+// sdn-cli-user-local-wasm-search-path: on a host with no passwordless sudo the
+// only installable layout is ~/.local, and without these entries the bare
+// binary is unusable without a wrapper exporting HD_WALLET_WASM_PATH.
+func TestUserLocalHDWalletCandidatesAreSearched(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+
+	candidates := defaultHDWalletWasmCandidates()
+	want := []string{
+		filepath.Join(home, ".local", "lib", "spacedatanetwork", "hd-wallet-wasi.wasm"),
+		filepath.Join(home, ".local", "lib", "hd-wallet-wasi.wasm"),
+	}
+	for _, w := range want {
+		found := false
+		for _, c := range candidates {
+			if c == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("%q is not searched; candidates: %v", w, candidates)
+		}
+	}
+
+	// The node's own install still wins over a user-local copy: a daemon must
+	// not derive its peer identity from whatever happens to be in a home dir.
+	idxOwn, idxHome := -1, -1
+	for i, c := range candidates {
+		if strings.HasSuffix(c, filepath.Join("wasm", "hd-wallet-wasi.wasm")) && idxOwn < 0 &&
+			!strings.Contains(c, filepath.Join(home, ".local")) {
+			idxOwn = i
+		}
+		if c == want[0] {
+			idxHome = i
+		}
+	}
+	if idxOwn < 0 || idxHome < 0 || idxOwn > idxHome {
+		t.Fatalf("executable-relative must precede user-local (own=%d home=%d): %v", idxOwn, idxHome, candidates)
+	}
+}
