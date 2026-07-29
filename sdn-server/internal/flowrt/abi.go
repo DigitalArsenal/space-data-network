@@ -101,11 +101,22 @@ func readFrameDescriptor(mod *wasmrt.Module, ptr uint32) (*FlowFrameDescriptor, 
 
 // encodeFrameDescriptor serializes a frame descriptor into buf (which must
 // be at least flowFrameDescriptorSize bytes).
+//
+// ALIGNMENT IS STATED, NEVER LEFT ZERO. The compiled runtime requires a
+// positive power of two, and a zeroed field is not one: a tick frame written
+// with Alignment unset was refused (-30) under WasmEdge while the browser
+// host — which defaults the field to 1 — ran the same artifact to completion.
+// The runtime now reads an absent alignment as 1, but this host must not rely
+// on that: it says what it means, so the two hosts encode the same frame.
 func encodeFrameDescriptor(buf []byte, fd *FlowFrameDescriptor) {
+	alignment := fd.Alignment
+	if alignment == 0 {
+		alignment = 1
+	}
 	binary.LittleEndian.PutUint32(buf[0:4], fd.IngressIndex)
 	binary.LittleEndian.PutUint32(buf[4:8], fd.TypeDescriptorIdx)
 	binary.LittleEndian.PutUint32(buf[8:12], fd.PortIDPointer)
-	binary.LittleEndian.PutUint32(buf[12:16], fd.Alignment)
+	binary.LittleEndian.PutUint32(buf[12:16], alignment)
 	binary.LittleEndian.PutUint32(buf[16:20], fd.Offset)
 	binary.LittleEndian.PutUint32(buf[20:24], fd.Size)
 	binary.LittleEndian.PutUint32(buf[24:28], fd.StreamID)
@@ -118,6 +129,14 @@ func encodeFrameDescriptor(buf []byte, fd *FlowFrameDescriptor) {
 	buf[41] = 0
 	if fd.Occupied {
 		buf[41] = 1
+	}
+	// Bytes 42..47 are wire_format / ownership / mutability / lifetime + pad in
+	// the current descriptor. This host only ever writes canonical, host-owned,
+	// immutable frames, but it writes them EXPLICITLY: leaving trailing bytes to
+	// whatever the caller's buffer happened to hold is how a descriptor picks up
+	// a claim nobody made.
+	for index := 42; index < flowFrameDescriptorSize; index++ {
+		buf[index] = 0
 	}
 }
 
