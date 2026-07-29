@@ -178,9 +178,14 @@ type FlowEdgeDescriptor struct {
 	AlignedByteLength          uint32
 	AlignedFixedStringLength   uint32
 	AlignedRequiredAlignment   uint32
+	// Opaque marks a byte edge: no SDS identity, no aligned layout (SDS $PLG
+	// 1.0.13 / module-sdk descriptor ABI generation 2). It is the reason this
+	// struct grew from 64 to 68 bytes; a host reading the old stride resolves
+	// every edge past the first at the wrong offset and believes the result.
+	Opaque uint32
 }
 
-const flowEdgeDescriptorSize = 64
+const flowEdgeDescriptorSize = 68
 
 func decodeFlowEdgeDescriptorBytes(buf []byte) (*FlowEdgeDescriptor, error) {
 	if len(buf) != flowEdgeDescriptorSize {
@@ -207,6 +212,7 @@ func decodeFlowEdgeDescriptorBytes(buf []byte) (*FlowEdgeDescriptor, error) {
 		AlignedByteLength:          fields[13],
 		AlignedFixedStringLength:   fields[14],
 		AlignedRequiredAlignment:   fields[15],
+		Opaque:                     fields[16],
 	}, nil
 }
 

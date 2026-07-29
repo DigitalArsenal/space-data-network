@@ -99,11 +99,12 @@ func TestCanonicalWakeupFrameDescriptorUsesSafeInvocationMetadata(t *testing.T) 
 	}
 }
 
-func TestDecodeFlowEdgeDescriptorPreservesSigned64ByteContract(t *testing.T) {
+func TestDecodeFlowEdgeDescriptorPreservesSignedContract(t *testing.T) {
 	buf := make([]byte, flowEdgeDescriptorSize)
 	wants := []uint32{
 		7, 101, 8, 102, 103, 104, 105, 106,
 		32, 107, 1, 1, 9, 4096, 64, 32,
+		0,
 	}
 	for index, want := range wants {
 		binary.LittleEndian.PutUint32(buf[index*4:index*4+4], want)
@@ -119,6 +120,7 @@ func TestDecodeFlowEdgeDescriptorPreservesSigned64ByteContract(t *testing.T) {
 		got.SchemaHashPointer, got.SchemaHashSize, got.RootTypeNamePointer,
 		got.CanonicalFallbackAvailable, got.AlignedEligible, got.AlignedLayoutFields,
 		got.AlignedByteLength, got.AlignedFixedStringLength, got.AlignedRequiredAlignment,
+		got.Opaque,
 	}
 	for index, want := range wants {
 		if fields[index] != want {
