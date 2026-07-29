@@ -1573,6 +1573,7 @@ func (n *Node) findHDWalletWasmPath() string {
 	// the producer's peer id and broken every trust grant naming it. A daemon
 	// must find its own install's copy first.
 	paths := executableRelativeWalletWasmPaths()
+	paths = append(paths, userLocalWalletWasmPaths()...)
 	paths = append(paths,
 		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
@@ -1587,6 +1588,19 @@ func (n *Node) findHDWalletWasmPath() string {
 		}
 	}
 	return ""
+}
+
+// userLocalWalletWasmPaths covers an unprivileged ~/.local install, the only
+// layout available on a host without passwordless sudo.
+func userLocalWalletWasmPaths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(home, ".local", "lib", "spacedatanetwork", "hd-wallet-wasi.wasm"),
+		filepath.Join(home, ".local", "lib", "hd-wallet-wasi.wasm"),
+	}
 }
 
 // executableRelativeWalletWasmPaths lists the HD-wallet wasm locations inside
