@@ -50,13 +50,14 @@ type ServiceFlow struct {
 	mu   sync.Mutex
 	inst *flowInstance
 
-	statsMu         sync.Mutex
-	retrievalGate   RetrievalGate
-	startedAt       time.Time
-	timerRunCount   uint64
-	errorCount      uint64
-	lastTimerStatus string
-	lastInvokeAt    time.Time
+	statsMu          sync.Mutex
+	retrievalGate    RetrievalGate
+	retrievalOutcome RetrievalOutcome
+	startedAt        time.Time
+	timerRunCount    uint64
+	errorCount       uint64
+	lastTimerStatus  string
+	lastInvokeAt     time.Time
 }
 
 // serviceBundleTopology is the flow.json subset needed for timer triggers.
@@ -262,6 +263,18 @@ func (sf *ServiceFlow) CronMethods() []plugins.CronMethodSpec {
 // ledger. nil means ungated.
 type RetrievalGate func() (allowed bool, reason string)
 
+// RetrievalOutcome reports how a gated retrieval ended, so the ledger that
+// counted the attempt as a failure can record WHY it stayed one.
+type RetrievalOutcome func(runErr error)
+
+// SetRetrievalOutcome installs the outcome sink. Only invoked for runs the
+// gate actually admitted — a forced run books no attempt, so it explains none.
+func (sf *ServiceFlow) SetRetrievalOutcome(outcome RetrievalOutcome) {
+	sf.statsMu.Lock()
+	defer sf.statsMu.Unlock()
+	sf.retrievalOutcome = outcome
+}
+
 // SetRetrievalGate installs the debounce gate. Injected by the node so this
 // package never learns what a "source" is.
 func (sf *ServiceFlow) SetRetrievalGate(gate RetrievalGate) {
@@ -285,6 +298,7 @@ func (sf *ServiceFlow) SetRetrievalGate(gate RetrievalGate) {
 // An operator who genuinely needs a pull inside the window passes
 // {"force":true} — deliberate, visible in the result, and never the default.
 func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []byte) ([]byte, error) {
+	attempted := false
 	if !cronInvokeForced(input) {
 		sf.statsMu.Lock()
 		gate := sf.retrievalGate
@@ -301,10 +315,22 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 				sf.recordTimerResult(nil)
 				return summary, nil
 			}
+			// The gate stamped an ATTEMPT, which counts as a failure until an
+			// ingest proves otherwise. Whatever happens next is the only chance
+			// to say why that attempt did or did not pay off.
+			attempted = true
 		}
 	}
 	out, err := sf.FireTrigger(ctx, method)
 	sf.recordTimerResult(err)
+	if attempted {
+		sf.statsMu.Lock()
+		outcome := sf.retrievalOutcome
+		sf.statsMu.Unlock()
+		if outcome != nil {
+			outcome(err)
+		}
+	}
 	return out, err
 }
 

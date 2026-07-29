@@ -698,6 +698,17 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 		if strings.TrimSpace(tags.ProviderID) == "" {
 			tags.ProviderID = strings.TrimSpace(providerPeerID)
 		}
+		// The peer that served this shard IS the producer of record for these
+		// rows, and it is the one fact this node knows first-hand. Two shapes
+		// arrive without one: an empty tag, and normalizeSourceTags' back-fill
+		// of the PROVIDER name — which the producer feed correctly refuses to
+		// report as a peer, because a provider name is not an identity. Either
+		// way the shard would fill this store while the board showed an idle
+		// node. A tag that names a DIFFERENT peer is left alone: that is a
+		// relayed record and its origin is not ours to rewrite.
+		if producer := strings.TrimSpace(tags.ProducerPeerID); producer == "" || producer == strings.TrimSpace(tags.ProviderID) {
+			tags.ProducerPeerID = strings.TrimSpace(providerPeerID)
+		}
 
 		var existing int
 		err = tx.QueryRow(`SELECT 1 FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, index.SchemaName, record.CID).Scan(&existing)
