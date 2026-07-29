@@ -127,6 +127,38 @@ func (r *Runtime) Poisoned() bool { return r.poisoned }
 // corrupted exactly like a host-invoked trap). The runtime must be replaced.
 func (r *Runtime) MarkPoisoned() { r.poisoned = true }
 
+// free releases guest memory — UNLESS the runtime is poisoned, in which case it
+// does nothing at all.
+//
+// This is not an optimisation, it is the difference between a daemon that
+// reports a failed replay and a daemon that burns a core forever. Every alloc
+// site here frees through `defer`, so on a trap the deferred free runs on a
+// guest whose allocator state is exactly what the trap corrupted, and
+// `Module.Deallocate` calls the guest's free() on `context.Background()` with
+// no budget and no cancellation. Measured live on host-02 (2026-07-29): the
+// record-catalog replay trapped in flatsql_query_params, the deferred free
+// entered a five-instruction loop in the AOT artifact (99.7% of perf samples in
+// a 14-byte address range), and because the module lock is still held by the
+// caller, the trap error never returned, RecoverPoisonedEngine was never
+// reached, and the box sat at 98% CPU from boot with no flow running.
+//
+// Leaking the buffer is free: a poisoned runtime is discarded wholesale, so its
+// entire linear memory goes with it.
+func (r *Runtime) free(ptr uint32) {
+	if !r.mayCallGuest() {
+		return
+	}
+	r.mod.Deallocate(ptr)
+}
+
+// mayCallGuest reports whether it is still safe to enter the guest. Split out
+// from free() so the guard's DECISION can be pinned by a test without a test
+// having to call into a real engine (or, worse, a nil one — reaching wasmrt
+// with no module segfaults inside cgo rather than raising a recoverable Go
+// panic, which is a trap for anyone tempted to prove this with a zero-value
+// Runtime).
+func (r *Runtime) mayCallGuest() bool { return r != nil && !r.poisoned }
+
 // WasmModule exposes the underlying wasmrt module so hosts can register the
 // LIVE engine instance into dependent VMs (wasmrt.WithLinkedModuleFrom) —
 // the loop C.7 direct-linkage wiring. The instance is named
@@ -303,7 +335,7 @@ func (r *Runtime) BuildQueryCacheKey(dataset, artifactVersion, queryID string, p
 	free := func() {
 		for _, p := range ptrs {
 			if p != 0 {
-				r.mod.Deallocate(p)
+				r.free(p)
 			}
 		}
 	}
@@ -385,7 +417,7 @@ func (r *Runtime) BuildResponseArtifactCacheKey(schemaName, schemaVersion, sql s
 	defer func() {
 		for _, p := range ptrs {
 			if p != 0 {
-				r.mod.Deallocate(p)
+				r.free(p)
 			}
 		}
 	}()
@@ -453,12 +485,12 @@ func (r *Runtime) CreateDatabase(schema, name string) (*Database, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer r.mod.Deallocate(schemaPtr)
+	defer r.free(schemaPtr)
 	namePtr, err := r.allocCString(name)
 	if err != nil {
 		return nil, err
 	}
-	defer r.mod.Deallocate(namePtr)
+	defer r.free(namePtr)
 
 	res, err := r.mod.Execute("flatsql_create_db", int32(schemaPtr), int32(namePtr))
 	if err != nil {
@@ -520,12 +552,12 @@ func (d *Database) RegisterFileID(fileID, tableName string) error {
 	if err != nil {
 		return err
 	}
-	defer d.rt.mod.Deallocate(fidPtr)
+	defer d.rt.free(fidPtr)
 	tblPtr, err := d.rt.allocCString(tableName)
 	if err != nil {
 		return err
 	}
-	defer d.rt.mod.Deallocate(tblPtr)
+	defer d.rt.free(tblPtr)
 
 	if _, err := d.rt.mod.Execute("flatsql_register_file_id", int32(d.handle), int32(fidPtr), int32(tblPtr)); err != nil {
 		return d.rt.execErr("flatsql_register_file_id", err)
@@ -543,7 +575,7 @@ func (d *Database) RegisterSource(source string) error {
 	if err != nil {
 		return err
 	}
-	defer d.rt.mod.Deallocate(srcPtr)
+	defer d.rt.free(srcPtr)
 
 	// flatsql_register_source is a void export: failures (e.g. duplicate
 	// source) only land in the error latch, so detect success by the source
@@ -591,7 +623,7 @@ func (d *Database) MarkDeleted(tableName string, sequence uint64) error {
 	if err != nil {
 		return err
 	}
-	defer d.rt.mod.Deallocate(tblPtr)
+	defer d.rt.free(tblPtr)
 
 	if _, err := d.rt.mod.Execute("flatsql_mark_deleted", int32(d.handle), int32(tblPtr), float64(sequence)); err != nil {
 		return d.rt.execErr("flatsql_mark_deleted", err)
@@ -609,7 +641,7 @@ func (d *Database) DeletedCount(tableName string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer d.rt.mod.Deallocate(tblPtr)
+	defer d.rt.free(tblPtr)
 
 	res, err := d.rt.mod.Execute("flatsql_get_deleted_count", int32(d.handle), int32(tblPtr))
 	if err != nil {
@@ -628,7 +660,7 @@ func (d *Database) ClearTombstones(tableName string) error {
 	if err != nil {
 		return err
 	}
-	defer d.rt.mod.Deallocate(tblPtr)
+	defer d.rt.free(tblPtr)
 
 	if _, err := d.rt.mod.Execute("flatsql_clear_tombstones", int32(d.handle), int32(tblPtr)); err != nil {
 		return d.rt.execErr("flatsql_clear_tombstones", err)
@@ -670,7 +702,7 @@ func (d *Database) ingest(export string, data []byte, source string) (int, error
 		return 0, err
 	}
 	if dataPtr != 0 {
-		defer d.rt.mod.Deallocate(dataPtr)
+		defer d.rt.free(dataPtr)
 	}
 
 	args := []interface{}{int32(d.handle), int32(dataPtr), int32(len(data))}
@@ -679,7 +711,7 @@ func (d *Database) ingest(export string, data []byte, source string) (int, error
 		if err != nil {
 			return 0, err
 		}
-		defer d.rt.mod.Deallocate(srcPtr)
+		defer d.rt.free(srcPtr)
 		args = append(args, int32(srcPtr))
 	}
 
@@ -718,7 +750,7 @@ func (d *Database) execQuery(sql string, params []interface{}) error {
 	if err != nil {
 		return err
 	}
-	defer d.rt.mod.Deallocate(sqlPtr)
+	defer d.rt.free(sqlPtr)
 
 	if len(params) == 0 {
 		res, err := d.rt.mod.Execute("flatsql_query", int32(d.handle), int32(sqlPtr))
@@ -740,7 +772,7 @@ func (d *Database) execQuery(sql string, params []interface{}) error {
 		return err
 	}
 	if blobPtr != 0 {
-		defer d.rt.mod.Deallocate(blobPtr)
+		defer d.rt.free(blobPtr)
 	}
 	res, err := d.rt.mod.Execute("flatsql_query_params",
 		int32(d.handle), int32(sqlPtr), int32(blobPtr), int32(len(blob)), int32(len(params)))
@@ -865,12 +897,12 @@ func (d *Database) RegisterQueryTemplate(queryID, sql string, cacheable bool) er
 	if err != nil {
 		return err
 	}
-	defer d.rt.mod.Deallocate(idPtr)
+	defer d.rt.free(idPtr)
 	sqlPtr, err := d.rt.allocCString(sql)
 	if err != nil {
 		return err
 	}
-	defer d.rt.mod.Deallocate(sqlPtr)
+	defer d.rt.free(sqlPtr)
 
 	c := int32(0)
 	if cacheable {
@@ -895,7 +927,7 @@ func (d *Database) QueryTemplate(queryID string, params ...interface{}) (*Result
 	if err != nil {
 		return nil, err
 	}
-	defer d.rt.mod.Deallocate(idPtr)
+	defer d.rt.free(idPtr)
 
 	blob, err := EncodeParams(params)
 	if err != nil {
@@ -906,7 +938,7 @@ func (d *Database) QueryTemplate(queryID string, params ...interface{}) (*Result
 		return nil, err
 	}
 	if blobPtr != 0 {
-		defer d.rt.mod.Deallocate(blobPtr)
+		defer d.rt.free(blobPtr)
 	}
 
 	res, err := d.rt.mod.Execute("flatsql_query_template",
@@ -935,7 +967,7 @@ func (d *Database) QueryMany(reqs []QueryRequest) ([]*Result, error) {
 		return nil, err
 	}
 	if blobPtr != 0 {
-		defer d.rt.mod.Deallocate(blobPtr)
+		defer d.rt.free(blobPtr)
 	}
 
 	res, err := d.rt.mod.Execute("flatsql_query_many",
@@ -1031,14 +1063,14 @@ func (d *Database) QueryRawFlatBufferStream(sql string, params ...interface{}) (
 	if err != nil {
 		return nil, err
 	}
-	defer d.rt.mod.Deallocate(sqlPtr)
+	defer d.rt.free(sqlPtr)
 
 	blobPtr, err := d.rt.allocBytes(blob)
 	if err != nil {
 		return nil, err
 	}
 	if blobPtr != 0 {
-		defer d.rt.mod.Deallocate(blobPtr)
+		defer d.rt.free(blobPtr)
 	}
 
 	res, err := d.rt.mod.Execute("flatsql_query_raw_flatbuffer_stream",
@@ -1146,7 +1178,7 @@ func (d *Database) LoadAndRebuild(data []byte) error {
 		return err
 	}
 	if dataPtr != 0 {
-		defer d.rt.mod.Deallocate(dataPtr)
+		defer d.rt.free(dataPtr)
 	}
 	if _, err := d.rt.mod.Execute("flatsql_load_and_rebuild", int32(d.handle), int32(dataPtr), int32(len(data))); err != nil {
 		return d.rt.execErr("flatsql_load_and_rebuild", err)
