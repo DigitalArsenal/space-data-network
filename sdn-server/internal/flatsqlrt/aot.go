@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
 )
@@ -58,12 +60,19 @@ func ensureAOT(cacheDir string, wasm []byte) ([]byte, error) {
 // a second call finds the artifact and reports alreadyPresent=true without
 // recompiling. A non-nil error (compiler unavailable, compile failure) is
 // meant to be surfaced with a non-zero exit.
+// PREWARMING NEVER PRUNES. An operator primes a cache for the artifact they
+// are about to run; that act must not delete the artifact they might have to
+// roll BACK to. It already did once: priming three new ingest-flow hashes
+// evicted the three previous ones, so the rollback restarted the sole producer
+// INTERPRETED — a populated-looking cache and a node that could not finish a
+// catalog parse. Eviction stays on the service path (EnsureAOTArtifact), where
+// it is bounded and where the evicted bytes are by definition not in use.
 func PrewarmAOTArtifact(cacheDir, prefix string, wasm []byte) (path string, alreadyPresent bool, err error) {
 	path = aotArtifactPath(cacheDir, prefix, wasm)
 	if cached, readErr := os.ReadFile(path); readErr == nil && len(cached) > 0 {
 		return path, true, nil
 	}
-	if _, err = EnsureAOTArtifact(cacheDir, prefix, wasm); err != nil {
+	if _, err = ensureAOTArtifact(cacheDir, prefix, wasm, false); err != nil {
 		return path, false, err
 	}
 	return path, false, nil
@@ -103,6 +112,18 @@ func LoadAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
 // non-engine modules (e.g. flow HTTP mounts) share the cache directory
 // safely by picking a distinct prefix.
 func EnsureAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
+	return ensureAOTArtifact(cacheDir, prefix, wasm, true)
+}
+
+// aotRetainedArtifactsPerPrefix is how many builds of one module survive a
+// prune: the one just compiled and its immediate predecessor. Keeping the
+// predecessor is what makes a rollback cheap — the previous artifact is still
+// on disk, so restoring the previous bundle comes up AOT instead of silently
+// interpreted. Anything older is unreachable by any rollback that matters and
+// is evicted so the cache stays bounded.
+const aotRetainedArtifactsPerPrefix = 2
+
+func ensureAOTArtifact(cacheDir, prefix string, wasm []byte, prune bool) ([]byte, error) {
 	path := aotArtifactPath(cacheDir, prefix, wasm)
 	if cached, err := os.ReadFile(path); err == nil && len(cached) > 0 {
 		return cached, nil
@@ -133,17 +154,45 @@ func EnsureAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
 
 	// Prune artifacts compiled from older bytes of the SAME module (prefix) —
 	// stale entries would otherwise accumulate across upgrades. Other
-	// prefixes sharing the directory are untouched.
-	if entries, err := os.ReadDir(cacheDir); err == nil {
-		for _, e := range entries {
-			name := e.Name()
-			if name != filepath.Base(path) &&
-				strings.HasPrefix(name, prefix+"-") && strings.HasSuffix(name, ".aot.wasm") {
-				os.Remove(filepath.Join(cacheDir, name))
-			}
-		}
+	// prefixes sharing the directory are untouched, and the most recent
+	// predecessor is KEPT so a rollback still finds compiled code.
+	if prune {
+		pruneAOTArtifacts(cacheDir, prefix, filepath.Base(path))
 	}
 	return os.ReadFile(path)
+}
+
+// pruneAOTArtifacts keeps `keepName` plus the (aotRetainedArtifactsPerPrefix-1)
+// most recently modified other artifacts under prefix, and deletes the rest.
+func pruneAOTArtifacts(cacheDir, prefix, keepName string) {
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return
+	}
+	type candidate struct {
+		name    string
+		modTime time.Time
+	}
+	others := make([]candidate, 0, len(entries))
+	for _, e := range entries {
+		name := e.Name()
+		if name == keepName ||
+			!strings.HasPrefix(name, prefix+"-") ||
+			!strings.HasSuffix(name, ".aot.wasm") {
+			continue
+		}
+		info, infoErr := e.Info()
+		if infoErr != nil {
+			continue
+		}
+		others = append(others, candidate{name: name, modTime: info.ModTime()})
+	}
+	sort.Slice(others, func(i, j int) bool {
+		return others[i].modTime.After(others[j].modTime)
+	})
+	for index := aotRetainedArtifactsPerPrefix - 1; index < len(others); index++ {
+		os.Remove(filepath.Join(cacheDir, others[index].name))
+	}
 }
 
 // AOTArtifactPath reports where an artifact for these wasm bytes lives under
