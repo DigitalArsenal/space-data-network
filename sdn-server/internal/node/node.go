@@ -1909,6 +1909,20 @@ func (n *Node) hydrateFullRecordCatalog(ctx context.Context) {
 			return
 		}
 		log.Errorf("FlatSQL full record-catalog replay failed after %s: %v", time.Since(start).Round(time.Millisecond), err)
+		// A replay that TRAPPED leaves the engine poisoned, and a poisoned
+		// engine fails every later query for the life of the process — the
+		// daemon would keep answering /api/* with errors and never recover
+		// without an operator restart, which is what host-02 did all of
+		// 2026-07-29. Rebuild it here: recovery does NOT re-run this replay
+		// (recordCatalogHydrated is false precisely because it failed), so
+		// there is no trap-recover-trap loop. The catalog stays unhydrated —
+		// degraded and honest — while the hot window is rebuilt from the
+		// stream files, which is what serving actually needs.
+		if epoch, rerr := n.store.RecoverPoisonedEngine(); rerr != nil {
+			log.Errorf("FlatSQL engine recovery after failed replay also failed: %v", rerr)
+		} else {
+			log.Warnf("FlatSQL engine recovered after failed record-catalog replay (epoch %d); the compact catalog is NOT hydrated", epoch)
+		}
 		return
 	}
 	if err := n.store.RebuildSourceSummaries(); err != nil {

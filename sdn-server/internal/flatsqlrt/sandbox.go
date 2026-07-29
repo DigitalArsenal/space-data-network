@@ -100,14 +100,14 @@ func (d *Database) querySandboxed(sql string, mode int, caps SandboxCaps, params
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	defer d.rt.mod.Deallocate(sqlPtr)
+	defer d.rt.free(sqlPtr)
 
 	blobPtr, err := d.rt.allocBytes(blob)
 	if err != nil {
 		return nil, 0, 0, err
 	}
 	if blobPtr != 0 {
-		defer d.rt.mod.Deallocate(blobPtr)
+		defer d.rt.free(blobPtr)
 	}
 
 	res, err := d.rt.mod.Execute("flatsql_query_sandboxed",
