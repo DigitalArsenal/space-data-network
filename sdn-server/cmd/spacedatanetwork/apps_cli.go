@@ -38,9 +38,21 @@ var appsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List running apps and their retrieval metrics",
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		// ANONYMOUS BY CONTRACT. The $APPS feed is on the node's public read
+		// surface, so an operator inspecting a node must not be blocked by a
+		// sign-in they do not need — e.g. on a host where the seed is readable
+		// only by another user, or on a node they do not own. Sign in when we
+		// can (a session costs nothing and keeps the audit trail), fall back to
+		// an anonymous read when we cannot, and SAY SO rather than pretending.
 		client, err := newAdminClient(cmd)
 		if err != nil {
-			return err
+			anon, aerr := newAnonymousAdminClient()
+			if aerr != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: reading the apps feed anonymously (%v)\n",
+				firstLine(err.Error()))
+			client = anon
 		}
 		var feed struct {
 			GeneratedAt string `json:"generated_at"`

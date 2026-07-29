@@ -697,8 +697,31 @@ func resolveHDWalletWasmPathFromInputs(explicit, envPath string, layout bundle.L
 		strings.Join(searched, "\n  "))
 }
 
-func defaultHDWalletWasmCandidates() []string {
+// executableRelativeHDWalletCandidates looks for the HD-wallet wasm NEXT TO THE
+// BINARY. The CLI signs in through the §19 root ceremony, which derives the
+// node's root key through this module — so on a service host the module is not
+// optional tooling, it is part of the daemon's own install. Before this, a
+// deploy directory holding only the binary (e.g. /opt/sdn-retriever) fell
+// through to hard-coded absolute paths belonging to OTHER installs, and the CLI
+// worked only by accident of a retired node's leftovers still being on disk.
+func executableRelativeHDWalletCandidates() []string {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+		exe = resolved
+	}
+	dir := filepath.Dir(exe)
 	return []string{
+		filepath.Join(dir, "wasm", "hd-wallet-wasi.wasm"),
+		filepath.Join(dir, "hd-wallet-wasi.wasm"),
+		filepath.Join(filepath.Dir(dir), "wasm", "hd-wallet-wasi.wasm"),
+	}
+}
+
+func defaultHDWalletWasmCandidates() []string {
+	return append(executableRelativeHDWalletCandidates(),
 		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"../../sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
@@ -707,7 +730,7 @@ func defaultHDWalletWasmCandidates() []string {
 		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
 		"/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm",
 		"/usr/local/lib/hd-wallet-wasi.wasm",
-	}
+	)
 }
 
 func validateAssetPinPreNodeConfig(cfg *config.Config) error {
@@ -1451,27 +1474,52 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			frontendUIMode := resolveUIMode()
 			log.Infof("Auth surface mode: %s (SDN_UI_MODE)", frontendUIMode)
 
-			// HD wallet authentication
-			if cfg.Admin.RequireAuth {
-				// The user store owns the private auth database; the session
-				// store shares that same handle via userStore.DB().
-				// Owner law 2026-07-27: the auth store is SQLite in its OWN
-				// file, kept out of the standards store. resolveAuthDBPath
-				// applies the default and refuses a path inside the record
-				// store rather than silently co-locating them.
+			// HD wallet authentication.
+			//
+			// THE ADMIT POINT IS UNCONDITIONAL (owner order 2026-07-28, "the CLI
+			// must work against EVERY daemon"). This construction used to sit
+			// inside `if cfg.Admin.RequireAuth`, so a daemon configured with
+			// admin.require_auth:false — the retriever profile, loopback admin
+			// listener — served /api/apps but 404'd /api/auth/challenge. The CLI
+			// signs in through the §19 root ceremony before every Admin-gated
+			// command, so on that shape `apps run` could not work at all: not
+			// because the route was missing, but because the DOOR was missing.
+			//
+			// require_auth no longer decides WHETHER an admit point exists. It
+			// decides only how wide the wall around the read surface is (see
+			// serveAdminMuxRequest): operator-authority paths are Admin-gated
+			// either way, because §14/§19 root recognition means a session is
+			// always OBTAINABLE on a node holding its own seed — which is the
+			// precondition that was missing when "no auth" had to mean "no gate".
+			//
+			// The user store owns the private auth database; the session
+			// store shares that same handle via userStore.DB().
+			// Owner law 2026-07-27: the auth store is SQLite in its OWN
+			// file, kept out of the standards store. resolveAuthDBPath
+			// applies the default and refuses a path inside the record
+			// store rather than silently co-locating them.
+			//
+			// legacyWalletUIPath is resolved here (not in the branch below) so
+			// the wallet-static mount inside the RequireAuth branch still sees it.
+			// The generic in-process wallet UI is a development-only legacy
+			// surface. Shipped conjunction mode uses the isolated typed wallet
+			// presenter and must not expose the legacy asset path or advertise it
+			// through /api/auth/status.
+			legacyWalletUIPath := legacyWalletUIPathForMode(frontendUIMode, cfg.Admin.WalletUIPath)
+			if authErr := func() error {
 				authDBPath, aerr := resolveAuthDBPath(cfg)
 				if aerr != nil {
-					return fmt.Errorf("admin authentication required: %w", aerr)
+					return aerr
 				}
-				userStore, err := auth.NewUserStore(authDBPath, cfg.Users)
-				if err != nil {
-					return fmt.Errorf("admin authentication required: create user store: %w", err)
+				userStore, uerr := auth.NewUserStore(authDBPath, cfg.Users)
+				if uerr != nil {
+					return fmt.Errorf("create user store: %w", uerr)
 				}
 
-				sessionStore, err := auth.NewSessionStore(userStore.DB())
-				if err != nil {
+				sessionStore, serr := auth.NewSessionStore(userStore.DB())
+				if serr != nil {
 					_ = userStore.Close()
-					return fmt.Errorf("admin authentication required: create session store: %w", err)
+					return fmt.Errorf("create session store: %w", serr)
 				}
 
 				sessionTTL, _ := time.ParseDuration(cfg.Admin.SessionExpiry)
@@ -1483,13 +1531,20 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if cfgDisplayPath == "" {
 					cfgDisplayPath = config.DefaultPath()
 				}
-				// The generic in-process wallet UI is a development-only legacy
-				// surface. Shipped conjunction mode uses the isolated typed wallet
-				// presenter and must not expose the legacy asset path or advertise it
-				// through /api/auth/status.
-				legacyWalletUIPath := legacyWalletUIPathForMode(frontendUIMode, cfg.Admin.WalletUIPath)
 				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, legacyWalletUIPath, cfgDisplayPath)
 				authHandler.SetTLSManager(tlsManager)
+				return nil
+			}(); authErr != nil {
+				// An operator who asked for authentication gets a hard failure,
+				// exactly as before. An operator who did not still loses the
+				// admit point — so the wall below refuses every Admin-only path
+				// with 503 rather than falling open.
+				if cfg.Admin.RequireAuth {
+					return fmt.Errorf("admin authentication required: %w", authErr)
+				}
+				log.Errorf("Admin admit point unavailable; Admin-only APIs will refuse (503): %v", authErr)
+			}
+			if authHandler != nil {
 				// OWNER DIRECTIVE 2026-07-27: the node's own root account is
 				// always accepted as the admin sign-in, with no error and no
 				// config seeding. The handler recognises it by comparing the
@@ -1542,7 +1597,17 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				} else {
 					log.Infof("Authentication session APIs enabled; legacy wallet login UI disabled in conjunction mode")
 				}
+				log.Infof("Admin admit point at %s://%s/api/auth/{challenge,verify} (require_auth: %v)",
+					adminScheme, adminAddr, cfg.Admin.RequireAuth)
+			}
 
+			// Everything below is the AUTHENTICATED-PROFILE surface, still keyed
+			// to require_auth. It is deliberately NOT part of the admit point:
+			// the authenticated publish routes registered here collide on the
+			// mux with the unauthenticated ones registered further down when
+			// require_auth is false, and the rest are operator surfaces a
+			// loopback ingest daemon has never mounted.
+			if cfg.Admin.RequireAuth && authHandler != nil {
 				if n.DirectoryService() != nil {
 					adminDirectoryHandler := directory.NewAdminHTTPHandler(n.DirectoryService())
 					adminMux.HandleFunc("/api/v1/admin/directory/import", authHandler.RequireAuth(peers.Standard, adminDirectoryHandler.ServeHTTP))
@@ -2751,6 +2816,40 @@ func serveAdminMuxRequest(
 			})(w, r)
 			return
 		}
+		adminMux.ServeHTTP(w, r)
+		return
+	}
+
+	// require_auth is OFF: the node's READ surface is open, and stays exactly as
+	// open as it was. OPERATOR AUTHORITY does not (owner order 2026-07-28).
+	//
+	// "No auth" once had to mean "no gate", because on a node with no seeded
+	// admin there was no way to satisfy a gate; §14/§19 root recognition removed
+	// that — a node holding its own seed can always mint an Admin session
+	// through the admit point, and the admit point is now mounted
+	// unconditionally. So Admin-only paths keep the gate the authenticated
+	// profile applies, and driving this node's schedules costs a real session.
+	//
+	// METHOD-GRANULAR, deliberately. isAdminOnlyAPIPath is prefix-only and
+	// classifies plenty of READS (/api/v1/data/records/, /api/peers/…) that an
+	// operator-disabled-auth node has always served openly; gating those would
+	// be closing the read surface, which is not what was asked and broke the
+	// plugin-demo record read on the first attempt. Only state-changing methods
+	// are gated here, which is precisely the set "run-now must stay behind the
+	// same auth the sidecar uses" names.
+	adminOnlyPath := isAdminOnlyAPIPath(r.URL.Path) &&
+		!isLoopbackSelfGatedAdminPath(r.URL.Path) &&
+		isStateChangingMethod(r.Method)
+	if adminOnlyPath && !publicAPIRequest(r.Method, r.URL.Path) {
+		if authHandler == nil {
+			// Fail closed: no admit point, no operator action.
+			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		authHandler.RequireAuth(peers.Admin, func(w http.ResponseWriter, r *http.Request) {
+			adminMux.ServeHTTP(w, r)
+		})(w, r)
+		return
 	}
 	adminMux.ServeHTTP(w, r)
 }
@@ -3148,6 +3247,40 @@ func validateAuthDBPathSeparation(authPath, storagePath string) error {
 			authPath, recordStore)
 	}
 	return nil
+}
+
+// isStateChangingMethod reports whether a request can alter node state. GET,
+// HEAD and OPTIONS cannot; everything else is treated as if it can, including
+// methods this daemon does not implement — an unknown verb is not a safe one.
+func isStateChangingMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	return true
+}
+
+// isLoopbackSelfGatedAdminPath names the /api/v1/admin/ routes whose HANDLER
+// enforces its own loopback-only gate, independently of any session. They are
+// machine-local control surfaces, not operator-authority-by-session:
+//
+//	/api/v1/admin/dataset-updates/publish  api/dataset_publication.go:120
+//	/api/v1/admin/update/shutdown          update/control.go:68
+//
+// This matters only on a require_auth:false daemon, where the wall would
+// otherwise start demanding a session on a door that is already correctly hung
+// — and would break the §19 publish trigger, which is a FLOW calling its own
+// node over loopback with the `http` capability and no credential by design
+// (graph/tasks/sdn-producer-publish-trigger.md). Under require_auth:true these
+// paths stay behind the session wall exactly as before; this predicate is not
+// consulted there.
+func isLoopbackSelfGatedAdminPath(path string) bool {
+	switch path {
+	case "/api/v1/admin/dataset-updates/publish",
+		"/api/v1/admin/update/shutdown":
+		return true
+	}
+	return false
 }
 
 func isAdminOnlyAPIPath(path string) bool {

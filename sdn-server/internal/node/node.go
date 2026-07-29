@@ -1563,20 +1563,49 @@ func (n *Node) findHDWalletWasmPath() string {
 	}
 	// Look for the pure WASI wallet artifact. The browser hd-wallet.wasm package
 	// artifact imports Emscripten JS glue and cannot be used by Go/WASI hosts.
-	paths := []string{
+	//
+	// EXECUTABLE-RELATIVE FIRST (2026-07-28). This module is what turns the
+	// node's mnemonic into its PEER IDENTITY: without it the daemon silently
+	// falls back to a random key and comes up as a DIFFERENT NODE. The list
+	// below used to start at hard-coded absolute paths belonging to other
+	// installs — on host-02 the retriever was resolving it out of a RETIRED
+	// node's directory, so purging that directory would have silently changed
+	// the producer's peer id and broken every trust grant naming it. A daemon
+	// must find its own install's copy first.
+	paths := executableRelativeWalletWasmPaths()
+	paths = append(paths,
 		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
 		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
 		"/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm",
 		"/usr/local/lib/hd-wallet-wasi.wasm",
-	}
+	)
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
 	}
 	return ""
+}
+
+// executableRelativeWalletWasmPaths lists the HD-wallet wasm locations inside
+// this binary's OWN install directory, in preference order. Kept beside the
+// resolver it feeds so the two never drift.
+func executableRelativeWalletWasmPaths() []string {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+		exe = resolved
+	}
+	dir := filepath.Dir(exe)
+	return []string{
+		filepath.Join(dir, "wasm", "hd-wallet-wasi.wasm"),
+		filepath.Join(dir, "hd-wallet-wasi.wasm"),
+		filepath.Join(filepath.Dir(dir), "wasm", "hd-wallet-wasi.wasm"),
+	}
 }
 
 // deriveP256PublicKeyHex derives a P-256 public key from a 32-byte seed and
