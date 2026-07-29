@@ -3661,6 +3661,13 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 	log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
 		from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
 
+	// Materialization fetched these blocks through the local Kubo API, so they
+	// are already in the blockstore — but UNPINNED, which made this node an
+	// incidental cache of the catalog rather than a durable provider of it
+	// (ops-browser-content-source-gap). Pin the whole referenced DAG so a
+	// browser dialling this box's endpoint keeps finding the bytes.
+	n.pinMaterializedDatasetDAG(result.ManifestCID, result.ShardCID, result.IndexCID)
+
 	// Storage quota enforcement (Task D3): a trusted peer materializing a
 	// large/frequent publication flood should evict this store's own
 	// oldest records rather than filling the disk. Dispatched in the
@@ -4499,6 +4506,12 @@ func (n *Node) indexLocalNodeEPM() error {
 	} else {
 		log.Debugf("Failed to compute local node EPM CID: %v", err)
 	}
+	// An epmcid is a promise that the bytes are fetchable. Computing it is not
+	// the same as storing it: until this call landed, every $PNM and vCard this
+	// node emitted advertised an EPM CID that resolved in NO blockstore
+	// (ops-browser-content-source-gap). Best effort — identity indexing must
+	// never fail because the local blockstore is unavailable.
+	n.publishLocalNodeEPMToBlockstore()
 	return n.directorySvc.UpsertNodeEPMJSON(n.epmService.DirectoryRecordJSON(), epmCID, "local-node")
 }
 
