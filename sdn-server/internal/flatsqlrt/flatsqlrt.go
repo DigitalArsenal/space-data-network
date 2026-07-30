@@ -13,6 +13,9 @@ import (
 	_ "embed"
 	"encoding/binary"
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
@@ -52,6 +55,51 @@ const (
 	cstringMaxLen = 64 * 1024 * 1024
 )
 
+// DefaultEngineExecTimeout is the HOST's wall-clock budget for ONE engine call.
+//
+// It is deliberately far larger than any healthy call: the full record-catalog
+// replay of 523,261 frames measured 48.3 s in TOTAL on host-01, spread over many
+// individual calls, so five minutes for a single call cannot be reached by
+// legitimate work at catalog scale. This budget is not a performance knob — it
+// is the bound that stops a RUNAWAY guest from consuming a core forever, and it
+// is set at the loosest value that still does that so it can never poison a
+// healthy engine.
+//
+// Prior art, both from unbounded engine calls: host-02 burned one vCPU (its
+// only vCPU) for 612 minutes inside a single WasmEdge_VMExecuteRegistered, and
+// host-01 lost all libp2p peering for 41+ minutes the same way. Zero disables
+// the bound and restores that behaviour; it should never be zero in production.
+//
+// Override with SDN_FLATSQL_EXEC_TIMEOUT (a Go duration, e.g. "90s"), so an
+// operator can retune on a live host without a rebuild.
+const DefaultEngineExecTimeout = 5 * time.Minute
+
+// engineExecTimeoutEnv names the operator override for DefaultEngineExecTimeout.
+const engineExecTimeoutEnv = "SDN_FLATSQL_EXEC_TIMEOUT"
+
+// resolveEngineExecTimeout returns the configured per-call engine budget: the
+// explicit option if set, else the SDN_FLATSQL_EXEC_TIMEOUT override, else
+// DefaultEngineExecTimeout. An unparseable or negative override is IGNORED with
+// a warning rather than silently disabling the bound — losing the bound is the
+// failure mode this whole mechanism exists to prevent, so it must not be
+// reachable by a typo in a unit file.
+func resolveEngineExecTimeout(explicit time.Duration) time.Duration {
+	if explicit != 0 {
+		return explicit
+	}
+	raw := strings.TrimSpace(os.Getenv(engineExecTimeoutEnv))
+	if raw == "" {
+		return DefaultEngineExecTimeout
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		fmt.Fprintf(os.Stderr, "[flatsqlrt] WARN ignoring %s=%q (%v); using default %s\n",
+			engineExecTimeoutEnv, raw, err, DefaultEngineExecTimeout)
+		return DefaultEngineExecTimeout
+	}
+	return d
+}
+
 // Option configures a Runtime.
 type Option func(*config)
 
@@ -60,6 +108,18 @@ type config struct {
 	wasmBytes        []byte
 	aotCacheDir      string
 	aotCompileOnMiss bool
+	execTimeout      time.Duration
+}
+
+// WithExecTimeout overrides the per-call wall-clock budget for engine calls
+// (see DefaultEngineExecTimeout). Zero keeps the default; a negative value is
+// rejected in favour of the default.
+func WithExecTimeout(d time.Duration) Option {
+	return func(c *config) {
+		if d > 0 {
+			c.execTimeout = d
+		}
+	}
 }
 
 // WithMaxMemoryPages overrides the default 4 GiB linear-memory growth cap.
@@ -120,7 +180,12 @@ func (r *Runtime) Mode() EngineMode {
 // engine export — a C++ throw on some untouched internal path, OOM,
 // unreachable) may leave guest state corrupted: a poisoned runtime must be
 // discarded and recreated; continuing to use it can hang or corrupt results.
-func (r *Runtime) Poisoned() bool { return r.poisoned }
+//
+// Reports poisoned when EITHER this layer saw a trap or the underlying wasmrt
+// module poisoned itself (a trap it classified, or a dedicated-thread call
+// abandoned on its wall-clock budget). storage.RecoverPoisonedEngine polls this,
+// so both sources must be visible here or a dead engine is never replaced.
+func (r *Runtime) Poisoned() bool { return r.poisoned || r.mod.Poisoned() }
 
 // MarkPoisoned records an externally observed trap (e.g. a linked flow's
 // direct engine dispatch trapping mid-call — the engine state may be
@@ -157,7 +222,18 @@ func (r *Runtime) free(ptr uint32) {
 // with no module segfaults inside cgo rather than raising a recoverable Go
 // panic, which is a trap for anyone tempted to prove this with a zero-value
 // Runtime).
-func (r *Runtime) mayCallGuest() bool { return r != nil && !r.poisoned }
+// It also consults the underlying wasmrt module, which poisons ITSELF on any
+// trap and on an abandoned dedicated-thread call. That second source matters:
+// wasmrt can observe a breach this layer never sees as an execErr (a wall-clock
+// abandonment happens in the dispatch, not in a guest return), and unless it is
+// surfaced here, storage.RecoverPoisonedEngine would never learn the engine
+// needs replacing and the daemon would run on a dead engine forever.
+//
+// Module.Poisoned is nil-safe, so this stays valid for the zero-value Runtime
+// the note above warns about.
+func (r *Runtime) mayCallGuest() bool {
+	return r != nil && !r.poisoned && !r.mod.Poisoned()
+}
 
 // WasmModule exposes the underlying wasmrt module so hosts can register the
 // LIVE engine instance into dependent VMs (wasmrt.WithLinkedModuleFrom) —
@@ -219,6 +295,16 @@ func New(opts ...Option) (*Runtime, error) {
 		// safe on the CALLER's thread (one contiguous executor invocation,
 		// §7.1) but require the module lock (SQLITE_THREADSAFE=0).
 		wasmrt.WithRegisteredName(EngineImportModule),
+		// THE ENGINE MUST BE BOUNDED. It is the most-invoked module in the
+		// daemon, it is invoked while the FlatSQLStore lock is held, and that
+		// lock is reachable from the libp2p connection gater — so an unbounded
+		// engine call is not a slow query, it is a total node outage. Until
+		// 2026-07-30 this call site set NEITHER budget, which is why one guest
+		// trap could hold the store lock indefinitely (see wasmrt's
+		// ErrModulePoisoned). The dedicated thread means the guest itself
+		// cannot be interrupted, but the CALLER is now bounded and the module
+		// is poisoned on breach, so the host always unwinds.
+		wasmrt.WithExecTimeout(resolveEngineExecTimeout(cfg.execTimeout)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("flatsqlrt: instantiate engine: %w", err)
@@ -303,6 +389,23 @@ func (r *Runtime) engineErr(op string) error {
 func (r *Runtime) execErr(op string, err error) error {
 	r.poisoned = true
 	return fmt.Errorf("flatsqlrt: %s (runtime poisoned — recreate it): %w", op, err)
+}
+
+// checkUsable refuses an operation on a poisoned engine BEFORE the module lock
+// is taken.
+//
+// wasmrt already refuses a poisoned module at dispatch, so this is not the
+// safety net — it is the one that keeps callers off the LOCK. That distinction
+// is the whole host-01 outage: the trapping call held the module lock, so every
+// later caller blocked in mod.Lock() and never reached a poison check at all.
+// Checking before the lock means an unwinding caller (sql.Tx.Rollback is the
+// measured one) fails instantly instead of queueing behind a dead engine.
+func (r *Runtime) checkUsable(op string) error {
+	if r.mayCallGuest() {
+		return nil
+	}
+	return fmt.Errorf("flatsqlrt: %s refused: engine is poisoned and awaiting replacement: %w",
+		op, wasmrt.ErrModulePoisoned)
 }
 
 // allocCString copies s into guest memory as a NUL-terminated C string.
@@ -736,6 +839,12 @@ type Result struct {
 // placeholders; supported Go types: nil, bool, all ints, float32/64, string,
 // []byte.
 func (d *Database) Query(sql string, params ...interface{}) (*Result, error) {
+	// Before the lock, deliberately — see checkUsable. This is the exact call
+	// the database/sql Rollback path takes, and the one that re-entered a
+	// trapped engine and hung host-01 for 41 minutes.
+	if err := d.rt.checkUsable("query"); err != nil {
+		return nil, err
+	}
 	d.rt.mod.Lock()
 	defer d.rt.mod.Unlock()
 	if err := d.execQuery(sql, params); err != nil {

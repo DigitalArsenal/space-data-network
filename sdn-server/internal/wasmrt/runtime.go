@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
@@ -35,12 +36,70 @@ var (
 	// cumulative cost crosses the configured budget; the VM remains usable
 	// afterward.
 	ErrFuelExhausted = errors.New("wasm execution exceeded instruction/cost fuel budget")
+
+	// ErrModulePoisoned is returned (wrapped) by every entry point of a module
+	// that has already trapped, or whose dedicated execution thread was lost to
+	// an unbounded guest call. It exists because a trap is NOT a clean return:
+	// `unreachable` in a no-EH build aborts with no unwind, so the guest's
+	// allocator and internal invariants may be corrupt, and RE-ENTERING such a
+	// guest is what actually hangs a host.
+	//
+	// Measured, and the reason this is a typed fail-fast rather than a retry:
+	// on host-01 (2026-07-30) the flatsql engine trapped in
+	// flatsql_query_params, and the database/sql cleanup path then called
+	// Rollback, which re-entered the SAME trapped VM and never returned —
+	// holding the FlatSQLStore lock, which blocked the libp2p connection gater,
+	// which took the whole node's peering down. A poisoned module must fail its
+	// callers instantly so their cleanup paths unwind instead of parking
+	// forever; recovery is a WHOLESALE replacement of the module by its owner
+	// (see storage.RecoverPoisonedEngine), never a retry on this instance.
+	ErrModulePoisoned = errors.New("wasm module poisoned by an earlier trap or lost execution thread")
 )
 
 // IsResourceLimitExceeded reports whether err (or any error it wraps) is a
 // wasmrt resource-limit breach: wall-clock timeout or fuel/cost exhaustion.
 func IsResourceLimitExceeded(err error) bool {
 	return errors.Is(err, ErrExecutionTimeout) || errors.Is(err, ErrFuelExhausted)
+}
+
+// IsPoisoned reports whether err (or any error it wraps) indicates the module
+// was refused because it is poisoned.
+func IsPoisoned(err error) bool { return errors.Is(err, ErrModulePoisoned) }
+
+// poisonsModule reports whether an execution error means the guest instance can
+// no longer be trusted to be re-entered.
+//
+// Poisoning:
+//   - a TRAP (any unrecognized WasmEdge execution failure: unreachable, out of
+//     bounds memory access, integer divide by zero, ...) — no unwind ran, so
+//     guest invariants are unknown.
+//   - a wall-clock breach on a module we could NOT interrupt (dedicated-thread
+//     modules): the guest is still running inside an unpreemptible cgo call on
+//     a thread we have abandoned, so the instance is gone even though the Go
+//     caller returned. Handled at the call site, which knows the dispatch mode.
+//
+// NOT poisoning:
+//   - ErrFuelExhausted: WasmEdge aborts the guest itself at a well-defined
+//     instruction boundary and documents the VM as reusable.
+//   - an interrupted async execution that was cancelled AND reaped
+//     (runAsyncWithTimeout waits for the cancellation to take effect), which is
+//     likewise a defined state.
+//   - ctx cancellation before the guest was ever entered.
+func poisonsModule(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrFuelExhausted) || errors.Is(err, ErrExecutionTimeout) {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, ErrModulePoisoned) {
+		// Already poisoned; do not re-log.
+		return false
+	}
+	return true
 }
 
 // classifyExecError inspects a raw WasmEdge execution error and wraps it in
@@ -121,12 +180,23 @@ func WithMaxMemoryPages(pages uint32) Option {
 // When set and the module was NOT created WithDedicatedThread, breaches are
 // hard-interrupted via WasmEdge's async-execute + cancel mechanism
 // (WasmEdge_AsyncCancel) — the guest is stopped mid-instruction and the
-// runtime remains usable for the next call. WithDedicatedThread modules
-// cannot safely use the async interrupt path (see WithDedicatedThread's
-// doc comment on nested-AOT thread affinity), so for those the wall-clock
-// budget is enforced best-effort only; WithCostLimit is the mechanism that
-// reliably bounds them and should always be set alongside this option for
-// dedicated-thread modules.
+// runtime remains usable for the next call.
+//
+// WithDedicatedThread modules cannot safely use the async interrupt path (see
+// WithDedicatedThread's doc comment on nested-AOT thread affinity), so the
+// guest itself cannot be stopped. The budget is nevertheless HARD for the
+// CALLER: on breach the caller returns ErrExecutionTimeout, releasing every
+// host lock it held, and the module is POISONED (ErrModulePoisoned) so no
+// further call is dispatched to the abandoned worker. The runaway guest keeps
+// one OS thread until the process exits and the module must be replaced
+// wholesale — the guest is not saved, but the HOST always survives, which is
+// the property that matters. WithCostLimit should still be set alongside this
+// option for dedicated-thread modules: it is the only mechanism that stops the
+// guest itself, so it turns a permanently leaked thread into a clean abort.
+//
+// Both mechanisms exist because neither alone is sufficient, and the absence of
+// BOTH on the flatsql engine is what took host-01's peering down on
+// 2026-07-30 (see ErrModulePoisoned).
 func WithExecTimeout(d time.Duration) Option {
 	return func(c *config) { c.execTimeout = d }
 }
@@ -301,6 +371,22 @@ type Module struct {
 	// corresponding enforcement — see WithExecTimeout / WithCostLimit.
 	execTimeout time.Duration
 	costLimit   uint
+
+	// poisoned is set once this instance has trapped (or its dedicated exec
+	// thread was abandoned) and must never be entered again. Read on EVERY
+	// entry, before any lock is taken and before any channel handoff, so a
+	// poisoned module fails its callers instantly instead of queueing them
+	// behind a call that will never return. atomic because it is written from
+	// the exec thread and read from arbitrary callers.
+	poisoned    atomic.Bool
+	poisonCause atomic.Value // error
+
+	// execThreadLost is set when a dedicated-thread call breached its
+	// wall-clock budget: the worker goroutine is still blocked in cgo and its
+	// OS thread is permanently consumed, so execCh must never be sent on again
+	// (an unbuffered send would block the caller forever) and Release must not
+	// wait on execWG.
+	execThreadLost atomic.Bool
 }
 
 // execRequest carries one guest call to the dedicated execution thread.
@@ -482,16 +568,148 @@ func (m *Module) executeDirect(ctx context.Context, name string, params ...inter
 	return values, classifyExecError(err)
 }
 
+// Poisoned reports whether this module has trapped (or lost its execution
+// thread) and must be discarded rather than re-entered. Owners poll this to
+// decide to rebuild the instance wholesale.
+func (m *Module) Poisoned() bool {
+	return m != nil && m.poisoned.Load()
+}
+
+// PoisonCause returns the error that poisoned this module, or nil.
+func (m *Module) PoisonCause() error {
+	if m == nil {
+		return nil
+	}
+	if v, ok := m.poisonCause.Load().(error); ok {
+		return v
+	}
+	return nil
+}
+
+// MarkPoisoned records that this instance must never be entered again. The
+// FIRST cause wins — later failures are consequences of the first, and the
+// original trap is the one worth reporting. Safe to call concurrently and
+// repeatedly.
+func (m *Module) MarkPoisoned(cause error) {
+	if m == nil {
+		return
+	}
+	if cause == nil {
+		cause = ErrModulePoisoned
+	}
+	if m.poisoned.CompareAndSwap(false, true) {
+		m.poisonCause.Store(cause)
+		// ERROR level and unconditional: ten hours of a silently spinning guest
+		// (host-02, 2026-07-30) was the second half of this defect. A poisoned
+		// module must never be a silent condition.
+		fmt.Fprintf(os.Stderr, "[wasmrt] ERROR module poisoned (%q): %v — instance will be refused until replaced\n",
+			m.registeredName, cause)
+	}
+}
+
+// poisonedErr builds the typed refusal returned to callers of a poisoned
+// module, preserving the original cause for diagnosis.
+func (m *Module) poisonedErr() error {
+	if cause := m.PoisonCause(); cause != nil {
+		return fmt.Errorf("%w: %v", ErrModulePoisoned, cause)
+	}
+	return ErrModulePoisoned
+}
+
 // exec routes a guest call through the dedicated thread when configured,
 // falling back to a direct call otherwise.
+//
+// Two host-survival properties are enforced here, both learned from the
+// host-01/host-02 wedges (see ErrModulePoisoned):
+//
+//  1. FAIL FAST ON A POISONED INSTANCE. The check happens before the channel
+//     handoff, so a caller unwinding from an earlier trap (e.g. sql.Tx.Rollback)
+//     gets an immediate error instead of being queued behind a call that will
+//     never complete.
+//
+//  2. THE HANDOFF IS BOUNDED. A dedicated-thread module keeps the plain
+//     synchronous WasmEdge call to preserve its nested-AOT thread-affinity
+//     invariant, and that call is an unpreemptible cgo call — nothing can
+//     interrupt it. What CAN be bounded is how long the CALLER waits for it. On
+//     breach the caller returns, releasing whatever host locks it held, and the
+//     module is poisoned so the abandoned worker is never sent to again. One OS
+//     thread is leaked permanently; that is the price of an uninterruptible
+//     runtime, and it is enormously cheaper than a wedged node.
 func (m *Module) exec(ctx context.Context, name string, params ...interface{}) ([]interface{}, error) {
-	if m.execCh == nil {
-		return m.executeDirect(ctx, name, params...)
+	if m.poisoned.Load() {
+		return nil, m.poisonedErr()
 	}
+	if m.execCh == nil {
+		values, err := m.executeDirect(ctx, name, params...)
+		if poisonsModule(err) {
+			m.MarkPoisoned(fmt.Errorf("trap in %q: %w", name, err))
+		}
+		return values, err
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// The dedicated worker cannot be interrupted, so bound the wait instead.
+	// The budget resolution is identical to executeDirect's so the caller sees
+	// one consistent deadline regardless of dispatch mode.
+	base := m.execTimeout
+	if b, ok := execBudgetFrom(ctx); ok && b.Timeout > 0 {
+		base = b.Timeout
+	}
+	timeout := m.effectiveTimeout(ctx, base)
+
 	req := &execRequest{ctx: ctx, name: name, params: params, done: make(chan execResult, 1)}
-	m.execCh <- req
-	res := <-req.done
-	return res.values, res.err
+
+	var timer *time.Timer
+	var fired <-chan time.Time
+	if timeout > 0 {
+		timer = time.NewTimer(timeout)
+		defer timer.Stop()
+		fired = timer.C
+	}
+
+	// The send itself must be bounded too: execCh is unbuffered, so if the
+	// worker is already blocked in cgo forever, an unbounded send would hang
+	// this caller exactly as the original defect did.
+	select {
+	case m.execCh <- req:
+	case <-fired:
+		return nil, m.abandonExecThread(name, timeout)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	select {
+	case res := <-req.done:
+		if poisonsModule(res.err) {
+			m.MarkPoisoned(fmt.Errorf("trap in %q: %w", name, res.err))
+		}
+		return res.values, res.err
+	case <-fired:
+		return nil, m.abandonExecThread(name, timeout)
+	case <-ctx.Done():
+		// The worker is still inside the guest; the instance is no longer
+		// usable even though this caller is giving up on it.
+		return nil, m.abandonExecThreadCause(name, ctx.Err())
+	}
+}
+
+// abandonExecThread gives up on a dedicated-thread call that outran its
+// wall-clock budget.
+func (m *Module) abandonExecThread(name string, timeout time.Duration) error {
+	return m.abandonExecThreadCause(name, fmt.Errorf("%w: %q exceeded %s (dedicated thread, uninterruptible)",
+		ErrExecutionTimeout, name, timeout))
+}
+
+func (m *Module) abandonExecThreadCause(name string, cause error) error {
+	m.execThreadLost.Store(true)
+	m.MarkPoisoned(fmt.Errorf("dedicated execution thread abandoned mid-call in %q: %w", name, cause))
+	return cause
 }
 
 // MemoryStats describes the module's current default linear memory size.
@@ -823,7 +1041,31 @@ func (m *Module) ReadCString(ptr, maxLen uint32) (string, error) {
 }
 
 // Release frees all WasmEdge resources.
+//
+// DELIBERATE LEAK when the dedicated execution thread was abandoned
+// (execThreadLost): that thread is still executing inside this VM in an
+// unpreemptible cgo call, so neither of the two things Release normally does is
+// safe. execWG.Wait() would block the caller forever — reproducing the very
+// wedge the abandonment exists to escape — and vm.Release() would free a VM,
+// configure and host modules that live C++ code is still touching, which is a
+// use-after-free that crashes the whole daemon rather than one module.
+//
+// So we leak: one OS thread, one VM and its host modules, bounded by the number
+// of times a guest has run away (normally zero, and the owner replaces the
+// instance wholesale after the first). Leaking is the correct trade — the
+// alternative is either a hang or a segfault, and this module has already been
+// poisoned, so nothing will ever enter it again.
 func (m *Module) Release() {
+	if m.execThreadLost.Load() {
+		fmt.Fprintf(os.Stderr, "[wasmrt] ERROR leaking VM and one OS thread for module %q: "+
+			"its execution thread is still inside an uninterruptible guest call; "+
+			"releasing WasmEdge resources under it would crash the process\n", m.registeredName)
+		m.execCh = nil
+		m.vm = nil
+		m.hostMods = nil
+		m.conf = nil
+		return
+	}
 	if m.execCh != nil {
 		close(m.execCh)
 		m.execWG.Wait()

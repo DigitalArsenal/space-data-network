@@ -27,6 +27,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -76,6 +77,13 @@ import (
 var (
 	log              = logging.Logger("sdn")
 	processStartTime = time.Now()
+
+	// wsProxyFailures counts /p2p/ websocket-upgrade proxy failures, i.e. every
+	// public 502 this daemon has served on that route. It is reported in the
+	// ERROR line the proxy's ErrorHandler now emits, so the journal alone tells
+	// an operator whether a 502 was a one-off or a sustained outage — the
+	// distinction that previously required dumping production's goroutines.
+	wsProxyFailures atomic.Uint64
 )
 
 var errLocalSDNDaemonUnavailable = errors.New("local SDN daemon unavailable")
@@ -1052,7 +1060,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				if wsTarget, sourceAddr := resolveLocalLibp2pWsProxyTarget(listenAddrStrings); wsTarget != nil {
 					wsProxy := httputil.NewSingleHostReverseProxy(wsTarget)
+					// NEVER discard this error. Every public /p2p/<peerid> 502 is
+					// emitted here, and until 2026-07-30 the cause was dropped on
+					// the floor — so a total peering outage presented as a bare
+					// 502 with no diagnosis anywhere in the journal, and finding
+					// it required a SIGQUIT goroutine dump of production. The
+					// upstream is our OWN loopback libp2p listener, so a failure
+					// is always a real node-side defect worth an ERROR line.
 					wsProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+						wsProxyFailures.Add(1)
+						log.Errorf(
+							"libp2p websocket upgrade proxy FAILED (total=%d): %s %s -> %s: %v",
+							wsProxyFailures.Load(), r.Method, r.URL.Path, wsTarget.String(), err,
+						)
 						http.Error(w, "upstream libp2p websocket unavailable", http.StatusBadGateway)
 					}
 					wsUpgradeProxy = wsProxy
