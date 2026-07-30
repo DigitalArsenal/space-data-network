@@ -100,6 +100,15 @@ fs.mkdirSync(embedDir, { recursive: true });
 fs.writeFileSync(outHtml, html);
 fs.writeFileSync(outCsp, csp + '\n');
 
-console.log(`[build-dashboard] wrote ${path.relative(process.cwd(), outHtml)} (${html.length} bytes)`);
+// Buffer.byteLength, NOT html.length: a JS string's length counts UTF-16 code
+// units, and this page is full of multi-byte characters (· › ‹ … ⚙ ◉ ◍), so
+// html.length under-reports the artifact by ~216 bytes. Byte provenance is the
+// discipline this whole surface is verified with — a build step that prints a
+// byte count must print the real one, or it sends the next agent hunting a
+// phantom delta between "what the build said" and what the node serves.
+console.log(
+  `[build-dashboard] wrote ${path.relative(process.cwd(), outHtml)} (${Buffer.byteLength(html, 'utf8')} bytes,` +
+    ` sha256 ${createHash('sha256').update(html, 'utf8').digest('hex')})`
+);
 console.log(`[build-dashboard] wrote ${path.relative(process.cwd(), outCsp)} (${hashes.length} inline-script hash(es))`);
 console.log(`[build-dashboard] CSP: ${csp}`);
