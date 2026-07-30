@@ -1,0 +1,22 @@
+{
+  "schema": "iris/dashboard-design-source/1",
+  "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
+  "mount_path": "sdn-js/spaceaware-ui",
+  "alias": "spaceaware-student-sdn",
+  "design_commit": "4716f75b859f0ecdd950f51e9ed468bb09b8fca4",
+  "artifact": {
+    "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
+    "bytes": 418886,
+    "sha256": "b3c1ddf7ec8daf3a47bfe8d61b706c82a1584e090d8db04a7800a5fcebdaeb06"
+  },
+  "byte_provenance_baseline": true,
+  "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
+  "supersedes": {
+    "bytes": 418722,
+    "sha256": "b7fc648318986eaf4ea232a06b3830fd9916afea1595e08028f2005dea0799ed",
+    "was_live_at": "https://sdn.spaceaware.io/ 2026-07-30",
+    "reason": "Pre-migration anchor, built when the design lib was a separate checkout outside this repo. It is NOT reproducible: svelte's default cssHash is hash(filename) and vite-plugin-svelte passes the RAW ABSOLUTE id, so that sha was a function of one machine's directory layout and any agent building in its own worktree got a different one with zero content change. The migration pins cssHash to hash(css) (vite.config.mjs), making the artifact path-independent and reproducible by anyone. Equivalence to this anchor was proven, not assumed: CSS byte-identical after scope-hash normalisation (45216 == 45216), whole-artifact length identical after normalisation (405241 == 405241), visible-text multiset identical, and an A/B/A control showed the submodule mount + dropped npm dep + vite rewrite reproduce b7fc6483 EXACTLY when the design root is pointed back at the old path."
+  },
+  "ruled_by": "IRIS 2026-07-30, ui-design-lib-two-way-sync (owner ruling 2026-07-30)",
+  "date": "2026-07-30"
+}
