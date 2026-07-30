@@ -1086,8 +1086,10 @@
      any padding.
      The rule that already existed for phones is simply applied at the width where
      the header actually stops fitting: the two STATUS chips go, the actionable
-     account control stays, and the same counts remain one line down in the route's
-     meta line. Threshold is the grid's own 1180px, not a new number. */
+     account control stays. Nothing they said is lost — the swarm counts are in
+     PEER MAP's own chips on NODE (`N LINKS`, `N PEERS`) and in the meta line on
+     PEERS, and this node's liveness is NODE HEALTH's whole hero. Threshold is the
+     grid's own 1180px, not a new number. */
   @media (max-width: 1180px) {
     .hdr-status { display: none; }
   }
