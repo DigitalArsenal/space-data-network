@@ -3,6 +3,7 @@ package peers
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -440,6 +441,17 @@ func (h *APIHandler) updatePeer(w http.ResponseWriter, r *http.Request, peerID p
 // removePeer removes a peer.
 func (h *APIHandler) removePeer(w http.ResponseWriter, r *http.Request, peerID peer.ID) {
 	if err := h.registry.RemovePeer(peerID); err != nil {
+		// Same rule as handlePeerTrust: a removal that is still on disk is not
+		// a removal, and 204 would be a lie the operator only discovers after a
+		// restart puts the peer back.
+		if errors.Is(err, ErrNotPersisted) {
+			writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
+				"code": "not_persisted",
+				"message": "This node removed the peer but could not write that to storage, " +
+					"so it will come back when the node restarts. The node's storage engine is not accepting writes.",
+			})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
@@ -470,7 +482,20 @@ func (h *APIHandler) handlePeerTrust(w http.ResponseWriter, r *http.Request, pee
 		return
 	}
 
+	// A trust change that did not reach storage is NOT a success. Answering 200
+	// here is exactly the owner's 2026-07-30 defect: on a node whose FlatSQL
+	// engine was poisoned the write lived only in RAM, the page said it worked,
+	// and EFFECTIVE stayed where it was. ErrNotPersisted is separated from
+	// "peer not found" so the operator is told which of the two happened.
 	if err := h.registry.SetTrustLevel(peerID, level); err != nil {
+		if errors.Is(err, ErrNotPersisted) {
+			writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
+				"code": "not_persisted",
+				"message": "This node applied the trust level but could not write it to storage, " +
+					"so it will be lost when the node restarts. The node's storage engine is not accepting writes.",
+			})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
@@ -943,6 +968,15 @@ func (h *APIHandler) handleVCardExport(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONStatus is writeJSON with an explicit status code, for the refusals
+// this package has to describe in a machine-readable `code` the dashboard can
+// turn into a sentence (api.js describeApiError) rather than a bare HTTP number.
+func writeJSONStatus(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
 
