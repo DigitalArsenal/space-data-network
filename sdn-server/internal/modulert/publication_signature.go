@@ -68,7 +68,10 @@ type moduleSignaturePayload struct {
 // signer is trusted) and AllowUnsignedByContentHash defaults to empty (no
 // bypass) — an empty-but-non-nil policy rejects every artifact, signed or
 // not, until an operator explicitly trusts a signer or allowlists a
-// content hash.
+// content hash — UNLESS ReportOnly is set, which is the observe stage
+// (evaluate everything, refuse nothing). So there are three states, not
+// two: nil = inert/no verification, ReportOnly = verified-and-logged, and
+// enforcing = fail closed.
 type ModuleSignaturePolicy struct {
 	// TrustedSigners is the set of Ed25519 publisher public keys a
 	// publication-trailer signature must chain to in order to be
@@ -88,6 +91,28 @@ type ModuleSignaturePolicy struct {
 	// operators can grep for it. Empty by default — production stays
 	// fail closed. MUST NOT be populated outside local development.
 	AllowUnsignedByContentHash map[string]bool
+
+	// ReportOnly is the OBSERVE stage of the seal-council rollout
+	// (graph/tasks/saw-module-signing-enforcement.md, owner ruling
+	// 2026-07-30). When true this policy is attached and fully evaluated —
+	// every artifact is verified and every would-be rejection is logged
+	// with the machine-greppable token "module_signature_observe" carrying
+	// content_hash, reason, and the OBSERVED signer/keyId — but nothing is
+	// refused: enforceModuleSignaturePolicy admits the artifact anyway.
+	//
+	// This exists because a nil policy is INERT (no verification happens at
+	// all, so an operator cannot discover what a flip would break) while a
+	// non-nil enforcing policy is FAIL CLOSED (a flip with unsigned prod
+	// artifacts in the catalog takes the node's modules down). ReportOnly
+	// is the third state the rollout actually needs: full evaluation, zero
+	// blast radius, so the rejection log can be drained to empty by
+	// re-signing BEFORE enforcement is turned on.
+	//
+	// ReportOnly is NOT a bypass and MUST NOT be confused with
+	// AllowUnsignedByContentHash: it blesses nothing permanently and
+	// records no artifact into policy. Clearing this one field is the whole
+	// enforce flip — which is deliberately a single, reversible step.
+	ReportOnly bool
 }
 
 // ModuleSignatureStatus reports the outcome of publication-trailer
@@ -232,6 +257,16 @@ func enforceModuleSignaturePolicy(policy *ModuleSignaturePolicy, wasmBytes []byt
 		log.Warnf(
 			"module signature bypass: content_hash=%s reason=%q — explicitly allowlisted via NodeContext.ModuleSignaturePolicy.AllowUnsignedByContentHash for local development; this MUST NOT be set in production",
 			status.ContentHash, status.Reason,
+		)
+		return portable, status, nil
+	}
+	if policy.ReportOnly {
+		// OBSERVE stage: evaluate fully, refuse nothing. The token below is
+		// the operator's drain-to-empty signal during the observe window —
+		// every line here is an artifact that WOULD die on the enforce flip.
+		log.Warnf(
+			"module_signature_observe: content_hash=%s reason=%s signed=%t observed_signer=%s observed_key_id=%q — ADMITTED because ModuleSignaturePolicy.ReportOnly is set; this artifact WOULD BE REFUSED under enforcement",
+			status.ContentHash, status.Reason, status.Signed, status.SignerPubKeyHex, status.KeyID,
 		)
 		return portable, status, nil
 	}
