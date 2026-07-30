@@ -445,3 +445,45 @@ func TestLiveRecordFitsOneDNSString(t *testing.T) {
 	}
 	t.Logf("live-shaped record is %d bytes", len(record))
 }
+
+// TestValidityIsCapped is the Seal Council condition (Hephaestus, 2026-07-30).
+// The cap lives in CanonicalStatement, which BOTH producers and verifiers pass
+// through, so an over-long proof can neither be minted nor accepted. A cap only
+// the signer honours is a cap an attacker holding the key simply ignores.
+func TestValidityIsCapped(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	issued := int64(1785400000)
+
+	atCap := Proof{
+		Domain:    "example.org",
+		PublicKey: pub,
+		IssuedAt:  issued,
+		ExpiresAt: issued + int64(MaxValidity.Seconds()),
+	}
+	if _, err := CanonicalStatement(atCap); err != nil {
+		t.Fatalf("exactly at the cap must be allowed: %v", err)
+	}
+
+	overCap := atCap
+	overCap.ExpiresAt = issued + int64(MaxValidity.Seconds()) + 1
+	if _, err := CanonicalStatement(overCap); !errors.Is(err, ErrValidityTooLong) {
+		t.Fatalf("one second over the cap must be refused, got %v", err)
+	}
+	if _, err := Sign(overCap, func(s []byte) ([]byte, error) { return ed25519.Sign(priv, s), nil }); !errors.Is(err, ErrValidityTooLong) {
+		t.Fatalf("Sign must refuse to mint an over-long proof, got %v", err)
+	}
+
+	// The verifier must refuse it too, even if some other signer minted it.
+	overCap.Signature = make([]byte, ed25519.SignatureSize)
+	if err := Verify(overCap, time.Unix(issued, 0)); !errors.Is(err, ErrValidityTooLong) {
+		t.Fatalf("Verify must refuse an over-long window regardless of who signed it, got %v", err)
+	}
+
+	// No-expiry still parses: it is discouraged, not forbidden, and the cap is a
+	// bound on a STATED window, not a requirement that one be stated.
+	never := atCap
+	never.ExpiresAt = 0
+	if _, err := CanonicalStatement(never); err != nil {
+		t.Fatalf("expires=0 must remain legal: %v", err)
+	}
+}

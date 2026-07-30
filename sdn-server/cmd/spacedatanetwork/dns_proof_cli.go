@@ -63,8 +63,8 @@ func init() {
 	dnsProofCmd.Flags().StringVar(&dnsProofDomain, "domain", "", "domain to bind (required), e.g. sdn.spaceaware.io")
 	dnsProofCmd.Flags().StringVar(&dnsProofSelector, "selector", "",
 		"optional single-label selector for multi-key domains: <selector>._sdnkey.<domain>")
-	dnsProofCmd.Flags().DurationVar(&dnsProofValidFor, "valid-for", 365*24*time.Hour,
-		"validity period; 0 means no expiry (NOT recommended: expiry bounds the blast radius of a lost key)")
+	dnsProofCmd.Flags().DurationVar(&dnsProofValidFor, "valid-for", dnsproof.MaxValidity,
+		"validity period, capped at "+dnsproof.MaxValidity.String()+"; 0 means no expiry (NOT recommended: expiry bounds the blast radius of a lost key)")
 	dnsProofCmd.Flags().BoolVar(&dnsProofJSON, "json", false, "emit JSON for programmatic use (dashboard menu)")
 	dnsProofCmd.Flags().Uint32Var(&dnsProofAccount, "account", 0, "BIP-44 account index")
 	rootCmd.AddCommand(dnsProofCmd)
@@ -162,6 +162,12 @@ func runDNSProof(cmd *cobra.Command, args []string) error {
 	// decrypt a seed to find out the operator typed a bare hostname.
 	if _, err := dnsproof.OwnerName(dnsProofDomain, dnsProofSelector); err != nil {
 		return err
+	}
+	// Refuse an over-long window at the flag boundary as well as in the library,
+	// so the operator is told BEFORE a seed is decrypted rather than after.
+	if dnsProofValidFor > dnsproof.MaxValidity {
+		return fmt.Errorf("--valid-for %s exceeds the %s maximum: there is no revocation channel for a published proof, so a binding may not outlive its cap",
+			dnsProofValidFor, dnsproof.MaxValidity)
 	}
 
 	cfg, cfgRes, err := config.LoadResolved(configPath)

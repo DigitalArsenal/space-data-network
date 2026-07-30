@@ -93,6 +93,17 @@ const (
 	ed25519PublicKeySize    = ed25519.PublicKeySize
 	secp256k1CompressedSize = 33
 
+	// MaxValidity caps how long a proof may claim to be good for.
+	//
+	// Seal Council condition (Hephaestus, 2026-07-30): the validity duration is
+	// the one caller-influenced field that is not structurally constrained the
+	// way the domain is, and THERE IS NO REVOCATION CHANNEL. An uncapped
+	// duration mints a near-immortal binding: an unexpired proof for domain X
+	// stays verifiable even after the key has moved on to serving a different
+	// host. Bounding it is the mitigation, so the bound is enforced in the
+	// library rather than left to each caller to remember.
+	MaxValidity = 365 * 24 * time.Hour
+
 	// maxTXTStringLen is the DNS <character-string> limit (RFC 1035 §3.3).
 	// A record longer than this is still legal — it becomes multiple strings in
 	// one RR — but staying inside one string is what survives registrar UIs, so
@@ -114,6 +125,7 @@ var (
 	ErrNotYetValid      = errors.New("dnsproof: proof is issued in the future beyond the allowed clock skew")
 	ErrDomainMismatch   = errors.New("dnsproof: record domain does not match the queried domain")
 	ErrBadDomain        = errors.New("dnsproof: invalid domain")
+	ErrValidityTooLong  = errors.New("dnsproof: validity window exceeds the maximum")
 )
 
 // Proof is one domain-to-key binding.
@@ -216,6 +228,14 @@ func CanonicalStatement(p Proof) ([]byte, error) {
 	}
 	if p.ExpiresAt != 0 && p.ExpiresAt <= p.IssuedAt {
 		return nil, fmt.Errorf("%w: expires-at %d is not after issued-at %d", ErrMissingTag, p.ExpiresAt, p.IssuedAt)
+	}
+	// The cap is checked here, in the ONE function every producer and every
+	// verifier passes through, so an over-long proof can neither be minted nor
+	// accepted. Checking it only in the CLI would leave the verifier trusting a
+	// window the signer was supposed to have limited.
+	if p.ExpiresAt != 0 && p.ExpiresAt-p.IssuedAt > int64(MaxValidity.Seconds()) {
+		return nil, fmt.Errorf("%w: validity window %ds exceeds the %ds maximum; there is no revocation channel, so a proof may not outlive its cap",
+			ErrValidityTooLong, p.ExpiresAt-p.IssuedAt, int64(MaxValidity.Seconds()))
 	}
 	peerID := strings.TrimSpace(p.PeerID)
 	if strings.ContainsAny(peerID, " \t\r\n;") {
