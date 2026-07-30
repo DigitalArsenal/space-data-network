@@ -98,7 +98,16 @@ func TestBuildObservedSDNPeersFiltersToAdvertisementEvidence(t *testing.T) {
 	}
 }
 
-func TestBuildObservedSDNPeersIncludesAdvertisementOnlyPeersWithKnownAddresses(t *testing.T) {
+// SUPERSEDED BY OWNER RULING 2026-07-30. This test asserted that a peer known
+// ONLY through an SDN advertisement — never dialled, never seen — belonged on
+// the board. The owner looked at the result of exactly that rule (34 such rows)
+// and said: "I have no idea what these peers are that are in the table" and "The
+// Peers table should not ever show peers that have never been seen, UNLESS they
+// have been added manually and 'pinned'". Advertisement discovery is still how
+// the node LEARNS of a peer; it is no longer a reason to seat one. The
+// addresses it contributes are still merged onto rows admitted for a real
+// reason — which is what this test now pins.
+func TestBuildObservedSDNPeersDoesNotSeatAdvertisementOnlyPeers(t *testing.T) {
 	t.Parallel()
 
 	localID := mustPeerID(t)
@@ -129,20 +138,35 @@ func TestBuildObservedSDNPeersIncludesAdvertisementOnlyPeersWithKnownAddresses(t
 		},
 	)
 
-	if len(out) != 1 {
-		t.Fatalf("observed SDN peer count = %d, want 1", len(out))
+	if len(out) != 0 {
+		t.Fatalf("observed SDN peer count = %d, want 0: an advertisement is a claim anyone can publish into a public DHT, not evidence this node has ever met the peer", len(out))
 	}
-	if out[0].ID != discoveredID {
-		t.Fatalf("observed peer ID = %s, want %s", out[0].ID, discoveredID)
+
+	// Pin the same peer and it is admitted — and the addresses learned from the
+	// advertisement are still merged onto the row, so the pin is dialable.
+	pinned := BuildObservedSDNPeers(
+		&PeerGraphSnapshot{
+			LocalPeerID: localID.String(),
+			Nodes: []PeerNode{
+				{PeerID: localID.String(), IsOnline: true},
+				{PeerID: discoveredID.String(), IsOnline: false, Pinned: true, PinSource: peers.PinSourceOperator},
+			},
+		},
+		nil,
+		map[string][]string{discoveredID.String(): {"spacedatanetwork/1.0.0"}},
+		map[string][]string{discoveredID.String(): {discoveredAddr.String()}},
+	)
+	if len(pinned) != 1 || pinned[0].ID != discoveredID {
+		t.Fatalf("pinned advertisement peer = %v, want exactly %s", pinned, discoveredID)
 	}
-	if len(out[0].Addrs) != 1 || out[0].Addrs[0].String() != discoveredAddr.String() {
-		t.Fatalf("observed peer addrs = %v, want [%s]", out[0].Addrs, discoveredAddr)
+	if len(pinned[0].Addrs) != 1 || pinned[0].Addrs[0].String() != discoveredAddr.String() {
+		t.Fatalf("pinned peer addrs = %v, want [%s]", pinned[0].Addrs, discoveredAddr)
 	}
-	if out[0].Metadata["advertisement_flags"] != "spacedatanetwork/1.0.0" {
-		t.Fatalf("advertisement_flags metadata = %q", out[0].Metadata["advertisement_flags"])
+	if pinned[0].Metadata["advertisement_flags"] != "spacedatanetwork/1.0.0" {
+		t.Fatalf("advertisement_flags metadata = %q", pinned[0].Metadata["advertisement_flags"])
 	}
-	if out[0].Metadata["agent_version"] != "spacedatanetwork/1.0.0" {
-		t.Fatalf("agent_version metadata = %q", out[0].Metadata["agent_version"])
+	if pinned[0].Metadata["agent_version"] != "" {
+		t.Fatalf("agent_version = %q: an advertisement flag is not an observed agent version", pinned[0].Metadata["agent_version"])
 	}
 }
 
@@ -239,8 +263,14 @@ func TestCountSDNPeersSplitsConnectedFromKnown(t *testing.T) {
 	if counts.Connected != 1 {
 		t.Fatalf("Connected = %d, want 1 (only the peer identifying as SDN; the IPFS-only peer must not count)", counts.Connected)
 	}
-	if counts.Known != 2 {
-		t.Fatalf("Known = %d, want 2 (connected SDN peer + advertisement-discovered offline SDN peer)", counts.Known)
+	// AMENDED BY OWNER RULING 2026-07-30. "Known" no longer means "anyone who
+	// ever advertised": an advertisement-discovered peer that has never been
+	// connected is not on the board, so it is not counted either. Known is now
+	// pinned-or-connected, which is what the page can actually show — the whole
+	// point of the ruling was that a headline number counting rows nobody could
+	// account for is a dishonest number.
+	if counts.Known != 1 {
+		t.Fatalf("Known = %d, want 1 (the connected SDN peer; an advertisement-only peer is not on the board)", counts.Known)
 	}
 	if counts.Known != len(BuildObservedSDNPeers(snapshot, nil, map[string][]string{sdnOfflineID.String(): {"sdn/1.0.3"}}, nil)) {
 		t.Fatalf("Known must equal the observed SDN peer list served at /api/peers/sdn")
@@ -320,8 +350,32 @@ func TestObservedSDNPeersAdmitsBySDNIdentityNotByProtocol(t *testing.T) {
 	if !got[sdnID.String()] {
 		t.Fatalf("a peer identifying as spacedatanetwork was excluded: %v", got)
 	}
-	if !got[staleOfflineID.String()] {
-		t.Fatal("a known-but-offline SDN node lost its seat; unreachable is not the same as foreign")
+	// AMENDED BY OWNER RULING 2026-07-30: "When a peer drops off the network it
+	// should just disappear." The 2026-07-28 membership rule this test guards
+	// (identity, not protocol) is UNCHANGED — but it decides WHETHER a peer is
+	// one of ours, not whether an absent one keeps a seat. Remembering an SDN
+	// node we cannot reach is exactly what produced a board full of "last seen
+	// — never". Unreachable is still not foreign; it is simply not present.
+	if got[staleOfflineID.String()] {
+		t.Fatal("an offline, unpinned peer kept its seat; a peer that drops off the network must disappear")
+	}
+	// Pinning is the ONLY way to keep it, and then it is there for a reason the
+	// row can state.
+	pinnedSnapshot := &PeerGraphSnapshot{LocalPeerID: localID.String(), Nodes: append(
+		append([]PeerNode{}, snapshot.Nodes[:len(snapshot.Nodes)-1]...),
+		PeerNode{PeerID: staleOfflineID.String(), IsOnline: false, Pinned: true, PinSource: peers.PinSourceOperator},
+	), Edges: snapshot.Edges}
+	keptItsSeat := false
+	for _, entry := range BuildObservedSDNPeers(pinnedSnapshot, []*peers.TrustedPeer{staleRegistry}, staleFlags, nil) {
+		if entry.ID == staleOfflineID {
+			keptItsSeat = true
+			if entry.Metadata["source"] != peers.PinSourceOperator {
+				t.Fatalf("pinned offline peer source = %q, want %q", entry.Metadata["source"], peers.PinSourceOperator)
+			}
+		}
+	}
+	if !keptItsSeat {
+		t.Fatal("a PINNED offline SDN node must keep its seat")
 	}
 	if got[localID.String()] {
 		t.Fatal("the local node must never appear as a row on its own board")

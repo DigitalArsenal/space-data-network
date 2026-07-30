@@ -52,6 +52,12 @@ func (h *APIHandler) setupRoutes() {
 	h.mux.HandleFunc("/api/peers", h.handlePeers)
 	h.mux.HandleFunc("/api/peers/", h.handlePeerByID)
 
+	// Pin management (owner ruling 2026-07-30). Registered as its own pattern
+	// so ServeMux's longest-match sends /api/peers/pins here instead of to the
+	// /api/peers/ subtree, which would try to decode "pins" as a peer id.
+	h.mux.HandleFunc("/api/peers/pins", h.handlePins)
+	h.mux.HandleFunc("/api/peers/pins/", h.handlePinByID)
+
 	// Group management endpoints
 	h.mux.HandleFunc("/api/groups", h.handleGroups)
 	h.mux.HandleFunc("/api/groups/", h.handleGroupByName)

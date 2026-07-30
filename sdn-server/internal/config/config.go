@@ -18,6 +18,12 @@ import (
 
 // Config represents the SDN server configuration.
 type Config struct {
+	// SourcePath is the config file this Config was loaded from, recorded so
+	// surfaces that tell an operator "change it in the config" can name the
+	// REAL file. Never serialized: it is where the config came from, not part
+	// of it. Empty when the defaults were used (no file on disk).
+	SourcePath string `yaml:"-"`
+
 	Mode       string           `yaml:"mode"` // "full" or "edge"
 	Network    NetworkConfig    `yaml:"network"`
 	Storage    StorageConfig    `yaml:"storage"`
@@ -1357,6 +1363,7 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
+	cfg.SourcePath = path
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}

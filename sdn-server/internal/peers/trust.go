@@ -609,6 +609,12 @@ type Registry struct {
 
 	persistence PersistenceProvider
 
+	// pins is the operator/config pin set (pin.go). It is deliberately NOT
+	// guarded by mu and never touched from the connection path: it has its own
+	// lock, it is written only by rare admin mutations, and the gater's
+	// admission decisions must never be able to wait on it (see strictMode).
+	pins *PinStore
+
 	// statsCh carries connection/message statistics updates to a background
 	// writer so RecordConnection/RecordMessage — both reachable from the
 	// connection gater — never touch the store on the caller's goroutine.
@@ -707,6 +713,9 @@ func NewRegistry(strictMode bool, persistence PersistenceProvider) *Registry {
 		peers:       make(map[peer.ID]*TrustedPeer),
 		groups:      make(map[string]*PeerGroup),
 		persistence: persistence,
+		// An unattached registry still answers pin questions — as "nothing is
+		// pinned" — so every consumer can ask unconditionally.
+		pins: &PinStore{pins: make(map[string]Pin)},
 	}
 	r.strictMode.Store(strictMode)
 
@@ -829,6 +838,32 @@ func (r *Registry) GetPeer(id peer.ID) (*TrustedPeer, error) {
 }
 
 // ListPeers returns all peers in the registry.
+// SetPinStore attaches the durable pin store. Passing nil leaves the registry
+// with its empty in-memory store rather than a nil one, so PinOf/Pins never
+// have to be nil-checked at the call site.
+func (r *Registry) SetPinStore(store *PinStore) {
+	if r == nil || store == nil {
+		return
+	}
+	r.pins = store
+}
+
+// Pins returns the pin store. Never nil for a registry built by NewRegistry.
+func (r *Registry) Pins() *PinStore {
+	if r == nil {
+		return nil
+	}
+	return r.pins
+}
+
+// PinOf reports the pin for a peer, if it is pinned.
+func (r *Registry) PinOf(id peer.ID) (Pin, bool) {
+	if r == nil || r.pins == nil || id == "" {
+		return Pin{}, false
+	}
+	return r.pins.Get(id.String())
+}
+
 func (r *Registry) ListPeers() []*TrustedPeer {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -385,6 +385,29 @@ func (n *Node) init() error {
 		}
 	}
 	n.peerRegistry = peers.NewRegistry(n.config.Peers.StrictMode, persistence)
+
+	// PIN STORE (owner ruling 2026-07-30: a peer that has never been seen may
+	// only appear if it was "added manually and 'pinned'"). This is DURABLE and
+	// deliberately independent of the registry persistence above — a pin that
+	// does not survive a restart is not a pin, and on this node the registry
+	// path is a legacy ".db" that the branch above refuses outright, so pins
+	// would otherwise have had nowhere to live. See internal/peers/pin.go for
+	// why the whole registry is not persisted instead.
+	pinPath := peers.PinPathFor(n.config.Peers.RegistryPath)
+	if pinPath == "" {
+		pinPath = peers.PinPathFor(filepath.Join(strings.TrimSpace(n.config.Storage.Path), "peers.json"))
+	}
+	pinStore, err := peers.NewPinStore(pinPath)
+	if err != nil {
+		// Fail loud, not silent: starting with an empty pin set would quietly
+		// drop peers the operator deliberately kept.
+		return fmt.Errorf("open peer pin store: %w", err)
+	}
+	n.peerRegistry.SetPinStore(pinStore)
+	if pinPath != "" {
+		log.Infof("Peer pin store at %s (%d pinned)", pinPath, pinStore.Len())
+	}
+
 	n.peerGater = peers.NewTrustedConnectionGater(n.peerRegistry)
 
 	// Wire the web-of-trust graph (Phase C2) from verified node-key-signed
@@ -411,22 +434,42 @@ func (n *Node) init() error {
 		log.Infof("Trusted peer strict mode disabled - unknown peers allowed with Standard trust")
 	}
 
-	// Add configured trusted peers to registry
+	// Add configured trusted peers to registry.
+	//
+	// A config trusted peer IS A PIN: the operator wrote it into a file, so it
+	// keeps its seat on the peer board whether or not it is reachable, and the
+	// board marks it as owned by that file. The note carries the REAL path and
+	// key — the owner asked "what does the first row 'config trusted peer'
+	// mean?" about a row that told him to go change a config entry without
+	// saying which file or which key.
+	configPinNote := "peers.trusted_peers"
+	if src := strings.TrimSpace(n.config.SourcePath); src != "" {
+		configPinNote = src + " · peers.trusted_peers"
+	}
 	for _, peerAddr := range n.config.Peers.TrustedPeers {
 		addrInfo, err := peer.AddrInfoFromString(peerAddr)
 		if err != nil {
 			log.Warnf("Invalid trusted peer address %s: %v", peerAddr, err)
 			continue
 		}
+		// NO MANUFACTURED NAME. This was literally `Name: "Config Trusted
+		// Peer"`, which the board then rendered as the peer's DN — the owner
+		// read it as the row's identity and asked what it meant. A peer's name
+		// comes from its EPM or from an operator; when there is none, the board
+		// shows the short peer id and says where the row came from instead.
 		tp := &peers.TrustedPeer{
 			ID:         addrInfo.ID,
 			Addrs:      addrInfo.Addrs,
 			TrustLevel: peers.Trusted,
-			Name:       "Config Trusted Peer",
 		}
 		if err := upsertConfiguredTrustedPeer(n.peerRegistry, tp); err != nil {
 			log.Warnf("Failed to add trusted peer %s: %v", addrInfo.ID, err)
 		}
+		addrStrings := make([]string, 0, len(addrInfo.Addrs))
+		for _, a := range addrInfo.Addrs {
+			addrStrings = append(addrStrings, a.String())
+		}
+		pinStore.DeclareConfigPin(addrInfo.ID, addrStrings, configPinNote)
 	}
 
 	// Parse listen addresses

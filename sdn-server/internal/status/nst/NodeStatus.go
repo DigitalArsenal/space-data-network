@@ -356,8 +356,78 @@ func (rcv *NodeStatus) StandardsVersion() []byte {
 	return rcv.STANDARDS_VERSION()
 }
 
+/// PROVENANCE — how this row reached the board, so an operator can answer
+/// "how did this get here?" without opening devtools (owner, 2026-07-30:
+/// "I have no idea what these peers are that are in the table").
+/// Exactly one of:
+///   "config"    — declared in the node's config file (peers.trusted_peers)
+///   "pinned"    — pinned by an operator through the pin API
+///   "connected" — seen right now on a live connection
+/// A row can carry NO other provenance: the feed admits pinned-or-connected
+/// and nothing else (epm.BuildObservedSDNPeers).
+func (rcv *NodeStatus) SOURCE() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *NodeStatus) Source() []byte {
+	return rcv.SOURCE()
+}
+
+/// PROVENANCE — how this row reached the board, so an operator can answer
+/// "how did this get here?" without opening devtools (owner, 2026-07-30:
+/// "I have no idea what these peers are that are in the table").
+/// Exactly one of:
+///   "config"    — declared in the node's config file (peers.trusted_peers)
+///   "pinned"    — pinned by an operator through the pin API
+///   "connected" — seen right now on a live connection
+/// A row can carry NO other provenance: the feed admits pinned-or-connected
+/// and nothing else (epm.BuildObservedSDNPeers).
+/// True for config and operator pins. A pinned peer keeps its seat while
+/// unreachable; an unpinned peer disappears when it drops off the network.
+func (rcv *NodeStatus) PINNED() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *NodeStatus) Pinned() bool {
+	return rcv.PINNED()
+}
+
+/// True for config and operator pins. A pinned peer keeps its seat while
+/// unreachable; an unpinned peer disappears when it drops off the network.
+func (rcv *NodeStatus) MutatePINNED(n bool) bool {
+	return rcv._tab.MutateBoolSlot(44, n)
+}
+
+func (rcv *NodeStatus) MutatePinned(n bool) bool {
+	return rcv.MutatePINNED(n)
+}
+
+/// For SOURCE=="config", the real file and key an operator can edit. For
+/// SOURCE=="pinned", the operator's own note. Never a manufactured label.
+func (rcv *NodeStatus) PIN_NOTE() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *NodeStatus) PinNote() []byte {
+	return rcv.PIN_NOTE()
+}
+
+/// For SOURCE=="config", the real file and key an operator can edit. For
+/// SOURCE=="pinned", the operator's own note. Never a manufactured label.
 func NodeStatusStart(builder *flatbuffers.Builder) {
-	builder.StartObject(19)
+	builder.StartObject(22)
 }
 func NodeStatusAddPEER_ID(builder *flatbuffers.Builder, PEER_ID flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(PEER_ID), 0)
@@ -478,6 +548,24 @@ func NodeStatusAddSTANDARDS_VERSION(builder *flatbuffers.Builder, STANDARDS_VERS
 }
 func NodeStatusAddStandardsVersion(builder *flatbuffers.Builder, STANDARDS_VERSION flatbuffers.UOffsetT) {
 	NodeStatusAddSTANDARDS_VERSION(builder, STANDARDS_VERSION)
+}
+func NodeStatusAddSOURCE(builder *flatbuffers.Builder, SOURCE flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(19, flatbuffers.UOffsetT(SOURCE), 0)
+}
+func NodeStatusAddSource(builder *flatbuffers.Builder, SOURCE flatbuffers.UOffsetT) {
+	NodeStatusAddSOURCE(builder, SOURCE)
+}
+func NodeStatusAddPINNED(builder *flatbuffers.Builder, PINNED bool) {
+	builder.PrependBoolSlot(20, PINNED, false)
+}
+func NodeStatusAddPinned(builder *flatbuffers.Builder, PINNED bool) {
+	NodeStatusAddPINNED(builder, PINNED)
+}
+func NodeStatusAddPIN_NOTE(builder *flatbuffers.Builder, PIN_NOTE flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(PIN_NOTE), 0)
+}
+func NodeStatusAddPinNote(builder *flatbuffers.Builder, PIN_NOTE flatbuffers.UOffsetT) {
+	NodeStatusAddPIN_NOTE(builder, PIN_NOTE)
 }
 func NodeStatusEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
