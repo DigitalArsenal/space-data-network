@@ -27,6 +27,46 @@
  *   - :root, NOT .root — wallet-theme.css styles a confirmation dialog that
  *     hd-wallet-ui appends to document.body, outside the app's .root element,
  *     and it must still resolve these tokens.
+ *
+ * THE LAYOUT GRAMMAR (IRIS, STANDING LAW — graph task
+ * `iris-dashboard-grammar-law`, owner directive 2026-07-30: "menus should NEVER
+ * have a double scrollbar, the widgets should not scroll, they should be
+ * responsive and be paginated if there is overflow. never have widgets with
+ * different widths and mismatched edges")
+ * ---------------------------------------------------------------------------
+ * Restated here because this is the file every wave already opens. The full text,
+ * with the evidence and the amendment procedure, is in the graph task. A wave that
+ * does not cite that id does not pass an Iris review.
+ *
+ *   L1  ONE SCROLL CONTEXT. The page column is the only scroller. No descendant
+ *       declares `overflow: auto|scroll`; `scrollbar-gutter` appears exactly ONCE
+ *       in the whole stylesheet, on that scroller. A modal body is the single
+ *       permitted exception — it is a separate scroll ROOT, not a nested one.
+ *   L2  ONE GUTTER, ONE OWNER: `--sdn-sp-9` (24px), applied by exactly one
+ *       element. No route body, panel column or admin section adds its own
+ *       `padding-inline` "to match". No new gutter token is ever minted — a
+ *       second name for 24px is how the first drift started.
+ *   L3  HEADER AND CONTENT SHARE ONE CONTENT BOX. They are siblings inside the
+ *       same scroll container, so a reserved scrollbar gutter is subtracted from
+ *       both or from neither. Never hand-tune a right padding against a scrollbar
+ *       width: it is not a CSS value and it differs per browser.
+ *   L4  WIDGETS DO NOT SCROLL. Vertical overflow PAGINATES, through the ONE
+ *       shared Pager.svelte — never an inner scroller, never a `max-height`.
+ *       Horizontal overflow is a RESPONSIVE failure: columns drop by declared
+ *       priority at breakpoints.
+ *   L5  ONE WIDTH PER COLUMN. Every panel in a column resolves to the identical
+ *       rendered width and every edge lands on a gutter. A `width`, `max-width`,
+ *       `margin-inline` or `padding-inline` on a panel-level element is a defect
+ *       unless the ruling that introduced it is cited at the declaration.
+ *   L6  CONTROL CHROME IS INSET AND FULL-SIZE. A `<select>` reserves
+ *       `padding-right` >= `--sdn-sp-8` for its chevron. A glyph beside a text
+ *       label renders at the label's rung or ONE ABOVE it, never below.
+ *       Aspect-locked media (QR canvases, maps) is clamped on AT MOST ONE axis
+ *       and carries an explicit `aspect-ratio` plus `flex: none` — two percentage
+ *       clamps plus flex-shrink is what squashed the identity QR into an
+ *       unscannable rectangle.
+ *
+ * `layout-grammar.test.js` fails the build on a violation of L1, L2, L4 or L5.
  */
 
 :root {

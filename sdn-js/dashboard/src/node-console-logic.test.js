@@ -1,6 +1,7 @@
 /*
- * The NODE dashboard's rules, as tests (task
- * sdn-dashboard-restore-template-widgets, wave 1).
+ * The NODE dashboard's rules, as tests (tasks
+ * sdn-dashboard-restore-template-widgets wave 1 +
+ * sdn-dashboard-wave2-edit-layout wave 2).
  *
  * Every assertion here is one of the honesty rules from IRIS's ruling. They are
  * not "does it format nicely" checks — they are the locks that stop a future
@@ -8,6 +9,7 @@
  * sparkline window, or leaving a hole in the grid.
  */
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import {
   BANDWIDTH_SAMPLE_MS,
@@ -22,7 +24,27 @@ import {
   sparkSpanS,
   storageFraction,
 } from './runtime.js';
-import { DEFAULT_LAYOUT, PUBLIC_LAYOUT, WIDGETS, LAYOUT_KEY, layoutFor, rowsOf, tilesExactly } from './node-layout.js';
+import {
+  DEFAULT_LAYOUT,
+  LAYOUT_KEY,
+  PRIVILEGED_WIDGETS,
+  PUBLIC_LAYOUT,
+  WIDGETS,
+  addWidget,
+  availableWidgets,
+  cycleSpan,
+  layoutFor,
+  moveWidget,
+  readLayout,
+  removeWidget,
+  renderLayout,
+  resetLayout,
+  rowsOf,
+  sanitizeLayout,
+  tilesExactly,
+  writeLayout,
+} from './node-layout.js';
+import { ACTIVITY_KINDS, activityRow, formatActivityClock } from './runtime.js';
 
 describe('the template layout, transcribed', () => {
   it('is the export\'s DEFAULT_LAYOUT verbatim', () => {
@@ -72,10 +94,21 @@ describe('the template layout, transcribed', () => {
     expect(DEFAULT_LAYOUT[0].span).toBe(4);
   });
 
-  it('registers no widget it cannot render in this wave', () => {
-    // peersum / storage / activity are wave 2. A registry entry with no
-    // renderer is a hole waiting for the first stale layout to find.
-    expect(Object.keys(WIDGETS).sort()).toEqual(['health', 'identity', 'netmap', 'service', 'throughput']);
+  it('is the export\'s full eight-widget registry, and nothing invented', () => {
+    // WAVE 2 completes the registry: peersum / storage / activity arrive WITH
+    // EDIT LAYOUT, because "the ADD menu is empty without them" (IRIS §2). The
+    // list is the template's own (`SDN Console.dc.html:863-871`) — a NINTH id is
+    // forbidden, since inventing a widget the design does not define is inventing
+    // design (IRIS R6).
+    expect(Object.keys(WIDGETS).sort()).toEqual([
+      'activity', 'health', 'identity', 'netmap', 'peersum', 'service', 'storage', 'throughput',
+    ]);
+    // And every entry can actually be RENDERED: a registry id with no renderer is
+    // a hole waiting for the first stale layout to find.
+    const console = readFileSync(new URL('./NodeConsole.svelte', import.meta.url), 'utf8');
+    for (const id of Object.keys(WIDGETS)) {
+      expect(console, `${id} is registered but has no renderer`).toContain(`w.id === '${id}'`);
+    }
   });
 });
 
@@ -197,7 +230,9 @@ describe('folding the runtime sources', () => {
     expect(r.rateInBps).toBeNull();
     expect(r.diskCapacityBytes).toBeNull();
     expect(r.history).toEqual([]);
-    expect(r.autostartKnown).toBe(false);
+    expect(r.autostart).toBe('');
+    expect(r.canRestart).toBe(false);
+    expect(r.canStop).toBe(false);
   });
 
   it('states uptime and mode from the anonymous surface when there is no session', () => {
@@ -239,11 +274,41 @@ describe('folding the runtime sources', () => {
     expect(r.history).toHaveLength(1);
   });
 
-  it('carries autostart_known through as FALSE rather than assuming a boolean', () => {
-    // The cell is omitted BECAUSE this is false, and it must come back on its
-    // own the day a host can answer.
-    expect(foldRuntime({ snapshot: { service: { autostart_known: false } } }).autostartKnown).toBe(false);
-    expect(foldRuntime({ snapshot: { service: { autostart_known: true } } }).autostartKnown).toBe(true);
+  it('takes AUTOSTART from the supervisor probe as systemd\'s own word', () => {
+    // Wave 1 read `service.autostart_known` off the node_status_read snapshot,
+    // which is a literal false there because THAT capability has no systemd
+    // surface — so the cell could only ever become honest by fabricating a
+    // boolean, which is what the hardcoded "ENABLED" did (IRIS §4 / R8). The
+    // honest source is GET /api/node/service, and the value is a WORD: "static"
+    // and "indirect" are neither enabled nor disabled, and a boolean would have
+    // to lie about one of them.
+    for (const word of ['enabled', 'disabled', 'static', 'indirect', 'masked']) {
+      expect(foldRuntime({ supervisor: { autostart: word } }).autostart).toBe(word);
+    }
+    // No probe, or a probe that proved no supervisor: no cell.
+    expect(foldRuntime({ snapshot: { service: { autostart_known: false } } }).autostart).toBe('');
+    expect(foldRuntime({ supervisor: { supervisor: '', control_enabled: false } }).autostart).toBe('');
+  });
+
+  it('renders a lifecycle control ONLY from the host\'s own can_restart/can_stop', () => {
+    // Fail-closed on the host (a proven supervisor AND the unit-level opt-in),
+    // and the page adds no inference of its own: a supervisor that is detected but
+    // not granted control yields NO buttons, not disabled ones (IRIS §5).
+    const detectedNoGrant = foldRuntime({
+      supervisor: { supervisor: 'systemd', unit: 'x.service', autostart: 'enabled', can_restart: false, can_stop: false },
+    });
+    expect(detectedNoGrant.supervisor).toBe('systemd');
+    expect(detectedNoGrant.autostart).toBe('enabled');
+    expect(detectedNoGrant.canRestart).toBe(false);
+    expect(detectedNoGrant.canStop).toBe(false);
+
+    const granted = foldRuntime({
+      supervisor: { supervisor: 'systemd', unit: 'x.service', can_restart: true, can_stop: true, restart_policy: 'always' },
+    });
+    expect(granted.canRestart).toBe(true);
+    expect(granted.canStop).toBe(true);
+    // The policy is carried because it is what a STOP MEANS on this host.
+    expect(granted.restartPolicy).toBe('always');
   });
 
   it('keeps a null disk null', () => {
@@ -325,5 +390,164 @@ describe('the poller never touches the admin surface without a session', () => {
     for (let i = 0; i < 12; i += 1) await Promise.resolve();
     feed.stop();
     expect(latest?.mode).toBe('full');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WAVE 2 — EDIT LAYOUT. The design demonstrates these mutators; here they are
+// RULES. Each one is a pure function over a layout, so the arrangement the
+// operator sees is provably the arrangement that gets persisted.
+// ---------------------------------------------------------------------------
+
+/** A localStorage stand-in — the app injects globalThis.localStorage. */
+function fakeStore(initial = {}) {
+  const map = new Map(Object.entries(initial));
+  return {
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => map.set(k, v),
+    seen: () => Object.fromEntries(map),
+  };
+}
+
+describe('EDIT LAYOUT persists what it renders', () => {
+  it('reads a saved layout back through the design\'s own key', () => {
+    const store = fakeStore({ [LAYOUT_KEY]: JSON.stringify([{ id: 'identity', span: 6 }, { id: 'health', span: 6 }]) });
+    expect(readLayout(store)).toEqual([{ id: 'identity', span: 6 }, { id: 'health', span: 6 }]);
+  });
+
+  it('falls back to the template default when a stored layout names a widget that no longer exists', () => {
+    // The template's own rule (`:883`): one stale id and the WHOLE layout is
+    // rejected. A partial repair would silently change an arrangement the
+    // operator chose, and a stale id is exactly the shape a rename leaves behind.
+    const store = fakeStore({ [LAYOUT_KEY]: JSON.stringify([{ id: 'health', span: 4 }, { id: 'conjunction', span: 8 }]) });
+    expect(readLayout(store)).toEqual(DEFAULT_LAYOUT);
+  });
+
+  it('rejects a duplicate id — the renderer is a keyed each and two keys is a blank page', () => {
+    expect(sanitizeLayout([{ id: 'health', span: 4 }, { id: 'health', span: 4 }])).toBeNull();
+  });
+
+  it('repairs an off-vocabulary span instead of throwing the layout away', () => {
+    // 7 is not in health's `spans:[4,6]`: it breaks 12-column tiling and leaves
+    // the cycle button with no index to advance from. The ARRANGEMENT is still the
+    // operator's, so the span is snapped to the widget's default.
+    expect(sanitizeLayout([{ id: 'health', span: 7 }])).toEqual([{ id: 'health', span: WIDGETS.health.def }]);
+  });
+
+  it('survives a storage that refuses to answer, or answers garbage', () => {
+    const thrower = { getItem: () => { throw new Error('private mode'); }, setItem: () => { throw new Error('private mode'); } };
+    expect(readLayout(thrower)).toEqual(DEFAULT_LAYOUT);
+    expect(writeLayout(thrower, DEFAULT_LAYOUT)).toBe(false);
+    expect(readLayout(fakeStore({ [LAYOUT_KEY]: 'not json' }))).toEqual(DEFAULT_LAYOUT);
+    expect(readLayout(fakeStore({ [LAYOUT_KEY]: '[]' }))).toEqual(DEFAULT_LAYOUT);
+  });
+
+  it('moves a widget to the position it was dragged over, and never loses one', () => {
+    const before = resetLayout();
+    const after = moveWidget(before, 'throughput', 'health');
+    expect(after.map((w) => w.id)).toEqual(['throughput', 'health', 'identity', 'service', 'netmap']);
+    expect(after).toHaveLength(before.length);
+    // Pure: the input is untouched, so a caller can render one and persist the other.
+    expect(before.map((w) => w.id)).toEqual(['health', 'identity', 'service', 'netmap', 'throughput']);
+  });
+
+  it('ignores a drag onto itself or onto a widget that is not placed', () => {
+    const layout = resetLayout();
+    expect(moveWidget(layout, 'health', 'health')).toBe(layout);
+    expect(moveWidget(layout, 'health', 'peersum')).toBe(layout);
+    expect(moveWidget(layout, '', 'health')).toBe(layout);
+  });
+
+  it('cycles a span through the design\'s vocabulary and wraps', () => {
+    let layout = [{ id: 'netmap', span: 6 }];
+    for (const want of [8, 12, 6, 8]) {
+      layout = cycleSpan(layout, 'netmap');
+      expect(layout[0].span).toBe(want);
+    }
+  });
+
+  it('adds only registered widgets, at their declared default span, once', () => {
+    const layout = addWidget(resetLayout(), 'activity');
+    expect(layout.at(-1)).toEqual({ id: 'activity', span: WIDGETS.activity.def });
+    // A second add is a no-op, not a duplicate (which sanitizeLayout would then reject).
+    expect(addWidget(layout, 'activity')).toBe(layout);
+    expect(addWidget(layout, 'not-a-widget')).toBe(layout);
+  });
+
+  it('offers exactly the widgets that are not placed, and nothing else', () => {
+    expect(availableWidgets(resetLayout()).map((w) => w.id).sort()).toEqual(['activity', 'peersum', 'storage']);
+    // Titles come from the registry, so the ADD menu cannot name a widget
+    // differently from its own panel.
+    expect(availableWidgets(resetLayout()).find((w) => w.id === 'storage').title).toBe(WIDGETS.storage.title);
+    const everything = Object.keys(WIDGETS).reduce((l, id) => addWidget(l, id), []);
+    expect(availableWidgets(everything)).toEqual([]);
+  });
+
+  it('removes a widget without touching the others', () => {
+    const after = removeWidget(resetLayout(), 'service');
+    expect(after.map((w) => w.id)).toEqual(['health', 'identity', 'netmap', 'throughput']);
+  });
+
+  it('gives an anonymous viewer the public layout no matter what is stored', () => {
+    // renderLayout COMPUTES the anonymous view, so a stored arrangement would be
+    // discarded on render — which is why the edit chrome is Admin-only (IRIS R3).
+    const stored = [{ id: 'activity', span: 12 }];
+    expect(renderLayout(false, stored)).toEqual(PUBLIC_LAYOUT);
+    expect(renderLayout(true, stored)).toEqual(stored);
+    // Signing out must not destroy what the operator saved.
+    expect(stored).toEqual([{ id: 'activity', span: 12 }]);
+  });
+
+  it('every widget the public layout offers is renderable without a session', () => {
+    for (const w of PUBLIC_LAYOUT) {
+      expect(PRIVILEGED_WIDGETS.has(w.id), `${w.id} needs the admin snapshot`).toBe(false);
+    }
+    // And the four that DO need it are named, so a future widget cannot quietly
+    // join the anonymous view and render blank.
+    expect([...PRIVILEGED_WIDGETS].sort()).toEqual(['activity', 'service', 'storage', 'throughput']);
+  });
+
+  it('an edited layout still tiles the 12-column grid when the operator uses the offered spans', () => {
+    // health 4 -> 6, identity 4 -> 6 fills row one exactly; netmap 8 + throughput 4
+    // fills row two. The point is that the vocabulary MAKES tiling reachable.
+    let layout = removeWidget(resetLayout(), 'service');
+    layout = cycleSpan(cycleSpan(layout, 'health'), 'identity');
+    expect(tilesExactly(layout)).toBe(true);
+    expect(rowsOf(layout)).toHaveLength(2);
+  });
+});
+
+describe('the activity ring reads as sentences, not as machine kinds', () => {
+  it('prints the design\'s clock from an RFC3339 stamp', () => {
+    expect(formatActivityClock('2026-07-30T12:04:22Z')).toBe('12:04:22');
+    expect(formatActivityClock('')).toBe('');
+    expect(formatActivityClock('not a date')).toBe('');
+  });
+
+  it('names every kind the host actually emits', () => {
+    // The taps are internal/node/epm_exchange_notifee.go, internal/node/node.go
+    // and internal/api/channels.go. A kind missing here would render as a machine
+    // token in front of the operator.
+    for (const kind of ['peer_connected', 'peer_disconnected', 'pnm_publication', 'record_stored', 'grant_issued']) {
+      expect(ACTIVITY_KINDS[kind], kind).toBeTruthy();
+    }
+  });
+
+  it('renders an unmapped kind rather than dropping the event', () => {
+    // A new tap must be VISIBLE the day it lands — silently swallowing it is how
+    // a host stops telling an operator what it is doing.
+    const row = activityRow({ ts: '2026-07-30T12:00:00Z', kind: 'channel_revoked', detail: 'alpha' });
+    expect(row.text).toBe('channel_revoked · alpha');
+    expect(row.token).toBe('textDim');
+  });
+
+  it('shortens the peer id and omits an absent one', () => {
+    const withPeer = activityRow(
+      { ts: '2026-07-30T12:00:00Z', kind: 'peer_connected', peer_id: '12D3KooWLongPeerIdentifier', detail: '' },
+      (id) => `${id.slice(0, 6)}…`
+    );
+    expect(withPeer.text).toBe('Peer connected · 12D3Ko…');
+    const withoutPeer = activityRow({ ts: '2026-07-30T12:00:00Z', kind: 'pnm_publication', detail: 'OMM.fbs' });
+    expect(withoutPeer.text).toBe('Publication received · OMM.fbs');
   });
 });

@@ -21,10 +21,18 @@
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { shortId, formatUptime, formatLastSeen, formatCoords } from './format.js';
 
-  /** @type {{ node: any, now: number }} */
-  let { node, now } = $props();
+  /**
+   * `initialView` opens this view directly on one of its tabs. The IDENTITY
+   * widget's QR button uses it to land on the scannable card in one click
+   * (IRIS ruling 2026-07-30 R5: the QR modal already existed here — "do not
+   * build a new modal"), instead of the inline canvas that rendered squashed
+   * and unscannable inside the dashboard card.
+   *
+   * @type {{ node: any, now: number, initialView?: 'parsed' | 'raw' | 'qr' }}
+   */
+  let { node, now, initialView = 'parsed' } = $props();
 
-  let view = $state('parsed'); // 'parsed' | 'raw' | 'qr'
+  let view = $state(initialView); // 'parsed' | 'raw' | 'qr'
   let addrsOpen = $state(false);
   let epmAvailable = $state(false);
   let qrCanvas = $state(null);
@@ -113,7 +121,13 @@
       await QRCode.toCanvas(canvas, card, {
         errorCorrectionLevel: 'M',
         margin: 2,
-        width: 320,
+        // 480, not 320 (IRIS ruling 2026-07-30 R5). At the vCard contract's
+        // 1400B density lock the code is ~version 33 = 149 modules, plus the
+        // 2-module quiet zone = 153 across. 320px gave 2.09 px/module — a
+        // fractional scale, which is resampling, which is the owner's
+        // "unreadable". 480/153 = 3 px/module exactly: an integer scale and a
+        // crisp 459px canvas.
+        width: 480,
         color: { dark: '#04060a', light: '#eaf6f8' },
       });
     })().catch(() => {});
@@ -244,7 +258,18 @@
     padding: 3px 9px;
   }
   .qr { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 0 4px; }
-  .qr canvas { background: #eaf6f8; padding: 6px; }
+  /* GRAMMAR L6 (iris-dashboard-grammar-law): aspect-locked media is clamped on
+     AT MOST ONE axis and states its ratio, with flex:none so the column's
+     flex-shrink cannot squash it. Two percentage clamps plus flex-shrink is
+     exactly what made the dashboard's inline QR an unscannable rectangle. */
+  .qr canvas {
+    background: #eaf6f8;
+    padding: 6px;
+    max-width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    flex: none;
+  }
   .qr-hint { font-size: var(--sdn-fs-label); letter-spacing: 0.04em; max-width: 460px; text-align: center; line-height: var(--sdn-lh-label); }
   .addr-toggle {
     background: transparent;

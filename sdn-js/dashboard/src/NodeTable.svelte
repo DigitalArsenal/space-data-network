@@ -101,18 +101,23 @@
 </div>
 
 <style>
+  /* GRAMMAR L1 (iris-dashboard-grammar-law): this element used to declare
+     `overflow:auto; scrollbar-gutter:stable`, and it is the second scrollbar in
+     the owner's screenshot — a scroller inside the page's own scroller, with its
+     own reserved track, which is also why this panel's right edge disagreed with
+     the panels around it. The table takes its natural height and the PAGE
+     scrolls; rows beyond the page size are reached through the pager. */
   .scroller {
-    overflow: auto;
-    /* Reserve the scrollbar track so the last column keeps its gutter instead
-       of losing it the moment the table starts scrolling. */
-    scrollbar-gutter: stable;
     min-height: 0;
     flex: 1;
   }
+  /* DENSITY (owner 2026-07-30 "reduce the font size in the tables by 30%", IRIS
+     R7's rungs — not a multiplier): the cell base drops value (20) -> label (15),
+     the header label (15) -> micro (13), and the metaline stays on micro. */
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
   }
   thead tr {
     border-bottom: 1px solid;
@@ -124,9 +129,9 @@
   th {
     text-align: left;
     font-weight: 500;
-    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
+    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
     letter-spacing: 0.16em;
-    padding: 9px 12px;
+    padding: var(--sdn-sp-2) var(--sdn-sp-5);
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
@@ -142,17 +147,17 @@
   }
   tbody tr.row:focus-visible { outline: 1px solid rgba(53, 201, 216, 0.5); outline-offset: -1px; }
   td {
-    padding: 9px 12px;
+    padding: var(--sdn-sp-2) var(--sdn-sp-5);
     vertical-align: top;
     overflow-wrap: anywhere;
   }
   .dn {
     font-family: 'Chakra Petch', sans-serif;
     font-weight: 600;
-    font-size: var(--sdn-fs-head); line-height: var(--sdn-lh-head);
+    font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note);
     letter-spacing: 0.04em;
   }
-  .pid { font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note); margin-top: 2px; }
+  .pid { font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro); margin-top: 2px; }
   .dn.unnamed { font-style: italic; }
   .kind {
     border: 1px solid;
@@ -171,7 +176,7 @@
     vertical-align: 2px;
   }
   .trust {
-    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
+    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
     letter-spacing: 0.14em;
     border: 1px solid;
     padding: 2px 7px;
@@ -182,17 +187,17 @@
     align-items: center;
     white-space: nowrap;
     gap: 6px;
-    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
     letter-spacing: 0.12em;
   }
   .status i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
   .empty {
     text-align: center;
     padding: 30px 12px;
-    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
     letter-spacing: 0.1em;
   }
-  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data); }
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label); }
   .nowrap { white-space: nowrap; }
   /* Narrow screens: drop the wide columns so NODE/TRUST/STATUS/LAST SEEN
      fit without a nested horizontal scroller (tap targets stay whole). */

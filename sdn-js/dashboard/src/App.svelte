@@ -23,14 +23,13 @@
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import NodeTable from './NodeTable.svelte';
   import NodeModal from './NodeModal.svelte';
-  import NodeDetail from './NodeDetail.svelte';
-  import NodeWidgets from './NodeWidgets.svelte';
   import NodeConsole from './NodeConsole.svelte';
+  import PeerMap from './PeerMap.svelte';
+  import Pager from './Pager.svelte';
   import NodeEditForm from './NodeEditForm.svelte';
   import AccountAdmin from './AccountAdmin.svelte';
   import SignInModal from './SignInModal.svelte';
   import AccountModal from './AccountModal.svelte';
-  import Globe from './Globe.svelte';
   import { shortId } from './format.js';
   import { TRUST_TIERS, normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { canEditNodeProfile, canManagePermissions } from './permissions.js';
@@ -41,28 +40,47 @@
   import { createSemanticEngine } from './semantic.js';
   import { createRuntimeFeed, foldRuntime } from './runtime.js';
 
-  // NODE is the landing route and carries the SDN Console template's dashboard
-  // (IRIS ruling 2026-07-30 §2 wave 1). The template's own rail puts `node`
-  // first with the ◉ glyph (`SDN Console.dc.html:892`), so THIS NODE — the
-  // identity detail page — takes ⬡ beside it rather than a duplicate glyph.
+  /**
+   * The rail, from the design source rather than from taste: the template's own
+   * ROUTES table is `['node','NODE','◉','N1'], ['peers','PEERS','◍','N2'],
+   * ['groups','GROUPS','⬡','N3'], …` (`SDN Console.dc.html:892`), so NODE and
+   * PEERS are verbatim and ACCOUNTS inherits ⬡ — the template's third glyph,
+   * freed by the death of THIS NODE.
+   *
+   * THIS NODE IS GONE (owner directive 2026-07-30: "the 'this node' menu should
+   * go away"). Nothing was lost with it: every fact its widgets carried — xpub,
+   * derivation paths, signing/encryption keys, EPM signature/timestamp/CID, chain
+   * addresses, multiaddrs, trust, the vCard and the QR — is in the node detail
+   * modal that every OTHER peer already gets, and the self node is a node (IRIS
+   * R6). The IDENTITY widget's DETAIL button opens it.
+   *
+   * PEERS IS NEW (owner directive 2026-07-30: "move the peers table with add peer
+   * form, along with the globe, to a whole new menu called Peers").
+   */
   const SECTIONS = [
     {
       label: 'NETWORK',
       items: [
         { id: 'node', label: 'NODE', glyph: '◉', fkey: 'N1' },
-        { id: 'self', label: 'THIS NODE', glyph: '⬡', fkey: 'N2' },
-        { id: 'accounts', label: 'ACCOUNTS', glyph: '◍', fkey: 'N3' },
+        { id: 'peers', label: 'PEERS', glyph: '◍', fkey: 'N2' },
+        { id: 'accounts', label: 'ACCOUNTS', glyph: '⬡', fkey: 'N3' },
       ],
     },
   ];
 
-  // One list for nodes and logins (§16): the owner does not differentiate
-  // between a node running somewhere and an account that logs in here.
+  // ACCOUNTS' subtitle changed because its content did: the node list has moved
+  // to PEERS, so what remains is operator keys and the trust registry (IRIS R7).
   const ROUTE_TITLE = {
     node: ['NODE', '· DASHBOARD'],
-    self: ['THIS NODE', '· NODE IDENTITY & STATUS'],
-    accounts: ['ACCOUNTS', '· NODES & LOGINS'],
+    peers: ['PEERS', '· SWARM MAP & PEER DIRECTORY'],
+    accounts: ['ACCOUNTS', '· OPERATOR KEYS & TRUST'],
   };
+
+  /** ACCOUNTS' two tables are TABS now — one visible at a time (owner 2026-07-30). */
+  const ACCOUNT_TABS = [
+    ['peers', 'TRUSTED PEERS'],
+    ['keys', 'OPERATOR KEYS'],
+  ];
 
   const HIDE_KEY = 'sdn.dashboard.hideUntrustedOffline';
   const readHidePref = () => {
@@ -92,6 +110,15 @@
   let sortKey = $state('trust');
   let sortDir = $state(1);
   let selected = $state(null);
+  /**
+   * The detail modal for THIS node, opened from the IDENTITY widget: '' closed,
+   * 'parsed' on the fields, 'qr' straight on the scannable card (owner directive
+   * 2026-07-30 — the QR belongs in a modal). It is a separate piece of state from
+   * `selected` so opening this node's own card cannot be confused with selecting
+   * a peer.
+   */
+  let selfModal = $state('');
+  let accountTab = $state('peers');
   let settingsOpen = $state(false);
   let page = $state(0);
   let semStatus = $state('idle');
@@ -405,6 +432,16 @@
 <div class="root" style="background:{theme.pageGlow};color:{theme.textBody};">
   <SdnRail sections={SECTIONS} active={route} onSelect={(id) => (route = id)} />
   <main>
+    <!-- GRAMMAR L3 (iris-dashboard-grammar-law): the header and the panel column
+         are siblings inside the SAME scroll container (`main`), so the reserved
+         scrollbar gutter is subtracted from BOTH or from neither and their right
+         edges are the same edge. The owner's screenshot showed the header chips
+         sitting ~14px right of every panel below them, because `.body` reserved a
+         scrollbar track the header did not — an alignment that cannot be fixed by
+         tuning a padding, since scrollbar width is not a CSS value. Sticky keeps
+         the header in place while the column scrolls; the background is opaque
+         because the design's is 0.92 alpha and content would show through it. -->
+    <div class="headwrap" style="background:{theme.pageGlow};">
     <!-- The title fallback used to name `ROUTE_TITLE.nodes`, a key that has never
          existed: an unknown route rendered `undefined[0]` and threw. It is the
          landing route's title now, which is what a fallback is for. -->
@@ -450,6 +487,7 @@
         </span>
       {/snippet}
     </ConsoleHeader>
+    </div>
 
     <div class="body">
       {#if !connected}
@@ -458,8 +496,8 @@
           Connecting to the node status feed (/ws/status)…
         </div>
       {:else if route === 'node'}
-        <!-- THE NODE DASHBOARD — the SDN Console template's default view
-             (IRIS §2 wave 1). Read-only: no EDIT LAYOUT until wave 2. -->
+        <!-- THE NODE DASHBOARD — the SDN Console template's view, with EDIT
+             LAYOUT and the full eight-widget registry (IRIS §2/§3 wave 2). -->
         {#if selfNode}
           {#if editing}
             <!-- The IDENTITY card's EDIT opens the profile form INLINE, in a
@@ -486,6 +524,8 @@
                 {canEdit}
                 onSelectNode={(n) => (selected = n)}
                 onEdit={() => (editing = true)}
+                onShowDetail={() => (selfModal = 'parsed')}
+                onShowQr={() => (selfModal = 'qr')}
               />
             </div>
           {/if}
@@ -495,54 +535,7 @@
             Waiting for this node's status entry…
           </div>
         {/if}
-      {:else if route === 'self'}
-        {#if selfNode}
-          <!-- A PAGE, not a modal (owner directive 2026-07-27): a page header
-               plus independent widgets, instead of the single-column card the
-               NODES dialog still uses. -->
-          <div class="self-page">
-            <div class="page-head" style="border-color:{theme.divider};">
-              <div class="self-titles">
-                <div class="self-dn" style="color:{theme.textBright};">{selfTitle}</div>
-                {#if selfNode.org?.trim() && selfNode.org.trim() !== selfTitle}
-                  <div class="self-org" style="color:{theme.textDim};">{selfNode.org}</div>
-                {/if}
-              </div>
-              <div class="self-chips">
-                <StatusChip label="SELF" color={theme.cyan} dot={false} />
-                <StatusChip label={selfNode.online ? 'ONLINE' : 'OFFLINE'} color={selfNode.online ? theme.green : theme.textMuted} />
-                {#if canEdit && !editing}
-                  <GBtn title="Edit this node's published identity" variant="primary" onclick={() => (editing = true)}>EDIT</GBtn>
-                {/if}
-              </div>
-            </div>
-
-            {#if editing}
-              <Panel variant="raised" pad="0" style="max-width:880px;">
-                <div class="self-body">
-                  <NodeEditForm
-                    onCancel={() => (editing = false)}
-                    onSaved={({ json, vcard }) => {
-                      epmOverride = { vcard, dn: typeof json?.dn === 'string' ? json.dn : undefined };
-                      editing = false;
-                    }}
-                  />
-                </div>
-              </Panel>
-            {:else}
-              <!-- STORED WALLETS moved to the account modal's WALLET section
-                   (IRIS ruling §5.4): browser custody is a property of the
-                   signed-in operator and this origin, not of the node. -->
-              <NodeWidgets node={selfNode} {now} {canEdit} />
-            {/if}
-          </div>
-        {:else}
-          <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
-            <span class="glyph" style="color:{theme.cyan};">◉</span>
-            Waiting for this node's status entry…
-          </div>
-        {/if}
-      {:else}
+      {:else if route === 'peers'}
         <div class="toolbar">
           <div class="search" style="border-color:{theme.hairline};">
             <span class="sglyph" style="color:{theme.textMuted};">⌕</span>
@@ -573,7 +566,7 @@
               onclick={() => (settingsOpen = !settingsOpen)}
               aria-expanded={settingsOpen}
               aria-haspopup="true"
-            >⚙ SETTINGS</button>
+            ><span class="gear">⚙</span> SETTINGS</button>
             {#if settingsOpen}
               <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
               <div class="settings-backdrop" onclick={() => (settingsOpen = false)}></div>
@@ -596,15 +589,30 @@
         </div>
 
         <div class="meta" style="color:{theme.textMuted};">
-          <span>{rows.length}/{accountRows.length} ACCOUNT{accountRows.length === 1 ? '' : 'S'}</span>
+          <span>{rows.length}/{accountRows.length} PEER{accountRows.length === 1 ? '' : 'S'}</span>
           <span class="dot">·</span>
           <span>SOURCE {shortId(view?.sourcePeerId ?? '')}</span>
           <span class="dot">·</span>
           <span>UPDATED {updatedAgo === 0 ? 'now' : `${updatedAgo}s ago`}</span>
         </div>
 
+        <!-- THE PEERS ROUTE (owner directive 2026-07-30). The swarm map and the
+             peer directory it plots, in one column: the SAME PeerMap component the
+             dashboard's netmap widget renders, never a second globe surface (IRIS
+             R7 + the grammar law's companion trap — two mounted globes are two
+             WebGL contexts). L5: no panel here carries a width, a max-width or its
+             own inline padding, so every edge is the column's edge. -->
         <div class="stack">
-          <Panel variant="raised" pad="0" style="flex:1 1 50%;min-height:0;display:flex;flex-direction:column;">
+          <Panel variant="raised">
+            <PeerMap
+              nodes={accountNodes}
+              selectedId={selected?.peerId ?? ''}
+              onSelectNode={(n) => (selected = n)}
+              height="420px"
+              sub="GEOLITE2 MMDB · LIVE SWARM"
+            />
+          </Panel>
+          <Panel variant="raised" pad="0">
             <div class="table-panel">
               <NodeTable
                 rows={pagedRows}
@@ -615,31 +623,73 @@
                 onOpen={(n) => (selected = n)}
                 {semanticActive}
               />
-              <div class="pager" style="border-color:{theme.divider};color:{theme.textMuted};">
-                <span>ROWS {rows.length ? safePage * PAGE_SIZE + 1 : 0}–{Math.min((safePage + 1) * PAGE_SIZE, rows.length)} OF {rows.length}</span>
-                <span class="pager-ctl">
-                  <button style="color:{theme.ice};border-color:{theme.hairline};" disabled={safePage === 0} onclick={() => (page = safePage - 1)}>‹ PREV</button>
-                  <span>PAGE {safePage + 1}/{pageCount}</span>
-                  <button style="color:{theme.ice};border-color:{theme.hairline};" disabled={safePage >= pageCount - 1} onclick={() => (page = safePage + 1)}>NEXT ›</button>
-                </span>
-              </div>
+              <!-- L4: the ONE shared pager. This was an inline copy; the ACTIVITY
+                   LOG widget needed the same control, and two implementations is
+                   how "widgets paginate" becomes "widgets mostly paginate". -->
+              <Pager
+                page={safePage}
+                pageCount={pageCount}
+                total={rows.length}
+                pageSize={PAGE_SIZE}
+                unit="ROWS"
+                onPage={(p) => (page = p)}
+              />
             </div>
           </Panel>
-          <Panel variant="raised" pad="0" style="flex:1 1 50%;min-height:0;display:flex;flex-direction:column;">
-            <div class="globe-panel">
-              <div class="k" style="color:{theme.textMuted};border-color:{theme.divider};">NODE LOCATIONS <span style="color:{theme.textFaint};">· GEOLITE2 MMDB</span></div>
-              <div class="globe-body">
-                <Globe nodes={rows.map((r) => r.node)} selectedId={selected?.peerId ?? ''} onSelect={(n) => (selected = n)} />
-              </div>
-            </div>
-          </Panel>
-        </div>
 
+          {#if session && canManagePermissions(session.trustLevel)}
+            <!-- ADD A PEER lives with the peers (owner directive 2026-07-30). It
+                 is the SAME component the ACCOUNTS tab uses, rendering only its
+                 form section — one set of API calls, one piece of state. -->
+            <AccountAdmin
+              {session}
+              nodes={accountNodes}
+              {rootAdminAvailable}
+              onRequestSignIn={() => (signInOpen = true)}
+              view="peer-add"
+            />
+          {/if}
+        </div>
+      {:else}
+        <!-- ACCOUNTS: the two admin tables, as TABS, one at a time (owner
+             directive 2026-07-30 — "have the tables selectable by tab (trusted
+             peers vs current node operator keys)"). The globe and the node
+             directory have moved to PEERS. -->
         {#if session && canManagePermissions(session.trustLevel)}
-          <!-- §16.3/§16.4: management folded into ACCOUNTS, existing APIs. -->
-          <div class="account-admin">
-            <AccountAdmin {session} nodes={accountNodes} {rootAdminAvailable} onRequestSignIn={() => (signInOpen = true)} />
+          <div class="tabbar" style="border-color:{theme.panelBorder};">
+            {#each ACCOUNT_TABS as [id, label] (id)}
+              <button
+                class="tab"
+                style="background:{accountTab === id ? 'rgba(53,201,216,0.18)' : 'transparent'};color:{accountTab === id ? theme.cyan : theme.textDim};border-color:{theme.panelBorder};"
+                aria-pressed={accountTab === id}
+                onclick={() => (accountTab = id)}
+              >{label}</button>
+            {/each}
           </div>
+          <div class="account-admin">
+            <AccountAdmin
+              {session}
+              nodes={accountNodes}
+              {rootAdminAvailable}
+              onRequestSignIn={() => (signInOpen = true)}
+              view={accountTab}
+            />
+          </div>
+        {:else}
+          <!-- Honest, not empty: the two surfaces on this page are Admin-only
+               reads (/api/auth/users, /api/peers), so an anonymous visitor is told
+               what this page is and how to reach it rather than shown a table
+               with nothing in it. The public peer directory is on PEERS. -->
+          <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
+            <span class="glyph" style="color:{theme.cyan};">⬡</span>
+            Operator keys and the trust registry are administrator surfaces. Sign in to manage them —
+            the public peer directory is on PEERS.
+          </div>
+          {#if !session}
+            <div class="signin-row">
+              <GBtn title="Sign in with your wallet key" variant="primary" onclick={() => (signInOpen = true)}>SIGN IN</GBtn>
+            </div>
+          {/if}
         {/if}
       {/if}
     </div>
@@ -647,6 +697,14 @@
 
   {#if selected}
     <NodeModal node={selected} {now} onClose={() => (selected = null)} />
+  {/if}
+
+  {#if selfModal && selfNode}
+    <!-- This node's own card, in the modal every other peer gets — opened on the
+         fields by DETAIL and on the scannable QR by QR (owner directive
+         2026-07-30; IRIS R6/R5). It replaces the THIS NODE page, whose every fact
+         this view already carries. -->
+    <NodeModal node={selfNode} {now} initialView={selfModal} onClose={() => (selfModal = '')} />
   {/if}
 
   {#if signInOpen}
@@ -770,6 +828,12 @@
     padding: var(--sdn-sp-2) var(--sdn-sp-6);
   }
 
+  /* GRAMMAR L1 + L3 (iris-dashboard-grammar-law): `main` is THE scroll context —
+     the only one on the page — and the header and the route body are its two
+     children. The scroll happens OUTSIDE both, so the reserved scrollbar track is
+     subtracted from the same box for both and their right edges coincide by
+     construction rather than by arithmetic. `scrollbar-gutter` appears exactly
+     once in this stylesheet, here. */
   main {
     position: absolute;
     left: 66px;
@@ -778,23 +842,26 @@
     bottom: 0;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
   }
+  /* The header travels with the scroll. It must be opaque: the design's own
+     background is 0.92 alpha, and panels sliding under it would show through. */
+  .headwrap {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    flex: none;
+  }
+  /* L2: ONE gutter, applied by ONE element — this one. Nothing inside a route may
+     add `padding-inline` "to match" (that is how the ACCOUNTS panels ended up 37px
+     narrower than the panels above them). */
   .body {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    /* Was `overflow: hidden`, which silently broke the ACCOUNTS route: the
-       admin panel is `flex: none`, so it took its full natural height, the
-       flexible .stack above it was squeezed to ZERO, and the clipped remainder
-       (the NETWORK PEERS table) became unreachable because nothing scrolled.
-       The visible symptom was the owner's screenshot: .stack's pager paints
-       with overflow:visible, so a 0-height panel's pager landed on top of the
-       panel below, crowding its border. The column scrolls now. */
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-gutter: stable;
     padding: var(--sdn-sp-7) var(--sdn-sp-9) var(--sdn-sp-9);
   }
   .toolbar {
@@ -849,6 +916,10 @@
     letter-spacing: 0.14em; /* eased from 0.16em so TRUST/HIDE… stay on one line */
     white-space: nowrap;
   }
+  /* L6 (owner directive 2026-07-30: "the arrow in the drop down should have
+     margin"): a <select> reserves INSET space for the chevron the platform draws
+     inside its box. Without it "ALL" sat against the arrow and the arrow against
+     the border. --sdn-sp-8 (20px) is the law's floor for this. */
   .ctl select {
     background: transparent;
     border: 1px solid;
@@ -856,6 +927,7 @@
     font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note);
     letter-spacing: 0.08em;
     padding: 6px 10px;
+    padding-right: var(--sdn-sp-8);
     outline: none;
   }
   .ctl select option { background: #0a141b; }
@@ -888,48 +960,39 @@
     margin-bottom: 12px;
   }
   .meta .dot { opacity: 0.5; }
+  /* L1 + L5: a plain column of panels, each at its NATURAL height, all the same
+     width. It used to be a flex race (`flex: 1 1 50%` on each panel against a
+     `min-height:480px` parent), which is what squeezed a panel to zero height
+     while its pager kept painting — the overlap in the owner's screenshot. The
+     page scrolls; nothing here competes for height. */
   .stack {
-    flex: 1;
-    /* Never collapse to nothing: the node table and the globe are the point of
-       this route, and a 0-height panel that still paints its pager is how the
-       overlap in the owner's screenshot happened. */
-    min-height: 480px;
     display: flex;
     flex-direction: column;
     gap: var(--sdn-sp-7);
   }
-  .globe-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
-  .globe-panel .k {
-    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
-    letter-spacing: 0.18em;
-    padding: 11px 14px 9px;
-    border-bottom: 1px solid;
-  }
-  .globe-body { flex: 1; min-height: 0; }
-  .table-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-  .pager {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    border-top: 1px solid;
-    padding: var(--sdn-sp-5) var(--sdn-sp-9);
-    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
-    letter-spacing: 0.14em;
-  }
-  .pager-ctl { display: inline-flex; align-items: center; gap: var(--sdn-sp-5); }
-  .pager button {
-    background: transparent;
+  /* ACCOUNTS' tab bar. Same control vocabulary as the PEER MAP's 3D/2D switch, so
+     the page has one idea of what a segmented control looks like. */
+  .tabbar {
+    display: inline-flex;
     border: 1px solid;
-    cursor: pointer;
-    font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
-    letter-spacing: 0.12em;
-    padding: var(--sdn-sp-3) calc(var(--sdn-sp-4) + 0.12em) var(--sdn-sp-3) var(--sdn-sp-4);
-    min-height: 40px;
+    margin-bottom: var(--sdn-sp-7);
+    align-self: flex-start;
   }
-  .pager button:disabled { opacity: 0.35; cursor: default; }
+  .tab {
+    border: 0;
+    cursor: pointer;
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 600;
+    font-size: var(--sdn-fs-label);
+    line-height: var(--sdn-lh-label);
+    letter-spacing: 0.12em;
+    padding: var(--sdn-sp-3) var(--sdn-sp-8);
+  }
+  .tab + .tab { border-left: 1px solid; }
+  .signin-row { margin-top: var(--sdn-sp-6); }
+  /* L1: no `flex: 1` height race and no inner scroller — the table is as tall as
+     its five rows and the pager sits under it. */
+  .table-panel { display: flex; flex-direction: column; }
   .settings-wrap { position: relative; }
   .settings-backdrop { position: fixed; inset: 0; z-index: 29; }
   .settings-btn {
@@ -941,6 +1004,18 @@
     letter-spacing: 0.14em;
     padding: 8px 14px;
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sdn-sp-3);
+  }
+  /* L6 (owner directive 2026-07-30: "the settings icon needs to be full size"): a
+     glyph beside a text label renders at the label's rung or ONE ABOVE it, never
+     below. The gear was inheriting the button's --sdn-fs-body and reading as a
+     rendering failure next to its own word; it now sits one rung up at
+     --sdn-fs-data with its own line-height so the button box does not grow. */
+  .gear {
+    font-size: var(--sdn-fs-data);
+    line-height: 1;
   }
   .settings-menu {
     position: absolute;
@@ -969,44 +1044,7 @@
     line-height: var(--sdn-lh-body);
     margin-top: 8px;
   }
-  .self-page {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    padding-bottom: 8px;
-  }
   .account-admin { margin-top: var(--sdn-sp-7); flex: none; }
-  .page-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 14px;
-    flex-wrap: wrap;
-    padding-bottom: 13px;
-    border-bottom: 1px solid;
-    flex: none;
-  }
-  .self-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 16px 18px 13px;
-    border-bottom: 1px solid;
-  }
-  .self-titles { min-width: 0; }
-  .self-dn {
-    font-family: 'Chakra Petch', sans-serif;
-    font-weight: 600;
-    font-size: var(--sdn-fs-hero); line-height: var(--sdn-lh-hero);
-    letter-spacing: 0.04em;
-    overflow-wrap: anywhere;
-  }
-  .self-org { font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value); letter-spacing: 0.04em; margin-top: 3px; }
-  .self-chips { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
   .self-body { padding: 14px 18px 18px; }
   /* The NODE dashboard takes its natural height and lets .body scroll — the
      widget grid is the page, so a nested scroller would trap the last row. */
@@ -1046,29 +1084,11 @@
      take their content height, the table shows its 5 rows fully, the
      globe gets a fixed workable height. Desktop is untouched. */
   @media (max-width: 760px) {
+    /* The page scroller is `main` at every width (L1) — this block used to add
+       `overflow-y:auto` here, which was the phone's second scroller. Only the
+       gutter narrows. */
     .body {
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
       padding: 12px 12px 24px;
-    }
-    .stack {
-      flex: none;
-      min-height: auto;
-    }
-    .table-panel {
-      flex: none;
-      min-height: auto;
-      max-height: none;
-    }
-    .globe-panel {
-      flex: none;
-      height: 340px;
-      min-height: 340px;
-    }
-    .self-page {
-      flex: none;
-      min-height: auto;
-      overflow: visible;
     }
     .toolbar {
       gap: 10px;

@@ -44,8 +44,34 @@
     userNeedsKeyProof,
   } from './permissions.js';
 
-  /** @type {{ session: any, nodes: any[], rootAdminAvailable?: boolean|null, onRequestSignIn: () => void }} */
-  let { session, nodes, rootAdminAvailable = null, onRequestSignIn } = $props();
+  /**
+   * `view` selects WHICH of this component's sections render. One component, one
+   * set of API calls and one piece of state, shown on the surface each part
+   * belongs to (owner directive 2026-07-30: ACCOUNTS' two tables become tabs, and
+   * the add-peer form moves to the new PEERS menu; IRIS R7 sequenced it):
+   *
+   *   'keys'     — OPERATOR KEYS only        (ACCOUNTS tab 2)
+   *   'peers'    — NETWORK PEERS table only, WITHOUT the add form (ACCOUNTS tab 1)
+   *   'peer-add' — the add-peer form only    (the PEERS route)
+   *   'all'      — everything, as before
+   *
+   * Splitting the component instead of the state is deliberate: two mounted
+   * copies would each poll /api/auth/users and /api/peers, and an edit made in one
+   * would leave the other stale.
+   *
+   * @type {{
+   *   session: any, nodes: any[], rootAdminAvailable?: boolean|null,
+   *   onRequestSignIn: () => void, view?: 'all' | 'keys' | 'peers' | 'peer-add',
+   * }}
+   */
+  let { session, nodes, rootAdminAvailable = null, onRequestSignIn, view = 'all' } = $props();
+
+  const showKeys = $derived(view === 'all' || view === 'keys');
+  const showPeers = $derived(view === 'all' || view === 'peers' || view === 'peer-add');
+  /** The registry TABLE — absent on the PEERS route, which shows the form alone. */
+  const showPeerTable = $derived(view === 'all' || view === 'peers');
+  /** The ADD A PEER form — absent from the ACCOUNTS tab, which is a reading surface. */
+  const showPeerForm = $derived(view === 'all' || view === 'peer-add');
 
   const level = $derived(session?.trustLevel ?? '');
   const admin = $derived(canManagePermissions(level));
@@ -333,6 +359,7 @@
     {/if}
 
     <!-- ---------------------------------------------------------------- -->
+    {#if showKeys}
     <Panel variant="raised" pad="0">
       <div class="head" style="border-color:{theme.divider};">
         <div>
@@ -454,19 +481,22 @@
         </form>
       </div>
     </Panel>
+    {/if}
 
     <!-- ---------------------------------------------------------------- -->
+    {#if showPeers}
     <Panel variant="raised" pad="0">
       <div class="head" style="border-color:{theme.divider};">
         <div>
           <Kick text="LIBP2P TRUST REGISTRY · /api/peers" />
-          <div class="ttl" style="color:{theme.textBright};">NETWORK PEERS</div>
+          <div class="ttl" style="color:{theme.textBright};">{showPeerTable ? 'NETWORK PEERS' : 'ADD A PEER'}</div>
         </div>
         <div class="chips">
           <StatusChip label={`${peerList.length} IN REGISTRY`} color={theme.ice} dot={false} />
         </div>
       </div>
       <div class="pad">
+        {#if showPeerTable}
         <div class="tbl-wrap">
           <!-- Same grammar as OPERATOR KEYS (IRIS ruling §4): two adjacent
                tables that behave differently is the mess the owner named. -->
@@ -522,7 +552,9 @@
             {/if}
           </table>
         </div>
+        {/if}
 
+        {#if showPeerForm}
         <form class="add" onsubmit={addPeer}>
           <div class="k" style="color:{theme.textMuted};">
             ADD A PEER
@@ -556,8 +588,10 @@
             the node can derive from it; nothing the card does not say is filled in.
           </div>
         </form>
+        {/if}
       </div>
     </Panel>
+    {/if}
 
     {#if editUser}
       <OperatorEditModal
@@ -588,15 +622,20 @@
 </div>
 
 <style>
+  /* GRAMMAR L1 + L2 + L5 (iris-dashboard-grammar-law). This block used to carry
+     `overflow:auto; scrollbar-gutter:stable; padding-inline:var(--sdn-sp-9)` and
+     it was BOTH defects in the owner's screenshots at once: the overflow made a
+     second scroller inside the page's own, and the padding added a SECOND page
+     gutter on top of the route body's — which is why these panels ended ~37px
+     short of the panels above them ("never have widgets with different widths and
+     mismatched edges"). The page scroller and the page gutter each have exactly
+     one owner now, and it is not this component. */
   .page {
     flex: 1;
     min-height: 0;
-    overflow: auto;
-    scrollbar-gutter: stable;
     display: flex;
     flex-direction: column;
     gap: var(--sdn-sp-7);
-    padding-inline: var(--sdn-sp-9);
     padding-bottom: var(--sdn-sp-3);
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
   }
@@ -618,25 +657,36 @@
   .chips { display: flex; gap: var(--sdn-sp-3); flex-wrap: wrap; justify-content: flex-end; align-self: center; }
   .pad { padding: var(--sdn-sp-9); }
   .k { font-size: var(--sdn-fs-fine); line-height: var(--sdn-lh-fine); letter-spacing: 0.18em; margin-bottom: var(--sdn-sp-3); }
-  .tbl-wrap { overflow-x: auto; scrollbar-gutter: stable; margin-bottom: var(--sdn-sp-7); }
+  /* L1/L4: no horizontal scroller. A table too wide for its panel is a
+     RESPONSIVE failure, not a pagination case — the columns that can drop do so
+     at the breakpoint below, and the rest wrap. A nested scroller here is what
+     put a second scrollbar inside the page in the owner's screenshot. */
+  .tbl-wrap { margin-bottom: var(--sdn-sp-7); }
   table { width: 100%; border-collapse: collapse; }
   /* ONE header style for every column. The old table coloured SOURCE per-cell,
      which is the inconsistency the owner spotted; colour is inherited from the
      header <tr> and from nowhere else (IRIS ruling §1). */
+  /* DENSITY (owner directive 2026-07-30: "reduce the font size in the tables by
+     30%"). IRIS ruled the rungs rather than a multiplier (R7): th 15 -> micro
+     (13), td 18 -> label (15). 0.7x of 18 is 12.6px, BELOW the ladder's floor and
+     below the size the owner paid to increase twenty-seven hours earlier, so the
+     remaining density comes from the ROW BOX — padding-block sp-3 -> sp-2 — and
+     from showing ONE table at a time instead of two. Rows per viewport roughly
+     doubles, which is what the instruction was actually about. */
   th {
     text-align: left;
     font-weight: 400;
-    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
+    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
     letter-spacing: 0.18em;
-    padding: 0 var(--sdn-sp-5) var(--sdn-sp-3) 0;
+    padding: 0 var(--sdn-sp-5) var(--sdn-sp-2) 0;
     border-bottom: 1px solid;
     white-space: nowrap;
     color: inherit;
   }
   td {
-    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
     letter-spacing: 0.02em;
-    padding: var(--sdn-sp-3) var(--sdn-sp-5) var(--sdn-sp-1) 0;
+    padding: var(--sdn-sp-2) var(--sdn-sp-5) var(--sdn-sp-1) 0;
     vertical-align: middle;
   }
   th:last-child, td.right { text-align: right; padding-right: 0; }
@@ -690,6 +740,12 @@
     min-height: 40px;
     outline: none;
   }
+  /* L6 (owner directive 2026-07-30: "the arrow in the drop down should have
+     margin"): the trust-tier select draws a chevron INSIDE its box, so the box
+     reserves inset space for it — otherwise the tier name sits against the arrow
+     and the arrow against the border. Same rule, same floor, as the toolbar's
+     TRUST select. */
+  select { padding-right: var(--sdn-sp-8); }
   select option { background: #0a141b; }
   textarea {
     width: 100%;
