@@ -25,10 +25,10 @@
   import NodeModal from './NodeModal.svelte';
   import NodeDetail from './NodeDetail.svelte';
   import NodeWidgets from './NodeWidgets.svelte';
-  import StoredWallets from './StoredWallets.svelte';
   import NodeEditForm from './NodeEditForm.svelte';
   import AccountAdmin from './AccountAdmin.svelte';
   import SignInModal from './SignInModal.svelte';
+  import AccountModal from './AccountModal.svelte';
   import Globe from './Globe.svelte';
   import { shortId } from './format.js';
   import { TRUST_TIERS, normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
@@ -103,6 +103,8 @@
   /** @type {boolean|null} null until /api/auth/status answers. */
   let rootAdminAvailable = $state(null);
   let signInOpen = $state(false);
+  /** The account modal (owner directive 2026-07-29 — the upper-right button). */
+  let accountOpen = $state(false);
   let editing = $state(false);
   /** Post-save profile echo, held until the status feed catches up. */
   let epmOverride = $state(null);
@@ -391,14 +393,23 @@
             <!-- The key's fingerprint is the ONE identifier that survives a
                  reload (§4/§6b); the dot marks a key still unlocked in this
                  page (able to sign an attestation), hollow means the session
-                 was restored from the cookie alone. -->
-            <StatusChip
-              label={`${shortFingerprint(session.fingerprint) || session.name || 'SIGNED IN'} · ${sessionTier.toUpperCase()}`}
-              color={sessionTierColor}
-              dot={Boolean(session.identity)}
-              title={`KEY ${session.fingerprint || 'unknown'}${session.name ? ` · ${session.name}` : ''}${session.identity ? ' · signed in from this page' : ' · session restored from the cookie'}`}
-            />
-            <GBtn title="End this session" onclick={signOut}>SIGN OUT</GBtn>
+                 was restored from the cookie alone.
+
+                 Owner directive 2026-07-29: this is the ACCOUNT BUTTON — it
+                 opens the account modal. SIGN OUT moved inside it, because a
+                 header that offers "leave" but not "look" is backwards. -->
+            <button
+              type="button"
+              class="acct"
+              onclick={() => (accountOpen = true)}
+              title={`Your account · KEY ${session.fingerprint || 'unknown'}${session.identity ? ' · signed in from this page' : ' · session restored from the cookie'}`}
+            >
+              <StatusChip
+                label={`${session.name?.trim() || shortFingerprint(session.fingerprint) || 'SIGNED IN'} · ${sessionTier.toUpperCase()}`}
+                color={sessionTierColor}
+                dot={Boolean(session.identity)}
+              />
+            </button>
           {:else}
             <GBtn title="Sign in with your wallet key" variant="primary" onclick={() => (signInOpen = true)}>SIGN IN</GBtn>
           {/if}
@@ -447,10 +458,10 @@
                 </div>
               </Panel>
             {:else}
+              <!-- STORED WALLETS moved to the account modal's WALLET section
+                   (IRIS ruling §5.4): browser custody is a property of the
+                   signed-in operator and this origin, not of the node. -->
               <NodeWidgets node={selfNode} {now} {canEdit} />
-              {#if session}
-                <div class="stored-wallets"><StoredWallets /></div>
-              {/if}
             {/if}
           </div>
         {:else}
@@ -572,6 +583,19 @@
       nodeName={selfTitle}
       onClose={() => (signInOpen = false)}
       onSignedIn={onSignedIn}
+    />
+  {/if}
+
+  {#if accountOpen && session}
+    <AccountModal
+      {session}
+      {selfNode}
+      {rootAdminAvailable}
+      onSignOut={() => {
+        accountOpen = false;
+        signOut();
+      }}
+      onClose={() => (accountOpen = false)}
     />
   {/if}
 </div>
@@ -814,7 +838,6 @@
     gap: 16px;
     padding-bottom: 8px;
   }
-  .stored-wallets { display: grid; }
   .account-admin { margin-top: 16px; flex: none; }
   .page-head {
     display: flex;
@@ -858,6 +881,21 @@
 
   .hdr-status { display: contents; }
   .hdr-session { display: contents; }
+  /* The account button is the session chip itself: same pixels, now clickable
+     (owner directive 2026-07-29). No new chrome, no second control. */
+  .acct {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  }
+  .acct:hover { filter: brightness(1.15); }
+  .acct:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; }
 
   /* Narrow screens (owner report: taps landing on clipped targets): the
      desktop half-and-half no-scroll layout collapses tap targets into
