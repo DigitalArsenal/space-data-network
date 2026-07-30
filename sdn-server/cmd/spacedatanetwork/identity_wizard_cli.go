@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -71,25 +70,111 @@ var identityWizardCmd = &cobra.Command{
 	},
 }
 
+// identityWizardStore hands out the node's FlatSQL store WITHOUT opening it
+// until something actually reads or writes.
+//
+// The store is single-writer: opening it takes a lock the daemon needs to run.
+// The wizard used to take that lock FIRST and only then load hd-wallet.wasm —
+// a derive measured at 474 SECONDS on a 2-vCPU host under interpreted
+// WasmEdge — so a display-name change cost the node ~8 minutes of downtime,
+// and an interrupted CLI kept the lock and locked the daemon out of its own
+// store ("already open for writing, held by pid N", host-01 2026-07-30).
+// Deferring the open to the point of use means the lock is held for the write
+// window only, and not at all when the daemon answers over HTTP.
+type identityWizardStore struct {
+	open   func() (*storage.FlatSQLStore, error)
+	store  *storage.FlatSQLStore
+	err    error
+	opened bool
+	owned  bool
+}
+
+// identityWizardStoreFromHandle wraps a store the caller already opened and
+// still owns; Close is then a no-op.
+func identityWizardStoreFromHandle(store *storage.FlatSQLStore) *identityWizardStore {
+	return &identityWizardStore{store: store, opened: true}
+}
+
+// Store opens the store on first use and memoizes the result, so a failure is
+// reported identically to every later caller instead of retrying the lock.
+func (s *identityWizardStore) Store() (*storage.FlatSQLStore, error) {
+	if s == nil {
+		return nil, errors.New("identity wizard store is required")
+	}
+	if !s.opened {
+		s.opened = true
+		s.owned = true
+		s.store, s.err = s.open()
+		if s.err != nil {
+			s.err = fmt.Errorf("failed to open storage: %w", s.err)
+		}
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.store == nil {
+		return nil, errors.New("identity wizard store is required")
+	}
+	return s.store, nil
+}
+
+// Close releases the single-writer lock on EVERY exit path, including the
+// error ones — an aborted wizard must never leave the daemon locked out.
+func (s *identityWizardStore) Close() error {
+	if s == nil || !s.owned || s.store == nil {
+		return nil
+	}
+	store := s.store
+	s.store = nil
+	return store.Close()
+}
+
 func runIdentityWizard(ctx context.Context, in io.Reader, out io.Writer, options identityWizardOptions) error {
 	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	// Built before the derive on purpose: it takes no lock, and a bad schema
+	// set should fail in milliseconds rather than after a multi-minute derive.
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
 		return fmt.Errorf("failed to initialize schema validator: %w", err)
 	}
-	store, err := storage.NewFlatSQLStore(cfg.Storage.Path, validator)
-	if err != nil {
-		return fmt.Errorf("failed to open storage: %w", err)
-	}
-	defer store.Close()
+	return runIdentityWizardWithDeps(ctx, in, out, options, cfg, identityWizardDeps{
+		DeriveIdentity: func(ctx context.Context) (identityWizardNodeIdentity, error) {
+			return loadIdentityWizardNodeIdentity(ctx, cfg)
+		},
+		OpenStore: func() (*storage.FlatSQLStore, error) {
+			return storage.NewFlatSQLStore(cfg.Storage.Path, validator)
+		},
+	})
+}
 
-	nodeIdentity, err := loadIdentityWizardNodeIdentity(ctx, cfg)
+// identityWizardDeps names the two expensive steps so their ORDER is testable:
+// the derive must complete before the store is ever opened.
+type identityWizardDeps struct {
+	DeriveIdentity func(ctx context.Context) (identityWizardNodeIdentity, error)
+	OpenStore      func() (*storage.FlatSQLStore, error)
+}
+
+func runIdentityWizardWithDeps(ctx context.Context, in io.Reader, out io.Writer, options identityWizardOptions, cfg *config.Config, deps identityWizardDeps) error {
+	if cfg == nil {
+		return errors.New("config is required")
+	}
+	if deps.DeriveIdentity == nil || deps.OpenStore == nil {
+		return errors.New("identity wizard dependencies are required")
+	}
+
+	// DERIVE FIRST, WITH NO LOCK HELD. Everything below this line is fast;
+	// everything above it used to run inside the store lock.
+	nodeIdentity, err := deps.DeriveIdentity(ctx)
 	if err != nil {
 		return err
 	}
+
+	store := &identityWizardStore{open: deps.OpenStore}
+	defer store.Close()
+
 	if options.PromptWriter == nil {
 		options.PromptWriter = os.Stderr
 	}
@@ -100,40 +185,65 @@ func runIdentityWizard(ctx context.Context, in io.Reader, out io.Writer, options
 	return runIdentityWizardWithProfile(ctx, in, out, options, store, nodeIdentity, cfg.Storage.Path, adminURL(cfg), profileSource)
 }
 
-func loadIdentityWizardNodeIdentity(ctx context.Context, cfg *config.Config) (identityWizardNodeIdentity, error) {
+// identityWizardMnemonic opens the node's mnemonic using the SAME resolvers
+// every other key-touching call site uses (key_reseal_cli.go, key_material_cli.go,
+// admin_client.go, node.go).
+//
+// The wizard used to roll its own chain here — os.Getenv("SDN_KEY_PASSWORD"),
+// then cfg.Security.KeyPassword, then the machine default — and was therefore
+// the LONE OUTLIER blind to SDN_KEY_PASSWORD_FILE. Nothing assigns
+// cfg.Security.KeyPassword during load, so on a file-sealed node it fell
+// straight through to the machine-derived default and reported
+// "chacha20poly1305: message authentication failed" on a perfectly intact seal
+// (vm-orbit-det-01, 2026-07-30). One resolver, or the file is a lie.
+func identityWizardMnemonic(cfg *config.Config) (string, error) {
 	if cfg == nil {
-		return identityWizardNodeIdentity{}, fmt.Errorf("config is required")
+		return "", fmt.Errorf("config is required")
 	}
-
-	keyPassword := os.Getenv("SDN_KEY_PASSWORD")
-	if keyPassword == "" {
-		keyPassword = cfg.Security.KeyPassword
+	keyPassword, err := config.KeyPassword(cfg)
+	if err != nil {
+		// Configured-but-unreadable is an ERROR, never a silent fallback: the
+		// fallback decrypts nothing and names the mnemonic, when the real
+		// fault is a missing mount.
+		return "", fmt.Errorf("resolve key password: %w", err)
 	}
 	if keyPassword == "" {
 		keyPassword = keys.DeriveDefaultPassword()
 	}
 
-	mnemonicPath := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys", "mnemonic")
+	// Same reason: MnemonicPathResolved honours SDN_MNEMONIC_FILE and yields
+	// the identical default path (config.KeyDir joins <storage dir>/keys).
+	mnemonicPath := config.MnemonicPathResolved(cfg)
 	if err := keys.EnforceKeyFilePermissions(mnemonicPath); err != nil {
-		return identityWizardNodeIdentity{}, err
+		return "", err
 	}
 	data, err := os.ReadFile(mnemonicPath)
 	if err != nil {
-		return identityWizardNodeIdentity{}, fmt.Errorf("failed to read mnemonic file %s: %w; run spacedatanetwork init first", mnemonicPath, err)
+		return "", fmt.Errorf("failed to read mnemonic file %s: %w; run spacedatanetwork init first", mnemonicPath, err)
 	}
 
 	var mnemonic string
 	if keys.IsMnemonicEncrypted(data) {
 		mnemonic, err = keys.DecryptMnemonic(data, keyPassword)
 		if err != nil {
-			return identityWizardNodeIdentity{}, fmt.Errorf("failed to decrypt mnemonic (wrong password?): %w", err)
+			return "", fmt.Errorf("failed to decrypt mnemonic (wrong password?): %w", err)
 		}
 	} else {
 		mnemonic = string(data)
 	}
-	mnemonic = strings.TrimSpace(mnemonic)
-	if mnemonic == "" {
-		return identityWizardNodeIdentity{}, fmt.Errorf("mnemonic file %s is empty", mnemonicPath)
+	if mnemonic = strings.TrimSpace(mnemonic); mnemonic == "" {
+		return "", fmt.Errorf("mnemonic file %s is empty", mnemonicPath)
+	}
+	return mnemonic, nil
+}
+
+func loadIdentityWizardNodeIdentity(ctx context.Context, cfg *config.Config) (identityWizardNodeIdentity, error) {
+	if cfg == nil {
+		return identityWizardNodeIdentity{}, fmt.Errorf("config is required")
+	}
+	mnemonic, err := identityWizardMnemonic(cfg)
+	if err != nil {
+		return identityWizardNodeIdentity{}, err
 	}
 
 	wp, err := resolveHDWalletWasmPath()
@@ -172,14 +282,15 @@ func runIdentityWizardWithIO(in io.Reader, out io.Writer, options identityWizard
 	if nodeIdentity.PeerID == "" {
 		return errors.New("identity wizard peer ID is required")
 	}
-	profileSource, err := loadIdentityWizardStoredProfileSource(store, nodeIdentity.PeerID, dataDir)
+	handle := identityWizardStoreFromHandle(store)
+	profileSource, err := loadIdentityWizardStoredProfileSource(handle, nodeIdentity.PeerID, dataDir)
 	if err != nil {
 		return err
 	}
-	return runIdentityWizardWithProfile(context.Background(), in, out, options, store, nodeIdentity, dataDir, "", profileSource)
+	return runIdentityWizardWithProfile(context.Background(), in, out, options, handle, nodeIdentity, dataDir, "", profileSource)
 }
 
-func runIdentityWizardWithProfile(ctx context.Context, in io.Reader, out io.Writer, options identityWizardOptions, store *storage.FlatSQLStore, nodeIdentity identityWizardNodeIdentity, dataDir, daemonBaseURL string, profileSource identityWizardProfileSource) error {
+func runIdentityWizardWithProfile(ctx context.Context, in io.Reader, out io.Writer, options identityWizardOptions, store *identityWizardStore, nodeIdentity identityWizardNodeIdentity, dataDir, daemonBaseURL string, profileSource identityWizardProfileSource) error {
 	if in == nil {
 		in = strings.NewReader("")
 	}
@@ -233,8 +344,17 @@ func runIdentityWizardWithProfile(ctx context.Context, in io.Reader, out io.Writ
 		return err
 	}
 
+	// THE WRITE WINDOW STARTS HERE — the first and only place this path needs
+	// the single-writer lock. Everything slow (derive) and everything
+	// cancellable (prompt, confirm) is already behind us, so the daemon is
+	// locked out for the write alone, not for the operator's typing.
+	storeHandle, err := store.Store()
+	if err != nil {
+		return err
+	}
+
 	service := epm.NewService(nodeIdentity.Identity, peers.NewRegistry(false, nil), peerID, nodeIdentity.XPub, dataDir)
-	service.SetProfileStore(store)
+	service.SetProfileStore(storeHandle)
 	if runtimeAddrs := identityWizardRuntimeAddressesFromEPM(profileSource.SourceEPM, peerID.String()); len(runtimeAddrs) > 0 {
 		if err := service.SetRuntimeAddresses(runtimeAddrs); err != nil {
 			return fmt.Errorf("preserve runtime EPM addresses: %w", err)
@@ -252,14 +372,17 @@ func runIdentityWizardWithProfile(ctx context.Context, in io.Reader, out io.Writ
 	if err != nil {
 		return fmt.Errorf("compute EPM CID: %w", err)
 	}
-	if err := directory.NewService(store).UpsertNodeEPMJSON(epmJSON, epmCID, "local-node"); err != nil {
+	if err := directory.NewService(storeHandle).UpsertNodeEPMJSON(epmJSON, epmCID, "local-node"); err != nil {
 		return fmt.Errorf("index local EPM directory record: %w", err)
 	}
 
 	return writeIdentityWizardOutput(out, service, epmBytes, epmJSON, options)
 }
 
-func loadIdentityWizardProfileSource(ctx context.Context, cfg *config.Config, store *storage.FlatSQLStore, peerID peer.ID, dataDir string) (identityWizardProfileSource, error) {
+// loadIdentityWizardProfileSource asks the DAEMON first, and only falls back to
+// the store. When the daemon answers, the store is never opened and its lock is
+// never taken — the edit is genuinely zero-downtime.
+func loadIdentityWizardProfileSource(ctx context.Context, cfg *config.Config, store *identityWizardStore, peerID peer.ID, dataDir string) (identityWizardProfileSource, error) {
 	if daemonSource, ok, err := loadIdentityWizardDaemonProfileSource(ctx, adminURL(cfg), peerID); err != nil {
 		return identityWizardProfileSource{}, err
 	} else if ok {
@@ -290,14 +413,18 @@ func loadIdentityWizardDaemonProfileSource(ctx context.Context, baseURL string, 
 	}, true, nil
 }
 
-func loadIdentityWizardStoredProfileSource(store *storage.FlatSQLStore, peerID peer.ID, dataDir string) (identityWizardProfileSource, error) {
+func loadIdentityWizardStoredProfileSource(store *identityWizardStore, peerID peer.ID, dataDir string) (identityWizardProfileSource, error) {
 	if store == nil {
 		return identityWizardProfileSource{}, errors.New("identity wizard store is required")
 	}
 	if peerID == "" {
 		return identityWizardProfileSource{}, errors.New("identity wizard peer ID is required")
 	}
-	raw, err := store.LoadLocalEPM(peerID.String())
+	storeHandle, err := store.Store()
+	if err != nil {
+		return identityWizardProfileSource{}, err
+	}
+	raw, err := storeHandle.LoadLocalEPM(peerID.String())
 	if err == nil {
 		profile, err := epm.ProfileFromEPMBytes(raw)
 		if err != nil {
@@ -556,8 +683,12 @@ func identityWizardAddressContainsPeer(address, peerID string) bool {
 	return strings.Contains(address, "/ipns/"+peerID) || strings.Contains(address, "/p2p/"+peerID)
 }
 
-func localEPMHasPublicIdentityMaterial(store *storage.FlatSQLStore, peerID peer.ID) (bool, error) {
-	raw, err := store.LoadLocalEPM(peerID.String())
+func localEPMHasPublicIdentityMaterial(store *identityWizardStore, peerID peer.ID) (bool, error) {
+	storeHandle, err := store.Store()
+	if err != nil {
+		return false, err
+	}
+	raw, err := storeHandle.LoadLocalEPM(peerID.String())
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return false, nil
