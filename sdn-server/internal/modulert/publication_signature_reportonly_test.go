@@ -17,7 +17,10 @@ package modulert
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+	"os"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/testsupport"
 )
 
 // reportOnlyPolicy is the observe-stage policy: real trust set, nothing refused.
@@ -175,5 +178,68 @@ func TestReportOnlyIsNotAContentHashAllowlist(t *testing.T) {
 	}
 	if len(policy.AllowUnsignedByContentHash) != 0 {
 		t.Fatalf("report-only must not seed AllowUnsignedByContentHash; got %d entry(s)", len(policy.AllowUnsignedByContentHash))
+	}
+}
+
+// TestNewModuleReportOnlyAdmitsUnsignedAtRealLoadEntrypoint proves the observe
+// stage fires on the ACTUAL load entrypoint (NewModule), not merely in the
+// helper. This is the specific thing the seal council could not assert about
+// the live node: Q2 found the gate was configured but "not on the actual load
+// path", so an empty rejection log proved nothing. Here an unsigned real module
+// goes through NewModule under report-only and MUST load, while the same module
+// under enforcement MUST NOT — so a drained observe log is meaningful evidence
+// rather than a blind spot.
+func TestNewModuleReportOnlyAdmitsUnsignedAtRealLoadEntrypoint(t *testing.T) {
+	t.Parallel()
+
+	wasmPath := testsupport.SkipIfNoLicensingModuleWasm(t)
+	wasmBytes, err := os.ReadFile(wasmPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) failed: %v", wasmPath, err)
+	}
+
+	moduleHash := ContentHashHex(wasmBytes)
+	capPolicy, err := NewCapabilityPolicyStore("")
+	if err != nil {
+		t.Fatalf("NewCapabilityPolicyStore failed: %v", err)
+	}
+	for _, capability := range []string{"ipfs", "protocol_dial", "wallet_sign"} {
+		if _, err := capPolicy.Approve(CapabilityApproval{
+			ModuleHash: moduleHash,
+			Capability: capability,
+			PluginID:   "licensing",
+			ApprovedBy: "test",
+		}); err != nil {
+			t.Fatalf("Approve(%s) failed: %v", capability, err)
+		}
+	}
+
+	trustedPub, _ := mustGenerateEd25519Key(t)
+
+	// REPORT-ONLY: an UNSIGNED real module loads, and the module reports why.
+	mod, err := NewModule(wasmBytes, nil, &NodeContext{
+		CapabilityPolicy:      capPolicy,
+		ModuleSignaturePolicy: reportOnlyPolicy(trustedPub),
+	})
+	if err != nil {
+		t.Fatalf("report-only must admit an unsigned module at the load entrypoint: %v", err)
+	}
+	status := mod.SignatureStatus()
+	if err := mod.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+	if status.Verified {
+		t.Fatalf("SignatureStatus() = %+v, want Verified=false for an unsigned module", status)
+	}
+	if status.Reason != "unsigned" {
+		t.Fatalf("SignatureStatus().Reason = %q, want %q", status.Reason, "unsigned")
+	}
+
+	// ENFORCING: the same module at the same entrypoint is refused.
+	if _, err := NewModule(wasmBytes, nil, &NodeContext{
+		CapabilityPolicy:      capPolicy,
+		ModuleSignaturePolicy: enforcingPolicy(trustedPub),
+	}); err == nil {
+		t.Fatal("enforcement must refuse the unsigned module that report-only admitted")
 	}
 }
