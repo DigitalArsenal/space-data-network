@@ -16,8 +16,8 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 `flatsql` repo (superproject submodule `repos/main-packages/flatsql`):
 
 - source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
-- flatsql commit: `8e86fee` (v1.2.0 — sandboxed public query `flatsql_query_sandboxed`, gateway loop G.5)
-- sha256: `1c53398ae6dc76ec806a3e4724461c6ccc82b6fe8861c6a1a42efcfa4b4c7f64`
+- flatsql commit: `b26ed45` (no-eh query-error latch — a SQL error is a value, never `unreachable`)
+- sha256: `4d17fc5f4936305a005bfc5c63c550a58e448412900299ac7d6adc63ba0137e9`
 
 Why no-exceptions (loop A.3/A.3b findings, measured): WasmEdge's AOT
 compiler (0.14–0.17) cannot parse wasm-exceptions (exnref) modules, and its
@@ -27,12 +27,30 @@ Wasmtime runs exnref natively but its C API/Go bindings do not expose the
 exceptions proposal yet. The no-EH build is export-identical and
 byte-parity-verified against the browser artifact (parity_test.go).
 
-Error semantics (since flatsql A.3c no-throw refactor): user-triggerable
-failures — bad SQL, param-count mismatch, unknown template, duplicate
-source, bad schema — are pre-validated/latched in the engine WITHOUT
-throwing, return clean errors, and do NOT poison the runtime. Only a
-genuine trap (untouched internal throw path, OOM, unreachable) sets
-`Runtime.Poisoned()`; a poisoned runtime must be discarded and recreated.
+Error semantics: EVERY host-reachable query failure is a value, never a
+trap. Two layers get there:
+
+- pre-validation (flatsql A.3c): bad SQL, param-count mismatch, unknown
+  template, duplicate source, bad schema are latched before execution;
+- exception-free EXECUTION (flatsql no-eh query-error latch, graph task
+  `mod-flatsql-query-params-unreachable-trap`): SQL errors raised while the
+  statement RUNS — constraint violations, busy/locked-after-retries, bind
+  and IO errors — return through `executeNoThrow`/`queryNoThrow` instead of
+  `throw`.
+
+The second layer is not cosmetic. This artifact is compiled
+`-fignore-exceptions`, so a `throw` on this build is not an exception, it
+is `unreachable`: the guest aborts and the whole engine instance is
+poisoned. Before the latch, an ordinary UNIQUE-constraint violation inside
+one bound INSERT aborted host-01's record-catalog hydration on every boot
+(`flatsql_query_params`, `calling stack:3351, 3351, 3351, 325, 192, 574,
+3351`), so its 1.34M-frame catalog never finished hydrating. The contract is
+asserted directly by `sql_error_no_trap_test.go` across every query entry
+the C ABI exposes.
+
+Only a genuine trap (a remaining internal throw path, OOM, unreachable)
+sets `Runtime.Poisoned()`; a poisoned runtime must be discarded and
+recreated.
 
 Production daemons should pass `WithPrecompiledAOTCache(dir)`: the portable
 module is AOT-compiled by an explicit release/prewarm step and loaded from
