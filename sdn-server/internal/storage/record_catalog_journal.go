@@ -297,10 +297,17 @@ func (j *recordCatalogJournal) replayFrames(ctx context.Context, store *FlatSQLS
 	if err != nil {
 		return 0, err
 	}
+	// newReplayRowIDState OPENS the shared rowid band (store.recordIndexRowIDs):
+	// for as long as this replay runs, live index inserts allocate an explicit
+	// rowid above every rowid the journal can ask for instead of taking the
+	// engine's MAX(rowid)+1 out of the half-hydrated table. Closing it is
+	// mandatory — an unbalanced begin would leave the live path allocating
+	// explicitly forever.
 	rowIDs, err := newReplayRowIDState(store, journalMaxRowID)
 	if err != nil {
 		return 0, err
 	}
+	defer store.recordIndexRowIDs.end()
 
 	var off int64
 	count := 0
