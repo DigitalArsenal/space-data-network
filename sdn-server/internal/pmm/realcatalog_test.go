@@ -85,6 +85,30 @@ func TestRealCatalogRoundTrip(t *testing.T) {
 		t.Fatalf("expected 15 closed entries, got %d", closed)
 	}
 
+	// The node HASHES what it serves and DECLARES what it does not.
+	//
+	// The closed-tier modules physically left this repo for
+	// space-data-network-closed-modules, so the node holds none of their bytes.
+	// They still carry a CONTENT_HASH — a client that obtains one through
+	// licensed delivery must be able to verify it — but they carry no source
+	// artifact, so LoadCatalog never tries to re-hash bytes that are not here.
+	// When they DID still resolve to a local file this check was the thing that
+	// caught the move: hashing from disk failed loudly instead of signing a
+	// stale declared hash.
+	servedFromDisk := 0
+	for i := range cf.Entries {
+		e := &cf.Entries[i]
+		if e.AccessPolicy == "ENTITLED" && e.SourceArtifact != "" {
+			t.Fatalf("closed module %s must not be backed by bytes on this node", e.ModuleID)
+		}
+		if e.SourceArtifact != "" {
+			servedFromDisk++
+		}
+	}
+	if servedFromDisk != 52 {
+		t.Fatalf("expected 52 entries served from local artifacts, got %d", servedFromDisk)
+	}
+
 	// The catalog is INPUT: no local disk path may survive into any projection.
 	jsonBytes, err := MarshalJSON(m, cf.Browse)
 	if err != nil {
