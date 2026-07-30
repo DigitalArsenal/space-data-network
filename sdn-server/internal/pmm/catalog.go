@@ -95,6 +95,9 @@ func BuildManifest(cf *CatalogFile, trust TrustAnchor, epoch uint64, canonicalUR
 		if m.Modules[i].Epoch == 0 {
 			m.Modules[i].Epoch = 1
 		}
+		// Catalog input, not record content. Dropped here so the provider's
+		// local disk layout can never reach a client through any projection.
+		m.Modules[i].SourceArtifact = ""
 	}
 	if err := Sign(m, signer); err != nil {
 		return nil, err
