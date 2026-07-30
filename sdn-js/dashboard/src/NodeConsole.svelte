@@ -382,7 +382,7 @@
             <span class="wkick" style="color:{theme.textMuted};">PEER MAP</span>
             <span class="wsub" style="color:{theme.textFaint};">GEOIP · LIVE SWARM</span>
             <span class="hchips">
-              <StatusChip label={`${links} LINKS`} color={theme.green} />
+              <StatusChip label={`${links} LINK${links === 1 ? '' : 'S'}`} color={theme.green} />
               <span class="tabs" style="border-color:{theme.panelBorder};">
                 {#each [['3d', '3D'], ['2d', '2D']] as [id, label] (id)}
                   <button
