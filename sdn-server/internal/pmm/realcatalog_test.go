@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,6 +83,25 @@ func TestRealCatalogRoundTrip(t *testing.T) {
 	}
 	if closed != 15 {
 		t.Fatalf("expected 15 closed entries, got %d", closed)
+	}
+
+	// The catalog is INPUT: no local disk path may survive into any projection.
+	jsonBytes, err := MarshalJSON(m, cf.Browse)
+	if err != nil {
+		t.Fatalf("json encode: %v", err)
+	}
+	if strings.Contains(string(jsonBytes), "source_artifact") ||
+		strings.Contains(string(jsonBytes), artifactRoot) {
+		t.Fatal("served JSON leaks the provider's local artifact layout")
+	}
+
+	// Emit the fixture the storefront consumes, straight from the real encoder,
+	// so the UI is never developed against a hand-written shape that drifts.
+	if out := os.Getenv("PMM_FIXTURE_OUT"); out != "" {
+		if err := os.WriteFile(out, jsonBytes, 0o644); err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+		t.Logf("wrote fixture to %s (%d bytes)", out, len(jsonBytes))
 	}
 	t.Logf("real catalog: %d entries, %d closed, %d binary bytes", len(m.Modules), closed, len(bin))
 }
