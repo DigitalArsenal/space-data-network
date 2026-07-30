@@ -27,6 +27,19 @@ const embedDir = path.resolve(__dirname, '../../sdn-server/cmd/spacedatanetwork/
 const outHtml = path.join(embedDir, 'dashboard.html');
 const outCsp = path.join(embedDir, 'dashboard.csp');
 
+// --- 0. Owner-ruled copy, BEFORE the build ----------------------------------
+// Scans the design source. Fails on a new offender, or on a change in the count
+// of a recorded one, naming both sides. See check-owner-ruled-copy.mjs for why
+// this is a build step and not a manual one.
+function guard(mode) {
+  const r = spawnSync(process.execPath, [path.join(__dirname, 'check-owner-ruled-copy.mjs'), mode], {
+    cwd: __dirname,
+    stdio: 'inherit'
+  });
+  if (r.status !== 0) process.exit(r.status ?? 1);
+}
+guard('--sources');
+
 // --- 1. Build ---------------------------------------------------------------
 const viteBin = path.resolve(__dirname, '../node_modules/vite/bin/vite.js');
 const build = spawnSync(process.execPath, [viteBin, 'build'], {
@@ -112,3 +125,10 @@ console.log(
 );
 console.log(`[build-dashboard] wrote ${path.relative(process.cwd(), outCsp)} (${hashes.length} inline-script hash(es))`);
 console.log(`[build-dashboard] CSP: ${csp}`);
+
+// --- 5. Owner-ruled copy, AFTER the build -----------------------------------
+// The source scan can pass while the artifact still carries the copy — via a
+// consumer-side rule, an inlined vendor chunk, or a path the scan does not
+// cover. This is the scope that actually proves it did not reach the user, so
+// it runs on the emitted bytes, last.
+guard('--artifact');

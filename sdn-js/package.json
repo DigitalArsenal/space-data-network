@@ -113,7 +113,6 @@
     "@types/node": "^20.10.0",
     "eslint": "^8.55.0",
     "onnxruntime-web": "^1.22.0",
-    "spaceaware-student-sdn": "file:../../SpaceAware-Student-UI",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "tsup": "^8.0.0",
