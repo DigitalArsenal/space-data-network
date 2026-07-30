@@ -216,21 +216,39 @@ func TestDefaultBootstrapAddresses_UsesRealPinnedPeers(t *testing.T) {
 		t.Fatal("DefaultBootstrapAddresses returned no peers")
 	}
 
-	foundSpaceawareDNSAddr := false
-	foundSpaceawareTCPAddr := false
-	foundCelestrakDNSAddr := false
+	foundSpaceaware := false
+	foundCelestrak := false
 	for _, addr := range addresses {
-		if addr == "/dnsaddr/bootstrap.spacedatanetwork.org/p2p/"+bootstrapPeerSpaceaware {
-			foundSpaceawareDNSAddr = true
+		if addr == "/ip4/159.203.150.8/tcp/4004/ws/p2p/"+bootstrapPeerSpaceaware {
+			foundSpaceaware = true
 		}
-		if addr == "/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45" {
-			foundSpaceawareTCPAddr = true
+		if addr == "/ip4/167.172.219.213/tcp/4001/p2p/"+bootstrapPeerCelestrak {
+			foundCelestrak = true
 		}
-		if addr == "/dnsaddr/bootstrap.spacedatanetwork.org/p2p/"+bootstrapPeerCelestrak {
-			foundCelestrakDNSAddr = true
+		// bootstrap.spacedatanetwork.org was never allocated and the owner ruled
+		// on 2026-07-30 that it never will be. A dnsaddr entry here is a
+		// guaranteed NXDOMAIN dial, and a bootstrap dial that fails at startup is
+		// never retried (ops-cluster-bootstrap-no-redial), so it burns a retry
+		// slot permanently.
+		if strings.Contains(addr, "bootstrap.spacedatanetwork.org") {
+			t.Fatalf("unallocated dnsaddr bootstrap host leaked into defaults: %s", addr)
+		}
+		// Measured dead 2026-07-30: neither production host has ANY udp
+		// listener, and neither serves 4001-on-host-01 or 8080.
+		if strings.Contains(addr, "quic") {
+			t.Fatalf("no production host has a udp listener; quic entry leaked into defaults: %s", addr)
+		}
+		if strings.Contains(addr, "/ip4/159.203.150.8/tcp/4001") ||
+			strings.Contains(addr, "/tcp/8080/") {
+			t.Fatalf("port measured CLOSED on the live host leaked into defaults: %s", addr)
 		}
 		if strings.Contains(addr, "16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT") {
 			t.Fatalf("retired SpaceAware full-node peer ID leaked into defaults: %s", addr)
+		}
+		// The legacy celestrak identity: its spacedatanetwork.service is stopped,
+		// and libp2p aborts on a peer-id mismatch even with the port open.
+		if strings.Contains(addr, "16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3") {
+			t.Fatalf("stopped legacy celestrak peer ID leaked into defaults: %s", addr)
 		}
 		if addr == "/dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1" {
 			t.Fatalf("placeholder bootstrap address leaked into defaults: %s", addr)
@@ -243,8 +261,8 @@ func TestDefaultBootstrapAddresses_UsesRealPinnedPeers(t *testing.T) {
 		}
 	}
 
-	if !foundSpaceawareDNSAddr || !foundSpaceawareTCPAddr || !foundCelestrakDNSAddr {
-		t.Fatal("DefaultBootstrapAddresses did not include both production dnsaddr bootstrap entries and SpaceAware TCP fallback")
+	if !foundSpaceaware || !foundCelestrak {
+		t.Fatal("DefaultBootstrapAddresses did not include both measured-live production peers (sdn.spaceaware.io ws/4004 and celestrak.eth tcp/4001)")
 	}
 }
 

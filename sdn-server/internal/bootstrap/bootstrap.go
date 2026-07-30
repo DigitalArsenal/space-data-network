@@ -16,25 +16,37 @@ import (
 
 var log = logging.Logger("sdn-bootstrap")
 
-// Production SDN bootstrap node peer IDs. The direct ip4 entries are the
-// authoritative fallbacks while dnsaddr bootstrap records are being published.
+// Production SDN bootstrap peers.
+//
+// EXPLICIT MULTIADDRS ONLY — there is no dnsaddr lane and there is not going to
+// be one. bootstrap.spacedatanetwork.org was never allocated (NXDOMAIN), and on
+// 2026-07-30 the owner ruled that it will NOT be: "No. We do not need this."
+// The two /dnsaddr/bootstrap.spacedatanetwork.org entries that used to head this
+// list are therefore removed rather than left to fail, because a bootstrap peer
+// that fails AT STARTUP is dialled once and never retried
+// (ops-cluster-bootstrap-no-redial) — a dead entry does not merely waste a dial,
+// it consumes a slice of a retry budget that never refills.
+//
+// Every address below was measured against the live listener on 2026-07-30, not
+// inherited. The previous list was dead in EVERY entry: host-01 listens only on
+// tcp/4004 ws (plus 127.0.0.1:18080), never 4001 and never 8080; neither host
+// has ANY udp listener, so all quic-v1 entries were unreachable; and the
+// celestrak peer id below was the LEGACY identity of a service that is now
+// inactive, which libp2p rejects on peer-id mismatch even with the port open.
 const (
-	bootstrapPeerSpaceaware = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45" // sdn.spaceaware.io (159.203.150.8) full node, tcp+quic on 4001
-	bootstrapPeerCelestrak  = "16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3" // celestrak.eth (167.172.219.213) full node, all transports
-	// The same SpaceAware identity also owns the ws/8080 relay listener on
-	// sdn.spaceaware.io; nginx terminates wss/443 in front of it.
-	bootstrapPeerSpaceawareRelay = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+	// sdn.spaceaware.io. Addressed by its RESERVED ip 159.203.150.8, not by the
+	// box's eth0 104.131.11.220: the reserved ip is not on any interface, it
+	// forwards, and it therefore survives a box replacement. Both were measured
+	// OPEN on tcp/4004 from a third host on 2026-07-30; 4001 was CLOSED on both.
+	bootstrapPeerSpaceaware = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+	// celestrak.eth retriever — the LIVE identity. Not 16Uiu2HAm9oK2…, which is
+	// the stopped legacy spacedatanetwork.service.
+	bootstrapPeerCelestrak = "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U"
 )
 
 var productionBootstrapAddresses = []string{
-	"/dnsaddr/bootstrap.spacedatanetwork.org/p2p/" + bootstrapPeerSpaceaware,
-	"/dnsaddr/bootstrap.spacedatanetwork.org/p2p/" + bootstrapPeerCelestrak,
-	"/ip4/159.203.150.8/tcp/4001/p2p/" + bootstrapPeerSpaceaware,
-	"/ip4/159.203.150.8/udp/4001/quic-v1/p2p/" + bootstrapPeerSpaceaware,
-	"/ip4/159.203.150.8/tcp/8080/ws/p2p/" + bootstrapPeerSpaceawareRelay,
+	"/ip4/159.203.150.8/tcp/4004/ws/p2p/" + bootstrapPeerSpaceaware,
 	"/ip4/167.172.219.213/tcp/4001/p2p/" + bootstrapPeerCelestrak,
-	"/ip4/167.172.219.213/udp/4001/quic-v1/p2p/" + bootstrapPeerCelestrak,
-	"/ip4/167.172.219.213/tcp/8080/ws/p2p/" + bootstrapPeerCelestrak,
 }
 
 // PeerInfo represents a bootstrap peer with its address and expected peer ID.

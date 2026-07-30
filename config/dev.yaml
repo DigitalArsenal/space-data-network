@@ -8,16 +8,17 @@ network:
     - /ip4/127.0.0.1/tcp/14001
     - /ip4/127.0.0.1/tcp/14080/ws
   bootstrap:
-    # The sdn.spaceaware.io sidecar has NO direct public libp2p listener —
-    # the dialable route is wss/443 through nginx (same path DEFAULT_EDGE_RELAYS
-    # uses). The raw-IP entries below are stale (159.203.150.8 is not host-01;
-    # its :4001 belongs to a kubo node) and kept only until the cluster
-    # addressing is reconciled.
+    - /ip4/159.203.150.8/tcp/4004/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+    # Corrected 2026-07-30 against the live listeners. The older note here said
+    # the sdn.spaceaware.io sidecar has NO direct public libp2p listener; that is
+    # no longer true — it listens on 0.0.0.0:4004 ws (plus 127.0.0.1:18080), and
+    # the entry above is the route two sibling nodes hold open today with the
+    # peer id verified. The note was right about :4001: that is a kubo node, and
+    # 159.203.150.8:4001 measured CLOSED, so no 4001 entry survives here.
+    # wss/443 through nginx (the DEFAULT_EDGE_RELAYS path) stays as the
+    # browser-reachable alternate.
     - /dns4/sdn.spaceaware.io/tcp/443/wss/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
-    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
-    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3
-    - /ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
-    - /ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3
+    - /ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U
   edge_relays: []
   max_connections: 100
   enable_relay: false
