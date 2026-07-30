@@ -226,8 +226,19 @@ scp -q "${STAGE}/hd-wallet-wasi.wasm"  "${TARGET}:.local/lib/spacedatanetwork/.s
 
 ssh -o ConnectTimeout=20 "$TARGET" "set -e
 L=${REMOTE_LIB_DIR}
-# Swap BOTH artifacts before anything runs again. Neither is in use: this host
-# runs no daemon, which is exactly why a plain mv is safe here.
+# STOPPED-STATE SWAP. The comment that used to sit here said 'this host runs no
+# daemon, which is exactly why a plain mv is safe' — that became FALSE on
+# 2026-07-30 when the owner directive put a systemd USER unit on this box, and a
+# stale assumption in a deploy script is a defect, not a comment. The unit is
+# stopped before the swap and started after, so the binary and libwasmedge can
+# never be replaced underneath a live process. Idempotent: if no unit is
+# present or it is already stopped, WAS_ACTIVE stays 'inactive' and nothing is
+# started that was not running before.
+WAS_ACTIVE=\$(systemctl --user is-active spacedatanetwork.service 2>/dev/null || true)
+if [ \"\$WAS_ACTIVE\" = \"active\" ]; then
+  echo 'stopping spacedatanetwork.service for a stopped-state swap'
+  systemctl --user stop spacedatanetwork.service
+fi
 chmod 755 \$L/.staging/spacedatanetwork
 mv -f \$L/.staging/spacedatanetwork      \$L/spacedatanetwork
 mv -f \$L/.staging/libwasmedge.so.0.1.0  \$L/wasmedge/libwasmedge.so.0.1.0
@@ -249,7 +260,35 @@ cat > ${REMOTE_BIN} <<'SHIM'
 # User-local layout because this VM has no passwordless sudo. The binary is
 # dynamically linked against libwasmedge.so.0 and the VM has no wasmedge
 # install, so the loader is pointed at the copy shipped beside the binary.
-LIBDIR=\"\$HOME/.local/lib/spacedatanetwork\"
+# OWNER RULING 2026-07-30 (graph: sdn-wasmedge-static-link) is that wasmedge
+# belongs INSIDE the executable; when that lands, the LD_LIBRARY_PATH line and
+# this whole per-user lib layout are DELETED, not maintained.
+
+# Resolve the install from THIS SCRIPT'S OWN location, never \$HOME. Under sudo
+# \$HOME becomes /root, so a \$HOME-relative shim execs a path that does not
+# exist (\"/root/.local/lib/spacedatanetwork/spacedatanetwork: not found\") and,
+# worse, the binary would read /root/.spacedatanetwork, find no keystore, and
+# the identity path can MINT A FRESH IDENTITY. Fail closed instead.
+SELF=\$(cd \"\$(dirname \"\$0\")\" && pwd -P)
+LIBDIR=\$(cd \"\$SELF/../lib/spacedatanetwork\" 2>/dev/null && pwd -P)
+if [ -z \"\$LIBDIR\" ] || [ ! -x \"\$LIBDIR/spacedatanetwork\" ]; then
+  echo \"spacedatanetwork: no install found beside \$SELF (expected ../lib/spacedatanetwork)\" >&2
+  exit 78
+fi
+
+# CROSS-USER REFUSAL. The install, the keystore and the at-rest password file
+# all belong to ONE user. Running as anyone else reads a different \$HOME and a
+# different (usually absent) keystore. Refusing is not a convenience: a silent
+# run against an absent keystore is how a stray second identity gets minted.
+INSTALL_OWNER=\$(stat -c %U \"\$LIBDIR\" 2>/dev/null || echo '')
+INVOKER=\$(id -un)
+if [ -n \"\$INSTALL_OWNER\" ] && [ \"\$INSTALL_OWNER\" != \"\$INVOKER\" ]; then
+  echo \"spacedatanetwork: USER-LOCAL install owned by \$INSTALL_OWNER; refusing to run as \$INVOKER.\" >&2
+  echo \"  The node identity, its keystore and its at-rest password all belong to \$INSTALL_OWNER.\" >&2
+  echo \"  Run instead:  sudo -u \$INSTALL_OWNER -H \$SELF/spacedatanetwork <args>\" >&2
+  exit 77
+fi
+
 LD_LIBRARY_PATH=\"\$LIBDIR/wasmedge\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\"
 export LD_LIBRARY_PATH
 
@@ -260,6 +299,24 @@ export LD_LIBRARY_PATH
 # follow-up on the graph: sdn-cli-user-local-wasm-search-path.
 HD_WALLET_WASM_PATH=\"\$LIBDIR/hd-wallet-wasi.wasm\"
 export HD_WALLET_WASM_PATH
+
+# AT-REST SEAL. A box re-sealed off the machine-derived key and onto an explicit
+# password FILE gives the DAEMON that file through a systemd drop-in, but the
+# CLI had no equivalent and fell through to the machine-derived default —
+# answering \"chacha20poly1305: message authentication failed\" on a perfectly
+# intact seal. That is the exact break the owner hit on 2026-07-30.
+# PATH ONLY: the value is never read, echoed or logged here.
+# Exported only when the file EXISTS, so a not-yet-resealed install keeps the
+# machine-derived default. An existing-but-unreadable file is deliberately left
+# to the binary, which treats configured-but-unreadable as a loud ERROR rather
+# than a silent fallback (sdn-server/internal/config/resolve.go, KeyPassword).
+# NEVER the inline SDN_KEY_PASSWORD form (HERMES, seal council 2026-07-30):
+# inline also overrides the credstore root in credstore/secrets.go and would
+# orphan credentials.enc, and it is visible in ps.
+if [ -z \"\${SDN_KEY_PASSWORD}\" ] && [ -z \"\${SDN_KEY_PASSWORD_FILE}\" ] && [ -e \"\$HOME/.sdn-key-password\" ]; then
+  SDN_KEY_PASSWORD_FILE=\"\$HOME/.sdn-key-password\"
+  export SDN_KEY_PASSWORD_FILE
+fi
 
 exec \"\$LIBDIR/spacedatanetwork\" \"\$@\"
 SHIM
@@ -296,6 +353,13 @@ note=all three artifacts are extracted from ONE source and swapped together
 note=hd-wallet-wasi.wasm derives the node PeerID from the mnemonic; changing it
 note=under an existing identity is gated behind --allow-wallet-wasm-change
 MAN
+
+# Restart ONLY if this script stopped it. A box that was deliberately left
+# stopped stays stopped.
+if [ \"\$WAS_ACTIVE\" = \"active\" ]; then
+  systemctl --user start spacedatanetwork.service
+  echo \"daemon restarted: \$(systemctl --user is-active spacedatanetwork.service)\"
+fi
 "
 
 # ---- verify BOTH shell modes, because only one of them was ever broken -------
@@ -308,4 +372,4 @@ VER_LOGIN="$(ssh -o ConnectTimeout=15 "$TARGET" 'bash -lc "spacedatanetwork vers
 
 ok "non-interactive: ${VER_NONINT}"
 ok "login shell:     ${VER_LOGIN}"
-ok "${TARGET} refreshed (no unit, no schedule, no identity — by design)"
+ok "${TARGET} refreshed (identity never touched; the unit is stopped and restarted around the swap, not installed, by this script)"
