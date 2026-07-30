@@ -467,7 +467,14 @@ func TestNodeVCardCarriesTheVerificationChainWithoutKeyMaterial(t *testing.T) {
 		t.Fatalf("testDerivedIdentity failed: %v", err)
 	}
 
-	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-test", t.TempDir())
+	// A REAL account xpub, not the "xpub-test" placeholder this test used until
+	// task sdn-vcf-duplicate-sign-alias. The placeholder does not parse, so the
+	// service fell back to publishing keys with no derivation, and the xpub /
+	// sign / encrypt aliases asserted below were only satisfiable because the
+	// builder falsely stamped the unparseable string onto the Ed25519 key. The
+	// aliases are a projection of real derivations, so the fixture has to carry
+	// one.
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, validTestXPub, t.TempDir())
 	if err := service.Init(); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
@@ -620,13 +627,30 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 	// the COMPLETE verification chain as email aliases — the keys' HD
 	// derivation paths (base64url of the EPM KEYS' KEY_ADDRESS), the EPM
 	// record's embedded signature + timestamp, and the record CID.
-	// The ed25519 signing key rides the card at its hardened path: it produces
-	// the EPM self-signature, so a verifier needs those exact bytes.
+	//
+	// OWNER RULE, task sdn-vcf-duplicate-sign-alias (2026-07-29): exactly ONE
+	// sign alias, carrying the xpub-DERIVABLE signing path. This assertion
+	// previously demanded the alias for identity.SigningKeyPath — the Ed25519
+	// key's all-hardened path — on the reasoning that "a verifier needs those
+	// exact bytes". That reasoning was the defect: the alias carries the PATH,
+	// not the bytes, and no xpub can derive a hardened SLIP-10 Ed25519 path, so
+	// the card shipped two indistinguishable sign rows and the owner scanned
+	// them. The Ed25519 key's BYTES still ride the record, which epmcid binds.
+	derivedForCard, ok := PublicIdentityKeysFromXPub(xpub, identity.Account)
+	if !ok {
+		t.Fatal("PublicIdentityKeysFromXPub failed")
+	}
 	signAlias := "EMAIL;type=INTERNET;type=sign:" +
-		base64.RawURLEncoding.EncodeToString([]byte(identity.SigningKeyPath)) +
+		base64.RawURLEncoding.EncodeToString([]byte(derivedForCard.SigningKeyPath)) +
 		"@sign.spacedatanetwork.org"
 	if got := strings.Count(unfolded, signAlias); got != 1 {
-		t.Fatalf("QR vCard sign alias count = %d, want 1: %s", got, qrVCard)
+		t.Fatalf("QR vCard derivable sign alias count = %d, want 1: %s", got, qrVCard)
+	}
+	if got := strings.Count(unfolded, "@sign.spacedatanetwork.org"); got != 1 {
+		t.Fatalf("QR vCard sign alias count = %d, want exactly 1 (the owner-scanned duplicate): %s", got, qrVCard)
+	}
+	if hardened := base64.RawURLEncoding.EncodeToString([]byte(identity.SigningKeyPath)); strings.Contains(unfolded, hardened) {
+		t.Fatalf("QR vCard still advertises the hardened Ed25519 path %q: %s", identity.SigningKeyPath, qrVCard)
 	}
 
 	// OWNER RULE: exactly ONE encrypt alias, carrying the EPM's single
