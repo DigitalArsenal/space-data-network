@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CLOCK_SKEW_SECONDS,
+  MAX_VALIDITY_SECONDS,
   DEFAULT_DOH_RESOLVERS,
   DEFAULT_QUORUM,
   canonicalStatement,
@@ -436,5 +437,47 @@ describe('resolver roster', () => {
     expect(new Set(DEFAULT_DOH_RESOLVERS.map((r) => r.operator)).size).toBe(3);
     expect(DEFAULT_QUORUM).toBeLessThan(DEFAULT_DOH_RESOLVERS.length);
     expect(DEFAULT_QUORUM).toBeGreaterThan(1);
+  });
+});
+
+// Seal Council condition (Hephaestus, 2026-07-30). Enforced in canonicalStatement,
+// which both producers and verifiers pass through, so an over-long proof can
+// neither be minted nor accepted. A cap only the signer honours is a cap an
+// attacker holding the key simply ignores.
+describe('validity cap', () => {
+  const issued = 1785400000;
+  const base = {
+    domain: 'example.org',
+    algorithm: 'ed25519' as const,
+    publicKey: new Uint8Array(32),
+    peerId: '',
+    issuedAt: issued,
+  };
+
+  it('allows exactly the cap and refuses one second more', () => {
+    expect(() =>
+      canonicalStatement({ ...base, expiresAt: issued + MAX_VALIDITY_SECONDS }),
+    ).not.toThrow();
+    expect(() =>
+      canonicalStatement({ ...base, expiresAt: issued + MAX_VALIDITY_SECONDS + 1 }),
+    ).toThrow(/exceeds the .* maximum/);
+  });
+
+  it('refuses an over-long window at VERIFY time, whoever signed it', () => {
+    const forged: DomainProof = {
+      ...base,
+      expiresAt: issued + MAX_VALIDITY_SECONDS + 1,
+      signature: new Uint8Array(64),
+    };
+    expect(() => verifyProof(forged, issued)).toThrow(/exceeds the .* maximum/);
+    expect(isValidProof(forged, issued)).toBe(false);
+  });
+
+  it('agrees with the Go MaxValidity constant', () => {
+    expect(MAX_VALIDITY_SECONDS).toBe(365 * 24 * 60 * 60);
+  });
+
+  it('still permits expires=0, which is discouraged not forbidden', () => {
+    expect(() => canonicalStatement({ ...base, expiresAt: 0 })).not.toThrow();
   });
 });

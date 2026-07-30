@@ -47,6 +47,18 @@ export const OWNER_LABEL = '_sdnkey';
 /** Seconds of tolerated clock skew on `ts=`. Matches the Go ClockSkew. */
 export const CLOCK_SKEW_SECONDS = 300;
 
+/**
+ * Maximum validity window a proof may claim, in seconds. Matches Go MaxValidity.
+ *
+ * Seal Council condition (Hephaestus, 2026-07-30): the duration is the one
+ * caller-influenced field that is not structurally constrained the way the domain
+ * is, and THERE IS NO REVOCATION CHANNEL. An unexpired proof for domain X stays
+ * verifiable after the key has moved on to serving a different host, so the
+ * VERIFIER enforces the bound too — not just the signer. A cap only the signer
+ * honours is a cap an attacker with the key simply ignores.
+ */
+export const MAX_VALIDITY_SECONDS = 365 * 24 * 60 * 60;
+
 export type ProofAlgorithm = 'ed25519' | 'secp256k1';
 
 export interface DomainProof {
@@ -199,6 +211,14 @@ export function canonicalStatement(proof: Omit<DomainProof, 'signature'>): Uint8
   }
   if (proof.expiresAt !== 0 && proof.expiresAt <= proof.issuedAt) {
     throw new Error(`dnsproof: expires-at ${proof.expiresAt} is not after issued-at ${proof.issuedAt}`);
+  }
+  // Enforced in canonicalStatement, the one function both producers and verifiers
+  // pass through, so an over-long proof can neither be minted nor accepted.
+  if (proof.expiresAt !== 0 && proof.expiresAt - proof.issuedAt > MAX_VALIDITY_SECONDS) {
+    throw new Error(
+      `dnsproof: validity window ${proof.expiresAt - proof.issuedAt}s exceeds the ${MAX_VALIDITY_SECONDS}s maximum; ` +
+        'there is no revocation channel, so a proof may not outlive its cap',
+    );
   }
   const peerId = (proof.peerId ?? '').trim();
   if (/[\s;]/.test(peerId)) throw new Error('dnsproof: peer id contains whitespace or a tag separator');
