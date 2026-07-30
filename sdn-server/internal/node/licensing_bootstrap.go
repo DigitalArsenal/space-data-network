@@ -21,6 +21,8 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
+	"golang.org/x/crypto/ed25519"
 )
 
 const (
@@ -285,7 +287,7 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 		return nil
 	}
 
-	configFrame, err := buildLicensingRuntimeConfigFrame(mod.NodeContext())
+	configFrame, expectedSigningPublicKey, err := buildLicensingRuntimeConfigFrame(mod.NodeContext())
 	if err != nil {
 		return err
 	}
@@ -301,6 +303,15 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 	}
 	if !flatbuffers.BufferHasIdentifier(configResponse, "$LCF") {
 		return fmt.Errorf("configure licensing runtime returned %d bytes without $LCF identifier", len(configResponse))
+	}
+	// The guest echoes the verifier key it actually retained in its $LCF status.
+	// Check it: that key — not the one we sent — is what gets stamped into every
+	// grant as GRANT_VERIFIER_PUBKEY and what clients verify against. A guest
+	// that silently kept zeroes (or a different key) must fail the bootstrap
+	// here, loudly, instead of coming up healthy and issuing grants no client
+	// can verify (task sdn-module-delivery-grant-sig-broken).
+	if err := verifyLicensingStatusVerifierKey(configResponse, expectedSigningPublicKey); err != nil {
+		return fmt.Errorf("configure licensing runtime: %w", err)
 	}
 
 	var publishErrs []error
@@ -367,23 +378,56 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 	return errors.Join(publishErrs...)
 }
 
-func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, error) {
+// buildLicensingRuntimeConfigFrame returns the $LCF configure frame and the
+// provider signing PUBLIC key it carries, so the caller can check the guest
+// echoed that exact key back in its status.
+func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, ed25519.PublicKey, error) {
 	if nodeCtx == nil {
-		return nil, fmt.Errorf("licensing node context is required")
+		return nil, nil, fmt.Errorf("licensing node context is required")
 	}
 	providerPeerID := strings.TrimSpace(nodeCtx.PeerID)
 	if providerPeerID == "" {
-		return nil, fmt.Errorf("licensing node context peer id is required")
+		return nil, nil, fmt.Errorf("licensing node context peer id is required")
 	}
 	keySlots := nodeCtx.KeySlots
 	if len(keySlots) == 0 {
-		return nil, fmt.Errorf("licensing node context key slots are required")
+		return nil, nil, fmt.Errorf("licensing node context key slots are required")
 	}
 	if raw := keySlots[providerSigningSlotID]; len(raw) != 32 {
-		return nil, fmt.Errorf("provider signing slot %q must contain a 32-byte Ed25519 seed", providerSigningSlotID)
+		return nil, nil, fmt.Errorf("provider signing slot %q must contain a 32-byte Ed25519 seed", providerSigningSlotID)
 	}
 	if raw := keySlots[providerWrappingSlotID]; len(raw) != 32 {
-		return nil, fmt.Errorf("provider wrapping slot %q must contain a 32-byte X25519 private key", providerWrappingSlotID)
+		return nil, nil, fmt.Errorf("provider wrapping slot %q must contain a 32-byte X25519 private key", providerWrappingSlotID)
+	}
+
+	// The guest CANNOT derive this itself. Grant signing goes through the host
+	// keyslot.sign oracle (internal/modulert/caps/keyslot.go:138), so the
+	// provider's Ed25519 seed never enters guest memory — and since
+	// space-data-network-modules 54bd4be (2026-07-09) removed the raw-key
+	// keyslot.get op, the ONLY way the licensing module can learn the public
+	// half is this field. It stamps whatever it is given here into every
+	// issued grant as LGR.GRANT_VERIFIER_PUBKEY, which is exactly the key
+	// browser clients ed25519-verify the grant's PROVIDER_SIGNATURE against
+	// (space-data-module-sdk src/licensing/records.js verifyLicensing-
+	// GrantProviderSignature). Omitting it left the guest holding 32 zero
+	// bytes (key_server.cpp: "leave it zeroed when absent"), so every grant
+	// issued since 2026-07-09 was unverifiable and the live sandcastle failed
+	// with "licensing grant provider signature verification failed"
+	// (task sdn-module-delivery-grant-sig-broken). The Go delivery client does
+	// not verify provider signatures, which is why only browsers saw it.
+	//
+	// Fail CLOSED: a licensing runtime that cannot state its own verifier key
+	// would come up healthy, list every module and issue grants no client can
+	// verify. Refusing to configure is the honest outcome.
+	signingPublicKey, err := caps.KeyslotEd25519PublicKey(nodeCtx, providerSigningSlotID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve provider signing public key: %w", err)
+	}
+	if len(signingPublicKey) != ed25519.PublicKeySize {
+		return nil, nil, fmt.Errorf(
+			"provider signing public key must be %d bytes, got %d",
+			ed25519.PublicKeySize, len(signingPublicKey),
+		)
 	}
 
 	builder := flatbuffers.NewBuilder(256)
@@ -396,6 +440,7 @@ func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, er
 		keyReferenceRoleProviderSigning,
 		keyReferenceAlgorithmEd25519Seed,
 		1,
+		signingPublicKey,
 	)
 	wrappingKeyRefOffset := buildKeyReferenceFrame(
 		builder,
@@ -404,6 +449,7 @@ func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, er
 		keyReferenceRoleProviderWrapping,
 		keyReferenceAlgorithmX25519,
 		1,
+		nil,
 	)
 
 	lcf.LCFStart(builder)
@@ -418,9 +464,54 @@ func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, er
 	lcf.LCFAddCHALLENGE_TTL_MS(builder, 30_000)
 	root := lcf.LCFEnd(builder)
 	lcf.FinishLCFBuffer(builder, root)
-	return builder.FinishedBytes(), nil
+	return builder.FinishedBytes(), signingPublicKey, nil
 }
 
+// verifyLicensingStatusVerifierKey checks that the licensing guest retained the
+// provider signing PUBLIC key the host sent it, by reading the key back out of
+// the $LCF status frame the guest returns from server_configure_runtime.
+//
+// This is the only host-observable proof that grants will be verifiable. The
+// guest stamps whatever it retained into every grant as GRANT_VERIFIER_PUBKEY;
+// if it kept zeroes (its documented behaviour when the host omits the field)
+// the node still boots, still lists every module and still issues grants —
+// which then fail in every browser with "licensing grant provider signature
+// verification failed". Checking the echo turns that into a boot failure.
+func verifyLicensingStatusVerifierKey(statusFrame []byte, expected ed25519.PublicKey) error {
+	if len(expected) != ed25519.PublicKeySize {
+		return fmt.Errorf(
+			"provider signing public key must be %d bytes, got %d",
+			ed25519.PublicKeySize, len(expected),
+		)
+	}
+	status := lcf.GetRootAsLCF(statusFrame, 0)
+	if status == nil {
+		return fmt.Errorf("licensing status frame is not a readable $LCF record")
+	}
+	signingKey := status.PROVIDER_SIGNING_KEY(nil)
+	if signingKey == nil {
+		return fmt.Errorf("licensing status omits PROVIDER_SIGNING_KEY")
+	}
+	reported := signingKey.PUBLIC_KEYBytes()
+	if len(reported) == 0 {
+		return fmt.Errorf(
+			"licensing runtime reported no provider signing public key — every grant it issues would be unverifiable",
+		)
+	}
+	if !bytes.Equal(reported, expected) {
+		return fmt.Errorf(
+			"licensing runtime retained provider signing public key %s, host sent %s — grants would be signed by one key and verified against another",
+			hex.EncodeToString(reported), hex.EncodeToString(expected),
+		)
+	}
+	return nil
+}
+
+// buildKeyReferenceFrame writes one KRF. publicKey is the PUBLIC half of a
+// host-managed slot and may be nil: it is emitted for the signing key, because
+// the guest cannot derive it and must publish it in every grant, and omitted
+// for the wrapping key, whose public half the guest already learns from the
+// requester's ECDH envelope.
 func buildKeyReferenceFrame(
 	builder *flatbuffers.Builder,
 	keyID string,
@@ -428,13 +519,21 @@ func buildKeyReferenceFrame(
 	role byte,
 	algorithm byte,
 	version uint32,
+	publicKey []byte,
 ) flatbuffers.UOffsetT {
 	keyIDOffset := builder.CreateString(keyID)
 	slotIDOffset := builder.CreateString(slotID)
+	var publicKeyOffset flatbuffers.UOffsetT
+	if len(publicKey) > 0 {
+		publicKeyOffset = builder.CreateByteVector(publicKey)
+	}
 
 	lcf.KRFStart(builder)
 	lcf.KRFAddKEY_ID(builder, keyIDOffset)
 	lcf.KRFAddSLOT_ID(builder, slotIDOffset)
+	if publicKeyOffset != 0 {
+		lcf.KRFAddPUBLIC_KEY(builder, publicKeyOffset)
+	}
 	switch role {
 	case keyReferenceRoleProviderSigning:
 		lcf.KRFAddROLE(builder, 1)
