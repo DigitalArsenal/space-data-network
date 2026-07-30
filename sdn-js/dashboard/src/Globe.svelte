@@ -8,6 +8,14 @@
    * Interaction: drag to rotate, auto-spin when idle, hover highlights the
    * nearest node dot (tooltip), click opens the node (onSelect).
    * Styled only with theme.js tokens.
+   *
+   * TWO PROJECTIONS, ONE DATA PATH (task sdn-dashboard-restore-template-widgets).
+   * The SDN Console template's PEER MAP carries a 3D/2D switch, so `mode` selects
+   * between the orthographic sphere and an equirectangular plate. Both go through
+   * project()/projectArcPoints() and draw the SAME rings, graticule, links and
+   * dots from the SAME vendored land.json — the design's globe.js FETCHES Natural
+   * Earth GeoJSON over the network, which the node's zero-external-origin-bytes
+   * law forbids, so that path is not ported (IRIS constraint (a)).
    */
   import { onMount } from 'svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
@@ -15,8 +23,21 @@
   import { shortId } from './format.js';
   import LAND from './land.json';
 
-  /** @type {{ nodes: any[], selectedId?: string, onSelect?: (node: any) => void }} */
-  let { nodes = [], selectedId = '', onSelect = () => {} } = $props();
+  /**
+   * @type {{
+   *   nodes: any[], selectedId?: string, onSelect?: (node: any) => void,
+   *   mode?: '3d' | '2d', legend?: boolean
+   * }}
+   */
+  let {
+    nodes = [],
+    selectedId = '',
+    onSelect = () => {},
+    mode = '3d',
+    legend = true,
+  } = $props();
+
+  const flat = $derived(mode === '2d');
 
   let canvas;
   let wrap;
@@ -38,8 +59,20 @@
     return hasTrustAssertion(n.trustLevel) ? theme.amber : theme.textMuted;
   }
 
-  /** Orthographic projection; returns null on the far side. */
+  /**
+   * Orthographic projection (3D), or equirectangular (2D).
+   *
+   * 3D returns null on the far side of the sphere — that null IS the far-side
+   * cull every caller relies on. 2D has no far side, so nothing is ever culled;
+   * `r` still scales the drawing, so the plate is sized from the same radius the
+   * sphere would have used and the two modes occupy the same box.
+   */
   function project(lat, lon, cx, cy, r) {
+    if (flat) {
+      // Longitude spans 2r, latitude r — a 2:1 plate, centred like the disc.
+      let λdeg = ((lon + 180) % 360 + 360) % 360 - 180;
+      return { x: cx + (λdeg / 180) * r, y: cy - (lat / 90) * (r / 2), z: 1 };
+    }
     const φ = lat * DEG;
     const λ = (lon + lonRot) * DEG;
     const φ0 = latRot * DEG;
@@ -54,13 +87,20 @@
 
   function strokeRing(ctx, ring, cx, cy, r) {
     let pen = false;
+    let prevLon = null;
     ctx.beginPath();
     for (const [lon, lat] of ring) {
       const p = project(lat, lon, cx, cy, r);
       if (!p) {
         pen = false;
+        prevLon = null;
         continue;
       }
+      // On a plate, a ring that steps across the antimeridian would be drawn as
+      // a full-width slash. Lift the pen instead — the shape re-enters on the
+      // other edge, which is what a real equirectangular map does.
+      if (flat && prevLon !== null && Math.abs(lon - prevLon) > 180) pen = false;
+      prevLon = lon;
       if (pen) ctx.lineTo(p.x, p.y);
       else ctx.moveTo(p.x, p.y);
       pen = true;
@@ -89,6 +129,7 @@
     const sinω = Math.sin(ω);
     const STEPS = 40;
     const pts = [];
+    const lons = [];
     for (let i = 0; i <= STEPS; i += 1) {
       const t = i / STEPS;
       const ka = Math.sin((1 - t) * ω) / sinω;
@@ -98,18 +139,25 @@
       const z = ka * va[2] + kb * vb[2];
       const lat = Math.asin(z / Math.hypot(x, y, z)) / DEG;
       const lon = Math.atan2(y, x) / DEG;
-      const lift = 1 + 0.1 * Math.sin(Math.PI * t) * Math.min(1, ω / 0.8);
+      // The 3D arc is LIFTED off the surface for the classic network look. On a
+      // plate there is no "off the surface" — scaling r there would stretch the
+      // whole projection, so the flat arc lies on the map.
+      const lift = flat ? 1 : 1 + 0.1 * Math.sin(Math.PI * t) * Math.min(1, ω / 0.8);
       pts.push(project(lat, lon, cx, cy, r * lift));
+      lons.push(lon);
     }
     ctx.strokeStyle = b.online ? 'rgba(53,201,216,0.55)' : 'rgba(110,170,190,0.25)';
     ctx.lineWidth = 1.1;
     let pen = false;
     ctx.beginPath();
-    for (const p of pts) {
+    for (let i = 0; i < pts.length; i += 1) {
+      const p = pts[i];
       if (!p) {
         pen = false;
         continue;
       }
+      // Same antimeridian rule as the coastlines: leave the edge and re-enter.
+      if (flat && i > 0 && Math.abs(lons[i] - lons[i - 1]) > 180) pen = false;
       if (pen) ctx.lineTo(p.x, p.y);
       else ctx.moveTo(p.x, p.y);
       pen = true;
@@ -143,15 +191,21 @@
 
     const cx = w / 2;
     const cy = h / 2;
-    const r = Math.min(w, h) / 2 - 18;
+    // The plate is 2:1, so it can use the full width; the sphere is bounded by
+    // the shorter side. Both leave the same 18px margin.
+    const r = (flat ? Math.min(w / 2, h) : Math.min(w, h) / 2) - 18;
     if (r <= 20) return;
 
-    if (!dragging && !hover) lonRot = (lonRot + 0.03) % 360;
+    // Auto-spin is a property of a sphere. A plate that drifted sideways would
+    // just slide the world off its own edge.
+    if (!flat && !dragging && !hover) lonRot = (lonRot + 0.03) % 360;
 
-    // Sphere disc + limb — flat fill (owner: no off-center "specular" shading).
+    // The body: a disc for the sphere, a rectangle for the plate. Flat fill
+    // either way (owner: no off-center "specular" shading).
     ctx.fillStyle = 'rgba(8,16,22,0.88)';
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    if (flat) ctx.rect(cx - r, cy - r / 2, r * 2, r);
+    else ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = theme.hairline;
     ctx.lineWidth = 1;
@@ -235,7 +289,7 @@
       ctx.fillStyle = theme.textBright;
       ctx.fillText(label, tx, ty + 2);
     }
-    canvas.style.cursor = hover ? 'pointer' : dragging ? 'grabbing' : 'grab';
+    canvas.style.cursor = hover ? 'pointer' : flat ? 'default' : dragging ? 'grabbing' : 'grab';
 
     raf = requestAnimationFrame(draw);
   }
@@ -246,6 +300,8 @@
   }
 
   function onPointerDown(e) {
+    // Nothing to rotate on a plate — but hover/select still work below.
+    if (flat) return;
     dragging = true;
     dragBase = { ...pointerPos(e), lonRot, latRot };
     canvas.setPointerCapture(e.pointerId);
@@ -282,12 +338,14 @@
     onpointerup={onPointerUp}
     onpointerleave={() => (lastPointer = null)}
   ></canvas>
-  <div class="legend" style="color:{theme.textFaint};">
-    <span><i style="background:{theme.green};"></i>ONLINE</span>
-    <span><i style="background:{theme.amber};"></i>OFFLINE·TRUSTED</span>
-    <span><i style="background:{theme.textMuted};"></i>OFFLINE</span>
-    <span><i class="ring" style="border-color:{theme.cyan};"></i>SELF</span>
-  </div>
+  {#if legend}
+    <div class="legend" style="color:{theme.textFaint};">
+      <span><i style="background:{theme.green};"></i>ONLINE</span>
+      <span><i style="background:{theme.amber};"></i>OFFLINE·TRUSTED</span>
+      <span><i style="background:{theme.textMuted};"></i>OFFLINE</span>
+      <span><i class="ring" style="border-color:{theme.cyan};"></i>SELF</span>
+    </div>
+  {/if}
 </div>
 
 <style>

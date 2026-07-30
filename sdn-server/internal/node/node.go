@@ -1116,6 +1116,19 @@ func (n *Node) buildNodeStatusMaterials() caps.NodeStatusMaterials {
 	return materials
 }
 
+// RuntimeStatusSnapshot returns this node's own runtime facts — uptime, record
+// store totals, disk headroom, service state/mode, libp2p bandwidth totals and
+// the sparkline ring — in the node_status_read.status result shape
+// (caps/nodestatus.go documents it).
+//
+// It is the SAME assembler the WASM capability uses; this method only re-uses
+// it for the node's admin-gated HTTP read surface (GET /api/node/runtime). No
+// new state, no new sampler, no shaping: the dashboard reads exactly what a
+// module with node_status_read reads.
+func (n *Node) RuntimeStatusSnapshot() map[string]interface{} {
+	return caps.NodeStatusSnapshot(n.buildNodeStatusMaterials())
+}
+
 // buildNodeActivityMaterials wires the node's shared activityRing into the
 // node_activity_read capability (materials only — mirrors
 // buildNodeStatusMaterials above). n.activityRing is constructed in New()
