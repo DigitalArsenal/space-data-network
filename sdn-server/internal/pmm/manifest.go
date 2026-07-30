@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	sdspmm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PMM"
 )
 
 // Signer signs a message with the node key. Satisfied by *keys.Manager.
@@ -39,18 +41,18 @@ type Signer interface {
 // EMPTY (owner/oracle ruling 2026-07-30: an absent DNS proof is published as an
 // empty DNS_PROOF_TXT, never as a fabricated one).
 type TrustAnchor struct {
-	ProviderDomain      string       `json:"PROVIDER_DOMAIN"`
-	NodePeerID          string       `json:"NODE_PEER_ID"`
-	NodeXpub            string       `json:"NODE_XPUB"`
-	SigningPublicKey    string       `json:"SIGNING_PUBLIC_KEY"`
-	SigningKeyPath      string       `json:"SIGNING_KEY_PATH"`
-	SignatureAlgorithm  string       `json:"SIGNATURE_ALGORITHM"`
-	EPMCID              string       `json:"EPM_CID"`
-	DNSProofRecordName  string       `json:"DNS_PROOF_RECORD_NAME"`
-	DNSProofTXT         string       `json:"DNS_PROOF_TXT"`
-	DNSProofStatement   string       `json:"DNS_PROOF_STATEMENT"`
-	BondAddresses       []ChainProof `json:"BOND_ADDRESSES"`
-	BondAttestationURL  string       `json:"BOND_ATTESTATION_URL"`
+	ProviderDomain     string       `json:"PROVIDER_DOMAIN"`
+	NodePeerID         string       `json:"NODE_PEER_ID"`
+	NodeXpub           string       `json:"NODE_XPUB"`
+	SigningPublicKey   string       `json:"SIGNING_PUBLIC_KEY"`
+	SigningKeyPath     string       `json:"SIGNING_KEY_PATH"`
+	SignatureAlgorithm string       `json:"SIGNATURE_ALGORITHM"`
+	EPMCID             string       `json:"EPM_CID"`
+	DNSProofRecordName string       `json:"DNS_PROOF_RECORD_NAME"`
+	DNSProofTXT        string       `json:"DNS_PROOF_TXT"`
+	DNSProofStatement  string       `json:"DNS_PROOF_STATEMENT"`
+	BondAddresses      []ChainProof `json:"BOND_ADDRESSES"`
+	BondAttestationURL string       `json:"BOND_ATTESTATION_URL"`
 }
 
 // ChainProof is one bond address derived from the node key.
@@ -64,17 +66,17 @@ type ChainProof struct {
 
 // Entry is one offered module, as declared by the catalog.
 type Entry struct {
-	ModuleID    string   `json:"MODULE_ID"`
-	PluginID    string   `json:"PLUGIN_ID"`
-	PLGCID      string   `json:"PLG_CID"`
-	Name        string   `json:"NAME"`
-	Description string   `json:"DESCRIPTION"`
-	Version     string   `json:"VERSION"`
-	Epoch       uint64   `json:"EPOCH"`
-	ContentHash string   `json:"CONTENT_HASH"`
-	SizeBytes   uint64   `json:"ARTIFACT_SIZE_BYTES"`
-	ArtifactPath string  `json:"ARTIFACT_PATH"`
-	ArtifactCID string   `json:"ARTIFACT_CID"`
+	ModuleID     string `json:"MODULE_ID"`
+	PluginID     string `json:"PLUGIN_ID"`
+	PLGCID       string `json:"PLG_CID"`
+	Name         string `json:"NAME"`
+	Description  string `json:"DESCRIPTION"`
+	Version      string `json:"VERSION"`
+	Epoch        uint64 `json:"EPOCH"`
+	ContentHash  string `json:"CONTENT_HASH"`
+	SizeBytes    uint64 `json:"ARTIFACT_SIZE_BYTES"`
+	ArtifactPath string `json:"ARTIFACT_PATH"`
+	ArtifactCID  string `json:"ARTIFACT_CID"`
 	// ArtifactSignature is lowercase hex of a detached signature over the 32 RAW
 	// bytes of ContentHash (never the 64 hex characters). It is EMPTY until the
 	// Seal Council's domain-separation dissent is resolved by the owner; see
@@ -94,6 +96,10 @@ type Entry struct {
 	IconURL           string   `json:"ICON_URL"`
 	SupersedesHash    string   `json:"SUPERSEDES_CONTENT_HASH"`
 	UpdatedAt         string   `json:"UPDATED_AT"`
+	// PluginType is the module's family and the ONLY sanctioned way to group an
+	// offering. A client MUST read this and MUST NOT infer family from the shape
+	// of MODULE_ID, which carries no normative structure.
+	PluginType string `json:"PLUGIN_TYPE"`
 
 	// SourceArtifact is the on-disk file whose bytes back this entry. It is
 	// catalog INPUT: read from the catalog file, hashed, and then dropped — it
@@ -122,9 +128,25 @@ type Manifest struct {
 // NAMES, so an out-of-vocabulary value would produce a statement no verifier can
 // rebuild. Reject at build time rather than serve an unverifiable manifest.
 var (
-	validTiers   = map[string]bool{"UNSPECIFIED": true, "CORE": true, "RECOMMENDED": true, "OPTIONAL": true}
-	validAccess  = map[string]bool{"ANONYMOUS": true, "AUTHENTICATED": true, "ENTITLED": true}
-	validStates  = map[string]bool{"ACTIVE": true, "DEPRECATED": true, "WITHDRAWN": true, "REVOKED": true}
+	validTiers  = map[string]bool{"UNSPECIFIED": true, "CORE": true, "RECOMMENDED": true, "OPTIONAL": true}
+	validAccess = map[string]bool{"ANONYMOUS": true, "AUTHENTICATED": true, "ENTITLED": true}
+	validStates = map[string]bool{"ACTIVE": true, "DEPRECATED": true, "WITHDRAWN": true, "REVOKED": true}
+
+	// validPluginTypes is the `pluginCategory` symbol table, taken from the
+	// generated binding rather than retyped, so it cannot drift from the IDL.
+	//
+	// TRAP, and the reason this is checked at all: `Unspecified` is 21, NOT 0 —
+	// `Sensor` holds 0 because the enum is append-only. Emitting a zero value
+	// for "family unknown" would silently publish every such module as a Sensor.
+	// An empty PLUGIN_TYPE is therefore rejected outright; callers must say
+	// "Unspecified" explicitly.
+	validPluginTypes = func() map[string]bool {
+		m := make(map[string]bool, len(sdspmm.EnumValuespluginCategory))
+		for name := range sdspmm.EnumValuespluginCategory {
+			m[name] = true
+		}
+		return m
+	}()
 )
 
 // ErrNoSigner is returned when a manifest is requested with no node key.
@@ -165,6 +187,9 @@ func (m *Manifest) Validate() error {
 		}
 		if !validStates[e.EntryState] {
 			return fmt.Errorf("pmm: %s has invalid ENTRY_STATE %q", e.ModuleID, e.EntryState)
+		}
+		if !validPluginTypes[e.PluginType] {
+			return fmt.Errorf("pmm: %s has invalid PLUGIN_TYPE %q", e.ModuleID, e.PluginType)
 		}
 		if len(e.ContentHash) != 64 {
 			return fmt.Errorf("pmm: %s CONTENT_HASH must be 64 hex chars, got %d", e.ModuleID, len(e.ContentHash))
