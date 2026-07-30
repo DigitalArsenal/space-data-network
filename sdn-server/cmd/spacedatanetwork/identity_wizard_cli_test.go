@@ -415,7 +415,14 @@ func TestIdentityWizardPreservesIdentityBackedPublicKeys(t *testing.T) {
 		t.Fatalf("testProviderDerivedIdentity failed: %v", err)
 	}
 
-	const xpub = "xpub-provider"
+	// A REAL account xpub, not the "xpub-provider" placeholder used elsewhere in
+	// this file. This test asserts that a published SIGNING key carries the
+	// xpub, and a key may only carry one when it is genuinely CKDpub-derivable
+	// from it (task sdn-vcf-duplicate-sign-alias): the placeholder does not
+	// parse, so the only key that ever carried it was the Ed25519 key, which was
+	// stamped with it falsely. The other placeholder uses in this file assert
+	// unrelated things and stay as they are.
+	const xpub = "xpub6DEcA45Z68pwH3NrnV1Tee1pLNfJYruoQkKZJxmeRdBaQAtZg9Vf5LzHVZoBR5dGpmHxWzUXTGo8w1nRS13AvmhbRcBVzduCL3TGsCsj9Mm"
 	seedService := epm.NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, xpub, dataDir)
 	seedService.SetProfileStore(store)
 	if err := seedService.Init(); err != nil {
