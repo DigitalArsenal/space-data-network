@@ -1,52 +1,50 @@
 /*
- * The NODE dashboard's widget registry and layouts — the template's own,
- * transcribed from the design source it is declared against:
+ * The NODE dashboard's LAYOUT ENGINE — the template's own rules, transcribed
+ * from the design source they are declared against:
  *
  *   SpaceAware-UI @ archive/SpaceAware.io 2/SDN Console.dc.html
  *   sha256 abacdbfc62aeaee1193eccec9087669bfeb2324422fe8223482556fad207f152
- *   WIDGETS :863-871 · DEFAULT_LAYOUT :873 · LKEY :862
+ *   WIDGETS :863-871 · DEFAULT_LAYOUT :873 · LKEY :862 · mutators :883-889
  *
  * IRIS ruling 2026-07-30 §1: "No import, no conversion, no hand-edit" — the
  * export STAYS in SpaceAware-UI and the widgets are implemented HERE, from the
- * design system's own primitives. This file is the layout half of that: the
- * spans and ids are the template's, verbatim, so a later wave can turn EDIT
- * LAYOUT on over exactly the vocabulary the design defined.
+ * design system's own primitives. Every mutator the design defines (`:883-889`)
+ * is a PURE FUNCTION here, so node-console-logic.test.js can prove the rules
+ * that the export only demonstrates.
  *
- * WAVE 2 TURNS EDITING ON (IRIS §2/§3). The registry is now the template's full
- * eight — the three add-only widgets (peersum / storage / activity, `:869-871`)
- * arrive together with EDIT LAYOUT because "the ADD menu is empty without them,
- * which is why they belong together". Every mutator the design defines
- * (`:883-889`) is a PURE FUNCTION here, so node-console-logic.test.js can prove
- * the rules that the export only demonstrates.
+ * WHAT THIS FILE IS NO LONGER (sdn-dashboard-modularize-for-parallelism): the
+ * widget TABLE. `WIDGETS`, `PRIVILEGED_WIDGETS` and both layouts used to be
+ * hand-written literals here, which made this file — and the eight-branch
+ * `{#if w.id}` chain that matched it — a file every widget task had to edit.
+ * They are now DISCOVERED from `widgets/*\/widget.js` (see widgets/registry.js);
+ * a widget declares its own title, spans, privilege and layout membership in its
+ * own directory. The exports below are re-exported unchanged so every consumer
+ * and every test reads exactly the shape they always did.
  */
+import {
+  WIDGETS as DISCOVERED_WIDGETS,
+  PRIVILEGED_WIDGETS as DISCOVERED_PRIVILEGED,
+  DEFAULT_LAYOUT as DISCOVERED_DEFAULT,
+  PUBLIC_LAYOUT as DISCOVERED_PUBLIC,
+} from './widgets/registry.js';
 
 /** The design's localStorage key, verbatim (`:862`). */
 export const LAYOUT_KEY = 'sdn_node_layout_v1';
 
 /**
- * The template's eight widgets and its span vocabulary (`:863-871`). `spans` is
- * the cycle EDIT LAYOUT offers; `def` is the span a widget takes when it is
- * added. The ids and spans are the design's verbatim; two of the TITLES are
- * deliberately not, and this is why:
+ * The template's eight widgets and its span vocabulary (`:863-871`), as each
+ * widget directory declares itself. `spans` is the cycle EDIT LAYOUT offers;
+ * `def` is the span a widget takes when it is added.
  *
  * TITLES ARE LABELS, NOT SPEC SHEETS (owner directive 2026-07-30, given twice:
  * "remove ... ALL superfluous descriptions / tags from all the menus here"). The
  * template's own titles carried implementation tags after a middot — `PEER MAP ·
  * GEOIP` named the geolocation database, `STORAGE · FLATSQL` named the storage
- * engine. Neither is a fact the reader of a panel header needs, and both are the
- * "tags" the owner is naming. The ids, spans and defaults are untouched, so the
- * EDIT LAYOUT vocabulary and every stored layout still resolve.
+ * engine. Neither is a fact the reader of a panel header needs. Each widget now
+ * carries that correction in its own `widget.js`, next to the panel that prints
+ * it, so the two cannot drift apart again.
  */
-export const WIDGETS = {
-  health: { title: 'NODE HEALTH', spans: [4, 6], def: 4 },
-  identity: { title: 'IDENTITY', spans: [4, 6], def: 4 },
-  service: { title: 'SERVICE', spans: [4, 6], def: 4 },
-  netmap: { title: 'PEER MAP', spans: [6, 8, 12], def: 8 },
-  throughput: { title: 'NETWORK THROUGHPUT', spans: [4, 6], def: 4 },
-  peersum: { title: 'PEER SUMMARY', spans: [4, 6], def: 4 },
-  storage: { title: 'STORAGE', spans: [4, 6], def: 4 },
-  activity: { title: 'ACTIVITY LOG', spans: [4, 8, 12], def: 8 },
-};
+export const WIDGETS = DISCOVERED_WIDGETS;
 
 /**
  * The widgets that CANNOT render without the Admin snapshot, and are therefore
@@ -56,20 +54,18 @@ export const WIDGETS = {
  * LOG (the ring is behind an Admin read surface). A stored layout naming one is
  * not corrupt — the same browser may have been signed in a minute ago — so it is
  * FILTERED for this render rather than discarded.
+ *
+ * Each of those four says so itself (`privileged: true` in its `widget.js`);
+ * this set is the roll-call, not the decision.
  */
-export const PRIVILEGED_WIDGETS = new Set(['service', 'throughput', 'storage', 'activity']);
+export const PRIVILEGED_WIDGETS = DISCOVERED_PRIVILEGED;
 
 /**
- * The template's DEFAULT_LAYOUT (`:873`), verbatim. This is the layout in the
- * owner's screenshot and it tiles the 12-column grid exactly: 4+4+4 then 8+4.
+ * The template's DEFAULT_LAYOUT (`:873`). This is the layout in the owner's
+ * screenshot and it tiles the 12-column grid exactly: 4+4+4 then 8+4. Assembled
+ * from the widgets that declare a `defaultSpan`, in registry order.
  */
-export const DEFAULT_LAYOUT = [
-  { id: 'health', span: 4 },
-  { id: 'identity', span: 4 },
-  { id: 'service', span: 4 },
-  { id: 'netmap', span: 8 },
-  { id: 'throughput', span: 4 },
-];
+export const DEFAULT_LAYOUT = DISCOVERED_DEFAULT;
 
 /**
  * The layout an anonymous visitor gets.
@@ -81,16 +77,13 @@ export const DEFAULT_LAYOUT = [
  * leave a four-column HOLE in row one, which is precisely the "looks wrong"
  * failure. So the two remaining widgets take the width the missing ones freed,
  * using ONLY spans the design already declares for them (health/identity
- * `spans:[4,6]`, netmap `spans:[6,8,12]`).
+ * `spans:[4,6]`, netmap `spans:[6,8,12]`) — each declared as that widget's own
+ * `publicSpan`.
  *
  * Both layouts therefore tile perfectly, and the ADMIN view — the owner's view —
  * is the template default unchanged.
  */
-export const PUBLIC_LAYOUT = [
-  { id: 'health', span: 6 },
-  { id: 'identity', span: 6 },
-  { id: 'netmap', span: 12 },
-];
+export const PUBLIC_LAYOUT = DISCOVERED_PUBLIC;
 
 /** The layout for this viewer. `privileged` = a confirmed Admin session. */
 export function layoutFor(privileged) {
