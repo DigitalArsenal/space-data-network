@@ -8,14 +8,28 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * The design repo is consumed via the `spaceaware-student-sdn` file: dependency
- * (declared in sdn-js/package.json). Resolve it through its real path so vite
- * compiles the .svelte SOURCE (not a pre-bundled node_modules dep) — ZERO edits
- * to the design tree (ZIP-SYNC LAW), import-only.
+ * The design repo is a GIT SUBMODULE at sdn-js/spaceaware-ui
+ * (DigitalArsenal/SpaceAware-UI, branch main) — owner ruling 2026-07-30: "we
+ * need DigitalArsenal/SpaceAware-UI to be the sub git repo in that folder, NOT
+ * a whole separate folder that we have to keep in synch." The pin IS the
+ * gitlink; there is no vendored copy and no folder-to-folder sync to drift.
+ *
+ * Point vite straight at the checkout so it compiles the .svelte SOURCE — ZERO
+ * edits to the design tree (ZIP-SYNC LAW), import-only. The previous
+ * `file:`-dependency + node_modules symlink hop resolved to the same real
+ * directory; it is gone because its target repo was deleted at stack e5639ca1,
+ * which left this build failing on a dangling symlink.
+ *
+ * Territories and the who-wins-per-class ruling: spaceaware-ui/UI_SOURCE_OF_TRUTH.md
+ * (IRIS). Artifact chain: dashboard/DESIGN-SOURCE.json.
+ *
+ * The alias KEY stays `spaceaware-student-sdn` deliberately: renaming it to
+ * `spaceaware-ui` touches the 7 import specifiers. It is a separate pass
+ * (IRIS ruling B, 2026-07-30), and with the cssHash pin below it is now
+ * certifiable byte-for-byte instead of merely hoped-for — measure it, though,
+ * do not assume it.
  */
-const designRoot = fs.realpathSync(
-  path.resolve(__dirname, '../node_modules/spaceaware-student-sdn')
-);
+const designRoot = fs.realpathSync(path.resolve(__dirname, '../spaceaware-ui'));
 
 /**
  * The sdn-js status client (createNodeStatusClient) is one module carrying both
@@ -50,9 +64,68 @@ function stubHeliaOnlyDeps() {
   };
 }
 
+/**
+ * Scope-hash pin + its safety net. Hashing CSS instead of the path buys
+ * reproducibility but introduces a failure mode the path version could not
+ * have: two DIFFERENT components whose <style> blocks are byte-identical now
+ * receive the SAME scope class, and their rules stop being isolated from each
+ * other. That is a style leak, and it would be invisible — the page would just
+ * be subtly wrong somewhere. So record every hash we mint and fail the build if
+ * one is ever claimed by two files.
+ */
+const cssHashOwners = new Map();
+function pinnedCssHash({ css, filename, hash }) {
+  const h = `svelte-${hash(css)}`;
+  const owners = cssHashOwners.get(h) ?? new Set();
+  owners.add(filename ?? '(unknown)');
+  cssHashOwners.set(h, owners);
+  return h;
+}
+function assertNoCssHashCollision() {
+  return {
+    name: 'sdn-dashboard-assert-no-css-hash-collision',
+    closeBundle() {
+      const collisions = [...cssHashOwners].filter(([, owners]) => owners.size > 1);
+      if (collisions.length === 0) return;
+      for (const [h, owners] of collisions) {
+        console.error(`[dashboard] scope-hash collision ${h}:\n  ${[...owners].join('\n  ')}`);
+      }
+      throw new Error(
+        'cssHash collision: components with byte-identical <style> share a scope class, ' +
+          'so their rules are no longer isolated. Give one of them a distinguishing rule, ' +
+          'or revert the cssHash pin (see the comment above).'
+      );
+    }
+  };
+}
+
 export default defineConfig({
   root: __dirname,
-  plugins: [stubHeliaOnlyDeps(), svelte(), viteSingleFile()],
+  plugins: [
+    stubHeliaOnlyDeps(),
+    // cssHash PINNED to the component's CSS, not its path. IRIS ruling
+    // 2026-07-30 (ui-design-lib-two-way-sync), option 2.
+    //
+    // Svelte's default is `svelte-${hash(filename ?? css)}`
+    // (svelte/src/compiler/validate-options.js:77-79), and
+    // @sveltejs/vite-plugin-svelte hands it the RAW ABSOLUTE id
+    // (utils/compile.js:59-62 via utils/id.js:18-22,47) — the root-stripped
+    // form is only used by the HMR override at compile.js:66, which never
+    // fires in a production build. So by default every scoped class in this
+    // page is a function of the absolute checkout path: the artifact was
+    // reproducible from exactly ONE directory on ONE machine, and any agent
+    // obeying the stack's build-in-your-own-worktree law produced a different
+    // sha with zero content change. That is a latent reproducibility defect,
+    // not a property worth keeping.
+    //
+    // Hashing the CSS instead makes the artifact path-independent and
+    // therefore reproducible by anyone, anywhere, and makes relocations and
+    // rename passes provable byte-for-byte. This deliberately diverges from
+    // svelte's default; the build asserts below that it did not collide.
+    svelte({ compilerOptions: { cssHash: pinnedCssHash } }),
+    viteSingleFile(),
+    assertNoCssHashCollision()
+  ],
   resolve: {
     alias: { 'spaceaware-student-sdn': designRoot },
     dedupe: ['svelte']
