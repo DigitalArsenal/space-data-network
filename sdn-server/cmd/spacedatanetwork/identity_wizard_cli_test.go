@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -21,6 +23,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -556,7 +559,7 @@ func TestIdentityWizardDaemonUpdatePreservesRuntimeAddress(t *testing.T) {
 			Format:       "json",
 			SessionToken: "session-123",
 		},
-		store,
+		identityWizardStoreFromHandle(store),
 		identityWizardNodeIdentity{
 			Identity: identity,
 			PeerID:   identity.PeerID,
@@ -824,4 +827,347 @@ func newIdentityWizardTestStore(t *testing.T) (string, *storage.FlatSQLStore, pe
 		t.Fatalf("peer.Decode failed: %v", err)
 	}
 	return cfgPath, store, peerID, cfg.Storage.Path
+}
+
+// --- sdn-identity-wizard-key-password-file-blind -----------------------------
+//
+// The wizard was the ONE key-touching call site that rolled its own password
+// chain and never called config.KeyPassword, so it was blind to
+// SDN_KEY_PASSWORD_FILE and reported "chacha20poly1305: message authentication
+// failed" on an intact seal (vm-orbit-det-01, 2026-07-30). These tests hold the
+// wizard to the SAME resolver as everybody else.
+
+func newSealedIdentityWizardNode(t *testing.T, password string) (*config.Config, string) {
+	t.Helper()
+
+	const mnemonic = "legal winner thank year wave sausage worth useful legal winner thank yellow"
+	tmpDir := t.TempDir()
+	cfg := config.Default()
+	cfg.Storage.Path = filepath.Join(tmpDir, "data")
+
+	keyDir := config.KeyDir(cfg)
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(%s) failed: %v", keyDir, err)
+	}
+	sealed, err := keys.EncryptMnemonic(mnemonic, password)
+	if err != nil {
+		t.Fatalf("EncryptMnemonic failed: %v", err)
+	}
+	if err := os.WriteFile(config.MnemonicPath(cfg), sealed, 0o600); err != nil {
+		t.Fatalf("write sealed mnemonic failed: %v", err)
+	}
+	return cfg, mnemonic
+}
+
+func writeIdentityWizardSecretFile(t *testing.T, secret string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "key-password")
+	if err := os.WriteFile(path, []byte(secret+"\n"), 0o600); err != nil {
+		t.Fatalf("write secret file failed: %v", err)
+	}
+	return path
+}
+
+func TestIdentityWizardHonoursKeyPasswordFile(t *testing.T) {
+	const password = "file-sealed-password"
+	cfg, mnemonic := newSealedIdentityWizardNode(t, password)
+
+	// Blind: with nothing set, the wizard falls to the machine-derived default
+	// and the seal it CAN open looks corrupt. This is the reported symptom.
+	if _, err := identityWizardMnemonic(cfg); err == nil {
+		t.Fatal("mnemonic opened without the sealing password; the fixture is not actually sealed")
+	}
+
+	t.Setenv(config.EnvKeyPasswordFile, writeIdentityWizardSecretFile(t, password))
+	got, err := identityWizardMnemonic(cfg)
+	if err != nil {
+		t.Fatalf("identityWizardMnemonic with %s failed: %v", config.EnvKeyPasswordFile, err)
+	}
+	if got != mnemonic {
+		t.Fatalf("identityWizardMnemonic = %q, want the sealed mnemonic", got)
+	}
+}
+
+func TestIdentityWizardKeyPasswordMatchesConfigResolver(t *testing.T) {
+	const password = "shared-secret-password"
+
+	for _, tc := range []struct {
+		name  string
+		apply func(t *testing.T, cfg *config.Config)
+	}{
+		{
+			name:  "inline env",
+			apply: func(t *testing.T, _ *config.Config) { t.Setenv(config.EnvKeyPassword, password) },
+		},
+		{
+			name: "password file",
+			apply: func(t *testing.T, _ *config.Config) {
+				t.Setenv(config.EnvKeyPasswordFile, writeIdentityWizardSecretFile(t, password))
+			},
+		},
+		{
+			name:  "config value",
+			apply: func(_ *testing.T, cfg *config.Config) { cfg.Security.KeyPassword = password },
+		},
+		{
+			name: "inline env wins over file",
+			apply: func(t *testing.T, _ *config.Config) {
+				t.Setenv(config.EnvKeyPassword, password)
+				t.Setenv(config.EnvKeyPasswordFile, writeIdentityWizardSecretFile(t, "not-the-one"))
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(config.EnvKeyPassword, "")
+			t.Setenv(config.EnvKeyPasswordFile, "")
+			cfg, mnemonic := newSealedIdentityWizardNode(t, password)
+			tc.apply(t, cfg)
+
+			resolved, err := config.KeyPassword(cfg)
+			if err != nil {
+				t.Fatalf("config.KeyPassword failed: %v", err)
+			}
+			if resolved != password {
+				t.Fatalf("config.KeyPassword = %q, want %q (fixture wrong)", resolved, password)
+			}
+			got, err := identityWizardMnemonic(cfg)
+			if err != nil {
+				t.Fatalf("identityWizardMnemonic disagrees with config.KeyPassword: %v", err)
+			}
+			if got != mnemonic {
+				t.Fatalf("identityWizardMnemonic = %q, want the sealed mnemonic", got)
+			}
+		})
+	}
+}
+
+func TestIdentityWizardUnreadableKeyPasswordFileIsAnErrorNotAFallback(t *testing.T) {
+	cfg, _ := newSealedIdentityWizardNode(t, "file-sealed-password")
+	missing := filepath.Join(t.TempDir(), "never-mounted")
+	t.Setenv(config.EnvKeyPasswordFile, missing)
+
+	_, err := identityWizardMnemonic(cfg)
+	if err == nil {
+		t.Fatal("a configured-but-unreadable password file must not fall back to the machine default")
+	}
+	// The operator must be sent to the MOUNT, not to the mnemonic.
+	if strings.Contains(err.Error(), "wrong password") {
+		t.Fatalf("error blames the mnemonic instead of the missing mount: %v", err)
+	}
+	if !strings.Contains(err.Error(), missing) {
+		t.Fatalf("error does not name the unreadable file %s: %v", missing, err)
+	}
+}
+
+func TestIdentityWizardHonoursMnemonicFileEnv(t *testing.T) {
+	const password = "file-sealed-password"
+	cfg, mnemonic := newSealedIdentityWizardNode(t, password)
+	t.Setenv(config.EnvKeyPasswordFile, writeIdentityWizardSecretFile(t, password))
+
+	moved := filepath.Join(t.TempDir(), "mnemonic")
+	sealed, err := os.ReadFile(config.MnemonicPath(cfg))
+	if err != nil {
+		t.Fatalf("read sealed mnemonic failed: %v", err)
+	}
+	if err := os.WriteFile(moved, sealed, 0o600); err != nil {
+		t.Fatalf("write moved mnemonic failed: %v", err)
+	}
+	if err := os.Remove(config.MnemonicPath(cfg)); err != nil {
+		t.Fatalf("remove default mnemonic failed: %v", err)
+	}
+	t.Setenv(config.EnvMnemonicFile, moved)
+
+	got, err := identityWizardMnemonic(cfg)
+	if err != nil {
+		t.Fatalf("identityWizardMnemonic with %s failed: %v", config.EnvMnemonicFile, err)
+	}
+	if got != mnemonic {
+		t.Fatalf("identityWizardMnemonic = %q, want the sealed mnemonic", got)
+	}
+}
+
+// --- sdn-identity-wizard-lock-before-derive ----------------------------------
+//
+// The store is single-writer. Opening it BEFORE the ~474s interpreted-WASM
+// derive held the daemon out of its own store for the whole derive (host-01,
+// 2026-07-30) and, when the CLI was orphaned, permanently. The derive must
+// finish before the lock is ever taken.
+
+type identityWizardOrderRecorder struct {
+	steps []string
+}
+
+func (r *identityWizardOrderRecorder) record(step string) { r.steps = append(r.steps, step) }
+
+func newIdentityWizardOrderConfig(t *testing.T) *config.Config {
+	t.Helper()
+
+	cfg := config.Default()
+	cfg.Storage.Path = filepath.Join(t.TempDir(), "data")
+	// A closed port: the daemon probe fails fast and the wizard falls through
+	// to the store, which is the lane that takes the lock.
+	cfg.Admin.ListenAddr = reserveClosedLoopbackAddr(t)
+	return cfg
+}
+
+func assertIdentityWizardStorePathUnlocked(t *testing.T, path string) {
+	t.Helper()
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("sds.NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(path, validator)
+	if err != nil {
+		t.Fatalf("store at %s is still locked after the wizard returned; the daemon cannot reopen it: %v", path, err)
+	}
+	_ = store.Close()
+}
+
+func TestIdentityWizardDerivesBeforeTakingTheStoreLock(t *testing.T) {
+	cfg := newIdentityWizardOrderConfig(t)
+	peerID, err := peer.Decode("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN")
+	if err != nil {
+		t.Fatalf("peer.Decode failed: %v", err)
+	}
+	order := &identityWizardOrderRecorder{}
+
+	var out bytes.Buffer
+	if err := runIdentityWizardWithDeps(
+		t.Context(),
+		strings.NewReader(""),
+		&out,
+		identityWizardOptions{Sets: []string{"dn=Ordered Node"}, Format: "json", Yes: true},
+		cfg,
+		identityWizardDeps{
+			DeriveIdentity: func(context.Context) (identityWizardNodeIdentity, error) {
+				// THE ASSERTION: at derive time the store must be untouched.
+				if len(order.steps) != 0 {
+					t.Errorf("store was opened before the derive: %v", order.steps)
+				}
+				order.record("derive")
+				return identityWizardNodeIdentity{PeerID: peerID}, nil
+			},
+			OpenStore: func() (*storage.FlatSQLStore, error) {
+				order.record("open-store")
+				validator, err := sds.NewValidator(nil)
+				if err != nil {
+					return nil, err
+				}
+				return storage.NewFlatSQLStore(cfg.Storage.Path, validator)
+			},
+		},
+	); err != nil {
+		t.Fatalf("runIdentityWizardWithDeps failed: %v", err)
+	}
+
+	if len(order.steps) < 2 || order.steps[0] != "derive" {
+		t.Fatalf("step order = %v, want derive before open-store", order.steps)
+	}
+	assertIdentityWizardStorePathUnlocked(t, cfg.Storage.Path)
+}
+
+func TestIdentityWizardNeverOpensStoreWhenDaemonAnswers(t *testing.T) {
+	identity, err := testProviderDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testProviderDerivedIdentity failed: %v", err)
+	}
+	const xpub = "xpub-provider"
+	dataDir := t.TempDir()
+	daemonService := epm.NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, xpub, dataDir)
+	if err := daemonService.UpdateProfile(&epm.Profile{DN: "Daemon Named Node"}); err != nil {
+		t.Fatalf("daemon seed UpdateProfile failed: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/node/epm" || r.Method != http.MethodGet {
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-flatbuffers")
+		_, _ = w.Write(daemonService.GetNodeEPM())
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Storage.Path = filepath.Join(t.TempDir(), "data")
+	cfg.Admin.ListenAddr = server.Listener.Addr().String()
+
+	store := &identityWizardStore{open: func() (*storage.FlatSQLStore, error) {
+		t.Error("store was opened even though the daemon answered; the edit is not zero-downtime")
+		return nil, errors.New("store must not be opened")
+	}}
+	defer store.Close()
+
+	source, err := loadIdentityWizardProfileSource(t.Context(), cfg, store, identity.PeerID, cfg.Storage.Path)
+	if err != nil {
+		t.Fatalf("loadIdentityWizardProfileSource failed: %v", err)
+	}
+	if !source.DaemonSource {
+		t.Fatalf("profile source is not the daemon: %#v", source)
+	}
+	if store.opened {
+		t.Fatal("store handle was materialised on the daemon path")
+	}
+}
+
+func TestIdentityWizardDeriveFailureNeverTakesTheStoreLock(t *testing.T) {
+	cfg := newIdentityWizardOrderConfig(t)
+	deriveErr := errors.New("failed to decrypt mnemonic (wrong password?)")
+
+	err := runIdentityWizardWithDeps(
+		t.Context(),
+		strings.NewReader(""),
+		io.Discard,
+		identityWizardOptions{Sets: []string{"dn=Never Written"}, Format: "json", Yes: true},
+		cfg,
+		identityWizardDeps{
+			DeriveIdentity: func(context.Context) (identityWizardNodeIdentity, error) {
+				return identityWizardNodeIdentity{}, deriveErr
+			},
+			OpenStore: func() (*storage.FlatSQLStore, error) {
+				t.Error("store was opened after the derive failed; a failed wizard must never lock the daemon out")
+				return nil, errors.New("store must not be opened")
+			},
+		},
+	)
+	if !errors.Is(err, deriveErr) {
+		t.Fatalf("runIdentityWizardWithDeps error = %v, want the derive error", err)
+	}
+	assertIdentityWizardStorePathUnlocked(t, cfg.Storage.Path)
+}
+
+func TestIdentityWizardCancelledRunReleasesTheStoreLock(t *testing.T) {
+	cfg := newIdentityWizardOrderConfig(t)
+	peerID, err := peer.Decode("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN")
+	if err != nil {
+		t.Fatalf("peer.Decode failed: %v", err)
+	}
+
+	// Yes:false + "n" answers the confirmation prompt with a refusal AFTER the
+	// stored profile source has opened the store. The lock must not survive it.
+	err = runIdentityWizardWithDeps(
+		t.Context(),
+		strings.NewReader("n\n"),
+		io.Discard,
+		identityWizardOptions{Sets: []string{"dn=Cancelled Node"}, Format: "json", PromptWriter: io.Discard},
+		cfg,
+		identityWizardDeps{
+			DeriveIdentity: func(context.Context) (identityWizardNodeIdentity, error) {
+				return identityWizardNodeIdentity{PeerID: peerID}, nil
+			},
+			OpenStore: func() (*storage.FlatSQLStore, error) {
+				validator, verr := sds.NewValidator(nil)
+				if verr != nil {
+					return nil, verr
+				}
+				return storage.NewFlatSQLStore(cfg.Storage.Path, validator)
+			},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("runIdentityWizardWithDeps error = %v, want the cancellation error", err)
+	}
+	assertIdentityWizardStorePathUnlocked(t, cfg.Storage.Path)
 }
