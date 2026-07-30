@@ -32,7 +32,6 @@
     interactive = true,
     /** The widget's row height; the PEERS route passes its own taller box. */
     height = '322px',
-    sub = 'GEOIP · LIVE SWARM',
   } = $props();
 
   let mapMode = $state('3d');
@@ -52,7 +51,6 @@
 
 <div class="whead">
   <span class="wkick" style="color:{theme.textMuted};">PEER MAP</span>
-  <span class="wsub" style="color:{theme.textFaint};">{sub}</span>
   <span class="hchips">
     <StatusChip label={`${links} LINK${links === 1 ? '' : 'S'}`} color={theme.green} />
     <span class="tabs" style="border-color:{theme.panelBorder};">
@@ -76,9 +74,9 @@
     <div>{peers.length} PEER{peers.length === 1 ? '' : 'S'}</div>
     <div>{countries} {countries === 1 ? 'COUNTRY' : 'COUNTRIES'}</div>
   </div>
-  {#if mapMode === '3d' && interactive}
-    <div class="maphint mono" style="color:{theme.textFaint};">DRAG TO ROTATE</div>
-  {/if}
+  <!-- No "DRAG TO ROTATE" caption. A globe under the cursor is discoverable by
+       dragging it; the caption was prose describing an affordance (owner
+       directive 2026-07-30). -->
 </div>
 <div class="mapfoot">
   <span class="legend" style="color:{theme.textDim};">
@@ -107,11 +105,6 @@
     margin-bottom: var(--sdn-sp-5);
   }
   .whead .wkick { margin-bottom: 0; }
-  .wsub {
-    font-size: var(--sdn-fs-micro);
-    line-height: var(--sdn-lh-micro);
-    letter-spacing: 0.14em;
-  }
   .hchips { display: inline-flex; align-items: center; gap: var(--sdn-sp-2); margin-left: auto; flex-wrap: wrap; }
 
   .tabs { display: inline-flex; border: 1px solid; }
@@ -140,15 +133,6 @@
     font-size: var(--sdn-fs-micro);
     line-height: var(--sdn-lh-micro);
     letter-spacing: 0.12em;
-  }
-  .maphint {
-    position: absolute;
-    right: 8px;
-    bottom: 6px;
-    pointer-events: none;
-    font-size: var(--sdn-fs-micro);
-    line-height: var(--sdn-lh-micro);
-    letter-spacing: 0.1em;
   }
   .mapfoot {
     display: flex;
