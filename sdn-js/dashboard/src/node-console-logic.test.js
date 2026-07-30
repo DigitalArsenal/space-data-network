@@ -551,3 +551,37 @@ describe('the activity ring reads as sentences, not as machine kinds', () => {
     expect(withoutPeer.text).toBe('Publication received · OMM.fbs');
   });
 });
+
+describe('the first poll after signing in reads everything', () => {
+  it('resets the sampling phase, so no admin source is a minute late', async () => {
+    // Found from a screenshot of the built page: the AUTOSTART cell was absent
+    // and the ACTIVITY LOG said "Reading the activity ring…" for a full minute
+    // after an admin session appeared, because the slow sources sample on
+    // `tick % N === 0` and setAdmin landed on tick 1. An absent cell that means
+    // "not read yet" is indistinguishable from one that means "this host cannot
+    // answer" — which is the whole distinction this wave exists to make.
+    const seen = [];
+    const feed = createRuntimeFeed({
+      onUpdate: () => {},
+      fetchJson: (path) => {
+        seen.push(path);
+        return Promise.resolve({});
+      },
+    });
+    feed.start();
+    // Three anonymous polls, so the phase is deliberately NOT on a boundary.
+    await Promise.resolve();
+    await Promise.resolve();
+    seen.length = 0;
+    feed.setAdmin(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    feed.stop();
+
+    const asked = seen.join(' ');
+    for (const path of ['/api/node/runtime', '/api/node/activity', '/api/node/service']) {
+      expect(asked, `${path} must be read on the FIRST admin poll`).toContain(path);
+    }
+  });
+});
