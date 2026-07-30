@@ -25,6 +25,7 @@
   import NodeModal from './NodeModal.svelte';
   import NodeDetail from './NodeDetail.svelte';
   import NodeWidgets from './NodeWidgets.svelte';
+  import NodeConsole from './NodeConsole.svelte';
   import NodeEditForm from './NodeEditForm.svelte';
   import AccountAdmin from './AccountAdmin.svelte';
   import SignInModal from './SignInModal.svelte';
@@ -38,13 +39,19 @@
   import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
   import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
   import { createSemanticEngine } from './semantic.js';
+  import { createRuntimeFeed, foldRuntime } from './runtime.js';
 
+  // NODE is the landing route and carries the SDN Console template's dashboard
+  // (IRIS ruling 2026-07-30 §2 wave 1). The template's own rail puts `node`
+  // first with the ◉ glyph (`SDN Console.dc.html:892`), so THIS NODE — the
+  // identity detail page — takes ⬡ beside it rather than a duplicate glyph.
   const SECTIONS = [
     {
       label: 'NETWORK',
       items: [
-        { id: 'self', label: 'THIS NODE', glyph: '◉', fkey: 'N1' },
-        { id: 'accounts', label: 'ACCOUNTS', glyph: '◍', fkey: 'N2' },
+        { id: 'node', label: 'NODE', glyph: '◉', fkey: 'N1' },
+        { id: 'self', label: 'THIS NODE', glyph: '⬡', fkey: 'N2' },
+        { id: 'accounts', label: 'ACCOUNTS', glyph: '◍', fkey: 'N3' },
       ],
     },
   ];
@@ -52,6 +59,7 @@
   // One list for nodes and logins (§16): the owner does not differentiate
   // between a node running somewhere and an account that logs in here.
   const ROUTE_TITLE = {
+    node: ['NODE', '· DASHBOARD'],
     self: ['THIS NODE', '· NODE IDENTITY & STATUS'],
     accounts: ['ACCOUNTS', '· NODES & LOGINS'],
   };
@@ -69,7 +77,13 @@
   /** @type {import('../../src/status/view-model').NodeStatusSetView | null} */
   let view = $state(null);
   let now = $state(Date.now());
-  let route = $state('self');
+  let route = $state('node');
+  /**
+   * The node's own runtime facts for the NODE dashboard (runtime.js). Starts as
+   * the empty fold so every widget renders from one shape and never has to guard
+   * for "not loaded yet" — an absent number is an absent cell, by construction.
+   */
+  let runtime = $state(foldRuntime());
   /** Admin-only enrichment rows from GET /api/accounts (§16.5). */
   let accountEntries = $state([]);
   let query = $state('');
@@ -110,6 +124,8 @@
   let epmOverride = $state(null);
 
   const PAGE_SIZE = 5;
+
+  const runtimeFeed = createRuntimeFeed({ onUpdate: (r) => (runtime = r) });
 
   const engine = createSemanticEngine({ onStatus: (s) => (semStatus = s) });
   // Diagnostic seam (same spirit as SDN_NODE_STATUS): lets operators probe
@@ -221,6 +237,17 @@
   $effect(() => {
     void session;
     readAccounts();
+  });
+
+  /**
+   * GET /api/node/runtime is Admin-only, so the poller is told about the session
+   * rather than discovering it from a 403. §16.5's rule, applied to the dashboard
+   * widgets: an anonymous or below-Admin visitor NEVER calls it, and signing out
+   * drops the snapshot in the same tick — privileged numbers cannot linger on a
+   * page whose session has ended.
+   */
+  $effect(() => {
+    runtimeFeed.setAdmin(canEdit);
   });
 
   function readAuthStatus() {
@@ -358,12 +385,16 @@
     refreshSession();
     readAuthStatus();
     const clock = setInterval(() => (now = Date.now()), 1000);
+    // The NODE dashboard's runtime facts. Anonymous sources only until the
+    // session effect above says otherwise.
+    runtimeFeed.start();
     // Warm the semantic model shortly after first paint (fail-open).
     const warm = setTimeout(() => engine.init(), 800);
     return () => {
       cancelled = true;
       clock && clearInterval(clock);
       clearTimeout(warm);
+      runtimeFeed.stop();
       unsub();
     };
   });
@@ -374,9 +405,12 @@
 <div class="root" style="background:{theme.pageGlow};color:{theme.textBody};">
   <SdnRail sections={SECTIONS} active={route} onSelect={(id) => (route = id)} />
   <main>
+    <!-- The title fallback used to name `ROUTE_TITLE.nodes`, a key that has never
+         existed: an unknown route rendered `undefined[0]` and threw. It is the
+         landing route's title now, which is what a fallback is for. -->
     <ConsoleHeader
-      title={(ROUTE_TITLE[route] ?? ROUTE_TITLE.nodes)[0]}
-      sub={(ROUTE_TITLE[route] ?? ROUTE_TITLE.nodes)[1]}
+      title={(ROUTE_TITLE[route] ?? ROUTE_TITLE.node)[0]}
+      sub={(ROUTE_TITLE[route] ?? ROUTE_TITLE.node)[1]}
       accent={theme.cyan}
     >
       {#snippet right()}
@@ -423,6 +457,44 @@
           <span class="glyph" style="color:{theme.cyan};">◍</span>
           Connecting to the node status feed (/ws/status)…
         </div>
+      {:else if route === 'node'}
+        <!-- THE NODE DASHBOARD — the SDN Console template's default view
+             (IRIS §2 wave 1). Read-only: no EDIT LAYOUT until wave 2. -->
+        {#if selfNode}
+          {#if editing}
+            <!-- The IDENTITY card's EDIT opens the profile form INLINE, in a
+                 raised panel on this page — "less like a modal, more like a
+                 page" (owner 2026-07-27; IRIS §6). -->
+            <Panel variant="raised" pad="0" style="max-width:880px;">
+              <div class="self-body">
+                <NodeEditForm
+                  onCancel={() => (editing = false)}
+                  onSaved={({ json, vcard }) => {
+                    epmOverride = { vcard, dn: typeof json?.dn === 'string' ? json.dn : undefined };
+                    editing = false;
+                  }}
+                />
+              </div>
+            </Panel>
+          {:else}
+            <div class="node-page">
+              <NodeConsole
+                node={selfNode}
+                {nodes}
+                {runtime}
+                {now}
+                {canEdit}
+                onSelectNode={(n) => (selected = n)}
+                onEdit={() => (editing = true)}
+              />
+            </div>
+          {/if}
+        {:else}
+          <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
+            <span class="glyph" style="color:{theme.cyan};">◉</span>
+            Waiting for this node's status entry…
+          </div>
+        {/if}
       {:else if route === 'self'}
         {#if selfNode}
           <!-- A PAGE, not a modal (owner directive 2026-07-27): a page header
@@ -936,6 +1008,9 @@
   .self-org { font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value); letter-spacing: 0.04em; margin-top: 3px; }
   .self-chips { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
   .self-body { padding: 14px 18px 18px; }
+  /* The NODE dashboard takes its natural height and lets .body scroll — the
+     widget grid is the page, so a nested scroller would trap the last row. */
+  .node-page { flex: none; min-width: 0; padding-bottom: 8px; }
   .empty {
     display: flex;
     align-items: center;

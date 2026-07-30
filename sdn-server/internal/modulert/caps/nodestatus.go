@@ -19,6 +19,13 @@
 //     materials-only convention — the host never makes response-shaping
 //     decisions).
 //
+// The same snapshot is ALSO the body of the node's admin-gated HTTP read
+// surface, GET /api/node/runtime (cmd/spacedatanetwork/node_runtime_api.go),
+// which the dashboard's NODE HEALTH / SERVICE / NETWORK THROUGHPUT widgets
+// read. Both callers go through NodeStatusSnapshot below — one assembler, one
+// shape, so the HTTP surface can never describe a node differently than a
+// module sees it.
+//
 // Result shape (snake_case JSON keys are the wire contract):
 //
 //	{
@@ -216,46 +223,59 @@ func (a *nodeStatusCapAdapter) handle(operation string, _ []byte) ([]byte, error
 	}
 }
 
-func (a *nodeStatusCapAdapter) now() time.Time {
-	if a.materials.Now != nil {
-		return a.materials.Now()
-	}
-	return time.Now()
+func (a *nodeStatusCapAdapter) status() []byte {
+	return modulert.PreEncodedEnvelope(map[string]interface{}{"ok": true, "result": NodeStatusSnapshot(a.materials)}, nil)
 }
 
-func (a *nodeStatusCapAdapter) status() []byte {
-	now := a.now().UTC()
+// NodeStatusSnapshot assembles the node_status_read.status RESULT object from
+// materials — the whole payload documented at the top of this file, with no
+// envelope around it.
+//
+// It is exported because the SAME snapshot is the body of the node's
+// admin-gated HTTP read surface (GET /api/node/runtime, which the dashboard's
+// NODE HEALTH / SERVICE / NETWORK THROUGHPUT widgets read). Two assemblers
+// would be two contracts: the WASM capability and the HTTP surface would drift
+// the first time a field moved, and the dashboard would render a shape no
+// module ever sees. There is exactly one assembler and both callers use it.
+//
+// No decision is made here about who may READ the snapshot — the capability
+// registry gates the hostcall and the auth wall gates the HTTP path. This
+// function only states the host's own runtime facts.
+func NodeStatusSnapshot(materials NodeStatusMaterials) map[string]interface{} {
+	now := time.Now().UTC()
+	if materials.Now != nil {
+		now = materials.Now().UTC()
+	}
 	var uptimeSeconds int64
-	if !a.materials.StartedAt.IsZero() {
-		if d := now.Sub(a.materials.StartedAt.UTC()); d > 0 {
+	if !materials.StartedAt.IsZero() {
+		if d := now.Sub(materials.StartedAt.UTC()); d > 0 {
 			uptimeSeconds = int64(d.Seconds())
 		}
 	}
 
 	var totalBytes, totalRecords int64
-	if a.materials.StorageSummary != nil {
-		if b, r, err := a.materials.StorageSummary(); err == nil {
+	if materials.StorageSummary != nil {
+		if b, r, err := materials.StorageSummary(); err == nil {
 			totalBytes, totalRecords = b, r
 		}
 	}
 
-	result := map[string]interface{}{
+	return map[string]interface{}{
 		"uptime_seconds": uptimeSeconds,
-		"started_at":     a.materials.StartedAt.UTC().Format(time.RFC3339),
+		"started_at":     materials.StartedAt.UTC().Format(time.RFC3339),
 		"store": map[string]interface{}{
 			"total_bytes":   totalBytes,
 			"total_records": totalRecords,
-			"storage_path":  a.materials.StoragePath,
+			"storage_path":  materials.StoragePath,
 		},
-		"disk": nodeStatusDiskJSON(a.materials.DiskStat, a.materials.StoragePath),
+		"disk": nodeStatusDiskJSON(materials.DiskStat, materials.StoragePath),
 		"service": map[string]interface{}{
 			"state":           "running",
-			"mode":            a.materials.Mode,
+			"mode":            materials.Mode,
 			"autostart_known": false,
 		},
-		"bandwidth": nodeStatusBandwidthJSON(a.materials.BandwidthTotals, a.materials.BandwidthHistory),
+		"bandwidth": nodeStatusBandwidthJSON(materials.BandwidthTotals, materials.BandwidthHistory),
 	}
-	return modulert.PreEncodedEnvelope(map[string]interface{}{"ok": true, "result": result}, nil)
 }
 
 func nodeStatusDiskJSON(statFn func(string) (DiskStat, error), path string) interface{} {

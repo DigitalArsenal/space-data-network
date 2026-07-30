@@ -1460,6 +1460,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Relay status endpoint (public, used by clients for load balancing)
 			adminMux.HandleFunc("/api/relay/status", handleRelayStatus(n))
 
+			// The node's own runtime facts (uptime, store, disk, service
+			// state/mode, libp2p bandwidth + sparkline) for the dashboard's
+			// NODE HEALTH / SERVICE / NETWORK THROUGHPUT widgets. Admin-only
+			// via isAdminOnlyAPIPath's "/api/node/runtime" prefix; read-only by
+			// construction (node_runtime_api.go). NOT a control surface — see
+			// that file's header for why RESTART/STOP/CHECK are absent.
+			adminMux.HandleFunc("/api/node/runtime", handleNodeRuntime(n))
+
 			// EPM (Entity Profile Message) API endpoints
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
 			adminMux.HandleFunc("/api/node/epm/vcard", handleNodeEPMVCard(n))
@@ -3339,6 +3347,11 @@ func isAdminOnlyAPIPath(path string) bool {
 		// carries its own method-granular Admin gate where /api/node/epm is
 		// mounted on adminMux.
 		strings.HasPrefix(path, "/api/node/epm") ||
+		// The node's own runtime state: storage path, disk capacity, libp2p
+		// bandwidth totals and the sparkline history. These describe the HOST,
+		// not public data, so unlike /api/v1/stats they are NOT on the
+		// anonymous surface. Read-only either way — see node_runtime_api.go.
+		strings.HasPrefix(path, "/api/node/runtime") ||
 		strings.HasPrefix(path, "/api/v0") ||
 		strings.HasPrefix(path, "/api/v1/admin/") ||
 		path == "/api/v1/data/summary" ||
