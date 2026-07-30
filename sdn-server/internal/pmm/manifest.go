@@ -25,6 +25,8 @@ import (
 	"strings"
 
 	sdspmm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PMM"
+
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
 
 // Signer signs a message with the node key. Satisfied by *keys.Manager.
@@ -212,16 +214,31 @@ func (m *Manifest) Validate() error {
 	return nil
 }
 
-// HashArtifact returns the SHA-256 of the portable, pre-AOT bytes the node
-// actually serves for this entry — the identity capability and signature
-// policies key on.
+// HashArtifact returns the SHA-256 and size of the PORTABLE bytes for an
+// artifact — the bytes a client actually compiles.
+//
+// A published module is `payload || REC-flatbuffer || uint32le(len) || "$REC"`:
+// the SDS publication trailer carries MBL/PNM/ENC metadata and every runtime
+// strips it before wasm validation. So the trailer MUST come off before hashing.
+//
+// This was a live defect, not a hypothetical: com.orbpro.sgp4 was published with
+// CONTENT_HASH over all 1171602 trailered bytes while clients compile only the
+// first 1170638. Any client doing the correct strip-then-hash got a mismatch and
+// had to either reject a valid module or skip verification entirely — and
+// ARTIFACT_SIZE_BYTES disagreed with CONTENT_HASH about which bytes it described.
+//
+// Stripping uses modulert.StripPublicationTrailer, the same implementation the
+// module runtime itself uses, so the manifest and the loader can never disagree
+// about where the portable payload ends. An artifact with no trailer is
+// unchanged by it.
 func HashArtifact(path string) (string, uint64, error) {
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return "", 0, fmt.Errorf("pmm: read artifact %s: %w", path, err)
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), uint64(len(data)), nil
+	portable := modulert.StripPublicationTrailer(data)
+	sum := sha256.Sum256(portable)
+	return hex.EncodeToString(sum[:]), uint64(len(portable)), nil
 }
 
 // CanonicalStatement rebuilds the exact bytes PMM.SIGNATURE covers.

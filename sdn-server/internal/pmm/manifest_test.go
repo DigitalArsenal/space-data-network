@@ -1,11 +1,16 @@
 package pmm
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -266,5 +271,57 @@ func TestPluginCategorySymbolValuesMatchSchema(t *testing.T) {
 	}
 	if got := sdspmm.EnumValuespluginCategory["Sensor"]; byte(got) != 0 {
 		t.Fatalf("Sensor must be 0, got %d", byte(got))
+	}
+}
+
+// HashArtifact must describe the PORTABLE bytes — the ones a client compiles —
+// not the published container. This is a regression test for a defect that
+// reached production: com.orbpro.sgp4 was published with CONTENT_HASH over all
+// 1171602 trailered bytes while clients compile only the first 1170638, so any
+// client doing the correct strip-then-hash saw a mismatch on a valid module.
+func TestHashArtifactStripsPublicationTrailer(t *testing.T) {
+	payload := append([]byte("\x00asm\x01\x00\x00\x00"), bytes.Repeat([]byte{0xAB}, 512)...)
+	wantHash := sha256.Sum256(payload)
+
+	// payload || REC || uint32le(len(REC)) || "$REC"
+	rec := bytes.Repeat([]byte{0x7F}, 964-8)
+	trailered := append(append([]byte{}, payload...), rec...)
+	var n [4]byte
+	binary.LittleEndian.PutUint32(n[:], uint32(len(rec)))
+	trailered = append(append(trailered, n[:]...), []byte("$REC")...)
+
+	dir := t.TempDir()
+	pubPath := filepath.Join(dir, "published.wasm")
+	if err := os.WriteFile(pubPath, trailered, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gotHash, gotSize, err := HashArtifact(pubPath)
+	if err != nil {
+		t.Fatalf("hash published: %v", err)
+	}
+	if gotHash != hex.EncodeToString(wantHash[:]) {
+		t.Fatalf("trailered artifact: hash must cover the portable payload only\n got %s\nwant %s",
+			gotHash, hex.EncodeToString(wantHash[:]))
+	}
+	if gotSize != uint64(len(payload)) {
+		t.Fatalf("ARTIFACT_SIZE_BYTES must describe the same bytes as CONTENT_HASH: got %d want %d",
+			gotSize, len(payload))
+	}
+	if gotSize == uint64(len(trailered)) {
+		t.Fatal("size still describes the trailered container")
+	}
+
+	// An artifact with no trailer must be completely unaffected.
+	plainPath := filepath.Join(dir, "plain.wasm")
+	if err := os.WriteFile(plainPath, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plainHash, plainSize, err := HashArtifact(plainPath)
+	if err != nil {
+		t.Fatalf("hash plain: %v", err)
+	}
+	if plainHash != gotHash || plainSize != gotSize {
+		t.Fatalf("untrailered artifact must hash identically to the stripped one:\n plain %s/%d\n strip %s/%d",
+			plainHash, plainSize, gotHash, gotSize)
 	}
 }
