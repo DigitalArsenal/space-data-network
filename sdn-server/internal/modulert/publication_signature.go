@@ -11,6 +11,7 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MBL"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
 )
 
 // Module publication-trailer signature verification (loop I1 — defensive
@@ -48,6 +49,54 @@ type moduleSignaturePayload struct {
 	SignatureHex        string `json:"signatureHex"`
 	SignedHashHex       string `json:"signedHashHex"`
 	SignedHashAlgorithm string `json:"signedHashAlgorithm"`
+
+	// StatementDomain names the DOMAIN-SEPARATED statement the signature
+	// covers, and is the field the node's own signing endpoint sets
+	// (internal/modulesign, Seal Council 2026-07-30). See
+	// signedMessageForPayload for the two-form verification contract.
+	StatementDomain string `json:"statementDomain"`
+}
+
+// signedMessageForPayload returns the exact bytes an artifact's signature must
+// verify over, and is where the DOMAIN SEPARATION contract is enforced on the
+// reading side.
+//
+// TWO FORMS, deliberately, and the choice is made by the artifact, not by
+// policy:
+//
+//   - statementDomain PRESENT — the node-signed form (internal/modulesign).
+//     The signature covers sigdomain.Statement(domain, contentHash). The domain
+//     must be EXACTLY DomainModulePublicationV1: not merely "registered". A
+//     registered-but-different domain — the update-manifest domain, say — is
+//     refused here, which is what stops a signature minted for a signed update
+//     from being stapled into a module trailer and admitted as a module.
+//
+//   - statementDomain ABSENT — the legacy SDK-signed form
+//     (space-data-module-sdk/src/bundle/signing.js:361, ed25519Sign over the
+//     bare hash bytes). Verification is byte-identical to what it has always
+//     been, so every artifact already in the catalog keeps verifying and this
+//     change has zero blast radius on the admit path.
+//
+// The asymmetry is intentional and is not a weakening: the legacy form remains
+// ACCEPTABLE to the verifier, but the node's signer never PRODUCES it. Closing
+// the cross-protocol oracle at the signer is what matters; the reader stays
+// backward compatible until the SDK emits the domain and the ecosystem has
+// re-signed (tracked as sdn-sdk-statement-domain-parity).
+func signedMessageForPayload(payload moduleSignaturePayload, contentHash []byte) ([]byte, string, error) {
+	domain := strings.TrimSpace(payload.StatementDomain)
+	if domain == "" {
+		return contentHash, "", nil
+	}
+	if domain != sigdomain.DomainModulePublicationV1 {
+		return nil, domain, fmt.Errorf(
+			"module signature declares statement domain %q; a module artifact must be signed under %q",
+			domain, sigdomain.DomainModulePublicationV1)
+	}
+	statement, err := sigdomain.Statement(domain, contentHash)
+	if err != nil {
+		return nil, domain, err
+	}
+	return statement, domain, nil
 }
 
 // ModuleSignaturePolicy is the operator-controlled trust policy for
@@ -135,10 +184,15 @@ type ModuleSignatureStatus struct {
 	// KeyID is the optional signer-supplied key identifier from the
 	// signature entry.
 	KeyID string
+	// StatementDomain is the domain-separation label the signature declared,
+	// or "" for the legacy bare-digest form. A non-empty value here means the
+	// signature covered sigdomain.Statement(domain, ContentHash) rather than
+	// the bare hash — see signedMessageForPayload.
+	StatementDomain string
 	// Reason is a short machine-checkable explanation: "unsigned", "ok",
 	// "untrusted_signer", "invalid_signature", "hash_mismatch",
 	// "invalid_trailer", "unsupported_algorithm", "invalid_public_key",
-	// "invalid_signature_payload".
+	// "invalid_signature_payload", "unsupported_statement_domain".
 	Reason string
 }
 
@@ -214,6 +268,16 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 		return portable, status, fmt.Errorf("module signature covers content hash %s, portable artifact hashes to %s", signedHash, status.ContentHash)
 	}
 
+	// Resolve WHAT the signature must cover before asking WHO signed it: a
+	// wrong statement domain is a property of the artifact and must be
+	// reported as such whether or not the signer happens to be trusted.
+	signedMessage, statementDomain, domainErr := signedMessageForPayload(payload, sum[:])
+	status.StatementDomain = statementDomain
+	if domainErr != nil {
+		status.Reason = "unsupported_statement_domain"
+		return portable, status, domainErr
+	}
+
 	trustedSigner := false
 	for _, key := range trustedKeys {
 		if len(key) == ed25519.PublicKeySize && hex.EncodeToString(key) == pubKeyHex {
@@ -226,7 +290,7 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 		return portable, status, fmt.Errorf("module signer %s is not a trusted publisher key", pubKeyHex)
 	}
 
-	if !ed25519.Verify(ed25519.PublicKey(pubKeyBytes), sum[:], sigBytes) {
+	if !ed25519.Verify(ed25519.PublicKey(pubKeyBytes), signedMessage, sigBytes) {
 		status.Reason = "invalid_signature"
 		return portable, status, errors.New("module publication signature verification failed")
 	}
@@ -265,8 +329,8 @@ func enforceModuleSignaturePolicy(policy *ModuleSignaturePolicy, wasmBytes []byt
 		// the operator's drain-to-empty signal during the observe window —
 		// every line here is an artifact that WOULD die on the enforce flip.
 		log.Warnf(
-			"module_signature_observe: content_hash=%s reason=%s signed=%t observed_signer=%s observed_key_id=%q — ADMITTED because ModuleSignaturePolicy.ReportOnly is set; this artifact WOULD BE REFUSED under enforcement",
-			status.ContentHash, status.Reason, status.Signed, status.SignerPubKeyHex, status.KeyID,
+			"module_signature_observe: content_hash=%s reason=%s signed=%t observed_signer=%s observed_key_id=%q statement_domain=%q — ADMITTED because ModuleSignaturePolicy.ReportOnly is set; this artifact WOULD BE REFUSED under enforcement",
+			status.ContentHash, status.Reason, status.Signed, status.SignerPubKeyHex, status.KeyID, status.StatementDomain,
 		)
 		return portable, status, nil
 	}
