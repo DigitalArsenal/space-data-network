@@ -42,14 +42,34 @@ function stripComments(src) {
     .replace(/(^|\s)\/\/[^\n]*/g, '$1');
 }
 
-/** Every component in the dashboard, with its source — declarations only. */
-const COMPONENTS = readdirSync(HERE)
-  .filter((f) => f.endsWith('.svelte'))
-  .map((file) => ({
-    file,
-    src: stripComments(readFileSync(join(HERE, file), 'utf8')),
-    raw: readFileSync(join(HERE, file), 'utf8'),
-  }));
+/**
+ * Every component in the dashboard, with its source — declarations only.
+ *
+ * WALKED, NOT LISTED (sdn-dashboard-modularize-for-parallelism). This used to
+ * read the flat `src/` directory. Widgets and routes are directories now
+ * (`widgets/<id>/Widget.svelte`, `routes/<id>/Route.svelte`), and a law that
+ * only scans one level would have silently stopped covering every widget on the
+ * page the moment they moved — the grammar's coverage must follow the code, or
+ * the modularisation buys parallelism by paying with enforcement.
+ *
+ * `file` stays the path RELATIVE to src/, so the by-name assertions below read
+ * the same and a violation names something you can open.
+ */
+function walk(rel = '') {
+  const out = [];
+  for (const entry of readdirSync(join(HERE, rel), { withFileTypes: true })) {
+    const next = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...walk(next));
+    else if (entry.name.endsWith('.svelte')) out.push(next);
+  }
+  return out;
+}
+
+const COMPONENTS = walk().map((file) => ({
+  file,
+  src: stripComments(readFileSync(join(HERE, file), 'utf8')),
+  raw: readFileSync(join(HERE, file), 'utf8'),
+}));
 
 /**
  * L1's one permitted exception: a modal body is a separate scroll ROOT — it is
@@ -183,12 +203,15 @@ describe('L4 — widgets paginate, they do not scroll', () => {
   });
 
   it('the metaline wraps instead of being clipped', () => {
-    const app = COMPONENTS.find((c) => c.file === PAGE_SCROLLER).src;
-    const meta = /(?<![-\w])\.meta\s*\{[^}]*\}/.exec(app)?.[0] ?? '';
-    expect(meta, 'App must style .meta').not.toBe('');
+    // Found by its SELECTOR, not by its file. The metaline belongs to whichever
+    // surface prints it — it moved from App.svelte into routes/peers/ when the
+    // routes became directories — and the law is about the rule, not its address.
+    const owner = COMPONENTS.find((c) => /(?<![-\w])\.meta\s*\{/.test(c.src));
+    expect(owner, 'some component must style .meta').toBeTruthy();
+    const meta = /(?<![-\w])\.meta\s*\{[^}]*\}/.exec(owner.src)[0];
     expect(/flex-wrap\s*:\s*wrap/.test(meta), 'L4b: it lives inside overflow-x:hidden').toBe(true);
     expect(
-      /\.meta\s*>\s*span\s*\{[^}]*white-space\s*:\s*nowrap/.test(app),
+      /\.meta\s*>\s*span\s*\{[^}]*white-space\s*:\s*nowrap/.test(owner.src),
       'L4b: the LIST wraps, a single fact does not split'
     ).toBe(true);
   });

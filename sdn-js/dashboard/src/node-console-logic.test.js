@@ -9,7 +9,7 @@
  * sparkline window, or leaving a hole in the grid.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 
 import {
   BANDWIDTH_SAMPLE_MS,
@@ -105,9 +105,18 @@ describe('the template layout, transcribed', () => {
     ]);
     // And every entry can actually be RENDERED: a registry id with no renderer is
     // a hole waiting for the first stale layout to find.
-    const console = readFileSync(new URL('./NodeConsole.svelte', import.meta.url), 'utf8');
+    //
+    // This used to grep NodeConsole.svelte for `w.id === '<id>'`, i.e. it
+    // asserted the eight-branch chain existed — which is precisely the structure
+    // sdn-dashboard-modularize-for-parallelism removed. The INVARIANT is
+    // unchanged and is now checked where it actually lives: a widget is a
+    // directory, and a directory that declares metadata must also ship a
+    // component. Checked on the filesystem rather than through
+    // widgets/components.js because that module compiles Svelte and this suite
+    // runs in vitest's `node` environment.
     for (const id of Object.keys(WIDGETS)) {
-      expect(console, `${id} is registered but has no renderer`).toContain(`w.id === '${id}'`);
+      const component = new URL(`./widgets/${id}/Widget.svelte`, import.meta.url);
+      expect(existsSync(component), `${id} is registered but has no widgets/${id}/Widget.svelte`).toBe(true);
     }
   });
 });

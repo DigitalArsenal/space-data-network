@@ -1,126 +1,69 @@
 <script>
   /**
-   * SDN Node Status $APP view — dashboard v2 (graph task nst-dashboard-table).
+   * SDN Node Status $APP — THE SHELL.
    *
-   * Composes the DESIGN repo's shell (SdnRail + ConsoleHeader) around one
-   * "NETWORK NODES" route: an mmdb-geo globe + a searchable, sortable,
-   * trust-filterable node table; row/dot click opens the full-detail modal
-   * (parsed vCard). Search is semantic when the node serves /embedding/*
-   * assets (MiniLM int8 via onnxruntime-web, same-origin, fail-open) and
-   * plain substring always. Data comes EXCLUSIVELY from
-   * globalThis.SDN_NODE_STATUS; this view never fetches node data itself.
+   * Composes the DESIGN repo's chrome (SdnRail + ConsoleHeader) around whichever
+   * route the registry discovered, and owns the four things that outlive a
+   * route: the status feed, the operator session, the runtime poller and the
+   * modals. Data comes EXCLUSIVELY from globalThis.SDN_NODE_STATUS; this view
+   * never fetches node data itself.
    *
    * PROVISIONAL (Iris ruling): the next design-tool zip supersedes this view.
-   * The data seam (SDN_NODE_STATUS) survives. Styled ONLY with theme.js
-   * tokens and the design components — no invented palette.
+   * The data seam (SDN_NODE_STATUS) survives. Styled ONLY with theme.js tokens
+   * and the design components — no invented palette.
+   *
+   * WHAT THIS FILE USED TO BE (sdn-dashboard-modularize-for-parallelism): 1,255
+   * lines with 25 hand-wired imports, a SECTIONS table, a ROUTE_TITLE table, a
+   * three-branch route `{#if}`, and every page's search/filter/sort/tab state in
+   * one scope. Adding PEERS on 2026-07-30 took four separate edits to this file.
+   * Routes are DISCOVERED now (`routes/registry.js`) and own their own state, so
+   * a page is a directory.
+   *
+   * THE SHELL CONTEXT — the one seam a route reads, spread as props:
+   *
+   *   view                 the raw NodeStatusSetView (its generatedAt/sourcePeerId)
+   *   nodes                every node in the feed
+   *   selfNode             this node's entry, with any unflushed profile edit applied
+   *   accountNodes         the feed merged with the Admin /api/accounts overlay
+   *   accountRows          the same set as account rows
+   *   runtime, now         the folded runtime snapshot and the page clock
+   *   session, canEdit     the operator session and whether it may edit
+   *   rootAdminAvailable   §14.1 — whether this node's root phrase signs in
+   *   presence             the honest pinned-or-connected summary (peers.js)
+   *   selected             the peer whose modal is open, if any
+   *   onSelectNode(node)   open a peer's detail modal
+   *   onRequestSignIn()    open the sign-in dialog
+   *   onShowSelf(view)     open THIS node's modal on 'parsed' | 'qr'
+   *   onProfileSaved(p)    a profile was just written — echo it until the feed agrees
+   *
+   * A route may also export `boot(shell)` from its `route.js`; the shell calls it
+   * once on mount for EVERY registered route, so page-lifetime work (PEERS warms
+   * the search model) lives in the feature's directory, not here.
    */
   import { onMount } from 'svelte';
   import SdnRail from 'spaceaware-student-sdn/src/lib/shell/SdnRail.svelte';
   import ConsoleHeader from 'spaceaware-student-sdn/src/lib/shell/ConsoleHeader.svelte';
   import StatusChip from 'spaceaware-student-sdn/src/lib/components/StatusChip.svelte';
-  import Panel from 'spaceaware-student-sdn/src/lib/components/Panel.svelte';
   import GBtn from 'spaceaware-student-sdn/src/lib/components/GBtn.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
-  import NodeTable from './NodeTable.svelte';
   import NodeModal from './NodeModal.svelte';
-  import NodeConsole from './NodeConsole.svelte';
-  import PeerMap from './PeerMap.svelte';
-  import Pager from './Pager.svelte';
-  import NodeEditForm from './NodeEditForm.svelte';
-  import AccountAdmin from './AccountAdmin.svelte';
   import SignInModal from './SignInModal.svelte';
   import AccountModal from './AccountModal.svelte';
   import { shortId } from './format.js';
-  import { TRUST_TIERS, normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
+  import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { canEditNodeProfile, canManagePermissions } from './permissions.js';
   import { accountFromNode, mergeAccounts, sortAccounts, vcardDisplayName, withoutSelf } from './accounts.js';
   import { apiFetch } from './api.js';
   import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
-  import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
   import { presenceSummary } from './peers.js';
-  import { createSemanticEngine } from './semantic.js';
-  import { createRuntimeFeed, foldRuntime } from './runtime.js';
-
-  /**
-   * The rail, from the design source rather than from taste: the template's own
-   * ROUTES table is `['node','NODE','◉','N1'], ['peers','PEERS','◍','N2'],
-   * ['groups','GROUPS','⬡','N3'], …` (`SDN Console.dc.html:892`), so NODE and
-   * PEERS are verbatim and ACCOUNTS inherits ⬡ — the template's third glyph,
-   * freed by the death of THIS NODE.
-   *
-   * THIS NODE IS GONE (owner directive 2026-07-30: "the 'this node' menu should
-   * go away"). Nothing was lost with it: every fact its widgets carried — xpub,
-   * derivation paths, signing/encryption keys, EPM signature/timestamp/CID, chain
-   * addresses, multiaddrs, trust, the vCard and the QR — is in the node detail
-   * modal that every OTHER peer already gets, and the self node is a node (IRIS
-   * R6). The IDENTITY widget's DETAIL button opens it.
-   *
-   * PEERS IS NEW (owner directive 2026-07-30: "move the peers table with add peer
-   * form, along with the globe, to a whole new menu called Peers").
-   */
-  /*
-   * NO `fkey`. The design source's rail renders `<span class="fkey">{it.fkey}</span>`
-   * beside every label, which is where the N1/N2/N3 column came from. Those keys
-   * are not even bound to anything — nothing in this dashboard listens for them —
-   * so the column was a tag describing a shortcut that does not exist. The data is
-   * dropped HERE (this table is the consumer's) and the span is suppressed in the
-   * rail-override block at the bottom of this file, because the markup itself
-   * lives in the design tree and the design tree is not hand-edited (ZIP-SYNC LAW).
-   */
-  const SECTIONS = [
-    {
-      label: 'NETWORK',
-      items: [
-        { id: 'node', label: 'NODE', glyph: '◉' },
-        { id: 'peers', label: 'PEERS', glyph: '◍' },
-        { id: 'accounts', label: 'ACCOUNTS', glyph: '⬡' },
-      ],
-    },
-  ];
-
-  /*
-   * A ROUTE IS ITS NAME. The second element used to carry an explanatory
-   * subtitle ('· DASHBOARD', '· SWARM MAP & PEER DIRECTORY', '· OPERATOR KEYS &
-   * TRUST') rendered next to the 29px route title — a description of a page the
-   * user is already looking at. Owner directive 2026-07-30 (twice). The shape
-   * stays a pair so `ROUTE_TITLE[route][1]` keeps working; the subtitle is empty
-   * and ConsoleHeader's `.sub` span collapses (see the override block).
-   */
-  const ROUTE_TITLE = {
-    node: ['NODE', ''],
-    peers: ['PEERS', ''],
-    accounts: ['ACCOUNTS', ''],
-  };
-
-  /**
-   * ACCOUNTS' two tables are TABS now — one visible at a time (owner 2026-07-30).
-   *
-   * NOT "TRUSTED PEERS". That tab is the libp2p trust REGISTRY, whose entries
-   * carry a trust level that may be `never` — calling the whole list "trusted"
-   * asserted of every row the one thing the row is there to record. The tab is
-   * named after the registry, and its chip already counts honestly ("N IN
-   * REGISTRY"). Part of the same correction as the header count: nothing on this
-   * page calls a set "trusted" on its behalf.
-   */
-  const ACCOUNT_TABS = [
-    ['peers', 'PEER REGISTRY'],
-    ['keys', 'OPERATOR KEYS'],
-  ];
-
-  const HIDE_KEY = 'sdn.dashboard.hideUntrustedOffline';
-  const readHidePref = () => {
-    try {
-      const raw = globalThis.localStorage?.getItem(HIDE_KEY);
-      return raw === null || raw === undefined ? true : raw === '1';
-    } catch {
-      return true;
-    }
-  };
+  import { foldRuntime, createRuntimeFeed } from './runtime.js';
+  import { ROUTES, SECTIONS, ROUTE_TITLE, LANDING } from './routes/registry.js';
+  import { ROUTE_COMPONENTS } from './routes/components.js';
 
   /** @type {import('../../src/status/view-model').NodeStatusSetView | null} */
   let view = $state(null);
   let now = $state(Date.now());
-  let route = $state('node');
+  let route = $state(LANDING);
   /**
    * The node's own runtime facts for the NODE dashboard (runtime.js). Starts as
    * the empty fold so every widget renders from one shape and never has to guard
@@ -129,11 +72,6 @@
   let runtime = $state(foldRuntime());
   /** Admin-only enrichment rows from GET /api/accounts (§16.5). */
   let accountEntries = $state([]);
-  let query = $state('');
-  let trustTier = $state('all');
-  let hideUntrustedOffline = $state(readHidePref());
-  let sortKey = $state('trust');
-  let sortDir = $state(1);
   let selected = $state(null);
   /**
    * The detail modal for THIS node, opened from the IDENTITY widget: '' closed,
@@ -143,12 +81,6 @@
    * a peer.
    */
   let selfModal = $state('');
-  let accountTab = $state('peers');
-  let settingsOpen = $state(false);
-  let page = $state(0);
-  let semStatus = $state('idle');
-  /** @type {Map<string, number> | null} */
-  let semScores = $state(null);
 
   // --- operator session (nst-node-edit-permissions-ui) ---------------------
   // `identity` (the in-page signer) exists ONLY for a session established in
@@ -171,24 +103,10 @@
   let signInOpen = $state(false);
   /** The account modal (owner directive 2026-07-29 — the upper-right button). */
   let accountOpen = $state(false);
-  let editing = $state(false);
   /** Post-save profile echo, held until the status feed catches up. */
   let epmOverride = $state(null);
 
-  const PAGE_SIZE = 5;
-
   const runtimeFeed = createRuntimeFeed({ onUpdate: (r) => (runtime = r) });
-
-  const engine = createSemanticEngine({ onStatus: (s) => (semStatus = s) });
-  // Diagnostic seam (same spirit as SDN_NODE_STATUS): lets operators probe
-  // embeddings/scores from the console; the UI never reads it back.
-  //
-  // Renamed off SDN_SEMANTIC deliberately. This global was NEVER rendered — it is
-  // a console handle — but it was the last occurrence of the token the owner named
-  // twice, and a reviewer grepping the served page for "SEMANTIC" would have found
-  // it and concluded the fix had missed again. The acceptance gate is a clean grep,
-  // so the token is gone from the bundle entirely.
-  globalThis.SDN_SEARCH_RANKER = engine;
 
   const nodes = $derived(view?.nodes ?? []);
   const feedSelfNode = $derived(nodes.find((n) => n.isSelf) ?? null);
@@ -225,7 +143,6 @@
   function clearSession() {
     session?.identity?.destroy?.();
     session = null;
-    editing = false;
   }
 
   /**
@@ -328,9 +245,6 @@
     clearSession();
   }
   const connected = $derived(view != null);
-  const updatedAgo = $derived(
-    view ? Math.max(0, Math.round((now - view.generatedAt) / 1000)) : null
-  );
 
   // Anonymous tier first: every row the public feed knows about. The Admin
   // overlay merges operator facets in on top when there is a session.
@@ -366,81 +280,45 @@
    * a total.
    */
   const presence = $derived(presenceSummary(accountNodes));
-  const visible = $derived(applySettings(accountNodes, { trustTier, hideUntrustedOffline }));
-  const searching = $derived(Boolean(query.trim()));
-  const semanticActive = $derived(searching && semStatus === 'ready' && semScores !== null);
 
-  /** @type {{node: any, score?: number}[]} */
-  const rows = $derived.by(() => {
-    if (!searching) return sortNodes(visible, sortKey, sortDir).map((node) => ({ node }));
-    const subs = substringSearch(visible, query);
-    if (semanticActive) {
-      return semanticRank(visible, semScores, new Set(subs.map((n) => n.peerId)));
-    }
-    return sortNodes(subs, sortKey, sortDir).map((node) => ({ node }));
-  });
-
-  const pageCount = $derived(Math.max(1, Math.ceil(rows.length / PAGE_SIZE)));
-  const safePage = $derived(Math.min(page, pageCount - 1));
-  const pagedRows = $derived(rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE));
-
-  // Any change to the filtered set snaps back to the first page.
-  $effect(() => {
-    void query;
-    void trustTier;
-    void hideUntrustedOffline;
-    void sortKey;
-    void sortDir;
-    page = 0;
-  });
-
-  /*
-   * OWNER DIRECTIVE 2026-07-30, twice: "also remove 'semantic' and ALL
-   * superfluous descriptions / tags from all the menus here, you are shitting up
-   * the interface with this garbage".
-   *
-   * The search-mode chip is GONE — label, colour and tooltip together. It was a
-   * status word bolted onto a search control, which is the exact class the owner
-   * named. `semStatus` is still what selects the ranking function below; the
-   * search box simply no longer narrates which one won. A control is its label.
+  /**
+   * THE SHELL API a route's `boot(shell)` is handed. Deliberately tiny: a route
+   * that needs page-lifetime work needs the node feed and nothing else. Anything
+   * wider belongs in the render context below, where it is reactive.
    */
-
-  function toggleSort(key) {
-    if (sortKey === key) sortDir = -sortDir;
-    else {
-      sortKey = key;
-      sortDir = 1;
-    }
-  }
-
-  function setHidePref(checked) {
-    hideUntrustedOffline = checked;
-    try {
-      globalThis.localStorage?.setItem(HIDE_KEY, checked ? '1' : '0');
-    } catch {
-      /* private mode etc. — non-persistent is fine */
-    }
-  }
-
-  // Keep node embeddings current whenever the feed updates (no-op until ready).
+  const nodeSubs = new Set();
   $effect(() => {
-    if (semStatus === 'ready' && nodes.length) {
-      engine.embedNodes(nodes, nodeEmbedText);
-    }
+    const current = nodes;
+    for (const fn of nodeSubs) fn(current);
   });
+  const shell = {
+    getNodes: () => view?.nodes ?? [],
+    subscribeNodes(fn) {
+      nodeSubs.add(fn);
+      return () => nodeSubs.delete(fn);
+    },
+  };
 
-  // Debounced query embedding → semScores drives the semantic ranking.
-  $effect(() => {
-    const q = query.trim();
-    if (!q || semStatus !== 'ready') {
-      semScores = null;
-      return;
-    }
-    const t = setTimeout(async () => {
-      const scores = await engine.queryScores(q);
-      if (query.trim() === q) semScores = scores;
-    }, 220);
-    return () => clearTimeout(t);
+  /** The one seam every route reads. See THE SHELL CONTEXT above. */
+  const routeCtx = $derived({
+    view,
+    nodes,
+    selfNode,
+    accountNodes,
+    accountRows,
+    runtime,
+    now,
+    session,
+    canEdit,
+    rootAdminAvailable,
+    presence,
+    selected,
+    onSelectNode: (n) => (selected = n),
+    onRequestSignIn: () => (signInOpen = true),
+    onShowSelf: (v) => (selfModal = v),
+    onProfileSaved: ({ json, vcard }) => {
+      epmOverride = { vcard, dn: typeof json?.dn === 'string' ? json.dn : undefined };
+    },
   });
 
   onMount(() => {
@@ -466,19 +344,19 @@
     // The NODE dashboard's runtime facts. Anonymous sources only until the
     // session effect above says otherwise.
     runtimeFeed.start();
-    // Warm the semantic model shortly after first paint (fail-open).
-    const warm = setTimeout(() => engine.init(), 800);
+    // Page-lifetime work each route declares for itself — called for EVERY
+    // registered route, not just the active one, because that is what "warm the
+    // search model 800ms after first paint" has always meant.
+    const teardowns = ROUTES.map((r) => r.boot?.(shell)).filter(Boolean);
     return () => {
       cancelled = true;
       clock && clearInterval(clock);
-      clearTimeout(warm);
       runtimeFeed.stop();
+      for (const done of teardowns) done();
       unsub();
     };
   });
 </script>
-
-<svelte:window onkeydown={(e) => e.key === 'Escape' && settingsOpen && (settingsOpen = false)} />
 
 <div class="root" style="background:{theme.pageGlow};color:{theme.textBody};">
   <SdnRail sections={SECTIONS} active={route} onSelect={(id) => (route = id)} />
@@ -493,12 +371,9 @@
          the header in place while the column scrolls; the background is opaque
          because the design's is 0.92 alpha and content would show through it. -->
     <div class="headwrap" style="background:{theme.pageGlow};">
-    <!-- The title fallback used to name `ROUTE_TITLE.nodes`, a key that has never
-         existed: an unknown route rendered `undefined[0]` and threw. It is the
-         landing route's title now, which is what a fallback is for. -->
     <ConsoleHeader
-      title={(ROUTE_TITLE[route] ?? ROUTE_TITLE.node)[0]}
-      sub={(ROUTE_TITLE[route] ?? ROUTE_TITLE.node)[1]}
+      title={(ROUTE_TITLE[route] ?? ROUTE_TITLE[LANDING])[0]}
+      sub={(ROUTE_TITLE[route] ?? ROUTE_TITLE[LANDING])[1]}
       accent={theme.cyan}
     >
       {#snippet right()}
@@ -563,209 +438,14 @@
           <span class="glyph" style="color:{theme.cyan};">◍</span>
           Connecting to the node status feed (/ws/status)…
         </div>
-      {:else if route === 'node'}
-        <!-- THE NODE DASHBOARD — the SDN Console template's view, with EDIT
-             LAYOUT and the full eight-widget registry (IRIS §2/§3 wave 2). -->
-        {#if selfNode}
-          {#if editing}
-            <!-- The IDENTITY card's EDIT opens the profile form INLINE, in a
-                 raised panel on this page — "less like a modal, more like a
-                 page" (owner 2026-07-27; IRIS §6). -->
-            <Panel variant="raised" pad="0" style="max-width:880px;">
-              <div class="self-body">
-                <NodeEditForm
-                  onCancel={() => (editing = false)}
-                  onSaved={({ json, vcard }) => {
-                    epmOverride = { vcard, dn: typeof json?.dn === 'string' ? json.dn : undefined };
-                    editing = false;
-                  }}
-                />
-              </div>
-            </Panel>
-          {:else}
-            <div class="node-page">
-              <NodeConsole
-                node={selfNode}
-                {nodes}
-                {runtime}
-                {now}
-                {canEdit}
-                onSelectNode={(n) => (selected = n)}
-                onEdit={() => (editing = true)}
-                onShowDetail={() => (selfModal = 'parsed')}
-                onShowQr={() => (selfModal = 'qr')}
-              />
-            </div>
-          {/if}
-        {:else}
-          <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
-            <span class="glyph" style="color:{theme.cyan};">◉</span>
-            Waiting for this node's status entry…
-          </div>
-        {/if}
-      {:else if route === 'peers'}
-        <div class="toolbar">
-          <div class="search" style="border-color:{theme.hairline};">
-            <span class="sglyph" style="color:{theme.textMuted};">⌕</span>
-            <input
-              type="search"
-              placeholder="SEARCH"
-              bind:value={query}
-              style="color:{theme.textBright};"
-              aria-label="Search nodes"
-            />
-          </div>
-
-          <label class="ctl" style="color:{theme.textMuted};">
-            TRUST
-            <select bind:value={trustTier} style="color:{theme.textBright};border-color:{theme.hairline};" aria-label="Filter by trust tier">
-              <option value="all">ALL</option>
-              {#each TRUST_TIERS as tier (tier)}
-                <option value={tier}>{tier.toUpperCase()}</option>
-              {/each}
-            </select>
-          </label>
-
-          <div class="settings-wrap">
-            <button
-              class="settings-btn"
-              style="color:{settingsOpen ? theme.cyan : theme.textMuted};border-color:{settingsOpen ? theme.cyan : theme.hairline};"
-              onclick={() => (settingsOpen = !settingsOpen)}
-              aria-expanded={settingsOpen}
-              aria-haspopup="true"
-            ><span class="gear">⚙</span> SETTINGS</button>
-            {#if settingsOpen}
-              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-              <div class="settings-backdrop" onclick={() => (settingsOpen = false)}></div>
-              <div class="settings-menu" style="background:{theme.panelRaised};border-color:{theme.panelBorder};">
-                <div class="settings-title" style="color:{theme.textMuted};border-color:{theme.divider};">DISPLAY SETTINGS</div>
-                <!-- This menu said the same thing THREE times: the checkbox
-                     label, a 96-character `title` restating it, and a hint
-                     paragraph restating it again. The label survives; the other
-                     two are the "garbage" the owner named (2026-07-30, twice). -->
-                <label class="ctl check" style="color:{theme.textBody};">
-                  <input
-                    type="checkbox"
-                    checked={hideUntrustedOffline}
-                    onchange={(e) => setHidePref(e.currentTarget.checked)}
-                  />
-                  HIDE UNTRUSTED OFFLINE
-                </label>
-              </div>
-            {/if}
-          </div>
-        </div>
-
-        <!-- The table's own arithmetic, stated as a subset rather than as a
-             total: a filter is on this toolbar and "12 PEERS" beside a table of
-             three is the same class of defect as the header count was. -->
-        <div class="meta" style="color:{theme.textMuted};">
-          <span>{rows.length} OF {accountRows.length} SHOWN</span>
-          <span class="dot">·</span>
-          <span>{presence.connected} CONNECTED</span>
-          {#if presence.pinnedOffline}
-            <span class="dot">·</span>
-            <span>{presence.pinnedOffline} PINNED, OFFLINE</span>
-          {/if}
-          <span class="dot">·</span>
-          <span>SOURCE {shortId(view?.sourcePeerId ?? '')}</span>
-          <span class="dot">·</span>
-          <span>UPDATED {updatedAgo === 0 ? 'now' : `${updatedAgo}s ago`}</span>
-        </div>
-
-        <!-- THE PEERS ROUTE (owner directive 2026-07-30). The swarm map and the
-             peer directory it plots, in one column: the SAME PeerMap component the
-             dashboard's netmap widget renders, never a second globe surface (IRIS
-             R7 + the grammar law's companion trap — two mounted globes are two
-             WebGL contexts). L5: no panel here carries a width, a max-width or its
-             own inline padding, so every edge is the column's edge. -->
-        <div class="stack">
-          <Panel variant="raised">
-            <PeerMap
-              nodes={accountNodes}
-              selectedId={selected?.peerId ?? ''}
-              onSelectNode={(n) => (selected = n)}
-              height="420px"
-            />
-          </Panel>
-          <Panel variant="raised" pad="0">
-            <div class="table-panel">
-              <NodeTable
-                rows={pagedRows}
-                {now}
-                {sortKey}
-                {sortDir}
-                onSort={toggleSort}
-                onOpen={(n) => (selected = n)}
-                {semanticActive}
-              />
-              <!-- L4: the ONE shared pager. This was an inline copy; the ACTIVITY
-                   LOG widget needed the same control, and two implementations is
-                   how "widgets paginate" becomes "widgets mostly paginate". -->
-              <Pager
-                page={safePage}
-                pageCount={pageCount}
-                total={rows.length}
-                pageSize={PAGE_SIZE}
-                unit="ROWS"
-                onPage={(p) => (page = p)}
-              />
-            </div>
-          </Panel>
-
-          {#if session && canManagePermissions(session.trustLevel)}
-            <!-- ADD A PEER lives with the peers (owner directive 2026-07-30). It
-                 is the SAME component the ACCOUNTS tab uses, rendering only its
-                 form section — one set of API calls, one piece of state. -->
-            <AccountAdmin
-              {session}
-              nodes={accountNodes}
-              {rootAdminAvailable}
-              onRequestSignIn={() => (signInOpen = true)}
-              view="peer-add"
-            />
-          {/if}
-        </div>
       {:else}
-        <!-- ACCOUNTS: the two admin tables, as TABS, one at a time (owner
-             directive 2026-07-30 — "have the tables selectable by tab (trusted
-             peers vs current node operator keys)"). The globe and the node
-             directory have moved to PEERS. -->
-        {#if session && canManagePermissions(session.trustLevel)}
-          <div class="tabbar" style="border-color:{theme.panelBorder};">
-            {#each ACCOUNT_TABS as [id, label] (id)}
-              <button
-                class="tab"
-                style="background:{accountTab === id ? 'rgba(53,201,216,0.18)' : 'transparent'};color:{accountTab === id ? theme.cyan : theme.textDim};border-color:{theme.panelBorder};"
-                aria-pressed={accountTab === id}
-                onclick={() => (accountTab = id)}
-              >{label}</button>
-            {/each}
-          </div>
-          <div class="account-admin">
-            <AccountAdmin
-              {session}
-              nodes={accountNodes}
-              {rootAdminAvailable}
-              onRequestSignIn={() => (signInOpen = true)}
-              view={accountTab}
-            />
-          </div>
-        {:else}
-          <!-- Honest, not empty: the two surfaces on this page are Admin-only
-               reads (/api/auth/users, /api/peers), so an anonymous visitor is told
-               what this page is and how to reach it rather than shown a table
-               with nothing in it. The public peer directory is on PEERS. -->
-          <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
-            <span class="glyph" style="color:{theme.cyan};">⬡</span>
-            Operator keys and the trust registry are administrator surfaces. Sign in to manage them —
-            the public peer directory is on PEERS.
-          </div>
-          {#if !session}
-            <div class="signin-row">
-              <GBtn title="Sign in with your wallet key" variant="primary" onclick={() => (signInOpen = true)}>SIGN IN</GBtn>
-            </div>
-          {/if}
+        <!-- The registry lookup that replaced the hand-written route branch. An
+             unknown route id renders nothing rather than throwing — the rail can
+             only offer ids the registry produced, so this is unreachable from the
+             UI and is here for a stale deep link. -->
+        {@const Route = ROUTE_COMPONENTS[route]}
+        {#if Route}
+          <Route {...routeCtx} />
         {/if}
       {/if}
     </div>
@@ -805,7 +485,6 @@
     />
   {/if}
 </div>
-
 <style>
   .root {
     position: fixed;
@@ -960,7 +639,8 @@
   }
   /* L2: ONE gutter, applied by ONE element — this one. Nothing inside a route may
      add `padding-inline` "to match" (that is how the ACCOUNTS panels ended up 37px
-     narrower than the panels above them). */
+     narrower than the panels above them). This is also the flex column every
+     route's markup becomes the children of. */
   .body {
     flex: 1;
     min-height: 0;
@@ -968,192 +648,9 @@
     flex-direction: column;
     padding: var(--sdn-sp-7) var(--sdn-sp-9) var(--sdn-sp-9);
   }
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    flex-wrap: wrap;
-    margin-bottom: 12px;
-  }
-  .search {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    border: 1px solid;
-    padding: 7px 10px;
-    flex: 1 1 320px;
-    min-width: 260px;
-    max-width: 560px;
-  }
-  .sglyph { font-size: var(--sdn-fs-head); line-height: var(--sdn-lh-head); }
-  .search input {
-    flex: 1;
-    background: transparent;
-    border: 0;
-    outline: none;
-    font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
-    letter-spacing: 0.06em;
-    min-width: 0;
-  }
-  .search input::placeholder { color: rgba(159, 212, 245, 0.35); }
-  /* MENU SCALE. Originally the owner's 2026-07-27 directive, applied here by
-     hand. The comment that stood here claimed "body text, tables and panels
-     are deliberately untouched: they were already scaled by the earlier
-     global directive" — that was FALSE, and it is why the owner had to give
-     the same instruction twice: measured on the built page, tables rendered
-     at 10-14.5px, i.e. unscaled. Sizes now come from the ladder in
-     scale.css, which covers every surface; padding/tracking stay nudged only
-     where larger glyphs would clip. */
-  .ctl {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
-    letter-spacing: 0.14em; /* eased from 0.16em so TRUST/HIDE… stay on one line */
-    white-space: nowrap;
-  }
-  /* L6 (owner directive 2026-07-30: "the arrow in the drop down should have
-     margin"): a <select> reserves INSET space for the chevron the platform draws
-     inside its box. Without it "ALL" sat against the arrow and the arrow against
-     the border. --sdn-sp-8 (20px) is the law's floor for this. */
-  .ctl select {
-    background: transparent;
-    border: 1px solid;
-    font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note);
-    letter-spacing: 0.08em;
-    padding: 6px 10px;
-    padding-right: var(--sdn-sp-8);
-    outline: none;
-  }
-  .ctl select option { background: #0a141b; }
-  .ctl.check { cursor: pointer; user-select: none; }
-  .ctl.check input {
-    appearance: none;
-    width: 17px; /* the tick keeps pace with its label */
-    height: 17px;
-    border: 1px solid rgba(110, 170, 190, 0.5);
-    background: transparent;
-    cursor: pointer;
-    display: inline-grid;
-    place-content: center;
-    margin: 0;
-  }
-  .ctl.check input::before {
-    content: '';
-    width: 9px;
-    height: 9px;
-    transform: scale(0);
-    background: #35c9d8;
-  }
-  .ctl.check input:checked::before { transform: scale(1); }
-  /* THE METALINE WRAPS (defect, owner's 390px screenshot 2026-07-30). This was a
-     nowrap flex row inside `main`, which is `overflow-x: hidden` — so at phone
-     widths it did not scroll and it did not wrap, it was CUT: measured 592px of
-     content in a 285px box, losing the last 307px. The words it lost were the
-     ones the page was rewritten to say ("1 PINNED, OFFLINE", "UPDATED …"), and
-     it is the surface the header's own count chips DELEGATE to below 1180px
-     (see the L3 block near the end of this file) — the one place a phone can
-     read them. Two rules do it:
-       flex-wrap  the LIST of facts breaks onto as many lines as it needs;
-       nowrap     a single fact never splits, so "3 OF 3 SHOWN" cannot render as
-                  "3 OF" / "3 SHOWN" the way it did at 390px. */
-  .meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 9px;
-    row-gap: 2px;
-    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
-    letter-spacing: 0.14em;
-    margin-bottom: 12px;
-  }
-  .meta > span { white-space: nowrap; }
-  .meta .dot { opacity: 0.5; }
-  /* L1 + L5: a plain column of panels, each at its NATURAL height, all the same
-     width. It used to be a flex race (`flex: 1 1 50%` on each panel against a
-     `min-height:480px` parent), which is what squeezed a panel to zero height
-     while its pager kept painting — the overlap in the owner's screenshot. The
-     page scrolls; nothing here competes for height. */
-  .stack {
-    display: flex;
-    flex-direction: column;
-    gap: var(--sdn-sp-7);
-  }
-  /* ACCOUNTS' tab bar. Same control vocabulary as the PEER MAP's 3D/2D switch, so
-     the page has one idea of what a segmented control looks like. */
-  .tabbar {
-    display: inline-flex;
-    border: 1px solid;
-    margin-bottom: var(--sdn-sp-7);
-    align-self: flex-start;
-  }
-  .tab {
-    border: 0;
-    cursor: pointer;
-    font-family: 'Chakra Petch', sans-serif;
-    font-weight: 600;
-    font-size: var(--sdn-fs-label);
-    line-height: var(--sdn-lh-label);
-    letter-spacing: 0.12em;
-    padding: var(--sdn-sp-3) var(--sdn-sp-8);
-  }
-  .tab + .tab { border-left: 1px solid; }
-  .signin-row { margin-top: var(--sdn-sp-6); }
-  /* L1: no `flex: 1` height race and no inner scroller — the table is as tall as
-     its five rows and the pager sits under it. */
-  .table-panel { display: flex; flex-direction: column; }
-  .settings-wrap { position: relative; }
-  .settings-backdrop { position: fixed; inset: 0; z-index: 29; }
-  .settings-btn {
-    background: transparent;
-    border: 1px solid;
-    cursor: pointer;
-    font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
-    letter-spacing: 0.14em;
-    padding: 8px 14px;
-    white-space: nowrap;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--sdn-sp-3);
-  }
-  /* L6 (owner directive 2026-07-30: "the settings icon needs to be full size"): a
-     glyph beside a text label renders at the label's rung or ONE ABOVE it, never
-     below. The gear was inheriting the button's --sdn-fs-body and reading as a
-     rendering failure next to its own word; it now sits one rung up at
-     --sdn-fs-data with its own line-height so the button box does not grow. */
-  .gear {
-    font-size: var(--sdn-fs-data);
-    line-height: 1;
-  }
-  .settings-menu {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    z-index: 30;
-    border: 1px solid;
-    /* Widened for the scaled type so the hint does not re-wrap — but
-       min-width beats max-width in CSS, so the cap has to live INSIDE the
-       min() or a 390px phone pushes the popover off the left edge. */
-    min-width: min(390px, calc(100vw - 32px));
-    max-width: calc(100vw - 32px);
-    padding: 14px 16px 15px;
-    box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
-  }
-  .settings-title {
-    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
-    letter-spacing: 0.16em;
-    border-bottom: 1px solid;
-    padding-bottom: 7px;
-    margin-bottom: 10px;
-  }
-  .account-admin { margin-top: var(--sdn-sp-7); flex: none; }
-  .self-body { padding: 14px 18px 18px; }
-  /* The NODE dashboard takes its natural height and lets .body scroll — the
-     widget grid is the page, so a nested scroller would trap the last row. */
-  .node-page { flex: none; min-width: 0; padding-bottom: 8px; }
+  /* The shell's own "no feed yet" block. Routes that need this shape carry their
+     own copy, in their own directory — the rule is nine lines and duplicating it
+     is what keeps two routes off one file. */
   .empty {
     display: flex;
     align-items: center;
@@ -1164,6 +661,7 @@
     letter-spacing: 0.06em;
     max-width: 560px;
   }
+  .empty .glyph { font-size: var(--sdn-fs-title); line-height: var(--sdn-lh-title); }
 
   .hdr-status { display: contents; }
   .hdr-session { display: contents; }
@@ -1211,23 +709,6 @@
     .body {
       padding: 12px 12px 24px;
     }
-    .toolbar {
-      gap: 10px;
-    }
-    .search {
-      flex-basis: 100%;
-      max-width: none;
-    }
-    /* At the +30% menu size the popover is wider than the toolbar row it
-       hangs off, and that row has wrapped — anchoring to it pushes the menu
-       off the left edge. Pin it to the viewport instead; the existing
-       full-screen backdrop already dismisses it. */
-    .settings-menu {
-      position: fixed;
-      inset: auto 12px 12px 12px;
-      min-width: 0;
-      max-width: none;
-    }
     .hdr-status { display: none; }
     .hdr-session {
       display: inline-flex;
@@ -1236,20 +717,4 @@
       padding-right: 8px;
     }
   }
-
-  /* Phones — the same 560px tier NodeTable's column ladder uses, so the table
-     and the line above it change shape at one width rather than two.
-     scale.css assigns the metaline rung to `micro`; at --sdn-fs-data its
-     longest single fact ("SOURCE 16Uiu2…1uF5PP") measures 266px, which still
-     does not fit a 320px viewport's 215px content box even after wrapping, and
-     wrapping alone spends five lines at 390px. At `micro` it fits every phone
-     width and costs four. Desktop keeps `data` — this is the one rung the
-     narrow tier lowers. */
-  @media (max-width: 560px) {
-    .meta {
-      font-size: var(--sdn-fs-micro);
-      line-height: var(--sdn-lh-micro);
-    }
-  }
-  .empty .glyph { font-size: var(--sdn-fs-title); line-height: var(--sdn-lh-title); }
 </style>
