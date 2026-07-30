@@ -12,6 +12,10 @@
  * (e.g. point a locally-served page at a remote node's feed).
  */
 import './fonts.css';
+// The type + spacing ladder. On :root (not .root) so the wallet confirmation
+// dialog, which hd-wallet-ui appends to document.body outside the app's mount,
+// still resolves the tokens wallet-theme.css spends.
+import './scale.css';
 // The ONLY stylesheet hd-wallet-ui has (contract §11.4: the package ships
 // zero css). Document-level because its confirmation dialog appends itself to
 // document.body and ignores the mount.

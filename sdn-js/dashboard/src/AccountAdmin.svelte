@@ -23,7 +23,7 @@
   import Panel from 'spaceaware-student-sdn/src/lib/components/Panel.svelte';
   import StatusChip from 'spaceaware-student-sdn/src/lib/components/StatusChip.svelte';
   import GBtn from 'spaceaware-student-sdn/src/lib/components/GBtn.svelte';
-  import Kicker from 'spaceaware-student-sdn/src/lib/components/Kicker.svelte';
+  import Kick from './Kick.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import { apiFetch, apiPostText, describeApiError } from './api.js';
   import { normalizeTrust, trustRank, TRUST_COLOR_TOKEN, TRUST_TIERS } from './trust.js';
@@ -336,7 +336,7 @@
     <Panel variant="raised" pad="0">
       <div class="head" style="border-color:{theme.divider};">
         <div>
-          <Kicker text="XPUB USER STORE · /api/auth/users" />
+          <Kick text="XPUB USER STORE · /api/auth/users" />
           <div class="ttl" style="color:{theme.textBright};">OPERATOR KEYS</div>
         </div>
         <div class="chips">
@@ -395,12 +395,12 @@
                         <span class="org" style="color:{theme.textDim};">· {user.organization}</span>
                       {/if}
                     </td>
-                    <td class="right">
+                    <td class="right" rowspan="2" style="border-color:{theme.divider};">
                       <GBtn title="Manage this operator key" onclick={() => (editUserXPub = user.xpub)}>EDIT</GBtn>
                     </td>
                   </tr>
                   <tr class="meta">
-                    <td colspan="4" style="border-color:{theme.divider};">
+                    <td colspan="3" style="border-color:{theme.divider};">
                       <span class="metaline">
                         {#each operatorMeta(user, normalizeTrust(user.trust_level)) as item, i (item.id)}
                           {#if i > 0}<span class="sep" style="color:{theme.textFaint};">·</span>{/if}
@@ -459,7 +459,7 @@
     <Panel variant="raised" pad="0">
       <div class="head" style="border-color:{theme.divider};">
         <div>
-          <Kicker text="LIBP2P TRUST REGISTRY · /api/peers" />
+          <Kick text="LIBP2P TRUST REGISTRY · /api/peers" />
           <div class="ttl" style="color:{theme.textBright};">NETWORK PEERS</div>
         </div>
         <div class="chips">
@@ -502,12 +502,12 @@
                         <span class="org" style="color:{theme.textDim};">· {peer.organization}</span>
                       {/if}
                     </td>
-                    <td class="right">
+                    <td class="right" rowspan="2" style="border-color:{theme.divider};">
                       <GBtn title="Manage this peer" onclick={() => (editPeerId = peer.id)}>EDIT</GBtn>
                     </td>
                   </tr>
                   <tr class="meta">
-                    <td colspan="3" style="border-color:{theme.divider};">
+                    <td colspan="2" style="border-color:{theme.divider};">
                       <span class="metaline">
                         {#each peerMeta(peer, normalizeTrust(peer.trust_level), normalizeTrust(peer.effective_trust_level)) as item, i (item.id)}
                           {#if i > 0}<span class="sep" style="color:{theme.textFaint};">·</span>{/if}
@@ -592,32 +592,33 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
+    scrollbar-gutter: stable;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    padding-bottom: 8px;
+    gap: var(--sdn-sp-7);
+    padding-inline: var(--sdn-sp-9);
+    padding-bottom: var(--sdn-sp-3);
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
   }
   .page :global(> section) { height: fit-content; }
   .head {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 14px;
-    padding: 14px 18px 12px;
+    gap: var(--sdn-sp-6);
+    padding: var(--sdn-sp-8) var(--sdn-sp-9);
     border-bottom: 1px solid;
   }
   .ttl {
     font-family: 'Chakra Petch', sans-serif;
     font-weight: 600;
-    font-size: 21px;
+    font-size: var(--sdn-fs-lead); line-height: var(--sdn-lh-lead);
     letter-spacing: 0.06em;
-    margin-top: 4px;
   }
-  .chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-  .pad { padding: 14px 18px 18px; }
-  .k { font-size: 12.5px; letter-spacing: 0.18em; margin-bottom: 8px; }
-  .tbl-wrap { overflow-x: auto; margin-bottom: 16px; }
+  .chips { display: flex; gap: var(--sdn-sp-3); flex-wrap: wrap; justify-content: flex-end; align-self: center; }
+  .pad { padding: var(--sdn-sp-9); }
+  .k { font-size: var(--sdn-fs-fine); line-height: var(--sdn-lh-fine); letter-spacing: 0.18em; margin-bottom: var(--sdn-sp-3); }
+  .tbl-wrap { overflow-x: auto; scrollbar-gutter: stable; margin-bottom: var(--sdn-sp-7); }
   table { width: 100%; border-collapse: collapse; }
   /* ONE header style for every column. The old table coloured SOURCE per-cell,
      which is the inconsistency the owner spotted; colour is inherited from the
@@ -625,21 +626,31 @@
   th {
     text-align: left;
     font-weight: 400;
-    font-size: 12.5px;
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
     letter-spacing: 0.18em;
-    padding: 0 10px 8px 0;
+    padding: 0 var(--sdn-sp-5) var(--sdn-sp-3) 0;
     border-bottom: 1px solid;
     white-space: nowrap;
     color: inherit;
   }
   td {
-    font-size: 14.5px;
+    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
     letter-spacing: 0.02em;
-    padding: 7px 10px 3px 0;
-    vertical-align: baseline;
+    padding: var(--sdn-sp-3) var(--sdn-sp-5) var(--sdn-sp-1) 0;
+    vertical-align: middle;
   }
-  td.right { text-align: right; padding-right: 0; }
-  td.none { text-align: center; padding: 18px 0; font-size: 14px; }
+  th:last-child, td.right { text-align: right; padding-right: 0; }
+  /* The spanning actions cell owns the record's underline (the meta <td> no
+     longer reaches this column) and centres its control by construction. */
+  td.right[rowspan] {
+    vertical-align: middle;
+    border-bottom: 1px solid;
+    /* The record's primary <td> is deliberately top-heavy (8px over 4px) so the
+       subscript hugs its line. A cell that SPANS both rows must not inherit
+       that asymmetry, or the control it centres lands 2px low. */
+    padding-block: var(--sdn-sp-2);
+  }
+  td.none { text-align: center; padding: 18px 0; font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data); }
 
   /* A RECORD is a <tbody> of two rows that read as one: the primary line
      carries no border, the subscript line carries the pair's. */
@@ -650,20 +661,20 @@
   .nm {
     font-family: 'Chakra Petch', sans-serif;
     font-weight: 600;
-    font-size: 15px;
+    font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
     letter-spacing: 0.03em;
   }
   .nm.unnamed { font-style: italic; font-weight: 400; }
-  .org { font-size: 12.5px; letter-spacing: 0.03em; }
+  .org { font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body); letter-spacing: 0.03em; }
   .metaline {
     display: flex;
     flex-wrap: wrap;
     gap: 0 7px;
     align-items: baseline;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 10px;
+    font-size: var(--sdn-fs-micro);
     letter-spacing: 0.14em;
-    line-height: 1.5;
+    line-height: var(--sdn-lh-micro);
   }
   .metaline .lbl { letter-spacing: 0.16em; }
   .metaline .sep { padding: 0 1px; }
@@ -673,36 +684,38 @@
     background: transparent;
     border: 1px solid;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 14px;
+    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
     letter-spacing: 0.06em;
-    padding: 5px 8px;
+    padding: var(--sdn-sp-3) var(--sdn-sp-4);
+    min-height: 40px;
     outline: none;
   }
   select option { background: #0a141b; }
   textarea {
     width: 100%;
-    font-size: 14px;
+    max-width: 100%;
+    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
     resize: vertical;
     letter-spacing: 0.02em;
-    padding: 8px 10px;
+    padding: var(--sdn-sp-4) var(--sdn-sp-5);
   }
-  .add { border-top: 1px solid rgba(110, 170, 190, 0.13); padding-top: 13px; display: flex; flex-direction: column; gap: 9px; }
-  .add-row { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
-  .add-row input { flex: 1 1 180px; min-width: 0; }
+  .add { border-top: 1px solid rgba(110, 170, 190, 0.13); padding: var(--sdn-sp-8) 0 0; display: flex; flex-direction: column; gap: var(--sdn-sp-5); }
+  .add-row { display: flex; gap: var(--sdn-sp-5); flex-wrap: wrap; align-items: stretch; }
+  .add-row input { flex: 1 1 clamp(220px, 30%, 340px); min-width: 0; }
   .badge {
     border: 1px solid;
-    font-size: 10.5px;
+    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
     letter-spacing: 0.14em;
-    padding: 1px 6px;
-    margin-left: 8px;
+    padding: var(--sdn-sp-1) var(--sdn-sp-2);
+    margin-left: var(--sdn-sp-3);
   }
-  .hint { font-size: 12.5px; letter-spacing: 0.03em; line-height: 1.55; }
+  .hint { font-size: var(--sdn-fs-body); letter-spacing: 0.03em; line-height: var(--sdn-lh-body); }
   .err {
     border: 1px solid;
-    padding: 10px 12px;
-    font-size: 13.5px;
+    padding: var(--sdn-sp-5) var(--sdn-sp-6);
+    font-size: var(--sdn-fs-body);
     letter-spacing: 0.04em;
-    line-height: 1.5;
+    line-height: var(--sdn-lh-data);
   }
   .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
 </style>

@@ -609,28 +609,35 @@
     overflow: hidden;
   }
   /* ------------------------------------------------------------------
-     RAIL MENU SCALE — owner directive 2026-07-27, +30% on menus.
-     SdnRail lives in the design repo (spaceaware-student-sdn) and the
-     ZIP-SYNC LAW forbids editing that tree: the design tool is its only
-     writer. So the scale is applied HERE, in the consumer, exactly as the
-     law prescribes. Every rule is the design value x1.3.
+     DESIGN-LIB SCALE. The owner asked for "+30% font on the dashboard UI"
+     on 2026-07-27; that pass reached the RAIL ONLY, by hand, which is why
+     he asked again on 2026-07-30. The factor is now the named ladder in
+     scale.css and this block carries it to every design-repo primitive.
+     Those primitives live in spaceaware-student-sdn and the ZIP-SYNC LAW
+     forbids editing that tree — the design tool is its only writer — so
+     the scale is applied HERE, in the consumer, exactly as the law
+     prescribes (IRIS ruling 2026-07-30 §4: override where the design
+     writes SCOPED CSS; use a prop only where it writes an INLINE
+     attribute, which is Panel's `pad` alone).
      `.root` prefixes the selectors purely for specificity — the design's
      own rules carry Svelte's scope class, so an unprefixed selector would
-     lose. Drop this block if a future design zip ships these sizes.
+     lose — and the element qualifiers matter: a bare `.primary` would
+     restyle <tr class="primary"> in the operator-keys tables.
+     Never `!important`. Drop this block if a design zip ships these sizes.
      ------------------------------------------------------------------ */
   .root :global(.sdn-rail .brand-name) {
-    font-size: 19.5px; /* 15 x1.3 */
+    font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
   }
   .root :global(.sdn-rail .brand-sub),
   .root :global(.sdn-rail .sec),
   .root :global(.sdn-rail .fkey) {
-    font-size: 12.35px; /* 9.5 x1.3 */
+    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
   }
   .root :global(.sdn-rail .nav-lbl) {
-    font-size: 19.5px; /* 15 x1.3 */
+    font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
   }
   .root :global(.sdn-rail .nav-ico) {
-    font-size: 26.65px; /* 20.5 x1.3 */
+    font-size: var(--sdn-fs-title); line-height: var(--sdn-lh-title);
   }
   .root :global(.sdn-rail .nav-i) {
     height: 56px; /* 46 -> 56 so the taller glyph + label are not cramped */
@@ -640,10 +647,55 @@
   }
   /* The expanded flyout has to grow or "PERMISSIONS N3" clips: the label
      column is (width - 64px icon gutter). 218px left ~154px, and the label
-     needs ~186px at 19.5px. */
+     needs ~191px at the value rung. */
   .root :global(aside.sdn-rail:hover),
   .root :global(aside.sdn-rail.pinned) {
     width: 286px;
+  }
+  /* GBtn (design GBtn.svelte): the owner's "edit buttons need to be bigger
+     and vertically centered". 22px line + 2x8px padding + 2x1px border = a
+     deterministic 40px box. Element-qualified so <tr class="primary"> is
+     never caught. */
+  .root :global(button.neutral),
+  .root :global(button.primary),
+  .root :global(button.destructive),
+  .root :global(a.neutral),
+  .root :global(a.primary),
+  .root :global(a.destructive) {
+    font-size: var(--sdn-fs-label);
+    line-height: var(--sdn-lh-label);
+    padding: var(--sdn-sp-3) var(--sdn-sp-9);
+    min-height: 40px;
+    min-width: 80px;
+  }
+  /* StatusChip (design StatusChip.svelte) — the control tier, so a chip never
+     out-shouts the button beside it. */
+  .root :global(.chip) {
+    font-size: var(--sdn-fs-label);
+    line-height: var(--sdn-lh-label);
+    padding: var(--sdn-sp-2) var(--sdn-sp-6);
+  }
+  .root :global(.chip .dot) { width: 9px; height: 9px; }
+  /* ConsoleHeader (design shell/ConsoleHeader.svelte) — the page title block.
+     Qualified by the `header` element on purpose: the design's `.ttl` class is
+     also an SDN class in AccountAdmin, and a bare :global(.ttl) would tie on
+     specificity and then win or lose on source order. No SDN component renders
+     a <header>, so this reaches ConsoleHeader and nothing else.
+     Chrome sits deliberately below content: kicker/sub on the control tier,
+     and the page title at the ladder's top rung. */
+  .root :global(header .kick),
+  .root :global(header .sub) {
+    font-size: var(--sdn-fs-label);
+    line-height: var(--sdn-lh-label);
+  }
+  .root :global(header .ttl) {
+    font-size: var(--sdn-fs-hero);
+    line-height: var(--sdn-lh-hero);
+  }
+  .root :global(header .peers) {
+    font-size: var(--sdn-fs-label);
+    line-height: var(--sdn-lh-label);
+    padding: var(--sdn-sp-2) var(--sdn-sp-6);
   }
 
   main {
@@ -661,8 +713,17 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
-    padding: 16px 24px 24px;
+    /* Was `overflow: hidden`, which silently broke the ACCOUNTS route: the
+       admin panel is `flex: none`, so it took its full natural height, the
+       flexible .stack above it was squeezed to ZERO, and the clipped remainder
+       (the NETWORK PEERS table) became unreachable because nothing scrolled.
+       The visible symptom was the owner's screenshot: .stack's pager paints
+       with overflow:visible, so a 0-height panel's pager landed on top of the
+       panel below, crowding its border. The column scrolls now. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding: var(--sdn-sp-7) var(--sdn-sp-9) var(--sdn-sp-9);
   }
   .toolbar {
     display: flex;
@@ -681,35 +742,38 @@
     min-width: 260px;
     max-width: 560px;
   }
-  .sglyph { font-size: 18px; }
+  .sglyph { font-size: var(--sdn-fs-head); line-height: var(--sdn-lh-head); }
   .search input {
     flex: 1;
     background: transparent;
     border: 0;
     outline: none;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 15px;
+    font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
     letter-spacing: 0.06em;
     min-width: 0;
   }
   .search input::placeholder { color: rgba(159, 212, 245, 0.35); }
   .mode {
-    font-size: 11px;
+    font-size: var(--sdn-fs-fine); line-height: var(--sdn-lh-fine);
     letter-spacing: 0.16em;
     border: 1px solid;
     padding: 2px 7px;
     white-space: nowrap;
   }
-  /* MENU SCALE (owner directive 2026-07-27: "font needs to be 30% bigger on
-     sdn node menus") — every size in this block is its previous value x1.3,
-     with padding/tracking nudged only where the larger glyphs would clip.
-     Body text, tables and panels are deliberately untouched: they were
-     already scaled by the earlier global directive. */
+  /* MENU SCALE. Originally the owner's 2026-07-27 directive, applied here by
+     hand. The comment that stood here claimed "body text, tables and panels
+     are deliberately untouched: they were already scaled by the earlier
+     global directive" — that was FALSE, and it is why the owner had to give
+     the same instruction twice: measured on the built page, tables rendered
+     at 10-14.5px, i.e. unscaled. Sizes now come from the ladder in
+     scale.css, which covers every surface; padding/tracking stay nudged only
+     where larger glyphs would clip. */
   .ctl {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    font-size: 16.25px; /* 12.5 x1.3 */
+    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
     letter-spacing: 0.14em; /* eased from 0.16em so TRUST/HIDE… stay on one line */
     white-space: nowrap;
   }
@@ -717,7 +781,7 @@
     background: transparent;
     border: 1px solid;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 16.9px; /* 13 x1.3 */
+    font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note);
     letter-spacing: 0.08em;
     padding: 6px 10px;
     outline: none;
@@ -726,7 +790,7 @@
   .ctl.check { cursor: pointer; user-select: none; }
   .ctl.check input {
     appearance: none;
-    width: 17px; /* 13 x1.3 — the tick keeps pace with its label */
+    width: 17px; /* the tick keeps pace with its label */
     height: 17px;
     border: 1px solid rgba(110, 170, 190, 0.5);
     background: transparent;
@@ -737,7 +801,7 @@
   }
   .ctl.check input::before {
     content: '';
-    width: 9px; /* 7 x1.3 */
+    width: 9px;
     height: 9px;
     transform: scale(0);
     background: #35c9d8;
@@ -747,21 +811,24 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    font-size: 14.5px;
+    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
     letter-spacing: 0.14em;
     margin-bottom: 12px;
   }
   .meta .dot { opacity: 0.5; }
   .stack {
     flex: 1;
-    min-height: 0;
+    /* Never collapse to nothing: the node table and the globe are the point of
+       this route, and a 0-height panel that still paints its pager is how the
+       overlap in the owner's screenshot happened. */
+    min-height: 480px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--sdn-sp-7);
   }
   .globe-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
   .globe-panel .k {
-    font-size: 12.5px;
+    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
     letter-spacing: 0.18em;
     padding: 11px 14px 9px;
     border-bottom: 1px solid;
@@ -775,19 +842,20 @@
     gap: 12px;
     flex-wrap: wrap;
     border-top: 1px solid;
-    padding: 9px 14px;
-    font-size: 12.5px;
+    padding: var(--sdn-sp-5) var(--sdn-sp-9);
+    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
     letter-spacing: 0.14em;
   }
-  .pager-ctl { display: inline-flex; align-items: center; gap: 10px; }
+  .pager-ctl { display: inline-flex; align-items: center; gap: var(--sdn-sp-5); }
   .pager button {
     background: transparent;
     border: 1px solid;
     cursor: pointer;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 12.5px;
+    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
     letter-spacing: 0.12em;
-    padding: 4px 10px;
+    padding: var(--sdn-sp-3) calc(var(--sdn-sp-4) + 0.12em) var(--sdn-sp-3) var(--sdn-sp-4);
+    min-height: 40px;
   }
   .pager button:disabled { opacity: 0.35; cursor: default; }
   .settings-wrap { position: relative; }
@@ -797,7 +865,7 @@
     border: 1px solid;
     cursor: pointer;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 16.25px; /* 12.5 x1.3 */
+    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
     letter-spacing: 0.14em;
     padding: 8px 14px;
     white-space: nowrap;
@@ -808,25 +876,25 @@
     right: 0;
     z-index: 30;
     border: 1px solid;
-    /* 300 x1.3 so the hint does not re-wrap at the new size — but min-width
-       beats max-width in CSS, so the cap has to live INSIDE the min() or a
-       390px phone pushes the popover off the left edge. */
+    /* Widened for the scaled type so the hint does not re-wrap — but
+       min-width beats max-width in CSS, so the cap has to live INSIDE the
+       min() or a 390px phone pushes the popover off the left edge. */
     min-width: min(390px, calc(100vw - 32px));
     max-width: calc(100vw - 32px);
     padding: 14px 16px 15px;
     box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
   }
   .settings-title {
-    font-size: 14.95px; /* 11.5 x1.3 */
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
     letter-spacing: 0.16em;
     border-bottom: 1px solid;
     padding-bottom: 7px;
     margin-bottom: 10px;
   }
   .settings-hint {
-    font-size: 16.25px; /* 12.5 x1.3 */
+    font-size: var(--sdn-fs-body);
     letter-spacing: 0.04em;
-    line-height: 1.5;
+    line-height: var(--sdn-lh-body);
     margin-top: 8px;
   }
   .self-page {
@@ -838,7 +906,7 @@
     gap: 16px;
     padding-bottom: 8px;
   }
-  .account-admin { margin-top: 16px; flex: none; }
+  .account-admin { margin-top: var(--sdn-sp-7); flex: none; }
   .page-head {
     display: flex;
     align-items: flex-start;
@@ -861,11 +929,11 @@
   .self-dn {
     font-family: 'Chakra Petch', sans-serif;
     font-weight: 600;
-    font-size: 24px;
+    font-size: var(--sdn-fs-hero); line-height: var(--sdn-lh-hero);
     letter-spacing: 0.04em;
     overflow-wrap: anywhere;
   }
-  .self-org { font-size: 15px; letter-spacing: 0.04em; margin-top: 3px; }
+  .self-org { font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value); letter-spacing: 0.04em; margin-top: 3px; }
   .self-chips { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
   .self-body { padding: 14px 18px 18px; }
   .empty {
@@ -874,7 +942,7 @@
     gap: 12px;
     border: 1px solid;
     padding: 26px 28px;
-    font-size: 16.5px;
+    font-size: var(--sdn-fs-lead); line-height: var(--sdn-lh-lead);
     letter-spacing: 0.06em;
     max-width: 560px;
   }
@@ -955,5 +1023,5 @@
       padding-right: 8px;
     }
   }
-  .empty .glyph { font-size: 21px; }
+  .empty .glyph { font-size: var(--sdn-fs-title); line-height: var(--sdn-lh-title); }
 </style>

@@ -116,16 +116,16 @@
 
 <style>
   .kv { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-  .k { font-size: 11px; letter-spacing: 0.16em; flex: 0 0 118px; }
-  .v { font-size: 13.5px; letter-spacing: 0.02em; min-width: 0; overflow-wrap: anywhere; }
+  .k { font-size: var(--sdn-fs-fine); line-height: var(--sdn-lh-fine); letter-spacing: 0.16em; flex: 0 0 118px; }
+  .v { font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data); letter-spacing: 0.02em; min-width: 0; overflow-wrap: anywhere; }
   .sel { user-select: all; }
   .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
-  .fine { font-size: 11.5px; letter-spacing: 0.06em; line-height: 1.55; margin: 0; }
+  .fine { font-size: var(--sdn-fs-label); letter-spacing: 0.06em; line-height: var(--sdn-lh-label); margin: 0; }
   select {
     background: transparent;
     border: 1px solid;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 14px;
+    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
     letter-spacing: 0.06em;
     padding: 5px 8px;
     outline: none;
@@ -135,9 +135,9 @@
   .err {
     border: 1px solid;
     padding: 9px 11px;
-    font-size: 13px;
+    font-size: var(--sdn-fs-note);
     letter-spacing: 0.04em;
-    line-height: 1.5;
+    line-height: var(--sdn-lh-note);
   }
   .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
   a { text-decoration: none; }

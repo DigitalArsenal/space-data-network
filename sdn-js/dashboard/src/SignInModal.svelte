@@ -182,20 +182,20 @@
 
 <style>
   .wallet-host { min-width: 0; }
-  .hint { font-size: 12.5px; letter-spacing: 0.04em; line-height: 1.55; }
+  .hint { font-size: var(--sdn-fs-body); letter-spacing: 0.04em; line-height: var(--sdn-lh-body); }
   .note {
     border: 1px solid;
     padding: 10px 12px;
-    font-size: 13px;
+    font-size: var(--sdn-fs-note);
     letter-spacing: 0.04em;
-    line-height: 1.55;
+    line-height: var(--sdn-lh-note);
   }
   .err {
     border: 1px solid;
     padding: 9px 11px;
-    font-size: 13px;
+    font-size: var(--sdn-fs-note);
     letter-spacing: 0.04em;
-    line-height: 1.5;
+    line-height: var(--sdn-lh-note);
   }
   .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
 </style>
