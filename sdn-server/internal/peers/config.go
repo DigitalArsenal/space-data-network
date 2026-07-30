@@ -69,11 +69,21 @@ func InitializeFromConfig(cfg RegistryConfig) (*Registry, *TrustedConnectionGate
 
 		// Only add if not already present (don't overwrite persisted data)
 		if _, err := registry.GetPeer(info.ID); err == ErrPeerNotFound {
+			// NO NAME. The config line is a multiaddr; it does not say what
+			// the operator calls this box, and `"config:" + ID.ShortString()`
+			// answered that question with `config:<peer.ID 16*PpYr2U>` — a
+			// PROVENANCE tag wearing libp2p's debug stringer, in the NAME
+			// field. That is the exact shape of the "Config Trusted Peer"
+			// placeholder the owner caught on 2026-07-30, and provenance has
+			// its own field now (Metadata["source"], the SOURCE column).
+			//
+			// A blank name renders as "unknown" and is TRUE. It is filled the
+			// moment there is something real to fill it with: the peer's own
+			// EPM DN, or an operator's pin label (epm/peergraph.go).
 			tp := &TrustedPeer{
 				ID:         info.ID,
 				Addrs:      info.Addrs,
 				TrustLevel: Trusted,
-				Name:       "config:" + info.ID.ShortString(),
 			}
 			if err := registry.AddPeer(tp); err != nil {
 				log.Warnf("Failed to add trusted peer %s: %v", info.ID.ShortString(), err)
