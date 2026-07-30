@@ -399,9 +399,17 @@ func (n *Node) init() error {
 	}
 	pinStore, err := peers.NewPinStore(pinPath)
 	if err != nil {
-		// Fail loud, not silent: starting with an empty pin set would quietly
-		// drop peers the operator deliberately kept.
-		return fmt.Errorf("open peer pin store: %w", err)
+		// LOUD, BUT NOT FATAL — and this is a deliberate proportionality call.
+		// A pin file is a DISPLAY surface. Refusing to boot the node because a
+		// few hundred bytes of JSON went bad would take sdn.spaceaware.io
+		// offline over a peer table, which is out of all proportion to the
+		// harm. So: preserve the bad file (NewPinStore renames it aside rather
+		// than overwriting it — nothing is lost and it can be recovered by
+		// hand), shout in the log, and come up with config pins only. The board
+		// then degrades to "config-pinned + connected", which is still honest
+		// about every row it shows.
+		log.Errorf("PEER PIN STORE UNAVAILABLE at %s: %v — operator pins will not appear on the peer board until this is fixed; config pins are unaffected", pinPath, err)
+		pinStore, _ = peers.NewPinStore("")
 	}
 	n.peerRegistry.SetPinStore(pinStore)
 	if pinPath != "" {

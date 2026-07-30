@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -121,6 +122,36 @@ func TestCorruptPinFileIsAnError(t *testing.T) {
 	}
 	if _, err := NewPinStore(path); err == nil {
 		t.Fatal("a malformed pin store must fail loudly")
+	}
+
+	// ...and the bad bytes must be PRESERVED, not left in place to be
+	// overwritten by the next Pin(). node.go carries on with an empty store so
+	// a bad pin file cannot take the node offline, which makes this the only
+	// thing standing between a JSON typo and silent, permanent pin loss.
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	var preserved string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "peer-pins.json.corrupt-") {
+			preserved = e.Name()
+		}
+	}
+	if preserved == "" {
+		t.Fatal("the malformed pin file was not preserved")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("the malformed file is still at the live path; the next Pin() would overwrite it")
+	}
+
+	// A fresh store at the same path now opens clean and is writable.
+	store, err := NewPinStore(path)
+	if err != nil {
+		t.Fatalf("reopen after corruption: %v", err)
+	}
+	if _, err := store.Pin(Pin{PeerID: testPinPeerA}); err != nil {
+		t.Fatalf("pin after corruption: %v", err)
 	}
 }
 

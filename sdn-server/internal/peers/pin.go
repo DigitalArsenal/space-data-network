@@ -131,7 +131,16 @@ func NewPinStore(path string) (*PinStore, error) {
 	}
 	var pins []Pin
 	if err := json.Unmarshal(data, &pins); err != nil {
-		return nil, fmt.Errorf("peers: parse pin store %s: %w", store.path, err)
+		// PRESERVE, NEVER OVERWRITE. The caller may choose to carry on with an
+		// empty store (node.go does, so a bad pin file cannot take the node
+		// offline) — and if it does, the very next Pin() would write over this
+		// file and destroy whatever the operator had kept. Move it aside first,
+		// so "my pins vanished" is always recoverable from disk.
+		aside := store.path + ".corrupt-" + time.Now().UTC().Format("20060102T150405Z")
+		if renameErr := os.Rename(store.path, aside); renameErr != nil {
+			return nil, fmt.Errorf("peers: parse pin store %s: %w (and it could not be moved aside: %v)", store.path, err, renameErr)
+		}
+		return nil, fmt.Errorf("peers: parse pin store %s: %w (preserved at %s)", store.path, err, aside)
 	}
 	for _, pin := range pins {
 		id := strings.TrimSpace(pin.PeerID)
