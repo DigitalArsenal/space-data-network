@@ -171,6 +171,7 @@ type Node struct {
 	pluginRegistry          *license.PluginRegistry
 	licensingModule         *modulert.Module
 	capabilityPolicy        *modulert.CapabilityPolicyStore
+	moduleSignaturePolicy   *modulert.ModuleSignaturePolicy
 	modulePublishAuthorizer license.ModulePublishAuthorizer
 	moduleDeliveryDiscovery cid.Cid
 	sdnAdvertisementTarget  sdnAdvertisementDiscoveryTarget
@@ -584,6 +585,16 @@ func (n *Node) init() error {
 		n.capabilityPolicy = capPolicyStore
 	}
 
+	// Module publication-signature policy (seal council / owner ruling
+	// 2026-07-30): the publisher key IS the node key, trust is priced by the
+	// Adversarial-Security bond on that key's derived chain addresses, and
+	// this binary — which the council found had NO policy attached at all
+	// (nil == no verification) — now always attaches one. It lands in
+	// REPORT-ONLY: verify everything, log every would-be rejection under the
+	// token "module_signature_observe", refuse nothing. See
+	// module_signature_policy.go and SDN_MODULE_SIGNATURE_ENFORCE.
+	n.moduleSignaturePolicy = n.buildModuleSignaturePolicy()
+
 	var xpubStr string
 	if n.identityBundle != nil {
 		xpubStr = n.identityBundle.XPub
@@ -791,6 +802,12 @@ func (n *Node) init() error {
 			log.Warnf("Failed to create flow manager: %v", err)
 		} else {
 			n.flowManager = fm
+			// Flow BUNDLES are admitted through the same publication-signature
+			// gate as modules (flowrt calls modulert.EnforceModuleSignaturePolicy),
+			// but only if the manager has been handed the policy. The council
+			// found SetModuleSignaturePolicy had ZERO callers repo-wide, which
+			// left the flow admit path inert even on nodes that gated modules.
+			fm.SetModuleSignaturePolicy(n.moduleSignaturePolicy)
 			log.Info("Flow manager initialized; installed flow WASM modules load only on explicit start or lazy HTTP request")
 		}
 	}
@@ -815,6 +832,13 @@ func (n *Node) buildModuleNodeContextWithPolicy() (*modulert.NodeContext, error)
 	}
 	if nodeCtx != nil {
 		nodeCtx.CapabilityPolicy = n.capabilityPolicy
+		// The publication-signature gate, attached on the SAME path and for
+		// the same reason as the capability policy: every modulert.NewModule
+		// call in this file routes through this wrapper, so the gate cannot
+		// be missed by whichever caller happens to build the NodeContext.
+		// This is the wiring the seal council found absent (node.go:790-799
+		// attached only CapabilityPolicy).
+		nodeCtx.ModuleSignaturePolicy = n.moduleSignaturePolicy
 	}
 	return nodeCtx, nil
 }
