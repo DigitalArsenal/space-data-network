@@ -37,6 +37,7 @@
   import { apiFetch } from './api.js';
   import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
   import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
+  import { presenceSummary } from './peers.js';
   import { createSemanticEngine } from './semantic.js';
   import { createRuntimeFeed, foldRuntime } from './runtime.js';
 
@@ -91,9 +92,18 @@
     accounts: ['ACCOUNTS', ''],
   };
 
-  /** ACCOUNTS' two tables are TABS now — one visible at a time (owner 2026-07-30). */
+  /**
+   * ACCOUNTS' two tables are TABS now — one visible at a time (owner 2026-07-30).
+   *
+   * NOT "TRUSTED PEERS". That tab is the libp2p trust REGISTRY, whose entries
+   * carry a trust level that may be `never` — calling the whole list "trusted"
+   * asserted of every row the one thing the row is there to record. The tab is
+   * named after the registry, and its chip already counts honestly ("N IN
+   * REGISTRY"). Part of the same correction as the header count: nothing on this
+   * page calls a set "trusted" on its behalf.
+   */
   const ACCOUNT_TABS = [
-    ['peers', 'TRUSTED PEERS'],
+    ['peers', 'PEER REGISTRY'],
     ['keys', 'OPERATOR KEYS'],
   ];
 
@@ -317,8 +327,6 @@
     }
     clearSession();
   }
-  const onlinePeers = $derived(nodes.filter((n) => !n.isSelf && n.online).length);
-  const totalPeers = $derived(nodes.filter((n) => !n.isSelf).length);
   const connected = $derived(view != null);
   const updatedAgo = $derived(
     view ? Math.max(0, Math.round((now - view.generatedAt) / 1000)) : null
@@ -334,12 +342,30 @@
       withoutSelf(mergeAccounts(withoutSelf(nodes.map(accountFromNode), selfId), accountEntries), selfId)
     );
   });
+  // The synthetic row for an Admin-overlay account with NO peer presence names
+  // itself `account`: it is not a peer, so it is not counted as one, and it can
+  // never be mistaken for a row whose provenance the node failed to state
+  // (peers.js `peerSource`).
   const accountNodes = $derived(accountRows.map((r) => r.node ?? {
     peerId: r.peerId, dn: r.name, org: r.organization, vcard: '', lat: 0, lon: 0,
     geoLabel: '', online: false, isSelf: false, agent: '', uptimeS: 0, lastSeen: r.lastConnected,
     addrs: [], trustLevel: r.trustLevel, role: '', latencyMs: 0, suiteVersion: '',
-    standardsVersion: '', account: r,
+    standardsVersion: '', source: 'account', pinned: false, pinNote: '', account: r,
   }));
+  /**
+   * THE HEADER COUNT (owner, 2026-07-30: "it says 35 peers, but only shows one
+   * on the globe", "I have no idea what these peers are that are in the table").
+   *
+   * It used to read `N/M PEERS ONLINE` over a set of 35 that was 34 DHT
+   * rendezvous advertisements this node had never dialled. The number was
+   * arithmetically true and told the owner nothing he could check. Admission is
+   * server-side now — a row is PINNED or CONNECTED — so the header states the
+   * set in exactly those terms, and every part of it is verifiable in the SOURCE
+   * column below it. `unexplained` should always be 0; if the node ever admits a
+   * row that is neither, the header says so in red rather than absorbing it into
+   * a total.
+   */
+  const presence = $derived(presenceSummary(accountNodes));
   const visible = $derived(applySettings(accountNodes, { trustTier, hideUntrustedOffline }));
   const searching = $derived(Boolean(query.trim()));
   const semanticActive = $derived(searching && semStatus === 'ready' && semScores !== null);
@@ -479,7 +505,16 @@
         <span class="hdr-status">
           {#if connected}
             <StatusChip label="FEED LIVE" color={theme.green} />
-            <StatusChip label={`${onlinePeers}/${totalPeers} PEERS ONLINE`} color={theme.ice} dot={false} />
+            <StatusChip
+              label={presence.pinnedOffline
+                ? `${presence.connected} CONNECTED · ${presence.pinnedOffline} PINNED`
+                : `${presence.connected} CONNECTED`}
+              color={theme.green}
+              dot={false}
+            />
+            {#if presence.unexplained}
+              <StatusChip label={`${presence.unexplained} UNEXPLAINED`} color={theme.red} dot={false} />
+            {/if}
           {:else}
             <StatusChip label="CONNECTING" color={theme.amber} />
           {/if}
@@ -621,8 +656,17 @@
           </div>
         </div>
 
+        <!-- The table's own arithmetic, stated as a subset rather than as a
+             total: a filter is on this toolbar and "12 PEERS" beside a table of
+             three is the same class of defect as the header count was. -->
         <div class="meta" style="color:{theme.textMuted};">
-          <span>{rows.length}/{accountRows.length} PEER{accountRows.length === 1 ? '' : 'S'}</span>
+          <span>{rows.length} OF {accountRows.length} SHOWN</span>
+          <span class="dot">·</span>
+          <span>{presence.connected} CONNECTED</span>
+          {#if presence.pinnedOffline}
+            <span class="dot">·</span>
+            <span>{presence.pinnedOffline} PINNED, OFFLINE</span>
+          {/if}
           <span class="dot">·</span>
           <span>SOURCE {shortId(view?.sourcePeerId ?? '')}</span>
           <span class="dot">·</span>
@@ -1004,14 +1048,28 @@
     background: #35c9d8;
   }
   .ctl.check input:checked::before { transform: scale(1); }
+  /* THE METALINE WRAPS (defect, owner's 390px screenshot 2026-07-30). This was a
+     nowrap flex row inside `main`, which is `overflow-x: hidden` — so at phone
+     widths it did not scroll and it did not wrap, it was CUT: measured 592px of
+     content in a 285px box, losing the last 307px. The words it lost were the
+     ones the page was rewritten to say ("1 PINNED, OFFLINE", "UPDATED …"), and
+     it is the surface the header's own count chips DELEGATE to below 1180px
+     (see the L3 block near the end of this file) — the one place a phone can
+     read them. Two rules do it:
+       flex-wrap  the LIST of facts breaks onto as many lines as it needs;
+       nowrap     a single fact never splits, so "3 OF 3 SHOWN" cannot render as
+                  "3 OF" / "3 SHOWN" the way it did at 390px. */
   .meta {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 9px;
+    row-gap: 2px;
     font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
     letter-spacing: 0.14em;
     margin-bottom: 12px;
   }
+  .meta > span { white-space: nowrap; }
   .meta .dot { opacity: 0.5; }
   /* L1 + L5: a plain column of panels, each at its NATURAL height, all the same
      width. It used to be a flex race (`flex: 1 1 50%` on each panel against a
@@ -1176,6 +1234,21 @@
       gap: 6px;
       align-items: center;
       padding-right: 8px;
+    }
+  }
+
+  /* Phones — the same 560px tier NodeTable's column ladder uses, so the table
+     and the line above it change shape at one width rather than two.
+     scale.css assigns the metaline rung to `micro`; at --sdn-fs-data its
+     longest single fact ("SOURCE 16Uiu2…1uF5PP") measures 266px, which still
+     does not fit a 320px viewport's 215px content box even after wrapping, and
+     wrapping alone spends five lines at 390px. At `micro` it fits every phone
+     width and costs four. Desktop keeps `data` — this is the one rung the
+     narrow tier lowers. */
+  @media (max-width: 560px) {
+    .meta {
+      font-size: var(--sdn-fs-micro);
+      line-height: var(--sdn-lh-micro);
     }
   }
   .empty .glyph { font-size: var(--sdn-fs-title); line-height: var(--sdn-lh-title); }

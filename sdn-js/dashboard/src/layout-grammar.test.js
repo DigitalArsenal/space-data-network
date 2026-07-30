@@ -140,6 +140,59 @@ describe('L4 — widgets paginate, they do not scroll', () => {
     expect(offenders, 'L4: overflow paginates; a max-height hides rows instead').toEqual([]);
   });
 
+  /*
+   * L4b — NOTHING IS CUT, AND NOTHING IS CUT UP.
+   *
+   * Added 2026-07-30 from two defects in one build of the PEERS route, both of
+   * them the same mistake in different elements: a box was allowed to be
+   * narrower than the shortest thing inside it, and the browser obliged.
+   *   · the NAME column rendered the fallback identity as `unkno` / `wn`,
+   *     because `overflow-wrap: anywhere` let every cell's minimum collapse to
+   *     one character and the SOURCE column's config path outbid it;
+   *   · the metaline lost its last 307px at 390px, because it was a nowrap flex
+   *     row inside a container that is `overflow-x: hidden` — so it could
+   *     neither wrap nor scroll, only disappear.
+   * Neither is visible in a unit test or a Go test; both are visible in a
+   * screenshot, which is why the rule is written against the source.
+   */
+  it('no table cell may collapse below one word', () => {
+    const table = COMPONENTS.find((c) => c.file === 'NodeTable.svelte').src;
+    // The bare `td` rule — anchored, or this matches `tr.row:hover td {` and
+    // passes against a block that never mentioned overflow-wrap at all.
+    const tdBlock = /^\s*td\s*\{[^}]*\}/m.exec(table)?.[0] ?? '';
+    expect(tdBlock, 'NodeTable must style td').not.toBe('');
+    expect(/padding\s*:/.test(tdBlock), 'the td default rule, not a hover rule').toBe(true);
+    expect(
+      /overflow-wrap\s*:\s*anywhere/.test(tdBlock),
+      'L4b: `anywhere` on the td default lets any column squeeze to one character — use break-word'
+    ).toBe(false);
+    // Exactly two values here have no bound on their length: the config path and
+    // an operator-typed display name. Each may collapse, and each is capped, so
+    // neither can bid for a column at the other columns' expense.
+    for (const sel of ['.note', '.dn']) {
+      const block = new RegExp(`\\${sel}\\s*\\{[^}]*\\}`).exec(table)?.[0] ?? '';
+      expect(block, `NodeTable must style ${sel}`).not.toBe('');
+      expect(/overflow-wrap\s*:\s*anywhere/.test(block), `L4b: ${sel} may collapse`).toBe(true);
+      expect(/max-width\s*:/.test(block), `L4b: …only while ${sel} is capped`).toBe(true);
+    }
+    // A peer id split across two lines is two fragments, not an identifier —
+    // and its width is the NAME column's floor, which is what keeps the two
+    // collapsible values above from squeezing the name to nothing.
+    const pid = /\.pid\s*\{[^}]*\}/.exec(table)?.[0] ?? '';
+    expect(/white-space\s*:\s*nowrap/.test(pid), 'L4b: a peer id is one token').toBe(true);
+  });
+
+  it('the metaline wraps instead of being clipped', () => {
+    const app = COMPONENTS.find((c) => c.file === PAGE_SCROLLER).src;
+    const meta = /(?<![-\w])\.meta\s*\{[^}]*\}/.exec(app)?.[0] ?? '';
+    expect(meta, 'App must style .meta').not.toBe('');
+    expect(/flex-wrap\s*:\s*wrap/.test(meta), 'L4b: it lives inside overflow-x:hidden').toBe(true);
+    expect(
+      /\.meta\s*>\s*span\s*\{[^}]*white-space\s*:\s*nowrap/.test(app),
+      'L4b: the LIST wraps, a single fact does not split'
+    ).toBe(true);
+  });
+
   it('there is exactly ONE pager implementation and it is the shared component', () => {
     // The tell-tale of a hand-rolled copy is the pager's own vocabulary.
     const offenders = COMPONENTS.filter(
@@ -172,6 +225,69 @@ describe('L6 — control chrome is inset and full-size', () => {
       expect(/aspect-ratio\s*:/.test(block), `${file}: state the aspect ratio (L6)`).toBe(true);
       expect(/flex\s*:\s*none/.test(block), `${file}: flex:none, or flex-shrink squashes it (L6)`).toBe(true);
     }
+  });
+});
+
+/*
+ * L7 — A COUNT IS CHECKABLE, A ROW SAYS WHERE IT CAME FROM.
+ *
+ * Added 2026-07-30 after the owner raised the same page three times in one day:
+ * "it says 35 peers, but only shows one on the globe … rows that say 'last seen
+ * - never', so how did they get there? Also what does the first row 'config
+ * trusted peer' mean?" — and, separately, "I have no idea what these peers are
+ * that are in the table".
+ *
+ * Every one of those was a surface asserting something the operator could not
+ * verify from the same screen: a total that the map contradicted, a verdict
+ * ("never") where the fact was "not yet", a hardcoded placeholder standing in
+ * for a name, and a set called "trusted" on the strength of nothing. The rules
+ * below are what "true on screen" means here, written so a build fails rather
+ * than a fourth screenshot arriving.
+ */
+describe('L7 — the page cannot assert what the operator cannot check', () => {
+  it('no surface calls a peer set "trusted" on its behalf', () => {
+    // The trust REGISTRY is a fine name for a registry: it records a level,
+    // which may be `never`. "TRUSTED PEERS" claims of every row the one thing
+    // the row exists to record.
+    const offenders = COMPONENTS.filter(({ file, src }) => /TRUSTED PEERS?['"`\s<]/.test(src)).map(
+      ({ file }) => file
+    );
+    expect(offenders, 'L7: name the registry, do not vouch for its contents').toEqual([]);
+  });
+
+  it('LAST SEEN never renders the bare word "never"', () => {
+    // "never" is a verdict about the future; the fact is "not observed yet",
+    // which for a pinned peer is ordinary. peers.js `lastSeenLabel` says which.
+    const src = readFileSync(join(HERE, 'format.js'), 'utf8');
+    expect(/return\s+'never'/.test(stripComments(src)), 'L7: format.js must not mint "never"').toBe(
+      false
+    );
+  });
+
+  it('the peers table carries a SOURCE column, and it is not droppable', () => {
+    const table = COMPONENTS.find((c) => c.file === 'NodeTable.svelte').src;
+    expect(/label:\s*'SOURCE'/.test(table), 'L7: the row must say how it got here').toBe(true);
+    // `drop:` is the narrow-screen priority ladder. NAME and SOURCE — who it is
+    // and why it is listed — carry no `drop`, so they survive every breakpoint.
+    // The column that answers the owner's question is not the first one to go.
+    expect(/key:\s*'source',\s*label:\s*'SOURCE'\s*}/.test(table)).toBe(true);
+    expect(/key:\s*'node',\s*label:\s*'NAME'\s*}/.test(table)).toBe(true);
+  });
+
+  it('the globe states its own coverage, so a count cannot contradict the dots', () => {
+    const map = COMPONENTS.find((c) => c.file === 'PeerMap.svelte').src;
+    expect(/mapCoverage\(/.test(map), 'L7: PeerMap must publish plotted vs total').toBe(true);
+    expect(/NO LOCATION/.test(map), 'L7: name the peers that cannot be drawn').toBe(true);
+  });
+
+  it('a provenance label is never a NAME — the vocabulary lives in peers.js', () => {
+    // The live feed's one named row read 'Config Trusted Peer', a placeholder
+    // the node manufactured because provenance had nowhere to go. Nothing in
+    // this tree may re-mint a name out of a row's origin.
+    const offenders = COMPONENTS.filter(({ src }) => /Config Trusted Peer/i.test(src)).map(
+      ({ file }) => file
+    );
+    expect(offenders, 'L7: provenance is a column, not a name').toEqual([]);
   });
 });
 

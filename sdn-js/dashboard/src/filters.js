@@ -10,6 +10,7 @@
 
 import { parseVCard, vcardSearchText, vcardProseText } from './vcard.js';
 import { normalizeTrust, trustRank, hasTrustAssertion } from './trust.js';
+import { peerSource } from './peers.js';
 
 /**
  * One node's flattened searchable text (lowercased): DN, org, trust tier,
@@ -111,10 +112,21 @@ export function semanticRank(nodes, scores, substringIds, floor = 0.18) {
   return out;
 }
 
+/**
+ * Provenance order for the SOURCE column: the rows that need explaining come
+ * first. A config pin is the one an operator cannot change from this page, an
+ * operator pin is the one they chose, a connection is self-explanatory, and
+ * "not stated" is a defect that belongs where it will be seen — at the top of
+ * the descending sort, never buried.
+ */
+const SOURCE_ORDER = { unknown: 0, config: 1, pinned: 2, connected: 3, account: 4 };
+
 /** Column sorters for the table. Key → comparator over NodeStatusView. */
 export const SORTERS = {
   node: (a, b) => (a.dn || a.org || a.peerId).localeCompare(b.dn || b.org || b.peerId),
   org: (a, b) => (a.org || '￿').localeCompare(b.org || '￿'),
+  source: (a, b) =>
+    (SOURCE_ORDER[peerSource(a).id] ?? 0) - (SOURCE_ORDER[peerSource(b).id] ?? 0),
   trust: (a, b) => trustRank(b.trustLevel) - trustRank(a.trustLevel),
   status: (a, b) => Number(b.online) - Number(a.online),
   geo: (a, b) => (a.geoLabel || '￿').localeCompare(b.geoLabel || '￿'),

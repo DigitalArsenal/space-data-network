@@ -18,6 +18,7 @@
   import StatusChip from 'spaceaware-student-sdn/src/lib/components/StatusChip.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import Globe from './Globe.svelte';
+  import { hasFix, mapCoverage } from './peers.js';
 
   /**
    * @type {{
@@ -39,7 +40,17 @@
   const peers = $derived((nodes ?? []).filter((n) => !n.isSelf));
   const links = $derived(peers.filter((n) => n.online).length);
   /** Only nodes with a real fix are drawn — 0,0 is "no location", not the Gulf of Guinea. */
-  const placed = $derived((nodes ?? []).filter((n) => n.lat !== 0 || n.lon !== 0));
+  const placed = $derived((nodes ?? []).filter(hasFix));
+  /**
+   * THE OWNER'S ARITHMETIC (2026-07-30): "it says 35 peers, but only shows one
+   * on the globe". Both numbers were true and neither was checkable — the
+   * overlay printed the peer COUNT next to a map that plots only the peers with
+   * a GeoIP fix, and never said so. A pinned peer with no location is invisible
+   * here by construction, so the widget states its own coverage: the dots you
+   * can count are `plotted`, and the difference is named rather than left to be
+   * discovered as a contradiction.
+   */
+  const coverage = $derived(mapCoverage(nodes));
   const countries = $derived(
     new Set(
       placed
@@ -71,7 +82,11 @@
 <div class="map" style="--peermap-h:{height};">
   <Globe nodes={placed} mode={mapMode} legend={false} {selectedId} onSelect={onSelectNode} {interactive} />
   <div class="mapmeta mono" style="color:{theme.textMuted};">
-    <div>{peers.length} PEER{peers.length === 1 ? '' : 'S'}</div>
+    <div>{coverage.peers} PEER{coverage.peers === 1 ? '' : 'S'}</div>
+    <div>{coverage.plotted} ON THE MAP</div>
+    {#if coverage.unplaced}
+      <div style="color:{theme.amber};">{coverage.unplaced} NO LOCATION</div>
+    {/if}
     <div>{countries} {countries === 1 ? 'COUNTRY' : 'COUNTRIES'}</div>
   </div>
   <!-- No "DRAG TO ROTATE" caption. A globe under the cursor is discoverable by
@@ -88,6 +103,15 @@
   <!-- The design's "Locations · MaxMind GeoLite2" attribution stays ABSENT: it
        is a claim about a resolver, true only of a node whose resolver really is
        GeoLite2 (IRIS constraint (b), wave 1). -->
+  {#if coverage.unplaced}
+    <!-- The gap, in words, on the surface where it is visible. This is not a
+         caption describing an affordance (the class the owner deleted) — it is
+         the reason two numbers on this page differ, which is a fact only this
+         widget knows. -->
+    <span class="gap" style="color:{theme.textFaint};">
+      {coverage.unplaced} peer{coverage.unplaced === 1 ? ' has' : 's have'} no GeoIP location and cannot be drawn — {coverage.unplaced === 1 ? 'it is' : 'they are'} in the table, not on the globe.
+    </span>
+  {/if}
 </div>
 
 <style>
@@ -143,6 +167,7 @@
     flex-wrap: wrap;
   }
   .legend { display: inline-flex; gap: var(--sdn-sp-6); flex-wrap: wrap; }
+  .gap { font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro); letter-spacing: 0.04em; }
   .legend span { display: inline-flex; align-items: center; gap: var(--sdn-sp-2); font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro); letter-spacing: 0.06em; }
   .legend i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
 

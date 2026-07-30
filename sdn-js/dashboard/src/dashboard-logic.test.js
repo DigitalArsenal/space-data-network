@@ -17,6 +17,15 @@ import {
   sortNodes,
 } from './filters.js';
 import { wordpieceTokenize, cosine, textHash } from './semantic.js';
+import { formatLastSeen } from './format.js';
+import {
+  peerSource,
+  isPeerRow,
+  lastSeenLabel,
+  presenceSummary,
+  mapCoverage,
+  hasFix,
+} from './peers.js';
 
 const CARD = [
   'BEGIN:VCARD',
@@ -199,6 +208,120 @@ describe('sortNodes', () => {
     expect(sortNodes(nodes, 'trust', 1).map((n) => n.peerId)).toEqual(['me', 'high', 'low']);
     expect(sortNodes(nodes, 'trust', -1).map((n) => n.peerId)).toEqual(['me', 'low', 'high']);
     expect(sortNodes(nodes, 'status', 1).map((n) => n.peerId)).toEqual(['me', 'high', 'low']);
+  });
+
+  it('SOURCE sorts the rows that need explaining to the top', () => {
+    const bySource = [
+      makeNode({ peerId: 'live', source: 'connected' }),
+      makeNode({ peerId: 'cfg', source: 'config' }),
+      makeNode({ peerId: 'mute', source: '' }),
+      makeNode({ peerId: 'pin', source: 'pinned' }),
+    ];
+    expect(sortNodes(bySource, 'source', 1).map((n) => n.peerId)).toEqual([
+      'mute', // SOURCE NOT STATED is a defect and is never buried
+      'cfg',
+      'pin',
+      'live',
+    ]);
+  });
+});
+
+/*
+ * PEER PROVENANCE — the owner asked four questions on 2026-07-30 and every one
+ * of them is a case below. The feed he was looking at carried 35 peers, 34 of
+ * them DHT advertisements this node had never dialled, one of them named by a
+ * hardcoded placeholder string.
+ */
+describe('peers — how did this row get here?', () => {
+  it('names each admitted source in words an operator can read', () => {
+    expect(peerSource({ source: 'config' }).label).toBe('FROM CONFIG FILE');
+    expect(peerSource({ source: 'pinned' }).label).toBe('PINNED BY OPERATOR');
+    expect(peerSource({ source: 'connected' }).label).toBe('CONNECTED NOW');
+  });
+
+  it('a config pin is pinned AND locked, and carries the file+key to edit', () => {
+    const src = peerSource({
+      source: 'config',
+      pinNote: '/etc/space-data-network/config.yaml  peers.trusted_peers',
+    });
+    expect(src.pinned).toBe(true);
+    expect(src.locked).toBe(true);
+    // The note is the REAL file and key, not prose about one.
+    expect(src.note).toContain('peers.trusted_peers');
+    expect(src.sentence).toContain('peers.trusted_peers');
+  });
+
+  it('an unstated source is admitted as unstated, never guessed into a good answer', () => {
+    for (const node of [{}, { source: '' }, { source: 'bogus' }, null]) {
+      const src = peerSource(node);
+      expect(src.id).toBe('unknown');
+      expect(src.label).toBe('SOURCE NOT STATED');
+      expect(src.tone).toBe('amber');
+    }
+  });
+
+  it('a connected peer that is ALSO pinned keeps both facts', () => {
+    const src = peerSource({ source: 'connected', pinned: true });
+    expect(src.id).toBe('connected');
+    expect(src.pinned).toBe(true);
+    expect(src.sentence).toContain('pinned');
+  });
+
+  it('an operator account is not a peer, so it is never counted as one', () => {
+    expect(isPeerRow({ source: 'account' })).toBe(false);
+    expect(isPeerRow({ source: 'connected' })).toBe(true);
+    expect(peerSource({ source: 'account' }).label).toBe('OPERATOR ACCOUNT');
+  });
+});
+
+describe('LAST SEEN — never the bare word "never" again', () => {
+  const NOW = 1_700_000_000_000;
+
+  it('a pinned peer this node has not dialled says exactly that', () => {
+    expect(lastSeenLabel({ source: 'pinned', lastSeen: 0 }, NOW)).toBe('PINNED · NOT YET SEEN');
+    expect(lastSeenLabel({ source: 'config', lastSeen: 0 }, NOW)).toBe('PINNED · NOT YET SEEN');
+  });
+
+  it('a real observation is still a real relative time', () => {
+    expect(lastSeenLabel({ source: 'connected', lastSeen: 1_699_999_970 }, NOW)).toBe('30s ago');
+  });
+
+  it('self reports uptime, not a last sighting', () => {
+    expect(lastSeenLabel({ isSelf: true, uptimeS: 3700 }, NOW)).toBe('UP 1h 1m');
+  });
+
+  it('the word "never" is gone from the formatter itself', () => {
+    expect(formatLastSeen(0, NOW)).toBe('not yet seen');
+    expect(lastSeenLabel({ lastSeen: 0 }, NOW)).toBe('NOT YET SEEN');
+  });
+});
+
+describe('the count and the map must agree on screen', () => {
+  const rows = [
+    makeNode({ peerId: 'self', isSelf: true, lat: 1, lon: 1 }),
+    makeNode({ peerId: 'live', source: 'connected', online: true, lat: 40, lon: -105 }),
+    makeNode({ peerId: 'pin', source: 'pinned', online: false, lat: 0, lon: 0, lastSeen: 0 }),
+    makeNode({ peerId: 'cfg', source: 'config', online: false, lat: 0, lon: 0, lastSeen: 0 }),
+    // An Admin-overlay account with no peer presence: not a peer, not a dot.
+    makeNode({ peerId: 'op', source: 'account', online: false, lat: 0, lon: 0 }),
+  ];
+
+  it('decomposes the header count into the two reasons a row is admitted', () => {
+    const p = presenceSummary(rows);
+    expect(p).toEqual({ connected: 1, pinnedOffline: 2, unexplained: 0, total: 3 });
+  });
+
+  it('counts an unadmitted row as UNEXPLAINED rather than absorbing it', () => {
+    // This is the 2026-07-30 feed: offline, never seen, nobody pinned it.
+    const ghost = makeNode({ peerId: 'ghost', source: '', online: false, lastSeen: 0 });
+    expect(presenceSummary([...rows, ghost]).unexplained).toBe(1);
+  });
+
+  it('states map coverage, because 0,0 is no location and cannot be drawn', () => {
+    expect(hasFix({ lat: 0, lon: 0 })).toBe(false);
+    expect(hasFix({ lat: 0, lon: -105 })).toBe(true);
+    // 3 peers, 1 plotted — the exact shape of "it says 35 peers but shows one".
+    expect(mapCoverage(rows)).toEqual({ peers: 3, plotted: 1, unplaced: 2 });
   });
 });
 

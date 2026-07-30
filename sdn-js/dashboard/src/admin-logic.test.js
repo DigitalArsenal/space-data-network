@@ -531,6 +531,123 @@ describe('add-by-key-or-vcard (contract §8)', () => {
   });
 });
 
+/*
+ * THE PIN REGISTRY — the interface the owner asked for by name on 2026-07-30
+ * ("we need an interface for that"). A pin is the ONLY reason a peer this node
+ * has never contacted appears in the peers table at all, so adding a peer pins
+ * it, and every refusal is a sentence rather than a button that does nothing.
+ */
+describe('pins (POST/DELETE /api/peers/pins)', async () => {
+  const {
+    buildPinBody, multiaddrsFromVCard, pinIsLocked, pinSourceLabel, pinNoteLabel,
+    pinDisplayName, pinnedAtLabel, sortPins, pinnableNodes,
+  } = await import('./peers.js');
+  const { describeApiError, ApiError } = await import('./api.js');
+
+  it('sends lowercase synthesized keys and only what was supplied', () => {
+    expect(buildPinBody({ peerId: ' 12D3KooWX ' })).toEqual({ peer_id: '12D3KooWX' });
+    expect(
+      buildPinBody({
+        peerId: '12D3KooWX',
+        addrs: ['/ip4/1.2.3.4/tcp/4001', '', '  '],
+        name: ' Ops ',
+        note: ' third box ',
+      })
+    ).toEqual({
+      peer_id: '12D3KooWX',
+      addrs: ['/ip4/1.2.3.4/tcp/4001'],
+      name: 'Ops',
+      note: 'third box',
+    });
+    // Nothing empty is ever sent — the pin registry is not handed blanks.
+    expect(buildPinBody({ peerId: 'x', addrs: [], name: '', note: '' })).toEqual({ peer_id: 'x' });
+  });
+
+  it('a full multiaddr is passed through as the identity (the API takes either)', () => {
+    const addr = '/ip4/5.6.7.8/tcp/4001/p2p/12D3KooWX';
+    expect(buildPinBody({ peerId: addr })).toEqual({ peer_id: addr });
+  });
+
+  it('takes multiaddrs from a pasted card verbatim, and invents none', () => {
+    const card = [
+      'BEGIN:VCARD',
+      'VERSION:4.0',
+      'FN:Peer Node',
+      'X-SDN-MULTIADDR:/ip4/1.2.3.4/tcp/4001',
+      'X-SDN-MULTIADDR:/ip4/1.2.3.4/udp/4001/quic-v1',
+      'X-SDN-MULTIADDR:/ip4/1.2.3.4/tcp/4001',
+      'END:VCARD',
+    ].join('\r\n');
+    expect(multiaddrsFromVCard(card)).toEqual([
+      '/ip4/1.2.3.4/tcp/4001',
+      '/ip4/1.2.3.4/udp/4001/quic-v1',
+    ]);
+    expect(multiaddrsFromVCard('BEGIN:VCARD\r\nFN:x\r\nEND:VCARD')).toEqual([]);
+    expect(multiaddrsFromVCard('')).toEqual([]);
+  });
+
+  it('a config-file pin is locked, named as such, and its note is a FILE', () => {
+    const cfg = { peer_id: 'a', source: 'config', note: '/etc/sdn/config.yaml  peers.trusted_peers' };
+    const own = { peer_id: 'b', source: 'operator', note: 'the box in the lab' };
+    expect(pinIsLocked(cfg)).toBe(true);
+    expect(pinIsLocked(own)).toBe(false);
+    expect(pinSourceLabel(cfg)).toBe('FROM CONFIG FILE');
+    expect(pinSourceLabel(own)).toBe('PINNED BY OPERATOR');
+    // The two notes are different KINDS of fact and are labelled differently.
+    expect(pinNoteLabel(cfg)).toBe('CONFIG');
+    expect(pinNoteLabel(own)).toBe('NOTE');
+  });
+
+  it('an unnamed pin reads "unknown", never its own id promoted to a name', () => {
+    expect(pinDisplayName({ peer_id: '12D3KooWX' })).toBe('unknown');
+    expect(pinDisplayName({ peer_id: '12D3KooWX', name: ' Ops ' })).toBe('Ops');
+  });
+
+  it('a missing pinned_at is an ABSENT cell, never an invented time', () => {
+    const NOW = 1_700_000_000_000;
+    expect(pinnedAtLabel({}, NOW)).toBe('');
+    expect(pinnedAtLabel({ pinned_at: 0 }, NOW)).toBe('');
+    expect(pinnedAtLabel({ pinned_at: 1_699_996_400 }, NOW)).toBe('PINNED 1h ago');
+    // RFC3339 is accepted too — the wire shape is the node's to choose.
+    expect(pinnedAtLabel({ pinned_at: '2023-11-14T22:13:20Z' }, NOW)).toBe('PINNED just now');
+  });
+
+  it('config pins sort first — they are the ones that need explaining', () => {
+    const sorted = sortPins([
+      { peer_id: 'b', name: 'Zulu' },
+      { peer_id: 'a', name: 'Alpha' },
+      { peer_id: 'c', name: 'Mike', source: 'config' },
+    ]);
+    expect(sorted.map((p) => p.peer_id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('offers PIN only for peers connected NOW that are not pinned already', () => {
+    const nodes = [
+      { peerId: 'self', isSelf: true, online: true, source: 'connected' },
+      { peerId: 'live', online: true, source: 'connected' },
+      { peerId: 'kept', online: true, source: 'connected', pinned: true },
+      { peerId: 'gone', online: false, source: 'pinned' },
+      { peerId: 'op', online: true, source: 'account' },
+      { peerId: 'raced', online: true, source: 'connected' },
+    ];
+    // `raced` is already in the pin registry — the feed frame was one behind.
+    const ids = pinnableNodes(nodes, [{ peer_id: 'raced' }]).map((n) => n.peerId);
+    expect(ids).toEqual(['live']);
+  });
+
+  it('every pin refusal is a sentence an operator can act on', () => {
+    const say = (code) => describeApiError(new ApiError(409, code, ''));
+    expect(say('config_pin')).toContain('config file');
+    expect(say('already_pinned')).toContain('already pinned');
+    expect(say('not_pinned')).toContain('nothing to remove');
+    expect(describeApiError(new ApiError(400, 'invalid_peer', ''))).toContain('multiaddr');
+    // None of them is the bare code, which is what a silent failure looks like.
+    for (const code of ['config_pin', 'already_pinned', 'not_pinned', 'invalid_peer']) {
+      expect(say(code)).not.toBe(code);
+    }
+  });
+});
+
 describe('ACCOUNTS — one list for nodes and logins (contract §16)', async () => {
   const {
     accountFromNode, accountFromEntry, mergeAccounts, accountDisplayName,
