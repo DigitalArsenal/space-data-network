@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -587,11 +588,33 @@ type ConnectionStats struct {
 
 // Registry manages the trusted peer registry.
 type Registry struct {
-	mu          sync.RWMutex
-	peers       map[peer.ID]*TrustedPeer
-	groups      map[string]*PeerGroup
-	strictMode  bool // Only connect to peers in registry
+	mu     sync.RWMutex
+	peers  map[peer.ID]*TrustedPeer
+	groups map[string]*PeerGroup
+
+	// strictMode ("only connect to peers in registry") is ATOMIC, not
+	// mu-guarded, and that is load-bearing rather than a micro-optimisation.
+	//
+	// IsStrictMode is called by the libp2p connection gater on EVERY inbound
+	// handshake (InterceptSecured) and EVERY outbound dial (InterceptPeerDial).
+	// Go's RWMutex queues new readers behind a waiting writer, so while any
+	// writer held mu this one-line bool read became a hard block on the whole
+	// peering path. Measured on host-01 2026-07-30: a writer stalled inside a
+	// FlatSQL persistence round-trip and 84 goroutines piled up here — 53
+	// inbound, 25 outbound — so the node accepted TCP it never read and could
+	// not dial out, taking /p2p/ to 502 and spaceaware.io/beta to an empty
+	// catalogue. An admission decision must never be able to wait on a
+	// persistence lock; an atomic load cannot.
+	strictMode atomic.Bool
+
 	persistence PersistenceProvider
+
+	// statsCh carries connection/message statistics updates to a background
+	// writer so RecordConnection/RecordMessage — both reachable from the
+	// connection gater — never touch the store on the caller's goroutine.
+	// See startStatsWriter.
+	statsCh   chan statsUpdate
+	statsStop chan struct{}
 
 	// trustGraph is the optional web-of-trust DAG (Phase C2, internal/trust)
 	// consulted by EffectiveTrustLevel to compute PGP web-of-trust validity
@@ -662,7 +685,7 @@ func (r *Registry) fireTrustChange(id peer.ID, old, newLevel TrustLevel) {
 // AddPeer" / "after RemovePeer" baseline used to compute trust-change
 // events for those two mutations.
 func (r *Registry) unknownPeerDirectTrustLevel() TrustLevel {
-	if r.strictMode {
+	if r.strictMode.Load() {
 		return Untrusted
 	}
 	return Standard
@@ -683,9 +706,9 @@ func NewRegistry(strictMode bool, persistence PersistenceProvider) *Registry {
 	r := &Registry{
 		peers:       make(map[peer.ID]*TrustedPeer),
 		groups:      make(map[string]*PeerGroup),
-		strictMode:  strictMode,
 		persistence: persistence,
 	}
+	r.strictMode.Store(strictMode)
 
 	// Load persisted data if available
 	if persistence != nil {
@@ -695,6 +718,8 @@ func NewRegistry(strictMode bool, persistence PersistenceProvider) *Registry {
 			r.groups = groups
 		}
 	}
+
+	r.startStatsWriter()
 
 	return r
 }
@@ -880,7 +905,7 @@ func (r *Registry) GetTrustLevel(id peer.ID) TrustLevel {
 
 	tp, exists := r.peers[id]
 	if !exists {
-		if r.strictMode {
+		if r.strictMode.Load() {
 			return Untrusted
 		}
 		return Standard // Default for unknown peers in non-strict mode
@@ -1142,14 +1167,26 @@ func (r *Registry) RemovePeerFromGroup(peerID peer.ID, groupName string) error {
 }
 
 // UpdateStats updates connection statistics for a peer.
+//
+// The in-memory update is synchronous (callers and the admin API read their own
+// writes), but persistence is handed to the background writer and NEVER
+// performed here. This function is reachable from the libp2p connection gater
+// via RecordConnection, and the previous implementation called the store — a
+// WASM round-trip — while holding the write lock, which is what turned one
+// stalled engine call into a total peering outage on host-01. See
+// stats_writer.go for the full measurement.
+//
+// The lock is therefore held for a map lookup and a few field writes only.
 func (r *Registry) UpdateStats(id peer.ID, fn func(*TrustedPeer)) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	tp, exists := r.peers[id]
 	if exists {
 		fn(tp)
-		r.save()
+	}
+	r.mu.Unlock()
+
+	if exists {
+		r.markStatsDirty()
 	}
 }
 
@@ -1177,18 +1214,25 @@ func (r *Registry) RecordMessage(id peer.ID, sent bool, bytes int64) {
 }
 
 // SetStrictMode enables or disables strict mode.
+//
+// The flag is published BEFORE the persistence call, so the admission policy
+// takes effect immediately even if the store write is slow or fails. That
+// direction is the fail-closed one for the case that matters: turning strict
+// mode ON must never wait on a disk/WASM round-trip.
 func (r *Registry) SetStrictMode(strict bool) {
+	r.strictMode.Store(strict)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.strictMode = strict
 	r.save()
 }
 
 // IsStrictMode returns whether strict mode is enabled.
+//
+// Deliberately lock-free — see the strictMode field comment. This is on the
+// libp2p gater's inbound AND outbound hot path and must never be able to block
+// behind a writer that is waiting on the store.
 func (r *Registry) IsStrictMode() bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.strictMode
+	return r.strictMode.Load()
 }
 
 // GetTrustedAddrInfos returns AddrInfo for all trusted peers (for IPFS Peering.Peers).
