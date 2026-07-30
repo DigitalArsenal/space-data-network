@@ -481,3 +481,46 @@ describe('validity cap', () => {
     expect(() => canonicalStatement({ ...base, expiresAt: 0 })).not.toThrow();
   });
 });
+
+// THE LIVE PRODUCTION RECORD, signed on 2026-07-30T13:03:11Z by the real
+// sdn.spaceaware.io node key during the Seal-Council-concurred one-shot run.
+//
+// This is the strongest regression test in the suite: it is not synthetic. If any
+// future change to the canonical statement, the tag grammar, the base64 handling
+// or the Ed25519 path breaks this, the proof PUBLISHED IN DNS stops verifying and
+// every provider trusting sdn.spaceaware.io silently loses that trust. Treat a
+// failure here as a production incident, not a test to update.
+const LIVE_PRODUCTION_RECORD =
+  'v=SDN1; p=DYDh_V-aTjTf3zag4VK9maZc__i8xsqydXtISuRC_Iw; ' +
+  'id=16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45; ' +
+  'ts=1785416591; xp=1816952591; ' +
+  'sig=bK3H0_h-7rSirzzXlS7_Wu2Pqlqj4y8ZP9jO2q9jjHfJksOyoYSrRgszvgYYNt1KnoKOOdRPuPy4zFWPfukxBA';
+
+describe('the live production record for sdn.spaceaware.io', () => {
+  // A fixed instant inside the published validity window, so the test does not
+  // start failing on 2027-07-30 for the wrong reason.
+  const insideWindow = 1785416600;
+
+  it('verifies against the real node key', () => {
+    const proof = parseRecord(LIVE_DOMAIN, LIVE_PRODUCTION_RECORD);
+    expect(() => verifyProof(proof, insideWindow)).not.toThrow();
+    expect(keyFingerprint(proof)).toBe(`ed25519:${LIVE_PUBKEY_HEX}`);
+    expect(proof.peerId).toBe(LIVE_PEER_ID);
+  });
+
+  it('fits one DNS character-string and sits exactly at the validity cap', () => {
+    expect(LIVE_PRODUCTION_RECORD.length).toBe(233);
+    const proof = parseRecord(LIVE_DOMAIN, LIVE_PRODUCTION_RECORD);
+    expect(proof.expiresAt - proof.issuedAt).toBe(MAX_VALIDITY_SECONDS);
+  });
+
+  it('cannot be replayed at another domain', () => {
+    const stolen = parseRecord('attacker.example', LIVE_PRODUCTION_RECORD);
+    expect(() => verifyProof(stolen, insideWindow)).toThrow(/does not verify/);
+  });
+
+  it('is refused once expired', () => {
+    const proof = parseRecord(LIVE_DOMAIN, LIVE_PRODUCTION_RECORD);
+    expect(() => verifyProof(proof, proof.expiresAt)).toThrow(/expired/);
+  });
+});
