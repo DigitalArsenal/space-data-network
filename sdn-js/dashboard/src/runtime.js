@@ -398,6 +398,16 @@ export function createRuntimeFeed({ onUpdate, fetchJson = (path) => apiFetch(pat
         emit();
         return;
       }
+      // RESET THE PHASE, or the first admin poll reads almost nothing.
+      //
+      // The slower sources are sampled on `tick % N === 0`, and a session is
+      // established several ticks in (the effect fires after /api/auth/me
+      // answers). Landing on tick 1 meant the activity ring waited up to 15s and
+      // the supervisor probe up to 60s — so a freshly signed-in operator watched
+      // "Reading the activity ring…" and an ABSENT AUTOSTART cell for a minute,
+      // which reads exactly like the fabricated-absence bug this wave removed.
+      // Verified from a screenshot of the built page, not reasoned about.
+      tick = 0;
       poll();
     },
     start() {
