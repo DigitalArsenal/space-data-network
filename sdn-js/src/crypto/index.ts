@@ -74,7 +74,21 @@ export {
   randomBytes,
   generateKey,
   sha256,
+  hkdfSha256,
 } from './hd-wallet';
+
+// Path-scoped deterministic module-delivery identity
+// (spec: sdn/sandcastle-module-identity/v1 — see ./path-scoped-identity.ts)
+export {
+  PATH_SCOPED_IDENTITY_INFO_V1,
+  PATH_SCOPED_IDENTITY_SALT_V1,
+  PATH_SCOPED_IDENTITY_SEED_BYTES,
+  canonicalizePathScopeUuid,
+  extractPathScopeUuid,
+  derivePathScopedSeed,
+  derivePathScopedIdentity,
+  derivePathScopedIdentityForPath,
+} from './path-scoped-identity';
 
 // Default export for convenience
 import * as hdWallet from './hd-wallet';

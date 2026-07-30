@@ -318,6 +318,18 @@ export {
   randomBytes,
   generateKey,
   sha256,
+  hkdfSha256,
+
+  // Path-scoped deterministic module-delivery identity
+  // (spec: sdn/sandcastle-module-identity/v1)
+  PATH_SCOPED_IDENTITY_INFO_V1,
+  PATH_SCOPED_IDENTITY_SALT_V1,
+  PATH_SCOPED_IDENTITY_SEED_BYTES,
+  canonicalizePathScopeUuid,
+  extractPathScopeUuid,
+  derivePathScopedSeed,
+  derivePathScopedIdentity,
+  derivePathScopedIdentityForPath,
 
   // Constants
   LanguageCode,
