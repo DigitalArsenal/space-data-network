@@ -53,6 +53,7 @@ type Handler struct {
 	externalLoginUI      bool // when true, an embedded UI owns GET /login; legacy page moves to /login/legacy
 	loginUIPolicySet     bool // distinguishes the backwards-compatible default from an explicit no-login production policy
 	root                 rootIdentityState
+	photoStore           ProfilePhotoStore // object storage port for operator profile photos; nil = endpoint fails closed
 }
 
 type pendingChallenge struct {
@@ -145,6 +146,56 @@ func XPubFingerprint(xpub string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// meResponse is the GET /api/auth/me body: everything the caller's OWN account
+// screen needs, and nothing about anyone else.
+//
+// It is a SUPERSET of authSessionUser, deliberately kept separate from it: the
+// sign-in response (/api/auth/verify) stays exactly the three fields it always
+// was, because a login reply is not a profile fetch and TestAuth_Verify_* pin
+// its shape. The xpub lock of §4/§13.1 is inherited unchanged — the embedded
+// authSessionUser carries a fingerprint, and no field added here reintroduces
+// the extended public key.
+//
+// Before this existed, an account screen could only learn these facts by
+// listing /api/auth/users, which is Admin-only. That is precisely why every
+// operator below Admin saw an empty account screen: the data was never secret,
+// it was merely unreachable except through a privileged registry read.
+type meResponse struct {
+	authSessionUser
+	Organization string `json:"organization,omitempty"`
+	Notes        string `json:"notes,omitempty"`
+	VCardData    string `json:"vcard_data,omitempty"`
+	// PhotoPath is the SAME-ORIGIN path this node serves the operator's profile
+	// photo from, and PhotoCID is the object behind it. The vCard PHOTO value is
+	// the path, never a public gateway URL: a node UI loads zero external-origin
+	// bytes, and a gateway URL in a published card would leak every viewer's
+	// address to a third party.
+	PhotoPath string `json:"photo_path,omitempty"`
+	PhotoCID  string `json:"photo_cid,omitempty"`
+	// Source is "config" or "database". A config row is read-only through this
+	// API — see UserStore.UpdateProfile.
+	Source           string `json:"source"`
+	SigningPubKeyHex string `json:"signing_pubkey_hex,omitempty"`
+	SignInCount      int64  `json:"connection_count"`
+	CreatedAt        int64  `json:"created_at,omitempty"`
+	LastLogin        int64  `json:"last_login,omitempty"`
+	// Editable states, in one boolean, whether THIS caller may PATCH this row.
+	// The UI must not infer it from the trust tier: every tier may edit its own
+	// profile, and the one thing that blocks the write is config provenance.
+	Editable bool `json:"editable"`
+}
+
+// updateMeRequest is the PATCH /api/auth/me body. Pointer fields keep "omitted"
+// and "cleared" apart. Unknown fields are REFUSED rather than ignored, so a
+// client that tries to send trust_level or xpub through the self-service door
+// is told no instead of receiving a 200 that changed nothing.
+type updateMeRequest struct {
+	Name         *string `json:"name"`
+	Organization *string `json:"organization"`
+	Notes        *string `json:"notes"`
+	VCardData    *string `json:"vcard_data"`
+}
+
 type addUserRequest struct {
 	XPub             string `json:"xpub"`
 	Name             string `json:"name"`
@@ -214,6 +265,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/verify", h.handleVerify)
 	mux.HandleFunc("/api/auth/logout", h.handleLogout)
 	mux.HandleFunc("/api/auth/me", h.handleMe)
+	mux.HandleFunc("/api/auth/me/photo", h.handleMePhoto)
 	mux.HandleFunc("/api/auth/status", h.handleAuthStatus)
 	mux.HandleFunc("/api/auth/users", h.handleUsers)
 	mux.HandleFunc("/api/auth/users/", h.handleUserByXPub)
@@ -713,8 +765,32 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
 }
 
+// handleMe serves the caller's OWN account: GET reads it, PATCH edits it.
+//
+// # The self-service write (owner directive 2026-07-30)
+//
+// Until now the only write into the operator registry was
+// PUT /api/auth/users/<xpub>, gated at Admin, so an operator at standard or
+// marginal tier had no way to change anything about themselves — the owner's
+// "they need to edit their shit" was unreachable for exactly the operators it
+// was written for. PATCH here closes that, under three constraints that are the
+// whole reason this is not simply "let users write the registry":
+//
+//	 1. SELF-SCOPED BY CONSTRUCTION. The row written is session.XPub. The request
+//	    body has no xpub field, so there is no parameter to tamper with — a
+//	    caller cannot address another row even by trying.
+//	 2. SELF-DESCRIBING FIELDS ONLY. Name, organization, notes and the vCard.
+//	    Trust level and signing key are absent from updateMeRequest and refused
+//	    by the strict decoder, so privilege can never be self-granted here; they
+//	    remain Admin-only (§7).
+//	 3. NODE IDENTITY IS ELSEWHERE. What this node publishes about ITSELF is
+//	    PUT /api/node/epm, Admin-only (§6), even when the signed-in key is the
+//	    node's own root account. Your account is not the node.
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet, http.MethodPatch:
+	default:
+		w.Header().Set("Allow", "GET, PATCH")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -732,11 +808,104 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, authSessionUser{
-		XPubFingerprint: XPubFingerprint(user.XPub),
-		Name:            user.Name,
-		TrustLevel:      user.TrustLevel,
-	})
+	if r.Method == http.MethodPatch {
+		decoder := json.NewDecoder(io.LimitReader(r.Body, maxProfileBodyBytes))
+		decoder.DisallowUnknownFields()
+		var req updateMeRequest
+		if err := decoder.Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{
+				Code:    "invalid_request",
+				Message: "only name, organization, notes and vcard_data may be changed here: " + err.Error(),
+			})
+			return
+		}
+		if err := validateProfileUpdate(req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: err.Error()})
+			return
+		}
+		if err := h.userStore.UpdateProfile(session.XPub, ProfileUpdate{
+			Name:         req.Name,
+			Organization: req.Organization,
+			Notes:        req.Notes,
+			VCardData:    req.VCardData,
+		}); err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "config file") {
+				writeJSON(w, http.StatusConflict, errorResponse{Code: "config_managed", Message: msg})
+				return
+			}
+			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "update_failed", Message: msg})
+			return
+		}
+		// Re-read so the reply is what the node now HOLDS, not what the caller
+		// hoped it sent: config overrides and trimming are applied on read.
+		if refreshed, err := h.userStore.GetUser(session.XPub); err == nil && refreshed != nil {
+			user = refreshed
+		}
+	}
+
+	writeJSON(w, http.StatusOK, h.meBody(user))
+}
+
+// maxProfileBodyBytes bounds a self-service profile write. A vCard with an
+// inline photo is the largest legitimate body; anything past this is not a
+// profile.
+const maxProfileBodyBytes = 256 << 10
+
+// meBody projects an operator row into the account-screen response.
+func (h *Handler) meBody(user *User) meResponse {
+	body := meResponse{
+		authSessionUser: authSessionUser{
+			XPubFingerprint: XPubFingerprint(user.XPub),
+			Name:            user.Name,
+			TrustLevel:      user.TrustLevel,
+		},
+		Organization:     user.Organization,
+		Notes:            user.Notes,
+		VCardData:        user.VCardData,
+		Source:           user.Source,
+		SigningPubKeyHex: user.SigningPubKeyHex,
+		SignInCount:      user.SignInCount,
+		Editable:         user.Source != "config",
+	}
+	if !user.CreatedAt.IsZero() {
+		body.CreatedAt = user.CreatedAt.Unix()
+	}
+	if user.LastLogin != nil {
+		body.LastLogin = user.LastLogin.Unix()
+	}
+	body.PhotoPath, body.PhotoCID = vCardPhotoReference(user.VCardData)
+	return body
+}
+
+// validateProfileUpdate bounds the free-text fields. These limits exist so one
+// operator cannot turn the registry — which is served to every Admin and
+// projected into the trust matrix — into a storage device.
+func validateProfileUpdate(req updateMeRequest) error {
+	limits := []struct {
+		name  string
+		value *string
+		max   int
+	}{
+		{"name", req.Name, 200},
+		{"organization", req.Organization, 200},
+		{"notes", req.Notes, 2000},
+		{"vcard_data", req.VCardData, maxProfileBodyBytes - 4096},
+	}
+	supplied := false
+	for _, limit := range limits {
+		if limit.value == nil {
+			continue
+		}
+		supplied = true
+		if len(*limit.value) > limit.max {
+			return fmt.Errorf("%s is longer than %d characters", limit.name, limit.max)
+		}
+	}
+	if !supplied {
+		return fmt.Errorf("no editable profile fields were supplied")
+	}
+	return nil
 }
 
 // assignableTrustLevel enforces the C7 admin-assignment ceiling: only
@@ -866,6 +1035,17 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 		if err := h.userStore.UpdateTrust(xpub, trust); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "update_failed", Message: err.Error()})
 			return
+		}
+		// The name in this body was silently discarded until 2026-07-30: this
+		// handler wrote trust and the signing key and dropped everything else,
+		// so BOTH renames in the dashboard (the ACCOUNTS page and the account
+		// modal) returned 200 and changed nothing. The request always claimed
+		// to carry a name; now it does.
+		if name := strings.TrimSpace(req.Name); name != "" {
+			if err := h.userStore.UpdateProfile(xpub, ProfileUpdate{Name: &name}); err != nil {
+				writeJSON(w, http.StatusBadRequest, errorResponse{Code: "update_failed", Message: err.Error()})
+				return
+			}
 		}
 		if strings.TrimSpace(req.SigningPubKeyHex) != "" {
 			if err := h.userStore.UpdateSigningPubKey(xpub, req.SigningPubKeyHex); err != nil {

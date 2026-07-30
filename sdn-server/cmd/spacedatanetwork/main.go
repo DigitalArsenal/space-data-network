@@ -1610,6 +1610,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, legacyWalletUIPath, cfgDisplayPath)
 				authHandler.SetTLSManager(tlsManager)
+				// Bind the operator profile-photo object store to the IPFS lane
+				// this node already runs. When admin.ipfs_api_url is unset the
+				// port stays nil and the endpoint refuses with 501 — a node
+				// without object storage says so instead of losing pictures.
+				if ipfsAPIURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL); ipfsAPIURL != "" {
+					authHandler.SetProfilePhotoStore(ipfsProfilePhotoStore{apiURL: ipfsAPIURL})
+				}
 				return nil
 			}(); authErr != nil {
 				// An operator who asked for authentication gets a hard failure,
@@ -3263,9 +3270,15 @@ const anyTierAuthenticatedTrust = peers.Never
 //     logout, which correctly means "already not signed in".
 //
 // Exact matches only — a prefix rule would admit look-alike paths.
+// /api/auth/me/photo joins this set for the same reason /api/auth/me is in it:
+// it is the caller acting on THEIR OWN row, self-scoped by construction (the
+// row written is session.XPub — there is no identifier in the request to
+// tamper with). Gating a profile picture at Standard would restore exactly the
+// hole the owner named on 2026-07-30: the operators most likely to be below
+// Standard are the ones who need to fill in who they are.
 func isAnyTierAuthenticatedAPIPath(path string) bool {
 	switch path {
-	case "/api/auth/me", "/api/auth/logout":
+	case "/api/auth/me", "/api/auth/me/photo", "/api/auth/logout":
 		return true
 	default:
 		return false
