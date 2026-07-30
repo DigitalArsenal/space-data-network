@@ -33,6 +33,17 @@
   import PeerEditModal from './PeerEditModal.svelte';
   import { operatorMeta, peerMeta, peerIdCell } from './keystate.js';
   import {
+    buildPinBody,
+    multiaddrsFromVCard,
+    pinDisplayName,
+    pinIsLocked,
+    pinNoteLabel,
+    pinSourceLabel,
+    pinnableNodes,
+    pinnedAtLabel,
+    sortPins,
+  } from './peers.js';
+  import {
     canManagePermissions,
     assignableUserTiers,
     assignablePeerTiers,
@@ -108,8 +119,24 @@
   let users = $state(null);
   /** @type {any[]|null} */
   let peers = $state(null);
+  /**
+   * THE PIN REGISTRY (owner ruling 2026-07-30: "The Peers table should not ever
+   * show peers that have never been seen, UNLESS they have been added manually
+   * and 'pinned' (we need an interface for that)"). This is that interface.
+   *
+   * `null` means the node did not answer — a build without the pin registry, or
+   * a session that lost its cookie — and renders `pinsError`, never an empty
+   * list. "No pins" and "could not read the pins" are different facts and the
+   * one that matters most here is the second: an operator looking at an empty
+   * panel would conclude their pins were gone.
+   * @type {any[]|null}
+   */
+  let pins = $state(null);
+  let pinsError = $state('');
   let loaded = $state(false);
   let error = $state('');
+  /** Non-fatal outcome of the last add: it worked, but not entirely. */
+  let notice = $state('');
   let busy = $state('');
   /** xpub → derived peer id, or '' when a derivation ran and failed. */
   let derivedPeerIds = $state(new Map());
@@ -119,8 +146,15 @@
 
   const userList = $derived(users ?? []);
   const peerList = $derived(peers ?? []);
+  const pinList = $derived(sortPins(pins ?? []));
   const editUser = $derived(userList.find((u) => u.xpub === editUserXPub) ?? null);
   const editPeer = $derived(peerList.find((p) => p.id === editPeerId) ?? null);
+  /** The pin record for the peer whose modal is open, or null when unpinned. */
+  const editPeerPin = $derived(
+    editPeer ? (pins ?? []).find((p) => String(p?.peer_id ?? '') === editPeer.id) ?? null : null
+  );
+  /** Connected right now and NOT pinned — one click from being kept. */
+  const pinnable = $derived(pinnableNodes(nodes, pins ?? []));
 
   // --- add forms (start empty; nothing is ever prefilled for the operator) ---
   let userInput = $state('');
@@ -144,10 +178,31 @@
     unknown: 'UNRECOGNIZED',
   };
 
+  /**
+   * The pin registry is read SEPARATELY from the other two: it is the newest
+   * endpoint on the node, and a node running a build without it must still be
+   * able to manage operator keys and trust. Its failure is reported in its own
+   * panel, not as the page's error.
+   */
+  async function readPins() {
+    try {
+      const res = await apiFetch('/api/peers/pins');
+      pins = Array.isArray(res?.pins) ? res.pins : [];
+      pinsError = '';
+    } catch (err) {
+      pins = null;
+      pinsError = describeApiError(err);
+    }
+  }
+
   async function refresh() {
     error = '';
     try {
-      const [u, p] = await Promise.all([apiFetch('/api/auth/users'), apiFetch('/api/peers')]);
+      const [u, p] = await Promise.all([
+        apiFetch('/api/auth/users'),
+        apiFetch('/api/peers'),
+        readPins(),
+      ]);
       users = Array.isArray(u) ? u : [];
       peers = Array.isArray(p) ? p : [];
     } catch (err) {
@@ -171,6 +226,8 @@
       requested = false;
       users = null;
       peers = null;
+      pins = null;
+      pinsError = '';
       loaded = false;
     }
   });
@@ -223,6 +280,7 @@
     if (busy) return;
     busy = key;
     error = '';
+    notice = '';
     try {
       await fn();
       await refresh();
@@ -232,6 +290,38 @@
       busy = '';
     }
   }
+
+  /**
+   * PIN — the peer stays listed even when it is not connected. Idempotent by
+   * design: `already_pinned` means the list this page was rendering was one
+   * frame stale, which is not an error an operator should ever be shown.
+   */
+  const pinPeer = (node) =>
+    run(`pin:${node.peerId}`, async () => {
+      try {
+        await apiFetch('/api/peers/pins', {
+          method: 'POST',
+          body: buildPinBody({
+            peerId: node.peerId,
+            addrs: node.addrs ?? [],
+            name: (node.dn ?? '').trim(),
+          }),
+        });
+      } catch (err) {
+        if (err?.code !== 'already_pinned') throw err;
+      }
+    });
+
+  /**
+   * UNPIN. A config-file pin is refused by the node with 409 `config_pin` and
+   * this page does not offer the button for one — but the refusal is still
+   * handled, because a config change between render and click is exactly the
+   * case where a button would otherwise appear to do nothing.
+   */
+  const unpinPeer = (pin) =>
+    run(`pin:${pin.peer_id}`, () =>
+      apiFetch(`/api/peers/pins/${encodeURIComponent(pin.peer_id)}`, { method: 'DELETE' })
+    );
 
   const setUserTier = (user, tier) =>
     run(`user:${user.xpub}`, () =>
@@ -300,6 +390,33 @@
     });
   }
 
+  /**
+   * ADDING A PEER PINS IT (owner ruling 2026-07-30: a never-seen peer is listed
+   * only if it "has been added manually and 'pinned'"). Adding without pinning
+   * would put a row in the trust registry that the peers table refuses to show
+   * until the peer happens to dial in — which is precisely the invisible state
+   * the owner was complaining about, arrived at from the other direction.
+   *
+   * The pin is a SECOND call and can fail on its own, so its failure is reported
+   * as what it is: the registry entry exists, the listing guarantee does not.
+   */
+  async function pinAfterAdd(id, { addrs = [], name = '' } = {}) {
+    if (!id) {
+      notice =
+        'Added to the trust registry, but this page could not read a peer id from what you pasted, so it was not pinned. It will be listed only while it is connected.';
+      return;
+    }
+    try {
+      await apiFetch('/api/peers/pins', {
+        method: 'POST',
+        body: buildPinBody({ peerId: id, addrs, name, note: peerNotes }),
+      });
+    } catch (err) {
+      if (err?.code === 'already_pinned') return;
+      notice = `Added to the trust registry, but not pinned: ${describeApiError(err)} Until it is pinned it is listed only while it is connected.`;
+    }
+  }
+
   function addPeer(e) {
     e?.preventDefault?.();
     return run('add-peer', async () => {
@@ -329,6 +446,12 @@
             }),
           });
         }
+        // The card's own multiaddrs, verbatim — a pin the node can actually
+        // dial. Nothing is synthesized when the card carries none.
+        await pinAfterAdd(id, {
+          addrs: multiaddrsFromVCard(card.vcard),
+          name: peerName || card.name,
+        });
       } else {
         const id = cls.kind === 'xpub' ? await peerIdFromXpub(cls.value) : cls.kind === 'peer_id' ? cls.value : '';
         await apiFetch('/api/peers', {
@@ -342,6 +465,7 @@
             notes: peerNotes,
           }),
         });
+        await pinAfterAdd(id, { name: peerName });
       }
       peerInput = '';
       peerName = '';
@@ -356,6 +480,12 @@
   {#if admin}
     {#if error}
       <div class="err" style="color:{theme.red};border-color:{theme.red};">{error}</div>
+    {/if}
+    <!-- PARTIAL SUCCESS IS NOT SUCCESS AND IT IS NOT FAILURE. An add that
+         reached the trust registry but not the pin registry gets said out loud,
+         in amber, naming what the operator now does NOT have. -->
+    {#if notice}
+      <div class="err" style="color:{theme.amber};border-color:{theme.amber};">{notice}</div>
     {/if}
 
     <!-- ---------------------------------------------------------------- -->
@@ -583,11 +713,142 @@
           </div>
           <input type="text" bind:value={peerNotes} placeholder="notes (optional)" style="color:{theme.textBright};border-color:{theme.hairline};background:{theme.inputWell};width:100%;" />
           <div class="hint" style="color:{theme.textFaint};">
+            Adding a peer PINS it: it stays in the peers table even while it is offline, which is
+            the only way a peer this node has never contacted is listed at all. Everything else in
+            that table is there because it is connected right now, and leaves when it disconnects.
             An xpub is a wallet account, not a libp2p host — it is converted to a peer id in
             this page before it is sent. A pasted card is stored verbatim with the EPM record
             the node can derive from it; nothing the card does not say is filled in.
           </div>
         </form>
+        {/if}
+      </div>
+    </Panel>
+    {/if}
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- PINNED PEERS — the interface the owner asked for by name (2026-07-30:
+         "UNLESS they have been added manually and 'pinned' (we need an interface
+         for that)"). It is ONE surface for the pin registry: the pins, why each
+         one is there, and the peers that could become one. Same record grammar
+         as the two tables above it. -->
+    {#if showPeerForm}
+    <Panel variant="raised" pad="0">
+      <div class="head" style="border-color:{theme.divider};">
+        <div>
+          <Kick text="PIN REGISTRY · /api/peers/pins" />
+          <div class="ttl" style="color:{theme.textBright};">PINNED PEERS</div>
+        </div>
+        <div class="chips">
+          <StatusChip label={`${pinList.length} PINNED`} color={theme.ice} dot={false} />
+        </div>
+      </div>
+      <div class="pad">
+        <div class="hint" style="color:{theme.textFaint};">
+          A pinned peer is listed whether or not it is connected. Everything else disappears from
+          the peers table the moment it drops off the network.
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr style="border-color:{theme.divider};color:{theme.textMuted};">
+                <th>PEER ID</th><th>NAME</th><th></th>
+              </tr>
+            </thead>
+            {#if pinsError}
+              <tbody>
+                <tr><td colspan="3" class="none" style="color:{theme.amber};">
+                  This node did not answer for its pins: {pinsError}
+                </td></tr>
+              </tbody>
+            {:else if pins === null}
+              <tbody>
+                <tr><td colspan="3" class="none" style="color:{theme.textFaint};">Reading the pin registry…</td></tr>
+              </tbody>
+            {:else if !pinList.length}
+              <tbody>
+                <tr><td colspan="3" class="none" style="color:{theme.textFaint};">
+                  No pinned peers. The peers table shows only what is connected right now.
+                </td></tr>
+              </tbody>
+            {:else}
+              {#each pinList as pin (pin.peer_id)}
+                {@const locked = pinIsLocked(pin)}
+                {@const when = pinnedAtLabel(pin)}
+                <tbody class="rec static">
+                  <tr class="primary">
+                    <td class="mono" style="color:{theme.ice};" title={pin.peer_id}>{shortId(pin.peer_id)}</td>
+                    <td>
+                      <span class="nm" class:unnamed={pinDisplayName(pin) === 'unknown'} style="color:{pinDisplayName(pin) === 'unknown' ? theme.textMuted : theme.textBright};">
+                        {pinDisplayName(pin)}
+                      </span>
+                    </td>
+                    <td class="right" rowspan="2" style="border-color:{theme.divider};">
+                      {#if locked}
+                        <!-- NOT a disabled button. "Three greyed buttons advertise
+                             a capability the page does not have" (NodeConsole's
+                             standing note) — the row states the reason instead,
+                             which is also the thing the operator needs to know. -->
+                        <span class="locked" style="color:{theme.textFaint};">CONFIG FILE</span>
+                      {:else}
+                        <GBtn title="Stop listing this peer while it is offline" disabled={busy === `pin:${pin.peer_id}`} onclick={() => unpinPeer(pin)}>
+                          {busy === `pin:${pin.peer_id}` ? 'UNPINNING…' : 'UNPIN'}
+                        </GBtn>
+                      {/if}
+                    </td>
+                  </tr>
+                  <tr class="meta">
+                    <td colspan="2" style="border-color:{theme.divider};">
+                      <span class="metaline">
+                        <span style="color:{locked ? theme.textDim : theme.ice};">{pinSourceLabel(pin)}</span>
+                        {#if when}
+                          <span class="sep" style="color:{theme.textFaint};">·</span>
+                          <span style="color:{theme.textDim};">{when}</span>
+                        {/if}
+                        {#if (pin.pinned_by ?? '').trim()}
+                          <span class="sep" style="color:{theme.textFaint};">·</span>
+                          <span class="lbl" style="color:{theme.textFaint};">BY</span>
+                          <span style="color:{theme.textDim};">{pin.pinned_by}</span>
+                        {/if}
+                        {#if (pin.note ?? '').trim()}
+                          <span class="sep" style="color:{theme.textFaint};">·</span>
+                          <span class="lbl" style="color:{theme.textFaint};">{pinNoteLabel(pin)}</span>
+                          <span style="color:{theme.textDim};">{pin.note}</span>
+                        {/if}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              {/each}
+            {/if}
+          </table>
+        </div>
+
+        {#if pinnable.length}
+          <!-- The owner's list, one click per row (2026-07-30: "Right now we
+               should have the peer at sdn.spaceaware.io, the one at
+               celestrak.eth, the one at vm-orbit-det-01, and that's it"). These
+               are connected NOW and will vanish when they disconnect. -->
+          <div class="sub" style="border-color:{theme.divider};">
+            <div class="k" style="color:{theme.textMuted};">CONNECTED · NOT PINNED</div>
+            <div class="hint" style="color:{theme.textFaint};">
+              These are listed only because they are connected. Pin the ones this node should
+              always show.
+            </div>
+            <div class="alist">
+              {#each pinnable as node (node.peerId)}
+                <div class="arow" style="border-color:{theme.divider};">
+                  <span class="nm" class:unnamed={!(node.dn ?? '').trim()} style="color:{(node.dn ?? '').trim() ? theme.textBright : theme.textMuted};">
+                    {(node.dn ?? '').trim() || 'unknown'}
+                  </span>
+                  <span class="mono aid" style="color:{theme.textDim};" title={node.peerId}>{shortId(node.peerId)}</span>
+                  <GBtn title="Keep listing this peer after it disconnects" disabled={busy === `pin:${node.peerId}`} onclick={() => pinPeer(node)}>
+                    {busy === `pin:${node.peerId}` ? 'PINNING…' : 'PIN'}
+                  </GBtn>
+                </div>
+              {/each}
+            </div>
+          </div>
         {/if}
       </div>
     </Panel>
@@ -610,6 +871,8 @@
     {#if editPeer}
       <PeerEditModal
         peer={editPeer}
+        pin={editPeerPin}
+        pinsKnown={pins !== null}
         tiers={peerTiers}
         busy={busy === `peer:${editPeer.id}`}
         {error}
@@ -706,6 +969,29 @@
      carries no border, the subscript line carries the pair's. */
   tbody.rec { cursor: pointer; }
   tbody.rec:hover { background: rgba(110, 170, 190, 0.05); }
+  /* A pin record is not a click target — its one action is the button in its own
+     cell — so it does not pretend to be one. */
+  tbody.rec.static { cursor: default; }
+  tbody.rec.static:hover { background: transparent; }
+  .locked {
+    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
+    letter-spacing: 0.16em;
+    white-space: nowrap;
+  }
+  /* The pin candidates: a list, not a third table — three facts and one control
+     per row, so a table's column machinery would be scaffolding around nothing. */
+  .sub { border-top: 1px solid; padding-top: var(--sdn-sp-7); display: flex; flex-direction: column; gap: var(--sdn-sp-3); }
+  .alist { display: flex; flex-direction: column; margin-top: var(--sdn-sp-3); }
+  .arow {
+    display: flex;
+    align-items: center;
+    gap: var(--sdn-sp-5);
+    flex-wrap: wrap;
+    padding: var(--sdn-sp-3) 0;
+    border-bottom: 1px solid;
+  }
+  .arow :global(button) { margin-left: auto; }
+  .aid { font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label); letter-spacing: 0.04em; }
   tr.primary td { border-bottom: 0; }
   tr.meta td { border-bottom: 1px solid; padding: 0 10px 7px 0; }
   .nm {
@@ -766,6 +1052,8 @@
     margin-left: var(--sdn-sp-3);
   }
   .hint { font-size: var(--sdn-fs-body); letter-spacing: 0.03em; line-height: var(--sdn-lh-body); }
+  /* A panel that OPENS with a hint owes the table under it a gap. */
+  .pad > .hint:first-child { margin-bottom: var(--sdn-sp-5); display: block; }
   .err {
     border: 1px solid;
     padding: var(--sdn-sp-5) var(--sdn-sp-6);

@@ -55,6 +55,18 @@ export function describeApiError(err) {
       return 'That xpub is already registered on this node.';
     case 'invalid_trust_level':
       return 'That trust level cannot be assigned through this API.';
+    // --- the pin registry (GET/POST /api/peers/pins, DELETE …/pins/{id}) ---
+    // A pin is what keeps a never-yet-seen peer in the table at all (owner
+    // ruling 2026-07-30), so every refusal has to be a sentence an operator can
+    // act on — a silent failure here reads as "the button does nothing".
+    case 'invalid_peer':
+      return 'That is not a peer id or a multiaddr this node can parse.';
+    case 'already_pinned':
+      return 'That peer is already pinned on this node.';
+    case 'not_pinned':
+      return 'That peer is not pinned, so there was nothing to remove.';
+    case 'config_pin':
+      return "This pin comes from the node's config file. It can only be removed there — this page cannot unpin it.";
     default:
       return err.message || `Request failed (HTTP ${err.status}).`;
   }

@@ -14,14 +14,54 @@
   import ModalShell from './ModalShell.svelte';
   import ModalSection from './ModalSection.svelte';
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
+  import { pinIsLocked, pinNoteLabel } from './peers.js';
 
   /**
+   * `pin` is this peer's record in the pin registry, or null when it is not
+   * pinned; `pinsKnown` is false while the node has not answered for its pins.
+   * The distinction is the point — "not pinned" and "we do not know" have
+   * opposite consequences for whether this peer stays in the table, and a modal
+   * that guessed would be the third surface today to state a peer fact it had
+   * not read.
+   *
    * @type {{
-   *   peer: any, tiers: string[], busy?: boolean, error?: string,
+   *   peer: any, pin?: any, pinsKnown?: boolean, tiers: string[],
+   *   busy?: boolean, error?: string,
    *   onSetTrust: (tier: string) => void, onRemove: () => void, onClose: () => void
    * }}
    */
-  let { peer, tiers, busy = false, error = '', onSetTrust, onRemove, onClose } = $props();
+  let { peer, pin = null, pinsKnown = false, tiers, busy = false, error = '', onSetTrust, onRemove, onClose } = $props();
+
+  const pinned = $derived(Boolean(pin));
+  const pinLocked = $derived(pinned && pinIsLocked(pin));
+  /**
+   * LISTING — the answer to "why is this peer in the table, or why is it not".
+   * Pins are added and removed in the PINNED PEERS panel; this modal states the
+   * fact so the two surfaces can never disagree, and does not grow a second
+   * control for one action.
+   */
+  const listing = $derived.by(() => {
+    if (!pinsKnown) return { label: 'NOT READ', sentence: '', tone: 'textMuted' };
+    if (pinLocked) {
+      return {
+        label: 'PINNED BY CONFIG FILE',
+        sentence: "Listed whether or not it is connected. The pin lives in this node's config file and can only be removed there.",
+        tone: 'textDim',
+      };
+    }
+    if (pinned) {
+      return {
+        label: 'PINNED',
+        sentence: 'Listed whether or not it is connected.',
+        tone: 'ice',
+      };
+    }
+    return {
+      label: 'NOT PINNED',
+      sentence: 'Listed only while it is connected. It disappears from the peers table when it drops off the network.',
+      tone: 'textMuted',
+    };
+  });
 
   const tier = $derived(normalizeTrust(peer?.trust_level));
   const effective = $derived(normalizeTrust(peer?.effective_trust_level));
@@ -68,6 +108,19 @@
         <span class="v" style="color:{theme.textBody};">{peer.notes}</span>
       </div>
     {/if}
+    {#if pinsKnown}
+      <div class="kv">
+        <span class="k" style="color:{theme.textMuted};">LISTING</span>
+        <span class="v" style="color:{theme[listing.tone] ?? theme.textDim};">{listing.label}</span>
+      </div>
+      <p class="fine" style="color:{theme.textFaint};">{listing.sentence}</p>
+      {#if pinned && (pin?.note ?? '').trim()}
+        <div class="kv">
+          <span class="k" style="color:{theme.textMuted};">{pinNoteLabel(pin)}</span>
+          <span class="v" style="color:{theme.textBody};">{pin.note}</span>
+        </div>
+      {/if}
+    {/if}
   </ModalSection>
 
   <ModalSection title="TRUST">
@@ -99,7 +152,13 @@
     </p>
   </ModalSection>
 
-  <ModalSection title="DANGER ZONE" danger note="Removing a peer drops its trust entry. It can dial this node again as a stranger.">
+  <ModalSection
+    title="DANGER ZONE"
+    danger
+    note={pinned
+      ? 'Removing a peer drops its trust entry. It can dial this node again as a stranger. It stays PINNED, so it stays in the peers table — unpin it separately.'
+      : 'Removing a peer drops its trust entry. It can dial this node again as a stranger.'}
+  >
     <div class="row">
       <GBtn
         title={confirming ? 'Click again to remove this peer' : 'Remove this peer'}
