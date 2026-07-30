@@ -519,7 +519,17 @@ deploy_binary() {
     fi
 
     case $type in
-        full) binary="spacedatanetwork" ;;
+        full)
+            # UNREACHABLE IN PRACTICE: deploy_binary() already returns above for
+            # type=="full" (host-native go-with-wasmedge build, see the ssh_cmd
+            # a few lines up). This generic CGO_ENABLED=0 path cannot link
+            # WasmEdge-go (cgo required — reproduced: "build constraints exclude
+            # all Go files in .../WasmEdge-go@v0.14.0/wasmedge") and must never
+            # run for the full binary. Fail loudly instead of silently building
+            # nothing, per ops-deploy-sh-cgo-full-binary-broken.
+            log_error "deploy_binary: type=full must not reach the generic CGO_ENABLED=0 build path (WasmEdge-go needs cgo); this is a caller bug, not a valid deploy"
+            exit 1
+            ;;
         edge) binary="spacedatanetwork-edge" ;;
         registry) binary="registry-builder" ;;
     esac
