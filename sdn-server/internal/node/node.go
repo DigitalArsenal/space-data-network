@@ -685,6 +685,13 @@ func (n *Node) init() error {
 	if err := n.plugins.Register(ailogplugin.New()); err != nil {
 		log.Warnf("Failed to register plugin %q: %v", ailogplugin.ID, err)
 	}
+	// $PMM provider module manifest. Registered here rather than wired into the
+	// daemon's mux because plugins.Manager.RegisterRoutes is already mounted on
+	// it, so the whole surface costs one Register call. It publishes nothing
+	// unless a module catalog is present.
+	if err := n.plugins.Register(newPMMPlugin(n)); err != nil {
+		log.Warnf("Failed to register plugin %q: %v", PMMPluginID, err)
+	}
 
 	runtimeIPFSAPIURL := n.resolveRuntimeIPFSAPIURL()
 	if runtimeIPFSAPIURL != "" && strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {

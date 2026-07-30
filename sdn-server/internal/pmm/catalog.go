@@ -77,16 +77,16 @@ func BuildManifest(cf *CatalogFile, trust TrustAnchor, epoch uint64, canonicalUR
 	}
 	stamp := func(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
 	m := &Manifest{
-		ProviderDomain:  trust.ProviderDomain,
-		ProviderName:    cf.ProviderName,
-		Description:     cf.Description,
-		Epoch:           epoch,
-		Trust:           trust,
-		Modules:         append([]Entry(nil), cf.Entries...),
-		CanonicalURL:    canonicalURL,
-		CreatedAt:       stamp(now),
-		UpdatedAt:       stamp(now),
-		ExpiresAt:       stamp(now.Add(ttl)),
+		ProviderDomain: trust.ProviderDomain,
+		ProviderName:   cf.ProviderName,
+		Description:    cf.Description,
+		Epoch:          epoch,
+		Trust:          trust,
+		Modules:        append([]Entry(nil), cf.Entries...),
+		CanonicalURL:   canonicalURL,
+		CreatedAt:      stamp(now),
+		UpdatedAt:      stamp(now),
+		ExpiresAt:      stamp(now.Add(ttl)),
 	}
 	for i := range m.Modules {
 		if m.Modules[i].UpdatedAt == "" {
@@ -103,4 +103,23 @@ func BuildManifest(cf *CatalogFile, trust TrustAnchor, epoch uint64, canonicalUR
 		return nil, err
 	}
 	return m, nil
+}
+
+// CatalogProviderDomain reads just the provider domain from a catalog file.
+//
+// The domain lives in the catalog rather than the daemon's config schema so this
+// surface can be added without a config migration, and so the domain can never
+// disagree with the catalog it describes.
+func CatalogProviderDomain(path string) (string, error) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("pmm: read catalog %s: %w", path, err)
+	}
+	var head struct {
+		ProviderDomain string `json:"provider_domain"`
+	}
+	if err := json.Unmarshal(raw, &head); err != nil {
+		return "", fmt.Errorf("pmm: decode catalog %s: %w", path, err)
+	}
+	return strings.TrimSpace(head.ProviderDomain), nil
 }
