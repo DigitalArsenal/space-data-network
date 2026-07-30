@@ -413,6 +413,39 @@ func CompactQRVCardForPeer(displayName, peerID string) string {
 	return strings.Join(lines, "\r\n") + "\r\n"
 }
 
+// isPubliclyDerivablePath reports whether an HD path can be reached from an
+// ancestor extended PUBLIC key by BIP-32 CKDpub alone.
+//
+// The test is depth-free and needs no base58 decode: a CryptoKey's XPUB is a
+// proper ancestor of its KEY_ADDRESS, so a verifier must run CKDpub for at
+// least the path's LAST element — and CKDpub cannot produce a HARDENED child at
+// all. A hardened final element therefore makes the key underivable from any
+// xpub, whatever that xpub's depth. (SLIP-10 Ed25519 goes further and has no
+// public derivation for any element, hardened or not; its paths are hardened
+// throughout, so this same test rejects them.)
+//
+// Anything that is not an "m/..." HD path — the node's non-HD runtime signing
+// key at "sdn/runtime-signing", say — is not derivable either, and gets no
+// alias.
+func isPubliclyDerivablePath(path string) bool {
+	elements := strings.Split(strings.TrimSpace(path), "/")
+	if len(elements) < 2 {
+		return false
+	}
+	if root := elements[0]; root != "m" && root != "M" {
+		return false
+	}
+	last := elements[len(elements)-1]
+	if last == "" {
+		return false
+	}
+	switch last[len(last)-1] {
+	case '\'', 'h', 'H':
+		return false
+	}
+	return true
+}
+
 func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM bool) []appleIdentityLine {
 	var entries []appleIdentityLine
 
@@ -428,7 +461,25 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 
 		addressType := strings.TrimSpace(string(key.ADDRESS_TYPE()))
 		keyPath := strings.TrimSpace(string(key.KEY_ADDRESS()))
+		keyXPub := strings.TrimSpace(string(key.XPUB()))
 		pathAlias := base64.RawURLEncoding.EncodeToString([]byte(keyPath))
+		// A derivation-path alias is only worth the QR bytes when the SAME
+		// record entry carries the XPUB the path resolves against: the whole
+		// point of the alias is "derive the key from xpub + path". An entry
+		// with no XPUB is asserting no derivation, so its path is unresolvable
+		// from the card and the alias would be dead weight — and worse than
+		// dead weight when it lands as a SECOND, indistinguishable row of the
+		// same alias kind (owner report 2026-07-29, task
+		// sdn-vcf-duplicate-sign-alias: two sign@ rows, one of them an
+		// all-hardened Ed25519 path that no xpub can ever produce).
+		//
+		// This is the same rule the owner already ruled on the encryption side
+		// (ONE ENCRYPTION PATH, epm/service.go — the hardened X25519 key is
+		// deliberately not advertised); it is now symmetric for signing, and
+		// it is structural rather than a per-algorithm special case. Keys
+		// without an advertised derivation stay fully discoverable from the
+		// record itself, which the epmcid alias binds to this card.
+		derivable := keyXPub != "" && isPubliclyDerivablePath(keyPath)
 		switch key.KEY_TYPE() {
 		case EPM.KeyTypeSigning:
 			// OWNER DIRECTIVE 2026-07-27: no key BYTES on the vCard. The
@@ -436,7 +487,7 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 			// carried the raw public key; they are gone. What remains is the
 			// DERIVATION PATH alias below, which is what the paradigm actually
 			// needs — a verifier derives the key from xpub + path.
-			if keyPath != "" {
+			if derivable {
 				entries = append(entries, appleIdentityLine{
 					Label:       joinedLabel("Signing Key Derivation Path", addressType, keyPath),
 					Value:       pathAlias,
@@ -445,7 +496,7 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 				})
 			}
 		case EPM.KeyTypeEncryption:
-			if keyPath != "" {
+			if derivable {
 				entries = append(entries, appleIdentityLine{
 					Label:       joinedLabel("Encryption Key Derivation Path", addressType, keyPath),
 					Value:       pathAlias,
