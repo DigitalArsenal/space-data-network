@@ -21,6 +21,7 @@
   import StatusChip from 'spaceaware-student-sdn/src/lib/components/StatusChip.svelte';
   import GBtn from 'spaceaware-student-sdn/src/lib/components/GBtn.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
+  import ModalShell from './ModalShell.svelte';
   import { apiFetch, describeApiError } from './api.js';
   import { signInWithWalletUI, loadWallet } from './wallet.js';
   import { walletUIAvailable, LEGACY_PROFILES } from './walletui.js';
@@ -103,43 +104,28 @@
     onClose();
   }
 
-  function onKeydown(e) {
-    if (e.key === 'Escape') dismiss();
-  }
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<!-- The ONE modal shell (IRIS ruling 2026-07-29 §3). `dismiss` is what the
+     shell calls for Esc, the ✕ and an overlay click alike, so an in-flight
+     wallet transaction is cancelled through the wallet's own path on every
+     dismissal route rather than only on the one we remembered to wire. -->
+<ModalShell
+  title="SIGN IN"
+  label="Wallet sign in"
+  width="560px"
+  onClose={dismiss}
+>
+  {#snippet chips()}
+    {#if stage === 'checking'}
+      <StatusChip label="LOADING WALLET" color={theme.amber} />
+    {:else if stage === 'unavailable'}
+      <StatusChip label="SIGN-IN UNAVAILABLE" color={theme.red} />
+    {:else}
+      <StatusChip label="WALLET READY" color={theme.green} />
+    {/if}
+  {/snippet}
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="overlay" onclick={(e) => e.target === e.currentTarget && dismiss()}>
-  <div
-    class="modal"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Wallet sign in"
-    style="background:{theme.panelRaised};border-color:{theme.panelBorder};color:{theme.textBody};"
-  >
-    <div class="head" style="border-color:{theme.divider};">
-      <div class="ttl" style="color:{theme.textBright};">SIGN IN</div>
-      <div class="chips">
-        {#if stage === 'checking'}
-          <StatusChip label="LOADING WALLET" color={theme.amber} />
-        {:else if stage === 'unavailable'}
-          <StatusChip label="SIGN-IN UNAVAILABLE" color={theme.red} />
-        {:else}
-          <StatusChip label="WALLET READY" color={theme.green} />
-        {/if}
-        <button
-          type="button"
-          class="close"
-          style="color:{theme.textMuted};border-color:{theme.hairline};"
-          onclick={dismiss}
-          aria-label="Close"
-        >✕</button>
-      </div>
-    </div>
-
-    <div class="body">
       {#if stage === 'unavailable'}
         <div class="note" style="color:{theme.red};border-color:{theme.hairline};">
           This node does not serve the wallet. Stage it with
@@ -192,55 +178,9 @@
       {#if error}
         <div class="err" style="color:{theme.red};border-color:{theme.red};">{error}</div>
       {/if}
-    </div>
-  </div>
-</div>
+</ModalShell>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(2, 5, 8, 0.72);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 50;
-    padding: 28px;
-  }
-  .modal {
-    width: min(560px, 100%);
-    max-height: min(88vh, 760px);
-    border: 1px solid;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
-    font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  }
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 15px 18px 12px;
-    border-bottom: 1px solid;
-  }
-  .ttl {
-    font-family: 'Chakra Petch', sans-serif;
-    font-weight: 600;
-    font-size: 22px;
-    letter-spacing: 0.1em;
-  }
-  .chips { display: flex; gap: 6px; align-items: center; }
-  .close {
-    background: transparent;
-    border: 1px solid;
-    cursor: pointer;
-    font-size: 14.5px;
-    line-height: 1;
-    padding: 4px 7px;
-  }
-  .close:disabled { opacity: 0.45; cursor: default; }
-  .body { overflow: auto; padding: 15px 18px 18px; display: flex; flex-direction: column; gap: 14px; }
   .wallet-host { min-width: 0; }
   .hint { font-size: 12.5px; letter-spacing: 0.04em; line-height: 1.55; }
   .note {
@@ -258,9 +198,4 @@
     line-height: 1.5;
   }
   .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
-
-  @media (max-width: 760px) {
-    .overlay { padding: 0; }
-    .modal { width: 100%; max-height: 100dvh; height: 100dvh; }
-  }
 </style>
