@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 func TestParsePeerMultiaddr(t *testing.T) {
@@ -224,5 +226,36 @@ func TestInitializeFromConfig_SkipsInvalidAddrs(t *testing.T) {
 	// Only the valid peer should be added
 	if registry.PeerCount() != 1 {
 		t.Errorf("Expected 1 peer (invalid addrs skipped), got %d", registry.PeerCount())
+	}
+}
+
+// ⛔ THE CONFIG LINE IS A MULTIADDR, NOT A NAME.
+//
+// This constructor used to write `Name: "config:" + info.ID.ShortString()`,
+// i.e. `config:<peer.ID 16*PpYr2U>` — a PROVENANCE tag, in libp2p's debug
+// stringer format, in the NAME field. It is the same shape as the "Config
+// Trusted Peer" placeholder the owner caught on 2026-07-30 ("what does the
+// first row 'config trusted peer' mean?"), and provenance has its own field.
+func TestInitializeFromConfig_DoesNotManufactureAName(t *testing.T) {
+	const pid = "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
+	registry, _, _, err := InitializeFromConfig(RegistryConfig{
+		TrustedPeers: []string{"/ip4/10.0.0.1/tcp/4001/p2p/" + pid},
+	})
+	if err != nil {
+		t.Fatalf("InitializeFromConfig: %v", err)
+	}
+	id, err := peer.Decode(pid)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	tp, err := registry.GetPeer(id)
+	if err != nil {
+		t.Fatalf("GetPeer: %v", err)
+	}
+	if tp.Name != "" {
+		t.Errorf("a config-declared peer must have no name until something real names it; got %q", tp.Name)
+	}
+	if tp.TrustLevel != Trusted {
+		t.Errorf("trust level = %v, want Trusted", tp.TrustLevel)
 	}
 }
