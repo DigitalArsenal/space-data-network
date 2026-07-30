@@ -144,6 +144,17 @@ func BuildNodeStatusSet(in Input) []byte {
 		if pid == selfPeerID {
 			continue
 		}
+		seen := lastSeen[pid]
+		// "LAST SEEN — NEVER" ON A PEER WE ARE TALKING TO RIGHT NOW was the
+		// owner's second complaint, and it was literally true of the feed: the
+		// registry only records LastSeen for peers already in it
+		// (Registry.UpdateStats is a no-op for an unknown id), so a peer that
+		// connected before it was ever registered kept LastSeen 0 forever. On
+		// the live feed EVERY row read 0, including the two that were online.
+		// If it is connected, we are seeing it now — say so.
+		if seen == 0 && online[pid] {
+			seen = now.Unix()
+		}
 		row := peerRow{
 			PeerID:       pid,
 			DN:           tp.Name,
@@ -151,9 +162,12 @@ func BuildNodeStatusSet(in Input) []byte {
 			TrustLevel:   tp.TrustLevel.String(),
 			AgentVersion: metaValue(tp.Metadata, "agent_version"),
 			Multiaddrs:   multiaddrStrings(tp.Addrs),
-			LastSeen:     lastSeen[pid],
+			LastSeen:     seen,
 			IsOnline:     online[pid],
 			VCard:        peerVCard(tp),
+			Source:       metaValue(tp.Metadata, "source"),
+			Pinned:       metaValue(tp.Metadata, "pinned") == "true",
+			PinNote:      metaValue(tp.Metadata, "pin_note"),
 		}
 		row.applyGeo(in.Geo)
 		if row.Lat == 0 && row.Lon == 0 {
@@ -186,6 +200,10 @@ type peerRow struct {
 	UptimeS          int64
 	SuiteVersion     string
 	StandardsVersion string
+	// Provenance: why this row is on the board. See NodeStatus.fbs.
+	Source  string
+	Pinned  bool
+	PinNote string
 }
 
 // applyGeo resolves the first public IP among the row's multiaddrs and fills
@@ -248,6 +266,8 @@ func encodeRow(b *flatbuffers.Builder, row *peerRow) flatbuffers.UOffsetT {
 	city := b.CreateString(row.City)
 	suite := b.CreateString(row.SuiteVersion)
 	standards := b.CreateString(row.StandardsVersion)
+	source := b.CreateString(row.Source)
+	pinNote := b.CreateString(row.PinNote)
 
 	addrOffsets := make([]flatbuffers.UOffsetT, len(row.Multiaddrs))
 	for i, a := range row.Multiaddrs {
@@ -279,6 +299,9 @@ func encodeRow(b *flatbuffers.Builder, row *peerRow) flatbuffers.UOffsetT {
 	nst.NodeStatusAddUptimeS(b, row.UptimeS)
 	nst.NodeStatusAddSuiteVersion(b, suite)
 	nst.NodeStatusAddStandardsVersion(b, standards)
+	nst.NodeStatusAddSource(b, source)
+	nst.NodeStatusAddPinned(b, row.Pinned)
+	nst.NodeStatusAddPinNote(b, pinNote)
 	return nst.NodeStatusEnd(b)
 }
 

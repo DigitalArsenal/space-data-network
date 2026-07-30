@@ -173,8 +173,46 @@ STANDARDS_VERSION(optionalEncoding?:any):string|Uint8Array|null {
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
+/**
+ * PROVENANCE — how this row reached the board, so an operator can answer
+ * "how did this get here?" without opening devtools (owner, 2026-07-30:
+ * "I have no idea what these peers are that are in the table").
+ * Exactly one of:
+ *   "config"    — declared in the node's config file (peers.trusted_peers)
+ *   "pinned"    — pinned by an operator through the pin API
+ *   "connected" — seen right now on a live connection
+ * A row can carry NO other provenance: the feed admits pinned-or-connected
+ * and nothing else (epm.BuildObservedSDNPeers).
+ */
+SOURCE():string|null
+SOURCE(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+SOURCE(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 42);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+/**
+ * True for config and operator pins. A pinned peer keeps its seat while
+ * unreachable; an unpinned peer disappears when it drops off the network.
+ */
+PINNED():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+/**
+ * For SOURCE=="config", the real file and key an operator can edit. For
+ * SOURCE=="pinned", the operator's own note. Never a manufactured label.
+ */
+PIN_NOTE():string|null
+PIN_NOTE(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+PIN_NOTE(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
 static startNodeStatus(builder:flatbuffers.Builder) {
-  builder.startObject(19);
+  builder.startObject(22);
 }
 
 static addPeerId(builder:flatbuffers.Builder, PEER_IDOffset:flatbuffers.Offset) {
@@ -265,12 +303,24 @@ static addStandardsVersion(builder:flatbuffers.Builder, STANDARDS_VERSIONOffset:
   builder.addFieldOffset(18, STANDARDS_VERSIONOffset, 0);
 }
 
+static addSource(builder:flatbuffers.Builder, SOURCEOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(19, SOURCEOffset, 0);
+}
+
+static addPinned(builder:flatbuffers.Builder, PINNED:boolean) {
+  builder.addFieldInt8(20, +PINNED, +false);
+}
+
+static addPinNote(builder:flatbuffers.Builder, PIN_NOTEOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(21, PIN_NOTEOffset, 0);
+}
+
 static endNodeStatus(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createNodeStatus(builder:flatbuffers.Builder, PEER_IDOffset:flatbuffers.Offset, DNOffset:flatbuffers.Offset, ORGANIZATIONOffset:flatbuffers.Offset, TRUST_LEVELOffset:flatbuffers.Offset, ROLEOffset:flatbuffers.Offset, AGENT_VERSIONOffset:flatbuffers.Offset, MULTIFORMAT_ADDRESSOffset:flatbuffers.Offset, LAST_SEEN:bigint, IS_ONLINE:boolean, LATENCY_MS:number, VCARDOffset:flatbuffers.Offset, LAT:number, LON:number, GEO_COUNTRYOffset:flatbuffers.Offset, GEO_CITYOffset:flatbuffers.Offset, IS_SELF:boolean, UPTIME_S:bigint, SUITE_VERSIONOffset:flatbuffers.Offset, STANDARDS_VERSIONOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createNodeStatus(builder:flatbuffers.Builder, PEER_IDOffset:flatbuffers.Offset, DNOffset:flatbuffers.Offset, ORGANIZATIONOffset:flatbuffers.Offset, TRUST_LEVELOffset:flatbuffers.Offset, ROLEOffset:flatbuffers.Offset, AGENT_VERSIONOffset:flatbuffers.Offset, MULTIFORMAT_ADDRESSOffset:flatbuffers.Offset, LAST_SEEN:bigint, IS_ONLINE:boolean, LATENCY_MS:number, VCARDOffset:flatbuffers.Offset, LAT:number, LON:number, GEO_COUNTRYOffset:flatbuffers.Offset, GEO_CITYOffset:flatbuffers.Offset, IS_SELF:boolean, UPTIME_S:bigint, SUITE_VERSIONOffset:flatbuffers.Offset, STANDARDS_VERSIONOffset:flatbuffers.Offset, SOURCEOffset:flatbuffers.Offset, PINNED:boolean, PIN_NOTEOffset:flatbuffers.Offset):flatbuffers.Offset {
   NodeStatus.startNodeStatus(builder);
   NodeStatus.addPeerId(builder, PEER_IDOffset);
   NodeStatus.addDn(builder, DNOffset);
@@ -291,6 +341,9 @@ static createNodeStatus(builder:flatbuffers.Builder, PEER_IDOffset:flatbuffers.O
   NodeStatus.addUptimeS(builder, UPTIME_S);
   NodeStatus.addSuiteVersion(builder, SUITE_VERSIONOffset);
   NodeStatus.addStandardsVersion(builder, STANDARDS_VERSIONOffset);
+  NodeStatus.addSource(builder, SOURCEOffset);
+  NodeStatus.addPinned(builder, PINNED);
+  NodeStatus.addPinNote(builder, PIN_NOTEOffset);
   return NodeStatus.endNodeStatus(builder);
 }
 }

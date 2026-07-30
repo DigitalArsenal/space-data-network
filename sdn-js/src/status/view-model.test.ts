@@ -49,12 +49,20 @@ function buildNodeStatusSetBytes(): Uint8Array {
   NodeStatus.addStandardsVersion(builder, standards0);
   const node0 = NodeStatus.endNodeStatus(builder);
 
-  // --- node 1: a peer with no geo, offline ---
+  // --- node 1: a peer with no geo, offline, PINNED BY THE CONFIG FILE ---
+  // The shape the owner asked about on 2026-07-30: it has never been seen and
+  // cannot be plotted, so it is on the board for exactly one reason, and the
+  // row has to be able to say which — and name the file that owns it.
   const peerId1 = builder.createString('12D3KooWPeerTwo');
+  const source1 = builder.createString('config');
+  const pinNote1 = builder.createString('/etc/space-data-network/config.yaml \u00b7 peers.trusted_peers');
   NodeStatus.startNodeStatus(builder);
   NodeStatus.addPeerId(builder, peerId1);
   NodeStatus.addIsOnline(builder, false);
   NodeStatus.addIsSelf(builder, false);
+  NodeStatus.addSource(builder, source1);
+  NodeStatus.addPinned(builder, true);
+  NodeStatus.addPinNote(builder, pinNote1);
   const node1 = NodeStatus.endNodeStatus(builder);
 
   const sourcePeerId = builder.createString('12D3KooWSelfNode');
@@ -126,6 +134,21 @@ describe('status view model', () => {
     expect(peer.lon).toBe(0);
     expect(peer.uptimeS).toBe(0);
     expect(peer.lastSeen).toBe(0);
+  });
+
+  it('carries per-row provenance so the page can answer "how did this get here?"', () => {
+    const [self, peer] = decodeNodeStatusSet(buildNodeStatusSetBytes()).nodes;
+
+    // A config pin: never seen, unplottable, and it names the real file and key.
+    expect(peer.source).toBe('config');
+    expect(peer.pinned).toBe(true);
+    expect(peer.pinNote).toContain('peers.trusted_peers');
+    expect(peer.lastSeen).toBe(0);
+
+    // The self row carries no provenance — it is not on its own board.
+    expect(self.source).toBe('');
+    expect(self.pinned).toBe(false);
+    expect(self.pinNote).toBe('');
   });
 
   it('nodeStatusSetToView returns numeric (not bigint) timestamps', () => {

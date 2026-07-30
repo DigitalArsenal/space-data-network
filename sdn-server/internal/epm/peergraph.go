@@ -45,6 +45,15 @@ type PeerNode struct {
 	MultiformatAddress []string `json:"multiformat_address,omitempty"`
 	LastSeen           string   `json:"last_seen,omitempty"`
 	IsOnline           bool     `json:"is_online"`
+
+	// PROVENANCE (owner ruling 2026-07-30). Pinned marks a peer the operator
+	// or the config file deliberately kept; PinSource is peers.PinSourceConfig
+	// or peers.PinSourceOperator; PinNote is the real config file and key for a
+	// config pin, or the operator's own note. These travel with the node so the
+	// projection can answer "how did this get here?" without the registry.
+	Pinned    bool   `json:"pinned,omitempty"`
+	PinSource string `json:"pin_source,omitempty"`
+	PinNote   string `json:"pin_note,omitempty"`
 }
 
 // PeerEdge is an edge in the peer graph.
@@ -114,6 +123,11 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 			if !tp.LastSeen.IsZero() {
 				node.LastSeen = tp.LastSeen.Format(time.RFC3339)
 			}
+			if pin, ok := registry.PinOf(tp.ID); ok {
+				node.Pinned = true
+				node.PinSource = pin.Source
+				node.PinNote = pin.Note
+			}
 			for _, a := range tp.AddrsStrings {
 				node.MultiformatAddress = append(node.MultiformatAddress, a)
 			}
@@ -146,6 +160,11 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 			AgentVersion: peerstoreAgentVersion(h, pid),
 			IsOnline:     true,
 		}
+		if pin, ok := registry.PinOf(pid); ok {
+			node.Pinned = true
+			node.PinSource = pin.Source
+			node.PinNote = pin.Note
+		}
 		snapshot.Nodes = append(snapshot.Nodes, node)
 
 		edge := PeerEdge{
@@ -157,6 +176,31 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 			edge.Protocols = protos
 		}
 		snapshot.Edges = append(snapshot.Edges, edge)
+	}
+
+	// A PIN IS KNOWLEDGE. Owner ruling 2026-07-30: a manually pinned peer stays
+	// on the board even though it has never been seen — so a pin that is in
+	// neither the registry nor the connection set must still produce a node,
+	// otherwise "pinned but not yet reachable" (the exact case the pin exists
+	// for) would be invisible. Offline, no addresses, no agent: honest.
+	if registry != nil {
+		for _, pin := range registry.Pins().List() {
+			pid, err := peer.Decode(pin.PeerID)
+			if err != nil || seen[pid] || connectedPeers[pid] {
+				continue
+			}
+			seen[pid] = true
+			snapshot.Nodes = append(snapshot.Nodes, PeerNode{
+				PeerID:             pin.PeerID,
+				DN:                 pin.Name,
+				Role:               RoleStandard,
+				MultiformatAddress: append([]string(nil), pin.Addrs...),
+				IsOnline:           false,
+				Pinned:             true,
+				PinSource:          pin.Source,
+				PinNote:            pin.Note,
+			})
+		}
 	}
 
 	return snapshot

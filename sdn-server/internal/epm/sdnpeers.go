@@ -35,7 +35,9 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 	}
 
 	out := make([]*peers.TrustedPeer, 0)
-	candidatePeerIDs := uniqueStrings(append(peerIDs(advertisementFlagsByPeer), sdnPeerIDsFromSnapshot(snapshot, registryByID)...))
+	candidatePeerIDs := uniqueStrings(append(
+		append(peerIDs(advertisementFlagsByPeer), pinnedPeerIDsFromSnapshot(snapshot)...),
+		sdnPeerIDsFromSnapshot(snapshot, registryByID)...))
 	for _, peerID := range candidatePeerIDs {
 		if peerID == "" || peerID == snapshot.LocalPeerID {
 			continue
@@ -43,7 +45,33 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 
 		flags := uniqueStrings(advertisementFlagsByPeer[peerID])
 		node := nodesByID[peerID]
-		if len(flags) == 0 && !isConnectedSDNPeer(node, protocolsByPeer[peerID], registryByID[peerID]) {
+
+		// ADMISSION (owner rulings 2026-07-30, verbatim: "The Peers table
+		// should not ever show peers that have never been seen, UNLESS they
+		// have been added manually and 'pinned'" / "When a peer drops off the
+		// network it should just disappear" / "I have no idea what these peers
+		// are that are in the table").
+		//
+		// A row is admitted for EXACTLY TWO reasons, and the row says which:
+		//   PINNED    — the operator or the config file deliberately kept it.
+		//   CONNECTED — it is on a live connection right now.
+		//
+		// What this deliberately kills: DHT rendezvous advertisement
+		// discoveries. Measured on the live feed 2026-07-30, 34 of 35 rows were
+		// exactly that — never dialled, no name, LAST_SEEN 0, no coordinates,
+		// and all carrying the identical agent string "spacedatanetwork/1.0.0"
+		// that the old code SYNTHESIZED for them from flags[0] a few lines
+		// below. Publishing an advertisement into a public DHT is a claim
+		// anyone can make; it is not evidence this node has ever met the peer,
+		// and it must not seat anyone on an operator's peer board.
+		//
+		// The disappearance rule falls out of this: an unpinned peer is here
+		// only while connected, so when it drops off it is simply absent from
+		// the next frame. No tombstones, no "last seen — never" accumulating.
+		if !node.Pinned && !node.IsOnline {
+			continue
+		}
+		if !node.Pinned && !isConnectedSDNPeer(node, protocolsByPeer[peerID], registryByID[peerID]) {
 			continue
 		}
 
@@ -62,7 +90,12 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 		// A peer that has gone offline keeps whatever agent-version the
 		// registry recorded, so a known SDN node that is merely unreachable
 		// still belongs on the board.
-		if !identifiesAsSDNAgent(node, registryByID[peerID], flags) {
+		//
+		// A PIN OVERRIDES THIS. An operator pinning a box by peer id has said
+		// what it is; demanding it also prove SDN membership before it may be
+		// listed would make a fresh, not-yet-reachable pin invisible — which is
+		// the one case the pin exists for.
+		if !node.Pinned && !identifiesAsSDNAgent(node, registryByID[peerID], flags) {
 			continue
 		}
 
@@ -89,8 +122,20 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 		if strings.TrimSpace(node.AgentVersion) != "" {
 			entry.Metadata["agent_version"] = strings.TrimSpace(node.AgentVersion)
 		}
-		if strings.TrimSpace(entry.Metadata["agent_version"]) == "" && len(flags) > 0 {
-			entry.Metadata["agent_version"] = flags[0]
+		// The advertisement flag is NOT an agent version. Copying flags[0] into
+		// agent_version is how 34 never-contacted rows all came to display
+		// "spacedatanetwork/1.0.0" on the live board — a version string this
+		// node never observed, presented as though it had. An unknown agent is
+		// an empty agent.
+
+		// PROVENANCE — the answer to the owner's "so how did they get there?",
+		// carried on the row itself rather than left to be inferred.
+		entry.Metadata["source"] = observedPeerSource(node)
+		if node.Pinned {
+			entry.Metadata["pinned"] = "true"
+			if note := strings.TrimSpace(node.PinNote); note != "" {
+				entry.Metadata["pin_note"] = note
+			}
 		}
 
 		out = append(out, entry)
@@ -143,6 +188,37 @@ func CountSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.TrustedPe
 		}
 	}
 	return counts
+}
+
+// observedPeerSource names why a row is on the board, in the vocabulary the
+// $NST SOURCE field and the dashboard badge share: "config", "pinned" or
+// "connected". A pin's own source wins, because a config pin is locked in the
+// UI and must name the file that owns it — including while it is connected.
+func observedPeerSource(node PeerNode) string {
+	if node.Pinned {
+		switch node.PinSource {
+		case peers.PinSourceConfig:
+			return peers.PinSourceConfig
+		default:
+			return peers.PinSourceOperator
+		}
+	}
+	return "connected"
+}
+
+func pinnedPeerIDsFromSnapshot(snapshot *PeerGraphSnapshot) []string {
+	if snapshot == nil {
+		return nil
+	}
+	out := make([]string, 0)
+	for _, node := range snapshot.Nodes {
+		peerID := strings.TrimSpace(node.PeerID)
+		if peerID == "" || peerID == snapshot.LocalPeerID || !node.Pinned {
+			continue
+		}
+		out = append(out, peerID)
+	}
+	return out
 }
 
 func sdnPeerIDsFromSnapshot(snapshot *PeerGraphSnapshot, registryByID map[string]*peers.TrustedPeer) []string {

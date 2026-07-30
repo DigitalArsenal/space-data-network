@@ -53,6 +53,23 @@ export interface NodeStatusView {
   suiteVersion: string;
   /** spacedatastandards.org version reported by the peer. */
   standardsVersion: string;
+  /**
+   * PROVENANCE — why this row is on the board, so the page can answer "how did
+   * this get here?" without devtools. Exactly one of:
+   *   'config'    — declared in the node's config file (peers.trusted_peers)
+   *   'pinned'    — pinned by an operator through the pin API
+   *   'connected' — seen right now on a live connection
+   * Empty on the self row. The feed admits pinned-or-connected and nothing
+   * else, so no other value can reach a client.
+   */
+  source: string;
+  /** True for config and operator pins; a pinned peer keeps its seat offline. */
+  pinned: boolean;
+  /**
+   * For source==='config', the real file and key an operator can edit. For
+   * source==='pinned', the operator's own note. Never a manufactured label.
+   */
+  pinNote: string;
 }
 
 /** The decoded status set as a plain view model. */
@@ -100,6 +117,9 @@ export function nodeStatusToView(node: NodeStatus): NodeStatusView {
     latencyMs: node.LATENCY_MS(),
     suiteVersion: node.SUITE_VERSION() ?? '',
     standardsVersion: node.STANDARDS_VERSION() ?? '',
+    source: node.SOURCE() ?? '',
+    pinned: node.PINNED(),
+    pinNote: node.PIN_NOTE() ?? '',
   };
 }
 

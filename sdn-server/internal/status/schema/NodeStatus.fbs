@@ -38,6 +38,22 @@ table NodeStatus {
   UPTIME_S: int64;
   SUITE_VERSION: string;
   STANDARDS_VERSION: string;
+  /// PROVENANCE — how this row reached the board, so an operator can answer
+  /// "how did this get here?" without opening devtools (owner, 2026-07-30:
+  /// "I have no idea what these peers are that are in the table").
+  /// Exactly one of:
+  ///   "config"    — declared in the node's config file (peers.trusted_peers)
+  ///   "pinned"    — pinned by an operator through the pin API
+  ///   "connected" — seen right now on a live connection
+  /// A row can carry NO other provenance: the feed admits pinned-or-connected
+  /// and nothing else (epm.BuildObservedSDNPeers).
+  SOURCE: string;
+  /// True for config and operator pins. A pinned peer keeps its seat while
+  /// unreachable; an unpinned peer disappears when it drops off the network.
+  PINNED: bool;
+  /// For SOURCE=="config", the real file and key an operator can edit. For
+  /// SOURCE=="pinned", the operator's own note. Never a manufactured label.
+  PIN_NOTE: string;
 }
 
 table NodeStatusSet {
