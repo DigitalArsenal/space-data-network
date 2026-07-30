@@ -127,6 +127,16 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 				node.Pinned = true
 				node.PinSource = pin.Source
 				node.PinNote = pin.Note
+				// THE OPERATOR'S OWN LABEL, which was being dropped on exactly
+				// the peers that matter. A pin's Name reached DN only on the
+				// never-seen branch below, so pinning a peer this node ALREADY
+				// had a registry row or a live connection for named it and the
+				// name went nowhere — measured 2026-07-30 as three fleet boxes
+				// rendering "unknown" on the owner's board. It never overrides
+				// a name the PEER published about itself; it fills the blank.
+				if strings.TrimSpace(node.DN) == "" {
+					node.DN = pin.Name
+				}
 			}
 			for _, a := range tp.AddrsStrings {
 				node.MultiformatAddress = append(node.MultiformatAddress, a)
@@ -164,6 +174,11 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 			node.Pinned = true
 			node.PinSource = pin.Source
 			node.PinNote = pin.Note
+			// Same rule on the connected-but-unregistered branch: an operator
+			// who names a box gets to see that name (see above).
+			if strings.TrimSpace(node.DN) == "" {
+				node.DN = pin.Name
+			}
 		}
 		snapshot.Nodes = append(snapshot.Nodes, node)
 

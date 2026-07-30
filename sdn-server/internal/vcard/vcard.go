@@ -97,7 +97,15 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 	})
 
 	// Distinguished Name -> FN (Formatted Name)
-	if dn := epm.DN(); dn != nil {
+	//
+	// EGRESS SCRUB. A DN already SIGNED into an EPM cannot be edited without
+	// re-signing, and two live fleet nodes are carrying `SDN Node <peer.ID
+	// 16*…>` from the old defaultProfile() (measured 2026-07-30). Fixing the
+	// minting site stops NEW ones; this stops the ones already in the field
+	// from being published as names, with no migration and no key handling.
+	// A scrubbed DN yields no FN at all — the honest blank, which every
+	// consumer already renders as "unknown".
+	if dn := epm.DN(); dn != nil && !IsStringerDN(string(dn)) {
 		card.Add("FN", &vcard.Field{Value: string(dn)})
 	}
 
@@ -385,17 +393,47 @@ func CompactQRVCard(epmBytes []byte) (string, error) {
 	return strings.Join(lines, "\r\n") + "\r\n", nil
 }
 
+// IsStringerDN reports whether a display name is libp2p's DEBUG STRINGER
+// rather than a name — `<peer.ID 16*PpYr2U>`, produced by peer.ID.ShortString()
+// and by `fmt`-ing a peer.ID without .String().
+//
+// ⛔ WHY THIS IS A NAMED PREDICATE AND NOT AN INLINE PREFIX TEST. Measured on
+// the live cluster 2026-07-30 (owner report: a peers row he could not read):
+// BOTH sdn-retriever's and the test node's anonymous /identity/<peerId>.vcf
+// published `FN:SDN Node <peer.ID 16*W1Ktwi>` — the node's OWN EPM DN, minted
+// by epm defaultProfile(). It reached three surfaces (the vCard, the status
+// feed's DN, the dashboard NAME column) and every one of them had to know the
+// shape to refuse it; the dashboard carries the same rejection in JS
+// (accounts.js vcardDisplayName). One predicate, so a fourth surface cannot
+// forget. The prefix match is deliberately loose — the poisoned DNs in the
+// field carry a "SDN Node " prefix, so a HasPrefix test alone misses them.
+func IsStringerDN(name string) bool {
+	return strings.Contains(name, "<peer.ID ")
+}
+
+// NodeFallbackName is what a node is called when nothing has named it: a plain
+// type label plus the tail of its peer id, which is the disambiguator an
+// operator can actually match against a box. It is NOT a claim of identity —
+// callers that must not invent one (a card built for SOMEONE ELSE'S peer) leave
+// the field blank instead; see peers.TrustedPeerToVCard.
+func NodeFallbackName(peerID string) string {
+	short := strings.TrimSpace(peerID)
+	if len(short) > 8 {
+		short = short[len(short)-8:]
+	}
+	if short == "" {
+		return "SDN Node"
+	}
+	return "SDN Node " + short
+}
+
 // CompactQRVCardForPeer builds the minimal scannable card for a peer that
 // has NOT published an EPM: a clean display name plus the peer-id alias so
 // the import still carries machine-usable identity.
 func CompactQRVCardForPeer(displayName, peerID string) string {
 	name := strings.TrimSpace(displayName)
-	if name == "" || strings.HasPrefix(name, "<peer.ID") {
-		short := peerID
-		if len(short) > 8 {
-			short = short[len(short)-8:]
-		}
-		name = "SDN Node " + short
+	if name == "" || IsStringerDN(name) {
+		name = NodeFallbackName(peerID)
 	}
 	lines := []string{
 		"BEGIN:VCARD",

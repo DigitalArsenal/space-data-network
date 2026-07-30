@@ -2315,9 +2315,20 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-// defaultProfile creates a default profile with the node's PeerID as DN.
+// defaultProfile creates the profile a node has before anyone names it.
+//
+// ⛔ It used to be `"SDN Node " + s.peerID.ShortString()`, and ShortString is
+// libp2p's DEBUG STRINGER: the DN it minted was the literal text
+// `SDN Node <peer.ID 16*W1Ktwi>`. Measured 2026-07-30, that string was LIVE on
+// two fleet nodes' anonymous /identity/<peerId>.vcf and on the /ws/status feed
+// — i.e. a Go debug format was those machines' published NAME, and the owner
+// read the consequence as a peers table full of "unknown" rows. Same defect
+// class as the hardcoded "Config Trusted Peer" he caught the day before.
+//
+// vcard.NodeFallbackName is the form the codebase already used for the peer QR
+// card, so there is now ONE fallback name in the node, not two.
 func (s *Service) defaultProfile() *Profile {
 	return &Profile{
-		DN: "SDN Node " + s.peerID.ShortString(),
+		DN: vcard.NodeFallbackName(s.peerID.String()),
 	}
 }

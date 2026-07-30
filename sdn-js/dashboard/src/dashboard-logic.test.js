@@ -25,6 +25,9 @@ import {
   presenceSummary,
   mapCoverage,
   hasFix,
+  withoutSelfRows,
+  registryDelta,
+  registryDeltaLabel,
 } from './peers.js';
 
 const CARD = [
@@ -234,21 +237,86 @@ describe('sortNodes', () => {
  */
 describe('peers — how did this row get here?', () => {
   it('names each admitted source in words an operator can read', () => {
-    expect(peerSource({ source: 'config' }).label).toBe('FROM CONFIG FILE');
-    expect(peerSource({ source: 'pinned' }).label).toBe('PINNED BY OPERATOR');
+    // IRIS 2026-07-30: config and pinned SHARE the badge, because the question
+    // the column answers is WHY THIS ROW IS HERE and the answer is the same —
+    // a human put it there. WHERE they have to go to change it is the LOCKED
+    // chip's job, not this label's.
+    expect(peerSource({ source: 'config' }).label).toBe('ADDED BY OPERATOR');
+    expect(peerSource({ source: 'pinned' }).label).toBe('ADDED BY OPERATOR');
     expect(peerSource({ source: 'connected' }).label).toBe('CONNECTED NOW');
   });
 
-  it('a config pin is pinned AND locked, and carries the file+key to edit', () => {
+  it('a config pin is pinned AND locked, and carries the file+key for the modal', () => {
     const src = peerSource({
       source: 'config',
       pinNote: '/etc/space-data-network/config.yaml  peers.trusted_peers',
     });
     expect(src.pinned).toBe(true);
     expect(src.locked).toBe(true);
-    // The note is the REAL file and key, not prose about one.
+    // The note is the REAL file and key, not prose about one. It survives on
+    // the object because PeerEditModal renders it under DEFINED IN.
     expect(src.note).toContain('peers.trusted_peers');
-    expect(src.sentence).toContain('peers.trusted_peers');
+  });
+
+  /*
+   * ⛔ OWNER 2026-07-30, verbatim: "Remove the path".
+   *
+   * The path is admin detail, not row data, and it had leaked to THREE
+   * surfaces. The prose an operator reads on the row must not smuggle it back
+   * in — a sentence containing a yaml path is the same defect wearing a
+   * different tag, and that is exactly what `sentence` used to do.
+   */
+  it('NO source sentence may contain a filesystem path or a config key', () => {
+    const note = '/etc/space-data-network/config.module-delivery-sidecar.yaml  peers.trusted_peers';
+    for (const source of ['config', 'pinned', 'connected', 'account', '', 'bogus']) {
+      const src = peerSource({ source, pinNote: note, pinned: true });
+      expect(src.sentence).not.toContain('/etc/');
+      expect(src.sentence).not.toContain('.yaml');
+      expect(src.sentence).not.toContain('peers.trusted_peers');
+      expect(src.sentence).not.toContain(note);
+    }
+  });
+
+  /*
+   * ⛔ NO SELF ROW — ruled THREE times (accounts-table-rules), so it is a test,
+   * not a habit. Owner 2026-07-30: "Is this the root node? If so it should not
+   * be in the peers list."
+   */
+  it('the peers renderer can never show the viewing node as its own peer', () => {
+    const SELF = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
+    const PEER = '16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U';
+    const rows = [
+      { node: { peerId: SELF, isSelf: true } },
+      { node: { peerId: PEER, isSelf: false } },
+    ];
+    expect(withoutSelfRows(rows, SELF).map((r) => r.node.peerId)).toEqual([PEER]);
+
+    // The IS_SELF flag is the primary test, but it is a flag someone has to
+    // write. A row whose flag was never set is STILL this node, and the peer-id
+    // match catches it — that is the whole point of enforcing in the renderer.
+    const unflagged = [{ node: { peerId: SELF, isSelf: false } }, { node: { peerId: PEER } }];
+    expect(withoutSelfRows(unflagged, SELF).map((r) => r.node.peerId)).toEqual([PEER]);
+
+    // And with no self id supplied at all, the flag alone still holds.
+    expect(withoutSelfRows(rows, '').map((r) => r.node.peerId)).toEqual([PEER]);
+    // A peer id is a hash: matched exactly, never by prefix.
+    expect(withoutSelfRows([{ node: { peerId: SELF.slice(0, 20) } }], SELF)).toHaveLength(1);
+  });
+
+  /*
+   * ⛔ OWNER 2026-07-30, on the trust registry saying 4 while the peers table
+   * said ROWS 1-3 OF 3: "what the fuck". Both were right; neither said what it
+   * was counting.
+   */
+  it('states the registry/board delta, and says nothing when they agree', () => {
+    expect(registryDelta(4, 3)).toBe(1);
+    expect(registryDeltaLabel(4, 3)).toBe('1 IN REGISTRY, NEVER CONNECTED · NOT SHOWN');
+    expect(registryDeltaLabel(3, 3)).toBe('');
+    // A board that somehow shows MORE than the registry is not a negative
+    // delta, it is no delta — never a "-1 IN REGISTRY" line.
+    expect(registryDeltaLabel(2, 3)).toBe('');
+    // -1 is "not read" (no admin session). Silence, never a fabricated 0.
+    expect(registryDeltaLabel(-1, 3)).toBe('');
   });
 
   it('an unstated source is admitted as unstated, never guessed into a good answer', () => {
@@ -264,7 +332,7 @@ describe('peers — how did this row get here?', () => {
     const src = peerSource({ source: 'connected', pinned: true });
     expect(src.id).toBe('connected');
     expect(src.pinned).toBe(true);
-    expect(src.sentence).toContain('pinned');
+    expect(src.sentence).toContain('added by an operator');
   });
 
   it('an operator account is not a peer, so it is never counted as one', () => {

@@ -37,7 +37,7 @@
   import { apiFetch } from './api.js';
   import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
   import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
-  import { presenceSummary } from './peers.js';
+  import { presenceSummary, registryDeltaLabel } from './peers.js';
   import { createSemanticEngine } from './semantic.js';
   import { createRuntimeFeed, foldRuntime } from './runtime.js';
 
@@ -292,9 +292,39 @@
     }
   }
 
+  /**
+   * THE OTHER COUNT, read so this page can EXPLAIN ITSELF rather than let an
+   * admin discover the disagreement.
+   *
+   * ⛔ OWNER 2026-07-30, on seeing the trust registry panel say "4 IN REGISTRY"
+   * while this table's pager said "ROWS 1-3 OF 3": "what the fuck".
+   *
+   * Both numbers were right. /api/peers is every peer this node HAS A RECORD
+   * FOR; this board admits only PINNED-OR-CONNECTED, so a registry entry that
+   * has never connected is invisible here BY DESIGN (the admission rule landed
+   * in sdn-peers-provenance-and-count-honesty, owner ruling: "should not ever
+   * show peers that have never been seen"). What was missing is that nothing on
+   * screen said the two sets were different sets. `-1` means "not read" and
+   * shows nothing — an unread count must never be rendered as agreement.
+   */
+  let registryCount = $state(-1);
+  async function readRegistryCount() {
+    if (!session || !canManagePermissions(session.trustLevel)) {
+      registryCount = -1;
+      return;
+    }
+    try {
+      const rows = await apiFetch('/api/peers');
+      registryCount = Array.isArray(rows) ? rows.length : -1;
+    } catch {
+      registryCount = -1;
+    }
+  }
+
   $effect(() => {
     void session;
     readAccounts();
+    readRegistryCount();
   });
 
   /**
@@ -665,7 +695,16 @@
           <span>{presence.connected} CONNECTED</span>
           {#if presence.pinnedOffline}
             <span class="dot">·</span>
-            <span>{presence.pinnedOffline} PINNED, OFFLINE</span>
+            <span>{presence.pinnedOffline} ADDED BY OPERATOR, OFFLINE</span>
+          {/if}
+          <!-- THE DELTA, named (IRIS 2026-07-30). Appears only when the trust
+               registry really does hold rows this board does not show, and only
+               for a session that can read /api/peers — the number it explains is
+               on an admin panel. Amber because it is a thing to look at, not a
+               thing that is wrong. -->
+          {#if registryDeltaLabel(registryCount, accountRows.length)}
+            <span class="dot">·</span>
+            <span style="color:{theme.amber};">{registryDeltaLabel(registryCount, accountRows.length)}</span>
           {/if}
           <span class="dot">·</span>
           <span>SOURCE {shortId(view?.sourcePeerId ?? '')}</span>
@@ -690,6 +729,11 @@
           </Panel>
           <Panel variant="raised" pad="0">
             <div class="table-panel">
+              <!-- `selfPeerId` is the SECOND half of the no-self-row guard
+                   (peers.js `withoutSelfRows`): the table refuses this node's
+                   own row even if IS_SELF was never written on the wire. The
+                   `withoutSelf()` calls in `accountRows` above stay — belt and
+                   braces on a law the owner has now stated three times. -->
               <NodeTable
                 rows={pagedRows}
                 {now}
@@ -698,6 +742,7 @@
                 onSort={toggleSort}
                 onOpen={(n) => (selected = n)}
                 {semanticActive}
+                selfPeerId={view?.sourcePeerId ?? ''}
               />
               <!-- L4: the ONE shared pager. This was an inline copy; the ACTIVITY
                    LOG widget needed the same control, and two implementations is

@@ -37,6 +37,7 @@
     multiaddrsFromVCard,
     pinDisplayName,
     pinIsLocked,
+    pinNoteIsPublishable,
     pinNoteLabel,
     pinSourceLabel,
     pinnableNodes,
@@ -619,10 +620,19 @@
       <div class="head" style="border-color:{theme.divider};">
         <div>
           <Kick text="LIBP2P TRUST REGISTRY · /api/peers" />
-          <div class="ttl" style="color:{theme.textBright};">{showPeerTable ? 'NETWORK PEERS' : 'ADD A PEER'}</div>
+          <!-- ⛔ NOT "NETWORK PEERS". That was this panel's title AND the PEERS
+               route's table, two surfaces with the same name showing different
+               numbers (4 here, 3 there) — which is most of why the owner's
+               reaction to the pair was "what the fuck" (2026-07-30). A panel is
+               named after the SET it shows: this one is the trust registry,
+               every peer this node holds a record for. -->
+          <div class="ttl" style="color:{theme.textBright};">{showPeerTable ? 'TRUST REGISTRY' : 'ADD A PEER'}</div>
         </div>
         <div class="chips">
-          <StatusChip label={`${peerList.length} IN REGISTRY`} color={theme.ice} dot={false} />
+          <!-- "IN TRUST REGISTRY", not "IN REGISTRY": the word that was missing
+               is the one that distinguishes this count from the peers board's
+               (IRIS 2026-07-30). The board states the delta on its own side. -->
+          <StatusChip label={`${peerList.length} IN TRUST REGISTRY`} color={theme.ice} dot={false} />
         </div>
       </div>
       <div class="pad">
@@ -800,7 +810,7 @@
                   <tr class="meta">
                     <td colspan="2" style="border-color:{theme.divider};">
                       <span class="metaline">
-                        <span style="color:{locked ? theme.textDim : theme.ice};">{pinSourceLabel(pin)}</span>
+                        <span style="color:{theme.ice};">{pinSourceLabel(pin)}</span>
                         {#if when}
                           <span class="sep" style="color:{theme.textFaint};">·</span>
                           <span style="color:{theme.textDim};">{when}</span>
@@ -810,7 +820,14 @@
                           <span class="lbl" style="color:{theme.textFaint};">BY</span>
                           <span style="color:{theme.textDim};">{pin.pinned_by}</span>
                         {/if}
-                        {#if (pin.note ?? '').trim()}
+                        <!-- ⛔ THE THIRD SURFACE THAT RENDERED THE PATH. Owner
+                             2026-07-30: "Remove the path" — and it has to mean
+                             every table, or the next screenshot is the same
+                             screenshot. `pinNoteIsPublishable` is false for a
+                             config pin (its "note" IS the file and key), so only
+                             an operator's own typed note survives here; the file
+                             and key live once, in PeerEditModal under DEFINED IN. -->
+                        {#if pinNoteIsPublishable(pin) && (pin.note ?? '').trim()}
                           <span class="sep" style="color:{theme.textFaint};">·</span>
                           <span class="lbl" style="color:{theme.textFaint};">{pinNoteLabel(pin)}</span>
                           <span style="color:{theme.textDim};">{pin.note}</span>

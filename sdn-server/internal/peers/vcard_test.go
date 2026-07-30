@@ -205,3 +205,40 @@ func TestImportPeerFromVCard_InvalidVCard(t *testing.T) {
 		t.Error("Expected error for invalid vCard")
 	}
 }
+
+// ⛔ A CARD BUILT FOR SOMEONE ELSE NEVER INVENTS THEIR NAME.
+//
+// Owner, 2026-07-30, on a peers row: "I have no idea what the fuck this means."
+// One reason it was unreadable is that this function used to fall back to
+// peer.ID.ShortString() — libp2p's DEBUG STRINGER — so a peer this node knows
+// nothing about was published with `FN:<peer.ID 16*PpYr2U>` as its NAME. That
+// exact string was measured going out on the live /ws/status feed.
+//
+// It is the same defect as the hardcoded "Config Trusted Peer" the owner caught
+// the day before: a value DESCRIBING the record, presented as the record. The
+// rule this test fixes is that an unknown name is an ADMITTED BLANK.
+func TestTrustedPeerToVCard_NoManufacturedName(t *testing.T) {
+	peerID, err := peer.Decode("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN")
+	if err != nil {
+		t.Fatalf("decode peer id: %v", err)
+	}
+	vcardStr := TrustedPeerToVCard(&TrustedPeer{ID: peerID, TrustLevel: Trusted})
+
+	if strings.Contains(vcardStr, "<peer.ID") {
+		t.Errorf("vCard published libp2p's debug stringer as a name:\n%s", vcardStr)
+	}
+	if strings.Contains(vcardStr, "FN:"+peerID.String()) {
+		t.Errorf("vCard promoted the peer id itself to the NAME line:\n%s", vcardStr)
+	}
+	// The card is still a valid, useful card — only the NAME is blank.
+	for _, want := range []string{"FN:", "X-SDN-PEER-ID:" + peerID.String(), "X-SDN-TRUST-LEVEL:full"} {
+		if !strings.Contains(vcardStr, want) {
+			t.Errorf("missing %q in:\n%s", want, vcardStr)
+		}
+	}
+	// And a name the node WAS given is used verbatim.
+	named := TrustedPeerToVCard(&TrustedPeer{ID: peerID, Name: "CelesTrak Retriever", TrustLevel: Trusted})
+	if !strings.Contains(named, "FN:CelesTrak Retriever") {
+		t.Errorf("a supplied name must be used verbatim:\n%s", named)
+	}
+}

@@ -44,20 +44,21 @@
     if (!pinsKnown) return { label: 'NOT READ', sentence: '', tone: 'textMuted' };
     if (pinLocked) {
       return {
-        label: 'PINNED BY CONFIG FILE',
-        sentence: "Listed whether or not it is connected. The pin lives in this node's config file and can only be removed there.",
-        tone: 'textDim',
+        label: 'ADDED BY OPERATOR · LOCKED',
+        sentence:
+          "An operator added this peer in this node's configuration file; it stays listed while offline. It can only be removed there — the file and key are below.",
+        tone: 'ice',
       };
     }
     if (pinned) {
       return {
-        label: 'PINNED',
-        sentence: 'Listed whether or not it is connected.',
+        label: 'ADDED BY OPERATOR',
+        sentence: 'An operator added this peer on this dashboard; it stays listed while offline.',
         tone: 'ice',
       };
     }
     return {
-      label: 'NOT PINNED',
+      label: 'CONNECTED ONLY',
       sentence: 'Listed only while it is connected. It disappears from the peers table when it drops off the network.',
       tone: 'textMuted',
     };
@@ -114,10 +115,17 @@
         <span class="v" style="color:{theme[listing.tone] ?? theme.textDim};">{listing.label}</span>
       </div>
       <p class="fine" style="color:{theme.textFaint};">{listing.sentence}</p>
+      <!-- ⛔ THE ONE PLACE THE CONFIG PATH IS ALLOWED TO EXIST (IRIS ruling
+           2026-07-30, discharging the owner's "Remove the path"). Every table
+           dropped it; it survives HERE, under DEFINED IN, because this is the
+           only surface with an admin in front of it who can act on the file —
+           and because "you cannot change this here" is useless without "and
+           here is where you can". `.path` wraps at separators so a 137-char
+           absolute path is readable rather than a single overflowing line. -->
       {#if pinned && (pin?.note ?? '').trim()}
         <div class="kv">
           <span class="k" style="color:{theme.textMuted};">{pinNoteLabel(pin)}</span>
-          <span class="v" style="color:{theme.textBody};">{pin.note}</span>
+          <span class="v path mono" style="color:{theme.textBody};">{pin.note}</span>
         </div>
       {/if}
     {/if}
@@ -203,6 +211,12 @@
     line-height: var(--sdn-lh-note);
   }
   .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  /* The config file + key, and the only place it renders. A modal body is a
+     scroll ROOT (grammar L1's one permitted exception), so this value may take
+     the height it needs; it must never grow a horizontal scroller instead.
+     `.v` already opts into `anywhere`; the smaller rung keeps a 137-char
+     absolute path to two lines at the modal's 640px. */
+  .path { font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note); }
   a { text-decoration: none; }
   a:hover { text-decoration: underline; }
 </style>
