@@ -43,7 +43,7 @@
 .wallet-terminal-error h1 {
   font-family: 'Chakra Petch', sans-serif;
   font-weight: 600;
-  font-size: 21px;
+  font-size: var(--sdn-fs-title); line-height: var(--sdn-lh-title);
   letter-spacing: 0.06em;
   color: #eaf6f8;
   margin: 0;
@@ -53,10 +53,10 @@
 .wallet-account p,
 .wallet-complete p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--sdn-fs-note);
   letter-spacing: 0.06em;
   color: #5a7a8a;
-  line-height: 1.55;
+  line-height: var(--sdn-lh-note);
 }
 
 /* ---- forms ------------------------------------------------------------- */
@@ -76,7 +76,7 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  font-size: 12.5px;
+  font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #5a7a8a;
@@ -91,7 +91,7 @@
   border-radius: 0;
   color: #eaf6f8;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 15px;
+  font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
   letter-spacing: 0.03em;
   padding: 8px 10px;
   outline: none;
@@ -144,7 +144,7 @@
   border-radius: 0;
   font-family: 'Chakra Petch', sans-serif;
   font-weight: 600;
-  font-size: 11.5px;
+  font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
   letter-spacing: 0.1em;
   padding: 7px 14px;
   background: rgba(7, 12, 18, 0.78);
@@ -223,8 +223,8 @@ label:has([data-wallet-remember]:disabled) {
 }
 .wallet-remember-blocked {
   margin: 2px 0 0;
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: var(--sdn-fs-body);
+  line-height: var(--sdn-lh-body);
   color: #ffb24d;
   letter-spacing: 0.03em;
 }
@@ -235,10 +235,10 @@ label:has([data-wallet-remember]:disabled) {
 [data-wallet-quarantine-status],
 [data-wallet-credential-state],
 .wallet-account-exit-status {
-  font-size: 12.5px;
+  font-size: var(--sdn-fs-body);
   letter-spacing: 0.04em;
   color: #44586a;
-  line-height: 1.5;
+  line-height: var(--sdn-lh-body);
   margin: 0;
 }
 .wallet-confirmation-row,
@@ -249,7 +249,7 @@ label:has([data-wallet-remember]:disabled) {
   align-items: baseline;
   padding: 5px 0;
   border-bottom: 1px solid rgba(110, 170, 190, 0.13);
-  font-size: 14px;
+  font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
   overflow-wrap: anywhere;
   min-width: 0;
 }
@@ -260,7 +260,7 @@ label:has([data-wallet-remember]:disabled) {
 .wallet-quarantine-row strong {
   flex: none;
   font-weight: 400;
-  font-size: 12.5px;
+  font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
   letter-spacing: 0.16em;
   color: #5a7a8a;
   text-transform: uppercase;
@@ -274,7 +274,7 @@ label:has([data-wallet-remember]:disabled) {
   border: 1px solid rgba(110, 170, 190, 0.22);
   background: linear-gradient(178deg, #0b151c, #060d12);
   padding: 12px 14px;
-  font-size: 13px;
+  font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note);
 }
 
 /* ---- the terminal error the app renders on a refusal ------------------- */
@@ -282,17 +282,17 @@ label:has([data-wallet-remember]:disabled) {
   border: 1px solid #ff6b6b;
   color: #ff9b9b;
   padding: 14px 16px;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: var(--sdn-fs-data);
+  line-height: var(--sdn-lh-data);
 }
 .wallet-terminal-error h1 {
   color: #ff9b9b;
-  font-size: 17px;
+  font-size: var(--sdn-fs-head); line-height: var(--sdn-lh-head);
 }
 
 .wallet-complete {
   color: #5ad6a0;
-  font-size: 15px;
+  font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
   letter-spacing: 0.04em;
 }
 
@@ -319,22 +319,22 @@ dialog.wallet-confirmation,
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
   padding: 16px 18px 18px;
   color: #c7d6dd;
-  font-size: 14px;
+  font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
 }
 .wallet-confirmation h1,
 .wallet-confirmation h2,
 #wallet-confirmation-heading {
   font-family: 'Chakra Petch', sans-serif;
   font-weight: 600;
-  font-size: 20px;
+  font-size: var(--sdn-fs-title); line-height: var(--sdn-lh-title);
   letter-spacing: 0.06em;
   color: #eaf6f8;
   margin: 0 0 4px;
 }
 .wallet-confirmation p {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: var(--sdn-fs-note);
+  line-height: var(--sdn-lh-note);
   color: #9fb3bc;
 }
 
@@ -348,7 +348,7 @@ dialog.wallet-confirmation,
   }
   .wallet-login h1,
   .wallet-account h1 {
-    font-size: 19px;
+    font-size: var(--sdn-fs-head); line-height: var(--sdn-lh-head);
   }
   .wallet-login-actions,
   .wallet-confirmation-actions {
@@ -359,6 +359,6 @@ dialog.wallet-confirmation,
   .wallet-confirmation-actions button {
     width: 100%;
     padding: 11px 14px;
-    font-size: 12.5px;
+    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
   }
 }

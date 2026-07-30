@@ -8,7 +8,7 @@
    * `danger` draws the block in red: the DANGER ZONE is always last and always
    * visibly separated (IRIS §3.6).
    */
-  import Kicker from 'spaceaware-student-sdn/src/lib/components/Kicker.svelte';
+  import Kick from './Kick.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
 
   /** @type {{ title: string, note?: string, danger?: boolean, children?: any }} */
@@ -16,7 +16,7 @@
 </script>
 
 <section class="sect" class:danger style="border-color:{danger ? theme.red : theme.divider};">
-  <Kicker text={title} />
+  <Kick text={title} />
   {#if note}
     <p class="note" style="color:{theme.textDim};">{note}</p>
   {/if}
@@ -35,6 +35,6 @@
   }
   .sect:first-of-type { border-top: 0; padding-top: 0; }
   .sect.danger { margin-top: 6px; padding-top: 14px; }
-  .note { margin: 0; font-size: 13px; line-height: 1.55; letter-spacing: 0.02em; }
+  .note { margin: 0; font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note); letter-spacing: 0.02em; }
   .content { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 </style>

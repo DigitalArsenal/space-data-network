@@ -103,13 +103,16 @@
 <style>
   .scroller {
     overflow: auto;
+    /* Reserve the scrollbar track so the last column keeps its gutter instead
+       of losing it the moment the table starts scrolling. */
+    scrollbar-gutter: stable;
     min-height: 0;
     flex: 1;
   }
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 15.5px;
+    font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
   }
   thead tr {
     border-bottom: 1px solid;
@@ -121,14 +124,14 @@
   th {
     text-align: left;
     font-weight: 500;
-    font-size: 12.5px;
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
     letter-spacing: 0.16em;
     padding: 9px 12px;
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
   }
-  th .dir { margin-left: 5px; font-size: 10.5px; }
+  th .dir { margin-left: 5px; font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro); }
   th.num, td.num { text-align: right; }
   tbody tr.row {
     border-bottom: 1px solid;
@@ -146,21 +149,21 @@
   .dn {
     font-family: 'Chakra Petch', sans-serif;
     font-weight: 600;
-    font-size: 17px;
+    font-size: var(--sdn-fs-head); line-height: var(--sdn-lh-head);
     letter-spacing: 0.04em;
   }
-  .pid { font-size: 13px; margin-top: 2px; }
+  .pid { font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note); margin-top: 2px; }
   .dn.unnamed { font-style: italic; }
   .kind {
     border: 1px solid;
-    font-size: 10px;
+    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
     letter-spacing: 0.14em;
     padding: 1px 5px;
     margin-left: 7px;
     white-space: nowrap;
   }
   .tag {
-    font-size: 10.5px;
+    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
     letter-spacing: 0.16em;
     border: 1px solid;
     padding: 1px 5px;
@@ -168,7 +171,7 @@
     vertical-align: 2px;
   }
   .trust {
-    font-size: 11.5px;
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
     letter-spacing: 0.14em;
     border: 1px solid;
     padding: 2px 7px;
@@ -179,27 +182,27 @@
     align-items: center;
     white-space: nowrap;
     gap: 6px;
-    font-size: 13.5px;
+    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
     letter-spacing: 0.12em;
   }
   .status i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
   .empty {
     text-align: center;
     padding: 30px 12px;
-    font-size: 14.5px;
+    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
     letter-spacing: 0.1em;
   }
-  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 14.5px; }
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data); }
   .nowrap { white-space: nowrap; }
   /* Narrow screens: drop the wide columns so NODE/TRUST/STATUS/LAST SEEN
      fit without a nested horizontal scroller (tap targets stay whole). */
   @media (max-width: 760px) {
     th.wide, td.wide { display: none; }
     th, td { padding: 9px 7px; }
-    .dn { font-size: 14.5px; }
-    .pid { font-size: 10.5px; }
-    .trust { padding: 2px 5px; font-size: 10px; letter-spacing: 0.08em; }
-    .status { font-size: 11.5px; letter-spacing: 0.06em; }
-    .mono { font-size: 12px; }
+    .dn { font-size: var(--sdn-fs-fine); line-height: var(--sdn-lh-fine); }
+    .pid { font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro); }
+    .trust { padding: 2px 5px; font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro); letter-spacing: 0.08em; }
+    .status { font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro); letter-spacing: 0.06em; }
+    .mono { font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label); }
   }
 </style>

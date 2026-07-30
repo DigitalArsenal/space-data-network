@@ -19,7 +19,7 @@
   import QRCode from 'qrcode';
   import Panel from 'spaceaware-student-sdn/src/lib/components/Panel.svelte';
   import StatusChip from 'spaceaware-student-sdn/src/lib/components/StatusChip.svelte';
-  import Kicker from 'spaceaware-student-sdn/src/lib/components/Kicker.svelte';
+  import Kick from './Kick.svelte';
   import GBtn from 'spaceaware-student-sdn/src/lib/components/GBtn.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import { parseVCard, contactCard, extractIdentity, buildCompactVCard } from './vcard.js';
@@ -276,7 +276,7 @@
     <Panel variant="raised" pad="0">
       <div class="w">
         <div class="whead" style="border-color:{theme.divider};">
-          <Kicker text="VCARD" />
+          <Kick text="VCARD" />
           <div class="wtitle" style="color:{theme.textBright};">CONTACT CARD</div>
           <div class="wchips actions">
             {#each [['card', 'MAIN CARD'], ['raw', 'CANONICAL RAW'], ['qr', 'QR']] as [id, label] (id)}
@@ -331,7 +331,7 @@
   <Panel variant="raised" pad="0">
     <div class="w">
       <div class="whead" style="border-color:{theme.divider};">
-        <Kicker text="NODE" />
+        <Kick text="NODE" />
         <div class="wtitle" style="color:{theme.textBright};">STATUS &amp; IDENTITY</div>
         <div class="wchips">
           <StatusChip label={tier.toUpperCase()} color={tierColor} dot={false} />
@@ -365,7 +365,7 @@
     <Panel variant="raised" pad="0">
       <div class="w">
         <div class="whead" style="border-color:{theme.divider};">
-          <Kicker text="DERIVED FROM THE NODE SEED" />
+          <Kick text="DERIVED FROM THE NODE SEED" />
           <div class="wtitle" style="color:{theme.textBright};">VERIFICATION KEYS</div>
         </div>
         <div class="wbody">
@@ -438,7 +438,7 @@
     <Panel variant="raised" pad="0">
       <div class="w">
         <div class="whead" style="border-color:{theme.divider};">
-          <Kicker text="SIGNED RECORD" />
+          <Kick text="SIGNED RECORD" />
           <div class="wtitle" style="color:{theme.textBright};">EPM PROVENANCE</div>
         </div>
         <div class="wbody">
@@ -460,7 +460,7 @@
     <Panel variant="raised" pad="0">
       <div class="w">
         <div class="whead" style="border-color:{theme.divider};">
-          <Kicker text="PUBLISHED IN THE CARD" />
+          <Kick text="PUBLISHED IN THE CARD" />
           <div class="wtitle" style="color:{theme.textBright};">CHAIN ADDRESSES</div>
         </div>
         <div class="wbody">
@@ -483,7 +483,7 @@
       <Panel variant="raised" pad="0">
         <div class="w">
           <div class="whead" style="border-color:{theme.divider};">
-            <Kicker text="LIBP2P" />
+            <Kick text="LIBP2P" />
             <div class="wtitle" style="color:{theme.textBright};">NETWORK ADDRESSES</div>
             <div class="wchips">
               <StatusChip label={`${node.addrs.length}`} color={theme.ice} dot={false} />
@@ -551,7 +551,7 @@
   .wtitle {
     font-family: 'Chakra Petch', sans-serif;
     font-weight: 600;
-    font-size: 16px;
+    font-size: var(--sdn-fs-lead); line-height: var(--sdn-lh-lead);
     letter-spacing: 0.1em;
     margin-right: auto;
   }
@@ -568,28 +568,28 @@
     padding: 11px 16px;
     margin-top: auto;
   }
-  .wfoot .k { font-size: 12.5px; letter-spacing: 0.16em; }
+  .wfoot .k { font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body); letter-spacing: 0.16em; }
   .slot { border-top: 1px solid; margin-top: 10px; padding-top: 10px; }
   .slot-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
-  .slot .k { font-size: 12.5px; letter-spacing: 0.16em; }
+  .slot .k { font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body); letter-spacing: 0.16em; }
   .path {
     width: 100%;
     border: 1px solid;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 14px;
+    font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data);
     letter-spacing: 0.02em;
     padding: 7px 9px;
     outline: none;
     overflow-wrap: anywhere;
   }
   .path.ro { border: 0; padding: 0; background: transparent; }
-  .hint { font-size: 12.5px; letter-spacing: 0.03em; margin-top: 5px; line-height: 1.5; }
+  .hint { font-size: var(--sdn-fs-body); letter-spacing: 0.03em; margin-top: 5px; line-height: var(--sdn-lh-body); }
   .err, .ok {
     border: 1px solid;
     padding: 8px 10px;
     margin-top: 10px;
-    font-size: 12.5px;
-    line-height: 1.5;
+    font-size: var(--sdn-fs-body);
+    line-height: var(--sdn-lh-body);
     overflow-wrap: anywhere;
   }
   .dl { display: inline-flex; gap: 6px; flex-wrap: wrap; }
@@ -597,10 +597,10 @@
   dl.cols { columns: 2; column-gap: 26px; }
   dl.cols .row { break-inside: avoid; }
   .row { display: flex; gap: 12px; padding: 4px 0; align-items: baseline; min-width: 0; }
-  dt { flex: none; width: 132px; font-size: 12.5px; letter-spacing: 0.16em; }
+  dt { flex: none; width: 132px; font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body); letter-spacing: 0.16em; }
   dd {
     margin: 0;
-    font-size: 15.5px;
+    font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
     min-width: 0;
     /* Nothing is ever clipped: peer ids, xpubs and signature hex are single
        unbreakable tokens, so they MUST be allowed to break anywhere. */
@@ -610,24 +610,24 @@
   dd.wrap { overflow-wrap: anywhere; }
   /* Long machine values (64-128 hex, xpub, CID) at a denser face so a column
      holds them in a few lines instead of a ragged tower. */
-  dd.machine { font-size: 12.5px; line-height: 1.45; }
-  dd.small { font-size: 12px; white-space: pre-line; }
+  dd.machine { font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body); }
+  dd.small { font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label); white-space: pre-line; }
   .act {
     background: transparent;
     border: 1px solid;
     cursor: pointer;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 11.5px;
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
     letter-spacing: 0.12em;
     padding: 4px 10px;
   }
   .qr { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 8px 0 4px; }
   .qr canvas { background: #eaf6f8; padding: 6px; max-width: 100%; height: auto; }
-  .qr-hint { font-size: 12px; letter-spacing: 0.04em; max-width: 460px; text-align: center; line-height: 1.5; }
+  .qr-hint { font-size: var(--sdn-fs-label); letter-spacing: 0.04em; max-width: 460px; text-align: center; line-height: var(--sdn-lh-label); }
   .addr-list { list-style: none; margin: 0; padding: 0; border: 1px solid; }
   .addr-list li {
-    font-size: 11.5px;
-    line-height: 1.5;
+    font-size: var(--sdn-fs-label);
+    line-height: var(--sdn-lh-label);
     overflow-wrap: anywhere;
     padding: 6px 10px;
     border-bottom: 1px solid;
@@ -637,12 +637,12 @@
     margin: 0;
     border: 1px solid;
     padding: 10px 12px;
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: var(--sdn-fs-label);
+    line-height: var(--sdn-lh-label);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-  .none { font-size: 15px; }
+  .none { font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value); }
   .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
 
   @media (max-width: 760px) {
@@ -653,7 +653,7 @@
     dl.cols { columns: 1; }
     .row { flex-direction: column; gap: 2px; align-items: stretch; }
     dt { width: auto; }
-    dd { font-size: 15px; }
+    dd { font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value); }
     .whead { padding: 12px 13px 10px; }
     .wbody { padding: 11px 13px 13px; }
   }

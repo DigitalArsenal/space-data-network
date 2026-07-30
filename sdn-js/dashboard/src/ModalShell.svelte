@@ -106,19 +106,19 @@
   .dn {
     font-family: 'Chakra Petch', sans-serif;
     font-weight: 600;
-    font-size: 22px;
+    font-size: var(--sdn-fs-title); line-height: var(--sdn-lh-title);
     letter-spacing: 0.06em;
     overflow-wrap: anywhere;
   }
   .dn.unnamed { font-style: italic; }
-  .sub { font-size: 13px; letter-spacing: 0.1em; margin-top: 4px; overflow-wrap: anywhere; }
+  .sub { font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note); letter-spacing: 0.1em; margin-top: 4px; overflow-wrap: anywhere; }
   .chips { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
   .close {
     background: transparent;
     border: 1px solid;
     cursor: pointer;
-    font-size: 14.5px;
-    line-height: 1;
+    font-size: var(--sdn-fs-data);
+    line-height: var(--sdn-lh-data);
     padding: 4px 7px;
     margin-left: 4px;
   }

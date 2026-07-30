@@ -17,7 +17,7 @@
    */
   import Panel from 'spaceaware-student-sdn/src/lib/components/Panel.svelte';
   import StatusChip from 'spaceaware-student-sdn/src/lib/components/StatusChip.svelte';
-  import Kicker from 'spaceaware-student-sdn/src/lib/components/Kicker.svelte';
+  import Kick from './Kick.svelte';
   import GBtn from 'spaceaware-student-sdn/src/lib/components/GBtn.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import { readQuarantinedRecords } from './walletui.js';
@@ -58,7 +58,7 @@
     <Panel variant="raised" pad="0">
       <div class="w">
         <div class="whead" style="border-color:{theme.divider};">
-          <Kicker text="THIS BROWSER, THIS ORIGIN" />
+          <Kick text="THIS BROWSER, THIS ORIGIN" />
           <div class="wtitle" style="color:{theme.textBright};">STORED WALLETS</div>
           <div class="wchips">
             <StatusChip label={`${records.length} ORPHANED`} color={theme.amber} dot={false} />
@@ -107,13 +107,13 @@
   .wtitle {
     font-family: 'Chakra Petch', sans-serif;
     font-weight: 600;
-    font-size: 16px;
+    font-size: var(--sdn-fs-lead); line-height: var(--sdn-lh-lead);
     letter-spacing: 0.1em;
     margin-right: auto;
   }
   .wchips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .wbody { padding: 12px 16px 15px; min-width: 0; }
-  .prose { margin: 0 0 12px; font-size: 14px; line-height: 1.6; }
+  .prose { margin: 0 0 12px; font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data); }
   .list { list-style: none; margin: 0; padding: 0; border: 1px solid; }
   .list li {
     display: flex;
@@ -124,8 +124,8 @@
     border-bottom: 1px solid;
   }
   .list li:last-child { border-bottom: 0; }
-  .key { font-size: 13.5px; overflow-wrap: anywhere; min-width: 0; flex: 1 1 220px; }
-  .bytes { font-size: 12.5px; white-space: nowrap; }
+  .key { font-size: var(--sdn-fs-data); line-height: var(--sdn-lh-data); overflow-wrap: anywhere; min-width: 0; flex: 1 1 220px; }
+  .bytes { font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body); white-space: nowrap; }
   .act { margin-left: auto; }
   .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
 

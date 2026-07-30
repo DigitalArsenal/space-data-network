@@ -1,0 +1,79 @@
+/*
+ * THE DASHBOARD TYPE + SPACING LADDER.  Governing ruling: IRIS/AMEND
+ * 2026-07-30 ("SUPERSEDES A AND B"), task sdn-dashboard-typography-density.
+ *
+ * WHY THIS FILE EXISTS
+ * --------------------
+ * The owner asked for "+30% font on the dashboard UI" on 2026-07-27.  That
+ * bump was applied BY HAND and only to the rail/menus: App.svelte carried
+ * literals like 19.5px and 26.65px, each annotated as its design value times
+ * one-point-three, while every other surface stayed unscaled.  He asked again
+ * on 2026-07-30.  So this is drift cleanup, not a new scale — the factor
+ * becomes a NAMED LADDER covering the whole dashboard, and every
+ * hand-multiplied literal is deleted.
+ *
+ * RULES (Iris, binding)
+ *   - Integer px only.  Fractional rungs are what produced 16.25 / 26.65 /
+ *     14.95 / 12.35 in the first place.
+ *   - Token names denote SIZE RUNGS, not roles: a nav label may legitimately
+ *     use --sdn-fs-value.
+ *   - Assignment for any site not named in the ruling:
+ *     nearest_rung(design_px * factor), ties round UP.  NEVER re-multiply a
+ *     value that was already scaled by the 2026-07-27 pass.
+ *   - Line-heights are px integers (the ratios 1.5 / 1.15 rounded) so every
+ *     line box is integral and the EDIT-centring gate measures design rather
+ *     than subpixel rounding.
+ *   - Spacing grows SUB-proportionally (~+22%, not +30%) or panels balloon.
+ *   - :root, NOT .root — wallet-theme.css styles a confirmation dialog that
+ *     hd-wallet-ui appends to document.body, outside the app's .root element,
+ *     and it must still resolve these tokens.
+ */
+
+:root {
+  /* ---- type rungs ------------------------------------------------------ */
+  --sdn-fs-micro: 13px;   /* subscript/metaline, badges, rail sub-labels     */
+  --sdn-fs-fine: 14px;    /* Kick (section kicker)                          */
+  --sdn-fs-label: 15px;   /* th, GBtn, StatusChip — the control tier        */
+  --sdn-fs-body: 16px;    /* body copy, hints, form controls                */
+  --sdn-fs-note: 17px;    /* .dn, secondary emphasis                        */
+  --sdn-fs-data: 18px;    /* td — the primary record cell                   */
+  --sdn-fs-value: 20px;   /* rail labels, numeric values                    */
+  --sdn-fs-lead: 21px;    /* .ttl panel titles                              */
+  --sdn-fs-head: 23px;    /* modal titles                                   */
+  --sdn-fs-title: 27px;   /* rail icons, page titles                        */
+  --sdn-fs-hero: 31px;    /* the largest widget number                      */
+
+  /* ---- line-height rungs (paired with the type rung of the same name) --- */
+  --sdn-lh-micro: 20px;
+  --sdn-lh-fine: 21px;
+  --sdn-lh-label: 22px;
+  --sdn-lh-body: 24px;
+  --sdn-lh-note: 26px;
+  --sdn-lh-data: 27px;
+  --sdn-lh-value: 30px;
+  --sdn-lh-lead: 24px;
+  --sdn-lh-head: 26px;
+  --sdn-lh-title: 31px;
+  --sdn-lh-hero: 36px;
+
+  /* ---- spacing ladder -------------------------------------------------- */
+  --sdn-sp-1: 4px;
+  --sdn-sp-2: 6px;
+  --sdn-sp-3: 8px;
+  --sdn-sp-4: 10px;
+  --sdn-sp-5: 12px;
+  --sdn-sp-6: 14px;
+  --sdn-sp-7: 16px;
+  --sdn-sp-8: 20px;   /* THE EDGE-GUTTER FLOOR — build fails below this     */
+  --sdn-sp-9: 24px;   /* default panel/table/head/form gutter               */
+  --sdn-sp-10: 32px;
+}
+
+/*
+ * The app's base size.  Everything inherits from here, so a surface that
+ * forgets to name a rung still lands on one.
+ */
+#app {
+  font-size: var(--sdn-fs-body);
+  line-height: var(--sdn-lh-body);
+}

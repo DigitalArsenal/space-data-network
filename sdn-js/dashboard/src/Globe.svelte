@@ -315,7 +315,7 @@
     bottom: 8px;
     display: flex;
     gap: 12px;
-    font-size: 11px;
+    font-size: var(--sdn-fs-fine); line-height: var(--sdn-lh-fine);
     letter-spacing: 0.14em;
     pointer-events: none;
   }
