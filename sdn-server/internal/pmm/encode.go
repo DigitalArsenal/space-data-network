@@ -100,6 +100,7 @@ func MarshalBinary(m *Manifest) ([]byte, error) {
 		sdspmm.PMMModuleEntryAddICON_URL(b, iconURL)
 		sdspmm.PMMModuleEntryAddSUPERSEDES_CONTENT_HASH(b, supersedes)
 		sdspmm.PMMModuleEntryAddUPDATED_AT(b, updatedAt)
+		sdspmm.PMMModuleEntryAddPLUGIN_TYPE(b, sdspmm.EnumValuespluginCategory[e.PluginType])
 		moduleOffsets = append(moduleOffsets, sdspmm.PMMModuleEntryEnd(b))
 	}
 

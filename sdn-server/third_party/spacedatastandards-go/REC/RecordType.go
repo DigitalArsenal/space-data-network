@@ -186,6 +186,27 @@ const (
 	RecordTypeENT  RecordType = 176
 	RecordTypeVAM  RecordType = 177
 	RecordTypeAPP  RecordType = 178
+	RecordTypeCMT  RecordType = 179
+	RecordTypeSCX  RecordType = 180
+	RecordTypeCVG  RecordType = 181
+	RecordTypePKB  RecordType = 182
+	RecordTypeRPT  RecordType = 183
+	RecordTypeSTO  RecordType = 184
+	RecordTypeSUB  RecordType = 185
+	RecordTypeWKS  RecordType = 186
+	RecordTypeCPS  RecordType = 187
+	RecordTypeFSB  RecordType = 188
+	RecordTypeFSO  RecordType = 189
+	RecordTypeGST  RecordType = 190
+	RecordTypeMDP  RecordType = 191
+	RecordTypeMDS  RecordType = 192
+	RecordTypePNL  RecordType = 193
+	RecordTypeSHC  RecordType = 194
+	RecordTypeCES  RecordType = 195
+	RecordTypeQEM  RecordType = 196
+	RecordTypeSBM  RecordType = 197
+	RecordTypePMM  RecordType = 198
+	RecordTypeOPP  RecordType = 199
 )
 
 var EnumNamesRecordType = map[RecordType]string{
@@ -368,6 +389,27 @@ var EnumNamesRecordType = map[RecordType]string{
 	RecordTypeENT:  "ENT",
 	RecordTypeVAM:  "VAM",
 	RecordTypeAPP:  "APP",
+	RecordTypeCMT:  "CMT",
+	RecordTypeSCX:  "SCX",
+	RecordTypeCVG:  "CVG",
+	RecordTypePKB:  "PKB",
+	RecordTypeRPT:  "RPT",
+	RecordTypeSTO:  "STO",
+	RecordTypeSUB:  "SUB",
+	RecordTypeWKS:  "WKS",
+	RecordTypeCPS:  "CPS",
+	RecordTypeFSB:  "FSB",
+	RecordTypeFSO:  "FSO",
+	RecordTypeGST:  "GST",
+	RecordTypeMDP:  "MDP",
+	RecordTypeMDS:  "MDS",
+	RecordTypePNL:  "PNL",
+	RecordTypeSHC:  "SHC",
+	RecordTypeCES:  "CES",
+	RecordTypeQEM:  "QEM",
+	RecordTypeSBM:  "SBM",
+	RecordTypePMM:  "PMM",
+	RecordTypeOPP:  "OPP",
 }
 
 var EnumValuesRecordType = map[string]RecordType{
@@ -550,6 +592,27 @@ var EnumValuesRecordType = map[string]RecordType{
 	"ENT":  RecordTypeENT,
 	"VAM":  RecordTypeVAM,
 	"APP":  RecordTypeAPP,
+	"CMT":  RecordTypeCMT,
+	"SCX":  RecordTypeSCX,
+	"CVG":  RecordTypeCVG,
+	"PKB":  RecordTypePKB,
+	"RPT":  RecordTypeRPT,
+	"STO":  RecordTypeSTO,
+	"SUB":  RecordTypeSUB,
+	"WKS":  RecordTypeWKS,
+	"CPS":  RecordTypeCPS,
+	"FSB":  RecordTypeFSB,
+	"FSO":  RecordTypeFSO,
+	"GST":  RecordTypeGST,
+	"MDP":  RecordTypeMDP,
+	"MDS":  RecordTypeMDS,
+	"PNL":  RecordTypePNL,
+	"SHC":  RecordTypeSHC,
+	"CES":  RecordTypeCES,
+	"QEM":  RecordTypeQEM,
+	"SBM":  RecordTypeSBM,
+	"PMM":  RecordTypePMM,
+	"OPP":  RecordTypeOPP,
 }
 
 func (v RecordType) String() string {

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	sdspmm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PMM"
 )
 
 type edSigner struct{ priv ed25519.PrivateKey }
@@ -28,15 +30,16 @@ func testManifest() *Manifest {
 		Modules: []Entry{
 			{
 				ModuleID: "com.orbpro.sgp4", Version: "1.0.0",
-				ContentHash:  strings.Repeat("a", 64),
-				TrustTier:    "CORE", AccessPolicy: "ANONYMOUS", DefaultEnabled: true,
-				EntryState:   "ACTIVE", ArtifactPath: "/modules/com.orbpro.sgp4/1.0.0/module.wasm",
+				ContentHash: strings.Repeat("a", 64),
+				TrustTier:   "CORE", AccessPolicy: "ANONYMOUS", DefaultEnabled: true,
+				EntryState: "ACTIVE", ArtifactPath: "/modules/com.orbpro.sgp4/1.0.0/module.wasm",
+				PluginType: "Propagator",
 			},
 			{
 				ModuleID: "com.orbpro.rf-fspl", Version: "0.1.0",
 				ContentHash: strings.Repeat("b", 64),
 				TrustTier:   "OPTIONAL", AccessPolicy: "ENTITLED", DefaultEnabled: false,
-				EntryState:  "ACTIVE",
+				EntryState: "ACTIVE", PluginType: "Comms",
 			},
 		},
 	}
@@ -137,7 +140,7 @@ func TestValidateEnforcesAccessPolicyPathCoupling(t *testing.T) {
 
 func TestValidateRejectsBadEnumsAndHashes(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
+		name   string
 		mutate func(*Manifest)
 	}{
 		{"tier", func(m *Manifest) { m.Modules[0].TrustTier = "PREMIUM" }},
@@ -230,5 +233,38 @@ func TestFreshnessCheck(t *testing.T) {
 	}
 	if FreshnessCheck(m, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Fatal("manifest past EXPIRES_AT must not be fresh")
+	}
+}
+
+// PLUGIN_TYPE is the only sanctioned grouping key, and its enum has a trap:
+// `Unspecified` is 21 because the enum is append-only and `Sensor` already holds
+// 0. A blank family must therefore be REJECTED, not defaulted — defaulting to
+// the zero value would publish every unfamilied module as a Sensor.
+func TestValidateRejectsBlankPluginTypeSoNothingDefaultsToSensor(t *testing.T) {
+	m := testManifest()
+	m.Modules[0].PluginType = ""
+	if err := m.Validate(); err == nil {
+		t.Fatal("blank PLUGIN_TYPE must be rejected, never defaulted (0 == Sensor)")
+	}
+	m2 := testManifest()
+	m2.Modules[0].PluginType = "Sensors" // not an IDL symbol
+	if err := m2.Validate(); err == nil {
+		t.Fatal("PLUGIN_TYPE must be an IDL pluginCategory symbol")
+	}
+	m3 := testManifest()
+	m3.Modules[0].PluginType = "Unspecified"
+	if err := m3.Validate(); err != nil {
+		t.Fatalf("Unspecified is a legitimate honest value: %v", err)
+	}
+}
+
+// The binding's symbol table must agree with the schema's documented values, or
+// our encoding silently means something else on the wire.
+func TestPluginCategorySymbolValuesMatchSchema(t *testing.T) {
+	if got := sdspmm.EnumValuespluginCategory["Unspecified"]; byte(got) != 21 {
+		t.Fatalf("Unspecified must be 21, got %d", byte(got))
+	}
+	if got := sdspmm.EnumValuespluginCategory["Sensor"]; byte(got) != 0 {
+		t.Fatalf("Sensor must be 0, got %d", byte(got))
 	}
 }
