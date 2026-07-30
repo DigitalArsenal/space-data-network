@@ -90,6 +90,12 @@ type FlatSQLStore struct {
 	// delete/GC/batch-clear frame can never land on top of a live re-add of the
 	// same content-addressed CID. See record_catalog_replay.go.
 	hydrationShield hydrationShield
+	// recordIndexRowIDs is the ONE sdn_record_index rowid allocator both writer
+	// lanes draw from while a record-catalog replay is in flight, so a replay
+	// and live traffic can never hand out the same rowid. Idle (and a complete
+	// no-op on the live write path) outside a replay. See
+	// record_catalog_replay.go.
+	recordIndexRowIDs recordIndexRowIDs
 	// hydrateMu serializes full record-catalog replays against each other (the
 	// post-boot background hydrate vs. the admin re-sync trigger). It is NOT the
 	// store write lock: a replay must never hold that for its duration or it
@@ -2355,7 +2361,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			if err != nil {
 				return inserted, fmt.Errorf("store %s record %s: %w", schemaName, cid, err)
 			}
-			if err := upsertRecordIndexExec(tx, schemaName, cid, now, data); err != nil {
+			if err := upsertRecordIndexExec(tx, &s.recordIndexRowIDs, schemaName, cid, now, data); err != nil {
 				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
 			}
 			event, err := s.recordCatalogUpsertEvent(tx, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now, data)
@@ -6139,10 +6145,25 @@ type indexedFields struct {
 }
 
 func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp int64, data []byte) error {
-	return upsertRecordIndexExec(s.db, schemaName, cid, sourceTimestamp, data)
+	return upsertRecordIndexExec(s.db, &s.recordIndexRowIDs, schemaName, cid, sourceTimestamp, data)
 }
 
-func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimestamp int64, data []byte) error {
+// upsertRecordIndexExec writes the LIVE index row.
+//
+// rowIDs is the store's shared sdn_record_index rowid allocator. It is idle —
+// and this function byte-identical to what it always was — except while a
+// record-catalog replay is in flight, when it hands out an EXPLICIT rowid above
+// every rowid the journal can ask for. Without that, a live write takes
+// MAX(rowid)+1 of the half-hydrated table, i.e. a rowid the replay has not
+// reached yet and will later insert by name: "UNIQUE constraint failed:
+// sdn_record_index.rowid", which is why host-01's catalog never finished
+// hydrating. See recordIndexRowIDs in record_catalog_replay.go.
+//
+// The explicit rowid is only ever an INSERT candidate: a repeat CID still takes
+// the ON CONFLICT(schema_name, cid) DO UPDATE branch and KEEPS the rowid it
+// already had, so a record's durable datasync cursor never moves. A rowid burned
+// that way is simply skipped — the counter is monotonic and gaps are legal.
+func upsertRecordIndexExec(exec sqlExecer, rowIDs *recordIndexRowIDs, schemaName, cid string, sourceTimestamp int64, data []byte) error {
 	fields, err := extractIndexedFields(schemaName, data)
 	if err != nil {
 		// The index is the global record catalog + sync cursor (WS7.3d): every
@@ -6177,11 +6198,7 @@ func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimesta
 	if fields.epochDay != "" {
 		day = fields.epochDay
 	}
-	_, err = exec.Exec(flatsqldrv.WithoutJournal(`
-		INSERT INTO sdn_record_index (
-			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	const conflictClause = `
 		ON CONFLICT(schema_name, cid) DO UPDATE SET
 			norad_cat_id = excluded.norad_cat_id,
 			entity_id = excluded.entity_id,
@@ -6190,8 +6207,24 @@ func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimesta
 			epoch_unix = excluded.epoch_unix,
 			epoch_day = excluded.epoch_day,
 			source_timestamp = excluded.source_timestamp
-	`), schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, sourceTimestamp)
-	if err != nil {
+	`
+	args := []any{schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, sourceTimestamp}
+	sqlText := `
+		INSERT INTO sdn_record_index (
+			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` + conflictClause
+	if rowIDs != nil {
+		if rid, explicit := rowIDs.allocateLive(); explicit {
+			sqlText = `
+		INSERT INTO sdn_record_index (
+			rowid, schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` + conflictClause
+			args = append([]any{rid}, args...)
+		}
+	}
+	if _, err = exec.Exec(flatsqldrv.WithoutJournal(sqlText), args...); err != nil {
 		return fmt.Errorf("failed to upsert index row: %w", err)
 	}
 

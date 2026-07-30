@@ -250,17 +250,105 @@ func placeholders(rows, cols int) string {
 //   - a repeat frame for a row that already owns that rowid keeps it;
 //   - otherwise hand out a fresh rowid above every rowid the journal or the
 //     table can contain, so it can collide with nothing, now or later.
+//
+// ONE ALLOCATOR, TWO LANES (2026-07-30). The rule above is only sound if the
+// replay is the ONLY writer handing out rowids, and a CHUNKED replay is not: it
+// releases store.mu between windows precisely so readers and live publishes can
+// interleave. A live publish inserts its index row WITHOUT an explicit rowid, so
+// the engine gives it MAX(rowid)+1 of the PARTIALLY hydrated table — a rowid
+// squarely inside the range the replay has not reached yet and will later ask
+// for by name. The ownership map is snapshotted once at replay start and never
+// learns about that row, so the replay hands the same rowid out a second time:
+//
+//	replay record index batch: flatsqlrt: query_params:
+//	  SQL execution error: UNIQUE constraint failed: sdn_record_index.rowid
+//
+// Reproduced off-host on host-01's real 450 MB journal at ~285,000 frames under
+// live writes; on host-01 itself it is why the catalog had NEVER finished
+// hydrating (before flatsql b26ed45 the same collision surfaced as an
+// `unreachable` guest trap, which hid the cause for months).
+//
+// The fix is a PARTITION with a single allocator (recordIndexRowIDs), not a
+// bigger lock — holding store.mu for all 1.34M frames is the reader blackout
+// this file exists to prevent. While a replay is in flight:
+//
+//   - [1 .. journalMaxRowID] is the REPLAY's exclusive band: only frames whose
+//     rowid the journal recorded may land there, so the datasync cursor is still
+//     reproduced verbatim for effectively every historical record;
+//   - everything above it is a single monotonic counter that BOTH lanes draw
+//     from — the replay for a fresh rowid, and the live path for an EXPLICIT one
+//     instead of the engine's MAX(rowid)+1.
+//
+// Live rows therefore land above the whole historical range (which is also the
+// truthful cursor ordering: they are newer than every pre-boot frame), and no
+// journal rowid can ever be occupied by a live row.
 type replayRowIDState struct {
-	owner map[int64]string // rowid -> shieldKey(schema, cid)
-	next  int64            // next never-colliding rowid
+	owner map[int64]string   // rowid -> shieldKey(schema, cid)
+	alloc *recordIndexRowIDs // shared fresh-rowid counter (never nil)
+}
+
+// recordIndexRowIDs is the store-wide sdn_record_index rowid allocator.
+//
+// Idle in the steady state: allocateLive reports "no" and the live upsert keeps
+// its ordinary 9-column statement, so nothing about normal writes changes. A
+// replay calls begin() to open the shared band and end() when it is done.
+type recordIndexRowIDs struct {
+	mu     sync.Mutex
+	active int   // replays in flight (hydrateMu serializes, but be honest)
+	next   int64 // next rowid no other writer can be holding
+}
+
+// begin opens the shared band strictly above `above` — which the replay sets to
+// max(table MAX(rowid), highest rowid the journal will ask for). It never lowers
+// the counter, so a second replay cannot reissue rowids the first one gave out.
+func (a *recordIndexRowIDs) begin(above int64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if above+1 > a.next {
+		a.next = above + 1
+	}
+	a.active++
+}
+
+func (a *recordIndexRowIDs) end() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.active > 0 {
+		a.active--
+	}
+}
+
+// reserve hands the REPLAY a rowid from the shared band. Always allocates: the
+// replay owns its own begin/end pairing.
+func (a *recordIndexRowIDs) reserve() int64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	rid := a.next
+	a.next++
+	return rid
+}
+
+// allocateLive hands a LIVE writer an explicit rowid, but only while a replay is
+// in flight. Outside a replay it returns false and the caller inserts without a
+// rowid, exactly as before — the engine's MAX(rowid)+1 is correct when nothing
+// else is handing rowids out.
+func (a *recordIndexRowIDs) allocateLive() (int64, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.active == 0 {
+		return 0, false
+	}
+	rid := a.next
+	a.next++
+	return rid, true
 }
 
 // newReplayRowIDState seeds ownership from any rows already in sdn_record_index
-// (the admin force re-sync replays into a populated table) and places the
-// fresh-rowid counter above both the table's max rowid and the highest rowid the
-// journal will ask for.
+// (the admin force re-sync replays into a populated table) and opens the shared
+// fresh-rowid band above both the table's max rowid and the highest rowid the
+// journal will ask for. The caller MUST pair this with store.recordIndexRowIDs.end().
 func newReplayRowIDState(store *FlatSQLStore, journalMaxRowID int64) (*replayRowIDState, error) {
-	state := &replayRowIDState{owner: map[int64]string{}}
+	state := &replayRowIDState{owner: map[int64]string{}, alloc: &store.recordIndexRowIDs}
 
 	var maxExisting int64
 	if err := store.db.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM sdn_record_index`).Scan(&maxExisting); err != nil {
@@ -285,10 +373,11 @@ func newReplayRowIDState(store *FlatSQLStore, journalMaxRowID int64) (*replayRow
 		}
 	}
 
-	state.next = maxExisting + 1
-	if journalMaxRowID >= state.next {
-		state.next = journalMaxRowID + 1
+	above := maxExisting
+	if journalMaxRowID > above {
+		above = journalMaxRowID
 	}
+	state.alloc.begin(above)
 	return state, nil
 }
 
@@ -304,8 +393,7 @@ func (r *replayRowIDState) resolve(event recordCatalogEvent) int64 {
 			return rid // same row, repeat frame: it already owns this rowid
 		}
 	}
-	rid := r.next
-	r.next++
+	rid := r.alloc.reserve()
 	r.owner[rid] = key
 	return rid
 }
