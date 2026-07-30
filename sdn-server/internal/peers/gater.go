@@ -10,6 +10,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+	"go.uber.org/zap/zapcore"
 )
 
 var log = logging.Logger("sdn-peers")
@@ -154,15 +155,28 @@ func (g *TrustedConnectionGater) InterceptSecured(dir network.Direction, p peer.
 }
 
 // InterceptUpgraded is called after the connection is fully upgraded.
+//
+// NOTHING HERE MAY BLOCK ON THE STORE. This callback runs inside
+// swarm.addConn on the connection's critical path, and until 2026-07-30 it
+// performed a synchronous FlatSQL round-trip while holding the Registry write
+// lock — see stats_writer.go for the goroutine dump in which that single fact
+// took every inbound and outbound connection on host-01 down for 41 minutes.
+//
+// RecordConnection is now an in-memory counter bump plus a non-blocking signal
+// to a background persister, and the trust-level lookup below is evaluated ONLY
+// when debug logging is on (it takes the registry read lock, so on the hot path
+// it is pure cost — and an avoidable dependency on a lock an admin mutation can
+// hold).
 func (g *TrustedConnectionGater) InterceptUpgraded(conn network.Conn) (bool, control.DisconnectReason) {
 	peerID := conn.RemotePeer()
 
-	// Record the connection in the registry
+	// Record the connection in the registry (in-memory; persistence is async).
 	g.registry.RecordConnection(peerID)
 
-	// Log based on trust level
-	trustLevel := g.registry.GetTrustLevel(peerID)
-	log.Debugf("Connection upgraded with peer %s (trust level: %s)", peerID.ShortString(), trustLevel.String())
+	if log.Desugar().Core().Enabled(zapcore.DebugLevel) {
+		trustLevel := g.registry.GetTrustLevel(peerID)
+		log.Debugf("Connection upgraded with peer %s (trust level: %s)", peerID.ShortString(), trustLevel.String())
+	}
 
 	return true, 0
 }
