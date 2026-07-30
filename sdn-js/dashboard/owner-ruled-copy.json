@@ -1,0 +1,29 @@
+{
+  "schema": "iris/owner-ruled-copy/1",
+  "ruling": "IRIS 2026-07-30, ui-design-lib-two-way-sync (acceptance #3); owner reported the semantic defect THREE times",
+  "tasks": ["ui-menu-label-clutter-purge", "design-tool-strip-menu-clutter-at-source"],
+
+  "banned": [
+    { "id": "SUBS",        "pattern": "\\bSUBS\\b",         "note": "menu clutter; owner-ruled removed" },
+    { "id": "fkey",        "pattern": "fkey",               "note": "the function-key column in the rail; owner-ruled removed" },
+    { "id": "LOCAL_NODE",  "pattern": "LOCAL NODE · DESKTOP", "note": "rail brand-sub; owner-ruled removed" },
+    { "id": "GEOIP",       "pattern": "GEOIP · LIVE SWARM",  "note": "menu clutter; owner-ruled removed" },
+    { "id": "DRAG",        "pattern": "DRAG TO ROTATE",      "note": "globe hint; owner-ruled removed" }
+  ],
+
+  "scopes": {
+    "lib":      { "verdict": "fail", "why": "code territory (spaceaware-ui/src/lib) — fixable in place" },
+    "console":  { "verdict": "fail", "why": "live design surface (spaceaware-ui/orbital-console) — NOT fixable here; route to design-tool-strip-menu-clutter-at-source, the correction goes into the design tool" },
+    "archive":  { "verdict": "warn", "why": "spaceaware-ui/archive is a HISTORICAL RECORD of the owner's exports. Failing on it would make the build permanently red and pressure someone into rewriting his history. Never fail here." },
+    "artifact": { "verdict": "fail", "why": "the built dashboard.html — the only scope that proves it did not reach the user" }
+  },
+
+  "baseline": {
+    "date": "2026-07-30",
+    "debt": "These are PRESENT TODAY and suppressed only by a consumer CSS rule (.root .sdn-rail .brand-sub,.root .sdn-rail .fkey{display:none}) — exactly the consumer-only strip IRIS warned would not hold. 'Not visible' is not 'not there'. This block is that debt, in writing. The check fails on any NEW offender and on any CHANGE IN COUNT of a baselined one, so the debt cannot grow silently. design-tool-strip-menu-clutter-at-source deletes these entries when the corrected surface lands, and the check becomes absolute.",
+    "counts": {
+      "lib":      { "fkey": 4, "LOCAL_NODE": 1 },
+      "artifact": { "fkey": 4, "LOCAL_NODE": 1 }
+    }
+  }
+}
