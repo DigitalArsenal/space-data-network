@@ -1078,6 +1078,20 @@
   .acct:hover { filter: brightness(1.15); }
   .acct:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; }
 
+  /* L3, MEASURED RATHER THAN ASSUMED. With header and panels finally sharing one
+     content box, their right edges agree exactly at 1280 / 1440 / 1920 — measured
+     0.0px — but at 900 the header's right cluster was still 25px PAST the panel
+     edge, because the title plus three controls do not fit 771px and the cluster
+     overflowed its own padding box. An overflowing control cannot be aligned by
+     any padding.
+     The rule that already existed for phones is simply applied at the width where
+     the header actually stops fitting: the two STATUS chips go, the actionable
+     account control stays, and the same counts remain one line down in the route's
+     meta line. Threshold is the grid's own 1180px, not a new number. */
+  @media (max-width: 1180px) {
+    .hdr-status { display: none; }
+  }
+
   /* Narrow screens (owner report: taps landing on clipped targets): the
      desktop half-and-half no-scroll layout collapses tap targets into
      140px strips. On phones the page scrolls naturally instead: panels
@@ -1107,9 +1121,6 @@
       min-width: 0;
       max-width: none;
     }
-    /* The header's right side can't fit the status chips AND the session
-       control on a phone — the actionable control wins; the same counts
-       live in the meta line anyway. */
     .hdr-status { display: none; }
     .hdr-session {
       display: inline-flex;
