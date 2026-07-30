@@ -271,6 +271,15 @@ func newLicensingTestModule(t *testing.T) *modulert.Module {
 				8, 7, 6, 5, 4, 3, 2, 1,
 			},
 		},
+		// These MUST match what buildModuleNodeContext declares in production.
+		// Without them resolveKeySlot fails closed and keyslot.sign refuses
+		// every request, so this fixture could not sign a grant at all — which
+		// is one reason the zero-verifier-key defect (task
+		// sdn-module-delivery-grant-sig-broken) survived a wasm-backed test.
+		KeySlotAlgorithms: map[string]string{
+			providerSigningSlotID:  modulert.KeySlotAlgorithmEd25519,
+			providerWrappingSlotID: modulert.KeySlotAlgorithmX25519,
+		},
 	}
 
 	capReg := modulert.NewCapabilityRegistry()
