@@ -8,9 +8,13 @@
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { shortId } from './format.js';
   import { accountDisplayName, accountFromNode, isUnnamed, kindLabel } from './accounts.js';
-  import { peerSource, lastSeenLabel } from './peers.js';
+  import { peerSource, lastSeenLabel, withoutSelfRows } from './peers.js';
 
   /**
+   * `selfPeerId` is the emitting node's own peer id (NodeStatusSet.SOURCE_PEER_ID).
+   * It is a prop rather than a lookup so this component stays pure, and it is
+   * OPTIONAL only because the IS_SELF flag is the primary test — see `safeRows`.
+   *
    * @type {{
    *   rows: {node: any, score?: number}[],
    *   now: number,
@@ -18,9 +22,24 @@
    *   onSort: (key: string) => void,
    *   onOpen: (node: any) => void,
    *   semanticActive?: boolean,
+   *   selfPeerId?: string,
    * }}
    */
-  let { rows = [], now, sortKey, sortDir, onSort, onOpen, semanticActive = false } = $props();
+  let { rows = [], now, sortKey, sortDir, onSort, onOpen, semanticActive = false, selfPeerId = '' } = $props();
+
+  /**
+   * ⛔ THE NO-SELF-ROW GUARD, HERE, IN THE RENDERER (peers.js `withoutSelfRows`).
+   *
+   * Owner 2026-07-30, reading a peer row: "Is this the root node? If so it
+   * should not be in the peers list". It was not — that row is host-02, verified
+   * against the live feed — but this is the THIRD ruling of the no-self-row law
+   * (accounts-table-rules), and the previous two left the property depending on
+   * one `withoutSelf()` call in App.svelte. One call site is not a guarantee: it
+   * is a thing that is currently true. A table that CANNOT render the node as
+   * its own peer is a guarantee, and it holds for every caller this component
+   * will ever have. Enforced by dashboard-logic.test.js.
+   */
+  const safeRows = $derived(withoutSelfRows(rows, selfPeerId));
 
   // THE COLUMN PRIORITY LADDER (grammar L4: "Horizontal overflow is a RESPONSIVE
   // failure: columns drop by declared priority at breakpoints").
@@ -39,8 +58,8 @@
   //         than account for it. Reuses the threshold App.svelte's header
   //         cluster already collapses at; no new number is minted. Measured:
   //         ORGANIZATION's floor is its own nowrap header label (143px) even
-  //         when every row holds an em-dash, and handing that 143px to SOURCE
-  //         at 900px takes the config path from nine wrapped lines to four.
+  //         when every row holds an em-dash, and it is handed to NAME and
+  //         SOURCE, which are the two columns that answer the owner's question.
   //   560   TRUST, STATUS, LAST SEEN. Liveness is NOT lost with STATUS: SOURCE
   //         already says CONNECTED NOW for a live peer, and the dormant amber
   //         rail marks a pinned peer that is not. TRUST is a toolbar filter and
@@ -86,7 +105,7 @@
       </tr>
     </thead>
     <tbody>
-      {#each rows as row (row.node.peerId + (row.node.isSelf ? ':self' : ''))}
+      {#each safeRows as row (row.node.peerId)}
         {@const n = row.node}
         {@const src = peerSource(n)}
         {@const dormant = !n.isSelf && !n.online && src.pinned}
@@ -131,16 +150,26 @@
           </td>
           <td class="d1180" style="color:{theme.textBody};">{n.org?.trim() || '—'}</td>
           <!-- SOURCE — the answer to "how did this get here?", on the row, in
-               words, without devtools. `src.note` is rendered as VISIBLE TEXT
-               (keystate.js's standing rule: never a tooltip only): for a config
-               pin it is the file and key an operator actually edits. -->
+               words, without devtools.
+               ⛔ NO `src.note` HERE. Owner 2026-07-30, verbatim: "Remove the
+               path". The config pin's note IS a filesystem path plus a yaml key,
+               and it used to render as a visible line under this badge; it was
+               the single least readable thing on the page and the widest
+               unbounded value in the table. It now lives in ONE place, the admin
+               EDIT modal, labelled DEFINED IN (IRIS ruling 2026-07-30) — the only
+               surface with an operator in front of it who can act on it. The
+               peers.js `pinNoteIsPublishable` predicate is what keeps that from
+               being re-litigated per surface. -->
           <td>
             <span class="src" style="color:{theme[src.tone] ?? theme.textDim};border-color:{theme[src.tone] ?? theme.textDim};" title={src.sentence}>{src.label}</span>
-            {#if src.id === 'connected' && src.pinned}
-              <span class="tag" style="color:{theme.ice};border-color:{theme.ice};">PINNED</span>
+            <!-- WHERE to change it, without saying where the file is: LOCKED
+                 means "this dashboard cannot unpin it", which is the only part
+                 of the config-file fact a table row needs to carry. -->
+            {#if src.locked}
+              <span class="tag" style="color:{theme.textMuted};border-color:{theme.textMuted};" title="Declared in this node's configuration file — this dashboard cannot remove it.">LOCKED</span>
             {/if}
-            {#if src.note}
-              <div class="note" style="color:{theme.textFaint};">{src.note}</div>
+            {#if src.id === 'connected' && src.pinned}
+              <span class="tag" style="color:{theme.ice};border-color:{theme.ice};">ADDED</span>
             {/if}
           </td>
           <td class="d560"><span class="trust" style="color:{trustColor(n.trustLevel)};border-color:{trustColor(n.trustLevel)};">{normalizeTrust(n.trustLevel).toUpperCase()}</span></td>
@@ -218,20 +247,19 @@
      lines, with the short peer id broken under it).
      The two differ in ONE way that decides this table: `anywhere` lets a cell's
      MINIMUM content width collapse to a single character, so an auto-layout
-     table is free to squeeze any column to nothing — and it did, to 80px,
-     because SOURCE's config path (a 137-character absolute path on the live
-     node) bid for 400px of the 1311 available. `break-word` wraps at word
+     table is free to squeeze any column to nothing — and it did, to 80px, when
+     SOURCE still rendered the config path (a 137-character absolute path on the
+     live node) and bid for 400px of the 1311 available. That value is gone (see
+     `.note` below) but the rule it taught stands: `break-word` wraps at word
      boundaries and only splits a word that genuinely cannot fit its line, so
-     every column keeps a floor made of its own longest unbreakable token.
-     `.note` opts back into `anywhere` below — a filesystem path is the one
-     value here that must be allowed to collapse. */
+     every column keeps a floor made of its own longest unbreakable token. */
   td {
     padding: var(--sdn-sp-2) var(--sdn-sp-5);
     vertical-align: top;
     overflow-wrap: break-word;
   }
   /* The OTHER unbounded value in the table (an EPM display name is whatever an
-     operator typed), capped on the same principle as `.note`: no value of
+     operator typed), capped on the principle the config path taught: no value of
      unbounded length may bid for unbounded width. Measured without the cap, a
      41-character single-token name took 422px of NAME and pushed the table 39px
      past its panel at 1440 and 154px past it at 390 — `break-word` does not
@@ -289,28 +317,17 @@
     border: 1px solid;
     padding: 2px 7px;
   }
-  /* The config pin's file+key. Small, dim, and WHOLE — an operator has to be
-     able to read the path they are being sent to.
-     THE COLUMN BUDGET LIVES HERE. This is the only value in the table with no
-     upper bound on its length, and an auto-layout table hands free space out in
-     proportion to what each column ASKS for, so an unbounded ask is an
-     unbounded column: uncapped, a 137-char dev path took 400px and a 59-char
-     prod path took 342px, both at the expense of NAME. `max-width` caps what
-     the cell may ask for (a block child's max-width bounds its parent cell's
-     max-content), which is the knob — the column it actually receives is
-     smaller. Measured at 40ch: SOURCE lands at 249px of 1311 at 1440w (19%) and
-     is IDENTICAL for the 59-char and 137-char paths, i.e. the layout no longer
-     depends on how long an operator's config path happens to be.
-     `overflow-wrap: anywhere` (against the `break-word` td default) is what
-     lets it collapse on a phone; the breaks still land on `/` and `-` first, so
-     the path reads in segments rather than being sliced mid-word. */
-  .note {
-    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
-    letter-spacing: 0.02em;
-    margin-top: 3px;
-    overflow-wrap: anywhere;
-    max-width: 40ch;
-  }
+  /* `.note` IS GONE, and with it the whole column-budget problem it created.
+     It rendered the config pin's file+key inline and was the ONLY value in this
+     table with no upper bound on its length; an auto-layout table hands free
+     space out in proportion to what each column ASKS for, so an unbounded ask
+     was an unbounded column — a 137-char dev path took 400px and a 59-char prod
+     path 342px, both at NAME's expense, and it needed a 40ch cap plus
+     `overflow-wrap:anywhere` to be survivable at all. Deleting the value beats
+     capping it: SOURCE's width is now floored by its own longest badge
+     ("ADDED BY OPERATOR") and is the same for every node, whatever an
+     operator's config path happens to be. Owner 2026-07-30: "Remove the path".
+     The value itself is not lost — PeerEditModal shows it under DEFINED IN. */
   /* theme.amber (#ffb24d) at low alpha — the same token the inline accent and
      the map legend use, spelled as a tint the way this file already spells
      theme.cyan's hover tint. */
@@ -334,7 +351,8 @@
   .nowrap { white-space: nowrap; }
   /* THE DROP LADDER (L4). Each class is named for the width at which its column
      leaves; the COLS table above assigns them and states the priority argument.
-     Measured table width vs. available width, prod-length config path, after:
+     Measured table width vs. available width (with the config path still in
+     SOURCE, i.e. the worst case this ladder was ever asked to hold), after:
        1920 1789/1791 · 1440 1309/1311 · 1280 1149/1151 · 1024 893/895
         900  769/771  ·  760  653/655  ·  560  453/455  ·  414  307/309
         390  283/285  ·  320  213/215
@@ -355,8 +373,8 @@
     .trust { padding: 2px 5px; font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro); letter-spacing: 0.08em; }
     /* Same tightening TRUST already had, for the same reason: the badge's
        longest word is what floors the SOURCE column, and at phone widths that
-       floor is the difference between the label reading `PINNED BY OPERATOR`
-       and reading `PINN` / `ED` / `BY` / `OPERAT` / `OR`. */
+       floor is the difference between the label reading `ADDED BY OPERATOR`
+       and reading `ADDE` / `D` / `BY` / `OPERAT` / `OR`. */
     .src { padding: 2px 5px; letter-spacing: 0.08em; }
     .status { font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro); letter-spacing: 0.06em; }
     .mono { font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label); }
@@ -364,7 +382,7 @@
   @media (max-width: 560px) {
     /* Phones. NAME + SOURCE only — 285px of table at 390px of viewport does not
        hold five columns, and the alternative measured out as a SOURCE column of
-       71px rendering `CONN`/`ECTE`/`D`/`NOW` and a 14-line path. Liveness is not
+       71px rendering `CONN`/`ECTE`/`D`/`NOW`. Liveness is not
        lost: SOURCE says CONNECTED NOW for a live peer and the dormant amber rail
        marks a pinned one that is not. TRUST, STATUS and LAST SEEN are in the
        row's detail modal, one tap away. */

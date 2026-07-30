@@ -26,6 +26,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	sdnvcard "github.com/spacedatanetwork/sdn-server/internal/vcard"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -317,8 +318,12 @@ func loadIdentityWizardStoredProfileSource(store *storage.FlatSQLStore, peerID p
 	return identityWizardProfileSource{Profile: defaultIdentityWizardProfile(peerID)}, nil
 }
 
+// The wizard's fallback must be the SAME string the daemon's defaultProfile
+// mints, or the wizard silently renames a node the moment it is run. Both now
+// come from vcard.NodeFallbackName — and neither emits peer.ID.ShortString(),
+// which put the literal `<peer.ID 16*…>` into two live nodes' published names.
 func defaultIdentityWizardProfile(peerID peer.ID) *epm.Profile {
-	return &epm.Profile{DN: "SDN Node " + peerID.ShortString()}
+	return &epm.Profile{DN: sdnvcard.NodeFallbackName(peerID.String())}
 }
 
 func runIdentityWizardWithDaemonProfile(ctx context.Context, out io.Writer, options identityWizardOptions, baseURL string, profile *epm.Profile, peerID peer.ID) error {

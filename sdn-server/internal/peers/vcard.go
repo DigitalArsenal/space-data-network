@@ -131,12 +131,26 @@ func TrustedPeerToVCard(tp *TrustedPeer) string {
 	// Required vCard fields
 	card.SetValue(vcard.FieldVersion, "4.0")
 
-	// Name
-	name := tp.Name
-	if name == "" {
-		name = tp.ID.ShortString()
-	}
-	card.SetValue(vcard.FieldFormattedName, name)
+	// NAME — or an ADMITTED BLANK. Never a manufactured one.
+	//
+	// ⛔ This line used to fall back to `tp.ID.ShortString()`, which is libp2p's
+	// DEBUG STRINGER: it renders the literal text `<peer.ID 16*PpYr2U>`. That
+	// string was measured going out on the live /ws/status feed 2026-07-30 as
+	// the FN of every peer this node has no EPM for, i.e. as that peer's NAME.
+	//
+	// It is the same defect as the hardcoded "Config Trusted Peer" the owner
+	// already caught once ("what does the first row 'config trusted peer'
+	// mean?"): a value that DESCRIBES the record being presented as the
+	// record's name. A manufactured label is worse than an admitted blank —
+	// the blank is honest and the client already renders it as "unknown",
+	// while the manufactured one has to be pattern-matched back out downstream
+	// (accounts.js vcardDisplayName carries exactly that `/^<peer\.ID\b/`
+	// rejection, and that rejection only exists because of this line).
+	//
+	// FN stays present-but-empty rather than omitted: vCard 4.0 requires the
+	// property, and an empty value is a card that says "I do not know this
+	// peer's name", which is the true statement.
+	card.SetValue(vcard.FieldFormattedName, tp.Name)
 
 	// Organization
 	if tp.Organization != "" {

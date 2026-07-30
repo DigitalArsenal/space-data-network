@@ -38,16 +38,39 @@ import { parseVCard } from './vcard.js';
 /**
  * WHERE A ROW CAME FROM, in the owner's words rather than the wire's.
  *
- *   config     a pin written into the node's config file. `pinNote` is the real
- *              FILE + KEY an operator edits — it is not a human note, and it is
- *              the answer to "what does 'config trusted peer' mean".
- *   pinned     an operator pinned it on this node. `pinNote` is their own note.
+ * ⛔ OWNER, 2026-07-30, reading a real row: "unknown / 16Uiu2…PpYr2U / — / FROM
+ * CONFIG FILE / /etc/space-data-network/config.module-delivery-sidecar.yaml ·
+ * peers.trusted_peers / FULL / OFFLINE / … — I have no idea what the fuck this
+ * means. Remove the path and make this very clear."
+ *
+ * Two things were wrong and both are fixed here rather than restyled.
+ *
+ * 1. THE BADGE NAMED A MECHANISM, NOT A REASON. "FROM CONFIG FILE" answers
+ *    "which file?" when the question on the page is "why is this here?". IRIS
+ *    ruling 2026-07-30: `config` and `pinned` SHARE the badge ADDED BY OPERATOR,
+ *    because to the person reading the table they are the same fact — a human
+ *    put it there. WHERE that human has to go to change it is a different
+ *    question, carried by the `LOCKED` chip and answered in full in the admin
+ *    EDIT modal, which is the only surface that has an operator in front of it.
+ *
+ * 2. THE PATH WAS ROW DATA. It is not. A filesystem path is admin detail, and
+ *    it was also the widest unbounded value in the table (a 59-char prod path
+ *    bid 342px of an 1311px table). `note` SURVIVES ON THIS OBJECT — the modal
+ *    reads it — and NO TABLE MAY RENDER IT. That is the whole of the owner's
+ *    "remove the path": removed from the row, kept where it is useful.
+ *
+ *   config     an operator declared this peer in the node's CONFIG FILE. `note`
+ *              is the real FILE + KEY they edit — modal-only.
+ *   pinned     an operator pinned it on this dashboard. `note` is their own.
  *   connected  it has a live connection right now. It is listed BECAUSE of that,
  *              and it disappears when it disconnects (owner ruling 1).
  *   account    not a peer at all: an operator account from the Admin overlay
  *              that has never connected. Kept distinct so it can be excluded
  *              from every peer count instead of inflating one.
  *   unknown    the feed said nothing. A defect, rendered as one.
+ *
+ * `sentence` is prose an operator can read aloud — it is the row's `title` and
+ * the modal's LISTING line, and it never contains a path either.
  */
 export function peerSource(node) {
   const raw = String(node?.source ?? '').trim().toLowerCase();
@@ -57,26 +80,25 @@ export function peerSource(node) {
   if (raw === 'config') {
     return {
       id: 'config',
-      label: 'FROM CONFIG FILE',
-      tone: 'textDim',
+      label: 'ADDED BY OPERATOR',
+      tone: 'ice',
       pinned: true,
       locked: true,
       note,
-      sentence: note
-        ? `Pinned by this node's config file — edit it at ${note}, not here.`
-        : "Pinned by this node's config file — edit it there, not here.",
+      sentence:
+        "An operator added this peer in this node's configuration file; it stays listed while offline.",
     };
   }
   if (raw === 'pinned') {
     return {
       id: 'pinned',
-      label: 'PINNED BY OPERATOR',
+      label: 'ADDED BY OPERATOR',
       tone: 'ice',
       pinned: true,
       locked: false,
       note,
       sentence:
-        'An operator pinned this peer on this node, so it stays listed even while it is not connected.',
+        'An operator added this peer on this dashboard; it stays listed while offline.',
     };
   }
   if (raw === 'connected') {
@@ -88,8 +110,8 @@ export function peerSource(node) {
       locked: false,
       note,
       sentence: flagged
-        ? 'Connected right now, and pinned: it stays listed after it disconnects.'
-        : 'Connected right now. That is the only reason it is listed — it disappears when it disconnects.',
+        ? 'Connected right now, and added by an operator: it stays listed after it disconnects.'
+        : 'Connected right now — that is the only reason it is listed.',
     };
   }
   if (raw === 'account') {
@@ -100,7 +122,7 @@ export function peerSource(node) {
       pinned: false,
       locked: false,
       note,
-      sentence: 'An operator account registered on this node. It has never connected as a peer.',
+      sentence: 'An operator account on this node. It has never connected as a peer.',
     };
   }
   return {
@@ -110,13 +132,79 @@ export function peerSource(node) {
     pinned: flagged,
     locked: false,
     note,
-    sentence:
-      'This node did not say how this row got here. Every row should be pinned or connected.',
+    sentence: 'This node did not say how this row got here.',
   };
 }
 
 /** True for rows that are peers — an operator account is not one. */
 export const isPeerRow = (node) => peerSource(node).id !== 'account';
+
+/**
+ * ⛔ NO SELF ROW — STRUCTURAL, not a call-site habit.
+ *
+ * Owner, 2026-07-30, on the row he could not read: "Is this the root node? If
+ * so it should not be in the peers list". It was not (that row is host-02;
+ * measured), but the rule he is invoking has now been RULED THREE TIMES
+ * (accounts-table-rules: "⛔ NO self row (ruled twice)"), and a rule ruled
+ * three times must be made IMPOSSIBLE rather than merely currently-true.
+ *
+ * Before this, self-exclusion lived only in App.svelte's `accountRows` — a
+ * `withoutSelf()` call at ONE call site. Any second consumer of NodeTable, any
+ * future route, any refactor that reordered that derivation, silently
+ * reintroduces the defect; nothing in the renderer forbids it. So the RENDERER
+ * enforces it (NodeTable calls this on its own props), which makes the property
+ * hold for every caller that will ever exist rather than for the one that
+ * exists today.
+ *
+ * TWO tests of self, because they fail independently: the feed's IS_SELF flag
+ * (authoritative when set) and a peer-id match against the emitting node
+ * (`NodeStatusSet.SOURCE_PEER_ID`), which still catches a row whose IS_SELF was
+ * never written. Comparison is exact — a peer id is a hash, never fuzzy-matched.
+ *
+ * @param {{node?: any}[]} rows  table rows, `{ node }`-shaped
+ * @param {string} selfPeerId    the emitting node's peer id (may be '')
+ */
+export function withoutSelfRows(rows, selfPeerId = '') {
+  const self = String(selfPeerId ?? '').trim();
+  return (rows ?? []).filter((row) => {
+    const node = row?.node ?? row;
+    if (!node) return false;
+    if (node.isSelf) return false;
+    return !(self && String(node.peerId ?? '').trim() === self);
+  });
+}
+
+/**
+ * THE SET DIFFERENCE, stated instead of left to be noticed.
+ *
+ * ⛔ OWNER, 2026-07-30, two messages: "then why is there four fucking peers when
+ * only three exist? make this make sense", and — seeing the trust registry say
+ * 4 while the peers table said ROWS 1-3 OF 3 — "what the fuck".
+ *
+ * Both numbers were CORRECT and neither said what it was counting. The trust
+ * registry (/api/peers) holds every peer this node has a record for; the peers
+ * board admits only PINNED-OR-CONNECTED (the admission rule landed in
+ * sdn-peers-provenance-and-count-honesty). A peer in the registry that has never
+ * connected is therefore invisible by design — and the invisibility is exactly
+ * what made the two numbers look like a bug.
+ *
+ * IRIS ruling: the registry row STAYS hidden (owner ruling 1 stands), and the
+ * delta is NAMED on the peers board. Returns 0 when the two agree, so the line
+ * only appears when there is something to explain.
+ */
+export function registryDelta(registryCount, boardCount) {
+  const registry = Number(registryCount ?? 0);
+  const board = Number(boardCount ?? 0);
+  if (!Number.isFinite(registry) || !Number.isFinite(board)) return 0;
+  return Math.max(0, Math.floor(registry) - Math.floor(board));
+}
+
+/** The delta line's copy, or '' when the two counts agree (IRIS 2026-07-30). */
+export function registryDeltaLabel(registryCount, boardCount) {
+  const n = registryDelta(registryCount, boardCount);
+  if (!n) return '';
+  return `${n} IN REGISTRY, NEVER CONNECTED · NOT SHOWN`;
+}
 
 /**
  * LAST SEEN, which must never again be the bare word "never" (owner: "rows that
@@ -201,11 +289,26 @@ export const pinIsLocked = (pin) => String(pin?.source ?? '').trim().toLowerCase
 
 /** The pin's own provenance badge, in the same vocabulary as a row's. */
 export function pinSourceLabel(pin) {
-  return pinIsLocked(pin) ? 'FROM CONFIG FILE' : 'PINNED BY OPERATOR';
+  return 'ADDED BY OPERATOR';
 }
 
-/** What the note IS: a config pin's "note" is a file path and a key. */
-export const pinNoteLabel = (pin) => (pinIsLocked(pin) ? 'CONFIG' : 'NOTE');
+/**
+ * What the note IS. A config pin's "note" is a FILE PATH AND A KEY, and it is
+ * admin-only detail: `DEFINED IN` is the label it carries in PeerEditModal, the
+ * one surface allowed to show it (IRIS 2026-07-30, discharging the owner's
+ * "Remove the path"). An operator's own pin note is just a NOTE and may appear
+ * wherever notes appear.
+ */
+export const pinNoteLabel = (pin) => (pinIsLocked(pin) ? 'DEFINED IN' : 'NOTE');
+
+/**
+ * MAY THIS NOTE BE SHOWN OUTSIDE THE EDIT MODAL? A config pin's note is a path
+ * and the answer is NO — anywhere, on any table, forever. An operator's own
+ * note is prose they typed and may be shown. Callers ask this instead of
+ * re-deriving the rule, so "remove the path" cannot be half-applied to one of
+ * the three surfaces that render pin notes.
+ */
+export const pinNoteIsPublishable = (pin) => !pinIsLocked(pin);
 
 /** NAME rule, unchanged (§16.4.3): "unknown", never an identifier promoted. */
 export const pinDisplayName = (pin) => String(pin?.name ?? '').trim() || 'unknown';

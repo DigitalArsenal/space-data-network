@@ -533,3 +533,51 @@ END:VCARD`
 		_, _ = VCardToEPM(vcardStr)
 	}
 }
+
+// ⛔ THE DEBUG STRINGER IS NOT A NAME — one predicate, so no fourth surface
+// forgets. Measured live 2026-07-30: TWO fleet nodes' anonymous
+// /identity/<peerId>.vcf published `FN:SDN Node <peer.ID 16*W1Ktwi>`, minted by
+// epm defaultProfile() out of peer.ID.ShortString(). The owner read the
+// downstream consequence as a peers table of "unknown" rows.
+func TestIsStringerDN(t *testing.T) {
+	poisoned := []string{
+		"<peer.ID 16*W1Ktwi>",
+		// The form actually found in the field carries a prefix, which is why a
+		// HasPrefix test would have missed it and this predicate uses Contains.
+		"SDN Node <peer.ID 16*cuvDMv>",
+		"SDN Node <peer.ID 16*PpYr2U>",
+	}
+	for _, name := range poisoned {
+		if !IsStringerDN(name) {
+			t.Errorf("IsStringerDN(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{"", "SpaceAware.io", "CelesTrak Retriever", "SDN Node cuvDMv", "peer.ID"} {
+		if IsStringerDN(name) {
+			t.Errorf("IsStringerDN(%q) = true, want false", name)
+		}
+	}
+}
+
+// The fallback is a TYPE plus a disambiguator, never a Go format verb. It is
+// the single fallback in the node: the peer QR card and the node's own default
+// EPM profile both call it, so a node cannot be called two different things by
+// two different code paths.
+func TestNodeFallbackName(t *testing.T) {
+	const pid = "16Uiu2HAmNVJAQmy2DCajxSJ9by9wp4qF75pHujexHUVYrhW1Ktwi"
+	got := NodeFallbackName(pid)
+	if got != "SDN Node rhW1Ktwi" {
+		t.Errorf("NodeFallbackName(%q) = %q", pid, got)
+	}
+	if IsStringerDN(got) {
+		t.Errorf("the fallback must not itself be a stringer: %q", got)
+	}
+	if NodeFallbackName("") != "SDN Node" {
+		t.Errorf("empty peer id must not produce a dangling suffix: %q", NodeFallbackName(""))
+	}
+	// Idempotent on an already-poisoned display name, via CompactQRVCardForPeer.
+	card := CompactQRVCardForPeer("SDN Node <peer.ID 16*W1Ktwi>", pid)
+	if strings.Contains(card, "<peer.ID") {
+		t.Errorf("the QR card republished the stringer:\n%s", card)
+	}
+}

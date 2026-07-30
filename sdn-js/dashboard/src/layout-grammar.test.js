@@ -166,14 +166,42 @@ describe('L4 — widgets paginate, they do not scroll', () => {
       /overflow-wrap\s*:\s*anywhere/.test(tdBlock),
       'L4b: `anywhere` on the td default lets any column squeeze to one character — use break-word'
     ).toBe(false);
-    // Exactly two values here have no bound on their length: the config path and
-    // an operator-typed display name. Each may collapse, and each is capped, so
-    // neither can bid for a column at the other columns' expense.
-    for (const sel of ['.note', '.dn']) {
+    // ONE value here still has no bound on its length: an operator-typed
+    // display name. It may collapse, and it is capped, so it cannot bid for a
+    // column at the other columns' expense.
+    //
+    // `.note` — the config file path — used to be the second, and is GONE
+    // (owner 2026-07-30: "Remove the path"). Deleting an unbounded value beats
+    // capping it, so this loop lost an entry rather than gaining an exception.
+    for (const sel of ['.dn']) {
       const block = new RegExp(`\\${sel}\\s*\\{[^}]*\\}`).exec(table)?.[0] ?? '';
       expect(block, `NodeTable must style ${sel}`).not.toBe('');
       expect(/overflow-wrap\s*:\s*anywhere/.test(block), `L4b: ${sel} may collapse`).toBe(true);
       expect(/max-width\s*:/.test(block), `L4b: …only while ${sel} is capped`).toBe(true);
+    }
+    /*
+     * ⛔ AND THE PATH STAYS OUT. Owner 2026-07-30, verbatim: "Remove the path".
+     * It had reached THREE surfaces before he saw it, so the guard is written
+     * against the source of every table that renders a peer: no peers table may
+     * bind `pinNote` / `src.note` / `pin.note` into a row again. PeerEditModal
+     * is the one permitted consumer and is not in this list.
+     */
+    for (const file of ['NodeTable.svelte', 'AccountAdmin.svelte']) {
+      const src = COMPONENTS.find((c) => c.file === file)?.src ?? '';
+      expect(src, `${file} must be readable`).not.toBe('');
+      const rendered = src.replace(/<!--[\s\S]*?-->/g, '');
+      expect(
+        /\{\s*src\.note\s*\}|\{\s*n\.pinNote\s*\}|\{\s*node\.pinNote\s*\}/.test(rendered),
+        `${file}: a peers table may not render a pin note — the config pin's note IS a filesystem path`
+      ).toBe(false);
+      // AccountAdmin may still show an OPERATOR's own note, but only behind the
+      // publishable predicate — never the raw `{#if (pin.note ?? '').trim()}`.
+      if (/\{\s*pin\.note\s*\}/.test(rendered)) {
+        expect(
+          /pinNoteIsPublishable\(/.test(rendered),
+          `${file}: a rendered pin note must be gated by pinNoteIsPublishable`
+        ).toBe(true);
+      }
     }
     // A peer id split across two lines is two fragments, not an identifier —
     // and its width is the NAME column's floor, which is what keeps the two

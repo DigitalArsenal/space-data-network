@@ -539,7 +539,7 @@ describe('add-by-key-or-vcard (contract §8)', () => {
  */
 describe('pins (POST/DELETE /api/peers/pins)', async () => {
   const {
-    buildPinBody, multiaddrsFromVCard, pinIsLocked, pinSourceLabel, pinNoteLabel,
+    buildPinBody, multiaddrsFromVCard, pinIsLocked, pinSourceLabel, pinNoteLabel, pinNoteIsPublishable,
     pinDisplayName, pinnedAtLabel, sortPins, pinnableNodes,
   } = await import('./peers.js');
   const { describeApiError, ApiError } = await import('./api.js');
@@ -591,11 +591,29 @@ describe('pins (POST/DELETE /api/peers/pins)', async () => {
     const own = { peer_id: 'b', source: 'operator', note: 'the box in the lab' };
     expect(pinIsLocked(cfg)).toBe(true);
     expect(pinIsLocked(own)).toBe(false);
-    expect(pinSourceLabel(cfg)).toBe('FROM CONFIG FILE');
-    expect(pinSourceLabel(own)).toBe('PINNED BY OPERATOR');
+    // One badge for both (IRIS 2026-07-30): a human added it either way.
+    expect(pinSourceLabel(cfg)).toBe('ADDED BY OPERATOR');
+    expect(pinSourceLabel(own)).toBe('ADDED BY OPERATOR');
     // The two notes are different KINDS of fact and are labelled differently.
-    expect(pinNoteLabel(cfg)).toBe('CONFIG');
+    // DEFINED IN is the modal-only label for the file+key.
+    expect(pinNoteLabel(cfg)).toBe('DEFINED IN');
     expect(pinNoteLabel(own)).toBe('NOTE');
+  });
+
+  /*
+   * ⛔ OWNER 2026-07-30, verbatim: "Remove the path". It had leaked to three
+   * surfaces, so the rule is a PREDICATE every surface asks, not a per-surface
+   * decision that can be half-applied on the fourth.
+   */
+  it('a config pin note is never publishable outside the edit modal', () => {
+    const cfg = { peer_id: 'a', source: 'config', note: '/etc/sdn/config.yaml  peers.trusted_peers' };
+    const own = { peer_id: 'b', source: 'operator', note: 'the box in the lab' };
+    expect(pinNoteIsPublishable(cfg)).toBe(false);
+    // Case and whitespace are the node's, not ours — CONFIG is still config.
+    expect(pinNoteIsPublishable({ ...cfg, source: ' Config ' })).toBe(false);
+    // An operator's own prose is theirs to show.
+    expect(pinNoteIsPublishable(own)).toBe(true);
+    expect(pinNoteIsPublishable({})).toBe(true);
   });
 
   it('an unnamed pin reads "unknown", never its own id promoted to a name', () => {
