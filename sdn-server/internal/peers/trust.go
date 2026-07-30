@@ -4,6 +4,7 @@ package peers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -754,6 +755,14 @@ var (
 	ErrGroupAlreadyExists = errors.New("group already exists")
 	ErrInvalidPeerID      = errors.New("invalid peer ID")
 	ErrInvalidTrustLevel  = errors.New("invalid trust level")
+
+	// ErrNotPersisted means the change WAS applied to the running registry but
+	// could NOT be written to storage, so it will not survive a restart. It is
+	// deliberately distinct from every "you asked for something impossible"
+	// error above: those mean the request was refused, this means the request
+	// was honoured and the record is at risk. Callers on the admin API must
+	// surface it rather than answer 200 (see api.go handlePeerTrust).
+	ErrNotPersisted = errors.New("peers: change applied in memory but not persisted")
 )
 
 // AddPeer adds a peer to the registry.
@@ -775,11 +784,11 @@ func (r *Registry) AddPeer(tp *TrustedPeer) error {
 
 	old := r.unknownPeerDirectTrustLevel()
 	r.peers[tp.ID] = tp
-	r.save()
+	saveErr := r.save()
 	r.mu.Unlock()
 
 	r.fireTrustChange(tp.ID, old, tp.TrustLevel)
-	return nil
+	return saveErr
 }
 
 // UpdatePeer updates an existing peer in the registry.
@@ -798,11 +807,11 @@ func (r *Registry) UpdatePeer(tp *TrustedPeer) error {
 
 	old := existing.TrustLevel
 	r.peers[tp.ID] = tp
-	r.save()
+	saveErr := r.save()
 	r.mu.Unlock()
 
 	r.fireTrustChange(tp.ID, old, tp.TrustLevel)
-	return nil
+	return saveErr
 }
 
 // RemovePeer removes a peer from the registry.
@@ -817,11 +826,11 @@ func (r *Registry) RemovePeer(id peer.ID) error {
 
 	old := existing.TrustLevel
 	delete(r.peers, id)
-	r.save()
+	saveErr := r.save()
 	r.mu.Unlock()
 
 	r.fireTrustChange(id, old, r.unknownPeerDirectTrustLevel())
-	return nil
+	return saveErr
 }
 
 // GetPeer retrieves a peer from the registry.
@@ -923,11 +932,11 @@ func (r *Registry) SetTrustLevel(id peer.ID, level TrustLevel) error {
 
 	old := tp.TrustLevel
 	tp.TrustLevel = level
-	r.save()
+	saveErr := r.save()
 	r.mu.Unlock()
 
 	r.fireTrustChange(id, old, level)
-	return nil
+	return saveErr
 }
 
 // GetTrustLevel returns the DIRECTLY ASSIGNED trust level for a peer,
@@ -1092,8 +1101,7 @@ func (r *Registry) AddGroup(group *PeerGroup) error {
 	}
 
 	r.groups[group.Name] = group
-	r.save()
-	return nil
+	return r.save()
 }
 
 // RemoveGroup removes a peer group.
@@ -1106,8 +1114,7 @@ func (r *Registry) RemoveGroup(name string) error {
 	}
 
 	delete(r.groups, name)
-	r.save()
-	return nil
+	return r.save()
 }
 
 // GetGroup retrieves a peer group.
@@ -1160,8 +1167,7 @@ func (r *Registry) AddPeerToGroup(peerID peer.ID, groupName string) error {
 
 	group.Members = append(group.Members, peerID)
 	tp.Groups = append(tp.Groups, groupName)
-	r.save()
-	return nil
+	return r.save()
 }
 
 // RemovePeerFromGroup removes a peer from a group.
@@ -1197,8 +1203,7 @@ func (r *Registry) RemovePeerFromGroup(peerID peer.ID, groupName string) error {
 	}
 	tp.Groups = newGroups
 
-	r.save()
-	return nil
+	return r.save()
 }
 
 // UpdateStats updates connection statistics for a peer.
@@ -1258,7 +1263,7 @@ func (r *Registry) SetStrictMode(strict bool) {
 	r.strictMode.Store(strict)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.save()
+	_ = r.save()
 }
 
 // IsStrictMode returns whether strict mode is enabled.
@@ -1348,17 +1353,32 @@ func (r *Registry) Import(data []byte, merge bool) error {
 		r.groups[g.Name] = g
 	}
 
-	r.save()
-	return nil
+	return r.save()
 }
 
-// save persists the registry if a persistence provider is configured.
-func (r *Registry) save() {
-	if r.persistence != nil {
-		if err := r.persistence.Save(r.peers, r.groups); err != nil {
-			log.Warnf("Failed to persist peer registry: %v", err)
-		}
+// save persists the registry if a persistence provider is configured, and
+// REPORTS whether that succeeded.
+//
+// It used to return nothing and merely log a warning. That is how the owner's
+// 2026-07-30 defect happened: on a node whose FlatSQL engine was poisoned,
+// every Save() failed, every mutator went on to `return nil`, and the admin API
+// answered 200 OK for a trust change that existed only in RAM and vanished on
+// restart. The operator set FULL, the page said it worked, and the level stayed
+// STANDARD. A warning in a journal nobody is reading is not an answer to an
+// operator who is standing at the button.
+//
+// The in-memory mutation is deliberately KEPT when this fails — the running
+// node must keep behaving according to the operator's intent for as long as it
+// is up — but the caller is told the change is not durable so it can say so.
+func (r *Registry) save() error {
+	if r.persistence == nil {
+		return nil
 	}
+	if err := r.persistence.Save(r.peers, r.groups); err != nil {
+		log.Warnf("Failed to persist peer registry: %v", err)
+		return fmt.Errorf("%w: %v", ErrNotPersisted, err)
+	}
+	return nil
 }
 
 // PeerCount returns the number of peers in the registry.
