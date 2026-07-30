@@ -53,6 +53,29 @@ export const SPARK_SAMPLES = 12;
 /** Anonymous facts change far more slowly than the bandwidth ring. */
 const VERSION_EVERY = 1; // once — a process cannot change its own build
 const RELAY_EVERY = 3; // 15s
+/**
+ * The activity ring (ACTIVITY LOG widget, wave 2). Events arrive when peers
+ * connect, records land and grants issue — minutes apart on a quiet node, not
+ * seconds — so re-reading 256 entries every 5s would be 12x the traffic for the
+ * same rows. 15s is the same cadence the anonymous facts use.
+ */
+const ACTIVITY_EVERY = 3; // 15s
+/**
+ * The supervisor probe (`GET /api/node/service`). A unit's enablement and
+ * restart policy change only when an operator changes them, so this is the
+ * slowest source on the timer — but it is re-read rather than read once, because
+ * `systemctl enable` on the box must reach the AUTOSTART cell without a reload.
+ */
+const SERVICE_EVERY = 12; // 60s
+/** The rows the design's ACTIVITY LOG shows per page (`SDN Console.dc.html:875-881`). */
+export const ACTIVITY_ROWS = 5;
+/**
+ * How many events to hold. The widget shows ACTIVITY_ROWS at a time and
+ * PAGINATES (grammar law L4 — widgets never scroll), so it needs more than one
+ * page in hand: five pages of five is a couple of minutes of a busy node and
+ * still a fraction of the ring's 256.
+ */
+export const ACTIVITY_FETCH = 25;
 
 /**
  * SI byte formatting, matching how a disk states its own capacity ("32 GB").
@@ -166,6 +189,59 @@ export function sparkSpanS(barCount, sampleMs = BANDWIDTH_SAMPLE_MS) {
 }
 
 /**
+ * `ts` (RFC3339 UTC) as the design's ACTIVITY LOG clock: "12:04:22" (`:876`).
+ * Returns '' for anything that is not a real timestamp, so a row can print its
+ * text without a fabricated time beside it.
+ */
+export function formatActivityClock(iso) {
+  const text = String(iso ?? '').trim();
+  if (!text) return '';
+  const d = new Date(text);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+/**
+ * The activity ring's event KINDS, rendered as the sentence the design writes
+ * ("Channel mpe-screening-alpha · grant accepted") plus its colour token.
+ *
+ * The host emits machine kinds (`peer_connected`, `record_stored`,
+ * `pnm_publication`, `grant_issued`, `peer_disconnected` —
+ * internal/modulert/caps/nodeactivity.go) and a `detail` that is already
+ * PII-free by that file's own contract. This map is the ONLY place the wording
+ * lives, and an unmapped kind renders its own machine name rather than being
+ * dropped: a new tap must be visible the day it lands, not silently swallowed.
+ */
+export const ACTIVITY_KINDS = {
+  peer_connected: { label: 'Peer connected', token: 'green' },
+  peer_disconnected: { label: 'Peer disconnected', token: 'textMuted' },
+  pnm_publication: { label: 'Publication received', token: 'ice' },
+  record_stored: { label: 'Record stored', token: 'cyan' },
+  grant_issued: { label: 'Channel grant issued', token: 'green' },
+};
+
+/**
+ * One activity event as the row the widget prints: a clock, a colour token and
+ * one sentence. `peer_id` is SHORTENED — the ring carries full 52-character peer
+ * ids and the design's row is one line.
+ */
+export function activityRow(event, shorten = (id) => id) {
+  const kind = String(event?.kind ?? '').trim();
+  const known = ACTIVITY_KINDS[kind];
+  const subject = String(event?.peer_id ?? '').trim();
+  const detail = String(event?.detail ?? '').trim();
+  const parts = [known ? known.label : kind || 'Event'];
+  if (subject) parts.push(shorten(subject));
+  if (detail) parts.push(detail);
+  return {
+    clock: formatActivityClock(event?.ts),
+    token: known ? known.token : 'textDim',
+    text: parts.join(' · '),
+  };
+}
+
+/**
  * used/capacity as a 0..1 bar fraction, or null when there is nothing honest to
  * draw. A null `disk` (statfs unavailable) must NOT become a zero-capacity bar
  * — the node reports null precisely so the UI does not fabricate one.
@@ -181,7 +257,7 @@ export function storageFraction(usedBytes, capacityBytes) {
  * below is the only thing that touches the network, which is what makes every
  * rule above testable.
  */
-export function foldRuntime({ version = null, relay = null, snapshot = null } = {}) {
+export function foldRuntime({ version = null, relay = null, snapshot = null, activity = null, supervisor = null } = {}) {
   const service = snapshot?.service ?? null;
   const bandwidth = snapshot?.bandwidth ?? null;
   const disk = snapshot?.disk ?? null;
@@ -208,10 +284,36 @@ export function foldRuntime({ version = null, relay = null, snapshot = null } = 
         ? Number(relay.uptime_seconds)
         : null,
     startedAt: (snapshot?.started_at ?? '').trim(),
-    // FALSE means "this host cannot see autostart", which is why the cell is
-    // omitted rather than filled. It is read, never assumed: the day a host
-    // gains that surface, the cell comes back on its own.
-    autostartKnown: Boolean(service?.autostart_known),
+    /**
+     * AUTOSTART, from the ONE surface that can honestly answer it: the
+     * supervisor probe (GET /api/node/service -> internal/hostsvc, reading
+     * systemd's UnitFileState). Wave 1 rendered a HARDCODED "ENABLED" behind
+     * `service.autostart_known`, which the node_status_read capability reports as
+     * literal false because IT has no systemd surface — so the cell could never
+     * become honest by flipping that flag, only by fabricating a boolean (IRIS
+     * §4 / R8, hermes-dash4's blocking condition).
+     *
+     * The value is systemd's own WORD ("enabled" / "disabled" / "static" /
+     * "indirect" / "masked"), never a boolean: "static" and "indirect" are
+     * neither, and flattening them would be the same lie in a new shape. Empty
+     * string = no supervisor was proven, and the cell is ABSENT.
+     */
+    autostart: (supervisor?.autostart ?? '').trim(),
+    /** The supervisor's name ("systemd"), or '' when none was proven. */
+    supervisor: (supervisor?.supervisor ?? '').trim(),
+    /** The unit that owns this process, as resolved from its own cgroup. */
+    unit: (supervisor?.unit ?? '').trim(),
+    /** systemd's Restart= policy — what a STOP would actually mean on this host. */
+    restartPolicy: (supervisor?.restart_policy ?? '').trim(),
+    /**
+     * The ONLY fields a lifecycle control may be rendered from. Both are
+     * fail-closed on the host side (a proven supervisor AND the unit-level
+     * opt-in), and absent/false here means the buttons are NOT DRAWN — never
+     * drawn disabled (IRIS §5: a greyed button advertises a capability the node
+     * does not have).
+     */
+    canRestart: Boolean(supervisor?.can_restart),
+    canStop: Boolean(supervisor?.can_stop),
     storeBytes,
     storeRecords,
     diskCapacityBytes: Number.isFinite(Number(disk?.capacity_bytes)) ? Number(disk.capacity_bytes) : null,
@@ -219,6 +321,19 @@ export function foldRuntime({ version = null, relay = null, snapshot = null } = 
     rateInBps: Number.isFinite(Number(bandwidth?.rate_in_bps)) ? Number(bandwidth.rate_in_bps) : null,
     rateOutBps: Number.isFinite(Number(bandwidth?.rate_out_bps)) ? Number(bandwidth.rate_out_bps) : null,
     history: Array.isArray(bandwidth?.history) ? bandwidth.history : [],
+    /**
+     * The activity ring, NEWEST FIRST as the host returns it. An empty array is
+     * an honest empty ring — the design's five fixture rows
+     * ("Schema sync · OMM updated to 9,120 rows") describe a node that is not
+     * this one and ship nowhere.
+     */
+    activity: Array.isArray(activity?.events) ? activity.events : [],
+    /**
+     * True once the ring has actually ANSWERED. `activity: []` alone cannot
+     * distinguish "this node has done nothing yet" from "the widget has not read
+     * the ring yet", and those are different sentences on screen.
+     */
+    activityRead: Boolean(activity),
   };
 }
 
@@ -238,7 +353,7 @@ export function createRuntimeFeed({ onUpdate, fetchJson = (path) => apiFetch(pat
   let tick = 0;
   let timer = null;
   let stopped = false;
-  const raw = { version: null, relay: null, snapshot: null };
+  const raw = { version: null, relay: null, snapshot: null, activity: null, supervisor: null };
 
   const emit = () => onUpdate?.(foldRuntime(raw));
 
@@ -257,6 +372,10 @@ export function createRuntimeFeed({ onUpdate, fetchJson = (path) => apiFetch(pat
     if (n % VERSION_EVERY === 0 && !raw.version) jobs.push(read('version', '/api/v1/version'));
     if (n % RELAY_EVERY === 0) jobs.push(read('relay', '/api/relay/status'));
     if (admin) jobs.push(read('snapshot', '/api/node/runtime'));
+    // The ring is Admin-only for the same reason the snapshot is (§16.5): it
+    // names the peers this host talks to. Never called without a session.
+    if (admin && n % ACTIVITY_EVERY === 0) jobs.push(read('activity', `/api/node/activity?limit=${ACTIVITY_FETCH}`));
+    if (admin && n % SERVICE_EVERY === 0) jobs.push(read('supervisor', '/api/node/service'));
     await Promise.all(jobs);
     if (!stopped) emit();
   }
@@ -269,6 +388,13 @@ export function createRuntimeFeed({ onUpdate, fetchJson = (path) => apiFetch(pat
       admin = on;
       if (!admin) {
         raw.snapshot = null;
+        // The ring goes with the snapshot: peer ids read under a session must
+        // not survive it.
+        raw.activity = null;
+        // And so does the supervisor state — a signed-out page must not keep
+        // claiming to know this host's unit, and must not keep can_restart true
+        // for a control it may no longer invoke.
+        raw.supervisor = null;
         emit();
         return;
       }

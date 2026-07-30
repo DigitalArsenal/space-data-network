@@ -203,7 +203,28 @@ func (a *nodeActivityCapAdapter) activity(payload []byte) []byte {
 		// this is a read-only convenience op, not worth a hard error.
 		_ = json.Unmarshal(payload, &req)
 	}
-	limit := req.Limit
+	return modulert.PreEncodedEnvelope(map[string]interface{}{
+		"ok":     true,
+		"result": NodeActivitySnapshot(a.materials, req.Limit),
+	}, nil)
+}
+
+// NodeActivitySnapshot assembles the node_activity_read.activity RESULT object
+// from materials — the whole payload documented at the top of this file, with no
+// envelope around it.
+//
+// It is exported for the same reason caps/nodestatus.go's NodeStatusSnapshot is:
+// the SAME snapshot is the body of the node's admin-gated HTTP read surface
+// (GET /api/node/activity, which the dashboard's ACTIVITY LOG widget reads —
+// graph task sdn-dashboard-wave2-edit-layout, IRIS §2/§3). Two assemblers would
+// be two contracts, and the dashboard would render a shape no module ever sees.
+// There is exactly one assembler and both callers use it.
+//
+// `limit` follows the hostcall's own clamp: <= 0 means the default 50, and
+// anything above ActivityRingCapacity is capped there. No decision about WHO may
+// read the ring is made here — the capability registry gates the hostcall and
+// the auth wall gates the HTTP path.
+func NodeActivitySnapshot(materials NodeActivityMaterials, limit int) map[string]interface{} {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -212,8 +233,8 @@ func (a *nodeActivityCapAdapter) activity(payload []byte) []byte {
 	}
 
 	var events []ActivityEvent
-	if a.materials.Ring != nil {
-		events = a.materials.Ring.Snapshot(limit)
+	if materials.Ring != nil {
+		events = materials.Ring.Snapshot(limit)
 	}
 
 	out := make([]map[string]interface{}, 0, len(events))
@@ -229,9 +250,8 @@ func (a *nodeActivityCapAdapter) activity(payload []byte) []byte {
 		out = append(out, entry)
 	}
 
-	result := map[string]interface{}{
+	return map[string]interface{}{
 		"count":  len(out),
 		"events": out,
 	}
-	return modulert.PreEncodedEnvelope(map[string]interface{}{"ok": true, "result": result}, nil)
 }

@@ -13,8 +13,15 @@
   import { shortId } from './format.js';
   import { accountDisplayName, accountFromNode, isUnnamed } from './accounts.js';
 
-  /** @type {{ node: any, now: number, onClose: () => void }} */
-  let { node, now, onClose } = $props();
+  /**
+   * `initialView` is passed straight through to NodeDetail so a caller can open
+   * this modal on the QR tab — which is how the dashboard's IDENTITY widget
+   * shows the scannable card (IRIS ruling 2026-07-30 R5). The self node is a
+   * node: it gets the same modal every other peer gets.
+   *
+   * @type {{ node: any, now: number, onClose: () => void, initialView?: 'parsed' | 'raw' | 'qr' }}
+   */
+  let { node, now, onClose, initialView = 'parsed' } = $props();
 
   const tier = $derived(normalizeTrust(node.trustLevel));
   const tierColor = $derived(theme[TRUST_COLOR_TOKEN[tier]] ?? theme.textMuted);
@@ -39,5 +46,5 @@
     <StatusChip label={tier.toUpperCase()} color={tierColor} dot={false} />
     <StatusChip label={node.online ? 'ONLINE' : 'OFFLINE'} color={node.online ? theme.green : theme.textMuted} />
   {/snippet}
-  <NodeDetail {node} {now} />
+  <NodeDetail {node} {now} {initialView} />
 </ModalShell>

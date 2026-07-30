@@ -219,6 +219,10 @@
     padding: 5px 8px;
     outline: none;
   }
+  /* L6 (owner directive 2026-07-30: "the arrow in the drop down should have
+     margin"): the tier select draws its chevron inside its own box, so the box
+     reserves inset space for it. */
+  select { padding-right: var(--sdn-sp-8); }
   select option { background: #0a141b; }
   select:disabled,
   input:disabled { opacity: 0.5; }

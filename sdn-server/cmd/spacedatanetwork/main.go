@@ -1464,9 +1464,25 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// state/mode, libp2p bandwidth + sparkline) for the dashboard's
 			// NODE HEALTH / SERVICE / NETWORK THROUGHPUT widgets. Admin-only
 			// via isAdminOnlyAPIPath's "/api/node/runtime" prefix; read-only by
-			// construction (node_runtime_api.go). NOT a control surface — see
-			// that file's header for why RESTART/STOP/CHECK are absent.
+			// construction (node_runtime_api.go). NOT a control surface — the
+			// supervisor read lives on its own path below.
 			adminMux.HandleFunc("/api/node/runtime", handleNodeRuntime(n))
+
+			// The node's own activity ring (peer connects, publications,
+			// record stores, grant issuance) for the dashboard's ACTIVITY LOG
+			// widget. Admin-only via the "/api/node/activity" prefix; calls the
+			// node_activity_read capability's OWN assembler, so the page cannot
+			// render a shape no module sees (node_activity_api.go).
+			adminMux.HandleFunc("/api/node/activity", handleNodeActivity(n))
+
+			// What this node's process supervisor says about it — unit,
+			// active/sub state, AUTOSTART and restart policy, all READ from
+			// systemd (internal/hostsvc). The read half of the lifecycle
+			// capability the owner approved 2026-07-30; Admin-only via the
+			// "/api/node/service" prefix, GET/HEAD only, and it is what makes
+			// the SERVICE panel's AUTOSTART cell a measurement instead of the
+			// hardcoded literal it used to be (node_service_api.go).
+			adminMux.HandleFunc("/api/node/service", handleNodeService())
 
 			// EPM (Entity Profile Message) API endpoints
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
@@ -3352,6 +3368,15 @@ func isAdminOnlyAPIPath(path string) bool {
 		// not public data, so unlike /api/v1/stats they are NOT on the
 		// anonymous surface. Read-only either way — see node_runtime_api.go.
 		strings.HasPrefix(path, "/api/node/runtime") ||
+		// The node's own activity ring. Every row names a peer this host talked
+		// to and when — public peer ids, but the PATTERN is a host fact, so the
+		// same classification as the bandwidth totals above.
+		strings.HasPrefix(path, "/api/node/activity") ||
+		// The node's own supervisor state, and — once the Council-ruled
+		// destructive half lands — every path beneath it. Prefix-classified
+		// deliberately: a lifecycle verb must never be able to appear on a path
+		// this list does not already cover (node_service_api.go).
+		strings.HasPrefix(path, "/api/node/service") ||
 		strings.HasPrefix(path, "/api/v0") ||
 		strings.HasPrefix(path, "/api/v1/admin/") ||
 		path == "/api/v1/data/summary" ||

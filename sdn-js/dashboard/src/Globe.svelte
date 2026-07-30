@@ -35,6 +35,15 @@
     onSelect = () => {},
     mode = '3d',
     legend = true,
+    /**
+     * `interactive={false}` gives the globe's pointer events up to whatever is
+     * behind it. The design's own dashboard does exactly this while EDIT LAYOUT
+     * is on (`SDN Console.dc.html:1020,1049` — `setInteractive(!editMode)`),
+     * because dragging the PEER MAP widget to reorder it would otherwise just
+     * rotate the globe under the pointer. The render keeps going: an
+     * un-draggable globe still spins, still draws, and still shows the swarm.
+     */
+    interactive = true,
   } = $props();
 
   const flat = $derived(mode === '2d');
@@ -289,7 +298,17 @@
       ctx.fillStyle = theme.textBright;
       ctx.fillText(label, tx, ty + 2);
     }
-    canvas.style.cursor = hover ? 'pointer' : flat ? 'default' : dragging ? 'grabbing' : 'grab';
+    // While non-interactive the cursor must say what WILL happen — the widget
+    // moves — not offer a grab the globe is going to ignore.
+    canvas.style.cursor = !interactive
+      ? 'move'
+      : hover
+        ? 'pointer'
+        : flat
+          ? 'default'
+          : dragging
+            ? 'grabbing'
+            : 'grab';
 
     raf = requestAnimationFrame(draw);
   }
@@ -300,6 +319,8 @@
   }
 
   function onPointerDown(e) {
+    // Handed over to the surface behind us (EDIT LAYOUT's widget drag).
+    if (!interactive) return;
     // Nothing to rotate on a plate — but hover/select still work below.
     if (flat) return;
     dragging = true;
@@ -308,6 +329,7 @@
   }
 
   function onPointerMove(e) {
+    if (!interactive) return;
     lastPointer = pointerPos(e);
     if (!dragging || !dragBase) return;
     const r = Math.min(wrap.clientWidth, wrap.clientHeight) / 2 - 18;
@@ -317,6 +339,9 @@
   }
 
   function onPointerUp(e) {
+    // No selection either: a click that lands while the layout is being edited
+    // belongs to the layout, not to the swarm.
+    if (!interactive) return;
     const moved =
       dragBase && (Math.abs(pointerPos(e).x - dragBase.x) > 3 || Math.abs(pointerPos(e).y - dragBase.y) > 3);
     dragging = false;
