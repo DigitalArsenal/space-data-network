@@ -597,15 +597,33 @@
   dl.cols { columns: 2; column-gap: 26px; }
   dl.cols .row { break-inside: avoid; }
   .row { display: flex; gap: 12px; padding: 4px 0; align-items: baseline; min-width: 0; }
-  dt { flex: none; width: 132px; font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body); letter-spacing: 0.16em; }
+  dt {
+    flex: none;
+    /* Geometry keeps pace with the type: 132px held "ORGANIZATION" at the old
+       face, but at the body rung + 0.16em tracking that label needs ~146px, and
+       .wbody's `overflow-wrap: anywhere` (which machine values in <dd> genuinely
+       need) was breaking it MID-WORD as "ORGANIZATI / ON". */
+    width: 152px;
+    font-size: var(--sdn-fs-body);
+    line-height: var(--sdn-lh-body);
+    letter-spacing: 0.16em;
+    /* A label is a known word, not an unbreakable machine token: wrap it at
+       spaces ("MIDDLE NAME") and never inside a word. */
+    overflow-wrap: normal;
+    word-break: normal;
+  }
   dd {
     margin: 0;
     font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
     min-width: 0;
     /* Nothing is ever clipped: peer ids, xpubs and signature hex are single
-       unbreakable tokens, so they MUST be allowed to break anywhere. */
-    overflow-wrap: anywhere;
-    word-break: break-word;
+       unbreakable tokens and must still break. But `anywhere` also lowers the
+       box's MIN-CONTENT width, so in this flex row it starved the value column
+       and split short values that fit fine ("SpaceAware.i / o"). `break-word`
+       breaks a long token only when it genuinely cannot fit, and leaves
+       min-content at the longest word — long hex still wraps, short values stay
+       whole. */
+    overflow-wrap: break-word;
   }
   dd.wrap { overflow-wrap: anywhere; }
   /* Long machine values (64-128 hex, xpub, CID) at a denser face so a column
