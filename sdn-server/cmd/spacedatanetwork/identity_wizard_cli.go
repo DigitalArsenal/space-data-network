@@ -145,9 +145,36 @@ func runIdentityWizard(ctx context.Context, in io.Reader, out io.Writer, options
 			return loadIdentityWizardNodeIdentity(ctx, cfg)
 		},
 		OpenStore: func() (*storage.FlatSQLStore, error) {
-			return storage.NewFlatSQLStore(cfg.Storage.Path, validator)
+			return openIdentityWizardStore(cfg.Storage.Path, validator)
 		},
 	})
+}
+
+// openIdentityWizardStore opens the node store for the identity wizard and
+// HYDRATES NOTHING THE COMMAND DOES NOT READ.
+//
+// Every store surface the wizard touches — LoadLocalEPM / SaveLocalEPM
+// (sdn_local_epms) and the node-EPM directory upsert — is rebuilt from the
+// AUXILIARY metadata journal (auxiliary.flatsqlmeta, `local_epm_upsert` /
+// `directory_upsert`), which is replayed unconditionally at open. Not one of
+// them reads the compact record catalog or the derived source summaries.
+//
+// A DEFAULT open also replays record-catalog.flatsqlmeta in full. On
+// sdn.spaceaware.io that journal is 450 MB / 1,344,427 frames, so the wizard
+// paid ~431 s of catalog hydration to read a single row — and worse, that
+// replay TRAPS in the guest (`unreachable` in flatsql_query_params, filed as
+// mod-flatsql-query-params-unreachable-trap). The trap poisons the engine, so
+// the local-EPM read that follows is refused outright: the node could not be
+// given its owner-assigned name at all, and every attempt cost a multi-minute
+// production outage while the daemon was stopped.
+//
+// Deferring both rebuilds removes the cost AND the failure — the wizard never
+// enters the code path that traps. It is also correct in the strict sense: a
+// command must not rebuild state it never reads.
+func openIdentityWizardStore(storagePath string, validator *sds.Validator) (*storage.FlatSQLStore, error) {
+	return storage.NewFlatSQLStore(storagePath, validator,
+		storage.WithDeferredRecordCatalogReplay(),
+		storage.WithDeferredBootRebuilds())
 }
 
 // identityWizardDeps names the two expensive steps so their ORDER is testable:
