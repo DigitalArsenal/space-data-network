@@ -165,9 +165,12 @@
   }
 </script>
 
+<!-- No `sub`. It read `SIGNED IN · <TIER>`, which was the tier's THIRD appearance
+     in this one modal — it is already the header chip below and the TRUST row in
+     THIS SESSION — and "SIGNED IN" is not news inside your own account modal.
+     Owner directive 2026-07-30 (twice). -->
 <ModalShell
   title={sessionName || 'unknown'}
-  sub={`SIGNED IN · ${tier.toUpperCase()}`}
   label="Your account"
   unnamed={!sessionName}
   width="680px"

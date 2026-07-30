@@ -24,18 +24,27 @@
 export const LAYOUT_KEY = 'sdn_node_layout_v1';
 
 /**
- * The template's eight widgets, with its own titles and span vocabulary
- * (`:863-871`, verbatim). `spans` is the cycle EDIT LAYOUT offers; `def` is the
- * span a widget takes when it is added.
+ * The template's eight widgets and its span vocabulary (`:863-871`). `spans` is
+ * the cycle EDIT LAYOUT offers; `def` is the span a widget takes when it is
+ * added. The ids and spans are the design's verbatim; two of the TITLES are
+ * deliberately not, and this is why:
+ *
+ * TITLES ARE LABELS, NOT SPEC SHEETS (owner directive 2026-07-30, given twice:
+ * "remove ... ALL superfluous descriptions / tags from all the menus here"). The
+ * template's own titles carried implementation tags after a middot — `PEER MAP ·
+ * GEOIP` named the geolocation database, `STORAGE · FLATSQL` named the storage
+ * engine. Neither is a fact the reader of a panel header needs, and both are the
+ * "tags" the owner is naming. The ids, spans and defaults are untouched, so the
+ * EDIT LAYOUT vocabulary and every stored layout still resolve.
  */
 export const WIDGETS = {
   health: { title: 'NODE HEALTH', spans: [4, 6], def: 4 },
   identity: { title: 'IDENTITY', spans: [4, 6], def: 4 },
   service: { title: 'SERVICE', spans: [4, 6], def: 4 },
-  netmap: { title: 'PEER MAP · GEOIP', spans: [6, 8, 12], def: 8 },
+  netmap: { title: 'PEER MAP', spans: [6, 8, 12], def: 8 },
   throughput: { title: 'NETWORK THROUGHPUT', spans: [4, 6], def: 4 },
   peersum: { title: 'PEER SUMMARY', spans: [4, 6], def: 4 },
-  storage: { title: 'STORAGE · FLATSQL', spans: [4, 6], def: 4 },
+  storage: { title: 'STORAGE', spans: [4, 6], def: 4 },
   activity: { title: 'ACTIVITY LOG', spans: [4, 8, 12], def: 8 },
 };
 

@@ -69,7 +69,7 @@ async function init(origin) {
     session = null;
     vocab = null;
     // Fail-open is unchanged; the reason rides along purely as a diagnostic
-    // (SDN_SEMANTIC.lastError) so an absent-asset node and a broken runtime
+    // (SDN_SEARCH_RANKER.lastError) so an absent-asset node and a broken runtime
     // are distinguishable without reading the worker's own console.
     setStatus('unavailable', String(err?.message ?? err));
   }

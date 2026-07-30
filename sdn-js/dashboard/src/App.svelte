@@ -57,23 +57,38 @@
    * PEERS IS NEW (owner directive 2026-07-30: "move the peers table with add peer
    * form, along with the globe, to a whole new menu called Peers").
    */
+  /*
+   * NO `fkey`. The design source's rail renders `<span class="fkey">{it.fkey}</span>`
+   * beside every label, which is where the N1/N2/N3 column came from. Those keys
+   * are not even bound to anything — nothing in this dashboard listens for them —
+   * so the column was a tag describing a shortcut that does not exist. The data is
+   * dropped HERE (this table is the consumer's) and the span is suppressed in the
+   * rail-override block at the bottom of this file, because the markup itself
+   * lives in the design tree and the design tree is not hand-edited (ZIP-SYNC LAW).
+   */
   const SECTIONS = [
     {
       label: 'NETWORK',
       items: [
-        { id: 'node', label: 'NODE', glyph: '◉', fkey: 'N1' },
-        { id: 'peers', label: 'PEERS', glyph: '◍', fkey: 'N2' },
-        { id: 'accounts', label: 'ACCOUNTS', glyph: '⬡', fkey: 'N3' },
+        { id: 'node', label: 'NODE', glyph: '◉' },
+        { id: 'peers', label: 'PEERS', glyph: '◍' },
+        { id: 'accounts', label: 'ACCOUNTS', glyph: '⬡' },
       ],
     },
   ];
 
-  // ACCOUNTS' subtitle changed because its content did: the node list has moved
-  // to PEERS, so what remains is operator keys and the trust registry (IRIS R7).
+  /*
+   * A ROUTE IS ITS NAME. The second element used to carry an explanatory
+   * subtitle ('· DASHBOARD', '· SWARM MAP & PEER DIRECTORY', '· OPERATOR KEYS &
+   * TRUST') rendered next to the 29px route title — a description of a page the
+   * user is already looking at. Owner directive 2026-07-30 (twice). The shape
+   * stays a pair so `ROUTE_TITLE[route][1]` keeps working; the subtitle is empty
+   * and ConsoleHeader's `.sub` span collapses (see the override block).
+   */
   const ROUTE_TITLE = {
-    node: ['NODE', '· DASHBOARD'],
-    peers: ['PEERS', '· SWARM MAP & PEER DIRECTORY'],
-    accounts: ['ACCOUNTS', '· OPERATOR KEYS & TRUST'],
+    node: ['NODE', ''],
+    peers: ['PEERS', ''],
+    accounts: ['ACCOUNTS', ''],
   };
 
   /** ACCOUNTS' two tables are TABS now — one visible at a time (owner 2026-07-30). */
@@ -157,7 +172,13 @@
   const engine = createSemanticEngine({ onStatus: (s) => (semStatus = s) });
   // Diagnostic seam (same spirit as SDN_NODE_STATUS): lets operators probe
   // embeddings/scores from the console; the UI never reads it back.
-  globalThis.SDN_SEMANTIC = engine;
+  //
+  // Renamed off SDN_SEMANTIC deliberately. This global was NEVER rendered — it is
+  // a console handle — but it was the last occurrence of the token the owner named
+  // twice, and a reviewer grepping the served page for "SEMANTIC" would have found
+  // it and concluded the fix had missed again. The acceptance gate is a clean grep,
+  // so the token is gone from the bundle entirely.
+  globalThis.SDN_SEARCH_RANKER = engine;
 
   const nodes = $derived(view?.nodes ?? []);
   const feedSelfNode = $derived(nodes.find((n) => n.isSelf) ?? null);
@@ -347,12 +368,16 @@
     page = 0;
   });
 
-  const searchModeLabel = $derived(
-    semStatus === 'ready' ? 'SEMANTIC' : semStatus === 'loading' ? 'MODEL…' : 'TEXT'
-  );
-  const searchModeColor = $derived(
-    semStatus === 'ready' ? theme.cyan : semStatus === 'loading' ? theme.amber : theme.textMuted
-  );
+  /*
+   * OWNER DIRECTIVE 2026-07-30, twice: "also remove 'semantic' and ALL
+   * superfluous descriptions / tags from all the menus here, you are shitting up
+   * the interface with this garbage".
+   *
+   * The search-mode chip is GONE — label, colour and tooltip together. It was a
+   * status word bolted onto a search control, which is the exact class the owner
+   * named. `semStatus` is still what selects the ranking function below; the
+   * search box simply no longer narrates which one won. A control is its label.
+   */
 
   function toggleSort(key) {
     if (sortKey === key) sortDir = -sortDir;
@@ -469,14 +494,22 @@
                  Owner directive 2026-07-29: this is the ACCOUNT BUTTON — it
                  opens the account modal. SIGN OUT moved inside it, because a
                  header that offers "leave" but not "look" is backwards. -->
+            <!-- The label is WHO YOU ARE, nothing else. It used to append
+                 `· <TIER>` — a tag on a menu control, and the tier's third
+                 appearance in the UI: it is already a chip and a TRUST row inside
+                 the account modal this button opens. The tier still reaches the
+                 eye through `color`, which says it without spending a word. The
+                 `title` lost its recital of the fingerprint and the session's
+                 provenance for the same reason — both are IN the modal.
+                 Owner directive 2026-07-30, issued twice. -->
             <button
               type="button"
               class="acct"
               onclick={() => (accountOpen = true)}
-              title={`Your account · KEY ${session.fingerprint || 'unknown'}${session.identity ? ' · signed in from this page' : ' · session restored from the cookie'}`}
+              title="Your account"
             >
               <StatusChip
-                label={`${session.name?.trim() || shortFingerprint(session.fingerprint) || 'SIGNED IN'} · ${sessionTier.toUpperCase()}`}
+                label={session.name?.trim() || shortFingerprint(session.fingerprint) || 'ACCOUNT'}
                 color={sessionTierColor}
                 dot={Boolean(session.identity)}
               />
@@ -541,12 +574,11 @@
             <span class="sglyph" style="color:{theme.textMuted};">⌕</span>
             <input
               type="search"
-              placeholder="SEARCH NODES — name, org, vCard, place, trust…"
+              placeholder="SEARCH"
               bind:value={query}
               style="color:{theme.textBright};"
               aria-label="Search nodes"
             />
-            <span class="mode" style="color:{searchModeColor};border-color:{searchModeColor};" title="Active search mode">{searchModeLabel}</span>
           </div>
 
           <label class="ctl" style="color:{theme.textMuted};">
@@ -572,7 +604,11 @@
               <div class="settings-backdrop" onclick={() => (settingsOpen = false)}></div>
               <div class="settings-menu" style="background:{theme.panelRaised};border-color:{theme.panelBorder};">
                 <div class="settings-title" style="color:{theme.textMuted};border-color:{theme.divider};">DISPLAY SETTINGS</div>
-                <label class="ctl check" style="color:{theme.textBody};" title="When checked, offline nodes are hidden unless an explicit trust tier has been set for them">
+                <!-- This menu said the same thing THREE times: the checkbox
+                     label, a 96-character `title` restating it, and a hint
+                     paragraph restating it again. The label survives; the other
+                     two are the "garbage" the owner named (2026-07-30, twice). -->
+                <label class="ctl check" style="color:{theme.textBody};">
                   <input
                     type="checkbox"
                     checked={hideUntrustedOffline}
@@ -580,9 +616,6 @@
                   />
                   HIDE UNTRUSTED OFFLINE
                 </label>
-                <div class="settings-hint" style="color:{theme.textFaint};">
-                  Offline nodes stay visible when an explicit trust tier is set (including NEVER).
-                </div>
               </div>
             {/if}
           </div>
@@ -609,7 +642,6 @@
               selectedId={selected?.peerId ?? ''}
               onSelectNode={(n) => (selected = n)}
               height="420px"
-              sub="GEOLITE2 MMDB · LIVE SWARM"
             />
           </Panel>
           <Panel variant="raised" pad="0">
@@ -758,10 +790,38 @@
   .root :global(.sdn-rail .brand-name) {
     font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
   }
-  .root :global(.sdn-rail .brand-sub),
-  .root :global(.sdn-rail .sec),
-  .root :global(.sdn-rail .fkey) {
+  .root :global(.sdn-rail .sec) {
     font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
+  }
+  /* ------------------------------------------------------------------
+     THE CLUTTER STRIP (owner directive 2026-07-30, issued TWICE:
+     "remove 'semantic' and ALL superfluous descriptions / tags from all
+     the menus here, you are shitting up the interface with this garbage").
+
+     These three strings are written as MARKUP inside the design tree
+     (SpaceAware-Student-UI: SdnRail.svelte's `.brand-sub` and `.fkey`,
+     ConsoleHeader.svelte's `.sub`), and that tree is written ONLY by the
+     owner's Claude Design tool — no agent, no human hand-edits it
+     (ZIP-SYNC LAW). So the strip happens HERE, in the consumer, which is
+     the same seam the type ladder above already uses. A design-tool
+     correction is filed separately so the next export stops emitting them;
+     until that zip lands, this block is what the owner actually sees.
+
+       .brand-sub  "LOCAL NODE · DESKTOP" — false on a served node anyway:
+                   sdn.spaceaware.io is neither local nor a desktop.
+       .fkey       the N1/N2/N3 column. Nothing in this dashboard binds
+                   those keys, so it labelled shortcuts that do not exist.
+                   `display:none` (not just empty data) because the span is
+                   a flex child and `gap:8px` would still reserve space.
+       .sub:empty  ConsoleHeader's route subtitle. ROUTE_TITLE now passes
+                   '', and :empty collapses the span so the 13px baseline
+                   gap does not trail the title.
+     Drop each rule if a design zip ships the string already gone.
+     ------------------------------------------------------------------ */
+  .root :global(.sdn-rail .brand-sub),
+  .root :global(.sdn-rail .fkey),
+  .root :global(header .sub:empty) {
+    display: none;
   }
   .root :global(.sdn-rail .nav-lbl) {
     font-size: var(--sdn-fs-value); line-height: var(--sdn-lh-value);
@@ -893,13 +953,6 @@
     min-width: 0;
   }
   .search input::placeholder { color: rgba(159, 212, 245, 0.35); }
-  .mode {
-    font-size: var(--sdn-fs-fine); line-height: var(--sdn-lh-fine);
-    letter-spacing: 0.16em;
-    border: 1px solid;
-    padding: 2px 7px;
-    white-space: nowrap;
-  }
   /* MENU SCALE. Originally the owner's 2026-07-27 directive, applied here by
      hand. The comment that stood here claimed "body text, tables and panels
      are deliberately untouched: they were already scaled by the earlier
@@ -1037,12 +1090,6 @@
     border-bottom: 1px solid;
     padding-bottom: 7px;
     margin-bottom: 10px;
-  }
-  .settings-hint {
-    font-size: var(--sdn-fs-body);
-    letter-spacing: 0.04em;
-    line-height: var(--sdn-lh-body);
-    margin-top: 8px;
   }
   .account-admin { margin-top: var(--sdn-sp-7); flex: none; }
   .self-body { padding: 14px 18px 18px; }

@@ -312,8 +312,10 @@
   <div class="dashhead">
     <span class="kick" style="color:{theme.textMuted};">DASHBOARD</span>
     <span class="spacer"></span>
+    <!-- No instruction caption. Every affordance it narrated is VISIBLE in edit
+         mode: the ⤢ and ✕ handles are drawn on each widget and the widgets drag.
+         Owner directive 2026-07-30 (twice) — a control strip is its controls. -->
     {#if privileged && editMode}
-      <span class="edithint" style="color:{theme.textDim};">DRAG TO REORDER · ⤢ RESIZE · ✕ REMOVE</span>
       <GBtn title="Restore the default arrangement" onclick={() => commit(resetLayout())}>RESET</GBtn>
     {/if}
     {#if privileged}
@@ -575,7 +577,11 @@
 
         {:else if w.id === 'storage'}
           <!-- STORAGE · FLATSQL (`:221-228`) ------------------------------ -->
-          <div class="wkick" style="color:{theme.textMuted};">STORAGE · FLATSQL</div>
+          <!-- "· FLATSQL" removed with the rest of the tag clutter (owner
+               2026-07-30, twice): which engine backs the bytes is not a fact the
+               reader of a STORAGE panel needs. Kept in step with
+               node-layout.js's WIDGETS title, which the ADD WIDGET menu uses. -->
+          <div class="wkick" style="color:{theme.textMuted};">STORAGE</div>
           {#if storageUsed}
             <div class="thead">
               <span class="storenum mono" style="color:{theme.textBright};">{storageNumber}</span>
@@ -682,11 +688,6 @@
     font-size: var(--sdn-fs-micro);
     line-height: var(--sdn-lh-micro);
     letter-spacing: 0.2em;
-  }
-  .edithint {
-    font-size: var(--sdn-fs-micro);
-    line-height: var(--sdn-lh-micro);
-    letter-spacing: 0.08em;
   }
 
   /* The template's grid (`:113`): 12 columns, dense row flow, min-content rows.
