@@ -564,6 +564,10 @@ async function assembleHeliaView(
     latencyMs: 0,
     suiteVersion: SUITE_VERSION,
     standardsVersion: SPACEDATASTANDARDS_VERSION,
+    // The self row is not on its own board, so it carries no provenance.
+    source: '',
+    pinned: false,
+    pinNote: '',
   });
 
   const bootstraps = await loadBootstrapDescriptors();
@@ -621,6 +625,13 @@ async function assembleHeliaView(
         latencyMs: 0,
         suiteVersion: '',
         standardsVersion: '',
+        // In-browser Helia mode has no node-side pin store to consult, so a
+        // bootstrap row is admitted for the one reason this client can prove:
+        // it is connected, or it is not there at all. Claiming 'pinned' here
+        // would be inventing provenance the client cannot know.
+        source: online ? 'connected' : '',
+        pinned: false,
+        pinNote: '',
       });
     }),
   );
