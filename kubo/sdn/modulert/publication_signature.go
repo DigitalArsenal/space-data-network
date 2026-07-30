@@ -12,6 +12,7 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MBL"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/ipfs/kubo/sdn/sigdomain"
 )
 
 // Module publication-trailer signature verification (loop I1 — defensive
@@ -50,6 +51,48 @@ type moduleSignaturePayload struct {
 	SignatureHex        string `json:"signatureHex"`
 	SignedHashHex       string `json:"signedHashHex"`
 	SignedHashAlgorithm string `json:"signedHashAlgorithm"`
+
+	// StatementDomain names the DOMAIN-SEPARATED statement the signature
+	// covers, and is the field the node's own signing endpoint sets
+	// (sdn-server/internal/modulesign, Seal Council 2026-07-30). See
+	// signedMessageForPayload.
+	StatementDomain string `json:"statementDomain"`
+}
+
+// signedMessageForPayload returns the exact bytes an artifact's signature must
+// verify over, and is where the DOMAIN SEPARATION contract is enforced on the
+// reading side.
+//
+// MUST STAY BYTE-COMPATIBLE with sdn-server/internal/modulert's function of the
+// same name: both binaries run on host-01 and must agree about every artifact.
+//
+// TWO FORMS, and the artifact chooses, not policy:
+//
+//   - statementDomain PRESENT — the node-signed form. The signature covers
+//     sigdomain.Statement(domain, contentHash), and the domain must be EXACTLY
+//     DomainModulePublicationV1: a registered-but-different domain (the
+//     update-manifest domain) is refused, so a signature minted for a signed
+//     update can never be stapled into a module trailer.
+//
+//   - statementDomain ABSENT — the legacy SDK-signed form
+//     (space-data-module-sdk/src/bundle/signing.js:361, a signature over the
+//     bare hash bytes). Byte-identical to previous behavior, so every artifact
+//     already in the catalog keeps verifying.
+func signedMessageForPayload(payload moduleSignaturePayload, contentHash []byte) ([]byte, string, error) {
+	domain := strings.TrimSpace(payload.StatementDomain)
+	if domain == "" {
+		return contentHash, "", nil
+	}
+	if domain != sigdomain.DomainModulePublicationV1 {
+		return nil, domain, fmt.Errorf(
+			"module signature declares statement domain %q; a module artifact must be signed under %q",
+			domain, sigdomain.DomainModulePublicationV1)
+	}
+	statement, err := sigdomain.Statement(domain, contentHash)
+	if err != nil {
+		return nil, domain, err
+	}
+	return statement, domain, nil
 }
 
 // ModuleSignaturePolicy is the operator-controlled trust policy for
@@ -112,10 +155,14 @@ type ModuleSignatureStatus struct {
 	// KeyID is the optional signer-supplied key identifier from the
 	// signature entry.
 	KeyID string
+	// StatementDomain is the domain-separation label the signature declared,
+	// or "" for the legacy bare-digest form. Non-empty means the signature
+	// covered sigdomain.Statement(domain, ContentHash).
+	StatementDomain string
 	// Reason is a short machine-checkable explanation: "unsigned", "ok",
 	// "untrusted_signer", "invalid_signature", "hash_mismatch",
 	// "invalid_trailer", "unsupported_algorithm", "invalid_public_key",
-	// "invalid_signature_payload".
+	// "invalid_signature_payload", "unsupported_statement_domain".
 	Reason string
 	// SignatureScope is "module" for the legacy portable-module digest and
 	// "bundle" when the signature binds every non-signature MBL member.
@@ -255,6 +302,16 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 		return portable, status, fmt.Errorf("module signature covers content hash %s, portable artifact hashes to %s", signedHash, status.ContentHash)
 	}
 
+	// Resolve WHAT the signature must cover before asking WHO signed it: a
+	// wrong statement domain is a property of the artifact and must be
+	// reported as such whether or not the signer happens to be trusted.
+	signedMessage, statementDomain, domainErr := signedMessageForPayload(payload, sum[:])
+	status.StatementDomain = statementDomain
+	if domainErr != nil {
+		status.Reason = "unsupported_statement_domain"
+		return portable, status, domainErr
+	}
+
 	trustedSigner := false
 	for _, key := range trustedKeys {
 		if len(key) == ed25519.PublicKeySize && hex.EncodeToString(key) == pubKeyHex {
@@ -267,7 +324,7 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 		return portable, status, fmt.Errorf("module signer %s is not a trusted publisher key", pubKeyHex)
 	}
 
-	if !ed25519.Verify(ed25519.PublicKey(pubKeyBytes), sum[:], sigBytes) {
+	if !ed25519.Verify(ed25519.PublicKey(pubKeyBytes), signedMessage, sigBytes) {
 		status.Reason = "invalid_signature"
 		return portable, status, errors.New("module publication signature verification failed")
 	}

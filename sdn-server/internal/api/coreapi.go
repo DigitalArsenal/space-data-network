@@ -18,6 +18,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/abac"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/modulesign"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -65,6 +66,11 @@ type CoreAPIHandler struct {
 	// statsCache bounds the two store reads behind /api/v1/stats so an
 	// anonymous poll never queues behind the ingest writer. See boundedread.go.
 	statsCache *boundedReader
+
+	// moduleSigner is the node's content-bound module signer, set by
+	// registerModuleSigningRoutes when this node holds a publisher key. nil
+	// means the signing endpoint was never mounted — see module_signing.go.
+	moduleSigner *modulesign.Signer
 }
 
 // SDNPeerCounts mirrors epm.SDNPeerCounts for the /api/v1/stats peers block:
@@ -166,6 +172,13 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 
 	// PubSub messages — public GET.
 	mux.HandleFunc("/api/v1/pubsub/messages", h.withRL(h.handlePubSubMessages))
+
+	// Content-bound module signing — POST /api/v1/admin/modules/sign, Admin
+	// session required, mounted only when this node holds a publisher key.
+	// Registered BEFORE the flow-mount branch below returns, so a node that
+	// yields its peer read surface to a gateway flow still gets the signing
+	// door. See module_signing.go for why this route lives here.
+	h.registerModuleSigningRoutes(mux)
 
 	peersClaimedByFlow := flowClaimed != nil &&
 		(flowClaimed("/api/v1/peers") || flowClaimed("/api/v1/peers/"))
