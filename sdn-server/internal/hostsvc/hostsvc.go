@@ -2,11 +2,12 @@
 // runs it — and nothing else.
 //
 // It answers a single question honestly ("what does my supervisor say about
-// me?") and, in supervisor.go, performs the two actions the owner authorized on
-// 2026-07-30 (graph task sdn-dashboard-wave3-service-lifecycle: RESTART / STOP,
-// under the Seal Council's conditions). It holds no policy: who may ask, whether
-// the capability is enabled at all, and what the UI renders are decisions made by
-// the caller (cmd/spacedatanetwork/node_service_api.go).
+// me?") and — below the divider at the bottom of this file — performs the two
+// actions the owner authorized on 2026-07-30 (graph task
+// sdn-dashboard-wave3-service-lifecycle: RESTART / STOP, under the Seal Council's
+// conditions). It holds no policy: who may ask, whether the capability is enabled
+// at all, and what the UI renders are decisions made by the callers
+// (cmd/spacedatanetwork/node_service_api.go and node_service_control.go).
 //
 // WHY A PROBE AND NOT A CONFIG VALUE. Every fact here is READ from the running
 // system, never configured and never assumed:
@@ -213,4 +214,122 @@ func parseShowOutput(out string) map[string]string {
 		props[strings.TrimSpace(key)] = strings.TrimSpace(value)
 	}
 	return props
+}
+
+// ---------------------------------------------------------------------------
+// THE DESTRUCTIVE HALF (owner authorization 2026-07-30 + Seal Council
+// conditions). Everything above this line is a read; everything below acts.
+// ---------------------------------------------------------------------------
+
+// Action is a lifecycle verb. There are exactly two, and they are the two the
+// owner authorized — this type exists so no third can be added by passing a
+// string through from somewhere else.
+type Action string
+
+const (
+	// ActionRestart asks the supervisor to restart the unit. Under systemd this
+	// is a real restart under ANY Restart= policy, which is why it does not
+	// self-exit: host-01 runs Restart=always (so a graceful exit would be
+	// resurrected as a restart, coincidentally correct) while host-02's
+	// retriever runs Restart=on-failure (so the same exit would be a permanent
+	// STOP). One mechanism that is honest on both is the supervisor's.
+	ActionRestart Action = "restart"
+	// ActionStop stops the unit, and it STICKS: an explicit systemd stop is not
+	// undone by Restart=. That is the point and it is also the danger.
+	ActionStop Action = "stop"
+)
+
+// systemctlVerb maps an Action to systemd's own subcommand. A verb absent from
+// this map is not executable — the switch is exhaustive by construction.
+func systemctlVerb(action Action) (string, bool) {
+	switch action {
+	case ActionRestart:
+		return "restart", true
+	case ActionStop:
+		return "stop", true
+	default:
+		return "", false
+	}
+}
+
+// Control performs a lifecycle Action on the unit named in state.
+//
+// SEAL COUNCIL CONDITIONS, all structural rather than documentary:
+//
+//   - `--no-block` is REQUIRED (Hephaestus): systemctl is exec'd from inside the
+//     unit's OWN cgroup, so for a restart or a stop systemd will kill this
+//     process — including the systemctl child — before it can report. Waiting on
+//     it means waiting for our own death, and the wait's failure would look like
+//     the command's failure. With --no-block the job is enqueued and we return.
+//   - the UNIT comes from `state`, which resolved it from /proc/self/cgroup and
+//     proved it ours by MainPID. It is NEVER taken from a request; there is no
+//     parameter here that a caller could aim at another unit.
+//   - ABSOLUTE systemctl path, no shell: exec.Command with a fixed argv, so
+//     nothing is word-split, expanded or resolved through PATH.
+//
+// It returns an error the caller can log verbatim. A refusal (no supervisor, an
+// unknown verb) is an error too, not a silent no-op: the caller logs and answers.
+func Control(ctx context.Context, state State, action Action) error {
+	if !state.Detected || state.Supervisor != "systemd" || state.Unit == "" {
+		return errNoSupervisor
+	}
+	verb, ok := systemctlVerb(action)
+	if !ok {
+		return errUnknownAction
+	}
+
+	// A bound on the ENQUEUE, not on the restart: --no-block returns as soon as
+	// systemd accepts the job.
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, SystemctlPath, verb, "--no-block", state.Unit)
+	cmd.Env = []string{}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return &ControlError{Action: action, Unit: state.Unit, Err: err, Output: strings.TrimSpace(string(out))}
+	}
+	return nil
+}
+
+// ControlError carries what systemd said, so the refusal log can name the
+// concrete failure rather than "restart failed".
+type ControlError struct {
+	Action Action
+	Unit   string
+	Err    error
+	Output string
+}
+
+func (e *ControlError) Error() string {
+	msg := "systemctl " + string(e.Action) + " " + e.Unit + ": " + e.Err.Error()
+	if e.Output != "" {
+		msg += ": " + e.Output
+	}
+	return msg
+}
+
+func (e *ControlError) Unwrap() error { return e.Err }
+
+// Sentinel refusals. Exported so the HTTP layer can distinguish "this host has
+// nothing to control" (a 409/501 shape) from "systemd said no" (a 500 shape)
+// without string matching.
+var (
+	errNoSupervisor  = errNoSupervisorType{}
+	errUnknownAction = errUnknownActionType{}
+)
+
+type errNoSupervisorType struct{}
+
+func (errNoSupervisorType) Error() string {
+	return "no supervisor proven for this process: refusing to act"
+}
+
+type errUnknownActionType struct{}
+
+func (errUnknownActionType) Error() string { return "unknown lifecycle action" }
+
+// ErrNoSupervisor reports whether err is the "nothing to control" refusal.
+func ErrNoSupervisor(err error) bool {
+	_, ok := err.(errNoSupervisorType)
+	return ok
 }

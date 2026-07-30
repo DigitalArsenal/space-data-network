@@ -1484,6 +1484,21 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// hardcoded literal it used to be (node_service_api.go).
 			adminMux.HandleFunc("/api/node/service", handleNodeService())
 
+			// The DESTRUCTIVE half (node_service_control.go): the owner
+			// authorized RESTART/STOP on 2026-07-30 and the Seal Council set the
+			// conditions. Admin-classified by the same prefix as the read above;
+			// each verb additionally requires the unit-level opt-in, a PROVEN
+			// supervisor, a single-use nonce bound to (verb, unit, identity) and
+			// a FRESH wallet signature over it — Hephaestus dissented from
+			// accepting the session cookie alone as authority to darken a live
+			// host. Default-off: with SDN_SERVICE_CONTROL unset, every one of
+			// these answers a logged refusal and the dashboard renders no
+			// buttons at all.
+			serviceControl := newServiceControlState()
+			adminMux.HandleFunc("/api/node/service/nonce", handleServiceNonce(serviceControl, authHandler))
+			adminMux.HandleFunc("/api/node/service/restart", handleServiceAction(serviceControl, authHandler))
+			adminMux.HandleFunc("/api/node/service/stop", handleServiceAction(serviceControl, authHandler))
+
 			// EPM (Entity Profile Message) API endpoints
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
 			adminMux.HandleFunc("/api/node/epm/vcard", handleNodeEPMVCard(n))
