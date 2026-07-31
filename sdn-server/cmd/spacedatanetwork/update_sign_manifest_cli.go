@@ -37,19 +37,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 )
 
 var (
-	updateSignManifestIn  string
-	updateSignManifestOut string
+	updateSignManifestIn      string
+	updateSignManifestOut     string
+	updateSignManifestNodeURL string
 )
 
 // updateSignManifestResponse mirrors internal/api.updateManifestSignResponse.
@@ -111,7 +115,7 @@ var updateSignManifestCmd = &cobra.Command{
 			return fmt.Errorf("encode manifest: %w", err)
 		}
 
-		client, err := newAdminClient(cmd)
+		client, err := newUpdateSigningClient(cmd)
 		if err != nil {
 			return err
 		}
@@ -167,6 +171,54 @@ var updateSignManifestCmd = &cobra.Command{
 	},
 }
 
+// newUpdateSigningClient is newAdminClient with an explicit destination.
+//
+// WHY THIS EXISTS. newAdminClient derives its base URL from the config's BIND
+// address (adminURL, main.go), mapping a wildcard bind to loopback. On the
+// publisher host that yields https://127.0.0.1:443 — and host-01's admin
+// listener is 0.0.0.0:443 fronted by a REAL certificate for sdn.spaceaware.io.
+// No certificate can be valid for 127.0.0.1 there, so the ceremony fails at TLS
+// verification before it can ask for a challenge. That is not a misconfigured
+// node; it is the correct shape for a node that also serves the public web, and
+// the CLI simply had no way to say "dial me by the name on the certificate".
+//
+// --node-url says it. The seed still has to be local (the ceremony signs with
+// the node's root key), so this does not widen who may sign; it only fixes how
+// the local operator reaches the local daemon.
+func newUpdateSigningClient(cmd *cobra.Command) (*adminClient, error) {
+	nodeURL := strings.TrimSpace(updateSignManifestNodeURL)
+	if nodeURL == "" {
+		return newAdminClient(cmd)
+	}
+
+	cfg, res, err := config.LoadResolved(configPath)
+	if err != nil {
+		return nil, err
+	}
+	c := &adminClient{
+		baseURL: strings.TrimRight(nodeURL, "/"),
+		http:    &http.Client{Timeout: 60 * time.Second},
+		cfg:     cfg,
+		res:     res,
+	}
+
+	// An operator-supplied token means we are not expected to hold the seed.
+	if token := sessionTokenOverride(cmd); token != "" {
+		c.token = token
+		return c, nil
+	}
+
+	// Verification stays on SYSTEM roots: a public hostname implies a publicly
+	// issued certificate, and pinning the node's own self-signed anchor here
+	// would be the wrong trust store for the name being dialled.
+	token, err := c.signInWithNodeRootKey(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	c.token = token
+	return c, nil
+}
+
 // verifyNodeSignedManifest re-derives the domain statement and checks the
 // signature against the key the node reported.
 func verifyNodeSignedManifest(signed []byte, publicKeyB64 string) error {
@@ -219,6 +271,8 @@ func verifyNodeSignedManifest(signed []byte, publicKeyB64 string) error {
 func init() {
 	updateSignManifestCmd.Flags().StringVar(&updateSignManifestIn, "manifest", "", "path of the unsigned manifest.json to sign")
 	updateSignManifestCmd.Flags().StringVar(&updateSignManifestOut, "out", "", "path to write the signed manifest.json")
+	updateSignManifestCmd.Flags().StringVar(&updateSignManifestNodeURL, "node-url", "",
+		"explicit base URL of the signing node (default: derived from the config bind address; set this when the daemon's certificate is issued for a public hostname rather than loopback)")
 	// Declared with no bound variable: sessionTokenOverride reads it back off
 	// the command's own flag set (admin_client.go), so every command that wants
 	// the remote-target override just has to DEFINE the flag.
