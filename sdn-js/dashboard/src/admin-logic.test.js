@@ -458,6 +458,52 @@ describe('permission gating (contract §7, §9.4)', () => {
   });
 });
 
+/*
+ * THE INERT LYING BUTTON (IRIS ruling 2026-07-30 §2). The owner chose FULL,
+ * pressed APPLY, and EFFECTIVE stayed STANDARD — over a <select> holding one
+ * option, because both tier lists above return `[]` below Admin and the modal
+ * padded the empty list with the peer's CURRENT tier. A one-option select is
+ * not a control, and a primary button that cannot fire is a claim about this
+ * session that the node does not agree with.
+ */
+describe('trustControlState — an armed control can fire, or it is not rendered', async () => {
+  const { trustControlState } = await import('./permissions.js');
+
+  it('one option is not a control: > 1, not > 0', () => {
+    expect(trustControlState({ hasSession: true, tiersKnown: true, tierCount: 1 })).toBe('needs-admin');
+    expect(trustControlState({ hasSession: true, tiersKnown: true, tierCount: 0 })).toBe('needs-admin');
+    expect(trustControlState({ hasSession: true, tiersKnown: true, tierCount: 2 })).toBe('armed');
+  });
+
+  it('"not asked yet" is never reported as "you may not"', () => {
+    // The whole reason `tiersKnown` exists: an empty tier list means both.
+    expect(trustControlState({ hasSession: true, tiersKnown: false, tierCount: 0 })).toBe('loading');
+    expect(trustControlState({ hasSession: true, tiersKnown: false, tierCount: 6 })).toBe('loading');
+  });
+
+  it('no session outranks both — there is nobody to be below Admin', () => {
+    expect(trustControlState({ hasSession: false, tiersKnown: true, tierCount: 6 })).toBe('needs-signin');
+    expect(trustControlState({ hasSession: false, tiersKnown: false, tierCount: 0 })).toBe('needs-signin');
+  });
+
+  it('is exactly the gate the two tier lists produce for a real session', () => {
+    const state = (level) =>
+      trustControlState({
+        hasSession: true,
+        tiersKnown: true,
+        tierCount: assignablePeerTiers(level).length,
+      });
+    expect(state('admin')).toBe('armed');
+    expect(state('ultimate')).toBe('armed');
+    // The owner's own case: /api/auth/me said standard.
+    expect(state('standard')).toBe('needs-admin');
+    expect(state('full')).toBe('needs-admin');
+    expect(state('')).toBe('needs-admin');
+    // …and the operator store's ceiling behaves identically (§7).
+    expect(assignableUserTiers('standard')).toEqual([]);
+  });
+});
+
 describe('add-by-key-or-vcard (contract §8)', () => {
   it('classifies what the operator pasted', () => {
     expect(classifyPeerInput('').kind).toBe('empty');
@@ -539,7 +585,7 @@ describe('add-by-key-or-vcard (contract §8)', () => {
  */
 describe('pins (POST/DELETE /api/peers/pins)', async () => {
   const {
-    buildPinBody, multiaddrsFromVCard, pinIsLocked, pinSourceLabel, pinNoteLabel,
+    buildPinBody, multiaddrsFromVCard, pinIsLocked, pinSourceLabel, pinNoteIsPublishable,
     pinDisplayName, pinnedAtLabel, sortPins, pinnableNodes,
   } = await import('./peers.js');
   const { describeApiError, ApiError } = await import('./api.js');
@@ -586,20 +632,30 @@ describe('pins (POST/DELETE /api/peers/pins)', async () => {
     expect(multiaddrsFromVCard('')).toEqual([]);
   });
 
-  it('a config-file pin is locked, named as such, and its note is a FILE', () => {
+  /*
+   * AMENDED 2026-07-30 (IRIS ruling §6): this test used to assert
+   * `pinNoteLabel(cfg) === 'CONFIG'` — the label over a rendered config path.
+   * That render is gone, and with it the label: the only question left about a
+   * note is whether it may be shown at ALL, which is what replaced it here.
+   */
+  it('a config-file pin is locked, named as such, and its note is never shown', () => {
     const cfg = { peer_id: 'a', source: 'config', note: '/etc/sdn/config.yaml  peers.trusted_peers' };
     const own = { peer_id: 'b', source: 'operator', note: 'the box in the lab' };
     expect(pinIsLocked(cfg)).toBe(true);
     expect(pinIsLocked(own)).toBe(false);
     expect(pinSourceLabel(cfg)).toBe('FROM CONFIG FILE');
     expect(pinSourceLabel(own)).toBe('PINNED BY OPERATOR');
-    // The two notes are different KINDS of fact and are labelled differently.
-    expect(pinNoteLabel(cfg)).toBe('CONFIG');
-    expect(pinNoteLabel(own)).toBe('NOTE');
+    // The two notes are different KINDS of fact: one is prose, one is a place.
+    expect(pinNoteIsPublishable(cfg)).toBe(false);
+    expect(pinNoteIsPublishable(own)).toBe(true);
   });
 
-  it('an unnamed pin reads "unknown", never its own id promoted to a name', () => {
-    expect(pinDisplayName({ peer_id: '12D3KooWX' })).toBe('unknown');
+  /*
+   * AMENDED 2026-07-30 (IRIS ruling §4): "unknown" is a TRUST TIER and these
+   * dialogs render one in the same head. An absent name is `unnamed`.
+   */
+  it('an unnamed pin reads "unnamed", never its own id promoted to a name', () => {
+    expect(pinDisplayName({ peer_id: '12D3KooWX' })).toBe('unnamed');
     expect(pinDisplayName({ peer_id: '12D3KooWX', name: ' Ops ' })).toBe('Ops');
   });
 
@@ -645,6 +701,63 @@ describe('pins (POST/DELETE /api/peers/pins)', async () => {
     for (const code of ['config_pin', 'already_pinned', 'not_pinned', 'invalid_peer']) {
       expect(say(code)).not.toBe(code);
     }
+  });
+});
+
+/*
+ * NO FAILURE IS EVER REPORTED AS A STATUS CODE (IRIS ruling 2026-07-30 §2).
+ * The owner pressed APPLY on a peer's trust and the modal's error banner said
+ * `HTTP 521` — which came from ApiError's own synthesized message, straight
+ * through the old `default:` arm. A status is a fact about the transport; the
+ * operator needs the fact about their action, starting with whether anything
+ * changed.
+ */
+describe('describeApiError — a status is not a sentence', async () => {
+  const { describeApiError, ApiError } = await import('./api.js');
+  const STATUSES = [0, 400, 401, 403, 404, 409, 429, 500, 502, 503, 504, 521, 522, 524, 530];
+
+  it('never renders a bare HTTP status, for any status the node can answer', () => {
+    for (const status of STATUSES) {
+      // The shape the owner hit: no code, no body — so ApiError's message IS
+      // `HTTP <status>` and the fallback has to see through it.
+      const said = describeApiError(new ApiError(status, '', ''));
+      expect(said, `status ${status}`).not.toMatch(/HTTP\s*\d{3}/);
+      expect(said.trim().length, `status ${status}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('says the node could not be reached when the fetch never landed', () => {
+    expect(describeApiError(new ApiError(0, '', ''))).toBe('Could not reach the node.');
+    expect(describeApiError(new ApiError(0, 'network_error', 'Could not reach the node.'))).toBe(
+      'Could not reach the node.'
+    );
+  });
+
+  it('says nothing was changed when nothing on the other end answered', () => {
+    for (const status of [502, 503, 504, 521, 522, 523, 524, 525, 526, 530]) {
+      const said = describeApiError(new ApiError(status, '', ''));
+      expect(said, `status ${status}`).toBe(
+        'The node did not answer. It may be restarting, or the connection to it is down. Nothing was changed.'
+      );
+    }
+  });
+
+  it('other 5xx: the node answered, and it still changed nothing', () => {
+    expect(describeApiError(new ApiError(500, '', ''))).toBe(
+      'The node answered with an error. Nothing was changed.'
+    );
+  });
+
+  it('a real sentence from the node survives; a code masquerading as one does not', () => {
+    // internal/peers answers http.Error — a text body and a status, no code.
+    expect(describeApiError(new ApiError(409, '', 'peer is pinned by config'))).toBe(
+      'peer is pinned by config'
+    );
+    expect(describeApiError(new ApiError(404, '', 'HTTP 404'))).toBe('The node refused that request.');
+  });
+
+  it('a contract code still wins over the status', () => {
+    expect(describeApiError(new ApiError(403, 'forbidden', ''))).toContain('trust level');
   });
 });
 

@@ -32,9 +32,34 @@ export const isUnauthorized = (err) => err instanceof ApiError && err.status ===
 export const isForbidden = (err) => err instanceof ApiError && err.status === 403;
 
 /**
+ * Statuses that mean "nothing on the other end answered": the node is down or
+ * restarting, or an edge in front of it could not reach it. 52x are
+ * Cloudflare's origin-side codes and 521 is the one the owner was shown
+ * verbatim in a modal error banner on 2026-07-30.
+ */
+const NO_ANSWER = new Set([502, 503, 504, 521, 522, 523, 524, 525, 526, 530]);
+
+/**
+ * `ApiError` synthesizes `HTTP <status>` as its message when the node sent
+ * neither a code nor a body (constructor above), so "the message the node
+ * actually said" has to exclude that synthetic one — otherwise the fallback
+ * below renders the transport code as the sentence, which is the defect.
+ */
+const BARE_STATUS = /^HTTP\s*\d{3}\.?$/;
+const nodeSaid = (err) => {
+  const said = String(err?.message ?? '').trim();
+  return BARE_STATUS.test(said) ? '' : said;
+};
+
+/**
  * One operator-facing sentence per contract failure code. The node answers
  * every verification failure with the SINGLE opaque code
  * `authentication_failed` (contract §4) — never try to say more than it does.
+ *
+ * NOTHING HERE MAY RETURN A BARE STATUS (IRIS ruling 2026-07-30 §2). The owner
+ * was shown `HTTP 521` as the whole explanation of a failed peer-trust write.
+ * A status code is a fact about the transport; the operator needs the fact
+ * about their action, and above all whether anything changed.
  */
 export function describeApiError(err) {
   if (!(err instanceof ApiError)) return String(err?.message ?? err ?? 'request failed');
@@ -68,8 +93,17 @@ export function describeApiError(err) {
     case 'config_pin':
       return "This pin comes from the node's config file. It can only be removed there — this page cannot unpin it.";
     default:
-      return err.message || `Request failed (HTTP ${err.status}).`;
+      break;
   }
+  // No code, or one this page does not name: fall back to the STATUS, said in
+  // words. `internal/peers` answers with http.Error (a text body and a status,
+  // no code at all), and an edge in front of the node answers with neither.
+  if (err.status === 0) return 'Could not reach the node.';
+  if (NO_ANSWER.has(err.status)) {
+    return 'The node did not answer. It may be restarting, or the connection to it is down. Nothing was changed.';
+  }
+  if (err.status >= 500) return 'The node answered with an error. Nothing was changed.';
+  return nodeSaid(err) || 'The node refused that request.';
 }
 
 /**
@@ -117,6 +151,23 @@ export async function apiText(path) {
     return await res.text();
   } catch {
     return '';
+  }
+}
+
+/**
+ * GET a text surface AND SAY HOW THE READ WENT. `apiText` collapses every
+ * failure to '', which is why the peer modal could not tell "this node never
+ * asked" from "the peer did not answer" — two facts with opposite meanings for
+ * a contact card (IRIS ruling 2026-07-30 §3). Never throws.
+ *
+ * @returns {Promise<{ok: boolean, status: number, text: string, threw: boolean}>}
+ */
+export async function apiTextResult(path) {
+  try {
+    const res = await fetch(path, { credentials: 'same-origin' });
+    return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '', threw: false };
+  } catch {
+    return { ok: false, status: 0, text: '', threw: true };
   }
 }
 

@@ -20,23 +20,38 @@
   import ModalSection from './ModalSection.svelte';
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { keyState, provenance, shortKey, signInsLabel, peerIdCell } from './keystate.js';
+  import { trustControlState } from './permissions.js';
 
   /**
+   * `tiersKnown`, `sessionTier`, `hasSession` and `rootAdminAvailable` are the
+   * same four the peer modal takes, for the same reason (IRIS ruling
+   * 2026-07-30 §2): `assignableUserTiers` returns `[]` both while
+   * /api/auth/me is in flight and when the answer was "below Admin", and the
+   * old markup padded that empty list with the row's CURRENT tier — a
+   * one-option select beside a primary APPLY that could not fire.
+   *
    * @type {{
-   *   user: any, peerCell: any, tiers: string[], busy?: boolean, error?: string,
+   *   user: any, peerCell: any, tiers: string[], tiersKnown?: boolean,
+   *   sessionTier?: string, hasSession?: boolean, rootAdminAvailable?: boolean|null,
+   *   busy?: boolean, error?: string,
    *   onSetTrust: (tier: string) => void, onRename: (name: string) => void,
-   *   onRemove: () => void, onClose: () => void
+   *   onRemove: () => void, onRequestSignIn?: () => void, onClose: () => void
    * }}
    */
   let {
     user,
     peerCell,
     tiers,
+    tiersKnown = false,
+    sessionTier = '',
+    hasSession = false,
+    rootAdminAvailable = null,
     busy = false,
     error = '',
     onSetTrust,
     onRename,
     onRemove,
+    onRequestSignIn,
     onClose,
   } = $props();
 
@@ -59,6 +74,32 @@
   let nameDraft = $state(untrack(() => (user?.name ?? '').trim()));
   let confirming = $state(false);
 
+  /**
+   * The trust control, on the same law as the peer modal's. `locked` is a
+   * SEPARATE reason and keeps its own sentence: a config key is not editable
+   * here however privileged the session is.
+   */
+  const trustControl = $derived(
+    trustControlState({ hasSession, tiersKnown, tierCount: (tiers ?? []).length })
+  );
+  const canSetTrust = $derived(trustControl === 'armed' && !locked);
+  const sessionTierLabel = $derived(normalizeTrust(sessionTier).toUpperCase());
+  const trustNote = $derived.by(() => {
+    if (locked) return 'Trust for a config key is set in the config file too.';
+    if (trustControl === 'armed') return '';
+    if (trustControl === 'loading') return 'Checking what this session may change…';
+    if (trustControl === 'needs-signin') {
+      return 'Not signed in. Operator trust is set by an Admin operator on this node.';
+    }
+    // §14.1/§14.4.2: name the root recovery phrase ONLY when the node said it
+    // is a sign-in path. `null` is "not asked yet", never a claim.
+    return rootAdminAvailable === true
+      ? `Your session is ${sessionTierLabel}. Setting operator trust is an Admin action. Sign in as an Admin operator, or with this node's root recovery phrase.`
+      : `Your session is ${sessionTierLabel}. Setting operator trust is an Admin action. An Admin operator must be enrolled on this node before it can be changed.`;
+  });
+
+  // Only reachable while the control is armed; the union keeps a tier this
+  // session may not grant visible rather than silently re-labelling the row.
   const tierOptions = $derived(
     tiers.includes(tier) ? tiers : [...tiers, tier]
   );
@@ -67,7 +108,7 @@
 </script>
 
 <ModalShell
-  title={displayName || 'unknown'}
+  title={displayName || 'unnamed'}
   sub={(user?.organization ?? '').trim()}
   label="Operator key"
   {unnamed}
@@ -129,29 +170,45 @@
     {/if}
   </ModalSection>
 
-  <ModalSection title="TRUST" note={locked ? 'Trust for a config key is set in the config file too.' : ''}>
-    <div class="row">
-      <select
-        bind:value={tierChoice}
-        disabled={busy || locked}
-        aria-label="Trust level"
-        style="color:{tierColor(tierChoice)};border-color:{theme.hairline};"
-      >
-        {#each tierOptions as t (t)}
-          <option value={t}>{t.toUpperCase()}</option>
-        {/each}
-      </select>
-      <GBtn
-        title={locked ? 'This key is defined in the config file' : 'Apply this trust level'}
-        variant="primary"
-        disabled={busy || locked || tierChoice === tier}
-        onclick={() => onSetTrust(tierChoice)}
-      >{busy ? 'APPLYING…' : 'APPLY'}</GBtn>
-    </div>
-    <p class="fine" style="color:{theme.textFaint};">
-      You can grant up to your own tier, capped at ADMIN — ULTIMATE means "this identity IS
-      this node" and is never granted here.
-    </p>
+  <ModalSection title="TRUST" note={trustNote}>
+    {#if canSetTrust}
+      <div class="row">
+        <select
+          bind:value={tierChoice}
+          disabled={busy}
+          aria-label="Trust level"
+          style="color:{tierColor(tierChoice)};border-color:{theme.hairline};"
+        >
+          {#each tierOptions as t (t)}
+            <option value={t}>{t.toUpperCase()}</option>
+          {/each}
+        </select>
+        <GBtn
+          title="Apply this trust level"
+          variant="primary"
+          disabled={busy || tierChoice === tier}
+          onclick={() => onSetTrust(tierChoice)}
+        >{busy ? 'APPLYING…' : 'APPLY'}</GBtn>
+      </div>
+      <p class="fine" style="color:{theme.textFaint};">
+        You can grant up to your own tier, capped at ADMIN — ULTIMATE means "this identity IS
+        this node" and is never granted here.
+      </p>
+    {:else}
+      <div class="kv">
+        <span class="k" style="color:{theme.textMuted};">ASSIGNED</span>
+        <span class="v" style="color:{tierColor(tier)};">{tier.toUpperCase()}</span>
+      </div>
+      {#if !locked && trustControl === 'needs-signin'}
+        <div class="row">
+          <GBtn title="Sign in with your wallet key" onclick={() => onRequestSignIn?.()}>SIGN IN</GBtn>
+        </div>
+      {:else if !locked && trustControl === 'needs-admin' && rootAdminAvailable === true}
+        <div class="row">
+          <GBtn title="Sign in with an Admin key" onclick={() => onRequestSignIn?.()}>SIGN IN AS ADMIN</GBtn>
+        </div>
+      {/if}
+    {/if}
   </ModalSection>
 
   <ModalSection title="SIGNING KEY">

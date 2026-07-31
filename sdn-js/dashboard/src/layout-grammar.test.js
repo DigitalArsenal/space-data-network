@@ -291,6 +291,90 @@ describe('L7 — the page cannot assert what the operator cannot check', () => {
   });
 });
 
+/*
+ * L8 — AN ADDRESS THE OPERATOR CAN REACH FROM THIS PAGE IS VOCABULARY; A
+ * LOCATION ON A BOX THEY MAY NOT EVEN HAVE A SHELL ON IS A LEAK.
+ *
+ * Added 2026-07-30 (IRIS ruling for `sdn-peer-modal-trust-apply-honesty`) from
+ * one session of the owner's. He opened the edit modal for a registry peer this
+ * node has never connected to and the page told him four untrue-ish things at
+ * once: a `<select>` with a single option beside a primary APPLY that could not
+ * fire; `HTTP 521` as the whole explanation of a contact card that was never
+ * going to load; `unknown` as a name six inches from `UNKNOWN` the trust tier;
+ * and, under a SOURCE heading, the literal string
+ * `<a config path> · <a config key>` — a location he had already flagged once.
+ *
+ * Every rule below is source-text law, for the same reason L1–L7 are: a
+ * rendered page only shows you the violation you happened to screenshot.
+ *
+ * What counts as a violation (the ruling's own list): absolute filesystem
+ * paths, config FILE names, dotted config KEY paths rendered as a value,
+ * systemd unit/socket names, env-var names presented as an answer. What does
+ * NOT: HTTP routes on this same origin (`/api/peers`, `/identity/<id>.vcf`,
+ * `/ws/status`) — the operator can open them in this very browser — plus URLs,
+ * the hash routes, peer ids, multiaddrs, comments, and clipboard payloads.
+ */
+describe('L8 — a reachable address is vocabulary, a box location is a leak', () => {
+  /** Markup only: the <script> half holds data plumbing, not rendered text. */
+  const markupOf = (src) => src.split('</script>').slice(1).join('</script>');
+
+  it('no component renders a pin note without the publishable guard', () => {
+    // A config pin's `note` IS the file and the key. peers.js decides whether a
+    // note is prose an operator typed; markup may only render it through that
+    // decision, and the guard lives in the block immediately above the render
+    // (the same lookback idiom L5 uses for a cited dimension).
+    const offenders = [];
+    for (const { file, src } of COMPONENTS) {
+      const lines = markupOf(src).split('\n');
+      lines.forEach((line, i) => {
+        if (!/pin\.note|pinNote/.test(line)) return;
+        const lookback = lines.slice(Math.max(0, i - 6), i + 1).join('\n');
+        if (!/pinNoteIsPublishable\(/.test(lookback)) offenders.push(`${file}:${i + 1} ${line.trim()}`);
+      });
+    }
+    expect(offenders, 'L8: a config location is data, never rendered text').toEqual([]);
+  });
+
+  it('no component carries a path-shaped literal', () => {
+    const PATH = /(^|["'>\s])(~?\/(etc|var|usr|opt|home|srv|root)\/|[A-Za-z]:\\)/;
+    const offenders = COMPONENTS.filter(({ src }) => PATH.test(src)).map(({ file }) => file);
+    expect(offenders, 'L8: an operator may not even have a shell on that box').toEqual([]);
+  });
+
+  it('no component names a config file, a unit or a socket', () => {
+    const UNIT = /\.(ya?ml|toml|sqlite|service|socket)\b/;
+    const offenders = COMPONENTS.filter(({ src }) => UNIT.test(src)).map(({ file }) => file);
+    expect(offenders, 'L8: name what the operator does, not the file it lands in').toEqual([]);
+  });
+
+  it('the peer modal renders no trust control it cannot fire', () => {
+    const modal = COMPONENTS.find((c) => c.file === 'PeerEditModal.svelte').src;
+    expect(/canSetTrust/.test(modal), 'L8: the armed state has a name').toBe(true);
+    // Every <select> in this file must sit inside the armed branch. Anything
+    // before `{#if canSetTrust}` is a control rendered in a state where APPLY
+    // does nothing — which is the defect the owner reported.
+    const armed = modal.indexOf('{#if canSetTrust}');
+    expect(armed, 'L8: PeerEditModal must gate its trust control').toBeGreaterThan(-1);
+    expect(modal.indexOf('<select'), 'L8: no <select> outside {#if canSetTrust}').toBeGreaterThan(armed);
+  });
+
+  it('no component falls back to the word "unknown" for a NAME', () => {
+    // `unknown` is a TRUST TIER, rendered by these same dialogs. A name that is
+    // absent reads `unnamed` — one word, one meaning.
+    //
+    // AccountModal.svelte is EXEMPT BY NAME: it is outside the write scope of
+    // sdn-peer-modal-trust-apply-honesty (its two fallbacks name the signed-in
+    // session and its fingerprint, not a peer or an operator row). Amending
+    // that exemption away is a separate pass — the law is amended first, in the
+    // graph task, then here, which is what this comment is.
+    const EXEMPT = ['AccountModal.svelte'];
+    const offenders = COMPONENTS.filter(
+      ({ file, src }) => !EXEMPT.includes(file) && /\|\|\s*'unknown'/.test(src)
+    ).map(({ file }) => file);
+    expect(offenders, 'L8: an absent name is `unnamed`, not the UNKNOWN tier').toEqual([]);
+  });
+});
+
 describe('the wave-1 defects these rules were written from', () => {
   it('NodeConsole holds no hardcoded ENABLED literal', () => {
     const src = COMPONENTS.find((c) => c.file === 'NodeConsole.svelte').src;

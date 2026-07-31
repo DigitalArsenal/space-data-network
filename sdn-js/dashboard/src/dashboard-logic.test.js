@@ -239,16 +239,31 @@ describe('peers — how did this row get here?', () => {
     expect(peerSource({ source: 'connected' }).label).toBe('CONNECTED NOW');
   });
 
-  it('a config pin is pinned AND locked, and carries the file+key to edit', () => {
+  /*
+   * AMENDED 2026-07-30 (IRIS ruling, sdn-peer-modal-trust-apply-honesty §6).
+   * This test used to REQUIRE the config location in the rendered sentence —
+   * the earlier "park it in the note" ruling. That ruling is revoked: the owner
+   * flagged the rendered path twice, and `sentence` is displayed text (the
+   * peers table renders it, and so did the modal). The note is still carried as
+   * DATA, because the copy affordance sends it to the clipboard verbatim; what
+   * changed is that no rendered string may contain it.
+   */
+  it('a config pin is pinned AND locked, and never says where', () => {
     const src = peerSource({
       source: 'config',
       pinNote: '/etc/space-data-network/config.yaml  peers.trusted_peers',
     });
     expect(src.pinned).toBe(true);
     expect(src.locked).toBe(true);
-    // The note is the REAL file and key, not prose about one.
+    // The note is the REAL file and key, and it stays in the data.
     expect(src.note).toContain('peers.trusted_peers');
-    expect(src.sentence).toContain('peers.trusted_peers');
+    // The SENTENCE is what a peer's row and its modal print.
+    expect(src.sentence).not.toContain('peers.trusted_peers');
+    expect(src.sentence).not.toContain('/etc');
+    expect(src.sentence).toBe("Pinned by this node's config file — edit it there, not here.");
+    // …and it does not vary with the note, so there is no path through this
+    // function that puts a location on screen.
+    expect(peerSource({ source: 'config' }).sentence).toBe(src.sentence);
   });
 
   it('an unstated source is admitted as unstated, never guessed into a good answer', () => {
@@ -322,6 +337,190 @@ describe('the count and the map must agree on screen', () => {
     expect(hasFix({ lat: 0, lon: -105 })).toBe(true);
     // 3 peers, 1 plotted — the exact shape of "it says 35 peers but shows one".
     expect(mapCoverage(rows)).toEqual({ peers: 3, plotted: 1, unplaced: 2 });
+  });
+});
+
+/*
+ * THE PEER MODAL'S FOUR HONESTY RULES (IRIS ruling 2026-07-30,
+ * sdn-peer-modal-trust-apply-honesty). Every case here is something the page
+ * told the owner that it could not back up.
+ */
+describe('a config location is data, never a rendered string', async () => {
+  const { pinNoteIsPublishable } = await import('./peers.js');
+
+  it('a config pin never publishes its note', () => {
+    expect(
+      pinNoteIsPublishable({
+        source: 'config',
+        note: '/etc/space-data-network/config.module-delivery-sidecar.yaml · peers.trusted_peers',
+      })
+    ).toBe(false);
+  });
+
+  it("an operator's own prose note is publishable", () => {
+    expect(pinNoteIsPublishable({ source: 'pinned', note: 'the celestrak box' })).toBe(true);
+  });
+
+  it('…but not when what they typed IS a location', () => {
+    // The source says an operator pinned it; the note says otherwise. The note
+    // is what reaches the screen, so the note is what decides.
+    expect(pinNoteIsPublishable({ source: 'pinned', note: '/etc/foo.yaml' })).toBe(false);
+    expect(pinNoteIsPublishable({ source: 'pinned', note: 'peers.trusted_peers' })).toBe(false);
+    expect(pinNoteIsPublishable({ source: 'pinned', note: 'C:\\sdn\\config.toml' })).toBe(false);
+  });
+
+  it('an absent note is nothing to publish either way', () => {
+    expect(pinNoteIsPublishable({ source: 'pinned' })).toBe(true);
+    expect(pinNoteIsPublishable({ source: 'config' })).toBe(false);
+  });
+});
+
+describe('the contact card states what this node measured, not a status code', async () => {
+  const { cardState, everConnected } = await import('./peers.js');
+
+  it('never seen + failed read = there is no card to serve', () => {
+    expect(cardState({ read: 'done', ok: false, everConnected: false })).toBe('not-served-here');
+  });
+
+  it('seen before + failed read = it did not come back this time', () => {
+    expect(cardState({ read: 'done', ok: false, everConnected: true })).toBe('did-not-load');
+  });
+
+  it('distinguishes in-flight from never-attempted', () => {
+    expect(cardState({ read: 'reading' })).toBe('reading');
+    expect(cardState({ read: 'idle' })).toBe('not-read');
+    expect(cardState({})).toBe('not-read');
+  });
+
+  it('a card that came back is just the card', () => {
+    expect(cardState({ read: 'done', ok: true, everConnected: false })).toBe('ok');
+  });
+
+  it('"ever connected" is the two facts the node HAS: a sighting, or a live link', () => {
+    expect(everConnected({ lastSeen: 1_700_000_000, online: false })).toBe(true);
+    expect(everConnected({ lastSeen: 0, online: true })).toBe(true);
+    expect(everConnected({ lastSeen: 0, online: false })).toBe(false);
+    // No row in the feed at all — this node has never had it on the line.
+    expect(everConnected(null)).toBe(false);
+  });
+});
+
+describe('the name ladder — and who said the name', async () => {
+  const { peerDisplayName } = await import('./peers.js');
+
+  it("prefers what the peer publishes about itself", () => {
+    expect(
+      peerDisplayName({ peer: { name: 'Celestrak Ops' }, cardFN: 'Card Name', pin: { name: 'the eth box' } })
+    ).toEqual({ name: 'Celestrak Ops', origin: 'peer' });
+  });
+
+  it('then the FN of a card this node actually read', () => {
+    expect(peerDisplayName({ peer: {}, cardFN: 'Card Name', pin: { name: 'label' } })).toEqual({
+      name: 'Card Name',
+      origin: 'peer',
+    });
+  });
+
+  it("then an operator's own label, MARKED as one", () => {
+    expect(peerDisplayName({ peer: {}, pin: { name: 'the eth box' } })).toEqual({
+      name: 'the eth box',
+      origin: 'operator',
+    });
+  });
+
+  it('and otherwise "unnamed" — never unknown, never an id promoted', () => {
+    const bare = peerDisplayName({ peer: { id: '16Uiu2HAmQMSobG4' }, pin: { note: 'a note' } });
+    expect(bare).toEqual({ name: 'unnamed', origin: 'none' });
+    // Not the id, not the note, not the organization, not a provenance label.
+    expect(
+      peerDisplayName({ peer: { id: '16Uiu2HAm', organization: 'CelesTrak' } }).name
+    ).toBe('unnamed');
+    expect(peerDisplayName({}).name).toBe('unnamed');
+  });
+});
+
+/*
+ * THE URL GRAMMAR (§5). Hash, and forced: the Go handler answers 404 for every
+ * path but `/`, so a path route survives exactly until reload.
+ */
+describe('route-url — the address bar is the state', async () => {
+  const { parseHash, formatHash, ROUTES } = await import('./route-url.js');
+  const PEER = '16Uiu2HAmQMSobG4rFZHS9wTQbYTzAKg5tNReY7sRUMah9CcuvDMv';
+  const XPUB = 'xpub6CUGRUonZSQ4TWtTMmzXdrXDtypWKiKrhko4egpiMZbpiaQL2jkwSB1icqYh2cfDfVxdx4df189oLKnC5fSwqPfgyP3hooxujYzAu3fDVmz';
+
+  it('round-trips every shape the ruling names', () => {
+    for (const hash of [
+      '#/node',
+      '#/peers',
+      '#/accounts',
+      '#/accounts/keys',
+      '#/accounts/peers',
+      `#/accounts/peers/${PEER}`,
+      `#/accounts/keys/${XPUB}`,
+      `#/peers/${PEER}`,
+      '#/peers/self',
+      '#/peers/self/qr',
+    ]) {
+      expect(formatHash(parseHash(hash)), hash).toBe(hash);
+    }
+  });
+
+  it('names the modal each shape opens', () => {
+    expect(parseHash(`#/accounts/peers/${PEER}`)).toEqual({
+      route: 'accounts', sub: 'peers', modal: 'peer', modalId: PEER, view: '',
+    });
+    expect(parseHash(`#/accounts/keys/${XPUB}`)).toEqual({
+      route: 'accounts', sub: 'keys', modal: 'operator', modalId: XPUB, view: '',
+    });
+    expect(parseHash(`#/peers/${PEER}`)).toEqual({
+      route: 'peers', sub: '', modal: 'node', modalId: PEER, view: '',
+    });
+    expect(parseHash('#/peers/self/qr')).toEqual({
+      route: 'peers', sub: '', modal: 'self', modalId: 'self', view: 'qr',
+    });
+  });
+
+  it('an empty or unparseable hash is the landing route, never a blank page', () => {
+    const landing = { route: 'node', sub: '', modal: '', modalId: '', view: '' };
+    for (const hash of ['', '#', '#/', '#/nope', '#/nope/deeper', 'garbage']) {
+      expect(parseHash(hash), hash).toEqual(landing);
+    }
+    // A subsection this route does not have is dropped, not invented.
+    expect(parseHash('#/accounts/wat')).toEqual(landing2('accounts'));
+    expect(parseHash('#/node/anything')).toEqual(landing2('node'));
+    function landing2(route) {
+      return { route, sub: '', modal: '', modalId: '', view: '' };
+    }
+  });
+
+  it('a modal is addressed under its OWN route, however it was opened', () => {
+    // The self card opened from the NODE dashboard is still the peers card:
+    // one dialog, one address, or Back is ambiguous.
+    expect(formatHash({ route: 'node', modal: 'self', modalId: 'self' })).toBe('#/peers/self');
+    expect(formatHash({ route: 'node', modal: 'node', modalId: PEER })).toBe(`#/peers/${PEER}`);
+    expect(formatHash({ route: 'peers', sub: 'keys', modal: 'peer', modalId: PEER })).toBe(
+      `#/accounts/peers/${PEER}`
+    );
+  });
+
+  it('closing a modal is its parent route, which is what CLOSE replaces to', () => {
+    const open = parseHash(`#/accounts/peers/${PEER}`);
+    expect(formatHash({ ...open, modal: '', modalId: '', view: '' })).toBe('#/accounts/peers');
+  });
+
+  it('nothing but the route, the subsection and the modal is addressable', () => {
+    // Filters, sort, page and the sign-in dialog are NOT places (§5), so no
+    // shape here can carry them. ROUTES is the whole vocabulary.
+    expect(Object.keys(ROUTES)).toEqual(['node', 'peers', 'accounts']);
+    expect(ROUTES.node).toEqual([]);
+    expect(ROUTES.peers).toEqual([]);
+    expect(ROUTES.accounts).toEqual(['peers', 'keys']);
+  });
+
+  it('a half-escaped fragment is not an id', () => {
+    expect(parseHash('#/peers/%E0%A4%A')).toEqual({
+      route: 'peers', sub: '', modal: '', modalId: '', view: '',
+    });
   });
 });
 

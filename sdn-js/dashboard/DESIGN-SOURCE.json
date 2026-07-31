@@ -3,7 +3,7 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "4716f75b859f0ecdd950f51e9ed468bb09b8fca4",
+  "design_commit": "38adb52beadac83b7b527b04264defb571b71311",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
     "bytes": 418886,
