@@ -6,6 +6,7 @@ export const FLATSQL_VERSION = "1.1.0";
 export const HD_WALLET_WASM_VERSION = "2.0.29";
 export const HD_WALLET_UI_VERSION = "2.0.29";
 export const IPFS_WEBUI_VERSION = "4.12.0";
+export const KUBO_VERSION = "0.40.0-dev";
 export const DEFAULT_UPDATE_CHANNEL = "stable";
 export const CURRENT_ADVERTISEMENT_FLAG = "spacedatanetwork/1.0.0";
 export const SUPPORTED_ADVERTISEMENT_FLAGS = [
