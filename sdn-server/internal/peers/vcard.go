@@ -125,16 +125,34 @@ func extractPeerFromCard(card vcard.Card) (*VCardPeerInfo, error) {
 }
 
 // TrustedPeerToVCard converts a TrustedPeer to vCard format string.
+// peerFilenameSuffix is a header/filename-safe short form of a peer id —
+// ShortString() renders "<peer.ID 16*abc123>", which is not safe unquoted
+// in a Content-Disposition header or as a filename.
+func peerFilenameSuffix(id peer.ID) string {
+	full := id.String()
+	if len(full) > 8 {
+		return full[len(full)-8:]
+	}
+	return full
+}
+
 func TrustedPeerToVCard(tp *TrustedPeer) string {
 	card := make(vcard.Card)
 
 	// Required vCard fields
 	card.SetValue(vcard.FieldVersion, "4.0")
 
-	// Name
+	// Name — ShortString() renders libp2p's "<peer.ID 16*abc123>" machine
+	// form, which must never surface as a contact name; nameless peers get
+	// the same "SDN Node <suffix>" the compact QR cards use.
 	name := tp.Name
 	if name == "" {
-		name = tp.ID.ShortString()
+		full := tp.ID.String()
+		short := full
+		if len(short) > 8 {
+			short = short[len(short)-8:]
+		}
+		name = "SDN Node " + short
 	}
 	card.SetValue(vcard.FieldFormattedName, name)
 

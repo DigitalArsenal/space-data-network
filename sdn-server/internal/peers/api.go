@@ -559,7 +559,7 @@ func (h *APIHandler) handlePeerEPM(w http.ResponseWriter, r *http.Request, peerI
 			vcardData = TrustedPeerToVCard(tp)
 		}
 		w.Header().Set("Content-Type", "text/vcard")
-		w.Header().Set("Content-Disposition", "attachment; filename=peer-"+peerID.ShortString()+".vcf")
+		w.Header().Set("Content-Disposition", "attachment; filename=peer-"+peerFilenameSuffix(peerID)+".vcf")
 		w.Write([]byte(vcardData))
 
 	case "qr":
@@ -960,7 +960,7 @@ func (h *APIHandler) handleVCardExport(w http.ResponseWriter, r *http.Request) {
 
 	vcardData := TrustedPeerToVCard(tp)
 	w.Header().Set("Content-Type", "text/vcard")
-	w.Header().Set("Content-Disposition", "attachment; filename=peer-"+peerID.ShortString()+".vcf")
+	w.Header().Set("Content-Disposition", "attachment; filename=peer-"+peerFilenameSuffix(peerID)+".vcf")
 	w.Write([]byte(vcardData))
 }
 
