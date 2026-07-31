@@ -563,13 +563,14 @@ func (h *APIHandler) handlePeerEPM(w http.ResponseWriter, r *http.Request, peerI
 		w.Write([]byte(vcardData))
 
 	case "qr":
-		var qrData []byte
-		if len(tp.EPMData) > 0 {
-			qrData, err = vcard.EPMToQR(tp.EPMData, 256)
-		} else {
-			vcardData := TrustedPeerToVCard(tp)
-			qrData, err = vcard.VCardToQR(vcardData, 256)
+		// OWNER LAW 2026-07-31: a QR card without the full crypto identity
+		// (xpub + sign/encrypt HD paths + epmsig chain) must not exist —
+		// no signed EPM from the peer means NO QR, never a name-only card.
+		if len(tp.EPMData) == 0 {
+			http.Error(w, "no signed EPM for this peer — QR requires the full crypto identity", http.StatusNotFound)
+			return
 		}
+		qrData, err := vcard.EPMToQR(tp.EPMData, 256)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -18,7 +18,14 @@
   import QRCode from 'qrcode';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import HostedModules from './HostedModules.svelte';
-  import { parseVCard, displayFields, isAliasEmail, extractIdentity, buildCompactVCard } from './vcard.js';
+  import {
+    parseVCard,
+    displayFields,
+    isAliasEmail,
+    extractIdentity,
+    buildCompactVCard,
+    cardCarriesCryptoIdentity,
+  } from './vcard.js';
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { shortId, formatUptime, formatLastSeen, formatCoords } from './format.js';
 
@@ -128,8 +135,13 @@
   );
   const basicFields = $derived(fields.filter((f) => CARD_BASIC.has(f.name) && f.name !== 'FN' && f.name !== 'N'));
   const extraFields = $derived(fields.filter((f) => !CARD_BASIC.has(f.name) && f.name !== 'FN' && f.name !== 'N'));
-  /** Server-rendered QR (integer module scale, inline disposition). Hidden if the node can't serve it. */
+  /** Server-rendered QR (integer module scale, inline disposition). The server
+   * 404s when it holds no signed EPM for the peer (owner law 2026-07-31) —
+   * that state is SHOWN, never silently blank. */
   let cardQrOk = $state(true);
+  /** QR tab: neither the server card nor the offline fallback carries the
+   * full crypto identity — render the refusal, never a name-only QR. */
+  let qrIdentityMissing = $state(false);
 
   const identityRows = $derived(
     [
@@ -186,6 +198,14 @@
         /* fall back below */
       }
       if (!card.trim()) card = buildCompactVCard(node, props);
+      // OWNER LAW 2026-07-31: never render a scannable card without the
+      // full crypto identity (xpub + sign/encrypt paths + epmsig) — the
+      // server refuses such cards and the offline fallback must too.
+      if (!cardCarriesCryptoIdentity(card)) {
+        qrIdentityMissing = true;
+        return;
+      }
+      qrIdentityMissing = false;
       await QRCode.toCanvas(canvas, card, {
         errorCorrectionLevel: 'M',
         margin: 2,
@@ -283,8 +303,16 @@
       <pre class="mono" style="color:{theme.textDim};border-color:{theme.hairline};">{node.vcard}</pre>
     {:else if view === 'qr'}
       <div class="qr">
-        <canvas bind:this={qrCanvas}></canvas>
-        <div class="qr-hint" style="color:{theme.textFaint};">Scan to import this node as a contact (vCard 3.0 — xpub, key derivation paths, EPM signature + CID ride as email aliases).</div>
+        {#if qrIdentityMissing}
+          <div class="none" style="color:{theme.textFaint};">
+            No scannable card: this node has not exchanged its signed EPM yet, so the full crypto
+            identity (xpub, key derivation paths, EPM signature) is not held here. A QR without it
+            is never served.
+          </div>
+        {:else}
+          <canvas bind:this={qrCanvas}></canvas>
+          <div class="qr-hint" style="color:{theme.textFaint};">Scan to import this node as a contact (vCard 3.0 — xpub, key derivation paths, EPM signature + CID ride as email aliases).</div>
+        {/if}
       </div>
     {:else}
       <div class="card" style="border-color:{theme.hairline};">
@@ -312,6 +340,10 @@
               height="160"
               onerror={() => (cardQrOk = false)}
             />
+          {:else}
+            <div class="card-qr-missing mono" style="color:{theme.textFaint};border-color:{theme.hairline};">
+              NO SIGNED EPM YET — QR REQUIRES THE FULL CRYPTO IDENTITY
+            </div>
           {/if}
         </div>
         {#if extraFields.length}
@@ -382,6 +414,16 @@
   .card-k { flex: none; width: 68px; font-size: var(--sdn-fs-label); letter-spacing: 0.14em; }
   .card-v { font-size: var(--sdn-fs-value); overflow-wrap: anywhere; min-width: 0; }
   .card-qr { flex: none; width: 160px; height: 160px; image-rendering: pixelated; }
+  .card-qr-missing {
+    flex: none;
+    width: 160px;
+    border: 1px dashed;
+    padding: 10px;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-align: center;
+    align-self: flex-start;
+  }
   .card-extra { border-top: 1px solid; margin-top: 12px; padding-top: 10px; }
   @media (max-width: 560px) {
     .card-head { flex-wrap: wrap; }

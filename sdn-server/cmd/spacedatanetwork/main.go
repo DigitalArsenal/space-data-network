@@ -2000,18 +2000,33 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 							if tp == nil || len(tp.EPMData) > 0 {
 								continue
 							}
-							if n.Host().Network().Connectedness(tp.ID) != network.Connected {
+							// A registry peer with known addresses but no live
+							// connection is DIALLED first: pinned peers (e.g.
+							// config-enrolled fleet nodes) may never dial us,
+							// and without their EPM the identity surface can
+							// serve no QR card at all (owner law 2026-07-31).
+							connected := n.Host().Network().Connectedness(tp.ID) == network.Connected
+							if !connected && len(tp.Addrs) == 0 {
 								continue
 							}
 							if last, ok := lastAttempt[tp.ID]; ok && time.Since(last) < retryCooldown {
 								continue
 							}
 							lastAttempt[tp.ID] = time.Now()
-							go func(target peer.ID) {
+							go func(target peer.ID, addrs []multiaddr.Multiaddr, connected bool) {
+								if !connected {
+									dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+									err := n.Host().Connect(dialCtx, peer.AddrInfo{ID: target, Addrs: addrs})
+									cancel()
+									if err != nil {
+										log.Debugf("epm-exchange: dial %s for EPM failed: %v", target.ShortString(), err)
+										return
+									}
+								}
 								if err := epmSvc.RequestPeerEPM(ctx, n.Host(), target); err != nil {
 									log.Debugf("epm-exchange: request to %s failed: %v", target.ShortString(), err)
 								}
-							}(tp.ID)
+							}(tp.ID, append([]multiaddr.Multiaddr(nil), tp.Addrs...), connected)
 						}
 					}
 				}()
@@ -2153,20 +2168,20 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					return tp.EPMData, true
 				},
 				PeerQRVCard: func(peerID string) (string, bool) {
+					// OWNER LAW 2026-07-31: a scannable card MUST carry the
+					// full crypto identity — xpub, sign/encrypt HD paths and
+					// the EPM signature chain. A peer we hold no signed EPM
+					// for gets NO QR card at all (fail closed), never a
+					// name-and-peer-id-only card.
 					tp := peerLookup(peerID)
-					if tp == nil {
+					if tp == nil || len(tp.EPMData) == 0 {
 						return "", false
 					}
-					if len(tp.EPMData) > 0 {
-						if card, err := sdnvcard.CompactQRVCard(tp.EPMData); err == nil {
-							return card, true
-						}
+					card, err := sdnvcard.CompactQRVCard(tp.EPMData)
+					if err != nil || !sdnvcard.CardCarriesCryptoIdentity(card) {
+						return "", false
 					}
-					name := strings.TrimSpace(tp.Name)
-					if name == "" {
-						name = strings.TrimSpace(tp.Organization)
-					}
-					return sdnvcard.CompactQRVCardForPeer(name, peerID), true
+					return card, true
 				},
 			}))
 			adminMux.Handle("/", makeRootHandler())

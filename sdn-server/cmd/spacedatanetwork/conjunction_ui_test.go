@@ -419,15 +419,16 @@ func TestIdentityDownloads(t *testing.T) {
 }
 
 // TestIdentityQRDownloads locks the /identity/<peerId>.qr.vcf variant: the
-// compact scannable card (self via GetNodeQRVCard, peers via their EPM or
-// the minimal peer-alias card), 404 when unknown.
+// compact scannable card (self via GetNodeQRVCard, peers via their signed
+// EPM — full crypto identity REQUIRED per owner law 2026-07-31), 404 when
+// unknown or when no signed EPM is held.
 func TestIdentityQRDownloads(t *testing.T) {
 	handler := makeIdentityHandler(identitySource{
 		SelfID:      "16UiuSelf",
-		SelfQRVCard: func() (string, error) { return "BEGIN:VCARD\r\nFN:Self QR\r\nEND:VCARD\r\n", nil },
+		SelfQRVCard: func() (string, error) { return fullChainTestCard("Self QR"), nil },
 		PeerQRVCard: func(id string) (string, bool) {
 			if id == "16UiuPeerA" {
-				return "BEGIN:VCARD\r\nFN:Peer QR\r\nEMAIL;type=INTERNET;type=peer:16UiuPeerA@peer.spacedatanetwork.org\r\nEND:VCARD\r\n", true
+				return fullChainTestCard("Peer QR"), true
 			}
 			return "", false
 		},
@@ -435,7 +436,7 @@ func TestIdentityQRDownloads(t *testing.T) {
 
 	for path, want := range map[string]string{
 		"/identity/16UiuSelf.qr.vcf":  "FN:Self QR",
-		"/identity/16UiuPeerA.qr.vcf": "@peer.spacedatanetwork.org",
+		"/identity/16UiuPeerA.qr.vcf": "@xpub.spacedatanetwork.org",
 	} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))

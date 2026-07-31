@@ -159,6 +159,18 @@ func (s *Service) RequestPeerEPM(ctx context.Context, h host.Host, target peer.I
 		return err
 	}
 
+	// Never store an unverified identity: the EPM must be self-signed by
+	// keys it carries, and must advertise the peer we asked (the discovery
+	// path already enforces both; the exchange path must match it).
+	if err := VerifyEPMSignature(epmData); err != nil {
+		log.Debugf("epm-exchange: rejecting unverified EPM from %s: %v", target.ShortString(), err)
+		return nil
+	}
+	if epmPeerID, err := PeerIDFromEPM(epmData); err == nil && epmPeerID != "" && epmPeerID != target.String() {
+		log.Debugf("epm-exchange: rejecting EPM from %s advertising different peer %s", target.ShortString(), epmPeerID)
+		return nil
+	}
+
 	// Store in peer registry
 	tp, err := s.registry.GetPeer(target)
 	if err != nil {

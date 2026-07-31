@@ -356,3 +356,23 @@ export function contactCard(props) {
     { key: 'note', label: 'NOTE', value: first('NOTE').trim() },
   ];
 }
+
+/**
+ * OWNER LAW 2026-07-31: a scannable card must carry the full crypto
+ * identity — the xpub alias, BOTH HD key-path aliases (sign + encrypt) and
+ * the EPM signature alias (epmsig). Mirrors the server gate
+ * (vcard.CardCarriesCryptoIdentity); anything failing it must render an
+ * "identity not exchanged" state, never a name-and-peer-id-only QR.
+ * @param {string} card raw (possibly folded) vCard text
+ * @returns {boolean}
+ */
+export function cardCarriesCryptoIdentity(card) {
+  if (!card || !card.trim()) return false;
+  const unfolded = card.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '');
+  return [
+    '@xpub.spacedatanetwork.org',
+    '@sign.spacedatanetwork.org',
+    '@encrypt.spacedatanetwork.org',
+    '@epmsig.spacedatanetwork.org',
+  ].every((domain) => unfolded.includes(domain));
+}
