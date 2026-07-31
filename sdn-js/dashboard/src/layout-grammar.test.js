@@ -323,12 +323,22 @@ describe('L8 — a reachable address is vocabulary, a box location is a leak', (
     // note is prose an operator typed; markup may only render it through that
     // decision, and the guard lives in the block immediately above the render
     // (the same lookback idiom L5 uses for a cited dimension).
+    //
+    // MATCHES ANY `<expr>.note` INTERPOLATION, not just `pin.note`. The first
+    // version of this rule named `pin.note|pinNote` and therefore did not see
+    // NodeTable's `{src.note}` — which is where the owner was still looking at
+    // /etc/space-data-network/config.module-delivery-sidecar.yaml on the live
+    // peers board AFTER the string had been "removed". The binding's name is
+    // not the point; rendering the note is.
     const offenders = [];
     for (const { file, src } of COMPONENTS) {
       const lines = markupOf(src).split('\n');
       lines.forEach((line, i) => {
-        if (!/pin\.note|pinNote/.test(line)) return;
-        const lookback = lines.slice(Math.max(0, i - 6), i + 1).join('\n');
+        // A PROPERTY ACCESS — `x.note` / `x.pinNote` — not the bare word, which
+        // is ModalSection's own caption prop and every `.note` CSS rule.
+        if (!/\{[^}]*[\w$)\]]\s*\??\.\s*(pinNote|note)\b[^}]*\}/.test(line)) return;
+        if (/noteIsPublishable\(|pinNoteLabel\(/.test(line)) return;
+        const lookback = lines.slice(Math.max(0, i - 8), i + 1).join('\n');
         if (!/pinNoteIsPublishable\(/.test(lookback)) offenders.push(`${file}:${i + 1} ${line.trim()}`);
       });
     }
