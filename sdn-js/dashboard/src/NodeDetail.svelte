@@ -139,9 +139,12 @@
    * 404s when it holds no signed EPM for the peer (owner law 2026-07-31) —
    * that state is SHOWN, never silently blank. */
   let cardQrOk = $state(true);
-  /** QR tab: neither the server card nor the offline fallback carries the
-   * full crypto identity — render the refusal, never a name-only QR. */
-  let qrIdentityMissing = $state(false);
+  /** QR tab render state. 'loading' while the server card fetch is pending
+   * (a hung origin previously left a bare blank canvas on screen — owner
+   * report 2026-07-31), 'ready' once the code is drawn, 'missing' when
+   * neither the server card nor the offline fallback carries the full
+   * crypto identity — the refusal renders, never a name-only QR. */
+  let qrTabState = $state('loading');
 
   const identityRows = $derived(
     [
@@ -189,10 +192,15 @@
   $effect(() => {
     if (view !== 'qr' || !qrCanvas) return;
     const canvas = qrCanvas;
+    qrTabState = 'loading';
     (async () => {
       let card = '';
       try {
-        const res = await fetch(`/identity/${node.peerId}.qr.vcf`);
+        // A hung origin must degrade to the fallback, not pin the tab in
+        // 'loading' for the CF timeout window (~100s).
+        const res = await fetch(`/identity/${node.peerId}.qr.vcf`, {
+          signal: AbortSignal.timeout(15000),
+        });
         if (res.ok) card = await res.text();
       } catch {
         /* fall back below */
@@ -202,10 +210,9 @@
       // full crypto identity (xpub + sign/encrypt paths + epmsig) — the
       // server refuses such cards and the offline fallback must too.
       if (!cardCarriesCryptoIdentity(card)) {
-        qrIdentityMissing = true;
+        qrTabState = 'missing';
         return;
       }
-      qrIdentityMissing = false;
       await QRCode.toCanvas(canvas, card, {
         errorCorrectionLevel: 'M',
         margin: 2,
@@ -218,7 +225,12 @@
         width: 480,
         color: { dark: '#04060a', light: '#eaf6f8' },
       });
-    })().catch(() => {});
+      qrTabState = 'ready';
+    })().catch(() => {
+      // A draw failure must surface as the refusal state, never a blank
+      // canvas pretending to be a code.
+      qrTabState = 'missing';
+    });
   });
 
   onMount(() => {
@@ -303,15 +315,19 @@
       <pre class="mono" style="color:{theme.textDim};border-color:{theme.hairline};">{node.vcard}</pre>
     {:else if view === 'qr'}
       <div class="qr">
-        {#if qrIdentityMissing}
+        {#if qrTabState === 'missing'}
           <div class="none" style="color:{theme.textFaint};">
             No scannable card: this node has not exchanged its signed EPM yet, so the full crypto
             identity (xpub, key derivation paths, EPM signature) is not held here. A QR without it
             is never served.
           </div>
         {:else}
-          <canvas bind:this={qrCanvas}></canvas>
-          <div class="qr-hint" style="color:{theme.textFaint};">Scan to import this node as a contact (vCard 3.0 — xpub, key derivation paths, EPM signature + CID ride as email aliases).</div>
+          <canvas bind:this={qrCanvas} style={qrTabState === 'ready' ? '' : 'display:none;'}></canvas>
+          {#if qrTabState === 'loading'}
+            <div class="none" style="color:{theme.textFaint};">FETCHING SIGNED CONTACT CARD…</div>
+          {:else}
+            <div class="qr-hint" style="color:{theme.textFaint};">Scan to import this node as a contact (vCard 3.0 — xpub, key derivation paths, EPM signature + CID ride as email aliases).</div>
+          {/if}
         {/if}
       </div>
     {:else}

@@ -1,6 +1,7 @@
 package epm
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"io"
@@ -187,6 +188,11 @@ func (s *Service) RequestPeerEPM(ctx context.Context, h host.Host, target peer.I
 	}
 
 	if tp != nil {
+		// Identical EPM already held = no-op; a registry persist is not
+		// free under ingest load (sdn-registry-save-lock-starvation).
+		if bytes.Equal(tp.EPMData, epmData) && tp.VCardData != "" {
+			return nil
+		}
 		tp.EPMData = epmData
 		// Generate vCard from EPM
 		if vcardStr, err := vcard.EPMToVCard(epmData); err == nil {
