@@ -122,7 +122,7 @@ test('search, installer, update, and live-DHT capabilities encode required modes
 
   const update = capabilities.get('update.daemon_in_place');
   assert.ok(update);
-  assert.equal(update.providerServer, 'https://sdn.spaceaware.io/api/v1/updates');
+  assert.equal(update.providerServer, 'https://sdn.spaceaware.io/updates');
   assert.ok(update.acceptance.some((item) => item.includes('rollback')), 'update acceptance must include rollback');
   assert.ok(update.acceptance.some((item) => item.includes('running daemon')), 'update acceptance must include running daemon');
 

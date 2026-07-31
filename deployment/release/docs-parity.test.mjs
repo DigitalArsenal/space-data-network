@@ -53,7 +53,7 @@ test('README and full docs describe CLI lifecycle, remove, search, identity, and
     'spacedatanetwork update check',
     'spacedatanetwork update stage',
     'spacedatanetwork update apply',
-    'sdn.spaceaware.io/api/v1/updates'
+    'sdn.spaceaware.io/updates'
   ];
 
   assertContainsAll('README.md', requiredPhrases);

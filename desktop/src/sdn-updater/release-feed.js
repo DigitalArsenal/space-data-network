@@ -5,10 +5,12 @@
 //
 // The path prefix is part of the base URL because host-01 has no web server in
 // front of the daemon: the SDN daemon itself owns :443, and it serves the feed
-// from its own API namespace (sdn-server/internal/api/update_feed.go mounts
-// /api/v1/updates/). A bare-origin feed would have to claim top-level paths on
-// the same origin that serves the node dashboard.
-const SDN_UPDATE_FEED_BASE_URL = 'https://sdn.spaceaware.io/api/v1/updates'
+// as a top-level static subtree (sdn-server/internal/api/update_feed.go mounts
+// /updates/), the same shape the node already uses for /wallet-wasm/ and
+// /wallet-ui/. It is NOT under /api/: a require_auth node default-denies every
+// /api/ path that is not on a literal allow-list, and a feed the fleet cannot
+// read without a session is not a feed.
+const SDN_UPDATE_FEED_BASE_URL = 'https://sdn.spaceaware.io/updates'
 const SDN_UPDATE_FEED_ORIGIN = new URL(SDN_UPDATE_FEED_BASE_URL)
 const SDN_UPDATE_FEED_HOSTNAME = SDN_UPDATE_FEED_ORIGIN.hostname
 // Normalized with no trailing slash so it can be prefix-matched against a

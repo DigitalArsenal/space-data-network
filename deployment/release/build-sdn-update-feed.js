@@ -24,8 +24,8 @@ async function writeJson (filePath, value) {
 // It must be relative, not absolute: the generated tree is rsync'd to whatever
 // directory the serving route is pointed at (SDN_UPDATE_FEED_DIR), and that
 // directory already IS the feed root. Emitting the base URL's own path here
-// would nest the tree one full prefix too deep — `api/v1/updates/cli-bundle/…`
-// underneath a directory already served at `/api/v1/updates/` — and every
+// would nest the tree one full prefix too deep — `updates/cli-bundle/…`
+// underneath a directory already served at `/updates/` — and every
 // manifest URL the index advertises would 404.
 //
 // So the base path is subtracted rather than assumed empty, which is what the
