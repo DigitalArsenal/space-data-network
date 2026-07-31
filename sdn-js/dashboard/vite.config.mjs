@@ -99,8 +99,14 @@ function assertNoCssHashCollision() {
   };
 }
 
+// S5 (UI consolidation): the app source lives in the spaceaware-ui
+// submodule; this file stays here because it is NODE law — the single-file
+// build, the CSP composition and the import-map assertion belong to the
+// artifact's owner, not the source repo (spec §1.1/§1.3).
+const appRoot = path.resolve(__dirname, '../spaceaware-ui/src/apps/sdn-node');
+
 export default defineConfig({
-  root: __dirname,
+  root: appRoot,
   plugins: [
     stubHeliaOnlyDeps(),
     // cssHash PINNED to the component's CSS, not its path. IRIS ruling
@@ -127,7 +133,11 @@ export default defineConfig({
     assertNoCssHashCollision()
   ],
   resolve: {
-    alias: { 'spaceaware-student-sdn': designRoot },
+    alias: {
+      'spaceaware-student-sdn': designRoot,
+      // NODE-owned transport the app imports by name (see apps/sdn-node/main.js).
+      'sdn-node-status-runtime': path.resolve(__dirname, '../src/ui/runtime/status-dashboard')
+    },
     dedupe: ['svelte']
   },
   optimizeDeps: { exclude: ['spaceaware-student-sdn'] },
@@ -145,7 +155,7 @@ export default defineConfig({
     outDir: path.resolve(__dirname, 'dist'),
     emptyOutDir: true,
     rollupOptions: {
-      input: path.resolve(__dirname, 'index.html'),
+      input: path.resolve(appRoot, 'index.html'),
       output: { entryFileNames: 'index.js' }
     }
   }

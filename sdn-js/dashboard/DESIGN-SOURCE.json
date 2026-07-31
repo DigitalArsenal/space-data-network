@@ -3,7 +3,7 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "38adb52beadac83b7b527b04264defb571b71311",
+  "design_commit": "a723fa9",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
     "bytes": 431229,
@@ -18,5 +18,11 @@
     "reason": "Pre-migration anchor, built when the design lib was a separate checkout outside this repo. It is NOT reproducible: svelte's default cssHash is hash(filename) and vite-plugin-svelte passes the RAW ABSOLUTE id, so that sha was a function of one machine's directory layout and any agent building in its own worktree got a different one with zero content change. The migration pins cssHash to hash(css) (vite.config.mjs), making the artifact path-independent and reproducible by anyone. Equivalence to this anchor was proven, not assumed: CSS byte-identical after scope-hash normalisation (45216 == 45216), whole-artifact length identical after normalisation (405241 == 405241), visible-text multiset identical, and an A/B/A control showed the submodule mount + dropped npm dep + vite rewrite reproduce b7fc6483 EXACTLY when the design root is pointed back at the old path."
   },
   "ruled_by": "IRIS 2026-07-30, ui-design-lib-two-way-sync (owner ruling 2026-07-30)",
-  "date": "2026-07-30"
+  "date": "2026-07-30",
+  "s5_consolidation": {
+    "date": "2026-07-31",
+    "what": "sdn-js/dashboard reduced to the node-law build shim; ALL app source moved to the spaceaware-ui submodule (spec 2026-07-31 \u00a71.3, task ui-consolidation-single-svelte5-app)",
+    "equivalence_proof": "artifact BYTE-IDENTICAL across the move: sha256 9e1089c17a51f0ff4faf36aa045452d096f51b389bade02d5fc6cddc01a53db4 (469695 bytes) built from dashboard/src pre-move and from spaceaware-ui/src/apps/sdn-node post-move \u2014 the cssHash content pin is what makes relocations provable byte-for-byte",
+    "previous_design_commit": "38adb52beadac83b7b527b04264defb571b71311"
+  }
 }
