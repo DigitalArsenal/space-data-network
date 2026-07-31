@@ -53,3 +53,48 @@ describe('paginate (always-visible pager)', () => {
     expect(paginate([], 1, 25)).toMatchObject({ page: 1, pages: 1, total: 0, start: 0, end: 0 });
   });
 });
+
+// OWNER LAW 2026-07-31: no scannable card without the full crypto identity.
+import { cardCarriesCryptoIdentity } from './vcard.js';
+
+describe('cardCarriesCryptoIdentity (owner law 2026-07-31)', () => {
+  const fullChain = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'FN:sdn.spaceaware.io',
+    'EMAIL;type=INTERNET;type=sign:bS80NA@sign.spacedatanetwork.org',
+    'EMAIL;type=INTERNET;type=xpub:xpub6DKCyLbCHZLFR4XpFg26royZdkxExSMHTjNorEgk@',
+    ' xpub.spacedatanetwork.org',
+    'EMAIL;type=INTERNET;type=encrypt:bS80NQ@encrypt.spacedatanetwork.org',
+    'EMAIL;type=INTERNET;type=epmsig:pPiwij9fiUMf@epmsig.spacedatanetwork.org',
+    'END:VCARD',
+  ].join('\r\n');
+
+  it('accepts a full-chain card, folded lines included', () => {
+    expect(cardCarriesCryptoIdentity(fullChain)).toBe(true);
+  });
+
+  it('rejects the name+peer-id-only card the owner outlawed', () => {
+    const minimal = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'FN:SDN Node bcPpYr2U',
+      'EMAIL;type=INTERNET;type=peer:16Uiu2HAmGjaPx@peer.spacedatanetwork.org',
+      'END:VCARD',
+    ].join('\r\n');
+    expect(cardCarriesCryptoIdentity(minimal)).toBe(false);
+  });
+
+  it('rejects a partial chain (xpub without epmsig)', () => {
+    const partial = fullChain
+      .split('\r\n')
+      .filter((l) => !l.includes('epmsig'))
+      .join('\r\n');
+    expect(cardCarriesCryptoIdentity(partial)).toBe(false);
+  });
+
+  it('rejects empty/blank cards', () => {
+    expect(cardCarriesCryptoIdentity('')).toBe(false);
+    expect(cardCarriesCryptoIdentity('   ')).toBe(false);
+  });
+});

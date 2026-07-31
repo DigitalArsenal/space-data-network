@@ -14,10 +14,10 @@ import (
 func TestIdentityQRPNG(t *testing.T) {
 	handler := makeIdentityHandler(identitySource{
 		SelfID:      "16UiuSelf",
-		SelfQRVCard: func() (string, error) { return "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Self\r\nEND:VCARD\r\n", nil },
+		SelfQRVCard: func() (string, error) { return fullChainTestCard("Self"), nil },
 		PeerQRVCard: func(id string) (string, bool) {
 			if id == "16UiuPeerA" {
-				return "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Peer A\r\nEND:VCARD\r\n", true
+				return fullChainTestCard("Peer A"), true
 			}
 			return "", false
 		},

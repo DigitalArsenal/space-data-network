@@ -390,33 +390,34 @@ func CompactQRVCard(epmBytes []byte) (string, error) {
 	return strings.Join(lines, "\r\n") + "\r\n", nil
 }
 
-// CompactQRVCardForPeer builds the minimal scannable card for a peer that
-// has NOT published an EPM: a clean display name plus the peer-id alias so
-// the import still carries machine-usable identity.
-func CompactQRVCardForPeer(displayName, peerID string) string {
-	name := strings.TrimSpace(displayName)
-	if name == "" || strings.HasPrefix(name, "<peer.ID") {
-		short := peerID
-		if len(short) > 8 {
-			short = short[len(short)-8:]
+// CardCarriesCryptoIdentity reports whether a vCard string carries the
+// minimum crypto identity a scannable card must have (OWNER LAW 2026-07-31):
+// the xpub alias, both HD key-path aliases (sign + encrypt), and the EPM
+// signature chain (epmsig). Cards failing this must never be served as QR.
+func CardCarriesCryptoIdentity(card string) bool {
+	// Alias lines are folded at 75 octets, so the needle must not span the
+	// fold point; the "@<domain>" needles sit directly after short local
+	// parts' unfolded prefix only for epmts — use domain needles on the
+	// UNFOLDED text to be safe.
+	unfolded := strings.ReplaceAll(strings.ReplaceAll(card, "\r\n ", ""), "\n ", "")
+	for _, domain := range []string{
+		"@" + xpubAliasDomain,
+		"@" + signPathAliasDomain,
+		"@" + encryptPathAliasDomain,
+		"@" + epmSigAliasDomain,
+	} {
+		if !strings.Contains(unfolded, domain) {
+			return false
 		}
-		name = "SDN Node " + short
 	}
-	lines := []string{
-		"BEGIN:VCARD",
-		"VERSION:3.0",
-		"N:;" + escapeVCardText(name) + ";;;",
-		"FN:" + escapeVCardText(name),
-	}
-	if isSafeEmailLocalPart(peerID) {
-		lines = append(lines, "EMAIL;type=INTERNET;type=peer:"+peerID+"@"+PeerAliasDomain)
-	}
-	lines = append(lines, "END:VCARD")
-	for i, line := range lines {
-		lines[i] = foldVCardLine(line)
-	}
-	return strings.Join(lines, "\r\n") + "\r\n"
+	return true
 }
+
+// CompactQRVCardForPeer was the minimal name+peer-id scannable card for
+// peers without an EPM. DELETED under owner law 2026-07-31: a QR card
+// without the full crypto identity (xpub + sign/encrypt HD paths + epmsig
+// chain) must never exist — CardCarriesCryptoIdentity gates every QR
+// serving path, and a peer we hold no signed EPM for gets NO card at all.
 
 // isPubliclyDerivablePath reports whether an HD path can be reached from an
 // ancestor extended PUBLIC key by BIP-32 CKDpub alone.

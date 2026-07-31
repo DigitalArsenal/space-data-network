@@ -388,7 +388,10 @@ func makeIdentityHandler(src identitySource) http.Handler {
 			} else if src.PeerQRVCard != nil {
 				card, _ = src.PeerQRVCard(id)
 			}
-			if strings.TrimSpace(card) == "" {
+			// OWNER LAW 2026-07-31: every scannable card carries the full
+			// crypto identity (xpub + sign/encrypt paths + epmsig chain) or
+			// is not served at all — for SELF exactly as for peers.
+			if strings.TrimSpace(card) == "" || !vcard.CardCarriesCryptoIdentity(card) {
 				http.NotFound(w, r)
 				return
 			}
@@ -410,7 +413,8 @@ func makeIdentityHandler(src identitySource) http.Handler {
 			} else if src.PeerQRVCard != nil {
 				card, _ = src.PeerQRVCard(id)
 			}
-			if strings.TrimSpace(card) == "" {
+			// Same law as qr.png: no crypto identity, no scannable card.
+			if strings.TrimSpace(card) == "" || !vcard.CardCarriesCryptoIdentity(card) {
 				http.NotFound(w, r)
 				return
 			}
