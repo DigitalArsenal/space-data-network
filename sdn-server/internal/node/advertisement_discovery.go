@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -282,6 +283,13 @@ func (n *Node) cacheFetchedDiscoveredNodeEPM(pid peer.ID, epmBytes []byte) error
 		tp, _ = n.peerRegistry.GetPeer(pid)
 	}
 	if tp != nil {
+		// The discovery loop re-runs on every re-connect; re-storing a
+		// byte-identical EPM re-triggered a registry persist each time,
+		// which starved registry readers under ingest load (graph task
+		// sdn-registry-save-lock-starvation). Identical EPM = no-op.
+		if bytes.Equal(tp.EPMData, epmBytes) && tp.VCardData != "" {
+			return nil
+		}
 		tp.EPMData = append([]byte(nil), epmBytes...)
 		if vcardStr, err := vcard.EPMToVCard(epmBytes); err == nil {
 			tp.VCardData = vcardStr

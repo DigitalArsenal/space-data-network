@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	sdspgm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PGM"
@@ -33,6 +35,19 @@ const (
 type FlatSQLPersistence struct {
 	flatStore      *storage.FlatSQLStore
 	providerPeerID string
+
+	// Save() previously re-read the ENTIRE PRR/PGM projection from the
+	// engine on every call — while every caller held the registry write
+	// lock — and re-appended every record whether or not it changed. On an
+	// ingest-busy engine that read took long enough to starve all registry
+	// readers: the identity endpoints hung to CF 524, owner-visible as a
+	// blank QR (graph task sdn-registry-save-lock-starvation). This
+	// provider owns every write to the projection, so it is read ONCE and
+	// maintained here; only records that actually changed are appended.
+	projMu     sync.Mutex
+	projLoaded bool
+	lastPeers  map[string]peerRegistryRecord
+	lastGroups map[string]peerGroupRecord
 }
 
 // NewFlatSQLPersistence creates a peer-registry persistence provider over the
@@ -54,9 +69,16 @@ func (fp *FlatSQLPersistence) Save(peers map[peer.ID]*TrustedPeer, groups map[st
 		return errors.New("peers: FlatSQL store is required")
 	}
 
-	currentPeers, currentGroups, err := fp.loadProjection()
-	if err != nil {
-		return err
+	fp.projMu.Lock()
+	defer fp.projMu.Unlock()
+	if !fp.projLoaded {
+		currentPeers, currentGroups, err := fp.loadProjection()
+		if err != nil {
+			return err
+		}
+		fp.lastPeers = currentPeers
+		fp.lastGroups = currentGroups
+		fp.projLoaded = true
 	}
 
 	now := time.Now().UnixMilli()
@@ -72,11 +94,15 @@ func (fp *FlatSQLPersistence) Save(peers map[peer.ID]*TrustedPeer, groups map[st
 		nextPeerIDs[id] = struct{}{}
 		record := peerRegistryRecordFromTrustedPeer(tp, now)
 		record.ProviderPeerID = fp.providerPeerID
+		if prev, ok := fp.lastPeers[id]; ok && !prev.Deleted && peerRecordsEquivalent(prev, record) {
+			continue
+		}
 		if err := fp.storePeerRecord(record); err != nil {
 			return err
 		}
+		fp.lastPeers[id] = record
 	}
-	for id, current := range currentPeers {
+	for id, current := range fp.lastPeers {
 		if current.Deleted {
 			continue
 		}
@@ -90,6 +116,7 @@ func (fp *FlatSQLPersistence) Save(peers map[peer.ID]*TrustedPeer, groups map[st
 		if err := fp.storePeerRecord(tombstone); err != nil {
 			return err
 		}
+		fp.lastPeers[id] = tombstone
 	}
 
 	nextGroupNames := make(map[string]struct{}, len(groups))
@@ -101,11 +128,15 @@ func (fp *FlatSQLPersistence) Save(peers map[peer.ID]*TrustedPeer, groups map[st
 		nextGroupNames[name] = struct{}{}
 		record := peerGroupRecordFromGroup(group, now)
 		record.ProviderPeerID = fp.providerPeerID
+		if prev, ok := fp.lastGroups[name]; ok && !prev.Deleted && groupRecordsEquivalent(prev, record) {
+			continue
+		}
 		if err := fp.storeGroupRecord(record); err != nil {
 			return err
 		}
+		fp.lastGroups[name] = record
 	}
-	for name, current := range currentGroups {
+	for name, current := range fp.lastGroups {
 		if current.Deleted {
 			continue
 		}
@@ -119,9 +150,25 @@ func (fp *FlatSQLPersistence) Save(peers map[peer.ID]*TrustedPeer, groups map[st
 		if err := fp.storeGroupRecord(tombstone); err != nil {
 			return err
 		}
+		fp.lastGroups[name] = tombstone
 	}
 
 	return nil
+}
+
+// peerRecordsEquivalent reports whether two records carry the same registry
+// state, ignoring the write timestamp and provider signature (which change
+// on every serialization, not with the data).
+func peerRecordsEquivalent(a, b peerRegistryRecord) bool {
+	a.UpdatedAtMs, b.UpdatedAtMs = 0, 0
+	a.ProviderSignature, b.ProviderSignature = nil, nil
+	return reflect.DeepEqual(a, b)
+}
+
+func groupRecordsEquivalent(a, b peerGroupRecord) bool {
+	a.UpdatedAtMs, b.UpdatedAtMs = 0, 0
+	a.ProviderSignature, b.ProviderSignature = nil, nil
+	return reflect.DeepEqual(a, b)
 }
 
 // Load rebuilds the in-memory peer registry from the latest PRR/PGM records.
