@@ -278,7 +278,7 @@
       "id": "update.daemon_in_place",
       "requirementIds": ["R09.signed_update_parity"],
       "surfaces": ["cli", "desktop", "release"],
-      "providerServer": "https://updates.spacedatanetwork.org",
+      "providerServer": "https://sdn.spaceaware.io/updates",
       "acceptance": [
         "CLI check/stage/apply verifies SDN signed update feed metadata",
         "update stages and swaps a running daemon in place",

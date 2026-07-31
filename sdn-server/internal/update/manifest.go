@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
 )
 
 const ManifestSchema = "org.spacedatanetwork.update.v1"
@@ -70,6 +72,20 @@ type ManifestSigning struct {
 	Algorithm string `json:"algorithm"`
 	PublicKey string `json:"public_key,omitempty"`
 	Signature string `json:"signature"`
+
+	// StatementDomain selects WHICH preimage the signature covers. It is the
+	// update lane's half of the domain-separation contract introduced for
+	// module artifacts (internal/sigdomain, Seal Council 2026-07-30) and is
+	// carried INSIDE the signed document — CanonicalManifestBytes removes only
+	// signing.signature — so it is covered by the signature it describes and
+	// cannot be added, removed or altered in flight.
+	//
+	// Absent  -> LEGACY form: ed25519 over the canonical manifest bytes.
+	// Present -> it must be EXACTLY sigdomain.DomainUpdateManifestV1, and the
+	//            signature covers sigdomain.Statement(domain, sha256(canonical)).
+	//
+	// There is no third case and no fallback: see assertSignature.
+	StatementDomain string `json:"statement_domain,omitempty"`
 }
 
 type ManifestRollback struct {
@@ -444,7 +460,38 @@ func (m *Manifest) assertSignature(roots TrustedRoots) error {
 	if err != nil {
 		return err
 	}
-	if !ed25519.Verify(publicKey, canonical, signature) {
+
+	// TWO ACCEPTED FORMS, selected by a field that is itself signed. This
+	// mirrors what internal/modulert already does for module artifacts, and it
+	// is additive in the same way: a manifest with no statement_domain verifies
+	// byte-for-byte as it did before this branch existed, so nothing previously
+	// admitted is now refused.
+	//
+	// The asymmetry that makes it safe is that there is no DOWNGRADE path. A
+	// manifest that names a domain is verified ONLY against that domain's
+	// statement — never retried in legacy mode — so an attacker cannot strip
+	// the field to change which preimage is checked: strip it and the canonical
+	// bytes change, which invalidates the signature outright.
+	//
+	// And the domain is matched by EQUALITY against the one constant this lane
+	// may use, deliberately NOT by sigdomain.Registered(). A registry lookup
+	// would accept SDN-MODULE-PUBLICATION-V1 here, which is precisely the
+	// cross-protocol replay the registry exists to prevent (Hermes CONCUR
+	// condition, Seal Council 2026-07-31).
+	preimage := canonical
+	if domain := strings.TrimSpace(m.Signing.StatementDomain); domain != "" {
+		if domain != sigdomain.DomainUpdateManifestV1 {
+			return fmt.Errorf("unsupported update signature statement domain %q", domain)
+		}
+		sum := sha256.Sum256(canonical)
+		statement, err := sigdomain.Statement(sigdomain.DomainUpdateManifestV1, sum[:])
+		if err != nil {
+			return fmt.Errorf("build update signature statement: %w", err)
+		}
+		preimage = statement
+	}
+
+	if !ed25519.Verify(publicKey, preimage, signature) {
 		return errors.New("invalid update signature")
 	}
 	return nil

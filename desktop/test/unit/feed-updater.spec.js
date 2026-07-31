@@ -89,7 +89,7 @@ function signedPayload ({ privateKey, publicKey, updateId, version, sequence, bu
 }
 
 function feedFetchers (index, payloadsByVersion) {
-  const indexUrl = 'https://updates.spacedatanetwork.org/desktop/stable/darwin/arm64/index.json'
+  const indexUrl = 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/index.json'
   const jsonByUrl = { [indexUrl]: index }
   const bytesByUrl = {}
 

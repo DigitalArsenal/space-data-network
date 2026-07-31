@@ -62,7 +62,7 @@ async function fetchBytes (url) {
 }
 
 // The SDN feed updater downloads update payloads exclusively from the
-// SDN-owned signed update feed (https://updates.spacedatanetwork.org), never
+// SDN-owned signed update feed (https://sdn.spaceaware.io/updates), never
 // from inherited IPFS Desktop GitHub release feeds. A fresh instance is
 // created per check so the persisted sequence is always re-read.
 function createFeedUpdater () {
