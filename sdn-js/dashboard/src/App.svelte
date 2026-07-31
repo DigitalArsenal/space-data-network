@@ -38,6 +38,7 @@
   import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
   import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
   import { presenceSummary } from './peers.js';
+  import { parseHash, formatHash } from './route-url.js';
   import { createSemanticEngine } from './semantic.js';
   import { createRuntimeFeed, foldRuntime } from './runtime.js';
 
@@ -134,15 +135,23 @@
   let hideUntrustedOffline = $state(readHidePref());
   let sortKey = $state('trust');
   let sortDir = $state(1);
-  let selected = $state(null);
   /**
-   * The detail modal for THIS node, opened from the IDENTITY widget: '' closed,
-   * 'parsed' on the fields, 'qr' straight on the scannable card (owner directive
-   * 2026-07-30 — the QR belongs in a modal). It is a separate piece of state from
-   * `selected` so opening this node's own card cannot be confused with selecting
-   * a peer.
+   * WHICH MODAL IS OPEN IS AN ADDRESS, not a flag (IRIS ruling 2026-07-30 §5).
+   * `modalKind` is '' | 'node' | 'self' | 'peer' | 'operator', `modalId` the
+   * record it names, `modalView` the self card's fields-or-QR choice. The four
+   * dialogs this page can open are the four shapes route-url.js formats, and
+   * every open, close and correction below goes through the URL — a surface
+   * that set a `selected` flag directly would open a dialog the address bar
+   * never heard of, and Back would leave the app.
    */
-  let selfModal = $state('');
+  let modalKind = $state('');
+  let modalId = $state('');
+  let modalView = $state('');
+  /**
+   * A deep link to a record that is not here any more. Amber, said out loud,
+   * never a silent redirect: the link may have come from another node.
+   */
+  let routeNotice = $state('');
   let accountTab = $state('peers');
   let settingsOpen = $state(false);
   let page = $state(0);
@@ -161,6 +170,13 @@
   // check the node's fingerprint against our own hash of it.
   /** @type {{name?: string, trustLevel: string, fingerprint: string, xpub: string, identity: any} | null} */
   let session = $state(null);
+  /**
+   * Has /api/auth/me answered AT ALL yet? `session === null` is two facts —
+   * "asked, nobody is signed in" and "have not asked" — and the trust controls
+   * downstream have to tell them apart (IRIS §2): an empty assignable-tier list
+   * means "below Admin" only after the node has answered.
+   */
+  let sessionKnown = $state(false);
   // §14.1: the node derives its accepted admin keys from its own seed, so its
   // root recovery phrase always signs in as admin. `admin_configured` now
   // means "an admin can sign in at all" and is true on a fresh node, so it
@@ -236,28 +252,147 @@
    * leaves the current state alone rather than inventing a sign-out.
    */
   async function refreshSession() {
-    let me;
+    // `finally`, not the happy path: every exit from this function — 401, a
+    // fingerprint mismatch, a network failure — is still an ANSWER about what
+    // this session is, and the trust controls wait on exactly that.
     try {
-      me = await apiFetch('/api/auth/me');
-    } catch (err) {
-      if (err?.status === 401) clearSession();
-      return;
+      let me;
+      try {
+        me = await apiFetch('/api/auth/me');
+      } catch (err) {
+        if (err?.status === 401) clearSession();
+        return;
+      }
+      const held = session?.identity ?? null;
+      const local = held ? await xpubFingerprint(held.xpub) : '';
+      if (!fingerprintMatches(local, me?.xpub_fingerprint)) {
+        // The cookie names a DIFFERENT identity than the key in this page.
+        clearSession();
+        return;
+      }
+      session = {
+        name: me?.name ?? '',
+        trustLevel: me?.trust_level ?? '',
+        fingerprint: me?.xpub_fingerprint ?? session?.fingerprint ?? '',
+        xpub: session?.xpub ?? '',
+        identity: held,
+      };
+    } finally {
+      sessionKnown = true;
     }
-    const held = session?.identity ?? null;
-    const local = held ? await xpubFingerprint(held.xpub) : '';
-    if (!fingerprintMatches(local, me?.xpub_fingerprint)) {
-      // The cookie names a DIFFERENT identity than the key in this page.
-      clearSession();
-      return;
-    }
-    session = {
-      name: me?.name ?? '',
-      trustLevel: me?.trust_level ?? '',
-      fingerprint: me?.xpub_fingerprint ?? session?.fingerprint ?? '',
-      xpub: session?.xpub ?? '',
-      identity: held,
-    };
   }
+
+  /* ---------------------------------------------------------------------
+   * ROUTING. The URL is a HASH and that is forced, not chosen: this page is
+   * ONE embedded $APP served at `/`, and the Go handler 404s every other path
+   * (conjunction_ui.go), so `/peers` dies on reload. A fragment never reaches
+   * the origin at all. route-url.js is the whole grammar; this is the history.
+   *
+   * `navIntent` and `modalPushed` are deliberately NOT $state — they are how
+   * the write effect below is told which kind of history entry it is making,
+   * and a reactive read of them inside that effect would re-run it.
+   * --------------------------------------------------------------------- */
+  let navIntent = 'replace';
+  let modalPushed = false;
+
+  /** Rail: a new place, so a new entry — Back returns to the last one. */
+  function goRoute(id) {
+    if (id === route && !modalKind) return;
+    navIntent = 'push';
+    modalPushed = false;
+    routeNotice = '';
+    modalKind = '';
+    modalId = '';
+    modalView = '';
+    route = id;
+  }
+
+  /** The ACCOUNTS submenu. The owner named it, so Back must return to it. */
+  function goTab(id) {
+    if (id === accountTab && !modalKind) return;
+    navIntent = 'push';
+    modalPushed = false;
+    routeNotice = '';
+    modalKind = '';
+    modalId = '';
+    modalView = '';
+    accountTab = id;
+  }
+
+  function openModal(kind, id = '', view = '') {
+    navIntent = 'push';
+    modalPushed = true;
+    routeNotice = '';
+    modalKind = kind;
+    modalId = id;
+    modalView = view;
+  }
+
+  /**
+   * CLOSE. `history.back()` when this session pushed the modal open, so the
+   * forward entry is consumed rather than stacked; `replaceState` to the parent
+   * when the operator ARRIVED on the modal (a deep link), because Back must not
+   * take them out of the app.
+   */
+  function closeModal() {
+    if (modalPushed) {
+      modalPushed = false;
+      globalThis.history?.back();
+      return;
+    }
+    navIntent = 'replace';
+    modalKind = '';
+    modalId = '';
+    modalView = '';
+  }
+
+  /** A correction is never a history entry — the operator did not go anywhere. */
+  function correctRoute(message) {
+    navIntent = 'replace';
+    modalPushed = false;
+    modalKind = '';
+    modalId = '';
+    modalView = '';
+    routeNotice = message;
+  }
+
+  /** Read the address bar: on mount, and on every back/forward. */
+  function readHash() {
+    const parsed = parseHash(globalThis.location?.hash ?? '');
+    route = parsed.route;
+    if (parsed.route === 'accounts' && parsed.sub) accountTab = parsed.sub;
+    modalKind = parsed.modal;
+    modalId = parsed.modalId;
+    modalView = parsed.view;
+    routeNotice = '';
+    // We did not create this entry, so anything we write from here is a
+    // correction of it, and closing a modal we did not push replaces.
+    navIntent = 'replace';
+    modalPushed = false;
+  }
+  // Synchronously at init, not in onMount: the write effect below runs in the
+  // same flush as onMount, and a read that landed after it would push the
+  // landing route over the operator's deep link.
+  if (typeof globalThis.location !== 'undefined') readHash();
+
+  /**
+   * The ONE writer. Guarded against the read — compare before touching history
+   * — or every hashchange would push the entry it just consumed.
+   */
+  $effect(() => {
+    const want = formatHash({
+      route,
+      sub: route === 'accounts' ? accountTab : '',
+      modal: modalKind,
+      modalId,
+      view: modalView,
+    });
+    if (want === (globalThis.location?.hash ?? '')) return;
+    const intent = navIntent;
+    navIntent = 'replace';
+    if (intent === 'push') globalThis.history?.pushState(null, '', want);
+    else globalThis.history?.replaceState(null, '', want);
+  });
 
   function onSignedIn(result) {
     signInOpen = false;
@@ -365,6 +500,33 @@
    * row that is neither, the header says so in red rather than absorbing it into
    * a total.
    */
+  /**
+   * The modals, resolved FROM THE URL rather than held beside it. `$derived`,
+   * so a peer that leaves the feed while its modal is open closes it instead of
+   * freezing a row that no longer exists. The raw feed is the second lookup
+   * because `accountNodes` drops the self row by construction.
+   */
+  const selected = $derived(
+    modalKind === 'node' && modalId
+      ? accountNodes.find((n) => n.peerId === modalId) ??
+          nodes.find((n) => n.peerId === modalId) ??
+          null
+      : null
+  );
+  /** '' closed, 'parsed' on the fields, 'qr' straight on the scannable card. */
+  const selfModal = $derived(modalKind === 'self' ? (modalView === 'qr' ? 'qr' : 'parsed') : '');
+  /**
+   * A peer id in the URL that this node's current view does not carry. Only
+   * judged once the feed has answered at all — before that it is "not loaded",
+   * not "not there".
+   */
+  $effect(() => {
+    if (modalKind !== 'node' || !modalId || !connected || selected) return;
+    correctRoute(
+      "That peer is not in this node's current view. Peers are listed only while they are connected or pinned."
+    );
+  });
+
   const presence = $derived(presenceSummary(accountNodes));
   const visible = $derived(applySettings(accountNodes, { trustTier, hideUntrustedOffline }));
   const searching = $derived(Boolean(query.trim()));
@@ -462,6 +624,10 @@
     // is an admin sign-in path (§14.1) so the dialog can say so.
     refreshSession();
     readAuthStatus();
+    // Back/forward. `hashchange` and not `popstate`: every entry this page
+    // makes is a fragment, and pushState alone never fires either — which is
+    // what keeps the write effect from re-entering through the read.
+    globalThis.addEventListener?.('hashchange', readHash);
     const clock = setInterval(() => (now = Date.now()), 1000);
     // The NODE dashboard's runtime facts. Anonymous sources only until the
     // session effect above says otherwise.
@@ -473,6 +639,7 @@
       clock && clearInterval(clock);
       clearTimeout(warm);
       runtimeFeed.stop();
+      globalThis.removeEventListener?.('hashchange', readHash);
       unsub();
     };
   });
@@ -481,7 +648,7 @@
 <svelte:window onkeydown={(e) => e.key === 'Escape' && settingsOpen && (settingsOpen = false)} />
 
 <div class="root" style="background:{theme.pageGlow};color:{theme.textBody};">
-  <SdnRail sections={SECTIONS} active={route} onSelect={(id) => (route = id)} />
+  <SdnRail sections={SECTIONS} active={route} onSelect={goRoute} />
   <main>
     <!-- GRAMMAR L3 (iris-dashboard-grammar-law): the header and the panel column
          are siblings inside the SAME scroll container (`main`), so the reserved
@@ -558,6 +725,13 @@
     </div>
 
     <div class="body">
+      <!-- A DEEP LINK THAT NO LONGER RESOLVES SAYS SO. Same amber idiom the
+           add-a-peer partial-success notice uses, because it is the same kind
+           of fact: what you asked for did not entirely happen, and here is
+           exactly which part. -->
+      {#if routeNotice}
+        <div class="notice" style="color:{theme.amber};border-color:{theme.amber};">{routeNotice}</div>
+      {/if}
       {#if !connected}
         <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
           <span class="glyph" style="color:{theme.cyan};">◍</span>
@@ -590,10 +764,10 @@
                 {runtime}
                 {now}
                 {canEdit}
-                onSelectNode={(n) => (selected = n)}
+                onSelectNode={(n) => openModal('node', n.peerId)}
                 onEdit={() => (editing = true)}
-                onShowDetail={() => (selfModal = 'parsed')}
-                onShowQr={() => (selfModal = 'qr')}
+                onShowDetail={() => openModal('self', 'self')}
+                onShowQr={() => openModal('self', 'self', 'qr')}
               />
             </div>
           {/if}
@@ -684,7 +858,7 @@
             <PeerMap
               nodes={accountNodes}
               selectedId={selected?.peerId ?? ''}
-              onSelectNode={(n) => (selected = n)}
+              onSelectNode={(n) => openModal('node', n.peerId)}
               height="420px"
             />
           </Panel>
@@ -696,7 +870,7 @@
                 {sortKey}
                 {sortDir}
                 onSort={toggleSort}
-                onOpen={(n) => (selected = n)}
+                onOpen={(n) => openModal('node', n.peerId)}
                 {semanticActive}
               />
               <!-- L4: the ONE shared pager. This was an inline copy; the ACTIVITY
@@ -721,6 +895,7 @@
               {session}
               nodes={accountNodes}
               {rootAdminAvailable}
+              {sessionKnown}
               onRequestSignIn={() => (signInOpen = true)}
               view="peer-add"
             />
@@ -738,7 +913,7 @@
                 class="tab"
                 style="background:{accountTab === id ? 'rgba(53,201,216,0.18)' : 'transparent'};color:{accountTab === id ? theme.cyan : theme.textDim};border-color:{theme.panelBorder};"
                 aria-pressed={accountTab === id}
-                onclick={() => (accountTab = id)}
+                onclick={() => goTab(id)}
               >{label}</button>
             {/each}
           </div>
@@ -747,6 +922,17 @@
               {session}
               nodes={accountNodes}
               {rootAdminAvailable}
+              {sessionKnown}
+              openPeerId={modalKind === 'peer' ? modalId : ''}
+              openUserXpub={modalKind === 'operator' ? modalId : ''}
+              onOpenModal={openModal}
+              onCloseModal={closeModal}
+              onModalMissing={(kind) =>
+                correctRoute(
+                  kind === 'operator'
+                    ? "No operator key with that xpub is enrolled on this node. It may have been removed, or the link came from another node."
+                    : "No peer with that ID is in this node's registry. It may have been removed, or the link came from another node."
+                )}
               onRequestSignIn={() => (signInOpen = true)}
               view={accountTab}
             />
@@ -772,7 +958,7 @@
   </main>
 
   {#if selected}
-    <NodeModal node={selected} {now} onClose={() => (selected = null)} />
+    <NodeModal node={selected} {now} onClose={closeModal} />
   {/if}
 
   {#if selfModal && selfNode}
@@ -780,7 +966,7 @@
          fields by DETAIL and on the scannable QR by QR (owner directive
          2026-07-30; IRIS R6/R5). It replaces the THIS NODE page, whose every fact
          this view already carries. -->
-    <NodeModal node={selfNode} {now} initialView={selfModal} onClose={() => (selfModal = '')} />
+    <NodeModal node={selfNode} {now} initialView={selfModal} onClose={closeModal} />
   {/if}
 
   {#if signInOpen}
@@ -1148,6 +1334,17 @@
     border-bottom: 1px solid;
     padding-bottom: 7px;
     margin-bottom: 10px;
+  }
+  /* The route notice — AccountAdmin's `.err` box, same metrics, so the page has
+     ONE idea of what "something did not entirely happen" looks like. */
+  .notice {
+    border: 1px solid;
+    padding: var(--sdn-sp-5) var(--sdn-sp-6);
+    font-size: var(--sdn-fs-body);
+    letter-spacing: 0.04em;
+    line-height: var(--sdn-lh-data);
+    margin-bottom: var(--sdn-sp-6);
+    flex: none;
   }
   .account-admin { margin-top: var(--sdn-sp-7); flex: none; }
   .self-body { padding: 14px 18px 18px; }

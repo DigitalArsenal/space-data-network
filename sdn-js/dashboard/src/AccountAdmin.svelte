@@ -37,7 +37,7 @@
     multiaddrsFromVCard,
     pinDisplayName,
     pinIsLocked,
-    pinNoteLabel,
+    pinNoteIsPublishable,
     pinSourceLabel,
     pinnableNodes,
     pinnedAtLabel,
@@ -70,12 +70,39 @@
    * copies would each poll /api/auth/users and /api/peers, and an edit made in one
    * would leave the other stale.
    *
+   * WHICH MODAL IS OPEN IS NOT THIS COMPONENT'S STATE (IRIS ruling 2026-07-30
+   * §5). It is in the URL — `#/accounts/peers/<id>`, `#/accounts/keys/<xpub>` —
+   * so App.svelte owns it and hands it down as `openPeerId`/`openUserXpub`,
+   * and every open/close here goes back out through `onOpenModal`. Two copies
+   * of that fact would be two answers to "what is on screen", one of them in
+   * the address bar and wrong.
+   *
+   * `sessionKnown` is false until /api/auth/me has answered ONCE: an empty
+   * assignable-tier list means "below Admin" only after that, and "not yet"
+   * before it (§2).
+   *
    * @type {{
    *   session: any, nodes: any[], rootAdminAvailable?: boolean|null,
+   *   sessionKnown?: boolean, openPeerId?: string, openUserXpub?: string,
+   *   onOpenModal?: (kind: string, id: string) => void,
+   *   onCloseModal?: () => void,
+   *   onModalMissing?: (kind: string, id: string) => void,
    *   onRequestSignIn: () => void, view?: 'all' | 'keys' | 'peers' | 'peer-add',
    * }}
    */
-  let { session, nodes, rootAdminAvailable = null, onRequestSignIn, view = 'all' } = $props();
+  let {
+    session,
+    nodes,
+    rootAdminAvailable = null,
+    sessionKnown = false,
+    openPeerId = '',
+    openUserXpub = '',
+    onOpenModal,
+    onCloseModal,
+    onModalMissing,
+    onRequestSignIn,
+    view = 'all',
+  } = $props();
 
   const showKeys = $derived(view === 'all' || view === 'keys');
   const showPeers = $derived(view === 'all' || view === 'peers' || view === 'peer-add');
@@ -140,15 +167,41 @@
   let busy = $state('');
   /** xpub → derived peer id, or '' when a derivation ran and failed. */
   let derivedPeerIds = $state(new Map());
-  /** The row whose EDIT modal is open, by xpub / peer id. */
-  let editUserXPub = $state('');
-  let editPeerId = $state('');
+  /** The row whose EDIT modal is open — read from the URL, never held here. */
+  const editUserXPub = $derived(openUserXpub);
+  const editPeerId = $derived(openPeerId);
 
   const userList = $derived(users ?? []);
   const peerList = $derived(peers ?? []);
   const pinList = $derived(sortPins(pins ?? []));
   const editUser = $derived(userList.find((u) => u.xpub === editUserXPub) ?? null);
   const editPeer = $derived(peerList.find((p) => p.id === editPeerId) ?? null);
+  /**
+   * The feed row for the peer whose modal is open, when it has one. The
+   * registry knows a peer's trust; only the feed knows whether this node has
+   * ever had it on the line, which is the fact the contact card turns on (§3).
+   */
+  const editPeerNode = $derived(
+    editPeer ? (nodes ?? []).find((n) => String(n?.peerId ?? '') === editPeer.id) ?? null : null
+  );
+
+  /**
+   * A DEEP LINK TO A RECORD THAT IS NOT THERE is answered, not silently
+   * redirected (§5): the link may have come from another node, or the record
+   * may have been removed since. Only judged once the registry has actually
+   * answered — `loaded` with a non-null list — or a slow read would look like
+   * a missing row.
+   */
+  $effect(() => {
+    if (!openPeerId || !loaded || peers === null) return;
+    if (peerList.some((p) => p.id === openPeerId)) return;
+    onModalMissing?.('peer', openPeerId);
+  });
+  $effect(() => {
+    if (!openUserXpub || !loaded || users === null) return;
+    if (userList.some((u) => u.xpub === openUserXpub)) return;
+    onModalMissing?.('operator', openUserXpub);
+  });
   /** The pin record for the peer whose modal is open, or null when unpinned. */
   const editPeerPin = $derived(
     editPeer ? (pins ?? []).find((p) => String(p?.peer_id ?? '') === editPeer.id) ?? null : null
@@ -347,8 +400,8 @@
     run(`user:${user.xpub}`, async () => {
       await apiFetch(`/api/auth/users/${encodeURIComponent(user.xpub)}`, { method: 'DELETE' });
       // The row this modal is about no longer exists — closing it is the only
-      // honest outcome.
-      editUserXPub = '';
+      // honest outcome, and closing means the URL, which is where the modal is.
+      onCloseModal?.();
     });
 
   const setPeerTier = (peer, tier) =>
@@ -362,7 +415,7 @@
   const removePeer = (peer) =>
     run(`peer:${peer.id}`, async () => {
       await apiFetch(`/api/peers/${encodeURIComponent(peer.id)}`, { method: 'DELETE' });
-      editPeerId = '';
+      onCloseModal?.();
     });
 
   function addUser(e) {
@@ -536,8 +589,8 @@
                 <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events a11y_no_noninteractive_tabindex -->
                 <tbody
                   class="rec"
-                  onclick={() => (editUserXPub = user.xpub)}
-                  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (editUserXPub = user.xpub)}
+                  onclick={() => onOpenModal?.('operator', user.xpub)}
+                  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onOpenModal?.('operator', user.xpub)}
                 >
                   <tr class="primary">
                     <td class="mono" style="color:{theme.ice};" title={user.xpub}>{shortId(user.xpub)}</td>
@@ -545,15 +598,17 @@
                       {cell.id ? shortId(cell.id) : cell.label}
                     </td>
                     <td>
+                      <!-- `unnamed`, not `unknown` (IRIS §4): UNKNOWN is a trust
+                           tier, and this row renders one two columns away. -->
                       <span class="nm" class:unnamed={!(user.name || '').trim()} style="color:{(user.name || '').trim() ? theme.textBright : theme.textMuted};">
-                        {(user.name || '').trim() || 'unknown'}
+                        {(user.name || '').trim() || 'unnamed'}
                       </span>
                       {#if (user.organization || '').trim() && user.organization.trim() !== (user.name || '').trim()}
                         <span class="org" style="color:{theme.textDim};">· {user.organization}</span>
                       {/if}
                     </td>
                     <td class="right" rowspan="2" style="border-color:{theme.divider};">
-                      <GBtn title="Manage this operator key" onclick={() => (editUserXPub = user.xpub)}>EDIT</GBtn>
+                      <GBtn title="Manage this operator key" onclick={() => onOpenModal?.('operator', user.xpub)}>EDIT</GBtn>
                     </td>
                   </tr>
                   <tr class="meta">
@@ -649,21 +704,21 @@
                 <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events a11y_no_noninteractive_tabindex -->
                 <tbody
                   class="rec"
-                  onclick={() => (editPeerId = peer.id)}
-                  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (editPeerId = peer.id)}
+                  onclick={() => onOpenModal?.('peer', peer.id)}
+                  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onOpenModal?.('peer', peer.id)}
                 >
                   <tr class="primary">
                     <td class="mono" style="color:{theme.ice};" title={peer.id}>{shortId(peer.id)}</td>
                     <td>
                       <span class="nm" class:unnamed={!(peer.name || '').trim()} style="color:{(peer.name || '').trim() ? theme.textBright : theme.textMuted};">
-                        {(peer.name || '').trim() || 'unknown'}
+                        {(peer.name || '').trim() || 'unnamed'}
                       </span>
                       {#if (peer.organization || '').trim() && peer.organization.trim() !== (peer.name || '').trim()}
                         <span class="org" style="color:{theme.textDim};">· {peer.organization}</span>
                       {/if}
                     </td>
                     <td class="right" rowspan="2" style="border-color:{theme.divider};">
-                      <GBtn title="Manage this peer" onclick={() => (editPeerId = peer.id)}>EDIT</GBtn>
+                      <GBtn title="Manage this peer" onclick={() => onOpenModal?.('peer', peer.id)}>EDIT</GBtn>
                     </td>
                   </tr>
                   <tr class="meta">
@@ -779,7 +834,7 @@
                   <tr class="primary">
                     <td class="mono" style="color:{theme.ice};" title={pin.peer_id}>{shortId(pin.peer_id)}</td>
                     <td>
-                      <span class="nm" class:unnamed={pinDisplayName(pin) === 'unknown'} style="color:{pinDisplayName(pin) === 'unknown' ? theme.textMuted : theme.textBright};">
+                      <span class="nm" class:unnamed={pinDisplayName(pin) === 'unnamed'} style="color:{pinDisplayName(pin) === 'unnamed' ? theme.textMuted : theme.textBright};">
                         {pinDisplayName(pin)}
                       </span>
                     </td>
@@ -810,9 +865,14 @@
                           <span class="lbl" style="color:{theme.textFaint};">BY</span>
                           <span style="color:{theme.textDim};">{pin.pinned_by}</span>
                         {/if}
-                        {#if (pin.note ?? '').trim()}
+                        <!-- A CONFIG pin's "note" is a file path and a key, and
+                             it is never rendered as text (IRIS §6): the peer's
+                             own modal copies it to the clipboard instead. What
+                             survives here is an operator's own prose note, and
+                             only when it does not read like a location. -->
+                        {#if pinNoteIsPublishable(pin)}
                           <span class="sep" style="color:{theme.textFaint};">·</span>
-                          <span class="lbl" style="color:{theme.textFaint};">{pinNoteLabel(pin)}</span>
+                          <span class="lbl" style="color:{theme.textFaint};">NOTE</span>
                           <span style="color:{theme.textDim};">{pin.note}</span>
                         {/if}
                       </span>
@@ -839,7 +899,7 @@
               {#each pinnable as node (node.peerId)}
                 <div class="arow" style="border-color:{theme.divider};">
                   <span class="nm" class:unnamed={!(node.dn ?? '').trim()} style="color:{(node.dn ?? '').trim() ? theme.textBright : theme.textMuted};">
-                    {(node.dn ?? '').trim() || 'unknown'}
+                    {(node.dn ?? '').trim() || 'unnamed'}
                   </span>
                   <span class="mono aid" style="color:{theme.textDim};" title={node.peerId}>{shortId(node.peerId)}</span>
                   <GBtn title="Keep listing this peer after it disconnects" disabled={busy === `pin:${node.peerId}`} onclick={() => pinPeer(node)}>
@@ -859,12 +919,17 @@
         user={editUser}
         peerCell={cellFor(editUser)}
         tiers={userTiers}
+        tiersKnown={sessionKnown}
+        sessionTier={level}
+        hasSession={Boolean(session)}
+        {rootAdminAvailable}
         busy={busy === `user:${editUser.xpub}`}
         {error}
         onSetTrust={(tier) => setUserTier(editUser, tier)}
         onRename={(name) => renameUser(editUser, name)}
         onRemove={() => removeUser(editUser)}
-        onClose={() => (editUserXPub = '')}
+        {onRequestSignIn}
+        onClose={() => onCloseModal?.()}
       />
     {/if}
 
@@ -873,12 +938,18 @@
         peer={editPeer}
         pin={editPeerPin}
         pinsKnown={pins !== null}
+        node={editPeerNode}
         tiers={peerTiers}
+        tiersKnown={sessionKnown}
+        sessionTier={level}
+        hasSession={Boolean(session)}
+        {rootAdminAvailable}
         busy={busy === `peer:${editPeer.id}`}
         {error}
         onSetTrust={(tier) => setPeerTier(editPeer, tier)}
         onRemove={() => removePeer(editPeer)}
-        onClose={() => (editPeerId = '')}
+        {onRequestSignIn}
+        onClose={() => onCloseModal?.()}
       />
     {/if}
   {/if}

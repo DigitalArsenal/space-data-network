@@ -50,6 +50,29 @@ export function assignablePeerTiers(sessionLevel) {
   return PEER_ASSIGNABLE_TIERS.filter((t) => trustRank(t) <= Math.min(trustRank(sessionLevel), ADMIN));
 }
 
+/**
+ * IS THE TRUST CONTROL A CONTROL AT ALL?
+ *
+ * Owner, 2026-07-30: opened a peer, chose FULL, pressed APPLY, and EFFECTIVE
+ * stayed STANDARD. Below Admin both tier lists above return `[]`, and the modal
+ * padded the empty list with the peer's CURRENT tier — minting a one-option
+ * `<select>` beside a `variant="primary"` APPLY. A one-option select is not a
+ * control, and a primary button that cannot fire is a lie about what this
+ * session may do. The page's job is to never again render an armed control that
+ * cannot fire, and to say which of the reasons it is.
+ *
+ * `> 1`, not `> 0`: one option is the tier the peer already has.
+ *
+ * This is honesty, NOT security — the node re-checks every write (§7/§9.4).
+ *
+ * @returns {'loading'|'armed'|'needs-admin'|'needs-signin'}
+ */
+export function trustControlState({ hasSession, tiersKnown, tierCount }) {
+  if (!hasSession) return 'needs-signin';
+  if (!tiersKnown) return 'loading';
+  return tierCount > 1 ? 'armed' : 'needs-admin';
+}
+
 /** Highest-first ordering for a tier list rendered in a <select>. */
 export function tiersHighestFirst(tiers) {
   return [...tiers].sort((a, b) => trustRank(b) - trustRank(a));

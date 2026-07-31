@@ -40,7 +40,8 @@ import { parseVCard } from './vcard.js';
  *
  *   config     a pin written into the node's config file. `pinNote` is the real
  *              FILE + KEY an operator edits — it is not a human note, and it is
- *              the answer to "what does 'config trusted peer' mean".
+ *              never rendered as text (§6): it is data, and the only way it
+ *              leaves this page is the clipboard, on an explicit click.
  *   pinned     an operator pinned it on this node. `pinNote` is their own note.
  *   connected  it has a live connection right now. It is listed BECAUSE of that,
  *              and it disappears when it disconnects (owner ruling 1).
@@ -62,9 +63,15 @@ export function peerSource(node) {
       pinned: true,
       locked: true,
       note,
-      sentence: note
-        ? `Pinned by this node's config file — edit it at ${note}, not here.`
-        : "Pinned by this node's config file — edit it there, not here.",
+      // THE PATH IS NOT IN THE SENTENCE (IRIS ruling 2026-07-30 §6, revoking the
+      // earlier parking ruling). This string used to interpolate `note` — the
+      // real file and key — and the owner named the result twice on screen:
+      // `/etc/space-data-network/config.module-delivery-sidecar.yaml ·
+      // peers.trusted_peers`. An address the operator can reach from this page
+      // is vocabulary; a location on a box they may not even have a shell on is
+      // a leak. `note` stays in the DATA (the copy affordance sends it to the
+      // clipboard verbatim) and never reaches a rendered string.
+      sentence: "Pinned by this node's config file — edit it there, not here.",
     };
   }
   if (raw === 'pinned') {
@@ -204,11 +211,84 @@ export function pinSourceLabel(pin) {
   return pinIsLocked(pin) ? 'FROM CONFIG FILE' : 'PINNED BY OPERATOR';
 }
 
-/** What the note IS: a config pin's "note" is a file path and a key. */
-export const pinNoteLabel = (pin) => (pinIsLocked(pin) ? 'CONFIG' : 'NOTE');
+/**
+ * A LOCATION ON A BOX, recognised so it can be refused.
+ *
+ * Absolute unix/windows paths, config FILE names, and dotted config KEY paths
+ * standing alone at the end of a value. It is deliberately conservative in one
+ * direction only: a false positive costs an operator's own note its cell, a
+ * false negative puts a path back on the owner's screen for the third time.
+ */
+const RAW_LOCATION =
+  /(^|\s)(~?\/(etc|var|usr|opt|home|srv|root)\/|[A-Za-z]:\\)|\.(ya?ml|toml|db|sqlite|conf|ini|service|socket)\b|\b[a-z_]+(\.[a-z_]+){1,}\b\s*$/;
 
-/** NAME rule, unchanged (§16.4.3): "unknown", never an identifier promoted. */
-export const pinDisplayName = (pin) => String(pin?.name ?? '').trim() || 'unknown';
+/**
+ * A config pin's "note" is a filesystem path and a key, not prose — so it is
+ * PUBLISHABLE only when an operator wrote it themselves and it does not read
+ * like a location (IRIS ruling 2026-07-30 §6a). The only place a config
+ * location may go is the clipboard, on an explicit click.
+ */
+export const pinNoteIsPublishable = (pin) =>
+  !pinIsLocked(pin) && !RAW_LOCATION.test(String(pin?.note ?? '').trim());
+
+/**
+ * NAME rule (§16.4.3): never an identifier promoted — and "unnamed", never
+ * "unknown" (IRIS ruling 2026-07-30 §4). `unknown` is a TRUST TIER rendered in
+ * the same modal head: one word, two meanings, six inches apart.
+ */
+export const pinDisplayName = (pin) => String(pin?.name ?? '').trim() || 'unnamed';
+
+/**
+ * HAS THIS NODE EVER HAD THIS PEER ON THE LINE? The two facts the node actually
+ * measured — a recorded sighting, or a live connection right now. Nothing here
+ * infers NAT, a firewall, or reachability: this node cannot measure any of
+ * them, and the contact card's copy turns on this and only this.
+ */
+export const everConnected = (node) =>
+  Number(node?.lastSeen ?? 0) > 0 || node?.online === true;
+
+/**
+ * THE CONTACT CARD READ, as a state rather than as an HTTP code.
+ *
+ * A contact card is served by the PEER THAT OWNS IT. A failed read against a
+ * peer this node has never connected to is not an error — there is no card to
+ * serve — and rendering `HTTP 521` as the answer (which is what the owner saw)
+ * states the transport where the fact belongs.
+ *
+ * `read` is 'idle' (never attempted), 'reading' (in flight) or 'done'.
+ * @returns {'ok'|'not-read'|'reading'|'not-served-here'|'did-not-load'}
+ */
+export function cardState({ read = 'idle', ok = false, everConnected: seen = false } = {}) {
+  if (read === 'reading') return 'reading';
+  if (read !== 'done') return 'not-read';
+  if (ok) return 'ok';
+  return seen ? 'did-not-load' : 'not-served-here';
+}
+
+/**
+ * WHOSE NAME IS ON THE TITLE, and who said it.
+ *
+ * First non-empty wins: what the peer publishes about itself, then the FN of a
+ * card this node actually read, then the label an operator typed into the pin
+ * registry, then nothing — and "nothing" says `unnamed`, it does not promote an
+ * id, an organization, a pin note, or a provenance label to the NAME line. That
+ * last refusal is the `Config Trusted Peer` lesson: a manufactured name is worse
+ * than an admitted blank.
+ *
+ * Pure, and meant to be `$derived` in the view rather than copied into state:
+ * a name that arrives with a later card read supersedes without a refresh.
+ *
+ * @returns {{ name: string, origin: 'peer'|'operator'|'none' }}
+ */
+export function peerDisplayName({ peer, cardFN = '', pin = null } = {}) {
+  const published = String(peer?.name ?? '').trim();
+  if (published) return { name: published, origin: 'peer' };
+  const fn = String(cardFN ?? '').trim();
+  if (fn) return { name: fn, origin: 'peer' };
+  const label = String(pin?.name ?? '').trim();
+  if (label) return { name: label, origin: 'operator' };
+  return { name: 'unnamed', origin: 'none' };
+}
 
 /**
  * "PINNED 3h ago" — tolerant of unix seconds or RFC3339, and ABSENT when the
