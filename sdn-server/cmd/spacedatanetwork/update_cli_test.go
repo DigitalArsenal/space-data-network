@@ -24,7 +24,7 @@ func TestLoadBundleManifestAcceptsSignedManifest(t *testing.T) {
 		"channel": "beta",
 		"signature": "test-signature",
 		"update": {
-			"feedBaseUrl": "https://updates.spacedatanetwork.org",
+			"feedBaseUrl": "https://sdn.spaceaware.io/api/v1/updates",
 			"pubsubTopic": "/sdn/updates/v1/beta",
 			"updaterModule": "org.spacedatanetwork.updater",
 			"updaterWasm": "runtime/modules/org.spacedatanetwork.updater.wasm"
@@ -41,7 +41,7 @@ func TestLoadBundleManifestAcceptsSignedManifest(t *testing.T) {
 	if manifest.Channel != "beta" {
 		t.Fatalf("Channel = %q, want beta", manifest.Channel)
 	}
-	if manifest.Update.FeedBaseURL != "https://updates.spacedatanetwork.org" ||
+	if manifest.Update.FeedBaseURL != "https://sdn.spaceaware.io/api/v1/updates" ||
 		manifest.Update.PubsubTopic != "/sdn/updates/v1/beta" ||
 		manifest.Update.UpdaterModule != "org.spacedatanetwork.updater" ||
 		manifest.Update.UpdaterWASM != "runtime/modules/org.spacedatanetwork.updater.wasm" {
@@ -104,18 +104,18 @@ func TestLoadBundleManifestRejectsWhitespaceRequiredFields(t *testing.T) {
 }
 
 func TestProviderFeedIndexURLUsesCLIBundlePath(t *testing.T) {
-	got, err := providerFeedIndexURL("https://updates.spacedatanetwork.org/", "beta", "linux", "amd64")
+	got, err := providerFeedIndexURL("https://sdn.spaceaware.io/api/v1/updates/", "beta", "linux", "amd64")
 	if err != nil {
 		t.Fatalf("providerFeedIndexURL returned error: %v", err)
 	}
-	want := "https://updates.spacedatanetwork.org/cli-bundle/beta/linux/amd64/index.json"
+	want := "https://sdn.spaceaware.io/api/v1/updates/cli-bundle/beta/linux/amd64/index.json"
 	if got != want {
 		t.Fatalf("providerFeedIndexURL = %q, want %q", got, want)
 	}
 }
 
 func TestProviderFeedIndexURLRejectsHTTP(t *testing.T) {
-	_, err := providerFeedIndexURL("http://updates.spacedatanetwork.org", "beta", "linux", "amd64")
+	_, err := providerFeedIndexURL("http://sdn.spaceaware.io/api/v1/updates", "beta", "linux", "amd64")
 	if err == nil || !strings.Contains(err.Error(), "must use HTTPS") {
 		t.Fatalf("providerFeedIndexURL error = %v, want HTTPS rejection", err)
 	}

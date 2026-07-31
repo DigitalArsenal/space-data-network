@@ -23,6 +23,7 @@ import (
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/updatesign"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
@@ -71,6 +72,13 @@ type CoreAPIHandler struct {
 	// registerModuleSigningRoutes when this node holds a publisher key. nil
 	// means the signing endpoint was never mounted — see module_signing.go.
 	moduleSigner *modulesign.Signer
+
+	// updateSigner is the node's content-bound update-manifest signer, set by
+	// registerUpdateSigningRoutes when this node holds a publisher key. nil
+	// means the endpoint was never mounted — see update_signing.go. It is a
+	// separate signer from moduleSigner over the SAME key: one publisher key,
+	// two disjoint statement domains (council Q7, internal/sigdomain).
+	updateSigner *updatesign.Signer
 }
 
 // SDNPeerCounts mirrors epm.SDNPeerCounts for the /api/v1/stats peers block:
@@ -179,6 +187,14 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	// yields its peer read surface to a gateway flow still gets the signing
 	// door. See module_signing.go for why this route lives here.
 	h.registerModuleSigningRoutes(mux)
+
+	// Update-manifest signing (POST, Admin) and the public update feed (GET).
+	// Same reason as above for living here rather than in main.go's route
+	// block. Both are registered before the flow-mount branch returns, so a
+	// node that yields its peer read surface to a gateway flow still publishes
+	// and still signs. See update_signing.go and update_feed.go.
+	h.registerUpdateSigningRoutes(mux)
+	h.registerUpdateFeedRoutes(mux)
 
 	peersClaimedByFlow := flowClaimed != nil &&
 		(flowClaimed("/api/v1/peers") || flowClaimed("/api/v1/peers/"))
