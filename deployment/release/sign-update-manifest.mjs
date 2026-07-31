@@ -107,6 +107,128 @@ export function signUpdateManifest({ manifest, privateKey }) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// NODE-SIGNED RELEASES — the lane that actually ships.
+//
+// OWNER RULING 2026-07-30: the publisher key IS the node key, trusted through
+// the Adversarial-Security bond on its derived chain addresses. That key is
+// encrypted at rest with a machine-derived key and CANNOT leave host-01, while
+// build-locally-ship-binaries says the release is built here and never there.
+// So the bytes travel to the key: this function POSTs the manifest DOCUMENT to
+// the node's content-bound endpoint, the node canonicalizes and hashes it
+// itself, signs the domain-separated statement, and returns a detached
+// signature. `signUpdateManifest` above (local Ed25519 key) remains for tests
+// and for the legacy form; it is not the lane for a shipped release.
+
+export const UPDATE_MANIFEST_STATEMENT_DOMAIN = 'SDN-UPDATE-MANIFEST-V1';
+export const UPDATE_MANIFEST_SIGNING_PATH = '/api/v1/admin/updates/sign-manifest';
+
+/**
+ * Sign a manifest with the node's bonded key.
+ *
+ * The manifest is submitted WITH signing.statement_domain already set and
+ * WITHOUT signing.signature. That ordering is not cosmetic: the domain lives
+ * inside the canonical bytes, so it is covered by the signature it authorizes.
+ * If the caller could add it afterwards, it would be an unsigned assertion
+ * about a signed document.
+ *
+ * @param {object}  args.manifest  unsigned manifest (buildUpdateManifest output)
+ * @param {string}  args.nodeUrl   e.g. https://sdn.spaceaware.io
+ * @param {string}  args.token     admin session bearer token
+ * @param {Function} [args.fetchImpl] injected for tests
+ */
+export async function signUpdateManifestWithNode({ manifest, nodeUrl, token, fetchImpl = fetch }) {
+  if (!manifest || typeof manifest !== 'object') {
+    throw new Error('manifest is required');
+  }
+  const base = new URL(requiredString(nodeUrl, 'nodeUrl'));
+  if (base.protocol !== 'https:' && base.hostname !== 'localhost' && base.hostname !== '127.0.0.1') {
+    // A bearer token for the bonded publisher key must not cross a cleartext
+    // hop. Loopback is exempt because there is no hop.
+    throw new Error('node URL must use HTTPS (or loopback) to carry an admin session token');
+  }
+  requiredString(token, 'token');
+
+  const submitted = {
+    ...manifest,
+    signing: {
+      ...manifest.signing,
+      statement_domain: UPDATE_MANIFEST_STATEMENT_DOMAIN,
+    },
+  };
+  delete submitted.signing.signature;
+
+  const endpoint = new URL(UPDATE_MANIFEST_SIGNING_PATH, base).toString();
+  const response = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers: {
+      // NOT application/json: the endpoint's digest guard rejects the digest
+      // header/query positions, and the body is a manifest document. The
+      // content type is declared plainly so a proxy cannot re-encode it.
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(submitted),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`node refused to sign the update manifest (${response.status}): ${text.slice(0, 400)}`);
+  }
+
+  let result;
+  try {
+    result = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`node signing response was not JSON: ${error.message}`);
+  }
+  if (result.statement_domain !== UPDATE_MANIFEST_STATEMENT_DOMAIN) {
+    throw new Error(`node signed under an unexpected statement domain: ${result.statement_domain}`);
+  }
+  if (typeof result.signature !== 'string' || result.signature.length === 0) {
+    throw new Error('node signing response carried no signature');
+  }
+
+  const signed = {
+    ...submitted,
+    signing: { ...submitted.signing, signature: result.signature },
+  };
+
+  // VERIFY BEFORE RETURNING. The producer must never publish a manifest it has
+  // not itself confirmed verifiable: a release that fails at the client is
+  // indistinguishable, from the fleet's side, from an outage. This re-derives
+  // the statement locally and checks the signature against the key the node
+  // reported, so a canonicalization drift between producer and node is caught
+  // here rather than on every box in the cluster.
+  assertNodeSignatureVerifies(signed, result.public_key);
+
+  return { manifest: signed, signing: result };
+}
+
+function assertNodeSignatureVerifies(signed, publicKeyB64) {
+  if (typeof publicKeyB64 !== 'string' || publicKeyB64.length === 0) {
+    throw new Error('node signing response carried no public key to verify against');
+  }
+  const canonical = canonicalManifestBytes(signed);
+  const statement = Buffer.concat([
+    Buffer.from(UPDATE_MANIFEST_STATEMENT_DOMAIN, 'ascii'),
+    Buffer.from([0x00]),
+    Buffer.from(sha256Hex(canonical), 'hex'),
+  ]);
+  const publicKey = crypto.createPublicKey({
+    key: Buffer.from(publicKeyB64, 'base64'),
+    type: 'spki',
+    format: 'der',
+  });
+  const ok = crypto.verify(null, statement, publicKey, Buffer.from(signed.signing.signature, 'base64'));
+  if (!ok) {
+    throw new Error(
+      'the signature returned by the node does not verify over the manifest we submitted — ' +
+      'producer and node disagree about the canonical bytes; do NOT publish this release'
+    );
+  }
+}
+
 function requiredString(value, name) {
   if (typeof value !== 'string' || value.length === 0) {
     throw new Error(`${name} is required`);

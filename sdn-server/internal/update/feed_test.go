@@ -9,7 +9,7 @@ func TestProviderFeedSelectsHighestCompatibleCLIBundleUpdate(t *testing.T) {
 	raw := []byte(`{
 		"schema": "org.spacedatanetwork.update.index.v1",
 		"generated_at": "2026-06-22T00:00:00Z",
-		"feed_base_url": "https://updates.spacedatanetwork.org",
+		"feed_base_url": "https://sdn.spaceaware.io/updates",
 		"updates": [
 			{
 				"update_id": "cli-bundle-beta-linux-amd64-1.0.4",
@@ -17,8 +17,8 @@ func TestProviderFeedSelectsHighestCompatibleCLIBundleUpdate(t *testing.T) {
 				"sequence": 104,
 				"channel": "beta",
 				"target": {"platform": "linux", "arch": "amd64", "kind": "cli-bundle"},
-				"manifest_url": "https://updates.spacedatanetwork.org/cli-bundle/beta/linux/amd64/1.0.4/manifest.json",
-				"carrier_url": "https://updates.spacedatanetwork.org/cli-bundle/beta/linux/amd64/1.0.4/update.wasm"
+				"manifest_url": "https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64/1.0.4/manifest.json",
+				"carrier_url": "https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64/1.0.4/update.wasm"
 			},
 			{
 				"update_id": "cli-bundle-beta-linux-amd64-1.0.5",
@@ -26,8 +26,8 @@ func TestProviderFeedSelectsHighestCompatibleCLIBundleUpdate(t *testing.T) {
 				"sequence": 105,
 				"channel": "beta",
 				"target": {"platform": "linux", "arch": "amd64", "kind": "cli-bundle"},
-				"manifest_url": "https://updates.spacedatanetwork.org/cli-bundle/beta/linux/amd64/1.0.5/manifest.json",
-				"carrier_url": "https://updates.spacedatanetwork.org/cli-bundle/beta/linux/amd64/1.0.5/update.wasm"
+				"manifest_url": "https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64/1.0.5/manifest.json",
+				"carrier_url": "https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64/1.0.5/update.wasm"
 			},
 			{
 				"update_id": "desktop-beta-linux-amd64-1.0.6",
@@ -35,8 +35,8 @@ func TestProviderFeedSelectsHighestCompatibleCLIBundleUpdate(t *testing.T) {
 				"sequence": 106,
 				"channel": "beta",
 				"target": {"platform": "linux", "arch": "amd64", "kind": "desktop-app"},
-				"manifest_url": "https://updates.spacedatanetwork.org/desktop/beta/linux/amd64/1.0.6/manifest.json",
-				"carrier_url": "https://updates.spacedatanetwork.org/desktop/beta/linux/amd64/1.0.6/update.wasm"
+				"manifest_url": "https://sdn.spaceaware.io/updates/desktop/beta/linux/amd64/1.0.6/manifest.json",
+				"carrier_url": "https://sdn.spaceaware.io/updates/desktop/beta/linux/amd64/1.0.6/update.wasm"
 			}
 		]
 	}`)
@@ -64,7 +64,7 @@ func TestProviderFeedRejectsInsecurePayloadURLs(t *testing.T) {
 	raw := []byte(`{
 		"schema": "org.spacedatanetwork.update.index.v1",
 		"generated_at": "2026-06-22T00:00:00Z",
-		"feed_base_url": "https://updates.spacedatanetwork.org",
+		"feed_base_url": "https://sdn.spaceaware.io/updates",
 		"updates": [
 			{
 				"update_id": "cli-bundle-beta-linux-amd64-1.0.5",
@@ -72,8 +72,8 @@ func TestProviderFeedRejectsInsecurePayloadURLs(t *testing.T) {
 				"sequence": 105,
 				"channel": "beta",
 				"target": {"platform": "linux", "arch": "amd64", "kind": "cli-bundle"},
-				"manifest_url": "http://updates.spacedatanetwork.org/cli-bundle/beta/linux/amd64/1.0.5/manifest.json",
-				"carrier_url": "https://updates.spacedatanetwork.org/cli-bundle/beta/linux/amd64/1.0.5/update.wasm"
+				"manifest_url": "http://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64/1.0.5/manifest.json",
+				"carrier_url": "https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64/1.0.5/update.wasm"
 			}
 		]
 	}`)
@@ -88,7 +88,7 @@ func TestProviderFeedRejectsTargetMismatchWhenSelectingExplicitUpdate(t *testing
 	raw := []byte(`{
 		"schema": "org.spacedatanetwork.update.index.v1",
 		"generated_at": "2026-06-22T00:00:00Z",
-		"feed_base_url": "https://updates.spacedatanetwork.org",
+		"feed_base_url": "https://sdn.spaceaware.io/updates",
 		"updates": [
 			{
 				"update_id": "cli-bundle-beta-darwin-amd64-1.0.5",
@@ -96,8 +96,8 @@ func TestProviderFeedRejectsTargetMismatchWhenSelectingExplicitUpdate(t *testing
 				"sequence": 105,
 				"channel": "beta",
 				"target": {"platform": "darwin", "arch": "amd64", "kind": "cli-bundle"},
-				"manifest_url": "https://updates.spacedatanetwork.org/cli-bundle/beta/darwin/amd64/1.0.5/manifest.json",
-				"carrier_url": "https://updates.spacedatanetwork.org/cli-bundle/beta/darwin/amd64/1.0.5/update.wasm"
+				"manifest_url": "https://sdn.spaceaware.io/updates/cli-bundle/beta/darwin/amd64/1.0.5/manifest.json",
+				"carrier_url": "https://sdn.spaceaware.io/updates/cli-bundle/beta/darwin/amd64/1.0.5/update.wasm"
 			}
 		]
 	}`)
@@ -123,7 +123,7 @@ func TestProviderFeedReportsNoNewUpdateAtCurrentSequence(t *testing.T) {
 	raw := []byte(`{
 		"schema": "org.spacedatanetwork.update.index.v1",
 		"generated_at": "2026-06-22T00:00:00Z",
-		"feed_base_url": "https://updates.spacedatanetwork.org",
+		"feed_base_url": "https://sdn.spaceaware.io/updates",
 		"updates": [
 			{
 				"update_id": "cli-bundle-beta-linux-amd64-1.0.5",
@@ -131,8 +131,8 @@ func TestProviderFeedReportsNoNewUpdateAtCurrentSequence(t *testing.T) {
 				"sequence": 105,
 				"channel": "beta",
 				"target": {"platform": "linux", "arch": "amd64", "kind": "cli-bundle"},
-				"manifest_url": "https://updates.spacedatanetwork.org/cli-bundle/beta/linux/amd64/1.0.5/manifest.json",
-				"carrier_url": "https://updates.spacedatanetwork.org/cli-bundle/beta/linux/amd64/1.0.5/update.wasm"
+				"manifest_url": "https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64/1.0.5/manifest.json",
+				"carrier_url": "https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64/1.0.5/update.wasm"
 			}
 		]
 	}`)

@@ -139,6 +139,44 @@ function assertSequence (manifest, currentSequence) {
   }
 }
 
+// The ONE statement domain this lane may use. It mirrors
+// sigdomain.DomainUpdateManifestV1 (sdn-server/internal/sigdomain/sigdomain.go)
+// and is matched by EQUALITY, never by membership in the domain registry:
+// accepting any registered domain here would admit a module-publication
+// signature as an update manifest, which is the exact cross-protocol replay the
+// registry exists to prevent.
+const UPDATE_MANIFEST_STATEMENT_DOMAIN = 'SDN-UPDATE-MANIFEST-V1'
+
+// signatureStatement builds the domain-separated preimage:
+//
+//   domain || 0x00 || sha256(canonicalManifestBytes)
+//
+// Byte-identical to sigdomain.Statement in the Go tree — signer, fleet verifier
+// and desktop verifier all commit to the same construction, so they cannot
+// drift.
+function signatureStatement (domain, canonicalBytes) {
+  return Buffer.concat([
+    Buffer.from(domain, 'ascii'),
+    Buffer.from([0x00]),
+    crypto.createHash('sha256').update(canonicalBytes).digest()
+  ])
+}
+
+// TWO ACCEPTED FORMS, selected by a field that is itself signed.
+//
+// signing.statement_domain lives INSIDE the canonical bytes (canonicalization
+// removes only signing.signature), so it is covered by the signature it
+// describes. That is what makes it a security control rather than a hint:
+//
+//   absent  -> LEGACY form, ed25519 over the canonical manifest bytes. Verifies
+//              byte-for-byte as it did before this branch existed, so no
+//              previously-installable release becomes uninstallable.
+//   present -> must be EXACTLY the update domain, and the signature covers the
+//              statement. Never retried in legacy mode.
+//
+// There is no downgrade in either direction: strip the field and the canonical
+// bytes change, which invalidates the signature outright; add it to a legacy
+// manifest and the same thing happens.
 function assertSignature (manifest, trustedRoots) {
   const trustedPublicKey = trustedRoots?.[manifest.signing.key_id]
   if (!trustedPublicKey) {
@@ -148,9 +186,22 @@ function assertSignature (manifest, trustedRoots) {
     throw new Error('update signing key mismatch')
   }
 
+  const canonicalBytes = canonicalManifestBytes(manifest)
+  const statementDomain = typeof manifest.signing.statement_domain === 'string'
+    ? manifest.signing.statement_domain.trim()
+    : ''
+
+  let preimage = canonicalBytes
+  if (statementDomain !== '') {
+    if (statementDomain !== UPDATE_MANIFEST_STATEMENT_DOMAIN) {
+      throw new Error('unsupported update signature statement domain')
+    }
+    preimage = signatureStatement(UPDATE_MANIFEST_STATEMENT_DOMAIN, canonicalBytes)
+  }
+
   const valid = crypto.verify(
     null,
-    canonicalManifestBytes(manifest),
+    preimage,
     publicKeyFromBase64(trustedPublicKey),
     Buffer.from(manifest.signing.signature, 'base64')
   )
@@ -208,8 +259,10 @@ function verifyDownloadedUpdatePayload ({ manifest, wasmBytes, bundleBytes, ...o
 }
 
 module.exports = {
+  UPDATE_MANIFEST_STATEMENT_DOMAIN,
   canonicalManifestBytes,
   sha256Hex,
+  signatureStatement,
   validateUpdateManifest,
   verifyDownloadedUpdatePayload
 }
