@@ -3,6 +3,8 @@
 const fs = require('fs/promises')
 const path = require('path')
 const {
+  SDN_UPDATE_FEED_BASE_PATH,
+  SDN_UPDATE_FEED_BASE_URL,
   buildReleaseIndex,
   updateFeedRoot
 } = require('../../desktop/src/sdn-updater/release-feed')
@@ -16,15 +18,30 @@ async function writeJson (filePath, value) {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`)
 }
 
+// relativeFeedPath is the on-disk directory for a manifest, RELATIVE TO THE
+// FEED ROOT.
+//
+// It must be relative, not absolute: the generated tree is rsync'd to whatever
+// directory the serving route is pointed at (SDN_UPDATE_FEED_DIR), and that
+// directory already IS the feed root. Emitting the base URL's own path here
+// would nest the tree one full prefix too deep — `api/v1/updates/cli-bundle/…`
+// underneath a directory already served at `/api/v1/updates/` — and every
+// manifest URL the index advertises would 404.
+//
+// So the base path is subtracted rather than assumed empty, which is what the
+// original code did when the feed lived at the root of its own hostname.
 function relativeFeedPath (manifest) {
   const root = updateFeedRoot({
-    baseUrl: 'https://updates.spacedatanetwork.org',
+    baseUrl: SDN_UPDATE_FEED_BASE_URL,
     channel: manifest.channel,
     platform: manifest.target.platform,
     arch: manifest.target.arch,
     kind: manifest.target.kind
   })
-  return new URL(root).pathname.replace(/^\//, '')
+  const full = new URL(root).pathname
+  const base = SDN_UPDATE_FEED_BASE_PATH
+  const relative = base && full.startsWith(`${base}/`) ? full.slice(base.length) : full
+  return relative.replace(/^\//, '')
 }
 
 async function buildFeedFromFiles ({

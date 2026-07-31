@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const executableMode = 0o755;
-const defaultUpdateFeedBaseUrl = 'https://updates.spacedatanetwork.org';
+const defaultUpdateFeedBaseUrl = 'https://sdn.spaceaware.io/api/v1/updates';
 const updaterModuleId = 'org.spacedatanetwork.updater';
 const updaterWasmPath = 'runtime/modules/org.spacedatanetwork.updater.wasm';
 const hdWalletWasmPath = 'runtime/modules/hd-wallet-wasi.wasm';

@@ -79,8 +79,8 @@ test.describe('SDN staged updater install flow', () => {
     const updater = createStagedUpdater({ rootDir })
 
     const result = await updater.downloadVerifyAndStageUpdate({
-      manifestUrl: 'https://updates.spacedatanetwork.org/desktop/manifest.json',
-      carrierUrl: 'https://updates.spacedatanetwork.org/desktop/update.wasm',
+      manifestUrl: 'https://sdn.spaceaware.io/api/v1/updates/desktop/manifest.json',
+      carrierUrl: 'https://sdn.spaceaware.io/api/v1/updates/desktop/update.wasm',
       fetchJson: async () => manifest,
       fetchBytes: async () => wasmBytes,
       extractBundleBytes: async bytes => {
