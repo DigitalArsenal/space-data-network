@@ -94,7 +94,19 @@ func (h *CoreAPIHandler) registerUpdateFeedRoutes(mux *http.ServeMux) {
 }
 
 // makeUpdateFeedHandler serves the feed tree read-only.
+//
+// The root is symlink-resolved ONCE here rather than per request, because the
+// containment check below compares it against a symlink-resolved candidate
+// path. Comparing a resolved child to an unresolved parent fails for any root
+// reached through a symlink — /var -> /private/var on macOS, and, more to the
+// point in production, a feed directory placed on a mounted volume and reached
+// through a convenience symlink. That mismatch does not fail open; it fails
+// CLOSED, 404ing an otherwise healthy feed, which is the kind of outage that
+// gets diagnosed as "the update server is broken" rather than as a path bug.
 func makeUpdateFeedHandler(root string) http.HandlerFunc {
+	if resolvedRoot, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolvedRoot
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -176,6 +188,20 @@ func updateFeedRelPath(urlPath string) (string, bool) {
 	if strings.ContainsAny(rel, "\x00\\") {
 		return "", false
 	}
+
+	// REFUSE ".." rather than normalizing it away. path.Clean on an absolute
+	// path CLAMPS a leading "../" at the root instead of escaping, so a
+	// traversal attempt would be silently rewritten into a legitimate-looking
+	// request for a different file inside the feed root — served with a 200 and
+	// no trace that the client asked to leave. Refusing outright means the only
+	// paths this surface ever serves are the ones the generator actually laid
+	// down, and a probe reads as a probe in the logs.
+	for _, segment := range strings.Split(rel, "/") {
+		if segment == ".." {
+			return "", false
+		}
+	}
+
 	cleaned := path.Clean("/" + rel)
 	cleaned = strings.TrimPrefix(cleaned, "/")
 	if cleaned == "" || cleaned == "." || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
