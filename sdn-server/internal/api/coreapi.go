@@ -262,6 +262,10 @@ func (h *CoreAPIHandler) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"agent_version":     versioninfo.AgentVersion,
 		"suite_version":     versioninfo.SuiteVersion,
 		"standards_version": versioninfo.SpaceDataStandardsVersion,
+		// The Kubo fork this node is based on (kubo/version.go, read at
+		// generation time) — the dashboard header renders it beside the
+		// suite version (owner 2026-07-31).
+		"kubo_version": versioninfo.KuboVersion,
 	})
 }
 

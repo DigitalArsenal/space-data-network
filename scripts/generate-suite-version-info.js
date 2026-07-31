@@ -9,6 +9,16 @@ const TS_OUTPUT_PATH = path.join(REPO_ROOT, "sdn-js", "src", "version-info.gener
 const GO_OUTPUT_PATH = path.join(REPO_ROOT, "sdn-server", "internal", "versioninfo", "generated.go");
 const CHECK_MODE = process.argv.includes("--check");
 
+// The kubo fork in-repo is the single source of truth for the Kubo version
+// the node is based on (kubo/version.go CurrentVersionNumber) — read it,
+// never duplicate it into the manifest.
+function readKuboVersion() {
+  const src = fs.readFileSync(path.join(REPO_ROOT, "kubo", "version.go"), "utf8");
+  const m = src.match(/CurrentVersionNumber\s*=\s*"([^"]+)"/);
+  if (!m) throw new Error("kubo/version.go: CurrentVersionNumber not found");
+  return m[1];
+}
+
 function readManifest() {
   const raw = fs.readFileSync(MANIFEST_PATH, "utf8");
   const manifest = JSON.parse(raw);
@@ -64,6 +74,7 @@ export const FLATSQL_VERSION = ${escapeForTS(manifest.dependencies.flatsql)};
 export const HD_WALLET_WASM_VERSION = ${escapeForTS(manifest.dependencies.hdWalletWasm)};
 export const HD_WALLET_UI_VERSION = ${escapeForTS(manifest.dependencies.hdWalletUI)};
 export const IPFS_WEBUI_VERSION = ${escapeForTS(manifest.dependencies.ipfsWebUI)};
+export const KUBO_VERSION = ${escapeForTS(manifest.kuboVersion)};
 export const DEFAULT_UPDATE_CHANNEL = ${escapeForTS(manifest.updates.defaultChannel)};
 export const CURRENT_ADVERTISEMENT_FLAG = ${escapeForTS(manifest.advertisement.currentFlag)};
 export const SUPPORTED_ADVERTISEMENT_FLAGS = [
@@ -100,6 +111,7 @@ const (
 \tHDWalletWasmVersion = ${escapeForGo(manifest.dependencies.hdWalletWasm)}
 \tHDWalletUIVersion = ${escapeForGo(manifest.dependencies.hdWalletUI)}
 \tIPFSWebUIVersion = ${escapeForGo(manifest.dependencies.ipfsWebUI)}
+\tKuboVersion = ${escapeForGo(manifest.kuboVersion)}
 \tDefaultUpdateChannel = ${escapeForGo(manifest.updates.defaultChannel)}
 \tCurrentAdvertisementFlag = ${escapeForGo(manifest.advertisement.currentFlag)}
 )
@@ -128,6 +140,7 @@ function writeFile(targetPath, content) {
 
 function main() {
   const manifest = readManifest();
+  manifest.kuboVersion = readKuboVersion();
   writeFile(TS_OUTPUT_PATH, renderTS(manifest));
   writeFile(GO_OUTPUT_PATH, renderGo(manifest));
 }
