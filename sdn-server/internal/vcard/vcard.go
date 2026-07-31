@@ -97,9 +97,14 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 	})
 
 	// Distinguished Name -> FN (Formatted Name)
-	if dn := epm.DN(); dn != nil {
-		card.Add("FN", &vcard.Field{Value: string(dn)})
+	// Default node DNs embed libp2p's "<peer.ID 16*abc123>" short form —
+	// machine noise, never a contact name (same guard as the compact cards).
+	// vCard 3.0 requires FN, so noisy/absent DNs fall back like they do there.
+	fn := strings.TrimSpace(safeString(epm.DN()))
+	if fn == "" || strings.Contains(fn, "<peer.ID") {
+		fn = "SDN Node"
 	}
+	card.Add("FN", &vcard.Field{Value: fn})
 
 	// Legal Name -> ORG (Organization)
 	if legalName := epm.LEGAL_NAME(); legalName != nil {

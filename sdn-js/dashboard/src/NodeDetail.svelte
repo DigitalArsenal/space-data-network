@@ -106,9 +106,16 @@
    * initials block — never an invented picture.
    */
   const CARD_BASIC = new Set(['FN', 'N', 'ORG', 'TITLE', 'ROLE', 'EMAIL', 'TEL', 'ADR', 'URL']);
-  const cardName = $derived(
-    fields.find((f) => f.name === 'FN')?.values?.[0] || (node.name || '').trim() || 'unnamed'
-  );
+  /* Old node binaries publish EPMs whose DN is libp2p's "<peer.ID 16*abc123>"
+   * short form; a vCard FN carrying it is machine noise, not a name. */
+  const cardFN = $derived.by(() => {
+    const fn = (fields.find((f) => f.name === 'FN')?.values?.[0] || '').trim();
+    return fn.includes('<peer.ID') ? '' : fn;
+  });
+  const cardName = $derived.by(() => {
+    const name = (node.name || '').trim();
+    return cardFN || (name && name !== 'unknown' ? name : 'unnamed');
+  });
   const cardInitials = $derived(
     cardName === 'unnamed'
       ? '?'
