@@ -61,7 +61,7 @@ const vectorsPath = "testdata/statement-domain-vectors.json"
 // pins the SAME constant against ITS copy (space-data-module-sdk
 // test/statement-domain-parity.test.js), so the two copies cannot diverge
 // without a red suite on at least one side.
-const vectorsSHA256 = "cce2710ce486c57d701d49246695c614757447ffc9464c8825167ea89758cad7"
+const vectorsSHA256 = "00432b9115f49f6f15cf7e6bd0296f2f9eca0428d7ccdd98036b32469698000d"
 
 type statementDomainVectors struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -291,6 +291,12 @@ func TestWriteStatementDomainSignatureMaterial(t *testing.T) {
 	forged := append(append([]byte("SDN-MADE-UP-DOMAIN"), 0), sum[:]...)
 
 	entry := func(domain string, signedMessage []byte, signedHashHex string) map[string]any {
+		return entryWithAlgorithm(moduleSignatureAlgorithm, domain, signedMessage, signedHashHex, pubHex, priv)
+	}
+	entryAlg := func(algorithm, domain string, signedMessage []byte, signedHashHex string) map[string]any {
+		return entryWithAlgorithm(algorithm, domain, signedMessage, signedHashHex, pubHex, priv)
+	}
+	_ = func(domain string, signedMessage []byte, signedHashHex string) map[string]any {
 		e := map[string]any{
 			"algorithm":           moduleSignatureAlgorithm,
 			"keyId":               "janus-vector-key",
@@ -337,6 +343,30 @@ func TestWriteStatementDomainSignatureMaterial(t *testing.T) {
 			Why:                  "declared domain is whitespace-padded; both sides TrimSpace before comparing",
 			PortableHex:          hex.EncodeToString(portable),
 			SignatureEntry:       entry("  "+mod+"  ", statement(mod), contentHash),
+			TrustedPublicKeysHex: trusted,
+			Expect:               expect{Verified: true, Reason: "ok", StatementDomain: mod, ContentHashHex: contentHash},
+		},
+		{
+			Name:                 "domain-signed-ok-nel-padded-domain",
+			Why:                  "U+0085 NEL pads the domain: Go's strings.TrimSpace strips it and JS's String.trim does NOT, so this vector is the whole reason the SDK trims Go's whitespace set explicitly",
+			PortableHex:          hex.EncodeToString(portable),
+			SignatureEntry:       entry("\u0085"+mod+"\u0085", statement(mod), contentHash),
+			TrustedPublicKeysHex: trusted,
+			Expect:               expect{Verified: true, Reason: "ok", StatementDomain: mod, ContentHashHex: contentHash},
+		},
+		{
+			Name:                 "domain-bom-padded-is-refused",
+			Why:                  "U+FEFF BOM pads the domain: JS's String.trim strips it and Go's does NOT, so a naive JS verifier would ACCEPT what the node refuses",
+			PortableHex:          hex.EncodeToString(portable),
+			SignatureEntry:       entry("\ufeff"+mod, statement(mod), contentHash),
+			TrustedPublicKeysHex: trusted,
+			Expect:               expect{Verified: false, Reason: "unsupported_statement_domain", StatementDomain: "\ufeff" + mod, ContentHashHex: contentHash},
+		},
+		{
+			Name:                 "domain-signed-ok-uppercase-algorithm",
+			Why:                  "the node compares the algorithm with EqualFold after TrimSpace; an exact-match verifier would refuse what the node admits",
+			PortableHex:          hex.EncodeToString(portable),
+			SignatureEntry:       entryAlg("  ED25519 ", mod, statement(mod), contentHash),
 			TrustedPublicKeysHex: trusted,
 			Expect:               expect{Verified: true, Reason: "ok", StatementDomain: mod, ContentHashHex: contentHash},
 		},
@@ -428,4 +458,22 @@ func TestWriteStatementDomainSignatureMaterial(t *testing.T) {
 		t.Fatalf("write %s: %v", out, err)
 	}
 	t.Logf("wrote %d bytes of statement-domain signature material to %s", len(encoded), out)
+}
+
+// entryWithAlgorithm builds one signature-entry payload. The algorithm is a
+// parameter so a vector can pin the node's EqualFold/TrimSpace tolerance rather
+// than assume it.
+func entryWithAlgorithm(algorithm, domain string, signedMessage []byte, signedHashHex, pubHex string, priv ed25519.PrivateKey) map[string]any {
+	e := map[string]any{
+		"algorithm":           algorithm,
+		"keyId":               "janus-vector-key",
+		"publicKeyHex":        pubHex,
+		"signatureHex":        hex.EncodeToString(ed25519.Sign(priv, signedMessage)),
+		"signedHashHex":       signedHashHex,
+		"signedHashAlgorithm": "sha256-canonical-module-hash",
+	}
+	if domain != "" {
+		e["statementDomain"] = domain
+	}
+	return e
 }
