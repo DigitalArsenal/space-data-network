@@ -69,11 +69,14 @@ func InitializeFromConfig(cfg RegistryConfig) (*Registry, *TrustedConnectionGate
 
 		// Only add if not already present (don't overwrite persisted data)
 		if _, err := registry.GetPeer(info.ID); err == ErrPeerNotFound {
+			// peerFilenameSuffix, not ShortString(): the libp2p
+			// "<peer.ID 16*abc123>" machine form must never enter a
+			// stored display name.
 			tp := &TrustedPeer{
 				ID:         info.ID,
 				Addrs:      info.Addrs,
 				TrustLevel: Trusted,
-				Name:       "config:" + info.ID.ShortString(),
+				Name:       "config:" + peerFilenameSuffix(info.ID),
 			}
 			if err := registry.AddPeer(tp); err != nil {
 				log.Warnf("Failed to add trusted peer %s: %v", info.ID.ShortString(), err)

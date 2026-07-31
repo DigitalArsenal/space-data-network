@@ -972,6 +972,15 @@ type PeersConfig struct {
 	// These peers will be added to the registry with Trusted level on startup.
 	TrustedPeers []string `yaml:"trusted_peers"`
 
+	// EPMDir names a directory of operator-managed signed EPM records
+	// (*.epm, size-prefixed FlatBuffers). Each file is signature-verified
+	// and its peer id extracted at boot, then loaded into the peer registry
+	// — so an enrolled fleet peer's full crypto identity (xpub, key paths,
+	// EPM signature) is held from provisioning, even while the peer is
+	// offline (owner directive 2026-07-31: "on instantiation, once the keys
+	// are generated, you have all the info you need"). Empty disables.
+	EPMDir string `yaml:"epm_dir"`
+
 	// EnableDHT enables DHT-based peer discovery.
 	EnableDHT bool `yaml:"enable_dht"`
 
