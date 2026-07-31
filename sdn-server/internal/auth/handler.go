@@ -726,16 +726,23 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	session = h.maybeRefreshSessionCookie(w, r, session)
 
-	user, err := h.userStore.GetUser(session.XPub)
-	if err != nil || user == nil {
-		writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "user not found"})
-		return
+	// The trust level reported here MUST be the session's — the value every
+	// RequireTrust gate actually enforces. Reporting the store row's level
+	// instead let the two diverge in the wild: an Admin session over a
+	// config-sourced standard row was shown "standard" (the dashboard then
+	// disarmed controls the node would have authorized), and a root session
+	// with no row at all was 401'd out of the dashboard entirely. The row is
+	// consulted only for display metadata, and its absence is not an auth
+	// failure — the session already proved itself.
+	name := ""
+	if user, err := h.userStore.GetUser(session.XPub); err == nil && user != nil {
+		name = user.Name
 	}
 
 	writeJSON(w, http.StatusOK, authSessionUser{
-		XPubFingerprint: XPubFingerprint(user.XPub),
-		Name:            user.Name,
-		TrustLevel:      user.TrustLevel,
+		XPubFingerprint: XPubFingerprint(session.XPub),
+		Name:            name,
+		TrustLevel:      session.TrustLevel,
 	})
 }
 
