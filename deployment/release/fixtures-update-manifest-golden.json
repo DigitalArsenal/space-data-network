@@ -1,0 +1,58 @@
+{
+  "domain_signed": {
+    "bundle": {
+      "format": "tar.gz",
+      "hash": "1e6ed65d77d6364eeaed5a745ba5c4985ae2b700dd85d7cf7f027bdf294a33fc",
+      "size": 6
+    },
+    "channel": "beta",
+    "created_at": "2026-07-31T00:00:00Z",
+    "expires_at": "2036-07-31T00:00:00Z",
+    "schema": "org.spacedatanetwork.update.v1",
+    "sequence": 9,
+    "signing": {
+      "algorithm": "Ed25519",
+      "key_id": "goldenroot",
+      "signature": "OEqIXWI261k5AtWJeMlakiogc+elwVhcdFNKPdVgWEkHvaMPTkYqo9YAso/17AumsOokH+H2rMnmhLvo01KxBA==",
+      "statement_domain": "SDN-UPDATE-MANIFEST-V1"
+    },
+    "target": {
+      "arch": "amd64",
+      "kind": "cli-bundle",
+      "platform": "linux"
+    },
+    "update_id": "sdn-cli-golden",
+    "version": "9.9.9",
+    "wasm": {
+      "hash": "5803587e6791c11992f31cb91a035dbbcd5659b5370e88c4e2f4d3dbba9fa3b7"
+    }
+  },
+  "legacy_signed": {
+    "bundle": {
+      "format": "tar.gz",
+      "hash": "1e6ed65d77d6364eeaed5a745ba5c4985ae2b700dd85d7cf7f027bdf294a33fc",
+      "size": 6
+    },
+    "channel": "beta",
+    "created_at": "2026-07-31T00:00:00Z",
+    "expires_at": "2036-07-31T00:00:00Z",
+    "schema": "org.spacedatanetwork.update.v1",
+    "sequence": 9,
+    "signing": {
+      "algorithm": "Ed25519",
+      "key_id": "goldenroot",
+      "signature": "7iS7rg54nRnRI/tYSb5nQs0GId+gE2RXGa4jHxeJzchfNGrm+3D0wKrE1V3dQ3eGMLwyKyVXGZBOD6mt9NawDA=="
+    },
+    "target": {
+      "arch": "amd64",
+      "kind": "cli-bundle",
+      "platform": "linux"
+    },
+    "update_id": "sdn-cli-golden",
+    "version": "9.9.9",
+    "wasm": {
+      "hash": "5803587e6791c11992f31cb91a035dbbcd5659b5370e88c4e2f4d3dbba9fa3b7"
+    }
+  },
+  "trusted_root_spki_b64": "MCowBQYDK2VwAyEAebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ="
+}

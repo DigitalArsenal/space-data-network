@@ -91,6 +91,62 @@ The signing scheme is Ed25519 over canonical manifest bytes. SDN already uses
 Ed25519 for portable identity records and node attestations, so this keeps the
 update trust primitive consistent with the rest of the stack.
 
+### Who signs, and what the signature actually covers (2026-07-31)
+
+OWNER RULING 2026-07-30: **the publisher key IS the node key.** There is no
+separate update root and no delegation ceremony. Trust is priced by the
+Adversarial-Security bond on the chain addresses derived from that key, not by
+where the private half is stored. The delegated-release-key design described
+below this section is the ORIGINAL design and is not what ships; it is retained
+because delegation is still the right shape if the fleet ever outgrows one
+publisher.
+
+The node key cannot leave host-01 (machine-bound key-at-rest, 2026-07-28) and
+release artifacts are never built on a host (build-locally-ship-binaries). The
+resolution is a content-bound signing endpoint, the sibling of the module one:
+
+```text
+POST /api/v1/admin/updates/sign-manifest      (Admin session required)
+```
+
+The build box POSTs the manifest DOCUMENT with `signing.statement_domain` set
+and `signing.signature` absent. The node canonicalizes and hashes the document
+ITSELF and signs a domain-separated statement:
+
+```text
+statement = "SDN-UPDATE-MANIFEST-V1" || 0x00 || sha256(canonicalManifestBytes)
+signature = ed25519(nodeSigningKey, statement)
+```
+
+Three properties are non-optional and enforced in code: the domain separation
+above (so an update signature can never be replayed as a module publication or
+a dataset-publication signature and vice versa), the node never signing a
+caller-supplied digest (a digest is not a well-formed manifest, so it is
+structurally unsignable), and an append-only audit line per signature that is a
+GATE — an unauditable signature is discarded, not logged and returned.
+Audit: `~/.spacedatanetwork/logs/update-signing.audit.jsonl`, override
+`SDN_UPDATE_SIGNING_AUDIT_LOG`.
+
+**Two accepted verification forms.** `signing.statement_domain` lives inside the
+canonical bytes (canonicalization removes only `signing.signature`), so it is
+covered by the signature it describes. Absent means the legacy raw-canonical
+form, which verifies exactly as before; present means it must be EXACTLY
+`SDN-UPDATE-MANIFEST-V1` — matched by equality, never by domain-registry
+membership, because a registry lookup would admit a module signature here.
+There is no downgrade in either direction: adding or stripping the field changes
+the canonical bytes and invalidates the signature outright.
+
+Because old verifiers do not know the second form, they FAIL CLOSED on a
+domain-signed manifest rather than accepting it unverified. A box therefore
+needs a binary carrying this verifier before it can consume domain-signed
+releases — which is why the lane's first delivery to any given box is a
+bootstrap, not an update.
+
+The trust store must hold the node's key in **SPKI DER base64**. The fleet
+verifier also accepts raw hex, but the desktop verifier accepts SPKI only, so a
+hex root produces a trust store that works on one side and fails on the other.
+The endpoint logs the exact `{key_id: public_key}` pair to install at startup.
+
 Trusted update roots are stored outside mutable update payloads:
 
 - packaged desktop root trust store under app resources;
@@ -157,7 +213,7 @@ automatic installation is enabled.
 The SDN-owned update feed origin is:
 
 ```text
-https://updates.spacedatanetwork.org
+https://sdn.spaceaware.io/updates
 ```
 
 Desktop application payloads are indexed under:
@@ -193,7 +249,7 @@ node deployment/release/build-sdn-update-feed.js \
 `SDN_UPDATE_FEED_ENTRIES` as a comma-separated list of
 `manifest.json:update.wasm` pairs and writes the feed under
 `dist/release/update-feed` by default. Publication to
-`updates.spacedatanetwork.org` is a release-operations step after artifact
+`sdn.spaceaware.io/updates` is a release-operations step after artifact
 verification; the tooling intentionally does not claim a live deployment.
 
 ## Electron Application Update Path
@@ -207,7 +263,7 @@ automatic SDN Desktop app updates remain disabled, but any Electron automatic
 update feed must resolve to:
 
 ```text
-https://updates.spacedatanetwork.org/desktop/<channel>/<platform>/<arch>
+https://sdn.spaceaware.io/updates/desktop/<channel>/<platform>/<arch>
 ```
 
 Kubo runtime checks are separate from Electron app updates and may inspect
@@ -229,7 +285,7 @@ Use this process for an upstream IPFS Desktop/WebUI/Kubo refresh:
    IPFS Desktop app update feeds are still disabled.
 5. Build desktop/runtime/module payloads, sign manifests, verify payload hashes,
    and assemble the static SDN feed index.
-6. Publish the feed tree to `updates.spacedatanetwork.org`.
+6. Publish the feed tree to `sdn.spaceaware.io/updates`.
 7. Publish the signed manifest through the SDN network release path so clients
    consume SDN-owned metadata only.
 
@@ -246,7 +302,7 @@ unsigned, expired, outside policy, or below the allowed rollback floor.
 Emergency disable for a bad manifest or bad upstream refresh:
 
 1. Remove or quarantine the affected `index.json` entry at
-   `updates.spacedatanetwork.org`.
+   `sdn.spaceaware.io/updates`.
 2. Publish a corrected index that points clients at the last known-good signed
    manifest, or publish no update for that target while investigation is open.
 3. Add the bad manifest sequence, update id, and signing key id to the
@@ -326,8 +382,8 @@ node deployment/release/build-sdn-update-feed.js \
 
 # 3. Publish the feed tree, then on the target host stage and apply.
 spacedatanetwork update stage \
-  --manifest https://updates.spacedatanetwork.org/cli-bundle/beta/darwin/arm64/1.2.3/manifest.json \
-  --carrier https://updates.spacedatanetwork.org/cli-bundle/beta/darwin/arm64/1.2.3/update.wasm
+  --manifest https://sdn.spaceaware.io/updates/cli-bundle/beta/darwin/arm64/1.2.3/manifest.json \
+  --carrier https://sdn.spaceaware.io/updates/cli-bundle/beta/darwin/arm64/1.2.3/update.wasm
 spacedatanetwork update apply
 ```
 

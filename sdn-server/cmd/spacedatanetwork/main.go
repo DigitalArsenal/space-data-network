@@ -308,6 +308,23 @@ func runStatus(cmd *cobra.Command) error {
 	return writeDaemonStatus(cmd.Context(), out, baseURL)
 }
 
+// daemonHealthPayload tolerates both health shapes the daemon has shipped:
+// the data-api liveness handler emits {"status":"ok"} and has never emitted
+// the "healthy" boolean this CLI historically decoded — which made every node
+// report unhealthy forever. An explicit "healthy" field, when present, wins.
+type daemonHealthPayload struct {
+	Healthy *bool          `json:"healthy"`
+	Status  string         `json:"status"`
+	Details map[string]any `json:"details"`
+}
+
+func (h daemonHealthPayload) ok() bool {
+	if h.Healthy != nil {
+		return *h.Healthy
+	}
+	return strings.EqualFold(h.Status, "ok")
+}
+
 func writeDaemonStatus(ctx context.Context, out io.Writer, baseURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/v1/data/health", nil)
 	if err != nil {
@@ -330,10 +347,7 @@ func writeDaemonStatus(ctx context.Context, out io.Writer, baseURL string) error
 		return nil
 	}
 
-	var health struct {
-		Healthy bool           `json:"healthy"`
-		Details map[string]any `json:"details"`
-	}
+	var health daemonHealthPayload
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
 		fmt.Fprintln(out, "daemon_status=unhealthy")
 		fmt.Fprintln(out, "data_health=unhealthy")
@@ -341,7 +355,7 @@ func writeDaemonStatus(ctx context.Context, out io.Writer, baseURL string) error
 		return nil
 	}
 
-	if health.Healthy {
+	if health.ok() {
 		fmt.Fprintln(out, "daemon_status=running")
 		fmt.Fprintln(out, "data_health=healthy")
 	} else {

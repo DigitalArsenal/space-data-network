@@ -181,7 +181,7 @@ spacedatanetwork update stage
 spacedatanetwork update apply
 ```
 
-The update feed is rooted at `updates.spacedatanetwork.org`. The daemon update
+The update feed is rooted at `sdn.spaceaware.io/updates`. The daemon update
 path stages the replacement, swaps the running bundle in place, restarts the
 daemon, checks health, and rolls back if the updated daemon does not come back
 healthy.
