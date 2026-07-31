@@ -12,6 +12,7 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MBL"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/ipfs/kubo/sdn/sigdomain"
 )
 
 // Module publication-trailer signature verification (loop I1 — defensive
@@ -50,6 +51,81 @@ type moduleSignaturePayload struct {
 	SignatureHex        string `json:"signatureHex"`
 	SignedHashHex       string `json:"signedHashHex"`
 	SignedHashAlgorithm string `json:"signedHashAlgorithm"`
+
+	// StatementDomain names the DOMAIN-SEPARATED statement the signature
+	// covers, and is the field the node's own signing endpoint sets
+	// (sdn-server/internal/modulesign, Seal Council 2026-07-30). See
+	// signedMessageForPayload.
+	StatementDomain string `json:"statementDomain"`
+}
+
+// decodeModuleSignaturePayload decodes the signature entry STRICTLY. Go's
+// encoding/json matches field names case-insensitively; the SDK's JS verifier
+// does not. A trailer spelling "StatementDomain" would therefore take the
+// domain path here and the LEGACY path in the SDK — same artifact, opposite
+// verdicts, node permissive. MUST STAY IN LOCKSTEP with the sdn-server twin.
+func decodeModuleSignaturePayload(entryPayload []byte, out *moduleSignaturePayload) error {
+	if err := json.Unmarshal(entryPayload, out); err != nil {
+		return fmt.Errorf("module signature entry payload is not valid JSON: %w", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(entryPayload, &raw); err != nil {
+		return fmt.Errorf("module signature entry payload is not a JSON object: %w", err)
+	}
+	known := map[string]bool{
+		"algorithm": true, "keyId": true, "publicKeyHex": true,
+		"signatureHex": true, "signedHashHex": true,
+		"signedHashAlgorithm": true, "statementDomain": true,
+	}
+	for key := range raw {
+		if known[key] {
+			continue
+		}
+		for exact := range known {
+			if strings.EqualFold(key, exact) {
+				return fmt.Errorf(
+					"module signature entry payload spells %q; the wire form is the module SDK's camelCase JSON and the correct spelling is %q",
+					key, exact)
+			}
+		}
+	}
+	return nil
+}
+
+// signedMessageForPayload returns the exact bytes an artifact's signature must
+// verify over, and is where the DOMAIN SEPARATION contract is enforced on the
+// reading side.
+//
+// MUST STAY BYTE-COMPATIBLE with sdn-server/internal/modulert's function of the
+// same name: both binaries run on host-01 and must agree about every artifact.
+//
+// TWO FORMS, and the artifact chooses, not policy:
+//
+//   - statementDomain PRESENT — the node-signed form. The signature covers
+//     sigdomain.Statement(domain, contentHash), and the domain must be EXACTLY
+//     DomainModulePublicationV1: a registered-but-different domain (the
+//     update-manifest domain) is refused, so a signature minted for a signed
+//     update can never be stapled into a module trailer.
+//
+//   - statementDomain ABSENT — the legacy SDK-signed form
+//     (space-data-module-sdk/src/bundle/signing.js:361, a signature over the
+//     bare hash bytes). Byte-identical to previous behavior, so every artifact
+//     already in the catalog keeps verifying.
+func signedMessageForPayload(payload moduleSignaturePayload, contentHash []byte) ([]byte, string, error) {
+	domain := strings.TrimSpace(payload.StatementDomain)
+	if domain == "" {
+		return contentHash, "", nil
+	}
+	if domain != sigdomain.DomainModulePublicationV1 {
+		return nil, domain, fmt.Errorf(
+			"module signature declares statement domain %q; a module artifact must be signed under %q",
+			domain, sigdomain.DomainModulePublicationV1)
+	}
+	statement, err := sigdomain.Statement(domain, contentHash)
+	if err != nil {
+		return nil, domain, err
+	}
+	return statement, domain, nil
 }
 
 // ModuleSignaturePolicy is the operator-controlled trust policy for
@@ -112,10 +188,14 @@ type ModuleSignatureStatus struct {
 	// KeyID is the optional signer-supplied key identifier from the
 	// signature entry.
 	KeyID string
+	// StatementDomain is the domain-separation label the signature declared,
+	// or "" for the legacy bare-digest form. Non-empty means the signature
+	// covered sigdomain.Statement(domain, ContentHash).
+	StatementDomain string
 	// Reason is a short machine-checkable explanation: "unsigned", "ok",
 	// "untrusted_signer", "invalid_signature", "hash_mismatch",
 	// "invalid_trailer", "unsupported_algorithm", "invalid_public_key",
-	// "invalid_signature_payload".
+	// "invalid_signature_payload", "unsupported_statement_domain".
 	Reason string
 	// SignatureScope is "module" for the legacy portable-module digest and
 	// "bundle" when the signature binds every non-signature MBL member.
@@ -219,16 +299,31 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 	status.Signed = true
 
 	var payload moduleSignaturePayload
-	if jsonErr := json.Unmarshal(entryPayload, &payload); jsonErr != nil {
+	if decodeErr := decodeModuleSignaturePayload(entryPayload, &payload); decodeErr != nil {
 		status.Reason = "invalid_signature_payload"
-		return portable, status, fmt.Errorf("module signature entry payload is not valid JSON: %w", jsonErr)
+		return portable, status, decodeErr
 	}
 	if !strings.EqualFold(strings.TrimSpace(payload.Algorithm), moduleSignatureAlgorithm) {
 		status.Reason = "unsupported_algorithm"
 		return portable, status, fmt.Errorf("unsupported module signature algorithm %q", payload.Algorithm)
 	}
 	status.KeyID = payload.KeyID
-	if payload.SignedHashAlgorithm == bundleSignatureHashAlgorithm {
+
+	// WHICH BASIS DID THIS SIGNATURE COVER? See the sdn-server twin for the
+	// full reasoning. This branch used to test ONLY the bundle algorithm, and
+	// tested it before the domain was ever looked at, so an artifact declaring
+	// both would have been verified with its statement domain ignored — the
+	// cross-domain replay guard silently off.
+	declaresDomain := strings.TrimSpace(payload.StatementDomain) != ""
+	declaresBundle := strings.TrimSpace(payload.SignedHashAlgorithm) == bundleSignatureHashAlgorithm
+	if declaresDomain && declaresBundle {
+		status.StatementDomain = strings.TrimSpace(payload.StatementDomain)
+		status.Reason = "ambiguous_signature_scope"
+		return portable, status, fmt.Errorf(
+			"module signature declares statement domain %q AND hash algorithm %q; these are different preimages and an artifact must declare exactly one",
+			status.StatementDomain, bundleSignatureHashAlgorithm)
+	}
+	if declaresBundle {
 		return verifyWholeBundleSignature(wasmBytes, trustedKeys)
 	}
 
@@ -255,6 +350,16 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 		return portable, status, fmt.Errorf("module signature covers content hash %s, portable artifact hashes to %s", signedHash, status.ContentHash)
 	}
 
+	// Resolve WHAT the signature must cover before asking WHO signed it: a
+	// wrong statement domain is a property of the artifact and must be
+	// reported as such whether or not the signer happens to be trusted.
+	signedMessage, statementDomain, domainErr := signedMessageForPayload(payload, sum[:])
+	status.StatementDomain = statementDomain
+	if domainErr != nil {
+		status.Reason = "unsupported_statement_domain"
+		return portable, status, domainErr
+	}
+
 	trustedSigner := false
 	for _, key := range trustedKeys {
 		if len(key) == ed25519.PublicKeySize && hex.EncodeToString(key) == pubKeyHex {
@@ -267,7 +372,7 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 		return portable, status, fmt.Errorf("module signer %s is not a trusted publisher key", pubKeyHex)
 	}
 
-	if !ed25519.Verify(ed25519.PublicKey(pubKeyBytes), sum[:], sigBytes) {
+	if !ed25519.Verify(ed25519.PublicKey(pubKeyBytes), signedMessage, sigBytes) {
 		status.Reason = "invalid_signature"
 		return portable, status, errors.New("module publication signature verification failed")
 	}
@@ -352,9 +457,9 @@ func verifyWholeBundleSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 	status.Signed = true
 
 	var payload moduleSignaturePayload
-	if err := json.Unmarshal(decoded.signaturePayload, &payload); err != nil {
+	if err := decodeModuleSignaturePayload(decoded.signaturePayload, &payload); err != nil {
 		status.Reason = "invalid_signature_payload"
-		return portable, status, fmt.Errorf("module signature entry payload is not valid JSON: %w", err)
+		return portable, status, err
 	}
 	if !strings.EqualFold(strings.TrimSpace(payload.Algorithm), moduleSignatureAlgorithm) {
 		status.Reason = "unsupported_algorithm"

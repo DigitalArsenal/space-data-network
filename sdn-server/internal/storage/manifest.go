@@ -725,7 +725,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 			if err != nil {
 				return imported, fmt.Errorf("store imported %s record %s: %w", index.SchemaName, record.CID, err)
 			}
-			if err := upsertRecordIndexExec(tx, index.SchemaName, record.CID, now, data); err != nil {
+			if err := upsertRecordIndexExec(tx, &s.recordIndexRowIDs, index.SchemaName, record.CID, now, data); err != nil {
 				log.Warnf("Failed to index imported %s record %s: %v", index.SchemaName, record.CID[:16]+"...", err)
 			}
 			event, err := s.recordCatalogUpsertEvent(tx, index.SchemaName, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now, data)

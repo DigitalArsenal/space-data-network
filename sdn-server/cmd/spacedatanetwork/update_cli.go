@@ -667,13 +667,11 @@ func probeDaemonHealth(ctx context.Context, client *http.Client, rawAdminURL str
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		return fmt.Errorf("daemon health rejected: %s %s", resp.Status, strings.TrimSpace(string(data)))
 	}
-	var health struct {
-		Healthy bool `json:"healthy"`
-	}
+	var health daemonHealthPayload
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
 		return fmt.Errorf("decode daemon health: %w", err)
 	}
-	if !health.Healthy {
+	if !health.ok() {
 		return errors.New("daemon reported unhealthy")
 	}
 	return nil

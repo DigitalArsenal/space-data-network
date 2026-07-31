@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -132,7 +133,7 @@ func newOMMDatabase(t *testing.T, rt *Runtime, name string) *Database {
 func TestEmbeddedArtifact(t *testing.T) {
 	sum := sha256.Sum256(EmbeddedWasm())
 	// Must match the provenance block in README.md.
-	const want = "1c53398ae6dc76ec806a3e4724461c6ccc82b6fe8861c6a1a42efcfa4b4c7f64"
+	const want = "4d17fc5f4936305a005bfc5c63c550a58e448412900299ac7d6adc63ba0137e9"
 	if got := hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("embedded flatsql-wasi-noeh.wasm sha256 = %s, want %s (update README provenance if the pin moved)", got, want)
 	}
@@ -197,9 +198,33 @@ func TestAOTCache(t *testing.T) {
 	if !rt.AOT() {
 		t.Fatal("expected AOT-compiled runtime (compiler unavailable?)")
 	}
+	// The cache retains the current artifact AND its predecessor on purpose
+	// (aotRetainedArtifactsPerPrefix — a rollback must come up AOT, not
+	// silently interpreted), so assert the POLICY, not "exactly one file":
+	// the artifact for the engine bytes under test must be present, and the
+	// prefix must stay inside the retention bound.
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("AOT cache dir entries: %v err=%v", entries, err)
+	if err != nil {
+		t.Fatalf("read AOT cache dir: %v", err)
+	}
+	sum := sha256.Sum256(EmbeddedWasm())
+	wantName := "flatsql-" + hex.EncodeToString(sum[:])[:16] + "-we" + RuntimeVersion() + ".aot.wasm"
+	found := false
+	engineArtifacts := 0
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "flatsql-") {
+			engineArtifacts++
+		}
+		if entry.Name() == wantName {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("AOT artifact %s missing; cache dir holds %v", wantName, entries)
+	}
+	if engineArtifacts > aotRetainedArtifactsPerPrefix {
+		t.Fatalf("engine AOT artifacts = %d, retention bound is %d: %v",
+			engineArtifacts, aotRetainedArtifactsPerPrefix, entries)
 	}
 
 	// Engine works end-to-end on the compiled artifact.

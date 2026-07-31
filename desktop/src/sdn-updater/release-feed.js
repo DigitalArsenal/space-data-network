@@ -1,5 +1,21 @@
-const SDN_UPDATE_FEED_BASE_URL = 'https://updates.spacedatanetwork.org'
-const SDN_UPDATE_FEED_HOSTNAME = new URL(SDN_UPDATE_FEED_BASE_URL).hostname
+// OWNER RULING 2026-07-30 (graph/tasks/sdn-signed-updater.md): the update
+// server RUNS ON sdn.spaceaware.io. updates.spacedatanetwork.org is MOOT — it
+// was never allocated, and its unobtainable DNS/HTTPS is what parked this task
+// from 2026-05 until the ruling. Do not resurrect it.
+//
+// The path prefix is part of the base URL because host-01 has no web server in
+// front of the daemon: the SDN daemon itself owns :443, and it serves the feed
+// as a top-level static subtree (sdn-server/internal/api/update_feed.go mounts
+// /updates/), the same shape the node already uses for /wallet-wasm/ and
+// /wallet-ui/. It is NOT under /api/: a require_auth node default-denies every
+// /api/ path that is not on a literal allow-list, and a feed the fleet cannot
+// read without a session is not a feed.
+const SDN_UPDATE_FEED_BASE_URL = 'https://sdn.spaceaware.io/updates'
+const SDN_UPDATE_FEED_ORIGIN = new URL(SDN_UPDATE_FEED_BASE_URL)
+const SDN_UPDATE_FEED_HOSTNAME = SDN_UPDATE_FEED_ORIGIN.hostname
+// Normalized with no trailing slash so it can be prefix-matched against a
+// request path without an off-by-one at the boundary.
+const SDN_UPDATE_FEED_BASE_PATH = SDN_UPDATE_FEED_ORIGIN.pathname.replace(/\/$/, '')
 
 function normalizeBaseUrl (baseUrl = SDN_UPDATE_FEED_BASE_URL) {
   const parsed = new URL(baseUrl)
@@ -67,12 +83,17 @@ function updatePayloadFeedUrls ({ baseUrl = SDN_UPDATE_FEED_BASE_URL, channel, p
   }
 }
 
+// The inherited IPFS Desktop updater would happily take a GitHub release feed;
+// this assertion is what keeps SDN Desktop pinned to SDN-owned metadata. It
+// checks the feed PATH as well as the origin because sdn.spaceaware.io now
+// serves the node dashboard and API from the same origin — origin alone no
+// longer distinguishes "the update feed" from "anything else this host serves".
 function assertSdnOwnedDesktopUpdateFeedUrl (feedUrl) {
   const parsed = new URL(feedUrl)
   if (parsed.protocol !== 'https:' || parsed.hostname !== SDN_UPDATE_FEED_HOSTNAME) {
     throw new Error('SDN desktop updates must use the SDN update feed origin')
   }
-  if (!parsed.pathname.startsWith('/desktop/')) {
+  if (!parsed.pathname.startsWith(`${SDN_UPDATE_FEED_BASE_PATH}/desktop/`)) {
     throw new Error('SDN desktop updates must use the desktop update feed path')
   }
 }
@@ -129,6 +150,8 @@ function buildReleaseIndex ({
 
 module.exports = {
   SDN_UPDATE_FEED_BASE_URL,
+  SDN_UPDATE_FEED_BASE_PATH,
+  SDN_UPDATE_FEED_HOSTNAME,
   assertSdnOwnedDesktopUpdateFeedUrl,
   buildReleaseIndex,
   desktopAppFeedUrls,

@@ -270,9 +270,51 @@ cat > ${REMOTE_BIN} <<'SHIM'
 # worse, the binary would read /root/.spacedatanetwork, find no keystore, and
 # the identity path can MINT A FRESH IDENTITY. Fail closed instead.
 SELF=\$(cd \"\$(dirname \"\$0\")\" && pwd -P)
+
+# RUNTIME dir: wasmedge, the HD wallet wasm, and the at-rest/ownership identity.
+# These live OUTSIDE any update bundle on purpose - update.Apply swaps a bundle
+# root's CONTENTS, so a runtime kept inside one would be swapped away with the
+# release that happened to ship it.
 LIBDIR=\$(cd \"\$SELF/../lib/spacedatanetwork\" 2>/dev/null && pwd -P)
-if [ -z \"\$LIBDIR\" ] || [ ! -x \"\$LIBDIR/spacedatanetwork\" ]; then
-  echo \"spacedatanetwork: no install found beside \$SELF (expected ../lib/spacedatanetwork)\" >&2
+
+# EXECUTABLE: the UPDATE LANE owns it. When a self-contained bundle is present
+# it WINS over the flat install, because that is what \`spacedatanetwork update
+# install\` just wrote, and the command an operator TYPES has to be the version
+# the lane installed.
+#
+# This is the exact defect of 2026-07-31: the lane swapped the bundle and the
+# daemon ran the new binary, but this wrapper kept execing the flat install, so
+# \`spacedatanetwork status\` answered from an OLD binary with the old health
+# decode and printed unhealthy against a healthy node. Same trap class as the
+# stale /usr/local/bin symlink on host-01 (topology cli_admit_point_fix_20260729):
+# the artifact moved, the entrypoint did not.
+#
+# Preferring the bundle STRUCTURALLY is the fix. A per-apply fixup step would
+# have to be remembered by every future release path; this cannot be forgotten,
+# and it also survives this file being regenerated, because the template that
+# regenerates it is this same text.
+#
+# A bundle is RECOGNISED only on the test bundle.ResolveCurrent itself applies -
+# bin/<exe> beside manifest.json - so a half-extracted, staged or abandoned
+# directory can never hijack the entrypoint.
+BUNDLE=\$(cd \"\$SELF/../lib/sdn-bundle\" 2>/dev/null && pwd -P)
+if [ -n \"\$BUNDLE\" ] && [ -x \"\$BUNDLE/bin/spacedatanetwork\" ] && [ -f \"\$BUNDLE/manifest.json\" ]; then
+  EXEC=\"\$BUNDLE/bin/spacedatanetwork\"
+  OWNERDIR=\"\$BUNDLE\"
+elif [ -n \"\$LIBDIR\" ] && [ -x \"\$LIBDIR/spacedatanetwork\" ]; then
+  EXEC=\"\$LIBDIR/spacedatanetwork\"
+  OWNERDIR=\"\$LIBDIR\"
+else
+  echo \"spacedatanetwork: no install found beside \$SELF\" >&2
+  echo \"  looked for a lane bundle at ../lib/sdn-bundle/bin/spacedatanetwork (beside manifest.json)\" >&2
+  echo \"  and a flat install at ../lib/spacedatanetwork/spacedatanetwork\" >&2
+  exit 78
+fi
+
+# The runtime dir is required even when the executable came from a bundle: the
+# wasmedge shared library and the HD wallet wasm are resolved from it below.
+if [ -z \"\$LIBDIR\" ]; then
+  echo \"spacedatanetwork: runtime dir ../lib/spacedatanetwork is missing (wasmedge + hd-wallet-wasi.wasm live there)\" >&2
   exit 78
 fi
 
@@ -280,7 +322,7 @@ fi
 # all belong to ONE user. Running as anyone else reads a different \$HOME and a
 # different (usually absent) keystore. Refusing is not a convenience: a silent
 # run against an absent keystore is how a stray second identity gets minted.
-INSTALL_OWNER=\$(stat -c %U \"\$LIBDIR\" 2>/dev/null || echo '')
+INSTALL_OWNER=\$(stat -c %U \"\$OWNERDIR\" 2>/dev/null || echo '')
 INVOKER=\$(id -un)
 if [ -n \"\$INSTALL_OWNER\" ] && [ \"\$INSTALL_OWNER\" != \"\$INVOKER\" ]; then
   echo \"spacedatanetwork: USER-LOCAL install owned by \$INSTALL_OWNER; refusing to run as \$INVOKER.\" >&2
@@ -318,7 +360,7 @@ if [ -z \"\${SDN_KEY_PASSWORD}\" ] && [ -z \"\${SDN_KEY_PASSWORD_FILE}\" ] && [ 
   export SDN_KEY_PASSWORD_FILE
 fi
 
-exec \"\$LIBDIR/spacedatanetwork\" \"\$@\"
+exec \"\$EXEC\" \"\$@\"
 SHIM
 chmod 755 ${REMOTE_BIN}
 
