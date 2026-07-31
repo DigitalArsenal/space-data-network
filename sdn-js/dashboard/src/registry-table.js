@@ -146,3 +146,62 @@ export function tiersPresent(rows, tierOf = (r) => r?.trust_level) {
   const seen = new Set((rows ?? []).map((r) => normalizeTrust(tierOf(r))));
   return [...seen].sort((a, b) => trustRank(b) - trustRank(a));
 }
+
+/**
+ * Per-column text extractors for the peer registry — one entry per filterable
+ * column. Owner 2026-07-31: "remove the dropdown for trust, have each field
+ * filterable and sortable by itself." Trust matches on BOTH the asserted and
+ * the effective tier: typing "full" should find a row either way it is full.
+ */
+export const PEER_FIELD_TEXT = {
+  peer: (r) => String(r?.id ?? '').toLowerCase(),
+  name: (r) =>
+    [r?.name, r?.organization].filter(Boolean).join(' ').toLowerCase(),
+  trust: (r) =>
+    [normalizeTrust(r?.trust_level), normalizeTrust(r?.effective_trust_level)]
+      .join(' ')
+      .toLowerCase(),
+};
+
+/**
+ * AND across columns, AND across terms within a column — the same term rule
+ * searchRows applies, per field. Empty filters cost nothing and change nothing.
+ */
+export function filterColumns(rows, columnFilters = {}, fieldTextOf = PEER_FIELD_TEXT) {
+  const active = Object.entries(columnFilters ?? {}).filter(
+    ([, v]) => String(v ?? '').trim() !== ''
+  );
+  if (!active.length) return [...(rows ?? [])];
+  return (rows ?? []).filter((row) =>
+    active.every(([key, value]) => {
+      const text = (fieldTextOf[key] ?? (() => ''))(row);
+      return String(value)
+        .trim()
+        .toLowerCase()
+        .split(/\s+/)
+        .every((t) => text.includes(t));
+    })
+  );
+}
+
+/**
+ * Pagination that is ALWAYS visible (owner 2026-07-31): the caller renders the
+ * returned window and the "START–END OF TOTAL" line even when one page holds
+ * everything. Page is clamped, never 404s: shrinking a filter while on page 9
+ * lands on the last page that exists.
+ */
+export function paginate(rows, page = 1, perPage = 25) {
+  const total = rows?.length ?? 0;
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  const clamped = Math.min(Math.max(1, Math.trunc(page) || 1), pages);
+  const startIdx = (clamped - 1) * perPage;
+  const windowRows = (rows ?? []).slice(startIdx, startIdx + perPage);
+  return {
+    rows: windowRows,
+    page: clamped,
+    pages,
+    total,
+    start: total ? startIdx + 1 : 0,
+    end: startIdx + windowRows.length,
+  };
+}

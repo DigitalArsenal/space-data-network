@@ -99,7 +99,11 @@
   const ROUTE_TITLE = {
     node: ['NODE', ''],
     peers: ['PEERS', ''],
-    accounts: ['ACCOUNTS', ''],
+    // Owner 2026-07-31: the page is PEERS, and the /api/peers note that used
+    // to sit on the removed table-card header lives beside the title now. The
+    // rail keeps ACCOUNTS as the route's NAME (two rail rows both reading
+    // PEERS would be the ambiguity the route-is-its-name rule exists to stop).
+    accounts: ['PEERS', '· /api/peers'],
     storefront: ['STOREFRONT', ''],
   };
 
