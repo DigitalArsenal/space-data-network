@@ -8,7 +8,7 @@
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { shortId } from './format.js';
   import { accountDisplayName, accountFromNode, isUnnamed, kindLabel } from './accounts.js';
-  import { peerSource, lastSeenLabel } from './peers.js';
+  import { peerSource, lastSeenLabel, pinNoteIsPublishable } from './peers.js';
 
   /**
    * @type {{
@@ -131,15 +131,20 @@
           </td>
           <td class="d1180" style="color:{theme.textBody};">{n.org?.trim() || '—'}</td>
           <!-- SOURCE — the answer to "how did this get here?", on the row, in
-               words, without devtools. `src.note` is rendered as VISIBLE TEXT
-               (keystate.js's standing rule: never a tooltip only): for a config
-               pin it is the file and key an operator actually edits. -->
+               words, without devtools.
+               The note is rendered ONLY when it is an operator's own words.
+               A config pin's "note" is a filesystem path and a yaml key — the
+               owner flagged that string on this very table twice ("this is
+               still strange") — so it is gated behind pinNoteIsPublishable and
+               the LABEL carries the meaning instead. An address the operator can
+               reach from this page is vocabulary; a location on a box they may
+               not have a shell on is a leak. -->
           <td>
             <span class="src" style="color:{theme[src.tone] ?? theme.textDim};border-color:{theme[src.tone] ?? theme.textDim};" title={src.sentence}>{src.label}</span>
             {#if src.id === 'connected' && src.pinned}
               <span class="tag" style="color:{theme.ice};border-color:{theme.ice};">PINNED</span>
             {/if}
-            {#if src.note}
+            {#if pinNoteIsPublishable({ source: src.id, note: src.note })}
               <div class="note" style="color:{theme.textFaint};">{src.note}</div>
             {/if}
           </td>
