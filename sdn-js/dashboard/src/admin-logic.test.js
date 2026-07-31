@@ -987,3 +987,112 @@ describe('contact card — the human vCard (owner directive 2026-07-27)', async 
     }
   });
 });
+
+/*
+ * ---------------------------------------------------------------------------
+ * THE ACCOUNTS TABLES: SEARCH, TRUST COLUMN, SORT
+ *
+ * Owner, 2026-07-31: "the accounts table does not have the trust as a separate
+ * column either." A column that cannot be sorted or filtered is a subscript
+ * with better spacing, so the pipeline behind the column is what is tested
+ * here — over the stack's own design fixtures, which carry the real field
+ * names and a mix of tiers.
+ * ---------------------------------------------------------------------------
+ */
+describe('the ACCOUNTS registries are searchable, filterable and sortable', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const {
+    applyRegistryView,
+    filterTier,
+    operatorSearchText,
+    peerSearchText,
+    searchRows,
+    sortRows,
+    tiersPresent,
+    OPERATOR_SORTERS,
+    PEER_SORTERS,
+  } = await import('./registry-table.js');
+
+  const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures');
+  const peers = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'api-peers.json'), 'utf8'));
+  const users = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'api-auth-users.json'), 'utf8'));
+
+  it('searches a peer by name, by peer id and by multiaddr', () => {
+    const byName = searchRows(peers, 'node two', peerSearchText);
+    expect(byName).toHaveLength(1);
+    expect(byName[0].name).toBe('Example Node Two');
+
+    const target = peers[0];
+    expect(searchRows(peers, target.id, peerSearchText)).toHaveLength(1);
+    // An operator pasting an address they were given must find the row.
+    const addr = (target.addrs ?? [])[0];
+    expect(searchRows(peers, addr, peerSearchText).some((p) => p.id === target.id)).toBe(true);
+  });
+
+  it('searches an operator key by xpub and by the peer id derived in the page', () => {
+    const u = users[0];
+    expect(searchRows(users, u.xpub, (x) => operatorSearchText(x)).map((x) => x.xpub)).toEqual([u.xpub]);
+    // The node stores no peer id for a user; the page derives it, and the search
+    // must still match on what the PEER ID cell prints.
+    const rows = users.map((x) => ({ ...x, __peerId: x === u ? '16Uiu2HAmDERIVED' : '' }));
+    const hit = searchRows(rows, '16Uiu2HAmDERIVED', (x) => operatorSearchText(x, x.__peerId));
+    expect(hit.map((x) => x.xpub)).toEqual([u.xpub]);
+  });
+
+  it('requires every term (AND), and an empty query keeps everyone', () => {
+    expect(searchRows(peers, '  ', peerSearchText)).toHaveLength(peers.length);
+    expect(searchRows(peers, 'example zzzz', peerSearchText)).toHaveLength(0);
+  });
+
+  it('filters by tier, and offers only the tiers that are actually there', async () => {
+    const present = tiersPresent(peers);
+    expect(present.length).toBeGreaterThan(0);
+    for (const tier of present) {
+      const rows = filterTier(peers, tier);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((p) => (p.trust_level || 'unknown') === tier)).toBe(true);
+    }
+    expect(filterTier(peers, 'all')).toHaveLength(peers.length);
+    // Most-trusted first, so the filter reads like the column sorts.
+    const { TRUST_TIERS: SCALE } = await import('./trust.js');
+    expect(present).toEqual([...present].sort((a, b) => SCALE.indexOf(a) - SCALE.indexOf(b)));
+  });
+
+  it('sorts by trust MOST-TRUSTED FIRST, and reverses on the second click', () => {
+    const down = sortRows(peers, 'trust', 1, PEER_SORTERS).map((p) => p.trust_level);
+    const up = sortRows(peers, 'trust', -1, PEER_SORTERS).map((p) => p.trust_level);
+    expect(down[0]).toBe('full');
+    expect(up).toEqual([...down].reverse());
+  });
+
+  it('sorts unnamed rows last, never first', () => {
+    const rows = [{ name: '', id: 'b' }, { name: 'Alpha', id: 'a' }];
+    expect(sortRows(rows, 'name', 1, PEER_SORTERS).map((r) => r.id)).toEqual(['a', 'b']);
+  });
+
+  it('runs filter → search → sort, so the count under the table is the truth', () => {
+    const out = applyRegistryView(
+      peers,
+      { query: 'example', tier: 'full', sortKey: 'trust', sortDir: 1 },
+      { textOf: peerSearchText, sorters: PEER_SORTERS }
+    );
+    expect(out.every((p) => p.trust_level === 'full')).toBe(true);
+    expect(out.every((p) => peerSearchText(p).includes('example'))).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(peers.length);
+  });
+
+  it('never mutates the registry it was handed', () => {
+    const before = peers.map((p) => p.id);
+    sortRows(peers, 'trust', -1, PEER_SORTERS);
+    applyRegistryView(peers, { sortKey: 'name', sortDir: -1 }, { textOf: peerSearchText });
+    expect(peers.map((p) => p.id)).toEqual(before);
+  });
+
+  it('the operator table sorts on its own columns', () => {
+    expect(Object.keys(OPERATOR_SORTERS)).toEqual(['xpub', 'peer', 'name', 'trust']);
+    const byTrust = sortRows(users, 'trust', 1, OPERATOR_SORTERS).map((u) => u.trust_level);
+    expect(byTrust[0]).toBe('admin');
+  });
+});

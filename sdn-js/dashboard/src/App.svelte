@@ -30,6 +30,8 @@
   import AccountAdmin from './AccountAdmin.svelte';
   import SignInModal from './SignInModal.svelte';
   import AccountModal from './AccountModal.svelte';
+  import HostedModules from './HostedModules.svelte';
+  import StorefrontListings from './StorefrontListings.svelte';
   import { shortId } from './format.js';
   import { TRUST_TIERS, normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { canEditNodeProfile, canManagePermissions } from './permissions.js';
@@ -38,7 +40,7 @@
   import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
   import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
   import { presenceSummary } from './peers.js';
-  import { parseHash, formatHash } from './route-url.js';
+  import { parseHash, formatHash, NODE_VIEWS } from './route-url.js';
   import { createSemanticEngine } from './semantic.js';
   import { createRuntimeFeed, foldRuntime } from './runtime.js';
 
@@ -68,6 +70,12 @@
    * rail-override block at the bottom of this file, because the markup itself
    * lives in the design tree and the design tree is not hand-edited (ZIP-SYNC LAW).
    */
+  /*
+   * STOREFRONT is the fourth entry (owner directive 2026-07-30: "We also need
+   * the storefront submenu"). ▤ is the template's list glyph — a shelf, not a
+   * currency symbol: this menu is what the node OFFERS, and half of what it
+   * offers is free.
+   */
   const SECTIONS = [
     {
       label: 'NETWORK',
@@ -75,6 +83,7 @@
         { id: 'node', label: 'NODE', glyph: '◉' },
         { id: 'peers', label: 'PEERS', glyph: '◍' },
         { id: 'accounts', label: 'ACCOUNTS', glyph: '⬡' },
+        { id: 'storefront', label: 'STOREFRONT', glyph: '▤' },
       ],
     },
   ];
@@ -91,6 +100,7 @@
     node: ['NODE', ''],
     peers: ['PEERS', ''],
     accounts: ['ACCOUNTS', ''],
+    storefront: ['STOREFRONT', ''],
   };
 
   /**
@@ -106,6 +116,12 @@
   const ACCOUNT_TABS = [
     ['peers', 'PEER REGISTRY'],
     ['keys', 'OPERATOR KEYS'],
+  ];
+
+  /** The STOREFRONT submenu, in the same tab grammar (IRIS 2026-07-31). */
+  const STOREFRONT_TABS = [
+    ['listings', 'LISTINGS'],
+    ['modules', 'MODULES'],
   ];
 
   const HIDE_KEY = 'sdn.dashboard.hideUntrustedOffline';
@@ -153,6 +169,14 @@
    */
   let routeNotice = $state('');
   let accountTab = $state('peers');
+  /**
+   * The STOREFRONT submenu (owner directive 2026-07-30). LISTINGS is what the
+   * node offers for sale or for free through /api/storefront/listings; MODULES
+   * is what it actually serves, read from its OWN signed $PMM by the same
+   * component every peer's card uses — a storefront that cannot show you the
+   * shelf is a menu with one empty page on it.
+   */
+  let storefrontTab = $state('listings');
   let settingsOpen = $state(false);
   let page = $state(0);
   let semStatus = $state('idle');
@@ -307,16 +331,33 @@
     route = id;
   }
 
-  /** The ACCOUNTS submenu. The owner named it, so Back must return to it. */
+  /**
+   * A SUBMENU. The owner named it, so Back must return to it — and STOREFRONT
+   * nests the same way ACCOUNTS does rather than inventing a second idiom
+   * (owner 2026-07-30: "We also need the storefront submenu").
+   */
   function goTab(id) {
-    if (id === accountTab && !modalKind) return;
+    const current = route === 'storefront' ? storefrontTab : accountTab;
+    if (id === current && !modalKind) return;
     navIntent = 'push';
     modalPushed = false;
     routeNotice = '';
     modalKind = '';
     modalId = '';
     modalView = '';
-    accountTab = id;
+    if (route === 'storefront') storefrontTab = id;
+    else accountTab = id;
+  }
+
+  /**
+   * WHICH TAB OF A NODE CARD IS OPEN, written to the address so a refresh
+   * returns to it. REPLACE, not push: a tab is a refinement of the dialog the
+   * operator already opened, and pushing would make Back walk the tabs instead
+   * of leaving the card.
+   */
+  function setCardView(v) {
+    navIntent = 'replace';
+    modalView = NODE_VIEWS.includes(v) ? v : '';
   }
 
   function openModal(kind, id = '', view = '') {
@@ -361,6 +402,7 @@
     const parsed = parseHash(globalThis.location?.hash ?? '');
     route = parsed.route;
     if (parsed.route === 'accounts' && parsed.sub) accountTab = parsed.sub;
+    if (parsed.route === 'storefront' && parsed.sub) storefrontTab = parsed.sub;
     modalKind = parsed.modal;
     modalId = parsed.modalId;
     modalView = parsed.view;
@@ -382,7 +424,7 @@
   $effect(() => {
     const want = formatHash({
       route,
-      sub: route === 'accounts' ? accountTab : '',
+      sub: route === 'accounts' ? accountTab : route === 'storefront' ? storefrontTab : '',
       modal: modalKind,
       modalId,
       view: modalView,
@@ -513,8 +555,14 @@
           null
       : null
   );
-  /** '' closed, 'parsed' on the fields, 'qr' straight on the scannable card. */
-  const selfModal = $derived(modalKind === 'self' ? (modalView === 'qr' ? 'qr' : 'parsed') : '');
+  /**
+   * '' closed, 'parsed' on the fields, 'qr' straight on the scannable card,
+   * 'modules' on what the node hosts. One list for both cards (route-url.js
+   * NODE_VIEWS): the self node is a node, and its own $PMM is exactly the
+   * record every peer's tab reads.
+   */
+  const cardView = $derived(NODE_VIEWS.includes(modalView) ? modalView : 'parsed');
+  const selfModal = $derived(modalKind === 'self' ? cardView : '');
   /**
    * A peer id in the URL that this node's current view does not carry. Only
    * judged once the feed has answered at all — before that it is "not loaded",
@@ -901,6 +949,41 @@
             />
           {/if}
         </div>
+      {:else if route === 'storefront'}
+        <!-- STOREFRONT (owner directive 2026-07-30: "We also need the storefront
+             submenu"). ACCOUNTS' tab grammar, verbatim — the same markup, the
+             same tokens, the same `goTab` — because a second submenu idiom would
+             be two answers to "where am I" on one rail (IRIS 2026-07-31).
+
+             LISTINGS is what the node sells or gives away; MODULES is the shelf
+             itself: this node's OWN signed $PMM, rendered by the same component
+             every peer's card uses. Both are anonymous reads. -->
+        <div class="tabbar" style="border-color:{theme.panelBorder};">
+          {#each STOREFRONT_TABS as [id, label] (id)}
+            <button
+              class="tab"
+              style="background:{storefrontTab === id ? 'rgba(53,201,216,0.18)' : 'transparent'};color:{storefrontTab === id ? theme.cyan : theme.textDim};border-color:{theme.panelBorder};"
+              aria-pressed={storefrontTab === id}
+              onclick={() => goTab(id)}
+            >{label}</button>
+          {/each}
+        </div>
+        <div class="stack">
+          <Panel variant="raised">
+            {#if storefrontTab === 'modules'}
+              {#if selfNode}
+                <HostedModules node={selfNode} />
+              {:else}
+                <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
+                  <span class="glyph" style="color:{theme.cyan};">▤</span>
+                  Waiting for this node's status entry…
+                </div>
+              {/if}
+            {:else}
+              <StorefrontListings />
+            {/if}
+          </Panel>
+        </div>
       {:else}
         <!-- ACCOUNTS: the two admin tables, as TABS, one at a time (owner
              directive 2026-07-30 — "have the tables selectable by tab (trusted
@@ -958,7 +1041,13 @@
   </main>
 
   {#if selected}
-    <NodeModal node={selected} {now} onClose={closeModal} />
+    <NodeModal
+      node={selected}
+      {now}
+      initialView={cardView}
+      onView={(v) => setCardView(v)}
+      onClose={closeModal}
+    />
   {/if}
 
   {#if selfModal && selfNode}
@@ -966,7 +1055,13 @@
          fields by DETAIL and on the scannable QR by QR (owner directive
          2026-07-30; IRIS R6/R5). It replaces the THIS NODE page, whose every fact
          this view already carries. -->
-    <NodeModal node={selfNode} {now} initialView={selfModal} onClose={closeModal} />
+    <NodeModal
+      node={selfNode}
+      {now}
+      initialView={selfModal}
+      onView={(v) => setCardView(v)}
+      onClose={closeModal}
+    />
   {/if}
 
   {#if signInOpen}

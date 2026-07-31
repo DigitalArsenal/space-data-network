@@ -17,6 +17,7 @@
   import { onMount } from 'svelte';
   import QRCode from 'qrcode';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
+  import HostedModules from './HostedModules.svelte';
   import { parseVCard, displayFields, isAliasEmail, extractIdentity, buildCompactVCard } from './vcard.js';
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { shortId, formatUptime, formatLastSeen, formatCoords } from './format.js';
@@ -28,11 +29,41 @@
    * build a new modal"), instead of the inline canvas that rendered squashed
    * and unscannable inside the dashboard card.
    *
-   * @type {{ node: any, now: number, initialView?: 'parsed' | 'raw' | 'qr' }}
+   * MODULES is the fourth tab (owner directive 2026-07-30 — "clicking on a node
+   * shows what's being hosted on that node"; IRIS ruling 2026-07-31: a tab, not
+   * a section). `onView` reports a tab change UP so the address bar can carry it
+   * — which tab is open is a place, and a refresh returns to it.
+   *
+   * @type {{ node: any, now: number, initialView?: 'parsed'|'raw'|'qr'|'modules',
+   *          onView?: (view: string) => void }}
    */
-  let { node, now, initialView = 'parsed' } = $props();
+  let { node, now, initialView = 'parsed', onView = undefined } = $props();
 
-  let view = $state(initialView); // 'parsed' | 'raw' | 'qr'
+  let view = $state(initialView); // 'parsed' | 'raw' | 'qr' | 'modules'
+
+  /**
+   * The tab follows the ADDRESS, not just the click: arriving on
+   * `#/peers/<id>/modules`, then pressing Back to `#/peers/<id>`, has to move
+   * the tab too. `initialView` is the prop the parent recomputes from the hash.
+   *
+   * `lastInitial` is deliberately NOT `$state`: reading `view` inside this
+   * effect would make the effect depend on the value it writes, and every click
+   * on a tab would be undone in the next flush by the prop that had not caught
+   * up yet. The effect reacts to the PROP changing and to nothing else.
+   */
+  let lastInitial = initialView || 'parsed';
+  $effect(() => {
+    const want = initialView || 'parsed';
+    if (want === lastInitial) return;
+    lastInitial = want;
+    view = want;
+  });
+
+  /** One place where a tab is chosen, so the URL can never miss one. */
+  function selectView(id) {
+    view = id;
+    onView?.(id);
+  }
   let addrsOpen = $state(false);
   let epmAvailable = $state(false);
   let qrCanvas = $state(null);
@@ -180,26 +211,32 @@
     </div>
   {/if}
 
+  <!-- ONE TAB BAR, FOUR TABS (IRIS 2026-07-31). MODULES is not a vCard view, so
+       the section's own label follows the tab rather than always saying VCARD —
+       and the bar renders even for a node that publishes no card, because "what
+       does this node host" is a question about the node, not about its card. -->
   <div class="section" style="border-color:{theme.divider};">
     <div class="vhead">
-      <div class="k" style="color:{theme.textMuted};">VCARD</div>
-      {#if hasVCard}
-        <div class="actions">
-          {#each [['parsed', 'PARSED'], ['raw', 'RAW'], ['qr', 'QR']] as [id, label] (id)}
-            <button
-              class="act"
-              style="color:{view === id ? theme.cyan : theme.ice};border-color:{view === id ? theme.cyan : theme.hairline};"
-              onclick={() => (view = id)}
-            >{label}</button>
-          {/each}
+      <div class="k" style="color:{theme.textMuted};">{view === 'modules' ? 'MODULES' : 'VCARD'}</div>
+      <div class="actions">
+        {#each hasVCard ? [['parsed', 'PARSED'], ['raw', 'RAW'], ['qr', 'QR'], ['modules', 'MODULES']] : [['modules', 'MODULES']] as [id, label] (id)}
+          <button
+            class="act"
+            style="color:{view === id ? theme.cyan : theme.ice};border-color:{view === id ? theme.cyan : theme.hairline};"
+            onclick={() => selectView(id)}
+          >{label}</button>
+        {/each}
+        {#if hasVCard}
           <button class="act" style="color:{theme.ice};border-color:{theme.hairline};" onclick={downloadVcf}>↓ VCF</button>
           {#if epmAvailable}
             <button class="act" style="color:{theme.ice};border-color:{theme.hairline};" onclick={downloadEpm}>↓ EPM</button>
           {/if}
-        </div>
-      {/if}
+        {/if}
+      </div>
     </div>
-    {#if !hasVCard}
+    {#if view === 'modules'}
+      <HostedModules {node} />
+    {:else if !hasVCard}
       <div class="none" style="color:{theme.textFaint};">No vCard published by this node.</div>
     {:else if view === 'raw'}
       <pre class="mono" style="color:{theme.textDim};border-color:{theme.hairline};">{node.vcard}</pre>

@@ -19,9 +19,16 @@
    * shows the scannable card (IRIS ruling 2026-07-30 R5). The self node is a
    * node: it gets the same modal every other peer gets.
    *
-   * @type {{ node: any, now: number, onClose: () => void, initialView?: 'parsed' | 'raw' | 'qr' }}
+   * `onView` carries a tab change back out to the address bar: which tab of a
+   * node card is open is a PLACE (`#/peers/<id>/modules`), so a refresh or a
+   * pasted link returns to it (owner 2026-07-30, twice — "hitting refresh
+   * doesn't go back to the same submenu").
+   *
+   * @type {{ node: any, now: number, onClose: () => void,
+   *          initialView?: 'parsed'|'raw'|'qr'|'modules',
+   *          onView?: (view: string) => void }}
    */
-  let { node, now, onClose, initialView = 'parsed' } = $props();
+  let { node, now, onClose, initialView = 'parsed', onView = undefined } = $props();
 
   const tier = $derived(normalizeTrust(node.trustLevel));
   const tierColor = $derived(theme[TRUST_COLOR_TOKEN[tier]] ?? theme.textMuted);
@@ -46,5 +53,5 @@
     <StatusChip label={tier.toUpperCase()} color={tierColor} dot={false} />
     <StatusChip label={node.online ? 'ONLINE' : 'OFFLINE'} color={node.online ? theme.green : theme.textMuted} />
   {/snippet}
-  <NodeDetail {node} {now} {initialView} />
+  <NodeDetail {node} {now} {initialView} {onView} />
 </ModalShell>
