@@ -27,6 +27,14 @@
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import { apiFetch, apiPostText, describeApiError } from './api.js';
   import { normalizeTrust, trustRank, TRUST_COLOR_TOKEN, TRUST_TIERS } from './trust.js';
+  import {
+    applyRegistryView,
+    operatorSearchText,
+    peerSearchText,
+    tiersPresent,
+    OPERATOR_SORTERS,
+    PEER_SORTERS,
+  } from './registry-table.js';
   import { shortId } from './format.js';
   import { peerIdFromXpub, shortFingerprint } from './wallet.js';
   import OperatorEditModal from './OperatorEditModal.svelte';
@@ -171,11 +179,91 @@
   const editUserXPub = $derived(openUserXpub);
   const editPeerId = $derived(openPeerId);
 
-  const userList = $derived(users ?? []);
-  const peerList = $derived(peers ?? []);
+  /* ------------------------------------------------------------------------
+   * TRUST IS A COLUMN NOW (owner, 2026-07-31: "the accounts table does not have
+   * the trust as a separate column either").
+   *
+   * THIS REVERSES ONE HALF OF AN EARLIER OWNER DIRECTIVE, and says so out loud
+   * rather than quietly: on 2026-07-29 the owner asked for "the trust, key,
+   * sign-ins ... all be small subscript stuff on the same row". That is still
+   * true of the key state, the sign-in count and the provenance — they stay on
+   * the subscript line. TRUST alone is promoted to a real column, because a
+   * subscript cannot be sorted and cannot be filtered, and sorting and filtering
+   * by tier is exactly what the 2026-07-31 directive asks for (Iris ruling:
+   * BOTH tables, same tier grammar as the peers table).
+   *
+   * EFFECTIVE stays subscript. It is a DERIVED fact (the node's web-of-trust
+   * computation), not the operator's assertion, and a column no control on this
+   * page can set would read as an input.
+   * --------------------------------------------------------------------- */
+  let userQuery = $state('');
+  let userTierFilter = $state('all');
+  let userSortKey = $state('trust');
+  let userSortDir = $state(1);
+  let peerQuery = $state('');
+  let peerTierFilter = $state('all');
+  let peerSortKey = $state('trust');
+  let peerSortDir = $state(1);
+
+  const allUsers = $derived(users ?? []);
+  const allPeers = $derived(peers ?? []);
+
+  /**
+   * The derived peer id rides ALONG with the row (`__peerId`) purely so the
+   * search box can match on it: it is computed in this page from the xpub, the
+   * node stores none (keystate.js), and a search that could not find a row by
+   * the identifier printed in its own PEER ID cell would be a search that lies.
+   */
+  const userRows = $derived(
+    allUsers.map((u) => ({ ...u, __peerId: derivedPeerIds.get(u.xpub) ?? '' }))
+  );
+
+  const userList = $derived(
+    applyRegistryView(
+      userRows,
+      { query: userQuery, tier: userTierFilter, sortKey: userSortKey, sortDir: userSortDir },
+      {
+        textOf: (u) => operatorSearchText(u, u.__peerId),
+        sorters: OPERATOR_SORTERS,
+      }
+    )
+  );
+  const peerList = $derived(
+    applyRegistryView(
+      allPeers,
+      { query: peerQuery, tier: peerTierFilter, sortKey: peerSortKey, sortDir: peerSortDir },
+      { textOf: peerSearchText, sorters: PEER_SORTERS }
+    )
+  );
+
+  /** The filter offers the tiers that are THERE, never the whole empty scale. */
+  const userTiersPresent = $derived(tiersPresent(allUsers));
+  const peerTiersPresent = $derived(tiersPresent(allPeers));
+
+  /** Same toggle contract as the peers table: same key flips direction. */
+  function sortUsers(key) {
+    if (userSortKey === key) userSortDir = -userSortDir;
+    else {
+      userSortKey = key;
+      userSortDir = 1;
+    }
+  }
+  function sortPeers(key) {
+    if (peerSortKey === key) peerSortDir = -peerSortDir;
+    else {
+      peerSortKey = key;
+      peerSortDir = 1;
+    }
+  }
   const pinList = $derived(sortPins(pins ?? []));
-  const editUser = $derived(userList.find((u) => u.xpub === editUserXPub) ?? null);
-  const editPeer = $derived(peerList.find((p) => p.id === editPeerId) ?? null);
+  /*
+   * THE OPEN DIALOG IS FOUND IN THE WHOLE REGISTRY, never in the filtered view.
+   * A search box that could close the modal the operator is reading — or worse,
+   * raise "no peer with that ID is in this node's registry" because a filter
+   * hid it — would make a display control look like a data loss.
+   */
+  const editUser = $derived(allUsers.find((u) => u.xpub === editUserXPub) ?? null);
+  const editPeer = $derived(allPeers.find((p) => p.id === editPeerId) ?? null);
   /**
    * The feed row for the peer whose modal is open, when it has one. The
    * registry knows a peer's trust; only the feed knows whether this node has
@@ -194,12 +282,12 @@
    */
   $effect(() => {
     if (!openPeerId || !loaded || peers === null) return;
-    if (peerList.some((p) => p.id === openPeerId)) return;
+    if (allPeers.some((p) => p.id === openPeerId)) return;
     onModalMissing?.('peer', openPeerId);
   });
   $effect(() => {
     if (!openUserXpub || !loaded || users === null) return;
-    if (userList.some((u) => u.xpub === openUserXpub)) return;
+    if (allUsers.some((u) => u.xpub === openUserXpub)) return;
     onModalMissing?.('operator', openUserXpub);
   });
   /** The pin record for the peer whose modal is open, or null when unpinned. */
@@ -550,10 +638,43 @@
           <div class="ttl" style="color:{theme.textBright};">OPERATOR KEYS</div>
         </div>
         <div class="chips">
-          <StatusChip label={`${userList.length} REGISTERED`} color={theme.ice} dot={false} />
+          <!-- The count states a SUBSET when one is on screen, for the same
+               reason the peers toolbar does: "12 REGISTERED" over a table of
+               three is the defect the header count already had once. -->
+          <StatusChip
+            label={userList.length === allUsers.length
+              ? `${allUsers.length} REGISTERED`
+              : `${userList.length} OF ${allUsers.length} SHOWN`}
+            color={theme.ice}
+            dot={false}
+          />
         </div>
       </div>
       <div class="pad">
+        <!-- The PEERS toolbar, verbatim in grammar (App.svelte) minus HIDE
+             UNTRUSTED OFFLINE: neither registry carries an online state, so the
+             control would filter on a fact this table does not have. -->
+        <div class="toolbar">
+          <div class="search" style="border-color:{theme.hairline};">
+            <span class="sglyph" style="color:{theme.textMuted};">⌕</span>
+            <input
+              type="search"
+              placeholder="SEARCH"
+              bind:value={userQuery}
+              style="color:{theme.textBright};"
+              aria-label="Search operator keys"
+            />
+          </div>
+          <label class="ctl" style="color:{theme.textMuted};">
+            TRUST
+            <select bind:value={userTierFilter} style="color:{tierColor(userTierFilter)};border-color:{theme.hairline};" aria-label="Filter operator keys by trust tier">
+              <option value="all">ALL</option>
+              {#each userTiersPresent as tier (tier)}
+                <option value={tier}>{tier.toUpperCase()}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
         <div class="tbl-wrap">
           <!--
             THE ROW GRAMMAR (owner directive 2026-07-29: "The table should just
@@ -570,18 +691,31 @@
           <table>
             <thead>
               <tr style="border-color:{theme.divider};color:{theme.textMuted};">
-                <th>XPUB</th><th>PEER ID</th><th>NAME</th><th></th>
+                {#each [['xpub', 'XPUB'], ['peer', 'PEER ID'], ['name', 'NAME'], ['trust', 'TRUST']] as [key, label] (key)}
+                  <th
+                    class="sortable"
+                    onclick={() => sortUsers(key)}
+                    style="color:{userSortKey === key ? theme.ice : theme.textMuted};"
+                  >{label}{#if userSortKey === key}<span class="dir">{userSortDir === 1 ? '▲' : '▼'}</span>{/if}</th>
+                {/each}
+                <th></th>
               </tr>
             </thead>
             {#if users === null}
               <tbody>
-                <tr><td colspan="4" class="none" style="color:{theme.textFaint};">Reading the operator keys…</td></tr>
+                <tr><td colspan="5" class="none" style="color:{theme.textFaint};">Reading the operator keys…</td></tr>
               </tbody>
-            {:else if !userList.length}
+            {:else if !allUsers.length}
               <tbody>
-                <tr><td colspan="4" class="none" style="color:{theme.textFaint};">
+                <tr><td colspan="5" class="none" style="color:{theme.textFaint};">
                   No operator keys enrolled.{#if rootAdminAvailable} This node's own root recovery phrase signs in as admin.{/if}
                 </td></tr>
+              </tbody>
+            {:else if !userList.length}
+              <!-- The registry is not empty; this VIEW of it is. Two different
+                   facts, two different sentences. -->
+              <tbody>
+                <tr><td colspan="5" class="none" style="color:{theme.textFaint};">No operator key matches the current search or trust filter.</td></tr>
               </tbody>
             {:else}
               {#each userList as user (user.xpub)}
@@ -607,12 +741,19 @@
                         <span class="org" style="color:{theme.textDim};">· {user.organization}</span>
                       {/if}
                     </td>
+                    <!-- TRUST, in the peers table's badge grammar exactly
+                         (NodeTable.svelte) — one tier vocabulary on this page. -->
+                    <td>
+                      <span class="trust" style="color:{tierColor(user.trust_level)};border-color:{tierColor(user.trust_level)};">
+                        {normalizeTrust(user.trust_level).toUpperCase()}
+                      </span>
+                    </td>
                     <td class="right" rowspan="2" style="border-color:{theme.divider};">
                       <GBtn title="Manage this operator key" onclick={() => onOpenModal?.('operator', user.xpub)}>EDIT</GBtn>
                     </td>
                   </tr>
                   <tr class="meta">
-                    <td colspan="3" style="border-color:{theme.divider};">
+                    <td colspan="4" style="border-color:{theme.divider};">
                       <span class="metaline">
                         {#each operatorMeta(user, normalizeTrust(user.trust_level)) as item, i (item.id)}
                           {#if i > 0}<span class="sep" style="color:{theme.textFaint};">·</span>{/if}
@@ -677,27 +818,65 @@
           <div class="ttl" style="color:{theme.textBright};">{showPeerTable ? 'NETWORK PEERS' : 'ADD A PEER'}</div>
         </div>
         <div class="chips">
-          <StatusChip label={`${peerList.length} IN REGISTRY`} color={theme.ice} dot={false} />
+          <StatusChip
+            label={peerList.length === allPeers.length
+              ? `${allPeers.length} IN REGISTRY`
+              : `${peerList.length} OF ${allPeers.length} SHOWN`}
+            color={theme.ice}
+            dot={false}
+          />
         </div>
       </div>
       <div class="pad">
         {#if showPeerTable}
+        <div class="toolbar">
+          <div class="search" style="border-color:{theme.hairline};">
+            <span class="sglyph" style="color:{theme.textMuted};">⌕</span>
+            <input
+              type="search"
+              placeholder="SEARCH"
+              bind:value={peerQuery}
+              style="color:{theme.textBright};"
+              aria-label="Search the peer registry"
+            />
+          </div>
+          <label class="ctl" style="color:{theme.textMuted};">
+            TRUST
+            <select bind:value={peerTierFilter} style="color:{tierColor(peerTierFilter)};border-color:{theme.hairline};" aria-label="Filter peers by trust tier">
+              <option value="all">ALL</option>
+              {#each peerTiersPresent as tier (tier)}
+                <option value={tier}>{tier.toUpperCase()}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
         <div class="tbl-wrap">
           <!-- Same grammar as OPERATOR KEYS (IRIS ruling §4): two adjacent
                tables that behave differently is the mess the owner named. -->
           <table>
             <thead>
               <tr style="border-color:{theme.divider};color:{theme.textMuted};">
-                <th>PEER ID</th><th>NAME</th><th></th>
+                {#each [['peer', 'PEER ID'], ['name', 'NAME'], ['trust', 'TRUST']] as [key, label] (key)}
+                  <th
+                    class="sortable"
+                    onclick={() => sortPeers(key)}
+                    style="color:{peerSortKey === key ? theme.ice : theme.textMuted};"
+                  >{label}{#if peerSortKey === key}<span class="dir">{peerSortDir === 1 ? '▲' : '▼'}</span>{/if}</th>
+                {/each}
+                <th></th>
               </tr>
             </thead>
             {#if peers === null}
               <tbody>
-                <tr><td colspan="3" class="none" style="color:{theme.textFaint};">Reading the trust registry…</td></tr>
+                <tr><td colspan="4" class="none" style="color:{theme.textFaint};">Reading the trust registry…</td></tr>
+              </tbody>
+            {:else if !allPeers.length}
+              <tbody>
+                <tr><td colspan="4" class="none" style="color:{theme.textFaint};">No peers in the trust registry.</td></tr>
               </tbody>
             {:else if !peerList.length}
               <tbody>
-                <tr><td colspan="3" class="none" style="color:{theme.textFaint};">No peers in the trust registry.</td></tr>
+                <tr><td colspan="4" class="none" style="color:{theme.textFaint};">No peer matches the current search or trust filter.</td></tr>
               </tbody>
             {:else}
               {#each peerList as peer (peer.id)}
@@ -717,12 +896,20 @@
                         <span class="org" style="color:{theme.textDim};">· {peer.organization}</span>
                       {/if}
                     </td>
+                    <!-- The ASSERTED tier — the one the EDIT modal writes.
+                         EFFECTIVE is the node's own computation and stays on the
+                         subscript line under it. -->
+                    <td>
+                      <span class="trust" style="color:{tierColor(peer.trust_level)};border-color:{tierColor(peer.trust_level)};">
+                        {normalizeTrust(peer.trust_level).toUpperCase()}
+                      </span>
+                    </td>
                     <td class="right" rowspan="2" style="border-color:{theme.divider};">
                       <GBtn title="Manage this peer" onclick={() => onOpenModal?.('peer', peer.id)}>EDIT</GBtn>
                     </td>
                   </tr>
                   <tr class="meta">
-                    <td colspan="2" style="border-color:{theme.divider};">
+                    <td colspan="3" style="border-color:{theme.divider};">
                       <span class="metaline">
                         {#each peerMeta(peer, normalizeTrust(peer.trust_level), normalizeTrust(peer.effective_trust_level)) as item, i (item.id)}
                           {#if i > 0}<span class="sep" style="color:{theme.textFaint};">·</span>{/if}
@@ -1024,6 +1211,74 @@
     vertical-align: middle;
   }
   th:last-child, td.right { text-align: right; padding-right: 0; }
+  /* A COLUMN YOU CAN SORT SAYS SO. Same affordance as the peers table's header
+     (NodeTable.svelte): the cursor changes, the active column takes the ice
+     token from the markup, and the direction is a caret rather than a state you
+     have to infer from the order. */
+  th.sortable { cursor: pointer; user-select: none; }
+  th .dir { margin-left: 5px; }
+  /* TRUST'S BADGE, identical to the peers table's (NodeTable.svelte `.trust`):
+     one tier vocabulary, one shape, on every table this page renders. */
+  .trust {
+    display: inline-block;
+    font-size: var(--sdn-fs-micro); line-height: var(--sdn-lh-micro);
+    letter-spacing: 0.14em;
+    border: 1px solid;
+    padding: 2px 7px;
+    white-space: nowrap;
+  }
+  /* The per-table toolbar. Same shape as the PEERS toolbar (App.svelte) — this
+     is a copy of a grammar, not a new one, and the two must not drift: search on
+     the left with room to grow, one tier filter beside it. */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-bottom: var(--sdn-sp-5);
+  }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid;
+    padding: 6px 10px;
+    flex: 1 1 280px;
+    min-width: 220px;
+    max-width: 520px;
+  }
+  .sglyph { font-size: var(--sdn-fs-head); line-height: var(--sdn-lh-head); }
+  .search input {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    outline: none;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: var(--sdn-fs-label); line-height: var(--sdn-lh-label);
+    letter-spacing: 0.06em;
+    min-width: 0;
+  }
+  .search input::placeholder { color: rgba(159, 212, 245, 0.35); }
+  .ctl {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--sdn-fs-body); line-height: var(--sdn-lh-body);
+    letter-spacing: 0.14em;
+    white-space: nowrap;
+  }
+  /* L6: a <select> reserves INSET space for the platform's own chevron. */
+  .ctl select {
+    background: transparent;
+    border: 1px solid;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: var(--sdn-fs-note); line-height: var(--sdn-lh-note);
+    letter-spacing: 0.08em;
+    padding: 5px 10px;
+    padding-right: var(--sdn-sp-8);
+    outline: none;
+  }
+  .ctl select option { background: #0a141b; }
   /* The spanning actions cell owns the record's underline (the meta <td> no
      longer reaches this column) and centres its control by construction. */
   td.right[rowspan] {

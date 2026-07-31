@@ -104,26 +104,28 @@ describe('sign-in counts', () => {
   });
 });
 
-describe('the subscript line (IRIS §1: exactly four items, in this order)', () => {
-  it('is trust, key state, sign-ins, provenance — and nothing else', () => {
+describe('the subscript line, after TRUST became a column (owner 2026-07-31)', () => {
+  it('is key state, sign-ins, provenance — TRUST has left this line', () => {
     const items = operatorMeta(
       { source: 'database', signing_pubkey_hex: KEY, connection_count: 8, trust_level: 'admin' },
       'admin'
     );
-    expect(items).toHaveLength(4);
-    expect(items.map((i) => i.id)).toEqual(['trust', 'key', 'signins', 'source']);
-    expect(items[0].v).toBe('ADMIN');
-    expect(items[1].v).toBe('KEY PROVEN');
-    expect(items[2].v).toBe('8 SIGN-INS');
-    expect(items[3].v).toBe('IN NODE DATABASE');
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i.id)).toEqual(['key', 'signins', 'source']);
+    // The tier is rendered ONCE per row now, in the sortable/filterable column.
+    expect(items.some((i) => i.k === 'TRUST')).toBe(false);
+    expect(items[0].v).toBe('KEY PROVEN');
+    expect(items[1].v).toBe('8 SIGN-INS');
+    expect(items[2].v).toBe('IN NODE DATABASE');
   });
 
-  it('peers share the grammar, and only carry what the peer actually has', () => {
+  it('peers keep EFFECTIVE — it is the node’s computation, not the assertion', () => {
     const bare = peerMeta({}, 'standard', 'standard');
-    expect(bare.map((i) => i.id)).toEqual(['trust', 'effective']);
+    expect(bare.map((i) => i.id)).toEqual(['effective']);
     const full = peerMeta({ computed_valid: true, notes: 'sfo2 box' }, 'full', 'admin');
-    expect(full.map((i) => i.id)).toEqual(['trust', 'effective', 'wot', 'notes']);
-    expect(full[3].v).toBe('sfo2 box');
+    expect(full.map((i) => i.id)).toEqual(['effective', 'wot', 'notes']);
+    expect(full[0].v).toBe('ADMIN');
+    expect(full[2].v).toBe('sfo2 box');
   });
 });
 

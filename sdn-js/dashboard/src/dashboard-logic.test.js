@@ -508,19 +508,80 @@ describe('route-url — the address bar is the state', async () => {
     expect(formatHash({ ...open, modal: '', modalId: '', view: '' })).toBe('#/accounts/peers');
   });
 
-  it('nothing but the route, the subsection and the modal is addressable', () => {
+  it('nothing but the route, the subsection, the modal and its tab is addressable', () => {
     // Filters, sort, page and the sign-in dialog are NOT places (§5), so no
-    // shape here can carry them. ROUTES is the whole vocabulary.
-    expect(Object.keys(ROUTES)).toEqual(['node', 'peers', 'accounts']);
+    // shape here can carry them. ROUTES is the whole vocabulary; STOREFRONT
+    // joined it on 2026-07-31 with the ACCOUNTS nesting, not a second idiom.
+    expect(Object.keys(ROUTES)).toEqual(['node', 'peers', 'accounts', 'storefront']);
     expect(ROUTES.node).toEqual([]);
     expect(ROUTES.peers).toEqual([]);
     expect(ROUTES.accounts).toEqual(['peers', 'keys']);
+    expect(ROUTES.storefront).toEqual(['listings', 'modules']);
   });
 
   it('a half-escaped fragment is not an id', () => {
     expect(parseHash('#/peers/%E0%A4%A')).toEqual({
       route: 'peers', sub: '', modal: '', modalId: '', view: '',
     });
+  });
+
+  /*
+   * The 2026-07-31 additions: the STOREFRONT submenu, and the node card's tab.
+   * Both exist because the owner asked the same thing twice — "hitting refresh
+   * doesn't go back to the same submenu" — and a tab that is not in the address
+   * is a submenu that forgets.
+   */
+  it('carries the storefront submenu, in the ACCOUNTS grammar', () => {
+    expect(parseHash('#/storefront')).toEqual({
+      route: 'storefront', sub: '', modal: '', modalId: '', view: '',
+    });
+    expect(parseHash('#/storefront/listings').sub).toBe('listings');
+    expect(parseHash('#/storefront/modules').sub).toBe('modules');
+    expect(formatHash({ route: 'storefront', sub: 'modules' })).toBe('#/storefront/modules');
+    expect(formatHash({ route: 'storefront' })).toBe('#/storefront');
+    // An unknown subsection is the route itself, never a blank page.
+    expect(parseHash('#/storefront/nonsense').sub).toBe('');
+    expect(formatHash({ route: 'storefront', sub: 'nonsense' })).toBe('#/storefront');
+  });
+
+  it('addresses the node card’s MODULES tab, for a peer and for this node', () => {
+    expect(parseHash(`#/peers/${PEER}/modules`)).toEqual({
+      route: 'peers', sub: '', modal: 'node', modalId: PEER, view: 'modules',
+    });
+    expect(formatHash({ modal: 'node', modalId: PEER, view: 'modules' })).toBe(
+      `#/peers/${PEER}/modules`
+    );
+    expect(parseHash('#/peers/self/modules')).toEqual({
+      route: 'peers', sub: '', modal: 'self', modalId: 'self', view: 'modules',
+    });
+    expect(formatHash({ modal: 'self', modalId: 'self', view: 'modules' })).toBe('#/peers/self/modules');
+    // The QR tab keeps working exactly as it did.
+    expect(formatHash({ modal: 'self', modalId: 'self', view: 'qr' })).toBe('#/peers/self/qr');
+  });
+
+  it('drops a tab that is not a tab, and never gives one to a registry dialog', () => {
+    expect(parseHash(`#/peers/${PEER}/nonsense`).view).toBe('');
+    expect(formatHash({ modal: 'node', modalId: PEER, view: 'nonsense' })).toBe(`#/peers/${PEER}`);
+    // The two ACCOUNTS dialogs have no tabs; a view handed in is dropped rather
+    // than minting an address that parses back to something else.
+    expect(formatHash({ modal: 'peer', modalId: PEER, view: 'modules' })).toBe(
+      `#/accounts/peers/${PEER}`
+    );
+    expect(formatHash({ modal: 'operator', modalId: XPUB, view: 'qr' })).toBe(
+      `#/accounts/keys/${XPUB}`
+    );
+  });
+
+  it('round-trips the new shapes too', () => {
+    for (const hash of [
+      '#/storefront',
+      '#/storefront/listings',
+      '#/storefront/modules',
+      `#/peers/${PEER}/modules`,
+      '#/peers/self/modules',
+    ]) {
+      expect(formatHash(parseHash(hash))).toBe(hash);
+    }
   });
 });
 

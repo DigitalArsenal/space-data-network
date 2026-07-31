@@ -117,14 +117,19 @@ export function signInsLabel(user) {
 }
 
 /**
- * The subscript line, in IRIS's order: trust, key state, sign-ins, provenance.
- * Exactly four items — a fifth would be a column re-growing in disguise.
+ * The subscript line: key state, sign-ins, provenance.
+ *
+ * TRUST LEFT THIS LINE ON 2026-07-31 and became a COLUMN (owner: "the accounts
+ * table does not have the trust as a separate column either"). It is not
+ * rendered twice six inches apart — the tier appears once per row, in the
+ * column that can be sorted and filtered by it. `trustLabel` is still accepted
+ * so every existing caller keeps compiling; it is deliberately unused.
  */
 export function operatorMeta(user, trustLabel) {
+  void trustLabel;
   const key = keyState(user);
   const prov = provenance(user);
   return [
-    { id: 'trust', k: 'TRUST', v: String(trustLabel ?? '').toUpperCase(), tone: 'trust' },
     { id: 'key', k: '', v: key.label, tone: key.tone },
     { id: 'signins', k: '', v: signInsLabel(user), tone: 'textDim' },
     { id: 'source', k: '', v: prov.label, tone: prov.tone },
@@ -134,10 +139,15 @@ export function operatorMeta(user, trustLabel) {
 /**
  * The peers panel's subscript line (same grammar — two adjacent tables with
  * different grammars is the mess the owner named).
+ *
+ * EFFECTIVE STAYS HERE while TRUST moves to a column (IRIS 2026-07-31). They
+ * are two facts: one is what an operator asserted, the other is what the node
+ * computed from the web of trust, and the modal's whole APPLY correction turned
+ * on the difference. A column the page cannot set would read as an input.
  */
 export function peerMeta(peer, trustLabel, effectiveLabel) {
+  void trustLabel;
   const items = [
-    { id: 'trust', k: 'TRUST', v: String(trustLabel ?? '').toUpperCase(), tone: 'trust' },
     { id: 'effective', k: 'EFFECTIVE', v: String(effectiveLabel ?? '').toUpperCase(), tone: 'effective' },
   ];
   if (peer?.computed_valid) {

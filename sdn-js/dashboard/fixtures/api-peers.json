@@ -1,0 +1,121 @@
+[
+  {
+    "id": "16Uiu2HAmEXAMPLEanHBrKnQa59EjTfoLdsxTjsg7MFwnW2qiiVw",
+    "addrs": [
+      "/ip4/198.51.100.20/tcp/4001",
+      "/ip4/198.51.100.20/tcp/8080/ws",
+      "/ip4/198.51.100.20/udp/4001/quic-v1"
+    ],
+    "trust_level": "full",
+    "name": "Example Node Two",
+    "organization": "Example Space Operations",
+    "added_at": "2026-06-01T00:00:00Z",
+    "last_seen": "2026-07-30T21:20:00Z",
+    "last_connected": "2026-07-30T21:20:00Z",
+    "connection_count": 1841,
+    "messages_received": 31297,
+    "messages_sent": 20251,
+    "bytes_received": 75407360,
+    "bytes_sent": 37703680,
+    "effective_trust_level": "full",
+    "computed_valid": true,
+    "marginal_truster_count": 0,
+    "full_truster_count": 1,
+    "fully_trusted": true,
+    "groups": [
+      "operators"
+    ],
+    "vcard_data": "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example Node Two\r\nORG:Example Space Operations\r\nX-SDN-MULTIADDR:/ip4/198.51.100.20/tcp/4001\r\nX-SDN-MULTIADDR:/ip4/198.51.100.20/tcp/8080/ws\r\nX-SDN-MULTIADDR:/ip4/198.51.100.20/udp/4001/quic-v1\r\nX-SDN-PEER-ID:16Uiu2HAmEXAMPLEanHBrKnQa59EjTfoLdsxTjsg7MFwnW2qiiVw\r\nX-SDN-TRUST-LEVEL:full\r\nEND:VCARD\r\n"
+  },
+  {
+    "id": "16Uiu2HAmEXAMPLEtyGqVkCHXLQtECeD836a3NPHtjM2VV1AsVQQ",
+    "addrs": [
+      "/ip4/203.0.113.30/tcp/4001",
+      "/ip4/127.0.0.1/tcp/4001"
+    ],
+    "trust_level": "full",
+    "name": "Example Node Three",
+    "organization": "",
+    "added_at": "2026-06-01T00:00:00Z",
+    "last_seen": "2026-07-30T19:20:00Z",
+    "last_connected": "2026-07-30T19:20:00Z",
+    "connection_count": 96,
+    "messages_received": 1632,
+    "messages_sent": 1056,
+    "bytes_received": 3932160,
+    "bytes_sent": 1966080,
+    "effective_trust_level": "full",
+    "computed_valid": true,
+    "marginal_truster_count": 0,
+    "full_truster_count": 1,
+    "fully_trusted": true,
+    "notes": "config trusted peer"
+  },
+  {
+    "id": "16Uiu2HAmEXAMPLEnkiZSg6jGEx8pgTKb8fgXc79FcMD5fAenpSH",
+    "addrs": [
+      "/ip4/192.0.2.40/tcp/4001/p2p-circuit"
+    ],
+    "trust_level": "standard",
+    "name": "",
+    "organization": "",
+    "added_at": "2026-06-01T00:00:00Z",
+    "last_seen": "2026-07-30T21:20:00Z",
+    "last_connected": "2026-07-30T21:20:00Z",
+    "connection_count": 3,
+    "messages_received": 51,
+    "messages_sent": 33,
+    "bytes_received": 122880,
+    "bytes_sent": 61440,
+    "effective_trust_level": "standard",
+    "computed_valid": true,
+    "marginal_truster_count": 0,
+    "full_truster_count": 1,
+    "fully_trusted": false
+  },
+  {
+    "id": "16Uiu2HAmEXAMPLEXVVVJADnKFdHf3DAY1XxvyKd8ba2bhKRM2HV",
+    "addrs": [
+      "/ip4/198.51.100.50/tcp/4001"
+    ],
+    "trust_level": "marginal",
+    "name": "Example Node Five",
+    "organization": "Example University",
+    "added_at": "2026-06-01T00:00:00Z",
+    "last_seen": "0001-01-01T00:00:00Z",
+    "last_connected": "0001-01-01T00:00:00Z",
+    "connection_count": 0,
+    "messages_received": 0,
+    "messages_sent": 0,
+    "bytes_received": 0,
+    "bytes_sent": 0,
+    "effective_trust_level": "marginal",
+    "computed_valid": true,
+    "marginal_truster_count": 1,
+    "full_truster_count": 0,
+    "fully_trusted": false
+  },
+  {
+    "id": "16Uiu2HAmEXAMPLEenu3T7aCEay6uhSy9LFzRNw6cwRfWbmcBAG8",
+    "addrs": [
+      "/ip4/203.0.113.60/tcp/4001"
+    ],
+    "trust_level": "never",
+    "name": "Example Node Six",
+    "organization": "",
+    "added_at": "2026-06-01T00:00:00Z",
+    "last_seen": "2026-07-30T21:20:00Z",
+    "last_connected": "2026-07-30T21:20:00Z",
+    "connection_count": 4,
+    "messages_received": 68,
+    "messages_sent": 44,
+    "bytes_received": 163840,
+    "bytes_sent": 81920,
+    "effective_trust_level": "never",
+    "computed_valid": false,
+    "marginal_truster_count": 0,
+    "full_truster_count": 0,
+    "fully_trusted": false,
+    "notes": "vetoed after repeated malformed publications"
+  }
+]

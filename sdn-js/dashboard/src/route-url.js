@@ -22,8 +22,28 @@
  * `hashchange`, and writes through ONE effect that compares before it pushes.
  */
 
-/** The rail's routes, and the subsections each one admits. */
-export const ROUTES = { node: [], peers: [], accounts: ['peers', 'keys'] };
+/**
+ * The rail's routes, and the subsections each one admits.
+ *
+ * STOREFRONT joined them on 2026-07-31 (owner: "We also need the storefront
+ * submenu"). It nests exactly the way ACCOUNTS already does — a tab bar whose
+ * selection is in the address — because a second nesting idiom on one rail is
+ * two answers to "where am I".
+ */
+export const ROUTES = {
+  node: [],
+  peers: [],
+  accounts: ['peers', 'keys'],
+  storefront: ['listings', 'modules'],
+};
+
+/**
+ * The views a NODE card can open on. `qr` was the first (the IDENTITY widget's
+ * scannable card); `modules` is the peer's signed $PMM offering, which is a
+ * PLACE — an operator sends "look at what this node hosts" to a colleague as a
+ * link, or refreshes on it, and both must land back on the same tab.
+ */
+export const NODE_VIEWS = ['qr', 'modules'];
 
 /**
  * A modal's HOME — the route (and subsection) it is always addressed under, so
@@ -74,6 +94,14 @@ export function parseHash(hash) {
   // typo never becomes a history entry.
   if (!route || !(route in ROUTES)) return empty;
 
+  if (route === 'storefront') {
+    const sub = parts[1] ?? '';
+    // An unknown or absent subsection lands on the route itself, which picks its
+    // own default tab — never a blank page, and never a modal this route has no
+    // dialog for.
+    return { ...empty, route, sub: ROUTES.storefront.includes(sub) ? sub : '' };
+  }
+
   if (route === 'accounts') {
     const sub = parts[1] ?? '';
     if (!ROUTES.accounts.includes(sub)) return { ...empty, route };
@@ -84,12 +112,16 @@ export function parseHash(hash) {
 
   if (route === 'peers') {
     const second = parts[1] ?? '';
+    // The third segment is the card's TAB, from one list for both cards: the
+    // self node is a node (IRIS R6), so `#/peers/self/modules` and
+    // `#/peers/<id>/modules` are the same dialog on the same tab.
+    const view = NODE_VIEWS.includes(parts[2] ?? '') ? parts[2] : '';
     if (second === SELF) {
-      return { route, sub: '', modal: 'self', modalId: SELF, view: parts[2] === 'qr' ? 'qr' : '' };
+      return { route, sub: '', modal: 'self', modalId: SELF, view };
     }
     const id = decode(second);
     if (!id) return { ...empty, route };
-    return { route, sub: '', modal: 'node', modalId: id, view: '' };
+    return { route, sub: '', modal: 'node', modalId: id, view };
   }
 
   return { ...empty, route };
@@ -104,9 +136,16 @@ export function formatHash({ route = 'node', sub = '', modal = '', modalId = '',
   const home = MODAL_HOME[modal];
   const r = home ? home[0] : route in ROUTES ? route : 'node';
   const s = home ? home[1] : (ROUTES[r] ?? []).includes(sub) ? sub : '';
+  const tab = NODE_VIEWS.includes(view) ? `/${view}` : '';
   let out = `#/${r}`;
   if (s) out += `/${s}`;
-  if (modal === 'self') return view === 'qr' ? `${out}/${SELF}/qr` : `${out}/${SELF}`;
-  if (home && modalId) out += `/${encodeURIComponent(modalId)}`;
+  if (modal === 'self') return `${out}/${SELF}${tab}`;
+  if (home && modalId) {
+    out += `/${encodeURIComponent(modalId)}`;
+    // Only the node card has tabs; the two registry dialogs do not, and a `view`
+    // handed in for one of them is dropped rather than minting an address that
+    // parses back to something else.
+    if (modal === 'node') out += tab;
+  }
   return out;
 }
