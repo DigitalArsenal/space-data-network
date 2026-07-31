@@ -34,6 +34,7 @@ import (
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	logging "github.com/ipfs/go-log/v2"
 	libp2phost "github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -1973,6 +1974,74 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				statusBroadcaster.Start()
 				adminMux.HandleFunc("/ws/status", statusBroadcaster.ServeHTTP)
 				log.Infof("Status feed available at %s://%s/ws/status (public read-only)", adminScheme, adminAddr)
+
+				// Operator-enrolled peer EPMs (peers.epm_dir): a fleet
+				// peer's signed identity is held from provisioning, even
+				// while the peer is offline (owner directive 2026-07-31).
+				if dir := strings.TrimSpace(cfg.Peers.EPMDir); dir != "" {
+					if count := loadEnrolledPeerEPMs(dir, n.PeerRegistry()); count > 0 {
+						log.Infof("peer-epm-enrolment: %d signed peer EPM(s) loaded from config epm_dir", count)
+					}
+				}
+
+				// On-identify EPM exchange (owner directive 2026-07-31: the
+				// identity is fetchable the moment a connection is
+				// instantiated): the instant identify completes for a peer
+				// speaking the exchange protocol, request its EPM if we do
+				// not hold one. The timer pump below stays as the sweep for
+				// missed events and offline pinned peers.
+				if sub, err := n.Host().EventBus().Subscribe(new(event.EvtPeerIdentificationCompleted)); err == nil {
+					go func() {
+						defer sub.Close()
+						for {
+							select {
+							case <-ctx.Done():
+								return
+							case e, ok := <-sub.Out():
+								if !ok {
+									return
+								}
+								evt, ok := e.(event.EvtPeerIdentificationCompleted)
+								if !ok {
+									continue
+								}
+								pid := evt.Peer
+								if pid == n.Host().ID() {
+									continue
+								}
+								epmSvc := n.EPMService()
+								registry := n.PeerRegistry()
+								if epmSvc == nil || registry == nil {
+									continue
+								}
+								if tp, err := registry.GetPeer(pid); err == nil && tp != nil && len(tp.EPMData) > 0 {
+									continue
+								}
+								protos, err := n.Host().Peerstore().GetProtocols(pid)
+								if err != nil {
+									continue
+								}
+								speaks := false
+								for _, proto := range protos {
+									if proto == epm.EPMExchangeProtocolID {
+										speaks = true
+										break
+									}
+								}
+								if !speaks {
+									continue
+								}
+								go func(target peer.ID) {
+									if err := epmSvc.RequestPeerEPM(ctx, n.Host(), target); err != nil {
+										log.Debugf("epm-exchange: on-identify request to %s failed: %v", target.ShortString(), err)
+									}
+								}(pid)
+							}
+						}
+					}()
+				} else {
+					log.Warnf("epm-exchange: identify-event subscription failed, timer pump only: %v", err)
+				}
 
 				// EPM exchange pump: RequestPeerEPM was previously never
 				// invoked, so observed peers' vCards stayed the sparse
