@@ -1,6 +1,6 @@
 package api
 
-// The SDN update feed — GET /api/v1/updates/<kind>/<channel>/<platform>/<arch>/…
+// The SDN update feed — GET /updates/<kind>/<channel>/<platform>/<arch>/…
 //
 // OWNER RULING 2026-07-30 (graph/tasks/sdn-signed-updater.md): the update
 // server RUNS ON sdn.spaceaware.io. There is no updates.spacedatanetwork.org,
@@ -38,7 +38,20 @@ import (
 
 // UpdateFeedRoute is the subtree this surface occupies. The trailing slash
 // makes it a subtree match; a request for the bare path is not served.
-const UpdateFeedRoute = "/api/v1/updates/"
+//
+// IT IS DELIBERATELY NOT UNDER /api/. On a require_auth node — which host-01
+// is — serveAdminMuxRequest (cmd/spacedatanetwork/main.go) default-denies every
+// path beginning with /api/ unless it appears in isPublicReadAPIPath's literal
+// allow-list. An update feed under /api/ therefore 401s to the entire fleet
+// until a list in main.go names it, and main.go's route/classifier block is
+// under another task's claim. It is also simply the wrong shape: the feed must
+// be readable by a client that has no session and never will have one.
+//
+// A top-level static subtree is the pattern this daemon already uses for
+// exactly this class of surface (/wallet-wasm/, /wallet-ui/): outside /api/,
+// served straight off the admin mux, public by construction rather than by
+// allow-list entry.
+const UpdateFeedRoute = "/updates/"
 
 // updateFeedDirEnv points at the directory holding the generated feed tree
 // (deployment/release/build-sdn-update-feed.js output).

@@ -50,17 +50,17 @@ test.describe('SDN updater release feed', () => {
 
     expect(urls).toEqual({
       baseUrl: SDN_UPDATE_FEED_BASE_URL,
-      feedUrl: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64',
-      indexUrl: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64/index.json',
-      manifestUrl: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64/0.48.0/manifest.json',
-      carrierUrl: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64/0.48.0/update.wasm'
+      feedUrl: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64',
+      indexUrl: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/index.json',
+      manifestUrl: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.48.0/manifest.json',
+      carrierUrl: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.48.0/update.wasm'
     })
     expect(JSON.stringify(urls)).not.toContain('ipfs-desktop')
     expect(JSON.stringify(urls)).not.toContain('github.com')
   })
 
   test('rejects non-SDN desktop application update feeds', () => {
-    expect(() => assertSdnOwnedDesktopUpdateFeedUrl('https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64')).not.toThrow()
+    expect(() => assertSdnOwnedDesktopUpdateFeedUrl('https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64')).not.toThrow()
     expect(() => assertSdnOwnedDesktopUpdateFeedUrl('https://github.com/DigitalArsenal/space-data-network/releases/latest')).toThrow('SDN desktop updates must use the SDN update feed origin')
     expect(() => assertSdnOwnedDesktopUpdateFeedUrl('https://github.com/ipfs-shipyard/ipfs-desktop/releases/latest')).toThrow('SDN desktop updates must use the SDN update feed origin')
   })
@@ -82,7 +82,7 @@ test.describe('SDN updater release feed', () => {
     expect(index).toEqual({
       schema: 'org.spacedatanetwork.update.index.v1',
       generated_at: '2026-05-05T12:00:00Z',
-      feed_base_url: 'https://sdn.spaceaware.io/api/v1/updates',
+      feed_base_url: 'https://sdn.spaceaware.io/updates',
       updates: [
         {
           update_id: 'desktop-stable-2026-05-05',
@@ -98,8 +98,8 @@ test.describe('SDN updater release feed', () => {
           bundle_hash: 'a'.repeat(64),
           wasm_hash: 'b'.repeat(64),
           signing_key_id: 'release-2026q2',
-          manifest_url: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64/0.48.0/manifest.json',
-          carrier_url: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64/0.48.0/update.wasm'
+          manifest_url: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.48.0/manifest.json',
+          carrier_url: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.48.0/update.wasm'
         },
         {
           update_id: 'desktop-stable-2026-05-04',
@@ -115,8 +115,8 @@ test.describe('SDN updater release feed', () => {
           bundle_hash: 'a'.repeat(64),
           wasm_hash: 'b'.repeat(64),
           signing_key_id: 'release-2026q2',
-          manifest_url: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64/0.47.1/manifest.json',
-          carrier_url: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64/0.47.1/update.wasm'
+          manifest_url: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.47.1/manifest.json',
+          carrier_url: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.47.1/update.wasm'
         }
       ]
     })
@@ -146,8 +146,8 @@ test.describe('SDN updater release feed', () => {
         arch: 'arm64',
         kind: 'kubo-runtime'
       },
-      manifest_url: 'https://sdn.spaceaware.io/api/v1/updates/kubo-runtime/stable/darwin/arm64/0.39.1/manifest.json',
-      carrier_url: 'https://sdn.spaceaware.io/api/v1/updates/kubo-runtime/stable/darwin/arm64/0.39.1/update.wasm'
+      manifest_url: 'https://sdn.spaceaware.io/updates/kubo-runtime/stable/darwin/arm64/0.39.1/manifest.json',
+      carrier_url: 'https://sdn.spaceaware.io/updates/kubo-runtime/stable/darwin/arm64/0.39.1/update.wasm'
     })
   })
 
@@ -185,8 +185,8 @@ test.describe('SDN updater release feed', () => {
       updates: [
         {
           update_id: 'desktop-stable-2026-05-05',
-          manifest_url: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64/0.48.0/manifest.json',
-          carrier_url: 'https://sdn.spaceaware.io/api/v1/updates/desktop/stable/darwin/arm64/0.48.0/update.wasm'
+          manifest_url: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.48.0/manifest.json',
+          carrier_url: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.48.0/update.wasm'
         }
       ]
     })

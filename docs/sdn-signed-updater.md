@@ -213,7 +213,7 @@ automatic installation is enabled.
 The SDN-owned update feed origin is:
 
 ```text
-https://sdn.spaceaware.io/api/v1/updates
+https://sdn.spaceaware.io/updates
 ```
 
 Desktop application payloads are indexed under:
@@ -249,7 +249,7 @@ node deployment/release/build-sdn-update-feed.js \
 `SDN_UPDATE_FEED_ENTRIES` as a comma-separated list of
 `manifest.json:update.wasm` pairs and writes the feed under
 `dist/release/update-feed` by default. Publication to
-`sdn.spaceaware.io/api/v1/updates` is a release-operations step after artifact
+`sdn.spaceaware.io/updates` is a release-operations step after artifact
 verification; the tooling intentionally does not claim a live deployment.
 
 ## Electron Application Update Path
@@ -263,7 +263,7 @@ automatic SDN Desktop app updates remain disabled, but any Electron automatic
 update feed must resolve to:
 
 ```text
-https://sdn.spaceaware.io/api/v1/updates/desktop/<channel>/<platform>/<arch>
+https://sdn.spaceaware.io/updates/desktop/<channel>/<platform>/<arch>
 ```
 
 Kubo runtime checks are separate from Electron app updates and may inspect
@@ -285,7 +285,7 @@ Use this process for an upstream IPFS Desktop/WebUI/Kubo refresh:
    IPFS Desktop app update feeds are still disabled.
 5. Build desktop/runtime/module payloads, sign manifests, verify payload hashes,
    and assemble the static SDN feed index.
-6. Publish the feed tree to `sdn.spaceaware.io/api/v1/updates`.
+6. Publish the feed tree to `sdn.spaceaware.io/updates`.
 7. Publish the signed manifest through the SDN network release path so clients
    consume SDN-owned metadata only.
 
@@ -302,7 +302,7 @@ unsigned, expired, outside policy, or below the allowed rollback floor.
 Emergency disable for a bad manifest or bad upstream refresh:
 
 1. Remove or quarantine the affected `index.json` entry at
-   `sdn.spaceaware.io/api/v1/updates`.
+   `sdn.spaceaware.io/updates`.
 2. Publish a corrected index that points clients at the last known-good signed
    manifest, or publish no update for that target while investigation is open.
 3. Add the bad manifest sequence, update id, and signing key id to the
@@ -382,8 +382,8 @@ node deployment/release/build-sdn-update-feed.js \
 
 # 3. Publish the feed tree, then on the target host stage and apply.
 spacedatanetwork update stage \
-  --manifest https://sdn.spaceaware.io/api/v1/updates/cli-bundle/beta/darwin/arm64/1.2.3/manifest.json \
-  --carrier https://sdn.spaceaware.io/api/v1/updates/cli-bundle/beta/darwin/arm64/1.2.3/update.wasm
+  --manifest https://sdn.spaceaware.io/updates/cli-bundle/beta/darwin/arm64/1.2.3/manifest.json \
+  --carrier https://sdn.spaceaware.io/updates/cli-bundle/beta/darwin/arm64/1.2.3/update.wasm
 spacedatanetwork update apply
 ```
 

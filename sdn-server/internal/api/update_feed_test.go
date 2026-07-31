@@ -41,9 +41,9 @@ func getFeed(t *testing.T, root, path string) *httptest.ResponseRecorder {
 func TestUpdateFeedServesTheProtocolFiles(t *testing.T) {
 	root := feedRoot(t)
 	for path, wantType := range map[string]string{
-		"/api/v1/updates/cli-bundle/beta/linux/amd64/index.json":          "application/json; charset=utf-8",
-		"/api/v1/updates/cli-bundle/beta/linux/amd64/1.2.3/manifest.json": "application/json; charset=utf-8",
-		"/api/v1/updates/cli-bundle/beta/linux/amd64/1.2.3/update.wasm":   "application/wasm",
+		"/updates/cli-bundle/beta/linux/amd64/index.json":          "application/json; charset=utf-8",
+		"/updates/cli-bundle/beta/linux/amd64/1.2.3/manifest.json": "application/json; charset=utf-8",
+		"/updates/cli-bundle/beta/linux/amd64/1.2.3/update.wasm":   "application/wasm",
 	} {
 		rec := getFeed(t, root, path)
 		if rec.Code != http.StatusOK {
@@ -63,14 +63,14 @@ func TestUpdateFeedServesTheProtocolFiles(t *testing.T) {
 func TestUpdateFeedRefusesEverythingElse(t *testing.T) {
 	root := feedRoot(t)
 	for _, path := range []string{
-		"/api/v1/updates/cli-bundle/beta/linux/amd64/deploy-notes.txt",
-		"/api/v1/updates/cli-bundle/beta/linux/amd64/index.html",
-		"/api/v1/updates/cli-bundle/beta/linux/amd64", // a directory
-		"/api/v1/updates/",                             // the bare root
-		"/api/v1/updates/../../../etc/passwd",          // traversal
-		"/api/v1/updates/cli-bundle/../../secret.json", // traversal back to root
-		"/api/v1/updates/a/b/c/d/e/f/g/too-deep.json",  // depth bound
-		"/api/v1/updates/cli-bundle/beta/linux/amd64/nope.json",
+		"/updates/cli-bundle/beta/linux/amd64/deploy-notes.txt",
+		"/updates/cli-bundle/beta/linux/amd64/index.html",
+		"/updates/cli-bundle/beta/linux/amd64",  // a directory
+		"/updates/",                             // the bare root
+		"/updates/../../../etc/passwd",          // traversal
+		"/updates/cli-bundle/../../secret.json", // traversal back to root
+		"/updates/a/b/c/d/e/f/g/too-deep.json",  // depth bound
+		"/updates/cli-bundle/beta/linux/amd64/nope.json",
 	} {
 		if rec := getFeed(t, root, path); rec.Code != http.StatusNotFound {
 			t.Fatalf("GET %s = %d, want 404", path, rec.Code)
@@ -82,7 +82,7 @@ func TestUpdateFeedIsReadOnly(t *testing.T) {
 	root := feedRoot(t)
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(method, "/api/v1/updates/cli-bundle/beta/linux/amd64/index.json", nil)
+		req := httptest.NewRequest(method, "/updates/cli-bundle/beta/linux/amd64/index.json", nil)
 		makeUpdateFeedHandler(root)(rec, req)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("%s = %d, want 405", method, rec.Code)
@@ -94,22 +94,22 @@ func TestUpdateFeedIsReadOnly(t *testing.T) {
 // pin the fleet to whatever release was current when it was first fetched.
 func TestUpdateFeedCachePolicy(t *testing.T) {
 	root := feedRoot(t)
-	if got := getFeed(t, root, "/api/v1/updates/cli-bundle/beta/linux/amd64/index.json").Header().Get("Cache-Control"); got != "no-cache" {
+	if got := getFeed(t, root, "/updates/cli-bundle/beta/linux/amd64/index.json").Header().Get("Cache-Control"); got != "no-cache" {
 		t.Fatalf("index cache-control = %q, want no-cache", got)
 	}
-	if got := getFeed(t, root, "/api/v1/updates/cli-bundle/beta/linux/amd64/1.2.3/update.wasm").Header().Get("Cache-Control"); got == "no-cache" {
+	if got := getFeed(t, root, "/updates/cli-bundle/beta/linux/amd64/1.2.3/update.wasm").Header().Get("Cache-Control"); got == "no-cache" {
 		t.Fatal("versioned payloads should be cacheable")
 	}
 }
 
 func TestUpdateFeedRelPathRejectsHiddenAndEmptySegments(t *testing.T) {
 	for _, path := range []string{
-		"/api/v1/updates/.git/config.json",
-		"/api/v1/updates/cli-bundle/.hidden/index.json",
+		"/updates/.git/config.json",
+		"/updates/cli-bundle/.hidden/index.json",
 		// NOTE: "cli-bundle//index.json" is deliberately NOT here. path.Clean
 		// collapses the empty segment, and http.ServeMux cleans the path before
 		// dispatch anyway, so it never reaches this function in production.
-		"/api/v1/updates/cli-bundle/beta/linux/amd64/index.json\x00.txt",
+		"/updates/cli-bundle/beta/linux/amd64/index.json\x00.txt",
 		"/somewhere/else/index.json",
 	} {
 		if _, ok := updateFeedRelPath(path); ok {
