@@ -97,6 +97,33 @@
   const coords = $derived(formatCoords(node.lat, node.lon));
   const hasVCard = $derived(Boolean(node.vcard?.trim()));
 
+  /*
+   * The PARSED view is an OUTLOOK-STYLE CONTACT CARD (owner 2026-07-31):
+   * image upper-left, the basic contact fields as plain text beside it, the
+   * scannable QR on the card itself. Basic = what a phone contact shows;
+   * everything else stays in the detail list under the card. No photo is
+   * published in these cards today, so the image is the tier-colored
+   * initials block — never an invented picture.
+   */
+  const CARD_BASIC = new Set(['FN', 'N', 'ORG', 'TITLE', 'ROLE', 'EMAIL', 'TEL', 'ADR', 'URL']);
+  const cardName = $derived(
+    fields.find((f) => f.name === 'FN')?.values?.[0] || (node.name || '').trim() || 'unnamed'
+  );
+  const cardInitials = $derived(
+    cardName === 'unnamed'
+      ? '?'
+      : cardName
+          .split(/[\s.-]+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((w) => w[0].toUpperCase())
+          .join('')
+  );
+  const basicFields = $derived(fields.filter((f) => CARD_BASIC.has(f.name) && f.name !== 'FN' && f.name !== 'N'));
+  const extraFields = $derived(fields.filter((f) => !CARD_BASIC.has(f.name) && f.name !== 'FN' && f.name !== 'N'));
+  /** Server-rendered QR (integer module scale, inline disposition). Hidden if the node can't serve it. */
+  let cardQrOk = $state(true);
+
   const identityRows = $derived(
     [
       ['XPUB', identity.xpub, true],
@@ -253,14 +280,44 @@
         <div class="qr-hint" style="color:{theme.textFaint};">Scan to import this node as a contact (vCard 3.0 — xpub, key derivation paths, EPM signature + CID ride as email aliases).</div>
       </div>
     {:else}
-      <dl>
-        {#each fields as field (field.name)}
-          <div class="row"><dt style="color:{theme.textMuted};">{field.label}</dt>
-            <dd class="mono" style="color:{theme.textBody};">
-              {#each field.values as v, i}{#if i}<br />{/if}{v}{/each}
-            </dd></div>
-        {/each}
-      </dl>
+      <div class="card" style="border-color:{theme.hairline};">
+        <div class="card-head">
+          <div class="avatar" style="border-color:{tierColor};color:{tierColor};" aria-hidden="true">{cardInitials}</div>
+          <div class="card-id">
+            <div class="card-name" style="color:{theme.textBright};">{cardName}</div>
+            {#each basicFields as field (field.name)}
+              <div class="card-line">
+                <span class="card-k" style="color:{theme.textMuted};">{field.label}</span>
+                <span class="card-v" style="color:{theme.textBody};">{field.values.join(' · ')}</span>
+              </div>
+            {/each}
+            <div class="card-line">
+              <span class="card-k" style="color:{theme.textMuted};">PEER ID</span>
+              <span class="card-v mono" style="color:{theme.ice};">{shortId(node.peerId)}</span>
+            </div>
+          </div>
+          {#if cardQrOk}
+            <img
+              class="card-qr"
+              src={`/identity/${node.peerId}.qr.png`}
+              alt="Scannable contact QR for this node"
+              width="160"
+              height="160"
+              onerror={() => (cardQrOk = false)}
+            />
+          {/if}
+        </div>
+        {#if extraFields.length}
+          <dl class="card-extra" style="border-color:{theme.divider};">
+            {#each extraFields as field (field.name)}
+              <div class="row"><dt style="color:{theme.textMuted};">{field.label}</dt>
+                <dd class="mono" style="color:{theme.textBody};">
+                  {#each field.values as v, i}{#if i}<br />{/if}{v}{/each}
+                </dd></div>
+            {/each}
+          </dl>
+        {/if}
+      </div>
     {/if}
   </div>
 
@@ -302,6 +359,27 @@
     padding: 3px 9px;
   }
   .qr { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 0 4px; }
+  .card { border: 1px solid; padding: 14px; margin-top: 8px; }
+  .card-head { display: flex; gap: 14px; align-items: flex-start; }
+  .avatar {
+    flex: none;
+    width: 72px; height: 72px;
+    border: 1px solid;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px; letter-spacing: 0.06em;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  .card-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .card-name { font-size: 15px; letter-spacing: 0.08em; }
+  .card-line { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+  .card-k { flex: none; width: 68px; font-size: var(--sdn-fs-label); letter-spacing: 0.14em; }
+  .card-v { font-size: var(--sdn-fs-value); overflow-wrap: anywhere; min-width: 0; }
+  .card-qr { flex: none; width: 160px; height: 160px; image-rendering: pixelated; }
+  .card-extra { border-top: 1px solid; margin-top: 12px; padding-top: 10px; }
+  @media (max-width: 560px) {
+    .card-head { flex-wrap: wrap; }
+    .card-qr { order: 3; margin: 8px auto 0; }
+  }
   /* GRAMMAR L6 (iris-dashboard-grammar-law): aspect-locked media is clamped on
      AT MOST ONE axis and states its ratio, with flex:none so the column's
      flex-shrink cannot squash it. Two percentage clamps plus flex-shrink is

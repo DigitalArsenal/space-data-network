@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 )
 
 //go:embed embedded/wallet_callback.html
@@ -373,7 +374,33 @@ func makeIdentityHandler(src identitySource) http.Handler {
 		}
 		var body []byte
 		var contentType, filename string
+		disposition := "attachment"
 		switch ext {
+		case "qr.png":
+			// The same density-locked card qr.vcf serves, rendered server-side
+			// with the already-vendored encoder so the dashboard's contact card
+			// can show a scannable QR without shipping a client QR library.
+			var card string
+			if id == src.SelfID {
+				if src.SelfQRVCard != nil {
+					card, _ = src.SelfQRVCard()
+				}
+			} else if src.PeerQRVCard != nil {
+				card, _ = src.PeerQRVCard(id)
+			}
+			if strings.TrimSpace(card) == "" {
+				http.NotFound(w, r)
+				return
+			}
+			png, err := vcard.VCardToQR(card, 320)
+			if err != nil {
+				http.Error(w, "qr render failed", http.StatusInternalServerError)
+				return
+			}
+			body = png
+			contentType = "image/png"
+			filename = id + ".qr.png"
+			disposition = "inline"
 		case "qr.vcf":
 			var card string
 			if id == src.SelfID {
@@ -427,7 +454,7 @@ func makeIdentityHandler(src identitySource) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		w.Header().Set("Content-Disposition", disposition+`; filename="`+filename+`"`)
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)

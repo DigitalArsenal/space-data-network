@@ -29,10 +29,13 @@
   import { normalizeTrust, trustRank, TRUST_COLOR_TOKEN, TRUST_TIERS } from './trust.js';
   import {
     applyRegistryView,
+    filterColumns,
     operatorSearchText,
+    paginate,
     peerSearchText,
     tiersPresent,
     OPERATOR_SORTERS,
+    PEER_FIELD_TEXT,
     PEER_SORTERS,
   } from './registry-table.js';
   import { shortId } from './format.js';
@@ -201,9 +204,12 @@
   let userSortKey = $state('trust');
   let userSortDir = $state(1);
   let peerQuery = $state('');
-  let peerTierFilter = $state('all');
+  /** Per-column filters (owner 2026-07-31) — the trust dropdown is gone. */
+  let peerColFilters = $state({ peer: '', name: '', trust: '' });
   let peerSortKey = $state('trust');
   let peerSortDir = $state(1);
+  let peerPage = $state(1);
+  const PEER_PAGE_SIZE = 25;
 
   const allUsers = $derived(users ?? []);
   const allPeers = $derived(peers ?? []);
@@ -229,16 +235,21 @@
     )
   );
   const peerList = $derived(
-    applyRegistryView(
-      allPeers,
-      { query: peerQuery, tier: peerTierFilter, sortKey: peerSortKey, sortDir: peerSortDir },
-      { textOf: peerSearchText, sorters: PEER_SORTERS }
+    filterColumns(
+      applyRegistryView(
+        allPeers,
+        { query: peerQuery, tier: 'all', sortKey: peerSortKey, sortDir: peerSortDir },
+        { textOf: peerSearchText, sorters: PEER_SORTERS }
+      ),
+      peerColFilters,
+      PEER_FIELD_TEXT
     )
   );
+  /** The rendered window — paginate clamps, so filter changes never strand the page. */
+  const peerWindow = $derived(paginate(peerList, peerPage, PEER_PAGE_SIZE));
 
   /** The filter offers the tiers that are THERE, never the whole empty scale. */
   const userTiersPresent = $derived(tiersPresent(allUsers));
-  const peerTiersPresent = $derived(tiersPresent(allPeers));
 
   /** Same toggle contract as the peers table: same key flips direction. */
   function sortUsers(key) {
@@ -812,21 +823,17 @@
     <!-- ---------------------------------------------------------------- -->
     {#if showPeers}
     <Panel variant="raised" pad="0">
+      <!-- The table header block is GONE (owner 2026-07-31): the page title
+           already says PEERS · /api/peers, and the registry count lives in the
+           always-visible pagination line under the table. Only the add-peer
+           form keeps a heading, since it has no other name. -->
+      {#if !showPeerTable}
       <div class="head" style="border-color:{theme.divider};">
         <div>
-          <Kick text="LIBP2P TRUST REGISTRY · /api/peers" />
-          <div class="ttl" style="color:{theme.textBright};">{showPeerTable ? 'NETWORK PEERS' : 'ADD A PEER'}</div>
-        </div>
-        <div class="chips">
-          <StatusChip
-            label={peerList.length === allPeers.length
-              ? `${allPeers.length} IN REGISTRY`
-              : `${peerList.length} OF ${allPeers.length} SHOWN`}
-            color={theme.ice}
-            dot={false}
-          />
+          <div class="ttl" style="color:{theme.textBright};">ADD A PEER</div>
         </div>
       </div>
+      {/if}
       <div class="pad">
         {#if showPeerTable}
         <div class="toolbar">
@@ -840,15 +847,6 @@
               aria-label="Search the peer registry"
             />
           </div>
-          <label class="ctl" style="color:{theme.textMuted};">
-            TRUST
-            <select bind:value={peerTierFilter} style="color:{tierColor(peerTierFilter)};border-color:{theme.hairline};" aria-label="Filter peers by trust tier">
-              <option value="all">ALL</option>
-              {#each peerTiersPresent as tier (tier)}
-                <option value={tier}>{tier.toUpperCase()}</option>
-              {/each}
-            </select>
-          </label>
         </div>
         <div class="tbl-wrap">
           <!-- Same grammar as OPERATOR KEYS (IRIS ruling §4): two adjacent
@@ -865,6 +863,23 @@
                 {/each}
                 <th></th>
               </tr>
+              <!-- Per-column filters (owner 2026-07-31): every field filterable
+                   by itself; the single trust dropdown is gone. -->
+              <tr class="colfilters" style="border-color:{theme.divider};">
+                {#each [['peer', 'FILTER ID'], ['name', 'FILTER NAME'], ['trust', 'FILTER TRUST']] as [key, ph] (key)}
+                  <th>
+                    <input
+                      type="search"
+                      class="colfilter"
+                      placeholder={ph}
+                      bind:value={peerColFilters[key]}
+                      style="color:{theme.textBright};border-color:{theme.hairline};background:{theme.inputWell};"
+                      aria-label={ph.toLowerCase()}
+                    />
+                  </th>
+                {/each}
+                <th></th>
+              </tr>
             </thead>
             {#if peers === null}
               <tbody>
@@ -876,10 +891,10 @@
               </tbody>
             {:else if !peerList.length}
               <tbody>
-                <tr><td colspan="4" class="none" style="color:{theme.textFaint};">No peer matches the current search or trust filter.</td></tr>
+                <tr><td colspan="4" class="none" style="color:{theme.textFaint};">No peer matches the current search or column filters.</td></tr>
               </tbody>
             {:else}
-              {#each peerList as peer (peer.id)}
+              {#each peerWindow.rows as peer (peer.id)}
                 <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events a11y_no_noninteractive_tabindex -->
                 <tbody
                   class="rec"
@@ -923,6 +938,24 @@
               {/each}
             {/if}
           </table>
+        </div>
+        <!-- Pagination is ALWAYS visible with the total (owner 2026-07-31),
+             even when one page holds everything — the count that used to live
+             in the removed "IN REGISTRY" chip lives here now, honestly. -->
+        <div class="pager" style="color:{theme.textMuted};border-color:{theme.divider};">
+          <span class="range">
+            {peerWindow.total
+              ? `${peerWindow.start}–${peerWindow.end} OF ${peerWindow.total} RECORDS`
+              : '0 RECORDS'}
+            {#if peerWindow.total !== allPeers.length}
+              <span style="color:{theme.textFaint};">({allPeers.length} IN REGISTRY)</span>
+            {/if}
+          </span>
+          <span class="pgctl">
+            <GBtn title="Previous page" disabled={peerWindow.page <= 1} onclick={() => (peerPage = peerWindow.page - 1)}>PREV</GBtn>
+            <span class="pg">PAGE {peerWindow.page} / {peerWindow.pages}</span>
+            <GBtn title="Next page" disabled={peerWindow.page >= peerWindow.pages} onclick={() => (peerPage = peerWindow.page + 1)}>NEXT</GBtn>
+          </span>
         </div>
         {/if}
 
@@ -1230,6 +1263,31 @@
   /* The per-table toolbar. Same shape as the PEERS toolbar (App.svelte) — this
      is a copy of a grammar, not a new one, and the two must not drift: search on
      the left with room to grow, one tier filter beside it. */
+  .colfilters th { padding: 4px 10px 8px; }
+  .colfilter {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    padding: 4px 8px;
+    border: 1px solid;
+    border-radius: 3px;
+    background: transparent;
+    outline: none;
+  }
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 2px 0;
+    border-top: 1px solid;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+  .pager .pgctl { display: flex; align-items: center; gap: 10px; }
+  .pager .pg { white-space: nowrap; }
   .toolbar {
     display: flex;
     align-items: center;
