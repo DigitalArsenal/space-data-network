@@ -14,7 +14,7 @@
    *   · addresses — collapsed by default, small separated rows
    * Styled only with theme.js tokens.
    */
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import QRCode from 'qrcode';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import HostedModules from './HostedModules.svelte';
@@ -51,7 +51,10 @@
    * on a tab would be undone in the next flush by the prop that had not caught
    * up yet. The effect reacts to the PROP changing and to nothing else.
    */
-  let lastInitial = initialView || 'parsed';
+  // `untrack` because this is a one-time snapshot of a prop at creation, which
+  // is exactly what svelte's state_referenced_locally warning exists to make
+  // deliberate rather than accidental.
+  let lastInitial = untrack(() => initialView) || 'parsed';
   $effect(() => {
     const want = initialView || 'parsed';
     if (want === lastInitial) return;
@@ -217,7 +220,11 @@
        does this node host" is a question about the node, not about its card. -->
   <div class="section" style="border-color:{theme.divider};">
     <div class="vhead">
-      <div class="k" style="color:{theme.textMuted};">{view === 'modules' ? 'MODULES' : 'VCARD'}</div>
+      <!-- ONE LABEL PER SECTION. On the MODULES tab the panel below prints its
+           own head ("HOSTED MODULES" + the verified chip), so a label here would
+           stack the same word twice — visible in the first local build, and the
+           kind of repeat the owner has already cut three times. -->
+      {#if view === 'modules'}<div></div>{:else}<div class="k" style="color:{theme.textMuted};">VCARD</div>{/if}
       <div class="actions">
         {#each hasVCard ? [['parsed', 'PARSED'], ['raw', 'RAW'], ['qr', 'QR'], ['modules', 'MODULES']] : [['modules', 'MODULES']] as [id, label] (id)}
           <button
