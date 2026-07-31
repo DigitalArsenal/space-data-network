@@ -61,7 +61,7 @@ const vectorsPath = "testdata/statement-domain-vectors.json"
 // pins the SAME constant against ITS copy (space-data-module-sdk
 // test/statement-domain-parity.test.js), so the two copies cannot diverge
 // without a red suite on at least one side.
-const vectorsSHA256 = "00432b9115f49f6f15cf7e6bd0296f2f9eca0428d7ccdd98036b32469698000d"
+const vectorsSHA256 = "72124d7710658858ca747c90593e7d0c23fb63560cb7b2cd3fe607d542d83c58"
 
 type statementDomainVectors struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -93,11 +93,28 @@ type statementDomainArtifactVector struct {
 	SignatureEntry       json.RawMessage `json:"signatureEntry"`
 	TrustedPublicKeysHex []string        `json:"trustedPublicKeysHex"`
 	SDKArtifactHex       string          `json:"sdkArtifactHex"`
-	Expect               struct {
+	// SDKEnvelopeOnly marks a vector that cannot be re-wrapped in the minimal
+	// Go-built trailer: a bundle-scope signature covers the WHOLE MBL, and the
+	// hand-built trailer carries no canonicalization rule and no canonical
+	// module hash, so decoding fails before any signature is examined. Those
+	// vectors are checked through sdkArtifactHex alone — which is the stronger
+	// check anyway, since it is the byte-for-byte envelope the SDK emits.
+	SDKEnvelopeOnly bool `json:"sdkEnvelopeOnly"`
+	Expect          struct {
 		Verified        bool   `json:"verified"`
 		Reason          string `json:"reason"`
 		StatementDomain string `json:"statementDomain"`
 		ContentHashHex  string `json:"contentHashHex"`
+		// SignatureScope and SignedHashHex pin WHAT the signature covered, not
+		// merely whether it passed. Without them "verified" says nothing about
+		// which basis each implementation used to reach that verdict — which is
+		// exactly how sdn-server and kubo came to disagree about bundle scope.
+		SignatureScope string `json:"signatureScope"`
+		SignedHashHex  string `json:"signedHashHex"`
+		// FlowNodeAdmissible is the module SDK's flow-composition gate. Go does
+		// not implement that gate; the field is pinned here so the vector file
+		// stays one contract rather than two, and the SDK suite asserts it.
+		FlowNodeAdmissible bool `json:"flowNodeAdmissible"`
 	} `json:"expect"`
 }
 
@@ -195,8 +212,10 @@ func TestStatementDomainVectors(t *testing.T) {
 			}
 			portable := mustHex(t, vec.PortableHex)
 
-			goBuilt := appendPublicationTrailer(portable, buildRECTrailerWithMBLSignature(t, vec.SignatureEntry))
-			checkStatementDomainVector(t, "go-built trailer", vec, goBuilt, portable, trusted)
+			if !vec.SDKEnvelopeOnly {
+				goBuilt := appendPublicationTrailer(portable, buildRECTrailerWithMBLSignature(t, vec.SignatureEntry))
+				checkStatementDomainVector(t, "go-built trailer", vec, goBuilt, portable, trusted)
+			}
 
 			if vec.SDKArtifactHex != "" {
 				sdkBuilt := mustHex(t, vec.SDKArtifactHex)
@@ -231,6 +250,12 @@ func checkStatementDomainVector(
 	}
 	if status.StatementDomain != vec.Expect.StatementDomain {
 		t.Fatalf("%s: status.StatementDomain = %q, vector pins %q", label, status.StatementDomain, vec.Expect.StatementDomain)
+	}
+	if status.SignatureScope != vec.Expect.SignatureScope {
+		t.Fatalf("%s: status.SignatureScope = %q, vector pins %q — the verdict may match while the BASIS does not, which is the divergence this field exists to catch", label, status.SignatureScope, vec.Expect.SignatureScope)
+	}
+	if status.SignedHash != vec.Expect.SignedHashHex {
+		t.Fatalf("%s: status.SignedHash = %q, vector pins %q", label, status.SignedHash, vec.Expect.SignedHashHex)
 	}
 	if vec.Expect.Verified && err != nil {
 		t.Fatalf("%s: verification succeeded but returned err = %v", label, err)

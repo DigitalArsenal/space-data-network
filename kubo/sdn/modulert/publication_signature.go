@@ -59,6 +59,39 @@ type moduleSignaturePayload struct {
 	StatementDomain string `json:"statementDomain"`
 }
 
+// decodeModuleSignaturePayload decodes the signature entry STRICTLY. Go's
+// encoding/json matches field names case-insensitively; the SDK's JS verifier
+// does not. A trailer spelling "StatementDomain" would therefore take the
+// domain path here and the LEGACY path in the SDK — same artifact, opposite
+// verdicts, node permissive. MUST STAY IN LOCKSTEP with the sdn-server twin.
+func decodeModuleSignaturePayload(entryPayload []byte, out *moduleSignaturePayload) error {
+	if err := json.Unmarshal(entryPayload, out); err != nil {
+		return fmt.Errorf("module signature entry payload is not valid JSON: %w", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(entryPayload, &raw); err != nil {
+		return fmt.Errorf("module signature entry payload is not a JSON object: %w", err)
+	}
+	known := map[string]bool{
+		"algorithm": true, "keyId": true, "publicKeyHex": true,
+		"signatureHex": true, "signedHashHex": true,
+		"signedHashAlgorithm": true, "statementDomain": true,
+	}
+	for key := range raw {
+		if known[key] {
+			continue
+		}
+		for exact := range known {
+			if strings.EqualFold(key, exact) {
+				return fmt.Errorf(
+					"module signature entry payload spells %q; the wire form is the module SDK's camelCase JSON and the correct spelling is %q",
+					key, exact)
+			}
+		}
+	}
+	return nil
+}
+
 // signedMessageForPayload returns the exact bytes an artifact's signature must
 // verify over, and is where the DOMAIN SEPARATION contract is enforced on the
 // reading side.
@@ -266,16 +299,31 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 	status.Signed = true
 
 	var payload moduleSignaturePayload
-	if jsonErr := json.Unmarshal(entryPayload, &payload); jsonErr != nil {
+	if decodeErr := decodeModuleSignaturePayload(entryPayload, &payload); decodeErr != nil {
 		status.Reason = "invalid_signature_payload"
-		return portable, status, fmt.Errorf("module signature entry payload is not valid JSON: %w", jsonErr)
+		return portable, status, decodeErr
 	}
 	if !strings.EqualFold(strings.TrimSpace(payload.Algorithm), moduleSignatureAlgorithm) {
 		status.Reason = "unsupported_algorithm"
 		return portable, status, fmt.Errorf("unsupported module signature algorithm %q", payload.Algorithm)
 	}
 	status.KeyID = payload.KeyID
-	if payload.SignedHashAlgorithm == bundleSignatureHashAlgorithm {
+
+	// WHICH BASIS DID THIS SIGNATURE COVER? See the sdn-server twin for the
+	// full reasoning. This branch used to test ONLY the bundle algorithm, and
+	// tested it before the domain was ever looked at, so an artifact declaring
+	// both would have been verified with its statement domain ignored — the
+	// cross-domain replay guard silently off.
+	declaresDomain := strings.TrimSpace(payload.StatementDomain) != ""
+	declaresBundle := strings.TrimSpace(payload.SignedHashAlgorithm) == bundleSignatureHashAlgorithm
+	if declaresDomain && declaresBundle {
+		status.StatementDomain = strings.TrimSpace(payload.StatementDomain)
+		status.Reason = "ambiguous_signature_scope"
+		return portable, status, fmt.Errorf(
+			"module signature declares statement domain %q AND hash algorithm %q; these are different preimages and an artifact must declare exactly one",
+			status.StatementDomain, bundleSignatureHashAlgorithm)
+	}
+	if declaresBundle {
 		return verifyWholeBundleSignature(wasmBytes, trustedKeys)
 	}
 
@@ -409,9 +457,9 @@ func verifyWholeBundleSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 	status.Signed = true
 
 	var payload moduleSignaturePayload
-	if err := json.Unmarshal(decoded.signaturePayload, &payload); err != nil {
+	if err := decodeModuleSignaturePayload(decoded.signaturePayload, &payload); err != nil {
 		status.Reason = "invalid_signature_payload"
-		return portable, status, fmt.Errorf("module signature entry payload is not valid JSON: %w", err)
+		return portable, status, err
 	}
 	if !strings.EqualFold(strings.TrimSpace(payload.Algorithm), moduleSignatureAlgorithm) {
 		status.Reason = "unsupported_algorithm"

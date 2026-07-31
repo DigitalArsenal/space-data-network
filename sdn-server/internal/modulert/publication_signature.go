@@ -36,6 +36,13 @@ const (
 	moduleSignatureAlgorithm   = "ed25519"
 	moduleSignatureEntryID     = "signature"
 	moduleSignatureSectionName = "sds.signature"
+	// bundleSignatureHashAlgorithm labels the BUNDLE-SCOPE basis: the signature
+	// covers a canonical statement over the whole MBL rather than the portable
+	// payload digest. See publication_signature_bundle.go.
+	bundleSignatureHashAlgorithm = "sha256-sdn-module-bundle-v1"
+
+	signatureScopeModule = "module"
+	signatureScopeBundle = "bundle"
 )
 
 // moduleSignaturePayload mirrors the JSON object
@@ -189,11 +196,60 @@ type ModuleSignatureStatus struct {
 	// signature covered sigdomain.Statement(domain, ContentHash) rather than
 	// the bare hash — see signedMessageForPayload.
 	StatementDomain string
+	// SignatureScope is "module" when the signature covers the portable-payload
+	// digest (bare or domain separated) and "bundle" when it covers the whole
+	// MBL. Empty when nothing was verified.
+	SignatureScope string
+	// SignedHash is the lowercase SHA-256 digest the signature actually
+	// covered. For module scope that is ContentHash; for bundle scope it is the
+	// canonical bundle statement digest, which is NOT ContentHash.
+	SignedHash string
 	// Reason is a short machine-checkable explanation: "unsigned", "ok",
 	// "untrusted_signer", "invalid_signature", "hash_mismatch",
 	// "invalid_trailer", "unsupported_algorithm", "invalid_public_key",
-	// "invalid_signature_payload", "unsupported_statement_domain".
+	// "invalid_signature_payload", "unsupported_statement_domain",
+	// "unsupported_hash_algorithm", "invalid_bundle",
+	// "ambiguous_signature_scope".
 	Reason string
+}
+
+// decodeModuleSignaturePayload decodes the signature entry STRICTLY.
+//
+// Go's encoding/json matches field names case-insensitively. That is a
+// cross-language divergence hiding in plain sight: a trailer carrying
+// "StatementDomain" populates the Go struct and takes the domain path here,
+// while the SDK's JS verifier reads payload.statementDomain, sees nothing, and
+// falls to the legacy bare-digest path — same artifact, opposite verdicts, and
+// the node is the permissive one. The wire form is the SDK's camelCase JSON and
+// it is singular, so the fix belongs on the Go side: reject any key that is not
+// spelled exactly as the SDK writes it, rather than teaching JS to accept
+// case variants.
+func decodeModuleSignaturePayload(entryPayload []byte, out *moduleSignaturePayload) error {
+	if err := json.Unmarshal(entryPayload, out); err != nil {
+		return fmt.Errorf("module signature entry payload is not valid JSON: %w", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(entryPayload, &raw); err != nil {
+		return fmt.Errorf("module signature entry payload is not a JSON object: %w", err)
+	}
+	known := map[string]bool{
+		"algorithm": true, "keyId": true, "publicKeyHex": true,
+		"signatureHex": true, "signedHashHex": true,
+		"signedHashAlgorithm": true, "statementDomain": true,
+	}
+	for key := range raw {
+		if known[key] {
+			continue
+		}
+		for exact := range known {
+			if strings.EqualFold(key, exact) {
+				return fmt.Errorf(
+					"module signature entry payload spells %q; the wire form is the module SDK's camelCase JSON and the correct spelling is %q",
+					key, exact)
+			}
+		}
+	}
+	return nil
 }
 
 // verifyPublicationSignature inspects wasmBytes (the raw artifact bytes,
@@ -235,15 +291,40 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 	status.Signed = true
 
 	var payload moduleSignaturePayload
-	if jsonErr := json.Unmarshal(entryPayload, &payload); jsonErr != nil {
+	if decodeErr := decodeModuleSignaturePayload(entryPayload, &payload); decodeErr != nil {
 		status.Reason = "invalid_signature_payload"
-		return portable, status, fmt.Errorf("module signature entry payload is not valid JSON: %w", jsonErr)
+		return portable, status, decodeErr
 	}
 	if !strings.EqualFold(strings.TrimSpace(payload.Algorithm), moduleSignatureAlgorithm) {
 		status.Reason = "unsupported_algorithm"
 		return portable, status, fmt.Errorf("unsupported module signature algorithm %q", payload.Algorithm)
 	}
 	status.KeyID = payload.KeyID
+
+	// WHICH BASIS DID THIS SIGNATURE COVER? Answered once, here, before any
+	// hash is compared — and an artifact that answers TWICE is refused.
+	//
+	// A statement domain says "the signature covers domain||0x00||sha256(
+	// portable)". The bundle hash algorithm says "the signature covers the
+	// canonical whole-bundle statement". They are different preimages, so an
+	// artifact declaring both has not stated what its signature covers. Picking
+	// one and ignoring the other is how a cross-domain replay guard gets
+	// silently switched off: the kubo twin evaluated the bundle branch FIRST,
+	// so a domain-carrying artifact that also claimed the bundle algorithm
+	// would have verified with its domain never checked. Unreachable today,
+	// which is precisely why it had to be closed before it became reachable.
+	declaresDomain := strings.TrimSpace(payload.StatementDomain) != ""
+	declaresBundle := strings.TrimSpace(payload.SignedHashAlgorithm) == bundleSignatureHashAlgorithm
+	if declaresDomain && declaresBundle {
+		status.StatementDomain = strings.TrimSpace(payload.StatementDomain)
+		status.Reason = "ambiguous_signature_scope"
+		return portable, status, fmt.Errorf(
+			"module signature declares statement domain %q AND hash algorithm %q; these are different preimages and an artifact must declare exactly one",
+			status.StatementDomain, bundleSignatureHashAlgorithm)
+	}
+	if declaresBundle {
+		return verifyWholeBundleSignature(wasmBytes, trustedKeys)
+	}
 
 	sigBytes, decErr := hex.DecodeString(strings.TrimSpace(payload.SignatureHex))
 	if decErr != nil || len(sigBytes) != ed25519.SignatureSize {
@@ -297,6 +378,8 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 
 	status.Verified = true
 	status.Reason = "ok"
+	status.SignatureScope = signatureScopeModule
+	status.SignedHash = status.ContentHash
 	return portable, status, nil
 }
 
