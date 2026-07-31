@@ -1996,7 +1996,35 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						if epmSvc == nil || registry == nil {
 							continue
 						}
-						for _, tp := range registry.ListPeers() {
+						// Pass 1: registry peers without an EPM. Pass 2: CONNECTED
+						// peers that advertise the EPM-exchange protocol but have
+						// no registry row at all — the registry projection can
+						// come up empty of learned rows after a restart, and a
+						// row-less peer would otherwise never be swept, leaving
+						// its identity surface dark (owner law 2026-07-31).
+						candidates := registry.ListPeers()
+						known := make(map[peer.ID]bool, len(candidates))
+						for _, tp := range candidates {
+							if tp != nil {
+								known[tp.ID] = true
+							}
+						}
+						for _, pid := range n.Host().Network().Peers() {
+							if known[pid] || pid == n.Host().ID() {
+								continue
+							}
+							protos, err := n.Host().Peerstore().GetProtocols(pid)
+							if err != nil {
+								continue
+							}
+							for _, proto := range protos {
+								if proto == epm.EPMExchangeProtocolID {
+									candidates = append(candidates, &peers.TrustedPeer{ID: pid})
+									break
+								}
+							}
+						}
+						for _, tp := range candidates {
 							if tp == nil || len(tp.EPMData) > 0 {
 								continue
 							}
