@@ -463,7 +463,17 @@ func loadIdentityWizardStoredProfileSource(store *identityWizardStore, peerID pe
 		}, nil
 	}
 	if !strings.Contains(err.Error(), "not found") {
-		return identityWizardProfileSource{}, fmt.Errorf("load local EPM profile: %w", err)
+		if !strings.Contains(err.Error(), "decrypt local EPM bytes") {
+			return identityWizardProfileSource{}, fmt.Errorf("load local EPM profile: %w", err)
+		}
+		// The stored row exists but no candidate key opens it — the envelope
+		// was sealed under inputs this box no longer has (hostname, home dir,
+		// store path, or a since-removed password source). The row is
+		// cryptographically orphaned and no operator action can recover it,
+		// but the identity keys hold everything needed to rebuild the EPM
+		// (owner ruling 2026-07-31), so treat it like a missing profile: the
+		// wizard's save overwrites the orphaned row under the current key.
+		fmt.Fprintf(os.Stderr, "warning: stored local EPM profile is undecryptable (%v); rebuilding the profile from the node identity — field values not set this run are reset to defaults\n", err)
 	}
 	if profile, err := epm.LoadProfile(dataDir); err == nil {
 		return identityWizardProfileSource{Profile: profile}, nil

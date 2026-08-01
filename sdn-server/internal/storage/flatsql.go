@@ -105,6 +105,12 @@ type FlatSQLStore struct {
 	dbPath    string
 	basePath  string
 	streamDir string
+	// localEPMKeyCache memoizes the derived candidate keys for the local-EPM
+	// row envelope (localEPMKeys) — scrypt is ~100ms per candidate and the
+	// env/password-file inputs cannot change within a process lifetime.
+	localEPMKeyOnce  sync.Once
+	localEPMKeyCache [][]byte
+	localEPMKeyErr   error
 	// lock is the exclusive single-writer liveness lock on
 	// <basePath>/store.lock (storelock.go, loop C.6b) — held for the
 	// store's whole lifetime, released by Close. Nil for read-only opens
@@ -4083,6 +4089,11 @@ func (s *FlatSQLStore) encryptLocalEPMPayload(plaintext []byte) (string, error) 
 	return string(raw), nil
 }
 
+// decryptLocalEPMPayload tries every key the node could plausibly have sealed
+// the row under (see localEPMKeyPasswords). Rows written before a password
+// source was added — or under a different one, since the daemon and CLI can
+// resolve different sources for the same box — stay readable; new writes
+// always seal under the first available source.
 func (s *FlatSQLStore) decryptLocalEPMPayload(rawEnvelope string) ([]byte, error) {
 	var envelope localEPMEnvelope
 	if err := json.Unmarshal([]byte(rawEnvelope), &envelope); err != nil {
@@ -4096,18 +4107,34 @@ func (s *FlatSQLStore) decryptLocalEPMPayload(rawEnvelope string) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	gcm, err := s.localEPMGCM()
+	keys, err := s.localEPMKeys()
 	if err != nil {
 		return nil, err
 	}
-	return gcm.Open(nil, iv, ciphertext, []byte("EPM.fbs"))
+	var lastErr error
+	for _, key := range keys {
+		gcm, err := localEPMGCMForKey(key)
+		if err != nil {
+			return nil, err
+		}
+		plaintext, err := gcm.Open(nil, iv, ciphertext, []byte("EPM.fbs"))
+		if err == nil {
+			return plaintext, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 func (s *FlatSQLStore) localEPMGCM() (cipher.AEAD, error) {
-	key, err := s.localEPMKey()
+	keys, err := s.localEPMKeys()
 	if err != nil {
 		return nil, err
 	}
+	return localEPMGCMForKey(keys[0])
+}
+
+func localEPMGCMForKey(key []byte) (cipher.AEAD, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -4115,26 +4142,58 @@ func (s *FlatSQLStore) localEPMGCM() (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-func (s *FlatSQLStore) localEPMKey() ([]byte, error) {
-	password := strings.TrimSpace(os.Getenv("SDN_EPM_STORE_PASSWORD"))
-	if password == "" {
-		password = strings.TrimSpace(os.Getenv("SDN_KEY_PASSWORD"))
+// localEPMKeyPasswords returns every password this box could have sealed the
+// local-EPM rows under, best first. Order matters: index 0 is what new writes
+// use. SDN_KEY_PASSWORD_FILE is the source most units actually configure —
+// it was silently ignored here until 2026-08-01, which left those boxes on
+// the hostname-composite fallback (fragile: a hostname, home-dir, or store
+// relocation orphans every row).
+func (s *FlatSQLStore) localEPMKeyPasswords() []string {
+	passwords := make([]string, 0, 4)
+	if p := strings.TrimSpace(os.Getenv("SDN_EPM_STORE_PASSWORD")); p != "" {
+		passwords = append(passwords, p)
 	}
-	if password == "" {
-		hostname, _ := os.Hostname()
-		homeDir, _ := os.UserHomeDir()
-		password = strings.Join([]string{
-			"sdn-local-epm",
-			hostname,
-			runtime.GOOS,
-			runtime.GOARCH,
-			homeDir,
-			filepath.Dir(s.dbPath),
-		}, "|")
+	if p := strings.TrimSpace(os.Getenv("SDN_KEY_PASSWORD")); p != "" {
+		passwords = append(passwords, p)
 	}
+	if path := strings.TrimSpace(os.Getenv("SDN_KEY_PASSWORD_FILE")); path != "" {
+		if raw, err := os.ReadFile(path); err == nil {
+			if p := strings.TrimSpace(string(raw)); p != "" {
+				passwords = append(passwords, p)
+			}
+		}
+	}
+	hostname, _ := os.Hostname()
+	homeDir, _ := os.UserHomeDir()
+	passwords = append(passwords, strings.Join([]string{
+		"sdn-local-epm",
+		hostname,
+		runtime.GOOS,
+		runtime.GOARCH,
+		homeDir,
+		filepath.Dir(s.dbPath),
+	}, "|"))
+	return passwords
+}
 
-	salt := sha256.Sum256([]byte(localEPMStoreSalt + "|" + s.dbPath))
-	return scrypt.Key([]byte(password), salt[:], 32768, 8, 1, 32)
+// localEPMKeys derives (and memoizes — scrypt is ~100ms per candidate) the
+// AES keys for every candidate password, in localEPMKeyPasswords order.
+func (s *FlatSQLStore) localEPMKeys() ([][]byte, error) {
+	s.localEPMKeyOnce.Do(func() {
+		salt := sha256.Sum256([]byte(localEPMStoreSalt + "|" + s.dbPath))
+		for _, password := range s.localEPMKeyPasswords() {
+			key, err := scrypt.Key([]byte(password), salt[:], 32768, 8, 1, 32)
+			if err != nil {
+				s.localEPMKeyErr = err
+				return
+			}
+			s.localEPMKeyCache = append(s.localEPMKeyCache, key)
+		}
+	})
+	if s.localEPMKeyErr != nil {
+		return nil, s.localEPMKeyErr
+	}
+	return s.localEPMKeyCache, nil
 }
 
 // RebuildIndex scans all schema tables and repopulates sdn_record_index.
