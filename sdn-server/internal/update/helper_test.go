@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestPrepareHelperPlanCopiesExecutableOutsideReplaceableBundlePaths(t *testing.T) {
@@ -95,5 +96,52 @@ func TestPrepareHelperPlanLetsDaemonProvideRestartArgs(t *testing.T) {
 	}
 	if !slices.Contains(plan.Args, "--admin-url") || !slices.Contains(plan.Args, "--token") {
 		t.Fatalf("helper args should include daemon control details: %#v", plan.Args)
+	}
+}
+
+// Regression for the 2026-08-01 host-02 false rollback: the 60s default
+// health gate cannot fit a store-heavy node whose boot replays the record
+// catalog for minutes, so the install lane must be able to carry a longer
+// budget through to the helper.
+func TestPrepareHelperPlanForwardsHealthTimeout(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "runtime", "sdn", "spacedatanetwork")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := PrepareHelperPlan(HelperPlanOptions{
+		Paths:            PathsFor(root),
+		SourceExecutable: source,
+		UpdateID:         "cli-bundle-beta-linux-amd64-1.0.7",
+		AdminURL:         "http://127.0.0.1:5001/",
+		Token:            "token-123",
+		HealthTimeout:    20 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("PrepareHelperPlan returned error: %v", err)
+	}
+	idx := slices.Index(plan.Args, "--health-timeout")
+	if idx < 0 || idx+1 >= len(plan.Args) || plan.Args[idx+1] != "20m0s" {
+		t.Fatalf("helper args must carry the health timeout: %#v", plan.Args)
+	}
+
+	// Zero keeps the default: the flag must be ABSENT, not "0s", so old
+	// helpers never see an unknown value.
+	plan, err = PrepareHelperPlan(HelperPlanOptions{
+		Paths:            PathsFor(root),
+		SourceExecutable: source,
+		UpdateID:         "cli-bundle-beta-linux-amd64-1.0.7",
+		AdminURL:         "http://127.0.0.1:5001/",
+		Token:            "token-123",
+	})
+	if err != nil {
+		t.Fatalf("PrepareHelperPlan returned error: %v", err)
+	}
+	if slices.Contains(plan.Args, "--health-timeout") {
+		t.Fatalf("zero health timeout must omit the flag: %#v", plan.Args)
 	}
 }
