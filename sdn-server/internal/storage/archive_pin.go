@@ -201,6 +201,10 @@ func (s *FlatSQLStore) ArchiveDatasetSelection(ctx context.Context, filter Index
 	if opts.ArchiveID == "" {
 		return nil, fmt.Errorf("archive id is required")
 	}
+	if strings.ContainsAny(opts.ArchiveID, "/\\") {
+		// The archive ID becomes part of the immutable manifest file name.
+		return nil, fmt.Errorf("archive id must not contain path separators")
+	}
 	opts.ProviderPeerID = strings.TrimSpace(opts.ProviderPeerID)
 	if opts.ProviderPeerID == "" {
 		return nil, fmt.Errorf("provider peer id is required")
