@@ -3,6 +3,7 @@
 package keys
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -46,6 +47,53 @@ func platformStableIdentifiers() []hwAttr {
 		attrs = append(attrs, hwAttr{"platuuid", id})
 	}
 	return attrs
+}
+
+// platformStableIdentifierReadings is the v4 counterpart of
+// platformStableIdentifiers, distinguishing ABSENT from UNREADABLE (see the
+// Linux twin for the defect this kills). On macOS the IOPlatformUUID is read
+// via ioreg, which needs no privilege — so an ioreg FAILURE is an error (the
+// source exists on every Mac but could not be read), while a successful run
+// that yields no UUID is recorded as explicitly absent.
+func platformStableIdentifierReadings() ([]sourceReading, error) {
+	id, err := ioPlatformUUIDStrict()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"machine fingerprint (v4): IOPlatformUUID could not be read (%w) — refusing to derive a privilege-degraded key; "+
+				"fix ioreg access or set SDN_KEY_PASSWORD_FILE", err)
+	}
+	if id == "" {
+		return []sourceReading{{key: "platuuid", absent: true}}, nil
+	}
+	return []sourceReading{{key: "platuuid", value: id}}, nil
+}
+
+// ioPlatformUUIDStrict is ioPlatformUUID with the failure modes separated:
+// an exec error is returned (unreadable), while a clean run without a UUID
+// line returns "" (absent). ioPlatformUUID itself is preserved unchanged for
+// the v2/v3 derivations.
+func ioPlatformUUIDStrict() (string, error) {
+	out, err := exec.Command("/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice").Output()
+	if err != nil {
+		return "", err
+	}
+	return parseIOPlatformUUID(string(out)), nil
+}
+
+// parseIOPlatformUUID extracts the quoted IOPlatformUUID value from ioreg
+// output, mirroring ioPlatformUUID's parsing exactly.
+func parseIOPlatformUUID(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "IOPlatformUUID") {
+			if idx := strings.LastIndex(line, "\""); idx > 0 {
+				trimmed := strings.TrimSuffix(line[:idx], "\"")
+				if q := strings.LastIndex(trimmed, "\""); q >= 0 {
+					return strings.TrimSpace(trimmed[q+1:])
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // ioPlatformUUID returns the stable per-machine IOPlatformUUID via ioreg.

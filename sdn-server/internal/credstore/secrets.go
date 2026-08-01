@@ -31,9 +31,10 @@
 // same hostname => same root => decrypts the same credentials.enc:
 //
 //  1. machine state   keys.DeriveDefaultPassword() — Argon2id over the stable
-//     hardware fingerprint; the SAME mechanism the node already
-//     relies on to unlock its own identity key at rest, so it
-//     adds no new fragility.
+//     (machine, user)-bound fingerprint; the SAME mechanism the
+//     node already relies on to unlock its own identity key at
+//     rest, so it adds no new fragility. It can REFUSE (unknown
+//     user, unreadable source); that refusal fails closed here.
 //
 //  2. node key pair   the UNLOCKED libp2p identity private key's raw bytes
 //     (node.IdentityKeyMaterial()). Never re-read from node.key
@@ -223,7 +224,13 @@ func ResolveRoot(nodePrivKey []byte) (string, error) {
 	if err != nil || strings.TrimSpace(hostname) == "" {
 		return "", errors.New("credstore: hostname unavailable; refusing to derive root key")
 	}
-	return DeriveRootKey(keys.DeriveDefaultPassword(), nodePrivKey, hostname)
+	machineState, err := keys.DeriveDefaultPassword()
+	if err != nil {
+		// Fail closed (never a weaker key): the machine derivation refused —
+		// e.g. unknown user, or a source that exists but cannot be read.
+		return "", fmt.Errorf("credstore: machine derivation refused; refusing to derive root key: %w", err)
+	}
+	return DeriveRootKey(machineState, nodePrivKey, hostname)
 }
 
 // DeriveRootKey combines the three machine-binding inputs into a 32-byte root
@@ -310,7 +317,7 @@ func (s *Store) attachLegacyRoots(nodePrivKey []byte) {
 		return
 	}
 	for _, cand := range keys.CandidatePasswords() {
-		if cand.Scheme == keys.SchemeV3 {
+		if cand.Scheme == keys.SchemeV4 {
 			continue // already the primary
 		}
 		root, derr := DeriveRootKey(cand.Password, append([]byte(nil), nodePrivKey...), hostname)

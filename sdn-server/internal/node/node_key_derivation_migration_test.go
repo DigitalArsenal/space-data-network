@@ -83,7 +83,11 @@ func TestPeerIDSurvivesDerivationMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-read node key: %v", err)
 	}
-	if _, err := keys.DecryptSecret(raw[len(nodeKeyEncMagic):], keys.DeriveDefaultPassword()); err != nil {
+	current, err := keys.DeriveDefaultPassword()
+	if err != nil {
+		t.Fatalf("current machine derivation must be available: %v", err)
+	}
+	if _, err := keys.DecryptSecret(raw[len(nodeKeyEncMagic):], current); err != nil {
 		t.Fatalf("node key must be re-sealed under the current derivation: %v", err)
 	}
 

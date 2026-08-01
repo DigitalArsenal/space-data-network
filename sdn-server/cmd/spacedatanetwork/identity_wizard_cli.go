@@ -235,7 +235,12 @@ func identityWizardMnemonic(cfg *config.Config) (string, error) {
 		return "", fmt.Errorf("resolve key password: %w", err)
 	}
 	if keyPassword == "" {
-		keyPassword = keys.DeriveDefaultPassword()
+		keyPassword, err = keys.DeriveDefaultPassword()
+		if err != nil {
+			// Refused derivation (unknown user, unreadable source): surface
+			// the real fault instead of a "wrong password" on intact material.
+			return "", fmt.Errorf("derive machine-default key password: %w", err)
+		}
 	}
 
 	// Same reason: MnemonicPathResolved honours SDN_MNEMONIC_FILE and yields

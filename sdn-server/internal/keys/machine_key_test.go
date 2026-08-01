@@ -7,8 +7,14 @@ import (
 )
 
 func TestDeriveDefaultPasswordDeterministic(t *testing.T) {
-	a := DeriveDefaultPassword()
-	b := DeriveDefaultPassword()
+	a, err := DeriveDefaultPassword()
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	b, err := DeriveDefaultPassword()
+	if err != nil {
+		t.Fatalf("derive again: %v", err)
+	}
 	if a != b {
 		t.Fatal("DeriveDefaultPassword must be deterministic across calls on the same machine")
 	}
@@ -29,8 +35,12 @@ func TestHardwareFingerprintExcludesHostname(t *testing.T) {
 }
 
 func TestDefaultAndLegacyDiffer(t *testing.T) {
-	if DeriveDefaultPassword() == DeriveLegacyPassword() {
-		t.Fatal("hardware-derived and legacy hostname-derived passwords must differ")
+	pw, err := DeriveDefaultPassword()
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if pw == DeriveLegacyPassword() {
+		t.Fatal("machine+user-derived and legacy hostname-derived passwords must differ")
 	}
 }
 
@@ -39,15 +49,21 @@ func TestDefaultAndLegacyDiffer(t *testing.T) {
 // and re-encrypted under the hardware-derived key, and cannot be decrypted with
 // the new key beforehand (which is exactly what triggers migration).
 func TestLegacyMigrationRoundTrip(t *testing.T) {
-	const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	// Not a BIP-39 wordlist run (the repo mnemonic guard rejects those in
+	// committed files); the test only needs an opaque string to seal.
+	const mnemonic = "seed-phrase-placeholder-for-legacy-migration-tests"
 
+	current, err := DeriveDefaultPassword()
+	if err != nil {
+		t.Fatalf("derive current: %v", err)
+	}
 	legacyEnc, err := EncryptMnemonic(mnemonic, DeriveLegacyPassword())
 	if err != nil {
 		t.Fatalf("encrypt with legacy password: %v", err)
 	}
 
-	if _, err := DecryptMnemonic(legacyEnc, DeriveDefaultPassword()); err == nil {
-		t.Fatal("legacy ciphertext must NOT decrypt under the hardware key (else migration never triggers)")
+	if _, err := DecryptMnemonic(legacyEnc, current); err == nil {
+		t.Fatal("legacy ciphertext must NOT decrypt under the current key (else migration never triggers)")
 	}
 
 	got, err := DecryptMnemonic(legacyEnc, DeriveLegacyPassword())
@@ -58,13 +74,13 @@ func TestLegacyMigrationRoundTrip(t *testing.T) {
 		t.Fatalf("legacy decrypt mismatch: %q", got)
 	}
 
-	newEnc, err := EncryptMnemonic(got, DeriveDefaultPassword())
+	newEnc, err := EncryptMnemonic(got, current)
 	if err != nil {
-		t.Fatalf("re-encrypt with hardware key: %v", err)
+		t.Fatalf("re-encrypt with current key: %v", err)
 	}
-	back, err := DecryptMnemonic(newEnc, DeriveDefaultPassword())
+	back, err := DecryptMnemonic(newEnc, current)
 	if err != nil {
-		t.Fatalf("decrypt re-encrypted with hardware key: %v", err)
+		t.Fatalf("decrypt re-encrypted with current key: %v", err)
 	}
 	if back != mnemonic {
 		t.Fatalf("post-migration mismatch: %q", back)
