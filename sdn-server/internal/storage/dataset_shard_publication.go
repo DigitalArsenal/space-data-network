@@ -168,6 +168,12 @@ func (s *FlatSQLStore) UpsertDatasetShardPublication(pub DatasetShardPublication
 	if pub.QueryProfile == "" {
 		return errors.New("query profile is required")
 	}
+	if pub.QueryProfile == ArchiveQueryProfile {
+		// The archive plane is pin-ledger-only (graph task pin-archive-plane):
+		// registering an archive here would expose it to supersede eviction
+		// and feed catch-up — structurally refused.
+		return errors.New("archive-plane exports are pin-ledger-only and are never registered as dataset shard publications")
+	}
 	if pub.Offset < 0 {
 		return errors.New("offset must be non-negative")
 	}

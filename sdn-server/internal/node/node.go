@@ -2962,6 +2962,17 @@ func (n *Node) buildTipQueue() *sdnpubsub.TipQueue {
 		tq.SetFetcher(newIPFSTipFetcher(ipfsAPIURL, tq.Config().MaxFetchBytes))
 		tq.SetPinner(newIPFSTipPinner(ipfsAPIURL))
 	}
+	if store := n.store; store != nil {
+		// Archive-plane protection (graph task pin-archive-plane): the TTL
+		// sweep consults the durable pin ledger and never unpins a CID held
+		// by a role='archive' (TTL=0, permanent) entry.
+		tq.SetPinRoleResolver(func(cidValue string) string {
+			if store.IsArchivePinnedCID(cidValue) {
+				return sdnpubsub.PinRoleArchive
+			}
+			return ""
+		})
+	}
 	tq.OnTip(n.handleTipQueueTip)
 	return tq
 }

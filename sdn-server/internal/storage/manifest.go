@@ -36,6 +36,25 @@ type DatasetPublicationManifestOptions struct {
 	SchemaHash      string
 	QueryEngine     string
 	QueryEngineVers string
+	// AuxiliaryAssets are extra OTHER-kind content-addressed DPM assets bound
+	// under the provider signature alongside the shard and index (e.g. the
+	// archive plane's source feed-head provenance references). They use only
+	// existing DPM v1.0.6 DPMAsset fields — no schema extension.
+	AuxiliaryAssets []DPMAuxiliaryAsset
+}
+
+// DPMAuxiliaryAsset is one extra OTHER-kind, content-addressed asset embedded
+// in a signed DPM. All fields map 1:1 onto existing DPMAsset schema fields;
+// MULTIFORMAT_ADDRESS is always derived as "/ipfs/"+CID so the unsigned
+// manifest can be rebuilt byte-for-byte during signature verification.
+type DPMAuxiliaryAsset struct {
+	CID        string
+	FileName   string
+	FileID     string
+	DataRoot   string
+	SchemaName string
+	ByteSHA256 string
+	ByteLength int64
 }
 
 // DatasetPublicationManifest is the signed DPM artifact for a dataset update.
@@ -865,6 +884,12 @@ func buildDatasetPublicationManifestBytes(opts DatasetPublicationManifestOptions
 		buildDPMAsset(builder, "data", export.ShardCID, "/ipfs/"+export.ShardCID, filepath.Base(export.ShardPath), fileIDValue, export.ShardBytes, export.ShardSHA256, export.ResultSHA256, export.SchemaName, opts.SchemaHash, export.ContentKeyID),
 		buildDPMAsset(builder, "index", export.IndexCID, "/ipfs/"+export.IndexCID, filepath.Base(export.IndexPath), fileIDValue, export.IndexBytes, export.IndexSHA256, "", "DPM.index.json", opts.SchemaHash, export.ContentKeyID),
 	}
+	for _, aux := range opts.AuxiliaryAssets {
+		if strings.TrimSpace(aux.CID) == "" {
+			return nil, fmt.Errorf("auxiliary DPM asset requires a CID")
+		}
+		assetOffsets = append(assetOffsets, buildDPMAsset(builder, "other", aux.CID, "/ipfs/"+aux.CID, aux.FileName, aux.FileID, aux.ByteLength, aux.ByteSHA256, aux.DataRoot, aux.SchemaName, "", ""))
+	}
 	assetsVector := buildOffsetVector(builder, assetOffsets, dpm.DPMStartASSETSVector)
 
 	sourceOffsets := make([]flatbuffers.UOffsetT, 0, len(export.SourceBatches))
@@ -1145,6 +1170,29 @@ func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
 		export.ContentKeyID = string(enc.CONTENT_KEY_ID())
 		export.EncryptionPolicy = string(enc.POLICY_ID())
 	}
+	// OTHER-kind auxiliary assets (e.g. archive-plane source feed-head
+	// references) are part of the signed manifest bytes; rebuild them in
+	// vector order or signature verification of any manifest carrying them
+	// would fail.
+	var auxiliaryAssets []DPMAuxiliaryAsset
+	for i := 0; i < manifest.ASSETSLength(); i++ {
+		var asset dpm.DPMAsset
+		if !manifest.ASSETS(&asset, i) {
+			continue
+		}
+		if asset.ASSET_KIND().String() != "OTHER" {
+			continue
+		}
+		auxiliaryAssets = append(auxiliaryAssets, DPMAuxiliaryAsset{
+			CID:        string(asset.CID()),
+			FileName:   string(asset.FILE_NAME()),
+			FileID:     string(asset.FILE_ID()),
+			DataRoot:   string(asset.DATA_ROOT()),
+			SchemaName: string(asset.SCHEMA_NAME()),
+			ByteSHA256: string(asset.BYTE_SHA256()),
+			ByteLength: int64(asset.BYTE_LENGTH()),
+		})
+	}
 	return buildDatasetPublicationManifestBytes(DatasetPublicationManifestOptions{
 		Export:          export,
 		DatasetID:       string(manifest.DATASET_ID()),
@@ -1156,6 +1204,7 @@ func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
 		SchemaHash:      shardSchemaHash(manifest, shard.Kind),
 		QueryEngine:     string(query.QUERY_ENGINE()),
 		QueryEngineVers: string(query.QUERY_ENGINE_VERSION()),
+		AuxiliaryAssets: auxiliaryAssets,
 	}, nil, "")
 }
 
