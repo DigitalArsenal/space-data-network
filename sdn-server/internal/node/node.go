@@ -2033,6 +2033,20 @@ func (n *Node) hydrateFullRecordCatalog(ctx context.Context) {
 	log.Infof("FlatSQL full record-catalog hydration complete: replayed=%d sources=%d total_records=%d in %s",
 		replayed, sources, total, time.Since(start).Round(time.Millisecond))
 
+	// The boot-time registry Load ran against this store BEFORE the PRR
+	// stream was replayed and silently came up empty of learned rows —
+	// EPMData, vCards and owner-set trust vanished on every restart
+	// (sdn-peer-registry-load-races-hydration; owner-visible as peer cards
+	// falling back to "SDN Node" after a deploy). Now that hydration is
+	// complete the projection is finally readable in full: merge it in.
+	if n.peerRegistry != nil {
+		if adopted, rErr := n.peerRegistry.ReloadFromPersistence(); rErr != nil {
+			log.Errorf("peer-registry reload after hydration failed: %v", rErr)
+		} else if adopted > 0 {
+			log.Infof("peer-registry reload after hydration: %d peer row(s) restored from the persisted projection", adopted)
+		}
+	}
+
 	// The store can now answer "do I hold this source's records?" honestly, so
 	// this is the first moment the retrieval ledger can be reconciled against
 	// it. Flow services may already have registered against the unreconciled

@@ -734,6 +734,96 @@ func NewRegistry(strictMode bool, persistence PersistenceProvider) *Registry {
 	return r
 }
 
+// ReloadFromPersistence re-reads the persisted projection and merges it into
+// the live registry (sdn-peer-registry-load-races-hydration). The boot-time
+// Load in NewRegistry runs against a store whose PRR stream has not been
+// hydrated yet, so it silently comes up empty of learned rows — EPMData,
+// vCards AND owner-set trust vanish every restart. Once record-catalog
+// hydration completes, the node calls this to adopt what the boot load missed.
+//
+// Locking: the persistence read runs entirely OUTSIDE mu — a writer stalled
+// inside a FlatSQL round-trip starves the gater hot path (measured 2026-07-30,
+// see the strictMode comment above). mu is taken only for the in-memory merge.
+//
+// Merge policy is deliberately conservative — restore what vanished, never
+// clobber live state:
+//   - a peer absent from memory is adopted wholesale;
+//   - a peer present in memory (config re-add, boot-window exchange) keeps its
+//     live stats/timestamps and only FILLS fields it lacks (EPMData, vCard,
+//     name, organization, notes, groups, addresses);
+//   - trust: a persisted non-default level is adopted only over an in-memory
+//     DEFAULT (Standard) — an owner change made after boot is never undone;
+//   - groups absent from memory are adopted; existing groups are kept.
+func (r *Registry) ReloadFromPersistence() (adoptedPeers int, err error) {
+	if isNilPersistenceProvider(r.persistence) {
+		return 0, nil
+	}
+	loadedPeers, loadedGroups, err := r.persistence.Load()
+	if err != nil {
+		return 0, err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, loaded := range loadedPeers {
+		if loaded == nil {
+			continue
+		}
+		current, ok := r.peers[id]
+		if !ok || current == nil {
+			r.peers[id] = loaded
+			adoptedPeers++
+			continue
+		}
+		filled := false
+		if len(current.EPMData) == 0 && len(loaded.EPMData) > 0 {
+			current.EPMData = loaded.EPMData
+			filled = true
+		}
+		if current.VCardData == "" && loaded.VCardData != "" {
+			current.VCardData = loaded.VCardData
+			filled = true
+		}
+		if current.Name == "" && loaded.Name != "" {
+			current.Name = loaded.Name
+			filled = true
+		}
+		if current.Organization == "" && loaded.Organization != "" {
+			current.Organization = loaded.Organization
+			filled = true
+		}
+		if current.Notes == "" && loaded.Notes != "" {
+			current.Notes = loaded.Notes
+			filled = true
+		}
+		if len(current.Groups) == 0 && len(loaded.Groups) > 0 {
+			current.Groups = loaded.Groups
+			filled = true
+		}
+		if len(current.Addrs) == 0 && len(loaded.Addrs) > 0 {
+			current.Addrs = loaded.Addrs
+			current.AddrsStrings = loaded.AddrsStrings
+			filled = true
+		}
+		if current.TrustLevel == Standard && loaded.TrustLevel != Standard {
+			current.TrustLevel = loaded.TrustLevel
+			filled = true
+		}
+		if filled {
+			adoptedPeers++
+		}
+	}
+	for name, group := range loadedGroups {
+		if group == nil || name == "" {
+			continue
+		}
+		if _, ok := r.groups[name]; !ok {
+			r.groups[name] = group
+		}
+	}
+	return adoptedPeers, nil
+}
+
 func isNilPersistenceProvider(persistence PersistenceProvider) bool {
 	if persistence == nil {
 		return true
