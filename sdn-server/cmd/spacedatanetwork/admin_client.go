@@ -244,7 +244,10 @@ func loadNodeRootSigningKey(ctx context.Context, cfg *config.Config, res config.
 			return nil, perr
 		}
 		if password == "" {
-			password = keys.DeriveDefaultPassword()
+			password, perr = keys.DeriveDefaultPassword()
+			if perr != nil {
+				return nil, fmt.Errorf("derive machine-default key password: %w", perr)
+			}
 		}
 		mnemonic, err = keys.DecryptMnemonic(data, password)
 		if err != nil {

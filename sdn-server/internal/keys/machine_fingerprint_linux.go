@@ -3,6 +3,7 @@
 package keys
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -43,6 +44,36 @@ func platformStableIdentifiers() []hwAttr {
 		attrs = append(attrs, hwAttr{"platuuid", id})
 	}
 	return attrs
+}
+
+// platuuidPath is the only rebuild- and resize-stable hardware source on
+// Linux. It is root-readable on most distros — which is exactly why v4 reads
+// it through platformStableIdentifierReadings and not best-effort.
+const platuuidPath = "/sys/class/dmi/id/product_uuid"
+
+// platformStableIdentifierReadings is the v4 counterpart of
+// platformStableIdentifiers: the same sources, but ABSENT and UNREADABLE are
+// distinguished instead of both being silently skipped (the defect that
+// forked the key space on vm-orbit-det-01 — sealed as root with the UUID,
+// opened as the service user without it).
+//
+//   - The file does not exist (DMI-less VM, container): explicitly ABSENT —
+//     a deliberate, reproducible derivation input.
+//   - The file exists but cannot be read (privilege): an ERROR. Sealing under
+//     a privilege-degraded fingerprint is failing open, and v4 refuses.
+func platformStableIdentifierReadings() ([]sourceReading, error) {
+	b, err := os.ReadFile(platuuidPath)
+	switch {
+	case err == nil:
+		return []sourceReading{{key: "platuuid", value: strings.TrimSpace(string(b))}}, nil
+	case os.IsNotExist(err):
+		return []sourceReading{{key: "platuuid", absent: true}}, nil
+	default:
+		return nil, fmt.Errorf(
+			"machine fingerprint (v4): %s exists but cannot be read (%w) — the at-rest key would silently depend on process privilege; "+
+				"grant this account read access, run as the account that sealed the material, or set SDN_KEY_PASSWORD_FILE",
+			platuuidPath, err)
+	}
 }
 
 func firstNonEmptyFile(paths ...string) string {

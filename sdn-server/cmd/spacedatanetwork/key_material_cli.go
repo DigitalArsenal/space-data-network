@@ -201,22 +201,22 @@ func init() {
 	rootCmd.AddCommand(keyCmd)
 }
 
-// resolveKeyPassword mirrors the precedence show-identity uses: env, then
-// config, then the machine-derived default.
-func resolveKeyCLIPassword(cfg *config.Config) string {
+// resolveKeyCLIPassword mirrors the precedence show-identity uses: env, then
+// config, then the machine-derived default. It ERRORS instead of degrading —
+// both a configured-but-unreadable password file and a refused machine
+// derivation (unknown user, unreadable source) must surface as the actual
+// fault, never as a "wrong password" on intact material or, worse, a seal
+// under a substitute key.
+func resolveKeyCLIPassword(cfg *config.Config) (string, error) {
 	// Routed through config.KeyPassword so SDN_KEY_PASSWORD_FILE — the mounted
 	// secret the remote deploy script feeds containers — is honoured everywhere
 	// the CLI touches key material, not just in one command.
 	password, err := config.KeyPassword(cfg)
 	if err != nil {
-		// A configured-but-unreadable secret file must not silently fall back to
-		// the machine default: that would report "wrong password" and send the
-		// operator hunting for a corrupt mnemonic instead of a missing mount.
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-		return ""
+		return "", fmt.Errorf("resolve key password: %w", err)
 	}
 	if password != "" {
-		return password
+		return password, nil
 	}
 	return keys.DeriveDefaultPassword()
 }
@@ -280,7 +280,10 @@ func runKeyExport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	password := resolveKeyCLIPassword(cfg)
+	password, err := resolveKeyCLIPassword(cfg)
+	if err != nil {
+		return err
+	}
 
 	var payload string
 	switch format {
@@ -359,7 +362,12 @@ func runKeyImport(cmd *cobra.Command, _ []string) error {
 	case keyFormatMnemonic:
 		err = mgr.ImportMnemonic(material)
 	case keyFormatBackup:
-		err = mgr.ImportEncrypted(material, resolveKeyCLIPassword(cfg))
+		var password string
+		password, err = resolveKeyCLIPassword(cfg)
+		if err != nil {
+			return err
+		}
+		err = mgr.ImportEncrypted(material, password)
 	default:
 		return fmt.Errorf("format %q cannot be imported", format)
 	}
@@ -482,7 +490,11 @@ func loadStoredMnemonic(cfg *config.Config, res config.Resolution) (mnemonic str
 		return "", path, fmt.Errorf("read %s (config: %s): %w", path, res.Describe(), err)
 	}
 	if keys.IsMnemonicEncrypted(data) {
-		mnemonic, err = keys.DecryptMnemonic(data, resolveKeyCLIPassword(cfg))
+		password, perr := resolveKeyCLIPassword(cfg)
+		if perr != nil {
+			return "", path, perr
+		}
+		mnemonic, err = keys.DecryptMnemonic(data, password)
 		if err != nil {
 			return "", path, fmt.Errorf("decrypt mnemonic (wrong password?): %w", err)
 		}

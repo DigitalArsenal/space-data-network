@@ -1493,7 +1493,13 @@ func (n *Node) writeEncryptedNodeKey(keyPath string, keyData []byte) error {
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0700); err != nil {
 		return fmt.Errorf("create key directory: %w", err)
 	}
-	enc, err := keys.EncryptSecret(keyData, n.resolveKeyPassword())
+	password, err := n.resolveKeyPassword()
+	if err != nil {
+		// Fail closed: sealing under a substitute key is a silent key-space
+		// fork — the exact defect the (machine, user) derivation exists to kill.
+		return fmt.Errorf("resolve at-rest key password: %w", err)
+	}
+	enc, err := keys.EncryptSecret(keyData, password)
 	if err != nil {
 		return fmt.Errorf("encrypt node identity key: %w", err)
 	}
@@ -1513,7 +1519,24 @@ func (n *Node) readNodeKeyFile(keyPath string) (crypto.PrivKey, error) {
 	}
 	if bytes.HasPrefix(raw, nodeKeyEncMagic) {
 		body := raw[len(nodeKeyEncMagic):]
-		keyData, derr := keys.DecryptSecret(body, n.resolveKeyPassword())
+		password, perr := n.resolveKeyPassword()
+		if perr != nil {
+			// The CURRENT derivation refused (e.g. a source is unreadable to
+			// this process). Opening may still succeed under an older
+			// generation via the ladder — but only on the machine-derived
+			// path; a configured-but-unreadable explicit password must never
+			// be bypassed. Re-sealing is impossible until the operator fixes
+			// the refusal, so say so instead of failing silently later.
+			if n.usingDerivedKeyPassword() {
+				if recovered, scheme, rerr := keys.DecryptSecretAnyScheme(body); rerr == nil {
+					log.Warnf("node identity key at %s opened under the %s-derived key, but the current derivation refuses (%v); it can NOT be re-sealed until this is fixed", keyPath, scheme, perr)
+					return crypto.UnmarshalPrivateKey(recovered)
+				}
+			}
+			return nil, fmt.Errorf("%w at %s: %v\n%s",
+				errNodeKeyUndecryptable, keyPath, perr, keys.DerivationFailureHint(filepath.Dir(keyPath)))
+		}
+		keyData, derr := keys.DecryptSecret(body, password)
 		if derr != nil {
 			// Try older machine-derivation generations before giving up, and
 			// re-seal under the current one on success, so a node whose
@@ -1554,26 +1577,26 @@ func (n *Node) readNodeKeyFile(keyPath string) (crypto.PrivKey, error) {
 
 // resolveKeyPassword returns the password for mnemonic encryption/decryption.
 // Priority: SDN_KEY_PASSWORD env var > config security.key_password > machine-derived default.
-func (n *Node) resolveKeyPassword() string {
+//
+// It FAILS instead of degrading (task sdn-mnemonic-at-rest-key-break):
+//
+//   - A configured-but-unreadable password file is an ERROR, never a fallback
+//     to the machine default. The old fallback sealed material under a key the
+//     operator never chose — a silent key-space fork whose symptom (a "corrupt"
+//     mnemonic) surfaces only when the node moves to the box the file was
+//     supposed to make portable.
+//   - The machine-derived default itself can now refuse (unknown user, a
+//     source that exists but cannot be read); that refusal propagates. Sealing
+//     under a privilege-degraded substitute is the exact defect v4 kills.
+func (n *Node) resolveKeyPassword() (string, error) {
 	// Routed through config.KeyPassword so SDN_KEY_PASSWORD_FILE — a mounted
 	// secret file — is honoured by the DAEMON and not only by the CLI.
-	//
-	// It was not, and the gap was expensive: a unit that set
-	// SDN_KEY_PASSWORD_FILE looked like it had a portable, file-fed identity,
-	// while the daemon quietly sealed everything under the machine-derived
-	// default instead. The mismatch is invisible until the node moves to
-	// another box — the exact moment the file was supposed to save it — and
-	// then the mnemonic will not open anywhere. The CLI and the daemon must
-	// resolve this the same way or the file is a lie.
 	password, err := config.KeyPassword(n.config)
 	if err != nil {
-		// Configured-but-unreadable: shout, because the cause is a missing
-		// mount and the symptom is going to look like a corrupt mnemonic.
-		log.Errorf("key password file is configured but unreadable (%v); falling back to the machine-derived default", err)
-		return keys.DeriveDefaultPassword()
+		return "", fmt.Errorf("key password file is configured but unreadable (%w); refusing the machine-derived fallback — fix the mount or unset the file", err)
 	}
 	if password != "" {
-		return password
+		return password, nil
 	}
 	return keys.DeriveDefaultPassword()
 }
@@ -1588,8 +1611,12 @@ func (n *Node) recordKeyDerivation(keyDir string) {
 	if !n.usingDerivedKeyPassword() {
 		return
 	}
-	_, sources := keys.DeriveDefaultPasswordWithSources()
-	if err := keys.WriteDerivationRecord(keyDir, keys.SchemeV3, sources); err != nil {
+	_, inputs, err := keys.DeriveDefaultPasswordWithSources()
+	if err != nil {
+		log.Warnf("unable to record key-derivation sources in %s (derivation refused: %v)", keyDir, err)
+		return
+	}
+	if err := keys.WriteDerivationRecord(keyDir, inputs); err != nil {
 		log.Warnf("unable to record key-derivation sources in %s: %v", keyDir, err)
 	}
 }

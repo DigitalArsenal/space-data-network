@@ -60,30 +60,102 @@ func TestV2FingerprintPreserved(t *testing.T) {
 	}
 }
 
-func TestDeriveDefaultPasswordIsV3AndDeterministic(t *testing.T) {
-	a, sourcesA := DeriveDefaultPasswordWithSources()
-	b, sourcesB := DeriveDefaultPasswordWithSources()
+func TestDeriveDefaultPasswordIsV4AndDeterministic(t *testing.T) {
+	a, inputsA, err := DeriveDefaultPasswordWithSources()
+	if err != nil {
+		t.Fatalf("v4 derivation must succeed on a normal host: %v", err)
+	}
+	b, inputsB, err := DeriveDefaultPasswordWithSources()
+	if err != nil {
+		t.Fatalf("second derivation: %v", err)
+	}
 	if a != b {
-		t.Fatal("v3 derivation must be deterministic on the same machine")
+		t.Fatal("v4 derivation must be deterministic on the same machine+user")
 	}
 	if len(a) != 32 {
 		t.Fatalf("expected a 32-byte key, got %d", len(a))
 	}
-	if len(sourcesA) != len(sourcesB) {
-		t.Fatal("source list must be deterministic")
+	if inputsA.Scheme != SchemeV4 {
+		t.Fatalf("expected scheme v4, got %q", inputsA.Scheme)
+	}
+	if inputsA.User == "" || inputsA.User != inputsB.User {
+		t.Fatalf("v4 inputs must carry a stable, non-empty user: %q vs %q", inputsA.User, inputsB.User)
+	}
+	if len(inputsA.States) != len(inputsB.States) {
+		t.Fatal("source states must be deterministic")
+	}
+	if a == DeriveV3Password() {
+		t.Fatal("v4 and v3 passwords must differ (distinct salts and inputs)")
 	}
 	if a == DeriveV2Password() {
-		t.Fatal("v3 and v2 passwords must differ (distinct salts and inputs)")
+		t.Fatal("v4 and v2 passwords must differ")
 	}
 	if a == DeriveLegacyPassword() {
-		t.Fatal("v3 and legacy passwords must differ")
+		t.Fatal("v4 and legacy passwords must differ")
 	}
 }
 
-// TestRoundTripUnderV3 is the base case: seal and open under the default
-// machine-derived key.
-func TestRoundTripUnderV3(t *testing.T) {
-	enc, err := EncryptMnemonic(testMnemonic, DeriveDefaultPassword())
+// TestV4FingerprintBindsUserAndEncodesAbsence pins the owner ruling (the key
+// is bound to (machine, user)) and design requirement 3 (absent is an
+// explicit, encoded input — never a silent skip).
+func TestV4FingerprintBindsUserAndEncodesAbsence(t *testing.T) {
+	fp, inputs, err := machineFingerprintV4()
+	if err != nil {
+		t.Fatalf("v4 fingerprint on a normal host: %v", err)
+	}
+	if !strings.HasPrefix(fp, "v4|") {
+		t.Fatalf("v4 fingerprint must be scheme-tagged: %q", fp)
+	}
+	if !strings.Contains(fp, "user="+inputs.User) {
+		t.Fatalf("v4 fingerprint must carry the user %q: %q", inputs.User, fp)
+	}
+
+	// The canonical form: an absent source changes the fingerprint relative
+	// to a present one, and both differ from the source not being listed.
+	withValue, _, err := fingerprintV4From("box", "svc", []sourceReading{{key: "platuuid", value: "uuid-1234"}})
+	if err != nil {
+		t.Fatalf("present reading: %v", err)
+	}
+	withAbsent, absentInputs, err := fingerprintV4From("box", "svc", []sourceReading{{key: "platuuid", absent: true}})
+	if err != nil {
+		t.Fatalf("absent reading: %v", err)
+	}
+	if withValue == withAbsent {
+		t.Fatal("present and absent sources must produce different fingerprints")
+	}
+	if !strings.Contains(withAbsent, "platuuid="+fingerprintAbsentMarker) {
+		t.Fatalf("absence must be ENCODED, not skipped: %q", withAbsent)
+	}
+	found := false
+	for _, s := range absentInputs.States {
+		if s.Key == "platuuid" && s.State == SourceStateAbsent {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("absent source must be recorded as explicitly absent: %+v", absentInputs.States)
+	}
+}
+
+// TestV4RefusesDegradedInputs: empty/unknown inputs are ERRORS, never a
+// silently weaker key (the precise v3 defect).
+func TestV4RefusesDegradedInputs(t *testing.T) {
+	if _, _, err := fingerprintV4From("box", "", nil); err == nil {
+		t.Fatal("an empty username must refuse derivation")
+	}
+	if _, _, err := fingerprintV4From("", "svc", nil); err == nil {
+		t.Fatal("an empty hostname must refuse derivation")
+	}
+}
+
+// TestRoundTripUnderV4 is the base case: seal and open under the default
+// machine+user-derived key.
+func TestRoundTripUnderV4(t *testing.T) {
+	pw, err := DeriveDefaultPassword()
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	enc, err := EncryptMnemonic(testMnemonic, pw)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
@@ -97,8 +169,51 @@ func TestRoundTripUnderV3(t *testing.T) {
 	if got != testMnemonic {
 		t.Fatalf("round-trip mismatch: %q", got)
 	}
-	if scheme != SchemeV3 {
+	if scheme != SchemeV4 {
 		t.Fatalf("expected the current scheme, got %q", scheme)
+	}
+}
+
+// TestMigrationFromV3 is the fleet-upgrade case for THIS change: every node
+// still on the machine-only v3 derivation must open via the ladder (and report
+// v3 so the caller re-seals under v4). Without this, shipping v4 orphans the
+// fleet — the exact failure class this task exists to end.
+func TestMigrationFromV3(t *testing.T) {
+	enc, err := EncryptMnemonic(testMnemonic, DeriveV3Password())
+	if err != nil {
+		t.Fatalf("seal under v3: %v", err)
+	}
+	pw, err := DeriveDefaultPassword()
+	if err != nil {
+		t.Fatalf("derive v4: %v", err)
+	}
+	if _, err := DecryptMnemonic(enc, pw); err == nil {
+		t.Fatal("v3 ciphertext must not open under v4 directly (else migration never triggers)")
+	}
+	got, scheme, err := DecryptMnemonicAnyScheme(enc)
+	if err != nil {
+		t.Fatalf("v3 mnemonic must open via the candidate ladder: %v", err)
+	}
+	if got != testMnemonic || scheme != SchemeV3 {
+		t.Fatalf("expected v3 recovery of the original mnemonic, got %q/%q", got, scheme)
+	}
+}
+
+// TestMigrationFromV3Degraded covers the vm-orbit-det-01 privilege fork: a
+// mnemonic sealed by a v3 process that could NOT read the platform UUID must
+// open via the ladder even when THIS process can (and vice versa is diagnosed,
+// not recoverable — the UUID is simply unavailable then).
+func TestMigrationFromV3Degraded(t *testing.T) {
+	enc, err := EncryptMnemonic(testMnemonic, DeriveV3DegradedPassword())
+	if err != nil {
+		t.Fatalf("seal under degraded v3: %v", err)
+	}
+	got, scheme, err := DecryptMnemonicAnyScheme(enc)
+	if err != nil {
+		t.Fatalf("privilege-degraded v3 material must open via the ladder: %v", err)
+	}
+	if got != testMnemonic || scheme != SchemeV3 {
+		t.Fatalf("expected v3 recovery, got %q/%q", got, scheme)
 	}
 }
 
@@ -110,8 +225,12 @@ func TestMigrationFromV2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seal under v2: %v", err)
 	}
-	if _, err := DecryptMnemonic(enc, DeriveDefaultPassword()); err == nil {
-		t.Fatal("v2 ciphertext must not open under v3 directly (else migration never triggers)")
+	pw, err := DeriveDefaultPassword()
+	if err != nil {
+		t.Fatalf("derive current: %v", err)
+	}
+	if _, err := DecryptMnemonic(enc, pw); err == nil {
+		t.Fatal("v2 ciphertext must not open under the current scheme directly (else migration never triggers)")
 	}
 	got, scheme, err := DecryptMnemonicAnyScheme(enc)
 	if err != nil {
@@ -198,8 +317,11 @@ func TestPassphraseOverrideBeatsMachineDerivation(t *testing.T) {
 func TestDerivationRecordRoundTripAndHint(t *testing.T) {
 	keyDir := t.TempDir()
 
-	_, sources := DeriveDefaultPasswordWithSources()
-	if err := WriteDerivationRecord(keyDir, SchemeV3, sources); err != nil {
+	pw, inputs, err := DeriveDefaultPasswordWithSources()
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if err := WriteDerivationRecord(keyDir, inputs); err != nil {
 		t.Fatalf("write record: %v", err)
 	}
 
@@ -207,19 +329,28 @@ func TestDerivationRecordRoundTripAndHint(t *testing.T) {
 	if !ok {
 		t.Fatal("record must read back")
 	}
-	if rec.Scheme != string(SchemeV3) || len(rec.Sources) != len(sources) {
+	if rec.Scheme != string(SchemeV4) || len(rec.SourceStates) != len(inputs.States) {
 		t.Fatalf("record round-trip mismatch: %+v", rec)
+	}
+	if rec.User != inputs.User {
+		t.Fatalf("record must carry the sealing user (design requirement 5): %+v", rec)
+	}
+	if len(rec.Sources) == 0 {
+		t.Fatalf("legacy present-source list must still be written: %+v", rec)
 	}
 
 	blob, err := os.ReadFile(filepath.Join(keyDir, derivationRecordFile))
 	if err != nil {
 		t.Fatalf("read record file: %v", err)
 	}
-	// The record is a diagnostic aid, not a secret leak.
-	if host := hostnameForFingerprint(); host != "" && strings.Contains(string(blob), host) {
+	// The record is a diagnostic aid, not a secret leak. (The hostname stays
+	// hashed; the USER is recorded verbatim by design — see derivation.go —
+	// and on a dev box may coincide with the hostname, so only exclude the
+	// hostname when it is not also the username.)
+	if host := hostnameForFingerprint(); host != "" && host != strings.ToLower(inputs.User) && strings.Contains(string(blob), host) {
 		t.Fatalf("derivation record must not contain the raw hostname value: %s", blob)
 	}
-	if strings.Contains(string(blob), DeriveDefaultPassword()) {
+	if strings.Contains(string(blob), pw) {
 		t.Fatal("derivation record must never contain key material")
 	}
 
@@ -228,6 +359,64 @@ func TestDerivationRecordRoundTripAndHint(t *testing.T) {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("failure hint must mention %q: %s", want, hint)
 		}
+	}
+}
+
+// TestFailureHintNamesTheUserDiff is design requirement 4 verbatim: "host
+// matched, user differs (sealed root, running tjkoury)" would have cost
+// nothing — so the hint must say exactly that class of thing.
+func TestFailureHintNamesTheUserDiff(t *testing.T) {
+	keyDir := t.TempDir()
+
+	_, inputs, err := DeriveDefaultPasswordWithSources()
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	sealedAs := inputs
+	sealedAs.User = inputs.User + "-someone-else" // sealed under a different account
+	if err := WriteDerivationRecord(keyDir, sealedAs); err != nil {
+		t.Fatalf("write record: %v", err)
+	}
+
+	hint := DerivationFailureHint(keyDir)
+	if !strings.Contains(hint, "USER DIFFERS") {
+		t.Fatalf("hint must flag the user difference: %s", hint)
+	}
+	if !strings.Contains(hint, sealedAs.User) || !strings.Contains(hint, inputs.User) {
+		t.Fatalf("hint must name BOTH the sealing and the running user: %s", hint)
+	}
+	if !strings.Contains(hint, "reseal") {
+		t.Fatalf("hint must name the deliberate escape (key reseal): %s", hint)
+	}
+}
+
+// TestFailureHintNamesSourceStateDiff: a source recorded present at seal time
+// but absent now (or vice versa) is named, not folded into "cannot decrypt".
+func TestFailureHintNamesSourceStateDiff(t *testing.T) {
+	keyDir := t.TempDir()
+
+	_, inputs, err := DeriveDefaultPasswordWithSources()
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	flipped := inputs
+	flipped.States = append([]SourceState(nil), inputs.States...)
+	for i := range flipped.States {
+		if flipped.States[i].Key == "platuuid" {
+			if flipped.States[i].State == SourceStatePresent {
+				flipped.States[i].State = SourceStateAbsent
+			} else {
+				flipped.States[i].State = SourceStatePresent
+			}
+		}
+	}
+	if err := WriteDerivationRecord(keyDir, flipped); err != nil {
+		t.Fatalf("write record: %v", err)
+	}
+
+	hint := DerivationFailureHint(keyDir)
+	if !strings.Contains(hint, `SOURCE "platuuid"`) {
+		t.Fatalf("hint must name the flipped source state: %s", hint)
 	}
 }
 

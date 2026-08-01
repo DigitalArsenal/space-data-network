@@ -32,15 +32,22 @@ func TestKeyResealRegisteredUnderKey(t *testing.T) {
 // afterwards, and the bytes inside are unchanged. A re-seal that altered the
 // mnemonic would change the PeerID and lose the node.
 func TestKeyResealMovesMaterialToTheConfiguredPassword(t *testing.T) {
-	const phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	// Not a BIP-39 wordlist run (the repo mnemonic guard rejects those in
+	// committed files); the test only needs an opaque string to seal.
+	const phrase = "seed-phrase-placeholder-for-reseal-cli-tests"
 	const destination = "portable-file-fed-password"
+
+	machinePassword, err := keys.DeriveDefaultPassword()
+	if err != nil {
+		t.Skipf("machine-derived password unavailable on this host: %v", err)
+	}
 
 	dir := t.TempDir()
 	mnemonicPath := filepath.Join(dir, "mnemonic")
 
 	// Sealed under the machine-derived password, exactly like a node that has
 	// never been told about a password file.
-	sealed, err := keys.EncryptMnemonic(phrase, keys.DeriveDefaultPassword())
+	sealed, err := keys.EncryptMnemonic(phrase, machinePassword)
 	if err != nil {
 		t.Fatalf("seal mnemonic: %v", err)
 	}
@@ -77,7 +84,7 @@ func TestKeyResealMovesMaterialToTheConfiguredPassword(t *testing.T) {
 	}
 	// And no longer with the old machine-derived one, which is the point of
 	// moving custody rather than adding to it.
-	if _, err := keys.DecryptMnemonic(resealed, keys.DeriveDefaultPassword()); err == nil {
+	if _, err := keys.DecryptMnemonic(resealed, machinePassword); err == nil {
 		t.Fatal("re-sealed mnemonic still opens with the machine-derived password")
 	}
 }

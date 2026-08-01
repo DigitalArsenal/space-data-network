@@ -5142,7 +5142,13 @@ func ensureNodeMnemonic(ctx context.Context, cfg *config.Config, generateMnemoni
 		keyPassword = cfg.Security.KeyPassword
 	}
 	if keyPassword == "" {
-		keyPassword = keys.DeriveDefaultPassword()
+		// SEALING lane: a refused machine derivation (unknown user, source
+		// unreadable to this process) must abort init — sealing under a
+		// substitute key forks the key space silently.
+		keyPassword, err = keys.DeriveDefaultPassword()
+		if err != nil {
+			return nodeMnemonicInitResult{}, fmt.Errorf("derive machine-default key password: %w", err)
+		}
 	}
 	encrypted, err := keys.EncryptMnemonic(strings.TrimSpace(mnemonic), keyPassword)
 	if err != nil {
@@ -5286,7 +5292,10 @@ func runShowIdentity(cmd *cobra.Command, args []string) error {
 		keyPassword = cfg.Security.KeyPassword
 	}
 	if keyPassword == "" {
-		keyPassword = keys.DeriveDefaultPassword()
+		keyPassword, err = keys.DeriveDefaultPassword()
+		if err != nil {
+			return fmt.Errorf("derive machine-default key password: %w", err)
+		}
 	}
 
 	// Locate mnemonic file

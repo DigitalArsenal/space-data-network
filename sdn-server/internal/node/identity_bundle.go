@@ -62,6 +62,12 @@ func (n *Node) loadOrCreateIdentityBundle() (*IdentityBundle, error) {
 		return nil, fmt.Errorf("derive identity from mnemonic: %w", err)
 	}
 
+	bundlePassword, err := n.resolveKeyPassword()
+	if err != nil {
+		// Fail closed: this password seals exported copies of the identity
+		// key; a substitute would fork the key space silently.
+		return nil, fmt.Errorf("resolve at-rest key password: %w", err)
+	}
 	bundle := &IdentityBundle{
 		Mnemonic:          mnemonic,
 		Identity:          identity,
@@ -69,7 +75,7 @@ func (n *Node) loadOrCreateIdentityBundle() (*IdentityBundle, error) {
 		IdentityKeyPath:   identity.IdentityKeyPath,
 		SigningKeyPath:    identity.SigningKeyPath,
 		EncryptionKeyPath: identity.EncryptionKeyPath,
-		keyPassword:       n.resolveKeyPassword(),
+		keyPassword:       bundlePassword,
 	}
 	if identity.Addresses != nil && identity.Addresses.Bitcoin != nil {
 		bundle.BitcoinAddress = identity.Addresses.Bitcoin.Address
@@ -108,7 +114,23 @@ func (n *Node) deriveIdentityBundleXPub(mnemonic string) (string, error) {
 }
 
 func (n *Node) loadOrCreateMnemonic(mnemonicPath, keyDir string) (string, error) {
-	keyPassword := n.resolveKeyPassword()
+	keyPassword, passwordErr := n.resolveKeyPassword()
+	if passwordErr != nil {
+		// The current derivation (or a configured password file) refused.
+		// An EXISTING mnemonic may still open under an older generation via
+		// the ladder below — machine-derived path only — but nothing may be
+		// SEALED, so creation and migration are off the table.
+		if data, err := os.ReadFile(mnemonicPath); err == nil && keys.IsMnemonicEncrypted(data) && n.usingDerivedKeyPassword() {
+			if recovered, scheme, rerr := keys.DecryptMnemonicAnyScheme(data); rerr == nil {
+				log.Warnf("mnemonic at %s opened under the %s-derived key, but the current derivation refuses (%v); it can NOT be re-sealed until this is fixed", mnemonicPath, scheme, passwordErr)
+				return strings.TrimSpace(recovered), nil
+			}
+		}
+		// Fail closed, and say why — never mint a fresh identity and never
+		// seal under a substitute key.
+		return "", fmt.Errorf("resolve at-rest key password for %s: %w\n%s",
+			mnemonicPath, passwordErr, keys.DerivationFailureHint(keyDir))
+	}
 
 	// Surface a hostname change (canary only — not part of the key).
 	if canary, cerr := keys.CheckAndUpdateHostnameCanary(keyDir); cerr != nil {
