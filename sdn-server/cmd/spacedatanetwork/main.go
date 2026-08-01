@@ -2051,6 +2051,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// EPM upgrades that peer's feed vCard, downloads and QR.
 				go func() {
 					const retryCooldown = time.Hour
+					// Refreshing an already-connected peer is one stream frame
+					// answered by a change-only append — cheap enough to bound
+					// EPM staleness in minutes instead of an hour.
+					const connectedRefreshCooldown = 10 * time.Minute
 					lastAttempt := map[peer.ID]time.Time{}
 					ticker := time.NewTicker(2 * time.Minute)
 					defer ticker.Stop()
@@ -2094,7 +2098,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 							}
 						}
 						for _, tp := range candidates {
-							if tp == nil || len(tp.EPMData) > 0 {
+							if tp == nil {
 								continue
 							}
 							// A registry peer with known addresses but no live
@@ -2103,10 +2107,28 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 							// and without their EPM the identity surface can
 							// serve no QR card at all (owner law 2026-07-31).
 							connected := n.Host().Network().Connectedness(tp.ID) == network.Connected
+							if len(tp.EPMData) > 0 && !connected {
+								// A stored EPM is only refreshed opportunistically
+								// from live connections — never worth a dial.
+								continue
+							}
 							if !connected && len(tp.Addrs) == 0 {
 								continue
 							}
-							if last, ok := lastAttempt[tp.ID]; ok && time.Since(last) < retryCooldown {
+							// CONNECTED peers are re-requested even when a row
+							// already has EPMData: the projection can restore a
+							// STALE EPM (observed 2026-08-01: a DN-less default
+							// EPM from host-02's orphaned-profile era resurfaced
+							// after hydration reload and the pump skipped the row
+							// forever). The exchange's change-only append makes an
+							// identical re-request a no-op, so the refresh runs on
+							// a short cooldown; the full cooldown still bounds
+							// DIALS, which are the expensive path.
+							cooldown := retryCooldown
+							if connected {
+								cooldown = connectedRefreshCooldown
+							}
+							if last, ok := lastAttempt[tp.ID]; ok && time.Since(last) < cooldown {
 								continue
 							}
 							lastAttempt[tp.ID] = time.Now()
