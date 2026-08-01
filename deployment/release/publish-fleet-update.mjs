@@ -88,20 +88,15 @@ const work = mkdtempSync(join(tmpdir(), 'sdn-fleet-update-'));
 const bundleName = `spacedatanetwork-${version}-${platform}-${arch}`;
 const bundleRoot = join(work, bundleName);
 mkdirSync(join(bundleRoot, 'bin'), { recursive: true });
-mkdirSync(join(bundleRoot, 'trust'), { recursive: true });
 cpSync(binaryPath, join(bundleRoot, 'bin', 'spacedatanetwork'));
 chmodSync(join(bundleRoot, 'bin', 'spacedatanetwork'), 0o755);
 
-// Trust roots: the key_id -> SPKI map the fleet verifier resolves the
-// manifest's key_id against. Source of truth is the publisher node itself —
-// pinned here from the live bundle heph shipped (same node key).
-const trustRoots = {
-  d4a971a7e534: 'MCowBQYDK2VwAyEADYDh/V+aTjTf3zag4VK9maZc//i8xsqydXtISuRC/Iw=',
-};
-writeFileSync(
-  join(bundleRoot, 'trust', 'update-roots.json'),
-  `${JSON.stringify(trustRoots)}\n`,
-);
+// NO trust/ in a lane bundle — the updater REFUSES it as a protected entry
+// (proven live on the first publish: `update bundle must not contain
+// protected entry "trust"`). Trust roots are installed once at BOOTSTRAP and
+// persist across swaps precisely so an update can never rotate the anchors
+// that verify updates. Bootstrap installers get trust/ from
+// deployment/release/fleet-trust-roots.json instead.
 
 writeFileSync(
   join(bundleRoot, 'manifest.json'),
