@@ -3007,6 +3007,18 @@ func serveAdminMuxRequest(
 			strings.HasPrefix(requestPath, "/orbpro-key-broker/")
 
 		if isAPIOrPlugin && !publicAPIRequest(r.Method, requestPath) {
+			// Loopback self-gated admin paths (update/dataset control) carry
+			// their OWN designed gate — loopback RemoteAddr + a one-time
+			// control token consumed on use — and that gate never ran on
+			// require_auth nodes because this default-deny fired first
+			// (ops-update-shutdown-401: an unattended fleet update reported
+			// success while the OLD binary kept running). Let a request that
+			// is BOTH self-gated AND actually from loopback reach its
+			// handler; everything remote still hits the wallet wall.
+			if isLoopbackSelfGatedAdminPath(requestPath) && isLoopbackRequestAddr(r.RemoteAddr) {
+				adminMux.ServeHTTP(w, r)
+				return
+			}
 			minTrust := peers.Standard
 			switch {
 			case isAdminOnlyAPIPath(requestPath):
@@ -3484,6 +3496,19 @@ func isLoopbackSelfGatedAdminPath(path string) bool {
 		return true
 	}
 	return false
+}
+
+// isLoopbackRequestAddr mirrors the update control handler's own RemoteAddr
+// gate (internal/update/control.go isLoopbackRemoteAddr): the wall may only
+// wave a self-gated request through when it demonstrably originates on this
+// box — the handler then enforces its one-time token on top.
+func isLoopbackRequestAddr(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
 }
 
 func isAdminOnlyAPIPath(path string) bool {
