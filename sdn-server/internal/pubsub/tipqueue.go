@@ -31,6 +31,17 @@ var (
 
 const pnmSchema = "PNM.fbs"
 
+// PinRoleArchive is the pin-ledger role of the immutable archive plane
+// (storage.PinLedgerRoleArchive; duplicated here because pubsub must not
+// import storage). CIDs whose resolved pin role is this value are permanent
+// pins: the TTL sweep never unpins them.
+const PinRoleArchive = "archive"
+
+// PinRoleResolver reports the durable pin-ledger role recorded for a CID
+// ("" when none). Wired by the host (internal/node) against the FlatSQL
+// store's pin ledger so the TTL sweep can skip role='archive' pins.
+type PinRoleResolver func(cid string) string
+
 // ContentFetcher fetches content by CID.
 type ContentFetcher interface {
 	Fetch(ctx context.Context, cid string) ([]byte, error)
@@ -73,11 +84,12 @@ type PNMVerifier func(pnmBytes []byte) (channels.PNMTrustEvidence, error)
 
 // TipQueue manages PNM-based tip/queue messaging.
 type TipQueue struct {
-	config   *TipQueueConfig
-	topicMgr *TopicManager
-	fetcher  ContentFetcher
-	pinner   ContentPinner
-	verifier PNMVerifier
+	config       *TipQueueConfig
+	topicMgr     *TopicManager
+	fetcher      ContentFetcher
+	pinner       ContentPinner
+	verifier     PNMVerifier
+	roleResolver PinRoleResolver
 
 	subscription *ps.Subscription
 	tips         map[string][]*Tip // schema -> pending tips
@@ -209,6 +221,15 @@ func (tq *TipQueue) SetPinner(pinner ContentPinner) {
 	tq.mu.Lock()
 	defer tq.mu.Unlock()
 	tq.pinner = pinner
+}
+
+// SetPinRoleResolver wires the durable pin-role lookup consulted by the TTL
+// sweep. A CID resolving to PinRoleArchive is an immutable archive-plane pin
+// (TTL=0, permanent) and is explicitly skipped by sweepExpiredPins.
+func (tq *TipQueue) SetPinRoleResolver(resolver PinRoleResolver) {
+	tq.mu.Lock()
+	defer tq.mu.Unlock()
+	tq.roleResolver = resolver
 }
 
 // SetPNMVerifier replaces the trust gate used before queueing received PNMs.
@@ -715,6 +736,7 @@ func (tq *TipQueue) ttlSweepLoop(interval time.Duration) {
 func (tq *TipQueue) sweepExpiredPins() {
 	tq.mu.RLock()
 	pinner := tq.pinner
+	roleResolver := tq.roleResolver
 	now := time.Now()
 	expired := make([]string, 0)
 	for cidValue, tip := range tq.pinnedCIDs {
@@ -729,6 +751,21 @@ func (tq *TipQueue) sweepExpiredPins() {
 	}
 
 	for _, cidValue := range expired {
+		// Explicit role='archive' skip (graph task pin-archive-plane): the
+		// immutable archive plane pins with TTL=0 — permanent. A tip for the
+		// same CID (e.g. a re-announcement) must never let the TTL sweep
+		// unpin an archive out from under the pin ledger.
+		if roleResolver != nil && roleResolver(cidValue) == PinRoleArchive {
+			tq.mu.Lock()
+			if tip := tq.pinnedCIDs[cidValue]; tip != nil {
+				// Stop re-evaluating it every sweep: an archive pin has no
+				// expiry.
+				tip.PinExpiry = time.Time{}
+			}
+			tq.mu.Unlock()
+			log.Debugf("Skipping TTL unpin for archive-pinned content: %s", cidValue)
+			continue
+		}
 		ctx, cancel := context.WithTimeout(tq.ctx, tq.config.FetchTimeout)
 		err := pinner.Unpin(ctx, cidValue)
 		cancel()

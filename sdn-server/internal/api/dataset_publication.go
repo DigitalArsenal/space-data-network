@@ -1017,6 +1017,13 @@ func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx 
 		if entry.CID == "" {
 			continue
 		}
+		// Explicit role='archive' skip (graph task pin-archive-plane):
+		// archive-plane pins are permanent and are never retired by head
+		// supersede. Defensive — the query above filters to shard-group-car —
+		// but retirement must stay safe if the listing ever widens.
+		if entry.Role == storage.PinLedgerRoleArchive {
+			continue
+		}
 		if entry.Head == currentHead || entry.SnapshotID == currentHead {
 			continue
 		}

@@ -810,6 +810,51 @@ func TestTipQueueSweepExpiredPinsUnpinsAndRemoves(t *testing.T) {
 	}
 }
 
+func TestTipQueueSweepExpiredPinsSkipsArchiveRole(t *testing.T) {
+	tq := NewTipQueue(nil)
+	pinner := newMockPinner()
+	tq.SetPinner(pinner)
+	tq.SetPinRoleResolver(func(cid string) string {
+		if cid == "bafyarchive" {
+			return PinRoleArchive
+		}
+		return ""
+	})
+
+	tq.mu.Lock()
+	tq.pinnedCIDs["bafyarchive"] = &Tip{CID: "bafyarchive", PinExpiry: time.Now().Add(-time.Minute)}
+	tq.pinnedCIDs["bafystale"] = &Tip{CID: "bafystale", PinExpiry: time.Now().Add(-time.Minute)}
+	tq.mu.Unlock()
+	_ = pinner.Pin(context.Background(), "bafyarchive", time.Minute)
+	_ = pinner.Pin(context.Background(), "bafystale", time.Minute)
+
+	tq.sweepExpiredPins()
+
+	if !pinner.IsPinned("bafyarchive") {
+		t.Fatal("archive-role pin must never be unpinned by the TTL sweep")
+	}
+	if pinner.IsPinned("bafystale") {
+		t.Fatal("expired non-archive pin should have been unpinned by the sweep")
+	}
+	remaining := tq.GetPinnedCIDs()
+	archiveTip, ok := remaining["bafyarchive"]
+	if !ok {
+		t.Fatal("archive CID should still be tracked as pinned")
+	}
+	if !archiveTip.PinExpiry.IsZero() {
+		t.Fatal("archive pin expiry should be cleared so the sweep stops re-evaluating it")
+	}
+	if _, ok := remaining["bafystale"]; ok {
+		t.Fatal("expired non-archive CID should have been removed from the tracked pinned set")
+	}
+
+	// A second sweep (expiry now zero) must still leave the archive pinned.
+	tq.sweepExpiredPins()
+	if !pinner.IsPinned("bafyarchive") {
+		t.Fatal("archive-role pin must survive repeated sweeps")
+	}
+}
+
 func TestTipQueueStartTTLSweeperStopsOnClose(t *testing.T) {
 	tq := NewTipQueue(nil)
 	tq.StartTTLSweeper(10 * time.Millisecond)
