@@ -232,6 +232,8 @@ var (
 	helperApplyToken           string
 	helperApplyNoRestart       bool
 	helperApplyRestartArgvJSON string
+	helperApplyHealthTimeout   time.Duration
+	updateInstallHealthTimeout time.Duration
 )
 
 var updateHelperApplyCmd = &cobra.Command{
@@ -275,12 +277,13 @@ var updateHelperApplyCmd = &cobra.Command{
 		fmt.Fprintf(out, "sequence=%d\n", result.Sequence)
 		fmt.Fprintf(out, "rollback_path=%s\n", result.RollbackPath)
 		return helperPostApplyRestart(cmd.Context(), helperPostApplyOptions{
-			Paths:       update.PathsFor(helperApplyBundleRoot),
-			RestartArgv: restartArgv,
-			AdminURL:    helperApplyAdminURL,
-			NoRestart:   helperApplyNoRestart,
-			Out:         out,
-			Err:         cmd.ErrOrStderr(),
+			Paths:         update.PathsFor(helperApplyBundleRoot),
+			RestartArgv:   restartArgv,
+			AdminURL:      helperApplyAdminURL,
+			NoRestart:     helperApplyNoRestart,
+			Out:           out,
+			Err:           cmd.ErrOrStderr(),
+			HealthTimeout: helperApplyHealthTimeout,
 		})
 	},
 }
@@ -347,6 +350,8 @@ func init() {
 	updateInstallCmd.Flags().StringVar(&updateInstallVersion, "version", "", "provider update version to install")
 	updateInstallCmd.Flags().BoolVar(&updateInstallDryRun, "dry-run", false, "verify and report without swapping files")
 	updateInstallCmd.Flags().BoolVar(&updateInstallDirect, "direct", false, "apply in the current process instead of using the helper")
+	updateInstallCmd.Flags().DurationVar(&updateInstallHealthTimeout, "health-timeout", 0, "how long the helper waits for daemon health after restart (0 = 60s default; store-heavy nodes whose boot replays the catalog need minutes)")
+	updateHelperApplyCmd.Flags().DurationVar(&helperApplyHealthTimeout, "health-timeout", 0, "post-restart daemon health wait (0 = 60s default)")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyBundleRoot, "bundle-root", "", "bundle root to update")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyUpdateID, "update-id", "", "staged update id to apply")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyAdminURL, "admin-url", "", "local daemon admin URL")
@@ -491,6 +496,7 @@ func prepareUpdateHelper(paths update.Paths, updateID string, token string) (*up
 		AdminURL:         adminURL(cfg),
 		Token:            token,
 		RestartArgv:      nil,
+		HealthTimeout:    updateInstallHealthTimeout,
 	})
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type HelperPlanOptions struct {
@@ -16,6 +17,13 @@ type HelperPlanOptions struct {
 	AdminURL         string
 	Token            string
 	RestartArgv      []string
+	// HealthTimeout bounds the post-restart health wait. Zero keeps the
+	// helper's 60s default — which fits an 18s-boot box like the VM but NOT a
+	// store-heavy node whose boot replays the record catalog for minutes
+	// (host-02 measured >5m on 2026-08-01; the 60s gate rolled back a healthy
+	// update). "Takes as long as it takes" is an owner rule; the gate must be
+	// able to say it too.
+	HealthTimeout time.Duration
 }
 
 type HelperPlan struct {
@@ -57,6 +65,9 @@ func PrepareHelperPlan(opts HelperPlanOptions) (*HelperPlan, error) {
 	}
 	if strings.TrimSpace(opts.AdminURL) != "" && strings.TrimSpace(opts.Token) != "" {
 		args = append(args, "--admin-url", opts.AdminURL, "--token", opts.Token)
+	}
+	if opts.HealthTimeout > 0 {
+		args = append(args, "--health-timeout", opts.HealthTimeout.String())
 	}
 	if len(opts.RestartArgv) == 0 && (strings.TrimSpace(opts.AdminURL) == "" || strings.TrimSpace(opts.Token) == "") {
 		args = append(args, "--no-restart")
