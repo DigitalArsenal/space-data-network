@@ -19,11 +19,10 @@
   },
 
   "baseline": {
-    "date": "2026-07-30",
-    "debt": "These are PRESENT TODAY and suppressed only by a consumer CSS rule (.root .sdn-rail .brand-sub,.root .sdn-rail .fkey{display:none}) — exactly the consumer-only strip IRIS warned would not hold. 'Not visible' is not 'not there'. This block is that debt, in writing. The check fails on any NEW offender and on any CHANGE IN COUNT of a baselined one, so the debt cannot grow silently. design-tool-strip-menu-clutter-at-source deletes these entries when the corrected surface lands, and the check becomes absolute.",
+    "date": "2026-08-02",
+    "debt": "The ARTIFACT is clean as of the rev-8 glass transcription (spaceaware-ui 6a43137): the built dashboard no longer bundles the old design shell, so the served page carries no baselined string and the artifact check is now absolute. The `lib` counts remain: src/lib/shell/{SdnRail,ConsoleHeader}.svelte still carry the design-origin fkey column and locality brand-sub — dead code for the dashboard, but present in the tree until design-tool-strip-menu-clutter-at-source lands the corrected export. The check still fails on any NEW offender and on any CHANGE IN COUNT of a baselined one.",
     "counts": {
-      "lib":      { "fkey": 4, "LOCAL_NODE": 1 },
-      "artifact": { "fkey": 4, "LOCAL_NODE": 1 }
+      "lib":      { "fkey": 4, "LOCAL_NODE": 1 }
     }
   }
 }
