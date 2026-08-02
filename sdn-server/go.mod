@@ -3,7 +3,7 @@ module github.com/spacedatanetwork/sdn-server
 go 1.25.0
 
 require (
-	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.173.0
+	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.174.0
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff
@@ -27,6 +27,7 @@ require (
 	github.com/second-state/WasmEdge-go v0.14.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.8.0
+	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.51.0
 	golang.org/x/mod v0.36.0
 	golang.org/x/net v0.54.0
@@ -135,7 +136,6 @@ require (
 	go.uber.org/fx v1.24.0 // indirect
 	go.uber.org/mock v0.5.2 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
