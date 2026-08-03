@@ -64,6 +64,11 @@ type DatasetExportIndex struct {
 }
 
 // DatasetExportSourceBatch summarizes one source batch used by an export.
+//
+// License/LicenseURL/Citation map 1:1 onto DPMSourceBatch LICENSE /
+// LICENSE_URL / CITATION and are bound under the provider signature. The DPM
+// schema has no share-alike field, so ShareAlike is carried here for node-side
+// policy and the provenance sidecar only — it is never written into the DPM.
 type DatasetExportSourceBatch struct {
 	ProviderID       string `json:"providerId,omitempty"`
 	SourceName       string `json:"sourceName,omitempty"`
@@ -75,6 +80,10 @@ type DatasetExportSourceBatch struct {
 	ParserVersion    string `json:"parserVersion,omitempty"`
 	ContentKeyID     string `json:"contentKeyId,omitempty"`
 	RecordCount      uint64 `json:"recordCount"`
+	License          string `json:"license,omitempty"`
+	LicenseURL       string `json:"licenseUrl,omitempty"`
+	Citation         string `json:"citation,omitempty"`
+	ShareAlike       bool   `json:"shareAlike,omitempty"`
 }
 
 // DatasetExportIndexRecord records byte offsets and indexed fields for one shard entry.
@@ -136,7 +145,17 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 			SourceTags: sourceTags[record.CID],
 		})
 	}
-	return ExportDatasetRecords(outputDir, filter, exportRecords)
+	export, err := ExportDatasetRecords(outputDir, filter, exportRecords)
+	if err != nil {
+		return nil, err
+	}
+	// Licence is batch-keyed state, not per-record: attach it after the
+	// deterministic shard/index bytes are fixed so an unlicensed export is
+	// byte-identical to the pre-licence behaviour.
+	if err := s.attachSourceBatchLicenses(export); err != nil {
+		return nil, err
+	}
+	return export, nil
 }
 
 // RepairDatasetPublicationIndexFromShard recreates a missing deterministic
@@ -189,6 +208,11 @@ func (s *FlatSQLStore) RepairDatasetPublicationIndexFromShard(outputDir string, 
 	}
 	if export.ShardSHA256 != publication.ShardSHA256 || export.ResultSHA256 != publication.ResultSHA256 {
 		return nil, fmt.Errorf("repaired shard identity changed")
+	}
+	// A repaired publication is republished from this export, so it must carry
+	// the same licence terms the original DPM bound.
+	if err := s.attachSourceBatchLicenses(export); err != nil {
+		return nil, err
 	}
 	return export, nil
 }

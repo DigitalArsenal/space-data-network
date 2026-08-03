@@ -28,6 +28,7 @@ const (
 	auxiliaryEventAssetPinReferenceTransition   = "asset_pin_reference_transition"
 	auxiliaryEventAssetPinReferenceDelete       = "asset_pin_reference_delete"
 	auxiliaryEventAssetPinAuditAppend           = "asset_pin_audit_append"
+	auxiliaryEventSourceBatchLicenseUpsert      = "source_batch_license_upsert"
 )
 
 type auxiliaryMetadataStore struct {
@@ -61,6 +62,7 @@ type auxiliaryMetadataEvent struct {
 	AssetPinReferenceTransition   *auxiliaryAssetPinReferenceTransition   `json:"asset_pin_reference_transition,omitempty"`
 	AssetPinReferenceDelete       *auxiliaryAssetPinReferenceDelete       `json:"asset_pin_reference_delete,omitempty"`
 	AssetPinAuditEvent            *AssetPinAuditEvent                     `json:"asset_pin_audit_event,omitempty"`
+	SourceBatchLicense            *SourceBatchLicense                     `json:"source_batch_license,omitempty"`
 }
 
 type auxiliaryMetadataFrame struct {
@@ -466,6 +468,11 @@ func (s *FlatSQLStore) applyAuxiliaryMetadataEvent(event auxiliaryMetadataEvent)
 			return fmt.Errorf("dataset replay state metadata event missing payload")
 		}
 		return s.applyDatasetPublicationReplayStateUpsert(*event.DatasetReplayState)
+	case auxiliaryEventSourceBatchLicenseUpsert:
+		if event.SourceBatchLicense == nil {
+			return fmt.Errorf("source batch license metadata event missing payload")
+		}
+		return s.applySourceBatchLicenseUpsert(*event.SourceBatchLicense)
 	case auxiliaryEventAssetOIDCReceiptConsume:
 		if event.AssetOIDCReceipt == nil {
 			return fmt.Errorf("asset OIDC receipt metadata event missing payload")

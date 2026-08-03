@@ -29,6 +29,16 @@ const (
 
 // DatasetPublicationRequest describes a local request to export, pin, sign,
 // and announce a dataset update from the daemon's current FlatSQL store.
+//
+// There is deliberately NO licence field here. A publication's licence terms
+// are a property of the source batch that was ingested — recorded at ingest
+// from the parser module's own declaration (storage.ingest_with_source) and
+// looked up per batch at export time — not of the caller who asks for the
+// batch to be published. An override here would let a local caller re-license
+// somebody else's data by typing a different string into a request body,
+// which is exactly the failure the licence carriage exists to prevent. Fix a
+// wrong licence at the source (re-ingest the batch with correct metadata, or
+// UpsertSourceBatchLicense), then republish.
 type DatasetPublicationRequest struct {
 	DatastoreKey        string   `json:"datastoreKey,omitempty"`
 	Schema              string   `json:"schema"`
