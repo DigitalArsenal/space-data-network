@@ -1514,6 +1514,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/node/service/restart", handleServiceAction(serviceControl, authHandler))
 			adminMux.HandleFunc("/api/node/service/stop", handleServiceAction(serviceControl, authHandler))
 
+			// Security-bond attestation (owner 2026-08-03): the embedded
+			// bond-attestation WASM module queries free chain services over
+			// the generic http cap; this host schedules it and serves the
+			// cached answer anonymously (bond_attestation.go).
+			bondAtt := &bondAttestor{}
+			bondAtt.start(ctx, n)
+			adminMux.HandleFunc("/api/v1/trust/bond", bondAtt.handleBond)
+
 			// EPM (Entity Profile Message) API endpoints
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
 			adminMux.HandleFunc("/api/node/epm/vcard", handleNodeEPMVCard(n))
@@ -3152,6 +3160,9 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/v1/stats",
 		"/api/v1/pubsub/topics",
 		"/api/v1/pubsub/messages",
+		// The node's security bond: public BY DESIGN — peers price trust by
+		// a bond anyone can verify (owner 2026-08-03; bond_attestation.go).
+		"/api/v1/trust/bond",
 		"/api/v1/peers":
 		return true
 	}
