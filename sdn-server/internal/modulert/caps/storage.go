@@ -468,6 +468,23 @@ func (s *storageCapAdapter) handleQuerySurface() []byte {
 // default (internal/ingest defaultMinFreeDiskBytes).
 const defaultIngestMinFreeDiskBytes = 5 * 1024 * 1024 * 1024
 
+// capBool reads an optional boolean from a cap payload. JSON booleans arrive
+// as bool; a module that spells the flag as a string still gets the obvious
+// reading rather than a silent false.
+func capBool(p map[string]interface{}, key string) bool {
+	if p == nil {
+		return false
+	}
+	switch v := p[key].(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true")
+	default:
+		return false
+	}
+}
+
 // handleIngestWithSource is the provenance/batch-capable flow ingest op
 // (loop C.8a): the WASM side (provider parser nodes) delivers a size-prefixed
 // aligned FlatBuffer record stream plus full SourceTags attribution; the host
@@ -490,6 +507,10 @@ const defaultIngestMinFreeDiskBytes = 5 * 1024 * 1024 * 1024
 //	  "source_url":  "https://...",               (optional)
 //	  "batch_id":    "<sha256 of source payload>",(required)
 //	  "content_key_id": "public",                 (optional)
+//	  "license":     "CC-BY-SA-4.0",              (optional, SPDX id)
+//	  "license_url": "https://...",               (optional)
+//	  "citation":    "SatNOGS DB contributors",   (optional)
+//	  "share_alike": true,                        (optional)
 //	  "source_peer": "source:provider",          (optional)
 //	  "records": {"$bin":0},                      (size-prefixed record stream)
 //	  "reconcile": "none"|"duplicates"|"current", (default "duplicates")
@@ -512,6 +533,15 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 		SourceURL:    str("source_url"),
 		BatchID:      str("batch_id"),
 		ContentKeyID: str("content_key_id"),
+		// Licence terms of the retrieved source, as declared by the parser
+		// node that fetched it. This is the ONLY authority for licence: the
+		// host never infers it from config, because only the module knows
+		// which upstream document it actually pulled. Carried through to
+		// DPMSourceBatch LICENSE / LICENSE_URL / CITATION on publication.
+		License:    str("license"),
+		LicenseURL: str("license_url"),
+		Citation:   str("citation"),
+		ShareAlike: capBool(p, "share_alike"),
 		// The HOST supplies the producer identity. It is deliberately not
 		// read from the payload: a module must not be able to attribute its
 		// writes to another node.

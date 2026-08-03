@@ -370,6 +370,9 @@ func materializeDatasetPublicationFromBytes(ctx context.Context, store *FlatSQLS
 	if err != nil {
 		return nil, err
 	}
+	if err := recordManifestSourceBatchLicenses(store, manifest, index.SchemaName); err != nil {
+		return nil, err
+	}
 	return &DatasetPublicationReplayResult{
 		ManifestCID:  manifestCID,
 		ShardCID:     shardAsset.CID,
@@ -406,6 +409,9 @@ func materializeDatasetPublicationFromFiles(ctx context.Context, store *FlatSQLS
 	if err != nil {
 		return nil, err
 	}
+	if err := recordManifestSourceBatchLicenses(store, manifest, index.SchemaName); err != nil {
+		return nil, err
+	}
 	return &DatasetPublicationReplayResult{
 		ManifestCID:  manifestCID,
 		ShardCID:     shardAsset.CID,
@@ -416,6 +422,50 @@ func materializeDatasetPublicationFromFiles(ctx context.Context, store *FlatSQLS
 		QuerySHA256:  index.QuerySHA256,
 		ResultSHA256: index.ResultSHA256,
 	}, nil
+}
+
+// recordManifestSourceBatchLicenses copies the licence terms a verified DPM
+// binds into the importing node's own batch-licence table, so that a
+// subscriber that later republishes these records carries the same terms. The
+// schema's own words: "share-alike terms propagate from this batch to every
+// derived record" — that propagation has to survive the hop, or the second
+// publisher strips the licence off data it did not originate.
+//
+// DPMSourceBatch carries no provider id of its own, so provider attribution
+// follows the same rule the signature round-trip uses (rebuildUnsignedDataset
+// Manifest): the query binding's first PROVIDER_ID, else the provider peer id.
+func recordManifestSourceBatchLicenses(store *FlatSQLStore, manifest *dpm.DPM, schemaName string) error {
+	if store == nil || manifest == nil || strings.TrimSpace(schemaName) == "" {
+		return nil
+	}
+	providerID := strings.TrimSpace(string(manifest.PROVIDER_PEER_ID()))
+	if query := manifest.QUERY(nil); query != nil {
+		if providerIDs := dpmStringVectorValues(query.PROVIDER_IDSLength(), query.PROVIDER_IDS); len(providerIDs) > 0 {
+			providerID = providerIDs[0]
+		}
+	}
+	for i := 0; i < manifest.SOURCESLength(); i++ {
+		var source dpm.DPMSourceBatch
+		if !manifest.SOURCES(&source, i) {
+			continue
+		}
+		license := SourceBatchLicense{
+			SchemaName: schemaName,
+			ProviderID: providerID,
+			SourceName: string(source.SOURCE_NAME()),
+			BatchID:    string(source.SOURCE_SHA256()),
+			License:    string(source.LICENSE()),
+			LicenseURL: string(source.LICENSE_URL()),
+			Citation:   string(source.CITATION()),
+		}
+		if license.IsEmpty() {
+			continue
+		}
+		if err := store.UpsertSourceBatchLicense(license); err != nil {
+			return fmt.Errorf("record imported source batch license: %w", err)
+		}
+	}
+	return nil
 }
 
 func datasetPublicationMaterializationWorkDir(configured string) (string, func(), error) {
@@ -970,6 +1020,22 @@ func buildDPMSourceBatch(builder *flatbuffers.Builder, source DatasetExportSourc
 	httpLastModified := builder.CreateString(source.HTTPLastModified)
 	retrievedAt := builder.CreateString(source.RetrievedAt)
 	parserVersion := builder.CreateString(source.ParserVersion)
+	// Licence fields are written ONLY when the batch declared them. A batch
+	// with no licence metadata must produce the exact bytes this node produced
+	// before licence carriage existed: an unset FlatBuffers slot leaves the
+	// vtable — and therefore the manifest CID and the provider signature —
+	// unchanged. The share-alike flag has no DPM field; it stays node-side
+	// (SourceBatchLicense) and in the wasm-authored provenance sidecar.
+	var license, licenseURL, citation flatbuffers.UOffsetT
+	if strings.TrimSpace(source.License) != "" {
+		license = builder.CreateString(source.License)
+	}
+	if strings.TrimSpace(source.LicenseURL) != "" {
+		licenseURL = builder.CreateString(source.LicenseURL)
+	}
+	if strings.TrimSpace(source.Citation) != "" {
+		citation = builder.CreateString(source.Citation)
+	}
 	dpm.DPMSourceBatchStart(builder)
 	dpm.DPMSourceBatchAddSOURCE_NAME(builder, sourceName)
 	dpm.DPMSourceBatchAddSOURCE_URL(builder, sourceURL)
@@ -979,6 +1045,15 @@ func buildDPMSourceBatch(builder *flatbuffers.Builder, source DatasetExportSourc
 	dpm.DPMSourceBatchAddRETRIEVED_AT(builder, retrievedAt)
 	dpm.DPMSourceBatchAddPARSER_VERSION(builder, parserVersion)
 	dpm.DPMSourceBatchAddRECORD_COUNT(builder, source.RecordCount)
+	if license != 0 {
+		dpm.DPMSourceBatchAddLICENSE(builder, license)
+	}
+	if licenseURL != 0 {
+		dpm.DPMSourceBatchAddLICENSE_URL(builder, licenseURL)
+	}
+	if citation != 0 {
+		dpm.DPMSourceBatchAddCITATION(builder, citation)
+	}
 	return dpm.DPMSourceBatchEnd(builder)
 }
 
@@ -1149,6 +1224,12 @@ func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
 			RetrievedAt:      string(source.RETRIEVED_AT()),
 			ParserVersion:    string(source.PARSER_VERSION()),
 			RecordCount:      source.RECORD_COUNT(),
+			// Licence terms are part of the signed bytes: a manifest that
+			// carries them must be rebuilt with them or its own signature
+			// stops verifying.
+			License:    string(source.LICENSE()),
+			LicenseURL: string(source.LICENSE_URL()),
+			Citation:   string(source.CITATION()),
 		})
 	}
 	export := &DatasetExport{

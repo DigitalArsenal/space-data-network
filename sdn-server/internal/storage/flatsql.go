@@ -698,6 +698,9 @@ func (s *FlatSQLStore) initTables() error {
 	if err := s.initSourceSummaryTable(); err != nil {
 		return fmt.Errorf("failed to create source summary table: %w", err)
 	}
+	if err := s.initSourceBatchLicenseTable(); err != nil {
+		return err
+	}
 	if err := s.initDatasetShardPublicationTable(); err != nil {
 		return fmt.Errorf("failed to create dataset shard publication table: %w", err)
 	}
@@ -2007,6 +2010,9 @@ func normalizeSourceTags(tags SourceTags) SourceTags {
 	tags.ContentKeyID = strings.TrimSpace(tags.ContentKeyID)
 	tags.ProducerPeerID = strings.TrimSpace(tags.ProducerPeerID)
 	tags.ProducerPublicKey = strings.TrimSpace(tags.ProducerPublicKey)
+	tags.License = strings.TrimSpace(tags.License)
+	tags.LicenseURL = strings.TrimSpace(tags.LicenseURL)
+	tags.Citation = strings.TrimSpace(tags.Citation)
 	if tags.ProducerPeerID == "" {
 		tags.ProducerPeerID = tags.ProviderID
 	}
@@ -2093,6 +2099,14 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 }
 
 // SourceTags records source provenance needed for provider/batch-aware queries.
+//
+// License/LicenseURL/Citation/ShareAlike are the batch's licence terms as
+// declared by the ingesting writer (the wasm parse node's ingest metadata).
+// They are carriage only: the per-record sdn_record_source_tags rows and the
+// record-catalog journal frames are unchanged, and the licence is persisted
+// once per source batch (see SourceBatchLicense). The json tags keep them out
+// of the deterministic dataset export index when empty, so an unlicensed
+// export stays byte-identical to what this node published before.
 type SourceTags struct {
 	ProviderID        string
 	SourceName        string
@@ -2101,6 +2115,10 @@ type SourceTags struct {
 	ContentKeyID      string
 	ProducerPeerID    string
 	ProducerPublicKey string
+	License           string `json:"License,omitempty"`
+	LicenseURL        string `json:"LicenseURL,omitempty"`
+	Citation          string `json:"Citation,omitempty"`
+	ShareAlike        bool   `json:"ShareAlike,omitempty"`
 }
 
 // SourceTagQuery filters stored records by source tags.
@@ -2242,6 +2260,13 @@ type IndexedRecordQuery struct {
 
 // StoreWithSourceTags stores a FlatBuffer record and attaches provider/source metadata.
 func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerID string, signature []byte, tags SourceTags) (string, error) {
+	// The batch's licence is recorded BEFORE the records land: a record whose
+	// licence could not be persisted must never become publishable, because
+	// republishing it without its terms is the thing this carriage exists to
+	// prevent. No-op when the writer declared no licence.
+	if err := s.recordSourceBatchLicense(schemaName, tags); err != nil {
+		return "", err
+	}
 	cid, err := s.storeOne(schemaName, data, peerID, signature, &tags)
 	if err != nil {
 		return "", err
@@ -2276,6 +2301,10 @@ func (s *FlatSQLStore) StoreBatch(schemaName string, records [][]byte, peerID st
 // StoreBatchWithSourceTags stores FlatBuffer records in chunked store-lock
 // windows (storeWriteChunkSize records per lock hold + transaction).
 func (s *FlatSQLStore) StoreBatchWithSourceTags(schemaName string, records [][]byte, peerID string, signature []byte, tags SourceTags) (int, error) {
+	// See StoreWithSourceTags: licence first, then records.
+	if err := s.recordSourceBatchLicense(schemaName, tags); err != nil {
+		return 0, err
+	}
 	return s.storeBatch(schemaName, records, peerID, signature, &tags)
 }
 
