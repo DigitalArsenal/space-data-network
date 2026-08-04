@@ -30,13 +30,19 @@ import (
 //
 //   - the module must be approved BY CONTENT HASH for the specific lane
 //     (capability "secrets:spacetrack"), by an operator, in
-//     capability_policy.json. It is in sensitiveCapabilities, so absent an
-//     approval entry the module is DENIED AT LOAD — the whole module fails to
-//     load, not just this call.
+//     capability_policy.json. The whole "secrets:" prefix is sensitive
+//     (modulert.IsSensitiveCapability), so absent an approval entry the module
+//     is DENIED AT LOAD — the whole module fails to load, not just this call.
 //   - approval is PER LANE. A module approved for "secrets:spacetrack" cannot
 //     read the EDC or MyIntelsat credential: the per-operation check below
 //     tests the capability for the exact id requested, mirroring the
 //     storage_query/storage_write split in caps/storage.go.
+//
+// LANES ARE OPERATOR-DEFINED (owner 2026-08-04). Nothing in this file knows or
+// cares which lanes exist: an id the operator invented last night behaves
+// exactly like "spacetrack" — same prefix gate at load, same per-lane check per
+// call, same isolation between lanes. The well-known ids are only the ones the
+// node ships a verifier for; they carry no privilege here.
 //
 // RESIDUAL RISK, STATED PLAINLY: an operator who approves "secrets:spacetrack"
 // for a module hash has given that exact module the credential. If that module

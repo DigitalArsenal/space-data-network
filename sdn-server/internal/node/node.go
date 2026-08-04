@@ -1106,12 +1106,19 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	// operator-entered provider credentials, encrypted at rest under the node's
 	// own key material (internal/credstore).
 	//
-	// Registered PER LANE so an operator approval for secrets:spacetrack grants
-	// exactly the Space-Track credential and nothing else; caps/secrets.go
-	// re-checks the requested lane on every call. Every secrets:* name is
-	// sensitive (modulert.IsSensitiveCapability gates the whole prefix), so a
-	// module declaring one is DENIED AT LOAD unless the operator approved that
-	// content hash for that lane.
+	// Registered as a FAMILY, not lane by lane. Lanes are operator-defined
+	// (owner 2026-08-04): the admin credentials API accepts an id for ANY
+	// service, so the lane set is not knowable at boot and a lane created at
+	// 10:05 must work without a daemon restart. RegisterFamily resolves every
+	// present and future secrets:* capability to the one handler.
+	//
+	// APPROVAL IS STILL PER LANE, PER MODULE HASH. Nothing about the family
+	// registration widens a grant: every secrets:* name is sensitive
+	// (modulert.IsSensitiveCapability gates the whole prefix), so a module
+	// declaring one is DENIED AT LOAD unless the operator approved that exact
+	// content hash for that exact lane, and caps/secrets.go re-checks the
+	// requested lane on every call — a module approved for secrets:spacetrack
+	// asking for secrets:acme is refused.
 	//
 	// The root key is derived from the UNLOCKED node identity private key (plus
 	// the machine fingerprint and hostname) via IdentityKeyMaterial(), which
@@ -1123,10 +1130,7 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	if credStore, cerr := credstore.OpenStore(n.config.Storage.Path, n.IdentityKeyMaterial()); cerr != nil {
 		log.Warnf("credential store unavailable; secrets capabilities not registered: %v", cerr)
 	} else {
-		secretsFac := caps.NewSecretsCapFactory(credStore)
-		for _, lane := range credstore.AllIDs() {
-			reg.RegisterBridgeAware(caps.CapabilityForID(lane), secretsFac)
-		}
+		reg.RegisterFamily(modulert.SecretsCapabilityPrefix, caps.NewSecretsCapFactory(credStore))
 	}
 
 	// PubSub capability — requires libp2p pubsub to be running

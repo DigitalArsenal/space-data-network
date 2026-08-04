@@ -40,12 +40,13 @@ type ProvisionIdentity struct {
 	Policy *CapabilityPolicyStore
 }
 
-// Lookup returns the registered factory for a capability.
+// Lookup returns the registered factory for a capability: the exact
+// registration if there is one, otherwise the longest matching family prefix
+// (RegisterFamily — used by the open-ended "secrets:<lane>" family).
 func (r *CapabilityRegistry) Lookup(capability string) (BridgeCapFactory, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	factory, ok := r.factories[capability]
-	return factory, ok
+	return r.lookupLocked(capability)
 }
 
 // ProvisionBridge restricts the bridge's granted set to exactly the given
