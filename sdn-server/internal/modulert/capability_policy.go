@@ -91,12 +91,15 @@ import (
 //     approval for secrets:spacetrack conveys nothing about secrets:edc_cpf —
 //     and caps/secrets.go re-checks the exact lane on every call.
 //
-//     Every lane must be listed here explicitly. IsSensitiveCapability is an
-//     allowlist-of-what-to-gate, NOT "deny anything unrecognized" (see the
-//     note on the function): a secrets:* name absent from this map would be
-//     treated as benign and DEFAULT-ALLOWED to every module. When a new
-//     credential lane is added to internal/secrets, add it here in the same
-//     change.
+//     The entries below are the WELL-KNOWN lanes only. Lanes are
+//     operator-defined (owner 2026-08-04) — the admin credentials API accepts
+//     an id for any service — so this map can never be the complete list, and
+//     it is NOT what makes a lane sensitive: IsSensitiveCapability gates the
+//     whole "secrets:" PREFIX (the one deliberate exception to the
+//     allowlist-of-what-to-gate rule, see the note on that function). A lane
+//     nobody enumerated is therefore denied at load without an explicit
+//     per-hash approval, not default-allowed. The entries below remain as the
+//     documented, reviewable set of lanes the node ships knowing about.
 var sensitiveCapabilities = map[string]bool{
 	"wallet_sign":     true,
 	"http":            true,

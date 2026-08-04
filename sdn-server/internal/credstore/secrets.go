@@ -114,22 +114,109 @@ const (
 )
 
 // Well-known credential IDs. The store is generic (id -> credential); these are
-// simply the lanes that exist today.
+// simply the lanes the node ships knowing about, i.e. the ones that have a
+// built-in verifier and documented semantics.
 const (
 	IDSpaceTrack = "spacetrack"
 	IDEDCCPF     = "edc_cpf"
 	IDMyIntelsat = "myintelsat"
 )
 
-// AllIDs lists every credential lane the node knows about. Each gets its own
-// capability (caps.CapabilityForID) so that approving a module for one lane
-// grants exactly that lane.
+// AllIDs lists the WELL-KNOWN credential lanes — the ones the node ships
+// knowing about. It is NOT the set of lanes that exist on a running node: an
+// operator may define arbitrary lanes for any service (see ValidateLaneID), and
+// the live set is well-known ∪ stored, reported by Store.Lanes.
 //
-// Adding a lane here means adding it to modulert's sensitiveCapabilities too —
-// though IsSensitiveCapability gates the whole "secrets:" prefix, so a missed
-// entry fails closed rather than default-allowing.
+// Each lane gets its own capability (caps.CapabilityForID) so that approving a
+// module for one lane grants exactly that lane. Operator-defined lanes are
+// covered by the same rule: modulert.IsSensitiveCapability gates the whole
+// "secrets:" prefix, so a lane nobody enumerated fails closed (denied at load
+// without an explicit per-hash approval) rather than default-allowing.
 func AllIDs() []string {
 	return []string{IDSpaceTrack, IDEDCCPF, IDMyIntelsat}
+}
+
+// IsWellKnown reports whether id is one of the lanes the node ships knowing
+// about (AllIDs). Everything else is an operator-defined lane: stored the same
+// way, gated the same way, but with no built-in verifier.
+func IsWellKnown(id string) bool {
+	switch strings.TrimSpace(id) {
+	case IDSpaceTrack, IDEDCCPF, IDMyIntelsat:
+		return true
+	default:
+		return false
+	}
+}
+
+// ---------------------------------------------------------------------
+// Lane ids — operator-defined lanes (owner 2026-08-04)
+// ---------------------------------------------------------------------
+
+// Lane-id shape. A lane id is not merely a map key: it becomes a capability
+// name ("secrets:<id>") that an operator reads, reasons about, and approves per
+// module hash in capability_policy.json. So it is constrained to a form that is
+// unambiguous on sight and stable across surfaces — one canonical spelling, no
+// case folding, no path/JSON/shell metacharacters, no whitespace.
+const (
+	// MinLaneIDLen rejects one-character lanes: they are too easy to typo into
+	// a DIFFERENT lane, and a typo here means approving a module for the wrong
+	// credential.
+	MinLaneIDLen = 2
+	// MaxLaneIDLen bounds what ends up in a capability string and in the
+	// policy file.
+	MaxLaneIDLen = 64
+)
+
+// reservedLaneIDPrefixes may never be claimed by an operator-defined lane.
+//
+// "sdn_" is reserved so the project can later mint node-semantic lanes (lanes
+// the daemon itself interprets) without colliding with something an operator
+// already created — a collision that would silently re-point an existing
+// operator approval at different semantics.
+var reservedLaneIDPrefixes = []string{"sdn_"}
+
+// ErrInvalidLaneID is the sentinel wrapped by every ValidateLaneID failure, so
+// callers can distinguish "this id is not allowed" from a keystore error.
+var ErrInvalidLaneID = errors.New("invalid credential lane id")
+
+// ValidateLaneID enforces the lane-id rule for lanes being CREATED:
+//
+//	^[a-z0-9_-]{2,64}$   and not starting with a reserved prefix
+//
+// Lowercase only — deliberately not case-folded. Two spellings of one lane
+// ("SpaceTrack" and "spacetrack") would be two capability names, and an
+// operator approving one while a module declares the other is a silent denial
+// at best and a mis-scoped approval at worst.
+//
+// The well-known ids (AllIDs) satisfy this rule and are accepted as they are
+// today; the reserved-prefix check applies to every id including theirs.
+//
+// The returned errors describe the RULE and never echo the offending id — the
+// id arrives from an HTTP path and is reflected back to the caller.
+func ValidateLaneID(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("%w: a lane id is required", ErrInvalidLaneID)
+	}
+	if len(id) < MinLaneIDLen || len(id) > MaxLaneIDLen {
+		return fmt.Errorf("%w: must be %d-%d characters", ErrInvalidLaneID, MinLaneIDLen, MaxLaneIDLen)
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '_' || c == '-':
+		default:
+			return fmt.Errorf("%w: only lowercase letters, digits, '_' and '-' are allowed", ErrInvalidLaneID)
+		}
+	}
+	for _, prefix := range reservedLaneIDPrefixes {
+		if strings.HasPrefix(id, prefix) {
+			return fmt.Errorf("%w: the %q prefix is reserved", ErrInvalidLaneID, prefix)
+		}
+	}
+	return nil
 }
 
 // ErrNotConfigured is returned by Reveal when no credential is stored under id.
@@ -486,10 +573,15 @@ func (s *Store) save(creds map[string]Credential) error {
 
 // Put stores (or replaces) the credential under id. Storing always resets
 // VerifiedAt: a new secret has not been verified until it is probed.
+//
+// id may name ANY service — the well-known lanes have no privileged status
+// here — but it must satisfy ValidateLaneID. Validating at the STORE (not only
+// at the admin API) means no caller anywhere can mint a lane whose id would not
+// round-trip through a capability name and an operator approval.
 func (s *Store) Put(id, username, secret string) error {
 	id = strings.TrimSpace(id)
-	if id == "" {
-		return errors.New("credential id required")
+	if err := ValidateLaneID(id); err != nil {
+		return err
 	}
 	if strings.TrimSpace(username) == "" {
 		return errors.New("username required")
@@ -617,6 +709,99 @@ func (s *Store) List() ([]Status, error) {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// Lanes reports every credential lane this node knows about: the well-known set
+// (AllIDs) UNION every id actually present in the keystore, sorted.
+//
+// This is the enumeration every surface should use. AllIDs alone would hide the
+// operator's own lanes; the stored ids alone would hide a well-known lane that
+// simply has not been filled in yet (and the operator needs to see that it
+// exists in order to fill it in).
+//
+// The lane ids themselves are NOT secret — they are service names, and they are
+// already visible to the operator in capability_policy.json. No credential
+// material is read here beyond the map keys.
+func (s *Store) Lanes() ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	creds, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(creds)+3)
+	out := make([]string, 0, len(creds)+3)
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	for _, id := range AllIDs() {
+		add(id)
+	}
+	for id := range creds {
+		add(id)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// ListLanes reports the status of every lane Lanes() reports — including
+// well-known lanes with nothing stored yet, which come back Configured=false.
+//
+// Contrast List(), which reports only lanes that HAVE a credential. Both are
+// secret-free (Status carries none); ListLanes is the one an operator surface
+// wants, because "this lane exists and is empty" is exactly the state that
+// needs acting on.
+//
+// A lane that was stored but never probed keeps VerifiedAt nil. That is the
+// honest answer — "saved, not verified" — and it is what an operator-defined
+// lane with no verifier will report forever. Nothing here fabricates a
+// verification that did not happen.
+func (s *Store) ListLanes() ([]Status, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	creds, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(creds)+3)
+	seen := make(map[string]bool, len(creds)+3)
+	for _, id := range AllIDs() {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for id := range creds {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+
+	out := make([]Status, 0, len(ids))
+	for _, id := range ids {
+		c, ok := creds[id]
+		if !ok {
+			out = append(out, Status{ID: id, Configured: false})
+			continue
+		}
+		updated := c.UpdatedAt
+		out = append(out, Status{
+			ID:             id,
+			Configured:     true,
+			UsernameMasked: MaskUsername(c.Username),
+			UpdatedAt:      &updated,
+			VerifiedAt:     c.VerifiedAt,
+		})
+	}
 	return out, nil
 }
 
