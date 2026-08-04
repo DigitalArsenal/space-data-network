@@ -239,3 +239,97 @@ describe('iterateSizePrefixedFrames', () => {
     expect(() => [...iterateSizePrefixedFrames(stream)]).toThrow(/truncated frame/);
   });
 });
+
+/**
+ * Default-$APP discovery (owner ruling 2026-08-04). Every SDN runtime has a
+ * default app — the Dashboard on a server node, the Orbital Console in this
+ * browser client — both loaded and linking to each other. The client finds
+ * them ANONYMOUSLY, before it has any identity.
+ *
+ * The mocked bodies reproduce the node's real shapes (sdn-server
+ * internal/api/appsdefault.go + internal/apps): $APP record fields keep the
+ * IDL's UPPER_SNAKE spelling, node-synthesized fields are lowercase.
+ */
+describe('HttpTransport default-$APP discovery', () => {
+  const defaultsDocument = {
+    generated_at: '2026-08-04T14:00:00Z',
+    node_peer_id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+    runtime_classes: ['server', 'browser'],
+    defaults: {
+      server: {
+        runtime_class: 'server',
+        state: 'installed',
+        default: true,
+        url: '/',
+        record_url: '/api/v1/apps/records/sdn-dashboard',
+        record_bytes: 553_952,
+        cross_link: {
+          runtime_class: 'browser',
+          app_id: 'spaceaware-orbital-console',
+          url: 'https://spaceaware.io/beta/',
+        },
+        ID: 'sdn-dashboard',
+        NAME: 'SDN Node Dashboard',
+        VERSION: '1.0.4',
+        UI: [{ ID: 'dashboard', ENTRY: true, MEDIA_TYPE: 'text/html; charset=utf-8', ENCODING: 'UTF8' }],
+      },
+      browser: {
+        runtime_class: 'browser',
+        state: 'declared',
+        default: true,
+        url: 'https://spaceaware.io/beta/',
+        cross_link: { runtime_class: 'server', app_id: 'sdn-dashboard', url: '/' },
+        ID: 'spaceaware-orbital-console',
+        NAME: 'Orbital Console',
+      },
+    },
+  };
+
+  it('reads both faces and their cross-links from the anonymous route', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(url);
+      return new Response(JSON.stringify(defaultsDocument), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }));
+
+    const transport = new HttpTransport(BASE, undefined, { credentials: 'omit' });
+    const doc = await transport.getDefaultApps();
+
+    expect(calls).toEqual([`${BASE}/api/v1/apps/default`]);
+    // The app THIS client opens, and the link back to the node's own face.
+    expect(doc.defaults.browser?.ID).toBe('spaceaware-orbital-console');
+    expect(doc.defaults.browser?.url).toBe('https://spaceaware.io/beta/');
+    expect(doc.defaults.browser?.cross_link?.app_id).toBe('sdn-dashboard');
+    expect(doc.defaults.server?.cross_link?.url).toBe('https://spaceaware.io/beta/');
+    // Record fields keep IDL capitalization; synthesized fields are lowercase.
+    expect(doc.defaults.server?.NAME).toBe('SDN Node Dashboard');
+    expect(doc.defaults.server?.UI?.[0].CONTENT_SHA256).toBeUndefined();
+    expect(doc.defaults.server?.state).toBe('installed');
+  });
+
+  it('fetches an installed app record as raw $APP bytes', async () => {
+    const record = new Uint8Array([0xa4, 0xa9, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x24, 0x41, 0x50, 0x50]);
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(url);
+      return new Response(record.slice().buffer as ArrayBuffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-flatbuffers; schema=APP' },
+      });
+    }));
+
+    const transport = new HttpTransport(BASE);
+    const bytes = await transport.getAppRecord('sdn-dashboard');
+    expect(calls).toEqual([`${BASE}/api/v1/apps/records/sdn-dashboard`]);
+    expect(bytes).toEqual(record);
+  });
+
+  it('returns null for a DECLARED app — a pointer is not a record', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('404 page not found', { status: 404 })));
+    const transport = new HttpTransport(BASE);
+    await expect(transport.getAppRecord('spaceaware-orbital-console')).resolves.toBeNull();
+  });
+});

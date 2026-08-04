@@ -1908,6 +1908,26 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					log.Infof("Apps feed available at %s://%s/api/apps (anonymous read)", adminScheme, adminAddr)
 				}
 
+				// DEFAULT-$APP surface (anonymous read): which $APP each
+				// runtime class opens — the Dashboard for this server, the
+				// declared console for a browser client — each carrying a
+				// link to the other (owner ruling 2026-08-04). Distinct from
+				// /api/apps above: that reports what the node RUNS, this
+				// reports what it OFFERS to open.
+				//
+				// A failed registry build is NOT fatal. The node's job is to
+				// run; a bad apps.* declaration must be loud and must not take
+				// the daemon down with it.
+				if appRegistry, err := buildAppRegistry(cfg.Apps, dashboardHTML); err != nil {
+					log.Errorf("Default-$APP registry not available: %v", err)
+				} else {
+					api.NewDefaultAppsHandler(appRegistry).
+						WithNodePeerID(n.PeerID().String()).
+						RegisterRoutes(adminMux)
+					log.Infof("Default $APP surface available at %s://%s%s (anonymous read); registered apps: %s",
+						adminScheme, adminAddr, api.AppsDefaultPath, strings.Join(appRegistry.IDs(), ", "))
+				}
+
 				// WebSocket bridge (gap B10.3): /ws lives outside the /api/
 				// and /orbpro-key-broker/ prefixes the top-level auth
 				// wall's isAPIOrPlugin check inspects, and an anonymous
@@ -3146,6 +3166,14 @@ func isPublicReadAPIPath(path string) bool {
 		// field is an operational fact about PUBLIC data retrieval — the same
 		// class of disclosure as /api/v1/stats, which is already anonymous.
 		"/api/apps",
+		// DEFAULT-$APP surface. A browser client asking "what do I open?"
+		// has no session and no identity yet — it is asking before it can be
+		// anybody — so this read must never be a privilege. What it discloses
+		// is app identity, where each app is served, and page content hashes:
+		// all already public (the dashboard's own bytes are served at "/" to
+		// anyone). The record route below serves those same bytes wrapped in
+		// their $APP envelope.
+		"/api/v1/apps/default",
 		"/api/storefront/listings",
 		"/api/v1/catalog",
 		"/api/v1/data/health",
@@ -3169,6 +3197,9 @@ func isPublicReadAPIPath(path string) bool {
 
 	return strings.HasPrefix(path, "/api/directory/") ||
 		strings.HasPrefix(path, "/api/v1/docs/") ||
+		// $APP record bytes for an app this node offers — same anonymity
+		// argument as /api/v1/apps/default above.
+		strings.HasPrefix(path, "/api/v1/apps/records/") ||
 		path == "/api/v1/channels" ||
 		strings.HasPrefix(path, "/api/v1/channels/") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
