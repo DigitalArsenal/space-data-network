@@ -2,6 +2,8 @@ package main
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/apps"
@@ -127,5 +129,53 @@ func TestDefaultAppRoutesAreAnonymousReads(t *testing.T) {
 				t.Fatalf("%s %s is anonymous — the surface is read-only", method, path)
 			}
 		}
+	}
+}
+
+// TestBuildAppRegistryInstallsRecordFromFile covers the operator-deployed
+// record tier (apps.installed): the record file loads, serves as installed,
+// and a config/record ID mismatch is refused loudly.
+func TestBuildAppRegistryInstallsRecordFromFile(t *testing.T) {
+	record, err := apps.BuildInlinePageRecord(
+		apps.AppIdentity{ID: "spaceaware-orbital-console", Name: "Orbital Console", Version: "t1"},
+		[]apps.InlinePage{{ID: "console", Title: "Orbital Console", HTML: []byte("<html>x</html>"), Entry: true}},
+	)
+	if err != nil {
+		t.Fatalf("build record: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "console.app.fb")
+	if err := os.WriteFile(path, record, 0o600); err != nil {
+		t.Fatalf("write record: %v", err)
+	}
+
+	cfg := config.AppsConfig{
+		DefaultBrowserApp: "spaceaware-orbital-console",
+		Installed: []config.InstalledAppConfig{{
+			ID:           "spaceaware-orbital-console",
+			RuntimeClass: "browser",
+			URL:          "https://spaceaware.io/beta/",
+			RecordPath:   path,
+		}},
+	}
+	registry, err := buildAppRegistry(cfg, nil)
+	if err != nil {
+		t.Fatalf("buildAppRegistry: %v", err)
+	}
+	defaults := registry.Defaults()
+	entry, ok := defaults[apps.RuntimeBrowser]
+	if !ok {
+		t.Fatalf("no browser default; defaults=%v", defaults)
+	}
+	if entry.State != apps.StateInstalled {
+		t.Fatalf("browser default state = %q, want installed", entry.State)
+	}
+	if _, ok := registry.Record("spaceaware-orbital-console"); !ok {
+		t.Fatalf("record not served for installed app")
+	}
+
+	// The mismatch is a refusal, not a silent rename.
+	cfg.Installed[0].ID = "some-other-id"
+	if _, err := buildAppRegistry(cfg, nil); err == nil {
+		t.Fatalf("expected ID-mismatch refusal, got nil error")
 	}
 }
