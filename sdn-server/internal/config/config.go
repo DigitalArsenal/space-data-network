@@ -47,6 +47,48 @@ type Config struct {
 	Embedding  EmbeddingConfig  `yaml:"embedding"`
 	WalletWasm WalletWasmConfig `yaml:"wallet_wasm"`
 	Status     StatusConfig     `yaml:"status"`
+	Apps       AppsConfig       `yaml:"apps"`
+}
+
+// AppsConfig declares the node's DEFAULT $APP per runtime class (owner ruling
+// 2026-08-04: "there needs to be a default $APP for the SDN node software
+// (server or browser), it's the Dashboard for the server and the
+// orbital-console for the browser").
+//
+// This is DEPLOYED DATA, not code — exactly like the $PMM catalog. WHICH app a
+// given node opens is an operator ruling that varies by node, so it arrives in
+// config and never as a table compiled into the daemon. Leaving the whole
+// section out is the shipped default: the node registers its own embedded
+// dashboard as the server-class default and advertises no browser app.
+type AppsConfig struct {
+	// DefaultServerApp / DefaultBrowserApp name the $APP ID each runtime class
+	// opens. Empty means "resolve automatically": if exactly one app of that
+	// class is registered it is the default, otherwise the node reports no
+	// default rather than guessing between candidates.
+	// YAML: apps.default_server_app / apps.default_browser_app.
+	DefaultServerApp  string `yaml:"default_server_app,omitempty"`
+	DefaultBrowserApp string `yaml:"default_browser_app,omitempty"`
+
+	// Declared lists apps this node ADVERTISES but holds no $APP record for —
+	// the browser console published elsewhere is the motivating case. A
+	// declared entry is a pointer (id + where to open it), never a claim about
+	// content the node cannot show: the defaults surface marks it
+	// state=declared and serves no record for it.
+	// YAML: apps.declared.
+	Declared []DeclaredAppConfig `yaml:"declared,omitempty"`
+}
+
+// DeclaredAppConfig is one entry of apps.declared.
+type DeclaredAppConfig struct {
+	ID          string `yaml:"id"`
+	Name        string `yaml:"name,omitempty"`
+	Version     string `yaml:"version,omitempty"`
+	Description string `yaml:"description,omitempty"`
+	// RuntimeClass is "server" or "browser" (the $APP schema's NODE / PAGE
+	// appRuntimeTarget names are accepted as synonyms).
+	RuntimeClass string `yaml:"runtime_class"`
+	// URL is where the runtime opens the app.
+	URL string `yaml:"url"`
 }
 
 // ModulesConfig tunes the module-sdk WASM runtime (internal/modulert).

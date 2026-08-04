@@ -233,6 +233,89 @@ export interface ChannelKeyEnvelopeResponse {
   [key: string]: unknown;
 }
 
+/** Anonymous default-$APP discovery document route. */
+export const DEFAULT_APPS_PATH = '/api/v1/apps/default';
+
+/** Anonymous $APP record byte route prefix. */
+export const APP_RECORD_PATH_PREFIX = '/api/v1/apps/records/';
+
+/** Media type the node serves $APP record bytes as. */
+export const APP_RECORD_CONTENT_TYPE = 'application/x-flatbuffers; schema=APP';
+
+/**
+ * Runtime class of an SDN default app: `server` is the node daemon (its
+ * Dashboard), `browser` is this client (the Orbital Console). These map onto
+ * the $APP schema's `appRuntimeTarget` NODE / PAGE vocabulary.
+ */
+export type AppRuntimeClass = 'server' | 'browser';
+
+/** One UI page of an $APP, as reported by the node's registry. */
+export interface DefaultAppUIPage {
+  /* $APP record fields — IDL capitalization, verbatim. */
+  ID: string;
+  TITLE?: string;
+  DESCRIPTION?: string;
+  ICON?: string;
+  MEDIA_TYPE?: string;
+  ENCODING?: string;
+  CONTENT_SHA256?: string;
+  ENTRY: boolean;
+  MODULE_ID?: string;
+  URL?: string;
+  /* Synthesized by the node — lowercase. */
+  content_bytes?: number;
+}
+
+/** Link from one runtime class's default app to the other's. */
+export interface DefaultAppCrossLink {
+  runtime_class: AppRuntimeClass;
+  app_id?: string;
+  name?: string;
+  url?: string;
+}
+
+/**
+ * One default app.
+ *
+ * Two key vocabularies, per the SDN JSON-capitalization law: fields read out
+ * of the $APP FlatBuffer keep the IDL's UPPER_SNAKE spelling; everything the
+ * node synthesizes (runtime class, state, URLs, cross-link) is lowercase.
+ */
+export interface DefaultAppEntry {
+  /* Synthesized. */
+  runtime_class: AppRuntimeClass;
+  /** `installed` — the node holds the $APP record; `declared` — it only points at the app. */
+  state: 'installed' | 'declared';
+  default: boolean;
+  /** Where this runtime opens the app (origin-relative when the node serves it). */
+  url?: string;
+  /** Where the $APP record bytes are fetched. Absent for a declared app. */
+  record_url?: string;
+  record_bytes?: number;
+  cross_link?: DefaultAppCrossLink;
+  /* $APP record fields. */
+  ID: string;
+  NAME?: string;
+  VERSION?: string;
+  DESCRIPTION?: string;
+  CREATED_AT?: string;
+  UPDATED_AT?: string;
+  UI?: DefaultAppUIPage[];
+}
+
+/** Response of `GET /api/v1/apps/default`. */
+export interface DefaultAppsDocument {
+  generated_at: string;
+  node_peer_id?: string;
+  runtime_classes: AppRuntimeClass[];
+  /**
+   * Keyed by runtime class. A class with no default is ABSENT rather than
+   * null — the node is saying nothing about it, which is not the same as
+   * saying it has none configured.
+   */
+  defaults: Partial<Record<AppRuntimeClass, DefaultAppEntry>>;
+}
+
 /** Construction options for {@link HttpTransport}. */
 export interface HttpTransportOptions {
   /**
@@ -401,6 +484,37 @@ export class HttpTransport {
   async getNodeInfo(): Promise<Record<string, unknown>> {
     const resp = await this.fetch('/api/node/info');
     return resp.json();
+  }
+
+  /**
+   * Discover the node's DEFAULT $APP per runtime class
+   * (`GET /api/v1/apps/default`).
+   *
+   * ANONYMOUS by contract on the node side — a browser client asking "what do
+   * I open?" has no session yet — so pass `credentials: 'omit'` when reading a
+   * node cross-origin, exactly as for the public data endpoints.
+   *
+   * `defaults.browser` is the app THIS client opens; `defaults.server` is the
+   * node's own dashboard, and each carries a `cross_link` to the other so the
+   * two faces can link to each other (owner ruling 2026-08-04).
+   */
+  async getDefaultApps(): Promise<DefaultAppsDocument> {
+    const resp = await this.fetch(DEFAULT_APPS_PATH);
+    return resp.json();
+  }
+
+  /**
+   * Fetch an app's $APP record bytes (`GET /api/v1/apps/records/<id>`), the
+   * canonical size-prefixed FlatBuffer. Returns `null` when the node holds no
+   * record for that id — a DECLARED default app is a pointer to where the app
+   * is served, not a record this node can hand over.
+   */
+  async getAppRecord(appId: string): Promise<Uint8Array | null> {
+    const resp = await this.fetch(`${APP_RECORD_PATH_PREFIX}${encodeURIComponent(appId)}`, undefined, {
+      allowStatuses: [404],
+    });
+    if (resp.status === 404) return null;
+    return new Uint8Array(await resp.arrayBuffer());
   }
 
   async listChannels(options: ChannelListOptions = {}): Promise<ChannelSummary[]> {
