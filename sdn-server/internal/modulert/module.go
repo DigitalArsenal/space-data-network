@@ -151,9 +151,20 @@ func (m *Module) Context() context.Context {
 }
 
 // CapabilityRegistry maps capability strings to provisioner functions.
+//
+// Most capabilities are registered by their EXACT name. A few form an open
+// FAMILY whose members are not knowable at boot — today only the credential
+// lanes ("secrets:<lane>"), where an operator may define a lane for any service
+// at runtime (see internal/credstore). Those register once by prefix
+// (RegisterFamily) and resolve for every present and future member.
 type CapabilityRegistry struct {
 	mu        sync.RWMutex
 	factories map[string]BridgeCapFactory
+	// families maps a capability-name PREFIX to the factory serving every
+	// capability that starts with it. Exact registrations always win; among
+	// families the longest matching prefix wins, so a family can never shadow
+	// a more specific one.
+	families map[string]BridgeCapFactory
 }
 
 // CapFactory creates a CapHandler for a module that declared a given capability.
@@ -167,7 +178,10 @@ type BridgeCapFactory func(mod *Module, bridge *HostBridge) CapHandler
 
 // NewCapabilityRegistry creates an empty registry.
 func NewCapabilityRegistry() *CapabilityRegistry {
-	return &CapabilityRegistry{factories: make(map[string]BridgeCapFactory)}
+	return &CapabilityRegistry{
+		factories: make(map[string]BridgeCapFactory),
+		families:  make(map[string]BridgeCapFactory),
+	}
 }
 
 // Register adds a capability factory.
@@ -183,6 +197,55 @@ func (r *CapabilityRegistry) RegisterBridgeAware(capability string, factory Brid
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.factories[capability] = factory
+}
+
+// RegisterFamily adds a factory serving EVERY capability whose name begins with
+// prefix. It exists for capability families whose membership is open-ended at
+// boot — the credential lanes ("secrets:<lane>"), where an operator may define
+// a lane for any service at runtime and the daemon must not need a restart to
+// serve it.
+//
+// THIS IS NOT A WIDENING OF PRIVILEGE. Resolving a factory is the LAST step of
+// provisioning, and it happens only for capabilities the module already got
+// past checkCapabilityPolicy with (see module.go instantiateWASM and
+// capability_provision.go ProvisionBridge — the policy gate runs first in both).
+// For the secrets family every member is sensitive by prefix
+// (IsSensitiveCapability), so each lane still requires its own operator
+// approval recorded against the module's content hash. What this changes is
+// only the failure mode for an APPROVED module naming an operator-defined lane:
+// previously "operation not supported" until the daemon restarted, now served.
+//
+// Exact registrations take precedence; among families the longest matching
+// prefix wins.
+func (r *CapabilityRegistry) RegisterFamily(prefix string, factory BridgeCapFactory) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		// A blank prefix would match every capability name — refuse rather than
+		// silently install a catch-all factory.
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.families[prefix] = factory
+}
+
+// lookupLocked resolves a capability to its factory. The caller must hold at
+// least the read lock.
+func (r *CapabilityRegistry) lookupLocked(capability string) (BridgeCapFactory, bool) {
+	if factory, ok := r.factories[capability]; ok {
+		return factory, true
+	}
+	var (
+		best     BridgeCapFactory
+		bestLen  = -1
+		bestSeen bool
+	)
+	for prefix, factory := range r.families {
+		if strings.HasPrefix(capability, prefix) && len(prefix) > bestLen {
+			best, bestLen, bestSeen = factory, len(prefix), true
+		}
+	}
+	return best, bestSeen
 }
 
 // NewModule loads a module-sdk WASM binary, reads its manifest, creates a
@@ -405,7 +468,7 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 	if m.capReg != nil {
 		m.capReg.mu.RLock()
 		for _, cap := range manifest.Capabilities {
-			if factory, ok := m.capReg.factories[cap]; ok {
+			if factory, ok := m.capReg.lookupLocked(cap); ok {
 				handler := factory(m, bridge)
 				bridge.RegisterCapHandler(capPrefixFromName(cap), handler)
 				log.Debugf("Module %q: provisioned capability %q", manifest.PluginID, cap)

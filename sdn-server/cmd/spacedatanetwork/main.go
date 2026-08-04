@@ -1760,10 +1760,15 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Provider-credential API (admin-only, WRITE-ONLY, fails closed)
 			// ----------------------------------------------------------------
 			//
-			// Operator-entered third-party credentials (Space-Track today),
+			// Operator-entered third-party credentials for ANY service,
 			// stored encrypted at rest under the node's own key material
 			// (internal/credstore) — NEVER as an SDS record, which would
 			// replicate the credential to every peer.
+			//
+			// Lane ids are operator-defined (owner 2026-08-04). The verifier
+			// map below is NOT the lane list: it is only the set of lanes this
+			// node can actively PROBE. A lane with no entry here is stored and
+			// reported as "saved, unverified" — honestly, and forever.
 			//
 			// Registered UNCONDITIONALLY and gated inside the handler. That is
 			// deliberate: nginx on the public host has no /api/ location block,
