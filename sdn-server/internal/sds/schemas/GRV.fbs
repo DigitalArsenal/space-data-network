@@ -1,5 +1,5 @@
-// Hash: 69456166cb20cbc46856e74928b8f13f15df2b133a918b55b9220abe854e08f3
-// Version: 0.0.2
+// Hash: 36dac7b1868da8150d27dc396d3823746c1f58721bb0c879dae101e6730f0bef
+// Version: 0.0.5
 // -----------------------------------END_HEADER
 enum GravityModelType : byte {
   POINT_MASS,
@@ -19,7 +19,22 @@ enum GravityModelName : byte {
   EIGEN_6C4,
   GOCO06S,
   XGM2019E,
-  CUSTOM_MODEL
+  CUSTOM_MODEL,
+  // Appended: widely distributed coefficient sets carried by open
+  // astrodynamics toolchains. Append only; never reorder.
+  GGM02C,
+  GGM02S,
+  GOCO05C,
+  // Moon
+  GLGM3150,
+  LPE200,
+  GGGRX1200,
+  // Mars
+  JGMRO120D,
+  // Mercury
+  JGMESS160A,
+  // Venus
+  SHGJ180U
 }
 
 enum CentralBody : byte {
@@ -49,6 +64,14 @@ table GRV {
   SOLID_TIDES:bool = false;
   OCEAN_TIDES:bool = false;
   POLE_TIDES:bool = false;
+  // Numeric gravity context for model-backed propagation and element maps.
+  EQUATORIAL_RADIUS:double;
+  J2:double;
+  MU:double;
+  J3:double;
+  J4:double;
+  J5:double;
+  J6:double;
 }
 
 root_type GRV;

@@ -273,7 +273,12 @@ var internalSchemas = map[string]bool{
 }
 
 const (
-	expectedStandardSchemaCount = 172 // +APP (Application Package Manifest, SDS v1.155.0)
+	// Every standard published by spacedatastandards.org at the pinned
+	// version. The embed is a FULL mirror, not a subset: REC.fbs (the
+	// aggregate Records schema) includes every other standard, so a partial
+	// embed leaves dangling includes — which is exactly how the set went
+	// stale before v1.177.0.
+	expectedStandardSchemaCount = 202 // spacedatastandards.org v1.177.0 (adds $IQC + $CNP, RF data suite)
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )
