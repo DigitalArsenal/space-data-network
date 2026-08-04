@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'owner-ruled-copy.json'), 'utf8'));
 
-const designRoot = path.resolve(__dirname, '../spaceaware-ui');
+const designRoot = path.resolve(__dirname, '../spaceaware-ui/dashboard');
 const artifactPath = path.resolve(
   __dirname,
   '../../sdn-server/cmd/spacedatanetwork/embedded/dashboard.html'

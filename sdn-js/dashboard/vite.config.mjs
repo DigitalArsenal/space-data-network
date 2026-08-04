@@ -29,7 +29,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * certifiable byte-for-byte instead of merely hoped-for — measure it, though,
  * do not assume it.
  */
-const designRoot = fs.realpathSync(path.resolve(__dirname, '../spaceaware-ui'));
+const designRoot = fs.realpathSync(path.resolve(__dirname, '../spaceaware-ui/dashboard'));
 
 /**
  * The sdn-js status client (createNodeStatusClient) is one module carrying both
@@ -103,7 +103,7 @@ function assertNoCssHashCollision() {
 // submodule; this file stays here because it is NODE law — the single-file
 // build, the CSP composition and the import-map assertion belong to the
 // artifact's owner, not the source repo (spec §1.1/§1.3).
-const appRoot = path.resolve(__dirname, '../spaceaware-ui/src/apps/sdn-node');
+const appRoot = path.resolve(__dirname, '../spaceaware-ui/dashboard/src/apps/sdn-node');
 
 export default defineConfig({
   root: appRoot,
