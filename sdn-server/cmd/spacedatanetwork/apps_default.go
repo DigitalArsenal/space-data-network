@@ -25,6 +25,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
@@ -80,6 +81,28 @@ func buildAppRegistry(cfg config.AppsConfig, dashboard []byte) (*apps.Registry, 
 		}
 		if _, err := registry.InstallRecord(apps.RuntimeServer, "/", record); err != nil {
 			return nil, fmt.Errorf("apps: install dashboard $APP record: %w", err)
+		}
+	}
+
+	for i, installed := range cfg.Installed {
+		class, ok := apps.ParseRuntimeClass(installed.RuntimeClass)
+		if !ok {
+			return nil, fmt.Errorf(
+				"apps.installed[%d] (%q): runtime_class %q is not one of server/browser",
+				i, installed.ID, installed.RuntimeClass)
+		}
+		record, err := os.ReadFile(installed.RecordPath)
+		if err != nil {
+			return nil, fmt.Errorf("apps.installed[%d] (%q): read record: %w", i, installed.ID, err)
+		}
+		entry, err := registry.InstallRecord(class, installed.URL, record)
+		if err != nil {
+			return nil, fmt.Errorf("apps.installed[%d] (%q): %w", i, installed.ID, err)
+		}
+		if entry.ID != installed.ID {
+			return nil, fmt.Errorf(
+				"apps.installed[%d]: config names %q but the record at %s is %q — refusing the mismatch",
+				i, installed.ID, installed.RecordPath, entry.ID)
 		}
 	}
 

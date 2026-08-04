@@ -76,6 +76,26 @@ type AppsConfig struct {
 	// state=declared and serves no record for it.
 	// YAML: apps.declared.
 	Declared []DeclaredAppConfig `yaml:"declared,omitempty"`
+
+	// Installed lists $APP records this node LOADS FROM DISK and serves at
+	// /api/v1/apps/records/<ID> — the operator-deployed-record tier between
+	// the Go-minted dashboard and the future pulled-record install lane. The
+	// record file is operator-deployed data with the same trust posture as
+	// this config file itself. YAML: apps.installed.
+	Installed []InstalledAppConfig `yaml:"installed,omitempty"`
+}
+
+// InstalledAppConfig is one entry of apps.installed.
+type InstalledAppConfig struct {
+	// ID must equal the record's own $APP ID — a cross-check that the file
+	// on disk is the record the operator meant (mistakes must be seen).
+	ID string `yaml:"id"`
+	// RuntimeClass is "server" or "browser" (NODE/PAGE accepted as synonyms).
+	RuntimeClass string `yaml:"runtime_class"`
+	// URL is where the runtime opens the app.
+	URL string `yaml:"url"`
+	// RecordPath is the on-disk size-prefixed $APP FlatBuffer.
+	RecordPath string `yaml:"record_path"`
 }
 
 // DeclaredAppConfig is one entry of apps.declared.
