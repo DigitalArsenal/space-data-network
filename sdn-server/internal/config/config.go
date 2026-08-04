@@ -582,6 +582,56 @@ type PublishingConfig struct {
 	//
 	// Empty (the default) disables the lane entirely.
 	LocalPublishAddr string `yaml:"local_publish_addr"`
+
+	// AutoPublish declares which INGESTED source lanes are republished to the
+	// network as dataset publications, without an operator typing a curl.
+	//
+	// WHY THIS EXISTS (2026-08-04, sdn-rfb-publish-to-consumer-node). A
+	// producer node can ingest a batch perfectly and still be invisible: the
+	// $RFB SatNOGS batch (5,289 records) landed on host-02 and never reached
+	// host-01, because nothing ever fired the publication. The CelesTrak
+	// lanes fire it from INSIDE the flow (a publish_request node POSTing the
+	// loopback admin route, gated on flow config), which is why they publish
+	// and every other ingest lane does not — and that in-flow trigger is the
+	// same shape that deadlocked the GP flow for 100 minutes with zero store
+	// writes. A lane declared here fires OFF the flow's thread instead: the
+	// wasm ingest call returns immediately and the export/pin/announce runs
+	// on the host's own queue.
+	//
+	// This is connector wiring, not application logic. The decision of WHAT
+	// is republished is configuration (this list); the mechanism is the same
+	// dataset publication the admin route already performs.
+	//
+	// FAIL-CLOSED: an empty list publishes nothing. Absence of configuration
+	// is never permission to republish somebody else's data — which matters
+	// most for share-alike sources (SatNOGS DB is CC-BY-SA-4.0).
+	AutoPublish []AutoPublishLane `yaml:"auto_publish,omitempty"`
+}
+
+// AutoPublishLane is one ingest lane whose batches are republished as dataset
+// publications when they land.
+//
+// Schema is REQUIRED; ProviderID/SourceName are optional narrowing filters
+// (empty = any). Matching is case-insensitive and the schema may be written
+// either as the standard code ("RFB") or the schema file ("RFB.fbs").
+type AutoPublishLane struct {
+	// Schema is the SDS schema whose batches publish, e.g. "RFB.fbs".
+	Schema string `yaml:"schema"`
+
+	// ProviderID narrows the lane to one provider (the provider_id the
+	// ingesting module declared), e.g. "space-data-network-02".
+	ProviderID string `yaml:"provider_id,omitempty"`
+
+	// SourceName narrows the lane to one source of that provider, e.g.
+	// "satnogs-db".
+	SourceName string `yaml:"source_name,omitempty"`
+
+	// MinInterval rate-limits this lane: a batch that lands sooner than this
+	// after the lane's last publication is skipped. Zero uses the built-in
+	// default (5m). A publication exports, pins and announces a whole shard,
+	// so a misconfigured 1-minute ingest timer must not turn into a
+	// publication storm.
+	MinInterval time.Duration `yaml:"min_interval,omitempty"`
 }
 
 // ErrListenAddrNotLoopback marks a listen address that is not loopback-only.

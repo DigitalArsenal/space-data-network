@@ -98,9 +98,15 @@ func TestNodeSecurityPublicAPIRequestPolicy(t *testing.T) {
 		{http.MethodPost, "/api/storefront/listings/search", true},
 		{http.MethodPost, "/api/storefront/payments/stripe/webhook", true},
 		{http.MethodGet, "/api/v1/data/omm/bulk", true},
-		// Retired native endpoints (loop C.4): no longer public paths.
+		// Retired native endpoint (loop C.4): not a per-schema bulk read, so
+		// it is not on the data plane and stays gated.
 		{http.MethodGet, "/api/v1/data/secure/omm", false},
-		{http.MethodGet, "/api/v1/data/mpe/bulk", false},
+		// Per-schema data plane (sdn-rfb-public-read-allowlist): anonymity now
+		// follows the STANDARD, not a literal path. $MPE is public
+		// catalogue-derived data, so its bulk read is anonymous whether or not
+		// the mounted flow implements the route yet (an unimplemented route
+		// answers 404 from inside the flow — it must not answer 401).
+		{http.MethodGet, "/api/v1/data/mpe/bulk", true},
 		{http.MethodGet, "/api/v1/channels", true},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM", true},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/monitor", true},
