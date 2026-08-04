@@ -17,6 +17,22 @@ import (
 // CredentialsHandler exposes the node's named-credential keystore to the
 // operator over the AUTHENTICATED admin surface.
 //
+// # LANES ARE OPERATOR-DEFINED (owner 2026-08-04)
+//
+// A "lane" is a named credential slot. Three are WELL-KNOWN — spacetrack,
+// edc_cpf, myintelsat (credstore.AllIDs) — because the node ships a verifier
+// and documented semantics for them. Every other lane id is the operator's to
+// invent: PUT a credential under any id satisfying credstore.ValidateLaneID and
+// the lane exists, is sealed with the same node-key envelope, is enumerated
+// here, and is reachable by a module the operator approves for
+// "secrets:<that id>". There is nothing special about the well-known three
+// except that this node knows how to PROBE them.
+//
+// Consequently the listing is well-known ∪ stored, and each row states whether
+// a verifier exists — because "stored, never verified" is the permanent and
+// honest state of a lane the node cannot probe, and an operator must be able to
+// tell that apart from "verification failed".
+//
 // # WRITE-ONLY BY CONSTRUCTION
 //
 // There is deliberately no route, and no code path below, that returns a stored
@@ -40,8 +56,10 @@ type CredentialsHandler struct {
 	requireAuth bool
 
 	// verifiers probe a credential against its upstream provider, keyed by
-	// credential id. A credential with no registered verifier is stored with
-	// status "saved but unverified".
+	// lane id. VERIFIERS ARE OPTIONAL: a lane with no registered verifier —
+	// which is every operator-defined lane — is stored and reported as "saved
+	// but unverified", forever. Absence of a verifier never blocks a write and
+	// is never papered over as success.
 	verifiers map[string]Verifier
 }
 
@@ -93,19 +111,63 @@ func (h *CredentialsHandler) gate(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// handleCollection: GET /api/v1/admin/credentials — status of every credential.
+// laneStatus is one row of the admin listing: the secret-free credstore.Status
+// (id, configured, masked username, timestamps) plus the two facts an operator
+// needs in order to read that status honestly.
+//
+// The Status is EMBEDDED, so its fields stay at the top level of the JSON
+// object exactly as before — "id", "configured", "username_masked",
+// "updated_at", "verified_at" — and this stays additive for existing callers.
+//
+// An absent "verified_at" means the credential was stored and never
+// successfully probed. Combined with "has_verifier": false that is the normal,
+// permanent state of an operator-defined lane, not a failure — the node has no
+// way to verify a service it knows nothing about, and it does not pretend
+// otherwise.
+type laneStatus struct {
+	credstore.Status
+	// WellKnown marks the lanes the node ships knowing about (credstore.AllIDs)
+	// as opposed to lanes the operator defined.
+	WellKnown bool `json:"well_known"`
+	// HasVerifier reports whether this node can probe the credential at all
+	// (a Verifier is registered for the lane). false means a PUT with
+	// "verify": true will honestly report "unverified", never "verified".
+	HasVerifier bool `json:"has_verifier"`
+}
+
+// handleCollection: GET /api/v1/admin/credentials — status of every lane.
+//
+// The listing is the well-known set UNION whatever the operator has actually
+// stored (credstore.Store.ListLanes), so operator-defined lanes appear here
+// alongside spacetrack/edc_cpf/myintelsat, and a well-known lane that has not
+// been filled in yet appears as configured=false rather than vanishing.
 func (h *CredentialsHandler) handleCollection(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	list, err := h.store.List()
+	list, err := h.store.ListLanes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "credential store unreadable")
 		return
 	}
-	// Every element is a credstore.Status: no secret material.
-	writeJSON(w, http.StatusOK, map[string]any{"credentials": list})
+	lanes := make([]laneStatus, 0, len(list))
+	for _, st := range list {
+		lanes = append(lanes, h.decorate(st))
+	}
+	// Every element embeds a credstore.Status: no secret material.
+	writeJSON(w, http.StatusOK, map[string]any{"credentials": lanes})
+}
+
+// decorate annotates a secret-free status with the lane's provenance
+// (well-known vs operator-defined) and whether a verifier exists for it.
+func (h *CredentialsHandler) decorate(st credstore.Status) laneStatus {
+	_, hasVerifier := h.verifiers[st.ID]
+	return laneStatus{
+		Status:      st,
+		WellKnown:   credstore.IsWellKnown(st.ID),
+		HasVerifier: hasVerifier,
+	}
 }
 
 // credentialRequest is the PUT body. The secret is accepted, never returned.
@@ -119,20 +181,36 @@ type credentialRequest struct {
 // credentialWriteResponse reports the outcome of a write. It carries a Status
 // (no secret) plus the verification result.
 type credentialWriteResponse struct {
-	Status credstore.Status `json:"status"`
+	Status laneStatus `json:"status"`
 	// Verification is "verified", "unverified", or "failed".
+	//
+	// "unverified" is the CORRECT and permanent answer for a lane with no
+	// verifier — every operator-defined lane. It is never upgraded to
+	// "verified" on the strength of a successful store.
 	Verification string `json:"verification"`
 	// VerificationError is a short, provider-supplied reason. It never contains
 	// the submitted credential.
 	VerificationError string `json:"verification_error,omitempty"`
 }
 
-// handleByID: GET (status) / PUT (save|replace) / DELETE (clear) on one id.
+// handleByID: GET (status) / PUT (save|replace) / DELETE (clear) on one lane.
+//
+// The lane id is ARBITRARY (owner 2026-08-04): any service the operator needs a
+// credential for, not just the well-known three. It must satisfy
+// credstore.ValidateLaneID, which is enforced on every method — an id that
+// cannot be stored can never exist, so rejecting it uniformly keeps GET/DELETE
+// from implying otherwise.
 func (h *CredentialsHandler) handleByID(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/credentials/")
 	id = strings.Trim(id, "/")
 	if id == "" || strings.Contains(id, "/") {
-		writeError(w, http.StatusBadRequest, "credential id required")
+		writeError(w, http.StatusBadRequest, "credential lane id required")
+		return
+	}
+	if err := credstore.ValidateLaneID(id); err != nil {
+		// ValidateLaneID's message states the RULE and never echoes the
+		// submitted id, which arrives from the URL path.
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -144,7 +222,7 @@ func (h *CredentialsHandler) handleByID(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "credential store unreadable")
 			return
 		}
-		writeJSON(w, http.StatusOK, status)
+		writeJSON(w, http.StatusOK, h.decorate(status))
 
 	case http.MethodPut, http.MethodPost:
 		h.handlePut(w, r, id)
@@ -154,7 +232,7 @@ func (h *CredentialsHandler) handleByID(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "could not clear credential")
 			return
 		}
-		writeJSON(w, http.StatusOK, credstore.Status{ID: id, Configured: false})
+		writeJSON(w, http.StatusOK, h.decorate(credstore.Status{ID: id, Configured: false}))
 
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -180,6 +258,12 @@ func (h *CredentialsHandler) handlePut(w http.ResponseWriter, r *http.Request, i
 
 	if err := h.store.Put(id, req.Username, req.Secret); err != nil {
 		// store.Put's errors are validation-only and never quote the secret.
+		// The lane id was already validated above, so a rejection here means a
+		// rule the caller can act on — report it as such rather than as a 500.
+		if errors.Is(err, credstore.ErrInvalidLaneID) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "could not store credential")
 		return
 	}
@@ -188,11 +272,18 @@ func (h *CredentialsHandler) handlePut(w http.ResponseWriter, r *http.Request, i
 
 	// Optional single authentication probe. Fetch policy: one lightweight login
 	// check, no data pull, no retry.
+	//
+	// VERIFIERS ARE OPTIONAL. A lane the node has no verifier for — every
+	// operator-defined lane, and any well-known lane whose verifier is not
+	// wired on this node — is stored and reported as "unverified". The node
+	// does NOT fabricate a verification it did not perform, and it does not
+	// refuse the write: the operator knows the credential is good, the node
+	// simply cannot confirm it.
 	if req.Verify {
 		verifier, ok := h.verifiers[id]
 		if !ok {
 			resp.Verification = "unverified"
-			resp.VerificationError = "no verifier is available for this credential"
+			resp.VerificationError = "this node has no verifier for this lane; the credential is stored but unverified"
 		} else {
 			ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 			defer cancel()
@@ -217,7 +308,7 @@ func (h *CredentialsHandler) handlePut(w http.ResponseWriter, r *http.Request, i
 		writeError(w, http.StatusInternalServerError, "credential stored but status unreadable")
 		return
 	}
-	resp.Status = status
+	resp.Status = h.decorate(status)
 
 	// resp contains a credstore.Status and short strings only — no secret.
 	writeJSON(w, http.StatusOK, resp)
