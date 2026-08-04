@@ -113,6 +113,16 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 			Organization: firstNonEmpty(node.Organization, peerOrganization(registryPeer)),
 			Metadata:     cloneMetadata(registryPeer),
 		}
+		// Carry the registry's identity payload onto the row. Without this,
+		// every observed peer rendered the sparse fallback card even when the
+		// registry held its signed EPM (enrolled via epm_dir or the exchange
+		// pump) — owner-visible as "SDN Node bcPpYr2U" rows for boxes whose
+		// directory card was fully named (owner 2026-08-04: "I have no idea
+		// who these are, we only have four active nodes").
+		if registryPeer != nil {
+			entry.EPMData = registryPeer.EPMData
+			entry.VCardData = registryPeer.VCardData
+		}
 
 		protocols := uniqueStrings(protocolsByPeer[peerID])
 		if len(protocols) > 0 {

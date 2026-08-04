@@ -872,18 +872,13 @@ func (s *Service) GetNodeQRVCard() (string, error) {
 }
 
 func (s *Service) decorateNodeVCardLocked(vcardStr string) string {
-	lines := []string{
-		"X-SDN-DIRECTORY-KIND:node",
-		"X-SDN-PEER-ID:" + s.peerID.String(),
-	}
-	if cid, err := ComputeEPMCID(s.epmBytes); err == nil && strings.TrimSpace(cid) != "" {
-		lines = append(lines, "X-SDN-EPM-CID:"+cid)
-	}
-	if s.identity != nil && s.identity.Addresses != nil && s.identity.Addresses.Bitcoin != nil {
-		if address := strings.TrimSpace(s.identity.Addresses.Bitcoin.Address); address != "" {
-			lines = append(lines, "X-SDN-BITCOIN-ADDRESS:"+address)
-		}
-	}
+	// OWNER RULING 2026-08-04: no X-SDN-* properties on any card. The
+	// directory kind, peer id, EPM CID and bitcoin address lines that used
+	// to be spliced in here are gone — the peer id is derivable from the
+	// xpub alias (the point of the alias paradigm), the EPM CID rides in the
+	// epmcid alias on the full card, and chain addresses ride in their own
+	// EMAIL aliases below. Only official vCard properties remain.
+	var lines []string
 	lines = append(lines, nodeIdentityAddressEmailAliasLines(s.identity)...)
 	// The verification-chain aliases (xpub, sign/encrypt derivation paths,
 	// epmsig/epmts/epmcid) are emitted by EPMToVCard from the EPM record

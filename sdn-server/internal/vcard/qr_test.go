@@ -225,20 +225,25 @@ func TestEPMQRCarriesTheCompactIdentityCard(t *testing.T) {
 	if !strings.Contains(unfolded, "BEGIN:VCARD") || !strings.Contains(unfolded, "END:VCARD") {
 		t.Fatalf("scanned payload is not a vCard:\n%s", scanned)
 	}
-	// The verification chain must survive into the QR.
+	// The scannable identity (owner ruling 2026-08-04) is EXACTLY the xpub
+	// plus the two derivation paths plus the signature — nothing more.
 	for _, required := range []string{
+		"xpub.spacedatanetwork.org",
 		"sign.spacedatanetwork.org",
 		"encrypt.spacedatanetwork.org",
-		"epmcid.spacedatanetwork.org",
+		"epmsig.spacedatanetwork.org",
 	} {
 		if !strings.Contains(unfolded, required) {
 			t.Fatalf("QR card is missing chain alias %q:\n%s", required, scanned)
 		}
 	}
-	// And it must carry neither key bytes nor the record itself.
+	// And it must carry neither key bytes, nor the record, nor the aliases
+	// dropped for scan density (epmts/epmcid — both recoverable from the
+	// record the signature binds), nor ANY extension property.
 	for _, banned := range []string{
-		"X-SDN-EPM-B64", "Binary EPM",
+		"X-SDN-EPM-B64", "Binary EPM", "\nX-", "\r\nX-",
 		"signing.spacedatanetwork.org", "encryption.spacedatanetwork.org",
+		"epmts.spacedatanetwork.org", "epmcid.spacedatanetwork.org",
 	} {
 		if strings.Contains(unfolded, banned) {
 			t.Fatalf("QR card still carries removed material %q:\n%s", banned, scanned)

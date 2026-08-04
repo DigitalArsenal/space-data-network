@@ -2,6 +2,7 @@ package peers
 
 import (
 	"testing"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/test"
@@ -69,6 +70,11 @@ func TestReloadFromPersistenceRestoresRowsWithoutClobbering(t *testing.T) {
 			Name:       "space-data-network-02",
 			EPMData:    []byte("learned-epm"),
 			VCardData:  "BEGIN:VCARD...",
+			// A real projection row always carries its timestamps (the
+			// persistence writer stamps them); the reload's staleness rule
+			// declines unpinned rows with no recent liveness at all.
+			AddedAt:  time.Now().Add(-time.Hour),
+			LastSeen: time.Now().Add(-time.Minute),
 		},
 		configID: {
 			ID:         configID,
@@ -128,5 +134,46 @@ func TestReloadFromPersistenceWithoutProvider(t *testing.T) {
 	adopted, err := registry.ReloadFromPersistence()
 	if err != nil || adopted != 0 {
 		t.Fatalf("no-provider reload = (%d, %v), want (0, nil)", adopted, err)
+	}
+}
+
+// TestReloadDeclinesStaleUnpinnedRows locks the registry-hygiene rule (owner
+// ruling 2026-08-04: "we only have four active nodes" — the registry must not
+// resurrect identities that will never dial again). An unpinned projection row
+// unseen for longer than the retention window is not adopted; a pinned row of
+// the same age is.
+func TestReloadDeclinesStaleUnpinnedRows(t *testing.T) {
+	staleID := test.RandPeerIDFatal(t)
+	pinnedID := test.RandPeerIDFatal(t)
+
+	provider := &switchablePersistence{}
+	registry := NewRegistry(false, provider)
+	pins, err := NewPinStore("")
+	if err != nil {
+		t.Fatalf("NewPinStore: %v", err)
+	}
+	registry.SetPinStore(pins)
+	if _, err := pins.Pin(Pin{PeerID: pinnedID.String(), Note: "operator pin"}); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+
+	old := time.Now().Add(-2 * staleUnpinnedPeerRetention)
+	provider.peers = map[peer.ID]*TrustedPeer{
+		staleID:  {ID: staleID, TrustLevel: Standard, Name: "retired-identity", AddedAt: old, LastSeen: old},
+		pinnedID: {ID: pinnedID, TrustLevel: Standard, Name: "pinned-box", AddedAt: old, LastSeen: old},
+	}
+
+	adopted, err := registry.ReloadFromPersistence()
+	if err != nil {
+		t.Fatalf("ReloadFromPersistence: %v", err)
+	}
+	if adopted != 1 {
+		t.Fatalf("adopted = %d, want 1 (pinned row only)", adopted)
+	}
+	if _, err := registry.GetPeer(staleID); err == nil {
+		t.Fatal("stale unpinned row was adopted; want declined")
+	}
+	if _, err := registry.GetPeer(pinnedID); err != nil {
+		t.Fatalf("pinned row was not adopted: %v", err)
 	}
 }

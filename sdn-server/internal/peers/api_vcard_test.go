@@ -124,8 +124,16 @@ func TestAPIHandler_VCardExport(t *testing.T) {
 	if !strings.Contains(body, "BEGIN:VCARD") {
 		t.Error("Response should contain vCard data")
 	}
-	if !strings.Contains(body, peerID.String()) {
-		t.Error("Response should contain peer ID")
+	// OWNER RULING 2026-08-04: exported cards carry only official vCard
+	// properties — no peer id, no X-SDN extensions.
+	if strings.Contains(body, peerID.String()) {
+		t.Error("Response must not carry the peer ID on the card")
+	}
+	if strings.Contains(body, "\nX-") || strings.Contains(body, "\r\nX-") {
+		t.Errorf("Response carries extension properties:\n%s", body)
+	}
+	if !strings.Contains(body, "FN:Export Test") {
+		t.Error("Response should carry the display name")
 	}
 }
 

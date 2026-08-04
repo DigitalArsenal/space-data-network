@@ -128,13 +128,21 @@ func TestTrustedPeerToVCard(t *testing.T) {
 	if !strings.Contains(vcardStr, "FN:Test Node") {
 		t.Error("Missing FN field")
 	}
-	if !strings.Contains(vcardStr, "X-SDN-PEER-ID:"+peerID.String()) {
-		t.Error("Missing X-SDN-PEER-ID field")
+	// OWNER RULING 2026-08-04: generation emits ONLY official vCard
+	// properties — no X-SDN peer id / trust / multiaddr / group extensions.
+	// The peer id is derivable from the identity xpub; registry facts are
+	// API facts, not contact facts.
+	if strings.Contains(vcardStr, "\nX-") || strings.Contains(vcardStr, "\r\nX-") {
+		t.Errorf("generated card carries an extension property:\n%s", vcardStr)
 	}
-	// TrustLevel.String() now emits the canonical PGP ownertrust name
-	// (Phase C1): Trusted's alias is Full.
-	if !strings.Contains(vcardStr, "X-SDN-TRUST-LEVEL:full") {
-		t.Error("Missing X-SDN-TRUST-LEVEL field")
+	if strings.Contains(vcardStr, peerID.String()) {
+		t.Errorf("generated card carries the peer id:\n%s", vcardStr)
+	}
+	if !strings.Contains(vcardStr, "ORG:Test Org") {
+		t.Error("Missing ORG field")
+	}
+	if !strings.Contains(vcardStr, "NOTE:Some notes") {
+		t.Error("Missing NOTE field")
 	}
 	if !strings.Contains(vcardStr, "END:VCARD") {
 		t.Error("Missing END:VCARD")
@@ -153,14 +161,24 @@ func TestTrustedPeerToVCard_RoundTrip(t *testing.T) {
 
 	vcardStr := TrustedPeerToVCard(tp)
 
-	// Parse back
-	info, err := ParseVCard(vcardStr)
-	if err != nil {
-		t.Fatalf("Failed to parse generated vCard: %v", err)
+	// A generated card no longer carries machine identity (owner ruling
+	// 2026-08-04), so it is NOT round-trippable through ParseVCard — that
+	// is the intended behavior, not a regression: identity exchange happens
+	// through signed EPM records, and vCard import remains for LEGACY cards
+	// that carry X-SDN-PEER-ID (reading is not emitting).
+	if _, err := ParseVCard(vcardStr); err == nil {
+		t.Fatal("generated card unexpectedly parsed as an SDN peer import — it should carry no peer id")
 	}
 
+	// Legacy cards still import.
+	legacy := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Round Trip Test\r\nORG:Test Org\r\nX-SDN-PEER-ID:" +
+		peerID.String() + "\r\nEND:VCARD\r\n"
+	info, err := ParseVCard(legacy)
+	if err != nil {
+		t.Fatalf("Failed to parse legacy vCard: %v", err)
+	}
 	if info.PeerID != peerID {
-		t.Errorf("PeerID mismatch after round trip")
+		t.Errorf("PeerID mismatch on legacy import")
 	}
 	if info.Name != "Round Trip Test" {
 		t.Errorf("Name mismatch: got %q", info.Name)

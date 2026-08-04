@@ -754,6 +754,19 @@ func NewRegistry(strictMode bool, persistence PersistenceProvider) *Registry {
 //   - trust: a persisted non-default level is adopted only over an in-memory
 //     DEFAULT (Standard) — an owner change made after boot is never undone;
 //   - groups absent from memory are adopted; existing groups are kept.
+//
+// staleUnpinnedPeerRetention is how long an UNPINNED registry row may go
+// unseen before the reload refuses to resurrect it from the persisted
+// projection. OWNER RULING 2026-08-04 ("there are a bunch of peers in the
+// peers registry; I have no idea who these are, we only have four active
+// nodes"): rows accumulate from old identities (pre-rebuild boxes, retired
+// test instances) that will never dial again, and nothing was expiring
+// them. A pin is an operator's word and is exempt; an expired peer that
+// does come back is fully re-enrolled by the on-identify EPM exchange, so
+// nothing durable is lost. The next projection Save tombstones what the
+// reload declined, which is how the store itself gets clean.
+const staleUnpinnedPeerRetention = 30 * 24 * time.Hour
+
 func (r *Registry) ReloadFromPersistence() (adoptedPeers int, err error) {
 	if isNilPersistenceProvider(r.persistence) {
 		return 0, nil
@@ -771,6 +784,21 @@ func (r *Registry) ReloadFromPersistence() (adoptedPeers int, err error) {
 		}
 		current, ok := r.peers[id]
 		if !ok || current == nil {
+			_, pinned := r.pins.Get(id.String())
+			lastAlive := loaded.LastSeen
+			if lastAlive.IsZero() {
+				lastAlive = loaded.AddedAt
+			}
+			if !pinned && (lastAlive.IsZero() || time.Since(lastAlive) > staleUnpinnedPeerRetention) {
+				log.Infof("peer-registry reload: declining stale unpinned row %s (%q, last seen %s) — expires from the projection on next save",
+					id.ShortString(), loaded.Name, lastAliveLabel(lastAlive))
+				continue
+			}
+			// Name every adopted row: this log line is the standing answer
+			// to "who are these peers" without needing an authenticated
+			// session (owner question 2026-08-04).
+			log.Infof("peer-registry reload: adopted %s name=%q trust=%s pinned=%t last_seen=%s",
+				id.ShortString(), loaded.Name, loaded.TrustLevel, pinned, lastAliveLabel(lastAlive))
 			r.peers[id] = loaded
 			adoptedPeers++
 			continue
@@ -822,6 +850,15 @@ func (r *Registry) ReloadFromPersistence() (adoptedPeers int, err error) {
 		}
 	}
 	return adoptedPeers, nil
+}
+
+// lastAliveLabel renders a last-seen time for the reload log without ever
+// printing the bare word "never" (owner directive 2026-07-30).
+func lastAliveLabel(t time.Time) string {
+	if t.IsZero() {
+		return "not recorded"
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func isNilPersistenceProvider(persistence PersistenceProvider) bool {

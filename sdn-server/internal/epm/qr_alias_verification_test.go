@@ -61,9 +61,13 @@ func TestQRAliasChainProvesEPMSignature(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	card, err := service.GetNodeQRVCard()
+	// The FULL downloadable card carries the complete verification chain.
+	// (The scannable QR card carries only xpub + sign/encrypt + epmsig —
+	// owner ruling 2026-08-04 dropped epmts/epmcid for scan density — so
+	// the chain-proof walk below runs against the full card.)
+	card, err := service.GetNodeVCard()
 	if err != nil {
-		t.Fatalf("GetNodeQRVCard failed: %v", err)
+		t.Fatalf("GetNodeVCard failed: %v", err)
 	}
 	aliases := parseAliasEmails(t, card)
 	epmBytes := service.GetNodeEPM()
