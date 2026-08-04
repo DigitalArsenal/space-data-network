@@ -941,19 +941,19 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// trigger. Descriptor + NUL-terminated port id + payload are packed into
 	// ONE allocation/write (one malloc + one memory write instead of three
 	// each — loop C.5c host-crossing reduction). Layout:
-	// [48B descriptor][port id\0][payload].
+	// [48B descriptor][port id\0][payload]. The descriptor itself is built by
+	// newIngressFrameDescriptor, which is where the "no type claim" encoding is
+	// stated and pinned.
 	portBytes := append([]byte(mf.triggerPortID), 0)
 	buf := make([]byte, flowFrameDescriptorSize+len(portBytes)+len(htq))
 	copy(buf[flowFrameDescriptorSize:], portBytes)
 	copy(buf[flowFrameDescriptorSize+len(portBytes):], htq)
 	framePtr, err := rt.Module().AllocateSize(uint32(len(buf)))
 	if err == nil {
-		encodeFrameDescriptor(buf[:flowFrameDescriptorSize], &FlowFrameDescriptor{
-			PortIDPointer: framePtr + flowFrameDescriptorSize,
-			Offset:        framePtr + flowFrameDescriptorSize + uint32(len(portBytes)),
-			Size:          uint32(len(htq)),
-			Occupied:      true,
-		})
+		encodeFrameDescriptor(
+			buf[:flowFrameDescriptorSize],
+			newIngressFrameDescriptor(framePtr, len(portBytes), len(htq)),
+		)
 		if err = rt.Module().WriteMemory(framePtr, buf); err == nil {
 			rt.EnqueueTriggerFrame(mf.triggerIndex, framePtr)
 		}
@@ -979,6 +979,38 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			detail = ": " + pipe.err.Error()
 		}
 		http.Error(w, "flow produced no HTTP response"+detail, http.StatusBadGateway)
+	}
+}
+
+// newIngressFrameDescriptor builds the FlowFrameDescriptor for ONE host-pumped
+// $HTQ request frame.
+//
+// TypeDescriptorIdx and Alignment are DECLARED here, never left at their Go
+// zero value.
+//
+// Zero is a VALID descriptor index, so leaving the field unset did not mean
+// "the host makes no type claim" — it claimed descriptor 0. The guest then
+// validated the request frame against whatever edge happens to be first in the
+// compiled table (flow_runtime.cpp enqueue_trigger_frame ->
+// flow_binding_accepts_descriptor). Whether that passed was luck of table
+// order: it held for the generation-1 bundles and broke the moment any of them
+// was recompiled, turning every HTTP flow inert with 502 "flow produced no HTTP
+// response". The module SDK's JS host has always written FLOW_INVALID_INDEX
+// here (flowRuntimeHost.js), so the SAME artifact served correctly in the
+// browser and answered 502 under WasmEdge — a cross-runtime divergence, which
+// is a P1 by the module-SDK charter, not a platform quirk.
+//
+// Alignment 0 is the same defect one field over: the guest reads it through
+// flow_effective_alignment and the JS host defaults it to 1. A $HTQ envelope
+// makes no alignment claim, so it says 1 explicitly.
+func newIngressFrameDescriptor(framePtr uint32, portIDLen, payloadLen int) *FlowFrameDescriptor {
+	return &FlowFrameDescriptor{
+		TypeDescriptorIdx: InvalidIndex,
+		Alignment:         1,
+		PortIDPointer:     framePtr + flowFrameDescriptorSize,
+		Offset:            framePtr + flowFrameDescriptorSize + uint32(portIDLen),
+		Size:              uint32(payloadLen),
+		Occupied:          true,
 	}
 }
 
