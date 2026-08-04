@@ -59,6 +59,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -1176,6 +1177,32 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				publicationAPI := api.NewDatasetPublicationHandler(publicationService)
 				publicationAPI.RegisterRoutes(adminMux)
 				log.Infof("Dataset publication API available at %s://%s/api/v1/admin/dataset-updates/publish", adminScheme, adminAddr)
+
+				// Auto-publish trigger (sdn-rfb-publish-to-consumer-node): the
+				// configured ingest lanes republish themselves as dataset
+				// publications when a batch lands, instead of waiting for a
+				// module that happens to carry a publish node or an operator
+				// with curl. Fail-closed — no configured lane, no publisher.
+				if autoPublisher := api.NewAutoPublisher(publicationService, cfg.Publishing.AutoPublish); autoPublisher != nil {
+					autoPublisher.Start(ctx)
+					removeObserver := caps.AddIngestObserver(func(obs caps.IngestObservation) {
+						autoPublisher.ObserveIngest(api.IngestedBatch{
+							Schema:     obs.Schema,
+							ProviderID: obs.ProviderID,
+							SourceName: obs.SourceName,
+							BatchID:    obs.BatchID,
+							Inserted:   obs.Inserted,
+						})
+					})
+					defer func() {
+						removeObserver()
+						autoPublisher.Stop()
+					}()
+					for _, lane := range autoPublisher.Lanes() {
+						log.Infof("Auto-publish lane armed: schema %s provider %q source %q",
+							lane.Schema, lane.ProviderID, lane.SourceName)
+					}
+				}
 			}
 
 			// Catalog API route (public)
@@ -3184,9 +3211,6 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/v1/data/health",
 		// Anonymous per-record index page for explicitly selected schemas.
 		"/api/v1/data/index",
-		// Flow-served record retrieval (loop C.4: the data-retrieval flow
-		// mounted at /api/v1/data/ owns routing/format/ETag inside wasm).
-		"/api/v1/data/omm/bulk",
 		"/sdn/libp2p.js",
 		"/api/v1/id",
 		"/api/v1/version",
@@ -3200,6 +3224,19 @@ func isPublicReadAPIPath(path string) bool {
 		return true
 	}
 
+	// Flow-served per-schema record retrieval (loop C.4: the data-retrieval
+	// flow mounted at /api/v1/data/ owns routing/format/ETag inside wasm).
+	//
+	// PER-SCHEMA, not per-literal (sdn-rfb-public-read-allowlist). This used
+	// to be the single literal "/api/v1/data/omm/bulk", which is why the $RFB
+	// read 401'd in a browser before CORS could answer, and why every future
+	// standard would have done the same. The anonymous data plane is now a
+	// property of the STANDARD (sds.IsPublicReadSchema) — an allow-list, so an
+	// unlisted or unknown standard stays behind the gate.
+	if code, ok := dataPlaneBulkSchema(path); ok {
+		return sds.IsPublicReadSchema(code)
+	}
+
 	return strings.HasPrefix(path, "/api/directory/") ||
 		strings.HasPrefix(path, "/api/v1/docs/") ||
 		// $APP record bytes for an app this node offers — same anonymity
@@ -3211,6 +3248,28 @@ func isPublicReadAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/storefront/listings/") ||
 		strings.HasPrefix(path, "/api/storefront/trust/") ||
 		strings.HasPrefix(path, "/api/v1/log/")
+}
+
+// dataPlaneBulkSchema matches the flow-served per-schema bulk read
+// "/api/v1/data/<code>/bulk" and returns <code> (e.g. "rfb").
+//
+// Deliberately exact: only the /bulk verb of the default data mount is
+// classified here. A record-by-CID read (/api/v1/data/records/<cid>), the SQL
+// query route and the datasync scan/stream surface each keep their own
+// classification — this function must never widen them by accident.
+func dataPlaneBulkSchema(path string) (string, bool) {
+	const prefix = "/api/v1/data/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	// Exactly two segments: "<code>/bulk". Trimming a "/bulk" suffix instead
+	// would read "/api/v1/data/bulk" as the schema "bulk", because the prefix
+	// and the suffix overlap on the same slash.
+	segments := strings.Split(strings.TrimPrefix(path, prefix), "/")
+	if len(segments) != 2 || segments[0] == "" || segments[1] != "bulk" {
+		return "", false
+	}
+	return segments[0], true
 }
 
 func isWebhookPath(path string) bool {

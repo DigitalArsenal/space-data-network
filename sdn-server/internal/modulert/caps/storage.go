@@ -748,24 +748,63 @@ type IngestObservation struct {
 type IngestObserver func(IngestObservation)
 
 var (
-	ingestObserverMu sync.RWMutex
-	ingestObserver   IngestObserver
+	ingestObserverMu     sync.RWMutex
+	ingestObserver       IngestObserver
+	extraIngestObservers map[uint64]IngestObserver
+	nextIngestObserverID uint64
 )
 
-// SetIngestObserver installs the process-wide ingest ledger hook. Pass nil to
-// disable.
+// SetIngestObserver installs the process-wide ingest ledger hook — the node's
+// operational metrics tap. Pass nil to disable. It replaces only the ledger
+// slot; taps registered with AddIngestObserver are untouched.
 func SetIngestObserver(observer IngestObserver) {
 	ingestObserverMu.Lock()
 	ingestObserver = observer
 	ingestObserverMu.Unlock()
 }
 
+// AddIngestObserver registers an ADDITIONAL tap on the same event and returns
+// the function that removes it.
+//
+// The ledger hook above is a single slot because there is exactly one
+// operational ledger. Other host connectors legitimately need the same signal —
+// the dataset auto-publisher (api.AutoPublisher) is one — and must not have to
+// displace the ledger to get it. Every observer runs on the INGESTING
+// goroutine, so a tap that does real work must hand it off to its own worker;
+// none may block, and none may fail the ingest.
+func AddIngestObserver(observer IngestObserver) func() {
+	if observer == nil {
+		return func() {}
+	}
+	ingestObserverMu.Lock()
+	id := nextIngestObserverID
+	nextIngestObserverID++
+	if extraIngestObservers == nil {
+		extraIngestObservers = make(map[uint64]IngestObserver)
+	}
+	extraIngestObservers[id] = observer
+	ingestObserverMu.Unlock()
+
+	return func() {
+		ingestObserverMu.Lock()
+		delete(extraIngestObservers, id)
+		ingestObserverMu.Unlock()
+	}
+}
+
 func observeIngest(obs IngestObservation) {
 	ingestObserverMu.RLock()
 	observer := ingestObserver
+	extras := make([]IngestObserver, 0, len(extraIngestObservers))
+	for _, extra := range extraIngestObservers {
+		extras = append(extras, extra)
+	}
 	ingestObserverMu.RUnlock()
 	if observer != nil {
 		observer(obs)
+	}
+	for _, extra := range extras {
+		extra(obs)
 	}
 }
 

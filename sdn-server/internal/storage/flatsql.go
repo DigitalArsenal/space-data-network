@@ -29,6 +29,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/RFB"
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/crypto/scrypt"
 
@@ -6379,6 +6380,36 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 		}
 		out.entityID = strings.TrimSpace(string(pnm.FILE_ID()))
 
+	case "RFB.fbs":
+		// RF emitters are NORAD-keyed data (sdn-data-index-rfb-norad). Without
+		// this case every $RFB row indexed with norad_cat_id NULL even though
+		// the bytes carried NORAD_CAT_ID, so /api/v1/data/index answered
+		// norad:null for all 5,289 SatNOGS records and ?norad= matched nothing —
+		// the whole "which satellites transmit on S-band" query path.
+		//
+		// entity_id is the TRANSMITTER, not the spacecraft: one RFB record
+		// describes exactly one emission of one device, and an UPLINK/DOWNLINK
+		// pair shares ID_TRANSMITTER (RFB.fbs). The spacecraft is already the
+		// norad_cat_id column, so indexing ID_ENTITY here would duplicate it and
+		// lose the ability to find the two halves of one transponder. ID is the
+		// fallback for a record with no device identifier.
+		//
+		// No epoch: $RFB is a specification of a band, not an observation at a
+		// time. Leaving epoch_unix NULL is the honest projection — a synthesized
+		// ingest time would make every emitter look like it changed today.
+		rfb, err := parseRFB(data)
+		if err != nil {
+			return nil, err
+		}
+		if id := rfb.NORAD_CAT_ID(); id > 0 {
+			idCopy := id
+			out.noradCatID = &idCopy
+		}
+		out.entityID = strings.TrimSpace(string(rfb.ID_TRANSMITTER()))
+		if out.entityID == "" {
+			out.entityID = strings.TrimSpace(string(rfb.ID()))
+		}
+
 	default:
 		// No structured extraction for this schema yet.
 	}
@@ -6425,6 +6456,22 @@ func parsePNM(data []byte) (pnm *PNM.PNM, err error) {
 		return PNM.GetRootAsPNM(data, 0), nil
 	default:
 		return nil, errors.New("invalid PNM buffer")
+	}
+}
+
+func parseRFB(data []byte) (rfb *RFB.RFB, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("malformed RFB buffer: %v", r)
+		}
+	}()
+	switch {
+	case RFB.SizePrefixedRFBBufferHasIdentifier(data):
+		return RFB.GetSizePrefixedRootAsRFB(data, 0), nil
+	case RFB.RFBBufferHasIdentifier(data):
+		return RFB.GetRootAsRFB(data, 0), nil
+	default:
+		return nil, errors.New("invalid RFB buffer")
 	}
 }
 

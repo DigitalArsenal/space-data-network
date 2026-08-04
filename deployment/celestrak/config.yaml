@@ -57,6 +57,28 @@ ingest:
   http_timeout: 900s
   dataset_publish_url: http://127.0.0.1:5001/api/v1/admin/dataset-updates/publish
 
+# Republication of INGESTED lanes (sdn-rfb-publish-to-consumer-node,
+# 2026-08-04). The CelesTrak lanes publish themselves from inside their flow
+# (the publish_request node above, via ingest.dataset_publish_url). The SatNOGS
+# RF flow has no publish node, so its $RFB batch — 5,289 emitter records,
+# verified live on this host 2026-08-03 — landed in the store and NEVER
+# replicated to the consumer node: nothing had ever fired a publication for it.
+#
+# Each lane here republishes on the host's own queue when a batch lands, off
+# the flow's thread (an in-flow publish trigger is what deadlocked the GP flow
+# for 100 minutes with zero store writes). Fail-closed: absent = publishes
+# nothing, which is why a share-alike source must be named deliberately.
+#
+# SatNOGS DB is CC-BY-SA-4.0 and republication IS the owner ruling of
+# 2026-08-03 ("publish them on SDN"); the licence travels with the batch
+# (DPMSourceBatch LICENSE/LICENSE_URL/CITATION) and per record (RFB.CITATION).
+publishing:
+  auto_publish:
+    - schema: RFB.fbs
+      source_name: satnogs-db
+      # The SatNOGS timer is daily; this only bounds a retry/restart burst.
+      min_interval: 30m
+
 setup:
   token_expiry: 10m
   data_path: /var/lib/spacedatanetwork/data

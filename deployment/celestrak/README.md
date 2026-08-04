@@ -1,5 +1,14 @@
 # CelesTrak Provider Node Deployment
 
+> **STALE, 2026-07-28 — DO NOT USE FOR INSTALL.** This directory describes a
+> two-daemon shape (`spacedatanetwork.service` + `kubo.service`) that
+> `install-host.sh` would install on the same box. That now VIOLATES owner law
+> ("never ever have more than one instance running on a box"). The box's live,
+> canonical shape is `deployment/systemd/sdn-retriever.service` — ONE daemon,
+> escrowed+disabled legacy units — recorded in `deployment/topology.json` under
+> `cluster["celestrak.eth"]`. Treat this file as historical background only
+> until it is rewritten to match.
+
 This directory contains host-specific, non-secret deployment assets for
 `space-data-network-02` / `celestrak.eth`.
 
@@ -171,6 +180,59 @@ journalctl -u space-data-network -n 300 --no-pager | grep 'Materialized trusted 
 journalctl -u space-data-network -n 300 --no-pager | grep 'Dataset publication PNM catch-up materialized'
 curl -fsS 'https://sdn.spaceaware.io/api/v1/data/omm/bulk?limit=1&format=json'
 curl -fsS 'http://127.0.0.1:10080/api/v1/data/omm/bulk?limit=1&format=json'
+```
+
+## Ingest-lane republication (`publishing.auto_publish`)
+
+A flow that INGESTS is not a flow that PUBLISHES. The CelesTrak lanes carry a
+`publish_request` node inside the flow (fed by `ingest.dataset_publish_url`);
+the SatNOGS RF flow does not, so its `$RFB` batch — 5,289 emitter records,
+live-verified on this host 2026-08-03 — sat in the store and never reached the
+consumer node. Nothing was broken in the transport: nothing had ever fired a
+publication for that lane (graph `sdn-rfb-publish-to-consumer-node`).
+
+`publishing.auto_publish` is the trigger as host configuration. Each lane
+republishes when a batch lands, on the daemon's own single-slot queue rather
+than the flow's thread — an in-flow publish trigger is what deadlocked the GP
+flow for 100 minutes with zero store writes. It is fail-closed: no lane, no
+publication.
+
+```yaml
+publishing:
+  auto_publish:
+    - schema: RFB.fbs          # required; "RFB" is accepted too
+      source_name: satnogs-db  # optional narrowing (empty = any source)
+      provider_id: ""          # optional narrowing (empty = any provider)
+      min_interval: 30m        # optional; default 5m
+```
+
+Apply it the normal way — the lane lives in this directory's `config.yaml`:
+
+```sh
+install -m 0644 config.yaml /etc/spacedatanetwork/config.yaml
+systemctl restart spacedatanetwork
+journalctl -u spacedatanetwork -n 200 --no-pager | grep 'Auto-publish lane armed'
+```
+
+Verify a real publication rather than the configuration alone (the next SatNOGS
+timer tick, or a forced run):
+
+```sh
+journalctl -u spacedatanetwork --no-pager | grep -E 'auto-publish(ed| failed)'
+curl -fsS 'http://127.0.0.1:5001/api/v1/data/index?schema=RFB.fbs&limit=1'
+```
+
+On the consumer node the import is gated on TRUST, not on the topic: every
+schema topic is joined automatically, and `materializeDatasetFeedHeadAnnouncement`
+drops a feed head from a peer that is not in `peers.trusted_peers` — at DEBUG,
+silently. Confirm the producer's live peer id is trusted there before calling a
+missing record a publication failure:
+
+```sh
+curl -fsS http://127.0.0.1:5001/api/node/info            # on the producer: its peer id
+grep -A5 'trusted_peers' /etc/spacedatanetwork/config.yaml   # on the consumer
+journalctl -u space-data-network --no-pager | grep 'Materialized trusted dataset update'
+curl -fsS 'https://sdn.spaceaware.io/api/v1/data/index?schema=RFB.fbs&limit=1'
 ```
 
 ## CelesTrak Source Controls
