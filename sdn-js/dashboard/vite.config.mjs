@@ -29,7 +29,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * certifiable byte-for-byte instead of merely hoped-for — measure it, though,
  * do not assume it.
  */
-const designRoot = fs.realpathSync(path.resolve(__dirname, '../spaceaware-ui/dashboard'));
+const designRoot = fs.realpathSync(path.resolve(__dirname, '../spaceaware-ui/src/dashboard'));
 
 /**
  * The sdn-js status client (createNodeStatusClient) is one module carrying both
@@ -103,7 +103,7 @@ function assertNoCssHashCollision() {
 // submodule; this file stays here because it is NODE law — the single-file
 // build, the CSP composition and the import-map assertion belong to the
 // artifact's owner, not the source repo (spec §1.1/§1.3).
-const appRoot = path.resolve(__dirname, '../spaceaware-ui/dashboard/src/apps/sdn-node');
+const appRoot = path.resolve(__dirname, '../spaceaware-ui/src/dashboard/src/apps/sdn-node');
 
 export default defineConfig({
   root: appRoot,
@@ -130,6 +130,24 @@ export default defineConfig({
     // svelte's default; the build asserts below that it did not collide.
     svelte({ compilerOptions: { cssHash: pinnedCssHash } }),
     viteSingleFile(),
+    {
+      /*
+       * NEVER inline .wasm into the single-file homepage. viteSingleFile's
+       * recommended config raises assetsInlineLimit to ~100MB in its own
+       * config hook (overriding anything set in this file's build block), so
+       * the moment onnxruntime-web's ort-wasm-simd-threaded.wasm became
+       * resolvable (spaceaware-ui's 2026-08-04 dep install) the 553KB embed
+       * silently became 36MB of base64. The semantic worker's contract is
+       * wasm-as-runtime-URL with fail-open 'unavailable' when the asset is
+       * not served (semantic.worker.js:68) — enforce it AFTER the plugin.
+       */
+      name: 'sdn-dashboard-never-inline-wasm',
+      enforce: 'post',
+      config(config) {
+        config.build = config.build ?? {};
+        config.build.assetsInlineLimit = (filePath) => !filePath.endsWith('.wasm');
+      },
+    },
     assertNoCssHashCollision()
   ],
   resolve: {
@@ -152,6 +170,16 @@ export default defineConfig({
   worker: { format: 'iife' },
   build: {
     target: 'es2022',
+    /*
+     * NEVER inline .wasm into the single-file homepage. viteSingleFile's
+     * recommended config raises assetsInlineLimit to ~100MB, so the moment
+     * onnxruntime-web's ort-wasm-simd-threaded.wasm became resolvable
+     * (spaceaware-ui's 2026-08-04 dep install), the 553KB embed silently
+     * became 36MB of base64. The semantic worker's contract is wasm-as-
+     * runtime-URL with fail-open 'unavailable' when the asset isn't served
+     * (semantic.worker.js) — keep it that way structurally.
+     */
+
     outDir: path.resolve(__dirname, 'dist'),
     emptyOutDir: true,
     rollupOptions: {
