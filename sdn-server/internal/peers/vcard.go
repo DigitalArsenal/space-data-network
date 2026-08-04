@@ -166,19 +166,14 @@ func TrustedPeerToVCard(tp *TrustedPeer) string {
 		card.SetValue(vcard.FieldNote, tp.Notes)
 	}
 
-	// SDN-specific fields
-	card.SetValue(VCardPropPeerID, tp.ID.String())
-	card.SetValue(VCardPropTrust, tp.TrustLevel.String())
-
-	// Multiaddresses
-	for _, addr := range tp.Addrs {
-		card.Add(VCardPropMultiaddr, &vcard.Field{Value: addr.String()})
-	}
-
-	// Groups
-	for _, group := range tp.Groups {
-		card.Add(VCardPropGroup, &vcard.Field{Value: group})
-	}
+	// OWNER RULING 2026-08-04: a vCard carries ONLY properties vCard defines.
+	// The X-SDN-* extension props this function used to emit — peer id, trust
+	// level, every multiaddr, groups — are GONE from generation: the peer id
+	// is derivable from the identity xpub (that is the point of the alias
+	// paradigm), the multiaddr/protocol lists are machine state that belongs
+	// on the API surfaces, and trust/groups are registry facts, not contact
+	// facts. ParseVCard still READS the X-SDN props for legacy card imports;
+	// reading is not emitting.
 
 	var buf strings.Builder
 	enc := vcard.NewEncoder(&buf)

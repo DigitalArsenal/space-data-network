@@ -50,6 +50,9 @@ func createDerivationPathEPM(t *testing.T) []byte {
 	sigPathOff := builder.CreateString(testSigningKeyPath)
 	encKeyOff := builder.CreateString("0xencryptionkey456")
 	encPathOff := builder.CreateString(testEncryptionKeyPath)
+	// A signed record: the QR card's alias allowlist includes epmsig, and a
+	// real EPM always carries its signature (hex on the wire).
+	signatureOff := builder.CreateString("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 
 	EPM.CryptoKeyStart(builder)
 	EPM.CryptoKeyAddPUBLIC_KEY(builder, sigKeyOff)
@@ -73,6 +76,8 @@ func createDerivationPathEPM(t *testing.T) []byte {
 	EPM.EPMStart(builder)
 	EPM.EPMAddDN(builder, dnOffset)
 	EPM.EPMAddKEYS(builder, keysVec)
+	EPM.EPMAddSIGNATURE(builder, signatureOff)
+	EPM.EPMAddSIGNATURE_TIMESTAMP(builder, 1700000000)
 	epmOffset := EPM.EPMEnd(builder)
 
 	builder.FinishSizePrefixedWithFileIdentifier(epmOffset, []byte(EPM.EPMIdentifier))

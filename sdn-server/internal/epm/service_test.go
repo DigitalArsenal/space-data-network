@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -448,11 +447,14 @@ func TestNodeVCardIncludesDirectoryMetadataAndPhoto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNodeVCard failed: %v", err)
 	}
-	if !strings.Contains(vcard, "X-SDN-DIRECTORY-KIND:node") {
-		t.Fatalf("vCard missing directory kind: %s", vcard)
+	// OWNER RULING 2026-08-04: no X-SDN extension properties on any card —
+	// directory kind and peer id are gone (the peer id is derivable from the
+	// xpub alias). The official PHOTO property stays.
+	if strings.Contains(vcard, "\r\nX-") || strings.Contains(vcard, "\nX-") {
+		t.Fatalf("vCard carries extension properties: %s", vcard)
 	}
-	if !strings.Contains(vcard, "X-SDN-PEER-ID:"+peerID.String()) {
-		t.Fatalf("vCard missing peer ID: %s", vcard)
+	if strings.Contains(vcard, peerID.String()) {
+		t.Fatalf("vCard carries the peer id: %s", vcard)
 	}
 	if !strings.Contains(vcard, "PHOTO;ENCODING=b;MEDIATYPE=image/png:iVBORw0KGgo=") {
 		t.Fatalf("vCard missing profile photo: %s", vcard)
@@ -485,24 +487,26 @@ func TestNodeVCardCarriesTheVerificationChainWithoutKeyMaterial(t *testing.T) {
 	}
 	unfolded := unfoldVCardForTest(vcard)
 
-	if !strings.Contains(vcard, "X-SDN-EPM-CID:") {
-		t.Fatalf("vCard missing EPM CID: %s", vcard)
+	// OWNER RULING 2026-08-04: the verification chain rides EXCLUSIVELY in
+	// the EMAIL aliases — the X-SDN-EPM-CID/-SIGNATURE/-TIMESTAMP extension
+	// properties are gone with every other X- property, and the serialized
+	// record never rides the card (owner directive 2026-07-27).
+	for _, required := range []string{
+		"@epmsig.spacedatanetwork.org",
+		"@epmts.spacedatanetwork.org",
+		"@epmcid.spacedatanetwork.org",
+	} {
+		if !strings.Contains(unfolded, required) {
+			t.Fatalf("vCard missing chain alias %q: %s", required, vcard)
+		}
 	}
-	if !strings.Contains(vcard, "X-SDN-EPM-SIGNATURE:") {
-		t.Fatalf("vCard missing EPM signature: %s", vcard)
+	if strings.Contains(vcard, "\r\nX-") || strings.Contains(vcard, "\nX-") {
+		t.Fatalf("node vCard carries extension properties: %s", vcard)
 	}
-	if !strings.Contains(vcard, "X-SDN-EPM-SIGNATURE-TIMESTAMP:") {
-		t.Fatalf("vCard missing EPM signature timestamp: %s", vcard)
-	}
-	// OWNER DIRECTIVE 2026-07-27: the serialized record no longer rides the
-	// card. The CID + signature + timestamp above ARE the chain — a verifier
-	// fetches the authoritative record by CID rather than trusting a copy
-	// carried alongside it. Asserting the blob's presence would now be
-	// asserting the defect.
-	if strings.Contains(vcard, "X-SDN-EPM-B64") || strings.Contains(unfolded, "Binary EPM") {
+	if strings.Contains(unfolded, "Binary EPM") {
 		t.Fatalf("node vCard still embeds the serialized EPM: %s", vcard)
 	}
-	for _, banned := range []string{"X-SIGNING-KEY", "X-ENCRYPTION-KEY",
+	for _, banned := range []string{
 		"signing.spacedatanetwork.org", "encryption.spacedatanetwork.org"} {
 		if strings.Contains(unfolded, banned) {
 			t.Fatalf("node vCard still carries key material %q: %s", banned, vcard)
@@ -694,34 +698,26 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 	if !strings.Contains(unfolded, sigAlias) {
 		t.Fatalf("QR vCard missing EPM signature alias %q: %s", sigAlias, qrVCard)
 	}
-	tsAlias := "EMAIL;type=INTERNET;type=epmts:" +
-		strconv.FormatInt(epmRecord.SIGNATURE_TIMESTAMP(), 10) + "@epmts.spacedatanetwork.org"
-	if !strings.Contains(unfolded, tsAlias) {
-		t.Fatalf("QR vCard missing signature timestamp alias %q: %s", tsAlias, qrVCard)
-	}
-	epmCid, err := ComputeEPMCID(epmBytes)
-	if err != nil {
-		t.Fatalf("ComputeEPMCID failed: %v", err)
-	}
-	cidAlias := "EMAIL;type=INTERNET;type=epmcid:" + epmCid + "@epmcid.spacedatanetwork.org"
-	if !strings.Contains(unfolded, cidAlias) {
-		t.Fatalf("QR vCard missing EPM CID alias %q: %s", cidAlias, qrVCard)
-	}
+	// OWNER RULING 2026-08-04 ("too much data, I can't scan the QR"): the
+	// epmts/epmcid aliases were DROPPED from the scannable card — both are
+	// recoverable from the record the signature already binds. They remain
+	// on the downloadable .vcf; here their presence is the defect.
 	for _, forbidden := range []string{
 		"PRODID", "ORG:", "TITLE:", "ROLE:", "UID:", "X-SDN-", "X-ABRELATEDNAMES:",
 		"@signing.spacedatanetwork.org", "@encryption.spacedatanetwork.org",
 		"@bitcoin.spacedatanetwork.org", "@ethereum.spacedatanetwork.org", "@solana.spacedatanetwork.org",
+		"@epmts.spacedatanetwork.org", "@epmcid.spacedatanetwork.org",
 		identity.PeerID.String(),
 	} {
 		if strings.Contains(unfolded, forbidden) {
 			t.Fatalf("QR vCard contains forbidden %q: %s", forbidden, qrVCard)
 		}
 	}
-	// Density budget: contact fields + the verification chain (xpub 111B +
-	// two b64url paths + sig 86B + timestamp + CID 59B, folded). Still a
-	// comfortably scannable QR (~byte-mode version 25 at EC-M).
-	if got := len([]byte(qrVCard)); got > 1400 {
-		t.Fatalf("QR vCard is %d bytes, want <= 1400: %s", got, qrVCard)
+	// Density budget: contact fields + xpub (111B) + two b64url paths + sig
+	// (86B), folded. Dropping epmts/epmcid bought back ~150 bytes of scan
+	// density; hold the ceiling well under the old 1400B lock.
+	if got := len([]byte(qrVCard)); got > 1200 {
+		t.Fatalf("QR vCard is %d bytes, want <= 1200: %s", got, qrVCard)
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(qrVCard, "\r\n"), "\r\n") {
 		if got := len([]byte(line)); got > 75 {

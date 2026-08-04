@@ -160,21 +160,19 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 		card.Add("ADR", &vcard.Field{Value: strings.Join(addrParts, ";")})
 	}
 
-	// Multiformat addresses -> URL
-	for i := 0; i < epm.MULTIFORMAT_ADDRESSLength(); i++ {
-		if addrBytes := epm.MULTIFORMAT_ADDRESS(i); addrBytes != nil {
-			addrStr := string(addrBytes)
-			if strings.TrimSpace(addrStr) != "" {
-				card.Add("URL", &vcard.Field{Value: addrStr})
-			}
+	// OWNER RULING 2026-08-04: multiaddrs/protocol lists are NOT contact
+	// data and no longer ride on any card (they used to be emitted here as
+	// URL lines). They live on the record and the API surfaces. Alternate
+	// names ride in NICKNAME — the official vCard 3.0 property — instead of
+	// the old X-ALTERNATE-NAME extension.
+	var altNames []string
+	for i := 0; i < epm.ALTERNATE_NAMESLength(); i++ {
+		if name := strings.TrimSpace(safeString(epm.ALTERNATE_NAMES(i))); name != "" {
+			altNames = append(altNames, name)
 		}
 	}
-
-	// Alternate names -> X-ALTERNATE-NAME (custom extension)
-	for i := 0; i < epm.ALTERNATE_NAMESLength(); i++ {
-		if name := epm.ALTERNATE_NAMES(i); name != nil {
-			card.Add("X-ALTERNATE-NAME", &vcard.Field{Value: string(name)})
-		}
+	if len(altNames) > 0 {
+		card.Add("NICKNAME", &vcard.Field{Value: strings.Join(altNames, ",")})
 	}
 
 	// OWNER DIRECTIVE 2026-07-27: no key BYTES on the vCard surface, and no
@@ -196,12 +194,13 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 	// contact card; the record is the record. Removing bytes from the card does
 	// not un-publish them from the record.
 
-	if signature := epm.SIGNATURE(); signature != nil {
-		card.Add(FieldSDNEPMSignature, &vcard.Field{Value: string(signature)})
-	}
-	if ts := epm.SIGNATURE_TIMESTAMP(); ts != 0 {
-		card.Add(FieldSDNEPMSignatureTimestamp, &vcard.Field{Value: strconv.FormatInt(ts, 10)})
-	}
+	// OWNER RULING 2026-08-04: NO extension properties on any card — not
+	// X-SDN-EPM-SIGNATURE/-TIMESTAMP (they ride in the epmsig/epmts EMAIL
+	// aliases below, which vCard importers actually keep), and not the
+	// itemN.X-ABLabel/X-ABRELATEDNAMES Apple mirror this function used to
+	// append (which also embedded the binary EPM — the single biggest source
+	// of card bloat). The machine identity is EXACTLY the EMAIL alias chain.
+
 	// Encode to string
 	var b strings.Builder
 	enc := vcard.NewEncoder(&b)
@@ -209,7 +208,7 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 		return "", err
 	}
 
-	return insertRawVCardLines(b.String(), AppleIdentityLinesFromEPM(epm, epmBytes, true)), nil
+	return insertRawVCardLines(b.String(), AppleIdentityEmailAliasLinesFromEPM(epm, epmBytes)), nil
 }
 
 type appleIdentityLine struct {
@@ -304,11 +303,15 @@ func AppleIdentityEmailAliasLinesFromEPM(epm *EPM.EPM, epmBytes []byte, kinds ..
 	return lines
 }
 
-// CompactQRVCardKinds is the alias-kind allowlist for scannable QR cards:
-// the complete EPM verification chain (xpub → derivation paths → signature
-// → timestamp → record CID) without the bulk public-key/chain aliases that
-// are recoverable from the record itself.
-var CompactQRVCardKinds = []string{"xpub", "sign", "encrypt", "epmsig", "epmts", "epmcid"}
+// CompactQRVCardKinds is the alias-kind allowlist for scannable QR cards.
+// OWNER RULING 2026-08-04 ("there's too much data, I can't scan the QR —
+// just the fields I requested, with the paths for digital signature and
+// encryption like the current node's EPM card"): exactly the xpub, the two
+// HD derivation-path aliases, and the EPM signature. epmts/epmcid were
+// dropped from the QR — both are recoverable from the record the signature
+// already binds, and every alias line costs scan density. The downloadable
+// .vcf keeps the full alias chain.
+var CompactQRVCardKinds = []string{"xpub", "sign", "encrypt", "epmsig"}
 
 // CompactQRVCard builds the scannable VERSION:3.0 contact card for an EPM:
 // structured name + human contact fields (email, phone, work address) plus

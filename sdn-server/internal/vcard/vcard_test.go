@@ -142,18 +142,16 @@ func TestEPMToVCardAddsIOSVisibleIdentityFields(t *testing.T) {
 	}
 	unfolded := unfoldVCardForTest(vcardStr)
 
-	// The iOS-visible identity surface is now the VERIFICATION CHAIN only:
-	// derivation paths and the record CID. Key bytes and the embedded record
-	// were removed by owner directive 2026-07-27.
+	// The machine-identity surface is the EMAIL alias chain ONLY (owner
+	// ruling 2026-08-04: no extension properties of any kind — the
+	// itemN.X-ABLabel/X-ABRELATEDNAMES Apple mirror is gone with the rest).
 	if !strings.Contains(unfolded, "epmcid.spacedatanetwork.org") {
 		t.Errorf("vCard missing the epmcid alias — the chain must survive the key-material strip, got:\n%s", vcardStr)
-	}
-	if !strings.Contains(vcardStr, "X-ABLabel:EPM CID") {
-		t.Errorf("vCard missing the iOS-visible EPM CID label, got:\n%s", vcardStr)
 	}
 	for _, banned := range []string{
 		"Public Key Signing", "Public Key Encryption", "Binary EPM",
 		"0xsigningkey123", "0xencryptionkey456",
+		"X-ABLabel", "X-ABRELATEDNAMES", "\nX-", "\r\nX-",
 	} {
 		if strings.Contains(unfolded, banned) {
 			t.Errorf("vCard still carries removed key/blob material %q, got:\n%s", banned, vcardStr)
