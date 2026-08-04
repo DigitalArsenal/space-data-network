@@ -1,111 +1,66 @@
-// Hash: placeholder
-// Version: 1.0.0
+// Hash: fc1c3a72bd5b8da84c30c1ef459bbfc6fe614e3949c0b6500257de382a37685f
+// Version: 1.0.2
 // -----------------------------------END_HEADER
-
-include "../STF/main.fbs";
-
-/// Review status
-enum ReviewStatus : byte {
-  /// Review is published and visible
+/// Review lifecycle status.
+enum reviewLifecycleStatus : byte {
   Published,
-  /// Review is pending moderation
   Pending,
-  /// Review was flagged for review
   Flagged,
-  /// Review was hidden by moderator
   Hidden,
-  /// Review was removed
   Removed
 }
 
-/// Quality metrics for the review
+/// Data quality metrics attached to a review.
 table DataQualityMetrics {
-  /// Schema compliance (0-100)
-  schema_compliance: uint8;
-  /// Data freshness (0-100)
-  data_freshness: uint8;
-  /// Coverage accuracy (0-100)
-  coverage_accuracy: uint8;
-  /// Delivery reliability (0-100)
-  delivery_reliability: uint8;
+  SCHEMA_COMPLIANCE: uint8;
+  DATA_FRESHNESS: uint8;
+  COVERAGE_ACCURACY: uint8;
+  DELIVERY_RELIABILITY: uint8;
 }
 
-/// Review Message
+/// Review - User review of a storefront listing
 table REV {
-  /// Unique review identifier (UUID)
-  review_id: string (required);
-  /// Reference to the listing being reviewed
-  listing_id: string (required);
-  /// Reviewer's peer ID
-  reviewer_peer_id: string (required);
+  /// Unique identifier for this review
+  REVIEW_ID: string (required);
+  /// ID of the listing being reviewed
+  LISTING_ID: string (required);
+  /// Peer ID of the reviewer
+  REVIEWER_PEER_ID: string (required);
 
-  /// Rating (1-5 stars)
-  rating: uint8 (required);
+  /// Rating from 1-5 stars
+  RATING: uint8;
   /// Review title
-  title: string;
+  TITLE: string;
   /// Review content/body
-  content: string;
+  CONTENT: string;
 
-  /// Data quality assessment
-  quality_metrics: DataQualityMetrics;
+  /// ACL grant ID proving purchase (proof of purchase)
+  ACL_GRANT_ID: string;
 
-  /// Proof of purchase (required for verified reviews)
-  acl_grant_id: string;
-  /// Whether this is a verified purchase review
-  verified_purchase: bool;
-
-  /// Review metadata
-  created_at: uint64 (required);
-  updated_at: uint64;
-  /// Review status
-  status: ReviewStatus = Published;
-
-  /// Helpfulness voting
-  helpful_count: uint32;
-  not_helpful_count: uint32;
-
-  /// Provider response
-  provider_response: string;
-  provider_response_at: uint64;
-
-  /// Moderation
-  flagged_count: uint32;
-  moderation_notes: string;
-
+  /// Unix timestamp of the review
+  TIMESTAMP: uint64;
   /// Ed25519 signature from reviewer
-  reviewer_signature: [ubyte];
-}
-
-/// Aggregated review statistics for a listing
-table ReviewStats {
-  /// Listing ID
-  listing_id: string (required);
-  /// Total number of reviews
-  total_reviews: uint32;
-  /// Number of verified purchase reviews
-  verified_reviews: uint32;
-  /// Average rating (x10 for precision, e.g., 42 = 4.2 stars)
-  average_rating_x10: uint16;
-  /// Rating distribution [1-star, 2-star, 3-star, 4-star, 5-star]
-  rating_distribution: [uint32];
-  /// Last review timestamp
-  last_review_at: uint64;
-  /// Average quality metrics across reviews
-  avg_quality_metrics: DataQualityMetrics;
-}
-
-/// Collection of reviews
-table ReviewCollection {
-  /// List of reviews
-  reviews: [REV];
-  /// Aggregated stats
-  stats: ReviewStats;
-  /// Total count (may differ from reviews length for pagination)
-  total_count: uint32;
-  /// Pagination offset
-  offset: uint32;
-  /// Pagination limit
-  limit: uint32;
+  REVIEWER_SIGNATURE: [ubyte];
+  /// Data quality metrics supplied by reviewer
+  QUALITY_METRICS: DataQualityMetrics;
+  /// Whether the review is tied to a verified purchase
+  VERIFIED_PURCHASE: bool;
+  /// Unix timestamp when the review was last updated
+  UPDATED_AT: uint64;
+  /// Review lifecycle status
+  STATUS: reviewLifecycleStatus;
+  /// Helpful vote count
+  HELPFUL_COUNT: uint32;
+  /// Not-helpful vote count
+  NOT_HELPFUL_COUNT: uint32;
+  /// Provider response body
+  PROVIDER_RESPONSE: string;
+  /// Unix timestamp when provider responded
+  PROVIDER_RESPONSE_AT: uint64;
+  /// Number of moderation flags
+  FLAGGED_COUNT: uint32;
+  /// Moderation notes
+  MODERATION_NOTES: string;
 }
 
 root_type REV;

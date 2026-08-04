@@ -105,16 +105,21 @@ var SupportedSchemas = []string{
 	"CAQ.fbs",  // Catalog Query - Catalog query envelope
 	"CAT.fbs",  // Catalog
 	"CDM.fbs",  // Conjunction Data Message
+	"CES.fbs",  // Catalog Embedding Shard
 	"CFP.fbs",  // CCSDS File Delivery Protocol PDU (CCSDS 727.0-B-5)
 	"CHN.fbs",  // Communications Channel
 	"CLT.fbs",  // Command Link Transmission Unit Service (CCSDS 912.3-B-2)
 	"CMS.fbs",  // Communications Payload
+	"CMT.fbs",  // Commission Terms - revenue split binding a listing, store or publisher
+	"CNP.fbs",  // Constellation Network Performance (SDS v1.177.0)
 	"COM.fbs",  // Communications Systems
 	"COT.fbs",  // Cursor on Target Event
+	"CPS.fbs",  // Compressed Packet Stream (CCSDS fixed-length packet run)
 	"CRD.fbs",  // Coordinate Systems
 	"CRM.fbs",  // Collision Risk Message
 	"CSM.fbs",  // Conjunction Summary Message
 	"CTR.fbs",  // Contact Report
+	"CVG.fbs",  // Coverage Grid Figure-of-Merit
 	"CZM.fbs",  // CZML Document
 	"DFH.fbs",  // GEO Drift History
 	"DMG.fbs",  // Damage Models
@@ -123,6 +128,7 @@ var SupportedSchemas = []string{
 	"DSS.fbs",  // Data Sync Status
 	"EME.fbs",  // Electromagnetic Emissions
 	"ENC.fbs",  // Encryption Header
+	"ENT.fbs",  // Entitlement - provider subscription or account entitlement state
 	"ENV.fbs",  // Atmosphere and Environment
 	"EOO.fbs",  // Earth Orientation
 	"EOP.fbs",  // Earth Orientation Parameters
@@ -133,18 +139,24 @@ var SupportedSchemas = []string{
 	"FCS.fbs",  // Fire Control Systems
 	"FPC.fbs",  // Fastest Path Compute
 	"FRM.fbs",  // Frame Transform
+	"FSB.fbs",  // FlatSQL Byte Stream - bounded typed chunk for append/query
+	"FSM.fbs",  // Field Stream Message - marketplace-protected live streams
+	"FSO.fbs",  // FlatSQL Operation - control, policy and status record
+	"FSP.fbs",  // Field Stream Policy - marketplace-protected live streams
 	"GDI.fbs",  // Ground Imagery
 	"GEO.fbs",  // GEO Spacecraft Status
 	"GJN.fbs",  // GeoJSON FeatureCollection
 	"GNO.fbs",  // GNSS Observation
 	"GPX.fbs",  // GPX Document
 	"GRV.fbs",  // Gravity Models
+	"GST.fbs",  // Ground/Tracking Station Definition
 	"GVH.fbs",  // Ground Vehicles
 	"HEL.fbs",  // Helicopter Dynamics
 	"HFC.fbs",  // Hypersonic Flight Conditions
 	"HYP.fbs",  // Hyperbolic Orbit
 	"IDM.fbs",  // Initial Data Message
 	"ION.fbs",  // Ionospheric Observation
+	"IQC.fbs",  // IQ Capture - archived baseband recording (SDS v1.177.0)
 	"IRO.fbs",  // Infrared Observation
 	"KMF.fbs",  // Key Material Frame
 	"KML.fbs",  // KML Document
@@ -164,6 +176,8 @@ var SupportedSchemas = []string{
 	"LPF.fbs",  // Licensing Proof Message
 	"LWK.fbs",  // Wrapped Module Content Key
 	"MBL.fbs",  // Module Bundle Listing
+	"MDP.fbs",  // Mission Design Problem - patched-conic broad search definition
+	"MDS.fbs",  // Mission Design Solution Set - candidate trajectories
 	"MET.fbs",  // Meteorological Data
 	"MFE.fbs",  // Manifold Element Set
 	"MNF.fbs",  // Orbit Manifold
@@ -189,23 +203,28 @@ var SupportedSchemas = []string{
 	"OOS.fbs",  // On-Orbit Solar Array
 	"OOT.fbs",  // On-Orbit Thruster
 	"OPM.fbs",  // Orbit Parameter Message
+	"OPP.fbs",  // Object Physical Properties - sourced physical description
 	"OSM.fbs",  // Orbit State Message
 	"PCF.fbs",  // Propagator Configuration
 	"PGM.fbs",  // Peer Group Membership Record
 	"PGR.fbs",  // Peer Graph Record - Peer network graph snapshot (SDN-internal)
 	"PHY.fbs",  // Physics and Rigid Body Dynamics
 	"PIV.fbs",  // Plugin Invoke - Plugin request/response envelopes
+	"PKB.fbs",  // Publisher Key-Broker Descriptor
 	"PLD.fbs",  // Payload
 	"PLG.fbs",  // Plugin Manifest - Signed plugin distribution record
 	"PLHD.fbs", // Publication Log Head - Log head announcement (SDN-internal)
 	"PLK.fbs",  // Plugin License Key
 	"PLOG.fbs", // Publication Log Entry - Internal compatibility log record (SDN-internal)
+	"PMM.fbs",  // Provider Module Manifest - what one provider node offers, signed
+	"PNL.fbs",  // Panelled (box-wing) Spacecraft Macro Model
 	"PNM.fbs",  // Publish Notification Message
 	"PPE.fbs",  // Polynomial Ephemeris
 	"PRR.fbs",  // Peer Registry Record
 	"PRG.fbs",  // Propagation Settings
 	"PRW.fbs",  // Propagator Runtime Wire
 	"PUR.fbs",  // Purchase Request - Marketplace purchases
+	"QEM.fbs",  // Query Encoder Model
 	"RAF.fbs",  // Return All Frames Service (CCSDS 913.1-B-2)
 	"RBK.fbs",  // Rigid Body Kinematics
 	"RCF.fbs",  // Return Channel Frames Service (CCSDS 913.5-B-2)
@@ -220,15 +239,21 @@ var SupportedSchemas = []string{
 	"RFO.fbs",  // RF Observation
 	"RHD.fbs",  // Routing Header - Message routing metadata (SDN-internal)
 	"ROC.fbs",  // Re-entry Operations Corridor
+	"RPT.fbs",  // Verifiable Report descriptor
 	"SAR.fbs",  // SAR Observation
+	"SBM.fbs",  // Satellite Breakup Model
+	"SCC.fbs",  // Scenario Controls - scenario setup/state message bus envelope
 	"SCM.fbs",  // Spacecraft Message
+	"SCN.fbs",  // Scenario - canonical scene composition and simulation state
 	"SCV.fbs",  // Sensor Coverage
+	"SCX.fbs",  // Chain Settlement / Smart-Contract Descriptor
 	"SDF.fbs",  // Signed Distance Field
 	"SDL.fbs",  // Space Data Link Security (CCSDS 355.0-B-1)
 	"SDR.fbs",  // Sensor Detection Report
 	"SEN.fbs",  // Sensor Management
 	"SEO.fbs",  // Space Environment Observation
 	"SEV.fbs",  // Space Environment Observation Detail
+	"SHC.fbs",  // Spherical-Harmonic Coefficient Set - a gravity field
 	"SHW.fbs",  // Shader Wire
 	"SIT.fbs",  // Satellite Impact Table
 	"SKI.fbs",  // Sky Imagery
@@ -240,8 +265,10 @@ var SupportedSchemas = []string{
 	"SPW.fbs",  // Space Weather Data Record
 	"SRI.fbs",  // Standards Record Index
 	"STF.fbs",  // Storefront Listing - Marketplace listings
+	"STO.fbs",  // Store Descriptor - storefront identity
 	"STR.fbs",  // Star Catalog Entry
 	"STV.fbs",  // State Vector
+	"SUB.fbs",  // Crypto-native Subscription Authorization
 	"SWR.fbs",  // Short-Wave Infrared Observation
 	"TAB.fbs",  // Typed Arena Buffer
 	"TCF.fbs",  // Telecommand Transfer Frame (CCSDS 232.0-B-3)
@@ -255,7 +282,10 @@ var SupportedSchemas = []string{
 	"TRE.fbs",  // Trust Edge Record
 	"TRK.fbs",  // Track
 	"TRN.fbs",  // Terrain Models
+	"VAM.fbs",  // Visual Asset Manifest - ranked visual representations for one entity
 	"VCM.fbs",  // Vector Covariance Message
+	"VST.fbs",  // Viewer State - display and camera state for a scenario
+	"WKS.fbs",  // Workspace - scene snapshot + FlatSQL query state + share grants
 	"WPN.fbs",  // Weapons and Munitions
 	"WTH.fbs",  // Weather Data
 	"XTC.fbs",  // XTCE SpaceSystem Document

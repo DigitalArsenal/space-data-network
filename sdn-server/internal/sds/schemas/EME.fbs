@@ -1,5 +1,5 @@
-// Hash: 863f34b95eccb3f6f6508934073b1bf595a6116636b750804165aa8c3dff38e3
-// Version: 1.0.1
+// Hash: 65acc785b2a01843dc867a565001a09991dc39159a0641f1bad50ffed904e91f
+// Version: 1.0.4
 // -----------------------------------END_HEADER
 /// Encrypted Message Envelope
 table EME {
@@ -12,14 +12,17 @@ table EME {
   /// Message Authentication Code to verify the integrity and authenticity of the encrypted message.
   MAC: string;
 
-  /// Unique value used to ensure that the same plaintext produces a different ciphertext for each encryption.
-  NONCE: string;
+  /// Random 12-byte nonce starting value. Incremented for each record in the stream to ensure unique nonces.
+  NONCE_START: [ubyte];
 
   /// Additional authentication tag used in some encryption schemes for integrity and authenticity verification.
   TAG: string;
 
   /// Initialization vector used to introduce randomness in the encryption process, enhancing security.
   IV: string;
+
+  /// Cryptographic salt used in key derivation (e.g. HKDF) to ensure unique key material per session.
+  SALT: string;
 
   /// Identifier for the public key used, aiding in recipient key management and message decryption.
   PUBLIC_KEY_IDENTIFIER: string;

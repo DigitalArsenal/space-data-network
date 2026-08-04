@@ -10,6 +10,8 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/APP"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CNP"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/IQC"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/LKS"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
@@ -50,6 +52,11 @@ var driftGuardedSchemas = []struct {
 	{"LKS.fbs", &LKS.LKS{}},
 	{"SPW.fbs", &SPW.SPW{}},
 	{"APP.fbs", &APP.APP{}},
+	// RF data suite (SDS v1.177.0). Guarded from the day they are embedded:
+	// both arrive with the pin bump, before any record exists, so the embed
+	// and the bindings are provably the same authority from record zero.
+	{"IQC.fbs", &IQC.IQC{}},
+	{"CNP.fbs", &CNP.CNP{}},
 }
 
 func TestEmbeddedSchemasMatchLinkedBindings(t *testing.T) {

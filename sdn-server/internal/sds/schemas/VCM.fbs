@@ -1,5 +1,5 @@
-// Hash: 8e522b102dc43b982b77cd5964a2973ca324bc51196c64ed5532cd6a5df8074b
-// Version: 1.2.6
+// Hash: fb734998a79de979a28198e7261c19971df393f6ef193423f5b40f7bbf440c1f
+// Version: 2.0.3
 // -----------------------------------END_HEADER
 include "../RFM/main.fbs";
 include "../TIM/main.fbs";
@@ -29,13 +29,13 @@ enum elementType : byte {
   MEAN = 1
 }
 
-enum anomalyType : byte {
+enum anomalyConvention : byte {
   TRUE_ANOMALY = 0,
   MEAN_ANOMALY = 1
 }
 
 /// Enum to represent common atmospheric models
-enum atmosphericModel : byte {
+enum atmosphericSource : byte {
   NONE = 0,
   JACCHIA_70 = 1,
   JB2008 = 2,
@@ -46,7 +46,7 @@ enum atmosphericModel : byte {
 }
 
 /// Enum to represent common geopotential models
-enum geopotentialModel : byte {
+enum geopotentialSource : byte {
   NONE = 0,
   EGM96 = 1,
   WGS84 = 2,
@@ -79,7 +79,7 @@ enum solarRadiationPressureModel : byte {
 }
 
 /// Enum to represent common lunar perturbation models
-enum lunarPerturbationModel : byte {
+enum lunarPerturbationSource : byte {
   NONE = 0,
   DE430 = 1,
   DE431 = 2,
@@ -87,14 +87,14 @@ enum lunarPerturbationModel : byte {
 }
 
 /// Enum to represent various solar perturbation models
-enum solarPerturbationModel : byte {
+enum solarPerturbationSource : byte {
   NONE = 0,
   DE430 = 1,
   DE431 = 2
 }
 
 /// Enum to represent resonance models
-enum resonanceModel : byte {
+enum resonanceSource : byte {
   NONE = 0,
   HIGH_ALTITUDE_RESONANCE = 1,
   LOW_ALTITUDE_RESONANCE = 2,
@@ -109,7 +109,7 @@ enum perturbationStatus : byte {
 }
 
 /// Enum to represent propagator types
-enum propagatorType : byte {
+enum propagatorFamily : byte {
   NONE = 0,
   SEMI_ANALYTICAL = 1,
   VINTI = 2,
@@ -128,7 +128,7 @@ enum propagatorType : byte {
 /// Propagator configuration structure to describe propagation settings
 table propagatorConfig {
   PROPAGATOR_NAME: string;
-  PROPAGATOR_TYPE: propagatorType;
+  PROPAGATOR_TYPE: propagatorFamily;
   FORCE_MODELS: [string];
   EPOCH: string;
   TIME_STEP: double;
@@ -146,14 +146,6 @@ table VCMStateVector {
   Z_DOT: double;
 }
 
-/// VCM Covariance Matrix Line
-table VCMCovarianceMatrixLine {
-  CX_X: double;
-  CY_X: double;
-  CZ_X: double;
-  CX_DOT_X: double;
-}
-
 /// Keplerian Elements
 table keplerianElements {
   SEMI_MAJOR_AXIS: double; // km
@@ -161,8 +153,9 @@ table keplerianElements {
   INCLINATION: double;     // degrees
   RA_OF_ASC_NODE: double;  // degrees
   ARG_OF_PERICENTER: double; // degrees
-  ANOMALY_TYPE: anomalyType;
+  ANOMALY_TYPE: anomalyConvention;
   ANOMALY: double;         // degrees
+  PERIAPSIS_RADIUS: double; // km, used when ECCENTRICITY is 1 and SEMI_MAJOR_AXIS is 0 for parabolic states
 }
 
 /// Equinoctial Elements
@@ -187,14 +180,14 @@ table uvwSigmas {
 
 /// VCM Atmospheric and Perturbation Model Data
 table VCMAtmosphericModelData {
-  ATMOSPHERIC_MODEL: atmosphericModel;
-  GEOPOTENTIAL_MODEL: geopotentialModel;
+  ATMOSPHERIC_MODEL: atmosphericSource;
+  GEOPOTENTIAL_MODEL: geopotentialSource;
   LUNAR_SOLAR_PERTURBATION: perturbationStatus;
-  LUNAR_PERTURBATION_MODEL: lunarPerturbationModel;
-  SOLAR_PERTURBATION_MODEL: solarPerturbationModel;
+  LUNAR_PERTURBATION_MODEL: lunarPerturbationSource;
+  SOLAR_PERTURBATION_MODEL: solarPerturbationSource;
   SOLAR_RADIATION_PRESSURE: perturbationStatus;
   SRP_MODEL: solarRadiationPressureModel;
-  RESONANCE_MODEL: resonanceModel;
+  RESONANCE_MODEL: resonanceSource;
 }
 
 /// Vector Covariance Message
@@ -218,7 +211,6 @@ table VCM {
   ATMOSPHERIC_MODEL_DATA: VCMAtmosphericModelData;
   PROPAGATOR_SETTINGS: propagatorConfig;
 
-  COVARIANCE_MATRIX: [VCMCovarianceMatrixLine];
   UVW_SIGMAS: uvwSigmas;
 
   // Spacecraft Parameters from OMM and OCM
@@ -240,10 +232,13 @@ table VCM {
 
   // Covariance Matrix for position/velocity
   COV_REFERENCE_FRAME: string;
-  CX_X: double;
-  CY_X: double;
-  CZ_X: double;
-  CX_DOT_X: double;
+  /// Covariance matrix as flat array (6x6 lower triangular = 21 elements).
+  /// Order: [CX_X, CY_X, CY_Y, CZ_X, CZ_Y, CZ_Z,
+  ///         CX_DOT_X, CX_DOT_Y, CX_DOT_Z, CX_DOT_X_DOT,
+  ///         CY_DOT_X, CY_DOT_Y, CY_DOT_Z, CY_DOT_X_DOT, CY_DOT_Y_DOT,
+  ///         CZ_DOT_X, CZ_DOT_Y, CZ_DOT_Z, CZ_DOT_X_DOT, CZ_DOT_Y_DOT, CZ_DOT_Z_DOT]
+  /// Units: position in km**2, velocity in km**2/s**2, cross in km**2/s
+  COVARIANCE:[double];
 
   // User-defined fields
   USER_DEFINED_BIP_0044_TYPE: uint;
