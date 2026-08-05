@@ -1315,6 +1315,85 @@ func TestEnsureNodeMnemonicCreatesEncryptedMnemonic(t *testing.T) {
 	}
 }
 
+func TestEnsureNodeMnemonicHonorsKeyPasswordFile(t *testing.T) {
+	passwordPath := filepath.Join(t.TempDir(), "key-password")
+	const password = "mounted-file-password"
+	if err := os.WriteFile(passwordPath, []byte(password+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.EnvKeyPassword, "")
+	t.Setenv(config.EnvKeyPasswordFile, passwordPath)
+
+	cfg := config.Default()
+	cfg.Storage.Path = filepath.Join(t.TempDir(), "data")
+	result, err := ensureNodeMnemonic(context.Background(), cfg, func(context.Context) (string, error) {
+		return testVectorMnemonic(), nil
+	})
+	if err != nil {
+		t.Fatalf("ensureNodeMnemonic failed: %v", err)
+	}
+	sealed, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := keys.DecryptMnemonic(sealed, password)
+	if err != nil {
+		t.Fatalf("mnemonic was not sealed under %s: %v", config.EnvKeyPasswordFile, err)
+	}
+	if got != testVectorMnemonic() {
+		t.Fatalf("decrypted mnemonic mismatch")
+	}
+}
+
+func TestEnsureNodeMnemonicUnreadablePasswordFileCannotMintIdentity(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "not-mounted")
+	t.Setenv(config.EnvKeyPassword, "")
+	t.Setenv(config.EnvKeyPasswordFile, missing)
+
+	cfg := config.Default()
+	cfg.Storage.Path = filepath.Join(t.TempDir(), "data")
+	generated := false
+	_, err := ensureNodeMnemonic(context.Background(), cfg, func(context.Context) (string, error) {
+		generated = true
+		return testVectorMnemonic(), nil
+	})
+	if err == nil || !strings.Contains(err.Error(), config.EnvKeyPasswordFile) {
+		t.Fatalf("expected password-file error, got %v", err)
+	}
+	if generated {
+		t.Fatal("mnemonic generator ran despite an unreadable configured password file")
+	}
+	mnemonicPath := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys", "mnemonic")
+	if _, statErr := os.Stat(mnemonicPath); !os.IsNotExist(statErr) {
+		t.Fatalf("mnemonic file exists after fail-closed init: %v", statErr)
+	}
+}
+
+func TestLocalEPMWriteRejectsUnreadableKeyPasswordFile(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "not-mounted")
+	t.Setenv(config.EnvKeyPassword, "")
+	t.Setenv(config.EnvKeyPasswordFile, missing)
+	t.Setenv("SDN_EPM_STORE_PASSWORD", "")
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewFlatSQLStore(t.TempDir(), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	err = store.SaveLocalEPM("12D3KooWFailClosed", []byte("epm-bytes"))
+	if err == nil || !strings.Contains(err.Error(), config.EnvKeyPasswordFile) {
+		t.Fatalf("expected password-file error from local EPM write, got %v", err)
+	}
+	if _, readErr := store.LoadLocalEPM("12D3KooWFailClosed"); readErr == nil {
+		t.Fatal("local EPM row was written despite an unreadable password file")
+	}
+}
+
 func TestEnsureNodeMnemonicPreservesExistingMnemonic(t *testing.T) {
 	t.Parallel()
 

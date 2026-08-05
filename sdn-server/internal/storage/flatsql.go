@@ -33,9 +33,11 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/crypto/scrypt"
 
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
@@ -4172,38 +4174,54 @@ func localEPMGCMForKey(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// localEPMKeyPasswords returns every password this box could have sealed the
-// local-EPM rows under, best first. Order matters: index 0 is what new writes
-// use. SDN_KEY_PASSWORD_FILE is the source most units actually configure —
-// it was silently ignored here until 2026-08-01, which left those boxes on
-// the hostname-composite fallback (fragile: a hostname, home-dir, or store
-// relocation orphans every row).
-func (s *FlatSQLStore) localEPMKeyPasswords() []string {
+// localEPMKeyPasswords returns the canonical write password first, followed
+// by read-only recovery candidates used by historical local-EPM envelopes.
+// New writes MUST use config.KeyPassword: it gives SDN_KEY_PASSWORD_FILE the
+// same precedence and fail-closed behavior as every mnemonic/key lane.
+func (s *FlatSQLStore) localEPMKeyPasswords() ([]string, error) {
+	password, err := config.KeyPassword(nil)
+	if err != nil {
+		return nil, fmt.Errorf("resolve local EPM key password: %w", err)
+	}
+	if password == "" {
+		password, err = keys.DeriveDefaultPassword()
+		if err != nil {
+			return nil, fmt.Errorf("derive machine-default local EPM key password: %w", err)
+		}
+	}
 	passwords := make([]string, 0, 4)
+
+	// This explicit EPM-only override predates the shared at-rest resolver and
+	// remains an intentional migration/testing escape hatch. In normal node
+	// operation it is unset, so the canonical password above selects writes.
 	if p := strings.TrimSpace(os.Getenv("SDN_EPM_STORE_PASSWORD")); p != "" {
 		passwords = append(passwords, p)
 	}
-	if p := strings.TrimSpace(os.Getenv("SDN_KEY_PASSWORD")); p != "" {
-		passwords = append(passwords, p)
+	if len(passwords) == 0 || passwords[len(passwords)-1] != password {
+		passwords = append(passwords, password)
 	}
-	if path := strings.TrimSpace(os.Getenv("SDN_KEY_PASSWORD_FILE")); path != "" {
-		if raw, err := os.ReadFile(path); err == nil {
-			if p := strings.TrimSpace(string(raw)); p != "" {
-				passwords = append(passwords, p)
-			}
-		}
+
+	// A password file can be introduced while rows remain sealed under the
+	// prior machine-derived key. Keep that key as a read candidate, never as
+	// the write key when an explicit password resolved above.
+	derivedPassword, deriveErr := keys.DeriveDefaultPassword()
+	if deriveErr == nil && derivedPassword != password {
+		passwords = append(passwords, derivedPassword)
 	}
 	hostname, _ := os.Hostname()
 	homeDir, _ := os.UserHomeDir()
-	passwords = append(passwords, strings.Join([]string{
+	legacyPassword := strings.Join([]string{
 		"sdn-local-epm",
 		hostname,
 		runtime.GOOS,
 		runtime.GOARCH,
 		homeDir,
 		filepath.Dir(s.dbPath),
-	}, "|"))
-	return passwords
+	}, "|")
+	if legacyPassword != password {
+		passwords = append(passwords, legacyPassword)
+	}
+	return passwords, nil
 }
 
 // localEPMKeys derives (and memoizes — scrypt is ~100ms per candidate) the
@@ -4211,7 +4229,12 @@ func (s *FlatSQLStore) localEPMKeyPasswords() []string {
 func (s *FlatSQLStore) localEPMKeys() ([][]byte, error) {
 	s.localEPMKeyOnce.Do(func() {
 		salt := sha256.Sum256([]byte(localEPMStoreSalt + "|" + s.dbPath))
-		for _, password := range s.localEPMKeyPasswords() {
+		passwords, err := s.localEPMKeyPasswords()
+		if err != nil {
+			s.localEPMKeyErr = err
+			return
+		}
+		for _, password := range passwords {
 			key, err := scrypt.Key([]byte(password), salt[:], 32768, 8, 1, 32)
 			if err != nil {
 				s.localEPMKeyErr = err
