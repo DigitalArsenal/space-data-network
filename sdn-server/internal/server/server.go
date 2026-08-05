@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -651,7 +652,13 @@ func (s *Server) handleKeyBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backup, err := s.keyMgr.ExportEncrypted(password)
+	mnemonic, err := s.loadNodeMnemonic()
+	if err != nil {
+		http.Error(w, "Failed to read node identity", http.StatusInternalServerError)
+		return
+	}
+
+	backup, err := keys.EncryptIdentityBackup(mnemonic, password)
 	if err != nil {
 		http.Error(w, "Failed to export backup", http.StatusInternalServerError)
 		return
@@ -681,15 +688,113 @@ func (s *Server) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 
 	backup := r.FormValue("backup")
 	password := r.FormValue("password")
-
-	if err := s.keyMgr.ImportEncrypted(backup, password); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": err.Error()})
+	if backup == "" || password == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "backup and password required"})
 		return
 	}
 
-	s.auditLog.LogKeyRestore(session.AdminID, clientIP, s.keyMgr.PublicKeyFingerprint())
+	mnemonic, err := keys.DecryptIdentityBackup(backup, password)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	if err := s.installNodeMnemonic(mnemonic); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"success": false, "error": "failed to install node identity"})
+		return
+	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "fingerprint": s.keyMgr.PublicKeyFingerprint()})
+	s.auditLog.LogKeyRestore(session.AdminID, clientIP, "mnemonic-root")
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "restart_required": true})
+}
+
+func (s *Server) nodeMnemonicPassword() (string, error) {
+	password, err := config.KeyPassword(s.config)
+	if err != nil {
+		return "", err
+	}
+	if password != "" {
+		return password, nil
+	}
+	return keys.DeriveDefaultPassword()
+}
+
+func (s *Server) loadNodeMnemonic() (string, error) {
+	path := config.MnemonicPathResolved(s.config)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read mnemonic %s: %w", path, err)
+	}
+	if !keys.IsMnemonicEncrypted(data) {
+		mnemonic := strings.TrimSpace(string(data))
+		if mnemonic == "" {
+			return "", keys.ErrInvalidMnemonic
+		}
+		return mnemonic, nil
+	}
+	configuredPassword, err := config.KeyPassword(s.config)
+	if err != nil {
+		return "", err
+	}
+	password := configuredPassword
+	if password == "" {
+		password, err = keys.DeriveDefaultPassword()
+		if err != nil {
+			return "", err
+		}
+	}
+	mnemonic, err := keys.DecryptMnemonic(data, password)
+	if err != nil && configuredPassword == "" {
+		if recovered, _, recoveryErr := keys.DecryptMnemonicAnyScheme(data); recoveryErr == nil {
+			return strings.TrimSpace(recovered), nil
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(mnemonic), nil
+}
+
+func (s *Server) installNodeMnemonic(mnemonic string) error {
+	mnemonic = strings.TrimSpace(mnemonic)
+	wordCount := len(strings.Fields(mnemonic))
+	if wordCount != 12 && wordCount != 15 && wordCount != 18 && wordCount != 21 && wordCount != 24 {
+		return keys.ErrInvalidMnemonic
+	}
+	password, err := s.nodeMnemonicPassword()
+	if err != nil {
+		return err
+	}
+	sealed, err := keys.EncryptMnemonic(mnemonic, password)
+	if err != nil {
+		return err
+	}
+	path := config.MnemonicPathResolved(s.config)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".mnemonic-restore-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(sealed); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // handleAuditAPI handles audit log API requests.
