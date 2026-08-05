@@ -18,10 +18,10 @@ import (
 
 // Errors for backup/recovery
 var (
-	ErrInvalidBackup      = errors.New("invalid backup data")
-	ErrDecryptionFailed   = errors.New("failed to decrypt backup - wrong password?")
-	ErrInvalidMnemonic    = errors.New("invalid mnemonic phrase")
-	ErrChecksumMismatch   = errors.New("mnemonic checksum mismatch")
+	ErrInvalidBackup    = errors.New("invalid backup data")
+	ErrDecryptionFailed = errors.New("failed to decrypt backup - wrong password?")
+	ErrInvalidMnemonic  = errors.New("invalid mnemonic phrase")
+	ErrChecksumMismatch = errors.New("mnemonic checksum mismatch")
 )
 
 // BackupFormat represents an encrypted key backup.
@@ -322,4 +322,57 @@ func (m *Manager) ImportFromQRData(qrData, password string) error {
 	}
 
 	return m.ImportEncrypted(string(decoded), password)
+}
+
+// EncryptIdentityBackup seals the node's authoritative BIP-39 mnemonic for
+// transport. The returned JSON contains no legacy signing/encryption key files.
+func EncryptIdentityBackup(mnemonic, password string) (string, error) {
+	mnemonic = strings.TrimSpace(mnemonic)
+	if mnemonic == "" {
+		return "", ErrInvalidMnemonic
+	}
+	sealed, err := EncryptMnemonic(mnemonic, password)
+	if err != nil {
+		return "", fmt.Errorf("encrypt identity backup: %w", err)
+	}
+	envelope := struct {
+		Version    int    `json:"version"`
+		Kind       string `json:"kind"`
+		Ciphertext string `json:"ciphertext"`
+	}{
+		Version:    1,
+		Kind:       "sdn-node-mnemonic",
+		Ciphertext: base64.StdEncoding.EncodeToString(sealed),
+	}
+	encoded, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal identity backup: %w", err)
+	}
+	return string(encoded), nil
+}
+
+// DecryptIdentityBackup opens a transport backup created by
+// EncryptIdentityBackup and returns the authoritative mnemonic.
+func DecryptIdentityBackup(backup, password string) (string, error) {
+	var envelope struct {
+		Version    int    `json:"version"`
+		Kind       string `json:"kind"`
+		Ciphertext string `json:"ciphertext"`
+	}
+	if err := json.Unmarshal([]byte(backup), &envelope); err != nil || envelope.Version != 1 || envelope.Kind != "sdn-node-mnemonic" {
+		return "", ErrInvalidBackup
+	}
+	sealed, err := base64.StdEncoding.DecodeString(envelope.Ciphertext)
+	if err != nil {
+		return "", ErrInvalidBackup
+	}
+	mnemonic, err := DecryptMnemonic(sealed, password)
+	if err != nil {
+		return "", ErrDecryptionFailed
+	}
+	mnemonic = strings.TrimSpace(mnemonic)
+	if mnemonic == "" {
+		return "", ErrInvalidMnemonic
+	}
+	return mnemonic, nil
 }
