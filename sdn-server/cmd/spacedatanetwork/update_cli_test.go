@@ -241,6 +241,96 @@ func TestHelperPostApplyRestartRollsBackWhenDaemonHealthFails(t *testing.T) {
 	}
 }
 
+// TestHelperPostApplyRestartSupervisedNeverSpawns is the regression test for
+// sdn-update-helper-supervisor-mode: when the daemon reports it was started
+// by systemd, the helper must NEVER call StartDaemon (that direct spawn is
+// exactly what escapes the unit's cgroup while the unit loops "activating"
+// against the store lock) — it only health-waits for the supervisor's own
+// Restart= policy to bring the daemon back.
+func TestHelperPostApplyRestartSupervisedNeverSpawns(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	spawned := false
+
+	err := helperPostApplyRestart(context.Background(), helperPostApplyOptions{
+		Paths:       update.PathsFor(t.TempDir()),
+		RestartArgv: []string{"/opt/sdn/bin/spacedatanetwork", "daemon"},
+		Supervised:  true,
+		AdminURL:    "http://127.0.0.1:5080",
+		Out:         &out,
+		Err:         &errOut,
+		StartDaemon: func(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error) {
+			spawned = true
+			return fakeHelperProcess{pid: 9999}, nil
+		},
+		WaitHealth: func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error {
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("helperPostApplyRestart (supervised) error = %v", err)
+	}
+	if spawned {
+		t.Fatal("StartDaemon was called under Supervised=true — this is the escapes-systemd bug")
+	}
+	if !strings.Contains(out.String(), "restart=supervised") {
+		t.Fatalf("stdout = %q, want restart=supervised", out.String())
+	}
+	if !strings.Contains(out.String(), "daemon_health=healthy") {
+		t.Fatalf("stdout = %q, want daemon_health=healthy", out.String())
+	}
+}
+
+// TestHelperPostApplyRestartSupervisedRollsBackWithoutSpawning proves the
+// unhealthy-then-rollback branch also never spawns: the supervisor's own
+// Restart= policy is what brings the (now rolled-back) binary back up.
+func TestHelperPostApplyRestartSupervisedRollsBackWithoutSpawning(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	spawned := false
+	rolledBack := false
+	healthAttempts := 0
+
+	err := helperPostApplyRestart(context.Background(), helperPostApplyOptions{
+		Paths:       update.PathsFor(t.TempDir()),
+		RestartArgv: []string{"/opt/sdn/bin/spacedatanetwork", "daemon"},
+		Supervised:  true,
+		AdminURL:    "http://127.0.0.1:5080",
+		Out:         &out,
+		Err:         &errOut,
+		StartDaemon: func(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error) {
+			spawned = true
+			return fakeHelperProcess{pid: 9999}, nil
+		},
+		WaitHealth: func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error {
+			healthAttempts++
+			if healthAttempts == 1 {
+				return errors.New("new daemon health failed")
+			}
+			return nil
+		},
+		Rollback: func(paths update.Paths) (*update.RollbackResult, error) {
+			rolledBack = true
+			return &update.RollbackResult{
+				RestoredVersion: "1.0.0",
+				FailedPath:      filepath.Join(paths.Failed, "cli-bundle-beta-bad"),
+			}, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "rolled back to 1.0.0") {
+		t.Fatalf("helperPostApplyRestart (supervised) error = %v, want rollback error", err)
+	}
+	if spawned {
+		t.Fatal("StartDaemon was called under Supervised=true during rollback — this is the escapes-systemd bug")
+	}
+	if !rolledBack {
+		t.Fatal("rollback was not invoked after supervised daemon health failure")
+	}
+	if healthAttempts != 2 {
+		t.Fatalf("health attempts = %d, want 2 (initial + post-rollback)", healthAttempts)
+	}
+}
+
 type fakeHelperProcess struct {
 	pid  int
 	kill func() error
