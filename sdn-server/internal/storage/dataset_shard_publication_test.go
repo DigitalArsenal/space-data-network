@@ -68,6 +68,100 @@ func TestFlatSQLStoreRecordsDatasetShardPublications(t *testing.T) {
 	}
 }
 
+// TestDatasetShardPublicationReadsRecoverPoisonedEngine is the regression
+// test for sdn-dataset-shard-publications-poison-never-recovers: a trapped
+// engine used to fail List/FindDatasetShardPublication* for the rest of the
+// process lifetime, because nothing on this read path ever called
+// storage.RecoverPoisonedEngine (unlike the httpmount.go C.7 linked-flow
+// path and the one boot-time replay path in node.go). Poison the LIVE
+// engine directly (MarkPoisoned, the same mechanism a real trap sets) and
+// assert every read entry point self-heals instead of failing forever.
+func TestDatasetShardPublicationReadsRecoverPoisonedEngine(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	pub := DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "catalogfixture-gp",
+		BatchID:      "batch-001",
+		QueryProfile: DatasetPublicationQueryProfile,
+		Offset:       50_000,
+		Limit:        50_000,
+		RecordCount:  50_000,
+		ShardCID:     "bafkshard",
+		IndexCID:     "bafkindex",
+		ManifestCID:  "bafkmanifest",
+		PublishedAt:  time.Unix(1_778_436_000, 0).UTC(),
+	}
+	if err := store.UpsertDatasetShardPublication(pub); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication (pre-poison) failed: %v", err)
+	}
+
+	engineBefore, _ := store.EngineRuntime()
+	if engineBefore == nil || engineBefore.Poisoned() {
+		t.Fatalf("engine should be live and healthy before the test poisons it")
+	}
+	epochBefore := store.EngineEpoch()
+	engineBefore.MarkPoisoned()
+
+	listQuery := DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "catalogfixture-gp",
+		QueryProfile: DatasetPublicationQueryProfile,
+	}
+	got, err := store.ListDatasetShardPublications(listQuery)
+	if err != nil {
+		t.Fatalf("ListDatasetShardPublications after poisoning did not self-heal: %v", err)
+	}
+	if len(got) != 1 || got[0].ShardCID != pub.ShardCID {
+		t.Fatalf("ListDatasetShardPublications after recovery: got %#v", got)
+	}
+
+	if store.EngineEpoch() <= epochBefore {
+		t.Fatalf("engine epoch did not advance: before=%d after=%d", epochBefore, store.EngineEpoch())
+	}
+	engineAfter, _ := store.EngineRuntime()
+	if engineAfter == nil || engineAfter.Poisoned() {
+		t.Fatal("engine should be healthy (replaced) after ListDatasetShardPublications recovered it")
+	}
+
+	// FindDatasetShardPublication and FindDatasetShardPublicationByCID must
+	// independently self-heal too — poison again and hit each directly.
+	engineAfter.MarkPoisoned()
+	findQuery := DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "catalogfixture-gp",
+		BatchID:      "batch-001",
+		QueryProfile: DatasetPublicationQueryProfile,
+		Offset:       50_000,
+		Limit:        50_000,
+		RecordCount:  50_000,
+	}
+	if _, found, err := store.FindDatasetShardPublication(findQuery); err != nil || !found {
+		t.Fatalf("FindDatasetShardPublication after poisoning did not self-heal: found=%v err=%v", found, err)
+	}
+
+	if engine, _ := store.EngineRuntime(); engine != nil {
+		engine.MarkPoisoned()
+	}
+	if _, found, err := store.FindDatasetShardPublicationByCID(DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		QueryProfile: DatasetPublicationQueryProfile,
+	}, pub.ShardCID); err != nil || !found {
+		t.Fatalf("FindDatasetShardPublicationByCID after poisoning did not self-heal: found=%v err=%v", found, err)
+	}
+}
+
 func TestFlatSQLStoreChainsDatasetShardPublicationFeedEntries(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {

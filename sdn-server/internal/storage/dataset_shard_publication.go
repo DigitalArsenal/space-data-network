@@ -56,6 +56,28 @@ type DatasetShardPublicationQuery struct {
 	RecordCount  int
 }
 
+// recoverDatasetShardEngineIfPoisoned peeks the engine's poisoned bit
+// (EngineRuntime, RLock only — cheap) and, if set, calls
+// RecoverPoisonedEngine (its own write-lock cycle; idempotent, a no-op when
+// healthy) BEFORE the caller takes s.mu.RLock() for its own query. Without
+// this, a trap anywhere in the process poisons the engine for its whole
+// remaining lifetime on this read path: unlike the httpmount.go C.7 linked
+// -flow path and the one boot-time replay path (node.go), nothing else ever
+// calls RecoverPoisonedEngine, and s.db (a flatsqldrv facade over the SAME
+// poisonable flatsqlrt.Runtime) refuses every query from then on — the
+// host-02 2026-07-29 failure mode (node.go:2038-2046), recurring via this
+// unguarded call path (graph/tasks/sdn-dataset-shard-publications-poison-never-recovers.md).
+// MUST run before s.mu.RLock(): RecoverPoisonedEngine takes s.mu.Lock(),
+// and a same-goroutine RWMutex upgrade deadlocks.
+func (s *FlatSQLStore) recoverDatasetShardEngineIfPoisoned() error {
+	if engine, _ := s.EngineRuntime(); engine != nil && engine.Poisoned() {
+		if _, err := s.RecoverPoisonedEngine(); err != nil {
+			return fmt.Errorf("recover poisoned engine: %w", err)
+		}
+	}
+	return nil
+}
+
 func DatasetShardPublicationCARGroups(publications []DatasetShardPublication, maxSourceBytes int64) [][]DatasetShardPublication {
 	ordered := append([]DatasetShardPublication(nil), publications...)
 	sort.Slice(ordered, func(i, j int) bool {
@@ -267,6 +289,10 @@ func (s *FlatSQLStore) FindDatasetShardPublication(query DatasetShardPublication
 		return DatasetShardPublication{}, false, errors.New("limit must be positive")
 	}
 
+	if err := s.recoverDatasetShardEngineIfPoisoned(); err != nil {
+		return DatasetShardPublication{}, false, fmt.Errorf("find dataset shard publication: %w", err)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	pub, err := s.findDatasetShardPublicationLocked(query)
@@ -290,6 +316,10 @@ func (s *FlatSQLStore) FindDatasetShardPublicationByCID(query DatasetShardPublic
 	}
 	if shardCID == "" {
 		return DatasetShardPublication{}, false, errors.New("shard cid is required")
+	}
+
+	if err := s.recoverDatasetShardEngineIfPoisoned(); err != nil {
+		return DatasetShardPublication{}, false, fmt.Errorf("find dataset shard publication by cid: %w", err)
 	}
 
 	where := []string{`schema_name = ?`, `query_profile = ?`, `shard_cid = ?`}
@@ -403,6 +433,10 @@ func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicatio
 	if query.RecordCount > 0 {
 		where = append(where, `record_count = ?`)
 		args = append(args, query.RecordCount)
+	}
+
+	if err := s.recoverDatasetShardEngineIfPoisoned(); err != nil {
+		return nil, fmt.Errorf("list dataset shard publications: %w", err)
 	}
 
 	s.mu.RLock()
