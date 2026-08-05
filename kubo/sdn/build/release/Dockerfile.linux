@@ -86,19 +86,12 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM scratch AS artifact
 COPY --from=build /out/ /
 
-# test-env: the exact build environment (Go toolchain + patched WasmEdge)
-# with NO source baked in — scripts/test-docker.sh bind-mounts the repo and
-# runs `go test` inside, so tests execute against the same libwasmedge the
-# prod binary links. Kept as a separate target so `--target artifact`
-# release builds are unaffected.
-FROM golang:${GO_VER}-bookworm AS test-env
-COPY --from=wasmedge /opt/wasmedge /opt/wasmedge
-RUN set -eux; \
-    if [ -d /opt/wasmedge/lib64 ] && [ ! -e /opt/wasmedge/lib ]; then ln -s lib64 /opt/wasmedge/lib; fi; \
-    ls /opt/wasmedge/lib/libwasmedge.so*
-ENV CGO_ENABLED=1 \
-    GOTOOLCHAIN=local \
-    CGO_CFLAGS="-I/opt/wasmedge/include" \
-    CGO_LDFLAGS="-L/opt/wasmedge/lib -lwasmedge" \
-    LD_LIBRARY_PATH=/opt/wasmedge/lib
-WORKDIR /src
+# The `go test` lane moved out of this file (ops-wasmedge-pin-drift-test-lane,
+# 2026-08): it used to run here as a `test-env` target against this file's
+# WASMEDGE_VER (0.14.1, source-compiled with the atomic-wait patch above) —
+# off the 0.16.4 every host actually runs. scripts/test-docker.sh now builds
+# deployment/docker/Dockerfile.test-env instead, which installs WasmEdge via
+# scripts/install-wasmedge.sh (the same recipe the shipped binaries use).
+# This file's own WASMEDGE_VER stays pinned to what the kubo/sdn release
+# artifact under artifact/ is built and reproduced against; bump it
+# deliberately, per the header comment, if that binary's runtime moves.

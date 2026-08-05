@@ -1,32 +1,40 @@
 #!/usr/bin/env bash
 # test-docker.sh — run the Go test suites inside the release build container.
 #
-# Tests execute in the SAME environment the linux/amd64 prod binary is built
-# in (golang-bookworm + the patched WasmEdge from Dockerfile.linux), so
-# wasm-runtime behavior under test matches what ships. GitHub Actions is
-# owner-banned; this and ci-local.sh are the only CI.
+# Tests execute against the SAME WasmEdge runtime + install recipe the
+# linux/amd64 prod binary is built with (deployment/docker/Dockerfile.test-env
+# runs scripts/install-wasmedge.sh, exactly like deployment/docker/Dockerfile's
+# builder stage), so wasm-runtime behavior under test matches what ships.
+# GitHub Actions is owner-banned; this and ci-local.sh are the only CI.
+#
+# Fixed 2026-08 (ops-wasmedge-pin-drift-test-lane): this used to build from
+# kubo/sdn/build/release/Dockerfile.linux's `test-env` target, which compiled
+# a DIFFERENT, OFF-PIN WasmEdge 0.14.1 from source. Every host runs 0.16.4;
+# the image tag below must move with scripts/install-wasmedge.sh's
+# WASMEDGE_VERSION default (single source of truth, per
+# space-data-module-sdk/src/testing/wasmedgePin.json) — bump both together.
 #
 # Usage:
 #   scripts/test-docker.sh                      # sdn-server + kubo/sdn suites
 #   scripts/test-docker.sh sdn-server ./internal/storage/
 #   scripts/test-docker.sh kubo ./sdn/... -run TestFoo
 #
-# First run builds the test image (WasmEdge compiles from source — slow once,
-# cached after). Go build/module caches persist in named volumes.
+# First run builds the test image (installs WasmEdge — slow once, cached
+# after). Go build/module caches persist in named volumes.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DOCKERFILE="$ROOT/kubo/sdn/build/release/Dockerfile.linux"
-IMAGE="sdn-test-env:wasmedge-0.14.1"
+DOCKERFILE="$ROOT/deployment/docker/Dockerfile.test-env"
+IMAGE="sdn-test-env:wasmedge-0.16.4"
 PLATFORM="${SDN_TEST_PLATFORM:-linux/amd64}"
 
 log() { printf '\033[0;36m[test-docker]\033[0m %s\n' "$*"; }
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1 || [ "${SDN_TEST_REBUILD:-0}" = "1" ]; then
-  log "building test image ($PLATFORM) — first build compiles WasmEdge, be patient"
-  docker buildx build --platform "$PLATFORM" --target test-env \
-    --load -t "$IMAGE" -f "$DOCKERFILE" "$ROOT/kubo"
+  log "building test image ($PLATFORM) — first build installs WasmEdge, be patient"
+  docker buildx build --platform "$PLATFORM" \
+    --load -t "$IMAGE" -f "$DOCKERFILE" "$ROOT"
 fi
 
 run_suite() {
