@@ -1,0 +1,40 @@
+# Go test environment for scripts/test-docker.sh.
+#
+# Fixes ops-wasmedge-pin-drift-test-lane: the test lane used to build from
+# kubo/sdn/build/release/Dockerfile.linux's `test-env` target, which compiled
+# WasmEdge 0.14.1 FROM SOURCE with a 0.14.1-specific atomic-wait-notify patch
+# — a different, older runtime than every host actually runs (0.16.4, which
+# fixes the same atomic-wait defect upstream and needs no patch; see
+# src/testing/wasmedgePin.json in space-data-module-sdk, the tri-runtime pin
+# source of truth). That drift produced a false "it's the WasmEdge pin" lead
+# during mod-flatsql-query-params-unreachable-trap.
+#
+# This target instead reuses scripts/install-wasmedge.sh — the EXACT recipe
+# deployment/docker/Dockerfile's builder stage uses to produce the binaries
+# that actually ship — so the release image, the test image and the host
+# installer read one version (WASMEDGE_VERSION, default 0.16.4) instead of
+# three. Bumping the runtime is one edit to install-wasmedge.sh's default;
+# no second copy of the version lives here.
+#
+# Build context is the REPO ROOT (not kubo/), matching install-wasmedge.sh's
+# path. Run via scripts/test-docker.sh; do not build by hand with a stale tag.
+
+FROM golang:1.25-bookworm AS test-env
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY scripts/install-wasmedge.sh ./scripts/install-wasmedge.sh
+RUN chmod +x ./scripts/install-wasmedge.sh && ./scripts/install-wasmedge.sh
+
+ENV WASMEDGE_DIR=/root/.wasmedge \
+    CGO_ENABLED=1 \
+    GOTOOLCHAIN=local \
+    CGO_CFLAGS="-I/root/.wasmedge/include" \
+    CGO_LDFLAGS="-L/root/.wasmedge/lib -Wl,-rpath,/root/.wasmedge/lib" \
+    LD_LIBRARY_PATH=/root/.wasmedge/lib
+
+WORKDIR /src
