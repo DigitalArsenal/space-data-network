@@ -106,6 +106,59 @@ scp_cmd() {
     scp "${ssh_opts[@]}" "$src" "${SSH_USER}@${ip}:${dest}"
 }
 
+# SHA-256 of a local file, portable across macOS (shasum) and Linux
+# (sha256sum) build machines. Same convention as scripts/install.sh's
+# calculate_sha256 — kept a separate copy here since deploy.sh has no shared
+# lib to source, but the algorithm and output (bare hex digest) must match.
+checksum_sha256() {
+    local file="$1"
+    if command -v sha256sum &> /dev/null; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum &> /dev/null; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        log_error "No SHA-256 tool found (need sha256sum or shasum) — cannot verify a deploy checksum"
+        exit 1
+    fi
+}
+
+# Stage a locally-built file on a remote host and verify its SHA-256 was not
+# altered in transit/at rest BEFORE any caller treats it as live.
+#
+# sdn-deploy-checksum-manifest: the local-Docker-build -> scp deploy path had
+# NO integrity check on the host — nothing verified the scp'd bytes beyond
+# the ssh transport itself, so a corrupted or substituted binary was
+# undetectable at cutover. This computes the hash independently on BOTH
+# ends (never trusts a single side's arithmetic) and fails closed: any
+# mismatch, or the absence of a hash tool on the remote host, aborts the
+# deploy and removes the staged file rather than leaving it to be picked up
+# by an unguarded next step. Caller is responsible for the atomic swap from
+# remote_path into its final location — this function only proves the bytes
+# that landed match the bytes that were built.
+remote_stage_and_verify() {
+    local local_file="$1" ip="$2" remote_path="$3"
+    local expected actual
+
+    expected="$(checksum_sha256 "$local_file")"
+    scp_cmd "$local_file" "$ip" "$remote_path"
+    actual="$(ssh_cmd "$ip" "sha256sum '${remote_path}' 2>/dev/null | awk '{print \$1}' || shasum -a 256 '${remote_path}' 2>/dev/null | awk '{print \$1}'")"
+
+    if [[ -z "$actual" ]]; then
+        log_error "checksum verify: could not compute a remote hash for ${ip}:${remote_path} (no sha256sum/shasum on host) — refusing cutover"
+        ssh_cmd "$ip" "rm -f '${remote_path}'" || true
+        exit 1
+    fi
+    if [[ "$expected" != "$actual" ]]; then
+        log_error "CHECKSUM MISMATCH staging $(basename "$local_file") on ${ip}:${remote_path}"
+        log_error "  local  (built):  $expected"
+        log_error "  remote (staged): $actual"
+        log_error "Refusing cutover — the staged bytes do not match what was built."
+        ssh_cmd "$ip" "rm -f '${remote_path}'" || true
+        exit 1
+    fi
+    log_success "checksum verified (${expected:0:12}...) for $(basename "$local_file") on $ip"
+}
+
 # Rsync a directory or file to a server
 rsync_cmd() {
     local src=$1
@@ -541,10 +594,11 @@ deploy_binary() {
     (cd "${PROJECT_ROOT}/sdn-server" && \
         GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "/tmp/${binary}" "./cmd/${binary}")
 
-    # Copy binary
+    # Copy binary — staged + checksum-verified BEFORE it is treated as live
+    # (sdn-deploy-checksum-manifest).
     ssh_cmd "$ip" "mkdir -p /opt/sdn/bin"
-    scp_cmd "/tmp/${binary}" "$ip" "/opt/sdn/bin/"
-    ssh_cmd "$ip" "chmod +x /opt/sdn/bin/${binary}"
+    remote_stage_and_verify "/tmp/${binary}" "$ip" "/opt/sdn/bin/${binary}.staged"
+    ssh_cmd "$ip" "mv /opt/sdn/bin/${binary}.staged /opt/sdn/bin/${binary} && chmod +x /opt/sdn/bin/${binary}"
 
     # Create systemd service
     cat << EOF | ssh_cmd "$ip" "cat > /etc/systemd/system/sdn-${type}.service"
