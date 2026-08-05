@@ -253,8 +253,9 @@ var updateHelperApplyCmd = &cobra.Command{
 				return fmt.Errorf("parse restart argv: %w", err)
 			}
 		}
+		var daemonSupervised bool
 		if strings.TrimSpace(helperApplyAdminURL) != "" && strings.TrimSpace(helperApplyToken) != "" {
-			daemonArgv, err := requestDaemonUpdateShutdown(&http.Client{Timeout: 10 * time.Second}, helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
+			daemonArgv, supervised, err := requestDaemonUpdateShutdown(&http.Client{Timeout: 10 * time.Second}, helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "daemon_shutdown=unavailable error=%q\n", err.Error())
 			} else {
@@ -262,6 +263,7 @@ var updateHelperApplyCmd = &cobra.Command{
 				if len(restartArgv) == 0 {
 					restartArgv = daemonArgv
 				}
+				daemonSupervised = supervised
 				time.Sleep(2 * time.Second)
 			}
 		}
@@ -279,6 +281,7 @@ var updateHelperApplyCmd = &cobra.Command{
 		return helperPostApplyRestart(cmd.Context(), helperPostApplyOptions{
 			Paths:         update.PathsFor(helperApplyBundleRoot),
 			RestartArgv:   restartArgv,
+			Supervised:    daemonSupervised,
 			AdminURL:      helperApplyAdminURL,
 			NoRestart:     helperApplyNoRestart,
 			Out:           out,
@@ -524,8 +527,19 @@ func (p helperExecProcess) Kill() error {
 }
 
 type helperPostApplyOptions struct {
-	Paths         update.Paths
-	RestartArgv   []string
+	Paths       update.Paths
+	RestartArgv []string
+	// Supervised, when true, means the DAEMON we are restarting reported it
+	// was started by systemd (INVOCATION_ID in its own environment — see
+	// requestDaemonUpdateShutdown). Direct-spawning RestartArgv in that case
+	// leaves a live, unsupervised replacement outside the unit's cgroup
+	// while the unit's own Restart= policy loops "activating" against the
+	// store's single-writer lock (six occurrences on lane boxes, graph task
+	// sdn-update-helper-supervisor-mode). When Supervised is true this
+	// function never calls StartDaemon: the daemon's own shutdown already
+	// exits the supervised process, the supervisor's Restart= policy brings
+	// it back under the SAME unit, and this only health-waits for that.
+	Supervised    bool
 	AdminURL      string
 	NoRestart     bool
 	Out           io.Writer
@@ -575,6 +589,10 @@ func helperPostApplyRestart(ctx context.Context, opts helperPostApplyOptions) er
 		timeout = 60 * time.Second
 	}
 
+	if opts.Supervised {
+		return helperPostApplyRestartSupervised(ctx, opts, waitHealth, rollback, client, out, errOut, timeout)
+	}
+
 	process, err := start(opts.RestartArgv, out, errOut)
 	if err != nil {
 		return fmt.Errorf("restart daemon: %w", err)
@@ -607,6 +625,48 @@ func helperPostApplyRestart(ctx context.Context, opts helperPostApplyOptions) er
 		fmt.Fprintf(out, "restart=started pid=%d\n", restoredProcess.PID())
 		if restoredHealthErr := waitHealth(ctx, client, opts.AdminURL, timeout); restoredHealthErr != nil {
 			return fmt.Errorf("daemon health failed after update; rolled back to %s but restored daemon is unhealthy: %w",
+				rollbackResult.RestoredVersion, restoredHealthErr)
+		}
+		fmt.Fprintln(out, "daemon_health=healthy")
+		return fmt.Errorf("daemon health failed after update; rolled back to %s", rollbackResult.RestoredVersion)
+	}
+}
+
+// helperPostApplyRestartSupervised is the opts.Supervised branch of
+// helperPostApplyRestart: it NEVER calls StartDaemon. The daemon we asked to
+// shut down (requestDaemonUpdateShutdown) was itself started by systemd, so
+// its own exit is what the unit's Restart= policy is watching for — the
+// supervisor brings it back under the SAME unit/cgroup on its own. All this
+// does is wait for that to happen, and if it does not, roll back the bundle
+// and wait again (the supervisor keeps retrying on whatever binary is on
+// disk, so a rollback is enough — no second process to spawn here either).
+func helperPostApplyRestartSupervised(
+	ctx context.Context,
+	opts helperPostApplyOptions,
+	waitHealth func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error,
+	rollback func(paths update.Paths) (*update.RollbackResult, error),
+	client *http.Client,
+	out, errOut io.Writer,
+	timeout time.Duration,
+) error {
+	fmt.Fprintln(out, "restart=supervised")
+	fmt.Fprintln(out, "next=the supervising init restarts the daemon under its own unit; not direct-spawning")
+	if strings.TrimSpace(opts.AdminURL) == "" {
+		return nil
+	}
+	if err := waitHealth(ctx, client, opts.AdminURL, timeout); err == nil {
+		fmt.Fprintln(out, "daemon_health=healthy")
+		return nil
+	} else {
+		fmt.Fprintf(errOut, "daemon_health=unhealthy error=%q\n", err.Error())
+		rollbackResult, rollbackErr := rollback(opts.Paths)
+		if rollbackErr != nil {
+			return fmt.Errorf("daemon health failed after update and rollback failed: %v: %w", err, rollbackErr)
+		}
+		fmt.Fprintf(out, "rollback=applied restored_version=%s failed_path=%s\n",
+			rollbackResult.RestoredVersion, rollbackResult.FailedPath)
+		if restoredHealthErr := waitHealth(ctx, client, opts.AdminURL, timeout); restoredHealthErr != nil {
+			return fmt.Errorf("daemon health failed after update; rolled back to %s but supervised restart is still unhealthy: %w",
 				rollbackResult.RestoredVersion, restoredHealthErr)
 		}
 		fmt.Fprintln(out, "daemon_health=healthy")
@@ -691,34 +751,40 @@ func generateUpdateControlToken() (string, error) {
 	return hex.EncodeToString(raw[:]), nil
 }
 
-func requestDaemonUpdateShutdown(client *http.Client, rawAdminURL string, bundleRoot string, token string) ([]string, error) {
+// requestDaemonUpdateShutdown asks the live daemon to shut down for an
+// update-apply and reports its restart argv plus whether IT was supervised
+// by systemd (INVOCATION_ID set in its own environment — the daemon is the
+// only party that can answer this reliably; the helper's own environment
+// says nothing about how the daemon it is restarting was started).
+func requestDaemonUpdateShutdown(client *http.Client, rawAdminURL string, bundleRoot string, token string) (restartArgv []string, supervised bool, err error) {
 	shutdownURL, err := adminEndpointURL(rawAdminURL, "/api/v1/admin/update/shutdown")
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	body, err := json.Marshal(map[string]string{
 		"token":      token,
 		"bundleRoot": bundleRoot,
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	resp, err := client.Post(shutdownURL, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, fmt.Errorf("daemon update shutdown rejected: %s %s", resp.Status, strings.TrimSpace(string(data)))
+		return nil, false, fmt.Errorf("daemon update shutdown rejected: %s %s", resp.Status, strings.TrimSpace(string(data)))
 	}
 	var result struct {
 		RestartArgv []string `json:"restartArgv"`
+		Supervised  bool     `json:"supervised"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return result.RestartArgv, nil
+	return result.RestartArgv, result.Supervised, nil
 }
 
 func adminEndpointURL(rawAdminURL string, endpointPath string) (string, error) {

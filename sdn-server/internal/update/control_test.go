@@ -45,6 +45,55 @@ func TestControlHandlerAcceptsLoopbackOneTimeToken(t *testing.T) {
 	}
 }
 
+// TestControlHandlerReportsSystemdSupervision is the regression test for
+// sdn-update-helper-supervisor-mode: the shutdown response must tell the
+// helper whether THIS daemon was started by systemd (INVOCATION_ID), since
+// the helper cannot infer that from its own environment.
+func TestControlHandlerReportsSystemdSupervision(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		invocationID   string
+		wantSupervised bool
+	}{
+		{name: "unsupervised (no INVOCATION_ID)", invocationID: "", wantSupervised: false},
+		{name: "supervised (systemd sets INVOCATION_ID)", invocationID: "abc123deadbeef", wantSupervised: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("INVOCATION_ID", tc.invocationID)
+
+			root := t.TempDir()
+			paths := PathsFor(root)
+			if err := WriteControlToken(paths, "token-123"); err != nil {
+				t.Fatalf("WriteControlToken failed: %v", err)
+			}
+			handler := NewControlHandler(ControlHandlerOptions{
+				BundleRoot: root,
+				Shutdown:   func() {},
+			})
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/update/shutdown", bytes.NewBufferString(`{"token":"token-123","bundleRoot":"`+filepath.ToSlash(root)+`"}`))
+			req.RemoteAddr = "127.0.0.1:43123"
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `"supervised":`+boolJSON(tc.wantSupervised)) {
+				t.Fatalf("body = %s, want supervised=%v", rec.Body.String(), tc.wantSupervised)
+			}
+		})
+	}
+}
+
+func boolJSON(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
 func TestControlHandlerRejectsNonLoopback(t *testing.T) {
 	root := t.TempDir()
 	if err := WriteControlToken(PathsFor(root), "token-123"); err != nil {

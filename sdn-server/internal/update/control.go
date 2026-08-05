@@ -35,6 +35,23 @@ type controlShutdownResponse struct {
 	PID         int      `json:"pid"`
 	BundleRoot  string   `json:"bundleRoot"`
 	RestartArgv []string `json:"restartArgv,omitempty"`
+	// Supervised reports whether THIS daemon process was started by a
+	// supervising init (systemd sets INVOCATION_ID for every process it
+	// manages, system or --user scope). The helper direct-spawning
+	// RestartArgv after a supervised daemon exits leaves the live
+	// replacement outside the unit's cgroup while the unit itself loops
+	// "activating" against the store's single-writer lock (six occurrences,
+	// graph task sdn-update-helper-supervisor-mode) — the helper must skip
+	// the direct spawn and let the supervisor's own Restart= policy respawn
+	// it when this is true.
+	Supervised bool `json:"supervised"`
+}
+
+// isSupervisedBySystemd reports whether the CURRENT process was started by
+// systemd (INVOCATION_ID is set for every unit-managed process since systemd
+// 232, system and user scope alike; nothing else sets it).
+func isSupervisedBySystemd() bool {
+	return strings.TrimSpace(os.Getenv("INVOCATION_ID")) != ""
 }
 
 func NewControlHandler(opts ControlHandlerOptions) http.Handler {
@@ -100,6 +117,7 @@ func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		PID:         os.Getpid(),
 		BundleRoot:  h.bundleRoot,
 		RestartArgv: os.Args,
+		Supervised:  isSupervisedBySystemd(),
 	})
 	if h.shutdown != nil {
 		go h.shutdown()
