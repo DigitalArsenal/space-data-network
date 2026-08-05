@@ -242,7 +242,18 @@ func TestAOTCache(t *testing.T) {
 		t.Fatalf("AOT query: rows=%#v err=%v", res, err)
 	}
 
-	// Second runtime hits the cache (no recompile: same single cache entry).
+	// Second runtime hits the cache: it must load the SAME artifact path rt
+	// did, AND that file must not have been rewritten (mtime unchanged) —
+	// i.e. no second compile happened. These are direct reuse assertions,
+	// not a directory-entry count: dir is the shared, cross-run dev cache
+	// (see the comment above) and can legitimately already hold artifacts
+	// from other engine builds or libwasmedge versions, so "exactly 1 file
+	// total" is the wrong invariant and is flaky against that legacy content.
+	wantPath := rt.Mode().ArtifactPath
+	before, err := os.Stat(wantPath)
+	if err != nil {
+		t.Fatalf("stat artifact before reuse: %v", err)
+	}
 	rt2, err := New(WithAOTCache(dir))
 	if err != nil {
 		t.Fatalf("New (cached): %v", err)
@@ -251,9 +262,15 @@ func TestAOTCache(t *testing.T) {
 	if !rt2.AOT() {
 		t.Fatal("cached runtime not AOT")
 	}
-	entries, _ = os.ReadDir(dir)
-	if len(entries) != 1 {
-		t.Fatalf("cache dir has %d entries after reuse, want 1", len(entries))
+	if got := rt2.Mode().ArtifactPath; got != wantPath {
+		t.Fatalf("cache reuse loaded a different artifact: got %s, want %s (cache key moved — no reuse)", got, wantPath)
+	}
+	after, err := os.Stat(wantPath)
+	if err != nil {
+		t.Fatalf("stat artifact after reuse: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("cache reuse rewrote the artifact (recompiled instead of reusing): mtime %v -> %v", before.ModTime(), after.ModTime())
 	}
 }
 
