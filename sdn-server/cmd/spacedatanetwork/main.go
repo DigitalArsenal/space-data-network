@@ -33,8 +33,8 @@ import (
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	logging "github.com/ipfs/go-log/v2"
-	libp2phost "github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/event"
+	libp2phost "github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -234,7 +234,7 @@ var showIdentityCmd = &cobra.Command{
 PeerID, xpub, signing public key, and optionally the mnemonic phrase itself.
 
 The mnemonic is only shown when --show-mnemonic is passed.
-Password is resolved from SDN_KEY_PASSWORD env, config, or machine default.`,
+Password is resolved from SDN_KEY_PASSWORD, SDN_KEY_PASSWORD_FILE, config, or machine default.`,
 	RunE: runShowIdentity,
 }
 
@@ -5235,6 +5235,15 @@ func ensureNodeMnemonic(ctx context.Context, cfg *config.Config, generateMnemoni
 		return nodeMnemonicInitResult{}, fmt.Errorf("read mnemonic file %s: %w", mnemonicPath, err)
 	}
 
+	// Resolve before generating anything. A resealed box can legitimately have
+	// no mnemonic at this instant; if its mounted password file is unavailable,
+	// generating first creates key material that must never be sealed under a
+	// fallback.
+	keyPassword, err := resolveKeyCLIPassword(cfg)
+	if err != nil {
+		return nodeMnemonicInitResult{}, err
+	}
+
 	mnemonic, err := generateMnemonic(ctx)
 	if err != nil {
 		return nodeMnemonicInitResult{}, fmt.Errorf("generate node mnemonic: %w", err)
@@ -5243,19 +5252,6 @@ func ensureNodeMnemonic(ctx context.Context, cfg *config.Config, generateMnemoni
 		return nodeMnemonicInitResult{}, fmt.Errorf("generated mnemonic is empty")
 	}
 
-	keyPassword := os.Getenv("SDN_KEY_PASSWORD")
-	if keyPassword == "" {
-		keyPassword = cfg.Security.KeyPassword
-	}
-	if keyPassword == "" {
-		// SEALING lane: a refused machine derivation (unknown user, source
-		// unreadable to this process) must abort init — sealing under a
-		// substitute key forks the key space silently.
-		keyPassword, err = keys.DeriveDefaultPassword()
-		if err != nil {
-			return nodeMnemonicInitResult{}, fmt.Errorf("derive machine-default key password: %w", err)
-		}
-	}
 	encrypted, err := keys.EncryptMnemonic(strings.TrimSpace(mnemonic), keyPassword)
 	if err != nil {
 		return nodeMnemonicInitResult{}, fmt.Errorf("encrypt node mnemonic: %w", err)
@@ -5392,16 +5388,9 @@ func runShowIdentity(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "config: %s\n", cfgRes.Describe())
 
-	// Resolve key password: env > config > machine default
-	keyPassword := os.Getenv("SDN_KEY_PASSWORD")
-	if keyPassword == "" {
-		keyPassword = cfg.Security.KeyPassword
-	}
-	if keyPassword == "" {
-		keyPassword, err = keys.DeriveDefaultPassword()
-		if err != nil {
-			return fmt.Errorf("derive machine-default key password: %w", err)
-		}
+	keyPassword, err := resolveKeyCLIPassword(cfg)
+	if err != nil {
+		return err
 	}
 
 	// Locate mnemonic file
