@@ -7,6 +7,7 @@ package flowrt
 
 import (
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -39,19 +40,29 @@ func TestLinkShimBytesMatchSDK(t *testing.T) {
 	}
 }
 
+// linkedImportFixtureWasm is a minimal synthetic module (testdata/, ~55
+// bytes) importing from both "flatsql" and "flatsql_link" — never
+// instantiated, only import-section-scanned. wasmImportsModule() detection
+// is a pure function of the import section, so it is unit-tested against a
+// fixture we control rather than the live space-data-network-modules
+// data-retrieval dist: that dist's engineLinkage evolves independently
+// (gen2 moved data-retrieval to the "bridge"/hostcall capability model —
+// see the C.7 integration tests below and
+// graph/tasks/sdn-gauntlet-required-reds-flowrt-hdwallet.md), and a
+// detection-algorithm test has no business depending on which linkage mode
+// one particular external flow currently ships.
+//
+//go:embed testdata/linked-import-fixture.wasm
+var linkedImportFixtureWasm []byte
+
 func TestWasmImportsModuleDetection(t *testing.T) {
-	dist := dataRetrievalFlowDist(t)
-	wasm, err := readFlowArtifactForTest(dist)
-	if err != nil {
-		t.Fatalf("read artifact: %v", err)
+	if !wasmImportsModule(linkedImportFixtureWasm, "flatsql") {
+		t.Fatal("fixture should import module flatsql")
 	}
-	if !wasmImportsModule(wasm, "flatsql") {
-		t.Fatal("linked data-retrieval artifact should import module flatsql")
+	if !wasmImportsModule(linkedImportFixtureWasm, LinkShimModuleName) {
+		t.Fatal("fixture should import module flatsql_link")
 	}
-	if !wasmImportsModule(wasm, LinkShimModuleName) {
-		t.Fatal("linked data-retrieval artifact should import module flatsql_link")
-	}
-	if wasmImportsModule(wasm, "no_such_module") {
+	if wasmImportsModule(linkedImportFixtureWasm, "no_such_module") {
 		t.Fatal("false positive import detection")
 	}
 	if wasmImportsModule([]byte("garbage"), "flatsql") {

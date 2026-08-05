@@ -33,7 +33,18 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-// dataRetrievalFlowDist locates the compiled flow bundle. Override with
+// dataRetrievalFlowDist locates the compiled flow bundle and requires it to
+// be an engine-LINKED artifact (imports wasm module "flatsql" — loop C.7):
+// every caller in this file and engine_link_test.go exercises the
+// direct-engine-link mount path specifically. The module-sdk gen2 compiler
+// can also emit "bridge" (hostcall-only, engineLinkage:"bridge" in
+// artifact.json) builds for the same flow — a real, non-buggy linkage
+// mode, just not the one these tests cover — so a bridge-mode build here
+// means the suite has no linked fixture to run against, not that the mount
+// path is broken. Skip loudly rather than fail: see
+// graph/tasks/sdn-gauntlet-required-reds-flowrt-hdwallet.md for the
+// follow-up (a dedicated linked-mode test fixture, decoupled from
+// data-retrieval's own architecture, is filed there). Override with
 // SDN_DATA_RETRIEVAL_FLOW_DIST; defaults to the sibling
 // space-data-network-modules checkout.
 func dataRetrievalFlowDist(t *testing.T) string {
@@ -45,6 +56,13 @@ func dataRetrievalFlowDist(t *testing.T) string {
 	}
 	if _, err := os.Stat(filepath.Join(dist, "runtime.wasm")); err != nil {
 		t.Skipf("data-retrieval flow bundle not found at %s (set SDN_DATA_RETRIEVAL_FLOW_DIST): %v", dist, err)
+	}
+	wasm, err := readFlowArtifactForTest(dist)
+	if err != nil {
+		t.Skipf("data-retrieval flow bundle at %s unreadable: %v", dist, err)
+	}
+	if !wasmImportsModule(wasm, flatsqlrt.EngineImportModule) {
+		t.Skipf("data-retrieval flow bundle at %s is bridge-linked (engineLinkage=bridge), not engine-linked (imports %q) — no linked fixture available for the C.7 mount tests (graph/tasks/sdn-gauntlet-required-reds-flowrt-hdwallet.md)", dist, flatsqlrt.EngineImportModule)
 	}
 	return dist
 }
