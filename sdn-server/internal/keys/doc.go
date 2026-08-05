@@ -60,11 +60,11 @@
 //
 //	signature, _ := mgr.Sign(data)
 //
-// Export encrypted backup:
+// Export the authoritative mnemonic as an encrypted identity backup:
 //
-//	backup, _ := mgr.ExportEncrypted("password")
+//	backup, _ := keys.EncryptIdentityBackup(mnemonic, "password")
 //
 // Import from backup:
 //
-//	err := mgr.ImportEncrypted(backupJSON, "password")
+//	mnemonic, err := keys.DecryptIdentityBackup(backup, "password")
 package keys
