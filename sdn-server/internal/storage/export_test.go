@@ -19,6 +19,7 @@ import (
 
 	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
@@ -148,6 +149,129 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 		if record.Offset < 0 || record.Length <= 0 {
 			t.Fatalf("record %d has invalid byte range: %+v", i, record)
 		}
+	}
+}
+
+// TestExportDatasetWindowCarriesSourceBatchLicense is the regression test
+// for sdn-dataset-publication-license-carriage: SourceTags already carries
+// License/LicenseURL/Citation/ShareAlike (ingest_license_test.go proves
+// that side), and buildDPMSourceBatch already writes them onto the wire
+// when DatasetExportSourceBatch carries them (manifest.go) — the missing
+// link was summarizeExportSourceBatches (export.go) silently dropping all
+// four fields when building DatasetExportSourceBatch from
+// DatasetExportIndexRecord.SourceTags at export time, blocking the
+// owner-ordered SatNOGS $RFB publication (CC-BY-SA).
+func TestExportDatasetWindowCarriesSourceBatchLicense(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-export-license-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(tmpDir, "db"), validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "satnogs-rfb",
+		SourceURL:    "https://db.satnogs.org/api/",
+		BatchID:      "batch-license-export-1",
+		ContentKeyID: "public",
+		License:      "CC-BY-SA-4.0",
+		LicenseURL:   "https://creativecommons.org/licenses/by-sa/4.0/",
+		Citation:     "SatNOGS DB contributors, CC BY-SA 4.0",
+		ShareAlike:   true,
+	}
+	record := sds.NewCATBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS (ZARYA)").
+		WithObjectID("1998-067A").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build()
+	if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:satnogs", nil, tags); err != nil {
+		t.Fatalf("store record failed: %v", err)
+	}
+
+	from := time.Now().Add(-time.Hour)
+	to := time.Now().Add(time.Hour)
+	export, err := store.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
+		SchemaName:         "CAT.fbs",
+		ProviderID:         "space-data-network-02",
+		SourceName:         "satnogs-rfb",
+		BatchID:            "batch-license-export-1",
+		CAReadyResidentSet: true,
+		From:               &from,
+		To:                 &to,
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+	if len(export.SourceBatches) != 1 {
+		t.Fatalf("SourceBatches = %#v, want exactly 1", export.SourceBatches)
+	}
+	got := export.SourceBatches[0]
+	if got.License != tags.License {
+		t.Fatalf("License = %q, want %q", got.License, tags.License)
+	}
+	if got.LicenseURL != tags.LicenseURL {
+		t.Fatalf("LicenseURL = %q, want %q", got.LicenseURL, tags.LicenseURL)
+	}
+	if got.Citation != tags.Citation {
+		t.Fatalf("Citation = %q, want %q", got.Citation, tags.Citation)
+	}
+	if got.ShareAlike != tags.ShareAlike {
+		t.Fatalf("ShareAlike = %v, want %v", got.ShareAlike, tags.ShareAlike)
+	}
+}
+
+// TestBuildDPMSourceBatchWritesLicenseFields is a narrow unit test for the
+// OTHER half of the license-carriage chain: buildDPMSourceBatch must write
+// LICENSE/LICENSE_URL/CITATION onto the wire when DatasetExportSourceBatch
+// carries them (this half was already correct — TestExportDatasetWindow
+// CarriesSourceBatchLicense above covers the half that was missing), and
+// must leave them unset (not empty-string) when the batch declares none, so
+// a licence-free batch still produces byte-identical vtables/signatures.
+func TestBuildDPMSourceBatchWritesLicenseFields(t *testing.T) {
+	licensed := DatasetExportSourceBatch{
+		SourceName:   "satnogs-rfb",
+		SourceURL:    "https://db.satnogs.org/api/",
+		SourceSHA256: "batch-sha",
+		RecordCount:  1,
+		License:      "CC-BY-SA-4.0",
+		LicenseURL:   "https://creativecommons.org/licenses/by-sa/4.0/",
+		Citation:     "SatNOGS DB contributors, CC BY-SA 4.0",
+	}
+	builder := flatbuffers.NewBuilder(256)
+	offset := buildDPMSourceBatch(builder, licensed)
+	builder.Finish(offset)
+	got := dpm.GetRootAsDPMSourceBatch(builder.FinishedBytes(), 0)
+	if string(got.LICENSE()) != licensed.License {
+		t.Fatalf("wire LICENSE = %q, want %q", got.LICENSE(), licensed.License)
+	}
+	if string(got.LICENSE_URL()) != licensed.LicenseURL {
+		t.Fatalf("wire LICENSE_URL = %q, want %q", got.LICENSE_URL(), licensed.LicenseURL)
+	}
+	if string(got.CITATION()) != licensed.Citation {
+		t.Fatalf("wire CITATION = %q, want %q", got.CITATION(), licensed.Citation)
+	}
+
+	unlicensed := DatasetExportSourceBatch{SourceName: "no-license-source", SourceSHA256: "batch-sha-2", RecordCount: 1}
+	builder2 := flatbuffers.NewBuilder(256)
+	offset2 := buildDPMSourceBatch(builder2, unlicensed)
+	builder2.Finish(offset2)
+	got2 := dpm.GetRootAsDPMSourceBatch(builder2.FinishedBytes(), 0)
+	if len(got2.LICENSE()) != 0 || len(got2.LICENSE_URL()) != 0 || len(got2.CITATION()) != 0 {
+		t.Fatalf("unlicensed batch must leave license fields unset: LICENSE=%q LICENSE_URL=%q CITATION=%q",
+			got2.LICENSE(), got2.LICENSE_URL(), got2.CITATION())
 	}
 }
 
