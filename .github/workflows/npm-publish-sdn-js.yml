@@ -33,8 +33,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+        # No submodules: build:package compiles sdn-js/src only, and the
+        # private SpaceAware-UI submodule fails an unauthenticated recursive
+        # checkout (sdn-js-npm-publish-blocked-by-submodule).
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
