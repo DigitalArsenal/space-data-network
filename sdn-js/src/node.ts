@@ -74,6 +74,12 @@ import {
 } from "./flatsql-sync";
 
 const TOPIC_PREFIX = "/spacedatanetwork/sds/";
+/**
+ * Key namespace for raw (binary) subscriptions inside the shared subscription
+ * map, so subscribe() and subscribeRaw() on the same schema never evict each
+ * other while stop() still cancels both.
+ */
+const RAW_SUBSCRIPTION_PREFIX = "raw:";
 type Libp2pCreateOptions = NonNullable<Parameters<typeof createLibp2p>[0]>;
 export const LEGACY_ID_EXCHANGE_PROTOCOL =
   "/space-data-network/id-exchange/1.0.0";
@@ -478,21 +484,89 @@ export class SDNNode {
   }
 
   /**
-   * Unsubscribe from a schema topic
+   * Subscribe to the raw bytes of a schema topic.
+   *
+   * The counterpart to publishRaw(): subscribe() JSON.parses every payload and
+   * drops anything that is not JSON, but live SDS traffic (PNM announcements on
+   * /spacedatanetwork/sds/PNM.fbs, module-delivery envelopes) is binary
+   * size-prefixed FlatBuffers, so the JSON path silently discards 100% of it.
+   *
+   * This is a connector, not a codec: the payload is handed to the caller
+   * VERBATIM — no decode, no schema validation, and no implicit local storage
+   * (exactly as publishRaw performs no implicit store). Decoding is the
+   * caller's job, which keeps FlatBuffer/IDL knowledge out of the host lib.
+   *
+   * Raw and JSON subscriptions are tracked independently, so a topic may carry
+   * both at once without either cancelling the other.
    */
-  async unsubscribe(schema: SchemaName): Promise<void> {
-    if (!this.libp2p) return;
+  async subscribeRaw(
+    schema: SchemaName | string,
+    handler: (bytes: Uint8Array, from: string) => void,
+  ): Promise<void> {
+    if (!this.libp2p) {
+      throw new Error("Node not initialized");
+    }
 
     const topicName = TOPIC_PREFIX + schema;
     const pubsub = this.libp2p.services.pubsub as GossipSub;
 
-    pubsub.unsubscribe(topicName);
+    pubsub.subscribe(topicName);
+
+    const controller = new AbortController();
+    this.subscriptions.set(RAW_SUBSCRIPTION_PREFIX + schema, controller);
+
+    pubsub.addEventListener(
+      "message",
+      (evt: CustomEvent) => {
+        if (evt.detail.topic !== topicName) return;
+
+        const msgData = evt.detail.data as Uint8Array;
+        if (!msgData || msgData.length === 0) return;
+
+        handler(msgData, evt.detail.from.toString());
+      },
+      { signal: controller.signal },
+    );
+  }
+
+  /**
+   * Cancel a raw subscription without disturbing a JSON subscribe() on the
+   * same topic (and vice versa): the gossipsub topic is only left once no
+   * subscription of either kind remains.
+   */
+  async unsubscribeRaw(schema: SchemaName | string): Promise<void> {
+    if (!this.libp2p) return;
+
+    const key = RAW_SUBSCRIPTION_PREFIX + schema;
+    const controller = this.subscriptions.get(key);
+    if (controller) {
+      controller.abort();
+      this.subscriptions.delete(key);
+    }
+
+    if (this.subscriptions.has(String(schema))) return;
+
+    const pubsub = this.libp2p.services.pubsub as GossipSub;
+    pubsub.unsubscribe(TOPIC_PREFIX + schema);
+  }
+
+  /**
+   * Unsubscribe from a schema topic
+   */
+  async unsubscribe(schema: SchemaName): Promise<void> {
+    if (!this.libp2p) return;
 
     const controller = this.subscriptions.get(schema);
     if (controller) {
       controller.abort();
       this.subscriptions.delete(schema);
     }
+
+    // A raw subscription on the same topic must survive this call.
+    if (this.subscriptions.has(RAW_SUBSCRIPTION_PREFIX + schema)) return;
+
+    const pubsub = this.libp2p.services.pubsub as GossipSub;
+    pubsub.unsubscribe(TOPIC_PREFIX + schema);
   }
 
   /**
