@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
-	logging "github.com/ipfs/go-log/v2"
 	p2pforge "github.com/ipshipyard/p2p-forge/client"
 	"github.com/multiformats/go-multiaddr"
 
@@ -159,7 +158,13 @@ func newAutoTLSCertManager(cfg config.AutoTLSConfig, dataPath string) (*p2pforge
 	// zap's global logger (zap.L()) is a no-op here because nothing calls
 	// zap.ReplaceGlobals, so routing p2p-forge/certmagic there would have
 	// thrown every ACME line on the floor.
-	rawLogger := logging.Logger("autotls").Desugar()
+	//
+	// It hangs off THIS package's logger rather than a fresh
+	// logging.Logger("autotls") because go-log applies SetAllLoggers only to
+	// subsystems that already exist when the daemon configures logging; a
+	// subsystem registered later inherits the default level (Error), which
+	// silently swallowed every ACME line the first time this shipped.
+	rawLogger := log.Desugar().Named("autotls")
 	certmagic.Default.Logger = rawLogger.Named("certmagic-default")
 	certmagic.DefaultACME.Logger = rawLogger.Named("certmagic-acme")
 
