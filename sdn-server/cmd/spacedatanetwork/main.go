@@ -2372,23 +2372,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      10 * time.Minute,
 				IdleTimeout:       120 * time.Second,
-				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					// Tunnel secure websocket upgrades to the local libp2p ws listener.
-					// This bypasses adminSecurityMiddleware entirely: it is a raw
-					// proxy passthrough, not a normal admin-mux response. The admin
-					// mux's OWN websocket endpoints (/ws pubsub bridge, /ws/status
-					// telemetry) must never be tunneled — without this exemption
-					// every ws client on a TLS admin listener gets a libp2p
-					// multistream banner instead of the endpoint it dialed.
-					if wsUpgradeProxy != nil && isWebSocketUpgradeRequest(r) && !isAdminWebSocketPath(r.URL.Path) {
-						wsUpgradeProxy.ServeHTTP(w, r)
-						return
-					}
-
+				Handler: newAdminUpgradeRouter(
+					wsUpgradeProxy,
 					adminSecurityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						serveAdminMuxRequest(w, r, adminMux, cfg.Admin.RequireAuth, assetOIDCCapabilityMounted, authHandler, publicAPIRequest)
-					}), tlsManager.Mode(), publicAPIRequest).ServeHTTP(w, r)
-				}),
+					}), tlsManager.Mode(), publicAPIRequest),
+				),
 			}
 			go func() {
 				if cfg.Admin.RequireAuth && authHandler != nil {
@@ -3418,6 +3407,49 @@ func isAdminWebSocketPath(path string) bool {
 	return false
 }
 
+// newAdminUpgradeRouter is the admin listener's TOP-LEVEL handler: it decides,
+// before anything else runs, whether a request is a libp2p websocket dial to be
+// tunnelled or an ordinary admin/dashboard request.
+//
+// THIS ORDER IS THE CONTRACT, and it is why this is a named function with tests
+// (TestAdminRootPathWebSocketUpgradeReturns101) rather than an anonymous
+// closure inside a 5000-line RunE. The dashboard is mounted at the catch-all
+// "/", so if the mux — or any middleware in front of it — ever gets to see a
+// root-path `Connection: Upgrade` first, the node answers a browser's libp2p
+// dial with 200 and a page of HTML, and every browser on the network silently
+// loses its data path while the site itself looks perfectly healthy. That
+// failure mode is invisible to every check that only asks "is the homepage up".
+//
+// Three rules, all load-bearing:
+//
+//  1. A websocket upgrade on ANY path other than the admin mux's own websocket
+//     endpoints is proxied to the local libp2p /ws listener, bypassing
+//     adminSecurityMiddleware entirely — it is a raw passthrough, not an admin
+//     response, and the libp2p security handshake is the authentication.
+//  2. /ws (pubsub bridge) and /ws/status (telemetry) are NEVER tunnelled;
+//     without that exemption every ws client on a TLS admin listener gets a
+//     libp2p multistream banner instead of the endpoint it dialled.
+//  3. With no tunnel configured (adminTLS off, or no local /ws listener found)
+//     every request falls through to the admin surface unchanged.
+//
+// NOTE FOR ANYONE PROBING THIS IN PRODUCTION: sdn.spaceaware.io sits behind a
+// CDN that speaks HTTP/2 to clients, and HTTP/2 cannot carry `Connection:
+// Upgrade` at all — it is a connection-specific header the protocol forbids. A
+// curl probe that negotiates h2 therefore reaches this handler as a PLAIN GET
+// and correctly receives the dashboard with 200. That is a property of the
+// probe, not of the node: probe with --http1.1 (RFC 8441 h2 websockets are not
+// in play here). Mistaking the h2 200 for a broken tunnel cost this task its
+// first hour.
+func newAdminUpgradeRouter(wsUpgradeProxy http.Handler, admin http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if wsUpgradeProxy != nil && isWebSocketUpgradeRequest(r) && !isAdminWebSocketPath(r.URL.Path) {
+			wsUpgradeProxy.ServeHTTP(w, r)
+			return
+		}
+		admin.ServeHTTP(w, r)
+	})
+}
+
 func isWebSocketUpgradeRequest(r *http.Request) bool {
 	if r == nil {
 		return false
@@ -3441,46 +3473,101 @@ func headerHasToken(rawValue string, token string) bool {
 	return false
 }
 
+// resolveLocalLibp2pWsProxyTarget picks the PLAINTEXT, LOOPBACK-REACHABLE
+// libp2p websocket listener that the admin listener's upgrade tunnel proxies
+// into (see newAdminUpgradeRouter).
+//
+// "Plaintext" is the part that is easy to get wrong and expensive to get wrong.
+// The tunnel speaks cleartext HTTP to 127.0.0.1: TLS is terminated once, at the
+// admin listener. So any listen address that terminates TLS ITSELF is a wrong
+// answer, and since the AutoTLS connector landed (internal/node/autotls.go) the
+// node can publish exactly such an address:
+//
+//	/ip4/167.172.219.213/tcp/4001/tls/sni/*.libp2p.direct/ws
+//
+// It contains "/ws", it does not contain "/wss", and it SHARES its TCP port
+// with the plain TCP transport (libp2p.ShareTCPListener) — so the previous
+// substring scan selected it, derived port 4001, and pointed the browser tunnel
+// at a TLS listener over cleartext. Every browser upgrade would 502 while the
+// node logged nothing but a proxy error. Parsing the multiaddr instead of
+// scanning it for "/ws" removes the whole class.
+//
+// Preference order, and both preferences are load-bearing:
+//  1. an explicitly LOOPBACK plain /ws listener (host-01's /ip4/127.0.0.1/tcp/
+//     18080/ws) — guaranteed reachable at the 127.0.0.1 address the proxy dials;
+//  2. any other plain /ws listener, whose port is reachable on loopback when it
+//     is bound to 0.0.0.0 (which go-libp2p reports expanded per interface).
 func resolveLocalLibp2pWsProxyTarget(listenAddrs []string) (*url.URL, string) {
+	var fallbackPort, fallbackAddr string
+
 	for _, rawAddr := range listenAddrs {
 		addr := strings.TrimSpace(rawAddr)
 		if addr == "" {
 			continue
 		}
-		if strings.Contains(addr, "/wss") || !strings.Contains(addr, "/ws") {
+		port, loopback, ok := plainLocalWsListener(addr)
+		if !ok {
 			continue
 		}
-		port := extractTCPPortFromMultiaddr(addr)
-		if port == "" {
+		if loopback {
+			if target, err := url.Parse("http://127.0.0.1:" + port); err == nil {
+				return target, addr
+			}
 			continue
 		}
-
-		target, err := url.Parse("http://127.0.0.1:" + port)
-		if err != nil {
-			continue
+		if fallbackPort == "" {
+			fallbackPort, fallbackAddr = port, addr
 		}
-		return target, addr
 	}
 
+	if fallbackPort != "" {
+		if target, err := url.Parse("http://127.0.0.1:" + fallbackPort); err == nil {
+			return target, fallbackAddr
+		}
+	}
 	return nil, ""
 }
 
-func extractTCPPortFromMultiaddr(addr string) string {
-	clean := strings.Trim(addr, "/")
-	if clean == "" {
-		return ""
+// plainLocalWsListener reports the TCP port of a CLEARTEXT websocket listen
+// address and whether it is bound to loopback. ok is false for anything the
+// tunnel must not proxy into: a TLS-terminating listener (/wss, or the AutoTLS
+// /tls/sni/.../ws form), a non-websocket transport, or an address with no TCP
+// port.
+func plainLocalWsListener(addr string) (port string, loopback bool, ok bool) {
+	ma, err := multiaddr.NewMultiaddr(addr)
+	if err != nil {
+		return "", false, false
 	}
-	parts := strings.Split(clean, "/")
-	for i := 0; i+1 < len(parts); i++ {
-		if parts[i] != "tcp" {
-			continue
-		}
-		port := strings.TrimSpace(parts[i+1])
-		if port != "" {
-			return port
+
+	sawWS := false
+	for _, proto := range ma.Protocols() {
+		switch proto.Code {
+		case multiaddr.P_WS:
+			sawWS = true
+		case multiaddr.P_WSS, multiaddr.P_TLS, multiaddr.P_QUIC, multiaddr.P_QUIC_V1,
+			multiaddr.P_WEBTRANSPORT, multiaddr.P_WEBRTC_DIRECT, multiaddr.P_CIRCUIT:
+			// TLS is terminated at the admin listener, once. A listener that
+			// terminates it again cannot be spoken to in cleartext.
+			return "", false, false
 		}
 	}
-	return ""
+	if !sawWS {
+		return "", false, false
+	}
+
+	port, err = ma.ValueForProtocol(multiaddr.P_TCP)
+	if err != nil || strings.TrimSpace(port) == "" {
+		return "", false, false
+	}
+
+	for _, code := range []int{multiaddr.P_IP4, multiaddr.P_IP6} {
+		if host, err := ma.ValueForProtocol(code); err == nil {
+			if ip := net.ParseIP(strings.TrimSpace(host)); ip != nil && ip.IsLoopback() {
+				return port, true, true
+			}
+		}
+	}
+	return port, false, true
 }
 
 // anyTierAuthenticatedTrust is the trust floor for the session-introspection
