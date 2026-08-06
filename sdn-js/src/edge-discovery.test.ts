@@ -11,6 +11,8 @@ import {
   rankBrowserBootstrapAddrs,
   resolvePeerBootstrapAddrs,
   getBootstrapRelays,
+  SPACEAWARE_RELAY_PEER_ID,
+  CELESTRAK_RELAY_PEER_ID,
 } from './edge-discovery';
 
 describe('edge-discovery', () => {
@@ -59,12 +61,48 @@ describe('edge-discovery', () => {
     });
 
     it('never ships a plain /ws address (mixed content on an HTTPS origin)', () => {
+      // The forbidden thing is an UNENCRYPTED websocket, not the four
+      // characters "/ws": an AutoTLS address ends `/tls/ws/p2p/…` and is
+      // exactly what we want to ship. Strip the TLS-wrapped form first, then
+      // assert nothing insecure survives.
       for (const relay of [
         ...DEFAULT_EDGE_RELAYS,
         ...Object.values(REGIONAL_FALLBACK_RELAYS).flat(),
       ]) {
-        expect(relay).not.toMatch(/\/ws(\/|$)/);
+        expect(relay.replace('/tls/ws', '')).not.toMatch(/\/ws(\/|$)/);
       }
+    });
+
+    // ops-host02-browser-relay-promotion (owner ruling 2026-08-06). Before
+    // this, the fleet advertised ONE CA-authenticated browser-dialable address
+    // and ensureMinimumRelays could not honestly clear a floor of 2 with
+    // distinct nodes.
+    it('ships TWO distinct browser-dialable nodes, not one address twice', () => {
+      const peers = new Set(
+        DEFAULT_EDGE_RELAYS.map((r) => r.split('/p2p/')[1]).filter(Boolean),
+      );
+      expect(peers.size).toBeGreaterThanOrEqual(2);
+      expect(peers.has(SPACEAWARE_RELAY_PEER_ID)).toBe(true);
+      expect(peers.has(CELESTRAK_RELAY_PEER_ID)).toBe(true);
+    });
+
+    it('bootstraps celestrak.eth over its AutoTLS libp2p.direct address', () => {
+      // Live-verified 2026-08-06 from this package's own js-libp2p stack:
+      // DIAL_OK 499 ms, limits null (direct), Let's Encrypt chain verified
+      // off-box. The libp2p.direct label is the node's OWN peer id in base36,
+      // so the name and its certificate rotate with the node, not with a
+      // pinned hash.
+      const celestrak = DEFAULT_EDGE_RELAYS.find((r) =>
+        r.includes(CELESTRAK_RELAY_PEER_ID),
+      );
+      expect(celestrak).toBeDefined();
+      expect(celestrak).toContain('.libp2p.direct/');
+      expect(celestrak).toContain('/tls/ws/');
+      expect(celestrak).not.toContain('/certhash/');
+      expect(isBrowserDialableAddr(celestrak as string)).toBe(true);
+      // The SHORT /dns4 form is load-bearing: @libp2p/websockets discards the
+      // long /ip4/…/tls/sni/<name>/ws form before opening a socket.
+      expect(celestrak?.startsWith('/dns4/')).toBe(true);
     });
   });
 
