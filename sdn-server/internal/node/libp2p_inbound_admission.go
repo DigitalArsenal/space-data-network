@@ -121,8 +121,8 @@ func applyUpgraderAcceptQueueLength() {
 // publish lane — refusing inbound is an outage, not a statistic. Everything else
 // is counted and summarised.
 type inboundAdmissionReporter struct {
-	allowedInbound atomic.Uint64
-	blockedInbound atomic.Uint64
+	allowedInbound  atomic.Uint64
+	blockedInbound  atomic.Uint64
 	allowedOutbound atomic.Uint64
 	blockedOutbound atomic.Uint64
 
