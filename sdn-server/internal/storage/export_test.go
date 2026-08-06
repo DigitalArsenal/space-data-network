@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1480,5 +1481,81 @@ func TestBuildSignedDatasetPublicationManifestBindsExportAndQuery(t *testing.T) 
 	var source dpm.DPMSourceBatch
 	if !root.SOURCES(&source, 0) || string(source.SOURCE_URL()) == "" {
 		t.Fatalf("source batch missing: %+v", source)
+	}
+}
+
+// TestExportDatasetWindowRefusesDuringRecordCatalogReplay is the regression
+// test for sdn-replay-checkpoint-resume: the in-memory FlatSQL control tables
+// hold no state across a restart (flatsql.go), so a store reopened the way the
+// daemon opens it — WithDeferredRecordCatalogReplay — answers every query
+// truthfully for whatever has landed so far and silently for what has not.
+// Before this fix, ExportDatasetWindow queried straight through a partial
+// replay and produced a partial (or, early on, empty) shard that reported
+// success — the "run completed but landed no batch" failure that blocked the
+// owner-ordered RFB publication lane. Export must now refuse with
+// ErrRecordCatalogHydrating instead, and must succeed once hydration lands.
+func TestExportDatasetWindowRefusesDuringRecordCatalogReplay(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(basePath, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	tags := SourceTags{ProviderID: "prov-a", SourceName: "catalogfixture-gp", BatchID: "batch-1"}
+	record := sds.NewCATBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS (ZARYA)").
+		WithObjectID("1998-067A").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build()
+	if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:catalogfixture", nil, tags); err != nil {
+		t.Fatalf("store record failed: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	// Reopen exactly the way the daemon opens it post-boot: replay deferred so
+	// admin/network surfaces can start before catalog-scale hydration finishes.
+	reopened, err := NewFlatSQLStore(basePath, validator,
+		WithDeferredBootRebuilds(), WithDeferredRecordCatalogReplay())
+	if err != nil {
+		t.Fatalf("deferred reopen failed: %v", err)
+	}
+	defer reopened.Close()
+	if reopened.RecordCatalogHydrated() {
+		t.Fatal("record catalog must not report hydrated before replay on a deferred reopen")
+	}
+
+	outDir := filepath.Join(t.TempDir(), "export")
+	filter := IndexedRecordQuery{
+		SchemaName: "CAT.fbs",
+		ProviderID: "prov-a",
+		SourceName: "catalogfixture-gp",
+		BatchID:    "batch-1",
+		Limit:      10,
+	}
+	if _, err := reopened.ExportDatasetWindow(outDir, filter); !errors.Is(err, ErrRecordCatalogHydrating) {
+		t.Fatalf("ExportDatasetWindow before replay: err = %v, want ErrRecordCatalogHydrating", err)
+	}
+
+	if _, err := reopened.ReplayRecordCatalog(false, nil); err != nil {
+		t.Fatalf("ReplayRecordCatalog: %v", err)
+	}
+	if !reopened.RecordCatalogHydrated() {
+		t.Fatal("record catalog must report hydrated after ReplayRecordCatalog")
+	}
+
+	export, err := reopened.ExportDatasetWindow(outDir, filter)
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow after replay: %v", err)
+	}
+	if export.RecordCount != 1 {
+		t.Fatalf("RecordCount = %d, want 1", export.RecordCount)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -110,6 +111,21 @@ type DatasetExportMaterializedMap struct {
 	ActivePayloads  []int            `json:"activePayloads,omitempty"`
 }
 
+// ErrRecordCatalogHydrating is returned by ExportDatasetWindow when the
+// compact record-catalog replay has not finished landing this process's
+// control tables (see record_catalog_replay.go: the in-memory FlatSQL engine
+// holds NO durable state of its own and is rebuilt from the journal on every
+// boot, so "partway through hydration" is a real, observable window, not a
+// corner case). Querying through a partial catalog does not fail loudly — it
+// silently returns however many rows have landed so far, which is the exact
+// failure this guard closes: a query-selected export (ARCHIVE PIN) is
+// PERMANENT once written, and an ordinary publication run that lands a
+// partial shard reports success ("run completed") while quietly shipping
+// less data than the query actually matches. Callers should treat this as
+// transient and retry once RecordCatalogHydrated() reports true; the
+// underlying data is never lost, only not yet visible to SQL.
+var ErrRecordCatalogHydrating = errors.New("record catalog is still hydrating: export refused rather than built from a partial replay")
+
 // ExportDatasetWindow writes a native FlatSQL size-prefixed FlatBuffer shard
 // and a deterministic materialized index for an indexed FlatSQL query.
 func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecordQuery) (*DatasetExport, error) {
@@ -118,6 +134,17 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	}
 	if filter.SchemaName == "" {
 		return nil, fmt.Errorf("schema name is required")
+	}
+	// The caller MUST confirm hydration first (mirrors SourceRecordCounts'
+	// documented rule in source_record_counts.go): a store opened with
+	// deferred replay, or one mid-background-hydration, answers every SQL
+	// query truthfully for whatever HAS landed and is silent about what
+	// has not. Refuse loudly here rather than let a partial answer travel
+	// downstream as a signed, potentially PERMANENT export.
+	if !s.RecordCatalogHydrated() {
+		log.Warnf("ExportDatasetWindow refused: record catalog still hydrating (schema=%s provider=%s source=%s batch=%s)",
+			filter.SchemaName, filter.ProviderID, filter.SourceName, filter.BatchID)
+		return nil, fmt.Errorf("export dataset window schema=%s: %w", filter.SchemaName, ErrRecordCatalogHydrating)
 	}
 
 	records, err := s.QueryIndexedRecords(filter)
