@@ -29,29 +29,127 @@ const getEnvRelays = (): string[] | null => {
  * Prefer DNS-based addresses for production deployments.
  * IP addresses should only be used for development/testing.
  */
-const SPACEAWARE_RELAY_PEER_ID = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
-const CELESTRAK_RELAY_PEER_ID = '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3';
-const SPACEAWARE_WEBRTC_DIRECT =
-  `/ip4/104.131.11.220/udp/4003/webrtc-direct/certhash/uEiDHMHA60lI3WloWOnksNqBZe8J7zUcxrIV_yB6E5NBMyw/p2p/${SPACEAWARE_RELAY_PEER_ID}`;
-const CELESTRAK_WEBRTC_DIRECT =
-  `/ip4/167.172.219.213/udp/4003/webrtc-direct/certhash/uEiD8YU5I18BuOBAcE8z_3NFRoGnhu9dKdTjG7PAqVbAjEQ/p2p/${CELESTRAK_RELAY_PEER_ID}`;
+export const SPACEAWARE_RELAY_PEER_ID =
+  '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
 
-export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
-  // Primary relay for the current production deployment (nginx proxies 443 -> 8080).
-  `/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
-  // Direct browser-dialable full-node bootstrap addresses from provider descriptors.
-  SPACEAWARE_WEBRTC_DIRECT,
-  CELESTRAK_WEBRTC_DIRECT,
-];
+/**
+ * CA-authenticated, browser-dialable bootstrap address for the SpaceAware full
+ * node. Verified live 2026-08-06: dials through the Cloudflare-fronted
+ * sdn.spaceaware.io to peer 16Uiu2HAm1Lbv…Fm45 and yields a DIRECT connection
+ * (connection.limits === null, i.e. not a limited/transient relay hop), over
+ * which /space-data-network/module-delivery/1.0.0 negotiates.
+ *
+ * BOOTSTRAP ROT LAW (upstream-sdn-2): NEVER pin a self-signed certificate hash
+ * (webrtc-direct/certhash, webtransport/certhash) in a shipped bundle. Those
+ * hashes rotate whenever the node regenerates its transport certificate — the
+ * two that used to live here (104.131.11.220/udp/4003 and
+ * 167.172.219.213/udp/4003) were dead by 2026-08-06, and the node no longer
+ * advertises ANY webrtc-direct address. A CA-authenticated /dns4 + /wss address
+ * survives certificate rotation because it is validated against the public web
+ * PKI, not a pinned hash. Certhash addresses are fine when they are RESOLVED AT
+ * RUNTIME (see resolvePeerBootstrapAddrs), never when they are baked in.
+ */
+const SPACEAWARE_WSS = `/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`;
+
+export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [SPACEAWARE_WSS];
 
 /**
  * Fallback relays for regional availability
  */
 export const REGIONAL_FALLBACK_RELAYS: Record<string, string[]> = {
-  'us-east': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`, SPACEAWARE_WEBRTC_DIRECT],
-  'eu-west': [CELESTRAK_WEBRTC_DIRECT],
-  'ap-southeast': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`, SPACEAWARE_WEBRTC_DIRECT],
+  'us-east': [SPACEAWARE_WSS],
+  'eu-west': [SPACEAWARE_WSS],
+  'ap-southeast': [SPACEAWARE_WSS],
 };
+
+/**
+ * True when a multiaddr pins a self-signed certificate hash, which is
+ * guaranteed to rot in a shipped browser bundle.
+ */
+export function pinsCerthash(addr: string): boolean {
+  return addr.includes('/certhash/');
+}
+
+/**
+ * True when a multiaddr is dialable from a browser on an HTTPS origin: it must
+ * be authenticated by the public web PKI (/wss or /tls/ws on a DNS name, which
+ * covers AutoTLS libp2p.direct addresses) or carry its own certificate hash
+ * (webrtc-direct / webtransport), which is only acceptable when freshly
+ * resolved. Plain /ws is excluded: an HTTPS page cannot open an insecure
+ * WebSocket (mixed content), which is exactly why browsers were left with only
+ * a relayed/transient connection to the full node.
+ */
+export function isBrowserDialableAddr(addr: string): boolean {
+  const caAuthenticated =
+    /^\/dns(4|6|addr)?\//.test(addr) &&
+    (addr.includes('/wss') || addr.includes('/tls/ws'));
+  const selfCertified =
+    addr.includes('/webrtc-direct/') || addr.includes('/webtransport/');
+  return caAuthenticated || selfCertified;
+}
+
+/**
+ * Rank bootstrap addresses best-first for a browser:
+ *   1. CA-authenticated /wss or /tls/ws (survives certificate rotation)
+ *   2. freshly resolved certhash transports (webrtc-direct / webtransport)
+ * Anything a browser cannot dial from an HTTPS origin is dropped.
+ */
+export function rankBrowserBootstrapAddrs(addrs: string[]): string[] {
+  const dialable = addrs.filter(isBrowserDialableAddr);
+  return [
+    ...dialable.filter((a) => !pinsCerthash(a)),
+    ...dialable.filter((a) => pinsCerthash(a)),
+  ];
+}
+
+/** Options for runtime bootstrap-address resolution. */
+export interface ResolveBootstrapOptions {
+  /**
+   * Delegated routing endpoint (IPIP-337 /routing/v1). REQUIRED — there is no
+   * baked-in default on purpose: the SDN node UI must load ZERO external-origin
+   * bytes, so the caller (or the host node) decides which router to trust.
+   * Point this at the node's own /routing/v1 to stay same-origin.
+   */
+  routingEndpoint: string;
+  /** Abort/timeout control. */
+  signal?: AbortSignal;
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Resolve a peer's CURRENT bootstrap addresses from a delegated routing
+ * endpoint, best-first for browser dialing.
+ *
+ * This is the rot-proof half of the fix: instead of shipping a certificate
+ * hash that expires, ask the router what the peer advertises right now. The
+ * peer ID is the only stable pin, and it is verified by the libp2p handshake.
+ * Returns [] on any failure so the caller falls back to DEFAULT_EDGE_RELAYS.
+ */
+export async function resolvePeerBootstrapAddrs(
+  peerId: string,
+  options: ResolveBootstrapOptions,
+): Promise<string[]> {
+  const doFetch = options.fetchImpl ?? globalThis.fetch;
+  if (typeof doFetch !== 'function') return [];
+
+  const base = options.routingEndpoint.replace(/\/+$/, '');
+  try {
+    const res = await doFetch(`${base}/routing/v1/peers/${peerId}`, {
+      headers: { Accept: 'application/json' },
+      signal: options.signal,
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { Peers?: Array<{ Addrs?: string[] }> };
+    const addrs = (body.Peers ?? []).flatMap((p) => p.Addrs ?? []);
+    // Re-attach the /p2p/ component the router omits, so the result is dialable.
+    const withPeer = addrs.map((a) =>
+      a.includes('/p2p/') ? a : `${a}/p2p/${peerId}`,
+    );
+    return rankBrowserBootstrapAddrs([...new Set(withPeer)]);
+  } catch {
+    return [];
+  }
+}
 
 let edgeRelaysModule: EdgeRelaysModule | null = null;
 let cachedRelays: string[] | null = null;
@@ -218,13 +316,39 @@ export async function loadEdgeRelays(): Promise<string[]> {
  * Get bootstrap relay addresses
  * This is the main entry point for SDNNode initialization
  */
-export async function getBootstrapRelays(): Promise<string[]> {
+export async function getBootstrapRelays(
+  options?: Partial<ResolveBootstrapOptions> & { peerIds?: string[] },
+): Promise<string[]> {
+  let base: string[];
   try {
-    return await loadEdgeRelays();
+    base = await loadEdgeRelays();
   } catch (err) {
     console.warn('Failed to load edge relays, using fallback:', err);
-    return DEFAULT_EDGE_RELAYS;
+    base = DEFAULT_EDGE_RELAYS;
   }
+
+  // Optional runtime resolution: only when the caller supplies a routing
+  // endpoint (no external origin is contacted by default). Freshly resolved
+  // addresses are preferred over the static list, which is the anti-rot path.
+  if (!options?.routingEndpoint) return base;
+
+  const peerIds = options.peerIds?.length
+    ? options.peerIds
+    : [SPACEAWARE_RELAY_PEER_ID];
+  const resolved: string[] = [];
+  for (const peerId of peerIds) {
+    resolved.push(
+      ...(await resolvePeerBootstrapAddrs(peerId, {
+        routingEndpoint: options.routingEndpoint,
+        signal: options.signal,
+        fetchImpl: options.fetchImpl,
+      })),
+    );
+  }
+
+  if (resolved.length === 0) return base;
+  metrics.relaysDiscovered = resolved.length + base.length;
+  return [...new Set([...resolved, ...base])];
 }
 
 /**
