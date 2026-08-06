@@ -17,7 +17,7 @@ func TestHostTransportsBindDefaultListenAddressFamilies(t *testing.T) {
 			"/ip4/127.0.0.1/tcp/0/ws",
 			"/ip4/127.0.0.1/udp/0/quic-v1",
 		),
-	}, hostTransportOptions()...)
+	}, hostTransportOptions(nil)...)
 	host, err := libp2p.New(options...)
 	if err != nil {
 		t.Fatalf("libp2p.New with node transports: %v", err)

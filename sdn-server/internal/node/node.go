@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,7 @@ import (
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
+	p2pforge "github.com/ipshipyard/p2p-forge/client"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -182,6 +184,11 @@ type Node struct {
 	epmExchangeMu           sync.Mutex
 	epmExchangeLastRequest  map[peer.ID]time.Time
 	autoRelayPeerChan       chan peer.AddrInfo
+
+	// autoTLSCertMgr is the p2p-forge certificate connector (autotls.go); nil
+	// unless network.autotls.enabled. Held only so Stop() can stop its
+	// renewal goroutines.
+	autoTLSCertMgr          *p2pforge.P2PForgeCertMgr
 	datasetMaterializeMu    sync.Mutex
 	datasetMaterializedPNMs map[string]time.Time
 	datasetSupersedeMu      sync.Mutex
@@ -480,9 +487,23 @@ func (n *Node) init() error {
 		pinStore.DeclareConfigPin(addrInfo.ID, addrStrings, configPinNote)
 	}
 
+	// AutoTLS (connector, see autotls.go): built BEFORE the listen addresses
+	// are parsed because enabling it adds a `/tls/sni/*.<domain>/ws` address
+	// per plain TCP listener, and before the host because the websocket
+	// transport needs its TLS config at construction time.
+	autoTLSCertMgr, err := newAutoTLSCertManager(n.config.Network.AutoTLS, n.config.Storage.Path)
+	if err != nil {
+		return err
+	}
+	configuredListen := n.config.Network.Listen
+	if autoTLSCertMgr != nil {
+		configuredListen = withAutoTLSListenAddrs(configuredListen, autoTLSDomain(n.config.Network.AutoTLS))
+		log.Infof("AutoTLS enabled: listening on %v", configuredListen)
+	}
+
 	// Parse listen addresses
-	listenAddrs := make([]multiaddr.Multiaddr, 0, len(n.config.Network.Listen))
-	for _, addr := range n.config.Network.Listen {
+	listenAddrs := make([]multiaddr.Multiaddr, 0, len(configuredListen))
+	for _, addr := range configuredListen {
 		ma, err := multiaddr.NewMultiaddr(addr)
 		if err != nil {
 			return fmt.Errorf("invalid listen address %s: %w", addr, err)
@@ -517,11 +538,23 @@ func (n *Node) init() error {
 	// node_status_read.status hostcall (and its background sparkline
 	// sampler, see runBandwidthHistorySampler) later reads back.
 	n.bandwidthCounter = libp2pmetrics.NewBandwidthCounter()
+	var autoTLSTLSConfig *tls.Config
+	if autoTLSCertMgr != nil {
+		autoTLSTLSConfig = autoTLSCertMgr.TLSConfig()
+	}
 	hostOptions := append([]libp2p.Option{
 		libp2p.Identity(privKey),
 		libp2p.UserAgent(versioninfo.AgentVersion),
 		libp2p.ListenAddrs(listenAddrs...),
-	}, hostTransportOptions()...)
+	}, hostTransportOptions(autoTLSTLSConfig)...)
+	if autoTLSCertMgr != nil {
+		// Rewrites the wildcard SNI listen address into the concrete
+		// `<ip-with-dashes>.<peerid>.libp2p.direct` address this node
+		// ADVERTISES — the address a browser (and delegated routing) actually
+		// sees. Without it the node listens on a browser-dialable socket and
+		// tells nobody about it.
+		hostOptions = append(hostOptions, libp2p.AddrsFactory(autoTLSCertMgr.AddressFactory()))
+	}
 	n.host, err = libp2p.New(append(hostOptions,
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		libp2p.Security(noise.ID, noise.New),
@@ -551,6 +584,14 @@ func (n *Node) init() error {
 	}
 	hostCreated = true
 	n.dht = dhtRouting
+	if autoTLSCertMgr != nil {
+		autoTLSCertMgr.ProvideHost(n.host)
+		if err := autoTLSCertMgr.Start(); err != nil {
+			return fmt.Errorf("start autotls certificate manager: %w", err)
+		}
+		n.autoTLSCertMgr = autoTLSCertMgr
+		log.Infof("AutoTLS certificate manager started (domain %s)", autoTLSDomain(n.config.Network.AutoTLS))
+	}
 	go n.feedAutoRelayCandidates(n.ctx)
 	metrics.SetPeerCountFunc(func() int { return len(n.host.Network().Peers()) })
 
@@ -4333,6 +4374,11 @@ func (n *Node) Stop() error {
 		if err := n.plugins.Close(); err != nil {
 			log.Warnf("Error closing plugins: %v", err)
 		}
+	}
+
+	if n.autoTLSCertMgr != nil {
+		n.autoTLSCertMgr.Stop()
+		n.autoTLSCertMgr = nil
 	}
 
 	if err := n.host.Close(); err != nil {

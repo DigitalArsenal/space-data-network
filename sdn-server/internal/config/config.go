@@ -744,6 +744,81 @@ type NetworkConfig struct {
 	MaxMessagesPerSecond float64 `yaml:"max_messages_per_second"` // Maximum messages per second per peer (default: 100)
 	MaxMessagesPerMinute int     `yaml:"max_messages_per_minute"` // Maximum messages per minute per peer (default: 1000)
 	RateLimitBurst       int     `yaml:"rate_limit_burst"`        // Allow burst of messages up to this limit (default: 50)
+
+	// AutoTLS provisions a publicly-trusted certificate for this node's own
+	// peer identity so browsers can dial it. See AutoTLSConfig.
+	AutoTLS AutoTLSConfig `yaml:"autotls"`
+}
+
+// AutoTLSConfig configures libp2p AutoTLS (p2p-forge / libp2p.direct), the
+// connector that makes this node BROWSER-DIALABLE without a DNS record, a
+// certificate file, or exposing the admin listener.
+//
+// A browser on an https:// origin cannot open a plain ws:// socket and will not
+// accept a pinned self-signed certificate hash, so a node with only
+// /tcp + /ws + /quic addresses is unreachable from a web page except through a
+// relay. AutoTLS closes that: the forge broker verifies this node is reachable
+// at the multiaddrs it claims, solves an ACME DNS-01 challenge on its behalf,
+// and Let's Encrypt issues a wildcard certificate for
+// `*.<this-node's-peer-id-base36>.libp2p.direct`. The resulting listen address
+// shares the existing TCP port, so no new port is opened.
+//
+// Disabled by default: enabling it publishes this node's IP inside a public DNS
+// name and registers with a third-party broker, which is an operator decision.
+type AutoTLSConfig struct {
+	// Enabled turns the connector on. When true, every plain /ip4|/ip6 + /tcp
+	// listen address gains a matching `/tls/sni/*.<domain>/ws` address.
+	Enabled bool `yaml:"enabled"`
+
+	// StoragePath is the certmagic storage directory holding the ACME account
+	// key and the issued certificate. Defaults to <storage.path>/p2p-forge-certs.
+	// It MUST persist across restarts: a wiped directory means a fresh ACME
+	// order on every boot, which is how a node ends up rate-limited by the CA.
+	StoragePath string `yaml:"storage_path"`
+
+	// DomainSuffix overrides the forge domain (default: libp2p.direct).
+	DomainSuffix string `yaml:"domain_suffix"`
+
+	// RegistrationEndpoint overrides the broker (default:
+	// https://registration.libp2p.direct).
+	RegistrationEndpoint string `yaml:"registration_endpoint"`
+
+	// CAEndpoint overrides the ACME directory (default: Let's Encrypt
+	// production). Point it at the staging directory when testing issuance.
+	CAEndpoint string `yaml:"ca_endpoint"`
+
+	// RegistrationToken is an optional broker access token (FORGE_ACCESS_TOKEN).
+	RegistrationToken string `yaml:"registration_token"`
+
+	// RegistrationDelay delays the first registration attempt (Go duration).
+	// Empty means no delay, which is what an operator who explicitly enabled
+	// the connector asked for.
+	RegistrationDelay string `yaml:"registration_delay"`
+
+	// ShortAddrs controls the SHAPE of the advertised address. Unset means
+	// TRUE, and that default is measured, not cosmetic:
+	//
+	//	short (default): /dns4/<ip-dashed>.<peerid>.libp2p.direct/tcp/<port>/tls/ws
+	//	long:            /ip4/<ip>/tcp/<port>/tls/sni/<name>/ws
+	//
+	// Dialed from the js-libp2p stack sdn-js ships (@libp2p/websockets v8),
+	// the LONG form is rejected before a socket is opened — "The dial request
+	// has no valid addresses" — while the short form connects (measured
+	// 2026-08-06 against a live forge-issued certificate: DIAL_OK in 438 ms,
+	// limits null, i.e. direct and non-transient). sdn-js's own
+	// isBrowserDialableAddr() also requires a /dns prefix, so the long form
+	// would be filtered out of the bootstrap list even if the transport
+	// accepted it. A node that advertises only the long form is not
+	// browser-dialable, which defeats the entire purpose of the connector.
+	//
+	// Pointer so "unset" is distinguishable from "explicitly false"; an
+	// operator who wants the long form must ask for it.
+	ShortAddrs *bool `yaml:"short_addrs"`
+
+	// AllowPrivateAddrs skips the "wait for public reachability" gate and lets
+	// private multiaddrs be sent to the broker. TEST ONLY — on a real host it
+	// only removes the guard that keeps doomed registrations out of the log.
+	AllowPrivateAddrs bool `yaml:"allow_private_addrs"`
 }
 
 // GeoIPConfig configures the fail-open GeoLite2-City connector
