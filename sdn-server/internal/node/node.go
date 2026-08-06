@@ -2030,8 +2030,10 @@ func (n *Node) hydrateFullRecordCatalog(ctx context.Context) {
 	replayed, err := n.store.ReplayRecordCatalogContext(ctx, false, progress)
 	if err != nil {
 		if ctx.Err() != nil {
-			log.Infof("FlatSQL full record-catalog replay cancelled at %d records after %s (shutdown); it resumes on next boot",
-				replayed, time.Since(start).Round(time.Millisecond))
+			log.Infof("FlatSQL full record-catalog replay cancelled at %d records after %s (shutdown); "+
+				"the in-memory control tables hold NO durable state of their own, so this is NOT a checkpoint — "+
+				"next boot restarts the replay from the beginning of the journal, not from %d",
+				replayed, time.Since(start).Round(time.Millisecond), replayed)
 			return
 		}
 		log.Errorf("FlatSQL full record-catalog replay failed after %s: %v", time.Since(start).Round(time.Millisecond), err)

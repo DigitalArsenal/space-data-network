@@ -32,6 +32,31 @@ package storage
 // destructive frames: a historical RecordDelete / SourceKeep / GCOlderThan must
 // never land on top of a LIVE re-add of the same CID. The hydration shield below
 // closes exactly that hole.
+//
+// WHY THIS FILE DOES NOT PERSIST A CROSS-BOOT REPLAY CURSOR (sdn-replay-checkpoint-resume).
+// The obvious-looking fix for "replay restarts from record 0 every boot" is to
+// save the last-applied journal offset and resume from it next time. That fix
+// is UNSOUND here and must not be reintroduced: engine.CreateDatabase opens a
+// brand-new IN-MEMORY "sdn-control" database on every process start (flatsql.go
+// — "dbPath no longer names a real SQLite file, the engine is in-memory"), so
+// the control tables a saved cursor would "resume into" are always EMPTY. Seeking
+// past frame N without replaying frames [0,N) would silently drop every record
+// those frames describe — strictly worse than the slow-convergence bug it would
+// "fix". A correct cursor requires the control-table STATE to survive the
+// restart too (an engine snapshot/serialize path, which flatsqlrt does not
+// currently expose), not just an offset int64.
+//
+// What IS safe, and what this loop actually did instead:
+//  1. FAIL CLOSED while incomplete (export.go ErrRecordCatalogHydrating) — a
+//     query-selected export (archive pin, publication shard, manifest replay
+//     verification) refuses rather than silently landing a partial answer.
+//  2. Honest logging: a cancelled replay says it restarts from the beginning
+//     next boot, not that it "resumes" (node.go hydrateFullRecordCatalog).
+//  3. Convergence speed is still open work: either a fast index/summary-only
+//     pre-pass ahead of the full per-record replay (the "newest-first" shape
+//     this task floated), or genuine engine-state persistence. Either is a
+//     real design change, not a one-line follow-up — take it to Hermes before
+//     starting.
 
 import (
 	"fmt"
