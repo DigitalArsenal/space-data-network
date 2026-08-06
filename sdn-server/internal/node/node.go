@@ -161,6 +161,11 @@ type Node struct {
 	peerRegistry *peers.Registry
 	peerGater    *peers.TrustedConnectionGater
 
+	// peerAdmission is the connection-manager side of trust: which peers this
+	// node KEEPS when the public swarm floods it (peer_admission_policy.go).
+	// The gater decides who may connect; this decides who survives a trim.
+	peerAdmission *peerAdmissionController
+
 	// tipQueue is the PNM auto-fetch/auto-pin/TTL engine (internal/pubsub,
 	// Task D1). It consumes the aggregate "PNM.fbs" topic (see
 	// handleSubscription) — the per-schema dataset topics (e.g. "OMM.fbs")
@@ -511,14 +516,26 @@ func (n *Node) init() error {
 		listenAddrs = append(listenAddrs, ma)
 	}
 
-	// Create connection manager
+	// Create connection manager under the resolved peer admission policy.
+	//
+	// The watermarks are NOT free parameters: they were `NewConnManager(1000,
+	// MaxConns)`, a hard-coded low water against a configured high water, which
+	// on a default config is low == high (no band — the node lives permanently
+	// AT its watermark, the observed host-01 state) and on celestrak.eth's
+	// max_connections: 64 is low > high, which go-libp2p does not validate and
+	// which makes the manager never trim at all. See
+	// peer_admission_policy.go for the measurement behind this.
+	admissionPolicy := resolveAdmissionPolicy(n.config.Network)
 	connMgr, err := connmgr.NewConnManager(
-		1000,                      // low water
-		n.config.Network.MaxConns, // high water
+		admissionPolicy.LowWater,
+		admissionPolicy.HighWater,
+		connmgr.WithGracePeriod(admissionPolicy.GracePeriod),
+		connmgr.WithSilencePeriod(admissionPolicy.SilencePeriod),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create connection manager: %w", err)
 	}
+	log.Info(admissionPolicy.Summary())
 	resourceManager, err := newFlatSQLSyncResourceManager()
 	if err != nil {
 		return fmt.Errorf("failed to create libp2p resource manager: %w", err)
@@ -594,6 +611,31 @@ func (n *Node) init() error {
 	}
 	go n.feedAutoRelayCandidates(n.ctx)
 	metrics.SetPeerCountFunc(func() int { return len(n.host.Network().Peers()) })
+
+	// PEER ADMISSION: protect the set that must never be gated out, then start
+	// the SDN-protocol reputation tagger.
+	//
+	// Both halves are required for the trim to be SAFE. Without protection a
+	// trim can evict host-02, a browser mid-/p2p/-session or the module-publish
+	// lane exactly as readily as a DHT crawler — nothing in this node had ever
+	// called Protect(). Without tagging every peer has value 0 and go-libp2p's
+	// value-ordered trim has nothing to order by.
+	n.peerAdmission = newPeerAdmissionController(admissionPolicy, connMgr, n.peerRegistry)
+	n.peerAdmission.ProtectFleet(
+		n.config.Network.Bootstrap,
+		n.config.Peers.TrustedPeers,
+		pinStore.List(),
+	)
+	n.peerRegistry.OnTrustChange(n.peerAdmission.HandleTrustChange)
+	if stats := n.peerAdmission.Stats(); stats.Enabled {
+		log.Infof("Peer admission: %d peers protected from trimming (bootstrap + config trusted + pins + registry trust >= %s)",
+			stats.ProtectedPeers, stats.ProtectTrustLevel)
+		go func() {
+			if err := n.peerAdmission.Run(n.ctx, n.host); err != nil && !errors.Is(err, context.Canceled) {
+				log.Warnf("Peer admission reputation tagger stopped: %v — SDN peers will no longer outrank anonymous churn in connection-manager trims", err)
+			}
+		}()
+	}
 
 	// Phase C6: anchor this node's own peer ID as the rooted web-of-trust
 	// root now that the libp2p host exists. Without it the rooted validity
@@ -4605,6 +4647,20 @@ func (n *Node) PeerRegistry() *peers.Registry {
 // PeerGater returns the connection gater for trust-based filtering.
 func (n *Node) PeerGater() *peers.TrustedConnectionGater {
 	return n.peerGater
+}
+
+// PeerAdmission returns the active peer admission policy and its live
+// counters. Zero value on a node that has not built its host yet.
+//
+// Exposed for the same reason InboundAdmission is: "is this node keeping the
+// right peers under flood?" has to be answerable from the node itself. The
+// last time it was not, the answer had to be inferred from `ss` on the host
+// across three separate investigations.
+func (n *Node) PeerAdmission() PeerAdmissionStats {
+	if n == nil {
+		return PeerAdmissionStats{}
+	}
+	return n.peerAdmission.Stats()
 }
 
 // TipQueue returns the PNM auto-fetch/auto-pin/TTL engine (Task D1), or nil

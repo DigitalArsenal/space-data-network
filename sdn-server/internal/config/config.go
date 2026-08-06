@@ -748,6 +748,78 @@ type NetworkConfig struct {
 	// AutoTLS provisions a publicly-trusted certificate for this node's own
 	// peer identity so browsers can dial it. See AutoTLSConfig.
 	AutoTLS AutoTLSConfig `yaml:"autotls"`
+
+	// Admission governs which connections this node KEEPS when the public
+	// swarm floods it. See PeerAdmissionConfig.
+	Admission PeerAdmissionConfig `yaml:"admission"`
+}
+
+// PeerAdmissionConfig configures the peer admission policy: the trim band the
+// libp2p connection manager works in, the headroom reserved below the ceiling
+// so pinned and trusted peers can always get in, and the window an inbound
+// peer has to prove it speaks an SDN protocol before it becomes a trim
+// candidate.
+//
+// WHY THIS EXISTS (measured on host-01, task sdn-inbound-junk-flood-policy):
+// ~1095 distinct IPs refilled inbound connections to the ceiling in ~65
+// minutes. That is not abuse — at ~1.11 connections per distinct IP it is
+// organic public-IPFS/libp2p DHT churn, which this node inherits because it is
+// a kubo fork. Per-IP connection caps free nothing against that shape, and
+// raising the ceiling is a treadmill. The fix is to make the connection
+// manager keep the RIGHT connections:
+//
+//	low_water < high_water < max_connections
+//
+// Before this config existed the node built its connection manager as
+// `NewConnManager(1000, network.max_connections)` — a hard-coded low water
+// against a configured high water. On a default config that is low == high:
+// no band at all, so the node lives permanently AT its watermark. On a node
+// configured below 1000 (celestrak.eth runs max_connections: 64) it is
+// low > high, and go-libp2p does not validate that — getConnsToClose returns
+// early whenever connCount <= lowWater, so the connection manager silently
+// never trims anything at all.
+type PeerAdmissionConfig struct {
+	// Disabled turns the policy off: no reserved headroom, no protection of
+	// pinned/trusted peers, no SDN-protocol reputation tagging.
+	//
+	// Spelled as an opt-OUT on purpose. `Enabled bool` would make the zero
+	// value (every programmatically constructed config, every test, every
+	// caller that does not go through Default()) silently run with NO
+	// admission policy, which is exactly the failure this file is about.
+	Disabled bool `yaml:"disabled"`
+
+	// HighWater is the connection count at which the connection manager starts
+	// trimming. 0 (default) derives it as max_connections - reserved_headroom.
+	// Values above max_connections are clamped: a high water at or above the
+	// ceiling is the degenerate configuration described above.
+	HighWater int `yaml:"high_water"`
+
+	// LowWater is the count trimming targets. 0 (default) derives it as 75% of
+	// the high water, which gives the manager a real band to work in instead of
+	// re-trimming on every tick.
+	LowWater int `yaml:"low_water"`
+
+	// ReservedHeadroom is how many connection slots are kept free BELOW the
+	// ceiling so a pinned peer, a browser /p2p/ upgrade or the module-publish
+	// lane can always be admitted while the generic pool is saturated.
+	// Default 128, clamped to at most a quarter of max_connections so small
+	// nodes stay sane.
+	ReservedHeadroom int `yaml:"reserved_headroom"`
+
+	// GracePeriod is how long a newly opened connection is immune from
+	// trimming — the window in which an inbound peer may prove it speaks an
+	// SDN protocol. Go duration; default 30s.
+	GracePeriod string `yaml:"grace_period"`
+
+	// SilencePeriod is how often the connection manager checks whether it is
+	// over the high water. Go duration; default 10s.
+	SilencePeriod string `yaml:"silence_period"`
+
+	// ProtectTrustLevel is the registry trust level at and above which a peer
+	// is PROTECTED from trimming outright. Default "trusted". Config trusted
+	// peers, operator pins and configured bootstrap peers are protected
+	// regardless of this setting.
+	ProtectTrustLevel string `yaml:"protect_trust_level"`
 }
 
 // AutoTLSConfig configures libp2p AutoTLS (p2p-forge / libp2p.direct), the
@@ -1349,6 +1421,15 @@ func Default() *Config {
 			MaxMessagesPerSecond: 100,  // 100 messages per second per peer
 			MaxMessagesPerMinute: 1000, // 1000 messages per minute per peer
 			RateLimitBurst:       50,   // Allow burst of 50 messages
+
+			// Admission: the zero value is already the intended policy (see
+			// PeerAdmissionConfig — every field derives its default), so this
+			// only spells out the two numbers an operator is most likely to
+			// want to see written down.
+			Admission: PeerAdmissionConfig{
+				ReservedHeadroom: 128,
+				GracePeriod:      "30s",
+			},
 		},
 		Storage: StorageConfig{
 			Path: dataPath,
