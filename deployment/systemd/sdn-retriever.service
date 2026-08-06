@@ -26,9 +26,14 @@
 # a kubo repo would destroy that repo's peer identity, and the key types are
 # incompatible anyway (secp256k1 HD-derived here, Ed25519 there).
 #
-# HARDWARE: 1 vCPU / 2 GB. Everything below is sized for that, not copied from
-# the 2-vCPU host. Owner law: prod does its own work and takes as long as it
-# takes — duration is NOT a gate, so nothing here trades correctness for speed.
+# HARDWARE (was 1 vCPU / 2 GB; OWNER RESIZED 2026-08-05, live-re-verified by
+# Hephaestus/Bohr the same day — kernel reports 4 vCPU / 7.8 GiB / 154 GiB disk,
+# see deployment/topology.json cluster["celestrak.eth"].post_resize_census_20260805).
+# The MemoryHigh/MemoryMax below are updated to match (ops-host02-topology-
+# refuted-memory-throttle); everything else in this unit is unchanged pending
+# fresh pin/load evidence on the new shape. Owner law: prod does its own work
+# and takes as long as it takes — duration is NOT a gate, so nothing here
+# trades correctness for speed.
 #
 # PORTS
 #   4001  libp2p, PUBLIC. Inherited from the kubo this box used to run, so it is
@@ -74,11 +79,15 @@ LimitNOFILE=65536
 
 # The ingest holds a whole fetched catalog, its base64 hostcall envelope, every
 # normalized record stream and the raw archive copy in ONE linear memory. A
-# SATCAT run measured ~670MB RSS on host-01. This box has 2GB total, so the
-# ceiling is set below the box and above the measurement, and swap exists to
-# absorb the peak rather than the OOM killer taking the run.
-MemoryHigh=1200M
-MemoryMax=1600M
+# SATCAT run measured ~670MB RSS on host-01; on THIS box, three concurrent
+# lanes were observed pinned at MemoryCurrent ~1.54G against the old 1.2G/1.6G
+# caps sized for the 1-vCPU/2GB shape (permanent memory.high throttle, swap
+# exhausted) — that shape no longer exists (post-resize: 4 vCPU / 7.8 GiB).
+# Resized 2026-08-05 (ops-host02-topology-refuted-memory-throttle): ceiling
+# raised to leave ~1.8G headroom on the box for the OS + ipfs.service
+# (MemoryMax=640M, untouched) + swap backstop, not maxing the box out.
+MemoryHigh=4200M
+MemoryMax=5800M
 
 NoNewPrivileges=true
 PrivateTmp=true
