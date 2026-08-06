@@ -627,6 +627,11 @@ func (n *Node) init() error {
 		pinStore.List(),
 	)
 	n.peerRegistry.OnTrustChange(n.peerAdmission.HandleTrustChange)
+	// THE BROWSER SIGNAL (task sdn-ws-upgrade-regression-82cdbf50). Without it
+	// the trim evicts every browser on the :443 websocket tunnel first, because
+	// an sdn-js browser registers no stream handlers and so advertises nothing
+	// but libp2p commons. Topic membership is what makes it OURS.
+	n.peerAdmission.SetTopicMembers(n.sdnTopicMembers)
 	if stats := n.peerAdmission.Stats(); stats.Enabled {
 		log.Infof("Peer admission: %d peers protected from trimming (bootstrap + config trusted + pins + registry trust >= %s)",
 			stats.ProtectedPeers, stats.ProtectTrustLevel)
@@ -4596,6 +4601,40 @@ func (n *Node) PublishToTopic(ctx context.Context, topicName string, data []byte
 		return fmt.Errorf("join topic %s: %w", topicName, err)
 	}
 	return topic.Publish(ctx, data)
+}
+
+// sdnTopicMembers is the peer set currently subscribed to one of THIS node's
+// joined SDN pubsub topics — the browser population, among others.
+//
+// Every topic in n.topics is an SDN topic: they are all joined through
+// joinAndStoreTopic from this node's own schema/feed names. A peer in this set
+// is consuming the SDN data path and must not be the first thing a connection
+// trim reaches for (peer_admission_policy.go, admissionTagSDNTopic).
+func (n *Node) sdnTopicMembers() []peer.ID {
+	if n == nil {
+		return nil
+	}
+	n.topicsMu.RLock()
+	topics := make([]*pubsub.Topic, 0, len(n.topics))
+	for _, topic := range n.topics {
+		if topic != nil {
+			topics = append(topics, topic)
+		}
+	}
+	n.topicsMu.RUnlock()
+
+	seen := make(map[peer.ID]struct{})
+	members := make([]peer.ID, 0, len(topics))
+	for _, topic := range topics {
+		for _, id := range topic.ListPeers() {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			members = append(members, id)
+		}
+	}
+	return members
 }
 
 func (n *Node) joinAndStoreTopic(key, topicName string) (*pubsub.Topic, error) {

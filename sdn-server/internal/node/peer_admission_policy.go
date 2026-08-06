@@ -3,7 +3,9 @@ package node
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	coreprotocol "github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -122,6 +125,24 @@ const (
 	// are protected instead.
 	admissionTagSDNPeer = "sdn-peer"
 
+	// admissionTagSDNTopic is the BROWSER signal, and it exists because the
+	// protocol-prefix test alone got the browsers wrong (see the OUTAGE note
+	// at the top of this file). A browser running sdn-js registers NO stream
+	// handlers at all: its entire relationship with this node is gossipsub on
+	// SDN topics, and /meshsub/ is — correctly, for a DHT crawler — classed as
+	// commons churn. Topic MEMBERSHIP is the honest discriminator: a peer
+	// subscribed to one of THIS node's SDN topics is consuming the SDN data
+	// path, whatever protocol prefixes it happens to advertise.
+	admissionTagSDNTopic = "sdn-topic-member"
+
+	// admissionTagTunnelled marks a peer that reached us through the node's
+	// OWN loopback websocket tunnel — the :443 root-path upgrade proxy in
+	// cmd/spacedatanetwork (resolveLocalLibp2pWsProxyTarget). Those connections
+	// are not public swarm churn by construction: this process proxied them in
+	// itself, from a browser on our own admin listener. Trimming them is
+	// trimming our own users.
+	admissionTagTunnelled = "sdn-tunnelled"
+
 	// admissionSDNPeerTagValue is large enough that any SDN peer outranks every
 	// untagged peer, and small enough to stay well inside the int arithmetic
 	// BasicConnMgr does over the sum of a peer's tags.
@@ -131,6 +152,13 @@ const (
 	defaultAdmissionReservedHeadroom = 128
 	defaultAdmissionGracePeriod      = 30 * time.Second
 	defaultAdmissionSilencePeriod    = 10 * time.Second
+
+	// defaultAdmissionTopicSweep is how often topic membership is re-read.
+	// Well inside the 30s grace period, so a browser that joins its topics a
+	// second after connecting is tagged long before it is ever trimmable, and
+	// far cheaper than the connection critical path this file refuses to touch
+	// (it is a pubsub.Topic.ListPeers() read on a timer).
+	defaultAdmissionTopicSweep = 10 * time.Second
 
 	// admissionLowWaterNumerator/Denominator derive the low water as a fraction
 	// of the high water when the operator did not set one. 3/4 leaves a band
@@ -154,11 +182,56 @@ var sdnProtocolPrefixes = []string{
 	"/sdn/",
 }
 
+// THE OUTAGE THIS FILE CAUSED, AND THE TWO SIGNALS THAT CLOSE IT
+// (task sdn-ws-upgrade-regression-82cdbf50, 2026-08-06, owner-reported:
+// "SpaceAware.io and the beta currently aren't receiving data").
+//
+// The policy above is right about the churn and did exactly what it says: on
+// host-01 it took the node from "never trims" (low == high == 1000, so
+// getConnsToClose bailed outright) to a live 654..872 band against ~1276 held
+// connections, and trimmed ~600 of them. Measured effect at 22:08Z: :4004 fell
+// from 1276 to 804 established — and :443, the browser websocket tunnel, fell
+// to FOUR.
+//
+// The browsers were in the trimmed population because NOTHING here could tell
+// them apart from a DHT crawler:
+//
+//   - an sdn-js browser node registers no stream handlers whatsoever (verified
+//     against sdn-js/src: the only `/spacedatanetwork/...` string in it is a
+//     pubsub TOPIC name, and every .handle() call is in a test), so Identify
+//     reports /ipfs/id/1.0.0, /ipfs/ping/1.0.0 and /meshsub/1.1.0 — all three
+//     in libp2pCommonsPrefixes below, by design. sdnPeerTagValue therefore
+//     returned 0: value 0, unprotected, INBOUND, few streams, i.e. the top of
+//     BasicConnMgr's kill list on every tie-break it applies;
+//   - and the boot log said it plainly: "Peer admission: 1 peers protected
+//     from trimming". One.
+//
+// So the fix is not to weaken the trim — the trim is correct and stays. It is
+// to give the policy the two facts it was missing, both of which are
+// observable without touching the connection path:
+//
+//  1. TOPIC MEMBERSHIP (admissionTagSDNTopic). A peer subscribed to one of this
+//     node's own SDN pubsub topics is consuming the SDN data path. That is what
+//     a browser IS to us, and it is not something a crawler does by accident.
+//  2. LOOPBACK TUNNEL PROVENANCE (admissionTagTunnelled). A connection whose
+//     remote address is loopback did not come off the public swarm: this
+//     process proxied it in itself, from the :443 root-path websocket upgrade
+//     interceptor. Public churn cannot forge that — it arrives on :4004 from a
+//     public IP.
+//
+// Both are VALUE tags, not protection: browsers still degrade gracefully under
+// genuine pressure. They simply stop being the FIRST thing evicted.
+
 // libp2pCommonsPrefixes are the protocols this node serves because it is a
 // libp2p/kubo node, not because it is an SDN node. A peer advertising only
 // these is exactly the churn this policy is about — including, critically,
 // /ipfs/kad/1.0.0, which every public DHT crawler speaks and which this node
 // also serves.
+//
+// NOTE /meshsub/ and /floodsub/: pubsub is commons at the PROTOCOL level and
+// must stay here (every gossipsub-speaking crawler advertises it), which is
+// exactly why browser recognition is done by TOPIC MEMBERSHIP instead — see
+// admissionTagSDNTopic.
 var libp2pCommonsPrefixes = []string{
 	"/ipfs/",
 	"/libp2p/",
@@ -346,7 +419,9 @@ func (p admissionPolicy) Summary() string {
 		"PEER ADMISSION POLICY: ceiling=%d (network.max_connections), trim band %d..%d, headroom=%d slots reserved "+
 			"below the ceiling for pinned peers; grace=%s (an inbound peer's window to prove it speaks an SDN "+
 			"protocol), trim check every %s; protected from trimming: config trusted peers + pins + bootstrap peers + "+
-			"registry trust >= %s; peers advertising an SDN protocol are tagged +%d so anonymous churn is trimmed first",
+			"registry trust >= %s; tagged +%d so anonymous churn is trimmed first: peers advertising an SDN "+
+			"protocol, peers subscribed to one of this node's SDN pubsub topics (browsers), and peers arriving "+
+			"through the local websocket upgrade tunnel",
 		p.Ceiling, p.LowWater, p.HighWater, p.Headroom,
 		p.GracePeriod, p.SilencePeriod, p.ProtectTrustLevel.String(), admissionSDNPeerTagValue)
 	if len(p.Notes) > 0 {
@@ -397,6 +472,47 @@ func sdnPeerTagValue(advertised []coreprotocol.ID, served map[coreprotocol.ID]st
 	return 0
 }
 
+// isTunnelledPeerAddr reports whether a connection's REMOTE multiaddr is
+// loopback, i.e. the peer reached this node through something on this box
+// rather than off the public swarm.
+//
+// On an SDN node the only producer of such connections is the node's own
+// admin-listener websocket tunnel: cmd/spacedatanetwork terminates TLS on :443,
+// intercepts a root-path `Connection: Upgrade` and reverse-proxies it to the
+// local libp2p /ws listener (resolveLocalLibp2pWsProxyTarget). Every browser on
+// https://sdn.spaceaware.io/ arrives this way, and arrives looking like
+// 127.0.0.1. Public churn cannot present a loopback remote address.
+//
+// Pure over multiaddrs so the provenance decision is testable without a swarm.
+func isTunnelledPeerAddr(addr multiaddr.Multiaddr) bool {
+	if addr == nil {
+		return false
+	}
+	for _, code := range []int{multiaddr.P_IP4, multiaddr.P_IP6} {
+		value, err := addr.ValueForProtocol(code)
+		if err != nil {
+			continue
+		}
+		ip := net.ParseIP(strings.TrimSpace(value))
+		if ip != nil && ip.IsLoopback() {
+			return true
+		}
+	}
+	return false
+}
+
+// anyTunnelledAddr reports whether ANY of a peer's live connections came in
+// through the loopback tunnel. Any is the right quantifier: a browser that also
+// happens to hold a public connection is still a browser.
+func anyTunnelledAddr(remoteAddrs []multiaddr.Multiaddr) bool {
+	for _, addr := range remoteAddrs {
+		if isTunnelledPeerAddr(addr) {
+			return true
+		}
+	}
+	return false
+}
+
 // PeerAdmissionStats is the observable state of the policy. Exposed for the
 // same reason InboundAdmission is: "is this node keeping the right peers?"
 // must be answerable from the node, not inferred from `ss` on the host.
@@ -417,6 +533,14 @@ type PeerAdmissionStats struct {
 	// AnonymousPeers is how many identified peers advertised no SDN protocol —
 	// the size of the churn population, measured rather than estimated.
 	AnonymousPeers uint64 `json:"anonymous_peers"`
+	// TopicMemberPeers is how many peers are currently tagged because they are
+	// subscribed to one of this node's SDN pubsub topics. This is the BROWSER
+	// count: it is the number the 2026-08-06 outage would have shown collapsing.
+	TopicMemberPeers int64 `json:"topic_member_peers"`
+	// TunnelledPeers is how many peers are currently tagged because they
+	// arrived through the node's own loopback websocket tunnel (:443 root-path
+	// upgrade proxy).
+	TunnelledPeers int64 `json:"tunnelled_peers"`
 }
 
 // peerAdmissionController applies the resolved policy to a live host.
@@ -428,14 +552,41 @@ type peerAdmissionController struct {
 	connMgr  connmgr.ConnManager
 	registry *peers.Registry
 
-	protectedPeers  atomic.Int64
-	sdnTaggedPeers  atomic.Int64
-	identifiedPeers atomic.Uint64
-	anonymousPeers  atomic.Uint64
+	// topicMembers reports the peers currently subscribed to one of THIS
+	// node's SDN pubsub topics. Injected (rather than reaching into the node)
+	// so the browser signal is testable with a plain closure and no gossipsub.
+	// nil disables the signal.
+	topicMembers func() []peer.ID
+	// topicSweep is the membership re-read interval; zero means the default.
+	topicSweep time.Duration
+
+	protectedPeers   atomic.Int64
+	sdnTaggedPeers   atomic.Int64
+	identifiedPeers  atomic.Uint64
+	anonymousPeers   atomic.Uint64
+	topicMemberPeers atomic.Int64
+	tunnelledPeers   atomic.Int64
+
+	taggedTopicMu sync.Mutex
+	taggedTopic   map[peer.ID]struct{}
 }
 
 func newPeerAdmissionController(policy admissionPolicy, cm connmgr.ConnManager, registry *peers.Registry) *peerAdmissionController {
-	return &peerAdmissionController{policy: policy, connMgr: cm, registry: registry}
+	return &peerAdmissionController{
+		policy:      policy,
+		connMgr:     cm,
+		registry:    registry,
+		taggedTopic: make(map[peer.ID]struct{}),
+	}
+}
+
+// SetTopicMembers installs the SDN pubsub topic-membership source (see
+// admissionTagSDNTopic). Called once at wiring time, before Run.
+func (c *peerAdmissionController) SetTopicMembers(fn func() []peer.ID) {
+	if c == nil {
+		return
+	}
+	c.topicMembers = fn
 }
 
 // protect marks a peer as never-trimmable under `tag`. Idempotent: connmgr
@@ -541,10 +692,19 @@ func (c *peerAdmissionController) Run(ctx context.Context, h host.Host) error {
 	}
 	defer sub.Close()
 
+	sweep := c.topicSweep
+	if sweep <= 0 {
+		sweep = defaultAdmissionTopicSweep
+	}
+	ticker := time.NewTicker(sweep)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-ticker.C:
+			c.refreshTopicMembers()
 		case raw, ok := <-sub.Out():
 			if !ok {
 				return nil
@@ -553,18 +713,94 @@ func (c *peerAdmissionController) Run(ctx context.Context, h host.Host) error {
 			if !ok {
 				continue
 			}
-			c.observeIdentified(evt.Peer, evt.Protocols, servedProtocolSet(h))
+			c.observeIdentified(evt.Peer, evt.Protocols, servedProtocolSet(h), remoteAddrsForPeer(h, evt.Peer))
+		}
+	}
+}
+
+// remoteAddrsForPeer collects the remote multiaddrs of a peer's live
+// connections. Off the connection critical path: this runs on the event bus
+// goroutine, after Identify has already completed.
+func remoteAddrsForPeer(h host.Host, id peer.ID) []multiaddr.Multiaddr {
+	if h == nil || h.Network() == nil || id == "" {
+		return nil
+	}
+	conns := h.Network().ConnsToPeer(id)
+	addrs := make([]multiaddr.Multiaddr, 0, len(conns))
+	for _, conn := range conns {
+		if conn == nil {
+			continue
+		}
+		addrs = append(addrs, conn.RemoteMultiaddr())
+	}
+	return addrs
+}
+
+// refreshTopicMembers re-reads SDN pubsub topic membership and keeps the
+// browser tag in step with it: joiners are tagged, leavers untagged.
+//
+// Untagging matters as much as tagging. A crawler that briefly joins a topic
+// and leaves must not keep a permanent value bonus, or the signal becomes a
+// way to opt out of the trim.
+func (c *peerAdmissionController) refreshTopicMembers() {
+	if c == nil || !c.policy.Enabled || c.connMgr == nil || c.topicMembers == nil {
+		return
+	}
+
+	current := make(map[peer.ID]struct{})
+	for _, id := range c.topicMembers() {
+		if id == "" {
+			continue
+		}
+		current[id] = struct{}{}
+	}
+
+	c.taggedTopicMu.Lock()
+	defer c.taggedTopicMu.Unlock()
+
+	for id := range current {
+		if _, already := c.taggedTopic[id]; already {
+			continue
+		}
+		c.connMgr.UpsertTag(id, admissionTagSDNTopic, func(int) int { return admissionSDNPeerTagValue })
+		c.taggedTopic[id] = struct{}{}
+		c.topicMemberPeers.Add(1)
+	}
+	for id := range c.taggedTopic {
+		if _, still := current[id]; still {
+			continue
+		}
+		c.connMgr.UntagPeer(id, admissionTagSDNTopic)
+		delete(c.taggedTopic, id)
+		if c.topicMemberPeers.Load() > 0 {
+			c.topicMemberPeers.Add(-1)
 		}
 	}
 }
 
 // observeIdentified applies the reputation decision for one identified peer.
 // Split out from Run so the decision is testable without an event bus.
-func (c *peerAdmissionController) observeIdentified(id peer.ID, advertised []coreprotocol.ID, served map[coreprotocol.ID]struct{}) {
+func (c *peerAdmissionController) observeIdentified(id peer.ID, advertised []coreprotocol.ID, served map[coreprotocol.ID]struct{}, remoteAddrs []multiaddr.Multiaddr) {
 	if c == nil || !c.policy.Enabled || c.connMgr == nil || id == "" {
 		return
 	}
 	c.identifiedPeers.Add(1)
+
+	// Loopback provenance is decided FIRST and independently of protocols,
+	// because the peer this rescues — a browser on the :443 tunnel — advertises
+	// nothing but commons and would otherwise be scored 0 and evicted first.
+	if anyTunnelledAddr(remoteAddrs) {
+		tunnelFirst := false
+		c.connMgr.UpsertTag(id, admissionTagTunnelled, func(existing int) int {
+			if existing == 0 {
+				tunnelFirst = true
+			}
+			return admissionSDNPeerTagValue
+		})
+		if tunnelFirst {
+			c.tunnelledPeers.Add(1)
+		}
+	}
 
 	value := sdnPeerTagValue(advertised, served)
 	if value == 0 {
@@ -616,5 +852,7 @@ func (c *peerAdmissionController) Stats() PeerAdmissionStats {
 		SDNTaggedPeers:     c.sdnTaggedPeers.Load(),
 		IdentifiedPeers:    c.identifiedPeers.Load(),
 		AnonymousPeers:     c.anonymousPeers.Load(),
+		TopicMemberPeers:   c.topicMemberPeers.Load(),
+		TunnelledPeers:     c.tunnelledPeers.Load(),
 	}
 }

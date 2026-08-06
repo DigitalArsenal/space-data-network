@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	coreprotocol "github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -444,8 +445,8 @@ func TestObserveIdentifiedTagsOnlySDNPeers(t *testing.T) {
 	sdnPeer := testPeerID(t)
 	churnPeer := testPeerID(t)
 
-	c.observeIdentified(sdnPeer, []coreprotocol.ID{"/spacedatanetwork/sds-exchange/1.0.0"}, served)
-	c.observeIdentified(churnPeer, []coreprotocol.ID{"/ipfs/kad/1.0.0"}, served)
+	c.observeIdentified(sdnPeer, []coreprotocol.ID{"/spacedatanetwork/sds-exchange/1.0.0"}, served, nil)
+	c.observeIdentified(churnPeer, []coreprotocol.ID{"/ipfs/kad/1.0.0"}, served, nil)
 
 	info := cm.GetTagInfo(sdnPeer)
 	if info == nil || info.Tags[admissionTagSDNPeer] != admissionSDNPeerTagValue {
@@ -470,7 +471,7 @@ func TestReIdentifyDoesNotStackValue(t *testing.T) {
 	id := testPeerID(t)
 
 	for i := 0; i < 25; i++ {
-		c.observeIdentified(id, []coreprotocol.ID{"/sdn/updates/v1/beta"}, nil)
+		c.observeIdentified(id, []coreprotocol.ID{"/sdn/updates/v1/beta"}, nil, nil)
 	}
 
 	info := cm.GetTagInfo(id)
@@ -487,8 +488,8 @@ func TestSDNPeersOutrankChurnInTheTrimOrder(t *testing.T) {
 	c := newPeerAdmissionController(enabledPolicy(), cm, nil)
 	sdnPeer, churnPeer := testPeerID(t), testPeerID(t)
 
-	c.observeIdentified(sdnPeer, []coreprotocol.ID{"/spacedatanetwork/epm-exchange/1.0.0"}, nil)
-	c.observeIdentified(churnPeer, []coreprotocol.ID{"/ipfs/kad/1.0.0"}, nil)
+	c.observeIdentified(sdnPeer, []coreprotocol.ID{"/spacedatanetwork/epm-exchange/1.0.0"}, nil, nil)
+	c.observeIdentified(churnPeer, []coreprotocol.ID{"/ipfs/kad/1.0.0"}, nil, nil)
 
 	sdnValue, churnValue := 0, 0
 	if info := cm.GetTagInfo(sdnPeer); info != nil {
@@ -518,7 +519,7 @@ func TestDisabledControllerIsInert(t *testing.T) {
 
 	c.ProtectFleet([]string{fmt.Sprintf("/ip4/10.0.0.2/tcp/4001/p2p/%s", id)}, nil, nil)
 	c.HandleTrustChange(id, peers.Standard, peers.Trusted)
-	c.observeIdentified(id, []coreprotocol.ID{"/spacedatanetwork/sds-exchange/1.0.0"}, nil)
+	c.observeIdentified(id, []coreprotocol.ID{"/spacedatanetwork/sds-exchange/1.0.0"}, nil, nil)
 
 	if cm.IsProtected(id, "") {
 		t.Error("a disabled policy must not protect anything")
@@ -538,7 +539,7 @@ func TestNilControllerIsSafe(t *testing.T) {
 	// Every one of these runs on a node whose host failed to build.
 	c.ProtectFleet([]string{id.String()}, nil, nil)
 	c.HandleTrustChange(id, peers.Standard, peers.Trusted)
-	c.observeIdentified(id, []coreprotocol.ID{"/sdn/x"}, nil)
+	c.observeIdentified(id, []coreprotocol.ID{"/sdn/x"}, nil, nil)
 	if s := c.Stats(); s.Enabled {
 		t.Fatalf("nil controller stats = %+v, want the zero value", s)
 	}
@@ -546,5 +547,168 @@ func TestNilControllerIsSafe(t *testing.T) {
 	var n *Node
 	if s := n.PeerAdmission(); s.Enabled {
 		t.Fatalf("nil node stats = %+v, want the zero value", s)
+	}
+}
+
+// --- THE 2026-08-06 BROWSER OUTAGE (task sdn-ws-upgrade-regression-82cdbf50) -
+
+// browserAdvertisedProtocols is what an sdn-js browser node ACTUALLY reports at
+// Identify. Verified against sdn-js/src: it registers no stream handlers at all
+// (the only "/spacedatanetwork/..." string in the package is a pubsub TOPIC
+// name, and every .handle() call is inside a test), so its whole protocol set
+// is libp2p commons — every entry below is matched by libp2pCommonsPrefixes.
+//
+// This slice is the regression. If a future change makes the policy depend on
+// browsers advertising something SDN-shaped, these tests fail, because browsers
+// do not.
+var browserAdvertisedProtocols = []coreprotocol.ID{
+	"/ipfs/id/1.0.0",
+	"/ipfs/id/push/1.0.0",
+	"/ipfs/ping/1.0.0",
+	"/meshsub/1.1.0",
+	"/meshsub/1.0.0",
+	"/floodsub/1.0.0",
+}
+
+func TestBrowserProtocolsAloneScoreZero(t *testing.T) {
+	// Not a bug — the premise. /meshsub/ MUST stay commons (every gossipsub
+	// crawler speaks it), which is precisely why the browser signal has to come
+	// from somewhere else. Recorded so the next reader does not "fix" it by
+	// whitelisting pubsub and re-admitting the entire crawler population.
+	if v := sdnPeerTagValue(browserAdvertisedProtocols, nil); v != 0 {
+		t.Fatalf("browser protocol set scored %d; the protocol test is not, and must not become, the browser signal", v)
+	}
+}
+
+// TestTunnelledBrowserSurvivesTheTrim is the outage, expressed as a test: a
+// browser on the :443 root-path websocket tunnel arrives over loopback,
+// advertises nothing but commons, and MUST NOT end up at value 0 next to the
+// DHT churn that shares its protocol set.
+func TestTunnelledBrowserSurvivesTheTrim(t *testing.T) {
+	cm := testConnMgr(t)
+	c := newPeerAdmissionController(enabledPolicy(), cm, nil)
+
+	browser := testPeerID(t)
+	crawler := testPeerID(t)
+
+	tunnelled := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/127.0.0.1/tcp/43122/ws"),
+	}
+	public := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/203.0.113.9/tcp/51544"),
+	}
+
+	c.observeIdentified(browser, browserAdvertisedProtocols, nil, tunnelled)
+	c.observeIdentified(crawler, browserAdvertisedProtocols, nil, public)
+
+	browserInfo := cm.GetTagInfo(browser)
+	if browserInfo == nil || browserInfo.Value != admissionSDNPeerTagValue {
+		t.Fatalf("browser tag value = %+v, want +%d — a loopback peer was proxied in by THIS node's websocket tunnel and is not public churn",
+			browserInfo, admissionSDNPeerTagValue)
+	}
+	if info := cm.GetTagInfo(crawler); info != nil && info.Value != 0 {
+		t.Fatalf("public churn tag value = %+v, want 0 — loopback provenance must not be inferable from a public address", info)
+	}
+	if s := c.Stats(); s.TunnelledPeers != 1 {
+		t.Fatalf("tunnelled peers = %d, want 1", s.TunnelledPeers)
+	}
+	// The value ordering is the whole mechanism: BasicConnMgr trims ascending.
+	if browserInfo.Value <= 0 {
+		t.Fatal("browser must outrank an untagged peer in the value-ordered trim")
+	}
+}
+
+// TestSDNTopicMemberIsNotTrimmedFirst covers the browser that dials the PUBLIC
+// listener rather than the tunnel (sdn-js also bootstraps straight to
+// /tcp/4004/ws and, on host-02, to the AutoTLS address). Loopback provenance
+// cannot help there; topic membership must.
+func TestSDNTopicMemberIsNotTrimmedFirst(t *testing.T) {
+	cm := testConnMgr(t)
+	c := newPeerAdmissionController(enabledPolicy(), cm, nil)
+
+	browser := testPeerID(t)
+	crawler := testPeerID(t)
+	members := []peer.ID{browser}
+	c.SetTopicMembers(func() []peer.ID { return members })
+
+	// Identify first: both look identical at the protocol layer.
+	c.observeIdentified(browser, browserAdvertisedProtocols, nil, nil)
+	c.observeIdentified(crawler, browserAdvertisedProtocols, nil, nil)
+	if info := cm.GetTagInfo(browser); info != nil && info.Value != 0 {
+		t.Fatalf("pre-sweep browser value = %+v, want 0: protocols alone cannot tell them apart", info)
+	}
+
+	c.refreshTopicMembers()
+
+	info := cm.GetTagInfo(browser)
+	if info == nil || info.Value != admissionSDNPeerTagValue {
+		t.Fatalf("topic-member browser tag = %+v, want +%d", info, admissionSDNPeerTagValue)
+	}
+	if info := cm.GetTagInfo(crawler); info != nil && info.Value != 0 {
+		t.Fatalf("non-member tag = %+v, want 0", info)
+	}
+	if s := c.Stats(); s.TopicMemberPeers != 1 {
+		t.Fatalf("topic member peers = %d, want 1", s.TopicMemberPeers)
+	}
+
+	// Leaving the topic must give the value back, or the tag becomes a
+	// permanent opt-out of the trim that any peer can claim once.
+	members = nil
+	c.refreshTopicMembers()
+	if info := cm.GetTagInfo(browser); info != nil && info.Value != 0 {
+		t.Fatalf("after leaving every topic, tag = %+v, want 0", info)
+	}
+	if s := c.Stats(); s.TopicMemberPeers != 0 {
+		t.Fatalf("topic member peers = %d after departure, want 0", s.TopicMemberPeers)
+	}
+}
+
+func TestTopicMembershipSweepIsIdempotent(t *testing.T) {
+	cm := testConnMgr(t)
+	c := newPeerAdmissionController(enabledPolicy(), cm, nil)
+	browser := testPeerID(t)
+	c.SetTopicMembers(func() []peer.ID { return []peer.ID{browser, browser, ""} })
+
+	for i := 0; i < 5; i++ {
+		c.refreshTopicMembers()
+	}
+	info := cm.GetTagInfo(browser)
+	if info == nil || info.Value != admissionSDNPeerTagValue {
+		t.Fatalf("tag after repeated sweeps = %+v, want a stable +%d (UpsertTag, never accumulate)",
+			info, admissionSDNPeerTagValue)
+	}
+	if s := c.Stats(); s.TopicMemberPeers != 1 {
+		t.Fatalf("topic member peers = %d, want 1 (peer count, not call count)", s.TopicMemberPeers)
+	}
+}
+
+func TestIsTunnelledPeerAddr(t *testing.T) {
+	for _, tc := range []struct {
+		addr string
+		want bool
+	}{
+		{"/ip4/127.0.0.1/tcp/18080/ws", true},
+		{"/ip4/127.0.0.1/tcp/4004/ws", true},
+		{"/ip6/::1/tcp/4004/ws", true},
+		{"/ip4/104.131.11.220/tcp/4004/ws", false},
+		{"/ip4/203.0.113.9/tcp/4001", false},
+		{"/ip4/10.100.10.20/tcp/4001", false}, // private LAN is NOT the tunnel
+		{"/ip6/2606:4700::1111/tcp/443", false},
+	} {
+		if got := isTunnelledPeerAddr(multiaddr.StringCast(tc.addr)); got != tc.want {
+			t.Errorf("isTunnelledPeerAddr(%s) = %v, want %v", tc.addr, got, tc.want)
+		}
+	}
+	if isTunnelledPeerAddr(nil) {
+		t.Error("nil multiaddr must not read as tunnelled")
+	}
+}
+
+func TestTopicSignalDisabledWithoutASource(t *testing.T) {
+	cm := testConnMgr(t)
+	c := newPeerAdmissionController(enabledPolicy(), cm, nil)
+	c.refreshTopicMembers() // no source installed: must be a no-op, not a panic
+	if s := c.Stats(); s.TopicMemberPeers != 0 {
+		t.Fatalf("topic member peers = %d without a source, want 0", s.TopicMemberPeers)
 	}
 }
