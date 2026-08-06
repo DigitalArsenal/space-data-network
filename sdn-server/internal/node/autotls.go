@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
+	logging "github.com/ipfs/go-log/v2"
 	p2pforge "github.com/ipshipyard/p2p-forge/client"
 	"github.com/multiformats/go-multiaddr"
-	"go.uber.org/zap"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
@@ -153,10 +153,13 @@ func newAutoTLSCertManager(cfg config.AutoTLSConfig, dataPath string) (*p2pforge
 		registrationDelay = parsed
 	}
 
-	// certmagic logs through its own package-level defaults when an issuer
-	// falls back to them; name them so those lines are attributable instead of
-	// arriving as anonymous stderr noise.
-	rawLogger := zap.L().Named("autotls")
+	// The certificate lane MUST be legible in the journal: this connector holds
+	// a certificate that has to RENEW, and a renewal that starts failing is
+	// otherwise completely silent. go-log is the daemon's logging system;
+	// zap's global logger (zap.L()) is a no-op here because nothing calls
+	// zap.ReplaceGlobals, so routing p2p-forge/certmagic there would have
+	// thrown every ACME line on the floor.
+	rawLogger := logging.Logger("autotls").Desugar()
 	certmagic.Default.Logger = rawLogger.Named("certmagic-default")
 	certmagic.DefaultACME.Logger = rawLogger.Named("certmagic-acme")
 

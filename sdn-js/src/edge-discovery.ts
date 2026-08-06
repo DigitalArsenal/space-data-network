@@ -51,15 +51,49 @@ export const SPACEAWARE_RELAY_PEER_ID =
  */
 const SPACEAWARE_WSS = `/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`;
 
-export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [SPACEAWARE_WSS];
+/**
+ * The celestrak.eth ingest node (host-02). Promoted to a browser-dialable
+ * bootstrap on 2026-08-06 (owner ruling, graph task
+ * `ops-host02-browser-relay-promotion`) because the fleet advertised exactly
+ * ONE CA-authenticated browser-dialable address and this list could not
+ * honestly hold a second one.
+ */
+export const CELESTRAK_RELAY_PEER_ID =
+  '16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U';
+
+/**
+ * AutoTLS (libp2p.direct) address for the celestrak.eth node.
+ *
+ * This is NOT a hand-written name: the label is that node's own peer ID in
+ * base36, the leading label is its IP with dashes, and the certificate behind
+ * it is a Let's Encrypt wildcard the node obtains for itself through the
+ * p2p-forge broker — so it rotates and renews without anyone editing this
+ * file, and it is validated against the public web PKI exactly like the
+ * Cloudflare-fronted address above. It is therefore NOT a pinned certhash and
+ * does not violate the bootstrap-rot law.
+ *
+ * Verified live 2026-08-06 from the js-libp2p stack this package ships:
+ * `DIAL_OK` in 499 ms, `limits === null` (direct, not a relay hop), and
+ * off-box `openssl s_client -verify_return_error` reports `Verification: OK`
+ * (TLSv1.3, issuer Let's Encrypt). The node advertises it in
+ * `/api/node/info.listen_addresses`, so `resolvePeerBootstrapAddrs()` finds it
+ * at runtime too — this constant is the offline fallback, not the only source.
+ */
+const CELESTRAK_AUTOTLS_WSS =
+  `/dns4/167-172-219-213.kzwfwjn5ji4purkaknrwvpronfvibl14m4uj4zvolmjz02gajewxm0fo7nsyagx.libp2p.direct/tcp/4001/tls/ws/p2p/${CELESTRAK_RELAY_PEER_ID}`;
+
+export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
+  SPACEAWARE_WSS,
+  CELESTRAK_AUTOTLS_WSS,
+];
 
 /**
  * Fallback relays for regional availability
  */
 export const REGIONAL_FALLBACK_RELAYS: Record<string, string[]> = {
-  'us-east': [SPACEAWARE_WSS],
-  'eu-west': [SPACEAWARE_WSS],
-  'ap-southeast': [SPACEAWARE_WSS],
+  'us-east': [SPACEAWARE_WSS, CELESTRAK_AUTOTLS_WSS],
+  'eu-west': [SPACEAWARE_WSS, CELESTRAK_AUTOTLS_WSS],
+  'ap-southeast': [SPACEAWARE_WSS, CELESTRAK_AUTOTLS_WSS],
 };
 
 /**
@@ -691,7 +725,18 @@ export class EdgeDiscovery {
   }
 
   /**
-   * Ensure we have minimum number of relays by adding fallbacks
+   * Ensure we have minimum number of relays by adding fallbacks.
+   *
+   * The default floor is 2 and STAYS 2. As of 2026-08-06 the fleet advertises
+   * exactly TWO CA-authenticated browser-dialable bootstrap addresses —
+   * sdn.spaceaware.io (host-01, Cloudflare-fronted) and the celestrak.eth node
+   * (host-02, AutoTLS/libp2p.direct, promoted by owner ruling under graph task
+   * `ops-host02-browser-relay-promotion`). A caller asking for 3 will still
+   * come up one short, and that is REPORTED, not papered over: this method
+   * adds real addresses only. Raising the floor to 3 requires a third node with
+   * a browser-dialable transport, not a code change — and inventing an address
+   * to satisfy a counter is how the two dead certhash entries this list used to
+   * ship got there in the first place.
    */
   ensureMinimumRelays(minimum: number = 2): void {
     if (this.knownRelays.size < minimum) {
