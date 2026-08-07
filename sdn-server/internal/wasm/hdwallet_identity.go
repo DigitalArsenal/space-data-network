@@ -32,6 +32,11 @@ const (
 	// LicensingGrantKeyPath is the derivation path for the Ed25519 key that signs
 	// LICENSING GRANTS (module-delivery). Format: m/44'/0'/account'/2'/0'.
 	//
+	// It is the FIRST consumer of the general purpose-key contract in
+	// hdwallet_purpose.go and must stay equal to
+	// PurposeKeyPath(PurposeLicensingGrant, account) — locked by test. New lanes
+	// should use DeriveChildForPurpose rather than adding a constant here.
+	//
 	// OWNER RULING 2026-08-07, verbatim: "derive a grant-signing child from the
 	// node identity, keep the update root isolated"
 	// (graph/tasks/sdn-grant-verifier-key-domain-separation.md).
@@ -196,7 +201,7 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 	identityPath := fmt.Sprintf(IdentityKeyPath, account)
 	signingPath := fmt.Sprintf(SigningKeyPath, account)
 	encryptionPath := fmt.Sprintf(EncryptionKeyPath, account)
-	grantSigningPath := fmt.Sprintf(LicensingGrantKeyPath, account)
+	grantSigningPath := PurposeKeyPath(PurposeLicensingGrant, account)
 
 	// Derive secp256k1 identity key at m/44'/0'/account'
 	identityDerived, err := hw.DeriveSecp256k1Key(ctx, seed, identityPath)
@@ -242,13 +247,9 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 	// signing key — that fallback IS the defect this derivation exists to remove
 	// (graph/tasks/sdn-grant-verifier-key-domain-separation.md). The licensing lane
 	// fails closed downstream when the slot is absent.
-	grantSigningDerived, err := hw.DeriveEd25519Key(ctx, seed, grantSigningPath)
+	grantSigningPrivKey, grantSigningPubKey, err := hw.DeriveChildForPurpose(ctx, seed, account, PurposeLicensingGrant)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive licensing grant signing key: %w", err)
-	}
-	grantSigningPrivKey, grantSigningPubKey, err := crypto.GenerateEd25519Key(bytes.NewReader(grantSigningDerived.PrivateKey))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create libp2p Ed25519 grant signing key: %w", err)
 	}
 
 	// Derive X25519 public key from the encryption private key
