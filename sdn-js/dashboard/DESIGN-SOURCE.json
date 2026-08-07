@@ -3,11 +3,22 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "a723fa9",
+  "design_commit": "a4d6ba5",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 431229,
-    "sha256": "54cb5402bbf1f7b7ac469bee1d29d5345d28caaae228d6c0c19634d5d439613e"
+    "bytes": 590210,
+    "sha256": "020416fd0d446c756759fc894c55567799fb6712e6591430e7ea057c7158c1bd"
+  },
+  "artifact_refresh": {
+    "date": "2026-08-07",
+    "task": "saw-ui-peer-popup-contact-card",
+    "was": {
+      "design_commit": "a723fa9",
+      "bytes": 431229,
+      "sha256": "54cb5402bbf1f7b7ac469bee1d29d5345d28caaae228d6c0c19634d5d439613e"
+    },
+    "why": "This block had not been advanced since 2026-07-30 while the pin moved five times, so it recorded an artifact the tree stopped shipping. It records the CURRENT bytes again, and it is advanced with the pin from here.",
+    "stale_embed_found": "A CONTROL BUILD at the OUTGOING pin (bbb4dca) did not reproduce the committed dashboard.html: same length, one differing region — the bundled SDS version string, 1.176.0 in the committed bytes against 1.177.0 in sdn-js's own dependency pin (package.json + package-lock). The embed had not been rebuilt since that pin advanced. The rebuild in this commit therefore carries TWO deltas, both of them corrections: the peer-popup contact card, and the SDS version the node already depends on. Nothing else differed."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
