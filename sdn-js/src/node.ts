@@ -99,6 +99,66 @@ function identifyCapabilityOnly() {
   });
 }
 
+/**
+ * The Kad-DHT is OPT-IN, and it is opt-in because leaving it on WEDGES a
+ * browser renderer permanently.
+ *
+ * MEASURED 2026-08-07 (trace, not inference — `disabled-by-default-v8.cpu_profiler`
+ * over a wedged renderer, which keeps sampling because the browser process
+ * records it):
+ *
+ *   - `rf-emitter-coverage-sdn` under a `/private/<uuid>/` link-key page and
+ *     the LIVE `spaceaware.io/beta` both stop answering ~11.5-12.4 s after
+ *     load, permanently: `evaluate(() => Date.now())` times out in the shell
+ *     AND the bucket frame, screenshots time out, tile fetches stop mid-stream.
+ *   - the renderer main thread's samples at that point are ~1/3 each in
+ *     `QueryManager.run` (`@libp2p/kad-dht`), `mergeSources` (`it-merge`) and
+ *     `EventTarget.dispatchEvent`, with idle collapsing from ~93% to ~3%.
+ *   - removing ONLY `services.dht` from this config (byte-level A/B on one box,
+ *     same build, same page) leaves both surfaces interactive for the full
+ *     60 s / 50 s window.
+ *
+ * WHY it never recovers: a browser DHT client walks the query frontier without
+ * ever awaiting real I/O — every candidate peer returned by a server's routing
+ * table is rejected by `connectionManager.isDialable()` (a browser cannot dial
+ * tcp/quic), so the expansion runs entirely in MICROTASKS. A microtask loop
+ * starves the task queue, which means timers never fire, which means the DHT's
+ * own `DEFAULT_QUERY_TIMEOUT` / `AbortSignal.timeout` NEVER fires either. The
+ * stall is unbounded by construction: no timeout inside a starved event loop
+ * can bound it. The only bound is not starting the service.
+ *
+ * The DHT is needed by exactly two APIs — `discoverProviders()` and
+ * `discoverSDNAdvertisementPeers()` — both of which are fallbacks. Module
+ * delivery dials descriptor relays directly, `fetchCIDBytes()` goes over the
+ * IPFS HTTP API/gateway, and pubsub rides the configured relays: none of them
+ * touch content routing. So the default costs nothing and the failure mode it
+ * removes is total.
+ *
+ * The default is the SAME in every runtime (browser, Node, WasmEdge). This is
+ * deliberate: a runtime-sniffing default would fork behaviour across the
+ * isomorphism boundary, and a caller that wants content routing should say so
+ * once, everywhere.
+ */
+export function dhtEnabled(config: Pick<SDNConfig, "enableDHT">): boolean {
+  return config.enableDHT === true;
+}
+
+/**
+ * The one message every DHT-dependent API raises when the service is off, so a
+ * missing capability is a bounded, legible failure instead of an empty result
+ * that reads like "no providers exist".
+ */
+export function dhtRequiredError(api: string): Error {
+  return new Error(
+    `${api} requires libp2p content routing, which is OFF by default: ` +
+      "pass enableDHT: true to SDNNode.create()/createHeliaSDNNode(). " +
+      "Do NOT enable it on a renderer main thread — a browser Kad-DHT client " +
+      "starves the event loop (measured 2026-08-07: permanent renderer wedge " +
+      "~12 s after load on RF sandcastles and spaceaware.io/beta). Run it in a " +
+      "worker, or address the provider directly with descriptor relays.",
+  );
+}
+
 type StreamChunk = Uint8Array | Uint8ArrayList | ArrayBufferView | ArrayBuffer;
 
 export interface SDNConfig {
@@ -107,7 +167,14 @@ export interface SDNConfig {
   includeIPFSBootstrap?: boolean;
   /** Enable libp2p Identify service. Disabled by default for lean browser module delivery. */
   enableIdentify?: boolean;
-  /** Enable libp2p DHT/content routing. Disable for peer-addressed browser nodes. */
+  /**
+   * Enable the libp2p Kad-DHT (content routing). OFF unless explicitly `true`
+   * — see {@link dhtEnabled} for the trace that made it opt-in. Only
+   * `discoverProviders()` and `discoverSDNAdvertisementPeers()` need it; every
+   * other lane (module delivery over descriptor relays, CID fetch over the
+   * IPFS HTTP API/gateway, pubsub over configured relays) works without it.
+   * NEVER enable it on a renderer main thread.
+   */
   enableDHT?: boolean;
   /** Let libp2p auto-dial discovered peers to satisfy minConnections. */
   enableAutoDial?: boolean;
@@ -247,7 +314,7 @@ export class SDNNode {
         emitSelf: false,
       }),
     };
-    if (this.config.enableDHT !== false) {
+    if (dhtEnabled(this.config)) {
       services.dht = kadDHT({
         clientMode: true,
       });
@@ -781,6 +848,9 @@ export class SDNNode {
     if (!this.libp2p) {
       throw new Error("Node not initialized");
     }
+    if (!dhtEnabled(this.config)) {
+      throw dhtRequiredError("SDNNode.discoverProviders()");
+    }
 
     const providers: DiscoveredProvider[] = [];
     const seen = new Set<string>();
@@ -818,6 +888,9 @@ export class SDNNode {
     if (!this.libp2p) {
       throw new Error("Node not initialized");
     }
+    if (!dhtEnabled(this.config)) {
+      throw dhtRequiredError("SDNNode.discoverSDNAdvertisementPeers()");
+    }
     return findSDNAdvertisementPeers({ ...options, libp2p: this.libp2p });
   }
 
@@ -833,6 +906,9 @@ export class SDNNode {
   ): Promise<void> {
     if (!this.libp2p) {
       throw new Error("Node not initialized");
+    }
+    if (!dhtEnabled(this.config)) {
+      throw dhtRequiredError("SDNNode.provideSDNAdvertisementFlag()");
     }
     await provideSDNAdvertisementFlag({ ...options, libp2p: this.libp2p });
   }

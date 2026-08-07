@@ -1,6 +1,6 @@
 {
   "name": "@spacedatanetwork/sdn-js",
-  "version": "2.0.15",
+  "version": "2.0.16",
   "description": "Space Data Network JavaScript library for browser and Node.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",

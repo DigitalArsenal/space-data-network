@@ -44,6 +44,7 @@ import { CID } from 'multiformats/cid';
 import { multiaddr } from '@multiformats/multiaddr';
 
 import type { SDNConfig } from './node';
+import { dhtEnabled } from './node';
 import { getBootstrapRelays } from './edge-discovery';
 import { initHDWallet } from './crypto/hd-wallet';
 import type { DerivedIdentity } from './crypto/types';
@@ -491,7 +492,12 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
       emitSelf: false,
     }),
   };
-  if (config.enableDHT !== false) {
+  // Opt-in, for the reason documented on `dhtEnabled` in ./node: a browser
+  // Kad-DHT client starves the renderer's event loop and wedges it for good.
+  // Helia does not need it here — blocks come from the peers this node dials
+  // directly (bitswap over the configured relays), which is exactly how
+  // spaceaware.io/beta reads the live catalog.
+  if (dhtEnabled(config)) {
     services.dht = kadDHT({ clientMode: true });
   }
   services.identify =
