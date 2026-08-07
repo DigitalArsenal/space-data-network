@@ -3,6 +3,7 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	kmf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/KMF"
+	lcf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LCF"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
@@ -405,4 +407,82 @@ func buildRecProtectedContentFixture(t *testing.T) []byte {
 	protectedContent = append(protectedContent, recordCollectionBytes...)
 	protectedContent = append(protectedContent, footer...)
 	return protectedContent
+}
+
+// TestLicensingRuntimeConfigFramePublishesProviderSigningPublicKey is the regression
+// guard for upstream-sdn-3. The node used to emit PROVIDER_SIGNING_KEY with no
+// PUBLIC_KEY at all; the licensing key server then "left it zeroed when absent"
+// (key_server.cpp:1107-1118) and stamped 32 zero bytes into every issued grant as
+// GRANT_VERIFIER_PUBKEY, so ed25519.verify(msg, sig, 0x00*32) failed for EVERY browser
+// client. Nothing on either side asserted the field was non-zero, which is why a
+// one-line omission cost a full debugging cycle. Assert all three properties: present,
+// correct length, and NOT all zero.
+func TestLicensingRuntimeConfigFramePublishesProviderSigningPublicKey(t *testing.T) {
+	t.Parallel()
+
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(i + 1)
+	}
+	wrapping := make([]byte, 32)
+	for i := range wrapping {
+		wrapping[i] = byte(0xA0 + i%16)
+	}
+
+	frame, err := buildLicensingRuntimeConfigFrame(&modulert.NodeContext{
+		PeerID: "16Uiu2HAmTestPeerIDForLicensingConfigFrame",
+		KeySlots: map[string][]byte{
+			providerSigningSlotID:  seed,
+			providerWrappingSlotID: wrapping,
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildLicensingRuntimeConfigFrame: %v", err)
+	}
+
+	cfg := lcf.GetRootAsLCF(frame, 0)
+	signingKey := cfg.PROVIDER_SIGNING_KEY(nil)
+	if signingKey == nil {
+		t.Fatal("PROVIDER_SIGNING_KEY is absent from the licensing config frame")
+	}
+
+	got := signingKey.PUBLIC_KEYBytes()
+	if len(got) == 0 {
+		t.Fatal("PROVIDER_SIGNING_KEY.PUBLIC_KEY is absent — the key server will zero it and every grant will fail verification (upstream-sdn-3)")
+	}
+	if len(got) != ed25519.PublicKeySize {
+		t.Fatalf("PROVIDER_SIGNING_KEY.PUBLIC_KEY must be %d bytes, got %d", ed25519.PublicKeySize, len(got))
+	}
+	if isAllZero(got) {
+		t.Fatal("PROVIDER_SIGNING_KEY.PUBLIC_KEY is all zero bytes — this is the exact upstream-sdn-3 defect")
+	}
+
+	// It must be the key the SIGNER will actually use, i.e. byte-identical to the
+	// derivation in internal/modulert/caps/keyslot.go.
+	want := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("PUBLIC_KEY does not match ed25519.NewKeyFromSeed(seed).Public()\n got: %x\nwant: %x", got, want)
+	}
+
+	// A grant signed by the slot must verify against the published key. This is the
+	// end-to-end property the browser depends on.
+	msg := []byte("upstream-sdn-3 grant verification round trip")
+	sig := ed25519.Sign(ed25519.NewKeyFromSeed(seed), msg)
+	if !ed25519.Verify(ed25519.PublicKey(got), msg, sig) {
+		t.Fatal("signature made with the provider signing slot does not verify against the published PUBLIC_KEY")
+	}
+}
+
+func TestBuildLicensingRuntimeConfigFrameRejectsShortSigningSeed(t *testing.T) {
+	t.Parallel()
+
+	if _, err := buildLicensingRuntimeConfigFrame(&modulert.NodeContext{
+		PeerID: "16Uiu2HAmTestPeerIDForLicensingConfigFrame",
+		KeySlots: map[string][]byte{
+			providerSigningSlotID:  make([]byte, 16),
+			providerWrappingSlotID: make([]byte, 32),
+		},
+	}); err == nil {
+		t.Fatal("expected a short provider signing seed to be rejected, got nil error")
+	}
 }
