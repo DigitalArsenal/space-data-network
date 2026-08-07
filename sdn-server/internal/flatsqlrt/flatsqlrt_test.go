@@ -133,7 +133,7 @@ func newOMMDatabase(t *testing.T, rt *Runtime, name string) *Database {
 func TestEmbeddedArtifact(t *testing.T) {
 	sum := sha256.Sum256(EmbeddedWasm())
 	// Must match the provenance block in README.md.
-	const want = "4d17fc5f4936305a005bfc5c63c550a58e448412900299ac7d6adc63ba0137e9"
+	const want = "9cf0c3b027ef24e2958eea8301f91093b3a2c9d12555641a123753cbdb07c3be"
 	if got := hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("embedded flatsql-wasi-noeh.wasm sha256 = %s, want %s (update README provenance if the pin moved)", got, want)
 	}

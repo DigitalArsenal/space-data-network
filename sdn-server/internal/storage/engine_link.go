@@ -60,11 +60,45 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 
 	log.Warnf("FlatSQL engine poisoned — rebuilding engine in place (epoch %d)", s.engineEpoch)
 
-	engine, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()))
+	// ONE WRITER PER FILE, ALWAYS.
+	//
+	// A poisoned runtime is RETIRED, not closed: linked flow VMs may still hold
+	// borrowed references to its named instance. But a retired engine that still
+	// owns open file descriptors on the control database would be a SECOND
+	// WRITER against the file the replacement is about to open — the exact
+	// corruption the one-daemon-per-box law exists to prevent, reproduced inside
+	// one process. Closing only the host FILE LAYER severs that without touching
+	// the wasm instance those VMs still reference: any further I/O the dead
+	// engine attempts gets ioErrBadHandle, which is precisely what a poisoned
+	// engine should get.
+	//
+	// The replacement then starts from a DISCARDED file rather than recovering
+	// the trapped engine's half-written pages. Everything in that file is
+	// derivable — this function already replays the whole catalog below — so
+	// discarding is free, and trusting pages written by an engine that trapped
+	// mid-transaction is not.
+	if s.controlDBDurable {
+		s.engine.FileIO().CloseAll()
+		if err := removeControlDatabaseFiles(s.dbPath); err != nil {
+			return s.engineEpoch, fmt.Errorf("recover poisoned engine: discard control database: %w", err)
+		}
+		s.checkpointedOffset.Store(0)
+	}
+
+	opts := []flatsqlrt.Option{flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir())}
+	if s.controlDBDurable {
+		opts = append(opts, flatsqlrt.WithFileIORoot(s.basePath))
+	}
+	engine, err := flatsqlrt.New(opts...)
 	if err != nil {
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: start replacement engine: %w", err)
 	}
-	engineDB, err := engine.CreateDatabase(engineRecordSchema, "sdn-control")
+	var engineDB *flatsqlrt.Database
+	if s.controlDBDurable {
+		engineDB, _, _, err = openControlDatabase(engine, s.dbPath)
+	} else {
+		engineDB, err = engine.CreateDatabase(engineRecordSchema, "sdn-control")
+	}
 	if err != nil {
 		engine.Close()
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: create database: %w", err)

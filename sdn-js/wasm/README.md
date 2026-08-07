@@ -76,27 +76,44 @@ brew install emscripten  # macOS
 apt install emscripten   # Ubuntu
 ```
 
-### flatsql-wasi.wasm — PIN SPLIT, DELIBERATE (2026-08-06)
+### flatsql-wasi.wasm — PIN SPLIT RESOLVED (2026-08-06)
 
-This checked-in copy is **older than the `flatsql` package this repo depends on**
-and is deliberately left behind for now.
+This copy is now **flatsql v1.4.3 (`c075dec`)**, matching the package pin, and it
+moved in the SAME COMMIT as the Go host's `env` module — which is the only way it
+was ever allowed to move.
 
-FlatSQL 1.4.0+ registers its own `sqlite3_vfs` over seven required imports in
-module `env` (`flatsql_io_open/read/write/truncate/sync/size/close` — see the
-flatsql repo's `docs/STORAGE-DURABILITY.md` §6). They are REQUIRED imports: a
-host that does not provide them **cannot instantiate the module**.
+**BREAKING FOR EMBEDDERS WHO BUILD THEIR OWN IMPORT OBJECT.** From v1.4.0 the
+artifact registers FlatSQL's own `sqlite3_vfs` over seven REQUIRED imports on
+module `env`:
 
-`preloadFlatSQLWASI()` hands these bytes to callers who build their own import
-object, and the Go host embeds its own copy at
-`sdn-server/internal/flatsqlrt/flatsql-wasi-noeh.wasm` with a sha256 pin test.
-Bumping any of those copies is therefore a coordinated host-contract change, not
-a file refresh: **the artifact and the host's `env` module land together, or the
-node fails to boot.**
+```
+i32 flatsql_io_open(ptr path, i32 pathLen, i32 flags)
+i32 flatsql_io_read(i32 h, ptr dst, i32 len, f64 offset)
+i32 flatsql_io_write(i32 h, ptr src, i32 len, f64 offset)
+i32 flatsql_io_truncate(i32 h, f64 size)
+i32 flatsql_io_sync(i32 h)
+f64 flatsql_io_size(i32 h)
+i32 flatsql_io_close(i32 h)
+```
 
-That work is the FlatSQL Phase 2 handoff (graph task
-`flatsql-ltx-state-persistence`, Hermes). Until it lands, this file stays on the
-pre-VFS artifact so existing embedders keep working.
+They are unconditional: a host that does not provide them **cannot instantiate
+the module**. There is no degraded mode and no feature flag. Offsets cross as
+`f64`, never `i64` — emscripten legalizes i64 at the JS boundary for the browser
+target and not for `STANDALONE_WASM`, so an i64 would give the same import
+different signatures in the two lanes.
 
-The browser lane is NOT affected and is already on the new engine: it loads
-`flatsql/wasm`, whose emscripten glue satisfies the seven imports itself
-(`sdn-js/src/flatsql-io-store.ts` supplies the storage backend).
+`preloadFlatSQLWASI()` only returns BYTES; nothing in this repo instantiates
+them. If you do, satisfy the seven imports — the flatsql package ships ready-made
+backends at `flatsql/io` (`createMemoryBackend`, `createNodeFsBackend`,
+`createChunkedStoreBackend`). The WASI surface itself is unchanged at six
+functions: FlatSQL uses no WASI file descriptors, so **preopens are irrelevant to
+its file I/O**.
+
+Host side: the Go daemon embeds its own copy at
+`sdn-server/internal/flatsqlrt/flatsql-wasi-noeh.wasm` (sha256 pin test) and
+satisfies `env` in `sdn-server/internal/flatsqlrt/hostio.go` over real files
+confined to the store directory.
+
+The browser lane was never affected: it loads `flatsql/wasm`, whose emscripten
+glue satisfies the seven imports itself (`sdn-js/src/flatsql-io-store.ts`
+supplies the storage backend).

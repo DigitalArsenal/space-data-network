@@ -16,8 +16,45 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 `flatsql` repo (superproject submodule `repos/main-packages/flatsql`):
 
 - source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
-- flatsql commit: `b26ed45` (no-eh query-error latch — a SQL error is a value, never `unreachable`)
-- sha256: `4d17fc5f4936305a005bfc5c63c550a58e448412900299ac7d6adc63ba0137e9`
+- flatsql commit: `c075dec`, tag **v1.4.3** (FlatSQL's own `sqlite3_vfs` over the
+  seven `env` file imports — disk-backed databases)
+- sha256: `9cf0c3b027ef24e2958eea8301f91093b3a2c9d12555641a123753cbdb07c3be`
+
+### The seven `env` imports are a HARD GATE
+
+From v1.4.0 the artifact imports `flatsql_io_open / read / write / truncate /
+sync / size / close` on module **`env`** UNCONDITIONALLY. A host that does not
+register them **cannot instantiate the module** — there is no degraded mode.
+`hostio.go` is that registration, and the artifact bump and the host wiring must
+always land in the same commit.
+
+The measured import surface of this artifact is 6 WASI + 7 `flatsql_io`; the
+WASI six are unchanged from the pre-VFS build (`clock_time_get`, `fd_write`,
+`fd_read`, `environ_sizes_get`, `environ_get`, `random_get`) — FlatSQL uses no
+WASI file descriptors at all, so **preopens are not part of this contract**.
+
+A runtime created WITHOUT `WithFileIORoot` still registers all seven, but every
+one refuses (`refusingHostFuncs`). That is deliberate and fail-closed: the
+defect this lane exists to remove was I/O that *looked* durable. An ephemeral
+engine's disk-backed open fails outright instead of succeeding against RAM.
+
+`kubo/sdn/flatsqlrt` is a separate lane and deliberately stays on the pre-VFS
+artifact — old artifact plus old host is self-consistent; bumping it without the
+same `env` wiring is what would break it.
+
+### DEPLOY REQUIREMENT — re-run `prewarm-aot` with this bump
+
+The AOT cache key is `flatsql-<sha256[:8]>-we<libwasmedge>.aot.wasm`, keyed on
+the ENGINE BYTES. Changing the artifact invalidates every host's cache, and the
+daemon **never compiles at startup** by design — so a host that ships this
+binary without re-running `spacedatanetwork prewarm-aot` as the daemon's user
+silently falls back to the INTERPRETER, which is ~100x slower for query
+workloads.
+
+That failure is especially nasty for this particular change: the whole point is
+a faster boot, and an interpreted engine would make the boot SLOWER while every
+log line still said the warm path was taken. The boot line
+`FlatSQL engine mode: ...` is what to check — it must say AOT.
 
 Why no-exceptions (loop A.3/A.3b findings, measured): WasmEdge's AOT
 compiler (0.14–0.17) cannot parse wasm-exceptions (exnref) modules, and its

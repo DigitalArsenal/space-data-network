@@ -835,7 +835,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 		return imported, fmt.Errorf("commit dataset shard import: %w", err)
 	}
 	committed = true
-	if err := s.recordCatalog.AppendAll(catalogEvents); err != nil {
+	if err := s.appendCatalogEvents(catalogEvents); err != nil {
 		return imported, fmt.Errorf("append record catalog events: %w", err)
 	}
 	return imported, nil

@@ -73,9 +73,15 @@ func EngineAOTCacheDir() string { return engineAOTCacheDir() }
 
 // FlatSQLStore provides storage over the in-process FlatSQL-WASM engine:
 // record payloads live in append-only stream files, and durable record
-// metadata lives in the compact record-catalog log. The engine's SQLite
-// tables are rebuilt from those domain records at open/recovery; SQL
-// statements are not persisted.
+// metadata lives in the compact record-catalog log.
+//
+// The engine's SQLite control tables are now DISK-BACKED (flatsql_boot_state.go)
+// and survive a restart, so a boot applies only the journal tail past a
+// persisted, digest-verified mark. That is an OPTIMISATION over an unchanged
+// baseline, not a new source of truth: the journal and the stream files remain
+// authoritative, and every doubt about the database — missing, corrupt,
+// mismatched, or an engine with no filesystem — discards it and rebuilds
+// everything from them exactly as this store always did.
 type FlatSQLStore struct {
 	db                     *sql.DB
 	engine                 *flatsqlrt.Runtime
@@ -148,6 +154,71 @@ type FlatSQLStore struct {
 	fieldEncMu   sync.Mutex
 	fieldEncPriv []byte
 	fieldEncPub  []byte
+
+	// controlDBDurable reports that the engine's control database is backed by
+	// a REAL FILE under basePath. False keeps every pre-durability behaviour:
+	// read-only opens, and any host whose engine could not reach a filesystem,
+	// re-derive the whole catalog at boot exactly as they always did.
+	// See flatsql_boot_state.go.
+	controlDBDurable bool
+	// controlDBPath is the engine's own database file — deliberately NOT
+	// dbPath, which still names the legacy v1 database the migration reads.
+	controlDBPath string
+	// checkpointedOffset is the record-catalog journal offset the persisted
+	// resume mark currently names. Read without the store lock to decide
+	// cheaply whether a checkpoint is worth taking at all.
+	checkpointedOffset atomic.Int64
+	// checkpointStop closes the background checkpoint loop; checkpointOnce
+	// makes Close idempotent against it.
+	checkpointStop chan struct{}
+	checkpointOnce sync.Once
+	// bootReplayFrom / bootReplayFrames record what the boot replay actually
+	// did, for the startup log line and for tests that must prove a WARM boot
+	// skipped work rather than merely being fast on a small fixture.
+	bootReplayFrom   int64
+	bootReplayWarm   bool
+	bootReplayFrames int
+	// bootResumeFrom carries the resume offset to a DEFERRED hydration — the
+	// path the daemon actually takes (node.go opens
+	// WithDeferredRecordCatalogReplay and hydrates in the background). It is
+	// consumed exactly once, by the first non-forced hydration.
+	bootResumeFrom atomic.Int64
+	// appliedOffset is the journal high-water mark this store has DEMONSTRABLY
+	// applied to its control tables — advanced only by the replay and by
+	// appendCatalogEvents (flatsql_boot_state.go), never by the raw file length.
+	// The persisted resume mark can never exceed it.
+	appliedOffset atomic.Int64
+}
+
+// BootReplayStats reports what the last open's record-catalog replay did.
+// A warm boot resumes from a persisted mark; a cold one starts at zero.
+type BootReplayStats struct {
+	// Warm is true when a persisted resume mark was accepted.
+	Warm bool
+	// ResumeOffset is the journal byte offset the replay started at.
+	ResumeOffset int64
+	// FramesApplied is how many journal frames the boot replay applied.
+	FramesApplied int
+	// JournalBytes is the journal's CRC-valid length at open.
+	JournalBytes int64
+	// Durable reports whether the control database is backed by a real file.
+	Durable bool
+}
+
+// BootReplay reports what this store's open replay did. The distinction that
+// matters operationally is Warm: a cold boot rebuilding a catalog-scale store
+// is the multi-minute start this lane exists to remove, and "it was fast" is
+// not evidence that the warm path was taken.
+func (s *FlatSQLStore) BootReplay() BootReplayStats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return BootReplayStats{
+		Warm:          s.bootReplayWarm,
+		ResumeOffset:  s.bootReplayFrom,
+		FramesApplied: s.bootReplayFrames,
+		JournalBytes:  s.recordCatalog.validLength(),
+		Durable:       s.controlDBDurable,
+	}
 }
 
 // StoreOption configures a FlatSQLStore at open time.
@@ -263,15 +334,54 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		}
 	}()
 
-	// dbPath no longer names a real SQLite file (the engine is in-memory),
-	// but the string stays exactly as before: it salts the local-EPM store key
-	// and is exposed via Path().
+	// dbPath keeps its historical value and all its historical jobs: it salts
+	// the local-EPM store key, it is what Path() reports, and it is the LEGACY
+	// v1 database MigrateLegacyControl reads in place. The engine's control
+	// database is a DIFFERENT, new file — see flatSQLControlDBName for why
+	// sharing this one would be a two-writer hazard.
 	dbPath := filepath.Join(basePath, "sdn.db")
+	controlDBPath := filepath.Join(basePath, flatSQLControlDBName)
 
-	engine, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to start FlatSQL engine: %w", err)
+	// ORDER MATTERS AND CHANGED HERE. The record-catalog journal is opened
+	// BEFORE the engine, because the warm/cold decision needs both halves of the
+	// handshake at once: the mark lives in the control database, and verifying
+	// it needs the journal. Neither compaction recovery nor the journal open
+	// touches the engine, so hoisting them costs nothing and lets a cold boot
+	// discard the control database before anything has queried it.
+	if !readOnly {
+		// Resolve any compaction (compaction.go) left interrupted by a prior
+		// crash BEFORE the record-catalog journal is opened, so replay always
+		// sees a journal file that is unambiguously the pre- or post-compaction
+		// one -- never a leftover temp or a half-renamed one. Read-only opens
+		// take no writer lock and must never mutate the store, so they skip this
+		// entirely and simply read whatever is currently on disk.
+		if err := recoverPendingCompaction(basePath, streamDir); err != nil {
+			return nil, fmt.Errorf("failed to recover pending stream compaction: %w", err)
+		}
 	}
+	recordCatalog, err := openRecordCatalogJournal(filepath.Join(basePath, recordCatalogJournalFileName), readOnly)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open record catalog journal: %w", err)
+	}
+	catalogOpened := false
+	defer func() {
+		if !catalogOpened {
+			recordCatalog.Close()
+		}
+	}()
+
+	// THE ENGINE'S CONTROL DATABASE, and the warm/cold decision in one step.
+	// A zero resume offset comes back with a GUARANTEED-EMPTY database, because
+	// a from-zero replay only rebuilds correctly into empty tables (see
+	// openControlEngine).
+	engine, engineDB, resumeFrom, err := openControlEngine(basePath, controlDBPath, readOnly,
+		func(mark bootMark, warm bool) int64 {
+			return resumeOffset(mark, warm, recordCatalog)
+		})
+	if err != nil {
+		return nil, err
+	}
+	controlDBDurable := !readOnly && engine.DiskBackedAvailable()
 	// Always log the engine mode at open — AOT vs interpreted, and WHICH artifact
 	// is executing. A stale AOT cache key (engine bytes or libwasmedge version
 	// bumped without re-running `prewarm-aot`) degrades silently to the
@@ -292,38 +402,20 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 			"Queries and record-catalog hydration will be ~100x slower.",
 			mode.CacheDir, mode.MissReason)
 	}
-	engineDB, err := engine.CreateDatabase(engineRecordSchema, "sdn-control")
-	if err != nil {
-		engine.Close()
-		return nil, fmt.Errorf("failed to create FlatSQL database: %w", err)
+	if controlDBDurable {
+		log.Infof("FlatSQL control database: DISK-BACKED at %s (journal_mode=TRUNCATE)", controlDBPath)
+	} else if readOnly {
+		log.Infof("FlatSQL control database: ephemeral (read-only open never becomes a second writer)")
+	} else {
+		log.Warnf("FlatSQL control database: EPHEMERAL — the engine has no filesystem, so the whole record catalog is re-derived at every boot")
 	}
 	if err := engineDB.RegisterFileID("$OMM", "OMM"); err != nil {
 		engine.Close()
 		return nil, fmt.Errorf("failed to register $OMM file identifier: %w", err)
 	}
 
-	// Resolve any compaction (compaction.go) left interrupted by a prior
-	// crash BEFORE the record-catalog journal below is opened, so replay
-	// always sees a journal file that is unambiguously the pre- or
-	// post-compaction one -- never a leftover temp or a half-renamed one.
-	// Read-only opens take no writer lock and must never mutate the store
-	// (mirrors every other writer-only invariant here), so they skip this
-	// entirely and simply read whatever is currently on disk.
-	if !readOnly {
-		if err := recoverPendingCompaction(basePath, streamDir); err != nil {
-			engine.Close()
-			return nil, fmt.Errorf("failed to recover pending stream compaction: %w", err)
-		}
-	}
-
-	recordCatalog, err := openRecordCatalogJournal(filepath.Join(basePath, recordCatalogJournalFileName), readOnly)
-	if err != nil {
-		engine.Close()
-		return nil, fmt.Errorf("failed to open record catalog journal: %w", err)
-	}
 	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), readOnly)
 	if err != nil {
-		recordCatalog.Close()
 		engine.Close()
 		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
 	}
@@ -357,7 +449,27 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		engineHotWindow: cfg.engineHotWindow,
 		engineResident:  map[string]int64{},
 		engineEpoch:     1,
+
+		controlDBDurable: controlDBDurable,
+		controlDBPath:    controlDBPath,
+		checkpointStop:   make(chan struct{}),
 	}
+	catalogOpened = true
+
+	// resumeFrom is 0 for EVERY doubt — no mark, wrong journal, mark past the
+	// valid length, unreadable prefix — and on that path openControlEngine has
+	// already guaranteed the control tables are empty, so a full replay behaves
+	// exactly as it always has.
+	if !controlDBDurable {
+		resumeFrom = 0
+	}
+	store.bootReplayFrom = resumeFrom
+	store.bootReplayWarm = resumeFrom > 0
+	store.checkpointedOffset.Store(resumeFrom)
+	store.bootResumeFrom.Store(resumeFrom)
+	// A warm boot inherits the mark's coverage: those frames ARE applied — that
+	// is what made the resume legal in the first place.
+	store.appliedOffset.Store(resumeFrom)
 
 	// Every live catalog mutation funnels through the journal append, which is
 	// where the hydration shield learns what live traffic touched during a
@@ -371,6 +483,13 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		store.Close()
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
+	// BEFORE anything queries: a persisted schema remembers virtual tables whose
+	// MODULE registration died with the last process. Restore the runtime half
+	// or the first query to touch one fails with `no such module`.
+	if err := store.reregisterPersistedSources(); err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to restore persisted engine sources: %w", err)
+	}
 	if _, err := auxiliaryMetadata.Replay(store); err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to replay auxiliary metadata: %w", err)
@@ -378,11 +497,25 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	if cfg.deferRecordCatalogReplay {
 		log.Infof("FlatSQL store: deferred compact record-catalog replay at open")
 	} else {
-		if _, err := recordCatalog.Replay(store); err != nil {
+		replayStart := time.Now()
+		replayedThrough := recordCatalog.validLength()
+		applied, err := recordCatalog.ReplayFrom(store, store.bootResumeFrom.Swap(0))
+		if err != nil {
 			store.Close()
 			return nil, fmt.Errorf("failed to replay record catalog journal: %w", err)
 		}
+		// The replay applied everything up to the length it snapshotted, so that
+		// is genuinely applied — and it is the only thing that may be marked.
+		store.noteCatalogAppliedThrough(replayedThrough)
+		store.bootReplayFrames = applied
 		store.recordCatalogHydrated.Store(true)
+		if store.bootReplayWarm {
+			log.Infof("FlatSQL store: WARM boot — resumed the record catalog at journal offset %d, applied %d frames in %s",
+				resumeFrom, applied, time.Since(replayStart).Round(time.Millisecond))
+		} else {
+			log.Infof("FlatSQL store: cold boot — replayed %d record-catalog frames from the beginning in %s",
+				applied, time.Since(replayStart).Round(time.Millisecond))
+		}
 	}
 	if cfg.deferBootRebuilds {
 		log.Infof("FlatSQL store: deferred derived source-summary and engine hot-window rebuilds at open")
@@ -390,6 +523,20 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		if err := store.RebuildDerivedState(); err != nil {
 			store.Close()
 			return nil, fmt.Errorf("failed to rebuild derived state: %w", err)
+		}
+	}
+
+	// Advance the mark to cover everything the boot just applied, then start the
+	// periodic checkpointer. Without the checkpointer a CRASH would cost a
+	// replay of everything since the last boot; with it, at most one interval.
+	if store.controlDBDurable {
+		if err := store.CheckpointRecordCatalog(); err != nil {
+			log.Warnf("FlatSQL store: initial boot-state checkpoint failed (next boot replays more, nothing is lost): %v", err)
+		}
+		if interval := resolveCheckpointInterval(); interval > 0 {
+			go store.runCheckpointLoop(interval)
+		} else {
+			log.Warnf("FlatSQL store: background boot-state checkpointing DISABLED by %s=0", checkpointIntervalEnv)
 		}
 	}
 
@@ -486,11 +633,37 @@ func (s *FlatSQLStore) ReplayRecordCatalogContext(ctx context.Context, force boo
 		s.recordCatalogHydrating.Store(false)
 	}()
 
-	count, err := s.recordCatalog.replayChunked(ctx, s, progress)
+	// THE WARM RESUME BELONGS HERE TOO, and this is the path production takes:
+	// node.go:365 opens the store WithDeferredRecordCatalogReplay and hydrates in
+	// the background, so the 5-minute boot was always THIS replay, not the
+	// synchronous one. The resume offset established at open is consumed exactly
+	// once, by the first hydration; a forced admin re-sync always starts at zero,
+	// because "re-sync" must mean re-derive and not "trust the mark I already
+	// have".
+	from := int64(0)
+	if !force {
+		from = s.bootResumeFrom.Swap(0)
+	} else {
+		s.bootResumeFrom.Store(0)
+	}
+	replayStart := time.Now()
+	replayedThrough := s.recordCatalog.validLength()
+	count, err := s.recordCatalog.replayFramesFrom(ctx, s, progress, true, from)
 	if err != nil {
 		return count, err
 	}
+	s.noteCatalogAppliedThrough(replayedThrough)
 	s.recordCatalogHydrated.Store(true)
+	if from > 0 {
+		log.Infof("FlatSQL store: WARM hydration — resumed the record catalog at journal offset %d, applied %d frames in %s",
+			from, count, time.Since(replayStart).Round(time.Millisecond))
+	}
+	// The tail is applied and the tables now describe the whole journal prefix,
+	// so the mark may move. Without this a deferred-replay daemon (i.e. the
+	// production one) would never advance it until its first clean shutdown.
+	if err := s.CheckpointRecordCatalog(); err != nil {
+		log.Warnf("FlatSQL store: checkpoint after hydration failed (the next boot replays more, nothing is lost): %v", err)
+	}
 	return count, nil
 }
 
@@ -2084,7 +2257,7 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	if err != nil {
 		return "", fmt.Errorf("record catalog event: %w", err)
 	}
-	if err := s.recordCatalog.Append(event); err != nil {
+	if err := s.appendCatalogEvent(event); err != nil {
 		return "", fmt.Errorf("append record catalog event: %w", err)
 	}
 
@@ -2443,7 +2616,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		return inserted, fmt.Errorf("commit batch store: %w", err)
 	}
 	committed = true
-	if err := s.recordCatalog.AppendAll(catalogEvents); err != nil {
+	if err := s.appendCatalogEvents(catalogEvents); err != nil {
 		return inserted, fmt.Errorf("append record catalog events: %w", err)
 	}
 	if len(enginePending) > 0 {
@@ -2491,7 +2664,7 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit source tag upsert: %w", err)
 	}
-	if err := s.recordCatalog.Append(event); err != nil {
+	if err := s.appendCatalogEvent(event); err != nil {
 		return fmt.Errorf("append record catalog source tag event: %w", err)
 	}
 	return nil
@@ -2888,7 +3061,7 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 	if err := tx.Commit(); err != nil {
 		return result, fmt.Errorf("commit source batch reconciliation: %w", err)
 	}
-	if err := s.recordCatalog.Append(recordCatalogEvent{
+	if err := s.appendCatalogEvent(recordCatalogEvent{
 		Kind:       recordCatalogEventSourceKeep,
 		SchemaName: result.SchemaName,
 		Tags: SourceTags{
@@ -3327,7 +3500,7 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if err := s.recordCatalog.Append(recordCatalogEvent{Kind: recordCatalogEventRecordDelete, SchemaName: schemaName, CID: cid}); err != nil {
+	if err := s.appendCatalogEvent(recordCatalogEvent{Kind: recordCatalogEventRecordDelete, SchemaName: schemaName, CID: cid}); err != nil {
 		return fmt.Errorf("append record catalog delete event: %w", err)
 	}
 	return nil
@@ -3414,7 +3587,7 @@ func (s *FlatSQLStore) garbageCollectBeforeLocked(cutoff int64) (int64, error) {
 			`, readSource)), schemaName); err != nil {
 				log.Warnf("GC source tag cleanup failed for %s: %v", schemaName, err)
 			}
-			if err := s.recordCatalog.Append(recordCatalogEvent{Kind: recordCatalogEventGCOlderThan, SchemaName: schemaName, CutoffUnix: cutoff}); err != nil {
+			if err := s.appendCatalogEvent(recordCatalogEvent{Kind: recordCatalogEventGCOlderThan, SchemaName: schemaName, CutoffUnix: cutoff}); err != nil {
 				return totalDeleted, fmt.Errorf("append record catalog GC event: %w", err)
 			}
 			if err := s.rebuildSourceSummaryForSchema(schemaName, tableName); err != nil {
@@ -3635,8 +3808,24 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 
 // Close closes the database handle, record catalog, and engine.
 func (s *FlatSQLStore) Close() error {
+	// Stop the background checkpointer BEFORE taking the write lock: it takes
+	// that same lock, and a ticker firing into a half-closed store would be
+	// operating on nil handles.
+	s.checkpointOnce.Do(func() {
+		if s.checkpointStop != nil {
+			close(s.checkpointStop)
+		}
+	})
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// A CLEAN shutdown always advances the mark: the next boot then replays
+	// nothing at all. This is the difference between "seconds" and "instant"
+	// on a restart, and it costs one small transaction.
+	if err := s.checkpointRecordCatalogLocked(); err != nil {
+		log.Warnf("FlatSQL store: final boot-state checkpoint failed (the next boot replays more, nothing is lost): %v", err)
+	}
 
 	var firstErr error
 	if s.db != nil {
