@@ -8,7 +8,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -1533,25 +1532,7 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 		log.Infof("HD wallet identity derived: PeerID=%s IdentityPath=%s SigningPath=%s EncryptionPath=%s GrantSigningPath=%s",
 			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath, info.GrantSigningKeyPath)
 
-		// Assert the separation POSITIVELY at boot, not only on failure. The whole
-		// reason the grant signer and the update root shared a key for as long as
-		// they did is that nothing ever stated which key was which — the collision
-		// was found by decoding a trust-root key_id by hand. Both values below are
-		// public; the update root's is already printed by the update-signing
-		// endpoint registration, and the grant verifier's is published to every
-		// client in KRF.PUBLIC_KEY.
-		if grantPub, err := bundle.Identity.GrantSigningPublicKey(); err == nil {
-			if updateRoot := n.updateRootSigningSeed(); len(updateRoot) == ed25519.SeedSize {
-				if updateRootPub, derr := ed25519PublicFromSeed(updateRoot); derr == nil {
-					if subtle.ConstantTimeCompare(grantPub, updateRootPub) == 1 {
-						log.Errorf("KEY DOMAIN COLLISION: the licensing grant verifier key and the fleet update/publisher root are the SAME ed25519 key (%x). Module-delivery grants will be REFUSED. See graph/tasks/sdn-grant-verifier-key-domain-separation.md.", grantPub)
-					} else {
-						log.Infof("Key domain separation OK: licensing grant verifier %x (%s) is distinct from the fleet update/publisher root %x (%s).",
-							grantPub, info.GrantSigningKeyPath, updateRootPub, info.SigningKeyPath)
-					}
-				}
-			}
-		}
+		n.logGrantKeyDomainSeparation(info.SigningKeyPath)
 
 		if repoPath := strings.TrimSpace(os.Getenv("IPFS_PATH")); repoPath != "" {
 			if err := EnsureManagedIPFSRepoIdentity(repoPath, bundle); err != nil {
@@ -4118,6 +4099,20 @@ func ed25519PublicKeyFromDirectoryJSON(epmJSON string) (ed25519.PublicKey, error
 	if !ok {
 		return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
 	}
+
+	// PURPOSE-AWARE, ORDER-INDEPENDENT. This function picks the key that verifies
+	// DATASET PUBLICATIONS, and it used to return the FIRST ed25519 signing entry
+	// in the record. That was safe only while a node advertised exactly one such
+	// key. Since the licensing grant verifier key (m/44'/0'/N'/2'/0') is now also
+	// advertised as an ed25519 Signing key — it must be, or clients cannot verify
+	// grants — "first" would be decided by FlatBuffers vector order, and picking
+	// the grant key here would make peers reject this node's OMM/OCM fleet-wide.
+	//
+	// So: filter out keys whose advertised derivation path is a NON-publication
+	// purpose, then require the remainder to be unambiguous. Ambiguity is an
+	// error, never a coin flip — a wrong key here fails closed at every peer and
+	// looks exactly like a corrupt signature.
+	var candidates []ed25519.PublicKey
 	for _, entry := range keys {
 		key, ok := entry.(map[string]any)
 		if !ok {
@@ -4128,11 +4123,56 @@ func ed25519PublicKeyFromDirectoryJSON(epmJSON string) (ed25519.PublicKey, error
 		if keyType != "signing" || (addressType != "" && addressType != "ed25519") {
 			continue
 		}
-		if pub, err := decodeEd25519PublicKeyHex(firstDirectoryString(key, "public_key", "PUBLIC_KEY")); err == nil {
-			return pub, nil
+		keyPath := firstDirectoryString(key, "key_address", "KEY_ADDRESS")
+		if directoryKeyPathIsNonPublicationPurpose(keyPath) {
+			continue
 		}
+		pub, err := decodeEd25519PublicKeyHex(firstDirectoryString(key, "public_key", "PUBLIC_KEY"))
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, pub)
 	}
-	return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
+
+	switch len(candidates) {
+	case 0:
+		return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
+	case 1:
+		return candidates[0], nil
+	default:
+		// All identical is not ambiguity — a record may legitimately repeat a key.
+		for _, c := range candidates[1:] {
+			if !c.Equal(candidates[0]) {
+				return nil, fmt.Errorf(
+					"EPM directory record advertises %d DIFFERENT Ed25519 signing public keys with no publication purpose to tell them apart; refusing to guess which one signs dataset publications",
+					len(candidates),
+				)
+			}
+		}
+		return candidates[0], nil
+	}
+}
+
+// licensingGrantPurposeIndex is the change-level index of
+// wasm.LicensingGrantKeyPath — m/44'/0'/<account>'/2'/0'. A key advertised at
+// this purpose signs licensing grants and NEVER dataset publications.
+const licensingGrantPurposeIndex = 2
+
+// directoryKeyPathIsNonPublicationPurpose reports whether an advertised
+// derivation path belongs to a purpose that is definitionally not the dataset
+// publication key.
+//
+// It is deliberately a DENY list rather than an allow list: an unrecognised or
+// unparseable path must stay a candidate, so this cannot silently discard the
+// publication key of a node running an older or hand-built identity scheme.
+func directoryKeyPathIsNonPublicationPurpose(keyPath string) bool {
+	components, err := epm.ParseKeyPath(keyPath)
+	if err != nil || len(components) != 5 {
+		return false
+	}
+	// m / 44' / coin' / account' / purpose' / index'
+	purpose := components[3]
+	return purpose.Hardened && purpose.Index == licensingGrantPurposeIndex
 }
 
 func firstDirectoryAny(values map[string]any, keys ...string) any {

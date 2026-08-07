@@ -1971,6 +1971,43 @@ func (s *Service) buildEPMBytesLocked(signatureHex string, signatureTimestamp in
 			keyOffsets = append(keyOffsets, encKeyOff)
 		}
 	}
+	// LICENSING GRANT VERIFIER KEY (m/44'/0'/N'/2'/0'). Owner ruling
+	// 2026-08-07, graph/tasks/sdn-grant-verifier-key-domain-separation.md.
+	//
+	// It MUST ride the EPM: a client that resolves this node's provider
+	// descriptor harvests every ed25519 Signing key here into
+	// `trustedGrantVerifierPublicKeys` (sdn-js server-descriptor.ts) and
+	// then refuses any grant whose GRANT_VERIFIER_PUBKEY is not in that
+	// set. Splitting the grant key off the identity signing key WITHOUT
+	// advertising it here would turn every grant failure from
+	// "invalid signature" into "invalid verifier" — still broken.
+	//
+	// Advertising it is safe and is the whole point of the hardened path:
+	// this is the public half of a fully hardened SLIP-0010 child, so it
+	// discloses nothing about the parent or any sibling, and the fleet
+	// update/publisher root is NOT what is published here.
+	//
+	// It carries NO XPUB, deliberately and for the same reason the Ed25519
+	// identity signing key above carries none: XPUB on a CryptoKey asserts
+	// public CKDpub-derivability, which is false for an all-hardened
+	// SLIP-10 Ed25519 path. That absence is also what keeps this key OFF
+	// the vCard and the QR — the alias projection emits a path alias only
+	// for entries that are publicly derivable (vcard.go, owner report
+	// 2026-07-29) — which is the required outcome here.
+	if s.identity != nil && s.identity.GrantSigningPubKey != nil && strings.TrimSpace(s.identity.GrantSigningKeyPath) != "" {
+		if grantPubBytes, err := s.identity.GrantSigningPubKey.Raw(); err == nil && len(grantPubBytes) > 0 {
+			grantPubOff := builder.CreateString(hex.EncodeToString(grantPubBytes))
+			grantAddrTypeOff := builder.CreateString("ed25519")
+			grantPathOff := builder.CreateString(s.identity.GrantSigningKeyPath)
+			EPM.CryptoKeyStart(builder)
+			EPM.CryptoKeyAddPUBLIC_KEY(builder, grantPubOff)
+			EPM.CryptoKeyAddADDRESS_TYPE(builder, grantAddrTypeOff)
+			EPM.CryptoKeyAddKEY_ADDRESS(builder, grantPathOff)
+			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+			keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
+		}
+	}
+
 	if len(s.runtimeSigningKey) == ed25519.PrivateKeySize {
 		pub := s.runtimeSigningKey.Public().(ed25519.PublicKey)
 		pubOff := builder.CreateString(hex.EncodeToString(pub))

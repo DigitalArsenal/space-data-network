@@ -243,6 +243,17 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 // is on DerivedIdentity.GrantSigningKeyPath.
 const licensingGrantKeyPathLabel = "m/44'/0'/<account>'/2'/0'"
 
+// Which derivation produced the grant key. TWO schemes exist in the fleet — the
+// HD path for mnemonic identities and an HKDF child for legacy on-disk identities
+// — and a host that does not say which one it used is undiagnosable from a log
+// (HEPHAESTUS, SEAL COUNCIL condition on Q1, 2026-08-07).
+const (
+	grantKeySchemeHD     = "SLIP-0010 HD child at " + licensingGrantKeyPathLabel
+	grantKeySchemeLegacy = "HKDF-SHA512 child under " + legacyGrantSigningDomain + " (legacy on-disk identity, no HD seed)"
+	grantKeySchemeEnv    = "SDN_DEV_PROVIDER_SIGNING_SEED_HEX override (development only)"
+	grantKeySchemeNone   = "none"
+)
+
 // legacyGrantSigningDomain is the KDF label for the legacy (non-HD) identity path.
 // It is versioned so the derivation can never be silently changed under a fleet
 // that has already published the corresponding verifier key.
@@ -267,6 +278,90 @@ func legacyGrantSigningSeed(parent []byte) []byte {
 		return nil
 	}
 	return seed
+}
+
+// logGrantKeyDomainSeparation states, once at boot, which key signs grants, which
+// key is the fleet update/publisher root, and how the grant key was derived.
+//
+// It asserts the separation POSITIVELY, not only on failure. The whole reason the
+// two duties shared a key for as long as they did is that nothing ever stated
+// which key was which — the collision was finally found by decoding a
+// fleet-trust-roots key_id by hand. Everything logged here is public: the update
+// root's public key is already printed by the update-signing endpoint
+// registration, and the grant verifier's is published to every client in
+// KRF.PUBLIC_KEY and in the node EPM.
+//
+// It reports the seed that is ACTUALLY provisioned (via moduleRuntimeKeySlots),
+// not the one the HD identity would imply, so a dev override cannot make the log
+// disagree with the running node.
+func (n *Node) logGrantKeyDomainSeparation(updateRootPath string) {
+	if n == nil {
+		return
+	}
+	grantSeed, _, err := n.moduleRuntimeKeySlots()
+	if err != nil || len(grantSeed) != ed25519.SeedSize {
+		log.Warnf("Licensing grant signing key unavailable (%v); this node will issue NO module-delivery grants.", err)
+		return
+	}
+	scheme := n.grantSigningKeyScheme(grantSeed)
+
+	if reason := grantSigningKeyDomainConflict(grantSeed, n.updateRootSigningSeed()); reason != "" {
+		log.Errorf(
+			"KEY DOMAIN COLLISION: %s. Grant key derivation: %s. Module-delivery grants will be REFUSED on this node. See graph/tasks/sdn-grant-verifier-key-domain-separation.md.",
+			reason, scheme,
+		)
+		return
+	}
+
+	grantPub, err := ed25519PublicFromSeed(grantSeed)
+	if err != nil {
+		log.Warnf("Licensing grant signing key does not yield a usable verifier key: %v", err)
+		return
+	}
+	grantPath := licensingGrantKeyPathLabel
+	if n.identity != nil && strings.TrimSpace(n.identity.GrantSigningKeyPath) != "" {
+		grantPath = n.identity.GrantSigningKeyPath
+	}
+
+	updateRoot := n.updateRootSigningSeed()
+	if len(updateRoot) != ed25519.SeedSize {
+		log.Infof(
+			"Key domain separation OK: licensing grant verifier %x (%s, %s). This node holds no fleet update/publisher root, so it signs no update manifests.",
+			grantPub, grantPath, scheme,
+		)
+		return
+	}
+	updateRootPub, err := ed25519PublicFromSeed(updateRoot)
+	if err != nil {
+		return
+	}
+	log.Infof(
+		"Key domain separation OK: licensing grant verifier %x (%s, %s) is distinct from the fleet update/publisher root %x (%s). Grants and fleet code authority do not share a key.",
+		grantPub, grantPath, scheme, updateRootPub, updateRootPath,
+	)
+}
+
+// grantSigningKeyScheme names WHICH derivation produced the grant seed that was
+// actually provisioned. It identifies the source by comparing the resolved seed
+// against each possible origin rather than by re-walking moduleRuntimeKeySlots'
+// branches, so it cannot drift out of agreement with the resolution it describes.
+//
+// Two schemes coexist in the fleet by design (HD for mnemonic identities, HKDF for
+// legacy on-disk ones). A host that does not say which one it used is
+// undiagnosable from a log — SEAL COUNCIL condition, HEPHAESTUS 2026-08-07.
+func (n *Node) grantSigningKeyScheme(seed []byte) string {
+	if len(seed) != ed25519.SeedSize {
+		return grantKeySchemeNone
+	}
+	if n != nil && n.identity != nil {
+		if raw, err := n.identity.RawGrantSigningKey(); err == nil && bytes.Equal(raw, seed) {
+			return grantKeySchemeHD
+		}
+	}
+	if bytes.Equal(readDevRuntimeKeySlotEnv("SDN_DEV_PROVIDER_SIGNING_SEED_HEX"), seed) {
+		return grantKeySchemeEnv
+	}
+	return grantKeySchemeLegacy
 }
 
 // grantSigningKeyDomainConflict is the structural guard the owner ruling requires:
