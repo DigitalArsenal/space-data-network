@@ -3,6 +3,7 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -388,6 +389,16 @@ func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, er
 
 	builder := flatbuffers.NewBuilder(256)
 
+	// The guest cannot derive this itself any more (keyslot.get was removed; only
+	// keyslot.sign / keyslot.unwrap remain), so the host must publish the ed25519
+	// verification key that corresponds to the seed held in the provider signing slot.
+	// This is a PUBLIC key by construction — it is what every client verifies grants
+	// against — and it never leaves the slot boundary as secret material.
+	providerSigningPublic, err := ed25519PublicFromSeed(keySlots[providerSigningSlotID])
+	if err != nil {
+		return nil, fmt.Errorf("derive provider signing public key: %w", err)
+	}
+
 	providerPeerIDOffset := builder.CreateString(providerPeerID)
 	signingKeyRefOffset := buildKeyReferenceFrame(
 		builder,
@@ -396,7 +407,11 @@ func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, er
 		keyReferenceRoleProviderSigning,
 		keyReferenceAlgorithmEd25519Seed,
 		1,
+		providerSigningPublic,
 	)
+	// The X25519 wrapping key deliberately carries no PUBLIC_KEY: the key server reads
+	// PUBLIC_KEY only off PROVIDER_SIGNING_KEY (key_server.cpp:1112-1116) and never off
+	// the wrapping reference. Adding it here would publish a field nothing consumes.
 	wrappingKeyRefOffset := buildKeyReferenceFrame(
 		builder,
 		providerWrappingKeyID,
@@ -404,6 +419,7 @@ func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, er
 		keyReferenceRoleProviderWrapping,
 		keyReferenceAlgorithmX25519,
 		1,
+		nil,
 	)
 
 	lcf.LCFStart(builder)
@@ -421,6 +437,53 @@ func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, er
 	return builder.FinishedBytes(), nil
 }
 
+// ed25519PublicFromSeed derives the ed25519 verification key for a provider signing
+// seed. It MUST stay byte-identical to the derivation used by the signer, which is
+// ed25519.NewKeyFromSeed(slot) in internal/modulert/caps/keyslot.go:135-142 — if these
+// two ever diverge, every grant verifies against the wrong key and the failure is
+// indistinguishable from a corrupt signature.
+func ed25519PublicFromSeed(seed []byte) ([]byte, error) {
+	if len(seed) != ed25519.SeedSize {
+		return nil, fmt.Errorf("provider signing seed must be %d bytes, got %d", ed25519.SeedSize, len(seed))
+	}
+	pub, ok := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("provider signing seed did not yield an ed25519 public key")
+	}
+	if len(pub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("derived ed25519 public key must be %d bytes, got %d", ed25519.PublicKeySize, len(pub))
+	}
+	// Fail closed rather than publish a zero verifier key: an all-zero PUBLIC_KEY is
+	// exactly the defect this function exists to prevent (upstream-sdn-3), and it is
+	// silently accepted by both the key server and the client length check.
+	if isAllZero(pub) {
+		return nil, fmt.Errorf("derived ed25519 public key is all zero bytes")
+	}
+	return pub, nil
+}
+
+func isAllZero(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// buildKeyReferenceFrame emits one KRF for the licensing runtime config frame.
+//
+// publicKey may be nil. When it is non-empty it is written to KRF.PUBLIC_KEY, which is
+// the ONLY channel by which the licensing WASM key server can learn the provider's
+// ed25519 verification key: it holds only the SEED in a host key slot and, since
+// space-data-network-modules 54bd4be removed the in-guest derivation, it copies
+// PUBLIC_KEY out of this frame and otherwise "leaves it zeroed when absent"
+// (licensing/core/src/cpp/src/key_server.cpp:1107-1118). That zero array is then stamped
+// into every issued grant as GRANT_VERIFIER_PUBKEY (:1158-1160), so omitting this field
+// makes ed25519 verification fail for EVERY browser client. Do not drop it again.
+//
+// FlatBuffers requires vectors to be created BEFORE the table is started, hence the
+// CreateByteVector call above KRFStart.
 func buildKeyReferenceFrame(
 	builder *flatbuffers.Builder,
 	keyID string,
@@ -428,13 +491,21 @@ func buildKeyReferenceFrame(
 	role byte,
 	algorithm byte,
 	version uint32,
+	publicKey []byte,
 ) flatbuffers.UOffsetT {
 	keyIDOffset := builder.CreateString(keyID)
 	slotIDOffset := builder.CreateString(slotID)
+	publicKeyOffset := flatbuffers.UOffsetT(0)
+	if len(publicKey) > 0 {
+		publicKeyOffset = builder.CreateByteVector(publicKey)
+	}
 
 	lcf.KRFStart(builder)
 	lcf.KRFAddKEY_ID(builder, keyIDOffset)
 	lcf.KRFAddSLOT_ID(builder, slotIDOffset)
+	if publicKeyOffset != 0 {
+		lcf.KRFAddPUBLIC_KEY(builder, publicKeyOffset)
+	}
 	switch role {
 	case keyReferenceRoleProviderSigning:
 		lcf.KRFAddROLE(builder, 1)
