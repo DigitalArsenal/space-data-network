@@ -38,7 +38,26 @@ func mustGenerateEd25519Key(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey
 	return pub, priv
 }
 
+// recRecordTypeMBLCurrent is the RecordType ordinal MBL happens to hold TODAY
+// (SDS v1.183.0, schema/REC/RECORDTYPE_ORDINALS.json). It exists ONLY so the
+// fixtures below can write a realistic byte and so the ordinal-independence
+// tests have something to vary. Production code must never compare against it.
+const recRecordTypeMBLCurrent byte = 80
+
+// recRecordTypeMBLLegacy is the ordinal MBL held before the 2026-07-08 union
+// renumber, and is what every artifact published on or before 2026-07-10 still
+// carries on disk. A reader that keys on the ordinal cannot see these at all.
+const recRecordTypeMBLLegacy byte = 67
+
 func buildRECTrailerWithMBLSignature(t *testing.T, signaturePayloadJSON []byte) []byte {
+	t.Helper()
+	return buildRECTrailerWithMBLSignatureAs(t, signaturePayloadJSON, recRecordTypeMBLCurrent, "MBL")
+}
+
+// buildRECTrailerWithMBLSignatureAs builds the same trailer with a caller-chosen
+// union ordinal and standard string, so a test can prove which of the two the
+// verifier actually keys on.
+func buildRECTrailerWithMBLSignatureAs(t *testing.T, signaturePayloadJSON []byte, valueType byte, standard string) []byte {
 	t.Helper()
 
 	b := flatbuffers.NewBuilder(512)
@@ -61,14 +80,15 @@ func buildRECTrailerWithMBLSignature(t *testing.T, signaturePayloadJSON []byte) 
 	MBL.MBLAddEntries(b, entriesVecOff)
 	mblOff := MBL.MBLEnd(b)
 
-	standardOff := b.CreateString("MBL")
+	standardOff := b.CreateString(standard)
 
-	// Hand-rolled REC.fbs "Record" wrapper: value_type=MBL(80), value=mblOff,
-	// standard="MBL".
+	// Hand-rolled REC.fbs "Record" wrapper: value_type=valueType, value=mblOff,
+	// standard=standard. The verifier keys on the STANDARD; value_type is
+	// written only because a real publisher writes it.
 	b.StartObject(3)
 	b.PrependUOffsetTSlot(2, standardOff, 0)
 	b.PrependUOffsetTSlot(1, mblOff, 0)
-	b.PrependByteSlot(0, recRecordTypeMBL, 0)
+	b.PrependByteSlot(0, valueType, 0)
 	recordOff := b.EndObject()
 
 	b.StartVector(4, 1, 4)

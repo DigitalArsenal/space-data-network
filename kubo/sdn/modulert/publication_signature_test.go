@@ -18,6 +18,12 @@ import (
 	"github.com/ipfs/kubo/sdn/testsupport"
 )
 
+// recRecordTypeMBLCurrent is the RecordType ordinal MBL happens to hold TODAY
+// (SDS v1.183.0, schema/REC/RECORDTYPE_ORDINALS.json). It exists ONLY so these
+// fixtures write a realistic byte. Production code must never compare against
+// it — selection is by Record.standard (sdn-rec-ordinal-hardcoded-mbl-80).
+const recRecordTypeMBLCurrent byte = 80
+
 // --- test fixture construction -------------------------------------------
 //
 // buildSignedModuleArtifact/buildRECTrailerWithMBLSignature hand-build the
@@ -65,12 +71,13 @@ func buildRECTrailerWithMBLSignature(t *testing.T, signaturePayloadJSON []byte) 
 
 	standardOff := b.CreateString("MBL")
 
-	// Hand-rolled REC.fbs "Record" wrapper: value_type=MBL(80), value=mblOff,
-	// standard="MBL".
+	// Hand-rolled REC.fbs "Record" wrapper: value=mblOff, standard="MBL".
+	// The verifier keys on the STANDARD; value_type is written only because a
+	// real publisher writes it.
 	b.StartObject(3)
 	b.PrependUOffsetTSlot(2, standardOff, 0)
 	b.PrependUOffsetTSlot(1, mblOff, 0)
-	b.PrependByteSlot(0, recRecordTypeMBL, 0)
+	b.PrependByteSlot(0, recRecordTypeMBLCurrent, 0)
 	recordOff := b.EndObject()
 
 	b.StartVector(4, 1, 4)
@@ -287,7 +294,7 @@ func buildSDKBundleScopedArtifact(t *testing.T, portable []byte, members []testB
 	b.StartObject(3)
 	b.PrependUOffsetTSlot(2, standard, 0)
 	b.PrependUOffsetTSlot(1, mblOffset, 0)
-	b.PrependByteSlot(0, recRecordTypeMBL, 0)
+	b.PrependByteSlot(0, recRecordTypeMBLCurrent, 0)
 	recordOffset := b.EndObject()
 	b.StartVector(4, 1, 4)
 	b.PrependUOffsetT(recordOffset)
