@@ -2,10 +2,13 @@ package storage
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"hash/crc32"
 	"io"
 	"os"
@@ -39,6 +42,11 @@ type auxiliaryMetadataStore struct {
 	readOnly    bool
 	replayLimit int64
 	assetFrames map[string][]byte
+	// digest / digestOffset are the running prefix fingerprint behind the
+	// resume mark (flatsql_boot_state.go). Incremental for the same reason the
+	// record catalog's is: a checkpoint must never re-walk the whole journal.
+	digest       hash.Hash
+	digestOffset int64
 }
 
 type auxiliaryMetadataAppendFile interface {
@@ -338,51 +346,165 @@ func auxiliaryAssetFrameConflict(identity string) error {
 	return fmt.Errorf("auxiliary asset frame %q: %w", identity, ErrAssetPinAuditConflict)
 }
 
+// auxiliaryReplayChunkFrames is how many frames share ONE transaction during a
+// replay.
+//
+// THE SIZE OF THIS NUMBER IS THE WHOLE DEFECT. Before it existed every frame
+// was its own autocommit transaction, which against the disk-backed,
+// TRUNCATE-journalled control database is a journal write + a database write +
+// a truncate, each fsynced: ~250 transactions/second, rewriting the same 2.2 MB
+// file, 211 s of store-open on a 20 MB auxiliary journal (task
+// flatsql-aux-replay-resume-mark). An in-order replay of an append-only journal
+// needs NO per-event durability — the journal IS the source of truth, and a
+// crash mid-replay simply replays again from the last mark. So the only thing
+// per-event commits bought was the fsync bill.
+//
+// 512 keeps a chunk's rollback footprint small and its transaction short enough
+// that the engine's page cache is not asked to hold an unbounded write set.
+const auxiliaryReplayChunkFrames = 512
+
+// Replay applies the whole auxiliary journal. Retained for the callers that
+// genuinely mean "from the beginning" — the poisoned-engine recovery
+// (engine_link.go) and tests.
 func (m *auxiliaryMetadataStore) Replay(store *FlatSQLStore) (int, error) {
+	count, _, err := m.ReplayFrom(store, 0)
+	return count, err
+}
+
+// ReplayFrom applies the auxiliary journal from `from` and reports how many
+// frames it applied and the offset it applied THROUGH — which is what the
+// resume mark is allowed to name.
+//
+// `from` is trusted only as far as it is plausible: a negative offset, or one
+// past the journal's valid length, replays everything. The caller
+// (auxiliaryResumeOffset) has already verified the prefix digest; this is the
+// second belt.
+func (m *auxiliaryMetadataStore) ReplayFrom(store *FlatSQLStore, from int64) (int, int64, error) {
 	if m == nil || m.f == nil {
-		return 0, nil
+		return 0, 0, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	info, err := m.f.Stat()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	size := info.Size()
 	if m.readOnly {
 		size = m.replayLimit
 	}
-	var off int64
-	var hdr [8]byte
+	off := from
+	if off < 0 || off > size {
+		off = 0
+	}
 	count := 0
 	for off < size {
-		if _, err := m.f.ReadAt(hdr[:], off); err != nil {
-			return count, err
+		applied, next, stop, err := m.replayChunkLocked(store, off, size)
+		count += applied
+		off = next
+		if err != nil {
+			return count, off, err
+		}
+		if stop {
+			break
+		}
+	}
+	return count, off, nil
+}
+
+// replayChunkLocked applies up to auxiliaryReplayChunkFrames frames inside ONE
+// transaction and reports how far it got. stop=true means the journal ended
+// early — a zero-length frame, a frame running past the valid length, or a CRC
+// mismatch — which is the torn tail the replay has always simply stopped at.
+//
+// A failure anywhere in the chunk rolls the WHOLE chunk back and reports the
+// offset unchanged, so nothing partial is ever counted as applied. That is
+// stricter than the per-event path it replaces (which left earlier events
+// committed), and it is the safe direction: the boot fails, and the next one
+// replays from a mark that covers only committed work.
+func (m *auxiliaryMetadataStore) replayChunkLocked(store *FlatSQLStore, off, size int64) (int, int64, bool, error) {
+	tx, err := store.beginAuxiliaryReplayBatch()
+	if err != nil {
+		return 0, off, false, err
+	}
+	defer store.endAuxiliaryReplayBatch()
+	defer tx.Rollback() // no-op once the commit below has succeeded
+
+	var hdr [8]byte
+	applied := 0
+	cur := off
+	for applied < auxiliaryReplayChunkFrames && cur < size {
+		if _, err := m.f.ReadAt(hdr[:], cur); err != nil {
+			return 0, off, false, err
 		}
 		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
 		crc := binary.LittleEndian.Uint32(hdr[4:])
-		if n == 0 || off+8+n > size {
+		if n == 0 || cur+8+n > size {
 			break
 		}
 		payload := make([]byte, n)
-		if _, err := m.f.ReadAt(payload, off+8); err != nil {
-			return count, err
+		if _, err := m.f.ReadAt(payload, cur+8); err != nil {
+			return 0, off, false, err
 		}
 		if crc32.ChecksumIEEE(payload) != crc {
 			break
 		}
 		event, err := decodeAuxiliaryMetadataEvent(payload)
 		if err != nil {
-			return count, err
+			return 0, off, false, err
 		}
 		if err := store.applyAuxiliaryMetadataEvent(event); err != nil {
-			return count, err
+			return 0, off, false, err
 		}
-		count++
-		off += 8 + n
+		applied++
+		cur += 8 + n
 	}
-	return count, nil
+	if err := tx.Commit(); err != nil {
+		return 0, off, false, fmt.Errorf("commit auxiliary metadata replay chunk: %w", err)
+	}
+	// Stopped short of the chunk budget with bytes left = the journal ended in
+	// a torn or truncated frame.
+	return applied, cur, cur < size && applied < auxiliaryReplayChunkFrames, nil
+}
+
+// validLength reports the auxiliary journal's CRC-valid length as established
+// when it was opened: writers truncate a torn tail away, readers are bounded by
+// replayLimit.
+func (m *auxiliaryMetadataStore) validLength() int64 {
+	if m == nil || m.f == nil {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.readOnly {
+		return m.replayLimit
+	}
+	info, err := m.f.Stat()
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// digestPrefix fingerprints the auxiliary journal's frame headers over
+// [0, limit) — headers only, incrementally, for the reasons spelled out on
+// recordCatalogJournal.digestPrefix.
+func (m *auxiliaryMetadataStore) digestPrefix(limit int64) (string, error) {
+	if m == nil || m.f == nil {
+		return "", errors.New("auxiliary metadata journal is not open")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.digest == nil || limit < m.digestOffset {
+		m.digest = newAuxiliaryMetadataDigest()
+		m.digestOffset = 0
+	}
+	if err := extendRecordCatalogDigest(m.digest, m.f, &m.digestOffset, limit); err != nil {
+		return "", err
+	}
+	return sealRecordCatalogDigest(m.digest, limit)
 }
 
 func (m *auxiliaryMetadataStore) Close() error {
@@ -421,11 +543,99 @@ func decodeAuxiliaryMetadataEvent(payload []byte) (auxiliaryMetadataEvent, error
 	return frame.Event, nil
 }
 
+// appendAuxiliaryMetadata is the funnel for the EIGHT auxiliary writers that
+// apply THEN append, and it advances the applied high-water mark on the way
+// out — the same structural trick appendCatalogEvents uses: the mark moves at
+// the one place that is definitionally reached only after an apply.
+//
+// See noteAuxiliaryApplied for why the ninth writer needs the other funnel.
 func (s *FlatSQLStore) appendAuxiliaryMetadata(event auxiliaryMetadataEvent) error {
 	if s == nil || s.auxiliaryMetadata == nil {
 		return nil
 	}
+	if err := s.auxiliaryMetadata.Append(event); err != nil {
+		return err
+	}
+	s.noteAuxiliaryApplied()
+	return nil
+}
+
+// appendAuxiliaryMetadataBeforeApply is the funnel for the ONE writer that
+// journals BEFORE it commits (the asset-pin lane). It must not advance
+// anything: between this call and that commit there is a frame on disk whose
+// rows do not exist yet, and a mark covering it would lose them for good. The
+// caller notes the offset itself, after its commit succeeds.
+func (s *FlatSQLStore) appendAuxiliaryMetadataBeforeApply(event auxiliaryMetadataEvent) error {
+	if s == nil || s.auxiliaryMetadata == nil {
+		return nil
+	}
 	return s.auxiliaryMetadata.Append(event)
+}
+
+// auxWriter is the SQL surface an auxiliary-metadata applier writes through.
+// Both *sql.DB (live traffic) and *sql.Tx (a replay chunk) satisfy it.
+type auxWriter interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// auxWrite hands an applier the right writer: the CHUNK TRANSACTION while a
+// batched replay is in flight, the store database otherwise.
+//
+// LOCKING. auxReplayWriter is written only where nothing else can read it: in
+// newFlatSQLStore before the store is published, and in the poisoned-engine
+// recovery, which holds s.mu. Every reader of it is an apply* handler, and
+// every live apply* caller holds s.mu. The field therefore never races, and it
+// is nil on every path that is not literally inside a replay.
+func (s *FlatSQLStore) auxWrite() auxWriter {
+	if s.auxReplayWriter != nil {
+		return s.auxReplayWriter
+	}
+	return s.db
+}
+
+// beginAuxiliaryReplayBatch opens one chunk transaction and routes the
+// auxiliary appliers into it.
+//
+// The reentrancy refusal is not decoration: the FlatSQL driver's transactions
+// are ENGINE-GLOBAL (flatsqldrv.Open), so a second BEGIN while one is open is
+// "cannot start a transaction within a transaction" from the engine — a boot
+// failure, not a silent one, but a confusing one.
+func (s *FlatSQLStore) beginAuxiliaryReplayBatch() (*sql.Tx, error) {
+	if s.auxReplayWriter != nil {
+		return nil, errors.New("auxiliary metadata replay is already batching")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin auxiliary metadata replay chunk: %w", err)
+	}
+	s.auxReplayWriter = tx
+	return tx, nil
+}
+
+func (s *FlatSQLStore) endAuxiliaryReplayBatch() {
+	s.auxReplayWriter = nil
+}
+
+// withAuxiliaryTx runs one applier's multi-statement work transactionally.
+// Inside a batched replay it JOINS the chunk transaction and lets the batch own
+// the commit; outside one it opens and commits its own, exactly as the
+// per-event path did.
+func (s *FlatSQLStore) withAuxiliaryTx(operation string, fn func(assetPinQueryExecer) error) error {
+	if w := s.auxReplayWriter; w != nil {
+		return fn(w)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin %s: %w", operation, err)
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *FlatSQLStore) checkAuxiliaryAssetFrame(event auxiliaryMetadataEvent) error {

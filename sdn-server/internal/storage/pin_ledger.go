@@ -181,7 +181,7 @@ func (s *FlatSQLStore) UpsertPinLedgerEntry(entry PinLedgerEntry) error {
 }
 
 func (s *FlatSQLStore) applyPinLedgerEntryUpsert(entry PinLedgerEntry) error {
-	_, err := s.db.Exec(`
+	_, err := s.auxWrite().Exec(`
 		INSERT INTO sdn_pin_ledger (
 			cid, schema_name, provider_peer_id, provider_public_key,
 			provider_id, source_name, batch_id, query_profile,

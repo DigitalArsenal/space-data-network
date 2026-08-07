@@ -236,7 +236,7 @@ func (s *FlatSQLStore) UpsertDatasetShardPublication(pub DatasetShardPublication
 }
 
 func (s *FlatSQLStore) applyDatasetShardPublicationUpsert(pub DatasetShardPublication) error {
-	_, err := s.db.Exec(`
+	_, err := s.auxWrite().Exec(`
 		INSERT INTO sdn_dataset_shard_publications (
 			schema_name, provider_id, source_name, batch_id, query_profile,
 			window_offset, window_limit, record_count, byte_count,
@@ -526,7 +526,7 @@ func (s *FlatSQLStore) applyDatasetShardPublicationDelete(query DatasetShardPubl
 		args = append(args, query.Limit)
 	}
 
-	result, err := s.db.Exec(`
+	result, err := s.auxWrite().Exec(`
 		DELETE FROM sdn_dataset_shard_publications
 		WHERE `+strings.Join(where, " AND "), args...)
 	if err != nil {

@@ -77,12 +77,24 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	// derivable — this function already replays the whole catalog below — so
 	// discarding is free, and trusting pages written by an engine that trapped
 	// mid-transaction is not.
+	//
+	// s.controlDBPath, NOT s.dbPath. Those are different files and this path had
+	// the wrong one: s.dbPath is the LEGACY v1 database (`sdn.db`, which
+	// MigrateLegacyControl still reads and which host-01 still has on disk),
+	// while the engine's control database is `control.flatsqldb`. As written it
+	// deleted the legacy database and then opened it as the control database —
+	// destroying data this store does not own, and handing the engine a file
+	// whose schema is not the control schema (or, once it is a non-database
+	// file, the flatsql_open_db trap: task flatsql-open-nondb-trap). Both marks
+	// are reset because a discarded database carries neither.
 	if s.controlDBDurable {
 		s.engine.FileIO().CloseAll()
-		if err := removeControlDatabaseFiles(s.dbPath); err != nil {
+		if err := removeControlDatabaseFiles(s.controlDBPath); err != nil {
 			return s.engineEpoch, fmt.Errorf("recover poisoned engine: discard control database: %w", err)
 		}
 		s.checkpointedOffset.Store(0)
+		s.auxCheckpointedOffset.Store(0)
+		s.auxAppliedOffset.Store(0)
 	}
 
 	opts := []flatsqlrt.Option{flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir())}
@@ -95,7 +107,7 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	}
 	var engineDB *flatsqlrt.Database
 	if s.controlDBDurable {
-		engineDB, _, _, err = openControlDatabase(engine, s.dbPath)
+		engineDB, _, _, err = openControlDatabase(engine, s.controlDBPath)
 	} else {
 		engineDB, err = engine.CreateDatabase(engineRecordSchema, "sdn-control")
 	}
@@ -132,10 +144,19 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	if err := s.initTables(); err != nil {
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: init tables: %w", err)
 	}
+	// From ZERO, always: the replacement database was discarded above, so there
+	// is nothing for a mark to resume into. The replay is batched (one
+	// transaction per chunk) exactly as it is at boot, and the caller holds
+	// s.mu, which is what makes routing the appliers through the chunk
+	// transaction safe here.
 	if s.auxiliaryMetadata != nil {
-		if _, err := s.auxiliaryMetadata.Replay(s); err != nil {
+		applied, through, err := s.auxiliaryMetadata.ReplayFrom(s, 0)
+		if err != nil {
 			return s.engineEpoch, fmt.Errorf("recover poisoned engine: replay auxiliary metadata: %w", err)
 		}
+		s.noteAuxiliaryAppliedThrough(through)
+		s.auxReplayed.Store(true)
+		log.Infof("FlatSQL engine recovery: replayed %d auxiliary metadata frames through offset %d", applied, through)
 	}
 
 	catalogWasHydrated := s.recordCatalogHydrated.Load()

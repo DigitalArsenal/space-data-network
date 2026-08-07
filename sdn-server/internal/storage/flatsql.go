@@ -201,6 +201,23 @@ type FlatSQLStore struct {
 	// appendCatalogEvents (flatsql_boot_state.go), never by the raw file length.
 	// The persisted resume mark can never exceed it.
 	appliedOffset atomic.Int64
+	// auxAppliedOffset / auxCheckpointedOffset are the SAME two quantities for
+	// the auxiliary-metadata journal, which is a different file with its own
+	// mark. auxReplayed says the auxiliary replay has run in this process — no
+	// auxiliary mark may be written before it has.
+	auxAppliedOffset      atomic.Int64
+	auxCheckpointedOffset atomic.Int64
+	auxReplayed           atomic.Bool
+	// auxReplayWriter routes the auxiliary appliers into a batched replay's
+	// CHUNK TRANSACTION. Nil except inside such a replay; see auxWrite for why
+	// a plain field is race-free here.
+	auxReplayWriter auxWriter
+	// bootAuxFrom / bootAuxWarm / bootAuxFrames record what the auxiliary boot
+	// replay did, for the startup log line and for tests that must prove a WARM
+	// boot skipped work rather than merely being fast on a small fixture.
+	bootAuxFrom   int64
+	bootAuxWarm   bool
+	bootAuxFrames int
 }
 
 // BootReplayStats reports what the last open's record-catalog replay did.
@@ -383,17 +400,38 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		}
 	}()
 
+	// The auxiliary journal is opened BEFORE the engine for the same reason the
+	// record-catalog journal is: the warm/cold decision needs BOTH journals in
+	// hand, because both marks live in the control database and verifying either
+	// one means fingerprinting its file.
+	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), readOnly)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
+	}
+	auxiliaryOpened := false
+	defer func() {
+		if !auxiliaryOpened {
+			auxiliaryMetadata.Close()
+		}
+	}()
+
 	// THE ENGINE'S CONTROL DATABASE, and the warm/cold decision in one step.
 	// A zero resume offset comes back with a GUARANTEED-EMPTY database, because
 	// a from-zero replay only rebuilds correctly into empty tables (see
 	// openControlEngine).
-	engine, engineDB, resumeFrom, err := openControlEngine(basePath, controlDBPath, readOnly,
-		func(mark bootMark, warm bool) int64 {
-			return resumeOffset(mark, warm, recordCatalog)
+	engine, engineDB, resume, err := openControlEngine(basePath, controlDBPath, readOnly,
+		func(mark bootMark, warm bool) bootResume {
+			catalog := resumeOffset(mark, warm, recordCatalog)
+			return bootResume{
+				Catalog:   catalog,
+				Auxiliary: auxiliaryResumeOffset(mark, warm, auxiliaryMetadata),
+				Keep:      controlDatabaseMayBeKept(catalog, warm, recordCatalog),
+			}
 		})
 	if err != nil {
 		return nil, err
 	}
+	resumeFrom := resume.Catalog
 	controlDBDurable := !readOnly && engine.DiskBackedAvailable()
 	// Always log the engine mode at open — AOT vs interpreted, and WHICH artifact
 	// is executing. A stale AOT cache key (engine bytes or libwasmedge version
@@ -425,12 +463,6 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	if err := engineDB.RegisterFileID("$OMM", "OMM"); err != nil {
 		engine.Close()
 		return nil, fmt.Errorf("failed to register $OMM file identifier: %w", err)
-	}
-
-	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), readOnly)
-	if err != nil {
-		engine.Close()
-		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
 	}
 
 	db := flatsqldrv.Open(engineDB)
@@ -469,6 +501,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		checkpointDone:   make(chan struct{}),
 	}
 	catalogOpened = true
+	auxiliaryOpened = true
 
 	// resumeFrom is 0 for EVERY doubt — no mark, wrong journal, mark past the
 	// valid length, unreadable prefix — and on that path openControlEngine has
@@ -476,7 +509,15 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// exactly as it always has.
 	if !controlDBDurable {
 		resumeFrom = 0
+		resume.Auxiliary = 0
 	}
+	store.bootAuxFrom = resume.Auxiliary
+	store.bootAuxWarm = resume.Auxiliary > 0
+	store.auxCheckpointedOffset.Store(resume.Auxiliary)
+	// A warm auxiliary boot inherits its mark's coverage for the same reason the
+	// catalog does: those frames ARE applied, which is what made the resume
+	// legal.
+	store.auxAppliedOffset.Store(resume.Auxiliary)
 	store.bootReplayFrom = resumeFrom
 	store.bootReplayWarm = resumeFrom > 0
 	store.checkpointedOffset.Store(resumeFrom)
@@ -504,9 +545,39 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		store.Close()
 		return nil, fmt.Errorf("failed to restore persisted engine sources: %w", err)
 	}
-	if _, err := auxiliaryMetadata.Replay(store); err != nil {
+	// THE AUXILIARY REPLAY STAYS ON THE CRITICAL PATH, DELIBERATELY.
+	//
+	// It was tempting to give it a `deferAux` sibling to
+	// deferRecordCatalogReplay and hydrate it in the background, and that would
+	// be WRONG. The record catalog can defer because it has a hydration shield
+	// (record_catalog_replay.go) that resolves replay-versus-live conflicts in
+	// favour of live traffic. The auxiliary tables have no such shield, and they
+	// are not a cache: they are the node's own state — its encrypted local EPM
+	// (read during identity bring-up, the instant this constructor returns), the
+	// directory, the pin ledger, dataset shard publications and their replay
+	// cursors, source licences, asset pin references. A daemon that answered
+	// queries or resumed publication with those tables half-populated would be
+	// serving and re-deriving from state it does not have yet, and a late
+	// historical delete/transition frame could land on top of a live row.
+	//
+	// So the fix for its cost is to make it CHEAP, not to move it: a resume mark
+	// (it now replays only the tail) plus chunk transactions (it no longer pays
+	// an fsync per event). Both are in auxiliary_metadata.go.
+	auxReplayStart := time.Now()
+	auxApplied, auxThrough, err := auxiliaryMetadata.ReplayFrom(store, resume.Auxiliary)
+	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to replay auxiliary metadata: %w", err)
+	}
+	store.noteAuxiliaryAppliedThrough(auxThrough)
+	store.bootAuxFrames = auxApplied
+	store.auxReplayed.Store(true)
+	if store.bootAuxWarm {
+		log.Infof("FlatSQL store: WARM auxiliary metadata — resumed at journal offset %d, applied %d frames in %s",
+			resume.Auxiliary, auxApplied, time.Since(auxReplayStart).Round(time.Millisecond))
+	} else {
+		log.Infof("FlatSQL store: cold auxiliary metadata — replayed %d frames from the beginning in %s",
+			auxApplied, time.Since(auxReplayStart).Round(time.Millisecond))
 	}
 	if cfg.deferRecordCatalogReplay {
 		log.Infof("FlatSQL store: deferred compact record-catalog replay at open")
@@ -4057,7 +4128,7 @@ func normalizeDirectoryRecord(record DirectoryRecord) (DirectoryRecord, error) {
 }
 
 func (s *FlatSQLStore) applyDirectoryRecordUpsert(record DirectoryRecord) error {
-	_, err := s.db.Exec(`
+	_, err := s.auxWrite().Exec(`
 		INSERT INTO sdn_directory (
 			kind, peer_id, dn, legal_name, bitcoin_address, epm_cid, source, updated_at, epm_json
 		)
@@ -4240,7 +4311,7 @@ func (s *FlatSQLStore) applyLocalEPMEncryptedUpsert(record auxiliaryLocalEPMReco
 		updatedAt = time.Now().Unix()
 	}
 
-	_, err := s.db.Exec(`
+	_, err := s.auxWrite().Exec(`
 		INSERT INTO sdn_local_epms (
 			peer_id, schema_name, encrypted_epm_bytes, updated_at
 		)
