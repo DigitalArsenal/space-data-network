@@ -568,18 +568,37 @@ func TestAuxiliaryMarkFreezesWhileAssetPinLedgerNeedsRecovery(t *testing.T) {
 	}
 }
 
-// TestAuxiliaryReplayChunkBoundaryIsExact walks the chunk size so a fixture
-// larger than one chunk cannot hide an off-by-one at the seam.
+// TestAuxiliaryReplayChunkBoundaryIsExact crosses the chunk seam so an
+// off-by-one there cannot hide: a frame dropped or applied twice at a chunk
+// boundary is the failure mode batching introduces, and it is invisible in any
+// fixture smaller than one chunk.
+//
+// The frames are appended STRAIGHT TO THE JOURNAL rather than written through
+// the public verbs. That is deliberate on two counts: a live write costs two
+// fsyncs (~25 ms), so 1,000 of them would put a minute on the go-host tier for
+// nothing; and appending without applying is precisely the claim under test —
+// the journal is the source of truth, and a replay is what turns it into rows.
 func TestAuxiliaryReplayChunkBoundaryIsExact(t *testing.T) {
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newFixtureStore(t, basePath)
-	// auxiliaryReplayChunkFrames is 512; each fixture generation writes ~12
-	// frames, so 60 generations crosses the seam comfortably.
-	const generations = 60
-	for gen := 1; gen <= generations; gen++ {
-		writeAuxiliaryFixture(t, store, gen)
+
+	// Two full chunks and a partial one, so the seam is crossed twice.
+	frames := 2*auxiliaryReplayChunkFrames + 37
+	for i := 0; i < frames; i++ {
+		if err := store.auxiliaryMetadata.Append(auxiliaryMetadataEvent{
+			Kind: auxiliaryEventDirectoryUpsert,
+			Directory: &DirectoryRecord{
+				Kind:      "node",
+				PeerID:    fmt.Sprintf("16Uiu2HAmSeam%06d", i),
+				DN:        fmt.Sprintf("seam %d", i),
+				Source:    "local",
+				EPMJSON:   "{}",
+				UpdatedAt: int64(1700000000 + i),
+			},
+		}); err != nil {
+			t.Fatalf("append frame %d: %v", i, err)
+		}
 	}
-	want := auxiliaryStateDigest(t, store)
 	journalEnd := store.auxiliaryMetadata.validLength()
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close(): %v", err)
@@ -590,14 +609,31 @@ func TestAuxiliaryReplayChunkBoundaryIsExact(t *testing.T) {
 	}
 	cold := newFixtureStore(t, basePath)
 	defer cold.Close()
-	if cold.bootAuxFrames <= auxiliaryReplayChunkFrames {
-		t.Fatalf("fixture applied %d frames, which does not cross the %d-frame chunk boundary",
-			cold.bootAuxFrames, auxiliaryReplayChunkFrames)
+	if cold.bootAuxFrames != frames {
+		t.Fatalf("cold replay applied %d frames, want %d (%d chunks + %d)",
+			cold.bootAuxFrames, frames, frames/auxiliaryReplayChunkFrames, frames%auxiliaryReplayChunkFrames)
 	}
 	if got := cold.auxAppliedOffset.Load(); got != journalEnd {
 		t.Fatalf("cold replay applied through %d, want the whole journal %d", got, journalEnd)
 	}
-	if got := auxiliaryStateDigest(t, cold); got != want {
-		t.Fatalf("multi-chunk cold replay state %s != pre-close state %s", got, want)
+	var rows int
+	if err := cold.db.QueryRow(
+		`SELECT COUNT(*) FROM sdn_directory WHERE peer_id LIKE '16Uiu2HAmSeam%'`).Scan(&rows); err != nil {
+		t.Fatalf("count replayed rows: %v", err)
+	}
+	if rows != frames {
+		t.Fatalf("replayed %d directory rows across %d chunks, want %d", rows, frames/auxiliaryReplayChunkFrames+1, frames)
+	}
+
+	// And the reopen after it is warm: the seam-crossing replay marked the whole
+	// journal, not just the last chunk.
+	if err := cold.Close(); err != nil {
+		t.Fatalf("Close() cold: %v", err)
+	}
+	warm := newFixtureStore(t, basePath)
+	defer warm.Close()
+	if !warm.bootAuxWarm || warm.bootAuxFrames != 0 || warm.bootAuxFrom != journalEnd {
+		t.Fatalf("reopen after a multi-chunk replay: warm=%v frames=%d from=%d, want warm with 0 frames at %d",
+			warm.bootAuxWarm, warm.bootAuxFrames, warm.bootAuxFrom, journalEnd)
 	}
 }
