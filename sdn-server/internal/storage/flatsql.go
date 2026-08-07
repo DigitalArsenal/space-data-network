@@ -47,6 +47,15 @@ var log = logging.Logger("storage")
 // NewFlatSQLStoreReadOnly (loop C.8b). Callers can match it with errors.Is.
 var ErrStoreReadOnly = errors.New("datastore is open read-only")
 
+// ErrStoreClosed is returned by read accessors reached AFTER Close.
+//
+// It exists because "closed" must be an ERROR VALUE, not a segfault. Several
+// callers are deliberately fire-and-forget background goroutines (node.go's
+// quota bookkeeping is spawned so it never adds latency to the materialization
+// path), so they can and do outlive the store — and every one of them already
+// handles an error return.
+var ErrStoreClosed = errors.New("datastore is closed")
+
 const (
 	flatSQLStreamDirName         = "flatsql-streams"
 	legacyBlobMigrationBatchSize = 50000
@@ -168,10 +177,14 @@ type FlatSQLStore struct {
 	// resume mark currently names. Read without the store lock to decide
 	// cheaply whether a checkpoint is worth taking at all.
 	checkpointedOffset atomic.Int64
-	// checkpointStop closes the background checkpoint loop; checkpointOnce
-	// makes Close idempotent against it.
-	checkpointStop chan struct{}
-	checkpointOnce sync.Once
+	// checkpointStop signals the background checkpoint loop to leave;
+	// checkpointDone is closed by the loop once it HAS left, and Close joins on
+	// it. checkpointRunning says whether there is anything to join.
+	// checkpointOnce makes the whole handshake idempotent.
+	checkpointStop    chan struct{}
+	checkpointDone    chan struct{}
+	checkpointRunning atomic.Bool
+	checkpointOnce    sync.Once
 	// bootReplayFrom / bootReplayFrames record what the boot replay actually
 	// did, for the startup log line and for tests that must prove a WARM boot
 	// skipped work rather than merely being fast on a small fixture.
@@ -453,6 +466,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		controlDBDurable: controlDBDurable,
 		controlDBPath:    controlDBPath,
 		checkpointStop:   make(chan struct{}),
+		checkpointDone:   make(chan struct{}),
 	}
 	catalogOpened = true
 
@@ -534,6 +548,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 			log.Warnf("FlatSQL store: initial boot-state checkpoint failed (next boot replays more, nothing is lost): %v", err)
 		}
 		if interval := resolveCheckpointInterval(); interval > 0 {
+			store.checkpointRunning.Store(true)
 			go store.runCheckpointLoop(interval)
 		} else {
 			log.Warnf("FlatSQL store: background boot-state checkpointing DISABLED by %s=0", checkpointIntervalEnv)
@@ -3639,6 +3654,16 @@ const maxQuotaEvictionRounds = 8
 func (s *FlatSQLStore) LiveRecordBytes() (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	// A CLOSED store answers, it does not crash. node.go's quota bookkeeping is
+	// deliberately fire-and-forget (materializeDatasetPublicationPNM spawns it so
+	// quota work adds no latency to materialization), so it CAN outlive the
+	// store's Close — and Close nils s.db, which made this a SIGSEGV in a
+	// daemon rather than an error at a call site that already handles errors.
+	// Reproduced deterministically once the disk-backed boot changed shutdown
+	// timing; latent long before that.
+	if s.db == nil {
+		return 0, ErrStoreClosed
+	}
 	return s.liveRecordBytesLocked()
 }
 
@@ -3808,14 +3833,12 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 
 // Close closes the database handle, record catalog, and engine.
 func (s *FlatSQLStore) Close() error {
-	// Stop the background checkpointer BEFORE taking the write lock: it takes
-	// that same lock, and a ticker firing into a half-closed store would be
-	// operating on nil handles.
-	s.checkpointOnce.Do(func() {
-		if s.checkpointStop != nil {
-			close(s.checkpointStop)
-		}
-	})
+	// Stop AND JOIN the background checkpointer before taking the write lock.
+	// Signalling alone is not enough: the loop may already be blocked on s.mu
+	// inside a checkpoint, and it would then run against a store this function
+	// has already nil'd. Must happen with the lock NOT held — the loop is
+	// waiting for it.
+	s.stopCheckpointLoop()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
