@@ -748,6 +748,11 @@ func (s *FlatSQLStore) checkpointRecordCatalogLocked() error {
 // write lock. Deliberately three single-row upserts and nothing else: this is
 // the entire footprint of a checkpoint inside the lock.
 func (s *FlatSQLStore) persistBootMarkLocked(end int64, digest string) error {
+	// The store may have been closed while we waited for the lock. A mark is
+	// worth nothing next to a nil-pointer dereference in a daemon.
+	if s.db == nil {
+		return nil
+	}
 	now := time.Now().Unix()
 	for _, kv := range [][2]string{
 		{bootMarkFormatKey, bootMarkFormat},
@@ -767,7 +772,15 @@ func (s *FlatSQLStore) persistBootMarkLocked(end int64, digest string) error {
 
 // runCheckpointLoop advances the mark periodically so a CRASH costs at most one
 // interval of replay. A clean shutdown checkpoints unconditionally in Close.
+//
+// It closes checkpointDone on the way out, and Close WAITS on that before it
+// tears anything down. That handshake is not decoration: without it the loop can
+// already be inside CheckpointRecordCatalog, blocked on s.mu, when Close takes
+// the lock and nils s.db — and the loop then dereferences a nil *sql.DB the
+// instant Close releases. Measured as a SIGSEGV in the node package's quota-GC
+// test, which closes a store while the daemon is still running.
 func (s *FlatSQLStore) runCheckpointLoop(interval time.Duration) {
+	defer close(s.checkpointDone)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -782,6 +795,20 @@ func (s *FlatSQLStore) runCheckpointLoop(interval time.Duration) {
 			}
 		}
 	}
+}
+
+// stopCheckpointLoop signals the loop and waits for it to leave. Idempotent, and
+// safe when the loop was never started. MUST be called WITHOUT the store lock:
+// the loop may be waiting for exactly that lock.
+func (s *FlatSQLStore) stopCheckpointLoop() {
+	s.checkpointOnce.Do(func() {
+		if s.checkpointStop != nil {
+			close(s.checkpointStop)
+		}
+		if s.checkpointRunning.Load() {
+			<-s.checkpointDone
+		}
+	})
 }
 
 // checkpointDirty reports whether enough journal has accumulated past the mark

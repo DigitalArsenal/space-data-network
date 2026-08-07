@@ -42,7 +42,19 @@ func TestAdminStoreHydrateReSyncsJournalOnlyRecords(t *testing.T) {
 		t.Fatalf("close seed store: %v", err)
 	}
 
-	// Reopen the way the daemon does after a restart: control tables empty.
+	// This test is about the ADMIN RE-SYNC endpoint, so it must start from a
+	// store whose control tables really are empty. Since the control database
+	// became durable (storage/flatsql_boot_state.go) a plain reopen is WARM and
+	// the records are already visible — the restart bug this endpoint was built
+	// to recover from no longer happens by itself. Discarding the control
+	// database reproduces the state the endpoint exists for: journal-only
+	// records, which is also every corruption/compaction fallback path.
+	for _, name := range []string{"control.flatsqldb", "control.flatsqldb-journal", "control.flatsqldb.fsdata"} {
+		if err := os.Remove(filepath.Join(basePath, name)); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("discard control database %s: %v", name, err)
+		}
+	}
+
 	store, err := storage.NewFlatSQLStore(basePath, validator,
 		storage.WithDeferredBootRebuilds(), storage.WithDeferredRecordCatalogReplay())
 	if err != nil {

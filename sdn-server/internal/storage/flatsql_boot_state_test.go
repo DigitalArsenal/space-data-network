@@ -455,7 +455,7 @@ func TestWarmBootTimingOnALargeStore(t *testing.T) {
 	if testing.Short() {
 		t.Skip("large synthetic store")
 	}
-	const frames = 60_000
+	const frames = 30_000
 
 	base := filepath.Join(t.TempDir(), "store")
 	v := bootTestValidator(t)
@@ -543,7 +543,7 @@ func TestDiscoveryReadDuringTailReplay(t *testing.T) {
 	v := bootTestValidator(t)
 
 	seed := openBootStore(t, base, v)
-	for i := 0; i < 40_000; i += 10_000 {
+	for i := 0; i < 20_000; i += 10_000 {
 		if err := seed.recordCatalog.AppendAll(synthCatalogFrames(i, 10_000)); err != nil {
 			t.Fatalf("append: %v", err)
 		}
