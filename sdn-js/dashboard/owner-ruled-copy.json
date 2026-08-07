@@ -1,14 +1,22 @@
 {
   "schema": "iris/owner-ruled-copy/1",
   "ruling": "IRIS 2026-07-30, ui-design-lib-two-way-sync (acceptance #3); owner reported the semantic defect THREE times",
-  "tasks": ["ui-menu-label-clutter-purge", "design-tool-strip-menu-clutter-at-source"],
+  "tasks": ["ui-menu-label-clutter-purge", "design-tool-strip-menu-clutter-at-source", "saw-ui-peer-popup-contact-card"],
 
   "banned": [
     { "id": "SUBS",        "pattern": "\\bSUBS\\b",         "note": "menu clutter; owner-ruled removed" },
     { "id": "fkey",        "pattern": "fkey",               "note": "the function-key column in the rail; owner-ruled removed" },
     { "id": "LOCAL_NODE",  "pattern": "LOCAL NODE · DESKTOP", "note": "rail brand-sub; owner-ruled removed" },
     { "id": "GEOIP",       "pattern": "GEOIP · LIVE SWARM",  "note": "menu clutter; owner-ruled removed" },
-    { "id": "DRAG",        "pattern": "DRAG TO ROTATE",      "note": "globe hint; owner-ruled removed" }
+    { "id": "DRAG",        "pattern": "DRAG TO ROTATE",      "note": "globe hint; owner-ruled removed" },
+
+    { "id": "SIGN_PATHS",  "pattern": "SIGNING PATHS",       "note": "peer popup identity row; owner-ruled removed 2026-08-07" },
+    { "id": "ENC_PATHS",   "pattern": "ENCRYPTION PATHS",    "note": "peer popup identity row; owner-ruled removed 2026-08-07" },
+    { "id": "SIGN_KEYS",   "pattern": "SIGNING KEYS",        "note": "peer popup identity row; owner-ruled removed 2026-08-07" },
+    { "id": "ENC_KEYS",    "pattern": "ENCRYPTION KEYS",     "note": "peer popup identity row; owner-ruled removed 2026-08-07" },
+    { "id": "EPM_SIG",     "pattern": "EPM SIGNATURE",       "note": "peer popup identity row; owner-ruled removed 2026-08-07" },
+    { "id": "EPM_TS",      "pattern": "EPM SIGNED AT",       "note": "peer popup identity row; owner-ruled removed 2026-08-07" },
+    { "id": "EPM_CID",     "pattern": "EPM CID",             "note": "peer popup identity row; owner-ruled removed 2026-08-07" }
   ],
 
   "scopes": {
@@ -17,6 +25,15 @@
     "archive":  { "verdict": "warn", "why": "spaceaware-ui/archive is a HISTORICAL RECORD of the owner's exports. Failing on it would make the build permanently red and pressure someone into rewriting his history. Never fail here." },
     "artifact": { "verdict": "fail", "why": "the built dashboard.html — the only scope that proves it did not reach the user" }
   },
+
+  "amendments": [
+    {
+      "date": "2026-08-07",
+      "task": "saw-ui-peer-popup-contact-card",
+      "ruling": "OWNER, verbatim: \"the peer popup looks like shit. Remove everything and make it look like an outlook contact card, and do not have the any of the tech shit like xpub signing paths epm signature, etc. All of that will just be on the vCard/EPM/QR\". The seven labels added above are the rows that popup printed; each existed in exactly ONE file (NodeDetail.svelte) and nowhere else in the tree, so a hit in any scope is a re-introduction, not a false positive. The unit half of the gate is spaceaware-ui src/dashboard/src/modules/sdn-admin/node/contact-card.test.js (banned SHAPES, proven live against what the popup used to render); this half is the one that proves the labels did not reach the fleet's bytes.",
+      "not_banned_here": "The VALUES (extended public key, derivation paths, signature/timestamp/content id, chain addresses, peer id) are deliberately absent from this list: they are runtime data, not copy, so the artifact scan cannot see them and a pattern for them would only fire on the DECODER — which is still legitimately bundled for the operator surfaces. The card model is where they are refused, structurally."
+    }
+  ],
 
   "baseline": {
     "date": "2026-08-02",
