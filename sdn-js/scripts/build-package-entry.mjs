@@ -3,9 +3,26 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
+import { resolveWalletBuildMode } from './wallet/external-wallet-build.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packageRoot = path.resolve(__dirname, '..');
+
+// Wallet runtime mode. Default: hd-wallet-wasm is inlined, which is what the
+// published package ships. `--external-wallet` / SDN_JS_EXTERNAL_WALLET=1
+// substitutes an adapter that obtains the runtime from the host instead, for
+// embedders that already ship a reviewed copy and must not have a second one.
+// See docs/EXTERNAL_WALLET_BUILD.md.
+const walletBuildMode = await resolveWalletBuildMode({
+  packageRoot,
+  argv: process.argv.slice(2),
+});
+console.log(
+  walletBuildMode.external
+    ? `[sdn-js] HD wallet runtime EXTERNALISED via ${path.relative(packageRoot, walletBuildMode.adapterPath)}`
+    : '[sdn-js] HD wallet runtime inlined (default package build)',
+);
 const hdWalletShims = new Map([
   ['./sdn-plugin.mjs', path.join(packageRoot, 'ui/shims/hd-wallet-sdn-plugin.mjs')],
   [
@@ -216,6 +233,8 @@ const sharedBuildOptions = {
         );
       },
     },
+    // Last so an embedder's substitutions win over the in-package shims.
+    ...walletBuildMode.plugins,
   ],
   loader: {
     '.wasm': 'file',
