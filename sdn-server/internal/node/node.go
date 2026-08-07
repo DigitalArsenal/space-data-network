@@ -4901,6 +4901,29 @@ func (n *Node) GrantSigningKey() []byte {
 	return grantSeed
 }
 
+// GrantVerifierPublicKeyHex returns the lowercase hex Ed25519 PUBLIC key that
+// clients must verify licensing grants against, or "" when this node cannot sign
+// grants (including when the domain separation guard has refused).
+//
+// This is the value advertised at /api/module-delivery/provider so a client can
+// cross-check LGR.GRANT_VERIFIER_PUBKEY against the provider it thinks it is
+// talking to. Publishing it is safe and is the point of the hardened derivation:
+// it is the public half of an all-hardened SLIP-0010 child, and it is NOT the
+// fleet update/publisher root. Advertising the root here was refused by the Seal
+// Council (HEPHAESTUS, 2026-08-07) and that refusal was lifted only once this
+// became a dedicated key.
+func (n *Node) GrantVerifierPublicKeyHex() string {
+	seed := n.GrantSigningKey()
+	if len(seed) != ed25519.SeedSize {
+		return ""
+	}
+	pub, err := ed25519PublicFromSeed(seed)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(pub)
+}
+
 // SigningKey returns the node's Ed25519 signing private key bytes, or nil if unavailable.
 //
 // THIS IS THE FLEET UPDATE / PUBLISHER ROOT — it signs SDN-UPDATE-MANIFEST-V1 and
