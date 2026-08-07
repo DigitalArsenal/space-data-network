@@ -438,3 +438,129 @@ func TestDirectoryKeyPathPurposeClassifier(t *testing.T) {
 		}
 	}
 }
+
+// TestServerManagedKeysReportsProvenanceAndRefusals is the owner's second ask
+// (2026-08-07): per-key provenance must be QUERYABLE, because the key-management
+// UI has to annotate "signing with the node root key" states and attribute bond
+// value to the right key.
+func TestServerManagedKeysReportsProvenanceAndRefusals(t *testing.T) {
+	t.Parallel()
+
+	signingSeed := make([]byte, ed25519.SeedSize)
+	for i := range signingSeed {
+		signingSeed[i] = byte(0x20 + i)
+	}
+	grantSeed := legacyGrantSigningSeed(signingSeed)
+
+	signingPriv, signingPub, err := crypto.GenerateEd25519Key(bytes.NewReader(signingSeed))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key(signing): %v", err)
+	}
+	grantPriv, grantPub, err := crypto.GenerateEd25519Key(bytes.NewReader(grantSeed))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key(grant): %v", err)
+	}
+
+	healthy := &Node{
+		identity: &wasm.DerivedIdentity{
+			SigningPrivKey:      signingPriv,
+			SigningPubKey:       signingPub,
+			SigningKeyPath:      "m/44'/0'/0'/0'/0'",
+			EncryptionKey:       bytes.Repeat([]byte{0x5c}, 32),
+			EncryptionPub:       bytes.Repeat([]byte{0x6d}, 32),
+			EncryptionKeyPath:   "m/44'/0'/0'/1'/0'",
+			GrantSigningPrivKey: grantPriv,
+			GrantSigningPubKey:  grantPub,
+			GrantSigningKeyPath: "m/44'/0'/0'/2'/0'",
+		},
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(t.TempDir(), "data")},
+		},
+	}
+
+	keys := healthy.ServerManagedKeys()
+	if len(keys) != 3 {
+		t.Fatalf("ServerManagedKeys returned %d entries, want identity/encryption/grant: %+v", len(keys), keys)
+	}
+
+	byPurpose := map[string]ManagedKey{}
+	updateRoots := 0
+	for _, key := range keys {
+		byPurpose[key.Purpose] = key
+		if key.Provenance != string(wasm.ProvenanceDerivedFromNodeRoot) {
+			t.Fatalf("%s provenance = %q, want the derive-from-node-root DEFAULT", key.Purpose, key.Provenance)
+		}
+		if !key.Reproducible {
+			t.Fatalf("%s is derived from the mnemonic but reported as not reproducible", key.Purpose)
+		}
+		if key.Description == "" {
+			t.Fatalf("%s has no description; the UI would have to invent one", key.Purpose)
+		}
+		if key.IsUpdateRoot {
+			updateRoots++
+		}
+	}
+	if updateRoots != 1 {
+		t.Fatalf("%d keys claim fleet code authority; exactly one may", updateRoots)
+	}
+	if !byPurpose["identity-signing"].IsUpdateRoot {
+		t.Fatal("the identity signing key is not flagged as the fleet update root")
+	}
+	if byPurpose["licensing-grant"].IsUpdateRoot {
+		t.Fatal("the grant key is flagged as the fleet update root")
+	}
+	if !byPurpose["licensing-grant"].InUse {
+		t.Fatalf("a properly separated grant key is reported as not in use: %q", byPurpose["licensing-grant"].Note)
+	}
+	if byPurpose["licensing-grant"].PublicKey == byPurpose["identity-signing"].PublicKey {
+		t.Fatal("the inventory reports the same public key for the grant lane and the update root")
+	}
+
+	// A REFUSED key is derivable but NOT signing. Reporting it as in-use would be
+	// a lie an operator would act on.
+	refused := &Node{
+		identity: collidingIdentity(t),
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(t.TempDir(), "data")},
+		},
+	}
+	for _, key := range refused.ServerManagedKeys() {
+		if key.Purpose != "licensing-grant" {
+			continue
+		}
+		if key.InUse {
+			t.Fatal("a refused grant key is reported as in use")
+		}
+		if !strings.Contains(key.Note, "REFUSED") {
+			t.Fatalf("a refused grant key does not say why: %q", key.Note)
+		}
+	}
+}
+
+// TestBondableAddressesAreIdentityOnly — the host names the addresses; summing
+// their value is chain RPC and therefore WASM's job, never the host's
+// (wasm-not-go-host-boundary).
+func TestBondableAddressesAreIdentityOnly(t *testing.T) {
+	t.Parallel()
+
+	n := &Node{
+		identity: &wasm.DerivedIdentity{
+			Addresses: &wasm.CoinAddresses{
+				Bitcoin:  &wasm.CoinAddress{Address: "bc1qexampleaddress0000000000000000000000000"},
+				Ethereum: &wasm.CoinAddress{Address: "0x1234567890abcdef1234567890abcdef12345678"},
+				Solana:   &wasm.CoinAddress{Address: "So1anaAddress1111111111111111111111111111111"},
+			},
+		},
+	}
+	addrs := n.BondableAddresses()
+	for _, chain := range []string{"bitcoin", "ethereum", "solana"} {
+		if strings.TrimSpace(addrs[chain]) == "" {
+			t.Fatalf("no bondable %s address reported", chain)
+		}
+	}
+
+	// No identity, no addresses — and no invented placeholders.
+	if got := (&Node{}).BondableAddresses(); got != nil {
+		t.Fatalf("a node with no identity reported bondable addresses: %v", got)
+	}
+}
