@@ -10,6 +10,12 @@
 
 ---
 
+> **📐 [The SDN Technical Path](docs/TECH-PATH.md)** — the authoritative
+> statement of the architecture this project is building: one streamed
+> FlatBuffer format end to end, FlatSQL-only durable storage, isomorphic
+> WASM compute over a connectors-only host, domain-separated keys, protected
+> module delivery, and an honest peer-to-peer mesh browsers join as peers.
+
 ## Mission
 
 **Enable decentralized, global collaboration on space situational awareness and space traffic management.**
