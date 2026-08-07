@@ -26,6 +26,8 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/cobra"
 
+	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
@@ -253,23 +255,133 @@ type modulePublishSigner struct {
 	XPub              string
 	SigningPubKey     ed25519.PublicKey
 	SigningPrivateKey ed25519.PrivateKey
+	Source            string
 }
 
-func loadModulePublishSigner(ctx context.Context, walletEnvPath, walletWASMPath string, account uint32) (*modulePublishSigner, error) {
-	envPath, err := resolveModulePublishWalletEnv(walletEnvPath)
-	if err != nil {
-		return nil, err
+// resolveModulePublishMnemonic answers "which key signs a module publication?".
+//
+// OWNER RULING 2026-08-07 (verbatim): "In the absence of a specific distribution
+// key, use the node's root key to sign / distribute without needing to create
+// separate .txt key files... the keys should always be derived from the hd node
+// root key, UNLESS they specifically setup another key."
+//
+// So the DEFAULT is this node's own HD root mnemonic, opened from the key
+// directory under the at-rest envelope the daemon already uses (explicit
+// configured password first, then the machine-derived ladder — identical to
+// `key reseal`, so a node that can boot can publish). No operator key ceremony,
+// no .txt file, no secret on the command line.
+//
+// A separate publication key remains fully supported but must be asked for
+// DELIBERATELY: --wallet-env, or SDN_MODULE_PUBLISH_WALLET_ENV. The implicit
+// CWD-relative dev-wallet.env files are honoured only as a last resort, so a
+// stray file in a working directory can never silently outrank the node root.
+//
+// Returned string is a human-readable SOURCE description for the operator log.
+// It never contains key material.
+func resolveModulePublishMnemonic(explicitWalletEnv string) (string, string, error) {
+	// 1. Deliberately configured separate key wins.
+	deliberate := strings.TrimSpace(explicitWalletEnv)
+	if deliberate == "" {
+		deliberate = strings.TrimSpace(os.Getenv("SDN_MODULE_PUBLISH_WALLET_ENV"))
 	}
-	envValues, err := readModulePublishEnvFile(envPath)
+	if deliberate != "" {
+		mnemonic, err := readModulePublishWalletEnvMnemonic(deliberate)
+		if err != nil {
+			return "", "", err
+		}
+		return mnemonic, fmt.Sprintf("configured publication key (%s)", deliberate), nil
+	}
+
+	// 2. DEFAULT — this node's HD root key.
+	mnemonic, source, rootErr := loadNodeRootMnemonic()
+	if rootErr == nil {
+		return mnemonic, source, nil
+	}
+
+	// 3. Last resort — the legacy implicit dev wallet files.
+	for _, candidate := range []string{
+		"config/dev-wallet.env",
+		"packages/space-data-network/config/dev-wallet.env",
+	} {
+		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
+			mnemonic, err := readModulePublishWalletEnvMnemonic(candidate)
+			if err != nil {
+				return "", "", err
+			}
+			return mnemonic, fmt.Sprintf("legacy dev wallet env (%s)", candidate), nil
+		}
+	}
+
+	return "", "", fmt.Errorf(
+		"no publication signing key available.\n"+
+			"  The default is this NODE'S OWN root key, which could not be opened: %w\n"+
+			"  Run this on the node (so --config resolves its key directory), or set up a\n"+
+			"  separate publication key deliberately with --wallet-env / SDN_MODULE_PUBLISH_WALLET_ENV.",
+		rootErr)
+}
+
+// loadNodeRootMnemonic opens this node's root mnemonic from its configured key
+// directory, using the same envelope ladder as `key reseal`.
+func loadNodeRootMnemonic() (string, string, error) {
+	// SDN_MNEMONIC_FILE names the mnemonic outright, so honour it even when no
+	// config resolves — the operator has already been explicit about the file.
+	cfg, _, cfgErr := config.LoadResolved(configPath)
+	if cfgErr != nil && strings.TrimSpace(os.Getenv("SDN_MNEMONIC_FILE")) == "" {
+		return "", "", fmt.Errorf("load config: %w", cfgErr)
+	}
+	keyDir := config.KeyDir(cfg)
+	mnemonicPath := strings.TrimSpace(config.MnemonicPathResolved(cfg))
+	if mnemonicPath == "" {
+		if keyDir == "" {
+			return "", "", errors.New("no key directory resolved from config, and SDN_MNEMONIC_FILE is unset")
+		}
+		mnemonicPath = filepath.Join(keyDir, "mnemonic")
+	}
+	data, err := os.ReadFile(mnemonicPath)
 	if err != nil {
-		return nil, err
+		return "", "", fmt.Errorf("read node mnemonic %s: %w", mnemonicPath, err)
+	}
+	if !keys.IsMnemonicEncrypted(data) {
+		if plain := strings.TrimSpace(string(data)); plain != "" {
+			return plain, fmt.Sprintf("node root key (%s)", mnemonicPath), nil
+		}
+		return "", "", fmt.Errorf("node mnemonic %s is empty", mnemonicPath)
+	}
+	// Explicitly configured at-rest password first — never bypass a pinned
+	// password with a machine-derived one that merely happens to work.
+	if pw, perr := config.KeyPassword(cfg); perr == nil && strings.TrimSpace(pw) != "" {
+		if recovered, derr := keys.DecryptMnemonic(data, pw); derr == nil {
+			return strings.TrimSpace(recovered), fmt.Sprintf("node root key (%s)", mnemonicPath), nil
+		}
+	}
+	recovered, scheme, aerr := keys.DecryptMnemonicAnyScheme(data)
+	if aerr != nil {
+		return "", "", fmt.Errorf("open node mnemonic %s: %w\n%s",
+			mnemonicPath, aerr, keys.DerivationFailureHint(keyDir))
+	}
+	return strings.TrimSpace(recovered),
+		fmt.Sprintf("node root key (%s, %s-derived envelope)", mnemonicPath, scheme), nil
+}
+
+func readModulePublishWalletEnvMnemonic(path string) (string, error) {
+	envValues, err := readModulePublishEnvFile(path)
+	if err != nil {
+		return "", err
 	}
 	mnemonic := firstNonEmptyEnvValue(envValues,
 		"SDN_TRACKED_DEV_ADMIN_MNEMONIC",
 		"SDN_MODULE_PUBLISH_MNEMONIC",
 	)
 	if strings.TrimSpace(mnemonic) == "" {
-		return nil, fmt.Errorf("wallet env file %s is missing SDN_TRACKED_DEV_ADMIN_MNEMONIC", envPath)
+		return "", fmt.Errorf("wallet env file %s is missing SDN_TRACKED_DEV_ADMIN_MNEMONIC", path)
+	}
+	return mnemonic, nil
+}
+
+func loadModulePublishSigner(ctx context.Context, walletEnvPath, walletWASMPath string, account uint32) (*modulePublishSigner, error) {
+	mnemonic, source, err := resolveModulePublishMnemonic(walletEnvPath)
+	if err != nil {
+		return nil, err
 	}
 	wasmPath, err := resolveModulePublishWalletWASM(walletWASMPath)
 	if err != nil {
@@ -313,6 +425,7 @@ func loadModulePublishSigner(ctx context.Context, walletEnvPath, walletWASMPath 
 		XPub:              xpub,
 		SigningPubKey:     append(ed25519.PublicKey(nil), pubRaw...),
 		SigningPrivateKey: signingPrivateKey,
+		Source:            source,
 	}, nil
 }
 
