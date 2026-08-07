@@ -17,6 +17,8 @@ package node
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -351,5 +353,88 @@ func TestGrantRoundTripVerifiesAgainstKRFAdvertisedPubkey(t *testing.T) {
 	forged := ed25519.Sign(ed25519.NewKeyFromSeed(updateRoot), grant)
 	if ed25519.Verify(ed25519.PublicKey(advertised), grant, forged) {
 		t.Fatal("a signature made with the update root verified against the grant verifier key — the keys are not separated")
+	}
+}
+
+// TestDirectoryEd25519SelectorIgnoresTheGrantKey is HEPHAESTUS's Q2b trap, closed.
+//
+// ed25519PublicKeyFromDirectoryJSON picks the key that verifies DATASET
+// PUBLICATIONS. It used to take the FIRST ed25519 signing entry, which was safe
+// only while a node advertised exactly one. The node now also advertises the
+// licensing grant verifier key as an ed25519 Signing key — it must, or clients
+// cannot verify grants — so "first" would be decided by vector order, and picking
+// the grant key here would make peers reject this node's OMM/OCM fleet-wide.
+func TestDirectoryEd25519SelectorIgnoresTheGrantKey(t *testing.T) {
+	t.Parallel()
+
+	publicationPub := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x11}, ed25519.SeedSize)).Public().(ed25519.PublicKey)
+	grantPub := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x22}, ed25519.SeedSize)).Public().(ed25519.PublicKey)
+
+	entry := func(pub ed25519.PublicKey, path string) string {
+		return fmt.Sprintf(`{"key_type":"signing","address_type":"ed25519","public_key":%q,"key_address":%q}`, hex.EncodeToString(pub), path)
+	}
+	publication := entry(publicationPub, "m/44'/0'/0'/0'/0'")
+	grant := entry(grantPub, "m/44'/0'/0'/2'/0'")
+
+	// BOTH orders must select the publication key. Order-dependence here is the
+	// whole defect.
+	for name, keys := range map[string]string{
+		"publication first": publication + "," + grant,
+		"grant first":       grant + "," + publication,
+	} {
+		got, err := ed25519PublicKeyFromDirectoryJSON(`{"keys":[` + keys + `]}`)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !got.Equal(publicationPub) {
+			t.Fatalf("%s: selected %x, want the publication key %x", name, got, publicationPub)
+		}
+	}
+
+	// A record carrying ONLY a grant key has no publication key — say so, do not
+	// hand back the grant key.
+	if _, err := ed25519PublicKeyFromDirectoryJSON(`{"keys":[` + grant + `]}`); err == nil {
+		t.Fatal("a record advertising only the grant key yielded a dataset publication key")
+	}
+
+	// Genuine ambiguity (two different non-grant signing keys) fails closed rather
+	// than picking one. A wrong key here fails at every peer and is indistinguishable
+	// from a corrupt signature.
+	other := entry(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x33}, ed25519.SeedSize)).Public().(ed25519.PublicKey), "sdn/runtime-signing")
+	if _, err := ed25519PublicKeyFromDirectoryJSON(`{"keys":[` + publication + "," + other + `]}`); err == nil {
+		t.Fatal("two different candidate publication keys were resolved by guessing instead of refused")
+	}
+
+	// Back-compat: a pre-existing single-key record, and a record with an
+	// unparseable path, both still resolve. The purpose filter is a DENY list
+	// precisely so it can never discard the only candidate.
+	legacy := entry(publicationPub, "")
+	if got, err := ed25519PublicKeyFromDirectoryJSON(`{"keys":[` + legacy + `]}`); err != nil || !got.Equal(publicationPub) {
+		t.Fatalf("a legacy single-key record no longer resolves: %x %v", got, err)
+	}
+}
+
+// TestDirectoryKeyPathPurposeClassifier pins the classifier's edges. It must
+// recognise the grant purpose exactly and treat everything it does not understand
+// as a candidate.
+func TestDirectoryKeyPathPurposeClassifier(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"m/44'/0'/0'/2'/0'", "m/44'/0'/7'/2'/0'", "m/44h/0h/0h/2h/0h"} {
+		if !directoryKeyPathIsNonPublicationPurpose(path) {
+			t.Fatalf("%q is the licensing grant path and was not recognised", path)
+		}
+	}
+	for _, path := range []string{
+		"m/44'/0'/0'/0'/0'", // identity signing / update root
+		"m/44'/0'/0'/1'/0'", // encryption
+		"m/44'/0'/0'/0/0",   // legacy auth
+		"sdn/runtime-signing",
+		"",
+		"m/44'/0'/0'", // too shallow to classify
+	} {
+		if directoryKeyPathIsNonPublicationPurpose(path) {
+			t.Fatalf("%q was wrongly excluded from the publication-key candidates", path)
+		}
 	}
 }

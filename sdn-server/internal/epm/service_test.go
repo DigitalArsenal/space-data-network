@@ -790,18 +790,28 @@ func testDerivedIdentity() (*wasm.DerivedIdentity, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The licensing grant signing key is a distinct child (owner ruling
+	// 2026-08-07) — never the identity signing key.
+	grantPrivKey, grantPubKey, err := crypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x28}, 64)))
+	if err != nil {
+		return nil, err
+	}
 	peerID, err := peer.IDFromPublicKey(identityPrivKey.GetPublic())
 	if err != nil {
 		return nil, err
 	}
 
 	return &wasm.DerivedIdentity{
-		IdentityPrivKey:    identityPrivKey,
-		IdentityPubKey:     identityPrivKey.GetPublic(),
-		SigningPrivKey:     signingPrivKey,
-		SigningPubKey:      signingPubKey,
-		EncryptionKey:      bytes.Repeat([]byte{0x33}, 32),
-		EncryptionPub:      bytes.Repeat([]byte{0x44}, 32),
+		IdentityPrivKey:     identityPrivKey,
+		IdentityPubKey:      identityPrivKey.GetPublic(),
+		SigningPrivKey:      signingPrivKey,
+		SigningPubKey:       signingPubKey,
+		EncryptionKey:       bytes.Repeat([]byte{0x33}, 32),
+		EncryptionPub:       bytes.Repeat([]byte{0x44}, 32),
+		GrantSigningPrivKey: grantPrivKey,
+		GrantSigningPubKey:  grantPubKey,
+		GrantSigningKeyPath: "m/44'/0'/0'/2'/0'",
+
 		PeerID:             peerID,
 		IdentityKeyPath:    "m/44'/0'/0'",
 		SigningKeyPath:     "m/44'/0'/0'/0'/0'",
