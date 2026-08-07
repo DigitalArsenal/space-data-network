@@ -44,8 +44,14 @@ func newTestService(t *testing.T) (*Service, *Store) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
+	// Listings and grants sign with DIFFERENT keys — owner ruling 2026-08-07,
+	// graph/tasks/sdn-grant-verifier-key-domain-separation.md.
+	_, grantKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate grant key: %v", err)
+	}
 
-	svc, err := NewService(store, "test-peer-id", privKey, nil)
+	svc, err := NewService(store, "test-peer-id", privKey, grantKey, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}

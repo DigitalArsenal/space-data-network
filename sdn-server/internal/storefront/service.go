@@ -26,24 +26,52 @@ const StorefrontPurchasesTopic = "/sdn/storefront/purchases"
 
 // Service provides storefront business logic
 type Service struct {
-	store         *Store
-	peerID        string
-	signingKey    ed25519.PrivateKey
-	pubsub        *ps.PubSub
-	listingTopic  *ps.Topic
-	purchaseTopic *ps.Topic
-	subscribers   map[string]chan *Listing // listingID -> channel
-	mu            sync.RWMutex
+	store  *Store
+	peerID string
+	// signingKey signs LISTINGS — a publication attestation by the provider of
+	// record, low volume, durable records. This is the node identity signing key
+	// (the fleet update / publisher root).
+	signingKey ed25519.PrivateKey
+	// grantSigningKey signs ACCESS GRANTS and is advertised to every requester as
+	// LGR.GRANT_VERIFIER_PUBKEY. It MUST be a distinct key from signingKey.
+	//
+	// OWNER RULING 2026-08-07, verbatim: "derive a grant-signing child from the
+	// node identity, keep the update root isolated"
+	// (graph/tasks/sdn-grant-verifier-key-domain-separation.md). Before that
+	// ruling this lane signed with signingKey and stamped the fleet
+	// code-authority public key into every grant handed to an anonymous client.
+	//
+	// Nil means grants are NOT signed. That is the pre-existing behaviour when no
+	// key is available and it stays fail-closed: an unsigned grant is visibly
+	// unsigned, whereas silently falling back to signingKey would recreate the
+	// exact collision this field removes.
+	grantSigningKey ed25519.PrivateKey
+	pubsub          *ps.PubSub
+	listingTopic    *ps.Topic
+	purchaseTopic   *ps.Topic
+	subscribers     map[string]chan *Listing // listingID -> channel
+	mu              sync.RWMutex
 }
 
-// NewService creates a new storefront service
-func NewService(store *Store, peerID string, signingKey ed25519.PrivateKey, pubsub *ps.PubSub) (*Service, error) {
+// NewService creates a new storefront service.
+//
+// signingKey signs listings; grantSigningKey signs access grants. They must not
+// be the same key — see the Service field docs and the owner ruling of
+// 2026-08-07. A caller that passes the same key for both gets an error rather
+// than a node that quietly issues grants under its fleet code-authority key.
+func NewService(store *Store, peerID string, signingKey, grantSigningKey ed25519.PrivateKey, pubsub *ps.PubSub) (*Service, error) {
+	if len(signingKey) > 0 && len(grantSigningKey) > 0 && signingKey.Equal(grantSigningKey) {
+		return nil, fmt.Errorf(
+			"storefront REFUSED: the grant signing key is the same key as the listing/publisher signing key; grants and fleet publication authority must not share a key (graph/tasks/sdn-grant-verifier-key-domain-separation.md)",
+		)
+	}
 	svc := &Service{
-		store:       store,
-		peerID:      peerID,
-		signingKey:  signingKey,
-		pubsub:      pubsub,
-		subscribers: make(map[string]chan *Listing),
+		store:           store,
+		peerID:          peerID,
+		signingKey:      signingKey,
+		grantSigningKey: grantSigningKey,
+		pubsub:          pubsub,
+		subscribers:     make(map[string]chan *Listing),
 	}
 
 	// Join PubSub topics if available
@@ -578,7 +606,7 @@ func (s *Service) IssueGrant(ctx context.Context, requestID string) (*AccessGran
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		}
-		if s.signingKey != nil {
+		if s.grantSigningKey != nil {
 			signature, err := s.signGrant(grant)
 			if err != nil {
 				return nil, fmt.Errorf("failed to sign grant: %w", err)
@@ -651,7 +679,7 @@ func (s *Service) IssueGrant(ctx context.Context, requestID string) (*AccessGran
 	grant.FieldStreamPolicy = grantFieldStreamPolicyFromListing(listing, grant)
 
 	// Sign the grant
-	if s.signingKey != nil {
+	if s.grantSigningKey != nil {
 		signature, err := s.signGrant(grant)
 		if err != nil {
 			return nil, fmt.Errorf("failed to sign grant: %w", err)
@@ -759,7 +787,7 @@ func inferListingKind(listing *Listing) ListingKind {
 }
 
 func (s *Service) signGrant(grant *AccessGrant) ([]byte, error) {
-	return ed25519.Sign(s.signingKey, s.grantSignaturePayload(grant)), nil
+	return ed25519.Sign(s.grantSigningKey, s.grantSignaturePayload(grant)), nil
 }
 
 func (s *Service) attachGrantResponse(grant *AccessGrant) error {
@@ -787,9 +815,12 @@ func (s *Service) encodeGrantResponse(grant *AccessGrant) ([]byte, error) {
 	capabilityToken := builder.CreateByteVector([]byte(grant.GrantID))
 	providerSignature := builder.CreateByteVector(grant.ProviderSignature)
 
+	// The verifier key advertised to the requester is the GRANT key, never the
+	// listing/publisher key. Publishing the latter here would hand the cluster's
+	// code-authority public key to every anonymous grant requester.
 	var verifierPubkey flatbuffers.UOffsetT
-	if s.signingKey != nil {
-		publicKey, ok := s.signingKey.Public().(ed25519.PublicKey)
+	if s.grantSigningKey != nil {
+		publicKey, ok := s.grantSigningKey.Public().(ed25519.PublicKey)
 		if !ok || len(publicKey) != ed25519.PublicKeySize {
 			return nil, fmt.Errorf("provider signing public key unavailable")
 		}
@@ -823,10 +854,10 @@ func (s *Service) encodeGrantResponse(grant *AccessGrant) ([]byte, error) {
 }
 
 func (s *Service) verifyGrantProviderSignature(grant *AccessGrant) error {
-	if grant == nil || s.signingKey == nil || grant.ProviderPeerID != s.peerID {
+	if grant == nil || s.grantSigningKey == nil || grant.ProviderPeerID != s.peerID {
 		return nil
 	}
-	publicKey, ok := s.signingKey.Public().(ed25519.PublicKey)
+	publicKey, ok := s.grantSigningKey.Public().(ed25519.PublicKey)
 	if !ok || len(publicKey) != ed25519.PublicKeySize {
 		return fmt.Errorf("provider signing public key unavailable")
 	}

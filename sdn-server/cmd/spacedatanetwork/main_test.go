@@ -2938,10 +2938,11 @@ func (p *runtimeMutationTestPlugin) InvokeCron(context.Context, string, []byte) 
 }
 
 type fakeProviderDescriptorSource struct {
-	host       libp2phost.Host
-	peer       peer.ID
-	addrs      []multiaddr.Multiaddr
-	epmService *epm.Service
+	host             libp2phost.Host
+	peer             peer.ID
+	addrs            []multiaddr.Multiaddr
+	epmService       *epm.Service
+	grantVerifierHex string
 }
 
 func (f fakeProviderDescriptorSource) PeerID() peer.ID {
@@ -2954,6 +2955,10 @@ func (f fakeProviderDescriptorSource) ListenAddrs() []multiaddr.Multiaddr {
 
 func (f fakeProviderDescriptorSource) Host() libp2phost.Host {
 	return f.host
+}
+
+func (f fakeProviderDescriptorSource) GrantVerifierPublicKeyHex() string {
+	return f.grantVerifierHex
 }
 
 func (f fakeProviderDescriptorSource) EPMService() *epm.Service {
@@ -3042,5 +3047,70 @@ func TestIdentityAdvertisesPublicationKey(t *testing.T) {
 	// No HD identity: unchanged legacy behavior, inject runtime key.
 	if identityAdvertisesPublicationKey(false, []byte(identityPriv), identityPriv) {
 		t.Fatal("non-HD node must keep injecting the runtime signing key")
+	}
+}
+
+// TestProviderDescriptorAdvertisesTheGrantVerifierKey — the advertisement the Seal
+// Council refused while the grant key WAS the fleet update root, and un-refused
+// once it became a dedicated hardened child (HEPHAESTUS, 2026-08-07,
+// graph/tasks/sdn-grant-verifier-key-domain-separation.md).
+//
+// It is what makes a client's trustedGrantVerifierPublicKeys cross-check possible
+// at all: without it the list is empty and the check is a no-op.
+func TestProviderDescriptorAdvertisesTheGrantVerifierKey(t *testing.T) {
+	const grantVerifier = "5f1c0a3e9b2d4c8a7e6f0d1b2c3a4e5f60718293a4b5c6d7e8f9012a3b4c5d6e"
+
+	privKey, _, err := crypto.GenerateSecp256k1Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateSecp256k1Key failed: %v", err)
+	}
+	host, err := libp2p.New(libp2p.NoListenAddrs, libp2p.Identity(privKey))
+	if err != nil {
+		t.Fatalf("libp2p.New failed: %v", err)
+	}
+	defer host.Close()
+
+	descriptor, err := buildProviderDescriptor(fakeProviderDescriptorSource{
+		host:             host,
+		peer:             host.ID(),
+		grantVerifierHex: grantVerifier,
+	})
+	if err != nil {
+		t.Fatalf("buildProviderDescriptor: %v", err)
+	}
+	if len(descriptor.GrantVerifierPublicKeys) != 1 || descriptor.GrantVerifierPublicKeys[0] != grantVerifier {
+		t.Fatalf("grantVerifierPublicKeys = %v, want [%s]", descriptor.GrantVerifierPublicKeys, grantVerifier)
+	}
+
+	// The JSON key must be spelled exactly as sdn-js reads it
+	// (ServerDescriptor.grantVerifierPublicKeys). A synthesized API field, so
+	// lowerCamel — not an SDS record key.
+	encoded, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatalf("marshal descriptor: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"grantVerifierPublicKeys":["`+grantVerifier+`"]`) {
+		t.Fatalf("descriptor JSON does not carry grantVerifierPublicKeys as sdn-js spells it: %s", encoded)
+	}
+
+	// A node that cannot sign grants advertises NO key rather than an empty
+	// string: an empty entry would be pinned by a client as a real key and would
+	// reject every grant.
+	silent, err := buildProviderDescriptor(fakeProviderDescriptorSource{
+		host: host,
+		peer: host.ID(),
+	})
+	if err != nil {
+		t.Fatalf("buildProviderDescriptor (no grant key): %v", err)
+	}
+	if len(silent.GrantVerifierPublicKeys) != 0 {
+		t.Fatalf("a node with no grant key advertised %v", silent.GrantVerifierPublicKeys)
+	}
+	encodedSilent, err := json.Marshal(silent)
+	if err != nil {
+		t.Fatalf("marshal silent descriptor: %v", err)
+	}
+	if strings.Contains(string(encodedSilent), "grantVerifierPublicKeys") {
+		t.Fatalf("the field should be omitted entirely when absent: %s", encodedSilent)
 	}
 }

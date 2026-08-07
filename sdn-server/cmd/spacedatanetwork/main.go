@@ -1339,9 +1339,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				} else {
 					sfSigningKey, err := storefrontSigningKeyFromRaw(n.SigningKey())
 					if err != nil {
-						log.Warnf("Storefront grants will be unsigned; node signing key unavailable: %v", err)
+						log.Warnf("Storefront listings will be unsigned; node signing key unavailable: %v", err)
 					}
-					sfSvc, err := storefront.NewService(sfStore, n.PeerID().String(), sfSigningKey, nil)
+					// Grants sign with the DERIVED GRANT CHILD, never the publisher
+					// root (owner ruling 2026-08-07,
+					// graph/tasks/sdn-grant-verifier-key-domain-separation.md). Nil
+					// here means grants go out unsigned and visibly so — it never
+					// falls back to sfSigningKey.
+					sfGrantKey, err := storefrontSigningKeyFromRaw(n.GrantSigningKey())
+					if err != nil {
+						log.Warnf("Storefront grants will be unsigned; node grant signing key unavailable: %v", err)
+					}
+					sfSvc, err := storefront.NewService(sfStore, n.PeerID().String(), sfSigningKey, sfGrantKey, nil)
 					if err != nil {
 						log.Warnf("Failed to initialize storefront service: %v", err)
 						_ = sfStore.Close()
@@ -4312,6 +4321,9 @@ type providerDescriptorSource interface {
 	ListenAddrs() []multiaddr.Multiaddr
 	Host() libp2phost.Host
 	EPMService() *epm.Service
+	// GrantVerifierPublicKeyHex is the ed25519 key clients verify licensing
+	// grants against. "" means this node issues no grants.
+	GrantVerifierPublicKeyHex() string
 }
 
 type providerDescriptorIdentityAddress struct {
@@ -4332,11 +4344,21 @@ type providerDescriptorIdentityResponse struct {
 }
 
 type providerDescriptorResponse struct {
-	PublicKey      string                              `json:"publicKey"`
-	PeerID         string                              `json:"peerId"`
-	IPNS           string                              `json:"ipns,omitempty"`
-	RelayAddresses []string                            `json:"relayAddresses,omitempty"`
-	Identity       *providerDescriptorIdentityResponse `json:"identity,omitempty"`
+	PublicKey string `json:"publicKey"`
+	PeerID    string `json:"peerId"`
+	// GrantVerifierPublicKeys is what a client loads into
+	// trustedGrantVerifierPublicKeys and cross-checks every grant's
+	// GRANT_VERIFIER_PUBKEY against. A LIST, not a scalar, so a key rotation can
+	// advertise old and new together instead of breaking every client mid-flight.
+	// Field name matches sdn-js ServerDescriptor.grantVerifierPublicKeys exactly.
+	//
+	// This is the grant CHILD (m/44'/0'/<account>'/2'/0'), never the fleet
+	// update/publisher root — advertising the root here was refused by the Seal
+	// Council and the refusal was lifted only because the key is now dedicated.
+	GrantVerifierPublicKeys []string                            `json:"grantVerifierPublicKeys,omitempty"`
+	IPNS                    string                              `json:"ipns,omitempty"`
+	RelayAddresses          []string                            `json:"relayAddresses,omitempty"`
+	Identity                *providerDescriptorIdentityResponse `json:"identity,omitempty"`
 }
 
 type moduleDeliveryListingsResult struct {
@@ -4666,6 +4688,9 @@ func buildProviderDescriptor(src providerDescriptorSource) (*providerDescriptorR
 		PublicKey: publicKeyHex,
 		PeerID:    peerID,
 		Identity:  buildProviderDescriptorIdentity(src, publicKeyHex, peerID),
+	}
+	if grantVerifier := strings.TrimSpace(src.GrantVerifierPublicKeyHex()); grantVerifier != "" {
+		response.GrantVerifierPublicKeys = []string{grantVerifier}
 	}
 	if peerID != "" {
 		response.IPNS = "/ipns/" + peerID

@@ -1529,8 +1529,10 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 		n.identity = bundle.Identity
 		n.identityBundle = bundle
 		info := bundle.Identity.Info()
-		log.Infof("HD wallet identity derived: PeerID=%s IdentityPath=%s SigningPath=%s EncryptionPath=%s",
-			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath)
+		log.Infof("HD wallet identity derived: PeerID=%s IdentityPath=%s SigningPath=%s EncryptionPath=%s GrantSigningPath=%s",
+			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath, info.GrantSigningKeyPath)
+
+		n.logGrantKeyDomainSeparation(info.SigningKeyPath)
 
 		if repoPath := strings.TrimSpace(os.Getenv("IPFS_PATH")); repoPath != "" {
 			if err := EnsureManagedIPFSRepoIdentity(repoPath, bundle); err != nil {
@@ -1549,6 +1551,17 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 		// Return secp256k1 identity key for libp2p PeerID
 		return bundle.Identity.IdentityPrivKey, nil
 	}
+
+	// NON-HD PATH. The separation line must fire here too, and this is not a
+	// nicety: TWO grant-key derivations exist in the fleet precisely BECAUSE
+	// non-HD nodes exist, so a boot that says nothing on exactly the nodes using
+	// the second scheme defeats the point of naming the scheme at all
+	// (SEAL COUNCIL condition Q1, HEPHAESTUS 2026-08-07). Found by booting the
+	// linux/amd64 build in a container, which takes this path.
+	//
+	// Deferred: the fallback identity is not resolved until the key below is
+	// loaded or generated, and the grant key derives from it.
+	defer n.logGrantKeyDomainSeparation("legacy on-disk identity (not HD-derived)")
 
 	// Fallback: load existing key or generate random one.
 	if _, statErr := os.Stat(keyPath); statErr == nil {
@@ -4097,6 +4110,20 @@ func ed25519PublicKeyFromDirectoryJSON(epmJSON string) (ed25519.PublicKey, error
 	if !ok {
 		return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
 	}
+
+	// PURPOSE-AWARE, ORDER-INDEPENDENT. This function picks the key that verifies
+	// DATASET PUBLICATIONS, and it used to return the FIRST ed25519 signing entry
+	// in the record. That was safe only while a node advertised exactly one such
+	// key. Since the licensing grant verifier key (m/44'/0'/N'/2'/0') is now also
+	// advertised as an ed25519 Signing key — it must be, or clients cannot verify
+	// grants — "first" would be decided by FlatBuffers vector order, and picking
+	// the grant key here would make peers reject this node's OMM/OCM fleet-wide.
+	//
+	// So: filter out keys whose advertised derivation path is a NON-publication
+	// purpose, then require the remainder to be unambiguous. Ambiguity is an
+	// error, never a coin flip — a wrong key here fails closed at every peer and
+	// looks exactly like a corrupt signature.
+	var candidates []ed25519.PublicKey
 	for _, entry := range keys {
 		key, ok := entry.(map[string]any)
 		if !ok {
@@ -4107,11 +4134,56 @@ func ed25519PublicKeyFromDirectoryJSON(epmJSON string) (ed25519.PublicKey, error
 		if keyType != "signing" || (addressType != "" && addressType != "ed25519") {
 			continue
 		}
-		if pub, err := decodeEd25519PublicKeyHex(firstDirectoryString(key, "public_key", "PUBLIC_KEY")); err == nil {
-			return pub, nil
+		keyPath := firstDirectoryString(key, "key_address", "KEY_ADDRESS")
+		if directoryKeyPathIsNonPublicationPurpose(keyPath) {
+			continue
 		}
+		pub, err := decodeEd25519PublicKeyHex(firstDirectoryString(key, "public_key", "PUBLIC_KEY"))
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, pub)
 	}
-	return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
+
+	switch len(candidates) {
+	case 0:
+		return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
+	case 1:
+		return candidates[0], nil
+	default:
+		// All identical is not ambiguity — a record may legitimately repeat a key.
+		for _, c := range candidates[1:] {
+			if !c.Equal(candidates[0]) {
+				return nil, fmt.Errorf(
+					"EPM directory record advertises %d DIFFERENT Ed25519 signing public keys with no publication purpose to tell them apart; refusing to guess which one signs dataset publications",
+					len(candidates),
+				)
+			}
+		}
+		return candidates[0], nil
+	}
+}
+
+// licensingGrantPurposeIndex is the change-level index of
+// wasm.LicensingGrantKeyPath — m/44'/0'/<account>'/2'/0'. A key advertised at
+// this purpose signs licensing grants and NEVER dataset publications.
+const licensingGrantPurposeIndex = 2
+
+// directoryKeyPathIsNonPublicationPurpose reports whether an advertised
+// derivation path belongs to a purpose that is definitionally not the dataset
+// publication key.
+//
+// It is deliberately a DENY list rather than an allow list: an unrecognised or
+// unparseable path must stay a candidate, so this cannot silently discard the
+// publication key of a node running an older or hand-built identity scheme.
+func directoryKeyPathIsNonPublicationPurpose(keyPath string) bool {
+	components, err := epm.ParseKeyPath(keyPath)
+	if err != nil || len(components) != 5 {
+		return false
+	}
+	// m / 44' / coin' / account' / purpose' / index'
+	purpose := components[3]
+	return purpose.Hardened && purpose.Index == licensingGrantPurposeIndex
 }
 
 func firstDirectoryAny(values map[string]any, keys ...string) any {
@@ -4809,7 +4881,65 @@ func (n *Node) indexLocalNodeEPM() error {
 	return n.directorySvc.UpsertNodeEPMJSON(n.epmService.DirectoryRecordJSON(), epmCID, "local-node")
 }
 
+// GrantSigningKey returns the 32-byte Ed25519 seed that signs LICENSING/ACCESS
+// GRANTS, or nil if unavailable. It is a derived CHILD of the node identity and is
+// never the key SigningKey returns.
+//
+// OWNER RULING 2026-08-07, verbatim: "derive a grant-signing child from the node
+// identity, keep the update root isolated"
+// (graph/tasks/sdn-grant-verifier-key-domain-separation.md).
+//
+// It resolves through moduleRuntimeKeySlots, the same path that fills the
+// licensing runtime's "provider-signing" slot, so every grant lane on this node —
+// the licensing WASM key server and the legacy storefront — advertises ONE grant
+// verifier public key. Two grant lanes with two verifier keys would be a client-
+// side mystery, not a security property.
+//
+// nil is returned when the two lanes would collide. Callers must treat that as
+// "cannot sign grants", never as "fall back to SigningKey".
+func (n *Node) GrantSigningKey() []byte {
+	if n == nil {
+		return nil
+	}
+	grantSeed, _, err := n.moduleRuntimeKeySlots()
+	if err != nil || len(grantSeed) != ed25519.SeedSize {
+		return nil
+	}
+	if reason := grantSigningKeyDomainConflict(grantSeed, n.updateRootSigningSeed()); reason != "" {
+		log.Errorf("REFUSING to hand out a grant signing key: %s (graph/tasks/sdn-grant-verifier-key-domain-separation.md)", reason)
+		return nil
+	}
+	return grantSeed
+}
+
+// GrantVerifierPublicKeyHex returns the lowercase hex Ed25519 PUBLIC key that
+// clients must verify licensing grants against, or "" when this node cannot sign
+// grants (including when the domain separation guard has refused).
+//
+// This is the value advertised at /api/module-delivery/provider so a client can
+// cross-check LGR.GRANT_VERIFIER_PUBKEY against the provider it thinks it is
+// talking to. Publishing it is safe and is the point of the hardened derivation:
+// it is the public half of an all-hardened SLIP-0010 child, and it is NOT the
+// fleet update/publisher root. Advertising the root here was refused by the Seal
+// Council (HEPHAESTUS, 2026-08-07) and that refusal was lifted only once this
+// became a dedicated key.
+func (n *Node) GrantVerifierPublicKeyHex() string {
+	seed := n.GrantSigningKey()
+	if len(seed) != ed25519.SeedSize {
+		return ""
+	}
+	pub, err := ed25519PublicFromSeed(seed)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(pub)
+}
+
 // SigningKey returns the node's Ed25519 signing private key bytes, or nil if unavailable.
+//
+// THIS IS THE FLEET UPDATE / PUBLISHER ROOT — it signs SDN-UPDATE-MANIFEST-V1 and
+// SDN-MODULE-PUBLICATION-V1 statements, i.e. what every box in the fleet will
+// install and run. It must NOT be used to sign grants; use GrantSigningKey.
 func (n *Node) SigningKey() []byte {
 	if n.identity != nil && n.identity.SigningPrivKey != nil {
 		raw, err := n.identity.SigningPrivKey.Raw()
