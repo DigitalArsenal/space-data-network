@@ -75,3 +75,28 @@ This requires Emscripten to be installed:
 brew install emscripten  # macOS
 apt install emscripten   # Ubuntu
 ```
+
+### flatsql-wasi.wasm — PIN SPLIT, DELIBERATE (2026-08-06)
+
+This checked-in copy is **older than the `flatsql` package this repo depends on**
+and is deliberately left behind for now.
+
+FlatSQL 1.4.0+ registers its own `sqlite3_vfs` over seven required imports in
+module `env` (`flatsql_io_open/read/write/truncate/sync/size/close` — see the
+flatsql repo's `docs/STORAGE-DURABILITY.md` §6). They are REQUIRED imports: a
+host that does not provide them **cannot instantiate the module**.
+
+`preloadFlatSQLWASI()` hands these bytes to callers who build their own import
+object, and the Go host embeds its own copy at
+`sdn-server/internal/flatsqlrt/flatsql-wasi-noeh.wasm` with a sha256 pin test.
+Bumping any of those copies is therefore a coordinated host-contract change, not
+a file refresh: **the artifact and the host's `env` module land together, or the
+node fails to boot.**
+
+That work is the FlatSQL Phase 2 handoff (graph task
+`flatsql-ltx-state-persistence`, Hermes). Until it lands, this file stays on the
+pre-VFS artifact so existing embedders keep working.
+
+The browser lane is NOT affected and is already on the new engine: it loads
+`flatsql/wasm`, whose emscripten glue satisfies the seven imports itself
+(`sdn-js/src/flatsql-io-store.ts` supplies the storage backend).
