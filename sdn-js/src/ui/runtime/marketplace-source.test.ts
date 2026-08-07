@@ -608,6 +608,8 @@ function createStfBytes(): Uint8Array {
     30,
     1000,
     0,
+    0,
+    0,
   );
   const pricingOffset = STF.createPricingVector(builder, [priceTierOffset]);
   const acceptedPaymentsOffset = STF.createAcceptedPaymentsVector(builder, [

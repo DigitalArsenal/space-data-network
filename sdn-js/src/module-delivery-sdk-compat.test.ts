@@ -437,6 +437,7 @@ function encodeChallengeResponse(options: {
     providerPeerIdOffset,
     0,
     0,
+    0,
   );
   LCH.finishLCHBuffer(builder, root);
   return builder.asUint8Array();
