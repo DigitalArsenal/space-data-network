@@ -132,6 +132,25 @@ func newEngineVMWithBytes(t *testing.T, engineBytes []byte) *wasmedge.VM {
 	}
 	wasi.InitWasi([]string{}, []string{}, []string{})
 
+	// The engine imports the seven flatsql_io_* functions on module "env"
+	// UNCONDITIONALLY (hostio.go): without them the module does not instantiate
+	// at all. This POC never touches a file, so it registers the REFUSING
+	// variant — which is also the honest thing for a VM with no store root.
+	envMod := wasmedge.NewModule(HostIOModule)
+	if envMod == nil {
+		t.Fatal("create env host module")
+	}
+	for _, hf := range refusingHostFuncs() {
+		ft := wasmedge.NewFunctionType(hf.Params, hf.Returns)
+		envMod.AddFunction(hf.Name, wasmedge.NewFunction(ft, hf.Func, nil, hf.Cost))
+		ft.Release()
+	}
+	if err := vm.RegisterModule(envMod); err != nil {
+		envMod.Release()
+		t.Fatalf("register env host module: %v", err)
+	}
+	t.Cleanup(envMod.Release)
+
 	if err := vm.RegisterWasmBuffer("flatsql", engineBytes); err != nil {
 		t.Fatalf("register engine as named module: %v", err)
 	}

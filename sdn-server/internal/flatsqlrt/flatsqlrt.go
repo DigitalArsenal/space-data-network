@@ -109,6 +109,21 @@ type config struct {
 	aotCacheDir      string
 	aotCompileOnMiss bool
 	execTimeout      time.Duration
+	fileIORoot       string
+}
+
+// WithFileIORoot gives this engine a REAL filesystem, confined to dir.
+//
+// Without it the engine still imports the seven flatsql_io_* functions — it
+// must, or the artifact cannot instantiate — but every one of them refuses
+// (refusingHostFuncs), so a disk-backed open fails instead of silently
+// succeeding against something undurable. That asymmetry is deliberate: the
+// defect this whole lane exists to remove was I/O that LOOKED durable.
+//
+// dir must exist. Every path the engine asks for is resolved inside it and
+// refused if it escapes (HostIO.Resolve).
+func WithFileIORoot(dir string) Option {
+	return func(c *config) { c.fileIORoot = dir }
 }
 
 // WithExecTimeout overrides the per-call wall-clock budget for engine calls
@@ -143,7 +158,27 @@ type Runtime struct {
 	aotMiss     string
 	aotCacheDir string
 	poisoned    bool
+
+	// io is the file layer behind the engine's seven "env" imports. Nil when
+	// the runtime was created without WithFileIORoot, in which case the imports
+	// are registered but refuse (see refusingHostFuncs).
+	io *HostIO
 }
+
+// FileIO returns this runtime's host file layer, or nil when the engine was
+// created without WithFileIORoot. Exposed for boot-time observability
+// (HostIO.Stats) — an unexpectedly slow open is either many small reads or a
+// few large ones, and those have different fixes.
+func (r *Runtime) FileIO() *HostIO {
+	if r == nil {
+		return nil
+	}
+	return r.io
+}
+
+// DiskBackedAvailable reports whether this runtime can open a database against
+// real files at all.
+func (r *Runtime) DiskBackedAvailable() bool { return r != nil && r.io != nil }
 
 // EngineMode describes how this runtime is executing the engine, for boot-time
 // observability. Silent interpreter fallback (a stale AOT cache key after an
@@ -279,8 +314,24 @@ func New(opts ...Option) (*Runtime, error) {
 		// compiler as part of service start.
 	}
 
+	// The engine's OWN filesystem. flatsql brings its own sqlite3_vfs over
+	// seven explicit imports on module "env" (hostio.go); those imports are
+	// UNCONDITIONAL in the artifact, so this registration is what makes the
+	// module instantiable at all — it is not an optional feature.
+	var fileIO *HostIO
+	ioFuncs := refusingHostFuncs()
+	if cfg.fileIORoot != "" {
+		io, ioErr := NewHostIO(cfg.fileIORoot)
+		if ioErr != nil {
+			return nil, fmt.Errorf("flatsqlrt: %w", ioErr)
+		}
+		fileIO = io
+		ioFuncs = fileIO.hostFuncs()
+	}
+
 	mod, err := wasmrt.NewModule(runBytes,
 		wasmrt.WithWASI(),
+		wasmrt.WithHostModule(HostIOModule, ioFuncs),
 		wasmrt.WithMaxMemoryPages(cfg.maxMemoryPages),
 		// The engine is routinely executed from INSIDE another module's host
 		// function (storage.flatsql_* capability hostcalls issued by AOT flow
@@ -311,9 +362,10 @@ func New(opts ...Option) (*Runtime, error) {
 	}
 	if _, err := mod.Execute("_initialize"); err != nil {
 		mod.Release()
+		fileIO.CloseAll()
 		return nil, fmt.Errorf("flatsqlrt: _initialize: %w", err)
 	}
-	return &Runtime{mod: mod, aot: aot, aotPath: aotPath, aotMiss: aotMiss, aotCacheDir: cfg.aotCacheDir}, nil
+	return &Runtime{mod: mod, aot: aot, aotPath: aotPath, aotMiss: aotMiss, aotCacheDir: cfg.aotCacheDir, io: fileIO}, nil
 }
 
 // Close releases the WasmEdge VM and all engine memory. Databases created on
@@ -323,6 +375,10 @@ func (r *Runtime) Close() {
 		r.mod.Release()
 		r.mod = nil
 	}
+	// Release the guest's file handles LAST and unconditionally: a discarded
+	// (or poisoned) engine must not keep the store's database file open, or the
+	// replacement engine opens a file the dead one is still writing through.
+	r.io.CloseAll()
 }
 
 // MemoryStats reports the engine's current/max linear memory.

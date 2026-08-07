@@ -33,30 +33,39 @@ package storage
 // never land on top of a LIVE re-add of the same CID. The hydration shield below
 // closes exactly that hole.
 //
-// WHY THIS FILE DOES NOT PERSIST A CROSS-BOOT REPLAY CURSOR (sdn-replay-checkpoint-resume).
-// The obvious-looking fix for "replay restarts from record 0 every boot" is to
-// save the last-applied journal offset and resume from it next time. That fix
-// is UNSOUND here and must not be reintroduced: engine.CreateDatabase opens a
-// brand-new IN-MEMORY "sdn-control" database on every process start (flatsql.go
-// — "dbPath no longer names a real SQLite file, the engine is in-memory"), so
-// the control tables a saved cursor would "resume into" are always EMPTY. Seeking
-// past frame N without replaying frames [0,N) would silently drop every record
-// those frames describe — strictly worse than the slow-convergence bug it would
-// "fix". A correct cursor requires the control-table STATE to survive the
-// restart too (an engine snapshot/serialize path, which flatsqlrt does not
-// currently expose), not just an offset int64.
+// THE CROSS-BOOT REPLAY CURSOR (sdn-replay-checkpoint-resume) — RULED UNSOUND,
+// NOW RESOLVED. Read the whole note before touching the resume path.
 //
-// What IS safe, and what this loop actually did instead:
+// This file used to say a persisted cursor "is UNSOUND here and must not be
+// reintroduced", and the reasoning was correct FOR THE STORE IT DESCRIBED:
+// engine.CreateDatabase opened a brand-new IN-MEMORY "sdn-control" database on
+// every process start, so the control tables a saved cursor would "resume into"
+// were always EMPTY, and seeking past frame N without applying frames [0,N)
+// would silently drop every record those frames describe. The note's own
+// condition for lifting it was explicit — "a correct cursor requires the
+// control-table STATE to survive the restart too, not just an offset int64".
+//
+// THAT CONDITION IS NOW MET. The control database is a real file
+// (flatsql_boot_state.go), so an offset means something. The resume is
+// nevertheless hedged at every step, because the failure mode of getting it
+// wrong is silent data loss rather than a crash:
+//
+//   - the mark carries a DIGEST of the journal prefix it was taken against, so a
+//     compacted or replaced journal can never be resumed into;
+//   - it is only ever written under the store write lock, after the rows it
+//     covers are committed;
+//   - and any doubt at all returns offset 0 AND discards the control database,
+//     so "from zero" is also "from empty" — which matters because producer rows
+//     replay with INSERT OR IGNORE and cannot be corrected in place.
+//
+// The safeguards this file added while the cursor was impossible all REMAIN, and
+// none of them were load-bearing only for the old shape:
 //  1. FAIL CLOSED while incomplete (export.go ErrRecordCatalogHydrating) — a
 //     query-selected export (archive pin, publication shard, manifest replay
-//     verification) refuses rather than silently landing a partial answer.
-//  2. Honest logging: a cancelled replay says it restarts from the beginning
-//     next boot, not that it "resumes" (node.go hydrateFullRecordCatalog).
-//  3. Convergence speed is still open work: either a fast index/summary-only
-//     pre-pass ahead of the full per-record replay (the "newest-first" shape
-//     this task floated), or genuine engine-state persistence. Either is a
-//     real design change, not a one-line follow-up — take it to Hermes before
-//     starting.
+//     verification) refuses rather than silently landing a partial answer. A
+//     warm boot still reports un-hydrated until its tail is applied.
+//  2. Honest logging: a cancelled replay says it restarts from where the mark
+//     stands, never that it "resumes" further than it did.
 
 import (
 	"fmt"
@@ -373,28 +382,29 @@ func (a *recordIndexRowIDs) allocateLive() (int64, bool) {
 // fresh-rowid band above both the table's max rowid and the highest rowid the
 // journal will ask for. The caller MUST pair this with store.recordIndexRowIDs.end().
 func newReplayRowIDState(store *FlatSQLStore, journalMaxRowID int64) (*replayRowIDState, error) {
+	return newReplayRowIDStateFor(store, journalMaxRowID, nil)
+}
+
+// newReplayRowIDStateFor is newReplayRowIDState with the ownership seed narrowed
+// to a known set of rowids.
+//
+// wanted == nil means "seed from the whole table" — the cold path, unchanged.
+// A WARM RESUME passes the rowids its tail actually carries, and that is what
+// keeps crash recovery O(tail) instead of O(catalog): seeding from the whole
+// table would load every sdn_record_index row into a Go map to replay a hundred
+// frames, which on a catalog-scale store is most of the boot. Ownership only
+// ever has to answer "is THIS rowid already someone else's", and the only rowids
+// asked about are the ones in the frames being applied.
+func newReplayRowIDStateFor(store *FlatSQLStore, journalMaxRowID int64, wanted []int64) (*replayRowIDState, error) {
 	state := &replayRowIDState{owner: map[int64]string{}, alloc: &store.recordIndexRowIDs}
 
 	var maxExisting int64
 	if err := store.db.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM sdn_record_index`).Scan(&maxExisting); err != nil {
 		return nil, fmt.Errorf("record index max rowid: %w", err)
 	}
-	if maxExisting > 0 {
-		rows, err := store.db.Query(`SELECT rowid, schema_name, cid FROM sdn_record_index`)
-		if err != nil {
-			return nil, fmt.Errorf("seed record index rowid owners: %w", err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var rid int64
-			var schemaName, cid string
-			if err := rows.Scan(&rid, &schemaName, &cid); err != nil {
-				return nil, fmt.Errorf("scan record index rowid owner: %w", err)
-			}
-			state.owner[rid] = shieldKey(schemaName, cid)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate record index rowid owners: %w", err)
+	if maxExisting > 0 && (wanted == nil || len(wanted) > 0) {
+		if err := seedRowIDOwners(store, state, wanted); err != nil {
+			return nil, err
 		}
 	}
 
@@ -404,6 +414,55 @@ func newReplayRowIDState(store *FlatSQLStore, journalMaxRowID int64) (*replayRow
 	}
 	state.alloc.begin(above)
 	return state, nil
+}
+
+// seedRowIDOwners fills state.owner. wanted == nil reads the whole table; a
+// non-empty slice is queried in bounded IN() chunks so one huge tail cannot
+// build a statement with a hundred thousand bind parameters.
+func seedRowIDOwners(store *FlatSQLStore, state *replayRowIDState, wanted []int64) error {
+	scan := func(query string, args ...any) error {
+		rows, err := store.db.Query(query, args...)
+		if err != nil {
+			return fmt.Errorf("seed record index rowid owners: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var rid int64
+			var schemaName, cid string
+			if err := rows.Scan(&rid, &schemaName, &cid); err != nil {
+				return fmt.Errorf("scan record index rowid owner: %w", err)
+			}
+			state.owner[rid] = shieldKey(schemaName, cid)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate record index rowid owners: %w", err)
+		}
+		return nil
+	}
+
+	if wanted == nil {
+		return scan(`SELECT rowid, schema_name, cid FROM sdn_record_index`)
+	}
+
+	const chunk = 500
+	for start := 0; start < len(wanted); start += chunk {
+		end := start + chunk
+		if end > len(wanted) {
+			end = len(wanted)
+		}
+		batch := wanted[start:end]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		args := make([]any, 0, len(batch))
+		for _, rid := range batch {
+			args = append(args, rid)
+		}
+		if err := scan(
+			`SELECT rowid, schema_name, cid FROM sdn_record_index WHERE rowid IN (`+placeholders+`)`,
+			args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolve returns the rowid to insert for this frame, per the rule above.

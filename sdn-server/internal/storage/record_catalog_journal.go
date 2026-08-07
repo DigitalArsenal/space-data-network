@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"hash"
 	"hash/crc32"
 	"io"
 	"os"
@@ -43,6 +44,15 @@ type recordCatalogJournal struct {
 	// (re)wrote while a background replay is in flight, so a historical
 	// destructive frame can never clobber them. Nil outside a store.
 	onAppend func([]recordCatalogEvent)
+
+	// digest is the RUNNING frame-header fingerprint covering [0, digestOffset),
+	// used by the warm-boot handshake (flatsql_boot_state.go). Keeping it
+	// running is what makes a periodic checkpoint cost O(frames since the last
+	// one) instead of O(catalog) — this lock is the one live appends take, so an
+	// O(catalog) walk here would be a new writer stall on every interval. Both
+	// fields are guarded by mu.
+	digest       hash.Hash
+	digestOffset int64
 }
 
 type recordCatalogEvent struct {
@@ -238,6 +248,21 @@ func (j *recordCatalogJournal) Replay(store *FlatSQLStore) (int, error) {
 	return j.replay(store, nil)
 }
 
+// ReplayFrom applies the journal starting at a byte offset instead of at zero.
+//
+// A non-zero start is ONLY sound because the control tables it resumes into now
+// survive the restart (the database is a real file — flatsql_boot_state.go).
+// The caller must have proved the offset names THIS journal; resumeOffset is
+// the only thing that produces one, and it returns 0 for every doubt. Frames
+// below the offset keep the rows already on disk — that is the entire win: a
+// warm boot pays for the tail, not for the catalog.
+func (j *recordCatalogJournal) ReplayFrom(store *FlatSQLStore, from int64) (int, error) {
+	if from <= 0 {
+		return j.replay(store, nil)
+	}
+	return j.replayFramesFrom(context.Background(), store, nil, false, from)
+}
+
 // replay applies the whole catalog INLINE, without touching the store write
 // lock: it is used where the caller already owns the store (initial open) or
 // already holds the write lock (engine-poison recovery in engine_link.go).
@@ -270,6 +295,12 @@ func (j *recordCatalogJournal) replayChunked(ctx context.Context, store *FlatSQL
 // (which holds store.mu across its journal append), so the two can never
 // deadlock against each other.
 func (j *recordCatalogJournal) replayFrames(ctx context.Context, store *FlatSQLStore, progress func(done int), chunked bool) (int, error) {
+	return j.replayFramesFrom(ctx, store, progress, chunked, 0)
+}
+
+// replayFramesFrom is replayFrames with an explicit start offset. `from` must be
+// a frame boundary in THIS journal; see ReplayFrom.
+func (j *recordCatalogJournal) replayFramesFrom(ctx context.Context, store *FlatSQLStore, progress func(done int), chunked bool, from int64) (int, error) {
 	if j == nil || j.f == nil {
 		return 0, nil
 	}
@@ -289,11 +320,29 @@ func (j *recordCatalogJournal) replayFrames(ctx context.Context, store *FlatSQLS
 	}
 	j.mu.Unlock()
 
+	// NOTHING TO REPLAY IS THE WHOLE POINT — TAKE IT BEFORE ANY O(CATALOG) WORK.
+	//
+	// A clean restart resumes with `from == size`. Everything below this line is
+	// sized by the CATALOG, not by the tail: scanMaxRowID walks every frame
+	// header in the journal, and newReplayRowIDState loads EVERY sdn_record_index
+	// row into a Go map to seed the rowid-owner table. Measured on a 120k-frame
+	// synthetic store, paying for those on a zero-frame resume dominated the
+	// entire "warm" boot. Neither is needed when no frame will be applied: no
+	// rowid is handed out, so there is nothing to keep out of the way of.
+	if from > 0 && from >= size {
+		return 0, nil
+	}
+
 	// The rowid resolver must know the highest rowid the journal will ask for
 	// BEFORE it hands out any fresh rowid, or a fresh rowid could collide with an
 	// explicit one in a later frame. One cheap scan of the frame headers gives it
 	// (see replayRowIDState for why colliding rowids exist at all).
-	journalMaxRowID, err := j.scanMaxRowID(size)
+	//
+	// A warm resume only needs the rowids the TAIL can ask for, so the scan
+	// starts where the replay does, and it COLLECTS them so ownership can be
+	// seeded for exactly those rows instead of for the whole index.
+	warm := from > 0
+	journalMaxRowID, tailRowIDs, err := j.scanRowIDsFrom(from, size, warm)
 	if err != nil {
 		return 0, err
 	}
@@ -303,13 +352,19 @@ func (j *recordCatalogJournal) replayFrames(ctx context.Context, store *FlatSQLS
 	// engine's MAX(rowid)+1 out of the half-hydrated table. Closing it is
 	// mandatory — an unbalanced begin would leave the live path allocating
 	// explicitly forever.
-	rowIDs, err := newReplayRowIDState(store, journalMaxRowID)
+	rowIDs, err := newReplayRowIDStateFor(store, journalMaxRowID, tailRowIDs)
 	if err != nil {
 		return 0, err
 	}
 	defer store.recordIndexRowIDs.end()
 
-	var off int64
+	// A warm resume starts at `from`. It is clamped to the snapshot length so a
+	// mark taken against a longer journal can never seek past the end, and an
+	// out-of-range value degrades to a full replay rather than to silence.
+	off := from
+	if off < 0 || off > size {
+		off = 0
+	}
 	count := 0
 	knownProducerTables := map[string]bool{}
 
@@ -342,31 +397,60 @@ func (j *recordCatalogJournal) replayFrames(ctx context.Context, store *FlatSQLS
 // Index.RowID any record-upsert frame carries (0 if none). Header-only work plus
 // a decode per frame — ~0.1s for the 171k-frame dev catalog.
 func (j *recordCatalogJournal) scanMaxRowID(size int64) (int64, error) {
+	return j.scanMaxRowIDFrom(0, size)
+}
+
+// scanMaxRowIDFrom is scanMaxRowID bounded to [from, size). A warm resume only
+// ever asks for the rowids its TAIL carries, so scanning the whole journal for a
+// 100-frame tail would make the resume O(catalog) again — which is the one thing
+// it must not be. `from` must be a frame boundary.
+func (j *recordCatalogJournal) scanMaxRowIDFrom(from, size int64) (int64, error) {
+	max, _, err := j.scanRowIDsFrom(from, size, false)
+	return max, err
+}
+
+// scanRowIDsFrom returns the highest explicit rowid in [from, size) and, when
+// collect is set, every explicit rowid it saw. The set is what lets a warm
+// resume seed rowid ownership for its TAIL only (newReplayRowIDStateFor) instead
+// of loading the whole record index.
+func (j *recordCatalogJournal) scanRowIDsFrom(from, size int64, collect bool) (int64, []int64, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	var off int64
+	off := from
+	if off < 0 || off > size {
+		off = 0
+	}
 	var hdr [8]byte
 	var max int64
+	var ids []int64
+	if collect {
+		ids = []int64{}
+	}
 	for off < size {
 		if _, err := j.f.ReadAt(hdr[:], off); err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
 		payload := make([]byte, n)
 		if _, err := j.f.ReadAt(payload, off+8); err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		event, err := decodeRecordCatalogEvent(payload)
 		if err != nil {
-			return 0, fmt.Errorf("record catalog frame at %d: %w", off, err)
+			return 0, nil, fmt.Errorf("record catalog frame at %d: %w", off, err)
 		}
-		if event.Kind == recordCatalogEventRecordUpsert && event.Index.RowID > max {
-			max = event.Index.RowID
+		if event.Kind == recordCatalogEventRecordUpsert && event.Index.RowID > 0 {
+			if event.Index.RowID > max {
+				max = event.Index.RowID
+			}
+			if collect {
+				ids = append(ids, event.Index.RowID)
+			}
 		}
 		off += 8 + n
 	}
-	return max, nil
+	return max, ids, nil
 }
 
 func (j *recordCatalogJournal) replayWindow(
@@ -680,6 +764,12 @@ func (j *recordCatalogJournal) reopen() error {
 	}
 	old := j.f
 	j.f = f
+	// A reopen is a NEW INODE (compaction renames a rewritten journal over this
+	// path), so every byte the running digest folded in belongs to a file that
+	// no longer exists. Reset it, or the next warm-boot mark would fingerprint
+	// the old journal and name offsets in the new one.
+	j.digest = nil
+	j.digestOffset = 0
 	if old != nil {
 		_ = old.Close()
 	}

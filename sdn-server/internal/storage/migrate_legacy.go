@@ -700,7 +700,7 @@ func (s *FlatSQLStore) appendMigratedRecordCatalogEvents() error {
 		if len(*events) == 0 || (!force && len(*events) < recordCatalogReplayBatchSize) {
 			return nil
 		}
-		if err := s.recordCatalog.AppendAll(*events); err != nil {
+		if err := s.appendCatalogEvents(*events); err != nil {
 			return err
 		}
 		*events = (*events)[:0]

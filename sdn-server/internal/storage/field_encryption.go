@@ -23,18 +23,24 @@ const fieldEncryptionContext = "space-data-network/storage/field-encryption/v1"
 // fieldEncryptionIdentityFileName is the durable sidecar file (under
 // s.basePath, next to flatsql-streams/ and the record catalog journal) that
 // holds this store's field-encryption keypair. It deliberately does NOT live
-// in sdn_metadata/the SQL layer: FlatSQLStore's `db` is a driver over an
-// in-memory FlatSQL engine (see newFlatSQLStore's dbPath comment --
-// "dbPath no longer names a real SQLite file (the engine is in-memory)") that
-// is reconstructed at open by replaying the record-catalog/auxiliary-metadata
-// journals, NOT by reading back arbitrary prior INSERTs; a raw
-// `INSERT INTO sdn_metadata` (as datastore_identity.go's own
-// datastoreIdentityMetadataKey row does -- see NewFlatSQLStoreForIdentity,
-// which re-supplies and re-records that identity on every open rather than
-// relying on read-back) would silently vanish on restart. A plain JSON file,
-// written the same atomic write-then-rename way
-// datastore_identity.go's writeDatastoreRegistry already does, is genuinely
-// durable.
+// in sdn_metadata/the SQL layer, and the reason has CHANGED SHAPE without going
+// away.
+//
+// It used to be absolute: FlatSQLStore's `db` was a driver over an IN-MEMORY
+// FlatSQL engine, so a raw `INSERT INTO sdn_metadata` simply vanished on
+// restart. That engine is now disk-backed (flatsql_boot_state.go) and
+// sdn_metadata does survive — the warm-boot mark itself lives there.
+//
+// But it survives CONDITIONALLY. Every recovery path in that file discards the
+// control database and re-derives the whole catalog from the journals: a corrupt
+// file, a compacted journal, a format bump, an engine that cannot reach a
+// filesystem. Anything reconstructed by replay comes back; anything that was
+// only ever an arbitrary INSERT does not. A KEYPAIR IS NOT RECOVERABLE, so it
+// must not depend on a file whose documented recovery is "delete it". A plain
+// JSON sidecar, written the same atomic write-then-rename way
+// datastore_identity.go's writeDatastoreRegistry already does, is unconditional.
+// Same for datastore_identity.go's own row, which NewFlatSQLStoreForIdentity
+// re-supplies and re-records on every open rather than relying on read-back.
 const fieldEncryptionIdentityFileName = "field-encryption-identity.json"
 
 func (s *FlatSQLStore) fieldEncryptionIdentityPath() string {

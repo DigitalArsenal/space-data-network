@@ -268,7 +268,7 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 		return 0, 0, fmt.Errorf("commit supersede chunk: %w", err)
 	}
 	committed = true
-	if err := s.recordCatalog.Append(recordCatalogEvent{
+	if err := s.appendCatalogEvent(recordCatalogEvent{
 		Kind:       recordCatalogEventSourceKeep,
 		SchemaName: scope.SchemaName,
 		Tags: SourceTags{

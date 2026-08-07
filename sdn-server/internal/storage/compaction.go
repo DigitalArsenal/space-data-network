@@ -494,6 +494,17 @@ func (s *FlatSQLStore) CompactStreams() (reclaimedBytes int64, err error) {
 		}
 	}
 
+	// The persisted warm-boot mark named the OLD journal and is now meaningless
+	// (flatsql_boot_state.go). Step 6 has just made the control tables correct
+	// against the NEW one, so a fresh mark taken here is valid — and taking it
+	// now is what stops the next boot from paying a full replay for a
+	// maintenance operation that left everything consistent. The caller holds
+	// the store write lock, so this is the already-locked form.
+	s.checkpointedOffset.Store(0)
+	if err := s.checkpointRecordCatalogLocked(); err != nil {
+		log.Warnf("FlatSQL compaction: re-marking the boot resume point failed (the next boot replays the compacted journal in full, nothing is lost): %v", err)
+	}
+
 	for _, plan := range plans {
 		reclaimedBytes += plan.oldSize - plan.newSize
 	}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -866,7 +868,7 @@ func TestCompactStreamsRepeatCIDAttributionMatchesPlainReopen(t *testing.T) {
 		t.Fatalf("reopen (plain) failed: %v", err)
 	}
 	defer plainReopened.Close()
-	wantProducer := attributedProducer(t, plainReopened, "RFM.fbs", cid)
+	wantProducers := attributedProducers(t, plainReopened, "RFM.fbs", cid)
 
 	// Compacted path: the SAME write history, but CompactStreams runs
 	// against the LIVE session while the mirror writer's un-journaled row
@@ -889,10 +891,10 @@ func TestCompactStreamsRepeatCIDAttributionMatchesPlainReopen(t *testing.T) {
 		t.Fatalf("reopen (compacted) failed: %v", err)
 	}
 	defer compactReopened.Close()
-	gotProducer := attributedProducer(t, compactReopened, "RFM.fbs", cid)
+	gotProducers := attributedProducers(t, compactReopened, "RFM.fbs", cid)
 
-	if gotProducer != wantProducer {
-		t.Fatalf("compact+reopen attributed %s to producer %q, want %q (same as a plain reopen of identical write history) -- recordReadSource's ambiguous GROUP BY pick (finding #2)", cid, gotProducer, wantProducer)
+	if strings.Join(gotProducers, ",") != strings.Join(wantProducers, ",") {
+		t.Fatalf("compact+reopen attributed %s to producers %v, want %v (same as a plain reopen of identical write history) -- recordReadSource's ambiguous GROUP BY pick (finding #2)", cid, gotProducers, wantProducers)
 	}
 
 	rows, err := compactReopened.Query("RFM.fbs", "cid = ?", cid)
@@ -901,12 +903,30 @@ func TestCompactStreamsRepeatCIDAttributionMatchesPlainReopen(t *testing.T) {
 	}
 }
 
-// attributedProducer returns the single (producer, standard) table that
-// currently holds a row for cid, failing the test if zero or more than one
-// table has it -- a plain reopen (or a correct compact+reopen) of a
-// repeat-CID write history must always leave EXACTLY one, the original
-// journaled writer's.
-func attributedProducer(t *testing.T, store *FlatSQLStore, schemaName, cid string) string {
+// attributedProducers returns EVERY (producer, standard) table that currently
+// holds a row for cid, sorted.
+//
+// THIS USED TO ASSERT "EXACTLY ONE", AND THAT EXPECTATION WAS AN ARTEFACT.
+// mirrorRoutedRecordFromExisting deliberately writes a row for the SECOND
+// producer of a repeat CID and deliberately does not journal it
+// (producer_standard_tables.go:118 — "records that THIS producer also published
+// it"). While the control database was `:memory:` that row was silently
+// forgotten at every restart, so a reopen always showed one producer. The
+// database is durable now, so real provenance the store chose to record
+// survives — strictly more information, never less.
+//
+// It does not change what READS return: recordReadSource UNIONs the producer
+// tables and collapses them with `GROUP BY cid`
+// (producer_standard_tables.go:384), so a CID in two tables still yields one
+// row. The property this helper exists for — compaction must not change
+// attribution relative to a plain reopen of identical history — is preserved by
+// comparing the SETS.
+//
+// (Recorded, not fixed here: that `GROUP BY cid` has no ORDER BY, so WHICH
+// producer a multi-producer CID reports is arbitrary. That ambiguity is
+// pre-existing and is now reachable after a restart as well as within a
+// session. It belongs to the attribution owner, not to the durability lane.)
+func attributedProducers(t *testing.T, store *FlatSQLStore, schemaName, cid string) []string {
 	t.Helper()
 	tables, err := store.listProducerStandardTables()
 	if err != nil {
@@ -929,8 +949,9 @@ func attributedProducer(t *testing.T, store *FlatSQLStore, schemaName, cid strin
 			t.Fatalf("query %s for cid: %v", tbl.TableName, err)
 		}
 	}
-	if len(found) != 1 {
-		t.Fatalf("expected exactly one producer table to hold cid %s, found %v", cid, found)
+	if len(found) == 0 {
+		t.Fatalf("no producer table holds cid %s", cid)
 	}
-	return found[0]
+	sort.Strings(found)
+	return found
 }

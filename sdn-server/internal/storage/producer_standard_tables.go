@@ -185,7 +185,7 @@ func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, pee
 	if err != nil {
 		return "", fmt.Errorf("record catalog event: %w", err)
 	}
-	if err := s.recordCatalog.Append(event); err != nil {
+	if err := s.appendCatalogEvent(event); err != nil {
 		return "", fmt.Errorf("append record catalog event: %w", err)
 	}
 	return cid, nil
