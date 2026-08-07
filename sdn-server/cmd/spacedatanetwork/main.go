@@ -1339,9 +1339,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				} else {
 					sfSigningKey, err := storefrontSigningKeyFromRaw(n.SigningKey())
 					if err != nil {
-						log.Warnf("Storefront grants will be unsigned; node signing key unavailable: %v", err)
+						log.Warnf("Storefront listings will be unsigned; node signing key unavailable: %v", err)
 					}
-					sfSvc, err := storefront.NewService(sfStore, n.PeerID().String(), sfSigningKey, nil)
+					// Grants sign with the DERIVED GRANT CHILD, never the publisher
+					// root (owner ruling 2026-08-07,
+					// graph/tasks/sdn-grant-verifier-key-domain-separation.md). Nil
+					// here means grants go out unsigned and visibly so — it never
+					// falls back to sfSigningKey.
+					sfGrantKey, err := storefrontSigningKeyFromRaw(n.GrantSigningKey())
+					if err != nil {
+						log.Warnf("Storefront grants will be unsigned; node grant signing key unavailable: %v", err)
+					}
+					sfSvc, err := storefront.NewService(sfStore, n.PeerID().String(), sfSigningKey, sfGrantKey, nil)
 					if err != nil {
 						log.Warnf("Failed to initialize storefront service: %v", err)
 						_ = sfStore.Close()
