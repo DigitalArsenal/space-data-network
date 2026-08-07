@@ -405,6 +405,35 @@ describe('createHeliaSDNNode', () => {
     await node.stop();
   });
 
+  it('starts NO Kad-DHT by default — a browser DHT client wedges the renderer', async () => {
+    // 2026-08-07 P1: the default-on DHT starved the main thread ~12 s after
+    // load on every RF sandcastle AND on live spaceaware.io/beta. Content
+    // routing is opt-in now; bitswap over directly dialled relays is how the
+    // /beta catalog reads, and it needs nothing here.
+    const { createHeliaSDNNode } = await import('./helia');
+    const node = await createHeliaSDNNode({
+      edgeRelays: ['/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider'],
+    });
+
+    expect(createLibp2pMock.mock.calls[0][0].services.dht).toBeUndefined();
+
+    await node.stop();
+  });
+
+  it('starts the DHT only when the caller opts in by name', async () => {
+    const { createHeliaSDNNode } = await import('./helia');
+    const node = await createHeliaSDNNode({
+      edgeRelays: ['/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider'],
+      enableDHT: true,
+    });
+
+    expect(createLibp2pMock.mock.calls[0][0].services.dht).toEqual({
+      service: 'dht',
+    });
+
+    await node.stop();
+  });
+
   it('can disable DHT and auto-dial for direct provider-addressed browser nodes', async () => {
     const { createHeliaSDNNode } = await import('./helia');
     const celestrakAddr =
