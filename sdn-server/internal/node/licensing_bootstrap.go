@@ -299,8 +299,14 @@ func (n *Node) logGrantKeyDomainSeparation(updateRootPath string) {
 		return
 	}
 	grantSeed, _, err := n.moduleRuntimeKeySlots()
-	if err != nil || len(grantSeed) != ed25519.SeedSize {
-		log.Warnf("Licensing grant signing key unavailable (%v); this node will issue NO module-delivery grants.", err)
+	if err != nil {
+		log.Warnf("Licensing grant signing key unavailable: %v. This node will issue NO module-delivery grants.", err)
+		return
+	}
+	if len(grantSeed) != ed25519.SeedSize {
+		// No error, just no key material — a node with neither an HD identity nor
+		// a legacy on-disk one. Say that plainly rather than reporting a nil error.
+		log.Warnf("No licensing grant signing key is provisioned (this node has no HD identity and no legacy signing identity). It will issue NO module-delivery grants.")
 		return
 	}
 	scheme := n.grantSigningKeyScheme(grantSeed)

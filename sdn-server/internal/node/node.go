@@ -1552,6 +1552,17 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 		return bundle.Identity.IdentityPrivKey, nil
 	}
 
+	// NON-HD PATH. The separation line must fire here too, and this is not a
+	// nicety: TWO grant-key derivations exist in the fleet precisely BECAUSE
+	// non-HD nodes exist, so a boot that says nothing on exactly the nodes using
+	// the second scheme defeats the point of naming the scheme at all
+	// (SEAL COUNCIL condition Q1, HEPHAESTUS 2026-08-07). Found by booting the
+	// linux/amd64 build in a container, which takes this path.
+	//
+	// Deferred: the fallback identity is not resolved until the key below is
+	// loaded or generated, and the grant key derives from it.
+	defer n.logGrantKeyDomainSeparation("legacy on-disk identity (not HD-derived)")
+
 	// Fallback: load existing key or generate random one.
 	if _, statErr := os.Stat(keyPath); statErr == nil {
 		privKey, err := n.readNodeKeyFile(keyPath)
