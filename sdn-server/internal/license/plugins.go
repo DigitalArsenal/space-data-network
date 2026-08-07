@@ -383,8 +383,25 @@ func (r *PluginRegistry) ReadEncryptedBundle(id string) ([]byte, *PluginAsset, e
 	return data, asset, nil
 }
 
-// DecryptBundle reads a plugin artifact and decrypts it using the supplied
-// X25519 private key when encrypted. Plain assets are returned as-is.
+// DecryptBundle reads a plugin artifact and decrypts it. Plain assets are
+// returned as-is.
+//
+// Three artifact generations live side by side in a plugin root and they are
+// distinguished STRUCTURALLY, never by length:
+//
+//  1. SDS protected publication — ends in the "$REC" footer. Sealed to the
+//     per-plugin `bundle.key` beside the artifact, which this method resolves
+//     itself via ReadBundleKey; recipientPrivateKey is not used and may be nil.
+//     This is what the module-SDK publication lane writes and what every
+//     artifact on the delivery fleet is.
+//  2. V2 — a 0x02 marker byte, sealed to recipientPrivateKey (node identity).
+//  3. V1 — raw ECIES eph||iv||hmac||ct, sealed to recipientPrivateKey.
+//
+// Ordering matters: the trailer is checked FIRST. Before this, a
+// protected-publication artifact matched neither marker, fell through to the V1
+// branch and MAC'd the wrong bytes with the wrong key, reporting
+// `failed to decrypt (V1): HMAC verification failed` for artifacts that were
+// never V1 — 42 plugins per boot, continuously since 2026-07-14.
 func (r *PluginRegistry) DecryptBundle(id string, recipientPrivateKey []byte) ([]byte, error) {
 	data, asset, err := r.ReadEncryptedBundle(id)
 	if err != nil {
@@ -399,6 +416,23 @@ func (r *PluginRegistry) DecryptBundle(id string, recipientPrivateKey []byte) ([
 	if len(data) == 0 {
 		return nil, fmt.Errorf("plugin %q bundle is empty", id)
 	}
+
+	// Generation 1: the SDS protected-publication envelope. Its recipient key is
+	// the artifact's own bundle.key, so it is resolved here rather than by the
+	// caller — the registry owns the directory both files live in.
+	if hasPublicationTrailer(data) {
+		bundleKey, keyErr := r.ReadBundleKey(id)
+		if keyErr != nil {
+			return nil, fmt.Errorf("plugin %q is a protected publication but its bundle key is unusable: %w", id, keyErr)
+		}
+		defer zeroBytes(bundleKey)
+		decrypted, decErr := decryptProtectedPublication(data, bundleKey)
+		if decErr != nil {
+			return nil, fmt.Errorf("plugin %q failed to decrypt (protected publication): %w", id, decErr)
+		}
+		return decrypted, nil
+	}
+
 	if len(recipientPrivateKey) == 0 {
 		return nil, fmt.Errorf("plugin %q requires a decryption key", id)
 	}

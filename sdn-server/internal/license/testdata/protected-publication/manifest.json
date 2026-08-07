@@ -1,0 +1,49 @@
+{
+  "key": "4f3b2a1908d7c6b5a4938271605f4e3d2c1b0a998877665544332211ffee0011",
+  "publicKeyHex": "a7e63558c6f7cd92ef0d56703c16dc33d5002a5f601377dab21f1d23ff37d351",
+  "fixtures": [
+    {
+      "name": "gcm-enc-only",
+      "note": "ENC-only GCM trailer — the OrbPro plugin lane shape (sgp4, viewshed-shader)",
+      "blobLen": 286,
+      "plaintextSha256": "968e98acd3e2898569441c1769845bc3ad79616458ffcd1cce35fadb48ff7381",
+      "plaintextLen": 14,
+      "aadSha256": "d6e6fe0bf6063137a8e9622d7e9441384eb053446f63681997552907762f3ef4",
+      "symmetric": "AES_256_GCM",
+      "context": "orbpro.plugin/com.example.test",
+      "records": [
+        "ENC"
+      ]
+    },
+    {
+      "name": "gcm-mbl-enc-pnm",
+      "note": "MBL+ENC+PNM GCM trailer — what the module-SDK publish lane writes (all 11 com.orbpro.rf-*)",
+      "blobLen": 1094,
+      "plaintextSha256": "968e98acd3e2898569441c1769845bc3ad79616458ffcd1cce35fadb48ff7381",
+      "plaintextLen": 14,
+      "aadSha256": "fcb56e7fb71c427500e4d6348926e182b042afce50187a659c209d1ae39ecc74",
+      "symmetric": "AES_256_GCM",
+      "context": "space-data-module-sdk/package",
+      "records": [
+        "MBL",
+        "ENC",
+        "PNM"
+      ]
+    },
+    {
+      "name": "ctr-legacy-mbl-enc-pnm",
+      "note": "2026-07-10 generation: AES_256_CTR, no tag — the SDK refuses to open this, the node must not",
+      "blobLen": 950,
+      "plaintextSha256": "968e98acd3e2898569441c1769845bc3ad79616458ffcd1cce35fadb48ff7381",
+      "plaintextLen": 14,
+      "aadSha256": "a93b6f0d57a6c8b7322ce6e2e7ecddc6f991fa3b901a3d4a3dc26c0111ab4d0a",
+      "symmetric": "AES_256_CTR",
+      "context": "space-data-module-sdk/package",
+      "records": [
+        "MBL",
+        "ENC",
+        "PNM"
+      ]
+    }
+  ]
+}
