@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha512"
+	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -14,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/hkdf"
 
 	kmf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/KMF"
 	lcf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LCF"
@@ -117,6 +121,31 @@ func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {
 		return nil, err
 	}
 
+	// DOMAIN SEPARATION GUARD (owner ruling 2026-08-07). The seed above signs
+	// licensing grants; n.updateRootSigningSeed() signs SDN-UPDATE-MANIFEST-V1 and
+	// module publication statements — fleet code authority. They must be DIFFERENT
+	// keys. If they are not, the grant slot is not provisioned at all: the node
+	// keeps serving everything else, and the licensing lane fails closed with the
+	// recorded reason (see buildLicensingRuntimeConfigFrame).
+	//
+	// This is checked at every context build rather than once at boot because a
+	// dev seed override (SDN_DEV_PROVIDER_SIGNING_SEED_HEX) can reintroduce the
+	// collision after boot, and because a guard that runs where the key is
+	// provisioned cannot be bypassed by a caller that skips boot.
+	if len(signingSeed) == 32 {
+		if reason := grantSigningKeyDomainConflict(signingSeed, n.updateRootSigningSeed()); reason != "" {
+			log.Errorf(
+				"REFUSING to provision licensing key slot %q: %s. The licensing grant signer and the fleet update/publisher root MUST be different keys (owner ruling 2026-08-07, graph/tasks/sdn-grant-verifier-key-domain-separation.md). Module-delivery grants are DISABLED on this node until the grant key is derived at %s. Nothing else is affected.",
+				providerSigningSlotID, reason, licensingGrantKeyPathLabel,
+			)
+			if nodeCtx.KeySlotRefusals == nil {
+				nodeCtx.KeySlotRefusals = make(map[string]string, 1)
+			}
+			nodeCtx.KeySlotRefusals[providerSigningSlotID] = reason
+			signingSeed = nil
+		}
+	}
+
 	if len(wrappingKey) > 0 {
 		nodeCtx.EncryptionKey = append([]byte(nil), wrappingKey...)
 	}
@@ -144,14 +173,24 @@ func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {
 	return nodeCtx, nil
 }
 
+// moduleRuntimeKeySlots resolves the two secrets the licensing runtime is given:
+// the GRANT signing seed (Ed25519, "provider-signing" slot) and the wrapping key
+// (X25519, "provider-wrapping" slot).
+//
+// The grant signing seed is the HD child at LicensingGrantKeyPath —
+// m/44'/0'/<account>'/2'/0' — NOT the node identity signing key at
+// m/44'/0'/<account>'/0'/0'. Owner ruling 2026-08-07, verbatim: "derive a
+// grant-signing child from the node identity, keep the update root isolated".
+// Before that ruling this function returned RawSigningKey(), which is why one
+// ed25519 key held both fleet code authority and every anonymous browser grant.
 func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 	envSigningSeed := readDevRuntimeKeySlotEnv("SDN_DEV_PROVIDER_SIGNING_SEED_HEX")
 	envWrappingKey := readDevRuntimeKeySlotEnv("SDN_DEV_NODE_ENCRYPTION_KEY_HEX")
 
 	if n != nil && n.identity != nil {
-		rawSigningKey, err := n.identity.RawSigningKey()
+		rawSigningKey, err := n.identity.RawGrantSigningKey()
 		if err != nil {
-			return nil, nil, fmt.Errorf("derive provider signing seed: %w", err)
+			return nil, nil, fmt.Errorf("derive licensing grant signing seed: %w", err)
 		}
 
 		var wrappingKey []byte
@@ -175,9 +214,14 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 		return envSigningSeed, envWrappingKey, nil
 	}
 
+	// LEGACY on-disk identity (no HD seed, so no BIP-32 path to derive at). The
+	// ruling still binds: this lane gets a CHILD, produced by a domain-separated
+	// KDF over the identity signing key rather than the identity signing key
+	// itself. Deterministic (same identity → same child), one-way, and never
+	// written to disk. See legacyGrantSigningSeed.
 	var signingSeed []byte
 	if identity.SigningKey != nil && len(identity.SigningKey.PrivateKey) >= 32 {
-		signingSeed = append([]byte(nil), identity.SigningKey.PrivateKey[:32]...)
+		signingSeed = legacyGrantSigningSeed(identity.SigningKey.PrivateKey[:32])
 	}
 
 	var wrappingKey []byte
@@ -192,6 +236,103 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 	}
 
 	return signingSeed, wrappingKey, nil
+}
+
+// licensingGrantKeyPathLabel is the account-independent shape of the grant key's
+// derivation path, for log lines and errors. The concrete path an identity used
+// is on DerivedIdentity.GrantSigningKeyPath.
+const licensingGrantKeyPathLabel = "m/44'/0'/<account>'/2'/0'"
+
+// legacyGrantSigningDomain is the KDF label for the legacy (non-HD) identity path.
+// It is versioned so the derivation can never be silently changed under a fleet
+// that has already published the corresponding verifier key.
+const legacyGrantSigningDomain = "SDN-LICENSING-GRANT-SIGNING-V1"
+
+// legacyGrantSigningSeed derives the licensing grant signing seed for a LEGACY
+// on-disk identity, which has no HD seed and therefore no BIP-32 path to derive
+// at. HKDF-SHA512 with a versioned info label gives the same three properties the
+// HD path gives — deterministic, one-way, and distinct from the parent — without
+// inventing a second HD scheme.
+//
+// The HD identity path does NOT use this: it uses LicensingGrantKeyPath, which is
+// the contract of record. This exists so a legacy node is domain-separated too
+// rather than tripping the guard and losing grants entirely.
+func legacyGrantSigningSeed(parent []byte) []byte {
+	if len(parent) < 32 {
+		return nil
+	}
+	reader := hkdf.New(sha512.New, parent[:32], nil, []byte(legacyGrantSigningDomain))
+	seed := make([]byte, ed25519.SeedSize)
+	if _, err := io.ReadFull(reader, seed); err != nil {
+		return nil
+	}
+	return seed
+}
+
+// grantSigningKeyDomainConflict is the structural guard the owner ruling requires:
+// the key that signs licensing grants and the key that is the fleet update /
+// publisher-of-record root must not be the same key. It returns "" when they are
+// properly separated, and an operator-readable reason when they are not.
+//
+// It compares the SEEDS and, independently, the derived PUBLIC keys. Seed equality
+// is the direct question; public-key equality is the one that actually matters to a
+// verifier and is what would still catch a future path where the two lanes reach the
+// same key by different routes. Constant-time comparison throughout — these are
+// secrets, and a guard that leaks timing about them is a worse trade than the guard
+// is worth.
+//
+// An ABSENT update root (no HD identity loaded, so no update signing endpoint is
+// registered — see api.registerUpdateSigningRoutes) is not a conflict: there is no
+// second authority to collide with.
+func grantSigningKeyDomainConflict(grantSeed, updateRootSeed []byte) string {
+	if len(grantSeed) != ed25519.SeedSize {
+		return ""
+	}
+	if len(updateRootSeed) < ed25519.SeedSize {
+		return ""
+	}
+	updateRootSeed = updateRootSeed[:ed25519.SeedSize]
+
+	if subtle.ConstantTimeCompare(grantSeed, updateRootSeed) == 1 {
+		return "the licensing grant signing seed is BYTE-IDENTICAL to the fleet update/publisher root seed (the node identity Ed25519 key at m/44'/0'/<account>'/0'/0'); one key would hold both fleet code authority and every anonymous browser grant"
+	}
+
+	grantPub, err := ed25519PublicFromSeed(grantSeed)
+	if err != nil {
+		return fmt.Sprintf("the licensing grant signing seed does not yield a usable ed25519 verification key: %v", err)
+	}
+	updateRootPub, err := ed25519PublicFromSeed(updateRootSeed)
+	if err != nil {
+		// The update root is not this lane's to validate. If it is unusable the
+		// update lane refuses itself; there is no grant-side conflict.
+		return ""
+	}
+	if subtle.ConstantTimeCompare(grantPub, updateRootPub) == 1 {
+		return fmt.Sprintf(
+			"the licensing grant verifier key %x is the SAME ed25519 public key as the fleet update/publisher root; publishing it on the grant surface would publish the cluster's code-authority key",
+			grantPub,
+		)
+	}
+	return ""
+}
+
+// updateRootSigningSeed returns the 32-byte Ed25519 seed of the key that signs
+// update manifests and module publication statements — i.e. the OTHER side of the
+// domain-separation guard. nil when this node has no such key, which is also the
+// condition under which the update signing endpoint is not registered.
+//
+// Deliberately reads through the same accessor the update lane uses
+// (Node.SigningKey, via api.nodeSigningKeyProvider) so the guard can never be
+// comparing against a key the update lane does not actually use.
+func (n *Node) updateRootSigningSeed() []byte {
+	if n == nil {
+		return nil
+	}
+	raw := n.SigningKey()
+	if len(raw) < ed25519.SeedSize {
+		return nil
+	}
+	return raw[:ed25519.SeedSize]
 }
 
 func readDevRuntimeKeySlotEnv(name string) []byte {
@@ -372,6 +513,19 @@ func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, er
 	if nodeCtx == nil {
 		return nil, fmt.Errorf("licensing node context is required")
 	}
+	// A REFUSED slot is not a missing slot. The host has the key and declined to
+	// provision it; say so, because "slot missing" would send an operator hunting
+	// for a key that is present and fine. This is the fail-closed end of the
+	// grant/update-root domain separation guard (owner ruling 2026-08-07): with the
+	// slot refused, no grant can be signed at all — the licensing runtime never
+	// gets configured.
+	if reason := nodeCtx.KeySlotRefusals[providerSigningSlotID]; reason != "" {
+		return nil, fmt.Errorf(
+			"licensing runtime REFUSED: the host declined to provision key slot %q — %s. Module-delivery grants are disabled until the grant signing key is a distinct child of the node identity (%s)",
+			providerSigningSlotID, reason, licensingGrantKeyPathLabel,
+		)
+	}
+
 	providerPeerID := strings.TrimSpace(nodeCtx.PeerID)
 	if providerPeerID == "" {
 		return nil, fmt.Errorf("licensing node context peer id is required")

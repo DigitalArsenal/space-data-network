@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -1529,8 +1530,28 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 		n.identity = bundle.Identity
 		n.identityBundle = bundle
 		info := bundle.Identity.Info()
-		log.Infof("HD wallet identity derived: PeerID=%s IdentityPath=%s SigningPath=%s EncryptionPath=%s",
-			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath)
+		log.Infof("HD wallet identity derived: PeerID=%s IdentityPath=%s SigningPath=%s EncryptionPath=%s GrantSigningPath=%s",
+			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath, info.GrantSigningKeyPath)
+
+		// Assert the separation POSITIVELY at boot, not only on failure. The whole
+		// reason the grant signer and the update root shared a key for as long as
+		// they did is that nothing ever stated which key was which — the collision
+		// was found by decoding a trust-root key_id by hand. Both values below are
+		// public; the update root's is already printed by the update-signing
+		// endpoint registration, and the grant verifier's is published to every
+		// client in KRF.PUBLIC_KEY.
+		if grantPub, err := bundle.Identity.GrantSigningPublicKey(); err == nil {
+			if updateRoot := n.updateRootSigningSeed(); len(updateRoot) == ed25519.SeedSize {
+				if updateRootPub, derr := ed25519PublicFromSeed(updateRoot); derr == nil {
+					if subtle.ConstantTimeCompare(grantPub, updateRootPub) == 1 {
+						log.Errorf("KEY DOMAIN COLLISION: the licensing grant verifier key and the fleet update/publisher root are the SAME ed25519 key (%x). Module-delivery grants will be REFUSED. See graph/tasks/sdn-grant-verifier-key-domain-separation.md.", grantPub)
+					} else {
+						log.Infof("Key domain separation OK: licensing grant verifier %x (%s) is distinct from the fleet update/publisher root %x (%s).",
+							grantPub, info.GrantSigningKeyPath, updateRootPub, info.SigningKeyPath)
+					}
+				}
+			}
+		}
 
 		if repoPath := strings.TrimSpace(os.Getenv("IPFS_PATH")); repoPath != "" {
 			if err := EnsureManagedIPFSRepoIdentity(repoPath, bundle); err != nil {
@@ -4809,7 +4830,42 @@ func (n *Node) indexLocalNodeEPM() error {
 	return n.directorySvc.UpsertNodeEPMJSON(n.epmService.DirectoryRecordJSON(), epmCID, "local-node")
 }
 
+// GrantSigningKey returns the 32-byte Ed25519 seed that signs LICENSING/ACCESS
+// GRANTS, or nil if unavailable. It is a derived CHILD of the node identity and is
+// never the key SigningKey returns.
+//
+// OWNER RULING 2026-08-07, verbatim: "derive a grant-signing child from the node
+// identity, keep the update root isolated"
+// (graph/tasks/sdn-grant-verifier-key-domain-separation.md).
+//
+// It resolves through moduleRuntimeKeySlots, the same path that fills the
+// licensing runtime's "provider-signing" slot, so every grant lane on this node —
+// the licensing WASM key server and the legacy storefront — advertises ONE grant
+// verifier public key. Two grant lanes with two verifier keys would be a client-
+// side mystery, not a security property.
+//
+// nil is returned when the two lanes would collide. Callers must treat that as
+// "cannot sign grants", never as "fall back to SigningKey".
+func (n *Node) GrantSigningKey() []byte {
+	if n == nil {
+		return nil
+	}
+	grantSeed, _, err := n.moduleRuntimeKeySlots()
+	if err != nil || len(grantSeed) != ed25519.SeedSize {
+		return nil
+	}
+	if reason := grantSigningKeyDomainConflict(grantSeed, n.updateRootSigningSeed()); reason != "" {
+		log.Errorf("REFUSING to hand out a grant signing key: %s (graph/tasks/sdn-grant-verifier-key-domain-separation.md)", reason)
+		return nil
+	}
+	return grantSeed
+}
+
 // SigningKey returns the node's Ed25519 signing private key bytes, or nil if unavailable.
+//
+// THIS IS THE FLEET UPDATE / PUBLISHER ROOT — it signs SDN-UPDATE-MANIFEST-V1 and
+// SDN-MODULE-PUBLICATION-V1 statements, i.e. what every box in the fleet will
+// install and run. It must NOT be used to sign grants; use GrantSigningKey.
 func (n *Node) SigningKey() []byte {
 	if n.identity != nil && n.identity.SigningPrivKey != nil {
 		raw, err := n.identity.SigningPrivKey.Raw()

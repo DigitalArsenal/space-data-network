@@ -38,7 +38,23 @@ type NodeContext struct {
 	// is unusable by any keyslot operation (fail closed). See the constant
 	// block above.
 	KeySlotAlgorithms map[string]string
-	Config            map[string]interface{}
+
+	// KeySlotRefusals records slots the HOST DELIBERATELY DID NOT PROVISION,
+	// slot ID → operator-readable reason. It is the difference between "this
+	// node has no such key" and "this node has the key and refuses to hand it
+	// to this slot", which are the same absence to a consumer and very
+	// different facts to an operator.
+	//
+	// A refused slot is simply absent from KeySlots, so nothing can sign with
+	// it — the refusal is already enforced by absence. This map exists so the
+	// lane that needed the slot can fail closed with the REAL reason instead of
+	// a generic "slot missing", and so the reason survives into a log line an
+	// operator can act on. First user: the grant-signing / update-root key
+	// domain separation guard (owner ruling 2026-08-07,
+	// graph/tasks/sdn-grant-verifier-key-domain-separation.md).
+	KeySlotRefusals map[string]string
+
+	Config map[string]interface{}
 
 	// CapabilityPolicy is the operator-controlled capability allowlist
 	// consulted at module load/provision time (loop B1 — defensive

@@ -29,6 +29,35 @@ const (
 	// Format: m/44'/0'/account'/1'/0'
 	EncryptionKeyPath = "m/44'/0'/%d'/1'/0'"
 
+	// LicensingGrantKeyPath is the derivation path for the Ed25519 key that signs
+	// LICENSING GRANTS (module-delivery). Format: m/44'/0'/account'/2'/0'.
+	//
+	// OWNER RULING 2026-08-07, verbatim: "derive a grant-signing child from the
+	// node identity, keep the update root isolated"
+	// (graph/tasks/sdn-grant-verifier-key-domain-separation.md).
+	//
+	// WHY IT IS ITS OWN PATH. Until this constant existed the grant lane signed
+	// with the key at SigningKeyPath — the SAME key that is the fleet update trust
+	// root (fleet-trust-roots.json key_id d4a971a7e534) and the module publisher of
+	// record. Those two duties have opposite risk profiles: the update root is
+	// fleet-wide CODE AUTHORITY, exercised rarely, maximum blast radius; a grant
+	// signature is issued to every anonymous browser, constantly, and is worth one
+	// module download. Sharing a key made any compromise or forced rotation of the
+	// high-volume path a compromise of fleet code authority.
+	//
+	// WHY THIS SHAPE. It is the next purpose index in the grammar this node already
+	// uses at the change level: 0' = signing/auth (SigningKeyPath), 1' = encryption
+	// (EncryptionKeyPath), 2' = licensing grants. Fully hardened, so it is a valid
+	// SLIP-0010 Ed25519 path (SLIP-0010 has no non-hardened Ed25519 derivation) and
+	// so publishing the child's PUBLIC key — which the grant lane MUST do, it is the
+	// verifier key every client checks against — discloses nothing about the parent
+	// or any sibling. That property is what makes the ruling safe to ship.
+	//
+	// The private half is never persisted: it is derived at identity-derivation time
+	// from the seed already in hand and lives only in memory, exactly like
+	// SigningPrivKey and EncryptionKey (machine-bound key-at-rest law).
+	LicensingGrantKeyPath = "m/44'/0'/%d'/2'/0'"
+
 	// LegacyAuthKeyPath is the derivation path hd-wallet-ui's LEGACY identity
 	// schemes (sdn-bip39-auth-v1-legacy, sdn-fast-password-auth-v1-legacy) use
 	// for their sdn-authentication key. Format: m/44'/0'/account'/0/0 — note
@@ -66,6 +95,17 @@ type DerivedIdentity struct {
 	// EncryptionPub is the X25519 public key (32 bytes)
 	EncryptionPub []byte
 
+	// GrantSigningPrivKey is the Ed25519 private key that signs LICENSING GRANTS.
+	// It is a hardened child of the same seed at LicensingGrantKeyPath and is
+	// deliberately NOT SigningPrivKey — see LicensingGrantKeyPath's doc and
+	// graph/tasks/sdn-grant-verifier-key-domain-separation.md.
+	GrantSigningPrivKey crypto.PrivKey
+
+	// GrantSigningPubKey is the Ed25519 public key clients verify grants against.
+	// Its bytes are what the host publishes in KRF.PUBLIC_KEY and what the key
+	// server stamps into every grant as GRANT_VERIFIER_PUBKEY.
+	GrantSigningPubKey crypto.PubKey
+
 	// PeerID is the libp2p peer ID derived from the secp256k1 identity key
 	PeerID peer.ID
 
@@ -77,6 +117,10 @@ type DerivedIdentity struct {
 
 	// EncryptionKeyPath is the derivation path used for the encryption key
 	EncryptionKeyPath string
+
+	// GrantSigningKeyPath is the derivation path used for the licensing grant
+	// signing key (LicensingGrantKeyPath rendered for this account).
+	GrantSigningKeyPath string
 
 	// BitcoinKeyPath is the derivation path used for the Bitcoin signing key
 	BitcoinKeyPath string
@@ -152,6 +196,7 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 	identityPath := fmt.Sprintf(IdentityKeyPath, account)
 	signingPath := fmt.Sprintf(SigningKeyPath, account)
 	encryptionPath := fmt.Sprintf(EncryptionKeyPath, account)
+	grantSigningPath := fmt.Sprintf(LicensingGrantKeyPath, account)
 
 	// Derive secp256k1 identity key at m/44'/0'/account'
 	identityDerived, err := hw.DeriveSecp256k1Key(ctx, seed, identityPath)
@@ -190,6 +235,22 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 		return nil, fmt.Errorf("failed to derive encryption key: %w", err)
 	}
 
+	// Derive the licensing GRANT signing key at m/44'/0'/account'/2'/0'.
+	//
+	// This is a hard failure, not a best-effort one. A node that cannot derive its
+	// grant key must not silently fall back to signing grants with the identity
+	// signing key — that fallback IS the defect this derivation exists to remove
+	// (graph/tasks/sdn-grant-verifier-key-domain-separation.md). The licensing lane
+	// fails closed downstream when the slot is absent.
+	grantSigningDerived, err := hw.DeriveEd25519Key(ctx, seed, grantSigningPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive licensing grant signing key: %w", err)
+	}
+	grantSigningPrivKey, grantSigningPubKey, err := crypto.GenerateEd25519Key(bytes.NewReader(grantSigningDerived.PrivateKey))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create libp2p Ed25519 grant signing key: %w", err)
+	}
+
 	// Derive X25519 public key from the encryption private key
 	encryptionPub, err := hw.X25519PublicKey(ctx, encryptionDerived.PrivateKey)
 	if err != nil {
@@ -216,13 +277,17 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 	}
 
 	return &DerivedIdentity{
-		Account:            account,
-		IdentityPrivKey:    identityPrivKey,
-		IdentityPubKey:     identityPubKey,
-		SigningPrivKey:     signingPrivKey,
-		SigningPubKey:      signingPubKey,
-		EncryptionKey:      encryptionDerived.PrivateKey,
-		EncryptionPub:      encryptionPub,
+		Account:             account,
+		IdentityPrivKey:     identityPrivKey,
+		IdentityPubKey:      identityPubKey,
+		SigningPrivKey:      signingPrivKey,
+		SigningPubKey:       signingPubKey,
+		EncryptionKey:       encryptionDerived.PrivateKey,
+		EncryptionPub:       encryptionPub,
+		GrantSigningPrivKey: grantSigningPrivKey,
+		GrantSigningPubKey:  grantSigningPubKey,
+		GrantSigningKeyPath: grantSigningPath,
+
 		PeerID:             peerID,
 		IdentityKeyPath:    identityPath,
 		SigningKeyPath:     signingPath,
@@ -285,6 +350,10 @@ func (id *DerivedIdentity) Verify(message, signature []byte) (bool, error) {
 
 // RawSigningKey returns the raw 32-byte Ed25519 seed.
 // Use with caution - this is sensitive key material.
+//
+// THIS IS THE UPDATE / PUBLISHER ROOT. It signs SDN-UPDATE-MANIFEST-V1 and
+// SDN-MODULE-BUNDLE statements — fleet code authority. It must NOT be used for
+// licensing grants; use RawGrantSigningKey for that (owner ruling 2026-08-07).
 func (id *DerivedIdentity) RawSigningKey() ([]byte, error) {
 	raw, err := id.SigningPrivKey.Raw()
 	if err != nil {
@@ -295,6 +364,43 @@ func (id *DerivedIdentity) RawSigningKey() ([]byte, error) {
 		return raw[:32], nil
 	}
 	return raw, nil
+}
+
+// RawGrantSigningKey returns the raw 32-byte Ed25519 seed for the LICENSING GRANT
+// signing key (LicensingGrantKeyPath). This is the seed the host loads into the
+// "provider-signing" key slot, and the only key the licensing runtime may sign
+// grants with.
+//
+// It is a sibling of the update root, never the update root itself. Callers that
+// want the publisher-of-record key want RawSigningKey.
+func (id *DerivedIdentity) RawGrantSigningKey() ([]byte, error) {
+	if id == nil || id.GrantSigningPrivKey == nil {
+		return nil, errors.New("identity has no licensing grant signing key")
+	}
+	raw, err := id.GrantSigningPrivKey.Raw()
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 64 {
+		return raw[:32], nil
+	}
+	return raw, nil
+}
+
+// GrantSigningPublicKey returns the 32-byte Ed25519 verification key clients use
+// to verify licensing grants. Public material by construction.
+func (id *DerivedIdentity) GrantSigningPublicKey() (ed25519.PublicKey, error) {
+	if id == nil || id.GrantSigningPubKey == nil {
+		return nil, errors.New("identity has no licensing grant signing key")
+	}
+	raw, err := id.GrantSigningPubKey.Raw()
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("grant signing public key must be %d bytes, got %d", ed25519.PublicKeySize, len(raw))
+	}
+	return ed25519.PublicKey(raw), nil
 }
 
 // MarshalPrivateKey serializes the identity's secp256k1 identity key for storage.
@@ -313,23 +419,37 @@ type IdentityInfo struct {
 	IdentityKeyPath   string
 	SigningKeyPath    string
 	EncryptionKeyPath string
-	Addresses         *CoinAddresses
+	// GrantSigningPubKeyHex / GrantSigningKeyPath describe the licensing grant
+	// verifier key. Both are PUBLIC by construction — the pubkey is what every
+	// client verifies grants against, and the path is a hardened SLIP-0010 path
+	// whose disclosure enables no derivation. Surfacing them here is what makes
+	// the update-root/grant-key separation checkable from a boot log.
+	GrantSigningPubKeyHex string
+	GrantSigningKeyPath   string
+	Addresses             *CoinAddresses
 }
 
 // Info returns non-sensitive identity information.
 func (id *DerivedIdentity) Info() IdentityInfo {
 	identityPubBytes, _ := id.IdentityPubKey.Raw()
 	signingPubBytes, _ := id.SigningPubKey.Raw()
+	var grantPubHex string
+	if id.GrantSigningPubKey != nil {
+		grantPubBytes, _ := id.GrantSigningPubKey.Raw()
+		grantPubHex = fmt.Sprintf("%x", grantPubBytes)
+	}
 	return IdentityInfo{
-		Account:           id.Account,
-		PeerID:            id.PeerID.String(),
-		IdentityPubKeyHex: fmt.Sprintf("%x", identityPubBytes),
-		SigningPubKeyHex:  fmt.Sprintf("%x", signingPubBytes),
-		EncryptionPubHex:  fmt.Sprintf("%x", id.EncryptionPub),
-		IdentityKeyPath:   id.IdentityKeyPath,
-		SigningKeyPath:    id.SigningKeyPath,
-		EncryptionKeyPath: id.EncryptionKeyPath,
-		Addresses:         id.Addresses,
+		Account:               id.Account,
+		PeerID:                id.PeerID.String(),
+		IdentityPubKeyHex:     fmt.Sprintf("%x", identityPubBytes),
+		SigningPubKeyHex:      fmt.Sprintf("%x", signingPubBytes),
+		EncryptionPubHex:      fmt.Sprintf("%x", id.EncryptionPub),
+		IdentityKeyPath:       id.IdentityKeyPath,
+		SigningKeyPath:        id.SigningKeyPath,
+		EncryptionKeyPath:     id.EncryptionKeyPath,
+		GrantSigningPubKeyHex: grantPubHex,
+		GrantSigningKeyPath:   id.GrantSigningKeyPath,
+		Addresses:             id.Addresses,
 	}
 }
 

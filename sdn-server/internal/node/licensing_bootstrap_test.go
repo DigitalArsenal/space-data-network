@@ -138,8 +138,20 @@ func TestBuildModuleNodeContextFallsBackToServerIdentity(t *testing.T) {
 		t.Fatalf("buildModuleNodeContext() failed: %v", err)
 	}
 
-	if got := nodeCtx.KeySlots[providerSigningSlotID]; !bytes.Equal(got, identity.SigningKey.PrivateKey[:32]) {
-		t.Fatalf("provider signing slot = %x, want %x", got, identity.SigningKey.PrivateKey[:32])
+	// OWNER RULING 2026-08-07: the grant signer is a CHILD of the identity, never
+	// the identity signing key itself. Before that ruling this assertion read
+	// `bytes.Equal(got, identity.SigningKey.PrivateKey[:32])` — it asserted the
+	// collision.
+	parentSeed := identity.SigningKey.PrivateKey[:32]
+	got := nodeCtx.KeySlots[providerSigningSlotID]
+	if len(got) != ed25519.SeedSize {
+		t.Fatalf("provider signing slot must be a %d-byte seed, got %d", ed25519.SeedSize, len(got))
+	}
+	if bytes.Equal(got, parentSeed) {
+		t.Fatalf("provider signing slot is the IDENTITY SIGNING KEY (%x) — grants and fleet code authority must not share a key", got)
+	}
+	if want := legacyGrantSigningSeed(parentSeed); !bytes.Equal(got, want) {
+		t.Fatalf("provider signing slot = %x, want the derived grant child %x", got, want)
 	}
 	if got := nodeCtx.KeySlots[providerWrappingSlotID]; !bytes.Equal(got, identity.EncryptionKey.PrivateKey) {
 		t.Fatalf("provider wrapping slot = %x, want %x", got, identity.EncryptionKey.PrivateKey)
