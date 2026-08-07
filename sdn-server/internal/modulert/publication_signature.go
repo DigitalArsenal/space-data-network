@@ -440,20 +440,40 @@ func EnforceModuleSignaturePolicy(policy *ModuleSignaturePolicy, wasmBytes []byt
 	return enforceModuleSignaturePolicy(policy, wasmBytes)
 }
 
-// recTrailerRecordType mirrors REC.fbs's RecordType enum value for "MBL"
-// (see third_party/spacedatastandards-go/REC/RecordType.go). The REC.fbs
-// collection wrapper (root table + heterogeneous Record union vector) is
-// hand-parsed here with the raw flatbuffers primitives instead of importing
-// the generated github.com/DigitalArsenal/spacedatastandards.org/lib/go/REC
-// package: that vendored package currently fails to build on its own
-// (duplicate method declarations from a codegen bug — PRW.Init, SDL.*,
-// SPP.DataLength — unrelated to modulert, out of this file's scope to fix,
-// see third_party/spacedatastandards-go/REC). The MBL/ModuleBundleEntry
-// sub-package builds fine and is used normally below. The hand-rolled
-// recRoot/recRecord readers implement exactly the same vtable-offset
-// contract REC.go's generated GetRootAsREC/Record accessors do (same
-// FlatBuffers wire format, just read directly).
-const recRecordTypeMBL byte = 80
+// mblStandard is the Record.standard string that selects the module-bundle
+// record. It is the ONLY stable discriminator.
+//
+// This used to be `const recRecordTypeMBL byte = 80` — a hand-copied literal of
+// the RecordType union ordinal. That is unsafe in both directions:
+//
+//   - BACKWARD: the ordinal has already renumbered. Artifacts written before
+//     2026-07-08 carry MBL=67 (ENC=34, PNM=98), so an ordinal comparison
+//     silently fails to find the MBL record in every pre-existing trailer and
+//     reports the module UNSIGNED. Signature verification returning "unsigned"
+//     for a signed artifact is the dangerous direction of this bug.
+//   - FORWARD: nothing stopped a future renumber from making 80 mean some OTHER
+//     standard, at which point this code would verify the wrong record.
+//
+// SDS v1.183.0 froze the union append-only and ships the contract at
+// schema/REC/RECORDTYPE_ORDINALS.json (MBL=80, ENC=39, PNM=114, frozen through
+// 202). That protects the future; it cannot repair trailers already on disk.
+// `Record.standard` has never shifted, so it is what we key on — matching the
+// SDK/JS readers, the sgp4 plugin's isOmmStandardName/isCatStandardName, and
+// internal/license/protected_publication.go.
+//
+// The REC.fbs collection wrapper (root table + heterogeneous Record union
+// vector) is hand-parsed here with the raw flatbuffers primitives instead of
+// importing the generated
+// github.com/DigitalArsenal/spacedatastandards.org/lib/go/REC package: that
+// vendored package currently fails to build on its own (duplicate method
+// declarations from a codegen bug — PRW.Init, SDL.*, SPP.DataLength; tracked as
+// sds-go-rec-package-uncompilable). The MBL/ModuleBundleEntry sub-package builds
+// fine and is used normally below. The hand-rolled recRoot/recRecord readers
+// implement exactly the same vtable-offset contract REC.go's generated
+// GetRootAsREC/Record accessors do (same FlatBuffers wire format, just read
+// directly) — and reading the standard string directly means this path cannot
+// regain an ordinal dependency even when that package is fixed.
+const mblStandard = "MBL"
 
 // recRoot is a minimal reader for the REC.fbs collection wrapper's root
 // table: field 0 (vtable slot 4) is the version string, field 1 (vtable
@@ -487,17 +507,26 @@ func (r recRoot) record(j int) (recRecord, bool) {
 
 // recRecord is a minimal reader for REC.fbs's Record wrapper: field 0
 // (vtable slot 4) is value_type (byte RecordType), field 1 (vtable slot 6)
-// is the value union table, field 2 (vtable slot 8) is the standard string
-// (unused here).
+// is the value union table, field 2 (vtable slot 8) is the standard string.
+//
+// value_type is deliberately NOT read. The standard string is the discriminator;
+// see the mblStandard comment above.
 type recRecord struct {
 	tab flatbuffers.Table
 }
 
-func (r recRecord) valueType() byte {
-	if o := flatbuffers.UOffsetT(r.tab.Offset(4)); o != 0 {
-		return r.tab.GetByte(o + r.tab.Pos)
+// standard returns Record.standard, the wire-stable discriminator.
+func (r recRecord) standard() string {
+	if o := flatbuffers.UOffsetT(r.tab.Offset(8)); o != 0 {
+		return string(r.tab.ByteVector(o + r.tab.Pos))
 	}
-	return 0
+	return ""
+}
+
+// isStandard reports whether this record carries the given SDS standard,
+// tolerating the whitespace/casing variation seen across publisher lanes.
+func (r recRecord) isStandard(standard string) bool {
+	return strings.EqualFold(strings.TrimSpace(r.standard()), standard)
 }
 
 func (r recRecord) value() (flatbuffers.Table, bool) {
@@ -535,7 +564,7 @@ func findModuleSignatureEntry(recBytes []byte) (payload []byte, err error) {
 		if !ok {
 			continue
 		}
-		if record.valueType() != recRecordTypeMBL {
+		if !record.isStandard(mblStandard) {
 			continue
 		}
 		mblTable, ok := record.value()

@@ -47,14 +47,22 @@ import (
 
 // --- fixture construction (mirrors internal/modulert/publication_signature_test.go) ---
 
-// testFlowSignatureEntryID/testFlowRECRecordTypeMBL mirror
-// modulert.moduleSignatureEntryID / modulert.recRecordTypeMBL, which are
-// unexported and so cannot be imported directly; findModuleSignatureEntry
-// also matches on MBL.ModuleBundleEntryRoleSIGNATURE alone, but these are
-// set for full parity with what the module SDK actually emits.
+// testFlowSignatureEntryID/testFlowRECStandardMBL mirror
+// modulert.moduleSignatureEntryID / modulert.mblStandard, which are unexported
+// and so cannot be imported directly; findModuleSignatureEntry also matches on
+// MBL.ModuleBundleEntryRoleSIGNATURE alone, but these are set for full parity
+// with what the module SDK actually emits.
+//
+// testFlowRECRecordTypeMBLCurrent is the ordinal MBL holds TODAY and is written
+// only so the fixture looks like a real publisher's output. The verifier keys on
+// the STANDARD STRING (sdn-rec-ordinal-hardcoded-mbl-80): this fixture used to
+// carry the ordinal alone, which meant it would have kept passing after a union
+// renumber broke production — a test that agrees with the bug is worse than no
+// test.
 const (
-	testFlowSignatureEntryID         = "signature"
-	testFlowRECRecordTypeMBL  byte   = 80
+	testFlowSignatureEntryID                = "signature"
+	testFlowRECStandardMBL           string = "MBL"
+	testFlowRECRecordTypeMBLCurrent  byte   = 80
 	testFlowSignatureMagic    string = "$REC"
 	testFlowSignatureAlgo     string = "ed25519"
 	testFlowSignatureHashAlgo string = "sha256-canonical-module-hash"
@@ -106,7 +114,7 @@ func buildFlowRECTrailerWithMBLSignature(t *testing.T, signaturePayloadJSON []by
 	MBL.MBLAddEntries(b, entriesVecOff)
 	mblOff := MBL.MBLEnd(b)
 
-	standardOff := b.CreateString("MBL")
+	standardOff := b.CreateString(testFlowRECStandardMBL)
 
 	// Hand-rolled REC.fbs "Record" wrapper: value_type=MBL(80), value=mblOff,
 	// standard="MBL" (see modulert/publication_signature.go's recRoot/
@@ -115,7 +123,7 @@ func buildFlowRECTrailerWithMBLSignature(t *testing.T, signaturePayloadJSON []by
 	b.StartObject(3)
 	b.PrependUOffsetTSlot(2, standardOff, 0)
 	b.PrependUOffsetTSlot(1, mblOff, 0)
-	b.PrependByteSlot(0, testFlowRECRecordTypeMBL, 0)
+	b.PrependByteSlot(0, testFlowRECRecordTypeMBLCurrent, 0)
 	recordOff := b.EndObject()
 
 	b.StartVector(4, 1, 4)

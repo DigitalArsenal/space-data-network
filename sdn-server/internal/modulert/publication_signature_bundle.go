@@ -168,7 +168,7 @@ func decodeModuleBundle(recBytes, portable []byte) (decoded *decodedModuleBundle
 	var root *MBL.MBL
 	for i := 0; i < rec.recordsLength(); i++ {
 		record, ok := rec.record(i)
-		if !ok || record.valueType() != recRecordTypeMBL {
+		if !ok || !record.isStandard(mblStandard) {
 			continue
 		}
 		table, ok := record.value()
