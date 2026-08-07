@@ -135,7 +135,7 @@ func (s *FlatSQLStore) applySourceBatchLicenseUpsert(license SourceBatchLicense)
 	if license.ShareAlike {
 		shareAlike = 1
 	}
-	if _, err := s.db.Exec(`
+	if _, err := s.auxWrite().Exec(`
 		INSERT INTO sdn_source_batch_license (
 			schema_name, provider_id, source_name, batch_id,
 			license, license_url, citation, share_alike, updated_at

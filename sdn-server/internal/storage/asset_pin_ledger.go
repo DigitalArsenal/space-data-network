@@ -78,8 +78,19 @@ func (s *FlatSQLStore) beginAssetPinTransaction(ctx context.Context, operation s
 	return s.assetPinTransactions.BeginTx(ctx, nil)
 }
 
+// appendAndCommitAssetPinMutation is the INVERTED auxiliary writer: it journals
+// the frame BEFORE it commits the rows, so a crash can never leave a committed
+// asset mutation with no durable audit frame.
+//
+// That inversion is why it must not use the ordinary append funnel. Between the
+// append and the commit below there is a frame on disk whose rows do not exist;
+// a resume mark covering it would make the next boot skip it and lose the
+// mutation permanently. So it appends without advancing anything, and notes the
+// applied offset only once the commit has actually succeeded. Every failure
+// path in between raises assetPinLedgerRecovery, which freezes the mark
+// entirely (noteAuxiliaryApplied).
 func (s *FlatSQLStore) appendAndCommitAssetPinMutation(tx assetPinTransaction, event auxiliaryMetadataEvent, appendOperation, commitOperation string) error {
-	if err := s.appendAuxiliaryMetadata(event); err != nil {
+	if err := s.appendAuxiliaryMetadataBeforeApply(event); err != nil {
 		appendErr := fmt.Errorf("%s: %w", appendOperation, err)
 		if errors.Is(err, errAuxiliaryMetadataAppendRecoveryRequired) {
 			// The caller still holds s.mu, so publish the poison state before any
@@ -98,6 +109,10 @@ func (s *FlatSQLStore) appendAndCommitAssetPinMutation(tx assetPinTransaction, e
 			ErrAssetPinLedgerRecoveryRequired,
 		)
 	}
+	// The rows are committed and the frame is durable: NOW the mark may cover
+	// it. The caller still holds s.mu, which is what makes sampling the
+	// journal's length here name only applied frames.
+	s.noteAuxiliaryApplied()
 	return nil
 }
 
@@ -860,11 +875,12 @@ func (s *FlatSQLStore) applyAssetOIDCReceiptConsume(receipt AssetOIDCReceipt) er
 		return err
 	}
 	ctx := context.Background()
-	inserted, err := insertAssetOIDCReceipt(ctx, s.db, receipt)
+	writer := s.auxWrite()
+	inserted, err := insertAssetOIDCReceipt(ctx, writer, receipt)
 	if err != nil || inserted {
 		return err
 	}
-	existing, err := findAssetOIDCReceiptTo(ctx, s.db, receipt.Digest)
+	existing, err := findAssetOIDCReceiptTo(ctx, writer, receipt.Digest)
 	if err != nil {
 		return fmt.Errorf("read replayed asset OIDC receipt: %w", err)
 	}
@@ -892,23 +908,18 @@ func (s *FlatSQLStore) applyAssetPinReferenceUpsert(payload auxiliaryAssetPinRef
 		return err
 	}
 	ctx := context.Background()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin replayed asset pin upsert: %w", err)
-	}
-	defer tx.Rollback()
-	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+	return s.withAuxiliaryTx("replayed asset pin upsert", func(tx assetPinQueryExecer) error {
+		if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+			return err
+		} else if same {
+			return nil
+		}
+		if err := upsertAssetPinReferenceTo(ctx, tx, ref); err != nil {
+			return err
+		}
+		_, err := insertAssetPinAuditEvent(ctx, tx, event)
 		return err
-	} else if same {
-		return nil
-	}
-	if err := upsertAssetPinReferenceTo(ctx, tx, ref); err != nil {
-		return err
-	}
-	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
-		return err
-	}
-	return tx.Commit()
+	})
 }
 
 func (s *FlatSQLStore) applyAssetPinReferenceTransition(payload auxiliaryAssetPinReferenceTransition) error {
@@ -925,34 +936,29 @@ func (s *FlatSQLStore) applyAssetPinReferenceTransition(payload auxiliaryAssetPi
 		return err
 	}
 	ctx := context.Background()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin replayed asset pin transition: %w", err)
-	}
-	defer tx.Rollback()
-	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+	return s.withAuxiliaryTx("replayed asset pin transition", func(tx assetPinQueryExecer) error {
+		if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+			return err
+		} else if same {
+			return nil
+		}
+		ref, err := findAssetPinReferenceWhere(ctx, tx, "reference_key = ?", transition.ReferenceKey)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reference %q: %w", transition.ReferenceKey, ErrAssetPinReferenceNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("find replayed asset pin reference for audit binding: %w", err)
+		}
+		bound, err := completeAssetPinAuditEvent(event, ref)
+		if err != nil {
+			return err
+		}
+		if err := transitionAssetPinReferenceTo(ctx, tx, transition); err != nil {
+			return err
+		}
+		_, err = insertAssetPinAuditEvent(ctx, tx, bound)
 		return err
-	} else if same {
-		return nil
-	}
-	ref, err := findAssetPinReferenceWhere(ctx, tx, "reference_key = ?", transition.ReferenceKey)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("reference %q: %w", transition.ReferenceKey, ErrAssetPinReferenceNotFound)
-	}
-	if err != nil {
-		return fmt.Errorf("find replayed asset pin reference for audit binding: %w", err)
-	}
-	event, err = completeAssetPinAuditEvent(event, ref)
-	if err != nil {
-		return err
-	}
-	if err := transitionAssetPinReferenceTo(ctx, tx, transition); err != nil {
-		return err
-	}
-	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
-		return err
-	}
-	return tx.Commit()
+	})
 }
 
 func (s *FlatSQLStore) applyAssetPinReferenceDelete(payload auxiliaryAssetPinReferenceDelete) error {
@@ -973,33 +979,30 @@ func (s *FlatSQLStore) applyAssetPinReferenceDelete(payload auxiliaryAssetPinRef
 		return err
 	}
 	ctx := context.Background()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin replayed asset pin delete: %w", err)
-	}
-	defer tx.Rollback()
-	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
-		return err
-	} else if same {
-		return nil
-	}
-	ref, findErr := findAssetPinReferenceWhere(ctx, tx, "reference_key = ?", payload.ReferenceKey)
-	if findErr != nil && !errors.Is(findErr, sql.ErrNoRows) {
-		return fmt.Errorf("find replayed asset pin reference for audit binding: %w", findErr)
-	}
-	if findErr == nil {
-		event, err = completeAssetPinAuditEvent(event, ref)
-		if err != nil {
+	return s.withAuxiliaryTx("replayed asset pin delete", func(tx assetPinQueryExecer) error {
+		if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
 			return err
+		} else if same {
+			return nil
 		}
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sdn_asset_pin_refs WHERE reference_key = ?`, payload.ReferenceKey); err != nil {
-		return fmt.Errorf("replay asset pin reference delete: %w", err)
-	}
-	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
+		bound := event
+		ref, findErr := findAssetPinReferenceWhere(ctx, tx, "reference_key = ?", payload.ReferenceKey)
+		if findErr != nil && !errors.Is(findErr, sql.ErrNoRows) {
+			return fmt.Errorf("find replayed asset pin reference for audit binding: %w", findErr)
+		}
+		if findErr == nil {
+			var err error
+			bound, err = completeAssetPinAuditEvent(event, ref)
+			if err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sdn_asset_pin_refs WHERE reference_key = ?`, payload.ReferenceKey); err != nil {
+			return fmt.Errorf("replay asset pin reference delete: %w", err)
+		}
+		_, err := insertAssetPinAuditEvent(ctx, tx, bound)
 		return err
-	}
-	return tx.Commit()
+	})
 }
 
 func (s *FlatSQLStore) applyAssetPinAuditAppend(event AssetPinAuditEvent) error {
@@ -1008,20 +1011,15 @@ func (s *FlatSQLStore) applyAssetPinAuditAppend(event AssetPinAuditEvent) error 
 		return err
 	}
 	ctx := context.Background()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin replayed asset pin audit append: %w", err)
-	}
-	defer tx.Rollback()
-	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+	return s.withAuxiliaryTx("replayed asset pin audit append", func(tx assetPinQueryExecer) error {
+		if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+			return err
+		} else if same {
+			return nil
+		}
+		_, err := insertAssetPinAuditEvent(ctx, tx, event)
 		return err
-	} else if same {
-		return nil
-	}
-	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
-		return err
-	}
-	return tx.Commit()
+	})
 }
 
 type assetPinExecer interface {

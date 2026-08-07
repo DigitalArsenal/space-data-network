@@ -86,7 +86,7 @@ func (s *FlatSQLStore) UpsertDatasetPublicationReplayState(state DatasetPublicat
 }
 
 func (s *FlatSQLStore) applyDatasetPublicationReplayStateUpsert(state DatasetPublicationReplayState) error {
-	_, err := s.db.Exec(`
+	_, err := s.auxWrite().Exec(`
 		INSERT INTO sdn_dataset_publication_replay_state (
 			pnm_key, schema_name, pnm_cid, file_id, state, error, updated_at
 		)

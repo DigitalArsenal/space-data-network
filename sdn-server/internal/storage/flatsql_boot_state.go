@@ -100,8 +100,33 @@ const (
 	bootMarkDigestKey = "flatsql_boot.record_catalog_digest"
 	bootMarkFormatKey = "flatsql_boot.format"
 
+	// bootMarkAuxOffsetKey / bootMarkAuxDigestKey are the SECOND, independent
+	// half of the handshake, for the OTHER journal.
+	//
+	// THERE ARE TWO JOURNALS AND THEY ARE UNRELATED FILES:
+	// record-catalog.flatsqlmeta and auxiliary.flatsqlmeta. Until this landed
+	// only the first had a mark, so `auxiliaryMetadataStore.Replay` re-applied
+	// its whole file on EVERY boot — free while the control tables were
+	// `:memory:`, and 211 s of fsync-per-event once they became a
+	// TRUNCATE-journalled disk database (task flatsql-aux-replay-resume-mark,
+	// measured A/B/A on vm-orbit-det-01: 4.6 s -> 211 s, cold and warm
+	// identical, which is the signature of work with no resume mark).
+	//
+	// The two marks are read and written together but decided SEPARATELY: a
+	// warm catalog with a cold auxiliary journal (or the reverse) is legal and
+	// costs only the replay it names.
+	bootMarkAuxOffsetKey = "flatsql_boot.auxiliary_offset"
+	bootMarkAuxDigestKey = "flatsql_boot.auxiliary_digest"
+
 	// bootMarkFormat is bumped whenever the meaning of the mark changes. A
 	// different value takes the cold path rather than misreading an old mark.
+	//
+	// The auxiliary keys did NOT bump it: they are additive and OPTIONAL under
+	// format 1. A database written before they existed simply has no auxiliary
+	// mark, which reads as "replay the auxiliary journal from the beginning" —
+	// the exact behaviour it had. Bumping instead would have forced every host
+	// to discard a perfectly good control database and re-derive the whole
+	// record catalog once, for nothing.
 	bootMarkFormat = "1"
 
 	// checkpointDirtyBytes is how much journal may accumulate past the mark
@@ -109,6 +134,15 @@ const (
 	// transaction; 4 MiB of frames is tens of thousands of records, so this is
 	// cheap insurance against a CRASH (a clean shutdown always checkpoints).
 	checkpointDirtyBytes = 4 << 20
+
+	// auxiliaryCheckpointDirtyBytes is the same insurance for the auxiliary
+	// journal, at a much lower threshold: that journal is a slow trickle
+	// (directory upserts, publications, pin-ledger rows — 20–29 MB accumulated
+	// over the LIFETIME of a production box), so a 4 MiB threshold would in
+	// practice mean "only ever at shutdown". 256 KiB keeps a SIGKILLed daemon's
+	// auxiliary replay to a rounding error while still costing at most a few
+	// checkpoints a day.
+	auxiliaryCheckpointDirtyBytes = 256 << 10
 
 	// checkpointInterval bounds how much wall-clock a crash can cost even on a
 	// slow trickle of writes.
@@ -135,9 +169,41 @@ func resolveCheckpointInterval() time.Duration {
 }
 
 // bootMark is the persisted resume point read out of a warm control database.
+// Offset/Digest name the record-catalog journal; AuxOffset/AuxDigest name the
+// auxiliary-metadata journal. Either pair may be absent (zero), independently.
 type bootMark struct {
-	Offset int64
-	Digest string
+	Offset    int64
+	Digest    string
+	AuxOffset int64
+	AuxDigest string
+}
+
+// bootResume is what the warm/cold decision yields: one resume offset per
+// journal, and whether the control database may be KEPT at all. Zero offsets
+// mean "replay this journal from the beginning".
+type bootResume struct {
+	Catalog   int64
+	Auxiliary int64
+	Keep      bool
+}
+
+// controlDatabaseMayBeKept answers the question openControlEngine actually
+// needs, which is NOT "is the record catalog resuming?" but "can this
+// database's existing rows survive the replay that is about to happen?".
+//
+// Resuming answers yes. So does an EMPTY record-catalog journal, and that
+// second case is not hypothetical: a node that has published nothing yet still
+// accumulates auxiliary frames (directory records off the accounts feed, pin
+// ledger rows, licences). Keying the decision on the catalog offset alone made
+// such a node discard its control database — and therefore its auxiliary
+// mark — on EVERY boot, so it could never have a warm auxiliary boot at all.
+// With no catalog bytes to replay, a from-zero catalog replay applies nothing,
+// and "from zero must mean from empty" is vacuous.
+func controlDatabaseMayBeKept(catalogResume int64, warm bool, journal *recordCatalogJournal) bool {
+	if catalogResume > 0 {
+		return true
+	}
+	return warm && journal.validLength() == 0
 }
 
 // appendCatalogEvent / appendCatalogEvents are the ONLY way live code may add
@@ -194,6 +260,64 @@ func (s *FlatSQLStore) noteCatalogAppliedThrough(off int64) {
 	}
 }
 
+// noteAuxiliaryApplied is the auxiliary journal's equivalent — and it is NOT a
+// copy of the record-catalog one, because the auxiliary lane has an EXCEPTION
+// that the catalog lane does not.
+//
+// ── THE ORDERING THAT MAKES SAMPLING THE FILE LENGTH LEGAL ────────────────
+//
+// Eight of the nine auxiliary writers APPLY, then APPEND, both under s.mu
+// (UpsertDirectoryRecord flatsql.go, SaveLocalEPM flatsql.go, pin_ledger.go,
+// dataset_shard_publication.go x2, dataset_publication_replay_state.go,
+// source_batch_license.go). For those, "the append returned" implies "my rows
+// are committed", and every OTHER frame in the file belongs to a writer that
+// has already released s.mu — so it finished its whole pair. Sampling the
+// file's length at that moment therefore names only applied frames.
+//
+// THE NINTH WRITER IS INVERTED. The asset-pin lane
+// (appendAndCommitAssetPinMutation, asset_pin_ledger.go) journals BEFORE it
+// commits its SQL transaction — deliberately, so a crash cannot leave a
+// committed mutation with no durable audit frame. Between its append and its
+// commit there is a frame on disk whose rows do NOT exist. If a mark ever
+// covered that frame, the next boot would skip it and the rows would be gone
+// FOREVER. So that lane appends through appendAuxiliaryMetadataBeforeApply,
+// which does not advance anything, and notes the offset only after its commit
+// succeeds.
+//
+// The remaining hole is a commit that FAILS: the frame stays on disk,
+// unapplied, and a later writer's sample would cover it. That failure already
+// poisons the store (assetPinLedgerRecovery), and this function FAILS CLOSED on
+// that flag: once the asset-pin ledger needs recovery the mark stops moving
+// entirely, so the next boot replays from at or before the orphaned frame and
+// re-applies it. A crash between the append and the commit is covered for free
+// — a dead process advances nothing.
+//
+// Callers must hold s.mu and must have completed BOTH their apply and their
+// append.
+func (s *FlatSQLStore) noteAuxiliaryApplied() {
+	if s == nil || s.auxiliaryMetadata == nil {
+		return
+	}
+	if s.assetPinLedgerRecovery.Load() {
+		return
+	}
+	s.noteAuxiliaryAppliedThrough(s.auxiliaryMetadata.validLength())
+}
+
+// noteAuxiliaryAppliedThrough records an explicit applied offset — used by the
+// auxiliary replay, which knows exactly how far it got. Monotonic.
+func (s *FlatSQLStore) noteAuxiliaryAppliedThrough(off int64) {
+	if s == nil {
+		return
+	}
+	for {
+		cur := s.auxAppliedOffset.Load()
+		if off <= cur || s.auxAppliedOffset.CompareAndSwap(cur, off) {
+			return
+		}
+	}
+}
+
 // openControlEngine starts the FlatSQL engine WITH A REAL FILESYSTEM rooted at
 // basePath and opens the control database, returning the journal offset the
 // caller's boot replay must start from. Zero means "replay everything", and on
@@ -222,7 +346,14 @@ func (s *FlatSQLStore) noteCatalogAppliedThrough(off int64) {
 // Now it has to be paid for explicitly: whenever the mark is unusable, the
 // control database is DISCARDED and reopened, so "cold boot" is byte-for-byte
 // the behaviour this store had before the lane existed.
-func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func(bootMark, bool) int64) (*flatsqlrt.Runtime, *flatsqlrt.Database, int64, error) {
+//
+// BOTH journals are decided in the one callback, and the DISCARD below is why
+// that matters: when the control database is thrown away, every table it held
+// goes with it — including the auxiliary ones. The marks live INSIDE the
+// database they describe, so a discard drops both together and the next open
+// reads neither. There is no way to keep an auxiliary mark that outlives the
+// rows it claims are already applied.
+func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func(bootMark, bool) bootResume) (*flatsqlrt.Runtime, *flatsqlrt.Database, bootResume, error) {
 	// A READ-ONLY open takes no store lock, so it must never become a second
 	// writer against a file the live daemon owns. It therefore keeps the
 	// ephemeral engine and re-derives, exactly as it always has. This is not a
@@ -231,7 +362,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 	// exists to prevent.
 	if readOnly {
 		engine, db, err := openEphemeralControlEngine()
-		return engine, db, 0, err
+		return engine, db, bootResume{}, err
 	}
 
 	// PRE-FLIGHT: never hand the engine a file that is not a database.
@@ -246,7 +377,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 	// too); until then the host refuses to present the input that triggers it,
 	// and the retry loop below survives it anyway.
 	if err := discardNonDatabaseFile(dbPath); err != nil {
-		return nil, nil, 0, err
+		return nil, nil, bootResume{}, err
 	}
 
 	// Up to three attempts, each with a FRESH RUNTIME. A poisoned runtime cannot
@@ -261,16 +392,20 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 			flatsqlrt.WithFileIORoot(basePath),
 		)
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("failed to start FlatSQL engine: %w", err)
+			return nil, nil, bootResume{}, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 		}
 
 		engineDB, mark, warm, err := tryOpenControlDatabase(engine, dbPath)
 		if err == nil {
-			resume := int64(0)
+			resume := bootResume{}
 			if decideResume != nil {
 				resume = decideResume(mark, warm)
 			}
-			if resume > 0 || !hadFile {
+			// THE RECORD CATALOG DECIDES WHETHER THE DATABASE SURVIVES. A cold
+			// catalog replay must land in empty tables (above), and emptying them
+			// necessarily discards the auxiliary rows too — so an auxiliary mark
+			// can never be honoured across a discard, and is dropped with it.
+			if resume.Keep || !hadFile {
 				// Warm, or a genuine first boot whose database is already empty.
 				return engine, engineDB, resume, nil
 			}
@@ -281,7 +416,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 			engineDB.Destroy()
 			engine.Close()
 			if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
-				return nil, nil, 0, fmt.Errorf("discard stale control database: %w", rmErr)
+				return nil, nil, bootResume{}, fmt.Errorf("discard stale control database: %w", rmErr)
 			}
 			continue
 		}
@@ -293,7 +428,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 		}
 		log.Warnf("FlatSQL control database at %s is unusable (%v) — discarding it and re-deriving from the journal", dbPath, err)
 		if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
-			return nil, nil, 0, fmt.Errorf("discard unusable control database: %w", rmErr)
+			return nil, nil, bootResume{}, fmt.Errorf("discard unusable control database: %w", rmErr)
 		}
 	}
 
@@ -302,7 +437,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 	// for the last year — a slow boot, never a dead one.
 	log.Errorf("FlatSQL control database could not be opened even after discarding it (%v) — falling back to an EPHEMERAL control database; every boot will re-derive the whole catalog until this is resolved", lastErr)
 	engine, db, err := openEphemeralControlEngine()
-	return engine, db, 0, err
+	return engine, db, bootResume{}, err
 }
 
 func fileExists(path string) bool {
@@ -451,14 +586,19 @@ func verifyControlDatabase(db *flatsqlrt.Database) error {
 // readBootMark reads the persisted resume point. A missing table, a missing
 // row, a bad number or a format bump all mean "no mark" — never an error,
 // because "no mark" is simply a cold boot.
+// The AUXILIARY pair is optional: it may be absent (a database written before
+// this lane existed, or one whose auxiliary replay has not checkpointed yet)
+// without costing the record catalog its warm resume. Absent reads as zero,
+// which means "replay the auxiliary journal from the beginning".
 func readBootMark(db *flatsqlrt.Database) (bootMark, bool) {
 	res, err := db.Query(
-		`SELECT key, value FROM sdn_metadata WHERE key IN (?, ?, ?)`,
-		bootMarkFormatKey, bootMarkOffsetKey, bootMarkDigestKey)
+		`SELECT key, value FROM sdn_metadata WHERE key IN (?, ?, ?, ?, ?)`,
+		bootMarkFormatKey, bootMarkOffsetKey, bootMarkDigestKey,
+		bootMarkAuxOffsetKey, bootMarkAuxDigestKey)
 	if err != nil || res == nil {
 		return bootMark{}, false
 	}
-	var format, offset, digest string
+	var format, offset, digest, auxOffset, auxDigest string
 	for _, row := range res.Rows {
 		if len(row) < 2 {
 			continue
@@ -472,16 +612,41 @@ func readBootMark(db *flatsqlrt.Database) (bootMark, bool) {
 			offset = val
 		case bootMarkDigestKey:
 			digest = val
+		case bootMarkAuxOffsetKey:
+			auxOffset = val
+		case bootMarkAuxDigestKey:
+			auxDigest = val
 		}
 	}
-	if format != bootMarkFormat || offset == "" || digest == "" {
+	// `warm` means "this database carries a mark in a format we understand" —
+	// NOT "the record catalog is resuming". Each journal's pair is then judged
+	// on its own (resumeOffset / auxiliaryResumeOffset), because a store can
+	// legitimately have one and not the other: a node with no records at all
+	// still checkpoints an auxiliary mark, and gating that behind a
+	// record-catalog mark it will never have would cost it a full auxiliary
+	// replay on every boot forever.
+	if format != bootMarkFormat {
 		return bootMark{}, false
 	}
-	n, err := strconv.ParseInt(offset, 10, 64)
-	if err != nil || n < 0 {
+	if offset == "" && auxOffset == "" {
 		return bootMark{}, false
 	}
-	return bootMark{Offset: n, Digest: digest}, true
+	mark := bootMark{}
+	if offset != "" && digest != "" {
+		n, err := strconv.ParseInt(offset, 10, 64)
+		if err != nil || n < 0 {
+			return bootMark{}, false
+		}
+		mark.Offset = n
+		mark.Digest = digest
+	}
+	if auxOffset != "" && auxDigest != "" {
+		if aux, err := strconv.ParseInt(auxOffset, 10, 64); err == nil && aux >= 0 {
+			mark.AuxOffset = aux
+			mark.AuxDigest = auxDigest
+		}
+	}
+	return mark, true
 }
 
 // removeControlDatabaseFiles deletes the control database and everything the
@@ -612,6 +777,55 @@ func resumeOffset(mark bootMark, warm bool, journal *recordCatalogJournal) int64
 	return mark.Offset
 }
 
+// auxiliaryResumeOffset is resumeOffset for the OTHER journal, and it answers
+// the same way: 0 for every doubt.
+//
+// ── WHY A FROM-ZERO AUXILIARY REPLAY IS SAFE OVER POPULATED TABLES ────────
+//
+// The record catalog needs "from zero means from empty" (openControlEngine)
+// because its appliers are INSERT OR IGNORE — a from-zero replay cannot correct
+// a row that is already there. The auxiliary appliers are not like that, and
+// this lane depends on the difference, so it is stated rather than assumed:
+//
+//   - every auxiliary upsert is ON CONFLICT DO UPDATE (sdn_directory,
+//     sdn_local_epms, sdn_pin_ledger, sdn_dataset_shard_publications,
+//     sdn_dataset_publication_replay_state, sdn_source_batch_license), so
+//     re-applying converges to the same row rather than losing to the first
+//     writer;
+//   - the asset-pin frames short-circuit on their own stable event ID
+//     (assetPinAuditEventAlreadyApplied) or on the receipt digest, and a
+//     conflicting re-apply is an ERROR, not a silent overwrite;
+//   - the one destructive frame (dataset shard publication delete) is replayed
+//     IN JOURNAL ORDER against the same prefix that produced the rows, so its
+//     effect is idempotent.
+//
+// That is why a warm catalog may sit next to a cold auxiliary journal: the
+// worst outcome is the work this task exists to avoid, never a wrong row.
+func auxiliaryResumeOffset(mark bootMark, warm bool, aux *auxiliaryMetadataStore) int64 {
+	if !warm || aux == nil || aux.f == nil {
+		return 0
+	}
+	if mark.AuxOffset <= 0 {
+		return 0
+	}
+	valid := aux.validLength()
+	if mark.AuxOffset > valid {
+		log.Warnf("FlatSQL boot: persisted auxiliary mark %d is past the auxiliary journal's valid length %d — replaying it from the beginning",
+			mark.AuxOffset, valid)
+		return 0
+	}
+	digest, err := aux.digestPrefix(mark.AuxOffset)
+	if err != nil {
+		log.Warnf("FlatSQL boot: could not verify the auxiliary journal prefix (%v) — replaying it from the beginning", err)
+		return 0
+	}
+	if digest != mark.AuxDigest {
+		log.Warnf("FlatSQL boot: auxiliary journal prefix digest changed — replaying it from the beginning")
+		return 0
+	}
+	return mark.AuxOffset
+}
+
 // digestPrefix fingerprints the journal's frame headers over [0, limit).
 //
 // Headers only: each 8-byte header carries the frame length and the CRC32 of
@@ -688,7 +902,63 @@ func (j *recordCatalogJournal) validLength() int64 {
 // individual writer uses internally. A writer that appends AFTER our sample is
 // simply not covered, and under-covering is always safe: it costs replay, never
 // correctness.
+//
+// It advances BOTH marks. They are gated separately and on purpose: the
+// record-catalog mark waits for hydration, which on the production daemon
+// happens in the BACKGROUND minutes after boot, while the auxiliary mark is
+// ready the moment the synchronous auxiliary replay finishes at open. Gating
+// them together would have meant a deferred-hydration daemon — i.e. every real
+// node — never persisting an auxiliary mark until its first clean shutdown, and
+// this whole fix would have been dead on the boxes it was written for.
 func (s *FlatSQLStore) CheckpointRecordCatalog() error {
+	return errors.Join(s.checkpointCatalogMark(), s.checkpointAuxiliaryMark())
+}
+
+// checkpointAuxiliaryMark advances the auxiliary resume mark to the offset this
+// store has demonstrably applied. Same shape as the catalog half: the digest is
+// computed OUTSIDE the store lock, only the upserts are inside it.
+func (s *FlatSQLStore) checkpointAuxiliaryMark() error {
+	end, digest, ok, err := s.auxiliaryMarkCandidate()
+	if err != nil || !ok {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistAuxiliaryMarkLocked(end, digest)
+}
+
+// auxiliaryMarkCandidate answers "what auxiliary mark may be written right now",
+// or ok=false when none may be. Shared by the locked and unlocked checkpoint
+// paths so the eligibility rules exist once.
+func (s *FlatSQLStore) auxiliaryMarkCandidate() (int64, string, bool, error) {
+	if s.readOnly || !s.controlDBDurable || s.auxiliaryMetadata == nil || s.auxiliaryMetadata.f == nil {
+		return 0, "", false, nil
+	}
+	// Nothing may be marked before the replay has actually run: until then the
+	// control tables do not describe the journal prefix at all.
+	if !s.auxReplayed.Load() {
+		return 0, "", false, nil
+	}
+	// FAIL CLOSED with noteAuxiliaryApplied: a poisoned asset-pin ledger means
+	// there may be a journaled mutation whose rows never committed.
+	if s.assetPinLedgerRecovery.Load() {
+		return 0, "", false, nil
+	}
+	end := s.auxAppliedOffset.Load()
+	if valid := s.auxiliaryMetadata.validLength(); end > valid {
+		end = valid
+	}
+	if end <= 0 {
+		return 0, "", false, nil
+	}
+	digest, err := s.auxiliaryMetadata.digestPrefix(end)
+	if err != nil {
+		return 0, "", false, fmt.Errorf("checkpoint auxiliary metadata: digest: %w", err)
+	}
+	return end, digest, true, nil
+}
+
+func (s *FlatSQLStore) checkpointCatalogMark() error {
 	if s.readOnly || !s.controlDBDurable || s.recordCatalog == nil || s.recordCatalog.f == nil {
 		return nil
 	}
@@ -719,8 +989,23 @@ func (s *FlatSQLStore) CheckpointRecordCatalog() error {
 
 // checkpointRecordCatalogLocked is the same operation for a caller that ALREADY
 // holds the store write lock (Close). It is the only path that pays for the
-// digest under the lock, and it runs exactly once per process.
+// digest under the lock, and it runs exactly once per process. It too advances
+// both marks — a clean shutdown is precisely when the auxiliary mark is most
+// worth having.
 func (s *FlatSQLStore) checkpointRecordCatalogLocked() error {
+	auxErr := s.checkpointAuxiliaryMarkLocked()
+	return errors.Join(s.checkpointCatalogMarkLocked(), auxErr)
+}
+
+func (s *FlatSQLStore) checkpointAuxiliaryMarkLocked() error {
+	end, digest, ok, err := s.auxiliaryMarkCandidate()
+	if err != nil || !ok {
+		return err
+	}
+	return s.persistAuxiliaryMarkLocked(end, digest)
+}
+
+func (s *FlatSQLStore) checkpointCatalogMarkLocked() error {
 	if s.readOnly || !s.controlDBDurable || s.recordCatalog == nil || s.recordCatalog.f == nil {
 		return nil
 	}
@@ -744,29 +1029,50 @@ func (s *FlatSQLStore) checkpointRecordCatalogLocked() error {
 	return s.persistBootMarkLocked(end, digest)
 }
 
-// persistBootMarkLocked writes the three handshake rows. Requires the store
-// write lock. Deliberately three single-row upserts and nothing else: this is
-// the entire footprint of a checkpoint inside the lock.
+// persistBootMarkLocked writes the three record-catalog handshake rows.
+// Requires the store write lock. Deliberately three single-row upserts and
+// nothing else: this is the entire footprint of a checkpoint inside the lock.
 func (s *FlatSQLStore) persistBootMarkLocked(end int64, digest string) error {
+	if err := s.upsertBootMarkRowsLocked("record catalog", [][2]string{
+		{bootMarkFormatKey, bootMarkFormat},
+		{bootMarkOffsetKey, strconv.FormatInt(end, 10)},
+		{bootMarkDigestKey, digest},
+	}); err != nil {
+		return err
+	}
+	s.checkpointedOffset.Store(end)
+	return nil
+}
+
+// persistAuxiliaryMarkLocked writes the auxiliary handshake rows. Same shape,
+// same lock, three more small upserts.
+func (s *FlatSQLStore) persistAuxiliaryMarkLocked(end int64, digest string) error {
+	if err := s.upsertBootMarkRowsLocked("auxiliary metadata", [][2]string{
+		{bootMarkFormatKey, bootMarkFormat},
+		{bootMarkAuxOffsetKey, strconv.FormatInt(end, 10)},
+		{bootMarkAuxDigestKey, digest},
+	}); err != nil {
+		return err
+	}
+	s.auxCheckpointedOffset.Store(end)
+	return nil
+}
+
+func (s *FlatSQLStore) upsertBootMarkRowsLocked(what string, rows [][2]string) error {
 	// The store may have been closed while we waited for the lock. A mark is
 	// worth nothing next to a nil-pointer dereference in a daemon.
 	if s.db == nil {
 		return nil
 	}
 	now := time.Now().Unix()
-	for _, kv := range [][2]string{
-		{bootMarkFormatKey, bootMarkFormat},
-		{bootMarkOffsetKey, strconv.FormatInt(end, 10)},
-		{bootMarkDigestKey, digest},
-	} {
+	for _, kv := range rows {
 		if _, err := s.db.Exec(
 			`INSERT INTO sdn_metadata(key, value, updated_at) VALUES(?, ?, ?)
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
 			kv[0], kv[1], now); err != nil {
-			return fmt.Errorf("checkpoint record catalog: persist %s: %w", kv[0], err)
+			return fmt.Errorf("checkpoint %s: persist %s: %w", what, kv[0], err)
 		}
 	}
-	s.checkpointedOffset.Store(end)
 	return nil
 }
 
@@ -814,11 +1120,18 @@ func (s *FlatSQLStore) stopCheckpointLoop() {
 // checkpointDirty reports whether enough journal has accumulated past the mark
 // to be worth a checkpoint. Reading the file size is far cheaper than taking
 // the store write lock, so the cheap question is asked first.
+// Either journal being dirty is enough; the checkpoint itself re-checks each
+// half's own eligibility.
 func (s *FlatSQLStore) checkpointDirty() bool {
-	if s.recordCatalog == nil || s.recordCatalog.f == nil {
-		return false
+	if s.recordCatalog != nil && s.recordCatalog.f != nil &&
+		s.appliedOffset.Load()-s.checkpointedOffset.Load() >= checkpointDirtyBytes {
+		return true
 	}
-	return s.appliedOffset.Load()-s.checkpointedOffset.Load() >= checkpointDirtyBytes
+	if s.auxiliaryMetadata != nil && s.auxiliaryMetadata.f != nil &&
+		s.auxAppliedOffset.Load()-s.auxCheckpointedOffset.Load() >= auxiliaryCheckpointDirtyBytes {
+		return true
+	}
+	return false
 }
 
 // newRecordCatalogDigest starts a running frame-header digest. The frame
@@ -827,6 +1140,18 @@ func (s *FlatSQLStore) checkpointDirty() bool {
 func newRecordCatalogDigest() hash.Hash {
 	h := sha256.New()
 	fmt.Fprintf(h, "record-catalog-v%d\n", recordCatalogFrameVersion)
+	return h
+}
+
+// newAuxiliaryMetadataDigest is the same running state for the auxiliary
+// journal, with its OWN domain prefix. The two files share the 8-byte
+// {length, payload CRC32} frame header, so the walker below is shared; the
+// prefix is what makes a catalog digest and an auxiliary digest of the same
+// bytes different values, so neither journal's mark can ever be honoured
+// against the other's file.
+func newAuxiliaryMetadataDigest() hash.Hash {
+	h := sha256.New()
+	fmt.Fprintf(h, "auxiliary-metadata-v%d\n", auxiliaryMetadataFrameVersion)
 	return h
 }
 
