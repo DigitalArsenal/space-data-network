@@ -262,6 +262,9 @@ func (p *AutoPublisher) ObserveIngest(batch IngestedBatch) {
 		ProviderID: provider,
 		SourceName: source,
 		BatchID:    batchID,
+		// Per-lane byte budget (config: publishing.auto_publish[].max_shard_bytes).
+		// Zero falls through to the node default in the publication service.
+		MaxShardBytes: lane.MaxShardBytes,
 	}
 	select {
 	case p.queue <- req:

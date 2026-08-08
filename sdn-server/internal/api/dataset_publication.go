@@ -27,6 +27,29 @@ const (
 	defaultFullCatalogPublicationChunkSize = maxDatasetPublicationChunkSize
 )
 
+// DefaultDatasetPublicationMaxShardBytes bounds a shard by BYTES as well as by
+// records — the second half of "aware of the length of the flatbuffer if that
+// is going to matter in terms of sharding".
+//
+// Until this existed a shard was a record-COUNT window only, so its size was
+// whatever the records happened to weigh: 250 x 132 B ($CAT) is ~33 KB, 250 x
+// 128 MiB is 32 GiB. Both were "one shard".
+//
+// 64 MiB is chosen against MEASURED record sizes, not a round number:
+//   - $OMM frames run 228-268 B and $CAT 132-188 B (31,141 and 69,998 real
+//     frames walked in flatsql-abi-stream-contract-read), so a catalogue-scale
+//     window of ~250K small records is ~60 MB — the count limits still bind
+//     first for ordinary feeds and shard identity for them does not change;
+//   - it is 1/8 of DefaultShardGroupCARMaxSourceBytes (512 MiB), so a CAR
+//     bundle still groups a useful number of shards;
+//   - it keeps one shard, its deterministic index, and the engine response
+//     that builds it comfortably inside the wasm32 4 GiB ceiling even when a
+//     query materialises a second copy.
+//
+// A single record larger than the budget is still published WHOLE, as its own
+// shard: buffers are never split.
+const DefaultDatasetPublicationMaxShardBytes int64 = 64 << 20
+
 // DatasetPublicationRequest describes a local request to export, pin, sign,
 // and announce a dataset update from the daemon's current FlatSQL store.
 //
@@ -40,14 +63,19 @@ const (
 // wrong licence at the source (re-ingest the batch with correct metadata, or
 // UpsertSourceBatchLicense), then republish.
 type DatasetPublicationRequest struct {
-	DatastoreKey        string   `json:"datastoreKey,omitempty"`
-	Schema              string   `json:"schema"`
-	ProviderID          string   `json:"providerId,omitempty"`
-	SourceName          string   `json:"sourceName,omitempty"`
-	BatchID             string   `json:"batchId,omitempty"`
-	DatasetID           string   `json:"datasetId,omitempty"`
-	Limit               int      `json:"limit,omitempty"`
-	ChunkSize           int      `json:"chunkSize,omitempty"`
+	DatastoreKey string `json:"datastoreKey,omitempty"`
+	Schema       string `json:"schema"`
+	ProviderID   string `json:"providerId,omitempty"`
+	SourceName   string `json:"sourceName,omitempty"`
+	BatchID      string `json:"batchId,omitempty"`
+	DatasetID    string `json:"datasetId,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
+	ChunkSize    int    `json:"chunkSize,omitempty"`
+	// MaxShardBytes caps ONE shard in bytes. 0 = the node default
+	// (DefaultDatasetPublicationMaxShardBytes); negative = explicitly
+	// unbounded (the pre-2026-08-07 behaviour, kept so an operator can
+	// reproduce an old shard exactly).
+	MaxShardBytes       int64    `json:"maxShardBytes,omitempty"`
 	FullCatalog         bool     `json:"fullCatalog,omitempty"`
 	AnnounceExisting    bool     `json:"announceExisting,omitempty"`
 	AnnouncementSchemas []string `json:"announcementSchemas,omitempty"`
@@ -293,7 +321,10 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 		limit = defaultDatasetPublicationLimit
 	}
 
-	filter := datasetPublicationExportFilter(activeReq, schema, limit, 0)
+	filter, _, err := activeService.byteBoundedExportFilter(activeReq, schema, limit, 0)
+	if err != nil {
+		return nil, err
+	}
 	sourceIdentity := datasetPublicationSourceIdentityFromRequest(activeReq)
 	result, err := activeService.publishDatasetUpdatePart(ctx, activeReq, schema, filter, sourceIdentity, datasetUpdateID(activeReq, activeService.now(), 0))
 	if err != nil {
@@ -488,6 +519,53 @@ func datasetPublicationExportFilter(req DatasetPublicationRequest, schema string
 	return filter
 }
 
+// datasetPublicationShardByteBudget resolves the per-shard byte cap for a
+// request: explicit value, node default, or explicitly unbounded (negative).
+func datasetPublicationShardByteBudget(req DatasetPublicationRequest) int64 {
+	switch {
+	case req.MaxShardBytes < 0:
+		return 0
+	case req.MaxShardBytes > 0:
+		return req.MaxShardBytes
+	default:
+		return DefaultDatasetPublicationMaxShardBytes
+	}
+}
+
+// byteBoundedExportFilter narrows a window to the byte budget BEFORE the export
+// reads anything, by probing the record lengths the store already recorded.
+//
+// The narrowing lands in filter.Limit itself, which is deliberate: a shard's
+// identity, its reuse key, and the consumer's cursor are all (offset, limit),
+// so a byte-cut shard is an ordinary shard of a smaller window rather than a
+// short read of a larger one. Returns the (possibly unchanged) filter and the
+// effective record limit.
+func (s *ConcreteDatasetPublicationService) byteBoundedExportFilter(
+	req DatasetPublicationRequest,
+	schema string,
+	limit, offset int,
+) (storage.IndexedRecordQuery, int, error) {
+	filter := datasetPublicationExportFilter(req, schema, limit, offset)
+	budget := datasetPublicationShardByteBudget(req)
+	if budget <= 0 || s.store == nil {
+		return filter, limit, nil
+	}
+	bounded, truncated, err := s.store.IndexedRecordWindowLimitForBytes(filter, budget)
+	if err != nil {
+		return filter, limit, fmt.Errorf("probe shard byte budget: %w", err)
+	}
+	// ONLY a real byte cut narrows the window. A window that merely holds fewer
+	// rows than its limit keeps the limit it was asked for: that number is the
+	// shard's identity and the consumer's cursor, and rewriting it for a short
+	// tail would republish an existing shard under a new key.
+	if !truncated || bounded <= 0 || bounded >= limit {
+		return filter, limit, nil
+	}
+	log.Debugf("Shard byte budget cut %s window offset=%d from %d to %d records (budget %d bytes)",
+		schema, offset, limit, bounded, budget)
+	return datasetPublicationExportFilter(req, schema, bounded, offset), bounded, nil
+}
+
 // datasetPublicationScopedToWholeBatch reports a request whose scope is already
 // stated by an explicit batch id and which asked for no head. Its export is
 // bounded by the batch filter, so the head limit has nothing left to protect
@@ -530,14 +608,21 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 	series := &DatasetPublicationResult{Schema: schema}
 	pruneStale := req.FullCatalog && req.Limit <= 0
 	pruneOffset := 0
-	for offset, part := 0, 1; offset < totalLimit; offset, part = offset+chunkSize, part+1 {
+	// The cursor advances by the EFFECTIVE window, not by the requested chunk:
+	// a byte-budget cut makes a part smaller than chunkSize, and advancing by
+	// chunkSize would skip the records the cut deferred.
+	for offset, part := 0, 1; offset < totalLimit; part++ {
 		limit := chunkSize
 		if remaining := totalLimit - offset; remaining < limit {
 			limit = remaining
 		}
 		partReq := req
 		partReq.DatasetID = datasetID
-		filter := datasetPublicationExportFilter(partReq, schema, limit, offset)
+		filter, effectiveLimit, err := s.byteBoundedExportFilter(partReq, schema, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+		limit = effectiveLimit
 		publication, err := s.publishDatasetUpdatePart(ctx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
 		if err != nil {
 			if offset > 0 && strings.Contains(err.Error(), "no records match export query") {
@@ -556,6 +641,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		if publication.RecordCount < limit {
 			break
 		}
+		offset += limit
 	}
 	if len(series.Publications) == 0 {
 		return nil, fmt.Errorf("export dataset window: no records match export query")

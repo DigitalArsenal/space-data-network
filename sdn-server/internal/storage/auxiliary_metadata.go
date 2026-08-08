@@ -47,6 +47,9 @@ type auxiliaryMetadataStore struct {
 	// record catalog's is: a checkpoint must never re-walk the whole journal.
 	digest       hash.Hash
 	digestOffset int64
+	// chunkBytes overrides the per-chunk replay byte budget
+	// (WithAuxiliaryReplayChunkBytes). Zero = auxiliaryReplayChunkBytes.
+	chunkBytes int64
 }
 
 type auxiliaryMetadataAppendFile interface {
@@ -363,6 +366,29 @@ func auxiliaryAssetFrameConflict(identity string) error {
 // that the engine's page cache is not asked to hold an unbounded write set.
 const auxiliaryReplayChunkFrames = 512
 
+// auxiliaryReplayChunkBytes bounds the SAME chunk in bytes.
+//
+// A frame count alone does not bound a transaction: 512 frames is 512 tiny
+// directory rows or 512 multi-megabyte payloads, and only one of those two is
+// "a short transaction". This is the replay-side half of the length-awareness
+// the owner asked for (graph/tasks/sdn-sharding-not-length-aware.md) — the
+// shard side is DefaultDatasetPublicationMaxShardBytes.
+//
+// 8 MiB is the write set a chunk may hold, not a frame limit: a frame LARGER
+// than the budget is still applied whole (one frame per chunk), because a
+// replay that refuses its own journal is worse than a big transaction, and
+// because a frame is never split. Overridable per store with
+// WithAuxiliaryReplayChunkBytes.
+const auxiliaryReplayChunkBytes int64 = 8 << 20
+
+// replayChunkBytes is the effective per-chunk byte budget for this store.
+func (m *auxiliaryMetadataStore) replayChunkBytes() int64 {
+	if m != nil && m.chunkBytes > 0 {
+		return m.chunkBytes
+	}
+	return auxiliaryReplayChunkBytes
+}
+
 // Replay applies the whole auxiliary journal. Retained for the callers that
 // genuinely mean "from the beginning" — the poisoned-engine recovery
 // (engine_link.go) and tests.
@@ -413,10 +439,16 @@ func (m *auxiliaryMetadataStore) ReplayFrom(store *FlatSQLStore, from int64) (in
 	return count, off, nil
 }
 
-// replayChunkLocked applies up to auxiliaryReplayChunkFrames frames inside ONE
-// transaction and reports how far it got. stop=true means the journal ended
-// early — a zero-length frame, a frame running past the valid length, or a CRC
-// mismatch — which is the torn tail the replay has always simply stopped at.
+// replayChunkLocked applies up to auxiliaryReplayChunkFrames frames — or
+// replayChunkBytes() bytes, whichever comes first — inside ONE transaction and
+// reports how far it got. stop=true means the journal ended early — a
+// zero-length frame, a frame running past the valid length, or a CRC mismatch —
+// which is the torn tail the replay has always simply stopped at.
+//
+// A budget stop is NOT a torn tail. That distinction is load-bearing: the
+// caller treats stop=true as "the journal ends here", so a byte budget that
+// reported itself the same way would silently truncate the replay. The two
+// reasons are tracked separately below.
 //
 // A failure anywhere in the chunk rolls the WHOLE chunk back and reports the
 // offset unchanged, so nothing partial is ever counted as applied. That is
@@ -434,6 +466,9 @@ func (m *auxiliaryMetadataStore) replayChunkLocked(store *FlatSQLStore, off, siz
 	var hdr [8]byte
 	applied := 0
 	cur := off
+	torn := false
+	budget := m.replayChunkBytes()
+	var chunkBytes int64
 	for applied < auxiliaryReplayChunkFrames && cur < size {
 		if _, err := m.f.ReadAt(hdr[:], cur); err != nil {
 			return 0, off, false, err
@@ -441,6 +476,12 @@ func (m *auxiliaryMetadataStore) replayChunkLocked(store *FlatSQLStore, off, siz
 		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
 		crc := binary.LittleEndian.Uint32(hdr[4:])
 		if n == 0 || cur+8+n > size {
+			torn = true
+			break
+		}
+		// Byte budget: stop BETWEEN frames, never inside one, and never
+		// before the chunk has applied anything.
+		if applied > 0 && budget > 0 && chunkBytes+8+n > budget {
 			break
 		}
 		payload := make([]byte, n)
@@ -448,6 +489,7 @@ func (m *auxiliaryMetadataStore) replayChunkLocked(store *FlatSQLStore, off, siz
 			return 0, off, false, err
 		}
 		if crc32.ChecksumIEEE(payload) != crc {
+			torn = true
 			break
 		}
 		event, err := decodeAuxiliaryMetadataEvent(payload)
@@ -459,13 +501,14 @@ func (m *auxiliaryMetadataStore) replayChunkLocked(store *FlatSQLStore, off, siz
 		}
 		applied++
 		cur += 8 + n
+		chunkBytes += 8 + n
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, off, false, fmt.Errorf("commit auxiliary metadata replay chunk: %w", err)
 	}
-	// Stopped short of the chunk budget with bytes left = the journal ended in
-	// a torn or truncated frame.
-	return applied, cur, cur < size && applied < auxiliaryReplayChunkFrames, nil
+	// Only a TORN frame ends the replay. Stopping on either budget (frames or
+	// bytes) with journal left simply means the next chunk continues.
+	return applied, cur, torn && cur < size, nil
 }
 
 // validLength reports the auxiliary journal's CRC-valid length as established
