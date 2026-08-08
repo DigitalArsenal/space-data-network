@@ -97,6 +97,9 @@ export {
   MemorySnapshotPersistence,
   HeliaSnapshotPersistence,
   flatBufferMatchesFileId,
+  // Shard classification (2.0.18): a size-prefixed STREAM is not a record.
+  flatBufferStreamMatchesFileId,
+  countFlatBufferStreamFramesWithFileId,
 } from './engine-record-store';
 export type {
   FlatSQLEngineRecordStoreOptions,
@@ -107,6 +110,10 @@ export type {
   EngineSyncChunkIngestOptions,
   EnginePublishedShardIngestOptions,
   EngineSyncIngestResult,
+  // Stream surface (2.0.18): the shard-shaped admit point + its paired read.
+  EngineStreamStoreOptions,
+  EngineStreamStoreResult,
+  EngineStreamReadOptions,
 } from './engine-record-store';
 // PRIMARY public query API (loop D.2): engine-native epoch profiles —
 // same template SQL/params as sdn-server engine_records.go, aligned raw
