@@ -73,7 +73,19 @@ Environment=LD_LIBRARY_PATH=/opt/sdn-retriever/.wasmedge/lib
 Environment=XDG_CACHE_HOME=/var/lib/sdn-retriever/cache
 # Deliberately ABSENT: IPFS_PATH. See the banner above.
 ExecStart=/opt/sdn-retriever/spacedatanetwork daemon --config /etc/spacedatanetwork/retriever/config.yaml
-Restart=on-failure
+# Restart=always, NOT on-failure, and this is load-bearing for the UPDATE LANE.
+# The lane applies an update by asking the daemon to shut down GRACEFULLY
+# (main.go:2551 "Update shutdown requested"), which exits ZERO. It then reports
+# `restart=supervised` / "the supervising init restarts the daemon under its own
+# unit" and waits on the admin health endpoint. Under Restart=on-failure systemd
+# treats exit 0 as success and never restarts, so that health check is
+# UNSATISFIABLE: every `update install` on this unit must time out, roll back,
+# and leave the box DARK until a human runs `systemctl start`.
+# Measured on host-02 2026-08-08: daemon stopped 06:54:18, health probe refused on
+# 127.0.0.1:5003 for the whole window, rollback to fa9c8d5f at 07:04:16, ingest
+# down 14m05s. host-01's delivery unit was already Restart=always, which is the
+# only reason the identical roll succeeded there.
+Restart=always
 RestartSec=15
 LimitNOFILE=65536
 
