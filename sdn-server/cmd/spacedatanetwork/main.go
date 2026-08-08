@@ -4700,10 +4700,54 @@ func buildProviderDescriptor(src providerDescriptorSource) (*providerDescriptorR
 		if addr == nil {
 			continue
 		}
+		if !dialableFromAnotherHost(addr) {
+			continue
+		}
 		response.RelayAddresses = append(response.RelayAddresses, addr.String())
 	}
 
 	return response, nil
+}
+
+// dialableFromAnotherHost reports whether a listen address is worth publishing
+// in the PUBLIC provider descriptor.
+//
+// This descriptor is not documentation. When relayAddresses is non-empty a
+// client uses it as its ENTIRE candidate list and never falls back to DHT
+// discovery (sdn-js module-delivery.ts:676-678), and it walks those candidates
+// SEQUENTIALLY re-sending the same stamped request frame (node.ts:657,673-683).
+// So an address that cannot possibly resolve to this node from the caller's
+// vantage point is not merely noise: it spends the real candidate's connect
+// budget before the real candidate is ever tried. host-01 was publishing
+// /ip4/127.0.0.1/tcp/4004/ws and /ip4/127.0.0.1/tcp/18080/ws on the open
+// internet — half of a four-candidate list that every remote browser had to
+// exhaust first.
+//
+// The filter is deliberately narrow: loopback, link-local and unspecified
+// (0.0.0.0, ::) are addresses NO other host can ever dial, whoever it is.
+// PRIVATE ranges are KEPT — on a LAN or a docker network they are the only
+// address that works, and a node whose descriptor is served on the same network
+// it listens on is a supported deployment. Anything that is not an IP literal
+// at all (dns4/dns6/p2p-circuit) is kept untouched: resolving it is the
+// client's job and this host cannot rule on it.
+//
+// An empty result is safe by construction — it is exactly the pre-descriptor
+// state, and the client falls back to DHT discovery.
+func dialableFromAnotherHost(addr multiaddr.Multiaddr) bool {
+	literal := ""
+	if v, err := addr.ValueForProtocol(multiaddr.P_IP4); err == nil {
+		literal = v
+	} else if v, err := addr.ValueForProtocol(multiaddr.P_IP6); err == nil {
+		literal = v
+	}
+	if literal == "" {
+		return true
+	}
+	ip := net.ParseIP(literal)
+	if ip == nil {
+		return true
+	}
+	return !ip.IsLoopback() && !ip.IsUnspecified() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast()
 }
 
 func buildProviderDescriptorIdentity(src providerDescriptorSource, defaultPublicKeyHex, peerID string) *providerDescriptorIdentityResponse {

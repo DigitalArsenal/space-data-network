@@ -55,6 +55,42 @@ const (
 	pluginTypeAnalysis = 3
 )
 
+// The licensing challenge's two time bounds, and which one carries the
+// security property.
+//
+// MAX_CLOCK_SKEW_MS is a CLOCK-DISAGREEMENT tolerance. The key server compares
+// the client's REQUESTED_AT against the provider's own arrival clock
+// (key_server.cpp:2372-2374). But a browser stamps REQUESTED_AT before it
+// encodes the request and before it dials (sdn-js module-delivery.ts:217,235,256),
+// and it re-sends the SAME stamped bytes to every candidate multiaddr in turn
+// (module-delivery.ts:671-687). So every millisecond of dial, handshake and
+// failed-candidate retry is charged against this window. At 5 s that made it an
+// end-to-end TRANSPORT budget wearing the name of a clock check, and it refused
+// live grants under ordinary concurrency: measured on host-01 over one boot,
+// 160 challenge requests -> 132 granted, 24 refused reason=invalid_timestamp,
+// every refusal on the requester's FIRST hop, the same module flipping
+// granted -> refused -> granted inside 18 s, ten refusals inside 37 ms.
+//
+// 300 s restores the key server's own kDefaultMaxSkewMs (key_server.cpp:69),
+// which the 5 s override was suppressing (key_server.cpp:1135-1137). This is
+// not widening a security window, because REQUESTED_AT was never the freshness
+// control:
+//
+//   - the provider mints a random 32-byte CHALLENGE_NONCE and computes
+//     EXPIRES_AT on its OWN clock (key_server.cpp:2400-2406) under
+//     CHALLENGE_TTL_MS below, and the proof leg must sign over that nonce;
+//   - that leg does not fail — 132 of 132 in the measured boot;
+//   - replaying a stale Request frame therefore buys an attacker a fresh
+//     challenge and nothing else.
+//
+// CHALLENGE_TTL_MS is the bound that DOES carry freshness, it is anchored to
+// server-issued state rather than to the client's clock, and it is deliberately
+// unchanged.
+const (
+	licensingMaxClockSkewMS = 300_000
+	licensingChallengeTTLMS = 30_000
+)
+
 // ModuleDeliveryListing is a canonical $PLG listing generated from a published
 // module catalog asset.
 type ModuleDeliveryListing struct {
@@ -757,8 +793,8 @@ func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, er
 	lcf.LCFAddPROVIDER_WRAPPING_KEY(builder, wrappingKeyRefOffset)
 	lcf.LCFAddACTIVE_KEY_VERSION(builder, 1)
 	lcf.LCFAddEXPIRES_AT(builder, 0)
-	lcf.LCFAddMAX_CLOCK_SKEW_MS(builder, 5_000)
-	lcf.LCFAddCHALLENGE_TTL_MS(builder, 30_000)
+	lcf.LCFAddMAX_CLOCK_SKEW_MS(builder, licensingMaxClockSkewMS)
+	lcf.LCFAddCHALLENGE_TTL_MS(builder, licensingChallengeTTLMS)
 	root := lcf.LCFEnd(builder)
 	lcf.FinishLCFBuffer(builder, root)
 	return builder.FinishedBytes(), nil

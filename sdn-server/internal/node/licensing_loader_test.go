@@ -109,6 +109,21 @@ func TestFindKeyBrokerWasmPathFallsBackToLegacyEnvVar(t *testing.T) {
 
 func writeTestPluginRegistry(t *testing.T, entries ...license.PluginCatalogEntry) *license.PluginRegistry {
 	t.Helper()
+	return writeTestPluginRegistryWithGrantPolicy(t, nil, entries...)
+}
+
+// writeTestPluginRegistryWithGrantPolicy writes the same fixture with an
+// operator grant-policy.json beside the catalog. A nil policy writes no file,
+// which is the fail-closed built-in default (allowlist over an empty list) and
+// therefore publishes NOTHING to the key server (23680234). Tests that need the
+// key server to actually answer a challenge for a module must pass a policy;
+// tests about the admit point itself want the nil case.
+func writeTestPluginRegistryWithGrantPolicy(
+	t *testing.T,
+	grantPolicy *license.GrantPolicyConfig,
+	entries ...license.PluginCatalogEntry,
+) *license.PluginRegistry {
+	t.Helper()
 
 	root := t.TempDir()
 	for _, entry := range entries {
@@ -131,6 +146,16 @@ func writeTestPluginRegistry(t *testing.T, entries ...license.PluginCatalogEntry
 	}
 	if err := os.WriteFile(filepath.Join(root, "catalog.json"), rawCatalog, 0o600); err != nil {
 		t.Fatalf("WriteFile(catalog) failed: %v", err)
+	}
+
+	if grantPolicy != nil {
+		rawPolicy, err := json.Marshal(grantPolicy)
+		if err != nil {
+			t.Fatalf("json.Marshal(grant policy) failed: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(root, license.GrantPolicyFileName), rawPolicy, 0o600); err != nil {
+			t.Fatalf("WriteFile(grant policy) failed: %v", err)
+		}
 	}
 
 	reg, err := license.LoadPluginRegistry(root)
