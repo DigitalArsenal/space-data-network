@@ -310,6 +310,25 @@ func (h *PublishHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ROUTE ON THE HEADER. The URL path segment is a COMMITMENT about the
+	// bytes that follow, so the record's own size prefix + file_identifier
+	// decides where it goes and a disagreement is a 400 naming both. The
+	// declared name has already gated the allow-list and ABAC above, and the
+	// route can only equal it or fail, so a caller can never reach another
+	// schema's table through an allowed path.
+	if h.validator != nil {
+		decision, routeErr := h.validator.RouteBuffer(schema, data)
+		if routeErr != nil {
+			writeError(w, http.StatusBadRequest, routeErr.Error())
+			return
+		}
+		if err := decision.MismatchError(); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		schema = decision.Schema
+	}
+
 	// Validate FlatBuffer
 	if h.validator != nil {
 		if err := h.validator.Validate(r.Context(), schema, data); err != nil {
@@ -435,8 +454,32 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
+		// Route each frame on its own header; the batch URL is a commitment
+		// for every record in the stream, so a frame whose identifier
+		// disagrees is reported and skipped rather than stored under the
+		// declared name.
+		recordSchema := schema
 		if h.validator != nil {
-			if err := h.validator.Validate(r.Context(), schema, data); err != nil {
+			decision, routeErr := h.validator.RouteBuffer(schema, data)
+			if routeErr != nil {
+				results = append(results, map[string]interface{}{
+					"error": routeErr.Error(),
+					"bytes": len(data),
+				})
+				continue
+			}
+			if err := decision.MismatchError(); err != nil {
+				results = append(results, map[string]interface{}{
+					"error": err.Error(),
+					"bytes": len(data),
+				})
+				continue
+			}
+			recordSchema = decision.Schema
+		}
+
+		if h.validator != nil {
+			if err := h.validator.Validate(r.Context(), recordSchema, data); err != nil {
 				results = append(results, map[string]interface{}{
 					"error": "validation failed: " + err.Error(),
 					"bytes": len(data),
@@ -455,7 +498,7 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 			}
 		}
 
-		cid, err := h.storeWithOptionalTags(schema, data, peerID, r)
+		cid, err := h.storeWithOptionalTags(recordSchema, data, peerID, r)
 		if err != nil {
 			results = append(results, map[string]interface{}{
 				"error": "store failed: " + err.Error(),
@@ -465,8 +508,8 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 		}
 
 		// Append PLG entry for this record (non-blocking on failure)
-		if h.logService != nil && schema != "PLOG.fbs" && schema != "PLHD.fbs" {
-			if _, _, logErr := h.logService.AppendEntry(schema, cid, nil, ""); logErr != nil {
+		if h.logService != nil && recordSchema != "PLOG.fbs" && recordSchema != "PLHD.fbs" {
+			if _, _, logErr := h.logService.AppendEntry(recordSchema, cid, nil, ""); logErr != nil {
 				_ = logErr
 			}
 		}

@@ -298,11 +298,18 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 		return
 	}
 
-	// Validate schema name to prevent path traversal and injection attacks
-	if err := sds.ValidateSchemaName(string(schemaName)); err != nil {
-		log.Warnf("Invalid schema name from %s: %v", s.Conn().RemotePeer().ShortString(), err)
-		s.Write([]byte{RespReject})
-		return
+	// Validate schema name to prevent path traversal and injection attacks.
+	//
+	// An EMPTY declaration is legal on this lane: the record's own
+	// file_identifier routes it (RouteBuffer, below). A transport with no
+	// schema channel could previously not deliver a record at all, even
+	// though every SDN record carries its type in its first bytes.
+	if len(schemaName) > 0 {
+		if err := sds.ValidateSchemaName(string(schemaName)); err != nil {
+			log.Warnf("Invalid schema name from %s: %v", s.Conn().RemotePeer().ShortString(), err)
+			s.Write([]byte{RespReject})
+			return
+		}
 	}
 
 	// Read data length (4 bytes)
@@ -332,12 +339,30 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// Get peer ID
 	peerID := s.Conn().RemotePeer()
 
+	// ROUTE ON THE HEADER. The record's own size prefix + file_identifier is
+	// the in-band truth; the pushed schema name is a COMMITMENT this lane
+	// makes about those bytes, so a disagreement is an error, never something
+	// the declaration wins. (Before: the name alone selected the table and the
+	// identifier was only ever used to validate it.)
+	decision, err := h.validator.RouteBuffer(string(schemaName), data)
+	if err != nil {
+		log.Warnf("Unroutable data push from %s: %v", peerID.ShortString(), err)
+		s.Write([]byte{RespReject})
+		return
+	}
+	if err := decision.MismatchError(); err != nil {
+		log.Warnf("Rejected data push from %s: %v", peerID.ShortString(), err)
+		s.Write([]byte{RespReject})
+		return
+	}
+	routedSchema := decision.Schema
+
 	// Validate data against schema with timeout
 	validationCtx, validationCancel := context.WithTimeout(ctx, DefaultValidationTimeout)
 	defer validationCancel()
 
-	if err := h.validator.Validate(validationCtx, string(schemaName), data); err != nil {
-		log.Warnf("Validation failed for %s from %s: %v", schemaName, peerID, err)
+	if err := h.validator.Validate(validationCtx, routedSchema, data); err != nil {
+		log.Warnf("Validation failed for %s from %s: %v", routedSchema, peerID, err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -346,13 +371,13 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// Reject without dereferencing the nil store (would SIGSEGV).
 	if h.store == nil {
 		n := h.droppedNoStore.Add(1)
-		log.Debugf("edge mode (no store): rejecting data push for %s from %s (dropped=%d)", schemaName, peerID.ShortString(), n)
+		log.Debugf("edge mode (no store): rejecting data push for %s from %s (dropped=%d)", routedSchema, peerID.ShortString(), n)
 		s.Write([]byte{RespReject})
 		return
 	}
 
 	// Store data
-	cid, err := h.store.Store(string(schemaName), data, peerID.String(), nil)
+	cid, err := h.store.Store(routedSchema, data, peerID.String(), nil)
 	if err != nil {
 		log.Warnf("Failed to store data: %v", err)
 		s.Write([]byte{RespReject})
@@ -501,8 +526,27 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultValidationTimeout)
 	defer cancel()
 
-	if hasSizePrefixedPNMIdentifier(data) {
-		if err := h.validator.Validate(ctx, "PNM.fbs", data); err != nil {
+	// ROUTE ON THE HEADER. On pubsub the topic is a delivery CHANNEL, not a
+	// commitment about the bytes — a $PNM announcement legitimately arrives on
+	// another standard's topic, which is why that one case used to be
+	// hand-written here. Routing every message on its own file_identifier
+	// generalises that exception instead of special-casing it; the topic is
+	// still gated (HasSchema, above) and still logged.
+	decision, routeErr := h.validator.RouteBuffer(schema, data)
+	if routeErr != nil {
+		log.Warnf("PubSub message rejected: unroutable record from %s on %s: %v", from.ShortString(), schema, routeErr)
+		return fmt.Errorf("unroutable record: %w", routeErr)
+	}
+	routedSchema := decision.Schema
+	if decision.Mismatch {
+		log.Debugf("PubSub message on %s carries %q: routing to %s by its own header", schema, decision.Identifier, routedSchema)
+	}
+
+	// The generated identifier check stays as a fallback for a validator with
+	// no PNM schema loaded, so this branch can never become weaker than it was.
+	if routedSchema == pnmSchemaName || (!decision.FromHeader && hasSizePrefixedPNMIdentifier(data)) {
+		routedSchema = pnmSchemaName
+		if err := h.validator.Validate(ctx, pnmSchemaName, data); err != nil {
 			log.Warnf("PubSub PNM rejected: validation failed from %s on %s: %v", from.ShortString(), schema, err)
 			return fmt.Errorf("PNM validation failed: %w", err)
 		}
@@ -516,7 +560,7 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 			log.Debugf("edge mode (no store): dropping PNM announcement from %s on %s (dropped=%d)", from.ShortString(), schema, n)
 			return nil
 		}
-		if _, err := h.store.Store("PNM.fbs", data, from.String(), nil); err != nil {
+		if _, err := h.store.Store(pnmSchemaName, data, from.String(), nil); err != nil {
 			return fmt.Errorf("failed to store PNM: %w", err)
 		}
 		if h.pnmHandler != nil {
@@ -531,9 +575,10 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	// SDS v1 message format: [data...]
 	msgData := data
 
-	// Validate data against schema
-	if err := h.validator.Validate(ctx, schema, msgData); err != nil {
-		log.Warnf("PubSub message rejected: validation failed for %s from %s: %v", schema, from.ShortString(), err)
+	// Validate data against the schema the RECORD declares, not the topic it
+	// arrived on.
+	if err := h.validator.Validate(ctx, routedSchema, msgData); err != nil {
+		log.Warnf("PubSub message rejected: validation failed for %s from %s on %s: %v", routedSchema, from.ShortString(), schema, err)
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
@@ -548,19 +593,25 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	// does not re-log per message.
 	if h.store == nil {
 		n := h.droppedNoStore.Add(1)
-		log.Debugf("edge mode (no store): dropping %s record from %s (dropped=%d)", schema, from.ShortString(), n)
+		log.Debugf("edge mode (no store): dropping %s record from %s (dropped=%d)", routedSchema, from.ShortString(), n)
 		return nil
 	}
 
 	// Store data
-	_, err := h.store.Store(schema, msgData, from.String(), nil)
+	_, err := h.store.Store(routedSchema, msgData, from.String(), nil)
 	if err != nil {
 		return fmt.Errorf("failed to store: %w", err)
 	}
 
-	log.Debugf("PubSub message accepted: %s record from %s", schema, from.ShortString())
+	log.Debugf("PubSub message accepted: %s record from %s on %s", routedSchema, from.ShortString(), schema)
 	return nil
 }
+
+// pnmSchemaName is the one schema the announcement lane treats specially —
+// not because routing is special-cased for it any more (RouteBuffer routes
+// every record on its own header), but because a validated PNM additionally
+// drives the announcement handler.
+const pnmSchemaName = "PNM.fbs"
 
 func hasSizePrefixedPNMIdentifier(data []byte) (ok bool) {
 	if len(data) < 8 {
