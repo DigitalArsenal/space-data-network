@@ -31,19 +31,19 @@ func zeroBytes(b []byte) {
 }
 
 const (
-	defaultPluginCatalogFile      = "catalog.json"
-	defaultPluginRootDirName      = "plugins"
-	defaultPluginContentType      = "application/wasm"
-	defaultPluginCacheControl     = "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"
-	defaultPluginRequiredScope    = "orbpro:base"
-	defaultMaxGrantTimeoutMs      = int64(300_000)
-	pluginRuntimeStatusStopped    = "stopped"
-	pluginRuntimeStatusRunning    = "running"
-	pluginRuntimeStatusError      = "error"
-	pluginCryptoContext           = "orbpro-plugin-v1"
-	pluginBundleV2Format          = byte(0x02)
-	pluginBundleV2Header          = 61
-	pluginBundleV1Header          = 80
+	defaultPluginCatalogFile   = "catalog.json"
+	defaultPluginRootDirName   = "plugins"
+	defaultPluginContentType   = "application/wasm"
+	defaultPluginCacheControl  = "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"
+	defaultPluginRequiredScope = "orbpro:base"
+	defaultMaxGrantTimeoutMs   = int64(300_000)
+	pluginRuntimeStatusStopped = "stopped"
+	pluginRuntimeStatusRunning = "running"
+	pluginRuntimeStatusError   = "error"
+	pluginCryptoContext        = "orbpro-plugin-v1"
+	pluginBundleV2Format       = byte(0x02)
+	pluginBundleV2Header       = 61
+	pluginBundleV1Header       = 80
 )
 
 var envelopeKeyWrapInfos = [][]byte{
@@ -1261,4 +1261,3 @@ func derivePluginBundleKey(sharedSecret []byte, context []byte) ([]byte, error) 
 	}
 	return k, nil
 }
-

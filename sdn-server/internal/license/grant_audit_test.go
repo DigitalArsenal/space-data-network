@@ -116,6 +116,42 @@ func TestDecodeGrantAuditEventIgnoresNonLicensingFrames(t *testing.T) {
 	}
 }
 
+// A peer can send anything. Before the recover, eight bytes were enough to take
+// the daemon down: the flatbuffers accessors do not verify offsets, and an
+// unrecovered panic in a stream-handler goroutine kills the process. Every one
+// of these is a remote, unauthenticated frame.
+func TestDecodeGrantAuditEventSurvivesCraftedFrames(t *testing.T) {
+	valid := buildChallengeFrame(t, challengeMessageTypeRequest, "com.orbpro.hpop", testXpub, "")
+
+	crafted := map[string][]byte{
+		// The identifier is at bytes 4..8; the root uoffset at 0..4 is junk.
+		"bogus root offset":    {0xff, 0xff, 0xff, 0x7f, '$', 'L', 'C', 'H'},
+		"root points past end": {0x40, 0x00, 0x00, 0x00, '$', 'L', 'C', 'H'},
+		"zero root":            {0x00, 0x00, 0x00, 0x00, '$', 'L', 'G', 'R'},
+		"identifier only":      {0x08, 0x00, 0x00, 0x00, '$', 'L', 'C', 'H', 0x00, 0x00, 0x00, 0x00},
+		"truncated valid":      valid[:len(valid)/2],
+		"valid with tail cut":  valid[:8],
+	}
+
+	for name, frame := range crafted {
+		t.Run(name, func(t *testing.T) {
+			// The assertion IS that this returns rather than panicking.
+			if _, ok := DecodeGrantAuditEvent("request", frame); ok {
+				t.Logf("%s decoded as a licensing frame; that is acceptable so long as it did not panic", name)
+			}
+		})
+	}
+}
+
+func TestAuditDeliveryFrameSurvivesCraftedFrames(t *testing.T) {
+	var lines []string
+	SetGrantAuditSink(func(line string) { lines = append(lines, line) }, nil)
+	defer SetGrantAuditSink(nil, nil)
+
+	// The full tap path, the way modulert calls it on bytes off the wire.
+	AuditDeliveryFrame("request", []byte{0xff, 0xff, 0xff, 0x7f, '$', 'L', 'C', 'H'}, "12D3KooWAttacker")
+}
+
 func TestAuditDeliveryFrameIsSafeWithNoSinkInstalled(t *testing.T) {
 	SetGrantAuditSink(nil, nil)
 	AuditDeliveryFrame("request", buildChallengeFrame(t, challengeMessageTypeRequest, "m", testXpub, ""), "peer")

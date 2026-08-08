@@ -101,7 +101,22 @@ const (
 // DecodeGrantAuditEvent classifies one frame from the delivery lane. It returns
 // ok=false for anything that is not a licensing frame, so the caller can tap a
 // generic stream handler without knowing which module it is serving.
-func DecodeGrantAuditEvent(direction string, frame []byte) (GrantAuditEvent, bool) {
+//
+// A REQUEST frame here is attacker-controlled: any peer may open the stream and
+// send bytes that merely look like a licensing frame. The flatbuffers Go
+// accessors do not verify offsets, so eight crafted bytes carrying the "$LCH"
+// identifier and a bogus root offset make a field read run off the buffer — and
+// an unrecovered panic in a libp2p stream-handler goroutine takes the WHOLE
+// daemon down. The module itself is safe because it verifies its own input; the
+// tap is the new exposure. An audit tap must never be the thing that kills the
+// node it audits, so a malformed frame is simply not audited.
+func DecodeGrantAuditEvent(direction string, frame []byte) (event GrantAuditEvent, ok bool) {
+	defer func() {
+		if recover() != nil {
+			event = GrantAuditEvent{}
+			ok = false
+		}
+	}()
 	if len(frame) < 8 {
 		return GrantAuditEvent{}, false
 	}
