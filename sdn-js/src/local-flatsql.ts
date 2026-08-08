@@ -33,6 +33,7 @@ import {
   type EngineEpochQueryRequest,
 } from './epoch-query-sql';
 import { validateReadOnlySql, type ReadOnlySqlValidationOptions } from './read-only-sql-sandbox';
+import { FlatSqlIoRouter, createFlatSqlIoStoreBackend } from './flatsql-io-store';
 
 /**
  * Minimal record surface the engine store ingests. Structurally compatible
@@ -282,11 +283,70 @@ const LOCAL_FLATSQL_STORE_NAME = 'datastores';
 // process MUST share a single initialization.
 let sharedFlatSqlPromise: Promise<FlatSQL> | null = null;
 
-/** Shared FlatSQL-WASM engine instance for this JS context. */
+/**
+ * The PRODUCTION I/O router (loop: sdn-js-flatsql-io-shim-not-wired-in-prod).
+ *
+ * There is exactly one wasm instance per JS context, therefore exactly one
+ * import object, therefore the seven `flatsql_io_*` imports must be installed
+ * ONCE at shared-init time — before any database exists. Until this was wired,
+ * `initFlatSQL` was called with no `io:` at all, so the browser lane had NO
+ * filesystem: `openDatabase(path)` reported FLATSQL_STATE_NO_FILESYSTEM and
+ * every "durable" path was a name with nothing behind it, while the Go host
+ * reached real files through `internal/flatsqlrt/hostio.go`. Same engine, two
+ * different durability stories — the divergence the disk-backed law exists to
+ * forbid.
+ *
+ * Stores register their own persistence backend under a disjoint path prefix
+ * (registerFlatSqlIoStore), so several stores share the one instance.
+ */
+let sharedFlatSqlIoRouter: FlatSqlIoRouter | null = null;
+const registeredIoPrefixes = new Set<string>();
+
+/** The process-wide FlatSQL I/O router, created on first use. */
+export function getSharedFlatSqlIoRouter(): FlatSqlIoRouter {
+  if (!sharedFlatSqlIoRouter) sharedFlatSqlIoRouter = new FlatSqlIoRouter();
+  return sharedFlatSqlIoRouter;
+}
+
+/** Path prefix owned by one persistence key inside the router namespace. */
+export function flatSqlIoPrefixForKey(persistenceKey: string): string {
+  return `sdn-flatsql/${persistenceKey}/`;
+}
+
+/**
+ * Mount a persistence store as a durable FlatSQL backend.
+ *
+ * Idempotent per prefix: the router keeps entries forever (there is one wasm
+ * instance for the life of the context), so re-registering the same prefix
+ * would shadow rather than replace.
+ */
+export function registerFlatSqlIoStore(
+  persistenceKey: string,
+  store: LocalFlatSqlPersistenceStore,
+): string {
+  const prefix = flatSqlIoPrefixForKey(persistenceKey);
+  if (!registeredIoPrefixes.has(prefix)) {
+    getSharedFlatSqlIoRouter().register(prefix, createFlatSqlIoStoreBackend(store, {
+      prefix: `${prefix}keys/`,
+    }));
+    registeredIoPrefixes.add(prefix);
+  }
+  return prefix;
+}
+
+/** Shared FlatSQL-WASM engine instance for this JS context, disk-capable. */
 export async function getSharedFlatSql(): Promise<FlatSQL> {
   if (!sharedFlatSqlPromise) {
-    sharedFlatSqlPromise = import('flatsql/wasm').then(({ initFlatSQL }) =>
-      initFlatSQL({ skipIntegrityCheck: true }));
+    const io = getSharedFlatSqlIoRouter();
+    sharedFlatSqlPromise = import('flatsql/wasm').then(({ initFlatSQL }) => {
+      // flatsql 1.4.4 ACCEPTS `io` at runtime (standalone.js stores it and the
+      // seven imports are bound from it) but its published InitOptions d.ts
+      // does not declare the field. The cast is the upstream typing gap, not a
+      // shortcut around the contract; flatsql-io-store.test.ts has carried the
+      // same error since the shim landed.
+      const options = { skipIntegrityCheck: true, io } as unknown as Parameters<typeof initFlatSQL>[0];
+      return initFlatSQL(options);
+    });
   }
   return sharedFlatSqlPromise;
 }
@@ -306,9 +366,16 @@ export function configureEngineDatabaseSession(db: Pick<FlatSQLDatabase, 'query'
 }
 
 export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions): Promise<LocalFlatSqlStore> {
+  const persistenceStore = createLocalFlatSqlPersistenceStore(options);
+  // Mount this store's persistence backend on the shared I/O router BEFORE the
+  // engine is initialized: the seven imports are bound once, at instantiation,
+  // and a backend registered afterwards would never be reachable by a database
+  // opened in this context.
+  if (options.persistenceKey && persistenceStore.available) {
+    registerFlatSqlIoStore(options.persistenceKey, persistenceStore);
+  }
   const flatsql = await getSharedFlatSql();
   const states = new Map<string, StandardDatabaseState>();
-  const persistenceStore = createLocalFlatSqlPersistenceStore(options);
 
   for (const schema of options.schemas) {
     const standardId = normalizeStandardId(schema.standardId);
