@@ -853,11 +853,32 @@ func (h *ChannelHandler) datasetPublicationChannelRows(standardFilter string) []
 					continue
 				}
 				seen[channelID] = struct{}{}
-				row := h.channelDetail(parsed)
-				row["topic"] = channels.DiscoveryTopic(standardCode)
-				row["channelHead"] = emptyStringAsNil(strings.TrimSpace(publication.FeedHead))
-				row["headAvailable"] = strings.TrimSpace(publication.PNMCID) != ""
-				rows = append(rows, row)
+				// ⛔ DO NOT call channelDetail here. It resolves verified
+				// metadata, which now falls back to
+				// restoreVerifiedPNMFromDatasetPublication — a record read BY
+				// CID, PER ROW. Prod reads a record by CID in 12-29 s today
+				// (sdn-record-by-cid-read-12-to-29-seconds), so listing ~9
+				// channels that way would reintroduce this route's hang from a
+				// different cause. A LIST does not need $PNM bytes: every field
+				// below comes from the publication row and the subscription
+				// registry, both already in hand.
+				state := h.subscriptions.Get(parsed)
+				rows = append(rows, map[string]interface{}{
+					"channelId":       parsed.ChannelID,
+					"sourceId":        parsed.SourceID,
+					"standardCode":    parsed.StandardCode,
+					"feedUuid":        emptyStringAsNil(parsed.FeedUUID),
+					"topic":           channels.DiscoveryTopic(standardCode),
+					"visibility":      "public",
+					"subscribed":      state.Subscribed,
+					"grantState":      "not-required",
+					"encryptionState": "none",
+					"channelHead":     emptyStringAsNil(strings.TrimSpace(publication.FeedHead)),
+					// headAvailable says GET /pnm will answer for this channel,
+					// established without paying to fetch the head.
+					"headAvailable": strings.TrimSpace(publication.PNMCID) != "",
+					"recordCount":   publication.RecordCount,
+				})
 			}
 		}
 	}

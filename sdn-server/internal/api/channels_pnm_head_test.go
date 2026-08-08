@@ -289,6 +289,49 @@ func TestChannelCollectionListsPublishedChannelsWithoutARecordScan(t *testing.T)
 	}
 }
 
+// ⛔ THE LIST MUST NOT FETCH HEADS. The head fallback reads a record BY CID,
+// and prod reads a record by CID in 12-29 s today
+// (sdn-record-by-cid-read-12-to-29-seconds). If the collection resolved
+// verified metadata per row it would re-hang the route from a different cause,
+// so a listing may never populate the registry with PNM bytes.
+func TestChannelCollectionDoesNotFetchPNMBytesPerRow(t *testing.T) {
+	t.Parallel()
+
+	store := pnmHeadTestStore(t)
+	publishedAt := time.Unix(1_785_896_379, 0).UTC()
+	seedPublishedChannel(t, store, "space-data-network-02", "satnogs-db", "bafkmanifest-rfb-nofetch", publishedAt)
+
+	handler := NewChannelHandler(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels?standardCode=RFB", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/channels = %d, want 200", rec.Code)
+	}
+
+	// If the listing had gone through channelDetail -> verifiedChannelMetadata,
+	// the head restore would have cached PNM bytes in the registry. It must not
+	// have: nothing is in there until somebody actually asks for a head.
+	for _, metadata := range handler.metadata.List() {
+		if len(metadata.PNMBytes) > 0 {
+			t.Fatalf("listing fetched $PNM bytes for %s — the collection paid a record-by-CID read per row",
+				metadata.ChannelID)
+		}
+	}
+
+	// And the head route still works right after, which is the point: the list
+	// advertises availability, the head route delivers it.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/channels/satnogs-db-RFB/pnm", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /pnm after listing = %d, want 200", rec.Code)
+	}
+}
+
 func containsString(haystack, needle string) bool {
 	return len(needle) > 0 && len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0
 }
