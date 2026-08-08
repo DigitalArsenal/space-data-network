@@ -248,10 +248,27 @@ export interface FlatSQLEngineRecordStoreOptions {
   flushOnWrite?: boolean;
   hashHex?: (data: Uint8Array) => Promise<string>;
   nowMs?: () => number;
-  /** SDS standards mirrored into per-standard engine databases (server layout). */
+  /**
+   * SDS standards mirrored into per-standard engine databases (server
+   * layout). THIS OPTION DECIDES DURABILITY: with no schemas there is no
+   * per-standard disk-backed lane at all and everything falls to the
+   * whole-blob envelope journal (see `envelopeJournalOnly`).
+   */
   schemas?: LocalFlatSqlSchema[];
   /** Key namespacing persisted engine state (streams, journal) in IndexedDB. */
   persistenceKey?: string | null;
+  /**
+   * Acknowledge whole-blob envelope-journal persistence: REQUIRED when a
+   * `persistenceKey` is given without `schemas`, ignored otherwise.
+   *
+   * A `persistenceKey` looks like a request for durable storage, and until
+   * 2.0.18 a schemas-less key silently downgraded to ONE `<key>:record-envelopes`
+   * blob rewritten in full on every flush and re-ingested in full at boot —
+   * measured at 10,544,950 B for a live catalogue cache. That downgrade is
+   * now refused rather than silent: pass `schemas` for the disk-backed
+   * per-source lane, or pass this flag to say the journal is what you meant.
+   */
+  envelopeJournalOnly?: boolean;
   desktopPersistenceBaseUrl?: string | null;
   fetch?: ((input: string | URL | Request, init?: RequestInit) => Promise<Response>) | null;
   /** Injectable key/value persistence backend (tests / embedders). */
@@ -267,10 +284,21 @@ export interface FlatSQLEngineRecordStoreOptions {
   nowSeconds?: (() => number) | null;
 }
 
+/**
+ * A standard registered on this store: the routing key (`OMM`), the 4-byte
+ * FlatBuffer file identifier payloads are ROUTED BY, and the engine table its
+ * frames land in.
+ */
+interface RegisteredStandard {
+  standardId: string;
+  fileId: string;
+  tableName: string;
+}
+
 interface EngineRecordStoreContext {
   controlDb: ControlDatabase;
   standards: LocalFlatSqlStore | null;
-  standardIds: Map<string, { standardId: string; fileId: string }>;
+  standardIds: Map<string, RegisteredStandard>;
   options: FlatSQLEngineRecordStoreOptions;
   /** Compact durable index for datasync-fed envelope rows (loop D.4). */
   syncEnvelopePersistence?: { store: LocalFlatSqlPersistenceStore; key: string } | null;
@@ -323,10 +351,63 @@ export interface EnginePublishedShardIngestOptions {
   persist?: boolean;
 }
 
+/**
+ * Admit options for `storeStream` — the shard-shaped admit point. The
+ * standard is NOT one of them: it is routed from the frames' file identifier.
+ */
+export interface EngineStreamStoreOptions {
+  /** Source partition the shard lands in (default: the store's defaultSource). */
+  source?: string | null;
+  /**
+   * ASSERTION only — the standard the caller believes this shard is. Routing
+   * is by file identifier; a mismatch is refused, never overridden.
+   */
+  standardId?: string | null;
+  /** Publication content id; keys the frames so re-admitting the shard is a no-op. */
+  shardCid?: string | null;
+  /** Expected sha256 of the stream bytes, verified before ingest when given. */
+  sha256?: string | null;
+  /** Provenance rows for the pin ledger (provider / source / batch attribution). */
+  pinLedgerEntries?: LocalFlatSqlPinLedgerEntry[];
+  /** Flush the lane after ingest (default true). */
+  persist?: boolean;
+  /**
+   * Write a per-FRAME envelope index row. DEFAULT FALSE: a shard's durable
+   * substrate is the lane, so envelope rows would be a second durable copy of
+   * bytes the lane already holds (measured: 21,104,976 B for one 10.5 MB
+   * shard). Opt in only when the frames must also be reachable through the
+   * record envelope surface (`get`/`query`/`count`).
+   */
+  indexEnvelopes?: boolean;
+}
+
+export interface EngineStreamStoreResult {
+  /** Standard the frames' file identifier routed to. */
+  standardId: string;
+  source: string;
+  /** Frames in the delivered stream. */
+  frames: number;
+  /** Frames newly materialized in the lane (replay makes this 0). */
+  ingested: number;
+  /** Envelope index rows written (0 unless `indexEnvelopes`). */
+  indexedEnvelopes: number;
+  bytes: number;
+  /** True when the ingested-keys ledger proved this shard was already resident. */
+  replayed: boolean;
+}
+
+export interface EngineStreamReadOptions {
+  /**
+   * Read ONE source partition in ingest order — required for byte-identical
+   * round trips. Omitted, the read spans every partition (a union).
+   */
+  source?: string | null;
+}
+
 export class FlatSQLEngineRecordStore {
   private readonly controlDb: ControlDatabase;
   private readonly standards: LocalFlatSqlStore | null;
-  private readonly standardIds: Map<string, { standardId: string; fileId: string }>;
+  private readonly standardIds: Map<string, RegisteredStandard>;
   private readonly byCid = new Map<string, StoredRecord>();
   /** Datasync-fed envelope index rows (schema|cid → row), payloads live in the engine partitions. */
   private readonly syncEnvelopes = new Map<string, SyncEnvelopeRow>();
@@ -361,6 +442,17 @@ export class FlatSQLEngineRecordStore {
     controlDb.query(CONTROL_INDEX_DDL);
 
     const schemas = options.schemas ?? [];
+    if (options.persistenceKey && schemas.length === 0 && options.envelopeJournalOnly !== true) {
+      controlDb.destroy();
+      throw new Error(
+        `FlatSQL record store: persistenceKey ${JSON.stringify(options.persistenceKey)} was given without \`schemas\`, ` +
+        'so there is NO per-standard disk-backed lane and every byte would fall to one whole-blob ' +
+        `\`${options.persistenceKey}:record-envelopes\` snapshot, rewritten in full on every flush and re-ingested in ` +
+        'full at boot. That silent downgrade is refused. Pass `schemas` (the disk-backed per-source lane, and the ' +
+        'only way to reach `storeStream`/`readStream`), or pass `envelopeJournalOnly: true` to declare that the ' +
+        'whole-blob journal is what you meant.',
+      );
+    }
     const standards = schemas.length > 0
       ? await createLocalFlatSqlStore({
         schemas,
@@ -372,10 +464,10 @@ export class FlatSQLEngineRecordStore {
         nowSeconds: options.nowSeconds,
       })
       : null;
-    const standardIds = new Map<string, { standardId: string; fileId: string }>();
+    const standardIds = new Map<string, RegisteredStandard>();
     for (const schema of schemas) {
       const standardId = schema.standardId.trim().split('.')[0]?.toUpperCase() ?? '';
-      if (standardId) standardIds.set(standardId, { standardId, fileId: schema.fileId });
+      if (standardId) standardIds.set(standardId, { standardId, fileId: schema.fileId, tableName: schema.tableName });
     }
 
     const resolvedOptions: FlatSQLEngineRecordStoreOptions = { ...options };
@@ -462,6 +554,190 @@ export class FlatSQLEngineRecordStore {
     options?: Parameters<LocalFlatSqlStore['ingestFlatBufferStream']>[2],
   ): Promise<number> {
     return this.requireStandards().ingestFlatBufferStream(standardId, streamBytes, options);
+  }
+
+  // -------------------------------------------------------------------------
+  // THE STREAM SURFACE (2.0.18) — shard-shaped admit point.
+  //
+  // `store()` admits ONE record and its provenance envelope (peer id,
+  // signature, cid); the envelope journal is that record's durable substrate
+  // and the engine vtab is a query cache over it. That contract is unchanged.
+  //
+  // A published SDS SHARD is a different payload class: already durable,
+  // already content-addressed by the publication that named it, carrying no
+  // per-frame peer id or signature. It is admitted HERE, into the disk-backed
+  // per-source lane, and the lane is its durable substrate — no envelope row,
+  // no second copy. That is how the two lanes stay ONE copy each instead of
+  // the 2x measured when a shard was forced through `store()`.
+  //
+  // Round-trip identity is the guarantee that makes this safe for a
+  // content-addressed consumer: `readStream` returns the bytes `storeStream`
+  // was given, byte for byte, across teardown and reopen.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Admit an aligned size-prefixed SDS shard into the disk-backed
+   * per-source standards lane. The standard is resolved from the FRAMES'
+   * FlatBuffer file identifier — header-only routing, never a caller-supplied
+   * name (`options.standardId` is an ASSERTION, refused on mismatch).
+   *
+   * Requires `schemas` (there is no lane without them) and refuses a payload
+   * that is not a size-prefixed stream of a registered standard.
+   */
+  async storeStream(
+    streamBytes: Uint8Array,
+    options: EngineStreamStoreOptions = {},
+  ): Promise<EngineStreamStoreResult> {
+    const standards = this.requireStandards();
+    const routed = this.routeStreamByFileId(streamBytes);
+    const expected = options.standardId?.trim().split('.')[0]?.toUpperCase();
+    if (expected && expected !== routed.standard.standardId) {
+      throw new Error(
+        `FlatSQL stream store: payload frames carry file identifier ${JSON.stringify(routed.standard.fileId)} ` +
+        `(standard ${routed.standard.standardId}), but the caller asserted ${JSON.stringify(expected)}. ` +
+        'Streams route by file identifier; the assertion is refused rather than overridden.',
+      );
+    }
+    const standardId = routed.standard.standardId;
+
+    if (options.sha256) {
+      const actual = await this.hashHex(streamBytes);
+      if (actual !== options.sha256.trim().toLowerCase()) {
+        throw new Error(
+          `FlatSQL stream store: ${standardId} shard sha256 mismatch — expected ${options.sha256}, got ${actual}`,
+        );
+      }
+    }
+
+    const source = options.source?.trim() || this.defaultSource;
+    const shardCid = options.shardCid?.trim() || null;
+    const ingested = await standards.ingestFlatBufferStream(standardId, streamBytes, {
+      source,
+      persist: false,
+      // Idempotent replay: the shard cid keys every frame, so re-admitting the
+      // same shard is a no-op instead of a duplicate ingest.
+      ...(shardCid ? { recordKeyPrefix: `shard:${shardCid}` } : {}),
+      ...(options.pinLedgerEntries?.length ? { pinLedgerEntries: options.pinLedgerEntries } : {}),
+    });
+    if (ingested === 0 && options.pinLedgerEntries?.length) {
+      await standards.recordPinLedgerEntries(options.pinLedgerEntries, { persist: false });
+    }
+
+    // Envelope rows are OPT-IN for a shard (default false): the lane is the
+    // durable substrate for this payload class, and indexing 32k frames costs
+    // a sha256 each plus a second durable copy of the same bytes.
+    let indexedEnvelopes = 0;
+    if (options.indexEnvelopes === true) {
+      const timestampMs = this.nowMs();
+      const schemaName = `${standardId}.fbs`;
+      for (const frame of iterateFlatSqlSizePrefixedStream(streamBytes)) {
+        const recordCid = await this.hashHex(frame);
+        if (this.upsertSyncEnvelope({ schema: schemaName, cid: recordCid, peerId: '', timestampMs })) {
+          indexedEnvelopes += 1;
+        }
+      }
+    }
+
+    if (options.persist !== false) {
+      await standards.flush(standardId);
+      if (indexedEnvelopes > 0) await this.persistSyncEnvelopes();
+    }
+
+    return {
+      standardId,
+      source,
+      frames: routed.frames,
+      ingested,
+      indexedEnvelopes,
+      bytes: streamBytes.byteLength,
+      replayed: ingested === 0 && routed.frames > 0,
+    };
+  }
+
+  /**
+   * Read a standard's lane back as ONE aligned size-prefixed stream — the
+   * paired read for `storeStream`, and the wire format itself.
+   *
+   * With a `source` this reads that per-source shadow table in `_rowid`
+   * order, which is exactly the order the frames were ingested in, so a shard
+   * admitted through `storeStream` comes back BYTE-IDENTICAL (verified at
+   * 32,141 frames / 10,544,168 B, across teardown + reopen). Without a
+   * `source` it reads the unified view across every partition, which is a
+   * union — use a source when byte identity is what you need.
+   *
+   * Returns an empty stream when the standard has no such partition yet.
+   */
+  readStream(standardId: string, options: EngineStreamReadOptions = {}): Uint8Array {
+    const standards = this.requireStandards();
+    const standard = this.requireRegisteredStandard(standardId);
+    const source = options.source?.trim() || null;
+    if (source) {
+      const sources = standards.listSources?.(standard.standardId);
+      if (Array.isArray(sources) && !sources.includes(source)) return new Uint8Array(0);
+      return this.queryRawFlatBufferStream(
+        standard.standardId,
+        `SELECT _data FROM "${standard.tableName}@${source}" ORDER BY _rowid ASC`,
+      );
+    }
+    return this.queryRawFlatBufferStream(
+      standard.standardId,
+      `SELECT _data FROM "${standard.tableName}" ORDER BY _rowid ASC`,
+    );
+  }
+
+  /** Standards registered on this store (routing key, file id, engine table). */
+  registeredStandards(): Array<{ standardId: string; fileId: string; tableName: string }> {
+    return Array.from(this.standardIds.values()).map((entry) => ({ ...entry }));
+  }
+
+  /** Resolve a size-prefixed stream to its standard by FILE IDENTIFIER alone. */
+  private routeStreamByFileId(streamBytes: Uint8Array): { standard: RegisteredStandard; frames: number } {
+    for (const standard of this.standardIds.values()) {
+      const frames = countFlatBufferStreamFramesWithFileId(streamBytes, standard.fileId);
+      if (frames > 0) return { standard, frames };
+    }
+    const registered = Array.from(this.standardIds.values())
+      .map((entry) => `${entry.standardId} (${entry.fileId})`)
+      .join(', ') || '<none>';
+    throw new Error(
+      'FlatSQL stream store: payload is not an aligned size-prefixed stream whose frames all carry a registered ' +
+      `standard's file identifier. Registered: ${registered}. A single record goes through \`store()\`; ` +
+      'a shard must be the wire format (u32 length + frame, repeated, tiling the buffer exactly).',
+    );
+  }
+
+  /**
+   * `store()` is the RECORD admit point. A multi-frame SDS shard handed to it
+   * used to be accepted, enveloped whole, and mirrored through a one-record
+   * ingest that produced zero queryable rows while doubling storage. The
+   * detection fix alone would make that silent (envelope only, no mirror);
+   * refusing makes it loud and names the surface that is actually wanted.
+   *
+   * Only genuine shards are refused: the payload must tile the buffer exactly
+   * into 2+ frames that ALL carry a registered standard's file identifier.
+   */
+  private refuseMultiFrameStream(data: Uint8Array): void {
+    for (const standard of this.standardIds.values()) {
+      const frames = countFlatBufferStreamFramesWithFileId(data, standard.fileId);
+      if (frames > 1) {
+        throw new Error(
+          `FlatSQL record store: store() admits ONE record, but this payload is an aligned size-prefixed ` +
+          `${standard.standardId} STREAM of ${frames} frames (${data.byteLength} B). Use ` +
+          '`storeStream(bytes, { source, shardCid })`, which admits it into the disk-backed per-source lane ' +
+          'and reads back byte-identical through `readStream(standardId, { source })`.',
+        );
+      }
+    }
+  }
+
+  private requireRegisteredStandard(standardId: string): RegisteredStandard {
+    const key = String(standardId).trim().split('.')[0]?.toUpperCase() ?? '';
+    const standard = this.standardIds.get(key);
+    if (!standard) {
+      const registered = Array.from(this.standardIds.keys()).join(', ') || '<none>';
+      throw new Error(`FlatSQL record store: standard ${JSON.stringify(standardId)} is not registered (have: ${registered})`);
+    }
+    return standard;
   }
 
   /**
@@ -847,6 +1123,7 @@ export class FlatSQLEngineRecordStore {
     peerId: string,
     signature: Uint8Array,
   ): Promise<string> {
+    this.refuseMultiFrameStream(data);
     const cid = await this.hashHex(data);
     if (this.byCid.has(cid)) return cid; // content-addressed dedupe
     const record: StoredRecord = {
@@ -1035,14 +1312,72 @@ function countFlatSqlStreamFrames(streamBytes: Uint8Array): number {
 }
 
 /**
- * True when the payload is a FlatBuffer carrying the given 4-byte file
- * identifier, either bare (identifier at bytes 4-7) or size-prefixed
- * (identifier at bytes 8-11) — the same acceptance the server's
- * engineRecordPayload applies.
+ * True when the payload is ONE FlatBuffer RECORD carrying the given 4-byte
+ * file identifier, either bare (identifier at bytes 4-7) or size-prefixed
+ * (identifier at bytes 8-11).
+ *
+ * The size-prefixed arm requires the u32 length prefix to account for the
+ * WHOLE buffer — the server's rule verbatim (sdn-server/internal/storage/
+ * engine_records.go:137 `engineRecordPayload`: `uint32(data[:4])+4 ==
+ * len(data) && SizePrefixedOMMBufferHasIdentifier(data)`). Without that
+ * length equality an aligned size-prefixed STREAM of N frames matches as a
+ * single record — its first frame's u32 prefix puts the file identifier at
+ * bytes 8-11 — and a 10.5 MB shard gets handed to a one-record ingest,
+ * which is the false positive measured in 2.0.17 (0 rows, doubled
+ * IndexedDB, +342 ms). sdn-js was MORE permissive than the Go host it
+ * mirrors; this closes that divergence. Multi-frame streams are classified
+ * by `flatBufferStreamMatchesFileId`.
  */
 export function flatBufferMatchesFileId(data: Uint8Array, fileId: string): boolean {
   if (fileId.length !== 4) return false;
-  return hasFileIdAt(data, 4, fileId) || hasFileIdAt(data, 8, fileId);
+  if (hasFileIdAt(data, 4, fileId)) return true;
+  return isSingleSizePrefixedBuffer(data) && hasFileIdAt(data, 8, fileId);
+}
+
+/** True when the u32 length prefix accounts for the whole buffer (ONE record). */
+function isSingleSizePrefixedBuffer(data: Uint8Array): boolean {
+  if (data.byteLength < 12) return false;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return view.getUint32(0, true) + 4 === data.byteLength;
+}
+
+/**
+ * True when the payload is an ALIGNED SIZE-PREFIXED STREAM whose frames all
+ * carry the given file identifier — the SDS shard shape (the wire format,
+ * and what `queryRawFlatBufferStream` returns).
+ *
+ * Strict by construction: the frame lengths must tile the buffer exactly and
+ * EVERY frame must carry the identifier, so opaque record bytes can never be
+ * mistaken for a shard. A one-frame stream satisfies this and also satisfies
+ * `flatBufferMatchesFileId` — that overlap is deliberate: a single record is
+ * legitimately admissible through either lane.
+ */
+export function flatBufferStreamMatchesFileId(data: Uint8Array, fileId: string): boolean {
+  return countFlatBufferStreamFramesWithFileId(data, fileId) > 0;
+}
+
+/**
+ * Frame count of an aligned size-prefixed stream whose frames ALL carry
+ * `fileId`; 0 when the buffer is not such a stream. Never throws — this is a
+ * classifier, run on untrusted bytes.
+ */
+export function countFlatBufferStreamFramesWithFileId(data: Uint8Array, fileId: string): number {
+  if (fileId.length !== 4 || data.byteLength < 12) return 0;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = 0;
+  let frames = 0;
+  while (offset < data.byteLength) {
+    if (data.byteLength - offset < 4) return 0;
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    const nextOffset = offset + length;
+    // Guard against a bogus u32 overflowing past the buffer (or wrapping).
+    if (length < 8 || nextOffset > data.byteLength || nextOffset < offset) return 0;
+    if (!hasFileIdAt(data, offset + 4, fileId)) return 0;
+    offset = nextOffset;
+    frames += 1;
+  }
+  return frames;
 }
 
 function hasFileIdAt(data: Uint8Array, offset: number, fileId: string): boolean {
