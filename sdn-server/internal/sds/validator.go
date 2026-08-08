@@ -296,15 +296,23 @@ type Validator struct {
 	flatc       *wasm.FlatcModule
 	schemas     map[string]int    // schema name -> schema ID
 	identifiers map[string]string // schema name -> 4-byte FlatBuffers file_identifier
-	mu          sync.RWMutex
+	// identifierSchemas is the REVERSE index that makes header-only routing
+	// possible (route.go): 4-byte file_identifier -> schema name. An
+	// identifier claimed by more than one schema is removed rather than
+	// resolved, because in-band bytes cannot disambiguate it.
+	identifierSchemas map[string]string
+	ambiguousIdents   map[string]bool
+	mu                sync.RWMutex
 }
 
 // NewValidator creates a new SDS validator.
 func NewValidator(flatc *wasm.FlatcModule) (*Validator, error) {
 	v := &Validator{
-		flatc:       flatc,
-		schemas:     make(map[string]int),
-		identifiers: make(map[string]string),
+		flatc:             flatc,
+		schemas:           make(map[string]int),
+		identifiers:       make(map[string]string),
+		identifierSchemas: make(map[string]string),
+		ambiguousIdents:   make(map[string]bool),
 	}
 
 	ctx := context.Background()
@@ -357,6 +365,17 @@ func (v *Validator) AddSchema(ctx context.Context, name string, content []byte) 
 	// embedded SDS schemas declare one.
 	if ident, ok := parseFileIdentifier(content); ok {
 		v.identifiers[name] = ident
+		switch {
+		case v.ambiguousIdents[ident]:
+			// already refused
+		case v.identifierSchemas[ident] == "" || v.identifierSchemas[ident] == name:
+			v.identifierSchemas[ident] = name
+		default:
+			log.Warnf("file identifier %q is declared by both %s and %s: header-only routing disabled for it",
+				ident, v.identifierSchemas[ident], name)
+			delete(v.identifierSchemas, ident)
+			v.ambiguousIdents[ident] = true
+		}
 	}
 
 	// If WASM module is available, use it
