@@ -258,6 +258,7 @@ type storeConfig struct {
 	engineHotWindow          int
 	deferBootRebuilds        bool
 	deferRecordCatalogReplay bool
+	auxReplayChunkBytes      int64
 }
 
 // WithEngineHotWindow overrides the engine hot-window bound: the maximum
@@ -290,6 +291,21 @@ func WithDeferredBootRebuilds() StoreOption {
 func WithDeferredRecordCatalogReplay() StoreOption {
 	return func(c *storeConfig) {
 		c.deferRecordCatalogReplay = true
+	}
+}
+
+// WithAuxiliaryReplayChunkBytes bounds ONE auxiliary-journal replay
+// transaction in BYTES as well as in frames (auxiliaryReplayChunkFrames).
+//
+// Without a byte bound a 512-frame chunk is unbounded in size — 512 tiny
+// directory rows and 512 multi-megabyte payloads were the same "chunk". Values
+// <= 0 keep the default (auxiliaryReplayChunkBytes, 8 MiB). A single frame
+// larger than the budget is still applied whole: frames are never split.
+func WithAuxiliaryReplayChunkBytes(bytes int64) StoreOption {
+	return func(c *storeConfig) {
+		if bytes > 0 {
+			c.auxReplayChunkBytes = bytes
+		}
 	}
 }
 
@@ -405,6 +421,9 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// hand, because both marks live in the control database and verifying either
 	// one means fingerprinting its file.
 	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), readOnly)
+	if auxiliaryMetadata != nil {
+		auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
 	}
@@ -6320,24 +6339,30 @@ func (s *FlatSQLStore) countLocalEPMRecordsLocked(filter RawRecordQuery) (int64,
 }
 
 // QueryIndexedRecords returns records using materialized catalog/source indexes.
-func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// indexedRecordProjection is the full record read: the payload locator
+// (stream_path/offset/record_length) plus the projected source tags.
+const indexedRecordProjection = `d.cid, d.peer_id, d.timestamp,
+		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
+		       tags.provider_id, tags.source_name, tags.batch_id`
 
-	tableName, err := s.recordReadSource(filter.SchemaName)
-	if err != nil {
-		return nil, fmt.Errorf("invalid schema name: %w", err)
-	}
+// indexedRecordLengthProjection is the BYTE PROBE: the frame length alone, the
+// value already recorded for every stored record. Reading it costs no payload
+// I/O, which is the whole point — a shard boundary must be decidable without
+// first materialising the shard it is trying to bound.
+const indexedRecordLengthProjection = `d.record_length`
 
+// normalizeIndexedRecordWindow applies the shared window rules (day/time
+// sanity, default and maximum limits) so a probe and its read agree on the
+// window before either touches the database.
+func normalizeIndexedRecordWindow(filter IndexedRecordQuery) (IndexedRecordQuery, error) {
 	if filter.Day != "" {
 		if _, err := time.Parse("2006-01-02", filter.Day); err != nil {
-			return nil, fmt.Errorf("invalid day %q (expected YYYY-MM-DD)", filter.Day)
+			return filter, fmt.Errorf("invalid day %q (expected YYYY-MM-DD)", filter.Day)
 		}
 	}
 	if filter.From != nil && filter.To != nil && filter.From.After(*filter.To) {
-		return nil, errors.New("from time must be before to time")
+		return filter, errors.New("from time must be before to time")
 	}
-
 	if filter.Limit <= 0 {
 		filter.Limit = 50
 	}
@@ -6348,19 +6373,20 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 	if filter.Limit > maxLimit {
 		filter.Limit = maxLimit
 	}
+	return filter, nil
+}
 
-	// Source tags are projected unconditionally (LEFT JOIN) so readers like the
-	// Downstream consumers can group records per provider. The grouped subquery pins
-	// ONE tag row per (schema, cid) for projection — a record can carry several
-	// tag rows (multi-producer mirrors, re-imports under a new batch id), so
-	// projection is one-of-many by design. Tag FILTERS below deliberately do NOT
-	// use this join: they must match ANY tag row (e.g. a record re-tagged under
-	// a second batch id still matches a query for that batch), so they run as an
-	// EXISTS over the raw table.
+// indexedRecordWindowSQL builds ONE window definition and hands it back with a
+// caller-chosen projection.
+//
+// It exists so the byte probe (IndexedRecordWindowLimitForBytes) and the record
+// read (QueryIndexedRecords) can never drift: a shard boundary computed from
+// record_length must describe EXACTLY the rows the export then materialises,
+// same filters, same ORDER BY, same LIMIT/OFFSET. Two hand-copied WHERE clauses
+// would be a silent mis-cut waiting to happen.
+func (s *FlatSQLStore) indexedRecordWindowSQL(filter IndexedRecordQuery, tableName, projection string) (string, []interface{}) {
 	query := fmt.Sprintf(`
-		SELECT d.cid, d.peer_id, d.timestamp,
-		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
-		       tags.provider_id, tags.source_name, tags.batch_id
+		SELECT %s
 		FROM %s d
 		INNER JOIN sdn_record_index idx
 		  ON idx.schema_name = ? AND idx.cid = d.cid
@@ -6370,7 +6396,7 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 			WHERE schema_name = ?
 			GROUP BY schema_name, cid
 		) tags ON tags.schema_name = idx.schema_name AND tags.cid = idx.cid
-	`, tableName)
+	`, projection, tableName)
 
 	args := []interface{}{filter.SchemaName, filter.SchemaName}
 	query += `
@@ -6453,6 +6479,114 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 		query += ` OFFSET ?`
 		args = append(args, filter.Offset)
 	}
+
+	return query, args
+}
+
+// DatasetShardFrameOverheadBytes is the per-record cost a shard pays on top of
+// the record itself: the little-endian uint32 size prefix that makes the shard
+// a size-prefixed STREAM (ExportDatasetRecords, export.go). It is counted here
+// because a boundary that ignored it would under-report every shard by 4 bytes
+// per record — 128 KB on a 32k-record window.
+const DatasetShardFrameOverheadBytes = 4
+
+// IndexedRecordWindowLimitForBytes reports how many records of a window fit in
+// maxBytes, WITHOUT reading a single payload.
+//
+// This is the missing half of the owner's requirement ("aware of the length of
+// the flatbuffer if that is going to matter in terms of sharding"). Shard
+// boundaries were pure record COUNTS: 250 records of $CAT is ~33 KB, 250
+// records of 128 MiB is 32 GiB — same shard, five orders of magnitude apart.
+// The size prefix that bounds every read was never allowed to bound a shard.
+//
+// Rules:
+//   - never splits a buffer: the cut lands BETWEEN frames, always (the
+//     property the read already proved and this must not break);
+//   - never returns 0 while the window has rows: one oversized record is a
+//     one-record shard, not a stall. A record larger than the budget is
+//     reported by the caller, not silently dropped;
+//   - never exceeds the window's own limit.
+//
+// The second return value is the ONLY thing that may narrow a caller's window:
+// it is true when the BUDGET stopped the probe with rows still to come, and
+// false when the window simply held fewer rows than its limit. Conflating the
+// two rewrites the (offset, limit) key of an ordinary short shard, which is a
+// publication's identity and its consumers' cursor.
+//
+// The probe reads record_length from the SAME window definition the export
+// then materialises (indexedRecordWindowSQL), so the count it returns is the
+// count the export produces.
+func (s *FlatSQLStore) IndexedRecordWindowLimitForBytes(filter IndexedRecordQuery, maxBytes int64) (int, bool, error) {
+	if maxBytes <= 0 {
+		return filter.Limit, false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tableName, err := s.recordReadSource(filter.SchemaName)
+	if err != nil {
+		return 0, false, fmt.Errorf("invalid schema name: %w", err)
+	}
+	filter, err = normalizeIndexedRecordWindow(filter)
+	if err != nil {
+		return 0, false, err
+	}
+
+	query, args := s.indexedRecordWindowSQL(filter, tableName, indexedRecordLengthProjection)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return 0, false, fmt.Errorf("shard byte probe failed: %w", err)
+	}
+	defer rows.Close()
+
+	var (
+		total     int64
+		count     int
+		truncated bool
+	)
+	for rows.Next() {
+		var recordLength int64
+		if err := rows.Scan(&recordLength); err != nil {
+			return 0, false, fmt.Errorf("failed scanning shard byte probe row: %w", err)
+		}
+		frame := recordLength + DatasetShardFrameOverheadBytes
+		if count > 0 && total+frame > maxBytes {
+			// Rows remain and the budget stopped us: this is a real cut.
+			truncated = true
+			break
+		}
+		total += frame
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, fmt.Errorf("shard byte probe failed: %w", err)
+	}
+	return count, truncated, nil
+}
+
+func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tableName, err := s.recordReadSource(filter.SchemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
+
+	filter, err = normalizeIndexedRecordWindow(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	// Source tags are projected unconditionally (LEFT JOIN) so readers like the
+	// Downstream consumers can group records per provider. The grouped subquery pins
+	// ONE tag row per (schema, cid) for projection — a record can carry several
+	// tag rows (multi-producer mirrors, re-imports under a new batch id), so
+	// projection is one-of-many by design. Tag FILTERS below deliberately do NOT
+	// use this join: they must match ANY tag row (e.g. a record re-tagged under
+	// a second batch id still matches a query for that batch), so they run as an
+	// EXISTS over the raw table.
+	query, args := s.indexedRecordWindowSQL(filter, tableName, indexedRecordProjection)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

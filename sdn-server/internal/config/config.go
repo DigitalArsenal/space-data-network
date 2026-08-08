@@ -632,6 +632,18 @@ type AutoPublishLane struct {
 	// so a misconfigured 1-minute ingest timer must not turn into a
 	// publication storm.
 	MinInterval time.Duration `yaml:"min_interval,omitempty"`
+
+	// MaxShardBytes caps ONE published shard in bytes, in addition to the
+	// record-count window. Zero uses the node default (64 MiB,
+	// api.DefaultDatasetPublicationMaxShardBytes); a negative value publishes
+	// unbounded shards, which is only ever right for reproducing a shard that
+	// was cut before byte budgets existed.
+	//
+	// This is the operator surface for the fix in
+	// graph/tasks/sdn-sharding-not-length-aware.md: without it a lane of large
+	// records produced a "250-record" shard of arbitrary size (250 x 128 MiB =
+	// 32 GiB), because buffer length never entered the boundary decision.
+	MaxShardBytes int64 `yaml:"max_shard_bytes,omitempty"`
 }
 
 // ErrListenAddrNotLoopback marks a listen address that is not loopback-only.
