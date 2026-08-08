@@ -100,6 +100,11 @@ type PluginCatalogEntry struct {
 	Dependencies      []PluginDependencyRef `json:"dependencies,omitempty"`
 	MaxGrantTimeoutMs int64                 `json:"max_grant_timeout_ms,omitempty"`
 
+	// GrantPolicy is the publisher's entitlement declaration for this module:
+	// "allowlist" (default, fail-closed), "open", or "link-key". Unset falls
+	// through to grant-policy.json. See grant_policy.go.
+	GrantPolicy string `json:"grant_policy,omitempty"`
+
 	// Upload audit fields (set when uploaded via API).
 	SignatureHex    string `json:"signature_hex,omitempty"`
 	SignerPubKeyHex string `json:"signer_pubkey_hex,omitempty"`
@@ -120,6 +125,11 @@ type PluginDescriptor struct {
 	UploadedAt      string `json:"uploaded_at,omitempty"`
 	Status          string `json:"status"`
 	StatusMessage   string `json:"status_message,omitempty"`
+
+	// GrantPolicy is the module's declared entitlement policy. Publishing it
+	// is deliberate: a client is entitled to know whether a module is open
+	// or allowlisted before it spends a challenge round trip on it.
+	GrantPolicy string `json:"grant_policy,omitempty"`
 }
 
 // PluginAsset is an in-memory validated plugin metadata record.
@@ -134,6 +144,7 @@ type PluginAsset struct {
 	AllowedXpubs      []string
 	Dependencies      []PluginDependencyRef
 	MaxGrantTimeoutMs int64
+	GrantPolicy       string
 	SignatureHex      string
 	SignerPubKeyHex   string
 	UploadedAt        string
@@ -160,6 +171,7 @@ type EncryptedPluginUpload struct {
 	AllowedXpubs       []string
 	Dependencies       []PluginDependencyRef
 	MaxGrantTimeoutMs  int64
+	GrantPolicy        string
 	SignatureHex       string
 	SignerPubKeyHex    string
 	UploadedAtOverride string
@@ -213,6 +225,7 @@ func (a *PluginAsset) Descriptor() PluginDescriptor {
 		UploadedAt:      a.UploadedAt,
 		Status:          status,
 		StatusMessage:   strings.TrimSpace(a.statusMessage),
+		GrantPolicy:     strings.TrimSpace(a.GrantPolicy),
 	}
 }
 
@@ -222,6 +235,40 @@ type PluginRegistry struct {
 
 	mu     sync.RWMutex
 	assets map[string]*PluginAsset
+
+	// grantPolicy is the operator's grant-policy.json, loaded once beside
+	// catalog.json. Never nil after LoadPluginRegistry.
+	grantPolicy *GrantPolicyConfig
+}
+
+// GrantPolicyConfig returns the loaded operator grant policy. It is never nil,
+// so a caller that skipped LoadPluginRegistry still resolves to the fail-closed
+// built-in default rather than to "no policy".
+func (r *PluginRegistry) GrantPolicyConfig() *GrantPolicyConfig {
+	if r == nil || r.grantPolicy == nil {
+		return &GrantPolicyConfig{}
+	}
+	return r.grantPolicy
+}
+
+// PublicationDecision resolves the admit-point ruling for one module ID.
+func (r *PluginRegistry) PublicationDecision(id string) (PublicationDecision, bool) {
+	asset, ok := r.Get(id)
+	if !ok {
+		return PublicationDecision{}, false
+	}
+	return EvaluatePublication(asset, r.GrantPolicyConfig()), true
+}
+
+// EffectiveGrantPolicy names the policy in force for a module ID, for audit
+// lines. An unknown module resolves to "" so the log prints "-" and not a
+// policy the node never applied.
+func (r *PluginRegistry) EffectiveGrantPolicy(id string) string {
+	decision, ok := r.PublicationDecision(id)
+	if !ok {
+		return ""
+	}
+	return decision.Policy
 }
 
 // SetRuntimeStatus updates runtime status for a catalog plugin.
@@ -287,9 +334,15 @@ func LoadPluginRegistry(rootPath string) (*PluginRegistry, error) {
 		return nil, fmt.Errorf("create plugin root: %w", err)
 	}
 
+	grantPolicy, err := LoadGrantPolicyConfig(rootAbs)
+	if err != nil {
+		return nil, err
+	}
+
 	reg := &PluginRegistry{
-		rootPath: rootAbs,
-		assets:   make(map[string]*PluginAsset),
+		rootPath:    rootAbs,
+		assets:      make(map[string]*PluginAsset),
+		grantPolicy: grantPolicy,
 	}
 
 	catalogPath := filepath.Join(rootAbs, defaultPluginCatalogFile)
@@ -649,6 +702,11 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 		SignerPubKeyHex:   entry.SignerPubKeyHex,
 		UploadedAt:        entry.UploadedAt,
 	}
+	grantPolicy, err := NormalizeGrantPolicy(entry.GrantPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("grant_policy: %w", err)
+	}
+	asset.GrantPolicy = grantPolicy
 	asset.AllowedXpubs = normalizeAllowedXpubs(entry.AllowedXpubs)
 	asset.Dependencies = normalizeDependencies(entry.Dependencies)
 	if asset.MaxGrantTimeoutMs < 0 {
@@ -804,6 +862,10 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 	if upload.MaxGrantTimeoutMs < 0 {
 		return nil, errors.New("max_grant_timeout_ms must be >= 0")
 	}
+	grantPolicy, err := NormalizeGrantPolicy(upload.GrantPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("grant_policy: %w", err)
+	}
 	uploadedAt := strings.TrimSpace(upload.UploadedAtOverride)
 	if uploadedAt == "" {
 		uploadedAt = time.Now().UTC().Format(time.RFC3339)
@@ -839,6 +901,7 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 		AllowedXpubs:      allowedXpubs,
 		Dependencies:      dependencies,
 		MaxGrantTimeoutMs: upload.MaxGrantTimeoutMs,
+		GrantPolicy:       grantPolicy,
 		SignatureHex:      strings.TrimSpace(upload.SignatureHex),
 		SignerPubKeyHex:   strings.TrimSpace(upload.SignerPubKeyHex),
 		UploadedAt:        uploadedAt,
@@ -872,6 +935,7 @@ func (r *PluginRegistry) saveCatalogLocked() error {
 			AllowedXpubs:      append([]string(nil), a.AllowedXpubs...),
 			Dependencies:      cloneDependencies(a.Dependencies),
 			MaxGrantTimeoutMs: a.MaxGrantTimeoutMs,
+			GrantPolicy:       a.GrantPolicy,
 			SignatureHex:      a.SignatureHex,
 			SignerPubKeyHex:   a.SignerPubKeyHex,
 			UploadedAt:        a.UploadedAt,

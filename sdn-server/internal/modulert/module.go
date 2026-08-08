@@ -17,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
@@ -1116,12 +1117,24 @@ func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
 		return
 	}
 
+	// Audit tap. The host decides nothing here and changes no byte: it reads
+	// the frame identifier of what crosses its boundary and, for licensing
+	// frames, writes one access line (module, requester FINGERPRINT, policy,
+	// outcome). Grant decisions are the key server's; observing them is the
+	// connector's. See internal/license/grant_audit.go.
+	remotePeer := ""
+	if conn := s.Conn(); conn != nil {
+		remotePeer = conn.RemotePeer().String()
+	}
+	license.AuditDeliveryFrame("request", reqBytes, remotePeer)
+
 	// Invoke the module's method
 	resp, err := m.InvokeMethod(context.Background(), methodID, reqBytes)
 	if err != nil {
 		log.Warnf("Module %q protocol %s: invoke error: %v", m.manifest.PluginID, methodID, err)
 		return
 	}
+	license.AuditDeliveryFrame("response", resp, remotePeer)
 
 	if len(resp) > 0 {
 		s.SetWriteDeadline(time.Now().Add(10 * time.Second))

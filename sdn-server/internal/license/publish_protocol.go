@@ -44,6 +44,7 @@ type ModulePublishEntry struct {
 	AllowedXpubs      []string              `json:"allowed_xpubs,omitempty"`
 	Dependencies      []PluginDependencyRef `json:"dependencies,omitempty"`
 	MaxGrantTimeoutMs int64                 `json:"max_grant_timeout_ms,omitempty"`
+	GrantPolicy       string                `json:"grant_policy,omitempty"`
 	SignatureHex      string                `json:"signature_hex,omitempty"`
 	SignerPubKeyHex   string                `json:"signer_pubkey_hex,omitempty"`
 }
@@ -101,6 +102,7 @@ func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, au
 			AllowedXpubs:       module.AllowedXpubs,
 			Dependencies:       module.Dependencies,
 			MaxGrantTimeoutMs:  module.MaxGrantTimeoutMs,
+			GrantPolicy:        module.GrantPolicy,
 			SignatureHex:       module.SignatureHex,
 			SignerPubKeyHex:    module.SignerPubKeyHex,
 			UploadedAtOverride: uploadedAt,
