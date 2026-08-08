@@ -161,6 +161,14 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
     expect(flatBufferMatchesFileId(bare, '$OMM')).toBe(true);
     expect(flatBufferMatchesFileId(sizePrefixed, '$CAT')).toBe(false);
     expect(flatBufferMatchesFileId(enc('not a flatbuffer'), '$OMM')).toBe(false);
+
+    // ...and a multi-frame STREAM is NOT a record, however much its first
+    // frame's size prefix makes bytes 8..11 look like one. Full coverage of
+    // the rule and the surface that takes a stream:
+    // engine-record-store-stream-surface.test.ts.
+    const shard = buildBenchCorpus(3).streamBytes as Uint8Array;
+    expect(flatBufferMatchesFileId(shard, '$OMM')).toBe(false);
+    expect(String.fromCharCode(...shard.subarray(8, 12))).toBe('$OMM');
   });
 });
 
