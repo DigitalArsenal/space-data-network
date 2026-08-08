@@ -391,6 +391,68 @@ describe('catalogue scale: the gate from the task, and byte identity', () => {
     }
   }, 240_000);
 
+  it('opens a live 2.0.17 whole-blob journal without crashing — the change is ADDITIVE', async () => {
+    // 32,139 browsers hold `<key>:record-envelopes` containing a shard that
+    // 2.0.17 accepted through `store()`. 2.0.18 must open that cache, not
+    // throw on it: the refusal is on the WRITE path (`store()`), while
+    // journal replay goes straight to `insertEnvelope` + `mirrorIntoStandard`,
+    // and the mirror now correctly declines a stream instead of feeding it to
+    // a one-record ingest. No layout changed, so there is nothing to migrate.
+    const { streamBytes } = catalogueShard();
+    const persistenceStore = new MemoryFlatSqlPersistenceStore();
+
+    // Build the legacy state the way 2.0.17 did: shard through `store()`.
+    const legacy = await FlatSQLStorage.open({
+      persistenceKey: 'legacy-2017-cache',
+      persistenceStore,
+      envelopeJournalOnly: true, // 2.0.17's console passed no schemas at all
+    });
+    // Reach past the 2.0.18 write-path refusal to reproduce the stored state.
+    await (legacy as unknown as {
+      insertEnvelope(record: {
+        cid: string; schema: string; peerId: string; timestamp: number;
+        data: Uint8Array; signature: Uint8Array;
+      }): void;
+    }).insertEnvelope({
+      cid: digest(streamBytes),
+      schema: 'OMM.fbs',
+      peerId: 'legacy',
+      timestamp: Date.now(),
+      data: streamBytes,
+      signature: new Uint8Array(0),
+    });
+    await legacy.flush();
+    await legacy.close();
+
+    const legacyBlob = await persistenceStore.readBytes('legacy-2017-cache:record-envelopes');
+    expect(legacyBlob).not.toBeNull();
+    expect(legacyBlob!.byteLength).toBeGreaterThan(10_000_000);
+
+    // 2.0.18 opens it — WITH schemas this time — and survives.
+    const upgraded = await FlatSQLStorage.open({
+      persistenceKey: 'legacy-2017-cache',
+      persistenceStore,
+      schemas: [OMM_STANDARD],
+    });
+    try {
+      expect(upgraded.standardsStore).not.toBeNull();
+      // The legacy envelope still replays (nothing is lost)...
+      expect(await upgraded.count()).toBe(1);
+      // ...and is NOT fed to the one-record mirror, which is what produced
+      // the empty table and the doubled storage on 2.0.17.
+      const rows = await upgraded.standardsStore!.query('SELECT COUNT(*) AS n FROM OMM', 'OMM');
+      expect(Number((rows.records[0] as Record<string, unknown>).n)).toBe(0);
+
+      // The caller re-caches through the new surface and gets real rows.
+      const result = await upgraded.storeStream(streamBytes, { source: 'celestrak-gp' });
+      expect(result.ingested).toBe(CATALOGUE_FRAME_COUNT);
+      const after = await upgraded.standardsStore!.query('SELECT COUNT(*) AS n FROM OMM', 'OMM');
+      expect(Number((after.records[0] as Record<string, unknown>).n)).toBe(CATALOGUE_FRAME_COUNT);
+    } finally {
+      await upgraded.close();
+    }
+  }, 240_000);
+
   it('reads an unknown source as an empty stream, and an unknown standard loudly', async () => {
     const store = await FlatSQLEngineRecordStore.open({ schemas: [OMM_STANDARD] });
     try {
