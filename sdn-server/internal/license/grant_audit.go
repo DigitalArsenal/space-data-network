@@ -210,6 +210,49 @@ func AuditDeliveryFrame(direction string, frame []byte, peerID string) {
 	sink(event.String())
 }
 
+// AuditDeliveryAborted records a delivery this provider did NOT answer.
+//
+// Why this exists. Every audit line above describes a frame that CROSSED the
+// boundary. The failure that cost the gallery its modules crossed nothing: the
+// stream handler read a request, failed to produce a response, and returned —
+// closing the stream with a clean EOF and no frame at all. Node-side that was a
+// bare WARN with no module and no requester; browser-side it surfaced as
+// "Read aborted", which names the symptom and nothing else. The two were
+// impossible to correlate, so a demo that silently substituted an in-engine
+// fallback looked identical to a demo that never asked.
+//
+// The connector decides nothing here. It reports that a request it admitted got
+// no answer, naming the module the REQUEST asked for and the requester's
+// fingerprint — never an xpub. A delivery that is granted but never fetched, or
+// fetched but never completed, is now a countable line rather than an absence.
+func AuditDeliveryAborted(stage string, requestFrame []byte, peerID string, cause error) {
+	sink := auditSink
+	if sink == nil {
+		return
+	}
+	event, ok := DecodeGrantAuditEvent("response", requestFrame)
+	if !ok {
+		// Undecodable request: still say a delivery died, with what is known.
+		event = GrantAuditEvent{Direction: "response", Kind: "$LCH"}
+	}
+	if event.PeerID == "" {
+		event.PeerID = peerID
+	}
+	if lookup := auditPolicy; lookup != nil {
+		event.Policy = lookup(event.ModuleID)
+	}
+	event.Outcome = "aborted"
+	event.Reason = strings.TrimSpace(stage)
+	if event.Reason == "" {
+		event.Reason = "unknown_stage"
+	}
+	line := event.String()
+	if cause != nil {
+		line += fmt.Sprintf(" cause=%q", cause.Error())
+	}
+	sink(line)
+}
+
 // FormatPublicationAudit renders the boot-time ledger line for one module's
 // publication decision. This is the host's OWN decision — the one place where
 // the host, not the key server, rules on entitlement.
