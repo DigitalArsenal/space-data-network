@@ -187,8 +187,29 @@ func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {
 		nodeCtx.EncryptionKey = append([]byte(nil), wrappingKey...)
 	}
 	if len(wrappingKey) == 32 {
-		if publicKeyHex, err := deriveP256PublicKeyHex(wrappingKey); err == nil {
+		// The published half must be the X25519 public key OF THIS SCALAR: the
+		// slot below is declared KeySlotAlgorithmX25519 and caps/keyslot.go
+		// opens it with ecdh.X25519(). Publishing anything else (this line used
+		// to publish a P-256 point over sha256(scalar)) leaves the wrapping
+		// lane inert — nothing can seal to a key the unwrap oracle does not
+		// hold. Fail closed: on a derivation error PublicKeyHex stays empty
+		// rather than advertising a key that cannot open.
+		publicKeyHex, err := deriveX25519PublicKeyHex(wrappingKey)
+		if err != nil {
+			log.Errorf("provider wrapping key: X25519 public half unavailable, keyslot.unwrap will be unusable: %v", err)
+		} else {
 			nodeCtx.PublicKeyHex = publicKeyHex
+			// Cross-check against the identity's own X25519 public half when
+			// there is one (hdwallet_identity.go derives EncryptionPub from
+			// this exact scalar). A mismatch means the scalar and the published
+			// key come from different derivations — refuse to publish rather
+			// than ship a wrapping lane that silently drops payloads.
+			if n != nil && n.identity != nil && len(n.identity.EncryptionPub) == 32 {
+				if expected := hex.EncodeToString(n.identity.EncryptionPub); !strings.EqualFold(expected, publicKeyHex) {
+					log.Errorf("provider wrapping key: derived X25519 public half does not match the node identity's EncryptionPub; not publishing")
+					nodeCtx.PublicKeyHex = ""
+				}
+			}
 		}
 	}
 	if len(signingSeed) == 32 || len(wrappingKey) == 32 {

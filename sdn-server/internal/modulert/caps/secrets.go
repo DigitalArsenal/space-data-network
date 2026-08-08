@@ -49,6 +49,17 @@ import (
 // also holds "http", it can exfiltrate it. Approval is the trust decision; this
 // code only guarantees that the decision is explicit, per-module, and per-lane.
 func NewSecretsCapFactory(store *credstore.Store) modulert.BridgeCapFactory {
+	return NewSecretsCapFactoryWithAudit(store, nil)
+}
+
+// NewSecretsCapFactoryWithAudit is NewSecretsCapFactory with the node's shared
+// activity ring attached. Reads stay untapped (they are the module's normal
+// working path); WRITES are recorded, because a module changing what the node
+// holds is an operator-visible event. The ring never carries a value — only
+// the lane id and the outcome. A nil ring is a no-op (ActivityRing.Append is
+// nil-safe), which is why the plain constructor above still compiles for every
+// existing caller.
+func NewSecretsCapFactoryWithAudit(store *credstore.Store, audit *ActivityRing) modulert.BridgeCapFactory {
 	return func(mod *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
 		return func(operation string, payload []byte) ([]byte, error) {
 			switch operation {
@@ -56,6 +67,10 @@ func NewSecretsCapFactory(store *credstore.Store) modulert.BridgeCapFactory {
 				return handleSecretsGet(store, bridge, payload), nil
 			case "secrets.status":
 				return handleSecretsStatus(store, bridge, payload), nil
+			case "secrets.put":
+				return handleSecretsPut(store, bridge, audit, payload), nil
+			case "secrets.clear":
+				return handleSecretsClear(store, bridge, audit, payload), nil
 			default:
 				// No "secrets.list" and no "secrets.export": a guest may never
 				// enumerate the keystore, only ask for a lane it is already
@@ -70,6 +85,26 @@ func NewSecretsCapFactory(store *credstore.Store) modulert.BridgeCapFactory {
 // Approving "secrets:spacetrack" grants exactly the spacetrack credential.
 func CapabilityForID(id string) string {
 	return "secrets:" + strings.TrimSpace(id)
+}
+
+// WriteCapabilityForID is the capability name gating WRITES to one credential
+// lane: "secrets:spacetrack:write".
+//
+// ⛔ IT IS A SEPARATE GRANT FROM THE READ CAPABILITY, DELIBERATELY.
+// capability_policy.json is an append-only operator ledger. Rows approving
+// "secrets:spacetrack" were signed off (2026-07-18, 2026-07-28) for READING a
+// credential. If writes rode that same name, every one of those existing rows
+// would silently gain the power to overwrite the operator's credentials the
+// moment the binary was upgraded — retroactive privilege escalation with no
+// operator act. So a write needs its own row, approved after this capability
+// existed. (Seal Council, Hermes + Hephaestus, 2026-08-08.)
+//
+// It still begins with "secrets:", so modulert.IsSensitiveCapability gates it
+// by prefix and an unapproved module is DENIED AT LOAD — fail closed, same as
+// the read lane. Holding the write capability grants no read: secrets.get
+// checks CapabilityForID and nothing else.
+func WriteCapabilityForID(id string) string {
+	return "secrets:" + strings.TrimSpace(id) + ":write"
 }
 
 // handleSecretsGet returns the credential for a requested lane.
@@ -152,4 +187,123 @@ func handleSecretsStatus(store *credstore.Store, bridge *modulert.HostBridge, pa
 	}
 	// credstore.Status carries no secret material.
 	return okCapJSON(status)
+}
+
+// handleSecretsPut stores a credential a module obtained itself — the browser
+// hands provider credentials to the module, the module hands them to the node's
+// keystore, and they are encrypted at rest under the machine-bound root exactly
+// like an operator-entered credential (credstore.Store.Put, secrets.go:581).
+//
+//	request:  {"id":"<lane>","username":"...","secret":"..."}
+//	response: {"id":"<lane>","stored":true,"updatedAt":"..."}
+//
+// THE RESPONSE NEVER ECHOES THE VALUE, and neither does any log line or audit
+// event this path emits — the lane id and the outcome are the whole record. A
+// write-only grant must not become a read oracle by reflection.
+//
+// Fail closed at every step: no store, no bridge, blank id, a lane id that does
+// not validate, or a module lacking secrets:<lane>:write all return an error
+// and change nothing on disk.
+func handleSecretsPut(store *credstore.Store, bridge *modulert.HostBridge, audit *ActivityRing, payload []byte) []byte {
+	var request struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+		Secret   string `json:"secret"`
+	}
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return errCapJSON("invalid secrets.put request payload")
+	}
+	id := strings.TrimSpace(request.ID)
+	if id == "" {
+		return errCapJSON("secrets.put requires an id")
+	}
+
+	// PER-LANE WRITE GATE. Note this checks the WRITE capability only: a module
+	// approved to READ secrets:spacetrack cannot reach this line.
+	capability := WriteCapabilityForID(id)
+	if bridge == nil || !bridge.HasCapability(capability) {
+		return refuseCapJSON("secrets.put", fmt.Sprintf("requires the %s capability grant", capability))
+	}
+
+	if store == nil {
+		return errCapJSON("credential store is not available on this node")
+	}
+
+	if err := store.Put(id, request.Username, request.Secret); err != nil {
+		// store.Put's errors are about the lane id and field presence, never
+		// about the value, so they are safe to surface — but keep them shaped
+		// rather than wrapped, so no future error string can leak material.
+		return errCapJSON(fmt.Sprintf("secrets.put rejected for lane %q: %s", id, secretsWriteErrorReason(err)))
+	}
+
+	log.Infof("secrets.put stored credential lane %q (value redacted)", id)
+	audit.Append("secrets_write", "", "put lane="+id)
+
+	status, err := store.Status(id)
+	if err != nil {
+		// The write succeeded; only the read-back for the timestamp failed.
+		return okCapJSON(map[string]interface{}{"id": id, "stored": true})
+	}
+	return okCapJSON(map[string]interface{}{
+		"id":        id,
+		"stored":    true,
+		"updatedAt": status.UpdatedAt,
+	})
+}
+
+// handleSecretsClear removes a lane's credential. Clearing an absent lane is
+// not an error (credstore.Store.Clear, secrets.go:627), so the response says
+// only that the lane is now empty — it does not disclose whether anything was
+// there, which would make a write-only grant a presence oracle.
+//
+//	request:  {"id":"<lane>"}
+//	response: {"id":"<lane>","cleared":true}
+func handleSecretsClear(store *credstore.Store, bridge *modulert.HostBridge, audit *ActivityRing, payload []byte) []byte {
+	var request struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return errCapJSON("invalid secrets.clear request payload")
+	}
+	id := strings.TrimSpace(request.ID)
+	if id == "" {
+		return errCapJSON("secrets.clear requires an id")
+	}
+
+	capability := WriteCapabilityForID(id)
+	if bridge == nil || !bridge.HasCapability(capability) {
+		return refuseCapJSON("secrets.clear", fmt.Sprintf("requires the %s capability grant", capability))
+	}
+
+	if store == nil {
+		return errCapJSON("credential store is not available on this node")
+	}
+
+	if err := store.Clear(id); err != nil {
+		return errCapJSON(fmt.Sprintf("secrets.clear failed for lane %q", id))
+	}
+
+	log.Infof("secrets.clear removed credential lane %q", id)
+	audit.Append("secrets_write", "", "clear lane="+id)
+
+	return okCapJSON(map[string]interface{}{"id": id, "cleared": true})
+}
+
+// secretsWriteErrorReason reduces a credstore write error to a fixed phrase.
+// Nothing derived from the SECRET may appear in an error string.
+func secretsWriteErrorReason(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "username required"):
+		return "username required"
+	case strings.Contains(message, "secret required"):
+		return "secret required"
+	case strings.Contains(message, "lane id"):
+		return "invalid lane id"
+	default:
+		return "credential store rejected the write"
+	}
 }

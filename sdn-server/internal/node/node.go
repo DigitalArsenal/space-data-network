@@ -1226,7 +1226,10 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	if credStore, cerr := credstore.OpenStore(n.config.Storage.Path, n.IdentityKeyMaterial()); cerr != nil {
 		log.Warnf("credential store unavailable; secrets capabilities not registered: %v", cerr)
 	} else {
-		reg.RegisterFamily(modulert.SecretsCapabilityPrefix, caps.NewSecretsCapFactory(credStore))
+		// The shared activity ring is passed so credential WRITES
+		// (secrets.put / secrets.clear, capability secrets:<lane>:write) leave
+		// an operator-visible trail. Lane id and outcome only — never a value.
+		reg.RegisterFamily(modulert.SecretsCapabilityPrefix, caps.NewSecretsCapFactoryWithAudit(credStore, n.activityRing))
 	}
 
 	// PubSub capability — requires libp2p pubsub to be running
@@ -1857,14 +1860,25 @@ func executableRelativeWalletWasmPaths() []string {
 	}
 }
 
-// deriveP256PublicKeyHex derives a P-256 public key from a 32-byte seed and
-// returns it as a hex string. Used to populate node.publicKey in the hostcall bridge.
-func deriveP256PublicKeyHex(seed []byte) (string, error) {
-	if len(seed) < 32 {
-		return "", fmt.Errorf("seed too short")
+// deriveX25519PublicKeyHex derives the X25519 public half OF THE SCALAR ITSELF
+// and returns it as hex. It populates node.publicKey in the hostcall bridge —
+// the key a browser seals a payload to before a module opens it with
+// keyslot.unwrap.
+//
+// ⛔ IT MUST STAY THE SAME CURVE, AND THE SAME SCALAR, AS THE UNWRAP ORACLE.
+// This replaced deriveP256PublicKeyHex, which published
+// P256(sha256(scalar)).PublicKey — a different curve AND a different scalar —
+// while the provider-wrapping slot is declared KeySlotAlgorithmX25519
+// (licensing_bootstrap.go) and caps/keyslot.go opens it with ecdh.X25519().
+// One scalar, three curves: no browser could seal to the published key and no
+// module could open what it sealed, so keyslot.unwrap was unusable as shipped.
+// crypto/ecdh is deliberately the same package the unwrap path uses, so the
+// published half cannot drift from the half that opens.
+func deriveX25519PublicKeyHex(scalar []byte) (string, error) {
+	if len(scalar) != 32 {
+		return "", fmt.Errorf("x25519 scalar must be 32 bytes, got %d", len(scalar))
 	}
-	h := sha256.Sum256(seed)
-	privKey, err := crypto_ecdh.P256().NewPrivateKey(h[:])
+	privKey, err := crypto_ecdh.X25519().NewPrivateKey(scalar)
 	if err != nil {
 		return "", err
 	}
