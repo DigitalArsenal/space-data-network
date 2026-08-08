@@ -1,0 +1,54 @@
+{
+  "//": "MODULE-DELIVERY GRANT POLICY — deployed to <plugin-root>/grant-policy.json (host-01: /opt/data/license/plugins/grant-policy.json). Read at boot by internal/license.LoadPluginRegistry; enforced at the admit point in internal/node.planCatalogPublication. See graph/tasks/sdn-allowed-xpubs-not-enforced.md and deployment/license/README.md.",
+
+  "//why": "P1, 2026-08-07: a throwaway anonymous identity holding no entitlement was issued a grant for com.orbpro.hpop. The only entitlement control on the wire is PLG.ALLOWED_XPUBS and the licensing key server reads an EMPTY allowlist as 'unrestricted'. Every one of the 43 entries in the live catalog was published with an empty allowlist, so every module was open and nothing said whether that was intended.",
+
+  "//audit_20260807": "LIVE CATALOG AUDITED before this file was written: 43 entries on host-01 (the only box with a catalog), ALL with allowed_xpubs=0. This file therefore enumerates the modules that were ALREADY unrestricted and declares them so, one by one. It does NOT use a '*' wildcard on purpose: anything published from now on lands on the fail-closed default and must be entitled or declared before it can be granted.",
+
+  "//how_to_end_the_for_now": "Set enforce_allowlist_only to true and every module below snaps back to allowlist, or delete an individual rule to close just that module. Neither needs a code change or a rebuild — edit and restart.",
+
+  "default_policy": "allowlist",
+  "enforce_allowlist_only": false,
+
+  "modules": [
+    {
+      "match": "com.orbpro.hpop",
+      "policy": "allowlist",
+      "note": "THE REPORTED DEFECT. Paid propagator tier. Restricted to allowed_xpubs; with none set it publishes NOTHING and can issue no grant. Entitle customers with `spacedatanetwork plugins publish-orbpro --allowed-xpub <xpub>`."
+    },
+
+    {
+      "match": "com.orbpro.rf-*",
+      "policy": "link-key",
+      "note": "OWNER DIRECTIVE 2026-08-07: the private sandcastle gallery link derives a fresh identity from the URL UUID, so these must grant to an xpub nobody has ever seen. Open FOR NOW — the URL is the credential."
+    },
+
+    {
+      "match": "com.orbpro.viewshed-shader*",
+      "policy": "link-key",
+      "note": "Pre-existing unrestricted state, declared not inherited. GLSL fragments served to the OrbPro sandcastle gallery."
+    },
+    {
+      "match": "com.orbpro.sensor-shaders*",
+      "policy": "link-key",
+      "note": "Pre-existing unrestricted state, declared not inherited. Sandcastle sensor shaders."
+    },
+    { "match": "com.orbpro.access", "policy": "link-key", "note": "Pre-existing unrestricted state, declared not inherited." },
+    { "match": "com.orbpro.analysis.orbit-determination", "policy": "link-key", "note": "Pre-existing unrestricted state, declared not inherited." },
+    { "match": "com.orbpro.fastest-path", "policy": "link-key", "note": "Pre-existing unrestricted state, declared not inherited." },
+    { "match": "com.orbpro.maneuver", "policy": "link-key", "note": "Pre-existing unrestricted state, declared not inherited." },
+    { "match": "com.orbpro.sgp4", "policy": "link-key", "note": "Pre-existing unrestricted state, declared not inherited." },
+    { "match": "com.orbpro.wasm-engine", "policy": "link-key", "note": "Pre-existing unrestricted state, declared not inherited." },
+
+    { "match": "com.digitalarsenal.examples.remote-sdn-live-e2e", "policy": "link-key", "note": "E2E fixture. Pre-existing unrestricted state." },
+    { "match": "com.digitalarsenal.flows.data-retrieval", "policy": "link-key", "note": "Pre-existing unrestricted state." },
+    { "match": "com.spaceaware.test.add-two", "policy": "link-key", "note": "Test fixture. Pre-existing unrestricted state." },
+    { "match": "org.spacedata.analysis.conjunction.assessment", "policy": "link-key", "note": "App 1 conjunction. Pre-existing unrestricted state." },
+
+    {
+      "match": "licensing",
+      "policy": "link-key",
+      "note": "The licensing client module itself. It must stay reachable or no client can ever run the challenge that the other policies depend on. Closing this closes the whole delivery lane."
+    }
+  ]
+}

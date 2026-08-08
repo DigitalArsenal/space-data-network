@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -546,8 +547,21 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 		return fmt.Errorf("configure licensing runtime returned %d bytes without $LCF identifier", len(configResponse))
 	}
 
+	// ADMIT POINT (graph/tasks/sdn-allowed-xpubs-not-enforced.md, P1).
+	//
+	// Everything below this line hands the licensing runtime a module's
+	// CONTENT KEY. Once a key is inside the guest the key server decides who
+	// gets a grant for it, and its rule for an empty ALLOWED_XPUBS is
+	// "unrestricted" — which is how a throwaway identity was granted
+	// com.orbpro.hpop. The host cannot and should not make grant decisions,
+	// but it does decide which keys it provisions at all, and provisioning a
+	// key for a module that declares a restriction it cannot express is the
+	// thing that fails open. So the gate is here: refuse the key, and no
+	// grant for that module is reachable by any path.
+	plan := planCatalogPublication(reg)
+
 	var publishErrs []error
-	for _, asset := range catalogPublicationAssets(reg) {
+	for _, asset := range plan.Admitted {
 		protectedContent, _, err := reg.ReadEncryptedBundle(asset.ID)
 		if err != nil {
 			publishErrs = append(publishErrs, fmt.Errorf("read encrypted bundle for %q: %w", asset.ID, err))
@@ -608,6 +622,64 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 	}
 
 	return errors.Join(publishErrs...)
+}
+
+// catalogPublicationPlan is the host's admit-point ruling over the whole
+// catalog: which modules get a content key provisioned into the licensing
+// runtime, and which are refused before any key leaves the host.
+type catalogPublicationPlan struct {
+	Admitted  []*license.PluginAsset
+	Refused   []string
+	Open      []string
+	Decisions []license.PublicationDecision
+}
+
+// planCatalogPublication rules on every catalog asset and writes the boot
+// ledger. It provisions nothing itself, so the ruling can be asserted in a test
+// without a live WASM runtime — which is the whole reason the P1 went
+// unnoticed: nothing tested the decision, only the plumbing around it.
+func planCatalogPublication(reg *license.PluginRegistry) catalogPublicationPlan {
+	plan := catalogPublicationPlan{}
+	if reg == nil {
+		return plan
+	}
+	policyCfg := reg.GrantPolicyConfig()
+
+	for _, asset := range catalogPublicationAssets(reg) {
+		decision := license.EvaluatePublication(asset, policyCfg)
+		plan.Decisions = append(plan.Decisions, decision)
+		if !decision.Publish {
+			plan.Refused = append(plan.Refused, asset.ID)
+			log.Errorf("%s", license.FormatPublicationAudit(decision))
+			_ = reg.SetRuntimeStatus(asset.ID, "refused", decision.Reason)
+			continue
+		}
+		if license.IsOpenGrantPolicy(decision.Policy) {
+			plan.Open = append(plan.Open, asset.ID)
+		}
+		log.Infof("%s", license.FormatPublicationAudit(decision))
+		plan.Admitted = append(plan.Admitted, asset)
+	}
+
+	// The standing ledger. Every boot names the full open set, so an "open
+	// for now" can never quietly become an open forever: the operator sees
+	// the list, and closing it is one edit to grant-policy.json.
+	if len(plan.Open) > 0 {
+		sort.Strings(plan.Open)
+		log.Warnf(
+			"grant-audit summary: %d module(s) grant to ANY identity that passes the licensing challenge — %s. "+
+				"This is a declared policy, not a default. To close it, set enforce_allowlist_only or a per-module \"allowlist\" rule in <plugin-root>/%s.",
+			len(plan.Open), strings.Join(plan.Open, ", "), license.GrantPolicyFileName,
+		)
+	}
+	if len(plan.Refused) > 0 {
+		sort.Strings(plan.Refused)
+		log.Errorf(
+			"grant-audit summary: %d module(s) REFUSED publication and can issue NO grants — %s. Entitle them (allowed_xpubs) or declare them open in <plugin-root>/%s.",
+			len(plan.Refused), strings.Join(plan.Refused, ", "), license.GrantPolicyFileName,
+		)
+	}
+	return plan
 }
 
 func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, error) {

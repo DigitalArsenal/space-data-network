@@ -1006,6 +1006,13 @@ func (n *Node) loadPluginRegistry() (*license.PluginRegistry, error) {
 	if reg.Count() > 0 {
 		log.Infof("Loaded %d plugin catalog entry(s) from %s", reg.Count(), pluginRoot)
 	}
+	// Point the delivery-lane audit at the daemon log and give it the policy
+	// table, so every licensing frame that crosses the boundary is logged
+	// with the policy actually in force for that module.
+	license.SetGrantAuditSink(
+		func(line string) { log.Infof("%s", line) },
+		reg.EffectiveGrantPolicy,
+	)
 	return reg, nil
 }
 

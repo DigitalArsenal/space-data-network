@@ -43,6 +43,7 @@ var (
 	modulePublishWalletAcct  uint32
 	modulePublishModules     []string
 	modulePublishAllowXpubs  []string
+	modulePublishGrantPolicy string
 	modulePublishTimeout     time.Duration
 )
 
@@ -71,6 +72,7 @@ func init() {
 	pluginsPublishOrbProCmd.Flags().Uint32Var(&modulePublishWalletAcct, "wallet-account", 0, "HD wallet account index used to derive the signing key")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishModules, "module", nil, "module id to publish; repeat to publish a subset")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishAllowXpubs, "allowed-xpub", nil, "allowed requester xpub (PKI) to apply to every published module; repeat for multiple xpubs")
+	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishGrantPolicy, "grant-policy", "", "grant policy to stamp on every published module: allowlist (fail-closed default), open, or link-key")
 	pluginsPublishOrbProCmd.Flags().DurationVar(&modulePublishTimeout, "timeout", 60*time.Second, "publish timeout")
 	pluginsCmd.AddCommand(pluginsPublishOrbProCmd)
 	rootCmd.AddCommand(pluginsCmd)
@@ -94,6 +96,9 @@ func runPluginsPublishOrbPro(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	applyPublishAllowedXpubs(&req, modulePublishAllowXpubs)
+	if err := applyPublishGrantPolicy(&req, modulePublishGrantPolicy); err != nil {
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), modulePublishTimeout)
 	defer cancel()
@@ -170,6 +175,7 @@ func buildModulePublishRequestFromPluginRoot(pluginRoot string, moduleIDs []stri
 			CacheControl:      entry.CacheControl,
 			AllowedXpubs:      append([]string(nil), entry.AllowedXpubs...),
 			MaxGrantTimeoutMs: entry.MaxGrantTimeoutMs,
+			GrantPolicy:       entry.GrantPolicy,
 			SignatureHex:      entry.SignatureHex,
 			SignerPubKeyHex:   entry.SignerPubKeyHex,
 		})
@@ -249,6 +255,25 @@ func applyPublishAllowedXpubs(req *license.ModulePublishRequest, xpubs []string)
 		}
 		req.Modules[i].AllowedXpubs = merged
 	}
+}
+
+// applyPublishGrantPolicy stamps a grant policy on every module in the request.
+// Unlike --allowed-xpub it OVERRIDES the catalog value, because the publisher
+// running the command is the one declaring the entitlement rule for this
+// publication. An unknown policy name is a hard error: a typo must not fall
+// back to something the publisher did not ask for.
+func applyPublishGrantPolicy(req *license.ModulePublishRequest, policy string) error {
+	normalized, err := license.NormalizeGrantPolicy(policy)
+	if err != nil {
+		return fmt.Errorf("--grant-policy: %w", err)
+	}
+	if req == nil || normalized == "" {
+		return nil
+	}
+	for i := range req.Modules {
+		req.Modules[i].GrantPolicy = normalized
+	}
+	return nil
 }
 
 type modulePublishSigner struct {
