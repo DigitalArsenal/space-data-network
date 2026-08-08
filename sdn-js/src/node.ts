@@ -384,6 +384,12 @@ export class SDNNode {
           persistenceKey: this.config.storeName || "sdn-store",
           schemas: this.config.storageSchemas,
           queryProfiles: this.config.storageQueryProfiles,
+          // Declared, not defaulted: an SDN node is a RECORD store first
+          // (store/get/query over `sdn_record_index` + the envelope journal),
+          // so with no `storageSchemas` the journal is what this node means.
+          // Configure `storageSchemas` to add the disk-backed per-source lane
+          // and the stream surface over it.
+          envelopeJournalOnly: true,
         });
       } else {
         this.storage = backend;
