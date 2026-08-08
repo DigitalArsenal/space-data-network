@@ -4421,6 +4421,16 @@ func (n *Node) runMDNS() {
 func (n *Node) runDHTDiscovery() {
 	defer n.wg.Done()
 
+	// `peers.enable_dht: false` means this node does not use the DHT. Without
+	// this gate the loop would still wake every 30s to Provide and every 60s to
+	// FindProviders against a routing table that was never bootstrapped —
+	// futile work whose failures log at Debug, i.e. invisible churn that reads
+	// as "DHT discovery is running" in every future investigation.
+	if n.dhtParticipation() == dhtParticipationOff {
+		log.Infof("DHT discovery loop not started (peers.enable_dht: false)")
+		return
+	}
+
 	moduleTargets := moduleDeliveryDiscoveryTargets(n.moduleDeliveryDiscovery)
 	if len(moduleTargets) == 0 && len(n.sdnDiscoveryTargets) == 0 {
 		log.Warn("No DHT discovery targets available")
