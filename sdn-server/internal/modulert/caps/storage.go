@@ -238,6 +238,21 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		if len(rawBytes) == 0 {
 			return errCapJSON("data could not be decoded"), nil
 		}
+		// ADMIT-POINT CHECK: storage.write takes ONE record. A whole
+		// size-prefixed SHARD reaching here would sail past
+		// engineRecordPayload (storage/engine_records.go:137 only strips a
+		// prefix that accounts for the WHOLE buffer) and be handed to
+		// IngestOne unsplit — one malformed row instead of N records, with
+		// no error anywhere. Refuse it and name the capability that exists
+		// for exactly this payload: storage.ingest_with_source demuxes the
+		// stream before storing (see handleIngestWithSource). The browser
+		// runtime refuses the same shape at the same boundary
+		// (sdn-js FlatSQLEngineRecordStore.store → storeStream, 2.0.18).
+		if frames, isStream := multiFrameSizePrefixedStream(rawBytes); isStream {
+			return errCapJSON(fmt.Sprintf(
+				"storage.write admits ONE record, but data is an aligned size-prefixed stream of %d frames (%d bytes); use storage.ingest_with_source, which splits the stream before storing",
+				frames, len(rawBytes))), nil
+		}
 		cid, err := s.store.Store(schema, rawBytes, s.producerID, nil)
 		if err != nil {
 			return errCapJSON("write failed: " + err.Error()), nil
@@ -826,6 +841,53 @@ func splitSizePrefixedStream(stream []byte) ([][]byte, error) {
 		off += n
 	}
 	return records, nil
+}
+
+// multiFrameSizePrefixedStream reports whether a payload is an aligned
+// [u32le len][frame]... stream of TWO OR MORE frames — the SDS shard shape,
+// as opposed to one record (bare, or size-prefixed with the prefix accounting
+// for the whole buffer, which is what engineRecordPayload strips).
+//
+// Deliberately strict, because it gates a refusal: the frame lengths must
+// tile the buffer EXACTLY, and every frame must carry a printable 4-byte
+// FlatBuffer file identifier at frame+4. Opaque record bytes cannot satisfy
+// both by accident, so a legitimate single record is never refused.
+func multiFrameSizePrefixedStream(data []byte) (int, bool) {
+	if len(data) < 24 {
+		return 0, false
+	}
+	frames := 0
+	off := 0
+	for off < len(data) {
+		if off+4 > len(data) {
+			return 0, false
+		}
+		n := int(binary.LittleEndian.Uint32(data[off:]))
+		off += 4
+		if n < 8 || off+n > len(data) {
+			return 0, false
+		}
+		if !hasPrintableFileIdentifier(data[off:]) {
+			return 0, false
+		}
+		off += n
+		frames++
+	}
+	return frames, frames >= 2
+}
+
+// hasPrintableFileIdentifier reports whether a bare FlatBuffer carries a
+// printable-ASCII 4-byte file identifier at bytes 4..8.
+func hasPrintableFileIdentifier(frame []byte) bool {
+	if len(frame) < 8 {
+		return false
+	}
+	for _, c := range frame[4:8] {
+		if c < 0x21 || c > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // sanitizePathComponent keeps archive names strictly single path components.
