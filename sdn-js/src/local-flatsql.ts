@@ -10,18 +10,29 @@
  * (sdn-server/internal/storage/engine_records.go). Records stored without an
  * explicit source partition under the server's default source name `local`.
  *
- * Persistence (browser durability): the engine is in-memory (OMIT_WAL), so
- * durable state lives in a key/value persistence store (IndexedDB
- * `sdn-local-flatsql`/`datastores` by default; desktop nodes can point at an
- * HTTP persistence endpoint). Per (standard, source) the ALIGNED size-
- * prefixed record stream of the shadow table is persisted
- * (`SELECT _data FROM "Table@source"`), and boot re-registers the sources,
- * rebuilds the unified views, and re-ingests each stream into its partition.
- * (Engine `exportData`/`loadAndRebuild` cannot be used once sources exist:
- * rebuild routes records by file id only, which would drop the source
- * attribution — verified against flatsql database.cpp.) Legacy single-blob
- * snapshots (pre-D.1 `exportData` bytes) are migrated into the `local`
- * source partition on first open.
+ * Persistence (browser durability): THE ENGINE ITSELF IS DISK-BACKED. Every
+ * standard's database is opened at a PATH (`openDatabase`) inside this store's
+ * namespace on the shared seven-import I/O router, so the engine writes its own
+ * arena (`<path>.fsdata`) and index (`<path>`) through the node's persistence
+ * store — IndexedDB `sdn-local-flatsql`/`datastores` by default, or a desktop
+ * HTTP persistence endpoint. Boot is `hydrate -> openDatabase -> registerFileId
+ * -> openState`, and flush is `flushIndex() -> await io.flushFor(path)`: exactly the
+ * sequence the Go host runs through `internal/flatsqlrt/hostio.go`. One engine,
+ * one durability story.
+ *
+ * SOURCE PARTITIONS ARE DURABLE TOO (flatsql >= 1.4.5). `_flatsql_sources` and
+ * `_flatsql_source_ranges` live in the index file, so `openState` restores every
+ * `<Table>@<source>` shadow table, re-binds the vtab modules and re-creates the
+ * unified views with NOTHING re-registered. That is what retired the old
+ * snapshot-export path (per-(standard, source) `SELECT _data FROM
+ * "Table@source"` blobs re-ingested at boot): it cost a whole-dataset rewrite
+ * per flush and a full re-ingest per boot, and it existed only because
+ * flatsql <= 1.4.4 restored base tables alone.
+ *
+ * Two legacy layouts are still READ, once, and deleted after they are folded
+ * into the engine's own state: the per-source streams above, and the pre-D.1
+ * single `exportData` blob (migrated into the default `local` partition).
+ * Neither is ever written again.
  */
 import type { FlatSQL, FlatSQLDatabase, QueryParam } from 'flatsql/wasm';
 
@@ -33,7 +44,14 @@ import {
   type EngineEpochQueryRequest,
 } from './epoch-query-sql';
 import { validateReadOnlySql, type ReadOnlySqlValidationOptions } from './read-only-sql-sandbox';
-import { FlatSqlIoRouter, createFlatSqlIoStoreBackend } from './flatsql-io-store';
+import {
+  FlatSqlIoRouter,
+  createFlatSqlIoStoreBackend,
+  hydrateFlatSqlDatabase,
+  restoreFlatSqlState,
+  flatSqlDurablePaths,
+  type DurableFlatSqlDatabase,
+} from './flatsql-io-store';
 
 /**
  * Minimal record surface the engine store ingests. Structurally compatible
@@ -225,12 +243,12 @@ export interface LocalFlatSqlStore {
 
 interface StandardDatabaseState {
   schema: LocalFlatSqlSchema;
-  db: FlatSQLDatabase;
+  db: FlatSQLDatabase & DurableFlatSqlDatabase;
+  /** Durable database path in the I/O router namespace; null = ephemeral engine. */
+  dbPath: string | null;
   ingestedKeys: Set<string>;
-  /** Source partitions registered on this database (shadow tables `<Table>@<source>`). */
+  /** Source partitions on this database (shadow tables `<Table>@<source>`), restored by openState. */
   sources: Set<string>;
-  /** Sources whose streams are currently persisted (stale keys get deleted on flush). */
-  persistedSources: string[];
   cachedBytes: number;
   dirty: boolean;
 }
@@ -334,19 +352,65 @@ export function registerFlatSqlIoStore(
   return prefix;
 }
 
+/**
+ * Durable database path for one standard inside a persistence key's namespace.
+ * The engine owns `<path>` (index), `<path>.fsdata` (arena) and
+ * `<path>-journal`; nothing else in the store addresses those keys.
+ */
+export function flatSqlDatabasePathForKey(persistenceKey: string, standardId: string): string {
+  return `${flatSqlIoPrefixForKey(persistenceKey)}${normalizeStandardId(standardId).toLowerCase()}.db`;
+}
+
+/**
+ * SQLite journal mode for the browser lane: 2 = TRUNCATE. WAL (1) needs
+ * xShmMap shared memory that neither wasm lane provides (flatsql
+ * docs/STORAGE-DURABILITY.md §3.5), which is precisely why the Go host runs
+ * the same value.
+ */
+const FLATSQL_JOURNAL_TRUNCATE = 2;
+
+type EngineDatabase = FlatSQLDatabase & DurableFlatSqlDatabase;
+
+/**
+ * THE boot sequence for one standard, in one place because every caller must
+ * perform it identically (mirrors sdn-server flatsqlrt open):
+ *
+ *   hydrate every durable file -> openDatabase(path) -> registerFileId ->
+ *   openState (restores base tables AND source partitions AND unified views)
+ *   -> session PRAGMAs
+ *
+ * `registerFileId` before `openState` is a contract, not a preference: replay
+ * routes frames by file identifier, and a database that has not been told its
+ * mapping restores nothing.
+ */
+async function openDurableStandardDatabase(
+  flatsql: FlatSQL,
+  io: FlatSqlIoRouter,
+  schema: LocalFlatSqlSchema,
+  dbPath: string,
+): Promise<{ db: EngineDatabase; restoredRecords: number; rederived: boolean }> {
+  await hydrateFlatSqlDatabase(io, dbPath);
+  const db = (flatsql as unknown as { openDatabase(schema: string, name: string, path: string, journalMode: number): EngineDatabase })
+    .openDatabase(
+      stripFlatBufferComments(schema.schema),
+      `sdn-${normalizeStandardId(schema.standardId).toLowerCase()}`,
+      dbPath,
+      FLATSQL_JOURNAL_TRUNCATE,
+    );
+  db.registerFileId(schema.fileId, schema.tableName);
+  const restored = restoreFlatSqlState(db);
+  configureEngineDatabaseSession(db);
+  return { db, restoredRecords: Math.max(0, restored.restored), rederived: restored.rederived };
+}
+
 /** Shared FlatSQL-WASM engine instance for this JS context, disk-capable. */
 export async function getSharedFlatSql(): Promise<FlatSQL> {
   if (!sharedFlatSqlPromise) {
     const io = getSharedFlatSqlIoRouter();
-    sharedFlatSqlPromise = import('flatsql/wasm').then(({ initFlatSQL }) => {
-      // flatsql 1.4.4 ACCEPTS `io` at runtime (standalone.js stores it and the
-      // seven imports are bound from it) but its published InitOptions d.ts
-      // does not declare the field. The cast is the upstream typing gap, not a
-      // shortcut around the contract; flatsql-io-store.test.ts has carried the
-      // same error since the shim landed.
-      const options = { skipIntegrityCheck: true, io } as unknown as Parameters<typeof initFlatSQL>[0];
-      return initFlatSQL(options);
-    });
+    // flatsql >= 1.4.5 declares `io` on InitOptions, so this is a typed call:
+    // the seven imports are bound from the router at instantiation, once.
+    sharedFlatSqlPromise = import('flatsql/wasm').then(({ initFlatSQL }) =>
+      initFlatSQL({ skipIntegrityCheck: true, io }));
   }
   return sharedFlatSqlPromise;
 }
@@ -375,54 +439,42 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
     registerFlatSqlIoStore(options.persistenceKey, persistenceStore);
   }
   const flatsql = await getSharedFlatSql();
+  const io = getSharedFlatSqlIoRouter();
+  const durable = Boolean(options.persistenceKey) && persistenceStore.available;
   const states = new Map<string, StandardDatabaseState>();
 
   for (const schema of options.schemas) {
     const standardId = normalizeStandardId(schema.standardId);
-    const db = flatsql.createDatabase(stripFlatBufferComments(schema.schema), `sdn-${standardId.toLowerCase()}`);
-    db.registerFileId(schema.fileId, schema.tableName);
-    configureEngineDatabaseSession(db);
+    const dbPath = durable ? flatSqlDatabasePathForKey(options.persistenceKey as string, standardId) : null;
 
-    // Restore source partitions (server-mirroring layout): re-register every
-    // persisted source, rebuild the unified views, then re-ingest each
-    // source's aligned stream into its shadow table.
-    const sources = new Set<string>();
-    let cachedBytes = 0;
-    let migratedLegacySnapshot = false;
+    // DURABLE OPEN. The engine restores its own base tables, source partitions
+    // and unified views from the index file — nothing is re-registered and
+    // nothing is re-ingested. An ephemeral store (no persistence key, or a
+    // store that reports itself unavailable) still gets the in-memory engine.
+    const opened = dbPath
+      ? await openDurableStandardDatabase(flatsql, io, { ...schema, standardId }, dbPath)
+      : null;
+    const db = opened ? opened.db : createEphemeralStandardDatabase(flatsql, { ...schema, standardId });
+
+    const sources = new Set<string>(opened ? db.listSources() : []);
+    let migrated = false;
     if (options.persistenceKey) {
-      const persistedSources = normalizePersistedSourceNames(
-        await persistenceStore.readJson(persistedSourcesKey(options.persistenceKey, standardId)),
-      );
-      for (const source of persistedSources) {
-        db.registerSource(source);
-        sources.add(source);
+      // ONE-TIME migration off the retired snapshot-export layout. Read only
+      // when the engine's own state restored nothing: once the disk-backed
+      // state carries the records, a leftover blob (e.g. a crash before its
+      // delete) must never double-ingest.
+      const engineRestoredNothing = !opened || opened.restoredRecords === 0;
+      migrated = engineRestoredNothing
+        ? await migrateLegacySnapshots(db, persistenceStore, options.persistenceKey, standardId, sources)
+        : false;
+      if (!engineRestoredNothing) {
+        await deleteLegacySnapshotKeys(persistenceStore, options.persistenceKey, standardId);
       }
-      if (sources.size > 0) db.createUnifiedViews();
-      for (const source of persistedSources) {
-        const stream = await persistenceStore.readBytes(persistedSourceStreamKey(options.persistenceKey, standardId, source));
-        if (stream && stream.byteLength > 0) {
-          db.ingest(stream, source);
-          cachedBytes += stream.byteLength;
-        }
-      }
-
-      // Legacy pre-D.1 snapshot (single exportData blob, no source
-      // attribution): migrate its records into the default `local` source.
-      // Only consulted when NO new-format source list exists — once the
-      // per-source layout has been written, a leftover legacy blob (e.g.
-      // crash before its delete) must not double-ingest.
-      const legacy = sources.size === 0
-        ? await readPersistedFlatSqlBytes(persistenceStore, persistedStandardKey(options.persistenceKey, standardId))
-        : null;
-      if (legacy && legacy.byteLength > 0) {
-        if (!sources.has(LOCAL_FLATSQL_DEFAULT_SOURCE)) {
-          db.registerSource(LOCAL_FLATSQL_DEFAULT_SOURCE);
-          sources.add(LOCAL_FLATSQL_DEFAULT_SOURCE);
-          db.createUnifiedViews();
-        }
-        db.ingest(legacy, LOCAL_FLATSQL_DEFAULT_SOURCE);
-        cachedBytes += legacy.byteLength;
-        migratedLegacySnapshot = true;
+      if (migrated && opened && dbPath) {
+        // Fold the migrated records into the engine's durable state
+        // immediately, so the legacy keys are never needed again.
+        opened.db.flushIndex();
+        await io.flushFor(dbPath);
       }
     }
 
@@ -436,11 +488,11 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
     states.set(standardId, {
       schema: { ...schema, standardId },
       db,
+      dbPath,
       ingestedKeys: repairedIngestedKeys,
       sources,
-      persistedSources: Array.from(sources),
-      cachedBytes,
-      dirty: repairedIngestedKeys !== ingestedKeys || migratedLegacySnapshot,
+      cachedBytes: cachedBytesForDatabase(db),
+      dirty: repairedIngestedKeys !== ingestedKeys || migrated,
     });
   }
 
@@ -453,9 +505,84 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
     pinLedger,
     persistenceStore,
     flatsql,
+    io,
     options.queryProfiles ?? null,
     options.nowSeconds ?? null,
   );
+}
+
+/** In-memory engine database — no persistence key, or a store that is not available. */
+function createEphemeralStandardDatabase(flatsql: FlatSQL, schema: LocalFlatSqlSchema): EngineDatabase {
+  const db = flatsql.createDatabase(
+    stripFlatBufferComments(schema.schema),
+    `sdn-${normalizeStandardId(schema.standardId).toLowerCase()}`,
+  ) as EngineDatabase;
+  db.registerFileId(schema.fileId, schema.tableName);
+  configureEngineDatabaseSession(db);
+  return db;
+}
+
+/**
+ * Fold the two RETIRED persistence layouts into the live database, once:
+ *   1. per-(standard, source) aligned streams (`<key>:<std>:src:<source>`)
+ *   2. the pre-D.1 single `exportData` blob (`<key>:<std>`) -> `local`
+ * Returns true when anything was ingested. The keys are deleted either way —
+ * nothing writes them again.
+ */
+async function migrateLegacySnapshots(
+  db: EngineDatabase,
+  persistenceStore: LocalFlatSqlPersistenceStore,
+  persistenceKey: string,
+  standardId: string,
+  sources: Set<string>,
+): Promise<boolean> {
+  const ensureSourceOn = (source: string) => {
+    if (sources.has(source)) return;
+    db.registerSource(source);
+    sources.add(source);
+    db.createUnifiedViews();
+  };
+
+  const legacySources = normalizePersistedSourceNames(
+    await persistenceStore.readJson(persistedSourcesKey(persistenceKey, standardId)),
+  );
+  let ingested = false;
+  for (const source of legacySources) {
+    const stream = await persistenceStore.readBytes(persistedSourceStreamKey(persistenceKey, standardId, source));
+    if (stream && stream.byteLength > 0) {
+      ensureSourceOn(source);
+      db.ingest(stream, source);
+      ingested = true;
+    }
+  }
+
+  if (legacySources.length === 0) {
+    const legacy = await readPersistedFlatSqlBytes(persistenceStore, persistedStandardKey(persistenceKey, standardId));
+    if (legacy && legacy.byteLength > 0) {
+      ensureSourceOn(LOCAL_FLATSQL_DEFAULT_SOURCE);
+      db.ingest(legacy, LOCAL_FLATSQL_DEFAULT_SOURCE);
+      ingested = true;
+    }
+  }
+
+  await deleteLegacySnapshotKeys(persistenceStore, persistenceKey, standardId, legacySources);
+  return ingested;
+}
+
+async function deleteLegacySnapshotKeys(
+  persistenceStore: LocalFlatSqlPersistenceStore,
+  persistenceKey: string,
+  standardId: string,
+  knownSources?: string[],
+): Promise<void> {
+  const sources = knownSources ?? normalizePersistedSourceNames(
+    await persistenceStore.readJson(persistedSourcesKey(persistenceKey, standardId)),
+  );
+  for (const source of sources) {
+    await persistenceStore.deleteKey(persistedSourceStreamKey(persistenceKey, standardId, source));
+  }
+  await persistenceStore.deleteKey(persistedSourcesKey(persistenceKey, standardId));
+  await persistenceStore.deleteKey(persistedStandardKey(persistenceKey, standardId));
 }
 
 export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOptions): Promise<void> {
@@ -463,15 +590,19 @@ export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOpti
   const standardIds = Array.from(new Set(options.standardIds.map(normalizeStandardId)));
   const persistenceStore = createLocalFlatSqlPersistenceStore(options);
   if (!persistenceKey || standardIds.length === 0 || !persistenceStore.available) return;
+  // Clearing a disk-backed store means DELETING THE ENGINE'S FILES, not just
+  // the side JSON. Mount on the shared router first (idempotent) so the drop
+  // goes through the SAME backend instance any live database is using — a
+  // second backend would delete the keys and leave a stale chunk cache behind.
+  registerFlatSqlIoStore(persistenceKey, persistenceStore);
+  const io = getSharedFlatSqlIoRouter();
   for (const standardId of standardIds) {
-    const persistedSources = normalizePersistedSourceNames(
-      await persistenceStore.readJson(persistedSourcesKey(persistenceKey, standardId)),
-    );
-    for (const source of persistedSources) {
-      await persistenceStore.deleteKey(persistedSourceStreamKey(persistenceKey, standardId, source));
+    for (const path of flatSqlDurablePaths(flatSqlDatabasePathForKey(persistenceKey, standardId))) {
+      await io.hydrate(path);
+      await io.drop(path);
     }
-    await persistenceStore.deleteKey(persistedSourcesKey(persistenceKey, standardId));
-    await persistenceStore.deleteKey(persistedStandardKey(persistenceKey, standardId));
+    // Retired snapshot-export layout: still deleted, never written.
+    await deleteLegacySnapshotKeys(persistenceStore, persistenceKey, standardId);
     await persistenceStore.deleteKey(persistedRecordKey(persistenceKey, standardId));
   }
   const entries = normalizePersistedPinLedgerEntries(await persistenceStore.readJson(persistedPinLedgerKey(persistenceKey)))
@@ -505,6 +636,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     private readonly pinLedger: Map<string, LocalFlatSqlPinLedgerEntry>,
     private readonly persistenceStore: LocalFlatSqlPersistenceStore,
     private readonly flatsql: FlatSQL,
+    private readonly io: FlatSqlIoRouter,
     private readonly queryProfiles: EngineEpochQueryProfilesConfig | null = null,
     private readonly nowSeconds: (() => number) | null = null,
   ) {}
@@ -608,28 +740,28 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
 
   async clearStandard(standardId: string, options: LocalFlatSqlClearOptions = {}): Promise<void> {
     const state = this.stateForStandard(standardId);
-    const previouslyPersistedSources = state.persistedSources;
-    state.db.destroy();
-    state.db = this.createDatabaseForSchema(state.schema);
+    await this.resetStandardDatabase(state);
     state.ingestedKeys.clear();
-    state.sources = new Set<string>();
-    state.persistedSources = [];
     state.cachedBytes = 0;
     state.dirty = false;
     this.deletePinLedgerEntriesForStandard(state.schema.standardId);
     if (options.persist !== false) {
-      await this.deletePersistedStandard(state.schema.standardId, previouslyPersistedSources);
+      await this.deletePersistedStandard(state.schema.standardId);
     }
   }
 
   async createStandardReplacementStore(standardId: string): Promise<LocalFlatSqlStore> {
     const state = this.stateForStandard(standardId);
+    // The staging store is deliberately EPHEMERAL: it holds a candidate
+    // catalog that has not been accepted yet, so it must not touch the live
+    // database's files. replaceStandardFrom moves the accepted partitions into
+    // the durable database rather than swapping the handle.
     const replacementState: StandardDatabaseState = {
       schema: { ...state.schema },
-      db: this.createDatabaseForSchema(state.schema),
+      db: createEphemeralStandardDatabase(this.flatsql, state.schema),
+      dbPath: null,
       ingestedKeys: new Set<string>(),
       sources: new Set<string>(),
-      persistedSources: [],
       cachedBytes: 0,
       dirty: false,
     };
@@ -639,6 +771,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
       new Map<string, LocalFlatSqlPinLedgerEntry>(),
       this.persistenceStore,
       this.flatsql,
+      this.io,
       this.queryProfiles,
       this.nowSeconds,
     );
@@ -655,23 +788,41 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     }
     const activeState = this.stateForStandard(standardId);
     const replacementState = replacementStore.stateForStandard(standardId);
-    activeState.db.destroy();
-    activeState.db = replacementState.db;
-    activeState.ingestedKeys = new Set(replacementState.ingestedKeys);
-    activeState.sources = new Set(replacementState.sources);
-    activeState.cachedBytes = replacementState.db.exportData().byteLength;
-    activeState.dirty = false;
-    replacementState.db = replacementStore.createDatabaseForSchema(replacementState.schema);
+    const replacementKeys = new Set(replacementState.ingestedKeys);
+
+    // Empty the live database (its FILES too, when durable) and move the
+    // staged partitions in as aligned streams — the same wire bytes, ingested
+    // with their source. Adopting the staging handle instead would hand the
+    // live standard an in-memory engine and silently un-durable the store.
+    await this.resetStandardDatabase(activeState);
+    for (const source of Array.from(replacementState.sources).sort()) {
+      const stream = replacementState.db.queryRawFlatBufferStream(
+        `SELECT _data FROM "${replacementState.schema.tableName}@${source}" ORDER BY _rowid ASC`,
+      );
+      if (stream.byteLength === 0) continue;
+      activeState.db.registerSource(source);
+      activeState.sources.add(source);
+      activeState.db.createUnifiedViews();
+      activeState.db.ingest(stream, source);
+    }
+    activeState.ingestedKeys = replacementKeys;
+    activeState.cachedBytes = cachedBytesForDatabase(activeState.db);
+    activeState.dirty = true;
+
+    replacementState.db.destroy();
+    replacementState.db = createEphemeralStandardDatabase(this.flatsql, replacementState.schema);
     replacementState.ingestedKeys.clear();
     replacementState.sources = new Set<string>();
-    replacementState.persistedSources = [];
     replacementState.cachedBytes = 0;
     replacementState.dirty = false;
+
     this.deletePinLedgerEntriesForStandard(activeState.schema.standardId);
     await this.recordPinLedgerEntries(entries, { persist: false });
     if (options.persist !== false) {
       await this.persistStandard(activeState);
       await this.persistPinLedger();
+    } else {
+      activeState.dirty = false;
     }
   }
 
@@ -824,49 +975,48 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     return normalized;
   }
 
-  private createDatabaseForSchema(schema: LocalFlatSqlSchema): FlatSQLDatabase {
-    const db = this.flatsql.createDatabase(stripFlatBufferComments(schema.schema), `sdn-${schema.standardId.toLowerCase()}`);
-    db.registerFileId(schema.fileId, schema.tableName);
-    configureEngineDatabaseSession(db);
-    return db;
+  /**
+   * Empty one standard's database. On a durable standard this DELETES THE
+   * FILES and reopens at the same path, so a clear survives a reload; on an
+   * ephemeral one it is a fresh in-memory database, exactly as before.
+   */
+  private async resetStandardDatabase(state: StandardDatabaseState): Promise<void> {
+    state.db.destroy();
+    state.sources = new Set<string>();
+    if (!state.dbPath) {
+      state.db = createEphemeralStandardDatabase(this.flatsql, state.schema);
+      return;
+    }
+    for (const path of flatSqlDurablePaths(state.dbPath)) {
+      await this.io.hydrate(path);
+      await this.io.drop(path);
+    }
+    const opened = await openDurableStandardDatabase(this.flatsql, this.io, state.schema, state.dbPath);
+    state.db = opened.db;
+    state.sources = new Set(opened.db.listSources());
   }
 
+  /**
+   * Make the engine's own state durable: append the index delta inside the
+   * mark's transaction, then let the async store land the dirty page groups.
+   * This IS the persistence path — there is no snapshot to export, because
+   * `openState` restores base tables, source partitions and unified views
+   * from the file the engine just wrote.
+   */
   private async persistStandard(state: StandardDatabaseState): Promise<void> {
-    // Per-(standard, source) aligned streams are the durable representation:
-    // the raw record bytes of each shadow table, exactly as the engine would
-    // stream them (size-prefixed frames), re-ingestible with their source at
-    // the next open. A single exportData blob cannot be used here — engine
-    // rebuild routes records by file id only and would lose the partitions.
-    const sources = Array.from(state.sources).sort();
-    const streams = new Map<string, Uint8Array>();
-    let totalBytes = 0;
-    for (const source of sources) {
-      const bytes = state.db.queryRawFlatBufferStream(
-        `SELECT _data FROM "${state.schema.tableName}@${source}" ORDER BY _rowid ASC`,
-      );
-      streams.set(source, bytes);
-      totalBytes += bytes.byteLength;
-    }
-    state.cachedBytes = totalBytes;
     state.dirty = false;
-    if (!this.persistenceKey) return;
-
-    for (const [source, bytes] of streams) {
-      await writePersistedFlatSqlBytes(
-        this.persistenceStore,
-        persistedSourceStreamKey(this.persistenceKey, state.schema.standardId, source),
-        bytes,
-      );
+    if (!this.persistenceKey) {
+      state.cachedBytes = cachedBytesForDatabase(state.db);
+      return;
     }
-    await this.persistenceStore.writeJson(persistedSourcesKey(this.persistenceKey, state.schema.standardId), sources);
-    // Drop streams for sources that no longer exist plus any legacy blob.
-    for (const source of state.persistedSources) {
-      if (!state.sources.has(source)) {
-        await this.persistenceStore.deleteKey(persistedSourceStreamKey(this.persistenceKey, state.schema.standardId, source));
-      }
+    if (state.dbPath) {
+      state.db.flushIndex();
+      await this.io.flushFor(state.dbPath);
+      // Post-flush the mark IS the arena length, without copying it out.
+      state.cachedBytes = Math.max(0, state.db.flushedOffset());
+    } else {
+      state.cachedBytes = cachedBytesForDatabase(state.db);
     }
-    await this.persistenceStore.deleteKey(persistedStandardKey(this.persistenceKey, state.schema.standardId));
-    state.persistedSources = sources;
     await writePersistedRecordKeys(this.persistenceStore, persistedRecordKey(this.persistenceKey, state.schema.standardId), state.ingestedKeys);
   }
 
@@ -879,13 +1029,9 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     await writePersistedPinLedgerEntries(this.persistenceStore, persistedPinLedgerKey(this.persistenceKey), Array.from(this.pinLedger.values()));
   }
 
-  private async deletePersistedStandard(standardId: string, persistedSources: string[] = []): Promise<void> {
+  private async deletePersistedStandard(standardId: string): Promise<void> {
     if (!this.persistenceKey) return;
-    for (const source of persistedSources) {
-      await this.persistenceStore.deleteKey(persistedSourceStreamKey(this.persistenceKey, standardId, source));
-    }
-    await this.persistenceStore.deleteKey(persistedSourcesKey(this.persistenceKey, standardId));
-    await this.persistenceStore.deleteKey(persistedStandardKey(this.persistenceKey, standardId));
+    await deleteLegacySnapshotKeys(this.persistenceStore, this.persistenceKey, standardId);
     await this.persistenceStore.deleteKey(persistedRecordKey(this.persistenceKey, standardId));
     await this.persistPinLedger();
   }
@@ -901,7 +1047,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
 
   private cachedBytesForState(state: StandardDatabaseState, includeCachedBytes: boolean): number {
     if (!includeCachedBytes) return state.cachedBytes;
-    state.cachedBytes = state.db.exportData().byteLength;
+    state.cachedBytes = cachedBytesForDatabase(state.db);
     return state.cachedBytes;
   }
 
@@ -938,6 +1084,17 @@ export function isReadOnlyFlatSqlQuery(sql: string): boolean {
 
 function recordCountForState(state: StandardDatabaseState): number {
   return recordCountForDatabase(state.db, state.schema.tableName);
+}
+
+/**
+ * Bytes this standard occupies = the arena, which on a durable database is
+ * literally the `.fsdata` file. MEASURED: `exportData().byteLength` and
+ * `flushedOffset()` agree exactly once the index is flushed (18360 == 18360 on
+ * the 85-record parity corpus), and `flushedOffset()` lags by the unflushed
+ * tail before it — so the mark is used only where a flush has just happened.
+ */
+function cachedBytesForDatabase(db: FlatSQLDatabase & DurableFlatSqlDatabase): number {
+  return db.exportData().byteLength;
 }
 
 /**
@@ -1524,12 +1681,13 @@ function desktopFlatSqlPersistenceEndpoint(baseUrl: string): string {
   return trimmed.endsWith('/api/flatsql/persistence') ? trimmed : `${trimmed}/api/flatsql/persistence`;
 }
 
+/**
+ * READ-ONLY by design. The snapshot-export writer that used to sit beside this
+ * is gone: the engine's own disk state is the durable representation, and these
+ * keys are only ever read once during migration and then deleted.
+ */
 async function readPersistedFlatSqlBytes(store: LocalFlatSqlPersistenceStore, key: string): Promise<Uint8Array | null> {
   return store.readBytes(key);
-}
-
-async function writePersistedFlatSqlBytes(store: LocalFlatSqlPersistenceStore, key: string, bytes: Uint8Array): Promise<void> {
-  await store.writeBytes(key, bytes);
 }
 
 async function readPersistedRecordKeys(store: LocalFlatSqlPersistenceStore, key: string): Promise<Set<string>> {

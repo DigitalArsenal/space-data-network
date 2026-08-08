@@ -297,11 +297,13 @@ describe('per-provider source partitioning (server layout mirror)', () => {
     const rows = await store.query('SELECT NORAD_CAT_ID, _source FROM OMM LIMIT 10', 'OMM');
     expect(rows.records).toEqual([{ NORAD_CAT_ID: 56775, _source: 'OMM@local' }]);
 
-    // First flush rewrites the new layout and retires the legacy blob.
+    // The legacy blob is folded into the ENGINE'S OWN disk state and deleted.
+    // Nothing rewrites the retired snapshot-export layout in its place: the
+    // durable representation is now the index + arena the engine writes.
     await store.flush('OMM');
     expect(await persistenceStore.readBytes('legacy-migration:OMM')).toBeNull();
-    expect(await persistenceStore.readJson('legacy-migration:OMM:sources')).toEqual(['local']);
-    expect(await persistenceStore.readBytes('legacy-migration:OMM:src:local')).not.toBeNull();
+    expect(await persistenceStore.readJson('legacy-migration:OMM:sources')).toBeNull();
+    expect(await persistenceStore.readBytes('legacy-migration:OMM:src:local')).toBeNull();
     store.destroy();
 
     const reopened = await createLocalFlatSqlStore({

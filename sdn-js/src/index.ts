@@ -149,6 +149,12 @@ export {
   createDefaultLocalFlatSqlPersistenceStore,
   MemoryFlatSqlPersistenceStore,
   LOCAL_FLATSQL_DEFAULT_SOURCE,
+  // Disk-backed engine surface: where a standard's index + arena live inside a
+  // persistence key's namespace, and the router the seven imports are bound to.
+  flatSqlDatabasePathForKey,
+  flatSqlIoPrefixForKey,
+  getSharedFlatSqlIoRouter,
+  registerFlatSqlIoStore,
   decodeFlatSqlSizePrefixedStream,
   iterateFlatSqlSizePrefixedStream,
   engineEpochSpecForSchema,
