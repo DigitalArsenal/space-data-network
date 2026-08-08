@@ -229,13 +229,13 @@ func TestDHTDefaultsToClientMode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	registersKad := func(server bool) bool {
+	registersKad := func(mode dhtParticipation) bool {
 		h, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 		if err != nil {
 			t.Fatalf("libp2p.New failed: %v", err)
 		}
 		defer h.Close()
-		d, err := dht.New(ctx, h, publicDHTOptions(server)...)
+		d, err := dht.New(ctx, h, publicDHTOptions(mode)...)
 		if err != nil {
 			t.Fatalf("dht.New failed: %v", err)
 		}
@@ -248,12 +248,12 @@ func TestDHTDefaultsToClientMode(t *testing.T) {
 		return false
 	}
 
-	if registersKad(false) {
-		t.Fatalf("publicDHTOptions(false) must NOT serve /ipfs/kad/1.0.0: client mode still queries and " +
+	if registersKad(dhtParticipationClient) {
+		t.Fatalf("publicDHTOptions(dhtParticipationClient) must NOT serve /ipfs/kad/1.0.0: client mode still queries and " +
 			"still provides its own records, it just stops answering the whole internet's lookups")
 	}
-	if !registersKad(true) {
-		t.Fatalf("publicDHTOptions(true) must serve /ipfs/kad/1.0.0 when a node is deliberately deployed as DHT infrastructure")
+	if !registersKad(dhtParticipationServer) {
+		t.Fatalf("publicDHTOptions(dhtParticipationServer) must serve /ipfs/kad/1.0.0 when a node is deliberately deployed as DHT infrastructure")
 	}
 }
 
@@ -388,5 +388,57 @@ func TestLoopbackStaysExemptForTheTLSProxyLane(t *testing.T) {
 				"and must not be rate-limited as if it were one remote host", i+1, err)
 		}
 		scopes = append(scopes, scope)
+	}
+}
+
+// TestOwnerSetEnableDHTIsHonoured pins the THIRD declared-never-read knob found
+// on this path.
+//
+// host-01's delivery sidecar has carried `peers.enable_dht: false` and ran a
+// full public Amino DHT SERVER regardless, because `EnableDHT` had zero read
+// sites — exactly the defect `network.enable_relay` had. The operator's setting
+// wins outright: a node told not to use the DHT does not get to serve it, no
+// matter what `network.dht_server` says.
+func TestOwnerSetEnableDHTIsHonoured(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		enableDHT bool
+		dhtServer bool
+		want      dhtParticipation
+	}{
+		{"operator disabled the DHT", false, false, dhtParticipationOff},
+		{"operator disabled the DHT, server flag must not override", false, true, dhtParticipationOff},
+		{"DHT on, default is client", true, false, dhtParticipationClient},
+		{"DHT on, explicit server", true, true, dhtParticipationServer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := &Node{config: &config.Config{}}
+			n.config.Peers.EnableDHT = tc.enableDHT
+			n.config.Network.DHTServer = tc.dhtServer
+			if got := n.dhtParticipation(); got != tc.want {
+				t.Fatalf("dhtParticipation() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDHTIsNeverNil guards the reason participation is expressed as a mode
+// rather than by skipping construction: Start dereferences n.dht with no nil
+// guard, as do the advertisement and discovery routines. Turning the DHT "off"
+// by not building it would trade a config defect for a panic.
+func TestDHTIsNeverNil(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile(filepath.Join(".", "node.go"))
+	if err != nil {
+		t.Fatalf("read node.go: %v", err)
+	}
+	if !strings.Contains(string(source), "n.dht.Bootstrap(ctx)") {
+		t.Skip("Bootstrap call site moved; re-derive this guard")
+	}
+	if !strings.Contains(string(source), "dhtParticipationOff:") {
+		t.Fatalf("Start must branch on dhtParticipationOff and skip Bootstrap rather than leave n.dht nil")
 	}
 }

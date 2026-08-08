@@ -33,7 +33,7 @@ func TestPublicDHTOptionsJoinStockIPFSProtocol(t *testing.T) {
 	}
 	defer h.Close()
 
-	d, err := dht.New(ctx, h, publicDHTOptions(true)...)
+	d, err := dht.New(ctx, h, publicDHTOptions(dhtParticipationServer)...)
 	if err != nil {
 		t.Fatalf("dht.New with publicDHTOptions failed: %v", err)
 	}
@@ -86,24 +86,24 @@ func TestPublicDHTOptionsDefaultToClientMode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	newDHT := func(server bool) *dht.IpfsDHT {
+	newDHT := func(mode dhtParticipation) *dht.IpfsDHT {
 		h, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 		if err != nil {
 			t.Fatalf("libp2p.New failed: %v", err)
 		}
 		t.Cleanup(func() { _ = h.Close() })
-		d, err := dht.New(ctx, h, publicDHTOptions(server)...)
+		d, err := dht.New(ctx, h, publicDHTOptions(mode)...)
 		if err != nil {
-			t.Fatalf("dht.New with publicDHTOptions(%t) failed: %v", server, err)
+			t.Fatalf("dht.New with publicDHTOptions(%v) failed: %v", mode, err)
 		}
 		t.Cleanup(func() { _ = d.Close() })
 		return d
 	}
 
-	if mode := newDHT(false).Mode(); mode != dht.ModeClient {
+	if mode := newDHT(dhtParticipationClient).Mode(); mode != dht.ModeClient {
 		t.Fatalf("default dht mode = %v, want dht.ModeClient — the node must not serve the public DHT unless asked", mode)
 	}
-	if mode := newDHT(true).Mode(); mode != dht.ModeAutoServer {
+	if mode := newDHT(dhtParticipationServer).Mode(); mode != dht.ModeAutoServer {
 		t.Fatalf("dht_server:true mode = %v, want dht.ModeAutoServer", mode)
 	}
 }

@@ -72,3 +72,49 @@ func TestProviderDescriptorKeepsRoutableAddresses(t *testing.T) {
 		}
 	}
 }
+
+// TestAnnouncedWSSNeverHijacksTheLocalProxyTarget guards a hazard created by
+// advertising an address the node does not bind.
+//
+// resolveLocalLibp2pWsProxyTarget reads the node's ADVERTISED address list to
+// find the cleartext loopback websocket listener it should reverse-proxy
+// /p2p/<peerid> upgrades into. Once `network.announce` puts
+// /dns4/sdn.spaceaware.io/tcp/443/wss on that list, the resolver sees an address
+// that looks like a websocket listener and is not one — it is this very server's
+// public TLS front door. Selecting it would make the node proxy its own :443
+// into itself: an infinite loop dressed as a peering outage.
+//
+// The /wss rejection in plainLocalWsListener already prevents that; this test
+// makes it non-negotiable.
+func TestAnnouncedWSSNeverHijacksTheLocalProxyTarget(t *testing.T) {
+	t.Parallel()
+
+	advertised := []string{
+		"/dns4/sdn.spaceaware.io/tcp/443/wss",
+		"/ip4/104.131.11.220/tcp/4004/ws",
+		"/ip4/127.0.0.1/tcp/18080/ws",
+	}
+	target, source := resolveLocalLibp2pWsProxyTarget(advertised)
+	if target == nil {
+		t.Fatalf("no proxy target selected from %v", advertised)
+	}
+	if got := target.String(); got != "http://127.0.0.1:18080" {
+		t.Fatalf("proxy target = %s (from %q), want the cleartext LOOPBACK listener http://127.0.0.1:18080",
+			got, source)
+	}
+
+	// And with only the announced wss plus the public cleartext listener, it
+	// must fall back to the public listener's port on loopback — never to 443.
+	target, _ = resolveLocalLibp2pWsProxyTarget([]string{
+		"/dns4/sdn.spaceaware.io/tcp/443/wss",
+		"/ip4/104.131.11.220/tcp/4004/ws",
+	})
+	if target == nil || target.String() != "http://127.0.0.1:4004" {
+		t.Fatalf("fallback proxy target = %v, want http://127.0.0.1:4004", target)
+	}
+
+	// An announce list containing ONLY the TLS front door must select nothing.
+	if target, _ := resolveLocalLibp2pWsProxyTarget([]string{"/dns4/sdn.spaceaware.io/tcp/443/wss"}); target != nil {
+		t.Fatalf("selected %s as a proxy target; the node must never proxy its own TLS listener into itself", target)
+	}
+}
