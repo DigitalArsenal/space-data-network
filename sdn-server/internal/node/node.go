@@ -305,14 +305,53 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 // ModeClient keeps every capability this node actually uses: it still QUERIES
 // the DHT and still PROVIDES its own records, so module-delivery provider
 // discovery is unchanged. It only stops serving strangers' lookups.
-func publicDHTOptions(server bool) []dht.Option {
+func publicDHTOptions(p dhtParticipation) []dht.Option {
 	mode := dht.ModeClient
-	if server {
+	if p == dhtParticipationServer {
 		mode = dht.ModeAutoServer
 	}
 	return []dht.Option{
 		dht.Mode(mode),
 	}
+}
+
+// dhtParticipation is how much of the public DHT this node takes part in.
+type dhtParticipation int
+
+const (
+	// dhtParticipationOff honours `peers.enable_dht: false`. The DHT object is
+	// still CONSTRUCTED — several call sites dereference n.dht with no nil
+	// guard (Start's Bootstrap at node.go, the advertisement/discovery
+	// routines), and making it nil would trade one defect for a panic — but it
+	// is never bootstrapped, so it joins nothing and answers nobody.
+	dhtParticipationOff dhtParticipation = iota
+	// dhtParticipationClient queries the DHT and publishes its own provider
+	// records without serving strangers' lookups.
+	dhtParticipationClient
+	// dhtParticipationServer serves the public Amino DHT. For nodes deliberately
+	// deployed as DHT infrastructure and sized for it.
+	dhtParticipationServer
+)
+
+// dhtParticipation resolves the two config knobs that govern DHT involvement.
+//
+// `peers.enable_dht` HAS EXISTED AND BEEN IGNORED. It is set to false on
+// host-01's delivery sidecar and was declared with zero read sites
+// (config.go, EnableDHT) — the same defect as `network.enable_relay`. An
+// operator-set false that the process ignores is worse than no knob, so it is
+// honoured here and it wins outright: a node told not to use the DHT does not
+// get to serve it.
+func (n *Node) dhtParticipation() dhtParticipation {
+	if n == nil || n.config == nil {
+		return dhtParticipationClient
+	}
+	if !n.config.Peers.EnableDHT {
+		return dhtParticipationOff
+	}
+	if n.config.Network.DHTServer {
+		return dhtParticipationServer
+	}
+	return dhtParticipationClient
 }
 
 // announceAddrsFactory builds a libp2p AddrsFactory that APPENDS operator-set
@@ -680,7 +719,7 @@ func (n *Node) init() error {
 		),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			var err error
-			dhtRouting, err = dht.New(n.ctx, h, publicDHTOptions(n.config.Network.DHTServer)...)
+			dhtRouting, err = dht.New(n.ctx, h, publicDHTOptions(n.dhtParticipation())...)
 			return dhtRouting, err
 		}),
 		libp2p.NATPortMap(),
@@ -1996,9 +2035,22 @@ func (n *Node) findKeyBrokerWasmPath() string {
 
 // Start begins the node's network operations.
 func (n *Node) Start(ctx context.Context) error {
-	// Bootstrap DHT
-	if err := n.dht.Bootstrap(ctx); err != nil {
-		return fmt.Errorf("failed to bootstrap DHT: %w", err)
+	// Bootstrap DHT — unless the operator turned it off. Bootstrapping is what
+	// makes a node join the public Amino DHT at all; skipping it is how
+	// `peers.enable_dht: false` becomes true in fact and not just in the file.
+	switch p := n.dhtParticipation(); p {
+	case dhtParticipationOff:
+		log.Infof("DHT disabled (peers.enable_dht: false): not bootstrapping, not joining the public DHT")
+	default:
+		if p == dhtParticipationServer {
+			log.Warnf(
+				"DHT SERVER mode (network.dht_server: true): this node will answer routing queries for the whole " +
+					"public IPFS network. That is an unbounded public workload — size the box for it.",
+			)
+		}
+		if err := n.dht.Bootstrap(ctx); err != nil {
+			return fmt.Errorf("failed to bootstrap DHT: %w", err)
+		}
 	}
 
 	// Validate bootstrap configuration and warn about missing peer IDs
