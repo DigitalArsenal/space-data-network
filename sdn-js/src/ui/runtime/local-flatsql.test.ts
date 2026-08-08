@@ -933,15 +933,30 @@ describe('local FlatSQL datastore', () => {
     });
 
     expect(loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
-    // D.1 layout: per-(standard, source) aligned streams + a source list —
-    // records without an explicit source live in the `local` partition.
-    expect(persisted.has('desktop-flatbuffer-cache:OMM:sources')).toBe(true);
-    expect(persisted.has('desktop-flatbuffer-cache:OMM:src:local')).toBe(true);
-    expect(persisted.has('desktop-flatbuffer-cache:OMM:record-keys')).toBe(true);
-    expect(calls).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: 'PUT', url: 'http://desktop.local/api/flatsql/persistence/desktop-flatbuffer-cache%3AOMM%3Asrc%3Alocal' }),
-      expect.objectContaining({ method: 'GET', url: 'http://desktop.local/api/flatsql/persistence/desktop-flatbuffer-cache%3AOMM%3Asrc%3Alocal' }),
+
+    // DISK-BACKED layout: the engine's own index + arena, written through the
+    // desktop persistence endpoint as fixed-size page groups. The retired
+    // snapshot-export keys (`:sources`, `:src:<source>`) must NOT come back —
+    // if they do, something is still rewriting the whole dataset per flush.
+    const enginePrefix = 'sdn-flatsql/desktop-flatbuffer-cache/keys/sdn-flatsql/desktop-flatbuffer-cache/omm.db';
+    const engineKeys = [...persisted.keys()].filter((key) => key.startsWith(enginePrefix));
+    expect(engineKeys).toEqual(expect.arrayContaining([
+      `${enginePrefix}#meta`,
+      `${enginePrefix}#0`,
+      `${enginePrefix}.fsdata#meta`,
+      `${enginePrefix}.fsdata#0`,
     ]));
+    expect(persisted.has('desktop-flatbuffer-cache:OMM:sources')).toBe(false);
+    expect(persisted.has('desktop-flatbuffer-cache:OMM:src:local')).toBe(false);
+    expect(persisted.has('desktop-flatbuffer-cache:OMM:record-keys')).toBe(true);
+    const persistenceUrl = (key: string) => `http://desktop.local/api/flatsql/persistence/${encodeURIComponent(key)}`;
+    // Both directions of the transport: the arena page group is WRITTEN by the
+    // flush, and the boot hydrate READS the file's length record before the
+    // engine opens. (Chunk reads only reach the endpoint from a cold context —
+    // one JS context keeps one page-group cache, which is the whole point of
+    // the chunked backend.)
+    expect(calls.some((call) => call.method === 'PUT' && call.url === persistenceUrl(`${enginePrefix}.fsdata#0`))).toBe(true);
+    expect(calls.some((call) => call.method === 'GET' && call.url === persistenceUrl(`${enginePrefix}.fsdata#meta`))).toBe(true);
     loaded.destroy();
   });
 

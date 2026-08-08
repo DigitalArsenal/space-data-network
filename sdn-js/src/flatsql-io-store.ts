@@ -199,9 +199,21 @@ export class FlatSqlIoRouter implements FlatSqlIoBackend {
     return this.backendFor(path).hydrate(path);
   }
 
+  /**
+   * Flush EVERY mounted backend. Correct for a whole-context shutdown and
+   * wrong for a single store's checkpoint: one node's ingest must not force
+   * another mount's transport to run (and fail — an unavailable IndexedDB
+   * mount registered by a different store would throw here). Per-store
+   * checkpoints use `flushFor(path)`.
+   */
   async flush(): Promise<void> {
     for (const entry of this.entries) await entry.backend.flush();
     await this.fallback.flush();
+  }
+
+  /** Flush only the backend that owns `path` — the per-store checkpoint. */
+  async flushFor(path: string): Promise<void> {
+    await this.backendFor(path).flush();
   }
 
   async drop(path: string): Promise<void> {
@@ -209,9 +221,15 @@ export class FlatSqlIoRouter implements FlatSqlIoBackend {
   }
 }
 
-/** The two files a durable FlatSQL database occupies in the backend namespace. */
+/**
+ * Every file a durable FlatSQL database occupies in the backend namespace:
+ * the index, the arena, and SQLite's rollback journal (journalMode TRUNCATE —
+ * WAL needs xShmMap, which no wasm lane provides). The journal is listed
+ * because a crash between `write` and `sync` leaves a HOT journal, and an open
+ * that cannot see it silently skips the rollback it exists for.
+ */
 export function flatSqlDurablePaths(dbPath: string): string[] {
-  return [dbPath, `${dbPath}.fsdata`];
+  return [dbPath, `${dbPath}.fsdata`, `${dbPath}-journal`];
 }
 
 /** Hydrate every file a database needs, before any synchronous engine call. */
@@ -234,11 +252,28 @@ export interface DurableOpenResult<TDatabase> {
   rederived: boolean;
 }
 
-interface DurableDatabase {
+/**
+ * The durable-state surface the flatsql wasm artifact exports and its published
+ * `wasm/index.d.ts` still does not declare (`openDatabase`, `openState`,
+ * `reindexAll`, `flushIndex`, `flushedOffset`, `isDiskBacked`, `streamPath` —
+ * present on both `wasm/index.js` and `wasm/standalone.js` since 1.4.0).
+ * Declared structurally here so callers type the calls they make instead of
+ * casting the engine away; drop it when upstream types them.
+ */
+export interface DurableFlatSqlDatabase {
   openState(): number;
   reindexAll(): number;
+  flushIndex(): number;
+  flushedOffset(): number;
   isDiskBacked(): boolean;
 }
+
+/** `FlatSQL.openDatabase` — same gap, same reason. */
+export interface DurableFlatSqlOpener<TDatabase> {
+  openDatabase(schema: string, dbName: string, path: string, journalMode?: number): TDatabase;
+}
+
+type DurableDatabase = Pick<DurableFlatSqlDatabase, 'openState' | 'reindexAll' | 'isDiskBacked'>;
 
 /**
  * The boot sequence, in one place so every caller performs it identically:
