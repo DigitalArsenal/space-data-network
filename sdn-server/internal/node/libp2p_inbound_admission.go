@@ -87,6 +87,37 @@ const (
 	inboundAdmissionTransientConns = 1024
 	inboundAdmissionSystemConns    = 2048
 
+	// inboundAdmissionPeerConns is the number of simultaneous inbound
+	// connections ONE remote peer identity may hold.
+	//
+	// THIS IS THE CEILING THAT BROKE THE LIVE GALLERY. go-libp2p's default is
+	// 8, and its own comment explains why: "8 for now so that it matches the
+	// number of concurrent dials we may do in swarm_dial.go". That is a sizing
+	// argument about how many addresses WE dial when reaching out — it is not
+	// an argument about how many connections a legitimate CLIENT may open to
+	// us, and it was never revisited for a node whose clients are browsers.
+	//
+	// Worse, it cannot be outgrown: PeerLimitIncrease declares no ConnsInbound
+	// and no Conns field, so rcmgr's scale() computes
+	// `8 + (0 * mebibytes)>>10` and the limit stays 8 on a 512 MB VPS and on a
+	// 512 GB server alike. Raising System and Transient ceilings — which this
+	// file already did — does nothing for it.
+	//
+	// The measured client: one browser opening the RF gallery derives ONE
+	// identity and then issues Promise.all over TEN module fetches, each of
+	// which builds its own delivery client and its own connection. The provider
+	// therefore sees ten simultaneous inbound connections from a single peer ID
+	// against a hard ceiling of eight. Measured against live prod on
+	// 2026-08-08, ten such clients lost 9-10 of 10 module-delivery streams to
+	// resets carrying StreamErrorCode 0x1002, byte-identical to the error the
+	// owner reported; at four clients the same probe was clean.
+	//
+	// 256 is sized for the real unit of work — a browser TAB — with room for a
+	// user opening several, reloading, or sitting behind a shared NAT, while
+	// remaining far below the System and Transient ceilings above so a single
+	// peer still cannot exhaust the node.
+	inboundAdmissionPeerConns = 256
+
 	// upgraderAcceptQueueLength widens how many inbound connections the libp2p
 	// upgrader negotiates concurrently (go-libp2p default 16). This is the DRAIN
 	// rate for the handoff described above: with 16, a burst of slow or junk
@@ -126,8 +157,17 @@ type inboundAdmissionReporter struct {
 	allowedOutbound atomic.Uint64
 	blockedOutbound atomic.Uint64
 
-	blockedStreams atomic.Uint64
-	blockedPeers   atomic.Uint64
+	blockedStreams       atomic.Uint64
+	blockedPeers         atomic.Uint64
+	blockedProtocols     atomic.Uint64
+	blockedProtocolPeers atomic.Uint64
+
+	// firstStreamBlockUnixNano / lastStreamLogUnixNano mirror the connection
+	// counters below for STREAM denials, which are a different failure with a
+	// different remedy: connections going dark is a total outage, streams being
+	// refused is a per-protocol budget that is too small.
+	firstStreamBlockUnixNano atomic.Int64
+	lastStreamLogUnixNano    atomic.Int64
 
 	// firstBlockUnixNano records when admission first started refusing, so the
 	// journal shows the ONSET rather than only the current state. Zero = never.
@@ -180,8 +220,67 @@ func (r *inboundAdmissionReporter) BlockConn(dir network.Direction, usefd bool) 
 
 func (r *inboundAdmissionReporter) AllowStream(_ peer.ID, _ network.Direction) {}
 
-func (r *inboundAdmissionReporter) BlockStream(_ peer.ID, _ network.Direction) {
-	r.blockedStreams.Add(1)
+// BlockStream records a stream denied at the system/transient/peer scopes.
+//
+// A blocked INBOUND stream is logged at ERROR for the same reason a blocked
+// connection is: go-libp2p answers it by resetting the stream with
+// StreamErrorCode 0x1002, and the client sees a bare "stream reset" that is
+// indistinguishable from a network fault. Three separate investigations
+// attributed this node's resets to the network before the code was read; the
+// node has always known the answer and never said it.
+func (r *inboundAdmissionReporter) BlockStream(p peer.ID, dir network.Direction) {
+	n := r.blockedStreams.Add(1)
+	if dir != network.DirInbound {
+		return
+	}
+	r.logStreamDenial(n, "peer/system scope", string(p))
+}
+
+// BlockProtocolPeer records a stream denied at the per-protocol-per-peer scope.
+//
+// This is the denial that produced the reported defect and it was previously
+// dropped on the floor entirely — the method existed only to satisfy the
+// interface. It is also the most actionable one, because it names the protocol
+// whose budget is too small.
+func (r *inboundAdmissionReporter) BlockProtocolPeer(proto protocol.ID, p peer.ID) {
+	n := r.blockedProtocolPeers.Add(1)
+	r.logStreamDenial(n, "protocol-peer scope for "+string(proto), string(p))
+}
+
+// BlockProtocol records a stream denied at the whole-protocol scope.
+func (r *inboundAdmissionReporter) BlockProtocol(proto protocol.ID) {
+	n := r.blockedProtocols.Add(1)
+	r.logStreamDenial(n, "protocol scope for "+string(proto), "")
+}
+
+// logStreamDenial emits a throttled, self-explaining denial line. Throttled for
+// the same reason connection denials are: under a flood, per-event logging is
+// itself an outage amplifier.
+func (r *inboundAdmissionReporter) logStreamDenial(count uint64, scope string, remote string) {
+	now := time.Now()
+	r.firstStreamBlockUnixNano.CompareAndSwap(0, now.UnixNano())
+	last := r.lastStreamLogUnixNano.Load()
+	if count != 1 && now.UnixNano()-last < int64(inboundAdmissionLogInterval) {
+		return
+	}
+	if !r.lastStreamLogUnixNano.CompareAndSwap(last, now.UnixNano()) {
+		return
+	}
+	since := time.Duration(0)
+	if first := r.firstStreamBlockUnixNano.Load(); first != 0 {
+		since = now.Sub(time.Unix(0, first)).Truncate(time.Second)
+	}
+	peerNote := ""
+	if remote != "" {
+		peerNote = " remote=" + remote
+	}
+	log.Errorf(
+		"INBOUND STREAM REFUSED by the resource manager at the %s%s: %d denied (refusing for %s). "+
+			"go-libp2p answers this by RESETTING the stream with code 0x1002 (StreamResourceLimitExceeded), so the "+
+			"client sees a bare \"stream reset\" and will blame the network. Raise the limit for this scope — see "+
+			"applyModuleDeliveryResourceLimits — or shed the load that is consuming it.",
+		scope, peerNote, count, since,
+	)
 }
 
 func (r *inboundAdmissionReporter) AllowPeer(_ peer.ID) {}
@@ -189,10 +288,6 @@ func (r *inboundAdmissionReporter) AllowPeer(_ peer.ID) {}
 func (r *inboundAdmissionReporter) BlockPeer(_ peer.ID) { r.blockedPeers.Add(1) }
 
 func (r *inboundAdmissionReporter) AllowProtocol(_ protocol.ID) {}
-
-func (r *inboundAdmissionReporter) BlockProtocol(_ protocol.ID) {}
-
-func (r *inboundAdmissionReporter) BlockProtocolPeer(_ protocol.ID, _ peer.ID) {}
 
 func (r *inboundAdmissionReporter) AllowService(_ string) {}
 
@@ -214,21 +309,33 @@ type InboundAdmissionStats struct {
 	BlockedOutbound uint64 `json:"blocked_outbound"`
 	BlockedStreams  uint64 `json:"blocked_streams"`
 	BlockedPeers    uint64 `json:"blocked_peers"`
+	// BlockedProtocols / BlockedProtocolPeers are stream denials attributed to
+	// a protocol budget. These are the ones that surface to a client as a bare
+	// "stream reset" on an otherwise healthy node.
+	BlockedProtocols     uint64 `json:"blocked_protocols"`
+	BlockedProtocolPeers uint64 `json:"blocked_protocol_peers"`
 	// RefusingSince is how long inbound admission has been refusing, or 0.
 	RefusingSinceSeconds float64 `json:"refusing_since_seconds"`
+	// StreamRefusingSinceSeconds is the same for STREAM denials, or 0.
+	StreamRefusingSinceSeconds float64 `json:"stream_refusing_since_seconds"`
 }
 
 func (r *inboundAdmissionReporter) Snapshot() InboundAdmissionStats {
 	s := InboundAdmissionStats{
-		AllowedInbound:  r.allowedInbound.Load(),
-		BlockedInbound:  r.blockedInbound.Load(),
-		AllowedOutbound: r.allowedOutbound.Load(),
-		BlockedOutbound: r.blockedOutbound.Load(),
-		BlockedStreams:  r.blockedStreams.Load(),
-		BlockedPeers:    r.blockedPeers.Load(),
+		AllowedInbound:       r.allowedInbound.Load(),
+		BlockedInbound:       r.blockedInbound.Load(),
+		AllowedOutbound:      r.allowedOutbound.Load(),
+		BlockedOutbound:      r.blockedOutbound.Load(),
+		BlockedStreams:       r.blockedStreams.Load(),
+		BlockedPeers:         r.blockedPeers.Load(),
+		BlockedProtocols:     r.blockedProtocols.Load(),
+		BlockedProtocolPeers: r.blockedProtocolPeers.Load(),
 	}
 	if first := r.firstBlockUnixNano.Load(); first != 0 {
 		s.RefusingSinceSeconds = time.Since(time.Unix(0, first)).Seconds()
+	}
+	if first := r.firstStreamBlockUnixNano.Load(); first != 0 {
+		s.StreamRefusingSinceSeconds = time.Since(time.Unix(0, first)).Seconds()
 	}
 	return s
 }

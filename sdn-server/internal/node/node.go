@@ -291,10 +291,81 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 // protocol ("/ipfs/kad/1.0.0") rather than a private "/spacedatanetwork"
 // swarm. Factored out so tests can assert the resulting protocol
 // configuration without standing up a full Node.
-func publicDHTOptions() []dht.Option {
-	return []dht.Option{
-		dht.Mode(dht.ModeAutoServer),
+//
+// MODE IS NOT COSMETIC. ModeAutoServer was hardcoded here until 2026-08-08 and
+// made every SDN node a SERVER for the public Amino DHT — answering routing
+// queries for the whole IPFS network. Measured consequence on host-01
+// (2 vCPU, whose only job is module delivery): 780 inbound connections from
+// ~700 distinct internet IPs, 2105 kad-dht handler warnings in 70 minutes, and
+// the daemon pinned at 98.5% CPU. Concurrent module-delivery streams then lost
+// the race for scheduler time and rcmgr headroom and were reset with
+// StreamErrorCode 0x1002 (StreamResourceLimitExceeded), which is the "stream
+// reset" browsers reported on their FIRST attempt.
+//
+// ModeClient keeps every capability this node actually uses: it still QUERIES
+// the DHT and still PROVIDES its own records, so module-delivery provider
+// discovery is unchanged. It only stops serving strangers' lookups.
+func publicDHTOptions(server bool) []dht.Option {
+	mode := dht.ModeClient
+	if server {
+		mode = dht.ModeAutoServer
 	}
+	return []dht.Option{
+		dht.Mode(mode),
+	}
+}
+
+// announceAddrsFactory builds a libp2p AddrsFactory that APPENDS operator-set
+// announce addresses to whatever the host actually bound.
+//
+// This exists because this node's browser-reachable address is not a libp2p
+// listener at all: TLS terminates on the node's own :443 HTTPS server, which
+// reverse-proxies /p2p/<peerid> websocket upgrades to the loopback libp2p
+// listener. libp2p cannot infer that, so a node fronted by TLS advertised only
+// its plain `/ws` addresses — which a browser on an HTTPS origin may not dial
+// (mixed content) and which every client therefore discards before dialing.
+//
+// Returns (nil, nil) when nothing is configured, so the host keeps go-libp2p's
+// default address behaviour untouched.
+func announceAddrsFactory(announce []string) (func([]multiaddr.Multiaddr) []multiaddr.Multiaddr, []string) {
+	extra := make([]multiaddr.Multiaddr, 0, len(announce))
+	rendered := make([]string, 0, len(announce))
+	for _, entry := range announce {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		ma, err := multiaddr.NewMultiaddr(trimmed)
+		if err != nil {
+			// Refusing to advertise a malformed address is right, but going
+			// silent about it is how a node ends up unreachable with a clean
+			// log. Announce addresses are the ONLY browser-dialable path on a
+			// TLS-fronted node, so a typo here is an outage.
+			log.Errorf("network.announce entry %q is not a valid multiaddr and will NOT be advertised: %v", trimmed, err)
+			continue
+		}
+		extra = append(extra, ma)
+		rendered = append(rendered, trimmed)
+	}
+	if len(extra) == 0 {
+		return nil, nil
+	}
+	return func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+		out := make([]multiaddr.Multiaddr, 0, len(addrs)+len(extra))
+		seen := make(map[string]struct{}, len(addrs)+len(extra))
+		for _, a := range append(append([]multiaddr.Multiaddr{}, addrs...), extra...) {
+			if a == nil {
+				continue
+			}
+			key := a.String()
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, a)
+		}
+		return out
+	}, rendered
 }
 
 func (n *Node) init() error {
@@ -565,6 +636,23 @@ func (n *Node) init() error {
 		libp2p.UserAgent(versioninfo.AgentVersion),
 		libp2p.ListenAddrs(listenAddrs...),
 	}, hostTransportOptions(autoTLSTLSConfig)...)
+	// Donated public relay service: OPT-IN. `network.enable_relay` was declared
+	// and never read, so host-01's `enable_relay: false` bought nothing and the
+	// delivery sidecar advertised /libp2p/circuit/relay/0.2.0/hop to the open
+	// internet. Honour the operator's setting.
+	if n.config.Network.EnableRelay {
+		hostOptions = append(hostOptions, libp2p.EnableRelayService())
+		log.Warnf(
+			"Circuit-relay HOP service ENABLED (network.enable_relay: true): this node will relay traffic for arbitrary peers. " +
+				"That is donated CPU and bandwidth — disable it on any box whose job is serving its own protocols.",
+		)
+	} else {
+		log.Infof("Circuit-relay HOP service disabled (network.enable_relay: false); this node can still dial THROUGH relays")
+	}
+	if announceFactory, announced := announceAddrsFactory(n.config.Network.Announce); announceFactory != nil {
+		hostOptions = append(hostOptions, libp2p.AddrsFactory(announceFactory))
+		log.Infof("Advertising %d configured announce address(es): %s", len(announced), strings.Join(announced, ", "))
+	}
 	if autoTLSCertMgr != nil {
 		// Rewrites the wildcard SNI listen address into the concrete
 		// `<ip-with-dashes>.<peerid>.libp2p.direct` address this node
@@ -580,8 +668,10 @@ func (n *Node) init() error {
 		libp2p.ConnectionGater(n.peerGater), // Trust-based connection gating
 		libp2p.ResourceManager(resourceManager),
 		libp2p.EnableHolePunching(),
+		// CLIENT side only: this node may always DIAL through someone else's
+		// relay. Serving as a relay for strangers is the separate, config-gated
+		// decision immediately below.
 		libp2p.EnableRelay(),
-		libp2p.EnableRelayService(),
 		libp2p.EnableAutoRelayWithPeerSource(
 			func(ctx context.Context, _ int) <-chan peer.AddrInfo {
 				return n.autoRelayPeerChan
@@ -590,7 +680,7 @@ func (n *Node) init() error {
 		),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			var err error
-			dhtRouting, err = dht.New(n.ctx, h, publicDHTOptions()...)
+			dhtRouting, err = dht.New(n.ctx, h, publicDHTOptions(n.config.Network.DHTServer)...)
 			return dhtRouting, err
 		}),
 		libp2p.NATPortMap(),
