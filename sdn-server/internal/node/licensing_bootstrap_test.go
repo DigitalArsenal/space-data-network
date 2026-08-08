@@ -60,8 +60,15 @@ func TestCatalogPublicationAssetsIncludesLicensingRuntimeModule(t *testing.T) {
 func TestBootstrapLicensingModulePublishesCatalogModulesAndHandlesChallenge(t *testing.T) {
 	t.Parallel()
 
-	reg := writeTestPluginRegistry(
+	// The grant policy is load-bearing, not decoration. 23680234 made the admit
+	// point fail closed, so with the default allowlist-over-an-empty-list this
+	// module is never PUBLISHED and every challenge below answers
+	// module_not_found — which reads as a challenge failure and is actually an
+	// admit-point refusal. This test is about the challenge handshake, so the
+	// module has to be grantable first.
+	reg := writeTestPluginRegistryWithGrantPolicy(
 		t,
+		&license.GrantPolicyConfig{DefaultPolicy: license.GrantPolicyOpen},
 		license.PluginCatalogEntry{
 			ID:                "com.orbpro.sgp4",
 			Version:           "1.0.0",
