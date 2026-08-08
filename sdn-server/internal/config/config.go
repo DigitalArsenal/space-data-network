@@ -998,6 +998,20 @@ type StorageConfig struct {
 	// cursors keep the full history. 0 = built-in default (400K records,
 	// sized against the engine's 4 GiB wasm32 ceiling).
 	EngineHotWindow int `yaml:"engine_hot_window,omitempty"`
+
+	// AuxiliaryReplayChunkBytes bounds ONE auxiliary-journal replay
+	// transaction in BYTES as well as in frames. Without a byte bound a
+	// 512-frame chunk is unbounded in size: 512 directory rows and 512
+	// multi-megabyte payloads were the same "chunk" (b6c21e87). The bound
+	// itself already ships with a built-in default; this is the operator
+	// knob for the boxes where the default is the wrong number — a
+	// 1-vCPU/2GB ingest box wants it smaller, a fat box replaying a long
+	// journal wants it bigger.
+	//
+	// 0 = built-in default (8 MiB, storage.WithAuxiliaryReplayChunkBytes).
+	// A single frame larger than the budget is still applied whole: frames
+	// are never split, so no value of this knob can wedge a replay.
+	AuxiliaryReplayChunkBytes int64 `yaml:"auxiliary_replay_chunk_bytes,omitempty"`
 }
 
 // DefaultStorageMaxSizePercent is the disk-quota percentage StorageConfig
