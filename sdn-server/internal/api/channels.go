@@ -76,6 +76,11 @@ type ChannelHandlerOptions struct {
 	ActivityRing *caps.ActivityRing
 }
 
+// datasetPublicationPNMSchemaName is the store schema the dataset-publication
+// lane writes its $PNM envelopes under (dataset_publication.go:686). The head
+// route reads them back by CID.
+const datasetPublicationPNMSchemaName = "PNM.fbs"
+
 const (
 	ChannelAuditStreamSubscribe = "stream_subscribe"
 	ChannelAuditStreamOpen      = "stream_open"
@@ -233,6 +238,7 @@ func (h *ChannelHandler) handleCollection(w http.ResponseWriter, r *http.Request
 			results = append(results, channelListRow(code))
 		}
 	}
+	seen := make(map[string]struct{})
 	for _, metadata := range h.restoreVerifiedDatasetPublicationMetadataList(standardFilter) {
 		parsed, err := channels.ParseChannelID(metadata.ChannelID)
 		if err != nil {
@@ -240,6 +246,20 @@ func (h *ChannelHandler) handleCollection(w http.ResponseWriter, r *http.Request
 		}
 		row := h.channelDetail(parsed)
 		row["topic"] = channels.DiscoveryTopic(parsed.StandardCode)
+		seen[metadata.ChannelID] = struct{}{}
+		results = append(results, row)
+	}
+	// Publication-derived channels. This is what makes the collection USABLE as
+	// a discovery surface: a consumer that does not already know a channel id
+	// cannot guess whether $RFB is published as satnogs-db-RFB or under the
+	// relaying node's provider id. Sourced from sdn_dataset_shard_publications
+	// (small, indexed) so it costs nothing like the ledger sweep above.
+	for _, row := range h.datasetPublicationChannelRows(standardFilter) {
+		channelID, _ := row["channelId"].(string)
+		if _, ok := seen[channelID]; ok {
+			continue
+		}
+		seen[channelID] = struct{}{}
 		results = append(results, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -642,12 +662,227 @@ func (h *ChannelHandler) getPNM(w http.ResponseWriter, r *http.Request, parsed c
 	}
 	metadata, verified := h.metadata.Get(parsed)
 	if !verified || len(metadata.PNMBytes) == 0 {
-		writeError(w, http.StatusNotFound, "verified PNM unavailable for channel")
-		return
+		// The in-memory registry only carries PNM bytes for publications this
+		// PROCESS witnessed. A restarted node — or a consumer node that only
+		// ever replicated somebody else's publication — has none, which is why
+		// this route answered 404 for every published channel on prod. Fall
+		// back to the node's own durable publication record. Two indexed reads,
+		// no store scan: see restoreVerifiedPNMFromDatasetPublication.
+		restored, ok := h.restoreVerifiedPNMFromDatasetPublication(parsed)
+		if !ok {
+			writeError(w, http.StatusNotFound, "verified PNM unavailable for channel")
+			return
+		}
+		metadata = restored
 	}
 	w.Header().Set("Content-Type", "application/vnd.sdn.pnm")
+	// The head token is content-addressed: the same PNM CID always means the
+	// same bytes, so a consumer that already holds this head can skip the body.
+	if cid := strings.TrimSpace(metadata.PNMCID); cid != "" {
+		w.Header().Set("ETag", `"`+cid+`"`)
+	}
+	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(metadata.PNMBytes)
+}
+
+// restoreVerifiedPNMFromDatasetPublication rebuilds a channel's verified $PNM
+// head from durable state when the in-memory registry has none.
+//
+// Cost contract (this route is a browser catch-up token — it must be fast and
+// must never scan the record store):
+//
+//  1. one indexed lookup in sdn_dataset_shard_publications, a table with one
+//     row per published window (28 rows on prod), for the newest publication
+//     of this channel that carries a PNM CID;
+//  2. one record read BY CID for the $PNM itself (520 B on prod).
+//
+// It deliberately does NOT use restoreVerifiedDatasetPublicationMetadata:
+// that path goes through LocalReplicaStats, which counts every raw record in
+// the schema — the same cost that makes /api/v1/channels hang.
+//
+// Trust: the bytes are only served when the $PNM envelope verifies
+// structurally AND its CID equals the manifest CID recorded in the node's own
+// publication row. That row is written either by this node's own publication
+// lane or by materializeDatasetFeedHeadAnnouncement, which admits publications
+// only from peers that pass peerRegistry.IsTrusted. Because the PNM is fetched
+// BY the CID that row names, no substitution is possible without breaking the
+// content address. Full provider-signature verification stays where the key
+// lives (the materialization lane, node.go:3857); this route re-checks the
+// binding, it does not invent a new trust anchor.
+func (h *ChannelHandler) restoreVerifiedPNMFromDatasetPublication(parsed channels.ChannelID) (channels.VerifiedMetadata, bool) {
+	if h == nil || h.store == nil {
+		return channels.VerifiedMetadata{}, false
+	}
+	publication, ok := h.latestDatasetPublicationForChannel(parsed)
+	if !ok || strings.TrimSpace(publication.PNMCID) == "" {
+		return channels.VerifiedMetadata{}, false
+	}
+	record, err := h.store.GetRecord(datasetPublicationPNMSchemaName, publication.PNMCID)
+	if err != nil || record == nil || len(record.Data) == 0 {
+		return channels.VerifiedMetadata{}, false
+	}
+	evidence, err := channels.VerifySignedPNMEnvelope(record.Data)
+	if err != nil {
+		return channels.VerifiedMetadata{}, false
+	}
+	// Bind the envelope to the publication the node itself recorded. A $PNM
+	// whose CID does not name that manifest is not this channel's head.
+	if manifestCID := strings.TrimSpace(publication.ManifestCID); manifestCID != "" &&
+		manifestCID != strings.TrimSpace(evidence.CID) {
+		return channels.VerifiedMetadata{}, false
+	}
+	verifiedAt := publication.PublishedAt
+	if verifiedAt.IsZero() {
+		verifiedAt = record.Timestamp
+	}
+	return h.metadata.RecordRestored(channels.VerifiedMetadata{
+		ChannelID:       parsed.ChannelID,
+		ChannelHead:     strings.TrimSpace(publication.FeedHead),
+		PNMCID:          strings.TrimSpace(evidence.CID),
+		PNMBytes:        record.Data,
+		PNMFileID:       evidence.FileID,
+		SignatureType:   evidence.SignatureType,
+		VerifiedAt:      verifiedAt,
+		ProviderPeer:    strings.TrimSpace(record.PeerID),
+		Visibility:      "public",
+		EncryptionState: "none",
+		LocalRows:       publication.RecordCount,
+		RemoteRows:      publication.RecordCount,
+		SyncedRows:      publication.RecordCount,
+		PinnedRows:      publication.RecordCount,
+		PinnedBytes:     publication.ByteCount,
+		SyncedBytes:     publication.ByteCount,
+	}), true
+}
+
+// latestDatasetPublicationForChannel returns the newest publication whose
+// source identity addresses this channel.
+//
+// A channel id is "<sourceID>-<STANDARD>". On the node that PUBLISHES, the
+// source id is the lane's source_name (satnogs-db-RFB). On a node that
+// REPLICATED that publication, the row also carries the relaying node's
+// provider_id, and datasetPublicationSourceID prefers provider_id — so the
+// same data would be addressed as space-data-network-02-RFB there. Both name
+// the same channel, so both resolve here. Consumers (and the $RFB gallery
+// cache) address channels by the DATA source, which is the stable half.
+func (h *ChannelHandler) latestDatasetPublicationForChannel(parsed channels.ChannelID) (storage.DatasetShardPublication, bool) {
+	if h == nil || h.store == nil {
+		return storage.DatasetShardPublication{}, false
+	}
+	schemaName, err := channels.SchemaNameFromStandardCode(parsed.StandardCode)
+	if err != nil {
+		return storage.DatasetShardPublication{}, false
+	}
+	publications, err := h.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   schemaName,
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		return storage.DatasetShardPublication{}, false
+	}
+	var newest storage.DatasetShardPublication
+	found := false
+	for _, publication := range publications {
+		if !datasetPublicationAddressesChannelSource(publication, parsed.SourceID) {
+			continue
+		}
+		if strings.TrimSpace(publication.PNMCID) == "" {
+			continue
+		}
+		if !found || publication.PublishedAt.After(newest.PublishedAt) {
+			newest = publication
+			found = true
+		}
+	}
+	return newest, found
+}
+
+// datasetPublicationChannelRows lists every channel this node can serve a head
+// for, derived from sdn_dataset_shard_publications alone.
+//
+// This is the discovery half of the head lane: without it a consumer must
+// GUESS the channel id (the $RFB gallery guessed satnogs-db-RFB, satnogs-RFB
+// and celestrak-RFB in turn). Cost is one indexed lookup per schema on a table
+// with one row per published window — it never touches the record store.
+func (h *ChannelHandler) datasetPublicationChannelRows(standardFilter string) []map[string]interface{} {
+	if h == nil || h.store == nil {
+		return nil
+	}
+	standardFilter = strings.TrimSpace(standardFilter)
+	schemaNames := sds.SupportedSchemas
+	if standardFilter != "" {
+		schemaName, err := channels.SchemaNameFromStandardCode(standardFilter)
+		if err != nil {
+			return nil
+		}
+		schemaNames = []string{schemaName}
+	}
+	rows := make([]map[string]interface{}, 0)
+	seen := make(map[string]struct{})
+	for _, schemaName := range schemaNames {
+		standardCode, err := channels.StandardCodeFromSchemaName(schemaName)
+		if err != nil {
+			continue
+		}
+		publications, err := h.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+			SchemaName:   schemaName,
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+		})
+		if err != nil {
+			continue
+		}
+		for _, publication := range publications {
+			sourceID := datasetPublicationSourceID(publication.ProviderID, publication.SourceName)
+			for _, candidate := range []string{sourceID, strings.TrimSpace(publication.SourceName)} {
+				if candidate == "" {
+					continue
+				}
+				channelID, err := channels.FormatChannelID(channels.ChannelIDInput{
+					SourceID:     candidate,
+					StandardCode: standardCode,
+				})
+				if err != nil {
+					continue
+				}
+				if _, ok := seen[channelID]; ok {
+					continue
+				}
+				parsed, err := channels.ParseChannelID(channelID)
+				if err != nil {
+					continue
+				}
+				seen[channelID] = struct{}{}
+				row := h.channelDetail(parsed)
+				row["topic"] = channels.DiscoveryTopic(standardCode)
+				row["channelHead"] = emptyStringAsNil(strings.TrimSpace(publication.FeedHead))
+				row["headAvailable"] = strings.TrimSpace(publication.PNMCID) != ""
+				rows = append(rows, row)
+			}
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		left, _ := rows[i]["channelId"].(string)
+		right, _ := rows[j]["channelId"].(string)
+		return left < right
+	})
+	return rows
+}
+
+// datasetPublicationAddressesChannelSource reports whether a publication row
+// belongs to the channel addressed by sourceID. The canonical id is the one
+// datasetPublicationSourceID derives; the data source_name is accepted as an
+// equal alias so a replicated publication stays addressable by the source that
+// produced it rather than by whichever node relayed it.
+func datasetPublicationAddressesChannelSource(publication storage.DatasetShardPublication, sourceID string) bool {
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" {
+		return false
+	}
+	if datasetPublicationSourceID(publication.ProviderID, publication.SourceName) == sourceID {
+		return true
+	}
+	return strings.TrimSpace(publication.SourceName) == sourceID
 }
 
 func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID, body []byte) {
@@ -1728,13 +1963,36 @@ func (h *ChannelHandler) verifiedChannelMetadata(parsed channels.ChannelID) (cha
 	}
 	metadata, ok := h.restoreVerifiedDatasetPublicationMetadata(parsed)
 	if !ok {
-		return channels.VerifiedMetadata{}, false
+		// Same durable fallback the $PNM head route uses: a channel whose head
+		// is served must not read as unverified in its own detail row.
+		return h.restoreVerifiedPNMFromDatasetPublication(parsed)
 	}
 	return h.metadata.RecordRestored(metadata), true
 }
 
+// hasVerifiedPNMPinLedgerEvidence reports whether the pin ledger holds any
+// verified pnm-role entry at all. sdn_pin_ledger is a small, indexed table
+// (one row per pinned artifact); this is the cheap precondition for the
+// LocalReplicaStats sweeps that restore channel metadata from it.
+func (h *ChannelHandler) hasVerifiedPNMPinLedgerEvidence() bool {
+	if h == nil || h.store == nil {
+		return false
+	}
+	entries, err := h.store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		Role:              "pnm",
+		VerificationState: "verified",
+	})
+	if err != nil {
+		return false
+	}
+	return len(entries) > 0
+}
+
 func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadata(parsed channels.ChannelID) (channels.VerifiedMetadata, bool) {
 	if h == nil || h.store == nil {
+		return channels.VerifiedMetadata{}, false
+	}
+	if !h.hasVerifiedPNMPinLedgerEvidence() {
 		return channels.VerifiedMetadata{}, false
 	}
 	schemaName, err := channels.SchemaNameFromStandardCode(parsed.StandardCode)
@@ -1771,6 +2029,19 @@ func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadata(parsed channe
 
 func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadataList(standardFilter string) []channels.VerifiedMetadata {
 	if h == nil || h.store == nil {
+		return nil
+	}
+	// COST GUARD. Every schema iterated below pays a LocalReplicaStats call,
+	// and LocalReplicaStats counts every raw record in the schema
+	// (pin_ledger.go localReplicaRawStats -> CountRawRecords + RawRecordHead).
+	// Across ~40 supported schemas that is the reason GET /api/v1/channels
+	// returned nothing in 60 s on prod. Every row this loop can produce needs a
+	// VERIFIED pnm-role pin-ledger entry (restoreVerifiedDatasetPublicationMetadataFromStat),
+	// so when the ledger holds none the whole sweep is provably empty — one
+	// cheap indexed probe on a small table decides it. Prod's ledger is empty
+	// (0 rows, verified 2026-08-08 on host-01), so this collapses the hang to a
+	// single query without changing the answer anywhere the ledger is populated.
+	if !h.hasVerifiedPNMPinLedgerEvidence() {
 		return nil
 	}
 	standardFilter = strings.TrimSpace(standardFilter)
