@@ -59,7 +59,7 @@ func planFor(t *testing.T, root string) catalogPublicationPlan {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return planCatalogPublication(reg)
+	return planCatalogPublication(reg, nil)
 }
 
 func admitted(plan catalogPublicationPlan, id string) bool {
