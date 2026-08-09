@@ -15,10 +15,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
+
+var log = logging.Logger("flatsqlrt")
 
 // The embedded engine is the NO-EXCEPTIONS WASI build (flatsql_wasi_noeh
 // CMake target): identical sources and exports to flatsql-wasi.wasm, but
@@ -163,6 +167,12 @@ type Runtime struct {
 	// the runtime was created without WithFileIORoot, in which case the imports
 	// are registered but refuse (see refusingHostFuncs).
 	io *HostIO
+
+	// Statement account for the single engine lock — see accountQuery.
+	statQueries   atomic.Int64
+	statSlow      atomic.Int64
+	statWaitNanos atomic.Int64
+	statHeldNanos atomic.Int64
 }
 
 // FileIO returns this runtime's host file layer, or nil when the engine was
@@ -901,12 +911,86 @@ func (d *Database) Query(sql string, params ...interface{}) (*Result, error) {
 	if err := d.rt.checkUsable("query"); err != nil {
 		return nil, err
 	}
+	queued := time.Now()
 	d.rt.mod.Lock()
-	defer d.rt.mod.Unlock()
+	waited := time.Since(queued)
+	started := time.Now()
+	defer func() {
+		d.rt.mod.Unlock()
+		d.rt.accountQuery(sql, waited, time.Since(started))
+	}()
 	if err := d.execQuery(sql, params); err != nil {
 		return nil, err
 	}
 	return d.readCurrentResult()
+}
+
+// slowQueryThreshold is when a single engine statement becomes evidence
+// instead of noise.
+//
+// THE INSTRUMENT THAT WAS MISSING. Three P1 latency tasks
+// (sdn-pin-ledger-probe-costs-76-seconds, sdn-record-by-cid-read-12-to-29-seconds,
+// sdn-flatsql-engine-read-queue-seconds-per-call) all reduced to ONE defect —
+// a read source that full-scanned two 250k-row tables — and none of them could
+// see it, because the engine reported nothing about what it was executing or
+// how long anything waited. The daemon spent 96 % of a 2-vCPU box re-reading the
+// same 10,534 pages and the only visible symptom was "the API is slow".
+//
+// The engine is ONE single-threaded instance behind ONE lock, so a statement
+// that takes a second does not cost one request a second — it costs EVERY
+// concurrent request a second. That makes the two numbers below the ones worth
+// printing: how long this statement waited for the engine, and how long it then
+// held it. Both are needed: a long WAIT names a victim, a long HOLD names a
+// culprit.
+//
+// Override with SDN_FLATSQL_SLOW_QUERY_MS; 0 disables.
+var slowQueryThreshold = func() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("SDN_FLATSQL_SLOW_QUERY_MS")); v != "" {
+		var ms int64
+		if _, err := fmt.Sscanf(v, "%d", &ms); err == nil {
+			if ms <= 0 {
+				return 0
+			}
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return 250 * time.Millisecond
+}()
+
+// Stats returns the engine's cumulative statement account: how many statements
+// ran, how many were slow, how long callers spent WAITING for the engine lock,
+// and how long they HELD it. Cheap enough to be always on (four atomic adds per
+// statement) and the only way to tell a saturated engine from a slow handler.
+func (r *Runtime) Stats() (queries, slow int64, totalWait, totalHeld time.Duration) {
+	return r.statQueries.Load(), r.statSlow.Load(),
+		time.Duration(r.statWaitNanos.Load()), time.Duration(r.statHeldNanos.Load())
+}
+
+// accountQuery records one statement and logs it when it crossed the slow
+// threshold on EITHER axis. The SQL is logged whole: these statements are
+// composed by the storage layer, and the composition (a union read source, a
+// window, a join) is precisely the thing that has to be identifiable.
+func (r *Runtime) accountQuery(sql string, waited, held time.Duration) {
+	r.statQueries.Add(1)
+	r.statWaitNanos.Add(int64(waited))
+	r.statHeldNanos.Add(int64(held))
+	if slowQueryThreshold <= 0 || (waited < slowQueryThreshold && held < slowQueryThreshold) {
+		return
+	}
+	r.statSlow.Add(1)
+	log.Warnf("FlatSQL slow statement: held %s, waited %s for the engine lock — the engine is single-threaded, so this cost EVERY concurrent reader the same wait. SQL: %s",
+		held.Round(time.Millisecond), waited.Round(time.Millisecond), collapseSQL(sql))
+}
+
+// collapseSQL squeezes a composed statement onto one log line without losing
+// the table names, which are the whole point of logging it.
+func collapseSQL(sql string) string {
+	s := strings.Join(strings.Fields(sql), " ")
+	const max = 1200
+	if len(s) > max {
+		return s[:max] + " …(truncated)"
+	}
+	return s
 }
 
 // execQuery runs flatsql_query or flatsql_query_params. Lock must be held.

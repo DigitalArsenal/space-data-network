@@ -2636,7 +2636,9 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 	}
 	// The source-tags path reads record rowid/bytes back through the union
 	// read source (computed after the routed table exists).
-	readSource, err := s.recordReadSource(schemaName)
+	// FILTERED read source: upsertSourceTagsTx looks the record up BY CID once
+	// per record, inside the ingest write lock. See recordReadSourceFiltered.
+	readSource, err := s.recordReadSourceFiltered(schemaName, "cid = ?1")
 	if err != nil {
 		return 0, fmt.Errorf("record read source: %w", err)
 	}
@@ -2748,7 +2750,9 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 
 	// Record rowid/bytes are read back through the union read source (routed
 	// tables + legacy when present).
-	readSource, err := s.recordReadSource(schemaName)
+	// FILTERED read source: upsertSourceTagsTx looks the record up BY CID once
+	// per record, inside the ingest write lock. See recordReadSourceFiltered.
+	readSource, err := s.recordReadSourceFiltered(schemaName, "cid = ?1")
 	if err != nil {
 		return fmt.Errorf("record read source: %w", err)
 	}
@@ -2847,7 +2851,10 @@ func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags Sour
 	bytesTotal := recordBytes
 	var storedRowID sql.NullInt64
 	var storedBytes sql.NullInt64
-	if err := tx.QueryRow(fmt.Sprintf(`SELECT rowid, record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&storedRowID, &storedBytes); err != nil {
+	// tableName is a FILTERED read source (recordReadSourceFiltered with
+	// `cid = ?1`) — same reason as mirrorRoutedRecordFromExisting: this runs
+	// once per record inside the ingest write lock.
+	if err := tx.QueryRow(fmt.Sprintf(`SELECT rowid, record_length FROM %s WHERE cid = ?1`, tableName), cid).Scan(&storedRowID, &storedBytes); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("lookup source-tagged record metadata: %w", err)
 		}
@@ -3519,13 +3526,13 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	}
 	defer tx.Rollback()
 
-	readSource, rsErr := s.recordReadSource(schemaName)
+	readSource, rsErr := s.recordReadSourceFiltered(schemaName, "cid = ?1")
 	if rsErr != nil {
 		return fmt.Errorf("record read source: %w", rsErr)
 	}
 	var recordBytes sql.NullInt64
 	var recordRowID sql.NullInt64
-	if err := tx.QueryRow(fmt.Sprintf(`SELECT rowid, record_length FROM %s WHERE cid = ?`, readSource), cid).Scan(&recordRowID, &recordBytes); err != nil {
+	if err := tx.QueryRow(fmt.Sprintf(`SELECT rowid, record_length FROM %s WHERE cid = ?1`, readSource), cid).Scan(&recordRowID, &recordBytes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("not found: %s", cid)
 		}
@@ -6626,14 +6633,21 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	readSource, err := s.recordReadSource(schemaName)
+	// The cid predicate is inlined into EVERY union branch, not just applied to
+	// the union's result: SQLite cannot push it through the read source's
+	// `GROUP BY cid`, so the outer-only form full-scans every (producer,
+	// standard) table on every record read. That scan is what saturated
+	// host-01's single-threaded engine and put SECONDS of queue in front of
+	// every other store read — see recordReadSourceFiltered for the
+	// measurements and the two graph tasks it closes.
+	readSource, err := s.recordReadSourceFiltered(schemaName, "cid = ?1")
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
 
 	querySQL := fmt.Sprintf(`
 		SELECT cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex
-		FROM %s WHERE cid = ?
+		FROM %s WHERE cid = ?1
 	`, readSource)
 
 	var record Record
