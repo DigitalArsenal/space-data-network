@@ -37,6 +37,12 @@ type HelperPlanOptions struct {
 	// apart.
 	Trigger     string
 	SignalKeyID string
+	// AdminCAFile is the certificate the daemon serves, handed to the helper so
+	// its loopback handshake and health gate verify against the RUNNING
+	// daemon's own anchor instead of re-deriving one from an ambient
+	// environment. See helperLoopbackTransport for the live failure that made
+	// this explicit.
+	AdminCAFile string
 }
 
 type HelperPlan struct {
@@ -90,6 +96,9 @@ func PrepareHelperPlan(opts HelperPlanOptions) (*HelperPlan, error) {
 	}
 	if keyID := strings.TrimSpace(opts.SignalKeyID); keyID != "" {
 		args = append(args, "--signal-key-id", keyID)
+	}
+	if ca := strings.TrimSpace(opts.AdminCAFile); ca != "" {
+		args = append(args, "--admin-ca", ca)
 	}
 	if len(opts.RestartArgv) == 0 && (strings.TrimSpace(opts.AdminURL) == "" || strings.TrimSpace(opts.Token) == "") {
 		args = append(args, "--no-restart")

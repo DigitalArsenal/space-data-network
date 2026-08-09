@@ -83,6 +83,9 @@ type SelfUpgradeOptions struct {
 	// operator who ran `update install`.
 	Trigger     string
 	SignalKeyID string
+	// AdminCAFile is the certificate the daemon serves; see
+	// HelperPlanOptions.AdminCAFile.
+	AdminCAFile string
 	// UnitPrefix names the transient systemd unit. Defaults to
 	// "sdn-self-upgrade".
 	UnitPrefix string
@@ -193,6 +196,7 @@ func LaunchSelfUpgrade(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 		AllowRollback:    opts.AllowRollback,
 		Trigger:          opts.Trigger,
 		SignalKeyID:      opts.SignalKeyID,
+		AdminCAFile:      opts.AdminCAFile,
 	})
 	if err != nil {
 		return nil, err
@@ -235,6 +239,11 @@ func launchViaSystemdRun(plan *HelperPlan, env []string, opts SelfUpgradeOptions
 	for _, kv := range env {
 		args = append(args, "--setenv="+kv)
 	}
+	// systemd-run inherits the MANAGER's environment, not the caller's, and a
+	// box with SDN_CONFIG set there hands the helper a config for a DIFFERENT
+	// node. Blank it explicitly so the helper resolves through the running
+	// daemon it is about to stop, which is the only config that describes it.
+	args = append(args, "--setenv=SDN_CONFIG=")
 	args = append(args, plan.Executable)
 	args = append(args, plan.Args...)
 

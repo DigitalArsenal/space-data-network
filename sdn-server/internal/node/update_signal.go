@@ -91,6 +91,10 @@ type UpdateSignalSubscriberDeps struct {
 	// AdminURL is this daemon's own admin base URL, used by the helper for the
 	// shutdown handshake and the health gate.
 	AdminURL string
+	// AdminCAFile is the certificate THIS daemon serves. Handed to the helper
+	// so its loopback calls verify against the running daemon's own anchor
+	// rather than re-deriving one from an ambient environment.
+	AdminCAFile string
 	// HealthTimeout bounds the helper's post-restart health wait.
 	HealthTimeout time.Duration
 	// MinInterval is the floor between two self-upgrades on this box.
@@ -320,6 +324,7 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 		AdminURL:      s.deps.AdminURL,
 		HealthTimeout: s.deps.HealthTimeout,
 		Trigger:       "signal",
+		AdminCAFile:   s.deps.AdminCAFile,
 		SignalKeyID:   signal.Signing.KeyID,
 		// Never: see the rollback refusal above.
 		AllowRollback: false,
@@ -435,6 +440,7 @@ func (n *Node) startUpdateSignalSubscriber() {
 		Channel:       channel,
 		Kind:          manifest.Kind(),
 		AdminURL:      n.localAdminURL(),
+		AdminCAFile:   adminaddr.DaemonCertPath(n.config.Admin.TLSCertFile, n.config.Admin.TLSCacheDir),
 		HealthTimeout: cfg.HealthTimeout(),
 		MinInterval:   cfg.MinInterval(),
 		MaxDelay:      time.Duration(cfg.MaxDelaySeconds) * time.Second,

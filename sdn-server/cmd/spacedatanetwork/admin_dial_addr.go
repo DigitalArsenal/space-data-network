@@ -6,7 +6,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/adminaddr"
@@ -123,20 +122,10 @@ func daemonTLSConfig(cfg *config.Config, res config.Resolution) (*tls.Config, st
 // daemonCertPath returns the certificate the daemon serves: the explicit
 // tls_cert_file when set, else the managed-TLS material under tls_cache_dir.
 func daemonCertPath(cfg *config.Config) string {
-	if p := strings.TrimSpace(cfg.Admin.TLSCertFile); p != "" {
-		return p
-	}
-	dir := strings.TrimSpace(cfg.Admin.TLSCacheDir)
-	if dir == "" {
+	if cfg == nil {
 		return ""
 	}
-	for _, name := range []string{"cert.pem", "fullchain.pem", "origin.crt", "bootstrap.crt"} {
-		candidate := filepath.Join(dir, name)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
-		}
-	}
-	return ""
+	return adminaddr.DaemonCertPath(cfg.Admin.TLSCertFile, cfg.Admin.TLSCacheDir)
 }
 
 // serverNameForCert picks the name to present in SNI/verification.
