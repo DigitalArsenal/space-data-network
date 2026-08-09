@@ -508,3 +508,72 @@ test('a 404 feed IS an initial publish', async () => {
     assert.equal(JSON.parse(result.stdout).lineage, 'initial');
   });
 });
+
+// ---------------------------------------------------------------------------
+// PUBLISHED ARTIFACTS ARE IMMUTABLE.
+// The 2026-08-09 truncated publish was "corrected" by writing the good payload
+// over the bad one in the same version directory. Same URL, same update_id, the
+// bad artifact's record destroyed. These pin the refusal and the escape hatch.
+// ---------------------------------------------------------------------------
+
+test('IMMUTABILITY: republishing an already-published version is REFUSED', () => {
+  const world = makeWorld({});
+  try {
+    const { repo, liveCommit } = makeRepo(world.dir);
+    stageLaneInto(repo);
+    const short = liveCommit.slice(0, 8);
+    const indexPath = join(world.dir, 'index.json');
+    // The feed already serves exactly the version this publish would write.
+    writeFileSync(indexPath, JSON.stringify(feedWith(liveCommit)));
+    writeFileSync(join(world.binDir, 'curl'), curlStub(indexPath));
+    chmodSync(join(world.binDir, 'curl'), 0o755);
+
+    const result = runPublisher({
+      world,
+      repoRoot: repo,
+      args: ['--binary', world.binary, '--source-commit', short, '--dry-run', '--no-smoke'],
+    });
+    assert.equal(result.status, 3, `expected refusal, got ${result.status}: ${result.stdout}`);
+    assert.match(result.stderr, /ALREADY PUBLISHED and published artifacts are immutable/);
+    // The refusal must name the escape hatch, or the operator's only move is
+    // to hand-edit the feed — which is the failure we are removing.
+    assert.match(result.stderr, /--supersede/);
+  } finally {
+    rmSync(world.dir, { recursive: true, force: true });
+  }
+});
+
+test('IMMUTABILITY: --supersede mints a NEW version + NEW sequence, never overwriting', () => {
+  const world = makeWorld({});
+  try {
+    const { repo, liveCommit } = makeRepo(world.dir);
+    stageLaneInto(repo);
+    const short = liveCommit.slice(0, 8);
+    const indexPath = join(world.dir, 'index.json');
+    writeFileSync(indexPath, JSON.stringify(feedWith(liveCommit)));
+    writeFileSync(join(world.binDir, 'curl'), curlStub(indexPath));
+    chmodSync(join(world.binDir, 'curl'), 0o755);
+
+    const result = runPublisher({
+      world,
+      repoRoot: repo,
+      args: [
+        '--binary', world.binary,
+        '--source-commit', short,
+        '--supersede', 'the published payload was truncated to 265,425 B',
+        '--dry-run', '--no-smoke',
+      ],
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const out = JSON.parse(result.stdout);
+    // The corrected artifact must NOT reuse the published identity.
+    assert.notEqual(out.version, `1.0.6-updatelane.${short}`);
+    assert.match(out.version, /^1\.0\.6-updatelane\.[0-9a-f]+\+r2$/);
+    assert.match(out.updateId, /\+r2$/);
+    assert.equal(out.superseded, `1.0.6-updatelane.${short}`);
+    assert.match(result.stderr, /SUPERSEDING/);
+    assert.match(result.stderr, /truncated to 265,425 B/);
+  } finally {
+    rmSync(world.dir, { recursive: true, force: true });
+  }
+});
