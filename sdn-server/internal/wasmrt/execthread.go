@@ -2,6 +2,7 @@ package wasmrt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -205,6 +206,8 @@ func (m *Module) RunOnExecThread(ctx context.Context, fn func(GuestCaller) error
 // failure, and poisons the instance because a body that panicked mid-readout
 // may have left the engine's result cursor in an unknown state.
 func runBatchBody(m *Module, scope *ExecScope, fn func(GuestCaller) error) (err error) {
+	m.inBatch.Store(true)
+	defer m.inBatch.Store(false)
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("wasmrt: panic in exec-thread batch: %v\n%s", r, debug.Stack())
@@ -213,6 +216,23 @@ func runBatchBody(m *Module, scope *ExecScope, fn func(GuestCaller) error) (err 
 	}()
 	return fn(scope)
 }
+
+// ErrBatchReentry is returned when a guest call is dispatched through the
+// module while one of its batches is running.
+//
+// This is the ONE way RunOnExecThread can be misused into a wedge: the batch
+// body runs ON the dedicated worker goroutine, so a call to Module.Execute from
+// inside it sends on execCh from the very goroutine that receives from it. That
+// send cannot complete, and with no bound it would hang until the five-minute
+// wall-clock budget abandoned the thread and poisoned the engine — a Go typo
+// costing a five-minute engine stall and a wholesale instance replacement.
+//
+// Refusing instead makes it a typed error at the call site, in microseconds,
+// with the export named. It cannot fire for a lock-respecting caller: every
+// batch is taken under the module lock that all other guest callers hold, so no
+// other goroutine can be dispatching while inBatch is set. If this error is ever
+// seen, the fix is to use the GuestCaller the batch was handed.
+var ErrBatchReentry = errors.New("wasm guest call dispatched while this module's exec-thread batch is running (use the batch's GuestCaller)")
 
 // Execute invokes an export synchronously on the thread this scope belongs to.
 func (s *ExecScope) Execute(name string, params ...interface{}) ([]interface{}, error) {
