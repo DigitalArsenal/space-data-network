@@ -602,8 +602,12 @@ print(f'index: {len(updates)} update(s)')
   try {
     run('ssh', [
       publisherSSH,
-      `mkdir -p ${JSON.stringify(dirnamePosix(ledgerPath))} && ` +
-        `printf '%s\\n' ${shellQuote(ledgerLine)} >> ${JSON.stringify(ledgerPath)}`,
+      // shellQuote, not JSON.stringify, for the PATHS too: a JSON string is
+      // double-quoted, and a double-quoted shell word still expands $, `` and
+      // backslashes. Single-quoting is the only literal form, and these strings
+      // are being handed to a remote shell.
+      `mkdir -p ${shellQuote(dirnamePosix(ledgerPath))} && ` +
+        `printf '%s\\n' ${shellQuote(ledgerLine)} >> ${shellQuote(ledgerPath)}`,
     ]);
     log(`[fleet-update] ledgered -> ${publisherSSH}:${ledgerPath}`);
   } catch (error) {
