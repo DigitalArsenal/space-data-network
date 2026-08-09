@@ -27,6 +27,62 @@ type ProviderFeedUpdate struct {
 	ExpiresAt   string         `json:"expires_at,omitempty"`
 	ManifestURL string         `json:"manifest_url"`
 	CarrierURL  string         `json:"carrier_url"`
+
+	// BundleHash/BundleSize/WasmHash/WasmSize mirror the signed manifest's own
+	// integrity fields at the INDEX level. They are advisory and optional: the
+	// signed manifest is, and remains, the only authority — an index is
+	// unsigned and a client that trusted it would have gained nothing.
+	//
+	// What they buy is divergence detection. The index and the manifest are
+	// written by the same publisher at the same moment and must agree; if they
+	// do not, something rewrote one of them, and the install stops instead of
+	// quietly preferring whichever the code happened to read
+	// (AssertMatchesPayload). Fields the feed omits are simply not checked, so
+	// feeds published before this existed keep working unchanged.
+	BundleHash string `json:"bundle_hash,omitempty"`
+	BundleSize int64  `json:"bundle_size,omitempty"`
+	WasmHash   string `json:"wasm_hash,omitempty"`
+	WasmSize   int64  `json:"wasm_size,omitempty"`
+}
+
+// AssertMatchesPayload verifies that the signed manifest and carrier actually
+// downloaded are the ones this index entry pointed at.
+//
+// Written after the 2026-08-09 truncated publish
+// (graph: sdn-publish-fleet-update-wraps-an-unverified-binary), where a
+// corrupt artifact was signed, indexed and served as the newest sequence. That
+// one was self-consistent, so this check would not have caught it — the
+// producer-side gate does that. This closes the neighbouring hole: an index
+// entry and the manifest it resolves to disagreeing about which artifact is
+// being installed.
+//
+// Only fields the entry actually declares are enforced.
+func (u ProviderFeedUpdate) AssertMatchesPayload(m *Manifest, carrierLen int) error {
+	if m == nil {
+		return errors.New("update provider feed entry has no manifest to check against")
+	}
+	if u.UpdateID != "" && m.UpdateID != u.UpdateID {
+		return fmt.Errorf("update provider feed entry %s resolves to a manifest for %s", u.UpdateID, m.UpdateID)
+	}
+	if u.Version != "" && m.Version != u.Version {
+		return fmt.Errorf("update provider feed entry %s: index version %s != manifest version %s", u.UpdateID, u.Version, m.Version)
+	}
+	if u.Sequence != 0 && m.Sequence != nil && *m.Sequence != u.Sequence {
+		return fmt.Errorf("update provider feed entry %s: index sequence %d != manifest sequence %d", u.UpdateID, u.Sequence, *m.Sequence)
+	}
+	if u.BundleHash != "" && !strings.EqualFold(u.BundleHash, m.Bundle.Hash) {
+		return fmt.Errorf("update provider feed entry %s: index bundle hash %s != manifest bundle hash %s", u.UpdateID, u.BundleHash, m.Bundle.Hash)
+	}
+	if u.BundleSize != 0 && m.Bundle.Size != u.BundleSize {
+		return fmt.Errorf("update provider feed entry %s: index bundle size %d != manifest bundle size %d", u.UpdateID, u.BundleSize, m.Bundle.Size)
+	}
+	if u.WasmHash != "" && !strings.EqualFold(u.WasmHash, m.Wasm.Hash) {
+		return fmt.Errorf("update provider feed entry %s: index wasm hash %s != manifest wasm hash %s", u.UpdateID, u.WasmHash, m.Wasm.Hash)
+	}
+	if u.WasmSize != 0 && carrierLen != 0 && int64(carrierLen) != u.WasmSize {
+		return fmt.Errorf("update provider feed entry %s: index wasm size %d != downloaded carrier size %d", u.UpdateID, u.WasmSize, carrierLen)
+	}
+	return nil
 }
 
 type ProviderFeedSelection struct {
