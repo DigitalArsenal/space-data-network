@@ -353,6 +353,49 @@ const emptyRecordReadSource = "(SELECT 0 AS rowid, '' AS cid, '' AS peer_id, 0 A
 // bare table name is returned, keeping single-table query plans unchanged.
 // Callers hold s.mu.
 func (s *FlatSQLStore) recordReadSource(schemaName string) (string, error) {
+	return s.recordReadSourceFiltered(schemaName, "")
+}
+
+// recordReadSourceFiltered is recordReadSource with branchWhere inlined into
+// EVERY union branch. Use it whenever the caller has a predicate that each
+// backing table can answer from an index — above all `cid = ?1`.
+//
+// WHY THIS EXISTS (measured on host-01, 2026-08-09):
+//
+// The union read source wraps its branches in `GROUP BY cid` to deduplicate a
+// cid that two producers both published. SQLite cannot push an OUTER predicate
+// through that GROUP BY into the branches, so
+//
+//	SELECT ... FROM (SELECT ... FROM (t1 UNION ALL t2) GROUP BY cid) WHERE cid = ?
+//
+// plans as a FULL SCAN of t1 and t2 — verified with EXPLAIN QUERY PLAN against
+// the live 2.8 GB control database, which answered `SCAN sds_p_…__OMM` and
+// `SCAN sds_p_source_celestrak__OMM` for exactly this query. On host-01 that is
+// 10,457 + ~50 pages per record read, and because the engine is one
+// single-threaded WASM instance whose VFS turns every page into a host call and
+// a pread64, the daemon was measured doing **27,466 preads/s over the same
+// 10,534 pages, forever** — 96 % CPU, 45 % of it system time, ~48,800 voluntary
+// context switches/s. Every OTHER store read, including a 30-row indexed probe
+// against sdn_dataset_shard_publications, then queued behind those scans and
+// cost 0.34–31.7 s. That queue is graph task
+// sdn-flatsql-engine-read-queue-seconds-per-call; the scan is its cause, and
+// sdn-record-by-cid-read-12-to-29-seconds is the same defect seen from the
+// other end.
+//
+// Inlining the predicate restores `SEARCH … USING INDEX (cid=?)` on every
+// branch. Measured at prod scale (250,318 + 1,088-row OMM producer tables, the
+// live counts): record-by-cid p50 123.6 ms -> 1.05 ms, and the 30-row control
+// probe's p95 measured WHILE that lane runs continuously fell 253.9 ms -> 3.2 ms
+// while the lane itself completed 23x more reads.
+//
+// branchWhere is repeated once per branch, so it MUST use numbered parameters
+// (?1, ?2 …), never positional `?`. Callers therefore pass their arguments
+// once. Semantics are unchanged: the GROUP BY still runs, so a cid present in
+// several tables still collapses to the same single row (covered by
+// TestRecordReadSourceFilteredMatchesUnfiltered).
+//
+// Callers hold s.mu.
+func (s *FlatSQLStore) recordReadSourceFiltered(schemaName, branchWhere string) (string, error) {
 	legacy, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
 		return "", err
@@ -375,11 +418,18 @@ func (s *FlatSQLStore) recordReadSource(schemaName string) (string, error) {
 	case 0:
 		return emptyRecordReadSource, nil
 	case 1:
+		// One table needs no union and no GROUP BY, so the caller's own outer
+		// predicate already reaches the index. Returning the bare name keeps
+		// single-table plans byte-identical to what they always were.
 		return tables[0], nil
+	}
+	where := ""
+	if strings.TrimSpace(branchWhere) != "" {
+		where = " WHERE " + branchWhere
 	}
 	selects := make([]string, 0, len(tables))
 	for _, t := range tables {
-		selects = append(selects, fmt.Sprintf("SELECT rowid AS rowid, %s FROM %s", recordReadColumns, t))
+		selects = append(selects, fmt.Sprintf("SELECT rowid AS rowid, %s FROM %s%s", recordReadColumns, t, where))
 	}
 	return "(SELECT rowid, " + recordReadColumns + " FROM (" + strings.Join(selects, " UNION ALL ") + ") GROUP BY cid)", nil
 }
