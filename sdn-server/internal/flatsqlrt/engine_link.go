@@ -62,7 +62,7 @@ func (h *EngineLinkHarvest) ResolveRef(generation uint64, ptr, size uint32, fnv 
 		}
 	}
 
-	current, err := d.queryCacheGenerationLocked()
+	current, err := d.queryCacheGenerationLocked(d.rt.mod)
 	if err != nil {
 		return nil, err
 	}
