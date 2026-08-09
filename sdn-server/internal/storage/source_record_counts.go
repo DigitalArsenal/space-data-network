@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -28,23 +30,32 @@ func (s *FlatSQLStore) SourceRecordCounts() (map[string]int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// GROUPING BY THE INDEX PREFIX IS NOT COSMETIC. schema_name is the leading
-	// column of idx_sdn_record_source_tags_lookup (schema_name, provider_id,
-	// source_name, batch_id); grouping by (provider_id, source_name) alone is
-	// not an index-ordered prefix, so SQLite had to sort every row of a 1.6 M-row
-	// table through a temp B-tree. Measured on host-01 2026-08-09: **24.9 s and
-	// 26.0 s of engine hold** in the slow-statement log, inside the one engine
-	// lock, on the retrieval-ledger reconciliation that runs after every boot.
-	// Adding schema_name to the GROUP BY makes it an ordered covering-index scan
-	// with no sort — and it cannot change the ANSWER, because the loop below
-	// re-keys on sourceCountKey(provider, source) and ACCUMULATES (`+=`), so a
-	// provider/source pair split across schemas is summed back together exactly
-	// as the single grouped aggregate summed it.
+	// IT READS THE SUMMARY NOW, AND THE RACE THE COMMENT ABOVE GUARDS AGAINST
+	// CANNOT HAPPEN. Every writer of sdn_record_source_summary — RebuildDerivedState,
+	// RebuildSourceSummaries, RecoverPoisonedEngine, SupersedeSourceBatches,
+	// ReconcileSourceBatch and garbageCollectBeforeLocked — holds s.mu in WRITE
+	// mode for the whole rebuild, and this read holds it in READ mode. A Go
+	// RWMutex admits no reader while a writer holds it, so "a caller that happens
+	// to read it mid-rebuild sees an empty answer" is not a state this store can
+	// be in. What the comment was really describing is a cost, and that cost was
+	// measured: on host-01, 2026-08-09, aggregating the tag table cost **24.9 s,
+	// 26.0 s and 29.1 s of engine hold**, inside the single engine lock, on the
+	// retrieval-ledger reconciliation that runs after every boot.
+	//
+	// Grouping by the index prefix was tried first and REFUTED on the live box:
+	// EXPLAIN confirmed the temp B-tree was gone, and the statement still cost
+	// 29.1 s, because the cost is the COVERING INDEX SCAN of 1.8 M entries, not
+	// the sort. Nothing that reads a row per record can be cheap in this engine.
+	// The summary is the same fact at tens of rows.
+	//
+	// The durability guarantee the comment asks for is kept by the fallback
+	// below, not by scanning: an EMPTY summary is not accepted as "no such
+	// record" while the durable tag table still holds rows.
 	rows, err := s.db.Query(`
-		SELECT provider_id, source_name, COUNT(*)
-		FROM sdn_record_source_tags
-		WHERE provider_id <> '' OR source_name <> ''
-		GROUP BY schema_name, provider_id, source_name
+		SELECT provider_id, source_name, SUM(record_count)
+		FROM sdn_record_source_summary
+		WHERE (provider_id <> '' OR source_name <> '') AND record_count > 0
+		GROUP BY provider_id, source_name
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("count records per source: %w", err)
@@ -69,6 +80,21 @@ func (s *FlatSQLStore) SourceRecordCounts() (map[string]int64, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate record counts per source: %w", err)
+	}
+	if len(counts) == 0 {
+		// An empty summary is only trustworthy if the DURABLE tag table is empty
+		// too. One indexed descent (LIMIT 1), not a scan — the whole point.
+		var probe int
+		err := s.db.QueryRow(`SELECT 1 FROM sdn_record_source_tags LIMIT 1`).Scan(&probe)
+		if err == nil {
+			return nil, fmt.Errorf(
+				"source record counts unavailable: sdn_record_source_summary is empty but " +
+					"sdn_record_source_tags is not — the derived summary has not been rebuilt yet, and " +
+					"reporting zero here would tell a reconciliation this store lost data it still holds")
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("probe durable source tags: %w", err)
+		}
 	}
 	return counts, nil
 }
