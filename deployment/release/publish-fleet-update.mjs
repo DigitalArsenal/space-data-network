@@ -138,6 +138,10 @@ const ledgerPath = arg('ledger-path', '/opt/spacedatanetwork/publish-ledger.log'
 // --rollback takes its REASON as its value. A rollback with no stated reason is
 // the thing we are trying to prevent, so there is no bare boolean form.
 const rollbackReason = arg('rollback', '');
+// --supersede takes its REASON as its value, for the same reason --rollback
+// does: replacing a published artifact without saying why it was bad is the
+// thing this guard exists to stop.
+const supersedeReason = arg('supersede', '');
 const dryRun = flag('dry-run');
 const noSmoke = flag('no-smoke');
 
@@ -154,8 +158,13 @@ if (noSmoke && !dryRun) {
 }
 
 const resolvedBinary = resolve(binaryPath);
-const version = `${versionPrefix}.${sourceCommit}`;
-const updateId = `sdn-cli-bundle-${version}`;
+// Mutable: a --supersede publish mints a NEW identity in step 0c rather than
+// overwriting the published one. Everything downstream (bundle name, manifest,
+// signing, upload path, index, ledger) reads these AFTER that decision.
+let version = `${versionPrefix}.${sourceCommit}`;
+let updateId = `sdn-cli-bundle-${version}`;
+// Set by step 0c to the version this publish revokes, if any.
+let supersededVersion = '';
 const sequence = Math.floor(Date.now() / 1000);
 const createdAt = new Date().toISOString();
 const expiresAt = new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString();
@@ -284,6 +293,74 @@ try {
   if (lineage.lineage === LINEAGE_ROLLBACK) {
     log(`[fleet-update] *** DECLARED ROLLBACK *** reason: ${lineage.reason}`);
     log('[fleet-update] hosts will refuse this update unless installed with --allow-rollback');
+  }
+
+  // --- 0c. PUBLISHED ARTIFACTS ARE IMMUTABLE ---------------------------------
+  // version derives from the source commit, so republishing the same commit
+  // lands in the SAME feed directory and overwrites manifest.json and
+  // update.wasm IN PLACE. That is what the 2026-08-09 correction did: a
+  // truncated 265,425-byte payload went out as 1.0.6-updatelane.1873884f and
+  // the corrected 20 MB payload was written over the top of it. The feed ended
+  // up serving the right bytes, and the correction was still unsound:
+  //
+  //   1. The URL never changed, so a client that already fetched
+  //      .../1.0.6-updatelane.1873884f/update.wasm has NO change signal.
+  //      Whether it ever picks up the fix becomes a question about HTTP cache
+  //      headers rather than about the feed.
+  //   2. The bad artifact's manifest, hash and sequence were DESTROYED rather
+  //      than superseded. Nothing records that it existed, so nothing can
+  //      revoke it and no audit can find it afterwards.
+  //   3. Worst: update_id stopped being a stable name for a fixed set of
+  //      bytes. Hosts persist update_id + sequence in updates/state.json —
+  //      including as the `previous` rollback target — so an in-place
+  //      overwrite silently changes what an already-recorded identifier means
+  //      on every box that holds it.
+  //
+  // This check runs BEFORE anything is built, hashed, smoke-tested or signed,
+  // so a correction costs a clear refusal instead of a wasted publish, and it
+  // reads the PUBLIC index rather than the publisher's disk — the feed as the
+  // fleet sees it is the thing that has to stay immutable.
+  {
+    const indexUrl = `${feedBaseUrl}/cli-bundle/${channel}/${platform}/${arch}/index.json`;
+    const res = fetchWithStatus(indexUrl);
+    if (res.status === 200) {
+      let published = [];
+      try {
+        published = JSON.parse(res.body)?.updates ?? [];
+      } catch {
+        published = [];
+      }
+      const clash = published.find((u) => u.version === version);
+      if (clash) {
+        if (!supersedeReason) {
+          console.error(
+            `REFUSED: ${version} IS ALREADY PUBLISHED and published artifacts are immutable.\n` +
+              `  in the feed : ${clash.update_id} sequence ${clash.sequence} bundle ${clash.bundle_hash}\n` +
+              `  this publish: would reuse that exact URL and update_id.\n` +
+              `Overwriting it gives cached clients no change signal, destroys the record of what was\n` +
+              `previously served under that name, and silently changes what ${clash.update_id} denotes\n` +
+              `on every host that already recorded it in updates/state.json.\n` +
+              `If the published artifact is BAD and this is the correction, say so — it will be\n` +
+              `published under a NEW version, NEW sequence and NEW URL, and the old one will be\n` +
+              `marked revoked rather than erased:\n` +
+              `  --supersede "<why the published artifact is bad>"`,
+          );
+          process.exit(3);
+        }
+        supersededVersion = version;
+        const priorRevisions = published.filter((u) =>
+          String(u.version ?? '').startsWith(`${version}+r`),
+        ).length;
+        version = `${version}+r${priorRevisions + 2}`;
+        updateId = `sdn-cli-bundle-${version}`;
+        log(
+          `[fleet-update] *** SUPERSEDING *** ${supersededVersion} ` +
+            `(${clash.update_id}, sequence ${clash.sequence})`,
+        );
+        log(`[fleet-update]   reason: ${supersedeReason}`);
+        log(`[fleet-update]   new identity: ${updateId} sequence ${sequence} — new URL, nothing overwritten`);
+      }
+    }
   }
 
   // --- 1. minimal fleet bundle ----------------------------------------------
@@ -417,6 +494,9 @@ try {
           sourceCommit: lineage.sourceCommit,
           supersedesCommit: lineage.supersedesCommit,
           ...(lineage.reason ? { rollbackReason: lineage.reason } : {}),
+          // Present only when this publish replaces a published artifact, so a
+          // correction is distinguishable from an ordinary roll without log parsing.
+          ...(supersededVersion ? { superseded: supersededVersion, supersedeReason } : {}),
         },
         null,
         2,
@@ -458,6 +538,24 @@ try {
   // --- 5. publish payload + regenerate index ---------------------------------
   const feedRel = `cli-bundle/${channel}/${platform}/${arch}`;
   const payloadRemote = `${feedDir}/${feedRel}/${version}`;
+
+  // Immutability was decided in step 0c, before anything was built or signed.
+  // If that step minted a superseding identity, mark the artifact it replaces
+  // revoked, in its OWN directory, so the record travels with the artifact and
+  // the index regeneration below picks it up.
+  if (supersededVersion) {
+    const oldRemote = `${feedDir}/${feedRel}/${supersededVersion}`;
+    const revocation = JSON.stringify({
+      schema: 'org.spacedatanetwork.update.revocation.v1',
+      revoked_at: createdAt,
+      reason: supersedeReason,
+      superseded_by: updateId,
+      superseded_by_sequence: sequence,
+    });
+    run('ssh', [publisherSSH, `printf '%s' ${shellQuote(revocation)} > ${oldRemote}/revoked.json`]);
+    log(`[fleet-update] revoked ${supersededVersion}; superseded by ${updateId}`);
+  }
+
   run('ssh', [publisherSSH, `mkdir -p ${payloadRemote}`]);
   run('scp', ['-q', signedPath, `${publisherSSH}:${payloadRemote}/manifest.json`]);
   const carrierLocal = join(work, 'update.wasm');
@@ -518,6 +616,12 @@ for mp in glob.glob(base + '/*/manifest.json'):
         entry['source_commit'] = prov['source_commit']
     if prov.get('lineage'):
         entry['lineage'] = prov['lineage']
+    # A superseded artifact stays LISTED but marked revoked. Erasing it is what
+    # made the 2026-08-09 truncated publish unauditable: a consumer can refuse a
+    # revoked entry, but an absent one it can only fail to notice.
+    rev = os.path.join(os.path.dirname(mp), 'revoked.json')
+    if os.path.exists(rev):
+        entry['revoked'] = json.load(open(rev))
     updates.append(entry)
 updates.sort(key=lambda u: u['sequence'], reverse=True)
 index = {
@@ -624,6 +728,9 @@ print(f'index: {len(updates)} update(s)')
         published: updateId,
         version,
         sequence,
+        // Present only when this publish replaced a published artifact, so a
+        // caller can tell a correction from an ordinary roll without parsing logs.
+        ...(supersededVersion ? { superseded: supersededVersion, superseded_reason: supersedeReason } : {}),
         binarySha256: binarySha,
         binarySize: verified.size,
         smokeLevel: verified.smokeLevel,

@@ -2264,7 +2264,20 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 			}
 
 			// (2) Full control-table replay + derived source summaries.
-			n.hydrateFullRecordCatalog(ctx)
+			//
+			// n.ctx, NOT ctx. This goroutine is tracked by n.wg, and Stop()
+			// signals shutdown with n.cancel(), which cancels n.ctx only —
+			// n.ctx is a CHILD of the daemon ctx (see New). Watching the
+			// parent here made n.wg.Wait() in Stop() UNSATISFIABLE: the
+			// parent's cancel is deferred in runDaemon and therefore does
+			// not fire until after Stop() has already returned. The replay
+			// is written to be cancellable and logs its own early exit; it
+			// simply never received the signal. Measured consequence on
+			// host-01: 15 of 22 stops on 2026-08-09 ran the full 90 s
+			// TimeoutStopSec and died on SIGKILL, every restart a 2-4 minute
+			// public outage. n.ctx also fires on parent cancellation, so this
+			// is strictly more responsive, never less.
+			n.hydrateFullRecordCatalog(n.ctx)
 		}()
 	})
 }
@@ -2320,6 +2333,15 @@ func (n *Node) hydrateFullRecordCatalog(ctx context.Context) {
 		} else {
 			log.Warnf("FlatSQL engine recovered after failed record-catalog replay (epoch %d); the compact catalog is NOT hydrated", epoch)
 		}
+		return
+	}
+	// RebuildSourceSummaries takes no context and holds the single global
+	// engine lock for its whole duration, so once it starts, shutdown waits
+	// for it. Do not start it if shutdown has already been signalled: the
+	// summaries are a DERIVED cache with no durable state of their own, and
+	// the next boot rebuilds them.
+	if ctx.Err() != nil {
+		log.Infof("FlatSQL source-summary rebuild skipped: shutdown signalled (%v); summaries are derived and rebuild on next boot", ctx.Err())
 		return
 	}
 	if err := n.store.RebuildSourceSummaries(); err != nil {
@@ -4631,10 +4653,39 @@ func (n *Node) discoverSDNAdvertisementPeers(target sdnAdvertisementDiscoveryTar
 	}
 }
 
-// Stop gracefully shuts down the node.
+// Stop gracefully shuts down the node, waiting indefinitely for background
+// tasks to drain. Prefer StopContext: an unbounded drain is how a stop turns
+// into a SIGKILL.
 func (n *Node) Stop() error {
+	return n.StopContext(context.Background())
+}
+
+// StopContext gracefully shuts down the node, giving background tasks until
+// ctx expires to drain.
+//
+// If the drain does NOT complete in time this returns an error WITHOUT tearing
+// down the store, and that asymmetry is deliberate. FlatSQLStore.Close() nils
+// the db, record catalog, engine db and engine handles under the store lock,
+// and not every writer re-checks for nil after re-acquiring it. Closing the
+// store while abandoned goroutines are still writing converts a hang into a
+// SIGSEGV. The state-safe response to a drain timeout is to report it and let
+// the caller's watchdog kill the process: every durable write is already
+// committed through fsync-per-append, CRC-framed journals that replay a
+// validated prefix on boot, so an abrupt exit costs a slower next boot and
+// nothing else. A crash-safe kill beats an unsafe teardown.
+func (n *Node) StopContext(ctx context.Context) error {
 	n.cancel()
-	n.wg.Wait()
+
+	drained := make(chan struct{})
+	go func() {
+		n.wg.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-ctx.Done():
+		return fmt.Errorf("node shutdown: background tasks did not drain before the deadline (store left OPEN deliberately; see StopContext): %w", ctx.Err())
+	}
 
 	// TipQueue owns its own internal context/wait group (it is usable
 	// standalone, outside a Node), so n.cancel()/n.wg.Wait() above do not

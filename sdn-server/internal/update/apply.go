@@ -129,6 +129,25 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		}, nil
 	}
 
+	// LEDGER BEFORE MUTATION. This is the last point at which nothing has been
+	// changed, so it is where the record has to be written: an apply that
+	// cannot be recorded must not happen at all. A failure here is fatal and
+	// deliberately aborts the apply — see deployledger.go for why the ledger
+	// lives inside the bundle root being modified, and for the measured
+	// history that made this a precondition instead of a convention.
+	if err := RecordDeployLedgerEntry(paths, DeployLedgerEntry{
+		Action:       "apply",
+		UpdateID:     candidate.UpdateID,
+		Version:      candidate.Result.Version,
+		Sequence:     candidate.Result.Sequence,
+		Channel:      candidate.Result.Channel,
+		FromVersion:  state.Version,
+		FromSequence: state.Sequence,
+		Rollback:     opts.AllowRollback,
+	}); err != nil {
+		return nil, err
+	}
+
 	incomingDir := filepath.Join(paths.Incoming, candidate.UpdateID)
 	if err := os.RemoveAll(incomingDir); err != nil {
 		return nil, err

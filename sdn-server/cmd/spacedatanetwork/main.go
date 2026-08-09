@@ -25,6 +25,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -2553,15 +2554,57 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	log.Info("Shutting down...")
 
-	// Shutdown admin server
-	if adminServer != nil {
-		adminServer.Shutdown(ctx)
-	}
-	if httpChallengeServer != nil {
-		httpChallengeServer.Shutdown(ctx)
-	}
-	if localPublishServer != nil {
-		localPublishServer.Shutdown(ctx)
+	// SHUTDOWN WATCHDOG. Before this existed, a wedged shutdown was SILENT:
+	// "Shutting down..." was the last line in the journal and the next thing
+	// systemd logged was SIGKILL at TimeoutStopSec, with no way to tell which
+	// step had blocked. On host-01, 15 of 22 stops on 2026-08-09 ended that
+	// way, each one a 2-4 minute public outage.
+	//
+	// Fire before systemd's TimeoutStopSec (90s on this fleet) so the
+	// goroutine dump reaches the journal instead of being lost to the kill,
+	// then re-raise SIGKILL. Re-raising the signal systemd would have sent
+	// keeps supervisor semantics byte-identical on boxes with Restart=always
+	// AND on boxes with Restart=on-failure — an invented exit code would not
+	// be honest on both. SIGKILL here is state-safe: every durable write is
+	// committed at write time through CRC-framed, fsync-per-append journals
+	// with CRC-validated prefix replay on boot, so an abrupt exit costs a
+	// slower next boot, never data.
+	shutdownWatchdog := time.AfterFunc(shutdownWatchdogTimeout, func() {
+		buf := make([]byte, 4<<20)
+		n := runtime.Stack(buf, true)
+		log.Errorf("SHUTDOWN WATCHDOG: still shutting down after %s — killing. Goroutine dump follows:\n%s",
+			shutdownWatchdogTimeout, buf[:n])
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGKILL)
+	})
+	defer shutdownWatchdog.Stop()
+
+	// The HTTP drains must NOT use ctx: ctx is the live daemon context and is
+	// still open here (its cancel is deferred at the top of runDaemon), so
+	// Shutdown(ctx) is semantically Shutdown(context.Background()) — it waits
+	// forever for in-flight handlers. On a box where a single store read can
+	// queue for tens of seconds behind the engine lock, one slow request held
+	// the whole shutdown. Bound it, then force the sockets closed.
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), httpShutdownTimeout)
+	defer cancelShutdown()
+	for _, srv := range []struct {
+		name string
+		srv  *http.Server
+	}{
+		{"admin", adminServer},
+		{"http-challenge", httpChallengeServer},
+		{"local-publish", localPublishServer},
+	} {
+		if srv.srv == nil {
+			continue
+		}
+		if err := srv.srv.Shutdown(shutdownCtx); err != nil {
+			// Deadline hit: Shutdown leaves in-flight requests running, so
+			// close the listeners outright rather than wait on a handler
+			// parked behind the engine queue. Abandoning a read is free and
+			// an abandoned write is already journal-fsynced or never started.
+			log.Warnf("%s server graceful shutdown exceeded %s (%v); force-closing", srv.name, httpShutdownTimeout, err)
+			_ = srv.srv.Close()
+		}
 	}
 	if storefrontSvc != nil {
 		if err := storefrontSvc.Close(); err != nil {
@@ -2578,7 +2621,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	stopAssetRetention()
-	return n.Stop()
+
+	// Bounded drain. On timeout StopContext deliberately leaves the store open
+	// rather than closing it out from under goroutines that are still running;
+	// the watchdog above then kills the process, which the journals make safe.
+	nodeStopCtx, cancelNodeStop := context.WithTimeout(context.Background(), nodeDrainTimeout)
+	defer cancelNodeStop()
+	return n.StopContext(nodeStopCtx)
 }
 
 func loadLandingPage(customPath string) ([]byte, error) {
@@ -2691,6 +2740,20 @@ const (
 	assetPinCapabilityUnavailableJSON = "{\"error\":{\"message\":\"asset pin capability unavailable\"}}\n"
 	assetPinKuboProbeTimeout          = 5 * time.Second
 	assetPinKuboProbeMaxResponseBytes = 64 << 10
+)
+
+// Shutdown budgets. These are deliberately well inside systemd's
+// TimeoutStopSec (90s on this fleet) so the daemon decides how it dies and
+// leaves evidence, rather than being SIGKILLed with an empty journal.
+//
+//	httpShutdownTimeout     — graceful drain of the three HTTP listeners.
+//	nodeDrainTimeout        — background goroutines (n.wg) after n.cancel().
+//	shutdownWatchdogTimeout — total budget; must exceed the two above plus
+//	                          store/engine teardown, and stay under 90s.
+const (
+	httpShutdownTimeout     = 15 * time.Second
+	nodeDrainTimeout        = 30 * time.Second
+	shutdownWatchdogTimeout = 75 * time.Second
 )
 
 type assetPinCapabilityStore interface {
