@@ -2320,6 +2320,15 @@ func (s *FlatSQLStore) rebuildSourceSummaryLane(lane sourceSummaryLane) error {
 	// recordReadSourceFiltered): without that a multi-producer standard plans as
 	// a full scan of every backing table per slice. Numbered parameters are
 	// mandatory there because the predicate is repeated once per branch.
+	//
+	// The join is a LEFT JOIN where the single-statement rebuild used an INNER
+	// one, and that is REQUIRED, not incidental. An INNER JOIN silently drops a
+	// tag whose record row is missing, so the lane's record_count would be
+	// PERMANENTLY below its tag count — and the fingerprint in
+	// sourceSummaryLaneNeedsRebuild, which compares exactly those two numbers,
+	// would never converge and would rebuild that lane on every boot forever.
+	// Reporting the row at zero bytes is both the honest answer for
+	// /api/v1/stats and the one that lets the skip work.
 	readSource, err := s.recordReadSourceFiltered(lane.SchemaName, "cid > ?1 AND (?2 = '' OR cid <= ?2)")
 	if err != nil {
 		return fmt.Errorf("read source for %s: %w", lane.SchemaName, err)
