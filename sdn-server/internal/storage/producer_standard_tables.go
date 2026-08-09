@@ -121,7 +121,14 @@ func (s *FlatSQLStore) mirrorRoutedRecord(exec sqlExecer, schemaName, cid, peerI
 // holding the content row — routed, or legacy on pre-flip databases).
 // Callers hold s.mu.
 func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schemaName, cid, peerID string, signature []byte) {
-	readSource, err := s.recordReadSource(schemaName)
+	// Inlined cid predicate, not an outer one: this runs ONCE PER REPEAT RECORD
+	// on the ingest path, inside the store's WRITE lock. With the predicate
+	// outside the union's GROUP BY it full-scanned every (producer, standard)
+	// table per record — measured on host-01 as 1,393 of 1,414 slow statements
+	// in a 12-minute window at ~300 ms each, which is what made an ingest batch
+	// hold the store lock for tens of seconds and put that wait in front of
+	// every API read. See recordReadSourceFiltered.
+	readSource, err := s.recordReadSourceFiltered(schemaName, "cid = ?1")
 	if err != nil {
 		log.Warnf("Routed mirror: read source for %s: %v", schemaName, err)
 		return
@@ -133,7 +140,7 @@ func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schem
 		recordLength int64
 	)
 	err = exec.QueryRow(
-		fmt.Sprintf(`SELECT timestamp, stream_path, stream_offset, record_length FROM %s WHERE cid = ?`, readSource),
+		fmt.Sprintf(`SELECT timestamp, stream_path, stream_offset, record_length FROM %s WHERE cid = ?1`, readSource),
 		cid,
 	).Scan(&timestamp, &streamPath, &streamOffset, &recordLength)
 	if err != nil {
