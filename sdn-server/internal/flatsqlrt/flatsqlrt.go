@@ -174,6 +174,9 @@ type Runtime struct {
 	statSlow      atomic.Int64
 	statWaitNanos atomic.Int64
 	statHeldNanos atomic.Int64
+
+	// dispatchLogStop ends the periodic guest-call account (startDispatchLog).
+	dispatchLogStop chan struct{}
 }
 
 // FileIO returns this runtime's host file layer, or nil when the engine was
@@ -390,12 +393,83 @@ func New(opts ...Option) (*Runtime, error) {
 		fileIO.CloseAll()
 		return nil, fmt.Errorf("flatsqlrt: _initialize: %w", err)
 	}
-	return &Runtime{mod: mod, aot: aot, aotPath: aotPath, aotMiss: aotMiss, aotCacheDir: cfg.aotCacheDir, io: fileIO}, nil
+	r := &Runtime{mod: mod, aot: aot, aotPath: aotPath, aotMiss: aotMiss, aotCacheDir: cfg.aotCacheDir, io: fileIO}
+	r.startDispatchLog()
+	return r, nil
+}
+
+// dispatchLogInterval is how often the engine states its guest-call account.
+//
+// WHY THIS IS ON BY DEFAULT, and why it is once every thirty minutes. On
+// 2026-08-09 `perf` on host-01 showed the daemon issuing ~87,000 rt_sigaction/s
+// and ~84,000 futex/s, identical at idle and under load — tens of thousands of
+// guest calls per second of BACKGROUND work — and nothing in the daemon could
+// say which export they were. Naming that lane needed a laptop profiler on a
+// production box. It should need a journal line.
+//
+// The rate is chosen against the opposite failure, which this repo also has on
+// record: enabling WasmEdge's cost-measuring statistics made it dump three lines
+// after EVERY guest invocation, 62 % of everything the daemon said in five
+// minutes (see wasmrt's package comment). Forty-eight lines a day is not that.
+//
+// SDN_FLATSQL_DISPATCH_LOG_SEC=<seconds> retunes it; 0 disables.
+var dispatchLogInterval = func() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("SDN_FLATSQL_DISPATCH_LOG_SEC"))
+	if raw == "" {
+		return 30 * time.Minute
+	}
+	var secs int64
+	if _, err := fmt.Sscanf(raw, "%d", &secs); err != nil || secs <= 0 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
+}()
+
+// startDispatchLog reports the engine's guest-call account periodically: how
+// many guest invocations ran, how many OS-thread handoffs they cost, and which
+// exports they were. Deltas, not totals — a cumulative counter cannot show a
+// lane that started an hour ago.
+func (r *Runtime) startDispatchLog() {
+	if dispatchLogInterval <= 0 {
+		return
+	}
+	r.dispatchLogStop = make(chan struct{})
+	go func() {
+		t := time.NewTicker(dispatchLogInterval)
+		defer t.Stop()
+		prev := r.mod.DispatchStats()
+		prevQ, _, _, _ := r.Stats()
+		for {
+			select {
+			case <-r.dispatchLogStop:
+				return
+			case <-t.C:
+				cur := r.mod.DispatchStats()
+				curQ, slow, wait, held := r.Stats()
+				calls := cur.Calls - prev.Calls
+				disp := cur.Dispatches - prev.Dispatches
+				secs := dispatchLogInterval.Seconds()
+				perHandoff := float64(calls)
+				if disp > 0 {
+					perHandoff = float64(calls) / float64(disp)
+				}
+				log.Infof("FlatSQL engine dispatch account (last %s): %d guest calls (%.0f/s) on %d thread handoffs (%.1f calls/handoff, batching=%v); "+
+					"%d statements, %d slow, %s waited, %s held; busiest exports: %s",
+					dispatchLogInterval, calls, float64(calls)/secs, disp, perHandoff, wasmrt.ExecBatchEnabled(),
+					curQ-prevQ, slow, wait.Round(time.Millisecond), held.Round(time.Millisecond), cur.Top(6))
+				prev, prevQ = cur, curQ
+			}
+		}
+	}()
 }
 
 // Close releases the WasmEdge VM and all engine memory. Databases created on
 // this runtime become invalid.
 func (r *Runtime) Close() {
+	if r.dispatchLogStop != nil {
+		close(r.dispatchLogStop)
+		r.dispatchLogStop = nil
+	}
 	if r.mod != nil {
 		r.mod.Release()
 		r.mod = nil
