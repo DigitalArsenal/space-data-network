@@ -176,3 +176,42 @@ func TestProviderFeedEntryMustAgreeWithTheManifestItResolvesTo(t *testing.T) {
 		})
 	}
 }
+
+// TestCanonicalizationPreservesUnmodelledFields pins the single assumption the
+// whole lineage design rests on.
+//
+// The verdict is trustworthy only because it is INSIDE the signed document. The
+// chain that keeps it there is: the publisher writes `provenance`; `update
+// sign-manifest` decodes the manifest into a generic map and re-marshals THAT
+// map (so fields the Go structs do not model survive the round trip to the
+// signing key); the node canonicalizes the RAW submitted bytes; and this
+// function canonicalizes the raw bytes again on the host.
+//
+// Every link is generic-over-JSON on purpose. The one that looks most like
+// tidy-up-able code is the CLI's `map[string]any` decode — re-typing it into
+// the Manifest struct would silently drop provenance, and a rollback would
+// arrive looking like an ordinary update. This test fails the moment
+// canonicalization stops carrying unmodelled fields, which is the same
+// property from the other end.
+func TestCanonicalizationPreservesUnmodelledFields(t *testing.T) {
+	raw := []byte(`{
+		"schema": "org.spacedatanetwork.update.v1",
+		"version": "1.0.0",
+		"provenance": {"lineage": "rollback", "source_commit": "aaaa1111", "binary_sha256": "deadbeef"},
+		"not_a_field_any_struct_models": {"z": 1, "a": 2},
+		"signing": {"signature": "dropped", "key_id": "k1", "algorithm": "Ed25519"}
+	}`)
+	canonical, err := CanonicalManifestBytes(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(canonical)
+
+	// Present, key-sorted, and with signing.signature removed.
+	want := `{"not_a_field_any_struct_models":{"a":2,"z":1},` +
+		`"provenance":{"binary_sha256":"deadbeef","lineage":"rollback","source_commit":"aaaa1111"},` +
+		`"schema":"org.spacedatanetwork.update.v1","signing":{"algorithm":"Ed25519","key_id":"k1"},"version":"1.0.0"}`
+	if got != want {
+		t.Fatalf("canonical bytes dropped or reordered unmodelled fields:\n got  %s\n want %s", got, want)
+	}
+}
