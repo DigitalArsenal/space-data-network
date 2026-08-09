@@ -77,6 +77,19 @@ export function buildUpdateManifest(options) {
   if (options.publicKey) {
     manifest.signing.public_key = publicKeyBase64(options.publicKey);
   }
+  // Optional provenance, carried INSIDE the signed document (canonicalization
+  // covers the whole generic JSON doc on both the Go and JS verification
+  // sides, so adding a field is signature-compatible and cannot be attached
+  // after signing). It exists because on 2026-08-09 the only way to tell the
+  // feed's artifact from the operator's build was to download and unpack the
+  // carrier; echoing the source binary's sha256 and size makes that a string
+  // comparison against a published field.
+  if (options.provenance) {
+    if (typeof options.provenance !== 'object' || Array.isArray(options.provenance)) {
+      throw new Error('provenance must be an object');
+    }
+    manifest.provenance = { ...options.provenance };
+  }
   if (options.rollback) {
     const previousSequence = options.rollback.previous_sequence ?? options.rollback.previousSequence;
     if (!Number.isInteger(previousSequence)) {

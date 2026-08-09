@@ -38,6 +38,12 @@ type ApplyOptions struct {
 	// enforced. Left empty, the gate is skipped (back-compat).
 	InstalledKuboVersion string
 
+	// AllowRollback threads the operator's explicit acceptance of a declared
+	// source-lineage rollback through to re-verification at apply time. Apply
+	// re-verifies from scratch, so without this a staged rollback accepted at
+	// `install` time would be refused a moment later at `apply` time.
+	AllowRollback bool
+
 	// testFault is an in-package-only fault-injection seam used by this
 	// package's own tests to exercise the phase-2-failure and crash-
 	// recovery paths through the real Apply entry point. It is unexported,
@@ -104,6 +110,7 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 	}
 	verifyOpts := HostVerifyOptions(roots, state.Sequence, opts.Now)
 	verifyOpts.InstalledKuboVersion = opts.InstalledKuboVersion
+	verifyOpts.AllowRollback = opts.AllowRollback
 	staged, err := ScanStaged(paths, verifyOpts)
 	if err != nil {
 		return nil, err

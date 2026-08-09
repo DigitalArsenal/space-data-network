@@ -96,6 +96,9 @@ test.describe('SDN updater release feed', () => {
           },
           expires_at: '2026-06-05T00:00:00Z',
           bundle_hash: 'a'.repeat(64),
+          // Carried alongside the hash so a consumer can reject an implausible
+          // artifact from the index alone (2026-08-09 truncated-publish fix).
+          bundle_size: 1234,
           wasm_hash: 'b'.repeat(64),
           signing_key_id: 'release-2026q2',
           manifest_url: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.48.0/manifest.json',
@@ -113,6 +116,9 @@ test.describe('SDN updater release feed', () => {
           },
           expires_at: '2026-06-05T00:00:00Z',
           bundle_hash: 'a'.repeat(64),
+          // Carried alongside the hash so a consumer can reject an implausible
+          // artifact from the index alone (2026-08-09 truncated-publish fix).
+          bundle_size: 1234,
           wasm_hash: 'b'.repeat(64),
           signing_key_id: 'release-2026q2',
           manifest_url: 'https://sdn.spaceaware.io/updates/desktop/stable/darwin/arm64/0.47.1/manifest.json',
