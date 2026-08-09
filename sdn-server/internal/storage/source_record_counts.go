@@ -28,11 +28,23 @@ func (s *FlatSQLStore) SourceRecordCounts() (map[string]int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// GROUPING BY THE INDEX PREFIX IS NOT COSMETIC. schema_name is the leading
+	// column of idx_sdn_record_source_tags_lookup (schema_name, provider_id,
+	// source_name, batch_id); grouping by (provider_id, source_name) alone is
+	// not an index-ordered prefix, so SQLite had to sort every row of a 1.6 M-row
+	// table through a temp B-tree. Measured on host-01 2026-08-09: **24.9 s and
+	// 26.0 s of engine hold** in the slow-statement log, inside the one engine
+	// lock, on the retrieval-ledger reconciliation that runs after every boot.
+	// Adding schema_name to the GROUP BY makes it an ordered covering-index scan
+	// with no sort — and it cannot change the ANSWER, because the loop below
+	// re-keys on sourceCountKey(provider, source) and ACCUMULATES (`+=`), so a
+	// provider/source pair split across schemas is summed back together exactly
+	// as the single grouped aggregate summed it.
 	rows, err := s.db.Query(`
 		SELECT provider_id, source_name, COUNT(*)
 		FROM sdn_record_source_tags
 		WHERE provider_id <> '' OR source_name <> ''
-		GROUP BY provider_id, source_name
+		GROUP BY schema_name, provider_id, source_name
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("count records per source: %w", err)
