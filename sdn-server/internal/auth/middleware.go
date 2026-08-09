@@ -20,12 +20,18 @@ const sessionContextKey contextKey = "auth_session"
 // sdn-server/docs/gateway-api.md §4 — this retires the "epoch endpoint
 // answers 302" oddity: an anonymous browser GET of a gated API route now
 // reads 401, not a login page).
+//
+// That JSON refusal is written through writeAuthRefusal (cors.go), which makes
+// it READABLE to a cross-origin browser. The comment above says the split
+// exists so an anonymous browser "reads 401, not a login page" — before that
+// decoration the intent was defeated for every cross-origin caller, which is
+// every embedded page and every gallery demo: they read neither.
 func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, err := h.sessionFromRequest(r)
 		if err != nil {
 			if wantsJSON(r) || isAPIPath(r) {
-				writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
+				writeAuthRefusal(w, r, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
 			} else {
 				http.Redirect(w, r, loginPagePath(r.URL.RequestURI(), false), http.StatusFound)
 			}
@@ -34,7 +40,7 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 
 		if session.TrustLevel < minTrust {
 			if wantsJSON(r) || isAPIPath(r) {
-				writeJSON(w, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "insufficient permissions"})
+				writeAuthRefusal(w, r, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "insufficient permissions"})
 			} else {
 				http.Redirect(w, r, loginPagePath(r.URL.RequestURI(), true), http.StatusFound)
 			}
@@ -65,16 +71,16 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 // Fail-closed: a nil Handler admits nobody.
 func (h *Handler) RequireTrust(w http.ResponseWriter, r *http.Request, minTrust peers.TrustLevel) bool {
 	if h == nil {
-		writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
+		writeAuthRefusal(w, r, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
 		return false
 	}
 	session, err := h.sessionFromRequest(r)
 	if err != nil || session == nil {
-		writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
+		writeAuthRefusal(w, r, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
 		return false
 	}
 	if session.TrustLevel < minTrust {
-		writeJSON(w, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "insufficient permissions"})
+		writeAuthRefusal(w, r, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "insufficient permissions"})
 		return false
 	}
 	return true
@@ -108,7 +114,7 @@ func (h *Handler) RequirePolicy(engine PolicyEngine, action abac.Action, resourc
 			if session == nil {
 				// No session in context — trust gate should have already rejected this,
 				// but be defensive.
-				writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
+				writeAuthRefusal(w, r, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
 				return
 			}
 
@@ -134,7 +140,7 @@ func (h *Handler) RequirePolicy(engine PolicyEngine, action abac.Action, resourc
 					"remote_addr", r.RemoteAddr,
 					"path", r.URL.Path,
 				)
-				writeJSON(w, http.StatusForbidden, errorResponse{Code: "policy_denied", Message: "access denied by policy: " + decision.Reason})
+				writeAuthRefusal(w, r, http.StatusForbidden, errorResponse{Code: "policy_denied", Message: "access denied by policy: " + decision.Reason})
 				return
 			}
 
