@@ -71,6 +71,11 @@ type SelfUpgradeOptions struct {
 	// source-lineage rollback. A signal-driven upgrade NEVER sets it: a
 	// broadcast is not an operator.
 	AllowRollback bool
+	// Trigger and SignalKeyID are carried into the helper's deploy-ledger line
+	// so an unattended self-upgrade is distinguishable, after the fact, from an
+	// operator who ran `update install`.
+	Trigger     string
+	SignalKeyID string
 	// UnitPrefix names the transient systemd unit. Defaults to
 	// "sdn-self-upgrade".
 	UnitPrefix string
@@ -179,6 +184,8 @@ func LaunchSelfUpgrade(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 		Token:            token,
 		HealthTimeout:    opts.HealthTimeout,
 		AllowRollback:    opts.AllowRollback,
+		Trigger:          opts.Trigger,
+		SignalKeyID:      opts.SignalKeyID,
 	})
 	if err != nil {
 		return nil, err

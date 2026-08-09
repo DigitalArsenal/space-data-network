@@ -319,6 +319,8 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 		UpdateID:      staged.UpdateID,
 		AdminURL:      s.deps.AdminURL,
 		HealthTimeout: s.deps.HealthTimeout,
+		Trigger:       "signal",
+		SignalKeyID:   signal.Signing.KeyID,
 		// Never: see the rollback refusal above.
 		AllowRollback: false,
 	})
@@ -461,8 +463,8 @@ func (n *Node) startUpdateSignalSubscriber() {
 // /sdn/updates/v1/beta at boot to hear its own channel — so a separate Join for
 // the subscriber meant `PublishToTopic` on that exact topic failed with
 //
-//     the signal was signed but could not be published: join topic
-//     /sdn/updates/v1/beta: topic already exists
+//	the signal was signed but could not be published: join topic
+//	/sdn/updates/v1/beta: topic already exists
 //
 // i.e. the one node in the fleet that must be able to push was the only node
 // that could not. Routing both through the node's cache makes the publish and
