@@ -438,14 +438,14 @@ func (r *Runtime) startDispatchLog() {
 		t := time.NewTicker(dispatchLogInterval)
 		defer t.Stop()
 		prev := r.mod.DispatchStats()
-		prevQ, _, _, _ := r.Stats()
+		prevQ, prevSlow, prevWait, prevHeld := r.Stats()
 		for {
 			select {
 			case <-r.dispatchLogStop:
 				return
 			case <-t.C:
 				cur := r.mod.DispatchStats()
-				curQ, slow, wait, held := r.Stats()
+				curQ, curSlow, curWait, curHeld := r.Stats()
 				calls := cur.Calls - prev.Calls
 				disp := cur.Dispatches - prev.Dispatches
 				secs := dispatchLogInterval.Seconds()
@@ -453,11 +453,19 @@ func (r *Runtime) startDispatchLog() {
 				if disp > 0 {
 					perHandoff = float64(calls) / float64(disp)
 				}
-				log.Infof("FlatSQL engine dispatch account (last %s): %d guest calls (%.0f/s) on %d thread handoffs (%.1f calls/handoff, batching=%v); "+
-					"%d statements, %d slow, %s waited, %s held; busiest exports: %s",
+				// EVERY figure on this line is a DELTA over the interval. Mixing a
+				// delta call count with a cumulative "held" is how a reader
+				// concludes the engine held its lock for 73 seconds of a 60-second
+				// window — which is exactly what the first version of this line
+				// said on host-01 before it was corrected.
+				held := curHeld - prevHeld
+				log.Infof("FlatSQL engine dispatch account (last %s, all figures are deltas over that window): "+
+					"%d guest calls (%.0f/s) on %d thread handoffs (%.1f calls/handoff, batching=%v); "+
+					"%d statements, %d slow, %s waited, %s held (%.0f%% of the window); busiest exports (CUMULATIVE): %s",
 					dispatchLogInterval, calls, float64(calls)/secs, disp, perHandoff, wasmrt.ExecBatchEnabled(),
-					curQ-prevQ, slow, wait.Round(time.Millisecond), held.Round(time.Millisecond), cur.Top(6))
-				prev, prevQ = cur, curQ
+					curQ-prevQ, curSlow-prevSlow, (curWait - prevWait).Round(time.Millisecond),
+					held.Round(time.Millisecond), 100*held.Seconds()/secs, cur.Top(6))
+				prev, prevQ, prevSlow, prevWait, prevHeld = cur, curQ, curSlow, curWait, curHeld
 			}
 		}
 	}()
