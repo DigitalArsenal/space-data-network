@@ -1,8 +1,14 @@
 package storage
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
@@ -475,4 +481,243 @@ func TestRawRecordCursorsUnaffectedByRoutedMirrors(t *testing.T) {
 	if head.MaxRowID != 3 {
 		t.Fatalf("MaxRowID = %d, want 3 (legacy-table rowid sequence)", head.MaxRowID)
 	}
+}
+
+// TestRecordReadSourceFilteredMatchesUnfiltered is the correctness half of the
+// pushdown fix (graph: sdn-flatsql-engine-read-queue-seconds-per-call). Inlining
+// the caller's predicate into every union branch must not change a single row —
+// including the one case the `GROUP BY cid` exists for, a cid published by TWO
+// producers into two different (producer, standard) tables.
+func TestRecordReadSourceFilteredMatchesUnfiltered(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	// The SAME record from two producers -> the same cid in two tables. This is
+	// the deduplication case, and it must survive the pushdown.
+	shared := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
+	onlyB := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("SATELLITE").Build()
+	sharedCID, err := store.StoreRoutedByProducer("OMM.fbs", shared, "peerA", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StoreRoutedByProducer("OMM.fbs", shared, "peerB", nil); err != nil {
+		t.Fatal(err)
+	}
+	onlyBCID, err := store.StoreRoutedByProducer("OMM.fbs", onlyB, "peerB", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store.mu.RLock()
+	plain, err := store.recordReadSource("OMM.fbs")
+	if err != nil {
+		store.mu.RUnlock()
+		t.Fatalf("recordReadSource: %v", err)
+	}
+	pushed, err := store.recordReadSourceFiltered("OMM.fbs", "cid = ?1")
+	store.mu.RUnlock()
+	if err != nil {
+		t.Fatalf("recordReadSourceFiltered: %v", err)
+	}
+	if plain == pushed {
+		t.Fatalf("filtered read source is identical to the unfiltered one — the predicate never reached the branches:\n%s", plain)
+	}
+	if !strings.Contains(pushed, "UNION ALL") {
+		t.Fatalf("expected a multi-table union for two producers, got %q", pushed)
+	}
+	if strings.Count(pushed, "WHERE cid = ?1") != strings.Count(pushed, "UNION ALL")+1 {
+		t.Fatalf("predicate is not inlined into EVERY branch: %s", pushed)
+	}
+
+	read := func(source, cid string) [][]interface{} {
+		t.Helper()
+		rows, err := store.db.Query(fmt.Sprintf(
+			`SELECT cid, peer_id, stream_offset, record_length FROM %s WHERE cid = ?1`, source), cid)
+		if err != nil {
+			t.Fatalf("query %s: %v", source, err)
+		}
+		defer rows.Close()
+		var out [][]interface{}
+		for rows.Next() {
+			var c, p string
+			var off, length int64
+			if err := rows.Scan(&c, &p, &off, &length); err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			out = append(out, []interface{}{c, p, off, length})
+		}
+		return out
+	}
+
+	for _, cid := range []string{sharedCID, onlyBCID, "bafy-not-here"} {
+		got, want := read(pushed, cid), read(plain, cid)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("cid %q: pushed-down read source returned %v, unfiltered returned %v", cid, got, want)
+		}
+	}
+	// The dedup case really does collapse to one row, not two.
+	if got := read(pushed, sharedCID); len(got) != 1 {
+		t.Fatalf("cid published by two producers returned %d rows, want 1: %v", len(got), got)
+	}
+
+	// And the whole point: GetRecord — which is what the API record-by-cid route
+	// calls — still answers, through the pushed-down source.
+	rec, err := store.GetRecord("OMM.fbs", sharedCID)
+	if err != nil {
+		t.Fatalf("GetRecord(shared): %v", err)
+	}
+	if rec.CID != sharedCID {
+		t.Fatalf("GetRecord returned cid %q, want %q", rec.CID, sharedCID)
+	}
+	if _, err := store.GetRecord("OMM.fbs", "bafy-not-here"); err == nil {
+		t.Fatal("GetRecord for a missing cid returned no error")
+	}
+}
+
+// TestRecordReadSourceProdScale is the MEASUREMENT half of the pushdown fix,
+// and it is opt-in (PRODSCALE=1) because it builds a ~90 MB control database.
+//
+// It reproduces host-01's shape exactly: two (producer, standard) OMM tables at
+// the live row counts, plus the 30-row sdn_dataset_shard_publications table that
+// the acceptance probe (GET /api/v1/channels/{id}/pnm) reads. Then it measures
+// the number that actually matters — the p95 of that 30-row indexed probe while
+// a record-by-cid lane runs continuously, which is the steady state of a node
+// serving browsers.
+//
+// Measured 2026-08-09 (M-series laptop, quiet, AOT engine):
+//
+//	record-by-cid, UNION+GROUP BY (before)   p50 123.6 ms
+//	record-by-cid, predicate pushed down     p50   1.05 ms   (118x)
+//	control probe p95 under the before-lane      253.9 ms   (18 reads completed)
+//	control probe p95 under the pushed lane        3.2 ms   (423 reads completed)
+//
+// A 128 MB engine page cache was A/B'd in the same run and bought only 2x on its
+// own (123.6 -> 61.4 ms) and nothing once the scan was gone: the scan is CPU on
+// B-tree traversal, not just I/O. That is why this fix is the plan, not the cache.
+func TestRecordReadSourceProdScale(t *testing.T) {
+	if os.Getenv("PRODSCALE") == "" {
+		t.Skip("set PRODSCALE=1 (builds a ~90 MB control database)")
+	}
+	big, small := 250318, 1088 // the live host-01 row counts
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tables := []string{"sds_p_probeA__OMM", "sds_p_probeB__OMM"}
+	for ti, rows := range []int{big, small} {
+		if _, err := store.db.Exec(fmt.Sprintf(`CREATE TABLE %s (
+			cid TEXT PRIMARY KEY, peer_id TEXT NOT NULL, timestamp INTEGER NOT NULL,
+			stream_path TEXT NOT NULL, stream_offset INTEGER NOT NULL,
+			record_length INTEGER NOT NULL, signature_hex TEXT,
+			created_at INTEGER DEFAULT 0, UNIQUE(cid))`, tables[ti])); err != nil {
+			t.Fatalf("create %s: %v", tables[ti], err)
+		}
+		for i := 0; i < rows; i += 5000 {
+			tx, err := store.db.Begin()
+			if err != nil {
+				t.Fatalf("begin: %v", err)
+			}
+			for j := 0; j < 5000 && i+j < rows; j++ {
+				n := i + j
+				if _, err := tx.Exec(fmt.Sprintf(`INSERT INTO %s
+					(cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex)
+					VALUES (?,?,?,?,?,?,?)`, tables[ti]),
+					fmt.Sprintf("bafybeih%d%040d", ti, n), "peer", int64(1786000000+n),
+					"flatsql-streams/OMM.flatsql", int64(n)*512, int64(384), fmt.Sprintf("%0128x", n)); err != nil {
+					t.Fatalf("insert: %v", err)
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatalf("commit: %v", err)
+			}
+		}
+	}
+
+	cols := recordReadColumns
+	branch := func(where string) string {
+		sel := make([]string, 0, len(tables))
+		for _, tab := range tables {
+			w := ""
+			if where != "" {
+				w = " WHERE " + where
+			}
+			sel = append(sel, fmt.Sprintf("SELECT rowid AS rowid, %s FROM %s%s", cols, tab, w))
+		}
+		return "(SELECT rowid, " + cols + " FROM (" + strings.Join(sel, " UNION ALL ") + ") GROUP BY cid)"
+	}
+	before := fmt.Sprintf(`SELECT cid, peer_id, timestamp FROM %s WHERE cid = ?1`, branch(""))
+	after := fmt.Sprintf(`SELECT cid, peer_id, timestamp FROM %s WHERE cid = ?1`, branch("cid = ?1"))
+	probe := `SELECT COUNT(*) FROM sdn_dataset_shard_publications WHERE schema_name = ?1 AND query_profile = ?2`
+	cid := fmt.Sprintf("bafybeih0%040d", big/2)
+
+	timeIt := func(sql string, args ...interface{}) time.Duration {
+		start := time.Now()
+		rows, err := store.db.Query(sql, args...)
+		if err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		for rows.Next() {
+		}
+		rows.Close()
+		return time.Since(start)
+	}
+	p95 := func(d []time.Duration) time.Duration {
+		sort.Slice(d, func(i, j int) bool { return d[i] < d[j] })
+		return d[int(float64(len(d)-1)*0.95)]
+	}
+	underLoad := func(label, loadSQL string) {
+		stop := make(chan struct{})
+		done := make(chan int64)
+		go func() {
+			var n int64
+			for {
+				select {
+				case <-stop:
+					done <- n
+					return
+				default:
+				}
+				rows, err := store.db.Query(loadSQL, cid)
+				if err != nil {
+					done <- n
+					return
+				}
+				for rows.Next() {
+				}
+				rows.Close()
+				n++
+			}
+		}()
+		time.Sleep(400 * time.Millisecond)
+		var got []time.Duration
+		for i := 0; i < 20; i++ {
+			got = append(got, timeIt(probe, "NOSUCH.fbs", "dataset-shard"))
+		}
+		close(stop)
+		t.Logf("%-42s control-probe p95 = %-12v (lane completed %d record reads)",
+			label, p95(got).Round(time.Microsecond), <-done)
+	}
+
+	var b, a []time.Duration
+	for i := 0; i < 20; i++ {
+		b = append(b, timeIt(before, cid))
+		a = append(a, timeIt(after, cid))
+	}
+	t.Logf("record-by-cid p95: UNION+GROUP BY %v -> pushed down %v",
+		p95(b).Round(time.Microsecond), p95(a).Round(time.Microsecond))
+	underLoad("UNION+GROUP BY lane (before)", before)
+	underLoad("pushed-down lane (after)", after)
 }
