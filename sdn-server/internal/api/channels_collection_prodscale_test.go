@@ -35,23 +35,29 @@ import (
 // a loaded host-01 ONE such call was measured at 0.5–23 s. 206 x that is the
 // 240 s. Row COUNT was never the cost; ROUND TRIPS were.
 //
-// Scale is settable so the same test can be run at the exact prod shape:
+// ⛔ OPT-IN, DELIBERATELY. Building the fixture costs minutes (~4 min at 25 k,
+// hours at 1.38 M), and `internal/api` already runs right up against the
+// gauntlet's 1800 s package timeout — adding an unconditional multi-minute
+// fixture to the default suite is what tips it over, which is exactly what
+// happened the first time this file was added. The correctness guard that must
+// run on EVERY commit is TestHasPinLedgerEntryMatchesTheListItReplaces below
+// (1.7 s); this one is a measurement you ask for:
 //
+//	SDN_CHANNEL_COST_RECORDS=25000   go test ./internal/api/ \
+//	  -run TestChannelCollectionCostAtProdScale -v -timeout 1h
 //	SDN_CHANNEL_COST_RECORDS=1380000 go test ./internal/api/ \
-//	  -run TestChannelCollectionCostAtProdScale -v -timeout 4h
+//	  -run TestChannelCollectionCostAtProdScale -v -timeout 8h   # host-01's shape
 //
-// The default is a store large enough to make a per-schema record count
-// visible while still running in CI time. The ASSERTIONS are scale-independent:
-// they compare the route against the shape it replaced, in ONE process at ONE
-// pin, on the SAME store.
+// The ASSERTIONS are scale-independent: they compare the route against the shape
+// it replaced, in ONE process at ONE pin, on the SAME store.
 func TestChannelCollectionCostAtProdScale(t *testing.T) {
-	records := 25_000
-	if raw := os.Getenv("SDN_CHANNEL_COST_RECORDS"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 {
-			t.Fatalf("SDN_CHANNEL_COST_RECORDS=%q is not a positive integer", raw)
-		}
-		records = parsed
+	raw := os.Getenv("SDN_CHANNEL_COST_RECORDS")
+	if raw == "" {
+		t.Skip("set SDN_CHANNEL_COST_RECORDS=<n> to run the collection cost measurement (fixture build costs minutes)")
+	}
+	records, err := strconv.Atoi(raw)
+	if err != nil || records < 1 {
+		t.Fatalf("SDN_CHANNEL_COST_RECORDS=%q is not a positive integer", raw)
 	}
 
 	validator, err := sds.NewValidator(nil)
