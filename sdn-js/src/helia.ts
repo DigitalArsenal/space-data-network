@@ -46,6 +46,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import type { SDNConfig } from './node';
 import { dhtEnabled } from './node';
 import { getBootstrapRelays } from './edge-discovery';
+import { resolveConnectionMonitorInit } from './connection-monitor-policy';
 import { initHDWallet } from './crypto/hd-wallet';
 import type { DerivedIdentity } from './crypto/types';
 
@@ -515,6 +516,10 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
     peerDiscovery: bootstrapList.length
       ? [bootstrap({ list: bootstrapList })]
       : [],
+    // Same policy as SDNNode: libp2p's stock heartbeat aborts the whole
+    // connection after a fixed 2000 ms, which a busy browser misses while the
+    // peer is healthy. See connection-monitor-policy.ts.
+    connectionMonitor: resolveConnectionMonitorInit(config.connectionMonitor),
     services,
   };
   if (config.enableAutoDial === false) {
