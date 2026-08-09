@@ -803,83 +803,90 @@ func (h *ChannelHandler) latestDatasetPublicationForChannel(parsed channels.Chan
 //
 // This is the discovery half of the head lane: without it a consumer must
 // GUESS the channel id (the $RFB gallery guessed satnogs-db-RFB, satnogs-RFB
-// and celestrak-RFB in turn). Cost is one indexed lookup per schema on a table
-// with one row per published window — it never touches the record store.
+// and celestrak-RFB in turn).
+//
+// ⛔ COST CONTRACT: exactly ONE store read, whatever the filter.
+//
+// It used to be one indexed read PER SUPPORTED SCHEMA, and the comment called
+// that free because the table is small. The table is small — 28 rows on prod —
+// but the loop is 206 schemas long, and the FlatSQL engine is a single-threaded
+// runtime every store call serializes on. Under live load one such call was
+// measured on host-01 at 0.5–23 s, so 206 of them is the reason the unfiltered
+// route exceeded 240 s. Row COUNT was never the cost; ROUND TRIPS were. Do not
+// reintroduce a per-schema loop here.
 func (h *ChannelHandler) datasetPublicationChannelRows(standardFilter string) []map[string]interface{} {
 	if h == nil || h.store == nil {
 		return nil
 	}
 	standardFilter = strings.TrimSpace(standardFilter)
-	schemaNames := sds.SupportedSchemas
+	schemaFilter := ""
 	if standardFilter != "" {
 		schemaName, err := channels.SchemaNameFromStandardCode(standardFilter)
 		if err != nil {
 			return nil
 		}
-		schemaNames = []string{schemaName}
+		schemaFilter = schemaName
+	}
+	publications, err := h.store.ListDatasetShardPublicationsForProfile(storage.DatasetPublicationQueryProfile, schemaFilter)
+	if err != nil {
+		return nil
 	}
 	rows := make([]map[string]interface{}, 0)
 	seen := make(map[string]struct{})
-	for _, schemaName := range schemaNames {
-		standardCode, err := channels.StandardCodeFromSchemaName(schemaName)
+	for _, publication := range publications {
+		// StandardCodeFromSchemaName is also the supported-schema filter: a
+		// publication row for a schema this build does not know is skipped,
+		// exactly as the per-schema loop skipped it.
+		standardCode, err := channels.StandardCodeFromSchemaName(publication.SchemaName)
 		if err != nil {
 			continue
 		}
-		publications, err := h.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
-			SchemaName:   schemaName,
-			QueryProfile: storage.DatasetPublicationQueryProfile,
-		})
-		if err != nil {
-			continue
-		}
-		for _, publication := range publications {
-			sourceID := datasetPublicationSourceID(publication.ProviderID, publication.SourceName)
-			for _, candidate := range []string{sourceID, strings.TrimSpace(publication.SourceName)} {
-				if candidate == "" {
-					continue
-				}
-				channelID, err := channels.FormatChannelID(channels.ChannelIDInput{
-					SourceID:     candidate,
-					StandardCode: standardCode,
-				})
-				if err != nil {
-					continue
-				}
-				if _, ok := seen[channelID]; ok {
-					continue
-				}
-				parsed, err := channels.ParseChannelID(channelID)
-				if err != nil {
-					continue
-				}
-				seen[channelID] = struct{}{}
-				// ⛔ DO NOT call channelDetail here. It resolves verified
-				// metadata, which now falls back to
-				// restoreVerifiedPNMFromDatasetPublication — a record read BY
-				// CID, PER ROW. Prod reads a record by CID in 12-29 s today
-				// (sdn-record-by-cid-read-12-to-29-seconds), so listing ~9
-				// channels that way would reintroduce this route's hang from a
-				// different cause. A LIST does not need $PNM bytes: every field
-				// below comes from the publication row and the subscription
-				// registry, both already in hand.
-				state := h.subscriptions.Get(parsed)
-				rows = append(rows, map[string]interface{}{
-					"channelId":       parsed.ChannelID,
-					"sourceId":        parsed.SourceID,
-					"standardCode":    parsed.StandardCode,
-					"feedUuid":        emptyStringAsNil(parsed.FeedUUID),
-					"topic":           channels.DiscoveryTopic(standardCode),
-					"visibility":      "public",
-					"subscribed":      state.Subscribed,
-					"grantState":      "not-required",
-					"encryptionState": "none",
-					"channelHead":     emptyStringAsNil(strings.TrimSpace(publication.FeedHead)),
-					// headAvailable says GET /pnm will answer for this channel,
-					// established without paying to fetch the head.
-					"headAvailable": strings.TrimSpace(publication.PNMCID) != "",
-					"recordCount":   publication.RecordCount,
-				})
+		sourceID := datasetPublicationSourceID(publication.ProviderID, publication.SourceName)
+		for _, candidate := range []string{sourceID, strings.TrimSpace(publication.SourceName)} {
+			if candidate == "" {
+				continue
 			}
+			channelID, err := channels.FormatChannelID(channels.ChannelIDInput{
+				SourceID:     candidate,
+				StandardCode: standardCode,
+			})
+			if err != nil {
+				continue
+			}
+			if _, ok := seen[channelID]; ok {
+				continue
+			}
+			parsed, err := channels.ParseChannelID(channelID)
+			if err != nil {
+				continue
+			}
+			seen[channelID] = struct{}{}
+			// ⛔ DO NOT call channelDetail here. It resolves verified
+			// metadata, which now falls back to
+			// restoreVerifiedPNMFromDatasetPublication — a record read BY
+			// CID, PER ROW. Prod reads a record by CID in 12-29 s today
+			// (sdn-record-by-cid-read-12-to-29-seconds), so listing ~9
+			// channels that way would reintroduce this route's hang from a
+			// different cause. A LIST does not need $PNM bytes: every field
+			// below comes from the publication row and the subscription
+			// registry, both already in hand.
+			state := h.subscriptions.Get(parsed)
+			rows = append(rows, map[string]interface{}{
+				"channelId":       parsed.ChannelID,
+				"sourceId":        parsed.SourceID,
+				"standardCode":    parsed.StandardCode,
+				"feedUuid":        emptyStringAsNil(parsed.FeedUUID),
+				"topic":           channels.DiscoveryTopic(standardCode),
+				"visibility":      "public",
+				"subscribed":      state.Subscribed,
+				"grantState":      "not-required",
+				"encryptionState": "none",
+				"channelHead":     emptyStringAsNil(strings.TrimSpace(publication.FeedHead)),
+				// headAvailable says GET /pnm will answer for this channel,
+				// established without paying to fetch the head.
+				"headAvailable": strings.TrimSpace(publication.PNMCID) != "",
+				"recordCount":   publication.RecordCount,
+			})
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -1992,22 +1999,31 @@ func (h *ChannelHandler) verifiedChannelMetadata(parsed channels.ChannelID) (cha
 }
 
 // hasVerifiedPNMPinLedgerEvidence reports whether the pin ledger holds any
-// verified pnm-role entry at all. sdn_pin_ledger is a small, indexed table
-// (one row per pinned artifact); this is the cheap precondition for the
-// LocalReplicaStats sweeps that restore channel metadata from it.
+// verified pnm-role entry at all — the precondition for the LocalReplicaStats
+// sweeps that restore channel metadata from it.
+//
+// It asks for ONE BIT and pays for one bit: SELECT 1 ... LIMIT 1 on the
+// (verification_state, updated_at) index, no row materialized, no ORDER BY.
+// The previous shape called ListPinLedgerEntries, which SELECTs 21 columns and
+// sorts them into a temp B-tree to answer len(entries) > 0.
 func (h *ChannelHandler) hasVerifiedPNMPinLedgerEvidence() bool {
 	if h == nil || h.store == nil {
 		return false
 	}
-	entries, err := h.store.ListPinLedgerEntries(storage.PinLedgerQuery{
-		Role:              "pnm",
-		VerificationState: "verified",
+	present, err := h.store.HasPinLedgerEntry(storage.PinLedgerQuery{
+		Role:              verifiedPNMPinLedgerRole,
+		VerificationState: verifiedPinLedgerState,
 	})
 	if err != nil {
 		return false
 	}
-	return len(entries) > 0
+	return present
 }
+
+const (
+	verifiedPNMPinLedgerRole = "pnm"
+	verifiedPinLedgerState   = "verified"
+)
 
 func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadata(parsed channels.ChannelID) (channels.VerifiedMetadata, bool) {
 	if h == nil || h.store == nil {
@@ -2052,29 +2068,38 @@ func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadataList(standardF
 	if h == nil || h.store == nil {
 		return nil
 	}
-	// COST GUARD. Every schema iterated below pays a LocalReplicaStats call,
-	// and LocalReplicaStats counts every raw record in the schema
-	// (pin_ledger.go localReplicaRawStats -> CountRawRecords + RawRecordHead).
-	// Across ~40 supported schemas that is the reason GET /api/v1/channels
-	// returned nothing in 60 s on prod. Every row this loop can produce needs a
-	// VERIFIED pnm-role pin-ledger entry (restoreVerifiedDatasetPublicationMetadataFromStat),
-	// so when the ledger holds none the whole sweep is provably empty — one
-	// cheap indexed probe on a small table decides it. Prod's ledger is empty
-	// (0 rows, verified 2026-08-08 on host-01), so this collapses the hang to a
-	// single query without changing the answer anywhere the ledger is populated.
-	if !h.hasVerifiedPNMPinLedgerEvidence() {
-		return nil
-	}
+	// ⛔ COST CONTRACT: the schema set comes from the LEDGER, never from the
+	// supported-schema list.
+	//
+	// Every schema iterated below pays a LocalReplicaStats call, and
+	// LocalReplicaStats counts every raw record in the schema (pin_ledger.go
+	// localReplicaRawStats -> CountRawRecords + RawRecordHead) — on prod that is
+	// ~1.4 M records. Every row this loop can emit requires a VERIFIED pnm-role
+	// pin-ledger entry for that schema
+	// (restoreVerifiedDatasetPublicationMetadataFromStat), so a schema with no
+	// such entry is provably empty and must never be swept.
+	//
+	// Asking the ledger for its distinct schemas is therefore both cheaper AND
+	// exact: one indexed read replaces a 206-schema fan-out, and an empty ledger
+	// (prod's state, 0 rows verified on host-01) costs exactly that one read.
+	// The previous shape asked a boolean and then swept ALL 206 schemas anyway
+	// the moment a single ledger row appeared — a latent 206 x CountRawRecords
+	// bomb armed by the first pin.
 	standardFilter = strings.TrimSpace(standardFilter)
-	schemaNames := make([]string, 0, len(sds.SupportedSchemas))
+	ledgerQuery := storage.PinLedgerQuery{
+		Role:              verifiedPNMPinLedgerRole,
+		VerificationState: verifiedPinLedgerState,
+	}
 	if standardFilter != "" {
 		schemaName, err := channels.SchemaNameFromStandardCode(standardFilter)
 		if err != nil {
 			return nil
 		}
-		schemaNames = append(schemaNames, schemaName)
-	} else {
-		schemaNames = append(schemaNames, sds.SupportedSchemas...)
+		ledgerQuery.SchemaName = schemaName
+	}
+	schemaNames, err := h.store.DistinctPinLedgerSchemas(ledgerQuery)
+	if err != nil || len(schemaNames) == 0 {
+		return nil
 	}
 	restoredByChannelID := make(map[string]channels.VerifiedMetadata)
 	for _, schemaName := range schemaNames {

@@ -216,9 +216,11 @@ func (s *FlatSQLStore) applyPinLedgerEntryUpsert(entry PinLedgerEntry) error {
 	return nil
 }
 
-func (s *FlatSQLStore) ListPinLedgerEntries(query PinLedgerQuery) ([]PinLedgerEntry, error) {
-	query = normalizePinLedgerQuery(query)
-	where := []string{"1 = 1"}
+// pinLedgerWhere builds the shared WHERE clause every pin-ledger read uses.
+// It never emits a constant-true term: `1 = 1` is not free on every planner,
+// and none of the callers need it.
+func pinLedgerWhere(query PinLedgerQuery) (string, []interface{}) {
+	where := []string{}
 	args := []interface{}{}
 	add := func(column, value string) {
 		if value == "" {
@@ -237,6 +239,86 @@ func (s *FlatSQLStore) ListPinLedgerEntries(query PinLedgerQuery) ([]PinLedgerEn
 	add("query_profile", query.QueryProfile)
 	add("role", query.Role)
 	add("verification_state", query.VerificationState)
+	if len(where) == 0 {
+		return "1 = 1", args
+	}
+	return strings.Join(where, " AND "), args
+}
+
+// HasPinLedgerEntry answers the ONE-BIT question "does any matching row exist"
+// without materializing a row, ordering a result set, or paying for the columns.
+//
+// This exists because the boolean was being answered by ListPinLedgerEntries,
+// which SELECTs 21 columns and sorts them by (updated_at DESC, cid ASC) — a
+// full result-set build and a temp B-tree for a question whose answer is one
+// bit. Every engine round trip on a loaded node is measured in seconds
+// (sdn-pin-ledger-probe-costs-76-seconds), so the shape of the query matters
+// more than the row count suggests.
+func (s *FlatSQLStore) HasPinLedgerEntry(query PinLedgerQuery) (bool, error) {
+	query = normalizePinLedgerQuery(query)
+	clause, args := pinLedgerWhere(query)
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var present int
+	err := s.db.QueryRow(`
+		SELECT 1
+		FROM sdn_pin_ledger
+		WHERE `+clause+`
+		LIMIT 1
+	`, args...).Scan(&present)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("probe pin ledger entry: %w", err)
+	}
+	return true, nil
+}
+
+// DistinctPinLedgerSchemas returns the distinct schema_name values of the rows
+// matching query.
+//
+// Callers that would otherwise sweep every SUPPORTED schema looking for
+// ledger-derived evidence should ask the ledger which schemas it actually holds
+// evidence for: the sweep can only produce output for those. One indexed read
+// replaces a per-schema fan-out.
+func (s *FlatSQLStore) DistinctPinLedgerSchemas(query PinLedgerQuery) ([]string, error) {
+	query = normalizePinLedgerQuery(query)
+	clause, args := pinLedgerWhere(query)
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT DISTINCT schema_name
+		FROM sdn_pin_ledger
+		WHERE `+clause+`
+		ORDER BY schema_name ASC
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list pin ledger schemas: %w", err)
+	}
+	defer rows.Close()
+
+	var schemas []string
+	for rows.Next() {
+		var schemaName string
+		if err := rows.Scan(&schemaName); err != nil {
+			return nil, fmt.Errorf("scan pin ledger schema: %w", err)
+		}
+		if schemaName = strings.TrimSpace(schemaName); schemaName != "" {
+			schemas = append(schemas, schemaName)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list pin ledger schemas rows: %w", err)
+	}
+	return schemas, nil
+}
+
+func (s *FlatSQLStore) ListPinLedgerEntries(query PinLedgerQuery) ([]PinLedgerEntry, error) {
+	query = normalizePinLedgerQuery(query)
+	clause, args := pinLedgerWhere(query)
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -246,7 +328,7 @@ func (s *FlatSQLStore) ListPinLedgerEntries(query PinLedgerQuery) ([]PinLedgerEn
 		       snapshot_id, head, high_water_mark, byte_hash, role, segment_start, segment_count, row_count, byte_count,
 		       ttl_seconds, verification_state, verified_at, updated_at
 		FROM sdn_pin_ledger
-		WHERE `+strings.Join(where, " AND ")+`
+		WHERE `+clause+`
 		ORDER BY updated_at DESC, cid ASC
 	`, args...)
 	if err != nil {
