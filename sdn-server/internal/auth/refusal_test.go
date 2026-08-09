@@ -211,3 +211,76 @@ func TestEveryAuthWallRefusalGoesThroughWriteAuthRefusal(t *testing.T) {
 		}
 	}
 }
+
+// Making the refusal readable is not enough: a caller that AUTHENTICATES
+// cross-origin must be able to read its own answer, or the lane is still
+// unusable. Scoped to signed-request admission (HERMES 2026-08-09 §b).
+func TestAdmittedSignedRequestResponseIsReadableCrossOrigin(t *testing.T) {
+	t.Parallel()
+
+	f := newSignedRequestFixture(t, peers.Standard, true)
+	id, challenge := f.mintChallenge(t)
+	body := []byte(`{}`)
+
+	rec := httptest.NewRecorder()
+	f.handler.RequireAuth(peers.Standard, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"credentialConfigured":true}`))
+	})(rec, newSignedRequest(http.MethodPut, credentialRoute, body, f.authorization(id, challenge, http.MethodPut, credentialRoute, body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != galleryOriginAuth {
+		t.Fatalf("Access-Control-Allow-Origin = %q on the SUCCESS path, want %q — an unreadable 200 leaves the lane just as broken", got, galleryOriginAuth)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty — never, on any path", got)
+	}
+}
+
+// A COOKIE-authenticated caller gains nothing from the decoration, so it does
+// not get one. Narrower on purpose.
+func TestAdmittedCookieSessionResponseIsNotDecorated(t *testing.T) {
+	t.Parallel()
+
+	f := newSignedRequestFixture(t, peers.Standard, true)
+	token, err := f.handler.sessions.CreateSession(f.xpub, peers.Standard, "127.0.0.1", "test-agent", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	req := newSignedRequest(http.MethodPut, credentialRoute, []byte(`{}`), "")
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	rec := httptest.NewRecorder()
+	f.handler.RequireAuth(peers.Standard, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q for a cookie-authenticated caller; the decoration is scoped to signed-request admission", got)
+	}
+}
+
+// RequireTrust is the sole gate for some routes on a require_auth:false node,
+// so it carries the decoration too.
+func TestRequireTrustDecoratesAnAdmittedSignedRequest(t *testing.T) {
+	t.Parallel()
+
+	f := newSignedRequestFixture(t, peers.Standard, true)
+	id, challenge := f.mintChallenge(t)
+	body := []byte(`{}`)
+
+	req := newSignedRequest(http.MethodPut, "/api/node/epm", body, f.authorization(id, challenge, http.MethodPut, "/api/node/epm", body))
+	rec := httptest.NewRecorder()
+
+	if !f.handler.RequireTrust(rec, req, peers.Standard) {
+		t.Fatalf("RequireTrust refused a valid signed request (status %d, body %s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != galleryOriginAuth {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, galleryOriginAuth)
+	}
+}

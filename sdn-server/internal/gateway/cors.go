@@ -108,6 +108,26 @@ func DecorateRefusal(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// DecorateAdmitted makes an ADMITTED response readable to the browser origin
+// that sent it. Same guards, same headers, same prohibition on
+// Access-Control-Allow-Credentials.
+//
+// Making the refusal readable is necessary but not sufficient: a gated route is
+// not public on the way OUT either, so a caller that authenticates successfully
+// still could not read its own 200 and the whole lane stayed unusable.
+//
+// HERMES ruled it admissible ONLY for callers admitted through the
+// signed-request mode (2026-08-09 §b), and the caller enforces that. The
+// argument is that a signed request carries a header the browser never attaches
+// on its own, so nothing an attacker can cause to be sent becomes readable;
+// a COOKIE-authenticated cross-origin response gains nothing either way,
+// because attaching a cookie cross-origin requires credentials:'include' and
+// that mode fails the CORS check while Access-Control-Allow-Credentials is
+// absent — which it permanently is.
+func DecorateAdmitted(w http.ResponseWriter, r *http.Request) bool {
+	return DecorateRefusal(w, r)
+}
+
 // AddVaryOrigin appends Origin to Vary without destroying an existing value.
 //
 // http.Header.Set would REPLACE a Vary the handler chain already set (for

@@ -28,6 +28,17 @@ type Session struct {
 	ExpiresAt  time.Time        `json:"expires_at"`
 	IPAddress  string           `json:"ip_address,omitempty"`
 	UserAgent  string           `json:"user_agent,omitempty"`
+
+	// SignedRequest marks a session that was NOT read from the session store:
+	// it was minted for one request by signed-request admission
+	// (signed_request.go) and dies with that request.
+	//
+	// It is a stamp, not a privilege — it grants nothing and is never
+	// persisted (json:"-", and this shape is only ever built in memory). It
+	// exists so the auth wall can decorate the ADMITTED response with CORS for
+	// exactly the mode where that is safe, without having to re-derive the
+	// safety argument from the absence of a cookie. HERMES ruling 2026-08-09.
+	SignedRequest bool `json:"-"`
 }
 
 // SessionStore manages authentication sessions in SQLite.
