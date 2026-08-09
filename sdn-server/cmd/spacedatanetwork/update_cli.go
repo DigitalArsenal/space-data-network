@@ -276,9 +276,13 @@ var updateHelperApplyCmd = &cobra.Command{
 				return fmt.Errorf("parse restart argv: %w", err)
 			}
 		}
+		// Resolved ONCE, here, while the daemon is still up — see
+		// daemonLoopbackTransport for why this cannot be deferred to the health
+		// gate below.
+		loopback := daemonLoopbackTransport()
 		var daemonSupervised bool
 		if strings.TrimSpace(helperApplyAdminURL) != "" && strings.TrimSpace(helperApplyToken) != "" {
-			daemonArgv, supervised, err := requestDaemonUpdateShutdown(daemonLoopbackHTTPClient(10*time.Second), helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
+			daemonArgv, supervised, err := requestDaemonUpdateShutdown(&http.Client{Timeout: 10 * time.Second, Transport: loopback}, helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "daemon_shutdown=unavailable error=%q\n", err.Error())
 			} else {
@@ -308,10 +312,11 @@ var updateHelperApplyCmd = &cobra.Command{
 			Supervised:  daemonSupervised,
 			AdminURL:    helperApplyAdminURL,
 			NoRestart:   helperApplyNoRestart,
-			// Same anchored client for the health gate: a probe that cannot
-			// verify the daemon's own certificate reports "unhealthy" for a
-			// perfectly healthy daemon and rolls a good update back.
-			Client:        daemonLoopbackHTTPClient(5 * time.Second),
+			// The SAME anchored transport, captured above while the daemon was
+			// still running: a probe that cannot verify the daemon's own
+			// certificate reports "unhealthy" for a perfectly healthy daemon
+			// and rolls a good update back.
+			Client:        &http.Client{Timeout: 5 * time.Second, Transport: loopback},
 			Out:           out,
 			Err:           cmd.ErrOrStderr(),
 			HealthTimeout: helperApplyHealthTimeout,
@@ -526,22 +531,40 @@ func shouldDelegateInstallToHelper() bool {
 // loopback and verification still happens — only the anchor changes.
 // InsecureSkipVerify is never set here.
 func daemonLoopbackHTTPClient(timeout time.Duration) *http.Client {
-	client := &http.Client{Timeout: timeout}
+	return &http.Client{Timeout: timeout, Transport: daemonLoopbackTransport()}
+}
+
+// daemonLoopbackTransport builds the anchored transport, and MUST be called
+// while the daemon is still running.
+//
+// config.LoadResolved("") prefers the RUNNING DAEMON tier — it reads the config
+// path off the live process's command line — and only that tier (or a system
+// location) satisfies Resolution.IsOwnDaemonConfig, which is the precondition
+// for trusting the certificate that config declares. An explicit -c path
+// deliberately does NOT qualify, because a config file can point anywhere and
+// must not get to choose the CLI's trust anchor.
+//
+// The consequence for the helper is a sequencing rule, not a flag: once it has
+// asked the daemon to shut down there is no running process to resolve from, so
+// a transport built at that point may silently fall back to system roots and
+// then report a perfectly healthy daemon as unhealthy — rolling a good update
+// back. Build it once, up front, and reuse it for both the shutdown handshake
+// and the post-restart health gate.
+func daemonLoopbackTransport() *http.Transport {
 	cfg, res, err := config.LoadResolved(configPath)
 	if err != nil || cfg == nil {
-		return client
+		return nil
 	}
 	tlsCfg, certPath, err := daemonTLSConfig(cfg, res)
 	if err != nil || tlsCfg == nil {
-		return client
+		return nil
 	}
 	base := strings.TrimRight(adminURL(cfg), "/")
 	host := strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
 	if name := serverNameForCert(certPath, ExpectedCertHostFor(host)); name != "" {
 		tlsCfg.ServerName = name
 	}
-	client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
-	return client
+	return &http.Transport{TLSClientConfig: tlsCfg}
 }
 
 func localDaemonAvailable(rawAdminURL string) bool {
