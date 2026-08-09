@@ -48,6 +48,76 @@ type Config struct {
 	WalletWasm WalletWasmConfig `yaml:"wallet_wasm"`
 	Status     StatusConfig     `yaml:"status"`
 	Apps       AppsConfig       `yaml:"apps"`
+	Update     UpdateConfig     `yaml:"update"`
+}
+
+// UpdateConfig governs whether this install acts on pushed update signals.
+//
+// OWNER RULING 2026-08-09: "We should be building locally and then pushing an
+// update signal to all installs to upgrade in place". Enabled is therefore
+// DEFAULT TRUE — the ruling is about all installs, and a default of false would
+// mean every box needed a config edit before the mechanism the ruling describes
+// did anything, which is the manual step it exists to remove.
+//
+// That default is safe because it is not the only gate. A signal is acted on
+// only if it is signed by a key in this bundle's trust roots, targets this
+// platform/arch/kind and channel, carries a sequence above the installed one,
+// does not declare a source-lineage rollback, and names an update this box has
+// not already tried and reversed. Everything it points at is then re-fetched
+// over HTTPS and verified against the signed manifest before a byte moves.
+//
+// A box opts out with `update: {enabled: false}`. That is the recorded way to
+// hold a box back — not silence on the publisher side, which would hold back
+// the whole fleet.
+type UpdateConfig struct {
+	// Enabled acts on update signals. Default true.
+	Enabled bool `yaml:"enabled"`
+
+	// Topic overrides the signal topic. Default: the pubsubTopic declared by
+	// this bundle's own manifest.json, so the bundle stays the source of truth
+	// for where its channel talks.
+	Topic string `yaml:"topic,omitempty"`
+
+	// Channel overrides the channel this box accepts signals for. Default: the
+	// channel in this bundle's manifest.json.
+	Channel string `yaml:"channel,omitempty"`
+
+	// HealthTimeoutSeconds bounds the helper's post-restart health wait.
+	// Default 600. The helper's own default is 60 s, which is correct for an
+	// 18-second-boot VM and WRONG for a store-heavy node whose boot replays the
+	// record catalog for minutes — a 60 s gate already rolled back a healthy
+	// update on host-02 once (graph: ops-update-lane-restart-policy-preflight).
+	// "Takes as long as it takes" is an owner rule; the gate must be able to
+	// say it too.
+	HealthTimeoutSeconds int `yaml:"health_timeout_seconds,omitempty"`
+
+	// MinIntervalSeconds is the floor between two self-upgrades on this box.
+	// Default 300. It bounds the blast radius of a publisher that signals in a
+	// loop: a box will decline to swap itself more often than this regardless
+	// of how many valid signals arrive.
+	MinIntervalSeconds int `yaml:"min_interval_seconds,omitempty"`
+
+	// MaxDelaySeconds spreads a fleet-wide roll over a window instead of
+	// restarting every box at once. Zero (the default) means act immediately,
+	// which is right for a fleet whose boxes hold different roles; set it on a
+	// fleet where several boxes serve the same surface.
+	MaxDelaySeconds int `yaml:"max_delay_seconds,omitempty"`
+}
+
+// HealthTimeout is the resolved post-restart health budget.
+func (u UpdateConfig) HealthTimeout() time.Duration {
+	if u.HealthTimeoutSeconds > 0 {
+		return time.Duration(u.HealthTimeoutSeconds) * time.Second
+	}
+	return 600 * time.Second
+}
+
+// MinInterval is the resolved floor between self-upgrades.
+func (u UpdateConfig) MinInterval() time.Duration {
+	if u.MinIntervalSeconds > 0 {
+		return time.Duration(u.MinIntervalSeconds) * time.Second
+	}
+	return 300 * time.Second
 }
 
 // AppsConfig declares the node's DEFAULT $APP per runtime class (owner ruling
@@ -1536,6 +1606,10 @@ func Default() *Config {
 		Status: StatusConfig{
 			AllowedOrigins: []string{"https://sdn.spaceaware.io"},
 		},
+		// Default ON: owner ruling 2026-08-09 is that the publisher pushes a
+		// signal and ALL installs upgrade in place. See UpdateConfig for the
+		// gates that make a default-on push lane safe.
+		Update: UpdateConfig{Enabled: true},
 		Schemas: SchemaConfig{
 			Validate: true,
 			Strict:   true,

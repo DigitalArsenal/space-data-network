@@ -142,6 +142,14 @@ const rollbackReason = arg('rollback', '');
 // does: replacing a published artifact without saying why it was bad is the
 // thing this guard exists to stop.
 const supersedeReason = arg('supersede', '');
+// --no-signal takes its REASON as its value, like every other opt-out here.
+//
+// OWNER RULING 2026-08-09: "pushing an update signal to all installs to upgrade
+// in place... That's the point of the update server." Publishing an artifact
+// and NOT telling the fleet leaves the boxes exactly where they were, which
+// looks identical to a publish that never happened — so the push is the DEFAULT
+// and skipping it has to be said out loud and recorded in the ledger line.
+const noSignalReason = arg('no-signal', '');
 const dryRun = flag('dry-run');
 const noSmoke = flag('no-smoke');
 
@@ -702,6 +710,11 @@ print(f'index: {len(updates)} update(s)')
     bundle_sha256: bundleHash,
     wasm_sha256: wasmHash,
     published_by: process.env.USER || 'unknown',
+    // Whether the fleet was TOLD. A published-but-unsignalled artifact and a
+    // published-and-pushed one look identical on the feed and are completely
+    // different events on the boxes.
+    signal: noSignalReason ? 'skipped' : 'pushed',
+    ...(noSignalReason ? { signal_skipped_reason: noSignalReason } : {}),
   });
   try {
     run('ssh', [
@@ -722,12 +735,58 @@ print(f'index: {len(updates)} update(s)')
     console.error(`[fleet-update] record this by hand on ${publisherSSH}:${ledgerPath}:\n${ledgerLine}`);
   }
 
+  // --- 8. PUSH ---------------------------------------------------------------
+  // A publish puts the artifact where the fleet CAN get it. The signal is what
+  // makes the fleet GO and get it. Until 2026-08-09 this step did not exist and
+  // a human supplied it by ssh'ing to each box and typing `update install` —
+  // which is polling, performed by a person.
+  //
+  // It runs LAST, after the served bytes have been re-fetched and proved to
+  // match, because a signal is an instruction to install and must never point
+  // at something this publish has not yet verified is actually being served.
+  let signalled = false;
+  let signalTopic = '';
+  if (dryRun) {
+    log('[fleet-update] dry run: no signal pushed');
+  } else if (noSignalReason) {
+    log(`[fleet-update] SIGNAL SKIPPED (recorded reason): ${noSignalReason}`);
+    log('[fleet-update] the artifact is published but NO install has been told to fetch it.');
+    log(`[fleet-update] push it later with: ssh ${publisherSSH} ${publisherBin} update signal --channel ${channel}`);
+  } else {
+    try {
+      const signalOut = run('ssh', [
+        publisherSSH,
+        `${shellQuote(publisherBin)} update signal --channel ${shellQuote(channel)} ` +
+          `--update-id ${shellQuote(updateId)} --platform ${shellQuote(platform)} --arch ${shellQuote(arch)} ` +
+          `--node-url ${shellQuote(new URL(feedBaseUrl).origin)}`,
+      ]).toString();
+      signalled = /published=true/.test(signalOut);
+      signalTopic = (signalOut.match(/^topic=(.+)$/m) || [])[1] || '';
+      if (!signalled) {
+        throw new Error(`the publisher did not report published=true:\n${signalOut}`);
+      }
+      log(`[fleet-update] SIGNAL PUSHED on ${signalTopic} -> every subscribed install upgrades itself`);
+    } catch (error) {
+      // Loud, and NOT fatal: the artifact is published, verified and serving.
+      // Failing the whole publish here would leave a good artifact behind a red
+      // exit code, and the recovery is one command.
+      console.error(`[fleet-update] WARNING: the artifact is published but the SIGNAL FAILED: ${error.message}`);
+      console.error(
+        `[fleet-update] the fleet has NOT been told. Push it with:\n` +
+          `  ssh ${publisherSSH} ${publisherBin} update signal --channel ${channel} --update-id ${updateId}`,
+      );
+    }
+  }
+
   console.log(
     JSON.stringify(
       {
         published: updateId,
         version,
         sequence,
+        signalled,
+        ...(signalTopic ? { signalTopic } : {}),
+        ...(noSignalReason ? { signalSkippedReason: noSignalReason } : {}),
         // Present only when this publish replaced a published artifact, so a
         // caller can tell a correction from an ordinary roll without parsing logs.
         ...(supersededVersion ? { superseded: supersededVersion, superseded_reason: supersedeReason } : {}),
