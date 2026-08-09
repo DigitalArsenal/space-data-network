@@ -46,6 +46,34 @@ var updateCheckCmd = &cobra.Command{
 		fmt.Fprintf(out, "updater_wasm=%s\n", manifest.Update.UpdaterWASM)
 		fmt.Fprintln(out, "update_check_scope=bundled_manifest")
 
+		// WHETHER THIS BOX IS LISTENING. "Why did that box not upgrade?" is the
+		// first question a push lane creates, and until now `update check` could
+		// not answer it: an install with the signal lane switched off looks
+		// exactly like a publisher that never signalled. Report the lane's
+		// posture and the reverse targets beside the feed facts, so one command
+		// answers both halves.
+		layout := bundle.ResolveCurrent()
+		if cfg, _, err := config.LoadResolved(configPath); err == nil && cfg != nil {
+			topic := strings.TrimSpace(cfg.Update.Topic)
+			if topic == "" {
+				topic = strings.TrimSpace(manifest.Update.PubsubTopic)
+			}
+			if topic == "" {
+				topic = update.SignalTopic(manifest.Channel)
+			}
+			fmt.Fprintf(out, "update_signal_enabled=%t\n", cfg.Update.Enabled)
+			fmt.Fprintf(out, "update_signal_topic=%s\n", topic)
+			fmt.Fprintf(out, "update_health_timeout=%s\n", cfg.Update.HealthTimeout())
+		}
+		if layout.Root != "" {
+			if inventory, err := update.Inventory(update.PathsFor(layout.Root)); err == nil {
+				fmt.Fprintf(out, "rollback_slots=%d/%d\n", len(inventory.Slots), inventory.Limit)
+				for _, slot := range inventory.Missing {
+					fmt.Fprintf(out, "rollback_slot_missing=%s\n", slot.UpdateID)
+				}
+			}
+		}
+
 		staged, available := scanStagedForCheck()
 		for _, candidate := range staged {
 			if candidate.Err != nil {
