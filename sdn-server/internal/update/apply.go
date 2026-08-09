@@ -74,6 +74,8 @@ type ApplyResult struct {
 	// PruneErrors are non-fatal retention failures. The apply succeeded; the
 	// box simply still holds a directory it meant to reap.
 	PruneErrors []string
+	// PrunedStaged are staged payloads this apply made unusable and removed.
+	PrunedStaged []string
 	// TwoPhase reports whether the apply went through the Kubo-first
 	// two-phase path (runtime/kubo/ was separable) rather than the legacy
 	// single-phase swap.
@@ -275,6 +277,18 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		TwoPhase:     twoPhase,
 		ModuleUpdate: moduleUpdate,
 		Slots:        slots,
+	}
+	// Abandoned staged payloads are the same unbounded-growth class as rollback
+	// directories, at ~20 MB each, and they had the same cause: nothing ever
+	// removed them. Apply only ever deleted the ONE payload it installed, so a
+	// staging attempt that never applied — a helper that died before the swap,
+	// a signal superseded by a newer one moments later — left its carrier on
+	// disk for good. Anything at or below the sequence now installed can never
+	// be applied again (assertSequence refuses it), so keeping it is pure cost.
+	for _, dir := range supersededStagedDirs(paths, candidate.Result.Sequence) {
+		if err := os.RemoveAll(dir); err == nil {
+			result.PrunedStaged = append(result.PrunedStaged, dir)
+		}
 	}
 	pruned, pruneErrs := pruneToRetention(paths, slots, appliedAt)
 	result.PrunedSlots = pruned
