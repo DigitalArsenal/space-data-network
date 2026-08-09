@@ -13,6 +13,8 @@ package adminaddr
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -99,4 +101,27 @@ func LocalAdminURL(listenAddr string, tlsEnabled bool) string {
 		scheme = "https"
 	}
 	return fmt.Sprintf("%s://%s/", scheme, addr)
+}
+
+// DaemonCertPath returns the certificate the daemon SERVES: the explicit
+// tls_cert_file when set, else the managed-TLS material under tls_cache_dir.
+//
+// It is the anchor a local client must verify against, and it is resolved here
+// so the daemon (handing the path to its own update helper) and the CLI
+// (deriving it from config) cannot disagree about which file that is.
+func DaemonCertPath(tlsCertFile, tlsCacheDir string) string {
+	if p := strings.TrimSpace(tlsCertFile); p != "" {
+		return p
+	}
+	dir := strings.TrimSpace(tlsCacheDir)
+	if dir == "" {
+		return ""
+	}
+	for _, name := range []string{"cert.pem", "fullchain.pem", "origin.crt", "bootstrap.crt"} {
+		candidate := filepath.Join(dir, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }

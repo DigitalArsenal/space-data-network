@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -284,6 +286,7 @@ var (
 	helperApplyRestartArgvJSON string
 	helperApplyHealthTimeout   time.Duration
 	helperApplyTrigger         string
+	helperApplyAdminCA         string
 	helperApplySignalKeyID     string
 	helperApplyAllowRollback   bool
 	updateInstallHealthTimeout time.Duration
@@ -309,7 +312,7 @@ var updateHelperApplyCmd = &cobra.Command{
 		// Resolved ONCE, here, while the daemon is still up — see
 		// daemonLoopbackTransport for why this cannot be deferred to the health
 		// gate below.
-		loopback := daemonLoopbackTransport()
+		loopback := helperLoopbackTransport(helperApplyAdminCA, helperApplyAdminURL)
 		var daemonSupervised bool
 		if strings.TrimSpace(helperApplyAdminURL) != "" && strings.TrimSpace(helperApplyToken) != "" {
 			daemonArgv, supervised, err := requestDaemonUpdateShutdown(daemonLoopbackClientWith(10*time.Second, loopback), helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
@@ -429,6 +432,8 @@ func init() {
 	updateHelperApplyCmd.Flags().BoolVar(&helperApplyNoRestart, "no-restart", false, "do not restart the daemon after apply")
 	updateHelperApplyCmd.Flags().BoolVar(&helperApplyAllowRollback, "allow-rollback", false, "accept an update the publisher marked as a deliberate source-lineage rollback")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyRestartArgvJSON, "restart-argv-json", "", "JSON array argv to restart after apply")
+	updateHelperApplyCmd.Flags().StringVar(&helperApplyAdminCA, "admin-ca", "",
+		"path of the certificate the daemon serves, handed over by the daemon itself; used as the TLS anchor for the loopback shutdown handshake and health gate")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyTrigger, "trigger", "", "what caused this apply (\"signal\" for a pushed update signal); recorded in the deploy ledger")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplySignalKeyID, "signal-key-id", "", "signing key of the signal that triggered this apply; recorded in the deploy ledger")
 	updateApplyCmd.Flags().StringVar(&updateApplyID, "update-id", "", "staged update id to apply (default: highest verified sequence)")
@@ -608,6 +613,51 @@ func daemonLoopbackClientWith(timeout time.Duration, transport *http.Transport) 
 // then report a perfectly healthy daemon as unhealthy — rolling a good update
 // back. Build it once, up front, and reuse it for both the shutdown handshake
 // and the post-restart health gate.
+// helperLoopbackTransport builds the helper's anchored transport, preferring the
+// certificate path THE DAEMON HANDED IT over re-deriving one from config.
+//
+// FOUND LIVE, 2026-08-09, on the second signal-driven self-upgrade. Inside the
+// transient systemd unit the config resolver did not reach the running-daemon
+// tier at all: systemd-run inherits the MANAGER's environment, and this box
+// carries SDN_CONFIG=/etc/space-data-network/config.yaml there — a different
+// config from the sidecar's, resolved through the SDN_CONFIG tier, which
+// deliberately does NOT satisfy IsOwnDaemonConfig (a config file must not get to
+// choose the client's trust anchor). So no anchor was found, the handshake went
+// out on system roots, and it failed:
+//
+//	daemon_shutdown=unavailable ... x509: certificate signed by unknown authority
+//
+// The swap still happened and the daemon was never stopped, so the box sat with
+// new bytes on disk and the old process serving, waiting for a human — the
+// precise outcome this lane exists to abolish.
+//
+// Re-deriving the anchor was the wrong shape. The daemon KNOWS which certificate
+// it serves; it is reading it off its own live config to serve TLS. Handing that
+// path to the helper it is spawning removes an ambient-environment dependency
+// from the middle of a deploy, and it is strictly stronger than re-derivation:
+// the anchor now comes from the running daemon's own configuration rather than
+// from whatever config file the helper's environment happens to point at.
+func helperLoopbackTransport(certPath, adminURL string) *http.Transport {
+	certPath = strings.TrimSpace(certPath)
+	if certPath == "" {
+		return daemonLoopbackTransport()
+	}
+	pem, err := os.ReadFile(certPath)
+	if err != nil {
+		return daemonLoopbackTransport()
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return daemonLoopbackTransport()
+	}
+	tlsCfg := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	host := strings.TrimPrefix(strings.TrimPrefix(strings.TrimRight(strings.TrimSpace(adminURL), "/"), "https://"), "http://")
+	if name := serverNameForCert(certPath, ExpectedCertHostFor(host)); name != "" {
+		tlsCfg.ServerName = name
+	}
+	return &http.Transport{TLSClientConfig: tlsCfg}
+}
+
 func daemonLoopbackTransport() *http.Transport {
 	cfg, res, err := config.LoadResolved(configPath)
 	if err != nil || cfg == nil {
