@@ -180,6 +180,23 @@ func NewHostBridge(nodeCtx *NodeContext, grantedCaps []string) *HostBridge {
 	return hb
 }
 
+// NodeContext returns the node identity/config context this bridge was built
+// with, or nil when there is none.
+//
+// It exists for BridgeCapFactory implementations that need the node context on
+// the FLOW path, where there is no *Module to read it from (ProvisionBridge
+// passes mod == nil for flow bundles). The bridge is the only place that
+// context exists for such a caller — it is what node.publicKey and secrets.*
+// already read — so a capability that resolves it from mod alone is dead in
+// every flow. Nil-safe: a nil bridge reports no context rather than panicking,
+// because a cap handler must degrade to a refusal, never take the daemon down.
+func (hb *HostBridge) NodeContext() *NodeContext {
+	if hb == nil {
+		return nil
+	}
+	return hb.nodeCtx
+}
+
 // RegisterCapHandler registers a handler for operations with the given prefix.
 func (hb *HostBridge) RegisterCapHandler(prefix string, handler CapHandler) {
 	hb.capHandlers[prefix] = handler

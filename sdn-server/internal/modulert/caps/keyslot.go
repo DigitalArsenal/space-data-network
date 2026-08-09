@@ -31,12 +31,32 @@ const keyslotUnwrapHKDFInfo = "sdn-server/keyslot.unwrap/v1"
 // private key material to the guest. Guests get the *outputs* of private-key
 // operations (a signature, or the plaintext that was wrapped to a slot's
 // public key) — never the key itself. See keyslot.sign and keyslot.unwrap.
-func NewKeyslotCapFactory() modulert.CapFactory {
-	return func(mod *modulert.Module) modulert.CapHandler {
-		if mod == nil {
-			return newKeyslotCapHandler(nil)
+//
+// ⛔ IT IS BRIDGE-AWARE, AND THAT IS NOT A STYLE CHOICE. A FLOW BUNDLE HAS NO
+// *Module: ProvisionBridge calls every factory as factory(mod, bridge) and
+// passes mod == nil for flow bundles, which are "not driven through the Module
+// invocation surface" (capability_provision.go). While this factory resolved
+// its NodeContext from mod alone, EVERY keyslot.* call from EVERY flow died at
+// the first line of resolveKeySlot with "keyslot context is not available" —
+// the slot was never looked up and no crypto was ever attempted.
+//
+// The defect was invisible because the neighbours are fine: secrets.* is
+// registered with RegisterBridgeAware and node.publicKey answers off the bridge,
+// both of which carry the real NodeContext. So one flow, in one request, could
+// publish the node's X25519 wrapping-slot public key AND store a secret, while
+// being structurally unable to OPEN anything sealed to that key. Measured on
+// host-01 2026-08-09: signed DELETE (secrets.clear) 200, signed PUT (which is
+// the same path plus keyslot.unwrap) 400, for every envelope including one
+// sealed by the shipped client to the live slot.
+//
+// The module path is unchanged: when there IS a Module its own NodeContext
+// still wins, because a module carries the context it was loaded with.
+func NewKeyslotCapFactory() modulert.BridgeCapFactory {
+	return func(mod *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
+		if mod != nil {
+			return newKeyslotCapHandler(mod.NodeContext())
 		}
-		return newKeyslotCapHandler(mod.NodeContext())
+		return newKeyslotCapHandler(bridge.NodeContext())
 	}
 }
 

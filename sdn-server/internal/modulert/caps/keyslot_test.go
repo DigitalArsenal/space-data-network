@@ -579,3 +579,139 @@ func TestKeyslotNilNodeContextFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+// provisionFlowBundleKeyslotBridge wires the keyslot capability onto a bridge
+// exactly as the daemon wires a FLOW: mod == nil, an operator approval recorded
+// against the bundle's own content hash (wallet_sign is sensitive by prefix, so
+// an unapproved bundle is denied at provisioning and never reaches a handler).
+func provisionFlowBundleKeyslotBridge(t *testing.T, nodeCtx *modulert.NodeContext) *modulert.HostBridge {
+	t.Helper()
+	const contentHash = "flow-bundle-content-hash"
+
+	registry := modulert.NewCapabilityRegistry()
+	registry.RegisterBridgeAware("wallet_sign", NewKeyslotCapFactory())
+
+	policy, err := modulert.NewCapabilityPolicyStore("") // in-memory
+	if err != nil {
+		t.Fatalf("NewCapabilityPolicyStore: %v", err)
+	}
+	if _, err := policy.Approve(modulert.CapabilityApproval{ModuleHash: contentHash, Capability: "wallet_sign"}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+
+	bridge := modulert.NewHostBridge(nodeCtx, nil)
+	if err := modulert.ProvisionBridge(bridge, registry, []string{"wallet_sign"}, nil,
+		modulert.ProvisionIdentity{ContentHash: contentHash, PluginID: "com.example.flow", Policy: policy}); err != nil {
+		t.Fatalf("ProvisionBridge: %v", err)
+	}
+	return bridge
+}
+
+// TestKeyslotIsUsableFromAFlowBundle is the regression test for the defect that
+// made keyslot.unwrap dead in every flow on every node (graph task
+// sdn-keyslot-unwrap-unusable-from-flow-bundles).
+//
+// IT MUST GO THROUGH ProvisionBridge, and that is the whole point. Every other
+// test in this file constructs the handler directly with
+// newKeyslotCapHandler(nodeCtx) — so all of them passed while the capability was
+// unreachable in production, because the thing that was broken was the WIRING
+// between the registry and the handler, not the handler. A flow bundle has no
+// *Module: ProvisionBridge passes mod == nil and the node context exists only on
+// the bridge. Provision it the way the daemon does, then dispatch the way a
+// guest does.
+func TestKeyslotIsUsableFromAFlowBundle(t *testing.T) {
+	slotPriv := throwawayX25519PrivateKey()
+	nodeCtx := &modulert.NodeContext{
+		KeySlots:          map[string][]byte{"provider-wrapping": slotPriv},
+		KeySlotAlgorithms: map[string]string{"provider-wrapping": modulert.KeySlotAlgorithmX25519},
+	}
+
+	// mod == nil is the flow-bundle case, verbatim.
+	bridge := provisionFlowBundleKeyslotBridge(t, nodeCtx)
+
+	// Seal to the slot's published public half exactly as a browser does.
+	curve := ecdh.X25519()
+	slotPrivKey, err := curve.NewPrivateKey(slotPriv)
+	if err != nil {
+		t.Fatalf("NewPrivateKey(slotPriv): %v", err)
+	}
+	ephemeralPriv, err := curve.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey(ephemeral): %v", err)
+	}
+	shared, err := ephemeralPriv.ECDH(slotPrivKey.PublicKey())
+	if err != nil {
+		t.Fatalf("ECDH: %v", err)
+	}
+	aesKey := make([]byte, 32)
+	if _, err := io.ReadFull(hkdf.New(sha256.New, shared, nil, []byte(keyslotUnwrapHKDFInfo)), aesKey); err != nil {
+		t.Fatalf("hkdf: %v", err)
+	}
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		t.Fatalf("aes.NewCipher: %v", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("cipher.NewGCM: %v", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		t.Fatalf("nonce: %v", err)
+	}
+	plaintext := []byte(`{"username":"","secret":"a-provider-token-the-guest-may-legitimately-see"}`)
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+
+	request, _ := json.Marshal(map[string]string{
+		"slotId":             "provider-wrapping",
+		"ephemeralPublicKey": base64.StdEncoding.EncodeToString(ephemeralPriv.PublicKey().Bytes()),
+		"nonce":              base64.StdEncoding.EncodeToString(nonce),
+		"ciphertext":         base64.StdEncoding.EncodeToString(ciphertext),
+	})
+
+	responseEnvelope := bridge.Dispatch("keyslot.unwrap", request)
+
+	var response struct {
+		Ok     bool `json:"ok"`
+		Result struct {
+			Plaintext string `json:"plaintext"`
+		} `json:"result"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(responseEnvelope, &response); err != nil {
+		t.Fatalf("decode response envelope: %v", err)
+	}
+	if !response.Ok {
+		// The pre-fix failure reads exactly this way, which is what a flow saw
+		// on every call: "keyslot context is not available".
+		t.Fatalf("keyslot.unwrap refused a flow-bundle caller: %s", response.Error.Message)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(response.Result.Plaintext)
+	if err != nil {
+		t.Fatalf("decode plaintext base64: %v", err)
+	}
+	if !bytes.Equal(decoded, plaintext) {
+		t.Fatalf("unwrap round-trip mismatch through the bridge: got %q, want %q", decoded, plaintext)
+	}
+	assertResponseNeverContainsKeyMaterial(t, responseEnvelope, slotPriv)
+}
+
+// TestKeyslotFlowBundleWithoutNodeContextStillFailsClosed keeps the fix from
+// widening anything: a bridge built with NO node context must still refuse,
+// rather than resolving a slot from somewhere else.
+func TestKeyslotFlowBundleWithoutNodeContextStillFailsClosed(t *testing.T) {
+	bridge := provisionFlowBundleKeyslotBridge(t, nil)
+
+	request, _ := json.Marshal(map[string]string{
+		"slotId":             "provider-wrapping",
+		"ephemeralPublicKey": base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"nonce":              base64.StdEncoding.EncodeToString(make([]byte, 12)),
+		"ciphertext":         base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	})
+	responseEnvelope := bridge.Dispatch("keyslot.unwrap", request)
+	if !strings.Contains(string(responseEnvelope), `"ok":false`) {
+		t.Fatalf("expected a refusal with no node context, got: %s", responseEnvelope)
+	}
+}
