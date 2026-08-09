@@ -39,14 +39,47 @@ import (
 // available, but it is a MIRROR: never the thing that can veto, and never the
 // thing whose absence excuses a missing record.
 
+// ONE OPERATOR LEDGER (2026-08-09).
+//
+// The reconciliation of 2026-08-09 measured the cost of having two: of eleven
+// binary changes on host-01 that day, FIVE were recorded only in
+// /opt/spacedatanetwork/deploy-ledger.log, FOUR only in
+// /var/log/sdn-deploy-lock.ledger, TWO in neither, and ZERO IN BOTH. Coverage
+// was not overlapping-and-incomplete — it was DISJOINT. An agent that read one
+// file and not the other reached a confident, wrong conclusion, and did:
+// "unledgered" turned out to be a property of the reader, not of the roll.
+//
+// The fix is not to merge the two files by hand (that produces a third partial
+// record — explicitly refused by the reconciliation lane). It is to make ONE of
+// them the live operator mirror and turn the other into a pointer to it, so
+// every future writer, whichever path it knows, appends to the same bytes.
+// /var/log/sdn-deploy-lock.ledger is the survivor for one structural reason:
+// it lives outside every bundle root, so it stays valid across a bundle swap, a
+// bundle-root move, and a box whose install path changes — which the
+// per-install path cannot. The retired path becomes a symlink to it
+// (deployment/scripts/unify-deploy-ledger.sh), and because open(2) follows
+// symlinks, a writer that only knows the old name still lands here.
+//
+// Authority is unchanged and remains the in-bundle copy below: the mirror is
+// where humans look, never what can veto.
 const (
 	// deployLedgerName lives under the bundle root, beside the bundle the
 	// apply mutates. Not under updates/: this is a record of what happened to
 	// the bundle, and it should travel with the bundle.
 	deployLedgerName = "deploy-ledger.jsonl"
 
-	// systemDeployLedger is the fleet-wide operator ledger. Best-effort mirror.
-	systemDeployLedger = "/var/log/sdn-deploy-lock.ledger"
+	// SystemDeployLedger is THE fleet-wide operator ledger — one file per box.
+	// Best-effort mirror of the authoritative in-bundle record.
+	SystemDeployLedger = "/var/log/sdn-deploy-lock.ledger"
+
+	// RetiredInstallDeployLedger is the second ledger the 2026-08-09 census
+	// found on host-01. It is retired in favour of SystemDeployLedger and
+	// carries a pointer; deployment/scripts/unify-deploy-ledger.sh performs the
+	// conversion on a box. Named here so the code and the box agree on which
+	// file was retired and why.
+	RetiredInstallDeployLedger = "deploy-ledger.log"
+
+	systemDeployLedger = SystemDeployLedger
 
 	// deployLockPath is the fleet's advisory cutover lock. Read (never taken)
 	// so the ledger line records who held the box at apply time.
@@ -68,6 +101,20 @@ type DeployLedgerEntry struct {
 	FromVersion  string `json:"from_version,omitempty"`
 	FromSequence int64  `json:"from_sequence,omitempty"`
 	Rollback     bool   `json:"rollback,omitempty"`
+	// Reason carries WHY for the actions where "what" is not enough: a
+	// rollback's trigger, or a retention prune's policy.
+	Reason string `json:"reason,omitempty"`
+	// Trigger records what caused this change — "signal" for a pushed update
+	// signal the box acted on itself, "operator" for a hand-run install.
+	// Distinguishing them is the whole point of the push lane: an unattended
+	// self-upgrade and a human at a keyboard leave otherwise identical traces.
+	Trigger string `json:"trigger,omitempty"`
+	// SignalKeyID is the signing key of the signal that triggered this change,
+	// when there was one.
+	SignalKeyID string `json:"signal_key_id,omitempty"`
+	// HeldSlots / PrunedSlots record a retention decision (Action "retain").
+	HeldSlots   []string `json:"held_slots,omitempty"`
+	PrunedSlots []string `json:"pruned_slots,omitempty"`
 	// LockHolder is whoever held /run/sdn-deploy.lock when this ran, verbatim
 	// from the lock file, or a marker saying the apply ran with NO lock held.
 	// An unlocked apply is not refused here — refusing would brick recovery on
@@ -155,6 +202,21 @@ func mirrorLine(e DeployLedgerEntry) []byte {
 	}
 	if e.Rollback {
 		b.WriteString(" DECLARED_ROLLBACK=yes")
+	}
+	if e.Trigger != "" {
+		fmt.Fprintf(&b, " trigger=%s", e.Trigger)
+	}
+	if e.SignalKeyID != "" {
+		fmt.Fprintf(&b, " signal_key_id=%s", e.SignalKeyID)
+	}
+	if len(e.HeldSlots) > 0 {
+		fmt.Fprintf(&b, " held=[%s]", strings.Join(e.HeldSlots, " "))
+	}
+	if len(e.PrunedSlots) > 0 {
+		fmt.Fprintf(&b, " pruned=[%s]", strings.Join(e.PrunedSlots, " "))
+	}
+	if e.Reason != "" {
+		fmt.Fprintf(&b, " reason=%q", e.Reason)
 	}
 	fmt.Fprintf(&b, " bundle_root=%s lock_holder=%q pid=%d", e.BundleRoot, e.LockHolder, e.PID)
 	b.WriteString(" source=update-lane-automatic (written by update.Apply; the apply refuses without it)\n")

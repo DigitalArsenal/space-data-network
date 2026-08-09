@@ -195,6 +195,9 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	// and still signs. See update_signing.go and update_feed.go.
 	h.registerUpdateSigningRoutes(mux)
 	h.registerUpdateFeedRoutes(mux)
+	// The PUSH half of the update lane (owner ruling 2026-08-09). Registered
+	// after the signing routes because it needs the signer they construct.
+	h.registerUpdateSignalRoutes(mux)
 
 	peersClaimedByFlow := flowClaimed != nil &&
 		(flowClaimed("/api/v1/peers") || flowClaimed("/api/v1/peers/"))

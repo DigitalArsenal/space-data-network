@@ -35,6 +35,38 @@
 # side computed what.
 set -euo pipefail
 
+# RETIRED AS THE NORM (owner ruling 2026-08-09): "We should be building locally
+# and then pushing an update signal to all installs to upgrade in place... That's
+# the point of the update server."
+#
+# This script is the integrity step of the HAND-RUN scp recipe described above.
+# That recipe is now the recorded-reason exception, not the norm: the sanctioned
+# lane is deployment/release/publish-fleet-update.mjs, which verifies, signs,
+# publishes AND pushes the signal, after which every install upgrades itself,
+# ledgers it, and self-rolls-back on a bad boot. An scp carries no signature, no
+# lineage check, no rollback slot and no ledger line.
+#
+# The refusal mirrors the graph workspace guard: state the reason and it
+# proceeds, loudly and on the record.
+if [[ -z "${SDN_MANUAL_DEPLOY_REASON:-}" ]]; then
+    cat >&2 <<'REFUSAL'
+
+REFUSED: this is the manual scp install path, retired as the norm by owner
+ruling 2026-08-09. Use the update lane:
+
+  node deployment/release/publish-fleet-update.mjs --binary <bin> --source-commit <sha>
+
+which publishes AND pushes the signal, after which every install upgrades
+itself in place. If the update lane itself is broken — the reason this path
+still exists — say so:
+
+  SDN_MANUAL_DEPLOY_REASON="<why the lane cannot be used>" $0 ...
+
+REFUSAL
+    exit 2
+fi
+echo "MANUAL STAGING OVERRIDE (owner ruling 2026-08-09 makes this the exception): ${SDN_MANUAL_DEPLOY_REASON}" >&2
+
 usage() {
     echo "Usage: $0 <local-file> <ssh-target> <remote-staged-path>" >&2
     exit 1

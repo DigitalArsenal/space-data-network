@@ -525,12 +525,93 @@ EOF
     log_success "Deployed $type to $ip"
 }
 
+# ---------------------------------------------------------------------------
+# MANUAL BINARY INSTALL: RETIRED AS THE NORM (owner ruling 2026-08-09)
+#
+#   "We should be building locally and then pushing an update signal to all
+#    installs to upgrade in place... That's the point of the update server."
+#
+# The sanctioned lane is: build locally -> deployment/release/publish-fleet-update.mjs
+# (verify, sign, publish, PUSH THE SIGNAL) -> every install upgrades ITSELF,
+# ledgers the change, and self-rolls-back if it does not come up healthy.
+#
+# An scp'd binary has none of that. It carries no signature, no source-lineage
+# ancestry check, no sequence, no rollback slot, and — until the 197cd28a weld,
+# which only governs lane applies — no ledger line at all. That is not a
+# theoretical gap: of eleven binary changes on host-01 on 2026-08-09, two were
+# recorded in NEITHER of the box's two ledgers, and the reverse target for a
+# live build was twice destroyed by a hand roll.
+#
+# So this path still exists — the update lane itself can break, and then you
+# need a way in — but it now requires the reason to be stated, mirroring the
+# graph workspace guard's GRAPH_GUARD_OVERRIDE. The reason is echoed and
+# appended to the box's deploy ledger, so a manual install is never the
+# unattributable event it used to be.
+assert_manual_install_reason() {
+    local target="${1:-<unknown host>}"
+    if [[ -n "${SDN_MANUAL_DEPLOY_REASON:-}" ]]; then
+        echo "" >&2
+        echo "################  MANUAL BINARY INSTALL OVERRIDE  ################" >&2
+        echo "# target: ${target}" >&2
+        echo "# reason: ${SDN_MANUAL_DEPLOY_REASON}" >&2
+        echo "# The sanctioned lane is publish-fleet-update.mjs + update signal." >&2
+        echo "# This reason will be recorded on the box's deploy ledger." >&2
+        echo "##################################################################" >&2
+        echo "" >&2
+        return 0
+    fi
+    cat >&2 <<'EOF'
+
+REFUSED: manual binary install (owner ruling 2026-08-09).
+
+  "We should be building locally and then pushing an update signal to all
+   installs to upgrade in place, and only save the last five binaries for
+   rollback purposes. That's the point of the update server."
+
+Use the update lane instead:
+
+  node deployment/release/publish-fleet-update.mjs \
+      --binary <locally-built linux/amd64 binary> \
+      --source-commit <sha>
+
+That verifies the binary, checks source lineage, signs the manifest with the
+node key, publishes to the feed, and PUSHES THE SIGNAL. Every install then
+fetches, verifies, upgrades itself in place, writes its own ledger line, and
+rolls back to the previous slot if it does not come up healthy.
+
+If the update lane itself is broken — which is the whole reason this path
+still exists — say so and it will proceed:
+
+  SDN_MANUAL_DEPLOY_REASON="<why the lane cannot be used>" <your command>
+
+EOF
+    return 1
+}
+
+# record_manual_install_reason appends the override to the box's deploy ledger,
+# so the manual path leaves the same kind of trace the lane leaves for itself.
+record_manual_install_reason() {
+    local target="$1"
+    [[ -n "${SDN_MANUAL_DEPLOY_REASON:-}" ]] || return 0
+    local line
+    line="$(date -u +%Y-%m-%dT%H:%M:%SZ) MANUAL-INSTALL host=${target} by=${USER:-unknown} reason=\"${SDN_MANUAL_DEPLOY_REASON}\" source=deploy.sh (NOT the update lane; owner ruling 2026-08-09 makes this the recorded-reason exception)"
+    ssh_cmd "$target" "printf '%s\n' \"$line\" >> /var/log/sdn-deploy-lock.ledger" 2>/dev/null || \
+        echo "WARNING: could not append the manual-install reason to /var/log/sdn-deploy-lock.ledger on ${target}; record it by hand:" >&2
+    echo "$line" >&2
+}
+
 # Deploy binary to server
 deploy_binary() {
     local ip=$1
     local type=$2
     local name=$3
     local binary
+
+    # RETIRED AS THE NORM: see assert_manual_install_reason above.
+    if [[ "${DRY_RUN:-false}" != "true" ]]; then
+        assert_manual_install_reason "$ip ($name)" || exit 1
+        record_manual_install_reason "$ip"
+    fi
 
     if [[ "$type" == "full" ]]; then
         prepare_full_node_assets

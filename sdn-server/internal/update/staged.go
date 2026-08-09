@@ -79,6 +79,13 @@ type State struct {
 	AppliedAt string `json:"applied_at,omitempty"`
 
 	Previous *StatePrevious `json:"previous,omitempty"`
+
+	// Slots is the rollback retention inventory, newest first, capped at
+	// RollbackSlotLimit (owner ruling 2026-08-09: keep the last five builds).
+	// Slots[0] duplicates Previous and is the default reverse target; older
+	// entries are reachable only by naming them. See slots.go for why Previous
+	// is kept alongside rather than replaced.
+	Slots []StateSlot `json:"slots,omitempty"`
 }
 
 type StatePrevious struct {

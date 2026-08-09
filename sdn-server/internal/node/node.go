@@ -2187,6 +2187,13 @@ func (n *Node) Start(ctx context.Context) error {
 		return err
 	}
 
+	// The push half of the update lane (owner ruling 2026-08-09): listen for a
+	// signed update signal on this channel's topic and upgrade this install in
+	// place. Deliberately non-fatal — a box that cannot run the lane must still
+	// boot and serve — and deliberately loud about why, either way. See
+	// update_signal.go.
+	n.startUpdateSignalSubscriber()
+
 	return nil
 }
 

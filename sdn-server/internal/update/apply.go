@@ -44,6 +44,14 @@ type ApplyOptions struct {
 	// `install` time would be refused a moment later at `apply` time.
 	AllowRollback bool
 
+	// Trigger and SignalKeyID travel into the deploy ledger line so an
+	// unattended self-upgrade is distinguishable, after the fact, from an
+	// operator who ran `update install` by hand. On a box where every agent
+	// authenticates with one key from one IP, this is the only thing that can
+	// tell them apart.
+	Trigger     string
+	SignalKeyID string
+
 	// testFault is an in-package-only fault-injection seam used by this
 	// package's own tests to exercise the phase-2-failure and crash-
 	// recovery paths through the real Apply entry point. It is unexported,
@@ -58,6 +66,14 @@ type ApplyResult struct {
 	Channel      string
 	RollbackPath string
 	DryRun       bool
+	// Slots is the box's rollback inventory after this apply, newest first,
+	// capped at RollbackSlotLimit.
+	Slots []StateSlot
+	// PrunedSlots are the rollback directories retention removed in this apply.
+	PrunedSlots []string
+	// PruneErrors are non-fatal retention failures. The apply succeeded; the
+	// box simply still holds a directory it meant to reap.
+	PruneErrors []string
 	// TwoPhase reports whether the apply went through the Kubo-first
 	// two-phase path (runtime/kubo/ was separable) rather than the legacy
 	// single-phase swap.
@@ -76,6 +92,10 @@ type ApplyResult struct {
 type RollbackOptions struct {
 	Reason string
 	Now    time.Time
+	// Slot names which retained build to restore: an update id, a version, or
+	// a rollback path. Empty selects the immediately-previous verified build
+	// (Slots[0]) — see selectSlot for why older generations must be named.
+	Slot string
 }
 
 type RollbackResult struct {
@@ -85,6 +105,10 @@ type RollbackResult struct {
 	RestoredChannel  string
 	FailedPath       string
 	Reason           string
+	// RestoredFrom is the rollback directory that was consumed.
+	RestoredFrom string
+	// Slots is the remaining inventory after the consumed slot was dropped.
+	Slots []StateSlot
 }
 
 // Apply verifies a staged update and atomically swaps the bundle contents,
@@ -144,6 +168,8 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		FromVersion:  state.Version,
 		FromSequence: state.Sequence,
 		Rollback:     opts.AllowRollback,
+		Trigger:      strings.TrimSpace(opts.Trigger),
+		SignalKeyID:  strings.TrimSpace(opts.SignalKeyID),
 	}); err != nil {
 		return nil, err
 	}
@@ -206,6 +232,7 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		return nil, swapErr
 	}
 
+	appliedAt := nowOr(opts.Now).UTC().Format(time.RFC3339)
 	previous := &StatePrevious{
 		Sequence: state.Sequence,
 		UpdateID: state.UpdateID,
@@ -213,13 +240,25 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		Channel:  state.Channel,
 		Rollback: rollbackDir,
 	}
+	// RETENTION (owner ruling 2026-08-09): the displaced build becomes the
+	// newest of up to five retained reverse targets. Previous stays as the
+	// back-compat mirror of Slots[0] — see slots.go.
+	slots := recordRollbackSlot(migrateSlots(state), StateSlot{
+		Sequence:   state.Sequence,
+		UpdateID:   state.UpdateID,
+		Version:    state.Version,
+		Channel:    state.Channel,
+		Path:       rollbackDir,
+		RecordedAt: appliedAt,
+	})
 	newState := &State{
 		Sequence:  candidate.Result.Sequence,
 		UpdateID:  candidate.UpdateID,
 		Version:   candidate.Result.Version,
 		Channel:   candidate.Result.Channel,
-		AppliedAt: time.Now().UTC().Format(time.RFC3339),
+		AppliedAt: appliedAt,
 		Previous:  previous,
+		Slots:     slots,
 	}
 	if err := SaveState(paths, newState); err != nil {
 		return nil, fmt.Errorf("update applied but state write failed: %w", err)
@@ -235,6 +274,12 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		RollbackPath: rollbackDir,
 		TwoPhase:     twoPhase,
 		ModuleUpdate: moduleUpdate,
+		Slots:        slots,
+	}
+	pruned, pruneErrs := pruneToRetention(paths, slots, appliedAt)
+	result.PrunedSlots = pruned
+	for _, err := range pruneErrs {
+		result.PruneErrors = append(result.PruneErrors, err.Error())
 	}
 	if moduleUpdate {
 		for _, module := range candidate.Manifest.Modules {
@@ -244,19 +289,55 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 	return result, nil
 }
 
+// RollbackLast restores the immediately-previous verified build. It is the
+// unchanged name for the unchanged default; Rollback selects an older slot.
 func RollbackLast(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
+	opts.Slot = ""
+	return Rollback(paths, opts)
+}
+
+// Rollback restores a retained build and leaves the displaced one under
+// updates/failed/<update-id>/.
+//
+// LIKE APPLY, IT LEDGERS BEFORE IT MUTATES. Rollback was the one bundle
+// mutation that wrote no record at all — and it is the one that runs
+// UNATTENDED, from the helper's post-restart health gate, on a box nobody is
+// watching. A box that quietly reverted itself and told no one is exactly the
+// unattributable change deployledger.go exists to make impossible, so the same
+// precondition applies here: no line on disk, no rollback.
+func Rollback(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 	state, err := LoadState(paths)
 	if err != nil {
 		return nil, err
 	}
-	if state.Previous == nil || strings.TrimSpace(state.Previous.Rollback) == "" {
-		return nil, errors.New("no previous update rollback is available")
+	slots := migrateSlots(state)
+	slot, err := selectSlot(slots, opts.Slot)
+	if err != nil {
+		return nil, err
 	}
-	previousRoot := state.Previous.Rollback
+	previousRoot := slot.Path
 	if info, err := os.Stat(previousRoot); err != nil {
-		return nil, fmt.Errorf("stat previous update rollback: %w", err)
+		return nil, fmt.Errorf("stat rollback slot %s: %w", slot.UpdateID, err)
 	} else if !info.IsDir() {
-		return nil, errors.New("previous update rollback is not a directory")
+		return nil, fmt.Errorf("rollback slot %s is not a directory: %s", slot.UpdateID, previousRoot)
+	}
+
+	reason := strings.TrimSpace(opts.Reason)
+	if reason == "" {
+		reason = "unspecified"
+	}
+	if err := RecordDeployLedgerEntry(paths, DeployLedgerEntry{
+		Action:       "rollback",
+		UpdateID:     slot.UpdateID,
+		Version:      slot.Version,
+		Sequence:     slot.Sequence,
+		Channel:      slot.Channel,
+		FromVersion:  state.Version,
+		FromSequence: state.Sequence,
+		Rollback:     true,
+		Reason:       reason,
+	}); err != nil {
+		return nil, err
 	}
 
 	failedID := strings.TrimSpace(state.UpdateID)
@@ -271,8 +352,8 @@ func RollbackLast(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 		return nil, fmt.Errorf("cleanup consumed rollback bundle: %w", err)
 	}
 
-	version := strings.TrimSpace(state.Previous.Version)
-	channel := strings.TrimSpace(state.Previous.Channel)
+	version := strings.TrimSpace(slot.Version)
+	channel := strings.TrimSpace(slot.Channel)
 	if version == "" || channel == "" {
 		manifestVersion, manifestChannel, err := readBundleVersionAndChannel(paths.Root)
 		if err != nil {
@@ -286,16 +367,25 @@ func RollbackLast(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 		}
 	}
 
-	now := opts.Now
-	if now.IsZero() {
-		now = time.Now()
-	}
+	remaining := dropSlot(slots, *slot)
 	newState := &State{
-		Sequence:  state.Previous.Sequence,
-		UpdateID:  state.Previous.UpdateID,
+		Sequence:  slot.Sequence,
+		UpdateID:  slot.UpdateID,
 		Version:   version,
 		Channel:   channel,
-		AppliedAt: now.UTC().Format(time.RFC3339),
+		AppliedAt: nowOr(opts.Now).UTC().Format(time.RFC3339),
+		Slots:     remaining,
+	}
+	// Previous mirrors Slots[0] so a box rolled back onto a pre-retention
+	// binary still finds the reverse target in the shape it understands.
+	if len(remaining) > 0 {
+		newState.Previous = &StatePrevious{
+			Sequence: remaining[0].Sequence,
+			UpdateID: remaining[0].UpdateID,
+			Version:  remaining[0].Version,
+			Channel:  remaining[0].Channel,
+			Rollback: remaining[0].Path,
+		}
 	}
 	if err := SaveState(paths, newState); err != nil {
 		return nil, fmt.Errorf("rollback restored bundle but state write failed: %w", err)
@@ -307,7 +397,48 @@ func RollbackLast(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 		RestoredChannel:  newState.Channel,
 		FailedPath:       failedDir,
 		Reason:           strings.TrimSpace(opts.Reason),
+		RestoredFrom:     previousRoot,
+		Slots:            remaining,
 	}, nil
+}
+
+// pruneToRetention enforces RollbackSlotLimit against the on-disk rollback
+// tree, and does it in the order the ledger discipline requires: PLAN, RECORD,
+// then DELETE.
+//
+// The record is not decoration. Before this existed, nothing in the codebase
+// ever deleted a rollback directory — they were swept by hand, unlogged, and
+// the 2026-08-09 reconciliation had to reconstruct which reverse targets had
+// been destroyed from four unrelated sources. A retention policy that deletes
+// silently would recreate that archaeology on a schedule.
+//
+// A failure to WRITE the record cancels the deletion (nothing is lost — the box
+// simply keeps more than five for now). A failure to delete is reported and the
+// apply still succeeds: too many reverse targets is a disk problem, never a
+// correctness one.
+func pruneToRetention(paths Paths, keep []StateSlot, recordedAt string) ([]string, []error) {
+	plan, err := planRollbackPrune(paths, keep)
+	if err != nil {
+		return nil, []error{err}
+	}
+	if len(plan) == 0 {
+		return nil, nil
+	}
+	held := make([]string, 0, len(keep))
+	for _, slot := range keep {
+		held = append(held, slot.UpdateID)
+	}
+	if err := RecordDeployLedgerEntry(paths, DeployLedgerEntry{
+		Action:     "retain",
+		RecordedAt: recordedAt,
+		Reason: fmt.Sprintf("rollback retention limit %d (owner ruling 2026-08-09); holding [%s]; pruning [%s]",
+			RollbackSlotLimit, strings.Join(held, " "), strings.Join(plan, " ")),
+		PrunedSlots: plan,
+		HeldSlots:   held,
+	}); err != nil {
+		return nil, []error{fmt.Errorf("rollback retention prune SKIPPED — it could not be recorded, and an unrecordable deletion does not happen: %w", err)}
+	}
+	return applyRollbackPrune(plan)
 }
 
 func readBundleVersionAndChannel(bundleRoot string) (string, string, error) {

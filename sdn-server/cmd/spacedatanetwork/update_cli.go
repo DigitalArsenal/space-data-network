@@ -278,7 +278,7 @@ var updateHelperApplyCmd = &cobra.Command{
 		}
 		var daemonSupervised bool
 		if strings.TrimSpace(helperApplyAdminURL) != "" && strings.TrimSpace(helperApplyToken) != "" {
-			daemonArgv, supervised, err := requestDaemonUpdateShutdown(&http.Client{Timeout: 10 * time.Second}, helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
+			daemonArgv, supervised, err := requestDaemonUpdateShutdown(daemonLoopbackHTTPClient(10*time.Second), helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "daemon_shutdown=unavailable error=%q\n", err.Error())
 			} else {
@@ -303,11 +303,15 @@ var updateHelperApplyCmd = &cobra.Command{
 		fmt.Fprintf(out, "sequence=%d\n", result.Sequence)
 		fmt.Fprintf(out, "rollback_path=%s\n", result.RollbackPath)
 		return helperPostApplyRestart(cmd.Context(), helperPostApplyOptions{
-			Paths:         update.PathsFor(helperApplyBundleRoot),
-			RestartArgv:   restartArgv,
-			Supervised:    daemonSupervised,
-			AdminURL:      helperApplyAdminURL,
-			NoRestart:     helperApplyNoRestart,
+			Paths:       update.PathsFor(helperApplyBundleRoot),
+			RestartArgv: restartArgv,
+			Supervised:  daemonSupervised,
+			AdminURL:    helperApplyAdminURL,
+			NoRestart:   helperApplyNoRestart,
+			// Same anchored client for the health gate: a probe that cannot
+			// verify the daemon's own certificate reports "unhealthy" for a
+			// perfectly healthy daemon and rolls a good update back.
+			Client:        daemonLoopbackHTTPClient(5 * time.Second),
 			Out:           out,
 			Err:           cmd.ErrOrStderr(),
 			HealthTimeout: helperApplyHealthTimeout,
@@ -496,12 +500,56 @@ func shouldDelegateInstallToHelper() bool {
 	return localDaemonAvailable(adminURL(cfg))
 }
 
+// daemonLoopbackHTTPClient reaches THIS box's own daemon with the daemon's own
+// certificate as the trust anchor.
+//
+// THIS IS THE DEFECT THAT MADE UNATTENDED SELF-UPGRADE IMPOSSIBLE. The helper
+// path used a bare http.Client, i.e. system roots. host-01's admin listener
+// binds 0.0.0.0:443 and serves an ORIGIN certificate for sdn.spaceaware.io: no
+// system root vouches for it, and it carries no 127.0.0.1 SAN, so a loopback
+// dial fails twice over — once on the anchor, once on the name. Measured
+// 2026-08-09: `curl https://127.0.0.1/api/v1/data/health` on host-01 returns
+// "SSL certificate problem: self-signed certificate", while the same request
+// with -k returns 200.
+//
+// The consequences were silent and exactly wrong. localDaemonAvailable() saw
+// the failure and concluded NO DAEMON IS RUNNING, so `update install` skipped
+// the helper entirely and applied in-process — no shutdown handshake, no
+// post-restart health gate, no automatic rollback. The daemon then had to be
+// restarted by hand, which is why every host-01 roll in the record reads
+// "install-while-up ... then systemctl restart --no-block". The lane reported
+// success; a human finished the job.
+//
+// adminClient has solved this since 2026-07-28 (daemonTLSConfig +
+// serverNameForCert): anchor to the certificate the daemon's own config
+// declares, and present a name that certificate covers. The dial still goes to
+// loopback and verification still happens — only the anchor changes.
+// InsecureSkipVerify is never set here.
+func daemonLoopbackHTTPClient(timeout time.Duration) *http.Client {
+	client := &http.Client{Timeout: timeout}
+	cfg, res, err := config.LoadResolved(configPath)
+	if err != nil || cfg == nil {
+		return client
+	}
+	tlsCfg, certPath, err := daemonTLSConfig(cfg, res)
+	if err != nil || tlsCfg == nil {
+		return client
+	}
+	base := strings.TrimRight(adminURL(cfg), "/")
+	host := strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
+	if name := serverNameForCert(certPath, ExpectedCertHostFor(host)); name != "" {
+		tlsCfg.ServerName = name
+	}
+	client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+	return client
+}
+
 func localDaemonAvailable(rawAdminURL string) bool {
 	infoURL, err := adminEndpointURL(rawAdminURL, "/api/node/info")
 	if err != nil {
 		return false
 	}
-	client := &http.Client{Timeout: 750 * time.Millisecond}
+	client := daemonLoopbackHTTPClient(750 * time.Millisecond)
 	resp, err := client.Get(infoURL)
 	if err != nil {
 		return false
