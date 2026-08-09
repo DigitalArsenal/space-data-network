@@ -470,6 +470,66 @@ func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicatio
 	return publications, nil
 }
 
+// ListDatasetShardPublicationsForProfile lists EVERY publication row in a query
+// profile in ONE read, ordered so that callers keep the per-schema ordering
+// contract of ListDatasetShardPublications (feed_sequence, then window offset,
+// newest publication first within a window).
+//
+// schemaName is optional: empty means every schema.
+//
+// This exists because channel DISCOVERY needs the whole table, and asking for it
+// one schema at a time meant 206 engine round trips (one per supported schema)
+// against a table that holds 28 rows in total on prod. Engine calls serialize on
+// a single-threaded runtime, so that fan-out — not the row count and not the
+// pin-ledger probe — is what made GET /api/v1/channels exceed 240 s
+// (sdn-pin-ledger-probe-costs-76-seconds). One query answers the same question.
+func (s *FlatSQLStore) ListDatasetShardPublicationsForProfile(queryProfile, schemaName string) ([]DatasetShardPublication, error) {
+	queryProfile = strings.TrimSpace(queryProfile)
+	if queryProfile == "" {
+		return nil, errors.New("query profile is required")
+	}
+	where := []string{`query_profile = ?`}
+	args := []interface{}{queryProfile}
+	if schemaName = strings.TrimSpace(schemaName); schemaName != "" {
+		where = append(where, `schema_name = ?`)
+		args = append(args, schemaName)
+	}
+
+	if err := s.recoverDatasetShardEngineIfPoisoned(); err != nil {
+		return nil, fmt.Errorf("list dataset shard publications for profile: %w", err)
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT schema_name, provider_id, source_name, batch_id, query_profile,
+		       window_offset, window_limit, record_count, byte_count,
+		       shard_cid, index_cid, manifest_cid, pnm_cid,
+		       shard_sha256, index_sha256, query_sha256, result_sha256,
+		       feed_sequence, previous_head, feed_head, published_at
+		FROM sdn_dataset_shard_publications
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY schema_name ASC, feed_sequence ASC, window_offset ASC, published_at DESC
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list dataset shard publications for profile: %w", err)
+	}
+	defer rows.Close()
+
+	var publications []DatasetShardPublication
+	for rows.Next() {
+		pub, err := scanDatasetShardPublication(rows)
+		if err != nil {
+			return nil, err
+		}
+		publications = append(publications, pub)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list dataset shard publications for profile rows: %w", err)
+	}
+	return publications, nil
+}
+
 func (s *FlatSQLStore) DeleteDatasetShardPublicationsAtOrAfterOffset(query DatasetShardPublicationQuery, offset int) (int64, error) {
 	if err := s.requireWritable("delete stale dataset shard publications"); err != nil {
 		return 0, err
