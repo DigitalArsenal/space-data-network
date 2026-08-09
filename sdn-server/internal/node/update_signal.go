@@ -426,7 +426,7 @@ func (n *Node) startUpdateSignalSubscriber() {
 	}
 
 	subscriber, err := NewUpdateSignalSubscriber(UpdateSignalSubscriberDeps{
-		Subscriber:    newPubSubTopicSubscriber(n.PubSub()),
+		Subscriber:    nodeTopicSubscriber{node: n},
 		Topic:         topic,
 		Paths:         paths,
 		TrustedRoots:  roots,
@@ -450,6 +450,39 @@ func (n *Node) startUpdateSignalSubscriber() {
 			log.Warnf("Update signal lane stopped: %v", err)
 		}
 	}()
+}
+
+// nodeTopicSubscriber subscribes through the NODE'S OWN join cache
+// (joinAndStoreTopic) rather than calling pubsub.Join directly.
+//
+// FOUND LIVE, 2026-08-09, on the first real push. go-libp2p-pubsub permits ONE
+// Join per topic per host and returns "topic already exists" for a second. The
+// publisher is also a subscriber — it runs the same daemon and joins
+// /sdn/updates/v1/beta at boot to hear its own channel — so a separate Join for
+// the subscriber meant `PublishToTopic` on that exact topic failed with
+//
+//     the signal was signed but could not be published: join topic
+//     /sdn/updates/v1/beta: topic already exists
+//
+// i.e. the one node in the fleet that must be able to push was the only node
+// that could not. Routing both through the node's cache makes the publish and
+// the subscription share one handle, which is also what every other topic in
+// this daemon already does.
+type nodeTopicSubscriber struct{ node *Node }
+
+func (a nodeTopicSubscriber) Subscribe(topic string) (updateTopicSubscription, error) {
+	if a.node == nil || a.node.pubsub == nil {
+		return nil, errors.New("node: update pub/sub router is not running")
+	}
+	joined, err := a.node.joinAndStoreTopic(topic, topic)
+	if err != nil {
+		return nil, fmt.Errorf("node: join update topic %s: %w", topic, err)
+	}
+	sub, err := joined.Subscribe()
+	if err != nil {
+		return nil, fmt.Errorf("node: subscribe update topic %s: %w", topic, err)
+	}
+	return pubSubSubscriptionAdapter{sub: sub}, nil
 }
 
 // localAdminURL is how this daemon reaches ITSELF, and it is the value the
