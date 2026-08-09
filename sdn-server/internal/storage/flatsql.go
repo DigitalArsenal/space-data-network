@@ -2172,36 +2172,59 @@ func (s *FlatSQLStore) rebuildSourceSummaryScope(schemaName string) error {
 // full scan of 1.6 M index entries per DISTINCT. schemaName == "" enumerates
 // every schema. Callers hold s.mu.
 func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLane, error) {
-	// Row-value comparison against the index's own column order is what makes
-	// this a seek: SQLite resolves `(a,b,c,d) > (?,?,?,?)` with ORDER BY a,b,c,d
-	// LIMIT 1 as a single descent into idx_sdn_record_source_tags_lookup.
+	// STEP is a row-value comparison against the index's own column order, and
+	// that is what makes it a SEEK: verified with EXPLAIN QUERY PLAN against the
+	// live 2.8 GB control database, which answers
+	//   SEARCH … USING COVERING INDEX idx_sdn_record_source_tags_lookup
+	//          ((schema_name,provider_id,source_name,batch_id)>(?,?,?,?))
 	// batch_id/provider_id/source_name are all `TEXT NOT NULL DEFAULT ''`
 	// (sourceTagsTableSQL), so no COALESCE is needed — and adding one here would
 	// make the comparison non-indexable, which is the whole point.
-	const seekAll = `
+	//
+	// The per-schema case deliberately does NOT add `schema_name = ?` to STEP.
+	// The same EXPLAIN says that with the equality present SQLite drops the
+	// row-value bound to a filter and plans
+	// `SEARCH … idx_sdn_record_source_tags_batch_cid (schema_name=?)` — a forward
+	// scan from the schema's first row on every step, which is O(rows) again.
+	// The schema is bounded in Go instead, by stopping at the first lane that
+	// belongs to a different one; the index orders by schema_name first, so a
+	// change of schema means the schema is finished.
+	const first = `
+		SELECT schema_name, provider_id, source_name, batch_id
+		FROM sdn_record_source_tags
+		ORDER BY schema_name, provider_id, source_name, batch_id
+		LIMIT 1`
+	const firstOfSchema = `
+		SELECT schema_name, provider_id, source_name, batch_id
+		FROM sdn_record_source_tags
+		WHERE schema_name = ?
+		ORDER BY schema_name, provider_id, source_name, batch_id
+		LIMIT 1`
+	const step = `
 		SELECT schema_name, provider_id, source_name, batch_id
 		FROM sdn_record_source_tags
 		WHERE (schema_name, provider_id, source_name, batch_id) > (?, ?, ?, ?)
 		ORDER BY schema_name, provider_id, source_name, batch_id
 		LIMIT 1`
-	const seekSchema = `
-		SELECT schema_name, provider_id, source_name, batch_id
-		FROM sdn_record_source_tags
-		WHERE schema_name = ?
-		  AND (schema_name, provider_id, source_name, batch_id) > (?, ?, ?, ?)
-		ORDER BY schema_name, provider_id, source_name, batch_id
-		LIMIT 1`
 
 	lanes := make([]sourceSummaryLane, 0, 64)
-	cursor := sourceSummaryLane{SchemaName: schemaName}
+	var cursor sourceSummaryLane
 	for i := 0; i < sourceSummaryLaneScanLimit; i++ {
 		var next sourceSummaryLane
 		var err error
-		if schemaName == "" {
-			err = s.db.QueryRow(seekAll, cursor.SchemaName, cursor.ProviderID, cursor.SourceName, cursor.BatchID).
+		switch {
+		case i > 0:
+			// Seeking PAST the lane just found is what skips its rows — a lane of
+			// 169,865 tag rows costs one index descent, not 169,865 steps.
+			err = s.db.QueryRow(step, cursor.SchemaName, cursor.ProviderID, cursor.SourceName, cursor.BatchID).
 				Scan(&next.SchemaName, &next.ProviderID, &next.SourceName, &next.BatchID)
-		} else {
-			err = s.db.QueryRow(seekSchema, schemaName, cursor.SchemaName, cursor.ProviderID, cursor.SourceName, cursor.BatchID).
+		case schemaName == "":
+			err = s.db.QueryRow(first).
+				Scan(&next.SchemaName, &next.ProviderID, &next.SourceName, &next.BatchID)
+		default:
+			// Not `> (schemaName,'','','')`: a lane whose provider/source/batch are
+			// all empty strings is a legal row and that bound would skip it.
+			err = s.db.QueryRow(firstOfSchema, schemaName).
 				Scan(&next.SchemaName, &next.ProviderID, &next.SourceName, &next.BatchID)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2209,6 +2232,9 @@ func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLan
 		}
 		if err != nil {
 			return nil, fmt.Errorf("enumerate source-summary lanes: %w", err)
+		}
+		if schemaName != "" && next.SchemaName != schemaName {
+			return lanes, nil
 		}
 		lanes = append(lanes, next)
 		cursor = next
