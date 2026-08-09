@@ -24,6 +24,11 @@ type HelperPlanOptions struct {
 	// update). "Takes as long as it takes" is an owner rule; the gate must be
 	// able to say it too.
 	HealthTimeout time.Duration
+	// AllowRollback carries the operator's explicit acceptance of a declared
+	// source-lineage rollback into the helper process, which re-verifies the
+	// staged payload from scratch in its own process and would otherwise
+	// refuse what `update install --allow-rollback` just accepted.
+	AllowRollback bool
 }
 
 type HelperPlan struct {
@@ -65,6 +70,9 @@ func PrepareHelperPlan(opts HelperPlanOptions) (*HelperPlan, error) {
 	}
 	if strings.TrimSpace(opts.AdminURL) != "" && strings.TrimSpace(opts.Token) != "" {
 		args = append(args, "--admin-url", opts.AdminURL, "--token", opts.Token)
+	}
+	if opts.AllowRollback {
+		args = append(args, "--allow-rollback")
 	}
 	if opts.HealthTimeout > 0 {
 		args = append(args, "--health-timeout", opts.HealthTimeout.String())

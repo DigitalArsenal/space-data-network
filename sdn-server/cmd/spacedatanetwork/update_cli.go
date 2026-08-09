@@ -75,6 +75,10 @@ var updateCheckCmd = &cobra.Command{
 var (
 	updateStageManifest string
 	updateStageCarrier  string
+	// updateStageAllowRollback mirrors --allow-rollback on `update install`
+	// for the manual staging path, so the gate cannot be sidestepped by
+	// staging first and applying second.
+	updateStageAllowRollback bool
 )
 
 var updateStageCmd = &cobra.Command{
@@ -108,7 +112,9 @@ var updateStageCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("read update carrier: %w", err)
 		}
-		staged, err := update.Stage(paths, manifestBytes, wasmBytes, update.HostVerifyOptions(roots, state.Sequence, time.Now()))
+		stageOpts := update.HostVerifyOptions(roots, state.Sequence, time.Now())
+		stageOpts.AllowRollback = updateStageAllowRollback
+		staged, err := update.Stage(paths, manifestBytes, wasmBytes, stageOpts)
 		if err != nil {
 			return err
 		}
@@ -133,6 +139,11 @@ var (
 	updateInstallVersion string
 	updateInstallDryRun  bool
 	updateInstallDirect  bool
+	// updateInstallAllowRollback accepts a manifest the PUBLISHER marked as a
+	// deliberate rollback (provenance.lineage=rollback). Without it, such a
+	// manifest is refused: a rollback and an accidental regression are
+	// byte-identical, and only an operator can tell them apart.
+	updateInstallAllowRollback bool
 )
 
 var updateInstallCmd = &cobra.Command{
@@ -174,7 +185,17 @@ var updateInstallCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("read provider update carrier: %w", err)
 		}
-		staged, err := update.Stage(paths, manifestBytes, wasmBytes, update.HostVerifyOptions(roots, state.Sequence, time.Now()))
+		// The index entry we selected on and the signed manifest we resolved to
+		// must describe the same artifact. Stage() then verifies the artifact
+		// itself against the manifest's signature, hashes and size.
+		if parsed, err := update.ParseManifest(manifestBytes); err != nil {
+			return err
+		} else if err := candidate.AssertMatchesPayload(parsed, len(wasmBytes)); err != nil {
+			return err
+		}
+		installOpts := update.HostVerifyOptions(roots, state.Sequence, time.Now())
+		installOpts.AllowRollback = updateInstallAllowRollback
+		staged, err := update.Stage(paths, manifestBytes, wasmBytes, installOpts)
 		if err != nil {
 			return err
 		}
@@ -204,8 +225,9 @@ var updateInstallCmd = &cobra.Command{
 			return nil
 		}
 		result, err := update.Apply(paths, update.ApplyOptions{
-			UpdateID: staged.UpdateID,
-			DryRun:   updateInstallDryRun,
+			UpdateID:      staged.UpdateID,
+			DryRun:        updateInstallDryRun,
+			AllowRollback: updateInstallAllowRollback,
 		})
 		if err != nil {
 			return err
@@ -233,6 +255,7 @@ var (
 	helperApplyNoRestart       bool
 	helperApplyRestartArgvJSON string
 	helperApplyHealthTimeout   time.Duration
+	helperApplyAllowRollback   bool
 	updateInstallHealthTimeout time.Duration
 )
 
@@ -268,7 +291,8 @@ var updateHelperApplyCmd = &cobra.Command{
 			}
 		}
 		result, err := update.Apply(update.PathsFor(helperApplyBundleRoot), update.ApplyOptions{
-			UpdateID: helperApplyUpdateID,
+			UpdateID:      helperApplyUpdateID,
+			AllowRollback: helperApplyAllowRollback,
 		})
 		if err != nil {
 			return err
@@ -349,10 +373,12 @@ type providerUpdateFilter struct {
 func init() {
 	updateStageCmd.Flags().StringVar(&updateStageManifest, "manifest", "", "path or HTTPS URL of the signed update manifest.json")
 	updateStageCmd.Flags().StringVar(&updateStageCarrier, "carrier", "", "path or HTTPS URL of the update.wasm carrier")
+	updateStageCmd.Flags().BoolVar(&updateStageAllowRollback, "allow-rollback", false, "accept an update the publisher marked as a deliberate source-lineage rollback")
 	updateInstallCmd.Flags().StringVar(&updateInstallID, "update-id", "", "provider update id to install (default: highest verified sequence)")
 	updateInstallCmd.Flags().StringVar(&updateInstallVersion, "version", "", "provider update version to install")
 	updateInstallCmd.Flags().BoolVar(&updateInstallDryRun, "dry-run", false, "verify and report without swapping files")
 	updateInstallCmd.Flags().BoolVar(&updateInstallDirect, "direct", false, "apply in the current process instead of using the helper")
+	updateInstallCmd.Flags().BoolVar(&updateInstallAllowRollback, "allow-rollback", false, "accept an update the publisher marked as a deliberate source-lineage rollback")
 	updateInstallCmd.Flags().DurationVar(&updateInstallHealthTimeout, "health-timeout", 0, "how long the helper waits for daemon health after restart (0 = 60s default; store-heavy nodes whose boot replays the catalog need minutes)")
 	updateHelperApplyCmd.Flags().DurationVar(&helperApplyHealthTimeout, "health-timeout", 0, "post-restart daemon health wait (0 = 60s default)")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyBundleRoot, "bundle-root", "", "bundle root to update")
@@ -360,6 +386,7 @@ func init() {
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyAdminURL, "admin-url", "", "local daemon admin URL")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyToken, "token", "", "one-time daemon update control token")
 	updateHelperApplyCmd.Flags().BoolVar(&helperApplyNoRestart, "no-restart", false, "do not restart the daemon after apply")
+	updateHelperApplyCmd.Flags().BoolVar(&helperApplyAllowRollback, "allow-rollback", false, "accept an update the publisher marked as a deliberate source-lineage rollback")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyRestartArgvJSON, "restart-argv-json", "", "JSON array argv to restart after apply")
 	updateApplyCmd.Flags().StringVar(&updateApplyID, "update-id", "", "staged update id to apply (default: highest verified sequence)")
 	updateApplyCmd.Flags().BoolVar(&updateApplyDryRun, "dry-run", false, "verify and report without swapping files")
@@ -500,6 +527,7 @@ func prepareUpdateHelper(paths update.Paths, updateID string, token string) (*up
 		Token:            token,
 		RestartArgv:      nil,
 		HealthTimeout:    updateInstallHealthTimeout,
+		AllowRollback:    updateInstallAllowRollback,
 	})
 }
 

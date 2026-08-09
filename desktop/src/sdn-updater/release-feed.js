@@ -121,6 +121,13 @@ function releaseIndexEntry (manifest, baseUrl) {
     },
     expires_at: manifest.expires_at,
     bundle_hash: manifest.bundle?.hash,
+    // The index carries the SIZE next to the hash so a consumer can reject an
+    // implausible artifact — or notice an index/manifest divergence — before
+    // downloading 20 MB to find out. The signed manifest remains the
+    // authority; this is a cheap early tripwire, added after the 2026-08-09
+    // truncated publish (graph:
+    // sdn-publish-fleet-update-wraps-an-unverified-binary).
+    bundle_size: manifest.bundle?.size,
     wasm_hash: manifest.wasm?.hash,
     signing_key_id: manifest.signing?.key_id,
     manifest_url: urls.manifestUrl,
