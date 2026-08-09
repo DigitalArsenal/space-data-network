@@ -336,8 +336,16 @@ func nowOr(t time.Time) time.Time {
 //
 // It reads each staged manifest rather than trusting the directory name: the
 // name is an update id, and the sequence is the thing the apply policy actually
-// compares. A staged directory whose manifest cannot be read at all is also
-// listed — it can never pass verification, so it is pure cost either way.
+// compares.
+//
+// A directory whose manifest cannot be read or parsed is LEFT ALONE, and that is
+// deliberate rather than lenient. Stage writes a directory in place, so a
+// half-written staging in progress looks exactly like a corrupt one from here —
+// and this function's output is fed straight to RemoveAll. Deleting on "cannot
+// read" would race a concurrent Stage and destroy a payload that was seconds
+// from being valid. ScanStaged already reports unreadable candidates as
+// rejected, which is the right place for that fact to surface; a cleanup pass
+// is the wrong place to act on it.
 func supersededStagedDirs(paths Paths, installedSequence int64) []string {
 	entries, err := os.ReadDir(paths.Staged)
 	if err != nil {
@@ -351,11 +359,13 @@ func supersededStagedDirs(paths Paths, installedSequence int64) []string {
 		dir := filepath.Join(paths.Staged, entry.Name())
 		raw, err := os.ReadFile(filepath.Join(dir, manifestFileName))
 		if err != nil {
-			superseded = append(superseded, dir)
 			continue
 		}
 		manifest, err := ParseManifest(raw)
-		if err != nil || manifest.Sequence == nil || *manifest.Sequence <= installedSequence {
+		if err != nil || manifest.Sequence == nil {
+			continue
+		}
+		if *manifest.Sequence <= installedSequence {
 			superseded = append(superseded, dir)
 		}
 	}
