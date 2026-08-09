@@ -102,6 +102,53 @@ type ManifestCompatibility struct {
 	MinKuboVersion string `json:"min_kubo_version,omitempty"`
 }
 
+// Lineage values for ManifestProvenance.Lineage.
+const (
+	// LineageDescendant asserts the publisher proved this artifact's source
+	// commit is a descendant of (or identical to) the commit the previously
+	// published artifact was built from.
+	LineageDescendant = "descendant"
+	// LineageRollback asserts the opposite, DELIBERATELY: the operator named
+	// the intent with an explicit flag at publish time.
+	LineageRollback = "rollback"
+	// LineageInitial is the first publish on a feed, with nothing to descend
+	// from.
+	LineageInitial = "initial"
+)
+
+// ManifestProvenance records WHERE an artifact came from, inside the signed
+// document.
+//
+// Two near-misses on 2026-08-09 nearly installed a host-01 binary built from a
+// branch that did not contain the fixes already live on that host (auth-CORS
+// e8c20f48, then per-call e1c2bb2f). Nothing in the lane objected: both were
+// well-formed, correctly signed, and carried a HIGHER sequence, because
+// sequence is publish time and says nothing about code lineage. A human caught
+// both.
+//
+// The ancestry test needs a git repository, which fleet hosts do not have. So
+// the publisher — which does — performs it and records the verdict here, and
+// the installer enforces the verdict rather than recomputing it. That is sound
+// precisely because this struct lives INSIDE the signed manifest: the same
+// signature that authorizes the bytes authorizes the claim about their
+// lineage, and Lineage cannot be edited in flight any more than Bundle.Hash
+// can.
+//
+// A rollback therefore stays possible and is never silent: it must be named at
+// publish time and accepted again at install time (VerifyOptions.AllowRollback).
+type ManifestProvenance struct {
+	SourceRepository string `json:"source_repository,omitempty"`
+	SourceCommit     string `json:"source_commit,omitempty"`
+	// SupersedesCommit is the source commit of the artifact that was newest on
+	// the feed when this one was published — the commit ancestry was tested
+	// against.
+	SupersedesCommit string `json:"supersedes_commit,omitempty"`
+	Lineage          string `json:"lineage,omitempty"`
+	RollbackReason   string `json:"rollback_reason,omitempty"`
+	BinarySHA256     string `json:"binary_sha256,omitempty"`
+	BinarySize       int64  `json:"binary_size,omitempty"`
+}
+
 type Manifest struct {
 	Schema        string                 `json:"schema"`
 	UpdateID      string                 `json:"update_id"`
@@ -116,6 +163,10 @@ type Manifest struct {
 	Signing       ManifestSigning        `json:"signing"`
 	Rollback      *ManifestRollback      `json:"rollback,omitempty"`
 	Compatibility *ManifestCompatibility `json:"compatibility,omitempty"`
+	// Provenance is optional and additive (see ManifestProvenance). Manifests
+	// published before it existed simply carry no lineage assertion and are
+	// treated as they always were.
+	Provenance *ManifestProvenance `json:"provenance,omitempty"`
 	// Modules (G4) is optional and additive: when non-empty it declares that
 	// this update installs only the listed built-in module artifacts (a
 	// targeted swap) instead of the full bundle. A manifest with no Modules
@@ -180,6 +231,34 @@ func assertHash(value, message string) error {
 		return errors.New(message)
 	}
 	return nil
+}
+
+// assertLineage enforces the publisher's recorded ancestry verdict.
+//
+// Only a manifest that explicitly declares itself a rollback is gated. An
+// absent provenance block (every manifest published before 2026-08-09) and a
+// descendant/initial verdict pass untouched, so this cannot strand the fleet
+// on artifacts that predate the field.
+func (m *Manifest) assertLineage(allowRollback bool) error {
+	if m.Provenance == nil || m.Provenance.Lineage != LineageRollback {
+		return nil
+	}
+	if allowRollback {
+		return nil
+	}
+	detail := ""
+	if m.Provenance.SupersedesCommit != "" {
+		detail = fmt.Sprintf(" (source %s is NOT a descendant of %s)",
+			m.Provenance.SourceCommit, m.Provenance.SupersedesCommit)
+	}
+	reason := m.Provenance.RollbackReason
+	if reason == "" {
+		reason = "no reason recorded"
+	}
+	return fmt.Errorf(
+		"update %s is a declared ROLLBACK%s: %s — installing it would revert code that is already live; "+
+			"pass --allow-rollback to accept that deliberately",
+		m.UpdateID, detail, reason)
 }
 
 func (m *Manifest) assertRequiredShape() error {
@@ -509,6 +588,13 @@ type VerifyOptions struct {
 	// existed see no behavior change until a coordinator wires the actual
 	// installed version in (see node.go TODO in the G3 report).
 	InstalledKuboVersion string
+
+	// AllowRollback permits installing a manifest whose provenance declares
+	// LineageRollback. It defaults to false everywhere on purpose: going
+	// BACKWARDS in source lineage is a legitimate operation and an ordinary
+	// mistake, and the two are distinguishable only by whether an operator
+	// said so. `update install --allow-rollback` is that statement.
+	AllowRollback bool
 }
 
 type VerifyResult struct {
@@ -543,6 +629,9 @@ func (m *Manifest) Validate(bundleHash string, opts VerifyOptions) (*VerifyResul
 		return nil, err
 	}
 	if err := m.assertCompatibility(opts.InstalledKuboVersion); err != nil {
+		return nil, err
+	}
+	if err := m.assertLineage(opts.AllowRollback); err != nil {
 		return nil, err
 	}
 	if m.Bundle.Hash != bundleHash {
