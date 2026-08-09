@@ -2120,55 +2120,50 @@ var sourceSummaryRebuildChunk = 8000
 const sourceSummaryLaneScanLimit = 100000
 
 // rebuildSourceSummaryScope recomputes the derived source summary for one schema
-// ("" = every schema) from the durable source-tag + record tables.
+// ("" = every schema, the post-hydration boot path) from the durable source-tag
+// and record tables.
 //
-// WHY IT IS SHAPED LIKE THIS (measured on host-01, 2026-08-09, from the
-// slow-statement log `flatsqlrt` gained the same day):
+// THE ONE RULE, learned the hard way on host-01 across three measured rolls:
+// **no statement here may touch sdn_record_source_tags at a scale proportional
+// to its rows.** That table is 1.8 M rows, and in this engine one pass over it
+// costs about 30 s of held engine lock however it is expressed. Three separate
+// shapes were tried and each cost the same 25-35 s:
 //
-// The previous shape was one `SELECT DISTINCT schema_name` over the 1.6 M-row
-// sdn_record_source_tags table followed by ONE grouped join per schema. On the
-// live node that was **43.4 s for the DISTINCT and 16-35 s per schema** — about
-// 2 m 41 s of the 2 m 47 s that every "full record-catalog hydration complete"
-// line reported, all of it inside the single engine lock, on every boot, on a
-// warm resume that had applied only 5,504 journal frames. Three separate defects:
+//   SELECT DISTINCT schema_name                     29.7 s, n=1,  max 29.75 s
+//   a row-value "loose index seek" per lane         28.7 s, n=42, max  2.75 s
+//   a per-lane COUNT(*) fingerprint                 33.3 s, n=44, max  2.85 s
 //
-//  1. `DISTINCT schema_name` full-scans an index whose leading column IS
-//     schema_name. It is replaced by a LOOSE INDEX SCAN (seek to the first key,
-//     then repeatedly seek past the one just found), which is O(lanes · log n)
-//     instead of O(rows) — tens of seeks instead of 1.6 M index entries.
-//  2. A warm resume rebuilt every lane of every schema to reflect a handful of
-//     landed batches. Each lane now carries a FINGERPRINT check first —
-//     COUNT(*) over the lane's covering index range against SUM(record_count)
-//     already in the summary — and an unchanged lane is skipped entirely. The
-//     check is an index-only range scan with no table access and no join; the
-//     join it skips is the 87 µs-per-row one.
-//  3. A changed lane was rebuilt in ONE statement, so a 169,865-row lane held
-//     the engine for ~15 s. It is now aggregated in `sourceSummaryRebuildChunk`
-//     cid slices and summed in Go, so the engine lock is released between
-//     slices and every other queued reader gets to run.
+// The middle one is the instructive failure: EXPLAIN QUERY PLAN calls it a SEARCH
+// on a covering index, through the engine AND through native sqlite3 on the same
+// live file, and native sqlite3 answers it in 1 ms — but the engine charged
+// 500-680 ms per seek and the cost tracked DATABASE SIZE (9 ms at a 90 MB
+// fixture, 680 ms at the live 2.8 GB) rather than lane count. A plan is not a
+// measurement here.
 //
-// The fingerprint is a COUNT, so it repairs anything that changed the number of
-// tag rows in a lane — which is every add, delete, supersede and GC. A change
-// that preserves a lane's row count exactly while changing its bytes/rowids is
-// not detected; that is stated rather than hidden, and `RebuildSourceSummaries`
-// is not the verb for repairing it (a lane whose tags changed identity has a
-// different lane key and is rebuilt).
+// So the rebuild does not look for what changed. It is TOLD:
+//
+//   - the per-record writers (insertNewSourceTagsTx, upsertSourceTagsTx) call
+//     incrementSourceSummary, so a lane they touch is already correct and needs
+//     no rebuild at all;
+//   - insertSourceTagsBatch — the bulk replay — is the ONLY tag writer that does
+//     not, and it records every lane it writes in replayedSourceLanes;
+//   - supersede / GC / batch reconciliation call the SCOPED form with the schema
+//     they just mutated, and every lane of that schema is rebuilt unconditionally
+//     because those verbs delete rows and the summary cannot be trusted for them.
+//
+// A boot therefore rebuilds exactly the lanes the replay landed — on a warm
+// resume, a handful — and issues no tag-table statement at all beyond those
+// lanes' own bounded slices.
+//
+// Pruning needs no separate pass: rebuildSourceSummaryLane DELETEs the lane's
+// summary rows before inserting what it found, so a lane whose tags are gone is
+// removed by the rebuild that visits it.
 func (s *FlatSQLStore) rebuildSourceSummaryScope(schemaName string) error {
 	lanes, err := s.sourceSummaryLanes(schemaName)
 	if err != nil {
 		return err
 	}
-	if err := s.pruneSourceSummaryLanes(schemaName, lanes); err != nil {
-		return err
-	}
 	for _, lane := range lanes {
-		changed, err := s.sourceSummaryLaneNeedsRebuild(lane)
-		if err != nil {
-			return err
-		}
-		if !changed {
-			continue
-		}
 		if err := s.rebuildSourceSummaryLane(lane); err != nil {
 			return err
 		}
@@ -2255,38 +2250,50 @@ func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLan
 		lanes = append(lanes, lane)
 	}
 
-	query := `SELECT DISTINCT schema_name, provider_id, source_name, batch_id FROM sdn_record_source_summary`
-	args := []any{}
-	if schemaName != "" {
-		query += ` WHERE schema_name = ?`
-		args = append(args, schemaName)
-	}
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("enumerate summary lanes: %w", err)
-	}
-	for rows.Next() {
-		var lane sourceSummaryLane
-		if err := rows.Scan(&lane.SchemaName, &lane.ProviderID, &lane.SourceName, &lane.BatchID); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("scan summary lane: %w", err)
-		}
-		add(lane)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, fmt.Errorf("iterate summary lanes: %w", err)
-	}
-	summaryLanes := len(lanes)
-
+	// The lanes the BULK replay landed. On the boot path these are the ONLY
+	// lanes that can be wrong, because every other tag writer maintains the
+	// summary as it goes.
 	for _, lane := range s.replayedSourceLanes.drain() {
 		add(lane)
 	}
 
+	// A SCOPED call comes from supersede / GC / batch reconciliation, which have
+	// just DELETED rows. Their schema's summary cannot be trusted lane by lane,
+	// so every lane of it is rebuilt. This reads the summary (tens of rows), not
+	// the tag table.
+	summaryLanes := 0
+	if schemaName != "" {
+		rows, err := s.db.Query(`
+			SELECT DISTINCT schema_name, provider_id, source_name, batch_id
+			FROM sdn_record_source_summary WHERE schema_name = ?`, schemaName)
+		if err != nil {
+			return nil, fmt.Errorf("enumerate summary lanes: %w", err)
+		}
+		for rows.Next() {
+			var lane sourceSummaryLane
+			if err := rows.Scan(&lane.SchemaName, &lane.ProviderID, &lane.SourceName, &lane.BatchID); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan summary lane: %w", err)
+			}
+			summaryLanes++
+			add(lane)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("iterate summary lanes: %w", err)
+		}
+	} else {
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_source_summary`).Scan(&summaryLanes); err != nil {
+			return nil, fmt.Errorf("count summary lanes: %w", err)
+		}
+	}
+
 	if summaryLanes == 0 {
-		// Nothing derived yet for this scope. Discover from the durable tags —
-		// once, on a path where there is nothing to skip.
+		// Nothing derived yet for this scope: a first boot, or a summary table
+		// that was dropped and recreated. An empty summary is not evidence of an
+		// empty store, so this is the one path that still pays the loose scan —
+		// on a store where there is nothing to skip anyway.
 		scanned, err := s.sourceSummaryLanesFromTags(schemaName)
 		if err != nil {
 			return nil, err
@@ -2374,48 +2381,6 @@ func (s *FlatSQLStore) sourceSummaryLanesFromTags(schemaName string) ([]sourceSu
 	return nil, fmt.Errorf("enumerate source-summary lanes: seek did not terminate after %d lanes", sourceSummaryLaneScanLimit)
 }
 
-// pruneSourceSummaryLanes removes summary rows whose lane no longer has any
-// source tags. The summary is a derived cache, so a lane that was superseded or
-// garbage-collected away must not keep reporting records. It reads the summary
-// (tens of rows) rather than the tag table, so it costs nothing.
-func (s *FlatSQLStore) pruneSourceSummaryLanes(schemaName string, lanes []sourceSummaryLane) error {
-	live := make(map[sourceSummaryLane]struct{}, len(lanes))
-	for _, lane := range lanes {
-		live[lane] = struct{}{}
-	}
-	query := `SELECT DISTINCT schema_name, provider_id, source_name, batch_id FROM sdn_record_source_summary`
-	args := []any{}
-	if schemaName != "" {
-		query += ` WHERE schema_name = ?`
-		args = append(args, schemaName)
-	}
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return fmt.Errorf("list summary lanes: %w", err)
-	}
-	stale := make([]sourceSummaryLane, 0)
-	for rows.Next() {
-		var lane sourceSummaryLane
-		if err := rows.Scan(&lane.SchemaName, &lane.ProviderID, &lane.SourceName, &lane.BatchID); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan summary lane: %w", err)
-		}
-		if _, ok := live[lane]; !ok {
-			stale = append(stale, lane)
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return fmt.Errorf("iterate summary lanes: %w", err)
-	}
-	for _, lane := range stale {
-		if err := s.deleteSourceSummaryLane(lane); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func (s *FlatSQLStore) deleteSourceSummaryLane(lane sourceSummaryLane) error {
 	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
@@ -2428,33 +2393,6 @@ func (s *FlatSQLStore) deleteSourceSummaryLane(lane sourceSummaryLane) error {
 	return nil
 }
 
-// sourceSummaryLaneNeedsRebuild is the fingerprint: the number of durable tag
-// rows in the lane against the number the summary already claims. Both sides are
-// index-only — the tag side is a covering range scan of
-// idx_sdn_record_source_tags_lookup, the summary side is tens of rows — so a
-// lane that has not changed costs milliseconds instead of the ~87 µs-per-row
-// join. Callers hold s.mu.
-func (s *FlatSQLStore) sourceSummaryLaneNeedsRebuild(lane sourceSummaryLane) (bool, error) {
-	var tagCount int64
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM sdn_record_source_tags
-		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
-	`, lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID).Scan(&tagCount); err != nil {
-		return false, fmt.Errorf("count source tags for %s/%s/%s/%s: %w",
-			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
-	}
-	var summaryCount int64
-	if err := s.db.QueryRow(`
-		SELECT COALESCE(SUM(record_count), 0) FROM sdn_record_source_summary
-		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
-	`, lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID).Scan(&summaryCount); err != nil {
-		return false, fmt.Errorf("count source summary for %s/%s/%s/%s: %w",
-			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
-	}
-	// A zero-row summary for a lane that HAS tags is the deferred-boot case:
-	// rebuild. Equal and non-zero is the steady state: skip.
-	return tagCount != summaryCount || tagCount == 0, nil
-}
 
 // sourceSummaryProducerAgg is one (producer_peer_id, producer_public_key) row of
 // a lane's summary, accumulated across chunks.

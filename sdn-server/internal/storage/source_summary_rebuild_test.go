@@ -281,10 +281,11 @@ func TestSourceSummaryRebuildChunkBoundary(t *testing.T) {
 	}
 }
 
-// TestSourceSummaryFingerprintSkipsUnchangedLanes proves the boot-path win: a
-// second rebuild over an unchanged store issues no lane rebuild at all, and a
-// lane whose tag count changed IS rebuilt.
-func TestSourceSummaryFingerprintSkipsUnchangedLanes(t *testing.T) {
+// TestSourceSummaryBootRebuildsOnlyReplayedLanes is the boot-path guarantee: a
+// rebuild with nothing recorded by the replay must touch NOTHING, and a rebuild
+// after the replay landed a lane must rebuild exactly that lane. This is what
+// keeps a boot off the 1.8 M-row tag table.
+func TestSourceSummaryBootRebuildsOnlyReplayedLanes(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
 		t.Fatalf("NewValidator failed: %v", err)
@@ -295,74 +296,48 @@ func TestSourceSummaryFingerprintSkipsUnchangedLanes(t *testing.T) {
 	}
 	defer store.Close()
 	seedSummaryFixture(t, store)
-
 	if err := store.rebuildSourceSummaryScope(""); err != nil {
 		t.Fatalf("first rebuild: %v", err)
 	}
+	before := snapshotSourceSummary(t, store)
+	if len(before) == 0 {
+		t.Fatal("fixture produced no summary rows; the test proves nothing")
+	}
+
+	// Nothing replayed since: the boot path must enumerate NO lanes at all.
+	store.replayedSourceLanes.drain()
 	lanes, err := store.sourceSummaryLanes("")
 	if err != nil {
 		t.Fatalf("sourceSummaryLanes: %v", err)
 	}
-	if len(lanes) != 4 {
-		t.Fatalf("expected 4 lanes, got %d: %+v", len(lanes), lanes)
+	if len(lanes) != 0 {
+		t.Fatalf("a boot with nothing replayed enumerated %d lane(s): %+v — that is the full-rebuild defect returning", len(lanes), lanes)
 	}
-	for _, lane := range lanes {
-		needs, err := store.sourceSummaryLaneNeedsRebuild(lane)
-		if err != nil {
-			t.Fatalf("fingerprint %+v: %v", lane, err)
-		}
-		if needs {
-			t.Fatalf("lane %+v still reports changed after a rebuild; the boot path would redo all the work", lane)
-		}
-	}
-
-	// Land one more record in batch-2 and prove only that lane reports changed.
-	if _, err := store.db.Exec(`INSERT INTO sds_p_prodB__OMM
-		(cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex)
-		VALUES ('bafyNEW00000000000000000000000', 'peer', 1786000001, 'p', 0, 777, '')`); err != nil {
-		t.Fatalf("insert new record: %v", err)
-	}
-	if _, err := store.db.Exec(`INSERT INTO sdn_record_source_tags
-		(schema_name, cid, provider_id, source_name, source_url, batch_id,
-		 content_key_id, producer_peer_id, producer_public_key, created_at)
-		VALUES ('OMM.fbs','bafyNEW00000000000000000000000','celestrak','gp','','batch-2','','peerA','peerA-key',1700009999)`); err != nil {
-		t.Fatalf("insert new tag: %v", err)
-	}
-	changed := map[string]bool{}
-	for _, lane := range lanes {
-		needs, err := store.sourceSummaryLaneNeedsRebuild(lane)
-		if err != nil {
-			t.Fatalf("fingerprint %+v: %v", lane, err)
-		}
-		changed[lane.BatchID] = needs
-	}
-	if !changed["batch-2"] {
-		t.Fatal("the lane that gained a record did not report changed")
-	}
-	for batch, needs := range changed {
-		if batch != "batch-2" && needs {
-			t.Fatalf("untouched lane %q reported changed", batch)
-		}
-	}
-
 	if err := store.rebuildSourceSummaryScope(""); err != nil {
-		t.Fatalf("second rebuild: %v", err)
+		t.Fatalf("no-op rebuild: %v", err)
 	}
-	var count, bytes int64
-	if err := store.db.QueryRow(`SELECT SUM(record_count), SUM(total_bytes) FROM sdn_record_source_summary
-		WHERE schema_name='OMM.fbs' AND batch_id='batch-2'`).Scan(&count, &bytes); err != nil {
-		t.Fatalf("read batch-2 summary: %v", err)
+	after := snapshotSourceSummary(t, store)
+	if len(after) != len(before) {
+		t.Fatalf("no-op rebuild changed the summary: %d rows -> %d", len(before), len(after))
 	}
-	if count != 5 {
-		t.Fatalf("batch-2 record_count = %d, want 5", count)
+
+	// A SCOPED call still rebuilds every lane of its schema, because supersede
+	// and GC delete rows and cannot be trusted lane by lane.
+	scoped, err := store.sourceSummaryLanes("OMM.fbs")
+	if err != nil {
+		t.Fatalf("scoped sourceSummaryLanes: %v", err)
 	}
-	if bytes != 200+201+202+203+777 {
-		t.Fatalf("batch-2 total_bytes = %d, want %d", bytes, 200+201+202+203+777)
+	if len(scoped) == 0 {
+		t.Fatal("a scoped rebuild enumerated no lanes; supersede/GC would leave stale rows")
 	}
 }
 
 // TestSourceSummaryPrunesVanishedLanes proves a lane whose tags were superseded
-// or garbage-collected away stops being reported.
+// or garbage-collected away stops being reported. It uses the SCOPED call
+// deliberately: that is the form SupersedeSourceBatches, ReconcileSourceBatch and
+// garbageCollectBeforeLocked actually use, and the only one that may assume the
+// schema it names was mutated. The boot path must NOT do this work — see
+// TestSourceSummaryBootRebuildsOnlyReplayedLanes.
 func TestSourceSummaryPrunesVanishedLanes(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
@@ -380,7 +355,7 @@ func TestSourceSummaryPrunesVanishedLanes(t *testing.T) {
 	if _, err := store.db.Exec(`DELETE FROM sdn_record_source_tags WHERE batch_id = 'batch-2'`); err != nil {
 		t.Fatalf("delete tags: %v", err)
 	}
-	if err := store.rebuildSourceSummaryScope(""); err != nil {
+	if err := store.rebuildSourceSummaryScope("OMM.fbs"); err != nil {
 		t.Fatalf("rebuild after delete: %v", err)
 	}
 	var n int
