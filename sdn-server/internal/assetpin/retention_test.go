@@ -116,6 +116,82 @@ func TestRetainerSweepPersistsJournaledTransitionAndDelete(t *testing.T) {
 	}
 }
 
+// TestRetainerSweepDeadlineNeverPoisonsTheAssetPinLedger is the sweep-level
+// guard for sdn-assetpin-retention-sweep-double-commits. An expiring per-call
+// deadline is an ordinary, retryable outcome: the next sweep tries again. It
+// must never be reported as a transaction-lifecycle failure, and above all it
+// must never leave the asset-pin ledger demanding recovery — a state that
+// refuses EVERY later asset mutation until the store is closed and reopened.
+//
+// The deadline here is pathologically small on purpose, so the sweep's real
+// (fsync-bound) store calls are certain to be cut off mid-flight.
+func TestRetainerSweepDeadlineNeverPoisonsTheAssetPinLedger(t *testing.T) {
+	now := time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC)
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator() error = %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ref := retentionReference("deadline-stale", "cid-deadline", storage.AssetReferenceStaged, now.Add(-91*24*time.Hour), now.Add(-time.Hour))
+	ref.MetadataJSON = `{}`
+	upsert := storage.AssetPinAuditEvent{
+		EventID:      "fixture-deadline-stale-upsert",
+		Kind:         "fixture_upsert",
+		Result:       "created",
+		CandidateKey: ref.CandidateKey,
+		ReferenceKey: ref.ReferenceKey,
+		CID:          ref.CID,
+		SHA256:       ref.SHA256,
+		ByteCount:    ref.ByteCount,
+		OccurredAt:   ref.CreatedAt,
+	}
+	if err := store.UpsertAssetPinReference(context.Background(), ref, upsert); err != nil {
+		t.Fatalf("UpsertAssetPinReference() error = %v", err)
+	}
+	retainer, err := NewRetainer(RetainerOptions{
+		Store:            store,
+		Pins:             &fakeRetentionPins{pinned: map[string]bool{ref.CID: true}},
+		Recovery:         newFakeRecoveryPager(),
+		Gate:             NewMutationGate(),
+		CallTimeout:      time.Nanosecond,
+		RecoveryPageSize: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewRetainer() error = %v", err)
+	}
+
+	sweepErr := retainer.Sweep(context.Background(), now)
+	if sweepErr != nil {
+		if strings.Contains(sweepErr.Error(), "transaction has already been committed or rolled back") {
+			t.Fatalf("Sweep() error = %v; an expired per-call deadline must not surface as a transaction-lifecycle failure", sweepErr)
+		}
+		if errors.Is(sweepErr, storage.ErrAssetPinLedgerRecoveryRequired) {
+			t.Fatalf("Sweep() error = %v; an expired per-call deadline must not poison the asset pin ledger", sweepErr)
+		}
+	}
+
+	// The store is still usable: the sweep is retryable, which is the whole
+	// point of failing on a deadline rather than on a lifecycle error.
+	retry := storage.AssetPinAuditEvent{
+		EventID:      "fixture-deadline-stale-retry",
+		Kind:         "fixture_upsert",
+		Result:       "created",
+		CandidateKey: ref.CandidateKey,
+		ReferenceKey: ref.ReferenceKey,
+		CID:          ref.CID,
+		SHA256:       ref.SHA256,
+		ByteCount:    ref.ByteCount,
+		OccurredAt:   ref.CreatedAt,
+	}
+	if err := store.UpsertAssetPinReference(context.Background(), ref, retry); err != nil {
+		t.Fatalf("UpsertAssetPinReference() after a deadline-cut sweep: error = %v; want a healthy ledger", err)
+	}
+}
+
 func TestRetainerSweepKeepsFailedUnpinRetryable(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	expired := retentionReference("retry-unpin", "cid-retry", storage.AssetReferenceRejected, now.Add(-31*24*time.Hour), now.Add(-24*time.Hour))
@@ -1182,6 +1258,20 @@ func retentionReference(key, cid string, state storage.AssetReferenceState, upda
 	return ref
 }
 
+// mustTestRetainer builds the fixture retainer for the FUNCTIONAL retention
+// tests — the ones asserting what a sweep does, not how fast it does it.
+//
+// It deliberately runs the shipped per-call deadline. That deadline is a
+// LIVENESS bound ("never block forever on a wedged store"), not a latency
+// assertion, and the value that asserts it exists belongs in the one test that
+// asserts it: TestRetainerSweepBoundsEveryKuboCall drives its own 20 ms
+// deadline against a store that blocks forever. This fixture previously used
+// 100 ms, which quietly turned every functional test into a bet on how fast the
+// box's disk was — one live asset-pin mutation is two fsyncs, ~26 ms on an idle
+// box and far more under a parallel test tier, so the suite failed on machine
+// load rather than on code (sdn-assetpin-retainer-calltimeout-flake). Using the
+// production default keeps every functional test bounded, keeps them on the
+// configuration the daemon actually runs, and stops them racing the disk.
 func mustTestRetainer(t *testing.T, store RetentionStore, pins RetentionPins, recovery RetentionRecoveryStore) *Retainer {
 	t.Helper()
 	retainer, err := NewRetainer(RetainerOptions{
@@ -1189,7 +1279,7 @@ func mustTestRetainer(t *testing.T, store RetentionStore, pins RetentionPins, re
 		Pins:             pins,
 		Recovery:         recovery,
 		Gate:             NewMutationGate(),
-		CallTimeout:      100 * time.Millisecond,
+		CallTimeout:      defaultRetentionCallTimeout,
 		RecoveryPageSize: 2,
 	})
 	if err != nil {

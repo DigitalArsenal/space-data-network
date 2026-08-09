@@ -69,13 +69,44 @@ func (beginner sqlAssetPinTransactionBeginner) BeginTx(ctx context.Context, opts
 	return beginner.db.BeginTx(ctx, opts)
 }
 
+// beginAssetPinTransaction is the ONLY place an asset-pin transaction is
+// opened, and it deliberately opens it on a context that CANNOT be cancelled.
+//
+// database/sql binds a transaction's life to the context it was begun with: it
+// runs an awaitDone goroutine that rolls the transaction back the moment that
+// context is done. Handing it the caller's context therefore introduces a
+// second, asynchronous owner of the transaction's lifecycle, racing the
+// synchronous one below. When the caller's context died in the window between
+// appendAndCommitAssetPinMutation's journal append and its Commit, that race
+// resolved as `sql: transaction has already been committed or rolled back`,
+// which this store correctly reads as a commit failure and answers by poisoning
+// the whole asset-pin ledger (ErrAssetPinLedgerRecoveryRequired). A retention
+// sweep whose per-call deadline expired, or an HTTP client that hung up mid
+// upload (the api handlers pass r.Context() straight through), could therefore
+// take asset pinning down until the store was closed and reopened.
+//
+// So the transaction is detached from cancellation and rolled back only by the
+// caller's own `defer tx.Rollback()`. Cancellation is still honored, and
+// honored EARLIER: every statement inside the transaction is executed with the
+// caller's context, so a cancelled caller fails at its next statement and
+// unwinds through that deliberate rollback with no journal frame written and no
+// ledger poisoned. Past the journal append there is no context left that can
+// stop the commit, which is why no caller needs to reason about sql.ErrTxDone.
 func (s *FlatSQLStore) beginAssetPinTransaction(ctx context.Context, operation string) (assetPinTransaction, error) {
 	// Asset mutation callers hold s.mu here. Re-check after lock acquisition so
 	// a writer queued behind a failed commit cannot validate against stale SQL.
 	if err := s.requireWritable(operation); err != nil {
 		return nil, err
 	}
-	return s.assetPinTransactions.BeginTx(ctx, nil)
+	if ctx == nil {
+		return nil, errors.New("asset pin storage context is required")
+	}
+	// An already-dead caller never gets a transaction at all: opening one here
+	// would only be rolled back at its first statement.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.assetPinTransactions.BeginTx(context.WithoutCancel(ctx), nil)
 }
 
 // appendAndCommitAssetPinMutation is the INVERTED auxiliary writer: it journals
@@ -89,6 +120,12 @@ func (s *FlatSQLStore) beginAssetPinTransaction(ctx context.Context, operation s
 // applied offset only once the commit has actually succeeded. Every failure
 // path in between raises assetPinLedgerRecovery, which freezes the mark
 // entirely (noteAuxiliaryApplied).
+//
+// That poison state is why the commit below must be unpre-emptable: reaching
+// this function is the point of no return, and beginAssetPinTransaction has
+// already detached the transaction from every context that could roll it back
+// behind our back. A failure here is therefore a REAL commit failure — a dead
+// engine or a broken file — never a caller that lost interest.
 func (s *FlatSQLStore) appendAndCommitAssetPinMutation(tx assetPinTransaction, event auxiliaryMetadataEvent, appendOperation, commitOperation string) error {
 	if err := s.appendAuxiliaryMetadataBeforeApply(event); err != nil {
 		appendErr := fmt.Errorf("%s: %w", appendOperation, err)
