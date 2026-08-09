@@ -331,8 +331,24 @@ func WithHostModule(name string, funcs []HostFunc) Option {
 // docs/wasmedge-aot-nested-execution.md, flowrt TestAOTMountRepro). Loop
 // C.9 proved the defect FIXED in libwasmedge 0.16.4 (standalone matrix
 // green), but the option is KEPT unconditionally: it also serializes this
-// module's executions, still protects 0.14 builds, and costs one channel
-// round-trip per call — noise next to any engine query.
+// module's executions and still protects 0.14 builds.
+//
+// THE COST IS NOT NOISE. This comment used to end "and costs one channel
+// round-trip per call — noise next to any engine query." That was measured
+// FALSE on host-01 (2026-08-09) and it was the single largest latency defect on
+// the box. The round trip is two goroutine wakeups, and a store read is not one
+// guest call: materializing a 30-row x 15-column result is ~920 of them, so one
+// indexed read of a small control table cost a flat ~0.9 s on a 2-vCPU box at
+// load 3, against a 6 ms HTTP floor. `perf` found 47.8 % kernel time whose top
+// symbols were all scheduler machinery, and ~81,000 context switches/s.
+//
+// Callers that make MANY guest calls under one lock must therefore use
+// RunOnExecThread (execthread.go), which sends the whole unit of work to this
+// thread once. That keeps every property this option exists for — the guest
+// still only ever executes on this one locked OS thread — while paying the
+// handoff once per statement instead of once per call. Live A/B at one binary
+// and one engine pin: p95 1.529 s per-call vs 0.400 s batched, and 1,051,984
+// handoffs vs 1,297 for the same million guest calls.
 func WithDedicatedThread() Option {
 	return func(c *config) { c.dedicatedThread = true }
 }

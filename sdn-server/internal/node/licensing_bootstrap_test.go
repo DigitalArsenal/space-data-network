@@ -303,7 +303,7 @@ func newLicensingTestModule(t *testing.T) *modulert.Module {
 	capReg.Register("crypto_decrypt", cryptoFactory)
 	capReg.Register("crypto_key_agreement", cryptoFactory)
 	capReg.Register("crypto_kdf", cryptoFactory)
-	capReg.Register("wallet_sign", caps.NewKeyslotCapFactory())
+	capReg.RegisterBridgeAware("wallet_sign", caps.NewKeyslotCapFactory())
 	capReg.Register("ipfs", func(_ *modulert.Module) modulert.CapHandler {
 		return func(operation string, payload []byte) ([]byte, error) {
 			return fakeIPFSCapResponse(t, operation, payload), nil
