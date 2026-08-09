@@ -10,6 +10,7 @@ package flatsqlrt
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/binary"
 	"fmt"
@@ -254,11 +255,25 @@ func (r *Runtime) MarkPoisoned() { r.poisoned = true }
 //
 // Leaking the buffer is free: a poisoned runtime is discarded wholesale, so its
 // entire linear memory goes with it.
+// The guard runs BEFORE r.mod is even read: `free` is reachable on a nil
+// Runtime (TestNilRuntimeIsNotEntered pins this), and evaluating r.mod to pass
+// it along would dereference nil before the guard could refuse. Delegating
+// through freeVia(r.mod, …) is exactly that mistake and it segfaults.
 func (r *Runtime) free(ptr uint32) {
 	if !r.mayCallGuest() {
 		return
 	}
 	r.mod.Deallocate(ptr)
+}
+
+// freeVia is free() against an explicit guest caller, so the same guard applies
+// whether the free rides inside a RunOnExecThread batch or pays its own thread
+// handoff. Only reachable from inside a batch, i.e. from a live Runtime.
+func (r *Runtime) freeVia(inv wasmrt.GuestCaller, ptr uint32) {
+	if !r.mayCallGuest() {
+		return
+	}
+	inv.Deallocate(ptr)
 }
 
 // mayCallGuest reports whether it is still safe to enter the guest. Split out
@@ -395,8 +410,10 @@ func (r *Runtime) Close() {
 func (r *Runtime) MemoryStats() (wasmrt.MemoryStats, error) { return r.mod.MemoryStats() }
 
 // lastError reads flatsql_get_error. Must be called with the module lock held.
-func (r *Runtime) lastError() string {
-	res, err := r.mod.Execute("flatsql_get_error")
+func (r *Runtime) lastError() string { return r.lastErrorVia(r.mod) }
+
+func (r *Runtime) lastErrorVia(inv wasmrt.GuestCaller) string {
+	res, err := inv.Execute("flatsql_get_error")
 	if err != nil || len(res) == 0 {
 		return fmt.Sprintf("(flatsql_get_error unavailable: %v)", err)
 	}
@@ -404,7 +421,7 @@ func (r *Runtime) lastError() string {
 	if ptr == 0 {
 		return "(no engine error message)"
 	}
-	msg, err := r.readCString(ptr)
+	msg, err := r.readCStringVia(inv, ptr)
 	if err != nil {
 		return fmt.Sprintf("(error message unreadable: %v)", err)
 	}
@@ -413,11 +430,13 @@ func (r *Runtime) lastError() string {
 
 // readCString scans a NUL-terminated guest string in bounded chunks, clamped
 // to the current linear-memory size. Must be called with the module lock held.
-func (r *Runtime) readCString(ptr uint32) (string, error) {
+func (r *Runtime) readCString(ptr uint32) (string, error) { return r.readCStringVia(r.mod, ptr) }
+
+func (r *Runtime) readCStringVia(inv wasmrt.GuestCaller, ptr uint32) (string, error) {
 	if ptr == 0 {
 		return "", nil
 	}
-	stats, err := r.mod.MemoryStats()
+	stats, err := inv.MemoryStats()
 	if err != nil {
 		return "", err
 	}
@@ -428,7 +447,7 @@ func (r *Runtime) readCString(ptr uint32) (string, error) {
 		if off+chunk > memEnd {
 			chunk = memEnd - off
 		}
-		data, err := r.mod.ReadMemory(off, chunk)
+		data, err := inv.ReadMemory(off, chunk)
 		if err != nil {
 			return "", err
 		}
@@ -446,8 +465,10 @@ func (r *Runtime) readCString(ptr uint32) (string, error) {
 // user-triggerable failures — bad SQL, param-count mismatch, unknown
 // template, duplicate source, bad schema — take this path without throwing,
 // so the runtime stays healthy and is NOT poisoned.
-func (r *Runtime) engineErr(op string) error {
-	return fmt.Errorf("flatsqlrt: %s: %s", op, r.lastError())
+func (r *Runtime) engineErr(op string) error { return r.engineErrVia(r.mod, op) }
+
+func (r *Runtime) engineErrVia(inv wasmrt.GuestCaller, op string) error {
+	return fmt.Errorf("flatsqlrt: %s: %s", op, r.lastErrorVia(inv))
 }
 
 // execErr wraps a trap/host-level failure of an engine export call and marks
@@ -476,18 +497,22 @@ func (r *Runtime) checkUsable(op string) error {
 
 // allocCString copies s into guest memory as a NUL-terminated C string.
 // Caller must Deallocate. Must be called with the module lock held.
-func (r *Runtime) allocCString(s string) (uint32, error) {
-	return r.mod.Allocate(append([]byte(s), 0))
+func (r *Runtime) allocCString(s string) (uint32, error) { return r.allocCStringVia(r.mod, s) }
+
+func (r *Runtime) allocCStringVia(inv wasmrt.GuestCaller, s string) (uint32, error) {
+	return inv.Allocate(append([]byte(s), 0))
 }
 
 // allocBytes copies b into guest memory; empty slices pass ptr 0 with len 0
 // (matching the JS shim's withBytes convention). Caller must Deallocate
 // non-zero pointers.
-func (r *Runtime) allocBytes(b []byte) (uint32, error) {
+func (r *Runtime) allocBytes(b []byte) (uint32, error) { return r.allocBytesVia(r.mod, b) }
+
+func (r *Runtime) allocBytesVia(inv wasmrt.GuestCaller, b []byte) (uint32, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	return r.mod.Allocate(b)
+	return inv.Allocate(b)
 }
 
 // BuildQueryCacheKey returns the engine's deterministic cache key for a
@@ -866,33 +891,44 @@ func (d *Database) ingest(export string, data []byte, source string) (int, error
 	d.rt.mod.Lock()
 	defer d.rt.mod.Unlock()
 
-	dataPtr, err := d.rt.allocBytes(data)
+	// Ingest is 3-5 guest calls (malloc, maybe malloc, ingest, free, free) and
+	// it runs once per shard on every replay and every feed head — one batch
+	// per ingest instead of five handoffs.
+	var count int
+	err := d.rt.mod.RunOnExecThread(context.Background(), func(inv wasmrt.GuestCaller) error {
+		dataPtr, err := d.rt.allocBytesVia(inv, data)
+		if err != nil {
+			return err
+		}
+		if dataPtr != 0 {
+			defer d.rt.freeVia(inv, dataPtr)
+		}
+
+		args := []interface{}{int32(d.handle), int32(dataPtr), int32(len(data))}
+		if source != "" {
+			srcPtr, err := d.rt.allocCStringVia(inv, source)
+			if err != nil {
+				return err
+			}
+			defer d.rt.freeVia(inv, srcPtr)
+			args = append(args, int32(srcPtr))
+		}
+
+		res, err := inv.Execute(export, args...)
+		if err != nil {
+			return fmt.Errorf("flatsqlrt: %s: %w", export, err)
+		}
+		n := toFloat64(res[0])
+		if n < 0 {
+			return d.rt.engineErrVia(inv, export)
+		}
+		count = int(n)
+		return nil
+	})
 	if err != nil {
 		return 0, err
 	}
-	if dataPtr != 0 {
-		defer d.rt.free(dataPtr)
-	}
-
-	args := []interface{}{int32(d.handle), int32(dataPtr), int32(len(data))}
-	if source != "" {
-		srcPtr, err := d.rt.allocCString(source)
-		if err != nil {
-			return 0, err
-		}
-		defer d.rt.free(srcPtr)
-		args = append(args, int32(srcPtr))
-	}
-
-	res, err := d.rt.mod.Execute(export, args...)
-	if err != nil {
-		return 0, fmt.Errorf("flatsqlrt: %s: %w", export, err)
-	}
-	count := toFloat64(res[0])
-	if count < 0 {
-		return 0, d.rt.engineErr(export)
-	}
-	return int(count), nil
+	return count, nil
 }
 
 // Result is a materialized row/column query result.
@@ -919,10 +955,28 @@ func (d *Database) Query(sql string, params ...interface{}) (*Result, error) {
 		d.rt.mod.Unlock()
 		d.rt.accountQuery(sql, waited, time.Since(started))
 	}()
-	if err := d.execQuery(sql, params); err != nil {
+
+	// ONE unit of work on the engine thread: the statement AND its whole
+	// materialization. The lock above is already held for exactly this span, so
+	// the batch changes no concurrency property — only how many times control
+	// crosses an OS thread boundary to get here (once, instead of once per
+	// result cell). See wasmrt.Module.RunOnExecThread.
+	var out *Result
+	err := d.rt.mod.RunOnExecThread(context.Background(), func(inv wasmrt.GuestCaller) error {
+		if err := d.execQuery(inv, sql, params); err != nil {
+			return err
+		}
+		res, err := d.readCurrentResult(inv)
+		if err != nil {
+			return err
+		}
+		out = res
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	return d.readCurrentResult()
+	return out, nil
 }
 
 // slowQueryThreshold is when a single engine statement becomes evidence
@@ -994,20 +1048,20 @@ func collapseSQL(sql string) string {
 }
 
 // execQuery runs flatsql_query or flatsql_query_params. Lock must be held.
-func (d *Database) execQuery(sql string, params []interface{}) error {
-	sqlPtr, err := d.rt.allocCString(sql)
+func (d *Database) execQuery(inv wasmrt.GuestCaller, sql string, params []interface{}) error {
+	sqlPtr, err := d.rt.allocCStringVia(inv, sql)
 	if err != nil {
 		return err
 	}
-	defer d.rt.free(sqlPtr)
+	defer d.rt.freeVia(inv, sqlPtr)
 
 	if len(params) == 0 {
-		res, err := d.rt.mod.Execute("flatsql_query", int32(d.handle), int32(sqlPtr))
+		res, err := inv.Execute("flatsql_query", int32(d.handle), int32(sqlPtr))
 		if err != nil {
 			return d.rt.execErr("flatsql_query", err)
 		}
 		if wasmrt.ToInt32(res[0]) == 0 {
-			return d.rt.engineErr("query")
+			return d.rt.engineErrVia(inv, "query")
 		}
 		return nil
 	}
@@ -1016,20 +1070,20 @@ func (d *Database) execQuery(sql string, params []interface{}) error {
 	if err != nil {
 		return err
 	}
-	blobPtr, err := d.rt.allocBytes(blob)
+	blobPtr, err := d.rt.allocBytesVia(inv, blob)
 	if err != nil {
 		return err
 	}
 	if blobPtr != 0 {
-		defer d.rt.free(blobPtr)
+		defer d.rt.freeVia(inv, blobPtr)
 	}
-	res, err := d.rt.mod.Execute("flatsql_query_params",
+	res, err := inv.Execute("flatsql_query_params",
 		int32(d.handle), int32(sqlPtr), int32(blobPtr), int32(len(blob)), int32(len(params)))
 	if err != nil {
 		return d.rt.execErr("flatsql_query_params", err)
 	}
 	if wasmrt.ToInt32(res[0]) == 0 {
-		return d.rt.engineErr("query_params")
+		return d.rt.engineErrVia(inv, "query_params")
 	}
 	return nil
 }
@@ -1046,13 +1100,23 @@ const (
 )
 
 // readCurrentResult materializes the engine's current result. Lock must be held.
-func (d *Database) readCurrentResult() (*Result, error) {
-	m := d.rt.mod
-	colsRes, err := m.Execute("flatsql_result_column_count")
+//
+// THIS IS THE CALL-COUNT HOT SPOT. Materializing R rows x C columns costs
+// 2 + C + 2*R*C guest invocations — the engine has no export that hands back a
+// whole result in one buffer for a TRUSTED caller (flatsql_query_sandboxed does
+// exactly that, but its SQLite authorizer makes control tables invisible, so it
+// cannot serve the store's own reads). A 30-row x 15-column control table is
+// therefore ~920 calls for ONE indexed read.
+//
+// Until the engine grows a bulk-result export, the fix is to stop paying a
+// cross-OS-thread handoff for each of them: `inv` is the batch's GuestCaller,
+// and every call below rides the single handoff RunOnExecThread already paid.
+func (d *Database) readCurrentResult(inv wasmrt.GuestCaller) (*Result, error) {
+	colsRes, err := inv.Execute("flatsql_result_column_count")
 	if err != nil {
 		return nil, err
 	}
-	rowsRes, err := m.Execute("flatsql_result_row_count")
+	rowsRes, err := inv.Execute("flatsql_result_row_count")
 	if err != nil {
 		return nil, err
 	}
@@ -1061,11 +1125,11 @@ func (d *Database) readCurrentResult() (*Result, error) {
 
 	out := &Result{Columns: make([]string, nCols), Rows: make([][]interface{}, nRows)}
 	for c := 0; c < nCols; c++ {
-		nameRes, err := m.Execute("flatsql_result_column_name", int32(c))
+		nameRes, err := inv.Execute("flatsql_result_column_name", int32(c))
 		if err != nil {
 			return nil, err
 		}
-		name, err := d.rt.readCString(toUint32(nameRes[0]))
+		name, err := d.rt.readCStringVia(inv, toUint32(nameRes[0]))
 		if err != nil {
 			return nil, err
 		}
@@ -1074,7 +1138,7 @@ func (d *Database) readCurrentResult() (*Result, error) {
 	for rIdx := 0; rIdx < nRows; rIdx++ {
 		row := make([]interface{}, nCols)
 		for c := 0; c < nCols; c++ {
-			v, err := d.readCell(rIdx, c)
+			v, err := d.readCell(inv, rIdx, c)
 			if err != nil {
 				return nil, err
 			}
@@ -1085,8 +1149,8 @@ func (d *Database) readCurrentResult() (*Result, error) {
 	return out, nil
 }
 
-func (d *Database) readCell(row, col int) (interface{}, error) {
-	m := d.rt.mod
+func (d *Database) readCell(inv wasmrt.GuestCaller, row, col int) (interface{}, error) {
+	m := inv
 	tRes, err := m.Execute("flatsql_result_cell_type", int32(row), int32(col))
 	if err != nil {
 		return nil, err
@@ -1117,7 +1181,7 @@ func (d *Database) readCell(row, col int) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		return d.rt.readCString(toUint32(v[0]))
+		return d.rt.readCStringVia(inv, toUint32(v[0]))
 	case cellBlob:
 		ptrRes, err := m.Execute("flatsql_result_cell_blob", int32(row), int32(col))
 		if err != nil {
@@ -1172,33 +1236,45 @@ func (d *Database) QueryTemplate(queryID string, params ...interface{}) (*Result
 	d.rt.mod.Lock()
 	defer d.rt.mod.Unlock()
 
-	idPtr, err := d.rt.allocCString(queryID)
-	if err != nil {
-		return nil, err
-	}
-	defer d.rt.free(idPtr)
+	var out *Result
+	err := d.rt.mod.RunOnExecThread(context.Background(), func(inv wasmrt.GuestCaller) error {
+		idPtr, err := d.rt.allocCStringVia(inv, queryID)
+		if err != nil {
+			return err
+		}
+		defer d.rt.freeVia(inv, idPtr)
 
-	blob, err := EncodeParams(params)
-	if err != nil {
-		return nil, err
-	}
-	blobPtr, err := d.rt.allocBytes(blob)
-	if err != nil {
-		return nil, err
-	}
-	if blobPtr != 0 {
-		defer d.rt.free(blobPtr)
-	}
+		blob, err := EncodeParams(params)
+		if err != nil {
+			return err
+		}
+		blobPtr, err := d.rt.allocBytesVia(inv, blob)
+		if err != nil {
+			return err
+		}
+		if blobPtr != 0 {
+			defer d.rt.freeVia(inv, blobPtr)
+		}
 
-	res, err := d.rt.mod.Execute("flatsql_query_template",
-		int32(d.handle), int32(idPtr), int32(blobPtr), int32(len(blob)), int32(len(params)))
+		res, err := inv.Execute("flatsql_query_template",
+			int32(d.handle), int32(idPtr), int32(blobPtr), int32(len(blob)), int32(len(params)))
+		if err != nil {
+			return d.rt.execErr("flatsql_query_template", err)
+		}
+		if wasmrt.ToInt32(res[0]) == 0 {
+			return d.rt.engineErrVia(inv, "query_template")
+		}
+		r, err := d.readCurrentResult(inv)
+		if err != nil {
+			return err
+		}
+		out = r
+		return nil
+	})
 	if err != nil {
-		return nil, d.rt.execErr("flatsql_query_template", err)
+		return nil, err
 	}
-	if wasmrt.ToInt32(res[0]) == 0 {
-		return nil, d.rt.engineErr("query_template")
-	}
-	return d.readCurrentResult()
+	return out, nil
 }
 
 // QueryMany executes a batch of queries in one guest call and materializes
@@ -1207,46 +1283,53 @@ func (d *Database) QueryMany(reqs []QueryRequest) ([]*Result, error) {
 	d.rt.mod.Lock()
 	defer d.rt.mod.Unlock()
 
-	blob, err := EncodeQueryRequests(reqs)
-	if err != nil {
-		return nil, err
-	}
-	blobPtr, err := d.rt.allocBytes(blob)
-	if err != nil {
-		return nil, err
-	}
-	if blobPtr != 0 {
-		defer d.rt.free(blobPtr)
-	}
-
-	res, err := d.rt.mod.Execute("flatsql_query_many",
-		int32(d.handle), int32(blobPtr), int32(len(blob)), int32(len(reqs)))
-	if err != nil {
-		return nil, d.rt.execErr("flatsql_query_many", err)
-	}
-	if wasmrt.ToInt32(res[0]) == 0 {
-		return nil, d.rt.engineErr("query_many")
-	}
-
-	countRes, err := d.rt.mod.Execute("flatsql_batch_result_count")
-	if err != nil {
-		return nil, err
-	}
-	n := int(wasmrt.ToInt32(countRes[0]))
-	results := make([]*Result, 0, n)
-	for i := 0; i < n; i++ {
-		selRes, err := d.rt.mod.Execute("flatsql_select_batch_result", int32(i))
+	var results []*Result
+	err := d.rt.mod.RunOnExecThread(context.Background(), func(inv wasmrt.GuestCaller) error {
+		blob, err := EncodeQueryRequests(reqs)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if wasmrt.ToInt32(selRes[0]) == 0 {
-			return nil, d.rt.engineErr(fmt.Sprintf("select_batch_result(%d)", i))
-		}
-		r, err := d.readCurrentResult()
+		blobPtr, err := d.rt.allocBytesVia(inv, blob)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		results = append(results, r)
+		if blobPtr != 0 {
+			defer d.rt.freeVia(inv, blobPtr)
+		}
+
+		res, err := inv.Execute("flatsql_query_many",
+			int32(d.handle), int32(blobPtr), int32(len(blob)), int32(len(reqs)))
+		if err != nil {
+			return d.rt.execErr("flatsql_query_many", err)
+		}
+		if wasmrt.ToInt32(res[0]) == 0 {
+			return d.rt.engineErrVia(inv, "query_many")
+		}
+
+		countRes, err := inv.Execute("flatsql_batch_result_count")
+		if err != nil {
+			return err
+		}
+		n := int(wasmrt.ToInt32(countRes[0]))
+		results = make([]*Result, 0, n)
+		for i := 0; i < n; i++ {
+			selRes, err := inv.Execute("flatsql_select_batch_result", int32(i))
+			if err != nil {
+				return err
+			}
+			if wasmrt.ToInt32(selRes[0]) == 0 {
+				return d.rt.engineErrVia(inv, fmt.Sprintf("select_batch_result(%d)", i))
+			}
+			r, err := d.readCurrentResult(inv)
+			if err != nil {
+				return err
+			}
+			results = append(results, r)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return results, nil
 }
@@ -1293,8 +1376,10 @@ func (d *Database) QueryRawFlatBufferStream(sql string, params ...interface{}) (
 
 	// Host mirror first: (generation, sql, params) is the engine's own
 	// staleness identity — a hit is byte-equivalent to re-reading the
-	// engine's cached artifact, minus the round-trip and the copy.
-	preGen, genErr := d.queryCacheGenerationLocked()
+	// engine's cached artifact, minus the round-trip and the copy. This one
+	// probe stays OUTSIDE the batch so a mirror hit costs a single guest call
+	// and never enters the exec thread for a readout it will not do.
+	preGen, genErr := d.queryCacheGenerationLocked(d.rt.mod)
 	mirrorKey := ""
 	if genErr == nil {
 		mirrorKey = rawMirrorKey(sql, blob, preGen)
@@ -1308,88 +1393,94 @@ func (d *Database) QueryRawFlatBufferStream(sql string, params ...interface{}) (
 		}
 	}
 
-	sqlPtr, err := d.rt.allocCString(sql)
-	if err != nil {
-		return nil, err
-	}
-	defer d.rt.free(sqlPtr)
-
-	blobPtr, err := d.rt.allocBytes(blob)
-	if err != nil {
-		return nil, err
-	}
-	if blobPtr != 0 {
-		defer d.rt.free(blobPtr)
-	}
-
-	res, err := d.rt.mod.Execute("flatsql_query_raw_flatbuffer_stream",
-		int32(d.handle), int32(sqlPtr), int32(blobPtr), int32(len(blob)), int32(len(params)))
-	if err != nil {
-		return nil, d.rt.execErr("flatsql_query_raw_flatbuffer_stream", err)
-	}
-	if wasmrt.ToInt32(res[0]) == 0 {
-		return nil, d.rt.engineErr("query_raw_flatbuffer_stream")
-	}
-
-	m := d.rt.mod
-	ptrRes, err := m.Execute("flatsql_response_artifact_data")
-	if err != nil {
-		return nil, err
-	}
-	sizeRes, err := m.Execute("flatsql_response_artifact_size")
-	if err != nil {
-		return nil, err
-	}
-	rowsRes, err := m.Execute("flatsql_response_artifact_row_count")
-	if err != nil {
-		return nil, err
-	}
-	colsRes, err := m.Execute("flatsql_response_artifact_column_count")
-	if err != nil {
-		return nil, err
-	}
-	hitRes, err := m.Execute("flatsql_response_artifact_cache_hit")
-	if err != nil {
-		return nil, err
-	}
-
-	size := uint32(wasmrt.ToInt32(sizeRes[0]))
-	var out []byte
-	if size > 0 {
-		out, err = m.ReadMemory(toUint32(ptrRes[0]), size)
+	var stream *RawStream
+	err = d.rt.mod.RunOnExecThread(context.Background(), func(inv wasmrt.GuestCaller) error {
+		sqlPtr, err := d.rt.allocCStringVia(inv, sql)
 		if err != nil {
-			return nil, err
+			return err
 		}
-	} else {
-		out = []byte{}
-	}
-	stream := &RawStream{
-		Bytes:      out,
-		Rows:       int(toFloat64(rowsRes[0])),
-		Columns:    int(toFloat64(colsRes[0])),
-		CacheHit:   wasmrt.ToInt32(hitRes[0]) != 0,
-		FNV1a64:    FNV1a64WordFolded(out),
-		FrameCount: countStreamFrames(out),
-	}
+		defer d.rt.freeVia(inv, sqlPtr)
 
-	// Mirror only when the generation is unchanged across the execution: a
-	// mutating raw-stream statement (or any concurrent invalidation) bumps
-	// it, and such results must never be replayed.
-	if mirrorKey != "" {
-		if postGen, err := d.queryCacheGenerationLocked(); err == nil && postGen == preGen {
-			if d.rawMirror == nil {
-				d.rawMirror = newRawStreamMirror()
-			}
-			d.rawMirror.put(mirrorKey, stream)
+		blobPtr, err := d.rt.allocBytesVia(inv, blob)
+		if err != nil {
+			return err
 		}
+		if blobPtr != 0 {
+			defer d.rt.freeVia(inv, blobPtr)
+		}
+
+		res, err := inv.Execute("flatsql_query_raw_flatbuffer_stream",
+			int32(d.handle), int32(sqlPtr), int32(blobPtr), int32(len(blob)), int32(len(params)))
+		if err != nil {
+			return d.rt.execErr("flatsql_query_raw_flatbuffer_stream", err)
+		}
+		if wasmrt.ToInt32(res[0]) == 0 {
+			return d.rt.engineErrVia(inv, "query_raw_flatbuffer_stream")
+		}
+
+		ptrRes, err := inv.Execute("flatsql_response_artifact_data")
+		if err != nil {
+			return err
+		}
+		sizeRes, err := inv.Execute("flatsql_response_artifact_size")
+		if err != nil {
+			return err
+		}
+		rowsRes, err := inv.Execute("flatsql_response_artifact_row_count")
+		if err != nil {
+			return err
+		}
+		colsRes, err := inv.Execute("flatsql_response_artifact_column_count")
+		if err != nil {
+			return err
+		}
+		hitRes, err := inv.Execute("flatsql_response_artifact_cache_hit")
+		if err != nil {
+			return err
+		}
+
+		size := uint32(wasmrt.ToInt32(sizeRes[0]))
+		var out []byte
+		if size > 0 {
+			out, err = inv.ReadMemory(toUint32(ptrRes[0]), size)
+			if err != nil {
+				return err
+			}
+		} else {
+			out = []byte{}
+		}
+		stream = &RawStream{
+			Bytes:      out,
+			Rows:       int(toFloat64(rowsRes[0])),
+			Columns:    int(toFloat64(colsRes[0])),
+			CacheHit:   wasmrt.ToInt32(hitRes[0]) != 0,
+			FNV1a64:    FNV1a64WordFolded(out),
+			FrameCount: countStreamFrames(out),
+		}
+
+		// Mirror only when the generation is unchanged across the execution: a
+		// mutating raw-stream statement (or any concurrent invalidation) bumps
+		// it, and such results must never be replayed.
+		if mirrorKey != "" {
+			if postGen, err := d.queryCacheGenerationLocked(inv); err == nil && postGen == preGen {
+				if d.rawMirror == nil {
+					d.rawMirror = newRawStreamMirror()
+				}
+				d.rawMirror.put(mirrorKey, stream)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return stream, nil
 }
 
 // queryCacheGenerationLocked reads the engine's query-cache generation
 // counter (bumped by every mutator). Caller holds the module lock.
-func (d *Database) queryCacheGenerationLocked() (uint64, error) {
-	res, err := d.rt.mod.Execute("flatsql_query_cache_generation", int32(d.handle))
+func (d *Database) queryCacheGenerationLocked(inv wasmrt.GuestCaller) (uint64, error) {
+	res, err := inv.Execute("flatsql_query_cache_generation", int32(d.handle))
 	if err != nil {
 		return 0, d.rt.execErr("flatsql_query_cache_generation", err)
 	}

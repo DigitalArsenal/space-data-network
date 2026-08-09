@@ -409,13 +409,24 @@ type Module struct {
 	// (an unbuffered send would block the caller forever) and Release must not
 	// wait on execWG.
 	execThreadLost atomic.Bool
+
+	// Guest-call account — see DispatchStats (execthread.go). Always on: an
+	// instrument that has to be enabled is off on the box where the defect is.
+	statCalls    atomic.Int64
+	statDispatch atomic.Int64
+	statBatches  atomic.Int64
+	callCounts   sync.Map // export name -> *atomic.Int64
 }
 
-// execRequest carries one guest call to the dedicated execution thread.
+// execRequest carries one unit of work to the dedicated execution thread:
+// either a single guest call (name+params) or a whole BATCH of them (batch,
+// set by RunOnExecThread), which is the difference between paying one thread
+// handoff per guest call and one per statement.
 type execRequest struct {
 	ctx    context.Context
 	name   string
 	params []interface{}
+	batch  func() error
 	done   chan execResult
 }
 
@@ -433,6 +444,10 @@ func (m *Module) startExecThread() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		for req := range m.execCh {
+			if req.batch != nil {
+				req.done <- execResult{err: req.batch()}
+				continue
+			}
 			values, err := m.executeDirect(req.ctx, req.name, req.params...)
 			req.done <- execResult{values: values, err: err}
 		}
@@ -558,6 +573,9 @@ func (m *Module) executeDirect(ctx context.Context, name string, params ...inter
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Every guest invocation passes through here — batched, dispatched or
+	// direct — so this is the one place the per-export account can be complete.
+	m.countCall(name)
 
 	// Per-call budget: start from the module's configured defaults, then let a
 	// host-attached ExecBudget override RAISE (or lower) them for this one
@@ -686,6 +704,7 @@ func (m *Module) exec(ctx context.Context, name string, params ...interface{}) (
 	timeout := m.effectiveTimeout(ctx, base)
 
 	req := &execRequest{ctx: ctx, name: name, params: params, done: make(chan execResult, 1)}
+	m.statDispatch.Add(1)
 
 	var timer *time.Timer
 	var fired <-chan time.Time
@@ -1002,29 +1021,14 @@ func (m *Module) WriteMemory(offset uint32, data []byte) error {
 
 // Allocate calls the module's malloc, writes data into the allocated region,
 // and returns the pointer. Caller must Deallocate when done.
-func (m *Module) Allocate(data []byte) (uint32, error) {
-	ptr, err := m.AllocateSize(uint32(len(data)))
-	if err != nil {
-		return 0, err
-	}
-	if err := m.WriteMemory(ptr, data); err != nil {
-		m.Deallocate(ptr)
-		return 0, err
-	}
-	return ptr, nil
-}
+//
+// Shared with ExecScope's implementation (execthread.go) so the batched and
+// unbatched allocation paths cannot drift apart.
+func (m *Module) Allocate(data []byte) (uint32, error) { return allocateVia(m, data) }
 
 // AllocateSize calls the module's malloc for the given size, returning the pointer.
 func (m *Module) AllocateSize(size uint32) (uint32, error) {
-	results, err := m.exec(context.Background(), m.mallocName, int32(size))
-	if err != nil {
-		return 0, fmt.Errorf("malloc(%d) failed: %w", size, err)
-	}
-	ptr := toUint32(results[0])
-	if ptr == 0 {
-		return 0, fmt.Errorf("%w: malloc(%d) returned 0", ErrAllocFailed, size)
-	}
-	return ptr, nil
+	return allocateSizeVia(m, m.mallocName, size)
 }
 
 // Deallocate calls the module's free.
@@ -1043,23 +1047,11 @@ func (m *Module) SecureDeallocate(ptr, size uint32) {
 }
 
 // AllocateString allocates a null-terminated C string in WASM memory.
-func (m *Module) AllocateString(s string) (uint32, error) {
-	data := append([]byte(s), 0)
-	return m.Allocate(data)
-}
+func (m *Module) AllocateString(s string) (uint32, error) { return allocateStringVia(m, s) }
 
 // ReadCString reads a null-terminated string from WASM memory.
 func (m *Module) ReadCString(ptr, maxLen uint32) (string, error) {
-	data, err := m.ReadMemory(ptr, maxLen)
-	if err != nil {
-		return "", err
-	}
-	for i, b := range data {
-		if b == 0 {
-			return string(data[:i]), nil
-		}
-	}
-	return string(data), nil
+	return readCStringVia(m, ptr, maxLen)
 }
 
 // Release frees all WasmEdge resources.

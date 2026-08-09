@@ -1,6 +1,7 @@
 package flatsqlrt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -96,65 +97,73 @@ func (d *Database) querySandboxed(sql string, mode int, caps SandboxCaps, params
 		return nil, 0, 0, err
 	}
 
-	sqlPtr, err := d.rt.allocCString(sql)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	defer d.rt.free(sqlPtr)
-
-	blobPtr, err := d.rt.allocBytes(blob)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	if blobPtr != 0 {
-		defer d.rt.free(blobPtr)
-	}
-
-	res, err := d.rt.mod.Execute("flatsql_query_sandboxed",
-		int32(d.handle), int32(sqlPtr), int32(blobPtr), int32(len(blob)), int32(len(params)),
-		int32(mode),
-		float64(caps.MaxRows), float64(caps.MaxBytes),
-		float64(caps.Timeout/time.Millisecond))
-	if err != nil {
-		return nil, 0, 0, d.rt.execErr("flatsql_query_sandboxed", err)
-	}
-	if wasmrt.ToInt32(res[0]) == 0 {
-		text := d.rt.lastError()
-		if se := parseSandboxError(text); se != nil {
-			return nil, 0, 0, fmt.Errorf("flatsqlrt: query_sandboxed: %w", se)
-		}
-		return nil, 0, 0, fmt.Errorf("flatsqlrt: query_sandboxed: %s", text)
-	}
-
-	m := d.rt.mod
-	ptrRes, err := m.Execute("flatsql_response_artifact_data")
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	sizeRes, err := m.Execute("flatsql_response_artifact_size")
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	rowsRes, err := m.Execute("flatsql_response_artifact_row_count")
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	colsRes, err := m.Execute("flatsql_response_artifact_column_count")
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	size := uint32(wasmrt.ToInt32(sizeRes[0]))
 	var out []byte
-	if size > 0 {
-		out, err = m.ReadMemory(toUint32(ptrRes[0]), size)
+	var rows, cols int
+	err = d.rt.mod.RunOnExecThread(context.Background(), func(inv wasmrt.GuestCaller) error {
+		sqlPtr, err := d.rt.allocCStringVia(inv, sql)
 		if err != nil {
-			return nil, 0, 0, err
+			return err
 		}
-	} else {
-		out = []byte{}
+		defer d.rt.freeVia(inv, sqlPtr)
+
+		blobPtr, err := d.rt.allocBytesVia(inv, blob)
+		if err != nil {
+			return err
+		}
+		if blobPtr != 0 {
+			defer d.rt.freeVia(inv, blobPtr)
+		}
+
+		res, err := inv.Execute("flatsql_query_sandboxed",
+			int32(d.handle), int32(sqlPtr), int32(blobPtr), int32(len(blob)), int32(len(params)),
+			int32(mode),
+			float64(caps.MaxRows), float64(caps.MaxBytes),
+			float64(caps.Timeout/time.Millisecond))
+		if err != nil {
+			return d.rt.execErr("flatsql_query_sandboxed", err)
+		}
+		if wasmrt.ToInt32(res[0]) == 0 {
+			text := d.rt.lastErrorVia(inv)
+			if se := parseSandboxError(text); se != nil {
+				return fmt.Errorf("flatsqlrt: query_sandboxed: %w", se)
+			}
+			return fmt.Errorf("flatsqlrt: query_sandboxed: %s", text)
+		}
+
+		ptrRes, err := inv.Execute("flatsql_response_artifact_data")
+		if err != nil {
+			return err
+		}
+		sizeRes, err := inv.Execute("flatsql_response_artifact_size")
+		if err != nil {
+			return err
+		}
+		rowsRes, err := inv.Execute("flatsql_response_artifact_row_count")
+		if err != nil {
+			return err
+		}
+		colsRes, err := inv.Execute("flatsql_response_artifact_column_count")
+		if err != nil {
+			return err
+		}
+
+		size := uint32(wasmrt.ToInt32(sizeRes[0]))
+		if size > 0 {
+			out, err = inv.ReadMemory(toUint32(ptrRes[0]), size)
+			if err != nil {
+				return err
+			}
+		} else {
+			out = []byte{}
+		}
+		rows = int(toFloat64(rowsRes[0]))
+		cols = int(toFloat64(colsRes[0]))
+		return nil
+	})
+	if err != nil {
+		return nil, 0, 0, err
 	}
-	return out, int(toFloat64(rowsRes[0])), int(toFloat64(colsRes[0])), nil
+	return out, rows, cols, nil
 }
 
 // QuerySandboxedStream executes one untrusted read-only SELECT whose every
