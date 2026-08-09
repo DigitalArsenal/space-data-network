@@ -416,6 +416,10 @@ type Module struct {
 	statDispatch atomic.Int64
 	statBatches  atomic.Int64
 	callCounts   sync.Map // export name -> *atomic.Int64
+
+	// inBatch is set while a RunOnExecThread body is executing on the worker
+	// goroutine — see ErrBatchReentry.
+	inBatch atomic.Bool
 }
 
 // execRequest carries one unit of work to the dedicated execution thread:
@@ -692,6 +696,10 @@ func (m *Module) exec(ctx context.Context, name string, params ...interface{}) (
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	// Refuse rather than self-deadlock — see ErrBatchReentry.
+	if m.inBatch.Load() {
+		return nil, fmt.Errorf("%w: export %q", ErrBatchReentry, name)
 	}
 
 	// The dedicated worker cannot be interrupted, so bound the wait instead.
