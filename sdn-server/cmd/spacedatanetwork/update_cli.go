@@ -283,6 +283,8 @@ var (
 	helperApplyNoRestart       bool
 	helperApplyRestartArgvJSON string
 	helperApplyHealthTimeout   time.Duration
+	helperApplyTrigger         string
+	helperApplySignalKeyID     string
 	helperApplyAllowRollback   bool
 	updateInstallHealthTimeout time.Duration
 )
@@ -310,7 +312,7 @@ var updateHelperApplyCmd = &cobra.Command{
 		loopback := daemonLoopbackTransport()
 		var daemonSupervised bool
 		if strings.TrimSpace(helperApplyAdminURL) != "" && strings.TrimSpace(helperApplyToken) != "" {
-			daemonArgv, supervised, err := requestDaemonUpdateShutdown(&http.Client{Timeout: 10 * time.Second, Transport: loopback}, helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
+			daemonArgv, supervised, err := requestDaemonUpdateShutdown(daemonLoopbackClientWith(10*time.Second, loopback), helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "daemon_shutdown=unavailable error=%q\n", err.Error())
 			} else {
@@ -325,6 +327,8 @@ var updateHelperApplyCmd = &cobra.Command{
 		result, err := update.Apply(update.PathsFor(helperApplyBundleRoot), update.ApplyOptions{
 			UpdateID:      helperApplyUpdateID,
 			AllowRollback: helperApplyAllowRollback,
+			Trigger:       strings.TrimSpace(helperApplyTrigger),
+			SignalKeyID:   strings.TrimSpace(helperApplySignalKeyID),
 		})
 		if err != nil {
 			return err
@@ -344,7 +348,7 @@ var updateHelperApplyCmd = &cobra.Command{
 			// still running: a probe that cannot verify the daemon's own
 			// certificate reports "unhealthy" for a perfectly healthy daemon
 			// and rolls a good update back.
-			Client:        &http.Client{Timeout: 5 * time.Second, Transport: loopback},
+			Client:        daemonLoopbackClientWith(5*time.Second, loopback),
 			Out:           out,
 			Err:           cmd.ErrOrStderr(),
 			HealthTimeout: helperApplyHealthTimeout,
@@ -425,6 +429,8 @@ func init() {
 	updateHelperApplyCmd.Flags().BoolVar(&helperApplyNoRestart, "no-restart", false, "do not restart the daemon after apply")
 	updateHelperApplyCmd.Flags().BoolVar(&helperApplyAllowRollback, "allow-rollback", false, "accept an update the publisher marked as a deliberate source-lineage rollback")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyRestartArgvJSON, "restart-argv-json", "", "JSON array argv to restart after apply")
+	updateHelperApplyCmd.Flags().StringVar(&helperApplyTrigger, "trigger", "", "what caused this apply (\"signal\" for a pushed update signal); recorded in the deploy ledger")
+	updateHelperApplyCmd.Flags().StringVar(&helperApplySignalKeyID, "signal-key-id", "", "signing key of the signal that triggered this apply; recorded in the deploy ledger")
 	updateApplyCmd.Flags().StringVar(&updateApplyID, "update-id", "", "staged update id to apply (default: highest verified sequence)")
 	updateApplyCmd.Flags().BoolVar(&updateApplyDryRun, "dry-run", false, "verify and report without swapping files")
 	updateCmd.AddCommand(updateCheckCmd)
@@ -559,7 +565,31 @@ func shouldDelegateInstallToHelper() bool {
 // loopback and verification still happens — only the anchor changes.
 // InsecureSkipVerify is never set here.
 func daemonLoopbackHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout, Transport: daemonLoopbackTransport()}
+	return daemonLoopbackClientWith(timeout, daemonLoopbackTransport())
+}
+
+// daemonLoopbackClientWith builds the client, and exists ONLY to keep a nil
+// transport out of http.Client.Transport.
+//
+// CAUGHT LIVE, 2026-08-09, by the first signal-driven self-upgrade. Transport is
+// an INTERFACE field; assigning a typed nil (*http.Transport)(nil) to it yields
+// a non-nil interface holding a nil pointer, so net/http skips its own nil check
+// and dereferences it. The helper panicked in requestDaemonUpdateShutdown before
+// it asked the daemon to stop:
+//
+//	net/http.(*Transport).alternateRoundTripper(0x0)
+//
+// The lane failed SAFE — the crash preceded the shutdown request and the swap,
+// so the daemon stayed up and healthy and the box was untouched — but it failed.
+// A nil transport must mean "use the default", which is what an absent field
+// means and what the code did before the transport was hoisted out of the
+// client constructor.
+func daemonLoopbackClientWith(timeout time.Duration, transport *http.Transport) *http.Client {
+	client := &http.Client{Timeout: timeout}
+	if transport != nil {
+		client.Transport = transport
+	}
+	return client
 }
 
 // daemonLoopbackTransport builds the anchored transport, and MUST be called

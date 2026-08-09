@@ -29,6 +29,14 @@ type HelperPlanOptions struct {
 	// staged payload from scratch in its own process and would otherwise
 	// refuse what `update install --allow-rollback` just accepted.
 	AllowRollback bool
+	// Trigger and SignalKeyID travel into the helper so the deploy-ledger line
+	// it writes says WHAT caused the apply. Without them an unattended
+	// signal-driven upgrade and an operator running `update install` by hand
+	// leave identical records — and on a box where every agent authenticates
+	// with one key from one IP, that line is the only thing that can tell them
+	// apart.
+	Trigger     string
+	SignalKeyID string
 }
 
 type HelperPlan struct {
@@ -76,6 +84,12 @@ func PrepareHelperPlan(opts HelperPlanOptions) (*HelperPlan, error) {
 	}
 	if opts.HealthTimeout > 0 {
 		args = append(args, "--health-timeout", opts.HealthTimeout.String())
+	}
+	if trigger := strings.TrimSpace(opts.Trigger); trigger != "" {
+		args = append(args, "--trigger", trigger)
+	}
+	if keyID := strings.TrimSpace(opts.SignalKeyID); keyID != "" {
+		args = append(args, "--signal-key-id", keyID)
 	}
 	if len(opts.RestartArgv) == 0 && (strings.TrimSpace(opts.AdminURL) == "" || strings.TrimSpace(opts.Token) == "") {
 		args = append(args, "--no-restart")
