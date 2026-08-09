@@ -88,7 +88,7 @@ func TestStatementSpacesAreDisjoint(t *testing.T) {
 
 func TestRegistryIsClosed(t *testing.T) {
 	got := Domains()
-	want := []string{DomainModulePublicationV1, DomainUpdateManifestV1}
+	want := []string{DomainModulePublicationV1, DomainUpdateManifestV1, DomainUpdateSignalV1}
 	if len(got) != len(want) {
 		t.Fatalf("Domains() = %v, want exactly %v — a new signed statement kind must be a reviewed change to sigdomain.go", got, want)
 	}
