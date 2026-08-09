@@ -17,25 +17,35 @@ package modulert
 // browser (or worse, the reverse).
 //
 // So the preimages, the signature bytes, and the REFUSAL REASONS are pinned as
-// DATA, in one file that both language suites read:
+// DATA, in one file that both language suites read — THREE homes, identical
+// bytes:
 //
 //	sdn-server/internal/modulert/testdata/statement-domain-vectors.json
-//	space-data-module-sdk/test/support/statement-domain-vectors.json   (identical bytes)
+//	kubo/sdn/modulert/testdata/statement-domain-vectors.json
+//	space-data-module-sdk/test/support/statement-domain-vectors.json
 //
-// The two copies are held identical by vectorsSHA256 below, which is asserted
-// on both sides: edit one copy and the OTHER suite fails, which is the only
+// The copies are held identical by vectorsSHA256 below, which is asserted in
+// all three suites: edit one copy and the OTHERS fail, which is the only
 // arrangement that makes drift loud.
 //
-// REGENERATION is two-stage and Go is authoritative for everything signed:
+// REGENERATION is THREE-stage and Go is authoritative for everything signed
+// except the bundle-scope vectors (stage 3), whose preimage is a canonical
+// statement only the SDK writer defines:
 //
 //  1. go test ./internal/modulert -run TestWriteStatementDomainSignatureMaterial \
 //     -args   (with SDN_STATEMENT_DOMAIN_MATERIAL=/path/material.json set)
 //     emits the signature entries — every signature made by crypto/ed25519 over
 //     a preimage built by sigdomain.Statement, never by hand.
 //  2. node space-data-module-sdk/test/support/statement-domain-vectors.mjs \
-//     <material.json> <out.json>
-//     wraps each entry in a REAL SDK publication trailer and writes the final
-//     vector file. Copy it to BOTH paths above and update vectorsSHA256.
+//     <material.json> <stage2.json>
+//     wraps each entry in a REAL SDK publication trailer.
+//  3. node space-data-module-sdk/test/support/statement-domain-vectors-bundle.mjs \
+//     <stage2.json> <out.json>
+//     adds the bundle-scope and scope-ambiguity vectors (SDK-signed; see that
+//     file's header for why the authority inverts) and backfills signatureScope
+//     / signedHashHex / flowNodeAdmissible on every earlier vector. Copy the
+//     result to ALL THREE paths above and update vectorsSHA256 in all three
+//     suites, in ONE change.
 //
 // Stage 2 lives in JS on purpose: sdkArtifactHex must be bytes the production
 // SDK writer actually produces, so that TestStatementDomainVectors below proves
@@ -61,7 +71,7 @@ const vectorsPath = "testdata/statement-domain-vectors.json"
 // pins the SAME constant against ITS copy (space-data-module-sdk
 // test/statement-domain-parity.test.js), so the two copies cannot diverge
 // without a red suite on at least one side.
-const vectorsSHA256 = "72124d7710658858ca747c90593e7d0c23fb63560cb7b2cd3fe607d542d83c58"
+const vectorsSHA256 = "3f750e0def2b0d673578e91e7ec89c8917b98c84aa9ef2488618ae51677c312c"
 
 type statementDomainVectors struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -353,6 +363,7 @@ func TestWriteStatementDomainSignatureMaterial(t *testing.T) {
 	trusted := []string{pubHex}
 	mod := sigdomain.DomainModulePublicationV1
 	upd := sigdomain.DomainUpdateManifestV1
+	sig := sigdomain.DomainUpdateSignalV1
 
 	artifacts := []artifact{
 		{
@@ -420,6 +431,22 @@ func TestWriteStatementDomainSignatureMaterial(t *testing.T) {
 			Expect:               expect{Verified: false, Reason: "unsupported_statement_domain", StatementDomain: upd, ContentHashHex: contentHash},
 		},
 		{
+			Name:                 "update-signal-domain-is-refused-for-a-module",
+			Why:                  "the update SIGNAL domain (owner ruling 2026-08-09) is a POINTER space, not an authorization space: a signature minted over a signal is cheap, frequent and broadcast to anyone listening, so if it were admissible here a listener could staple it onto BYTES. Registered, well-formed, correctly signed by a trusted key — and still refused, because the module verifier admits exactly one domain",
+			PortableHex:          hex.EncodeToString(portable),
+			SignatureEntry:       entry(sig, statement(sig), contentHash),
+			TrustedPublicKeysHex: trusted,
+			Expect:               expect{Verified: false, Reason: "unsupported_statement_domain", StatementDomain: sig, ContentHashHex: contentHash},
+		},
+		{
+			Name:                 "update-signal-domain-untrusted-signer",
+			Why:                  "ORDER pin for the signal domain, and it matters MORE here than for the reserved manifest domain because the signal has a live producer: what the signature covers is resolved BEFORE who signed it, so a replayed signal is refused as the wrong STATEMENT KIND even when the signer would also have failed. A verifier that checked the signer first would report untrusted_signer and hide the replay",
+			PortableHex:          hex.EncodeToString(portable),
+			SignatureEntry:       entry(sig, statement(sig), contentHash),
+			TrustedPublicKeysHex: []string{},
+			Expect:               expect{Verified: false, Reason: "unsupported_statement_domain", StatementDomain: sig, ContentHashHex: contentHash},
+		},
+		{
 			Name:                 "unregistered-domain",
 			Why:                  "the registry is CLOSED: an unknown label is refused even though its preimage is well-formed",
 			PortableHex:          hex.EncodeToString(portable),
@@ -461,6 +488,7 @@ func TestWriteStatementDomainSignatureMaterial(t *testing.T) {
 	statements := []map[string]any{
 		{"name": "module-publication-over-portable-hash", "domain": mod, "contentHashHex": contentHash, "statementHex": hex.EncodeToString(statement(mod)), "registered": true},
 		{"name": "update-manifest-over-portable-hash", "domain": upd, "contentHashHex": contentHash, "statementHex": hex.EncodeToString(statement(upd)), "registered": true},
+		{"name": "update-signal-over-portable-hash", "domain": sig, "contentHashHex": contentHash, "statementHex": hex.EncodeToString(statement(sig)), "registered": true},
 		{"name": "unregistered-domain-has-no-statement", "domain": "SDN-MADE-UP-DOMAIN", "contentHashHex": contentHash, "statementHex": "", "registered": false},
 	}
 

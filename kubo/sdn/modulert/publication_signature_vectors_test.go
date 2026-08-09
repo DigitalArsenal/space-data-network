@@ -70,7 +70,7 @@ const vectorsPath = "testdata/statement-domain-vectors.json"
 // pins the SAME constant against ITS copy (space-data-module-sdk
 // test/statement-domain-parity.test.js), so the two copies cannot diverge
 // without a red suite on at least one side.
-const vectorsSHA256 = "72124d7710658858ca747c90593e7d0c23fb63560cb7b2cd3fe607d542d83c58"
+const vectorsSHA256 = "3f750e0def2b0d673578e91e7ec89c8917b98c84aa9ef2488618ae51677c312c"
 
 type statementDomainVectors struct {
 	SchemaVersion int    `json:"schemaVersion"`

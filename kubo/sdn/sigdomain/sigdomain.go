@@ -89,6 +89,23 @@ const (
 	// value of a domain registry is that the namespace is decided in advance
 	// and in one place. Nothing signs it yet.
 	DomainUpdateManifestV1 = "SDN-UPDATE-MANIFEST-V1"
+
+	// DomainUpdateSignalV1 covers an UPDATE SIGNAL: the small pub/sub nudge a
+	// publisher emits after an artifact is on the feed, telling the fleet that
+	// a new version exists and where to fetch it (owner ruling 2026-08-09,
+	// "pushing an update signal to all installs to upgrade in place").
+	//
+	// It is a SEPARATE domain from DomainUpdateManifestV1 even though the same
+	// bonded key signs both, and the separation is load-bearing in one specific
+	// direction: a signal is a POINTER, a manifest is an AUTHORIZATION. If both
+	// verified in the same space, a signature minted over a signal — which is
+	// cheap, frequent, and broadcast to anyone listening — could be replayed as
+	// authorization for bytes. The signal grants nothing: everything it names is
+	// re-fetched and re-verified against the signed manifest before a byte is
+	// swapped. Keeping the two preimage spaces disjoint is what makes that
+	// asymmetry structural rather than a property of how carefully each side
+	// happens to parse.
+	DomainUpdateSignalV1 = "SDN-UPDATE-SIGNAL-V1"
 )
 
 // registry is the closed set of statement domains this node will sign or
@@ -97,6 +114,7 @@ const (
 var registry = map[string]string{
 	DomainModulePublicationV1: "module artifact, portable-payload SHA-256",
 	DomainUpdateManifestV1:    "update manifest, canonical manifest SHA-256 (reserved; no producer yet)",
+	DomainUpdateSignalV1:      "update signal, canonical signal SHA-256 (advisory pub/sub nudge; authorizes nothing)",
 }
 
 // ErrUnregisteredDomain is returned by Statement for any domain not in the
