@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -888,12 +889,35 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 }
 
 // sessionFromRequest extracts and validates the session from a request cookie.
+// sessionFromRequest resolves the caller's session, in three ordered modes.
+//
+//  1. A session already on the request context. RequireAuth stores one after it
+//     admits a caller, so a gate composed UNDERNEATH the wall (RequireTrust on a
+//     method-granular route) resolves the same session instead of evaluating the
+//     request a second time. That idempotence is load-bearing for mode 3, whose
+//     credential is single-use: without it, the second evaluation in one request
+//     would find a challenge the first one had already spent.
+//  2. The session cookie — the ordinary, contract-normative transport for
+//     anything on this node's own origin.
+//  3. A signed request (signed_request.go) — the ruled transport for an operator
+//     write from a page that is not on this node's origin, where a Lax cookie
+//     structurally cannot travel. It mints nothing and stores nothing.
 func (h *Handler) sessionFromRequest(r *http.Request) (*Session, error) {
+	if existing := SessionFromContext(r.Context()); existing != nil {
+		return existing, nil
+	}
 	cookie, err := r.Cookie("sdn_wallet_session")
-	if err != nil {
+	if err == nil {
+		return h.sessions.ValidateSession(cookie.Value)
+	}
+	session, signedErr := h.sessionFromSignedRequest(r)
+	if signedErr == nil {
+		return session, nil
+	}
+	if errors.Is(signedErr, errNoSignedRequest) {
 		return nil, fmt.Errorf("no session cookie")
 	}
-	return h.sessions.ValidateSession(cookie.Value)
+	return nil, signedErr
 }
 
 func requestUsesHTTPS(r *http.Request) bool {
