@@ -6626,14 +6626,21 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	readSource, err := s.recordReadSource(schemaName)
+	// The cid predicate is inlined into EVERY union branch, not just applied to
+	// the union's result: SQLite cannot push it through the read source's
+	// `GROUP BY cid`, so the outer-only form full-scans every (producer,
+	// standard) table on every record read. That scan is what saturated
+	// host-01's single-threaded engine and put SECONDS of queue in front of
+	// every other store read — see recordReadSourceFiltered for the
+	// measurements and the two graph tasks it closes.
+	readSource, err := s.recordReadSourceFiltered(schemaName, "cid = ?1")
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
 
 	querySQL := fmt.Sprintf(`
 		SELECT cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex
-		FROM %s WHERE cid = ?
+		FROM %s WHERE cid = ?1
 	`, readSource)
 
 	var record Record
