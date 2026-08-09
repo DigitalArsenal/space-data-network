@@ -2078,115 +2078,380 @@ func (s *FlatSQLStore) ensureSourceSummaryForSchema(schemaName, tableName string
 }
 
 func (s *FlatSQLStore) rebuildSourceSummariesFromDurableState() error {
-	rows, err := s.db.Query(`
-		SELECT DISTINCT schema_name
-		FROM sdn_record_source_tags
-		ORDER BY schema_name
-	`)
-	if err != nil {
-		return fmt.Errorf("list source-summary schemas: %w", err)
-	}
-	defer rows.Close()
+	return s.rebuildSourceSummaryScope("")
+}
 
-	for rows.Next() {
-		var schemaName string
-		if err := rows.Scan(&schemaName); err != nil {
-			return fmt.Errorf("scan source-summary schema: %w", err)
-		}
-		tableName, err := sds.SchemaNameToTable(schemaName)
+// sourceSummaryLane is one (schema, provider, source, batch) lane of the derived
+// sdn_record_source_summary cache — the unit the rebuild works in.
+type sourceSummaryLane struct {
+	SchemaName string
+	ProviderID string
+	SourceName string
+	BatchID    string
+}
+
+// sourceSummaryRebuildChunk bounds how many source-tag rows ONE engine statement
+// may aggregate during a rebuild.
+//
+// The engine is a single-threaded WASM SQLite behind one lock, so a statement's
+// duration is a stop-the-world for every other reader on the box — which is why
+// the bound exists at all and why it is expressed in ROWS, not in time. Measured
+// on host-01 (2026-08-09): the rebuild join costs ~87 µs per tag row
+// (MPE 261,419 rows -> 22.7 s, RFB 10,587 rows -> 0.63 s — the same rate, and
+// RFB has ONE backing table while MPE also has one, which is how we know the
+// union read source was never the driver). 8,000 rows is therefore ~0.7 s of
+// engine hold: under the 1 s acceptance bar with room for a loaded box.
+var sourceSummaryRebuildChunk = 8000
+
+// sourceSummaryLaneScanLimit is a runaway guard on the loose index scan below.
+// A node holds tens of lanes; tens of thousands means the seek stopped
+// advancing, and looping forever inside the engine lock is the failure mode this
+// whole task exists to remove.
+const sourceSummaryLaneScanLimit = 100000
+
+// rebuildSourceSummaryScope recomputes the derived source summary for one schema
+// ("" = every schema) from the durable source-tag + record tables.
+//
+// WHY IT IS SHAPED LIKE THIS (measured on host-01, 2026-08-09, from the
+// slow-statement log `flatsqlrt` gained the same day):
+//
+// The previous shape was one `SELECT DISTINCT schema_name` over the 1.6 M-row
+// sdn_record_source_tags table followed by ONE grouped join per schema. On the
+// live node that was **43.4 s for the DISTINCT and 16-35 s per schema** — about
+// 2 m 41 s of the 2 m 47 s that every "full record-catalog hydration complete"
+// line reported, all of it inside the single engine lock, on every boot, on a
+// warm resume that had applied only 5,504 journal frames. Three separate defects:
+//
+//  1. `DISTINCT schema_name` full-scans an index whose leading column IS
+//     schema_name. It is replaced by a LOOSE INDEX SCAN (seek to the first key,
+//     then repeatedly seek past the one just found), which is O(lanes · log n)
+//     instead of O(rows) — tens of seeks instead of 1.6 M index entries.
+//  2. A warm resume rebuilt every lane of every schema to reflect a handful of
+//     landed batches. Each lane now carries a FINGERPRINT check first —
+//     COUNT(*) over the lane's covering index range against SUM(record_count)
+//     already in the summary — and an unchanged lane is skipped entirely. The
+//     check is an index-only range scan with no table access and no join; the
+//     join it skips is the 87 µs-per-row one.
+//  3. A changed lane was rebuilt in ONE statement, so a 169,865-row lane held
+//     the engine for ~15 s. It is now aggregated in `sourceSummaryRebuildChunk`
+//     cid slices and summed in Go, so the engine lock is released between
+//     slices and every other queued reader gets to run.
+//
+// The fingerprint is a COUNT, so it repairs anything that changed the number of
+// tag rows in a lane — which is every add, delete, supersede and GC. A change
+// that preserves a lane's row count exactly while changing its bytes/rowids is
+// not detected; that is stated rather than hidden, and `RebuildSourceSummaries`
+// is not the verb for repairing it (a lane whose tags changed identity has a
+// different lane key and is rebuilt).
+func (s *FlatSQLStore) rebuildSourceSummaryScope(schemaName string) error {
+	lanes, err := s.sourceSummaryLanes(schemaName)
+	if err != nil {
+		return err
+	}
+	if err := s.pruneSourceSummaryLanes(schemaName, lanes); err != nil {
+		return err
+	}
+	for _, lane := range lanes {
+		changed, err := s.sourceSummaryLaneNeedsRebuild(lane)
 		if err != nil {
-			return fmt.Errorf("source-summary schema %q: %w", schemaName, err)
+			return err
 		}
-		if err := s.rebuildSourceSummaryForSchema(schemaName, tableName); err != nil {
+		if !changed {
+			continue
+		}
+		if err := s.rebuildSourceSummaryLane(lane); err != nil {
 			return err
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate source-summary schemas: %w", err)
+	return nil
+}
+
+// sourceSummaryLanes enumerates the distinct (schema, provider, source, batch)
+// lanes present in sdn_record_source_tags with a LOOSE INDEX SCAN over
+// idx_sdn_record_source_tags_lookup — one indexed seek per lane, rather than a
+// full scan of 1.6 M index entries per DISTINCT. schemaName == "" enumerates
+// every schema. Callers hold s.mu.
+func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLane, error) {
+	// Row-value comparison against the index's own column order is what makes
+	// this a seek: SQLite resolves `(a,b,c,d) > (?,?,?,?)` with ORDER BY a,b,c,d
+	// LIMIT 1 as a single descent into idx_sdn_record_source_tags_lookup.
+	// batch_id/provider_id/source_name are all `TEXT NOT NULL DEFAULT ''`
+	// (sourceTagsTableSQL), so no COALESCE is needed — and adding one here would
+	// make the comparison non-indexable, which is the whole point.
+	const seekAll = `
+		SELECT schema_name, provider_id, source_name, batch_id
+		FROM sdn_record_source_tags
+		WHERE (schema_name, provider_id, source_name, batch_id) > (?, ?, ?, ?)
+		ORDER BY schema_name, provider_id, source_name, batch_id
+		LIMIT 1`
+	const seekSchema = `
+		SELECT schema_name, provider_id, source_name, batch_id
+		FROM sdn_record_source_tags
+		WHERE schema_name = ?
+		  AND (schema_name, provider_id, source_name, batch_id) > (?, ?, ?, ?)
+		ORDER BY schema_name, provider_id, source_name, batch_id
+		LIMIT 1`
+
+	lanes := make([]sourceSummaryLane, 0, 64)
+	cursor := sourceSummaryLane{SchemaName: schemaName}
+	for i := 0; i < sourceSummaryLaneScanLimit; i++ {
+		var next sourceSummaryLane
+		var err error
+		if schemaName == "" {
+			err = s.db.QueryRow(seekAll, cursor.SchemaName, cursor.ProviderID, cursor.SourceName, cursor.BatchID).
+				Scan(&next.SchemaName, &next.ProviderID, &next.SourceName, &next.BatchID)
+		} else {
+			err = s.db.QueryRow(seekSchema, schemaName, cursor.SchemaName, cursor.ProviderID, cursor.SourceName, cursor.BatchID).
+				Scan(&next.SchemaName, &next.ProviderID, &next.SourceName, &next.BatchID)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return lanes, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("enumerate source-summary lanes: %w", err)
+		}
+		lanes = append(lanes, next)
+		cursor = next
+	}
+	return nil, fmt.Errorf("enumerate source-summary lanes: seek did not terminate after %d lanes", sourceSummaryLaneScanLimit)
+}
+
+// pruneSourceSummaryLanes removes summary rows whose lane no longer has any
+// source tags. The summary is a derived cache, so a lane that was superseded or
+// garbage-collected away must not keep reporting records. It reads the summary
+// (tens of rows) rather than the tag table, so it costs nothing.
+func (s *FlatSQLStore) pruneSourceSummaryLanes(schemaName string, lanes []sourceSummaryLane) error {
+	live := make(map[sourceSummaryLane]struct{}, len(lanes))
+	for _, lane := range lanes {
+		live[lane] = struct{}{}
+	}
+	query := `SELECT DISTINCT schema_name, provider_id, source_name, batch_id FROM sdn_record_source_summary`
+	args := []any{}
+	if schemaName != "" {
+		query += ` WHERE schema_name = ?`
+		args = append(args, schemaName)
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return fmt.Errorf("list summary lanes: %w", err)
+	}
+	stale := make([]sourceSummaryLane, 0)
+	for rows.Next() {
+		var lane sourceSummaryLane
+		if err := rows.Scan(&lane.SchemaName, &lane.ProviderID, &lane.SourceName, &lane.BatchID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan summary lane: %w", err)
+		}
+		if _, ok := live[lane]; !ok {
+			stale = append(stale, lane)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return fmt.Errorf("iterate summary lanes: %w", err)
+	}
+	for _, lane := range stale {
+		if err := s.deleteSourceSummaryLane(lane); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *FlatSQLStore) deleteSourceSummaryLane(lane sourceSummaryLane) error {
+	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
+		DELETE FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`), lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID); err != nil {
+		return fmt.Errorf("clear source summary for %s/%s/%s/%s: %w",
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+	}
+	return nil
+}
+
+// sourceSummaryLaneNeedsRebuild is the fingerprint: the number of durable tag
+// rows in the lane against the number the summary already claims. Both sides are
+// index-only — the tag side is a covering range scan of
+// idx_sdn_record_source_tags_lookup, the summary side is tens of rows — so a
+// lane that has not changed costs milliseconds instead of the ~87 µs-per-row
+// join. Callers hold s.mu.
+func (s *FlatSQLStore) sourceSummaryLaneNeedsRebuild(lane sourceSummaryLane) (bool, error) {
+	var tagCount int64
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM sdn_record_source_tags
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID).Scan(&tagCount); err != nil {
+		return false, fmt.Errorf("count source tags for %s/%s/%s/%s: %w",
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+	}
+	var summaryCount int64
+	if err := s.db.QueryRow(`
+		SELECT COALESCE(SUM(record_count), 0) FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID).Scan(&summaryCount); err != nil {
+		return false, fmt.Errorf("count source summary for %s/%s/%s/%s: %w",
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+	}
+	// A zero-row summary for a lane that HAS tags is the deferred-boot case:
+	// rebuild. Equal and non-zero is the steady state: skip.
+	return tagCount != summaryCount || tagCount == 0, nil
+}
+
+// sourceSummaryProducerAgg is one (producer_peer_id, producer_public_key) row of
+// a lane's summary, accumulated across chunks.
+type sourceSummaryProducerAgg struct {
+	RecordCount int64
+	TotalBytes  int64
+	MaxRowID    int64
+	FirstSeen   int64
+}
+
+type sourceSummaryProducerKey struct {
+	PeerID    string
+	PublicKey string
+}
+
+// rebuildSourceSummaryLane recomputes ONE lane in bounded cid slices, releasing
+// the engine lock between slices so queued readers interleave, then replaces the
+// lane's summary rows in two small statements. Callers hold s.mu.
+func (s *FlatSQLStore) rebuildSourceSummaryLane(lane sourceSummaryLane) error {
+	// The cid bounds are pushed into EVERY union branch (see
+	// recordReadSourceFiltered): without that a multi-producer standard plans as
+	// a full scan of every backing table per slice. Numbered parameters are
+	// mandatory there because the predicate is repeated once per branch.
+	readSource, err := s.recordReadSourceFiltered(lane.SchemaName, "cid > ?1 AND (?2 = '' OR cid <= ?2)")
+	if err != nil {
+		return fmt.Errorf("read source for %s: %w", lane.SchemaName, err)
+	}
+	boundarySQL := fmt.Sprintf(`
+		SELECT cid FROM sdn_record_source_tags
+		WHERE schema_name = ?1 AND provider_id = ?2 AND source_name = ?3 AND batch_id = ?4
+		  AND cid > ?5
+		ORDER BY cid
+		LIMIT 1 OFFSET %d`, sourceSummaryRebuildChunk-1)
+	aggSQL := fmt.Sprintf(`
+		SELECT t.producer_peer_id, t.producer_public_key,
+		       COUNT(*),
+		       COALESCE(SUM(records.record_length), 0),
+		       COALESCE(MAX(records.rowid), 0),
+		       COALESCE(MIN(t.created_at), 0)
+		FROM (
+			SELECT cid, producer_peer_id, producer_public_key, created_at
+			FROM sdn_record_source_tags
+			WHERE schema_name = ?3 AND provider_id = ?4 AND source_name = ?5 AND batch_id = ?6
+			  AND cid > ?1 AND (?2 = '' OR cid <= ?2)
+		) t
+		LEFT JOIN %s records ON records.cid = t.cid
+		GROUP BY t.producer_peer_id, t.producer_public_key`, readSource)
+
+	aggs := make(map[sourceSummaryProducerKey]*sourceSummaryProducerAgg, 4)
+	lastCID := ""
+	for slice := 0; ; slice++ {
+		if slice > sourceSummaryLaneScanLimit {
+			return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: slice cursor did not advance",
+				lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID)
+		}
+		// The slice is a CLOSED cid range so a cid carried by several producers
+		// can never straddle the boundary and be dropped: the boundary is a cid
+		// value, and every row with that cid is inside the slice.
+		boundary := ""
+		if err := s.db.QueryRow(boundarySQL,
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, lastCID,
+		).Scan(&boundary); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("slice source summary for %s/%s/%s/%s: %w",
+				lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+		}
+
+		rows, err := s.db.Query(aggSQL, lastCID, boundary,
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID)
+		if err != nil {
+			return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: %w",
+				lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+		}
+		sliceRows := int64(0)
+		for rows.Next() {
+			var key sourceSummaryProducerKey
+			var got sourceSummaryProducerAgg
+			if err := rows.Scan(&key.PeerID, &key.PublicKey,
+				&got.RecordCount, &got.TotalBytes, &got.MaxRowID, &got.FirstSeen); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan source summary slice: %w", err)
+			}
+			sliceRows += got.RecordCount
+			acc := aggs[key]
+			if acc == nil {
+				acc = &sourceSummaryProducerAgg{}
+				aggs[key] = acc
+			}
+			acc.RecordCount += got.RecordCount
+			acc.TotalBytes += got.TotalBytes
+			if got.MaxRowID > acc.MaxRowID {
+				acc.MaxRowID = got.MaxRowID
+			}
+			if got.FirstSeen > 0 && (acc.FirstSeen == 0 || got.FirstSeen < acc.FirstSeen) {
+				acc.FirstSeen = got.FirstSeen
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return fmt.Errorf("iterate source summary slice: %w", err)
+		}
+		if boundary == "" || sliceRows == 0 {
+			break
+		}
+		lastCID = boundary
+	}
+
+	if err := s.deleteSourceSummaryLane(lane); err != nil {
+		return err
+	}
+	if len(aggs) == 0 {
+		return nil
+	}
+	values := make([]string, 0, len(aggs))
+	args := make([]any, 0, len(aggs)*10)
+	for key, acc := range aggs {
+		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))")
+		firstSeen := acc.FirstSeen
+		if firstSeen == 0 {
+			firstSeen = time.Now().Unix()
+		}
+		args = append(args,
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID,
+			key.PeerID, key.PublicKey,
+			acc.RecordCount, acc.TotalBytes, acc.MaxRowID, firstSeen)
+	}
+	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
+		INSERT INTO sdn_record_source_summary (
+			schema_name, provider_id, source_name, batch_id, producer_peer_id,
+			producer_public_key, record_count, total_bytes, max_rowid, first_seen, updated_at
+		) VALUES %s
+	`, strings.Join(values, ", "))), args...); err != nil {
+		return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: %w",
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
 	}
 	return nil
 }
 
 func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName string) error {
-	// WS7.3d: record rows live in the (producer, standard) tables (plus the
-	// legacy table on pre-flip databases) — join through the union read source.
-	if rs, rsErr := s.recordReadSource(schemaName); rsErr == nil {
-		tableName = rs
-	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_summary WHERE schema_name = ?`), schemaName); err != nil {
-		return fmt.Errorf("clear source summary for %s: %w", schemaName, err)
-	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
-		INSERT INTO sdn_record_source_summary (
-			schema_name, provider_id, source_name, batch_id, producer_peer_id,
-			producer_public_key, record_count, total_bytes, max_rowid, first_seen, updated_at
-		)
-		SELECT
-			tags.schema_name,
-			tags.provider_id,
-			tags.source_name,
-			COALESCE(tags.batch_id, ''),
-			COALESCE(tags.producer_peer_id, ''),
-			COALESCE(tags.producer_public_key, ''),
-			COUNT(*),
-			COALESCE(SUM(records.record_length), 0),
-			COALESCE(MAX(records.rowid), 0),
-			COALESCE(MIN(tags.created_at), strftime('%%s', 'now')),
-			strftime('%%s', 'now')
-		FROM sdn_record_source_tags tags
-		INNER JOIN %s records ON records.cid = tags.cid
-		WHERE tags.schema_name = ?
-		GROUP BY tags.schema_name, tags.provider_id, tags.source_name, COALESCE(tags.batch_id, ''),
-		         COALESCE(tags.producer_peer_id, ''), COALESCE(tags.producer_public_key, '')
-	`, tableName)), schemaName); err != nil {
-		return fmt.Errorf("rebuild source summary for %s: %w", schemaName, err)
-	}
-	return nil
+	_ = tableName
+	return s.rebuildSourceSummaryScope(schemaName)
 }
 
+// rebuildSourceSummaryForSourceBatch recomputes ONE lane unconditionally — the
+// callers that reach it (batch reconciliation, RefreshSourceBatchSummary) have
+// just changed that lane, so the fingerprint check is skipped and the chunked
+// rebuild runs directly.
 func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName, providerID, sourceName, batchID string) error {
-	// WS7.3d: join through the union read source (see rebuildSourceSummaryForSchema).
-	if rs, rsErr := s.recordReadSource(schemaName); rsErr == nil {
-		tableName = rs
-	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
-		DELETE FROM sdn_record_source_summary
-		WHERE schema_name = ?
-		  AND provider_id = ?
-		  AND source_name = ?
-		  AND batch_id = ?
-	`), schemaName, providerID, sourceName, batchID); err != nil {
-		return fmt.Errorf("clear source summary for %s/%s/%s/%s: %w", schemaName, providerID, sourceName, batchID, err)
-	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
-		INSERT INTO sdn_record_source_summary (
-			schema_name, provider_id, source_name, batch_id, producer_peer_id,
-			producer_public_key, record_count, total_bytes, max_rowid, first_seen, updated_at
-		)
-		SELECT
-			tags.schema_name,
-			tags.provider_id,
-			tags.source_name,
-			COALESCE(tags.batch_id, ''),
-			COALESCE(tags.producer_peer_id, ''),
-			COALESCE(tags.producer_public_key, ''),
-			COUNT(*),
-			COALESCE(SUM(records.record_length), 0),
-			COALESCE(MAX(records.rowid), 0),
-			COALESCE(MIN(tags.created_at), strftime('%%s', 'now')),
-			strftime('%%s', 'now')
-		FROM sdn_record_source_tags tags
-		INNER JOIN %s records ON records.cid = tags.cid
-		WHERE tags.schema_name = ?
-		  AND tags.provider_id = ?
-		  AND tags.source_name = ?
-		  AND tags.batch_id = ?
-		GROUP BY tags.schema_name, tags.provider_id, tags.source_name, COALESCE(tags.batch_id, ''),
-		         COALESCE(tags.producer_peer_id, ''), COALESCE(tags.producer_public_key, '')
-	`, tableName)), schemaName, providerID, sourceName, batchID); err != nil {
-		return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: %w", schemaName, providerID, sourceName, batchID, err)
-	}
-	return nil
+	_ = tableName
+	return s.rebuildSourceSummaryLane(sourceSummaryLane{
+		SchemaName: schemaName,
+		ProviderID: providerID,
+		SourceName: sourceName,
+		BatchID:    batchID,
+	})
 }
 
 // RefreshSourceBatchSummary recomputes one provider/source/batch summary from
@@ -4819,24 +5084,29 @@ func (s *FlatSQLStore) SourceBatchProgress() ([]SourceBatchProgress, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// ONE grouped scan of the summary, which is ALREADY the per-lane aggregate:
+	// tens of rows. The previous shape LEFT JOINed a `GROUP BY schema, provider,
+	// source, batch` over the WHOLE sdn_record_source_tags table — one row per
+	// RECORD — purely to recover first/last seen. On host-01 that measured
+	// **37.6 s and 90.0 s of engine hold** (2026-08-09 slow-statement log, 1.6 M
+	// tag rows), and because the engine is single-threaded behind one lock,
+	// every other reader on the box paid the same wait — one `sqlite_master`
+	// lookup was logged waiting the full 1 m 29.989 s behind it.
+	//
+	// This is the SAME conversion ProducerSourceProgress already went through
+	// for the same reason (see its comment): first_seen lives on the summary,
+	// and last_seen is the summary's own updated_at, which is stamped by
+	// incrementSourceSummary on every landed record. Legacy rows carry
+	// first_seen = 0 and are reported as unknown rather than as 1970, which is
+	// what NULLIF does here.
 	rows, err := s.db.Query(`
 		SELECT ss.schema_name, ss.provider_id, ss.source_name, ss.batch_id,
 		       SUM(ss.record_count) AS count,
 		       SUM(ss.total_bytes) AS total_bytes,
 		       MAX(ss.updated_at) AS updated_at,
-		       MIN(t.first_seen) AS first_seen,
-		       MAX(t.last_seen) AS last_seen
+		       MIN(NULLIF(ss.first_seen, 0)) AS first_seen,
+		       MAX(ss.updated_at) AS last_seen
 		FROM sdn_record_source_summary ss
-		LEFT JOIN (
-			SELECT tg.schema_name, tg.provider_id, tg.source_name, tg.batch_id,
-			       MIN(tg.created_at) AS first_seen, MAX(tg.created_at) AS last_seen
-			FROM sdn_record_source_tags tg
-			GROUP BY tg.schema_name, tg.provider_id, tg.source_name, tg.batch_id
-		) t
-		  ON t.schema_name = ss.schema_name
-		 AND t.provider_id = ss.provider_id
-		 AND t.source_name = ss.source_name
-		 AND t.batch_id = ss.batch_id
 		GROUP BY ss.schema_name, ss.provider_id, ss.source_name, ss.batch_id
 		HAVING SUM(ss.record_count) > 0
 		ORDER BY ss.schema_name ASC, ss.provider_id ASC, ss.source_name ASC, ss.batch_id ASC
