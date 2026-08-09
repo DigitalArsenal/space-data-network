@@ -729,7 +729,11 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 	if err != nil {
 		return 0, fmt.Errorf("ensure (producer, standard) table: %w", err)
 	}
-	readSource, err := s.recordReadSource(index.SchemaName)
+	// FILTERED read source: upsertSourceTagsTx below looks each record up BY CID
+	// once per imported row, inside the store write lock. An outer-only predicate
+	// full-scans every (producer, standard) table per row — see
+	// recordReadSourceFiltered.
+	readSource, err := s.recordReadSourceFiltered(index.SchemaName, "cid = ?1")
 	if err != nil {
 		return 0, fmt.Errorf("record read source: %w", err)
 	}
