@@ -114,6 +114,16 @@ type FlatSQLStore struct {
 	// no-op on the live write path) outside a replay. See
 	// record_catalog_replay.go.
 	recordIndexRowIDs recordIndexRowIDs
+	// replayedSourceLanes records every (schema, provider, source, batch) lane
+	// the BULK replay path wrote source tags for. It exists because
+	// insertSourceTagsBatch is the ONE tag writer that does not maintain
+	// sdn_record_source_summary (the per-record writers both call
+	// incrementSourceSummary), so it is the ONE reason a lane can exist in the
+	// tag table without a summary row — which is the entire reason the rebuild
+	// has to discover lanes at all. Recording them turns that discovery from a
+	// scan of the 1.8 M-row tag table into a read of the tens-of-rows summary
+	// plus this set. See sourceSummaryLanes.
+	replayedSourceLanes replayedSourceLaneSet
 	// hydrateMu serializes full record-catalog replays against each other (the
 	// post-boot background hydrate vs. the admin re-sync trigger). It is NOT the
 	// store write lock: a replay must never hold that for its duration or it
@@ -2166,12 +2176,134 @@ func (s *FlatSQLStore) rebuildSourceSummaryScope(schemaName string) error {
 	return nil
 }
 
-// sourceSummaryLanes enumerates the distinct (schema, provider, source, batch)
-// lanes present in sdn_record_source_tags with a LOOSE INDEX SCAN over
-// idx_sdn_record_source_tags_lookup — one indexed seek per lane, rather than a
-// full scan of 1.6 M index entries per DISTINCT. schemaName == "" enumerates
-// every schema. Callers hold s.mu.
+// replayedSourceLaneSet is the set of lanes the bulk replay wrote tags for since
+// the last summary rebuild. Guarded by its own mutex because the replay writes
+// it while holding the store write lock and the rebuild drains it under the same
+// lock, but the two are different call stacks and the set outlives either.
+type replayedSourceLaneSet struct {
+	mu    sync.Mutex
+	lanes map[sourceSummaryLane]struct{}
+}
+
+func (r *replayedSourceLaneSet) note(lane sourceSummaryLane) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lanes == nil {
+		r.lanes = make(map[sourceSummaryLane]struct{}, 16)
+	}
+	r.lanes[lane] = struct{}{}
+}
+
+// drain returns and clears the set. The rebuild takes them once; a lane written
+// after the drain lands in the next set, which is correct because the rebuild
+// that follows it will see it.
+func (r *replayedSourceLaneSet) drain() []sourceSummaryLane {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.lanes) == 0 {
+		return nil
+	}
+	out := make([]sourceSummaryLane, 0, len(r.lanes))
+	for lane := range r.lanes {
+		out = append(out, lane)
+	}
+	r.lanes = nil
+	return out
+}
+
+// sourceSummaryLanes enumerates the (schema, provider, source, batch) lanes the
+// rebuild must consider. schemaName == "" means every schema. Callers hold s.mu.
+//
+// WHY IT DOES NOT SCAN THE TAG TABLE (measured on host-01, 2026-08-09, live):
+//
+// The first version of this walked sdn_record_source_tags with a row-value loose
+// index scan. `EXPLAIN QUERY PLAN` says that is a seek — both through the engine
+// and through native sqlite3 on the live file — and native sqlite3 answers it in
+// **1 ms**. The ENGINE charged **500-680 ms per seek, 42 of them, 28.7 s total,
+// every one with waited = 0 s**, and the per-seek cost tracked DATABASE SIZE
+// (9 ms against the 90 MB prod-scale fixture, 680 ms against the live 2.8 GB)
+// rather than lane count. Whatever the plan says, the engine is not descending.
+// The rule this leaves behind: **no rebuild statement may touch the tag table at
+// a scale proportional to its rows** — not a DISTINCT, not a COUNT(*), and not a
+// "seek" whose cost says otherwise.
+//
+// So the lanes are read from the two places that already know them:
+//
+//  1. sdn_record_source_summary — tens of rows, and every lane written by the
+//     per-record path is there already, because insertNewSourceTagsTx and
+//     upsertSourceTagsTx both call incrementSourceSummary.
+//  2. replayedSourceLanes — the lanes the BULK replay wrote. insertSourceTagsBatch
+//     is the only tag writer that does not maintain the summary, so it is the
+//     only way a lane can exist in tags without a summary row.
+//
+// The union is exact for every writer in the tree. The fallback below covers the
+// one case it cannot: a summary that is EMPTY for the scope (a first boot, a
+// dropped/migrated summary table) is not evidence of an empty store, so that
+// path still pays the loose scan once — which is the right trade, because it
+// happens when there is nothing to skip anyway.
 func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLane, error) {
+	seen := make(map[sourceSummaryLane]struct{}, 64)
+	lanes := make([]sourceSummaryLane, 0, 64)
+	add := func(lane sourceSummaryLane) {
+		if schemaName != "" && lane.SchemaName != schemaName {
+			return
+		}
+		if _, ok := seen[lane]; ok {
+			return
+		}
+		seen[lane] = struct{}{}
+		lanes = append(lanes, lane)
+	}
+
+	query := `SELECT DISTINCT schema_name, provider_id, source_name, batch_id FROM sdn_record_source_summary`
+	args := []any{}
+	if schemaName != "" {
+		query += ` WHERE schema_name = ?`
+		args = append(args, schemaName)
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("enumerate summary lanes: %w", err)
+	}
+	for rows.Next() {
+		var lane sourceSummaryLane
+		if err := rows.Scan(&lane.SchemaName, &lane.ProviderID, &lane.SourceName, &lane.BatchID); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan summary lane: %w", err)
+		}
+		add(lane)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("iterate summary lanes: %w", err)
+	}
+	summaryLanes := len(lanes)
+
+	for _, lane := range s.replayedSourceLanes.drain() {
+		add(lane)
+	}
+
+	if summaryLanes == 0 {
+		// Nothing derived yet for this scope. Discover from the durable tags —
+		// once, on a path where there is nothing to skip.
+		scanned, err := s.sourceSummaryLanesFromTags(schemaName)
+		if err != nil {
+			return nil, err
+		}
+		for _, lane := range scanned {
+			add(lane)
+		}
+	}
+	return lanes, nil
+}
+
+// sourceSummaryLanesFromTags is the COLD discovery path: a loose index scan over
+// idx_sdn_record_source_tags_lookup. It is only reached when the summary holds
+// nothing for the scope, because on the live node each of its seeks costs
+// 500-680 ms in the engine — see sourceSummaryLanes for the measurement and why
+// the warm path must not use it. Callers hold s.mu.
+func (s *FlatSQLStore) sourceSummaryLanesFromTags(schemaName string) ([]sourceSummaryLane, error) {
 	// STEP is a row-value comparison against the index's own column order, and
 	// that is what makes it a SEEK: verified with EXPLAIN QUERY PLAN against the
 	// live 2.8 GB control database, which answers

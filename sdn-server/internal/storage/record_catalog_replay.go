@@ -742,6 +742,18 @@ func (s *FlatSQLStore) insertSourceTagsBatch(exec sqlExecer, events []recordCata
 			args = append(args, event.SchemaName, event.CID, tags.ProviderID, tags.SourceName,
 				tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID,
 				tags.ProducerPublicKey, event.CreatedAt)
+			// THIS is the one tag write in the tree that does not maintain
+			// sdn_record_source_summary — the per-record writers both call
+			// incrementSourceSummary. Recording the lane is what lets the
+			// rebuild find what changed without scanning the 1.8 M-row tag
+			// table; without it the rebuild is back to a full DISTINCT and the
+			// 2 m 41 s boot this task removed. See sourceSummaryLanes.
+			s.replayedSourceLanes.note(sourceSummaryLane{
+				SchemaName: event.SchemaName,
+				ProviderID: tags.ProviderID,
+				SourceName: tags.SourceName,
+				BatchID:    tags.BatchID,
+			})
 		}
 		sqlText := fmt.Sprintf(`
 			INSERT INTO sdn_record_source_tags (
