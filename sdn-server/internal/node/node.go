@@ -1325,7 +1325,11 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	reg.Register("crypto_decrypt", cryptoFac)
 	reg.Register("crypto_key_agreement", cryptoFac)
 	reg.Register("crypto_kdf", cryptoFac)
-	reg.Register("wallet_sign", caps.NewKeyslotCapFactory())
+	// BRIDGE-AWARE, because a flow bundle has no *Module to carry the node
+	// context (see NewKeyslotCapFactory). Registered with Register instead,
+	// keyslot.unwrap/keyslot.sign answer "keyslot context is not available"
+	// for every flow on this node.
+	reg.RegisterBridgeAware("wallet_sign", caps.NewKeyslotCapFactory())
 
 	// Credential-keystore capabilities ("secrets:<lane>") — the node's
 	// operator-entered provider credentials, encrypted at rest under the node's
