@@ -17,6 +17,28 @@ import (
 	"github.com/second-state/WasmEdge-go/wasmedge"
 )
 
+// WasmEdge's own logger writes at INFO by default, and enabling cost measuring
+// (SetStatisticsCostMeasuring, which WithCostLimit requires for fuel
+// enforcement) makes it dump a three-line
+// "==== Statistics ==== / Gas costs: N / ==== End ====" block AFTER EVERY
+// GUEST INVOCATION.
+//
+// MEASURED on host-01, 2026-08-08: 5176 of 8311 journal lines in five minutes —
+// 62% of everything the daemon said — were that dump, at roughly 17 lines per
+// second, indefinitely. Every one of them costs a write, a journald round trip
+// and rsyslog work on a 2-vCPU box whose actual job is serving modules, and
+// they bury the lines an operator needs. The cumulative gas counter had reached
+// 3.68e10, which is the other half of the story: the number is cumulative for
+// the VM's lifetime, so the dump is not even reporting per-call cost.
+//
+// ERROR, not OFF: WasmEdge's error output is how a genuine instantiation or
+// trap failure explains itself, and silencing that is how a defect becomes
+// invisible — the exact failure mode this package's own comments keep
+// recording. This raises the threshold; it does not gag the runtime.
+func init() {
+	wasmedge.SetLogErrorLevel()
+}
+
 var (
 	ErrNoModule    = errors.New("WASM module not loaded")
 	ErrAllocFailed = errors.New("WASM memory allocation failed")

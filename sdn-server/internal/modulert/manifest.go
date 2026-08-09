@@ -16,6 +16,17 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
+// ModuleDeliveryWireID is the libp2p protocol every module-delivery grant
+// negotiates. It is a PUBLIC WIRE NAME: changing it is a fleet-wide breaking
+// change, not a refactor.
+//
+// Exported because the host must be able to size resource-manager limits for
+// this protocol by NAME (see internal/node/libp2p_resource_manager.go). While
+// this was a bare string literal, the delivery lane silently inherited
+// upstream's generic per-protocol-per-peer stream budget and reset client
+// bursts with StreamErrorCode 0x1002.
+const ModuleDeliveryWireID = "/space-data-network/module-delivery/1.0.0"
+
 // Manifest is the parsed module manifest extracted from the embedded FlatBuffer.
 type Manifest struct {
 	PluginID     string
@@ -465,7 +476,7 @@ func attachKnownPLGProtocols(m *Manifest) {
 		InputPortID:   "request",
 		OutputPortID:  "response",
 		Description:   "Handle the canonical SDS module-delivery licensing flow.",
-		WireID:        "/space-data-network/module-delivery/1.0.0",
+		WireID:        ModuleDeliveryWireID,
 		TransportKind: "libp2p",
 		Role:          "handle",
 		AutoInstall:   true,
