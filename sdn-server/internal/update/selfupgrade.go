@@ -37,6 +37,13 @@ package update
 // journal beside everything else about the roll. Where there is no systemd
 // (containers, dev boxes), a new session (setsid) is enough, because there is
 // no supervisor to kill the cgroup in the first place.
+//
+// PROVEN LIVE on host-01, 2026-08-09: the daemon heard a signed signal, fetched
+// and staged while continuing to serve, and launched the swap as
+// sdn-self-upgrade-<epoch>.service. The transient unit's output lands in the
+// journal beside the daemon's own, which is how the first run's helper panic was
+// diagnosed in one command, and --collect reaped the failed unit so the next
+// launch was not blocked by a leftover failed unit of the same name.
 
 import (
 	"crypto/rand"
