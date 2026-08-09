@@ -330,3 +330,35 @@ func nowOr(t time.Time) time.Time {
 	}
 	return t
 }
+
+// supersededStagedDirs lists staged payloads that can never be applied again
+// because the box is now at or beyond their sequence.
+//
+// It reads each staged manifest rather than trusting the directory name: the
+// name is an update id, and the sequence is the thing the apply policy actually
+// compares. A staged directory whose manifest cannot be read at all is also
+// listed — it can never pass verification, so it is pure cost either way.
+func supersededStagedDirs(paths Paths, installedSequence int64) []string {
+	entries, err := os.ReadDir(paths.Staged)
+	if err != nil {
+		return nil
+	}
+	var superseded []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(paths.Staged, entry.Name())
+		raw, err := os.ReadFile(filepath.Join(dir, manifestFileName))
+		if err != nil {
+			superseded = append(superseded, dir)
+			continue
+		}
+		manifest, err := ParseManifest(raw)
+		if err != nil || manifest.Sequence == nil || *manifest.Sequence <= installedSequence {
+			superseded = append(superseded, dir)
+		}
+	}
+	sort.Strings(superseded)
+	return superseded
+}
