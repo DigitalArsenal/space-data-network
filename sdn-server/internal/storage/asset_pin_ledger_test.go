@@ -2308,3 +2308,282 @@ func (file *faultingAuxiliaryMetadataAppendFile) Sync() error {
 	}
 	return nil
 }
+
+// --- caller-context cancellation must never poison the asset-pin ledger ---
+//
+// Regression cover for sdn-assetpin-retention-sweep-double-commits. The two
+// failing call sites named in that receipt —
+//
+//	commit asset pin reference transition:      sql: transaction has already been committed or rolled back
+//	commit expired asset pin reference delete:  sql: transaction has already been committed or rolled back
+//
+// are the two asset-pin mutations the retention sweep performs, and both reached
+// ErrTxDone the same way: the transaction was begun with the CALLER's context,
+// so database/sql's awaitDone goroutine rolled it back the instant that context
+// died, and the store then read its own doomed Commit as a real commit failure
+// and poisoned the whole ledger. The sweep's per-call deadline could do it; so
+// could an HTTP client hanging up, because the api handlers pass r.Context()
+// straight into these calls.
+//
+// These tests drive that exact interleaving deterministically instead of waiting
+// for a loaded box to produce it.
+
+// assetPinCancelPoint selects which side of the point of no return (the
+// auxiliary journal append inside appendAndCommitAssetPinMutation) the caller's
+// context dies on.
+type assetPinCancelPoint int
+
+const (
+	// cancelAtCommitBoundary kills the caller between the journal append and the
+	// commit — the window that produced both reported failures.
+	cancelAtCommitBoundary assetPinCancelPoint = iota
+	// cancelBeforeAnyStatement kills the caller before the mutation has written
+	// anything at all.
+	cancelBeforeAnyStatement
+)
+
+type cancellingAssetPinTransactionBeginner struct {
+	delegate assetPinTransactionBeginner
+	cancel   context.CancelFunc
+	at       assetPinCancelPoint
+	// torndown records that database/sql tore the transaction down behind the
+	// store's back. It must stay false: the transaction's lifetime belongs to
+	// beginAssetPinTransaction and its caller's deferred Rollback, to nothing else.
+	torndown *bool
+}
+
+func (beginner cancellingAssetPinTransactionBeginner) BeginTx(ctx context.Context, opts *sql.TxOptions) (assetPinTransaction, error) {
+	tx, err := beginner.delegate.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	if beginner.at == cancelBeforeAnyStatement {
+		beginner.cancel()
+		return tx, nil
+	}
+	return &cancellingAssetPinTransaction{
+		assetPinTransaction: tx,
+		cancel:              beginner.cancel,
+		torndown:            beginner.torndown,
+	}, nil
+}
+
+type cancellingAssetPinTransaction struct {
+	assetPinTransaction
+	cancel   context.CancelFunc
+	torndown *bool
+}
+
+// Commit stands in for "the caller's deadline expired / the client hung up
+// while the store was between its journal append and its commit". It cancels
+// the caller's context and then gives database/sql a generous window to react
+// before delegating, so a transaction that is still bound to that context is
+// guaranteed to be dead by the time the real Commit runs.
+func (tx *cancellingAssetPinTransaction) Commit() error {
+	tx.cancel()
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		var probe int
+		err := tx.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM sdn_asset_pin_refs`).Scan(&probe)
+		if errors.Is(err, sql.ErrTxDone) {
+			*tx.torndown = true
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return tx.assetPinTransaction.Commit()
+}
+
+// assetPinCancellationCase is one of the two call sites from the receipt.
+type assetPinCancellationCase struct {
+	name string
+	// mutate performs the call site's mutation against the store.
+	mutate func(ctx context.Context, store *FlatSQLStore, ref AssetPinReference, suffix string) error
+	// assertApplied checks the mutation is durably visible.
+	assertApplied func(t *testing.T, store *FlatSQLStore, ref AssetPinReference)
+	// assertUntouched checks the mutation left no trace.
+	assertUntouched func(t *testing.T, store *FlatSQLStore, ref AssetPinReference)
+}
+
+func assetPinCancellationCases() []assetPinCancellationCase {
+	return []assetPinCancellationCase{
+		{
+			// "commit asset pin reference transition"
+			name: "transition",
+			mutate: func(ctx context.Context, store *FlatSQLStore, ref AssetPinReference, suffix string) error {
+				abandonedAt := ref.ExpiresAt
+				transition := AssetPinReferenceTransition{
+					ReferenceKey: ref.ReferenceKey,
+					FromState:    AssetReferenceStaged,
+					ToState:      AssetReferenceAbandoned,
+					GitHubIssue:  ref.GitHubIssue,
+					UpdatedAt:    abandonedAt,
+					ExpiresAt:    abandonedAt,
+				}
+				event := testAssetPinEvent("event-cancel-transition-"+suffix, "reference_transition", ref, abandonedAt)
+				event.Result = string(AssetReferenceAbandoned)
+				return store.TransitionAssetPinReference(ctx, transition, event)
+			},
+			assertApplied: func(t *testing.T, store *FlatSQLStore, ref AssetPinReference) {
+				t.Helper()
+				got, ok, err := store.FindAssetPinReference(context.Background(), ref.ReferenceKey)
+				if err != nil || !ok {
+					t.Fatalf("FindAssetPinReference() = %+v, %v, %v; want the reference", got, ok, err)
+				}
+				if got.State != AssetReferenceAbandoned {
+					t.Fatalf("reference state = %q, want %q", got.State, AssetReferenceAbandoned)
+				}
+			},
+			assertUntouched: func(t *testing.T, store *FlatSQLStore, ref AssetPinReference) {
+				t.Helper()
+				got, ok, err := store.FindAssetPinReference(context.Background(), ref.ReferenceKey)
+				if err != nil || !ok {
+					t.Fatalf("FindAssetPinReference() = %+v, %v, %v; want the reference", got, ok, err)
+				}
+				if got.State != AssetReferenceStaged {
+					t.Fatalf("reference state = %q, want the untouched %q", got.State, AssetReferenceStaged)
+				}
+			},
+		},
+		{
+			// "commit expired asset pin reference delete"
+			name: "delete_expired",
+			mutate: func(ctx context.Context, store *FlatSQLStore, ref AssetPinReference, suffix string) error {
+				event := testAssetPinEvent("event-cancel-delete-"+suffix, "reference_delete", ref, ref.ExpiresAt)
+				return store.DeleteExpiredAssetPinReference(ctx, ref.ReferenceKey, event)
+			},
+			assertApplied: func(t *testing.T, store *FlatSQLStore, ref AssetPinReference) {
+				t.Helper()
+				if got, ok, err := store.FindAssetPinReference(context.Background(), ref.ReferenceKey); err != nil || ok {
+					t.Fatalf("FindAssetPinReference() = %+v, %v, %v; want the reference deleted", got, ok, err)
+				}
+			},
+			assertUntouched: func(t *testing.T, store *FlatSQLStore, ref AssetPinReference) {
+				t.Helper()
+				if _, ok, err := store.FindAssetPinReference(context.Background(), ref.ReferenceKey); err != nil || !ok {
+					t.Fatalf("FindAssetPinReference() ok = %v, err = %v; want the reference retained", ok, err)
+				}
+			},
+		},
+	}
+}
+
+// newExpiredStagedAssetPinReferenceForTest seeds one staged reference whose
+// finite expiry is already in the past, which makes it eligible for BOTH the
+// abandon transition and the expired delete.
+func newExpiredStagedAssetPinReferenceForTest(t *testing.T, store *FlatSQLStore, suffix string) AssetPinReference {
+	t.Helper()
+	createdAt := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Microsecond)
+	ref := testAssetPinReference(
+		"reference-cancel-"+suffix,
+		"candidate-cancel-"+suffix,
+		"bafybeicancel"+suffix,
+		strings.Repeat("7", 64),
+		AssetReferenceStaged,
+		createdAt,
+		createdAt.Add(time.Hour),
+	)
+	if err := store.UpsertAssetPinReference(context.Background(), ref, testAssetPinEvent("event-cancel-seed-"+suffix, "reference_upsert", ref, createdAt)); err != nil {
+		t.Fatalf("UpsertAssetPinReference() error = %v", err)
+	}
+	return ref
+}
+
+// assertAssetPinLedgerStillWritable proves the ledger was not poisoned: a
+// poisoned store refuses every later mutation with ErrAssetPinLedgerRecoveryRequired
+// until it is closed and reopened, which is the outage this defect caused.
+func assertAssetPinLedgerStillWritable(t *testing.T, store *FlatSQLStore, suffix string) {
+	t.Helper()
+	if err := store.requireWritable("probe asset pin ledger"); err != nil {
+		t.Fatalf("store is not writable after a cancelled caller: %v", err)
+	}
+	probe := newExpiredStagedAssetPinReferenceForTest(t, store, "probe-"+suffix)
+	if _, ok, err := store.FindAssetPinReference(context.Background(), probe.ReferenceKey); err != nil || !ok {
+		t.Fatalf("probe reference after cancellation = ok %v, err %v; want a healthy ledger", ok, err)
+	}
+}
+
+func TestAssetPinMutationCommitSurvivesCallerCancellation(t *testing.T) {
+	for _, testCase := range assetPinCancellationCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			basePath := filepath.Join(t.TempDir(), "store")
+			store := newAssetPinTestStore(t, basePath)
+			ref := newExpiredStagedAssetPinReferenceForTest(t, store, testCase.name)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			torndown := false
+			store.assetPinTransactions = cancellingAssetPinTransactionBeginner{
+				delegate: store.assetPinTransactions,
+				cancel:   cancel,
+				at:       cancelAtCommitBoundary,
+				torndown: &torndown,
+			}
+
+			err := testCase.mutate(ctx, store, ref, testCase.name)
+			store.assetPinTransactions = sqlAssetPinTransactionBeginner{db: store.db}
+
+			if torndown {
+				t.Fatalf("database/sql rolled the asset pin transaction back when the caller's context died; the transaction must not be bound to the caller. %s error = %v", testCase.name, err)
+			}
+			if err != nil {
+				t.Fatalf("%s with a caller cancelled at the commit boundary: error = %v, want the mutation to commit", testCase.name, err)
+			}
+			if errors.Is(err, sql.ErrTxDone) || errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
+				t.Fatalf("%s error = %v, want neither ErrTxDone nor ledger recovery", testCase.name, err)
+			}
+			testCase.assertApplied(t, store, ref)
+			assertAssetPinLedgerStillWritable(t, store, testCase.name)
+
+			// The auxiliary frame was journaled BEFORE the commit, so a reopen
+			// must replay to exactly the state the commit produced.
+			if err := store.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			testCase.assertApplied(t, newAssetPinTestStore(t, basePath), ref)
+		})
+	}
+}
+
+func TestAssetPinMutationCancelledBeforeAnyWriteRollsBackWithoutPoisoningLedger(t *testing.T) {
+	for _, testCase := range assetPinCancellationCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			basePath := filepath.Join(t.TempDir(), "store")
+			store := newAssetPinTestStore(t, basePath)
+			ref := newExpiredStagedAssetPinReferenceForTest(t, store, testCase.name)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			torndown := false
+			store.assetPinTransactions = cancellingAssetPinTransactionBeginner{
+				delegate: store.assetPinTransactions,
+				cancel:   cancel,
+				at:       cancelBeforeAnyStatement,
+				torndown: &torndown,
+			}
+
+			journalBefore := auxiliaryJournalSizeForTest(t, basePath)
+			err := testCase.mutate(ctx, store, ref, testCase.name)
+			store.assetPinTransactions = sqlAssetPinTransactionBeginner{db: store.db}
+
+			// Cancellation is still honored — just earlier, and cleanly.
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("%s with a cancelled caller: error = %v, want context.Canceled", testCase.name, err)
+			}
+			if errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
+				t.Fatalf("%s error = %v; a cancelled caller must never poison the ledger", testCase.name, err)
+			}
+			if journalAfter := auxiliaryJournalSizeForTest(t, basePath); journalAfter != journalBefore {
+				t.Fatalf("auxiliary journal size = %d, want the unchanged %d: a rolled-back mutation must journal nothing", journalAfter, journalBefore)
+			}
+			testCase.assertUntouched(t, store, ref)
+			assertAssetPinLedgerStillWritable(t, store, testCase.name)
+
+			// The same mutation retried on a live context still works.
+			if err := testCase.mutate(context.Background(), store, ref, testCase.name); err != nil {
+				t.Fatalf("%s retry after cancellation: error = %v", testCase.name, err)
+			}
+			testCase.assertApplied(t, store, ref)
+		})
+	}
+}
