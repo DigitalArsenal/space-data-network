@@ -743,14 +743,66 @@ type UserEntry struct {
 
 // NetworkConfig contains network-related settings.
 type NetworkConfig struct {
-	Listen         []string `yaml:"listen"`
-	Bootstrap      []string `yaml:"bootstrap"`
-	EdgeRelays     []string `yaml:"edge_relays"`
-	MaxConns       int      `yaml:"max_connections"`
-	EnableRelay    bool     `yaml:"enable_relay"`
-	MaxMessageSize int      `yaml:"max_message_size"` // Maximum message size in bytes (default: 10MB)
-	MaxSchemaName  int      `yaml:"max_schema_name"`  // Maximum schema name length (default: 256)
-	MaxQuerySize   int      `yaml:"max_query_size"`   // Maximum query size in bytes (default: 4KB)
+	Listen     []string `yaml:"listen"`
+	Bootstrap  []string `yaml:"bootstrap"`
+	EdgeRelays []string `yaml:"edge_relays"`
+	MaxConns   int      `yaml:"max_connections"`
+
+	// EnableRelay controls whether this node RUNS a public circuit-relay v2
+	// HOP service — i.e. donates its bandwidth and CPU to relay traffic
+	// between arbitrary internet peers.
+	//
+	// THIS FIELD WAS DECLARED AND NEVER READ until 2026-08-08. host-01's
+	// module-delivery sidecar has carried `enable_relay: false` since it was
+	// written, and the node ran `libp2p.EnableRelayService()` unconditionally
+	// anyway: a live identify against the box returned
+	// `/libp2p/circuit/relay/0.2.0/hop`, and it sat at 98.5% CPU of 2 vCPUs
+	// with 780 inbound connections from ~700 distinct internet IPs while its
+	// actual job — serving encrypted modules to browsers — lost every race for
+	// the CPU. An operator-set "false" that the process ignores is worse than
+	// no knob at all, because it reads as a decision that was made.
+	//
+	// This never gates the CLIENT side: a node can always DIAL through someone
+	// else's relay (libp2p.EnableRelay) regardless of this setting.
+	EnableRelay bool `yaml:"enable_relay"`
+
+	// DHTServer controls whether this node serves the PUBLIC Amino/IPFS
+	// Kademlia DHT (dht.ModeAutoServer) instead of using it as a client
+	// (dht.ModeClient).
+	//
+	// Defaults to FALSE. A DHT SERVER answers routing queries for the whole
+	// IPFS network, which is an unbounded public workload with no relationship
+	// to anything this node is for. It was hardcoded to ModeAutoServer until
+	// 2026-08-08 and produced 2105 kad-dht handler warnings in 70 minutes on
+	// host-01 alongside the relay load above. Client mode keeps everything the
+	// node actually needs — it still QUERIES the DHT and still PROVIDES its own
+	// records (module-delivery provider discovery is unaffected) — it simply
+	// stops serving strangers' lookups off a 2-vCPU box.
+	//
+	// Set true only on a node that is deliberately deployed as public DHT
+	// infrastructure and sized for it.
+	DHTServer bool `yaml:"dht_server"`
+
+	// Announce lists EXTRA multiaddrs this node advertises for itself, on top
+	// of what it actually binds. It exists because the browser-reachable
+	// address of this node is NOT a libp2p listener: TLS terminates on the
+	// node's own :443 HTTPS server, which reverse-proxies /p2p/<peerid>
+	// websocket upgrades to the loopback libp2p listener
+	// (see newAdminUpgradeRouter). libp2p therefore has no way to discover
+	// that `/dns4/<host>/tcp/443/wss` reaches it, and advertised NOTHING a
+	// browser on an HTTPS origin could legally dial — only `/ws`, which is
+	// mixed content and is dropped client-side before a dial is even attempted.
+	//
+	// Entries are advertised verbatim (a trailing /p2p/<peerid> is optional and
+	// is appended by consumers), so they flow into identify, into delegated
+	// routing, and into /api/module-delivery/provider — which is what lets a
+	// browser get a dialable address from the CONTRACT instead of from a
+	// hardcoded constant in one client library.
+	Announce []string `yaml:"announce"`
+
+	MaxMessageSize int `yaml:"max_message_size"` // Maximum message size in bytes (default: 10MB)
+	MaxSchemaName  int `yaml:"max_schema_name"`  // Maximum schema name length (default: 256)
+	MaxQuerySize   int `yaml:"max_query_size"`   // Maximum query size in bytes (default: 4KB)
 
 	// Rate limiting settings (per peer)
 	MaxMessagesPerSecond float64 `yaml:"max_messages_per_second"` // Maximum messages per second per peer (default: 100)
@@ -1436,10 +1488,17 @@ func Default() *Config {
 				"/ip4/0.0.0.0/udp/4001/quic-v1",
 				"/ip4/0.0.0.0/udp/4003/webrtc-direct",
 			},
-			Bootstrap:      bootstrap.DefaultBootstrapAddresses(),
-			EdgeRelays:     []string{},
-			MaxConns:       1000,
-			EnableRelay:    true,
+			Bootstrap:  bootstrap.DefaultBootstrapAddresses(),
+			EdgeRelays: []string{},
+			MaxConns:   1000,
+			// Donated public infrastructure is OPT-IN, not the default. See the
+			// field comments on EnableRelay/DHTServer: both ran unconditionally
+			// until 2026-08-08 and pinned host-01 at 98.5% CPU serving the
+			// public IPFS DHT and relaying strangers' traffic, while the
+			// module-delivery lane it exists for reset streams under load.
+			EnableRelay:    false,
+			DHTServer:      false,
+			Announce:       []string{},
 			MaxMessageSize: 10 * 1024 * 1024, // 10MB default
 			MaxSchemaName:  256,              // 256 bytes max schema name
 			MaxQuerySize:   4 * 1024,         // 4KB max query size

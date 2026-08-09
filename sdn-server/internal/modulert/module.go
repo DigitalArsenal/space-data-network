@@ -1106,6 +1106,11 @@ func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
 	// Read the full bounded request payload before invoking the module.
 	reqBytes, err := io.ReadAll(io.LimitReader(s, 16385))
 	if err != nil {
+		remote := ""
+		if conn := s.Conn(); conn != nil {
+			remote = conn.RemotePeer().String()
+		}
+		license.AuditDeliveryAborted("read_failed", reqBytes, remote, err)
 		log.Debugf("Module %q protocol %s: read error: %v", m.manifest.PluginID, methodID, err)
 		return
 	}
@@ -1131,16 +1136,27 @@ func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
 	// Invoke the module's method
 	resp, err := m.InvokeMethod(context.Background(), methodID, reqBytes)
 	if err != nil {
+		// A request this node ADMITTED and then answered with silence. Say so
+		// in the delivery audit, naming the module and the requester
+		// fingerprint, or the only trace is a bare WARN here and a
+		// "Read aborted" in a browser nobody can correlate it with.
+		license.AuditDeliveryAborted("invoke_failed", reqBytes, remotePeer, err)
 		log.Warnf("Module %q protocol %s: invoke error: %v", m.manifest.PluginID, methodID, err)
 		return
 	}
 	license.AuditDeliveryFrame("response", resp, remotePeer)
 
-	if len(resp) > 0 {
-		s.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if _, err := s.Write(resp); err != nil {
-			log.Debugf("Module %q protocol %s: write error: %v", m.manifest.PluginID, methodID, err)
-		}
+	if len(resp) == 0 {
+		license.AuditDeliveryAborted("empty_response", reqBytes, remotePeer, nil)
+		return
+	}
+
+	s.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if _, err := s.Write(resp); err != nil {
+		// The answer existed and never landed: from the requester's side this
+		// is indistinguishable from a provider that refused.
+		license.AuditDeliveryAborted("write_failed", reqBytes, remotePeer, err)
+		log.Debugf("Module %q protocol %s: write error: %v", m.manifest.PluginID, methodID, err)
 	}
 }
 

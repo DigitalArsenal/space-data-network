@@ -578,6 +578,17 @@ func isRuntimeIPFSAPIReachable(rawURL string) bool {
 	return resp.StatusCode > 0 && resp.StatusCode < 500
 }
 
+// bootstrapLicensingModule configures the licensing runtime from scratch and
+// then provisions the WHOLE catalog. It is a BOOT path, and only a boot path.
+//
+// `server_configure_runtime` is a session reset, not a refresh: the key server
+// answers it by dropping every pending challenge, every issued grant and every
+// module publication, and by discarding its ephemeral keypair
+// (key_server.cpp key_server_configure_runtime -> clear_pending_challenges /
+// clear_pending_grants / clear_publications). That is correct for "configure".
+// It is catastrophic as a reaction to "a module was published", which is what
+// this function used to be wired to — see publishCatalogAssets and
+// graph/tasks/sdn-delivery-first-attempt-bar-remaining-modes.md.
 func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry) error {
 	if mod == nil {
 		return fmt.Errorf("licensing module is required")
@@ -604,6 +615,42 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 		return fmt.Errorf("configure licensing runtime returned %d bytes without $LCF identifier", len(configResponse))
 	}
 
+	return publishCatalogAssets(mod, reg, nil)
+}
+
+// publishCatalogAssets provisions content keys into the ALREADY-CONFIGURED
+// licensing runtime for the named assets, or for the whole catalog when ids is
+// empty. It never reconfigures the runtime, so publishing a module does not
+// interrupt a delivery already in flight for a different one.
+//
+// This is the incremental publish path. It exists because re-running the boot
+// bootstrap on every publish is what made three unrelated-looking errors appear
+// in fresh gallery loads: a browser mid-handshake would meet
+// "invalid licensing grant identifier" (its challenge/grant was cleared), or
+// "requested module publication was not found" (its module had been cleared and
+// not yet re-added), or a dial that never answered (42 serial guest invocations
+// holding the module mutex). One publish, one module.
+func publishCatalogAssets(mod *modulert.Module, reg *license.PluginRegistry, ids []string) error {
+	if mod == nil {
+		return fmt.Errorf("licensing module is required")
+	}
+	if reg == nil {
+		return nil
+	}
+
+	var scope map[string]struct{}
+	if len(ids) > 0 {
+		scope = make(map[string]struct{}, len(ids))
+		for _, id := range ids {
+			if trimmed := strings.TrimSpace(id); trimmed != "" {
+				scope[trimmed] = struct{}{}
+			}
+		}
+		if len(scope) == 0 {
+			return nil
+		}
+	}
+
 	// ADMIT POINT (graph/tasks/sdn-allowed-xpubs-not-enforced.md, P1).
 	//
 	// Everything below this line hands the licensing runtime a module's
@@ -614,8 +661,10 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 	// but it does decide which keys it provisions at all, and provisioning a
 	// key for a module that declares a restriction it cannot express is the
 	// thing that fails open. So the gate is here: refuse the key, and no
-	// grant for that module is reachable by any path.
-	plan := planCatalogPublication(reg)
+	// grant for that module is reachable by any path. The admit point is the
+	// SAME ruling on the incremental path as on the boot path — scoping which
+	// assets are considered never widens what may be published.
+	plan := planCatalogPublication(reg, scope)
 
 	var publishErrs []error
 	for _, asset := range plan.Admitted {
@@ -695,7 +744,12 @@ type catalogPublicationPlan struct {
 // ledger. It provisions nothing itself, so the ruling can be asserted in a test
 // without a live WASM runtime — which is the whole reason the P1 went
 // unnoticed: nothing tested the decision, only the plumbing around it.
-func planCatalogPublication(reg *license.PluginRegistry) catalogPublicationPlan {
+// planCatalogPublication rules on the catalog. A nil scope means the whole
+// catalog (a boot ruling, which also writes the standing open/refused ledger);
+// a non-nil scope restricts the ruling to those asset IDs, which is what an
+// incremental publish needs — the same decision per asset, without re-stating a
+// 42-line ledger for a one-module change.
+func planCatalogPublication(reg *license.PluginRegistry, scope map[string]struct{}) catalogPublicationPlan {
 	plan := catalogPublicationPlan{}
 	if reg == nil {
 		return plan
@@ -703,6 +757,11 @@ func planCatalogPublication(reg *license.PluginRegistry) catalogPublicationPlan 
 	policyCfg := reg.GrantPolicyConfig()
 
 	for _, asset := range catalogPublicationAssets(reg) {
+		if scope != nil {
+			if _, wanted := scope[asset.ID]; !wanted {
+				continue
+			}
+		}
 		decision := license.EvaluatePublication(asset, policyCfg)
 		plan.Decisions = append(plan.Decisions, decision)
 		if !decision.Publish {
@@ -720,7 +779,11 @@ func planCatalogPublication(reg *license.PluginRegistry) catalogPublicationPlan 
 
 	// The standing ledger. Every boot names the full open set, so an "open
 	// for now" can never quietly become an open forever: the operator sees
-	// the list, and closing it is one edit to grant-policy.json.
+	// the list, and closing it is one edit to grant-policy.json. A scoped
+	// ruling is not a census, so it does not restate the census.
+	if scope != nil {
+		return plan
+	}
 	if len(plan.Open) > 0 {
 		sort.Strings(plan.Open)
 		log.Warnf(
