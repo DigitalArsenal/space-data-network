@@ -42,6 +42,10 @@ import type {
 import type { LocalFlatSqlSchema } from "./local-flatsql";
 import { getBootstrapRelays, EdgeDiscovery } from "./edge-discovery";
 import {
+  resolveConnectionMonitorInit,
+  type SdnConnectionMonitorConfig,
+} from "./connection-monitor-policy";
+import {
   findSDNAdvertisementPeers,
   provideSDNAdvertisementFlag,
   type DiscoveredSDNAdvertisementPeer,
@@ -217,6 +221,17 @@ export interface SDNConfig {
   enableRelayProbing?: boolean;
   /** Interval between relay probes in ms (default: 30000) */
   relayProbeIntervalMs?: number;
+  /**
+   * libp2p connection-monitor policy. Omit for the sdn-js default (heartbeat
+   * on, 30 s cadence, 30 s deadline), `false` to switch the heartbeat off, or
+   * an object to override single fields.
+   *
+   * NOT a cosmetic knob: libp2p's own default aborts a connection — and every
+   * stream on it — when one heartbeat misses a FIXED 2000 ms deadline, which a
+   * browser main thread routinely misses while a globe starts. See
+   * `connection-monitor-policy.ts` for the measurement.
+   */
+  connectionMonitor?: SdnConnectionMonitorConfig;
 }
 
 export interface SDNNodeEvents {
@@ -337,6 +352,14 @@ export class SDNNode {
       connectionEncryption: [noise()],
       streamMuxers: [yamux()],
       peerDiscovery: [bootstrap({ list: bootstrapList })],
+      // A heartbeat that misses its deadline tears down the connection AND
+      // every stream on it. libp2p's stock deadline is 2000 ms and does not
+      // adapt; a browser that is compiling wasm blows through it while the
+      // peer is perfectly healthy, which is how a granted module delivery
+      // still failed with `Read aborted`. See connection-monitor-policy.ts.
+      connectionMonitor: resolveConnectionMonitorInit(
+        this.config.connectionMonitor,
+      ),
       services,
     };
     if (this.config.enableAutoDial === false) {
