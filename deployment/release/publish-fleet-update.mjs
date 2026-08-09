@@ -756,9 +756,16 @@ print(f'index: {len(updates)} update(s)')
     try {
       const signalOut = run('ssh', [
         publisherSSH,
+        // Deliberately NO --node-url: that routes the admin call through the
+        // PUBLIC hostname, i.e. through the CDN, and the first real push
+        // (2026-08-09) came back as a Cloudflare 502 with the origin perfectly
+        // healthy. The deploy control plane has no business traversing a CDN
+        // to reach a daemon on the same box. Without it the client dials
+        // loopback and anchors verification to the certificate the daemon's own
+        // config declares (newAdminClient -> daemonTLSConfig), which is both
+        // shorter and strictly better authenticated.
         `${shellQuote(publisherBin)} update signal --channel ${shellQuote(channel)} ` +
-          `--update-id ${shellQuote(updateId)} --platform ${shellQuote(platform)} --arch ${shellQuote(arch)} ` +
-          `--node-url ${shellQuote(new URL(feedBaseUrl).origin)}`,
+          `--update-id ${shellQuote(updateId)} --platform ${shellQuote(platform)} --arch ${shellQuote(arch)}`,
       ]).toString();
       signalled = /published=true/.test(signalOut);
       signalTopic = (signalOut.match(/^topic=(.+)$/m) || [])[1] || '';
