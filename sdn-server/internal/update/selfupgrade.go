@@ -234,7 +234,10 @@ func launchViaSystemdRun(plan *HelperPlan, env []string, opts SelfUpgradeOptions
 		// does). Without it a failed self-upgrade leaves a failed unit behind
 		// that blocks the next launch on the same name.
 		"--collect",
-		"--description=SDN self-upgrade swap (update " + plan.Args[len(plan.Args)-1] + ")",
+		// The update id, named explicitly. It used to be plan.Args[last], which
+		// silently became whatever flag was appended most recently — the live
+		// run described itself as "update /etc/spacedatanetwork/tls/origin.crt".
+		"--description=SDN self-upgrade swap (update " + opts.UpdateID + ")",
 	}
 	for _, kv := range env {
 		args = append(args, "--setenv="+kv)
