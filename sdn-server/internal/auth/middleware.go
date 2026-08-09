@@ -48,6 +48,7 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 		}
 
 		session = h.maybeRefreshSessionCookie(w, r, session)
+		decorateAdmitted(w, r, session)
 
 		// Store session in request context
 		ctx := context.WithValue(r.Context(), sessionContextKey, session)
@@ -83,6 +84,11 @@ func (h *Handler) RequireTrust(w http.ResponseWriter, r *http.Request, minTrust 
 		writeAuthRefusal(w, r, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "insufficient permissions"})
 		return false
 	}
+	// RequireTrust is the SOLE gate for some routes on a require_auth:false
+	// node (gateNodeEPMWrite), so the admitted-response decoration belongs here
+	// too and not only in RequireAuth. Where both run, the decoration's
+	// never-overwrite guard makes the second call a no-op.
+	decorateAdmitted(w, r, session)
 	return true
 }
 
@@ -150,6 +156,17 @@ func (h *Handler) RequirePolicy(engine PolicyEngine, action abac.Action, resourc
 }
 
 // OptionalAuth attaches the session to the request context if present, but does not require it.
+//
+// It is deliberately NOT given the admitted-response decoration: its only
+// callers are public-read storefront routes where an anonymous caller also
+// reaches next, so decorating here would decorate UNAUTHENTICATED responses.
+// Those routes are the anonymous policy's business, not the wall's.
+//
+// HAZARD, same class as the nested-RequireTrust case: sessionFromRequest below
+// will CONSUME a single-use signed-request challenge if one is ever aimed at a
+// route wrapped in OptionalAuth. Nothing does that today (these routes need no
+// authority), but a future route that wants both optional auth and signed
+// requests must resolve the session once and pass it down, never evaluate twice.
 func (h *Handler) OptionalAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, err := h.sessionFromRequest(r)

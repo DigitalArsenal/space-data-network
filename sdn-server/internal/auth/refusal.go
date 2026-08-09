@@ -21,3 +21,20 @@ func writeAuthRefusal(w http.ResponseWriter, r *http.Request, status int, body e
 	gateway.DecorateRefusal(w, r)
 	writeJSON(w, status, body)
 }
+
+// decorateAdmitted makes an ADMITTED response readable to the cross-origin
+// browser that authenticated for it — but ONLY for a caller admitted through
+// signed-request mode.
+//
+// The refusal decoration alone is not enough to make the lane usable: a gated
+// route is not public on the way out either, so a caller that authenticated
+// successfully still could not read its own 200. The gate on `SignedRequest` is
+// HERMES's narrowing (2026-08-09 §b): a cookie-authenticated caller gains
+// nothing from the decoration, so it does not get one and nobody has to
+// re-derive that argument the next time cookie handling is touched.
+func decorateAdmitted(w http.ResponseWriter, r *http.Request, session *Session) {
+	if session == nil || !session.SignedRequest {
+		return
+	}
+	gateway.DecorateAdmitted(w, r)
+}

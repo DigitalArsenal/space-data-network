@@ -277,11 +277,12 @@ func (h *Handler) sessionFromSignedRequest(r *http.Request) (*Session, error) {
 // finds no cookie to rotate.
 func (h *Handler) ephemeralSession(xpub string, trust peers.TrustLevel, r *http.Request, now time.Time) *Session {
 	return &Session{
-		XPub:       xpub,
-		TrustLevel: trust,
-		CreatedAt:  now,
-		ExpiresAt:  now,
-		IPAddress:  clientIPForRequest(r),
-		UserAgent:  r.UserAgent(),
+		XPub:          xpub,
+		TrustLevel:    trust,
+		CreatedAt:     now,
+		ExpiresAt:     now,
+		IPAddress:     clientIPForRequest(r),
+		UserAgent:     r.UserAgent(),
+		SignedRequest: true,
 	}
 }
