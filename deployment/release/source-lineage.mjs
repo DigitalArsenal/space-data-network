@@ -67,15 +67,43 @@ export function resolveLiveSourceCommit({
   platform,
   arch,
   versionPrefix,
-  fetchText,
+  fetch,
 }) {
   const feedRel = `cli-bundle/${channel}/${platform}/${arch}`;
-  let index;
-  try {
-    index = JSON.parse(fetchText(`${feedBaseUrl}/${feedRel}/index.json`));
-  } catch {
+  const indexUrl = `${feedBaseUrl}/${feedRel}/index.json`;
+
+  // "Could not reach the feed" and "the feed has no artifacts" must NOT collapse
+  // into the same answer. If a transient network failure read as "initial
+  // publish", every flaky moment would silently switch the ancestry guard off —
+  // and a guard that disarms itself exactly when the world is unreliable is
+  // worse than no guard, because it still looks armed. Unverifiable is not
+  // verified (owner premise law): only a definite 404 means "nothing published
+  // here yet".
+  const response = fetch(indexUrl);
+  if (response.status === 404) {
     return null;
   }
+  if (response.status !== 200) {
+    throw new SourceLineageRefusal(
+      `could not read the update feed index at ${indexUrl} ` +
+        `(${response.error ? response.error : `HTTP ${response.status}`}). Source-commit ancestry cannot be ` +
+        'checked, so a build that silently reverts live code could not be detected — refusing rather than ' +
+        'publishing with the guard effectively off.',
+      { indexUrl, status: response.status },
+    );
+  }
+
+  let index;
+  try {
+    index = JSON.parse(response.body);
+  } catch (error) {
+    throw new SourceLineageRefusal(
+      `the update feed index at ${indexUrl} is not valid JSON (${error.message}) — refusing to publish against ` +
+        'a feed whose current head cannot be determined.',
+      { indexUrl },
+    );
+  }
+
   const updates = Array.isArray(index?.updates) ? index.updates : [];
   if (updates.length === 0) {
     return null;
@@ -86,11 +114,17 @@ export function resolveLiveSourceCommit({
     return { commit: newest.source_commit, version: newest.version, sequence: newest.sequence, via: 'index entry' };
   }
 
+  // Fallbacks may fail softly: unlike the index, they are not the difference
+  // between "checked" and "unchecked" — the version-suffix derivation below
+  // still yields an answer, and if nothing does, this function refuses.
   try {
-    const manifest = JSON.parse(fetchText(`${feedBaseUrl}/${feedRel}/${newest.version}/manifest.json`));
-    const commit = manifest?.provenance?.source_commit;
-    if (typeof commit === 'string' && commit.length > 0) {
-      return { commit, version: newest.version, sequence: newest.sequence, via: 'manifest provenance' };
+    const manifestResponse = fetch(`${feedBaseUrl}/${feedRel}/${newest.version}/manifest.json`);
+    if (manifestResponse.status === 200) {
+      const manifest = JSON.parse(manifestResponse.body);
+      const commit = manifest?.provenance?.source_commit;
+      if (typeof commit === 'string' && commit.length > 0) {
+        return { commit, version: newest.version, sequence: newest.sequence, via: 'manifest provenance' };
+      }
     }
   } catch {
     /* fall through to the version-string derivation */

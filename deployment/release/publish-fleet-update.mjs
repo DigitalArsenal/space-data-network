@@ -165,6 +165,28 @@ const run = (cmd, args, opts = {}) =>
   execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'inherit'], ...opts });
 const log = (line) => console.error(line);
 
+/**
+ * Fetch a URL and report the HTTP status SEPARATELY from transport failure.
+ *
+ * Deliberately not `curl -f`: with -f a 404 and a DNS failure both surface as a
+ * non-zero exit, and the lineage guard must distinguish "nothing is published
+ * here yet" (proceed as an initial publish) from "I could not look" (refuse).
+ * Collapsing them would let a flaky network silently disarm the guard.
+ */
+function fetchWithStatus(url) {
+  const bodyPath = join(tmpdir(), `sdn-fetch-${process.pid}-${Date.now()}`);
+  try {
+    const status = run('curl', ['-s', '-m', '30', '-o', bodyPath, '-w', '%{http_code}', url]).toString().trim();
+    const body = readFileSync(bodyPath, 'utf8');
+    return { status: Number(status), body };
+  } catch (error) {
+    // curl itself failed: DNS, connect, TLS, timeout. No HTTP status exists.
+    return { status: 0, body: '', error: error.message };
+  } finally {
+    rmSync(bodyPath, { force: true });
+  }
+}
+
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 const dirnamePosix = (p) => {
   const i = String(p).lastIndexOf('/');
@@ -243,7 +265,7 @@ try {
     platform,
     arch,
     versionPrefix,
-    fetchText: (url) => run('curl', ['-sf', '-m', '30', url]).toString(),
+    fetch: fetchWithStatus,
   });
   const lineage = assertSourceLineage({
     repoRoot,

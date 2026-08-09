@@ -62,12 +62,7 @@ function makeWorld({ binarySize = 22 * 1024 * 1024, feedIndex = null } = {}) {
   mkdirSync(binDir);
   const indexPath = join(dir, 'index.json');
   if (feedIndex) writeFileSync(indexPath, JSON.stringify(feedIndex));
-  writeFileSync(
-    join(binDir, 'curl'),
-    feedIndex
-      ? `#!/bin/sh\ncat ${JSON.stringify(indexPath)}\n`
-      : '#!/bin/sh\nexit 22\n', // curl -f on a 404
-  );
+  writeFileSync(join(binDir, 'curl'), curlStub(feedIndex ? indexPath : null));
   chmodSync(join(binDir, 'curl'), 0o755);
   // ssh/scp must never be reached in these tests; if they are, say so loudly.
   for (const forbidden of ['ssh', 'scp']) {
@@ -79,6 +74,20 @@ function makeWorld({ binarySize = 22 * 1024 * 1024, feedIndex = null } = {}) {
   }
 
   return { dir, binary, bytes, sha: sha256(bytes), binDir };
+}
+
+/**
+ * Stand-in for curl as the publisher invokes it:
+ *   curl -s -m 30 -o <bodyPath> -w %{http_code} <url>
+ * It writes the body to the -o path and prints the status, so the test can
+ * express "404, nothing published" and "200, here is the feed" as the DIFFERENT
+ * facts the lineage guard treats them as.
+ */
+function curlStub(bodyPath) {
+  if (!bodyPath) {
+    return '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then : > "$2"; fi; shift; done\nprintf 404\n';
+  }
+  return `#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then cp ${JSON.stringify(bodyPath)} "$2"; fi; shift; done\nprintf 200\n`;
 }
 
 /** A real git repo with a linear history plus a divergent branch. */
@@ -344,7 +353,7 @@ test('SILENT REVERT: publishing a non-descendant commit is refused, naming both 
     // Re-stub curl to serve a feed whose newest artifact came from liveCommit.
     const indexPath = join(world.dir, 'index.json');
     writeFileSync(indexPath, JSON.stringify(feedWith(liveCommit)));
-    writeFileSync(join(world.binDir, 'curl'), `#!/bin/sh\ncat ${JSON.stringify(indexPath)}\n`);
+    writeFileSync(join(world.binDir, 'curl'), curlStub(indexPath));
     chmodSync(join(world.binDir, 'curl'), 0o755);
 
     const result = runPublisher({
@@ -371,7 +380,7 @@ test('a descendant of the live commit publishes normally', () => {
     stageLaneInto(repo);
     const indexPath = join(world.dir, 'index.json');
     writeFileSync(indexPath, JSON.stringify(feedWith(liveCommit)));
-    writeFileSync(join(world.binDir, 'curl'), `#!/bin/sh\ncat ${JSON.stringify(indexPath)}\n`);
+    writeFileSync(join(world.binDir, 'curl'), curlStub(indexPath));
     chmodSync(join(world.binDir, 'curl'), 0o755);
 
     const result = runPublisher({
@@ -395,7 +404,7 @@ test('re-publishing the SAME commit is a descendant, not a revert', () => {
     stageLaneInto(repo);
     const indexPath = join(world.dir, 'index.json');
     writeFileSync(indexPath, JSON.stringify(feedWith(liveCommit)));
-    writeFileSync(join(world.binDir, 'curl'), `#!/bin/sh\ncat ${JSON.stringify(indexPath)}\n`);
+    writeFileSync(join(world.binDir, 'curl'), curlStub(indexPath));
     chmodSync(join(world.binDir, 'curl'), 0o755);
 
     const result = runPublisher({
@@ -417,7 +426,7 @@ test('--rollback allows the revert and records it as a rollback with its reason'
     stageLaneInto(repo);
     const indexPath = join(world.dir, 'index.json');
     writeFileSync(indexPath, JSON.stringify(feedWith(liveCommit)));
-    writeFileSync(join(world.binDir, 'curl'), `#!/bin/sh\ncat ${JSON.stringify(indexPath)}\n`);
+    writeFileSync(join(world.binDir, 'curl'), curlStub(indexPath));
     chmodSync(join(world.binDir, 'curl'), 0o755);
 
     const result = runPublisher({
@@ -460,5 +469,42 @@ test('--no-smoke is refused without --dry-run', async () => {
     });
     assert.equal(result.status, 2, result.stderr);
     assert.match(result.stderr, /only permitted with --dry-run/);
+  });
+});
+
+test('an UNREACHABLE feed refuses — it must not read as "nothing published yet"', async () => {
+  await withWorld({}, (world) => {
+    const { repo, descendant } = makeRepo(world.dir);
+    stageLaneInto(repo);
+
+    // curl fails at the transport layer: no DNS, no connection, no HTTP status.
+    // If this read as an initial publish, a flaky network would silently disarm
+    // the silent-revert guard while leaving it looking armed.
+    writeFileSync(join(world.binDir, 'curl'), '#!/bin/sh\necho "curl: (6) Could not resolve host" >&2\nexit 6\n');
+    chmodSync(join(world.binDir, 'curl'), 0o755);
+
+    const result = runPublisher({
+      world,
+      repoRoot: repo,
+      args: ['--binary', world.binary, '--source-commit', descendant, '--dry-run', '--no-smoke'],
+    });
+    assert.equal(result.status, 3, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /could not read the update feed index/);
+    assert.match(result.stderr, /guard effectively off/);
+  });
+});
+
+test('a 404 feed IS an initial publish', async () => {
+  await withWorld({}, (world) => {
+    const { repo, descendant } = makeRepo(world.dir);
+    stageLaneInto(repo);
+    // makeWorld already installed the 404 stub when no feed index was given.
+    const result = runPublisher({
+      world,
+      repoRoot: repo,
+      args: ['--binary', world.binary, '--source-commit', descendant, '--dry-run', '--no-smoke'],
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(JSON.parse(result.stdout).lineage, 'initial');
   });
 });
