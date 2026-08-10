@@ -1282,41 +1282,31 @@ const imported = await Identity.import(exported, 'password123');</code></pre>
       </section>
 
       <section id="sdk-astrodynamics" class="doc-section">
-        <h3>Astrodynamics Library</h3>
-        <p>The SDK includes a complete astrodynamics library for propagation and conjunction assessment.</p>
+        <h3>Astrodynamics &mdash; WASM Modules, Not JavaScript</h3>
+        <p><strong>The JavaScript SDK computes no physics.</strong> There is no <code>./astro</code> subpath, no SGP4 in JavaScript, no frame rotations and no probability-of-collision integral in the package &mdash; all of it was removed in <code>3.0.0</code>. Astrodynamics is delivered as signed WebAssembly modules through the space data module SDK, so the browser, the Go server and the WasmEdge runtime all execute <em>the same artifact</em> and return the same numbers. JavaScript holds UI state, rendering glue, format conversion and dispatch. Nothing else.</p>
 
-        <pre><code>import { propagate, sgp4 } from './sdn-js/dist/esm/astro/index.js';
+        <p>A module is fetched and verified through the delivery/storefront path, then handed to the SDK harness. The package never instantiates the artifact itself, never encodes a FlatBuffer by hand and never names a WASI function &mdash; that is what keeps a second copy of the ABI from existing:</p>
 
-// SGP4 propagation from TLE
-const state = sgp4(tle, epochMinutes);
-// { position: [x, y, z], velocity: [vx, vy, vz] }
+        <pre><code>const { createBrowserModuleHarness } = await import('space-data-module-sdk/host/browser-module');
 
-// Propagate OMM
-const states = propagate(omm, {
-  start: new Date('2025-01-24T00:00:00Z'),
-  end: new Date('2025-01-25T00:00:00Z'),
-  step: 60 // seconds
-});</code></pre>
+// `wasmSource` is an already-verified WebAssembly.Module, hash-checked
+// against the signed $PMM record it was delivered with.
+const harness = createBrowserModuleHarness({ wasmSource, surface: 'command' });</code></pre>
 
-        <pre><code>import { screenConjunctions, computePc } from './sdn-js/dist/esm/astro/index.js';
+        <table>
+          <thead>
+            <tr><th>What you want</th><th>Module</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>SGP4/SDP4 propagation</td><td><code>propagator/sgp4</code></td></tr>
+            <tr><td>GMST, ECI&harr;ECEF, time scales</td><td><code>foundation/frames</code>, <code>foundation/time</code></td></tr>
+            <tr><td>Conjunction screening, probability of collision</td><td><code>analysis/conjunction-assessment</code></td></tr>
+          </tbody>
+        </table>
 
-// Screen for close approaches
-const conjunctions = screenConjunctions(primaryOMM, secondaryOMMs, {
-  threshold: 5000, // meters
-  timeWindow: 7 * 24 * 3600 // 7 days
-});
+        <p>Delivery failure <strong>refuses</strong>. There is no JavaScript fallback to answer with instead &mdash; an answer nobody can trace to a signed artifact is worse than no answer.</p>
 
-// Compute collision probability
-const pc = computePc(cdm);</code></pre>
-
-        <pre><code>import { eciToEcef, ecefToLla } from './sdn-js/dist/esm/astro/index.js';
-
-// ECI to ECEF
-const ecef = eciToEcef(eci, gmst);
-
-// ECEF to Lat/Lon/Alt
-const lla = ecefToLla(ecef);
-// { lat: 51.5, lon: -0.1, alt: 400000 }</code></pre>
+        <p>What the JavaScript SDK still does with element sets is convert their <em>text</em>: <code>tleToOMM</code> parses a TLE into a CCSDS OMM record and is exported from the package root. It parses elements; it never advances them. See <a href="#schemas-entity">Converting from TLE</a>.</p>
       </section>
 
       <!-- Identity & Cryptography -->
@@ -2240,7 +2230,7 @@ const schemas = SchemaRegistry.list();
 // ['OMM', 'OEM', 'CDM', 'EPM', ...]</code></pre>
 
         <h3>Converting from TLE</h3>
-        <pre><code>import { tleToOMM } from './sdn-js/dist/esm/index.js';
+        <pre><code>import { tleToOMM } from '@spacedatanetwork/sdn-js';
 
 const tle = [
   '1 25544U 98067A   25024.50000000  .00016717  00000-0  10270-3 0  9029',
