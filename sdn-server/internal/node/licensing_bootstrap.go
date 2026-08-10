@@ -52,7 +52,14 @@ const (
 	publicationTrailerFooterLength = 8
 	publicationTrailerMagicText    = "$REC"
 
-	pluginTypeAnalysis = 3
+	// pluginCategoryUnspecified is the IDL symbol used when the deployed $PMM
+	// module catalog declares no PLUGIN_TYPE for an ID.
+	//
+	// It is spelled out rather than left to the flatbuffers default because the
+	// `pluginCategory` zero value is Sensor: an unset field does not read as
+	// "unknown" on the wire, it reads as a confident, wrong answer. The whole
+	// point of this constant is that silence stays legible as silence.
+	pluginCategoryUnspecified = "Unspecified"
 )
 
 // The licensing challenge's two time bounds, and which one carries the
@@ -1102,12 +1109,26 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 
 	nowMs := uint64(time.Now().UnixMilli())
 
+	// PLUGIN_TYPE is the listing's SHELF. It was a compile-time literal here,
+	// which meant every module this node published announced the same family
+	// regardless of what it actually was — a category surface that was
+	// structurally incapable of being wrong in an interesting way, because it
+	// was never right. The declared family comes from the deployed $PMM module
+	// catalog (pmm.CatalogPluginTypes), joined onto the asset by the registry.
+	//
+	// An unrecognized or absent symbol resolves to Unspecified. It does NOT
+	// fall through to the flatbuffers default, which is Sensor.
+	pluginCategory, known := plg.EnumValuespluginCategory[strings.TrimSpace(asset.PluginType)]
+	if !known {
+		pluginCategory = plg.EnumValuespluginCategory[pluginCategoryUnspecified]
+	}
+
 	plg.PLGStart(builder)
 	plg.PLGAddPLUGIN_ID(builder, pluginIDOffset)
 	plg.PLGAddNAME(builder, nameOffset)
 	plg.PLGAddVERSION(builder, versionOffset)
 	plg.PLGAddDESCRIPTION(builder, descriptionOffset)
-	plg.PLGAddPLUGIN_TYPE(builder, pluginTypeAnalysis)
+	plg.PLGAddPLUGIN_TYPE(builder, pluginCategory)
 	plg.PLGAddABI_VERSION(builder, 1)
 	plg.PLGAddENCRYPTED(builder, true)
 	if requiredScopeOffset != 0 {

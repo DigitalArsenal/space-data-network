@@ -952,6 +952,10 @@ func (n *Node) init() error {
 		log.Warnf("Plugin registry unavailable: %v", regErr)
 	} else if reg != nil {
 		n.pluginRegistry = reg
+		// Join the declared module families in BEFORE anything publishes a
+		// $PLG descriptor below, so the boot-time publication carries the same
+		// category the listings endpoint will later serve.
+		n.applyModuleCatalogPluginTypes(reg)
 		recipientKey, keyErr := n.findPluginDecryptPrivateKey()
 		if keyErr != nil {
 			log.Warnf("Plugin decryption key invalid: %v", keyErr)

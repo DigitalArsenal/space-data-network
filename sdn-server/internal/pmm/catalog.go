@@ -123,3 +123,49 @@ func CatalogProviderDomain(path string) (string, error) {
 	}
 	return strings.TrimSpace(head.ProviderDomain), nil
 }
+
+// CatalogPluginTypes reads PLUGIN_ID -> PLUGIN_TYPE and nothing else.
+//
+// PLUGIN_TYPE is the module's family and the ONLY sanctioned way to group an
+// offering (see Entry.PluginType). Every surface that shelves modules by
+// category therefore has to read it from HERE — the one declared, deployed
+// truth — rather than carry a second copy that can disagree with this one.
+//
+// LoadCatalog re-hashes every artifact from disk, which is the right cost when
+// a manifest is about to be signed and the wrong cost for a metadata read on a
+// request path. This does the decode and stops.
+//
+// A blank PLUGIN_TYPE is DROPPED, never defaulted. The enum's zero value is
+// Sensor, so a defaulted blank is not a missing answer, it is a wrong one.
+func CatalogPluginTypes(path string) (map[string]string, error) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("pmm: read catalog %s: %w", path, err)
+	}
+	var cf struct {
+		Entries []struct {
+			ModuleID   string `json:"MODULE_ID"`
+			PluginID   string `json:"PLUGIN_ID"`
+			PluginType string `json:"PLUGIN_TYPE"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(raw, &cf); err != nil {
+		return nil, fmt.Errorf("pmm: decode catalog %s: %w", path, err)
+	}
+	types := make(map[string]string, len(cf.Entries))
+	for _, e := range cf.Entries {
+		declared := strings.TrimSpace(e.PluginType)
+		if declared == "" {
+			continue
+		}
+		// Keyed by both identifiers: the licensing catalog keys assets by the
+		// plugin ID, and a catalog that omits PLUGIN_ID is declaring that the
+		// module ID is the plugin ID.
+		for _, key := range []string{e.PluginID, e.ModuleID} {
+			if k := strings.TrimSpace(key); k != "" {
+				types[k] = declared
+			}
+		}
+	}
+	return types, nil
+}

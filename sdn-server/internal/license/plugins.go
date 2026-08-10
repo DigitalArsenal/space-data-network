@@ -149,6 +149,16 @@ type PluginAsset struct {
 	SignerPubKeyHex   string
 	UploadedAt        string
 
+	// PluginType is the module's declared `pluginCategory` IDL SYMBOL, joined
+	// in from the deployed $PMM module catalog by SetPluginTypes. It is NOT
+	// registry-owned state and is never written back to catalog.json: a second
+	// stored copy of a category is a second thing that can be wrong.
+	//
+	// Empty means the catalog declared nothing for this ID. Callers must map
+	// that to Unspecified explicitly — never to the enum's zero value, which is
+	// Sensor.
+	PluginType string
+
 	encryptedPath string
 	keyPath       string
 	plainPath     string
@@ -239,6 +249,35 @@ type PluginRegistry struct {
 	// grantPolicy is the operator's grant-policy.json, loaded once beside
 	// catalog.json. Never nil after LoadPluginRegistry.
 	grantPolicy *GrantPolicyConfig
+
+	// pluginTypes is PLUGIN_ID -> declared `pluginCategory` symbol, joined in
+	// from the deployed $PMM module catalog. Guarded by mu with the assets.
+	pluginTypes map[string]string
+}
+
+// SetPluginTypes installs the PLUGIN_ID -> PLUGIN_TYPE join read from the
+// deployed $PMM module catalog, replacing any previous set.
+//
+// The registry stores modules; it does not decide their families. This is the
+// seam where the one declared truth is handed to it, so that every asset the
+// registry hands out carries the SAME category the $PMM manifest publishes.
+// Re-callable: a re-staged catalog re-declares categories without a restart.
+func (r *PluginRegistry) SetPluginTypes(types map[string]string) {
+	if r == nil {
+		return
+	}
+	next := make(map[string]string, len(types))
+	for id, declared := range types {
+		normalizedID := strings.TrimSpace(id)
+		normalizedType := strings.TrimSpace(declared)
+		if normalizedID == "" || normalizedType == "" {
+			continue
+		}
+		next[normalizedID] = normalizedType
+	}
+	r.mu.Lock()
+	r.pluginTypes = next
+	r.mu.Unlock()
 }
 
 // GrantPolicyConfig returns the loaded operator grant policy. It is never nil,
@@ -413,7 +452,12 @@ func (r *PluginRegistry) Get(id string) (*PluginAsset, bool) {
 	if !ok {
 		return nil, false
 	}
-	return asset.clone(), true
+	clone := asset.clone()
+	// Stamped on the OUTGOING copy only. The stored asset stays free of it, so
+	// saveCatalogLocked can never persist a shadow copy of the $PMM catalog's
+	// category into catalog.json.
+	clone.PluginType = r.pluginTypes[normalized]
+	return clone, true
 }
 
 // ReadEncryptedBundle reads plugin bytes (encrypted or plain).
