@@ -104,8 +104,10 @@ var SupportedSchemas = []string{
 	"BUS.fbs",  // Satellite Bus Specification
 	"CAQ.fbs",  // Catalog Query - Catalog query envelope
 	"CAT.fbs",  // Catalog
+	"CCT.fbs",  // Capability Category Taxonomy - the ratified category vocabulary ($PLG/$APP/$PMM/$STF include it)
 	"CDM.fbs",  // Conjunction Data Message
 	"CES.fbs",  // Catalog Embedding Shard
+	"CMR.fbs",  // Constellation Membership Record (SDS v1.186.0; included by REC)
 	"CFP.fbs",  // CCSDS File Delivery Protocol PDU (CCSDS 727.0-B-5)
 	"CHN.fbs",  // Communications Channel
 	"CLT.fbs",  // Command Link Transmission Unit Service (CCSDS 912.3-B-2)
@@ -271,6 +273,7 @@ var SupportedSchemas = []string{
 	"SUB.fbs",  // Crypto-native Subscription Authorization
 	"SWR.fbs",  // Short-Wave Infrared Observation
 	"TAB.fbs",  // Typed Arena Buffer
+	"TBS.fbs",  // Terrestrial Base Station Site (SDS v1.186.0; included by REC)
 	"TCF.fbs",  // Telecommand Transfer Frame (CCSDS 232.0-B-3)
 	"TDM.fbs",  // Tracking Data Message
 	"TIM.fbs",  // Time Message

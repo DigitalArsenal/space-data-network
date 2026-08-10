@@ -1,6 +1,8 @@
-// Hash: af1f13b9b0b5da3fe376a8baf001da07b05f005cbba735c6de9760318fe44883
-// Version: 1.151.1
+// Hash: 796e00b47708f9f5e8babf42046154bc0cea52f9a7b38f85fa81a5b5a445908f
+// Version: 1.151.3
 // -----------------------------------END_HEADER
+include "../CCT/main.fbs";
+
 /// Application Package Manifest
 ///
 /// An app is a launchable collection of WASM modules, the SDS data types it
@@ -299,6 +301,28 @@ table APP {
   /// resolve into MODULES, and each MODULE_ID/METHOD_ID/PORT_ID triple must
   /// name a method port advertised by that module's PLG manifest.
   DATAFLOW:[APPDataflow];
+  /// App-wide runtime class, reusing appRuntimeTarget. Lets a pulled manifest
+  /// self-describe where the app as a whole is meant to run, instead of that
+  /// classification being supplied externally at install time. This is the
+  /// app-level DEFAULT/DECLARATION only: an individual APPModuleRef.
+  /// RUNTIME_TARGET still governs where that specific member module loads and
+  /// may specialize away from RUNTIME_CLASS (for example a NODE-class app
+  /// with one PAGE-capable module). Defaults to NODE to preserve the prior
+  /// node-only assumption of manifests written before this field existed.
+  RUNTIME_CLASS:appRuntimeTarget = NODE;
+  /// The one ratified $CCT category this app is shelved under, using the same
+  /// vocabulary and the same semantics as PLG.PRIMARY_CATEGORY, so a storefront
+  /// or library shelf holds apps and modules together without translating
+  /// between two classification schemes. RUNTIME_CLASS says WHERE an app runs;
+  /// PRIMARY_CATEGORY says WHAT IT DOES. They are independent: a NODE-class app
+  /// and a PAGE-class app can share a category.
+  /// UNSPECIFIED means the publisher did not classify the app; a consumer
+  /// renders it ungrouped and never infers a class.
+  PRIMARY_CATEGORY:capabilityClass = UNSPECIFIED;
+  /// Every ratified $CCT category this app belongs to, for browse, filter and
+  /// per-category counting. An app MAY carry several. If nonempty it MUST
+  /// include PRIMARY_CATEGORY. Codes MUST NOT repeat.
+  CATEGORIES:[capabilityClass];
 }
 
 root_type APP;

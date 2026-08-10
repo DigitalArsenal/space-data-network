@@ -10,14 +10,18 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/APP"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CCT"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CNP"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/IQC"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/LKS"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
+	sdsplg "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
+	sdspmm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/RFB"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
+	sdsstf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STF"
 )
 
 // WHY THIS GUARD EXISTS (2026-08-04, sdn-server-rfb-schema-embed-stale).
@@ -57,6 +61,16 @@ var driftGuardedSchemas = []struct {
 	// and the bindings are provably the same authority from record zero.
 	{"IQC.fbs", &IQC.IQC{}},
 	{"CNP.fbs", &CNP.CNP{}},
+	// The category lane (SDS v1.186.0, $CCT). These three carry
+	// PRIMARY_CATEGORY/CATEGORIES and this node WRITES all three, so they move
+	// out of the unguarded waiver on the same pin bump that gives them a
+	// category to write. $CCT itself is guarded because it is the vocabulary
+	// those fields join against: an embed that lagged it would let the strict
+	// validator disagree with the enum the encoders resolve through.
+	{"PLG.fbs", &sdsplg.PLG{}},
+	{"PMM.fbs", &sdspmm.PMM{}},
+	{"STF.fbs", &sdsstf.STF{}},
+	{"CCT.fbs", &CCT.CCT{}},
 }
 
 func TestEmbeddedSchemasMatchLinkedBindings(t *testing.T) {

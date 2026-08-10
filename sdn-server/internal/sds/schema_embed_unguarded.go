@@ -6,11 +6,11 @@ package sds
 // This is a DECLARATION, not a dismissal. The embed still ships in the binary
 // and the strict validator still reads it, so any of these can drift from the
 // pinned bindings without a test noticing — the RFB defect
-// (sdn-server-rfb-schema-embed-stale) is exactly that failure, and CES.fbs is a
-// live example: it carries `cesPoolingKind.MAX`, which SDS removed at 1.183.0
-// as a flatc sentinel collision. That is NOT drift against this node's pin
-// (lib/go v1.177.0 carries MAX too, so embed and bindings agree) — it is the
-// node being older than HEAD, tracked as sdn-sds-pin-bump-1183.
+// (sdn-server-rfb-schema-embed-stale) is exactly that failure. CES.fbs used to
+// be the live example — it carried `cesPoolingKind.MAX`, which SDS removed at
+// 1.183.0 as a flatc sentinel collision, and the node sat behind that at
+// lib/go v1.177.0. The v1.186.0 pin bump carries the node past it: embed and
+// bindings are now both post-1.183.0 and the sentinel is gone from each.
 //
 // THE MOMENT THE HOST STARTS READING ONE OF THESE, move it to
 // driftGuardedSchemas. That is one line and it is not optional.
@@ -39,6 +39,7 @@ var unguardedEmbeddedSchemas = map[string]bool{
 	"CFP.fbs":  true,
 	"CHN.fbs":  true,
 	"CLT.fbs":  true,
+	"CMR.fbs":  true,
 	"CMS.fbs":  true,
 	"CMT.fbs":  true,
 	"COM.fbs":  true,
@@ -137,11 +138,9 @@ var unguardedEmbeddedSchemas = map[string]bool{
 	"PIV.fbs":  true,
 	"PKB.fbs":  true,
 	"PLD.fbs":  true,
-	"PLG.fbs":  true,
 	"PLHD.fbs": true,
 	"PLK.fbs":  true,
 	"PLOG.fbs": true,
-	"PMM.fbs":  true,
 	"PNL.fbs":  true,
 	"PPE.fbs":  true,
 	"PRG.fbs":  true,
@@ -186,13 +185,13 @@ var unguardedEmbeddedSchemas = map[string]bool{
 	"SON.fbs":  true,
 	"SPP.fbs":  true,
 	"SRI.fbs":  true,
-	"STF.fbs":  true,
 	"STO.fbs":  true,
 	"STR.fbs":  true,
 	"STV.fbs":  true,
 	"SUB.fbs":  true,
 	"SWR.fbs":  true,
 	"TAB.fbs":  true,
+	"TBS.fbs":  true,
 	"TCF.fbs":  true,
 	"TDM.fbs":  true,
 	"TIM.fbs":  true,
