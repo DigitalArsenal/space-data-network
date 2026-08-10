@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/pmm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
@@ -179,8 +180,51 @@ func (p *pmmPlugin) rebuild() error {
 	p.artifacts = next
 	p.mu.Unlock()
 	p.source.Set(m, cf.Browse)
+
+	// Re-declare module families to the plugin registry from the catalog we
+	// just read. A re-staged catalog therefore re-categorizes the $PLG listing
+	// lane on the same refresh that re-signs the $PMM manifest, instead of the
+	// two surfaces drifting apart until the next restart.
+	types := make(map[string]string, len(cf.Entries))
+	for i := range cf.Entries {
+		e := &cf.Entries[i]
+		for _, key := range []string{e.PluginID, e.ModuleID} {
+			if k := strings.TrimSpace(key); k != "" {
+				types[k] = strings.TrimSpace(e.PluginType)
+			}
+		}
+	}
+	p.node.PluginRegistry().SetPluginTypes(types)
+
 	log.Infof("pmm: manifest signed — %d module(s), %d anonymously fetchable", len(m.Modules), len(next))
 	return nil
+}
+
+// applyModuleCatalogPluginTypes joins the deployed $PMM module catalog's
+// declared families onto the plugin registry.
+//
+// A missing catalog is not an error — it means this node declares no families,
+// and every listing then says Unspecified, which is the truth. A catalog that
+// is present but unreadable IS worth a log: the operator meant to declare
+// something and the shelves will silently read Unspecified instead.
+func (n *Node) applyModuleCatalogPluginTypes(reg *license.PluginRegistry) {
+	if n == nil || reg == nil || n.config == nil {
+		return
+	}
+	base := strings.TrimSpace(n.config.Storage.Path)
+	if base == "" {
+		return
+	}
+	catalog := filepath.Join(base, "modules", pmmCatalogFile)
+	if _, err := os.Stat(catalog); err != nil {
+		return
+	}
+	types, err := pmm.CatalogPluginTypes(catalog)
+	if err != nil {
+		log.Warnf("pmm: module families unavailable from %s; listings will read Unspecified: %v", catalog, err)
+		return
+	}
+	reg.SetPluginTypes(types)
 }
 
 // trustAnchor derives the anchor from the node's own identity.
