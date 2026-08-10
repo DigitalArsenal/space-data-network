@@ -278,7 +278,7 @@ const (
 	// aggregate Records schema) includes every other standard, so a partial
 	// embed leaves dangling includes — which is exactly how the set went
 	// stale before v1.177.0.
-	expectedStandardSchemaCount = 202 // spacedatastandards.org v1.177.0 (adds $IQC + $CNP, RF data suite)
+	expectedStandardSchemaCount = 205 // spacedatastandards.org v1.186.0 (adds $CCT, $CMR, $TBS)
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )

@@ -4,6 +4,20 @@ package REC
 
 import "strconv"
 
+/// ORDINAL FREEZE -- APPEND ONLY, FOREVER.
+/// A member's position IS its wire value: flatc writes it into the
+/// Record.value_type byte of every $REC ever serialized, including the
+/// publication trailer of every protected module artifact. Inserting,
+/// reordering or removing a member silently re-points every record ever
+/// written at the wrong standard. This has already happened three times;
+/// inserting $PGM mid-union (c1580d4700, 2026-07-08) moved $PNM 113 -> 114
+/// and broke protected-plugin decryption fleet-wide for three weeks.
+/// New standards are APPENDED at the end. A retired standard is deprecated
+/// in place, never deleted -- an ordinal is never reused.
+/// Contract: schema/REC/RECORDTYPE_ORDINALS.json
+/// Guard:    node scripts/checkRecordTypeOrdinals.mjs
+/// Records written before 2026-07-08 are only decodable via Record.standard,
+/// which is the sole discriminator that has never shifted.
 type RecordType byte
 
 const (
@@ -209,6 +223,9 @@ const (
 	RecordTypeOPP  RecordType = 199
 	RecordTypeIQC  RecordType = 200
 	RecordTypeCNP  RecordType = 201
+	RecordTypeCMR  RecordType = 202
+	RecordTypeTBS  RecordType = 203
+	RecordTypeCCT  RecordType = 204
 )
 
 var EnumNamesRecordType = map[RecordType]string{
@@ -414,6 +431,9 @@ var EnumNamesRecordType = map[RecordType]string{
 	RecordTypeOPP:  "OPP",
 	RecordTypeIQC:  "IQC",
 	RecordTypeCNP:  "CNP",
+	RecordTypeCMR:  "CMR",
+	RecordTypeTBS:  "TBS",
+	RecordTypeCCT:  "CCT",
 }
 
 var EnumValuesRecordType = map[string]RecordType{
@@ -619,6 +639,9 @@ var EnumValuesRecordType = map[string]RecordType{
 	"OPP":  RecordTypeOPP,
 	"IQC":  RecordTypeIQC,
 	"CNP":  RecordTypeCNP,
+	"CMR":  RecordTypeCMR,
+	"TBS":  RecordTypeTBS,
+	"CCT":  RecordTypeCCT,
 }
 
 func (v RecordType) String() string {

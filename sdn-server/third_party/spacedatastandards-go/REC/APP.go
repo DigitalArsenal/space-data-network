@@ -380,8 +380,136 @@ func (rcv *APP) DataflowLength() int {
 /// running page and how. Referential integrity: every MODULE_ID here must
 /// resolve into MODULES, and each MODULE_ID/METHOD_ID/PORT_ID triple must
 /// name a method port advertised by that module's PLG manifest.
+/// App-wide runtime class, reusing appRuntimeTarget. Lets a pulled manifest
+/// self-describe where the app as a whole is meant to run, instead of that
+/// classification being supplied externally at install time. This is the
+/// app-level DEFAULT/DECLARATION only: an individual APPModuleRef.
+/// RUNTIME_TARGET still governs where that specific member module loads and
+/// may specialize away from RUNTIME_CLASS (for example a NODE-class app
+/// with one PAGE-capable module). Defaults to NODE to preserve the prior
+/// node-only assumption of manifests written before this field existed.
+func (rcv *APP) RUNTIME_CLASS() appRuntimeTarget {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		return appRuntimeTarget(rcv._tab.GetByte(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *APP) RuntimeClass() appRuntimeTarget {
+	return rcv.RUNTIME_CLASS()
+}
+
+/// App-wide runtime class, reusing appRuntimeTarget. Lets a pulled manifest
+/// self-describe where the app as a whole is meant to run, instead of that
+/// classification being supplied externally at install time. This is the
+/// app-level DEFAULT/DECLARATION only: an individual APPModuleRef.
+/// RUNTIME_TARGET still governs where that specific member module loads and
+/// may specialize away from RUNTIME_CLASS (for example a NODE-class app
+/// with one PAGE-capable module). Defaults to NODE to preserve the prior
+/// node-only assumption of manifests written before this field existed.
+func (rcv *APP) MutateRUNTIME_CLASS(n appRuntimeTarget) bool {
+	return rcv._tab.MutateByteSlot(26, byte(n))
+}
+
+func (rcv *APP) MutateRuntimeClass(n appRuntimeTarget) bool {
+	return rcv.MutateRUNTIME_CLASS(n)
+}
+
+/// The one ratified $CCT category this app is shelved under, using the same
+/// vocabulary and the same semantics as PLG.PRIMARY_CATEGORY, so a storefront
+/// or library shelf holds apps and modules together without translating
+/// between two classification schemes. RUNTIME_CLASS says WHERE an app runs;
+/// PRIMARY_CATEGORY says WHAT IT DOES. They are independent: a NODE-class app
+/// and a PAGE-class app can share a category.
+/// UNSPECIFIED means the publisher did not classify the app; a consumer
+/// renders it ungrouped and never infers a class.
+func (rcv *APP) PRIMARY_CATEGORY() capabilityClass {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	if o != 0 {
+		return capabilityClass(rcv._tab.GetByte(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *APP) PrimaryCategory() capabilityClass {
+	return rcv.PRIMARY_CATEGORY()
+}
+
+/// The one ratified $CCT category this app is shelved under, using the same
+/// vocabulary and the same semantics as PLG.PRIMARY_CATEGORY, so a storefront
+/// or library shelf holds apps and modules together without translating
+/// between two classification schemes. RUNTIME_CLASS says WHERE an app runs;
+/// PRIMARY_CATEGORY says WHAT IT DOES. They are independent: a NODE-class app
+/// and a PAGE-class app can share a category.
+/// UNSPECIFIED means the publisher did not classify the app; a consumer
+/// renders it ungrouped and never infers a class.
+func (rcv *APP) MutatePRIMARY_CATEGORY(n capabilityClass) bool {
+	return rcv._tab.MutateByteSlot(28, byte(n))
+}
+
+func (rcv *APP) MutatePrimaryCategory(n capabilityClass) bool {
+	return rcv.MutatePRIMARY_CATEGORY(n)
+}
+
+/// Every ratified $CCT category this app belongs to, for browse, filter and
+/// per-category counting. An app MAY carry several. If nonempty it MUST
+/// include PRIMARY_CATEGORY. Codes MUST NOT repeat.
+func (rcv *APP) CATEGORIES(j int) capabilityClass {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return capabilityClass(rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1)))
+	}
+	return 0
+}
+
+func (rcv *APP) Categories(j int) capabilityClass {
+	return rcv.CATEGORIES(j)
+}
+
+func (rcv *APP) CATEGORIESLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *APP) CategoriesLength() int {
+	return rcv.CATEGORIESLength()
+}
+
+func (rcv *APP) CATEGORIESBytes() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *APP) CategoriesBytes() []byte {
+	return rcv.CATEGORIESBytes()
+}
+
+/// Every ratified $CCT category this app belongs to, for browse, filter and
+/// per-category counting. An app MAY carry several. If nonempty it MUST
+/// include PRIMARY_CATEGORY. Codes MUST NOT repeat.
+func (rcv *APP) MutateCATEGORIES(j int, n capabilityClass) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), byte(n))
+	}
+	return false
+}
+
+func (rcv *APP) MutateCategories(j int, n capabilityClass) bool {
+	return rcv.MutateCATEGORIES(j, n)
+}
+
 func APPStart(builder *flatbuffers.Builder) {
-	builder.StartObject(11)
+	builder.StartObject(14)
 }
 func APPAddID(builder *flatbuffers.Builder, ID flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(ID), 0)
@@ -478,6 +606,30 @@ func APPStartDATAFLOWVector(builder *flatbuffers.Builder, numElems int) flatbuff
 }
 func APPStartDataflowVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return APPStartDATAFLOWVector(builder, numElems)
+}
+func APPAddRUNTIME_CLASS(builder *flatbuffers.Builder, RUNTIME_CLASS appRuntimeTarget) {
+	builder.PrependByteSlot(11, byte(RUNTIME_CLASS), 0)
+}
+func APPAddRuntimeClass(builder *flatbuffers.Builder, RUNTIME_CLASS appRuntimeTarget) {
+	APPAddRUNTIME_CLASS(builder, RUNTIME_CLASS)
+}
+func APPAddPRIMARY_CATEGORY(builder *flatbuffers.Builder, PRIMARY_CATEGORY capabilityClass) {
+	builder.PrependByteSlot(12, byte(PRIMARY_CATEGORY), 0)
+}
+func APPAddPrimaryCategory(builder *flatbuffers.Builder, PRIMARY_CATEGORY capabilityClass) {
+	APPAddPRIMARY_CATEGORY(builder, PRIMARY_CATEGORY)
+}
+func APPAddCATEGORIES(builder *flatbuffers.Builder, CATEGORIES flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(CATEGORIES), 0)
+}
+func APPAddCategories(builder *flatbuffers.Builder, CATEGORIES flatbuffers.UOffsetT) {
+	APPAddCATEGORIES(builder, CATEGORIES)
+}
+func APPStartCATEGORIESVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(1, numElems, 1)
+}
+func APPStartCategoriesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return APPStartCATEGORIESVector(builder, numElems)
 }
 func APPEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

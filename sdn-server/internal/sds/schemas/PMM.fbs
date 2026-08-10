@@ -1,5 +1,5 @@
-// Hash: e6d2299aa3197576e363815f6e6847a19a8983fdfcccb6050986e4ae4dfa15a9
-// Version: 1.170.1
+// Hash: 744d3f6e56d5fcad680f066862ec3799bfa489734a3ecc79ef7b573b1fd04540
+// Version: 1.170.3
 // -----------------------------------END_HEADER
 // Provider Module Manifest (PMM)
 // Description
@@ -226,12 +226,38 @@ table PMMModuleEntry {
   /// the linked `$PLG`, so an anonymous client can section the catalogue at
   /// boot without fetching one `$PLG` per module.
   PLUGIN_TYPE: pluginCategory = Unspecified;
+  /// The one ratified `$CCT` category this module is shelved under. Mirrors
+  /// `$PLG.PRIMARY_CATEGORY` verbatim and SUPERSEDES `PLUGIN_TYPE` as the
+  /// sanctioned way to group an offering: `pluginCategory` is single-valued,
+  /// holds a real family at ordinal 0, mixes capability families with
+  /// node-internal plumbing, and carries a deprecated vendor-derived member.
+  /// Present here, rather than only on the linked `$PLG`, so an anonymous
+  /// client can section the catalogue at boot without fetching one `$PLG` per
+  /// module. `UNSPECIFIED` MUST render as ungrouped, never as a real category.
+  ///
+  /// SIGNATURE SEAM — normative. Under the `SDN-MODULE-MANIFEST-V1` canonical
+  /// statement this field is NOT covered by `PMM.SIGNATURE`, exactly like
+  /// `NAME`, `DESCRIPTION` and `ICON_URL`. It is an UNVERIFIED PROVIDER CLAIM
+  /// resting on a signed content hash. A consumer that shelves, filters or
+  /// counts by this field MUST NOT present the resulting grouping as
+  /// authenticated, and MUST keep the verified identity (`MODULE_ID`,
+  /// `CONTENT_HASH`, `ARTIFACT_SIGNATURE`, `TRUST_TIER`) visually separable
+  /// from provider-supplied presentation. Extending the canonical statement to
+  /// cover presentation fields is a `SDN-MODULE-MANIFEST-V2` change that moves
+  /// every verifier in lockstep and is not made implicitly by adopting this
+  /// field.
+  PRIMARY_CATEGORY: capabilityClass = UNSPECIFIED;
+  /// Every ratified `$CCT` category this module belongs to, for browse, filter
+  /// and per-category counting. Mirrors `$PLG.CATEGORIES`. If nonempty it MUST
+  /// include PRIMARY_CATEGORY. Carries the same unsigned-claim caveat as
+  /// PRIMARY_CATEGORY.
+  CATEGORIES: [capabilityClass];
 }
 
 /// Provider Module Manifest — what one provider node offers, signed by that
 /// node's key.
 table PMM {
-  /// Domain of the provider, e.g. "sdn.spaceaware.io". Required. MUST equal
+  /// Domain of the provider, e.g. "node.example.org". Required. MUST equal
   /// the origin the manifest was served from.
   PROVIDER_DOMAIN: string (required);
   /// Display name of the provider.
