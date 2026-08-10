@@ -53,6 +53,18 @@ func TestBuyerDashboardReturnsPurchasesGrantsAndDeliveries(t *testing.T) {
 	if len(body.Deliveries) != 1 || body.Deliveries[0].KeyWrapStatus != "issued" {
 		t.Fatalf("dashboard deliveries = %#v, want issued delivery", body.Deliveries)
 	}
+	// The grant -> listing join is server work that was already being done to
+	// derive Deliveries and then discarded, which left the library re-fetching
+	// one listing per grant. Returning it costs nothing and removes that hop.
+	if len(body.Listings) != 1 || body.Listings[0].ListingID != purchase.ListingID {
+		t.Fatalf("dashboard listings = %#v, want the joined listing %s", body.Listings, purchase.ListingID)
+	}
+	// Same rows the deliveries were derived from — not a second, differently
+	// sourced view of the catalog.
+	if body.Listings[0].ListingID != body.Deliveries[0].ListingID {
+		t.Fatalf("listings[0].ListingID = %s, deliveries[0].ListingID = %s — these must be the same join",
+			body.Listings[0].ListingID, body.Deliveries[0].ListingID)
+	}
 }
 
 func TestAdminDashboardReturnsModerationTrustAndPaymentSurfaces(t *testing.T) {

@@ -978,8 +978,17 @@ func (h *APIHandler) handleSellerDashboard(w http.ResponseWriter, r *http.Reques
 
 // BuyerDashboardResponse represents the buyer dashboard data
 type BuyerDashboardResponse struct {
-	ActiveGrants    []*AccessGrant            `json:"active_grants"`
-	Grants          []*AccessGrant            `json:"grants"`
+	ActiveGrants []*AccessGrant `json:"active_grants"`
+	Grants       []*AccessGrant `json:"grants"`
+	// Listings is the grant -> listing join this handler ALREADY performs in
+	// order to derive Deliveries. It used to be computed and thrown away, which
+	// left the client re-fetching, one request per grant, exactly the rows the
+	// server had just read. Same key as SellerDashboardResponse.Listings, and
+	// joined by ListingID the same way dashboardDeliveries joins it.
+	//
+	// A listing can repeat when a buyer holds more than one grant against it;
+	// callers index by ListingID rather than iterating positionally.
+	Listings        []Listing                 `json:"listings"`
 	TotalGrants     int                       `json:"total_grants"`
 	RecentPurchases []*PurchaseRequest        `json:"recent_purchases,omitempty"`
 	Purchases       []*PurchaseRequest        `json:"purchases,omitempty"`
@@ -1014,6 +1023,7 @@ func (h *APIHandler) handleBuyerDashboard(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, BuyerDashboardResponse{
 		ActiveGrants:    grants,
 		Grants:          grants,
+		Listings:        listings,
 		TotalGrants:     len(grants),
 		RecentPurchases: purchases,
 		Purchases:       purchases,
