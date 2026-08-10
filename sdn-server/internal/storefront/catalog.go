@@ -13,7 +13,19 @@ import (
 const (
 	DHTKeyListingPrefix  = "/sdn/listing/"
 	DHTKeyProviderPrefix = "/sdn/provider/"
-	DHTKeyCategoryPrefix = "/sdn/category/"
+
+	// DHTKeyDataTypePrefix indexes listings by SDS DATA TYPE — the $OMM, $CDM,
+	// $CAT codes in STF.DATA_TYPES. It was called a "category" index, and it
+	// never was one: a data-type list is what a listing DELIVERS, not what the
+	// unit DOES. $CCT capabilityClass (STF.PRIMARY_CATEGORY, SDS v1.186.0) is
+	// the capability category, and $STF forbids re-deriving one from
+	// DATA_TYPES precisely because they are different questions.
+	//
+	// The Go identifier is corrected; the key STRING is deliberately NOT.
+	// Renaming a published routing key is an owner call, and this path is
+	// dead-wired today (main.go constructs the catalog with a nil DHT), so no
+	// live key exists to migrate. Filed rather than changed under the wire.
+	DHTKeyDataTypePrefix = "/sdn/category/"
 )
 
 // CatalogEntry represents a listing entry in the DHT catalog
@@ -89,17 +101,27 @@ func (c *Catalog) PublishListing(ctx context.Context, listing *Listing) error {
 		}
 	}
 
-	// Update category indexes
+	// Update data-type indexes.
+	//
+	// The code is used VERBATIM. It used to be lowercased into the key, which
+	// silently rewrote every SDS type code the standard defines in caps — $OMM
+	// became "omm" — and the SDS capitalization rule is not cosmetic: the code
+	// IS the identifier. A lookup for the canonical code then missed the index
+	// built from it.
 	for _, dt := range listing.DataTypes {
-		categoryKey := DHTKeyCategoryPrefix + strings.ToLower(dt)
+		dataType := strings.TrimSpace(dt)
+		if dataType == "" {
+			continue
+		}
+		dataTypeKey := DHTKeyDataTypePrefix + dataType
 		c.mu.RLock()
-		categoryIDs := c.getCategoryListingIDsLocked(dt)
+		dataTypeIDs := c.getDataTypeListingIDsLocked(dataType)
 		c.mu.RUnlock()
 
 		if c.dht != nil {
-			catData, _ := json.Marshal(categoryIDs)
-			if err := c.dht.PutValue(ctx, categoryKey, catData); err != nil {
-				log.Warnf("Failed to publish category index to DHT: %v", err)
+			catData, _ := json.Marshal(dataTypeIDs)
+			if err := c.dht.PutValue(ctx, dataTypeKey, catData); err != nil {
+				log.Warnf("Failed to publish data-type index to DHT: %v", err)
 			}
 		}
 	}
@@ -160,13 +182,18 @@ func (c *Catalog) FetchProviderListings(ctx context.Context, providerPeerID stri
 	return ids, nil
 }
 
-// FetchCategoryListings fetches listing IDs for a data type category from DHT
-func (c *Catalog) FetchCategoryListings(ctx context.Context, dataType string) ([]string, error) {
+// FetchDataTypeListings fetches listing IDs for one SDS DATA TYPE from the DHT.
+//
+// This answers "who delivers $OMM", not "what capability class is this" — the
+// latter is STF.PRIMARY_CATEGORY and has no index here. The type code is used
+// verbatim: it is an SDS identifier, and case-folding it produced a key no
+// canonical lookup could hit.
+func (c *Catalog) FetchDataTypeListings(ctx context.Context, dataType string) ([]string, error) {
 	if c.dht == nil {
 		return nil, fmt.Errorf("DHT not available")
 	}
 
-	key := DHTKeyCategoryPrefix + strings.ToLower(dataType)
+	key := DHTKeyDataTypePrefix + strings.TrimSpace(dataType)
 	data, err := c.dht.GetValue(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch category listings: %w", err)
@@ -209,15 +236,15 @@ func (c *Catalog) getProviderListingIDsLocked(providerPeerID string) []string {
 	return ids
 }
 
-func (c *Catalog) getCategoryListingIDsLocked(dataType string) []string {
+func (c *Catalog) getDataTypeListingIDsLocked(dataType string) []string {
 	var ids []string
-	dt := strings.ToLower(dataType)
+	dt := strings.TrimSpace(dataType)
 	for _, e := range c.entries {
 		if !e.Active {
 			continue
 		}
 		for _, d := range e.DataTypes {
-			if strings.ToLower(d) == dt {
+			if strings.TrimSpace(d) == dt {
 				ids = append(ids, e.ListingID)
 				break
 			}

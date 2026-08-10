@@ -2,6 +2,7 @@ package storefront
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	sdsacl "github.com/DigitalArsenal/spacedatastandards.org/lib/go/ACL"
@@ -9,16 +10,17 @@ import (
 	sdsrev "github.com/DigitalArsenal/spacedatastandards.org/lib/go/REV"
 	sdsstf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STF"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/spacedatanetwork/sdn-server/internal/cct"
 )
 
-func encodeStorefrontRecord(schemaName string, data interface{}) ([]byte, error) {
+func encodeStorefrontRecord(schemaName string, data interface{}, moduleCategory func(string) string) ([]byte, error) {
 	switch schemaName {
 	case SchemaSTF:
 		listing, ok := listingRecord(data)
 		if !ok {
 			return nil, fmt.Errorf("%s expects Listing, got %T", schemaName, data)
 		}
-		return encodeListingRecord(listing), nil
+		return encodeListingRecord(listing, moduleCategory), nil
 	case SchemaACL:
 		grant, ok := accessGrantRecord(data)
 		if !ok {
@@ -86,7 +88,36 @@ func reviewRecord(data interface{}) (*Review, bool) {
 	}
 }
 
-func encodeListingRecord(listing *Listing) []byte {
+// listingPrimaryCategory resolves the $CCT capabilityClass a listing shelves
+// under.
+//
+// Before SDS v1.186.0 an $STF carried no capability category at all — only
+// DATA_TYPES and TAGS — so a storefront shelf and a library shelf were grouped
+// by two unrelated systems. $STF now forbids re-deriving a category from
+// DATA_TYPES, TAGS or TITLE, none of which are a controlled vocabulary, which
+// leaves exactly one honest source: the module behind a module listing.
+//
+// A data-stream listing therefore resolves to UNSPECIFIED, and so does a module
+// listing whose module the catalog never categorized. That is the correct
+// answer, not a gap to paper over: PRIMARY_CATEGORY says WHAT THE UNIT DOES,
+// and nothing in a data-stream listing states it. LISTING_KIND (delivery kind)
+// and ACCESS_TYPE (commercial model) already carry what those listings do know,
+// and neither is a substitute.
+func listingPrimaryCategory(listing *Listing, moduleCategory func(string) string) string {
+	if moduleCategory == nil || listing.ListingKind != ListingKindWASMModule {
+		return cct.Unspecified
+	}
+	moduleID := strings.TrimSpace(listing.ProtectedDelivery.ModuleID)
+	if moduleID == "" {
+		return cct.Unspecified
+	}
+	if class := strings.TrimSpace(moduleCategory(moduleID)); class != "" {
+		return class
+	}
+	return cct.Unspecified
+}
+
+func encodeListingRecord(listing *Listing, moduleCategory func(string) string) []byte {
 	builder := flatbuffers.NewBuilder(2048)
 
 	listingID := stringOffset(builder, listing.ListingID)
@@ -107,6 +138,7 @@ func encodeListingRecord(listing *Listing) []byte {
 	license := stringOffset(builder, listing.License)
 	signature := fbByteVector(builder, listing.Signature, sdsstf.STFStartSIGNATUREVector)
 	sourcePeerID := stringOffset(builder, listing.SourcePeerID)
+	primaryCategory := listingPrimaryCategory(listing, moduleCategory)
 
 	sdsstf.STFStart(builder)
 	sdsstf.STFAddLISTING_ID(builder, listingID)
@@ -136,6 +168,17 @@ func encodeListingRecord(listing *Listing) []byte {
 	sdsstf.STFAddTERMS_CID(builder, termsCID)
 	sdsstf.STFAddLICENSE(builder, license)
 	sdsstf.STFAddSOURCE_PEER_ID(builder, sourcePeerID)
+	// The shelf. Written explicitly even when it is UNSPECIFIED — $CCT holds
+	// UNSPECIFIED at ordinal 0 so the default would be correct, but a reader of
+	// these bytes cannot distinguish a defaulted field from a stated one, and
+	// this lane is exactly where that ambiguity used to do damage.
+	//
+	// CATEGORIES is left empty: it is for listings that genuinely span several
+	// classes, and a category joined from one single-valued module family is
+	// always exactly one. $STF defines an empty list with a set
+	// PRIMARY_CATEGORY as membership in that one category, so the honest
+	// encoding is silence rather than a one-element vector.
+	sdsstf.STFAddPRIMARY_CATEGORY(builder, sdsstf.EnumValuescapabilityClass[primaryCategory])
 	root := sdsstf.STFEnd(builder)
 	sdsstf.FinishSTFBuffer(builder, root)
 	return builder.FinishedBytes()

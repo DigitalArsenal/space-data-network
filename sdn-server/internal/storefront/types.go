@@ -199,6 +199,26 @@ type Listing struct {
 	License            string             `json:"license"`
 	Signature          []byte             `json:"signature"`
 	SourcePeerID       string             `json:"source_peer_id,omitempty"` // empty = local, set = discovered from remote peer
+
+	// PrimaryCategory is the $CCT capabilityClass member the listing shelves
+	// under — the same value encodeListingRecord writes to
+	// STF.PRIMARY_CATEGORY, so the JSON a client reads and the FlatBuffer a
+	// peer verifies say one thing.
+	//
+	// DERIVED, never stored. It is stamped on read from the node's module
+	// catalog join, the one authority $PLG and $PMM also answer from; there is
+	// deliberately no storefront_listings column, because a persisted copy
+	// would keep the shelf a re-staged catalog moved. It is likewise never
+	// accepted on input: a client cannot declare its own category by POSTing
+	// one.
+	//
+	// UNSPECIFIED for every data-stream listing, and for a module listing whose
+	// module the catalog never categorized. $STF forbids re-deriving a category
+	// from DATA_TYPES, TAGS or TITLE, so unknown stays unknown.
+	//
+	// IDL capitalization, per the SDS JSON key rule: this key mirrors a record
+	// field, not a synthesized one.
+	PrimaryCategory string `json:"PRIMARY_CATEGORY"`
 }
 
 // AccessGrant represents a data access grant (ACL)
