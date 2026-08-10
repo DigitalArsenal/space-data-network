@@ -1,6 +1,6 @@
 {
   "name": "@spacedatanetwork/sdn-js",
-  "version": "2.0.19",
+  "version": "3.0.0",
   "description": "Space Data Network JavaScript library for browser and Node.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -20,10 +20,6 @@
     "./storefront": {
       "types": "./dist/storefront/index.d.ts",
       "import": "./dist/storefront/index.mjs"
-    },
-    "./astro": {
-      "types": "./dist/astro/index.d.ts",
-      "import": "./dist/astro/index.mjs"
     }
   },
   "files": [
@@ -101,7 +97,6 @@
     "monaco-editor": "^0.55.1",
     "multiformats": "^13.3.7",
     "qrcode": "^1.5.3",
-    "satellite.js": "^7.0.1",
     "space-data-module-sdk": "https://github.com/DigitalArsenal/space-data-module-sdk/archive/72056a9231cdf88513514b6745b2238d1f103436.tar.gz",
     "spacedatastandards.org": "https://github.com/DigitalArsenal/spacedatastandards.org/archive/refs/tags/v1.177.0.tar.gz",
     "uint8arraylist": "^2.4.8",

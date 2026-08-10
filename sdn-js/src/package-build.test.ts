@@ -126,7 +126,6 @@ describe('sdn-js package build', () => {
 
     await expect(fs.access(path.resolve(DIST_PATH, 'chunks'))).rejects.toThrow();
     expect(modules.map((modulePath) => path.relative(DIST_PATH, modulePath))).toEqual([
-      'astro/index.mjs',
       'index.mjs',
       'status/index.mjs',
       'storefront/index.mjs',
@@ -145,14 +144,67 @@ describe('sdn-js package build', () => {
     expect(packageJson.exports?.['./status']?.types).toBe('./dist/status/index.d.ts');
     expect(packageJson.exports?.['./storefront']?.import).toBe('./dist/storefront/index.mjs');
     expect(packageJson.exports?.['./storefront']?.types).toBe('./dist/storefront/index.d.ts');
-    expect(packageJson.exports?.['./astro']?.import).toBe('./dist/astro/index.mjs');
-    expect(packageJson.exports?.['./astro']?.types).toBe('./dist/astro/index.d.ts');
     expect(
       Object.keys(packageJson.scripts ?? {}).some((name) =>
         name.includes('runtime-browser'),
       ),
     ).toBe(false);
     expect(packageJson.scripts?.prepublishOnly).not.toContain('--prefix');
+  });
+
+  /**
+   * THE ASTRO FLOOR, INVERTED (3.0.0, graph task
+   * `sdn-js-astro-ships-a-js-propagator`).
+   *
+   * Until 2.0.19 this file asserted that `./astro` EXISTED. It shipped a
+   * JavaScript SGP4/SDP4 propagator (satellite.js), GMST and ECI->ECEF
+   * rotations, golden-section TCA refinement and a Foster probability-of-
+   * collision integral — as published SDK API, with satellite.js's own WASM
+   * runtime deliberately shimmed out so the browser bundle took the pure-JS
+   * path. OWNER LAW 2026-08-09, verbatim: "There is no JS physics at all.
+   * Everything we are doing is through WASM space data module SDK no
+   * exceptions."
+   *
+   * Deleting the export is only half the job; the other half is making the
+   * deletion load-bearing, so the same contract line that used to demand the
+   * propagator now forbids it. Propagation is `propagator/sgp4`, frames/time
+   * are `foundation/frames` + `foundation/time`, and screening/Pc is
+   * `analysis/conjunction-assessment` — all reached through the
+   * space-data-module-sdk browser harness, never re-implemented here.
+   */
+  it('publishes NO astro subpath and depends on no JS propagator', async () => {
+    const packageJson = JSON.parse(await fs.readFile(PACKAGE_JSON_PATH, 'utf8'));
+
+    expect(packageJson.exports?.['./astro']).toBeUndefined();
+    expect(Object.keys(packageJson.exports ?? {})).toEqual([
+      '.',
+      './ui',
+      './status',
+      './storefront',
+    ]);
+    expect(packageJson.dependencies?.['satellite.js']).toBeUndefined();
+    expect(packageJson.devDependencies?.['satellite.js']).toBeUndefined();
+
+    // Removing a published export is a MAJOR break, and 2.0.19 is on npm with
+    // `dist/astro/index.mjs` inside its tarball.
+    expect(Number.parseInt(String(packageJson.version).split('.')[0], 10)).toBeGreaterThanOrEqual(3);
+
+    // No published byte may carry the JS propagator, under any name.
+    const modules = await collectDistModulePaths();
+    const offenders: string[] = [];
+    for (const modulePath of modules) {
+      const source = await fs.readFile(modulePath, 'utf8');
+      if (/twoline2satrec|json2satrec|\bsatrec\b|gstime\s*\(/.test(source)) {
+        offenders.push(path.relative(DIST_PATH, modulePath));
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // And no source file may re-import it.
+    await expect(fs.access(path.resolve(__dirname, 'astro'))).rejects.toThrow();
+    await expect(
+      fs.access(path.resolve(__dirname, 'shims/satellite-wasm-disabled.ts')),
+    ).rejects.toThrow();
   });
 
   it('builds only the package core (UI apps removed — owner clean slate 2026-07-24)', async () => {

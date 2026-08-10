@@ -56,17 +56,12 @@ const sharedBuildOptions = {
     'multiformats/hashes/sha2': path.join(packageRoot, 'src/shims/multiformats-sha2-native.ts'),
   },
   plugins: [
-    {
-      name: 'satellite-js-wasm-disabled',
-      setup(pluginBuild) {
-        pluginBuild.onResolve({ filter: /^\.\/wasm\/index\.js$/ }, (args) => {
-          if (!args.importer.includes(`node_modules${path.sep}satellite.js${path.sep}`)) {
-            return null;
-          }
-          return { path: path.join(packageRoot, 'src/shims/satellite-wasm-disabled.ts') };
-        });
-      },
-    },
+    // REMOVED in 3.0.0: the `satellite-js-wasm-disabled` plugin, which resolved
+    // satellite.js's optional WASM entry to an empty shim so the browser bundle
+    // took the pure-JS SGP4 path. Under owner law 2026-08-09 ("There is no JS
+    // physics at all. Everything we are doing is through WASM space data module
+    // SDK no exceptions") that plugin was the violation stated out loud. The
+    // dependency, the shim and the `./astro` entry below all went with it.
     {
       // Loop D.1: the FlatSQL-WASM engine (THE SDNNode store) is bundled
       // into the package entries. Its emscripten glue / wasm loader import
@@ -248,7 +243,6 @@ await build({
     path.join(packageRoot, 'src/ui/index.ts'),
     path.join(packageRoot, 'src/status/index.ts'),
     path.join(packageRoot, 'src/storefront/index.ts'),
-    path.join(packageRoot, 'src/astro/index.ts'),
   ],
   outdir: path.join(packageRoot, 'dist'),
   outbase: path.join(packageRoot, 'src'),
