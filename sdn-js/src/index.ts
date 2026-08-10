@@ -515,3 +515,12 @@ export type {
 } from './transport/http';
 export { SessionAuth } from './transport/auth';
 export type { AuthProvider } from './transport/auth';
+// TLE text -> CCSDS OMM record. FORMAT CONVERSION ONLY (owner law 2026-08-09:
+// "There is no JS physics at all"). This is what remains of the retired
+// `./astro` subpath export, which shipped a JavaScript SGP4/SDP4 propagator,
+// GMST/ECI->ECEF rotations and a probability-of-collision integral; all of that
+// is gone as of 3.0.0 and belongs to `propagator/sgp4`, `foundation/frames` and
+// `analysis/conjunction-assessment` reached through the space-data-module-sdk
+// browser harness. Parsing element text is not propagating it, so it stays.
+export { tleToOMM } from './format/tle';
+export type { OmmRecord, TleLines } from './format/tle';

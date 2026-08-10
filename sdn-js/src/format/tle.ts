@@ -1,14 +1,32 @@
 /**
- * Two-line element set parsing and conversion to CCSDS OMM records.
+ * Two-line element set TEXT PARSING and conversion to CCSDS OMM records.
+ *
+ * FORMAT CONVERSION ONLY — no propagation, no frames, no physics of any kind.
+ * Elements are parsed out of 69-column fixed-width text and restated under
+ * CCSDS field names; they are never ADVANCED. Nothing here integrates, rotates,
+ * or evaluates an orbit.
+ *
+ * That distinction is the whole reason this file survived the excision of
+ * `src/astro/` (graph task `sdn-js-astro-ships-a-js-propagator`). OWNER LAW
+ * 2026-08-09, verbatim: "There is no JS physics at all. Everything we are doing
+ * is through WASM space data module SDK no exceptions." JavaScript in a shipped
+ * bundle holds exactly four things — UI state, rendering glue, unit/format
+ * conversion, and dispatch. This is the third one, and it must stay the third
+ * one: if a future edit here needs to know where an object IS rather than what
+ * its element set SAYS, that belongs in `propagator/sgp4` reached through the
+ * space-data-module-sdk browser harness, never in this file.
  *
  * Field names follow the OMM FlatBuffer surface used across SDN (see
  * src/ui/runtime/omm-flatbuffer.ts), so the output of tleToOMM() can be fed
- * directly to the OMM builders and to propagate().
+ * directly to the OMM builders and to any module that takes an OMM record.
  */
 
-import type { TleLines } from './internal';
-
-export type { TleLines };
+/** The two element lines of a TLE, plus the optional title line. */
+export interface TleLines {
+  line1: string;
+  line2: string;
+  name?: string;
+}
 
 export interface OmmRecord {
   CCSDS_OMM_VERS: number;
