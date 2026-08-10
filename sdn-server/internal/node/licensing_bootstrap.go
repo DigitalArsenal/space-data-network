@@ -24,6 +24,7 @@ import (
 	lcf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LCF"
 	plg "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/spacedatanetwork/sdn-server/internal/cct"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
@@ -1109,19 +1110,43 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 
 	nowMs := uint64(time.Now().UnixMilli())
 
-	// PLUGIN_TYPE is the listing's SHELF. It was a compile-time literal here,
-	// which meant every module this node published announced the same family
-	// regardless of what it actually was — a category surface that was
-	// structurally incapable of being wrong in an interesting way, because it
-	// was never right. The declared family comes from the deployed $PMM module
-	// catalog (pmm.CatalogPluginTypes), joined onto the asset by the registry.
+	// The listing's SHELF, written twice on purpose.
 	//
-	// An unrecognized or absent symbol resolves to Unspecified. It does NOT
-	// fall through to the flatbuffers default, which is Sensor.
-	pluginCategory, known := plg.EnumValuespluginCategory[strings.TrimSpace(asset.PluginType)]
+	// PRIMARY_CATEGORY ($CCT capabilityClass, SDS v1.186.0) is the shelf every
+	// storefront, library and search surface now groups by. PLUGIN_TYPE is the
+	// retired `pluginCategory` vocabulary, kept on the wire because consumers
+	// pinned before the taxonomy existed still read it — $PLG declares it a
+	// FALLBACK, consulted only when PRIMARY_CATEGORY is UNSPECIFIED. The
+	// migration is one-way: nothing here ever back-derives PLUGIN_TYPE from
+	// PRIMARY_CATEGORY, and it could not, since several old families collapse
+	// into one new class.
+	//
+	// Both come from the one declared source: the deployed $PMM module catalog
+	// (pmm.CatalogPluginTypes), joined onto the asset by the registry. It was
+	// a compile-time literal here until wave 1, which meant every module this
+	// node published announced the same family regardless of what it was.
+	//
+	// Note the asymmetry in how the two defaults are handled, because it is the
+	// defect this taxonomy fixes. PLUGIN_TYPE MUST be spelled Unspecified
+	// explicitly: pluginCategory's zero value is Sensor, so an unset field
+	// there reads as a confident wrong answer. PRIMARY_CATEGORY does not need
+	// that care — UNSPECIFIED holds ordinal 0 — but is written explicitly
+	// anyway so a reader of these bytes cannot mistake "the publisher stated
+	// nothing" for "the encoder forgot the field".
+	declaredType := strings.TrimSpace(asset.PluginType)
+	pluginCategory, known := plg.EnumValuespluginCategory[declaredType]
 	if !known {
 		pluginCategory = plg.EnumValuespluginCategory[pluginCategoryUnspecified]
 	}
+	primaryCategory := plg.EnumValuescapabilityClass[cct.FromPluginType(declaredType)]
+
+	// CATEGORIES is left EMPTY, and that is a statement rather than an
+	// omission. It exists for modules that genuinely belong to several classes;
+	// pluginCategory is single-valued, so a category derived from it is always
+	// exactly one, and $PLG defines an empty list with a set PRIMARY_CATEGORY
+	// to mean precisely "belongs to that one category". Writing a one-element
+	// vector here would manufacture the appearance of a multi-category
+	// declaration the publisher never made.
 
 	plg.PLGStart(builder)
 	plg.PLGAddPLUGIN_ID(builder, pluginIDOffset)
@@ -1129,6 +1154,7 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 	plg.PLGAddVERSION(builder, versionOffset)
 	plg.PLGAddDESCRIPTION(builder, descriptionOffset)
 	plg.PLGAddPLUGIN_TYPE(builder, pluginCategory)
+	plg.PLGAddPRIMARY_CATEGORY(builder, primaryCategory)
 	plg.PLGAddABI_VERSION(builder, 1)
 	plg.PLGAddENCRYPTED(builder, true)
 	if requiredScopeOffset != 0 {

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/cct"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/pmm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
@@ -225,6 +226,33 @@ func (n *Node) applyModuleCatalogPluginTypes(reg *license.PluginRegistry) {
 		return
 	}
 	reg.SetPluginTypes(types)
+}
+
+// ModuleCapabilityClass resolves a module ID to the $CCT capabilityClass member
+// it shelves under, reading the SAME registry join that $PLG and $PMM encode
+// from.
+//
+// This is the storefront's only door to a category. It is a live lookup rather
+// than a snapshot, so a re-staged catalog re-shelves storefront listings on the
+// same refresh that re-categorizes the $PLG lane — there is no second copy to
+// forget to update.
+//
+// An unknown module, an uncategorized one, and a node with no registry at all
+// are the same answer: UNSPECIFIED. $CCT defines that to render ungrouped, and
+// this function never guesses a class from an ID, a name or a tag.
+func (n *Node) ModuleCapabilityClass(moduleID string) string {
+	if n == nil {
+		return cct.Unspecified
+	}
+	reg := n.PluginRegistry()
+	if reg == nil {
+		return cct.Unspecified
+	}
+	asset, ok := reg.Get(strings.TrimSpace(moduleID))
+	if !ok {
+		return cct.Unspecified
+	}
+	return cct.FromPluginType(asset.PluginType)
 }
 
 // trustAnchor derives the anchor from the node's own identity.

@@ -8,6 +8,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 
 	sdspmm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PMM"
+	"github.com/spacedatanetwork/sdn-server/internal/cct"
 )
 
 // NOTE on the enums: the generated Go binding declares its enum TYPES unexported
@@ -101,6 +102,25 @@ func MarshalBinary(m *Manifest) ([]byte, error) {
 		sdspmm.PMMModuleEntryAddSUPERSEDES_CONTENT_HASH(b, supersedes)
 		sdspmm.PMMModuleEntryAddUPDATED_AT(b, updatedAt)
 		sdspmm.PMMModuleEntryAddPLUGIN_TYPE(b, sdspmm.EnumValuespluginCategory[e.PluginType])
+		// PRIMARY_CATEGORY ($CCT, SDS v1.186.0) supersedes PLUGIN_TYPE as the
+		// grouping vocabulary. It is carried HERE, on the manifest entry,
+		// rather than only on the linked $PLG, so an anonymous client can
+		// section the whole catalogue at boot without fetching one $PLG per
+		// module — which is the entire reason $PMM mirrors it.
+		//
+		// PLUGIN_TYPE keeps being written: $PLG declares it the fallback for
+		// consumers pinned before the taxonomy, read only when
+		// PRIMARY_CATEGORY is UNSPECIFIED. The two never disagree because both
+		// resolve from the same validated e.PluginType symbol.
+		//
+		// SIGNATURE SEAM: $PMM states normatively that PRIMARY_CATEGORY is NOT
+		// covered by PMM.SIGNATURE under SDN-MODULE-MANIFEST-V1 — it sits with
+		// NAME, DESCRIPTION and ICON_URL as an unverified provider claim
+		// resting on a signed content hash. CanonicalStatement is therefore
+		// deliberately NOT extended to cover it; doing so would be a V2 change
+		// that has to move every verifier in lockstep.
+		// TestCanonicalStatementExcludesPresentationFields holds that seam.
+		sdspmm.PMMModuleEntryAddPRIMARY_CATEGORY(b, sdspmm.EnumValuescapabilityClass[cct.FromPluginType(e.PluginType)])
 		moduleOffsets = append(moduleOffsets, sdspmm.PMMModuleEntryEnd(b))
 	}
 

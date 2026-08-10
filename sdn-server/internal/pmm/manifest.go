@@ -17,6 +17,7 @@ package pmm
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -26,6 +27,7 @@ import (
 
 	sdspmm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PMM"
 
+	"github.com/spacedatanetwork/sdn-server/internal/cct"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
 
@@ -98,9 +100,18 @@ type Entry struct {
 	IconURL           string   `json:"ICON_URL"`
 	SupersedesHash    string   `json:"SUPERSEDES_CONTENT_HASH"`
 	UpdatedAt         string   `json:"UPDATED_AT"`
-	// PluginType is the module's family and the ONLY sanctioned way to group an
-	// offering. A client MUST read this and MUST NOT infer family from the shape
-	// of MODULE_ID, which carries no normative structure.
+	// PluginType is the module's declared `pluginCategory` family.
+	//
+	// It is no longer the grouping vocabulary: $CCT `capabilityClass`, projected
+	// as PRIMARY_CATEGORY by Entry.MarshalJSON and encoded onto the record by
+	// MarshalBinary, superseded it at SDS v1.186.0. A consumer that can read
+	// PRIMARY_CATEGORY MUST prefer it and consult PLUGIN_TYPE only when
+	// PRIMARY_CATEGORY is UNSPECIFIED.
+	//
+	// This stays the catalog's INPUT field, and the only one: PRIMARY_CATEGORY
+	// is derived from it, never declared alongside it. Two declarable category
+	// fields would be two authorities that can disagree, which is the failure
+	// mode the whole lane is built to avoid.
 	PluginType string `json:"PLUGIN_TYPE"`
 
 	// SourceArtifact is the on-disk file whose bytes back this entry. It is
@@ -108,6 +119,24 @@ type Entry struct {
 	// is never encoded into the record or the signed statement, because a client
 	// must not learn the provider's local layout.
 	SourceArtifact string `json:"source_artifact,omitempty"`
+}
+
+// MarshalJSON projects the entry with the derived $CCT category alongside the
+// declared family, so the JSON surface and the FlatBuffer say the same thing.
+//
+// PRIMARY_CATEGORY is emitted, never accepted. There is no matching
+// UnmarshalJSON, so a catalog file that tries to declare the key is ignored
+// rather than obeyed — the derivation from PLUGIN_TYPE is the only path to a
+// category, on every surface. IDL capitalization per the SDS JSON rule.
+//
+// The local `entry` type is what stops this from recursing: it has Entry's
+// fields and tags but not its methods.
+func (e Entry) MarshalJSON() ([]byte, error) {
+	type entry Entry
+	return json.Marshal(struct {
+		entry
+		PrimaryCategory string `json:"PRIMARY_CATEGORY"`
+	}{entry(e), cct.FromPluginType(e.PluginType)})
 }
 
 // Manifest is the whole record.
