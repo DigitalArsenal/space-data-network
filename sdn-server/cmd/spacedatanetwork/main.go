@@ -1338,6 +1338,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					log.Warnf("Failed to initialize storefront store: %v", err)
 				} else {
+					// $STF.PRIMARY_CATEGORY comes from the node's module
+					// registry join, not from a storefront-local table: one
+					// catalog is the authority for the shelf on $PLG, $PMM and
+					// $STF alike. Injected here because internal/storefront
+					// must not grow its own catalog reader.
+					sfStore.SetModuleCategoryResolver(n.ModuleCapabilityClass)
 					sfSigningKey, err := storefrontSigningKeyFromRaw(n.SigningKey())
 					if err != nil {
 						log.Warnf("Storefront listings will be unsigned; node signing key unavailable: %v", err)

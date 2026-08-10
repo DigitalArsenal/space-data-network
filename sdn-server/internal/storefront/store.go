@@ -37,6 +37,36 @@ type Store struct {
 	db        *sql.DB // own engine-backed database for index tables
 	closer    func() error
 	mu        sync.RWMutex
+
+	// moduleCategory resolves a module listing's MODULE_ID to the $CCT
+	// capabilityClass member it shelves under, so an encoded $STF can carry
+	// PRIMARY_CATEGORY.
+	//
+	// It is a JOIN, injected by the node, and deliberately NOT a stored column.
+	// The category has exactly one authority — the deployed $PMM module
+	// catalog, the same one $PLG and $PMM read — and persisting a per-listing
+	// copy here would create a second one that drifts the moment a catalog is
+	// re-staged without every listing being rewritten. Resolving at encode time
+	// means all three records answer from the same source by construction.
+	//
+	// nil is the honest default: a store nobody wired a catalog into knows no
+	// categories and encodes UNSPECIFIED, which $CCT defines to render as
+	// ungrouped.
+	moduleCategory func(moduleID string) string
+}
+
+// SetModuleCategoryResolver injects the module-to-category join used when
+// encoding $STF.PRIMARY_CATEGORY. Passing nil restores the "this store knows no
+// categories" default.
+//
+// This is the whole seam. internal/storefront is a pre-existing
+// connectors-boundary breach whose migration is an open owner decision
+// (sds-commercial-schemas.md §8.11), so it takes an injected lookup rather than
+// growing its own catalog reader, its own table or its own route.
+func (s *Store) SetModuleCategoryResolver(resolve func(moduleID string) string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.moduleCategory = resolve
 }
 
 // NewStore creates a new storefront store backed by FlatSQL. Index tables
@@ -526,8 +556,11 @@ func (s *Store) GetOrCreateSecret(name string, genBytes int) (string, error) {
 
 // storeRecordToFlatSQL encodes canonical SDS FlatBuffers and stores them through FlatSQL.
 // Returns the content identifier (CID).
+// Every caller already holds s.mu (CreateListing and its siblings lock for the
+// whole write), so s.moduleCategory is read here without re-locking — taking it
+// again would deadlock against that outer hold.
 func (s *Store) storeRecordToFlatSQL(schemaName string, data interface{}, peerID string, signature []byte) (string, error) {
-	recordData, err := encodeStorefrontRecord(schemaName, data)
+	recordData, err := encodeStorefrontRecord(schemaName, data, s.moduleCategory)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode %s record: %w", schemaName, err)
 	}
@@ -543,6 +576,14 @@ func (s *Store) storeRecordToFlatSQL(schemaName string, data interface{}, peerID
 func (s *Store) CreateListing(listing *Listing) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// The shelf is derived, never declared. A caller that arrived with
+	// PRIMARY_CATEGORY set — a client POSTing one, or a listing round-tripped
+	// through a read that stamped it — must not get to choose its own category,
+	// so the field is cleared before encoding and re-derived from the catalog
+	// join on the way out. Without this, self-classification would be one
+	// forged JSON key away.
+	listing.PrimaryCategory = ""
 
 	// Store canonical record through FlatSQL (content-addressed)
 	peerID := listing.ProviderPeerID
@@ -661,8 +702,23 @@ func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 	if listing.ListingKind == "" {
 		listing.ListingKind = ListingKindDataStream
 	}
+	s.stampPrimaryCategory(&listing)
 
 	return &listing, nil
+}
+
+// stampPrimaryCategory fills the derived shelf on a listing read back from the
+// index tables.
+//
+// It calls the SAME resolver encodeListingRecord uses, so a listing's JSON and
+// its encoded $STF cannot disagree — they are two renderings of one lookup, not
+// two copies of a stored value. Callers already hold s.mu (read or write); the
+// resolver field is only replaced under the full lock.
+func (s *Store) stampPrimaryCategory(listing *Listing) {
+	if listing == nil {
+		return
+	}
+	listing.PrimaryCategory = listingPrimaryCategory(listing, s.moduleCategory)
 }
 
 // SearchListings searches listings with filters using the index tables.
@@ -845,6 +901,7 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		if listing.ListingKind == "" {
 			listing.ListingKind = ListingKindDataStream
 		}
+		s.stampPrimaryCategory(&listing)
 
 		listings = append(listings, listing)
 	}
