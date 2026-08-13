@@ -945,6 +945,24 @@ func (s *FlatSQLStore) initTables() error {
 		return fmt.Errorf("failed to create time window index: %w", err)
 	}
 
+	// idx_sdn_record_index_schema_rowid serves the untagged raw-record page
+	// (queryRawRecords): with equality on schema_name the index's implicit
+	// rowid tail IS the scan order, so `WHERE idx.schema_name = ? AND
+	// idx.rowid > ? ORDER BY idx.rowid` plans as a pure seek + in-order scan
+	// (verified: `SEARCH idx USING INDEX idx_sdn_record_index_schema_rowid
+	// (schema_name=? AND rowid>?)`, no temp B-tree). Without it the WS7.3d
+	// rowid sync cursor sorts the ENTIRE schema through a temp B-tree to hand
+	// back one page — measured 59.2 s over 54 PRR pages in one host-01 boot.
+	// REQUIRED (built even on existing databases): the untagged page below is
+	// planned around it. It is the narrowest possible index (schema_name +
+	// implicit rowid), so the one-time backfill build is a single scan.
+	if err := s.createRequiredStartupIndex("sdn_record_index", "idx_sdn_record_index_schema_rowid", `
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_schema_rowid
+		ON sdn_record_index (schema_name)
+	`); err != nil {
+		return fmt.Errorf("failed to create schema rowid index: %w", err)
+	}
+
 	sourceTagsExisted, err := s.initSourceTagsTable()
 	if err != nil {
 		return fmt.Errorf("failed to create source tags table: %w", err)
@@ -6044,6 +6062,66 @@ func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName stri
 	return s.scanRawRecordRows(rows, hydrate)
 }
 
+// untaggedRawRecordPageQueryLocked composes the untagged half of the
+// raw-record page: rows of the schema carrying no source tag. The scan DRIVES
+// FROM sdn_record_index in rowid order and joins the payload tables outward —
+// never from a derived table whose projected rowid the engine cannot seek or
+// order on, which forced it to sort the ENTIRE schema through a temp B-tree
+// to return one LIMIT page (measured 59.2 s held / 54 calls / 2.33 s max over
+// one host-01 boot, all on PRR.fbs). With idx_sdn_record_index_schema_rowid
+// the rowid-cursor page plans as `SEARCH idx USING INDEX
+// idx_sdn_record_index_schema_rowid (schema_name=? AND rowid>?)` — a pure
+// seek plus in-order scan that stops at LIMIT. schemaHasTags=false (the
+// schema has ZERO source-tag rows, e.g. PRR.fbs) drops the NOT EXISTS
+// anti-join entirely: the caller's single presence probe replaces one
+// correlated probe per row. Callers hold s.mu.
+func (s *FlatSQLStore) untaggedRawRecordPageQueryLocked(filter RawRecordQuery, indexFilter rawRecordSyncFilter, schemaHasTags bool, limit int) (string, []interface{}, error) {
+	payload, err := s.recordReadSource(filter.SchemaName)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid schema name: %w", err)
+	}
+	query := fmt.Sprintf(`
+		SELECT idx.rowid, idx.cid, records.peer_id, records.timestamp,
+		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
+		       '', '', '', '', '', '', '', NULL
+		FROM sdn_record_index idx
+		JOIN %s records ON records.cid = idx.cid
+		WHERE idx.schema_name = ?
+	`, payload)
+	args := make([]interface{}, 0, len(indexFilter.args)+6)
+	args = append(args, filter.SchemaName)
+	if schemaHasTags {
+		query += `
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM sdn_record_source_tags tags
+			WHERE tags.schema_name = ? AND tags.cid = idx.cid
+		  )
+		`
+		args = append(args, filter.SchemaName)
+	}
+	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+		query += ` AND records.peer_id = ?`
+		args = append(args, peerID)
+	}
+	if cid := strings.TrimSpace(filter.CID); cid != "" {
+		query += ` AND idx.cid = ?`
+		args = append(args, cid)
+	}
+	query, args = appendRawRecordRowIDCursorWhere(query, args, "idx", filter)
+	query, args = appendRawRecordSyncFilterWhere(query, args, indexFilter)
+	switch {
+	case filter.UseRowIDCursor:
+		query += ` ORDER BY idx.rowid ASC, idx.cid ASC LIMIT ?`
+	case indexFilter.active():
+		query += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) ASC, idx.cid ASC LIMIT ?`
+	default:
+		query += ` ORDER BY records.timestamp DESC, idx.cid ASC LIMIT ?`
+	}
+	args = append(args, limit)
+	return query, args, nil
+}
+
 func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -6082,7 +6160,31 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		return s.queryRawRecordsWithRowIDSourceCursorLocked(tableName, filter, hydrate)
 	}
 
-	taggedQuery := fmt.Sprintf(`
+	// A schema with ZERO source-tag rows (the peer registry PRR.fbs carries
+	// none by design) makes the tagged half below dead weight and the untagged
+	// half's per-row NOT EXISTS anti-join pure overhead — 17,324 correlated
+	// probes per PRR page at the measured host-01 scale. One indexed presence
+	// probe (idx_sdn_record_source_tags_unique, schema_name prefix) settles it
+	// up front. Only consulted on the !sourceFiltered path, where the untagged
+	// half can run; source-filtered queries keep their tagged-only plan.
+	schemaHasTags := true
+	if !sourceFiltered {
+		var one int
+		probeErr := s.db.QueryRow(
+			`SELECT 1 FROM sdn_record_source_tags WHERE schema_name = ? LIMIT 1`,
+			filter.SchemaName,
+		).Scan(&one)
+		switch {
+		case errors.Is(probeErr, sql.ErrNoRows):
+			schemaHasTags = false
+		case probeErr != nil:
+			return nil, fmt.Errorf("raw record source-tag probe failed: %w", probeErr)
+		}
+	}
+
+	records := make([]*Record, 0)
+	if schemaHasTags {
+		taggedQuery := fmt.Sprintf(`
 		SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
 		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
@@ -6090,88 +6192,53 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		FROM sdn_record_source_tags tags
 		INNER JOIN %s records ON records.cid = tags.cid
 	`, tableName)
-	if indexFiltered {
-		taggedQuery += `
+		if indexFiltered {
+			taggedQuery += `
 		INNER JOIN sdn_record_index idx
 		  ON idx.schema_name = tags.schema_name AND idx.cid = records.cid
 		`
-	}
-	taggedQuery += ` WHERE tags.schema_name = ?`
-	args := []interface{}{filter.SchemaName}
+		}
+		taggedQuery += ` WHERE tags.schema_name = ?`
+		args := []interface{}{filter.SchemaName}
 
-	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
-		taggedQuery += ` AND records.peer_id = ?`
-		args = append(args, peerID)
-	}
-	if cid := strings.TrimSpace(filter.CID); cid != "" {
-		taggedQuery += ` AND records.cid = ?`
-		args = append(args, cid)
-	}
-	taggedQuery, args = appendRawRecordSourceTagFilters(taggedQuery, args, "tags", filter)
-	taggedQuery, args = appendRawRecordRowIDCursorWhere(taggedQuery, args, "records", filter)
-	taggedQuery, args = appendRawRecordSyncFilterWhere(taggedQuery, args, indexFilter)
-	if filter.UseRowIDCursor {
-		taggedQuery += ` ORDER BY records.rowid ASC, records.cid ASC LIMIT ?`
-		args = append(args, filter.Limit)
-	} else if indexFiltered {
-		taggedQuery += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) ASC, records.cid ASC LIMIT ? OFFSET ?`
-		args = append(args, filter.Limit, filter.Offset)
-	} else {
-		taggedQuery += ` ORDER BY tags.created_at DESC, tags.cid ASC LIMIT ? OFFSET ?`
-		args = append(args, filter.Limit, filter.Offset)
-	}
+		if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+			taggedQuery += ` AND records.peer_id = ?`
+			args = append(args, peerID)
+		}
+		if cid := strings.TrimSpace(filter.CID); cid != "" {
+			taggedQuery += ` AND records.cid = ?`
+			args = append(args, cid)
+		}
+		taggedQuery, args = appendRawRecordSourceTagFilters(taggedQuery, args, "tags", filter)
+		taggedQuery, args = appendRawRecordRowIDCursorWhere(taggedQuery, args, "records", filter)
+		taggedQuery, args = appendRawRecordSyncFilterWhere(taggedQuery, args, indexFilter)
+		if filter.UseRowIDCursor {
+			taggedQuery += ` ORDER BY records.rowid ASC, records.cid ASC LIMIT ?`
+			args = append(args, filter.Limit)
+		} else if indexFiltered {
+			taggedQuery += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) ASC, records.cid ASC LIMIT ? OFFSET ?`
+			args = append(args, filter.Limit, filter.Offset)
+		} else {
+			taggedQuery += ` ORDER BY tags.created_at DESC, tags.cid ASC LIMIT ? OFFSET ?`
+			args = append(args, filter.Limit, filter.Offset)
+		}
 
-	rows, err := s.db.Query(taggedQuery, args...)
-	if err != nil {
-		return nil, fmt.Errorf("raw record query failed: %w", err)
-	}
-	records, err := s.scanRawRecordRows(rows, hydrate)
-	if err != nil {
-		return nil, err
+		rows, err := s.db.Query(taggedQuery, args...)
+		if err != nil {
+			return nil, fmt.Errorf("raw record query failed: %w", err)
+		}
+		records, err = s.scanRawRecordRows(rows, hydrate)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if !sourceFiltered && len(records) < filter.Limit {
-		untaggedLimit := filter.Limit - len(records)
-		untaggedQuery := fmt.Sprintf(`
-			SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
-			       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
-			       '', '', '', '', '', '', '', NULL
-			FROM %s records
-		`, tableName)
-		untaggedArgs := make([]interface{}, 0, len(indexFilter.args)+3)
-		if indexFiltered {
-			untaggedQuery += `
-			INNER JOIN sdn_record_index idx
-			  ON idx.schema_name = ? AND idx.cid = records.cid
-			`
-			untaggedArgs = append(untaggedArgs, filter.SchemaName)
+		untaggedQuery, untaggedArgs, err := s.untaggedRawRecordPageQueryLocked(
+			filter, indexFilter, schemaHasTags, filter.Limit-len(records))
+		if err != nil {
+			return nil, err
 		}
-		untaggedQuery += `
-			WHERE NOT EXISTS (
-				SELECT 1
-				FROM sdn_record_source_tags tags
-				WHERE tags.schema_name = ? AND tags.cid = records.cid
-			)
-		`
-		untaggedArgs = append(untaggedArgs, filter.SchemaName)
-		if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
-			untaggedQuery += ` AND records.peer_id = ?`
-			untaggedArgs = append(untaggedArgs, peerID)
-		}
-		if cid := strings.TrimSpace(filter.CID); cid != "" {
-			untaggedQuery += ` AND records.cid = ?`
-			untaggedArgs = append(untaggedArgs, cid)
-		}
-		untaggedQuery, untaggedArgs = appendRawRecordRowIDCursorWhere(untaggedQuery, untaggedArgs, "records", filter)
-		untaggedQuery, untaggedArgs = appendRawRecordSyncFilterWhere(untaggedQuery, untaggedArgs, indexFilter)
-		if filter.UseRowIDCursor {
-			untaggedQuery += ` ORDER BY records.rowid ASC, records.cid ASC LIMIT ?`
-		} else if indexFiltered {
-			untaggedQuery += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) ASC, records.cid ASC LIMIT ?`
-		} else {
-			untaggedQuery += ` ORDER BY records.timestamp DESC, records.cid ASC LIMIT ?`
-		}
-		untaggedArgs = append(untaggedArgs, untaggedLimit)
 		untaggedRows, err := s.db.Query(untaggedQuery, untaggedArgs...)
 		if err != nil {
 			return nil, fmt.Errorf("raw untagged record query failed: %w", err)
