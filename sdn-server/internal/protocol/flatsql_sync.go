@@ -27,6 +27,14 @@ const (
 // any libp2p stream transport, including WebSocket and WebRTC.
 type FlatSQLSyncHandler struct {
 	store *storage.FlatSQLStore
+
+	// discovery answers the publication DISCOVER hop (list_published_shards
+	// and the published shard/asset lookups) from a stale-while-revalidate
+	// snapshot so anonymous browsers never queue behind the store's writers.
+	// Measured live before this cache: 22-45 s answers behind ingest's write
+	// lock against a 20 s client timeout — /beta's CATALOGUE UNAVAILABLE
+	// (task sdn-flatsql-sync-discovery-latency-resets).
+	discovery *datasync.PublicationDiscoveryCache
 }
 
 type flatSQLSyncRequest struct {
@@ -75,7 +83,24 @@ type flatSQLSyncRequest struct {
 
 // NewFlatSQLSyncHandler creates a FlatSQL sync stream handler.
 func NewFlatSQLSyncHandler(store *storage.FlatSQLStore) *FlatSQLSyncHandler {
-	return &FlatSQLSyncHandler{store: store}
+	return &FlatSQLSyncHandler{
+		store:     store,
+		discovery: datasync.NewPublicationDiscoveryCache(datasync.DefaultPublicationDiscoveryRefreshInterval),
+	}
+}
+
+// listPublicationsFast serves publication lookups for the handler's ROOT store
+// from the discovery cache, so the hot read never takes the store-wide RLock
+// (where it queued behind writers for 22-45 s live). Registered datastores are
+// opened per request and closed on return, so a background refresh must never
+// touch them — they keep the direct store path.
+func (h *FlatSQLSyncHandler) listPublicationsFast(activeStore *storage.FlatSQLStore, query storage.DatasetShardPublicationQuery) ([]storage.DatasetShardPublication, bool, error) {
+	if activeStore == h.store && h.discovery != nil {
+		pubs, err := h.discovery.Publications(activeStore, query)
+		return pubs, true, err
+	}
+	pubs, err := activeStore.ListDatasetShardPublications(query)
+	return pubs, false, err
 }
 
 // HandleStream handles one FlatSQL sync request. The record data plane is a
@@ -369,13 +394,14 @@ func (h *FlatSQLSyncHandler) handleListPublishedShards(writer io.Writer, req fla
 	if queryProfile == "" {
 		queryProfile = storage.DatasetPublicationQueryProfile
 	}
-	publications, err := activeStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+	discoveryQuery := storage.DatasetShardPublicationQuery{
 		SchemaName:   schema,
 		ProviderID:   firstNonEmptyProtocolString(req.ProviderID, req.ProviderId),
 		SourceName:   req.SourceName,
 		BatchID:      firstNonEmptyProtocolString(req.BatchID, req.BatchId),
 		QueryProfile: queryProfile,
-	})
+	}
+	publications, cached, err := h.listPublicationsFast(activeStore, discoveryQuery)
 	if err != nil {
 		return err
 	}
@@ -384,6 +410,12 @@ func (h *FlatSQLSyncHandler) handleListPublishedShards(writer io.Writer, req fla
 		if datasetShardPublicationAssetsAvailable(activeStore, pub) {
 			servable = append(servable, pub)
 		}
+	}
+	if cached && len(servable) == 0 && len(publications) > 0 {
+		// Every listed shard failed the on-disk availability check — the
+		// snapshot likely predates a supersede that pruned the files. Kick a
+		// refresh (non-blocking) so the next request converges.
+		h.discovery.ForceRefresh(activeStore, discoveryQuery)
 	}
 	publications = servable
 
@@ -490,7 +522,7 @@ func (h *FlatSQLSyncHandler) publishedShardStreamItem(activeStore *storage.FlatS
 	if queryProfile == "" {
 		queryProfile = storage.DatasetPublicationQueryProfile
 	}
-	pub, found, err := activeStore.FindDatasetShardPublicationByCID(storage.DatasetShardPublicationQuery{
+	pub, found, err := h.findPublicationByCID(activeStore, storage.DatasetShardPublicationQuery{
 		SchemaName:   schema,
 		ProviderID:   firstNonEmptyProtocolString(req.ProviderID, req.ProviderId),
 		SourceName:   req.SourceName,
@@ -619,16 +651,43 @@ func (h *FlatSQLSyncHandler) publishedAssetPublication(activeStore *storage.Flat
 		queryProfile = storage.DatasetPublicationQueryProfile
 	}
 	requestedRole := strings.TrimSpace(firstNonEmptyProtocolString(req.AssetRole, req.AssetRoleSnake))
-	publications, err := activeStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+	assetQuery := storage.DatasetShardPublicationQuery{
 		SchemaName:   schema,
 		ProviderID:   firstNonEmptyProtocolString(req.ProviderID, req.ProviderId),
 		SourceName:   req.SourceName,
 		BatchID:      firstNonEmptyProtocolString(req.BatchID, req.BatchId),
 		QueryProfile: queryProfile,
-	})
+	}
+	publications, cached, err := h.listPublicationsFast(activeStore, assetQuery)
 	if err != nil {
 		return storage.DatasetShardPublication{}, "", err
 	}
+	pub, role, found, err := matchPublishedAsset(publications, cid, requestedRole)
+	if err != nil {
+		return storage.DatasetShardPublication{}, "", err
+	}
+	if !found && cached {
+		// The cached snapshot may predate the publish that minted this CID:
+		// fall through to the store once (correctness beats latency for a
+		// cache miss) before declaring the asset unknown.
+		publications, err = activeStore.ListDatasetShardPublications(assetQuery)
+		if err != nil {
+			return storage.DatasetShardPublication{}, "", err
+		}
+		pub, role, found, err = matchPublishedAsset(publications, cid, requestedRole)
+		if err != nil {
+			return storage.DatasetShardPublication{}, "", err
+		}
+	}
+	if !found {
+		return storage.DatasetShardPublication{}, "", fmt.Errorf("published asset was not found for %s", cid)
+	}
+	return pub, role, nil
+}
+
+// matchPublishedAsset resolves cid against a publication list in list order
+// (feed_sequence, window_offset, published_at — the store's own ordering).
+func matchPublishedAsset(publications []storage.DatasetShardPublication, cid, requestedRole string) (storage.DatasetShardPublication, string, bool, error) {
 	for _, pub := range publications {
 		role := ""
 		switch cid {
@@ -641,11 +700,31 @@ func (h *FlatSQLSyncHandler) publishedAssetPublication(activeStore *storage.Flat
 			continue
 		}
 		if requestedRole != "" && requestedRole != role {
-			return storage.DatasetShardPublication{}, "", fmt.Errorf("published asset %s is a %s, not %s", cid, role, requestedRole)
+			return storage.DatasetShardPublication{}, "", false, fmt.Errorf("published asset %s is a %s, not %s", cid, role, requestedRole)
 		}
-		return pub, role, nil
+		return pub, role, true, nil
 	}
-	return storage.DatasetShardPublication{}, "", fmt.Errorf("published asset was not found for %s", cid)
+	return storage.DatasetShardPublication{}, "", false, nil
+}
+
+// findPublicationByCID resolves a shard CID for the payload hop. For the root
+// store it scans the discovery cache's snapshot first (same rows, same order
+// as the store's LIMIT 1 query) so the payload hop cannot stall behind a
+// writer either; an unknown CID falls through to the store once so a
+// just-published shard is still served correctly.
+func (h *FlatSQLSyncHandler) findPublicationByCID(activeStore *storage.FlatSQLStore, query storage.DatasetShardPublicationQuery, cid string) (storage.DatasetShardPublication, bool, error) {
+	if activeStore == h.store && h.discovery != nil {
+		publications, err := h.discovery.Publications(activeStore, query)
+		if err != nil {
+			return storage.DatasetShardPublication{}, false, err
+		}
+		for _, pub := range publications {
+			if pub.ShardCID == cid {
+				return pub, true, nil
+			}
+		}
+	}
+	return activeStore.FindDatasetShardPublicationByCID(query, cid)
 }
 
 func cleanPublishedShardCIDs(values []string) []string {
