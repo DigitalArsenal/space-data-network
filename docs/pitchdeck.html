@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Space Data Network - The Open Protocol for Space Data Exchange. Investor Pitch Deck.">
-  <title>Space Data Network — Pitch Deck</title>
+  <meta name="description" content="God's Eye × OrbPro — a partnership brief for building a functional world model from real and synthetic data.">
+  <title>God's Eye × OrbPro — Partnership Brief</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -938,6 +938,361 @@
       max-width: 600px;
       margin: 0 auto;
     }
+
+    /* ============================================
+       PARTNERSHIP DECK
+       ============================================ */
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent-cyan);
+      margin-bottom: 14px;
+    }
+
+    .hero-lockup {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 28px;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .hero-lockup .join-mark { color: var(--accent-cyan); font-size: 22px; }
+
+    .deck-kicker {
+      max-width: 880px;
+      font-size: 25px;
+      line-height: 1.45;
+      color: var(--text-secondary);
+      margin-bottom: 34px;
+    }
+
+    .thesis-line {
+      padding: 20px 24px;
+      border-left: 3px solid var(--accent-cyan);
+      background: linear-gradient(90deg, rgba(79, 171, 181, 0.12), rgba(79, 171, 181, 0));
+      font-size: 19px;
+      max-width: 880px;
+    }
+
+    .source-note {
+      margin-top: 18px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      line-height: 1.5;
+      color: rgba(150, 160, 180, 0.72);
+    }
+
+    .source-note a { text-decoration: underline; text-underline-offset: 2px; }
+
+    .split-visual {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: 36px;
+      align-items: center;
+    }
+
+    .visual-frame {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--ui-border-hover);
+      border-radius: var(--radius);
+      min-height: 390px;
+      background: rgba(8, 12, 22, 0.9);
+      box-shadow: 0 22px 70px rgba(0, 0, 0, 0.35);
+    }
+
+    .visual-frame img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .visual-frame::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, transparent 54%, rgba(5, 8, 15, 0.92));
+      pointer-events: none;
+    }
+
+    .visual-caption {
+      position: absolute;
+      z-index: 2;
+      left: 20px;
+      right: 20px;
+      bottom: 16px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: rgba(232, 236, 241, 0.86);
+    }
+
+    .evidence-banner {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 14px;
+      border: 1px solid rgba(77, 168, 130, 0.35);
+      border-radius: 999px;
+      background: rgba(77, 168, 130, 0.1);
+      color: #87d2ae;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 18px;
+    }
+
+    .compact-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+    }
+
+    .compact-list li {
+      position: relative;
+      padding-left: 20px;
+      color: var(--text-secondary);
+      font-size: 16px;
+      line-height: 1.45;
+    }
+
+    .compact-list li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0.7em;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent-cyan);
+      box-shadow: 0 0 14px rgba(79, 171, 181, 0.8);
+    }
+
+    .fact-qualifier {
+      display: block;
+      margin-top: 14px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-muted);
+    }
+
+    .gap-statement {
+      max-width: 980px;
+      font-size: clamp(30px, 4.5vw, 60px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.035em;
+      margin-bottom: 38px;
+    }
+
+    .domain-ribbon {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 26px;
+    }
+
+    .domain-ribbon span {
+      padding: 7px 12px;
+      border: 1px solid var(--ui-border);
+      border-radius: 999px;
+      background: rgba(15, 22, 36, 0.7);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .world-model-stack {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 30px;
+    }
+
+    .model-layer {
+      min-height: 210px;
+      padding: 24px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--ui-border);
+      background: rgba(15, 22, 36, 0.78);
+    }
+
+    .model-layer .layer-number {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent-cyan);
+      margin-bottom: 24px;
+    }
+
+    .model-layer h3 { font-size: 18px; margin-bottom: 10px; }
+    .model-layer p { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+
+    .algorithm-field {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .algorithm-field span {
+      padding: 11px 13px;
+      border: 1px solid rgba(79, 171, 181, 0.22);
+      border-radius: 10px;
+      background: rgba(79, 171, 181, 0.06);
+      color: rgba(205, 224, 229, 0.88);
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .metric-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .metric-box {
+      padding: 18px;
+      border-radius: var(--radius-sm);
+      background: rgba(15, 22, 36, 0.78);
+      border: 1px solid var(--ui-border);
+    }
+
+    .metric-box strong {
+      display: block;
+      font-size: 26px;
+      line-height: 1.1;
+      margin-bottom: 6px;
+    }
+
+    .metric-box span { font-size: 11px; color: var(--text-muted); }
+
+    .camera-sequence {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 24px;
+    }
+
+    .camera-step {
+      position: relative;
+      padding: 16px 14px;
+      text-align: center;
+      border: 1px solid var(--ui-border);
+      border-radius: 12px;
+      background: rgba(15, 22, 36, 0.76);
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .camera-step:not(:last-child)::after {
+      content: '→';
+      position: absolute;
+      right: -9px;
+      top: 50%;
+      z-index: 2;
+      transform: translateY(-50%);
+      color: var(--accent-cyan);
+    }
+
+    .advantage-grid {
+      display: grid;
+      grid-template-columns: 1fr 70px 1fr;
+      gap: 24px;
+      align-items: stretch;
+      margin-top: 26px;
+    }
+
+    .advantage-column {
+      padding: 30px;
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      background: rgba(15, 22, 36, 0.78);
+    }
+
+    .advantage-column h3 { font-size: 24px; margin-bottom: 18px; }
+    .advantage-column ul { list-style: none; display: grid; gap: 12px; }
+    .advantage-column li { color: var(--text-secondary); font-size: 15px; }
+
+    .plus-column {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 38px;
+      color: var(--accent-cyan);
+    }
+
+    .pilot-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 28px;
+    }
+
+    .pilot-phase {
+      padding: 26px;
+      min-height: 240px;
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius-sm);
+      background: rgba(15, 22, 36, 0.78);
+    }
+
+    .pilot-phase .week {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent-cyan);
+      margin-bottom: 26px;
+    }
+
+    .pilot-phase h3 { font-size: 21px; margin-bottom: 12px; }
+    .pilot-phase p { color: var(--text-secondary); font-size: 14px; line-height: 1.55; }
+
+    .ask-row {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 30px 0 40px;
+    }
+
+    .ask-row span {
+      padding: 10px 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(91, 141, 239, 0.3);
+      background: rgba(91, 141, 239, 0.08);
+      color: rgba(200, 218, 245, 0.9);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    @media (max-width: 1024px) {
+      .world-model-stack { grid-template-columns: 1fr 1fr; }
+      .algorithm-field { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 768px) {
+      .split-visual, .advantage-grid, .pilot-strip { grid-template-columns: 1fr; }
+      .plus-column { min-height: 36px; }
+      .world-model-stack { grid-template-columns: 1fr; }
+      .visual-frame { min-height: 310px; }
+      .camera-sequence { grid-template-columns: 1fr 1fr; }
+      .deck-kicker { font-size: 19px; }
+      .hero-lockup { flex-wrap: wrap; }
+    }
   </style>
 </head>
 <body>
@@ -957,18 +1312,389 @@
           <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/>
           <circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/>
         </svg>
-        Pitch Deck
+        God's Eye × OrbPro
       </a>
       <div class="slide-nav" id="slideNav"></div>
-      <span class="slide-counter" id="slideCounter">1 / 12</span>
+      <span class="slide-counter" id="slideCounter">1 / 14</span>
     </div>
     <div class="nav-right">
       <a href="index.html" class="nav-link">Home</a>
-      <a href="docs.html" class="nav-link">Docs</a>
+      <a href="docs.html" class="nav-link">Platform</a>
       <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" class="nav-link">GitHub</a>
     </div>
   </div>
 </nav>
+
+<main id="tailoredDeck">
+  <!-- Slide 1: Partnership thesis -->
+  <section class="slide" id="slide-1">
+    <div class="slide-inner">
+      <div class="hero-lockup fade-in">
+        <span>God's Eye</span><span class="join-mark">×</span><span>OrbPro</span>
+      </div>
+      <h1 class="slide-title fade-in fade-in-delay-1" style="max-width: 970px;">
+        From a view of the world to a <span class="gradient-text">functional world model.</span>
+      </h1>
+      <p class="deck-kicker fade-in fade-in-delay-2">
+        A partnership brief for Bilawal Sidhu: fuse the interface people already want with the physics, sensing, provenance, and deployment substrate mission systems still lack.
+      </p>
+      <div class="thesis-line fade-in fade-in-delay-3">
+        See everything. Simulate what happens next. Train agents that understand the difference.
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 2: God’s Eye traction -->
+  <section class="slide" id="slide-2">
+    <div class="slide-inner">
+      <div class="slide-label">The opening</div>
+      <h2 class="slide-title fade-in">God's Eye proved the interface.</h2>
+      <div class="grid-3 fade-in fade-in-delay-1">
+        <div class="card">
+          <div class="eyebrow">Fuse</div>
+          <h3>Public feeds become one place</h3>
+          <p>Aircraft, satellites, cameras, maps, reporting, and timelines become a coherent spatial experience.</p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Understand</div>
+          <h3>The globe becomes a query surface</h3>
+          <p>People can move from raw feeds to an explorable account of what happened, where, and when.</p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Demand</div>
+          <h3>The audience arrived immediately</h3>
+          <p>The press response validates an appetite for a cinematic, legible window into real-world events.</p>
+        </div>
+      </div>
+      <div class="callout fade-in fade-in-delay-2" style="margin-bottom: 0;">
+        The next leap is not another layer on the globe. It is the intelligence and physics layer underneath it.
+      </div>
+      <p class="source-note">Source: Bilawal Sidhu, <a href="https://www.spatialintelligence.ai/p/i-built-a-spy-satellite-simulator" target="_blank" rel="noopener">“I Built a Spy Satellite Simulator”</a>, Feb. 24, 2026. Bilawal describes WorldView as a demo for the underlying SpatialOS infrastructure project and notes that its intelligence layer is not yet built.</p>
+    </div>
+  </section>
+
+  <!-- Slide 3: Mission gap -->
+  <section class="slide" id="slide-3">
+    <div class="slide-inner">
+      <div class="slide-label">The mission gap</div>
+      <div class="gap-statement fade-in">
+        Current classified systems cannot show the entire satellite catalog—<span class="gradient-text-warm">much less everything.</span>
+      </div>
+      <div class="grid-2 fade-in fade-in-delay-1">
+        <div class="card">
+          <div class="eyebrow">What exists</div>
+          <h3>Powerful tools, fragmented pictures</h3>
+          <p>Mission applications are split by sensor, domain, network, classification boundary, hardware profile, and vendor architecture.</p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">What is missing</div>
+          <h3>One interactive, time-coherent model</h3>
+          <p>Space, air, maritime, RF/EM, EO/IR, terrain, weather, provenance, and uncertainty—running together at operational tempo.</p>
+        </div>
+      </div>
+      <div class="domain-ribbon fade-in fade-in-delay-2">
+        <span>Space</span><span>Air</span><span>Maritime</span><span>RF / EM</span><span>EO / IR</span><span>Terrain</span><span>Weather</span><span>Cyber</span><span>Provenance</span>
+      </div>
+      <span class="fact-qualifier">Founder assessment based on direct experience with classified mission tooling, including disadvantaged JWICS thin-client VDI environments. Site-specific performance and accreditation remain to be validated.</span>
+    </div>
+  </section>
+
+  <!-- Slide 4: Functional world model -->
+  <section class="slide" id="slide-4">
+    <div class="slide-inner">
+      <div class="slide-label">The shared thesis</div>
+      <h2 class="slide-title fade-in">Build the model, not just the map.</h2>
+      <p class="slide-subtitle fade-in fade-in-delay-1" style="max-width: 880px; margin-bottom: 0;">
+        A functional world model preserves state, time, physics, sensing, uncertainty, provenance, and the actions an agent can take.
+      </p>
+      <div class="world-model-stack fade-in fade-in-delay-2">
+        <div class="model-layer">
+          <div class="layer-number">01 / OBSERVE</div>
+          <h3>Real data</h3>
+          <p>Orbital catalogs, tracks, imagery, RF measurements, terrain, weather, cameras, and open or mission feeds.</p>
+        </div>
+        <div class="model-layer">
+          <div class="layer-number">02 / RESOLVE</div>
+          <h3>State + identity</h3>
+          <p>Normalize entities, coordinate frames, time, lineage, confidence, access, and uncertainty.</p>
+        </div>
+        <div class="model-layer">
+          <div class="layer-number">03 / SIMULATE</div>
+          <h3>Physics + sensors</h3>
+          <p>Propagate, detect, occlude, interfere, task, maneuver, break up, and replay.</p>
+        </div>
+        <div class="model-layer">
+          <div class="layer-number">04 / LEARN</div>
+          <h3>World models</h3>
+          <p>Train and evaluate agents against real observations plus controllable synthetic truth.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 5: Full catalog -->
+  <section class="slide" id="slide-5">
+    <div class="slide-inner split-visual">
+      <div>
+        <div class="slide-label">Proof point</div>
+        <div class="evidence-banner fade-in">Captured in OrbPro · Browser / WASM</div>
+        <h2 class="slide-title fade-in fade-in-delay-1" style="font-size: 52px;">The full catalog is the baseline.</h2>
+        <ul class="compact-list fade-in fade-in-delay-2">
+          <li>29,570 propagated space objects in the existing demonstration.</li>
+          <li>Interactive visualization, analysis, and camera control in one runtime.</li>
+          <li>Pluggable propagators—not a hardwired single-provider architecture.</li>
+        </ul>
+        <div class="metric-pair fade-in fade-in-delay-3">
+          <div class="metric-box"><strong>≥10×</strong><span>founder-observed advantage vs. legacy mission tooling</span></div>
+          <div class="metric-box"><strong>A/B/A</strong><span>proposed joint benchmark on one fixed box and pin</span></div>
+        </div>
+        <span class="fact-qualifier">The ≥10× statement is an operator observation, not yet an independently reproduced benchmark. The pilot makes it measurable.</span>
+      </div>
+      <div class="visual-frame fade-in fade-in-delay-2">
+        <img src="img-sgp4-propagation.jpg" alt="OrbPro full-catalog SGP4 propagation demonstration showing 29,570 satellites">
+        <div class="visual-caption">OrbPro full-catalog propagation capture · 29,570 objects · interactive browser runtime</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 6: RF and EM -->
+  <section class="slide" id="slide-6">
+    <div class="slide-inner split-visual">
+      <div class="visual-frame fade-in">
+        <img src="img-sensor-volume.jpg" alt="OrbPro sensor volume and terrain obstruction demonstration">
+        <div class="visual-caption">Sensor volume, geometry, terrain obstruction, and time-dependent access</div>
+      </div>
+      <div>
+        <div class="slide-label">Operational physics</div>
+        <h2 class="slide-title fade-in" style="font-size: 50px;">RF / EM turns a scene into a mission.</h2>
+        <p class="slide-subtitle fade-in fade-in-delay-1" style="margin-bottom: 20px;">
+          “Where is it?” becomes “Can I detect it, communicate with it, deny it, or trust the link?”
+        </p>
+        <div class="algorithm-field fade-in fade-in-delay-2">
+          <span>Antenna patterns</span><span>Link budgets</span><span>BER / modulation</span>
+          <span>Free-space loss</span><span>Longley–Rice</span><span>Diffraction</span>
+          <span>Rain / cloud / gas</span><span>Doppler / Fresnel</span><span>Terrain obstruction</span>
+          <span>Interference</span><span>Coverage / access</span><span>Detection models</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 7: Algorithm fusion -->
+  <section class="slide" id="slide-7">
+    <div class="slide-inner">
+      <div class="slide-label">The fusion environment</div>
+      <h2 class="slide-title fade-in">Every useful algorithm becomes a composable capability.</h2>
+      <p class="slide-subtitle fade-in fade-in-delay-1" style="max-width: 900px; margin-bottom: 28px;">
+        Pull in the best available software—government, commercial, academic, and open—behind stable data and module contracts. Keep the world state coherent while implementations evolve.
+      </p>
+      <div class="arch-diagram fade-in fade-in-delay-2">
+        <div class="arch-layer commercial">
+          <div class="arch-layer-title">Model + agent layer</div>
+          <div class="arch-items">
+            <span class="arch-item">World models</span><span class="arch-item">Multimodal agents</span><span class="arch-item">Planning</span><span class="arch-item">Anomaly detection</span><span class="arch-item">Forecasting</span>
+          </div>
+        </div>
+        <div class="arch-layer open">
+          <div class="arch-layer-title">Composable algorithm layer</div>
+          <div class="arch-items">
+            <span class="arch-item">Astrodynamics</span><span class="arch-item">RF / EM</span><span class="arch-item">EO / IR</span><span class="arch-item">Computer vision</span><span class="arch-item">Terrain</span><span class="arch-item">Weather</span><span class="arch-item">Tracking</span><span class="arch-item">Conjunction</span><span class="arch-item">Breakup</span><span class="arch-item">Camera tasking</span>
+          </div>
+        </div>
+        <div class="arch-layer open" style="margin-bottom: 0;">
+          <div class="arch-layer-title">Space Data Network substrate</div>
+          <div class="arch-items">
+            <span class="arch-item">Time + frames</span><span class="arch-item">Identity</span><span class="arch-item">Provenance</span><span class="arch-item">Permissions</span><span class="arch-item">Real + synthetic data</span><span class="arch-item">Offline distribution</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 8: Real and synthetic -->
+  <section class="slide" id="slide-8">
+    <div class="slide-inner split-visual">
+      <div>
+        <div class="slide-label">The training flywheel</div>
+        <h2 class="slide-title fade-in" style="font-size: 52px;">Real data grounds it. Synthetic data scales it.</h2>
+        <ul class="compact-list fade-in fade-in-delay-1">
+          <li>Replay observed events with exact time, frame, source, and confidence.</li>
+          <li>Generate rare, dangerous, or unobserved cases under controllable physics.</li>
+          <li>Train on both; evaluate against held-out reality and known synthetic truth.</li>
+          <li>Capture failures and feed them back into scenarios, sensors, and models.</li>
+        </ul>
+        <div class="flywheel fade-in fade-in-delay-2" style="justify-content: flex-start;">
+          <span class="flywheel-step">Observe</span><span class="flywheel-arrow">→</span>
+          <span class="flywheel-step">Simulate</span><span class="flywheel-arrow">→</span>
+          <span class="flywheel-step">Train</span><span class="flywheel-arrow">→</span>
+          <span class="flywheel-step">Evaluate</span>
+        </div>
+      </div>
+      <div class="visual-frame fade-in fade-in-delay-2">
+        <img src="iridium-cosmos-debris.jpg" alt="OrbPro collision and debris simulation">
+        <div class="visual-caption">Example synthetic truth: collision, breakup, propagation, sensing, and downstream effects</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 9: Camera control -->
+  <section class="slide" id="slide-9">
+    <div class="slide-inner split-visual">
+      <div class="visual-frame fade-in">
+        <img src="ai.jpg" alt="AI-driven OrbPro scene and camera control">
+        <div class="visual-caption">Camera and scene control exposed as deterministic tools for people and agents</div>
+      </div>
+      <div>
+        <div class="slide-label">Controllable observation</div>
+        <h2 class="slide-title fade-in" style="font-size: 50px;">The camera is a sensor.</h2>
+        <p class="slide-subtitle fade-in fade-in-delay-1" style="margin-bottom: 20px;">
+          Track-from and track-to define what the observer can see, from where, over time. That makes viewpoint a repeatable part of the data—not a UI flourish.
+        </p>
+        <div class="camera-sequence fade-in fade-in-delay-2">
+          <div class="camera-step">SELECT<br>observer</div>
+          <div class="camera-step">TRACK FROM<br>platform</div>
+          <div class="camera-step">TRACK TO<br>target</div>
+          <div class="camera-step">CAPTURE<br>labeled view</div>
+        </div>
+        <ul class="compact-list fade-in fade-in-delay-3" style="margin-top: 22px;">
+          <li>Deterministic framing for training and evaluation.</li>
+          <li>Sensor frusta, access, occlusion, and tasking tied to the same world state.</li>
+          <li>Natural-language and programmatic control over identical scene primitives.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 10: Deployment -->
+  <section class="slide" id="slide-10">
+    <div class="slide-inner">
+      <div class="slide-label">Mission deployment</div>
+      <h2 class="slide-title fade-in">Run where the mission runs.</h2>
+      <p class="slide-subtitle fade-in fade-in-delay-1" style="max-width: 860px;">
+        OrbPro is designed for the environments that kill cloud-first demos: disconnected networks, constrained thin-client VDI, local-only data, and controlled software supply chains.
+      </p>
+      <div class="grid-4 fade-in fade-in-delay-2">
+        <div class="card"><div class="eyebrow">Portable</div><h3>Browser + WASM</h3><p>One deterministic runtime profile across workstation and thin-client surfaces.</p></div>
+        <div class="card"><div class="eyebrow">Disconnected</div><h3>Offline capable</h3><p>Local assets, local models, local data, and no external-origin bytes.</p></div>
+        <div class="card"><div class="eyebrow">Composable</div><h3>Pluggable physics</h3><p>Swap providers without rebuilding the mission concept around one algorithm.</p></div>
+        <div class="card"><div class="eyebrow">Governable</div><h3>Provenance first</h3><p>Data lineage, identity, permissions, versions, and model outputs stay attributable.</p></div>
+      </div>
+      <div class="callout fade-in fade-in-delay-3" style="font-size: 17px; margin-bottom: 0;">
+        Deployment fit is an architecture claim, not an accreditation claim. Each classified site still owns its security review, hardening, and authorization path.
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 11: Builder history -->
+  <section class="slide" id="slide-11">
+    <div class="slide-inner split-visual">
+      <div>
+        <div class="slide-label">Built experience</div>
+        <h2 class="slide-title fade-in" style="font-size: 50px;">This is a continuation, not a pivot.</h2>
+        <p class="slide-subtitle fade-in fade-in-delay-1" style="margin-bottom: 22px;">
+          I built and demonstrated an activity-based intelligence tool at GEOINT while working at Analytical Graphics, Inc. (AGI, now part of Synopsys). The problem was already clear: the operator needed the tracks, timelines, sensors, and viewpoints in one environment.
+        </p>
+        <ul class="compact-list fade-in fade-in-delay-2">
+          <li>Multi-domain objects and events on a shared globe.</li>
+          <li>Time-series activity, active-object detection, and coordinated views.</li>
+          <li>Mission-focused visualization built for real analyst workflows.</li>
+        </ul>
+        <div class="thesis-line fade-in fade-in-delay-3" style="margin-top: 22px;">
+          OrbPro carries that lesson forward with a lighter runtime, a broader physics stack, and an open fusion substrate.
+        </div>
+      </div>
+      <div class="visual-frame fade-in fade-in-delay-2" style="min-height: 470px;">
+        <img src="img-geoint-abi-demo.jpg" alt="Activity-based intelligence tool built at AGI and demonstrated at GEOINT" style="object-position: center;">
+        <div class="visual-caption">Past work · activity-based intelligence demonstration at GEOINT · built while at AGI</div>
+      </div>
+      <p class="source-note" style="grid-column: 1 / -1; margin-top: -18px;">Photo provided by TJ Koury. Company lineage: AGI was <a href="https://www.ansys.com/news-center/press-releases/10-26-20-ansys-analytical-graphics-inc-sign-definitive-acquisition-agreement" target="_blank" rel="noopener">acquired by Ansys</a>; Synopsys <a href="https://investor.synopsys.com/news/news-details/2025/Synopsys-Completes-Acquisition-of-Ansys/default.aspx" target="_blank" rel="noopener">completed its acquisition of Ansys</a> in 2025.</p>
+    </div>
+  </section>
+
+  <!-- Slide 12: Complementary advantage -->
+  <section class="slide" id="slide-12">
+    <div class="slide-inner">
+      <div class="slide-label">Why us, together</div>
+      <h2 class="slide-title fade-in">The product instinct meets the mission substrate.</h2>
+      <div class="advantage-grid fade-in fade-in-delay-1">
+        <div class="advantage-column">
+          <div class="eyebrow">Bilawal / God's Eye</div>
+          <h3>The interface people want</h3>
+          <ul>
+            <li>Public-data fusion and rapid OSINT product loops</li>
+            <li>Cinematic spatial storytelling and camera language</li>
+            <li>AI-native interaction, audience, and cultural reach</li>
+            <li>SpatialOS vision: a queryable physical-world model</li>
+          </ul>
+        </div>
+        <div class="plus-column">×</div>
+        <div class="advantage-column">
+          <div class="eyebrow">DigitalArsenal / OrbPro</div>
+          <h3>The engine missions need</h3>
+          <ul>
+            <li>Full-catalog space dynamics plus RF/EM and sensor physics</li>
+            <li>Real + synthetic data under one time-coherent state model</li>
+            <li>Disconnected, constrained, classified-environment experience</li>
+            <li>Publicly named program lineage: Bodhi, MIST/FADE, THRESHER</li>
+          </ul>
+        </div>
+      </div>
+      <p class="source-note">Sensitive implementation details intentionally omitted. Public background: <a href="https://www.caci.com/sites/default/files/2021-05/F367_MIST_FADE_210510.pdf" target="_blank" rel="noopener">CACI MIST/FADE overview</a> and <a href="https://www.caci.com/isrew-mission-management-and-data-analytics" target="_blank" rel="noopener">CACI mission analytics portfolio</a>. SpatialOS framing: <a href="https://www.spatialintelligence.ai/p/i-built-a-spy-satellite-simulator" target="_blank" rel="noopener">Bilawal Sidhu</a>.</p>
+    </div>
+  </section>
+
+  <!-- Slide 13: Pilot -->
+  <section class="slide" id="slide-13">
+    <div class="slide-inner">
+      <div class="slide-label">A 90-day joint pilot</div>
+      <h2 class="slide-title fade-in">Prove the fusion environment on one consequential scenario.</h2>
+      <div class="pilot-strip fade-in fade-in-delay-1">
+        <div class="pilot-phase">
+          <div class="week">DAYS 0–30</div>
+          <h3>Connect</h3>
+          <p>Bring a selected God's Eye data story into the SDN substrate. Normalize entities, time, provenance, and camera actions.</p>
+        </div>
+        <div class="pilot-phase">
+          <div class="week">DAYS 31–60</div>
+          <h3>Make it physical</h3>
+          <p>Add full-catalog dynamics, RF/EM effects, sensor access, occlusion, and a real + synthetic scenario generator.</p>
+        </div>
+        <div class="pilot-phase">
+          <div class="week">DAYS 61–90</div>
+          <h3>Measure + package</h3>
+          <p>Run the fixed-box A/B/A benchmark, demonstrate agent tasks, and deliver a disconnected reference build.</p>
+        </div>
+      </div>
+      <div class="thesis-line fade-in fade-in-delay-2" style="margin-top: 22px; max-width: none;">
+        Exit criteria: one scenario, one reproducible world state, one agent evaluation set, one offline-capable build, one benchmark receipt.
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 14: Ask -->
+  <section class="slide cta-section" id="slide-14">
+    <div class="slide-inner">
+      <div class="hero-lockup fade-in" style="justify-content: center;">
+        <span>God's Eye</span><span class="join-mark">×</span><span>OrbPro</span>
+      </div>
+      <h2 class="slide-title fade-in fade-in-delay-1">Let's build the functional world model.</h2>
+      <p class="slide-subtitle fade-in fade-in-delay-2" style="margin-left: auto; margin-right: auto;">
+        Co-design the experience. Fuse the data. Add the physics. Train and evaluate the agents. Package it for the places that matter.
+      </p>
+      <div class="ask-row fade-in fade-in-delay-3">
+        <span>Joint 90-day pilot</span><span>Public demonstration lane</span><span>Restricted deployment lane</span><span>Shared world-model roadmap</span>
+      </div>
+      <div class="btn-row fade-in fade-in-delay-4">
+        <a href="mailto:tj@digitalarsenal.io?subject=God%27s%20Eye%20%C3%97%20OrbPro" class="btn btn-primary">Build it together</a>
+        <a href="docs.html" class="btn btn-secondary">Explore the platform</a>
+      </div>
+      <p style="margin-top: 30px; font-size: 13px; color: var(--text-muted);">TJ Koury · DigitalArsenal.io, Inc. · tj@digitalarsenal.io</p>
+    </div>
+  </section>
+</main>
+
+<!-- The prior general investor narrative is retained inertly for revision history. -->
+<template id="legacyDeck">
 
 <!-- ========================================
      SLIDE 1: TITLE
@@ -1846,16 +2572,14 @@
   </div>
 </section>
 
+</template>
+
 <!-- Footer -->
 <footer>
   <div class="footer-links">
-    <a href="onboarding.html">Onboarding</a>
-    <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
-    <a href="https://x.com/TJKoury" target="_blank">@TJKoury</a>
-    <a href="https://www.linkedin.com/in/anthony-k-5754554/" target="_blank">LinkedIn</a>
-    <a href="https://signal.me/#eu/N3lZBb0uC3vueQt05SATYx6vFAbiLGtxxP1vhnUZyuIXYunr9WFEd6xJ9F3MzJXn" target="_blank">Signal</a>
+    <a href="mailto:tj@digitalarsenal.io">tj@digitalarsenal.io</a>
     <a href="index.html">Home</a>
-    <a href="docs.html">Documentation</a>
+    <a href="docs.html">Platform</a>
     <a href="https://spacedatastandards.org" target="_blank">Standards</a>
     <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">GitHub</a>
   </div>
@@ -1874,7 +2598,7 @@
   // ============================================
   // SLIDE NAVIGATION
   // ============================================
-  const slides = document.querySelectorAll('.slide');
+  const slides = document.querySelectorAll('#tailoredDeck .slide');
   const slideNav = document.getElementById('slideNav');
   const slideCounter = document.getElementById('slideCounter');
 
