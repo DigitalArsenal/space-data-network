@@ -1,6 +1,7 @@
 package datasync
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -8,6 +9,11 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
+
+// errPublicationFetchPanicked is what coalesced waiters observe if a first
+// fetch panicked out of the calling goroutine: the entry is dropped and the
+// next request retries the store.
+var errPublicationFetchPanicked = errors.New("publication discovery fetch did not complete")
 
 // PublicationLister is the minimal store surface publication discovery needs.
 // *storage.FlatSQLStore satisfies it.
@@ -99,7 +105,10 @@ func NewPublicationDiscoveryCache(refreshInterval time.Duration) *PublicationDis
 //
 // The returned slice is the caller's to mutate (callers filter it in place).
 func (c *PublicationDiscoveryCache) Publications(lister PublicationLister, query storage.DatasetShardPublicationQuery) ([]storage.DatasetShardPublication, error) {
-	if c == nil || lister == nil {
+	if lister == nil {
+		return nil, errors.New("publication lister is unavailable")
+	}
+	if c == nil {
 		return lister.ListDatasetShardPublications(query)
 	}
 	key := publicationDiscoveryKey(query)
@@ -114,24 +123,28 @@ func (c *PublicationDiscoveryCache) Publications(lister PublicationLister, query
 
 		// First fetch for this query shape: nothing to serve yet, so this
 		// request pays the store read (and any writer hold in front of it).
-		pubs, err := lister.ListDatasetShardPublications(query)
-
-		c.mu.Lock()
-		entry.fetched = err == nil
-		entry.firstErr = err
-		entry.pubs = pubs
-		entry.fetchedAt = c.now()
-		if err != nil {
-			// Do not cache failures: drop the entry so the next request
-			// retries, but only if a concurrent path has not replaced it.
-			if c.entries[key] == entry {
-				delete(c.entries, key)
+		// The completion runs in a defer so a panicking store read can never
+		// strand coalesced waiters on entry.ready.
+		var pubs []storage.DatasetShardPublication
+		err := errPublicationFetchPanicked
+		defer func() {
+			c.mu.Lock()
+			entry.fetched = err == nil
+			entry.firstErr = err
+			entry.pubs = pubs
+			entry.fetchedAt = c.now()
+			if err != nil {
+				// Do not cache failures: drop the entry so the next request
+				// retries, but only if a concurrent path has not replaced it.
+				if c.entries[key] == entry {
+					delete(c.entries, key)
+				}
 			}
-		}
-		close(entry.ready)
-		result := clonePublications(entry.pubs)
-		c.mu.Unlock()
-		return result, err
+			close(entry.ready)
+			c.mu.Unlock()
+		}()
+		pubs, err = lister.ListDatasetShardPublications(query)
+		return clonePublications(pubs), err
 	}
 	entry.lastAccess = c.now()
 	if entry.fetched {
@@ -183,16 +196,25 @@ func (c *PublicationDiscoveryCache) ForceRefresh(lister PublicationLister, query
 // good snapshot (a stale list beats no list) and the next stale request
 // retries.
 func (c *PublicationDiscoveryCache) refresh(lister PublicationLister, query storage.DatasetShardPublicationQuery, key string, entry *publicationDiscoveryEntry) {
-	pubs, err := lister.ListDatasetShardPublications(query)
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	entry.refreshing = false
-	if err != nil {
-		return
-	}
-	entry.pubs = pubs
-	entry.fetchedAt = c.now()
+	ok := false
+	var pubs []storage.DatasetShardPublication
+	defer func() {
+		// A panicking store read runs on this background goroutine, where it
+		// would otherwise take the whole process down and leave the entry
+		// wedged in refreshing=true; recover and treat it as a failed
+		// refresh (keep last-good, retry on the next stale hit).
+		_ = recover()
+		c.mu.Lock()
+		entry.refreshing = false
+		if ok {
+			entry.pubs = pubs
+			entry.fetchedAt = c.now()
+		}
+		c.mu.Unlock()
+	}()
+	var err error
+	pubs, err = lister.ListDatasetShardPublications(query)
+	ok = err == nil
 }
 
 // evictForRoomLocked makes room for one more entry, dropping the
