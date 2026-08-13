@@ -1569,17 +1569,24 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
 			adminMux.HandleFunc("/api/node/epm/vcard", handleNodeEPMVCard(n))
 			adminMux.HandleFunc("/api/node/epm/qr", handleNodeEPMQR(n))
-			// §18 key slots: read the derivation paths in effect and compute
-			// what GEN KEY would rotate them to. Admin-only (it describes the
-			// node's identity layout); derives server-side and returns PATHS
-			// ONLY — the seed never leaves the process and no key material is
-			// returned, because the public key is reconstructible by anyone
-			// from xpub + path.
+			// The MANAGED-KEY REGISTRY (owner ruling 2026-08-07, graph task
+			// sdn-managed-key-registry-api), which subsumes the §18 key-slot
+			// surface: GET = identity slots + purpose slots with derivation
+			// provenance + the full inventory + bond addresses; POST = the §18
+			// GEN KEY proposal (unchanged) or configure/clear of a dedicated
+			// purpose key. Admin-only via the /api/node/epm prefix; the GET
+			// returns public material only, and the POST accepts a seed but
+			// never returns one.
 			adminMux.HandleFunc("/api/node/epm/keys", gateNodeEPMWrite(
-				handleNodeEPMKeySlots(n),
+				handleNodeManagedKeys(n),
 				cfg.Admin.RequireAuth,
 				func() *auth.Handler { return authHandler },
 			))
+			// Per-key signing audit: which key signed what, when, for whom —
+			// folded from the append-only module-signing and update-signing
+			// audit logs (it invents no third log). GET only; same Admin
+			// classification as the registry above.
+			adminMux.HandleFunc("/api/node/epm/keys/audit", handleNodeKeySigningAudit(n))
 			// The auth handler is constructed further below (it needs the
 			// storage path), so the gate resolves it per request rather than
 			// capturing a nil pointer at mount time.
