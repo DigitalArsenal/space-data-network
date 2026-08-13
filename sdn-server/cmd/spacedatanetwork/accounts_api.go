@@ -30,13 +30,11 @@ package main
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
-	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
@@ -232,58 +230,8 @@ func handleAccounts(n *node.Node, resolveAuth func() *auth.Handler) http.Handler
 	}
 }
 
-// handleNodeEPMKeySlots serves the §18 identity key-slot surface.
-//
-//	GET  /api/node/epm/keys          -> the slots in effect + their GEN KEY proposals
-//	POST /api/node/epm/keys {"slot"} -> the GEN KEY proposal for one slot
-//
-// Both are Admin-only and both return PATHS ONLY. No private key material is
-// read, derived, or returned: the corresponding public key is reconstructible by
-// anyone from the published xpub plus the path, and the node's seed never leaves
-// the process. GEN KEY here PROPOSES; applying the proposal is a separate,
-// explicit save through the EPM edit flow, so the button cannot silently
-// re-publish the node's identity.
-func handleNodeEPMKeySlots(n *node.Node) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		svc := n.EPMService()
-		if svc == nil {
-			http.Error(w, "EPM service not available", http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Cache-Control", "no-store")
-
-		switch r.Method {
-		case http.MethodGet:
-			slots, err := svc.KeySlots()
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusServiceUnavailable)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"slots": slots})
-
-		case http.MethodPost:
-			var req struct {
-				Slot string `json:"slot"`
-			}
-			if err := json.NewDecoder(io.LimitReader(r.Body, 4*1024)).Decode(&req); err != nil {
-				http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			current, next, err := svc.ProposeNextKeyPath(epm.KeySlotID(req.Slot))
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"slot":         req.Slot,
-				"current_path": current,
-				"next_path":    next,
-			})
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	}
-}
+// The §18 identity key-slot surface (GET slots + POST GEN KEY proposal) moved
+// to handleNodeManagedKeys in managed_keys_api.go, which subsumes it: the same
+// route now also serves the full managed-key registry (owner ruling 2026-08-07)
+// and the configure/clear purpose-key actions. The §18 contract is unchanged —
+// paths only, propose-never-apply.

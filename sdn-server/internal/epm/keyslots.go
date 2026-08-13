@@ -47,7 +47,16 @@ type KeySlot struct {
 	// key is NOT, which is why it is not offered as a rotatable slot (see
 	// §17.8 and the note on KeySlots below).
 	XPubDerivable bool `json:"xpub_derivable"`
+	// Source is the derivation provenance the key-management UI renders:
+	// "root" — derived from the node root key (both slots here always are: the
+	// key is a pure function of the published xpub plus Path). The managed-key
+	// registry (owner ruling 2026-08-07) adds purpose slots whose source can be
+	// "external"; these two never can, which is why the value is fixed.
+	Source string `json:"source"`
 }
+
+// KeySlotSourceRoot is the Source value for a key derived from the node root.
+const KeySlotSourceRoot = "root"
 
 // KeySlots reports the operator-rotatable key slots for this node.
 //
@@ -82,8 +91,8 @@ func (s *Service) KeySlots() ([]KeySlot, error) {
 	signPath, encPath := EffectiveKeyPaths(s.profile, s.identity.Account)
 
 	slots := []KeySlot{
-		{Slot: KeySlotSigning, Path: signPath, XPubDerivable: true},
-		{Slot: KeySlotEncryption, Path: encPath, XPubDerivable: true},
+		{Slot: KeySlotSigning, Path: signPath, XPubDerivable: true, Source: KeySlotSourceRoot},
+		{Slot: KeySlotEncryption, Path: encPath, XPubDerivable: true, Source: KeySlotSourceRoot},
 	}
 	for i := range slots {
 		next, err := NextKeyPath(slots[i].Path, SlotXPubDerivable)

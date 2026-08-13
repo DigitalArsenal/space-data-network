@@ -49,12 +49,26 @@ type bondAttestor struct {
 	peerID     string
 }
 
-// bondAddresses is the module's invoke payload: this node's own EPM-derived
-// chain addresses. Empty fields are simply absent balances.
+// bondAddresses is one chain-address triple. Empty fields are simply absent
+// balances.
 type bondAddresses struct {
 	Btc string `json:"btc,omitempty"`
 	Eth string `json:"eth,omitempty"`
 	Sol string `json:"sol,omitempty"`
+}
+
+func (a bondAddresses) empty() bool { return a.Btc == "" && a.Eth == "" && a.Sol == "" }
+
+// bondInvokePayload is the module's invoke payload. The flat fields are the
+// node's own EPM-derived addresses — the ROOT's — kept exactly as the shipped
+// module reads them, so an old artifact keeps answering. `keys` is the per-key
+// extension (owner ruling 2026-08-07: "the rollup of all value across all keys
+// that are being managed by a server"): one address set per managed key that
+// has bondable addresses, keyed by purpose label. A module that predates the
+// field ignores it; a host that predates it simply never sends it.
+type bondInvokePayload struct {
+	bondAddresses
+	Keys map[string]bondAddresses `json:"keys,omitempty"`
 }
 
 // readBondAddresses pulls the chain addresses out of the node's own signed
@@ -79,6 +93,34 @@ func readBondAddresses(n *node.Node) bondAddresses {
 		out.Sol = v
 	}
 	return out
+}
+
+// chainTripleFromMap folds a purpose's {"bitcoin"/"ethereum"/"solana": addr}
+// map (the inventory's convention) into the module's {btc,eth,sol} triple.
+func chainTripleFromMap(addrs map[string]string) bondAddresses {
+	return bondAddresses{
+		Btc: addrs["bitcoin"],
+		Eth: addrs["ethereum"],
+		Sol: addrs["solana"],
+	}
+}
+
+// buildBondInvokePayload assembles the per-key attestation request: the ROOT's
+// EPM addresses in the legacy flat fields, plus one entry per managed key with
+// bondable addresses. Pure — testable without a node.
+func buildBondInvokePayload(root bondAddresses, purposeAddrs map[string]map[string]string) bondInvokePayload {
+	payload := bondInvokePayload{bondAddresses: root}
+	for purpose, addrs := range purposeAddrs {
+		triple := chainTripleFromMap(addrs)
+		if triple.empty() {
+			continue
+		}
+		if payload.Keys == nil {
+			payload.Keys = make(map[string]bondAddresses, len(purposeAddrs))
+		}
+		payload.Keys[purpose] = triple
+	}
+	return payload
 }
 
 // bondModuleNodeContext returns a NodeContext whose capability policy
@@ -108,12 +150,12 @@ func bondModuleNodeContext() *modulert.NodeContext {
 // A failed run leaves the previous attestation standing — a stale bond
 // beats a vanished one, and `attested_at` says how stale.
 func (b *bondAttestor) refresh(ctx context.Context, n *node.Node) {
-	addrs := readBondAddresses(n)
-	if addrs.Btc == "" && addrs.Eth == "" && addrs.Sol == "" {
-		log.Debugf("bond attestation: node EPM carries no chain addresses yet")
+	invoke := buildBondInvokePayload(readBondAddresses(n), n.PurposeBondAddresses())
+	if invoke.empty() && len(invoke.Keys) == 0 {
+		log.Debugf("bond attestation: node EPM carries no chain addresses yet and no managed key declares any")
 		return
 	}
-	payload, err := json.Marshal(addrs)
+	payload, err := json.Marshal(invoke)
 	if err != nil {
 		return
 	}

@@ -66,6 +66,51 @@ func TestBondHandlerWrapsModuleAnswer(t *testing.T) {
 	}
 }
 
+// TestBuildBondInvokePayloadPerKey pins the per-key request shape (owner
+// ruling 2026-08-07): the ROOT's addresses stay in the legacy flat fields the
+// shipped module reads, and every managed key with bondable addresses gets a
+// triple under keys[<purpose>]. Empty triples never ship.
+func TestBuildBondInvokePayloadPerKey(t *testing.T) {
+	root := bondAddresses{Btc: "bc1root", Eth: "0xroot"}
+	payload := buildBondInvokePayload(root, map[string]map[string]string{
+		"identity-signing": {"bitcoin": "bc1root", "ethereum": "0xroot"},
+		"licensing-grant":  {"ethereum": "0xgrant"},
+		"empty-key":        {"bitcoin": ""},
+	})
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded struct {
+		Btc  string                   `json:"btc"`
+		Eth  string                   `json:"eth"`
+		Keys map[string]bondAddresses `json:"keys"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Btc != "bc1root" || decoded.Eth != "0xroot" {
+		t.Fatalf("legacy flat fields must stay the root's: %s", raw)
+	}
+	if decoded.Keys["identity-signing"].Btc != "bc1root" {
+		t.Fatalf("identity-signing triple wrong: %s", raw)
+	}
+	if decoded.Keys["licensing-grant"].Eth != "0xgrant" {
+		t.Fatalf("licensing-grant triple wrong: %s", raw)
+	}
+	if _, present := decoded.Keys["empty-key"]; present {
+		t.Fatalf("an all-empty triple must not ship: %s", raw)
+	}
+
+	// No per-key addresses at all -> no keys field on the wire (an old module
+	// sees a byte-identical request).
+	legacy, _ := json.Marshal(buildBondInvokePayload(root, nil))
+	if strings.Contains(string(legacy), "\"keys\"") {
+		t.Fatalf("keys field must be absent when there are no per-key addresses: %s", legacy)
+	}
+}
+
 // The embedded module artifact must actually be a wasm binary — an empty or
 // truncated embed would otherwise surface only at the first hourly run.
 func TestBondModuleArtifactEmbedded(t *testing.T) {

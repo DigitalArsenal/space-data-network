@@ -28,6 +28,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
 const (
@@ -166,6 +167,21 @@ func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {
 		return nil, err
 	}
 
+	// A CONFIGURED external grant key that cannot be read is a refusal with a
+	// reason, not a missing slot: record it so the licensing bootstrap reports
+	// the real cause instead of "key slots are required".
+	if _, extRefusal := n.configuredGrantSeed(); extRefusal != "" {
+		log.Errorf(
+			"REFUSING to provision licensing key slot %q: an operator-configured external key exists but cannot be used — %s. Module-delivery grants are DISABLED on this node until the configured key is repaired (or cleared, returning to the derived default).",
+			providerSigningSlotID, extRefusal,
+		)
+		if nodeCtx.KeySlotRefusals == nil {
+			nodeCtx.KeySlotRefusals = make(map[string]string, 1)
+		}
+		nodeCtx.KeySlotRefusals[providerSigningSlotID] = "configured external key unusable: " + extRefusal
+		signingSeed = nil
+	}
+
 	// DOMAIN SEPARATION GUARD (owner ruling 2026-08-07). The seed above signs
 	// licensing grants; n.updateRootSigningSeed() signs SDN-UPDATE-MANIFEST-V1 and
 	// module publication statements — fleet code authority. They must be DIFFERENT
@@ -253,17 +269,36 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 	envSigningSeed := readDevRuntimeKeySlotEnv("SDN_DEV_PROVIDER_SIGNING_SEED_HEX")
 	envWrappingKey := readDevRuntimeKeySlotEnv("SDN_DEV_NODE_ENCRYPTION_KEY_HEX")
 
+	// OWNER RULING 2026-08-07, the "UNLESS they specifically setup another key"
+	// half: an operator-CONFIGURED external grant key takes precedence over the
+	// derived default. A configured-but-unreadable key yields NO seed at all —
+	// never the derived fallback — because signing with a different key than
+	// the one the operator configured is a silent substitution. The refusal
+	// reason is surfaced by buildModuleNodeContext / ServerManagedKeys via
+	// configuredGrantSeed.
+	extSeed, extRefusal := n.configuredGrantSeed()
+
 	if n != nil && n.identity != nil {
-		rawSigningKey, err := n.identity.RawGrantSigningKey()
-		if err != nil {
-			return nil, nil, fmt.Errorf("derive licensing grant signing seed: %w", err)
+		var rawSigningKey []byte
+		switch {
+		case extRefusal != "":
+			rawSigningKey = nil
+		case len(extSeed) == 32:
+			rawSigningKey = append([]byte(nil), extSeed...)
+		default:
+			derived, err := n.identity.RawGrantSigningKey()
+			if err != nil {
+				return nil, nil, fmt.Errorf("derive licensing grant signing seed: %w", err)
+			}
+			rawSigningKey = derived
 		}
 
 		var wrappingKey []byte
 		if len(n.identity.EncryptionKey) > 0 {
 			wrappingKey = append([]byte(nil), n.identity.EncryptionKey...)
 		}
-		if len(rawSigningKey) != 32 && len(envSigningSeed) == 32 {
+		// The dev env override never papers over a refused external key.
+		if extRefusal == "" && len(rawSigningKey) != 32 && len(envSigningSeed) == 32 {
 			rawSigningKey = append([]byte(nil), envSigningSeed...)
 		}
 		if len(wrappingKey) != 32 && len(envWrappingKey) == 32 {
@@ -277,6 +312,12 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 	if identity == nil {
+		if extRefusal != "" {
+			return nil, envWrappingKey, nil
+		}
+		if len(extSeed) == 32 {
+			return append([]byte(nil), extSeed...), envWrappingKey, nil
+		}
 		return envSigningSeed, envWrappingKey, nil
 	}
 
@@ -284,17 +325,26 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 	// ruling still binds: this lane gets a CHILD, produced by a domain-separated
 	// KDF over the identity signing key rather than the identity signing key
 	// itself. Deterministic (same identity → same child), one-way, and never
-	// written to disk. See legacyGrantSigningSeed.
+	// written to disk. See legacyGrantSigningSeed. An operator-configured
+	// external key outranks the KDF child here exactly as it outranks the HD
+	// child above.
 	var signingSeed []byte
-	if identity.SigningKey != nil && len(identity.SigningKey.PrivateKey) >= 32 {
-		signingSeed = legacyGrantSigningSeed(identity.SigningKey.PrivateKey[:32])
+	switch {
+	case extRefusal != "":
+		signingSeed = nil
+	case len(extSeed) == 32:
+		signingSeed = append([]byte(nil), extSeed...)
+	default:
+		if identity.SigningKey != nil && len(identity.SigningKey.PrivateKey) >= 32 {
+			signingSeed = legacyGrantSigningSeed(identity.SigningKey.PrivateKey[:32])
+		}
 	}
 
 	var wrappingKey []byte
 	if identity.EncryptionKey != nil && len(identity.EncryptionKey.PrivateKey) > 0 {
 		wrappingKey = append([]byte(nil), identity.EncryptionKey.PrivateKey...)
 	}
-	if len(signingSeed) != 32 && len(envSigningSeed) == 32 {
+	if extRefusal == "" && len(signingSeed) != 32 && len(envSigningSeed) == 32 {
 		signingSeed = append([]byte(nil), envSigningSeed...)
 	}
 	if len(wrappingKey) != 32 && len(envWrappingKey) == 32 {
@@ -302,6 +352,33 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 	}
 
 	return signingSeed, wrappingKey, nil
+}
+
+// configuredGrantSeed resolves the operator-configured EXTERNAL grant seed:
+// (seed, "") when one is configured and readable, (nil, "") when none is
+// configured — the ruled default derivation then applies — and (nil, reason)
+// when one IS configured but cannot be read or parsed, which is the fail-closed
+// state: the grant slot is simply not provisioned.
+//
+// A keystore that cannot be OPENED at all (ErrPurposeKeyStoreUnavailable) is
+// treated as "none configured": every never-configured node can be in that
+// state and must keep its pre-existing derived behavior.
+func (n *Node) configuredGrantSeed() ([]byte, string) {
+	cfg, err := n.ConfiguredPurposeKey(wasm.PurposeLicensingGrant)
+	if errors.Is(err, ErrPurposeKeyStoreUnavailable) {
+		return nil, ""
+	}
+	if err != nil {
+		return nil, err.Error()
+	}
+	if cfg == nil {
+		return nil, ""
+	}
+	seed, derr := decodePurposeKeySeed(cfg.SeedHex)
+	if derr != nil {
+		return nil, derr.Error()
+	}
+	return seed, ""
 }
 
 // licensingGrantKeyPathLabel is the account-independent shape of the grant key's
@@ -314,10 +391,11 @@ const licensingGrantKeyPathLabel = "m/44'/0'/<account>'/2'/0'"
 // — and a host that does not say which one it used is undiagnosable from a log
 // (HEPHAESTUS, SEAL COUNCIL condition on Q1, 2026-08-07).
 const (
-	grantKeySchemeHD     = "SLIP-0010 HD child at " + licensingGrantKeyPathLabel
-	grantKeySchemeLegacy = "HKDF-SHA512 child under " + legacyGrantSigningDomain + " (legacy on-disk identity, no HD seed)"
-	grantKeySchemeEnv    = "SDN_DEV_PROVIDER_SIGNING_SEED_HEX override (development only)"
-	grantKeySchemeNone   = "none"
+	grantKeySchemeHD       = "SLIP-0010 HD child at " + licensingGrantKeyPathLabel
+	grantKeySchemeLegacy   = "HKDF-SHA512 child under " + legacyGrantSigningDomain + " (legacy on-disk identity, no HD seed)"
+	grantKeySchemeEnv      = "SDN_DEV_PROVIDER_SIGNING_SEED_HEX override (development only)"
+	grantKeySchemeExternal = "operator-configured external key (provenance external-configured; not derivable from the node mnemonic)"
+	grantKeySchemeNone     = "none"
 )
 
 // legacyGrantSigningDomain is the KDF label for the legacy (non-HD) identity path.
@@ -424,6 +502,9 @@ func (n *Node) logGrantKeyDomainSeparation(updateRootPath string) {
 func (n *Node) grantSigningKeyScheme(seed []byte) string {
 	if len(seed) != ed25519.SeedSize {
 		return grantKeySchemeNone
+	}
+	if ext, refusal := n.configuredGrantSeed(); refusal == "" && bytes.Equal(ext, seed) {
+		return grantKeySchemeExternal
 	}
 	if n != nil && n.identity != nil {
 		if raw, err := n.identity.RawGrantSigningKey(); err == nil && bytes.Equal(raw, seed) {

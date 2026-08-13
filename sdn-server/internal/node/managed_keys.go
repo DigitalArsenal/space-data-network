@@ -68,6 +68,46 @@ type ManagedKey struct {
 	// Note carries any operator-relevant qualifier, such as the reason a key is
 	// derivable but refused. Empty when there is nothing to say.
 	Note string `json:"note,omitempty"`
+
+	// Slot is the module-runtime key-slot id this purpose fills
+	// ("provider-signing" for the grant key, "provider-wrapping" for the
+	// encryption scalar), empty when the key is not exposed as a runtime slot.
+	// It is the join key the key-management UI matches purposes on.
+	Slot string `json:"slot,omitempty"`
+
+	// Configurable reports whether an operator may point this purpose at a
+	// dedicated external key. Exactly the PurposeKeyConfigurable ruling; false
+	// for the update root FOREVER. ConfigurableReason states why when false.
+	Configurable       bool   `json:"configurable"`
+	ConfigurableReason string `json:"configurable_reason,omitempty"`
+
+	// BondAddresses are the chain addresses whose balances back THIS key under
+	// the adversarial-security model ("bitcoin"/"ethereum"/"solana" -> addr).
+	// The root identity carries the node's EPM addresses; an external
+	// configured key carries the addresses the operator declared for it; a
+	// derived hardened child carries none and is correctly UNBONDED.
+	BondAddresses map[string]string `json:"bond_addresses,omitempty"`
+}
+
+// purposeRuntimeSlot maps a purpose to the module-runtime key slot it fills.
+func purposeRuntimeSlot(p wasm.KeyPurpose) string {
+	switch p {
+	case wasm.PurposeLicensingGrant:
+		return providerSigningSlotID
+	case wasm.PurposeEncryption:
+		return providerWrappingSlotID
+	default:
+		return ""
+	}
+}
+
+// annotateManagedKey fills the fields shared by every inventory row.
+func (n *Node) annotateManagedKey(entry *ManagedKey, purpose wasm.KeyPurpose) {
+	entry.Slot = purposeRuntimeSlot(purpose)
+	entry.Configurable, entry.ConfigurableReason = PurposeKeyConfigurable(purpose)
+	if purpose == wasm.PurposeIdentitySigning {
+		entry.BondAddresses = n.BondableAddresses()
+	}
 }
 
 // ServerManagedKeys returns every key this node can sign or agree with, with its
@@ -88,6 +128,13 @@ func (n *Node) ServerManagedKeys() []ManagedKey {
 		grantRefusal = grantSigningKeyDomainConflict(grantSeed, n.updateRootSigningSeed())
 	}
 
+	// The operator-configured external grant key, when there is one.
+	// moduleRuntimeKeySlots already resolved it into grantSeed (or into a
+	// refusal); this read is what lets the inventory SAY so rather than
+	// mislabeling an external key as derived.
+	extGrant, extGrantRefusal := n.configuredGrantSeed()
+	extGrantCfg, _ := n.ConfiguredPurposeKey(wasm.PurposeLicensingGrant)
+
 	var out []ManagedKey
 
 	if n.identity != nil {
@@ -105,18 +152,48 @@ func (n *Node) ServerManagedKeys() []ManagedKey {
 				InUse:          true,
 			}
 			if key.Purpose == wasm.PurposeLicensingGrant {
-				// A grant key can be perfectly derivable and still not be signing
-				// anything, because the domain separation guard refused to
-				// provision it. Reporting it as in-use would be a lie an operator
-				// would act on.
-				if grantRefusal != "" {
+				switch {
+				case extGrantRefusal != "":
+					// Configured, unreadable: the slot is NOT provisioned
+					// (fail closed) and the row must carry the reason, not a
+					// derived key the node is deliberately not signing with.
+					entry.Provenance = string(wasm.ProvenanceExternalConfigured)
+					entry.Reproducible = false
+					entry.PublicKey = ""
+					entry.DerivationPath = ""
+					entry.InUse = false
+					entry.Note = "REFUSED: an operator-configured external key exists but cannot be used — " + extGrantRefusal
+				case len(extGrant) == ed25519.SeedSize:
+					// Configured and readable: the external key IS the grant
+					// key. Report ITS public half and its provenance; the
+					// operator holds backup responsibility for it.
+					entry.Provenance = string(wasm.ProvenanceExternalConfigured)
+					entry.Reproducible = false
+					entry.DerivationPath = ""
+					if pub, perr := ed25519PublicFromSeed(extGrant); perr == nil {
+						entry.PublicKey = hex.EncodeToString(pub)
+					}
+					if extGrantCfg != nil {
+						entry.BondAddresses = extGrantCfg.BondAddresses
+					}
+					entry.Note = "operator-configured external key (set " + configuredAtNote(extGrantCfg) + "); the licensing runtime loads it at boot — restart the daemon if it was configured after the last boot"
+					if grantRefusal != "" {
+						entry.InUse = false
+						entry.Note = "REFUSED at boot: " + grantRefusal
+					}
+				case grantRefusal != "":
+					// A grant key can be perfectly derivable and still not be
+					// signing anything, because the domain separation guard
+					// refused to provision it. Reporting it as in-use would be
+					// a lie an operator would act on.
 					entry.InUse = false
 					entry.Note = "REFUSED at boot: " + grantRefusal
-				} else if len(grantSeed) != ed25519.SeedSize {
+				case len(grantSeed) != ed25519.SeedSize:
 					entry.InUse = false
 					entry.Note = "no grant signing seed is provisioned; this node issues no grants"
 				}
 			}
+			n.annotateManagedKey(&entry, key.Purpose)
 			out = append(out, entry)
 		}
 		return out
@@ -131,7 +208,7 @@ func (n *Node) ServerManagedKeys() []ManagedKey {
 		return nil
 	}
 	if identity.SigningKey != nil && len(identity.SigningKey.PublicKey) > 0 {
-		out = append(out, ManagedKey{
+		entry := ManagedKey{
 			Purpose:      wasm.PurposeIdentitySigning.String(),
 			Description:  wasm.PurposeIdentitySigning.Description(),
 			Algorithm:    "ed25519",
@@ -141,9 +218,24 @@ func (n *Node) ServerManagedKeys() []ManagedKey {
 			IsUpdateRoot: true,
 			InUse:        true,
 			Note:         "legacy on-disk identity: generated from crypto/rand and stored, not derived from a mnemonic. It cannot be recovered from a seed phrase.",
-		})
+		}
+		n.annotateManagedKey(&entry, wasm.PurposeIdentitySigning)
+		out = append(out, entry)
 	}
-	if len(grantSeed) == ed25519.SeedSize {
+	switch {
+	case extGrantRefusal != "":
+		entry := ManagedKey{
+			Purpose:      wasm.PurposeLicensingGrant.String(),
+			Description:  wasm.PurposeLicensingGrant.Description(),
+			Algorithm:    "ed25519",
+			Provenance:   string(wasm.ProvenanceExternalConfigured),
+			Reproducible: false,
+			InUse:        false,
+			Note:         "REFUSED: an operator-configured external key exists but cannot be used — " + extGrantRefusal,
+		}
+		n.annotateManagedKey(&entry, wasm.PurposeLicensingGrant)
+		out = append(out, entry)
+	case len(grantSeed) == ed25519.SeedSize:
 		entry := ManagedKey{
 			Purpose:      wasm.PurposeLicensingGrant.String(),
 			Description:  wasm.PurposeLicensingGrant.Description(),
@@ -153,13 +245,75 @@ func (n *Node) ServerManagedKeys() []ManagedKey {
 			Reproducible: true,
 			InUse:        grantRefusal == "",
 		}
+		if len(extGrant) == ed25519.SeedSize {
+			entry.Provenance = string(wasm.ProvenanceExternalConfigured)
+			entry.KDFDomain = ""
+			entry.Reproducible = false
+			if extGrantCfg != nil {
+				entry.BondAddresses = extGrantCfg.BondAddresses
+			}
+			entry.Note = "operator-configured external key (set " + configuredAtNote(extGrantCfg) + "); the licensing runtime loads it at boot — restart the daemon if it was configured after the last boot"
+		}
 		if pub, perr := ed25519PublicFromSeed(grantSeed); perr == nil {
 			entry.PublicKey = hex.EncodeToString(pub)
 		}
 		if grantRefusal != "" {
+			entry.InUse = false
 			entry.Note = "REFUSED at boot: " + grantRefusal
 		}
+		n.annotateManagedKey(&entry, wasm.PurposeLicensingGrant)
 		out = append(out, entry)
+	}
+	return out
+}
+
+// configuredAtNote renders when/by whom an external key was configured, for the
+// inventory note. Public metadata only.
+func configuredAtNote(cfg *PurposeKeyConfig) string {
+	if cfg == nil {
+		return "at an unrecorded time"
+	}
+	note := cfg.ConfiguredAt
+	if note == "" {
+		note = "at an unrecorded time"
+	}
+	if cfg.ConfiguredBy != "" {
+		note += " by session " + cfg.ConfiguredBy
+	}
+	return note
+}
+
+// PurposeBondAddresses is the per-key address map the bond attestation runs
+// over: purpose label -> chain -> address, one entry per managed key that HAS
+// bondable addresses. Derived hardened children have none and are therefore
+// absent — correctly UNBONDED, never given an invented share.
+//
+// Built FROM the inventory rather than beside it, so the attestation and the
+// key registry can never disagree about which addresses belong to which key.
+func (n *Node) PurposeBondAddresses() map[string]map[string]string {
+	keys := n.ServerManagedKeys()
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]string, len(keys))
+	for _, key := range keys {
+		if len(key.BondAddresses) == 0 {
+			continue
+		}
+		addrs := make(map[string]string, len(key.BondAddresses))
+		for chain, addr := range key.BondAddresses {
+			if strings.TrimSpace(addr) == "" {
+				continue
+			}
+			addrs[chain] = addr
+		}
+		if len(addrs) == 0 {
+			continue
+		}
+		out[key.Purpose] = addrs
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
