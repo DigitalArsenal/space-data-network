@@ -18,8 +18,8 @@
 package main
 
 import (
-	_ "embed"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"net/http"
 	"sync"
