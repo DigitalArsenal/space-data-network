@@ -479,6 +479,88 @@ func (s *UserStore) UpdateSigningPubKey(xpub, signingPubKeyHex string) error {
 	return nil
 }
 
+// ProfileUpdate carries the fields an operator may change ON THEIR OWN ROW.
+//
+// Every field is a pointer so that "absent" and "cleared" stay distinguishable:
+// a PATCH that omits Organization must not blank an organization the operator
+// set last week, while a PATCH that sends "" must. Nothing outside this struct
+// is writable by its owner — trust level, signing key, xpub, sign-in count and
+// created_at are facts the NODE asserts about an operator, not claims the
+// operator makes about themselves, and they stay on the Admin surface
+// (nst-node-admin-contract §7).
+type ProfileUpdate struct {
+	Name         *string
+	Organization *string
+	Notes        *string
+	VCardData    *string
+}
+
+// UpdateProfile writes the self-describing fields of ONE operator row.
+//
+// # Why this exists at all
+//
+// PUT /api/auth/users/<xpub> has never written `name` — it calls UpdateTrust
+// and UpdateSigningPubKey and drops the rest of the body on the floor — so both
+// the account modal's rename and the ACCOUNTS page's rename have been silent
+// no-ops: the request returned 200 and the row never changed. This is the write
+// those surfaces always claimed to make.
+//
+// # Why config rows refuse instead of writing
+//
+// applyConfigOverrides re-imposes the config file's Name over whatever the
+// database holds on every read, so a write here would appear to succeed and
+// then vanish on the next GET. Refusing is the honest outcome, and it matches
+// UpdateTrust's existing refusal for the same rows.
+func (s *UserStore) UpdateProfile(xpub string, update ProfileUpdate) error {
+	trimmed := strings.TrimSpace(xpub)
+	if trimmed == "" {
+		return fmt.Errorf("profile update requires an xpub")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.configUsers[trimmed]; ok {
+		return fmt.Errorf("this entry comes from the node config file and cannot be edited through the API")
+	}
+
+	assignments := make([]string, 0, 4)
+	args := make([]any, 0, 5)
+	if update.Name != nil {
+		assignments = append(assignments, "name = ?")
+		args = append(args, strings.TrimSpace(*update.Name))
+	}
+	if update.Organization != nil {
+		assignments = append(assignments, "organization = ?")
+		args = append(args, strings.TrimSpace(*update.Organization))
+	}
+	if update.Notes != nil {
+		assignments = append(assignments, "notes = ?")
+		args = append(args, strings.TrimSpace(*update.Notes))
+	}
+	if update.VCardData != nil {
+		assignments = append(assignments, "vcard_data = ?")
+		args = append(args, strings.TrimSpace(*update.VCardData))
+	}
+	if len(assignments) == 0 {
+		return fmt.Errorf("no editable profile fields were supplied")
+	}
+
+	args = append(args, trimmed)
+	result, err := s.db.Exec(
+		"UPDATE users SET "+strings.Join(assignments, ", ")+" WHERE xpub = ?",
+		args...,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update profile: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
 // RemoveUser removes a user from the database. Config users cannot be removed.
 func (s *UserStore) RemoveUser(xpub string) error {
 	s.mu.Lock()
