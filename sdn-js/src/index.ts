@@ -149,6 +149,21 @@ export type {
   RemoteEpochStreamRequest,
   RemoteEpochStreamResult,
 } from './remote-epoch-stream';
+export {
+  GeoPlacesCache,
+  GEONAMES_STANDARD_CODE,
+  GEONAMES_SOURCE,
+  geoPlacesEpochTopic,
+  parseAnnounce,
+} from './geonames-cache';
+export type {
+  GeoPlacesCacheState,
+  GeoPlacesCacheOptions,
+  GeoPlacesReadResult,
+  GeoPlacesEpochAnnounce,
+  GeoPlacesAnnounceSubscriber,
+  GeoPlacesUnsubscribe,
+} from './geonames-cache';
 // Per-standard engine store surface (per-source shadow tables + unified views).
 export {
   createLocalFlatSqlStore,
