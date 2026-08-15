@@ -53,6 +53,7 @@ export const SUPPORTED_SCHEMAS = [
   'GEO.fbs',    // GEO Spacecraft Status
   'GJN.fbs',    // GeoJSON FeatureCollection
   'GNO.fbs',    // GNSS Observation
+  'GNP.fbs',    // Gazetteer Named Place
   'GPX.fbs',    // GPX Document
   'GRV.fbs',    // Gravity Models
   'GVH.fbs',    // Ground Vehicles
@@ -226,6 +227,7 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
   'GEO.fbs': 'GEO Spacecraft Status',
   'GJN.fbs': 'GeoJSON FeatureCollection',
   'GNO.fbs': 'GNSS Observation',
+  'GNP.fbs': 'Gazetteer Named Place',
   'GPX.fbs': 'GPX Document',
   'GRV.fbs': 'Gravity Models',
   'GVH.fbs': 'Ground Vehicles',
@@ -397,6 +399,7 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
   'GEO.fbs': '',
   'GJN.fbs': '',
   'GNO.fbs': '',
+  'GNP.fbs': '',
   'GPX.fbs': '',
   'GRV.fbs': '',
   'GVH.fbs': '',

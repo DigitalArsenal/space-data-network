@@ -9,8 +9,10 @@ import {
 } from './schemas';
 
 // Mirrors sdn-server/internal/sds: 161 Space Data Standards schemas
+// plus GNP (Gazetteer Named Place, SDS v1.190.0 — JS-side ahead of the Go
+// registration until the sdn-server SDS pin ripple lands)
 // plus 4 SDN-internal schemas (PGR, PLHD, PLOG, RHD).
-const EXPECTED_STANDARD_SCHEMA_COUNT = 161;
+const EXPECTED_STANDARD_SCHEMA_COUNT = 162;
 const INTERNAL_SCHEMAS = ['PGR.fbs', 'PLHD.fbs', 'PLOG.fbs', 'RHD.fbs'] as const;
 const EXPECTED_TOTAL_SCHEMA_COUNT =
   EXPECTED_STANDARD_SCHEMA_COUNT + INTERNAL_SCHEMAS.length;
