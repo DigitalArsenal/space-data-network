@@ -110,6 +110,15 @@ var sensitiveCapabilities = map[string]bool{
 	"ipfs":            true,
 	"pubsub":          true,
 
+	// Generic byte-stream connector grants (task sdn-stream-connector): raw
+	// outbound TCP, raw TLS sockets, and websocket dials are network egress
+	// with credential-bearing reach, so each kind is operator-gated per
+	// module content hash exactly like http. The stream cap handler ALSO
+	// re-checks the exact kind per call (defense in depth).
+	"tcp":       true,
+	"tls":       true,
+	"websocket": true,
+
 	// schedule_cron lets a RUNNING module change its own live cron schedule and
 	// persist a config override to the node home directory (sdn/sdncron wires
 	// the factory in sdnservices.BuildServices). That is a real mutation +
