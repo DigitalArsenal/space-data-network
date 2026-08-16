@@ -55,6 +55,16 @@ var publicReadSchemas = map[string]string{
 	// bytes and must not be a privilege.
 	"EPM.fbs": "entity profile messages — the identity this node publishes about itself and its peers",
 	"APP.fbs": "application package manifests — the apps this node serves are already public",
+
+	// Entity groups. A group asserts MEMBERSHIP ONLY — it never republishes a
+	// member's data, and every member it names is a reference into a standard
+	// that is already on this list (CAT/OMM today). It is broadcast on an open
+	// gossipsub topic (/spacedatanetwork/channels/EGP/<providerID>), so
+	// refusing it over HTTP protects nothing and only makes this node's own
+	// published groups unverifiable to a browser — the PNM/DPM rationale
+	// exactly. Ownership is the signing key on the envelope, never the read
+	// gate: anonymous READ does not imply anonymous PUBLISH.
+	"EGP.fbs": "entity groups — membership assertions over already-public catalogue records, already broadcast on public channel topics",
 }
 
 // IsPublicReadSchema reports whether records of this standard are served on the

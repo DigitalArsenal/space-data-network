@@ -11,6 +11,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/APP"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CCT"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EGP"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CNP"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/IQC"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/LKS"
@@ -71,6 +72,11 @@ var driftGuardedSchemas = []struct {
 	{"PMM.fbs", &sdspmm.PMM{}},
 	{"STF.fbs", &sdsstf.STF{}},
 	{"CCT.fbs", &CCT.CCT{}},
+	// Entity groups (SDS v1.193.0, $EGP). Guarded from the day it is embedded:
+	// the node serves $EGP on the anonymous data plane and decodes its fields,
+	// so the embed and the binding must be provably the same authority from
+	// record zero.
+	{"EGP.fbs", &EGP.EGP{}},
 }
 
 func TestEmbeddedSchemasMatchLinkedBindings(t *testing.T) {

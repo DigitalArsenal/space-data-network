@@ -278,7 +278,14 @@ const (
 	// aggregate Records schema) includes every other standard, so a partial
 	// embed leaves dangling includes — which is exactly how the set went
 	// stale before v1.177.0.
-	expectedStandardSchemaCount = 205 // spacedatastandards.org v1.186.0 (adds $CCT, $CMR, $TBS)
+	// 205 from spacedatastandards.org v1.186.0 (adds $CCT, $CMR, $TBS), plus
+	// $EGP alone from v1.193.0. $EGP is a DELIBERATE partial addition ahead of
+	// a full pin bump: its schema is self-contained (no includes) and the
+	// v1.186.0 REC.fbs does not reference it, so it adds no dangling include —
+	// the failure mode this count exists to catch. It is drift-guarded against
+	// its vendored binding, so the embed cannot silently diverge. Fold this
+	// back into a single version comment at the next full pin bump.
+	expectedStandardSchemaCount = 206
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )
