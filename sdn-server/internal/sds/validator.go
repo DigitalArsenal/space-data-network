@@ -133,6 +133,7 @@ var SupportedSchemas = []string{
 	"ENT.fbs",  // Entitlement - provider subscription or account entitlement state
 	"ENV.fbs",  // Atmosphere and Environment
 	"EOO.fbs",  // Earth Orientation
+	"EGP.fbs",  // Entity Group - publishable set of entity references
 	"EOP.fbs",  // Earth Orientation Parameters
 	"EPM.fbs",  // Entity Profile Manifest
 	"ESL.fbs",  // Entity/Standards Link
