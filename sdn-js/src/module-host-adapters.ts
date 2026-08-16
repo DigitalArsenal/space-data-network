@@ -34,6 +34,10 @@
  */
 
 import { unixfs } from '@helia/unixfs';
+import {
+  createStreamCapabilityAdapter,
+  type StreamFrameSink,
+} from './stream-cap.js';
 import { CID } from 'multiformats/cid';
 import type { Helia } from 'helia';
 import type { Libp2p } from 'libp2p';
@@ -81,6 +85,21 @@ export interface ModuleHostAdapterOptions {
     data: Uint8Array;
     from?: string;
   }) => void;
+  /**
+   * Delivery sink for generic byte-stream connector events (stream.open /
+   * stream.send / stream.close, task sdn-stream-connector) — routed by the
+   * harness to the guest's declared "on_stream_frame" method, exactly like
+   * onPubsubMessage -> on_pubsub_message. Providing it enables the "stream"
+   * adapter family.
+   */
+  onStreamFrame?: StreamFrameSink;
+  /**
+   * Granted stream capability names ("tcp"|"tls"|"websocket") from the
+   * module's approved manifest. Fail closed per kind; browser can only back
+   * "websocket" (Janus isomorphism ruling — identical surface, runtime-
+   * dependent availability). Defaults to ["websocket"].
+   */
+  streamCapabilities?: string[];
 }
 
 export interface ModuleHostCapabilityAdapters {
@@ -88,6 +107,7 @@ export interface ModuleHostCapabilityAdapters {
   storage?: Record<string, (params: Record<string, unknown>) => Promise<unknown>>;
   pubsub?: Record<string, (params: Record<string, unknown>) => Promise<unknown>>;
   walletSign?: Record<string, (params: Record<string, unknown>) => Promise<unknown>>;
+  stream?: Record<string, (params: Record<string, unknown>) => Promise<unknown>>;
 }
 
 function decodeBase64(value: string): Uint8Array {
@@ -266,6 +286,13 @@ export function createModuleHostCapabilityAdapters(
         return key instanceof Uint8Array ? key : new Uint8Array(key);
       },
     };
+  }
+
+  if (options.onStreamFrame) {
+    adapters.stream = createStreamCapabilityAdapter({
+      onStreamFrame: options.onStreamFrame,
+      grantedCapabilities: options.streamCapabilities,
+    });
   }
 
   return adapters;

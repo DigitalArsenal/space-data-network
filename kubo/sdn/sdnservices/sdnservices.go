@@ -277,6 +277,14 @@ func BuildServices(deps Deps) (*Services, error) {
 	// modulert sensitiveCapability); the factory additionally re-checks the
 	// grant per call.
 	capReg.RegisterBridgeAware("http", NewHTTPCapFactory())
+	// Generic byte-stream connector (task sdn-stream-connector): ONE shared
+	// handler under the "stream" hostcall prefix serves the tcp/tls/websocket
+	// grants (all modulert sensitiveCapabilities — operator-gated by content
+	// hash, fail closed) and re-checks the exact kind per call.
+	streamFactory := NewStreamCapFactory()
+	for _, name := range []string{"tcp", "tls", "websocket"} {
+		capReg.RegisterBridgeAware(name, streamFactory)
+	}
 	wakeups := NewWakeupBroker(nil)
 	capReg.RegisterBridgeAware("timers", NewWakeupCapFactory(wakeups, resolveModuleIdentity))
 

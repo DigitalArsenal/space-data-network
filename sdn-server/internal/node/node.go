@@ -1320,6 +1320,15 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	}
 	reg.Register("http", caps.NewHTTPCapFactory())
 
+	// Generic byte-stream connector (task sdn-stream-connector): ONE shared
+	// handler under the "stream" hostcall prefix serves the tcp/tls/websocket
+	// grants (all modulert sensitiveCapabilities — operator-gated by content
+	// hash, fail closed) and re-checks the exact kind per call.
+	streamFac := caps.NewStreamCapFactory()
+	reg.RegisterBridgeAware("tcp", streamFac)
+	reg.RegisterBridgeAware("tls", streamFac)
+	reg.RegisterBridgeAware("websocket", streamFac)
+
 	// Crypto capabilities — always available (pure Go stdlib)
 	cryptoFac := caps.NewCryptoCapFactory()
 	reg.Register("crypto_hash", cryptoFac)

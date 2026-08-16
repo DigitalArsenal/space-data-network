@@ -113,6 +113,15 @@ var sensitiveCapabilities = map[string]bool{
 	"ipfs":            true,
 	"pubsub":          true,
 
+	// Generic byte-stream connector grants (task sdn-stream-connector): raw
+	// outbound TCP, raw TLS sockets, and websocket dials are network egress
+	// with credential-bearing reach, so each kind is operator-gated per
+	// module content hash exactly like http. The stream cap handler ALSO
+	// re-checks the exact kind per call (defense in depth).
+	"tcp":       true,
+	"tls":       true,
+	"websocket": true,
+
 	// Credential-keystore lanes (internal/secrets). See the block comment above.
 	"secrets:spacetrack": true,
 	"secrets:edc_cpf":    true,

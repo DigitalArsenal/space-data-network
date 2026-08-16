@@ -1,0 +1,27 @@
+{
+  "pluginId": "org.spacedatanetwork.tests.stream-echo",
+  "name": "Stream Echo (test module)",
+  "version": "0.1.0",
+  "pluginFamily": "data_source",
+  "capabilities": ["websocket"],
+  "invokeSurfaces": ["direct"],
+  "externalInterfaces": [],
+  "methods": [
+    {
+      "methodId": "run_echo",
+      "displayName": "Open stream, send probe, await echo, close",
+      "inputPorts": [],
+      "outputPorts": [],
+      "maxBatch": 1,
+      "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "on_stream_frame",
+      "displayName": "Host-push inbound stream event sink",
+      "inputPorts": [],
+      "outputPorts": [],
+      "maxBatch": 1,
+      "drainPolicy": "single-shot"
+    }
+  ]
+}

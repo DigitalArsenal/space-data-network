@@ -811,6 +811,11 @@ func capPrefixFromName(cap string) string {
 		return "schedule"
 	case "p2p_read":
 		return "p2p"
+	case "tcp", "tls", "websocket":
+		// Generic byte-stream connector (cap codes 23/20/22): one shared
+		// "stream" hostcall handler serves all three transport grants and
+		// re-checks the exact kind per call (sdnservices/stream_cap.go).
+		return "stream"
 	default:
 		return cap
 	}
