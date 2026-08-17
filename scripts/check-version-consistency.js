@@ -133,12 +133,25 @@ const mockGoVersions = readVersionMock("SDN_VERSION_CHECK_MOCK_GO_VERSIONS");
 const mockGoDirectVersions = readVersionMock("SDN_VERSION_CHECK_MOCK_GO_DIRECT_VERSIONS");
 const mockGitTags = readVersionMock("SDN_VERSION_CHECK_MOCK_GIT_TAGS");
 
-function getPublishedNpmVersion(packageName) {
+function getPublishedNpmVersion(packageName, expectedVersion) {
   if (Object.prototype.hasOwnProperty.call(mockNpmVersions, packageName)) {
-    return { version: String(mockNpmVersions[packageName]), error: null };
+    const mocked = Array.isArray(mockNpmVersions[packageName])
+      ? mockNpmVersions[packageName].map(String)
+      : [String(mockNpmVersions[packageName])];
+    return {
+      version: mocked.includes(expectedVersion)
+        ? expectedVersion
+        : mocked.at(-1) ?? null,
+      error: null,
+    };
   }
 
-  const result = spawnSync("npm", ["view", packageName, "version", "--json"], {
+  // A production pin only needs to be PUBLISHED, not the registry's latest
+  // release. Query the exact version: comparing against `npm view <pkg>
+  // version` falsely rejects every valid retained pin as soon as a newer
+  // release becomes latest.
+  const spec = expectedVersion ? `${packageName}@${expectedVersion}` : packageName;
+  const result = spawnSync("npm", ["view", spec, "version", "--json"], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     timeout: 30_000,
@@ -230,13 +243,13 @@ function getPublishedGitTag(depName, repo, tag) {
 }
 
 function checkPublishedNpmVersion(packageName, expectedVersion) {
-  const { version, error } = getPublishedNpmVersion(packageName);
+  const { version, error } = getPublishedNpmVersion(packageName, expectedVersion);
   if (error) {
     fail(`npm registry ${packageName} could not be queried: ${error}`);
   } else if (version === expectedVersion) {
     pass(`npm registry ${packageName} exposes production version ${expectedVersion}`);
   } else {
-    fail(`npm registry ${packageName} latest=${version}; expected production version ${expectedVersion} is not available`);
+    fail(`npm registry ${packageName}@${expectedVersion} is not available (registry returned ${version})`);
   }
 }
 
