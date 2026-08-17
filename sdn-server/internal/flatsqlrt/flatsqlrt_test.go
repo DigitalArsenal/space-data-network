@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -244,7 +245,14 @@ func TestAOTCache(t *testing.T) {
 		t.Fatalf("AOT query: rows=%#v err=%v", res, err)
 	}
 
-	// Second runtime hits the cache (no recompile: same single cache entry).
+	// Second runtime hits the exact current artifact without replacing it.
+	// The directory may legitimately contain the retained predecessor, so an
+	// exact one-entry assertion would contradict aotRetainedArtifactsPerPrefix.
+	wantPath := filepath.Join(dir, wantName)
+	artifactBefore, err := os.Stat(wantPath)
+	if err != nil {
+		t.Fatalf("stat AOT artifact before reuse: %v", err)
+	}
 	rt2, err := New(WithAOTCache(dir))
 	if err != nil {
 		t.Fatalf("New (cached): %v", err)
@@ -253,9 +261,35 @@ func TestAOTCache(t *testing.T) {
 	if !rt2.AOT() {
 		t.Fatal("cached runtime not AOT")
 	}
-	entries, _ = os.ReadDir(dir)
-	if len(entries) != 1 {
-		t.Fatalf("cache dir has %d entries after reuse, want 1", len(entries))
+	artifactAfter, err := os.Stat(wantPath)
+	if err != nil {
+		t.Fatalf("stat AOT artifact after reuse: %v", err)
+	}
+	if !os.SameFile(artifactBefore, artifactAfter) ||
+		artifactBefore.Size() != artifactAfter.Size() ||
+		!artifactBefore.ModTime().Equal(artifactAfter.ModTime()) {
+		t.Fatalf("AOT cache reuse replaced %s instead of loading it", wantPath)
+	}
+	entries, err = os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read AOT cache dir after reuse: %v", err)
+	}
+	found = false
+	engineArtifacts = 0
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "flatsql-") {
+			engineArtifacts++
+		}
+		if entry.Name() == wantName {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("AOT artifact %s disappeared after reuse; cache dir holds %v", wantName, entries)
+	}
+	if engineArtifacts > aotRetainedArtifactsPerPrefix {
+		t.Fatalf("engine AOT artifacts after reuse = %d, retention bound is %d: %v",
+			engineArtifacts, aotRetainedArtifactsPerPrefix, entries)
 	}
 }
 
