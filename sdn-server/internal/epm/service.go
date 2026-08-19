@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -30,9 +29,9 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"golang.org/x/crypto/ripemd160"
-	"golang.org/x/crypto/sha3"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
+	"github.com/spacedatanetwork/sdn-server/internal/chainsig"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
@@ -316,20 +315,15 @@ func verifyEthereumChainProof(payload []byte, proof IdentityAttestationChainProo
 		return fmt.Errorf("invalid ethereum public key length: %d", len(publicKey))
 	}
 
-	messageHash := ethereumSignedMessageHash(payload)
-	recoveredPubKey, _, err := ecdsa.RecoverCompact(signature, messageHash)
+	recovered, err := chainsig.VerifyPersonalSign(payload, signature, chainsig.SignatureEncodingCompactVRS)
 	if err != nil {
 		return fmt.Errorf("invalid ethereum signature: %w", err)
 	}
-	if !bytes.Equal(recoveredPubKey.SerializeCompressed(), publicKey) {
+	if !bytes.Equal(recovered.CompressedPublicKey, publicKey) {
 		return errors.New("ethereum signature does not match proof public key")
 	}
 
-	recoveredAddress, err := ethereumAddressFromCompressedPublicKey(recoveredPubKey.SerializeCompressed())
-	if err != nil {
-		return fmt.Errorf("ethereum proof public key could not be converted to address: %w", err)
-	}
-	if normalizeChainAddress(recoveredAddress, identityChainEthereum) != normalizeChainAddress(proof.Address, identityChainEthereum) {
+	if normalizeChainAddress(recovered.EthereumAddress, identityChainEthereum) != normalizeChainAddress(proof.Address, identityChainEthereum) {
 		return errors.New("ethereum proof address does not match recovered key")
 	}
 
@@ -441,14 +435,6 @@ func bitcoinSignedMessageHash(message []byte) []byte {
 	return stage2[:]
 }
 
-func ethereumSignedMessageHash(message []byte) []byte {
-	prefix := "\x19Ethereum Signed Message:\n" + strconv.Itoa(len(message))
-	h := sha3.NewLegacyKeccak256()
-	_, _ = h.Write([]byte(prefix))
-	_, _ = h.Write(message)
-	return h.Sum(nil)
-}
-
 func bitcoinAddressFromCompressedPublicKey(compressedPubKey []byte) (string, error) {
 	pubKey, err := secp256k1.ParsePubKey(compressedPubKey)
 	if err != nil {
@@ -460,18 +446,6 @@ func bitcoinAddressFromCompressedPublicKey(compressedPubKey []byte) (string, err
 	_, _ = r.Write(h[:])
 	program := r.Sum(nil)
 	return bech32SegwitEncode("bc", 0, program)
-}
-
-func ethereumAddressFromCompressedPublicKey(compressedPubKey []byte) (string, error) {
-	pubKey, err := secp256k1.ParsePubKey(compressedPubKey)
-	if err != nil {
-		return "", fmt.Errorf("invalid compressed secp256k1 pubkey: %w", err)
-	}
-	uncompressed := pubKey.SerializeUncompressed() // 65-byte uncompressed
-	h := sha3.NewLegacyKeccak256()
-	_, _ = h.Write(uncompressed[1:])
-	hash := h.Sum(nil)
-	return eip55Checksum(fmt.Sprintf("%x", hash[12:])), nil
 }
 
 func bech32SegwitEncode(hrp string, witnessVersion byte, program []byte) (string, error) {
@@ -560,37 +534,6 @@ func bech32ConvertBits(data []byte, fromBits, toBits uint, pad bool) ([]byte, er
 		return nil, fmt.Errorf("invalid bech32 bit group padding")
 	}
 	return ret, nil
-}
-
-func eip55Checksum(addrHex string) string {
-	h := sha3.NewLegacyKeccak256()
-	_, _ = h.Write([]byte(addrHex))
-	hash := h.Sum(nil)
-
-	var result strings.Builder
-	result.WriteString("0x")
-	for i, c := range addrHex {
-		if c >= '0' && c <= '9' {
-			result.WriteByte(byte(c))
-			continue
-		}
-		if i%2 == 0 {
-			nibble := hash[i/2] >> 4
-			if nibble >= 8 {
-				result.WriteByte(byte(c - 32))
-			} else {
-				result.WriteByte(byte(c))
-			}
-		} else {
-			nibble := hash[i/2] & 0x0f
-			if nibble >= 8 {
-				result.WriteByte(byte(c - 32))
-			} else {
-				result.WriteByte(byte(c))
-			}
-		}
-	}
-	return result.String()
 }
 
 // Service manages the node's EPM (Entity Profile Message).
@@ -2279,7 +2222,7 @@ func (s *Service) buildEthereumAttestationProof(payload []byte, payloadInfo iden
 		return IdentityAttestationChainProof{}, fmt.Errorf("invalid ethereum private key")
 	}
 	pubKey := privKey.PubKey().SerializeCompressed()
-	signedHash := ethereumSignedMessageHash(payload)
+	signedHash := chainsig.PersonalSignHash(payload)
 	signature := ecdsa.SignCompact(privKey, signedHash, true)
 
 	proof := IdentityAttestationChainProof{
