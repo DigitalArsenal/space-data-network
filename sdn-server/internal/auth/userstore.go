@@ -53,7 +53,11 @@ type UserStore struct {
 	db          *sql.DB
 	closer      func() error
 	configUsers map[string]User
-	mu          sync.RWMutex
+	// linkedEthereum maps a lowercase external EVM address to the config user
+	// it is linked to (config.UserEntry.EthereumAddress). Recognition only —
+	// nothing in the auth admission path reads this map.
+	linkedEthereum map[string]User
+	mu             sync.RWMutex
 }
 
 // NewUserStore creates a user store backed by a private SQLite database plus
@@ -69,9 +73,10 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 	}
 
 	s := &UserStore{
-		db:          db,
-		closer:      closer,
-		configUsers: make(map[string]User),
+		db:             db,
+		closer:         closer,
+		configUsers:    make(map[string]User),
+		linkedEthereum: make(map[string]User),
 	}
 
 	if err := s.initDB(); err != nil {
@@ -83,12 +88,31 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 	now := time.Now()
 	for _, entry := range configEntries {
 		xpub := strings.TrimSpace(entry.XPub)
-		if xpub == "" {
+		linkedAddr := strings.ToLower(strings.TrimSpace(entry.EthereumAddress))
+		if xpub == "" && linkedAddr == "" {
 			continue
 		}
 		trust, err := peers.ParseTrustLevel(strings.TrimSpace(strings.ToLower(entry.TrustLevel)))
 		if err != nil {
-			log.Warnf("Skipping config user %q: invalid trust level %q", xpub, entry.TrustLevel)
+			log.Warnf("Skipping config user %q: invalid trust level %q", entry.Name, entry.TrustLevel)
+			continue
+		}
+
+		// A linked-only entry (external EVM address, no xpub) enrolls nothing
+		// into the sign-in lane — it exists purely so a connected wallet can
+		// be RECOGNIZED by name and trust label.
+		if xpub == "" {
+			if !isEVMAddress(linkedAddr) {
+				log.Warnf("Config user %q: ethereum_address %q is not a 0x + 40-hex address; ignored", entry.Name, entry.EthereumAddress)
+				continue
+			}
+			s.linkedEthereum[linkedAddr] = User{
+				Name:       entry.Name,
+				TrustLevel: trust,
+				Source:     "config",
+				CreatedAt:  now,
+			}
+			log.Infof("Config entry %q: external EVM address linked for recognition (%s…%s)", entry.Name, linkedAddr[:6], linkedAddr[len(linkedAddr)-4:])
 			continue
 		}
 
@@ -108,7 +132,7 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 			log.Infof("Config user %q: signing key will be bound on first login (TOFU)", entry.Name)
 		}
 
-		s.configUsers[entry.XPub] = User{
+		user := User{
 			XPub:             xpub,
 			Name:             entry.Name,
 			TrustLevel:       trust,
@@ -116,10 +140,42 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 			Source:           "config",
 			CreatedAt:        now,
 		}
+		s.configUsers[entry.XPub] = user
+
+		if linkedAddr != "" {
+			if !isEVMAddress(linkedAddr) {
+				log.Warnf("Config user %q: ethereum_address %q is not a 0x + 40-hex address; ignored", entry.Name, entry.EthereumAddress)
+			} else {
+				s.linkedEthereum[linkedAddr] = user
+				log.Infof("Config user %q: external EVM address linked for recognition (%s…%s)", entry.Name, linkedAddr[:6], linkedAddr[len(linkedAddr)-4:])
+			}
+		}
 	}
 
 	log.Infof("User store initialized: %d config users, database at %s", len(s.configUsers), dbPath)
 	return s, nil
+}
+
+// isEVMAddress reports whether address is a lowercase 0x + 40-hex string.
+func isEVMAddress(address string) bool {
+	if len(address) != 42 || address[0] != '0' || address[1] != 'x' {
+		return false
+	}
+	for _, c := range address[2:] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// LinkedExternalAccount reports the enrolled account an external EVM address
+// is linked to, if any (config.UserEntry.EthereumAddress). Recognition only.
+func (s *UserStore) LinkedExternalAccount(address string) (User, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	user, ok := s.linkedEthereum[strings.ToLower(strings.TrimSpace(address))]
+	return user, ok
 }
 
 func (s *UserStore) initDB() error {
