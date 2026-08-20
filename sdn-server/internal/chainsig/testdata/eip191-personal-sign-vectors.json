@@ -1,0 +1,14 @@
+{
+  "schema": "sdn-eip191-personal-sign-v1",
+  "vectors": [
+    {
+      "name": "deterministic-wrong-order-regression",
+      "message_utf8": "SDN EIP-191 cross-implementation vector 145",
+      "message_hex": "0x53444e204549502d3139312063726f73732d696d706c656d656e746174696f6e20766563746f7220313435",
+      "signature_compact_vrs_hex": "0x1f1b4be460396cf41cdd9fe834abd9e6eb17ede58b9cdd2c61946eff4e3c733e060079d1506289950356551cf7b83f43c5d552c8020032b55d296ab310910e8385",
+      "signature_wallet_rsv_hex": "0x1b4be460396cf41cdd9fe834abd9e6eb17ede58b9cdd2c61946eff4e3c733e060079d1506289950356551cf7b83f43c5d552c8020032b55d296ab310910e83851b",
+      "compressed_public_key_hex": "0x0317f7d114db45e9f689acff44aff64ce107868f21e8177cca2802c8ca5b89c710",
+      "ethereum_address": "0xf565b32CE7A7C55939f30efAEc6D075c94a4394a"
+    }
+  ]
+}
