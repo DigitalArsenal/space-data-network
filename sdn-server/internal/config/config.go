@@ -809,6 +809,13 @@ type UserEntry struct {
 
 	// Name is an optional human-readable label.
 	Name string `yaml:"name"`
+
+	// EthereumAddress optionally links an external EVM wallet address to this
+	// account so surfaces can RECOGNIZE a connected wallet (owner 2026-08-20;
+	// intended for local/dev nodes during development). Identification only,
+	// never authentication: no session is ever minted from an address claim —
+	// signed admission belongs to the external-wallet verification lane.
+	EthereumAddress string `yaml:"ethereum_address,omitempty"`
 }
 
 // NetworkConfig contains network-related settings.

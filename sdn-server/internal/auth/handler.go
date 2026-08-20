@@ -260,6 +260,34 @@ func (h *Handler) SetExternalLoginUI(external bool) {
 	h.loginUIPolicySet = true
 }
 
+// handleExternalLinked answers GET /api/auth/external/linked?address=0x… —
+// whether an external EVM address is LINKED to an enrolled account
+// (config.UserEntry.EthereumAddress; owner 2026-08-20, dev linking lane).
+// Recognition only: the answer names the account and its trust label so a
+// surface can say "linked", and it NEVER mints or influences a session —
+// signed admission belongs to the external-wallet verification lane.
+func (h *Handler) handleExternalLinked(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Code: "method_not_allowed", Message: "GET only"})
+		return
+	}
+	address := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("address")))
+	if !isEVMAddress(address) {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "address must be 0x + 40 hex"})
+		return
+	}
+	user, ok := h.userStore.LinkedExternalAccount(address)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"linked": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"linked":      true,
+		"name":        user.Name,
+		"trust_level": user.TrustLevel.String(),
+	})
+}
+
 // RegisterRoutes registers all auth routes on the provided mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/challenge", h.handleChallenge)
@@ -268,6 +296,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/me", h.handleMe)
 	mux.HandleFunc("/api/auth/me/photo", h.handleMePhoto)
 	mux.HandleFunc("/api/auth/status", h.handleAuthStatus)
+	mux.HandleFunc("/api/auth/external/linked", h.handleExternalLinked)
 	mux.HandleFunc("/api/auth/users", h.handleUsers)
 	mux.HandleFunc("/api/auth/users/", h.handleUserByXPub)
 	mux.HandleFunc("/api/auth/attest", h.handleAttest)
