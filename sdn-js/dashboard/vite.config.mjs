@@ -32,6 +32,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const designRoot = fs.realpathSync(path.resolve(__dirname, '../spaceaware-ui/src/dashboard'));
 
 /**
+ * The external-wallet component home (owner 2026-08-20: hd-wallet-ui owns the
+ * code, every app consumes it as a component). The dashboard face imports
+ * 'hd-wallet-ui/external', which is NOT the npm pin — the npm 2.0.29 pair
+ * stays the node's STAGED custody runtime (/wallet-ui/*, walletui.js), a
+ * separate lane this alias never touches. Resolution goes through the design
+ * repo's external-checkout registry (probe = the component barrel, so a
+ * pre-move checkout is not a valid resolution; worktrees and the
+ * SPACEAWARE_UI_HD_WALLET_WASM override both work), and requireExternal
+ * fails the build LOUD naming every place it looked. The embed roll records
+ * the resolved commit alongside the submodule pin.
+ */
+const { requireExternal } = await import(
+  path.resolve(__dirname, '../spaceaware-ui/scripts/resolve-externals.mjs')
+);
+const hdWalletExternalRoot = fs.realpathSync(requireExternal('hd-wallet-wasm'));
+
+/**
  * The sdn-js status client (createNodeStatusClient) is one module carrying both
  * the REMOTE (WebSocket /ws/status) and the local HELIA assembly paths. The
  * dashboard uses REMOTE mode only; the helia path's dynamic imports
@@ -154,7 +171,10 @@ export default defineConfig({
     alias: {
       'spaceaware-student-sdn': designRoot,
       // NODE-owned transport the app imports by name (see apps/sdn-node/main.js).
-      'sdn-node-status-runtime': path.resolve(__dirname, '../src/ui/runtime/status-dashboard')
+      'sdn-node-status-runtime': path.resolve(__dirname, '../src/ui/runtime/status-dashboard'),
+      // Insertion order matters: the longer style key must precede the bare key.
+      'hd-wallet-ui/external/style': path.join(hdWalletExternalRoot, 'wallet-ui/styles/external-panel.css'),
+      'hd-wallet-ui/external': path.join(hdWalletExternalRoot, 'wallet-ui/src/external/index.js')
     },
     dedupe: ['svelte']
   },
