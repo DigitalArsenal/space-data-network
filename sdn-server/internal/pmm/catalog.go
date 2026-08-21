@@ -32,13 +32,14 @@ type BrowseHint struct {
 	ModulePath      string `json:"module_path"`
 }
 
-// LoadCatalog reads the catalog file and re-hashes every artifact from disk.
+// DecodeCatalog reads a catalog file WITHOUT re-hashing any artifact.
 //
-// The hash is ALWAYS recomputed from the bytes on disk rather than trusted from
-// the file. A catalog that disagrees with the artifact it names is the exact
-// failure this record exists to prevent, and a stale declared hash would be
-// signed into a manifest clients then reject.
-func LoadCatalog(path, artifactRoot string) (*CatalogFile, error) {
+// That is exactly the read a request path needs: a submission must be refused
+// when its MODULE_ID is already managed by the operator catalog, and re-hashing
+// every artifact on a request path would be the wrong cost for a metadata
+// conflict lookup. LoadCatalog is the one that pays the hash cost, at rebuild
+// time where it belongs.
+func DecodeCatalog(path string) (*CatalogFile, error) {
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("pmm: read catalog %s: %w", path, err)
@@ -46,6 +47,20 @@ func LoadCatalog(path, artifactRoot string) (*CatalogFile, error) {
 	var cf CatalogFile
 	if err := json.Unmarshal(raw, &cf); err != nil {
 		return nil, fmt.Errorf("pmm: decode catalog %s: %w", path, err)
+	}
+	return &cf, nil
+}
+
+// LoadCatalog reads the catalog file and re-hashes every artifact from disk.
+//
+// The hash is ALWAYS recomputed from the bytes on disk rather than trusted from
+// the file. A catalog that disagrees with the artifact it names is the exact
+// failure this record exists to prevent, and a stale declared hash would be
+// signed into a manifest clients then reject.
+func LoadCatalog(path, artifactRoot string) (*CatalogFile, error) {
+	cf, err := DecodeCatalog(path)
+	if err != nil {
+		return nil, err
 	}
 	for i := range cf.Entries {
 		e := &cf.Entries[i]
@@ -65,7 +80,7 @@ func LoadCatalog(path, artifactRoot string) (*CatalogFile, error) {
 		e.ContentHash = hash
 		e.SizeBytes = size
 	}
-	return &cf, nil
+	return cf, nil // cf is already *CatalogFile from DecodeCatalog
 }
 
 // BuildManifest assembles and signs the record from catalog data plus the node's

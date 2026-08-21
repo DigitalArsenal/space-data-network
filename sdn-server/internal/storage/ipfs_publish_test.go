@@ -745,3 +745,166 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
 }
+
+const (
+	// testIPNSName mirrors a kubo name/publish response Name field for the
+	// daemon's own identity (host-01's production IPNS name).
+	testIPNSName = "k51qzi5uqu5dknk4691lf0hb9u8yqtly1cw2nvhuvdsrb5nem0b1695tl4xp52"
+)
+
+func TestPublishIPNSNamePostsNamePublishForDaemonOwnIdentity(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v0/name/publish" {
+			t.Fatalf("path = %q, want /api/v0/name/publish", r.URL.Path)
+		}
+		query := r.URL.Query()
+		if got := query.Get("arg"); got != "/ipfs/"+testAssetCID {
+			t.Fatalf("arg = %q, want /ipfs/%s", got, testAssetCID)
+		}
+		if got := query.Get("lifetime"); got != ipnsRecordLifetime.String() {
+			t.Fatalf("lifetime = %q, want %s", got, ipnsRecordLifetime.String())
+		}
+		if got := query.Get("allow-offline"); got != "true" {
+			t.Fatalf("allow-offline = %q, want true", got)
+		}
+		if got := query.Get("key"); got != "" {
+			t.Fatalf("key = %q, want unset (daemon's own identity key)", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Name":"/ipns/` + testIPNSName + `","Value":"/ipfs/` + testAssetCID + `"}`))
+	}))
+	defer server.Close()
+
+	ipnsName, err := PublishIPNSName(context.Background(), server.URL, testAssetCID)
+	if err != nil {
+		t.Fatalf("PublishIPNSName failed: %v", err)
+	}
+	if ipnsName != testIPNSName {
+		t.Fatalf("IPNS name = %q, want %q", ipnsName, testIPNSName)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+func TestPublishIPNSNameRejectsValueMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Name":"/ipns/` + testIPNSName + `","Value":"/ipfs/` + testOtherCID + `"}`))
+	}))
+	defer server.Close()
+
+	_, err := PublishIPNSName(context.Background(), server.URL, testAssetCID)
+	if err == nil {
+		t.Fatal("PublishIPNSName succeeded with mismatched Value")
+	}
+	if !strings.Contains(err.Error(), "want /ipfs/"+testAssetCID) {
+		t.Fatalf("error = %q, want mismatch against %s", err, testAssetCID)
+	}
+}
+
+func TestPublishIPNSNameRejectsInvalidInputs(t *testing.T) {
+	cases := []struct {
+		name string
+		api  string
+		cid  string
+	}{
+		{name: "empty api url", api: "  ", cid: testAssetCID},
+		{name: "empty cid", api: "https://kubo.invalid", cid: "  "},
+		{name: "invalid cid", api: "https://kubo.invalid", cid: "not-a-cid"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := PublishIPNSName(context.Background(), tc.api, tc.cid); err == nil {
+				t.Fatal("PublishIPNSName succeeded, want input error")
+			}
+		})
+	}
+}
+
+func TestPublishIPNSNameBoundsNonSuccessResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("ipns record expires soon, republish required"))
+	}))
+	defer server.Close()
+
+	_, err := PublishIPNSName(context.Background(), server.URL, testAssetCID)
+	if err == nil {
+		t.Fatal("PublishIPNSName succeeded, want non-2xx error")
+	}
+	if !strings.Contains(err.Error(), "502") || !strings.Contains(err.Error(), "republish required") {
+		t.Fatalf("error = %q, want status and body", err)
+	}
+}
+
+func TestPublishIPNSNameRejectsOversizedSuccessResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(bytes.Repeat([]byte("x"), maxKuboCommandErrorBodyBytes+1))
+	}))
+	defer server.Close()
+
+	_, err := PublishIPNSName(context.Background(), server.URL, testAssetCID)
+	if err == nil {
+		t.Fatal("PublishIPNSName succeeded with oversized response")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("error = %q, want response size bound complaint", err)
+	}
+}
+
+func TestPublishIPNSNameClientTimeoutStopsStalledResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 50 * time.Millisecond}
+	startedAt := time.Now()
+	_, err := publishIPNSNameWithClient(context.Background(), client, server.URL, testAssetCID)
+	if err == nil {
+		t.Fatal("PublishIPNSName succeeded with stalled response")
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("stalled name/publish returned after %v, want bounded client timeout", elapsed)
+	}
+}
+
+func TestPublishIPNSNameHonorsContextCancellation(t *testing.T) {
+	requestStarted := make(chan struct{})
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		close(requestStarted)
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := publishIPNSNameWithClient(ctx, client, "https://kubo.invalid", testAssetCID)
+		result <- err
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("name/publish request did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("PublishIPNSName error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("PublishIPNSName did not return after cancellation")
+	}
+}

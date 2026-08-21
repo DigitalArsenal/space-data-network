@@ -40,6 +40,33 @@ func TestShippedCelesTrakConfigCarriesTheRFBAutoPublishLane(t *testing.T) {
 	t.Fatalf("shipped celestrak config declares no RFB.fbs/satnogs-db auto_publish lane: %+v", cfg.Publishing.AutoPublish)
 }
 
+// The cellular $TBS lane (sdn-tbs-feed-sync-for-cache-lane, 2026-08-21) is
+// the producer-side trigger of the host-02 -> host-01 topology hop: the
+// aggregate cache on the consumer node serves from ITS OWN sds_tbs store, and
+// this shipped lane is what turns a landed cell-tower ingest batch
+// (attribution: provider "opencellid", source "cell-tower-bulk") into a
+// dataset publication the consumer's schema-generic feed-head subscription
+// materializes. A shipped config that loses the lane reproduces the exact
+// "store fills locally, peers never see it" defect the RFB lane fixed — so
+// the checked-in file is loaded here rather than trusted.
+func TestShippedCelesTrakConfigCarriesTheTBSAutoPublishLane(t *testing.T) {
+	configPath := filepath.Join("..", "..", "..", "deployment", "celestrak", "config.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("deployment config not present in this checkout: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("shipped celestrak config does not load: %v", err)
+	}
+	for _, lane := range cfg.Publishing.AutoPublish {
+		if lane.Schema == "TBS.fbs" && lane.SourceName == "cell-tower-bulk" {
+			return
+		}
+	}
+	t.Fatalf("shipped celestrak config declares no TBS.fbs/cell-tower-bulk auto_publish lane: %+v", cfg.Publishing.AutoPublish)
+}
+
 func TestLoadAutoPublishLanesFromYAML(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	yamlDoc := "publishing:\n" +

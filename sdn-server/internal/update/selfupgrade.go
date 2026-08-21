@@ -46,6 +46,7 @@ package update
 // launch was not blocked by a leftover failed unit of the same name.
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -56,6 +57,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/hostsvc"
 )
 
 // SelfUpgradeOptions describes one launch of the swap phase.
@@ -89,6 +92,14 @@ type SelfUpgradeOptions struct {
 	// UnitPrefix names the transient systemd unit. Defaults to
 	// "sdn-self-upgrade".
 	UnitPrefix string
+	// DaemonUnit and DaemonRestartPolicy are the systemd unit this daemon
+	// resolved from its own cgroup and its Restart= policy, resolved at
+	// LAUNCH time while this process can still refuse cleanly, and carried
+	// into the helper so it can cross-check the shutdown response and refuse
+	// before it has asked this process to exit (ops-update-lane-restart-
+	// policy-preflight). Empty when no supervisor is proven.
+	DaemonUnit          string
+	DaemonRestartPolicy string
 }
 
 // SelfUpgradeLaunch reports how the swap phase was started, for the log line
@@ -186,6 +197,26 @@ func LaunchSelfUpgrade(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 		return nil, fmt.Errorf("write update control token: %w", err)
 	}
 
+	// RESOLVE THE SUPERVISOR AT LAUNCH (ops-update-lane-restart-policy-
+	// preflight). This process IS the daemon, so hostsvc.Probe resolves the
+	// exact unit it runs under and the unit's Restart= policy — the facts the
+	// helper needs to build its restart plan BEFORE it asks this process to
+	// exit. A supervised daemon whose unit or policy cannot be resolved is
+	// refused up front: under Restart=on-failure or Restart=no a clean exit
+	// is a STOP and the box stays down (live incident 2026-08-08), and an
+	// unknown policy cannot be planned around.
+	env := helperRuntimeEnv(os.Environ())
+	if SupervisedBySystemd() {
+		state := hostsvc.Probe(context.Background())
+		if strings.TrimSpace(state.Unit) == "" || strings.TrimSpace(state.RestartPolicy) == "" {
+			return nil, fmt.Errorf(
+				"supervised daemon: refusing to launch the self-upgrade helper because the owning systemd unit or its Restart= policy could not be resolved (unit=%q restart=%q); a clean daemon exit could leave the box down. Verify the service definition, then retry",
+				state.Unit, state.RestartPolicy)
+		}
+		opts.DaemonUnit = state.Unit
+		opts.DaemonRestartPolicy = state.RestartPolicy
+	}
+
 	plan, err := PrepareHelperPlan(HelperPlanOptions{
 		Paths:            paths,
 		SourceExecutable: source,
@@ -201,12 +232,29 @@ func LaunchSelfUpgrade(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 	if err != nil {
 		return nil, err
 	}
+	// The resolved supervisor facts travel with the helper as explicit args so
+	// it can cross-check the shutdown response and refuse before any exit is
+	// requested.
+	if unit := strings.TrimSpace(opts.DaemonUnit); unit != "" {
+		plan.Args = append(plan.Args, "--daemon-unit", unit)
+	}
+	if policy := strings.TrimSpace(opts.DaemonRestartPolicy); policy != "" {
+		plan.Args = append(plan.Args, "--daemon-restart-policy", policy)
+	}
 
-	env := helperRuntimeEnv(os.Environ())
 	if SupervisedBySystemd() {
 		if launch, err := launchViaSystemdRun(plan, env, opts); err == nil {
 			return launch, nil
-		} else if !isSystemdRunUnavailable(err) {
+		} else if isSystemdRunUnavailable(err) {
+			// A supervised box WITHOUT systemd-run is not a box for the
+			// detached fallback either: a setsid child of this daemon lives in
+			// THIS unit's cgroup, and the unit teardown that follows this
+			// process's exit would kill the helper mid-swap. Escaping the
+			// daemon cgroup is not optional here (ops-update-lane-restart-
+			// policy-preflight: "helper escape from the daemon cgroup").
+			return nil, fmt.Errorf(
+				"supervised daemon: %w — the helper MUST run outside this daemon's cgroup (a helper inside it is killed by the unit teardown the moment this daemon exits), and systemd-run is the only escape this lane has; install systemd-run and retry", err)
+		} else {
 			// A supervised box where systemd-run exists but REFUSED is not a
 			// box to fall back on: the fallback would put the helper in the
 			// daemon's cgroup, which is the exact failure this avoids.

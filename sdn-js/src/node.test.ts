@@ -23,6 +23,21 @@ class MockEdgeDiscovery {
   }
 }
 
+/** A stream-shaped object `exchangeStream` can sink into and read from. */
+function makeMockStream(): {
+  sink: ReturnType<typeof vi.fn>;
+  source: AsyncIterable<Uint8Array>;
+  close: ReturnType<typeof vi.fn>;
+} {
+  return {
+    sink: vi.fn(async () => undefined),
+    source: (async function* () {
+      yield new Uint8Array([7, 8, 9]);
+    })(),
+    close: vi.fn(async () => undefined),
+  };
+}
+
 vi.mock("libp2p", () => ({
   createLibp2p: createLibp2pMock,
 }));
@@ -103,6 +118,7 @@ describe("SDNNode relay bootstrap", () => {
       start: vi.fn(async () => undefined),
       stop: vi.fn(async () => undefined),
       getPeers: vi.fn(() => []),
+      dialProtocol: vi.fn(async () => makeMockStream()),
     });
     createHeliaFromLibp2pMock.mockResolvedValue({
       stop: vi.fn(async () => undefined),
@@ -276,5 +292,147 @@ describe("SDNNode relay bootstrap", () => {
         storageBackend: "indexeddb" as never,
       }),
     ).rejects.toThrow(/SDNStorage.*removed/is);
+  });
+});
+
+/*
+ * ---------------------------------------------------------------------------
+ * Regression: every delivery dial carries OUR deadline signal
+ * (sdn-js-connection-monitor-kills-its-own-in-flight-streams, ASK 2-3).
+ *
+ * libp2p 1.9.4's upgrader creates a silent 30000 ms timer exactly when
+ * `options.signal == null` ("no abort signal was passed ... falling back to
+ * default timeout", upgrader.js). The defect half of this task is that
+ * `SDNNode.dialProtocol` passed NO options at all, so that 30 s default
+ * governed every module-delivery and flatsql-sync stream this node opened.
+ * These tests pin the seam: a signal is always passed, its deadline comes
+ * from SDNConfig (host-tightenable), and a timed-out attempt kills only that
+ * attempt — never the connection it rides on.
+ * ---------------------------------------------------------------------------
+ */
+describe("SDNNode dialProtocol deadline", () => {
+  const relay = "/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider";
+  const targetPeer =
+    "12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j";
+  const DELIVERY_PROTOCOL = "/space-data-network/module-delivery/1.0.0";
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    edgeDiscoveryInstances.length = 0;
+    vi.restoreAllMocks();
+    getBootstrapRelaysMock.mockResolvedValue([relay]);
+    createLibp2pMock.mockResolvedValue({
+      peerId: { toString: () => "test-peer-id" },
+      services: {},
+      addEventListener: vi.fn(),
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      getPeers: vi.fn(() => []),
+      dialProtocol: vi.fn(async () => makeMockStream()),
+    });
+    createHeliaFromLibp2pMock.mockResolvedValue({
+      stop: vi.fn(async () => undefined),
+    });
+    fetchCIDBytesFromHeliaMock.mockResolvedValue(new Uint8Array([1, 2, 3]));
+  });
+
+  async function lastMockLibp2p(): Promise<{
+    dialProtocol: ReturnType<typeof vi.fn>;
+  }> {
+    const result = createLibp2pMock.mock.results[0];
+    if (result == null || result.type !== "return") {
+      throw new Error("expected createLibp2p to have resolved in this test");
+    }
+    // `mockResolvedValue` hands the mock fn a promise; the mock's result
+    // slot holds that promise, not the object it resolves with.
+    return (await result.value) as {
+      dialProtocol: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  it("passes an explicit signal, so libp2p's silent 30s fallback never governs our deliveries", async () => {
+    const { SDNNode, DEFAULT_DIAL_PROTOCOL_TIMEOUT_MS } = await import(
+      "./node"
+    );
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const node = await SDNNode.create({
+      edgeRelays: [relay],
+      enableStorage: false,
+    });
+
+    const reply = await node.dialProtocol(
+      targetPeer,
+      DELIVERY_PROTOCOL,
+      new Uint8Array([1]),
+    );
+
+    expect(reply).toEqual(new Uint8Array([7, 8, 9]));
+    // The deadline is OUR constant, not an absent options argument.
+    expect(timeoutSpy).toHaveBeenCalledWith(DEFAULT_DIAL_PROTOCOL_TIMEOUT_MS);
+    const call = (await lastMockLibp2p()).dialProtocol.mock.calls[0];
+    expect(call[2]).toEqual(
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+
+    await node.stop();
+  });
+
+  it("honours dialProtocolTimeoutMs from SDNConfig — a host can tighten it", async () => {
+    const { SDNNode } = await import("./node");
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const node = await SDNNode.create({
+      edgeRelays: [relay],
+      enableStorage: false,
+      dialProtocolTimeoutMs: 5_000,
+    });
+
+    await node.dialProtocol(
+      targetPeer,
+      DELIVERY_PROTOCOL,
+      new Uint8Array([1]),
+    );
+
+    expect(timeoutSpy).toHaveBeenCalledWith(5_000);
+
+    await node.stop();
+  });
+
+  it("gives every candidate-address attempt a fresh budget — one timed-out address does not abort the rest", async () => {
+    const { SDNNode } = await import("./node");
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const node = await SDNNode.create({
+      edgeRelays: [relay],
+      enableStorage: false,
+      dialProtocolTimeoutMs: 6_000,
+    });
+
+    (await lastMockLibp2p()).dialProtocol.mockRejectedValueOnce(
+      new Error("first candidate refused"),
+    );
+
+    await node.dialProtocol(
+      targetPeer,
+      DELIVERY_PROTOCOL,
+      new Uint8Array([1]),
+      [
+        "/ip4/127.0.0.1/tcp/14081/ws",
+        "/ip4/127.0.0.1/tcp/14082/ws",
+      ],
+    );
+
+    const calls = (await lastMockLibp2p()).dialProtocol.mock.calls;
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call[2]).toEqual(
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    }
+    // Two candidates, two deadlines — the shared-signal instant-abort trap
+    // is exactly what this task exists to rule out.
+    expect(timeoutSpy).toHaveBeenCalledWith(6_000);
+    expect(timeoutSpy).toHaveBeenCalledTimes(2);
+
+    await node.stop();
   });
 });

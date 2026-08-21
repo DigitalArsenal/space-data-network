@@ -106,7 +106,13 @@ func newCelestrakIngestHarness(t *testing.T) *celestrakIngestHarness {
 // CONFIG and fires every timer trigger it declares.
 func (h *celestrakIngestHarness) runIngestService(t *testing.T, dist string, nodeConfig map[string]interface{}) *ServiceFlow {
 	t.Helper()
-	policy := approvedCapabilityPolicy(t, dist, "http", "storage_ingest")
+	// storage_query joins http + storage_ingest: the gp flow re-executes the
+	// dataset default query in-flow after each OMM store (cache_warm ->
+	// flatsql-query, graph task sdn-dataset-default-query-materialized-cache),
+	// and the capability policy store refuses unapproved sensitive
+	// capabilities. The storage_query HANDLER is registered in the harness
+	// above; only the approval record is added here.
+	policy := approvedCapabilityPolicy(t, dist, "http", "storage_ingest", "storage_query")
 	services := []config.FlowService{{
 		Flow:        dist,
 		Config:      nodeConfig,
@@ -406,9 +412,16 @@ func TestCelesTrakIngestFlowConfiguredURLSurvivesTheHostcall(t *testing.T) {
 }
 
 // TestCelesTrakIngestFlowsDeclareOnlyConnectorCapabilities pins the boundary:
-// a retrieval app may ask the host for egress and guarded persistence and
-// NOTHING else. A bundle that grows a capability beyond this pair is doing
-// application work in the host and must be rejected in review.
+// a retrieval app may ask the host for egress, guarded persistence and the
+// default-query cache-warm re-execution and NOTHING else. A bundle that grows
+// a capability beyond this set is doing application work in the host and must
+// be rejected in review. The one declared exception is the gp flow's
+// storage_query: the default-query lane (cache_warm -> flatsql-query, graph
+// task sdn-dataset-default-query-materialized-cache) re-executes the dataset's
+// registered default FlatSQL query inside the flow after each OMM store to
+// warm the engine's response artifact. The query text comes from node CONFIG,
+// never from the flow, and every result byte stays in the flow — the host
+// merely serves the engine, exactly as it already does through data load.
 func TestCelesTrakIngestFlowsDeclareOnlyConnectorCapabilities(t *testing.T) {
 	for _, variant := range []string{"gp", "satcat", "spw"} {
 		dist := celestrakFlowDist(t, variant)
@@ -422,12 +435,21 @@ func TestCelesTrakIngestFlowsDeclareOnlyConnectorCapabilities(t *testing.T) {
 		if err := json.Unmarshal(raw, &manifest); err != nil {
 			t.Fatalf("parse %s manifest: %v", variant, err)
 		}
+		expected := map[string]bool{"http": true, "storage_ingest": true}
+		if variant == "gp" {
+			expected["storage_query"] = true
+		}
 		got := map[string]bool{}
 		for _, capability := range manifest.Capabilities {
 			got[capability] = true
 		}
-		if len(got) != 2 || !got["http"] || !got["storage_ingest"] {
-			t.Fatalf("%s bundle capabilities = %v, want exactly [http storage_ingest]", variant, manifest.Capabilities)
+		if len(got) != len(expected) {
+			t.Fatalf("%s bundle capabilities = %v, want exactly %v", variant, manifest.Capabilities, expected)
+		}
+		for capability := range expected {
+			if !got[capability] {
+				t.Fatalf("%s bundle capabilities = %v, want exactly %v", variant, manifest.Capabilities, expected)
+			}
 		}
 	}
 }
@@ -452,7 +474,10 @@ func TestCelesTrakIngestRespectsTheDebounceGate(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	policy := approvedCapabilityPolicy(t, dist, "http", "storage_ingest")
+	// The gp bundle declares storage_query for its default-query warm lane
+	// (cache_warm -> flatsql-query); approve it here exactly as the shared
+	// harness does.
+	policy := approvedCapabilityPolicy(t, dist, "http", "storage_ingest", "storage_query")
 	loaded, err := LoadFlowServices([]config.FlowService{{
 		Flow:        dist,
 		MemoryPages: 4096,

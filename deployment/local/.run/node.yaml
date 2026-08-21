@@ -1,0 +1,52 @@
+# RENDERED by deployment/local/sdn-local-node.sh — do not edit by hand.
+# Local docker TEST node. Not cluster capacity. Own identity, generated on
+# first boot into the sdn-local-test-data volume.
+
+mode: full
+
+network:
+  listen:
+    - /ip4/0.0.0.0/tcp/4001
+  # Public, dialable cluster peers. The local node dials OUT; nothing dials in,
+  # because this machine is behind NAT. Recorded live-verified peer IDs only —
+  # see deployment/topology.json. NEVER copy a peer ID from a stale template.
+  bootstrap: []
+  edge_relays: []
+  max_connections: 256
+  enable_relay: false
+
+storage:
+  path: /app/data/store
+  max_size: 10GB
+  gc_interval: 1h
+
+admin:
+  enabled: true
+  listen_addr: 0.0.0.0:5001
+  require_auth: true
+  session_expiry: 24h
+  totp_required: false
+  auth_db_path: /app/data/auth.db
+  tls_mode: disabled
+  webui_path: /app/webui
+
+wallet_wasm:
+  assets_dir: /app/wallet-wasm
+  ui_assets_dir: /app/wallet-ui
+
+peers:
+  registry_path: /app/data/peers.db
+
+tor:
+  enabled: false
+  hidden_service_enabled: false
+
+# This is a TEST PEER, not the ingest node. Ingest/OD flows belong to the
+# celestrak.eth node; running them here would fork the authoritative source.
+flows:
+  enabled: false
+  storage_path: /app/data/flows
+
+setup:
+  token_expiry: 10m
+  data_path: /app/data

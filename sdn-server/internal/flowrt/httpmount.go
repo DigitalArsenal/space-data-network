@@ -970,6 +970,7 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := rt.Drain(r.Context(), handlers, DrainOptions{MaxIterations: 1000}); err != nil && !pipe.wroteHeader {
+		log.Errorf("Flow mount %q: drain failed for %s %s: %v", mf.mountPath, r.Method, r.URL.Path, err)
 		http.Error(w, fmt.Sprintf("flow drain: %v", err), http.StatusBadGateway)
 		return
 	}
@@ -978,6 +979,7 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if pipe.err != nil {
 			detail = ": " + pipe.err.Error()
 		}
+		log.Errorf("Flow mount %q: no HTTP response for %s %s%s", mf.mountPath, r.Method, r.URL.Path, detail)
 		http.Error(w, "flow produced no HTTP response"+detail, http.StatusBadGateway)
 	}
 }

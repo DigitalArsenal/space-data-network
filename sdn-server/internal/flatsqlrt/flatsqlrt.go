@@ -177,6 +177,13 @@ type Runtime struct {
 
 	// dispatchLogStop ends the periodic guest-call account (startDispatchLog).
 	dispatchLogStop chan struct{}
+	// dispatchLogDone is closed by the startDispatchLog goroutine right before
+	// it returns. Close() blocks on it after signalling dispatchLogStop, so the
+	// goroutine's last r.mod.DispatchStats() read is strictly ordered before
+	// Close() nils r.mod — without this join, the goroutine can read r.mod
+	// concurrently with (or after) Close() releasing and nil-ing it (DATA RACE,
+	// see sdn-flatsqlrt-dispatch-log-races-runtime-close).
+	dispatchLogDone chan struct{}
 }
 
 // FileIO returns this runtime's host file layer, or nil when the engine was
@@ -433,15 +440,24 @@ func (r *Runtime) startDispatchLog() {
 	if dispatchLogInterval <= 0 {
 		return
 	}
-	r.dispatchLogStop = make(chan struct{})
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	r.dispatchLogStop = stop
+	r.dispatchLogDone = done
 	go func() {
+		// stop/done are captured as locals, NOT read off r via the field each
+		// loop iteration: Close() writes r.dispatchLogStop = nil (and later
+		// r.dispatchLogDone = nil) once it knows this goroutine has exited,
+		// which would otherwise race with the select re-evaluating r.dispatchLogStop
+		// on every trip through the loop.
+		defer close(done)
 		t := time.NewTicker(dispatchLogInterval)
 		defer t.Stop()
 		prev := r.mod.DispatchStats()
 		prevQ, prevSlow, prevWait, prevHeld := r.Stats()
 		for {
 			select {
-			case <-r.dispatchLogStop:
+			case <-stop:
 				return
 			case <-t.C:
 				cur := r.mod.DispatchStats()
@@ -477,6 +493,12 @@ func (r *Runtime) Close() {
 	if r.dispatchLogStop != nil {
 		close(r.dispatchLogStop)
 		r.dispatchLogStop = nil
+		// Join the dispatch-log goroutine before touching r.mod below: its last
+		// tick may already be past the stop-channel select and mid-read of
+		// r.mod, and only this wait orders that read before the release/nil
+		// that follows.
+		<-r.dispatchLogDone
+		r.dispatchLogDone = nil
 	}
 	if r.mod != nil {
 		r.mod.Release()
