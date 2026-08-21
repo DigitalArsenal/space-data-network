@@ -45,10 +45,36 @@ type pinUnixFSFileOptions struct {
 }
 
 const (
-	maxKuboCommandErrorBodyBytes = 4 * 1024
-	maxAssetKuboAddResponseBytes = 64 * 1024
-	assetKuboRequestTimeout      = 30 * time.Second
+	maxKuboCommandErrorBodyBytes        = 4 * 1024
+	maxAssetKuboAddResponseBytes        = 64 * 1024
+	maxKuboIPNSNamePublishResponseBytes = 16 * 1024
+	assetKuboRequestTimeout             = 30 * time.Second
 )
+
+// IPNS re-publication policy for the daemon's own name (the record accepted
+// by the deployment check; acceptance: the re-publish interval must stay
+// strictly inside the record lifetime, or the name decays back to
+// unresolvable):
+//   - ipnsRecordLifetime is the validity window signed into every IPNS record
+//     — sent to kubod as an explicit `lifetime=` on every name/publish.
+//   - ipnsKuboRepublishPeriod is kubod's background re-publish cadence (Kubo
+//     config default on both production hosts). TestIPNSRepublishPolicy-
+//     StaysInsideRecordLifetime fails the build if it ever reaches the
+//     lifetime.
+//   - Plus an immediate re-publish on EVERY catalog manifest publish (see
+//     PublishDatasetPublicationManifestToIPFS), so the name tracks each
+//     freshly exported catalog rather than only staying alive.
+const (
+	ipnsRecordLifetime      = 168 * time.Hour // 7 days
+	ipnsKuboRepublishPeriod = 23 * time.Hour
+)
+
+// ipnsLifetimeParam renders ipnsRecordLifetime the exact way the name/publish
+// command documents it ("168h"), keeping the wire value and the signed record
+// window in one source of truth.
+func ipnsLifetimeParam() string {
+	return fmt.Sprintf("%dh", int64(ipnsRecordLifetime/time.Hour))
+}
 
 type assetKuboDoer interface {
 	Do(*http.Request) (*http.Response, error)
@@ -86,7 +112,14 @@ func PublishDatasetExportToIPFS(ctx context.Context, ipfsAPIURL string, export *
 	}, nil
 }
 
-// PublishDatasetPublicationManifestToIPFS pins a signed dataset manifest through a Kubo RPC API.
+// PublishDatasetPublicationManifestToIPFS pins a signed dataset manifest
+// through a Kubo RPC API, then re-publishes the daemon's IPNS name at the
+// freshly pinned manifest CID. This function is the single choke point every
+// catalog manifest publish passes through, so the name re-publish happens on
+// every catalog publish — not just on a timer. A re-publish failure is logged
+// at error level but does NOT fail the manifest publish: the content keeps
+// serving, and the deployment check (celestrak-browser-provider-probe Layer 4
+// — NAME) is the tripwire for a stale name.
 func PublishDatasetPublicationManifestToIPFS(ctx context.Context, ipfsAPIURL string, manifest *DatasetPublicationManifest) (string, error) {
 	if manifest == nil {
 		return "", fmt.Errorf("dataset publication manifest is required")
@@ -95,7 +128,91 @@ func PublishDatasetPublicationManifestToIPFS(ctx context.Context, ipfsAPIURL str
 	if err != nil {
 		return "", fmt.Errorf("pin manifest: %w", err)
 	}
+	if err := PublishIPNSName(ctx, ipfsAPIURL, manifestCID); err != nil {
+		log.Errorf("IPNS name re-publish to %s failed after pinning manifest %s (content keeps serving; the stale name is the deployment check's finding): %v", ipfsAPIURL, manifestCID, err)
+	}
 	return manifestCID, nil
+}
+
+// PublishIPNSName publishes the daemon's own IPNS name to the given CID
+// through Kubo's name/publish command. No `key` is sent: kubod publishes
+// under its own identity key, which IS the IPNS name the deployment check
+// verifies (host-01's ipfs.service name). The record is signed with an
+// explicit lifetime (ipnsRecordLifetime) and is allowed to publish offline —
+// the block is already pinned locally, so the signed record stays valid and
+// resolvable without a re-announce.
+func PublishIPNSName(ctx context.Context, ipfsAPIURL, cidValue string) error {
+	return publishIPNSNameWithClient(ctx, newAssetKuboHTTPClient(), ipfsAPIURL, cidValue)
+}
+
+func publishIPNSNameWithClient(ctx context.Context, client assetKuboDoer, apiURL, cidValue string) error {
+	if client == nil {
+		return fmt.Errorf("asset Kubo client is required")
+	}
+	if strings.TrimSpace(apiURL) == "" {
+		return fmt.Errorf("ipfs api url is required")
+	}
+	cidValue = strings.TrimSpace(cidValue)
+	if cidValue == "" {
+		return fmt.Errorf("cid is required")
+	}
+	parsedCID, err := cid.Decode(cidValue)
+	if err != nil {
+		return fmt.Errorf("invalid cid: %w", err)
+	}
+
+	endpoint, err := url.JoinPath(strings.TrimRight(apiURL, "/"), "/api/v0/name/publish")
+	if err != nil {
+		return fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := reqURL.Query()
+	query.Set("arg", "/ipfs/"+parsedCID.String())
+	query.Set("lifetime", ipnsLifetimeParam())
+	query.Set("allow-offline", "true")
+	// No "key": kubod publishes under its own identity key — the daemon's
+	// own IPNS name. Delete any key inherited from a configured API URL so
+	// the command can never be steered onto another identity.
+	query.Del("key")
+	reqURL.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("create IPFS request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("post IPFS name publish: %w", err)
+	}
+	defer resp.Body.Close()
+	body, truncated, err := readBoundedKuboBody(resp.Body, maxKuboIPNSNamePublishResponseBytes)
+	if err != nil {
+		return fmt.Errorf("read IPFS name publish response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if truncated {
+			message += " [truncated]"
+		}
+		return fmt.Errorf("IPFS name publish failed with status %d: %s", resp.StatusCode, message)
+	}
+	if truncated {
+		return fmt.Errorf("IPFS name publish response exceeds %d bytes", maxKuboIPNSNamePublishResponseBytes)
+	}
+	var result struct {
+		Value string `json:"Value"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("decode IPFS name publish response: %w", err)
+	}
+	expected := "/ipfs/" + parsedCID.String()
+	if result.Value != expected {
+		return fmt.Errorf("IPFS name publish returned value %q, want %q", result.Value, expected)
+	}
+	return nil
 }
 
 // FetchIPFSBlockByCID fetches immutable bytes from a Kubo RPC API. The CID may

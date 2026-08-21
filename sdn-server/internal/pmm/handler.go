@@ -17,6 +17,14 @@ const Path = "/.well-known/sdn/modules.pmm"
 // whose domain the DNS proof binds.
 const ArtifactPrefix = "/modules/"
 
+// SubmissionPath is the anonymous self-serve submission endpoint for the
+// manifest: a third party can POST a plaintext module listing here with NO
+// admin wallet — the ANONYMOUS/plaintext listing that has always been legal
+// but never reachable. Like Path it sits outside the /api/ auth wall, so it is
+// anonymous by construction. Contract and receipt semantics are documented in
+// the repo's docs/pmm-listing-submission.md and implemented in submit.go.
+const SubmissionPath = "/.well-known/sdn/modules.pmm/submissions"
+
 // Source produces the current manifest. Implementations cache; the handler does
 // not, so a rebuild is always observable at the endpoint.
 type Source interface {

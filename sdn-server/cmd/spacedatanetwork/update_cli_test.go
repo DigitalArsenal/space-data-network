@@ -242,26 +242,34 @@ func TestHelperPostApplyRestartRollsBackWhenDaemonHealthFails(t *testing.T) {
 }
 
 // TestHelperPostApplyRestartSupervisedNeverSpawns is the regression test for
-// sdn-update-helper-supervisor-mode: when the daemon reports it was started
-// by systemd, the helper must NEVER call StartDaemon (that direct spawn is
-// exactly what escapes the unit's cgroup while the unit loops "activating"
-// against the store lock) — it only health-waits for the supervisor's own
-// Restart= policy to bring the daemon back.
+// sdn-update-helper-supervisor-mode AND ops-update-lane-restart-policy-preflight:
+// when the daemon reported it was started by systemd, the helper must NEVER
+// call StartDaemon (that direct spawn is exactly what escapes the unit's
+// cgroup while the unit loops "activating" against the store lock). Instead it
+// starts the EXACT resolved unit through the supervisor (StartUnit), health-
+// waits, and otherwise the swap is good.
 func TestHelperPostApplyRestartSupervisedNeverSpawns(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	spawned := false
+	var startedUnits []string
 
 	err := helperPostApplyRestart(context.Background(), helperPostApplyOptions{
-		Paths:       update.PathsFor(t.TempDir()),
-		RestartArgv: []string{"/opt/sdn/bin/spacedatanetwork", "daemon"},
-		Supervised:  true,
-		AdminURL:    "http://127.0.0.1:5080",
-		Out:         &out,
-		Err:         &errOut,
+		Paths:         update.PathsFor(t.TempDir()),
+		RestartArgv:   []string{"/opt/sdn/bin/spacedatanetwork", "daemon"},
+		Supervised:    true,
+		Unit:          "space-data-network.service",
+		RestartPolicy: "always",
+		AdminURL:      "http://127.0.0.1:5080",
+		Out:           &out,
+		Err:           &errOut,
 		StartDaemon: func(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error) {
 			spawned = true
 			return fakeHelperProcess{pid: 9999}, nil
+		},
+		StartUnit: func(ctx context.Context, unit string) error {
+			startedUnits = append(startedUnits, unit)
+			return nil
 		},
 		WaitHealth: func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error {
 			return nil
@@ -273,8 +281,14 @@ func TestHelperPostApplyRestartSupervisedNeverSpawns(t *testing.T) {
 	if spawned {
 		t.Fatal("StartDaemon was called under Supervised=true — this is the escapes-systemd bug")
 	}
-	if !strings.Contains(out.String(), "restart=supervised") {
-		t.Fatalf("stdout = %q, want restart=supervised", out.String())
+	if len(startedUnits) != 1 || startedUnits[0] != "space-data-network.service" {
+		t.Fatalf("StartUnit calls = %#v, want the resolved unit exactly once", startedUnits)
+	}
+	if !strings.Contains(out.String(), "restart=supervised unit=space-data-network.service policy=always") {
+		t.Fatalf("stdout = %q, want restart=supervised naming the resolved unit", out.String())
+	}
+	if !strings.Contains(out.String(), "unit_start=started unit=space-data-network.service") {
+		t.Fatalf("stdout = %q, want unit_start=started", out.String())
 	}
 	if !strings.Contains(out.String(), "daemon_health=healthy") {
 		t.Fatalf("stdout = %q, want daemon_health=healthy", out.String())
@@ -282,25 +296,34 @@ func TestHelperPostApplyRestartSupervisedNeverSpawns(t *testing.T) {
 }
 
 // TestHelperPostApplyRestartSupervisedRollsBackWithoutSpawning proves the
-// unhealthy-then-rollback branch also never spawns: the supervisor's own
-// Restart= policy is what brings the (now rolled-back) binary back up.
+// unhealthy-then-rollback branch also never spawns: after a rollback the
+// helper starts the SAME resolved unit again (now on the previous slot) and
+// health-waits again — a direct spawn would escape the unit's cgroup and
+// leave the unit itself dead.
 func TestHelperPostApplyRestartSupervisedRollsBackWithoutSpawning(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	spawned := false
 	rolledBack := false
 	healthAttempts := 0
+	var startedUnits []string
 
 	err := helperPostApplyRestart(context.Background(), helperPostApplyOptions{
-		Paths:       update.PathsFor(t.TempDir()),
-		RestartArgv: []string{"/opt/sdn/bin/spacedatanetwork", "daemon"},
-		Supervised:  true,
-		AdminURL:    "http://127.0.0.1:5080",
-		Out:         &out,
-		Err:         &errOut,
+		Paths:         update.PathsFor(t.TempDir()),
+		RestartArgv:   []string{"/opt/sdn/bin/spacedatanetwork", "daemon"},
+		Supervised:    true,
+		Unit:          "space-data-network.service",
+		RestartPolicy: "on-failure",
+		AdminURL:      "http://127.0.0.1:5080",
+		Out:           &out,
+		Err:           &errOut,
 		StartDaemon: func(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error) {
 			spawned = true
 			return fakeHelperProcess{pid: 9999}, nil
+		},
+		StartUnit: func(ctx context.Context, unit string) error {
+			startedUnits = append(startedUnits, unit)
+			return nil
 		},
 		WaitHealth: func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error {
 			healthAttempts++
@@ -326,8 +349,159 @@ func TestHelperPostApplyRestartSupervisedRollsBackWithoutSpawning(t *testing.T) 
 	if !rolledBack {
 		t.Fatal("rollback was not invoked after supervised daemon health failure")
 	}
+	if len(startedUnits) != 2 {
+		t.Fatalf("StartUnit calls = %#v, want one start before each health wait", startedUnits)
+	}
+	for _, unit := range startedUnits {
+		if unit != "space-data-network.service" {
+			t.Fatalf("StartUnit started %q, want the resolved unit every time", unit)
+		}
+	}
 	if healthAttempts != 2 {
 		t.Fatalf("health attempts = %d, want 2 (initial + post-rollback)", healthAttempts)
+	}
+}
+
+// TestHelperPostApplyRestartSupervisedExplicitStartFailureRollsBack covers
+// the explicit start failing (systemctl start refuses — masked unit, missing
+// binary, start-limit): the helper rolls the bundle back and retries the
+// start against the previous slot. A start failure must never be the bare
+// "box stays down".
+func TestHelperPostApplyRestartSupervisedExplicitStartFailureRollsBack(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	spawned := false
+	rolledBack := false
+	startAttempts := 0
+
+	err := helperPostApplyRestart(context.Background(), helperPostApplyOptions{
+		Paths:         update.PathsFor(t.TempDir()),
+		RestartArgv:   []string{"/opt/sdn/bin/spacedatanetwork", "daemon"},
+		Supervised:    true,
+		Unit:          "space-data-network.service",
+		RestartPolicy: "on-failure",
+		AdminURL:      "http://127.0.0.1:5080",
+		Out:           &out,
+		Err:           &errOut,
+		StartDaemon: func(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error) {
+			spawned = true
+			return fakeHelperProcess{pid: 9999}, nil
+		},
+		StartUnit: func(ctx context.Context, unit string) error {
+			startAttempts++
+			if startAttempts == 1 {
+				return errors.New("systemctl start space-data-network.service: Unit is masked.")
+			}
+			return nil
+		},
+		WaitHealth: func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error {
+			return nil
+		},
+		Rollback: func(paths update.Paths) (*update.RollbackResult, error) {
+			rolledBack = true
+			return &update.RollbackResult{
+				RestoredVersion: "1.0.0",
+				FailedPath:      filepath.Join(paths.Failed, "cli-bundle-beta-bad"),
+			}, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "rolled back to 1.0.0") {
+		t.Fatalf("helperPostApplyRestart (supervised) error = %v, want rollback error after failed start", err)
+	}
+	if spawned {
+		t.Fatal("StartDaemon was called under Supervised=true — the cgroup-escape regression")
+	}
+	if !rolledBack {
+		t.Fatal("rollback was not invoked after the explicit start failed")
+	}
+	if startAttempts != 2 {
+		t.Fatalf("start attempts = %d, want 2 (failed start + retry after rollback)", startAttempts)
+	}
+	if !strings.Contains(errOut.String(), "unit_start=error") {
+		t.Fatalf("stderr = %q, want the failed start reported", errOut.String())
+	}
+	if !strings.Contains(out.String(), "rollback=applied restored_version=1.0.0") {
+		t.Fatalf("stdout = %q, want rollback=applied", out.String())
+	}
+}
+
+// TestHelperPostApplyRestartSupervisedRefusesUnresolvedUnit is the helper's
+// fail-closed half of the gate: a supervised run with no resolved unit must
+// refuse rather than guess — starting the wrong unit or nothing would strand
+// the box. (The daemon refuses such shutdowns first; this is the belt.)
+func TestHelperPostApplyRestartSupervisedRefusesUnresolvedUnit(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	err := helperPostApplyRestart(context.Background(), helperPostApplyOptions{
+		Paths:       update.PathsFor(t.TempDir()),
+		RestartArgv: []string{"/opt/sdn/bin/spacedatanetwork", "daemon"},
+		Supervised:  true,
+		AdminURL:    "http://127.0.0.1:5080",
+		Out:         &out,
+		Err:         &errOut,
+	})
+	if err == nil || !strings.Contains(err.Error(), "owning systemd unit") {
+		t.Fatalf("helperPostApplyRestart (supervised) error = %v, want unresolved-unit refusal", err)
+	}
+}
+
+// TestRequestDaemonUpdateShutdownParsesUnitAndPolicy proves the helper's
+// decoder accepts the shutdown response's resolved-unit fields
+// (ops-update-lane-restart-policy-preflight): the unit and Restart= policy
+// the daemon resolved on ITS OWN process are exactly what the supervised
+// branch starts after the swap.
+func TestRequestDaemonUpdateShutdownParsesUnitAndPolicy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/update/shutdown" || r.Method != http.MethodPost {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{
+			"status": "shutdown_requested",
+			"pid": 4242,
+			"bundleRoot": "/opt/spacedatanetwork",
+			"restartArgv": ["/opt/spacedatanetwork/bin/spacedatanetwork", "daemon"],
+			"supervised": true,
+			"unit": "space-data-network.service",
+			"restartPolicy": "on-failure"
+		}`))
+	}))
+	defer server.Close()
+
+	info, err := requestDaemonUpdateShutdown(server.Client(), server.URL, "/opt/spacedatanetwork", "token-123")
+	if err != nil {
+		t.Fatalf("requestDaemonUpdateShutdown error = %v", err)
+	}
+	if !info.Supervised {
+		t.Fatal("Supervised = false, want true")
+	}
+	if info.Unit != "space-data-network.service" {
+		t.Fatalf("Unit = %q, want the resolved owning unit", info.Unit)
+	}
+	if info.RestartPolicy != "on-failure" {
+		t.Fatalf("RestartPolicy = %q, want on-failure", info.RestartPolicy)
+	}
+	if len(info.RestartArgv) != 2 || info.RestartArgv[0] != "/opt/spacedatanetwork/bin/spacedatanetwork" {
+		t.Fatalf("RestartArgv = %#v", info.RestartArgv)
+	}
+}
+
+func TestRequestDaemonUpdateShutdownSurfacesRefusal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"update shutdown refused: unit space-data-network.service has Restart=\"no\" ..."}`))
+	}))
+	defer server.Close()
+
+	_, err := requestDaemonUpdateShutdown(server.Client(), server.URL, "/opt/spacedatanetwork", "token-123")
+	if err == nil {
+		t.Fatal("requestDaemonUpdateShutdown accepted a refusal response")
+	}
+	if !strings.Contains(err.Error(), "update shutdown refused") {
+		t.Fatalf("error = %v, want the daemon's actionable refusal surfaced", err)
 	}
 }
 

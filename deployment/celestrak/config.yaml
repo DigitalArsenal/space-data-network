@@ -72,11 +72,23 @@ ingest:
 # SatNOGS DB is CC-BY-SA-4.0 and republication IS the owner ruling of
 # 2026-08-03 ("publish them on SDN"); the licence travels with the batch
 # (DPMSourceBatch LICENSE/LICENSE_URL/CITATION) and per record (RFB.CITATION).
+#
+# The $TBS lane (sdn-tbs-feed-sync-for-cache-lane, 2026-08-21): cellular
+# ingest is owner-placed on THIS host (host-02) while the aggregate cache
+# flow reads the consumer node's local store (host-01) — so the $TBS rows
+# must ride the dataset-feed-head-sync data plane like $RFB does. The lane's
+# source_name matches the cell-tower ingest flow's attribution defaults
+# (provider "opencellid"); absent = nothing ships, fail-closed by design.
 publishing:
   auto_publish:
     - schema: RFB.fbs
       source_name: satnogs-db
       # The SatNOGS timer is daily; this only bounds a retry/restart burst.
+      min_interval: 30m
+    - schema: TBS.fbs
+      source_name: cell-tower-bulk
+      # The cell-tower pull runs on its own cadence; this only bounds a
+      # retry/restart burst.
       min_interval: 30m
 
 setup:

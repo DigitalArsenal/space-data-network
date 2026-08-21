@@ -64,6 +64,24 @@ type boundedReader struct {
 	// takes schema/provider/source/batch/norad/page/limit) cannot be turned
 	// into unbounded memory growth by an anonymous caller.
 	maxKeys int
+	// now supplies the timestamps that decide staleness and stamp answers.
+	// nil = time.Now. It is injectable so tests decide staleness on LOGICAL
+	// time — how much newer one answer is than the last — never on how long
+	// the wall clock took between two requests. A loaded box must not decide
+	// the gate: measured 2026-08-14, TestStatsReportsItsOwnStaleness passed in
+	// 1.3s alone and FAILED inside the parallel package run at load ~18, when
+	// the 2s min-refresh window lapsed while the scheduler starved the test
+	// goroutine. See gauntlet-go-host-tier-tests-fail-under-machine-load.
+	nowFn func() time.Time
+}
+
+// now is the reader's clock. Nil-safe so the nil-cache degrade path keeps
+// working when an assembled-by-lit handler has no reader at all.
+func (b *boundedReader) now() time.Time {
+	if b != nil && b.nowFn != nil {
+		return b.nowFn()
+	}
+	return time.Now()
 }
 
 // boundedReaderDefaultKeys is the key ceiling for a parameterized surface. The
@@ -86,7 +104,7 @@ func (b *boundedReader) entryFor(key string) *boundedEntry {
 	defer b.mu.Unlock()
 
 	if e, ok := b.entries[key]; ok {
-		e.used = time.Now()
+		e.used = b.now()
 		return e
 	}
 
@@ -108,7 +126,7 @@ func (b *boundedReader) entryFor(key string) *boundedEntry {
 		}
 	}
 
-	e := &boundedEntry{used: time.Now()}
+	e := &boundedEntry{used: b.now()}
 	b.entries[key] = e
 	return e
 }
@@ -142,14 +160,14 @@ func (b *boundedReader) read(key string, budget, minRefresh time.Duration, load 
 		if err != nil {
 			return boundedResult{}
 		}
-		return boundedResult{Value: val, OK: true, Fresh: true, AsOf: time.Now()}
+		return boundedResult{Value: val, OK: true, Fresh: true, AsOf: b.now()}
 	}
 
 	e := b.entryFor(key)
 
 	e.mu.Lock()
 	// Young enough: answer from cache and do not touch the store at all.
-	if e.have && minRefresh > 0 && time.Since(e.at) < minRefresh {
+	if e.have && minRefresh > 0 && b.now().Sub(e.at) < minRefresh {
 		res := boundedResult{Value: e.val, OK: true, Fresh: false, AsOf: e.at}
 		e.mu.Unlock()
 		return res
@@ -190,7 +208,7 @@ func (b *boundedReader) loadInto(e *boundedEntry, load func() (interface{}, erro
 
 	e.mu.Lock()
 	if err == nil {
-		e.val, e.at, e.have = val, time.Now(), true
+		e.val, e.at, e.have = val, b.now(), true
 	}
 	done := e.done
 	e.done = nil
@@ -235,7 +253,7 @@ func (b *boundedReader) readAll(budget, minRefresh time.Duration, reqs ...bounde
 	for _, req := range reqs {
 		e := b.entryFor(req.Key)
 		e.mu.Lock()
-		if e.have && minRefresh > 0 && time.Since(e.at) < minRefresh {
+		if e.have && minRefresh > 0 && b.now().Sub(e.at) < minRefresh {
 			out[req.Key] = boundedResult{Value: e.val, OK: true, Fresh: false, AsOf: e.at}
 			e.mu.Unlock()
 			continue
