@@ -12,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/connmgr"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	coreprotocol "github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
@@ -107,6 +108,68 @@ import (
 // on host-01 down for 41 minutes (see the InterceptUpgraded scar in
 // internal/peers/gater.go). Everything here is either construction-time or
 // event-bus driven; NOTHING runs on the connection critical path.
+//
+// WHY THE BAND NEEDS AN ADMISSION GATE, NOT A STRONGER TRIM
+// (task sdn-admission-band-not-reached-under-churn, measured post-82cdbf50
+// roll, host-02 / celestrak.eth, ceiling 1000, advertised band 654..872):
+//
+//	22:16:26Z ipfs=924   22:17:28Z ipfs=880   22:18:30Z ipfs=987
+//	22:19:31Z ipfs=885   22:20:33Z ipfs=930   22:21:35Z ipfs=977
+//
+// A perfect sawtooth RIDING ABOVE the high water: the trimmer fires (the
+// ~100-connection drops at each tick), the pool refills inside one silence
+// period, and the count equilibrates just under the ceiling instead of inside
+// the band. This is not a watermark tuning problem and no watermark tuning
+// fixes it, because go-libp2p's connmgr is post-hoc and ADVISORY: it never
+// refuses anything, it trims on a tick after the connection already exists,
+// and every connection inside the 30s grace window is ineligible — so under
+// continuous inbound churn there is always a fresh ungraceable cohort and the
+// trim can never catch the pool. The connmgr's only pre-grace refusal points
+// are the resource-manager ceilings (blind and identity-blind: once their
+// scope is exhausted they refuse EVERY inbound, browser tunnel included — the
+// accept-wedge signature) and the ConnectionGater, where identity is unknown
+// until InterceptSecured, so an accept-time gate can only discriminate by IP
+// — the one axis the 1276/1198 measurement ruled out.
+//
+// THE ADDITION: an identity-aware refusal point on the event bus, which
+// closes the gap between those two. go-libp2p emits
+// EvtPeerConnectednessChanged the moment a peer's connectedness transitions
+// to Connected — the earliest point at which the PEER IDENTITY exists — and
+// this controller already consumes that same bus for Identify tagging, on its
+// own goroutine, never on the connection critical path. When the live pool
+// exceeds the admission ceiling (resolved to the trim high water), the
+// connections of the just-connected peer are closed at admission — refused —
+// UNLESS the peer:
+//
+//   - is protected (fleet + config trusted + pins + registry trust >= the
+//     protect level): protection is checked BEFORE the refusal decision, so a
+//     pinned or trusted peer landing at full pool lands in the reserved
+//     headroom rather than being refused — which is exactly what the headroom
+//     claim promises and what the pre-fix state violated;
+//   - carries a positive reputation tag from an EARLIER session (connmgr tags
+//     persist per peer): it proved itself once, so it is known;
+//   - arrived through the loopback tunnel (a browser this process proxied in
+//     itself — public churn cannot present a loopback remote).
+//
+// Everything else — the anonymous, never-seen, public-address population the
+// measurement identified — is refused. Under continuous churn the pool then
+// rides the band: trims drain it toward the low water, the gate refuses the
+// refill above the high water, and the sawtooth lives inside 654..872 instead
+// of 880..987. The advertised "headroom=N slots reserved below the ceiling
+// for pinned peers" stops being a figure of speech: nothing non-protected
+// occupies the reserve while the gate holds.
+//
+// The refusal action is a plain conn.Close() driven from the event-bus
+// consumer goroutine — the same goroutine class go-libp2p itself uses for
+// close-in-open-notification (swarm_conn.go defers its notify work to a
+// goroutine precisely so a close from an open notification cannot deadlock),
+// so no swarm lock is ever taken under another swarm lock.
+//
+// Deliberately NOT done, again: a harder trim (the task bans it), a lowered
+// network.max_connections (reproduces the low>high no-trim wiring this policy
+// was written to correct — see the comment at node.go:520-527), a second
+// parallel pruning loop over network.Conns (the 41-minute scar), or an rcmgr
+// ceiling lowered to the band (the accept-wedge signature).
 
 const (
 	// Protection tags. Distinct names on purpose: Unprotect removes ONE tag and
@@ -170,6 +233,14 @@ const (
 	// minAdmissionBand keeps a derived low water from collapsing onto the high
 	// water on very small ceilings.
 	minAdmissionBand = 4
+
+	// defaultAdmissionRefusalLogInterval throttles the admission gate's WARN
+	// logging exactly like the rcmgr reporter throttles its "INBOUND ADMISSION
+	// REFUSED" lines: the first refusal of a saturating run is logged
+	// immediately — that is the moment the gate starts holding the line —
+	// and thereafter at most once per interval, because under a flood
+	// per-event logging is itself an outage amplifier.
+	defaultAdmissionRefusalLogInterval = 30 * time.Second
 )
 
 // sdnProtocolPrefixes are the protocol-ID namespaces that identify a peer as
@@ -257,6 +328,14 @@ type admissionPolicy struct {
 	// (Ceiling - HighWater), i.e. what the policy DELIVERS rather than what was
 	// requested.
 	Headroom int
+
+	// AdmitCeiling is the live-connection count at which the admission gate
+	// starts refusing peers (task sdn-admission-band-not-reached-under-churn).
+	// It resolves to the trim high water, so the gate and the trim together
+	// hold the pool inside the advertised band: the trim can only drain, so
+	// the gate does the refusing. Zero means no gate (the disabled escape
+	// hatch — see resolveAdmissionPolicy).
+	AdmitCeiling int
 
 	GracePeriod   time.Duration
 	SilencePeriod time.Duration
@@ -377,6 +456,11 @@ func resolveAdmissionPolicy(cfg config.NetworkConfig) admissionPolicy {
 		}
 	}
 
+	// The admission gate's ceiling is the trim high water — the top of the
+	// advertised band. The pool may reach it, but may not ride above it; in
+	// the disabled escape hatch it stays 0 and no gate is armed.
+	p.AdmitCeiling = p.HighWater
+
 	return p
 }
 
@@ -421,9 +505,12 @@ func (p admissionPolicy) Summary() string {
 			"protocol), trim check every %s; protected from trimming: config trusted peers + pins + bootstrap peers + "+
 			"registry trust >= %s; tagged +%d so anonymous churn is trimmed first: peers advertising an SDN "+
 			"protocol, peers subscribed to one of this node's SDN pubsub topics (browsers), and peers arriving "+
-			"through the local websocket upgrade tunnel",
+			"through the local websocket upgrade tunnel; admission gate: while the pool is at/above %d, a freshly "+
+			"connected peer is refused unless it is protected, carries a positive reputation tag from an earlier "+
+			"session, or arrived through the local tunnel — the band is ENFORCED, not advertised",
 		p.Ceiling, p.LowWater, p.HighWater, p.Headroom,
-		p.GracePeriod, p.SilencePeriod, p.ProtectTrustLevel.String(), admissionSDNPeerTagValue)
+		p.GracePeriod, p.SilencePeriod, p.ProtectTrustLevel.String(), admissionSDNPeerTagValue,
+		p.AdmitCeiling)
 	if len(p.Notes) > 0 {
 		s += " | ADJUSTED: " + strings.Join(p.Notes, "; ")
 	}
@@ -541,6 +628,15 @@ type PeerAdmissionStats struct {
 	// arrived through the node's own loopback websocket tunnel (:443 root-path
 	// upgrade proxy).
 	TunnelledPeers int64 `json:"tunnelled_peers"`
+	// AdmitCeiling is the live-connection count at which the admission gate
+	// starts refusing unknown, unprotected, non-tunnel peers (the trim high
+	// water). 0 means no gate armed (disabled escape hatch).
+	AdmitCeiling int `json:"admit_ceiling"`
+	// InboundRefused is how many peer connections the admission gate has
+	// closed at admission since boot. Rising counts mean the gate is holding
+	// the band against churn; combined with the connection gauge it shows the
+	// sawtooth contained inside the band.
+	InboundRefused uint64 `json:"inbound_refused"`
 }
 
 // peerAdmissionController applies the resolved policy to a live host.
@@ -560,12 +656,31 @@ type peerAdmissionController struct {
 	// topicSweep is the membership re-read interval; zero means the default.
 	topicSweep time.Duration
 
+	// liveConnCount reports the current live connection count at gate decision
+	// time. Injected for tests; nil falls back to len(h.Network().Conns()) on
+	// the event-bus goroutine, which is off the connection critical path.
+	liveConnCount func() int
+	// closeConnsTo closes every live connection to one peer. Injected for
+	// tests; nil falls back to closing h.Network().ConnsToPeer(id) directly.
+	closeConnsTo func(id peer.ID)
+
 	protectedPeers   atomic.Int64
 	sdnTaggedPeers   atomic.Int64
 	identifiedPeers  atomic.Uint64
 	anonymousPeers   atomic.Uint64
 	topicMemberPeers atomic.Int64
 	tunnelledPeers   atomic.Int64
+
+	// inboundRefused is how many peer connections the admission gate has
+	// closed at admission (task sdn-admission-band-not-reached-under-churn).
+	inboundRefused atomic.Uint64
+	// firstInboundRefusalNano anchors the "refusing since" of the throttled
+	// gate log; zero until the first refusal.
+	firstInboundRefusalNano atomic.Int64
+	// lastInboundRefusalLogNano is the last time the gate WARN actually fired;
+	// refusals between log lines still count and still close connections, they
+	// just stay silent. zero value = never logged.
+	lastInboundRefusalLogNano atomic.Int64
 
 	taggedTopicMu sync.Mutex
 	taggedTopic   map[peer.ID]struct{}
@@ -692,6 +807,22 @@ func (c *peerAdmissionController) Run(ctx context.Context, h host.Host) error {
 	}
 	defer sub.Close()
 
+	// The admission gate's event feed: EvtPeerConnectednessChanged fires the
+	// moment a peer's connectedness transitions, which is the earliest point
+	// at which the peer IDENTITY exists — the discriminator no other refusal
+	// point has — and it is delivered to this goroutine through the same bus,
+	// so the gate never runs on the connection critical path either. The
+	// library emits it per PEER, not per connection: a peer opening a second
+	// connection (the browser gallery case) is not re-gated, and the measured
+	// churn population (1.07 conns per IP) is gated exactly once per connect.
+	//
+	// See the policy comment at the top of this file for the full reasoning.
+	connSub, err := h.EventBus().Subscribe(new(event.EvtPeerConnectednessChanged))
+	if err != nil {
+		return fmt.Errorf("subscribe to peer connectedness events: %w", err)
+	}
+	defer connSub.Close()
+
 	sweep := c.topicSweep
 	if sweep <= 0 {
 		sweep = defaultAdmissionTopicSweep
@@ -714,6 +845,17 @@ func (c *peerAdmissionController) Run(ctx context.Context, h host.Host) error {
 				continue
 			}
 			c.observeIdentified(evt.Peer, evt.Protocols, servedProtocolSet(h), remoteAddrsForPeer(h, evt.Peer))
+		case raw, ok := <-connSub.Out():
+			if !ok {
+				return nil
+			}
+			evt, ok := raw.(event.EvtPeerConnectednessChanged)
+			if !ok {
+				continue
+			}
+			if evt.Connectedness == network.Connected {
+				c.onPeerConnected(h, evt.Peer)
+			}
 		}
 	}
 }
@@ -823,6 +965,131 @@ func (c *peerAdmissionController) observeIdentified(id peer.ID, advertised []cor
 	}
 }
 
+// refusalVerdict is the PURE admission decision for a peer that just
+// transitioned to Connected: refuse it (close its connections) or keep it.
+//
+// The discriminators available at this moment — identity, protection,
+// connmgr reputation, and the live pool size — are exactly the ones that are
+// NOT available at the ConnectionGater (identity unknown until
+// InterceptSecured), which is why the gate lives on the connectedness event
+// rather than at accept: an accept-time gate could only discriminate by IP,
+// the one axis the 1276/1198 measurement ruled out.
+//
+// Decision, in order:
+//
+//  1. Disabled policy, nil controller, missing connmgr, or a band with no
+//     gate ceiling (AdmitCeiling <= 0) never refuses — the escape hatch stays
+//     an escape hatch.
+//  2. liveConns <= AdmitCeiling: inside the advertised band, keep. The gate
+//     only holds the line at/above the trim high water; the trim owns the
+//     drain below it.
+//  3. Loopback provenance first, and independently of everything else: a peer
+//     whose remote is any of this node's loopback addrs arrived through the
+//     :443 websocket tunnel — this process proxied a browser in itself, and
+//     public churn cannot present a loopback remote. Keep, always.
+//  4. Protected (fleet, config trusted, pins, registry trust at/above the
+//     protect level): keep — this is the headroom claim, made real: a pinned
+//     peer landing at full pool occupies the reserved slots instead of being
+//     refused.
+//  5. Positive connmgr reputation: keep. BasicConnMgr tags persist per peer
+//     across connections, so a peer with value > 0 proved itself on an
+//     earlier session and is known; value 0 or no tag at all is a peer this
+//     process has never had cause to trust — the measured churn population.
+func (c *peerAdmissionController) refusalVerdict(id peer.ID, liveConns int, remoteAddrs []multiaddr.Multiaddr) bool {
+	if c == nil || !c.policy.Enabled || c.connMgr == nil || id == "" {
+		return false
+	}
+	if liveConns <= c.policy.AdmitCeiling {
+		return false
+	}
+	if anyTunnelledAddr(remoteAddrs) {
+		return false
+	}
+	if c.connMgr.IsProtected(id, "") {
+		return false
+	}
+	if info := c.connMgr.GetTagInfo(id); info != nil && info.Value > 0 {
+		return false
+	}
+	return true
+}
+
+// onPeerConnected is the admission gate's dispatcher: judge one peer at its
+// Connected transition and refuse it when the verdict says so.
+//
+// Runs on the controller's Run goroutine (event-bus delivery), so closing
+// connections here cannot take a swarm lock while another swarm lock is held;
+// go-libp2p itself closes from open notifications in the same goroutine class
+// (swarm_conn.go defers its notify work to a goroutine for exactly that
+// reason). The cost a refused connection has already paid is the handshake;
+// under the measured churn that is the price of holding the band, and it is
+// paid off the critical path.
+//
+// The live count and the close are read through the injected hooks when a
+// test provides them and through the host otherwise — deliberately NOT a
+// connmgr call, because the connmgr's own count is post-hoc and advisory
+// (it is what trims; it is not what admits).
+func (c *peerAdmissionController) onPeerConnected(h host.Host, id peer.ID) {
+	if c == nil || !c.policy.Enabled || id == "" {
+		return
+	}
+	live := 0
+	switch {
+	case c.liveConnCount != nil:
+		live = c.liveConnCount()
+	case h != nil && h.Network() != nil:
+		live = len(h.Network().Conns())
+	default:
+		return
+	}
+	if !c.refusalVerdict(id, live, remoteAddrsForPeer(h, id)) {
+		return
+	}
+	c.inboundRefused.Add(1)
+	c.logInboundRefusal(id, live)
+	if c.closeConnsTo != nil {
+		c.closeConnsTo(id)
+		return
+	}
+	if h == nil || h.Network() == nil {
+		return
+	}
+	for _, conn := range h.Network().ConnsToPeer(id) {
+		if conn == nil {
+			continue
+		}
+		_ = conn.Close()
+	}
+}
+
+// logInboundRefusal reports the gate firing. Throttled the same way the
+// resource-manager admission reporter throttles its "INBOUND ADMISSION
+// REFUSED" lines: the FIRST refusal is reported immediately — that is the
+// moment the gate starts holding the line, and its absence was what made a
+// prior saturation phase invisible — and thereafter at most once per
+// interval, because under a flood per-event logging is itself an outage
+// amplifier. A throttled-away refusal still counts and still closes.
+func (c *peerAdmissionController) logInboundRefusal(id peer.ID, liveConns int) {
+	now := time.Now()
+	count := c.inboundRefused.Load()
+	c.firstInboundRefusalNano.CompareAndSwap(0, now.UnixNano())
+	last := c.lastInboundRefusalLogNano.Load()
+	if count != 1 && now.UnixNano()-last < int64(defaultAdmissionRefusalLogInterval) {
+		return
+	}
+	if !c.lastInboundRefusalLogNano.CompareAndSwap(last, now.UnixNano()) {
+		return
+	}
+	refusingFor := time.Duration(0)
+	if first := c.firstInboundRefusalNano.Load(); first != 0 {
+		refusingFor = now.Sub(time.Unix(0, first)).Truncate(time.Second)
+	}
+	log.Warnf("INBOUND ADMISSION REFUSED: peer %s has no standing reputation and the connection pool is at/above the band ceiling (%d >= %d); "+
+		"closed its connection at admission; protected and previously-known peers and tunnel browsers are never refused; "+
+		"refusal #%d, refusing since %s (throttled: at most one line per %s)",
+		id, liveConns, c.policy.AdmitCeiling, count, refusingFor, defaultAdmissionRefusalLogInterval)
+}
+
 func servedProtocolSet(h host.Host) map[coreprotocol.ID]struct{} {
 	if h == nil || h.Mux() == nil {
 		return nil
@@ -854,5 +1121,7 @@ func (c *peerAdmissionController) Stats() PeerAdmissionStats {
 		AnonymousPeers:     c.anonymousPeers.Load(),
 		TopicMemberPeers:   c.topicMemberPeers.Load(),
 		TunnelledPeers:     c.tunnelledPeers.Load(),
+		AdmitCeiling:       c.policy.AdmitCeiling,
+		InboundRefused:     c.inboundRefused.Load(),
 	}
 }

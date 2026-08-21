@@ -1,0 +1,82 @@
+{
+  "scheme": "xyz",
+  "version": 1,
+  "normative": "README.md in this directory",
+  "endpoints": [
+    { "method": "GET", "path": "/api/v1/cellular/tiles/meta", "role": "tile layer capability + dataset honesty" },
+    { "method": "GET", "path": "/api/v1/cellular/tiles/{z}/{x}/{y}", "role": "tile envelope (points or density), bounds-checked, 404 out of bounds" }
+  ],
+  "defaults": {
+    "minZoom": 0,
+    "maxZoom": 18,
+    "threshold": 2048,
+    "budget": 4096,
+    "densityN": 16,
+    "latClampDegrees": 85.05112878,
+    "equatorTileMetersZoom0": 40075016.686,
+    "concurrencyCap": 4
+  },
+  "modeSelection": [
+    { "when": "count <= threshold", "mode": "points", "sampled": false },
+    { "when": "threshold < count <= budget", "mode": "points", "sampled": true },
+    { "when": "count > budget", "mode": "density", "points": null }
+  ],
+  "metaEnvelope": {
+    "required": ["scheme", "minZoom", "maxZoom", "threshold", "budget", "densityN", "deconflicted", "dataset", "serverTime"],
+    "dataset": { "required": ["dataset", "epoch", "records", "stale", "cacheState"] },
+    "cacheState": ["warm", "empty", "ingesting"]
+  },
+  "tileEnvelope": {
+    "required": ["scheme", "z", "x", "y", "mode", "count", "threshold", "budget", "sampled", "points", "density", "deconflicted", "dataset", "serverTime"],
+    "mode": ["points", "density"],
+    "pointFields": ["LATITUDE", "LONGITUDE", "RADIO", "ID", "MCC", "MNC", "CELL_ID", "LAC", "TAC", "RANGE_M", "SAMPLES", "AVERAGE_SIGNAL_DBM", "OPERATOR", "FREQUENCY_MHZ", "SITE_NAME"],
+    "pointRequired": ["LATITUDE", "LONGITUDE"],
+    "density": { "required": ["n", "cells"], "cell": { "required": ["lon", "lat", "count"] } }
+  },
+  "tileMath": {
+    "xFromLon": "x = clamp(floor((lon + 180) / 360 * n), 0, n-1)",
+    "yFromLat": "y = clamp(floor((1 - asinh(tan(latRad)) / PI) / 2 * n), 0, n-1)",
+    "lonWest": "x / n * 360 - 180",
+    "lonEast": "(x + 1) / n * 360 - 180",
+    "latNorth": "atan(sinh(PI * (1 - 2y/n)))",
+    "latSouth": "atan(sinh(PI * (1 - 2(y+1)/n)))",
+    "zoomFromCamera": "z = clamp(floor(log2(156543.03392 * cos(latDeg) / mpp)), minZoom, maxZoom); mpp = 2 * heightM * tan(fovV / 2) / viewportHeightPx"
+  },
+  "fixtures": {
+    "meta": {
+      "scheme": "xyz",
+      "minZoom": 0,
+      "maxZoom": 18,
+      "threshold": 2048,
+      "budget": 4096,
+      "densityN": 16,
+      "deconflicted": true,
+      "deconfliction": { "method": "HIGHEST_SAMPLE_COUNT", "statement": "Tiles reflect the node store's deconflicted positions; count is deconflicted site count, never report count." },
+      "dataset": { "dataset": "sds_tbs", "epoch": "2026-08-21T00:00:00.000Z", "records": 1234567, "stale": false, "cacheState": "warm" },
+      "serverTime": "2026-08-21T00:00:00.000Z"
+    },
+    "tilePoints": {
+      "scheme": "xyz", "z": 8, "x": 134, "y": 84,
+      "mode": "points", "count": 812, "threshold": 2048, "budget": 4096, "sampled": false,
+      "points": [
+        { "LATITUDE": 40.7128, "LONGITUDE": -74.006, "RADIO": 1, "ID": "occ/nyc-001", "MCC": 310, "MNC": 260, "CELL_ID": 45678, "RANGE_M": 450, "SAMPLES": 12, "AVERAGE_SIGNAL_DBM": -86, "OPERATOR": "T-Mobile US", "FREQUENCY_MHZ": 1900, "SITE_NAME": "Brooklyn-04" }
+      ],
+      "density": null,
+      "deconflicted": true,
+      "dataset": { "dataset": "sds_tbs", "epoch": "2026-08-21T00:00:00.000Z", "records": 1234567, "stale": false, "cacheState": "warm" },
+      "serverTime": "2026-08-21T00:00:00.000Z"
+    },
+    "tileDensity": {
+      "scheme": "xyz", "z": 8, "x": 134, "y": 84,
+      "mode": "density", "count": 104376, "threshold": 2048, "budget": 4096, "sampled": false,
+      "points": null,
+      "density": { "n": 16, "cells": [
+        { "lon": -73.95, "lat": 40.7, "count": 8123 },
+        { "lon": -73.85, "lat": 40.7, "count": 3412 }
+      ]},
+      "deconflicted": true,
+      "dataset": { "dataset": "sds_tbs", "epoch": "2026-08-21T00:00:00.000Z", "records": 104376002, "stale": false, "cacheState": "warm" },
+      "serverTime": "2026-08-21T00:00:00.000Z"
+    }
+  }
+}

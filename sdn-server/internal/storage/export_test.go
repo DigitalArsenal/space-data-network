@@ -603,7 +603,7 @@ func TestFetchIPFSBlockByCIDUsesCatForChunkedUnixFSFiles(t *testing.T) {
 	}
 }
 
-func TestPublishDatasetPublicationManifestToIPFSPinsManifestCID(t *testing.T) {
+func TestPublishDatasetPublicationManifestToIPFSPinsManifestCIDAndRepublishesIPNSName(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-dpm-ipfs-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -623,29 +623,49 @@ func TestPublishDatasetPublicationManifestToIPFSPinsManifestCID(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if r.URL.Path != "/api/v0/block/put" || r.URL.Query().Get("pin") != "true" {
+		switch r.URL.Path {
+		case "/api/v0/block/put":
+			if r.URL.Query().Get("pin") != "true" {
+				t.Fatalf("block/put pin = %q, want true", r.URL.Query().Get("pin"))
+			}
+			reader, err := r.MultipartReader()
+			if err != nil {
+				t.Fatalf("create multipart reader: %v", err)
+			}
+			part, err := reader.NextPart()
+			if err != nil {
+				t.Fatalf("read multipart part: %v", err)
+			}
+			if part.FormName() != "data" {
+				t.Fatalf("multipart form name = %q, want data", part.FormName())
+			}
+			body, err := io.ReadAll(part)
+			if err != nil {
+				t.Fatalf("read multipart body: %v", err)
+			}
+			if !bytes.Equal(body, manifestBytes) {
+				t.Fatalf("manifest body mismatch")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Key":"` + manifestCID + `"}`))
+		case "/api/v0/name/publish":
+			if got := r.URL.Query().Get("arg"); got != "/ipfs/"+manifestCID {
+				t.Fatalf("name/publish arg = %q, want /ipfs/%s", got, manifestCID)
+			}
+			if got := r.URL.Query().Get("lifetime"); got != ipnsRecordLifetime.String() {
+				t.Fatalf("name/publish lifetime = %q, want %s", got, ipnsRecordLifetime.String())
+			}
+			if got := r.URL.Query().Get("allow-offline"); got != "true" {
+				t.Fatalf("name/publish allow-offline = %q, want true", got)
+			}
+			if got := r.URL.Query().Get("key"); got != "" {
+				t.Fatalf("name/publish key = %q, want unset (daemon's own identity)", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Name":"/ipns/k51qzi5uqu5dknk4691lf0hb9u8yqtly1cw2nvhuvdsrb5nem0b1695tl4xp52","Value":"/ipfs/` + manifestCID + `"}`))
+		default:
 			t.Fatalf("unexpected request URL: %s", r.URL.String())
 		}
-		reader, err := r.MultipartReader()
-		if err != nil {
-			t.Fatalf("create multipart reader: %v", err)
-		}
-		part, err := reader.NextPart()
-		if err != nil {
-			t.Fatalf("read multipart part: %v", err)
-		}
-		if part.FormName() != "data" {
-			t.Fatalf("multipart form name = %q, want data", part.FormName())
-		}
-		body, err := io.ReadAll(part)
-		if err != nil {
-			t.Fatalf("read multipart body: %v", err)
-		}
-		if !bytes.Equal(body, manifestBytes) {
-			t.Fatalf("manifest body mismatch")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Key":"` + manifestCID + `"}`))
 	}))
 	defer server.Close()
 
@@ -659,8 +679,70 @@ func TestPublishDatasetPublicationManifestToIPFSPinsManifestCID(t *testing.T) {
 	if publishedCID != manifestCID {
 		t.Fatalf("published CID = %q, want %q", publishedCID, manifestCID)
 	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want 1", requests)
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2 (block/put then name/publish)", requests)
+	}
+}
+
+func TestPublishDatasetPublicationManifestToIPFSLogsIPNSFailureButKeepsManifestCID(t *testing.T) {
+	// A catalog publish that pin succeeds but the name re-publication fails
+	// must still return the pinned manifest CID: the content is served, and
+	// the deployment check (not the publish itself) is the tripwire for the
+	// stale name.
+	tmpDir, err := os.MkdirTemp("", "flatsql-dpm-ipfs-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	manifestBytes := []byte("signed-manifest")
+	manifestCID, err := cidV1RawSHA256(manifestBytes)
+	if err != nil {
+		t.Fatalf("compute manifest cid: %v", err)
+	}
+	manifestPath := filepath.Join(tmpDir, "manifest.dpm")
+	if err := os.WriteFile(manifestPath, manifestBytes, 0600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path == "/api/v0/block/put" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Key":"` + manifestCID + `"}`))
+			return
+		}
+		if r.URL.Path == "/api/v0/name/publish" {
+			http.Error(w, "record too old, please republish", http.StatusInternalServerError)
+			return
+		}
+		t.Fatalf("unexpected request URL: %s", r.URL.String())
+	}))
+	defer server.Close()
+
+	publishedCID, err := PublishDatasetPublicationManifestToIPFS(context.Background(), server.URL, &DatasetPublicationManifest{
+		Path: manifestPath,
+		CID:  manifestCID,
+	})
+	if err != nil {
+		t.Fatalf("PublishDatasetPublicationManifestToIPFS failed on IPNS hiccup: %v", err)
+	}
+	if publishedCID != manifestCID {
+		t.Fatalf("published CID = %q, want %q", publishedCID, manifestCID)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2 (name/publish must still be attempted)", requests)
+	}
+}
+
+func TestIPNSRepublishPolicyStaysInsideRecordLifetime(t *testing.T) {
+	// Acceptance: the recorded re-publication interval must be shorter than
+	// the IPNS record lifetime, or records expire between re-publishes and
+	// the name decays back to unresolvable exactly as observed when both
+	// production names rotted.
+	if ipnsKuboRepublishPeriod >= ipnsRecordLifetime {
+		t.Fatalf("re-publish interval %s must be strictly shorter than record lifetime %s", ipnsKuboRepublishPeriod, ipnsRecordLifetime)
 	}
 }
 

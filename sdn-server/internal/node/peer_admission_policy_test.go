@@ -1,13 +1,16 @@
 package node
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	coreprotocol "github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
@@ -71,6 +74,11 @@ func TestResolveAdmissionPolicyDefaults(t *testing.T) {
 	}
 	if p.Headroom != 128 {
 		t.Fatalf("headroom = %d, want 128", p.Headroom)
+	}
+	// The admission gate arms at the trim high water: the pool may reach the
+	// top of the band, and riding above it is what refuses.
+	if p.AdmitCeiling != 872 {
+		t.Fatalf("admit ceiling = %d, want the trim high water 872", p.AdmitCeiling)
 	}
 	if p.GracePeriod != 30*time.Second {
 		t.Fatalf("grace = %s, want 30s", p.GracePeriod)
@@ -235,6 +243,9 @@ func TestResolveAdmissionPolicyExplicitWatermarksWin(t *testing.T) {
 	if p.Headroom != 500 {
 		t.Fatalf("headroom = %d, want ceiling 2000 - high 1500", p.Headroom)
 	}
+	if p.AdmitCeiling != 1500 {
+		t.Fatalf("admit ceiling = %d, want the configured high water 1500", p.AdmitCeiling)
+	}
 	if p.ProtectTrustLevel != peers.Admin {
 		t.Fatalf("protect level = %s, want Admin", p.ProtectTrustLevel)
 	}
@@ -257,6 +268,9 @@ func TestResolveAdmissionPolicyDisabledIsASafeEscapeHatch(t *testing.T) {
 	if p.LowWater > p.HighWater || p.LowWater < 1 {
 		t.Fatalf("even disabled, the watermarks must stay valid: %d..%d", p.LowWater, p.HighWater)
 	}
+	if p.AdmitCeiling != 0 {
+		t.Fatalf("admit ceiling = %d when disabled, want 0 (no gate armed)", p.AdmitCeiling)
+	}
 	if !strings.Contains(p.Summary(), "DISABLED") {
 		t.Fatalf("the boot log must say the node is running without an admission policy, got %q", p.Summary())
 	}
@@ -267,7 +281,7 @@ func TestResolveAdmissionPolicyDisabledIsASafeEscapeHatch(t *testing.T) {
 
 func TestAdmissionPolicySummaryStatesTheActivePolicy(t *testing.T) {
 	s := enabledPolicy().Summary()
-	for _, want := range []string{"PEER ADMISSION POLICY", "ceiling=1000", "654..872", "headroom=128", "grace=30s"} {
+	for _, want := range []string{"PEER ADMISSION POLICY", "ceiling=1000", "654..872", "headroom=128", "grace=30s", "admission gate"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("boot log line must contain %q, got %q", want, s)
 		}
@@ -527,7 +541,7 @@ func TestDisabledControllerIsInert(t *testing.T) {
 	if info := cm.GetTagInfo(id); info != nil && info.Value != 0 {
 		t.Errorf("a disabled policy must not tag anything, got %+v", info)
 	}
-	if s := c.Stats(); s.Enabled || s.ProtectedPeers != 0 || s.SDNTaggedPeers != 0 {
+	if s := c.Stats(); s.Enabled || s.ProtectedPeers != 0 || s.SDNTaggedPeers != 0 || s.AdmitCeiling != 0 {
 		t.Errorf("stats = %+v, want an inert policy", s)
 	}
 }
@@ -710,5 +724,221 @@ func TestTopicSignalDisabledWithoutASource(t *testing.T) {
 	c.refreshTopicMembers() // no source installed: must be a no-op, not a panic
 	if s := c.Stats(); s.TopicMemberPeers != 0 {
 		t.Fatalf("topic member peers = %d without a source, want 0", s.TopicMemberPeers)
+	}
+}
+
+// --- the admission gate (task sdn-admission-band-not-reached-under-churn) ---
+
+// gateFixture is a controller armed with the enabled default policy and its
+// own connmgr, so every case's protection/tag state starts clean.
+func gateFixture(t *testing.T) *peerAdmissionController {
+	t.Helper()
+	return newPeerAdmissionController(enabledPolicy(), testConnMgr(t), nil)
+}
+
+func publicAddrs() []multiaddr.Multiaddr {
+	return []multiaddr.Multiaddr{multiaddr.StringCast("/ip4/203.0.113.9/tcp/51544")}
+}
+
+// TestRefusalVerdict is the gate's decision table. The verdict is PURE — a
+// plain function of (policy, connmgr state, live pool, remote addrs) — so
+// every exemption is pinned here without any swarm.
+func TestRefusalVerdict(t *testing.T) {
+	tunnelAddrs := []multiaddr.Multiaddr{multiaddr.StringCast("/ip4/127.0.0.1/tcp/18080/ws")}
+
+	tagged := testPeerID(t)    // proved itself on an earlier session
+	protected := testPeerID(t) // config-trusted, protected like the fleet
+
+	t.Run("accepts inside the band and at the ceiling", func(t *testing.T) {
+		c := gateFixture(t)
+		id := testPeerID(t)
+		if c.refusalVerdict(id, 0, publicAddrs()) {
+			t.Error("an empty pool must never refuse")
+		}
+		if c.refusalVerdict(id, 871, publicAddrs()) {
+			t.Error("871 < high water 872 must never refuse")
+		}
+		// The pool may reach the top of the band; only riding ABOVE it refuses.
+		if c.refusalVerdict(id, 872, publicAddrs()) {
+			t.Error("872 == admit ceiling must not refuse: the gate holds the line AT the ceiling, not below it")
+		}
+	})
+
+	t.Run("refuses anonymous public churn above the ceiling", func(t *testing.T) {
+		c := gateFixture(t)
+		id := testPeerID(t)
+		if !c.refusalVerdict(id, 873, publicAddrs()) {
+			t.Error("an unknown, unprotected, public-address peer at 873 must be refused — this is the measured population")
+		}
+		// Identity unknown = no addrs to judge: still the same population, and
+		// invisibility must not spare it.
+		if !c.refusalVerdict(id, 900, nil) {
+			t.Error("a peer with no remote addrs must not be spared by invisibility")
+		}
+	})
+
+	t.Run("never refuses the tunnel browser", func(t *testing.T) {
+		c := gateFixture(t)
+		id := testPeerID(t)
+		// Loopback provenance is decided independently of reputation: the :443
+		// tunnel browser advertises nothing SDN-shaped and must still land.
+		if c.refusalVerdict(id, 900, tunnelAddrs) {
+			t.Error("a loopback-tunnel peer at saturation must land: this process proxied it in itself")
+		}
+		// The raw upgrade edge may present WITHOUT a /ws suffix — any loopback
+		// remote is the tunnel signal (this process owns the only loopback in
+		// the picture), and the exemption must not depend on the suffix.
+		plainLoopback := []multiaddr.Multiaddr{multiaddr.StringCast("/ip4/127.0.0.1/tcp/41234")}
+		if c.refusalVerdict(id, 900, plainLoopback) {
+			t.Error("a plain loopback remote (no /ws) is still the tunnel signal and must land")
+		}
+	})
+
+	t.Run("never refuses protection", func(t *testing.T) {
+		c := gateFixture(t)
+		c.ProtectFleet(nil, []string{fmt.Sprintf("/ip4/10.0.0.2/tcp/4001/p2p/%s", protected)}, nil)
+		if c.refusalVerdict(protected, 987, publicAddrs()) {
+			t.Error("a config-trusted peer at the measured peak must land in the reserved headroom — that is the headroom claim")
+		}
+	})
+
+	t.Run("never refuses a positively-tagged peer", func(t *testing.T) {
+		c := gateFixture(t)
+		c.observeIdentified(tagged, []coreprotocol.ID{"/spacedatanetwork/sds-exchange/1.0.0"}, nil, nil)
+		if c.refusalVerdict(tagged, 900, publicAddrs()) {
+			t.Error("a peer with connmgr value > 0 proved itself once and is known, not churn")
+		}
+	})
+
+	t.Run("disabled policy and nil controller never refuse", func(t *testing.T) {
+		disabled := resolveAdmissionPolicy(config.NetworkConfig{
+			MaxConns:  1000,
+			Admission: config.PeerAdmissionConfig{Disabled: true},
+		})
+		dc := newPeerAdmissionController(disabled, testConnMgr(t), nil)
+		id := testPeerID(t)
+		if dc.refusalVerdict(id, 987, publicAddrs()) {
+			t.Error("the disabled escape hatch must stay an escape hatch: no gate, ever")
+		}
+		var c *peerAdmissionController
+		if c.refusalVerdict(id, 987, publicAddrs()) {
+			t.Error("a nil controller must never refuse")
+		}
+	})
+}
+
+// TestOnPeerConnectedCountsAndClosesAtSaturation drives the dispatcher with
+// injected hooks: at the measured peak every fresh Connected transition of an
+// anonymous peer is refused, counted, and closed — even with a nil host.
+func TestOnPeerConnectedCountsAndClosesAtSaturation(t *testing.T) {
+	c := gateFixture(t)
+	var closed []peer.ID
+	c.liveConnCount = func() int { return 987 } // the measured peak
+	c.closeConnsTo = func(id peer.ID) { closed = append(closed, id) }
+
+	id := testPeerID(t)
+	c.onPeerConnected(nil, id) // nil host: the injected hooks must suffice
+	c.onPeerConnected(nil, id)
+
+	if len(closed) != 2 {
+		t.Fatalf("closed %d times, want 2 (each fresh transition of an anonymous peer above the ceiling)", len(closed))
+	}
+	if closed[0] != id || closed[1] != id {
+		t.Fatalf("closed %v, want %s twice", closed, id)
+	}
+	s := c.Stats()
+	if s.InboundRefused != 2 {
+		t.Fatalf("inbound_refused = %d, want 2", s.InboundRefused)
+	}
+	if s.AdmitCeiling != 872 {
+		t.Fatalf("admit_ceiling = %d, want 872 (the trim high water)", s.AdmitCeiling)
+	}
+}
+
+func TestOnPeerConnectedKeepsInsideTheBandAndIsInertDisabled(t *testing.T) {
+	t.Run("inside the band is never closed", func(t *testing.T) {
+		c := gateFixture(t)
+		closed := false
+		c.liveConnCount = func() int { return 800 }
+		c.closeConnsTo = func(peer.ID) { closed = true }
+		c.onPeerConnected(nil, testPeerID(t))
+		if closed {
+			t.Error("a pool at 800 (inside 654..872) must never trigger a refusal")
+		}
+		if s := c.Stats(); s.InboundRefused != 0 {
+			t.Fatalf("inbound_refused = %d inside the band, want 0", s.InboundRefused)
+		}
+	})
+
+	t.Run("disabled controller never counts or closes", func(t *testing.T) {
+		disabled := resolveAdmissionPolicy(config.NetworkConfig{
+			MaxConns:  1000,
+			Admission: config.PeerAdmissionConfig{Disabled: true},
+		})
+		c := newPeerAdmissionController(disabled, testConnMgr(t), nil)
+		closed := false
+		c.liveConnCount = func() int { return 987 }
+		c.closeConnsTo = func(peer.ID) { closed = true }
+		c.onPeerConnected(nil, testPeerID(t))
+		if closed {
+			t.Error("a disabled policy must not close anything")
+		}
+		if s := c.Stats(); s.InboundRefused != 0 {
+			t.Fatalf("inbound_refused = %d with the policy disabled, want 0", s.InboundRefused)
+		}
+	})
+
+	t.Run("nil controller is inert", func(t *testing.T) {
+		var c *peerAdmissionController
+		c.onPeerConnected(nil, testPeerID(t)) // must not panic
+		if s := c.Stats(); s.InboundRefused != 0 {
+			t.Fatalf("nil controller inbound_refused = %d, want 0", s.InboundRefused)
+		}
+	})
+}
+
+// TestOnPeerConnectedKeepsTheTunnelBrowserAtSaturation is the exemption, end
+// to end against a REAL swarm: two in-process hosts over loopback read
+// exactly like a browser this node proxied in itself (any loopback remote IS
+// the tunnel signal — see isTunnelledPeerAddr, and this node owns the only
+// loopback in the picture), so at a full pool the gate must leave the
+// connection standing, count nothing, and never close it. The close side of
+// the dispatcher is covered by TestOnPeerConnectedCountsAndClosesAtSaturation
+// (injected close hook) and the refusal side by TestRefusalVerdict; this test
+// pins the production-critical exemption with real conns.
+func TestOnPeerConnectedKeepsTheTunnelBrowserAtSaturation(t *testing.T) {
+	h1, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("host 1: %v", err)
+	}
+	t.Cleanup(func() { _ = h1.Close() })
+	h2, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("host 2: %v", err)
+	}
+	t.Cleanup(func() { _ = h2.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := h1.Connect(ctx, peer.AddrInfo{ID: h2.ID(), Addrs: h2.Addrs()}); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if got := h1.Network().Connectedness(h2.ID()); got != network.Connected {
+		t.Fatalf("connectedness before the gate = %v, want Connected", got)
+	}
+
+	c := gateFixture(t)
+	c.liveConnCount = func() int { return 1000 } // pool full
+
+	c.onPeerConnected(h1, h2.ID())
+
+	if got := h1.Network().Connectedness(h2.ID()); got != network.Connected {
+		t.Fatalf("connectedness after the gate = %v, want Connected — a loopback remote is the tunnel signal and must be kept at saturation", got)
+	}
+	if got := len(h1.Network().ConnsToPeer(h2.ID())); got != 1 {
+		t.Fatalf("conns to the kept peer = %d, want 1", got)
+	}
+	if s := c.Stats(); s.InboundRefused != 0 {
+		t.Fatalf("inbound_refused = %d, want 0 — the tunnel browser must never count as refused", s.InboundRefused)
 	}
 }

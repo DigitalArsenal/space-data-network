@@ -1,6 +1,7 @@
 package update
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/spacedatanetwork/sdn-server/internal/hostsvc"
 )
 
 const controlTokenName = "control-token"
@@ -17,12 +20,18 @@ const controlTokenName = "control-token"
 type ControlHandlerOptions struct {
 	BundleRoot string
 	Shutdown   func()
+	// Probe resolves THIS daemon's supervisor state before the handler
+	// answers a shutdown request. Nil uses hostsvc.Probe. The seam exists
+	// so the supervisor contract is testable on hosts (macOS, CI,
+	// containers) that have no systemd to probe.
+	Probe func(ctx context.Context) hostsvc.State
 }
 
 type controlHandler struct {
 	bundleRoot string
 	paths      Paths
 	shutdown   func()
+	probe      func(ctx context.Context) hostsvc.State
 }
 
 type controlShutdownRequest struct {
@@ -37,14 +46,23 @@ type controlShutdownResponse struct {
 	RestartArgv []string `json:"restartArgv,omitempty"`
 	// Supervised reports whether THIS daemon process was started by a
 	// supervising init (systemd sets INVOCATION_ID for every process it
-	// manages, system or --user scope). The helper direct-spawning
-	// RestartArgv after a supervised daemon exits leaves the live
-	// replacement outside the unit's cgroup while the unit itself loops
-	// "activating" against the store's single-writer lock (six occurrences,
-	// graph task sdn-update-helper-supervisor-mode) — the helper must skip
-	// the direct spawn and let the supervisor's own Restart= policy respawn
-	// it when this is true.
+	// manages, system or --user scope). It is a backstop signal; the fields
+	// the helper's restart plan is built from are Unit and RestartPolicy.
 	Supervised bool `json:"supervised"`
+	// Unit is the systemd unit this daemon resolved from its own cgroup and
+	// proved it owns via MainPID (hostsvc.Probe). "" when no supervisor was
+	// proven. When the daemon IS supervised this is the EXACT unit the
+	// helper must start explicitly after the swap — never RestartArgv, which
+	// a direct spawn would place outside this unit's cgroup while the unit
+	// loops "activating" against the store's single-writer lock (six
+	// occurrences, graph task sdn-update-helper-supervisor-mode).
+	Unit string `json:"unit"`
+	// RestartPolicy is the resolved unit's Restart= setting verbatim
+	// ("always", "on-failure", "no", …). The helper does NOT bank on it to
+	// respawn the daemon (a clean exit is a STOP under on-failure and no,
+	// live incident 2026-08-08): every known policy gets an explicit unit
+	// restart. An UNKNOWN policy is a refusal, not a plan.
+	RestartPolicy string `json:"restartPolicy"`
 }
 
 // isSupervisedBySystemd reports whether the CURRENT process was started by
@@ -56,10 +74,15 @@ func isSupervisedBySystemd() bool {
 
 func NewControlHandler(opts ControlHandlerOptions) http.Handler {
 	root := filepath.Clean(strings.TrimSpace(opts.BundleRoot))
+	probe := opts.Probe
+	if probe == nil {
+		probe = hostsvc.Probe
+	}
 	return &controlHandler{
 		bundleRoot: root,
 		paths:      PathsFor(root),
 		shutdown:   opts.Shutdown,
+		probe:      probe,
 	}
 }
 
@@ -106,6 +129,24 @@ func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeControlError(w, http.StatusForbidden, "update control token rejected")
 		return
 	}
+
+	// RESOLVE THE SUPERVISOR BEFORE SHUTDOWN (ops-update-lane-restart-policy-
+	// preflight). The helper's restart plan is built from this response, so the
+	// owning unit and its Restart= policy must be established BEFORE this
+	// process exits. A daemon that a supervisor owns but whose unit/policy
+	// cannot be resolved is REFUSED, not answered: under Restart=on-failure or
+	// Restart=no a clean exit is a STOP and the box stays down (live incident
+	// 2026-08-08), and under an unknown policy neither the supervisor nor the
+	// helper can be trusted to bring it back. The refusal happens BEFORE the
+	// one-time token is consumed, so a corrected retry does not need a fresh
+	// launch.
+	supervised := isSupervisedBySystemd()
+	state := h.probe(r.Context())
+	if supervised && (strings.TrimSpace(state.Unit) == "" || strings.TrimSpace(state.RestartPolicy) == "") {
+		writeControlError(w, http.StatusServiceUnavailable, fmt.Sprintf(
+			"update shutdown refused: this daemon is supervised by systemd but its owning unit or Restart= policy could not be resolved (unit=%q restart=%q); a clean daemon exit would leave the box down and no explicit restart can be planned. Verify the unit and its Restart= setting (systemctl status, systemctl show), then retry; no files were changed", state.Unit, state.RestartPolicy))
+		return
+	}
 	if err := os.Remove(controlTokenPath(h.paths)); err != nil && !os.IsNotExist(err) {
 		writeControlError(w, http.StatusInternalServerError, fmt.Sprintf("consume update control token: %v", err))
 		return
@@ -113,11 +154,13 @@ func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(controlShutdownResponse{
-		Status:      "shutdown_requested",
-		PID:         os.Getpid(),
-		BundleRoot:  h.bundleRoot,
-		RestartArgv: os.Args,
-		Supervised:  isSupervisedBySystemd(),
+		Status:        "shutdown_requested",
+		PID:           os.Getpid(),
+		BundleRoot:    h.bundleRoot,
+		RestartArgv:   os.Args,
+		Supervised:    supervised,
+		Unit:          state.Unit,
+		RestartPolicy: state.RestartPolicy,
 	})
 	if h.shutdown != nil {
 		go h.shutdown()

@@ -232,6 +232,19 @@ export interface SDNConfig {
    * `connection-monitor-policy.ts` for the measurement.
    */
   connectionMonitor?: SdnConnectionMonitorConfig;
+  /**
+   * Deadline for one of our own delivery dials (`dialProtocol`), in ms.
+   *
+   * libp2p's upgrader creates a silent 30000 ms `AbortSignal.timeout` whenever
+   * a dial carries no signal (upgrader.js at libp2p 1.9.4) — every delivery
+   * stream this node opens used to ride that default. Passing our own signal
+   * makes the bound explicit here, tighter by default, and tunable per host.
+   * The 15 s default is 5x the worst main-thread stall measured under 6x
+   * throttling and 2x shorter than libp2p's fallback; raising or lowering it
+   * never touches the connection-monitor policy above, and a timed-out
+   * attempt aborts only that attempt, never the connection it runs on.
+   */
+  dialProtocolTimeoutMs?: number;
 }
 
 export interface SDNNodeEvents {
@@ -754,27 +767,44 @@ export class SDNNode {
     const dialTargets = candidateAddrs.map((addr) =>
       normalizeDialTarget(addr, targetPeerId),
     );
+    const deadlineMs = resolveDialProtocolTimeoutMs(this.config);
     let lastError: unknown = null;
 
     if (dialTargets.length === 0) {
-      const stream = await this.libp2p.dialProtocol(
-        peerIdFromString(targetPeerId) as unknown as Parameters<
-          Libp2p["dialProtocol"]
-        >[0],
-        protocolId,
-      );
-      return exchangeStream(stream, payloadBytes);
+      // An explicit signal, never libp2p's silent 30000 ms protocol-select
+      // fallback (upgrader.js at 1.9.4 takes that branch exactly when
+      // `options.signal == null`). This signal bounds ONLY this attempt;
+      // when it fires, the attempt dies — not the connection it was on.
+      const deadline = dialDeadline(deadlineMs);
+      try {
+        const stream = await this.libp2p.dialProtocol(
+          peerIdFromString(targetPeerId) as unknown as Parameters<
+            Libp2p["dialProtocol"]
+          >[0],
+          protocolId,
+          deadline.signal != null ? { signal: deadline.signal } : {},
+        );
+        return exchangeStream(stream, payloadBytes);
+      } finally {
+        deadline.cancel?.();
+      }
     }
 
     for (const dialTarget of dialTargets) {
+      // A fresh budget per candidate: one timed-out address must not consume
+      // a shared signal and instantly abort every remaining candidate.
+      const deadline = dialDeadline(deadlineMs);
       try {
         const stream = await this.libp2p.dialProtocol(
           multiaddr(dialTarget),
           protocolId,
+          deadline.signal != null ? { signal: deadline.signal } : {},
         );
         return await exchangeStream(stream, payloadBytes);
       } catch (error) {
         lastError = error;
+      } finally {
+        deadline.cancel?.();
       }
     }
 
@@ -1086,6 +1116,54 @@ function shouldProbeRelays(
     return config.enableRelayProbing === true;
   }
   return config.enableRelayProbing !== false;
+}
+
+/**
+ * Deadline for one of our own delivery dials, in ms — the value passed to
+ * `dialProtocol`'s signal when the host does not configure one.
+ *
+ * 5x the worst main-thread stall measured on the RF gallery under 6x CPU
+ * throttling (the same yardstick as the connection-monitor policy) and 2x
+ * shorter than libp2p's silent 30000 ms protocol-select fallback. A provider
+ * that has not answered multistream-select within this bound on a healthy
+ * connection is worth failing over to the next candidate — or back to the
+ * client retry.
+ */
+export const DEFAULT_DIAL_PROTOCOL_TIMEOUT_MS = 15_000;
+
+function resolveDialProtocolTimeoutMs(config: SDNConfig): number {
+  const configured = Number(config.dialProtocolTimeoutMs);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_DIAL_PROTOCOL_TIMEOUT_MS;
+}
+
+type DialDeadline = {
+  signal?: AbortSignal;
+  /** Clears the fallback timer, when one was created. */
+  cancel?: () => void;
+};
+
+/**
+ * An AbortSignal that fires `timeoutMs` from now, or an empty deadline when
+ * the runtime provides neither `AbortSignal.timeout` nor `AbortController`
+ * (in which case libp2p's own protocol-select fallback still bounds the
+ * attempt). Mirrors the defensive pattern in `helia.ts` `dialBootstrapAddrs`.
+ */
+function dialDeadline(timeoutMs: number): DialDeadline {
+  if (
+    typeof AbortSignal !== "undefined" &&
+    typeof AbortSignal.timeout === "function"
+  ) {
+    return { signal: AbortSignal.timeout(timeoutMs) };
+  }
+  if (typeof AbortController !== "undefined") {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return { signal: controller.signal, cancel: () => clearTimeout(timer) };
+  }
+  return {};
 }
 
 function resolveHeliaFetchTimeoutMs(config: SDNConfig): number {
