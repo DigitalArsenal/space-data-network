@@ -52,8 +52,16 @@ type pmmPlugin struct {
 	artifacts map[string]string // ARTIFACT_PATH -> on-disk file
 	root      string            // artifact root
 	catalog   string            // catalog path
+	store     *pmm.SubmissionStore
 	stop      chan struct{}
 	mounted   bool
+
+	// submitMu latches the self-serve submission lane against the manifest
+	// rebuild: a submission is Save+publish as one unit, and the refresh loop
+	// cannot interleave a rebuild between the two. The manifest GET/artifact
+	// GET stay lock-free (they read the StaticSource and the artifacts map
+	// under mu), so an idle lane costs the hot path nothing.
+	submitMu sync.Mutex
 }
 
 func newPMMPlugin(n *Node) *pmmPlugin {
@@ -110,6 +118,7 @@ func (p *pmmPlugin) Start(_ context.Context, _ plugins.RuntimeContext) error {
 
 	p.mu.Lock()
 	p.root, p.catalog = root, catalog
+	p.store = pmm.NewSubmissionStore(root)
 	p.mu.Unlock()
 
 	if err := p.rebuild(); err != nil {
@@ -139,14 +148,23 @@ func (p *pmmPlugin) refreshLoop() {
 	}
 }
 
-// rebuild re-reads the catalog, re-hashes every served artifact from disk, and
-// re-signs.
+// rebuild re-reads the catalog, merges the self-serve submission store, re-
+// hashes every served artifact from disk, and re-signs.
 //
 // Hashing from disk rather than trusting the catalog's declared hash is the
 // point: a catalog that disagrees with the artifact it names is exactly the
 // failure this record exists to prevent, and a stale hash would be signed into a
 // manifest every client then rejects.
 func (p *pmmPlugin) rebuild() error {
+	p.submitMu.Lock()
+	defer p.submitMu.Unlock()
+	return p.rebuildLocked()
+}
+
+// rebuildLocked is rebuild with the submission latch already held. It exists so
+// a submission that just landed can publish itself as one unit (submitMu held
+// by the HTTP handler) without re-entering the latch.
+func (p *pmmPlugin) rebuildLocked() error {
 	p.mu.RLock()
 	root, catalog := p.root, p.catalog
 	p.mu.RUnlock()
@@ -162,6 +180,20 @@ func (p *pmmPlugin) rebuild() error {
 	cf, err := pmm.LoadCatalog(catalog, root)
 	if err != nil {
 		return err
+	}
+	if p.store != nil {
+		// Self-serve submissions merge AFTER the operator catalog so the
+		// operator ALWAYS wins on a MODULE_ID collision. A submission that
+		// cannot be re-hashed from disk is skipped with a logged reason — a
+		// deleted record is a withdrawal, a corrupt one is stopped at the
+		// door — and can never take the signed manifest down.
+		stored, skips := p.store.Load()
+		for _, skipErr := range skips {
+			log.Warnf("pmm: skipping submission: %v", skipErr)
+		}
+		if added, suppressed := cf.MergeSubmissions(stored); added > 0 || len(suppressed) > 0 {
+			log.Infof("pmm: merged %d self-serve submission(s), %d suppressed by operator catalog", added, len(suppressed))
+		}
 	}
 	m, err := pmm.BuildManifest(cf, *trust, uint64(time.Now().Unix()),
 		"https://"+trust.ProviderDomain+pmm.Path, time.Now(), pmmManifestTTL, signer)
@@ -330,6 +362,50 @@ func (p *pmmPlugin) RegisterRoutes(mux *http.ServeMux) {
 	}
 	mux.Handle(pmm.Path, pmm.Handler(p.source))
 	mux.Handle(pmm.ArtifactPrefix, p.artifactHandler())
+	if p.store != nil {
+		// Self-serve submission lane: ANONYMOUS, no admin wallet, mounted next
+		// to the manifest it feeds. The route is outside /api/ like the rest
+		// of this surface, so it is anonymous by construction.
+		mux.Handle(pmm.SubmissionPath, p.submissionHandler())
+	}
+}
+
+// submissionHandler wraps the package-level lane handler with the plugin's
+// own latch so Save+publish is one unit and a concurrent refresh cannot
+// interleave (see pmmPlugin.submitMu).
+func (p *pmmPlugin) submissionHandler() http.Handler {
+	inner := pmm.NewSubmissionHandler(p.store, p.catalogHasModule, func() error { return p.rebuildLocked() })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.submitMu.Lock()
+		defer p.submitMu.Unlock()
+		inner.ServeHTTP(w, r)
+	})
+}
+
+// catalogHasModule reports whether the OPERATOR catalog manages a MODULE_ID.
+// The submission lane refuses such IDs up front (the operator wins collisions
+// by construction at merge time; this is the prompt 409 rather than the slow
+// silent suppression). The decode-only read re-hashes nothing — the hash cost
+// belongs to the rebuild, not a request path.
+func (p *pmmPlugin) catalogHasModule(moduleID string) bool {
+	p.mu.RLock()
+	catalog := p.catalog
+	p.mu.RUnlock()
+	if catalog == "" {
+		return false
+	}
+	cf, err := pmm.DecodeCatalog(catalog)
+	if err != nil {
+		// A broken operator catalog will fail the rebuild anyway; answer
+		// "no collision" and let the merge's suppression rule be the belt.
+		return false
+	}
+	for i := range cf.Entries {
+		if cf.Entries[i].ModuleID == moduleID {
+			return true
+		}
+	}
+	return false
 }
 
 // artifactHandler serves the portable WASM bytes the manifest names.

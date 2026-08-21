@@ -620,32 +620,55 @@ func TestPublishDatasetPublicationManifestToIPFSPinsManifestCID(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	requests := 0
+	requests := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if r.URL.Path != "/api/v0/block/put" || r.URL.Query().Get("pin") != "true" {
+		requests = append(requests, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v0/block/put":
+			if r.URL.Query().Get("pin") != "true" {
+				t.Fatalf("block/put pin query = %q, want true", r.URL.Query().Get("pin"))
+			}
+			reader, err := r.MultipartReader()
+			if err != nil {
+				t.Fatalf("create multipart reader: %v", err)
+			}
+			part, err := reader.NextPart()
+			if err != nil {
+				t.Fatalf("read multipart part: %v", err)
+			}
+			if part.FormName() != "data" {
+				t.Fatalf("multipart form name = %q, want data", part.FormName())
+			}
+			body, err := io.ReadAll(part)
+			if err != nil {
+				t.Fatalf("read multipart body: %v", err)
+			}
+			if !bytes.Equal(body, manifestBytes) {
+				t.Fatalf("manifest body mismatch")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Key":"` + manifestCID + `"}`))
+		case "/api/v0/name/publish":
+			if r.Method != http.MethodPost {
+				t.Errorf("name/publish method = %q, want POST", r.Method)
+			}
+			if arg := r.URL.Query().Get("arg"); arg != "/ipfs/"+manifestCID {
+				t.Errorf("name/publish arg = %q, want %q", arg, "/ipfs/"+manifestCID)
+			}
+			if lifetime := r.URL.Query().Get("lifetime"); lifetime != ipnsLifetimeParam() {
+				t.Errorf("name/publish lifetime = %q, want %q", lifetime, ipnsLifetimeParam())
+			}
+			if offline := r.URL.Query().Get("allow-offline"); offline != "true" {
+				t.Errorf("name/publish allow-offline = %q, want true", offline)
+			}
+			if keys := r.URL.Query()["key"]; len(keys) != 0 {
+				t.Errorf("name/publish key query = %v, want NO key (daemon identity)", keys)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Name":"k51qzi5uqu5dknk4691lf0hb9u8yqtly1cw2nvhuvdsrb5nem0b1695tl4xp52","Value":"/ipfs/` + manifestCID + `"}`))
+		default:
 			t.Fatalf("unexpected request URL: %s", r.URL.String())
 		}
-		reader, err := r.MultipartReader()
-		if err != nil {
-			t.Fatalf("create multipart reader: %v", err)
-		}
-		part, err := reader.NextPart()
-		if err != nil {
-			t.Fatalf("read multipart part: %v", err)
-		}
-		if part.FormName() != "data" {
-			t.Fatalf("multipart form name = %q, want data", part.FormName())
-		}
-		body, err := io.ReadAll(part)
-		if err != nil {
-			t.Fatalf("read multipart body: %v", err)
-		}
-		if !bytes.Equal(body, manifestBytes) {
-			t.Fatalf("manifest body mismatch")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Key":"` + manifestCID + `"}`))
 	}))
 	defer server.Close()
 
@@ -659,8 +682,79 @@ func TestPublishDatasetPublicationManifestToIPFSPinsManifestCID(t *testing.T) {
 	if publishedCID != manifestCID {
 		t.Fatalf("published CID = %q, want %q", publishedCID, manifestCID)
 	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want 1", requests)
+	if len(requests) != 2 {
+		t.Fatalf("requests = %v, want block/put THEN name/publish (2)", requests)
+	}
+	if requests[0] != "/api/v0/block/put" || requests[1] != "/api/v0/name/publish" {
+		t.Fatalf("request order = %v, want [block/put name/publish]", requests)
+	}
+}
+
+func TestPublishDatasetPublicationManifestToIPFSKeepsCIDOnIPNSHiccup(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-dpm-ipns-hiccup-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	manifestBytes := []byte("signed-manifest")
+	manifestCID, err := cidV1RawSHA256(manifestBytes)
+	if err != nil {
+		t.Fatalf("compute manifest cid: %v", err)
+	}
+	manifestPath := filepath.Join(tmpDir, "manifest.dpm")
+	if err := os.WriteFile(manifestPath, manifestBytes, 0600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch r.URL.Path {
+		case "/api/v0/block/put":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Key":"` + manifestCID + `"}`))
+		case "/api/v0/name/publish":
+			// The IPNS layer hiccups: the block is pinned and the name
+			// publish is attempted, but Kubo refuses. The manifest publish
+			// must still succeed — content keeps serving and the deployment
+			// check is the stale-name tripwire.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, "Error: IPNS record could not be published")
+		default:
+			t.Fatalf("unexpected request URL: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	publishedCID, err := PublishDatasetPublicationManifestToIPFS(context.Background(), server.URL, &DatasetPublicationManifest{
+		Path: manifestPath,
+		CID:  manifestCID,
+	})
+	if err != nil {
+		t.Fatalf("PublishDatasetPublicationManifestToIPFS failed on IPNS hiccup: %v", err)
+	}
+	if publishedCID != manifestCID {
+		t.Fatalf("published CID = %q, want %q", publishedCID, manifestCID)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want block/put then attempted name/publish", requests)
+	}
+}
+
+func TestIPNSRepublishPolicyStaysInsideRecordLifetime(t *testing.T) {
+	if ipnsKuboRepublishPeriod >= ipnsRecordLifetime {
+		t.Fatalf("IPNS re-publish interval %v reaches the record lifetime %v; the name decays back to unresolvable between re-publishes", ipnsKuboRepublishPeriod, ipnsRecordLifetime)
+	}
+	if ipnsRecordLifetime%time.Hour != 0 {
+		t.Fatalf("IPNS record lifetime %v is not a whole number of hours; the wire lifetime param loses precision", ipnsRecordLifetime)
+	}
+	wireLifetime, err := time.ParseDuration(ipnsLifetimeParam())
+	if err != nil {
+		t.Fatalf("wire lifetime param %q does not parse: %v", ipnsLifetimeParam(), err)
+	}
+	if wireLifetime != ipnsRecordLifetime {
+		t.Fatalf("wire lifetime %v != record lifetime %v; the signed record window and the posted command have drifted", wireLifetime, ipnsRecordLifetime)
 	}
 }
 

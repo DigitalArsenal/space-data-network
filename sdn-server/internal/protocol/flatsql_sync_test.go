@@ -23,8 +23,16 @@ import (
 )
 
 func TestFlatSQLSyncProtocolReadChunkReturnsSnapshotMetadataAndFrames(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// NO wall-clock deadline on the dial. A loaded box must not decide this
+	// test: measured 2026-08-14, this test passed in ~1.3s alone and FAILED
+	// inside the parallel package run at load ~18 — the 10s context expired
+	// while the scheduler starved the test goroutine, so the verdict measured
+	// the machine, not the sync protocol. A broken dial surfaces as a
+	// Connect/NewStream error (libp2p bounds its own dial attempts); a
+	// genuinely hung test is caught by go test's own -timeout, the gate's
+	// deadlock guard at the scale where a budget means something.
+	// See gauntlet-go-host-tier-tests-fail-under-machine-load.
+	ctx := context.Background()
 
 	store := newFlatSQLSyncTestStore(t)
 	payload := storeFlatSQLSyncTestOMM(t, store, 56775, "STARLINK-6292")
@@ -253,8 +261,10 @@ func TestFlatSQLSyncProtocolAckProgress(t *testing.T) {
 }
 
 func TestFlatSQLSyncProtocolWireSpeedProbeStreamsRequestedBytes(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// No wall-clock deadline on the dial — a loaded box must not decide this
+	// test (same measurement + reasoning as the read-chunk test above: ~1.3s
+	// alone, FAIL at load ~18 under the old 10s context).
+	ctx := context.Background()
 
 	server, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {

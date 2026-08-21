@@ -106,7 +106,14 @@ func newCelestrakIngestHarness(t *testing.T) *celestrakIngestHarness {
 // CONFIG and fires every timer trigger it declares.
 func (h *celestrakIngestHarness) runIngestService(t *testing.T, dist string, nodeConfig map[string]interface{}) *ServiceFlow {
 	t.Helper()
-	policy := approvedCapabilityPolicy(t, dist, "http", "storage_ingest")
+	// The gp bundle also declares storage_query for its dataset default-query
+	// warm lane (graph task sdn-dataset-default-query-materialized-cache,
+	// FOLLOW-UP C: hostcap/flatsql-query after every OMM store). This is the
+	// fail-closed operator approval for the bundle's content hash, exactly as
+	// production's capability policy store would be asked to record; satcat
+	// and spw do not request the capability and are unaffected by the
+	// superset.
+	policy := approvedCapabilityPolicy(t, dist, "http", "storage_ingest", "storage_query")
 	services := []config.FlowService{{
 		Flow:        dist,
 		Config:      nodeConfig,
@@ -407,9 +414,21 @@ func TestCelesTrakIngestFlowConfiguredURLSurvivesTheHostcall(t *testing.T) {
 
 // TestCelesTrakIngestFlowsDeclareOnlyConnectorCapabilities pins the boundary:
 // a retrieval app may ask the host for egress and guarded persistence and
-// NOTHING else. A bundle that grows a capability beyond this pair is doing
-// application work in the host and must be rejected in review.
+// NOTHING else. The ONE declared exception is the dataset default-query lane
+// (graph task sdn-dataset-default-query-materialized-cache, FOLLOW-UP C): the
+// gp bundle adds storage_query because it warms the materialized default
+// query after every OMM store (hostcap/flatsql-query:query, no caller SQL
+// interpolation — the LIMIT rides as a bound i64 parameter). A bundle that
+// grows any OTHER capability beyond this pair/lane is doing application work
+// in the host and must be rejected in review. satcat/spw are open to the same
+// lane in their rollout wave (the dep is already declared) but do not carry
+// it yet, so their pin stays at the exact connector pair.
 func TestCelesTrakIngestFlowsDeclareOnlyConnectorCapabilities(t *testing.T) {
+	want := map[string][]string{
+		"gp":     {"http", "storage_ingest", "storage_query"},
+		"satcat": {"http", "storage_ingest"},
+		"spw":    {"http", "storage_ingest"},
+	}
 	for _, variant := range []string{"gp", "satcat", "spw"} {
 		dist := celestrakFlowDist(t, variant)
 		raw, err := os.ReadFile(filepath.Join(dist, "plugin-manifest.json"))
@@ -422,12 +441,18 @@ func TestCelesTrakIngestFlowsDeclareOnlyConnectorCapabilities(t *testing.T) {
 		if err := json.Unmarshal(raw, &manifest); err != nil {
 			t.Fatalf("parse %s manifest: %v", variant, err)
 		}
+		wantSet := want[variant]
 		got := map[string]bool{}
 		for _, capability := range manifest.Capabilities {
 			got[capability] = true
 		}
-		if len(got) != 2 || !got["http"] || !got["storage_ingest"] {
-			t.Fatalf("%s bundle capabilities = %v, want exactly [http storage_ingest]", variant, manifest.Capabilities)
+		if len(got) != len(wantSet) {
+			t.Fatalf("%s bundle capabilities = %v, want exactly %v", variant, manifest.Capabilities, wantSet)
+		}
+		for _, capability := range wantSet {
+			if !got[capability] {
+				t.Fatalf("%s bundle capabilities = %v, want exactly %v", variant, manifest.Capabilities, wantSet)
+			}
 		}
 	}
 }
@@ -452,7 +477,10 @@ func TestCelesTrakIngestRespectsTheDebounceGate(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	policy := approvedCapabilityPolicy(t, dist, "http", "storage_ingest")
+	// Same in-place operator approval as runIngestService: the gp bundle
+	// carries storage_query for its default-query warm lane (graph task
+	// sdn-dataset-default-query-materialized-cache).
+	policy := approvedCapabilityPolicy(t, dist, "http", "storage_ingest", "storage_query")
 	loaded, err := LoadFlowServices([]config.FlowService{{
 		Flow:        dist,
 		MemoryPages: 4096,

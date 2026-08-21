@@ -48,6 +48,7 @@ package update
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -165,6 +166,19 @@ func SupervisedBySystemd() bool {
 func LaunchSelfUpgrade(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch, error) {
 	if strings.TrimSpace(opts.UpdateID) == "" {
 		return nil, fmt.Errorf("self-upgrade requires a staged update id")
+	}
+	// PRE-FLIGHT RESTART POLICY GATE (ops-update-lane-restart-policy-preflight).
+	// A supervised daemon is only allowed to launch the swap at all when its
+	// owning unit and Restart= policy are proven safe, so a signal-driven run
+	// fails HERE in the daemon's own log with the actionable reason instead of
+	// spawning a transient unit that the control endpoint then refuses. The
+	// control endpoint re-verifies the same gate at shutdown time; this is the
+	// early, self-describing half of the same check.
+	if SupervisedBySystemd() {
+		unit, policy := supervisionProbe()
+		if unit == "" || !isSafeRestartPolicy(policy) {
+			return nil, errors.New(supervisedShutdownRefusal(unit, policy))
+		}
 	}
 	source := strings.TrimSpace(opts.SourceExecutable)
 	if source == "" {
