@@ -278,14 +278,16 @@ const (
 	// aggregate Records schema) includes every other standard, so a partial
 	// embed leaves dangling includes — which is exactly how the set went
 	// stale before v1.177.0.
-	// 205 from spacedatastandards.org v1.186.0 (adds $CCT, $CMR, $TBS), plus
-	// $EGP alone from v1.193.0. $EGP is a DELIBERATE partial addition ahead of
-	// a full pin bump: its schema is self-contained (no includes) and the
-	// v1.186.0 REC.fbs does not reference it, so it adds no dangling include —
-	// the failure mode this count exists to catch. It is drift-guarded against
-	// its vendored binding, so the embed cannot silently diverge. Fold this
-	// back into a single version comment at the next full pin bump.
-	expectedStandardSchemaCount = 206
+	//
+	// 224 from spacedatastandards.org v1.196.0. The v1.193.0 $EGP partial
+	// addition is folded back in here, as its own comment asked: this is the
+	// full pin bump, so there is one version and one count again. The bump
+	// carries $IRM (Ingest Resume Mark, REC ordinal 223) — the cellular ingest
+	// flow's durable checkpoint, which modules write through the schema-typed
+	// storage.write capability and which the strict validator cannot admit
+	// without this embed — together with the 17 other standards REC.fbs began
+	// including between v1.186.0 and v1.196.0.
+	expectedStandardSchemaCount = 224
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )
