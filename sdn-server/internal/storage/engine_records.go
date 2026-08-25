@@ -2,11 +2,16 @@ package storage
 
 // engine_records.go wires SDS record vtabs into the store's FlatSQL-WASM
 // engine (loop B.3, docs/flatsql-store-v2.md §4/§5): the write path mirrors
-// every stored OMM record into a per-source shadow table
-// (`OMM@<source-name>`), boot rebuilds the hot window from the durable
+// every stored record of a ROUTED schema into a per-source shadow table
+// (`<Base>@<source-name>`), boot rebuilds the hot window from the durable
 // control tables + stream files, and epoch profile queries (nearest / as_of /
 // forward) run natively inside the engine over the unified OMM view,
 // streaming aligned size-prefixed FlatBuffer frames out.
+//
+// Two schemas are routed: $OMM (loop B.3) and $TBS (the cellular slice,
+// sdn-tbs-feed-sync-for-cache-lane). Everything below is driven off
+// engineRoutedSchemas so a third standard is a table graph + one map entry,
+// never another hard-coded schema comparison.
 //
 // The engine vtab is a pure cache: control rows + stream files remain the
 // source of truth, so ingest failures are logged and skipped — only a trapped
@@ -18,9 +23,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
-
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 )
@@ -37,13 +41,77 @@ const (
 	// journal, or datasync cursor rowids.
 	engineDefaultHotWindow = 400_000
 
-	// engineOMMSchemaName is the only SDS schema routed into the engine so
-	// far (loop B.3 slice); further standards land with their own tables.
+	// engineOMMSchemaName is the loop-B.3 SDS schema routed into the engine.
 	engineOMMSchemaName = "OMM.fbs"
+
+	// engineTBSSchemaName is the cellular slice
+	// (sdn-tbs-feed-sync-for-cache-lane): $TBS sites materialized by the
+	// dataset-feed-head-sync lane must be readable through the engine's
+	// record surface, because that is what storage.flatsql_query_stream ->
+	// QueryRawStream serves to the aggregate cache flow.
+	engineTBSSchemaName = "TBS.fbs"
 
 	// engineDefaultSource partitions records stored without source tags.
 	engineDefaultSource = "local"
 )
+
+// engineRoutedSchema is one SDS standard's engine binding: the SQL base table
+// its records land in and the 4-byte FlatBuffer file identifier that routes a
+// buffer to that table at ingest (RegisterFileID).
+type engineRoutedSchema struct {
+	Table  string
+	FileID string
+}
+
+// engineRoutedSchemas is THE list of SDS schemas routed into the engine. A
+// new standard joins by adding its table graph to engineDatabaseSchema and one
+// entry here; file-id registration, table ownership, the public query
+// surface, ingest gating, hot-window eviction and boot rebuild all read this
+// map rather than comparing against a schema constant.
+var engineRoutedSchemas = map[string]engineRoutedSchema{
+	engineOMMSchemaName: {Table: "OMM", FileID: "$OMM"},
+	engineTBSSchemaName: {Table: "TBS", FileID: "$TBS"},
+}
+
+// engineRoutedSchemaFor resolves a schema name (with or without the ".fbs"
+// suffix, any case) to its engine binding.
+func engineRoutedSchemaFor(schemaName string) (engineRoutedSchema, bool) {
+	binding, ok := engineRoutedSchemas[normalizeSchemaNameForEpoch(schemaName)]
+	return binding, ok
+}
+
+// engineRoutesSchema reports whether stored records of this schema are
+// mirrored into the engine.
+func engineRoutesSchema(schemaName string) bool {
+	_, ok := engineRoutedSchemaFor(schemaName)
+	return ok
+}
+
+// engineRoutedSchemaNames lists the routed schema names in a stable order so
+// boot rebuild and file-id registration are deterministic.
+func engineRoutedSchemaNames() []string {
+	names := make([]string, 0, len(engineRoutedSchemas))
+	for name := range engineRoutedSchemas {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// registerEngineFileIDs maps every routed standard's file identifier to its
+// base table. A table only materializes in SQLite once its file id is
+// registered (FlatSQLDatabase::initializeSQLiteEngine), so this is also what
+// makes `SELECT ... FROM TBS` resolve on a store that has never ingested a
+// $TBS record — an empty answer instead of "no such table".
+func registerEngineFileIDs(engineDB *flatsqlrt.Database) error {
+	for _, name := range engineRoutedSchemaNames() {
+		binding := engineRoutedSchemas[name]
+		if err := engineDB.RegisterFileID(binding.FileID, binding.Table); err != nil {
+			return fmt.Errorf("register %s file identifier: %w", binding.FileID, err)
+		}
+	}
+	return nil
+}
 
 // engineRecordSchema is the FlatBuffer schema handed to the engine. The OMM
 // table mirrors the SDS OMM layout exactly (parity-tested against real $OMM
@@ -97,6 +165,56 @@ const engineRecordSchema = `
   file_identifier "$OMM";
 `
 
+// engineTBSTableGraph is the $TBS record table, appended to engineRecordSchema
+// to form the schema the store actually creates its database from
+// (engineDatabaseSchema).
+//
+// It is a SEPARATE constant on purpose. engineRecordSchema is a CROSS-HOST
+// CONTRACT: shared-test-vectors/flatsql-parity.json pins that exact text and
+// both hosts (WasmEdge via internal/flatsqlrt, V8 via sdn-js) build their
+// parity database from it, so this host cannot unilaterally rewrite it.
+// Appending keeps the pinned OMM surface byte-identical while the node gains
+// the cellular read surface.
+//
+// The table mirrors internal/sds/schemas/TBS.fbs field-for-field IN
+// DECLARATION ORDER — vtable slots are positional, so a reordered or elided
+// field would decode a NEIGHBOURING value, not a missing one. The two
+// trailing REQUIRED fields (SOURCES:[TBSProvenance], CONSENSUS:TBSConsensus)
+// are deliberately NOT projected as columns: they are a table vector and a
+// nested table, they sit last so omitting them cannot shift any preceding
+// slot, and every column the cellular tile contract names
+// (docs/cellular-density-tiles/contract.json pointFields) is flat. Their
+// bytes are never lost — `_data` is the whole record, so attribution and
+// consensus travel intact to any consumer that decodes the frame with the
+// real $TBS binding.
+const engineTBSTableGraph = `
+  table TBS {
+    ID:string;
+    NATIVE_ID:string;
+    RADIO:tbsRadioClass = UNKNOWN;
+    MCC:uint;
+    MNC:uint;
+    LAC:uint;
+    TAC:uint;
+    CELL_ID:string;
+    LATITUDE:double;
+    LONGITUDE:double;
+    RANGE_M:double;
+    SAMPLES:uint;
+    AVERAGE_SIGNAL_DBM:double;
+    FIRST_OBSERVED:string;
+    LAST_OBSERVED:string;
+    OPERATOR:string;
+    FREQUENCY_MHZ:double;
+    SITE_NAME:string;
+    COUNTRY_CODE:string;
+  }
+`
+
+// engineDatabaseSchema is the schema every engine database is created from:
+// the parity-pinned OMM surface plus this host's additional routed standards.
+const engineDatabaseSchema = engineRecordSchema + engineTBSTableGraph
+
 // Engine-native epoch query shapes over the unified OMM view. Positional
 // params, in this exact order: ?1 source shadow name (” = all sources),
 // ?2 epoch unix seconds (float), ?3 limit.
@@ -111,7 +229,12 @@ const (
 // can never use these names: the vtab occupies them in the shared SQLite
 // context.
 func engineOwnsTableName(tableName string) bool {
-	return tableName == "OMM"
+	for _, binding := range engineRoutedSchemas {
+		if tableName == binding.Table {
+			return true
+		}
+	}
+	return false
 }
 
 // engineIngest is one record queued for the engine vtab after its control
@@ -134,13 +257,27 @@ func engineSourceName(tags *SourceTags) string {
 // engineRecordPayload returns the unprefixed FlatBuffer bytes the engine's
 // IngestOne* API expects. Store accepts both bare and size-prefixed buffers
 // (see parseOMM), so strip a 4-byte size prefix when the buffer carries one.
+// The identifier check is over EVERY routed standard: a $TBS frame arriving
+// with its prefix intact must be stripped exactly like an $OMM one, otherwise
+// the engine reads the length word as the root offset and drops the record.
 func engineRecordPayload(data []byte) []byte {
 	if len(data) >= 12 &&
 		int64(binary.LittleEndian.Uint32(data[:4]))+4 == int64(len(data)) &&
-		OMM.SizePrefixedOMMBufferHasIdentifier(data) {
+		engineRoutedFileID(string(data[8:12])) {
 		return data[4:]
 	}
 	return data
+}
+
+// engineRoutedFileID reports whether a 4-byte FlatBuffer file identifier
+// belongs to a routed standard.
+func engineRoutedFileID(fileID string) bool {
+	for _, binding := range engineRoutedSchemas {
+		if fileID == binding.FileID {
+			return true
+		}
+	}
+	return false
 }
 
 // ensureEngineSource registers a per-source shadow table once and refreshes
@@ -202,7 +339,8 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 // correctness-critical state); only a poisoned runtime is fatal. Caller
 // holds s.mu for writing.
 func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
-	if schemaName != engineOMMSchemaName || s.engineHotWindow <= 0 {
+	binding, routed := engineRoutedSchemaFor(schemaName)
+	if !routed || s.engineHotWindow <= 0 {
 		return nil
 	}
 	overflow := s.engineResident[schemaName] - int64(s.engineHotWindow)
@@ -220,7 +358,7 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 	// concurrently written sources). Tombstoned rows are already skipped by
 	// the vtab scan.
 	res, err := s.engineDB.Query(
-		`SELECT _source, _rowid FROM OMM ORDER BY _rowid ASC LIMIT ?1`, overflow)
+		`SELECT _source, _rowid FROM "`+binding.Table+`" ORDER BY _rowid ASC LIMIT ?1`, overflow)
 	if err != nil {
 		log.Warnf("FlatSQL engine: hot-window eviction scan (%s): %v", schemaName, err)
 		if s.engine.Poisoned() {
@@ -242,7 +380,8 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 		if !ok {
 			continue
 		}
-		// source carries the FULL shadow-table name ("OMM@catalogfixture-gp") as
+		// source carries the FULL shadow-table name ("OMM@catalogfixture-gp",
+		// "TBS@cell-tower-bulk") as
 		// reported by the unified view — exactly the name MarkDeleted keys
 		// on, and guaranteed registered (it came from the engine itself).
 		if err := s.engineDB.MarkDeleted(source, uint64(seq)); err != nil {
@@ -263,13 +402,26 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 }
 
 // rebuildEngineRecords reloads the engine vtab hot window from durable state
-// at boot: the newest engineHotWindow OMM records (by global index rowid),
-// replayed in ascending rowid order from the stream files. A no-op on empty
-// stores. Never fails the open for per-record problems — only a poisoned
-// runtime is fatal. Called from NewFlatSQLStore before the store is shared,
-// so no locking is needed.
+// at boot, once per ROUTED schema: the newest engineHotWindow records of that
+// schema (by global index rowid), replayed in ascending rowid order from the
+// stream files. A no-op on empty stores. Never fails the open for per-record
+// problems — only a poisoned runtime is fatal. Called from NewFlatSQLStore
+// before the store is shared, so no locking is needed.
+//
+// The window is PER SCHEMA: a store that has ingested millions of $OMM must
+// still come back with its $TBS sites resident, so the two never share (and
+// never evict each other out of) one budget.
 func (s *FlatSQLStore) rebuildEngineRecords() error {
-	readSource, err := s.recordReadSource(engineOMMSchemaName)
+	for _, schemaName := range engineRoutedSchemaNames() {
+		if err := s.rebuildEngineRecordsForSchema(schemaName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
+	readSource, err := s.recordReadSource(schemaName)
 	if err != nil {
 		log.Warnf("FlatSQL engine rebuild: record read source: %v", err)
 		return nil
@@ -294,9 +446,9 @@ func (s *FlatSQLStore) rebuildEngineRecords() error {
 			ORDER BY idx.rowid DESC
 			LIMIT ?
 		) ORDER BY rid ASC
-	`, readSource), engineOMMSchemaName, s.engineHotWindow)
+	`, readSource), schemaName, s.engineHotWindow)
 	if err != nil {
-		log.Warnf("FlatSQL engine rebuild: query %s hot window: %v", engineOMMSchemaName, err)
+		log.Warnf("FlatSQL engine rebuild: query %s hot window: %v", schemaName, err)
 		return nil
 	}
 	defer rows.Close()
@@ -350,9 +502,9 @@ func (s *FlatSQLStore) rebuildEngineRecords() error {
 	if err := rows.Err(); err != nil {
 		log.Warnf("FlatSQL engine rebuild: iterate hot window: %v", err)
 	}
-	s.engineResident[engineOMMSchemaName] = int64(rebuilt)
+	s.engineResident[schemaName] = int64(rebuilt)
 	if rebuilt > 0 || skipped > 0 {
-		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped, window %d)", rebuilt, engineOMMSchemaName, skipped, s.engineHotWindow)
+		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped, window %d)", rebuilt, schemaName, skipped, s.engineHotWindow)
 	}
 	return nil
 }
@@ -400,6 +552,11 @@ func (s *FlatSQLStore) readStreamRecordCached(files map[string]*os.File, streamP
 // hydrating anything from stream files. sourceName is the bare source (e.g.
 // "catalogfixture-gp"); empty means all sources. limit <= 0 means no limit.
 func (s *FlatSQLStore) QueryEpochRawStream(schemaName string, sourceName string, profile string, epochUnix float64, limit int) (*flatsqlrt.RawStream, error) {
+	// Epoch profiles are $OMM-specific by construction, not by omission: the
+	// three SQL shapes partition on NORAD_CAT_ID and order on
+	// USER_DEFINED_EPOCH_TIMESTAMP, neither of which exists on any other
+	// routed standard. A routed-but-non-OMM schema is refused here rather
+	// than silently answered from the wrong columns.
 	if normalizeSchemaNameForEpoch(schemaName) != engineOMMSchemaName {
 		return nil, fmt.Errorf("engine epoch queries support only %s (got %q)", engineOMMSchemaName, schemaName)
 	}
@@ -443,8 +600,9 @@ func (s *FlatSQLStore) QueryEpochRawStream(schemaName string, sourceName string,
 // EngineRecordCount reports how many records are resident in the engine's
 // unified view for a schema (the hot window), 0 when nothing was ingested yet.
 func (s *FlatSQLStore) EngineRecordCount(schemaName string) (int64, error) {
-	if normalizeSchemaNameForEpoch(schemaName) != engineOMMSchemaName {
-		return 0, fmt.Errorf("engine record counts support only %s (got %q)", engineOMMSchemaName, schemaName)
+	binding, routed := engineRoutedSchemaFor(schemaName)
+	if !routed {
+		return 0, fmt.Errorf("engine record counts support only %v (got %q)", engineRoutedSchemaNames(), schemaName)
 	}
 
 	s.mu.RLock()
@@ -452,7 +610,7 @@ func (s *FlatSQLStore) EngineRecordCount(schemaName string) (int64, error) {
 	if s.engineDB == nil {
 		return 0, errors.New("store is closed")
 	}
-	res, err := s.engineDB.Query(`SELECT COUNT(*) FROM OMM`)
+	res, err := s.engineDB.Query(`SELECT COUNT(*) FROM "` + binding.Table + `"`)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "no such view") {
 			return 0, nil

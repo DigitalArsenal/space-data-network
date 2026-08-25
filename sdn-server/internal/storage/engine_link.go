@@ -109,15 +109,15 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	if s.controlDBDurable {
 		engineDB, _, _, err = openControlDatabase(engine, s.controlDBPath)
 	} else {
-		engineDB, err = engine.CreateDatabase(engineRecordSchema, "sdn-control")
+		engineDB, err = engine.CreateDatabase(engineDatabaseSchema, "sdn-control")
 	}
 	if err != nil {
 		engine.Close()
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: create database: %w", err)
 	}
-	if err := engineDB.RegisterFileID("$OMM", "OMM"); err != nil {
+	if err := registerEngineFileIDs(engineDB); err != nil {
 		engine.Close()
-		return s.engineEpoch, fmt.Errorf("recover poisoned engine: register $OMM: %w", err)
+		return s.engineEpoch, fmt.Errorf("recover poisoned engine: register file identifiers: %w", err)
 	}
 	db := flatsqldrv.Open(engineDB)
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
@@ -179,8 +179,10 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 		}
 		s.engineHotHydrated.Store(true)
 	} else if hotWindowWasHydrated && s.recordCatalog != nil {
-		if _, err := s.recordCatalog.ReplayEngineHotWindow(s, engineOMMSchemaName, s.engineHotWindow); err != nil {
-			return s.engineEpoch, fmt.Errorf("recover poisoned engine: compact hot-window rebuild: %w", err)
+		for _, schemaName := range engineRoutedSchemaNames() {
+			if _, err := s.recordCatalog.ReplayEngineHotWindow(s, schemaName, s.engineHotWindow); err != nil {
+				return s.engineEpoch, fmt.Errorf("recover poisoned engine: compact hot-window rebuild (%s): %w", schemaName, err)
+			}
 		}
 		s.engineHotHydrated.Store(true)
 	}

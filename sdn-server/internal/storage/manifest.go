@@ -752,6 +752,17 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 	imported := 0
 	now := time.Now().Unix()
 	catalogEvents := make([]recordCatalogEvent, 0, len(records)*2)
+	// Records of a ROUTED schema are mirrored into the engine record vtabs
+	// after the chunk commits, exactly as StoreWithSourceTags does on the
+	// local write path. Without this, a materialized dataset shard was
+	// durable but INVISIBLE to every flow that reads through
+	// storage.flatsql_query_stream -> QueryRawStream until the next process
+	// boot rebuilt the hot window — which is precisely the cellular cache
+	// lane's failure mode: host-01 materializes host-02's $TBS feed head and
+	// the aggregate cache still answers empty
+	// (sdn-tbs-feed-sync-for-cache-lane).
+	var enginePending []engineIngest
+	engineRouted := engineRoutesSchema(index.SchemaName)
 	for _, record := range records {
 		data, err := readRecord(record)
 		if err != nil {
@@ -806,6 +817,9 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 				return imported, fmt.Errorf("record catalog event for imported %s record %s: %w", index.SchemaName, record.CID, err)
 			}
 			catalogEvents = append(catalogEvents, event)
+			if engineRouted {
+				enginePending = append(enginePending, engineIngest{data: data, source: engineSourceName(&tags)})
+			}
 			imported++
 			if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
 				if err := insertNewSourceTagsTx(tx, index.SchemaName, record.CID, tags, recordLength, rowID); err != nil {
@@ -841,6 +855,14 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 	committed = true
 	if err := s.appendCatalogEvents(catalogEvents); err != nil {
 		return imported, fmt.Errorf("append record catalog events: %w", err)
+	}
+	if len(enginePending) > 0 {
+		// The engine vtab is a cache over the durable substrate committed
+		// above, so a mirroring failure never unwinds the import; only a
+		// poisoned (trapped) runtime is returned.
+		if err := s.ingestEngineRecords(index.SchemaName, enginePending); err != nil {
+			return imported, fmt.Errorf("mirror imported %s records into the engine: %w", index.SchemaName, err)
+		}
 	}
 	return imported, nil
 }
