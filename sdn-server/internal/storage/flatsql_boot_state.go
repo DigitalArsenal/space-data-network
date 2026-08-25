@@ -68,6 +68,7 @@ import (
 	"hash"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -353,7 +354,7 @@ func (s *FlatSQLStore) noteAuxiliaryAppliedThrough(off int64) {
 // database they describe, so a discard drops both together and the next open
 // reads neither. There is no way to keep an auxiliary mark that outlives the
 // rows it claims are already applied.
-func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func(bootMark, bool) bootResume) (*flatsqlrt.Runtime, *flatsqlrt.Database, bootResume, error) {
+func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func(bootMark, bool) bootResume) (*flatsqlrt.Runtime, *flatsqlrt.Database, bootResume, engineBootPlan, error) {
 	// A READ-ONLY open takes no store lock, so it must never become a second
 	// writer against a file the live daemon owns. It therefore keeps the
 	// ephemeral engine and re-derives, exactly as it always has. This is not a
@@ -361,8 +362,11 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 	// second process is precisely the corruption the one-daemon-per-box law
 	// exists to prevent.
 	if readOnly {
-		engine, db, err := openEphemeralControlEngine()
-		return engine, db, bootResume{}, err
+		// A read-only open builds an EPHEMERAL control database with no
+		// pre-existing tables, so no standard can collide with one and there
+		// is no persisted source to restore.
+		engine, db, err := openEphemeralControlEngine(engineDatabaseSchema)
+		return engine, db, bootResume{}, engineBootPlan{Excluded: map[string]bool{}}, err
 	}
 
 	// PRE-FLIGHT: never hand the engine a file that is not a database.
@@ -377,7 +381,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 	// too); until then the host refuses to present the input that triggers it,
 	// and the retry loop below survives it anyway.
 	if err := discardNonDatabaseFile(dbPath); err != nil {
-		return nil, nil, bootResume{}, err
+		return nil, nil, bootResume{}, engineBootPlan{}, err
 	}
 
 	// Up to three attempts, each with a FRESH RUNTIME. A poisoned runtime cannot
@@ -387,15 +391,23 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 	for attempt := 0; attempt < 3; attempt++ {
 		hadFile := fileExists(dbPath)
 
+		// PROBE FIRST, in its own runtime, then open for real. Both the
+		// exclusion set (which decides the schema text) and the persisted
+		// source list (which must be registered before the real database's
+		// first query) are answers about the file's existing contents, and
+		// asking the real database would BE that first query.
+		plan := probeControlDatabase(basePath, dbPath)
+
 		engine, err := flatsqlrt.New(
 			flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()),
 			flatsqlrt.WithFileIORoot(basePath),
 		)
 		if err != nil {
-			return nil, nil, bootResume{}, fmt.Errorf("failed to start FlatSQL engine: %w", err)
+			return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 		}
 
-		engineDB, mark, warm, err := tryOpenControlDatabase(engine, dbPath)
+		engineDB, mark, warm, err := tryOpenControlDatabase(engine, dbPath,
+			engineSchemaTextExcluding(plan.Excluded), enginePrepare(plan))
 		if err == nil {
 			resume := bootResume{}
 			if decideResume != nil {
@@ -407,7 +419,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 			// can never be honoured across a discard, and is dropped with it.
 			if resume.Keep || !hadFile {
 				// Warm, or a genuine first boot whose database is already empty.
-				return engine, engineDB, resume, nil
+				return engine, engineDB, resume, plan, nil
 			}
 			// Cold with pre-existing state: discard and reopen so the replay
 			// lands in empty tables. One extra engine start, on the path that
@@ -416,7 +428,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 			engineDB.Destroy()
 			engine.Close()
 			if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
-				return nil, nil, bootResume{}, fmt.Errorf("discard stale control database: %w", rmErr)
+				return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("discard stale control database: %w", rmErr)
 			}
 			continue
 		}
@@ -428,7 +440,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 		}
 		log.Warnf("FlatSQL control database at %s is unusable (%v) — discarding it and re-deriving from the journal", dbPath, err)
 		if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
-			return nil, nil, bootResume{}, fmt.Errorf("discard unusable control database: %w", rmErr)
+			return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("discard unusable control database: %w", rmErr)
 		}
 	}
 
@@ -436,8 +448,42 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 	// engine keeps the node ALIVE on exactly the pre-durability terms it ran on
 	// for the last year — a slow boot, never a dead one.
 	log.Errorf("FlatSQL control database could not be opened even after discarding it (%v) — falling back to an EPHEMERAL control database; every boot will re-derive the whole catalog until this is resolved", lastErr)
-	engine, db, err := openEphemeralControlEngine()
-	return engine, db, bootResume{}, err
+	engine, db, err := openEphemeralControlEngine(engineDatabaseSchema)
+	return engine, db, bootResume{}, engineBootPlan{Excluded: map[string]bool{}}, err
+}
+
+// enginePrepare is the work that must happen between OpenDatabase and the
+// database's FIRST QUERY, or not at all.
+//
+// The engine registers its SQLite virtual tables lazily, once, at the first
+// query (FlatSQLDatabase::initializeSQLiteEngine) — and it registers exactly
+// the tables that have a file identifier by then, base AND per-source shadow.
+// Doing this here therefore costs one no-op `CREATE VIRTUAL TABLE IF NOT
+// EXISTS` per already-persisted table; doing it after the first query costs a
+// full unified-view rebuild instead (~20 ms per schema-changing statement on
+// the disk-backed engine, 227 standards, three statements each).
+//
+// On a store with NO persisted source there is nothing to gain and something
+// to lose: the base vtabs would be created here only for CreateUnifiedViews to
+// DROP them again. Cold stores therefore register their file identifiers after
+// the open instead (NewFlatSQLStore).
+func enginePrepare(plan engineBootPlan) func(*flatsqlrt.Database) error {
+	if len(plan.Sources) == 0 {
+		return nil
+	}
+	return func(db *flatsqlrt.Database) error {
+		if err := registerEngineFileIDs(db, plan.Excluded); err != nil {
+			return err
+		}
+		for _, source := range plan.Sources {
+			if err := db.RegisterSource(source); err != nil {
+				// Never fatal: a source that cannot be re-registered is a
+				// source whose queries would have failed anyway.
+				log.Warnf("FlatSQL boot: could not re-register persisted source %q: %v", source, err)
+			}
+		}
+		return nil
+	}
 }
 
 func fileExists(path string) bool {
@@ -479,12 +525,12 @@ func discardNonDatabaseFile(dbPath string) error {
 // filesystem and an in-memory control database. Read-only opens and any host
 // that cannot reach a filesystem land here, and everything downstream behaves
 // exactly as it did before this lane existed.
-func openEphemeralControlEngine() (*flatsqlrt.Runtime, *flatsqlrt.Database, error) {
+func openEphemeralControlEngine(schemaText string) (*flatsqlrt.Runtime, *flatsqlrt.Database, error) {
 	engine, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 	}
-	db, err := engine.CreateDatabase(engineDatabaseSchema, "sdn-control")
+	db, err := engine.CreateDatabase(schemaText, "sdn-control")
 	if err != nil {
 		engine.Close()
 		return nil, nil, fmt.Errorf("failed to create FlatSQL database: %w", err)
@@ -496,8 +542,8 @@ func openEphemeralControlEngine() (*flatsqlrt.Runtime, *flatsqlrt.Database, erro
 // persisted mark. One wipe-and-retry is attempted: a database that cannot be
 // opened or verified is worth exactly nothing, because everything it holds is
 // derivable from the journal and the stream files.
-func openControlDatabase(engine *flatsqlrt.Runtime, dbPath string) (*flatsqlrt.Database, bootMark, bool, error) {
-	db, mark, warm, err := tryOpenControlDatabase(engine, dbPath)
+func openControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, bool, error) {
+	db, mark, warm, err := tryOpenControlDatabase(engine, dbPath, schemaText, prepare)
 	if err == nil {
 		return db, mark, warm, nil
 	}
@@ -505,17 +551,26 @@ func openControlDatabase(engine *flatsqlrt.Runtime, dbPath string) (*flatsqlrt.D
 	if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
 		return nil, bootMark{}, false, fmt.Errorf("discard unusable control database: %w", rmErr)
 	}
-	db, mark, warm, err = tryOpenControlDatabase(engine, dbPath)
+	db, mark, warm, err = tryOpenControlDatabase(engine, dbPath, schemaText, prepare)
 	if err != nil {
 		return nil, bootMark{}, false, fmt.Errorf("open control database after discard: %w", err)
 	}
 	return db, mark, warm, nil
 }
 
-func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath string) (*flatsqlrt.Database, bootMark, bool, error) {
-	db, err := engine.OpenDatabase(engineDatabaseSchema, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
+func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, bool, error) {
+	db, err := engine.OpenDatabase(schemaText, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
 	if err != nil {
 		return nil, bootMark{}, false, err
+	}
+	// BEFORE THE FIRST QUERY. IsDiskBacked/ReindexAll/verifyControlDatabase all
+	// query, and the engine's virtual-table registration is a one-shot at the
+	// first query — see enginePrepare.
+	if prepare != nil {
+		if err := prepare(db); err != nil {
+			db.Destroy()
+			return nil, bootMark{}, false, err
+		}
 	}
 	disk, err := db.IsDiskBacked()
 	if err != nil {
@@ -661,88 +716,213 @@ func removeControlDatabaseFiles(dbPath string) error {
 	return nil
 }
 
-// reregisterPersistedSources restores the RUNTIME half of every FlatSQL source
-// the on-disk schema remembers.
+// finishEngineSourceSetup completes engine source bring-up after the store is
+// constructed: it guarantees the default partition exists on a store that has
+// none, and rebuilds the unified views EXACTLY WHEN THEY NEED IT.
 //
-// THE TRAP THIS CLOSES, and it is not obvious. A FlatSQL source is two things:
-// a `sqlite3_create_module_v2` registration (process state, gone on restart)
-// and a `CREATE VIRTUAL TABLE "<Base>@<source>" USING "__flatsql_module_..."`
-// statement (flatsql cpp/src/sqlite_engine.cpp:414). While the database was
-// `:memory:` both died together and neither was ever missed. Now the DDL
-// SURVIVES and the module does not, so a persisted schema entry points at a
-// module nothing registered — and the very first query to touch it fails with
-// `no such module: __flatsql_module_...`, at boot, before any ingest has had a
-// chance to re-register the source as a side effect.
+// THE RUNTIME HALF, AND WHY IT IS ALREADY DONE BY NOW. A FlatSQL source is two
+// things: a `sqlite3_create_module_v2` registration (process state, gone on
+// restart) and a `CREATE VIRTUAL TABLE "<Base>@<source>"` statement (flatsql
+// cpp/src/sqlite_engine.cpp) that SURVIVES in the persisted schema. A
+// persisted vtab whose module nothing registered fails with `no such module`
+// on the first query to touch it. openControlEngine closes that by registering
+// the probed sources BEFORE the database's first query, so the engine's lazy
+// initializeSQLiteEngine registers every base AND shadow table itself — which
+// costs one no-op `CREATE VIRTUAL TABLE IF NOT EXISTS` per table instead of a
+// full view rebuild.
 //
-// The store's own `engineSources` map starts empty on every open too, so
-// without this the map and the schema disagree from the first instruction.
-// Registering from the schema makes both true at once.
-//
-// The vtab CONTENT is not restored and must not be: it is the record arena,
-// which this slice deliberately does not persist (see tryOpenControlDatabase).
-// Registering an empty source is exactly the state a cold boot reaches before
-// the hot-window rebuild refills it.
-func (s *FlatSQLStore) reregisterPersistedSources() error {
-	if !s.controlDBDurable {
-		return nil
-	}
-	rows, err := s.db.Query(
-		`SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%__flatsql_module_%'`)
-	if err != nil {
-		// A store with no such schema yet is the common case, not an error.
-		return nil
-	}
-	var vtabs []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan persisted virtual table: %w", err)
+// WHY THE REBUILD IS CONDITIONAL. CreateUnifiedViews is all-or-nothing across
+// the schema: DROP TABLE + DROP VIEW + CREATE VIEW for EVERY routed table.
+// Measured on the disk-backed engine, a schema-changing statement costs ~20 ms
+// (SQLite re-reads the whole schema after each one), so rebuilding 227 views
+// is ~10 s — per boot, for views that are already correct. Skipping it when
+// the persisted views already union exactly the registered sources takes a
+// warm open from ~10.8 s back to ~0.1 s.
+func (s *FlatSQLStore) finishEngineSourceSetup(plan engineBootPlan) error {
+	rebuild := !plan.ViewsCurrent
+	if len(s.engineSources) == 0 {
+		// EVERY ROUTED BASE NAME MUST RESOLVE, INCLUDING ON AN EMPTY STORE.
+		// Base tables materialize either through the engine's lazy
+		// initializeSQLiteEngine or as unified views; a store with no source
+		// has neither, so `SELECT _data FROM IRM` would answer "no such table"
+		// instead of zero rows — an answer no caller can tell from a real
+		// failure. Registering the default partition makes the answer EMPTY.
+		if err := s.engineDB.RegisterSource(engineDefaultSource); err != nil {
+			log.Warnf("FlatSQL boot: could not register the default engine source: %v", err)
+			return nil
 		}
-		vtabs = append(vtabs, name)
+		s.engineSources[engineDefaultSource] = true
+		rebuild = true
 	}
-	closeErr := rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("enumerate persisted virtual tables: %w", err)
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if len(vtabs) == 0 {
+	if !rebuild {
+		log.Infof("FlatSQL boot: %d engine source registration(s) restored; unified views already current", len(s.engineSources))
 		return nil
+	}
+	if err := s.rebuildUnifiedViews(); err != nil {
+		log.Warnf("FlatSQL boot: rebuild unified views over %d engine source(s): %v", len(s.engineSources), err)
+		return nil
+	}
+	log.Infof("FlatSQL boot: rebuilt the unified views over %d engine source(s)", len(s.engineSources))
+	return nil
+}
+
+// engineBootPlan is everything the store must know about an existing control
+// database BEFORE it opens that database for real.
+type engineBootPlan struct {
+	// Excluded names the routed standards this store must not route.
+	Excluded map[string]bool
+	// Sources are the per-source partitions the persisted schema remembers.
+	Sources []string
+	// ViewsCurrent reports that the persisted unified views already union
+	// exactly Sources for every routed standard.
+	ViewsCurrent bool
+}
+
+// registeredSources is the store-side mirror of the sources enginePrepare
+// registered on the engine before its first query. The two must agree from the
+// first instruction: the engine would refuse a duplicate RegisterSource, and a
+// store that thinks it has no sources would register the default partition and
+// rebuild every view for nothing.
+func (p engineBootPlan) registeredSources() map[string]bool {
+	sources := make(map[string]bool, len(p.Sources))
+	for _, source := range p.Sources {
+		sources[source] = true
+	}
+	return sources
+}
+
+// engineProbeSchema is the schema the PROBE database is opened with: one table
+// that is never given a file identifier, so the probe cannot create, drop or
+// rename anything. SchemaParser refuses an empty schema, which is the only
+// reason it declares a table at all.
+const engineProbeSchema = `
+  table SDN_ENGINE_BOOT_PROBE {
+    PROBE:string;
+  }
+`
+
+// probeControlDatabase reads what the control database already contains, in a
+// SEPARATE runtime that is fully closed before the real one opens.
+//
+// IT HAS TO BE A SEPARATE DATABASE, and that is the whole point. Two decisions
+// depend on the file's existing contents and BOTH must be made before the real
+// database is opened or first queried:
+//
+//   - WHICH STANDARDS MAY BE ROUTED. createUnifiedView DROPs the base name
+//     before creating the view, so a standard whose code is already a plain
+//     control table must be absent from the schema the database is created
+//     from — not merely skipped in Go.
+//   - WHICH SOURCES TO REGISTER. Registering them before the real database's
+//     first query is what lets the engine's lazy initialization register the
+//     shadow vtabs, which is what makes the view rebuild skippable.
+//
+// Asking the real database either question would itself be the first query, so
+// the probe is a different database entirely. It is sequential — destroyed and
+// closed before the real open — so there is never a second writer on the file,
+// and it costs one engine start (~5 ms) plus one open.
+//
+// Every failure returns an EMPTY plan: no exclusions, no pre-registered
+// sources, a view rebuild. That is exactly the behaviour this store had before
+// the probe existed.
+func probeControlDatabase(basePath, dbPath string) engineBootPlan {
+	plan := engineBootPlan{Excluded: map[string]bool{}}
+	if !fileExists(dbPath) {
+		return plan
+	}
+	engine, err := flatsqlrt.New(
+		flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()),
+		flatsqlrt.WithFileIORoot(basePath),
+	)
+	if err != nil {
+		log.Warnf("FlatSQL boot probe: start probe engine: %v", err)
+		return plan
+	}
+	defer engine.Close()
+	db, err := engine.OpenDatabase(engineProbeSchema, "sdn-engine-boot-probe", dbPath, flatsqlrt.JournalTruncate)
+	if err != nil {
+		log.Warnf("FlatSQL boot probe: open control database for probing: %v", err)
+		return plan
+	}
+	defer db.Destroy()
+	res, err := db.Query(`SELECT type, name, COALESCE(sql, '') FROM sqlite_master WHERE type IN ('table', 'view')`)
+	if err != nil {
+		log.Warnf("FlatSQL boot probe: read control schema: %v", err)
+		return plan
 	}
 
-	// A shadow table is named "<Base>@<source>"; the engine's RegisterSource
-	// takes the SOURCE and recreates the shadow table for every base table, so
-	// one registration per distinct source is both necessary and sufficient.
-	seen := map[string]bool{}
-	for _, name := range vtabs {
-		at := strings.LastIndex(name, "@")
-		if at < 0 || at+1 >= len(name) {
+	plain := map[string]bool{}
+	views := map[string]string{}
+	sourceSet := map[string]bool{}
+	for _, row := range res.Rows {
+		if len(row) != 3 {
 			continue
 		}
-		source := name[at+1:]
-		if seen[source] || s.engineSources[source] {
+		kind, _ := row[0].(string)
+		name, _ := row[1].(string)
+		text, _ := row[2].(string)
+		switch {
+		case kind == "view":
+			views[name] = text
+		case strings.Contains(text, "__flatsql_module_"):
+			if at := strings.LastIndex(name, "@"); at >= 0 && at+1 < len(name) {
+				sourceSet[name[at+1:]] = true
+			}
+		default:
+			plain[name] = true
+		}
+	}
+
+	for name, binding := range engineRoutedSchemas {
+		if _, decorated := engineDecoratedSchemas[name]; decorated {
+			// $OMM and $TBS have owned their canonical names since loop B.3
+			// and the cellular slice; un-routing them now would be a
+			// different regression, not a fix.
 			continue
 		}
-		seen[source] = true
-		if err := s.engineDB.RegisterSource(source); err != nil {
-			// Never fatal. A source that cannot be re-registered is a source
-			// whose queries would have failed anyway; the honest response is to
-			// say so and let the caller decide, not to refuse to boot.
-			log.Warnf("FlatSQL boot: could not re-register persisted source %q: %v", source, err)
+		if plain[binding.Table] {
+			plan.Excluded[name] = true
+		}
+	}
+	if len(plan.Excluded) > 0 {
+		names := make([]string, 0, len(plan.Excluded))
+		for name := range plan.Excluded {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		log.Errorf("FlatSQL boot: %v are NOT engine-routed in this store — a plain control table already holds each standard's canonical name and routing it would DROP that table. Their rows stay readable through the ordinary record read source.", names)
+	}
+
+	plan.Sources = make([]string, 0, len(sourceSet))
+	for source := range sourceSet {
+		plan.Sources = append(plan.Sources, source)
+	}
+	sort.Strings(plan.Sources)
+	plan.ViewsCurrent = len(plan.Sources) > 0 && engineViewsCoverSources(plan, views)
+	return plan
+}
+
+// engineViewsCoverSources reports whether the PERSISTED views already union
+// exactly plan.Sources for every standard this store will route. A view that
+// is missing, or that names a partition nobody registered, means rebuild.
+func engineViewsCoverSources(plan engineBootPlan, views map[string]string) bool {
+	for schemaName, binding := range engineRoutedSchemas {
+		if plan.Excluded[schemaName] {
 			continue
 		}
-		s.engineSources[source] = true
+		text, ok := views[binding.Table]
+		if !ok {
+			return false
+		}
+		if strings.Count(text, binding.Table+"@") != len(plan.Sources) {
+			return false
+		}
+		for _, source := range plan.Sources {
+			if !strings.Contains(text, `"`+binding.Table+"@"+source+`"`) {
+				return false
+			}
+		}
 	}
-	if len(seen) == 0 {
-		return nil
-	}
-	if err := s.engineDB.CreateUnifiedViews(); err != nil {
-		log.Warnf("FlatSQL boot: rebuild unified views after restoring %d persisted sources: %v", len(seen), err)
-	}
-	log.Infof("FlatSQL boot: restored %d persisted engine source registration(s)", len(seen))
-	return nil
+	return true
 }
 
 // resumeOffset decides where the boot replay starts.

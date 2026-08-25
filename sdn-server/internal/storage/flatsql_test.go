@@ -335,9 +335,12 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 	}
 	defer store.Close()
 
-	// Uses CAT: the OMM name is reserved by the engine record vtab (loop
-	// B.3), so a plain canonical "OMM" table can no longer exist — CAT keeps
-	// the resume-migration logic covered.
+	// EVERY embedded standard is engine-routed now, so every canonical name is
+	// a unified view in a healthy store and the blob->stream resume migration
+	// is only reachable where routing was EXCLUDED — a database that already
+	// held a plain table of that name. Dropping the view and excluding the
+	// standard reproduces exactly that store, which is the only shape this
+	// migration still runs against.
 	if _, err := store.db.Exec(`
 		CREATE TABLE sds_cat (
 			cid TEXT PRIMARY KEY,
@@ -366,6 +369,10 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 		t.Fatalf("append existing stream record failed: %v", err)
 	}
 	// Simulate a pre-flip database: the canonical legacy table exists with rows.
+	store.engineExcluded["CAT.fbs"] = true
+	if _, err := store.db.Exec(`DROP VIEW IF EXISTS CAT`); err != nil {
+		t.Fatalf("drop routed CAT view: %v", err)
+	}
 	if err := store.createSchemaMetadataTable("CAT"); err != nil {
 		t.Fatalf("create canonical legacy table failed: %v", err)
 	}

@@ -108,6 +108,10 @@ func (r *LegacyMigrationReport) Ok() bool {
 type legacyTable struct {
 	name string
 	ddl  string
+	// dest is the table the rows are copied INTO. It differs from name only
+	// when the legacy name is reserved by an engine record vtab and the rows
+	// are re-homed (legacyTableDestination).
+	dest string
 }
 
 // MigrateLegacyControl copies every eligible control/metadata table from a
@@ -158,6 +162,10 @@ func (s *FlatSQLStore) MigrateLegacyControl(legacy *sql.DB, opts LegacyMigration
 			log.Warnf("legacy migration: skipping table %s: %s", t.name, reason)
 			report.Tables = append(report.Tables, entry)
 			continue
+		}
+		t.dest = s.legacyTableDestination(t)
+		if t.dest != t.name {
+			log.Infof("legacy migration: re-homing table %s into %s (the canonical name is an engine record vtab here)", t.name, t.dest)
 		}
 		filter := s.legacyWindowFilterForTable(legacy, window, t.name)
 		entry.WindowFiltered = filter != nil
@@ -408,8 +416,19 @@ func (s *FlatSQLStore) legacyTableSkipReason(legacy *sql.DB, all []legacyTable, 
 	if strings.Contains(lowerName, "_fts") {
 		return "FTS shadow table"
 	}
-	if engineOwnsTableName(t.name) {
-		return "table name is reserved by an engine record vtab; rows are served from routed (producer, standard) tables"
+	if s.engineOwnsTableName(t.name) {
+		// RE-HOME, DO NOT DROP. Every embedded standard is engine-routed now,
+		// so this used to be a two-name carve-out ($OMM, $TBS) and is 227
+		// names today: a blanket skip would silently discard a pre-flip
+		// store's canonical rows at import. Rows in the v2 stream-metadata
+		// layout are copied into the (producer, standard) table instead
+		// (legacyTableDestination), where recordReadSourceFiltered still
+		// unions them. Only the BLOB-era layout is skipped, and only because
+		// the blob->stream migration is what owns those bytes.
+		if legacyTableHasStreamColumns(legacy, t.name) {
+			return ""
+		}
+		return "table name is reserved by an engine record vtab and the rows are in the pre-stream BLOB layout; run the blob->stream migration first"
 	}
 	if !legacyDDLHasDataBlob(t.ddl) {
 		return ""
@@ -422,6 +441,22 @@ func (s *FlatSQLStore) legacyTableSkipReason(legacy *sql.DB, all []legacyTable, 
 		return fmt.Sprintf("legacy BLOB-era table; stream-metadata twin %s exists", twin)
 	}
 	return ""
+}
+
+// legacyTableDestination is the table legacy rows are copied INTO: normally
+// the legacy name itself, and the reserved standard's (producer, standard)
+// table when that name belongs to an engine record vtab. The "legacy" producer
+// token keeps the rows inside the routed namespace, which is what
+// listProducerStandardTables (and therefore every read) enumerates.
+func (s *FlatSQLStore) legacyTableDestination(t legacyTable) string {
+	if !s.engineOwnsTableName(t.name) {
+		return t.name
+	}
+	dest, err := ProducerStandardTableName("legacy", t.name+".fbs")
+	if err != nil {
+		return t.name
+	}
+	return dest
 }
 
 // legacyDDLHasDataBlob reports whether a table's original DDL declares a
@@ -516,16 +551,28 @@ func legacyTableColumns(legacy *sql.DB, tableName string) ([]legacyColumn, error
 // win over initTables-seeded defaults (e.g. sdn_metadata keys). A non-nil
 // filter bounds the copy to the hot window.
 func (s *FlatSQLStore) copyLegacyTable(legacy *sql.DB, t legacyTable, filter *legacyCopyFilter) (int64, error) {
-	exists, err := s.tableExists(t.name)
+	dest := t.dest
+	if dest == "" {
+		dest = t.name
+	}
+	exists, err := s.tableExists(dest)
 	if err != nil {
 		return 0, err
 	}
 	if !exists {
-		if strings.TrimSpace(t.ddl) == "" {
-			return 0, fmt.Errorf("legacy table %s has no DDL in sqlite_master", t.name)
-		}
-		if _, err := s.db.Exec(t.ddl); err != nil {
-			return 0, fmt.Errorf("recreate legacy table %s from its DDL: %w", t.name, err)
+		if dest != t.name {
+			// A re-homed table is created from the CANONICAL layout, never
+			// from the legacy DDL: that DDL names the reserved table.
+			if err := s.createSchemaMetadataTable(dest); err != nil {
+				return 0, fmt.Errorf("create re-home target %s: %w", dest, err)
+			}
+		} else {
+			if strings.TrimSpace(t.ddl) == "" {
+				return 0, fmt.Errorf("legacy table %s has no DDL in sqlite_master", t.name)
+			}
+			if _, err := s.db.Exec(t.ddl); err != nil {
+				return 0, fmt.Errorf("recreate legacy table %s from its DDL: %w", t.name, err)
+			}
 		}
 	}
 
@@ -539,7 +586,7 @@ func (s *FlatSQLStore) copyLegacyTable(legacy *sql.DB, t legacyTable, filter *le
 
 	// Make sure every legacy column exists in the destination (older/newer
 	// deployments may diverge; initTables' table wins its extra columns).
-	destCols, err := s.tableColumnSet(t.name)
+	destCols, err := s.tableColumnSet(dest)
 	if err != nil {
 		return 0, err
 	}
@@ -551,7 +598,7 @@ func (s *FlatSQLStore) copyLegacyTable(legacy *sql.DB, t legacyTable, filter *le
 		if typ == "" {
 			typ = "TEXT"
 		}
-		if err := s.ensureColumn(t.name, c.name, typ); err != nil {
+		if err := s.ensureColumn(dest, c.name, typ); err != nil {
 			return 0, err
 		}
 	}
@@ -586,7 +633,7 @@ func (s *FlatSQLStore) copyLegacyTable(legacy *sql.DB, t legacyTable, filter *le
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(quotedCols)), ", ")
 	insertSQL := fmt.Sprintf(
 		`INSERT OR REPLACE INTO %s (%s) VALUES (%s)`,
-		quoteIdent(t.name), strings.Join(quotedCols, ", "), placeholders,
+		quoteIdent(dest), strings.Join(quotedCols, ", "), placeholders,
 	)
 	selectSQL := fmt.Sprintf(`SELECT %s FROM %s`, strings.Join(selectCols, ", "), quoteIdent(t.name))
 	var selectArgs []any

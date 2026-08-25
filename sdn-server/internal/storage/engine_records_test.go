@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
+
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/IRM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/TBS"
 
@@ -733,5 +737,475 @@ func TestEngineTBSHotWindowEvictsOldestSites(t *testing.T) {
 	}
 	if len(records) != 6 {
 		t.Fatalf("durable $TBS records = %d, want 6 (eviction must not delete)", len(records))
+	}
+}
+
+// buildEngineIRM writes the smallest LEGAL $IRM resume mark, UNPREFIXED (the
+// Store API's input shape). A FlatBuffers builder refuses to finish a table
+// that is missing a required field, so this constructor is itself a check that
+// the vendored binding and the embedded IRM.fbs agree.
+func buildEngineIRM(t *testing.T, jobID string, sequence uint64, nextOffset uint64) []byte {
+	t.Helper()
+	b := flatbuffers.NewBuilder(512)
+	sourceURL := b.CreateString("https://example.invalid/bulk/catalog.csv")
+	IRM.IRMSourceStart(b)
+	IRM.IRMSourceAddSOURCE_URL(b, sourceURL)
+	source := IRM.IRMSourceEnd(b)
+
+	job := b.CreateString(jobID)
+	provider := b.CreateString("mls")
+	updated := b.CreateString("2026-08-25T00:00:00.000Z")
+	IRM.IRMStart(b)
+	IRM.IRMAddJOB_ID(b, job)
+	IRM.IRMAddPROVIDER_ID(b, provider)
+	IRM.IRMAddSOURCE(b, source)
+	IRM.IRMAddSEQUENCE(b, sequence)
+	IRM.IRMAddNEXT_OFFSET(b, nextOffset)
+	IRM.IRMAddUPDATED_AT(b, updated)
+	IRM.FinishSizePrefixedIRMBuffer(b, IRM.IRMEnd(b))
+	return b.FinishedBytes()[4:]
+}
+
+// TestIRMWrittenThroughStorageReadsBackFromTheEngine is the owner directive's
+// acceptance test: $IRM is readable through the sandboxed query surface with
+// the SAME SQL shape as every other standard, because it is routed for the
+// same reason every other standard is — it is one of the standards this node
+// embeds. Nothing in the store names IRM.
+func TestIRMWrittenThroughStorageReadsBackFromTheEngine(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newEngineRecordsStore(t, basePath)
+
+	tags := SourceTags{ProviderID: "mls", SourceName: "cell-tower-bulk", BatchID: "mls@1"}
+	const marks = 3
+	var last []byte
+	for i := 1; i <= marks; i++ {
+		last = buildEngineIRM(t, "cellular-worldwide", uint64(i), uint64(i)*4096)
+		if _, err := store.StoreWithSourceTags("IRM.fbs", last, "space-data-network-02", nil, tags); err != nil {
+			t.Fatalf("store $IRM %d: %v", i, err)
+		}
+	}
+
+	// THE MODULE CONTRACT, VERBATIM: this is the SQL the cellular ingest flow
+	// runs through hostcap/flatsql-query to find its durable resume mark.
+	const markSQL = `SELECT _data FROM IRM ORDER BY _rowid DESC LIMIT ?`
+	caps := flatsqlrt.SandboxCaps{MaxRows: 32, MaxBytes: 1 << 20, Timeout: 30 * time.Second}
+
+	assertMarks := func(t *testing.T, s *FlatSQLStore, want int) [][]byte {
+		t.Helper()
+		stream, err := s.QuerySandboxedStream(markSQL, caps, 32)
+		if err != nil {
+			t.Fatalf("sandboxed $IRM read: %v", err)
+		}
+		frames, err := flatsqlrt.DecodeSizePrefixedStream(stream.Bytes)
+		if err != nil {
+			t.Fatalf("decode $IRM frames: %v", err)
+		}
+		if len(frames) != want {
+			t.Fatalf("$IRM frames = %d, want %d", len(frames), want)
+		}
+		for i, frame := range frames {
+			if !IRM.IRMBufferHasIdentifier(frame) {
+				t.Fatalf("frame %d does not carry the $IRM identifier", i)
+			}
+		}
+		return frames
+	}
+
+	frames := assertMarks(t, store, marks)
+	// ORDER BY _rowid DESC: the newest mark first, byte-identical to what was
+	// stored. A resume mark that comes back re-encoded is a resume mark a
+	// consumer cannot verify.
+	if string(frames[0]) != string(last) {
+		t.Fatal("the newest $IRM frame is not byte-identical to the stored record")
+	}
+	if got := IRM.GetRootAsIRM(frames[0], 0).SEQUENCE(); got != marks {
+		t.Fatalf("newest $IRM SEQUENCE = %d, want %d", got, marks)
+	}
+
+	// The per-source shadow partition exists for a generically routed
+	// standard exactly as it does for $OMM and $TBS.
+	scoped, err := store.engineDB.Query(`SELECT count(*) FROM "IRM@cell-tower-bulk"`)
+	if err != nil {
+		t.Fatalf("per-source $IRM shadow table read: %v", err)
+	}
+	if got := engineCellInt(t, scoped.Rows[0][0]); got != marks {
+		t.Fatalf("IRM@cell-tower-bulk count = %d, want %d", got, marks)
+	}
+
+	// A restarted node must come back serving the same marks, or every crash
+	// re-reads the whole bulk source from offset zero.
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	reopened := newEngineRecordsStore(t, basePath)
+	defer reopened.Close()
+	assertMarks(t, reopened, marks)
+}
+
+// TestEveryRoutedStandardAnswersEmptyOnAFreshStore is the OTHER half of the
+// contract, and the half that actually broke production: a module reading a
+// standard this node has never stored must get ZERO ROWS, not "no such table".
+// An error there is indistinguishable from a real failure, which is exactly
+// how the cellular ingest flow turned a first run into a fault envelope.
+//
+// It is simultaneously the proof that every routed table materialized.
+func TestEveryRoutedStandardAnswersEmptyOnAFreshStore(t *testing.T) {
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	caps := flatsqlrt.SandboxCaps{MaxRows: 4, MaxBytes: 1 << 16, Timeout: 30 * time.Second}
+	for _, schemaName := range store.engineRoutedSchemaNames() {
+		binding := engineRoutedSchemas[schemaName]
+		stream, err := store.QuerySandboxedStream(
+			`SELECT _data FROM "`+binding.Table+`" ORDER BY _rowid DESC LIMIT ?`, caps, 1)
+		if err != nil {
+			t.Fatalf("%s: %v", binding.Table, err)
+		}
+		if len(stream.Bytes) != 0 {
+			t.Fatalf("%s returned %d bytes on a fresh store, want an empty stream", binding.Table, len(stream.Bytes))
+		}
+	}
+}
+
+// TestRoutedStandardRehydratesRecordsStoredBeforeRouting proves the
+// compatibility claim: engine routing is a CACHE mirror, so records written
+// while a standard was NOT routed re-enter its table through the ordinary boot
+// rebuild. There is nothing to migrate because nothing ever moved — the
+// durable substrate is the same stream file and the same (producer, standard)
+// control rows either way.
+func TestRoutedStandardRehydratesRecordsStoredBeforeRouting(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newEngineRecordsStore(t, basePath)
+
+	// Force this store back to the pre-flip routed set while the records are
+	// written: they land in the durable substrate and NOT in the engine.
+	for schemaName := range engineRoutedSchemas {
+		if _, decorated := engineDecoratedSchemas[schemaName]; !decorated {
+			store.engineExcluded[schemaName] = true
+		}
+	}
+	tags := SourceTags{ProviderID: "mls", SourceName: "cell-tower-bulk", BatchID: "mls@1"}
+	const marks = 4
+	for i := 1; i <= marks; i++ {
+		record := buildEngineIRM(t, "pre-flip", uint64(i), uint64(i)*1024)
+		if _, err := store.StoreWithSourceTags("IRM.fbs", record, "space-data-network-02", nil, tags); err != nil {
+			t.Fatalf("store $IRM %d: %v", i, err)
+		}
+	}
+	if count, err := store.engineDB.Query(`SELECT count(*) FROM "IRM"`); err != nil {
+		t.Fatalf("unrouted $IRM count: %v", err)
+	} else if got := engineCellInt(t, count.Rows[0][0]); got != 0 {
+		t.Fatalf("unrouted $IRM landed %d records in the engine, want 0", got)
+	}
+	// The durable control row is written either way — that is the whole point.
+	if _, err := store.db.Query(`SELECT cid FROM "sds_p_space_data_network_02__IRM"`); err != nil {
+		t.Fatalf("unrouted $IRM has no (producer, standard) rows: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	reopened := newEngineRecordsStore(t, basePath)
+	defer reopened.Close()
+	stream, err := reopened.QueryRawStream(`SELECT _data FROM IRM ORDER BY _rowid DESC LIMIT ?`, 32)
+	if err != nil {
+		t.Fatalf("rehydrated $IRM read: %v", err)
+	}
+	frames, err := flatsqlrt.DecodeSizePrefixedStream(stream.Bytes)
+	if err != nil {
+		t.Fatalf("decode rehydrated $IRM frames: %v", err)
+	}
+	if len(frames) != marks {
+		t.Fatalf("rehydrated $IRM frames = %d, want %d", len(frames), marks)
+	}
+}
+
+// TestPlainControlTableCollisionExcludesTheStandardWithoutDroppingIt is the
+// fail-closed data-destruction guard. createUnifiedView issues
+// `DROP TABLE IF EXISTS "<name>"` before it creates the view, so a standard
+// whose code is already a plain control table must never be routed in that
+// store — the rows are reachable (recordReadSourceFiltered unions the bare
+// canonical table) and dropping them would be silent, permanent loss.
+func TestPlainControlTableCollisionExcludesTheStandardWithoutDroppingIt(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newEngineRecordsStore(t, basePath)
+
+	// The store must come back WARM, or the control database is discarded on
+	// the next boot and the collision cannot exist to be guarded against. One
+	// stored record plus a checkpoint is what makes the resume mark usable.
+	if _, err := store.Store("OMM.fbs", buildEngineOMM(t, 25544, "ISS", 1700000000), "peer", nil); err != nil {
+		t.Fatalf("store $OMM: %v", err)
+	}
+
+	// A pre-WS7.3d store shape: the standard's canonical name is a PLAIN
+	// control table holding real rows. Building it means removing the unified
+	// view this build creates for the same name — which is exactly the
+	// collision, seen from the other side.
+	if _, err := store.db.Exec(`DROP VIEW IF EXISTS CDM`); err != nil {
+		t.Fatalf("drop routed view: %v", err)
+	}
+	if err := store.createSchemaMetadataTable("CDM"); err != nil {
+		t.Fatalf("create legacy canonical table: %v", err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO CDM (cid, peer_id, timestamp, stream_path, stream_offset, record_length) VALUES ('bafyLegacyCDM', 'peer', 1, 'flatsql-streams/CDM.bin', 0, 8)`); err != nil {
+		t.Fatalf("seed legacy canonical row: %v", err)
+	}
+	if err := store.CheckpointRecordCatalog(); err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	reopened := newEngineRecordsStore(t, basePath)
+	defer reopened.Close()
+
+	if !reopened.engineExcluded["CDM.fbs"] {
+		t.Fatal("a standard whose code is already a plain control table must be excluded from routing")
+	}
+	if reopened.engineRoutesSchema("CDM.fbs") {
+		t.Fatal("the excluded standard is still routed")
+	}
+	if reopened.engineOwnsTableName("CDM") {
+		t.Fatal("the excluded standard still claims to own its canonical table name")
+	}
+	// THE ROWS SURVIVED. This is the assertion the guard exists for.
+	rows, err := reopened.db.Query(`SELECT cid FROM CDM`)
+	if err != nil {
+		t.Fatalf("legacy canonical table was destroyed: %v", err)
+	}
+	defer rows.Close()
+	found := ""
+	for rows.Next() {
+		if err := rows.Scan(&found); err != nil {
+			t.Fatalf("scan legacy row: %v", err)
+		}
+	}
+	if found != "bafyLegacyCDM" {
+		t.Fatalf("legacy canonical row = %q, want bafyLegacyCDM", found)
+	}
+	// Everything else still routes: the exclusion is per standard, not a
+	// blanket retreat to the old two-entry map.
+	if !reopened.engineRoutesSchema("IRM.fbs") || !reopened.engineRoutesSchema("OMM.fbs") {
+		t.Fatal("one collision must not un-route the rest of the catalog")
+	}
+}
+
+// TestGenericHotWindowBoundsUndecoratedStandards pins the memory bound: the
+// full per-schema window belongs to the two standards this host decorates and
+// reads at provider scale; every other routed standard gets the smaller
+// generic budget, because engine_hot_window x 227 standards is not a bound on
+// anything.
+func TestGenericHotWindowBoundsUndecoratedStandards(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator,
+		WithEngineHotWindow(400_000), WithEngineGenericHotWindow(2))
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore: %v", err)
+	}
+	defer store.Close()
+
+	if got := store.engineWindowFor("OMM.fbs"); got != 400_000 {
+		t.Errorf("OMM window = %d, want the decorated window 400000", got)
+	}
+	if got := store.engineWindowFor("TBS.fbs"); got != 400_000 {
+		t.Errorf("TBS window = %d, want the decorated window 400000", got)
+	}
+	if got := store.engineWindowFor("IRM.fbs"); got != 2 {
+		t.Errorf("IRM window = %d, want the generic window 2", got)
+	}
+
+	tags := SourceTags{ProviderID: "mls", SourceName: "cell-tower-bulk", BatchID: "mls@1"}
+	for i := 1; i <= 5; i++ {
+		record := buildEngineIRM(t, "window", uint64(i), uint64(i)*512)
+		if _, err := store.StoreWithSourceTags("IRM.fbs", record, "space-data-network-02", nil, tags); err != nil {
+			t.Fatalf("store $IRM %d: %v", i, err)
+		}
+	}
+	count, err := store.EngineRecordCount("IRM.fbs")
+	if err != nil {
+		t.Fatalf("EngineRecordCount(IRM.fbs): %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("resident $IRM = %d, want the generic window 2", count)
+	}
+	// Eviction is a CACHE bound: the durable rows are all still there.
+	var durable int
+	if err := store.db.QueryRow(`SELECT count(*) FROM sdn_record_index WHERE schema_name = 'IRM.fbs'`).Scan(&durable); err != nil {
+		t.Fatalf("durable $IRM count: %v", err)
+	}
+	if durable != 5 {
+		t.Fatalf("durable $IRM records = %d, want 5 — hot-window eviction must never touch the substrate", durable)
+	}
+}
+
+// TestPublicQuerySurfaceCoversEveryRoutedStandard pins the read surface: the
+// sandboxed public query may read every routed standard's view and per-source
+// shadow tables, and asking WHAT is queryable must not cost a full scan of
+// every partition.
+func TestPublicQuerySurfaceCoversEveryRoutedStandard(t *testing.T) {
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	tags := SourceTags{ProviderID: "mls", SourceName: "cell-tower-bulk", BatchID: "mls@1"}
+	if _, err := store.StoreWithSourceTags("IRM.fbs", buildEngineIRM(t, "surface", 1, 512), "space-data-network-02", nil, tags); err != nil {
+		t.Fatalf("store $IRM: %v", err)
+	}
+
+	surface, err := store.PublicQuerySurface()
+	if err != nil {
+		t.Fatalf("PublicQuerySurface: %v", err)
+	}
+	byName := make(map[string]QuerySurfaceTable, len(surface))
+	for _, entry := range surface {
+		byName[entry.Name] = entry
+	}
+	for _, schemaName := range store.engineRoutedSchemaNames() {
+		if _, ok := byName[engineRoutedSchemas[schemaName].Table]; !ok {
+			t.Fatalf("%s is routed but absent from the public query surface", schemaName)
+		}
+	}
+	irm, ok := byName["IRM"]
+	if !ok {
+		t.Fatal("IRM is missing from the public query surface")
+	}
+	if irm.Records != 1 {
+		t.Fatalf("IRM surface records = %d, want 1", irm.Records)
+	}
+	if len(irm.Columns) == 0 {
+		t.Fatal("IRM surface reports no columns")
+	}
+	if _, ok := byName["IRM@cell-tower-bulk"]; !ok {
+		t.Fatal("the per-source shadow partition is missing from the public query surface")
+	}
+	// A standard with nothing resident is still queryable and reports zero
+	// WITHOUT a count(*) over its partitions.
+	if empty, ok := byName["CDM"]; !ok || empty.Records != 0 {
+		t.Fatalf("CDM surface = %+v, want a present relation with 0 records", empty)
+	}
+}
+
+// TestBootRebuildsUnifiedViewsAtMostOnce is the BOOT COST gate, expressed as
+// the property that actually bounds the cost rather than as a stopwatch.
+//
+// CreateUnifiedViews is all-or-nothing across the schema: DROP TABLE + DROP
+// VIEW + CREATE VIEW for EVERY routed standard. Rebuilding once per source —
+// which is what ensureEngineSource does — was free while two standards were
+// routed and is O(routed tables x sources) write DDL now that every embedded
+// standard is. A warm boot must therefore rebuild ZERO times (the persisted
+// views already union exactly the registered sources) and a cold one exactly
+// once, independent of how many providers the node has ingested from.
+func TestBootRebuildsUnifiedViewsAtMostOnce(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newEngineRecordsStore(t, basePath)
+
+	if store.engineViewRebuilds > 1 {
+		t.Fatalf("first open rebuilt the unified views %d times, want at most 1", store.engineViewRebuilds)
+	}
+	for i, source := range []string{"catalogfixture-gp", "celestrak-satcat", "satnogs-db"} {
+		tags := SourceTags{ProviderID: "p", SourceName: source, BatchID: source + "@1"}
+		if _, err := store.StoreWithSourceTags("OMM.fbs",
+			buildEngineOMM(t, uint32(40000+i), fmt.Sprintf("SAT-%d", i), 1700000000+int64(i)), "peer", nil, tags); err != nil {
+			t.Fatalf("store $OMM for %s: %v", source, err)
+		}
+	}
+	if err := store.CheckpointRecordCatalog(); err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	reopened := newEngineRecordsStore(t, basePath)
+	defer reopened.Close()
+	if reopened.engineViewRebuilds != 0 {
+		t.Fatalf("warm boot rebuilt the unified views %d times, want 0 — the persisted views already cover the registered sources",
+			reopened.engineViewRebuilds)
+	}
+	// SKIPPING THE REBUILD MUST NOT COST THE SHADOW MODULES. A persisted vtab
+	// whose module nothing registered fails with `no such module` on the first
+	// query to touch it, which is the trap the whole ordering exists to close.
+	for _, relation := range []string{`"OMM"`, `"OMM@catalogfixture-gp"`, `"OMM@satnogs-db"`, `"IRM"`} {
+		if _, err := reopened.engineDB.Query(`SELECT count(*) FROM ` + relation); err != nil {
+			t.Fatalf("warm-boot query of %s: %v", relation, err)
+		}
+	}
+	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 3 {
+		t.Fatalf("warm-boot $OMM count = %d (err %v), want 3", count, err)
+	}
+}
+
+// TestEngineIngestRoutesEveryFileIDToItsOwnTable is the drift test across all
+// 227 bindings: a buffer bearing a standard's four-byte identifier lands in
+// that standard's table AND IN NO OTHER. With two routed standards a
+// file-id/table mix-up was obvious; across the whole catalog it would be
+// invisible until a consumer read one standard's rows out of another's table.
+func TestEngineIngestRoutesEveryFileIDToItsOwnTable(t *testing.T) {
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	routed := store.engineRoutedSchemaNames()
+	for _, schemaName := range routed {
+		binding := engineRoutedSchemas[schemaName]
+		b := flatbuffers.NewBuilder(64)
+		b.StartObject(0)
+		root := b.EndObject()
+		b.FinishWithFileIdentifier(root, []byte(binding.FileID))
+		if _, err := store.engineDB.IngestOneWithSource(b.FinishedBytes(), engineDefaultSource); err != nil {
+			t.Fatalf("ingest %s: %v", binding.FileID, err)
+		}
+	}
+
+	for _, schemaName := range routed {
+		binding := engineRoutedSchemas[schemaName]
+		res, err := store.engineDB.Query(`SELECT count(*) FROM "` + binding.Table + `"`)
+		if err != nil {
+			t.Fatalf("count %s: %v", binding.Table, err)
+		}
+		if got := engineCellInt(t, res.Rows[0][0]); got != 1 {
+			t.Fatalf("%s holds %d records, want exactly 1 (its own)", binding.Table, got)
+		}
+	}
+}
+
+// TestLeftoverUnifiedViewsAreInvisibleToTheLegacyTablePaths is the ROLLBACK
+// safety proof. Rolling back to a binary that routes only $OMM and $TBS leaves
+// 225 unified views behind in the control database. That is harmless only
+// because every legacy/canonical-table path filters on type='table': a
+// leftover view must never be mistaken for a per-standard metadata table, or
+// the older binary would try to read record rows out of a view over vtabs it
+// does not know how to register.
+func TestLeftoverUnifiedViewsAreInvisibleToTheLegacyTablePaths(t *testing.T) {
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	tags := SourceTags{ProviderID: "mls", SourceName: "cell-tower-bulk", BatchID: "mls@1"}
+	if _, err := store.StoreWithSourceTags("IRM.fbs", buildEngineIRM(t, "rollback", 1, 128), "space-data-network-02", nil, tags); err != nil {
+		t.Fatalf("store $IRM: %v", err)
+	}
+	// The view exists...
+	if _, err := store.engineDB.Query(`SELECT count(*) FROM "IRM"`); err != nil {
+		t.Fatalf("routed IRM view is missing: %v", err)
+	}
+	// ...and is invisible to the plain-table paths.
+	exists, err := store.tableExists("IRM")
+	if err != nil {
+		t.Fatalf("tableExists(IRM): %v", err)
+	}
+	if exists {
+		t.Fatal("the IRM unified view is visible as a plain table: a rolled-back binary would read records out of it")
+	}
+	source, err := store.recordReadSourceFiltered("IRM.fbs", "")
+	if err != nil {
+		t.Fatalf("recordReadSource(IRM.fbs): %v", err)
+	}
+	if source == "IRM" || strings.Contains(source, " IRM ") {
+		t.Fatalf("record read source names the unified view: %q", source)
+	}
+	if !strings.Contains(source, "__IRM") {
+		t.Fatalf("record read source %q does not name the (producer, standard) table that actually holds the rows", source)
 	}
 }

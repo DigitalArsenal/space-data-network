@@ -82,31 +82,22 @@ type QuerySurfaceTable struct {
 	Records int64 `json:"records"`
 }
 
-// engineSchemaBaseTables are the SDS record tables routed into the engine,
-// derived from engineRoutedSchemas (engine_records.go) so this surface can
-// never drift from what is actually registered: OMM (loop B.3) and TBS (the
-// cellular slice).
-//
-// NEXT (Iris/Themis $APP composition ruling 2026-07-24): "APP" joins when the
-// new UI codebase lands — installed apps are FlatSQL rows enumerated by
-// query, never a directory scan. Joining is now one engineRoutedSchemas entry
-// plus its table graph in engineDatabaseSchema; file-id registration, table
-// ownership and this list follow automatically.
-var engineSchemaBaseTables = engineRoutedBaseTables()
-
-func engineRoutedBaseTables() []string {
-	tables := make([]string, 0, len(engineRoutedSchemas))
-	for _, name := range engineRoutedSchemaNames() {
-		tables = append(tables, engineRoutedSchemas[name].Table)
-	}
-	return tables
-}
-
 // PublicQuerySurface enumerates the tables/views/columns the sandboxed
 // public query may read, straight from the live engine (no hand-maintained
 // list to drift). The surface is the engine HOT WINDOW: up to
-// storage.engine_hot_window recent records per schema — full history lives
-// in the append-only stream files, not in SQL.
+// storage.engine_hot_window recent records per decorated schema and
+// storage.engine_generic_hot_window for every other routed standard — full
+// history lives in the append-only stream files, not in SQL.
+//
+// BOUNDED BY CONSTRUCTION. Every embedded standard is routed now, so the
+// surface is 227 base views plus 227 x sources shadow tables. The earlier
+// shape ran `SELECT *` AND `SELECT count(*)` against every one of them: at
+// host-01's seven sources that is 1,816 relations and 1,816 full partition
+// scans, which would make asking WHAT is queryable more expensive than
+// querying it. Columns are therefore probed ONCE PER SCHEMA (a shadow table
+// and its view declare the same columns, by construction — the view is a
+// UNION ALL over the shadows), and a relation is only counted when the schema
+// has records resident at all.
 func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -114,58 +105,73 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 		return nil, fmt.Errorf("engine database not available")
 	}
 
-	names := make([]string, 0, 1+len(s.engineSources))
-	kinds := make([]string, 0, cap(names))
-	sources := make([]string, 0, cap(names))
-	for _, base := range engineSchemaBaseTables {
-		if len(s.engineSources) > 0 {
-			names = append(names, base)
-			kinds = append(kinds, "view")
-			sources = append(sources, "")
-			srcNames := make([]string, 0, len(s.engineSources))
-			for src := range s.engineSources {
-				srcNames = append(srcNames, src)
-			}
-			sort.Strings(srcNames)
-			for _, src := range srcNames {
-				names = append(names, base+"@"+src)
-				kinds = append(kinds, "table")
-				sources = append(sources, src)
-			}
-		} else {
-			names = append(names, base)
-			kinds = append(kinds, "table")
-			sources = append(sources, "")
-		}
+	srcNames := make([]string, 0, len(s.engineSources))
+	for src := range s.engineSources {
+		srcNames = append(srcNames, src)
 	}
+	sort.Strings(srcNames)
 
-	surface := make([]QuerySurfaceTable, 0, len(names))
-	for i, name := range names {
-		quoted := `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
-		cols, err := s.engineDB.Query("SELECT * FROM " + quoted + " LIMIT 0")
+	routed := s.engineRoutedSchemaNames()
+	surface := make([]QuerySurfaceTable, 0, len(routed)*(1+len(srcNames)))
+	for _, schemaName := range routed {
+		base := engineRoutedSchemas[schemaName].Table
+		quotedBase := quoteEngineRelation(base)
+		cols, err := s.engineDB.Query("SELECT * FROM " + quotedBase + " LIMIT 0")
 		if err != nil {
-			return nil, fmt.Errorf("enumerate columns of %s: %w", name, err)
+			return nil, fmt.Errorf("enumerate columns of %s: %w", base, err)
 		}
-		count, err := s.engineDB.Query("SELECT count(*) FROM " + quoted)
-		if err != nil {
-			return nil, fmt.Errorf("count %s: %w", name, err)
-		}
-		var records int64
-		if len(count.Rows) == 1 && len(count.Rows[0]) == 1 {
-			switch v := count.Rows[0][0].(type) {
-			case int64:
-				records = v
-			case float64:
-				records = int64(v)
-			}
+		resident := s.engineResident[schemaName] > 0
+
+		if len(srcNames) == 0 {
+			surface = append(surface, QuerySurfaceTable{
+				Name:    base,
+				Kind:    "table",
+				Columns: cols.Columns,
+				Records: s.countEngineRelation(quotedBase, resident),
+			})
+			continue
 		}
 		surface = append(surface, QuerySurfaceTable{
-			Name:    name,
-			Kind:    kinds[i],
-			Source:  sources[i],
+			Name:    base,
+			Kind:    "view",
 			Columns: cols.Columns,
-			Records: records,
+			Records: s.countEngineRelation(quotedBase, resident),
 		})
+		for _, src := range srcNames {
+			name := base + "@" + src
+			surface = append(surface, QuerySurfaceTable{
+				Name:    name,
+				Kind:    "table",
+				Source:  src,
+				Columns: cols.Columns,
+				Records: s.countEngineRelation(quoteEngineRelation(name), resident),
+			})
+		}
 	}
 	return surface, nil
+}
+
+// countEngineRelation returns the resident record count, and SKIPS the count
+// entirely for a schema with nothing resident: COUNT(*) on a vtab scans every
+// partition, and 227 routed standards make "nothing there" the overwhelmingly
+// common case.
+func (s *FlatSQLStore) countEngineRelation(quoted string, resident bool) int64 {
+	if !resident {
+		return 0
+	}
+	count, err := s.engineDB.Query("SELECT count(*) FROM " + quoted)
+	if err != nil || len(count.Rows) != 1 || len(count.Rows[0]) != 1 {
+		return 0
+	}
+	switch v := count.Rows[0][0].(type) {
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	}
+	return 0
+}
+
+func quoteEngineRelation(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
