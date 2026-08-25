@@ -2268,7 +2268,12 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 			}
 
 			// (1) Fast engine hot window so linked-data flows work first.
-			count, err := n.store.HydrateEngineHotWindowFromRecordCatalog()
+			//
+			// n.ctx for the same reason step (2) uses it (see below): this
+			// goroutine is tracked by n.wg, Stop() cancels n.ctx only, and the
+			// hot-window pass reads a multi-GB journal under the store write
+			// lock. Without the signal, Stop() waits out the whole scan.
+			count, err := n.store.HydrateEngineHotWindowFromRecordCatalogContext(n.ctx)
 			if err != nil {
 				log.Errorf("FlatSQL compact engine hot-window hydration failed: %v", err)
 			} else {

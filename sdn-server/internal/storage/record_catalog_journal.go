@@ -53,6 +53,13 @@ type recordCatalogJournal struct {
 	// fields are guarded by mu.
 	digest       hash.Hash
 	digestOffset int64
+
+	// engineHotWindowPasses counts the FULL journal reads the engine
+	// hot-window rebuild has made on this journal. A pass costs the whole file
+	// (5.5 GB on host-02), so the number of them is the boot cost; the routed
+	// standard count must never be a multiplier on it. Guarded by mu, read by
+	// the test that pins that invariant.
+	engineHotWindowPasses int
 }
 
 type recordCatalogEvent struct {
@@ -555,127 +562,291 @@ func (j *recordCatalogJournal) replayWindow(
 	return applied, off, nil
 }
 
-func (j *recordCatalogJournal) ReplayEngineHotWindow(store *FlatSQLStore, schemaName string, limit int) (int, error) {
-	if j == nil || j.f == nil || limit <= 0 {
+// engineHotWindowCandidateBudget bounds how many hot-window candidates ONE
+// journal pass may hold across ALL schemas at once.
+//
+// The pass fans out into one heap per schema, so its peak memory is the SUM of
+// the resident candidate sets, not one schema's. A box holding records in every
+// routed standard would otherwise retain 400,000 ($OMM) + 226 x 10,000 generic
+// events at once — a gigabyte of live heap on an 8 GB droplet.
+//
+// The budget is RESERVED at window creation, against the schema's own window
+// limit, not measured after the fact: a heap that is small now can still grow to
+// its limit later, so checking the live count would bound nothing. A schema
+// whose reservation does not fit is deferred to a follow-up pass instead of
+// allocating a heap. Deferral is safe precisely because a deferred schema has NO
+// partial state — the follow-up pass reads it from offset 0, exactly as the
+// first pass would have. The FIRST schema a pass meets is always admitted, so a
+// single window larger than the whole budget (an operator-raised
+// storage.engine_hot_window) still makes progress rather than starving.
+//
+// Passes are therefore ceil(live candidates / budget) — never one per schema.
+// On every box in the fleet today (a handful of populated standards) that is
+// exactly ONE pass.
+//
+// A var, not a const, so the test that proves deferral loses nothing can drive
+// the multi-pass path with a small budget instead of a gigabyte fixture.
+var engineHotWindowCandidateBudget = 600_000
+
+// engineHotWindowCancelCheckFrames is how often a hot-window pass polls its
+// context. The pass holds the store write lock, and Stop() waits on the
+// goroutine that runs it: an uninterruptible multi-GB journal scan here is the
+// shape that ran 15 of 22 host-01 stops into SIGKILL (see node.go
+// StartBackgroundRecordCatalogHydration).
+const engineHotWindowCancelCheckFrames = 4096
+
+// recordCatalogEngineWindow is ONE schema's hot-window candidate set for the
+// duration of a journal pass: the newest `limit` records of that schema that
+// have survived every delete / source-keep / GC frame seen so far.
+type recordCatalogEngineWindow struct {
+	schemaName string
+	limit      int
+	byCID      map[string]*recordCatalogEngineCandidate
+	candidates *recordCatalogEngineCandidateHeap
+}
+
+func newRecordCatalogEngineWindow(schemaName string, limit int) *recordCatalogEngineWindow {
+	w := &recordCatalogEngineWindow{
+		schemaName: schemaName,
+		limit:      limit,
+		byCID:      map[string]*recordCatalogEngineCandidate{},
+		candidates: &recordCatalogEngineCandidateHeap{},
+	}
+	heap.Init(w.candidates)
+	return w
+}
+
+func (w *recordCatalogEngineWindow) len() int { return w.candidates.Len() }
+
+func (w *recordCatalogEngineWindow) remove(cid string) {
+	c := w.byCID[cid]
+	if c == nil {
+		return
+	}
+	heap.Remove(w.candidates, c.heapIndex)
+	delete(w.byCID, cid)
+}
+
+func (w *recordCatalogEngineWindow) add(event recordCatalogEvent) {
+	if strings.TrimSpace(event.CID) == "" {
+		return
+	}
+	if existing := w.byCID[event.CID]; existing != nil {
+		existing.event = event
+		heap.Fix(w.candidates, existing.heapIndex)
+		return
+	}
+	candidate := &recordCatalogEngineCandidate{event: event}
+	if w.candidates.Len() < w.limit {
+		heap.Push(w.candidates, candidate)
+		w.byCID[event.CID] = candidate
+		return
+	}
+	if w.candidates.Len() == 0 || recordCatalogEngineSortKey(event) <= recordCatalogEngineSortKey((*w.candidates)[0].event) {
+		return
+	}
+	evicted := heap.Pop(w.candidates).(*recordCatalogEngineCandidate)
+	delete(w.byCID, evicted.event.CID)
+	heap.Push(w.candidates, candidate)
+	w.byCID[event.CID] = candidate
+}
+
+func (w *recordCatalogEngineWindow) updateTag(event recordCatalogEvent) {
+	c := w.byCID[event.CID]
+	if c == nil {
+		return
+	}
+	if event.CreatedAt >= c.tagTime {
+		c.tags = normalizeSourceTags(event.Tags)
+		c.tagTime = event.CreatedAt
+	}
+}
+
+func (w *recordCatalogEngineWindow) applySourceKeep(event recordCatalogEvent) {
+	keep := normalizeSourceTags(event.Tags)
+	for cid, c := range w.byCID {
+		if c.tags.ProviderID == keep.ProviderID &&
+			c.tags.SourceName == keep.SourceName &&
+			c.tags.BatchID != keep.BatchID {
+			w.remove(cid)
+		}
+	}
+}
+
+func (w *recordCatalogEngineWindow) applyGCOlderThan(cutoff int64) {
+	for cid, c := range w.byCID {
+		ts := c.event.Index.SourceTimestamp
+		if ts == 0 {
+			ts = c.event.Timestamp
+		}
+		if ts < cutoff {
+			w.remove(cid)
+		}
+	}
+}
+
+func (w *recordCatalogEngineWindow) apply(event recordCatalogEvent) {
+	switch event.Kind {
+	case recordCatalogEventRecordUpsert:
+		w.add(event)
+	case recordCatalogEventTagUpsert:
+		w.updateTag(event)
+	case recordCatalogEventRecordDelete:
+		w.remove(event.CID)
+	case recordCatalogEventSourceKeep:
+		w.applySourceKeep(event)
+	case recordCatalogEventGCOlderThan:
+		w.applyGCOlderThan(event.CutoffUnix)
+	}
+}
+
+// ordered returns the surviving candidates oldest-first, which is the order the
+// engine must ingest them in so the newest write of a cid wins.
+func (w *recordCatalogEngineWindow) ordered() []*recordCatalogEngineCandidate {
+	ordered := make([]*recordCatalogEngineCandidate, w.candidates.Len())
+	copy(ordered, *w.candidates)
+	sort.Slice(ordered, func(i, j int) bool {
+		return recordCatalogEngineSortKey(ordered[i].event) < recordCatalogEngineSortKey(ordered[j].event)
+	})
+	return ordered
+}
+
+// ReplayEngineHotWindows rebuilds the engine hot window for MANY schemas in ONE
+// PASS over the journal.
+//
+// WHY ONE PASS IS THE WHOLE POINT. There is exactly one record-catalog journal
+// per store, and a pass over it is a full sequential read + decode of every
+// frame — 5.5 GB and ~78 s on host-02 today. The per-schema filter is applied
+// AFTER the frame is decoded, so scanning once per schema costs a whole file
+// read per schema whether or not that schema owns a single record. With $OMM and
+// $TBS routed that was 2 passes; with every embedded standard routed it would be
+// 227, i.e. hours of boot under the store write lock (s.mu) with every API read,
+// ingest and p2p operation queued behind it. Fanning out into per-schema heaps
+// makes the cost of routing 227 standards the same ONE read this always paid for
+// two — bounded in memory by engineHotWindowCandidateBudget and cancellable by
+// ctx.
+//
+// limitFor gives each schema its own window budget (engineWindowFor: the full
+// window for decorated standards, the smaller generic one for the rest). A
+// schema whose limit is <= 0 is skipped entirely.
+func (j *recordCatalogJournal) ReplayEngineHotWindows(ctx context.Context, store *FlatSQLStore, schemas []string, limitFor func(string) int) (int, error) {
+	if j == nil || j.f == nil || limitFor == nil {
 		return 0, nil
 	}
+	pending := make([]string, 0, len(schemas))
+	seen := map[string]bool{}
+	for _, schemaName := range schemas {
+		if seen[schemaName] || limitFor(schemaName) <= 0 {
+			continue
+		}
+		seen[schemaName] = true
+		pending = append(pending, schemaName)
+	}
+	if len(pending) == 0 {
+		return 0, nil
+	}
+
+	total := 0
+	for len(pending) > 0 {
+		loaded, deferred, err := j.replayEngineHotWindowPass(ctx, store, pending, limitFor)
+		total += loaded
+		if err != nil {
+			return total, err
+		}
+		if len(deferred) >= len(pending) {
+			// No progress is impossible by construction (the first schema a
+			// pass meets always gets a heap), but a bug that made it possible
+			// must not loop forever inside the store lock.
+			log.Warnf("FlatSQL engine compact hot-window rebuild: %d schema(s) made no progress; stopping", len(deferred))
+			return total, nil
+		}
+		pending = deferred
+	}
+	return total, nil
+}
+
+// replayEngineHotWindowPass is ONE journal read. It returns the records loaded
+// into the engine and the schemas it deferred because the candidate budget was
+// already spent when it first met them.
+func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, store *FlatSQLStore, schemas []string, limitFor func(string) int) (int, []string, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.engineHotWindowPasses++
 
 	info, err := j.f.Stat()
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	size := info.Size()
 	if j.readOnly {
 		size = j.replayLimit
 	}
 
-	byCID := make(map[string]*recordCatalogEngineCandidate)
-	candidates := &recordCatalogEngineCandidateHeap{}
-	heap.Init(candidates)
-
-	removeCandidate := func(cid string) {
-		c := byCID[cid]
-		if c == nil {
-			return
-		}
-		heap.Remove(candidates, c.heapIndex)
-		delete(byCID, cid)
+	wanted := make(map[string]int, len(schemas))
+	for _, schemaName := range schemas {
+		wanted[schemaName] = limitFor(schemaName)
 	}
-	addCandidate := func(event recordCatalogEvent) {
-		if strings.TrimSpace(event.CID) == "" {
-			return
-		}
-		if existing := byCID[event.CID]; existing != nil {
-			existing.event = event
-			heap.Fix(candidates, existing.heapIndex)
-			return
-		}
-		candidate := &recordCatalogEngineCandidate{event: event}
-		if candidates.Len() < limit {
-			heap.Push(candidates, candidate)
-			byCID[event.CID] = candidate
-			return
-		}
-		if candidates.Len() == 0 || recordCatalogEngineSortKey(event) <= recordCatalogEngineSortKey((*candidates)[0].event) {
-			return
-		}
-		evicted := heap.Pop(candidates).(*recordCatalogEngineCandidate)
-		delete(byCID, evicted.event.CID)
-		heap.Push(candidates, candidate)
-		byCID[event.CID] = candidate
-	}
-	updateCandidateTag := func(event recordCatalogEvent) {
-		c := byCID[event.CID]
-		if c == nil {
-			return
-		}
-		if event.CreatedAt >= c.tagTime {
-			c.tags = normalizeSourceTags(event.Tags)
-			c.tagTime = event.CreatedAt
-		}
-	}
-	applySourceKeep := func(event recordCatalogEvent) {
-		keep := normalizeSourceTags(event.Tags)
-		for cid, c := range byCID {
-			if c.tags.ProviderID == keep.ProviderID &&
-				c.tags.SourceName == keep.SourceName &&
-				c.tags.BatchID != keep.BatchID {
-				removeCandidate(cid)
-			}
-		}
-	}
-	applyGCOlderThan := func(cutoff int64) {
-		for cid, c := range byCID {
-			ts := c.event.Index.SourceTimestamp
-			if ts == 0 {
-				ts = c.event.Timestamp
-			}
-			if ts < cutoff {
-				removeCandidate(cid)
-			}
-		}
-	}
+	windows := make(map[string]*recordCatalogEngineWindow, len(schemas))
+	deferredSet := map[string]bool{}
+	reserved := 0
 
 	var off int64
 	var hdr [8]byte
+	// ONE reusable frame buffer: a pass over host-01's journal decodes millions
+	// of frames, and a per-frame allocation is millions of garbage buffers.
+	var payload []byte
+	frames := 0
 	for off < size {
-		if _, err := j.f.ReadAt(hdr[:], off); err != nil {
-			return candidates.Len(), err
-		}
-		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
-		payload := make([]byte, n)
-		if _, err := j.f.ReadAt(payload, off+8); err != nil {
-			return candidates.Len(), err
-		}
-		event, err := decodeRecordCatalogEvent(payload)
-		if err != nil {
-			return candidates.Len(), fmt.Errorf("record catalog frame at %d: %w", off, err)
-		}
-		if event.SchemaName == schemaName {
-			switch event.Kind {
-			case recordCatalogEventRecordUpsert:
-				addCandidate(event)
-			case recordCatalogEventTagUpsert:
-				updateCandidateTag(event)
-			case recordCatalogEventRecordDelete:
-				removeCandidate(event.CID)
-			case recordCatalogEventSourceKeep:
-				applySourceKeep(event)
-			case recordCatalogEventGCOlderThan:
-				applyGCOlderThan(event.CutoffUnix)
+		if frames%engineHotWindowCancelCheckFrames == 0 {
+			select {
+			case <-ctx.Done():
+				return 0, nil, ctx.Err()
+			default:
 			}
 		}
+		frames++
+		if _, err := j.f.ReadAt(hdr[:], off); err != nil {
+			return 0, nil, err
+		}
+		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
+		if int64(cap(payload)) < n {
+			payload = make([]byte, n)
+		}
+		frame := payload[:n]
+		if _, err := j.f.ReadAt(frame, off+8); err != nil {
+			return 0, nil, err
+		}
 		off += 8 + n
+
+		// The schema name is the first field of the frame, so an unwanted
+		// schema costs a peek instead of a full decode + allocation.
+		schemaName, ok := peekRecordCatalogEventSchema(frame)
+		if !ok {
+			return 0, nil, fmt.Errorf("record catalog frame at %d: malformed header", off-(8+n))
+		}
+		limit, isWanted := wanted[schemaName]
+		if !isWanted || limit <= 0 || deferredSet[schemaName] {
+			continue
+		}
+		window := windows[schemaName]
+		if window == nil {
+			if len(windows) > 0 && reserved+limit > engineHotWindowCandidateBudget {
+				deferredSet[schemaName] = true
+				continue
+			}
+			window = newRecordCatalogEngineWindow(schemaName, limit)
+			windows[schemaName] = window
+			reserved += limit
+		}
+		event, err := decodeRecordCatalogEvent(frame)
+		if err != nil {
+			return 0, nil, fmt.Errorf("record catalog frame at %d: %w", off-(8+n), err)
+		}
+		window.apply(event)
 	}
 
-	ordered := make([]*recordCatalogEngineCandidate, candidates.Len())
-	copy(ordered, *candidates)
-	sort.Slice(ordered, func(i, j int) bool {
-		return recordCatalogEngineSortKey(ordered[i].event) < recordCatalogEngineSortKey(ordered[j].event)
-	})
-
+	// Stream file handles are shared across schemas: the hot window reads the
+	// same few append-only files millions of times otherwise.
 	files := map[string]*os.File{}
 	defer func() {
 		for _, f := range files {
@@ -684,7 +855,46 @@ func (j *recordCatalogJournal) ReplayEngineHotWindow(store *FlatSQLStore, schema
 	}()
 
 	loaded := 0
-	for _, c := range ordered {
+	for _, schemaName := range schemas {
+		if deferredSet[schemaName] {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return loaded, nil, ctx.Err()
+		default:
+		}
+		window := windows[schemaName]
+		if window == nil {
+			// No frame in the journal names this schema: it is resident zero,
+			// recorded exactly as the per-schema replay always recorded it.
+			store.engineResident[schemaName] = 0
+			continue
+		}
+		n, err := j.loadEngineHotWindow(store, window, files)
+		loaded += n
+		if err != nil {
+			return loaded, nil, err
+		}
+	}
+
+	deferred := make([]string, 0, len(deferredSet))
+	for _, schemaName := range schemas {
+		if deferredSet[schemaName] {
+			deferred = append(deferred, schemaName)
+		}
+	}
+	if len(deferred) > 0 {
+		log.Infof("FlatSQL engine compact hot-window rebuild: candidate budget reached; %d schema(s) deferred to a follow-up pass", len(deferred))
+	}
+	return loaded, deferred, nil
+}
+
+// loadEngineHotWindow ingests one schema's surviving candidates into the engine,
+// oldest first, and records the resulting residency.
+func (j *recordCatalogJournal) loadEngineHotWindow(store *FlatSQLStore, window *recordCatalogEngineWindow, files map[string]*os.File) (int, error) {
+	loaded := 0
+	for _, c := range window.ordered() {
 		event := c.event
 		data, err := store.readStreamRecordCached(files, event.StreamPath, event.StreamOffset, event.RecordLength)
 		if err != nil {
@@ -708,11 +918,38 @@ func (j *recordCatalogJournal) ReplayEngineHotWindow(store *FlatSQLStore, schema
 		}
 		loaded++
 	}
-	store.engineResident[schemaName] = int64(loaded)
+	store.engineResident[window.schemaName] = int64(loaded)
 	if loaded > 0 {
-		log.Infof("FlatSQL engine compact hot-window rebuild: loaded %d %s records (window %d)", loaded, schemaName, limit)
+		log.Infof("FlatSQL engine compact hot-window rebuild: loaded %d %s records (window %d)", loaded, window.schemaName, window.limit)
 	}
 	return loaded, nil
+}
+
+// peekRecordCatalogEventSchema reads just the frame version, kind and schema
+// name — the first three fields decodeRecordCatalogEvent reads — so a pass can
+// reject a frame it does not want without decoding or allocating the rest.
+// It must stay in lockstep with encodeRecordCatalogEvent's field order.
+func peekRecordCatalogEventSchema(payload []byte) (string, bool) {
+	if len(payload) < 2 || payload[0] != recordCatalogFrameVersion {
+		return "", false
+	}
+	rest := payload[2:]
+	n, read := binary.Uvarint(rest)
+	if read <= 0 || uint64(len(rest)-read) < n {
+		return "", false
+	}
+	return string(rest[read : read+int(n)]), true
+}
+
+// EngineHotWindowPasses reports how many full journal reads the engine
+// hot-window rebuild has made on this journal.
+func (j *recordCatalogJournal) EngineHotWindowPasses() int {
+	if j == nil {
+		return 0
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.engineHotWindowPasses
 }
 
 func (j *recordCatalogJournal) Close() error {

@@ -174,7 +174,7 @@ type FlatSQLStore struct {
 	// keyed by schema name. Non-empty only on a database migrated from a
 	// pre-WS7.3d store that still holds a plain control table named like a
 	// standard code — routing it would DROP that table (engine_records.go
-	// engineExcludedStandards). Fixed at open; never mutated afterwards.
+	// probeControlDatabase). Fixed at open; never mutated afterwards.
 	engineExcluded map[string]bool
 	// engineEpoch counts engine replacements (starts at 1); retiredEngines
 	// holds poisoned runtimes whose live instances dependent flow VMs may
@@ -842,11 +842,28 @@ func (s *FlatSQLStore) RebuildSourceSummaries() error {
 	return s.rebuildSourceSummariesFromDurableState()
 }
 
-// HydrateEngineHotWindowFromRecordCatalog loads only the OMM engine hot window
-// from compact record metadata and stream files. It is cheaper than full
-// record-catalog replay and is intended to make linked data-retrieval flows
-// usable before the full metadata catalog finishes hydrating.
+// HydrateEngineHotWindowFromRecordCatalog loads the engine hot window for every
+// routed schema from compact record metadata and stream files. It is cheaper
+// than full record-catalog replay and is intended to make linked
+// data-retrieval flows usable before the full metadata catalog finishes
+// hydrating.
 func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalog() (int, error) {
+	return s.HydrateEngineHotWindowFromRecordCatalogContext(context.Background())
+}
+
+// HydrateEngineHotWindowFromRecordCatalogContext is
+// HydrateEngineHotWindowFromRecordCatalog that a shutdown can interrupt.
+//
+// TWO BOUNDS MAKE THIS SAFE AT 227 ROUTED STANDARDS. It holds the store write
+// lock, so its duration is a stop-the-world for every reader, writer and p2p
+// operation on the box: (1) the replay is ONE pass over the journal for ALL
+// schemas (ReplayEngineHotWindows), never one pass per schema — the journal is
+// multi-GB on both hosts and a per-schema pass would turn boot into hours; and
+// (2) it polls ctx, so Stop() is not left waiting on an uninterruptible scan.
+// A cancelled hydration is NOT an error and does NOT mark the window hydrated:
+// the next boot redoes it from the journal, which is the durable source of
+// truth here.
+func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalogContext(ctx context.Context) (int, error) {
 	if s.engineHotHydrated.Load() {
 		return 0, nil
 	}
@@ -859,13 +876,13 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalog() (int, error) {
 		s.engineHotHydrated.Store(true)
 		return 0, nil
 	}
-	count := 0
-	for _, schemaName := range s.engineRoutedSchemaNames() {
-		n, err := s.recordCatalog.ReplayEngineHotWindow(s, schemaName, s.engineWindowFor(schemaName))
-		count += n
-		if err != nil {
-			return count, err
+	count, err := s.recordCatalog.ReplayEngineHotWindows(ctx, s, s.engineRoutedSchemaNames(), s.engineWindowFor)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			log.Infof("FlatSQL compact engine hot-window hydration cancelled after %d records — the next boot resumes it", count)
+			return count, nil
 		}
+		return count, err
 	}
 	s.engineHotHydrated.Store(true)
 	return count, nil

@@ -1086,6 +1086,29 @@ func TestPublicQuerySurfaceCoversEveryRoutedStandard(t *testing.T) {
 	if empty, ok := byName["CDM"]; !ok || empty.Records != 0 {
 		t.Fatalf("CDM surface = %+v, want a present relation with 0 records", empty)
 	}
+	// SIZE BOUND. This is a public response body: an empty standard contributes
+	// its base relation and NOTHING else, so 227 standards x sources empty
+	// partitions (each repeating the full column list) never ship.
+	if _, ok := byName["CDM@cell-tower-bulk"]; ok {
+		t.Fatal("an empty standard must not list per-source partitions in the public surface")
+	}
+	bases, shadows := 0, 0
+	for _, entry := range surface {
+		if entry.Source == "" {
+			bases++
+			continue
+		}
+		shadows++
+		if !strings.HasPrefix(entry.Name, "IRM@") {
+			t.Fatalf("%s is a per-source partition of a standard with nothing resident", entry.Name)
+		}
+	}
+	if bases != len(store.engineRoutedSchemaNames()) {
+		t.Fatalf("public query surface lists %d base relations, want one per routed standard (%d)", bases, len(store.engineRoutedSchemaNames()))
+	}
+	if shadows == 0 {
+		t.Fatal("the populated standard's per-source partitions are missing from the public surface")
+	}
 }
 
 // TestBootRebuildsUnifiedViewsAtMostOnce is the BOOT COST gate, expressed as

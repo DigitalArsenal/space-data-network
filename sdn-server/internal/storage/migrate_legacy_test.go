@@ -428,6 +428,17 @@ func TestMigrateLegacyControlUnlimitedPreservesCursorSpace(t *testing.T) {
 	if rehomed != 6 {
 		t.Fatalf("re-homed CAT rows = %d, want 6", rehomed)
 	}
+	// THE ROWS ARE STILL REACHABLE, which is the property re-homing exists to
+	// defend — a table that exists but no read path unions is the same silent
+	// loss with extra steps. CountRawRecords goes through rawRecordReadSource,
+	// the production read path.
+	reachable, err := store.CountRawRecords(RawRecordQuery{SchemaName: "CAT.fbs"})
+	if err != nil {
+		t.Fatalf("read re-homed CAT rows through the record read source: %v", err)
+	}
+	if reachable != 6 {
+		t.Fatalf("re-homed CAT rows readable through the record read source = %d, want 6", reachable)
+	}
 	for name, want := range map[string]int64{
 		"sdn_record_index":       12,
 		"sdn_record_source_tags": 12,
