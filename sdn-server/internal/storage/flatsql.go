@@ -159,6 +159,23 @@ type FlatSQLStore struct {
 	// tombstoned) resident count per schema. Both guarded by mu.
 	engineHotWindow int
 	engineResident  map[string]int64
+	// engineGenericHotWindow is the smaller per-schema budget applied to
+	// standards routed GENERICALLY (every embedded standard that is not one of
+	// the two this host decorates). engineHotWindow x 227 standards is not a
+	// bound; this is (engine_records.go engineWindowFor).
+	engineGenericHotWindow int
+	// engineViewRebuilds counts CreateUnifiedViews invocations on this store.
+	// It is a BOUND, not a statistic: the rebuild is all-or-nothing across
+	// every routed standard, so "how many times did we run it" is the number
+	// that decides whether opening a store is O(routed tables) or
+	// O(routed tables x sources). Guarded by mu.
+	engineViewRebuilds int64
+	// engineExcluded names the routed standards THIS store does not route,
+	// keyed by schema name. Non-empty only on a database migrated from a
+	// pre-WS7.3d store that still holds a plain control table named like a
+	// standard code — routing it would DROP that table (engine_records.go
+	// engineExcludedStandards). Fixed at open; never mutated afterwards.
+	engineExcluded map[string]bool
 	// engineEpoch counts engine replacements (starts at 1); retiredEngines
 	// holds poisoned runtimes whose live instances dependent flow VMs may
 	// still reference — released at Close (engine_link.go, loop C.7). Both
@@ -266,6 +283,7 @@ type StoreOption func(*storeConfig)
 
 type storeConfig struct {
 	engineHotWindow          int
+	engineGenericHotWindow   int
 	deferBootRebuilds        bool
 	deferRecordCatalogReplay bool
 	auxReplayChunkBytes      int64
@@ -280,6 +298,19 @@ func WithEngineHotWindow(records int) StoreOption {
 	return func(c *storeConfig) {
 		if records > 0 {
 			c.engineHotWindow = records
+		}
+	}
+}
+
+// WithEngineGenericHotWindow overrides the hot-window bound for GENERICALLY
+// routed standards — every embedded standard except the two this host
+// decorates ($OMM, $TBS), which keep WithEngineHotWindow. Values <= 0 keep the
+// default (engineDefaultGenericHotWindow). Config key
+// storage.engine_generic_hot_window.
+func WithEngineGenericHotWindow(records int) StoreOption {
+	return func(c *storeConfig) {
+		if records > 0 {
+			c.engineGenericHotWindow = records
 		}
 	}
 }
@@ -350,7 +381,10 @@ func NewFlatSQLStoreReadOnly(basePath string, validator *sds.Validator, opts ...
 }
 
 func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, opts ...StoreOption) (*FlatSQLStore, error) {
-	cfg := storeConfig{engineHotWindow: engineDefaultHotWindow}
+	cfg := storeConfig{
+		engineHotWindow:        engineDefaultHotWindow,
+		engineGenericHotWindow: engineDefaultGenericHotWindow,
+	}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -448,7 +482,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// A zero resume offset comes back with a GUARANTEED-EMPTY database, because
 	// a from-zero replay only rebuilds correctly into empty tables (see
 	// openControlEngine).
-	engine, engineDB, resume, err := openControlEngine(basePath, controlDBPath, readOnly,
+	engine, engineDB, resume, bootPlan, err := openControlEngine(basePath, controlDBPath, readOnly,
 		func(mark bootMark, warm bool) bootResume {
 			catalog := resumeOffset(mark, warm, recordCatalog)
 			return bootResume{
@@ -489,7 +523,11 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	} else {
 		log.Warnf("FlatSQL control database: EPHEMERAL — the engine has no filesystem, so the whole record catalog is re-derived at every boot")
 	}
-	if err := registerEngineFileIDs(engineDB); err != nil {
+	// Cold stores register here, AFTER the open's first query: enginePrepare
+	// already did it for a store whose persisted sources were pre-registered,
+	// and RegisterFileID is idempotent, so re-running it is a cheap no-op
+	// either way.
+	if err := registerEngineFileIDs(engineDB, bootPlan.Excluded); err != nil {
 		engine.Close()
 		return nil, fmt.Errorf("failed to register engine file identifiers: %w", err)
 	}
@@ -518,11 +556,13 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		streamDir:            streamDir,
 		lock:                 lock,
 		readOnly:             readOnly,
-		engineSources:        map[string]bool{},
+		engineSources:        bootPlan.registeredSources(),
 
-		engineHotWindow: cfg.engineHotWindow,
-		engineResident:  map[string]int64{},
-		engineEpoch:     1,
+		engineHotWindow:        cfg.engineHotWindow,
+		engineGenericHotWindow: cfg.engineGenericHotWindow,
+		engineResident:         map[string]int64{},
+		engineExcluded:         bootPlan.Excluded,
+		engineEpoch:            1,
 
 		controlDBDurable: controlDBDurable,
 		controlDBPath:    controlDBPath,
@@ -567,12 +607,13 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		store.Close()
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
-	// BEFORE anything queries: a persisted schema remembers virtual tables whose
-	// MODULE registration died with the last process. Restore the runtime half
-	// or the first query to touch one fails with `no such module`.
-	if err := store.reregisterPersistedSources(); err != nil {
+	// Complete engine source bring-up: the runtime half of every persisted
+	// source was restored before the database's first query (enginePrepare);
+	// this guarantees a default partition on an empty store and rebuilds the
+	// unified views only when they are not already current.
+	if err := store.finishEngineSourceSetup(bootPlan); err != nil {
 		store.Close()
-		return nil, fmt.Errorf("failed to restore persisted engine sources: %w", err)
+		return nil, fmt.Errorf("failed to complete engine source setup: %w", err)
 	}
 	// THE AUXILIARY REPLAY STAYS ON THE CRITICAL PATH, DELIBERATELY.
 	//
@@ -819,8 +860,8 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalog() (int, error) {
 		return 0, nil
 	}
 	count := 0
-	for _, schemaName := range engineRoutedSchemaNames() {
-		n, err := s.recordCatalog.ReplayEngineHotWindow(s, schemaName, s.engineHotWindow)
+	for _, schemaName := range s.engineRoutedSchemaNames() {
+		n, err := s.recordCatalog.ReplayEngineHotWindow(s, schemaName, s.engineWindowFor(schemaName))
 		count += n
 		if err != nil {
 			return count, err
@@ -1480,7 +1521,7 @@ func (s *FlatSQLStore) migrateLegacySchemaTable(schemaName, tableName string) er
 	if !legacyExists {
 		return nil
 	}
-	if engineOwnsTableName(tableName) {
+	if s.engineOwnsTableName(tableName) {
 		// The canonical name is reserved by the engine's record vtab, so the
 		// legacy blob rows cannot be merged into a plain table of that name.
 		// Leave them for the B.7 legacy importer (which replays into the
@@ -2133,9 +2174,9 @@ const sourceSummaryLaneScanLimit = 100000
 // costs about 30 s of held engine lock however it is expressed. Three separate
 // shapes were tried and each cost the same 25-35 s:
 //
-//   SELECT DISTINCT schema_name                     29.7 s, n=1,  max 29.75 s
-//   a row-value "loose index seek" per lane         28.7 s, n=42, max  2.75 s
-//   a per-lane COUNT(*) fingerprint                 33.3 s, n=44, max  2.85 s
+//	SELECT DISTINCT schema_name                     29.7 s, n=1,  max 29.75 s
+//	a row-value "loose index seek" per lane         28.7 s, n=42, max  2.75 s
+//	a per-lane COUNT(*) fingerprint                 33.3 s, n=44, max  2.85 s
 //
 // The middle one is the instructive failure: EXPLAIN QUERY PLAN calls it a SEARCH
 // on a covering index, through the engine AND through native sqlite3 on the same
@@ -2385,7 +2426,6 @@ func (s *FlatSQLStore) sourceSummaryLanesFromTags(schemaName string) ([]sourceSu
 	return nil, fmt.Errorf("enumerate source-summary lanes: seek did not terminate after %d lanes", sourceSummaryLaneScanLimit)
 }
 
-
 func (s *FlatSQLStore) deleteSourceSummaryLane(lane sourceSummaryLane) error {
 	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
 		DELETE FROM sdn_record_source_summary
@@ -2396,7 +2436,6 @@ func (s *FlatSQLStore) deleteSourceSummaryLane(lane sourceSummaryLane) error {
 	}
 	return nil
 }
-
 
 // sourceSummaryProducerAgg is one (producer_peer_id, producer_public_key) row of
 // a lane's summary, accumulated across chunks.
@@ -2743,7 +2782,7 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	// Engine-cache mirror (same contract as storeBatch): live ingest paths
 	// write per record, and the vtab hot window must reflect them without
 	// waiting for a boot rebuild.
-	if engineRoutesSchema(schemaName) {
+	if s.engineRoutesSchema(schemaName) {
 		if err := s.ingestEngineRecords(schemaName, []engineIngest{{data: data, source: engineSourceName(tags)}}); err != nil {
 			return "", err
 		}
@@ -3072,7 +3111,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 				}
 				catalogEvents = append(catalogEvents, tagEvent)
 			}
-			if engineRoutesSchema(schemaName) {
+			if s.engineRoutesSchema(schemaName) {
 				enginePending = append(enginePending, engineIngest{data: data, source: engineSourceName(tags)})
 			}
 		default:

@@ -762,7 +762,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 	// the aggregate cache still answers empty
 	// (sdn-tbs-feed-sync-for-cache-lane).
 	var enginePending []engineIngest
-	engineRouted := engineRoutesSchema(index.SchemaName)
+	engineRouted := s.engineRoutesSchema(index.SchemaName)
 	for _, record := range records {
 		data, err := readRecord(record)
 		if err != nil {

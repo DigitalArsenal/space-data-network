@@ -192,8 +192,10 @@ func buildLegacyFixture(t *testing.T) *legacyFixture {
 		`, row.schemaName, row.cid)
 	}
 
-	// Canonical per-schema stream-metadata table (CAT) — recreated in the v2
-	// store from its legacy DDL because CAT is not engine-reserved.
+	// Canonical per-schema stream-metadata table (CAT). Every embedded
+	// standard is engine-routed now, so the canonical name is reserved in the
+	// v2 store and these rows are RE-HOMED into sds_p_legacy__CAT rather than
+	// recreated under their own name.
 	mustExecLegacy(t, legacy, schemaMetadataTableSQL("CAT"))
 	for cid, frame := range catFrames {
 		mustExecLegacy(t, legacy, `
@@ -211,7 +213,10 @@ func buildLegacyFixture(t *testing.T) *legacyFixture {
 		`, legacyRoutedOMMTable), cid, ommStreamRel, frame.offset, frame.length)
 	}
 
-	// Canonical OMM table: engine-reserved name in v2 — must be skipped.
+	// Canonical OMM table: engine-reserved name in v2 — RE-HOMED, never
+	// skipped. A blanket skip was survivable while two standards were routed
+	// and would silently discard a pre-flip store's canonical rows now that
+	// every standard is.
 	mustExecLegacy(t, legacy, schemaMetadataTableSQL("OMM"))
 
 	// BLOB-era table with a stream-metadata twin — must be skipped, its rows
@@ -402,12 +407,26 @@ func TestMigrateLegacyControlUnlimitedPreservesCursorSpace(t *testing.T) {
 		t.Fatalf("engine hot window ingested %d records, want 6", report.EngineRecordsIngested)
 	}
 
-	// Skip decisions.
+	// Skip decisions. An engine-reserved canonical name is RE-HOMED, not
+	// skipped: only the pre-stream BLOB layout and FTS shadows are skipped.
 	skipReasons, copiedRows := reportTableEntries(report)
-	for _, name := range []string{"OMM", "sds_cat", "sdn_search_fts_data"} {
+	for _, name := range []string{"sds_cat", "sdn_search_fts_data"} {
 		if skipReasons[name] == "" {
 			t.Fatalf("expected table %s to be skipped, report: %+v", name, report.Tables)
 		}
+	}
+	if skipReasons["OMM"] != "" {
+		t.Fatalf("engine-reserved OMM must be re-homed, not skipped: %s", skipReasons["OMM"])
+	}
+	// THE RE-HOME LANDED. CAT's canonical name belongs to an engine record
+	// vtab in the v2 store, so its rows must be readable under the routed
+	// (producer, standard) name instead — anything else is silent loss.
+	var rehomed int
+	if err := store.db.QueryRow(`SELECT count(*) FROM sds_p_legacy__CAT`).Scan(&rehomed); err != nil {
+		t.Fatalf("re-homed CAT table: %v", err)
+	}
+	if rehomed != 6 {
+		t.Fatalf("re-homed CAT rows = %d, want 6", rehomed)
 	}
 	for name, want := range map[string]int64{
 		"sdn_record_index":       12,

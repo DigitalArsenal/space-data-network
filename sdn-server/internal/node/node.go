@@ -472,6 +472,7 @@ func (n *Node) init() error {
 	if n.config.Mode != "edge" {
 		n.store, err = storage.NewFlatSQLStore(n.config.Storage.Path, n.validator,
 			storage.WithEngineHotWindow(n.config.Storage.EngineHotWindow),
+			storage.WithEngineGenericHotWindow(n.config.Storage.EngineGenericHotWindow),
 			storage.WithAuxiliaryReplayChunkBytes(n.config.Storage.AuxiliaryReplayChunkBytes),
 			storage.WithDeferredBootRebuilds(),
 			storage.WithDeferredRecordCatalogReplay())
