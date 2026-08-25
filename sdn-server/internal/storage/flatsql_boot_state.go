@@ -467,6 +467,17 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 // to lose: the base vtabs would be created here only for CreateUnifiedViews to
 // DROP them again. Cold stores therefore register their file identifiers after
 // the open instead (NewFlatSQLStore).
+//
+// WHAT THIS DOES NOT BOUND, STATED PLAINLY. These calls only tell the engine
+// what exists; the `CREATE VIRTUAL TABLE IF NOT EXISTS` statements are issued
+// INSIDE the engine, by its lazy initializeSQLiteEngine, at the first query —
+// so the host cannot wrap them in one transaction the way rebuildUnifiedViews
+// wraps CreateUnifiedViews. On the FIRST boot after every standard became
+// routed, host-01's seven persisted sources therefore materialize 227 base plus
+// 227 x 7 shadow tables in one un-batched burst; afterwards the same statements
+// are no-ops against an already-current schema. Batching the burst is a change
+// to the engine's own initialization (one transaction around it), filed for the
+// engine owner alongside the errors-as-values note above.
 func enginePrepare(plan engineBootPlan) func(*flatsqlrt.Database) error {
 	if len(plan.Sources) == 0 {
 		return nil
@@ -808,10 +819,25 @@ const engineProbeSchema = `
 // depend on the file's existing contents and BOTH must be made before the real
 // database is opened or first queried:
 //
-//   - WHICH STANDARDS MAY BE ROUTED. createUnifiedView DROPs the base name
-//     before creating the view, so a standard whose code is already a plain
-//     control table must be absent from the schema the database is created
-//     from — not merely skipped in Go.
+//   - WHICH STANDARDS MAY BE ROUTED. This is a DATA-DESTRUCTION GUARD, not
+//     tidiness: createUnifiedView issues `DROP TABLE IF EXISTS "<name>"` before
+//     it creates the view (flatsql cpp/src/sqlite_engine.cpp), so routing a
+//     standard whose code is already a PLAIN control table would DELETE that
+//     table and every row in it — rows that are reachable today, because
+//     recordReadSourceFiltered unions the bare canonical table when it exists.
+//     Such a standard must be absent from the schema the database is created
+//     from, not merely skipped in Go. It can only fire on a database migrated
+//     from a pre-WS7.3d store; it fires FAIL-CLOSED (the standard is dropped
+//     from the schema, its rows stay exactly where they are, the exclusion is
+//     logged). The two DECORATED standards are deliberately not excludable:
+//     they have been engine-owned since loop B.3 / the cellular slice, so
+//     their canonical names were reserved before this change and excluding
+//     them now would be a different regression, not a fix.
+//
+//     THIS IS THE ONLY COPY OF THAT RULE. It used to be duplicated in
+//     storage.engineExcludedStandards, which nothing called; a fail-closed
+//     guard with two implementations has one that silently drifts.
+//
 //   - WHICH SOURCES TO REGISTER. Registering them before the real database's
 //     first query is what lets the engine's lazy initialization register the
 //     shadow vtabs, which is what makes the view rebuild skippable.

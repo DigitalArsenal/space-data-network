@@ -41,19 +41,25 @@ func TestEveryEmbeddedStandardIsRoutedOrDeclaredUnroutable(t *testing.T) {
 		if !sdsSupports(schemaName) {
 			t.Errorf("%s is declared unroutable (%s) but is not an embedded standard", schemaName, reason)
 		}
-		if reason != enginecatalog.SkipNoFileIdentifier {
-			continue
-		}
-		// THE EXCLUSION MUST STILL BE TRUE. The only reason a standard is not
-		// routed is that its IDL declares no file_identifier; the moment
-		// Themis mints one, this fails and the standard routes with no code
-		// change here.
-		src, err := os.ReadFile(filepath.Join(embeddedSchemaDir, schemaName))
-		if err != nil {
-			t.Fatalf("read %s: %v", schemaName, err)
-		}
-		if strings.Contains(string(src), "file_identifier") {
-			t.Errorf("%s now declares a file_identifier: drop the exclusion and regenerate the catalog", schemaName)
+		// THE EXCLUSION MUST STILL BE TRUE, WHATEVER ITS REASON. Every reason
+		// string is re-validated against the IDL here, and an UNKNOWN reason
+		// fails rather than being waved through — a carve-out this test cannot
+		// re-check is a permanently unverified exclusion, which is precisely
+		// what the owner directive ("every standard ingested like all the
+		// others") exists to prevent.
+		switch reason {
+		case enginecatalog.SkipNoFileIdentifier:
+			// The moment Themis mints a file_identifier, this fails and the
+			// standard routes with no code change here.
+			src, err := os.ReadFile(filepath.Join(embeddedSchemaDir, schemaName))
+			if err != nil {
+				t.Fatalf("read %s: %v", schemaName, err)
+			}
+			if strings.Contains(string(src), "file_identifier") {
+				t.Errorf("%s now declares a file_identifier: drop the exclusion and regenerate the catalog", schemaName)
+			}
+		default:
+			t.Errorf("%s is declared unroutable for reason %q, which this test cannot re-validate against the IDL — add the check for that reason here, or the exclusion is unverifiable forever", schemaName, reason)
 		}
 	}
 }

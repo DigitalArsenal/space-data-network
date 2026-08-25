@@ -41,6 +41,7 @@ import (
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 const (
@@ -166,7 +167,7 @@ func engineRoutedSchemaNames() []string {
 // $TBS record — an empty answer instead of "no such table".
 //
 // excluded names the standards this particular store must NOT route (see
-// engineExcludedStandards). Registering an excluded standard would be worse
+// probeControlDatabase). Registering an excluded standard would be worse
 // than useless: its table is absent from the schema this database was created
 // from, and FlatSQLDatabase::registerFileId THROWS on an unknown table —
 // which, in the -fignore-exceptions engine, poisons the runtime at boot.
@@ -309,52 +310,6 @@ func engineOwnsTableName(tableName string) bool {
 }
 
 // ==================== Per-store routing (exclusions + windows) ====================
-
-// engineExcludedStandards reports the routed standards this store must NOT
-// route, because their standard code is already a PLAIN table in its control
-// database.
-//
-// THIS IS A DATA-DESTRUCTION GUARD, not tidiness. createUnifiedView issues
-// `DROP TABLE IF EXISTS "<name>"` before it creates the view (flatsql
-// cpp/src/sqlite_engine.cpp), so routing a standard whose code is an existing
-// plain table would DELETE that table and every row in it — and those rows are
-// reachable today, because recordReadSourceFiltered unions the bare canonical
-// table when it exists. v1 stores are routed-only and never create such a
-// table anew, so this can only fire on a database migrated from a pre-WS7.3d
-// store. It fires FAIL-CLOSED: the standard is dropped from the schema the
-// database is created from, its rows are left exactly where they are, and the
-// exclusion is logged with the reason.
-//
-// The two DECORATED standards are deliberately not excludable: they have been
-// engine-owned since loop B.3 / the cellular slice, so their canonical names
-// were already reserved before this change and excluding them now would be a
-// different regression, not a fix.
-func engineExcludedStandards(engineDB *flatsqlrt.Database) (map[string]bool, error) {
-	res, err := engineDB.Query(
-		`SELECT name FROM sqlite_master WHERE type = 'table' AND (sql IS NULL OR sql NOT LIKE '%__flatsql_module_%')`)
-	if err != nil {
-		return nil, err
-	}
-	plain := make(map[string]bool, len(res.Rows))
-	for _, row := range res.Rows {
-		if len(row) != 1 {
-			continue
-		}
-		if name, ok := row[0].(string); ok {
-			plain[name] = true
-		}
-	}
-	excluded := map[string]bool{}
-	for name, binding := range engineRoutedSchemas {
-		if _, decorated := engineDecoratedSchemas[name]; decorated {
-			continue
-		}
-		if plain[binding.Table] {
-			excluded[name] = true
-		}
-	}
-	return excluded, nil
-}
 
 // engineSchemaTextExcluding removes the excluded standards' table blocks from
 // the engine schema text. A table that is absent from the schema is never
@@ -666,17 +621,17 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 // never evict each other out of) one budget.
 func (s *FlatSQLStore) rebuildEngineRecords() error {
 	s.preregisterEngineSources()
-	present, err := s.schemasWithIndexedRecords()
+	present, err := s.schemasWithRecordTables()
 	if err != nil {
-		log.Warnf("FlatSQL engine rebuild: enumerate indexed schemas: %v", err)
+		log.Warnf("FlatSQL engine rebuild: enumerate schemas with record tables: %v", err)
 		present = nil
 	}
 	for _, schemaName := range s.engineRoutedSchemaNames() {
-		// ONE query answers "which schemas have any records at all", so a
-		// store that has never seen 220 of the 227 routed standards does not
-		// pay 220 hot-window queries at every boot. A nil map means the
-		// enumeration itself failed; fall back to probing each schema, which
-		// is what this always did.
+		// ONE schema-catalog query answers "which schemas could have a record
+		// at all", so a store that has never seen 220 of the 227 routed
+		// standards does not pay 220 hot-window queries at every boot. A nil
+		// map means the enumeration itself failed; fall back to probing each
+		// schema, which is what this always did.
 		if present != nil && !present[schemaName] {
 			s.engineResident[schemaName] = 0
 			continue
@@ -748,24 +703,62 @@ func (s *FlatSQLStore) preregisterEngineSources() {
 	log.Infof("FlatSQL engine rebuild: pre-registered %d engine source(s) in one view rebuild", registered)
 }
 
-// schemasWithIndexedRecords lists the schema names that have at least one row
-// in the global record index. schema_name leads idx_sdn_record_index_lookup,
-// so this is an index scan over distinct values, not a table scan.
-func (s *FlatSQLStore) schemasWithIndexedRecords() (map[string]bool, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT schema_name FROM sdn_record_index`)
+// schemasWithRecordTables lists the routed schema names that HAVE A BACKING
+// RECORD TABLE in this control database — the cheap, exact answer to "which
+// standards could possibly have a record here".
+//
+// IT READS THE SCHEMA CATALOG, NOT THE DATA. The obvious formulation,
+// `SELECT DISTINCT schema_name FROM sdn_record_index`, is the shape this engine
+// has already been measured to be pathological at: rebuildSourceSummaryScope
+// (flatsql.go) records `SELECT DISTINCT schema_name` costing 29.7 s of held
+// engine lock on host-01, a plan EXPLAIN called a covering-index SEARCH costing
+// 28.7 s, and native sqlite3 answering the same statement on the same file in
+// 1 ms — the engine's cost tracked DATABASE SIZE, not rows. Per-schema probes
+// are no better: the same measurement charged 500-680 ms PER SEEK at 2.8 GB, so
+// 227 of them is minutes. sqlite_master is a few thousand rows on the largest
+// box in the fleet and does not grow with records at all.
+//
+// It is EXACT, not approximate: recordReadSourceFiltered unions exactly the
+// legacy per-standard table plus the sds_p_<producer>__<STANDARD> tables, so a
+// standard with no table in that set has no readable row by construction, and
+// the hot-window query for it can only return zero rows. Virtual tables are
+// excluded the same way tableExists excludes them — the engine's own record
+// vtabs live in this SQLite context under the bare standard name.
+func (s *FlatSQLStore) schemasWithRecordTables() (map[string]bool, error) {
+	rows, err := s.db.Query(`
+		SELECT name FROM sqlite_master
+		WHERE type = 'table' AND COALESCE(sql, '') NOT LIKE 'CREATE VIRTUAL%'
+	`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	present := map[string]bool{}
+	standards := map[string]bool{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
-		present[name] = true
+		if _, standard, ok := parseProducerStandardTable(name); ok {
+			standards[standard] = true
+			continue
+		}
+		standards[name] = true
 	}
-	return present, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	present := map[string]bool{}
+	for _, schemaName := range s.engineRoutedSchemaNames() {
+		table, err := sds.SchemaNameToTable(schemaName)
+		if err != nil {
+			continue
+		}
+		if standards[table] {
+			present[schemaName] = true
+		}
+	}
+	return present, nil
 }
 
 func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {

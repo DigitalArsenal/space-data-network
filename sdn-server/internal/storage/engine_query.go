@@ -89,15 +89,25 @@ type QuerySurfaceTable struct {
 // storage.engine_generic_hot_window for every other routed standard — full
 // history lives in the append-only stream files, not in SQL.
 //
-// BOUNDED BY CONSTRUCTION. Every embedded standard is routed now, so the
-// surface is 227 base views plus 227 x sources shadow tables. The earlier
-// shape ran `SELECT *` AND `SELECT count(*)` against every one of them: at
-// host-01's seven sources that is 1,816 relations and 1,816 full partition
-// scans, which would make asking WHAT is queryable more expensive than
-// querying it. Columns are therefore probed ONCE PER SCHEMA (a shadow table
-// and its view declare the same columns, by construction — the view is a
-// UNION ALL over the shadows), and a relation is only counted when the schema
-// has records resident at all.
+// BOUNDED BY CONSTRUCTION, IN COST AND IN SIZE. Every embedded standard is
+// routed now, so the naive surface is 227 base views plus 227 x sources shadow
+// tables — 1,816 relations at host-01's seven sources.
+//
+//   - COST: the earlier shape ran `SELECT *` AND `SELECT count(*)` against
+//     every one of them, which would make asking WHAT is queryable more
+//     expensive than querying it. Columns are probed ONCE PER SCHEMA (a shadow
+//     table and its view declare the same columns, by construction — the view
+//     is a UNION ALL over the shadows), and a relation is counted only when the
+//     schema has records resident at all.
+//   - SIZE: this is a PUBLIC response body. Listing every schema's shadow
+//     partitions repeats the full column list 8x per standard on host-01 —
+//     ~33,000 column entries, several hundred KB, for partitions that are
+//     empty. So EVERY routed standard is listed (that is the point: the surface
+//     must show what can be queried, and an empty answer is a valid answer),
+//     but per-source partitions are listed only for the standards that
+//     actually have records resident. The naming rule is uniform —
+//     "<STANDARD>@<source>" — and the populated partitions are exactly the ones
+//     a caller can get rows out of.
 func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -137,6 +147,12 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 			Columns: cols.Columns,
 			Records: s.countEngineRelation(quotedBase, resident),
 		})
+		if !resident {
+			// Nothing is in this standard's partitions, so listing one entry
+			// per source would be 226 x sources empty relations carrying a
+			// duplicate column list in a public body.
+			continue
+		}
 		for _, src := range srcNames {
 			name := base + "@" + src
 			surface = append(surface, QuerySurfaceTable{
