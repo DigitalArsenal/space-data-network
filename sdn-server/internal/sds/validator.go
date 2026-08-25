@@ -83,6 +83,7 @@ func init() {
 // (spacedatastandards.org) schema plus the SDN-internal schemas
 // (PGR, PLHD, PLOG, RHD).
 var SupportedSchemas = []string{
+	"ACI.fbs",  // Access Interval - one contiguous access window with its RF link samples (SDS v1.196.0)
 	"ACL.fbs",  // Access Control List - Data access grants
 	"ACM.fbs",  // Attitude Comprehensive Message
 	"ACR.fbs",  // Aircraft Dynamics
@@ -90,12 +91,14 @@ var SupportedSchemas = []string{
 	"AEM.fbs",  // Attitude Ephemeris Message
 	"ANI.fbs",  // Analytic Imagery Product
 	"AOF.fbs",  // AOS Transfer Frame (CCSDS 732.0-B-3)
+	"APL.fbs",  // Atmospheric Propagation Loss Statistics (SDS v1.196.0)
 	"APP.fbs",  // Application Package Manifest
 	"APM.fbs",  // Attitude Parameter Message
 	"ARM.fbs",  // Armor and Protection
 	"AST.fbs",  // Astrodynamics
 	"ATD.fbs",  // Attitude Data Point
 	"ATM.fbs",  // Attitude Message
+	"AVL.fbs",  // Airspace Volume (SDS v1.196.0)
 	"BAL.fbs",  // Ballistics
 	"BEM.fbs",  // Antenna Beam
 	"BMC.fbs",  // Beam Contour
@@ -122,19 +125,23 @@ var SupportedSchemas = []string{
 	"CSM.fbs",  // Conjunction Summary Message
 	"CTR.fbs",  // Contact Report
 	"CVG.fbs",  // Coverage Grid Figure-of-Merit
+	"CVP.fbs",  // Coverage Geometry (SDS v1.196.0)
 	"CZM.fbs",  // CZML Document
 	"DFH.fbs",  // GEO Drift History
 	"DMG.fbs",  // Damage Models
 	"DOA.fbs",  // Difference of Arrival Geolocation
 	"DPM.fbs",  // Dataset Publication Manifest
 	"DSS.fbs",  // Data Sync Status
+	"DTT.fbs",  // Digital Terrain Tile - one addressable tile of a terrain elevation pyramid (SDS v1.196.0)
 	"EME.fbs",  // Electromagnetic Emissions
 	"ENC.fbs",  // Encryption Header
 	"ENT.fbs",  // Entitlement - provider subscription or account entitlement state
 	"ENV.fbs",  // Atmosphere and Environment
 	"EOO.fbs",  // Earth Orientation
 	"EGP.fbs",  // Entity Group - publishable set of entity references
+	"EMC.fbs",  // Electromagnetic Compatibility Assessment (SDS v1.196.0)
 	"EOP.fbs",  // Earth Orientation Parameters
+	"EPF.fbs",  // Aggregate Interference and Flux-Density Compliance (SDS v1.196.0)
 	"EPM.fbs",  // Entity Profile Manifest
 	"ESL.fbs",  // Entity/Standards Link
 	"ETM.fbs",  // Entity Metadata
@@ -147,9 +154,11 @@ var SupportedSchemas = []string{
 	"FSO.fbs",  // FlatSQL Operation - control, policy and status record
 	"FSP.fbs",  // Field Stream Policy - marketplace-protected live streams
 	"GDI.fbs",  // Ground Imagery
+	"GEL.fbs",  // Emitter Geolocation Solution (SDS v1.196.0)
 	"GEO.fbs",  // GEO Spacecraft Status
 	"GJN.fbs",  // GeoJSON FeatureCollection
 	"GNO.fbs",  // GNSS Observation
+	"GNP.fbs",  // Gazetteer Named Place (SDS v1.196.0)
 	"GPX.fbs",  // GPX Document
 	"GRV.fbs",  // Gravity Models
 	"GST.fbs",  // Ground/Tracking Station Definition
@@ -160,6 +169,7 @@ var SupportedSchemas = []string{
 	"IDM.fbs",  // Initial Data Message
 	"ION.fbs",  // Ionospheric Observation
 	"IQC.fbs",  // IQ Capture - archived baseband recording (SDS v1.177.0)
+	"IRM.fbs",  // Ingest Resume Mark - durable checkpoint of one bulk-ingest job (REC 223) (SDS v1.196.0)
 	"IRO.fbs",  // Infrared Observation
 	"KMF.fbs",  // Key Material Frame
 	"KML.fbs",  // KML Document
@@ -208,6 +218,7 @@ var SupportedSchemas = []string{
 	"OPM.fbs",  // Orbit Parameter Message
 	"OPP.fbs",  // Object Physical Properties - sourced physical description
 	"OSM.fbs",  // Orbit State Message
+	"PAP.fbs",  // Phased Array Pattern Synthesis (SDS v1.196.0)
 	"PCF.fbs",  // Propagator Configuration
 	"PGM.fbs",  // Peer Group Membership Record
 	"PGR.fbs",  // Peer Graph Record - Peer network graph snapshot (SDN-internal)
@@ -238,11 +249,14 @@ var SupportedSchemas = []string{
 	"REV.fbs",  // Review - Marketplace reviews
 	"RFB.fbs",  // RF Band Specification
 	"RFE.fbs",  // RF Emitter
+	"RFL.fbs",  // RF Link Sample (SDS v1.196.0)
 	"RFM.fbs",  // Reference Frame Message
 	"RFO.fbs",  // RF Observation
+	"RFS.fbs",  // RF Surface Material (SDS v1.196.0)
 	"RHD.fbs",  // Routing Header - Message routing metadata (SDN-internal)
 	"ROC.fbs",  // Re-entry Operations Corridor
 	"RPT.fbs",  // Verifiable Report descriptor
+	"RSD.fbs",  // Radar Sensitivity and Detection Performance (SDS v1.196.0)
 	"SAR.fbs",  // SAR Observation
 	"SBM.fbs",  // Satellite Breakup Model
 	"SCC.fbs",  // Scenario Controls - scenario setup/state message bus envelope
@@ -277,17 +291,21 @@ var SupportedSchemas = []string{
 	"TBS.fbs",  // Terrestrial Base Station Site (SDS v1.186.0; included by REC)
 	"TCF.fbs",  // Telecommand Transfer Frame (CCSDS 232.0-B-3)
 	"TDM.fbs",  // Tracking Data Message
+	"TFN.fbs",  // Transport Facility Node (SDS v1.196.0)
 	"TIM.fbs",  // Time Message
 	"TKG.fbs",  // Tracking and Data Fusion
 	"TME.fbs",  // Time Systems
 	"TMF.fbs",  // Telemetry Transfer Frame (CCSDS 132.0-B-2)
+	"TMS.fbs",  // Track Model State (SDS v1.196.0)
 	"TNR.fbs",  // Trust Node Record
 	"TPN.fbs",  // Transponder
 	"TRE.fbs",  // Trust Edge Record
 	"TRK.fbs",  // Track
 	"TRN.fbs",  // Terrain Models
+	"TRS.fbs",  // Terrain Raster Solve (SDS v1.196.0)
 	"VAM.fbs",  // Visual Asset Manifest - ranked visual representations for one entity
 	"VCM.fbs",  // Vector Covariance Message
+	"VEP.fbs",  // Vehicle Endurance Profile (SDS v1.196.0)
 	"VST.fbs",  // Viewer State - display and camera state for a scenario
 	"WKS.fbs",  // Workspace - scene snapshot + FlatSQL query state + share grants
 	"WPN.fbs",  // Weapons and Munitions

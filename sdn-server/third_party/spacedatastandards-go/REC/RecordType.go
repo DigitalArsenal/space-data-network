@@ -226,7 +226,25 @@ const (
 	RecordTypeCMR  RecordType = 202
 	RecordTypeTBS  RecordType = 203
 	RecordTypeCCT  RecordType = 204
+	RecordTypeACI  RecordType = 205
+	RecordTypeCVP  RecordType = 206
+	RecordTypeRFL  RecordType = 207
+	RecordTypeRFS  RecordType = 208
+	RecordTypeTRS  RecordType = 209
+	RecordTypeGNP  RecordType = 210
+	RecordTypeDTT  RecordType = 211
+	RecordTypeAVL  RecordType = 212
+	RecordTypeTFN  RecordType = 213
+	RecordTypeTMS  RecordType = 214
+	RecordTypeVEP  RecordType = 215
 	RecordTypeEGP  RecordType = 216
+	RecordTypeAPL  RecordType = 217
+	RecordTypeEMC  RecordType = 218
+	RecordTypeEPF  RecordType = 219
+	RecordTypeGEL  RecordType = 220
+	RecordTypePAP  RecordType = 221
+	RecordTypeRSD  RecordType = 222
+	RecordTypeIRM  RecordType = 223
 )
 
 var EnumNamesRecordType = map[RecordType]string{
@@ -435,7 +453,25 @@ var EnumNamesRecordType = map[RecordType]string{
 	RecordTypeCMR:  "CMR",
 	RecordTypeTBS:  "TBS",
 	RecordTypeCCT:  "CCT",
+	RecordTypeACI:  "ACI",
+	RecordTypeCVP:  "CVP",
+	RecordTypeRFL:  "RFL",
+	RecordTypeRFS:  "RFS",
+	RecordTypeTRS:  "TRS",
+	RecordTypeGNP:  "GNP",
+	RecordTypeDTT:  "DTT",
+	RecordTypeAVL:  "AVL",
+	RecordTypeTFN:  "TFN",
+	RecordTypeTMS:  "TMS",
+	RecordTypeVEP:  "VEP",
 	RecordTypeEGP:  "EGP",
+	RecordTypeAPL:  "APL",
+	RecordTypeEMC:  "EMC",
+	RecordTypeEPF:  "EPF",
+	RecordTypeGEL:  "GEL",
+	RecordTypePAP:  "PAP",
+	RecordTypeRSD:  "RSD",
+	RecordTypeIRM:  "IRM",
 }
 
 var EnumValuesRecordType = map[string]RecordType{
@@ -644,7 +680,25 @@ var EnumValuesRecordType = map[string]RecordType{
 	"CMR":  RecordTypeCMR,
 	"TBS":  RecordTypeTBS,
 	"CCT":  RecordTypeCCT,
+	"ACI":  RecordTypeACI,
+	"CVP":  RecordTypeCVP,
+	"RFL":  RecordTypeRFL,
+	"RFS":  RecordTypeRFS,
+	"TRS":  RecordTypeTRS,
+	"GNP":  RecordTypeGNP,
+	"DTT":  RecordTypeDTT,
+	"AVL":  RecordTypeAVL,
+	"TFN":  RecordTypeTFN,
+	"TMS":  RecordTypeTMS,
+	"VEP":  RecordTypeVEP,
 	"EGP":  RecordTypeEGP,
+	"APL":  RecordTypeAPL,
+	"EMC":  RecordTypeEMC,
+	"EPF":  RecordTypeEPF,
+	"GEL":  RecordTypeGEL,
+	"PAP":  RecordTypePAP,
+	"RSD":  RecordTypeRSD,
+	"IRM":  RecordTypeIRM,
 }
 
 func (v RecordType) String() string {
