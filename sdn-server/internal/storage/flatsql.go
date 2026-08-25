@@ -489,9 +489,9 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	} else {
 		log.Warnf("FlatSQL control database: EPHEMERAL — the engine has no filesystem, so the whole record catalog is re-derived at every boot")
 	}
-	if err := engineDB.RegisterFileID("$OMM", "OMM"); err != nil {
+	if err := registerEngineFileIDs(engineDB); err != nil {
 		engine.Close()
-		return nil, fmt.Errorf("failed to register $OMM file identifier: %w", err)
+		return nil, fmt.Errorf("failed to register engine file identifiers: %w", err)
 	}
 
 	db := flatsqldrv.Open(engineDB)
@@ -818,9 +818,13 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalog() (int, error) {
 		s.engineHotHydrated.Store(true)
 		return 0, nil
 	}
-	count, err := s.recordCatalog.ReplayEngineHotWindow(s, engineOMMSchemaName, s.engineHotWindow)
-	if err != nil {
-		return count, err
+	count := 0
+	for _, schemaName := range engineRoutedSchemaNames() {
+		n, err := s.recordCatalog.ReplayEngineHotWindow(s, schemaName, s.engineHotWindow)
+		count += n
+		if err != nil {
+			return count, err
+		}
 	}
 	s.engineHotHydrated.Store(true)
 	return count, nil
@@ -2739,7 +2743,7 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	// Engine-cache mirror (same contract as storeBatch): live ingest paths
 	// write per record, and the vtab hot window must reflect them without
 	// waiting for a boot rebuild.
-	if schemaName == engineOMMSchemaName {
+	if engineRoutesSchema(schemaName) {
 		if err := s.ingestEngineRecords(schemaName, []engineIngest{{data: data, source: engineSourceName(tags)}}); err != nil {
 			return "", err
 		}
@@ -3068,7 +3072,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 				}
 				catalogEvents = append(catalogEvents, tagEvent)
 			}
-			if schemaName == engineOMMSchemaName {
+			if engineRoutesSchema(schemaName) {
 				enginePending = append(enginePending, engineIngest{data: data, source: engineSourceName(tags)})
 			}
 		default:

@@ -82,15 +82,25 @@ type QuerySurfaceTable struct {
 	Records int64 `json:"records"`
 }
 
-// engineSchemaBaseTables are the SDS record tables routed into the engine
-// (only OMM so far — loop B.3 slice; further standards join here).
+// engineSchemaBaseTables are the SDS record tables routed into the engine,
+// derived from engineRoutedSchemas (engine_records.go) so this surface can
+// never drift from what is actually registered: OMM (loop B.3) and TBS (the
+// cellular slice).
 //
-// NEXT (Iris/Themis $APP composition ruling 2026-07-24): "APP" joins this
-// list when the new UI codebase lands — installed apps are FlatSQL rows
-// enumerated by query, never a directory scan. Joining requires the APP
-// table graph in engineRecordSchema (engine_records.go), RegisterFileID
-// ("$APP","APP"), and engineOwnsTableName — not just this list.
-var engineSchemaBaseTables = []string{"OMM"}
+// NEXT (Iris/Themis $APP composition ruling 2026-07-24): "APP" joins when the
+// new UI codebase lands — installed apps are FlatSQL rows enumerated by
+// query, never a directory scan. Joining is now one engineRoutedSchemas entry
+// plus its table graph in engineDatabaseSchema; file-id registration, table
+// ownership and this list follow automatically.
+var engineSchemaBaseTables = engineRoutedBaseTables()
+
+func engineRoutedBaseTables() []string {
+	tables := make([]string, 0, len(engineRoutedSchemas))
+	for _, name := range engineRoutedSchemaNames() {
+		tables = append(tables, engineRoutedSchemas[name].Table)
+	}
+	return tables
+}
 
 // PublicQuerySurface enumerates the tables/views/columns the sandboxed
 // public query may read, straight from the live engine (no hand-maintained

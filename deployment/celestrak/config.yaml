@@ -72,11 +72,31 @@ ingest:
 # SatNOGS DB is CC-BY-SA-4.0 and republication IS the owner ruling of
 # 2026-08-03 ("publish them on SDN"); the licence travels with the batch
 # (DPMSourceBatch LICENSE/LICENSE_URL/CITATION) and per record (RFB.CITATION).
+#
+# Cellular $TBS lane (sdn-tbs-feed-sync-for-cache-lane, 2026-08-21): the
+# aggregate cache on the consumer node (host-01, sdn.spaceaware.io) serves
+# from ITS LOCAL sds_tbs store, while the cell-tower ingest flow is
+# owner-placed on THIS host (host-02, celestrak.eth). The mechanism that
+# moves $TBS rows between them is the SDN's own data plane — the same
+# dataset-feed-head-sync lane as RFB. This lane is the producer-side trigger:
+# a landed cell-tower batch (attribution defaulting to provider "opencellid",
+# source "cell-tower-bulk") becomes a dataset publication with a feed-head
+# announcement on this host's own queue. The consumer's feed-head
+# subscription is schema-generic (every embedded validator schema, TBS.fbs
+# included) and its materialize path (ImportDatasetShardFromFiles,
+# schema-agnostic) fills host-01's sds_tbs. This lane is OFF-THREAD and
+# fail-closed like the RFB lane; absent = nothing ships, so the source is
+# named deliberately.
 publishing:
   auto_publish:
     - schema: RFB.fbs
       source_name: satnogs-db
       # The SatNOGS timer is daily; this only bounds a retry/restart burst.
+      min_interval: 30m
+    - schema: TBS.fbs
+      source_name: cell-tower-bulk
+      # The cell-tower ingest timer is interval-driven; this bounds a
+      # retry/restart burst, it never withholds a landed batch.
       min_interval: 30m
 
 setup:

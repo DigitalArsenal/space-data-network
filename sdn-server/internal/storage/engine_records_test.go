@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/TBS"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -585,5 +586,152 @@ func TestEngineHotWindowEviction(t *testing.T) {
 	defer wide.Close()
 	if count, _ := wide.EngineRecordCount("OMM.fbs"); count != 15 {
 		t.Fatalf("engine count with wide window = %d, want 15", count)
+	}
+}
+
+// TestEngineServesTBSStoredWithSourceTags is the LOCAL half of the cellular
+// read surface (sdn-tbs-feed-sync-for-cache-lane): $TBS sites written by the
+// cell-tower ingest flow's storage-ingest capability — StoreWithSourceTags,
+// the same call the flow makes — must be readable through the engine record
+// surface that storage.flatsql_query_stream -> QueryRawStream serves to the
+// aggregate cache flow, on the SAME process that wrote them (no restart, no
+// boot rebuild). Before the TBS record slice this read was "no such table".
+func TestEngineServesTBSStoredWithSourceTags(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newEngineRecordsStore(t, basePath)
+
+	tags := SourceTags{
+		ProviderID:   "opencellid",
+		SourceName:   "cell-tower-bulk",
+		BatchID:      "opencellid@1",
+		ContentKeyID: "public",
+	}
+	const siteCount = 5
+	ids := make([]string, siteCount)
+	for i := 0; i < siteCount; i++ {
+		ids[i] = fmt.Sprintf("310-410-7-%d", 500+i)
+		record := newTBSRecord(ids[i], "opencellid", 310, 51.5+0.01*float64(i), -0.12)
+		if _, err := store.StoreWithSourceTags("TBS.fbs", record, "space-data-network-02", nil, tags); err != nil {
+			t.Fatalf("StoreWithSourceTags $TBS %d: %v", i, err)
+		}
+	}
+
+	assertEngineTBS := func(t *testing.T, s *FlatSQLStore, want int) {
+		t.Helper()
+		stream, err := s.QueryRawStream("SELECT _data FROM TBS ORDER BY _rowid DESC LIMIT ?", 100)
+		if err != nil {
+			t.Fatalf("engine $TBS read: %v", err)
+		}
+		frames, err := flatsqlrt.DecodeSizePrefixedStream(stream.Bytes)
+		if err != nil {
+			t.Fatalf("decode $TBS frames: %v", err)
+		}
+		if len(frames) != want {
+			t.Fatalf("engine $TBS frames = %d, want %d", len(frames), want)
+		}
+		for i, frame := range frames {
+			if !TBS.TBSBufferHasIdentifier(frame) {
+				t.Fatalf("frame %d is not a $TBS buffer", i)
+			}
+			if site := TBS.GetRootAsTBS(frame, 0); site.SOURCESLength() != 1 || site.CONSENSUS(nil) == nil {
+				t.Fatalf("frame %d lost its required SOURCES/CONSENSUS", i)
+			}
+		}
+	}
+
+	assertEngineTBS(t, store, siteCount)
+
+	// The per-source shadow partition is TBS@<source-name>, exactly like
+	// OMM@<source-name>: the cache lane can scope a read to one provider feed.
+	scoped, err := store.engineDB.Query(`SELECT count(*) FROM "TBS@cell-tower-bulk"`)
+	if err != nil {
+		t.Fatalf("per-source $TBS shadow table read: %v", err)
+	}
+	if got := engineCellInt(t, scoped.Rows[0][0]); got != siteCount {
+		t.Fatalf("TBS@cell-tower-bulk count = %d, want %d", got, siteCount)
+	}
+
+	// $OMM and $TBS partition independently — a routed standard never lands
+	// in another standard's table.
+	ommCount, err := store.EngineRecordCount("OMM.fbs")
+	if err != nil {
+		t.Fatalf("EngineRecordCount(OMM.fbs): %v", err)
+	}
+	if ommCount != 0 {
+		t.Fatalf("OMM engine count = %d, want 0 (only $TBS was stored)", ommCount)
+	}
+
+	// Boot rebuild: a restarted node must come back serving the same sites
+	// from the durable substrate, or the cache lane answers empty after every
+	// upgrade.
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	reopened := newEngineRecordsStore(t, basePath)
+	defer reopened.Close()
+	assertEngineTBS(t, reopened, siteCount)
+}
+
+// TestEngineTBSHotWindowEvictsOldestSites pins the hot-window bound on the
+// TBS slice: eviction tombstones the OLDEST resident sites in their per-source
+// shadow table and never touches the durable substrate.
+func TestEngineTBSHotWindowEvictsOldestSites(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator, WithEngineHotWindow(3))
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{ProviderID: "opencellid", SourceName: "cell-tower-bulk", BatchID: "opencellid@1"}
+	for i := 0; i < 6; i++ {
+		record := newTBSRecord(fmt.Sprintf("310-410-9-%d", i), "opencellid", 310, 10+float64(i), 20)
+		if _, err := store.StoreWithSourceTags("TBS.fbs", record, "space-data-network-02", nil, tags); err != nil {
+			t.Fatalf("StoreWithSourceTags $TBS %d: %v", i, err)
+		}
+	}
+
+	count, err := store.EngineRecordCount("TBS.fbs")
+	if err != nil {
+		t.Fatalf("EngineRecordCount(TBS.fbs): %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("resident $TBS after a window of 3 = %d, want 3", count)
+	}
+
+	// The window keeps the NEWEST sites.
+	stream, err := store.QueryRawStream("SELECT _data FROM TBS ORDER BY _rowid ASC")
+	if err != nil {
+		t.Fatalf("engine $TBS read: %v", err)
+	}
+	frames, err := flatsqlrt.DecodeSizePrefixedStream(stream.Bytes)
+	if err != nil {
+		t.Fatalf("decode $TBS frames: %v", err)
+	}
+	if len(frames) != 3 {
+		t.Fatalf("engine $TBS frames = %d, want 3", len(frames))
+	}
+	for i, frame := range frames {
+		want := fmt.Sprintf("310-410-9-%d", i+3)
+		if got := string(TBS.GetRootAsTBS(frame, 0).ID()); got != want {
+			t.Fatalf("resident site %d = %q, want %q (oldest evicted first)", i, got, want)
+		}
+	}
+
+	// The durable substrate keeps every site: eviction is a cache bound.
+	records, err := store.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName: "TBS.fbs",
+		ProviderID: tags.ProviderID,
+		SourceName: tags.SourceName,
+		Limit:      100,
+	})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords: %v", err)
+	}
+	if len(records) != 6 {
+		t.Fatalf("durable $TBS records = %d, want 6 (eviction must not delete)", len(records))
 	}
 }

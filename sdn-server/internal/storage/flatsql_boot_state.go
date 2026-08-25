@@ -484,7 +484,7 @@ func openEphemeralControlEngine() (*flatsqlrt.Runtime, *flatsqlrt.Database, erro
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 	}
-	db, err := engine.CreateDatabase(engineRecordSchema, "sdn-control")
+	db, err := engine.CreateDatabase(engineDatabaseSchema, "sdn-control")
 	if err != nil {
 		engine.Close()
 		return nil, nil, fmt.Errorf("failed to create FlatSQL database: %w", err)
@@ -513,7 +513,7 @@ func openControlDatabase(engine *flatsqlrt.Runtime, dbPath string) (*flatsqlrt.D
 }
 
 func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath string) (*flatsqlrt.Database, bootMark, bool, error) {
-	db, err := engine.OpenDatabase(engineRecordSchema, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
+	db, err := engine.OpenDatabase(engineDatabaseSchema, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
 	if err != nil {
 		return nil, bootMark{}, false, err
 	}
