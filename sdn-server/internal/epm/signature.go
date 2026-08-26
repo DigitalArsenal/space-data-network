@@ -57,10 +57,12 @@ func VerifyEPMSignature(epmData []byte) error {
 }
 
 // verifyEPMSignatureAgainstKeys tries each signing key in the EPM, dispatching on
-// its ADDRESS_TYPE. ed25519 (empty or "ed25519") is the default fast path;
-// secp256k1 signing keys are verified as ECDSA-DER over sha256(payload). Exactly
-// one signing key produced SIGNATURE, so accepting on the first that verifies is
-// correct, and ed25519 is tried first to preserve the 25519 default.
+// its ALGORITHM (§21: the verifier dispatches on ALGORITHM, never on
+// ADDRESS_TYPE, which is an address-format tag). ed25519 (empty or "ed25519") is
+// the default fast path; secp256k1 signing keys are verified as ECDSA-DER over
+// sha256(payload). Exactly one signing key produced SIGNATURE, so accepting on
+// the first that verifies is correct, and ed25519 is tried first to preserve
+// the 25519 default.
 func verifyEPMSignatureAgainstKeys(epmRecord *EPM.EPM, payload, signature []byte) bool {
 	key := new(EPM.CryptoKey)
 	for i := 0; i < epmRecord.KEYSLength(); i++ {
@@ -71,7 +73,7 @@ func verifyEPMSignatureAgainstKeys(epmRecord *EPM.EPM, payload, signature []byte
 		if err != nil {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(string(key.ADDRESS_TYPE()))) {
+		switch strings.ToLower(strings.TrimSpace(string(key.ALGORITHM()))) {
 		case "", "ed25519":
 			if len(pub) == ed25519.PublicKeySize && len(signature) == ed25519.SignatureSize &&
 				ed25519.Verify(ed25519.PublicKey(pub), payload, signature) {
@@ -163,6 +165,17 @@ func canonicalSigningContentFromEPM(epmRecord *EPM.EPM) ([]byte, error) {
 			addBytesString(entry, "XPUB", key.XPUB())
 			addBytesString(entry, "ADDRESS_TYPE", key.ADDRESS_TYPE())
 			addBytesString(entry, "KEY_ADDRESS", key.KEY_ADDRESS())
+			// §21 / canonical-serialization annex rule 6: KEY_PATH, ALGORITHM
+			// and ENCODING participate in the JCS preimage. They were absent
+			// here, which would have made post-flip records carrying
+			// ALGORITHM fail Go-side verification (Themis finding). Under §21
+			// published records carry no XPUB/KEY_ADDRESS/KEY_PATH, so
+			// addBytesString's empty-skip omits them naturally; pre-flip
+			// records that DO carry them still verify (annex §3: verification
+			// is over stored order).
+			addBytesString(entry, "KEY_PATH", key.KEY_PATH())
+			addBytesString(entry, "ALGORITHM", key.ALGORITHM())
+			addBytesString(entry, "ENCODING", key.ENCODING())
 			switch key.KEY_TYPE() {
 			case EPM.KeyTypeSigning:
 				entry["KEY_TYPE"] = "Signing"

@@ -50,11 +50,13 @@ func TestGetNodeEPMJSONIncludesSecp256k1IdentitySigningKey(t *testing.T) {
 			if got, want := key["public_key"], derived.SigningPublicKey; got != want {
 				t.Fatalf("public_key = %v, want %q", got, want)
 			}
-			if got, want := key["key_address"], derived.SigningKeyPath; got != want {
-				t.Fatalf("key_address = %v, want %q", got, want)
+			// §21: key_address and xpub are private — suppressed from the
+			// published JSON projection.
+			if key["key_address"] != nil {
+				t.Fatalf("key_address = %v, want nil (private under §21)", key["key_address"])
 			}
-			if got, want := key["xpub"], derived.XPub; got != want {
-				t.Fatalf("xpub = %v, want %q", got, want)
+			if key["xpub"] != nil {
+				t.Fatalf("xpub = %v, want nil (private under §21)", key["xpub"])
 			}
 			return
 		}
@@ -290,8 +292,9 @@ func TestNodeEPMUsesRuntimeEd25519SigningKeyWithoutHDIdentity(t *testing.T) {
 			if got, want := key["public_key"], hex.EncodeToString(pub); got != want {
 				t.Fatalf("public_key = %v, want %q", got, want)
 			}
-			if got, want := key["key_address"], "sdn/dataset-publication/v1"; got != want {
-				t.Fatalf("key_address = %v, want %q", got, want)
+			// §21: key_address is private — suppressed from the published JSON.
+			if key["key_address"] != nil {
+				t.Fatalf("key_address = %v, want nil (private under §21)", key["key_address"])
 			}
 			return
 		}
@@ -322,17 +325,19 @@ func TestGetNodeEPMJSONProjectsRuntimeIdentityFields(t *testing.T) {
 	if got, want := info["signing_pubkey_hex"], hex.EncodeToString(signingPubBytes); got != want {
 		t.Fatalf("signing_pubkey_hex = %v, want %q", got, want)
 	}
-	if got, want := info["signing_key_path"], identity.SigningKeyPath; got != want {
-		t.Fatalf("signing_key_path = %v, want %q", got, want)
+	// §21: signing_key_path, encryption_key_path and xpub are private —
+	// suppressed from the published JSON projection.
+	if info["signing_key_path"] != nil {
+		t.Fatalf("signing_key_path = %v, want nil (private under §21)", info["signing_key_path"])
 	}
 	if got, want := info["encryption_pubkey_hex"], hex.EncodeToString(identity.EncryptionPub); got != want {
 		t.Fatalf("encryption_pubkey_hex = %v, want %q", got, want)
 	}
-	if got, want := info["encryption_key_path"], identity.EncryptionKeyPath; got != want {
-		t.Fatalf("encryption_key_path = %v, want %q", got, want)
+	if info["encryption_key_path"] != nil {
+		t.Fatalf("encryption_key_path = %v, want nil (private under §21)", info["encryption_key_path"])
 	}
-	if got, want := info["xpub"], "xpub-test"; got != want {
-		t.Fatalf("xpub = %v, want %q", got, want)
+	if info["xpub"] != nil {
+		t.Fatalf("xpub = %v, want nil (private under §21)", info["xpub"])
 	}
 	if got, want := info["directory_kind"], "node"; got != want {
 		t.Fatalf("directory_kind = %v, want %q", got, want)
@@ -461,7 +466,7 @@ func TestNodeVCardIncludesDirectoryMetadataAndPhoto(t *testing.T) {
 	}
 }
 
-func TestNodeVCardCarriesTheVerificationChainWithoutKeyMaterial(t *testing.T) {
+func TestNodeVCardCarriesTheVerificationChainWithLiteralKeys(t *testing.T) {
 	t.Parallel()
 
 	identity, err := testDerivedIdentity()
@@ -469,13 +474,6 @@ func TestNodeVCardCarriesTheVerificationChainWithoutKeyMaterial(t *testing.T) {
 		t.Fatalf("testDerivedIdentity failed: %v", err)
 	}
 
-	// A REAL account xpub, not the "xpub-test" placeholder this test used until
-	// task sdn-vcf-duplicate-sign-alias. The placeholder does not parse, so the
-	// service fell back to publishing keys with no derivation, and the xpub /
-	// sign / encrypt aliases asserted below were only satisfiable because the
-	// builder falsely stamped the unparseable string onto the Ed25519 key. The
-	// aliases are a projection of real derivations, so the fixture has to carry
-	// one.
 	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, validTestXPub, t.TempDir())
 	if err := service.Init(); err != nil {
 		t.Fatalf("Init failed: %v", err)
@@ -506,26 +504,25 @@ func TestNodeVCardCarriesTheVerificationChainWithoutKeyMaterial(t *testing.T) {
 	if strings.Contains(unfolded, "Binary EPM") {
 		t.Fatalf("node vCard still embeds the serialized EPM: %s", vcard)
 	}
+	// §21 (2026-08-19): the sign/encrypt aliases carry LITERAL KEY BYTES
+	// (b64url), not derivation paths. The xpub alias is RETIRED — it must
+	// not appear on the card.
+	for _, required := range []string{
+		"@sign.spacedatanetwork.org",
+		"@encrypt.spacedatanetwork.org",
+	} {
+		if !strings.Contains(unfolded, required) {
+			t.Fatalf("vCard missing literal-key alias %q: %s", required, vcard)
+		}
+	}
+	if strings.Contains(unfolded, "@xpub.spacedatanetwork.org") {
+		t.Fatalf("vCard still carries the retired xpub alias: %s", vcard)
+	}
 	for _, banned := range []string{
 		"signing.spacedatanetwork.org", "encryption.spacedatanetwork.org"} {
 		if strings.Contains(unfolded, banned) {
-			t.Fatalf("node vCard still carries key material %q: %s", banned, vcard)
+			t.Fatalf("node vCard still carries legacy key material %q: %s", banned, vcard)
 		}
-	}
-	// The signing/encryption PUBLIC KEY aliases that used to be asserted here
-	// are gone with the rest of the key material. The chain aliases that remain
-	// — xpub, the sign/encrypt DERIVATION PATHS, epmsig/epmts/epmcid — plus the
-	// chain ADDRESS aliases below are what the identity contract actually needs:
-	// addresses are derived public identifiers, not signing/encryption key
-	// bytes, and they stay per the locked vCard alias contract.
-	if !strings.Contains(unfolded, "@xpub.spacedatanetwork.org") {
-		t.Fatalf("vCard missing the xpub alias — the verifier derives keys from it: %s", vcard)
-	}
-	if !strings.Contains(unfolded, "@sign.spacedatanetwork.org") {
-		t.Fatalf("vCard missing the signing DERIVATION PATH alias: %s", vcard)
-	}
-	if !strings.Contains(unfolded, "@encrypt.spacedatanetwork.org") {
-		t.Fatalf("vCard missing the encryption DERIVATION PATH alias: %s", vcard)
 	}
 	if !strings.Contains(unfolded, identity.Addresses.Bitcoin.Address+"@bitcoin.spacedatanetwork.org") {
 		t.Fatalf("vCard missing iPhone-visible bitcoin address alias: %s", vcard)
@@ -569,7 +566,7 @@ func TestDirectoryRecordJSONEmbedsBinaryEPMForVCFExport(t *testing.T) {
 	}
 }
 
-func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
+func TestNodeQRUsesCompactContactAndLiteralKeyVCard(t *testing.T) {
 	t.Parallel()
 
 	identity, err := testDerivedIdentity()
@@ -623,69 +620,43 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 			t.Fatalf("QR vCard missing %q: %s", required, qrVCard)
 		}
 	}
-	xpubAlias := "EMAIL;type=INTERNET;type=xpub:" + xpub + "@xpub.spacedatanetwork.org"
-	if got := strings.Count(unfolded, xpubAlias); got != 1 {
-		t.Fatalf("QR vCard xpub alias count = %d, want 1: %s", got, qrVCard)
-	}
-	// Owner directive (nst-qr-identity-verify): the scannable card carries
-	// the COMPLETE verification chain as email aliases — the keys' HD
-	// derivation paths (base64url of the EPM KEYS' KEY_ADDRESS), the EPM
-	// record's embedded signature + timestamp, and the record CID.
-	//
-	// OWNER RULE, task sdn-vcf-duplicate-sign-alias (2026-07-29): exactly ONE
-	// sign alias, carrying the xpub-DERIVABLE signing path. This assertion
-	// previously demanded the alias for identity.SigningKeyPath — the Ed25519
-	// key's all-hardened path — on the reasoning that "a verifier needs those
-	// exact bytes". That reasoning was the defect: the alias carries the PATH,
-	// not the bytes, and no xpub can derive a hardened SLIP-10 Ed25519 path, so
-	// the card shipped two indistinguishable sign rows and the owner scanned
-	// them. The Ed25519 key's BYTES still ride the record, which epmcid binds.
+	// §21 (2026-08-19): the scannable card carries the sign/encrypt LITERAL
+	// KEY aliases (b64url of the hex-decoded public key bytes), not xpub or
+	// derivation paths. Exactly ONE sign alias + ONE encrypt alias
+	// (one-row invariant, sdn-vcf-duplicate-sign-alias precedent).
 	derivedForCard, ok := PublicIdentityKeysFromXPub(xpub, identity.Account)
 	if !ok {
 		t.Fatal("PublicIdentityKeysFromXPub failed")
 	}
+	signKeyBytes, decErr := hex.DecodeString(derivedForCard.SigningPublicKey)
+	if decErr != nil {
+		t.Fatalf("decode signing pubkey: %v", decErr)
+	}
 	signAlias := "EMAIL;type=INTERNET;type=sign:" +
-		base64.RawURLEncoding.EncodeToString([]byte(derivedForCard.SigningKeyPath)) +
+		base64.RawURLEncoding.EncodeToString(signKeyBytes) +
 		"@sign.spacedatanetwork.org"
 	if got := strings.Count(unfolded, signAlias); got != 1 {
-		t.Fatalf("QR vCard derivable sign alias count = %d, want 1: %s", got, qrVCard)
+		t.Fatalf("QR vCard sign literal-key alias count = %d, want 1: %s", got, qrVCard)
 	}
 	if got := strings.Count(unfolded, "@sign.spacedatanetwork.org"); got != 1 {
-		t.Fatalf("QR vCard sign alias count = %d, want exactly 1 (the owner-scanned duplicate): %s", got, qrVCard)
+		t.Fatalf("QR vCard sign alias count = %d, want exactly 1: %s", got, qrVCard)
 	}
-	if hardened := base64.RawURLEncoding.EncodeToString([]byte(identity.SigningKeyPath)); strings.Contains(unfolded, hardened) {
-		t.Fatalf("QR vCard still advertises the hardened Ed25519 path %q: %s", identity.SigningKeyPath, qrVCard)
-	}
-
-	// OWNER RULE: exactly ONE encrypt alias, carrying the EPM's single
-	// advertised (xpub-derivable secp256k1) encryption path — never the
-	// hardened X25519 path, which no xpub holder could verify.
-	advertisedEncPath := ""
-	encAliasCount := strings.Count(unfolded, "@encrypt.spacedatanetwork.org")
-	{
-		root := EPM.GetSizePrefixedRootAsEPM(service.GetNodeEPM(), 0)
-		var k EPM.CryptoKey
-		for i := 0; i < root.KEYSLength(); i++ {
-			if root.KEYS(&k, i) && k.KEY_TYPE() == EPM.KeyTypeEncryption {
-				advertisedEncPath = string(k.KEY_ADDRESS())
-				break
-			}
-		}
-	}
-	if advertisedEncPath == "" {
-		t.Fatal("EPM advertises no encryption key")
-	}
-	if advertisedEncPath == identity.EncryptionKeyPath {
-		t.Errorf("card carries the hardened X25519 path %q", advertisedEncPath)
+	encKeyBytes, decErr := hex.DecodeString(derivedForCard.EncryptionPublicKey)
+	if decErr != nil {
+		t.Fatalf("decode encryption pubkey: %v", decErr)
 	}
 	encAlias := "EMAIL;type=INTERNET;type=encrypt:" +
-		base64.RawURLEncoding.EncodeToString([]byte(advertisedEncPath)) +
+		base64.RawURLEncoding.EncodeToString(encKeyBytes) +
 		"@encrypt.spacedatanetwork.org"
 	if got := strings.Count(unfolded, encAlias); got != 1 {
-		t.Fatalf("QR vCard encrypt alias count = %d, want 1: %s", got, qrVCard)
+		t.Fatalf("QR vCard encrypt literal-key alias count = %d, want 1: %s", got, qrVCard)
 	}
-	if encAliasCount != 1 {
-		t.Fatalf("QR vCard has %d encrypt aliases, want exactly 1: %s", encAliasCount, qrVCard)
+	if got := strings.Count(unfolded, "@encrypt.spacedatanetwork.org"); got != 1 {
+		t.Fatalf("QR vCard encrypt alias count = %d, want exactly 1: %s", got, qrVCard)
+	}
+	// The xpub alias is RETIRED under §21 — it must not appear.
+	if strings.Contains(unfolded, "@xpub.spacedatanetwork.org") {
+		t.Fatalf("QR vCard still carries the retired xpub alias: %s", qrVCard)
 	}
 	epmBytes := service.GetNodeEPM()
 	epmRecord := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
@@ -705,6 +676,7 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 	for _, forbidden := range []string{
 		"PRODID", "ORG:", "TITLE:", "ROLE:", "UID:", "X-SDN-", "X-ABRELATEDNAMES:",
 		"@signing.spacedatanetwork.org", "@encryption.spacedatanetwork.org",
+		"@xpub.spacedatanetwork.org",
 		"@bitcoin.spacedatanetwork.org", "@ethereum.spacedatanetwork.org", "@solana.spacedatanetwork.org",
 		"@epmts.spacedatanetwork.org", "@epmcid.spacedatanetwork.org",
 		identity.PeerID.String(),
@@ -713,9 +685,8 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 			t.Fatalf("QR vCard contains forbidden %q: %s", forbidden, qrVCard)
 		}
 	}
-	// Density budget: contact fields + xpub (111B) + two b64url paths + sig
-	// (86B), folded. Dropping epmts/epmcid bought back ~150 bytes of scan
-	// density; hold the ceiling well under the old 1400B lock.
+	// Density budget: contact fields + two b64url key aliases + sig (86B),
+	// folded. Hold the ceiling well under the 1200B lock.
 	if got := len([]byte(qrVCard)); got > 1200 {
 		t.Fatalf("QR vCard is %d bytes, want <= 1200: %s", got, qrVCard)
 	}
@@ -764,20 +735,26 @@ func TestNodeQRVCardDoesNotLeakPeerIDWithoutName(t *testing.T) {
 	}
 }
 
-func TestNodeQRVCardRequiresXPub(t *testing.T) {
+func TestNodeQRVCardWorksWithoutXPub(t *testing.T) {
 	t.Parallel()
 
 	identity, err := testDerivedIdentity()
 	if err != nil {
 		t.Fatalf("testDerivedIdentity failed: %v", err)
 	}
+	// §21: the QR card no longer requires an xpub — the aliases carry literal
+	// key bytes from the EPM record, not a derivation path that needs an xpub.
 	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "", t.TempDir())
 	if err := service.Init(); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	if _, err := service.GetNodeQRVCard(); err == nil || !strings.Contains(err.Error(), "HD extended public key") {
-		t.Fatalf("GetNodeQRVCard error = %v, want required HD extended public key error", err)
+	card, err := service.GetNodeQRVCard()
+	if err != nil {
+		t.Fatalf("GetNodeQRVCard failed without xpub (§21): %v", err)
+	}
+	if !strings.Contains(card, "BEGIN:VCARD") {
+		t.Fatalf("QR card is not a vCard: %s", card)
 	}
 }
 

@@ -787,29 +787,16 @@ func (s *Service) GetNodeQRVCard() (string, error) {
 	if s.epmBytes == nil {
 		return "", fmt.Errorf("no EPM available")
 	}
-	xpub := strings.TrimSpace(s.xpub)
-	if xpub == "" {
-		return "", fmt.Errorf("HD extended public key is required for node QR")
-	}
-	if _, err := parseXPub(xpub); err != nil {
-		return "", fmt.Errorf("HD extended public key is required for node QR: %w", err)
-	}
 
 	// The compact card (contact fields + the complete verification-chain
 	// email aliases sourced from the EPM record itself) is shared with the
 	// anonymous /identity/<peerId>.qr.vcf surface via internal/vcard.
+	// §21 (2026-08-19): the aliases carry literal key bytes; the xpub is no
+	// longer injected — it is private, and the card's sign/encrypt aliases
+	// are the verification material.
 	card, err := vcard.CompactQRVCard(s.epmBytes)
 	if err != nil {
 		return "", err
-	}
-	// Older EPMs may lack XPUB in their KEYS entries; the node's configured
-	// xpub is authoritative, so guarantee the alias is present. Check the
-	// UNFOLDED card — RFC 6350 folding can split the domain across
-	// physical lines (the colon-anchored-needle trap).
-	if !strings.Contains(unfoldVCardText(card), "@xpub.spacedatanetwork.org") {
-		card = insertVCardLines(card, []string{
-			foldNodeQRVCardLine("EMAIL;TYPE=INTERNET;TYPE=xpub:" + xpub + "@xpub.spacedatanetwork.org"),
-		})
 	}
 	return card, nil
 }
@@ -818,17 +805,14 @@ func (s *Service) decorateNodeVCardLocked(vcardStr string) string {
 	// OWNER RULING 2026-08-04: no X-SDN-* properties on any card. The
 	// directory kind, peer id, EPM CID and bitcoin address lines that used
 	// to be spliced in here are gone — the peer id is derivable from the
-	// xpub alias (the point of the alias paradigm), the EPM CID rides in the
+	// published key (§21: peerIdFromPublicKey), the EPM CID rides in the
 	// epmcid alias on the full card, and chain addresses ride in their own
 	// EMAIL aliases below. Only official vCard properties remain.
 	var lines []string
 	lines = append(lines, nodeIdentityAddressEmailAliasLines(s.identity)...)
-	// The verification-chain aliases (xpub, sign/encrypt derivation paths,
-	// epmsig/epmts/epmcid) are emitted by EPMToVCard from the EPM record
-	// itself; only guarantee the xpub alias when the record's KEYS lack it.
-	if xpub := strings.TrimSpace(s.xpub); xpub != "" && !strings.Contains(unfoldVCardText(vcardStr), "@xpub.spacedatanetwork.org") {
-		lines = append(lines, "EMAIL;type=INTERNET;type=xpub:"+xpub+"@xpub.spacedatanetwork.org")
-	}
+	// §21: the xpub alias is retired. The verification-chain aliases
+	// (sign/encrypt literal keys, epmsig/epmts/epmcid) are emitted by
+	// EPMToVCard from the EPM record itself; nothing is force-injected here.
 	if s.profile != nil {
 		if photoLine := vcardPhotoLine(s.profile.PhotoDataURL); photoLine != "" {
 			lines = append(lines, photoLine)
@@ -1117,12 +1101,10 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 				if v := key.PUBLIC_KEY(); v != nil {
 					k["public_key"] = string(v)
 				}
-				if v := key.XPUB(); v != nil {
-					k["xpub"] = string(v)
-				}
-				if v := key.KEY_ADDRESS(); v != nil {
-					k["key_address"] = string(v)
-				}
+				// §21 (2026-08-19): XPUB, KEY_ADDRESS and KEY_PATH are
+				// PRIVATE / operational — suppressed from the published JSON
+				// projection. A published record carries the literal
+				// PUBLIC_KEY and nothing about how it was derived.
 				if v := key.ADDRESS_TYPE(); v != nil {
 					k["address_type"] = string(v)
 				}
@@ -1131,6 +1113,18 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 					k["key_type"] = "signing"
 				case EPM.KeyTypeEncryption:
 					k["key_type"] = "encryption"
+				}
+				// ALGORITHM and ENCODING participate in the JCS signing
+				// preimage (canonical-serialization annex rule 6) and in
+				// curve dispatch; they were absent from this projection, which
+				// would have made post-flip records carrying ALGORITHM fail
+				// Go-side verification (Themis finding, task
+				// sds-epm-literal-key-publication-profile).
+				if v := key.ALGORITHM(); v != nil {
+					k["algorithm"] = string(v)
+				}
+				if v := key.ENCODING(); v != nil {
+					k["encoding"] = string(v)
 				}
 				keys = append(keys, k)
 			}
@@ -1233,22 +1227,15 @@ func (s *Service) overlayRuntimeIdentityFields(result map[string]interface{}) {
 	} else if strings.TrimSpace(info.EncryptionPubHex) != "" && result["encryption_pubkey_hex"] == nil {
 		result["encryption_pubkey_hex"] = info.EncryptionPubHex
 	}
-	if strings.TrimSpace(info.IdentityKeyPath) != "" && result["identity_key_path"] == nil {
-		result["identity_key_path"] = info.IdentityKeyPath
-	}
-	if hasDerived && result["signing_key_path"] == nil {
-		result["signing_key_path"] = derived.SigningKeyPath
-	} else if strings.TrimSpace(info.SigningKeyPath) != "" && result["signing_key_path"] == nil {
-		result["signing_key_path"] = info.SigningKeyPath
-	}
-	if hasDerived && result["encryption_key_path"] == nil {
-		result["encryption_key_path"] = derived.EncryptionKeyPath
-	} else if strings.TrimSpace(info.EncryptionKeyPath) != "" && result["encryption_key_path"] == nil {
-		result["encryption_key_path"] = info.EncryptionKeyPath
-	}
-	if strings.TrimSpace(s.xpub) != "" && result["xpub"] == nil {
-		result["xpub"] = s.xpub
-	}
+	// §21 (2026-08-19): derivation paths and the xpub are PRIVATE. This
+	// endpoint is anonymous (§6: GET /api/node/epm/json), so the key paths
+	// and xpub that used to overlay here are suppressed from the published
+	// surface. The literal public keys above ARE the published identity; the
+	// paths stay in the operator's private config (AdvertisedEncryptionKey /
+	// EffectiveKeyPaths, escrow/recovery-facing — see §21.2).
+	//
+	// (identity_key_path / signing_key_path / encryption_key_path / xpub
+	// intentionally NOT emitted here.)
 	if info.Addresses != nil {
 		if info.Addresses.Bitcoin != nil {
 			if strings.TrimSpace(info.Addresses.Bitcoin.Address) != "" && result["bitcoin_address"] == nil {

@@ -201,7 +201,7 @@ func TestQRToEPM(t *testing.T) {
 //
 // OWNER DIRECTIVE 2026-07-27: the QR no longer transports the serialized record.
 // EPMToQR renders the compact identity card — contact fields plus the
-// verification chain (xpub, sign/encrypt derivation paths, epmsig/epmts/epmcid)
+// verification chain (§21: sign/encrypt literal-key aliases, epmsig/epmts/epmcid)
 // — and a verifier FETCHES the authoritative record by its CID instead of
 // unpacking a copy carried alongside.
 //
@@ -209,7 +209,7 @@ func TestQRToEPM(t *testing.T) {
 // asserting one would be asserting the defect. What must hold is that the card
 // scans, carries the chain, and carries no key bytes or embedded record.
 func TestEPMQRCarriesTheCompactIdentityCard(t *testing.T) {
-	epmBytes := createDerivationPathEPM(t)
+	epmBytes := createLiteralKeyEPM(t)
 
 	pngData, err := EPMToQR(epmBytes, 512)
 	if err != nil {
@@ -225,10 +225,10 @@ func TestEPMQRCarriesTheCompactIdentityCard(t *testing.T) {
 	if !strings.Contains(unfolded, "BEGIN:VCARD") || !strings.Contains(unfolded, "END:VCARD") {
 		t.Fatalf("scanned payload is not a vCard:\n%s", scanned)
 	}
-	// The scannable identity (owner ruling 2026-08-04) is EXACTLY the xpub
-	// plus the two derivation paths plus the signature — nothing more.
+	// The scannable identity (§21, 2026-08-19) is the two literal-key
+	// aliases (sign + encrypt) plus the signature — nothing more. The xpub
+	// alias is retired; the local parts are b64url(key bytes).
 	for _, required := range []string{
-		"xpub.spacedatanetwork.org",
 		"sign.spacedatanetwork.org",
 		"encrypt.spacedatanetwork.org",
 		"epmsig.spacedatanetwork.org",
@@ -237,12 +237,14 @@ func TestEPMQRCarriesTheCompactIdentityCard(t *testing.T) {
 			t.Fatalf("QR card is missing chain alias %q:\n%s", required, scanned)
 		}
 	}
-	// And it must carry neither key bytes, nor the record, nor the aliases
-	// dropped for scan density (epmts/epmcid — both recoverable from the
-	// record the signature binds), nor ANY extension property.
+	// And it must carry neither the embedded record, nor the xpub alias
+	// (retired under §21), nor the aliases dropped for scan density
+	// (epmts/epmcid — both recoverable from the record the signature binds),
+	// nor ANY extension property.
 	for _, banned := range []string{
 		"X-SDN-EPM-B64", "Binary EPM", "\nX-", "\r\nX-",
 		"signing.spacedatanetwork.org", "encryption.spacedatanetwork.org",
+		"xpub.spacedatanetwork.org",
 		"epmts.spacedatanetwork.org", "epmcid.spacedatanetwork.org",
 	} {
 		if strings.Contains(unfolded, banned) {

@@ -55,21 +55,20 @@ const (
 	// Owner rule (graph task nst-qr-identity-verify): vCard v3 importers
 	// (iPhone/Android) drop X-* properties, so EVERY piece of the EPM
 	// verification chain must ride in EMAIL aliases shaped
-	// <value>@<kind>.spacedatanetwork.org. The kinds below complete the
-	// chain the existing signing/encryption/xpub/chain aliases started:
-	// sign/encrypt carry the keys' HD derivation paths (base64url — path
-	// characters are not email-safe), epmsig/epmts carry the EPM record's
-	// embedded signature (base64url of the raw bytes) and its timestamp,
-	// and epmcid carries the canonical CID of the serialized record. An
-	// importer can then fetch the record (by CID or /identity/<peer>.epm),
-	// derive the signing public key from the xpub at the sign path, match
-	// it against the record's KEYS, and verify the signature.
-	signPathAliasDomain    = "sign.spacedatanetwork.org"
-	encryptPathAliasDomain = "encrypt.spacedatanetwork.org"
-	epmSigAliasDomain      = "epmsig.spacedatanetwork.org"
-	epmTsAliasDomain       = "epmts.spacedatanetwork.org"
-	epmCidAliasDomain      = "epmcid.spacedatanetwork.org"
-	xpubAliasDomain        = "xpub.spacedatanetwork.org"
+	// <value>@<kind>.spacedatanetwork.org.
+	//
+	// §21 (owner ruling 2026-08-19): the sign/encrypt aliases carry the
+	// LITERAL PUBLIC KEY BYTES (base64url), not the derivation path. xpub and
+	// derivation paths are PRIVATE — a verifier reads the key from the alias
+	// and the record's KEYS[], fetches the record by CID, and verifies the
+	// signature against the published key. The xpub alias is RETIRED. Domains
+	// are UNCHANGED (sign./encrypt.); the constants are renamed in code only
+	// to say what the local part now is (key bytes, not a path).
+	signKeyAliasDomain    = "sign.spacedatanetwork.org"
+	encryptKeyAliasDomain = "encrypt.spacedatanetwork.org"
+	epmSigAliasDomain     = "epmsig.spacedatanetwork.org"
+	epmTsAliasDomain      = "epmts.spacedatanetwork.org"
+	epmCidAliasDomain     = "epmcid.spacedatanetwork.org"
 	// PeerAliasDomain carries the libp2p peer id for nodes that have not
 	// published an EPM yet (their compact card would otherwise hold no
 	// machine identity at all).
@@ -305,13 +304,14 @@ func AppleIdentityEmailAliasLinesFromEPM(epm *EPM.EPM, epmBytes []byte, kinds ..
 
 // CompactQRVCardKinds is the alias-kind allowlist for scannable QR cards.
 // OWNER RULING 2026-08-04 ("there's too much data, I can't scan the QR —
-// just the fields I requested, with the paths for digital signature and
-// encryption like the current node's EPM card"): exactly the xpub, the two
-// HD derivation-path aliases, and the EPM signature. epmts/epmcid were
-// dropped from the QR — both are recoverable from the record the signature
-// already binds, and every alias line costs scan density. The downloadable
-// .vcf keeps the full alias chain.
-var CompactQRVCardKinds = []string{"xpub", "sign", "encrypt", "epmsig"}
+// just the fields I requested, with the fields for digital signature and
+// encryption like the current node's EPM card"): the two literal-key aliases
+// and the EPM signature. §21 (2026-08-19) retired the xpub alias — the local
+// parts are now b64url(key bytes), not derivation paths, so the xpub is no
+// longer on the card at all. epmts/epmcid stay dropped from the QR — both are
+// recoverable from the record the signature already binds, and every alias
+// line costs scan density. The downloadable .vcf keeps the full alias chain.
+var CompactQRVCardKinds = []string{"sign", "encrypt", "epmsig"}
 
 // CompactQRVCard builds the scannable VERSION:3.0 contact card for an EPM:
 // structured name + human contact fields (email, phone, work address) plus
@@ -394,9 +394,12 @@ func CompactQRVCard(epmBytes []byte) (string, error) {
 }
 
 // CardCarriesCryptoIdentity reports whether a vCard string carries the
-// minimum crypto identity a scannable card must have (OWNER LAW 2026-07-31):
-// the xpub alias, both HD key-path aliases (sign + encrypt), and the EPM
-// signature chain (epmsig). Cards failing this must never be served as QR.
+// minimum crypto identity a scannable card must have (OWNER LAW 2026-07-31;
+// §21 amendment 2026-08-19): the two literal-key aliases (sign + encrypt) and
+// the EPM signature chain (epmsig). The xpub alias is no longer required — it
+// is retired under §21 (the local parts are now key bytes, not derivation
+// paths, so the xpub is not on the card). Cards failing this must never be
+// served as QR.
 func CardCarriesCryptoIdentity(card string) bool {
 	// Alias lines are folded at 75 octets, so the needle must not span the
 	// fold point; the "@<domain>" needles sit directly after short local
@@ -404,9 +407,8 @@ func CardCarriesCryptoIdentity(card string) bool {
 	// UNFOLDED text to be safe.
 	unfolded := strings.ReplaceAll(strings.ReplaceAll(card, "\r\n ", ""), "\n ", "")
 	for _, domain := range []string{
-		"@" + xpubAliasDomain,
-		"@" + signPathAliasDomain,
-		"@" + encryptPathAliasDomain,
+		"@" + signKeyAliasDomain,
+		"@" + encryptKeyAliasDomain,
 		"@" + epmSigAliasDomain,
 	} {
 		if !strings.Contains(unfolded, domain) {
@@ -418,47 +420,39 @@ func CardCarriesCryptoIdentity(card string) bool {
 
 // CompactQRVCardForPeer was the minimal name+peer-id scannable card for
 // peers without an EPM. DELETED under owner law 2026-07-31: a QR card
-// without the full crypto identity (xpub + sign/encrypt HD paths + epmsig
+// without the full crypto identity (sign/encrypt literal keys + epmsig
 // chain) must never exist — CardCarriesCryptoIdentity gates every QR
 // serving path, and a peer we hold no signed EPM for gets NO card at all.
 
-// isPubliclyDerivablePath reports whether an HD path can be reached from an
-// ancestor extended PUBLIC key by BIP-32 CKDpub alone.
-//
-// The test is depth-free and needs no base58 decode: a CryptoKey's XPUB is a
-// proper ancestor of its KEY_ADDRESS, so a verifier must run CKDpub for at
-// least the path's LAST element — and CKDpub cannot produce a HARDENED child at
-// all. A hardened final element therefore makes the key underivable from any
-// xpub, whatever that xpub's depth. (SLIP-10 Ed25519 goes further and has no
-// public derivation for any element, hardened or not; its paths are hardened
-// throughout, so this same test rejects them.)
-//
-// Anything that is not an "m/..." HD path — the node's non-HD runtime signing
-// key at "sdn/runtime-signing", say — is not derivable either, and gets no
-// alias.
-func isPubliclyDerivablePath(path string) bool {
-	elements := strings.Split(strings.TrimSpace(path), "/")
-	if len(elements) < 2 {
-		return false
+// hexPublicKeyToAlias decodes a hex-encoded PUBLIC_KEY (as carried in the EPM
+// record's CryptoKey) to raw bytes and re-encodes as base64url — the email-safe
+// local part the §21 sign/encrypt aliases carry. Returns ("", false) when the
+// hex is absent or undecodable, so the caller simply skips the alias rather
+// than emitting a dead row.
+func hexPublicKeyToAlias(hexKey string) (string, bool) {
+	hexKey = strings.TrimSpace(hexKey)
+	if hexKey == "" {
+		return "", false
 	}
-	if root := elements[0]; root != "m" && root != "M" {
-		return false
+	raw, err := hex.DecodeString(hexKey)
+	if err != nil || len(raw) == 0 {
+		return "", false
 	}
-	last := elements[len(elements)-1]
-	if last == "" {
-		return false
-	}
-	switch last[len(last)-1] {
-	case '\'', 'h', 'H':
-		return false
-	}
-	return true
+	return base64.RawURLEncoding.EncodeToString(raw), true
 }
 
 func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM bool) []appleIdentityLine {
 	var entries []appleIdentityLine
 
 	key := new(EPM.CryptoKey)
+	// ONE-ROW INVARIANT (§21): exactly ONE sign alias (the first signing key
+	// — the one that produced SIGNATURE) + ONE encrypt alias (the first
+	// encryption key). A record that carries two of the same KEY_TYPE must
+	// yield one row, not two: two rows of the same alias kind are
+	// indistinguishable to every consumer that scans the card
+	// (sdn-vcf-duplicate-sign-alias precedent).
+	signEmitted := false
+	encryptEmitted := false
 	for i := 0; i < epm.KEYSLength(); i++ {
 		if !epm.KEYS(key, i) {
 			continue
@@ -469,61 +463,41 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 		}
 
 		addressType := strings.TrimSpace(string(key.ADDRESS_TYPE()))
-		keyPath := strings.TrimSpace(string(key.KEY_ADDRESS()))
-		keyXPub := strings.TrimSpace(string(key.XPUB()))
-		pathAlias := base64.RawURLEncoding.EncodeToString([]byte(keyPath))
-		// A derivation-path alias is only worth the QR bytes when the SAME
-		// record entry carries the XPUB the path resolves against: the whole
-		// point of the alias is "derive the key from xpub + path". An entry
-		// with no XPUB is asserting no derivation, so its path is unresolvable
-		// from the card and the alias would be dead weight — and worse than
-		// dead weight when it lands as a SECOND, indistinguishable row of the
-		// same alias kind (owner report 2026-07-29, task
-		// sdn-vcf-duplicate-sign-alias: two sign@ rows, one of them an
-		// all-hardened Ed25519 path that no xpub can ever produce).
-		//
-		// This is the same rule the owner already ruled on the encryption side
-		// (ONE ENCRYPTION PATH, epm/service.go — the hardened X25519 key is
-		// deliberately not advertised); it is now symmetric for signing, and
-		// it is structural rather than a per-algorithm special case. Keys
-		// without an advertised derivation stay fully discoverable from the
-		// record itself, which the epmcid alias binds to this card.
-		derivable := keyXPub != "" && isPubliclyDerivablePath(keyPath)
+		// §21 (owner ruling 2026-08-19): the sign/encrypt aliases carry the
+		// LITERAL PUBLIC KEY BYTES (b64url of the hex-decoded key), not the
+		// derivation path. xpub and KEY_PATH are private — a verifier reads
+		// the key from this alias and the record's KEYS[], fetches the record
+		// by CID, and verifies the signature against the published key. No
+		// derivation, no derivable gate, no xpub alias.
+		keyAlias, ok := hexPublicKeyToAlias(publicKey)
+		if !ok {
+			continue
+		}
 		switch key.KEY_TYPE() {
 		case EPM.KeyTypeSigning:
-			// OWNER DIRECTIVE 2026-07-27: no key BYTES on the vCard. The
-			// "signing"/"encryption" aliases and their Apple related-name rows
-			// carried the raw public key; they are gone. What remains is the
-			// DERIVATION PATH alias below, which is what the paradigm actually
-			// needs — a verifier derives the key from xpub + path.
-			if derivable {
-				entries = append(entries, appleIdentityLine{
-					Label:       joinedLabel("Signing Key Derivation Path", addressType, keyPath),
-					Value:       pathAlias,
-					EmailType:   "sign",
-					EmailDomain: signPathAliasDomain,
-				})
+			if signEmitted {
+				continue
 			}
-		case EPM.KeyTypeEncryption:
-			if derivable {
-				entries = append(entries, appleIdentityLine{
-					Label:       joinedLabel("Encryption Key Derivation Path", addressType, keyPath),
-					Value:       pathAlias,
-					EmailType:   "encrypt",
-					EmailDomain: encryptPathAliasDomain,
-				})
-			}
-		default:
-			// Unclassified key: still no bytes on the card.
-		}
-
-		if xpub := strings.TrimSpace(string(key.XPUB())); xpub != "" {
 			entries = append(entries, appleIdentityLine{
-				Label:       joinedLabel("Extended Public Key", addressType, keyPath),
-				Value:       xpub,
-				EmailType:   "xpub",
-				EmailDomain: xpubAliasDomain,
+				Label:       joinedLabel("Signing Public Key", addressType, ""),
+				Value:       keyAlias,
+				EmailType:   "sign",
+				EmailDomain: signKeyAliasDomain,
 			})
+			signEmitted = true
+		case EPM.KeyTypeEncryption:
+			if encryptEmitted {
+				continue
+			}
+			entries = append(entries, appleIdentityLine{
+				Label:       joinedLabel("Encryption Public Key", addressType, ""),
+				Value:       keyAlias,
+				EmailType:   "encrypt",
+				EmailDomain: encryptKeyAliasDomain,
+			})
+			encryptEmitted = true
+		default:
+			// Unclassified key: no alias.
 		}
 	}
 

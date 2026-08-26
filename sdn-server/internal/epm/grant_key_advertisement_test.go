@@ -71,8 +71,11 @@ func TestNodeEPMAdvertisesTheGrantVerifierKey(t *testing.T) {
 			if got, _ := key["address_type"].(string); got != "ed25519" {
 				t.Fatalf("grant verifier address_type = %q, want \"ed25519\"", got)
 			}
-			if got, _ := key["key_address"].(string); got != "m/44'/0'/0'/2'/0'" {
-				t.Fatalf("grant verifier key_address = %q, want the grant derivation path", got)
+			// §21: key_address (the derivation path) is private — suppressed
+			// from the published JSON. The grant verifier's PUBLIC_KEY is still
+			// published; how it was derived is not.
+			if key["key_address"] != nil {
+				t.Fatalf("grant verifier key_address = %v, want nil (private under §21)", key["key_address"])
 			}
 			// XPUB on a CryptoKey ASSERTS public CKDpub-derivability, which is
 			// false for an all-hardened SLIP-10 Ed25519 path. Its absence is also

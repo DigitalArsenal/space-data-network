@@ -11,15 +11,18 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// buildTestEPM assembles a size-prefixed $EPM with one signing key (addrType +
+// buildTestEPM assembles a size-prefixed $EPM with one signing key (algorithm +
 // compressed/hex pubkey), ENTITY_TYPE User, timestamp, and optional SIGNATURE hex.
+// §21: the verifier dispatches on ALGORITHM, not ADDRESS_TYPE. The addrType
+// parameter is retained for callers but is now set as ALGORITHM (the curve
+// designator); ADDRESS_TYPE is an address-format tag, not a curve designator.
 func buildTestEPM(addrType, pubHex, sigHex string, ts int64) []byte {
 	b := flatbuffers.NewBuilder(256)
 	pub := b.CreateString(pubHex)
-	at := b.CreateString(addrType)
+	alg := b.CreateString(addrType)
 	EPM.CryptoKeyStart(b)
 	EPM.CryptoKeyAddPUBLIC_KEY(b, pub)
-	EPM.CryptoKeyAddADDRESS_TYPE(b, at)
+	EPM.CryptoKeyAddALGORITHM(b, alg)
 	EPM.CryptoKeyAddKEY_TYPE(b, EPM.KeyTypeSigning)
 	key := EPM.CryptoKeyEnd(b)
 
