@@ -71,8 +71,11 @@ func TestCompactHotWindowHydrationCostsOneJournalPassForEveryRoutedStandard(t *t
 	reopened := reopenDeferred(t, basePath)
 	defer reopened.Close()
 
-	if routed := len(reopened.engineRoutedSchemaNames()); routed < 100 {
-		t.Fatalf("only %d routed schemas — this test is meaningless unless the whole catalog is routed", routed)
+	// EXACT, not a floor: this store excludes nothing, so it routes the whole
+	// catalog or the one-pass claim is being measured against a shrunken set.
+	if routed := len(reopened.engineRoutedSchemaNames()); routed != len(engineRoutedSchemas) {
+		t.Fatalf("store routes %d of %d schemas — the one-pass claim must be measured over the whole catalog",
+			routed, len(engineRoutedSchemas))
 	}
 	loaded, err := reopened.HydrateEngineHotWindowFromRecordCatalog()
 	if err != nil {

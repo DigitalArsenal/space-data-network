@@ -33,10 +33,20 @@
 // updateSQLiteTable / createUnifiedView. The embedded engine is the
 // -fignore-exceptions build where a throw lowers to `unreachable`, so a
 // zero-column table poisons the runtime at boot. When a root table's very
-// first field is already non-representable, the projection therefore emits
-// that first field as a `string` column: slot 0 is still slot 0, the value is
-// junk (documented), memory safety is the engine's bounds-checked reader, and
-// the table is legal.
+// first field is already non-representable, the projection therefore emits a
+// column for it anyway: slot 0 is still slot 0 and the table is legal.
+//
+// THAT FALLBACK COLUMN IS A FIXED-WIDTH READ (`ubyte`), NOT A STRING. Slot 0
+// holds an offset to a sub-table (or a vector, or a union value), and a
+// `string` column made the vtab read a length and a byte run from wherever
+// that offset points — the interior of the sub-table, i.e. doubles — and hand
+// it to sqlite3_result_text. Those bytes reach the PUBLIC /api/v1/query JSON
+// response, whose in-wasm writer escapes only `"`, `\` and bytes < 0x20, so a
+// junk column emitted a response body that was not valid UTF-8. A one-byte
+// read cannot: it is a number, it carries no record bytes, no length inside
+// the record decides its size, and `SELECT SITE FROM LDM` returning a small
+// integer is unmistakably not the site. The whole record still travels in
+// `_data`, which is what consumers of these standards read.
 package enginecatalog
 
 import (
@@ -47,6 +57,10 @@ import (
 	"sort"
 	"strings"
 )
+
+// fallbackColumnType is the engine type of the >=1-column-invariant fallback
+// (see the package doc): a one-byte read of a slot the engine cannot decode.
+const fallbackColumnType = "ubyte"
 
 // Column is one projected SQL column: the SDS field name verbatim (SDS JSON /
 // column capitalization is never re-spelled) and the engine IDL type emitted
@@ -185,6 +199,25 @@ func parseTables(src string) map[string]string {
 	return tables
 }
 
+// includeCandidates maps an IDL include path to the file names it can have in
+// the FLATTENED embedded schema directory.
+//
+// The IDLs are authored one directory per standard and include each other as
+// "../<CODE>/main.fbs", but the node embeds them flattened as "<CODE>.fbs".
+// Resolving only filepath.Base gives "main.fbs", which exists nowhere — so
+// every include silently missed, every enum declared in a shared IDL stayed
+// unknown, and eleven standards stopped their projection at the first such
+// field and dropped every readable column after it. The directory component
+// is the standard code, which is exactly the flattened file name.
+func includeCandidates(inc string) []string {
+	base := filepath.Base(inc)
+	dir := filepath.Base(filepath.Dir(inc))
+	if base == "main.fbs" && dir != "" && dir != "." && dir != ".." && dir != string(filepath.Separator) {
+		return []string{dir + ".fbs", base}
+	}
+	return []string{base}
+}
+
 // parseSchema reads one IDL and FOLLOWS ITS INCLUDES for type declarations.
 //
 // Includes are resolved because the alternative is silently WORSE, not safer:
@@ -240,8 +273,14 @@ func parseSchema(dir, name string) (*schemaDoc, error) {
 			}
 		}
 		for _, m := range reInclude.FindAllStringSubmatch(src, -1) {
-			if err := load(filepath.Base(m[1]), false); err != nil {
-				return err
+			for _, candidate := range includeCandidates(m[1]) {
+				if _, err := os.Stat(filepath.Join(dir, candidate)); err != nil {
+					continue
+				}
+				if err := load(candidate, false); err != nil {
+					return err
+				}
+				break
 			}
 		}
 		return nil
@@ -400,10 +439,10 @@ func Build(schemaDir string, pinned map[string]bool) (*Catalog, error) {
 			// >=1 COLUMN INVARIANT. Slot 0 already holds something the engine
 			// cannot represent, and a zero-column table emits malformed DDL
 			// that TRAPS the no-exceptions engine at boot. Emit slot 0 as a
-			// string: the read is fully bounds-checked
-			// (flatsql cpp/src/database.cpp readStringField), so the worst
-			// case is a junk or NULL cell — never an out-of-bounds read.
-			cols = []Column{{Name: fields[0].name, Type: "string", Junk: true}}
+			// FIXED-WIDTH ubyte: the cell is a number, so the junk read can
+			// never carry raw record bytes into the public JSON response the
+			// way a string or a blob column did.
+			cols = []Column{{Name: fields[0].name, Type: fallbackColumnType, Junk: true}}
 		}
 		cat.Bindings = append(cat.Bindings, Binding{
 			Schema:  name,
@@ -539,11 +578,12 @@ const unroutableDoc = `// engineUnroutableSchemas records the embedded standards
 const fallbackDoc = `// engineUnprojectableFirstFields names the standards whose root table already
 // starts with a field the engine cannot represent. The >=1 COLUMN INVARIANT
 // forces a column anyway (a zero-column table emits malformed DDL and traps
-// the no-exceptions engine), so their single column reads slot 0 as a string:
-// bounds-checked and memory-safe, but NOT that field's value. Consumers of
-// these standards read ` + "`_data`" + `, which is the whole record. The entry
-// disappears by itself if the standard ever declares a representable first
-// field.
+// the no-exceptions engine), so their single column is a FIXED-WIDTH one-byte
+// read of slot 0: a number, never that field's value, and never raw record
+// bytes in the public JSON response — which is what a string column there
+// produced. Consumers of these standards read ` + "`_data`" + `, which is the
+// whole record. The entry disappears by itself if the standard ever declares a
+// representable first field.
 `
 
 const pinnedDoc = `// enginePinnedSchemas are routed, but their table text lives elsewhere as a
