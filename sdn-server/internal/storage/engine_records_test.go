@@ -1011,7 +1011,7 @@ func TestPlainControlTableCollisionExcludesTheStandardWithoutDroppingIt(t *testi
 // TestGenericHotWindowBoundsUndecoratedStandards pins the memory bound: the
 // full per-schema window belongs to the two standards this host decorates and
 // reads at provider scale; every other routed standard gets the smaller
-// generic budget, because engine_hot_window x 227 standards is not a bound on
+// generic budget, because engine_hot_window x 226 standards is not a bound on
 // anything.
 func TestGenericHotWindowBoundsUndecoratedStandards(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
@@ -1104,7 +1104,7 @@ func TestPublicQuerySurfaceCoversEveryRoutedStandard(t *testing.T) {
 		t.Fatalf("CDM surface = %+v, want a present relation with 0 records", empty)
 	}
 	// SIZE BOUND. This is a public response body: an empty standard contributes
-	// its base relation and NOTHING else, so 227 standards x sources empty
+	// its base relation and NOTHING else, so 226 standards x sources empty
 	// partitions (each repeating the full column list) never ship.
 	if _, ok := byName["CDM@cell-tower-bulk"]; ok {
 		t.Fatal("an empty standard must not list per-source partitions in the public surface")
@@ -1179,7 +1179,7 @@ func TestBootRebuildsUnifiedViewsAtMostOnce(t *testing.T) {
 }
 
 // TestEngineIngestRoutesEveryFileIDToItsOwnTable is the drift test across all
-// 227 bindings: a buffer bearing a standard's four-byte identifier lands in
+// 226 bindings: a buffer bearing a standard's four-byte identifier lands in
 // that standard's table AND IN NO OTHER. With two routed standards a
 // file-id/table mix-up was obvious; across the whole catalog it would be
 // invisible until a consumer read one standard's rows out of another's table.
@@ -1213,7 +1213,7 @@ func TestEngineIngestRoutesEveryFileIDToItsOwnTable(t *testing.T) {
 
 // TestLeftoverUnifiedViewsAreInvisibleToTheLegacyTablePaths is the ROLLBACK
 // safety proof. Rolling back to a binary that routes only $OMM and $TBS leaves
-// 225 unified views behind in the control database. That is harmless only
+// 224 unified views behind in the control database. That is harmless only
 // because every legacy/canonical-table path filters on type='table': a
 // leftover view must never be mistaken for a per-standard metadata table, or
 // the older binary would try to read record rows out of a view over vtabs it

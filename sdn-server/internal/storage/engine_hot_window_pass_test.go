@@ -62,7 +62,7 @@ func reopenDeferred(t *testing.T, basePath string) *FlatSQLStore {
 // A hot-window pass reads and decodes the ENTIRE record-catalog journal —
 // 5.5 GB and ~78 s on host-02 — because the per-schema filter is applied after
 // each frame is decoded. Scanning once per routed schema would therefore
-// multiply boot by the routed standard count (2 -> 227 here) while holding the
+// multiply boot by the routed standard count (2 -> 226 here) while holding the
 // store write lock, which is hours of stop-the-world on the production boxes.
 // The invariant is: the number of full journal reads does not depend on how
 // many standards are routed.

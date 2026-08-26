@@ -567,7 +567,7 @@ func (j *recordCatalogJournal) replayWindow(
 //
 // The pass fans out into one heap per schema, so its peak memory is the SUM of
 // the resident candidate sets, not one schema's. A box holding records in every
-// routed standard would otherwise retain 400,000 ($OMM) + 226 x 10,000 generic
+// routed standard would otherwise retain 400,000 ($OMM) + 225 x 10,000 generic
 // events at once — a gigabyte of live heap on an 8 GB droplet.
 //
 // The budget is RESERVED at window creation, against the schema's own window
@@ -720,9 +720,9 @@ func (w *recordCatalogEngineWindow) ordered() []*recordCatalogEngineCandidate {
 // AFTER the frame is decoded, so scanning once per schema costs a whole file
 // read per schema whether or not that schema owns a single record. With $OMM and
 // $TBS routed that was 2 passes; with every embedded standard routed it would be
-// 227, i.e. hours of boot under the store write lock (s.mu) with every API read,
+// 226, i.e. hours of boot under the store write lock (s.mu) with every API read,
 // ingest and p2p operation queued behind it. Fanning out into per-schema heaps
-// makes the cost of routing 227 standards the same ONE read this always paid for
+// makes the cost of routing 226 standards the same ONE read this always paid for
 // two — bounded in memory by engineHotWindowCandidateBudget and cancellable by
 // ctx.
 //
@@ -913,12 +913,27 @@ func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, st
 // loadEngineHotWindow ingests one schema's surviving candidates into the engine,
 // oldest first, and records the resulting residency.
 func (j *recordCatalogJournal) loadEngineHotWindow(store *FlatSQLStore, window *recordCatalogEngineWindow, files map[string]*os.File) (int, error) {
+	binding, routed := store.engineRoutedSchemaFor(window.schemaName)
+	if !routed {
+		store.engineResidentSet(window.schemaName, 0)
+		return 0, nil
+	}
 	loaded := 0
 	for _, c := range window.ordered() {
 		event := c.event
 		data, err := store.readStreamRecordCached(files, event.StreamPath, event.StreamOffset, event.RecordLength)
 		if err != nil {
 			log.Warnf("FlatSQL engine compact hot-window rebuild: read %s@%d: %v", event.StreamPath, event.StreamOffset, err)
+			continue
+		}
+		// Same raw-read caveat as the per-schema boot rebuild: these bytes are
+		// the stream frame verbatim, so anything the engine cannot route is
+		// refused HERE rather than counted as resident after a silent drop
+		// (engineIngestablePayload).
+		payload, reason, ok := engineIngestablePayload(binding, data)
+		if !ok {
+			log.Warnf("FlatSQL engine compact hot-window rebuild: skip %s record at %s@%d: %s",
+				window.schemaName, event.StreamPath, event.StreamOffset, reason)
 			continue
 		}
 		source := engineSourceName(&c.tags)
@@ -929,7 +944,7 @@ func (j *recordCatalogJournal) loadEngineHotWindow(store *FlatSQLStore, window *
 			}
 			continue
 		}
-		if _, err := store.engineDB.IngestOneWithSource(engineRecordPayload(data), source); err != nil {
+		if _, err := store.engineDB.IngestOneWithSource(payload, source); err != nil {
 			log.Warnf("FlatSQL engine compact hot-window rebuild: ingest record: %v", err)
 			if store.engine.Poisoned() {
 				return loaded, fmt.Errorf("FlatSQL engine poisoned during compact hot-window rebuild: %w", err)

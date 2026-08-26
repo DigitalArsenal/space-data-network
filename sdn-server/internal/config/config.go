@@ -1132,7 +1132,7 @@ type StorageConfig struct {
 	// routed standard — every embedded standard except the two this host
 	// decorates and reads at provider scale ($OMM, $TBS). Every standard the
 	// node ships is engine-routed (owner directive 2026-08-25), so
-	// EngineHotWindow multiplied across 227 standards is not a bound at all
+	// EngineHotWindow multiplied across 226 standards is not a bound at all
 	// against the engine's 4 GiB wasm32 ceiling; a standard that is routed
 	// merely because it exists gets this smaller budget until something
 	// actually reads it at scale. Eviction is a CACHE bound — stream files,

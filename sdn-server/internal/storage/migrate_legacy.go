@@ -418,7 +418,7 @@ func (s *FlatSQLStore) legacyTableSkipReason(legacy *sql.DB, all []legacyTable, 
 	}
 	if s.engineOwnsTableName(t.name) {
 		// RE-HOME, DO NOT DROP. Every embedded standard is engine-routed now,
-		// so this used to be a two-name carve-out ($OMM, $TBS) and is 227
+		// so this used to be a two-name carve-out ($OMM, $TBS) and is 226
 		// names today: a blanket skip would silently discard a pre-flip
 		// store's canonical rows at import. Rows in the v2 stream-metadata
 		// layout are copied into the (producer, standard) table instead

@@ -36,6 +36,27 @@
 // first field is already non-representable, the projection therefore emits a
 // column for it anyway: slot 0 is still slot 0 and the table is legal.
 //
+// AN `(encrypted)` FIELD TAKES ITS STANDARD OFF THE ENGINE ENTIRELY. A field
+// carrying the `(encrypted)` attribute is SEALED AT REST by the store
+// (internal/encfield + internal/storage/field_encryption.go): the bytes that
+// reach the stream file are an envelope, and the plaintext exists only in the
+// caller's buffer. The engine mirror is fed from THAT CALLER'S BUFFER, and the
+// engine is the PUBLIC /api/v1/query surface — every routed record answers
+// `SELECT _data`, which is the whole record — so routing such a standard would
+// hand the sealed plaintext straight back out and void the at-rest boundary
+// for the life of the process. It is not fixable per column: `_data` alone is
+// enough. The standard is therefore NOT routed, and the reason
+// (SkipEncryptedField) is a property of the IDL exactly like a missing
+// file_identifier, re-validated against the IDL by
+// TestEveryEmbeddedStandardIsRoutedOrDeclaredUnroutable.
+//
+// SCOPE OF THE RULE: the standard's OWN IDL file. The seal boundary is a
+// schema's own root-table fields (that is what encfield.RegisterSchema
+// declares and what Seal/Open act on), so an `(encrypted)` attribute reached
+// through an `include` belongs to the OTHER standard and does not seal this
+// one's bytes — a nested type's plaintext is already unsealed in this
+// standard's stream file, and taking it off the engine would protect nothing.
+//
 // THAT FALLBACK COLUMN IS A FIXED-WIDTH READ (`ubyte`), NOT A STRING. Slot 0
 // holds an offset to a sub-table (or a vector, or a union value), and a
 // `string` column made the vtab read a length and a byte run from wherever
@@ -47,6 +68,18 @@
 // the record decides its size, and `SELECT SITE FROM LDM` returning a small
 // integer is unmistakably not the site. The whole record still travels in
 // `_data`, which is what consumers of these standards read.
+//
+// THAT FIXES THE FALLBACK, NOT THE GENERAL CASE, AND THIS PACKAGE DOES NOT
+// CLAIM OTHERWISE. The writer's escaping is the same for EVERY string cell, so
+// an ordinary projected `string` column carries the record's bytes into the
+// response body exactly as they were stored — and FlatBuffers does not require
+// a string to be valid UTF-8, nor does the store's write path check it. That
+// is an inherited property of the engine (the pinned $OMM table has had
+// `string` columns since loop B.3), it is not something a column TYPE can fix,
+// and it is closed one level up: storage.QuerySandboxedJSON makes the
+// assembled body valid UTF-8 at the boundary, which is the only place that
+// sees the whole payload. See its doc, and
+// TestProjectedStringColumnsAreJSONSafe.
 package enginecatalog
 
 import (
@@ -69,7 +102,10 @@ type Column struct {
 	Name string
 	Type string
 	// Junk marks the >=1-column-invariant fallback: the field's real type is
-	// not representable and the column reads its slot as a string.
+	// not representable, so the column is a FIXED-WIDTH one-byte
+	// (fallbackColumnType) read of slot 0 rather than that field's value. It
+	// is deliberately NOT a string — a string column there handed raw record
+	// bytes to the public JSON writer (see the package doc).
 	Junk bool
 	// Terminal marks a column that is the LAST one the projection may emit
 	// (a union discriminator, whose value offset occupies the next slot).
@@ -110,6 +146,15 @@ const SkipNoFileIdentifier = "declares no file_identifier"
 // be re-emitted.
 const SkipPinned = "table graph is pinned as a cross-host contract"
 
+// SkipEncryptedField is the reason string for a standard whose IDL declares an
+// `(encrypted)` field. Its records are SEALED AT REST by the store, and the
+// engine is fed the caller's PLAINTEXT buffer and read back by the public
+// sandboxed query surface (`SELECT _data` returns the whole record), so
+// routing it would publish exactly the bytes the seal exists to protect. Like
+// SkipNoFileIdentifier this is a property of the IDL, not a carve-out: drop
+// the attribute and the standard routes with no code change here.
+const SkipEncryptedField = "declares an (encrypted) field, whose plaintext must never reach the engine's public query surface"
+
 var (
 	reInclude   = regexp.MustCompile(`(?m)^\s*include\s+"([^"]+)"\s*;`)
 	reEnum      = regexp.MustCompile(`(?m)^\s*enum\s+(\w+)\s*:\s*(\w+)`)
@@ -119,6 +164,12 @@ var (
 	reFileIdent = regexp.MustCompile(`(?m)^\s*file_identifier\s*"([^"]{4})"\s*;`)
 	reField     = regexp.MustCompile(`^([A-Za-z_]\w*)\s*:\s*(.+)$`)
 	reAttrs     = regexp.MustCompile(`\(([^)]*)\)`)
+	// reAttrField matches a FIELD DECLARATION carrying an attribute list --
+	// `KEY_BYTES: [ubyte] (encrypted);`. It deliberately does not match the
+	// `attribute "encrypted";` DECLARATION (no `:`), nor a field merely NAMED
+	// encrypted (`encrypted: bool = false;` in RHD.fbs — no attribute list),
+	// so the rule fires on a real `(encrypted)` field and nothing else.
+	reAttrField = regexp.MustCompile(`(?m)^[^/\n]*?\w\s*:\s*[^;{}()]*\(([^)]*)\)\s*;`)
 )
 
 // scalarTypes are the FlatBuffers scalars the engine's schema parser maps to a
@@ -148,6 +199,10 @@ type schemaDoc struct {
 	tables  map[string]string // name -> body
 	root    string
 	fileID  string
+	// encrypted is true when the standard's OWN IDL declares a field with the
+	// `(encrypted)` attribute (see SkipEncryptedField). Includes are NOT
+	// scanned — see the package doc for why the seal boundary is per-schema.
+	encrypted bool
 }
 
 // stripComments removes `//`-to-end-of-line comments (including `///` doc
@@ -271,6 +326,7 @@ func parseSchema(dir, name string) (*schemaDoc, error) {
 			if m := reFileIdent.FindStringSubmatch(src); m != nil {
 				doc.fileID = m[1]
 			}
+			doc.encrypted = declaresEncryptedField(src)
 		}
 		for _, m := range reInclude.FindAllStringSubmatch(src, -1) {
 			for _, candidate := range includeCandidates(m[1]) {
@@ -289,6 +345,22 @@ func parseSchema(dir, name string) (*schemaDoc, error) {
 		return nil, err
 	}
 	return doc, nil
+}
+
+// declaresEncryptedField reports whether an IDL (comments already stripped)
+// declares ANY field with the `(encrypted)` attribute — in the root table or
+// in any other table of the same file, because `_data` carries the whole
+// record either way.
+func declaresEncryptedField(src string) bool {
+	for _, m := range reAttrField.FindAllStringSubmatch(src, -1) {
+		for _, attr := range strings.Split(strings.ToLower(m[1]), ",") {
+			attr = strings.TrimSpace(attr)
+			if attr == "encrypted" || strings.HasPrefix(attr, "encrypted:") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type field struct {
@@ -404,6 +476,14 @@ func Build(schemaDir string, pinned map[string]bool) (*Catalog, error) {
 			return nil, fmt.Errorf("file identifier %q is declared by both %s and %s: routing it would send one standard's records into the other's table", doc.fileID, prev, name)
 		}
 		byFileID[doc.fileID] = name
+		if doc.encrypted {
+			// SEALED AT REST STAYS SEALED. Recorded AFTER the duplicate-file-id
+			// bookkeeping above so an unrouted standard still reserves its four
+			// header bytes: two standards sharing an identifier is a routing
+			// fault regardless of which one is excluded.
+			cat.Skipped = append(cat.Skipped, Skip{Schema: name, Reason: SkipEncryptedField})
+			continue
+		}
 		if doc.root == "" {
 			return nil, fmt.Errorf("%s declares a file_identifier but no root_type", name)
 		}

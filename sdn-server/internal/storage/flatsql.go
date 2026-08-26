@@ -161,7 +161,7 @@ type FlatSQLStore struct {
 	engineResident  map[string]int64
 	// engineGenericHotWindow is the smaller per-schema budget applied to
 	// standards routed GENERICALLY (every embedded standard that is not one of
-	// the two this host decorates). engineHotWindow x 227 standards is not a
+	// the two this host decorates). engineHotWindow x 226 standards is not a
 	// bound; this is (engine_records.go engineWindowFor).
 	engineGenericHotWindow int
 	// engineViewRebuilds counts CreateUnifiedViews invocations on this store.
@@ -873,7 +873,7 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalog() (int, error) {
 // HydrateEngineHotWindowFromRecordCatalogContext is
 // HydrateEngineHotWindowFromRecordCatalog that a shutdown can interrupt.
 //
-// TWO BOUNDS MAKE THIS SAFE AT 227 ROUTED STANDARDS. It holds the store write
+// TWO BOUNDS MAKE THIS SAFE AT 226 ROUTED STANDARDS. It holds the store write
 // lock, so its duration is a stop-the-world for every reader, writer and p2p
 // operation on the box: (1) the replay is ONE pass over the journal for ALL
 // schemas (ReplayEngineHotWindows), never one pass per schema — the journal is
@@ -3956,7 +3956,30 @@ func (s *FlatSQLStore) QuerySince(schemaName string, since time.Time) ([][]byte,
 	return s.Query(schemaName, "timestamp > ?", since.Unix())
 }
 
-// Delete removes a record by CID.
+// Delete removes a record by CID: the control rows (the per-standard record
+// table, the source tags, the global index) and the derived-summary
+// bookkeeping.
+//
+// IT DOES NOT REACH THE ENGINE, AND THAT IS A STATED SEMANTIC, NOT AN
+// OVERSIGHT. The engine record vtabs are a HOT-WINDOW CACHE of the durable
+// substrate (engine_records.go), and this store has no mapping from a CID to
+// the (source, _rowid) pair flatsql_mark_deleted keys on — the engine's rowid
+// space is its own ingest sequence. So until the process restarts:
+//
+//   - the deleted record keeps answering from the sandboxed public query
+//     surface (SELECT ... FROM "<STANDARD>" / "<STANDARD>@<source>"), WHOLE:
+//     `_data` is the record's own bytes;
+//   - s.engineResident is not decremented, so residency drifts HIGH after
+//     deletes and the hot-window eviction bound is enforced against a count
+//     that is a little too large (it evicts slightly early — the safe
+//     direction for a cache bound);
+//   - the next boot rebuilds the window from sdn_record_index, which no longer
+//     names the record, so it comes back gone.
+//
+// EVERY EMBEDDED STANDARD IS ROUTED NOW, so this applies to superseded, GC'd
+// and operator-removed records of all of them rather than to $OMM and $TBS
+// alone. Callers that need a delete to be immediately invisible on the query
+// surface must not rely on this method alone.
 func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	if err := s.requireWritable("delete record"); err != nil {
 		return err
