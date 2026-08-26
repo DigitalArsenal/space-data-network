@@ -1171,6 +1171,7 @@ func RegisterFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps Flow
 		if mount.MemoryPages > 0 {
 			mountDeps.MaxMemoryPages = mount.MemoryPages
 		}
+		mountDeps.NodeCtx = mountNodeContext(deps.NodeCtx, mount.Config)
 		mf, err := LoadMountedFlow(mount.Flow, mountDeps)
 		if err != nil {
 			if errors.Is(err, ErrFlowNotInstalled) {
@@ -1234,6 +1235,7 @@ func RegisterLazyFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps 
 		if mount.MemoryPages > 0 {
 			mountDeps.MaxMemoryPages = mount.MemoryPages
 		}
+		mountDeps.NodeCtx = mountNodeContext(deps.NodeCtx, mount.Config)
 		mf := newLazyMountedFlow(mount.Flow, mountDeps)
 		mf.mountPath = mount.Path
 		mux.Handle(mount.Path, mf)
@@ -1245,6 +1247,27 @@ func RegisterLazyFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps 
 			mount.Flow, mount.Path, mf.PoolSize())
 	}
 	return mounted, nil
+}
+
+// mountNodeContext returns the node context one mount's flow nodes see,
+// carrying that mount's config block into the builtin plugin.getConfig
+// hostcall. It COPIES the shared context so one mount's config can never
+// leak into another's or into the node-wide one, mirroring exactly what
+// LoadFlowServices does for flows.services[].config.
+//
+// An empty config block returns the shared context unchanged: absence of
+// configuration must stay indistinguishable from the behaviour before this
+// existed.
+func mountNodeContext(shared *modulert.NodeContext, cfg map[string]interface{}) *modulert.NodeContext {
+	if len(cfg) == 0 {
+		return shared
+	}
+	nodeCtx := modulert.NodeContext{}
+	if shared != nil {
+		nodeCtx = *shared
+	}
+	nodeCtx.Config = cfg
+	return &nodeCtx
 }
 
 // registerMountAlias registers the exact-path alias for a subtree mount.

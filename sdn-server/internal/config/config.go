@@ -661,6 +661,22 @@ type FlowMount struct {
 	// MemoryPages caps each pooled instance's linear memory (64KB pages).
 	// Default (0): the flows.max_memory_pages global.
 	MemoryPages uint32 `yaml:"memory_pages,omitempty"`
+
+	// Config is the node-config block served to this mount's flow nodes
+	// through the builtin plugin.getConfig hostcall — the SAME generic
+	// hostcall flows.services[].config already uses. Configuration, never
+	// host code.
+	//
+	// Without it a MOUNTED flow could not be told anything by the operator,
+	// only a timer-served one. That is not a stylistic gap: the cellular
+	// aggregate/tile lane reads its store through a node-configured
+	// statement (cell_cache_sql), whose compiled-in fallback names the
+	// PRE-MIGRATION per-standard blob layout ("SELECT data FROM sds_tbs ...")
+	// that a migrated store does not have. Mounted with no way to receive the
+	// modern statement, that lane answers empty on a node whose store is
+	// full — the exact instant-but-permanently-empty failure the cache hold
+	// existed to prevent.
+	Config map[string]interface{} `yaml:"config,omitempty"`
 }
 
 // PublishingConfig controls remote data publishing via the API.
