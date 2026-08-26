@@ -41,9 +41,9 @@ describe('peer identity projection', () => {
       dn: 'SpaceAware Directory',
       email: 'ops@spaceaware.io',
       telephone: '+1-555-0100',
-      public_key: 'node-public-key',
-      signing_public_key: 'signing-public-key',
-      encryption_public_key: 'encryption-public-key',
+      public_key: HD_TEST_SIGNING_PUBLIC_KEY,
+      signing_public_key: HD_TEST_SIGNING_PUBLIC_KEY,
+      encryption_public_key: HD_TEST_ENCRYPTION_PUBLIC_KEY,
       xpub: HD_TEST_XPUB,
       epm_cid: 'bafy-peer-epm',
     });
@@ -57,9 +57,9 @@ describe('peer identity projection', () => {
       email: 'ops@spaceaware.io',
       telephone: '+1-555-0100',
       peer_id: PEER_ID,
-      public_key: 'node-public-key',
-      signing_public_key: 'signing-public-key',
-      encryption_public_key: 'encryption-public-key',
+      public_key: HD_TEST_SIGNING_PUBLIC_KEY,
+      signing_public_key: HD_TEST_SIGNING_PUBLIC_KEY,
+      encryption_public_key: HD_TEST_ENCRYPTION_PUBLIC_KEY,
       xpub: HD_TEST_XPUB,
       epm_cid: 'bafy-peer-epm',
     });
@@ -68,14 +68,17 @@ describe('peer identity projection', () => {
     const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
     expect(payload).not.toContain('UID:16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45');
     expect(payload).not.toContain('X-SDN-EPM-CID:bafy-peer-epm');
-    expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public-key');
-    expect(payload).not.toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public-key');
-    expect(payload).not.toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public-key');
+    expect(payload).not.toContain('X-SDN-PUBLIC-KEY:');
+    expect(payload).not.toContain('X-SDN-SIGNING-PUBLIC-KEY:');
+    expect(payload).not.toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:');
     expect(unfoldedPayload).not.toContain(PEER_ID);
     expect(unfoldedPayload).not.toContain('peerid.spacedatanetwork.org');
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.spacedatanetwork.org`);
-    expect(unfoldedPayload).not.toContain('signing-public-key@signing.spacedatanetwork.org');
-    expect(unfoldedPayload).not.toContain('encryption-public-key@encryption.spacedatanetwork.org');
+    // §21: sign/encrypt aliases carry b64url(literal key bytes), not xpub.
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=sign:AyH84qZubBvgkSiyDj9QN0-gXsHOuE6qeOac8c3cYKem@sign.spacedatanetwork.org`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=encrypt:AwH25fAad2VhfIF1aNsH6B3BuGqHV19HAvNHtYl_ax0G@encrypt.spacedatanetwork.org`);
+    expect(unfoldedPayload).not.toContain('xpub.spacedatanetwork.org');
+    expect(unfoldedPayload).not.toContain('signing.spacedatanetwork.org');
+    expect(unfoldedPayload).not.toContain('encryption.spacedatanetwork.org');
   });
 
   it('lets hosted EPM values override metadata while preserving missing metadata keys', () => {
@@ -201,7 +204,10 @@ describe('peer identity projection', () => {
     const payload = createVCardQrPayload(enriched);
     const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
     expect(unfoldedPayload).not.toContain(PEER_ID);
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.spacedatanetwork.org`);
+    // §21: sign/encrypt aliases carry b64url(literal key bytes), not xpub.
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=sign:AyH84qZubBvgkSiyDj9QN0-gXsHOuE6qeOac8c3cYKem@sign.spacedatanetwork.org`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=encrypt:AwH25fAad2VhfIF1aNsH6B3BuGqHV19HAvNHtYl_ax0G@encrypt.spacedatanetwork.org`);
+    expect(unfoldedPayload).not.toContain('xpub.spacedatanetwork.org');
     expect(unfoldedPayload).not.toContain(`X-SDN-XPUB:${HD_TEST_XPUB}`);
     expect(unfoldedPayload).not.toContain(`X-SDN-SIGNING-PUBLIC-KEY:${HD_TEST_SIGNING_PUBLIC_KEY}`);
     expect(unfoldedPayload).not.toContain(`X-SDN-ENCRYPTION-PUBLIC-KEY:${HD_TEST_ENCRYPTION_PUBLIC_KEY}`);
@@ -228,7 +234,10 @@ describe('peer identity projection', () => {
     expect(unfoldedPayload).toContain('FN:CelesTrak Provider');
     expect(unfoldedPayload).not.toContain(PEER_ID);
     expect(unfoldedPayload).not.toContain('peerid.spacedatanetwork.org');
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.spacedatanetwork.org`);
+    // §21: sign/encrypt aliases carry b64url(literal key bytes), not xpub.
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=sign:AyH84qZubBvgkSiyDj9QN0-gXsHOuE6qeOac8c3cYKem@sign.spacedatanetwork.org`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=encrypt:AwH25fAad2VhfIF1aNsH6B3BuGqHV19HAvNHtYl_ax0G@encrypt.spacedatanetwork.org`);
+    expect(unfoldedPayload).not.toContain('xpub.spacedatanetwork.org');
     expect(unfoldedPayload).not.toContain('UID:');
     expect(unfoldedPayload).not.toContain('X-SDN-PEER-ID');
     expect(unfoldedPayload).not.toContain('X-SDN-EPM-CID');

@@ -54,6 +54,10 @@ const IDENTITY_EMAIL_DOMAINS = {
 } as const;
 const PEER_ID_ALIAS_DOMAIN = 'peerid.spacedatanetwork.org';
 const XPUB_ALIAS_DOMAIN = 'xpub.spacedatanetwork.org';
+// §21 (owner ruling 2026-08-19): sign/encrypt aliases carry b64url(literal key
+// bytes), not derivation paths. The xpub alias is RETIRED.
+const SIGN_ALIAS_DOMAIN = 'sign.spacedatanetwork.org';
+const ENCRYPT_ALIAS_DOMAIN = 'encrypt.spacedatanetwork.org';
 
 type IdentityAliasType = keyof typeof IDENTITY_EMAIL_DOMAINS;
 export type IdentityPublicKeyType = 'signing' | 'encryption';
@@ -100,9 +104,16 @@ export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmR
   const displayName = pickString(epm, ['dn', 'DN', 'displayName', 'name', 'legal_name', 'legalName', 'organization', 'org'])
     || record.label
     || 'Space Data Network';
-  const xpub = identityXpubValue(epm)?.trim();
-  if (!xpub || !isSafeEmailLocalPart(xpub)) {
-    throw new Error('HD extended public key is required for identity QR');
+  // §21 (owner ruling 2026-08-19): the QR card carries the literal sign +
+  // encrypt public keys as EMAIL aliases (b64url of the hex-decoded key bytes),
+  // not the xpub. The xpub is private; the card's aliases ARE the verification
+  // material. A card without a verifiable signing key is not a servable QR.
+  const signKey = identityPublicKeyValue(epm, 'signing');
+  const encryptKey = identityPublicKeyValue(epm, 'encryption');
+  const signAlias = hexKeyToB64UrlAlias(signKey);
+  const encryptAlias = hexKeyToB64UrlAlias(encryptKey);
+  if (!signAlias) {
+    throw new Error('a verifiable signing public key is required for identity QR');
   }
   const lines = ['BEGIN:VCARD', 'VERSION:3.0'];
 
@@ -111,7 +122,10 @@ export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmR
   addVCardLine(lines, 'EMAIL', pickString(epm, ['email']));
   addVCardLine(lines, 'TEL', pickString(epm, ['telephone', 'phone', 'tel']));
   addVCardAddressLine(lines, epm);
-  addCompactIdentityEmailLine(lines, 'xpub', xpub, XPUB_ALIAS_DOMAIN);
+  addCompactIdentityEmailLine(lines, 'sign', signAlias, SIGN_ALIAS_DOMAIN);
+  if (encryptAlias) {
+    addCompactIdentityEmailLine(lines, 'encrypt', encryptAlias, ENCRYPT_ALIAS_DOMAIN);
+  }
   lines.push('END:VCARD');
   return `${lines.map(foldVCardLine).join('\r\n')}\r\n`;
 }
@@ -123,14 +137,12 @@ export function createVCardQrPayloadFromVCard(vcard: string): string {
   const displayName = vcardValue(lines, 'FN')
     || [name[1], name[0]].filter(Boolean).join(' ')
     || 'Space Data Network';
-  const xpub = (
-    vcardValue(lines, 'X-SDN-XPUB')
-    || vcardValue(lines, 'X-XPUB')
-    || vcardValue(lines, 'XPUB')
-    || vcardEmailAlias(lines, XPUB_ALIAS_DOMAIN, 'xpub')
-  ).trim();
-  if (!xpub || !isSafeEmailLocalPart(xpub)) {
-    throw new Error('HD extended public key is required for identity QR');
+  // §21: extract the sign/encrypt literal-key aliases from the source card
+  // (b64url local parts at sign./encrypt. domains), not the xpub.
+  const signAlias = vcardEmailAlias(lines, SIGN_ALIAS_DOMAIN, 'sign').trim();
+  const encryptAlias = vcardEmailAlias(lines, ENCRYPT_ALIAS_DOMAIN, 'encrypt').trim();
+  if (!signAlias || !isSafeEmailLocalPart(signAlias)) {
+    throw new Error('a verifiable signing public key is required for identity QR');
   }
   const epm: Record<string, unknown> = {
     dn: displayName,
@@ -164,7 +176,10 @@ export function createVCardQrPayloadFromVCard(vcard: string): string {
   addVCardLine(compactLines, 'EMAIL', pickString(epm, ['email']));
   addVCardLine(compactLines, 'TEL', pickString(epm, ['telephone']));
   addVCardAddressLine(compactLines, epm);
-  addCompactIdentityEmailLine(compactLines, 'xpub', xpub, XPUB_ALIAS_DOMAIN);
+  addCompactIdentityEmailLine(compactLines, 'sign', signAlias, SIGN_ALIAS_DOMAIN);
+  if (encryptAlias) {
+    addCompactIdentityEmailLine(compactLines, 'encrypt', encryptAlias, ENCRYPT_ALIAS_DOMAIN);
+  }
   compactLines.push('END:VCARD');
   return `${compactLines.map(foldVCardLine).join('\r\n')}\r\n`;
 }
@@ -209,10 +224,17 @@ export function epmJsonFromVCard(text: string): Record<string, unknown> {
   fields.telephone = vcardValue(lines, 'TEL');
   fields.peer_id = vcardValue(lines, 'X-SDN-PEER-ID') || vcardEmailAlias(lines, PEER_ID_ALIAS_DOMAIN, 'peerid');
   fields.epm_cid = vcardValue(lines, 'X-SDN-EPM-CID');
-  fields.xpub = vcardValue(lines, 'X-SDN-XPUB') || vcardEmailAlias(lines, XPUB_ALIAS_DOMAIN, 'xpub');
+  // §21: the xpub alias is retired; the sign/encrypt aliases carry b64url(key
+  // bytes) at sign./encrypt. domains. Decode the b64url local part back to hex
+  // for the JSON mirror. The legacy X-SDN-* and signing./encryption. domains
+  // are read as fallbacks for pre-flip cards.
   fields.public_key = vcardValue(lines, 'X-SDN-PUBLIC-KEY') || vcardEmailAlias(lines, 'spacedatanetwork.org');
-  fields.signing_public_key = vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY') || vcardIdentityEmailAlias(lines, 'signing');
-  fields.encryption_public_key = vcardValue(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY') || vcardIdentityEmailAlias(lines, 'encryption');
+  const signAliasLocal = vcardEmailAlias(lines, SIGN_ALIAS_DOMAIN, 'sign');
+  fields.signing_public_key = vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY')
+    || (signAliasLocal ? b64UrlAliasToHex(signAliasLocal) : vcardIdentityEmailAlias(lines, 'signing'));
+  const encryptAliasLocal = vcardEmailAlias(lines, ENCRYPT_ALIAS_DOMAIN, 'encrypt');
+  fields.encryption_public_key = vcardValue(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY')
+    || (encryptAliasLocal ? b64UrlAliasToHex(encryptAliasLocal) : vcardIdentityEmailAlias(lines, 'encryption'));
   for (const key of Object.keys(fields)) {
     if (!fields[key]) delete fields[key];
   }
@@ -233,13 +255,92 @@ export function identityXpubValue(epm: Record<string, unknown>): string | undefi
 
 function addCompactIdentityEmailLine(
   lines: string[],
-  type: 'peerid' | 'xpub',
+  type: 'peerid' | 'xpub' | 'sign' | 'encrypt',
   value: string | undefined,
   domain: string,
 ): void {
   const trimmed = value?.trim();
   if (!trimmed || !isSafeEmailLocalPart(trimmed)) return;
   lines.push(`EMAIL;TYPE=INTERNET;TYPE=${type}:${trimmed}@${domain}`);
+}
+
+/**
+ * §21: convert a hex-encoded public key to a b64url email-safe local part —
+ * the form the sign/encrypt aliases carry. Returns undefined when the hex is
+ * absent or undecodable, so the caller skips the alias rather than emitting a
+ * dead row.
+ */
+function hexKeyToB64UrlAlias(hexKey: string | undefined): string | undefined {
+  const trimmed = hexKey?.trim();
+  if (!trimmed) return undefined;
+  try {
+    const raw = hexToBytes(trimmed);
+    if (!raw.length) return undefined;
+    return bytesToB64Url(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+  // Strict like Go's hex.DecodeString: non-hex characters refuse, so a key
+  // whose bytes cannot be decoded yields NO alias — the Go side skips, and
+  // the mirror must not emit garbage b64url rows.
+  if (!/^[0-9a-fA-F]+$/.test(clean) || clean.length % 2 !== 0) throw new Error('invalid hex');
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+function bytesToB64Url(bytes: Uint8Array): string {
+  // base64url without padding (RFC 4648 §5), matching Go's RawURLEncoding.
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    out += chars[b0 >> 2];
+    out += chars[((b0 & 0x03) << 4) | (b1 >> 4)];
+    if (i + 1 < bytes.length) out += chars[((b1 & 0x0f) << 2) | (b2 >> 6)];
+    if (i + 2 < bytes.length) out += chars[b2 & 0x3f];
+  }
+  return out;
+}
+
+/**
+ * §21: inverse of hexKeyToB64UrlAlias — decode a b64url alias local part back
+ * to the hex-encoded public key the record carries. Returns '' on decode
+ * failure so the caller's falsy-skip drops it.
+ */
+function b64UrlAliasToHex(b64url: string): string {
+  try {
+    const raw = b64UrlToBytes(b64url);
+    return Array.from(raw, (b) => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    return '';
+  }
+}
+
+function b64UrlToBytes(b64url: string): Uint8Array {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  const map = new Map<string, number>();
+  for (let i = 0; i < chars.length; i += 1) map.set(chars[i], i);
+  const clean = b64url.replace(/=+$/, '');
+  const out: number[] = [];
+  for (let i = 0; i < clean.length; i += 4) {
+    const c0 = map.get(clean[i]) ?? 0;
+    const c1 = i + 1 < clean.length ? (map.get(clean[i + 1]) ?? 0) : 0;
+    const c2 = i + 2 < clean.length ? (map.get(clean[i + 2]) ?? 0) : 0;
+    const c3 = i + 3 < clean.length ? (map.get(clean[i + 3]) ?? 0) : 0;
+    out.push((c0 << 2) | (c1 >> 4));
+    if (i + 1 < clean.length) out.push(((c1 & 0x0f) << 4) | (c2 >> 2));
+    if (i + 2 < clean.length) out.push(((c2 & 0x03) << 6) | c3);
+  }
+  return new Uint8Array(out);
 }
 
 function addVCardStructuredName(lines: string[], epm: Record<string, unknown>, displayName: string): void {
@@ -301,9 +402,17 @@ function isIdentityRoleKey(
   keyPath: string | undefined,
   xpub: string | undefined,
 ): boolean {
-  if (keyType !== type && !(type === 'encryption' && addressType === 'x25519')) return false;
-  if (xpub) return true;
-  return isDocumentedIdentityPath(type, keyPath);
+  // §21 (owner ruling 2026-08-19): a key is a sign/encrypt identity key if it
+  // has the right KEY_TYPE and carries a PUBLIC_KEY — no xpub or derivation
+  // path is required. The xpub and path are private; the PUBLIC_KEY is the
+  // published verification material. The legacy xpub/path matching is
+  // retained as a fallback for pre-flip records that carry no KEY_TYPE.
+  if (keyType === type) return true;
+  if (type === 'encryption' && addressType === 'x25519') return true;
+  // Pre-flip fallback: a key with an xpub and a documented path still
+  // qualifies (it was published under the old paradigm).
+  if (xpub && isDocumentedIdentityPath(type, keyPath)) return true;
+  return false;
 }
 
 function isDocumentedIdentityPath(type: IdentityPublicKeyType, path: string | undefined): boolean {
@@ -453,6 +562,9 @@ function isSdnAliasEmail(value: string, params: string[]): boolean {
   if (normalized.endsWith('@spacedatanetwork.org')) return true;
   if (normalized.endsWith(`@${PEER_ID_ALIAS_DOMAIN}`)) return true;
   if (normalized.endsWith(`@${XPUB_ALIAS_DOMAIN}`)) return true;
+  // §21: the sign/encrypt literal-key alias domains.
+  if (normalized.endsWith(`@${SIGN_ALIAS_DOMAIN}`)) return true;
+  if (normalized.endsWith(`@${ENCRYPT_ALIAS_DOMAIN}`)) return true;
   if (Object.values(IDENTITY_EMAIL_DOMAINS).some((domain) => normalized.endsWith(`@${domain}`))) return true;
   return Object.keys(IDENTITY_EMAIL_DOMAINS).some((type) => vcardEmailHasType(params, type));
 }
