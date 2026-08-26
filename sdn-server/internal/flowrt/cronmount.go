@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +59,21 @@ type ServiceFlow struct {
 	errorCount       uint64
 	lastTimerStatus  string
 	lastInvokeAt     time.Time
+	// What the LAST drain's nodes reported, read straight off the artifact's
+	// node-state table. See nodeRunDigest.
+	lastNodeDigest []nodeRunOutcome
+}
+
+// nodeRunOutcome is one node's mechanism-level result for one drain: how many
+// times it was dispatched and what status it last returned. It carries NO
+// interpretation — the host does not know what any node means, and nothing
+// here decides whether the run was good.
+type nodeRunOutcome struct {
+	NodeID      string
+	PluginID    string
+	MethodID    string
+	Invocations uint64
+	LastStatus  uint32
 }
 
 // serviceBundleTopology is the flow.json subset needed for timer triggers.
@@ -328,7 +344,7 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 		outcome := sf.retrievalOutcome
 		sf.statsMu.Unlock()
 		if outcome != nil {
-			outcome(err)
+			outcome(sf.retrievalDiagnosis(err))
 		}
 	}
 	return out, err
@@ -416,8 +432,14 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 		handlers[key] = collect
 	}
 
-	if _, err := rt.Drain(ctx, handlers, DrainOptions{MaxIterations: 1000}); err != nil {
-		return nil, fmt.Errorf("flow service %q trigger %q: %w", sf.programID, triggerID, err)
+	_, drainErr := rt.Drain(ctx, handlers, DrainOptions{MaxIterations: 1000})
+	// Read the node-state table BEFORE returning on a drain error: a run that
+	// died mid-drain is exactly the one whose per-node record is worth having.
+	sf.statsMu.Lock()
+	sf.lastNodeDigest = readNodeRunDigest(rt)
+	sf.statsMu.Unlock()
+	if drainErr != nil {
+		return nil, fmt.Errorf("flow service %q trigger %q: %w", sf.programID, triggerID, drainErr)
 	}
 
 	summary, _ := json.Marshal(map[string]interface{}{
@@ -425,6 +447,99 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 		"results": results,
 	})
 	return summary, nil
+}
+
+// readNodeRunDigest copies the artifact's per-node state table out of guest
+// memory after a drain.
+//
+// WHY THE HOST READS THIS AT ALL. Every node of a linked-direct artifact runs
+// INSIDE the guest (`space_data_module_runtime_drain_linked`), so a node that
+// refuses its input — `plugin_set_error(...); return 400` — returns through the
+// in-wasm scheduler and never reaches the host loop below. Drain returns nil,
+// FireTrigger returns nil, and until this existed the host could say nothing
+// about the run beyond "it finished". That is how the cellular worldwide ingest
+// fetched 3 MiB and stored nothing THREE times with no cause recorded anywhere
+// (graph: sdn-cellular-ingest-lands-no-batch): the guest knew which node
+// refused and why; the host threw the answer away.
+//
+// This is a CONNECTOR read and nothing more. The host copies node index ->
+// (id, plugin, method, invocation count, last status) and forms no opinion
+// about what any of them mean. A non-zero status is NOT treated as a run
+// failure: hostcap/http-request answers a dead mirror with 502 and no frame BY
+// DESIGN, and flows that fan out across mirrors depend on that being survivable.
+// The status is carried, not judged.
+func readNodeRunDigest(rt *FlowRuntime) []nodeRunOutcome {
+	if rt == nil || rt.NodeCount == 0 {
+		return nil
+	}
+	digest := make([]nodeRunOutcome, 0, rt.NodeCount)
+	for i := uint32(0); i < rt.NodeCount; i++ {
+		state, err := rt.GetNodeRuntimeState(i)
+		if err != nil || state == nil {
+			continue
+		}
+		var info flowNodeInfo
+		if int(i) < len(rt.nodeInfo) {
+			info = rt.nodeInfo[i]
+		}
+		digest = append(digest, nodeRunOutcome{
+			NodeID:      info.NodeID,
+			PluginID:    info.PluginID,
+			MethodID:    info.MethodID,
+			Invocations: state.InvocationCount,
+			LastStatus:  state.LastStatus,
+		})
+	}
+	return digest
+}
+
+// retrievalDiagnosis is what the run tells the source-metrics ledger.
+//
+// A drain error is already an answer, so it passes through untouched. The hard
+// case is the CLEAN run — the flow returned 0 and landed nothing — because the
+// ledger's fallback text ("run completed but landed no batch") names a symptom
+// and no cause. The node digest holds the cause the guest already computed, so
+// the clean case reports the nodes that refused and, failing that, the nodes
+// that never ran at all: a pipeline whose tail never fired is starved, and
+// which node the frames stopped at is the whole diagnosis.
+//
+// This error is HANDED TO THE LEDGER, NOT RETURNED FROM THE RUN. The ledger
+// records a reason only while an attempt's failure streak is still standing —
+// i.e. only when nothing landed — so a run that DID store a batch discards this
+// entirely and no successful run is ever recoloured by a 502 from one mirror.
+func (sf *ServiceFlow) retrievalDiagnosis(runErr error) error {
+	if runErr != nil {
+		return runErr
+	}
+	sf.statsMu.Lock()
+	digest := sf.lastNodeDigest
+	sf.statsMu.Unlock()
+	if len(digest) == 0 {
+		return nil
+	}
+
+	var refused, starved []string
+	for _, node := range digest {
+		label := node.NodeID
+		if node.PluginID != "" {
+			label = fmt.Sprintf("%s (%s:%s)", node.NodeID, node.PluginID, node.MethodID)
+		}
+		switch {
+		case node.Invocations > 0 && node.LastStatus != 0:
+			refused = append(refused, fmt.Sprintf("%s status %d", label, node.LastStatus))
+		case node.Invocations == 0:
+			starved = append(starved, label)
+		}
+	}
+	switch {
+	case len(refused) > 0:
+		return fmt.Errorf("run completed but landed no batch; node(s) refused: %s",
+			strings.Join(refused, "; "))
+	case len(starved) > 0:
+		return fmt.Errorf("run completed but landed no batch; node(s) never ran: %s",
+			strings.Join(starved, ", "))
+	}
+	return nil
 }
 
 func (sf *ServiceFlow) recordTimerResult(err error) {
