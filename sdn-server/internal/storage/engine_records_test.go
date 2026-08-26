@@ -858,12 +858,16 @@ func TestEveryRoutedStandardAnswersEmptyOnAFreshStore(t *testing.T) {
 	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
 	defer store.Close()
 
-	// FLOOR GUARD. This test loops over the store's own routed set, so without
-	// a floor it would pass VACUOUSLY if that set ever collapsed back toward
-	// {OMM, TBS} — proving nothing about the directive it exists to enforce.
+	// EXACTNESS GUARD. This test loops over the store's own routed set, so
+	// without a guard it would pass VACUOUSLY if that set ever collapsed back
+	// toward {OMM, TBS}. A FLOOR ("at least 100") would still admit a silent
+	// loss of a hundred standards: a fresh store excludes nothing by
+	// construction, so its routed set is the WHOLE catalog or the directive
+	// is broken.
 	routed := store.engineRoutedSchemaNames()
-	if len(routed) < 100 {
-		t.Fatalf("only %d routed schemas — this test is meaningless unless the whole catalog is routed", len(routed))
+	if len(routed) != len(engineRoutedSchemas) {
+		t.Fatalf("fresh store routes %d of %d schemas — a fresh store excludes nothing",
+			len(routed), len(engineRoutedSchemas))
 	}
 
 	caps := flatsqlrt.SandboxCaps{MaxRows: 4, MaxBytes: 1 << 16, Timeout: 30 * time.Second}

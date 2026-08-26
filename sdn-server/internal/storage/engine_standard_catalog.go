@@ -28,6 +28,32 @@ const engineStandardCatalogGraph = `
     LISTING_ID:string;
     BUYER_PEER_ID:string;
     BUYER_ENCRYPTION_PUBKEY:[ubyte];
+    ACCESS_TYPE:byte;
+    TIER_NAME:string;
+    GRANTED_AT:uint64;
+    EXPIRES_AT:uint64;
+    PAYMENT_TX_HASH:string;
+    PAYMENT_METHOD:byte;
+    PROVIDER_SIGNATURE:[ubyte];
+    KEY_ALGORITHM:string;
+    RATE_LIMIT:uint32;
+    MAX_RECORDS_PER_REQUEST:uint32;
+    STATUS:byte;
+    PAYMENT_AMOUNT:uint64;
+    PAYMENT_CURRENCY:string;
+    PAYMENT_CHAIN:string;
+    NEXT_RENEWAL:uint64;
+    AUTO_RENEW:bool;
+    RENEWAL_COUNT:uint32;
+    TOTAL_REQUESTS:uint64;
+    TOTAL_RECORDS:uint64;
+    LAST_ACCESS:uint64;
+    DELIVERY_TOPIC:string;
+    CREATED_AT:uint64;
+    UPDATED_AT:uint64;
+    NOTES:string;
+    PROVIDER_PEER_ID:string;
+    GRANT_RESPONSE_BASE64:string;
   }
   table ACM {
     CCSDS_ACM_VERS:string;
@@ -69,7 +95,7 @@ const engineStandardCatalogGraph = `
     RESERVED:ubyte;
   }
   table ACW {
-    REQUEST:string;
+    REQUEST:ubyte;
   }
   table AEM {
     CCSDS_AEM_VERS:string;
@@ -115,6 +141,7 @@ const engineStandardCatalogGraph = `
     LINK_ID:string;
     WINDOW_START:double;
     WINDOW_STOP:double;
+    TIME_SYSTEM:byte;
   }
   table APM {
     CCSDS_APM_VERS:string;
@@ -263,7 +290,7 @@ const engineStandardCatalogGraph = `
     TIME_FROM_LAUNCH:double;
   }
   table BSP {
-    INTERPOLATION_REQUEST:string;
+    INTERPOLATION_REQUEST:ubyte;
   }
   table BUS {
     ID:string;
@@ -293,7 +320,7 @@ const engineStandardCatalogGraph = `
     NOTES:string;
   }
   table CAQ {
-    REQUEST:string;
+    REQUEST:ubyte;
   }
   table CAT {
     OBJECT_NAME:string;
@@ -301,6 +328,23 @@ const engineStandardCatalogGraph = `
     NORAD_CAT_ID:uint;
     OBJECT_TYPE:byte;
     OPS_STATUS_CODE:byte;
+    OWNER:byte;
+    LAUNCH_DATE:string;
+    LAUNCH_SITE:string;
+    DECAY_DATE:string;
+    PERIOD:double;
+    INCLINATION:double;
+    APOGEE:double;
+    PERIGEE:double;
+    RCS:double;
+    DATA_STATUS_CODE:byte;
+    ORBIT_CENTER:string;
+    ORBIT_TYPE:byte;
+    DEPLOYMENT_DATE:string;
+    MANEUVERABLE:bool;
+    SIZE:double;
+    MASS:double;
+    MASS_TYPE:byte;
   }
   table CCT {
     TAXONOMY_ID:string;
@@ -546,7 +590,7 @@ const engineStandardCatalogGraph = `
     DATA_MODE:string;
   }
   table CSM {
-    OBJECT_1:string;
+    OBJECT_1:ubyte;
   }
   table CTR {
     ID:string;
@@ -569,6 +613,17 @@ const engineStandardCatalogGraph = `
     NAME:string;
     SCENARIO_ID:string;
     GEOMETRY_KIND:byte;
+    METRIC:byte;
+    METRIC_UNITS:string;
+    THRESHOLD_VALUE:double;
+    THRESHOLD_UNITS:string;
+    THRESHOLD_COMPARISON:byte;
+    EPOCH:double;
+    INTERVAL_START:double;
+    INTERVAL_STOP:double;
+    TIME_SYSTEM:byte;
+    GENERATION:uint64;
+    SUPERSEDES_COVERAGE_ID:string;
   }
   table CZM {
     NAME:string;
@@ -851,6 +906,9 @@ const engineStandardCatalogGraph = `
     DESCRIPTOR:string;
     SOURCE:string;
     ORIGIN:string;
+    DATA_MODE:byte;
+    CREATED_AT:string;
+    CREATED_BY:string;
   }
   table EOP {
     DATE:string;
@@ -957,10 +1015,10 @@ const engineStandardCatalogGraph = `
     RESERVED:[ubyte];
   }
   table FPC {
-    GRAPH_DEFINITION:string;
+    GRAPH_DEFINITION:ubyte;
   }
   table FRM {
-    FRAME_TRANSFORM_REQUEST:string;
+    FRAME_TRANSFORM_REQUEST:ubyte;
   }
   table FSB {
     REQUEST_ID:ulong;
@@ -1059,7 +1117,7 @@ const engineStandardCatalogGraph = `
     RAW_FILE_URI:string;
   }
   table GJN {
-    FEATURES:string;
+    FEATURES:ubyte;
   }
   table GNO {
     ID:string;
@@ -1204,7 +1262,7 @@ const engineStandardCatalogGraph = `
     STEP_SIZE:double;
   }
   table HYP {
-    CAT_IDS:string;
+    CAT_IDS:ubyte;
   }
   table IDM {
     ID:string;
@@ -1348,7 +1406,7 @@ const engineStandardCatalogGraph = `
     REQUESTER_EPM:[ubyte];
   }
   table LDM {
-    SITE:string;
+    SITE:ubyte;
   }
   table LGR {
     MESSAGE_TYPE:byte;
@@ -1601,6 +1659,7 @@ const engineStandardCatalogGraph = `
     ARG_OF_PERICENTER:double;
     MEAN_ANOMALY:double;
     BSTAR:double;
+    MEAN_ELEMENT_THEORY:byte;
   }
   table MSL {
     POSITION_X:double;
@@ -1735,7 +1794,7 @@ const engineStandardCatalogGraph = `
     RESERVED:[ubyte];
   }
   table NUM {
-    ROOT_SOLVE_REQUEST:string;
+    ROOT_SOLVE_REQUEST:ubyte;
   }
   table OBD {
     ID:string;
@@ -1797,7 +1856,7 @@ const engineStandardCatalogGraph = `
     AOU_TYPE:byte;
   }
   table OCM {
-    HEADER:string;
+    HEADER:ubyte;
   }
   table OEM {
     CLASSIFICATION:string;
@@ -2094,7 +2153,7 @@ const engineStandardCatalogGraph = `
     THERMAL_STATE:string;
   }
   table PIV {
-    REQUEST:string;
+    REQUEST:ubyte;
   }
   table PKB {
     BROKER_ID:string;
@@ -2182,7 +2241,7 @@ const engineStandardCatalogGraph = `
     TIMESTAMP_SIGNATURE_TYPE:string;
   }
   table PPE {
-    COMMENT:string;
+    COMMENT:ubyte;
   }
   table PRG {
     NAME:string;
@@ -2192,7 +2251,7 @@ const engineStandardCatalogGraph = `
     PEER_ID:string;
   }
   table PRW {
-    INIT:string;
+    INIT:ubyte;
   }
   table PUR {
     REQUEST_ID:string;
@@ -2200,11 +2259,44 @@ const engineStandardCatalogGraph = `
     TIER_NAME:string;
     BUYER_PEER_ID:string;
     BUYER_ENCRYPTION_PUBKEY:[ubyte];
+    PAYMENT_METHOD:byte;
+    PAYMENT_AMOUNT:uint64;
+    PAYMENT_CURRENCY:string;
+    PAYMENT_TX_HASH:string;
+    PAYMENT_CHAIN:string;
+    PAYMENT_REFERENCE:string;
+    BUYER_SIGNATURE:[ubyte];
+    TIMESTAMP:uint64;
+    KEY_ALGORITHM:string;
+    BUYER_EMAIL:string;
+    SENDER_ADDRESS:string;
+    CONFIRMATION_BLOCK:uint64;
+    PAYMENT_INTENT_ID:string;
+    CREDITS_TRANSACTION_ID:string;
+    STATUS:byte;
+    STATUS_MESSAGE:string;
+    CREATED_AT:uint64;
+    UPDATED_AT:uint64;
+    PAYMENT_DEADLINE:uint64;
+    PAYMENT_CONFIRMED_AT:uint64;
+    GRANT_ISSUED_AT:uint64;
+    GRANT_ID:string;
+    PROVIDER_PEER_ID:string;
+    PROVIDER_ACKNOWLEDGED_AT:uint64;
+    PREFERRED_DELIVERY_METHOD:string;
+    WEBHOOK_URL:string;
+    PROVIDER_SIGNATURE:[ubyte];
   }
   table QEM {
     MODEL_ID:string;
     MODEL_VERSION:string;
     MODEL_WEIGHTS_SHA256:string;
+    POOLING_METHOD:byte;
+    TEMPLATE_VERSION:string;
+    DIMENSIONS:uint32;
+    ENCODING:byte;
+    NORMALIZATION:byte;
+    VOCAB_SIZE:uint32;
   }
   table RAF {
     PDU_TYPE:byte;
@@ -2217,7 +2309,7 @@ const engineStandardCatalogGraph = `
     DATA:[ubyte];
   }
   table RBK {
-    RIGID_BODY_REQUEST:string;
+    RIGID_BODY_REQUEST:ubyte;
   }
   table RCF {
     PDU_TYPE:byte;
@@ -2351,6 +2443,13 @@ const engineStandardCatalogGraph = `
     EIRP:double;
     NORAD_CAT_ID:uint;
     ID_TRANSMITTER:string;
+    LINK_DIRECTION:byte;
+    BAUD:double;
+    SERVICE:string;
+    XMT_STATUS:byte;
+    INVERT:bool;
+    IARU_COORDINATION:string;
+    CITATION:string;
   }
   table RFE {
     ID:string;
@@ -2647,7 +2746,7 @@ const engineStandardCatalogGraph = `
     TOKEN_DECIMALS:uint8;
   }
   table SDF {
-    CONFIG:string;
+    CONFIG:ubyte;
   }
   table SDL {
     SPI:ushort;
@@ -2659,7 +2758,7 @@ const engineStandardCatalogGraph = `
     PAYLOAD:[ubyte];
   }
   table SDR {
-    CONFIG:string;
+    CONFIG:ubyte;
   }
   table SEN {
     ID:string;
@@ -2713,7 +2812,7 @@ const engineStandardCatalogGraph = `
     REFERENCE_EPOCH:string;
   }
   table SHW {
-    COMPILE_REQUEST:string;
+    COMPILE_REQUEST:ubyte;
   }
   table SIT {
     ID:string;
@@ -2759,7 +2858,7 @@ const engineStandardCatalogGraph = `
     RESERVED:[ubyte];
   }
   table SNW {
-    BATCH_REQUEST:string;
+    BATCH_REQUEST:ubyte;
   }
   table SOI {
     ID:string;
@@ -3020,6 +3119,20 @@ const engineStandardCatalogGraph = `
   table TMS {
     ID:string;
     TRACK_ID:string;
+    ENVIRONMENT:byte;
+    EPOCH:string;
+    LATITUDE:double;
+    LONGITUDE:double;
+    ALTITUDE_M:double;
+    GROUND_SPEED_MPS:double;
+    VELOCITY_NORTH_MPS:double;
+    VELOCITY_EAST_MPS:double;
+    VELOCITY_UP_MPS:double;
+    HEADING_DEG:double;
+    COURSE_DEG:double;
+    TURN_RATE_DPS:double;
+    VERTICAL_RATE_MPS:double;
+    MODEL_ID:string;
   }
   table TNR {
     NODE_ID:string;
@@ -3089,10 +3202,10 @@ const engineStandardCatalogGraph = `
     COURSE:double;
   }
   table TRN {
-    SOURCES:string;
+    SOURCES:ubyte;
   }
   table TRS {
-    REQUEST:string;
+    REQUEST:ubyte;
   }
   table VAM {
     ID:string;
@@ -3105,9 +3218,14 @@ const engineStandardCatalogGraph = `
     ID:string;
     VEHICLE_CLASS_ID:string;
     VEHICLE_TYPE_DESIGNATOR:string;
+    ENVIRONMENT:byte;
+    ENERGY_TYPE:byte;
+    CAPACITY_VALUE:double;
+    CAPACITY_UNITS:string;
+    RESERVE_FRACTION:double;
   }
   table VST {
-    CAMERA:string;
+    CAMERA:ubyte;
   }
   table WKS {
     WORKSPACE_ID:string;
@@ -3402,11 +3520,12 @@ var engineUnroutableSchemas = map[string]string{
 // engineUnprojectableFirstFields names the standards whose root table already
 // starts with a field the engine cannot represent. The >=1 COLUMN INVARIANT
 // forces a column anyway (a zero-column table emits malformed DDL and traps
-// the no-exceptions engine), so their single column reads slot 0 as a string:
-// bounds-checked and memory-safe, but NOT that field's value. Consumers of
-// these standards read `_data`, which is the whole record. The entry
-// disappears by itself if the standard ever declares a representable first
-// field.
+// the no-exceptions engine), so their single column is a FIXED-WIDTH one-byte
+// read of slot 0: a number, never that field's value, and never raw record
+// bytes in the public JSON response — which is what a string column there
+// produced. Consumers of these standards read `_data`, which is the
+// whole record. The entry disappears by itself if the standard ever declares a
+// representable first field.
 var engineUnprojectableFirstFields = map[string]string{
 	"ACW.fbs": "REQUEST",
 	"BSP.fbs": "INTERPOLATION_REQUEST",
