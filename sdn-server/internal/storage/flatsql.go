@@ -307,6 +307,9 @@ func WithEngineHotWindow(records int) StoreOption {
 // decorates ($OMM, $TBS), which keep WithEngineHotWindow. Values <= 0 keep the
 // default (engineDefaultGenericHotWindow). Config key
 // storage.engine_generic_hot_window.
+//
+// A value LARGER than WithEngineHotWindow is honoured, not clamped; the store
+// warns at open, because the two windows share one 4 GiB engine.
 func WithEngineGenericHotWindow(records int) StoreOption {
 	return func(c *storeConfig) {
 		if records > 0 {
@@ -387,6 +390,15 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	}
 	for _, o := range opts {
 		o(&cfg)
+	}
+	if cfg.engineGenericHotWindow > cfg.engineHotWindow {
+		// HONOURED, NOT CLAMPED — and therefore said out loud. The generic
+		// window applies to every embedded standard except the two this host
+		// decorates, so setting it above storage.engine_hot_window means the
+		// standards nothing reads at scale each get a bigger share of the one
+		// 4 GiB engine than $OMM and $TBS do.
+		log.Warnf("FlatSQL engine: storage.engine_generic_hot_window (%d) is LARGER than storage.engine_hot_window (%d) — every generically routed standard now holds more records resident than the two decorated ones; all of them share the engine's 4 GiB ceiling",
+			cfg.engineGenericHotWindow, cfg.engineHotWindow)
 	}
 
 	streamDir := filepath.Join(basePath, flatSQLStreamDirName)
@@ -530,6 +542,13 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	if err := registerEngineFileIDs(engineDB, bootPlan.Excluded); err != nil {
 		engine.Close()
 		return nil, fmt.Errorf("failed to register engine file identifiers: %w", err)
+	}
+	// An exclusion is only real once the view a previous boot wrote for that
+	// standard is gone; until then every plain-table path resolves the view
+	// and answers `no such module`.
+	if err := dropExcludedStandardViews(engineDB, bootPlan.Excluded); err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("failed to clear leftover unified views for unrouted standards: %w", err)
 	}
 
 	db := flatsqldrv.Open(engineDB)

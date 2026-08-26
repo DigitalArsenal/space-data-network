@@ -782,9 +782,25 @@ func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, st
 		size = j.replayLimit
 	}
 
-	wanted := make(map[string]int, len(schemas))
+	// BOTH SPELLINGS PER SCHEMA. The journal frame carries the schema name the
+	// WRITER passed — the bare code for every record the module SDK and the
+	// wasm provider sources store ("OMM", "OEM", "IRM") — while `schemas` is
+	// the routed set, spelled canonically. Keying `wanted` only canonically
+	// made the pass skip every bare-spelled frame, so those records came back
+	// resident-zero after a restart. canonical maps whatever the frame says
+	// back to the routed name, which is what the per-schema heaps, the
+	// deferral set and the residency bookkeeping are keyed by.
+	wanted := make(map[string]int, len(schemas)*2)
+	canonical := make(map[string]string, len(schemas)*2)
 	for _, schemaName := range schemas {
-		wanted[schemaName] = limitFor(schemaName)
+		limit := limitFor(schemaName)
+		for _, alias := range engineSchemaNameAliases(schemaName) {
+			if _, taken := canonical[alias]; taken {
+				continue
+			}
+			wanted[alias] = limit
+			canonical[alias] = schemaName
+		}
 	}
 	windows := make(map[string]*recordCatalogEngineWindow, len(schemas))
 	deferredSet := map[string]bool{}
@@ -825,7 +841,11 @@ func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, st
 			return 0, nil, fmt.Errorf("record catalog frame at %d: malformed header", off-(8+n))
 		}
 		limit, isWanted := wanted[schemaName]
-		if !isWanted || limit <= 0 || deferredSet[schemaName] {
+		if !isWanted || limit <= 0 {
+			continue
+		}
+		schemaName = canonical[schemaName]
+		if deferredSet[schemaName] {
 			continue
 		}
 		window := windows[schemaName]
@@ -868,7 +888,7 @@ func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, st
 		if window == nil {
 			// No frame in the journal names this schema: it is resident zero,
 			// recorded exactly as the per-schema replay always recorded it.
-			store.engineResident[schemaName] = 0
+			store.engineResidentSet(schemaName, 0)
 			continue
 		}
 		n, err := j.loadEngineHotWindow(store, window, files)
@@ -918,7 +938,7 @@ func (j *recordCatalogJournal) loadEngineHotWindow(store *FlatSQLStore, window *
 		}
 		loaded++
 	}
-	store.engineResident[window.schemaName] = int64(loaded)
+	store.engineResidentSet(window.schemaName, int64(loaded))
 	if loaded > 0 {
 		log.Infof("FlatSQL engine compact hot-window rebuild: loaded %d %s records (window %d)", loaded, window.schemaName, window.limit)
 	}

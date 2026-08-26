@@ -406,10 +406,62 @@ func (s *FlatSQLStore) engineWindowFor(schemaName string) int {
 	if _, decorated := engineDecoratedSchemas[normalizeSchemaNameForEpoch(schemaName)]; decorated {
 		return s.engineHotWindow
 	}
-	if s.engineGenericHotWindow > 0 && s.engineGenericHotWindow < s.engineHotWindow {
+	if s.engineGenericHotWindow > 0 {
+		// HONOURED EVEN WHEN IT EXCEEDS THE DECORATED WINDOW. This used to
+		// require `< s.engineHotWindow`, which silently handed an operator who
+		// RAISED storage.engine_generic_hot_window the decorated window
+		// instead — a config key that quietly means something else for half
+		// its range is worse than one that costs memory. NewFlatSQLStore warns
+		// at open when it is the larger of the two, because that is where the
+		// memory implication belongs (every routed standard shares one 4 GiB
+		// engine).
 		return s.engineGenericHotWindow
 	}
 	return s.engineHotWindow
+}
+
+// engineSchemaNameAliases lists every spelling of a schema name that a WRITER
+// may have persisted for it.
+//
+// The store writes sdn_record_index.schema_name and the record-catalog journal
+// frame VERBATIM, in whatever spelling the caller passed, while every engine
+// route is keyed by the canonical ".fbs" name. Both spellings are in
+// production use — caps/storage.go passes the module's `schema` string through
+// untouched, and the modules' provider_source.hpp sets record_schema to the
+// bare code ("OMM", "OEM") — so a rebuild that matched only the canonical
+// spelling brought back ZERO rows for every record written the bare way. That
+// is the exact failure the routing flip exists to eliminate, and it is a READ
+// mismatch: nothing needs migrating, the boot rebuild just has to ask for both
+// names.
+func engineSchemaNameAliases(schemaName string) []string {
+	canonical := normalizeSchemaNameForEpoch(schemaName)
+	bare := strings.TrimSuffix(canonical, ".fbs")
+	if bare == "" || bare == canonical {
+		return []string{canonical}
+	}
+	return []string{canonical, bare}
+}
+
+// ==================== Engine residency bookkeeping ====================
+//
+// engineResident is keyed by the CANONICAL schema name, always. The write path
+// is reached with the caller's spelling ("IRM") and the read paths — above all
+// PublicQuerySurface — look it up by the routed name ("IRM.fbs"), so an
+// unnormalized map reported Records: 0 and omitted every `<CODE>@<source>`
+// partition for any standard written the bare way, while the rows were
+// provably readable from the view. Every touch goes through these three
+// accessors so the two spellings can never disagree again. Caller holds s.mu.
+
+func (s *FlatSQLStore) engineResidentCount(schemaName string) int64 {
+	return s.engineResident[normalizeSchemaNameForEpoch(schemaName)]
+}
+
+func (s *FlatSQLStore) engineResidentSet(schemaName string, n int64) {
+	s.engineResident[normalizeSchemaNameForEpoch(schemaName)] = n
+}
+
+func (s *FlatSQLStore) engineResidentAdd(schemaName string, delta int64) {
+	s.engineResident[normalizeSchemaNameForEpoch(schemaName)] += delta
 }
 
 // engineIngest is one record queued for the engine vtab after its control
@@ -448,6 +500,81 @@ func engineRecordPayload(data []byte) []byte {
 // belongs to a routed standard.
 func engineRoutedFileID(fileID string) bool {
 	return engineRoutedFileIDs[fileID]
+}
+
+// dropExcludedStandardViews removes the unified views a PREVIOUS boot left
+// behind for standards THIS boot does not route.
+//
+// A unified view is a PERSISTED schema object. Excluding a standard takes its
+// table out of the schema and stops its vtab module from ever being
+// registered, but the `CREATE VIEW "<CODE>" AS SELECT ... FROM "<CODE>@src"`
+// an earlier boot wrote survives in sqlite_master. Every plain-table path then
+// resolves that leftover view instead of the canonical control table and
+// answers `no such module: __flatsql_module_<code>_<src>`.
+//
+// That is not cosmetic: it is how the legacy blob migration — whose entire
+// purpose is to CREATE the canonical table for an excluded standard — fails
+// the open outright, and it is what a boot that fell back to the decorated
+// standards after an unreadable probe would leave behind on all 225 others.
+// Dropping the leftovers is what makes an exclusion MEAN "this standard is an
+// ordinary control table in this store", which is exactly what it claims.
+//
+// The per-source shadow vtabs are deliberately left alone: DROP TABLE on a
+// virtual table needs its module registered (which is precisely what an
+// excluded standard does not have), and they are already invisible to every
+// plain-table path (tableExists and schemasWithRecordTables both filter
+// `CREATE VIRTUAL%`). A later boot that re-routes the standard adopts them.
+func dropExcludedStandardViews(engineDB *flatsqlrt.Database, excluded map[string]bool) error {
+	if len(excluded) == 0 {
+		return nil
+	}
+	names := make(map[string]bool, len(excluded))
+	for name := range excluded {
+		if binding, ok := engineRoutedSchemas[name]; ok {
+			names[binding.Table] = true
+		}
+	}
+	res, err := engineDB.Query(`SELECT name FROM sqlite_master WHERE type = 'view'`)
+	if err != nil {
+		return fmt.Errorf("enumerate persisted unified views: %w", err)
+	}
+	leftover := []string{}
+	for _, row := range res.Rows {
+		if len(row) != 1 {
+			continue
+		}
+		if name, ok := row[0].(string); ok && names[name] {
+			leftover = append(leftover, name)
+		}
+	}
+	if len(leftover) == 0 {
+		return nil
+	}
+	sort.Strings(leftover)
+	// ONE TRANSACTION, for the same reason rebuildUnifiedViews uses one:
+	// SQLite re-reads the whole schema after every schema-changing statement,
+	// and the fail-closed path can have 225 of them.
+	batched := false
+	if _, err := engineDB.Query("BEGIN"); err == nil {
+		batched = true
+	}
+	for _, name := range leftover {
+		if _, err := engineDB.Query(`DROP VIEW IF EXISTS ` + quoteEngineRelation(name)); err != nil {
+			if batched {
+				if _, rbErr := engineDB.Query("ROLLBACK"); rbErr != nil {
+					log.Warnf("FlatSQL boot: roll back leftover view cleanup: %v", rbErr)
+				}
+			}
+			return fmt.Errorf("drop leftover unified view %q: %w", name, err)
+		}
+	}
+	if batched {
+		if _, err := engineDB.Query("COMMIT"); err != nil {
+			return fmt.Errorf("commit leftover unified-view cleanup: %w", err)
+		}
+	}
+	log.Warnf("FlatSQL boot: dropped %d leftover unified view(s) for standard(s) this store does not route: %v", len(leftover), leftover)
+	return nil
 }
 
 // rebuildUnifiedViews replaces every routed base name with a UNION ALL view
@@ -532,7 +659,7 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 		}
 		ingested++
 	}
-	s.engineResident[schemaName] += ingested
+	s.engineResidentAdd(schemaName, ingested)
 	return s.enforceEngineHotWindowLocked(schemaName)
 }
 
@@ -551,7 +678,7 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 	if !routed || window <= 0 {
 		return nil
 	}
-	overflow := s.engineResident[schemaName] - int64(window)
+	overflow := s.engineResidentCount(schemaName) - int64(window)
 	if overflow <= 0 {
 		return nil
 	}
@@ -601,7 +728,7 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 		}
 		evicted++
 	}
-	s.engineResident[schemaName] -= evicted
+	s.engineResidentAdd(schemaName, -evicted)
 	if evicted > 0 {
 		log.Infof("FlatSQL engine: hot window evicted %d oldest %s records (window %d)",
 			evicted, schemaName, window)
@@ -633,7 +760,7 @@ func (s *FlatSQLStore) rebuildEngineRecords() error {
 		// map means the enumeration itself failed; fall back to probing each
 		// schema, which is what this always did.
 		if present != nil && !present[schemaName] {
-			s.engineResident[schemaName] = 0
+			s.engineResidentSet(schemaName, 0)
 			continue
 		}
 		if err := s.rebuildEngineRecordsForSchema(schemaName); err != nil {
@@ -768,6 +895,19 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 		return nil
 	}
 
+	// BOTH SPELLINGS. sdn_record_index.schema_name is written verbatim in
+	// whatever spelling the writer used, and the bare code is the shape the
+	// module SDK and the wasm provider sources actually pass
+	// (engineSchemaNameAliases). Matching only the canonical ".fbs" name meant
+	// a record stored as "IRM" was live-readable and then came back as ZERO
+	// rows after a restart.
+	aliases := engineSchemaNameAliases(schemaName)
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")
+	args := make([]any, 0, len(aliases)+1)
+	for _, alias := range aliases {
+		args = append(args, alias)
+	}
+	args = append(args, s.engineWindowFor(schemaName))
 	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT stream_path, stream_offset, record_length, source_name FROM (
 			SELECT idx.rowid AS rid,
@@ -783,11 +923,11 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 			       ), '') AS source_name
 			FROM sdn_record_index idx
 			JOIN %s rr ON rr.cid = idx.cid
-			WHERE idx.schema_name = ?
+			WHERE idx.schema_name IN (%s)
 			ORDER BY idx.rowid DESC
 			LIMIT ?
 		) ORDER BY rid ASC
-	`, readSource), schemaName, s.engineWindowFor(schemaName))
+	`, readSource, placeholders), args...)
 	if err != nil {
 		log.Warnf("FlatSQL engine rebuild: query %s hot window: %v", schemaName, err)
 		return nil
@@ -843,7 +983,7 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 	if err := rows.Err(); err != nil {
 		log.Warnf("FlatSQL engine rebuild: iterate hot window: %v", err)
 	}
-	s.engineResident[schemaName] = int64(rebuilt)
+	s.engineResidentSet(schemaName, int64(rebuilt))
 	if rebuilt > 0 || skipped > 0 {
 		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped, window %d)", rebuilt, schemaName, skipped, s.engineWindowFor(schemaName))
 	}

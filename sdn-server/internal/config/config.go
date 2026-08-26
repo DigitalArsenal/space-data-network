@@ -1137,7 +1137,9 @@ type StorageConfig struct {
 	// merely because it exists gets this smaller budget until something
 	// actually reads it at scale. Eviction is a CACHE bound — stream files,
 	// compact metadata and datasync cursors keep the full history either way.
-	// 0 = built-in default (10K records).
+	// 0 = built-in default (10K records). A value larger than EngineHotWindow
+	// is HONOURED, not clamped — the store logs a warning at open, because
+	// both windows are served from the engine's one 4 GiB ceiling.
 	EngineGenericHotWindow int `yaml:"engine_generic_hot_window,omitempty"`
 
 	// AuxiliaryReplayChunkBytes bounds ONE auxiliary-journal replay

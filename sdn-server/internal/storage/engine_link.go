@@ -190,6 +190,28 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 		s.engineHotHydrated.Store(true)
 	}
 
+	// EVERY ROUTED BASE NAME MUST RESOLVE AFTER RECOVERY TOO, and this is the
+	// only place that can guarantee it here. The replacement database is fresh
+	// (the old one was discarded above), so its lazy initializeSQLiteEngine
+	// latched with no tables and the unified views are gone with the file. The
+	// replays register a source per record they load — but a store whose
+	// journal yields no records for a standard registers nothing, and
+	// `SELECT _data FROM IRM` would then answer "no such table": the exact
+	// answer firstRunSemantics promises can never happen, and the answer the
+	// cellular ingest flow's resume-mark SQL cannot tell from a real failure.
+	// It also un-breaks PublicQuerySurface, which aborts the WHOLE surface on
+	// one unresolvable base name.
+	//
+	// ViewsCurrent is true only when the replays already registered sources —
+	// in that case ensureEngineSource has rebuilt the views once already, so
+	// this is a no-op rather than a second all-or-nothing rebuild.
+	if err := s.finishEngineSourceSetup(engineBootPlan{
+		Excluded:     s.engineExcluded,
+		ViewsCurrent: len(s.engineSources) > 0,
+	}); err != nil {
+		return s.engineEpoch, fmt.Errorf("recover poisoned engine: engine source setup: %w", err)
+	}
+
 	log.Infof("FlatSQL engine rebuilt after poisoning (epoch %d)", s.engineEpoch)
 	return s.engineEpoch, nil
 }

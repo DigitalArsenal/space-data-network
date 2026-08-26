@@ -435,6 +435,13 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 
 		lastErr = err
 		engine.Close() // discards a poisoned runtime AND releases its file handles
+		if errors.Is(err, errEnginePrepareFailed) {
+			// The FILE is fine; the host-side registration is not. Fail the
+			// start and leave the control database untouched — exactly the
+			// non-destructive failure this was before the registration moved
+			// in front of the first query.
+			return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("failed to register engine file identifiers: %w", err)
+		}
 		if attempt == 2 {
 			break
 		}
@@ -452,6 +459,21 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 	return engine, db, bootResume{}, engineBootPlan{Excluded: map[string]bool{}}, err
 }
 
+// errEnginePrepareFailed marks a failure of the pre-first-query preparation
+// step — today, file-identifier registration.
+//
+// IT IS NOT EVIDENCE THAT THE CONTROL DATABASE IS BAD, and that distinction is
+// the whole reason the sentinel exists. Before this work, registerEngineFileIDs
+// ran AFTER the open, in NewFlatSQLStore, and a failure was a hard,
+// NON-DESTRUCTIVE start failure that left the file exactly where it was.
+// Running it in front of the first query put it inside tryOpenControlDatabase,
+// whose error means "unusable database" and whose caller answers that by
+// DELETING the control database and re-deriving from the journal — multi-GB on
+// host-01/host-02. RegisterFileID is documented as THROWING on an unknown
+// table and now runs 227 times per boot instead of 2, so that blast radius is
+// not theoretical. Callers unwrap this sentinel and fail the start instead.
+var errEnginePrepareFailed = errors.New("engine file-identifier registration")
+
 // enginePrepare is the work that must happen between OpenDatabase and the
 // database's FIRST QUERY, or not at all.
 //
@@ -468,23 +490,39 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 // DROP them again. Cold stores therefore register their file identifiers after
 // the open instead (NewFlatSQLStore).
 //
-// WHAT THIS DOES NOT BOUND, STATED PLAINLY. These calls only tell the engine
-// what exists; the `CREATE VIRTUAL TABLE IF NOT EXISTS` statements are issued
-// INSIDE the engine, by its lazy initializeSQLiteEngine, at the first query —
-// so the host cannot wrap them in one transaction the way rebuildUnifiedViews
-// wraps CreateUnifiedViews. On the FIRST boot after every standard became
-// routed, host-01's seven persisted sources therefore materialize 227 base plus
-// 227 x 7 shadow tables in one un-batched burst; afterwards the same statements
-// are no-ops against an already-current schema. Batching the burst is a change
-// to the engine's own initialization (one transaction around it), filed for the
-// engine owner alongside the errors-as-values note above.
+// WHAT THIS DOES NOT BOUND, STATED PLAINLY, WITH THE MEASUREMENT. These calls
+// only tell the engine what exists; the `CREATE VIRTUAL TABLE IF NOT EXISTS`
+// statements are issued INSIDE the engine, by its lazy initializeSQLiteEngine,
+// at the first query — so the host cannot wrap them in one transaction the way
+// rebuildUnifiedViews wraps CreateUnifiedViews. On the FIRST boot after every
+// standard became routed, host-01's seven persisted sources therefore
+// materialize 227 base plus 227 x 7 shadow tables in ONE un-batched burst.
+//
+// MEASURED on the shipped engine (laptop NVMe, journal_mode=TRUNCATE): the
+// cold first-query burst is 63.0 s against an EMPTY control database and
+// 59.9 s against a 784 MB one. The cost is SCHEMA-OBJECT bound, not
+// database-size bound, so host-01's 6.8 GB and host-02's 3.4 GB do not inflate
+// it — but the droplets' block-volume fsync will, expect roughly 2-5x, i.e.
+// 2-5 minutes, on top of the catalog replay. It is genuinely ONCE: warm
+// re-boots run the same statements as no-ops in 0.08-0.8 s. Engine memory is a
+// non-issue (1816 TableStores ~ 20 MB RSS).
+//
+// THE OPERATIONAL EDGE THAT FOLLOWS FROM THAT NUMBER: the fleet's post-restart
+// health budget (config UpdateConfig.HealthTimeout, default 600 s) covers the
+// burst with room, but a box whose update.health_timeout_seconds has been set
+// below ~300 s will fail its first post-flip health check and SELF-ROLL-BACK.
+// Check it before rolling this to a box that overrides the default.
+//
+// Batching the burst is a change to the engine's own initialization (one
+// transaction around it), filed for the engine owner alongside the
+// errors-as-values note above.
 func enginePrepare(plan engineBootPlan) func(*flatsqlrt.Database) error {
 	if len(plan.Sources) == 0 {
 		return nil
 	}
 	return func(db *flatsqlrt.Database) error {
 		if err := registerEngineFileIDs(db, plan.Excluded); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errEnginePrepareFailed, err)
 		}
 		for _, source := range plan.Sources {
 			if err := db.RegisterSource(source); err != nil {
@@ -557,6 +595,11 @@ func openControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, p
 	db, mark, warm, err := tryOpenControlDatabase(engine, dbPath, schemaText, prepare)
 	if err == nil {
 		return db, mark, warm, nil
+	}
+	if errors.Is(err, errEnginePrepareFailed) {
+		// A registration failure says nothing about the file. Never trade a
+		// multi-GB control database for it.
+		return nil, bootMark{}, false, err
 	}
 	log.Warnf("FlatSQL control database at %s is unusable (%v) — discarding it and re-deriving from the journal", dbPath, err)
 	if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
@@ -812,6 +855,36 @@ const engineProbeSchema = `
   }
 `
 
+// engineUnprobedPlan is the FAIL-CLOSED answer to "what does this control
+// database already contain?" — the plan a boot uses when the probe could not
+// read the file at all.
+//
+// It routes ONLY the two decorated standards, i.e. the schema text this store
+// shipped before every embedded standard became routed
+// (engineRecordSchema + engineTBSTableGraph). Those two names cannot collide
+// with a plain control table in any store: they have been engine-owned since
+// loop B.3 and the cellular slice, so no migration can have left a plain table
+// of either name behind. Every generically routed standard is dropped from the
+// schema, which is what makes the boot incapable of issuing
+// `DROP TABLE IF EXISTS "<CODE>"` against rows it never got to look at.
+//
+// The cost of being wrong in this direction is a boot whose sandboxed query
+// surface answers "no such table" for the generic standards instead of zero
+// rows. The cost of being wrong in the other direction is silent, permanent,
+// unledgered row loss with no backup. They are not comparable.
+func engineUnprobedPlan(what string, cause error) engineBootPlan {
+	excluded := make(map[string]bool, len(engineRoutedSchemas))
+	for name := range engineRoutedSchemas {
+		if _, decorated := engineDecoratedSchemas[name]; decorated {
+			continue
+		}
+		excluded[name] = true
+	}
+	log.Errorf("FlatSQL boot probe: %s: %v — the control database could not be inspected, so this boot routes ONLY the decorated standards. %d generically routed standard(s) answer \"no such table\" until a boot whose probe succeeds; nothing is dropped.",
+		what, cause, len(excluded))
+	return engineBootPlan{Excluded: excluded}
+}
+
 // probeControlDatabase reads what the control database already contains, in a
 // SEPARATE runtime that is fully closed before the real one opens.
 //
@@ -847,9 +920,25 @@ const engineProbeSchema = `
 // closed before the real open — so there is never a second writer on the file,
 // and it costs one engine start (~5 ms) plus one open.
 //
-// Every failure returns an EMPTY plan: no exclusions, no pre-registered
-// sources, a view rebuild. That is exactly the behaviour this store had before
-// the probe existed.
+// EVERY FAILURE FAILS CLOSED, and that is a correction: this probe used to
+// return an EMPTY plan whenever it could not read the file. An empty plan is
+// NOT "the behaviour this store had before the probe existed" — it is the full
+// 227-standard schema plus registerEngineFileIDs over every standard, which is
+// precisely the input that makes createUnifiedView issue
+// `DROP TABLE IF EXISTS "<CODE>"` against a colliding plain control table.
+// Nothing downstream re-checks (finishEngineSourceSetup,
+// preregisterEngineSources and ensureEngineSource all rebuild the views with
+// no collision test), so a fail-OPEN probe left a data-destruction guard with
+// no guard at all on exactly the stores that need it — dev stores and old
+// backups migrated from a pre-WS7.3d shape.
+//
+// A probe that cannot answer therefore answers NO (engineUnprobedPlan): the
+// two DECORATED standards stay routed, because they have owned their canonical
+// names since loop B.3 / the cellular slice and no store can hold a plain table
+// of those names, and every GENERICALLY routed standard is un-routed for that
+// boot. The store comes up on the pre-flip read surface — degraded, logged, and
+// self-correcting on the next boot whose probe succeeds — never with a dropped
+// table.
 func probeControlDatabase(basePath, dbPath string) engineBootPlan {
 	plan := engineBootPlan{Excluded: map[string]bool{}}
 	if !fileExists(dbPath) {
@@ -860,20 +949,17 @@ func probeControlDatabase(basePath, dbPath string) engineBootPlan {
 		flatsqlrt.WithFileIORoot(basePath),
 	)
 	if err != nil {
-		log.Warnf("FlatSQL boot probe: start probe engine: %v", err)
-		return plan
+		return engineUnprobedPlan("start probe engine", err)
 	}
 	defer engine.Close()
 	db, err := engine.OpenDatabase(engineProbeSchema, "sdn-engine-boot-probe", dbPath, flatsqlrt.JournalTruncate)
 	if err != nil {
-		log.Warnf("FlatSQL boot probe: open control database for probing: %v", err)
-		return plan
+		return engineUnprobedPlan("open control database for probing", err)
 	}
 	defer db.Destroy()
 	res, err := db.Query(`SELECT type, name, COALESCE(sql, '') FROM sqlite_master WHERE type IN ('table', 'view')`)
 	if err != nil {
-		log.Warnf("FlatSQL boot probe: read control schema: %v", err)
-		return plan
+		return engineUnprobedPlan("read control schema", err)
 	}
 
 	plain := map[string]bool{}
@@ -898,6 +984,8 @@ func probeControlDatabase(basePath, dbPath string) engineBootPlan {
 		}
 	}
 
+	collided := []string{}
+	legacyBlob := []string{}
 	for name, binding := range engineRoutedSchemas {
 		if _, decorated := engineDecoratedSchemas[name]; decorated {
 			// $OMM and $TBS have owned their canonical names since loop B.3
@@ -905,17 +993,36 @@ func probeControlDatabase(basePath, dbPath string) engineBootPlan {
 			// different regression, not a fix.
 			continue
 		}
-		if plain[binding.Table] {
+		switch {
+		case plain[binding.Table]:
 			plan.Excluded[name] = true
+			collided = append(collided, name)
+		case plain[legacySchemaTableName(name)]:
+			// THE SECOND PER-STORE EXCLUSION, and it is a REACHABILITY guard
+			// rather than a destruction one. migrateLegacySchemaTable merges a
+			// pre-stream `sds_<lower>` BLOB table into the canonical table, and
+			// it DEFERS whenever the engine owns that canonical name. Routing a
+			// standard whose store still holds its blob table would therefore
+			// pin those rows outside every production read path — Get and
+			// recordReadSource both union the canonical table and the
+			// (producer, standard) tables, neither of which the blob rows are
+			// in — with nothing to un-pin them.
+			//
+			// So the standard stays UNROUTED until the blob migration runs.
+			// That migration merges the rows into the plain canonical table,
+			// and the NEXT boot keeps the standard unrouted for the collision
+			// reason above, with its rows readable the ordinary way.
+			plan.Excluded[name] = true
+			legacyBlob = append(legacyBlob, name)
 		}
 	}
-	if len(plan.Excluded) > 0 {
-		names := make([]string, 0, len(plan.Excluded))
-		for name := range plan.Excluded {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		log.Errorf("FlatSQL boot: %v are NOT engine-routed in this store — a plain control table already holds each standard's canonical name and routing it would DROP that table. Their rows stay readable through the ordinary record read source.", names)
+	sort.Strings(collided)
+	sort.Strings(legacyBlob)
+	if len(collided) > 0 {
+		log.Errorf("FlatSQL boot: %v are NOT engine-routed in this store — a plain control table already holds each standard's canonical name and routing it would DROP that table. Their rows stay readable through the ordinary record read source.", collided)
+	}
+	if len(legacyBlob) > 0 {
+		log.Errorf("FlatSQL boot: %v are NOT engine-routed in this store — a pre-stream sds_<lower> BLOB table still holds their rows, and routing the canonical name would stop the legacy migration from ever merging them into the record read path. They route on the boot after that migration runs.", legacyBlob)
 	}
 
 	plan.Sources = make([]string, 0, len(sourceSet))
