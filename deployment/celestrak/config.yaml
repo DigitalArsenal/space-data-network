@@ -93,11 +93,29 @@ publishing:
       source_name: satnogs-db
       # The SatNOGS timer is daily; this only bounds a retry/restart burst.
       min_interval: 30m
+    # LIVE LANE (corrected 2026-08-26, hermes-tbs, graph
+    # sdn-cellular-tbs-reaches-host01). The narrowing MUST name the source the
+    # box actually ingests. host-02 runs the cell-tower ingest flow configured
+    # with provider "mls-archive" / source "mls-final-full-cell-export" (the
+    # MLS final worldwide export on archive.org); "cell-tower-bulk" below is
+    # the MODULE DEFAULT and matches NOTHING this box produces, so on its own
+    # it published nothing at all and host-01's cellular tiles stayed at
+    # records:0. Both lanes are declared: the live MLS one, and the OpenCellID
+    # bulk one for when its credential is re-seeded here.
+    #
+    # min_interval is 30s, NOT the 30m the whole-payload lanes use, because
+    # this source is PAGED. AutoPublisher.ObserveIngest DISCARDS a batch that
+    # lands inside the window -- it returns without recording it, and a
+    # publication is scoped to ONE batch id -- so a long window here does not
+    # defer chunks, it loses them. At the ~1-minute paging tick this lane
+    # runs, a 30m window would silently drop about 29 of every 30 chunks.
+    - schema: TBS.fbs
+      provider_id: mls-archive
+      source_name: mls-final-full-cell-export
+      min_interval: 30s
     - schema: TBS.fbs
       source_name: cell-tower-bulk
-      # The cell-tower ingest timer is interval-driven; this bounds a
-      # retry/restart burst, it never withholds a landed batch.
-      min_interval: 30m
+      min_interval: 30s
 
 setup:
   token_expiry: 10m
