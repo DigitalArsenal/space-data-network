@@ -7,6 +7,13 @@ import {
   reassembleChunkedQrPayloads,
 } from './identity';
 
+// §21 fixture keys (owner ruling 2026-08-19): the card carries b64url of the
+// hex-decoded LITERAL public keys — never the xpub or derivation paths.
+const SIGNING_PUBLIC_KEY_HEX = '0321fce2a66e6c1be09128b20e3f50374fa05ec1ceb84eaa78e69cf1cddc60a7a6';
+const ENCRYPTION_PUBLIC_KEY_HEX = '0301f6e5f01a7765617c817568db07e81dc1b86a87575f4702f347b5897f6b1d06';
+const SIGN_ALIAS_LINE = 'EMAIL;TYPE=INTERNET;TYPE=sign:AyH84qZubBvgkSiyDj9QN0-gXsHOuE6qeOac8c3cYKem@sign.spacedatanetwork.org';
+const ENCRYPT_ALIAS_LINE = 'EMAIL;TYPE=INTERNET;TYPE=encrypt:AwH25fAad2VhfIF1aNsH6B3BuGqHV19HAvNHtYl_ax0G@encrypt.spacedatanetwork.org';
+
 describe('normalizeHostedEpmRecord', () => {
   it('keeps node-owned identity separate from additional local EPMs', () => {
     const own = normalizeHostedEpmRecord({
@@ -80,8 +87,7 @@ describe('public EPM exports', () => {
     expect(serialized).not.toMatch(/CORE|Seed|walletPrivate|SECRET|XPriv|privateKey|privateSeed/);
   });
 
-  it('creates bounded vCard QR payloads with contact fields and one HD xpub alias only', () => {
-    const xpub = 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT';
+  it('creates bounded vCard QR payloads with contact fields and literal sign/encrypt key aliases', () => {
     const payload = createVCardQrPayload({
       id: 'alice',
       kind: 'hosted',
@@ -107,13 +113,13 @@ describe('public EPM exports', () => {
         },
         peer_id: '16Uiu2Alice',
         epm_cid: 'bafyepm',
-        xpub,
+        xpub: 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT',
         public_key: 'node-public',
-        signing_public_key: 'signing-public',
-        encryption_public_key: 'encryption-public',
+        signing_public_key: SIGNING_PUBLIC_KEY_HEX,
+        encryption_public_key: ENCRYPTION_PUBLIC_KEY_HEX,
         keys: [
-          { key_type: 'signing', public_key: 'signing-public', derivation_path: "m/44'/0'/0'/0/0" },
-          { key_type: 'encryption', public_key: 'encryption-public', derivation_path: "m/44'/0'/0'/1/0" },
+          { key_type: 'signing', public_key: SIGNING_PUBLIC_KEY_HEX, derivation_path: "m/44'/0'/0'/0/0" },
+          { key_type: 'encryption', public_key: ENCRYPTION_PUBLIC_KEY_HEX, derivation_path: "m/44'/0'/0'/1/0" },
         ],
         private_key: 'must-not-export',
       },
@@ -126,21 +132,25 @@ describe('public EPM exports', () => {
     expect(payload).toContain('EMAIL:alice@example.com');
     expect(payload).toContain('TEL:+1 555 0100');
     expect(payload).toContain('ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA');
-    const xpubAlias = `EMAIL;TYPE=INTERNET;TYPE=xpub:${xpub}@xpub.spacedatanetwork.org`;
-    expect(unfolded).toContain(xpubAlias);
-    expect(unfolded.split(xpubAlias)).toHaveLength(2);
+    // §21: the aliases carry b64url(literal key bytes) — exactly one row each.
+    expect(unfolded.split(SIGN_ALIAS_LINE)).toHaveLength(2);
+    expect(unfolded.split(ENCRYPT_ALIAS_LINE)).toHaveLength(2);
     for (const forbidden of [
       'PRODID',
       'ORG:',
       'TITLE:',
       'ROLE:',
       'peerid.spacedatanetwork.org',
+      'xpub',
+      'signing.spacedatanetwork.org',
+      'encryption.spacedatanetwork.org',
       'X-SDN-XPUB',
       '16Uiu2Alice',
       'bafyepm',
       'node-public',
-      'signing-public',
-      'encryption-public',
+      SIGNING_PUBLIC_KEY_HEX,
+      ENCRYPTION_PUBLIC_KEY_HEX,
+      "m/44'",
       'must-not-export',
     ]) {
       expect(unfolded).not.toContain(forbidden);
@@ -148,7 +158,7 @@ describe('public EPM exports', () => {
     expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(512);
   });
 
-  it('refuses to create an identity QR without the required HD xpub alias', () => {
+  it('refuses to create an identity QR without a verifiable signing public key', () => {
     expect(() => createVCardQrPayload({
       id: 'contact-only',
       kind: 'hosted',
@@ -157,21 +167,23 @@ describe('public EPM exports', () => {
         email: 'contact@example.com',
         telephone: '+1 555 0100',
       },
-    })).toThrow('HD extended public key is required for identity QR');
+    })).toThrow('a verifiable signing public key is required for identity QR');
   });
 
-  it('refuses an xpub value that cannot be stored as the vCard email alias', () => {
+  it('does not accept a bare xpub as QR identity material', () => {
+    // §21: the xpub is PRIVATE and never satisfies the QR — the card needs
+    // the literal signing key bytes (the sign alias).
     expect(() => createVCardQrPayload({
-      id: 'invalid-xpub',
+      id: 'xpub-only',
       kind: 'hosted',
       epm_json: {
-        dn: 'Invalid Xpub',
-        xpub: 'xpub:cannot-be-an-email-local-part',
+        dn: 'Xpub Only',
+        xpub: 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT',
       },
-    })).toThrow('HD extended public key is required for identity QR');
+    })).toThrow('a verifiable signing public key is required for identity QR');
   });
 
-  it('fits a representative contact and HD xpub payload in a version-15 level-M QR or smaller', async () => {
+  it('fits a representative contact and literal-key payload in a version-15 level-M QR or smaller', async () => {
     // @ts-expect-error qrcode does not ship TypeScript declarations in this package.
     const module = await import('qrcode');
     const qrCode = (module.default ?? module) as {
@@ -199,14 +211,15 @@ describe('public EPM exports', () => {
           postal_code: '32920',
           country: 'USA',
         },
-        xpub: 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT',
+        signing_public_key: SIGNING_PUBLIC_KEY_HEX,
+        encryption_public_key: ENCRYPTION_PUBLIC_KEY_HEX,
       },
     });
 
     expect(qrCode.create(payload, { errorCorrectionLevel: 'M' }).modules.size).toBeLessThanOrEqual(77);
   });
 
-  it('omits signing and encryption key arrays from compact QR aliases', () => {
+  it('carries signing and encryption keys as b64url aliases, never raw arrays or paths', () => {
     const payload = createVCardQrPayload({
       id: 'node',
       kind: 'node-self',
@@ -215,8 +228,8 @@ describe('public EPM exports', () => {
         peer_id: '12D3KooWNode',
         xpub: 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT',
         keys: [
-          { key_type: 'signing', public_key: 'array-signing-key', derivation_path: "m/44'/0'/0'/0/0" },
-          { key_type: 'encryption', public_key: 'array-encryption-key', derivation_path: "m/44'/0'/0'/1/0" },
+          { key_type: 'signing', public_key: SIGNING_PUBLIC_KEY_HEX, derivation_path: "m/44'/0'/0'/0/0" },
+          { key_type: 'encryption', public_key: ENCRYPTION_PUBLIC_KEY_HEX, derivation_path: "m/44'/0'/0'/1/0" },
         ],
       },
     });
@@ -224,8 +237,15 @@ describe('public EPM exports', () => {
 
     expect(unfolded).not.toContain('12D3KooWNode');
     expect(unfolded).not.toContain('peerid.spacedatanetwork.org');
-    expect(unfolded).not.toContain('array-signing-key@signing.spacedatanetwork.org');
-    expect(unfolded).not.toContain('array-encryption-key@encryption.spacedatanetwork.org');
+    expect(unfolded).not.toContain('xpub');
+    expect(unfolded).not.toContain(SIGNING_PUBLIC_KEY_HEX);
+    expect(unfolded).not.toContain(ENCRYPTION_PUBLIC_KEY_HEX);
+    expect(unfolded).not.toContain("m/44'");
+    expect(unfolded).not.toContain('signing.spacedatanetwork.org');
+    expect(unfolded).not.toContain('encryption.spacedatanetwork.org');
+    // The keys array rides the card as b64url literal-key aliases instead.
+    expect(unfolded).toContain(SIGN_ALIAS_LINE);
+    expect(unfolded).toContain(ENCRYPT_ALIAS_LINE);
   });
 
   it('imports signing and encryption public keys from typed vCard email aliases into EPM JSON', async () => {
@@ -255,7 +275,7 @@ describe('public EPM exports', () => {
     });
   });
 
-  it('imports PeerID and xpub from compact QR vCard email aliases', async () => {
+  it('imports PeerID and literal signing/encryption keys from compact QR vCard email aliases', async () => {
     const vcardModule = await import('./identity-vcard');
     const fromVCard = (vcardModule as unknown as {
       epmJsonFromVCard?: (payload: string) => Record<string, unknown>;
@@ -267,26 +287,30 @@ describe('public EPM exports', () => {
       'VERSION:3.0',
       'FN:CelesTrak Provider',
       'EMAIL;TYPE=INTERNET;TYPE=peerid:16Uiu2Peer@peerid.spacedatanetwork.org',
-      'EMAIL;TYPE=INTERNET;TYPE=xpub:xpub6Provider@xpub.spacedatanetwork.org',
+      SIGN_ALIAS_LINE,
+      ENCRYPT_ALIAS_LINE,
       'END:VCARD',
     ].join('\r\n'));
 
+    // The b64url local parts decode back to the hex public keys the record
+    // carries; the xpub alias is retired and never imported.
     expect(epm).toMatchObject({
       dn: 'CelesTrak Provider',
       peer_id: '16Uiu2Peer',
-      xpub: 'xpub6Provider',
+      signing_public_key: SIGNING_PUBLIC_KEY_HEX,
+      encryption_public_key: ENCRYPTION_PUBLIC_KEY_HEX,
     });
     expect(epm).not.toHaveProperty('email');
+    expect(epm).not.toHaveProperty('xpub');
   });
 
-  it('reduces a full daemon vCard to the same bounded contact and xpub QR contract', async () => {
+  it('reduces a full daemon vCard to the same bounded contact and literal-key QR contract', async () => {
     const vcardModule = await import('./identity-vcard');
     const reduceForQr = (vcardModule as unknown as {
       createVCardQrPayloadFromVCard?: (payload: string) => string;
     }).createVCardQrPayloadFromVCard;
     expect(reduceForQr).toBeTypeOf('function');
 
-    const xpub = 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT';
     const full = [
       'BEGIN:VCARD',
       'VERSION:3.0',
@@ -301,8 +325,8 @@ describe('public EPM exports', () => {
       'X-SDN-PEER-ID:16Uiu2Alice',
       'X-SDN-EPM-CID:bafyepm',
       'X-SDN-EPM-B64:' + 'z'.repeat(2200),
-      `EMAIL;TYPE=INTERNET;TYPE=xpub:${xpub}@xpub.spacedatanetwork.org`,
-      'EMAIL;TYPE=INTERNET;TYPE=signing:signing-public@signing.spacedatanetwork.org',
+      SIGN_ALIAS_LINE,
+      ENCRYPT_ALIAS_LINE,
       'END:VCARD',
     ].join('\r\n');
 
@@ -313,8 +337,20 @@ describe('public EPM exports', () => {
     expect(unfolded).toContain('EMAIL:alice@example.com');
     expect(unfolded).toContain('TEL:+1 555 0100');
     expect(unfolded).toContain('ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA');
-    expect(unfolded).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${xpub}@xpub.spacedatanetwork.org`);
-    for (const forbidden of ['PRODID', 'ORG:', 'TITLE:', '16Uiu2Alice', 'bafyepm', 'X-SDN-EPM-B64', 'signing-public']) {
+    // §21: the b64url literal-key aliases survive the reduction untouched.
+    expect(unfolded).toContain(SIGN_ALIAS_LINE);
+    expect(unfolded).toContain(ENCRYPT_ALIAS_LINE);
+    for (const forbidden of [
+      'PRODID',
+      'ORG:',
+      'TITLE:',
+      '16Uiu2Alice',
+      'bafyepm',
+      'X-SDN-EPM-B64',
+      SIGNING_PUBLIC_KEY_HEX,
+      ENCRYPTION_PUBLIC_KEY_HEX,
+      'xpub',
+    ]) {
       expect(unfolded).not.toContain(forbidden);
     }
     expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(512);
@@ -369,13 +405,17 @@ describe('public EPM exports', () => {
     });
   });
 
-  it('does not treat a legacy account identity key as the signing or encryption public key', async () => {
+  it('treats a KEY_TYPE signing key as the signing public key even with a legacy account path', async () => {
     const vcardModule = await import('./identity-vcard');
     const identityPublicKeyValue = (vcardModule as unknown as {
       identityPublicKeyValue?: (epm: Record<string, unknown>, type?: 'signing' | 'encryption') => string | undefined;
     }).identityPublicKeyValue;
     expect(identityPublicKeyValue).toBeTypeOf('function');
 
+    // §21: KEY_TYPE is the authority — the legacy path-based discrimination is
+    // RETIRED (paths are private). A key the record declares signing IS the
+    // signing public key; the epmsig binding (the signature verifies against
+    // the card key) is what holds it honest.
     const epm = {
       public_key: 'legacy-identity-public-key',
       keys: [
@@ -389,17 +429,19 @@ describe('public EPM exports', () => {
     };
 
     expect(identityPublicKeyValue?.(epm)).toBe('legacy-identity-public-key');
-    expect(identityPublicKeyValue?.(epm, 'signing')).toBeUndefined();
+    expect(identityPublicKeyValue?.(epm, 'signing')).toBe('legacy-identity-public-key');
     expect(identityPublicKeyValue?.(epm, 'encryption')).toBeUndefined();
   });
 
-  it('does not treat non-identity signing keys as xpub-derived signing keys', async () => {
+  it('resolves typed signing keys but refuses QR emission for undecodable hex', async () => {
     const vcardModule = await import('./identity-vcard');
     const identityPublicKeyValue = (vcardModule as unknown as {
       identityPublicKeyValue?: (epm: Record<string, unknown>, type?: 'signing' | 'encryption') => string | undefined;
     }).identityPublicKeyValue;
     expect(identityPublicKeyValue).toBeTypeOf('function');
 
+    // A KEY_TYPE signing key resolves regardless of its purpose-labeled
+    // KEY_ADDRESS (paths no longer discriminate under §21)...
     const epm = {
       public_key: 'legacy-identity-public-key',
       keys: [
@@ -410,8 +452,17 @@ describe('public EPM exports', () => {
         },
       ],
     };
+    expect(identityPublicKeyValue?.(epm, 'signing')).toBe('dataset-publication-signing-key');
 
-    expect(identityPublicKeyValue?.(epm, 'signing')).toBeUndefined();
+    // ...but a QR is only servable for keys whose bytes are decodable hex:
+    // undecodable material refuses, mirroring the Go side which skips the
+    // alias rather than emitting a dead row (no garbage b64url aliases).
+    expect(() => createVCardQrPayload({ ...epm, dn: 'Dataset Node' })).toThrow(
+      'a verifiable signing public key is required for identity QR',
+    );
+    expect(() => createVCardQrPayload({ dn: 'Plain Node', signing_public_key: 'not-hex' })).toThrow(
+      'a verifiable signing public key is required for identity QR',
+    );
   });
 });
 
