@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -445,6 +446,19 @@ func TestFieldEncryptedStandardsAreNeverEngineRouted(t *testing.T) {
 		t.Fatal("KMF.fbs is routed")
 	}
 
+	// THE REFUSAL THAT ACTUALLY REMOVES THE NAME FROM SQL. Withholding the
+	// file id keeps records out of the table, but it does not keep the table
+	// out of the database: CreateUnifiedViews builds a view for EVERY table
+	// the schema text declares, whatever file ids are registered. "No such
+	// table: KMF" therefore survives only while the generated schema text
+	// contains no KMF table at all — assert that, rather than asserting it
+	// downstream and calling three refusals independently sufficient.
+	for _, decl := range []string{"table KMF ", "table KMF{", "table KMF\n"} {
+		if strings.Contains(engineDatabaseSchema, decl) {
+			t.Fatalf("the generated engine schema declares %q — a view for it materializes at CreateUnifiedViews", decl)
+		}
+	}
+
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newEngineRecordsStore(t, basePath)
 	if store.engineRoutesSchema("KMF.fbs") {
@@ -601,5 +615,37 @@ func TestEngineIngestRefusesBytesItCannotRoute(t *testing.T) {
 		if count != resident {
 			t.Errorf("%s: engine holds %d records but residency says %d", schemaName, count, resident)
 		}
+	}
+}
+
+// TestEngineDerivedRTreesAreTheDisclosedSet pins the schema objects the ENGINE
+// creates on its own. Routing every standard handed the engine 226 tables of
+// schema-exact column names, and it answers geospatial-looking names with a
+// derived R-Tree (three backing tables each) — cost that lands inside the
+// un-batched first-query burst enginePrepare's header sizes the health-timeout
+// warning against, and per-ingest index maintenance afterwards. The set is
+// therefore a reviewed fact, not an emergent one.
+func TestEngineDerivedRTreesAreTheDisclosedSet(t *testing.T) {
+	disclosed := []string{
+		"_rtree_CRM", "_rtree_ENV", "_rtree_GNO", "_rtree_ION", "_rtree_OBT",
+		"_rtree_SEN", "_rtree_SEO", "_rtree_SIT", "_rtree_SWR", "_rtree_TBS",
+		"_rtree_TMS", "_rtree_TRK",
+	}
+
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	res, err := store.engineDB.Query(
+		"SELECT name FROM sqlite_master WHERE sql LIKE 'CREATE VIRTUAL%' AND name LIKE '\\_rtree\\_%' ESCAPE '\\' ORDER BY name")
+	if err != nil {
+		t.Fatalf("enumerate derived r-trees: %v", err)
+	}
+	got := make([]string, 0, len(res.Rows))
+	for _, row := range res.Rows {
+		got = append(got, fmt.Sprint(row[0]))
+	}
+	if strings.Join(got, ",") != strings.Join(disclosed, ",") {
+		t.Fatalf("engine-derived r-trees = %v, disclosed %v — update the boot-cost disclosure in flatsql_boot_state.go (enginePrepare) before changing this list",
+			got, disclosed)
 	}
 }

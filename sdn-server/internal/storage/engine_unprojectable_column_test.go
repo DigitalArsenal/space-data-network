@@ -391,13 +391,14 @@ func TestProjectedStringColumnsAreJSONSafe(t *testing.T) {
 			column: binding.Columns[idx].Name,
 			record: hostileStringRecord(t, root, idx),
 		})
-		if len(targets) == 8 {
-			break
-		}
 	}
-	if len(targets) < 4 {
+	// EVERY routed standard that projects a string, not a sample of them: a
+	// sample is exactly how a guard ends up proving something about the first
+	// eight entries of a catalog and nothing about the surface it names.
+	if len(targets) < 100 {
 		t.Fatalf("only %d generically routed standards project a string column — the oracle is broken", len(targets))
 	}
+	t.Logf("hostile-string guard covers %d routed standards (plus the pinned $OMM below)", len(targets))
 
 	// THE INHERITED CASE TOO. $OMM's table text is pinned, so it is not in the
 	// generated catalog; its CREATION_DATE is a `string` column that predates
@@ -493,5 +494,146 @@ func TestProjectedStringColumnsAreJSONSafe(t *testing.T) {
 
 	if !sanitizerWasLoadBearing {
 		t.Fatal("no engine answer was invalid UTF-8: the fixture stopped exercising the defect, so the guard proved nothing")
+	}
+}
+
+// ==========================================================================
+// SANITIZING MUST NOT DEFEAT THE BYTE CAP IT RUNS BEHIND
+// ==========================================================================
+//
+// U+FFFD is three bytes, so replacing a LONE invalid byte grows the body.
+// bytes.ToValidUTF8 collapses each RUN to one U+FFFD, so a record full of
+// 0xFF actually SHRINKS; the growth case is invalid bytes ISOLATED between
+// valid ones (0xFF,'a',0xFF,'a',...), where 2 bytes become 4 — measured
+// below, not assumed. The engine rejects (never truncates) a result over
+// SandboxCaps.MaxBytes, and MaxBytes is the volumetric guard on an anonymous
+// public endpoint: a body that fit the cap when the engine measured it must
+// not reach the caller at ~2x that size because a peer chose its bytes well.
+// QuerySandboxedJSON therefore re-checks the cap AFTER sanitizing and raises
+// the engine's own typed byte-cap rejection.
+func TestSanitizedJSONStillWearsTheByteCap(t *testing.T) {
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	root, err := loadFlatcRoot("OMM")
+	if err != nil {
+		t.Fatalf("flatc oracle for OMM: %v", err)
+	}
+	slot := -1
+	for _, f := range root.Fields {
+		if f.Kind == flatcString && f.Name == "CREATION_DATE" {
+			slot = f.Slot
+			break
+		}
+	}
+	if slot < 0 {
+		t.Fatal("flatc says $OMM has no CREATION_DATE string field")
+	}
+
+	// Distinct records (identical bytes dedupe), each carrying a long run of
+	// lone invalid bytes — the cheapest way for a peer to buy amplification.
+	tags := SourceTags{ProviderID: "hostile", SourceName: "hostile-peer", BatchID: "amplify@1"}
+	for i := 0; i < 8; i++ {
+		hostile := append(bytes.Repeat([]byte{0xff, 'a'}, 48), byte('0'+i))
+		b := flatbuffers.NewBuilder(256)
+		off := b.CreateString(string(hostile))
+		b.StartObject(root.Slots)
+		b.PrependUOffsetTSlot(slot, off, 0)
+		b.FinishWithFileIdentifier(b.EndObject(), []byte(root.FileID))
+		if _, err := store.StoreWithSourceTags("OMM.fbs", b.FinishedBytes(), "peer-hostile", nil, tags); err != nil {
+			t.Fatalf("store hostile OMM record %d: %v", i, err)
+		}
+	}
+
+	sql := `SELECT CREATION_DATE FROM "OMM"`
+	generous := flatsqlrt.SandboxCaps{MaxRows: 64, MaxBytes: 1 << 20, Timeout: 30 * time.Second}
+
+	// MEASURED: what the engine assembled, and what sanitizing costs.
+	raw, _, _, err := store.engineDB.QuerySandboxedJSON(sql, generous)
+	if err != nil {
+		t.Fatalf("engine %s: %v", sql, err)
+	}
+	if utf8.Valid(raw) {
+		t.Fatal("the engine answer is already valid UTF-8 — the fixture no longer exercises amplification")
+	}
+	sanitized, _, _, err := store.QuerySandboxedJSON(sql, generous)
+	if err != nil {
+		t.Fatalf("%s: %v", sql, err)
+	}
+	if len(sanitized) <= len(raw) {
+		t.Fatalf("sanitized body is %d bytes, engine body %d — no growth to guard against", len(sanitized), len(raw))
+	}
+	t.Logf("engine body %d bytes -> %d bytes after U+FFFD replacement (%.2fx)",
+		len(raw), len(sanitized), float64(len(sanitized))/float64(len(raw)))
+
+	// A cap the ENGINE accepts (it is the size of the body the engine
+	// assembled) and the sanitized body exceeds.
+	tight := flatsqlrt.SandboxCaps{MaxRows: 64, MaxBytes: uint64(len(raw)), Timeout: 30 * time.Second}
+	if _, _, _, err := store.engineDB.QuerySandboxedJSON(sql, tight); err != nil {
+		t.Fatalf("premise broken: the engine itself rejects its own body size: %v", err)
+	}
+	payload, _, _, err := store.QuerySandboxedJSON(sql, tight)
+	if err == nil {
+		t.Fatalf("cap %d let a %d-byte sanitized body through", tight.MaxBytes, len(payload))
+	}
+	se, ok := flatsqlrt.AsSandboxError(err)
+	if !ok || se.Code != flatsqlrt.SandboxCodeByteCap {
+		t.Fatalf("rejection = %v, want a typed %s sandbox error", err, flatsqlrt.SandboxCodeByteCap)
+	}
+	if payload != nil {
+		t.Fatal("a rejected query must not hand back bytes")
+	}
+}
+
+// TestThePublicSurfaceMarksEveryPlaceholderColumn holds the listing to the
+// same honesty the column type already buys. The fallback column is named
+// after the IDL field it could not project (`SITE` on `LDM`), so a caller
+// reading the surface has no way to tell it from a real column — it returns a
+// small integer, which is loud at the value level and silent at the listing
+// level. Every standard the generator declares unprojectable is marked, so
+// the marking cannot drift from the catalog.
+func TestThePublicSurfaceMarksEveryPlaceholderColumn(t *testing.T) {
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	surface, err := store.PublicQuerySurface()
+	if err != nil {
+		t.Fatalf("public query surface: %v", err)
+	}
+	if len(engineUnprojectableFirstFields) == 0 {
+		t.Fatal("no standard falls back — this guard has nothing to check")
+	}
+
+	seen := make(map[string]bool, len(engineUnprojectableFirstFields))
+	for _, rel := range surface {
+		base, _, _ := strings.Cut(rel.Name, "@")
+		schema := base + ".fbs"
+		field, junk := engineUnprojectableFirstFields[schema]
+		if !junk {
+			if len(rel.PlaceholderColumns) != 0 {
+				t.Errorf("%s is marked %v but projects real columns", rel.Name, rel.PlaceholderColumns)
+			}
+			continue
+		}
+		seen[schema] = true
+		if len(rel.PlaceholderColumns) != 1 || rel.PlaceholderColumns[0] != field {
+			t.Errorf("%s placeholder_columns = %v, want [%s]", rel.Name, rel.PlaceholderColumns, field)
+			continue
+		}
+		found := false
+		for _, col := range rel.Columns {
+			if col == field {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s marks %q as a placeholder but does not list it as a column", rel.Name, field)
+		}
+	}
+	for schema := range engineUnprojectableFirstFields {
+		if !seen[schema] {
+			t.Errorf("%s falls back but never appears on the public surface", schema)
+		}
 	}
 }

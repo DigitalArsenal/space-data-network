@@ -101,6 +101,17 @@ func TestGeneratedColumnsReadTheirOwnFieldValue(t *testing.T) {
 // Each mutated table is created in a SEPARATE engine database from its own
 // schema text, so the mutation is measured by the real engine reading a real
 // record — not by comparing declarations.
+//
+// WHAT THIS RESTS ON, STATED SO IT CANNOT ROT QUIETLY: the mutations are
+// applied to projectFromFlatc, a reimplementation of the projection rule, not
+// to enginecatalog.Build itself. That is only worth something while the
+// reimplementation still reproduces the committed catalog EXACTLY — which is
+// not assumed here, it is asserted for every non-junk binding by
+// TestGeneratedCatalogMatchesTheVendoredFlatcBindings. If that assertion is
+// ever weakened, these mutations stop standing in for the generator's and
+// this file goes back to being decoration. (Verified out of band that
+// mutating the REAL generator and regenerating fails both this guard and
+// TestGeneratedColumnsReadTheirOwnFieldValue.)
 func TestCatalogValueGuardFailsOnAMutatedProjection(t *testing.T) {
 	catalog, err := enginecatalog.Build(embeddedSchemaDir, enginecatalog.PinnedSchemas)
 	if err != nil {
