@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 )
@@ -56,13 +58,54 @@ func (s *FlatSQLStore) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxCa
 // assembles a bare JSON array of {"<column>": value} objects IN-WASM with
 // column names verbatim from SQLite — schema-exact key capitalization
 // (NORAD_CAT_ID, MEAN_MOTION, ...) is structural, never re-spelled by hand.
+//
+// THE PAYLOAD IS MADE VALID UTF-8 HERE, AT THE BOUNDARY. A JSON text that is
+// not valid UTF-8 is not JSON (RFC 8259 §8.1) — every strict reader rejects
+// the whole body, however tame the other rows are. The engine's in-wasm writer
+// escapes only `"`, `\` and bytes < 0x20, so ANY `string` column hands the
+// record's bytes to the response verbatim, and a record is peer-supplied data:
+// nothing on the write path requires a FlatBuffers string to be valid UTF-8,
+// and hundreds of `string` columns are projected across the routed standards.
+// This is not a property of the fallback column that
+// enginecatalog's >=1-column invariant emits (that one is a fixed-width
+// number and cannot carry bytes at all) — it is a property of every projected
+// string, and it predates the routing flip: the pinned $OMM table's
+// CREATION_DATE behaves identically.
+//
+// SANITIZING THE ASSEMBLED BYTES IS STRUCTURE-PRESERVING, not a re-encode.
+// Every structural byte of the engine's JSON — `[`, `{`, `"`, `:`, `,`, `\`,
+// the digits, the literals — is ASCII, i.e. valid UTF-8 by itself, so an
+// invalid byte run can only occur INSIDE a string literal and replacing each
+// run with U+FFFD cannot move a delimiter or change a key. The scan is one
+// pass over a payload the caps already bound (SandboxCaps.MaxBytes), and it
+// allocates only for a body that was going to be rejected anyway.
+//
+// The record itself is never rewritten: `_data` and the QuerySandboxedStream
+// path carry the FlatBuffer byte for byte, so a consumer that wants the
+// original bytes of a hostile string still gets them.
 func (s *FlatSQLStore) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (payload []byte, rows, cols int, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.engineDB == nil {
 		return nil, 0, 0, fmt.Errorf("engine database not available")
 	}
-	return s.engineDB.QuerySandboxedJSON(sql, caps, params...)
+	payload, rows, cols, err = s.engineDB.QuerySandboxedJSON(sql, caps, params...)
+	if err != nil {
+		return nil, rows, cols, err
+	}
+	return validUTF8JSON(payload), rows, cols, nil
+}
+
+// validUTF8JSON returns payload unchanged when it is already valid UTF-8 (the
+// overwhelming case, checked at ~GB/s), and otherwise replaces each invalid
+// byte run with U+FFFD. See QuerySandboxedJSON for why that is safe on an
+// assembled JSON body and why it belongs at this boundary rather than in the
+// engine.
+func validUTF8JSON(payload []byte) []byte {
+	if utf8.Valid(payload) {
+		return payload
+	}
+	return bytes.ToValidUTF8(payload, []byte(string(utf8.RuneError)))
 }
 
 // QuerySurfaceTable describes one queryable relation of the public query
@@ -90,7 +133,7 @@ type QuerySurfaceTable struct {
 // history lives in the append-only stream files, not in SQL.
 //
 // BOUNDED BY CONSTRUCTION, IN COST AND IN SIZE. Every embedded standard is
-// routed now, so the naive surface is 227 base views plus 227 x sources shadow
+// routed now, so the naive surface is 226 base views plus 226 x sources shadow
 // tables — 1,816 relations at host-01's seven sources.
 //
 //   - COST: the earlier shape ran `SELECT *` AND `SELECT count(*)` against
@@ -149,7 +192,7 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 		})
 		if !resident {
 			// Nothing is in this standard's partitions, so listing one entry
-			// per source would be 226 x sources empty relations carrying a
+			// per source would be 225 x sources empty relations carrying a
 			// duplicate column list in a public body.
 			continue
 		}
@@ -169,7 +212,7 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 
 // countEngineRelation returns the resident record count, and SKIPS the count
 // entirely for a schema with nothing resident: COUNT(*) on a vtab scans every
-// partition, and 227 routed standards make "nothing there" the overwhelmingly
+// partition, and 226 routed standards make "nothing there" the overwhelmingly
 // common case.
 func (s *FlatSQLStore) countEngineRelation(quoted string, resident bool) int64 {
 	if !resident {

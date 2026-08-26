@@ -17,17 +17,40 @@ package storage
 // now the DEFAULT for every standard the node embeds: the generated catalog
 // (engine_standard_catalog.go) supplies the table graph and the file
 // identifier for each, and a standard stops being routed only for a reason
-// stated about its IDL (no file_identifier) or about the store it is opening
-// (its code is already a plain control table there).
+// stated about its IDL (no file_identifier; an `(encrypted)` field — see
+// below) or about the store it is opening (its code is already a plain control
+// table there). 228 embedded standards, 226 routed.
 //
 // SCHEMA-SPECIFIC DECORATIONS STAY OPT-IN AND ARE NEVER THE GATE. $OMM keeps
 // the engine-native epoch profiles (QueryEpochRawStream refuses any other
 // schema by construction) and $TBS keeps the lat/lon R-Tree the engine derives
 // from its column names — both sit ON TOP of the generic route.
 //
+// FIELD-ENCRYPTED STANDARDS ARE THE ONE THING THE DEFAULT DOES NOT SWALLOW.
+// A standard whose IDL declares an `(encrypted)` field is SEALED AT REST
+// (internal/encfield, field_encryption.go): the stream file holds an envelope
+// and the plaintext lives only in the caller's buffer — which is exactly the
+// buffer this file mirrors into the engine, and the engine is the PUBLIC
+// /api/v1/query surface where `SELECT _data` returns the whole record. Routing
+// such a standard would therefore publish the plaintext the seal exists to
+// protect. It is refused in THREE places, each of which alone is sufficient:
+// the generated catalog never emits a table or a file id for it
+// (enginecatalog.SkipEncryptedField), buildEngineRoutedSchemas drops anything
+// the catalog declares unroutable, and every routing decision re-asks the live
+// encfield registry (engineSchemaSealsFields) so a schema registered in Go
+// without a catalog regeneration is still never routed. FAIL CLOSED: an
+// unrecognised standard is not routed rather than routed-and-hoped-about.
+//
 // The engine vtab is a pure cache: control rows + stream files remain the
 // source of truth, so ingest failures are logged and skipped — only a trapped
 // (poisoned) runtime is fatal.
+//
+// DELETE IS NOT MIRRORED. Store.Delete removes the control rows and the index
+// entry; it does NOT tombstone the engine row, so a deleted record keeps
+// answering from the sandboxed query surface until the next boot rebuild
+// (which reads sdn_record_index and therefore cannot see it). Residency is not
+// decremented either, so s.engineResident drifts HIGH after deletes. See
+// FlatSQLStore.Delete for the full statement of the semantics.
 
 //go:generate go run ./gen -schemas ../sds/schemas -out engine_standard_catalog.go
 
@@ -40,6 +63,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
@@ -59,7 +83,7 @@ const (
 	// engineDefaultGenericHotWindow bounds the records resident per
 	// GENERICALLY routed schema — every standard except the two the node
 	// decorates and reads at provider scale. The per-schema budget above is
-	// sized for a catalog-scale feed; multiplied across 227 standards it is
+	// sized for a catalog-scale feed; multiplied across 226 standards it is
 	// not a bound at all against the engine's 4 GiB, so a standard that is
 	// routed merely because it exists gets a small window until something
 	// actually reads it at scale. Configurable via WithEngineGenericHotWindow
@@ -115,13 +139,34 @@ func buildEngineRoutedSchemas() map[string]engineRoutedSchema {
 	for name, binding := range engineGeneratedStandardBindings {
 		routed[name] = binding
 	}
+	// A DECLARED EXCLUSION WINS OVER EVERY OTHER SOURCE. engineUnroutableSchemas
+	// is generated from the IDLs alongside the bindings, so the two agree by
+	// construction — but the decorated set above is hand-written, and a
+	// hand-edited or half-regenerated catalog that listed a standard in both
+	// maps would otherwise route the very standard the generator refused. The
+	// declaration is the answer; the routing table follows it.
+	for name := range engineUnroutableSchemas {
+		delete(routed, name)
+	}
 	return routed
+}
+
+// engineSchemaSealsFields reports whether a standard's records are FIELD
+// SEALED at rest (encfield.RegisterSchema, keyed by the table name exactly as
+// field_encryption.go registers it). Asked at every routing decision rather
+// than folded into engineRoutedSchemas because the registry is populated by
+// package init() and package-level VARS are initialized BEFORE init() runs: a
+// var-time answer would be "no encrypted schemas" forever. A runtime lookup is
+// one RWMutex read over a map the write path already consults per record
+// (sealRecordFields).
+func engineSchemaSealsFields(binding engineRoutedSchema) bool {
+	return encfield.HasEncryptedFields(binding.Table)
 }
 
 // engineRoutedTableNames / engineRoutedFileIDs are set lookups over the same
 // map. They exist because their callers run PER RECORD (engineRecordPayload on
 // every stored buffer) and per table name: a linear scan was free over two
-// entries and is 227 string compares per record now.
+// entries and is 226 string compares per record now.
 var (
 	engineRoutedTableNames = engineRoutedNameSet(func(b engineRoutedSchema) string { return b.Table })
 	engineRoutedFileIDs    = engineRoutedNameSet(func(b engineRoutedSchema) string { return b.FileID })
@@ -135,11 +180,19 @@ func engineRoutedNameSet(key func(engineRoutedSchema) string) map[string]bool {
 	return set
 }
 
-// engineRoutedSchemaFor resolves a schema name (with or without the ".fbs"
-// suffix, any case) to its engine binding.
+// engineRoutedSchemaFor resolves a schema name to its engine binding. The name
+// may be written with or without the ".fbs" suffix — normalizeSchemaNameForEpoch
+// appends it — but the CODE ITSELF IS CASE-SENSITIVE, exactly like every SDS
+// standard code and every stored schema_name ("irm" is not $IRM here).
+//
+// A standard whose records are sealed at rest is refused even if it somehow
+// appears in the table (engineSchemaSealsFields — see this file's header).
 func engineRoutedSchemaFor(schemaName string) (engineRoutedSchema, bool) {
 	binding, ok := engineRoutedSchemas[normalizeSchemaNameForEpoch(schemaName)]
-	return binding, ok
+	if !ok || engineSchemaSealsFields(binding) {
+		return engineRoutedSchema{}, false
+	}
+	return binding, true
 }
 
 // engineRoutesSchema reports whether stored records of this schema are
@@ -153,7 +206,14 @@ func engineRoutesSchema(schemaName string) bool {
 // boot rebuild and file-id registration are deterministic.
 func engineRoutedSchemaNames() []string {
 	names := make([]string, 0, len(engineRoutedSchemas))
-	for name := range engineRoutedSchemas {
+	for name, binding := range engineRoutedSchemas {
+		if engineSchemaSealsFields(binding) {
+			// NEVER REGISTER ITS FILE ID. registerEngineFileIDs reads this
+			// list, and an unregistered identifier means the table never
+			// materializes in SQLite at all — `SELECT ... FROM <SEALED>`
+			// answers "no such table" instead of answering with plaintext.
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -306,7 +366,15 @@ const (
 // can never use these names: the vtab occupies them in the shared SQLite
 // context.
 func engineOwnsTableName(tableName string) bool {
-	return engineRoutedTableNames[tableName]
+	if !engineRoutedTableNames[tableName] {
+		return false
+	}
+	// The name-set vars are built at package-var time, which is BEFORE the
+	// encfield registrations run (see engineSchemaSealsFields), so the sealed
+	// check happens here instead. It keeps every package-level accessor
+	// agreeing: a standard that is not routed does not own its table name
+	// either, and its plain control table is an ordinary control table.
+	return !encfield.HasEncryptedFields(tableName)
 }
 
 // ==================== Per-store routing (exclusions + windows) ====================
@@ -401,7 +469,7 @@ func (s *FlatSQLStore) engineRoutedSchemaNames() []string {
 // engineWindowFor is the hot-window budget for one schema: the full
 // per-schema window for the two DECORATED standards (which are read at
 // provider scale), the smaller generic window for everything else. Without
-// the split, 227 schemas x engine_hot_window is not a bound on anything.
+// the split, 226 schemas x engine_hot_window is not a bound on anything.
 func (s *FlatSQLStore) engineWindowFor(schemaName string) int {
 	if _, decorated := engineDecoratedSchemas[normalizeSchemaNameForEpoch(schemaName)]; decorated {
 		return s.engineHotWindow
@@ -502,6 +570,38 @@ func engineRoutedFileID(fileID string) bool {
 	return engineRoutedFileIDs[fileID]
 }
 
+// engineIngestablePayload returns the bytes to hand the engine for one record
+// of binding's standard, or a stated reason why those bytes CANNOT ingest into
+// that standard's table.
+//
+// IT EXISTS BECAUSE A REFUSED INGEST LOOKED LIKE A SUCCESSFUL ONE. The engine
+// routes a buffer by the four identifier bytes at offset 4 and drops anything
+// it cannot place — WITHOUT returning an error (flatsql_ingest_one_with_source
+// answers a non-negative count either way). Both callers then counted the
+// record as resident, so a store could report N records in a table holding
+// zero: live-readable, then empty after a restart, which is the exact failure
+// the routing flip exists to eliminate. Checking the identifier the engine is
+// about to route on makes the count mean what it says, and turns a silent drop
+// into a logged skip.
+//
+// The sealed-frame check is the LAST of the three refusals of a
+// field-encrypted standard (see this file's header): whatever the routing
+// table says, an encfield envelope — which is not a FlatBuffer at all, it
+// starts "SDF1" — never reaches the engine.
+func engineIngestablePayload(binding engineRoutedSchema, data []byte) ([]byte, string, bool) {
+	if encfield.IsSealed(data) {
+		return nil, "record is a field-encryption envelope, not a FlatBuffer", false
+	}
+	payload := engineRecordPayload(data)
+	if len(payload) < 8 {
+		return nil, fmt.Sprintf("record is %d bytes, too short to carry a file identifier", len(payload)), false
+	}
+	if id := string(payload[4:8]); id != binding.FileID {
+		return nil, fmt.Sprintf("file identifier %q does not route to %q (want %q)", id, binding.Table, binding.FileID), false
+	}
+	return payload, "", true
+}
+
 // dropExcludedStandardViews removes the unified views a PREVIOUS boot left
 // behind for standards THIS boot does not route.
 //
@@ -515,7 +615,7 @@ func engineRoutedFileID(fileID string) bool {
 // That is not cosmetic: it is how the legacy blob migration — whose entire
 // purpose is to CREATE the canonical table for an excluded standard — fails
 // the open outright, and it is what a boot that fell back to the decorated
-// standards after an unreadable probe would leave behind on all 225 others.
+// standards after an unreadable probe would leave behind on all 224 others.
 // Dropping the leftovers is what makes an exclusion MEAN "this standard is an
 // ordinary control table in this store", which is exactly what it claims.
 //
@@ -553,7 +653,7 @@ func dropExcludedStandardViews(engineDB *flatsqlrt.Database, excluded map[string
 	sort.Strings(leftover)
 	// ONE TRANSACTION, for the same reason rebuildUnifiedViews uses one:
 	// SQLite re-reads the whole schema after every schema-changing statement,
-	// and the fail-closed path can have 225 of them.
+	// and the fail-closed path can have 224 of them.
 	batched := false
 	if _, err := engineDB.Query("BEGIN"); err == nil {
 		batched = true
@@ -586,7 +686,9 @@ func dropExcludedStandardViews(engineDB *flatsqlrt.Database, excluded map[string
 // the ENTIRE schema after each schema-changing statement, and the disk-backed
 // engine writes a rollback journal for each one, so the cost is quadratic in
 // the number of routed standards. Measured on the disk-backed engine with 227
-// standards and one source: 10.1 s un-batched, 0.086 s inside one transaction.
+// standards and one source (the catalog before $KMF was taken off the engine —
+// the number is the measurement's, not today's count): 10.1 s un-batched,
+// 0.086 s inside one transaction.
 // It is also strictly safer — a crash mid-rebuild now rolls back instead of
 // leaving half the record surface dropped.
 //
@@ -641,8 +743,23 @@ func (s *FlatSQLStore) ensureEngineSource(source string) error {
 // are logged and skipped; only a poisoned (trapped) runtime is returned as an
 // error. Caller holds s.mu for writing.
 func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIngest) error {
+	binding, routed := s.engineRoutedSchemaFor(schemaName)
+	if !routed {
+		// Callers gate on engineRoutesSchema before queueing, so this is the
+		// fail-closed backstop for a schema that stopped being routed between
+		// the queue and the flush (an exclusion, or a field-encrypted standard).
+		if len(pending) > 0 {
+			log.Warnf("FlatSQL engine: %d %s record(s) queued for a schema this store does not route — not mirrored", len(pending), schemaName)
+		}
+		return nil
+	}
 	ingested := int64(0)
 	for _, p := range pending {
+		payload, reason, ok := engineIngestablePayload(binding, p.data)
+		if !ok {
+			log.Warnf("FlatSQL engine: skip %s record for %q: %s", schemaName, p.source, reason)
+			continue
+		}
 		if err := s.ensureEngineSource(p.source); err != nil {
 			log.Warnf("FlatSQL engine: register source %q for %s: %v", p.source, schemaName, err)
 			if s.engine.Poisoned() {
@@ -650,7 +767,7 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 			}
 			continue
 		}
-		if _, err := s.engineDB.IngestOneWithSource(engineRecordPayload(p.data), p.source); err != nil {
+		if _, err := s.engineDB.IngestOneWithSource(payload, p.source); err != nil {
 			log.Warnf("FlatSQL engine: ingest %s record into %q: %v", schemaName, p.source, err)
 			if s.engine.Poisoned() {
 				return fmt.Errorf("FlatSQL engine poisoned during %s ingest: %w", schemaName, err)
@@ -755,8 +872,8 @@ func (s *FlatSQLStore) rebuildEngineRecords() error {
 	}
 	for _, schemaName := range s.engineRoutedSchemaNames() {
 		// ONE schema-catalog query answers "which schemas could have a record
-		// at all", so a store that has never seen 220 of the 227 routed
-		// standards does not pay 220 hot-window queries at every boot. A nil
+		// at all", so a store that has never seen 219 of the 226 routed
+		// standards does not pay 219 hot-window queries at every boot. A nil
 		// map means the enumeration itself failed; fall back to probing each
 		// schema, which is what this always did.
 		if present != nil && !present[schemaName] {
@@ -778,7 +895,7 @@ func (s *FlatSQLStore) rebuildEngineRecords() error {
 // unified views whenever it meets a source for the first time, and
 // CreateUnifiedViews is all-or-nothing across the schema. With two routed
 // standards a cold boot paid 2 x sources view rebuilds; with every embedded
-// standard routed it would pay 227 x sources DROP/DROP/CREATE statements —
+// standard routed it would pay 226 x sources DROP/DROP/CREATE statements —
 // O(tables x sources) write DDL on the path that is already the slow one.
 // Registering the known set up front collapses that to a single rebuild.
 //
@@ -842,7 +959,7 @@ func (s *FlatSQLStore) preregisterEngineSources() {
 // 28.7 s, and native sqlite3 answering the same statement on the same file in
 // 1 ms — the engine's cost tracked DATABASE SIZE, not rows. Per-schema probes
 // are no better: the same measurement charged 500-680 ms PER SEEK at 2.8 GB, so
-// 227 of them is minutes. sqlite_master is a few thousand rows on the largest
+// 226 of them is minutes. sqlite_master is a few thousand rows on the largest
 // box in the fleet and does not grow with records at all.
 //
 // It is EXACT, not approximate: recordReadSourceFiltered unions exactly the
@@ -889,6 +1006,11 @@ func (s *FlatSQLStore) schemasWithRecordTables() (map[string]bool, error) {
 }
 
 func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
+	binding, routed := s.engineRoutedSchemaFor(schemaName)
+	if !routed {
+		s.engineResidentSet(schemaName, 0)
+		return nil
+	}
 	readSource, err := s.recordReadSource(schemaName)
 	if err != nil {
 		log.Warnf("FlatSQL engine rebuild: record read source: %v", err)
@@ -958,6 +1080,17 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 			skipped++
 			continue
 		}
+		// readStreamRecordCached is the RAW reader: unlike
+		// readFlatSQLStreamRecord it does NOT run the field-decryption pass, so
+		// a sealed standard's frame arrives here as an encfield ENVELOPE. That
+		// envelope cannot ingest, and counting it as resident is what made a
+		// restart report rows it did not have.
+		payload, reason, ok := engineIngestablePayload(binding, data)
+		if !ok {
+			log.Warnf("FlatSQL engine rebuild: skip %s record at %s@%d: %s", schemaName, streamPath, streamOffset, reason)
+			skipped++
+			continue
+		}
 		source := strings.TrimSpace(sourceName)
 		if source == "" {
 			source = engineDefaultSource
@@ -970,7 +1103,7 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 			skipped++
 			continue
 		}
-		if _, err := s.engineDB.IngestOneWithSource(engineRecordPayload(data), source); err != nil {
+		if _, err := s.engineDB.IngestOneWithSource(payload, source); err != nil {
 			log.Warnf("FlatSQL engine rebuild: ingest record: %v", err)
 			if s.engine.Poisoned() {
 				return fmt.Errorf("FlatSQL engine poisoned during rebuild ingest: %w", err)
@@ -990,9 +1123,15 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 	return nil
 }
 
-// readStreamRecordCached is readFlatSQLStreamRecord with a caller-owned open
-// file cache (boot rebuild reads the same append-only stream files record by
-// record).
+// readStreamRecordCached is readFlatSQLStreamRecord's RAW sibling with a
+// caller-owned open file cache (boot rebuild reads the same append-only stream
+// files record by record).
+//
+// RAW IS THE DIFFERENCE THAT MATTERS. readFlatSQLStreamRecord runs the
+// transparent field-level DECRYPTION pass (E1, the mirror of Append's seal);
+// this does not. For a sealed standard the bytes it returns are an encfield
+// envelope, not a FlatBuffer — which is precisely why every caller passes them
+// through engineIngestablePayload instead of straight to the engine.
 func (s *FlatSQLStore) readStreamRecordCached(files map[string]*os.File, streamPath string, streamOffset, recordLength int64) ([]byte, error) {
 	if streamOffset < 0 {
 		return nil, fmt.Errorf("negative FlatSQL stream offset %d", streamOffset)

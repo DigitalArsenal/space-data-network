@@ -3,13 +3,21 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/enginecatalog"
 )
+
+// reEncryptedFieldAttr matches a FIELD carrying the `(encrypted)` attribute
+// ("KEY_BYTES: [ubyte] (encrypted);"). Written independently of the
+// generator's own regex on purpose: this test is the generator's oracle, not
+// its mirror.
+var reEncryptedFieldAttr = regexp.MustCompile(`(?m)^\s*\w+\s*:[^;]*\(\s*encrypted\s*\)\s*;`)
 
 // embeddedSchemaDir is the IDL directory the generated catalog is derived
 // from. The generator reads the same path.
@@ -57,6 +65,27 @@ func TestEveryEmbeddedStandardIsRoutedOrDeclaredUnroutable(t *testing.T) {
 			}
 			if strings.Contains(string(src), "file_identifier") {
 				t.Errorf("%s now declares a file_identifier: drop the exclusion and regenerate the catalog", schemaName)
+			}
+		case enginecatalog.SkipEncryptedField:
+			// THE ONE EXCLUSION THAT IS ABOUT SECRECY, NOT ABOUT THE IDL BEING
+			// INCOMPLETE. The standard seals a field at rest, and the engine is
+			// the PUBLIC query surface fed with the caller's plaintext buffer,
+			// so routing it would publish what the seal protects. Re-validated
+			// from BOTH sources of truth: the IDL attribute the generator reads
+			// and the encfield registration the store's write path acts on.
+			src, err := os.ReadFile(filepath.Join(embeddedSchemaDir, schemaName))
+			if err != nil {
+				t.Fatalf("read %s: %v", schemaName, err)
+			}
+			if !reEncryptedFieldAttr.MatchString(string(src)) {
+				t.Errorf("%s no longer declares an (encrypted) field: drop the exclusion and regenerate the catalog", schemaName)
+			}
+			table, err := sds.SchemaNameToTable(schemaName)
+			if err != nil {
+				t.Fatalf("table name for %s: %v", schemaName, err)
+			}
+			if !encfield.HasEncryptedFields(table) {
+				t.Errorf("%s is excluded as field-encrypted but internal/storage registers no encrypted field for %q — one of the two is wrong", schemaName, table)
 			}
 		default:
 			t.Errorf("%s is declared unroutable for reason %q, which this test cannot re-validate against the IDL — add the check for that reason here, or the exclusion is unverifiable forever", schemaName, reason)

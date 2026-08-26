@@ -470,7 +470,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 // whose error means "unusable database" and whose caller answers that by
 // DELETING the control database and re-deriving from the journal — multi-GB on
 // host-01/host-02. RegisterFileID is documented as THROWING on an unknown
-// table and now runs 227 times per boot instead of 2, so that blast radius is
+// table and now runs 226 times per boot instead of 2, so that blast radius is
 // not theoretical. Callers unwrap this sentinel and fail the start instead.
 var errEnginePrepareFailed = errors.New("engine file-identifier registration")
 
@@ -483,7 +483,7 @@ var errEnginePrepareFailed = errors.New("engine file-identifier registration")
 // Doing this here therefore costs one no-op `CREATE VIRTUAL TABLE IF NOT
 // EXISTS` per already-persisted table; doing it after the first query costs a
 // full unified-view rebuild instead (~20 ms per schema-changing statement on
-// the disk-backed engine, 227 standards, three statements each).
+// the disk-backed engine, 227 standards as measured, three statements each).
 //
 // On a store with NO persisted source there is nothing to gain and something
 // to lose: the base vtabs would be created here only for CreateUnifiedViews to
@@ -496,7 +496,7 @@ var errEnginePrepareFailed = errors.New("engine file-identifier registration")
 // at the first query — so the host cannot wrap them in one transaction the way
 // rebuildUnifiedViews wraps CreateUnifiedViews. On the FIRST boot after every
 // standard became routed, host-01's seven persisted sources therefore
-// materialize 227 base plus 227 x 7 shadow tables in ONE un-batched burst.
+// materialize 226 base plus 226 x 7 shadow tables in ONE un-batched burst.
 //
 // MEASURED on the shipped engine (laptop NVMe, journal_mode=TRUNCATE): the
 // cold first-query burst is 63.0 s against an EMPTY control database and
@@ -788,7 +788,7 @@ func removeControlDatabaseFiles(dbPath string) error {
 // WHY THE REBUILD IS CONDITIONAL. CreateUnifiedViews is all-or-nothing across
 // the schema: DROP TABLE + DROP VIEW + CREATE VIEW for EVERY routed table.
 // Measured on the disk-backed engine, a schema-changing statement costs ~20 ms
-// (SQLite re-reads the whole schema after each one), so rebuilding 227 views
+// (SQLite re-reads the whole schema after each one), so rebuilding 226 views
 // is ~10 s — per boot, for views that are already correct. Skipping it when
 // the persisted views already union exactly the registered sources takes a
 // warm open from ~10.8 s back to ~0.1 s.
@@ -923,7 +923,7 @@ func engineUnprobedPlan(what string, cause error) engineBootPlan {
 // EVERY FAILURE FAILS CLOSED, and that is a correction: this probe used to
 // return an EMPTY plan whenever it could not read the file. An empty plan is
 // NOT "the behaviour this store had before the probe existed" — it is the full
-// 227-standard schema plus registerEngineFileIDs over every standard, which is
+// 226-standard schema plus registerEngineFileIDs over every standard, which is
 // precisely the input that makes createUnifiedView issue
 // `DROP TABLE IF EXISTS "<CODE>"` against a colliding plain control table.
 // Nothing downstream re-checks (finishEngineSourceSetup,

@@ -302,3 +302,196 @@ func TestGeneratedFallbackMatchesARealFlatcBuiltRecord(t *testing.T) {
 		t.Fatal("_data frame did not decode back to the site it was built with")
 	}
 }
+
+// ==========================================================================
+// EVERY PROJECTED string COLUMN IS A PUBLIC SURFACE, NOT JUST THE FALLBACK
+// ==========================================================================
+//
+// The fallback column above was ONE way raw record bytes reached the public
+// /api/v1/query body. It was never the only one, and fixing it fixed only it.
+//
+// The general case: the engine's vtab hands ANY string cell to
+// sqlite3_result_text and the in-wasm JSON writer passes every byte >= 0x20
+// through verbatim, so a `string` column carries the record's bytes into the
+// response exactly as they were stored. FlatBuffers does not require a string
+// to be valid UTF-8 and neither does the store's write path (it checks the
+// file identifier, not the encoding), so a peer-supplied record can put
+// arbitrary bytes in front of hundreds of projected string columns.
+//
+// THIS CLASS IS INHERITED, NOT INTRODUCED HERE: the pinned $OMM table has
+// declared CREATION_DATE / OBJECT_NAME as `string` since loop B.3, and the
+// subtest below measures it on $OMM too. What routing every standard changed
+// is the BLAST RADIUS — from two tables to every embedded standard, most of
+// them peer-writable — which is why the guard belongs in this branch:
+// storage.QuerySandboxedJSON now makes the assembled body valid UTF-8 at the
+// boundary (see its doc for why that is structure-preserving).
+
+// hostileUTF8 is a byte run that is not valid UTF-8 anywhere: a lone 0xFF,
+// a truncated surrogate-range lead, a bare continuation byte and a two-byte
+// sequence whose continuation is missing.
+var hostileUTF8 = []byte{0xff, 0xfe, 0x80, 'A', 0xc3, '('}
+
+// hostileStringRecord builds a real record of root's standard whose first
+// string field carries hostileUTF8 — the shape a hostile or merely
+// mis-encoded peer can store through the ordinary write path.
+func hostileStringRecord(t *testing.T, root *flatcRoot, slot int) []byte {
+	t.Helper()
+	b := flatbuffers.NewBuilder(256)
+	off := b.CreateString(string(hostileUTF8))
+	b.StartObject(root.Slots)
+	b.PrependUOffsetTSlot(slot, off, 0)
+	b.FinishWithFileIdentifier(b.EndObject(), []byte(root.FileID))
+	return b.FinishedBytes()
+}
+
+// firstStringColumn returns the projected column index that reads a genuine
+// `string` slot, per BOTH the catalog and the flatc oracle.
+func firstStringColumn(binding enginecatalog.Binding, root *flatcRoot) (int, bool) {
+	for i, col := range binding.Columns {
+		if col.Junk || col.Type != "string" {
+			continue
+		}
+		if i < len(root.Fields) && root.Fields[i].Kind == flatcString && root.Fields[i].Name == col.Name {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// TestProjectedStringColumnsAreJSONSafe stores a record whose string field is
+// not valid UTF-8 through the PRODUCTION write path for a spread of
+// generically routed standards and reads it back through the public sandboxed
+// JSON surface. The response body must be a valid JSON text.
+func TestProjectedStringColumnsAreJSONSafe(t *testing.T) {
+	catalog, err := enginecatalog.Build(embeddedSchemaDir, enginecatalog.PinnedSchemas)
+	if err != nil {
+		t.Fatalf("build catalog: %v", err)
+	}
+	roots := loadFlatcOracle(t, catalog.Bindings)
+
+	type target struct {
+		schema string
+		table  string
+		column string
+		record []byte
+	}
+	var targets []target
+	for _, binding := range catalog.Bindings {
+		root, ok := roots[binding.Schema]
+		if !ok {
+			continue
+		}
+		idx, ok := firstStringColumn(binding, root)
+		if !ok {
+			continue
+		}
+		targets = append(targets, target{
+			schema: binding.Schema,
+			table:  binding.Table,
+			column: binding.Columns[idx].Name,
+			record: hostileStringRecord(t, root, idx),
+		})
+		if len(targets) == 8 {
+			break
+		}
+	}
+	if len(targets) < 4 {
+		t.Fatalf("only %d generically routed standards project a string column — the oracle is broken", len(targets))
+	}
+
+	// THE INHERITED CASE TOO. $OMM's table text is pinned, so it is not in the
+	// generated catalog; its CREATION_DATE is a `string` column that predates
+	// the routing flip and behaves identically.
+	ommRoot, err := loadFlatcRoot("OMM")
+	if err != nil {
+		t.Fatalf("flatc oracle for OMM: %v", err)
+	}
+	ommSlot := -1
+	for _, f := range ommRoot.Fields {
+		if f.Kind == flatcString && f.Name == "CREATION_DATE" {
+			ommSlot = f.Slot
+			break
+		}
+	}
+	if ommSlot < 0 {
+		t.Fatal("flatc says $OMM has no CREATION_DATE string field")
+	}
+	targets = append(targets, target{
+		schema: "OMM.fbs", table: "OMM", column: "CREATION_DATE",
+		record: hostileStringRecord(t, ommRoot, ommSlot),
+	})
+
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	caps := flatsqlrt.SandboxCaps{MaxRows: 8, MaxBytes: 1 << 20, Timeout: 30 * time.Second}
+	tags := SourceTags{ProviderID: "hostile", SourceName: "hostile-peer", BatchID: "hostile@1"}
+
+	sanitizerWasLoadBearing := false
+	for _, tc := range targets {
+		t.Run(tc.schema, func(t *testing.T) {
+			// The write path ACCEPTS it: nothing validates string encoding,
+			// which is the premise of the whole test.
+			if _, err := store.StoreWithSourceTags(tc.schema, tc.record, "peer-hostile", nil, tags); err != nil {
+				t.Fatalf("store hostile %s record: %v", tc.schema, err)
+			}
+			sql := "SELECT " + quoteEngineRelation(tc.column) + " FROM " + quoteEngineRelation(tc.table)
+
+			// MEASURED, NOT ASSUMED. The engine's own answer still carries the
+			// raw bytes — if it ever stops, this test says so instead of
+			// quietly passing for the wrong reason.
+			raw, _, _, err := store.engineDB.QuerySandboxedJSON(sql, caps)
+			if err != nil {
+				t.Fatalf("engine %s: %v", sql, err)
+			}
+			if !utf8.Valid(raw) {
+				sanitizerWasLoadBearing = true
+			}
+
+			payload, rows, _, err := store.QuerySandboxedJSON(sql, caps)
+			if err != nil {
+				t.Fatalf("%s: %v", sql, err)
+			}
+			if rows < 1 {
+				t.Fatalf("%s returned %d rows", sql, rows)
+			}
+			if !utf8.Valid(payload) {
+				t.Errorf("public JSON for %s is not valid UTF-8: %q", sql, payload)
+			}
+			if !json.Valid(payload) {
+				t.Errorf("public JSON for %s does not parse: %q", sql, payload)
+			}
+			var decoded []map[string]any
+			if err := json.Unmarshal(payload, &decoded); err != nil {
+				t.Fatalf("public JSON for %s: %v (%q)", sql, err, payload)
+			}
+			for _, row := range decoded {
+				if s, isText := row[tc.column].(string); isText && !utf8.ValidString(s) {
+					t.Errorf("%s.%s carries invalid UTF-8 into the public response: %q", tc.table, tc.column, s)
+				}
+			}
+
+			// THE RECORD IS NOT REWRITTEN. Sanitizing is a property of the
+			// JSON body only: the FlatBuffer keeps the bytes the peer sent.
+			stream, err := store.QuerySandboxedStream(
+				`SELECT _data FROM `+quoteEngineRelation(tc.table)+` ORDER BY _rowid DESC LIMIT ?`, caps, 1)
+			if err != nil {
+				t.Fatalf("%s: _data stream: %v", tc.schema, err)
+			}
+			frames, err := flatsqlrt.DecodeSizePrefixedStream(stream.Bytes)
+			if err != nil {
+				t.Fatalf("%s: decode _data: %v", tc.schema, err)
+			}
+			if len(frames) != 1 || !bytes.Equal(frames[0], tc.record) {
+				t.Fatalf("%s: _data round trip did not return the stored record byte for byte", tc.schema)
+			}
+			if !bytes.Contains(frames[0], hostileUTF8) {
+				t.Fatalf("%s: _data lost the original bytes", tc.schema)
+			}
+		})
+	}
+
+	if !sanitizerWasLoadBearing {
+		t.Fatal("no engine answer was invalid UTF-8: the fixture stopped exercising the defect, so the guard proved nothing")
+	}
+}

@@ -1339,15 +1339,6 @@ const engineStandardCatalogGraph = `
     BACKGROUND:double;
     SNR:double;
   }
-  table KMF {
-    KEY_ID:string;
-    ROLE:byte;
-    ALGORITHM:byte;
-    ENCODING:byte;
-    KEY_BYTES:[ubyte];
-    VERSION:uint32;
-    EXPIRES_AT:uint64;
-  }
   table KML {
     NAME:string;
     DESCRIPTION:string;
@@ -3369,7 +3360,6 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"IQC.fbs":  {Table: "IQC", FileID: "$IQC"},
 	"IRM.fbs":  {Table: "IRM", FileID: "$IRM"},
 	"IRO.fbs":  {Table: "IRO", FileID: "$IRO"},
-	"KMF.fbs":  {Table: "KMF", FileID: "$KMF"},
 	"KML.fbs":  {Table: "KML", FileID: "$KML"},
 	"KRF.fbs":  {Table: "KRF", FileID: "$KRF"},
 	"LAM.fbs":  {Table: "LAM", FileID: "$LAM"},
@@ -3514,6 +3504,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 // stops having it. TestEveryEmbeddedStandardIsRoutedOrDeclaredUnroutable fails
 // if an entry goes stale.
 var engineUnroutableSchemas = map[string]string{
+	"KMF.fbs": "declares an (encrypted) field, whose plaintext must never reach the engine's public query surface",
 	"VCM.fbs": "declares no file_identifier",
 }
 

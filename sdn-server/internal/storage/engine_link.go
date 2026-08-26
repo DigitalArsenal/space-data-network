@@ -183,7 +183,7 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 		// ONE journal pass for ALL routed schemas. Recovery runs on demand,
 		// under s.mu, while the node is serving traffic: a pass per schema
 		// would freeze every read and write on the box for as long as it takes
-		// to read the multi-GB journal 227 times.
+		// to read the multi-GB journal 226 times.
 		if _, err := s.recordCatalog.ReplayEngineHotWindows(context.Background(), s, s.engineRoutedSchemaNames(), s.engineWindowFor); err != nil {
 			return s.engineEpoch, fmt.Errorf("recover poisoned engine: compact hot-window rebuild: %w", err)
 		}
