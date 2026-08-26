@@ -76,10 +76,17 @@
 // a string to be valid UTF-8, nor does the store's write path check it. That
 // is an inherited property of the engine (the pinned $OMM table has had
 // `string` columns since loop B.3), it is not something a column TYPE can fix,
-// and it is closed one level up: storage.QuerySandboxedJSON makes the
-// assembled body valid UTF-8 at the boundary, which is the only place that
-// sees the whole payload. See its doc, and
-// TestProjectedStringColumnsAreJSONSafe.
+// and it is closed WHERE THE BYTES LEAVE, which is not one place but two:
+// storage.QuerySandboxedJSON makes the bodies the ENGINE assembles valid
+// UTF-8 (see its doc, and TestProjectedStringColumnsAreJSONSafe), and the
+// host's HTTP responder makes every JSON-labelled body valid UTF-8 on the way
+// to the socket (flowrt/httpmount_json_wire.go), which is what covers the
+// full-record presentation a wasm encoder produces from raw record frames —
+// a path that never passes through this store's JSON writer at all. Claiming
+// the store boundary was "the only place that sees the whole payload" was
+// wrong, and it was wrong in the direction that mattered: /api/v1/query
+// answered format=json full-record requests with invalid UTF-8 while the
+// store-level guard passed.
 package enginecatalog
 
 import (

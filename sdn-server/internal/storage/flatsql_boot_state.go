@@ -498,6 +498,19 @@ var errEnginePrepareFailed = errors.New("engine file-identifier registration")
 // standard became routed, host-01's seven persisted sources therefore
 // materialize 226 base plus 226 x 7 shadow tables in ONE un-batched burst.
 //
+// PLUS THE DECORATIONS THE ENGINE DERIVES BY ITSELF, which the earlier
+// arithmetic left out. The engine builds an R-Tree for any table whose column
+// names read geospatial, and the schema-exact catalog trips that for ELEVEN
+// standards besides the intended $TBS — CRM, ENV, GNO, ION, OBT, SEN, SEO,
+// SIT, SWR, TMS, TRK, every one of them a genuinely geospatial standard
+// (LAT/LON/ALT columns straight out of its IDL). MEASURED on the shipped
+// engine: 12 `_rtree_*` virtual tables, each backed by three plain tables, so
+// 48 extra schema objects created inside the same burst, plus per-ingest index
+// maintenance for those eleven standards from then on. It is disclosed here
+// and PINNED by TestEngineDerivedRTreesAreTheDisclosedSet, so the next catalog
+// change that trips a twelfth is a test failure and not a surprise on a
+// droplet.
+//
 // MEASURED on the shipped engine (laptop NVMe, journal_mode=TRUNCATE): the
 // cold first-query burst is 63.0 s against an EMPTY control database and
 // 59.9 s against a 784 MB one. The cost is SCHEMA-OBJECT bound, not

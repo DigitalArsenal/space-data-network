@@ -265,6 +265,7 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 			Tables []struct {
 				Name    string   `json:"name"`
 				Kind    string   `json:"kind"`
+				Source  string   `json:"source"`
 				Columns []string `json:"columns"`
 				Records int64    `json:"records"`
 			} `json:"tables"`
@@ -277,21 +278,61 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 		if err := json.Unmarshal(body, &surface); err != nil {
 			t.Fatalf("surface json: %v (%q)", err, body)
 		}
-		if len(surface.Tables) != 2 || surface.Tables[0].Name != "OMM" ||
-			surface.Tables[1].Name != "OMM@celestrak-gp" {
-			t.Fatalf("surface tables: %+v", surface.Tables)
+		// EVERY EMBEDDED STANDARD IS ROUTED, so the surface is no longer
+		// "the two decorated standards": it lists every routed relation
+		// (an empty answer is a valid answer, and a caller cannot discover
+		// what it may query from a listing that hides it). Per-source
+		// partitions are listed only for standards that actually hold
+		// records — otherwise the public body repeats a full column list
+		// once per standard per source.
+		if len(surface.Tables) < 200 {
+			t.Fatalf("surface lists %d relations — every routed standard should appear", len(surface.Tables))
 		}
-		if surface.Tables[0].Records != 3 {
-			t.Fatalf("OMM records = %d, want 3", surface.Tables[0].Records)
+		type surfaceRel = struct {
+			Name    string   `json:"name"`
+			Kind    string   `json:"kind"`
+			Source  string   `json:"source"`
+			Columns []string `json:"columns"`
+			Records int64    `json:"records"`
+		}
+		var ommView, ommShadow *surfaceRel
+		var foreignPartitions []string
+		for i := range surface.Tables {
+			rel := &surface.Tables[i]
+			base, source, isPartition := strings.Cut(rel.Name, "@")
+			switch {
+			case rel.Name == "OMM":
+				ommView = rel
+			case rel.Name == "OMM@celestrak-gp":
+				ommShadow = rel
+			case isPartition && base != "OMM":
+				// Only $OMM has records here, and only a standard with
+				// records resident gets its partitions listed.
+				foreignPartitions = append(foreignPartitions, rel.Name)
+			case isPartition && rel.Source != source:
+				t.Fatalf("%s reports source %q", rel.Name, rel.Source)
+			}
+		}
+		if ommView == nil || ommView.Kind != "view" {
+			t.Fatalf("surface has no OMM view: %+v", surface.Tables)
+		}
+		if ommShadow == nil || ommShadow.Kind != "table" || ommShadow.Source != "celestrak-gp" {
+			t.Fatalf("surface has no OMM@celestrak-gp shadow: %+v", ommShadow)
+		}
+		if len(foreignPartitions) != 0 {
+			t.Fatalf("per-source partitions listed for standards with nothing resident: %v", foreignPartitions)
+		}
+		if ommView.Records != 3 {
+			t.Fatalf("OMM records = %d, want 3", ommView.Records)
 		}
 		hasData := false
-		for _, col := range surface.Tables[0].Columns {
+		for _, col := range ommView.Columns {
 			if col == "_data" {
 				hasData = true
 			}
 		}
 		if !hasData {
-			t.Fatalf("OMM columns missing _data: %v", surface.Tables[0].Columns)
+			t.Fatalf("OMM columns missing _data: %v", ommView.Columns)
 		}
 		if surface.Caps.TimeoutMs != 1500 || surface.Caps.MaxRows != 100 {
 			t.Fatalf("caps: %+v", surface.Caps)

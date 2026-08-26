@@ -33,12 +33,22 @@ package storage
 // buffer this file mirrors into the engine, and the engine is the PUBLIC
 // /api/v1/query surface where `SELECT _data` returns the whole record. Routing
 // such a standard would therefore publish the plaintext the seal exists to
-// protect. It is refused in THREE places, each of which alone is sufficient:
-// the generated catalog never emits a table or a file id for it
-// (enginecatalog.SkipEncryptedField), buildEngineRoutedSchemas drops anything
-// the catalog declares unroutable, and every routing decision re-asks the live
-// encfield registry (engineSchemaSealsFields) so a schema registered in Go
-// without a catalog regeneration is still never routed. FAIL CLOSED: an
+// protect. It is refused in THREE places, and they are not interchangeable:
+//
+//   - The generated catalog never emits a table OR a file id for it
+//     (enginecatalog.SkipEncryptedField). This is the refusal that removes the
+//     NAME from SQL: `SELECT ... FROM KMF` answers "no such table" because the
+//     schema text never declared the table, so CreateUnifiedViews — which
+//     builds a view for every table the schema DOES declare, whatever file ids
+//     are registered — has nothing to build. Pinned by
+//     TestFieldEncryptedStandardsAreNeverEngineRouted.
+//   - buildEngineRoutedSchemas drops anything the catalog declares unroutable.
+//   - Every routing decision re-asks the live encfield registry
+//     (engineSchemaSealsFields), so a schema registered in Go without a
+//     catalog regeneration still gets no plaintext mirrored into the engine.
+//
+// The last two stop DATA from entering; only the first also stops the name
+// from resolving, and this file no longer claims otherwise. FAIL CLOSED: an
 // unrecognised standard is not routed rather than routed-and-hoped-about.
 //
 // The engine vtab is a pure cache: control rows + stream files remain the
@@ -209,9 +219,15 @@ func engineRoutedSchemaNames() []string {
 	for name, binding := range engineRoutedSchemas {
 		if engineSchemaSealsFields(binding) {
 			// NEVER REGISTER ITS FILE ID. registerEngineFileIDs reads this
-			// list, and an unregistered identifier means the table never
-			// materializes in SQLite at all — `SELECT ... FROM <SEALED>`
-			// answers "no such table" instead of answering with plaintext.
+			// list, so no sealed record can ever be mirrored into a table:
+			// the engine places a buffer by its file identifier, and an
+			// unregistered identifier has nowhere to go. That is the
+			// property this line owns. It is NOT what makes the name
+			// disappear from SQL — CreateUnifiedViews creates a view for
+			// every table the schema TEXT declares, registered or not — and
+			// the seal does not lean on it for that: the generated catalog
+			// never writes a `table` for a sealed standard in the first
+			// place (see the file header).
 			continue
 		}
 		names = append(names, name)

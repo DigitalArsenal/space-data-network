@@ -787,13 +787,97 @@ func (mf *MountedFlow) PoolSize() int {
 // C.5c) has its body substituted from the instance's hostcall-bridge
 // registry — the buffer a capability handler registered during this same
 // exchange; the bytes never traversed the flow's linear memory.
+//
+// The bytes are the flow's, but the WIRE CONTRACT is the host's: when the
+// flow labels the response JSON, the pipe will not write a body that
+// contradicts that label (invalid UTF-8, or no bytes at all). See
+// httpmount_json_wire.go — that guard is the whole of the host's opinion
+// about a body, and it applies to every mount.
 type htrPipe struct {
 	w           http.ResponseWriter
 	bridge      *modulert.HostBridge
 	inst        *flowInstance
+	method      string
+	status      int
 	wroteHeader bool
-	frames      int
-	err         error
+	// headerPending: the flow's status+headers are staged in w.Header() but
+	// WriteHeader is HELD BACK because the response declares a JSON body and
+	// no body byte has arrived yet. It is written the moment one does, and
+	// refused at finish() if none ever does.
+	headerPending bool
+	// staged names the header fields THIS FLOW added, so a response the host
+	// ends up refusing can drop the flow's fields without touching headers an
+	// outer middleware (CORS, security headers) set on the same writer.
+	staged []string
+	json   jsonWireGuard
+	frames int
+	err    error
+}
+
+// ensureHeader emits the staged status line, once, at the last moment.
+func (p *htrPipe) ensureHeader() {
+	if p.wroteHeader {
+		return
+	}
+	p.w.WriteHeader(p.status)
+	p.wroteHeader = true
+	p.headerPending = false
+}
+
+// writeBody streams one run of body bytes under the wire guard.
+func (p *htrPipe) writeBody(b []byte) {
+	if len(b) == 0 {
+		return
+	}
+	if p.json.active {
+		if b = p.json.chunk(b); len(b) == 0 {
+			return // held as a split-rune carry; flushed at finish()
+		}
+	}
+	p.ensureHeader()
+	if _, err := p.w.Write(b); err != nil && p.err == nil {
+		p.err = err
+	}
+}
+
+// dropStagedHeaders discards header fields staged for a response that will
+// never be sent, so an error answer written by ServeHTTP does not inherit the
+// flow's Content-Type/ETag.
+func (p *htrPipe) dropStagedHeaders() {
+	if p.wroteHeader {
+		return
+	}
+	for _, name := range p.staged {
+		p.w.Header().Del(name)
+	}
+	p.staged = nil
+	p.headerPending = false
+}
+
+// finish closes the exchange: flush any carried bytes, then hold the flow to
+// the contract it declared. A JSON-labelled, body-bearing response that
+// produced NO bytes is not a JSON text, so the host answers an honest 502
+// instead of a silent empty 200 that reads like "no records".
+func (p *htrPipe) finish() {
+	if p.json.active {
+		if tail := p.json.flush(); len(tail) > 0 {
+			p.ensureHeader()
+			if _, err := p.w.Write(tail); err != nil && p.err == nil {
+				p.err = err
+			}
+			if flusher, ok := p.w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+	}
+	if p.wroteHeader || !p.headerPending {
+		return
+	}
+	p.dropStagedHeaders()
+	http.Error(p.w,
+		fmt.Sprintf("flow declared a JSON body on status %d and produced no bytes", p.status),
+		http.StatusBadGateway)
+	p.wroteHeader = true
 }
 
 func (p *htrPipe) emit(_ context.Context, args *InvocationArgs) (*InvocationResult, error) {
@@ -826,25 +910,28 @@ func (p *htrPipe) emit(_ context.Context, args *InvocationArgs) (*InvocationResu
 			refBody = b
 		}
 
-		if !p.wroteHeader {
+		if !p.wroteHeader && !p.headerPending {
 			for _, h := range resp.Headers {
 				p.w.Header().Add(h.Name, h.Value)
+				p.staged = append(p.staged, h.Name)
 			}
-			p.w.WriteHeader(int(resp.Status))
-			p.wroteHeader = true
-		}
-		if len(resp.Body) > 0 {
-			if _, err := p.w.Write(resp.Body); err != nil && p.err == nil {
-				p.err = err
+			p.status = int(resp.Status)
+			p.json.active = statusCarriesBody(p.status, p.method) && declaresJSONBody(resp.Headers)
+			if p.json.active && len(resp.Body) == 0 && len(refBody) == 0 {
+				// Nothing to write yet under a JSON label: stage the header
+				// and decide at finish() whether this becomes a real response
+				// or an honest refusal.
+				p.headerPending = true
+			} else {
+				p.ensureHeader()
 			}
 		}
-		if len(refBody) > 0 {
-			if _, err := p.w.Write(refBody); err != nil && p.err == nil {
-				p.err = err
+		p.writeBody(resp.Body)
+		p.writeBody(refBody)
+		if p.wroteHeader {
+			if flusher, ok := p.w.(http.Flusher); ok {
+				flusher.Flush()
 			}
-		}
-		if flusher, ok := p.w.(http.Flusher); ok {
-			flusher.Flush()
 		}
 	}
 	return &InvocationResult{StatusCode: 0}, nil
@@ -963,16 +1050,20 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pipe := &htrPipe{w: w, bridge: inst.bridge, inst: inst}
+	pipe := &htrPipe{w: w, bridge: inst.bridge, inst: inst, method: r.Method}
 	handlers := make(HandlerMap, len(mf.egressKeys))
 	for _, key := range mf.egressKeys {
 		handlers[key] = pipe.emit
 	}
 
 	if _, err := rt.Drain(r.Context(), handlers, DrainOptions{MaxIterations: 1000}); err != nil && !pipe.wroteHeader {
+		pipe.dropStagedHeaders()
 		http.Error(w, fmt.Sprintf("flow drain: %v", err), http.StatusBadGateway)
 		return
 	}
+	// Close the exchange under the wire contract the flow declared (carried
+	// bytes flushed; a JSON label with no bytes refused honestly).
+	pipe.finish()
 	if !pipe.wroteHeader {
 		detail := ""
 		if pipe.err != nil {

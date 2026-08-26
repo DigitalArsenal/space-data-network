@@ -72,6 +72,17 @@ func (s *FlatSQLStore) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxCa
 // string, and it predates the routing flip: the pinned $OMM table's
 // CREATION_DATE behaves identically.
 //
+// THIS BOUNDARY IS NOT THE ONLY JSON PRODUCER ON /api/v1/query, AND IT NEVER
+// CLAIMED TO BE THE LAST ONE. The public-query flow has two: the tabular
+// projections THIS function assembles, and the full-record presentation, where
+// the flow takes QuerySandboxedStream's raw FlatBuffer frames (deliberately
+// unsanitized — that path is the wire format) and encodes them to JSON inside
+// a wasm node. Those bytes never pass through here, so the host closes them
+// where they reach the socket instead: flowrt/httpmount_json_wire.go holds
+// every JSON-labelled response body of every mount to RFC 8259 (UTF-8, and
+// never zero bytes). Sanitizing here as well is not redundant — the storage
+// capability answers module callers that never touch HTTP.
+//
 // SANITIZING THE ASSEMBLED BYTES IS STRUCTURE-PRESERVING, not a re-encode.
 // Every structural byte of the engine's JSON — `[`, `{`, `"`, `:`, `,`, `\`,
 // the digits, the literals — is ASCII, i.e. valid UTF-8 by itself, so an
@@ -93,7 +104,25 @@ func (s *FlatSQLStore) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCaps
 	if err != nil {
 		return nil, rows, cols, err
 	}
-	return validUTF8JSON(payload), rows, cols, nil
+	payload = validUTF8JSON(payload)
+
+	// THE BYTE CAP IS RE-CHECKED AFTER SANITIZING, because sanitizing can
+	// GROW the body: U+FFFD is three bytes, and while a RUN of invalid bytes
+	// collapses to one replacement, invalid bytes isolated between valid ones
+	// each cost two extra — measured at 1.81x on a hostile fixture
+	// (TestSanitizedJSONStillWearsTheByteCap). The engine REJECTS (never
+	// truncates) a result over MaxBytes, and MaxBytes is the volumetric guard
+	// on an anonymous public endpoint, so the boundary that widens the body
+	// re-wears the cap: same typed rejection the engine would have raised, so
+	// the flow maps it to the same status.
+	if caps.MaxBytes > 0 && uint64(len(payload)) > caps.MaxBytes {
+		return nil, rows, cols, &flatsqlrt.SandboxError{
+			Code: flatsqlrt.SandboxCodeByteCap,
+			Message: fmt.Sprintf("sandbox: %s: result is %d bytes after replacing invalid UTF-8 (cap %d)",
+				flatsqlrt.SandboxCodeByteCap, len(payload), caps.MaxBytes),
+		}
+	}
+	return payload, rows, cols, nil
 }
 
 // validUTF8JSON returns payload unchanged when it is already valid UTF-8 (the
@@ -121,6 +150,17 @@ type QuerySurfaceTable struct {
 	// Columns in engine order — schema-exact names plus the engine meta
 	// columns (_data = the record FlatBuffer BLOB, _source on views).
 	Columns []string `json:"columns"`
+	// PlaceholderColumns names the subset of Columns that exist only to
+	// satisfy the engine's >=1-column invariant (enginecatalog): the
+	// standard's first field is a table/struct/union/vector the projection
+	// cannot represent, so the column carries a FIXED-WIDTH one-byte read of
+	// slot 0 — never that field's value. Advertising `SITE` on `LDM` with no
+	// marker made a junk read look exactly like the field, which is a quiet
+	// lie in a public listing; the honest answer for these standards is
+	// `_data`. Synthesized by the API, so the key is lowercase (schema-exact
+	// capitalization applies to SDS field names, not to fields the surface
+	// invents).
+	PlaceholderColumns []string `json:"placeholder_columns,omitempty"`
 	// Records currently resident in the engine hot window for this relation.
 	Records int64 `json:"records"`
 }
@@ -174,21 +214,27 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 			return nil, fmt.Errorf("enumerate columns of %s: %w", base, err)
 		}
 		resident := s.engineResidentCount(schemaName) > 0
+		var placeholders []string
+		if field, junk := engineUnprojectableFirstFields[schemaName]; junk {
+			placeholders = []string{field}
+		}
 
 		if len(srcNames) == 0 {
 			surface = append(surface, QuerySurfaceTable{
-				Name:    base,
-				Kind:    "table",
-				Columns: cols.Columns,
-				Records: s.countEngineRelation(quotedBase, resident),
+				Name:               base,
+				Kind:               "table",
+				Columns:            cols.Columns,
+				PlaceholderColumns: placeholders,
+				Records:            s.countEngineRelation(quotedBase, resident),
 			})
 			continue
 		}
 		surface = append(surface, QuerySurfaceTable{
-			Name:    base,
-			Kind:    "view",
-			Columns: cols.Columns,
-			Records: s.countEngineRelation(quotedBase, resident),
+			Name:               base,
+			Kind:               "view",
+			Columns:            cols.Columns,
+			PlaceholderColumns: placeholders,
+			Records:            s.countEngineRelation(quotedBase, resident),
 		})
 		if !resident {
 			// Nothing is in this standard's partitions, so listing one entry
@@ -199,11 +245,12 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 		for _, src := range srcNames {
 			name := base + "@" + src
 			surface = append(surface, QuerySurfaceTable{
-				Name:    name,
-				Kind:    "table",
-				Source:  src,
-				Columns: cols.Columns,
-				Records: s.countEngineRelation(quoteEngineRelation(name), resident),
+				Name:               name,
+				Kind:               "table",
+				Source:             src,
+				Columns:            cols.Columns,
+				PlaceholderColumns: placeholders,
+				Records:            s.countEngineRelation(quoteEngineRelation(name), resident),
 			})
 		}
 	}
