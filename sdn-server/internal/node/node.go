@@ -2659,6 +2659,14 @@ func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
 	if err != nil {
 		return true, "retrieval ledger unreadable; treating as never retrieved"
 	}
+	// A lane may declare its OWN base window
+	// (flows.services[].retrieval_interval). A paged source is not re-asking
+	// for the same bytes, so the whole-payload default does not describe it.
+	baseHours := sourcemetrics.DefaultDebounceHours
+	if configured, ok := n.flowServiceRetrievalBaseHours(appID); ok {
+		baseHours = configured
+	}
+
 	// An attempt inside the debounce window bars another one regardless of how
 	// it went. This is what a publisher is actually owed.
 	if last, failures := n.sourceMetrics.AttemptState(appID); last != nil {
@@ -2666,7 +2674,7 @@ func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
 		// window (capped). A publisher that has started refusing us is asking
 		// to be asked less often, and retrying on the same cadence is how a
 		// node earns a longer ban instead of a shorter one.
-		hours := sourcemetrics.EffectiveDebounceHours(failures)
+		hours := sourcemetrics.EffectiveDebounceHoursFrom(baseHours, failures)
 		window := time.Duration(hours * float64(time.Hour))
 		if age := time.Since(*last); age < window {
 			if failures > 1 {
@@ -2699,6 +2707,11 @@ func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
 		if window <= 0 {
 			window = time.Duration(sourcemetrics.DefaultDebounceHours * float64(time.Hour))
 		}
+		// The ledger row stores the node-wide default; a lane the operator
+		// gave its own cadence must not be re-gated by it here.
+		if configured, ok := n.flowServiceRetrievalBaseHours(appID); ok {
+			window = time.Duration(configured * float64(time.Hour))
+		}
 		if age := time.Since(*src.LastRetrievedAt); age >= window {
 			return true, fmt.Sprintf("source %s last retrieved %s ago (debounce %s)",
 				src.SourceID, age.Round(time.Minute), window)
@@ -2708,6 +2721,43 @@ func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
 		return true, "no source has ever been retrieved by this flow"
 	}
 	return false, "every source is inside its debounce window"
+}
+
+// flowServiceRetrievalBaseHours reports the operator-configured base debounce
+// window for a flow service, in hours.
+//
+// It matches on the config's flow reference, which is what the node also uses
+// as the plugin/app id for a service loaded from flows.services. A service
+// referenced by filesystem path therefore gets no override — deliberately, so
+// this never guesses which config entry a path-loaded flow came from.
+//
+// An unparseable value is REFUSED, not silently dropped: the lane keeps the
+// node default and the reason is logged once per evaluation, because a typo
+// that quietly restores a 3 h window on a lane the operator meant to page is
+// exactly the failure this knob exists to end.
+func (n *Node) flowServiceRetrievalBaseHours(appID string) (float64, bool) {
+	if n == nil || n.config == nil {
+		return 0, false
+	}
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return 0, false
+	}
+	for _, service := range n.config.Flows.Services {
+		if strings.TrimSpace(service.Flow) != appID {
+			continue
+		}
+		interval, ok, err := service.EffectiveRetrievalInterval()
+		if err != nil {
+			log.Warnf("Flow service %q: %v; keeping the node default retrieval debounce", appID, err)
+			return 0, false
+		}
+		if !ok {
+			return 0, false
+		}
+		return interval.Hours(), true
+	}
+	return 0, false
 }
 
 func (n *Node) runDatasetPublicationPNMCatchup() {

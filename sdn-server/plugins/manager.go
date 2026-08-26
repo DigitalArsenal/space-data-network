@@ -79,6 +79,25 @@ type CronMethodSpec struct {
 	//   "json"       — plugin writes JSON to out_ptr
 	//   "flatbuffer" — plugin writes FlatBuffer bytes to out_ptr
 	Output string `json:"output"`
+
+	// IntervalPinned marks DefaultInterval as an OPERATOR-DECLARED cadence
+	// from the node config file, not a bundle suggestion. A pinned interval
+	// outranks persisted runtime state (modules/runtime-inputs.json, written
+	// by SaveRuntimeModuleSchedule from the dashboard).
+	//
+	// Without this, a schedule saved once through the dashboard silently
+	// outlives every later edit of the config file, and the two surfaces
+	// disagree: the $APPS board reports the CONFIG interval (it is built from
+	// the same triggers the config override wrote) while the ticker runs the
+	// PERSISTED one. Measured live on host-02 2026-08-26: config
+	// flows.services[].intervals declared timer-cell-ingest 1m, /api/apps
+	// reported interval_ms 60000, and the cron ticker fired every 5m0s from
+	// a stale persisted "5m0s". A board that reports a cadence the node is
+	// not running is worse than no board.
+	//
+	// Enable/disable is a SEPARATE axis and stays with the persisted state:
+	// an operator who turned a lane off from the dashboard keeps it off.
+	IntervalPinned bool `json:"interval_pinned,omitempty"`
 }
 
 // CronScheduleConfig is the per-method schedule from the server config file
@@ -658,11 +677,20 @@ func (m *Manager) resolveCronSchedule(spec CronMethodSpec, pluginConfig map[stri
 	intervalStr := spec.DefaultInterval
 	enabled := true
 
-	// Override from server config if present.
+	// Override from persisted/runtime state if present — unless the config
+	// file pinned this cadence, in which case the operator's file wins and a
+	// stale dashboard save is ignored rather than silently outranking it.
 	if sched, ok := pluginConfig[spec.Method]; ok {
 		enabled = sched.Enabled
 		if sched.Interval != "" {
-			intervalStr = sched.Interval
+			if spec.IntervalPinned {
+				if sched.Interval != intervalStr {
+					log.Infof("Cron method %q: persisted schedule %q ignored; the node config file pins this cadence at %q",
+						spec.Method, sched.Interval, intervalStr)
+				}
+			} else {
+				intervalStr = sched.Interval
+			}
 		}
 	}
 
