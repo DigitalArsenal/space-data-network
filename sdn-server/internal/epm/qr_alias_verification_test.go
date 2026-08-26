@@ -62,7 +62,7 @@ func TestQRAliasChainProvesEPMSignature(t *testing.T) {
 	}
 
 	// The FULL downloadable card carries the complete verification chain.
-	// (The scannable QR card carries only xpub + sign/encrypt + epmsig —
+	// (§21: the scannable QR card carries sign/encrypt literal keys + epmsig —
 	// owner ruling 2026-08-04 dropped epmts/epmcid for scan density — so
 	// the chain-proof walk below runs against the full card.)
 	card, err := service.GetNodeVCard()
@@ -102,40 +102,42 @@ func TestQRAliasChainProvesEPMSignature(t *testing.T) {
 		t.Fatalf("epmts alias = %v, want [%d]", aliases["epmts"], record.SIGNATURE_TIMESTAMP())
 	}
 
-	// 3. Derive the signing key from the scanned xpub at the scanned sign
-	// path; it must be one of the record's signing keys.
-	if len(aliases["xpub"]) != 1 || aliases["xpub"][0] != xpub {
-		t.Fatalf("xpub alias = %v, want [%s]", aliases["xpub"], xpub)
+	// 3. §21 (2026-08-19): the sign/encrypt aliases carry LITERAL KEY BYTES
+	// (b64url of the hex-decoded public key), not derivation paths. The xpub
+	// alias is RETIRED — it must not appear on the card.
+	if len(aliases["xpub"]) != 0 {
+		t.Fatalf("xpub alias = %v, want none (retired under §21)", aliases["xpub"])
 	}
 	derived, ok := PublicIdentityKeysFromXPub(xpub, identity.Account)
 	if !ok {
 		t.Fatal("PublicIdentityKeysFromXPub failed")
 	}
 	// OWNER RULE, task sdn-vcf-duplicate-sign-alias (2026-07-29): EXACTLY ONE
-	// sign alias, and it is the xpub-derivable path.
-	//
-	// This assertion used to scan the sign aliases for *a* derivable one and
-	// accept extras alongside it. That tolerance is what let the live card ship
-	// two indistinguishable sign@ rows — the second being the Ed25519 key's
-	// all-hardened SLIP-10 path, which no extended public key can derive. A
-	// consumer scanning the QR has no way to tell two rows of the same alias
-	// kind apart, so "at least one is usable" is not a contract; "exactly one,
-	// and it resolves" is.
+	// sign alias (one-row invariant). Under §21 the local part is b64url of
+	// the literal signing public key bytes, not a derivation path.
 	if len(aliases["sign"]) != 1 {
-		t.Fatalf("sign aliases = %v, want exactly 1 (the xpub-derivable path)", aliases["sign"])
+		t.Fatalf("sign aliases = %v, want exactly 1 (the literal key)", aliases["sign"])
 	}
-	signedPath, err := base64.RawURLEncoding.DecodeString(aliases["sign"][0])
+	signKeyBytes, err := base64.RawURLEncoding.DecodeString(aliases["sign"][0])
 	if err != nil {
 		t.Fatalf("sign alias %q not base64url: %v", aliases["sign"][0], err)
 	}
-	if string(signedPath) != derived.SigningKeyPath {
-		t.Fatalf("sign alias decodes to %q, want the xpub-derivable path %q",
-			signedPath, derived.SigningKeyPath)
+	if hex.EncodeToString(signKeyBytes) != derived.SigningPublicKey {
+		t.Fatalf("sign alias decodes to %x, want the literal signing key %s",
+			signKeyBytes, derived.SigningPublicKey)
 	}
-	// Same rule on the encryption side (already owner-ruled: ONE ENCRYPTION
-	// PATH), asserted here so the two halves cannot drift apart again.
+	// Same rule on the encryption side (ONE ENCRYPTION KEY), asserted here so
+	// the two halves cannot drift apart again.
 	if len(aliases["encrypt"]) != 1 {
 		t.Fatalf("encrypt aliases = %v, want exactly 1", aliases["encrypt"])
+	}
+	encAliasBytes, err := base64.RawURLEncoding.DecodeString(aliases["encrypt"][0])
+	if err != nil {
+		t.Fatalf("encrypt alias %q not base64url: %v", aliases["encrypt"][0], err)
+	}
+	if hex.EncodeToString(encAliasBytes) != derived.EncryptionPublicKey {
+		t.Fatalf("encrypt alias decodes to %x, want the literal encryption key %s",
+			encAliasBytes, derived.EncryptionPublicKey)
 	}
 	keyInRecord := false
 	key := new(EPM.CryptoKey)
@@ -147,7 +149,7 @@ func TestQRAliasChainProvesEPMSignature(t *testing.T) {
 		}
 	}
 	if !keyInRecord {
-		t.Fatalf("xpub-derived signing key %s not present in the record's KEYS", derived.SigningPublicKey)
+		t.Fatalf("signing key %s not present in the record's KEYS", derived.SigningPublicKey)
 	}
 
 	// 4. The record's embedded signature verifies.
