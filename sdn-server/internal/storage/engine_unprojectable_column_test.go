@@ -395,8 +395,19 @@ func TestProjectedStringColumnsAreJSONSafe(t *testing.T) {
 	// EVERY routed standard that projects a string, not a sample of them: a
 	// sample is exactly how a guard ends up proving something about the first
 	// eight entries of a catalog and nothing about the surface it names.
-	if len(targets) < 100 {
-		t.Fatalf("only %d generically routed standards project a string column — the oracle is broken", len(targets))
+	//
+	// THE COUNT IS EXACT, NOT A FLOOR. It is derivable and it is the whole
+	// claim this test makes about its own coverage: of the generated tables,
+	// the ones declaring at least one `string` column, minus the standards
+	// with no flatc oracle in this checkout (loadFlatcOracle skips them).
+	// A floor of ">= 100" would let coverage collapse from 176 to 101 in
+	// silence. When a catalog change moves it, update the number here — the
+	// same discipline TestEngineDerivedRTreesAreTheDisclosedSet applies to
+	// its disclosed list.
+	const stringProjectingRoutedStandards = 176
+	if len(targets) != stringProjectingRoutedStandards {
+		t.Fatalf("the hostile-string guard covers %d generically routed standards, want exactly %d — a catalog change moved the projected-string set (or the flatc oracle is incomplete); confirm with `awk '/^  table [A-Z]/{tbl=$2; has=0} /:string;/{if(tbl)has=1} /^  }$/{if(tbl&&has)n++; tbl=\"\"} END{print n}' internal/storage/engine_standard_catalog.go` minus the unvendored standards",
+			len(targets), stringProjectingRoutedStandards)
 	}
 	t.Logf("hostile-string guard covers %d routed standards (plus the pinned $OMM below)", len(targets))
 
@@ -498,20 +509,27 @@ func TestProjectedStringColumnsAreJSONSafe(t *testing.T) {
 }
 
 // ==========================================================================
-// SANITIZING MUST NOT DEFEAT THE BYTE CAP IT RUNS BEHIND
+// SANITIZING MUST NOT TURN A WITHIN-CAP ANSWER INTO A PEER-TRIGGERED DENIAL
 // ==========================================================================
 //
 // U+FFFD is three bytes, so replacing a LONE invalid byte grows the body.
 // bytes.ToValidUTF8 collapses each RUN to one U+FFFD, so a record full of
 // 0xFF actually SHRINKS; the growth case is invalid bytes ISOLATED between
 // valid ones (0xFF,'a',0xFF,'a',...), where 2 bytes become 4 — measured
-// below, not assumed. The engine rejects (never truncates) a result over
-// SandboxCaps.MaxBytes, and MaxBytes is the volumetric guard on an anonymous
-// public endpoint: a body that fit the cap when the engine measured it must
-// not reach the caller at ~2x that size because a peer chose its bytes well.
-// QuerySandboxedJSON therefore re-checks the cap AFTER sanitizing and raises
-// the engine's own typed byte-cap rejection.
-func TestSanitizedJSONStillWearsTheByteCap(t *testing.T) {
+// below, not assumed.
+//
+// WHO CONTROLS THAT GROWTH DECIDES WHERE THE CAP IS WORN. The bytes are a
+// PEER's: nothing on the write path requires a FlatBuffers string to be valid
+// UTF-8. Re-checking SandboxCaps.MaxBytes after sanitizing therefore hands
+// that peer a switch — publish a record with isolated invalid bytes and a
+// query that FITS the cap starts failing outright, for every caller, on an
+// anonymous public endpoint. The cap is a volumetric guard, not a
+// content-integrity rule, and the engine still wears it: it REJECTS (never
+// truncates) a result over MaxBytes when it assembles the body. So the
+// boundary returns the widened body — bounded by construction at 3x, since
+// every invalid byte becomes at most three — rather than converting an answer
+// the caller is entitled to into a 4xx/5xx a peer chose.
+func TestSanitizingNeverTurnsAWithinCapAnswerIntoAFailure(t *testing.T) {
 	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
 	defer store.Close()
 
@@ -566,15 +584,39 @@ func TestSanitizedJSONStillWearsTheByteCap(t *testing.T) {
 	t.Logf("engine body %d bytes -> %d bytes after U+FFFD replacement (%.2fx)",
 		len(raw), len(sanitized), float64(len(sanitized))/float64(len(raw)))
 
-	// A cap the ENGINE accepts (it is the size of the body the engine
-	// assembled) and the sanitized body exceeds.
+	// A cap the ENGINE accepts — it is exactly the size of the body the
+	// engine assembled — which the SANITIZED body exceeds. The caller still
+	// gets its rows.
 	tight := flatsqlrt.SandboxCaps{MaxRows: 64, MaxBytes: uint64(len(raw)), Timeout: 30 * time.Second}
 	if _, _, _, err := store.engineDB.QuerySandboxedJSON(sql, tight); err != nil {
 		t.Fatalf("premise broken: the engine itself rejects its own body size: %v", err)
 	}
-	payload, _, _, err := store.QuerySandboxedJSON(sql, tight)
+	payload, rows, _, err := store.QuerySandboxedJSON(sql, tight)
+	if err != nil {
+		t.Fatalf("a within-cap answer was refused because a peer's bytes widened it: %v", err)
+	}
+	if rows < 1 {
+		t.Fatalf("within-cap answer returned %d rows", rows)
+	}
+	if uint64(len(payload)) <= tight.MaxBytes {
+		t.Fatalf("the fixture stopped exercising widening: %d bytes under a %d cap", len(payload), tight.MaxBytes)
+	}
+	if !utf8.Valid(payload) || !json.Valid(payload) {
+		t.Fatalf("the widened body is not a JSON text: %q", payload)
+	}
+	// THE WIDENING IS BOUNDED, which is why returning it is safe: one invalid
+	// byte becomes at most three.
+	if uint64(len(payload)) > 3*tight.MaxBytes {
+		t.Fatalf("sanitized body is %d bytes under a %d cap — more than the 3x U+FFFD bound",
+			len(payload), tight.MaxBytes)
+	}
+
+	// THE VOLUMETRIC CONTRACT IS INTACT: a cap below what the engine assembles
+	// is still the engine's own typed rejection, and it hands back no bytes.
+	overrun := flatsqlrt.SandboxCaps{MaxRows: 64, MaxBytes: uint64(len(raw)) - 1, Timeout: 30 * time.Second}
+	payload, _, _, err = store.QuerySandboxedJSON(sql, overrun)
 	if err == nil {
-		t.Fatalf("cap %d let a %d-byte sanitized body through", tight.MaxBytes, len(payload))
+		t.Fatalf("cap %d let a %d-byte body through", overrun.MaxBytes, len(payload))
 	}
 	se, ok := flatsqlrt.AsSandboxError(err)
 	if !ok || se.Code != flatsqlrt.SandboxCodeByteCap {

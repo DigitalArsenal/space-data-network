@@ -433,6 +433,83 @@ func engineSchemaTextExcluding(excluded map[string]bool) string {
 	return strings.TrimSuffix(out.String(), "\n")
 }
 
+// ==================== Declared columns (the listing is free) ====================
+
+// engineRelationMetaColumns are the columns the ENGINE appends to EVERY record
+// relation — base vtab, per-source shadow vtab and unified view alike — after
+// the standard's projected fields, in this order. `_source` is a real vtab
+// column (not something the view synthesizes), which is why a base table on a
+// store with no source partitions declares it too.
+var engineRelationMetaColumns = []string{"_source", "_rowid", "_offset", "_data"}
+
+// engineDeclaredColumns maps each engine table name to the fields the schema
+// text declares for it, in declaration order — which IS the column order,
+// because FlatBuffers vtable slots are positional (see enginecatalog).
+var engineDeclaredColumns = parseEngineDeclaredColumns(engineDatabaseSchema)
+
+// parseEngineDeclaredColumns reads the engine schema text the database is
+// created from. It is the same line shape engineSchemaTextExcluding walks:
+// `table X {`, one `NAME:type;` per line, `}`.
+func parseEngineDeclaredColumns(schema string) map[string][]string {
+	out := make(map[string][]string, 256)
+	table := ""
+	var cols []string
+	for _, line := range strings.Split(schema, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if table == "" {
+			if strings.HasPrefix(trimmed, "table ") && strings.HasSuffix(trimmed, "{") {
+				table = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "table "), "{"))
+				cols = nil
+			}
+			continue
+		}
+		if trimmed == "}" {
+			out[table] = cols
+			table, cols = "", nil
+			continue
+		}
+		name, _, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			continue
+		}
+		if name = strings.TrimSpace(name); name == "" || strings.HasPrefix(name, "//") {
+			continue
+		}
+		cols = append(cols, name)
+	}
+	return out
+}
+
+// engineRelationColumns returns what `SELECT *` yields for a routed standard's
+// relation — the declared fields followed by the engine meta columns.
+//
+// IT IS DERIVED, NOT PROBED, AND THAT IS THE POINT. The public query surface
+// lists EVERY routed standard, so probing columns cost one prepared statement
+// per standard against a UNION ALL view with one branch per source: 226
+// statements holding the single-threaded engine (and s.mu) for an
+// UNAUTHENTICATED listing — measured at ~76-99 ms per call versus 0.4 ms for
+// the `SELECT _data ... LIMIT 10` it is supposed to describe, which is exactly
+// the "asking WHAT is queryable costs more than querying it" shape
+// PublicQuerySurface's own doc rules out. The schema text the database was
+// created from already says what the columns are.
+//
+// The derivation stays honest because a persisted view that projects anything
+// else is REBUILT at boot: engineViewsCoverSources compares each persisted
+// view's projection against this list, so an upgraded binary whose catalog
+// changed a standard's columns never serves the old view's column list (and
+// TestSurfaceColumnsAreTheEngineColumns pins derived == engine for every
+// routed standard, base relation and shadow partition alike).
+func engineRelationColumns(table string) ([]string, bool) {
+	declared, ok := engineDeclaredColumns[table]
+	if !ok {
+		return nil, false
+	}
+	cols := make([]string, 0, len(declared)+len(engineRelationMetaColumns))
+	cols = append(cols, declared...)
+	cols = append(cols, engineRelationMetaColumns...)
+	return cols, true
+}
+
 // engineRoutedSchemaFor is engineRoutedSchemaFor narrowed to THIS store's
 // routed set (the catalog minus the store's exclusions).
 func (s *FlatSQLStore) engineRoutedSchemaFor(schemaName string) (engineRoutedSchema, bool) {
@@ -640,28 +717,44 @@ func engineIngestablePayload(binding engineRoutedSchema, data []byte) ([]byte, s
 // excluded standard does not have), and they are already invisible to every
 // plain-table path (tableExists and schemasWithRecordTables both filter
 // `CREATE VIRTUAL%`). A later boot that re-routes the standard adopts them.
+//
+// A PER-STORE EXCLUSION IS NOT THE ONLY WAY A STANDARD STOPS BEING ROUTED. A
+// standard can LEAVE THE CATALOG ENTIRELY between binaries — that is what
+// happened to $KMF when it gained an `(encrypted)` field, and it is what any
+// SDS bump does when an IDL loses its file_identifier or gains a sealed field.
+// Such a name is not in engineRoutedSchemas at all, so the per-store exclusion
+// set never mentions it and a leftover view for it would survive with no vtab
+// module behind it — the exact failure this function exists to prevent, one
+// input class short. The sweep is therefore over the PERSISTED VIEWS: any view
+// this binary does not route is dropped, identified by its own definition
+// (`... FROM "<NAME>@<source>"`, the shape CreateUnifiedViews writes) so a view
+// an operator or a migration created for some other purpose is never touched.
 func dropExcludedStandardViews(engineDB *flatsqlrt.Database, excluded map[string]bool) error {
-	if len(excluded) == 0 {
-		return nil
-	}
-	names := make(map[string]bool, len(excluded))
-	for name := range excluded {
-		if binding, ok := engineRoutedSchemas[name]; ok {
-			names[binding.Table] = true
+	routedTables := make(map[string]bool, len(engineRoutedSchemas))
+	for name, binding := range engineRoutedSchemas {
+		if excluded[name] {
+			continue
 		}
+		routedTables[binding.Table] = true
 	}
-	res, err := engineDB.Query(`SELECT name FROM sqlite_master WHERE type = 'view'`)
+	res, err := engineDB.Query(`SELECT name, sql FROM sqlite_master WHERE type = 'view'`)
 	if err != nil {
 		return fmt.Errorf("enumerate persisted unified views: %w", err)
 	}
 	leftover := []string{}
 	for _, row := range res.Rows {
-		if len(row) != 1 {
+		if len(row) != 2 {
 			continue
 		}
-		if name, ok := row[0].(string); ok && names[name] {
-			leftover = append(leftover, name)
+		name, ok := row[0].(string)
+		if !ok || routedTables[name] {
+			continue
 		}
+		text, _ := row[1].(string)
+		if !isEngineUnifiedViewText(name, text) {
+			continue
+		}
+		leftover = append(leftover, name)
 	}
 	if len(leftover) == 0 {
 		return nil
@@ -691,6 +784,14 @@ func dropExcludedStandardViews(engineDB *flatsqlrt.Database, excluded map[string
 	}
 	log.Warnf("FlatSQL boot: dropped %d leftover unified view(s) for standard(s) this store does not route: %v", len(leftover), leftover)
 	return nil
+}
+
+// isEngineUnifiedViewText reports whether a persisted view is one the engine's
+// CreateUnifiedViews wrote for the record table `name`: its definition selects
+// from that name's per-source shadow partitions. A view with any other
+// definition belongs to somebody else and is left alone.
+func isEngineUnifiedViewText(name, text string) bool {
+	return strings.Contains(text, `FROM "`+strings.ReplaceAll(name, `"`, `""`)+`@`)
 }
 
 // rebuildUnifiedViews replaces every routed base name with a UNION ALL view

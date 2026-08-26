@@ -178,6 +178,80 @@ func TestLegacyBlobTableKeepsItsStandardUnroutedUntilItsRowsMigrate(t *testing.T
 	}
 }
 
+// TestLeftoverViewForAStandardThisBinaryDroppedIsSweptAtBoot covers the input
+// class a per-store exclusion set cannot see: a standard that LEAVES THE
+// CATALOG between binaries.
+//
+// A unified view is persisted. dropExcludedStandardViews used to sweep only
+// the names in THIS STORE's exclusion set, which is a subset of the routed
+// catalog — so a standard the previous binary routed and this one does not
+// know at all (what commit 4ddce3c8 did to $KMF when it gained an
+// `(encrypted)` field, and what any SDS bump does when an IDL loses its
+// file_identifier) kept a view with no vtab module behind it. Every
+// plain-table path then resolves that view instead of the canonical control
+// table, answers `no such module: __flatsql_module_kmf_<src>`, and CREATE
+// TABLE on the same name collides with it: exactly the failure the sweep
+// exists to prevent, one input class short.
+//
+// The sweep is identified by the view's OWN definition, so a view somebody
+// else created is never touched.
+func TestLeftoverViewForAStandardThisBinaryDroppedIsSweptAtBoot(t *testing.T) {
+	const dropped = "KMF"
+	if _, routed := engineRoutedSchemas[dropped+".fbs"]; routed {
+		t.Skipf("%s is routed by this binary — pick a standard this binary does not route", dropped)
+	}
+
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newEngineRecordsStore(t, basePath)
+	// A warm store, or the control database is discarded on the next boot and
+	// the leftover goes with it for the wrong reason.
+	if _, err := store.Store("OMM.fbs", buildEngineOMM(t, 25544, "ISS", 1700000000), "peer", nil); err != nil {
+		t.Fatalf("store $OMM: %v", err)
+	}
+	// What the PREVIOUS binary left behind, in the exact shape
+	// CreateUnifiedViews writes.
+	if _, err := store.engineDB.Query(
+		`CREATE VIEW "` + dropped + `" AS SELECT "_source", "_rowid", "_offset", "_data" FROM "` + dropped + `@local"`); err != nil {
+		t.Fatalf("seed leftover unified view: %v", err)
+	}
+	// And a view that is nobody's business but the operator's.
+	if _, err := store.engineDB.Query(`CREATE VIEW "operator_report" AS SELECT count(*) AS n FROM "OMM"`); err != nil {
+		t.Fatalf("seed operator view: %v", err)
+	}
+	if err := store.CheckpointRecordCatalog(); err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	reopened := newEngineRecordsStore(t, basePath)
+	defer reopened.Close()
+
+	res, err := reopened.engineDB.Query(`SELECT name FROM sqlite_master WHERE type = 'view'`)
+	if err != nil {
+		t.Fatalf("enumerate persisted views: %v", err)
+	}
+	views := map[string]bool{}
+	for _, row := range res.Rows {
+		if name, ok := row[0].(string); ok {
+			views[name] = true
+		}
+	}
+	if views[dropped] {
+		t.Fatalf("the leftover unified view for %s survived a boot that does not route it — every plain-table path for that name now resolves a view with no module behind it", dropped)
+	}
+	if !views["operator_report"] {
+		t.Fatal("the sweep took a view it did not write")
+	}
+	// THE CONSEQUENCE, not just the artifact: the canonical control table for
+	// that name can be created again. SQLite refuses CREATE TABLE while a view
+	// of the same name exists.
+	if _, err := reopened.db.Exec(`CREATE TABLE "` + dropped + `" (cid TEXT PRIMARY KEY, data BLOB)`); err != nil {
+		t.Fatalf("the canonical control table for %s cannot be created: %v", dropped, err)
+	}
+}
+
 // TestEnginePrepareFailureNeverDiscardsTheControlDatabase pins the blast
 // radius of moving registerEngineFileIDs in front of the database's first
 // query. It used to run AFTER the open, in NewFlatSQLStore, where a failure

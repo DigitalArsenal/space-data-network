@@ -15,6 +15,7 @@ package flowrt
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -250,11 +251,22 @@ func TestPublicQueryJSONWireIsAlwaysAJSONText(t *testing.T) {
 
 func htrFrame(t *testing.T, status uint16, contentType string, body []byte) FrameData {
 	t.Helper()
-	resp := &httpabi.Response{Status: status, Body: body}
+	var headers []httpabi.Header
 	if contentType != "" {
-		resp.Headers = []httpabi.Header{{Name: "content-type", Value: contentType}}
+		headers = []httpabi.Header{{Name: "content-type", Value: contentType}}
 	}
-	return FrameData{PortID: "response", Bytes: httpabi.EncodeResponse(resp)}
+	return htrFrameHeaders(t, status, headers, body)
+}
+
+// htrFrameHeaders builds an egress frame with an arbitrary header block — the
+// shape a flow that declares its own Content-Length or Vary produces.
+func htrFrameHeaders(t *testing.T, status uint16, headers []httpabi.Header, body []byte) FrameData {
+	t.Helper()
+	return FrameData{PortID: "response", Bytes: httpabi.EncodeResponse(&httpabi.Response{
+		Status:  status,
+		Headers: headers,
+		Body:    body,
+	})}
 }
 
 // runPipe drives htrPipe exactly as ServeHTTP does: one emit per egress
@@ -395,5 +407,111 @@ func TestJSONContentTypeDetection(t *testing.T) {
 	}
 	if declaresJSONBody(nil) {
 		t.Fatal("a response with no content type declares no JSON body")
+	}
+}
+
+// TestJSONWireGuardDropsAFlowDeclaredContentLength drives the guard through a
+// REAL net/http server, because the defect it closes only exists there: the
+// guard can GROW the body (one invalid byte becomes a three-byte U+FFFD), and
+// net/http truncates every write past a Content-Length the response already
+// declared. A flow that computed its length before the rewrite would therefore
+// have its body cut at an arbitrary offset — malformed JSON, possibly with a
+// U+FFFD sliced in half, which is the very invalid UTF-8 the guard exists to
+// prevent. The recorder used by the other tests does not enforce lengths, so
+// this one takes the socket.
+func TestJSONWireGuardDropsAFlowDeclaredContentLength(t *testing.T) {
+	body := []byte("[\"A\xffB\"]") // 8 bytes; 10 after replacement
+	frame := htrFrameHeaders(t, 200, []httpabi.Header{
+		{Name: "content-type", Value: "application/json"},
+		{Name: "content-length", Value: "8"},
+	}, body)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pipe := &htrPipe{w: w, method: r.Method}
+		if _, err := pipe.emit(r.Context(), &InvocationArgs{Frames: []FrameData{frame}}); err != nil {
+			t.Errorf("emit: %v", err)
+			return
+		}
+		pipe.finish()
+		if pipe.err != nil {
+			t.Errorf("pipe error: %v", pipe.err)
+		}
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v (got %q)", err, got)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if len(got) <= len(body) {
+		t.Fatalf("client got %d bytes %q, want the whole %d-byte sanitized body — a stale Content-Length truncated it",
+			len(got), got, len(body)+2)
+	}
+	if !utf8.Valid(got) || !json.Valid(got) {
+		t.Fatalf("client got %q, which is not a JSON text", got)
+	}
+	if cl := resp.Header.Get("Content-Length"); cl == "8" {
+		t.Fatalf("the flow's pre-sanitization Content-Length %q reached the wire", cl)
+	}
+}
+
+// TestRefusalRestoresHeaderValuesTheHostSet covers the case a delete-by-name
+// drop silently broke: a header BOTH an outer middleware and the flow set. The
+// refusal must take back exactly the flow's values.
+func TestRefusalRestoresHeaderValuesTheHostSet(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rec.Header().Add("Vary", "Origin")
+	rec.Header().Set("Access-Control-Allow-Origin", "*")
+
+	pipe := &htrPipe{w: rec, method: http.MethodGet}
+	frame := htrFrameHeaders(t, 200, []httpabi.Header{
+		{Name: "content-type", Value: "application/json"},
+		{Name: "vary", Value: "Accept"},
+		{Name: "etag", Value: `"deadbeef"`},
+	}, nil)
+	if _, err := pipe.emit(t.Context(), &InvocationArgs{Frames: []FrameData{frame}}); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	pipe.finish()
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+	if got := rec.Header().Values("Vary"); len(got) != 1 || got[0] != "Origin" {
+		t.Fatalf("Vary = %v, want [Origin] — the flow's value must go, the middleware's must stay", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("the host's own header was dropped: %q", got)
+	}
+	if got := rec.Header().Get("Etag"); got != "" {
+		t.Fatalf("the flow's ETag survived the refusal: %q", got)
+	}
+}
+
+// TestBodyLessStatusesMayDeclareJSON pins the exemption list to the HTTP spec
+// the guard cites: 205 Reset Content is REQUIRED to have no content (RFC 9110
+// §15.3.6), so refusing one would be the guard inventing a defect.
+func TestBodyLessStatusesMayDeclareJSON(t *testing.T) {
+	for _, status := range []uint16{
+		http.StatusContinue,
+		http.StatusNoContent,
+		http.StatusResetContent,
+		http.StatusNotModified,
+	} {
+		rec := runPipe(t, http.MethodGet, htrFrame(t, status, "application/json", nil))
+		if rec.Code != int(status) {
+			t.Fatalf("status %d answered %d — a body-less status may declare a media type and send nothing", status, rec.Code)
+		}
+		if rec.Body.Len() != 0 {
+			t.Fatalf("status %d sent %d body bytes", status, rec.Body.Len())
+		}
 	}
 }

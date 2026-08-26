@@ -37,14 +37,23 @@ package flowrt
 // THE FIX BELONGS AT BOTH ENDS, AND THIS IS THE HOST END. The generic
 // record→JSON presentation is application logic and is owed by the flow
 // bundle (task modules-public-query-generic-record-json); the host does not
-// grow a record encoder to cover for it. What the host owes — and enforces
-// here, for every mount, not just this one — is that it never writes bytes
-// that contradict the media type in the header block it is about to send:
-// invalid UTF-8 inside a JSON-labelled body is replaced with U+FFFD at the
-// last possible moment, and a JSON-labelled body-bearing response that
-// produces NO bytes is refused with an honest 502 instead of a silent empty
-// 200. Refusing beats lying: an empty 200 is indistinguishable from "this
-// standard has no records", which is a real and different answer.
+// grow a record encoder to cover for it.
+//
+// EXACTLY TWO PROPERTIES ARE ENFORCED HERE, AND WELL-FORMEDNESS IS NOT ONE OF
+// THEM. For every mount, on any response the flow itself labelled JSON, the
+// host guarantees that the body it writes is VALID UTF-8 (each invalid run
+// replaced with U+FFFD at the last possible moment) and that a body-bearing
+// status does not produce ZERO bytes (refused with an honest 502 instead of a
+// silent empty 200 — an empty 200 is indistinguishable from "this standard has
+// no records", which is a real and different answer). It does NOT check that
+// the body PARSES: a wasm encoder that stops halfway through and emits
+// `[{"OBJECT_NAME":` still reaches the client. Nothing here could do better
+// honestly — the body streams frame by frame and the status line is already on
+// the wire by the time a truncation could be detected, so a well-formedness
+// verdict would need the whole body buffered, which is not what a connector
+// does with a stream it does not own. Producing a complete JSON text is the
+// FLOW's contract; not contradicting the label the host stamped on the wire is
+// the HOST's, and that is what this file is.
 //
 // COST AND BLAST RADIUS. The scan runs only on responses the flow itself
 // labelled JSON — the FlatBuffer stream path (application/vnd.sdn.
@@ -174,10 +183,13 @@ func declaresJSONBody(headers []httpabi.Header) bool {
 }
 
 // statusCarriesBody reports whether this status/method pair is REQUIRED to
-// carry a body when it declares a media type. 1xx/204/304 responses and every
-// HEAD answer are body-less by the HTTP spec itself (RFC 9110 §6.4.1,
-// §15.4.5), so an empty body under a JSON content type is correct there and
-// the guard must stay out of the way.
+// carry a body when it declares a media type. 1xx, 204, 205 and 304 responses
+// and every HEAD answer are body-less by the HTTP spec itself (RFC 9110
+// §6.4.1, §15.3.5, §15.3.6, §15.4.5), so an empty body under a JSON content
+// type is correct there and the guard must stay out of the way. 205 belongs on
+// that list for the same reason 204 does — RFC 9110 §15.3.6 requires a Reset
+// Content response to have no content — and refusing one with a 502 would be
+// the guard inventing a defect.
 func statusCarriesBody(status int, method string) bool {
 	if strings.EqualFold(method, http.MethodHead) {
 		return false
@@ -185,7 +197,9 @@ func statusCarriesBody(status int, method string) bool {
 	switch {
 	case status < 200:
 		return false
-	case status == http.StatusNoContent, status == http.StatusNotModified:
+	case status == http.StatusNoContent,
+		status == http.StatusResetContent,
+		status == http.StatusNotModified:
 		return false
 	default:
 		return true
