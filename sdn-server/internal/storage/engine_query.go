@@ -94,6 +94,21 @@ func (s *FlatSQLStore) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxCa
 // The record itself is never rewritten: `_data` and the QuerySandboxedStream
 // path carry the FlatBuffer byte for byte, so a consumer that wants the
 // original bytes of a hostile string still gets them.
+//
+// THE BYTE CAP GOVERNS WHAT THE ENGINE ASSEMBLES, AND SANITIZING NEVER TURNS A
+// WITHIN-CAP ANSWER INTO A FAILURE. Replacement can widen the body — U+FFFD is
+// three bytes, and while a RUN of invalid bytes collapses to one replacement,
+// isolated invalid bytes each cost two extra (measured at 1.81x on a hostile
+// fixture, TestSanitizingNeverTurnsAWithinCapAnswerIntoAFailure) — so re-wearing
+// SandboxCaps.MaxBytes here would hand a PEER the ability to make a query that
+// fits the cap fail outright, on an anonymous public endpoint, by choosing the
+// bytes of a record it publishes. That is a denial the boundary must not
+// create: a caller asking for rows it is entitled to gets them. The volumetric
+// contract still holds, because the engine REJECTS (never truncates) a result
+// over MaxBytes before this function ever sees it, and the widening it applies
+// afterwards is bounded by construction — every invalid byte becomes at most
+// three, so the body is at most 3x the cap and only for input that was already
+// hostile.
 func (s *FlatSQLStore) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (payload []byte, rows, cols int, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -104,25 +119,7 @@ func (s *FlatSQLStore) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCaps
 	if err != nil {
 		return nil, rows, cols, err
 	}
-	payload = validUTF8JSON(payload)
-
-	// THE BYTE CAP IS RE-CHECKED AFTER SANITIZING, because sanitizing can
-	// GROW the body: U+FFFD is three bytes, and while a RUN of invalid bytes
-	// collapses to one replacement, invalid bytes isolated between valid ones
-	// each cost two extra — measured at 1.81x on a hostile fixture
-	// (TestSanitizedJSONStillWearsTheByteCap). The engine REJECTS (never
-	// truncates) a result over MaxBytes, and MaxBytes is the volumetric guard
-	// on an anonymous public endpoint, so the boundary that widens the body
-	// re-wears the cap: same typed rejection the engine would have raised, so
-	// the flow maps it to the same status.
-	if caps.MaxBytes > 0 && uint64(len(payload)) > caps.MaxBytes {
-		return nil, rows, cols, &flatsqlrt.SandboxError{
-			Code: flatsqlrt.SandboxCodeByteCap,
-			Message: fmt.Sprintf("sandbox: %s: result is %d bytes after replacing invalid UTF-8 (cap %d)",
-				flatsqlrt.SandboxCodeByteCap, len(payload), caps.MaxBytes),
-		}
-	}
-	return payload, rows, cols, nil
+	return validUTF8JSON(payload), rows, cols, nil
 }
 
 // validUTF8JSON returns payload unchanged when it is already valid UTF-8 (the
@@ -178,10 +175,19 @@ type QuerySurfaceTable struct {
 //
 //   - COST: the earlier shape ran `SELECT *` AND `SELECT count(*)` against
 //     every one of them, which would make asking WHAT is queryable more
-//     expensive than querying it. Columns are probed ONCE PER SCHEMA (a shadow
-//     table and its view declare the same columns, by construction — the view
-//     is a UNION ALL over the shadows), and a relation is counted only when the
-//     schema has records resident at all.
+//     expensive than querying it. Probing columns ONCE PER SCHEMA was not
+//     enough either: 226 prepared statements over 7-branch UNION ALL views
+//     measured ~76-99 ms per listing while the `SELECT _data ... LIMIT 10` the
+//     listing describes cost 0.4 ms — ~190x, on an UNAUTHENTICATED endpoint
+//     whose every statement holds the single-threaded engine and s.mu, so a
+//     handful of listings per second saturated the box every ingest and every
+//     other read queues behind. Columns are therefore DERIVED from the schema
+//     text the database was created from (engineRelationColumns) — zero
+//     statements, and a shadow table, its view and the base vtab all declare
+//     that same list by construction — and a relation is counted only when the
+//     schema has records resident at all. What the listing costs is now one
+//     count per POPULATED relation, independent of how many standards are
+//     routed.
 //   - SIZE: this is a PUBLIC response body. Listing every schema's shadow
 //     partitions repeats the full column list 8x per standard on host-01 —
 //     ~33,000 column entries, several hundred KB, for partitions that are
@@ -209,9 +215,14 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 	for _, schemaName := range routed {
 		base := engineRoutedSchemas[schemaName].Table
 		quotedBase := quoteEngineRelation(base)
-		cols, err := s.engineDB.Query("SELECT * FROM " + quotedBase + " LIMIT 0")
-		if err != nil {
-			return nil, fmt.Errorf("enumerate columns of %s: %w", base, err)
+		columns, ok := engineRelationColumns(base)
+		if !ok {
+			// A routed standard whose table the engine schema text does not
+			// declare cannot exist (buildEngineRoutedSchemas reads the same
+			// generated catalog the text is emitted from), and if it ever did
+			// the honest answer is to say so rather than to list a standard
+			// with no columns.
+			return nil, fmt.Errorf("engine schema declares no table %q for routed standard %s", base, schemaName)
 		}
 		resident := s.engineResidentCount(schemaName) > 0
 		var placeholders []string
@@ -223,7 +234,7 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 			surface = append(surface, QuerySurfaceTable{
 				Name:               base,
 				Kind:               "table",
-				Columns:            cols.Columns,
+				Columns:            columns,
 				PlaceholderColumns: placeholders,
 				Records:            s.countEngineRelation(quotedBase, resident),
 			})
@@ -232,7 +243,7 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 		surface = append(surface, QuerySurfaceTable{
 			Name:               base,
 			Kind:               "view",
-			Columns:            cols.Columns,
+			Columns:            columns,
 			PlaceholderColumns: placeholders,
 			Records:            s.countEngineRelation(quotedBase, resident),
 		})
@@ -248,7 +259,7 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 				Name:               name,
 				Kind:               "table",
 				Source:             src,
-				Columns:            cols.Columns,
+				Columns:            columns,
 				PlaceholderColumns: placeholders,
 				Records:            s.countEngineRelation(quoteEngineRelation(name), resident),
 			})

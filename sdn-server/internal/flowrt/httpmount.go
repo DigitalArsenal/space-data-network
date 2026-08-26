@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"sort"
@@ -805,10 +806,13 @@ type htrPipe struct {
 	// no body byte has arrived yet. It is written the moment one does, and
 	// refused at finish() if none ever does.
 	headerPending bool
-	// staged names the header fields THIS FLOW added, so a response the host
-	// ends up refusing can drop the flow's fields without touching headers an
-	// outer middleware (CORS, security headers) set on the same writer.
-	staged []string
+	// staged maps each canonical header name THIS FLOW added to the number of
+	// values that name already carried BEFORE the flow ran, so a response the
+	// host ends up refusing can drop the flow's fields without touching the
+	// values an outer middleware (CORS, security headers) set on the same
+	// writer — including for a name they BOTH set (Vary, Cache-Control), where
+	// deleting by name alone silently took the middleware's value with it.
+	staged map[string]int
 	json   jsonWireGuard
 	frames int
 	err    error
@@ -840,15 +844,54 @@ func (p *htrPipe) writeBody(b []byte) {
 	}
 }
 
+// stageHeaders writes the flow's header fields onto the writer, remembering
+// what each name carried beforehand so a refusal can put it back exactly.
+//
+// CONTENT-LENGTH IS THE ONE FIELD THE HOST WILL NOT FORWARD UNDER THE GUARD.
+// The JSON wire guard can REWRITE body bytes (one invalid byte becomes a
+// three-byte U+FFFD), so a length the flow computed before that rewrite is a
+// number the host is about to contradict: net/http truncates every write past
+// a declared Content-Length, which would cut the body at an arbitrary offset —
+// malformed JSON, possibly with a U+FFFD sliced in half, i.e. exactly the
+// invalid UTF-8 the guard exists to prevent. Dropping the field lets Go frame
+// the response it actually sends (chunked, or a length it computes itself).
+// No flow bundle declares one today; the guard's contract is that it holds for
+// every mount, including the one that will.
+func (p *htrPipe) stageHeaders(headers []httpabi.Header) {
+	dst := p.w.Header()
+	for _, h := range headers {
+		if p.json.active && strings.EqualFold(h.Name, "Content-Length") {
+			continue
+		}
+		key := textproto.CanonicalMIMEHeaderKey(h.Name)
+		if p.staged == nil {
+			p.staged = make(map[string]int, len(headers))
+		}
+		if _, seen := p.staged[key]; !seen {
+			p.staged[key] = len(dst.Values(key))
+		}
+		dst.Add(h.Name, h.Value)
+	}
+}
+
 // dropStagedHeaders discards header fields staged for a response that will
 // never be sent, so an error answer written by ServeHTTP does not inherit the
-// flow's Content-Type/ETag.
+// flow's Content-Type/ETag. Each name is TRUNCATED back to the values it
+// carried before the flow ran rather than deleted outright — deleting by name
+// removes an outer middleware's value for that same name too.
 func (p *htrPipe) dropStagedHeaders() {
 	if p.wroteHeader {
 		return
 	}
-	for _, name := range p.staged {
-		p.w.Header().Del(name)
+	dst := p.w.Header()
+	for key, keep := range p.staged {
+		if keep == 0 {
+			dst.Del(key)
+			continue
+		}
+		if values := dst[key]; len(values) > keep {
+			dst[key] = values[:keep]
+		}
 	}
 	p.staged = nil
 	p.headerPending = false
@@ -911,12 +954,9 @@ func (p *htrPipe) emit(_ context.Context, args *InvocationArgs) (*InvocationResu
 		}
 
 		if !p.wroteHeader && !p.headerPending {
-			for _, h := range resp.Headers {
-				p.w.Header().Add(h.Name, h.Value)
-				p.staged = append(p.staged, h.Name)
-			}
 			p.status = int(resp.Status)
 			p.json.active = statusCarriesBody(p.status, p.method) && declaresJSONBody(resp.Headers)
+			p.stageHeaders(resp.Headers)
 			if p.json.active && len(resp.Body) == 0 && len(refBody) == 0 {
 				// Nothing to write yet under a JSON label: stage the header
 				// and decide at finish() whether this becomes a real response

@@ -1048,8 +1048,23 @@ func probeControlDatabase(basePath, dbPath string) engineBootPlan {
 }
 
 // engineViewsCoverSources reports whether the PERSISTED views already union
-// exactly plan.Sources for every standard this store will route. A view that
-// is missing, or that names a partition nobody registered, means rebuild.
+// exactly plan.Sources for every standard this store will route, AND project
+// exactly the columns this binary's schema text declares. A view that is
+// missing, that names a partition nobody registered, or that still projects a
+// previous catalog's column list means rebuild.
+//
+// THE COLUMN CHECK IS WHAT KEEPS THE PUBLIC LISTING HONEST. A unified view
+// enumerates its projection EXPLICITLY (`CREATE VIEW "X" AS SELECT "A", "B",
+// ..., "_data" FROM "X@src" UNION ALL ...`), so it is a persisted copy of the
+// column list — and this rebuild used to be conditional on SOURCE coverage
+// alone. An upgraded binary whose catalog gained or lost a projected field
+// therefore kept serving the OLD view: `SELECT *` on the view answered the
+// previous column list while the shadow vtabs (re-declared from the current
+// text at connect) answered the new one, and PublicQuerySurface derives from
+// the text. Rebuilding on a projection mismatch makes the text the single
+// answer, at the cost of ONE all-or-nothing rebuild on the boot after a
+// catalog change (warm boots with an unchanged catalog still rebuild zero
+// times — TestBootRebuildsUnifiedViewsAtMostOnce).
 func engineViewsCoverSources(plan engineBootPlan, views map[string]string) bool {
 	for schemaName, binding := range engineRoutedSchemas {
 		if plan.Excluded[schemaName] {
@@ -1067,8 +1082,66 @@ func engineViewsCoverSources(plan engineBootPlan, views map[string]string) bool 
 				return false
 			}
 		}
+		columns, ok := engineRelationColumns(binding.Table)
+		if !ok || !engineViewProjectsColumns(text, columns) {
+			return false
+		}
 	}
 	return true
+}
+
+// engineViewProjectsColumns reports whether a persisted unified view's FIRST
+// branch projects exactly `columns`, in order. Only the quoted identifiers are
+// compared, so the check does not depend on how the engine spaces its SQL —
+// and the first branch is enough because CreateUnifiedViews writes the same
+// projection into every branch.
+func engineViewProjectsColumns(text string, columns []string) bool {
+	start := strings.Index(text, "SELECT ")
+	if start < 0 {
+		return false
+	}
+	rest := text[start+len("SELECT "):]
+	end := strings.Index(rest, " FROM ")
+	if end < 0 {
+		return false
+	}
+	projected := quotedSQLIdentifiers(rest[:end])
+	if len(projected) != len(columns) {
+		return false
+	}
+	for i, name := range columns {
+		if projected[i] != name {
+			return false
+		}
+	}
+	return true
+}
+
+// quotedSQLIdentifiers extracts the double-quoted identifiers of a SQL
+// fragment in order, honouring the "" escape.
+func quotedSQLIdentifiers(fragment string) []string {
+	var out []string
+	for i := 0; i < len(fragment); i++ {
+		if fragment[i] != '"' {
+			continue
+		}
+		var name strings.Builder
+		i++
+		for i < len(fragment) {
+			if fragment[i] == '"' {
+				if i+1 < len(fragment) && fragment[i+1] == '"' {
+					name.WriteByte('"')
+					i += 2
+					continue
+				}
+				break
+			}
+			name.WriteByte(fragment[i])
+			i++
+		}
+		out = append(out, name.String())
+	}
+	return out
 }
 
 // resumeOffset decides where the boot replay starts.

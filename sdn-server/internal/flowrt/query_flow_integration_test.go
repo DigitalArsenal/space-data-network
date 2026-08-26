@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -30,18 +31,119 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
+// publicQueryFlowDist resolves the REAL compiled public-query bundle this
+// file's suite mounts.
+//
+// IT MUST RESOLVE FROM A PER-TASK WORKTREE, AND ITS ABSENCE MUST BE A FAILURE.
+// The single relative path this used to try — ../../../../space-data-network-
+// modules — only resolves in the CANONICAL super-repo layout
+// (repos/main-packages/space-data-network/sdn-server/... alongside
+// repos/main-packages/space-data-network-modules). From a private per-task
+// worktree, which is the workspace the own-workspace law requires for
+// concurrent agents AND the workspace the gauntlet measures (`--at
+// sdn=<worktree>`), it resolves to ~/software/worktrees/space-data-network-
+// modules, which does not exist. The suite then t.Skipf'd — so the endpoint
+// tests that prove the host's JSON wire guard closes the reported defect on
+// the ACTUAL mounted bundle never ran in the gate, and a green receipt said
+// nothing about the endpoint. That is the same failure mode as a store-level
+// test passing while the endpoint is broken, moved up one level into the gate.
+//
+// So: every layout is tried (env override, sibling checkout, super-repo
+// layout, and the checkout a linked worktree's gitdir points back at), and a
+// bundle that cannot be found FAILS. A checkout that genuinely has no modules
+// repo can opt out with SDN_SKIP_MISSING_FLOW_BUNDLES=1 — an explicit,
+// greppable declaration rather than a silent skip that looks like a pass.
 func publicQueryFlowDist(t *testing.T) string {
 	t.Helper()
-	root := os.Getenv("SDN_PUBLIC_QUERY_FLOW_DIST")
-	if root == "" {
-		root = filepath.Join("..", "..", "..", "..",
-			"space-data-network-modules", "flows", "public-query", "dist")
+	roots := publicQueryFlowDistRoots()
+	for _, root := range roots {
+		dist := filepath.Join(root, "query")
+		if _, err := os.Stat(filepath.Join(dist, "runtime.wasm")); err == nil {
+			return dist
+		}
 	}
-	dist := filepath.Join(root, "query")
-	if _, err := os.Stat(filepath.Join(dist, "runtime.wasm")); err != nil {
-		t.Skipf("public-query flow bundle not found at %s (set SDN_PUBLIC_QUERY_FLOW_DIST): %v", dist, err)
+	if os.Getenv("SDN_SKIP_MISSING_FLOW_BUNDLES") == "1" {
+		t.Skipf("public-query flow bundle not found and SDN_SKIP_MISSING_FLOW_BUNDLES=1; checked %v", roots)
 	}
-	return dist
+	t.Fatalf("public-query flow bundle not found — this suite is the end-to-end proof of the /api/v1/query wire contract and must not pass by skipping. "+
+		"Build it (space-data-network-modules: npm run build -w flows/public-query), point SDN_PUBLIC_QUERY_FLOW_DIST at <modules>/flows/public-query/dist, "+
+		"or set SDN_SKIP_MISSING_FLOW_BUNDLES=1 to declare this checkout has no modules repo. Checked: %v", roots)
+	return ""
+}
+
+// publicQueryFlowDistRoots lists every place the public-query bundle can live,
+// most specific first.
+func publicQueryFlowDistRoots() []string {
+	var roots []string
+	if env := strings.TrimSpace(os.Getenv("SDN_PUBLIC_QUERY_FLOW_DIST")); env != "" {
+		roots = append(roots, env)
+	}
+	for _, checkout := range modulesCheckoutCandidates() {
+		roots = append(roots, filepath.Join(checkout, "flows", "public-query", "dist"))
+	}
+	return roots
+}
+
+// modulesCheckoutCandidates enumerates plausible space-data-network-modules
+// checkouts: as a sibling of any ancestor of this package (the canonical
+// repos/main-packages layout and the packages/ layout), and the same walk from
+// the checkout a LINKED WORKTREE's gitdir points back at — which is what makes
+// a worktree under ~/software/worktrees find the stack it belongs to.
+func modulesCheckoutCandidates() []string {
+	const modules = "space-data-network-modules"
+	anchors := []string{}
+	if wd, err := os.Getwd(); err == nil {
+		anchors = append(anchors, wd)
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		anchors = append(anchors, filepath.Dir(file))
+	}
+	for _, anchor := range append([]string(nil), anchors...) {
+		if root, ok := checkoutRootFromGitLink(anchor); ok {
+			anchors = append(anchors, root)
+		}
+	}
+
+	seen := map[string]bool{}
+	out := []string{}
+	add := func(path string) {
+		path = filepath.Clean(path)
+		if !seen[path] {
+			seen[path] = true
+			out = append(out, path)
+		}
+	}
+	for _, anchor := range anchors {
+		for dir := filepath.Clean(anchor); ; dir = filepath.Dir(dir) {
+			add(filepath.Join(dir, modules))
+			add(filepath.Join(dir, "repos", "main-packages", modules))
+			add(filepath.Join(dir, "packages", modules))
+			if parent := filepath.Dir(dir); parent == dir {
+				break
+			}
+		}
+	}
+	return out
+}
+
+// checkoutRootFromGitLink follows a linked worktree's `.git` FILE back to the
+// checkout that owns it: `gitdir: <repo>/.git/worktrees/<name>` for a plain
+// clone, `gitdir: <super>/.git/modules/<path>/worktrees/<name>` for a
+// submodule — in both cases everything before "/.git/" is a real checkout on
+// disk, and walking up from there finds the stack the worktree belongs to.
+func checkoutRootFromGitLink(start string) (string, bool) {
+	for dir := filepath.Clean(start); ; dir = filepath.Dir(dir) {
+		if data, err := os.ReadFile(filepath.Join(dir, ".git")); err == nil {
+			link := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(data)), "gitdir:"))
+			if idx := strings.Index(link, string(filepath.Separator)+".git"+string(filepath.Separator)); idx > 0 {
+				return link[:idx], true
+			}
+			return "", false
+		}
+		if parent := filepath.Dir(dir); parent == dir {
+			return "", false
+		}
+	}
 }
 
 func buildQueryTestOMM(t *testing.T, norad uint32, name string, epochUnix int64) []byte {
