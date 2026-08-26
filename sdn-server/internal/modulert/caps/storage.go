@@ -278,7 +278,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		return okCapJSON(true), nil
 
 	case "storage.ingest_with_source":
-		return s.handleIngestWithSource(p, str), nil
+		return logIngestRefusal(s.handleIngestWithSource(p, str)), nil
 
 	// Engine-native ops (loop C.1): results are ALIGNED size-prefixed
 	// FlatBuffer streams delivered as raw binary envelope segments (the
@@ -532,6 +532,31 @@ func capBool(p map[string]interface{}, key string) bool {
 //	  "archive": {"source":"provider","name":"catalog.csv","raw":{"$bin":1}},
 //	  "provenance": {"source":"provider-gp","json":{"$bin":2}}
 //	}
+// logIngestRefusal writes a REFUSED batch down.
+//
+// The guarded-persistence answer travels back INTO the guest, and every node of
+// a linked-direct flow runs inside the guest, so a refusal here used to leave
+// the host with nothing to say beyond "the run landed no batch" (graph:
+// sdn-cellular-ingest-lands-no-batch, where a refusal at exactly this boundary
+// was invisible until the flow runtime started reading node status). The host
+// already computed the reason; not writing it down was the whole defect. This
+// logs the connector's own verdict and nothing about what the records mean.
+func logIngestRefusal(response []byte) []byte {
+	var envelope struct {
+		OK    *bool `json:"ok"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response, &envelope); err != nil {
+		return response
+	}
+	if envelope.OK != nil && !*envelope.OK && envelope.Error.Message != "" {
+		log.Warnf("storage.ingest_with_source refused a batch: %s", envelope.Error.Message)
+	}
+	return response
+}
+
 func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str func(string) string) []byte {
 	if s.bridge == nil || !s.bridge.HasCapability("storage_ingest") {
 		return refuseCapJSON("storage.ingest_with_source",
@@ -661,9 +686,19 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 			return errCapJSON("post-ingest duplicate reconcile failed: " + err.Error())
 		}
 		result["reconciled_duplicates"] = dupResult.Deleted
-		if err := s.store.RefreshSourceBatchSummary(schema, tags.ProviderID, tags.SourceName, tags.BatchID); err != nil {
-			return errCapJSON("refresh source batch summary failed: " + err.Error())
-		}
+	}
+	// THE SUMMARY IS BOOKKEEPING, NOT RECONCILIATION, so it is refreshed for
+	// EVERY mode — including "none".
+	//
+	// It used to be nested inside the reconcile branch above, which meant a lane
+	// that asked the host to touch nothing (the correct mode for a chunked
+	// append: cellular worldwide ingest, one chunk per tick) stored its records
+	// and then reported zero records and zero bytes for that source forever.
+	// `apps list` showed the flow with no source lines while the rows were
+	// sitting in the store — an ingest that worked and looked exactly like one
+	// that never ran (graph: sdn-cellular-ingest-lands-no-batch).
+	if err := s.store.RefreshSourceBatchSummary(schema, tags.ProviderID, tags.SourceName, tags.BatchID); err != nil {
+		return errCapJSON("refresh source batch summary failed: " + err.Error())
 	}
 
 	// Optional raw-payload archive (runner archiveRaw layout:

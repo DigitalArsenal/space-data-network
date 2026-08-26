@@ -3704,6 +3704,26 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 			  AND tags.provider_id = ?
 			  AND tags.source_name = ?
 			  AND tags.batch_id = ?
+			  -- AN EMPTY INDEX IS NOT AN IDENTITY.
+			  --
+			  -- The partition above is the SATELLITE index. A standard that
+			  -- populates none of it — $TBS cell sites, $IRM marks, every
+			  -- non-satellite record type — lands every row in the single
+			  -- partition (-1, '', '', '', -1, '') and ROW_NUMBER() marks all
+			  -- but one of them a duplicate. The duplicates mode is the DEFAULT,
+			  -- so a batch of six distinct cell towers reconciled down to ONE
+			  -- and reported success (graph:
+			  -- sdn-cellular-ingest-lands-no-batch, measured: 6 sites in, 1
+			  -- stored). Records that share an ACTUAL key still collapse; a row
+			  -- with no key at all is no longer anyone's duplicate.
+			  AND (
+			    COALESCE(idx.norad_cat_id, -1) <> -1
+			    OR COALESCE(idx.entity_id, '') <> ''
+			    OR COALESCE(idx.object_type, '') <> ''
+			    OR COALESCE(idx.ops_status_code, '') <> ''
+			    OR COALESCE(idx.epoch_unix, -1) <> -1
+			    OR COALESCE(idx.epoch_day, '') <> ''
+			  )
 		)
 		SELECT COUNT(*)
 		FROM ranked
@@ -3752,6 +3772,26 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 			  AND tags.provider_id = ?
 			  AND tags.source_name = ?
 			  AND tags.batch_id = ?
+			  -- AN EMPTY INDEX IS NOT AN IDENTITY.
+			  --
+			  -- The partition above is the SATELLITE index. A standard that
+			  -- populates none of it — $TBS cell sites, $IRM marks, every
+			  -- non-satellite record type — lands every row in the single
+			  -- partition (-1, '', '', '', -1, '') and ROW_NUMBER() marks all
+			  -- but one of them a duplicate. The duplicates mode is the DEFAULT,
+			  -- so a batch of six distinct cell towers reconciled down to ONE
+			  -- and reported success (graph:
+			  -- sdn-cellular-ingest-lands-no-batch, measured: 6 sites in, 1
+			  -- stored). Records that share an ACTUAL key still collapse; a row
+			  -- with no key at all is no longer anyone's duplicate.
+			  AND (
+			    COALESCE(idx.norad_cat_id, -1) <> -1
+			    OR COALESCE(idx.entity_id, '') <> ''
+			    OR COALESCE(idx.object_type, '') <> ''
+			    OR COALESCE(idx.ops_status_code, '') <> ''
+			    OR COALESCE(idx.epoch_unix, -1) <> -1
+			    OR COALESCE(idx.epoch_day, '') <> ''
+			  )
 		)
 		SELECT cid
 		FROM ranked
