@@ -387,7 +387,26 @@ const MaxDebounceHours = 24.0
 // consecutiveFailures failed attempts: the base window doubled per failure,
 // capped at MaxDebounceHours.
 func EffectiveDebounceHours(consecutiveFailures int) float64 {
-	hours := DefaultDebounceHours
+	return EffectiveDebounceHoursFrom(DefaultDebounceHours, consecutiveFailures)
+}
+
+// EffectiveDebounceHoursFrom is EffectiveDebounceHours from an explicit base
+// window, for a lane the operator has given its own cadence
+// (config.FlowService.RetrievalInterval).
+//
+// The ESCALATION is deliberately identical: a configured base only changes
+// where the backoff starts, never that a refusing publisher is asked less
+// often, and never the MaxDebounceHours ceiling. A non-positive base falls
+// back to DefaultDebounceHours rather than removing the gate — "no window"
+// is not a value this function will produce.
+func EffectiveDebounceHoursFrom(baseHours float64, consecutiveFailures int) float64 {
+	hours := baseHours
+	if hours <= 0 {
+		hours = DefaultDebounceHours
+	}
+	if hours > MaxDebounceHours {
+		return MaxDebounceHours
+	}
 	for i := 0; i < consecutiveFailures && hours < MaxDebounceHours; i++ {
 		hours *= 2
 	}

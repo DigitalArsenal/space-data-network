@@ -593,7 +593,53 @@ type FlowService struct {
 	// Intervals overrides trigger intervals by trigger id (Go duration
 	// strings, e.g. timer-gp: "6h"). Default: the flow.json trigger
 	// defaults.
+	//
+	// An interval declared here is OPERATOR-PINNED: it outranks a schedule
+	// persisted from the dashboard (data/modules/runtime-inputs.json), which
+	// otherwise silently outlives every later edit of this file.
 	Intervals map[string]string `yaml:"intervals,omitempty"`
+
+	// RetrievalInterval overrides the node's retrieval debounce window for
+	// THIS flow service (a Go duration string, e.g. "45s"). Empty (default)
+	// keeps sourcemetrics.DefaultDebounceHours.
+	//
+	// The debounce is host egress policy — the same family as
+	// modules.egress_min_interval — and its 3 h default encodes a promise to
+	// a publisher: do not ask for the same bytes again inside the window. It
+	// keys on the flow's last ATTEMPT, which is exactly right for a lane that
+	// pulls one whole published payload per fire.
+	//
+	// It is exactly WRONG for a PAGED source. A lane that resumes through a
+	// large archive by durable mark fetches a DIFFERENT byte range every fire
+	// (HTTP 206, offset advancing), so it never re-asks for the same bytes;
+	// gating it at 3 h prices one page per three hours. Measured live on
+	// host-02 2026-08-26: a 1,565,271,921 B cell-tower export paged at one
+	// chunk per 3 h needs ~2 years.
+	//
+	// Failure backoff is UNCHANGED in kind: consecutive failures still double
+	// the window from this base and are still capped at
+	// sourcemetrics.MaxDebounceHours, so a lane whose publisher starts
+	// refusing still backs off rather than hammering it.
+	RetrievalInterval string `yaml:"retrieval_interval,omitempty"`
+}
+
+// EffectiveRetrievalInterval parses RetrievalInterval. It returns ok=false
+// when nothing is configured (the caller keeps the node default), and an
+// error when a value is present but unusable — a typo must be visible, never
+// silently read as "no override" and never as "no debounce at all".
+func (f FlowService) EffectiveRetrievalInterval() (time.Duration, bool, error) {
+	raw := strings.TrimSpace(f.RetrievalInterval)
+	if raw == "" {
+		return 0, false, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, false, fmt.Errorf("flows.services[%q].retrieval_interval %q is not a duration: %w", f.Flow, raw, err)
+	}
+	if d <= 0 {
+		return 0, false, fmt.Errorf("flows.services[%q].retrieval_interval %q must be positive", f.Flow, raw)
+	}
+	return d, true, nil
 }
 
 // FlowMount binds one HTTP listener path to one flow module. Route → module

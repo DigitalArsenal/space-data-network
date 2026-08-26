@@ -36,6 +36,13 @@ type serviceTrigger struct {
 	Index      uint32
 	PortID     string
 	IntervalMs int
+
+	// IntervalPinned records that IntervalMs came from the node config file
+	// (flows.services[].intervals), not from the bundle's declared default.
+	// It travels into CronMethodSpec so the plugin manager's scheduler knows
+	// the cadence is operator-declared and must outrank persisted runtime
+	// state.
+	IntervalPinned bool
 }
 
 // ServiceFlow is one timer-served flow bundle registered as an SDN plugin.
@@ -197,6 +204,10 @@ func LoadFlowService(flowRef string, intervals map[string]string, deps FlowMount
 							return nil, fmt.Errorf("flow service %q: invalid interval override for trigger %q: %v", flowRef, trig.TriggerID, derr)
 						}
 						st.IntervalMs = int(d.Milliseconds())
+						// The operator wrote this in the node config file, so
+						// it outranks any schedule persisted from the
+						// dashboard (plugins.CronMethodSpec.IntervalPinned).
+						st.IntervalPinned = true
 					}
 					sf.triggers = append(sf.triggers, st)
 				}
@@ -266,6 +277,7 @@ func (sf *ServiceFlow) CronMethods() []plugins.CronMethodSpec {
 			Method:          trigger.TriggerID,
 			Description:     fmt.Sprintf("Flow timer trigger: %s", trigger.TriggerID),
 			DefaultInterval: interval,
+			IntervalPinned:  trigger.IntervalPinned,
 			Input:           "none",
 			Output:          "json",
 		})
