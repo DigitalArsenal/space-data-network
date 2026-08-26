@@ -130,7 +130,7 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 		if err != nil {
 			return nil, fmt.Errorf("enumerate columns of %s: %w", base, err)
 		}
-		resident := s.engineResident[schemaName] > 0
+		resident := s.engineResidentCount(schemaName) > 0
 
 		if len(srcNames) == 0 {
 			surface = append(surface, QuerySurfaceTable{

@@ -40,11 +40,16 @@ func buildEngineOMM(t *testing.T, norad uint32, name string, epochUnix int64) []
 
 func newEngineRecordsStore(t *testing.T, basePath string) *FlatSQLStore {
 	t.Helper()
+	return newEngineRecordsStoreWithOptions(t, basePath)
+}
+
+func newEngineRecordsStoreWithOptions(t *testing.T, basePath string, opts ...StoreOption) *FlatSQLStore {
+	t.Helper()
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
 		t.Fatalf("NewValidator failed: %v", err)
 	}
-	store, err := NewFlatSQLStore(basePath, validator)
+	store, err := NewFlatSQLStore(basePath, validator, opts...)
 	if err != nil {
 		t.Fatalf("NewFlatSQLStore failed: %v", err)
 	}
@@ -853,8 +858,16 @@ func TestEveryRoutedStandardAnswersEmptyOnAFreshStore(t *testing.T) {
 	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
 	defer store.Close()
 
+	// FLOOR GUARD. This test loops over the store's own routed set, so without
+	// a floor it would pass VACUOUSLY if that set ever collapsed back toward
+	// {OMM, TBS} — proving nothing about the directive it exists to enforce.
+	routed := store.engineRoutedSchemaNames()
+	if len(routed) < 100 {
+		t.Fatalf("only %d routed schemas — this test is meaningless unless the whole catalog is routed", len(routed))
+	}
+
 	caps := flatsqlrt.SandboxCaps{MaxRows: 4, MaxBytes: 1 << 16, Timeout: 30 * time.Second}
-	for _, schemaName := range store.engineRoutedSchemaNames() {
+	for _, schemaName := range routed {
 		binding := engineRoutedSchemas[schemaName]
 		stream, err := store.QuerySandboxedStream(
 			`SELECT _data FROM "`+binding.Table+`" ORDER BY _rowid DESC LIMIT ?`, caps, 1)
