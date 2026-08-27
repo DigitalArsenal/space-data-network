@@ -25,28 +25,14 @@ var (
 // VerifyEPMSignature verifies the embedded EPM signature against the canonical
 // EPM payload. The signature field itself is excluded; the signature timestamp
 // is included so it cannot be altered without invalidating the signature.
+//
+// This is the WIRE verifier: it accepts a signature produced by ANY signing key
+// carried in the record's KEYS vector. Chain verification bound to a card's
+// sign-alias key (§21) must use VerifyEPMSignatureBindingKey instead — there the
+// record's SIGNATURE has to verify against the FIRST signing key, the one the
+// vCard advertises as the sign@ alias.
 func VerifyEPMSignature(epmData []byte) error {
-	if len(epmData) == 0 {
-		return ErrEmptyEPMData
-	}
-	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmData) {
-		return ErrInvalidEPMData
-	}
-
-	epmRecord := EPM.GetSizePrefixedRootAsEPM(epmData, 0)
-	signatureHex := strings.TrimSpace(string(epmRecord.SIGNATURE()))
-	if signatureHex == "" {
-		return ErrMissingEPMSignature
-	}
-	if epmRecord.SIGNATURE_TIMESTAMP() == 0 {
-		return fmt.Errorf("%w: missing signature timestamp", ErrMissingEPMSignature)
-	}
-
-	signature, err := decodeHexString(signatureHex)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidEPMSignature, err)
-	}
-	payload, err := canonicalSigningContentFromEPM(epmRecord)
+	epmRecord, signature, payload, err := verifyEPMSignaturePrep(epmData)
 	if err != nil {
 		return err
 	}
@@ -56,6 +42,64 @@ func VerifyEPMSignature(epmData []byte) error {
 	return ErrInvalidEPMSignature
 }
 
+// VerifyEPMSignatureBindingKey verifies the embedded EPM signature against
+// EXACTLY the card's sign-alias key (§21). signAliasKey is the raw public key
+// bytes carried on the vCard sign@ alias — the base64url literal decoded.
+//
+// The sign alias is emitted from the FIRST signing key's PUBLIC_KEY
+// (appleIdentityEntriesFromEPM, one-row invariant), so binding enforces:
+//  1. the record's first signing key IS signAliasKey (card and record
+//     advertise the same key), and
+//  2. SIGNATURE verifies against that key.
+//
+// A signature produced by any OTHER signing key in the record — even a key that
+// would verify on its own — is rejected. This closes the loophole where a
+// record could carry the legitimate key first and an attacker's signing key
+// second and still pass chain verification.
+func VerifyEPMSignatureBindingKey(epmData []byte, signAliasKey []byte) error {
+	epmRecord, signature, payload, err := verifyEPMSignaturePrep(epmData)
+	if err != nil {
+		return err
+	}
+	if len(signAliasKey) == 0 {
+		return ErrInvalidEPMSignature
+	}
+	if verifyEPMSignatureAgainstSignAlias(epmRecord, payload, signature, signAliasKey) {
+		return nil
+	}
+	return ErrInvalidEPMSignature
+}
+
+// verifyEPMSignaturePrep loads and validates an EPM buffer, returning the parsed
+// record, its decoded SIGNATURE bytes, and the canonical signing payload.
+func verifyEPMSignaturePrep(epmData []byte) (*EPM.EPM, []byte, []byte, error) {
+	if len(epmData) == 0 {
+		return nil, nil, nil, ErrEmptyEPMData
+	}
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmData) {
+		return nil, nil, nil, ErrInvalidEPMData
+	}
+
+	epmRecord := EPM.GetSizePrefixedRootAsEPM(epmData, 0)
+	signatureHex := strings.TrimSpace(string(epmRecord.SIGNATURE()))
+	if signatureHex == "" {
+		return nil, nil, nil, ErrMissingEPMSignature
+	}
+	if epmRecord.SIGNATURE_TIMESTAMP() == 0 {
+		return nil, nil, nil, fmt.Errorf("%w: missing signature timestamp", ErrMissingEPMSignature)
+	}
+
+	signature, err := decodeHexString(signatureHex)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("%w: %v", ErrInvalidEPMSignature, err)
+	}
+	payload, err := canonicalSigningContentFromEPM(epmRecord)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return epmRecord, signature, payload, nil
+}
+
 // verifyEPMSignatureAgainstKeys tries each signing key in the EPM, dispatching on
 // its ALGORITHM (§21: the verifier dispatches on ALGORITHM, never on
 // ADDRESS_TYPE, which is an address-format tag). ed25519 (empty or "ed25519") is
@@ -63,6 +107,9 @@ func VerifyEPMSignature(epmData []byte) error {
 // sha256(payload). Exactly one signing key produced SIGNATURE, so accepting on
 // the first that verifies is correct, and ed25519 is tried first to preserve
 // the 25519 default.
+//
+// Binding to the card's sign-alias key — NOT "any" signing key — is
+// VerifyEPMSignatureBindingKey / verifyEPMSignatureAgainstSignAlias.
 func verifyEPMSignatureAgainstKeys(epmRecord *EPM.EPM, payload, signature []byte) bool {
 	key := new(EPM.CryptoKey)
 	for i := 0; i < epmRecord.KEYSLength(); i++ {
@@ -73,26 +120,56 @@ func verifyEPMSignatureAgainstKeys(epmRecord *EPM.EPM, payload, signature []byte
 		if err != nil {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(string(key.ALGORITHM()))) {
-		case "", "ed25519":
-			if len(pub) == ed25519.PublicKeySize && len(signature) == ed25519.SignatureSize &&
-				ed25519.Verify(ed25519.PublicKey(pub), payload, signature) {
-				return true
-			}
-		case "secp256k1":
-			pk, err := secp256k1.ParsePubKey(pub)
-			if err != nil {
-				continue
-			}
-			sig, err := ecdsa.ParseDERSignature(signature)
-			if err != nil {
-				continue
-			}
-			digest := sha256.Sum256(payload)
-			if sig.Verify(digest[:], pk) {
-				return true
-			}
+		if verifySignatureForKey(pub, string(key.ALGORITHM()), payload, signature) {
+			return true
 		}
+	}
+	return false
+}
+
+// verifyEPMSignatureAgainstSignAlias verifies SIGNATURE against EXACTLY the
+// card's sign-alias key. The record's FIRST signing key is the sign alias
+// (appleIdentityEntriesFromEPM emits the first signing key as the one-row sign@
+// alias); if that key is not signAliasKey, or SIGNATURE does not verify against
+// it, verification fails — no other signing key in the record is ever tried.
+func verifyEPMSignatureAgainstSignAlias(epmRecord *EPM.EPM, payload, signature, signAliasKey []byte) bool {
+	key := new(EPM.CryptoKey)
+	for i := 0; i < epmRecord.KEYSLength(); i++ {
+		if !epmRecord.KEYS(key, i) || key.KEY_TYPE() != EPM.KeyTypeSigning {
+			continue
+		}
+		pub, err := decodeHexString(string(key.PUBLIC_KEY()))
+		if err != nil {
+			return false
+		}
+		if !bytes.Equal(pub, signAliasKey) {
+			return false
+		}
+		return verifySignatureForKey(pub, string(key.ALGORITHM()), payload, signature)
+	}
+	return false
+}
+
+// verifySignatureForKey verifies SIGNATURE against a single public key of the
+// given ALGORITHM (§21: dispatch on ALGORITHM, never on ADDRESS_TYPE). ed25519
+// (empty or "ed25519") is the default fast path; secp256k1 keys verify as
+// ECDSA-DER over sha256(payload).
+func verifySignatureForKey(pub []byte, algorithm string, payload, signature []byte) bool {
+	switch strings.ToLower(strings.TrimSpace(algorithm)) {
+	case "", "ed25519":
+		return len(pub) == ed25519.PublicKeySize && len(signature) == ed25519.SignatureSize &&
+			ed25519.Verify(ed25519.PublicKey(pub), payload, signature)
+	case "secp256k1":
+		pk, err := secp256k1.ParsePubKey(pub)
+		if err != nil {
+			return false
+		}
+		sig, err := ecdsa.ParseDERSignature(signature)
+		if err != nil {
+			return false
+		}
+		digest := sha256.Sum256(payload)
+		return sig.Verify(digest[:], pk)
 	}
 	return false
 }
