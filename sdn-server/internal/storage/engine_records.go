@@ -68,10 +68,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -1142,36 +1144,36 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 	// rows after a restart.
 	aliases := engineSchemaNameAliases(schemaName)
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")
-	args := make([]any, 0, len(aliases)+1)
-	for _, alias := range aliases {
-		args = append(args, alias)
-	}
-	args = append(args, s.engineWindowFor(schemaName))
-	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT stream_path, stream_offset, record_length, source_name FROM (
-			SELECT idx.rowid AS rid,
-			       rr.stream_path AS stream_path,
-			       rr.stream_offset AS stream_offset,
-			       rr.record_length AS record_length,
-			       COALESCE((
-			           SELECT tags.source_name
-			           FROM sdn_record_source_tags tags
-			           WHERE tags.schema_name = idx.schema_name AND tags.cid = idx.cid
-			           ORDER BY tags.created_at DESC
-			           LIMIT 1
-			       ), '') AS source_name
-			FROM sdn_record_index idx
-			JOIN %s rr ON rr.cid = idx.cid
-			WHERE idx.schema_name IN (%s)
-			ORDER BY idx.rowid DESC
-			LIMIT ?
-		) ORDER BY rid ASC
-	`, readSource, placeholders), args...)
+
+	// PAGED BY ROWID, AND THAT IS THE WHOLE FIX.
+	//
+	// This used to be ONE statement: a join over every sdn_record_index row for
+	// the schema, a correlated source-tag lookup per row, an ORDER BY rowid
+	// DESC and a LIMIT of the whole hot window. One statement is one engine
+	// call, and an engine call that outlives the uninterruptible per-call
+	// budget abandons the execution thread and POISONS the instance — the node
+	// then answers nothing until a human intervenes.
+	//
+	// MEASURED on host-02's real store (3,535,562 index rows, 5,697,842
+	// source-tag rows, AOT, 2026-08-27): the single statement for CAT.fbs held
+	// the engine 5m0.001s and poisoned it. The window is now filled newest-first
+	// in pages of engineHotWindowRebuildPage rows, each its own bounded call,
+	// seeking on idx.rowid — so the cost per call is a function of the PAGE, not
+	// of the store.
+	//
+	// Order is preserved exactly: pages descend, and the ingest walks the pages
+	// in reverse and each page in reverse, so records still land oldest-first
+	// and the arena sequence is unchanged.
+	window := s.engineWindowFor(schemaName)
+	pages, pageStats, err := s.readEngineHotWindowPages(schemaName, readSource, aliases, placeholders, window)
 	if err != nil {
 		log.Warnf("FlatSQL engine rebuild: query %s hot window: %v", schemaName, err)
 		return nil
 	}
-	defer rows.Close()
+	if pageStats.slowest*2 > s.engineExecBudget() {
+		log.Warnf("FlatSQL engine rebuild: the slowest %s hot-window page (%d rows) held the engine %s — over half the %s per-call budget. Lower the page size before this store grows again.",
+			schemaName, pageStats.slowestRows, pageStats.slowest.Round(time.Millisecond), s.engineExecBudget())
+	}
 
 	// Cache stream file handles across records: the hot window reads the same
 	// few append-only files millions of times otherwise.
@@ -1183,59 +1185,58 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 	}()
 
 	rebuilt, skipped := 0, 0
-	for rows.Next() {
-		var streamPath, sourceName string
-		var streamOffset, recordLength int64
-		if err := rows.Scan(&streamPath, &streamOffset, &recordLength, &sourceName); err != nil {
-			log.Warnf("FlatSQL engine rebuild: scan hot-window row: %v", err)
-			skipped++
-			continue
-		}
-		data, err := s.readStreamRecordCached(files, streamPath, streamOffset, recordLength)
-		if err != nil {
-			log.Warnf("FlatSQL engine rebuild: read %s@%d: %v", streamPath, streamOffset, err)
-			skipped++
-			continue
-		}
-		// readStreamRecordCached is the RAW reader: unlike
-		// readFlatSQLStreamRecord it does NOT run the field-decryption pass, so
-		// a sealed standard's frame arrives here as an encfield ENVELOPE. That
-		// envelope cannot ingest, and counting it as resident is what made a
-		// restart report rows it did not have.
-		payload, reason, ok := engineIngestablePayload(binding, data)
-		if !ok {
-			log.Warnf("FlatSQL engine rebuild: skip %s record at %s@%d: %s", schemaName, streamPath, streamOffset, reason)
-			skipped++
-			continue
-		}
-		source := strings.TrimSpace(sourceName)
-		if source == "" {
-			source = engineDefaultSource
-		}
-		if err := s.ensureEngineSource(source); err != nil {
-			log.Warnf("FlatSQL engine rebuild: register source %q: %v", source, err)
-			if s.engine.Poisoned() {
-				return fmt.Errorf("FlatSQL engine poisoned registering source %q: %w", source, err)
+	// Oldest first: pages descend by rowid, so walk them backwards and each
+	// page backwards. Same order the single ORDER BY rid ASC statement gave.
+	for p := len(pages) - 1; p >= 0; p-- {
+		page := pages[p]
+		for i := len(page) - 1; i >= 0; i-- {
+			row := page[i]
+			streamPath, sourceName := row.streamPath, row.sourceName
+			streamOffset, recordLength := row.streamOffset, row.recordLength
+			data, err := s.readStreamRecordCached(files, streamPath, streamOffset, recordLength)
+			if err != nil {
+				log.Warnf("FlatSQL engine rebuild: read %s@%d: %v", streamPath, streamOffset, err)
+				skipped++
+				continue
 			}
-			skipped++
-			continue
-		}
-		if _, err := s.engineDB.IngestOneWithSource(payload, source); err != nil {
-			log.Warnf("FlatSQL engine rebuild: ingest record: %v", err)
-			if s.engine.Poisoned() {
-				return fmt.Errorf("FlatSQL engine poisoned during rebuild ingest: %w", err)
+			// readStreamRecordCached is the RAW reader: unlike
+			// readFlatSQLStreamRecord it does NOT run the field-decryption pass, so
+			// a sealed standard's frame arrives here as an encfield ENVELOPE. That
+			// envelope cannot ingest, and counting it as resident is what made a
+			// restart report rows it did not have.
+			payload, reason, ok := engineIngestablePayload(binding, data)
+			if !ok {
+				log.Warnf("FlatSQL engine rebuild: skip %s record at %s@%d: %s", schemaName, streamPath, streamOffset, reason)
+				skipped++
+				continue
 			}
-			skipped++
-			continue
+			source := strings.TrimSpace(sourceName)
+			if source == "" {
+				source = engineDefaultSource
+			}
+			if err := s.ensureEngineSource(source); err != nil {
+				log.Warnf("FlatSQL engine rebuild: register source %q: %v", source, err)
+				if s.engine.Poisoned() {
+					return fmt.Errorf("FlatSQL engine poisoned registering source %q: %w", source, err)
+				}
+				skipped++
+				continue
+			}
+			if _, err := s.engineDB.IngestOneWithSource(payload, source); err != nil {
+				log.Warnf("FlatSQL engine rebuild: ingest record: %v", err)
+				if s.engine.Poisoned() {
+					return fmt.Errorf("FlatSQL engine poisoned during rebuild ingest: %w", err)
+				}
+				skipped++
+				continue
+			}
+			rebuilt++
 		}
-		rebuilt++
-	}
-	if err := rows.Err(); err != nil {
-		log.Warnf("FlatSQL engine rebuild: iterate hot window: %v", err)
 	}
 	s.engineResidentSet(schemaName, int64(rebuilt))
 	if rebuilt > 0 || skipped > 0 {
-		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped, window %d)", rebuilt, schemaName, skipped, s.engineWindowFor(schemaName))
+		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped, window %d, %d page(s), slowest page %s)",
+			rebuilt, schemaName, skipped, window, pageStats.pages, pageStats.slowest.Round(time.Millisecond))
 	}
 	return nil
 }
@@ -1362,4 +1363,167 @@ func (s *FlatSQLStore) EngineRecordCount(schemaName string) (int64, error) {
 		return 0, fmt.Errorf("unexpected engine count cell type %T", res.Rows[0][0])
 	}
 	return count, nil
+}
+
+// engineHotWindowRebuildPage bounds ONE hot-window rebuild statement in rows.
+//
+// It is deliberately small. The per-call budget is five minutes and the
+// measured single-statement cost on host-02's real store was over it, so the
+// page has to leave room for a store several times larger before any one call
+// gets close again. 2,000 rows against a 3.5M-row index is three orders of
+// magnitude of headroom, and the extra statements are free: the engine lock is
+// held for the same total time either way (measured at 0% of a 30-minute
+// production window).
+//
+// A var, not a const, so a test can shrink it and prove the paged read
+// reproduces the single-statement result exactly.
+var engineHotWindowRebuildPage = 2000
+
+// engineHotWindowRow is one row of the paged hot-window read.
+type engineHotWindowRow struct {
+	rid          int64
+	streamPath   string
+	streamOffset int64
+	recordLength int64
+	sourceName   string
+}
+
+// engineHotWindowPageStats reports what the paging cost, so a box that is
+// approaching the budget says so in its log instead of dying quietly.
+type engineHotWindowPageStats struct {
+	pages       int
+	slowest     time.Duration
+	slowestRows int
+}
+
+// readEngineHotWindowPages fills a schema's hot window newest-first, in bounded
+// pages, seeking on sdn_record_index.rowid.
+//
+// The returned pages are ordered newest page first, and each page's rows
+// descend by rowid — the caller reverses both to ingest oldest-first.
+//
+// Strings are interned across pages on purpose: a 400,000-row $OMM window
+// repeats the same handful of stream paths and source names, and interning
+// turns tens of megabytes of duplicate strings into pointers.
+func (s *FlatSQLStore) readEngineHotWindowPages(schemaName, readSource string, aliases []string, placeholders string, window int) ([][]engineHotWindowRow, engineHotWindowPageStats, error) {
+	stats := engineHotWindowPageStats{}
+	if window <= 0 {
+		return nil, stats, nil
+	}
+	// THE PLAN IS THE FIX, and the engine's own EXPLAIN is what named it.
+	//
+	// This read used to resolve each record's source with a CORRELATED
+	// LIMIT-1 subquery:
+	//
+	//	COALESCE((SELECT tags.source_name FROM sdn_record_source_tags tags
+	//	          WHERE tags.schema_name = idx.schema_name AND tags.cid = idx.cid
+	//	          ORDER BY tags.created_at DESC LIMIT 1), '')
+	//
+	// The ORDER BY makes SQLite prefer the index that satisfies it —
+	// idx_sdn_record_source_tags_recent (schema_name, created_at DESC, cid) —
+	// which probes on schema_name ALONE and then walks that schema's tag rows
+	// looking for the cid. Per record. Measured on host-02's real store
+	// (159,835 CAT rows, 5,697,842 tag rows, AOT, 256 MiB page cache): 5m0s and
+	// a poisoned engine, with the working set fully cached (22,423 host reads).
+	// It was never I/O — with SQLite's default ~2 MB cache the same statement
+	// also read 64 GB back through the host shim, so it was BOTH, and fixing
+	// only the cache fixed nothing.
+	//
+	// A LEFT JOIN has no ORDER BY to satisfy, so the planner takes the
+	// two-column equality index instead:
+	//
+	//	SEARCH tags USING INDEX idx_sdn_record_source_tags_unique (schema_name=? AND cid=?)
+	//
+	// Rows arrive oldest-tag-first per record and the newest wins in Go, which
+	// is exactly what LIMIT 1 over `created_at DESC` meant.
+	query := fmt.Sprintf(`
+		SELECT page.rid, page.stream_path, page.stream_offset, page.record_length,
+		       COALESCE(tags.source_name, '') AS source_name
+		FROM (
+			SELECT idx.rowid AS rid,
+			       idx.cid AS cid,
+			       idx.schema_name AS schema_name,
+			       rr.stream_path AS stream_path,
+			       rr.stream_offset AS stream_offset,
+			       rr.record_length AS record_length
+			FROM sdn_record_index idx
+			JOIN %s rr ON rr.cid = idx.cid
+			WHERE idx.schema_name IN (%s) AND idx.rowid < ?
+			ORDER BY idx.rowid DESC
+			LIMIT ?
+		) page
+		LEFT JOIN sdn_record_source_tags tags
+		  ON tags.schema_name = page.schema_name AND tags.cid = page.cid
+		ORDER BY page.rid DESC, tags.created_at ASC
+	`, readSource, placeholders)
+
+	intern := map[string]string{}
+	keep := func(v string) string {
+		if got, ok := intern[v]; ok {
+			return got
+		}
+		intern[v] = v
+		return v
+	}
+
+	var pages [][]engineHotWindowRow
+	cursor := int64(math.MaxInt64)
+	remaining := window
+	for remaining > 0 {
+		limit := engineHotWindowRebuildPage
+		if limit > remaining {
+			limit = remaining
+		}
+		args := make([]any, 0, len(aliases)+2)
+		for _, alias := range aliases {
+			args = append(args, alias)
+		}
+		args = append(args, cursor, limit)
+
+		started := time.Now()
+		rows, err := s.db.Query(query, args...)
+		if err != nil {
+			return nil, stats, err
+		}
+		// The LEFT JOIN yields ONE ROW PER SOURCE TAG, so a record with two
+		// tags arrives twice, oldest first. Collapsing on rid with last-wins
+		// reproduces the LIMIT-1-over-created_at-DESC answer exactly.
+		page := make([]engineHotWindowRow, 0, limit)
+		for rows.Next() {
+			var row engineHotWindowRow
+			var streamPath, sourceName string
+			if err := rows.Scan(&row.rid, &streamPath, &row.streamOffset, &row.recordLength, &sourceName); err != nil {
+				rows.Close()
+				return nil, stats, err
+			}
+			row.streamPath = keep(streamPath)
+			row.sourceName = keep(sourceName)
+			if n := len(page); n > 0 && page[n-1].rid == row.rid {
+				page[n-1] = row
+				continue
+			}
+			page = append(page, row)
+		}
+		iterErr := rows.Err()
+		rows.Close()
+		held := time.Since(started)
+		if held > stats.slowest {
+			stats.slowest, stats.slowestRows = held, len(page)
+		}
+		if iterErr != nil {
+			return nil, stats, iterErr
+		}
+		if len(page) == 0 {
+			break
+		}
+		stats.pages++
+		pages = append(pages, page)
+		cursor = page[len(page)-1].rid
+		remaining -= len(page)
+		if len(page) < limit {
+			// Short page: the index is exhausted for this schema.
+			break
+		}
+	}
+	return pages, stats, nil
 }
