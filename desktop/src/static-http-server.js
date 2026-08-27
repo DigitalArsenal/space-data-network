@@ -1107,6 +1107,34 @@ function bytesToHex (bytes) {
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
+// §21 (owner ruling 2026-08-19): the sign/encrypt EMAIL aliases carry
+// b64url(literal public key bytes) at the sign./encrypt. domains — base64url
+// without padding (RFC 4648 §5), matching the sdn-js and Go mirrors. A public
+// key that does not decode as strict hex yields NO alias, so the caller skips
+// the row rather than emitting a garbage local part.
+function hexKeyToB64UrlAlias (hexKey) {
+  const trimmed = String(hexKey || '').trim()
+  if (!trimmed || !/^[0-9a-fA-F]+$/.test(trimmed) || trimmed.length % 2 !== 0) return ''
+  const raw = Buffer.from(trimmed, 'hex')
+  if (!raw.length) return ''
+  return bytesToB64Url(raw)
+}
+
+function bytesToB64Url (bytes) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i]
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0
+    out += chars[b0 >> 2]
+    out += chars[((b0 & 0x03) << 4) | (b1 >> 4)]
+    if (i + 1 < bytes.length) out += chars[((b1 & 0x0f) << 2) | (b2 >> 6)]
+    if (i + 2 < bytes.length) out += chars[b2 & 0x3f]
+  }
+  return out
+}
+
 function uint32BE (value) {
   const buffer = Buffer.alloc(4)
   buffer.writeUInt32BE(value >>> 0, 0)
@@ -1320,8 +1348,11 @@ function escapeVCardValue (value) {
 }
 
 const IDENTITY_ALIAS_DOMAINS = {
-  signing: 'signing.spacedatanetwork.org',
-  encryption: 'encryption.spacedatanetwork.org',
+  // §21 (owner ruling 2026-08-19): the sign/encrypt aliases carry
+  // b64url(literal public key bytes) at the sign./encrypt. domains. The
+  // legacy signing./encryption. domains and the xpub alias are RETIRED.
+  sign: 'sign.spacedatanetwork.org',
+  encrypt: 'encrypt.spacedatanetwork.org',
   bitcoin: 'bitcoin.spacedatanetwork.org',
   ethereum: 'ethereum.spacedatanetwork.org',
   solana: 'solana.spacedatanetwork.org'
@@ -1371,7 +1402,9 @@ function identityRecordToVCard (record) {
   addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', record.kind === 'node-self' ? 'node' : 'user')
   addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId)
   addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid)
-  addVCardLine(lines, 'X-SDN-XPUB', readEpmXpub(epm))
+  // §21: the xpub alias is RETIRED — the xpub and derivation paths are
+  // private; the sign/encrypt literal-key aliases below ARE the published
+  // verification material.
   const publicKeyEmail = publicKeyEmailAddress(publicKey)
   addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmail)
   addVCardIdentityEmailLines(lines, epm, signingPublicKey, encryptionPublicKey)
@@ -1427,8 +1460,11 @@ function addVCardIdentityEmailLines (lines, epm, signingPublicKey, encryptionPub
     lines.push(line)
   }
 
-  addAlias('signing', signingPublicKey)
-  addAlias('encryption', encryptionPublicKey)
+  // §21: the sign/encrypt aliases are b64url(literal key bytes) at the
+  // sign./encrypt. domains — never the raw hex and never the xpub. A key
+  // that does not decode to strict hex emits no alias row.
+  addAlias('sign', hexKeyToB64UrlAlias(signingPublicKey))
+  addAlias('encrypt', hexKeyToB64UrlAlias(encryptionPublicKey))
   addAlias('bitcoin', readEpmString(epm, ['bitcoin_address', 'bitcoinAddress']) || findChainAddress(epm, 'bitcoin'))
   addAlias('ethereum', readEpmString(epm, ['ethereum_address', 'ethereumAddress']) || findChainAddress(epm, 'ethereum'))
   addAlias('solana', readEpmString(epm, ['solana_address', 'solanaAddress']) || findChainAddress(epm, 'solana'))
