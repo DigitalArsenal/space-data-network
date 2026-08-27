@@ -928,8 +928,19 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 	// for the dominant single-source case; near-ingest-order across
 	// concurrently written sources). Tombstoned rows are already skipped by
 	// the vtab scan.
-	res, err := s.engineDB.Query(
-		`SELECT _source, _rowid FROM "`+binding.Table+`" ORDER BY _rowid ASC LIMIT ?1`, overflow)
+	// PER SOURCE, NOT OVER THE UNION. The unified view is a UNION ALL across
+	// every registered partition, so `ORDER BY _rowid ASC LIMIT 64` over it
+	// makes SQLite materialize and SORT the WHOLE relation to find 64 rows.
+	// Measured on host-01: 1,306 calls in one hour holding s.mu for 572.9 s
+	// total — and s.mu is write-preferring, so all 572.9 s came straight out
+	// of concurrent readers (sdn-flatsql-store-lock-starves-readers: /tiles/meta,
+	// ONE query on an EMPTY relation, median 1.2 s and max 90 s).
+	//
+	// Each partition is already in `_rowid` order, so asking each one for its
+	// oldest `overflow` rows and merging the (small) candidate lists in Go
+	// costs O(sources x overflow) instead of O(relation log relation). For the
+	// dominant single-source case it is one bounded query on one partition.
+	candidates, err := s.oldestEngineRowsPerSource(binding.Table, overflow)
 	if err != nil {
 		log.Warnf("FlatSQL engine: hot-window eviction scan (%s): %v", schemaName, err)
 		if s.engine.Poisoned() {
@@ -939,18 +950,8 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 	}
 
 	evicted := int64(0)
-	for _, row := range res.Rows {
-		if len(row) != 2 {
-			continue
-		}
-		source, ok := row[0].(string)
-		if !ok || source == "" {
-			continue
-		}
-		seq, ok := row[1].(int64)
-		if !ok {
-			continue
-		}
+	for _, cand := range candidates {
+		source, seq := cand.source, cand.rowid
 		// source carries the FULL shadow-table name ("OMM@catalogfixture-gp",
 		// "TBS@cell-tower-bulk") as
 		// reported by the unified view — exactly the name MarkDeleted keys
@@ -1526,4 +1527,91 @@ func (s *FlatSQLStore) readEngineHotWindowPages(schemaName, readSource string, a
 		}
 	}
 	return pages, stats, nil
+}
+
+// engineEvictionCandidate is one row the hot window may tombstone: the FULL
+// shadow-table name MarkDeleted keys on, and that partition's ingest sequence.
+type engineEvictionCandidate struct {
+	source string
+	rowid  int64
+}
+
+// oldestEngineRowsPerSource returns the `limit` oldest live rows of a routed
+// standard, merged across its registered partitions.
+//
+// It asks each PARTITION for its own oldest rows rather than asking the unified
+// view for the relation's oldest rows, because the second question forces a
+// sort of the whole UNION ALL. Each partition scans in `_rowid` order, so its
+// own query is bounded by `limit`; merging k bounded, already-ordered lists is
+// then a k-way selection over at most k*limit rows in Go, with no engine work
+// at all.
+func (s *FlatSQLStore) oldestEngineRowsPerSource(table string, limit int64) ([]engineEvictionCandidate, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	sources := make([]string, 0, len(s.engineSources))
+	for source := range s.engineSources {
+		sources = append(sources, source)
+	}
+	sort.Strings(sources)
+	if len(sources) == 0 {
+		return nil, nil
+	}
+
+	// ONE CALL, WITH EVERY BRANCH BOUNDED — and the middle version of this
+	// taught me why both halves matter.
+	//
+	// Asking the unified UNION ALL view for `ORDER BY _rowid ASC LIMIT n`
+	// makes SQLite sort the WHOLE relation to find n rows: 1,306 calls holding
+	// s.mu for 572.9 s in one hour on host-01. Fixing that by asking each
+	// partition separately removed the sort but paid ONE ENGINE ROUND TRIP PER
+	// SOURCE, and that is worse whenever the relation is small and the sources
+	// are many — measured, on TestWarmBootTimingOnALargeStore: 3 failures in 15
+	// runs at a repeatable ~125 ms of added warm hydration, against 15/15 clean
+	// on main. A "cheaper" query that costs nine round trips is not cheaper.
+	//
+	// So: still no full-relation sort (each branch carries its own ORDER BY and
+	// LIMIT, so each is bounded by `limit`), and still a single engine call
+	// (the branches are UNION ALLed in one statement). The outer sort sees at
+	// most len(sources)*limit rows.
+	var b strings.Builder
+	b.WriteString("SELECT src, rid FROM (")
+	for i, source := range sources {
+		if i > 0 {
+			b.WriteString(" UNION ALL ")
+		}
+		partition := table + "@" + source
+		b.WriteString("SELECT * FROM (SELECT ")
+		b.WriteString(quoteEngineSQLString(partition))
+		b.WriteString(" AS src, _rowid AS rid FROM ")
+		b.WriteString(quoteEngineRelation(partition))
+		b.WriteString(" ORDER BY rid ASC LIMIT ?1)")
+	}
+	b.WriteString(") ORDER BY rid ASC LIMIT ?1")
+
+	res, err := s.engineDB.Query(b.String(), limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]engineEvictionCandidate, 0, limit)
+	for _, row := range res.Rows {
+		if len(row) != 2 {
+			continue
+		}
+		source, ok := row[0].(string)
+		if !ok || source == "" {
+			continue
+		}
+		seq, ok := row[1].(int64)
+		if !ok {
+			continue
+		}
+		out = append(out, engineEvictionCandidate{source: source, rowid: seq})
+	}
+	return out, nil
+}
+
+// quoteEngineSQLString renders a SQL string literal (single quotes doubled).
+func quoteEngineSQLString(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
