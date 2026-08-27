@@ -24,6 +24,8 @@ package storage
 // counts and the time it took.
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -39,7 +41,12 @@ const schemaNameCanonicalizationLedgerKey = "storage.schema_name_canonicalizatio
 // schemaNameCanonicalizationBatch bounds one UPDATE. A production ingest box
 // carries hundreds of thousands of rows under the wrong spelling and every
 // updated row also moves in the primary key's b-tree.
-const schemaNameCanonicalizationBatch = 50000
+const schemaNameCanonicalizationBatch = 20000
+
+// schemaNameCanonicalizationBatchBudget mirrors the source-tag migration's:
+// the engine kills any single call at five minutes and poisons itself, so a
+// batch that gets anywhere near that must say so while the store still works.
+const schemaNameCanonicalizationBatchBudget = 60 * time.Second
 
 // canonicalizeStoredSchemaNames rewrites non-canonical schema_name values in
 // the record index, the source-tag rows and the source summary.
@@ -81,28 +88,46 @@ func (s *FlatSQLStore) canonicalizeStoredSchemaNames() error {
 	return nil
 }
 
+// distinctStoredSchemaNames walks the DISTINCT schema names by SEEKING past
+// each one, not by scanning. `SELECT DISTINCT schema_name` over a multi-million
+// row table is one unbounded engine call, and one unbounded engine call is how
+// this work poisoned an engine in rehearsal; schema_name leads
+// sdn_record_index's primary key, so each step here is one index descent and
+// there are as many steps as there are standards in the store.
 func (s *FlatSQLStore) distinctStoredSchemaNames() ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT schema_name FROM sdn_record_index`)
-	if err != nil {
-		return nil, fmt.Errorf("list stored schema names: %w", err)
-	}
-	defer rows.Close()
 	var names []string
-	for rows.Next() {
+	cursor := ""
+	for i := 0; i < schemaNameScanLimit; i++ {
 		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
+		err := s.db.QueryRow(`
+			SELECT schema_name FROM sdn_record_index
+			WHERE schema_name > ?
+			ORDER BY schema_name
+			LIMIT 1
+		`, cursor).Scan(&name)
+		if errors.Is(err, sql.ErrNoRows) {
+			return names, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list stored schema names: %w", err)
 		}
 		names = append(names, name)
+		cursor = name
 	}
-	return names, rows.Err()
+	return nil, fmt.Errorf("list stored schema names: seek did not terminate after %d names", schemaNameScanLimit)
 }
+
+// schemaNameScanLimit bounds the seek above. The SDS catalog is a couple of
+// hundred standards and each can appear under at most a canonical and a bare
+// spelling, so anything past this is a loop, not a catalog.
+const schemaNameScanLimit = 4096
 
 // canonicalizeOneSchemaName moves every row filed under legacy to canonical
 // and reports how many record-index rows moved.
 func (s *FlatSQLStore) canonicalizeOneSchemaName(legacy, canonical string) (int64, error) {
 	var moved int64
 	for {
+		batchStarted := time.Now()
 		// MERGE, NOT COLLIDE. The same CID can already be present under the
 		// canonical name (a record re-ingested after the write path was
 		// fixed); the canonical row wins and the legacy one is dropped.
@@ -136,18 +161,36 @@ func (s *FlatSQLStore) canonicalizeOneSchemaName(legacy, canonical string) (int6
 		if removed == 0 {
 			break
 		}
+		if elapsed := time.Since(batchStarted); elapsed > schemaNameCanonicalizationBatchBudget {
+			log.Warnf("Schema-name canonicalization: a %d-row batch took %s, which is within reach of the engine's 5m per-call limit",
+				schemaNameCanonicalizationBatch, elapsed.Round(time.Millisecond))
+		}
 	}
 
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
-		INSERT OR IGNORE INTO `+sourceTagRowsTable+` (schema_name, cid, provenance_id, created_at)
-		SELECT ?, cid, provenance_id, created_at FROM `+sourceTagRowsTable+` WHERE schema_name = ?
-	`), canonical, legacy); err != nil {
-		return moved, fmt.Errorf("canonicalize source tag rows %q: %w", legacy, err)
-	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
-		DELETE FROM `+sourceTagRowsTable+` WHERE schema_name = ?
-	`), legacy); err != nil {
-		return moved, fmt.Errorf("retire legacy source tag rows %q: %w", legacy, err)
+	// Bounded, for the same reason the record-index loop above is.
+	for {
+		if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
+			INSERT OR IGNORE INTO `+sourceTagRowsTable+` (schema_name, cid, provenance_id, created_at)
+			SELECT ?, cid, provenance_id, created_at
+			FROM (
+				SELECT cid, provenance_id, created_at FROM `+sourceTagRowsTable+`
+				WHERE schema_name = ? ORDER BY cid LIMIT ?
+			)
+		`), canonical, legacy, schemaNameCanonicalizationBatch); err != nil {
+			return moved, fmt.Errorf("canonicalize source tag rows %q: %w", legacy, err)
+		}
+		deleted, err := s.db.Exec(flatsqldrv.WithoutJournal(`
+			DELETE FROM `+sourceTagRowsTable+`
+			WHERE schema_name = ?
+			  AND cid IN (SELECT cid FROM `+sourceTagRowsTable+` WHERE schema_name = ? ORDER BY cid LIMIT ?)
+		`), legacy, legacy, schemaNameCanonicalizationBatch)
+		if err != nil {
+			return moved, fmt.Errorf("retire legacy source tag rows %q: %w", legacy, err)
+		}
+		removed, _ := deleted.RowsAffected()
+		if removed == 0 {
+			break
+		}
 	}
 
 	summaryExists, err := s.tableExists("sdn_record_source_summary")

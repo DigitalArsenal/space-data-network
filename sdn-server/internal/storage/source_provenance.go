@@ -61,6 +61,10 @@ const (
 	// one transaction would hold the engine for the whole copy and need a
 	// rollback journal the size of the table.
 	sourceTagMigrationBatch = 20000
+	// sourceTagMigrationBatchBudget is the per-batch wall clock past which the
+	// migration says it is approaching the engine's uninterruptible 5-minute
+	// per-call limit. Crossing it is not fatal; being SILENT about it was.
+	sourceTagMigrationBatchBudget = 60 * time.Second
 )
 
 // provenanceCache memoizes the tuple -> id lookup for the life of a store.
@@ -479,35 +483,65 @@ func (s *FlatSQLStore) migrateSourceTagsToProvenance() error {
 		return nil
 	}
 
-	var total int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM ` + sourceTagsViewName).Scan(&total); err != nil {
-		return fmt.Errorf("count legacy source tags: %w", err)
-	}
-	log.Infof("Source-tag provenance migration: interning %d legacy row(s) — the seven provenance strings move to a dictionary and the per-record row becomes (schema, cid, provenance id)", total)
+	// NO UNBOUNDED STATEMENT RUNS HERE, and the rehearsal is why. The engine
+	// gives ONE call five minutes on an uninterruptible dedicated thread and
+	// POISONS itself past that — a poisoned engine is a node that answers
+	// nothing until a human intervenes, on a fleet that installs the newest
+	// signed sequence by itself. So there is no COUNT(*) for a progress line,
+	// no DISTINCT over the whole table, and no unbounded INSERT ... SELECT:
+	// every statement below carries a LIMIT, and every batch is timed so a box
+	// that is slower than the rehearsal says so in its log instead of dying.
+	log.Infof("Source-tag provenance migration: interning the legacy source-tag table — the seven provenance strings move to a dictionary and the per-record row becomes (schema, cid, provenance id)")
+	started := time.Now()
 
-	// The dictionary first: one pass over the DISTINCT tuples, which is a
-	// handful of rows even on a box with millions of records.
-	if _, err := s.db.Exec(`
-		INSERT OR IGNORE INTO ` + sourceProvenanceTable + ` (
-			provider_id, source_name, source_url, batch_id,
-			content_key_id, producer_peer_id, producer_public_key
-		)
-		SELECT DISTINCT provider_id, source_name, COALESCE(source_url, ''), batch_id,
-		       content_key_id, producer_peer_id, producer_public_key
-		FROM ` + sourceTagsViewName + `
-	`); err != nil {
-		return fmt.Errorf("intern legacy source provenance: %w", err)
-	}
-
-	// Then the rows, in bounded batches keyed by (schema_name, cid) so a
-	// resumed run makes forward progress.
 	var copied int64
+	var batches int
 	lastSchema, lastCID := "", ""
 	for {
+		batchStarted := time.Now()
+
+		// The dictionary is seeded from THIS BATCH's rows only, so the seed is
+		// bounded by the same LIMIT the copy is.
+		if _, err := s.db.Exec(`
+			INSERT INTO `+sourceProvenanceTable+` (
+				provider_id, source_name, source_url, batch_id,
+				content_key_id, producer_peer_id, producer_public_key
+			)
+			SELECT DISTINCT t.provider_id, t.source_name, COALESCE(t.source_url, ''), t.batch_id,
+			       t.content_key_id, t.producer_peer_id, t.producer_public_key
+			FROM (
+				SELECT provider_id, source_name, source_url, batch_id,
+				       content_key_id, producer_peer_id, producer_public_key
+				FROM `+sourceTagsViewName+`
+				WHERE schema_name > ? OR (schema_name = ? AND cid > ?)
+				ORDER BY schema_name, cid
+				LIMIT ?
+			) t
+			WHERE NOT EXISTS (
+				SELECT 1 FROM `+sourceProvenanceTable+` p
+				WHERE p.provider_id = t.provider_id
+				  AND p.source_name = t.source_name
+				  AND p.source_url = COALESCE(t.source_url, '')
+				  AND p.batch_id = t.batch_id
+				  AND p.content_key_id = t.content_key_id
+				  AND p.producer_peer_id = t.producer_peer_id
+				  AND p.producer_public_key = t.producer_public_key
+			)
+		`, lastSchema, lastSchema, lastCID, sourceTagMigrationBatch); err != nil {
+			return fmt.Errorf("intern legacy source provenance: %w", err)
+		}
+
 		result, err := s.db.Exec(`
-			INSERT OR IGNORE INTO `+sourceTagRowsTable+` (schema_name, cid, provenance_id, created_at)
+			INSERT INTO `+sourceTagRowsTable+` (schema_name, cid, provenance_id, created_at)
 			SELECT t.schema_name, t.cid, p.id, COALESCE(t.created_at, 0)
-			FROM `+sourceTagsViewName+` t
+			FROM (
+				SELECT schema_name, cid, provider_id, source_name, source_url, batch_id,
+				       content_key_id, producer_peer_id, producer_public_key, created_at
+				FROM `+sourceTagsViewName+`
+				WHERE schema_name > ? OR (schema_name = ? AND cid > ?)
+				ORDER BY schema_name, cid
+				LIMIT ?
+			) t
 			JOIN `+sourceProvenanceTable+` p
 			  ON p.provider_id = t.provider_id
 			 AND p.source_name = t.source_name
@@ -516,23 +550,29 @@ func (s *FlatSQLStore) migrateSourceTagsToProvenance() error {
 			 AND p.content_key_id = t.content_key_id
 			 AND p.producer_peer_id = t.producer_peer_id
 			 AND p.producer_public_key = t.producer_public_key
-			WHERE t.schema_name > ? OR (t.schema_name = ? AND t.cid > ?)
-			ORDER BY t.schema_name, t.cid
-			LIMIT ?
+			WHERE NOT EXISTS (
+				SELECT 1 FROM `+sourceTagRowsTable+` r
+				WHERE r.schema_name = t.schema_name AND r.cid = t.cid AND r.provenance_id = p.id
+			)
 		`, lastSchema, lastSchema, lastCID, sourceTagMigrationBatch)
 		if err != nil {
 			return fmt.Errorf("copy legacy source tags: %w", err)
 		}
 		affected, _ := result.RowsAffected()
+		copied += affected
+		batches++
 
+		// Advance the cursor to the LAST row this batch covered. Bounded by
+		// the same LIMIT, so it is an index walk of one batch, not a scan.
 		var nextSchema, nextCID string
 		err = s.db.QueryRow(`
-			SELECT schema_name, cid FROM `+sourceTagsViewName+`
-			WHERE schema_name > ? OR (schema_name = ? AND cid > ?)
-			ORDER BY schema_name, cid
-			LIMIT 1 OFFSET ?
-		`, lastSchema, lastSchema, lastCID, sourceTagMigrationBatch-1).Scan(&nextSchema, &nextCID)
-		copied += affected
+			SELECT schema_name, cid FROM (
+				SELECT schema_name, cid FROM `+sourceTagsViewName+`
+				WHERE schema_name > ? OR (schema_name = ? AND cid > ?)
+				ORDER BY schema_name, cid
+				LIMIT ?
+			) ORDER BY schema_name DESC, cid DESC LIMIT 1
+		`, lastSchema, lastSchema, lastCID, sourceTagMigrationBatch).Scan(&nextSchema, &nextCID)
 		if errors.Is(err, sql.ErrNoRows) {
 			break
 		}
@@ -543,7 +583,18 @@ func (s *FlatSQLStore) migrateSourceTagsToProvenance() error {
 			break
 		}
 		lastSchema, lastCID = nextSchema, nextCID
-		log.Infof("Source-tag provenance migration: %d/%d row(s) interned", copied, total)
+
+		elapsed := time.Since(batchStarted)
+		if batches%10 == 0 || elapsed > 30*time.Second {
+			log.Infof("Source-tag provenance migration: %d row(s) interned in %d batch(es), last batch %s",
+				copied, batches, elapsed.Round(time.Millisecond))
+		}
+		if elapsed > sourceTagMigrationBatchBudget {
+			// The engine kills a call at five minutes. A batch that is even
+			// close says so, loudly, while the store is still usable.
+			log.Warnf("Source-tag provenance migration: a %d-row batch took %s, which is within reach of the engine's 5m per-call limit — the next release should lower sourceTagMigrationBatch",
+				sourceTagMigrationBatch, elapsed.Round(time.Millisecond))
+		}
 	}
 
 	if _, err := s.db.Exec(`DROP TABLE ` + sourceTagsViewName); err != nil {
@@ -556,28 +607,39 @@ func (s *FlatSQLStore) migrateSourceTagsToProvenance() error {
 		return err
 	}
 	s.provenance.reset()
-	log.Infof("Source-tag provenance migration complete: %d row(s); the legacy table and its six indexes are gone", copied)
+	log.Infof("Source-tag provenance migration complete: %d row(s) in %d batch(es), %s; the legacy table and its six indexes are gone",
+		copied, batches, time.Since(started).Round(time.Millisecond))
 	return nil
 }
 
-// replaceWithPartialIndex installs createSQL, and REBUILDS the index when a
-// full-table index of the same name is already there.
+// replaceWithPartialIndex installs createSQL on a store that does not have the
+// index yet, and REPORTS — never performs — the rebuild on a store that does.
 //
-// The rebuild is deliberate and it is synchronous. The saving it turns on
-// (154.1 B per non-satellite record, measured) applies to rows ALREADY
-// written, and only dropping the full b-tree returns those pages. The drop is
-// instant; the create is one scan of sdn_record_index, which on the largest
-// box in the fleet is a few million rows and lands inside the fleet's
-// post-restart health budget with room. It happens ONCE per box: after it, the
-// stored DDL carries the WHERE clause and this is a no-op.
+// THE REBUILD IS NOT STARTUP WORK, AND THE REHEARSAL IS WHY. A first version
+// of this dropped the full index and rebuilt it partial at open. Run against a
+// COPY of host-02's real 10.2 GB control database, that boot spent 46 minutes
+// inside the engine and then died:
+//
+//	module poisoned ("flatsql"): "(batch)" exceeded 5m0s
+//	(dedicated thread, uninterruptible) — instance will be refused until replaced
+//
+// CREATE INDEX over millions of rows is ONE engine call and cannot be split,
+// so it will always be able to blow the engine's wall-clock budget — and a
+// poisoned engine is a node that answers nothing, on every boot, until a human
+// intervenes. The fleet installs the newest signed sequence automatically, so
+// shipping that would have taken every box that carries a large store.
+//
+// This follows the rule the full indexes already followed (createStartupIndex):
+// an index that is not there yet on an existing table is maintenance work. A
+// store created after this change gets partial indexes from birth and pays
+// nothing; a store that already has the full ones keeps them, correct and
+// slower to store, until maintenance rebuilds them.
 func (s *FlatSQLStore) replaceWithPartialIndex(indexName, createSQL string, tableExisted bool) error {
 	var existingSQL string
 	err := s.db.QueryRow(`SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'index' AND name = ?`, indexName).Scan(&existingSQL)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if tableExisted {
-			// Same rule the full indexes always followed: a missing index on
-			// an existing table is maintenance work, not startup work.
 			log.Warnf("Skipping synchronous startup creation of missing index %s; rebuild indexes during maintenance", indexName)
 			return nil
 		}
@@ -589,14 +651,99 @@ func (s *FlatSQLStore) replaceWithPartialIndex(indexName, createSQL string, tabl
 	if strings.Contains(strings.ToUpper(existingSQL), " WHERE ") {
 		return nil
 	}
-	log.Infof("Rebuilding %s as a PARTIAL index: records that populate none of the satellite index columns stop paying for it", indexName)
-	started := time.Now()
-	if _, err := s.db.Exec(`DROP INDEX IF EXISTS ` + indexName); err != nil {
-		return fmt.Errorf("drop full index %s: %w", indexName, err)
-	}
-	if _, err := s.db.Exec(createSQL); err != nil {
-		return fmt.Errorf("create partial index %s: %w", indexName, err)
-	}
-	log.Infof("Rebuilt %s as a partial index in %s", indexName, time.Since(started).Round(time.Millisecond))
+	log.Infof("Index %s is still the FULL index: rebuilding it as partial would save 154.1 B per non-satellite record, but CREATE INDEX over this table is one uninterruptible engine call — it is maintenance work, not startup work", indexName)
 	return nil
+}
+
+// RebuildPartialRecordIndexes is the MAINTENANCE half of replaceWithPartialIndex:
+// it performs the drop-and-recreate that open deliberately refuses to do.
+//
+// It is exported so the maintenance lane — which already owns the operations
+// that cost O(store) and are allowed to take as long as they take — can run it
+// deliberately, on a box the operator has chosen, instead of on every boot of
+// every box at once. Callers take the store write lock.
+func (s *FlatSQLStore) RebuildPartialRecordIndexes() error {
+	if err := s.requireWritable("rebuild partial record indexes"); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, idx := range partialRecordIndexDefinitions() {
+		var existingSQL string
+		err := s.db.QueryRow(`SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'index' AND name = ?`, idx.name).Scan(&existingSQL)
+		if errors.Is(err, sql.ErrNoRows) {
+			if _, err := s.db.Exec(idx.createSQL); err != nil {
+				return fmt.Errorf("create partial index %s: %w", idx.name, err)
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if strings.Contains(strings.ToUpper(existingSQL), " WHERE ") {
+			continue
+		}
+		started := time.Now()
+		log.Infof("Maintenance: rebuilding %s as a partial index", idx.name)
+		if _, err := s.db.Exec(`DROP INDEX IF EXISTS ` + idx.name); err != nil {
+			return fmt.Errorf("drop full index %s: %w", idx.name, err)
+		}
+		if _, err := s.db.Exec(idx.createSQL); err != nil {
+			return fmt.Errorf("create partial index %s: %w", idx.name, err)
+		}
+		log.Infof("Maintenance: rebuilt %s as a partial index in %s", idx.name, time.Since(started).Round(time.Millisecond))
+	}
+	return nil
+}
+
+// partialRecordIndexDefinition is one sdn_record_index secondary index and the
+// statement that creates it.
+type partialRecordIndexDefinition struct {
+	name      string
+	createSQL string
+}
+
+// partialRecordIndexDefinitions is the ONE place these five indexes are
+// defined, so open and maintenance can never disagree about their shape.
+//
+// PARTIAL, AND FOR A MEASURED REASON. Five of these six indexes key on a
+// column that only a SATELLITE record populates — norad_cat_id, entity_id,
+// object_type, epoch_day, epoch_unix. A $TBS cell site, an $IRM mark, and every
+// other non-satellite record leaves all of them NULL, and then paid 154.1 B PER
+// RECORD (measured with `dbstat` over 20,000 real $TBS records) to be filed
+// under an all-NULL key in five b-trees that can never be searched for it.
+//
+// `WHERE <column> IS NOT NULL` is the smallest possible statement of that: it
+// is application-blind — no standard is named, nothing reads a payload — and it
+// costs the satellite standards NOTHING, because a query that says
+// `norad_cat_id = ?` implies `norad_cat_id IS NOT NULL` and SQLite's planner
+// uses a partial index whose WHERE clause the query implies.
+func partialRecordIndexDefinitions() []partialRecordIndexDefinition {
+	return []partialRecordIndexDefinition{
+		{"idx_sdn_record_index_lookup", `
+			CREATE INDEX IF NOT EXISTS idx_sdn_record_index_lookup
+			ON sdn_record_index (schema_name, epoch_day, norad_cat_id, entity_id, source_timestamp DESC)
+			WHERE epoch_day IS NOT NULL
+		`},
+		{"idx_sdn_record_index_norad", `
+			CREATE INDEX IF NOT EXISTS idx_sdn_record_index_norad
+			ON sdn_record_index (schema_name, norad_cat_id, source_timestamp DESC)
+			WHERE norad_cat_id IS NOT NULL
+		`},
+		{"idx_sdn_record_index_entity", `
+			CREATE INDEX IF NOT EXISTS idx_sdn_record_index_entity
+			ON sdn_record_index (schema_name, entity_id, source_timestamp DESC)
+			WHERE entity_id IS NOT NULL
+		`},
+		{"idx_sdn_record_index_catalog_filters", `
+			CREATE INDEX IF NOT EXISTS idx_sdn_record_index_catalog_filters
+			ON sdn_record_index (schema_name, object_type, ops_status_code, norad_cat_id)
+			WHERE object_type IS NOT NULL OR ops_status_code IS NOT NULL
+		`},
+		{"idx_sdn_record_index_time_window", `
+			CREATE INDEX IF NOT EXISTS idx_sdn_record_index_time_window
+			ON sdn_record_index (schema_name, epoch_unix, source_timestamp DESC)
+			WHERE epoch_unix IS NOT NULL
+		`},
+	}
 }
