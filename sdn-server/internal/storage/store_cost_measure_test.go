@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
@@ -140,4 +141,81 @@ func TestMeasureStoreCostPerRecord(t *testing.T) {
 	}
 	t.Logf("fixture payload %d B over %d records = %.1f B/record", payload, len(records), float64(payload)/float64(len(records)))
 	reportCost(t, fmt.Sprintf("StoreBatchWithSourceTags TBS.fbs"), base, inserted, elapsed)
+}
+
+// TestOpenExistingStoreRehearsal opens an EXISTING store directory with this
+// build and reports what the boot migrations cost and what they reclaimed.
+//
+// It is the rehearsal the deploy law requires: run the migration on a COPY of
+// the real layout, locally, before the binary that contains it reaches a box.
+// Skipped unless SDN_STORE_REHEARSAL_DIR names a store copy.
+func TestOpenExistingStoreRehearsal(t *testing.T) {
+	base := os.Getenv("SDN_STORE_REHEARSAL_DIR")
+	if base == "" {
+		t.Skip("set SDN_STORE_REHEARSAL_DIR to a COPY of a store directory")
+	}
+	// THE RUNTIME PIN, STATED WITH THE MEASUREMENT. The store opens the engine
+	// with WithPrecompiledAOTCache, which LOADS an artifact but never compiles
+	// one — so a cold cache silently means an INTERPRETED engine, and an
+	// interpreted engine turns a 30-second boot statement into one that blows
+	// the engine's uninterruptible 5-minute per-call budget and poisons it.
+	// A rehearsal that does not say which of the two it measured is not
+	// evidence. Prewarm, then report.
+	artifact, alreadyPresent, err := flatsqlrt.PrewarmAOTArtifact(engineAOTCacheDir(), "flatsql", flatsqlrt.EmbeddedWasm())
+	if err != nil {
+		t.Logf("AOT prewarm failed (%v) — this rehearsal runs INTERPRETED", err)
+	} else {
+		t.Logf("AOT artifact %s (already present: %v)", artifact, alreadyPresent)
+	}
+
+	_, before := dirBytes(t, base)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	started := time.Now()
+	store, err := NewFlatSQLStore(base, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore(%s): %v", base, err)
+	}
+	openElapsed := time.Since(started)
+	if engine, _ := store.EngineRuntime(); engine != nil {
+		t.Logf("engine AOT in use: %v", engine.AOT())
+	}
+	t.Logf("open + migrations took %s", openElapsed.Round(time.Millisecond))
+
+	for _, q := range []struct{ label, sql string }{
+		{"record index rows", `SELECT COUNT(*) FROM sdn_record_index`},
+		{"record index TBS.fbs", `SELECT COUNT(*) FROM sdn_record_index WHERE schema_name = 'TBS.fbs'`},
+		{"record index bare TBS", `SELECT COUNT(*) FROM sdn_record_index WHERE schema_name = 'TBS'`},
+		{"source tag rows", `SELECT COUNT(*) FROM sdn_record_source_tag_rows`},
+		{"interned provenance rows", `SELECT COUNT(*) FROM sdn_source_provenance`},
+		{"source tags via the view", `SELECT COUNT(*) FROM sdn_record_source_tags`},
+	} {
+		var n int64
+		if err := store.db.QueryRow(q.sql).Scan(&n); err != nil {
+			t.Errorf("%s: %v", q.label, err)
+			continue
+		}
+		t.Logf("  %-28s %d", q.label, n)
+	}
+	var ledger string
+	if err := store.db.QueryRow(`SELECT value FROM sdn_metadata WHERE key = ?`, schemaNameCanonicalizationLedgerKey).Scan(&ledger); err == nil {
+		t.Logf("  canonicalization ledger: %s", ledger)
+	}
+
+	closeStarted := time.Now()
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	t.Logf("close took %s", time.Since(closeStarted).Round(time.Millisecond))
+
+	files, after := dirBytes(t, base)
+	t.Logf("store %d B -> %d B (%+d B)", before, after, after-before)
+	for name, size := range files {
+		if size > 1<<20 {
+			t.Logf("  %-44s %13d B", name, size)
+		}
+	}
 }

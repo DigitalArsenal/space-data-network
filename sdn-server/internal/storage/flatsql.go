@@ -1011,44 +1011,10 @@ func (s *FlatSQLStore) initTables() error {
 	// planner uses a partial index whose WHERE clause the query implies. The
 	// indexes are REBUILT (dropped first) on a store that already has the full
 	// ones, which is what turns the saving on for records already written.
-	if err := s.replaceWithPartialIndex("idx_sdn_record_index_lookup", `
-		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_lookup
-		ON sdn_record_index (schema_name, epoch_day, norad_cat_id, entity_id, source_timestamp DESC)
-		WHERE epoch_day IS NOT NULL
-	`, recordIndexExisted); err != nil {
-		return fmt.Errorf("failed to create composite index: %w", err)
-	}
-
-	if err := s.replaceWithPartialIndex("idx_sdn_record_index_norad", `
-		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_norad
-		ON sdn_record_index (schema_name, norad_cat_id, source_timestamp DESC)
-		WHERE norad_cat_id IS NOT NULL
-	`, recordIndexExisted); err != nil {
-		return fmt.Errorf("failed to create norad index: %w", err)
-	}
-
-	if err := s.replaceWithPartialIndex("idx_sdn_record_index_entity", `
-		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_entity
-		ON sdn_record_index (schema_name, entity_id, source_timestamp DESC)
-		WHERE entity_id IS NOT NULL
-	`, recordIndexExisted); err != nil {
-		return fmt.Errorf("failed to create entity index: %w", err)
-	}
-
-	if err := s.replaceWithPartialIndex("idx_sdn_record_index_catalog_filters", `
-		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_catalog_filters
-		ON sdn_record_index (schema_name, object_type, ops_status_code, norad_cat_id)
-		WHERE object_type IS NOT NULL OR ops_status_code IS NOT NULL
-	`, recordIndexExisted); err != nil {
-		return fmt.Errorf("failed to create catalog filter index: %w", err)
-	}
-
-	if err := s.replaceWithPartialIndex("idx_sdn_record_index_time_window", `
-		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_time_window
-		ON sdn_record_index (schema_name, epoch_unix, source_timestamp DESC)
-		WHERE epoch_unix IS NOT NULL
-	`, recordIndexExisted); err != nil {
-		return fmt.Errorf("failed to create time window index: %w", err)
+	for _, idx := range partialRecordIndexDefinitions() {
+		if err := s.replaceWithPartialIndex(idx.name, idx.createSQL, recordIndexExisted); err != nil {
+			return fmt.Errorf("failed to create %s: %w", idx.name, err)
+		}
 	}
 
 	// A legacy PHYSICAL source-tags table is first normalized to the
