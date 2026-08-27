@@ -14,8 +14,43 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/ingest"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
+
+// canonicalStoredSchemaName is the schema name a WRITE persists under.
+//
+// The capability's own documented shape accepts a bare standard code
+// ("OMM") as readily as a file name ("OMM.fbs"), and READERS normalize:
+// engineRoutedSchemaFor normalizes before routing into the engine, and
+// normalizeDatasetPublicationSchema normalizes a publication request. The
+// WRITE path did not, so whatever spelling a module happened to use was
+// persisted verbatim into sdn_record_index.schema_name and
+// sdn_record_source_tags.schema_name.
+//
+// That split is not cosmetic; it was measured live on host-02 2026-08-26 and
+// it silently severed a whole dataset from the network. The cell-tower ingest
+// module stamps "TBS" (its kSchema), so 258,125 $TBS rows landed with
+// schema_name "TBS" — visible in /api/v1/catalog, visible to the engine
+// (which normalizes), and INVISIBLE to every export: QueryIndexedRecords
+// joins `sdn_record_index idx ON idx.schema_name = ?` with the normalized
+// "TBS.fbs", matching nothing. Every publish attempt answered "no records
+// match export query" while the store held a quarter of a million rows, and
+// the control — RFB.fbs, stamped canonically — published in about a second.
+// No $TBS batch could ever be exported, announced or replicated, so the
+// consumer node stayed at records:0 no matter how much the producer ingested.
+//
+// Canonicalizing HERE, at the connector boundary, is the fix that cannot be
+// forgotten by the next module: one spelling is persisted, and it is the one
+// every reader already normalizes to. An input that cannot be a schema name
+// at all is passed through unchanged so the store's own validation refuses it
+// with its own error, rather than this helper inventing one.
+func canonicalStoredSchemaName(schema string) string {
+	if canonical := sds.NormalizeSchemaFileName(schema); canonical != "" {
+		return canonical
+	}
+	return schema
+}
 
 // NewStorageCapFactory returns a BridgeCapFactory for "storage_query" and
 // "storage_write" capabilities. Both capabilities share the same handler —
@@ -223,7 +258,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		if s.bridge == nil || !s.bridge.HasCapability("storage_write") {
 			return refuseCapJSON("storage.write", "requires the storage_write capability grant"), nil
 		}
-		schema := str("schema")
+		schema := canonicalStoredSchemaName(str("schema"))
 		if schema == "" {
 			return errCapJSON("missing schema"), nil
 		}
@@ -563,7 +598,7 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 			"requires the storage_ingest capability grant")
 	}
 
-	schema := str("schema")
+	schema := canonicalStoredSchemaName(str("schema"))
 	if schema == "" {
 		return errCapJSON("missing schema")
 	}
