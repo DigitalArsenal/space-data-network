@@ -96,44 +96,22 @@ func TestPagedHotWindowReadReproducesTheSingleStatement(t *testing.T) {
 			t.Fatalf("row %d differs\n paged: %+v\n baseline: %+v", i, got[i], want[i])
 		}
 	}
-}
 
-// A WINDOW SMALLER THAN THE STORE MUST STILL TAKE THE NEWEST RECORDS. Paging
-// walks rowid DESCENDING for exactly this reason; a page loop that walked the
-// other way would silently make a restart resident on the OLDEST records.
-func TestPagedHotWindowTakesTheNewestRecordsWhenTheWindowIsSmaller(t *testing.T) {
-	basePath := filepath.Join(t.TempDir(), "store")
-	store := newEngineRecordsStore(t, basePath)
-	defer store.Close()
-
-	const records = 20
+	// A WINDOW SMALLER THAN THE STORE MUST STILL TAKE THE NEWEST RECORDS.
+	// Paging walks rowid DESCENDING for exactly this reason; a page loop that
+	// walked the other way would silently make a restart resident on the
+	// OLDEST records. Same store, because opening the engine costs ~12 s and
+	// this package's test binary already runs close to its 30-minute cap.
 	const window = 6
-	tags := SourceTags{ProviderID: "prov-window", SourceName: "window-src", BatchID: "batch-window"}
-	for i := 0; i < records; i++ {
-		record := buildEngineOMM(t, uint32(9500+i), "WINDOW-SAT", int64(1700000000+i))
-		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "peer-window", nil, tags); err != nil {
-			t.Fatalf("store record %d: %v", i, err)
-		}
-	}
-	readSource, err := store.recordReadSource("OMM.fbs")
-	if err != nil {
-		t.Fatalf("recordReadSource: %v", err)
-	}
-	aliases := engineSchemaNameAliases("OMM.fbs")
-	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")
-
-	restore := engineHotWindowRebuildPage
 	engineHotWindowRebuildPage = 4
-	defer func() { engineHotWindowRebuildPage = restore }()
-
-	pages, _, err := store.readEngineHotWindowPages("OMM.fbs", readSource, aliases, placeholders, window)
+	windowPages, _, err := store.readEngineHotWindowPages("OMM.fbs", readSource, aliases, placeholders, window)
 	if err != nil {
-		t.Fatalf("paged read: %v", err)
+		t.Fatalf("paged read (small window): %v", err)
 	}
 	total := 0
 	var lowest, highest int64
 	first := true
-	for _, page := range pages {
+	for _, page := range windowPages {
 		for _, row := range page {
 			total++
 			if first {

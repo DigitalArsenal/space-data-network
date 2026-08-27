@@ -10,8 +10,13 @@ import (
 
 // THE BUDGET IS THE ENGINE'S, NOT A NUMBER PICKED HERE. A phase scored against
 // anything other than the budget the runtime actually enforces would report a
-// margin the node does not have.
-func TestBootPhaseBudgetUsesTheEnginesOwnBudget(t *testing.T) {
+// margin the node does not have — and a phase must be VISIBLE while it runs,
+// because the whole investigation turned on being able to ask the runtime what
+// it was doing when a call went past the budget.
+//
+// ONE store for both facts on purpose: opening the engine costs ~12 s and this
+// package's test binary already runs close to its 30-minute cap.
+func TestBootPhaseBudgetIsTheEnginesAndStampsForItsDuration(t *testing.T) {
 	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
 	defer store.Close()
 
@@ -27,17 +32,6 @@ func TestBootPhaseBudgetUsesTheEnginesOwnBudget(t *testing.T) {
 	if budget.budget <= 0 {
 		t.Fatalf("phase budget is %s; a boot with no budget cannot warn about crossing one", budget.budget)
 	}
-}
-
-// A PHASE MUST BE VISIBLE WHILE IT RUNS. The whole investigation turned on
-// being able to ask the runtime what it was doing when a call went past the
-// budget, so the stamp has to be set for the duration and cleared after.
-func TestBootPhaseStampsTheRuntimeForItsDuration(t *testing.T) {
-	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
-	defer store.Close()
-
-	engine, _ := store.EngineRuntime()
-	budget := newBootPhaseBudget(engine)
 
 	if got := engine.Phase(); got != "" {
 		t.Fatalf("engine phase = %q before any phase started", got)
