@@ -2756,8 +2756,29 @@ func TestBuildProviderDescriptorIncludesPublishedIdentityAddresses(t *testing.T)
 		t.Fatalf("buildProviderDescriptor failed: %v", err)
 	}
 
-	if got, want := payload.Identity.XPub, "xpub-provider"; got != want {
-		t.Fatalf("identity.xpub = %q, want %q", got, want)
+	// §21 (owner ruling 2026-08-19, memory identity-literal-pubkeys-policy):
+	// the PUBLISHED identity is the literal sign/encrypt public keys; the xpub
+	// and the derivation paths are PRIVATE. The node EPM projection stopped
+	// carrying "xpub" when the flip landed (internal/epm/service_test.go:339
+	// asserts info["xpub"] == nil), so the provider descriptor — a public,
+	// unauthenticated read — must carry no xpub either. This assertion used to
+	// demand "xpub-provider" here and was simply never updated, which left the
+	// REQUIRED go-host-tier gate red on main.
+	if got := payload.Identity.XPub; got != "" {
+		t.Fatalf("identity.xpub = %q, want %q (xpub is PRIVATE under §21)", got, "")
+	}
+	// The wire form is the surface that matters: `omitempty` must actually
+	// drop the key, so a client can never read an xpub off this endpoint.
+	wire, err := json.Marshal(payload.Identity)
+	if err != nil {
+		t.Fatalf("marshal identity: %v", err)
+	}
+	var wireKeys map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &wireKeys); err != nil {
+		t.Fatalf("unmarshal identity: %v", err)
+	}
+	if _, present := wireKeys["xpub"]; present {
+		t.Fatalf("provider descriptor identity JSON carries an \"xpub\" key: %s", wire)
 	}
 	if got, want := payload.Identity.SigningPublicKey, identity.Info().SigningPubKeyHex; got != want {
 		t.Fatalf("identity.signingPublicKey = %q, want %q", got, want)
