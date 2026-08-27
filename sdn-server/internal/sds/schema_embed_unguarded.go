@@ -21,6 +21,30 @@ package sds
 // control this waiver would otherwise lack. The moment the host reads an IRM
 // field in Go, that test stops being enough and the rule below applies.
 //
+// $VCF (vCard Projection Card, REC ordinal 224) arrives waived on the v1.197.0
+// pin under the same single reason. A $VCF record is produced by the vCard
+// PROJECTION MODULE — WASM — and written through the schema-typed storage.write
+// capability; the Go host emits vCard TEXT from an EPM (internal/epm,
+// internal/auth) but never decodes a $VCF FlatBuffer field, so there is no
+// binding instance here to compare the embed against. The compensating control
+// is TestVCFIsAdmittedByTheEmbeddedValidator, which drives a real card through
+// the embedded validator with the VENDORED binding. If the host ever reads a
+// $VCF field in Go — say to serve a card it did not project — that test stops
+// being enough and the rule below applies.
+
+// $STX (Scheduled Transmission, REC 225) and $TXS (Terrestrial Transmitter
+// Site, REC 226) arrive waived together on the v1.198.0 pin, and they are ONE
+// waiver rather than two: STX.fbs includes ../TXS/main.fbs and its SOURCES
+// vector is [TXSProvenance], so the pair is a single include closure that the
+// validator either loads whole or not at all. The reason is the standing one —
+// the RF-catalog ingest builds these records in WASM and writes them through
+// the schema-typed storage.write capability; no Go binding instance here
+// decodes a $TXS or $STX field. The compensating control is
+// TestTXSAndSTXAreAdmittedByTheEmbeddedValidator, which drives real records of
+// BOTH standards through the embedded validator with the VENDORED bindings and
+// asserts the TXS.ID <- STX.SITE_ID join the RF dataset is read on. The moment
+// the host reads one of these fields in Go, the rule below applies.
+
 // THE MOMENT THE HOST STARTS READING ONE OF THESE, move it to
 // driftGuardedSchemas. That is one line and it is not optional.
 var unguardedEmbeddedSchemas = map[string]bool{
@@ -211,6 +235,7 @@ var unguardedEmbeddedSchemas = map[string]bool{
 	"STO.fbs":  true,
 	"STR.fbs":  true,
 	"STV.fbs":  true,
+	"STX.fbs":  true,
 	"SUB.fbs":  true,
 	"SWR.fbs":  true,
 	"TAB.fbs":  true,
@@ -229,7 +254,9 @@ var unguardedEmbeddedSchemas = map[string]bool{
 	"TRK.fbs":  true,
 	"TRN.fbs":  true,
 	"TRS.fbs":  true,
+	"TXS.fbs":  true,
 	"VAM.fbs":  true,
+	"VCF.fbs":  true,
 	"VCM.fbs":  true,
 	"VEP.fbs":  true,
 	"VST.fbs":  true,

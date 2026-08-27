@@ -279,15 +279,28 @@ const (
 	// embed leaves dangling includes — which is exactly how the set went
 	// stale before v1.177.0.
 	//
-	// 224 from spacedatastandards.org v1.196.0. The v1.193.0 $EGP partial
-	// addition is folded back in here, as its own comment asked: this is the
-	// full pin bump, so there is one version and one count again. The bump
-	// carries $IRM (Ingest Resume Mark, REC ordinal 223) — the cellular ingest
-	// flow's durable checkpoint, which modules write through the schema-typed
-	// storage.write capability and which the strict validator cannot admit
-	// without this embed — together with the 17 other standards REC.fbs began
-	// including between v1.186.0 and v1.196.0.
-	expectedStandardSchemaCount = 224
+	// 225 from spacedatastandards.org v1.197.0 — every standard the pin
+	// publishes, counted as `ls schema/*/main.fbs` counts them. The v1.196.0
+	// bump folded the v1.193.0 $EGP partial addition back in and brought the
+	// count to 224 with $IRM (Ingest Resume Mark, REC ordinal 223) and the 17
+	// other standards REC.fbs began including between v1.186.0 and v1.196.0.
+	//
+	// v1.197.0 added exactly ONE: $VCF (vCard Projection Card, REC ordinal 224),
+	// the canonical contact-card projection of one published EPM. The vCard
+	// projection module writes it through the schema-typed storage.write
+	// capability, and a standard the validator has never loaded is not one it
+	// can admit — before that embed the write failed closed exactly as $IRM's
+	// did before v1.196.0.
+	//
+	// v1.198.0 adds TWO more for the RF-catalog program: $STX (Scheduled
+	// Transmission, REC ordinal 225) and $TXS (Terrestrial Transmitter Site,
+	// REC ordinal 226). $TXS is the merged, source-attributed facility record
+	// and $STX is one broadcast schedule row that references it by
+	// TXS.ID — STX.fbs literally includes ../TXS/main.fbs and reuses
+	// TXSProvenance, so the two are ONE include closure and neither embeds
+	// alone. Only REC.fbs changed among the 225 already embedded; the rest of
+	// this pin is the two new standards and the re-vendored bindings.
+	expectedStandardSchemaCount = 227
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )

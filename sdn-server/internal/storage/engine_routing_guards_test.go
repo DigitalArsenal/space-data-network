@@ -703,7 +703,7 @@ func TestEngineDerivedRTreesAreTheDisclosedSet(t *testing.T) {
 	disclosed := []string{
 		"_rtree_CRM", "_rtree_ENV", "_rtree_GNO", "_rtree_ION", "_rtree_OBT",
 		"_rtree_SEN", "_rtree_SEO", "_rtree_SIT", "_rtree_SWR", "_rtree_TBS",
-		"_rtree_TMS", "_rtree_TRK",
+		"_rtree_TMS", "_rtree_TRK", "_rtree_TXS",
 	}
 
 	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))

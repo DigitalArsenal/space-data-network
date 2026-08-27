@@ -285,6 +285,7 @@ var SupportedSchemas = []string{
 	"STO.fbs",  // Store Descriptor - storefront identity
 	"STR.fbs",  // Star Catalog Entry
 	"STV.fbs",  // State Vector
+	"STX.fbs",  // Scheduled Transmission - one broadcast schedule row for a terrestrial transmitter (REC 225) (SDS v1.198.0)
 	"SUB.fbs",  // Crypto-native Subscription Authorization
 	"SWR.fbs",  // Short-Wave Infrared Observation
 	"TAB.fbs",  // Typed Arena Buffer
@@ -303,7 +304,9 @@ var SupportedSchemas = []string{
 	"TRK.fbs",  // Track
 	"TRN.fbs",  // Terrain Models
 	"TRS.fbs",  // Terrain Raster Solve (SDS v1.196.0)
+	"TXS.fbs",  // Terrestrial Transmitter Site - merged, source-attributed transmitter facility (REC 226) (SDS v1.198.0)
 	"VAM.fbs",  // Visual Asset Manifest - ranked visual representations for one entity
+	"VCF.fbs",  // vCard Projection Card - canonical contact-card projection of one published EPM (REC 224) (SDS v1.197.0)
 	"VCM.fbs",  // Vector Covariance Message
 	"VEP.fbs",  // Vehicle Endurance Profile (SDS v1.196.0)
 	"VST.fbs",  // Viewer State - display and camera state for a scenario
