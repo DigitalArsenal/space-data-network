@@ -724,6 +724,81 @@ func (mf *MountedFlow) release(inst *flowInstance) {
 	mf.pool <- inst
 }
 
+// releaseAfterExchange returns an instance to the pool with the ingress queue
+// it was handed CLEAN, and is the only path an HTTP exchange may use.
+//
+// THE DEFECT THIS CLOSES. The host enqueues exactly ONE $HTQ frame per request
+// (ServeHTTP above) and then hands the pooled instance to the NEXT request. The
+// trigger queue is INSTANCE state, so a frame the flow never consumed survives
+// the exchange that created it. Nothing consumes it whenever the drain ends
+// early — a client that disconnected (Drain returns ctx.Err()), a mid-drain
+// error, or a guest entry node that refused before reading its input port.
+//
+// The next request then enqueues its own frame ON TOP of the residue and the
+// entry node sees TWO frames on a port its manifest declares single-stream.
+// A flow that enforces that contract in code — `refuse_batched()` in the
+// cellular aggregate's cache_plan — refuses, and because every node of a
+// linked-direct artifact runs INSIDE the guest, the refusal is a wasm return
+// value: Drain reports no error, no handler is invoked, and the mount answers a
+// bare 502 "flow produced no HTTP response". The residue is never consumed, so
+// the SECOND request poisons the instance PERMANENTLY: every later request on
+// it fails identically until the daemon restarts.
+//
+// Measured on host-01 2026-08-27 (graph sdn-host01-cellular-providers-502):
+// /api/v1/cellular/providers, /tiles/meta and /tiles/0/0/0 all answered 502 in
+// ~13 ms while the flow was loaded and healthy (17 nodes, 34 edges) and every
+// capability it needs was approved — one poisoned pool, three dead routes, zero
+// host log lines.
+//
+// Resetting is exactly scoped: the guest's reset_state clears the node queues,
+// the ingress states, the current invocation frames and the routing state
+// (flow_runtime.cpp space_data_module_runtime_reset_state) and touches no
+// dependency, plugin or allocator state, so a reset instance is the same
+// instance with its exchange bookkeeping zeroed.
+//
+// The reset is CONDITIONAL and LOGGED because residue is itself a defect
+// signal: an exchange that left its own request frame behind is one the flow
+// never answered, and an operator has to be able to see that happening.
+func (mf *MountedFlow) releaseAfterExchange(inst *flowInstance) {
+	if inst != nil && inst.rt != nil {
+		if queued, reset := discardIngressResidue(inst.rt, mf.triggerIndex); reset {
+			log.Warnf(
+				"Flow mount %q: exchange left %d unconsumed ingress frame(s) on trigger %d — "+
+					"resetting the instance before it returns to the pool. An instance pooled with "+
+					"residue makes the NEXT request arrive as a batched input on a single-stream "+
+					"port, which flows refuse in-guest and the mount can only report as 502 "+
+					"\"flow produced no HTTP response\" (graph sdn-host01-cellular-providers-502).",
+				mf.mountPath, queued, mf.triggerIndex,
+			)
+		}
+	}
+	mf.release(inst)
+}
+
+// exchangeRuntime is the per-exchange runtime surface the residue guard needs.
+// *FlowRuntime satisfies it; tests substitute a fake so the guarantee is
+// asserted without a compiled artifact.
+type exchangeRuntime interface {
+	GetIngressRuntimeState(index uint32) (*FlowIngressRuntimeState, error)
+	ResetState()
+}
+
+// discardIngressResidue clears the trigger queue when an exchange left frames
+// on it, and reports how many it cleared.
+//
+// A clean exchange consumed the one frame the host enqueued for it, so anything
+// still queued is residue that would batch onto the NEXT request's frame. A
+// runtime that cannot answer is treated as clean: this is a diagnostic read and
+// it may never turn a served request into a failed one.
+func discardIngressResidue(rt exchangeRuntime, triggerIndex uint32) (uint32, bool) {
+	state, err := rt.GetIngressRuntimeState(triggerIndex)
+	if err != nil || state == nil || state.QueuedFrames == 0 {
+		return 0, false
+	}
+	rt.ResetState()
+	return state.QueuedFrames, true
+}
+
 // Close releases every pooled instance. Instances currently serving a
 // request are released when their request finishes.
 func (mf *MountedFlow) Close() {
@@ -1033,7 +1108,7 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("acquire flow instance: %v", err), http.StatusServiceUnavailable)
 		return
 	}
-	defer func() { mf.release(inst) }()
+	defer func() { mf.releaseAfterExchange(inst) }()
 
 	// Linked instances borrow the store's live engine: if the engine was
 	// poisoned, recover it (idempotent), and if the engine epoch moved,
@@ -1109,7 +1184,54 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if pipe.err != nil {
 			detail = ": " + pipe.err.Error()
 		}
+		// A mounted flow that answered nothing is a HOST-VISIBLE refusal and
+		// may not be reported as a bare status line. Every node of a
+		// linked-direct artifact runs inside the guest, so a node that refused
+		// its input (`plugin_set_error(...); return 400`) returns through the
+		// in-wasm scheduler: Drain reports no error and no handler fires. The
+		// artifact's own node-state table is the only place the cause exists,
+		// and the host already knows how to read it — the timer lane has since
+		// e322cc4c (readNodeRunDigest). The HTTP lane threw it away, which is
+		// how three live cellular routes served 502 for hours with not one log
+		// line naming a node (graph sdn-host01-cellular-providers-502).
+		//
+		// This is a CONNECTOR read: node id, plugin, method, invocation count
+		// and last status are copied out and reported. The host forms no
+		// opinion about what any node means.
+		log.Warnf("Flow mount %q: %s %s produced no HTTP response%s — %s",
+			mf.mountPath, r.Method, r.URL.Path, detail, describeNodeRunDigest(readNodeRunDigest(rt)))
 		http.Error(w, "flow produced no HTTP response"+detail, http.StatusBadGateway)
+	}
+}
+
+// describeNodeRunDigest renders one drain's per-node outcome for an operator.
+//
+// It reports the nodes that were actually dispatched and, separately, the nodes
+// that never ran at all — a flow that stalls answers nothing precisely because
+// the node that would have answered was never reached, so "who did NOT run" is
+// the load-bearing half of the diagnosis.
+func describeNodeRunDigest(digest []nodeRunOutcome) string {
+	if len(digest) == 0 {
+		return "no per-node state available from the artifact"
+	}
+	var ran, idle []string
+	for _, n := range digest {
+		if n.Invocations == 0 {
+			idle = append(idle, n.NodeID)
+			continue
+		}
+		ran = append(ran, fmt.Sprintf("%s(%s:%s) x%d last_status=%d",
+			n.NodeID, n.PluginID, n.MethodID, n.Invocations, n.LastStatus))
+	}
+	switch {
+	case len(ran) == 0:
+		return fmt.Sprintf("NO node ran; %d node(s) idle: %s",
+			len(idle), strings.Join(idle, ", "))
+	case len(idle) == 0:
+		return "nodes ran: " + strings.Join(ran, "; ")
+	default:
+		return fmt.Sprintf("nodes ran: %s; never reached: %s",
+			strings.Join(ran, "; "), strings.Join(idle, ", "))
 	}
 }
 
