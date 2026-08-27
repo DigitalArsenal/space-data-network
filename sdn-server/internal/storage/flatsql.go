@@ -179,6 +179,9 @@ type FlatSQLStore struct {
 	// may still mutate — it is never durable.
 	readOnly bool
 	mu       sync.RWMutex
+	// lockStats accounts s.mu itself — the lock the engine's slow-statement
+	// instrument cannot see (store_lock_accounting.go).
+	lockStats storeLockStats
 	// engineSources tracks per-source shadow tables already registered on the
 	// engine (flatsql_register_source errors on duplicates). Guarded by mu.
 	engineSources map[string]bool
@@ -815,8 +818,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 // is safe to run after opening a store with WithDeferredBootRebuilds, but it
 // may be expensive on large catalogs and holds the store write lock.
 func (s *FlatSQLStore) RebuildDerivedState() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("RebuildDerivedState")()
 	// PHASE-STAMPED WHEREVER IT RUNS, not only at open. This is reachable from
 	// the store maintenance API and from every non-deferred open, so when it is
 	// the thing holding the single-threaded engine the log has to say so — it
@@ -960,8 +962,7 @@ func (s *FlatSQLStore) HydrateRecordCatalog() (int, error) {
 // freshly replayed control tables (a daemon opened with
 // WithDeferredRecordCatalogReplay has no summaries until this runs).
 func (s *FlatSQLStore) RebuildSourceSummaries() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("RebuildSourceSummaries")()
 	return s.rebuildSourceSummariesFromDurableState()
 }
 
@@ -993,8 +994,7 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalogContext(ctx contex
 	s.engineHotHydrating.Store(true)
 	defer s.engineHotHydrating.Store(false)
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("HydrateEngineHotWindowFromRecordCatalogContext")()
 	if s.recordCatalog == nil {
 		s.engineHotHydrated.Store(true)
 		return 0, nil
@@ -2766,8 +2766,7 @@ func (s *FlatSQLStore) RefreshSourceBatchSummary(schemaName, providerID, sourceN
 		return fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("RefreshSourceBatchSummary")()
 	return s.rebuildSourceSummaryForSourceBatch(schemaName, tableName, providerID, sourceName, batchID)
 }
 
@@ -2868,8 +2867,7 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	if err := s.requireWritable("store record"); err != nil {
 		return "", err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("storeOne")()
 
 	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
 		return "", fmt.Errorf("invalid schema name: %w", err)
@@ -3171,8 +3169,7 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 // storeBatchChunk stores one chunk under one store lock, FlatSQL stream
 // appender, and control transaction (the pre-chunking storeBatch body).
 func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("storeBatchChunk")()
 
 	appender, err := s.newFlatSQLStreamAppender(schemaName)
 	if err != nil {
@@ -3298,8 +3295,7 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 		return fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("UpsertSourceTags")()
 
 	// Record rowid/bytes are read back through the union read source (routed
 	// tables + legacy when present).
@@ -3633,8 +3629,7 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 		return result, fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("ReconcileSourceBatch")()
 
 	readSource, err := s.recordReadSource(result.SchemaName)
 	if err != nil {
@@ -3777,8 +3772,7 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 		return result, fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("ReconcileSourceBatchIndexedDuplicates")()
 
 	readSource, err := s.recordReadSource(result.SchemaName)
 	if err != nil {
@@ -4128,8 +4122,7 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	if err := s.requireWritable("delete record"); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("Delete")()
 
 	tableName, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
@@ -4258,8 +4251,7 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 	if err := s.requireWritable("garbage collect"); err != nil {
 		return 0, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("GarbageCollect")()
 
 	cutoff := time.Now().Add(-maxAge).Unix()
 	return s.garbageCollectBeforeLocked(cutoff)
@@ -4380,6 +4372,24 @@ func (s *FlatSQLStore) LiveRecordBytes() (int64, error) {
 	return s.liveRecordBytesLocked()
 }
 
+// liveRecordBytesLocked sums record_length across every schema's read source.
+//
+// IT IS O(SCHEMAS x RECORDS) AND IT RUNS UNDER THE WRITE LOCK, which is a
+// measured reader-starvation source: 42 calls and 485.1 s of s.mu time on
+// host-01 in one hour, single calls up to 26.6 s, every second of it taken from
+// concurrent readers (sdn-flatsql-store-lock-starves-readers).
+//
+// IT IS STILL THE SCAN, DELIBERATELY. The obvious fix — sum the per-lane
+// total_bytes that sdn_record_source_summary already maintains — is WRONG and
+// the existing TestLiveRecordBytesSumsRecordLength proves it in one line: a
+// record stored WITHOUT source tags creates no summary lane, so the maintained
+// total answered 0 where the scan answers 600. Quota enforcement reads this
+// number; a fast wrong answer is worse than a slow right one.
+//
+// The real fix is a counter maintained on the record write path itself (so it
+// covers untagged writes) with a rebuild path for existing stores, which is a
+// design decision rather than an edit — filed as
+// sdn-live-record-bytes-needs-a-maintained-counter.
 func (s *FlatSQLStore) liveRecordBytesLocked() (int64, error) {
 	var total int64
 	for _, schemaName := range s.validator.Schemas() {
@@ -4475,8 +4485,7 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 	if err := s.requireWritable("garbage collect to quota"); err != nil {
 		return 0, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("GarbageCollectToQuota")()
 
 	liveBytes, err := s.liveRecordBytesLocked()
 	if err != nil {
@@ -4553,8 +4562,7 @@ func (s *FlatSQLStore) Close() error {
 	// waiting for it.
 	s.stopCheckpointLoop()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("Close")()
 
 	// A CLEAN shutdown always advances the mark: the next boot then replays
 	// nothing at all. This is the difference between "seconds" and "instant"
@@ -4719,8 +4727,7 @@ func (s *FlatSQLStore) UpsertDirectoryRecord(record DirectoryRecord) error {
 		return err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("UpsertDirectoryRecord")()
 
 	if err := s.applyDirectoryRecordUpsert(record); err != nil {
 		return err
@@ -4914,8 +4921,7 @@ func (s *FlatSQLStore) SaveLocalEPM(peerID string, epmBytes []byte) error {
 	if err := s.requireWritable("save local EPM"); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("SaveLocalEPM")()
 
 	peerID = strings.TrimSpace(peerID)
 	if peerID == "" {
@@ -5187,8 +5193,7 @@ func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 	if err := s.requireWritable("reindex"); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("RebuildIndex")()
 
 	summary := make(map[string]int64)
 

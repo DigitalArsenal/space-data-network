@@ -16,8 +16,10 @@ import (
 // This is the generic engine query surface for the module hostcall bridge
 // and the retrieval module (loop C.1).
 func (s *FlatSQLStore) QueryRawStream(sql string, params ...interface{}) (*flatsqlrt.RawStream, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// ACCOUNTED, because this is the reader that was starving. On host-01 the
+	// tile requests that took 3.3-90 s all reported `waited 0s` on the ENGINE
+	// lock: the seconds were spent here, waiting for s.mu behind a writer.
+	defer s.lockRead("QueryRawStream")()
 	if s.engineDB == nil {
 		return nil, fmt.Errorf("engine database not available")
 	}
