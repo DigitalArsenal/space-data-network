@@ -98,6 +98,64 @@ func (s *Service) AppendEntry(schemaType, recordCID string, entityIDs []string, 
 	return plgCID, newSeq, nil
 }
 
+// AppendEntryBatch appends one hash-chained PLG entry per record CID, in
+// order, under a single lock hold and a single chunked batch store. The
+// per-entry AppendEntry path pays a full store write per record, which caps
+// batch publishing at single-record speed; here the chain is computed
+// sequentially (cheap hashing + signing) and the PLG buffers land through
+// StoreBatch. Each entry's signature lives inside its PLG buffer, exactly as
+// in AppendEntry. Returns the new head sequence.
+func (s *Service) AppendEntryBatch(schemaType string, recordCIDs []string) (uint64, error) {
+	if len(recordCIDs) == 0 {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	prevSeq, prevEntryHash, err := s.store.GetLogHead(s.peerID, schemaType)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get log head: %w", err)
+	}
+
+	entries := make([][]byte, 0, len(recordCIDs))
+	rows := make([]storage.LogIndexRow, 0, len(recordCIDs))
+	for _, recordCID := range recordCIDs {
+		newSeq := prevSeq + 1
+		now := uint64(time.Now().Unix())
+		entryHash := ComputeEntryHash(newSeq, schemaType, s.peerID, recordCID, prevEntryHash, now)
+
+		var sigBytes []byte
+		if s.signingKey != nil {
+			entryHashBytes, _ := hex.DecodeString(entryHash)
+			sigBytes, err = s.signingKey.Sign(entryHashBytes)
+			if err != nil {
+				return 0, fmt.Errorf("failed to sign entry hash: %w", err)
+			}
+		}
+
+		plgData := buildPLGFlatBuffer(newSeq, schemaType, s.peerID, recordCID, prevEntryHash, entryHash, now, sigBytes, nil, "")
+		entries = append(entries, plgData)
+		rows = append(rows, storage.LogIndexRow{
+			Sequence:  newSeq,
+			EntryHash: entryHash,
+			RecordCID: recordCID,
+			PLGCID:    storage.ComputeCID(plgData),
+			Timestamp: int64(now),
+		})
+		prevSeq, prevEntryHash = newSeq, entryHash
+	}
+
+	if _, err := s.store.StoreBatch(plgSchema, entries, s.peerID, nil); err != nil {
+		return 0, fmt.Errorf("failed to store PLG entries: %w", err)
+	}
+	if err := s.store.UpsertLogIndexBatch(s.peerID, schemaType, rows); err != nil {
+		log.Warnf("Failed to upsert log index batch for %s: %v", schemaType, err)
+	}
+
+	log.Debugf("Appended %d PLG entries through seq=%d for %s/%s", len(entries), prevSeq, s.peerID[:8]+"...", schemaType)
+	return prevSeq, nil
+}
+
 // BuildPLH creates a PLH FlatBuffer for the current log head of the given schema type.
 func (s *Service) BuildPLH(schemaType, multiaddr string) ([]byte, error) {
 	headSeq, headEntryHash, err := s.store.GetLogHead(s.peerID, schemaType)

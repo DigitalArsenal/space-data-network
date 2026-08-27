@@ -4634,6 +4634,14 @@ func (s *FlatSQLStore) Stats() (map[string]int64, error) {
 // plain string comparison), but content re-ingested after the fix is
 // content-addressed under its proper CIDv1 rather than the old digest — see
 // the loop A4 report for the full compat analysis.
+// ComputeCID returns the content identifier this store assigns to a record's
+// bytes — the same value Store/StoreBatch write to the cid column — so callers
+// that store through the batch path can report per-record CIDs without a
+// read-back.
+func ComputeCID(data []byte) string {
+	return computeCID(data)
+}
+
 func computeCID(data []byte) string {
 	c, err := cidV1RawSHA256(data)
 	if err != nil {
@@ -7694,6 +7702,62 @@ func (s *FlatSQLStore) UpsertLogIndex(publisherPeerID, schemaType string, sequen
 	return nil
 }
 
+// LogIndexRow is one sdn_log_index entry for UpsertLogIndexBatch.
+type LogIndexRow struct {
+	Sequence  uint64
+	EntryHash string
+	RecordCID string
+	PLGCID    string
+	EpochDay  string
+	Timestamp int64
+}
+
+// UpsertLogIndexBatch upserts many log-index rows for one (publisher, schema)
+// log inside a single transaction. Per-row UpsertLogIndex auto-commits each
+// statement through the engine, which caps batch PLG appends at per-row
+// transaction cost.
+func (s *FlatSQLStore) UpsertLogIndexBatch(publisherPeerID, schemaType string, rows []LogIndexRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin log index batch: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	stmt, err := tx.Prepare(`
+		INSERT INTO sdn_log_index (
+			publisher_peer_id, schema_type, sequence, entry_hash, record_cid, plg_cid, epoch_day, timestamp
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(publisher_peer_id, schema_type, sequence) DO UPDATE SET
+			entry_hash = excluded.entry_hash,
+			record_cid = excluded.record_cid,
+			plg_cid = excluded.plg_cid,
+			epoch_day = excluded.epoch_day,
+			timestamp = excluded.timestamp
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare log index upsert: %w", err)
+	}
+	defer stmt.Close()
+	for _, row := range rows {
+		if _, err := stmt.Exec(publisherPeerID, schemaType, row.Sequence, row.EntryHash, row.RecordCID, row.PLGCID, row.EpochDay, row.Timestamp); err != nil {
+			return fmt.Errorf("upsert log index seq %d: %w", row.Sequence, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit log index batch: %w", err)
+	}
+	committed = true
+	return nil
+}
+
 // GetLogHead returns the latest sequence and entry hash for a (publisher, schema) log.
 func (s *FlatSQLStore) GetLogHead(publisherPeerID, schemaType string) (uint64, string, error) {
 	s.mu.RLock()
@@ -7728,7 +7792,10 @@ func (s *FlatSQLStore) QueryLogEntries(publisherPeerID, schemaType string, since
 	if limit > 1000 {
 		limit = 1000
 	}
-	plgTableName, err := s.recordReadSource("PLG.fbs")
+	// Publication log entries live under PLOG.fbs (PLG.fbs is the Plugin
+	// Manifest standard — joining it here returned zero entries for every
+	// log sync).
+	plgTableName, err := s.recordReadSource("PLOG.fbs")
 	if err != nil {
 		return nil, fmt.Errorf("invalid PLG schema name: %w", err)
 	}
