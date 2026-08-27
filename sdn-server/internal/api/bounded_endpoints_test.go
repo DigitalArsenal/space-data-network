@@ -15,18 +15,32 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-// gateLoadAverage reports the 1-minute load average the gate saw when it
-// started this package, or 0 when the tests were not run through the gate.
-// graph/gauntlet/go-tier.mjs exports GO_TIER_LOADAVG1 for exactly this: a test
-// whose premise is a wall-clock window has to be able to say whether the box
-// was in a position to honour it (gauntlet-go-host-tier-tests-fail-under-
-// machine-load, 2026-08-27).
-func gateLoadAverage() float64 {
-	v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("GO_TIER_LOADAVG1")), 64)
-	if err != nil || v < 0 {
-		return 0
+// gateLoad reports what the gate saw when it started this package: the 1-minute
+// load average, the core count, and the ratio between them. Zero when the tests
+// were not run through the gate. graph/gauntlet/go-tier.mjs exports
+// GO_TIER_LOADAVG1 / GO_TIER_NCPU / GO_TIER_LOAD_RATIO for exactly this — a
+// test whose premise is a wall-clock window has to be able to say whether the
+// box was in a position to honour it.
+//
+// The ratio is the number that matters. This box is a 28-core Mac Studio, where
+// a loadavg of 20 is 71 % utilisation: BUSY, not starved. A test that flips
+// there is simply wrong (owner 2026-08-27), so nothing here treats mere
+// business as an excuse — only genuine oversubscription does.
+func gateLoad() (loadavg1 float64, ncpu float64, ratio float64) {
+	envFloat := func(k string) float64 {
+		v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(k)), 64)
+		if err != nil || v < 0 {
+			return 0
+		}
+		return v
 	}
-	return v
+	loadavg1 = envFloat("GO_TIER_LOADAVG1")
+	ncpu = envFloat("GO_TIER_NCPU")
+	ratio = envFloat("GO_TIER_LOAD_RATIO")
+	if ratio == 0 && ncpu > 0 {
+		ratio = loadavg1 / ncpu
+	}
+	return loadavg1, ncpu, ratio
 }
 
 // These tests pin the WIRING: the two anonymous store-backed surfaces really
@@ -183,10 +197,11 @@ func TestStatsReportsItsOwnStaleness(t *testing.T) {
 		}
 	}
 	if first == nil {
+		load, ncpu, ratio := gateLoad()
 		t.Skipf("the bounded-read windows (budget %v, refresh %v) never held across %d attempts on this box "+
-			"(last first-read stale=%v, gate 1-min loadavg %.2f): the scheduler, not handleStats, decided the timing — "+
-			"nothing here is attributable to the candidate",
-			storeReadBudget, storeReadMinRefresh, attempts, firstStale, gateLoadAverage())
+			"(last first-read stale=%v; gate 1-min loadavg %.2f on %.0f cores = %.0f%%): the scheduler, not handleStats, "+
+			"decided the timing — nothing here is attributable to the candidate",
+			storeReadBudget, storeReadMinRefresh, attempts, firstStale, load, ncpu, ratio*100)
 	}
 
 	if first["as_of"] == nil {
