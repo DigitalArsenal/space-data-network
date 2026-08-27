@@ -42,10 +42,12 @@ type KeySlot struct {
 	Rotatable bool `json:"rotatable"`
 	// Reason explains a false Rotatable to the operator.
 	Reason string `json:"reason,omitempty"`
-	// XPubDerivable records whether a verifier can reconstruct this key from
-	// the published xpub. Both slots here are; the node's ed25519 record-signing
-	// key is NOT, which is why it is not offered as a rotatable slot (see
-	// §17.8 and the note on KeySlots below).
+	// XPubDerivable records whether this key's path is one an escrow/recovery
+	// holder can reconstruct from the operator's private xpub. Under §21 the xpub
+	// is no longer published, so this is a console-only operator-facing fact, not
+	// a verifier-facing one. Both slots here are derivable; the node's ed25519
+	// record-signing key is NOT, which is why it is not offered as a rotatable
+	// slot (see the note on KeySlots below).
 	XPubDerivable bool `json:"xpub_derivable"`
 }
 
