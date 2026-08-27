@@ -164,7 +164,9 @@ func openDatasetPNMStore() (*storage.FlatSQLStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize schema validator: %w", err)
 	}
-	store, err := openStoreForReading(cfg.Storage.Path, validator)
+	// dataset-pnm reads RECORDS (QueryRecentRecords -> recordReadSource over the
+	// per-producer control tables), so the record catalog must be hydrated.
+	store, err := openStoreForReading(cfg.Storage.Path, validator, storeReadNeeds{recordCatalog: true})
 	if err != nil {
 		return nil, err
 	}
