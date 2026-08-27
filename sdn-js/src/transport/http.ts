@@ -114,6 +114,27 @@ export function* iterateSizePrefixedFrames(stream: Uint8Array): Generator<Uint8A
   }
 }
 
+/**
+ * Encode records as an aligned size-prefixed FlatBuffer record stream — the
+ * exact inverse of `iterateSizePrefixedFrames`. Same u32 little-endian prefix
+ * everywhere: engine, server (`binary.LittleEndian.Uint32`), and this client.
+ * `iterateSizePrefixedFrames(encodeSizePrefixedFrames(x))` yields `x`.
+ */
+export function encodeSizePrefixedFrames(records: readonly Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const rec of records) total += 4 + rec.byteLength;
+  const stream = new Uint8Array(total);
+  const view = new DataView(stream.buffer);
+  let offset = 0;
+  for (const rec of records) {
+    view.setUint32(offset, rec.byteLength, true);
+    offset += 4;
+    stream.set(rec, offset);
+    offset += rec.byteLength;
+  }
+  return stream;
+}
+
 /** Result of a publish operation. */
 export interface PublishResult {
   cid: string;
@@ -443,21 +464,9 @@ export class HttpTransport {
     return resp.json();
   }
 
-  /** Publish multiple records as a uint32BE-length-prefixed stream. */
+  /** Publish multiple records as a size-prefixed FlatBuffer record stream. */
   async publishBatch(schema: string, records: Uint8Array[]): Promise<BatchPublishResult> {
-    // Build length-prefixed stream
-    let totalLen = 0;
-    for (const rec of records) totalLen += 4 + rec.length;
-
-    const stream = new Uint8Array(totalLen);
-    const view = new DataView(stream.buffer);
-    let offset = 0;
-    for (const rec of records) {
-      view.setUint32(offset, rec.length, false); // big-endian
-      offset += 4;
-      stream.set(rec, offset);
-      offset += rec.length;
-    }
+    const stream = encodeSizePrefixedFrames(records);
 
     const resp = await this.fetch(`/api/v1/data/publish/batch/${encodeURIComponent(schema)}`, {
       method: 'POST',
