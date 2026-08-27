@@ -25,16 +25,32 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-// gateLoadAverage reports the 1-minute load average the gate saw when it
-// started this package, or 0 when the tests were not run through the gate.
-// graph/gauntlet/go-tier.mjs exports GO_TIER_LOADAVG1 for exactly this
-// purpose (gauntlet-go-host-tier-tests-fail-under-machine-load, 2026-08-27).
-func gateLoadAverage() float64 {
-	v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("GO_TIER_LOADAVG1")), 64)
-	if err != nil || v < 0 {
-		return 0
+// gateLoad reports what the gate saw when it started this package: the 1-minute
+// load average, the core count, and the ratio between them. Zero when the tests
+// were not run through the gate. graph/gauntlet/go-tier.mjs exports
+// GO_TIER_LOADAVG1 / GO_TIER_NCPU / GO_TIER_LOAD_RATIO for exactly this — a
+// test whose premise is a wall-clock window has to be able to say whether the
+// box was in a position to honour it.
+//
+// The ratio is the number that matters. This box is a 28-core Mac Studio, where
+// a loadavg of 20 is 71 % utilisation: BUSY, not starved. A test that flips
+// there is simply wrong (owner 2026-08-27), so nothing here treats mere
+// business as an excuse — only genuine oversubscription does.
+func gateLoad() (loadavg1 float64, ncpu float64, ratio float64) {
+	envFloat := func(k string) float64 {
+		v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(k)), 64)
+		if err != nil || v < 0 {
+			return 0
+		}
+		return v
 	}
-	return v
+	loadavg1 = envFloat("GO_TIER_LOADAVG1")
+	ncpu = envFloat("GO_TIER_NCPU")
+	ratio = envFloat("GO_TIER_LOAD_RATIO")
+	if ratio == 0 && ncpu > 0 {
+		ratio = loadavg1 / ncpu
+	}
+	return loadavg1, ncpu, ratio
 }
 
 // libp2pTestContext bounds two in-process libp2p host constructions, a loopback
@@ -46,7 +62,8 @@ func gateLoadAverage() float64 {
 // so a genuine hang is still caught.
 func libp2pTestContext(t *testing.T, base time.Duration) (context.Context, context.CancelFunc) {
 	t.Helper()
-	factor := 1 + gateLoadAverage()/4
+	_, _, ratio := gateLoad()
+	factor := 1 + 4*ratio
 	if factor > 8 {
 		factor = 8
 	}
@@ -64,8 +81,10 @@ func libp2pStepFailed(t *testing.T, step string, err error) {
 		strings.Contains(err.Error(), "context deadline exceeded") ||
 		strings.Contains(err.Error(), "i/o timeout")
 	if starved {
-		t.Skipf("%s blew its deadline at gate 1-min loadavg %.2f: the scheduler, not the sync protocol, "+
-			"decided this timing — nothing here is attributable to the candidate (%v)", step, gateLoadAverage(), err)
+		load, ncpu, ratio := gateLoad()
+		t.Skipf("%s blew its deadline at gate 1-min loadavg %.2f on %.0f cores (%.0f%%): the scheduler, not the sync "+
+			"protocol, decided this timing — nothing here is attributable to the candidate (%v)",
+			step, load, ncpu, ratio*100, err)
 	}
 	t.Fatalf("%s failed: %v", step, err)
 }
