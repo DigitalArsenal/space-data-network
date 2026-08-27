@@ -498,11 +498,20 @@ export {
   HttpTransport,
   FLATBUFFER_STREAM_CONTENT_TYPE,
   iterateSizePrefixedFrames,
+  iterateSizePrefixedFrameStream,
+  encodeSizePrefixedFrames,
   DEFAULT_APPS_PATH,
   APP_RECORD_PATH_PREFIX,
   APP_RECORD_CONTENT_TYPE,
 } from './transport/http';
-export type { LogHeadInfo, HttpTransportOptions } from './transport/http';
+export type {
+  LogHeadInfo,
+  HttpTransportOptions,
+  ByteStreamSource,
+  DataQueryFrameStreamResult,
+  PublishStreamOptions,
+  StreamPublishResult,
+} from './transport/http';
 // Default-$APP discovery (owner ruling 2026-08-04): every SDN runtime has a
 // default app — the Dashboard on a server node, the Orbital Console in this
 // browser client — and each links to the other.

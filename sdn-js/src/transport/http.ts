@@ -135,6 +135,119 @@ export function encodeSizePrefixedFrames(records: readonly Uint8Array[]): Uint8A
   return stream;
 }
 
+/** Byte source for the incremental frame decoder. */
+export type ByteStreamSource =
+  | ReadableStream<Uint8Array>
+  | AsyncIterable<Uint8Array>
+  | Iterable<Uint8Array>;
+
+/**
+ * Incrementally decode an aligned size-prefixed FlatBuffer record stream
+ * (same u32 LE wire format as `iterateSizePrefixedFrames`) from a byte
+ * source, without buffering the whole stream. Frames contained in a single
+ * chunk are yielded as zero-copy subarray views; a frame that spans chunks is
+ * assembled once. Ending mid-prefix or mid-frame throws; ending on a frame
+ * boundary is the clean end of the stream.
+ *
+ * Accepts a WHATWG `ReadableStream` (a `fetch` response body in browsers and
+ * Node alike — read via `getReader()`, never async iteration, which Safari
+ * does not implement) or any async iterable of byte chunks.
+ */
+export async function* iterateSizePrefixedFrameStream(
+  source: ByteStreamSource,
+): AsyncGenerator<Uint8Array, void, undefined> {
+  const chunks = byteChunks(source);
+  // Unconsumed remainder of the most recent chunk.
+  let head: Uint8Array | null = null;
+  let index = 0;
+
+  const nextChunk = async (): Promise<Uint8Array | null> => {
+    if (head !== null && head.byteLength > 0) {
+      const h = head;
+      head = null;
+      return h;
+    }
+    head = null;
+    for (;;) {
+      const { done, value } = await chunks.next();
+      if (done) return null;
+      if (value !== undefined && value.byteLength > 0) return value;
+    }
+  };
+
+  // Read exactly n bytes; null only when the stream ends BEFORE the first
+  // byte, so the caller can tell a clean end from a truncation.
+  const take = async (n: number, what: string): Promise<Uint8Array | null> => {
+    const first = await nextChunk();
+    if (first === null) return null;
+    if (first.byteLength >= n) {
+      head = first.subarray(n);
+      return first.subarray(0, n);
+    }
+    const out = new Uint8Array(n);
+    let filled = 0;
+    let chunk: Uint8Array | null = first;
+    while (chunk !== null) {
+      const use = Math.min(n - filled, chunk.byteLength);
+      out.set(chunk.subarray(0, use), filled);
+      filled += use;
+      if (filled === n) {
+        head = chunk.subarray(use);
+        return out;
+      }
+      chunk = await nextChunk();
+    }
+    throw new Error(`Invalid FlatBuffer record stream: truncated ${what} at frame ${index}`);
+  };
+
+  try {
+    for (;;) {
+      const prefix = await take(4, 'frame header');
+      if (prefix === null) return;
+      const length =
+        ((prefix[0] as number) |
+          ((prefix[1] as number) << 8) |
+          ((prefix[2] as number) << 16) |
+          ((prefix[3] as number) << 24)) >>>
+        0;
+      if (length === 0) {
+        yield new Uint8Array(0);
+        index += 1;
+        continue;
+      }
+      const frame = await take(length, 'frame');
+      if (frame === null) {
+        throw new Error(`Invalid FlatBuffer record stream: truncated frame at index ${index}`);
+      }
+      yield frame;
+      index += 1;
+    }
+  } finally {
+    // A consumer that stops early closes the byte source too, so an
+    // underlying fetch body is cancelled rather than left downloading.
+    await chunks.return(undefined).catch(() => {});
+  }
+}
+
+async function* byteChunks(source: ByteStreamSource): AsyncGenerator<Uint8Array, void, undefined> {
+  if (typeof (source as ReadableStream<Uint8Array>).getReader === 'function') {
+    const reader = (source as ReadableStream<Uint8Array>).getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        if (value !== undefined) yield value;
+      }
+    } finally {
+      // No-op after a clean end; on early exit it cancels the transfer.
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  } else {
+    yield* source as AsyncIterable<Uint8Array> & Iterable<Uint8Array>;
+  }
+}
+
 /** Result of a publish operation. */
 export interface PublishResult {
   cid: string;
@@ -149,6 +262,38 @@ export interface BatchPublishResult {
   stored_at: string;
   count: number;
   results: Array<{ cid?: string; error?: string; bytes: number }>;
+}
+
+/** Options for `publishBatchStream`. */
+export interface PublishStreamOptions {
+  /**
+   * Framed-payload budget per HTTP request. Default 8 MiB — under the
+   * server's batch body cap (10x its max record size) at any sane config.
+   */
+  maxBytesPerRequest?: number;
+  /** Record-count budget per HTTP request. Default 5000. */
+  maxRecordsPerRequest?: number;
+}
+
+/** Aggregate result of a streamed publish. */
+export interface StreamPublishResult extends BatchPublishResult {
+  /** Number of HTTP requests the stream was carried over. */
+  requests: number;
+}
+
+/**
+ * Incremental FlatBuffer-stream query result (`streamData`): frames arrive as
+ * the response body streams in, nothing is buffered whole.
+ */
+export interface DataQueryFrameStreamResult {
+  format: 'flatbuffers';
+  status: number;
+  notModified: boolean;
+  etag: string | null;
+  /** `X-SDN-Record-Count` header (0 when absent / not modified). */
+  recordCount: number;
+  /** Incremental frame iterator over the streaming response body. */
+  frames: AsyncGenerator<Uint8Array, void, undefined>;
 }
 
 /** Log head response from GET /api/v1/log/{schema}/head. */
@@ -382,6 +527,7 @@ export class HttpTransport {
    * is the opt-in edge adapter (`format: 'json'`). Pass `ifNoneMatch` with
    * a previously returned `etag` to make the request conditional; a 304
    * comes back as `notModified: true` — serve the local engine store copy.
+   * For pulls too large to buffer whole, use `streamData`.
    */
   async queryData(opts: DataQueryOptions & { format: 'json' }): Promise<DataQueryJsonResult>;
   async queryData(opts: DataQueryOptions & { format?: 'flatbuffers' }): Promise<DataQueryStreamResult>;
@@ -474,6 +620,93 @@ export class HttpTransport {
       body: stream.buffer as ArrayBuffer,
     });
     return resp.json();
+  }
+
+  /**
+   * Query data as an INCREMENTAL frame stream — `queryData` without the
+   * whole-body buffer. Frames are yielded as the response streams in, so a
+   * multi-gigabyte pull holds one chunk at a time, not the payload. Same
+   * endpoint, wire format, ETag/304 contract as `queryData`.
+   */
+  async streamData(opts: Omit<DataQueryOptions, 'format'>): Promise<DataQueryFrameStreamResult> {
+    const params = new URLSearchParams();
+    if (opts.source) params.set('source', opts.source);
+    if (opts.profile) params.set('profile', opts.profile);
+    if (opts.epoch !== undefined && opts.epoch !== null) params.set('epoch', String(opts.epoch));
+    if (opts.limit && opts.limit > 0) params.set('limit', String(Math.floor(opts.limit)));
+    const qs = params.toString();
+    const path = `${dataBulkPath(opts.schema)}${qs ? '?' + qs : ''}`;
+    const headers: Record<string, string> = { Accept: FLATBUFFER_STREAM_CONTENT_TYPE };
+    if (opts.ifNoneMatch) headers['If-None-Match'] = opts.ifNoneMatch;
+
+    const resp = await this.fetch(path, { headers }, { allowStatuses: [304] });
+    const etag = resp.headers?.get?.('etag') ?? null;
+    const notModified = resp.status === 304;
+    const recordCountHeader = resp.headers?.get?.('x-sdn-record-count');
+    const recordCount = recordCountHeader ? Number.parseInt(recordCountHeader, 10) || 0 : 0;
+
+    const body = notModified ? null : resp.body;
+    const frames = body
+      ? iterateSizePrefixedFrameStream(body)
+      : (async function* (): AsyncGenerator<Uint8Array, void, undefined> {
+          // 304, or a fetch shim without response-body streaming: fall back
+          // to the buffered stream — same frames, one allocation.
+          if (notModified) return;
+          yield* iterateSizePrefixedFrames(new Uint8Array(await resp.arrayBuffer()));
+        })();
+
+    return { format: 'flatbuffers', status: resp.status, notModified, etag, recordCount, frames };
+  }
+
+  /**
+   * Publish a stream of records — `publishBatch` for an unbounded source.
+   * Accepts any sync or async iterable of record buffers, carries them in
+   * size-bounded sub-batches of the SAME size-prefixed wire format, and
+   * aggregates the per-record results. Bounded requests keep every sub-batch
+   * under the server's batch body cap and work identically in every runtime —
+   * no reliance on request-body streaming, which browsers do not agree on.
+   */
+  async publishBatchStream(
+    schema: string,
+    records: Iterable<Uint8Array> | AsyncIterable<Uint8Array>,
+    opts?: PublishStreamOptions,
+  ): Promise<StreamPublishResult> {
+    const maxBytes = opts?.maxBytesPerRequest ?? 8 * 1024 * 1024;
+    const maxRecords = opts?.maxRecordsPerRequest ?? 5000;
+
+    const aggregate: StreamPublishResult = {
+      schema,
+      stored_at: '',
+      count: 0,
+      results: [],
+      requests: 0,
+    };
+    let pending: Uint8Array[] = [];
+    let pendingBytes = 0;
+
+    const flush = async (): Promise<void> => {
+      if (pending.length === 0) return;
+      const res = await this.publishBatch(schema, pending);
+      aggregate.stored_at = res.stored_at;
+      aggregate.count += res.count;
+      aggregate.results.push(...res.results);
+      aggregate.requests += 1;
+      pending = [];
+      pendingBytes = 0;
+    };
+
+    for await (const rec of records) {
+      if (
+        pending.length > 0 &&
+        (pendingBytes + 4 + rec.byteLength > maxBytes || pending.length >= maxRecords)
+      ) {
+        await flush();
+      }
+      pending.push(rec);
+      pendingBytes += 4 + rec.byteLength;
+    }
+    await flush();
+    return aggregate;
   }
 
   /** Get log head for a publisher+schema. */
