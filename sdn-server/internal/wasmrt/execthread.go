@@ -195,6 +195,17 @@ func (m *Module) RunOnExecThread(ctx context.Context, fn func(GuestCaller) error
 	}
 }
 
+// ExecTimeout reports this module's per-call wall-clock budget (0 = none).
+// Exposed so a host can say, in its own logs, how much room a long-running
+// call has left before the dedicated thread is abandoned and the instance is
+// poisoned.
+func (m *Module) ExecTimeout() time.Duration {
+	if m == nil {
+		return 0
+	}
+	return m.execTimeout
+}
+
 // runBatchBody runs the caller's unit of work, converting a panic into a
 // poisoned module and a returned error.
 //
@@ -267,8 +278,10 @@ func (s *ExecScope) ReadCString(ptr, maxLen uint32) (string, error) {
 
 // Allocation DOES dispatch (malloc/free are guest exports), so these route
 // through this scope's in-place Execute rather than the module's handoff.
-func (s *ExecScope) Allocate(data []byte) (uint32, error)      { return allocateVia(s, data) }
-func (s *ExecScope) AllocateSize(size uint32) (uint32, error)  { return allocateSizeVia(s, s.m.mallocName, size) }
+func (s *ExecScope) Allocate(data []byte) (uint32, error) { return allocateVia(s, data) }
+func (s *ExecScope) AllocateSize(size uint32) (uint32, error) {
+	return allocateSizeVia(s, s.m.mallocName, size)
+}
 func (s *ExecScope) AllocateString(str string) (uint32, error) { return allocateStringVia(s, str) }
 func (s *ExecScope) Deallocate(ptr uint32)                     { s.Execute(s.m.freeName, int32(ptr)) }
 func (s *ExecScope) SecureDeallocate(ptr, size uint32) {

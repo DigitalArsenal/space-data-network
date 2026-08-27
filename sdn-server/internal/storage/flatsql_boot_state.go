@@ -396,7 +396,10 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 		// source list (which must be registered before the real database's
 		// first query) are answers about the file's existing contents, and
 		// asking the real database would BE that first query.
+		probeStart := time.Now()
 		plan := probeControlDatabase(basePath, dbPath)
+		log.Infof("FlatSQL boot phase \"boot: probe control database (second engine, schema read)\" took %s",
+			time.Since(probeStart).Round(time.Millisecond))
 
 		engine, err := flatsqlrt.New(
 			flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()),
@@ -406,8 +409,13 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 			return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 		}
 
+		engine.SetPhase("boot: open control database for writing")
+		openStart := time.Now()
 		engineDB, mark, warm, err := tryOpenControlDatabase(engine, dbPath,
 			engineSchemaTextExcluding(plan.Excluded), enginePrepare(plan))
+		engine.SetPhase("")
+		log.Infof("FlatSQL boot phase \"boot: open control database for writing\" took %s (views already current: %v)",
+			time.Since(openStart).Round(time.Millisecond), plan.ViewsCurrent)
 		if err == nil {
 			resume := bootResume{}
 			if decideResume != nil {
@@ -825,6 +833,14 @@ func (s *FlatSQLStore) finishEngineSourceSetup(plan engineBootPlan) error {
 		log.Infof("FlatSQL boot: %d engine source registration(s) restored; unified views already current", len(s.engineSources))
 		return nil
 	}
+	// MEASURED, NOT ASSUMED (2026-08-27, host-02's real store: 226 routed
+	// standards, 9 registered sources, 2,034 shadow partitions, AOT). This was
+	// the leading suspect for the boot poison — one guest call whose work is
+	// quadratic in (standards x sources) — and it is NOT: the all-at-once call
+	// rebuilds every view in 391 ms, and a host-side per-standard rebuild of
+	// the same 226 views took 732 ms. It stays as it is. The statement that
+	// actually poisoned the engine was the hot-window read
+	// (engine_records.go), and it is fixed there.
 	if err := s.rebuildUnifiedViews(); err != nil {
 		log.Warnf("FlatSQL boot: rebuild unified views over %d engine source(s): %v", len(s.engineSources), err)
 		return nil

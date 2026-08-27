@@ -177,6 +177,11 @@ type Runtime struct {
 
 	// dispatchLogStop ends the periodic guest-call account (startDispatchLog).
 	dispatchLogStop chan struct{}
+
+	// The in-flight statement + phase, so a poisoned engine names the SQL
+	// that poisoned it instead of the bare "(batch)" dispatch label. See
+	// inflight.go.
+	inFlightState
 }
 
 // FileIO returns this runtime's host file layer, or nil when the engine was
@@ -878,8 +883,13 @@ func (d *Database) RegisterSource(source string) error {
 func (d *Database) CreateUnifiedViews() error {
 	d.rt.mod.Lock()
 	defer d.rt.mod.Unlock()
+	// ONE GUEST CALL FOR EVERY ROUTED STANDARD. It is all-or-nothing by
+	// construction (the guest drops and recreates the whole set), so it is
+	// also the single unbounded call on the boot path: it scales with the
+	// store, and the engine's per-call budget does not. Name it while it runs.
+	defer d.rt.beginInFlight("flatsql_create_unified_views (all routed standards, one guest call)")()
 	if _, err := d.rt.mod.Execute("flatsql_create_unified_views", int32(d.handle)); err != nil {
-		return d.rt.execErr("flatsql_create_unified_views", err)
+		return d.rt.attributeExecErr(d.rt.execErr("flatsql_create_unified_views", err))
 	}
 	return nil
 }
@@ -1033,7 +1043,11 @@ func (d *Database) Query(sql string, params ...interface{}) (*Result, error) {
 	d.rt.mod.Lock()
 	waited := time.Since(queued)
 	started := time.Now()
+	// Published BEFORE dispatch, cleared after: the statement that never
+	// returns is exactly the one accountQuery can never report (inflight.go).
+	endInFlight := d.rt.beginInFlight(sql)
 	defer func() {
+		endInFlight()
 		d.rt.mod.Unlock()
 		d.rt.accountQuery(sql, waited, time.Since(started))
 	}()
@@ -1131,6 +1145,11 @@ func collapseSQL(sql string) string {
 
 // execQuery runs flatsql_query or flatsql_query_params. Lock must be held.
 func (d *Database) execQuery(inv wasmrt.GuestCaller, sql string, params []interface{}) error {
+	// Callers that enter a batch under a coarse label (QueryMany, raw-stream)
+	// get the exact statement attributed here.
+	if _, cur, _, ok := d.rt.InFlight(); !ok || cur == "" {
+		defer d.rt.beginInFlight(sql)()
+	}
 	sqlPtr, err := d.rt.allocCStringVia(inv, sql)
 	if err != nil {
 		return err
@@ -1317,6 +1336,7 @@ func (d *Database) RegisterQueryTemplate(queryID, sql string, cacheable bool) er
 func (d *Database) QueryTemplate(queryID string, params ...interface{}) (*Result, error) {
 	d.rt.mod.Lock()
 	defer d.rt.mod.Unlock()
+	defer d.rt.beginInFlight("template:" + queryID)()
 
 	var out *Result
 	err := d.rt.mod.RunOnExecThread(context.Background(), func(inv wasmrt.GuestCaller) error {

@@ -67,6 +67,34 @@ const (
 // by engine-bytes hash inside, so it is shared safely across datastores and
 // processes; compiling per-datastore would redo a ~35 s LLVM compile for
 // every store open (and every test).
+// enginePageCacheEnv names the operator override for the control database's
+// SQLite page cache, in MiB.
+const enginePageCacheEnv = "SDN_FLATSQL_PAGE_CACHE_MIB"
+
+// defaultEnginePageCacheMiB is the page cache the control database opens with.
+//
+// 256 MiB against a 10.7 GB database is still a small fraction of it, but it is
+// two orders of magnitude more than SQLite's ~2 MB default and it is what makes
+// an index-driven statement over millions of rows stop thrashing the host-IO
+// shim. It lives inside the engine's linear memory, which is bounded at 4 GiB.
+const defaultEnginePageCacheMiB = 256
+
+// resolveEnginePageCacheMiB returns the configured page cache in MiB. 0
+// disables the override and leaves SQLite's default in place.
+func resolveEnginePageCacheMiB() int {
+	raw := strings.TrimSpace(os.Getenv(enginePageCacheEnv))
+	if raw == "" {
+		return defaultEnginePageCacheMiB
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		log.Warnf("FlatSQL control database: ignoring %s=%q (%v); using %d MiB",
+			enginePageCacheEnv, raw, err, defaultEnginePageCacheMiB)
+		return defaultEnginePageCacheMiB
+	}
+	return n
+}
+
 func engineAOTCacheDir() string {
 	if base, err := os.UserCacheDir(); err == nil {
 		return filepath.Join(base, engineAOTCacheDirName)
@@ -196,6 +224,10 @@ type FlatSQLStore struct {
 	// read-only opens, and any host whose engine could not reach a filesystem,
 	// re-derive the whole catalog at boot exactly as they always did.
 	// See flatsql_boot_state.go.
+	// bootBudget times each boot phase against the engine's per-call budget
+	// (boot_phase_budget.go); nil outside boot.
+	bootBudget *bootPhaseBudget
+
 	controlDBDurable bool
 	// controlDBPath is the engine's own database file — deliberately NOT
 	// dbPath, which still names the legacy v1 database the migration reads.
@@ -461,7 +493,14 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 			return nil, fmt.Errorf("failed to recover pending stream compaction: %w", err)
 		}
 	}
+	// PRE-ENGINE PHASES ARE TIMED TOO. They cannot poison the engine (no guest
+	// call crosses here), but on host-02 the wall clock from process start to
+	// the engine-mode line was 2m14s, and until now nothing said which of these
+	// four steps owned it.
+	journalOpenStart := time.Now()
 	recordCatalog, err := openRecordCatalogJournal(filepath.Join(basePath, recordCatalogJournalFileName), readOnly)
+	log.Infof("FlatSQL boot phase \"boot: open record-catalog journal (CRC-valid prefix scan)\" took %s",
+		time.Since(journalOpenStart).Round(time.Millisecond))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open record catalog journal: %w", err)
 	}
@@ -476,7 +515,10 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// record-catalog journal is: the warm/cold decision needs BOTH journals in
 	// hand, because both marks live in the control database and verifying either
 	// one means fingerprinting its file.
+	auxOpenStart := time.Now()
 	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), readOnly)
+	log.Infof("FlatSQL boot phase \"boot: open auxiliary metadata journal\" took %s",
+		time.Since(auxOpenStart).Round(time.Millisecond))
 	if auxiliaryMetadata != nil {
 		auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
 	}
@@ -494,6 +536,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// A zero resume offset comes back with a GUARANTEED-EMPTY database, because
 	// a from-zero replay only rebuilds correctly into empty tables (see
 	// openControlEngine).
+	controlOpenStart := time.Now()
 	engine, engineDB, resume, bootPlan, err := openControlEngine(basePath, controlDBPath, readOnly,
 		func(mark bootMark, warm bool) bootResume {
 			catalog := resumeOffset(mark, warm, recordCatalog)
@@ -503,6 +546,8 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 				Keep:      controlDatabaseMayBeKept(catalog, warm, recordCatalog),
 			}
 		})
+	log.Infof("FlatSQL boot phase \"boot: probe + open control database\" took %s",
+		time.Since(controlOpenStart).Round(time.Millisecond))
 	if err != nil {
 		return nil, err
 	}
@@ -539,19 +584,50 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// already did it for a store whose persisted sources were pre-registered,
 	// and RegisterFileID is idempotent, so re-running it is a cheap no-op
 	// either way.
+	// EVERY BOOT PHASE IS NOW TIMED AGAINST THE ENGINE'S OWN PER-CALL BUDGET
+	// (boot_phase_budget.go). A phase that crosses it in one call abandons the
+	// execution thread and poisons the node until a human intervenes, and the
+	// only reason that was ever a surprise is that nothing measured it.
+	bootBudget := newBootPhaseBudget(engine)
+	endPhase := bootBudget.phase("boot: register engine file identifiers")
 	if err := registerEngineFileIDs(engineDB, bootPlan.Excluded); err != nil {
+		endPhase()
 		engine.Close()
 		return nil, fmt.Errorf("failed to register engine file identifiers: %w", err)
 	}
+	endPhase()
 	// An exclusion is only real once the view a previous boot wrote for that
 	// standard is gone; until then every plain-table path resolves the view
 	// and answers `no such module`.
+	endPhase = bootBudget.phase("boot: drop leftover views for unrouted standards")
 	if err := dropExcludedStandardViews(engineDB, bootPlan.Excluded); err != nil {
+		endPhase()
 		engine.Close()
 		return nil, fmt.Errorf("failed to clear leftover unified views for unrouted standards: %w", err)
 	}
+	endPhase()
 
 	db := flatsqldrv.Open(engineDB)
+
+	// THE PAGE CACHE IS A CONNECTOR SETTING AND NOTHING WAS SETTING IT.
+	//
+	// SQLite's default page cache is ~2 MB. The control database on host-02 is
+	// 10.7 GB with 3.5M record-index rows and 5.7M source-tag rows, and every
+	// cache miss is a page read back through the engine's wasm host-IO shim.
+	// A statement whose working set does not fit re-reads the same index pages
+	// thousands of times, which is how a query that native SQLite answers in
+	// 0.97 s held the engine for 5m0s and poisoned it.
+	//
+	// Sized in MiB, overridable per box, and applied BEFORE the first real
+	// statement. Negative cache_size means "kibibytes", not "pages", so the
+	// bound holds whatever the page size is.
+	if mib := resolveEnginePageCacheMiB(); mib > 0 {
+		if _, err := db.Exec(fmt.Sprintf("PRAGMA cache_size = -%d", mib*1024)); err != nil {
+			log.Warnf("FlatSQL control database: could not raise the page cache to %d MiB (%v) — large-store statements will re-read pages through the host shim", mib, err)
+		} else {
+			log.Infof("FlatSQL control database: page cache %d MiB (%s)", mib, enginePageCacheEnv)
+		}
+	}
 
 	// Enable foreign keys
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
@@ -622,18 +698,25 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	}
 
 	// Initialize tables for all schemas
+	store.bootBudget = bootBudget
+	endPhase = bootBudget.phase("boot: initTables (control schema, indexes, legacy migrations)")
 	if err := store.initTables(); err != nil {
+		endPhase()
 		store.Close()
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
+	endPhase()
 	// Complete engine source bring-up: the runtime half of every persisted
 	// source was restored before the database's first query (enginePrepare);
 	// this guarantees a default partition on an empty store and rebuilds the
 	// unified views only when they are not already current.
+	endPhase = bootBudget.phase("boot: engine source setup + unified-view rebuild")
 	if err := store.finishEngineSourceSetup(bootPlan); err != nil {
+		endPhase()
 		store.Close()
 		return nil, fmt.Errorf("failed to complete engine source setup: %w", err)
 	}
+	endPhase()
 	// THE AUXILIARY REPLAY STAYS ON THE CRITICAL PATH, DELIBERATELY.
 	//
 	// It was tempting to give it a `deferAux` sibling to
@@ -653,7 +736,9 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// (it now replays only the tail) plus chunk transactions (it no longer pays
 	// an fsync per event). Both are in auxiliary_metadata.go.
 	auxReplayStart := time.Now()
+	endPhase = bootBudget.phase("boot: auxiliary metadata replay")
 	auxApplied, auxThrough, err := auxiliaryMetadata.ReplayFrom(store, resume.Auxiliary)
+	endPhase()
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to replay auxiliary metadata: %w", err)
@@ -672,8 +757,10 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		log.Infof("FlatSQL store: deferred compact record-catalog replay at open")
 	} else {
 		replayStart := time.Now()
+		endPhase = bootBudget.phase("boot: record-catalog replay (synchronous)")
 		replayedThrough := recordCatalog.validLength()
 		applied, err := recordCatalog.ReplayFrom(store, store.bootResumeFrom.Swap(0))
+		endPhase()
 		if err != nil {
 			store.Close()
 			return nil, fmt.Errorf("failed to replay record catalog journal: %w", err)
@@ -694,10 +781,13 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	if cfg.deferBootRebuilds {
 		log.Infof("FlatSQL store: deferred derived source-summary and engine hot-window rebuilds at open")
 	} else {
+		endPhase = bootBudget.phase("boot: derived-state rebuild (source summaries + engine hot window)")
 		if err := store.RebuildDerivedState(); err != nil {
+			endPhase()
 			store.Close()
 			return nil, fmt.Errorf("failed to rebuild derived state: %w", err)
 		}
+		endPhase()
 	}
 
 	// Advance the mark to cover everything the boot just applied, then start the
@@ -715,6 +805,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		}
 	}
 
+	bootBudget.summary()
 	opened = true
 	return store, nil
 }
@@ -726,12 +817,25 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 func (s *FlatSQLStore) RebuildDerivedState() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.rebuildSourceSummariesFromDurableState(); err != nil {
+	// PHASE-STAMPED WHEREVER IT RUNS, not only at open. This is reachable from
+	// the store maintenance API and from every non-deferred open, so when it is
+	// the thing holding the single-threaded engine the log has to say so — it
+	// is the path whose CAT.fbs statement poisoned host-02's engine in
+	// rehearsal (sdn-boot-poisons-engine-on-a-large-store).
+	budget := newBootPhaseBudget(s.engine)
+	end := budget.phase("maintenance: source-summary rebuild")
+	err := s.rebuildSourceSummariesFromDurableState()
+	end()
+	if err != nil {
 		return fmt.Errorf("source summaries: %w", err)
 	}
-	if err := s.rebuildEngineRecords(); err != nil {
+	end = budget.phase("maintenance: engine hot-window rebuild")
+	err = s.rebuildEngineRecords()
+	end()
+	if err != nil {
 		return fmt.Errorf("engine records: %w", err)
 	}
+	budget.summary()
 	return nil
 }
 
