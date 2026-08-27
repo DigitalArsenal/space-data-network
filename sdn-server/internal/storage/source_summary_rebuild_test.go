@@ -589,12 +589,16 @@ func TestSourceSummaryLanesUsesIndexSeek(t *testing.T) {
 	defer store.Close()
 	seedSummaryFixture(t, store)
 
+	// THE STEP QUERY sourceSummaryLanesFromTags ACTUALLY RUNS. Provenance is
+	// interned (source_provenance.go), so the lane key on disk is
+	// (schema_name, provenance_id) and the seek runs over the slim rows alone;
+	// the provider/source/batch strings are resolved per LANE afterwards.
 	rows, err := store.db.Query(`EXPLAIN QUERY PLAN
-		SELECT schema_name, provider_id, source_name, batch_id
-		FROM sdn_record_source_tags
-		WHERE (schema_name, provider_id, source_name, batch_id) > (?, ?, ?, ?)
-		ORDER BY schema_name, provider_id, source_name, batch_id
-		LIMIT 1`, "", "", "", "")
+		SELECT schema_name, provenance_id
+		FROM `+sourceTagRowsTable+`
+		WHERE (schema_name, provenance_id) > (?, ?)
+		ORDER BY schema_name, provenance_id
+		LIMIT 1`, "", 0)
 	if err != nil {
 		t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
 	}
@@ -619,11 +623,14 @@ func TestSourceSummaryLanesUsesIndexSeek(t *testing.T) {
 	if joined == "" {
 		t.Fatal("EXPLAIN QUERY PLAN returned nothing")
 	}
-	if !strings.Contains(joined, "idx_sdn_record_source_tags_lookup") {
-		t.Fatalf("lane seek does not use idx_sdn_record_source_tags_lookup: %s", joined)
+	if !strings.Contains(joined, "SEARCH") {
+		t.Fatalf("lane seek is not a SEARCH: %s", joined)
 	}
-	if strings.Contains(joined, "SCAN sdn_record_source_tags") {
-		t.Fatalf("lane seek full-scans the tag table — this is the 43 s DISTINCT again: %s", joined)
+	if strings.Contains(joined, "SCAN "+sourceTagRowsTable) {
+		t.Fatalf("lane seek full-scans the tag rows — this is the 43 s DISTINCT again: %s", joined)
+	}
+	if strings.Contains(joined, "TEMP B-TREE") {
+		t.Fatalf("lane seek sorts instead of walking the key order: %s", joined)
 	}
 	t.Logf("lane seek plan: %s", joined)
 }

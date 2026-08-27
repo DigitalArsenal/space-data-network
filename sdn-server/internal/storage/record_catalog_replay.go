@@ -728,7 +728,11 @@ func recordCatalogIndexArgs(event recordCatalogEvent) []any {
 
 // insertSourceTagsBatch writes sdn_record_source_tags rows as multi-row upserts.
 func (s *FlatSQLStore) insertSourceTagsBatch(exec sqlExecer, events []recordCatalogEvent) error {
-	const cols = 10
+	// FOUR columns now, not ten: the seven provenance strings are interned
+	// once per distinct tuple (source_provenance.go) and the row carries the
+	// dictionary id. A replay batch of a million cellular records therefore
+	// binds one integer per row where it used to bind seven strings.
+	const cols = 4
 	perStatement := replayStatementRows(cols)
 	for start := 0; start < len(events); start += perStatement {
 		end := start + perStatement
@@ -738,10 +742,12 @@ func (s *FlatSQLStore) insertSourceTagsBatch(exec sqlExecer, events []recordCata
 		chunk := events[start:end]
 		args := make([]any, 0, len(chunk)*cols)
 		for _, event := range chunk {
-			tags := event.Tags
-			args = append(args, event.SchemaName, event.CID, tags.ProviderID, tags.SourceName,
-				tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID,
-				tags.ProducerPublicKey, event.CreatedAt)
+			tags := normalizeSourceTags(event.Tags)
+			provenanceID, err := s.provenanceIDTx(exec, tags)
+			if err != nil {
+				return err
+			}
+			args = append(args, event.SchemaName, event.CID, provenanceID, event.CreatedAt)
 			// THIS is the one tag write in the tree that does not maintain
 			// sdn_record_source_summary — the per-record writers both call
 			// incrementSourceSummary. Recording the lane is what lets the
@@ -756,13 +762,10 @@ func (s *FlatSQLStore) insertSourceTagsBatch(exec sqlExecer, events []recordCata
 			})
 		}
 		sqlText := fmt.Sprintf(`
-			INSERT INTO sdn_record_source_tags (
-				schema_name, cid, provider_id, source_name, source_url, batch_id,
-				content_key_id, producer_peer_id, producer_public_key, created_at
-			)
+			INSERT INTO `+sourceTagRowsTable+` (schema_name, cid, provenance_id, created_at)
 			VALUES %s
-			ON CONFLICT(schema_name, cid, provider_id, source_name, batch_id, content_key_id, producer_peer_id, producer_public_key)
-			DO UPDATE SET source_url = excluded.source_url
+			ON CONFLICT(schema_name, cid, provenance_id)
+			DO UPDATE SET created_at = excluded.created_at
 		`, placeholders(len(chunk), cols))
 		if _, err := exec.Exec(flatsqldrv.WithoutJournal(sqlText), args...); err != nil {
 			return fmt.Errorf("replay source tag batch: %w", err)
