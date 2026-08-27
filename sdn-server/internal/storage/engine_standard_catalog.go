@@ -3017,6 +3017,28 @@ const engineStandardCatalogGraph = `
     FLAGS:ubyte;
     RESERVED:[ubyte];
   }
+  table STX {
+    ID:string;
+    SITE_ID:string;
+    SITE_NATIVE_ID:string;
+    STATION_NAME:string;
+    STATION_IDENTITY:string;
+    FREQUENCY_KHZ:double;
+    BANDWIDTH_KHZ:double;
+    EMISSION_DESIGNATOR:string;
+    MODULATION:byte;
+    POLARIZATION:byte;
+    SERVICE:byte;
+    CONTENT:byte;
+    TIME_START_UTC:string;
+    TIME_STOP_UTC:string;
+    DAYS:ubyte;
+    IRREGULAR:bool;
+    VALID_FROM:string;
+    VALID_UNTIL:string;
+    SEASON:string;
+    TARGET_AREA:string;
+  }
   table SUB {
     SUBSCRIPTION_ID:string;
     ENTITLEMENT_ID:string;
@@ -3198,12 +3220,35 @@ const engineStandardCatalogGraph = `
   table TRS {
     REQUEST:ubyte;
   }
+  table TXS {
+    ID:string;
+    NATIVE_ID:string;
+    SITE_NAME:string;
+    STATION_IDENTITY:string;
+    LICENSEE:string;
+    LICENSE_ID:string;
+    SERVICE:byte;
+    STATUS:byte;
+    COUNTRY_CODE:string;
+    ADMIN_AREA:string;
+    LATITUDE:double;
+    LONGITUDE:double;
+    POSITION_AUTHORITY:byte;
+    POSITION_UNCERTAINTY_M:double;
+    POSITION_DISPUTED:bool;
+  }
   table VAM {
     ID:string;
     VERSION:string;
     ENTITY_ID:string;
     ENTITY_KIND:string;
     CANONICAL_VARIANT_ID:string;
+  }
+  table VCF {
+    CARD_ID:string;
+    FORM:byte;
+    CARD:string;
+    MEDIA_TYPE:string;
   }
   table VEP {
     ID:string;
@@ -3472,6 +3517,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"STO.fbs":  {Table: "STO", FileID: "$STO"},
 	"STR.fbs":  {Table: "STR", FileID: "$STR"},
 	"STV.fbs":  {Table: "STV", FileID: "$STV"},
+	"STX.fbs":  {Table: "STX", FileID: "$STX"},
 	"SUB.fbs":  {Table: "SUB", FileID: "$SUB"},
 	"SWR.fbs":  {Table: "SWR", FileID: "$SWR"},
 	"TAB.fbs":  {Table: "TAB", FileID: "$TAB"},
@@ -3489,7 +3535,9 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"TRK.fbs":  {Table: "TRK", FileID: "$TRK"},
 	"TRN.fbs":  {Table: "TRN", FileID: "$TRN"},
 	"TRS.fbs":  {Table: "TRS", FileID: "$TRS"},
+	"TXS.fbs":  {Table: "TXS", FileID: "$TXS"},
 	"VAM.fbs":  {Table: "VAM", FileID: "$VAM"},
+	"VCF.fbs":  {Table: "VCF", FileID: "$VCF"},
 	"VEP.fbs":  {Table: "VEP", FileID: "$VEP"},
 	"VST.fbs":  {Table: "VST", FileID: "$VST"},
 	"WKS.fbs":  {Table: "WKS", FileID: "$WKS"},

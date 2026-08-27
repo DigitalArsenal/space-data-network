@@ -504,20 +504,28 @@ var errEnginePrepareFailed = errors.New("engine file-identifier registration")
 // at the first query — so the host cannot wrap them in one transaction the way
 // rebuildUnifiedViews wraps CreateUnifiedViews. On the FIRST boot after every
 // standard became routed, host-01's seven persisted sources therefore
-// materialize 226 base plus 226 x 7 shadow tables in ONE un-batched burst.
+// materialize 228 base plus 228 x 7 shadow tables in ONE un-batched burst.
 //
 // PLUS THE DECORATIONS THE ENGINE DERIVES BY ITSELF, which the earlier
 // arithmetic left out. The engine builds an R-Tree for any table whose column
-// names read geospatial, and the schema-exact catalog trips that for ELEVEN
+// names read geospatial, and the schema-exact catalog trips that for TWELVE
 // standards besides the intended $TBS — CRM, ENV, GNO, ION, OBT, SEN, SEO,
-// SIT, SWR, TMS, TRK, every one of them a genuinely geospatial standard
-// (LAT/LON/ALT columns straight out of its IDL). MEASURED on the shipped
-// engine: 12 `_rtree_*` virtual tables, each backed by three plain tables, so
-// 48 extra schema objects created inside the same burst, plus per-ingest index
-// maintenance for those eleven standards from then on. It is disclosed here
-// and PINNED by TestEngineDerivedRTreesAreTheDisclosedSet, so the next catalog
-// change that trips a twelfth is a test failure and not a surprise on a
-// droplet.
+// SIT, SWR, TMS, TRK and, from the v1.198.0 pin, TXS; every one of them a
+// genuinely geospatial standard (LAT/LON/ALT columns straight out of its IDL).
+// MEASURED on the shipped engine: 13 `_rtree_*` virtual tables, each backed by
+// three plain tables, so 52 extra schema objects created inside the same
+// burst, plus per-ingest index maintenance for those twelve standards from
+// then on. It is disclosed here and PINNED by
+// TestEngineDerivedRTreesAreTheDisclosedSet, so the next catalog change that
+// trips a thirteenth is a test failure and not a surprise on a droplet.
+//
+// $TXS EARNED ITS R-TREE; it is not catalog noise. A Terrestrial Transmitter
+// Site carries LATITUDE/LONGITUDE straight out of its IDL and the RF catalogue
+// is read BY AREA ("which transmitters cover this ground"), so the derived
+// index is the one the query pattern actually wants. Its companion $STX takes
+// none and should not: a Scheduled Transmission holds no position of its own,
+// only a SITE_ID join back into $TXS. One new index for one new geospatial
+// standard is the arithmetic working, not drifting.
 //
 // MEASURED on the shipped engine (laptop NVMe, journal_mode=TRUNCATE): the
 // cold first-query burst is 63.0 s against an EMPTY control database and

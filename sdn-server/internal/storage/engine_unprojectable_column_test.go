@@ -400,11 +400,19 @@ func TestProjectedStringColumnsAreJSONSafe(t *testing.T) {
 	// claim this test makes about its own coverage: of the generated tables,
 	// the ones declaring at least one `string` column, minus the standards
 	// with no flatc oracle in this checkout (loadFlatcOracle skips them).
-	// A floor of ">= 100" would let coverage collapse from 176 to 101 in
+	// A floor of ">= 100" would let coverage collapse from 179 to 101 in
 	// silence. When a catalog change moves it, update the number here — the
 	// same discipline TestEngineDerivedRTreesAreTheDisclosedSet applies to
 	// its disclosed list.
-	const stringProjectingRoutedStandards = 176
+	//
+	// 176 -> 179 on the SDS v1.198.0 pin, and the delta is exactly the three
+	// standards that pin embedded: $VCF (3 string columns), $TXS (8) and $STX
+	// (12). Each projects at least one string, so each earns hostile-string
+	// coverage; none was exempted. The raw catalog count is 183 tables
+	// declaring a string column, and the 4 that do not appear here are the
+	// standards with no flatc oracle in this checkout (loadFlatcOracle skips
+	// them) — the same 4 as before this pin, so the gap did not move.
+	const stringProjectingRoutedStandards = 179
 	if len(targets) != stringProjectingRoutedStandards {
 		t.Fatalf("the hostile-string guard covers %d generically routed standards, want exactly %d — a catalog change moved the projected-string set (or the flatc oracle is incomplete); confirm with `awk '/^  table [A-Z]/{tbl=$2; has=0} /:string;/{if(tbl)has=1} /^  }$/{if(tbl&&has)n++; tbl=\"\"} END{print n}' internal/storage/engine_standard_catalog.go` minus the unvendored standards",
 			len(targets), stringProjectingRoutedStandards)
