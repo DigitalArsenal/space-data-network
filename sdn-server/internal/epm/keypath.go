@@ -2,21 +2,26 @@ package epm
 
 // Derivation-path validation and rotation for the operator-editable SIGNING
 // PATH / ENCRYPTION PATH fields (owner directive 2026-07-27, §18 of
-// graph/tasks/nst-node-admin-contract.md).
+// graph/tasks/nst-node-admin-contract.md; §21 amendment 2026-08-19).
+//
+// §21 (owner ruling 2026-08-19): the xpub and derivation paths are PRIVATE.
+// Published identity carries the literal PUBLIC_KEY bytes; a verifier never
+// derives a key from a published xpub. The validation below is therefore
+// ESCROW/RECOVERY-FACING: an escrow holder reconstructing a key from the
+// operator's private xpub needs the same hardening shape, and getting it
+// backwards produces a key that looks fine and resolves nowhere — which
+// silently breaks escrow recovery, not verification.
 //
 // An operator can hand-edit these paths and can press GEN KEY to rotate them.
-// Both actions can silently destroy verifiability if the resulting path is the
-// wrong SHAPE, and the two shapes required are exactly inverted — which is why
-// this is enforced here rather than trusted to a UI:
+// Both actions can silently destroy escrow recoverability if the resulting path
+// is the wrong SHAPE, and the two shapes required are exactly inverted —
+// which is why this is enforced here rather than trusted to a UI:
 //
 //   - An XPUB-DERIVABLE slot (the secp256k1 signing and encryption keys) MUST be
 //     NON-HARDENED at every component below the account. BIP-32 public
 //     derivation (CKDpub) cannot produce a hardened child — the hardened formula
-//     hashes the parent PRIVATE key — so a hardened path here would mean no
-//     third party could ever derive the key from the published xpub. That
-//     silently breaks the owner's whole "xpub + paths, don't ship keys"
-//     paradigm, and it breaks it for VERIFIERS, who would have no way to tell
-//     the difference between "wrong path" and "bad signature".
+//     hashes the parent PRIVATE key — so a hardened path here would mean an
+//     escrow holder could never derive the key from the operator's private xpub.
 //
 //   - A SLIP-10 Ed25519 slot MUST be HARDENED at every component. SLIP-10
 //     ed25519 has no public derivation at all; every child is hardened by
@@ -24,7 +29,7 @@ package epm
 //     underivable one.
 //
 // Neither rule is a policy preference. Both are forced by the key math, and
-// getting either backwards produces a record that looks fine and verifies
+// getting either backwards produces a key that looks fine and resolves
 // nowhere.
 
 import (
@@ -149,10 +154,16 @@ func FormatKeyPath(components []KeyPathComponent) string {
 // shape its slot requires. See the package comment for why the two slots demand
 // opposite things.
 //
+// §21 (owner ruling 2026-08-19): the xpub is no longer published, so this
+// validation is ESCROW/RECOVERY-FACING, not verifier-facing. The hardening
+// rules stay — an escrow holder reconstructing a key from the operator's
+// private xpub needs the same non-hardened-below-account shape — but the
+// rationale is no longer "a verifier walks from the published xpub."
+//
 // The BIP-44 account prefix (m/44'/coin'/account') is hardened in both cases;
 // for an xpub-derivable slot the non-hardened requirement applies BELOW the
-// account, because that is the part a verifier walks from the published account
-// xpub.
+// account, because that is the part an escrow holder walks from the operator's
+// private account xpub.
 func ValidateKeyPath(path string, slot KeyPathSlot) error {
 	components, err := ParseKeyPath(path)
 	if err != nil {
@@ -233,10 +244,14 @@ func NextKeyPath(path string, slot KeyPathSlot) (string, error) {
 // Empty means UNSET, never "delete". PUT /api/node/epm is a whole-profile
 // replace (§6), so a client that omits these fields must not thereby wipe the
 // node's key layout.
-// AdvertisedEncryptionKey returns the ONE encryption key this node publishes:
-// the xpub-derivable secp256k1 key at the profile's effective encryption path.
 //
-// OWNER RULE (2026-07-27): one encrypt path, everywhere it is shown. The card,
+// §21 (owner ruling 2026-08-19): the xpub and derivation paths are PRIVATE.
+// AdvertisedEncryptionKey returns the ONE encryption key this node publishes
+// — the literal PUBLIC_KEY at the profile's effective encryption path. The
+// path is an internal/escrow detail; the published surface carries the key
+// bytes, not the path.
+//
+// OWNER RULE (2026-07-27): one encrypt key, everywhere it is shown. The card,
 // the QR, the API slot list and the CLI must all name the SAME key — the whole
 // point of the rule is that an operator never sees two and wonders which is
 // real. So this is the single accessor: it composes EffectiveKeyPaths with the
