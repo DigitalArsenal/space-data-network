@@ -141,19 +141,42 @@ func convertArgs(args []driver.NamedValue) ([]interface{}, error) {
 }
 
 // splitStatements breaks a multi-statement SQL string into individual
-// statements (quote-, comment-, and trigger-unaware-but-sufficient: the
-// engine's flatsql_query executes ONE statement, while database/sql callers
-// legitimately Exec multi-statement DDL blocks the way sqlite3_exec allows).
-// Statements containing bind parameters must be single (params bind to one
-// statement only) — callers already follow that convention.
+// statements (quote- and comment-aware: the engine's flatsql_query executes
+// ONE statement, while database/sql callers legitimately Exec multi-statement
+// DDL blocks the way sqlite3_exec allows). Statements containing bind
+// parameters must be single (params bind to one statement only) — callers
+// already follow that convention.
+//
+// IT IS ALSO TRIGGER-AWARE, and it has to be. A CREATE TRIGGER body is a
+// BEGIN ... END block whose inner statements each end in a semicolon, so a
+// naive split hands the engine "CREATE TRIGGER x INSTEAD OF INSERT ON v BEGIN
+// INSERT ..." and gets back `incomplete input`. Inside a CREATE TRIGGER, BEGIN
+// and CASE open a block and END closes one; a semicolon only terminates the
+// statement at depth zero.
 func splitStatements(query string) []string {
 	var stmts []string
 	var b strings.Builder
 	i := 0
 	n := len(query)
+	depth := 0
 	for i < n {
 		ch := query[i]
 		switch {
+		case isSQLWordStart(ch) && (depth > 0 || statementIsCreateTrigger(b.String())):
+			start := i
+			for i < n && isSQLWordByte(query[i]) {
+				i++
+			}
+			word := strings.ToUpper(query[start:i])
+			switch word {
+			case "BEGIN", "CASE":
+				depth++
+			case "END":
+				if depth > 0 {
+					depth--
+				}
+			}
+			b.WriteString(query[start:i])
 		case ch == '\'' || ch == '"' || ch == '`':
 			quote := ch
 			b.WriteByte(ch)
@@ -188,6 +211,13 @@ func splitStatements(query string) []string {
 				i++
 			}
 		case ch == ';':
+			if depth > 0 {
+				// Inside a trigger body: this semicolon ends an inner
+				// statement, not the CREATE TRIGGER.
+				b.WriteByte(ch)
+				i++
+				continue
+			}
 			if s := strings.TrimSpace(b.String()); s != "" {
 				stmts = append(stmts, s)
 			}
@@ -305,4 +335,34 @@ func (r *rows) Next(dest []driver.Value) error {
 		}
 	}
 	return nil
+}
+
+func isSQLWordStart(ch byte) bool {
+	return ch == '_' || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')
+}
+
+func isSQLWordByte(ch byte) bool {
+	return isSQLWordStart(ch) || (ch >= '0' && ch <= '9')
+}
+
+// statementIsCreateTrigger reports whether what has accumulated so far opens a
+// CREATE [TEMP|TEMPORARY] TRIGGER. Only then does BEGIN/END nesting matter:
+// everywhere else BEGIN is a transaction and END is a CASE terminator, and
+// counting them would break ordinary multi-statement DDL.
+func statementIsCreateTrigger(sofar string) bool {
+	fields := strings.Fields(strings.ToUpper(sofar))
+	if len(fields) == 0 || fields[0] != "CREATE" {
+		return false
+	}
+	for _, f := range fields[1:] {
+		switch f {
+		case "TEMP", "TEMPORARY", "IF", "NOT", "EXISTS":
+			continue
+		case "TRIGGER":
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }

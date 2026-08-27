@@ -560,6 +560,19 @@ func (s *FlatSQLStore) copyLegacyTable(legacy *sql.DB, t legacyTable, filter *le
 		return 0, err
 	}
 	if !exists {
+		// A destination that is a VIEW is already there, in the only form it
+		// has: sdn_record_source_tags is the compatibility view over the
+		// interned provenance tables (source_provenance.go), and its INSTEAD OF
+		// triggers accept the legacy INSERTs below verbatim. Recreating the
+		// legacy DDL over it would collide with the view and abort the whole
+		// legacy migration.
+		isView, viewErr := s.viewExists(dest)
+		if viewErr != nil {
+			return 0, viewErr
+		}
+		exists = isView
+	}
+	if !exists {
 		if dest != t.name {
 			// A re-homed table is created from the CANONICAL layout, never
 			// from the legacy DDL: that DDL names the reserved table.
@@ -859,7 +872,7 @@ func (s *FlatSQLStore) appendMigratedRecordCatalogEvents() error {
 		       COALESCE(producer_public_key, ''),
 		       created_at
 		FROM sdn_record_source_tags
-		ORDER BY rowid ASC
+		ORDER BY schema_name ASC, cid ASC
 	`)
 	if err != nil {
 		return fmt.Errorf("read migrated source tags: %w", err)

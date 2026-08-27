@@ -822,7 +822,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 			}
 			imported++
 			if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
-				if err := insertNewSourceTagsTx(tx, index.SchemaName, record.CID, tags, recordLength, rowID); err != nil {
+				if err := insertNewSourceTagsTx(s, tx, index.SchemaName, record.CID, tags, recordLength, rowID); err != nil {
 					return imported, err
 				}
 				tagEvent, err := recordCatalogTagUpsertEvent(tx, index.SchemaName, record.CID, tags)
@@ -836,7 +836,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 		}
 
 		if err == nil && strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
-			if err := upsertSourceTagsTx(tx, readSource, index.SchemaName, record.CID, tags, record.Length); err != nil {
+			if err := upsertSourceTagsTx(s, tx, readSource, index.SchemaName, record.CID, tags, record.Length); err != nil {
 				return imported, err
 			}
 			tagEvent, err := recordCatalogTagUpsertEvent(tx, index.SchemaName, record.CID, tags)

@@ -217,8 +217,10 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 	}
 
 	tagsResult, err := tx.Exec(flatsqldrv.WithoutJournal(`
-		DELETE FROM sdn_record_source_tags
-		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?
+		DELETE FROM `+sourceTagRowsTable+`
+		WHERE schema_name = ?
+		  AND provenance_id IN (`+provenanceIDsMatchingSQL(
+		`provider_id = ? AND source_name = ? AND batch_id <> ?`)+`)
 		  AND cid IN (SELECT cid FROM temp_sdn_supersede_cids)
 	`), scope.SchemaName, scope.ProviderID, scope.SourceName, scope.KeepBatch)
 	if err != nil {

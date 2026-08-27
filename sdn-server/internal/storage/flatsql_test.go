@@ -174,7 +174,7 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 		BatchID:      "fast-import-batch",
 		ContentKeyID: "public",
 	}
-	if err := insertNewSourceTagsTx(tx, "OMM.fbs", cid, tags, recordLength, rowID); err != nil {
+	if err := insertNewSourceTagsTx(store, tx, "OMM.fbs", cid, tags, recordLength, rowID); err != nil {
 		t.Fatalf("insertNewSourceTagsTx failed: %v", err)
 	}
 	if err := tx.Commit(); err != nil {

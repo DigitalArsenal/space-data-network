@@ -114,6 +114,11 @@ type FlatSQLStore struct {
 	// no-op on the live write path) outside a replay. See
 	// record_catalog_replay.go.
 	recordIndexRowIDs recordIndexRowIDs
+	// provenance memoizes the interned (provider, source, url, batch,
+	// content key, producer peer, producer key) -> id lookup that replaced
+	// seven repeated strings on every source-tag row. See
+	// source_provenance.go.
+	provenance provenanceCache
 	// replayedSourceLanes records every (schema, provider, source, batch) lane
 	// the BULK replay path wrote source tags for. It exists because
 	// insertSourceTagsBatch is the ONE tag writer that does not maintain
@@ -991,81 +996,74 @@ func (s *FlatSQLStore) initTables() error {
 	if err := s.ensureColumn("sdn_record_index", "ops_status_code", "TEXT"); err != nil {
 		return err
 	}
-	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_lookup", recordIndexExisted, `
+	// PARTIAL, AND FOR A MEASURED REASON. Five of these six indexes key on a
+	// column that only a SATELLITE record populates — norad_cat_id, entity_id,
+	// object_type, epoch_day, epoch_unix. A $TBS cell site, an $IRM mark, and
+	// every other non-satellite record leaves all of them NULL, and then paid
+	// 154.1 B PER RECORD (measured with `dbstat` over 20,000 real $TBS records)
+	// to be filed under an all-NULL key in five b-trees that can never be
+	// searched for it.
+	//
+	// `WHERE <column> IS NOT NULL` is the smallest possible statement of that:
+	// it is application-blind — no standard is named, nothing reads a payload
+	// — and it costs the satellite standards NOTHING, because a query that
+	// says `norad_cat_id = ?` implies `norad_cat_id IS NOT NULL` and SQLite's
+	// planner uses a partial index whose WHERE clause the query implies. The
+	// indexes are REBUILT (dropped first) on a store that already has the full
+	// ones, which is what turns the saving on for records already written.
+	if err := s.replaceWithPartialIndex("idx_sdn_record_index_lookup", `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_lookup
 		ON sdn_record_index (schema_name, epoch_day, norad_cat_id, entity_id, source_timestamp DESC)
-	`); err != nil {
+		WHERE epoch_day IS NOT NULL
+	`, recordIndexExisted); err != nil {
 		return fmt.Errorf("failed to create composite index: %w", err)
 	}
 
-	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_norad", recordIndexExisted, `
+	if err := s.replaceWithPartialIndex("idx_sdn_record_index_norad", `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_norad
 		ON sdn_record_index (schema_name, norad_cat_id, source_timestamp DESC)
-	`); err != nil {
+		WHERE norad_cat_id IS NOT NULL
+	`, recordIndexExisted); err != nil {
 		return fmt.Errorf("failed to create norad index: %w", err)
 	}
 
-	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_entity", recordIndexExisted, `
+	if err := s.replaceWithPartialIndex("idx_sdn_record_index_entity", `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_entity
 		ON sdn_record_index (schema_name, entity_id, source_timestamp DESC)
-	`); err != nil {
+		WHERE entity_id IS NOT NULL
+	`, recordIndexExisted); err != nil {
 		return fmt.Errorf("failed to create entity index: %w", err)
 	}
 
-	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_catalog_filters", recordIndexExisted, `
+	if err := s.replaceWithPartialIndex("idx_sdn_record_index_catalog_filters", `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_catalog_filters
 		ON sdn_record_index (schema_name, object_type, ops_status_code, norad_cat_id)
-	`); err != nil {
+		WHERE object_type IS NOT NULL OR ops_status_code IS NOT NULL
+	`, recordIndexExisted); err != nil {
 		return fmt.Errorf("failed to create catalog filter index: %w", err)
 	}
 
-	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_time_window", recordIndexExisted, `
+	if err := s.replaceWithPartialIndex("idx_sdn_record_index_time_window", `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_time_window
 		ON sdn_record_index (schema_name, epoch_unix, source_timestamp DESC)
-	`); err != nil {
+		WHERE epoch_unix IS NOT NULL
+	`, recordIndexExisted); err != nil {
 		return fmt.Errorf("failed to create time window index: %w", err)
 	}
 
-	sourceTagsExisted, err := s.initSourceTagsTable()
-	if err != nil {
-		return fmt.Errorf("failed to create source tags table: %w", err)
+	// A legacy PHYSICAL source-tags table is first normalized to the
+	// producer-aware column set, then interned into the dictionary + slim rows
+	// + compatibility view. Its six indexes are NOT rebuilt: they cost
+	// 1,151.8 B per record between them (measured), and the interned layout
+	// answers the same queries from two.
+	if _, err := s.initSourceTagsTable(); err != nil {
+		return fmt.Errorf("failed to normalize legacy source tags table: %w", err)
 	}
-
-	if !sourceTagsExisted {
-		log.Infof("Building FlatSQL source tag producer uniqueness index")
+	if err := s.initSourceProvenance(); err != nil {
+		return fmt.Errorf("failed to create interned source provenance: %w", err)
 	}
-	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_unique", sourceTagsExisted, `
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_sdn_record_source_tags_unique
-		ON sdn_record_source_tags (
-			schema_name, cid, provider_id, source_name, batch_id,
-			content_key_id, producer_peer_id, producer_public_key
-		)
-	`); err != nil {
-		return fmt.Errorf("failed to create source tags producer uniqueness index: %w", err)
-	}
-	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_lookup", sourceTagsExisted, `
-		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_lookup
-		ON sdn_record_source_tags (schema_name, provider_id, source_name, batch_id)
-	`); err != nil {
-		return fmt.Errorf("failed to create source tags lookup index: %w", err)
-	}
-	if err := s.createRequiredStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_source_cid", `
-		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_source_cid
-		ON sdn_record_source_tags (schema_name, provider_id, source_name, cid)
-	`); err != nil {
-		return fmt.Errorf("failed to create source tags source/cid index: %w", err)
-	}
-	if err := s.createRequiredStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_batch_cid", `
-		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_batch_cid
-		ON sdn_record_source_tags (schema_name, provider_id, source_name, batch_id, cid)
-	`); err != nil {
-		return fmt.Errorf("failed to create source tags batch/cid index: %w", err)
-	}
-	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_recent", sourceTagsExisted, `
-		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_recent
-		ON sdn_record_source_tags (schema_name, created_at DESC, cid)
-	`); err != nil {
-		return fmt.Errorf("failed to create source tags recent index: %w", err)
+	if err := s.canonicalizeStoredSchemaNames(); err != nil {
+		return fmt.Errorf("failed to canonicalize stored schema names: %w", err)
 	}
 	if err := s.initSourceSummaryTable(); err != nil {
 		return fmt.Errorf("failed to create source summary table: %w", err)
@@ -1250,14 +1248,19 @@ func (s *FlatSQLStore) createRequiredStartupIndex(tableName, indexName string, c
 	return nil
 }
 
+// initSourceTagsTable normalizes a LEGACY physical sdn_record_source_tags
+// table to the 9-column producer-aware shape. It no longer CREATES that table:
+// on a store that has never had one, source tags are the interned pair of
+// tables plus the compatibility view (source_provenance.go), and this returns
+// immediately. Its only remaining job is to make an old table's columns
+// predictable before the provenance migration copies it.
 func (s *FlatSQLStore) initSourceTagsTable() (bool, error) {
 	existed, err := s.tableExists("sdn_record_source_tags")
 	if err != nil {
 		return false, err
 	}
 	if !existed {
-		_, err := s.db.Exec(sourceTagsTableSQL("sdn_record_source_tags"))
-		return false, err
+		return false, nil
 	}
 	needsMigration, err := s.sourceTagsTableNeedsMigration()
 	if err != nil {
@@ -2386,66 +2389,72 @@ func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLan
 	return lanes, nil
 }
 
-// sourceSummaryLanesFromTags is the COLD discovery path: a loose index scan over
-// idx_sdn_record_source_tags_lookup. It is only reached when the summary holds
-// nothing for the scope, because on the live node each of its seeks costs
-// 500-680 ms in the engine — see sourceSummaryLanes for the measurement and why
-// the warm path must not use it. Callers hold s.mu.
+// sourceSummaryLanesFromTags is the COLD discovery path: a loose index scan
+// over idx_sdn_record_source_tag_rows_provenance. It is only reached when the
+// summary holds nothing for the scope, because on the live node each of its
+// seeks costs 500-680 ms in the engine — see sourceSummaryLanes for the
+// measurement and why the warm path must not use it. Callers hold s.mu.
 func (s *FlatSQLStore) sourceSummaryLanesFromTags(schemaName string) ([]sourceSummaryLane, error) {
 	// STEP is a row-value comparison against the index's own column order, and
-	// that is what makes it a SEEK: verified with EXPLAIN QUERY PLAN against the
-	// live 2.8 GB control database, which answers
-	//   SEARCH … USING COVERING INDEX idx_sdn_record_source_tags_lookup
-	//          ((schema_name,provider_id,source_name,batch_id)>(?,?,?,?))
-	// batch_id/provider_id/source_name are all `TEXT NOT NULL DEFAULT ''`
-	// (sourceTagsTableSQL), so no COALESCE is needed — and adding one here would
-	// make the comparison non-indexable, which is the whole point.
+	// that is what makes it a SEEK rather than a scan: a lane of 169,865 tag
+	// rows costs one index descent, not 169,865 steps.
 	//
-	// The per-schema case deliberately does NOT add `schema_name = ?` to STEP.
-	// The same EXPLAIN says that with the equality present SQLite drops the
-	// row-value bound to a filter and plans
-	// `SEARCH … idx_sdn_record_source_tags_batch_cid (schema_name=?)` — a forward
-	// scan from the schema's first row on every step, which is O(rows) again.
-	// The schema is bounded in Go instead, by stopping at the first lane that
-	// belongs to a different one; the index orders by schema_name first, so a
-	// change of schema means the schema is finished.
+	// The KEY IS NOW (schema_name, provenance_id), not the four provenance
+	// strings, because the strings are interned (source_provenance.go) and
+	// idx_sdn_record_source_tag_rows_provenance orders exactly that way. The
+	// lane's provider/source/batch come from the dictionary afterwards, which
+	// is one integer-primary-key lookup against a table with one row per batch.
+	//
+	// The per-schema case deliberately does NOT add `schema_name = ?` to STEP:
+	// with the equality present SQLite drops the row-value bound to a filter
+	// and plans a forward scan from the schema's first row on every step, which
+	// is O(rows) again. The schema is bounded in Go instead, by stopping at the
+	// first lane that belongs to a different one; the index orders by
+	// schema_name first, so a change of schema means the schema is finished.
+	// The seek runs over the SLIM TABLE ALONE, and it has to. Joining the
+	// dictionary into the same statement makes SQLite plan the join first and
+	// answer with a different index plus a temp b-tree for the ORDER BY, which
+	// is the O(rows) scan this whole function exists to avoid. The dictionary
+	// lookup is a separate integer-primary-key hit per LANE (dozens), not per
+	// row.
 	const first = `
-		SELECT schema_name, provider_id, source_name, batch_id
-		FROM sdn_record_source_tags
-		ORDER BY schema_name, provider_id, source_name, batch_id
+		SELECT schema_name, provenance_id
+		FROM ` + sourceTagRowsTable + `
+		ORDER BY schema_name, provenance_id
 		LIMIT 1`
 	const firstOfSchema = `
-		SELECT schema_name, provider_id, source_name, batch_id
-		FROM sdn_record_source_tags
+		SELECT schema_name, provenance_id
+		FROM ` + sourceTagRowsTable + `
 		WHERE schema_name = ?
-		ORDER BY schema_name, provider_id, source_name, batch_id
+		ORDER BY schema_name, provenance_id
 		LIMIT 1`
 	const step = `
-		SELECT schema_name, provider_id, source_name, batch_id
-		FROM sdn_record_source_tags
-		WHERE (schema_name, provider_id, source_name, batch_id) > (?, ?, ?, ?)
-		ORDER BY schema_name, provider_id, source_name, batch_id
+		SELECT schema_name, provenance_id
+		FROM ` + sourceTagRowsTable + `
+		WHERE (schema_name, provenance_id) > (?, ?)
+		ORDER BY schema_name, provenance_id
 		LIMIT 1`
+	const resolve = `
+		SELECT provider_id, source_name, batch_id
+		FROM ` + sourceProvenanceTable + `
+		WHERE id = ?`
 
 	lanes := make([]sourceSummaryLane, 0, 64)
-	var cursor sourceSummaryLane
+	var cursorSchema string
+	var cursorProvenance int64
 	for i := 0; i < sourceSummaryLaneScanLimit; i++ {
 		var next sourceSummaryLane
+		var provenanceID int64
 		var err error
 		switch {
 		case i > 0:
 			// Seeking PAST the lane just found is what skips its rows — a lane of
 			// 169,865 tag rows costs one index descent, not 169,865 steps.
-			err = s.db.QueryRow(step, cursor.SchemaName, cursor.ProviderID, cursor.SourceName, cursor.BatchID).
-				Scan(&next.SchemaName, &next.ProviderID, &next.SourceName, &next.BatchID)
+			err = s.db.QueryRow(step, cursorSchema, cursorProvenance).Scan(&next.SchemaName, &provenanceID)
 		case schemaName == "":
-			err = s.db.QueryRow(first).
-				Scan(&next.SchemaName, &next.ProviderID, &next.SourceName, &next.BatchID)
+			err = s.db.QueryRow(first).Scan(&next.SchemaName, &provenanceID)
 		default:
-			// Not `> (schemaName,'','','')`: a lane whose provider/source/batch are
-			// all empty strings is a legal row and that bound would skip it.
-			err = s.db.QueryRow(firstOfSchema, schemaName).
-				Scan(&next.SchemaName, &next.ProviderID, &next.SourceName, &next.BatchID)
+			err = s.db.QueryRow(firstOfSchema, schemaName).Scan(&next.SchemaName, &provenanceID)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return lanes, nil
@@ -2453,11 +2462,15 @@ func (s *FlatSQLStore) sourceSummaryLanesFromTags(schemaName string) ([]sourceSu
 		if err != nil {
 			return nil, fmt.Errorf("enumerate source-summary lanes: %w", err)
 		}
+		if err := s.db.QueryRow(resolve, provenanceID).
+			Scan(&next.ProviderID, &next.SourceName, &next.BatchID); err != nil {
+			return nil, fmt.Errorf("resolve source-summary lane provenance %d: %w", provenanceID, err)
+		}
 		if schemaName != "" && next.SchemaName != schemaName {
 			return lanes, nil
 		}
 		lanes = append(lanes, next)
-		cursor = next
+		cursorSchema, cursorProvenance = next.SchemaName, provenanceID
 	}
 	return nil, fmt.Errorf("enumerate source-summary lanes: seek did not terminate after %d lanes", sourceSummaryLaneScanLimit)
 }
@@ -3128,8 +3141,9 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			if err != nil {
 				return inserted, fmt.Errorf("store %s record %s: %w", schemaName, cid, err)
 			}
-			if err := upsertRecordIndexExec(tx, &s.recordIndexRowIDs, schemaName, cid, now, data); err != nil {
-				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
+			indexErr := upsertRecordIndexExec(tx, &s.recordIndexRowIDs, schemaName, cid, now, data)
+			if indexErr != nil {
+				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", indexErr)
 			}
 			event, err := s.recordCatalogUpsertEvent(tx, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now, data)
 			if err != nil {
@@ -3138,8 +3152,9 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			catalogEvents = append(catalogEvents, event)
 			inserted++
 			if tags != nil {
-				if err := insertNewSourceTagsTx(tx, schemaName, cid, *tags, recordLength, rowID); err != nil {
-					return inserted, err
+				tagErr := insertNewSourceTagsTx(s, tx, schemaName, cid, *tags, recordLength, rowID)
+				if tagErr != nil {
+					return inserted, tagErr
 				}
 				tagEvent, err := recordCatalogTagUpsertEvent(tx, schemaName, cid, *tags)
 				if err != nil {
@@ -3155,7 +3170,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		}
 
 		if tags != nil && err == nil {
-			if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, *tags, int64(len(data))); err != nil {
+			if err := upsertSourceTagsTx(s, tx, readSource, schemaName, cid, *tags, int64(len(data))); err != nil {
 				return inserted, err
 			}
 			tagEvent, err := recordCatalogTagUpsertEvent(tx, schemaName, cid, *tags)
@@ -3212,7 +3227,7 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 	}
 	defer tx.Rollback()
 
-	if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, tags, -1); err != nil {
+	if err := upsertSourceTagsTx(s, tx, readSource, schemaName, cid, tags, -1); err != nil {
 		return err
 	}
 	event, err := recordCatalogTagUpsertEvent(tx, schemaName, cid, tags)
@@ -3228,7 +3243,7 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 	return nil
 }
 
-func insertNewSourceTagsTx(tx *sql.Tx, schemaName, cid string, tags SourceTags, recordBytes, recordRowID int64) error {
+func insertNewSourceTagsTx(store *FlatSQLStore, tx *sql.Tx, schemaName, cid string, tags SourceTags, recordBytes, recordRowID int64) error {
 	tags = normalizeSourceTags(tags)
 	if err := ValidateSourceTags(tags); err != nil {
 		return err
@@ -3237,13 +3252,14 @@ func insertNewSourceTagsTx(tx *sql.Tx, schemaName, cid string, tags SourceTags, 
 		return errors.New("cid is required")
 	}
 
+	provenanceID, err := store.provenanceIDTx(tx, tags)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
-		INSERT INTO sdn_record_source_tags (
-			schema_name, cid, provider_id, source_name, source_url, batch_id,
-			content_key_id, producer_peer_id, producer_public_key
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`), schemaName, cid, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
+		INSERT INTO `+sourceTagRowsTable+` (schema_name, cid, provenance_id)
+		VALUES (?, ?, ?)
+	`), schemaName, cid, provenanceID); err != nil {
 		return fmt.Errorf("failed to insert source tags: %w", err)
 	}
 	if err := incrementSourceSummary(tx, schemaName, tags, recordBytes, recordRowID); err != nil {
@@ -3252,7 +3268,7 @@ func insertNewSourceTagsTx(tx *sql.Tx, schemaName, cid string, tags SourceTags, 
 	return nil
 }
 
-func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags SourceTags, recordBytes int64) error {
+func upsertSourceTagsTx(store *FlatSQLStore, tx *sql.Tx, tableName, schemaName, cid string, tags SourceTags, recordBytes int64) error {
 	tags = normalizeSourceTags(tags)
 	if err := ValidateSourceTags(tags); err != nil {
 		return err
@@ -3261,34 +3277,46 @@ func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags Sour
 		return errors.New("cid is required")
 	}
 
+	// URL-BLIND IDENTITY, exactly as the legacy 8-column primary key had it:
+	// two rows that differ only in source_url were always ONE row, and the
+	// second write updated the first. With provenance interned, "updating the
+	// URL" means re-pointing this record at the dictionary entry that carries
+	// the new URL — a per-record operation with per-record effect, so a record
+	// that shares a batch with others is still the only one re-pointed.
+	var existingProvenanceID int64
 	var existingSourceURL string
 	err := tx.QueryRow(`
-		SELECT COALESCE(source_url, '')
-		FROM sdn_record_source_tags
-		WHERE schema_name = ?
-		  AND cid = ?
-		  AND provider_id = ?
-		  AND source_name = ?
-		  AND batch_id = ?
-		  AND content_key_id = ?
-		  AND producer_peer_id = ?
-		  AND producer_public_key = ?
-	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey).Scan(&existingSourceURL)
+		SELECT p.id, COALESCE(p.source_url, '')
+		FROM `+sourceTagRowsTable+` r
+		JOIN `+sourceProvenanceTable+` p ON p.id = r.provenance_id
+		WHERE r.schema_name = ?
+		  AND r.cid = ?
+		  AND p.provider_id = ?
+		  AND p.source_name = ?
+		  AND p.batch_id = ?
+		  AND p.content_key_id = ?
+		  AND p.producer_peer_id = ?
+		  AND p.producer_public_key = ?
+	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey).Scan(&existingProvenanceID, &existingSourceURL)
 	if err == nil {
 		if existingSourceURL != tags.SourceURL {
+			provenanceID, err := store.provenanceIDTx(tx, tags)
+			if err != nil {
+				return err
+			}
 			if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
-				UPDATE sdn_record_source_tags
-				SET source_url = ?
-				WHERE schema_name = ?
-				  AND cid = ?
-				  AND provider_id = ?
-				  AND source_name = ?
-				  AND batch_id = ?
-				  AND content_key_id = ?
-				  AND producer_peer_id = ?
-				  AND producer_public_key = ?
-			`), tags.SourceURL, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
+				INSERT OR IGNORE INTO `+sourceTagRowsTable+` (schema_name, cid, provenance_id, created_at)
+				SELECT ?, ?, ?, created_at
+				FROM `+sourceTagRowsTable+`
+				WHERE schema_name = ? AND cid = ? AND provenance_id = ?
+			`), schemaName, cid, provenanceID, schemaName, cid, existingProvenanceID); err != nil {
 				return fmt.Errorf("update existing source tag URL: %w", err)
+			}
+			if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
+				DELETE FROM `+sourceTagRowsTable+`
+				WHERE schema_name = ? AND cid = ? AND provenance_id = ?
+			`), schemaName, cid, existingProvenanceID); err != nil {
+				return fmt.Errorf("retire superseded source tag URL: %w", err)
 			}
 		}
 		return nil
@@ -3312,14 +3340,14 @@ func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags Sour
 		bytesTotal = storedBytes.Int64
 	}
 
-	_, err = tx.Exec(flatsqldrv.WithoutJournal(`
-		INSERT INTO sdn_record_source_tags (
-			schema_name, cid, provider_id, source_name, source_url, batch_id,
-			content_key_id, producer_peer_id, producer_public_key
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`), schemaName, cid, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey)
+	provenanceID, err := store.provenanceIDTx(tx, tags)
 	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
+		INSERT OR IGNORE INTO `+sourceTagRowsTable+` (schema_name, cid, provenance_id)
+		VALUES (?, ?, ?)
+	`), schemaName, cid, provenanceID); err != nil {
 		return fmt.Errorf("failed to upsert source tags: %w", err)
 	}
 
@@ -3576,7 +3604,7 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`INSERT OR IGNORE INTO temp_sdn_reconcile_cids (cid) `+cidSubquery), args...); err != nil {
 		return result, fmt.Errorf("stage source batch cids: %w", err)
 	}
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?`), args...); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tag_rows WHERE schema_name = ? AND provenance_id IN (SELECT id FROM sdn_source_provenance WHERE provider_id = ? AND source_name = ? AND batch_id <> ?)`), args...); err != nil {
 		return result, fmt.Errorf("delete source batch tags: %w", err)
 	}
 	// Delete orphaned records (staged cids with no surviving source tag) from
@@ -3801,11 +3829,10 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 		return result, fmt.Errorf("stage source batch duplicate cids: %w", err)
 	}
 	if _, err := tx.Exec(`
-		DELETE FROM sdn_record_source_tags
+		DELETE FROM `+sourceTagRowsTable+`
 		WHERE schema_name = ?
-		  AND provider_id = ?
-		  AND source_name = ?
-		  AND batch_id = ?
+		  AND provenance_id IN (`+provenanceIDsMatchingSQL(
+		`provider_id = ? AND source_name = ? AND batch_id = ?`)+`)
 		  AND cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids)
 	`, args...); err != nil {
 		return result, fmt.Errorf("delete source batch duplicate tags: %w", err)
@@ -4112,7 +4139,7 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
 		log.Warnf("Failed to delete index row for %s/%s: %v", schemaName, cid, err)
 	}
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tag_rows WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
 		log.Warnf("Failed to delete source tags for %s/%s: %v", schemaName, cid, err)
 	}
 	for _, tags := range deletedTags {
@@ -4205,7 +4232,7 @@ func (s *FlatSQLStore) garbageCollectBeforeLocked(cutoff int64) (int64, error) {
 				continue
 			}
 			if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
-				DELETE FROM sdn_record_source_tags
+				DELETE FROM `+sourceTagRowsTable+`
 				WHERE schema_name = ?
 				  AND cid NOT IN (SELECT cid FROM %s)
 			`, readSource)), schemaName); err != nil {
@@ -6153,7 +6180,7 @@ func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName stri
 	query += `
 			  AND EXISTS (
 				SELECT 1
-				FROM sdn_record_source_tags tags INDEXED BY idx_sdn_record_source_tags_source_cid
+				FROM sdn_record_source_tags tags
 				WHERE tags.schema_name = ? AND tags.cid = records.cid
 	`
 	args = append(args, filter.SchemaName)
@@ -6168,7 +6195,7 @@ func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName stri
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
 		FROM candidates
-		CROSS JOIN sdn_record_source_tags tags INDEXED BY idx_sdn_record_source_tags_source_cid
+		CROSS JOIN sdn_record_source_tags tags
 		WHERE tags.schema_name = ? AND tags.cid = candidates.cid
 	`
 	args = append(args, filter.Limit, filter.SchemaName)

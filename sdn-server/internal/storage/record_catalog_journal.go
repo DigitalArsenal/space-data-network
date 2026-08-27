@@ -1370,10 +1370,17 @@ func (s *FlatSQLStore) buildCompactedRecordCatalogSnapshot(remap compactionOffse
 		})
 	}
 
+	// ORDER BY the tag's own key, not a rowid: sdn_record_source_tags is a
+	// view over the interned rows (source_provenance.go) and a view has no
+	// rowid. The compacted journal only needs a DETERMINISTIC order — every
+	// tag frame is an independent upsert — and (schema, cid, provenance) is
+	// the base table's primary key, so this order is the storage order.
 	tagRows, err := s.db.Query(`
-		SELECT schema_name, cid, provider_id, source_name, source_url, batch_id, content_key_id, producer_peer_id, producer_public_key, created_at
-		FROM sdn_record_source_tags
-		ORDER BY rowid ASC
+		SELECT r.schema_name, r.cid, p.provider_id, p.source_name, p.source_url, p.batch_id,
+		       p.content_key_id, p.producer_peer_id, p.producer_public_key, r.created_at
+		FROM ` + sourceTagRowsTable + ` r
+		JOIN ` + sourceProvenanceTable + ` p ON p.id = r.provenance_id
+		ORDER BY r.schema_name ASC, r.cid ASC, r.provenance_id ASC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("compact snapshot: scan sdn_record_source_tags: %w", err)
@@ -1442,6 +1449,20 @@ func decodeRecordCatalogEvent(payload []byte) (recordCatalogEvent, error) {
 	event := recordCatalogEvent{Kind: kind}
 	if event.SchemaName, err = readRCString(reader); err != nil {
 		return recordCatalogEvent{}, err
+	}
+	// ONE SPELLING ON THE WAY OUT, whatever the frame says.
+	//
+	// Frames written before the write path canonicalized (sdn 39662af9) carry
+	// the module's own spelling — host-02 has ~453,000 $TBS frames that say
+	// "TBS", not "TBS.fbs". A replay of those frames re-materializes rows
+	// under a schema_name every reader normalizes away from, which is exactly
+	// the split that made a quarter of a million cell sites unexportable. So
+	// the boot fix-up cannot be a one-time UPDATE alone: the journal outlives
+	// it, and normalizing HERE is what makes the correction survive every
+	// future replay and rebuild. A string that is not a schema name at all is
+	// passed through untouched, so the store's own validation still refuses it.
+	if canonical := sds.NormalizeSchemaFileName(event.SchemaName); canonical != "" {
+		event.SchemaName = canonical
 	}
 	if event.CID, err = readRCString(reader); err != nil {
 		return recordCatalogEvent{}, err
@@ -1831,16 +1852,29 @@ func (s *FlatSQLStore) applyRecordCatalogTagUpsertTo(exec sqlExecer, event recor
 	if err := ValidateSourceTags(tags); err != nil {
 		return err
 	}
-	_, err := exec.Exec(flatsqldrv.WithoutJournal(`
-		INSERT INTO sdn_record_source_tags (
-			schema_name, cid, provider_id, source_name, source_url, batch_id,
-			content_key_id, producer_peer_id, producer_public_key, created_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(schema_name, cid, provider_id, source_name, batch_id, content_key_id, producer_peer_id, producer_public_key)
-		DO UPDATE SET source_url = excluded.source_url
-	`), event.SchemaName, event.CID, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey, event.CreatedAt)
+	// URL-BLIND IDENTITY (source_provenance.go): the legacy statement's
+	// ON CONFLICT key excluded source_url and updated it in place, so a replay
+	// of the same record with a new URL re-points the record instead of adding
+	// a second tag row.
+	provenanceID, err := s.provenanceIDTx(exec, tags)
 	if err != nil {
+		return err
+	}
+	if _, err := exec.Exec(flatsqldrv.WithoutJournal(`
+		DELETE FROM `+sourceTagRowsTable+`
+		WHERE schema_name = ? AND cid = ? AND provenance_id <> ?
+		  AND provenance_id IN (`+provenanceIDsMatchingSQL(
+			`provider_id = ? AND source_name = ? AND batch_id = ?
+			   AND content_key_id = ? AND producer_peer_id = ? AND producer_public_key = ?`)+`)
+	`), event.SchemaName, event.CID, provenanceID,
+		tags.ProviderID, tags.SourceName, tags.BatchID,
+		tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
+		return fmt.Errorf("replay source tag: retire superseded URL: %w", err)
+	}
+	if _, err := exec.Exec(flatsqldrv.WithoutJournal(`
+		INSERT OR IGNORE INTO `+sourceTagRowsTable+` (schema_name, cid, provenance_id, created_at)
+		VALUES (?, ?, ?, ?)
+	`), event.SchemaName, event.CID, provenanceID, event.CreatedAt); err != nil {
 		return fmt.Errorf("replay source tag: %w", err)
 	}
 	return nil
@@ -1869,7 +1903,7 @@ func (s *FlatSQLStore) applyRecordCatalogRecordDelete(schemaName, cid string) er
 	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
+	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tag_rows WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
 		return err
 	}
 	return nil
@@ -1902,8 +1936,10 @@ func (s *FlatSQLStore) applyRecordCatalogSourceKeep(schemaName, providerID, sour
 		return err
 	}
 	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
-		DELETE FROM sdn_record_source_tags
-		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?
+		DELETE FROM `+sourceTagRowsTable+`
+		WHERE schema_name = ?
+		  AND provenance_id IN (`+provenanceIDsMatchingSQL(
+			`provider_id = ? AND source_name = ? AND batch_id <> ?`)+`)
 	`), schemaName, providerID, sourceName, keepBatch); err != nil {
 		return err
 	}
@@ -1940,7 +1976,7 @@ func (s *FlatSQLStore) applyRecordCatalogGCOlderThan(schemaName string, cutoffUn
 		return err
 	}
 	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
-		DELETE FROM sdn_record_source_tags
+		DELETE FROM `+sourceTagRowsTable+`
 		WHERE schema_name = ?
 		  AND cid IN (SELECT cid FROM temp_sdn_record_catalog_gc_cids)
 	`), schemaName); err != nil {
