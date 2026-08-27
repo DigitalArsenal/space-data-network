@@ -38,8 +38,8 @@ test.describe('desktop static identity API', () => {
         peer_id: '16Uiu2Alice',
         epm_cid: 'bafy-alice-epm',
         public_key: 'abcdef',
-        signing_public_key: 'signing-public',
-        encryption_public_key: 'encryption-public',
+        signing_public_key: HD_TEST_SIGNING_PUBLIC_KEY,
+        encryption_public_key: HD_TEST_ENCRYPTION_PUBLIC_KEY,
         private_key: 'must-not-be-exported'
       }
     })
@@ -83,13 +83,49 @@ test.describe('desktop static identity API', () => {
     expect(vcard.body).toContain('ROLE:Operator')
     expect(vcard.body).toContain('ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA')
     expect(vcard.body).toContain('EMAIL;TYPE=INTERNET:abcdef@spacedatanetwork.org')
-    expect(unfoldedVcard).toContain('EMAIL;type=INTERNET;type=signing:signing-public@signing.spacedatanetwork.org')
-    expect(unfoldedVcard).toContain('EMAIL;type=INTERNET;type=encryption:encryption-public@encryption.spacedatanetwork.org')
+    // §21: the sign/encrypt aliases carry b64url(literal public key bytes) at
+    // the sign./encrypt. domains; the legacy signing./encryption. domains and
+    // the X-SDN-XPUB alias are retired.
+    const signAlias = Buffer.from(HD_TEST_SIGNING_PUBLIC_KEY, 'hex').toString('base64url')
+    const encryptAlias = Buffer.from(HD_TEST_ENCRYPTION_PUBLIC_KEY, 'hex').toString('base64url')
+    expect(unfoldedVcard).toContain(`EMAIL;type=INTERNET;type=sign:${signAlias}@sign.spacedatanetwork.org`)
+    expect(unfoldedVcard).toContain(`EMAIL;type=INTERNET;type=encrypt:${encryptAlias}@encrypt.spacedatanetwork.org`)
+    expect(unfoldedVcard).not.toContain('signing.spacedatanetwork.org')
+    expect(unfoldedVcard).not.toContain('encryption.spacedatanetwork.org')
+    expect(unfoldedVcard).not.toContain('X-SDN-XPUB')
     expect(vcard.body).toContain('X-SDN-PEER-ID:16Uiu2Alice')
     expect(vcard.body).toContain('X-SDN-PUBLIC-KEY:abcdef')
-    expect(vcard.body).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public')
-    expect(vcard.body).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public')
+    // The 66-char hex keys fold onto 74-col vCard lines, so assert on the
+    // unfolded card body.
+    expect(unfoldedVcard).toContain(`X-SDN-SIGNING-PUBLIC-KEY:${HD_TEST_SIGNING_PUBLIC_KEY}`)
+    expect(unfoldedVcard).toContain(`X-SDN-ENCRYPTION-PUBLIC-KEY:${HD_TEST_ENCRYPTION_PUBLIC_KEY}`)
     expect(vcard.body).not.toContain('must-not-be-exported')
+  })
+
+  test('serves no sign/encrypt alias row for a public key that does not decode as hex', async () => {
+    // §21: the sign/encrypt aliases are b64url(literal key bytes). A key that
+    // does not decode as strict hex must not produce a garbage b64url row —
+    // the alias is skipped, and no legacy signing./encryption. domain fills
+    // in (those domains and the xpub alias are retired).
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-alias-skip-'))
+    const { serveDesktopIdentityAPI } = loadStaticServer(userData)
+
+    await requestJson(serveDesktopIdentityAPI, 'PUT', '/api/identity/epms/legacy', {
+      epm_json: {
+        dn: 'Legacy Contact',
+        signing_public_key: 'ed25519-signing-not-hex',
+        encryption_public_key: 'x25519-encryption-not-hex'
+      }
+    })
+
+    const vcard = await requestRaw(serveDesktopIdentityAPI, 'GET', '/api/identity/epms/legacy/vcard')
+    expect(vcard.statusCode).toBe(200)
+    const unfoldedVcard = vcard.body.replace(/\r\n[ \t]/g, '')
+    expect(unfoldedVcard).not.toContain('sign.spacedatanetwork.org')
+    expect(unfoldedVcard).not.toContain('encrypt.spacedatanetwork.org')
+    expect(unfoldedVcard).not.toContain('signing.spacedatanetwork.org')
+    expect(unfoldedVcard).not.toContain('encryption.spacedatanetwork.org')
+    expect(unfoldedVcard).not.toContain('X-SDN-XPUB')
   })
 
   test('serves local node and person directory search from public hosted EPMs', async () => {
@@ -605,7 +641,7 @@ test.describe('desktop static identity API', () => {
     expect(raw.body).not.toContain('must-not-be-written')
   })
 
-  test('publishes xpub with documented wallet signing and encryption public keys in self EPM and vCard exports', async () => {
+  test('derives wallet signing and encryption keys from xpub in self EPM; vCard exports §21 literal-key aliases only', async () => {
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-identity-xpub-'))
     const { serveDesktopIdentityAPI, serveDesktopNodeIdentityAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
     const xpub = HD_TEST_XPUB
@@ -657,12 +693,20 @@ test.describe('desktop static identity API', () => {
     const vcard = await requestRaw(serveDesktopIdentityAPI, 'GET', '/api/identity/epms/self/vcard')
     expect(vcard.statusCode).toBe(200)
     const unfoldedVcard = vcard.body.replace(/\r\n[ \t]/g, '')
-    expect(unfoldedVcard).toContain(`X-SDN-XPUB:${xpub}`)
+    // §21: the self vCard carries the sign/encrypt b64url literal-key aliases
+    // at the sign./encrypt. domains; the xpub alias and the legacy
+    // signing./encryption. domains are retired, so the xpub never rides the
+    // served card.
+    const signAlias = Buffer.from(signingPublicKey, 'hex').toString('base64url')
+    const encryptAlias = Buffer.from(encryptionPublicKey, 'hex').toString('base64url')
+    expect(unfoldedVcard).toContain(`EMAIL;type=INTERNET;type=sign:${signAlias}@sign.spacedatanetwork.org`)
+    expect(unfoldedVcard).toContain(`EMAIL;type=INTERNET;type=encrypt:${encryptAlias}@encrypt.spacedatanetwork.org`)
+    expect(unfoldedVcard).not.toContain('signing.spacedatanetwork.org')
+    expect(unfoldedVcard).not.toContain('encryption.spacedatanetwork.org')
+    expect(unfoldedVcard).not.toContain('X-SDN-XPUB')
     expect(unfoldedVcard).toContain(`X-SDN-SIGNING-PUBLIC-KEY:${signingPublicKey}`)
     expect(unfoldedVcard).toContain(`X-SDN-ENCRYPTION-PUBLIC-KEY:${encryptionPublicKey}`)
     expect(unfoldedVcard).toContain(`X-SDN-EPM-CID:${self.json.epmCid}`)
-    expect(unfoldedVcard).toContain(`EMAIL;type=INTERNET;type=signing:${signingPublicKey}@signing.spacedatanetwork.org`)
-    expect(unfoldedVcard).toContain(`EMAIL;type=INTERNET;type=encryption:${encryptionPublicKey}@encryption.spacedatanetwork.org`)
 
     const raw = await requestRaw(serveDesktopNodeEPMAPI, 'GET', '/api/node/epm')
     expect(raw.statusCode).toBe(200)
