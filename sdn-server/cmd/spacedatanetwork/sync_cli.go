@@ -188,7 +188,10 @@ func loadSyncStatusSnapshot(ctx context.Context, options syncStatusOptions) (syn
 	if err != nil {
 		return syncStatusSnapshot{}, fmt.Errorf("failed to initialize schema validator: %w", err)
 	}
-	store, err := openStoreForReading(cfg.Storage.Path, validator)
+	// sync status reads the pin ledger, dataset-shard publications and the
+	// directory — all auxiliary tables, which are never deferred. It needs
+	// neither the record catalog nor the derived summaries.
+	store, err := openStoreForReading(cfg.Storage.Path, validator, storeReadNeeds{})
 	if err != nil {
 		return syncStatusSnapshot{}, err
 	}

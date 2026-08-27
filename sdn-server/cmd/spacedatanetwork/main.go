@@ -458,7 +458,9 @@ func exportLocalIdentity(ctx context.Context, out io.Writer, cfg *config.Config,
 	if err != nil {
 		return fmt.Errorf("failed to initialize schema validator: %w", err)
 	}
-	store, err := openStoreForReading(cfg.Storage.Path, validator)
+	// The local EPM identity is a RECORD (QueryRawRecords over EPM.fbs), so the
+	// record catalog must be hydrated.
+	store, err := openStoreForReading(cfg.Storage.Path, validator, storeReadNeeds{recordCatalog: true})
 	if err != nil {
 		return err
 	}

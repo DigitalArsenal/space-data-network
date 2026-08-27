@@ -573,7 +573,9 @@ func openSearchStore() (*storage.FlatSQLStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize schema validator: %w", err)
 	}
-	store, err := openStoreForReading(cfg.Storage.Path, validator)
+	// search reports per-schema record counts through DataSummary, which reads
+	// the derived sdn_record_source_summary table.
+	store, err := openStoreForReading(cfg.Storage.Path, validator, storeReadNeeds{sourceSummaries: true})
 	if err != nil {
 		return nil, err
 	}
