@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operator Enrolment — Space Data Network</title>
+<meta name="description" content="Operator Enrolment for the Space Data Network.">
+<style>
+:root {
+  color-scheme: light;
+  --white: #ffffff;
+  --gray-50: #f9fafb;
+  --gray-100: #f2f4f7;
+  --gray-200: #e4e7ec;
+  --gray-300: #d0d5dd;
+  --gray-400: #98a2b3;
+  --gray-500: #667085;
+  --gray-600: #475467;
+  --gray-700: #344054;
+  --gray-800: #1d2939;
+  --gray-900: #101828;
+  --shadow-sm: 0px 1px 3px 0px rgba(16, 24, 40, 0.1);
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 2.5rem 1.5rem 6rem;
+  font: 16px/1.65 Outfit, ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--gray-800); background: var(--gray-50);
+}
+main {
+  max-width: 48rem; margin: 0 auto; background: var(--white);
+  border: 1px solid var(--gray-200); border-radius: var(--radius);
+  box-shadow: var(--shadow-sm); padding: 2.5rem 2.75rem 3rem;
+}
+h1, h2, h3, h4 { line-height: 1.25; font-weight: 650; color: var(--gray-900); margin: 2.5rem 0 .75rem; }
+h1 { font-size: 1.9rem; margin-top: 0; letter-spacing: -.02em; }
+h2 { font-size: 1.35rem; padding-bottom: .35rem; border-bottom: 1px solid var(--gray-200); }
+h3 { font-size: 1.05rem; }
+p, ul, ol, blockquote, table { margin: 0 0 1rem; }
+li { margin: .25rem 0; }
+a { color: var(--gray-900); text-underline-offset: 2px; }
+code {
+  font: .875em/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--gray-100); padding: .12em .35em; border-radius: 6px;
+}
+pre {
+  background: var(--gray-900); color: var(--gray-50); padding: 1rem 1.15rem;
+  border-radius: 10px; overflow-x: auto; margin: 0 0 1.25rem;
+  font-size: .84rem; line-height: 1.55;
+}
+pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+blockquote {
+  margin-left: 0; padding: .6rem 1rem; border-left: 3px solid var(--gray-300);
+  background: var(--gray-50); color: var(--gray-600); border-radius: 0 8px 8px 0;
+}
+table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+th, td { text-align: left; padding: .5rem .65rem; border-bottom: 1px solid var(--gray-200); vertical-align: top; }
+th { font-weight: 620; background: var(--gray-50); color: var(--gray-500);
+     text-transform: uppercase; font-size: .78rem; letter-spacing: .04em; }
+hr { border: 0; border-top: 1px solid var(--gray-200); margin: 2.5rem 0; }
+.nav {
+  max-width: 48rem; margin: 0 auto 1.25rem; display: flex; flex-wrap: wrap;
+  gap: .5rem; align-items: center; font-size: .875rem;
+}
+/* Pill nav, the console's rail vocabulary: ink-on-paper for the active item. */
+.nav a {
+  color: var(--gray-600); text-decoration: none; background: var(--white);
+  border: 1px solid var(--gray-200); border-radius: 999px; padding: .35rem .85rem;
+  transition: background .15s, color .15s;
+}
+.nav a:hover { background: var(--gray-100); color: var(--gray-900); }
+.nav a[aria-current="page"] {
+  background: var(--gray-900); border-color: var(--gray-900); color: var(--white);
+}
+.nav .grow { margin-left: auto; }
+.foot { max-width: 48rem; margin: 1.5rem auto 0; color: var(--gray-500); font-size: .85rem; }
+
+@media print {
+  /* The site chrome is navigation, and navigation does not survive paper. */
+  body { padding: 0; font-size: 11pt; }
+  .nav, .foot, .no-print { display: none !important; }
+  main { max-width: none; }
+  pre { background: #f2f4f7; color: #101828; border: 1px solid #e4e7ec;
+        white-space: pre-wrap; word-wrap: break-word; }
+  h1, h2, h3 { break-after: avoid; }
+  pre, table, blockquote { break-inside: avoid; }
+  .chapter { break-before: page; }
+  .chapter:first-of-type { break-before: auto; }
+}
+@page { size: A4; margin: 18mm 16mm; }
+</style>
+</head>
+<body>
+  <nav class="nav">
+      <a href="server-overview.html">Server Overview</a>
+      <a href="agent-api-guide.html">API Guide</a>
+      <a href="operator-enrolment.html" aria-current="page">Operator Enrolment</a>
+      <span class="grow"></span>
+      <a href="space-data-network-docs.pdf">PDF</a>
+    </nav>
+<main>
+<h1>OPERATOR ENROLMENT</h1>
+<h2>1. Operators and peers: one kind of thing with a trust level</h2>
+<p>A <strong>peer</strong> is a network identity: a libp2p peer ID that talks to this node over the network, carries data, and can be granted a trust level. An <strong>operator</strong> is a login identity: a BIP-32 account extended public key (an <strong>xpub</strong>) recorded in the node&#39;s user store, used with a wallet to sign in to the dashboard. Every operator derives a peer ID from its xpub, so one identity can be both a network participant and a login account.</p>
+<p><code>accounts list</code> shows the merged view — one row per identity, whether enrolled as a peer, an operator, or both:</p>
+<pre><code>$ spacedatanetwork accounts list
+{
+  &quot;accounts&quot;: [
+    {
+      &quot;can_sign_in&quot;: true,
+      &quot;kind&quot;: &quot;operator&quot;,
+      &quot;name&quot;: &quot;Node Root&quot;,
+      &quot;peer_id&quot;: &quot;16Uiu2HAkuSSuf8u32gYjS24jmER35Le5GFYLJfJeaQNfPEWPsJuA&quot;,
+      &quot;source&quot;: &quot;database&quot;,
+      &quot;trust_level&quot;: &quot;admin&quot;,
+      &quot;xpub&quot;: &quot;xpub6CfBgD57CQrTjuj9FDcVjvfwmu2beKsKqTYLt2rQFsm6...&quot;
+    },
+    {
+      &quot;can_sign_in&quot;: false,
+      &quot;kind&quot;: &quot;peer&quot;,
+      &quot;name&quot;: &quot;...&quot;,
+      &quot;peer_id&quot;: &quot;16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45&quot;,
+      &quot;trust_level&quot;: &quot;full&quot;
+    }
+  ]
+}
+</code></pre>
+<p>A merged row has two underlying records (a peer entry and an operator entry), so every trust change must say which one it targets — the CLI is explicit about this (Section 6).</p>
+<p>Two identities are special:</p>
+<ul>
+<li><strong>The node&#39;s own key</strong> (the root derived from the node&#39;s seed). Whoever holds the seed can always sign in as administrator, with or without any user-store row. It appears in <code>accounts list</code> as &quot;Node Root&quot;.</li>
+<li><strong>The first admin bootstrap</strong> (Section 5): a node with no administrators mints the first sign-in as &quot;Initial Admin&quot;.</li>
+</ul>
+<h2>2. The key handover, end to end</h2>
+<p>An operator row needs <strong>two public values</strong> before it can ever sign in:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>What it is</th>
+<th>Where it comes from</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>xpub</code></td>
+<td>BIP-32 account extended public key</td>
+<td>the prospective operator&#39;s wallet</td>
+</tr>
+<tr>
+<td><code>signing_pubkey_hex</code></td>
+<td>64-hex Ed25519 <strong>public</strong> signing key</td>
+<td>the same wallet</td>
+</tr>
+</tbody></table>
+<p>The <code>name</code> is optional. The trust level is chosen by the enrolling admin, not by the key holder.</p>
+<p>Sign-in works like this: the wallet sends a challenge request containing its Ed25519 public key; the node looks the operator up <strong>by that signing key, not by xpub</strong>; the wallet then signs the challenge with the matching private key. So the row must carry the signing public key or the node has nothing to match. The xpub is the row&#39;s identity — every endpoint addresses the row by it — and the signing key is the possession proof.</p>
+<h3>Step 1 — the prospective operator generates a key on their own machine</h3>
+<p><strong>Shipped path: the in-browser key ceremony</strong> — the sanctioned way to generate an SDN key. Dashboard → <strong>Accounts → Operator keys</strong> → <strong>&quot;GENERATE A KEY&quot;</strong> dialog (the other half of the paste-an-xpub &quot;APPROVE A KEY&quot; form; both land in the same operator table). Some newer dashboard builds show a paste-only &quot;Enrol a key&quot; form without the generation button; the generation dialog&#39;s public output — xpub + signing public key + peer ID + fingerprint — is also reachable from the HD-wallet wallet UIs&#39; copy buttons. The ceremony:</p>
+<ul>
+<li>generates a fresh 24-word recovery phrase entirely in the browser (HD-wallet module, seeded from the browser&#39;s own random source);</li>
+<li>derives and shows <strong>only public material</strong>: the account xpub, the peer ID, an xpub fingerprint, and the Ed25519 <strong>public</strong> key;</li>
+<li>never lets the phrase leave the page — not posted, not saved, not written to storage; it disappears when the dialog closes.</li>
+</ul>
+<p>The printed signing public key is computed by the exact same unlock path the wallet uses at sign-in, so it is byte-identical to what the phrase presents on login.</p>
+<p><strong>CLI alternative (xpub half only).</strong> If the operator already has a BIP-39 recovery phrase (e.g. from any offline BIP-39 tool), the CLI derives the standard account xpub at <code>m/44&#39;/0&#39;/0&#39;</code>:</p>
+<pre><code>$ spacedatanetwork derive-xpub
+Enter your BIP-39 mnemonic phrase:
+--- SDN Identity ---
+XPub (BIP-32):     xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj
+
+Add to config.yaml:
+users:
+  - xpub: &quot;xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj&quot;
+    trust_level: &quot;admin&quot;
+    name: &quot;Operator&quot;
+xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj
+</code></pre>
+<p>The bare xpub goes to <strong>standard output</strong> (for scripts); the paste-ready config block goes to standard error. If the module file cannot be found, point at it explicitly: <code>--wasm &lt;path&gt;</code> or the <code>HD_WALLET_WASM_PATH</code> environment variable.</p>
+<blockquote>
+<p><strong>Not yet supported:</strong> <code>derive-xpub</code> prints only the xpub. The matching Ed25519 signing public key currently comes from the browser ceremony or the HD-wallet wallet UI (a proposed CLI printing both fields: Section 8). A command named <code>identity new</code>, mentioned in some dev environment examples, does <strong>not</strong> exist in the current binary; <code>identity</code> offers only <code>directory</code>, <code>export</code>, <code>gen-key</code>, <code>keys</code>, <code>set</code>, <code>wizard</code>.</p>
+</blockquote>
+<h3>Step 2 — what gets handed over</h3>
+<p>The prospective operator passes to an existing administrator <strong>exactly</strong>:</p>
+<ol>
+<li>the <strong>xpub</strong> (starts with <code>xpub</code>),</li>
+<li>the <strong>64-hex Ed25519 signing public key</strong>,</li>
+<li>their preferred display <strong>name</strong> (optional).</li>
+</ol>
+<p><strong>What must never be handed over, in any channel:</strong> the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI&#39;s custody classification: <code>key export --format mnemonic</code> is labelled &quot;THE ENTIRE NODE IDENTITY IN PLAINTEXT&quot; and <code>base64</code>/<code>hex</code>/<code>kubo</code>/<code>libp2p</code> formats are labelled &quot;SECRET&quot;.) Nothing in enrolment ever asks for a private value; an enrolment request that does is a scam or a bug.</p>
+<h3>Step 3 — what binds on first login (TOFU)</h3>
+<p>The signing key is bound <strong>on first successful login — trust on first use</strong>:</p>
+<ul>
+<li>Signing key pre-seeded at enrolment (recommended; it is a required field in the dashboard form): login just works; any other key is refused from day one.</li>
+<li>Row created without a signing key (possible via config): the <strong>first</strong> wallet that completes a successful sign-in binds its key permanently; a conflicting key presented later is refused.</li>
+<li>The binding is a pin — whoever holds the phrase that first signed in owns the account permanently. An admin can pin the key in advance (dashboard form or config <code>signing_pubkey_hex</code>), mapping enrolment exactly to the key the holder presented.</li>
+</ul>
+<p>Failure modes to avoid:</p>
+<ul>
+<li><strong>Enrolling the wrong signing key</strong> — the node holds a pin the operator cannot produce; the account can never sign in.</li>
+<li><strong>Omitting the signing key entirely</strong> — the row is a dead record: the dashboard sends no xpub at sign-in, the node resolves the operator by signing key, and a keyless row matches nothing.</li>
+</ul>
+<h2>3. Path A — enrol from the CLI (and the config path)</h2>
+<p><code>accounts trust --xpub</code> is the only CLI command that touches operator rows, and it <strong>updates an existing operator — it cannot create one</strong>. Proven on the wire against a live node:</p>
+<pre><code>$ spacedatanetwork accounts trust \
+    --xpub xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj \
+    --level admin
+Error: PUT /api/auth/users/xpub6Bosf...: 400 Bad Request:
+{&quot;code&quot;:&quot;update_failed&quot;,&quot;message&quot;:&quot;user not found&quot;}
+</code></pre>
+<p>An xpub with no row gets &quot;user not found&quot; — nothing is created. The create endpoint (<code>POST /api/auth/users</code>) is called by the dashboard form alone; no CLI command performs it.</p>
+<p><strong>The real CLI-compatible creation path is <code>config.yaml</code></strong> — also the path that works before any admin exists (Section 5):</p>
+<ol>
+<li>Have the prospective operator run <code>derive-xpub</code> and hand you the xpub (and, from the browser ceremony or wallet UI, the signing public key).</li>
+<li>Add a <code>users:</code> entry — this is exactly what <code>derive-xpub</code> prints:</li>
+</ol>
+<pre><code class="language-yaml">users:
+  - xpub: &quot;xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj&quot;
+    signing_pubkey_hex: &quot;e31e29b7c8b76bd08012ae0a917eced0067a183e9f1de980a7ef377115578f93&quot;   # 64 hex chars, required in practice
+    trust_level: &quot;admin&quot;
+    name: &quot;Operator&quot;
+</code></pre>
+<p>   (<code>signing_pubkey_hex</code> is optional in the config parser and required in practice, for the same dead-record reason as in the UI. Without it, the node logs that the signing key &quot;will be bound on first login (TOFU)&quot;.)
+3. Restart the daemon (<code>spacedatanetwork restart</code>, or stop/start).
+4. The operator signs in; the account is live. Two consequences:</p>
+<ul>
+<li>entries from <code>config.yaml</code> <strong>cannot be changed or removed through the API or dashboard</strong> — a config row is re-imposed from the file on every read, so changing trust or name means editing the file and restarting;</li>
+<li>a config row <strong>can</strong> carry trust spellings the API refuses: <code>never</code> and <code>ultimate</code>.</li>
+</ul>
+<p>Once a row exists, the CLI manages it:</p>
+<pre><code># change an operator&#39;s trust level (or rename)
+spacedatanetwork accounts trust --xpub &lt;xpub&gt; --level admin
+spacedatanetwork accounts trust --xpub &lt;xpub&gt; --name &quot;New Name&quot;
+
+# view the merged view (peers, operators, and identities that are both)
+spacedatanetwork accounts list
+</code></pre>
+<p>Every admin command authenticates by signing in as the node&#39;s own root key against the live daemon, or pass a session token explicitly with <code>--session-token &lt;token&gt;</code> or the <code>SDN_SESSION_TOKEN</code> environment variable.</p>
+<blockquote>
+<p><strong>Not yet supported:</strong> no CLI command creates an operator row — <code>accounts add</code> creates <strong>peer</strong> rows only and explicitly refuses xpubs (&quot;it identifies a wallet account, not a libp2p host&quot;). Proposal: Section 8.</p>
+</blockquote>
+<h2>4. Path B — enrol from the dashboard UI</h2>
+<ol>
+<li>Sign in as an administrator.</li>
+<li>Open <strong>Accounts</strong>, then the <strong>Operators</strong> tab.</li>
+<li>In the <strong>&quot;Enrol a key&quot;</strong> form enter:<ul>
+<li><strong>Account xpub</strong> — pasted from the prospective operator&#39;s key ceremony or from <code>derive-xpub</code>;</li>
+<li><strong>Name</strong> — optional, their display name;</li>
+<li><strong>Trust</strong> — one of: <code>unknown</code>, <code>marginal</code>, <code>standard</code>, <code>full</code>, <code>admin</code> (the dropdown offers exactly these; see Section 6);</li>
+<li><strong>Signing public key (hex)</strong> — the 64-hex Ed25519 public key from the same ceremony, lowercased; the wallet UIs&#39; convenience copy button produces this directly.</li>
+</ul>
+</li>
+<li>Click <strong>Enrol</strong>. The node answers <code>201</code> for a new row; a duplicate xpub answers <code>409 user_exists</code>.</li>
+</ol>
+<p>The form posts exactly the two-value payload above to <code>POST /api/auth/users</code> with the session cookie. Any admin session can also edit a row&#39;s trust/name/signing key (the row&#39;s own edit control in the table) and <strong>Withdraw</strong> a row — see Section 7 for what withdrawal refuses.</p>
+<h2>5. Bootstrapping: where the first administrator comes from</h2>
+<p>On a brand-new node, exactly three ways an administrator exists:</p>
+<p><strong>1. The node&#39;s own key — always.</strong> The node derives its identity from its seed. Whoever holds that seed signs in as administrator no matter what the user store contains (the &quot;Node Root&quot; row). This is the fallback that means the operator tier can never be permanently destroyed (Section 7).</p>
+<p><strong>2. <code>config.yaml</code> seeding.</strong> Before first start, or at any time, add a <code>users:</code> entry with <code>trust_level: &quot;admin&quot;</code> as in Section 3. The seeded key signs in immediately.</p>
+<p><strong>3. First-admin bootstrap — automatic.</strong> When no administrator exists anywhere (no config rows, no database rows at admin tier), the node arms one bootstrap path: the first wallet that completes a full sign-in not matching the node&#39;s own root is minted as <strong>&quot;Initial Admin&quot;</strong> at admin trust, and its signing key is bound at that moment. Two constraints are enforced deliberately:</p>
+<ul>
+<li>the xpub must be an account-level xpub — a BIP-32 <strong>master</strong> xpub (depth 0) is <em>refused</em> at both the challenge and the minting step, because it would store a key that enumerates an entire wallet. Any xpub from <code>derive-xpub</code> (account 0) qualifies;</li>
+<li>the path only exists while <code>HasAdmin()</code> is false — the moment any administrator row appears (including a config row), the bootstrap stops arming, and unknown keys get unverifiable challenges instead.</li>
+</ul>
+<p><strong>Legacy setup mode:</strong> on a daemon with no identity key yet, the terminal banner prints a one-time setup token and the root page redirects to a setup page that creates the initial node identity plus a legacy username/password administrator. Old pre-wallet flow; still present on fresh boxes.</p>
+<h2>6. Trust levels, and what each one grants</h2>
+<p>The scale is the classic PGP ownertrust ladder, from hard veto to self-identity:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Numeric</th>
+<th>Grants</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>never</code></td>
+<td>-1</td>
+<td>Explicit distrust — hard veto, never overridden</td>
+</tr>
+<tr>
+<td><code>unknown</code></td>
+<td>0</td>
+<td>No assertion; the fail-closed default</td>
+</tr>
+<tr>
+<td><code>marginal</code></td>
+<td>1</td>
+<td>Weakest positive assertion</td>
+</tr>
+<tr>
+<td><code>standard</code></td>
+<td>2</td>
+<td>Normal access; the default for newly added peers</td>
+</tr>
+<tr>
+<td><code>full</code></td>
+<td>3</td>
+<td>Confident trust</td>
+</tr>
+<tr>
+<td><code>admin</code></td>
+<td>4</td>
+<td><strong>Operator tier: administrative API access, can manage other accounts</strong></td>
+</tr>
+<tr>
+<td><code>ultimate</code></td>
+<td>5</td>
+<td>Reserved for the node&#39;s own identity — never granted to anyone else</td>
+</tr>
+</tbody></table>
+<p>Admin grants: all <code>/api/auth/users*</code> management (the Enrol/editing surface), the merged accounts view, peer trust management, and the rest of the admin-gated API. Every admin gate is a numeric comparison against tier 4.</p>
+<p><strong>Who can assign what:</strong></p>
+<ul>
+<li><strong>Operators (the API):</strong> only <code>unknown</code> through <code>admin</code>. The API refuses <code>never</code> (operator lockout) and <code>ultimate</code> (self-identity) — wiring-proof:</li>
+</ul>
+<pre><code>$ spacedatanetwork accounts trust --xpub &lt;xpub&gt; --level never
+Error: PUT /api/auth/users/&lt;xpub&gt;: 400 Bad Request:
+{&quot;code&quot;:&quot;invalid_trust_level&quot;,&quot;message&quot;:&quot;trust level \&quot;never\&quot; is not
+assignable via this API: must be between \&quot;unknown\&quot; and \&quot;admin\&quot;
+(ultimate is reserved for the node&#39;s own identity; never as an operator
+lockout is not yet supported)&quot;}
+</code></pre>
+<p>  (The CLI help line listing <code>never|unknown|marginal|standard|full|admin|ultimate</code> is the <em>peer</em> path&#39;s full vocabulary; the operator path always rejects <code>never</code> and <code>ultimate</code>.)</p>
+<ul>
+<li><strong>Peers (the CLI <code>accounts trust --peer-id</code> path):</strong> the full range, including <code>never</code> and <code>ultimate</code>, with no ceiling.</li>
+<li><strong>Config rows:</strong> any spelling is accepted from the file (<code>never</code> and <code>ultimate</code> included) — the ceiling exists only on the API.</li>
+</ul>
+<h2>7. Withdrawal, and the guards around it</h2>
+<p><strong>The dashboard blocks three withdrawals client-side</strong>, with the reason in place of a confirmation:</p>
+<ul>
+<li><strong>From config</strong> — the row is owned by the config file; edit the file and restart instead.</li>
+<li><strong>Your key</strong> — withdrawing your own key from the node that authenticated you would lock the session&#39;s owner out.</li>
+<li><strong>Last admin</strong> — if this row is the only one at admin tier, withdrawing it would leave the node with no administrator at all.</li>
+</ul>
+<p>The server itself has only one gate: the caller must hold an admin session. There is no server-side &quot;self&quot; or &quot;last admin&quot; check — an API caller <em>can</em> delete the last row; the guard lives in the UI. Deleting the last row is not permanent: the node re-arms the first-admin bootstrap, so the next wallet to sign in is minted &quot;Initial Admin&quot; again. With the root key&#39;s unconditional admission, the operator tier can never be permanently destroyed.</p>
+<p>Two more withdrawal facts:</p>
+<ul>
+<li><strong>Config rows cannot be removed or trust-changed via the API at all</strong> (errors are explicit: &quot;config users cannot be removed&quot; / &quot;config-managed users cannot have trust changed through the API&quot;).</li>
+<li><strong>Live sessions survive a demotion or removal.</strong> A session carries the trust level minted when it was created; it is not re-validated against the row on every request. A withdrawn operator keeps what they already hold in an open session until it expires — withdrawal stops <em>future</em> sign-ins immediately (the row is gone from the resolution path) but does not retroactively void open sessions.</li>
+</ul>
+<h2>8. Not yet supported, and the minimal scheme that would close it</h2>
+<p><strong>Gap 1 — the CLI prints only half the handover.</strong> <code>derive-xpub</code> prints the xpub but never the signing public key, so a CLI-only operator cannot produce both enrolment fields without a browser. <strong>Proposed (not built):</strong> extend <code>derive-xpub</code> to also derive and print the Ed25519 signing public key through the exact wallet unlock path sign-in uses (the same byte-identity guarantee the browser ceremony already guarantees), so its output becomes the complete handover block.</p>
+<p><strong>Gap 2 — no CLI create for operators.</strong> <code>accounts trust --xpub</code> updates only; creation lives in the dashboard form, first-admin bootstrap, and config seeding. <strong>Proposed (not built):</strong> a <code>POST /api/auth/users</code> call from the CLI (e.g. an <code>accounts add --xpub ... --signing-pubkey-hex ... --level ...</code> mode that disambiguates from peer creation by requiring the xpub flag), or a first-class <code>users</code> command group. Until one exists, the CLI path is: <code>derive-xpub</code> → edit <code>config.yaml</code> → restart.</p>
+<p>Neither proposal exists in the shipped binary; treat both as design.</p>
+<h2>9. Security notes: what never leaves the operator&#39;s machine</h2>
+<ul>
+<li><strong>The recovery phrase.</strong> The browser ceremony generates it locally and drops it when the dialog closes. Never type it into a chat, an email, a ticket, or a terminal command; a phrase that has appeared in a transcript or a log is compromised — generate a new one.</li>
+<li><strong>Private keys.</strong> The node never asks for them. Enrolment transports exactly two public values: the xpub and the Ed25519 public key.</li>
+<li><strong>The node&#39;s own key material.</strong> At-rest keys are encrypted with a machine-derived key and fail closed if the machine changes. <code>key export --format mnemonic</code> prints the entire node identity in plaintext — that command belongs on the box, in a trusted session, not in any pipeline you cannot vouch for.</li>
+<li><strong>Master xpubs.</strong> A depth-0 master xpub is refused by the first-admin bootstrap because it would enumerate an entire wallet; always enrol the account-level xpub (<code>derive-xpub</code> output).</li>
+<li><strong>No enumeration.</strong> A sign-in attempt with an unknown xpub receives a valid-looking challenge that <em>can never verify</em> — probing for whether an account exists gets you silence, not information.</li>
+<li><strong>Session tokens.</strong> Browser sessions ride an HttpOnly cookie. Scripted administration passes a session token explicitly (<code>--session-token</code> / <code>SDN_SESSION_TOKEN</code>) — treat it as a bearer credential.</li>
+</ul>
+<hr>
+<p><em>Verified against the shipped binary <code>sdn-server/spacedatanetwork</code>, its real help output, the live daemon on <code>127.0.0.1:7173</code>, and the node source (<code>sdn-server/internal/auth/</code>, <code>sdn-server/internal/peers/</code>, <code>sdn-server/cmd/spacedatanetwork/</code>, and the dashboard sources under <code>sdn-js/spaceaware-ui/</code>).</em></p>
+
+</main>
+<div class="foot">Space Data Network documentation. <a href="space-data-network-docs.pdf">Download as PDF</a>.</div>
+</body>
+</html>

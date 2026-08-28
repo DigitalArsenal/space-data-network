@@ -16,11 +16,18 @@ import {
   type NodeStatusClientOptions,
 } from '../../status/client';
 import type { NodeStatusSetView } from '../../status/view-model';
+import type { DashboardStatsView } from '../../status/dashboard-stats';
 
 /** The global seam shape read by the status dashboard UI. */
 export interface SDNNodeStatusGlobal {
   subscribe(cb: (view: NodeStatusSetView) => void): () => void;
   current(): NodeStatusSetView | null;
+  /**
+   * Dashboard stats ($NDS frames on the same socket). Optional: absent when
+   * the node predates the snapshot lane — the UI falls back to its own fetch.
+   */
+  subscribeStats?(cb: (view: DashboardStatsView) => void): () => void;
+  currentStats?(): DashboardStatsView | null;
   stop(): void;
 }
 
@@ -52,6 +59,8 @@ export function startStatusDashboard(options: NodeStatusClientOptions): StatusDa
     client,
     subscribe: (cb) => client.subscribe(cb),
     current: () => client.current(),
+    subscribeStats: (cb) => (client.subscribeStats ? client.subscribeStats(cb) : () => {}),
+    currentStats: () => client.currentStats?.() ?? null,
     stop: () => {
       client.stop();
       if (globalThis.SDN_NODE_STATUS === handle) {

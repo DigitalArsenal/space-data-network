@@ -25,6 +25,11 @@ import {
   type NodeStatusSetView,
   type NodeStatusView,
 } from './view-model';
+import {
+  decodeDashboardStats,
+  isDashboardStatsFrame,
+  type DashboardStatsView,
+} from './dashboard-stats';
 
 /** Minimal structural WebSocket used by the client (browser / `ws` / mocks). */
 export interface WebSocketLike {
@@ -44,6 +49,15 @@ export type WebSocketCtor = new (url: string) => WebSocketLike;
 /** A subscriber for status set updates. */
 export type NodeStatusListener = (view: NodeStatusSetView) => void;
 
+/** A subscriber for dashboard stats updates ($NDS frames on the same socket). */
+export type DashboardStatsListener = (view: DashboardStatsView) => void;
+
+/** File-identifier peek for a size-prefixed frame: bytes 8..12. */
+function frameIdentifier(bytes: Uint8Array): string {
+  if (bytes.length < 12) return '';
+  return String.fromCharCode(bytes[8]!, bytes[9]!, bytes[10]!, bytes[11]!);
+}
+
 /** The shared client interface exposed by both modes. */
 export interface NodeStatusClient {
   /**
@@ -53,6 +67,14 @@ export interface NodeStatusClient {
   subscribe(cb: NodeStatusListener): () => void;
   /** The most recently emitted view, or `null` before the first update. */
   current(): NodeStatusSetView | null;
+  /**
+   * Subscribe to dashboard stats ($NDS frames pushed on the same socket by
+   * nodes that carry the snapshot lane). Absent on old nodes: no frame ever
+   * arrives and the store keeps whatever the caller fetched itself.
+   */
+  subscribeStats?(cb: DashboardStatsListener): () => void;
+  /** The most recently received stats view, or `null`. */
+  currentStats?(): DashboardStatsView | null;
   /** Stop the client, closing sockets/timers. Idempotent. */
   stop(): void;
 }
@@ -252,10 +274,32 @@ function createRemoteClient(options: NodeStatusClientOptions): NodeStatusClient 
     }, delay);
   };
 
+  // Stats lane: latest $NDS view + subscribers (same socket, second frame kind).
+  const statsListeners = new Set<DashboardStatsListener>();
+  let latestStats: DashboardStatsView | null = null;
+  const emitStats = (view: DashboardStatsView): void => {
+    latestStats = view;
+    for (const cb of [...statsListeners]) {
+      try {
+        cb(view);
+      } catch {
+        /* isolate subscriber errors */
+      }
+    }
+  };
+
   const handleFrame = async (data: unknown): Promise<void> => {
     try {
       const bytes = await toUint8Array(data);
       if (!bytes || bytes.length === 0) return;
+      // The socket multiplexes frame kinds; the file identifier picks the
+      // decoder. An identifier this build does not know is a newer node's
+      // frame — skip it, never mis-decode it as node status.
+      if (isDashboardStatsFrame(bytes)) {
+        emitStats(decodeDashboardStats(bytes));
+        return;
+      }
+      if (frameIdentifier(bytes) !== '$NST') return;
       hub.emit(decodeNodeStatusSet(bytes));
     } catch (error) {
       reportError(error);
@@ -307,6 +351,18 @@ function createRemoteClient(options: NodeStatusClientOptions): NodeStatusClient 
   return {
     subscribe: hub.subscribe,
     current: hub.current,
+    subscribeStats(cb) {
+      statsListeners.add(cb);
+      if (latestStats) {
+        try {
+          cb(latestStats);
+        } catch {
+          /* isolate subscriber errors */
+        }
+      }
+      return () => statsListeners.delete(cb);
+    },
+    currentStats: () => latestStats,
     stop() {
       if (stopped) return;
       stopped = true;
@@ -494,6 +550,8 @@ export function fetchNodeStatusOnce(
         try {
           const bytes = await toUint8Array(event?.data);
           if (!bytes || bytes.length === 0) return;
+          // The socket multiplexes frame kinds — wait for the $NST one.
+          if (frameIdentifier(bytes) !== '$NST') return;
           const view = decodeNodeStatusSet(bytes);
           finish(() => resolve(view));
         } catch (error) {

@@ -31,6 +31,24 @@ const (
 // prefixed). Returning nil skips that push.
 type SnapshotFunc func() []byte
 
+// FrameSourceFunc returns a pre-built frame and the generation it was built
+// at. ok is false while the source has nothing yet. The Broadcaster pushes the
+// frame as its own binary message when the generation moves, so the socket
+// carries several INDEPENDENT frames; a client tells them apart by the
+// FlatBuffer file identifier ($NST for node status, $NDS for dashboard stats),
+// which sits at bytes 8..12 of a size-prefixed buffer.
+type FrameSourceFunc func() (frame []byte, generation uint64, ok bool)
+
+// frameSource is one auxiliary frame lane and the generation last pushed.
+type frameSource struct {
+	name string
+	get  FrameSourceFunc
+	// lastGen is touched only from refresh (single-flighted by b.building).
+	lastGen atomic.Uint64
+	// lastFrame is what a newly connected client is sent immediately.
+	lastFrame atomic.Pointer[[]byte]
+}
+
 // Broadcaster is the public, read-only /ws/status hub: it upgrades incoming
 // connections, pushes the current status frame immediately, then fans out a
 // fresh frame to every client on a 5s ticker. There is no authentication and
@@ -55,6 +73,10 @@ type Broadcaster struct {
 	// building guards against overlapping builds when one takes longer than the
 	// tick: a slow build must not queue up more of itself.
 	building atomic.Bool
+
+	// sources are ADDITIONAL frame lanes pushed on the same socket alongside
+	// the $NST frame. Set before Start; never mutated afterwards.
+	sources []*frameSource
 
 	mu      sync.Mutex
 	clients map[*wsClient]struct{}
@@ -91,6 +113,16 @@ func NewBroadcaster(snapshot SnapshotFunc, allowedOrigins []string) *Broadcaster
 	return b
 }
 
+// AddFrameSource registers an additional frame lane pushed on this socket.
+// Call before Start. The lane's frame is sent on connect and whenever its
+// generation changes; the $NST frame keeps flowing exactly as before.
+func (b *Broadcaster) AddFrameSource(name string, get FrameSourceFunc) {
+	if get == nil {
+		return
+	}
+	b.sources = append(b.sources, &frameSource{name: name, get: get})
+}
+
 // Start launches the 5s broadcast loop. Idempotent.
 func (b *Broadcaster) Start() {
 	b.startOnce.Do(func() {
@@ -106,9 +138,6 @@ func (b *Broadcaster) Start() {
 // caller of the snapshot function, and it never runs on a connection's
 // goroutine or inside the ticker loop.
 func (b *Broadcaster) refresh() {
-	if b.snapshot == nil {
-		return
-	}
 	if !b.building.CompareAndSwap(false, true) {
 		// A previous build is still running against a busy subsystem. Skipping
 		// is correct: clients keep receiving the cached frame, and one slow
@@ -117,12 +146,30 @@ func (b *Broadcaster) refresh() {
 	}
 	defer b.building.Store(false)
 
-	frame := b.snapshot()
-	if frame == nil {
-		return
+	if b.snapshot != nil {
+		if frame := b.snapshot(); frame != nil {
+			b.lastFrame.Store(&frame)
+			b.broadcast(frame)
+		}
 	}
-	b.lastFrame.Store(&frame)
-	b.broadcast(frame)
+	b.pushSources()
+}
+
+// pushSources fans out each auxiliary lane whose generation moved since the
+// last push. An unchanged lane sends nothing: an idle node must not spend
+// bandwidth restating the same numbers.
+func (b *Broadcaster) pushSources() {
+	for _, src := range b.sources {
+		frame, gen, ok := src.get()
+		if !ok || len(frame) == 0 {
+			continue
+		}
+		src.lastFrame.Store(&frame)
+		if src.lastGen.Swap(gen) == gen {
+			continue
+		}
+		b.broadcast(frame)
+	}
 }
 
 // cachedFrame returns the last built frame, or nil before the first build.
@@ -226,6 +273,25 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		go b.refresh()
 	}
 
+	// Auxiliary lanes are sent to the new client regardless of generation: it
+	// has seen nothing yet, and waiting for the numbers to change would leave
+	// a freshly opened dashboard blank on a quiet node.
+	for _, src := range b.sources {
+		frame := src.cachedFrame()
+		if frame == nil {
+			if f, _, ok := src.get(); ok {
+				frame = f
+			}
+		}
+		if len(frame) == 0 {
+			continue
+		}
+		select {
+		case c.send <- frame:
+		default:
+		}
+	}
+
 	go b.writePump(c)
 	b.readPump(c) // blocks until the client disconnects
 }
@@ -303,6 +369,13 @@ func (b *Broadcaster) checkOrigin(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+func (s *frameSource) cachedFrame() []byte {
+	if p := s.lastFrame.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 func isLoopbackHost(host string) bool {

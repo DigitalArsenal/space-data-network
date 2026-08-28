@@ -4,6 +4,7 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,15 +23,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  *
  * Territories and the who-wins-per-class ruling: spaceaware-ui/UI_SOURCE_OF_TRUTH.md
  * (IRIS). Artifact chain: dashboard/DESIGN-SOURCE.json.
- *
- * The alias KEY stays `spaceaware-student-sdn` deliberately: renaming it to
- * `spaceaware-ui` touches the 7 import specifiers. It is a separate pass
- * (IRIS ruling B, 2026-07-30), and with the cssHash pin below it is now
- * certifiable byte-for-byte instead of merely hoped-for — measure it, though,
- * do not assume it.
  */
-const designRoot = fs.realpathSync(path.resolve(__dirname, '../spaceaware-ui/src/dashboard'));
-
 /**
  * The external-wallet component home (owner 2026-08-20: hd-wallet-ui owns the
  * code, every app consumes it as a component). The dashboard face imports
@@ -120,11 +113,20 @@ function assertNoCssHashCollision() {
 // submodule; this file stays here because it is NODE law — the single-file
 // build, the CSP composition and the import-map assertion belong to the
 // artifact's owner, not the source repo (spec §1.1/§1.3).
-const appRoot = path.resolve(__dirname, '../spaceaware-ui/src/dashboard/src/apps/sdn-node');
+//
+// Owner 2026-08-28: the old dashboard tree is deleted; the embed builds from
+// the TailAdmin tree — the same App the browser client shell mounts.
+const appRoot = path.resolve(__dirname, '../spaceaware-ui/src/dashboard-tailadmin/apps/sdn-node');
+
+// Tailwind v4 (CSS-first, @tailwindcss/vite). Resolved out of the design
+// repo's own dependency tree — this build dir has no tailwind install.
+const requireUi = createRequire(path.resolve(__dirname, '../spaceaware-ui/package.json'));
+const tailwindcss = (await import(requireUi.resolve('@tailwindcss/vite'))).default;
 
 export default defineConfig({
   root: appRoot,
   plugins: [
+    tailwindcss(),
     stubHeliaOnlyDeps(),
     // cssHash PINNED to the component's CSS, not its path. IRIS ruling
     // 2026-07-30 (ui-design-lib-two-way-sync), option 2.
@@ -169,7 +171,6 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      'spaceaware-student-sdn': designRoot,
       // NODE-owned transport the app imports by name (see apps/sdn-node/main.js).
       'sdn-node-status-runtime': path.resolve(__dirname, '../src/ui/runtime/status-dashboard'),
       // Insertion order matters: the longer style key must precede the bare key.
@@ -178,7 +179,6 @@ export default defineConfig({
     },
     dedupe: ['svelte']
   },
-  optimizeDeps: { exclude: ['spaceaware-student-sdn'] },
   // The semantic engine runs in a Web Worker (semantic.worker.js), imported
   // with ?worker&inline so vite bakes it into the single bundle and spawns it
   // from a blob: URL — no second served file, which is what keeps the

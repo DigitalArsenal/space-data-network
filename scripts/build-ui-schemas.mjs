@@ -68,6 +68,42 @@ function generate(flatc, lang, outVirtualDir, entries) {
   return collectOutputs(flatc, outVirtualDir);
 }
 
+// Two schemas sharing one namespace each emit their own `nst.ts` barrel, and
+// the second overwrites the first — the surviving barrel then re-exports only
+// half the tables. Compile each schema into its own output dir and union the
+// barrels: every other generated file is per-table and identical either way.
+function generateAll(flatc, lang, outPrefix, entries) {
+  const merged = new Map();
+  entries.forEach((entry, i) => {
+    for (const [rel, source] of generate(flatc, lang, `${outPrefix}_${i}`, [entry])) {
+      const prior = merged.get(rel);
+      if (prior === undefined || prior === source) {
+        merged.set(rel, source);
+        continue;
+      }
+      merged.set(rel, mergeBarrel(rel, prior, source));
+    }
+  });
+  return merged;
+}
+
+// Union two barrel files line by line, keeping first-seen order. Anything that
+// is not an export line must already agree, or the schemas genuinely collide.
+function mergeBarrel(rel, a, b) {
+  const lines = [];
+  const seen = new Set();
+  for (const line of [...a.split("\n"), ...b.split("\n")]) {
+    if (seen.has(line)) continue;
+    if (line.trim() !== "" && !line.startsWith("//") && !line.startsWith("/*") &&
+        !line.startsWith("export ")) {
+      throw new Error(`cannot merge generated ${rel}: conflicting line ${line}`);
+    }
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
 const schemaFiles = (await fs.readdir(SCHEMA_DIR)).filter((f) =>
   f.endsWith(".fbs"),
 );
@@ -86,8 +122,8 @@ for (const f of schemaFiles) {
   entries.push(virtual);
 }
 
-const goOutputs = generate(flatc, "--go", "/out_go", entries);
-const tsOutputs = generate(flatc, "--ts", "/out_ts", entries);
+const goOutputs = generateAll(flatc, "--go", "/out_go", entries);
+const tsOutputs = generateAll(flatc, "--ts", "/out_ts", entries);
 await writeOutputs(GO_OUT, goOutputs);
 await writeOutputs(TS_OUT, tsOutputs);
 
