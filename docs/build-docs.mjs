@@ -40,7 +40,7 @@ const { marked } = require('marked');
 const DOCS = [
   { slug: 'server-overview', src: 'SERVER-OVERVIEW.md', title: 'Server Overview' },
   { slug: 'agent-api-guide', src: 'AGENT-API-GUIDE.md', title: 'API Guide' },
-  { slug: 'operator-enrolment', src: 'OPERATOR-ENROLMENT.md', title: 'Operator Enrolment' },
+  { slug: 'operator-enrollment', src: 'OPERATOR-ENROLLMENT.md', title: 'Operator Enrollment' },
 ];
 
 const SITE = 'Space Data Network';

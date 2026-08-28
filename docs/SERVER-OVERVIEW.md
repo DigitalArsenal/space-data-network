@@ -1,6 +1,10 @@
 # Server Overview — A Space Data Network Node
 
-Companions: [Operator Enrolment](./OPERATOR-ENROLMENT.md) (becoming an operator or admin — key generation, trust levels, exact HTTP calls); [API Guide](./AGENT-API-GUIDE.md) (the full REST surface, authentication, error semantics, anonymous data plane); `README.md` (getting started); [TECH-PATH.md](./TECH-PATH.md); `sdn-server/docs/gateway-api.md`. On any running node, the served API reference is at `http://<node>/api/v1/docs`.
+Companions: [Operator Enrollment](./OPERATOR-ENROLLMENT.md) (becoming an operator or admin — key generation, trust levels, exact HTTP calls); [API Guide](./AGENT-API-GUIDE.md) (the full REST surface, authentication, error semantics, anonymous data plane); `README.md` (getting started); [TECH-PATH.md](./TECH-PATH.md); `sdn-server/docs/gateway-api.md`. On any running node, the served API reference is at `http://<node>/api/v1/docs`.
+
+> In the dashboard: [Node](#/node) · [Identity](#/identity) · [Peers](#/peers) ·
+> [Store](#/store) · [Accounts](#/accounts) — these links open the page beside
+> this guide when it is read inside the dashboard's documentation panel.
 
 ## 1. What a node is
 
@@ -58,9 +62,9 @@ Storage is **FlatSQL**: a SQL engine compiled to WASM, hosted in-process by the 
 
 ### The anonymous read surface is a schema property
 
-What "anyone can read" is decided per **schema**, not per URL path, and it is fail-closed: a schema is anonymously readable only if deliberately on the allowlist. Today that is the public catalogue and its provenance lane:
+What "anyone can read" is decided per **schema**, not per URL path, and it is fail-closed: a schema is anonymously readable only if deliberately on the allowlist. Today that is the public catalog and its provenance lane:
 
-`OMM` (orbital element sets), `CAT` (catalogue entries), `MPE` (mean parameter ephemerides), `SPW` (space weather indices), `RFB` (RF band specifications / emitter catalogue), `LKS` (link status), `PNM` (publication notifications), `DPM` (dataset publication manifests), `EPM` (entity profile messages / identity records), `APP` (application package manifests), and `EGP` (entity groups).
+`OMM` (orbital element sets), `CAT` (catalog entries), `MPE` (mean parameter ephemerides), `SPW` (space weather indices), `RFB` (RF band specifications / emitter catalog), `LKS` (link status), `PNM` (publication notifications), `DPM` (dataset publication manifests), `EPM` (entity profile messages / identity records), `APP` (application package manifests), and `EGP` (entity groups).
 
 Everything else — including `TBS` and `IQC` — is anonymous-read CLOSED by default until deliberately opened. Anonymous read never implies anonymous publish.
 
@@ -148,7 +152,7 @@ Four ways, and it matters which one you use:
 
 No passwords. Sign-in is an Ed25519 challenge-response: `POST /api/auth/challenge` returns a random challenge; the wallet signs it; `POST /api/auth/verify` admits the session and sets an HttpOnly session cookie. The CLI authenticates the same way using the node's own root key, or accepts an existing session token via `--session-token` or `$SDN_SESSION_TOKEN`.
 
-The full enrolment story — key generation, sign-in requirements, withdrawal rules — is in [Operator Enrolment](./OPERATOR-ENROLMENT.md).
+The full enrollment story — key generation, sign-in requirements, withdrawal rules — is in [Operator Enrollment](./OPERATOR-ENROLLMENT.md).
 
 ## 6. How data moves: libp2p, pubsub, IPFS
 
@@ -232,7 +236,7 @@ That is the whole design: one format, one identity tree, signed at every boundar
 
 ## 10. Where to go next
 
-- **[Operator Enrolment](./OPERATOR-ENROLMENT.md)** — become an operator or admin: key generation, `derive-xpub`, the dashboard enrolment form, trust levels, withdrawal and lockout rules, and every exact HTTP call.
+- **[Operator Enrollment](./OPERATOR-ENROLLMENT.md)** — become an operator or admin: key generation, `derive-xpub`, the dashboard enrollment form, trust levels, withdrawal and lockout rules, and every exact HTTP call.
 - **[API Guide](./AGENT-API-GUIDE.md)** — the REST surface in full: authentication, the anonymous allowlist, write paths, error and refusal semantics, and CORS/same-origin behavior.
 - On a running node: `http://<node>/api/v1/docs` serves the generated OpenAPI reference for exactly the routes that node mounted (anonymous, same-origin).
 - [TECH-PATH.md](./TECH-PATH.md) — the authoritative statement of the architecture, with rationale and the order data flows.
@@ -241,6 +245,6 @@ That is the whole design: one format, one identity tree, signed at every boundar
 
 ## Not yet supported
 
-- No CLI command creates an operator (xpub) row. Enrolment happens through the dashboard, `config.yaml`, the first-admin bootstrap, or the node-root ceremony — see [Operator Enrolment](./OPERATOR-ENROLMENT.md) for each path and its exact behavior.
+- No CLI command creates an operator (xpub) row. Enrollment happens through the dashboard, `config.yaml`, the first-admin bootstrap, or the node-root ceremony — see [Operator Enrollment](./OPERATOR-ENROLLMENT.md) for each path and its exact behavior.
 - Anonymous publishing is not enabled by default on a node; it is an explicit opt-in configuration, and even then records are attributed to an untrusted principal.
 - The bulk record-retrieval routes present JSON for the orbital-element standard only; other standards answer in the native streaming FlatBuffer format. JSON is a read-side presentation choice, not a second wire format.

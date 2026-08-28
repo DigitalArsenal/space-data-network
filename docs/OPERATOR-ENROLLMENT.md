@@ -1,4 +1,4 @@
-# OPERATOR ENROLMENT
+# OPERATOR ENROLLMENT
 
 ## 1. Operators and peers: one kind of thing with a trust level
 
@@ -88,15 +88,15 @@ The prospective operator passes to an existing administrator **exactly**:
 2. the **64-hex Ed25519 signing public key**,
 3. their preferred display **name** (optional).
 
-**What must never be handed over, in any channel:** the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI's custody classification: `key export --format mnemonic` is labelled "THE ENTIRE NODE IDENTITY IN PLAINTEXT" and `base64`/`hex`/`kubo`/`libp2p` formats are labelled "SECRET".) Nothing in enrolment ever asks for a private value; an enrolment request that does is a scam or a bug.
+**What must never be handed over, in any channel:** the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI's custody classification: `key export --format mnemonic` is labelled "THE ENTIRE NODE IDENTITY IN PLAINTEXT" and `base64`/`hex`/`kubo`/`libp2p` formats are labelled "SECRET".) Nothing in enrollment ever asks for a private value; an enrollment request that does is a scam or a bug.
 
 ### Step 3 — what binds on first login (TOFU)
 
 The signing key is bound **on first successful login — trust on first use**:
 
-- Signing key pre-seeded at enrolment (recommended; it is a required field in the dashboard form): login just works; any other key is refused from day one.
+- Signing key pre-seeded at enrollment (recommended; it is a required field in the dashboard form): login just works; any other key is refused from day one.
 - Row created without a signing key (possible via config): the **first** wallet that completes a successful sign-in binds its key permanently; a conflicting key presented later is refused.
-- The binding is a pin — whoever holds the phrase that first signed in owns the account permanently. An admin can pin the key in advance (dashboard form or config `signing_pubkey_hex`), mapping enrolment exactly to the key the holder presented.
+- The binding is a pin — whoever holds the phrase that first signed in owns the account permanently. An admin can pin the key in advance (dashboard form or config `signing_pubkey_hex`), mapping enrollment exactly to the key the holder presented.
 
 Failure modes to avoid:
 
@@ -231,7 +231,7 @@ Two more withdrawal facts:
 
 ## 8. Not yet supported, and the minimal scheme that would close it
 
-**Gap 1 — the CLI prints only half the handover.** `derive-xpub` prints the xpub but never the signing public key, so a CLI-only operator cannot produce both enrolment fields without a browser. **Proposed (not built):** extend `derive-xpub` to also derive and print the Ed25519 signing public key through the exact wallet unlock path sign-in uses (the same byte-identity guarantee the browser ceremony already guarantees), so its output becomes the complete handover block.
+**Gap 1 — the CLI prints only half the handover.** `derive-xpub` prints the xpub but never the signing public key, so a CLI-only operator cannot produce both enrollment fields without a browser. **Proposed (not built):** extend `derive-xpub` to also derive and print the Ed25519 signing public key through the exact wallet unlock path sign-in uses (the same byte-identity guarantee the browser ceremony already guarantees), so its output becomes the complete handover block.
 
 **Gap 2 — no CLI create for operators.** `accounts trust --xpub` updates only; creation lives in the dashboard form, first-admin bootstrap, and config seeding. **Proposed (not built):** a `POST /api/auth/users` call from the CLI (e.g. an `accounts add --xpub ... --signing-pubkey-hex ... --level ...` mode that disambiguates from peer creation by requiring the xpub flag), or a first-class `users` command group. Until one exists, the CLI path is: `derive-xpub` → edit `config.yaml` → restart.
 
@@ -240,7 +240,7 @@ Neither proposal exists in the shipped binary; treat both as design.
 ## 9. Security notes: what never leaves the operator's machine
 
 - **The recovery phrase.** The browser ceremony generates it locally and drops it when the dialog closes. Never type it into a chat, an email, a ticket, or a terminal command; a phrase that has appeared in a transcript or a log is compromised — generate a new one.
-- **Private keys.** The node never asks for them. Enrolment transports exactly two public values: the xpub and the Ed25519 public key.
+- **Private keys.** The node never asks for them. Enrollment transports exactly two public values: the xpub and the Ed25519 public key.
 - **The node's own key material.** At-rest keys are encrypted with a machine-derived key and fail closed if the machine changes. `key export --format mnemonic` prints the entire node identity in plaintext — that command belongs on the box, in a trusted session, not in any pipeline you cannot vouch for.
 - **Master xpubs.** A depth-0 master xpub is refused by the first-admin bootstrap because it would enumerate an entire wallet; always enrol the account-level xpub (`derive-xpub` output).
 - **No enumeration.** A sign-in attempt with an unknown xpub receives a valid-looking challenge that *can never verify* — probing for whether an account exists gets you silence, not information.

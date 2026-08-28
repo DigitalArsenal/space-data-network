@@ -99,13 +99,13 @@ a new standard is NOT readable until deliberately allow-listed — the right
 default for a store that also holds key material, access grants,
 node-internal ledgers.
 
-Public: `OMM` (orbital element sets — the primary catalogue), `CAT` (catalogue
+Public: `OMM` (orbital element sets — the primary catalog), `CAT` (catalog
 entries), `MPE` (mean parameter ephemerides), `SPW` (space weather indices),
-`RFB` (published emitter catalogue), `LKS` (link status), `PNM` (publication
+`RFB` (published emitter catalog), `LKS` (link status), `PNM` (publication
 notifications — already broadcast on public pubsub topics), `DPM` (dataset
 publication manifests — already pinned publicly), `EPM` (entity profile
 messages — the identity records), `APP` (application package manifests),
-`EGP` (entity groups — membership assertions over already-public catalogue
+`EGP` (entity groups — membership assertions over already-public catalog
 records).
 
 NOT public: `TBS` (telemetry bitstreams), `IQC` (integripulse quality check) —
