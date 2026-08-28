@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -38,9 +39,28 @@ const (
 	rawDataStreamRequestMaxBytes   = datasync.StreamRequestMaxBytes
 )
 
-// NewDataQueryHandler creates a new data query handler.
+// NewDataQueryHandler creates a new data query handler with a RAM-only index
+// cache: every cached page is lost on restart.
 func NewDataQueryHandler(store *storage.FlatSQLStore) *DataQueryHandler {
-	return &DataQueryHandler{store: store, indexCache: newBoundedReader(boundedReaderDefaultKeys)}
+	return NewDataQueryHandlerWithUICache(store, "")
+}
+
+// indexCacheFileName is the index cache's backing file inside the UI cache dir.
+const indexCacheFileName = "data-index.json"
+
+// NewDataQueryHandlerWithUICache creates a data query handler whose index cache
+// is backed by uiCacheDir, so the pages this node served before a restart are
+// served again from the FIRST request of the next boot instead of STORE_BUSY
+// for the hour the store spends hydrating. An empty uiCacheDir is RAM-only.
+func NewDataQueryHandlerWithUICache(store *storage.FlatSQLStore, uiCacheDir string) *DataQueryHandler {
+	path := ""
+	if uiCacheDir != "" {
+		path = filepath.Join(uiCacheDir, indexCacheFileName)
+	}
+	return &DataQueryHandler{
+		store:      store,
+		indexCache: newBoundedReaderPersisted(boundedReaderDefaultKeys, path, decodeRecordIndexPageValue),
+	}
 }
 
 // RegisterRoutes registers the NATIVE data API routes: health/summary

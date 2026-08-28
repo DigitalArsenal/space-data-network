@@ -198,7 +198,10 @@ func (s *UserStore) initDB() error {
 			vcard_data TEXT DEFAULT '',
 			created_at INTEGER NOT NULL,
 			last_login_at INTEGER,
-			connection_count INTEGER NOT NULL DEFAULT 0
+			connection_count INTEGER NOT NULL DEFAULT 0,
+			epm_cid TEXT DEFAULT '',
+			epm_updated_at INTEGER NOT NULL DEFAULT 0,
+			epm_photo_data_url TEXT DEFAULT ''
 		)
 	`)
 	if err != nil {
@@ -217,6 +220,13 @@ func (s *UserStore) initDB() error {
 		`ALTER TABLE users ADD COLUMN epm_data BLOB`,
 		`ALTER TABLE users ADD COLUMN vcard_data TEXT DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN connection_count INTEGER NOT NULL DEFAULT 0`,
+		// Account EPM binding (owner directive 2026-08-28). epm_data already
+		// held the record bytes; these two carry the CID the node pinned it
+		// under and when. Together they ARE the durable account→epm_cid
+		// binding the pin reconciler walks — see account_epm_reconcile.go.
+		`ALTER TABLE users ADD COLUMN epm_cid TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN epm_updated_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN epm_photo_data_url TEXT DEFAULT ''`,
 	} {
 		if _, aerr := s.db.Exec(stmt); aerr != nil &&
 			!strings.Contains(strings.ToLower(aerr.Error()), "duplicate column") {

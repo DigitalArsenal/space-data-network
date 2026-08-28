@@ -98,6 +98,15 @@ func putRawBlockToLocalBlockstore(ctx context.Context, apiURL string, data []byt
 	return parseBlockPutCID(responseBody)
 }
 
+// PutPinnedRawBlock is the exported connector: bytes in, the pinned CIDv1 raw
+// block's identifier out. It is the same call publishLocalNodeEPMToBlockstore
+// makes for the node's own $EPM, exposed so the account-EPM lane
+// (internal/api/account_epm_store.go) can pin an account's identity the same
+// way — through main.go, which owns the binding, not through a new dependency.
+func PutPinnedRawBlock(ctx context.Context, apiURL string, data []byte) (string, error) {
+	return putRawBlockToLocalBlockstore(ctx, apiURL, data)
+}
+
 func parseBlockPutCID(body []byte) (string, error) {
 	var result struct {
 		Key string `json:"Key"`

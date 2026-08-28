@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -68,6 +69,12 @@ type CoreAPIHandler struct {
 	// anonymous poll never queues behind the ingest writer. See boundedread.go.
 	statsCache *boundedReader
 
+	// uiCacheDir is where the read-surface caches persist their last-known-good
+	// answers so a restart does not blank them (see boundedpersist.go and
+	// status/snapshot_persist.go). "" = RAM-only. Set with SetUICacheDir before
+	// StartDashboardSnapshots.
+	uiCacheDir string
+
 	// moduleSigner is the node's content-bound module signer, set by
 	// registerModuleSigningRoutes when this node holds a publisher key. nil
 	// means the signing endpoint was never mounted — see module_signing.go.
@@ -128,6 +135,22 @@ func NewCoreAPIHandler(
 		// nominal, this surface takes no parameters.
 		statsCache: newBoundedReader(8),
 	}
+}
+
+// SetUICacheDir points the read-surface caches at a directory that survives a
+// restart (config.UICacheDir). Call it BEFORE StartDashboardSnapshots and
+// before serving: it rebuilds the stats cache with its file loaded, so
+// /api/v1/stats answers with the numbers this node last knew rather than
+// nothing while the store hydrates. An empty dir leaves the handler RAM-only.
+func (h *CoreAPIHandler) SetUICacheDir(dir string) {
+	if h == nil {
+		return
+	}
+	h.uiCacheDir = dir
+	if dir == "" {
+		return
+	}
+	h.statsCache = newBoundedReaderPersisted(8, filepath.Join(dir, statsCacheFileName), decodeStatsValue)
 }
 
 // writeCoreAPIError writes an error response using the code+message error envelope.

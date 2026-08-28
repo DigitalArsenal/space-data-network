@@ -45,6 +45,11 @@ type Snapshot struct {
 	Err error
 	// ErrAt is when Err was recorded.
 	ErrAt time.Time
+	// Restored is true while Frame is the frame this lane persisted on a
+	// PREVIOUS boot — real data, from before the restart, not yet replaced by
+	// a build of this boot. The frame's own AS_OF says how old it is. See
+	// snapshot_persist.go.
+	Restored bool
 }
 
 type lane struct {
@@ -57,6 +62,11 @@ type lane struct {
 // SnapshotCache holds a named set of background-refreshed frames.
 type SnapshotCache struct {
 	lanes map[string]*lane
+
+	// persistDir backs every lane's latest frame with a file so a restart does
+	// not blank the dashboard. "" = RAM-only, the original behavior. Set with
+	// SetPersistDir before Start; see snapshot_persist.go.
+	persistDir string
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -89,6 +99,10 @@ func (c *SnapshotCache) Start() {
 		return
 	}
 	c.startOnce.Do(func() {
+		// Restore BEFORE any lane goroutine runs: the whole point is that the
+		// first request through the door after a restart is answered, not told
+		// the snapshot is cold while a 60-minute hydration holds the store.
+		c.loadPersisted()
 		for _, l := range c.lanes {
 			c.wg.Add(1)
 			go c.run(l)
@@ -137,20 +151,32 @@ func (c *SnapshotCache) build(l *lane) error {
 	frame, err := l.cfg.Build()
 
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if err != nil {
 		l.snap.Err, l.snap.ErrAt = err, time.Now()
+		l.mu.Unlock()
 		return err
 	}
 	l.snap.Err, l.snap.ErrAt = nil, time.Time{}
-	if l.snap.Generation != 0 && bytes.Equal(l.snap.Frame, frame) {
+	unchanged := l.snap.Generation != 0 && bytes.Equal(l.snap.Frame, frame)
+	if unchanged {
 		// Nothing moved: hold the generation so ETags and the ws push stay
-		// quiet while the node is idle.
+		// quiet while the node is idle. A restored frame that this boot's build
+		// reproduced byte for byte is no longer "from the previous boot" — this
+		// boot just confirmed it.
+		l.snap.Restored = false
+		l.mu.Unlock()
 		return nil
 	}
 	l.snap.Frame = frame
 	l.snap.Generation++
 	l.snap.BuiltAt = time.Now()
+	l.snap.Restored = false
+	snap := l.snap
+	l.mu.Unlock()
+
+	// Write-behind on the lane goroutine, outside the lock: a slow disk must
+	// never delay a Frame() read. See snapshot_persist.go.
+	c.persistLane(l.cfg.Name, snap)
 	return nil
 }
 

@@ -52,6 +52,12 @@ type boundedEntry struct {
 	done chan struct{}
 	// used is the last time any reader touched this key, for eviction.
 	used time.Time
+	// fromDisk marks a value restored from the backing file at construction:
+	// real data from before the restart, but not this boot's. It is never
+	// reported Fresh, so every surface renders it stale/as_of exactly the way a
+	// budget miss is rendered. The first successful load clears it. See
+	// boundedpersist.go.
+	fromDisk bool
 }
 
 // boundedReader is a keyed, single-flight, last-known-good cache.
@@ -64,6 +70,10 @@ type boundedReader struct {
 	// takes schema/provider/source/batch/norad/page/limit) cannot be turned
 	// into unbounded memory growth by an anonymous caller.
 	maxKeys int
+	// persist is the optional disk backing that carries the last-known-good
+	// answers across a restart. nil = RAM-only, exactly the original behavior.
+	// See boundedpersist.go.
+	persist *boundedPersist
 }
 
 // boundedReaderDefaultKeys is the key ceiling for a parameterized surface. The
@@ -172,7 +182,7 @@ func (b *boundedReader) read(key string, budget, minRefresh time.Duration, load 
 	select {
 	case <-wait:
 		e.mu.Lock()
-		res := boundedResult{Value: e.val, OK: e.have, Fresh: e.have, AsOf: e.at}
+		res := boundedResult{Value: e.val, OK: e.have, Fresh: e.have && !e.fromDisk, AsOf: e.at}
 		e.mu.Unlock()
 		return res
 	case <-timer.C:
@@ -191,6 +201,9 @@ func (b *boundedReader) loadInto(e *boundedEntry, load func() (interface{}, erro
 	e.mu.Lock()
 	if err == nil {
 		e.val, e.at, e.have = val, time.Now(), true
+		// This boot has now read the real thing; the restored value (if any)
+		// is superseded and the answer is Fresh again.
+		e.fromDisk = false
 	}
 	done := e.done
 	e.done = nil
@@ -198,6 +211,10 @@ func (b *boundedReader) loadInto(e *boundedEntry, load func() (interface{}, erro
 
 	if err != nil {
 		log.Debugf("bounded read: load failed, keeping last-known-good: %v", err)
+	} else {
+		// Write-behind, debounced: the next boot serves this answer instantly
+		// instead of STORE_BUSY. Never on the request path.
+		b.schedulePersist()
 	}
 	close(done)
 }
@@ -275,7 +292,7 @@ wait:
 		case i := <-finished:
 			p := pending[i]
 			p.e.mu.Lock()
-			out[p.key] = boundedResult{Value: p.e.val, OK: p.e.have, Fresh: p.e.have, AsOf: p.e.at}
+			out[p.key] = boundedResult{Value: p.e.val, OK: p.e.have, Fresh: p.e.have && !p.e.fromDisk, AsOf: p.e.at}
 			p.e.mu.Unlock()
 			settled[i] = true
 			remaining--

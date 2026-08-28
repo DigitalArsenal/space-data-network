@@ -192,6 +192,34 @@ func KeyDir(cfg *Config) string {
 	return filepath.Join(filepath.Dir(cfg.Storage.Path), "keys")
 }
 
+// UICacheDir returns the directory holding the read-surface caches that must
+// SURVIVE A RESTART: <storage.path>/ui-cache.
+//
+// host-01 spends 60-100 minutes hydrating under the store lock after each
+// daemon restart, and every RAM-only read cache starts empty, so for that whole
+// window the anonymous surfaces answered STORE_BUSY / SNAPSHOT_COLD — the node
+// forgot what it had been serving a minute earlier. The caches write their
+// last-known-good answers here and load them at boot.
+//
+// It is DERIVED, never configured: one derivation is what stops the daemon and
+// any tool disagreeing about where the cache lives, the same rule KeyDir
+// follows. An empty basePath returns "" and every caller then runs RAM-only.
+//
+// The directory is created 0700 — these are the node's own answers to its own
+// public surfaces, but the store directory's posture is the node's, not the
+// world's.
+func UICacheDir(basePath string) (string, error) {
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" {
+		return "", nil
+	}
+	dir := filepath.Join(basePath, "ui-cache")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create ui cache dir %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
 // MnemonicPath returns the node's encrypted mnemonic file for a config.
 func MnemonicPath(cfg *Config) string {
 	dir := KeyDir(cfg)

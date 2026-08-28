@@ -55,6 +55,8 @@ type Handler struct {
 	loginUIPolicySet     bool // distinguishes the backwards-compatible default from an explicit no-login production policy
 	root                 rootIdentityState
 	photoStore           ProfilePhotoStore // object storage port for operator profile photos; nil = endpoint fails closed
+	accountEPMBuilder    AccountEPMBuilder // builds+signs an account's $EPM; nil = /api/auth/epm PUT fails closed
+	accountEPMStore      AccountEPMStore   // record + pin lane for account $EPMs; nil = /api/auth/epm PUT fails closed
 }
 
 type pendingChallenge struct {
@@ -295,6 +297,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/logout", h.handleLogout)
 	mux.HandleFunc("/api/auth/me", h.handleMe)
 	mux.HandleFunc("/api/auth/me/photo", h.handleMePhoto)
+	mux.HandleFunc("/api/auth/epm", h.handleAccountEPM)
 	mux.HandleFunc("/api/auth/status", h.handleAuthStatus)
 	mux.HandleFunc("/api/auth/external/linked", h.handleExternalLinked)
 	mux.HandleFunc("/api/auth/users", h.handleUsers)

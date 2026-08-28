@@ -1047,6 +1047,23 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if adminTLS {
 				adminScheme = "https"
 			}
+
+			// Read-surface caches that survive a restart. host-01 spends
+			// 60-100 minutes hydrating under the store lock after every daemon
+			// restart; with RAM-only caches the anonymous surfaces answered
+			// STORE_BUSY / SNAPSHOT_COLD for that whole window, i.e. the node
+			// forgot what it had been serving a minute earlier. The caches
+			// write their last-known-good answers into this directory and load
+			// them at boot, serving them marked stale with an as_of. A failure
+			// to create the directory is NOT fatal: caching is an
+			// optimization, and "" degrades to exactly the old RAM-only
+			// behavior.
+			uiCacheDir, uiCacheErr := config.UICacheDir(cfg.Storage.Path)
+			if uiCacheErr != nil {
+				log.Warnf("UI read caches will not survive restart: %v", uiCacheErr)
+				uiCacheDir = ""
+			}
+
 			adminMux := http.NewServeMux()
 			var wsUpgradeProxy http.Handler
 			assetOIDCCapabilityMounted := false
@@ -1113,7 +1130,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// surface). Record retrieval (/api/v1/data/omm/bulk etc.) is
 			// served by the data-retrieval flow mounted below via
 			// n.MountFlows (config flows.mounts) — loop C.4 cutover.
-			dataAPI := api.NewDataQueryHandler(n.Store())
+			dataAPI := api.NewDataQueryHandlerWithUICache(n.Store(), uiCacheDir)
 			dataAPI.RegisterRoutes(adminMux)
 
 			// Store maintenance (admin write): on-demand record-catalog
@@ -1685,6 +1702,30 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if ipfsAPIURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL); ipfsAPIURL != "" {
 					authHandler.SetProfilePhotoStore(ipfsProfilePhotoStore{apiURL: ipfsAPIURL})
 				}
+
+				// ACCOUNT EPMs (owner directive 2026-08-28). Two connectors and
+				// no application logic: the node's EPM service is the builder
+				// (same builder as the node's own record, different subject),
+				// and the record+pin lane is the FlatSQL store plus — when
+				// admin.ipfs_api_url is set — the local blockstore. A node
+				// without a store binds neither and /api/auth/epm refuses with
+				// 501 rather than losing somebody's identity.
+				if store := n.Store(); store != nil {
+					var blockstore api.AccountEPMBlockstore
+					if ipfsAPIURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL); ipfsAPIURL != "" {
+						blockstore = ipfsAccountEPMBlockstore{apiURL: ipfsAPIURL}
+					}
+					accountEPMStore := api.NewAccountEPMStore(store, n.PeerID().String(), blockstore)
+					authHandler.SetAccountEPMServices(n.EPMService(), accountEPMStore)
+
+					// THE FLEET LAW: "All SDN nodes need to be able to pin all
+					// the EPMs that are created by accounts tied to them"
+					// (owner 2026-08-28). The store is ready here, so the
+					// reconciler's boot pass runs against a live lane; it then
+					// repeats every six hours and stops when ctx is cancelled
+					// on shutdown.
+					auth.NewAccountEPMReconciler(userStore, accountEPMStore).Start(ctx)
+				}
 				return nil
 			}(); authErr != nil {
 				// An operator who asked for authentication gets a hard failure,
@@ -1912,6 +1953,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					authHandler,
 					n.ListenAddrs,
 				)
+				// Point the stats cache and the dashboard stats lane at the
+				// restart-surviving cache directory. MUST precede
+				// StartDashboardSnapshots — the lane loads its persisted frame
+				// at Start.
+				coreAPI.SetUICacheDir(uiCacheDir)
 				// SDN peer counts for /api/v1/stats — the anonymous read
 				// surface app boards poll. Same evidence as the dashboard's
 				// /api/peers/sdn (epm.BuildObservedSDNPeers), so "SDN peers"
