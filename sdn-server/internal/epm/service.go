@@ -1013,8 +1013,35 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 		return nil
 	}
 
-	epm := EPM.GetSizePrefixedRootAsEPM(s.epmBytes, 0)
+	result := EPMRecordJSON(EPM.GetSizePrefixedRootAsEPM(s.epmBytes, 0))
+	if s.profile != nil && strings.TrimSpace(s.profile.PhotoDataURL) != "" {
+		result["photo_data_url"] = s.profile.PhotoDataURL
+	}
+
+	s.overlayRuntimeIdentityFields(result)
+	result["directory_kind"] = "node"
+	result["entity_type"] = "node"
+	result["peer_id"] = s.peerID.String()
+	result["version"] = versioninfo.AgentVersion
+	result["agent_version"] = versioninfo.AgentVersion
+	result["suite_version"] = versioninfo.SuiteVersion
+	result["standards_version"] = versioninfo.SpaceDataStandardsVersion
+	result["advertisement_flag"] = versioninfo.CurrentAdvertisementFlag
+
+	return result
+}
+
+// EPMRecordJSON projects a parsed $EPM record into the JSON shape every EPM
+// surface serves. It is the RECORD half of GetNodeEPMJSON — everything that can
+// be read out of the wire bytes, and nothing that depends on the node's own
+// runtime state. Account EPMs (account_epm.go) are projected through exactly
+// this function, so an account record and the node record round-trip through
+// the same field names, capitalization rules and §21 suppressions.
+func EPMRecordJSON(epm *EPM.EPM) map[string]interface{} {
 	result := make(map[string]interface{})
+	if epm == nil {
+		return result
+	}
 
 	if dn := epm.DN(); dn != nil {
 		result["dn"] = string(dn)
@@ -1049,10 +1076,6 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 	if tel := epm.TELEPHONE(); tel != nil {
 		result["telephone"] = string(tel)
 	}
-	if s.profile != nil && strings.TrimSpace(s.profile.PhotoDataURL) != "" {
-		result["photo_data_url"] = s.profile.PhotoDataURL
-	}
-
 	// Address
 	addr := new(EPM.Address)
 	if epm.ADDRESS(addr) != nil {
@@ -1187,16 +1210,6 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 		}
 		result["chain_proofs"] = proofs
 	}
-
-	s.overlayRuntimeIdentityFields(result)
-	result["directory_kind"] = "node"
-	result["entity_type"] = "node"
-	result["peer_id"] = s.peerID.String()
-	result["version"] = versioninfo.AgentVersion
-	result["agent_version"] = versioninfo.AgentVersion
-	result["suite_version"] = versioninfo.SuiteVersion
-	result["standards_version"] = versioninfo.SpaceDataStandardsVersion
-	result["advertisement_flag"] = versioninfo.CurrentAdvertisementFlag
 
 	return result
 }

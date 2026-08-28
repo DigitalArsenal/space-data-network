@@ -42,6 +42,17 @@ const (
 	// dashboardStreamFormat names the framing, matching the /ws/status frames:
 	// a 4-byte little-endian length prefix ahead of the root buffer.
 	dashboardStreamFormat = "flatsql-size-prefixed-le-u32"
+
+	// statsCacheKeySummary and statsCacheKeySourceProgress are the two fixed
+	// statsCache keys. They are constants because the persistence decode hook
+	// keys the CONCRETE value type off them (boundedpersist.go): a renamed key
+	// with a stale file must miss, never decode into the wrong type.
+	statsCacheKeySummary        = "summary"
+	statsCacheKeySourceProgress = "source_batch_progress"
+
+	// statsCacheFileName is the stats cache's backing file inside the UI cache
+	// directory.
+	statsCacheFileName = "stats.json"
 )
 
 // storeStats is the store-derived half of the stats payload — everything both
@@ -88,6 +99,11 @@ func (h *CoreAPIHandler) StartDashboardSnapshots() {
 			return status.BuildDashboardStatsSet(dashboardInputFrom(s)), nil
 		},
 	})
+	// Frames outlive the process: Start loads the previous boot's frame before
+	// the first background build, so /api/v1/dashboard/stats answers instantly
+	// after a restart instead of SNAPSHOT_COLD for the hour the store hydrates.
+	// The restored frame's own AS_OF states how old its numbers are.
+	d.cache.SetPersistDir(h.uiCacheDir)
 	h.dashboard = d
 	d.cache.Start()
 }
@@ -123,15 +139,15 @@ func (h *CoreAPIHandler) readStoreStats() storeStats {
 	// ONE budget for the whole snapshot: the two reads are independent and
 	// wait together (see boundedread.go readAll).
 	results := h.statsCache.readAll(storeReadBudget, storeReadMinRefresh,
-		boundedRequest{Key: "summary", Load: func() (interface{}, error) {
+		boundedRequest{Key: statsCacheKeySummary, Load: func() (interface{}, error) {
 			return h.store.DataSummary()
 		}},
-		boundedRequest{Key: "source_batch_progress", Load: func() (interface{}, error) {
+		boundedRequest{Key: statsCacheKeySourceProgress, Load: func() (interface{}, error) {
 			return h.store.SourceBatchProgress()
 		}},
 	)
-	summaryRes := results["summary"]
-	progressRes := results["source_batch_progress"]
+	summaryRes := results[statsCacheKeySummary]
+	progressRes := results[statsCacheKeySourceProgress]
 
 	if summaryRes.OK {
 		if summary, _ := summaryRes.Value.(*storage.DataSummary); summary != nil {
