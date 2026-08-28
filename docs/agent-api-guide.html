@@ -95,7 +95,7 @@ hr { border: 0; border-top: 1px solid var(--gray-200); margin: 2.5rem 0; }
   <nav class="nav">
       <a href="server-overview.html">Server Overview</a>
       <a href="agent-api-guide.html" aria-current="page">API Guide</a>
-      <a href="operator-enrolment.html">Operator Enrolment</a>
+      <a href="operator-enrollment.html">Operator Enrollment</a>
       <span class="grow"></span>
       <a href="space-data-network-docs.pdf">PDF</a>
     </nav>
@@ -192,13 +192,13 @@ allow-list, not the path; a schema is anonymous only if named in it. Fail-closed
 a new standard is NOT readable until deliberately allow-listed — the right
 default for a store that also holds key material, access grants,
 node-internal ledgers.</p>
-<p>Public: <code>OMM</code> (orbital element sets — the primary catalogue), <code>CAT</code> (catalogue
+<p>Public: <code>OMM</code> (orbital element sets — the primary catalog), <code>CAT</code> (catalog
 entries), <code>MPE</code> (mean parameter ephemerides), <code>SPW</code> (space weather indices),
-<code>RFB</code> (published emitter catalogue), <code>LKS</code> (link status), <code>PNM</code> (publication
+<code>RFB</code> (published emitter catalog), <code>LKS</code> (link status), <code>PNM</code> (publication
 notifications — already broadcast on public pubsub topics), <code>DPM</code> (dataset
 publication manifests — already pinned publicly), <code>EPM</code> (entity profile
 messages — the identity records), <code>APP</code> (application package manifests),
-<code>EGP</code> (entity groups — membership assertions over already-public catalogue
+<code>EGP</code> (entity groups — membership assertions over already-public catalog
 records).</p>
 <p>NOT public: <code>TBS</code> (telemetry bitstreams), <code>IQC</code> (integripulse quality check) —
 both answer <code>401</code> (verified live):</p>

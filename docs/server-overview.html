@@ -95,13 +95,18 @@ hr { border: 0; border-top: 1px solid var(--gray-200); margin: 2.5rem 0; }
   <nav class="nav">
       <a href="server-overview.html" aria-current="page">Server Overview</a>
       <a href="agent-api-guide.html">API Guide</a>
-      <a href="operator-enrolment.html">Operator Enrolment</a>
+      <a href="operator-enrollment.html">Operator Enrollment</a>
       <span class="grow"></span>
       <a href="space-data-network-docs.pdf">PDF</a>
     </nav>
 <main>
 <h1>Server Overview — A Space Data Network Node</h1>
-<p>Companions: <a href="operator-enrolment.html">Operator Enrolment</a> (becoming an operator or admin — key generation, trust levels, exact HTTP calls); <a href="agent-api-guide.html">API Guide</a> (the full REST surface, authentication, error semantics, anonymous data plane); <code>README.md</code> (getting started); <a href="./TECH-PATH.md">TECH-PATH.md</a>; <code>sdn-server/docs/gateway-api.md</code>. On any running node, the served API reference is at <code>http://&lt;node&gt;/api/v1/docs</code>.</p>
+<p>Companions: <a href="operator-enrollment.html">Operator Enrollment</a> (becoming an operator or admin — key generation, trust levels, exact HTTP calls); <a href="agent-api-guide.html">API Guide</a> (the full REST surface, authentication, error semantics, anonymous data plane); <code>README.md</code> (getting started); <a href="./TECH-PATH.md">TECH-PATH.md</a>; <code>sdn-server/docs/gateway-api.md</code>. On any running node, the served API reference is at <code>http://&lt;node&gt;/api/v1/docs</code>.</p>
+<blockquote>
+<p>In the dashboard: <a href="#/node">Node</a> · <a href="#/identity">Identity</a> · <a href="#/peers">Peers</a> ·
+<a href="#/store">Store</a> · <a href="#/accounts">Accounts</a> — these links open the page beside
+this guide when it is read inside the dashboard&#39;s documentation panel.</p>
+</blockquote>
 <h2>1. What a node is</h2>
 <p>Run the binary and it describes itself:</p>
 <pre><code>$ spacedatanetwork --help
@@ -149,8 +154,8 @@ and SQLite-based structured storage, optimized for space data standards.
 </li>
 </ul>
 <h3>The anonymous read surface is a schema property</h3>
-<p>What &quot;anyone can read&quot; is decided per <strong>schema</strong>, not per URL path, and it is fail-closed: a schema is anonymously readable only if deliberately on the allowlist. Today that is the public catalogue and its provenance lane:</p>
-<p><code>OMM</code> (orbital element sets), <code>CAT</code> (catalogue entries), <code>MPE</code> (mean parameter ephemerides), <code>SPW</code> (space weather indices), <code>RFB</code> (RF band specifications / emitter catalogue), <code>LKS</code> (link status), <code>PNM</code> (publication notifications), <code>DPM</code> (dataset publication manifests), <code>EPM</code> (entity profile messages / identity records), <code>APP</code> (application package manifests), and <code>EGP</code> (entity groups).</p>
+<p>What &quot;anyone can read&quot; is decided per <strong>schema</strong>, not per URL path, and it is fail-closed: a schema is anonymously readable only if deliberately on the allowlist. Today that is the public catalog and its provenance lane:</p>
+<p><code>OMM</code> (orbital element sets), <code>CAT</code> (catalog entries), <code>MPE</code> (mean parameter ephemerides), <code>SPW</code> (space weather indices), <code>RFB</code> (RF band specifications / emitter catalog), <code>LKS</code> (link status), <code>PNM</code> (publication notifications), <code>DPM</code> (dataset publication manifests), <code>EPM</code> (entity profile messages / identity records), <code>APP</code> (application package manifests), and <code>EGP</code> (entity groups).</p>
 <p>Everything else — including <code>TBS</code> and <code>IQC</code> — is anonymous-read CLOSED by default until deliberately opened. Anonymous read never implies anonymous publish.</p>
 <h2>4. Identity and signatures</h2>
 <h3>One HD key tree</h3>
@@ -244,7 +249,7 @@ List and manage accounts (network peers and login operators are one thing)
 </ol>
 <h3>Sign-in</h3>
 <p>No passwords. Sign-in is an Ed25519 challenge-response: <code>POST /api/auth/challenge</code> returns a random challenge; the wallet signs it; <code>POST /api/auth/verify</code> admits the session and sets an HttpOnly session cookie. The CLI authenticates the same way using the node&#39;s own root key, or accepts an existing session token via <code>--session-token</code> or <code>$SDN_SESSION_TOKEN</code>.</p>
-<p>The full enrolment story — key generation, sign-in requirements, withdrawal rules — is in <a href="operator-enrolment.html">Operator Enrolment</a>.</p>
+<p>The full enrollment story — key generation, sign-in requirements, withdrawal rules — is in <a href="operator-enrollment.html">Operator Enrollment</a>.</p>
 <h2>6. How data moves: libp2p, pubsub, IPFS</h2>
 <h3>The network layer</h3>
 <p>Every node runs a libp2p host: TLS and noise for transport security, an autonomous system-style connection manager with trust-aware gating, resource management, NAT port mapping, hole punching, and client relay with automatic relay peer discovery. Full-public nodes participate in the DHT and can serve relay for light peers (relay is a config-gated, donated-bandwidth service). When serving TLS directly, the node advertises <code>libp2p.direct</code> addresses that browsers can dial.</p>
@@ -317,7 +322,7 @@ List and manage accounts (network peers and login operators are one thing)
 <p>That is the whole design: one format, one identity tree, signed at every boundary, with the host acting only as a connector.</p>
 <h2>10. Where to go next</h2>
 <ul>
-<li><strong><a href="operator-enrolment.html">Operator Enrolment</a></strong> — become an operator or admin: key generation, <code>derive-xpub</code>, the dashboard enrolment form, trust levels, withdrawal and lockout rules, and every exact HTTP call.</li>
+<li><strong><a href="operator-enrollment.html">Operator Enrollment</a></strong> — become an operator or admin: key generation, <code>derive-xpub</code>, the dashboard enrollment form, trust levels, withdrawal and lockout rules, and every exact HTTP call.</li>
 <li><strong><a href="agent-api-guide.html">API Guide</a></strong> — the REST surface in full: authentication, the anonymous allowlist, write paths, error and refusal semantics, and CORS/same-origin behavior.</li>
 <li>On a running node: <code>http://&lt;node&gt;/api/v1/docs</code> serves the generated OpenAPI reference for exactly the routes that node mounted (anonymous, same-origin).</li>
 <li><a href="./TECH-PATH.md">TECH-PATH.md</a> — the authoritative statement of the architecture, with rationale and the order data flows.</li>
@@ -326,7 +331,7 @@ List and manage accounts (network peers and login operators are one thing)
 </ul>
 <h2>Not yet supported</h2>
 <ul>
-<li>No CLI command creates an operator (xpub) row. Enrolment happens through the dashboard, <code>config.yaml</code>, the first-admin bootstrap, or the node-root ceremony — see <a href="operator-enrolment.html">Operator Enrolment</a> for each path and its exact behavior.</li>
+<li>No CLI command creates an operator (xpub) row. Enrollment happens through the dashboard, <code>config.yaml</code>, the first-admin bootstrap, or the node-root ceremony — see <a href="operator-enrollment.html">Operator Enrollment</a> for each path and its exact behavior.</li>
 <li>Anonymous publishing is not enabled by default on a node; it is an explicit opt-in configuration, and even then records are attributed to an untrusted principal.</li>
 <li>The bulk record-retrieval routes present JSON for the orbital-element standard only; other standards answer in the native streaming FlatBuffer format. JSON is a read-side presentation choice, not a second wire format.</li>
 </ul>

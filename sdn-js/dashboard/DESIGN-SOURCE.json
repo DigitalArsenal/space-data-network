@@ -3,11 +3,11 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "bf57365",
+  "design_commit": "ec1bb6c",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 791709,
-    "sha256": "c6d77728693f90802d17a6b5bd856b178f6b84ce7052029acb8e3087615d09c3"
+    "bytes": 801824,
+    "sha256": "a12a59ddb2c88bab031f9b357fa5886ff5ca97575d30d0b630c683e3e861e5e3"
   },
   "artifact_refresh": {
     "date": "2026-08-28",
@@ -17,7 +17,7 @@
       "bytes": 600152,
       "sha256": "8299efd30faec5a1b34f88d86bf9166bf08a611bbce7c01157694eea61bfe8d9"
     },
-    "why": "Owner 2026-08-28: the old dashboard tree is deleted; the embed now builds from the TailAdmin tree (src/dashboard-tailadmin/apps/sdn-node) \u2014 the same App the client shell mounts. Peers globe + IPs, Software/Data store with semantic search, $NDS instant stats, /docs link."
+    "why": "Login wave: one wallet runtime instance (browser-native imports), external/local sessions kept, account-EPM identity page, ?v=2.0.30 pins, American spellings."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
