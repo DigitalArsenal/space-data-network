@@ -73,6 +73,11 @@ type CoreAPIHandler struct {
 	// means the signing endpoint was never mounted — see module_signing.go.
 	moduleSigner *modulesign.Signer
 
+	// dashboard owns the background snapshot lanes behind the dashboard data
+	// plane. nil until StartDashboardSnapshots runs (a store-less handler, or
+	// a test that never starts it); both stats surfaces degrade gracefully.
+	dashboard *dashboardSnapshots
+
 	// updateSigner is the node's content-bound update-manifest signer, set by
 	// registerUpdateSigningRoutes when this node holds a publisher key. nil
 	// means the endpoint was never mounted — see update_signing.go. It is a
@@ -171,6 +176,9 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	mux.HandleFunc("/api/v1/id", h.withRL(h.handleID))
 	mux.HandleFunc("/api/v1/version", h.withRL(h.handleVersion))
 	mux.HandleFunc("/api/v1/stats", h.withRL(h.handleStats))
+	// Instant binary twin of /api/v1/stats: the pre-built $NDS frame, served
+	// from RAM. See dashboard_stats.go.
+	mux.HandleFunc(DashboardStatsPath, h.withRL(h.handleDashboardStats))
 
 	// PubSub topic listing — public GET.
 	mux.HandleFunc("/api/v1/pubsub/topics", h.withRL(h.handleTopics))
@@ -311,93 +319,63 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 		"sources":       []interface{}{},
 	}
 
-	// The peers block above is host state and is always instantaneous. The two
+	// The peers block above is host state and is always instantaneous. The
 	// store-derived blocks below are NOT: they take the record store's read
-	// lock, which a running ingest holds for minutes. They are therefore read
-	// under a budget and served from the last-known-good answer when the store
-	// is busy — the peers block, and this endpoint's role as the pipeline's
-	// progress heartbeat, must survive a busy writer.
+	// lock, which a running ingest holds for minutes. They come from the
+	// background stats lane (dashboard_stats.go) so this request runs no query
+	// at all; only a node whose lane has never built pays the bounded read
+	// inline, and even then it answers from last-known-good under a budget.
 	//
 	// stale/as_of are API-synthesized fields and stay lowercase (SDS record
 	// keys keep their IDL capitalization; these are not record fields).
-	stale := false
-	var asOf time.Time
-	if h.store != nil {
-		// ONE budget for the whole response: the two reads are independent and
-		// wait together. Serving them sequentially doubled the worst case for
-		// no benefit (measured live mid-ingest: 1.55 s vs 0.79 s).
-		results := h.statsCache.readAll(storeReadBudget, storeReadMinRefresh,
-			boundedRequest{Key: "summary", Load: func() (interface{}, error) {
-				return h.store.DataSummary()
-			}},
-			boundedRequest{Key: "source_batch_progress", Load: func() (interface{}, error) {
-				return h.store.SourceBatchProgress()
-			}},
-		)
-		summaryRes := results["summary"]
-		progressRes := results["source_batch_progress"]
+	stats := h.cachedStoreStats()
+	if !stats.Built && h.store != nil {
+		stats = h.readStoreStats()
+	}
 
-		if summaryRes.OK {
-			if summary, _ := summaryRes.Value.(*storage.DataSummary); summary != nil {
-				schemaList := make([]map[string]interface{}, 0, len(summary.Schemas))
-				for _, sc := range summary.Schemas {
-					schemaList = append(schemaList, map[string]interface{}{
-						"schema":      sc.SchemaName,
-						"count":       sc.Count,
-						"total_bytes": sc.TotalBytes,
-					})
-				}
-				resp["total_records"] = summary.TotalRecords
-				resp["total_bytes"] = summary.TotalBytes
-				resp["schemas"] = schemaList
-			}
+	if stats.Built {
+		schemaList := make([]map[string]interface{}, 0, len(stats.Schemas))
+		for _, sc := range stats.Schemas {
+			schemaList = append(schemaList, map[string]interface{}{
+				"schema":      sc.SchemaName,
+				"count":       sc.Count,
+				"total_bytes": sc.TotalBytes,
+			})
 		}
-		if !summaryRes.Fresh {
-			stale = true
-		}
-		if summaryRes.OK {
-			asOf = summaryRes.AsOf
-		}
+		resp["total_records"] = stats.TotalRecords
+		resp["total_bytes"] = stats.TotalBytes
+		resp["schemas"] = schemaList
 
 		// Per-(schema, provider, source, batch) live pipeline progress. This
 		// schema-neutral read-only aggregate reports counts, bytes, and arrival
 		// timestamps without interpreting application records.
-		if progressRes.OK {
-			progress, _ := progressRes.Value.([]storage.SourceBatchProgress)
-			sources := make([]map[string]interface{}, 0, len(progress))
-			for _, p := range progress {
-				row := map[string]interface{}{
-					"schema":      p.SchemaName,
-					"provider_id": p.ProviderID,
-					"source_name": p.SourceName,
-					"batch_id":    p.BatchID,
-					"count":       p.Count,
-					"total_bytes": p.TotalBytes,
-				}
-				if p.FirstSeenUnix > 0 {
-					row["first_seen"] = time.Unix(p.FirstSeenUnix, 0).UTC().Format(time.RFC3339)
-				}
-				if p.LastSeenUnix > 0 {
-					row["last_seen"] = time.Unix(p.LastSeenUnix, 0).UTC().Format(time.RFC3339)
-				}
-				if p.UpdatedAtUnix > 0 {
-					row["updated_at"] = time.Unix(p.UpdatedAtUnix, 0).UTC().Format(time.RFC3339)
-				}
-				sources = append(sources, row)
+		sources := make([]map[string]interface{}, 0, len(stats.Sources))
+		for _, p := range stats.Sources {
+			row := map[string]interface{}{
+				"schema":      p.SchemaName,
+				"provider_id": p.ProviderID,
+				"source_name": p.SourceName,
+				"batch_id":    p.BatchID,
+				"count":       p.Count,
+				"total_bytes": p.TotalBytes,
 			}
-			resp["sources"] = sources
+			if p.FirstSeenUnix > 0 {
+				row["first_seen"] = time.Unix(p.FirstSeenUnix, 0).UTC().Format(time.RFC3339)
+			}
+			if p.LastSeenUnix > 0 {
+				row["last_seen"] = time.Unix(p.LastSeenUnix, 0).UTC().Format(time.RFC3339)
+			}
+			if p.UpdatedAtUnix > 0 {
+				row["updated_at"] = time.Unix(p.UpdatedAtUnix, 0).UTC().Format(time.RFC3339)
+			}
+			sources = append(sources, row)
 		}
-		if !progressRes.Fresh {
-			stale = true
-		}
-		if progressRes.OK && (asOf.IsZero() || progressRes.AsOf.Before(asOf)) {
-			asOf = progressRes.AsOf
-		}
+		resp["sources"] = sources
 	}
 
-	resp["stale"] = stale
-	if !asOf.IsZero() {
-		resp["as_of"] = asOf.UTC().Format(time.RFC3339)
+	resp["stale"] = stats.Stale
+	if !stats.AsOf.IsZero() {
+		resp["as_of"] = stats.AsOf.UTC().Format(time.RFC3339)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

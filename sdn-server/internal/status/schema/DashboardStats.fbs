@@ -1,0 +1,57 @@
+// DashboardStats.fbs — LOCAL UI-transport schema for the dashboard data plane.
+//
+// NOT a spacedatastandards.org record (owner ruling 2026-07-24: local schemas
+// are approved for UI transport; SDS stays for network-standard records).
+// Compiled exclusively with the wasm flatc (scripts/build-ui-schemas.mjs);
+// generated Go lands in internal/status/nst (same package as NodeStatus),
+// generated TS in sdn-js/src/status/generated. Field names are UPPER_SNAKE to
+// match the SDS JSON-key capitalization convention.
+//
+// This carries exactly what /api/v1/stats already renders on the dashboard —
+// the per-schema record totals and the per-(provider, source, batch) ingest
+// progress rows. It is built on a background lane (internal/status/snapshot.go)
+// and served from RAM, so no dashboard read ever queues behind the store's
+// write lock. The host-state peer counts stay on the JSON surface and on the
+// $NST feed; they are instantaneous and were never the source of the stall.
+
+namespace nst;
+
+/// One schema's record footprint in the FlatSQL store.
+table DashboardSchemaStat {
+  /// SDS schema name, e.g. "OMM"
+  SCHEMA: string;
+  RECORD_COUNT: int64;
+  TOTAL_BYTES: int64;
+}
+
+/// One (schema, provider, source, batch) ingest lane's live progress.
+table DashboardSourceStat {
+  SCHEMA: string;
+  PROVIDER_ID: string;
+  SOURCE_NAME: string;
+  BATCH_ID: string;
+  RECORD_COUNT: int64;
+  TOTAL_BYTES: int64;
+  /// Unix seconds; 0 = unknown
+  FIRST_INGEST_AT: int64;
+  LAST_INGEST_AT: int64;
+  UPDATED_AT: int64;
+}
+
+table DashboardStatsSet {
+  /// Unix seconds when this snapshot was assembled
+  GENERATED_AT: int64;
+  SCHEMAS: [DashboardSchemaStat];
+  SOURCES: [DashboardSourceStat];
+  TOTAL_RECORDS: int64;
+  TOTAL_BYTES: int64;
+  /// True when the assembling read hit its store budget and this set carries
+  /// the last-known-good numbers. A stale snapshot is reported AS stale —
+  /// never as a confident zero.
+  STALE: bool;
+  /// Unix seconds the store numbers were last true; 0 = never read
+  AS_OF: int64;
+}
+
+root_type DashboardStatsSet;
+file_identifier "$NDS";

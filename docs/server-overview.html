@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server Overview — Space Data Network</title>
+<meta name="description" content="Server Overview for the Space Data Network.">
+<style>
+:root {
+  color-scheme: light;
+  --white: #ffffff;
+  --gray-50: #f9fafb;
+  --gray-100: #f2f4f7;
+  --gray-200: #e4e7ec;
+  --gray-300: #d0d5dd;
+  --gray-400: #98a2b3;
+  --gray-500: #667085;
+  --gray-600: #475467;
+  --gray-700: #344054;
+  --gray-800: #1d2939;
+  --gray-900: #101828;
+  --shadow-sm: 0px 1px 3px 0px rgba(16, 24, 40, 0.1);
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 2.5rem 1.5rem 6rem;
+  font: 16px/1.65 Outfit, ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--gray-800); background: var(--gray-50);
+}
+main {
+  max-width: 48rem; margin: 0 auto; background: var(--white);
+  border: 1px solid var(--gray-200); border-radius: var(--radius);
+  box-shadow: var(--shadow-sm); padding: 2.5rem 2.75rem 3rem;
+}
+h1, h2, h3, h4 { line-height: 1.25; font-weight: 650; color: var(--gray-900); margin: 2.5rem 0 .75rem; }
+h1 { font-size: 1.9rem; margin-top: 0; letter-spacing: -.02em; }
+h2 { font-size: 1.35rem; padding-bottom: .35rem; border-bottom: 1px solid var(--gray-200); }
+h3 { font-size: 1.05rem; }
+p, ul, ol, blockquote, table { margin: 0 0 1rem; }
+li { margin: .25rem 0; }
+a { color: var(--gray-900); text-underline-offset: 2px; }
+code {
+  font: .875em/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--gray-100); padding: .12em .35em; border-radius: 6px;
+}
+pre {
+  background: var(--gray-900); color: var(--gray-50); padding: 1rem 1.15rem;
+  border-radius: 10px; overflow-x: auto; margin: 0 0 1.25rem;
+  font-size: .84rem; line-height: 1.55;
+}
+pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+blockquote {
+  margin-left: 0; padding: .6rem 1rem; border-left: 3px solid var(--gray-300);
+  background: var(--gray-50); color: var(--gray-600); border-radius: 0 8px 8px 0;
+}
+table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+th, td { text-align: left; padding: .5rem .65rem; border-bottom: 1px solid var(--gray-200); vertical-align: top; }
+th { font-weight: 620; background: var(--gray-50); color: var(--gray-500);
+     text-transform: uppercase; font-size: .78rem; letter-spacing: .04em; }
+hr { border: 0; border-top: 1px solid var(--gray-200); margin: 2.5rem 0; }
+.nav {
+  max-width: 48rem; margin: 0 auto 1.25rem; display: flex; flex-wrap: wrap;
+  gap: .5rem; align-items: center; font-size: .875rem;
+}
+/* Pill nav, the console's rail vocabulary: ink-on-paper for the active item. */
+.nav a {
+  color: var(--gray-600); text-decoration: none; background: var(--white);
+  border: 1px solid var(--gray-200); border-radius: 999px; padding: .35rem .85rem;
+  transition: background .15s, color .15s;
+}
+.nav a:hover { background: var(--gray-100); color: var(--gray-900); }
+.nav a[aria-current="page"] {
+  background: var(--gray-900); border-color: var(--gray-900); color: var(--white);
+}
+.nav .grow { margin-left: auto; }
+.foot { max-width: 48rem; margin: 1.5rem auto 0; color: var(--gray-500); font-size: .85rem; }
+
+@media print {
+  /* The site chrome is navigation, and navigation does not survive paper. */
+  body { padding: 0; font-size: 11pt; }
+  .nav, .foot, .no-print { display: none !important; }
+  main { max-width: none; }
+  pre { background: #f2f4f7; color: #101828; border: 1px solid #e4e7ec;
+        white-space: pre-wrap; word-wrap: break-word; }
+  h1, h2, h3 { break-after: avoid; }
+  pre, table, blockquote { break-inside: avoid; }
+  .chapter { break-before: page; }
+  .chapter:first-of-type { break-before: auto; }
+}
+@page { size: A4; margin: 18mm 16mm; }
+</style>
+</head>
+<body>
+  <nav class="nav">
+      <a href="server-overview.html" aria-current="page">Server Overview</a>
+      <a href="agent-api-guide.html">API Guide</a>
+      <a href="operator-enrolment.html">Operator Enrolment</a>
+      <span class="grow"></span>
+      <a href="space-data-network-docs.pdf">PDF</a>
+    </nav>
+<main>
+<h1>Server Overview — A Space Data Network Node</h1>
+<p>Companions: <a href="operator-enrolment.html">Operator Enrolment</a> (becoming an operator or admin — key generation, trust levels, exact HTTP calls); <a href="agent-api-guide.html">API Guide</a> (the full REST surface, authentication, error semantics, anonymous data plane); <code>README.md</code> (getting started); <a href="./TECH-PATH.md">TECH-PATH.md</a>; <code>sdn-server/docs/gateway-api.md</code>. On any running node, the served API reference is at <code>http://&lt;node&gt;/api/v1/docs</code>.</p>
+<h2>1. What a node is</h2>
+<p>Run the binary and it describes itself:</p>
+<pre><code>$ spacedatanetwork --help
+spacedatanetwork is a specialized fork of IPFS tailored for the Space Data Network.
+It replaces generic content-addressed storage with FlatBuffer-native data handling
+and SQLite-based structured storage, optimized for space data standards.
+</code></pre>
+<p>Two qualifications to that self-description:</p>
+<ul>
+<li>&quot;Fork of IPFS&quot;: the server is a libp2p Go application (streams, DHT, pubsub, bitswap-style sync all over libp2p), and the repo carries an in-tree fork of Kubo, the IPFS reference implementation, hosting the node console and the IPFS side of publishing. Both derive their identity from the same node key.</li>
+<li>&quot;SQLite-based structured storage&quot; is legacy wording. The structured storage engine is <strong>FlatSQL</strong>, a SQL engine that runs as a WASM module and reads FlatBuffer records directly — no embedded SQLite in the stack. Details in <a href="#3-storage-flatsql-append-only-engine-routed">Section 3</a>.</li>
+</ul>
+<p>A node is one long-running daemon per machine, reachable over libp2p (including through NAT via relay and hole punching), storing FlatBuffer records in append-only streams, serving them over HTTP and pubsub, and running WASM modules and flows for everything above socket plumbing.</p>
+<p>Operational shape:</p>
+<ul>
+<li>One daemon per box. <code>daemon --help</code> exposes an <code>--allow-multi-daemon</code> flag marked &quot;DEVELOPMENT ONLY&quot;; production is a single instance managed as a background service (<code>init</code>, <code>start</code>, <code>status</code>, <code>stop</code>, <code>restart</code>).</li>
+<li>The CLI talks to the daemon over its local HTTP API (<code>status</code> prints <code>admin_url=http://127.0.0.1:7173/</code> by default; <code>open</code> prints the UI URL).</li>
+<li>Two topology tiers: full nodes on public IPs (DHT, relay, pin, publish) and light peers — including browsers — behind NAT. A browser running the SDN library is a peer, not a client: with the same mnemonic as a server node, it has the same cryptographic identity.</li>
+<li>Fleet software updates are pushed by signed update signals over an update feed; a node fetches, verifies, upgrades itself in place, and can roll back.</li>
+</ul>
+<h2>2. One format: SDS FlatBuffers end to end</h2>
+<p>The unit of data everywhere is a <a href="https://spacedatastandards.org">Space Data Standards</a> FlatBuffer record, size-prefixed, in wire form. The same bytes that travel over pubsub are appended to disk, indexed in place, queried without deserialization, and served back out:</p>
+<blockquote>
+<p>network → disk → query → network is one format.</p>
+</blockquote>
+<p>The node embeds 228 <code>.fbs</code> schema files (all the ratified Space Data Standards plus a few SDN-internal record schemas such as the publication log and ping records) and validates every record it stores against the matching schema. Two consequences:</p>
+<ul>
+<li><strong>Zero-copy reads.</strong> Query results are aligned, size-prefixed FlatBuffer streams; a reader walks fields out of the wire bytes directly.</li>
+<li><strong>Keys match the schema exactly.</strong> As JSON, field names match the IDL capitalization exactly (<code>NORAD_CAT_ID</code>, not <code>norad_cat_id</code>). Never re-case them at the edges.</li>
+</ul>
+<p>Standards are neutral contracts: descriptions name capability classes, never vendors or organizations. Provenance — which archive, which measurement program — is carried as record data at runtime, not baked into the standard.</p>
+<h2>3. Storage: FlatSQL, append-only, engine-routed</h2>
+<p>Storage is <strong>FlatSQL</strong>: a SQL engine compiled to WASM, hosted in-process by the Go server (via the WasmEdge runtime), running the identical artifact the browser runs.</p>
+<ul>
+<li><p><strong>Durability on disk.</strong> Tables and B-tree indexes are zero-copy indexes <strong>over the record streams</strong>: they store offsets into the FlatBuffer stream files, never copies of payload bytes. The engine writes files only through seven explicit, offset-addressed host imports, so an engine that cannot open real disk storage fails loudly rather than silently running in memory.</p>
+</li>
+<li><p><strong>Append-only streams, journal as source of truth.</strong> Records land in append-only stream files; nothing is rewritten in place. Boot is open + verify + tail over the record journal — the journal is the source of truth; the persisted index is a recovery accelerator that can cost time but never data.</p>
+</li>
+<li><p><strong>Engine-routed by default.</strong> Every embedded standard routes through the engine: each standard&#39;s records mirror into a per-source shadow table (<code>OMM@celestrak-gp</code>, for example) as stored. There are no per-standard hard-coded query paths; a query reads the standard&#39;s table. The canonical query shape for the latest records of a type is:</p>
+<pre><code class="language-sql">SELECT _data FROM &lt;TYPE&gt; ORDER BY _rowid DESC LIMIT ?
+</code></pre>
+<p>Two categories of standards are deliberately not routed: those whose IDL declares no file identifier, and those whose IDL declares an <code>(encrypted)</code> field. The latter are <strong>sealed at rest</strong> — the stream holds an encrypted envelope — so they are never mirrored into the public query surface, and their table names do not even resolve in SQL.</p>
+</li>
+<li><p><strong>Per-record content addressing.</strong> Records are content-addressed by SHA-256: the same FlatBuffer bytes always produce the same CID, so deduplication and network sync can trust byte equality.</p>
+</li>
+</ul>
+<h3>The anonymous read surface is a schema property</h3>
+<p>What &quot;anyone can read&quot; is decided per <strong>schema</strong>, not per URL path, and it is fail-closed: a schema is anonymously readable only if deliberately on the allowlist. Today that is the public catalogue and its provenance lane:</p>
+<p><code>OMM</code> (orbital element sets), <code>CAT</code> (catalogue entries), <code>MPE</code> (mean parameter ephemerides), <code>SPW</code> (space weather indices), <code>RFB</code> (RF band specifications / emitter catalogue), <code>LKS</code> (link status), <code>PNM</code> (publication notifications), <code>DPM</code> (dataset publication manifests), <code>EPM</code> (entity profile messages / identity records), <code>APP</code> (application package manifests), and <code>EGP</code> (entity groups).</p>
+<p>Everything else — including <code>TBS</code> and <code>IQC</code> — is anonymous-read CLOSED by default until deliberately opened. Anonymous read never implies anonymous publish.</p>
+<h2>4. Identity and signatures</h2>
+<h3>One HD key tree</h3>
+<p>A node&#39;s entire cryptography descends from one BIP-39 mnemonic, turned into seed via SLIP-10 with the standard BIP-44 path structure (coin type 0):</p>
+<pre><code class="language-text">BIP-39 Mnemonic → seed → SLIP-10 Master Key
+    ├── m/44&#39;/0&#39;/0&#39;/0&#39;/0&#39;  →  Ed25519 Signing Key (also the libp2p PeerID)
+    └── m/44&#39;/0&#39;/0&#39;/1&#39;/0&#39;  →  X25519 Encryption Key
+</code></pre>
+<p>The signed identity is also the network identity: the Ed25519 signing key <strong>is</strong> the libp2p PeerID. Purpose-separated child keys follow the grammar <code>m/44&#39;/0&#39;/&lt;account&gt;&#39;/&lt;purpose&gt;&#39;/0&#39;</code>, fully hardened at every level, so publishing a child&#39;s public half reveals nothing about the parent or its siblings. The purposes in use:</p>
+<ul>
+<li><strong>Identity signing</strong> (purpose 0) — signs sign-in challenges, identity and publication records, dataset publications, module publications, and update manifests. Whatever this key signs, every node in the fleet will install and run.</li>
+<li><strong>Encryption</strong> (purpose 1) — key agreement for encrypted records and module bundles; signs nothing.</li>
+<li><strong>Licensing grants</strong> (purpose 2) — signs module-delivery and storefront access grants; clients verify grants against its public half.</li>
+</ul>
+<p>At rest, the mnemonic is encrypted with a machine-derived key and fails closed if the machine changes. The managed IPFS repo identity is derived from the same root, never a separate key.</p>
+<h3>What is published vs kept private</h3>
+<p>The node publishes an identity record (EPM) with human and machine faces: a contact card with name, organization, and photo, plus the literal public keys that verify it — email aliases ride the vCard/QR forms as machine-read identifiers. The xpub and the derivation paths are private. Identity records are self-signed: the record&#39;s signatures must verify against keys carried in the record itself, and the card&#39;s primary signing key must be exactly the key the contact role names.</p>
+<h3>Domain-separated signatures</h3>
+<p>Any endpoint that can produce a signature over content the node did not author is a potential oracle for forging another protocol&#39;s signature — sign a raw SHA-256 of one thing and you may have signed something else. So every detached signature the node produces is domain-separated:</p>
+<pre><code class="language-text">statement = domain-label || 0x00 || SHA-256(content)
+</code></pre>
+<p>Domains come from a closed registry (<code>SDN-MODULE-PUBLICATION-V1</code>, <code>SDN-UPDATE-MANIFEST-V1</code>, <code>SDN-UPDATE-SIGNAL-V1</code>, dataset publication bindings, and others). A signature minted for one statement kind can never be replayed as another; adding a new signed statement kind is a reviewed change, never a request parameter.</p>
+<h3>First login binds the key</h3>
+<p>A wallet first signs in with its Ed25519 key; that key is then bound to the identity (first use wins). A conflicting key presented later is refused. Possession of key material is thus proof of identity, in both directions: the node&#39;s own key is always admitted as an administrator.</p>
+<h2>5. Peers and operators are one kind of thing</h2>
+<p>From the CLI help, verbatim: &quot;a node running somewhere and an account that logs in are the same kind of thing: a PRR-shaped identity carrying a trust level.&quot;</p>
+<p><code>accounts</code> is the command you use for both:</p>
+<pre><code>$ spacedatanetwork accounts --help
+List and manage accounts (network peers and login operators are one thing)
+</code></pre>
+<ul>
+<li><code>accounts add</code> adds a <strong>peer</strong> by <code>--peer-id</code>, <code>--public-key</code>, or <code>--vcard</code>. It refuses an xpub on purpose: an xpub identifies a wallet account, not a libp2p host.</li>
+<li><code>accounts list</code> shows the merged table: peer rows and operator rows, unified by the key that both derive (the secp256k1 account public key from an operator&#39;s xpub maps to a libp2p peer ID, which is what merges a peer row and an operator row for the same entity).</li>
+<li><code>accounts trust</code> changes trust explicitly: <code>--peer-id</code> targets the peer; <code>--xpub</code> targets the operator. It only updates an existing row; it cannot create one.</li>
+</ul>
+<h3>Trust levels</h3>
+<p>Trust levels follow the PGP ownertrust scale, persisted as a signed integer:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Value</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>never</code></td>
+<td>-1</td>
+<td>Deliberate distrust: a hard veto that no web-of-trust computation can override</td>
+</tr>
+<tr>
+<td><code>unknown</code> / <code>untrusted</code></td>
+<td>0</td>
+<td>No assertion made; the fail-closed default</td>
+</tr>
+<tr>
+<td><code>marginal</code> / <code>limited</code></td>
+<td>1</td>
+<td>Weakest positive assertion</td>
+</tr>
+<tr>
+<td><code>standard</code></td>
+<td>2</td>
+<td>Between marginal and full; the default for ordinary peer access</td>
+</tr>
+<tr>
+<td><code>full</code> / <code>trusted</code></td>
+<td>3</td>
+<td>Full confidence</td>
+</tr>
+<tr>
+<td><code>admin</code></td>
+<td>4</td>
+<td>Operational super-user: operator sessions, admin API routes</td>
+</tr>
+<tr>
+<td><code>ultimate</code></td>
+<td>5</td>
+<td>Reserved exclusively for the node&#39;s own identity; never granted to a remote peer or session</td>
+</tr>
+</tbody></table>
+<p>Assignable to operators up to <code>admin</code>; <code>ultimate</code> is the node&#39;s own key&#39;s level and <code>never</code> is not supported as an operator lockout. For peers, the full range applies. The node also computes a web-of-trust validity from the peer graph, which feeds effective trust for access decisions.</p>
+<p>Web-of-trust detail: the peer graph records each peer&#39;s role (standard, bootstrap, relay, gateway, seed); connection admission is trust-aware; fleet connections (known bootstraps, configured trusted peers, pins) are protected from trimming.</p>
+<h3>How operator rows come to exist</h3>
+<p>Four ways, and it matters which one you use:</p>
+<ol>
+<li><strong>Configuration</strong>: a <code>users:</code> block in <code>config.yaml</code> (xpub, trust level, optional name and signing public key). Config entries win over database rows on every read, cannot have their trust changed through the API, and cannot be removed through the API.</li>
+<li><strong>The dashboard</strong>: the ACCOUNTS view&#39;s &quot;Enrol a key&quot; form (xpub, name, trust, signing public key in hex), which creates the row through the admin API.</li>
+<li><strong>First-admin bootstrap</strong>: if no admin exists anywhere, the next wallet that signs in is minted as the initial admin. The node therefore cannot be permanently locked out at the operator level by deleting the last admin row.</li>
+<li><strong>The root ceremony</strong>: the node&#39;s own key is always admitted as an admin, with or without a stored row.</li>
+</ol>
+<h3>Sign-in</h3>
+<p>No passwords. Sign-in is an Ed25519 challenge-response: <code>POST /api/auth/challenge</code> returns a random challenge; the wallet signs it; <code>POST /api/auth/verify</code> admits the session and sets an HttpOnly session cookie. The CLI authenticates the same way using the node&#39;s own root key, or accepts an existing session token via <code>--session-token</code> or <code>$SDN_SESSION_TOKEN</code>.</p>
+<p>The full enrolment story — key generation, sign-in requirements, withdrawal rules — is in <a href="operator-enrolment.html">Operator Enrolment</a>.</p>
+<h2>6. How data moves: libp2p, pubsub, IPFS</h2>
+<h3>The network layer</h3>
+<p>Every node runs a libp2p host: TLS and noise for transport security, an autonomous system-style connection manager with trust-aware gating, resource management, NAT port mapping, hole punching, and client relay with automatic relay peer discovery. Full-public nodes participate in the DHT and can serve relay for light peers (relay is a config-gated, donated-bandwidth service). When serving TLS directly, the node advertises <code>libp2p.direct</code> addresses that browsers can dial.</p>
+<p>Stream protocols:</p>
+<ul>
+<li><code>/spacedatanetwork/sds-exchange/1.0.0</code> — record exchange</li>
+<li><code>/space-data-network/id-exchange/1.0.0</code> — identity records</li>
+<li><code>/space-data-network/chat/1.0.0</code></li>
+<li><code>/space-data-network/flatsql-sync/1.0.0</code> — published shard sync (the high-throughput data lane)</li>
+</ul>
+<h3>Pubsub lanes</h3>
+<ul>
+<li><strong>Per-schema data topics</strong> — <code>/spacedatanetwork/sds/&lt;SCHEMA&gt;</code> — the streaming record lane: one topic per standard, joined for every validated schema.</li>
+<li><strong>Feed heads</strong> — <code>/space-data-network/feed-heads/1.0.0/&lt;schema&gt;</code> — small, signed, mutable pointer messages. A feed head announces where a standard&#39;s latest immutable materialized set lives (record count, byte count, shard / query-index / manifest CIDs, publication CID) and is what replicas subscribe to <em>before</em> fetching the immutable shards.</li>
+<li><strong>Adjuncts</strong> — <code>/spacedatanetwork/edge-relays</code> (relay announcements), storefront topics <code>/sdn/storefront/{listings,purchases,reviews}</code>, per-buyer delivery topics <code>/sdn/data/{listing_id}/{buyer_peer_id}</code>, and channel discovery topics.</li>
+</ul>
+<h3>The publication lifecycle (dataset lane)</h3>
+<p>Providers publish materialized datasets, and the whole lifecycle is signed end to end:</p>
+<ol>
+<li>A provider ingests source data and normalizes it into SDS FlatBuffers.</li>
+<li>Records are stored locally and mirrored into the engine&#39;s tables.</li>
+<li>The provider exports the authoritative set as a <code>DATA_SHARD</code> (the streams) plus a <code>QUERY_INDEX</code> asset.</li>
+<li>It builds and signs a dataset publication manifest (<strong>DPM</strong>) binding the file identifier, source and byte hashes, schema hash, and the assets&#39; content addresses, and pins it to IPFS.</li>
+<li>It signs and announces a publication notification (<strong>PNM</strong>) on the open pubsub topics.</li>
+<li>Consumers resolve the latest PNM by peer + standard, verify the signature against the publisher&#39;s identity, fetch the manifest and assets by content address over libp2p, verify hashes, roots, and signatures, and import the shard into their own store.</li>
+</ol>
+<p>Content addressing is what makes this safe without a trusted third party: bytes are their own addresses, and the signature chain binds names to bytes. Published-shard downloads run at near wire speed (the documented gate is 2 Gbit/s sustained, 99% of wire speed). Over HTTP, the same records are served against the per-schema anonymous allowlist of Section 3.</p>
+<h2>7. Everything compute is WASM; the host only connects</h2>
+<p><strong>All functionality is WASM.</strong> The Go host and the browser JavaScript host are thin, application-blind connector layers exposing the same small set of generic hooks (network, storage, file I/O, signing). A module compiled once runs identically under WasmEdge on a node and in a browser tab, threaded through the wasi-threads contract. Divergence between the two runtimes is treated as a defect, caught by running identical scenarios against both artifacts.</p>
+<p>In practice:</p>
+<ul>
+<li><p><strong>The SQL engine is itself a WASM module</strong> hosted in-process by the Go server, using the same FlatSQL artifact the browser uses (byte-parity between the artifacts is enforced by shared test vectors). The server-side build is the no-exceptions variant, because the AOT compiler must be able to precompile it; interpreted execution is far too slow for query work. Long-running engine calls are bounded by an execution timeout.</p>
+</li>
+<li><p><strong>HTTP routes are flows.</strong> The public record-retrieval surface (<code>/api/v1/data/...</code>) is compiled WASM flow bundles mounted by configuration. The host does request plumbing and nothing else:</p>
+<blockquote>
+<p>There is no gateway: the only host glue is socket plumbing with zero decisions — HTTP request → one request frame → response frames written verbatim; all routing, query parsing, format selection, caching, and ETag logic live inside the WASM flow. Which flow owns which listener path is configuration, never Go code.</p>
+</blockquote>
+<p>Requests are serialized per flow instance; each mount runs a small pool of instances (default 4).</p>
+</li>
+<li><p><strong>Ingestion runners are flows too.</strong> The credentialed source workers (Space-Track, UDL, and friends — <code>ingest</code> in the CLI) run as flows over the host&#39;s timer, HTTP egress, and guarded persistence, not as custom Go fetchers.</p>
+</li>
+<li><p><strong>Host functions are few.</strong> The shared set is essentially <code>clock_now_ms</code>, <code>random_bytes</code>, and <code>log</code>. Everything else a module can do comes through the capability bridge.</p>
+</li>
+<li><p><strong>Capabilities are explicit grants.</strong> A module&#39;s access to storage is granted (and refused) as named capabilities — <code>storage.write</code> (write a record of a schema) vs <code>storage.query</code> vs <code>storage.delete</code>. Write does not imply read; a module that cannot load cannot touch anything.</p>
+</li>
+</ul>
+<p>The browser SDK follows the same boundary: a browser peer hosts the same wasm-threaded modules, so a flow behaves identically whether its host is a server daemon or a page.</p>
+<h2>8. Apps and the store</h2>
+<h3>Apps</h3>
+<p>An &quot;app&quot; is a loadable runtime module or a timer-served flow bundle — the ingest workers are apps in this sense. The app registry treats an app entry as data like anything else: an installed entry is <em>decoded from</em> a signed app-package FlatBuffer record (<code>APP</code>), never invented from metadata, and the node&#39;s own dashboard record is built from the artifact bytes it serves, so the record and the served page can never disagree. <code>apps list</code> reads the public app feed; <code>apps run</code> fires an app&#39;s schedule on demand.</p>
+<p>A served app page is self-contained by contract: CSS and JavaScript inlined, assets as data URIs, zero external requests. Pages served by a node load nothing from external origins — the sibling <a href="agent-api-guide.html">API Guide</a> assumes the same rule for anything you mount.</p>
+<h3>The marketplace / store</h3>
+<ul>
+<li>Listing, purchase-request, and review records (<code>STF</code>, <code>PUR</code>, <code>REV</code>) live on dedicated pubsub topics and in the store; the catalog is DHT-broadcast; delivery of purchased data goes over per-buyer topics.</li>
+<li>Canonical discovery is the <code>PLG</code> manifest published on spacedatastandards.org: exactly one signed listing per plugin ID and version, so the network can agree on what &quot;the plugin <code>X</code> version <code>Y</code>&quot; means.</li>
+<li>Module delivery is a signed handshake: discover the manifest, connect to the provider peer, complete a challenge/grant exchange verified against the licensing-grant key advertised in the provider&#39;s identity, fetch the encrypted WASM bundle by content address, unwrap the content key, decrypt locally, and load it through the standard module harness. Nothing server side ever runs the module or sees the content key.</li>
+<li>Encrypted record streams advertise their own field-level policy in-band: <code>FSM</code> records mark each field Public / Encrypted / Redacted / Unavailable, so a consumer can handle a record it cannot decrypt correctly.</li>
+</ul>
+<p><code>marketplace</code> in the CLI filters listings by kind (<code>data_stream</code> or <code>wasm_module</code>), access type (<code>one-time</code>, <code>subscription</code>, <code>streaming</code>, <code>query</code>), standard, tags, and provider ID.</p>
+<h2>9. How the pieces fit</h2>
+<p>Follow one record from origin to a consumer&#39;s screen:</p>
+<ol>
+<li><strong>Origin.</strong> A provider (human, script, or flow worker) acquires source data — say, an orbital element set — and encodes it as a size-prefixed SDS FlatBuffer (<code>OMM</code>). The bytes are now the record; there is no other form.</li>
+<li><strong>Validation and admission.</strong> <code>ingest</code>-style workers or the publish API present the bytes. The node checks the schema is allowed for publishing on this node, checks the session/trust/authorization policy, caps the body size, and validates the record structurally against the schema. The record&#39;s own size prefix and file identifier decide which standard&#39;s table it enters — a caller can never steer an <code>OMM</code> record onto another standard&#39;s table through an allowed path.</li>
+<li><strong>Storage.</strong> The bytes are appended to the standard&#39;s append-only stream (content-addressed, CID-deduplicated), indexed, journaled, and mirrored into the engine&#39;s per-source shadow table for the standard. On disk: one stream, one engine, one format.</li>
+<li><strong>Announcement.</strong> A signed feed head goes out on the schema&#39;s feed-heads topic; the record may also stream on the schema&#39;s pubsub topic. The provider periodically materializes the authoritative set into a shard + query index, signs a DPM, pins it to IPFS, and signs a PNM.</li>
+<li><strong>Propagation.</strong> Other nodes verify the feed head / PNM signatures against the publisher&#39;s published identity key, fetch the shard by content address over <code>flatsql-sync</code>, verify hashes and signatures, and import it. Full nodes with public addresses serve and pin; light peers and browsers sync over relay.</li>
+<li><strong>Serving.</strong> Records answer queries from the engine: the public schemas over the anonymous HTTP data plane, everything else behind authentication. A requesting browser is itself a node — it fetched, verified, and stores the same bytes locally rather than trusting the server&#39;s word.</li>
+</ol>
+<p>That is the whole design: one format, one identity tree, signed at every boundary, with the host acting only as a connector.</p>
+<h2>10. Where to go next</h2>
+<ul>
+<li><strong><a href="operator-enrolment.html">Operator Enrolment</a></strong> — become an operator or admin: key generation, <code>derive-xpub</code>, the dashboard enrolment form, trust levels, withdrawal and lockout rules, and every exact HTTP call.</li>
+<li><strong><a href="agent-api-guide.html">API Guide</a></strong> — the REST surface in full: authentication, the anonymous allowlist, write paths, error and refusal semantics, and CORS/same-origin behavior.</li>
+<li>On a running node: <code>http://&lt;node&gt;/api/v1/docs</code> serves the generated OpenAPI reference for exactly the routes that node mounted (anonymous, same-origin).</li>
+<li><a href="./TECH-PATH.md">TECH-PATH.md</a> — the authoritative statement of the architecture, with rationale and the order data flows.</li>
+<li><code>sdn-server/docs/gateway-api.md</code> — the gateway API design and implementation record.</li>
+<li><code>README.md</code> — installation, quick start (<code>init</code>, <code>start</code>, <code>status</code>), and components.</li>
+</ul>
+<h2>Not yet supported</h2>
+<ul>
+<li>No CLI command creates an operator (xpub) row. Enrolment happens through the dashboard, <code>config.yaml</code>, the first-admin bootstrap, or the node-root ceremony — see <a href="operator-enrolment.html">Operator Enrolment</a> for each path and its exact behavior.</li>
+<li>Anonymous publishing is not enabled by default on a node; it is an explicit opt-in configuration, and even then records are attributed to an untrusted principal.</li>
+<li>The bulk record-retrieval routes present JSON for the orbital-element standard only; other standards answer in the native streaming FlatBuffer format. JSON is a read-side presentation choice, not a second wire format.</li>
+</ul>
+
+</main>
+<div class="foot">Space Data Network documentation. <a href="space-data-network-docs.pdf">Download as PDF</a>.</div>
+</body>
+</html>

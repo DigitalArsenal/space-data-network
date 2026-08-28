@@ -33,16 +33,14 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'owner-ruled-copy.json'), 'utf8'));
 
-const designRoot = path.resolve(__dirname, '../spaceaware-ui/src/dashboard');
+const designRoot = path.resolve(__dirname, '../spaceaware-ui/src/dashboard-tailadmin');
 const artifactPath = path.resolve(
   __dirname,
   '../../sdn-server/cmd/spacedatanetwork/embedded/dashboard.html'
 );
 
 const SCOPE_DIRS = {
-  lib: path.join(designRoot, 'src/lib'),
-  console: path.join(designRoot, 'orbital-console'),
-  archive: path.join(designRoot, 'archive')
+  lib: designRoot
 };
 
 function walk(dir) {

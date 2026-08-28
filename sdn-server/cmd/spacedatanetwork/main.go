@@ -1921,6 +1921,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					return api.SDNPeerCounts{Connected: counts.Connected, Known: counts.Known}
 				})
 
+				// Background dashboard data plane: the stats lane rebuilds the
+				// store numbers every 5s off the request path, so both
+				// /api/v1/stats and the binary /api/v1/dashboard/stats answer
+				// from RAM while an ingest holds the write lock.
+				coreAPI.StartDashboardSnapshots()
+				defer coreAPI.StopDashboardSnapshots()
+
 				// Mounted gateway flows claim mux paths (incl. the trimmed
 				// exact alias of trailing-slash subtree mounts); the core
 				// API yields claimed surfaces — G.2: the peers-discovery
@@ -1936,6 +1943,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				coreAPI.RegisterRoutesWithFlowMounts(adminMux, func(path string) bool {
 					return flowClaimedPaths[path]
 				})
+				// Sandboxed read-only SELECT (docs Phase G.5) — the data
+				// explorer's uniform lane, admin-gated.
+				coreAPI.RegisterSandboxQueryRoute(adminMux)
 				log.Infof("Core API available at %s://%s/api/v1/{id,version,stats,peers,pubsub}", adminScheme, adminAddr)
 
 				// $APPS feed (anonymous read): what apps this node runs and
@@ -2056,6 +2066,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						FallbackAddrs:    statusFallbackAddrs,
 					})
 				}, cfg.Status.AllowedOrigins)
+				// The dashboard stats frame rides the SAME socket as an
+				// additional binary message; clients tell the two apart by the
+				// FlatBuffer file identifier ($NST vs $NDS). Existing $NST
+				// consumers are unaffected.
+				statusBroadcaster.AddFrameSource("stats", coreAPI.DashboardStatsFrame)
 				statusBroadcaster.Start()
 				adminMux.HandleFunc("/ws/status", statusBroadcaster.ServeHTTP)
 				log.Infof("Status feed available at %s://%s/ws/status (public read-only)", adminScheme, adminAddr)
@@ -2294,6 +2309,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// and the APIs are unchanged.
 			// ----------------------------------------------------------------
 			adminMux.Handle("/fonts/", makeFontsHandler())
+			// The node's own documentation, shipped in the binary (owner
+			// 2026-08-28): version-exact guides + PDF at /docs/.
+			adminMux.Handle("/docs", makeDocsHandler())
+			adminMux.Handle("/docs/", makeDocsHandler())
 			// Semantic-search assets for the dashboard's embedding search
 			// (model + tokenizer + ort wasm runtime), same-origin and
 			// fail-open: absent assets 404 and the dashboard keeps its
@@ -3291,6 +3310,10 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/v1/id",
 		"/api/v1/version",
 		"/api/v1/stats",
+		// The same numbers as /api/v1/stats, pre-serialized as a $NDS frame.
+		// Same disclosure, same anonymous posture as the /ws/status feed that
+		// also carries it.
+		"/api/v1/dashboard/stats",
 		"/api/v1/pubsub/topics",
 		"/api/v1/pubsub/messages",
 		// The node's security bond: public BY DESIGN — peers price trust by

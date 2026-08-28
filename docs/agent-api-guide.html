@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Guide — Space Data Network</title>
+<meta name="description" content="API Guide for the Space Data Network.">
+<style>
+:root {
+  color-scheme: light;
+  --white: #ffffff;
+  --gray-50: #f9fafb;
+  --gray-100: #f2f4f7;
+  --gray-200: #e4e7ec;
+  --gray-300: #d0d5dd;
+  --gray-400: #98a2b3;
+  --gray-500: #667085;
+  --gray-600: #475467;
+  --gray-700: #344054;
+  --gray-800: #1d2939;
+  --gray-900: #101828;
+  --shadow-sm: 0px 1px 3px 0px rgba(16, 24, 40, 0.1);
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 2.5rem 1.5rem 6rem;
+  font: 16px/1.65 Outfit, ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--gray-800); background: var(--gray-50);
+}
+main {
+  max-width: 48rem; margin: 0 auto; background: var(--white);
+  border: 1px solid var(--gray-200); border-radius: var(--radius);
+  box-shadow: var(--shadow-sm); padding: 2.5rem 2.75rem 3rem;
+}
+h1, h2, h3, h4 { line-height: 1.25; font-weight: 650; color: var(--gray-900); margin: 2.5rem 0 .75rem; }
+h1 { font-size: 1.9rem; margin-top: 0; letter-spacing: -.02em; }
+h2 { font-size: 1.35rem; padding-bottom: .35rem; border-bottom: 1px solid var(--gray-200); }
+h3 { font-size: 1.05rem; }
+p, ul, ol, blockquote, table { margin: 0 0 1rem; }
+li { margin: .25rem 0; }
+a { color: var(--gray-900); text-underline-offset: 2px; }
+code {
+  font: .875em/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--gray-100); padding: .12em .35em; border-radius: 6px;
+}
+pre {
+  background: var(--gray-900); color: var(--gray-50); padding: 1rem 1.15rem;
+  border-radius: 10px; overflow-x: auto; margin: 0 0 1.25rem;
+  font-size: .84rem; line-height: 1.55;
+}
+pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+blockquote {
+  margin-left: 0; padding: .6rem 1rem; border-left: 3px solid var(--gray-300);
+  background: var(--gray-50); color: var(--gray-600); border-radius: 0 8px 8px 0;
+}
+table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+th, td { text-align: left; padding: .5rem .65rem; border-bottom: 1px solid var(--gray-200); vertical-align: top; }
+th { font-weight: 620; background: var(--gray-50); color: var(--gray-500);
+     text-transform: uppercase; font-size: .78rem; letter-spacing: .04em; }
+hr { border: 0; border-top: 1px solid var(--gray-200); margin: 2.5rem 0; }
+.nav {
+  max-width: 48rem; margin: 0 auto 1.25rem; display: flex; flex-wrap: wrap;
+  gap: .5rem; align-items: center; font-size: .875rem;
+}
+/* Pill nav, the console's rail vocabulary: ink-on-paper for the active item. */
+.nav a {
+  color: var(--gray-600); text-decoration: none; background: var(--white);
+  border: 1px solid var(--gray-200); border-radius: 999px; padding: .35rem .85rem;
+  transition: background .15s, color .15s;
+}
+.nav a:hover { background: var(--gray-100); color: var(--gray-900); }
+.nav a[aria-current="page"] {
+  background: var(--gray-900); border-color: var(--gray-900); color: var(--white);
+}
+.nav .grow { margin-left: auto; }
+.foot { max-width: 48rem; margin: 1.5rem auto 0; color: var(--gray-500); font-size: .85rem; }
+
+@media print {
+  /* The site chrome is navigation, and navigation does not survive paper. */
+  body { padding: 0; font-size: 11pt; }
+  .nav, .foot, .no-print { display: none !important; }
+  main { max-width: none; }
+  pre { background: #f2f4f7; color: #101828; border: 1px solid #e4e7ec;
+        white-space: pre-wrap; word-wrap: break-word; }
+  h1, h2, h3 { break-after: avoid; }
+  pre, table, blockquote { break-inside: avoid; }
+  .chapter { break-before: page; }
+  .chapter:first-of-type { break-before: auto; }
+}
+@page { size: A4; margin: 18mm 16mm; }
+</style>
+</head>
+<body>
+  <nav class="nav">
+      <a href="server-overview.html">Server Overview</a>
+      <a href="agent-api-guide.html" aria-current="page">API Guide</a>
+      <a href="operator-enrolment.html">Operator Enrolment</a>
+      <span class="grow"></span>
+      <a href="space-data-network-docs.pdf">PDF</a>
+    </nav>
+<main>
+<h1>Space Data Network — Interaction Guide</h1>
+<p>Commands below ran against a live local daemon at <code>http://localhost:7173</code>
+(suite 1.0.4, standards 1.186.0) unless noted.</p>
+<p>Local nodes listen on <code>http://127.0.0.1:7173</code> by default; <code>spacedatanetwork status</code>
+prints the admin URL, <code>spacedatanetwork open</code> opens it.</p>
+<hr>
+<h2>1. Verify a node is alive and read data anonymously</h2>
+<pre><code class="language-bash"># 1. Who is this node?
+curl http://localhost:7173/api/v1/version
+# -&gt; {&quot;agent_version&quot;:&quot;spacedatanetwork/1.0.4&quot;,&quot;kubo_version&quot;:&quot;0.40.0-dev&quot;,
+#     &quot;standards_version&quot;:&quot;1.186.0&quot;,&quot;suite_version&quot;:&quot;1.0.4&quot;}
+
+curl http://localhost:7173/api/v1/id
+# -&gt; {&quot;peer_id&quot;:&quot;16Uiu2HAku...&quot;,&quot;listen_addresses&quot;:[&quot;/ip4/...&quot;,&quot;...&quot;],
+#     &quot;agent_version&quot;:&quot;...&quot;,&quot;suite_version&quot;:&quot;...&quot;,&quot;standards_version&quot;:&quot;...&quot;}
+
+# 2. What does this node hold, and what are its rate limits?
+curl http://localhost:7173/api/v1/catalog
+# -&gt; {&quot;peer_id&quot;:&quot;...&quot;,&quot;capabilities&quot;:[&quot;data_query&quot;,&quot;data_publish&quot;,&quot;pubsub&quot;],
+#     &quot;rate_limits&quot;:{&quot;max_record_bytes&quot;:10485760,&quot;publish_per_minute&quot;:10,&quot;query_per_minute&quot;:1000},
+#     &quot;schemas&quot;:[{&quot;name&quot;:&quot;TBS.fbs&quot;,&quot;record_count&quot;:1078755,&quot;total_bytes&quot;:758000000}, ...]}
+
+# 3. The anonymous record index (CIDs + a few indexed columns, no content):
+curl &quot;http://localhost:7173/api/v1/data/index?schema=TBS&amp;page=1&amp;limit=3&quot;
+# -&gt; {&quot;as_of&quot;:&quot;2026-08-27T18:52:13Z&quot;,&quot;limit&quot;:3,&quot;page&quot;:1,&quot;rows&quot;:[
+#       {&quot;cid&quot;:&quot;bafkreia2224p3z4dnboyfhfach4bhalke76gch7tb73gto5e6nj5fi2k5a&quot;,&quot;epoch&quot;:null,&quot;norad&quot;:null}, ...],
+#     &quot;schema&quot;:&quot;TBS.fbs&quot;,&quot;stale&quot;:false,&quot;total&quot;:1078755}
+
+# 4. Health check and the human-readable API reference (both anonymous):
+curl http://localhost:7173/api/v1/data/health
+# -&gt; {&quot;component&quot;:&quot;spaceaware-data-api&quot;,&quot;status&quot;:&quot;ok&quot;,&quot;time&quot;:&quot;...&quot;}
+
+curl http://localhost:7173/api/v1/docs
+# -&gt; 200 text/html  (the Gateway API reference UI; zero off-node requests)
+</code></pre>
+<p>If step 1 fails, the daemon is not running or not on that port. Record CONTENT
+is a separate gate from the index (section 2).</p>
+<hr>
+<h2>2. The anonymous surface</h2>
+<p>The auth wall is default-deny: <code>/api/**</code> admits an unauthenticated request only
+in three cases.</p>
+<h3>What is anonymous</h3>
+<ol>
+<li><p><strong>Unconditional POST</strong> (no session, no CSRF):</p>
+<ul>
+<li><code>POST /api/auth/challenge</code>, <code>POST /api/auth/verify</code> — sign-in ceremony
+(section 3); public by design (no session yet).</li>
+<li><code>POST /api/storefront/listings/search</code></li>
+<li><code>POST /api/storefront/payments/stripe/webhook</code></li>
+</ul>
+</li>
+<li><p><strong>GET/HEAD of the public read paths</strong> (verbatim source:
+<code>sdn-server/cmd/spacedatanetwork/main.go</code>, <code>isPublicReadAPIPath</code>):</p>
+<ul>
+<li><code>GET /api/v1/version</code>, <code>/api/v1/id</code>, <code>/api/v1/stats</code></li>
+<li><code>GET /api/node/info</code> — full public identity: peer_id, versions,
+EPM-derived addresses, chain proofs, listen addresses, onion address.</li>
+<li><code>GET /api/node/epm</code>, <code>/api/node/epm/json</code>, <code>/api/node/epm/vcard</code>,
+<code>/api/node/epm/qr</code></li>
+<li><code>GET /api/relay/status</code> — peer_id, connections, configured_nodes,
+max_connections, load, mode, versions, uptime_seconds.</li>
+<li><code>GET /api/v1/catalog</code>, <code>/api/v1/data/health</code></li>
+<li><code>GET /api/v1/data/index?schema=&lt;CODE&gt;&amp;page=&amp;limit=</code> — anonymous CID index
+(capped at 200 rows/page; <code>limit</code> &gt; 200 clamped).</li>
+<li><code>GET /api/v1/pubsub/topics</code>, <code>/api/v1/pubsub/messages?schema=&amp;limit=</code></li>
+<li><code>GET /api/v1/channels</code>, <code>/api/v1/channels/&lt;standardCode&gt;</code></li>
+<li><code>GET /api/apps</code>, <code>/api/v1/apps/default</code>, <code>/api/v1/apps/records/&lt;...&gt;</code> —
+app feed and app record bytes.</li>
+<li><code>GET /api/storefront/listings</code>, <code>/api/storefront/listings/&lt;anything&gt;</code>,
+<code>/api/storefront/trust/</code></li>
+<li><code>GET /api/v1/trust/bond</code> — the node&#39;s security bond.</li>
+<li><code>GET /api/module-delivery/provider</code>, <code>/api/module-delivery/listings</code> —
+the provider descriptor and module listings.</li>
+<li><code>GET /api/v1/docs</code>, <code>/api/v1/openapi.json</code>, <code>/api/v1/docs/&lt;asset&gt;</code> — the
+API reference itself is anonymous.</li>
+<li><code>GET /api/auth/status</code> — <code>{&quot;admin_configured&quot;,&quot;root_admin_available&quot;, &quot;users_configured&quot;,&quot;config_path&quot;,&quot;wallet_ui_configured&quot;, ...}</code>; tells
+whether a node has an operator yet.</li>
+<li><code>GET /api/directory/...</code>, <code>/api/v1/demo/...</code>, <code>/api/v1/log/...</code></li>
+<li><code>GET /api/v1/peers</code> — legacy native peer list.</li>
+<li><code>GET /sdn/libp2p.js</code></li>
+</ul>
+</li>
+<li><p><strong>Per-schema record content</strong> — <code>GET /api/v1/data/&lt;CODE&gt;/bulk</code> — by
+allow-list, below.</p>
+</li>
+</ol>
+<h3>The fail-closed allow-list: public readability is a property of the standard</h3>
+<p><code>/api/v1/data/&lt;CODE&gt;/bulk</code> serves record CONTENT, gated by a schema-classified
+allow-list, not the path; a schema is anonymous only if named in it. Fail-closed:
+a new standard is NOT readable until deliberately allow-listed — the right
+default for a store that also holds key material, access grants,
+node-internal ledgers.</p>
+<p>Public: <code>OMM</code> (orbital element sets — the primary catalogue), <code>CAT</code> (catalogue
+entries), <code>MPE</code> (mean parameter ephemerides), <code>SPW</code> (space weather indices),
+<code>RFB</code> (published emitter catalogue), <code>LKS</code> (link status), <code>PNM</code> (publication
+notifications — already broadcast on public pubsub topics), <code>DPM</code> (dataset
+publication manifests — already pinned publicly), <code>EPM</code> (entity profile
+messages — the identity records), <code>APP</code> (application package manifests),
+<code>EGP</code> (entity groups — membership assertions over already-public catalogue
+records).</p>
+<p>NOT public: <code>TBS</code> (telemetry bitstreams), <code>IQC</code> (integripulse quality check) —
+both answer <code>401</code> (verified live):</p>
+<pre><code class="language-bash">curl -i &quot;http://localhost:7173/api/v1/data/tbs/bulk?limit=1&quot;
+# -&gt; HTTP/1.1 401 Unauthorized
+#    {&quot;code&quot;:&quot;unauthorized&quot;,&quot;message&quot;:&quot;not authenticated&quot;}
+
+curl -i &quot;http://localhost:7173/api/v1/data/iqc/bulk?limit=1&quot;
+# -&gt; HTTP/1.1 401 Unauthorized
+#    {&quot;code&quot;:&quot;unauthorized&quot;,&quot;message&quot;:&quot;not authenticated&quot;}
+</code></pre>
+<ul>
+<li>Accept spelling is flexible: <code>OMM</code>, <code>omm</code>, <code>OMM.fbs</code> all resolve.</li>
+<li>The anonymous INDEX is served for ANY schema: listing CIDs is not reading
+records. Verified live: the TBS index above queried 1,078,755 records
+anonymously; the TBS content route still refused.</li>
+<li>The allow-list governs READ only. Publishing is a separate, authenticated
+surface (section 4).</li>
+</ul>
+<h3>Reading record content: bulk</h3>
+<p>Served by the node&#39;s data-retrieval engine (a WASM flow inside the node, not a
+plain Go endpoint):</p>
+<pre><code class="language-bash">curl &quot;http://localhost:7173/api/v1/data/&lt;CODE&gt;/bulk?limit=100&amp;epoch=2026-08-27T00:00:00Z&quot;
+</code></pre>
+<p>Parameters: <code>epoch</code> (RFC3339 or unix seconds; default now), <code>profile</code> or <code>mode</code>
+(<code>nearest</code> / <code>as_of</code> / <code>forward</code>; default per node config), <code>limit</code> (min 1;
+default unbounded), <code>source</code> (a registered provider source), <code>format</code>
+(<code>flatbuffer</code> default; <code>json</code> accepted by the OMM route only).</p>
+<p>Response: size-prefixed FlatBuffer stream (8-byte aligned
+<code>[u32le length][bytes]</code> frames; content type <code>application/vnd.sdn.flatbuffers.stream</code>)
+or, for OMM <code>format=json</code>, a bare JSON array with schema-exact keys
+(<code>NORAD_CAT_ID</code>, <code>EPOCH</code>, <code>MEAN_MOTION</code> — never lowercased). Both encodings
+carry a record count header and an ETag; send <code>If-None-Match</code> for
+<code>304 Not Modified</code>.</p>
+<p>Failure modes:</p>
+<ul>
+<li><code>401</code> — standard not on the allow-list (TBS, IQC, every not-yet-listed
+standard). Permanent by design; not a retry condition.</li>
+<li><code>503 &quot;flow unavailable: engine hot window not ready&quot;</code> — standard IS public
+but the query engine has not hydrated its hot window yet (observed verbatim
+on the authoring node for <code>omm/bulk</code> and <code>pnm/bulk</code>). Warm-up: retry with
+backoff. Light routes (<code>/api/v1/catalog</code>, <code>/api/v1/data/index</code>,
+<code>/api/v1/data/health</code>) stay live meanwhile.</li>
+</ul>
+<hr>
+<h2>3. The authenticated surface — signing in as an operator</h2>
+<p>Ed25519 challenge-response with a wallet key — no passwords, no bearer tokens.
+Identity: BIP-32 xpub + Ed25519 signing public key (64 hex chars). The signing
+key signs; the xpub is the account address the operator row is stored under.</p>
+<h3>The ceremony</h3>
+<pre><code class="language-bash">TS=$(date +%s)
+# The challenge request carries the signing public key and, optionally, the xpub.
+# ts must be within 2 minutes of the server clock (verified: outside that window
+# the answer is 400 {&quot;code&quot;:&quot;invalid_timestamp&quot;, ...}).
+curl -X POST http://localhost:7173/api/auth/challenge \
+  -H &#39;Content-Type: application/json&#39; \
+  -d &quot;{\&quot;xpub\&quot;:\&quot;xpub6...\&quot;,\&quot;client_pubkey_hex\&quot;:\&quot;&lt;64-hex Ed25519 public key&gt;\&quot;,\&quot;ts\&quot;:$TS}&quot;
+# -&gt; {&quot;challenge_id&quot;:&quot;cca6041ac1...&quot;,&quot;challenge&quot;:&quot;q4XAAWmLAvjCTZDBeBuwSA4UKNLr3DKSmCV/WAJrlG0&quot;,
+#     &quot;expires_at&quot;:1787856891}
+
+# Then sign the raw challenge bytes with the Ed25519 private key and:
+curl -X POST http://localhost:7173/api/auth/verify \
+  -H &#39;Content-Type: application/json&#39; \
+  -d &#39;{&quot;challenge_id&quot;:&quot;...&quot;,&quot;challenge&quot;:&quot;...&quot;,&quot;client_pubkey_hex&quot;:&quot;&lt;64-hex&gt;&quot;,&quot;xpub&quot;:&quot;xpub6...&quot;,&quot;signature_hex&quot;:&quot;&lt;128-hex Ed25519 signature of the raw challenge bytes&gt;&quot;}&#39;
+# -&gt; 200, Set-Cookie: sdn_wallet_session=...; HttpOnly; SameSite=Lax; [Secure]
+#    {&quot;user&quot;:{&quot;xpub_fingerprint&quot;:&quot;...&quot;,&quot;name&quot;:&quot;...&quot;,&quot;trust_level&quot;:&quot;admin&quot;},&quot;expires_at&quot;:...}
+</code></pre>
+<p>Session facts (verified from source):</p>
+<ul>
+<li>Cookie <code>sdn_wallet_session</code>: <code>HttpOnly</code>, <code>SameSite=Lax</code>, <code>Secure</code> over TLS or
+<code>X-Forwarded-Proto: https</code>. Legacy name <code>sdn_session</code> also recognized.</li>
+<li>Challenges single-use, 60 s expiry; limits 60/min per IP and 30/min per xpub
+(challenge), 120/min and 60/min (verify).</li>
+<li>Unknown identities get a real-looking challenge that can never verify — the
+node deliberately does not store it, so no enrollment enumeration. Verified
+live: a made-up xpub returned <code>200</code> with a valid <code>challenge_id</code>; verification
+would fail.</li>
+<li>Key binding is first-use-wins (TOFU): the first signing key at a successful
+verify binds permanently to the xpub; a conflicting key is refused later. An
+admin can pre-seed the signing key when creating the operator row.</li>
+<li>The node&#39;s own root account signs in at admin level without any store row.
+With NO operator at all (no config users, no database rows), the first wallet
+that completes a verify becomes the &quot;Initial Admin&quot; (first-admin bootstrap).
+A BIP-32 master xpub (depth 0) is refused here — it would enumerate the whole
+wallet.</li>
+</ul>
+<h3>How to call as an operator from a script</h3>
+<p>The CLI demonstrates the two sanctioned ways:</p>
+<ol>
+<li>Auto sign-in as the node&#39;s root key: every operator command
+(<code>spacedatanetwork accounts list</code>, <code>... status</code>, <code>... providers</code>, ...)
+completes the full challenge-verify ceremony with the node&#39;s own key and
+reuses the session cookie.</li>
+<li>Pass an existing session token explicitly:</li>
+</ol>
+<pre><code class="language-bash">export SDN_SESSION_TOKEN=&quot;&lt;token&gt;&quot;
+spacedatanetwork accounts list
+# or on every command:
+spacedatanetwork accounts list --session-token &quot;$SDN_SESSION_TOKEN&quot;
+</code></pre>
+<p>There is no way to mint a session token without completing the challenge-verify
+ceremony once.</p>
+<h3>What an operator can see and do</h3>
+<p>Trust levels: <code>never</code>, <code>unknown</code>, <code>marginal</code>, <code>standard</code>, <code>full</code>, <code>admin</code>,
+<code>ultimate</code> (seven values).</p>
+<ul>
+<li>Anonymous + sign-in reads: anything in section 2, plus <code>GET /api/auth/me</code>
+(who you are, at any trust tier).</li>
+<li><code>standard</code> (default floor for publishing): write data (section 4).</li>
+<li><code>admin</code>: everything, including the operator matrix (<code>/api/auth/users</code>), peer
+trust management (<code>/api/peers</code>), the admin data surface
+(<code>/api/v1/data/scan|stream|query|records|...</code>), imports/exports, and
+<code>GET /api/accounts</code> (the merged account view).</li>
+<li><code>ultimate</code> is reserved for the node&#39;s own identity. Operator rows: <code>unknown</code>
+through <code>admin</code>, never <code>never</code> (lockout) and never <code>ultimate</code>; both refused
+with <code>400 {&quot;code&quot;:&quot;invalid_trust_level&quot;}</code>.</li>
+<li>Below the required tier: <code>403 {&quot;code&quot;:&quot;forbidden&quot;}</code>.</li>
+</ul>
+<p>Operator life cycle:</p>
+<ul>
+<li>Operator rows are created by: the node&#39;s <code>users:</code> config block, the
+dashboard&#39;s &quot;Enrol a key&quot; form (<code>POST /api/auth/users</code>, admin-only), the
+first-admin bootstrap, or the root sign-in&#39;s record row.</li>
+<li><code>spacedatanetwork accounts trust --xpub &lt;xpub&gt; --level &lt;level&gt;</code> UPDATEs an
+existing row (<code>PUT /api/auth/users/&lt;xpub&gt;</code>); never creates one. A nonexistent
+xpub answers <code>400 {&quot;code&quot;:&quot;update_failed&quot;,&quot;message&quot;:&quot;user not found&quot;}</code>.</li>
+<li>Config-managed operators cannot have trust changed or be removed through the
+API.</li>
+</ul>
+<hr>
+<h2>4. Writing data to a node (vendor ingest)</h2>
+<p>Publish surface: <code>POST /api/v1/data/publish/{schema}</code> and
+<code>POST /api/v1/data/publish/batch/{schema}</code>. Mounted only when the node&#39;s
+config enables publishing; requires a session. Anonymous attempts are refused
+at the wall (verified: <code>401 {&quot;code&quot;:&quot;unauthorized&quot;}</code>).</p>
+<h3>Admission path, in the exact order the node checks it</h3>
+<ol>
+<li>Publishing enabled? No → <code>403 data publishing is disabled on this node</code>.</li>
+<li>Schema from the URL path: missing or invalid → <code>400</code>.</li>
+<li>Schema in the publishing allow-list (config; empty list = all)? No →
+<code>403 schema not allowed for publishing: &lt;schema&gt;</code>.</li>
+<li>Session present? No → <code>401 no session</code>.</li>
+<li>Trust gate (default <code>standard</code>, node-configurable). Below → <code>403</code>.</li>
+<li>ABAC policy (if configured): denied → <code>403 access denied by policy: &lt;reason&gt;</code>.</li>
+<li>Body over max record bytes (10 MiB default) → <code>413 request body too large</code>.</li>
+<li>Record&#39;s OWN size prefix + FlatBuffer file identifier decide the schema;
+mismatch with the URL path → <code>400</code> naming both. A caller can never reach
+another schema&#39;s table through an allowed path.</li>
+<li>Structural FlatBuffer validation → <code>400 validation failed: ...</code>.</li>
+<li>Storage quota → <code>403</code>.</li>
+<li>Stored → <code>201 {&quot;cid&quot;:&quot;&lt;sha256 hex&gt;&quot;,&quot;schema&quot;:&quot;&lt;canonical&gt;&quot;,&quot;stored_at&quot;:&quot;&lt;RFC3339&gt;&quot;,&quot;bytes&quot;:N}</code>.</li>
+</ol>
+<p>Batch mode: same ladder, body of repeated <code>[u32le size][flatbuffer]</code> frames,
+total capped at 10 times the max record bytes, per-frame results in the
+response. Single record body: raw size-prefixed FlatBuffer bytes of the
+standard (content type <code>application/vnd.sdn.flatbuffers</code> or similar binary
+media — not JSON).</p>
+<p>Optional provenance query parameters:
+<code>?source_name=...&amp;provider_id=...&amp;batch_id=...&amp;source_url=...</code> — tagged records
+feed the per-source, per-batch progress aggregates on <code>/api/v1/stats</code>;
+untagged publishes keep the legacy path.</p>
+<h3>Streaming</h3>
+<p>The same <code>[u32le size][flatbuffer]</code> framing streams in both directions.</p>
+<p>Reads: <code>GET /api/v1/data/&lt;CODE&gt;/bulk</code> streams frames as they are written
+(<code>X-SDN-Stream-Format: flatsql-size-prefixed-le-u32</code>); consume incrementally,
+one chunk in memory at a time. sdn-js: <code>transport.streamData({schema})</code> returns
+an async frame iterator; <code>iterateSizePrefixedFrameStream(source)</code> decodes any
+byte stream in the same wire format.</p>
+<p>Writes: <code>transport.publishBatchStream(schema, records)</code> takes any sync or
+async iterable of record buffers and carries it in size-bounded batch requests
+(default 8 MiB each, under the server&#39;s batch body cap), aggregating the
+per-record results. Unbounded sources publish without buffering the whole set.</p>
+<h3>What is verified — and what is not</h3>
+<p>Verified on admission: session identity, trust tier, policy, quota, and
+structural FlatBuffer validity (well-formed, correct file identifier, schema
+conformance).</p>
+<p>Individual records are not signed or encrypted, by design. Authentication is
+the ingest gate: once a session is admitted and authorized to publish, the
+records it sends need no per-message signature.</p>
+<p>Signing happens at the publication layer instead. <code>$PNM</code> is the digital
+signature message: it carries <code>SIGNATURE</code> over the <code>CID</code>,
+<code>TIMESTAMP_SIGNATURE</code> over the publish time, the <code>SIGNATURE_TYPE</code> naming the
+scheme, and <code>MULTIFORMAT_ADDRESS</code> — the canonical location where the
+corresponding data is found. A PNM rides in a stream of messages or travels on
+its own. For dataset updates the CID points at a <code>$DPM</code>, which carries the full
+verification contract: provider identity, retrieval protocol, canonical query,
+result hash, Merkle roots, and <code>FILE_ID</code>.</p>
+<p>One signature attests a whole publication, bound to its content address —
+not one signature per record.</p>
+<p>No JSON/NDJSON bulk-write endpoint: batch is size-prefixed FlatBuffer frames
+only. JSON is a read-side presentation format only.</p>
+<p>Rate limits: per-minute publish rate (this node advertises 10/min in
+<code>/api/v1/catalog</code>) and per-publisher storage quotas.</p>
+<p>The node also runs credentialed first-party acquisition (<code>spacedatanetwork ingest</code>
+— Space-Track and UDL, each with its own credentialed sign-in) and scheduled
+flow-based ingestion; separate lanes from the vendor HTTP API above.</p>
+<hr>
+<h2>5. Refusal semantics — what a client should do</h2>
+<p>HTTP status first, body shape second: the auth wall uses <code>{&quot;code&quot;,&quot;message&quot;}</code>;
+the data API uses <code>{&quot;error&quot;:{&quot;message&quot;:...}}</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Body (real examples)</th>
+<th>Meaning</th>
+<th>What the client should do</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>200</td>
+<td>index/catalog rows; bulk stream; <code>{&quot;status&quot;:&quot;ok&quot;}</code></td>
+<td>Success</td>
+<td>Nothing</td>
+</tr>
+<tr>
+<td>201</td>
+<td><code>{&quot;cid&quot;:&quot;...&quot;,&quot;schema&quot;:&quot;...&quot;,&quot;stored_at&quot;:&quot;...&quot;,&quot;bytes&quot;:N}</code></td>
+<td>Record stored</td>
+<td>Trust the CID; use it for reference</td>
+</tr>
+<tr>
+<td>304</td>
+<td>empty</td>
+<td><code>If-None-Match</code> hit on a conditional read</td>
+<td>Use your cached copy</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>{&quot;code&quot;:&quot;invalid_timestamp&quot;,&quot;message&quot;:&quot;timestamp outside allowable skew&quot;}</code></td>
+<td>Bad request: skew, malformed body, route/header schema mismatch, invalid trust level, unknown operator on config-managed row</td>
+<td>Fix the request; do not retry unchanged</td>
+</tr>
+<tr>
+<td>401</td>
+<td><code>{&quot;code&quot;:&quot;unauthorized&quot;,&quot;message&quot;:&quot;not authenticated&quot;}</code></td>
+<td>No or expired session; OR standard not on the anonymous allow-list (bulk reads)</td>
+<td>TBS/IQC bulk: give up, permanent by design. Otherwise: sign in (section 3)</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>{&quot;code&quot;:&quot;forbidden&quot;}</code>; <code>data publishing is disabled on this node</code>; <code>schema not allowed...</code>; <code>access denied by policy...</code>; <code>CSRF validation failed (...)</code></td>
+<td>Below required trust tier, or a policy/CSRF refusal</td>
+<td>Elevate trust or change lanes. CSRF: by design for cross-origin browsers — use the documented request signing scheme or a server-side caller</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>{&quot;error&quot;:{&quot;message&quot;:...}}</code></td>
+<td>No such route / record / flow param</td>
+<td>Check the path; never retry blindly</td>
+</tr>
+<tr>
+<td>413</td>
+<td><code>request body too large</code></td>
+<td>Over max record bytes (10 MiB default)</td>
+<td>Shrink or split the payload</td>
+</tr>
+<tr>
+<td>429</td>
+<td><code>{&quot;code&quot;:&quot;too_many_requests&quot;,...}</code></td>
+<td>Challenge/verify or publish rate limit</td>
+<td>Back off; respect <code>Retry-After</code> if present</td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>{&quot;error&quot;:{&quot;code&quot;:&quot;STORE_BUSY&quot;,&quot;message&quot;:&quot;record store is busy; no cached page for this query yet&quot;},&quot;stale&quot;:true}</code> + <code>Retry-After: 1</code></td>
+<td>Record-store read lock held (e.g. a running ingest); no cached index page yet</td>
+<td>Retry after ~1 s; the node answers from a cache once one exists</td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>flow unavailable: engine hot window not ready</code> (plain text)</td>
+<td>Standard is public but the query engine has not hydrated its hot window</td>
+<td>Retry with backoff — warm-up, not denial; light routes stay live</td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>local storage unavailable in edge mode</code></td>
+<td>Edge mode, no local store</td>
+<td>Read-only node</td>
+</tr>
+</tbody></table>
+<p>State-changing browser requests with a session cookie are CSRF-gated:
+same-origin Origin, Referer, or <code>X-Requested-With</code> (the CLI sends
+<code>X-Requested-With: XMLHttpRequest</code>). Anonymous public routes skip CSRF — safe
+for cross-origin reads.</p>
+<hr>
+<h2>6. For AI agents — discovering capability at runtime</h2>
+<p>Do not hardcode this document&#39;s lists; they change as standards are added and
+flows are mounted. Discover instead:</p>
+<ol>
+<li><p><strong>Who the node is</strong>: <code>GET /api/v1/id</code> then <code>GET /api/node/info</code> — peer_id,
+agent/suite/standards versions, the identity record.</p>
+</li>
+<li><p><strong>What it holds and its limits</strong>: <code>GET /api/v1/catalog</code> —
+<code>capabilities</code> (<code>data_query</code>, <code>data_publish</code>, <code>pubsub</code>), per-schema
+<code>record_count</code> / <code>total_bytes</code>, <code>rate_limits</code> (<code>query_per_minute</code>,
+<code>publish_per_minute</code>, <code>max_record_bytes</code>).</p>
+</li>
+<li><p><strong>The generated API reference</strong>: <code>GET /api/v1/openapi.json</code> (strong ETag —
+send <code>If-None-Match</code>; 304 comes back cheap). Read the stamps:</p>
+<ul>
+<li><code>x-sdn-served-by: flow|native</code> and <code>x-sdn-anonymous: true|false</code> per
+operation, stamped with the EFFECTIVE decision at boot.</li>
+<li>Unstamped entries are planned routes not mounted yet. Verified live on the
+authoring node: <code>/api/v1/query</code> appears in the spec with no stamp and
+answers <code>401</code> today.</li>
+<li>The spec is not a complete route map — the light read surfaces
+(<code>/api/v1/catalog</code>, <code>/api/v1/data/index</code>, <code>/api/v1/version</code>,
+<code>/api/v1/pubsub/topics</code>, ...) live outside it. Cross-check both sources.</li>
+<li>The human-readable form of the same spec is <code>GET /api/v1/docs</code> (self-hosted
+UI; its configuration explicitly disables external fonts and network
+agents).</li>
+</ul>
+</li>
+<li><p><strong>Public readability is a property of the schema, not of a path.</strong> Probe the
+content route, read the refusal:</p>
+<pre><code class="language-bash">curl -i &quot;http://localhost:7173/api/v1/data/&lt;CODE&gt;/bulk?limit=1&quot;
+# 200      -&gt; public, and the engine is hot
+# 503      -&gt; public, engine still warming (retry with backoff)
+# 401      -&gt; not on the anonymous allow-list; content stays behind the gate
+</code></pre>
+<p>The only durable definition of public is the allow-list itself
+(<code>sdn-server/internal/sds/public_read.go</code>); it is fail-closed, so when in
+doubt, probe.</p>
+</li>
+<li><p><strong>Prefer reads with ETags</strong>: bulk reads and the spec carry ETags or record
+counts; conditional requests with <code>If-None-Match</code> get cheap 304s. Keep the
+ETag from the first response and replay it.</p>
+</li>
+<li><p><strong>Writing</strong>: same admission ladder as a human (section 4). If you are an
+agent given an operator session token, send it as the <code>sdn_wallet_session</code>
+cookie (or use the node&#39;s CLI, which proxies the ceremony for you). Do not
+sign individual records — authentication is the gate, and attestation is a
+<code>$PNM</code> over the publication&#39;s CID (section 4).</p>
+</li>
+</ol>
+<hr>
+<h2>7. Not yet supported</h2>
+<ul>
+<li>Any JSON/NDJSON bulk-write endpoint. Batch publish is size-prefixed
+FlatBuffer frames only.</li>
+<li>Any bearer-token scheme. <code>sdn_wallet_session</code> is HttpOnly by design; the
+deliberate escapes are the root-key CLI ceremony and <code>$SDN_SESSION_TOKEN</code>.</li>
+<li><code>spacedatanetwork identity new</code> — referenced in some example configs but not
+present in the current binary; <code>spacedatanetwork derive-xpub</code> derives an xpub
+from an existing BIP-39 mnemonic; key generation happens in the browser
+wallet ceremony.</li>
+<li>A CLI command that creates an operator row: <code>accounts trust --xpub</code> updates
+only (creation paths: section 3).</li>
+<li>TLS &quot;origin&quot; mode: TLS is <code>disabled</code>, <code>static</code>, or managed (automatic
+certificates). HTTP stays plaintext in local/dev modes.</li>
+<li><code>/api/v1/query</code>, <code>/api/v1/standards</code>, <code>/api/v1/peers/{peerId}/pnm</code>,
+<code>/api/v1/peers/{peerId}/{standard}/latest</code>: planned gateway routes served
+only when the corresponding flow bundle is mounted on a node. Unstamped in
+the OpenAPI spec today; probe before relying on them.</li>
+<li>The <code>peers-discovery</code> endpoints (described in the API reference) are served
+by optional flow mounts; may not exist on every node — probe first.</li>
+</ul>
+<hr>
+<h2>8. Reference — what requires a session</h2>
+<p>Everything under <code>/api/**</code> not listed in section 2 requires a session.
+<code>admin</code>-gated examples: <code>/api/v1/data/scan</code>, <code>/api/v1/data/stream</code>,
+<code>/api/v1/data/query</code>, <code>/api/v1/data/records/&lt;schema&gt;/&lt;cid&gt;</code>, <code>/api/accounts</code>,
+<code>/api/peers/*</code> — including <code>/api/peers/sdn</code>, <code>/api/peers/graph</code> and
+<code>/api/peers/graph/schema</code>, all of which answer <code>401</code> without a session,
+<code>/api/auth/users</code>, <code>/api/v1/conjunction/screen</code>,
+<code>/api/import</code>, <code>/api/export</code>, <code>/api/v1/modules/runtime/</code>.</p>
+<p>The same classification logic — a single predicate — drives the auth wall,
+CORS, and the OpenAPI generator&#39;s anonymity stamps.</p>
+
+</main>
+<div class="foot">Space Data Network documentation. <a href="space-data-network-docs.pdf">Download as PDF</a>.</div>
+</body>
+</html>

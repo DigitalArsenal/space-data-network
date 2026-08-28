@@ -28,4 +28,13 @@ export {
   type NodeStatusView,
 } from './view-model';
 
+export {
+  decodeDashboardStats,
+  isDashboardStatsFrame,
+  type DashboardSchemaStatView,
+  type DashboardSourceStatView,
+  type DashboardStatsView,
+} from './dashboard-stats';
+
 export { NodeStatus, NodeStatusSet } from './generated/nst.js';
+export { DashboardSchemaStat, DashboardSourceStat, DashboardStatsSet } from './generated/nst.js';

@@ -786,7 +786,7 @@ func plannedRouteDecls() []staticRouteDecl {
 			},
 		},
 		{
-			path: "/api/v1/query", method: "POST", plannedIn: "G.5",
+			path: "/api/v1/query", method: "POST",
 			tag: dataTag, tagDescription: dataDesc,
 			operation: openAPIObj{
 				"operationId": "postQuery",
