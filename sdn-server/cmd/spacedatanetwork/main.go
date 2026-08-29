@@ -1695,6 +1695,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, legacyWalletUIPath, cfgDisplayPath)
 				authHandler.SetTLSManager(tlsManager)
+				if cfg.Admin.DevAutoAdmin {
+					// Loopback-bound listeners only: dev_auto_admin on a
+					// reachable bind would BE an open admin surface, so the
+					// daemon refuses to start instead of degrading.
+					if !isLoopbackListenAddr(cfg.Admin.ListenAddr) {
+						return fmt.Errorf("admin.dev_auto_admin requires a loopback listen_addr (got %q)", cfg.Admin.ListenAddr)
+					}
+					authHandler.EnableDevAutoAdmin()
+					log.Warnf("admin.dev_auto_admin is ON: loopback requests are auto-admitted as the first Admin user (dev only)")
+				}
 				// Bind the operator profile-photo object store to the IPFS lane
 				// this node already runs. When admin.ipfs_api_url is unset the
 				// port stays nil and the endpoint refuses with 501 — a node
@@ -3879,6 +3889,22 @@ func isLoopbackSelfGatedAdminPath(path string) bool {
 // gate (internal/update/control.go isLoopbackRemoteAddr): the wall may only
 // wave a self-gated request through when it demonstrably originates on this
 // box — the handler then enforces its one-time token on top.
+// isLoopbackListenAddr reports whether a configured listen address binds a
+// loopback interface — the gate admin.dev_auto_admin must pass. "localhost" is
+// accepted alongside literal loopback IPs; an empty or wildcard host is NOT
+// loopback (it binds every interface).
+func isLoopbackListenAddr(listenAddr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(listenAddr))
+	if err != nil {
+		host = strings.TrimSpace(listenAddr)
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func isLoopbackRequestAddr(remoteAddr string) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
