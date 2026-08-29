@@ -169,7 +169,7 @@ Stream protocols:
 
 ### Pubsub lanes
 
-- **Per-schema data topics** — `/spacedatanetwork/sds/<SCHEMA>` — the streaming record lane: one topic per standard, joined for every validated schema.
+- **Per-schema data topics** — `/spacedatanetwork/sds/<SCHEMA>` — the streaming record lane: one topic per standard, joined for every validated schema. Publication notifications ride the PNM standard's own data topic, `/spacedatanetwork/sds/PNM.fbs`.
 - **Feed heads** — `/space-data-network/feed-heads/1.0.0/<schema>` — small, signed, mutable pointer messages. A feed head announces where a standard's latest immutable materialized set lives (record count, byte count, shard / query-index / manifest CIDs, publication CID) and is what replicas subscribe to *before* fetching the immutable shards.
 - **Adjuncts** — `/spacedatanetwork/edge-relays` (relay announcements), storefront topics `/sdn/storefront/{listings,purchases,reviews}`, per-buyer delivery topics `/sdn/data/{listing_id}/{buyer_peer_id}`, and channel discovery topics.
 

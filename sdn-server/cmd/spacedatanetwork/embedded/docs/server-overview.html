@@ -262,7 +262,7 @@ List and manage accounts (network peers and login operators are one thing)
 </ul>
 <h3>Pubsub lanes</h3>
 <ul>
-<li><strong>Per-schema data topics</strong> — <code>/spacedatanetwork/sds/&lt;SCHEMA&gt;</code> — the streaming record lane: one topic per standard, joined for every validated schema.</li>
+<li><strong>Per-schema data topics</strong> — <code>/spacedatanetwork/sds/&lt;SCHEMA&gt;</code> — the streaming record lane: one topic per standard, joined for every validated schema. Publication notifications ride the PNM standard&#39;s own data topic, <code>/spacedatanetwork/sds/PNM.fbs</code>.</li>
 <li><strong>Feed heads</strong> — <code>/space-data-network/feed-heads/1.0.0/&lt;schema&gt;</code> — small, signed, mutable pointer messages. A feed head announces where a standard&#39;s latest immutable materialized set lives (record count, byte count, shard / query-index / manifest CIDs, publication CID) and is what replicas subscribe to <em>before</em> fetching the immutable shards.</li>
 <li><strong>Adjuncts</strong> — <code>/spacedatanetwork/edge-relays</code> (relay announcements), storefront topics <code>/sdn/storefront/{listings,purchases,reviews}</code>, per-buyer delivery topics <code>/sdn/data/{listing_id}/{buyer_peer_id}</code>, and channel discovery topics.</li>
 </ul>
