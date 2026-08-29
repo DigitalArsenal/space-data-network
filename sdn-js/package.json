@@ -77,7 +77,7 @@
     "@libp2p/crypto": "^4.1.9",
     "@libp2p/identify": "^2.0.0",
     "@libp2p/interface": "^1.7.0",
-    "@libp2p/kad-dht": "^12.0.0",
+    "@libp2p/kad-dht": "^16.2.7",
     "@libp2p/peer-id": "^4.2.4",
     "@libp2p/tcp": "^9.0.24",
     "@libp2p/webrtc": "^6.0.16",
