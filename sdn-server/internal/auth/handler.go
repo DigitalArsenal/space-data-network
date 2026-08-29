@@ -57,6 +57,13 @@ type Handler struct {
 	photoStore           ProfilePhotoStore // object storage port for operator profile photos; nil = endpoint fails closed
 	accountEPMBuilder    AccountEPMBuilder // builds+signs an account's $EPM; nil = /api/auth/epm PUT fails closed
 	accountEPMStore      AccountEPMStore   // record + pin lane for account $EPMs; nil = /api/auth/epm PUT fails closed
+
+	// admin.dev_auto_admin (loopback-only dev convenience; see
+	// devAutoAdminSession). devSessionMu guards devSessionToken; the flag
+	// itself is set once at startup before the listener opens.
+	devAutoAdmin    bool
+	devSessionMu    sync.Mutex
+	devSessionToken string
 }
 
 type pendingChallenge struct {
@@ -1121,6 +1128,16 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 //     write from a page that is not on this node's origin, where a Lax cookie
 //     structurally cannot travel. It mints nothing and stores nothing.
 func (h *Handler) sessionFromRequest(r *http.Request) (*Session, error) {
+	session, err := h.sessionFromRequestStrict(r)
+	if err != nil {
+		if dev := h.devAutoAdminSession(r); dev != nil {
+			return dev, nil
+		}
+	}
+	return session, err
+}
+
+func (h *Handler) sessionFromRequestStrict(r *http.Request) (*Session, error) {
 	if existing := SessionFromContext(r.Context()); existing != nil {
 		return existing, nil
 	}
@@ -1136,6 +1153,64 @@ func (h *Handler) sessionFromRequest(r *http.Request) (*Session, error) {
 		return nil, fmt.Errorf("no session cookie")
 	}
 	return nil, signedErr
+}
+
+// EnableDevAutoAdmin arms admin.dev_auto_admin. Call once at startup, before
+// the admin listener opens; the caller (main.go) has already verified the
+// listener is loopback-bound.
+func (h *Handler) EnableDevAutoAdmin() {
+	h.devAutoAdmin = true
+}
+
+// devAutoAdminSession implements admin.dev_auto_admin: a LOOPBACK request that
+// resolved no session of its own is admitted as the node's first Admin user.
+// The session it returns is REAL — minted through the session store with that
+// user's xpub and trust — so everything downstream (trust gates, ABAC, account
+// EPM custody, /api/auth/me) sees exactly what a wallet sign-in would have
+// produced. Returns nil unless the flag is armed, the caller's RemoteAddr is
+// loopback (checked directly, never via forwarded headers), and an Admin user
+// exists.
+func (h *Handler) devAutoAdminSession(r *http.Request) *Session {
+	if !h.devAutoAdmin || h.userStore == nil || h.sessions == nil {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil || !ip.IsLoopback() {
+		return nil
+	}
+	h.devSessionMu.Lock()
+	defer h.devSessionMu.Unlock()
+	if h.devSessionToken != "" {
+		if s, verr := h.sessions.ValidateSession(h.devSessionToken); verr == nil {
+			return s
+		}
+		h.devSessionToken = ""
+	}
+	users, err := h.userStore.ListUsers()
+	if err != nil {
+		return nil
+	}
+	for _, u := range users {
+		if u.TrustLevel < peers.Admin {
+			continue
+		}
+		token, cerr := h.sessions.CreateSession(u.XPub, u.TrustLevel, "127.0.0.1", "dev-auto-admin", h.sessionTTL)
+		if cerr != nil {
+			return nil
+		}
+		s, verr := h.sessions.ValidateSession(token)
+		if verr != nil {
+			return nil
+		}
+		h.devSessionToken = token
+		log.Warnf("dev_auto_admin: loopback caller auto-admitted as %q (admin) — dev mode only", u.Name)
+		return s
+	}
+	return nil
 }
 
 func requestUsesHTTPS(r *http.Request) bool {

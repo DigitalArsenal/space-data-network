@@ -1504,6 +1504,13 @@ type AdminConfig struct {
 	// RequireAuth requires authentication for the admin interface.
 	RequireAuth bool `yaml:"require_auth"`
 
+	// DevAutoAdmin makes every loopback request that carries no session resolve
+	// as the node's first Admin user, so a local dev loop needs no wallet
+	// ceremony. Honored ONLY when the admin listener is bound to a loopback
+	// address; on any other bind the daemon refuses to start rather than ship
+	// an open admin surface. Never set this on a deployed node.
+	DevAutoAdmin bool `yaml:"dev_auto_admin"`
+
 	// SessionExpiry is the duration for admin session tokens (default: 24h).
 	SessionExpiry string `yaml:"session_expiry"`
 
