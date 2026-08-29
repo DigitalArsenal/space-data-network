@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PNM_TOPIC } from './pnm-publisher';
 
+// docs.html became a redirect stub when the docs split into per-page HTML
+// (2026-08-29); the served content lives in server-overview.html now.
 const publicExampleFiles = [
-  '../../docs/docs.html',
+  '../../docs/server-overview.html',
   './stress/streaming.stress.test.ts',
 ] as const;
 
@@ -25,7 +27,7 @@ describe('public SDN channel naming examples', () => {
   });
 
   it('documents the wire topic used by the shipped PNM publisher', () => {
-    const docs = readFileSync(new URL('../../docs/docs.html', import.meta.url), 'utf8');
+    const docs = readFileSync(new URL('../../docs/server-overview.html', import.meta.url), 'utf8');
     expect(docs).toContain(PNM_TOPIC);
   });
 });
