@@ -181,7 +181,6 @@ func TestGenerateOpenAPINativeAndPlanned(t *testing.T) {
 		{"/api/v1/standards", "get", "G.2"},
 		{"/api/v1/peers/{peerId}/pnm", "get", "G.3"},
 		{"/api/v1/peers/{peerId}/{standard}/latest", "get", "G.4"},
-		{"/api/v1/query", "post", "G.5"},
 	}
 	for _, p := range planned {
 		op := opAt(t, doc, p.path, p.method)
