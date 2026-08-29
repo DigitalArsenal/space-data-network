@@ -1886,10 +1886,25 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := Default()
+	defaultStoragePath := cfg.Storage.Path
+	defaultFlowsPath := cfg.Flows.StoragePath
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
 	cfg.SourcePath = path
+	// flows.storage_path defaults are derived from the HOME data dir at
+	// construction time, so a config that moves storage.path without an
+	// explicit flows.storage_path silently kept reading/installing flow
+	// bundles under ~/.spacedatanetwork/data/flows — a node would then serve
+	// a stale artifact forever while operators updated the store-relative
+	// dir (this shipped a July flow on a node whose installed bundle was
+	// current: dev 2026-08-29; same class as
+	// sdn-data-retrieval-flow-not-installed). When the operator moved the
+	// store but left flows.storage_path at its default, the flows dir moves
+	// with the store.
+	if cfg.Flows.StoragePath == defaultFlowsPath && cfg.Storage.Path != defaultStoragePath {
+		cfg.Flows.StoragePath = filepath.Join(cfg.Storage.Path, "flows")
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}

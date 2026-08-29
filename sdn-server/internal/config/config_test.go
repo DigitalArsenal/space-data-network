@@ -366,3 +366,41 @@ func TestLoadAcceptsFlowMountPathUnderAPIPrefix(t *testing.T) {
 		t.Fatalf("unexpected mounts after load: %+v", cfg.Flows.Mounts)
 	}
 }
+
+// flows.storage_path must FOLLOW a moved storage.path unless the operator set
+// it explicitly. Before this rule a node with a custom store silently kept its
+// flow bundles under ~/.spacedatanetwork/data/flows and served whatever stale
+// artifact sat there (dev 2026-08-29: a July data-retrieval flow shadowed the
+// current installed bundle; same class as sdn-data-retrieval-flow-not-installed).
+func TestLoadFlowsStorageFollowsMovedStoragePath(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlDoc := "storage:\n  path: \"" + filepath.Join(dir, "store") + "\"\n"
+	if err := os.WriteFile(configPath, []byte(yamlDoc), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if got, want := cfg.Flows.StoragePath, filepath.Join(dir, "store", "flows"); got != want {
+		t.Fatalf("Flows.StoragePath = %q, want %q", got, want)
+	}
+}
+
+func TestLoadExplicitFlowsStoragePathIsKept(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	explicit := filepath.Join(dir, "elsewhere", "flow-bundles")
+	yamlDoc := "storage:\n  path: \"" + filepath.Join(dir, "store") + "\"\nflows:\n  storage_path: \"" + explicit + "\"\n"
+	if err := os.WriteFile(configPath, []byte(yamlDoc), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if cfg.Flows.StoragePath != explicit {
+		t.Fatalf("Flows.StoragePath = %q, want explicit %q", cfg.Flows.StoragePath, explicit)
+	}
+}
