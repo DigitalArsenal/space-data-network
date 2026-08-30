@@ -39,6 +39,12 @@ func (h *CoreAPIHandler) handleSandboxQuery(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, "no store")
 		return
 	}
+	// Fail FAST while startup hydration holds the store lock — the same 503
+	// the table lane answers (tableStoreWarming); blocking here parked browser
+	// requests behind hours of catalog rebuild.
+	if h.tableStoreWarming(w) {
+		return
+	}
 	var req sandboxQueryRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
