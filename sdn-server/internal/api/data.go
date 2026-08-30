@@ -81,6 +81,9 @@ func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/health", h.handleHealth)
 	mux.HandleFunc("/api/v1/data/index", h.handleRecordIndex)
 	mux.HandleFunc("/api/v1/data/summary", h.handleSummary)
+	// Resolved sources: summaries joined to signed publisher profiles — the
+	// provenance chips' server lane (sources.go).
+	h.RegisterResolvedSourcesRoute(mux)
 	mux.HandleFunc("/api/v1/data/datastores", h.handleDatastores)
 	mux.HandleFunc("/api/v1/data/scan", h.handleScan)
 	mux.HandleFunc("/api/v1/data/stream", h.handleRawStream)
