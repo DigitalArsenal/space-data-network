@@ -14,17 +14,17 @@
     },
     {
       "id": "fkey",
-      "pattern": "fkey",
-      "note": "the function-key column in the rail; owner-ruled removed"
+      "pattern": "\\bfkey\\b",
+      "note": "the function-key column in the rail; owner-ruled removed. Word-bounded 2026-08-30: the bare substring began matching wasm-bindgen glue identifiers (getwithrefkey) in the built artifact — code identifiers are not copy."
     },
     {
       "id": "LOCAL_NODE",
-      "pattern": "LOCAL NODE \u00b7 DESKTOP",
+      "pattern": "LOCAL NODE · DESKTOP",
       "note": "rail brand-sub; owner-ruled removed"
     },
     {
       "id": "GEOIP",
-      "pattern": "GEOIP \u00b7 LIVE SWARM",
+      "pattern": "GEOIP · LIVE SWARM",
       "note": "menu clutter; owner-ruled removed"
     },
     {
@@ -71,11 +71,11 @@
   "scopes": {
     "lib": {
       "verdict": "fail",
-      "why": "code territory (spaceaware-ui/src/lib) \u2014 fixable in place"
+      "why": "code territory (spaceaware-ui/src/lib) — fixable in place"
     },
     "console": {
       "verdict": "fail",
-      "why": "live design surface (spaceaware-ui/orbital-console) \u2014 NOT fixable here; route to design-tool-strip-menu-clutter-at-source, the correction goes into the design tool"
+      "why": "live design surface (spaceaware-ui/orbital-console) — NOT fixable here; route to design-tool-strip-menu-clutter-at-source, the correction goes into the design tool"
     },
     "archive": {
       "verdict": "warn",
@@ -83,7 +83,7 @@
     },
     "artifact": {
       "verdict": "fail",
-      "why": "the built dashboard.html \u2014 the only scope that proves it did not reach the user"
+      "why": "the built dashboard.html — the only scope that proves it did not reach the user"
     }
   },
   "amendments": [
@@ -91,7 +91,7 @@
       "date": "2026-08-07",
       "task": "saw-ui-peer-popup-contact-card",
       "ruling": "OWNER, verbatim: \"the peer popup looks like shit. Remove everything and make it look like an outlook contact card, and do not have the any of the tech shit like xpub signing paths epm signature, etc. All of that will just be on the vCard/EPM/QR\". The seven labels added above are the rows that popup printed; each existed in exactly ONE file (NodeDetail.svelte) and nowhere else in the tree, so a hit in any scope is a re-introduction, not a false positive. The unit half of the gate is spaceaware-ui src/dashboard/src/modules/sdn-admin/node/contact-card.test.js (banned SHAPES, proven live against what the popup used to render); this half is the one that proves the labels did not reach the fleet's bytes.",
-      "not_banned_here": "The VALUES (extended public key, derivation paths, signature/timestamp/content id, chain addresses, peer id) are deliberately absent from this list: they are runtime data, not copy, so the artifact scan cannot see them and a pattern for them would only fire on the DECODER \u2014 which is still legitimately bundled for the operator surfaces. The card model is where they are refused, structurally."
+      "not_banned_here": "The VALUES (extended public key, derivation paths, signature/timestamp/content id, chain addresses, peer id) are deliberately absent from this list: they are runtime data, not copy, so the artifact scan cannot see them and a pattern for them would only fire on the DECODER — which is still legitimately bundled for the operator surfaces. The card model is where they are refused, structurally."
     }
   ],
   "baseline": {
