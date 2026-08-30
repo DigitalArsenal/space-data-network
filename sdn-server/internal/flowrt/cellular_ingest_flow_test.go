@@ -194,7 +194,7 @@ func TestCellularIngestFlowLandsSitesUnderTheConfiguredProvider(t *testing.T) {
 	var landed int64
 	for tag, count := range counts {
 		t.Logf("landed %s = %d", tag, count)
-		if strings.HasPrefix(tag, "TBS|mls-archive|") {
+		if strings.HasPrefix(tag, "TBS.fbs|mls-archive|") {
 			landed += count
 		}
 	}
@@ -208,7 +208,7 @@ func TestCellularIngestFlowLandsSitesUnderTheConfiguredProvider(t *testing.T) {
 	// export; it must not share an identity, or stored records carry a licence
 	// and an authority that never asserted them.
 	for tag := range counts {
-		if strings.HasPrefix(tag, "TBS|opencellid") {
+		if strings.HasPrefix(tag, "TBS.fbs|opencellid") {
 			t.Fatalf("MLS rows landed under an OpenCelliD tag: %s", tag)
 		}
 	}
