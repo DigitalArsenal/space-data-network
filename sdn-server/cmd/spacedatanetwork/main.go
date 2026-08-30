@@ -2002,6 +2002,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// Sandboxed read-only SELECT (docs Phase G.5) — the data
 				// explorer's uniform lane, admin-gated.
 				coreAPI.RegisterSandboxQueryRoute(adminMux)
+				// Server-side table pages over the same sandbox: pagination,
+				// sort, per-column filters, search, and the network-source
+				// selector ("_source") — the data-engineering page's lane.
+				coreAPI.RegisterTableRoutes(adminMux)
 				log.Infof("Core API available at %s://%s/api/v1/{id,version,stats,peers,pubsub}", adminScheme, adminAddr)
 
 				// $APPS feed (anonymous read): what apps this node runs and
