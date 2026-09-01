@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -159,6 +160,87 @@ func TestOfflineSatcatParsersStoreCanonicalCATRecords(t *testing.T) {
 				t.Fatal("normalized hash is empty")
 			}
 		})
+	}
+}
+
+func TestIngestSatcatDataPreservesCanonicalCSVOwners(t *testing.T) {
+	fixture := []byte(strings.Join([]string{
+		"OBJECT_NAME,OBJECT_ID,NORAD_CAT_ID,OBJECT_TYPE,OPS_STATUS_CODE,OWNER,LAUNCH_DATE,LAUNCH_SITE,DECAY_DATE,PERIOD,INCLINATION,APOGEE,PERIGEE,RCS,DATA_STATUS_CODE,ORBIT_CENTER,ORBIT_TYPE",
+		"ALSAT-1,2002-054A,27559,PAY,,ALG,2002-11-28,PLMSC,,97.41,98.25,649,620,0.3270,,EA,ORB",
+		"ISS (ZARYA),1998-067A,25544,PAY,+,US,1998-11-20,TYMSC,,92.68,51.6,423,417,0.0,,EA,ORB",
+		"UNKNOWN-OWNER,2026-001A,90001,PAY,+,NOT_A_COUNTRY,2026-01-01,TYMSC,,90,51,500,490,0.0,,EA,ORB",
+		"ABSENT-OWNER,2026-001B,90002,PAY,+,,2026-01-01,TYMSC,,90,51,500,490,0.0,,EA,ORB",
+		"EXPLICIT-AB,2026-001C,90003,PAY,+,AB,2026-01-01,TYMSC,,90,51,500,490,0.0,,EA,ORB",
+	}, "\n"))
+	runner := newTestRunner(t)
+	tags := sourceTags("space-data-network-02", "celestrak-satcat-csv", "https://celestrak.org/pub/satcat.csv", fixture)
+	count, _, err := runner.ingestSatcatData(fixture, "source:fixture", tags)
+	if err != nil {
+		t.Fatalf("ingestSatcatData failed: %v", err)
+	}
+	if count != 5 {
+		t.Fatalf("CAT count = %d, want 5", count)
+	}
+
+	records, err := runner.store.QuerySourceTaggedRecords(storage.SourceTagQuery{
+		SchemaName: "CAT.fbs",
+		ProviderID: tags.ProviderID,
+		SourceName: tags.SourceName,
+		BatchID:    tags.BatchID,
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("QuerySourceTaggedRecords(CAT.fbs): %v", err)
+	}
+	ownersByNorad := make(map[uint32]string, len(records))
+	for _, record := range records {
+		cat := CATFB.GetSizePrefixedRootAsCAT(record.Data, 0)
+		ownersByNorad[cat.NORAD_CAT_ID()] = CATFB.EnumNameslegacyCountryCode[cat.OWNER()]
+	}
+	if got, want := ownersByNorad[27559], "ALG"; got != want {
+		t.Errorf("ALSAT-1 OWNER = %q, want %q", got, want)
+	}
+	if got, want := ownersByNorad[25544], "US"; got != want {
+		t.Errorf("ISS OWNER = %q, want %q", got, want)
+	}
+	if got, want := ownersByNorad[90001], "UNK"; got != want {
+		t.Errorf("unknown OWNER = %q, want explicit %q", got, want)
+	}
+	if got, want := ownersByNorad[90002], "UNK"; got != want {
+		t.Errorf("absent OWNER = %q, want explicit %q", got, want)
+	}
+	if got, want := ownersByNorad[90003], "AB"; got != want {
+		t.Errorf("explicit AB OWNER = %q, want %q", got, want)
+	}
+}
+
+func TestFixedWidthSatcatOwnersAreExplicitUnknown(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("testdata", "catalog-sample.txt"))
+	if err != nil {
+		t.Fatalf("read fixed-width CAT fixture: %v", err)
+	}
+	runner := newTestRunner(t)
+	tags := sourceTags("space-data-network-02", "celestrak-satcat", "https://celestrak.org/pub/satcat.txt", fixture)
+	if _, _, err := runner.ingestSatcatData(fixture, "source:fixture", tags); err != nil {
+		t.Fatalf("ingestSatcatData failed: %v", err)
+	}
+	records, err := runner.store.QuerySourceTaggedRecords(storage.SourceTagQuery{
+		SchemaName: "CAT.fbs",
+		ProviderID: tags.ProviderID,
+		SourceName: tags.SourceName,
+		BatchID:    tags.BatchID,
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("QuerySourceTaggedRecords(CAT.fbs): %v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("fixed-width SATCAT stored no records")
+	}
+	for _, record := range records {
+		if got, want := CATFB.EnumNameslegacyCountryCode[CATFB.GetSizePrefixedRootAsCAT(record.Data, 0).OWNER()], "UNK"; got != want {
+			t.Errorf("fixed-width CAT OWNER = %q, want explicit %q", got, want)
+		}
 	}
 }
 
