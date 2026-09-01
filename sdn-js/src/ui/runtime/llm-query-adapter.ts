@@ -1,5 +1,6 @@
 import { validateReadOnlySql } from './read-only-sql-sandbox';
 import type { LocalLlmQueryContext, LocalLlmQueryDraft, LocalLlmQueryRequest } from './llm-query-context';
+import { findSemanticCountryMention } from './semantic-datasets';
 
 export interface LocalLlmQueryAdapter {
   onContext?: (context: LocalLlmQueryContext) => void;
@@ -41,7 +42,31 @@ function deterministicSqlForAsk(ask: string, context: LocalLlmQueryContext): str
       return `SELECT * FROM ${tableName} WHERE MEAN_MOTION < 1`;
     }
   }
+
+  const country = findSemanticCountryMention(ask);
+  if (country) {
+    const columns = new Set(context.schema.columns.map((column) => column.toUpperCase()));
+    if (
+      context.schema.standardId === 'CAT' &&
+      columns.has('OWNER') &&
+      typeof country.value === 'number' &&
+      Number.isInteger(country.value)
+    ) {
+      // CAT.OWNER is the pinned SDS legacyCountryCode byte enum. FlatSQL stores
+      // it as its numeric ordinal, so string country literals cannot match it.
+      return `SELECT * FROM ${tableName} WHERE OWNER = ${country.value}`;
+    }
+    if (columns.has('COUNTRY')) {
+      // Compatibility for datasets that genuinely expose a string COUNTRY
+      // column. The literal comes from pinned metadata, never from the ask.
+      return `SELECT * FROM ${tableName} WHERE COUNTRY = ${sqlStringLiteral(country.country)}`;
+    }
+  }
   return `SELECT * FROM ${tableName}`;
+}
+
+function sqlStringLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
 }
 
 function sanitizeAdapterContext(context: LocalLlmQueryContext): LocalLlmQueryContext {

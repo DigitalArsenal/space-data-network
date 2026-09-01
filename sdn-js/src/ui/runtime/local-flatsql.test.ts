@@ -4,10 +4,12 @@ import * as flatbuffers from 'flatbuffers';
 import { describe, expect, it } from 'vitest';
 
 import { CAT } from 'spacedatastandards.org/lib/js/CAT/CAT.js';
+import { legacyCountryCode } from 'spacedatastandards.org/lib/js/CAT/legacyCountryCode.js';
 import { operationalState } from 'spacedatastandards.org/lib/js/CAT/operationalState.js';
 import { spaceObjectClass } from 'spacedatastandards.org/lib/js/CAT/spaceObjectClass.js';
 
 import { buildEpochProfileSql } from './epoch-query-sql';
+import { createDeterministicLocalLlmQueryAdapter } from './llm-query-adapter';
 import { clearLocalFlatSqlStore, createLocalFlatSqlStore, decodeFlatSqlSizePrefixedStream, flatSqlSizePrefixedStreamInfo, isReadOnlyFlatSqlQuery, stripSdnFlatBufferSizePrefix } from './local-flatsql';
 
 const require = createRequire(import.meta.url);
@@ -17,6 +19,13 @@ function readSdsSchema(specifier: string): string {
 }
 
 const CAT_SCHEMA = readSdsSchema('spacedatastandards.org/schema/CAT/main.fbs');
+const CAT_SCHEMA_WITH_SCALAR_OWNER = CAT_SCHEMA.replace(
+  /OWNER\s*:\s*legacyCountryCode\s*;/,
+  'OWNER: byte;',
+);
+if (CAT_SCHEMA_WITH_SCALAR_OWNER === CAT_SCHEMA) {
+  throw new Error('Pinned SDS CAT schema has no legacyCountryCode OWNER field');
+}
 const OMM_SCHEMA = readSdsSchema('spacedatastandards.org/schema/OMM/main.fbs');
 const PNM_SCHEMA = readSdsSchema('spacedatastandards.org/schema/PNM/main.fbs');
 const STARLINK_6292_OMM_BYTES = Buffer.from('HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA', 'base64');
@@ -363,6 +372,58 @@ describe('local FlatSQL datastore', () => {
       'SELECT NORAD_CAT_ID, COUNT(*) AS c FROM CAT WHERE NORAD_CAT_ID = 25544 GROUP BY NORAD_CAT_ID',
       'CAT',
     ).records).toEqual([{ NORAD_CAT_ID: 25544, c: 2 }]);
+    store.destroy();
+  });
+
+  it('executes an individual-country draft against the numeric CAT OWNER enum', async () => {
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'CAT',
+        tableName: 'CAT',
+        fileId: '$CAT',
+        // The production engine catalogue lowers enum storage to its wire
+        // scalar; mirror that representation for this focused execution lane.
+        schema: CAT_SCHEMA_WITH_SCALAR_OWNER,
+      }],
+    });
+    const algeria = stripSdnFlatBufferSizePrefix(buildCatFixture({
+      objectName: 'ALGERIA-SAT',
+      objectId: '2026-001A',
+      noradCatId: 99001,
+      owner: legacyCountryCode.ALG,
+    }));
+    const brazil = stripSdnFlatBufferSizePrefix(buildCatFixture({
+      objectName: 'BRAZIL-SAT',
+      objectId: '2026-002A',
+      noradCatId: 99002,
+      owner: legacyCountryCode.BRAZ,
+    }));
+    await store.ingestFlatBufferStream('CAT', flatSqlSizePrefixedStream([algeria, brazil]), {
+      persist: false,
+      recordKeyPrefix: 'country-query',
+    });
+    const draft = await createDeterministicLocalLlmQueryAdapter().draftSql({
+      ask: 'show catalog objects owned by Algeria',
+      context: {
+        schema: {
+          standardId: 'CAT',
+          schemaName: 'CAT.fbs',
+          tableName: 'CAT',
+          columns: ['OBJECT_NAME', 'OWNER'],
+        },
+        source: { dataSourceId: 'local:test', providerName: 'Local test provider' },
+        queryProfile: 'dataset-publication-offset-v1',
+        queryProfiles: [],
+        semanticDatasets: [],
+        sampleRows: [],
+        limits: { maxRows: 100, maxBytes: 64_000, timeoutMs: 5_000 },
+      },
+    });
+
+    expect(draft.sql).toBe('SELECT * FROM CAT WHERE OWNER = 3 LIMIT 100');
+    expect(store.query(draft.sql, 'CAT').records).toEqual([
+      expect.objectContaining({ OBJECT_NAME: 'ALGERIA-SAT', OWNER: legacyCountryCode.ALG }),
+    ]);
     store.destroy();
   });
 
@@ -1174,7 +1235,12 @@ function flatSqlSizePrefixedStream(records: Uint8Array[]): Uint8Array {
   return out;
 }
 
-function buildCatFixture(options: { objectName: string; objectId: string; noradCatId: number }): Uint8Array {
+function buildCatFixture(options: {
+  objectName: string;
+  objectId: string;
+  noradCatId: number;
+  owner?: legacyCountryCode;
+}): Uint8Array {
   const builder = new flatbuffers.Builder(256);
   const objectName = builder.createString(options.objectName);
   const objectId = builder.createString(options.objectId);
@@ -1184,6 +1250,7 @@ function buildCatFixture(options: { objectName: string; objectId: string; noradC
   CAT.addNoradCatId(builder, options.noradCatId);
   CAT.addObjectType(builder, spaceObjectClass.PAYLOAD);
   CAT.addOpsStatusCode(builder, operationalState.OPERATIONAL);
+  CAT.addOwner(builder, options.owner ?? legacyCountryCode.AB);
   const cat = CAT.endCAT(builder);
   CAT.finishSizePrefixedCATBuffer(builder, cat);
   return builder.asUint8Array();
