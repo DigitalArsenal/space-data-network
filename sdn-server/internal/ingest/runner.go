@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	MPEFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	SPWFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -675,6 +676,7 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...sto
 			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad))).
 			WithObjectType(normalizeSatcatObjectType(getValue(row, "OBJECT_TYPE"))).
 			WithOpsStatus(normalizeSatcatOpsStatus(getValue(row, "OPS_STATUS_CODE", "OPS_STATUS", "STATUS"))).
+			WithOwner(satcatOwnerCode(getValue(row, "OWNER"))).
 			WithManeuverable(false).
 			WithMass(0).
 			WithSize(0).
@@ -715,6 +717,22 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...sto
 		return 0, "", fmt.Errorf("no CAT rows parsed")
 	}
 	return count, hex.EncodeToString(normalized.Sum(nil)), nil
+}
+
+// satcatOwnerCode accepts only exact legacyCountryCode labels from CelesTrak's
+// CSV OWNER column. Never substitute country names, ISO codes, or a separate
+// country catalog: source codes that are absent or not in the canonical SDS
+// enum explicitly encode UNK. Leaving the field omitted would decode as AB.
+//
+// The generated enum type is unexported, but its generated vocabulary is
+// public. Converting the selected value to int8 preserves the canonical wire
+// value while keeping the parser independent of generated implementation names.
+func satcatOwnerCode(value string) int8 {
+	owner, ok := CATFB.EnumValueslegacyCountryCode[strings.TrimSpace(value)]
+	if !ok {
+		return int8(CATFB.EnumValueslegacyCountryCode["UNK"])
+	}
+	return int8(owner)
 }
 
 func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, string, error) {
@@ -1371,6 +1389,8 @@ func parseSatcatFixedWidth(content []byte) ([]map[string]string, error) {
 		}
 
 		row["OBJECT_TYPE"] = inferFixedWidthSatcatObjectType(row["OBJECT_NAME"])
+		// The public fixed-width SATCAT layout has no OWNER column. The builder
+		// therefore encodes explicit UNK rather than inferring ownership.
 		rows = append(rows, row)
 	}
 

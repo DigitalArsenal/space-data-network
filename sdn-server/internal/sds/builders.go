@@ -590,6 +590,7 @@ type CATBuilder struct {
 	noradCatID   uint32
 	objectType   string
 	opsStatus    string
+	owner        int8
 	launchDate   string
 	launchSite   string
 	decayDate    string
@@ -613,6 +614,7 @@ func NewCATBuilder() *CATBuilder {
 		noradCatID:   25544,
 		objectType:   "UNKNOWN",
 		opsStatus:    "UNKNOWN",
+		owner:        int8(CAT.EnumValueslegacyCountryCode["UNK"]),
 		launchDate:   "1998-11-20",
 		launchSite:   "TYMSC",
 		decayDate:    "",
@@ -655,6 +657,15 @@ func (b *CATBuilder) WithObjectType(objectType string) *CATBuilder {
 // WithOpsStatus sets the SDS CAT operational status.
 func (b *CATBuilder) WithOpsStatus(status string) *CATBuilder {
 	b.opsStatus = status
+	return b
+}
+
+// WithOwner sets the CAT OWNER wire value from the canonical
+// legacyCountryCode enum. The generated Go enum is intentionally unexported,
+// so callers pass its underlying value after resolving source codes through
+// the generated enum vocabulary.
+func (b *CATBuilder) WithOwner(owner int8) *CATBuilder {
+	b.owner = owner
 	return b
 }
 
@@ -714,6 +725,13 @@ func (b *CATBuilder) Build() []byte {
 	CAT.CATAddNORAD_CAT_ID(b.builder, b.noradCatID)
 	addCATObjectType(b.builder, b.objectType)
 	addCATOpsStatus(b.builder, b.opsStatus)
+	// Equivalent to generated CATAddOWNER. The generated legacyCountryCode Go
+	// type is unexported, so its dynamic wire value cannot be passed to that
+	// helper outside the generated package. CAT OWNER is schema slot 5 and has
+	// default 0 (AB); callers must supply the explicit UNK wire value when
+	// ownership is unknown so it is never omitted as AB. Keep slot 5 aligned
+	// with CAT/main.fbs.
+	b.builder.PrependInt8Slot(5, b.owner, 0)
 	CAT.CATAddLAUNCH_DATE(b.builder, launchDateOffset)
 	CAT.CATAddLAUNCH_SITE(b.builder, launchSiteOffset)
 	CAT.CATAddDECAY_DATE(b.builder, decayDateOffset)
