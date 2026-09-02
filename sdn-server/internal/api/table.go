@@ -8,13 +8,14 @@ package api
 // table holds, with counts. Powers the "by source" selector.
 //
 // Source selection and metadata ordering execute against the durable catalog.
-// Projected-column filters, global search, and projected-column ordering apply
-// to the selected page after its FlatBuffers are decoded through the same
-// generated bindings as the JSON download lane. Admin-gated like the sandbox
-// lane: this is the operator's explorer; the anonymous read surface stays the
-// routed bulk/index endpoints.
+// Projected-column filters, global search, and projected-column ordering scan
+// the selected durable set in bounded chunks, decoding each FlatBuffer through
+// the same generated bindings as the JSON download lane before paging the
+// result. Admin-gated like the sandbox lane: this is the operator's explorer;
+// the anonymous read surface stays the routed bulk/index endpoints.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -37,6 +38,13 @@ const (
 	// across, so a wide table cannot turn one keystroke into a 60-branch scan.
 	tableSearchColumnCap = 24
 	tableQueryTimeout    = 20 * time.Second
+
+	// Filtered/sorted requests walk the durable catalog in bounded store-lock
+	// windows. The record and wall-clock ceilings keep an interactive request
+	// from monopolising decoding work on exceptionally large selections.
+	tableScanChunkSize    = 250
+	tableScanRecordBudget = 250_000
+	tableScanTimeBudget   = 2 * time.Second
 )
 
 var (
@@ -66,6 +74,35 @@ type tableResponse struct {
 	Limit     int        `json:"limit"`
 	Truncated bool       `json:"truncated"`
 	Source    string     `json:"source,omitempty"`
+	Partial   bool       `json:"partial,omitempty"`
+	Scanned   int64      `json:"scanned,omitempty"`
+	Stored    int64      `json:"stored,omitempty"`
+}
+
+type tableScanBudget struct {
+	MaxRecords int
+	MaxTime    time.Duration
+}
+
+type tableScanBudgetContextKey struct{}
+
+func tableScanBudgetForContext(ctx context.Context) tableScanBudget {
+	budget := tableScanBudget{MaxRecords: tableScanRecordBudget, MaxTime: tableScanTimeBudget}
+	if injected, ok := ctx.Value(tableScanBudgetContextKey{}).(tableScanBudget); ok {
+		if injected.MaxRecords > 0 {
+			budget.MaxRecords = injected.MaxRecords
+		}
+		if injected.MaxTime > 0 {
+			budget.MaxTime = injected.MaxTime
+		}
+	}
+	return budget
+}
+
+// withTableScanBudget is an internal test seam. Request parameters can never
+// raise or lower the production scan ceilings.
+func withTableScanBudget(ctx context.Context, budget tableScanBudget) context.Context {
+	return context.WithValue(ctx, tableScanBudgetContextKey{}, budget)
 }
 
 type tableSourcesResponse struct {
@@ -314,6 +351,33 @@ func (h *CoreAPIHandler) handleTablePage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	total := fullTableStoredCount(summary, req.Schema+".fbs", sourceName)
+	if req.Q != "" || len(filters) > 0 || sortColumn != "" {
+		rows, matched, scanned, partial, err := h.scanFullTableSelection(
+			r.Context(), req, projection, filters, sortColumn, sourceName,
+			total, tableScanBudgetForContext(r.Context()),
+		)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, tableResponse{
+			Schema:    req.Schema + ".fbs",
+			Columns:   projection,
+			Rows:      rows,
+			Total:     matched,
+			Page:      req.Page,
+			Limit:     req.Limit,
+			Truncated: false,
+			Source:    req.Source,
+			Partial:   partial,
+			Scanned:   scanned,
+			Stored:    total,
+		})
+		return
+	}
+
+	// Fast path: an unfiltered, unsorted request reads only its requested
+	// durable page (or the complete small selection), exactly as before.
 	globalSort := ""
 	if sortColumn == "_rowid" || sortColumn == "_source" || sortColumn == "_offset" {
 		globalSort = sortColumn
@@ -445,6 +509,109 @@ func fullTableStoredCount(summary *storage.DataSummary, schemaName, sourceName s
 	return total
 }
 
+// scanFullTableSelection walks one durable standard/source selection newest to
+// oldest. Every FullTablePage call owns only one small read-lock window; the
+// decoder and predicates run after that lock has been released.
+func (h *CoreAPIHandler) scanFullTableSelection(
+	ctx context.Context,
+	req tableRequest,
+	projection []string,
+	filters map[string]string,
+	sortColumn string,
+	sourceName string,
+	stored int64,
+	budget tableScanBudget,
+) (rows [][]string, matched, scanned int64, partial bool, err error) {
+	deadline := time.Now().Add(budget.MaxTime)
+	pageStart := int64(req.Page-1) * int64(req.Limit)
+	pageEnd := pageStart + int64(req.Limit)
+	rows = make([][]string, 0, req.Limit)
+	sortable := make([]fullTableProjectedRecord, 0)
+	var binding *bulkBinding
+	var beforeRowID int64
+	exhausted := false
+
+scan:
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, scanned, false, err
+		}
+		if scanned >= int64(budget.MaxRecords) || !time.Now().Before(deadline) {
+			exhausted = true
+			break
+		}
+
+		chunkLimit := tableScanChunkSize
+		if remaining := budget.MaxRecords - int(scanned); remaining < chunkLimit {
+			chunkLimit = remaining
+		}
+		chunk, err := h.store.FullTablePage(storage.FullTablePageQuery{
+			SchemaName:  req.Schema + ".fbs",
+			SourceName:  sourceName,
+			Limit:       chunkLimit,
+			BeforeRowID: beforeRowID,
+		})
+		if err != nil {
+			return nil, 0, scanned, false, err
+		}
+		if len(chunk) == 0 {
+			break
+		}
+		if binding == nil {
+			binding, err = tableBindingForPage(req.Schema+".fbs", chunk[0].Data)
+			if err != nil {
+				return nil, 0, scanned, false, err
+			}
+		}
+
+		for _, record := range chunk {
+			if scanned >= int64(budget.MaxRecords) || !time.Now().Before(deadline) {
+				exhausted = true
+				break scan
+			}
+			projected, matches, err := projectFullTableRecord(
+				req.Schema, record, binding, projection, filters, req.Q, sortColumn,
+			)
+			if err != nil {
+				return nil, 0, scanned, false, err
+			}
+			scanned++
+			if !matches {
+				continue
+			}
+			if sortColumn != "" {
+				sortable = append(sortable, projected)
+			} else if matched >= pageStart && matched < pageEnd {
+				rows = append(rows, projected.row)
+			}
+			matched++
+		}
+
+		beforeRowID = chunk[len(chunk)-1].RowID
+		if len(chunk) < chunkLimit {
+			break
+		}
+	}
+
+	partial = exhausted && scanned < stored
+	if sortColumn == "" {
+		return rows, matched, scanned, partial, nil
+	}
+
+	sortFullTableRecords(sortable, sortColumn, req.Dir)
+	if pageStart >= int64(len(sortable)) {
+		return rows, matched, scanned, partial, nil
+	}
+	end := pageEnd
+	if end > int64(len(sortable)) {
+		end = int64(len(sortable))
+	}
+	for _, record := range sortable[int(pageStart):int(end)] {
+		rows = append(rows, record.row)
+	}
+	return rows, matched, scanned, partial, nil
+}
+
 func resolveFullTableRequest(req tableRequest, columns []string) ([]string, map[string]string, string, error) {
 	projection := defaultTableProjection(columns)
 	if len(req.Cols) > 0 {
@@ -504,6 +671,12 @@ func tableBindingForPage(schemaName string, sample []byte) (*bulkBinding, error)
 	}, nil
 }
 
+type fullTableProjectedRecord struct {
+	row       []string
+	sortValue string
+	rowID     int64
+}
+
 func projectFullTablePage(schema string, records []*storage.Record, projection []string, filters map[string]string, q, sortColumn, direction string) ([][]string, error) {
 	if len(records) == 0 {
 		return [][]string{}, nil
@@ -512,58 +685,100 @@ func projectFullTablePage(schema string, records []*storage.Record, projection [
 	if err != nil {
 		return nil, err
 	}
-	type projectedRecord struct {
-		values map[string]string
-		row    []string
-	}
-	projected := make([]projectedRecord, 0, len(records))
+	projected := make([]fullTableProjectedRecord, 0, len(records))
 	for _, record := range records {
-		root, err := binding.decode(record.Data)
+		row, matches, err := projectFullTableRecord(schema, record, binding, projection, filters, q, sortColumn)
 		if err != nil {
 			return nil, err
 		}
-		object, err := bindingObject(root, binding.fields)
-		if err != nil {
-			return nil, err
+		if matches {
+			projected = append(projected, row)
 		}
-		values := make(map[string]string, len(object)+4)
-		for key, value := range object {
-			values[key] = fullTableCell(value)
-		}
-		values["_rowid"] = strconv.FormatInt(record.RowID, 10)
-		values["_offset"] = strconv.FormatInt(record.StreamOffset, 10)
-		values["_data"] = base64.StdEncoding.EncodeToString(record.Data)
-		if record.SourceTags.SourceName != "" {
-			values["_source"] = schema + "@" + record.SourceTags.SourceName
-		}
-		if !fullTableRecordMatches(values, projection, filters, q) {
-			continue
-		}
-		row := make([]string, len(projection))
-		for i, column := range projection {
-			row[i] = values[column]
-		}
-		projected = append(projected, projectedRecord{values: values, row: row})
 	}
-	if sortColumn != "" && sortColumn != "_rowid" && sortColumn != "_source" && sortColumn != "_offset" {
-		descending := direction == "desc"
-		sort.SliceStable(projected, func(i, j int) bool {
-			comparison := compareFullTableCells(projected[i].values[sortColumn], projected[j].values[sortColumn])
-			if comparison == 0 {
-				comparison = compareFullTableCells(projected[i].values["_rowid"], projected[j].values["_rowid"])
-				return comparison > 0
-			}
-			if descending {
-				return comparison > 0
-			}
-			return comparison < 0
-		})
-	}
+	sortFullTableRecords(projected, sortColumn, direction)
 	rows := make([][]string, len(projected))
 	for i := range projected {
 		rows[i] = projected[i].row
 	}
 	return rows, nil
+}
+
+func projectFullTableRecord(
+	schema string,
+	record *storage.Record,
+	binding *bulkBinding,
+	projection []string,
+	filters map[string]string,
+	q string,
+	sortColumn string,
+) (fullTableProjectedRecord, bool, error) {
+	root, err := binding.decode(record.Data)
+	if err != nil {
+		return fullTableProjectedRecord{}, false, err
+	}
+	object, err := bindingObject(root, binding.fields)
+	if err != nil {
+		return fullTableProjectedRecord{}, false, err
+	}
+	values := make(map[string]string, len(projection)+len(filters)+2)
+	setValue := func(column string) {
+		if _, exists := values[column]; exists {
+			return
+		}
+		switch column {
+		case "_rowid":
+			values[column] = strconv.FormatInt(record.RowID, 10)
+		case "_offset":
+			values[column] = strconv.FormatInt(record.StreamOffset, 10)
+		case "_data":
+			values[column] = base64.StdEncoding.EncodeToString(record.Data)
+		case "_source":
+			if record.SourceTags.SourceName != "" {
+				values[column] = schema + "@" + record.SourceTags.SourceName
+			}
+		default:
+			values[column] = fullTableCell(object[column])
+		}
+	}
+	for _, column := range projection {
+		setValue(column)
+	}
+	for column := range filters {
+		setValue(column)
+	}
+	if sortColumn != "" {
+		setValue(sortColumn)
+	}
+	setValue("_rowid")
+	if !fullTableRecordMatches(values, projection, filters, q) {
+		return fullTableProjectedRecord{}, false, nil
+	}
+	row := make([]string, len(projection))
+	for i, column := range projection {
+		row[i] = values[column]
+	}
+	return fullTableProjectedRecord{
+		row:       row,
+		sortValue: values[sortColumn],
+		rowID:     record.RowID,
+	}, true, nil
+}
+
+func sortFullTableRecords(records []fullTableProjectedRecord, sortColumn, direction string) {
+	if sortColumn == "" {
+		return
+	}
+	descending := direction == "desc"
+	sort.SliceStable(records, func(i, j int) bool {
+		comparison := compareFullTableCells(records[i].sortValue, records[j].sortValue)
+		if comparison == 0 {
+			return records[i].rowID > records[j].rowID
+		}
+		if descending {
+			return comparison > 0
+		}
+		return comparison < 0
+	})
 }
 
 func fullTableCell(value interface{}) string {

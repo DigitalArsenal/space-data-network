@@ -13,8 +13,12 @@ type FullTablePageQuery struct {
 	SourceName string
 	Limit      int
 	Offset     int
-	Sort       string
-	Descending bool
+	// BeforeRowID is an exclusive cursor over the durable global record index.
+	// It lets callers walk a large selection in bounded lock windows without
+	// OFFSET drift when a newer record is stored between chunks.
+	BeforeRowID int64
+	Sort        string
+	Descending  bool
 }
 
 // FullTableColumns returns the compiled SDS projection followed by the engine
@@ -94,6 +98,10 @@ func (s *FlatSQLStore) FullTablePage(query FullTablePageQuery) ([]*Record, error
 			  AND filter_tags.cid = records.cid
 		)`
 		args = append(args, schemaName, sourceName)
+	}
+	if query.BeforeRowID > 0 {
+		statement += ` AND records.rowid < ?`
+		args = append(args, query.BeforeRowID)
 	}
 
 	innerOrder, outerOrder := "records.rowid", "candidates.rowid"
