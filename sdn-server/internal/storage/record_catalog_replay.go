@@ -79,9 +79,12 @@ const (
 	// recordCatalogReplayWindow bounds how many journal frames one replay
 	// window applies: one store-write-lock hold + one control transaction.
 	// Readers interleave BETWEEN windows, so this sets the worst-case reader
-	// stall. Batched, a 5,000-frame window is tens of milliseconds — far inside
-	// the two-second reader budget that storeWriteChunkSize was tuned against.
-	recordCatalogReplayWindow = 5000
+	// stall. "Tens of milliseconds" was measured on a small store; on the dev
+	// store's 8.6 GB control database (1.3M index rows through the host I/O
+	// shim) a 5,000-frame window held the lock ~6-7 s and back-to-back windows
+	// starved writers for up to 58 s (2026-09-02). 500 frames bounds one hold
+	// under a second; the chunked loop also yields between windows.
+	recordCatalogReplayWindow = 500
 
 	// recordCatalogReplayParamBudget bounds how many bind parameters may appear
 	// in ONE multi-row statement, which is what turns ~4 engine calls per record
