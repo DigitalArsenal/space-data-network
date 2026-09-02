@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,12 +104,17 @@ func TestRunPrewarmAOTWritesEngineArtifactAndIsIdempotent(t *testing.T) {
 // the directory (the char after "flatsql" is "l", not the required "-").
 func findEngineArtifact(t *testing.T, dir string) string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(dir, "flatsql-*.aot.wasm"))
+	// The shared cache dir outlives engine bumps, so it legitimately holds one
+	// artifact per engine build ever tested on this machine: look for THIS
+	// engine's (the cache key is the sha256 prefix of the embedded bytes).
+	sum := sha256.Sum256(flatsqlrt.EmbeddedWasm())
+	prefix := hex.EncodeToString(sum[:])[:16]
+	matches, err := filepath.Glob(filepath.Join(dir, "flatsql-"+prefix+"-*.aot.wasm"))
 	if err != nil {
 		t.Fatalf("glob engine artifact: %v", err)
 	}
 	if len(matches) != 1 {
-		t.Fatalf("expected exactly one flatsql engine artifact in %s, got %v", dir, matches)
+		t.Fatalf("expected exactly one flatsql engine artifact for engine %s in %s, got %v", prefix, dir, matches)
 	}
 	return matches[0]
 }
