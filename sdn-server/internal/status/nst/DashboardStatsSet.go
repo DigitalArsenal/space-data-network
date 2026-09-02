@@ -225,8 +225,70 @@ func (rcv *DashboardStatsSet) MutateAsOf(n int64) bool {
 	return rcv.MutateAS_OF(n)
 }
 
+func (rcv *DashboardStatsSet) EVENTS(obj *DashboardIngestEvent, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		if obj == nil {
+			obj = new(DashboardIngestEvent)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *DashboardStatsSet) Events(obj *DashboardIngestEvent, j int) bool {
+	return rcv.EVENTS(obj, j)
+}
+
+func (rcv *DashboardStatsSet) EVENTSLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *DashboardStatsSet) EventsLength() int {
+	return rcv.EVENTSLength()
+}
+
+func (rcv *DashboardStatsSet) TOPICS(obj *DashboardTopicStat, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		if obj == nil {
+			obj = new(DashboardTopicStat)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *DashboardStatsSet) Topics(obj *DashboardTopicStat, j int) bool {
+	return rcv.TOPICS(obj, j)
+}
+
+func (rcv *DashboardStatsSet) TOPICSLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *DashboardStatsSet) TopicsLength() int {
+	return rcv.TOPICSLength()
+}
+
 func DashboardStatsSetStart(builder *flatbuffers.Builder) {
-	builder.StartObject(7)
+	builder.StartObject(9)
 }
 func DashboardStatsSetAddGENERATED_AT(builder *flatbuffers.Builder, GENERATED_AT int64) {
 	builder.PrependInt64Slot(0, GENERATED_AT, 0)
@@ -281,6 +343,30 @@ func DashboardStatsSetAddAS_OF(builder *flatbuffers.Builder, AS_OF int64) {
 }
 func DashboardStatsSetAddAsOf(builder *flatbuffers.Builder, AS_OF int64) {
 	DashboardStatsSetAddAS_OF(builder, AS_OF)
+}
+func DashboardStatsSetAddEVENTS(builder *flatbuffers.Builder, EVENTS flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(EVENTS), 0)
+}
+func DashboardStatsSetAddEvents(builder *flatbuffers.Builder, EVENTS flatbuffers.UOffsetT) {
+	DashboardStatsSetAddEVENTS(builder, EVENTS)
+}
+func DashboardStatsSetStartEVENTSVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func DashboardStatsSetStartEventsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return DashboardStatsSetStartEVENTSVector(builder, numElems)
+}
+func DashboardStatsSetAddTOPICS(builder *flatbuffers.Builder, TOPICS flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(TOPICS), 0)
+}
+func DashboardStatsSetAddTopics(builder *flatbuffers.Builder, TOPICS flatbuffers.UOffsetT) {
+	DashboardStatsSetAddTOPICS(builder, TOPICS)
+}
+func DashboardStatsSetStartTOPICSVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func DashboardStatsSetStartTopicsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return DashboardStatsSetStartTOPICSVector(builder, numElems)
 }
 func DashboardStatsSetEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

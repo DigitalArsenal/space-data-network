@@ -17,15 +17,56 @@ type DashboardSchemaRow struct {
 
 // DashboardSourceRow is one (schema, provider, source, batch) ingest lane.
 type DashboardSourceRow struct {
-	Schema        string
-	ProviderID    string
-	SourceName    string
-	BatchID       string
-	RecordCount   int64
-	TotalBytes    int64
-	FirstIngestAt int64
-	LastIngestAt  int64
-	UpdatedAt     int64
+	Schema             string
+	ProviderID         string
+	SourceName         string
+	BatchID            string
+	RecordCount        int64
+	TotalBytes         int64
+	FirstIngestAt      int64
+	LastIngestAt       int64
+	UpdatedAt          int64
+	WindowRecords      int64
+	PriorWindowRecords int64
+	WindowMS           int64
+
+	// IngestTimestamps is an optional exact list of newly observed record
+	// arrival times (Unix seconds). The production snapshot lane can omit it:
+	// DashboardMonitor then records the non-negative count delta at
+	// LastIngestAt. Tests and richer callers use it for exact window counts.
+	// It is monitor input only and is not serialized directly.
+	IngestTimestamps []int64
+}
+
+// DashboardIngestEventKind is one source-ingest transition.
+type DashboardIngestEventKind string
+
+const (
+	DashboardIngestEventStall   DashboardIngestEventKind = "Stall"
+	DashboardIngestEventReject  DashboardIngestEventKind = "Reject"
+	DashboardIngestEventRecover DashboardIngestEventKind = "Recover"
+)
+
+// DashboardIngestEventRow is one event carried by the dashboard snapshot.
+type DashboardIngestEventRow struct {
+	Kind       DashboardIngestEventKind
+	Schema     string
+	ProviderID string
+	SourceName string
+	Message    string
+	Count      int64
+	At         int64
+}
+
+// DashboardTopicRow is one pubsub topic's live traffic summary.
+type DashboardTopicRow struct {
+	Topic      string
+	RatePerMin float64
+	LastSeenAt int64
+	Subscribed bool
+	// MessageTimestamps optionally carries exact observations for the current
+	// minute. When present, DashboardMonitor derives RatePerMin/LastSeenAt.
+	MessageTimestamps []int64
 }
 
 // DashboardStatsInput is the assembled data BuildDashboardStatsSet serializes.
@@ -34,6 +75,8 @@ type DashboardSourceRow struct {
 type DashboardStatsInput struct {
 	Schemas []DashboardSchemaRow
 	Sources []DashboardSourceRow
+	Events  []DashboardIngestEventRow
+	Topics  []DashboardTopicRow
 
 	TotalRecords int64
 	TotalBytes   int64
@@ -53,6 +96,13 @@ type DashboardStatsInput struct {
 // exactly like BuildNodeStatusSet's $NST frames, so one binary socket can
 // carry both and the client tells them apart by the identifier bytes.
 func BuildDashboardStatsSet(in DashboardStatsInput) []byte {
+	return defaultDashboardMonitor.Build(in)
+}
+
+// buildDashboardStatsSet serializes already-derived rows. DashboardMonitor is
+// the stateful observation layer; keeping serialization separate makes its
+// transitions deterministic and independently testable.
+func buildDashboardStatsSet(in DashboardStatsInput) []byte {
 	now := in.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -97,6 +147,9 @@ func BuildDashboardStatsSet(in DashboardStatsInput) []byte {
 		nst.DashboardSourceStatAddFirstIngestAt(b, row.FirstIngestAt)
 		nst.DashboardSourceStatAddLastIngestAt(b, row.LastIngestAt)
 		nst.DashboardSourceStatAddUpdatedAt(b, row.UpdatedAt)
+		nst.DashboardSourceStatAddWindowRecords(b, row.WindowRecords)
+		nst.DashboardSourceStatAddPriorWindowRecords(b, row.PriorWindowRecords)
+		nst.DashboardSourceStatAddWindowMs(b, row.WindowMS)
 		sourceOffsets[i] = nst.DashboardSourceStatEnd(b)
 	}
 	nst.DashboardStatsSetStartSourcesVector(b, len(sourceOffsets))
@@ -104,6 +157,46 @@ func BuildDashboardStatsSet(in DashboardStatsInput) []byte {
 		b.PrependUOffsetT(sourceOffsets[i])
 	}
 	sourcesVec := b.EndVector(len(sourceOffsets))
+
+	eventOffsets := make([]flatbuffers.UOffsetT, len(in.Events))
+	for i := range in.Events {
+		row := &in.Events[i]
+		schema := b.CreateString(row.Schema)
+		provider := b.CreateString(row.ProviderID)
+		source := b.CreateString(row.SourceName)
+		message := b.CreateString(row.Message)
+		nst.DashboardIngestEventStart(b)
+		nst.DashboardIngestEventAddKind(b, dashboardEventKind(row.Kind))
+		nst.DashboardIngestEventAddSchema(b, schema)
+		nst.DashboardIngestEventAddProviderId(b, provider)
+		nst.DashboardIngestEventAddSourceName(b, source)
+		nst.DashboardIngestEventAddMessage(b, message)
+		nst.DashboardIngestEventAddCount(b, row.Count)
+		nst.DashboardIngestEventAddAt(b, row.At)
+		eventOffsets[i] = nst.DashboardIngestEventEnd(b)
+	}
+	nst.DashboardStatsSetStartEventsVector(b, len(eventOffsets))
+	for i := len(eventOffsets) - 1; i >= 0; i-- {
+		b.PrependUOffsetT(eventOffsets[i])
+	}
+	eventsVec := b.EndVector(len(eventOffsets))
+
+	topicOffsets := make([]flatbuffers.UOffsetT, len(in.Topics))
+	for i := range in.Topics {
+		row := &in.Topics[i]
+		topic := b.CreateString(row.Topic)
+		nst.DashboardTopicStatStart(b)
+		nst.DashboardTopicStatAddTopic(b, topic)
+		nst.DashboardTopicStatAddRatePerMin(b, row.RatePerMin)
+		nst.DashboardTopicStatAddLastSeenAt(b, row.LastSeenAt)
+		nst.DashboardTopicStatAddSubscribed(b, row.Subscribed)
+		topicOffsets[i] = nst.DashboardTopicStatEnd(b)
+	}
+	nst.DashboardStatsSetStartTopicsVector(b, len(topicOffsets))
+	for i := len(topicOffsets) - 1; i >= 0; i-- {
+		b.PrependUOffsetT(topicOffsets[i])
+	}
+	topicsVec := b.EndVector(len(topicOffsets))
 
 	nst.DashboardStatsSetStart(b)
 	nst.DashboardStatsSetAddGeneratedAt(b, now.Unix())
@@ -113,8 +206,21 @@ func BuildDashboardStatsSet(in DashboardStatsInput) []byte {
 	nst.DashboardStatsSetAddTotalBytes(b, in.TotalBytes)
 	nst.DashboardStatsSetAddStale(b, in.Stale)
 	nst.DashboardStatsSetAddAsOf(b, asOf)
+	nst.DashboardStatsSetAddEvents(b, eventsVec)
+	nst.DashboardStatsSetAddTopics(b, topicsVec)
 	set := nst.DashboardStatsSetEnd(b)
 
 	nst.FinishSizePrefixedDashboardStatsSetBuffer(b, set)
 	return b.FinishedBytes()
+}
+
+func dashboardEventKind(kind DashboardIngestEventKind) nst.DashboardIngestEventKind {
+	switch kind {
+	case DashboardIngestEventReject:
+		return nst.DashboardIngestEventKindReject
+	case DashboardIngestEventRecover:
+		return nst.DashboardIngestEventKindRecover
+	default:
+		return nst.DashboardIngestEventKindStall
+	}
 }

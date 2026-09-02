@@ -81,8 +81,32 @@ UPDATED_AT():bigint {
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
+/**
+ * Records observed in the current rolling window.
+ */
+WINDOW_RECORDS():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+/**
+ * Records observed in the immediately preceding rolling window.
+ */
+PRIOR_WINDOW_RECORDS():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+/**
+ * Rolling-window width in milliseconds (default 300000).
+ */
+WINDOW_MS():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
 static startDashboardSourceStat(builder:flatbuffers.Builder) {
-  builder.startObject(9);
+  builder.startObject(12);
 }
 
 static addSchema(builder:flatbuffers.Builder, SCHEMAOffset:flatbuffers.Offset) {
@@ -121,12 +145,24 @@ static addUpdatedAt(builder:flatbuffers.Builder, UPDATED_AT:bigint) {
   builder.addFieldInt64(8, UPDATED_AT, BigInt('0'));
 }
 
+static addWindowRecords(builder:flatbuffers.Builder, WINDOW_RECORDS:bigint) {
+  builder.addFieldInt64(9, WINDOW_RECORDS, BigInt('0'));
+}
+
+static addPriorWindowRecords(builder:flatbuffers.Builder, PRIOR_WINDOW_RECORDS:bigint) {
+  builder.addFieldInt64(10, PRIOR_WINDOW_RECORDS, BigInt('0'));
+}
+
+static addWindowMs(builder:flatbuffers.Builder, WINDOW_MS:bigint) {
+  builder.addFieldInt64(11, WINDOW_MS, BigInt('0'));
+}
+
 static endDashboardSourceStat(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createDashboardSourceStat(builder:flatbuffers.Builder, SCHEMAOffset:flatbuffers.Offset, PROVIDER_IDOffset:flatbuffers.Offset, SOURCE_NAMEOffset:flatbuffers.Offset, BATCH_IDOffset:flatbuffers.Offset, RECORD_COUNT:bigint, TOTAL_BYTES:bigint, FIRST_INGEST_AT:bigint, LAST_INGEST_AT:bigint, UPDATED_AT:bigint):flatbuffers.Offset {
+static createDashboardSourceStat(builder:flatbuffers.Builder, SCHEMAOffset:flatbuffers.Offset, PROVIDER_IDOffset:flatbuffers.Offset, SOURCE_NAMEOffset:flatbuffers.Offset, BATCH_IDOffset:flatbuffers.Offset, RECORD_COUNT:bigint, TOTAL_BYTES:bigint, FIRST_INGEST_AT:bigint, LAST_INGEST_AT:bigint, UPDATED_AT:bigint, WINDOW_RECORDS:bigint, PRIOR_WINDOW_RECORDS:bigint, WINDOW_MS:bigint):flatbuffers.Offset {
   DashboardSourceStat.startDashboardSourceStat(builder);
   DashboardSourceStat.addSchema(builder, SCHEMAOffset);
   DashboardSourceStat.addProviderId(builder, PROVIDER_IDOffset);
@@ -137,6 +173,9 @@ static createDashboardSourceStat(builder:flatbuffers.Builder, SCHEMAOffset:flatb
   DashboardSourceStat.addFirstIngestAt(builder, FIRST_INGEST_AT);
   DashboardSourceStat.addLastIngestAt(builder, LAST_INGEST_AT);
   DashboardSourceStat.addUpdatedAt(builder, UPDATED_AT);
+  DashboardSourceStat.addWindowRecords(builder, WINDOW_RECORDS);
+  DashboardSourceStat.addPriorWindowRecords(builder, PRIOR_WINDOW_RECORDS);
+  DashboardSourceStat.addWindowMs(builder, WINDOW_MS);
   return DashboardSourceStat.endDashboardSourceStat(builder);
 }
 }
