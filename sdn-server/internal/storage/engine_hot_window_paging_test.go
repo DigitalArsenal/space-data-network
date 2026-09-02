@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 )
 
 // THE PAGED HOT-WINDOW READ MUST BE THE SAME ANSWER, not a similar one.
@@ -23,8 +26,33 @@ func TestPagedHotWindowReadReproducesTheSingleStatement(t *testing.T) {
 	tags := SourceTags{ProviderID: "prov-page", SourceName: "paging-src", BatchID: "batch-page"}
 	for i := 0; i < records; i++ {
 		record := buildEngineOMM(t, uint32(9000+i), "PAGE-SAT", int64(1700000000+i))
-		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "peer-paging", nil, tags); err != nil {
+		// Production writers use both spellings. Interleave them here so the
+		// paged per-alias merge has to reconstruct the historical global rowid
+		// order rather than getting a free single-alias pass.
+		schemaName := "OMM.fbs"
+		if i%3 == 1 {
+			schemaName = "OMM"
+		}
+		cid, err := store.StoreWithSourceTags(schemaName, record, "peer-paging", nil, tags)
+		if err != nil {
 			t.Fatalf("store record %d: %v", i, err)
+		}
+		if i == records/2 {
+			// The reader receives all tag rows in ascending created_at order and
+			// must retain this later source tag, just like the replaced
+			// correlated ORDER BY created_at DESC LIMIT 1 query did.
+			newer := tags
+			newer.SourceName = "paging-src-newest"
+			if err := store.UpsertSourceTags(schemaName, cid, newer); err != nil {
+				t.Fatalf("attach later source tag: %v", err)
+			}
+			if _, err := store.db.Exec(`
+				UPDATE sdn_record_source_tags
+				SET created_at = created_at + 1
+				WHERE schema_name = ? AND cid = ? AND source_name = ?
+			`, schemaName, cid, newer.SourceName); err != nil {
+				t.Fatalf("make source-tag ordering deterministic: %v", err)
+			}
 		}
 	}
 
@@ -137,5 +165,155 @@ func TestPagedHotWindowReadReproducesTheSingleStatement(t *testing.T) {
 	}
 	if highest-lowest != int64(window-1) {
 		t.Fatalf("window spans rowids %d..%d for %d rows — the pages are not contiguous", lowest, highest, window)
+	}
+}
+
+// The persistent schema index is a migration, not a new-store optimisation.
+// This test removes it after records exist and asks initTables to recreate it,
+// proving the required-index path backfills existing catalog rows. Its EXPLAIN
+// assertion is deliberately against the actual FlatSQL engine, not the host
+// SQLite CLI: the production regression was a planner/runtime mismatch.
+func TestHotWindowSchemaRowIDIndexBackfillsAndSeeks(t *testing.T) {
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	for i := 0; i < 8; i++ {
+		if _, err := store.Store("OMM.fbs", buildEngineOMM(t, uint32(9900+i), "INDEX-SAT", int64(1710000000+i)), "peer-index", nil); err != nil {
+			t.Fatalf("store record %d: %v", i, err)
+		}
+	}
+	if _, err := store.db.Exec(`DROP INDEX idx_sdn_record_index_schema_rowid`); err != nil {
+		t.Fatalf("drop schema rowid index: %v", err)
+	}
+	if err := store.initTables(); err != nil {
+		t.Fatalf("recreate required schema rowid index: %v", err)
+	}
+
+	var indexCount int
+	if err := store.db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_sdn_record_index_schema_rowid'
+	`).Scan(&indexCount); err != nil {
+		t.Fatalf("inspect schema rowid index: %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("schema rowid index count = %d, want 1", indexCount)
+	}
+
+	rows, err := store.db.Query(`
+		EXPLAIN QUERY PLAN
+		SELECT rowid
+		FROM sdn_record_index INDEXED BY idx_sdn_record_index_schema_rowid
+		WHERE schema_name = ? AND rowid < ?
+		ORDER BY rowid DESC
+		LIMIT ?
+	`, "OMM.fbs", int64(1<<63-1), 4)
+	if err != nil {
+		t.Fatalf("explain schema rowid seek: %v", err)
+	}
+	defer rows.Close()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatalf("scan schema rowid plan: %v", err)
+		}
+		details = append(details, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate schema rowid plan: %v", err)
+	}
+	plan := strings.Join(details, "\n")
+	if !strings.Contains(plan, "idx_sdn_record_index_schema_rowid") ||
+		!strings.Contains(plan, "schema_name=? AND rowid<?") {
+		t.Fatalf("hot-window query is not a bounded schema-local seek:\n%s", plan)
+	}
+}
+
+// Maintenance must preserve the old one-statement rebuild's GLOBAL
+// oldest-first engine insertion order, even when the indexed read is split
+// across many writer-lock yields. Otherwise each page is locally reversed but
+// newer pages arrive before older ones, and the next live write evicts a newer
+// record rather than the actual oldest resident record.
+func TestMaintenanceHotWindowKeepsGlobalOldestFirstAcrossChunks(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	const (
+		window  = 128
+		initial = 130
+		first   = 10000
+	)
+
+	seed := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(window))
+	for i := 0; i < initial; i++ {
+		if _, err := seed.Store("OMM.fbs", buildEngineOMM(t, uint32(first+i), "ORDER-SAT", int64(1720000000+i)), "peer-order", nil); err != nil {
+			seed.Close()
+			t.Fatalf("store seed record %d: %v", i, err)
+		}
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seeded store: %v", err)
+	}
+
+	// A daemon-style deferred reopen has no engine rows, so this exercises the
+	// maintenance rebuild rather than the ordinary live mirror.
+	reopened := newEngineRecordsStoreWithOptions(t, basePath,
+		WithEngineHotWindow(window), WithDeferredBootRebuilds(), WithDeferredRecordCatalogReplay())
+	defer reopened.Close()
+	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 0 {
+		t.Fatalf("deferred engine count = %d err=%v, want 0 nil", count, err)
+	}
+	if err := reopened.RebuildDerivedState(); err != nil {
+		t.Fatalf("maintenance rebuild: %v", err)
+	}
+	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != window {
+		t.Fatalf("rebuild engine count = %d err=%v, want %d nil", count, err, window)
+	}
+	if !reopened.EngineHotWindowHydrated() {
+		t.Fatal("successful maintenance rebuild did not mark its engine hot window hydrated")
+	}
+	// A second derived-state call on this LIVE engine must leave the cache
+	// alone. New writes already mirror into it; replaying the pre-snapshot
+	// durable prefix would append every row a second time even if the resident
+	// counter happened to look correct.
+	if err := reopened.RebuildDerivedState(); err != nil {
+		t.Fatalf("repeat derived-state maintenance: %v", err)
+	}
+	beforeLive, err := reopened.QueryRawStream("SELECT _data FROM OMM ORDER BY _rowid ASC")
+	if err != nil {
+		t.Fatalf("read repeated-rebuild OMM window: %v", err)
+	}
+	beforeFrames, err := flatsqlrt.DecodeSizePrefixedStream(beforeLive.Bytes)
+	if err != nil {
+		t.Fatalf("decode repeated-rebuild OMM window: %v", err)
+	}
+	if len(beforeFrames) != window {
+		t.Fatalf("repeat rebuild left %d engine frames, want %d without duplicate durable replay", len(beforeFrames), window)
+	}
+
+	// The post-rebuild record overflows the window by exactly one. It must
+	// evict first+2, the oldest member of the 128-record durable window.
+	if _, err := reopened.Store("OMM.fbs", buildEngineOMM(t, first+initial, "ORDER-SAT", 1720000000+initial), "peer-order", nil); err != nil {
+		t.Fatalf("store post-rebuild record: %v", err)
+	}
+	stream, err := reopened.QueryRawStream("SELECT _data FROM OMM ORDER BY _rowid ASC")
+	if err != nil {
+		t.Fatalf("read rebuilt OMM window: %v", err)
+	}
+	frames, err := flatsqlrt.DecodeSizePrefixedStream(stream.Bytes)
+	if err != nil {
+		t.Fatalf("decode rebuilt OMM window: %v", err)
+	}
+	if len(frames) != window {
+		t.Fatalf("rebuilt OMM frame count = %d, want %d", len(frames), window)
+	}
+	for i, frame := range frames {
+		if !OMM.OMMBufferHasIdentifier(frame) {
+			t.Fatalf("frame %d is not an OMM FlatBuffer", i)
+		}
+		want := uint32(first + 3 + i)
+		if got := OMM.GetRootAsOMM(frame, 0).NORAD_CAT_ID(); got != want {
+			t.Fatalf("engine _rowid %d has NORAD %d, want %d: rebuild pages were not globally oldest-first", i, got, want)
+		}
 	}
 }
