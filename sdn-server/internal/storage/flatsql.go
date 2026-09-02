@@ -264,7 +264,12 @@ type FlatSQLStore struct {
 	// hot-window hydration, OUTSIDE the store lock. Tests use it to hold the
 	// pass open while proving readers interleave.
 	engineHydrateBatchHook func()
-	bootReplayFrames       int
+	// engineSchemaLoaded names the routed schemas whose hot window the current
+	// hydration has already loaded (or restored from persisted state), so a
+	// reader of THAT standard answers while other standards are still being
+	// rebuilt. Guarded by s.mu.
+	engineSchemaLoaded map[string]bool
+	bootReplayFrames   int
 	// bootResumeFrom carries the resume offset to a DEFERRED hydration — the
 	// path the daemon actually takes (node.go opens
 	// WithDeferredRecordCatalogReplay and hydrates in the background). It is
@@ -679,6 +684,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		engineHotWindow:        cfg.engineHotWindow,
 		engineGenericHotWindow: cfg.engineGenericHotWindow,
 		engineResident:         map[string]int64{},
+		engineSchemaLoaded:     map[string]bool{},
 		engineExcluded:         bootPlan.Excluded,
 		engineEpoch:            1,
 
@@ -1080,6 +1086,30 @@ func (s *FlatSQLStore) RecordCatalogHydrated() bool {
 
 // EngineHotWindowHydrating reports whether the linked-query OMM engine window
 // is currently being rebuilt from compact metadata.
+// EngineSchemaReady reports whether a standard's engine table can answer a
+// query now: always once the hot window is hydrated, and during a hydration
+// as soon as that standard's window has been loaded (or restored from disk).
+// The table lane gates PER STANDARD on this instead of refusing every read
+// while any rebuild runs — a $TRE reader must not wait for $TBS.
+func (s *FlatSQLStore) EngineSchemaReady(schemaName string) bool {
+	if s == nil {
+		return false
+	}
+	if s.engineHotHydrated.Load() {
+		return true
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.engineSchemaLoaded[normalizeSchemaNameForEpoch(schemaName)]
+}
+
+func (s *FlatSQLStore) engineSchemaLoadedSet(schemaName string) {
+	if s.engineSchemaLoaded == nil {
+		s.engineSchemaLoaded = map[string]bool{}
+	}
+	s.engineSchemaLoaded[normalizeSchemaNameForEpoch(schemaName)] = true
+}
+
 func (s *FlatSQLStore) EngineHotWindowHydrating() bool {
 	return s != nil && s.engineHotHydrating.Load()
 }
