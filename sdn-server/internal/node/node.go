@@ -2267,20 +2267,20 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 			default:
 			}
 
-			// (1) Fast engine hot window so linked-data flows work first.
+			// (1) Full control-table replay + derived source summaries FIRST.
 			//
-			// n.ctx for the same reason step (2) uses it (see below): this
-			// goroutine is tracked by n.wg, Stop() cancels n.ctx only, and the
-			// hot-window pass reads a multi-GB journal under the store write
-			// lock. Without the signal, Stop() waits out the whole scan.
-			count, err := n.store.HydrateEngineHotWindowFromRecordCatalogContext(n.ctx)
-			if err != nil {
-				log.Errorf("FlatSQL compact engine hot-window hydration failed: %v", err)
-			} else {
-				log.Infof("FlatSQL compact engine hot-window hydration complete: %d records", count)
-			}
-
-			// (2) Full control-table replay + derived source summaries.
+			// ORDER MATTERS FOR SURVIVAL, not for speed. The catalog replay
+			// ends in a checkpoint that writes the resume mark; without that
+			// mark the next boot discards the whole control database — and
+			// the engine's flushed record state with it. Running the engine
+			// hot window first (the old order) meant a restart anywhere in
+			// its minutes-long cold pass, or before the catalog replay after
+			// it, threw everything away (measured 2026-09-02: three cold
+			// rebuilds in a row). Catalog first: a few minutes into a cold
+			// boot the database is already safe to keep; the engine window
+			// then flushes and writes its own coverage mark, after which a
+			// restart opens both in milliseconds. On a WARM boot both steps
+			// are tail-only and this order costs nothing.
 			//
 			// n.ctx, NOT ctx. This goroutine is tracked by n.wg, and Stop()
 			// signals shutdown with n.cancel(), which cancels n.ctx only —
@@ -2295,6 +2295,19 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 			// public outage. n.ctx also fires on parent cancellation, so this
 			// is strictly more responsive, never less.
 			n.hydrateFullRecordCatalog(n.ctx)
+
+			// (2) Engine hot window: on a warm boot only the journal tail
+			// past the engine's coverage mark; on a cold boot the batched,
+			// per-batch-locked rebuild that readers interleave with.
+			//
+			// n.ctx for the same reason as above: this goroutine is tracked
+			// by n.wg and Stop() cancels n.ctx only.
+			count, err := n.store.HydrateEngineHotWindowFromRecordCatalogContext(n.ctx)
+			if err != nil {
+				log.Errorf("FlatSQL compact engine hot-window hydration failed: %v", err)
+			} else {
+				log.Infof("FlatSQL compact engine hot-window hydration complete: %d records", count)
+			}
 		}()
 	})
 }
