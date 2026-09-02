@@ -177,3 +177,42 @@ func TestWarmBootScansOnlyTheJournalTail(t *testing.T) {
 		t.Fatalf("boot scanned the journal from %d, want only the tail past the checkpoint at %d", warm.recordCatalog.scanStart, journalEnd)
 	}
 }
+
+// A journal rewritten with DIFFERENT frames of the SAME lengths keeps every
+// frame boundary; the sidecar must still be refused (and dropped), because
+// the last frame's payload CRC no longer matches.
+func TestJournalOpenRefusesASidecarFromARewrittenJournal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), recordCatalogJournalFileName)
+	end := rawFrames(t, path, 4, 3)
+	j := openJournalForTest(t, path)
+	digest, err := j.digestPrefix(end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.writePrefixMark(end, digest); err != nil {
+		t.Fatal(err)
+	}
+	j.Close()
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := rawFrames(t, path, 4, 200); got != end { // same lengths, other payloads
+		t.Fatalf("rewritten length %d != %d", got, end)
+	}
+	j2 := openJournalForTest(t, path)
+	defer j2.Close()
+	if j2.scanStart != 0 {
+		t.Fatalf("rewritten journal: scanStart = %d, want 0", j2.scanStart)
+	}
+	if _, err := os.Stat(recordCatalogPrefixMarkPath(path)); !os.IsNotExist(err) {
+		t.Fatalf("stale sidecar was not dropped: %v", err)
+	}
+	fresh, err := j2.digestPrefix(end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh == digest {
+		t.Fatal("digest of the rewritten journal equals the old one; the test rewrite is not adversarial")
+	}
+}

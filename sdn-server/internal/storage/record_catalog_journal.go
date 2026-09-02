@@ -213,6 +213,15 @@ func (j *recordCatalogJournal) scanFromTrustedPrefix() (int64, error) {
 		j.digest = h
 		j.digestOffset = mark.Offset
 		j.lastFrameStart = mark.LastFrameStart
+	} else if _, statErr := os.Stat(recordCatalogPrefixMarkPath(j.path)); statErr == nil {
+		// A sidecar that does not describe THIS file (journal replaced,
+		// truncated, or rewritten) must not survive to mislead a later boot
+		// once the file has grown back to the offset it names.
+		if rmErr := os.Remove(recordCatalogPrefixMarkPath(j.path)); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Warnf("record catalog: could not drop a stale prefix mark: %v", rmErr)
+		} else {
+			log.Infof("record catalog journal: prefix mark did not verify against the file — dropped; scanning the whole journal")
+		}
 	}
 	valid, err := scanRecordCatalogValidLengthFrom(j.f, from)
 	if err != nil {
@@ -235,6 +244,7 @@ func (j *recordCatalogJournal) scanFromTrustedPrefix() (int64, error) {
 type recordCatalogPrefixMark struct {
 	Offset         int64  `json:"offset"`
 	LastFrameStart int64  `json:"last_frame_start"`
+	LastFrameCRC   uint32 `json:"last_frame_crc"`
 	Digest         string `json:"digest"`
 	DigestState    string `json:"digest_state"`
 }
@@ -263,9 +273,17 @@ func (j *recordCatalogJournal) writePrefixMark(end int64, digest string) error {
 	if err != nil {
 		return err
 	}
+	// The last frame's payload CRC binds the sidecar to this file's CONTENT:
+	// a journal rewritten with different frames of the same lengths keeps
+	// every boundary but not this value.
+	var hdr [8]byte
+	if _, err := j.f.ReadAt(hdr[:], j.lastFrameStart); err != nil {
+		return err
+	}
 	body, err := json.Marshal(recordCatalogPrefixMark{
 		Offset:         end,
 		LastFrameStart: j.lastFrameStart,
+		LastFrameCRC:   binary.LittleEndian.Uint32(hdr[4:]),
 		Digest:         digest,
 		DigestState:    base64.StdEncoding.EncodeToString(state),
 	})
@@ -309,7 +327,7 @@ func trustedRecordCatalogPrefix(f *os.File, journalPath string) (recordCatalogPr
 	}
 	n := int64(binary.LittleEndian.Uint32(hdr[0:]))
 	crc := binary.LittleEndian.Uint32(hdr[4:])
-	if n <= 0 || mark.LastFrameStart+8+n != mark.Offset {
+	if n <= 0 || mark.LastFrameStart+8+n != mark.Offset || crc != mark.LastFrameCRC {
 		return recordCatalogPrefixMark{}, nil, false
 	}
 	payload := make([]byte, n)
