@@ -63,11 +63,12 @@ func (r *SchemaRegistry) loadEmbedded() error {
 		}
 
 		r.schemas[entry.Name()] = content
-		desc := extractDescription(content)
+		// The curated catalogue text ("Name - description") describes the
+		// standard as a whole; a generated schema's first doc comment is the
+		// first FIELD's comment, which describes nothing but that field.
+		desc := schemaDescriptions[entry.Name()]
 		if desc == "" {
-			// A generated schema opens with a Hash/Version header and no doc
-			// comment; the curated catalogue text is the description then.
-			desc = schemaDescriptions[entry.Name()]
+			desc = extractDescription(content)
 		}
 		r.descriptions[entry.Name()] = desc
 	}
