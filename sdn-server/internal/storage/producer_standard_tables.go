@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -84,8 +85,72 @@ func (s *FlatSQLStore) ensureProducerStandardTable(producerID, schemaName string
 		if err := s.createSchemaMetadataTable(tableName); err != nil {
 			return "", fmt.Errorf("create (producer, standard) table %s: %w", tableName, err)
 		}
+		if _, err := s.db.Exec(flatsqldrv.WithoutJournal(routedTimestampIndexSQL(tableName))); err != nil {
+			return "", fmt.Errorf("create (producer, standard) timestamp index on %s: %w", tableName, err)
+		}
 	}
 	return tableName, nil
+}
+
+// routedTimestampIndexName is the per-table index that serves every
+// `timestamp < ?` / `timestamp >= ?` predicate against a (producer, standard)
+// table: age-based garbage collection, retention frames during the catalog
+// replay, and time-window reads. Without it each of those is a full table
+// scan under the store write lock (measured 2026-09-02 on the dev store:
+// 335 ms per replay retention frame against a routed $TBS table, every
+// reader queued behind it). The legacy per-schema tables carry a
+// (peer_id, timestamp) index, which SQLite cannot use for a bare timestamp
+// predicate; routed tables carried no secondary index at all.
+func routedTimestampIndexName(tableName string) string {
+	return "idx_" + tableName + "_time"
+}
+
+func routedTimestampIndexSQL(tableName string) string {
+	return fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (timestamp)`, routedTimestampIndexName(tableName), tableName)
+}
+
+// EnsureRoutedTimestampIndexes backfills the timestamp index on every
+// (producer, standard) table created before the index existed. One table per
+// write-lock hold, so readers interleave between tables; the build of a
+// single large table's index is one engine statement and cannot be split.
+// Returns the number of indexes created. Safe to call on every boot: tables
+// that already carry the index cost one sqlite_master probe each.
+func (s *FlatSQLStore) EnsureRoutedTimestampIndexes(ctx context.Context) (int, error) {
+	if err := s.requireWritable("EnsureRoutedTimestampIndexes"); err != nil {
+		return 0, err
+	}
+	unlock := s.lockWrite("EnsureRoutedTimestampIndexes.list")
+	tables, err := s.listProducerStandardTables()
+	unlock()
+	if err != nil {
+		return 0, err
+	}
+	created := 0
+	for _, pt := range tables {
+		if ctx != nil && ctx.Err() != nil {
+			return created, ctx.Err()
+		}
+		n, err := s.ensureRoutedTimestampIndex(pt.TableName)
+		if err != nil {
+			return created, err
+		}
+		created += n
+	}
+	return created, nil
+}
+
+func (s *FlatSQLStore) ensureRoutedTimestampIndex(tableName string) (int, error) {
+	defer s.lockWrite("EnsureRoutedTimestampIndexes")()
+	exists, err := s.indexExists(routedTimestampIndexName(tableName))
+	if err != nil || exists {
+		return 0, err
+	}
+	start := time.Now()
+	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(routedTimestampIndexSQL(tableName))); err != nil {
+		return 0, fmt.Errorf("create timestamp index on %s: %w", tableName, err)
+	}
+	log.Infof("FlatSQL created timestamp index on routed table %s in %s", tableName, time.Since(start).Round(time.Millisecond))
+	return 1, nil
 }
 
 // routedProducerID maps a record's peer identity to the producer token used
