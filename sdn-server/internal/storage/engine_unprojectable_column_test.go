@@ -412,7 +412,10 @@ func TestProjectedStringColumnsAreJSONSafe(t *testing.T) {
 	// declaring a string column, and the 4 that do not appear here are the
 	// standards with no flatc oracle in this checkout (loadFlatcOracle skips
 	// them) — the same 4 as before this pin, so the gap did not move.
-	const stringProjectingRoutedStandards = 179
+	//
+	// 179 -> 182 on the SDS v1.207.0 pin: $ICN, $TRP and $TRV (the trust
+	// rules engine's standards) each project string columns.
+	const stringProjectingRoutedStandards = 182
 	if len(targets) != stringProjectingRoutedStandards {
 		t.Fatalf("the hostile-string guard covers %d generically routed standards, want exactly %d — a catalog change moved the projected-string set (or the flatc oracle is incomplete); confirm with `awk '/^  table [A-Z]/{tbl=$2; has=0} /:string;/{if(tbl)has=1} /^  }$/{if(tbl&&has)n++; tbl=\"\"} END{print n}' internal/storage/engine_standard_catalog.go` minus the unvendored standards",
 			len(targets), stringProjectingRoutedStandards)
