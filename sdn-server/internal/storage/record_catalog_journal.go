@@ -983,6 +983,7 @@ func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, st
 		}
 		for _, schemaName := range absent {
 			store.engineResidentSet(schemaName, 0)
+			store.engineSchemaLoadedSet(schemaName)
 		}
 		unlock()
 	}
@@ -1102,6 +1103,7 @@ func (j *recordCatalogJournal) loadEngineHotWindow(ctx context.Context, store *F
 	} else {
 		store.engineResidentSet(window.schemaName, int64(loaded))
 	}
+	store.engineSchemaLoadedSet(window.schemaName)
 	unlock()
 	if loaded > 0 {
 		log.Infof("FlatSQL engine compact hot-window rebuild: loaded %d %s records (window %d)", loaded, window.schemaName, window.limit)

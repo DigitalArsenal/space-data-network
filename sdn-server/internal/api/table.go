@@ -255,14 +255,20 @@ func (h *CoreAPIHandler) tableColumns(r *http.Request, schema string) ([]string,
 	return res.Columns, nil
 }
 
-// tableStoreWarming answers 503 immediately while startup catalog hydration
-// holds (or is waiting for) the store lock. Without this the handler BLOCKS on
-// the read lock for the whole rebuild — measured on the dev store: hours of a
-// hung request and a silently empty grid, which reads as "there are NO rows".
-func (h *CoreAPIHandler) tableStoreWarming(w http.ResponseWriter) bool {
-	if h.store.RecordCatalogHydrating() || h.store.EngineHotWindowHydrating() {
+// tableStoreWarming answers 503 while THIS standard's engine table is not yet
+// loaded by a running hot-window hydration. It is per standard on purpose: the
+// hydration locks per ingest batch, so a standard whose window is already
+// loaded answers normally while a larger one is still being rebuilt (owner
+// 2026-09-02: reads are independent of data-layer maintenance).
+func (h *CoreAPIHandler) tableStoreWarming(w http.ResponseWriter, schema string) bool {
+	if schema == "" {
+		// Free-form SQL names no single standard; it answers with whatever is
+		// loaded rather than being refused for the length of a rebuild.
+		return false
+	}
+	if h.store.EngineHotWindowHydrating() && !h.store.EngineSchemaReady(schema+".fbs") {
 		writeError(w, http.StatusServiceUnavailable,
-			"the store is rebuilding its catalog after a restart; retry shortly")
+			fmt.Sprintf("the store is still loading %s after a restart; retry shortly", schema))
 		return true
 	}
 	return false
@@ -277,12 +283,12 @@ func (h *CoreAPIHandler) handleTablePage(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, "no store")
 		return
 	}
-	if h.tableStoreWarming(w) {
-		return
-	}
 	req, err := parseTableRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if h.tableStoreWarming(w, req.Schema) {
 		return
 	}
 	columns, err := h.tableColumns(r, req.Schema)
@@ -332,12 +338,12 @@ func (h *CoreAPIHandler) handleTableSources(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, "no store")
 		return
 	}
-	if h.tableStoreWarming(w) {
-		return
-	}
 	schema := strings.ToUpper(strings.TrimSpace(strings.TrimSuffix(r.URL.Query().Get("schema"), ".fbs")))
 	if !tableSchemaCodePattern.MatchString(schema) {
 		writeError(w, http.StatusBadRequest, "schema is required (a standard code such as OMM)")
+		return
+	}
+	if h.tableStoreWarming(w, schema) {
 		return
 	}
 	res, err := h.store.SandboxedSelect(r.Context(), buildSourcesSQL(schema),
