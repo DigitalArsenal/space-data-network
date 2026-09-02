@@ -4,8 +4,10 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { DashboardIngestEvent } from './DashboardIngestEvent.js';
 import { DashboardSchemaStat } from './DashboardSchemaStat.js';
 import { DashboardSourceStat } from './DashboardSourceStat.js';
+import { DashboardTopicStat } from './DashboardTopicStat.js';
 
 
 export class DashboardStatsSet {
@@ -86,8 +88,28 @@ AS_OF():bigint {
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
+EVENTS(index: number, obj?:DashboardIngestEvent):DashboardIngestEvent|null {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? (obj || new DashboardIngestEvent()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+eventsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+TOPICS(index: number, obj?:DashboardTopicStat):DashboardTopicStat|null {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? (obj || new DashboardTopicStat()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+topicsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startDashboardStatsSet(builder:flatbuffers.Builder) {
-  builder.startObject(7);
+  builder.startObject(9);
 }
 
 static addGeneratedAt(builder:flatbuffers.Builder, GENERATED_AT:bigint) {
@@ -142,6 +164,38 @@ static addAsOf(builder:flatbuffers.Builder, AS_OF:bigint) {
   builder.addFieldInt64(6, AS_OF, BigInt('0'));
 }
 
+static addEvents(builder:flatbuffers.Builder, EVENTSOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(7, EVENTSOffset, 0);
+}
+
+static createEventsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startEventsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addTopics(builder:flatbuffers.Builder, TOPICSOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(8, TOPICSOffset, 0);
+}
+
+static createTopicsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startTopicsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endDashboardStatsSet(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -155,7 +209,7 @@ static finishSizePrefixedDashboardStatsSetBuffer(builder:flatbuffers.Builder, of
   builder.finish(offset, '$NDS', true);
 }
 
-static createDashboardStatsSet(builder:flatbuffers.Builder, GENERATED_AT:bigint, SCHEMASOffset:flatbuffers.Offset, SOURCESOffset:flatbuffers.Offset, TOTAL_RECORDS:bigint, TOTAL_BYTES:bigint, STALE:boolean, AS_OF:bigint):flatbuffers.Offset {
+static createDashboardStatsSet(builder:flatbuffers.Builder, GENERATED_AT:bigint, SCHEMASOffset:flatbuffers.Offset, SOURCESOffset:flatbuffers.Offset, TOTAL_RECORDS:bigint, TOTAL_BYTES:bigint, STALE:boolean, AS_OF:bigint, EVENTSOffset:flatbuffers.Offset, TOPICSOffset:flatbuffers.Offset):flatbuffers.Offset {
   DashboardStatsSet.startDashboardStatsSet(builder);
   DashboardStatsSet.addGeneratedAt(builder, GENERATED_AT);
   DashboardStatsSet.addSchemas(builder, SCHEMASOffset);
@@ -164,6 +218,8 @@ static createDashboardStatsSet(builder:flatbuffers.Builder, GENERATED_AT:bigint,
   DashboardStatsSet.addTotalBytes(builder, TOTAL_BYTES);
   DashboardStatsSet.addStale(builder, STALE);
   DashboardStatsSet.addAsOf(builder, AS_OF);
+  DashboardStatsSet.addEvents(builder, EVENTSOffset);
+  DashboardStatsSet.addTopics(builder, TOPICSOffset);
   return DashboardStatsSet.endDashboardStatsSet(builder);
 }
 }
