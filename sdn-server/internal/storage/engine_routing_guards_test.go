@@ -293,7 +293,7 @@ func TestEnginePrepareFailureNeverDiscardsTheControlDatabase(t *testing.T) {
 	// failure, reached before the first query.
 	schema := engineSchemaTextExcluding(map[string]bool{"CDM.fbs": true})
 	prepare := enginePrepare(engineBootPlan{Excluded: map[string]bool{}, Sources: []string{engineDefaultSource}})
-	_, _, _, err = openControlDatabase(engine, dbPath, schema, prepare)
+	_, _, _, _, err = openControlDatabase(engine, dbPath, schema, prepare)
 	if err == nil {
 		t.Fatal("registering a file identifier for a table absent from the schema must fail the open")
 	}
@@ -380,12 +380,18 @@ func TestRecordsStoredWithTheBareStandardCodeSurviveARestart(t *testing.T) {
 		}
 	}
 
-	// Path 1: the boot rebuild that reads sdn_record_index.
+	// Path 1: the boot rebuild that reads sdn_record_index. The store above was
+	// closed cleanly, so this is a WARM open of the engine's persisted records.
 	reopened := newEngineRecordsStore(t, basePath)
 	assertOneFrame(t, reopened, "IRM")
 	assertOneFrame(t, reopened, "OMM")
-	if err := reopened.Close(); err != nil {
-		t.Fatalf("close reopened store: %v", err)
+	// A boot checkpoint persisted the engine's records and the mark, so Path 2
+	// must DISCARD the control database to be the cold journal hydration this
+	// test is about (a cold boot with pre-existing state discards it anyway).
+	controlDBPath := reopened.controlDBPath
+	simulateCrash(t, reopened)
+	if err := removeControlDatabaseFiles(controlDBPath); err != nil {
+		t.Fatalf("discard control database: %v", err)
 	}
 
 	// Path 2: the ONE-PASS record-catalog journal hydration, whose frames carry

@@ -277,6 +277,10 @@ func TestEngineRecordsBootRebuild(t *testing.T) {
 }
 
 func TestEngineHotWindowHydratesFromCompactCatalogBeforeFullReplay(t *testing.T) {
+	// A COLD boot on purpose (crash, no checkpoint): this test pins the compact
+	// journal hydration itself. A clean close persists the engine's records and
+	// the reopen would answer without it.
+	t.Setenv(checkpointIntervalEnv, "0")
 	basePath := filepath.Join(t.TempDir(), "store")
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
@@ -303,9 +307,7 @@ func TestEngineHotWindowHydratesFromCompactCatalogBeforeFullReplay(t *testing.T)
 	}, "peer-engine-catalog", nil, otherTags); err != nil {
 		t.Fatalf("StoreBatchWithSourceTags provider-two failed: %v", err)
 	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
+	simulateCrash(t, store)
 
 	reopened, err := NewFlatSQLStore(basePath, validator,
 		WithDeferredBootRebuilds(),
