@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash"
 	"hash/crc32"
@@ -30,6 +31,22 @@ const (
 	recordCatalogEventGCOlderThan  byte = 5
 
 	recordCatalogReplayBatchSize = 10000
+)
+
+// errEngineHotWindowSnapshotStale is deliberately private to the maintenance
+// replay. A compaction is allowed to replace both the journal and stream
+// inodes while a long candidate scan is in flight; the maintenance path must
+// discard that detached snapshot before it reads a single stream frame.
+var errEngineHotWindowSnapshotStale = errors.New("record catalog hot-window snapshot changed during scan")
+
+// These no-op seams keep the interleavings below deterministic in the storage
+// regression tests. They are invoked with neither the store nor journal mutex
+// held, so a test may start a writer or compaction without manufacturing an
+// impossible lock order.
+var (
+	engineHotWindowMaintenanceBeforeScan  = func() {}
+	engineHotWindowMaintenanceAfterScan   = func() {}
+	engineHotWindowMaintenanceBeforeChunk = func(int) {}
 )
 
 type recordCatalogJournal struct {
@@ -60,6 +77,16 @@ type recordCatalogJournal struct {
 	// standard count must never be a multiplier on it. Guarded by mu, read by
 	// the test that pins that invariant.
 	engineHotWindowPasses int
+}
+
+// recordCatalogEngineSnapshot pins one immutable journal inode and the valid
+// prefix that existed when the snapshot was taken. A compaction swaps the path
+// to a different inode; scanning this descriptor after releasing j.mu is safe,
+// but its stream offsets are usable only after the later identity check.
+type recordCatalogEngineSnapshot struct {
+	f    *os.File
+	info os.FileInfo
+	size int64
 }
 
 type recordCatalogEvent struct {
@@ -791,6 +818,15 @@ func (j *recordCatalogJournal) ReplayEngineHotWindowsForMaintenance(ctx context.
 	prepared := false
 	for len(pending) > 0 {
 		loaded, deferred, err := j.replayEngineHotWindowMaintenancePass(ctx, store, pending, limitFor, !prepared)
+		if errors.Is(err, errEngineHotWindowSnapshotStale) {
+			// No candidate was consumed from the detached inode. Start this
+			// pass again from the compacted journal, retaining the resident
+			// baseline established before the first attempt.
+			if err := ctx.Err(); err != nil {
+				return total, err
+			}
+			continue
+		}
 		total += loaded
 		if err != nil {
 			return total, err
@@ -806,28 +842,58 @@ func (j *recordCatalogJournal) ReplayEngineHotWindowsForMaintenance(ctx context.
 }
 
 // replayEngineHotWindowMaintenancePass does one stable journal scan then
-// consumes its candidates in bounded store-lock windows. Taking s.mu before
-// j.mu for the first baseline deliberately matches every live writer's lock
-// order; s.mu is released before the multi-GB scan, so writers may wait on the
-// journal but readers never wait behind it.
+// consumes its candidates in bounded store-lock windows. It only retains j.mu
+// long enough to detach a descriptor for the current journal inode. Holding
+// j.mu for the scan was still a reader-starvation bug: a writer can own s.mu
+// while waiting for that mutex, and RWMutex then queues every RecordIndexPage
+// reader behind it. The detached descriptor makes the scan independent of the
+// live appender; identity validation + pinned stream descriptors makes its
+// offsets safe across compaction.
 func (j *recordCatalogJournal) replayEngineHotWindowMaintenancePass(ctx context.Context, store *FlatSQLStore, schemas []string, limitFor func(string) int, prepare bool) (int, []string, error) {
 	if prepare {
 		release := store.lockWrite("HydrateEngineHotWindow: establish resident baseline")
-		j.mu.Lock()
 		for _, schemaName := range schemas {
 			store.engineResidentSet(schemaName, 0)
 		}
 		release()
-	} else {
-		j.mu.Lock()
 	}
-	windows, deferredSet, err := j.collectEngineHotWindowPassLocked(ctx, schemas, limitFor)
+
+	// Keep the live writer/compactor mutex only around the descriptor handoff.
+	// Append is permitted once this returns; size bounds the scan to the prefix
+	// already reflected in control state, and any compaction is detected below.
+	j.mu.Lock()
+	snapshot, err := j.snapshotEngineHotWindowLocked()
 	j.mu.Unlock()
 	if err != nil {
 		return 0, nil, err
 	}
+	defer snapshot.f.Close()
 
-	files := map[string]*os.File{}
+	engineHotWindowMaintenanceBeforeScan()
+	windows, deferredSet, err := collectEngineHotWindowPass(ctx, snapshot.f, snapshot.size, schemas, limitFor)
+	engineHotWindowMaintenanceAfterScan()
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// The path check and every stream open are one short read section. A
+	// compaction needs s.mu.Lock, so it cannot swap a new journal/stream inode
+	// between identity validation and the opens. Afterwards the FDs remain
+	// valid even if the paths are renamed, and no lock is retained for reads.
+	releaseRead := store.lockRead("HydrateEngineHotWindow: pin compact snapshot streams")
+	current, statErr := os.Stat(j.path)
+	if statErr != nil || !os.SameFile(snapshot.info, current) {
+		releaseRead()
+		if statErr != nil {
+			return 0, nil, fmt.Errorf("stat current record catalog journal: %w", statErr)
+		}
+		return 0, nil, errEngineHotWindowSnapshotStale
+	}
+	files, err := store.pinEngineHotWindowStreams(windows)
+	releaseRead()
+	if err != nil {
+		return 0, nil, err
+	}
 	defer func() {
 		for _, f := range files {
 			_ = f.Close()
@@ -851,7 +917,7 @@ func (j *recordCatalogJournal) replayEngineHotWindowMaintenancePass(ctx context.
 			// real resident row, and that live row must win over the snapshot.
 			continue
 		}
-		n, err := j.loadEngineHotWindowForMaintenance(store, window, files)
+		n, err := j.loadEngineHotWindowForMaintenance(ctx, store, window, files)
 		loaded += n
 		if err != nil {
 			return loaded, nil, err
@@ -868,6 +934,37 @@ func (j *recordCatalogJournal) replayEngineHotWindowMaintenancePass(ctx context.
 		log.Infof("FlatSQL engine compact hot-window maintenance: candidate budget reached; %d schema(s) deferred to a follow-up pass", len(deferred))
 	}
 	return loaded, deferred, nil
+}
+
+// snapshotEngineHotWindowLocked duplicates the journal descriptor while the
+// current inode and replay prefix are stable. The caller holds j.mu.
+func (j *recordCatalogJournal) snapshotEngineHotWindowLocked() (*recordCatalogEngineSnapshot, error) {
+	if j.f == nil {
+		return nil, nil
+	}
+	info, err := j.f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(j.path)
+	if err != nil {
+		return nil, err
+	}
+	pinnedInfo, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if !os.SameFile(info, pinnedInfo) {
+		_ = f.Close()
+		return nil, errEngineHotWindowSnapshotStale
+	}
+	size := info.Size()
+	if j.readOnly {
+		size = j.replayLimit
+	}
+	j.engineHotWindowPasses++
+	return &recordCatalogEngineSnapshot{f: f, info: pinnedInfo, size: size}, nil
 }
 
 // replayEngineHotWindowPass is ONE journal read. It returns the records loaded
@@ -898,6 +995,14 @@ func (j *recordCatalogJournal) collectEngineHotWindowPassLocked(ctx context.Cont
 	if j.readOnly {
 		size = j.replayLimit
 	}
+	return collectEngineHotWindowPass(ctx, j.f, size, schemas, limitFor)
+}
+
+// collectEngineHotWindowPass is the pure scan half of a hot-window replay.
+// The historical recovery caller invokes it while holding j.mu through the
+// wrapper above. Maintenance passes it a detached FD and deliberately scan
+// with no store/journal mutex held.
+func collectEngineHotWindowPass(ctx context.Context, file *os.File, size int64, schemas []string, limitFor func(string) int) (map[string]*recordCatalogEngineWindow, map[string]bool, error) {
 
 	// BOTH SPELLINGS PER SCHEMA. The journal frame carries the schema name the
 	// WRITER passed — the bare code for every record the module SDK and the
@@ -938,7 +1043,7 @@ func (j *recordCatalogJournal) collectEngineHotWindowPassLocked(ctx context.Cont
 			}
 		}
 		frames++
-		if _, err := j.f.ReadAt(hdr[:], off); err != nil {
+		if _, err := file.ReadAt(hdr[:], off); err != nil {
 			return nil, nil, err
 		}
 		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
@@ -946,7 +1051,7 @@ func (j *recordCatalogJournal) collectEngineHotWindowPassLocked(ctx context.Cont
 			payload = make([]byte, n)
 		}
 		frame := payload[:n]
-		if _, err := j.f.ReadAt(frame, off+8); err != nil {
+		if _, err := file.ReadAt(frame, off+8); err != nil {
 			return nil, nil, err
 		}
 		off += 8 + n
@@ -1087,7 +1192,7 @@ func (j *recordCatalogJournal) loadEngineHotWindow(store *FlatSQLStore, window *
 // loadEngineHotWindow, but scopes stream reads and engine mutation to a small
 // page. The resulting _rowid sequence remains globally oldest-first because
 // recordCatalogEngineWindow.ordered is already that order.
-func (j *recordCatalogJournal) loadEngineHotWindowForMaintenance(store *FlatSQLStore, window *recordCatalogEngineWindow, files map[string]*os.File) (int, error) {
+func (j *recordCatalogJournal) loadEngineHotWindowForMaintenance(ctx context.Context, store *FlatSQLStore, window *recordCatalogEngineWindow, files map[string]*os.File) (int, error) {
 	binding, routed := store.engineRoutedSchemaFor(window.schemaName)
 	if !routed {
 		return 0, nil
@@ -1100,6 +1205,10 @@ func (j *recordCatalogJournal) loadEngineHotWindowForMaintenance(store *FlatSQLS
 		chunk = 1
 	}
 	for start := 0; start < len(ordered); start += chunk {
+		engineHotWindowMaintenanceBeforeChunk(start)
+		if err := ctx.Err(); err != nil {
+			return loaded, err
+		}
 		end := start + chunk
 		if end > len(ordered) {
 			end = len(ordered)

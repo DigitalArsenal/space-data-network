@@ -1442,13 +1442,12 @@ func (s *FlatSQLStore) readStreamRecordCached(files map[string]*os.File, streamP
 	if recordLength < 0 || recordLength > int64(^uint32(0)) {
 		return nil, fmt.Errorf("invalid FlatSQL record length %d", recordLength)
 	}
-	clean := filepath.Clean(streamPath)
-	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
-		return nil, fmt.Errorf("invalid FlatSQL stream path %q", streamPath)
+	clean, err := cleanFlatSQLStreamPath(streamPath)
+	if err != nil {
+		return nil, err
 	}
 	file, ok := files[clean]
 	if !ok {
-		var err error
 		file, err = os.Open(filepath.Join(s.basePath, clean))
 		if err != nil {
 			return nil, err
@@ -1467,6 +1466,53 @@ func (s *FlatSQLStore) readStreamRecordCached(files map[string]*os.File, streamP
 		return nil, err
 	}
 	return data, nil
+}
+
+// cleanFlatSQLStreamPath is shared by the lazy historic recovery reader and
+// the maintenance snapshot pinner. The latter must validate exactly the same
+// paths before opening them, otherwise an eager FD cache would weaken the
+// existing traversal boundary.
+func cleanFlatSQLStreamPath(streamPath string) (string, error) {
+	clean := filepath.Clean(streamPath)
+	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("invalid FlatSQL stream path %q", streamPath)
+	}
+	return clean, nil
+}
+
+// pinEngineHotWindowStreams opens every stream referenced by a completed
+// compact-journal scan. Callers hold s.mu.RLock while this runs, so a stream
+// compaction cannot exchange path inodes between validating the journal and
+// opening these descriptors. The resulting FDs are safe to use unlocked.
+func (s *FlatSQLStore) pinEngineHotWindowStreams(windows map[string]*recordCatalogEngineWindow) (map[string]*os.File, error) {
+	files := make(map[string]*os.File)
+	closeAll := func() {
+		for _, f := range files {
+			_ = f.Close()
+		}
+	}
+	for _, window := range windows {
+		if window == nil {
+			continue
+		}
+		for _, candidate := range window.ordered() {
+			clean, err := cleanFlatSQLStreamPath(candidate.event.StreamPath)
+			if err != nil {
+				closeAll()
+				return nil, err
+			}
+			if _, ok := files[clean]; ok {
+				continue
+			}
+			file, err := os.Open(filepath.Join(s.basePath, clean))
+			if err != nil {
+				closeAll()
+				return nil, fmt.Errorf("pin FlatSQL stream %q: %w", clean, err)
+			}
+			files[clean] = file
+		}
+	}
+	return files, nil
 }
 
 // QueryEpochRawStream runs an engine-native epoch profile (nearest, as_of,

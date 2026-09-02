@@ -228,6 +228,11 @@ func (s *FlatSQLStore) appendCatalogEvent(event recordCatalogEvent) error {
 }
 
 func (s *FlatSQLStore) appendCatalogEvents(events []recordCatalogEvent) error {
+	// Control-table mutation commits before this append. Advance the source
+	// summary publication generation before attempting the journal write too:
+	// if that append fails, the caller reports failure but its already-committed
+	// source tags must still invalidate a concurrent maintenance aggregate.
+	s.sourceSummaryGeneration.Add(1)
 	if err := s.recordCatalog.AppendAll(events); err != nil {
 		return err
 	}

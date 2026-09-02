@@ -74,6 +74,105 @@ func withSourceSummaryRebuildChunk(t *testing.T, chunk int, fn func()) {
 	fn()
 }
 
+// TestMaintenanceSourceSummaryLaneYieldsToColdCATIndex is the liveness
+// regression for the other half of RebuildDerivedState. A source lane can be
+// provider-scale by itself; merely moving the hot-window work into chunks did
+// not help while this aggregation retained s.mu for every one of its slices.
+//
+// The hook pauses immediately after slice one released the lock. A live CAT
+// write advances the catalog generation, so the eventual atomic publication
+// must retry from a new high-water rather than erase that writer's incremental
+// summary. The cold record-index read is deliberately an uncached public-data
+// equivalent and must finish inside the service's 750 ms budget while the
+// remaining single-lane maintenance work is paused.
+func TestMaintenanceSourceSummaryLaneYieldsToColdCATIndex(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-satcat-csv", BatchID: "maintenance-lane"}
+	initial := make([][]byte, 0, 128)
+	for i := 0; i < cap(initial); i++ {
+		initial = append(initial, sds.NewCATBuilder().
+			WithNoradCatID(uint32(27559+i)).
+			WithObjectName(fmt.Sprintf("CAT-MAINTENANCE-%d", i)).
+			WithObjectType("PAYLOAD").
+			Build())
+	}
+	if n, err := store.StoreBatchWithSourceTags("CAT.fbs", initial, "peer-cat", nil, tags); err != nil || n != len(initial) {
+		t.Fatalf("seed CAT maintenance lane = %d, %v", n, err)
+	}
+
+	oldAfterSlice := sourceSummaryMaintenanceAfterSlice
+	started := make(chan struct{})
+	resume := make(chan struct{})
+	fired := false
+	sourceSummaryMaintenanceAfterSlice = func() {
+		if fired {
+			return
+		}
+		fired = true
+		close(started)
+		<-resume
+	}
+	t.Cleanup(func() { sourceSummaryMaintenanceAfterSlice = oldAfterSlice })
+
+	done := make(chan error, 1)
+	oldChunk := sourceSummaryRebuildChunk
+	sourceSummaryRebuildChunk = 1
+	defer func() { sourceSummaryRebuildChunk = oldChunk }()
+	go func() {
+		done <- store.rebuildSourceSummaryLaneForMaintenance(sourceSummaryLane{
+			SchemaName: "CAT.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, BatchID: tags.BatchID,
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("source-summary maintenance did not release its first slice")
+	}
+
+	// This is both the concurrent writer and the source-summary generation
+	// proof: the first aggregate is now stale and must be retried.
+	live := sds.NewCATBuilder().WithNoradCatID(99999).WithObjectName("CAT-LIVE-WRITER").WithObjectType("PAYLOAD").Build()
+	if _, err := store.StoreWithSourceTags("CAT.fbs", live, "peer-live", nil, tags); err != nil {
+		t.Fatalf("live CAT write while summary lane paused: %v", err)
+	}
+
+	startedRead := time.Now()
+	rows, total, err := store.RecordIndexPage(RecordIndexPageQuery{
+		SchemaName: "CAT.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, NoradLike: "27559", Limit: 1,
+	})
+	if err != nil {
+		t.Fatalf("cold CAT RecordIndexPage during source-summary maintenance: %v", err)
+	}
+	if elapsed := time.Since(startedRead); elapsed >= 750*time.Millisecond {
+		t.Fatalf("cold CAT RecordIndexPage took %s during source-summary maintenance", elapsed)
+	}
+	if total != 1 || len(rows) != 1 {
+		t.Fatalf("cold CAT RecordIndexPage = %d rows (%d total), want 1", len(rows), total)
+	}
+	close(resume)
+	if err := <-done; err != nil {
+		t.Fatalf("maintenance source summary lane: %v", err)
+	}
+	var count int64
+	if err := store.db.QueryRow(`SELECT COALESCE(SUM(record_count), 0) FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?`,
+		"CAT.fbs", tags.ProviderID, tags.SourceName, tags.BatchID).Scan(&count); err != nil {
+		t.Fatalf("read published CAT summary: %v", err)
+	}
+	if count != int64(len(initial)+1) {
+		t.Fatalf("published CAT summary count = %d, want %d after generation retry", count, len(initial)+1)
+	}
+}
+
 type summarySnapshotRow struct {
 	Schema, Provider, Source, Batch, PeerID, PubKey string
 	Count, Bytes, MaxRowID, FirstSeen               int64
