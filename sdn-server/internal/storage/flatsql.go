@@ -4823,6 +4823,13 @@ func (s *FlatSQLStore) Close() error {
 	// waiting for it.
 	s.stopCheckpointLoop()
 
+	// Derived-state maintenance deliberately takes derivedStateMu BEFORE s.mu
+	// and releases s.mu between bounded source/engine chunks. Close must take
+	// the same order and retain the ownership mutex through teardown: otherwise
+	// it can acquire s.mu during an unlocked scan, nil the engine/journal, and
+	// let the still-running maintenance goroutine dereference retired state.
+	s.derivedStateMu.Lock()
+	defer s.derivedStateMu.Unlock()
 	defer s.lockWrite("Close")()
 
 	// A CLEAN shutdown always advances the mark: the next boot then replays

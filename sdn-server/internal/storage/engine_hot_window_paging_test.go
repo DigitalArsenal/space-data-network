@@ -396,6 +396,76 @@ func TestMaintenanceHotWindowDetachedScanDoesNotStarveAWriterOrColdReader(t *tes
 	}
 }
 
+// TestCloseWaitsForDetachedHotWindowMaintenance pins the shutdown lifetime
+// boundary. The candidate scan intentionally runs with s.mu released; Close
+// must therefore wait on derivedStateMu before it can tear down the engine,
+// database, or journal the scan will use after it resumes.
+func TestCloseWaitsForDetachedHotWindowMaintenance(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	seed := newEngineRecordsStore(t, basePath)
+	for i := 0; i < 8; i++ {
+		if _, err := seed.Store("OMM.fbs", buildEngineOMM(t, uint32(84000+i), "CLOSE-SCAN", int64(1760000000+i)), "peer-close", nil); err != nil {
+			t.Fatalf("store OMM %d: %v", i, err)
+		}
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+
+	store := reopenDeferred(t, basePath)
+	started := make(chan struct{})
+	releaseScan := make(chan struct{})
+	oldBeforeScan := engineHotWindowMaintenanceBeforeScan
+	engineHotWindowMaintenanceBeforeScan = func() {
+		close(started)
+		<-releaseScan
+	}
+	t.Cleanup(func() { engineHotWindowMaintenanceBeforeScan = oldBeforeScan })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hydrated := make(chan error, 1)
+	go func() {
+		_, err := store.HydrateEngineHotWindowFromRecordCatalogContext(ctx)
+		hydrated <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("maintenance did not reach detached scan pause")
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- store.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned during a detached maintenance scan: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// The scan's next cancellation poll is after the hook. Releasing it only
+	// after cancellation proves Close remains blocked for the actual owner,
+	// not merely for an incidental store mutex hold.
+	cancel()
+	close(releaseScan)
+	select {
+	case err := <-hydrated:
+		if err != nil {
+			t.Fatalf("cancelled hydration returned %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("hydration did not finish after scan release")
+	}
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close after hydration: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not finish after hydration released derived state")
+	}
+}
+
 // TestMaintenanceHotWindowRetriesCompactionBetweenScanAndStreamPin proves a
 // compacted journal cannot be paired with old stream offsets. The test forces
 // CompactStreams exactly after the detached scan and before the first stream
