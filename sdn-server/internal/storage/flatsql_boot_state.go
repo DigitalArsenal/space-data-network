@@ -752,10 +752,13 @@ func openControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, p
 }
 
 func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, bool, engineRecordState, error) {
+	phase := time.Now()
 	db, err := engine.OpenDatabase(schemaText, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
 	if err != nil {
 		return nil, bootMark{}, false, engineRecordState{}, err
 	}
+	log.Infof("FlatSQL boot phase \"boot: engine OpenDatabase\" took %s", time.Since(phase).Round(time.Millisecond))
+	phase = time.Now()
 	// BEFORE THE FIRST QUERY. IsDiskBacked/ReindexAll/verifyControlDatabase all
 	// query, and the engine's virtual-table registration is a one-shot at the
 	// first query — see enginePrepare.
@@ -787,11 +790,16 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	// bookkeeping (engineResident) and the hot-window tombstones; both are
 	// restored from the tables right after open
 	// (restoreEngineResidencyFromPersistedState).
+	log.Infof("FlatSQL boot phase \"boot: prepare + IsDiskBacked\" took %s", time.Since(phase).Round(time.Millisecond))
+	phase = time.Now()
+	endState := newBootPhaseBudget(engine).phase("boot: open engine record state (OpenState)")
 	state, err := openEngineRecordState(db, dbPath)
+	endState()
 	if err != nil {
 		db.Destroy()
 		return nil, bootMark{}, false, engineRecordState{}, err
 	}
+	phase = time.Now()
 
 	if err := verifyControlDatabase(db); err != nil {
 		db.Destroy()
@@ -799,6 +807,7 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	}
 
 	mark, warm := readBootMark(db)
+	log.Infof("FlatSQL boot phase \"boot: verify + read boot mark\" took %s", time.Since(phase).Round(time.Millisecond))
 	return db, mark, warm, state, nil
 }
 
@@ -1400,8 +1409,9 @@ func (j *recordCatalogJournal) digestPrefix(limit int64) (string, error) {
 		// rewind a hash.
 		j.digest = newRecordCatalogDigest()
 		j.digestOffset = 0
+		j.lastFrameStart = -1
 	}
-	if err := extendRecordCatalogDigest(j.digest, j.f, &j.digestOffset, limit); err != nil {
+	if err := extendRecordCatalogDigestTracking(j.digest, j.f, &j.digestOffset, limit, &j.lastFrameStart); err != nil {
 		// Leave the running state consistent with what it actually covers so a
 		// later call can still extend from there.
 		return "", err
@@ -1623,6 +1633,11 @@ func (s *FlatSQLStore) persistBootMarkLocked(end int64, digest string) error {
 		return err
 	}
 	s.checkpointedOffset.Store(end)
+	// The sidecar lets the next boot trust [0, end) without re-reading it.
+	// Best-effort: without it the boot scans the whole journal, as before.
+	if err := s.recordCatalog.writePrefixMark(end, digest); err != nil {
+		log.Warnf("FlatSQL checkpoint: prefix mark not written (next boot scans the whole journal): %v", err)
+	}
 	return nil
 }
 
@@ -1753,6 +1768,13 @@ func newAuxiliaryMetadataDigest() hash.Hash {
 // extendRecordCatalogDigest folds the frame headers in [*off, limit) into h and
 // advances *off. Caller holds the journal lock.
 func extendRecordCatalogDigest(h hash.Hash, f *os.File, off *int64, limit int64) error {
+	return extendRecordCatalogDigestTracking(h, f, off, limit, nil)
+}
+
+// extendRecordCatalogDigestTracking is extendRecordCatalogDigest that also
+// reports, through last (nil = don't care), the start offset of the final
+// frame it folded in — the boundary the checkpoint sidecar records.
+func extendRecordCatalogDigestTracking(h hash.Hash, f *os.File, off *int64, limit int64, last *int64) error {
 	var hdr [8]byte
 	for *off < limit {
 		if limit-*off < 8 {
@@ -1766,6 +1788,9 @@ func extendRecordCatalogDigest(h hash.Hash, f *os.File, off *int64, limit int64)
 			return fmt.Errorf("journal prefix %d ends mid-frame at %d", limit, *off)
 		}
 		h.Write(hdr[:])
+		if last != nil {
+			*last = *off
+		}
 		*off += 8 + n
 	}
 	return nil
