@@ -192,8 +192,74 @@ func (rcv *DashboardSourceStat) MutateUpdatedAt(n int64) bool {
 	return rcv.MutateUPDATED_AT(n)
 }
 
+/// Records observed in the current rolling window.
+func (rcv *DashboardSourceStat) WINDOW_RECORDS() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *DashboardSourceStat) WindowRecords() int64 {
+	return rcv.WINDOW_RECORDS()
+}
+
+/// Records observed in the current rolling window.
+func (rcv *DashboardSourceStat) MutateWINDOW_RECORDS(n int64) bool {
+	return rcv._tab.MutateInt64Slot(22, n)
+}
+
+func (rcv *DashboardSourceStat) MutateWindowRecords(n int64) bool {
+	return rcv.MutateWINDOW_RECORDS(n)
+}
+
+/// Records observed in the immediately preceding rolling window.
+func (rcv *DashboardSourceStat) PRIOR_WINDOW_RECORDS() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *DashboardSourceStat) PriorWindowRecords() int64 {
+	return rcv.PRIOR_WINDOW_RECORDS()
+}
+
+/// Records observed in the immediately preceding rolling window.
+func (rcv *DashboardSourceStat) MutatePRIOR_WINDOW_RECORDS(n int64) bool {
+	return rcv._tab.MutateInt64Slot(24, n)
+}
+
+func (rcv *DashboardSourceStat) MutatePriorWindowRecords(n int64) bool {
+	return rcv.MutatePRIOR_WINDOW_RECORDS(n)
+}
+
+/// Rolling-window width in milliseconds (default 300000).
+func (rcv *DashboardSourceStat) WINDOW_MS() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *DashboardSourceStat) WindowMs() int64 {
+	return rcv.WINDOW_MS()
+}
+
+/// Rolling-window width in milliseconds (default 300000).
+func (rcv *DashboardSourceStat) MutateWINDOW_MS(n int64) bool {
+	return rcv._tab.MutateInt64Slot(26, n)
+}
+
+func (rcv *DashboardSourceStat) MutateWindowMs(n int64) bool {
+	return rcv.MutateWINDOW_MS(n)
+}
+
 func DashboardSourceStatStart(builder *flatbuffers.Builder) {
-	builder.StartObject(9)
+	builder.StartObject(12)
 }
 func DashboardSourceStatAddSCHEMA(builder *flatbuffers.Builder, SCHEMA flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(SCHEMA), 0)
@@ -248,6 +314,24 @@ func DashboardSourceStatAddUPDATED_AT(builder *flatbuffers.Builder, UPDATED_AT i
 }
 func DashboardSourceStatAddUpdatedAt(builder *flatbuffers.Builder, UPDATED_AT int64) {
 	DashboardSourceStatAddUPDATED_AT(builder, UPDATED_AT)
+}
+func DashboardSourceStatAddWINDOW_RECORDS(builder *flatbuffers.Builder, WINDOW_RECORDS int64) {
+	builder.PrependInt64Slot(9, WINDOW_RECORDS, 0)
+}
+func DashboardSourceStatAddWindowRecords(builder *flatbuffers.Builder, WINDOW_RECORDS int64) {
+	DashboardSourceStatAddWINDOW_RECORDS(builder, WINDOW_RECORDS)
+}
+func DashboardSourceStatAddPRIOR_WINDOW_RECORDS(builder *flatbuffers.Builder, PRIOR_WINDOW_RECORDS int64) {
+	builder.PrependInt64Slot(10, PRIOR_WINDOW_RECORDS, 0)
+}
+func DashboardSourceStatAddPriorWindowRecords(builder *flatbuffers.Builder, PRIOR_WINDOW_RECORDS int64) {
+	DashboardSourceStatAddPRIOR_WINDOW_RECORDS(builder, PRIOR_WINDOW_RECORDS)
+}
+func DashboardSourceStatAddWINDOW_MS(builder *flatbuffers.Builder, WINDOW_MS int64) {
+	builder.PrependInt64Slot(11, WINDOW_MS, 0)
+}
+func DashboardSourceStatAddWindowMs(builder *flatbuffers.Builder, WINDOW_MS int64) {
+	DashboardSourceStatAddWINDOW_MS(builder, WINDOW_MS)
 }
 func DashboardSourceStatEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

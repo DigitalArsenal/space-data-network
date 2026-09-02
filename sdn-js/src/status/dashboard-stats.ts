@@ -15,7 +15,7 @@
 
 import * as flatbuffers from 'flatbuffers';
 
-import { DashboardStatsSet } from './generated/nst.js';
+import { DashboardIngestEventKind, DashboardStatsSet } from './generated/nst.js';
 
 /** One schema's record footprint in the node's store. */
 export interface DashboardSchemaStatView {
@@ -37,6 +37,35 @@ export interface DashboardSourceStatView {
   firstIngestAt: number;
   lastIngestAt: number;
   updatedAt: number;
+  /** Records ingested during the current rolling window. */
+  windowRecords: number;
+  /** Records ingested during the immediately preceding rolling window. */
+  priorWindowRecords: number;
+  /** Rolling-window width in milliseconds. */
+  windowMs: number;
+}
+
+export type DashboardIngestEventKindView = 'stall' | 'reject' | 'recover';
+
+/** One source-ingest transition. */
+export interface DashboardIngestEventView {
+  kind: DashboardIngestEventKindView;
+  schema: string;
+  providerId: string;
+  sourceName: string;
+  message: string;
+  count: number;
+  /** Unix seconds when the transition occurred. */
+  at: number;
+}
+
+/** Live traffic for one pubsub topic. */
+export interface DashboardTopicStatView {
+  topic: string;
+  ratePerMin: number;
+  /** Unix seconds; 0 means no observation. */
+  lastSeenAt: number;
+  subscribed: boolean;
 }
 
 /** The decoded stats set as a plain view model. */
@@ -55,6 +84,8 @@ export interface DashboardStatsView {
   totalBytes: number;
   schemas: DashboardSchemaStatView[];
   sources: DashboardSourceStatView[];
+  events: DashboardIngestEventView[];
+  topics: DashboardTopicStatView[];
 }
 
 /** `$NDS`, the dashboard-stats file identifier. */
@@ -109,6 +140,38 @@ export function decodeDashboardStats(frame: Uint8Array): DashboardStatsView {
       firstIngestAt: Number(row.FIRST_INGEST_AT()),
       lastIngestAt: Number(row.LAST_INGEST_AT()),
       updatedAt: Number(row.UPDATED_AT()),
+      windowRecords: Number(row.WINDOW_RECORDS()),
+      priorWindowRecords: Number(row.PRIOR_WINDOW_RECORDS()),
+      windowMs: Number(row.WINDOW_MS()),
+    });
+  }
+
+  const events: DashboardIngestEventView[] = [];
+  const eventCount = set.eventsLength();
+  for (let i = 0; i < eventCount; i += 1) {
+    const row = set.EVENTS(i);
+    if (!row) continue;
+    events.push({
+      kind: dashboardEventKind(row.KIND()),
+      schema: row.SCHEMA() ?? '',
+      providerId: row.PROVIDER_ID() ?? '',
+      sourceName: row.SOURCE_NAME() ?? '',
+      message: row.MESSAGE() ?? '',
+      count: Number(row.COUNT()),
+      at: Number(row.AT()),
+    });
+  }
+
+  const topics: DashboardTopicStatView[] = [];
+  const topicCount = set.topicsLength();
+  for (let i = 0; i < topicCount; i += 1) {
+    const row = set.TOPICS(i);
+    if (!row) continue;
+    topics.push({
+      topic: row.TOPIC() ?? '',
+      ratePerMin: row.RATE_PER_MIN(),
+      lastSeenAt: Number(row.LAST_SEEN_AT()),
+      subscribed: row.SUBSCRIBED(),
     });
   }
 
@@ -120,5 +183,18 @@ export function decodeDashboardStats(frame: Uint8Array): DashboardStatsView {
     totalBytes: Number(set.TOTAL_BYTES()),
     schemas,
     sources,
+    events,
+    topics,
   };
+}
+
+function dashboardEventKind(kind: DashboardIngestEventKind): DashboardIngestEventKindView {
+  switch (kind) {
+    case DashboardIngestEventKind.Reject:
+      return 'reject';
+    case DashboardIngestEventKind.Recover:
+      return 'recover';
+    default:
+      return 'stall';
+  }
 }
