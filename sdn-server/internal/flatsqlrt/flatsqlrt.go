@@ -177,6 +177,7 @@ type Runtime struct {
 
 	// dispatchLogStop ends the periodic guest-call account (startDispatchLog).
 	dispatchLogStop chan struct{}
+	dispatchLogDone chan struct{}
 
 	// The in-flight statement + phase, so a poisoned engine names the SQL
 	// that poisoned it instead of the bare "(batch)" dispatch label. See
@@ -439,7 +440,13 @@ func (r *Runtime) startDispatchLog() {
 		return
 	}
 	r.dispatchLogStop = make(chan struct{})
+	r.dispatchLogDone = make(chan struct{})
+	// The goroutine reads r.mod on every tick; Close nils r.mod. Close
+	// therefore stops this goroutine and WAITS for it (dispatchLogDone) before
+	// releasing the module — the race detector caught the unsynchronised
+	// version (2026-09-02, TestRegisterLegacyPublicationPlanChunks...).
 	go func() {
+		defer close(r.dispatchLogDone)
 		t := time.NewTicker(dispatchLogInterval)
 		defer t.Stop()
 		prev := r.mod.DispatchStats()
@@ -481,6 +488,7 @@ func (r *Runtime) startDispatchLog() {
 func (r *Runtime) Close() {
 	if r.dispatchLogStop != nil {
 		close(r.dispatchLogStop)
+		<-r.dispatchLogDone
 		r.dispatchLogStop = nil
 	}
 	if r.mod != nil {
