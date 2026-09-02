@@ -46,9 +46,15 @@ type Service struct {
 	// unsigned, whereas silently falling back to signingKey would recreate the
 	// exact collision this field removes.
 	grantSigningKey ed25519.PrivateKey
+	providerEPMCID  string
 	pubsub          *ps.PubSub
 	listingTopic    *ps.Topic
+	listingSub      *ps.Subscription
 	purchaseTopic   *ps.Topic
+	listingCancel   context.CancelFunc
+	listingDone     chan struct{}
+	pendingListings map[string]pendingListingAnnouncement
+	pendingSTF      map[string]pendingListingSTF
 	subscribers     map[string]chan *Listing // listingID -> channel
 	mu              sync.RWMutex
 }
@@ -72,6 +78,9 @@ func NewService(store *Store, peerID string, signingKey, grantSigningKey ed25519
 		grantSigningKey: grantSigningKey,
 		pubsub:          pubsub,
 		subscribers:     make(map[string]chan *Listing),
+		pendingListings: make(map[string]pendingListingAnnouncement),
+		pendingSTF:      make(map[string]pendingListingSTF),
+		listingDone:     make(chan struct{}),
 	}
 
 	// Join PubSub topics if available
@@ -80,6 +89,15 @@ func NewService(store *Store, peerID string, signingKey, grantSigningKey ed25519
 		svc.listingTopic, err = pubsub.Join(StorefrontListingsTopic)
 		if err != nil {
 			log.Warnf("Failed to join listings topic: %v", err)
+		} else {
+			svc.listingSub, err = svc.listingTopic.Subscribe()
+			if err != nil {
+				log.Warnf("Failed to subscribe to listings topic: %v", err)
+			} else {
+				ctx, cancel := context.WithCancel(context.Background())
+				svc.listingCancel = cancel
+				go svc.runListingSubscription(ctx)
+			}
 		}
 
 		svc.purchaseTopic, err = pubsub.Join(StorefrontPurchasesTopic)
@@ -1308,6 +1326,13 @@ func generateToken(length int) string {
 
 // Close closes the service
 func (s *Service) Close() error {
+	if s.listingCancel != nil {
+		s.listingCancel()
+		<-s.listingDone
+	}
+	if s.listingSub != nil {
+		s.listingSub.Cancel()
+	}
 	if s.listingTopic != nil {
 		s.listingTopic.Close()
 	}
