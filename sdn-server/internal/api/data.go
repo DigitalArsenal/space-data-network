@@ -5,16 +5,23 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 
@@ -64,20 +71,23 @@ func NewDataQueryHandlerWithUICache(store *storage.FlatSQLStore, uiCacheDir stri
 }
 
 // RegisterRoutes registers the NATIVE data API routes: health/summary
-// introspection and the datasync sync surface (scan/stream/query/records —
-// the sdn-js remote backend and node-to-node HTTP sync contract).
+// introspection, the streaming CSV/JSONL bulk-export adapters, and the datasync
+// sync surface (scan/stream/query/records — the sdn-js remote backend and
+// node-to-node HTTP sync contract).
 //
 // The record-serving "manual http" endpoints that used to live here
 // (omm, omm/bulk, mpe, mpe/bulk, cat, cat/bulk, spw/bulk, secure/omm) were
 // RETIRED in loop C.4: /api/v1/data/* record retrieval is served by the
 // data-retrieval FLOW module mounted through the config mount table
 // (config flows.mounts, default mount path "/api/v1/data/"). Param parsing,
-// profile resolution, format selection (flatbuffers default, json branch)
-// and ETag/304 handling all execute inside the WASM flow; the Go host is
-// pure socket plumbing (internal/flowrt/httpmount.go). Exact-match native
-// routes below take precedence over the flow's subtree mount on
-// http.ServeMux, so the two coexist on the same mux.
+// profile resolution, and FlatBuffer selection remain shared with that lane.
+// The exact OMM/CAT bulk adapters below add schema-generic presentation
+// encodings without buffering a full response. Exact-match native routes take
+// precedence over the flow's subtree mount on http.ServeMux, so the two
+// coexist on the same mux.
 func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/data/omm/bulk", h.handleOMMBulkExport)
+	mux.HandleFunc("/api/v1/data/cat/bulk", h.handleCATBulkExport)
 	mux.HandleFunc("/api/v1/data/health", h.handleHealth)
 	mux.HandleFunc("/api/v1/data/index", h.handleRecordIndex)
 	mux.HandleFunc("/api/v1/data/summary", h.handleSummary)
@@ -1080,6 +1090,644 @@ func parseBool(r *http.Request, key string) bool {
 	return raw == "1" || raw == "true" || raw == "yes"
 }
 
+type bulkExportFormat string
+
+const (
+	bulkFormatFlatBuffer bulkExportFormat = "flatbuffer"
+	bulkFormatJSON       bulkExportFormat = "json"
+	bulkFormatCSV        bulkExportFormat = "csv"
+	bulkFormatJSONL      bulkExportFormat = "jsonl"
+)
+
+func requestedBulkExportFormat(r *http.Request) (bulkExportFormat, error) {
+	// Accept is deliberately ignored: the public bulk-lane contract selects
+	// presentation encodings only through the format query parameter.
+	switch value := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format"))); value {
+	case "", "flatbuffer", "flatbuffers", "binary", "fbs", "fb":
+		return bulkFormatFlatBuffer, nil
+	case "json", "application/json":
+		return bulkFormatJSON, nil
+	case "csv", "text/csv":
+		return bulkFormatCSV, nil
+	case "jsonl", "ndjson", "application/x-ndjson":
+		return bulkFormatJSONL, nil
+	default:
+		return "", fmt.Errorf("unsupported format %q; use flatbuffer, json, csv, or jsonl", value)
+	}
+}
+
+func (h *DataQueryHandler) handleOMMBulkExport(w http.ResponseWriter, r *http.Request) {
+	h.handleBulkExport(w, r, "OMM.fbs", "omm")
+}
+
+func (h *DataQueryHandler) handleCATBulkExport(w http.ResponseWriter, r *http.Request) {
+	h.handleBulkExport(w, r, "CAT.fbs", "cat")
+}
+
+func (h *DataQueryHandler) handleBulkExport(w http.ResponseWriter, r *http.Request, schemaName, standard string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	format, err := requestedBulkExportFormat(r)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		http.Error(w, err.Error()+".", http.StatusBadRequest)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	records, err := h.bulkExportRecords(r, schemaName)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("X-SDN-Schema", schemaName)
+	w.Header().Set("X-SDN-Record-Count", strconv.Itoa(len(records)))
+	w.Header().Set("ETag", bulkExportETag(schemaName, records))
+	if match := strings.TrimSpace(r.Header.Get("If-None-Match")); match != "" && match == w.Header().Get("ETag") {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	if format == bulkFormatFlatBuffer {
+		writeFlatBufferRecordStreamWithContentType(w, schemaName, records, ContentTypeFlatBufferStream, h.store)
+		return
+	}
+
+	binding, err := bulkBindingForSchema(schemaName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	switch format {
+	case bulkFormatJSON:
+		w.Header().Set("Content-Type", ContentTypeJSON)
+		w.WriteHeader(http.StatusOK)
+		_ = writeBulkJSONArray(w, binding, records)
+	case bulkFormatCSV:
+		w.Header().Set("Content-Type", ContentTypeCSV)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", bulkExportFilename(standard, bulkExportAsOf(r, records), "csv")))
+		w.WriteHeader(http.StatusOK)
+		_ = writeBulkCSV(w, binding, records)
+	case bulkFormatJSONL:
+		w.Header().Set("Content-Type", ContentTypeJSONL)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", bulkExportFilename(standard, bulkExportAsOf(r, records), "jsonl")))
+		w.WriteHeader(http.StatusOK)
+		_ = writeBulkJSONLines(w, binding, records)
+	}
+}
+
+func (h *DataQueryHandler) bulkExportRecords(r *http.Request, schemaName string) ([]*storage.Record, error) {
+	values := r.URL.Query()
+	limit := parseLimit(r, 50000, 250000)
+	providerID := firstNonEmptyDataString(values.Get("provider_id"), values.Get("providerId"))
+	sourceName := firstNonEmptyDataString(values.Get("source"), values.Get("source_name"), values.Get("sourceName"))
+	batchID := firstNonEmptyDataString(values.Get("batch_id"), values.Get("batchId"))
+
+	if schemaName == "OMM.fbs" {
+		profile := firstNonEmptyDataString(values.Get("profile"), values.Get("mode"))
+		profile = strings.TrimPrefix(profile, "epoch.")
+		if profile == "" {
+			profile = "nearest"
+		}
+		query := storage.EpochRecordQuery{
+			SchemaName: schemaName,
+			Profile:    "epoch." + profile,
+			ProviderID: providerID,
+			SourceName: sourceName,
+			BatchID:    batchID,
+			Limit:      limit,
+		}
+		if day := strings.TrimSpace(values.Get("day")); day != "" {
+			if _, err := time.Parse("2006-01-02", day); err != nil {
+				return nil, fmt.Errorf("invalid day (expected YYYY-MM-DD)")
+			}
+			query.Profile = storage.EpochProfileDay
+			query.Day = day
+		} else if fromRaw, toRaw := strings.TrimSpace(values.Get("from")), strings.TrimSpace(values.Get("to")); fromRaw != "" || toRaw != "" {
+			from, err := time.Parse(time.RFC3339, fromRaw)
+			if err != nil {
+				return nil, fmt.Errorf("invalid from (expected RFC3339)")
+			}
+			to, err := time.Parse(time.RFC3339, toRaw)
+			if err != nil {
+				return nil, fmt.Errorf("invalid to (expected RFC3339)")
+			}
+			query.Profile = storage.EpochProfileWindow
+			query.From = &from
+			query.To = &to
+		} else {
+			at, err := parseBulkExportEpoch(firstNonEmptyDataString(values.Get("epoch"), values.Get("at")))
+			if err != nil {
+				return nil, err
+			}
+			query.At = at
+		}
+		matches, err := h.store.QueryEpochRecords(query)
+		if err != nil {
+			return nil, err
+		}
+		records := make([]*storage.Record, 0, len(matches))
+		for _, match := range matches {
+			records = append(records, match.Record)
+		}
+		return records, nil
+	}
+
+	filter := storage.IndexedRecordQuery{
+		SchemaName:          schemaName,
+		ProviderID:          providerID,
+		SourceName:          sourceName,
+		BatchID:             batchID,
+		Day:                 strings.TrimSpace(values.Get("day")),
+		Limit:               limit,
+		AllowLargeResultSet: true,
+	}
+	if filter.Day != "" {
+		if _, err := time.Parse("2006-01-02", filter.Day); err != nil {
+			return nil, fmt.Errorf("invalid day (expected YYYY-MM-DD)")
+		}
+	}
+	if fromRaw := strings.TrimSpace(values.Get("from")); fromRaw != "" {
+		from, err := time.Parse(time.RFC3339, fromRaw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid from (expected RFC3339)")
+		}
+		filter.From = &from
+	}
+	if toRaw := strings.TrimSpace(values.Get("to")); toRaw != "" {
+		to, err := time.Parse(time.RFC3339, toRaw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid to (expected RFC3339)")
+		}
+		filter.To = &to
+	}
+	return h.store.QueryIndexedRecords(filter)
+}
+
+func parseBulkExportEpoch(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Now().UTC(), nil
+	}
+	if seconds, err := strconv.ParseFloat(raw, 64); err == nil {
+		whole, fraction := mathModf(seconds)
+		return time.Unix(int64(whole), int64(fraction*float64(time.Second))).UTC(), nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid epoch (expected RFC3339 or unix seconds)")
+	}
+	return parsed.UTC(), nil
+}
+
+// mathModf is the small, dependency-free subset of math.Modf needed for unix
+// timestamps with fractional seconds.
+func mathModf(value float64) (float64, float64) {
+	whole := float64(int64(value))
+	return whole, value - whole
+}
+
+func bulkExportETag(schemaName string, records []*storage.Record) string {
+	hash := sha256.New()
+	_, _ = io.WriteString(hash, schemaName)
+	for _, record := range records {
+		_, _ = io.WriteString(hash, "\x00"+record.CID)
+	}
+	return `"` + hex.EncodeToString(hash.Sum(nil)) + `"`
+}
+
+func bulkExportAsOf(r *http.Request, records []*storage.Record) string {
+	values := r.URL.Query()
+	if raw := firstNonEmptyDataString(values.Get("as-of"), values.Get("as_of"), values.Get("day")); raw != "" {
+		return sanitizeBulkFilenamePart(raw)
+	}
+	if raw := firstNonEmptyDataString(values.Get("epoch"), values.Get("at")); raw != "" {
+		if parsed, err := parseBulkExportEpoch(raw); err == nil {
+			return parsed.Format("2006-01-02")
+		}
+	}
+	latest := time.Time{}
+	for _, record := range records {
+		candidate := record.MaterializedAt
+		if candidate.IsZero() {
+			candidate = record.Timestamp
+		}
+		if candidate.After(latest) {
+			latest = candidate
+		}
+	}
+	if latest.IsZero() {
+		latest = time.Now().UTC()
+	}
+	return latest.UTC().Format("2006-01-02")
+}
+
+func sanitizeBulkFilenamePart(value string) string {
+	var out strings.Builder
+	for _, char := range strings.TrimSpace(value) {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.' {
+			out.WriteRune(char)
+		}
+	}
+	if out.Len() == 0 {
+		return "latest"
+	}
+	return out.String()
+}
+
+func bulkExportFilename(standard, asOf, extension string) string {
+	return sanitizeBulkFilenamePart(strings.ToLower(standard)) + "-" + sanitizeBulkFilenamePart(asOf) + "." + extension
+}
+
+type bulkBindingFieldKind uint8
+
+const (
+	bulkBindingScalar bulkBindingFieldKind = iota
+	bulkBindingTable
+	bulkBindingVector
+	bulkBindingTableVector
+	bulkBindingUnion
+)
+
+type bulkBindingField struct {
+	name         string
+	getter       reflect.Method
+	lengthGetter reflect.Method
+	kind         bulkBindingFieldKind
+	childType    reflect.Type
+	line         int
+}
+
+type bulkBinding struct {
+	schemaName string
+	rootType   reflect.Type
+	fields     []bulkBindingField
+	decode     func([]byte) (interface{}, error)
+}
+
+var (
+	bulkBindings    sync.Map // schema name -> *bulkBinding
+	bindingFieldsBy sync.Map // reflect.Type -> []bulkBindingField
+)
+
+func bulkBindingForSchema(schemaName string) (*bulkBinding, error) {
+	if cached, ok := bulkBindings.Load(schemaName); ok {
+		return cached.(*bulkBinding), nil
+	}
+	binding := &bulkBinding{schemaName: schemaName}
+	switch schemaName {
+	case "OMM.fbs":
+		binding.rootType = reflect.TypeOf((*OMM.OMM)(nil))
+		binding.decode = func(data []byte) (interface{}, error) { return decodeOMM(data) }
+	case "CAT.fbs":
+		binding.rootType = reflect.TypeOf((*CAT.CAT)(nil))
+		binding.decode = func(data []byte) (interface{}, error) { return decodeCAT(data) }
+	default:
+		return nil, fmt.Errorf("no generated Go binding registered for %s", schemaName)
+	}
+	fields, err := generatedBindingFields(binding.rootType)
+	if err != nil {
+		return nil, err
+	}
+	binding.fields = fields
+	actual, _ := bulkBindings.LoadOrStore(schemaName, binding)
+	return actual.(*bulkBinding), nil
+}
+
+// generatedBindingFields discovers the IDL accessors from the generated Go
+// binding and orders them by their compiled source-line metadata. The Go
+// reflection API exposes methods alphabetically; the source line is what
+// preserves the FlatBuffers generator's schema declaration order without a
+// second, hand-maintained list.
+func generatedBindingFields(rootType reflect.Type) ([]bulkBindingField, error) {
+	if cached, ok := bindingFieldsBy.Load(rootType); ok {
+		return cached.([]bulkBindingField), nil
+	}
+	if rootType.Kind() != reflect.Ptr || rootType.Elem().Kind() != reflect.Struct {
+		return nil, fmt.Errorf("generated binding root must be a pointer to struct, got %s", rootType)
+	}
+	fields := make([]bulkBindingField, 0, rootType.NumMethod())
+	for index := 0; index < rootType.NumMethod(); index++ {
+		method := rootType.Method(index)
+		if !isGeneratedIDLAccessor(method.Name) {
+			continue
+		}
+		field := bulkBindingField{name: method.Name, getter: method}
+		if fn := runtime.FuncForPC(method.Func.Pointer()); fn != nil {
+			_, field.line = fn.FileLine(method.Func.Pointer())
+		}
+		lengthGetter, hasLength := rootType.MethodByName(method.Name + "Length")
+		switch method.Type.NumIn() {
+		case 1:
+			if method.Type.NumOut() != 1 {
+				continue
+			}
+			field.kind = bulkBindingScalar
+		case 2:
+			if method.Type.NumOut() != 1 {
+				continue
+			}
+			argument := method.Type.In(1)
+			result := method.Type.Out(0)
+			switch {
+			case hasLength && argument.Kind() == reflect.Int:
+				field.kind = bulkBindingVector
+				field.lengthGetter = lengthGetter
+			case argument.Kind() == reflect.Ptr && result.Kind() == reflect.Ptr:
+				field.kind = bulkBindingTable
+				field.childType = argument
+			case argument.Kind() == reflect.Ptr && result.Kind() == reflect.Bool:
+				field.kind = bulkBindingUnion
+				field.childType = argument
+			default:
+				continue
+			}
+		case 3:
+			if !hasLength || method.Type.In(1).Kind() != reflect.Ptr || method.Type.In(2).Kind() != reflect.Int ||
+				method.Type.NumOut() != 1 || method.Type.Out(0).Kind() != reflect.Bool {
+				continue
+			}
+			field.kind = bulkBindingTableVector
+			field.childType = method.Type.In(1)
+			field.lengthGetter = lengthGetter
+		default:
+			continue
+		}
+		fields = append(fields, field)
+	}
+	sort.SliceStable(fields, func(i, j int) bool {
+		if fields[i].line == fields[j].line {
+			return fields[i].name < fields[j].name
+		}
+		return fields[i].line < fields[j].line
+	})
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("generated binding %s exposes no IDL accessors", rootType)
+	}
+	bindingFieldsBy.Store(rootType, fields)
+	return fields, nil
+}
+
+func isGeneratedIDLAccessor(name string) bool {
+	if strings.HasPrefix(name, "Mutate") || strings.HasSuffix(name, "Length") || strings.HasSuffix(name, "Bytes") {
+		return false
+	}
+	if name == strings.ToUpper(name) {
+		return name != ""
+	}
+	return strings.HasSuffix(name, "_type") && strings.TrimSuffix(name, "_type") == strings.ToUpper(strings.TrimSuffix(name, "_type"))
+}
+
+func bindingObject(root interface{}, fields []bulkBindingField) (map[string]interface{}, error) {
+	value := reflect.ValueOf(root)
+	if !value.IsValid() || (value.Kind() == reflect.Ptr && value.IsNil()) {
+		return nil, nil
+	}
+	object := make(map[string]interface{}, len(fields))
+	for _, field := range fields {
+		fieldValue, err := bindingFieldValue(value, field)
+		if err != nil {
+			return nil, err
+		}
+		object[field.name] = fieldValue
+	}
+	return object, nil
+}
+
+func bindingFieldValue(root reflect.Value, field bulkBindingField) (interface{}, error) {
+	switch field.kind {
+	case bulkBindingScalar:
+		result := field.getter.Func.Call([]reflect.Value{root})[0]
+		return exportedBindingScalar(result), nil
+	case bulkBindingTable:
+		child := reflect.New(field.childType.Elem())
+		result := field.getter.Func.Call([]reflect.Value{root, child})[0]
+		if result.IsNil() {
+			return nil, nil
+		}
+		fields, err := generatedBindingFields(field.childType)
+		if err != nil {
+			return nil, err
+		}
+		return bindingObject(result.Interface(), fields)
+	case bulkBindingVector:
+		length := int(field.lengthGetter.Func.Call([]reflect.Value{root})[0].Int())
+		values := make([]interface{}, 0, length)
+		for index := 0; index < length; index++ {
+			result := field.getter.Func.Call([]reflect.Value{root, reflect.ValueOf(index)})[0]
+			values = append(values, exportedBindingScalar(result))
+		}
+		return values, nil
+	case bulkBindingTableVector:
+		length := int(field.lengthGetter.Func.Call([]reflect.Value{root})[0].Int())
+		values := make([]interface{}, 0, length)
+		childFields, err := generatedBindingFields(field.childType)
+		if err != nil {
+			return nil, err
+		}
+		for index := 0; index < length; index++ {
+			child := reflect.New(field.childType.Elem())
+			ok := field.getter.Func.Call([]reflect.Value{root, child, reflect.ValueOf(index)})[0].Bool()
+			if !ok {
+				values = append(values, nil)
+				continue
+			}
+			object, err := bindingObject(child.Interface(), childFields)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, object)
+		}
+		return values, nil
+	case bulkBindingUnion:
+		// The generated union discriminator is exported as its adjacent *_type
+		// field. A union table has no schema-independent concrete Go type, so its
+		// value remains null here instead of being guessed from raw table bytes.
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unsupported generated binding field %s", field.name)
+	}
+}
+
+func exportedBindingScalar(value reflect.Value) interface{} {
+	if value.Kind() == reflect.Slice && value.Type().Elem().Kind() == reflect.Uint8 {
+		return string(value.Bytes())
+	}
+	if value.CanInterface() {
+		if stringer, ok := value.Interface().(fmt.Stringer); ok {
+			return stringer.String()
+		}
+		return value.Interface()
+	}
+	switch value.Kind() {
+	case reflect.Bool:
+		return value.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return value.Int()
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return value.Uint()
+	case reflect.Float32, reflect.Float64:
+		return value.Float()
+	case reflect.String:
+		return value.String()
+	default:
+		return nil
+	}
+}
+
+func bindingCSVHeader(fields []bulkBindingField) ([]string, error) {
+	return appendBindingCSVHeader(nil, "", fields)
+}
+
+func appendBindingCSVHeader(header []string, prefix string, fields []bulkBindingField) ([]string, error) {
+	for _, field := range fields {
+		name := prefix + field.name
+		if field.kind != bulkBindingTable {
+			header = append(header, name)
+			continue
+		}
+		children, err := generatedBindingFields(field.childType)
+		if err != nil {
+			return nil, err
+		}
+		header, err = appendBindingCSVHeader(header, name+".", children)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return header, nil
+}
+
+func bindingCSVValues(fields []bulkBindingField, object map[string]interface{}) ([]string, error) {
+	values := make([]string, 0, len(fields))
+	return appendBindingCSVValues(values, fields, object)
+}
+
+func appendBindingCSVValues(values []string, fields []bulkBindingField, object map[string]interface{}) ([]string, error) {
+	for _, field := range fields {
+		value := object[field.name]
+		if field.kind == bulkBindingTable {
+			children, err := generatedBindingFields(field.childType)
+			if err != nil {
+				return nil, err
+			}
+			if child, ok := value.(map[string]interface{}); ok {
+				values, err = appendBindingCSVValues(values, children, child)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			}
+			childHeader, err := bindingCSVHeader(children)
+			if err != nil {
+				return nil, err
+			}
+			for range childHeader {
+				values = append(values, "")
+			}
+			continue
+		}
+		if value == nil {
+			values = append(values, "")
+			continue
+		}
+		if field.kind == bulkBindingVector || field.kind == bulkBindingTableVector {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, string(encoded))
+			continue
+		}
+		values = append(values, fmt.Sprint(value))
+	}
+	return values, nil
+}
+
+func writeBulkCSV(writer io.Writer, binding *bulkBinding, records []*storage.Record) error {
+	header, err := bindingCSVHeader(binding.fields)
+	if err != nil {
+		return err
+	}
+	csvWriter := csv.NewWriter(writer)
+	csvWriter.UseCRLF = true
+	if err := csvWriter.Write(header); err != nil {
+		return err
+	}
+	for _, record := range records {
+		root, err := binding.decode(record.Data)
+		if err != nil {
+			return err
+		}
+		object, err := bindingObject(root, binding.fields)
+		if err != nil {
+			return err
+		}
+		row, err := bindingCSVValues(binding.fields, object)
+		if err != nil {
+			return err
+		}
+		if err := csvWriter.Write(row); err != nil {
+			return err
+		}
+	}
+	csvWriter.Flush()
+	return csvWriter.Error()
+}
+
+func writeBulkJSONArray(writer io.Writer, binding *bulkBinding, records []*storage.Record) error {
+	if _, err := io.WriteString(writer, "["); err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(writer)
+	encoder.SetEscapeHTML(false)
+	for index, record := range records {
+		if index > 0 {
+			if _, err := io.WriteString(writer, ","); err != nil {
+				return err
+			}
+		}
+		root, err := binding.decode(record.Data)
+		if err != nil {
+			return err
+		}
+		object, err := bindingObject(root, binding.fields)
+		if err != nil {
+			return err
+		}
+		if err := encoder.Encode(object); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(writer, "]")
+	return err
+}
+
+func writeBulkJSONLines(writer io.Writer, binding *bulkBinding, records []*storage.Record) error {
+	encoder := json.NewEncoder(writer)
+	encoder.SetEscapeHTML(false)
+	for _, record := range records {
+		root, err := binding.decode(record.Data)
+		if err != nil {
+			return err
+		}
+		object, err := bindingObject(root, binding.fields)
+		if err != nil {
+			return err
+		}
+		if err := encoder.Encode(object); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func requestedRawFlatBufferStream(r *http.Request) bool {
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
 	if format == "raw-flatbuffer-stream" || format == "flatbuffer-stream" || format == "flatbuffers-stream" {
@@ -1148,6 +1796,17 @@ func decodeOMM(data []byte) (*OMM.OMM, error) {
 		return OMM.GetRootAsOMM(data, 0), nil
 	default:
 		return nil, fmt.Errorf("invalid OMM buffer")
+	}
+}
+
+func decodeCAT(data []byte) (*CAT.CAT, error) {
+	switch {
+	case CAT.SizePrefixedCATBufferHasIdentifier(data):
+		return CAT.GetSizePrefixedRootAsCAT(data, 0), nil
+	case CAT.CATBufferHasIdentifier(data):
+		return CAT.GetRootAsCAT(data, 0), nil
+	default:
+		return nil, fmt.Errorf("invalid CAT buffer")
 	}
 }
 
