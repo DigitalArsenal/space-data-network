@@ -205,6 +205,7 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 
 	// PubSub topic listing — public GET.
 	mux.HandleFunc("/api/v1/pubsub/topics", h.withRL(h.handleTopics))
+	mux.HandleFunc("/api/v1/standards", h.withRL(h.handleStandards))
 
 	// PubSub publish — requires standard auth when authHandler is present.
 	mux.HandleFunc("/api/v1/pubsub/publish", h.withRL(h.requireAuth(peers.Standard, h.handlePubSubPublish)))
