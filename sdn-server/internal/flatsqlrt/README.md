@@ -16,9 +16,10 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 `flatsql` repo (superproject submodule `repos/main-packages/flatsql`):
 
 - source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
-- flatsql commit: `c075dec`, tag **v1.4.3** (FlatSQL's own `sqlite3_vfs` over the
-  seven `env` file imports — disk-backed databases)
-- sha256: `9cf0c3b027ef24e2958eea8301f91093b3a2c9d12555641a123753cbdb07c3be`
+- flatsql commit: `fa3b186`, **1.4.5** (source PARTITIONS survive a teardown —
+  `_flatsql_sources` / `_flatsql_source_ranges` next to the mark; the same bytes
+  sdn-js pins as `flatsql@1.4.5`)
+- sha256: `6ba592213a8550269746afd6cfb3c7b87288ffcf8ddceda4d2722e4227b2c249`
 
 ### The seven `env` imports are a HARD GATE
 

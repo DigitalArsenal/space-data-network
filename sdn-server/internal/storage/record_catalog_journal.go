@@ -1037,7 +1037,7 @@ func (j *recordCatalogJournal) loadEngineHotWindow(ctx context.Context, store *F
 			}
 			return err
 		}
-		if _, err := store.engineDB.IngestWithSource(stream, source); err != nil {
+		if err := store.ingestEngineStreamLocked(stream, source); err != nil {
 			log.Warnf("FlatSQL engine compact hot-window rebuild: ingest %d %s record(s): %v", n, window.schemaName, err)
 			if store.engine.Poisoned() {
 				poisoned = fmt.Errorf("FlatSQL engine poisoned during compact hot-window rebuild: %w", err)
