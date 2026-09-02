@@ -261,3 +261,54 @@ func TestReadersInterleaveWithBackgroundHotWindowHydration(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// TestEngineStateFlushedAfterHydrationSurvivesACrash: the hot-window hydration
+// flushes the engine's record stream as soon as it completes, so a crash before
+// the catalog checkpoint (the production shape: a cold catalog replay takes
+// minutes) still leaves a database the next boot opens WARM instead of one it
+// must discard.
+func TestEngineStateFlushedAfterHydrationSurvivesACrash(t *testing.T) {
+	t.Setenv(checkpointIntervalEnv, "0")
+	basePath := filepath.Join(t.TempDir(), "store")
+	seed := newEngineRecordsStore(t, basePath)
+	if !seed.BootReplay().Durable {
+		t.Skip("engine has no filesystem on this host")
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := seed.Store("OMM", buildEngineOMM(t, uint32(7000+i), "F", 1700000000+int64(i)), "peer", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	simulateCrash(t, seed) // cold next time
+
+	cold := reopenDeferred(t, basePath)
+	if cold.BootReplay().EngineWarm {
+		t.Fatal("expected a cold engine")
+	}
+	// The daemon's order: catalog first (its checkpoint makes the database
+	// survive), then the engine window (its flush + coverage mark make the
+	// engine survive). Die right after — no further checkpoint.
+	if _, err := cold.HydrateRecordCatalog(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cold.HydrateEngineHotWindowFromRecordCatalog(); err != nil {
+		t.Fatal(err)
+	}
+	simulateCrash(t, cold)
+
+	again := reopenDeferred(t, basePath)
+	defer again.Close()
+	stats := again.BootReplay()
+	if !stats.EngineWarm || stats.EngineRecords != 3 {
+		t.Fatalf("after a crash following hydration the engine state must be warm with 3 records: %+v", stats)
+	}
+	if got := engineFrameCount(t, again, "OMM"); got != 3 {
+		t.Fatalf("OMM answers %d frames, want 3", got)
+	}
+	if loaded, err := again.HydrateEngineHotWindowFromRecordCatalog(); err != nil || loaded != 0 {
+		t.Fatalf("hydration after the warm reopen loaded %d (err=%v), want 0", loaded, err)
+	}
+	if got := engineFrameCount(t, again, "OMM"); got != 3 {
+		t.Fatalf("OMM answers %d frames after hydration, want 3 (no duplicates)", got)
+	}
+}
