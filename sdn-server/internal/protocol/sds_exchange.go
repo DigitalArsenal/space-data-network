@@ -506,6 +506,9 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 		log.Warnf("PubSub message rejected: invalid schema name from %s: %v", from.ShortString(), err)
 		return fmt.Errorf("invalid schema name: %w", err)
 	}
+	// The dashboard's TOPICS lane: every admitted message is one observation
+	// on its schema topic (the same name the topics endpoint lists).
+	DefaultTopicActivity.Observe("/spacedatanetwork/sds/"+schema, time.Now())
 
 	if len(data) == 0 {
 		return errors.New("message too short")
