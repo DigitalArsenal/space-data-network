@@ -730,6 +730,36 @@ func (w *recordCatalogEngineWindow) ordered() []*recordCatalogEngineCandidate {
 // window for decorated standards, the smaller generic one for the rest). A
 // schema whose limit is <= 0 is skipped entirely.
 func (j *recordCatalogJournal) ReplayEngineHotWindows(ctx context.Context, store *FlatSQLStore, schemas []string, limitFor func(string) int) (int, error) {
+	return j.ReplayEngineHotWindowsOpts(ctx, store, schemas, limitFor, engineReplayOptions{CallerHoldsStoreLock: true})
+}
+
+// engineReplayOptions shapes one engine hot-window replay.
+type engineReplayOptions struct {
+	// From is the journal offset to start at (0 = the whole journal); see
+	// ReplayEngineHotWindowsFrom.
+	From int64
+	// CallerHoldsStoreLock says the caller already owns the store write lock
+	// (open before the store is shared, RebuildDerivedState, poison recovery).
+	// When false — the daemon's background hydration — the replay takes the
+	// lock PER INGEST BATCH and releases it between batches, so every reader
+	// lane (directory, sources, summary, identity) interleaves with the
+	// rebuild instead of parking behind it for its whole duration (owner
+	// 2026-09-02: reads are independent of data-layer maintenance).
+	CallerHoldsStoreLock bool
+}
+
+// ReplayEngineHotWindowsFrom is ReplayEngineHotWindows over the journal TAIL
+// starting at a frame boundary the caller has proved names this journal (the
+// resume mark): the engine already holds every record below it from its
+// persisted state, so the tail's records are ADDED to the resident counts and
+// the hot window is re-enforced per schema afterwards. from <= 0 is the whole
+// journal.
+func (j *recordCatalogJournal) ReplayEngineHotWindowsFrom(ctx context.Context, store *FlatSQLStore, schemas []string, limitFor func(string) int, from int64) (int, error) {
+	return j.ReplayEngineHotWindowsOpts(ctx, store, schemas, limitFor, engineReplayOptions{From: from, CallerHoldsStoreLock: true})
+}
+
+// ReplayEngineHotWindowsOpts is the general form of ReplayEngineHotWindows.
+func (j *recordCatalogJournal) ReplayEngineHotWindowsOpts(ctx context.Context, store *FlatSQLStore, schemas []string, limitFor func(string) int, opts engineReplayOptions) (int, error) {
 	if j == nil || j.f == nil || limitFor == nil {
 		return 0, nil
 	}
@@ -748,7 +778,7 @@ func (j *recordCatalogJournal) ReplayEngineHotWindows(ctx context.Context, store
 
 	total := 0
 	for len(pending) > 0 {
-		loaded, deferred, err := j.replayEngineHotWindowPass(ctx, store, pending, limitFor)
+		loaded, deferred, err := j.replayEngineHotWindowPass(ctx, store, pending, limitFor, opts)
 		total += loaded
 		if err != nil {
 			return total, err
@@ -768,19 +798,33 @@ func (j *recordCatalogJournal) ReplayEngineHotWindows(ctx context.Context, store
 // replayEngineHotWindowPass is ONE journal read. It returns the records loaded
 // into the engine and the schemas it deferred because the candidate budget was
 // already spent when it first met them.
-func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, store *FlatSQLStore, schemas []string, limitFor func(string) int) (int, []string, error) {
+func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, store *FlatSQLStore, schemas []string, limitFor func(string) int, opts engineReplayOptions) (int, []string, error) {
+	from := opts.From
+	// THE JOURNAL LOCK COVERS THE SIZE SNAPSHOT ONLY. The file is append-only
+	// and ReadAt on a prefix is safe against a concurrent append, so the scan
+	// below runs WITHOUT j.mu: a live writer (store.mu -> journal.mu) must never
+	// park on this pass while holding the store lock, or every reader parks
+	// behind it too. Frames appended after the snapshot are ingested by the
+	// writer itself and are simply not part of this pass.
 	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.engineHotWindowPasses++
-
 	info, err := j.f.Stat()
 	if err != nil {
+		j.mu.Unlock()
 		return 0, nil, err
 	}
 	size := info.Size()
 	if j.readOnly {
 		size = j.replayLimit
 	}
+	// A TAIL replay starts at the resume mark. A mark at (or past) the end is
+	// the clean-restart case: nothing to ingest, and no pass is counted.
+	tail := from > 0
+	if tail && from >= size {
+		j.mu.Unlock()
+		return 0, nil, nil
+	}
+	j.engineHotWindowPasses++
+	j.mu.Unlock()
 
 	// BOTH SPELLINGS PER SCHEMA. The journal frame carries the schema name the
 	// WRITER passed — the bare code for every record the module SDK and the
@@ -807,6 +851,9 @@ func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, st
 	reserved := 0
 
 	var off int64
+	if tail {
+		off = from
+	}
 	var hdr [8]byte
 	// ONE reusable frame buffer: a pass over host-01's journal decodes millions
 	// of frames, and a per-frame allocation is millions of garbage buffers.
@@ -874,7 +921,37 @@ func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, st
 		}
 	}()
 
+	// EVERY SOURCE THE PASS WILL INGEST INTO IS REGISTERED UP FRONT, in one
+	// locked section and one unified-view rebuild: registering inside a batch
+	// rebuilds every view (~0.4 s on a 226-standard store) while readers wait.
+	sourceSet := map[string]bool{}
+	for _, schemaName := range schemas {
+		window := windows[schemaName]
+		if window == nil || deferredSet[schemaName] {
+			continue
+		}
+		for _, c := range window.ordered() {
+			sourceSet[engineSourceName(&c.tags)] = true
+		}
+	}
+	if len(sourceSet) > 0 {
+		names := make([]string, 0, len(sourceSet))
+		for name := range sourceSet {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		unlock := func() {}
+		if !opts.CallerHoldsStoreLock {
+			unlock = store.lockWrite("engine hot-window: register sources")
+		}
+		store.registerEngineSourcesLocked(names)
+		unlock()
+	}
+
 	loaded := 0
+	// Schemas the journal never named are resident zero; set them in ONE
+	// locked section rather than one lock per schema.
+	var absent []string
 	for _, schemaName := range schemas {
 		if deferredSet[schemaName] {
 			continue
@@ -886,16 +963,27 @@ func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, st
 		}
 		window := windows[schemaName]
 		if window == nil {
-			// No frame in the journal names this schema: it is resident zero,
-			// recorded exactly as the per-schema replay always recorded it.
-			store.engineResidentSet(schemaName, 0)
+			// A tail says nothing about schemas it does not mention.
+			if !tail {
+				absent = append(absent, schemaName)
+			}
 			continue
 		}
-		n, err := j.loadEngineHotWindow(store, window, files)
+		n, err := j.loadEngineHotWindow(ctx, store, window, files, tail, opts.CallerHoldsStoreLock)
 		loaded += n
 		if err != nil {
 			return loaded, nil, err
 		}
+	}
+	if len(absent) > 0 {
+		unlock := func() {}
+		if !opts.CallerHoldsStoreLock {
+			unlock = store.lockWrite("engine hot-window: resident-zero schemas")
+		}
+		for _, schemaName := range absent {
+			store.engineResidentSet(schemaName, 0)
+		}
+		unlock()
 	}
 
 	deferred := make([]string, 0, len(deferredSet))
@@ -912,14 +1000,63 @@ func (j *recordCatalogJournal) replayEngineHotWindowPass(ctx context.Context, st
 
 // loadEngineHotWindow ingests one schema's surviving candidates into the engine,
 // oldest first, and records the resulting residency.
-func (j *recordCatalogJournal) loadEngineHotWindow(store *FlatSQLStore, window *recordCatalogEngineWindow, files map[string]*os.File) (int, error) {
+func (j *recordCatalogJournal) loadEngineHotWindow(ctx context.Context, store *FlatSQLStore, window *recordCatalogEngineWindow, files map[string]*os.File, additive, callerHoldsLock bool) (int, error) {
+	// lock takes the store write lock for ONE critical section (a batch
+	// flush, or the residency bookkeeping) when this pass does not already
+	// own it. Stream-file reads and payload checks happen outside it.
+	lock := func(what string) func() {
+		if callerHoldsLock {
+			return func() {}
+		}
+		return store.lockWrite(what)
+	}
 	binding, routed := store.engineRoutedSchemaFor(window.schemaName)
 	if !routed {
-		store.engineResidentSet(window.schemaName, 0)
+		if !additive {
+			unlock := lock("engine hot-window: unrouted schema")
+			store.engineResidentSet(window.schemaName, 0)
+			unlock()
+		}
 		return 0, nil
 	}
-	loaded := 0
+	var poisoned error
+	batch := &engineIngestBatch{store: store}
+	batch.onFlush = func(stream []byte, source string, n int) error {
+		if store.engineHydrateBatchHook != nil {
+			store.engineHydrateBatchHook() // outside the lock, once per batch
+		}
+		unlock := lock("engine hot-window: ingest batch " + window.schemaName)
+		defer unlock()
+		if err := store.ensureEngineSource(source); err != nil {
+			log.Warnf("FlatSQL engine compact hot-window rebuild: register source %q: %v", source, err)
+			if store.engine.Poisoned() {
+				poisoned = fmt.Errorf("FlatSQL engine poisoned registering source %q: %w", source, err)
+			}
+			return err
+		}
+		if _, err := store.engineDB.IngestWithSource(stream, source); err != nil {
+			log.Warnf("FlatSQL engine compact hot-window rebuild: ingest %d %s record(s): %v", n, window.schemaName, err)
+			if store.engine.Poisoned() {
+				poisoned = fmt.Errorf("FlatSQL engine poisoned during compact hot-window rebuild: %w", err)
+			}
+			return err
+		}
+		if additive {
+			store.engineResidentAdd(window.schemaName, int64(n))
+		}
+		return nil
+	}
 	for _, c := range window.ordered() {
+		if poisoned != nil {
+			return int(batch.total), poisoned
+		}
+		if batch.records == 0 {
+			select {
+			case <-ctx.Done():
+				return int(batch.total), ctx.Err()
+			default:
+			}
+		}
 		event := c.event
 		data, err := store.readStreamRecordCached(files, event.StreamPath, event.StreamOffset, event.RecordLength)
 		if err != nil {
@@ -936,24 +1073,28 @@ func (j *recordCatalogJournal) loadEngineHotWindow(store *FlatSQLStore, window *
 				window.schemaName, event.StreamPath, event.StreamOffset, reason)
 			continue
 		}
-		source := engineSourceName(&c.tags)
-		if err := store.ensureEngineSource(source); err != nil {
-			log.Warnf("FlatSQL engine compact hot-window rebuild: register source %q: %v", source, err)
-			if store.engine.Poisoned() {
-				return loaded, fmt.Errorf("FlatSQL engine poisoned registering source %q: %w", source, err)
-			}
-			continue
-		}
-		if _, err := store.engineDB.IngestOneWithSource(payload, source); err != nil {
-			log.Warnf("FlatSQL engine compact hot-window rebuild: ingest record: %v", err)
-			if store.engine.Poisoned() {
-				return loaded, fmt.Errorf("FlatSQL engine poisoned during compact hot-window rebuild: %w", err)
-			}
-			continue
-		}
-		loaded++
+		// add flushes the previous batch on a source change or a full batch;
+		// its error was already logged by onFlush and a poisoned engine is
+		// caught at the top of the loop.
+		_ = batch.add(payload, engineSourceName(&c.tags))
 	}
-	store.engineResidentSet(window.schemaName, int64(loaded))
+	_ = batch.flush()
+	if poisoned != nil {
+		return int(batch.total), poisoned
+	}
+	loaded := int(batch.total)
+	unlock := lock("engine hot-window: residency " + window.schemaName)
+	if additive {
+		if loaded > 0 {
+			if err := store.enforceEngineHotWindowLocked(window.schemaName); err != nil {
+				unlock()
+				return loaded, err
+			}
+		}
+	} else {
+		store.engineResidentSet(window.schemaName, int64(loaded))
+	}
+	unlock()
 	if loaded > 0 {
 		log.Infof("FlatSQL engine compact hot-window rebuild: loaded %d %s records (window %d)", loaded, window.schemaName, window.limit)
 	}

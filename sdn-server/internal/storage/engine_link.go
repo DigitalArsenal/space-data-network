@@ -108,7 +108,7 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	}
 	var engineDB *flatsqlrt.Database
 	if s.controlDBDurable {
-		engineDB, _, _, err = openControlDatabase(engine, s.controlDBPath, engineSchemaTextExcluding(s.engineExcluded), nil)
+		engineDB, _, _, _, err = openControlDatabase(engine, s.controlDBPath, engineSchemaTextExcluding(s.engineExcluded), nil)
 	} else {
 		engineDB, err = engine.CreateDatabase(engineSchemaTextExcluding(s.engineExcluded), "sdn-control")
 	}
@@ -137,6 +137,10 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	s.engineDB = engineDB
 	s.engineSources = map[string]bool{}
 	s.engineResident = map[string]int64{}
+	// The replacement started from discarded files: nothing is persisted, so
+	// the rebuild below is a genuine from-empty one.
+	s.engineStateWarm = false
+	s.engineTailFrom.Store(0)
 	s.engineEpoch++
 	if oldDB != nil {
 		_ = oldDB.Close()

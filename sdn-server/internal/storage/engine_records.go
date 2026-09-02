@@ -65,6 +65,7 @@ package storage
 //go:generate go run ./gen -schemas ../sds/schemas -out engine_standard_catalog.go
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -857,6 +858,67 @@ func (s *FlatSQLStore) ensureEngineSource(source string) error {
 	return nil
 }
 
+// engineIngestBatch accumulates consecutive records for ONE source and hands
+// them to the engine as a single size-prefixed stream (flatsql_ingest_with_source)
+// instead of one guest call + one journal fsync PER RECORD. Measured before
+// this existed: the boot replay ingested 1.2M TBS records at ~120/s, I/O bound
+// on a per-record fsync, holding the store lock for hours; batched, one fsync
+// covers up to engineIngestBatchRecords records.
+type engineIngestBatch struct {
+	store   *FlatSQLStore
+	source  string
+	stream  []byte
+	records int
+	total   int64
+	// onFlush, when set, replaces the direct engine call so the caller can
+	// wrap one flush in its own locking/registration (the journal replay).
+	onFlush func(stream []byte, source string, n int) error
+}
+
+const (
+	engineIngestBatchRecords = 512
+	engineIngestBatchBytes   = 8 << 20
+)
+
+// add queues one bare FlatBuffer for source. A source change or a full batch
+// flushes first. Errors are the engine's: the caller decides whether a
+// poisoned runtime is fatal.
+func (b *engineIngestBatch) add(payload []byte, source string) error {
+	if b.records > 0 && (source != b.source || b.records >= engineIngestBatchRecords || len(b.stream)+4+len(payload) > engineIngestBatchBytes) {
+		if err := b.flush(); err != nil {
+			return err
+		}
+	}
+	b.source = source
+	var hdr [4]byte
+	binary.LittleEndian.PutUint32(hdr[:], uint32(len(payload)))
+	b.stream = append(b.stream, hdr[:]...)
+	b.stream = append(b.stream, payload...)
+	b.records++
+	return nil
+}
+
+// flush ingests the pending stream. On success the batch is empty and the
+// records are counted in total.
+func (b *engineIngestBatch) flush() error {
+	if b.records == 0 {
+		return nil
+	}
+	n := b.records
+	stream := b.stream
+	b.stream = b.stream[:0]
+	b.records = 0
+	if b.onFlush != nil {
+		if err := b.onFlush(stream, b.source, n); err != nil {
+			return err
+		}
+	} else if _, err := b.store.engineDB.IngestWithSource(stream, b.source); err != nil {
+		return err
+	}
+	b.total += int64(n)
+	return nil
+}
+
 // ingestEngineRecords mirrors committed records into the engine vtab. The
 // control row + stream file are the source of truth, so per-record failures
 // are logged and skipped; only a poisoned (trapped) runtime is returned as an
@@ -872,7 +934,7 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 		}
 		return nil
 	}
-	ingested := int64(0)
+	batch := &engineIngestBatch{store: s}
 	for _, p := range pending {
 		payload, reason, ok := engineIngestablePayload(binding, p.data)
 		if !ok {
@@ -886,16 +948,20 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 			}
 			continue
 		}
-		if _, err := s.engineDB.IngestOneWithSource(payload, p.source); err != nil {
-			log.Warnf("FlatSQL engine: ingest %s record into %q: %v", schemaName, p.source, err)
+		if err := batch.add(payload, p.source); err != nil {
+			log.Warnf("FlatSQL engine: ingest %s records into %q: %v", schemaName, batch.source, err)
 			if s.engine.Poisoned() {
 				return fmt.Errorf("FlatSQL engine poisoned during %s ingest: %w", schemaName, err)
 			}
-			continue
 		}
-		ingested++
 	}
-	s.engineResidentAdd(schemaName, ingested)
+	if err := batch.flush(); err != nil {
+		log.Warnf("FlatSQL engine: ingest %s records into %q: %v", schemaName, batch.source, err)
+		if s.engine.Poisoned() {
+			return fmt.Errorf("FlatSQL engine poisoned during %s ingest: %w", schemaName, err)
+		}
+	}
+	s.engineResidentAdd(schemaName, batch.total)
 	return s.enforceEngineHotWindowLocked(schemaName)
 }
 
@@ -984,6 +1050,13 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 // still come back with its $TBS sites resident, so the two never share (and
 // never evict each other out of) one budget.
 func (s *FlatSQLStore) rebuildEngineRecords() error {
+	if s.engineStateWarm {
+		// The engine opened its persisted records; a from-index rebuild would
+		// ingest every one of them a second time. Only the journal tail past
+		// the resume mark can be missing.
+		_, err := s.applyEngineJournalTail(context.Background(), true)
+		return err
+	}
 	s.preregisterEngineSources()
 	present, err := s.schemasWithRecordTables()
 	if err != nil {
@@ -1005,6 +1078,70 @@ func (s *FlatSQLStore) rebuildEngineRecords() error {
 		}
 	}
 	return nil
+}
+
+// restoreEngineResidencyFromPersistedState rebuilds the Go-side residency
+// bookkeeping from the tables the engine just opened from disk, and re-applies
+// the per-standard hot-window bound: the engine persists records and index but
+// NOT tombstones (measured: a MarkDeleted row is visible again after
+// FlushIndex + reopen), so the oldest rows beyond the window are evicted again
+// here, exactly as live ingest evicts them. Called from NewFlatSQLStore before
+// the store is shared, so no locking is needed. Returns the resident total.
+func (s *FlatSQLStore) restoreEngineResidencyFromPersistedState() int64 {
+	present, err := s.schemasWithRecordTables()
+	if err != nil {
+		log.Warnf("FlatSQL engine records: enumerate schemas with record tables: %v", err)
+		present = nil
+	}
+	var total int64
+	for _, schemaName := range s.engineRoutedSchemaNames() {
+		binding, routed := s.engineRoutedSchemaFor(schemaName)
+		if !routed || (present != nil && !present[schemaName]) {
+			s.engineResidentSet(schemaName, 0)
+			continue
+		}
+		var n int64
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM "` + binding.Table + `"`).Scan(&n); err != nil {
+			// A base name that does not resolve yet answers as zero resident;
+			// the first live record registers it.
+			s.engineResidentSet(schemaName, 0)
+			continue
+		}
+		s.engineResidentSet(schemaName, n)
+		total += n
+		if n == 0 {
+			continue
+		}
+		if err := s.enforceEngineHotWindowLocked(schemaName); err != nil {
+			log.Warnf("FlatSQL engine records: re-apply %s hot window after warm open: %v", schemaName, err)
+		}
+		log.Infof("FlatSQL engine records: %s — %d persisted record(s) resident from disk (window %d)", schemaName, s.engineResidentCount(schemaName), s.engineWindowFor(schemaName))
+	}
+	return total
+}
+
+// applyEngineJournalTail ingests into the engine the records whose catalog
+// frames were journaled after the resume mark the engine state was flushed
+// against — the only records a warm engine can be missing. The offset is
+// consumed once; a second call is a no-op. callerHoldsLock says the caller
+// owns the store write lock (open before the store is shared,
+// RebuildDerivedState); the background hydration passes false and the replay
+// locks per batch.
+func (s *FlatSQLStore) applyEngineJournalTail(ctx context.Context, callerHoldsLock bool) (int, error) {
+	from := s.engineTailFrom.Swap(0)
+	if s.recordCatalog == nil || from <= 0 {
+		return 0, nil
+	}
+	count, err := s.recordCatalog.ReplayEngineHotWindowsOpts(ctx, s, s.engineRoutedSchemaNames(), s.engineWindowFor, engineReplayOptions{From: from, CallerHoldsStoreLock: callerHoldsLock})
+	if err != nil {
+		// Put the offset back: a cancelled or failed tail must be retried.
+		s.engineTailFrom.CompareAndSwap(0, from)
+		return count, err
+	}
+	if count > 0 {
+		log.Infof("FlatSQL engine records: ingested %d record(s) from the journal tail past offset %d", count, from)
+	}
+	return count, nil
 }
 
 // preregisterEngineSources registers every source the derived summary cache
@@ -1065,6 +1202,37 @@ func (s *FlatSQLStore) preregisterEngineSources() {
 		return
 	}
 	log.Infof("FlatSQL engine rebuild: pre-registered %d engine source(s) in one view rebuild", registered)
+}
+
+// registerEngineSourcesLocked registers every not-yet-registered source in
+// names and rebuilds the unified views ONCE for all of them. Caller holds
+// s.mu for writing. Returns how many were new.
+func (s *FlatSQLStore) registerEngineSourcesLocked(names []string) int {
+	registered := 0
+	for _, source := range names {
+		source = strings.TrimSpace(source)
+		if source == "" || s.engineSources[source] {
+			continue
+		}
+		if err := s.engineDB.RegisterSource(source); err != nil {
+			log.Warnf("FlatSQL engine: register source %q: %v", source, err)
+			if s.engine.Poisoned() {
+				return registered
+			}
+			continue
+		}
+		s.engineSources[source] = true
+		registered++
+	}
+	if registered == 0 {
+		return 0
+	}
+	if err := s.rebuildUnifiedViews(); err != nil {
+		log.Warnf("FlatSQL engine: rebuild unified views after registering %d source(s): %v", registered, err)
+		return registered
+	}
+	log.Infof("FlatSQL engine: registered %d source(s) in one view rebuild", registered)
+	return registered
 }
 
 // schemasWithRecordTables lists the routed schema names that HAVE A BACKING
@@ -1185,7 +1353,8 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 		}
 	}()
 
-	rebuilt, skipped := 0, 0
+	skipped := 0
+	batch := &engineIngestBatch{store: s}
 	// Oldest first: pages descend by rowid, so walk them backwards and each
 	// page backwards. Same order the single ORDER BY rid ASC statement gave.
 	for p := len(pages) - 1; p >= 0; p-- {
@@ -1223,17 +1392,21 @@ func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
 				skipped++
 				continue
 			}
-			if _, err := s.engineDB.IngestOneWithSource(payload, source); err != nil {
-				log.Warnf("FlatSQL engine rebuild: ingest record: %v", err)
+			if err := batch.add(payload, source); err != nil {
+				log.Warnf("FlatSQL engine rebuild: ingest records: %v", err)
 				if s.engine.Poisoned() {
 					return fmt.Errorf("FlatSQL engine poisoned during rebuild ingest: %w", err)
 				}
-				skipped++
-				continue
 			}
-			rebuilt++
 		}
 	}
+	if err := batch.flush(); err != nil {
+		log.Warnf("FlatSQL engine rebuild: ingest records: %v", err)
+		if s.engine.Poisoned() {
+			return fmt.Errorf("FlatSQL engine poisoned during rebuild ingest: %w", err)
+		}
+	}
+	rebuilt := int(batch.total)
 	s.engineResidentSet(schemaName, int64(rebuilt))
 	if rebuilt > 0 || skipped > 0 {
 		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped, window %d, %d page(s), slowest page %s)",

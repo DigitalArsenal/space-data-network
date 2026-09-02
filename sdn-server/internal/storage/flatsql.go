@@ -250,9 +250,21 @@ type FlatSQLStore struct {
 	// bootReplayFrom / bootReplayFrames record what the boot replay actually
 	// did, for the startup log line and for tests that must prove a WARM boot
 	// skipped work rather than merely being fast on a small fixture.
-	bootReplayFrom   int64
-	bootReplayWarm   bool
-	bootReplayFrames int
+	bootReplayFrom int64
+	bootReplayWarm bool
+	// engineStateWarm / engineStateRecords record that the engine opened its
+	// persisted record state at boot (flatsql_boot_state.go: openEngineRecordState);
+	// engineTailFrom is the journal offset the ENGINE replay resumes from —
+	// consumed exactly once, like bootResumeFrom, by whichever rebuild runs
+	// first (the synchronous open or the deferred hydration).
+	engineStateWarm    bool
+	engineStateRecords int
+	engineTailFrom     atomic.Int64
+	// engineHydrateBatchHook runs before each ingest batch of the background
+	// hot-window hydration, OUTSIDE the store lock. Tests use it to hold the
+	// pass open while proving readers interleave.
+	engineHydrateBatchHook func()
+	bootReplayFrames       int
 	// bootResumeFrom carries the resume offset to a DEFERRED hydration — the
 	// path the daemon actually takes (node.go opens
 	// WithDeferredRecordCatalogReplay and hydrates in the background). It is
@@ -295,6 +307,12 @@ type BootReplayStats struct {
 	JournalBytes int64
 	// Durable reports whether the control database is backed by a real file.
 	Durable bool
+	// EngineWarm is true when the engine's persisted record state was opened
+	// at boot, so no record was re-ingested to make the tables answer.
+	EngineWarm bool
+	// EngineRecords is the count the engine reported visible from its
+	// persisted state at open.
+	EngineRecords int
 }
 
 // BootReplay reports what this store's open replay did. The distinction that
@@ -310,6 +328,8 @@ func (s *FlatSQLStore) BootReplay() BootReplayStats {
 		FramesApplied: s.bootReplayFrames,
 		JournalBytes:  s.recordCatalog.validLength(),
 		Durable:       s.controlDBDurable,
+		EngineWarm:    s.engineStateWarm,
+		EngineRecords: s.engineStateRecords,
 	}
 }
 
@@ -693,6 +713,22 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// is what made the resume legal in the first place.
 	store.appliedOffset.Store(resumeFrom)
 
+	// THE ENGINE'S RECORDS SURVIVED TOO. The mark was written only after the
+	// engine flushed its record state (flushEngineStateLocked), so every record
+	// the mark covers is already visible in the tables: the boot restores the
+	// Go-side residency from those tables and later ingests only the journal
+	// tail past the mark. Nothing is re-ingested to serve what is on disk.
+	if controlDBDurable && bootPlan.EngineState.Warm {
+		store.engineStateWarm = true
+		store.engineStateRecords = bootPlan.EngineState.Records
+		store.engineTailFrom.Store(resumeFrom)
+		endPhase = bootBudget.phase("boot: restore engine residency from persisted record state")
+		restored := store.restoreEngineResidencyFromPersistedState()
+		endPhase()
+		log.Infof("FlatSQL engine records: WARM — %d persisted record(s) visible from disk without re-ingest (%d resident across routed standards); only the journal tail past offset %d will be ingested",
+			bootPlan.EngineState.Records, restored, resumeFrom)
+	}
+
 	// Every live catalog mutation funnels through the journal append, which is
 	// where the hydration shield learns what live traffic touched during a
 	// background replay (record_catalog_replay.go).
@@ -994,12 +1030,29 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalogContext(ctx contex
 	s.engineHotHydrating.Store(true)
 	defer s.engineHotHydrating.Store(false)
 
-	defer s.lockWrite("HydrateEngineHotWindowFromRecordCatalogContext")()
+	// NO STORE LOCK ACROSS THE PASS. The replay takes the write lock per
+	// ingest batch (engineReplayOptions.CallerHoldsStoreLock=false) so every
+	// reader lane keeps answering while a multi-GB journal is rebuilt.
 	if s.recordCatalog == nil {
 		s.engineHotHydrated.Store(true)
 		return 0, nil
 	}
-	count, err := s.recordCatalog.ReplayEngineHotWindows(ctx, s, s.engineRoutedSchemaNames(), s.engineWindowFor)
+	// Register every source the durable summary cache knows in ONE short
+	// locked section up front: registering a source rebuilds every unified
+	// view (~0.4 s on a 226-standard store), and doing that inside an ingest
+	// batch is exactly the kind of lock hold readers must not pay for.
+	func() {
+		defer s.lockWrite("engine hot-window: preregister sources")()
+		s.preregisterEngineSources()
+	}()
+	var count int
+	var err error
+	if s.engineStateWarm {
+		// Persisted records are already resident: ingest the journal tail only.
+		count, err = s.applyEngineJournalTail(ctx, false)
+	} else {
+		count, err = s.recordCatalog.ReplayEngineHotWindowsOpts(ctx, s, s.engineRoutedSchemaNames(), s.engineWindowFor, engineReplayOptions{})
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			log.Infof("FlatSQL compact engine hot-window hydration cancelled after %d records — the next boot resumes it", count)
