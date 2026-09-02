@@ -1,25 +1,27 @@
 package api
 
 // GET /api/v1/data/table — the dashboard's server-side table lane: one page of
-// one standard's engine table, with server-executed pagination, column sort,
-// per-column contains-filters, a global search term, and a NETWORK SOURCE
-// selector (`_source` — every engine-routed table carries the lane that
-// delivered each record, e.g. "OMM@celestrak-gp").
+// one standard's complete durable record set. The FlatSQL engine relation is a
+// bounded resident window and is deliberately not the pagination source.
 //
 // GET /api/v1/data/table/sources — the distinct `_source` lanes one standard's
 // table holds, with counts. Powers the "by source" selector.
 //
-// Both are composed HERE, from validated identifiers and escaped literals, and
-// executed through storage.SandboxedSelect — the same read-only, capped,
-// single-SELECT sandbox behind POST /api/v1/query. The composition is pure
-// (buildTableSQL/buildSourcesSQL) so the injection surface is testable without
-// a store. Admin-gated like the sandbox lane: this is the operator's explorer;
-// the anonymous read surface stays the routed bulk/index endpoints.
+// Source selection and metadata ordering execute against the durable catalog.
+// Projected-column filters, global search, and projected-column ordering apply
+// to the selected page after its FlatBuffers are decoded through the same
+// generated bindings as the JSON download lane. Admin-gated like the sandbox
+// lane: this is the operator's explorer; the anonymous read surface stays the
+// routed bulk/index endpoints.
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +32,7 @@ import (
 
 const (
 	tableDefaultLimit = 100
-	tableMaxLimit     = 500
+	tableMaxLimit     = 1000
 	// tableSearchColumnCap bounds how many columns a global search term ORs
 	// across, so a wide table cannot turn one keystroke into a 60-branch scan.
 	tableSearchColumnCap = 24
@@ -59,7 +61,7 @@ type tableResponse struct {
 	Schema    string     `json:"schema"`
 	Columns   []string   `json:"columns"`
 	Rows      [][]string `json:"rows"`
-	Total     int        `json:"total"`
+	Total     int64      `json:"total"`
 	Page      int        `json:"page"`
 	Limit     int        `json:"limit"`
 	Truncated bool       `json:"truncated"`
@@ -288,43 +290,82 @@ func (h *CoreAPIHandler) handleTablePage(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if h.tableStoreWarming(w, req.Schema) {
-		return
-	}
-	columns, err := h.tableColumns(r, req.Schema)
+	columns, err := h.store.FullTableColumns(req.Schema + ".fbs")
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("standard %s is not queryable here: %v", req.Schema, err))
 		return
 	}
-	countSQL, pageSQL, projection, err := buildTableSQL(req, columns)
+	projection, filters, sortColumn, err := resolveFullTableRequest(req, columns)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	countRes, err := h.store.SandboxedSelect(r.Context(), countSQL,
-		storage.SandboxSelectCaps{MaxRows: 1, Timeout: tableQueryTimeout})
+	sourceName, err := durableTableSourceName(req.Schema, req.Source)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	total := 0
-	if len(countRes.Rows) > 0 && len(countRes.Rows[0]) > 0 {
-		total, _ = strconv.Atoi(countRes.Rows[0][0])
-	}
-	pageRes, err := h.store.SandboxedSelect(r.Context(), pageSQL,
-		storage.SandboxSelectCaps{MaxRows: req.Limit, Timeout: tableQueryTimeout})
+
+	// Count and page are intentionally separate store calls. Each takes one
+	// bounded read-lock window; maintenance never waits behind a whole request.
+	summary, err := h.store.DataSummary()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	total := fullTableStoredCount(summary, req.Schema+".fbs", sourceName)
+	globalSort := ""
+	if sortColumn == "_rowid" || sortColumn == "_source" || sortColumn == "_offset" {
+		globalSort = sortColumn
+	}
+	pageLimit := req.Limit
+	pageOffset := (req.Page - 1) * req.Limit
+	// A selected set that fits in one bounded block keeps exact historical
+	// sort/filter/search semantics. Larger sets deliberately project only the
+	// requested page so neither memory nor the store lock grows with total.
+	completeSelection := total <= tableMaxLimit
+	if completeSelection {
+		pageLimit = int(total)
+		pageOffset = 0
+	}
+	records, err := h.store.FullTablePage(storage.FullTablePageQuery{
+		SchemaName: req.Schema + ".fbs",
+		SourceName: sourceName,
+		Limit:      pageLimit,
+		Offset:     pageOffset,
+		Sort:       globalSort,
+		Descending: req.Dir == "desc",
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rows, err := projectFullTablePage(req.Schema, records, projection, filters, req.Q, sortColumn, req.Dir)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if completeSelection {
+		total = int64(len(rows))
+		start := (req.Page - 1) * req.Limit
+		if start >= len(rows) {
+			rows = [][]string{}
+		} else {
+			end := start + req.Limit
+			if end > len(rows) {
+				end = len(rows)
+			}
+			rows = rows[start:end]
+		}
 	}
 	writeJSON(w, http.StatusOK, tableResponse{
 		Schema:    req.Schema + ".fbs",
 		Columns:   projection,
-		Rows:      pageRes.Rows,
+		Rows:      rows,
 		Total:     total,
 		Page:      req.Page,
 		Limit:     req.Limit,
-		Truncated: pageRes.Truncated,
+		Truncated: false,
 		Source:    req.Source,
 	})
 }
@@ -343,22 +384,246 @@ func (h *CoreAPIHandler) handleTableSources(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "schema is required (a standard code such as OMM)")
 		return
 	}
-	if h.tableStoreWarming(w, schema) {
-		return
-	}
-	res, err := h.store.SandboxedSelect(r.Context(), buildSourcesSQL(schema),
-		storage.SandboxSelectCaps{MaxRows: 200, Timeout: tableQueryTimeout})
+	summary, err := h.store.DataSummary()
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("standard %s is not queryable here: %v", schema, err))
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("standard %s sources are unavailable: %v", schema, err))
 		return
 	}
-	out := tableSourcesResponse{Schema: schema + ".fbs", Sources: []tableSourceCount{}}
-	for _, row := range res.Rows {
-		if len(row) < 2 {
-			continue
+	counts := map[string]int64{}
+	for _, source := range summary.Sources {
+		if source.SchemaName == schema+".fbs" && strings.TrimSpace(source.SourceName) != "" {
+			counts[schema+"@"+source.SourceName] += source.Count
 		}
-		n, _ := strconv.Atoi(row[1])
-		out.Sources = append(out.Sources, tableSourceCount{Source: row[0], Count: n})
+	}
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if counts[names[i]] == counts[names[j]] {
+			return names[i] < names[j]
+		}
+		return counts[names[i]] > counts[names[j]]
+	})
+	out := tableSourcesResponse{Schema: schema + ".fbs", Sources: []tableSourceCount{}}
+	for _, name := range names {
+		out.Sources = append(out.Sources, tableSourceCount{Source: name, Count: int(counts[name])})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func durableTableSourceName(schema, source string) (string, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return "", nil
+	}
+	prefix := schema + "@"
+	if !strings.HasPrefix(source, prefix) || strings.TrimPrefix(source, prefix) == "" {
+		return "", fmt.Errorf("source must name a %s lane", schema)
+	}
+	return strings.TrimPrefix(source, prefix), nil
+}
+
+func fullTableStoredCount(summary *storage.DataSummary, schemaName, sourceName string) int64 {
+	if summary == nil {
+		return 0
+	}
+	if sourceName == "" {
+		for _, schema := range summary.Schemas {
+			if schema.SchemaName == schemaName {
+				return schema.Count
+			}
+		}
+		return 0
+	}
+	var total int64
+	for _, source := range summary.Sources {
+		if source.SchemaName == schemaName && source.SourceName == sourceName {
+			total += source.Count
+		}
+	}
+	return total
+}
+
+func resolveFullTableRequest(req tableRequest, columns []string) ([]string, map[string]string, string, error) {
+	projection := defaultTableProjection(columns)
+	if len(req.Cols) > 0 {
+		projection = projection[:0]
+		for _, column := range req.Cols {
+			resolved, err := resolveColumn(column, columns)
+			if err != nil {
+				return nil, nil, "", err
+			}
+			projection = append(projection, resolved)
+		}
+	}
+	if len(projection) == 0 {
+		return nil, nil, "", fmt.Errorf("no columns to select")
+	}
+	filters := make(map[string]string, len(req.Filters))
+	for column, value := range req.Filters {
+		resolved, err := resolveColumn(column, columns)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		filters[resolved] = value
+	}
+	sortColumn := ""
+	if req.Sort != "" {
+		resolved, err := resolveColumn(req.Sort, columns)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		sortColumn = resolved
+	}
+	return projection, filters, sortColumn, nil
+}
+
+func tableBindingForPage(schemaName string, sample []byte) (*bulkBinding, error) {
+	if binding, err := bulkBindingForSchema(schemaName); err == nil {
+		return binding, nil
+	}
+	if schemaName != "MPE.fbs" {
+		return nil, fmt.Errorf("no JSON projection is registered for %s", schemaName)
+	}
+	root, err := decodeMPE(sample)
+	if err != nil {
+		return nil, err
+	}
+	fields, err := generatedBindingFields(reflect.TypeOf(root))
+	if err != nil {
+		return nil, err
+	}
+	return &bulkBinding{
+		schemaName: schemaName,
+		rootType:   reflect.TypeOf(root),
+		fields:     fields,
+		decode: func(data []byte) (interface{}, error) {
+			return decodeMPE(data)
+		},
+	}, nil
+}
+
+func projectFullTablePage(schema string, records []*storage.Record, projection []string, filters map[string]string, q, sortColumn, direction string) ([][]string, error) {
+	if len(records) == 0 {
+		return [][]string{}, nil
+	}
+	binding, err := tableBindingForPage(schema+".fbs", records[0].Data)
+	if err != nil {
+		return nil, err
+	}
+	type projectedRecord struct {
+		values map[string]string
+		row    []string
+	}
+	projected := make([]projectedRecord, 0, len(records))
+	for _, record := range records {
+		root, err := binding.decode(record.Data)
+		if err != nil {
+			return nil, err
+		}
+		object, err := bindingObject(root, binding.fields)
+		if err != nil {
+			return nil, err
+		}
+		values := make(map[string]string, len(object)+4)
+		for key, value := range object {
+			values[key] = fullTableCell(value)
+		}
+		values["_rowid"] = strconv.FormatInt(record.RowID, 10)
+		values["_offset"] = strconv.FormatInt(record.StreamOffset, 10)
+		values["_data"] = base64.StdEncoding.EncodeToString(record.Data)
+		if record.SourceTags.SourceName != "" {
+			values["_source"] = schema + "@" + record.SourceTags.SourceName
+		}
+		if !fullTableRecordMatches(values, projection, filters, q) {
+			continue
+		}
+		row := make([]string, len(projection))
+		for i, column := range projection {
+			row[i] = values[column]
+		}
+		projected = append(projected, projectedRecord{values: values, row: row})
+	}
+	if sortColumn != "" && sortColumn != "_rowid" && sortColumn != "_source" && sortColumn != "_offset" {
+		descending := direction == "desc"
+		sort.SliceStable(projected, func(i, j int) bool {
+			comparison := compareFullTableCells(projected[i].values[sortColumn], projected[j].values[sortColumn])
+			if comparison == 0 {
+				comparison = compareFullTableCells(projected[i].values["_rowid"], projected[j].values["_rowid"])
+				return comparison > 0
+			}
+			if descending {
+				return comparison > 0
+			}
+			return comparison < 0
+		})
+	}
+	rows := make([][]string, len(projected))
+	for i := range projected {
+		rows[i] = projected[i].row
+	}
+	return rows, nil
+}
+
+func fullTableCell(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []byte:
+		return string(typed)
+	}
+	rv := reflect.ValueOf(value)
+	if rv.IsValid() && (rv.Kind() == reflect.Map || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
+		encoded, err := json.Marshal(value)
+		if err == nil {
+			return string(encoded)
+		}
+	}
+	return fmt.Sprint(value)
+}
+
+func fullTableRecordMatches(values map[string]string, projection []string, filters map[string]string, q string) bool {
+	for column, term := range filters {
+		if !strings.Contains(strings.ToLower(values[column]), strings.ToLower(term)) {
+			return false
+		}
+	}
+	term := strings.ToLower(strings.TrimSpace(q))
+	if term == "" {
+		return true
+	}
+	checked := 0
+	for _, column := range projection {
+		if strings.HasPrefix(column, "_") {
+			continue
+		}
+		if strings.Contains(strings.ToLower(values[column]), term) {
+			return true
+		}
+		checked++
+		if checked >= tableSearchColumnCap {
+			break
+		}
+	}
+	return false
+}
+
+func compareFullTableCells(left, right string) int {
+	leftNumber, leftErr := strconv.ParseFloat(left, 64)
+	rightNumber, rightErr := strconv.ParseFloat(right, 64)
+	if leftErr == nil && rightErr == nil {
+		switch {
+		case leftNumber < rightNumber:
+			return -1
+		case leftNumber > rightNumber:
+			return 1
+		default:
+			return 0
+		}
+	}
+	return strings.Compare(strings.ToLower(left), strings.ToLower(right))
 }

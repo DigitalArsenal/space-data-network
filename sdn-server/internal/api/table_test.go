@@ -1,9 +1,17 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	MPE "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
+	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 var catColumns = []string{"OBJECT_NAME", "OBJECT_ID", "NORAD_CAT_ID", "OWNER", "_source", "_rowid", "_offset", "_data"}
@@ -134,5 +142,107 @@ func TestBuildSourcesSQL(t *testing.T) {
 	got := buildSourcesSQL("OMM")
 	if got != "SELECT _source, COUNT(*) FROM OMM GROUP BY _source ORDER BY COUNT(*) DESC" {
 		t.Fatalf("buildSourcesSQL = %q", got)
+	}
+}
+
+func TestTablePageReadsPastTheEngineHotWindow(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(
+		filepath.Join(t.TempDir(), "store"),
+		validator,
+		storage.WithEngineHotWindow(10),
+	)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	tags := storage.SourceTags{ProviderID: "test", SourceName: "full-page", BatchID: "b1", ContentKeyID: "public"}
+	for i := 0; i < 25; i++ {
+		record := sds.NewOMMBuilder().
+			WithNoradCatID(uint32(30000 + i)).
+			WithObjectName(fmt.Sprintf("FULL-%03d", i)).
+			WithEpoch("2026-09-02T00:00:00Z").
+			Build()
+		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:full-page", nil, tags); err != nil {
+			t.Fatalf("store OMM %d: %v", i, err)
+		}
+	}
+	resident, err := store.EngineRecordCount("OMM.fbs")
+	if err != nil {
+		t.Fatalf("EngineRecordCount: %v", err)
+	}
+	if resident != 10 {
+		t.Fatalf("resident engine rows = %d, want hot window 10", resident)
+	}
+
+	handler := NewCoreAPIHandler("", nil, nil, nil, store, nil, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/api/v1/data/table?schema=OMM&page=4&limit=5&cols=OBJECT_NAME,_rowid", nil)
+	res := httptest.NewRecorder()
+	handler.handleTablePage(res, req)
+	if res.Code != 200 {
+		t.Fatalf("table page -> %d: %s", res.Code, res.Body.String())
+	}
+	var page tableResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode table response: %v", err)
+	}
+	if page.Total != 25 {
+		t.Fatalf("total = %d, want all 25 stored records", page.Total)
+	}
+	if len(page.Rows) != 5 {
+		t.Fatalf("rows = %d, want 5", len(page.Rows))
+	}
+	if page.Rows[0][0] != "FULL-009" || page.Rows[4][0] != "FULL-005" {
+		t.Fatalf("page past hot window = %v, want FULL-009 through FULL-005", page.Rows)
+	}
+	if page.Rows[0][1] == "" || page.Rows[4][1] == "" {
+		t.Fatalf("durable row ids missing: %v", page.Rows)
+	}
+}
+
+func TestTablePageProjectsMPEWithTheExistingRecordDecoder(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	builder := flatbuffers.NewBuilder(256)
+	entityID := builder.CreateString("mpe-entity-42")
+	MPE.MPEStart(builder)
+	MPE.MPEAddENTITY_ID(builder, entityID)
+	MPE.MPEAddEPOCH(builder, 1788393600)
+	MPE.MPEAddMEAN_MOTION(builder, 15.25)
+	root := MPE.MPEEnd(builder)
+	MPE.FinishSizePrefixedMPEBuffer(builder, root)
+	if _, err := store.StoreWithSourceTags("MPE.fbs", builder.FinishedBytes(), "source:mpe", nil,
+		storage.SourceTags{ProviderID: "test", SourceName: "mpe", BatchID: "b1", ContentKeyID: "public"}); err != nil {
+		t.Fatalf("store MPE: %v", err)
+	}
+
+	handler := NewCoreAPIHandler("", nil, nil, nil, store, nil, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/api/v1/data/table?schema=MPE&cols=ENTITY_ID,EPOCH,MEAN_MOTION", nil)
+	res := httptest.NewRecorder()
+	handler.handleTablePage(res, req)
+	if res.Code != 200 {
+		t.Fatalf("MPE table page -> %d: %s", res.Code, res.Body.String())
+	}
+	var page tableResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode MPE table response: %v", err)
+	}
+	if page.Total != 1 || len(page.Rows) != 1 {
+		t.Fatalf("MPE page = total %d rows %v", page.Total, page.Rows)
+	}
+	if got := page.Rows[0]; got[0] != "mpe-entity-42" || got[1] != "1.7883936e+09" || got[2] != "15.25" {
+		t.Fatalf("MPE projection = %v", got)
 	}
 }
