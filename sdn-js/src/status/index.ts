@@ -31,10 +31,20 @@ export {
 export {
   decodeDashboardStats,
   isDashboardStatsFrame,
+  type DashboardIngestEventKindView,
+  type DashboardIngestEventView,
   type DashboardSchemaStatView,
   type DashboardSourceStatView,
   type DashboardStatsView,
+  type DashboardTopicStatView,
 } from './dashboard-stats';
 
 export { NodeStatus, NodeStatusSet } from './generated/nst.js';
-export { DashboardSchemaStat, DashboardSourceStat, DashboardStatsSet } from './generated/nst.js';
+export {
+  DashboardIngestEvent,
+  DashboardIngestEventKind,
+  DashboardSchemaStat,
+  DashboardSourceStat,
+  DashboardStatsSet,
+  DashboardTopicStat,
+} from './generated/nst.js';

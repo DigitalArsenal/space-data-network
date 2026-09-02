@@ -45,11 +45,12 @@ import (
 //go:embed assets/scalar.standalone.js
 var scalarStandaloneJS []byte
 
-// Media types of the two response encodings every record-stream route
-// serves (docs/gateway-api.md §3).
+// Media types of the response encodings served by record-stream routes.
 const (
 	ContentTypeFlatBufferStream = "application/vnd.sdn.flatbuffers.stream"
 	ContentTypeJSON             = "application/json"
+	ContentTypeCSV              = "text/csv; charset=utf-8"
+	ContentTypeJSONL            = "application/x-ndjson"
 )
 
 // FlowDocSource is the slice of a mounted flow the generator reads.
@@ -294,9 +295,10 @@ func GenerateOpenAPI(opts DocsHandlerOptions) ([]byte, error) {
 				"designed-but-not-yet-mounted Phase G routes (marked x-sdn-status: planned).\n\n" +
 				"Response conventions (all record streams): default encoding is an aligned " +
 				"size-prefixed FlatBuffer stream (" + ContentTypeFlatBufferStream + "); " +
-				"?format=json opts into a BARE top-level JSON array of records. Metadata never rides " +
+				"?format=json opts into a BARE top-level JSON array, ?format=csv into an RFC 4180 " +
+				"stream, and ?format=jsonl into newline-delimited JSON. Metadata never rides " +
 				"in a body envelope — X-SDN-Record-Count and a content-derived ETag are response " +
-				"headers on BOTH encodings, and conditional GET (If-None-Match → 304) works on both.\n\n" +
+				"headers on every encoding, and conditional GET (If-None-Match → 304) works on each.\n\n" +
 				"Property names: JSON renderings of SDS records use the spacedatastandards.org " +
 				"IDL / JSON Schema capitalization EXACTLY (NORAD_CAT_ID, MEAN_MOTION, FILE_ID, " +
 				"CID, DN, …) — never lowercased. API-synthesized envelope fields that are not " +
@@ -309,7 +311,7 @@ func GenerateOpenAPI(opts DocsHandlerOptions) ([]byte, error) {
 		"components": openAPIObj{
 			"headers": openAPIObj{
 				"XSDNRecordCount": openAPIObj{
-					"description": "Number of records in the response: size-prefixed frames of the FlatBuffer stream, or top-level elements of the bare JSON array. Present on both encodings.",
+					"description": "Number of records in the response: FlatBuffer frames, JSON array elements, CSV data rows, or JSONL lines. Present on every encoding.",
 					"schema":      openAPIObj{"type": "integer", "minimum": 0},
 				},
 				"ETag": openAPIObj{
@@ -402,10 +404,19 @@ func operationFromFlowRoute(mf FlowDocSource, route *flowrt.FlowAPIRoute, tag st
 	if route.Deprecated {
 		op["deprecated"] = true
 	}
-	if len(route.Params) > 0 {
-		params := make([]interface{}, 0, len(route.Params))
+	if len(route.Params) > 0 || isBulkExportRoute(route.Method, fullPath) {
+		params := make([]interface{}, 0, len(route.Params)+1)
+		formatSeen := false
 		for _, p := range route.Params {
+			if isBulkExportRoute(route.Method, fullPath) && strings.EqualFold(fmt.Sprint(p["name"]), "format") {
+				params = append(params, formatParam())
+				formatSeen = true
+				continue
+			}
 			params = append(params, p)
+		}
+		if isBulkExportRoute(route.Method, fullPath) && !formatSeen {
+			params = append(params, formatParam())
 		}
 		op["parameters"] = params
 	}
@@ -424,11 +435,44 @@ func operationFromFlowRoute(mf FlowDocSource, route *flowrt.FlowAPIRoute, tag st
 		}
 		op["responses"] = responses
 	}
+	if isBulkExportRoute(route.Method, fullPath) {
+		augmentBulkExportResponses(op)
+	}
 	// Declared vs effective anonymity: the flow REQUESTS placement, the
 	// host allowlist DECIDES (docs/gateway-api.md §4).
 	op["x-sdn-anonymous-requested"] = route.Anonymous
 	stampAnonymous(op, effective, route.Method, fullPath)
 	return op
+}
+
+func isBulkExportRoute(method, path string) bool {
+	return strings.EqualFold(method, http.MethodGet) && strings.HasSuffix(strings.TrimSuffix(path, "/"), "/bulk")
+}
+
+func augmentBulkExportResponses(op openAPIObj) {
+	responses, _ := op["responses"].(openAPIObj)
+	if responses == nil {
+		responses = openAPIObj{}
+		op["responses"] = responses
+	}
+	okResponse, _ := responses["200"].(openAPIObj)
+	if okResponse == nil {
+		okResponse = openAPIObj{"description": "Record stream."}
+		responses["200"] = okResponse
+	}
+	content, _ := okResponse["content"].(openAPIObj)
+	if content == nil {
+		content = openAPIObj{}
+		okResponse["content"] = content
+	}
+	content[ContentTypeCSV] = openAPIObj{
+		"schema":      openAPIObj{"type": "string"},
+		"description": "RFC 4180 CSV with the SDS binding fields in schema order; nested tables use dotted paths and vectors are JSON cells.",
+	}
+	content[ContentTypeJSONL] = openAPIObj{
+		"schema":      openAPIObj{"type": "string"},
+		"description": "One canonical JSON record per line, with the same object shape as each format=json array element.",
+	}
 }
 
 func responseFromFlowDecl(decl flowrt.FlowAPIResponse) openAPIObj {
@@ -513,7 +557,7 @@ func recordStreamResponses(fbDescription, jsonItemDescription string, sds openAP
 	}
 	return openAPIObj{
 		"200": openAPIObj{
-			"description": "Record stream; X-SDN-Record-Count and ETag headers on both encodings.",
+			"description": "Record stream; X-SDN-Record-Count and ETag headers on every encoding.",
 			"headers":     streamHeaders,
 			"content": openAPIObj{
 				ContentTypeFlatBufferStream: fbMedia,
@@ -523,6 +567,14 @@ func recordStreamResponses(fbDescription, jsonItemDescription string, sds openAP
 						"items":       openAPIObj{"type": "object"},
 						"description": jsonItemDescription,
 					},
+				},
+				ContentTypeCSV: openAPIObj{
+					"schema":      openAPIObj{"type": "string"},
+					"description": "RFC 4180 CSV with schema-ordered SDS columns.",
+				},
+				ContentTypeJSONL: openAPIObj{
+					"schema":      openAPIObj{"type": "string"},
+					"description": "One canonical JSON record per line.",
 				},
 			},
 		},
@@ -535,8 +587,8 @@ func formatParam() openAPIObj {
 		"name":        "format",
 		"in":          "query",
 		"required":    false,
-		"schema":      openAPIObj{"type": "string", "enum": []string{"flatbuffer", "json"}, "default": "flatbuffer"},
-		"description": "Response encoding: flatbuffer = aligned size-prefixed FlatBuffer stream (default); json = bare top-level JSON array.",
+		"schema":      openAPIObj{"type": "string", "enum": []string{"flatbuffer", "json", "csv", "jsonl"}, "default": "flatbuffer"},
+		"description": "Response encoding: flatbuffer = aligned size-prefixed FlatBuffer stream (default); json = bare top-level array; csv = RFC 4180; jsonl = one JSON object per line.",
 	}
 }
 
