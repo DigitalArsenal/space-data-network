@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 
 import { decodeDashboardStats, isDashboardStatsFrame } from './dashboard-stats';
 import {
+  DashboardIngestEvent,
+  DashboardIngestEventKind,
   DashboardSchemaStat,
   DashboardSourceStat,
   DashboardStatsSet,
+  DashboardTopicStat,
   NodeStatusSet,
 } from './generated/nst.js';
 
@@ -35,8 +38,37 @@ function buildFrame(): Uint8Array {
   DashboardSourceStat.addFirstIngestAt(b, BigInt(1755999000));
   DashboardSourceStat.addLastIngestAt(b, BigInt(1756000000));
   DashboardSourceStat.addUpdatedAt(b, BigInt(1756000000));
+  DashboardSourceStat.addWindowRecords(b, BigInt(17));
+  DashboardSourceStat.addPriorWindowRecords(b, BigInt(11));
+  DashboardSourceStat.addWindowMs(b, BigInt(300000));
   const source = DashboardSourceStat.endDashboardSourceStat(b);
   const sources = DashboardStatsSet.createSourcesVector(b, [source]);
+
+  const eventSchema = b.createString('OMM');
+  const eventProvider = b.createString('celestrak');
+  const eventSource = b.createString('gp');
+  const eventMessage = b.createString('Ingest resumed after a quiet period.');
+  const event = DashboardIngestEvent.createDashboardIngestEvent(
+    b,
+    DashboardIngestEventKind.Recover,
+    eventSchema,
+    eventProvider,
+    eventSource,
+    eventMessage,
+    BigInt(1),
+    BigInt(1756000010),
+  );
+  const events = DashboardStatsSet.createEventsVector(b, [event]);
+
+  const topicName = b.createString('/sdn/OMM/v1');
+  const topic = DashboardTopicStat.createDashboardTopicStat(
+    b,
+    topicName,
+    2.5,
+    BigInt(1756000005),
+    true,
+  );
+  const topics = DashboardStatsSet.createTopicsVector(b, [topic]);
 
   DashboardStatsSet.startDashboardStatsSet(b);
   DashboardStatsSet.addGeneratedAt(b, BigInt(1756000123));
@@ -46,6 +78,8 @@ function buildFrame(): Uint8Array {
   DashboardStatsSet.addTotalBytes(b, BigInt(4200000));
   DashboardStatsSet.addStale(b, true);
   DashboardStatsSet.addAsOf(b, BigInt(1756000000));
+  DashboardStatsSet.addEvents(b, events);
+  DashboardStatsSet.addTopics(b, topics);
   const set = DashboardStatsSet.endDashboardStatsSet(b);
 
   DashboardStatsSet.finishSizePrefixedDashboardStatsSetBuffer(b, set);
@@ -86,6 +120,28 @@ describe('dashboard stats frames', () => {
           firstIngestAt: 1755999000,
           lastIngestAt: 1756000000,
           updatedAt: 1756000000,
+          windowRecords: 17,
+          priorWindowRecords: 11,
+          windowMs: 300000,
+        },
+      ],
+      events: [
+        {
+          kind: 'recover',
+          schema: 'OMM',
+          providerId: 'celestrak',
+          sourceName: 'gp',
+          message: 'Ingest resumed after a quiet period.',
+          count: 1,
+          at: 1756000010,
+        },
+      ],
+      topics: [
+        {
+          topic: '/sdn/OMM/v1',
+          ratePerMin: 2.5,
+          lastSeenAt: 1756000005,
+          subscribed: true,
         },
       ],
     });

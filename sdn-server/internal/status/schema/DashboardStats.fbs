@@ -36,6 +36,39 @@ table DashboardSourceStat {
   FIRST_INGEST_AT: int64;
   LAST_INGEST_AT: int64;
   UPDATED_AT: int64;
+  /// Records observed in the current rolling window.
+  WINDOW_RECORDS: int64;
+  /// Records observed in the immediately preceding rolling window.
+  PRIOR_WINDOW_RECORDS: int64;
+  /// Rolling-window width in milliseconds (default 300000).
+  WINDOW_MS: int64;
+}
+
+enum DashboardIngestEventKind: byte {
+  Stall,
+  Reject,
+  Recover
+}
+
+/// One source-ingest transition surfaced to the dashboard.
+table DashboardIngestEvent {
+  KIND: DashboardIngestEventKind = Stall;
+  SCHEMA: string;
+  PROVIDER_ID: string;
+  SOURCE_NAME: string;
+  MESSAGE: string;
+  COUNT: int64;
+  /// Unix seconds when the transition occurred.
+  AT: int64;
+}
+
+/// Live traffic for one pubsub topic.
+table DashboardTopicStat {
+  TOPIC: string;
+  RATE_PER_MIN: double;
+  /// Unix seconds; 0 = not observed.
+  LAST_SEEN_AT: int64;
+  SUBSCRIBED: bool;
 }
 
 table DashboardStatsSet {
@@ -51,6 +84,8 @@ table DashboardStatsSet {
   STALE: bool;
   /// Unix seconds the store numbers were last true; 0 = never read
   AS_OF: int64;
+  EVENTS: [DashboardIngestEvent];
+  TOPICS: [DashboardTopicStat];
 }
 
 root_type DashboardStatsSet;
