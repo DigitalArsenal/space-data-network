@@ -49,6 +49,12 @@ type KeySlot struct {
 	// record-signing key is NOT, which is why it is not offered as a rotatable
 	// slot (see the note on KeySlots below).
 	XPubDerivable bool `json:"xpub_derivable"`
+	// Algorithm names the curve the slot's key lives on (both rotatable
+	// slots are secp256k1 children of the account xpub).
+	Algorithm string `json:"algorithm,omitempty"`
+	// PublicKey is the slot's current public key (compressed secp256k1, hex),
+	// derived from the xpub at Path — the same value the node's EPM publishes.
+	PublicKey string `json:"public_key,omitempty"`
 }
 
 // KeySlots reports the operator-rotatable key slots for this node.
@@ -84,8 +90,14 @@ func (s *Service) KeySlots() ([]KeySlot, error) {
 	signPath, encPath := EffectiveKeyPaths(s.profile, s.identity.Account)
 
 	slots := []KeySlot{
-		{Slot: KeySlotSigning, Path: signPath, XPubDerivable: true},
-		{Slot: KeySlotEncryption, Path: encPath, XPubDerivable: true},
+		{Slot: KeySlotSigning, Path: signPath, XPubDerivable: true, Algorithm: "secp256k1"},
+		{Slot: KeySlotEncryption, Path: encPath, XPubDerivable: true, Algorithm: "secp256k1"},
+	}
+	if s.identity != nil {
+		if derived, ok := derivePublicIdentityKeysFromXPub(s.xpub, s.identity.Info().Account); ok {
+			slots[0].PublicKey = derived.SigningPublicKey
+			slots[1].PublicKey = derived.EncryptionPublicKey
+		}
 	}
 	for i := range slots {
 		next, err := NextKeyPath(slots[i].Path, SlotXPubDerivable)
