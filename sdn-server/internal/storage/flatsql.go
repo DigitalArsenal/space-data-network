@@ -182,6 +182,17 @@ type FlatSQLStore struct {
 	// lockStats accounts s.mu itself — the lock the engine's slow-statement
 	// instrument cannot see (store_lock_accounting.go).
 	lockStats storeLockStats
+
+	// unsummarizedCounts caches the COUNT(*)/SUM(record_length) scan that
+	// DataSummary falls back to for a schema that has rows but no
+	// source-summary lane yet (a catalog replay in progress, before its
+	// summary rebuild). The dashboard stats lane calls DataSummary every 5 s
+	// and each such scan held the single-threaded engine 0.4–0.9 s per schema
+	// (measured 2026-09-02 on the dev store: ~20 scans/min, a fifth of the
+	// engine, every reader and the replay itself queued behind them). A
+	// provisional count may be a minute old; the summary lane replaces it.
+	unsummarizedMu     sync.Mutex
+	unsummarizedCounts map[string]unsummarizedCount
 	// engineSources tracks per-source shadow tables already registered on the
 	// engine (flatsql_register_source errors on duplicates). Guarded by mu.
 	engineSources map[string]bool
@@ -5426,6 +5437,42 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 }
 
 // DataSummary returns aggregate FlatSQL record counts and raw byte totals.
+type unsummarizedCount struct {
+	count int64
+	bytes int64
+	at    time.Time
+}
+
+// unsummarizedCountTTL bounds how stale a provisional (scanned) schema count
+// may be before DataSummary scans the table again.
+const unsummarizedCountTTL = 60 * time.Second
+
+// unsummarizedSchemaCountLocked answers a schema's record count and byte
+// total by table scan, at most once per unsummarizedCountTTL per schema.
+// Callers hold s.mu (read side is enough; the cache has its own lock).
+func (s *FlatSQLStore) unsummarizedSchemaCountLocked(schemaName, tableName string) (int64, int64, error) {
+	now := time.Now()
+	s.unsummarizedMu.Lock()
+	if c, ok := s.unsummarizedCounts[schemaName]; ok && now.Sub(c.at) < unsummarizedCountTTL {
+		s.unsummarizedMu.Unlock()
+		return c.count, c.bytes, nil
+	}
+	s.unsummarizedMu.Unlock()
+
+	var count int64
+	var totalBytes sql.NullInt64
+	if err := s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*), COALESCE(SUM(record_length), 0) FROM %s`, tableName)).Scan(&count, &totalBytes); err != nil {
+		return 0, 0, err
+	}
+	s.unsummarizedMu.Lock()
+	if s.unsummarizedCounts == nil {
+		s.unsummarizedCounts = map[string]unsummarizedCount{}
+	}
+	s.unsummarizedCounts[schemaName] = unsummarizedCount{count: count, bytes: totalBytes.Int64, at: now}
+	s.unsummarizedMu.Unlock()
+	return count, totalBytes.Int64, nil
+}
+
 func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -5502,13 +5549,11 @@ func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid schema name %q: %w", schemaName, err)
 		}
-		var count int64
-		var totalBytes sql.NullInt64
-		if err := s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*), COALESCE(SUM(record_length), 0) FROM %s`, tableName)).Scan(&count, &totalBytes); err != nil {
+		count, bytesTotal, err := s.unsummarizedSchemaCountLocked(schemaName, tableName)
+		if err != nil {
 			return nil, fmt.Errorf("summarize %s: %w", schemaName, err)
 		}
 		if count > 0 {
-			bytesTotal := totalBytes.Int64
 			summary.Schemas = append(summary.Schemas, DataSchemaSummary{
 				SchemaName: schemaName,
 				Count:      count,

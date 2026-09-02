@@ -63,7 +63,13 @@ func (r *SchemaRegistry) loadEmbedded() error {
 		}
 
 		r.schemas[entry.Name()] = content
-		r.descriptions[entry.Name()] = extractDescription(content)
+		desc := extractDescription(content)
+		if desc == "" {
+			// A generated schema opens with a Hash/Version header and no doc
+			// comment; the curated catalogue text is the description then.
+			desc = schemaDescriptions[entry.Name()]
+		}
+		r.descriptions[entry.Name()] = desc
 	}
 
 	log.Infof("Loaded %d embedded schemas", len(r.schemas))
@@ -136,18 +142,32 @@ func (r *SchemaRegistry) Add(name string, content []byte, description string) {
 }
 
 // extractDescription extracts the schema description from FlatBuffer comments.
+// The generator's file header (`// Hash: …`, `// Version: …`,
+// `// ---END_HEADER`) is not documentation and is skipped.
 func extractDescription(content []byte) string {
 	lines := strings.Split(string(content), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "///") {
-			return strings.TrimPrefix(line, "/// ")
+		var text string
+		switch {
+		case strings.HasPrefix(line, "///"):
+			text = strings.TrimSpace(strings.TrimPrefix(line, "///"))
+		case strings.HasPrefix(line, "//"):
+			text = strings.TrimSpace(strings.TrimPrefix(line, "//"))
+		default:
+			continue
 		}
-		if strings.HasPrefix(line, "//") {
-			return strings.TrimPrefix(line, "// ")
+		if isGeneratedHeaderLine(text) {
+			continue
 		}
+		return text
 	}
 	return ""
+}
+
+func isGeneratedHeaderLine(text string) bool {
+	return strings.HasPrefix(text, "Hash:") || strings.HasPrefix(text, "Version:") ||
+		strings.HasSuffix(text, "END_HEADER") || strings.Trim(text, "-") == ""
 }
 
 // Default schema descriptions

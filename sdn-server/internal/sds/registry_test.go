@@ -2,6 +2,7 @@
 package sds
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -161,6 +162,21 @@ func TestSchemaDescriptions(t *testing.T) {
 	}
 }
 
+// A generated schema whose only comments are the Hash/Version header must
+// still describe itself from the curated catalogue, never as "Hash: …".
+func TestGeneratedSchemasDescribeThemselves(t *testing.T) {
+	reg, err := NewSchemaRegistry()
+	if err != nil {
+		t.Fatalf("NewSchemaRegistry: %v", err)
+	}
+	for _, name := range []string{"CAT.fbs", "OMM.fbs", "SPW.fbs"} {
+		desc := reg.GetDescription(name)
+		if desc == "" || strings.HasPrefix(desc, "Hash:") {
+			t.Errorf("%s description = %q", name, desc)
+		}
+	}
+}
+
 func TestExtractDescription(t *testing.T) {
 	tests := []struct {
 		content  string
@@ -170,6 +186,8 @@ func TestExtractDescription(t *testing.T) {
 		{"// Regular comment", "Regular comment"},
 		{"no comment\ntable Test {}", ""},
 		{"/// First line\n/// Second line", "First line"},
+		{"// Hash: ca31386a\n// Version: 1.0.4\n// -----------------------------------END_HEADER\ninclude \"../PLD/main.fbs\";", ""},
+		{"// Hash: ca31386a\n// Version: 1.0.4\n// -----END_HEADER\n/// Catalog entries", "Catalog entries"},
 	}
 
 	for _, test := range tests {
