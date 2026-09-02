@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -1020,6 +1021,8 @@ func (j *recordCatalogJournal) loadEngineHotWindow(ctx context.Context, store *F
 		return 0, nil
 	}
 	var poisoned error
+	flushed := 0
+	loadStart := time.Now()
 	batch := &engineIngestBatch{store: store}
 	batch.onFlush = func(stream []byte, source string, n int) error {
 		if store.engineHydrateBatchHook != nil {
@@ -1043,6 +1046,11 @@ func (j *recordCatalogJournal) loadEngineHotWindow(ctx context.Context, store *F
 		}
 		if additive {
 			store.engineResidentAdd(window.schemaName, int64(n))
+		}
+		flushed++
+		if flushed%64 == 0 {
+			log.Infof("FlatSQL engine compact hot-window rebuild: %s — %d record(s) ingested so far (%d batches, %s)",
+				window.schemaName, batch.total+int64(n), flushed, time.Since(loadStart).Round(time.Second))
 		}
 		return nil
 	}
