@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -909,8 +910,22 @@ func captureImportLegacyGlobals() func() {
 	}
 }
 
+// newImportLegacyKuboTestServer is a TEST-ONLY fake of the Kubo RPC surface
+// the importer talks to (it is sdn-server test code, not Kubo). The recorder
+// adds several CAR bundles concurrently, so the handler runs on many
+// goroutines at once: `pinned` is guarded by a mutex, and a protocol
+// violation is reported with t.Errorf + a 500 the caller surfaces through its
+// own error path — never t.Fatalf from a non-test goroutine, which the testing
+// package forbids and which showed up as an unexplained FAIL under gauntlet
+// load (2026-09-02).
 func newImportLegacyKuboTestServer(t *testing.T, pinned map[string][]byte) *httptest.Server {
 	t.Helper()
+	var mu sync.Mutex
+	fail := func(w http.ResponseWriter, format string, args ...any) {
+		msg := fmt.Sprintf(format, args...)
+		t.Errorf("fake kubo: %s", msg)
+		http.Error(w, msg, http.StatusInternalServerError)
+	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var responseKey string
 		var wantField string
@@ -923,40 +938,52 @@ func newImportLegacyKuboTestServer(t *testing.T, pinned map[string][]byte) *http
 			wantField = "data"
 		case "/api/v0/dag/export":
 			rootCID := r.URL.Query().Get("arg")
+			mu.Lock()
 			body, ok := pinned[rootCID]
+			mu.Unlock()
 			if !ok {
-				t.Fatalf("dag/export root %q was not pinned", rootCID)
+				fail(w, "dag/export root %q was not pinned", rootCID)
+				return
 			}
 			decoded, err := cid.Decode(rootCID)
 			if err != nil {
-				t.Fatalf("decode dag/export root CID: %v", err)
+				fail(w, "decode dag/export root CID: %v", err)
+				return
 			}
 			w.Header().Set("Content-Type", "application/vnd.ipld.car")
 			writeImportLegacySingleBlockCARForTest(t, w, decoded, body)
 			return
 		default:
-			t.Fatalf("unexpected IPFS path: %s", r.URL.Path)
+			fail(w, "unexpected IPFS path: %s", r.URL.Path)
+			return
 		}
 		reader, err := r.MultipartReader()
 		if err != nil {
-			t.Fatalf("multipart reader: %v", err)
+			fail(w, "multipart reader: %v", err)
+			return
 		}
 		part, err := reader.NextPart()
 		if err != nil {
-			t.Fatalf("next part: %v", err)
+			fail(w, "next part: %v", err)
+			return
 		}
 		if part.FormName() != wantField {
-			t.Fatalf("multipart field = %q, want %s", part.FormName(), wantField)
+			fail(w, "multipart field = %q, want %s", part.FormName(), wantField)
+			return
 		}
 		if filepath.Ext(part.FileName()) == ".car" && r.URL.Query().Get("chunker") != "size-1048576" {
-			t.Fatalf("CAR add chunker = %q, want Kubo-compatible 1 MiB chunks", r.URL.Query().Get("chunker"))
+			fail(w, "CAR add chunker = %q, want Kubo-compatible 1 MiB chunks", r.URL.Query().Get("chunker"))
+			return
 		}
 		body, err := io.ReadAll(part)
 		if err != nil {
-			t.Fatalf("read part: %v", err)
+			fail(w, "read part: %v", err)
+			return
 		}
 		cidValue := importLegacyCIDV1RawSHA256ForTest(t, body)
+		mu.Lock()
 		pinned[cidValue] = body
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"` + responseKey + `":"` + cidValue + `"}` + "\n"))
 	}))
