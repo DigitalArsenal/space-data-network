@@ -522,7 +522,9 @@ func TestWarmBootTimingOnALargeStore(t *testing.T) {
 	// An order of magnitude is the floor. Anything less means the resume is
 	// still paying for the catalog somewhere — which is exactly the regression
 	// the first cut of this test caught (a zero-frame resume was still scanning
-	// every frame header and loading every index row).
+	// every frame header and loading every index row). The correctness checks
+	// above always run; only this wall-clock comparison needs a quiet box.
+	skipTimingUnlessQuiet(t)
 	if warmElapsed*10 > coldElapsed {
 		t.Fatalf("warm hydration %s is not an order of magnitude faster than cold %s — the resume is still doing O(catalog) work",
 			warmElapsed, coldElapsed)
@@ -600,6 +602,9 @@ func TestDiscoveryReadDuringTailReplay(t *testing.T) {
 		t.Fatal(readErr)
 	}
 	t.Logf("DISCOVERY READ DURING TAIL REPLAY: worst of 8 sequential = %s", worst.Round(time.Millisecond))
+	// The reads above must SUCCEED regardless of load; only the wall-clock
+	// bound below needs a quiet box.
+	skipTimingUnlessQuiet(t)
 
 	// The live symptom was 20+ seconds. A local bound of 2 s is far looser than
 	// anything healthy and still fails the starvation class outright.
