@@ -20,6 +20,8 @@ package api
 // gossipsub topics (WS11.4), and when a Store is wired edges persist.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -39,6 +41,17 @@ type TrustHandler struct {
 	// Protect wraps the mutation endpoints (wire the node's admin auth
 	// here in production). nil = unprotected (tests/local).
 	Protect func(http.HandlerFunc) http.HandlerFunc
+
+	// Policies, Verdicts and Engine wire the `$TRP` rules engine
+	// (sdn-trust-rules-engine). nil = the rules surface answers 503.
+	Policies *trust.PolicyStore
+	Verdicts *trust.VerdictStore
+	Engine   *trust.Engine
+	// SaveInterval persists the runtime evaluation interval (0 = each
+	// policy's own cadence) so a restart keeps the operator's setting.
+	SaveInterval func(ms uint32) error
+
+	protectFn func(http.HandlerFunc) http.HandlerFunc
 }
 
 // NewTrustHandler creates a handler over a trust service.
@@ -59,6 +72,14 @@ func (h *TrustHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/trust/query", h.handleQuery)
 	mux.HandleFunc("/api/v1/trust/edges", protect(h.handleEdges))
 	mux.HandleFunc("/api/v1/trust/funds", protect(h.handleFunds))
+	h.protectFn = protect
+	// Rules engine: policies and verdicts read openly (a policy is the
+	// evaluator's published rule; a verdict is its signed public opinion),
+	// mutations and settings behind the same admin gate as edges.
+	mux.HandleFunc("/api/v1/trust/policies", h.handlePolicies)
+	mux.HandleFunc("/api/v1/trust/verdicts", h.handleVerdicts)
+	mux.HandleFunc("/api/v1/trust/settings", h.handleSettings)
+	mux.HandleFunc("/api/v1/trust/evaluate", protect(h.handleEvaluate))
 }
 
 func writeTrustJSON(w http.ResponseWriter, status int, v any) {
@@ -306,6 +327,7 @@ func (h *TrustHandler) handleEdges(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		h.trigger("edge-changed")
 		writeTrustJSON(w, http.StatusOK, mutationResponse{Flips: changes, Delivered: h.fanOut(changes)})
 	case http.MethodDelete:
 		truster := r.URL.Query().Get("truster")
@@ -325,6 +347,7 @@ func (h *TrustHandler) handleEdges(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		h.trigger("edge-changed")
 		writeTrustJSON(w, http.StatusOK, mutationResponse{Flips: changes, Delivered: h.fanOut(changes)})
 	default:
 		trustError(w, http.StatusMethodNotAllowed, "POST or DELETE")
@@ -347,5 +370,194 @@ func (h *TrustHandler) handleFunds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	changes := h.Service.UpdateFunds(node, holdings)
+	h.trigger("funds-changed")
 	writeTrustJSON(w, http.StatusOK, mutationResponse{Flips: changes, Delivered: h.fanOut(changes)})
+}
+
+// ---- `$TRP` rules engine surface ---------------------------------------
+
+func (h *TrustHandler) trigger(source string) {
+	if h.Engine != nil {
+		h.Engine.Trigger(source)
+	}
+}
+
+func (h *TrustHandler) rulesWired(w http.ResponseWriter) bool {
+	if h.Policies == nil || h.Verdicts == nil {
+		trustError(w, http.StatusServiceUnavailable, "the trust rules engine is not wired on this node")
+		return false
+	}
+	return true
+}
+
+// handlePolicies: GET lists every policy (latest record per POLICY_ID);
+// POST stores a new or updated policy as a signed `$TRP` record.
+func (h *TrustHandler) handlePolicies(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		if !h.rulesWired(w) {
+			return
+		}
+		list, err := h.Policies.List()
+		if err != nil {
+			trustError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		if list == nil {
+			list = []trust.Policy{}
+		}
+		writeTrustJSON(w, http.StatusOK, map[string]any{"policies": list})
+	case http.MethodPost:
+		protect := h.protectFn
+		if protect == nil {
+			protect = func(f http.HandlerFunc) http.HandlerFunc { return f }
+		}
+		protect(h.postPolicy)(w, r)
+	default:
+		trustError(w, http.StatusMethodNotAllowed, "GET or POST")
+	}
+}
+
+func newPolicyID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return "trp-" + hex.EncodeToString(b[:])
+}
+
+func (h *TrustHandler) postPolicy(w http.ResponseWriter, r *http.Request) {
+	if !h.rulesWired(w) {
+		return
+	}
+	var p trust.Policy
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
+		trustError(w, http.StatusBadRequest, "invalid policy body: "+err.Error())
+		return
+	}
+	if p.ID == "" {
+		p.ID = newPolicyID()
+	}
+	if p.EvaluationIntervalMs == 0 {
+		p.EvaluationIntervalMs = trust.DefaultEvaluationIntervalMs
+	}
+	if err := p.Validate(); err != nil {
+		trustError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cid, signedJSON, err := h.Policies.Put(p)
+	if err != nil {
+		trustError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.trigger("policy-changed")
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-SDN-Record-CID", cid)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(signedJSON)
+}
+
+// handleVerdicts serves the latest verdict per (policy, subject) from the
+// engine when it runs, else the stored `$TRV` history.
+func (h *TrustHandler) handleVerdicts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		trustError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	if !h.rulesWired(w) {
+		return
+	}
+	q := r.URL.Query()
+	policyID, subject := q.Get("policy"), q.Get("subject")
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	var (
+		verdicts []trust.Verdict
+		err      error
+		source   = "history"
+	)
+	if q.Get("history") == "" && h.Engine != nil {
+		verdicts = h.Engine.Latest(policyID, subject)
+		source = "engine"
+	} else {
+		verdicts, err = h.Verdicts.List(policyID, subject, limit)
+		if err != nil {
+			trustError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+	}
+	if verdicts == nil {
+		verdicts = []trust.Verdict{}
+	}
+	writeTrustJSON(w, http.StatusOK, map[string]any{"source": source, "verdicts": verdicts})
+}
+
+type trustSettings struct {
+	EvaluationIntervalMs uint32 `json:"EVALUATION_INTERVAL_MS"`
+	MinIntervalMs        uint32 `json:"MIN_INTERVAL_MS"`
+	DefaultIntervalMs    uint32 `json:"DEFAULT_INTERVAL_MS"`
+	Runs                 uint64 `json:"RUNS"`
+	LastRunMs            int64  `json:"LAST_RUN"`
+}
+
+func (h *TrustHandler) settings() trustSettings {
+	s := trustSettings{MinIntervalMs: trust.MinEvaluationIntervalMs, DefaultIntervalMs: trust.DefaultEvaluationIntervalMs}
+	if h.Engine != nil {
+		s.EvaluationIntervalMs = h.Engine.IntervalOverride()
+		s.Runs = h.Engine.Runs()
+		if t := h.Engine.LastRun(); !t.IsZero() {
+			s.LastRunMs = t.UnixMilli()
+		}
+	}
+	return s
+}
+
+// handleSettings: GET reports the cadence in force; PUT sets the runtime
+// override (EVALUATION_INTERVAL_MS, 0 = each policy's own) without restart.
+func (h *TrustHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeTrustJSON(w, http.StatusOK, h.settings())
+	case http.MethodPut:
+		protect := h.protectFn
+		if protect == nil {
+			protect = func(f http.HandlerFunc) http.HandlerFunc { return f }
+		}
+		protect(h.putSettings)(w, r)
+	default:
+		trustError(w, http.StatusMethodNotAllowed, "GET or PUT")
+	}
+}
+
+func (h *TrustHandler) putSettings(w http.ResponseWriter, r *http.Request) {
+	if h.Engine == nil {
+		trustError(w, http.StatusServiceUnavailable, "the trust rules engine is not running on this node")
+		return
+	}
+	var req struct {
+		EvaluationIntervalMs *uint32 `json:"EVALUATION_INTERVAL_MS"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.EvaluationIntervalMs == nil {
+		trustError(w, http.StatusBadRequest, "EVALUATION_INTERVAL_MS is required")
+		return
+	}
+	h.Engine.SetIntervalOverride(*req.EvaluationIntervalMs)
+	if h.SaveInterval != nil {
+		if err := h.SaveInterval(h.Engine.IntervalOverride()); err != nil {
+			trustError(w, http.StatusInternalServerError, "persist: "+err.Error())
+			return
+		}
+	}
+	writeTrustJSON(w, http.StatusOK, h.settings())
+}
+
+// handleEvaluate asks for one early pass now.
+func (h *TrustHandler) handleEvaluate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		trustError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	if h.Engine == nil {
+		trustError(w, http.StatusServiceUnavailable, "the trust rules engine is not running on this node")
+		return
+	}
+	h.Engine.Trigger("manual")
+	writeTrustJSON(w, http.StatusAccepted, map[string]any{"triggered": true, "runs": h.Engine.Runs()})
 }

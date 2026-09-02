@@ -48,6 +48,14 @@ package sds
 // THE MOMENT THE HOST STARTS READING ONE OF THESE, move it to
 // driftGuardedSchemas. That is one line and it is not optional.
 var unguardedEmbeddedSchemas = map[string]bool{
+	// $ICN / $TRP / $TRV (v1.207.0 mint, dashboard-console program): the host
+	// decodes $TRP and $TRV in internal/trust with the pinned bindings and
+	// round-trips both in trust tests (rules_test.go), which is the compensating
+	// control until they graduate to driftGuardedSchemas; $ICN is written by the
+	// ingest lanes that land after this pin.
+	"ICN.fbs":  true,
+	"TRP.fbs":  true,
+	"TRV.fbs":  true,
 	"ACI.fbs":  true,
 	"ACL.fbs":  true,
 	"ACM.fbs":  true,

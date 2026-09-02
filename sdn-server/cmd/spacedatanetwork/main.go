@@ -1583,6 +1583,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			bondAtt := &bondAttestor{}
 			bondAtt.start(ctx, n)
 			adminMux.HandleFunc("/api/v1/trust/bond", bondAtt.handleBond)
+			// Trust rules engine (`$TRP` policies → signed `$TRV` verdicts) and
+			// the trust graph API over it (trust_engine.go).
+			if err := startTrustRulesEngine(ctx, n, adminMux, cfg.Storage.Path, cfg.Admin.RequireAuth, func() *auth.Handler { return authHandler }, bondAtt); err != nil {
+				log.Warnf("Trust rules engine not started: %v", err)
+			}
 
 			// EPM (Entity Profile Message) API endpoints
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
@@ -3379,6 +3384,10 @@ func isPublicReadAPIPath(path string) bool {
 		// The node's security bond: public BY DESIGN — peers price trust by
 		// a bond anyone can verify (owner 2026-08-03; bond_attestation.go).
 		"/api/v1/trust/bond",
+		// Policies are the evaluator's published rules and verdicts its
+		// signed public opinions: both read as openly as the bond.
+		"/api/v1/trust/policies",
+		"/api/v1/trust/verdicts",
 		"/api/v1/peers":
 		return true
 	}

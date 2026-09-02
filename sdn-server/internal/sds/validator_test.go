@@ -300,7 +300,7 @@ const (
 	// TXSProvenance, so the two are ONE include closure and neither embeds
 	// alone. Only REC.fbs changed among the 225 already embedded; the rest of
 	// this pin is the two new standards and the re-vendored bindings.
-	expectedStandardSchemaCount = 227
+	expectedStandardSchemaCount = 230
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )

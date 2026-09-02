@@ -187,8 +187,8 @@ func TestEmbeddedSetIsTheWholePinnedStandardSet(t *testing.T) {
 		}
 		standards++
 	}
-	if standards != 227 {
-		t.Errorf("embedded SDS standards = %d, want 227 (spacedatastandards.org v1.198.0)", standards)
+	if standards != 230 {
+		t.Errorf("embedded SDS standards = %d, want 230 (spacedatastandards.org v1.207.0)", standards)
 	}
 	if internal != expectedInternalSchemaCount {
 		t.Errorf("embedded internal schemas = %d, want %d", internal, expectedInternalSchemaCount)

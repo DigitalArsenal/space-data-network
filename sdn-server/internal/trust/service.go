@@ -292,3 +292,24 @@ func (s *Service) rescore(base map[string]struct{}, perEvaluatorExtra map[string
 func (s *Service) NeighborhoodOf(id string, maxDepth int) []string {
 	return s.graph.Neighborhood(id, maxDepth)
 }
+
+// Nodes lists every node the trust graph currently knows.
+func (s *Service) Nodes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.graph.Nodes()
+}
+
+// TrustersOf maps every truster of subject to the weight of its live edge —
+// the input the TrustedConnections predicate reads.
+func (s *Service) TrustersOf(subject string) map[string]float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]float64{}
+	for _, truster := range s.graph.Trusters(subject) {
+		if e, ok := s.graph.Edge(truster, subject); ok {
+			out[truster] = e.Weight
+		}
+	}
+	return out
+}
