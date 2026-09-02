@@ -1264,6 +1264,37 @@ const engineStandardCatalogGraph = `
   table HYP {
     CAT_IDS:ubyte;
   }
+  table ICN {
+    CONNECTOR_ID:string;
+    KIND:byte;
+    TARGET_SCHEMA:string;
+    STATUS:byte;
+    STATUS_MESSAGE:string;
+    ENDPOINT_URL:string;
+    HTTP_METHOD:string;
+    AUTH_KIND:byte;
+    AUTH_HEADER_NAME:string;
+    CREDENTIAL_REFERENCE:string;
+    POLL_INTERVAL_MS:uint32;
+    DIRECTORY_PATH:string;
+    FILE_PATTERN:string;
+    SCAN_INTERVAL_MS:uint32;
+    SETTLE_DELAY_MS:uint32;
+    POST_INGEST_ACTION:byte;
+    UPLOAD_SESSION_ID:string;
+    UPLOAD_FILE_COUNT:uint32;
+    UPLOAD_TOTAL_BYTES:uint64;
+    UPLOAD_CONTENT_HASH:string;
+    DETECTED_FORMAT:string;
+    SAMPLE_RECORD_COUNT:uint32;
+    LAST_INGEST_AT:uint64;
+    LAST_ERROR_AT:uint64;
+    LAST_ERROR:string;
+    CREATED_AT:uint64;
+    UPDATED_AT:uint64;
+    PROVIDER_PEER_ID:string;
+    PROVIDER_SIGNATURE:[ubyte];
+  }
   table IDM {
     ID:string;
     NAME:string;
@@ -3217,8 +3248,22 @@ const engineStandardCatalogGraph = `
   table TRN {
     SOURCES:ubyte;
   }
+  table TRP {
+    POLICY_ID:string;
+    NAME:string;
+    DESCRIPTION:string;
+  }
   table TRS {
     REQUEST:ubyte;
+  }
+  table TRV {
+    VERDICT_ID:string;
+    POLICY_ID:string;
+    SUBJECT_ID:string;
+    PASSED:bool;
+    PREVIOUS_PASSED:bool;
+    SCORE:double;
+    PREVIOUS_SCORE:double;
   }
   table TXS {
     ID:string;
@@ -3400,6 +3445,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"HEL.fbs":  {Table: "HEL", FileID: "$HEL"},
 	"HFC.fbs":  {Table: "HFC", FileID: "$HFC"},
 	"HYP.fbs":  {Table: "HYP", FileID: "$HYP"},
+	"ICN.fbs":  {Table: "ICN", FileID: "$ICN"},
 	"IDM.fbs":  {Table: "IDM", FileID: "$IDM"},
 	"ION.fbs":  {Table: "ION", FileID: "$ION"},
 	"IQC.fbs":  {Table: "IQC", FileID: "$IQC"},
@@ -3534,7 +3580,9 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"TRE.fbs":  {Table: "TRE", FileID: "$TRE"},
 	"TRK.fbs":  {Table: "TRK", FileID: "$TRK"},
 	"TRN.fbs":  {Table: "TRN", FileID: "$TRN"},
+	"TRP.fbs":  {Table: "TRP", FileID: "$TRP"},
 	"TRS.fbs":  {Table: "TRS", FileID: "$TRS"},
+	"TRV.fbs":  {Table: "TRV", FileID: "$TRV"},
 	"TXS.fbs":  {Table: "TXS", FileID: "$TXS"},
 	"VAM.fbs":  {Table: "VAM", FileID: "$VAM"},
 	"VCF.fbs":  {Table: "VCF", FileID: "$VCF"},
