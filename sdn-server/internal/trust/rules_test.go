@@ -276,3 +276,21 @@ func TestEngineNeverLeaksRPCSecretsIntoVerdicts(t *testing.T) {
 		t.Fatalf("evidence states the refusal without secrets: %q", text)
 	}
 }
+
+func TestEngineEvaluatesDirectorySubjectsWithoutTrustEdges(t *testing.T) {
+	var published []string
+	p := Policy{ID: "p", Active: true, EvaluationIntervalMs: 60_000, Root: Group{ID: "r", Combinator: CombinatorAll, Predicates: []Predicate{{ID: "c", Kind: PredicateTrustedConnections, RequiredCount: 1}}}}
+	eng, _, _ := newTestEngine(t, []Policy{p}, nil, &published)
+	eng.extraSubjects = func() []string { return []string{"peer-known-only", "me", ""} }
+	eng.RunOnce(context.Background(), "test")
+	got := eng.Latest("p", "peer-known-only")
+	if len(got) != 1 || got[0].Passed {
+		t.Fatalf("a directory-known peer with no trust edge must get a FAIL verdict: %+v", got)
+	}
+	if got[0].Results[0].EvidenceText == "" {
+		t.Fatal("the failing verdict must say why")
+	}
+	if len(eng.Latest("p", "me")) != 0 {
+		t.Fatal("the evaluator never evaluates itself")
+	}
+}

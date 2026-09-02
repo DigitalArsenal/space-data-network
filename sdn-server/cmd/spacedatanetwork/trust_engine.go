@@ -179,6 +179,27 @@ func directoryChainAddresses(flat *storage.FlatSQLStore) trust.AddressResolver {
 	}
 }
 
+// directoryNodeSubjects lists every node with a verified profile in the
+// directory (except this node) as a subject for the rules engine.
+func directoryNodeSubjects(flat *storage.FlatSQLStore, selfPeerID string) func() []string {
+	return func() []string {
+		if flat == nil {
+			return nil
+		}
+		records, err := flat.QueryDirectory(storage.DirectoryQuery{Kind: directory.KindNode, ExcludePeerID: selfPeerID, Limit: 2000})
+		if err != nil {
+			return nil
+		}
+		out := make([]string, 0, len(records))
+		for _, rec := range records {
+			if id := strings.TrimSpace(rec.PeerID); id != "" && id != selfPeerID {
+				out = append(out, id)
+			}
+		}
+		return out
+	}
+}
+
 // startTrustRulesEngine loads the trust graph, starts the engine and mounts
 // the trust API (edges/scores + policies/verdicts/settings) on adminMux.
 func startTrustRulesEngine(ctx context.Context, n *node.Node, adminMux *http.ServeMux, storagePath string, requireAuth bool, resolveAuth func() *auth.Handler, bondAtt *bondAttestor) error {
@@ -216,6 +237,7 @@ func startTrustRulesEngine(ctx context.Context, n *node.Node, adminMux *http.Ser
 		Policies: policies, Verdicts: verdicts, Service: svc,
 		Balances: trust.BalanceSourceFunc(bondBalances),
 		Resolve:  directoryChainAddresses(flat),
+		Subjects: directoryNodeSubjects(flat, peerID),
 		Publish:  publish, Key: key, PeerID: peerID,
 	})
 	if err != nil {
