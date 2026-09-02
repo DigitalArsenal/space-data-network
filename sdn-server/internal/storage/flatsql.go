@@ -152,6 +152,12 @@ type FlatSQLStore struct {
 	// scan of the 1.8 M-row tag table into a read of the tens-of-rows summary
 	// plus this set. See sourceSummaryLanes.
 	replayedSourceLanes replayedSourceLaneSet
+	// sourceSummaryGeneration advances for every catalog append attempt after a
+	// durable control-table mutation. The maintenance summary rebuild captures
+	// it with a tag-table high-water and refuses to replace a lane if a live
+	// writer committed meanwhile; otherwise its final replacement could erase
+	// the writer's incremental summary.
+	sourceSummaryGeneration atomic.Uint64
 	// hydrateMu serializes full record-catalog replays against each other (the
 	// post-boot background hydrate vs. the admin re-sync trigger). It is NOT the
 	// store write lock: a replay must never hold that for its duration or it
@@ -870,9 +876,7 @@ func (s *FlatSQLStore) rebuildSourceSummariesForMaintenance() error {
 		return err
 	}
 	for _, lane := range lanes {
-		release = s.lockWrite("RebuildDerivedState: source-summary lane")
-		err = s.rebuildSourceSummaryLane(lane)
-		release()
+		err = s.rebuildSourceSummaryLaneForMaintenance(lane)
 		if err != nil {
 			return err
 		}
@@ -2359,6 +2363,12 @@ type sourceSummaryLane struct {
 // engine hold: under the 1 s acceptance bar with room for a loaded box.
 var sourceSummaryRebuildChunk = 8000
 
+// sourceSummaryMaintenanceAfterSlice is a no-op production seam used by the
+// deterministic liveness regression. It runs after a bounded maintenance
+// slice releases s.mu, so tests can prove that a cold reader and a live writer
+// do not queue behind the remaining lane scan.
+var sourceSummaryMaintenanceAfterSlice = func() {}
+
 // sourceSummaryLaneScanLimit is a runaway guard on the loose index scan below.
 // A node holds tens of lanes; tens of thousands means the seek stopped
 // advancing, and looping forever inside the engine lock is the failure mode this
@@ -2478,10 +2488,11 @@ func (r *replayedSourceLaneSet) drain() []sourceSummaryLane {
 //     only way a lane can exist in tags without a summary row.
 //
 // The union is exact for every writer in the tree. The fallback below covers the
-// one case it cannot: a summary that is EMPTY for the scope (a first boot, a
-// dropped/migrated summary table) is not evidence of an empty store, so that
-// path still pays the loose scan once — which is the right trade, because it
-// happens when there is nothing to skip anyway.
+// one case it cannot: a summary that is EMPTY for the scope AND has no replay
+// lane is not evidence of an empty store. Only then does the cold path pay the
+// loose scan once. A replayed lane is itself exact discovery evidence; scanning
+// the entire tag table after it was already recorded would reintroduce the
+// maintenance blackout this path exists to avoid.
 func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLane, error) {
 	seen := make(map[sourceSummaryLane]struct{}, 64)
 	lanes := make([]sourceSummaryLane, 0, 64)
@@ -2535,7 +2546,7 @@ func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLan
 		}
 	}
 
-	if summaryLanes == 0 {
+	if summaryLanes == 0 && len(lanes) == 0 {
 		// Nothing derived yet for this scope: a first boot, or a summary table
 		// that was dropped and recreated. An empty summary is not evidence of an
 		// empty store, so this is the one path that still pays the loose scan —
@@ -2780,6 +2791,195 @@ func (s *FlatSQLStore) rebuildSourceSummaryLane(lane sourceSummaryLane) error {
 	`, strings.Join(values, ", "))), args...); err != nil {
 		return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: %w",
 			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+	}
+	return nil
+}
+
+// sourceSummaryMaintenanceRetryLimit is a livelock guard, not a correctness
+// escape hatch. Each attempt uses an immutable tag high-water and refuses to
+// publish if any live catalog writer advanced the generation. A sustained write
+// storm should surface a retryable maintenance error rather than silently
+// replace an incremental summary with an old aggregate.
+const sourceSummaryMaintenanceRetryLimit = 32
+
+// rebuildSourceSummaryLaneForMaintenance is the live-service form of the
+// source-summary rebuild. The historic recovery variant above is intentionally
+// still called under one store write lock: it has no concurrent writers and its
+// simpler transaction shape is part of recovery behavior. This variant takes a
+// short write lock per bounded CID slice, and publishes the complete aggregate
+// only if the durable catalog generation and lane rowid high-water stayed
+// stable throughout the scan.
+func (s *FlatSQLStore) rebuildSourceSummaryLaneForMaintenance(lane sourceSummaryLane) error {
+	for attempt := 0; attempt < sourceSummaryMaintenanceRetryLimit; attempt++ {
+		release := s.lockWrite("RebuildDerivedState: snapshot source-summary lane")
+		generation := s.sourceSummaryGeneration.Load()
+		readSource, err := s.recordReadSourceFiltered(lane.SchemaName, "cid > ?1 AND (?2 = '' OR cid <= ?2)")
+		var highWater int64
+		if err == nil {
+			err = s.db.QueryRow(`
+				SELECT COALESCE(MAX(rowid), 0) FROM sdn_record_source_tags
+				WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?`,
+				lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID).Scan(&highWater)
+		}
+		release()
+		if err != nil {
+			return fmt.Errorf("snapshot source summary for %s/%s/%s/%s: %w",
+				lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+		}
+
+		// Both statements carry the fixed rowid high-water. A concurrent tag
+		// insert therefore cannot leak into an otherwise old aggregate even
+		// before the generation guard discards this attempt at publication.
+		boundarySQL := fmt.Sprintf(`
+			SELECT cid FROM sdn_record_source_tags
+			WHERE schema_name = ?1 AND provider_id = ?2 AND source_name = ?3 AND batch_id = ?4
+			  AND cid > ?5 AND rowid <= ?6
+			ORDER BY cid
+			LIMIT 1 OFFSET %d`, sourceSummaryRebuildChunk-1)
+		aggSQL := fmt.Sprintf(`
+			SELECT t.producer_peer_id, t.producer_public_key,
+			       COUNT(*),
+			       COALESCE(SUM(records.record_length), 0),
+			       COALESCE(MAX(records.rowid), 0),
+			       COALESCE(MIN(t.created_at), 0)
+			FROM (
+				SELECT cid, producer_peer_id, producer_public_key, created_at
+				FROM sdn_record_source_tags
+				WHERE schema_name = ?3 AND provider_id = ?4 AND source_name = ?5 AND batch_id = ?6
+				  AND cid > ?1 AND (?2 = '' OR cid <= ?2) AND rowid <= ?7
+			) t
+			LEFT JOIN %s records ON records.cid = t.cid
+			GROUP BY t.producer_peer_id, t.producer_public_key`, readSource)
+
+		aggs := make(map[sourceSummaryProducerKey]*sourceSummaryProducerAgg, 4)
+		lastCID := ""
+		stable := true
+		for slice := 0; ; slice++ {
+			if slice > sourceSummaryLaneScanLimit {
+				return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: slice cursor did not advance",
+					lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID)
+			}
+			release = s.lockWrite("RebuildDerivedState: source-summary slice")
+			boundary := ""
+			err = s.db.QueryRow(boundarySQL,
+				lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, lastCID, highWater,
+			).Scan(&boundary)
+			if errors.Is(err, sql.ErrNoRows) {
+				err = nil
+			}
+			if err == nil {
+				var rows *sql.Rows
+				rows, err = s.db.Query(aggSQL, lastCID, boundary,
+					lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, highWater)
+				if err == nil {
+					sliceRows := int64(0)
+					for rows.Next() {
+						var key sourceSummaryProducerKey
+						var got sourceSummaryProducerAgg
+						if err = rows.Scan(&key.PeerID, &key.PublicKey,
+							&got.RecordCount, &got.TotalBytes, &got.MaxRowID, &got.FirstSeen); err != nil {
+							break
+						}
+						sliceRows += got.RecordCount
+						acc := aggs[key]
+						if acc == nil {
+							acc = &sourceSummaryProducerAgg{}
+							aggs[key] = acc
+						}
+						acc.RecordCount += got.RecordCount
+						acc.TotalBytes += got.TotalBytes
+						if got.MaxRowID > acc.MaxRowID {
+							acc.MaxRowID = got.MaxRowID
+						}
+						if got.FirstSeen > 0 && (acc.FirstSeen == 0 || got.FirstSeen < acc.FirstSeen) {
+							acc.FirstSeen = got.FirstSeen
+						}
+					}
+					if err == nil {
+						err = rows.Err()
+					}
+					if closeErr := rows.Close(); err == nil && closeErr != nil {
+						err = closeErr
+					}
+					if err == nil && (boundary == "" || sliceRows == 0) {
+						stable = false
+					} else if err == nil {
+						lastCID = boundary
+					}
+				}
+			}
+			release()
+			sourceSummaryMaintenanceAfterSlice()
+			if err != nil {
+				return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: %w",
+					lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+			}
+			if !stable {
+				break
+			}
+		}
+
+		release = s.lockWrite("RebuildDerivedState: publish source-summary lane")
+		if s.sourceSummaryGeneration.Load() != generation {
+			release()
+			continue
+		}
+		err = s.replaceSourceSummaryLane(lane, aggs)
+		release()
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: live catalog changed during %d attempts",
+		lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, sourceSummaryMaintenanceRetryLimit)
+}
+
+// replaceSourceSummaryLane is the small atomic publication section shared by
+// the generation-guarded maintenance path. Callers hold s.mu.Lock.
+func (s *FlatSQLStore) replaceSourceSummaryLane(lane sourceSummaryLane, aggs map[sourceSummaryProducerKey]*sourceSummaryProducerAgg) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin source summary replacement: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
+		DELETE FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`), lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID); err != nil {
+		return fmt.Errorf("clear source summary for %s/%s/%s/%s: %w",
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+	}
+	if len(aggs) == 0 {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit empty source summary replacement: %w", err)
+		}
+		return nil
+	}
+	values := make([]string, 0, len(aggs))
+	args := make([]any, 0, len(aggs)*10)
+	for key, acc := range aggs {
+		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))")
+		firstSeen := acc.FirstSeen
+		if firstSeen == 0 {
+			firstSeen = time.Now().Unix()
+		}
+		args = append(args,
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID,
+			key.PeerID, key.PublicKey,
+			acc.RecordCount, acc.TotalBytes, acc.MaxRowID, firstSeen)
+	}
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
+		INSERT INTO sdn_record_source_summary (
+			schema_name, provider_id, source_name, batch_id, producer_peer_id,
+			producer_public_key, record_count, total_bytes, max_rowid, first_seen, updated_at
+		) VALUES %s
+	`, strings.Join(values, ", "))), args...); err != nil {
+		return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: %w",
+			lane.SchemaName, lane.ProviderID, lane.SourceName, lane.BatchID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit source summary replacement: %w", err)
 	}
 	return nil
 }

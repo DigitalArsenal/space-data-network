@@ -1,13 +1,16 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 // THE PAGED HOT-WINDOW READ MUST BE THE SAME ANSWER, not a similar one.
@@ -315,5 +318,166 @@ func TestMaintenanceHotWindowKeepsGlobalOldestFirstAcrossChunks(t *testing.T) {
 		if got := OMM.GetRootAsOMM(frame, 0).NORAD_CAT_ID(); got != want {
 			t.Fatalf("engine _rowid %d has NORAD %d, want %d: rebuild pages were not globally oldest-first", i, got, want)
 		}
+	}
+}
+
+// TestMaintenanceHotWindowDetachedScanDoesNotStarveAWriterOrColdReader pins
+// the real lock inversion. The old maintenance scan held j.mu for its entire
+// journal walk; a live writer then held s.mu while waiting on that mutex, and
+// Go's writer-preferring RWMutex queued every cold RecordIndexPage reader.
+func TestMaintenanceHotWindowDetachedScanDoesNotStarveAWriterOrColdReader(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	seed := newEngineRecordsStore(t, basePath)
+	cat := sds.NewCATBuilder().WithNoradCatID(27559).WithObjectName("ALGERIA").Build()
+	if _, err := seed.Store("CAT.fbs", cat, "peer-cat", nil); err != nil {
+		t.Fatalf("store CAT: %v", err)
+	}
+	omm := make([][]byte, 0, 130)
+	for i := 0; i < cap(omm); i++ {
+		omm = append(omm, buildEngineOMM(t, uint32(81000+i), "LOCK-SCAN", int64(1730000000+i)))
+	}
+	if n, err := seed.StoreBatch("OMM.fbs", omm, "peer-hot", nil); err != nil || n != len(omm) {
+		t.Fatalf("seed hot journal = %d, %v", n, err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+
+	store := reopenDeferred(t, basePath)
+	defer store.Close()
+	started := make(chan struct{})
+	releaseScan := make(chan struct{})
+	oldBeforeScan := engineHotWindowMaintenanceBeforeScan
+	engineHotWindowMaintenanceBeforeScan = func() {
+		close(started)
+		<-releaseScan
+	}
+	t.Cleanup(func() { engineHotWindowMaintenanceBeforeScan = oldBeforeScan })
+
+	hydrated := make(chan error, 1)
+	go func() {
+		_, err := store.HydrateEngineHotWindowFromRecordCatalogContext(context.Background())
+		hydrated <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("maintenance scan did not reach unlocked scan hook")
+	}
+
+	writer := make(chan error, 1)
+	go func() {
+		_, err := store.Store("OMM.fbs", buildEngineOMM(t, 99999, "LIVE-WRITER", 1730000999), "peer-live", nil)
+		writer <- err
+	}()
+	select {
+	case err := <-writer:
+		if err != nil {
+			t.Fatalf("writer during detached scan: %v", err)
+		}
+	case <-time.After(750 * time.Millisecond):
+		t.Fatal("writer remained blocked by the hot-window candidate scan")
+	}
+
+	startedRead := time.Now()
+	rows, total, err := store.RecordIndexPage(RecordIndexPageQuery{SchemaName: "CAT.fbs", NoradLike: "27559", Limit: 1})
+	if err != nil {
+		t.Fatalf("cold CAT RecordIndexPage during scan: %v", err)
+	}
+	if elapsed := time.Since(startedRead); elapsed >= 750*time.Millisecond {
+		t.Fatalf("cold CAT RecordIndexPage took %s while scan was paused", elapsed)
+	}
+	if total != 1 || len(rows) != 1 {
+		t.Fatalf("cold CAT RecordIndexPage = %d rows (%d total), want 1", len(rows), total)
+	}
+	close(releaseScan)
+	if err := <-hydrated; err != nil {
+		t.Fatalf("hydrate after writer: %v", err)
+	}
+}
+
+// TestMaintenanceHotWindowRetriesCompactionBetweenScanAndStreamPin proves a
+// compacted journal cannot be paired with old stream offsets. The test forces
+// CompactStreams exactly after the detached scan and before the first stream
+// FD is opened; the first snapshot must be discarded and the retry must load a
+// complete window from one coherent inode generation.
+func TestMaintenanceHotWindowRetriesCompactionBetweenScanAndStreamPin(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	seed := newEngineRecordsStore(t, basePath)
+	for i := 0; i < 130; i++ {
+		if _, err := seed.Store("OMM.fbs", buildEngineOMM(t, uint32(82000+i), "COMPACT-SCAN", int64(1740000000+i)), "peer-compact", nil); err != nil {
+			t.Fatalf("store OMM %d: %v", i, err)
+		}
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+
+	store := reopenDeferred(t, basePath)
+	defer store.Close()
+	oldAfterScan := engineHotWindowMaintenanceAfterScan
+	fired := false
+	engineHotWindowMaintenanceAfterScan = func() {
+		if fired {
+			return
+		}
+		fired = true
+		if _, err := store.CompactStreams(); err != nil {
+			t.Fatalf("force compaction between scan and pin: %v", err)
+		}
+	}
+	t.Cleanup(func() { engineHotWindowMaintenanceAfterScan = oldAfterScan })
+
+	loaded, err := store.HydrateEngineHotWindowFromRecordCatalog()
+	if err != nil {
+		t.Fatalf("hydrate after forced compaction: %v", err)
+	}
+	if !fired || loaded != 130 {
+		t.Fatalf("forced compaction hydrate fired=%v loaded=%d, want true/130", fired, loaded)
+	}
+	if passes := store.recordCatalog.EngineHotWindowPasses(); passes != 2 {
+		t.Fatalf("compaction snapshot made %d journal scans, want stale scan + coherent retry", passes)
+	}
+	if count, err := store.EngineRecordCount("OMM.fbs"); err != nil || count != 130 {
+		t.Fatalf("coherent compacted OMM window = %d err=%v, want 130 nil", count, err)
+	}
+}
+
+// TestMaintenanceHotWindowCancelAfterScanLeavesWindowUnhydrated covers the
+// cancellation point a long scan alone cannot reach: after candidate selection
+// but before a later bounded ingest chunk. Partial cache contents are allowed;
+// advertising the cache as hydrated is not.
+func TestMaintenanceHotWindowCancelAfterScanLeavesWindowUnhydrated(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	seed := newEngineRecordsStore(t, basePath)
+	for i := 0; i < 130; i++ {
+		if _, err := seed.Store("OMM.fbs", buildEngineOMM(t, uint32(83000+i), "CANCEL-SCAN", int64(1750000000+i)), "peer-cancel", nil); err != nil {
+			t.Fatalf("store OMM %d: %v", i, err)
+		}
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+
+	store := reopenDeferred(t, basePath)
+	defer store.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	oldBeforeChunk := engineHotWindowMaintenanceBeforeChunk
+	engineHotWindowMaintenanceBeforeChunk = func(start int) {
+		if start >= engineHotWindowMaintenanceChunk {
+			cancel()
+		}
+	}
+	t.Cleanup(func() { engineHotWindowMaintenanceBeforeChunk = oldBeforeChunk })
+	loaded, err := store.HydrateEngineHotWindowFromRecordCatalogContext(ctx)
+	if err != nil {
+		t.Fatalf("cancelled maintenance hydrate returned an error: %v", err)
+	}
+	if loaded == 0 {
+		t.Fatal("cancel hook fired before a bounded page was consumed")
+	}
+	if store.EngineHotWindowHydrated() {
+		t.Fatal("cancel after scan/later chunk marked hot window hydrated")
 	}
 }
