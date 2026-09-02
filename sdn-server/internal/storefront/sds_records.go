@@ -104,7 +104,15 @@ func reviewRecord(data interface{}) (*Review, bool) {
 // and ACCESS_TYPE (commercial model) already carry what those listings do know,
 // and neither is a substitute.
 func listingPrimaryCategory(listing *Listing, moduleCategory func(string) string) string {
-	if moduleCategory == nil || listing.ListingKind != ListingKindWASMModule {
+	if listing.ListingKind != ListingKindWASMModule {
+		if category := strings.TrimSpace(listing.PrimaryCategory); category != "" {
+			if _, ok := sdsstf.EnumValuescapabilityClass[category]; ok {
+				return category
+			}
+		}
+		return cct.Unspecified
+	}
+	if moduleCategory == nil {
 		return cct.Unspecified
 	}
 	moduleID := strings.TrimSpace(listing.ProtectedDelivery.ModuleID)
@@ -139,6 +147,7 @@ func encodeListingRecord(listing *Listing, moduleCategory func(string) string) [
 	signature := fbByteVector(builder, listing.Signature, sdsstf.STFStartSIGNATUREVector)
 	sourcePeerID := stringOffset(builder, listing.SourcePeerID)
 	primaryCategory := listingPrimaryCategory(listing, moduleCategory)
+	categories := fbCapabilityClassVector(builder, listing.Categories, sdsstf.STFStartCATEGORIESVector)
 
 	sdsstf.STFStart(builder)
 	sdsstf.STFAddLISTING_ID(builder, listingID)
@@ -173,12 +182,14 @@ func encodeListingRecord(listing *Listing, moduleCategory func(string) string) [
 	// these bytes cannot distinguish a defaulted field from a stated one, and
 	// this lane is exactly where that ambiguity used to do damage.
 	//
-	// CATEGORIES is left empty: it is for listings that genuinely span several
-	// classes, and a category joined from one single-valued module family is
-	// always exactly one. $STF defines an empty list with a set
-	// PRIMARY_CATEGORY as membership in that one category, so the honest
-	// encoding is silence rather than a one-element vector.
+	// Module listings normally leave CATEGORIES empty because their single shelf
+	// comes from the module-catalog join. The SDS-exact publication lane can
+	// populate this vector for data and service offerings that genuinely span
+	// several ratified capability classes.
 	sdsstf.STFAddPRIMARY_CATEGORY(builder, sdsstf.EnumValuescapabilityClass[primaryCategory])
+	if categories != 0 {
+		sdsstf.STFAddCATEGORIES(builder, categories)
+	}
 	root := sdsstf.STFEnd(builder)
 	sdsstf.FinishSTFBuffer(builder, root)
 	return builder.FinishedBytes()
@@ -591,6 +602,23 @@ func fbPaymentMethodVector(builder *flatbuffers.Builder, methods []PaymentMethod
 	return builder.EndVector(len(methods))
 }
 
+func fbCapabilityClassVector(builder *flatbuffers.Builder, categories []string, start func(*flatbuffers.Builder, int) flatbuffers.UOffsetT) flatbuffers.UOffsetT {
+	values := make([]byte, 0, len(categories))
+	for _, category := range categories {
+		if value, ok := sdsstf.EnumValuescapabilityClass[strings.TrimSpace(category)]; ok {
+			values = append(values, byte(value))
+		}
+	}
+	if len(values) == 0 {
+		return 0
+	}
+	start(builder, len(values))
+	for i := len(values) - 1; i >= 0; i-- {
+		builder.PrependByte(values[i])
+	}
+	return builder.EndVector(len(values))
+}
+
 func paymentMethodValue(method PaymentMethod) int8 {
 	switch method {
 	case PaymentMethodCryptoSOL:
@@ -642,6 +670,8 @@ func addSTFListingKind(builder *flatbuffers.Builder, kind ListingKind) {
 	switch kind {
 	case ListingKindWASMModule:
 		sdsstf.STFAddLISTING_KIND(builder, 1)
+	case ListingKindService:
+		sdsstf.STFAddLISTING_KIND(builder, 2)
 	default:
 		sdsstf.STFAddLISTING_KIND(builder, 0)
 	}

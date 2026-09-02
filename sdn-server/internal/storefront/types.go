@@ -14,12 +14,13 @@ const (
 	AccessTypeQuery
 )
 
-// ListingKind distinguishes protected data-stream listings from protected WASM module listings.
+// ListingKind distinguishes the SDS storefront delivery kinds.
 type ListingKind string
 
 const (
 	ListingKindDataStream ListingKind = "data_stream"
 	ListingKindWASMModule ListingKind = "wasm_module"
+	ListingKindService    ListingKind = "Service"
 )
 
 // ProtectedDelivery records the immutable encrypted artifact/window metadata
@@ -199,22 +200,23 @@ type Listing struct {
 	License            string             `json:"license"`
 	Signature          []byte             `json:"signature"`
 	SourcePeerID       string             `json:"source_peer_id,omitempty"` // empty = local, set = discovered from remote peer
+	SourceConnectorID  string             `json:"SOURCE_CONNECTOR_ID,omitempty"`
+	Categories         []string           `json:"CATEGORIES,omitempty"`
+	CanonicalJSONSig   []byte             `json:"canonical_json_signature,omitempty"`
 
 	// PrimaryCategory is the $CCT capabilityClass member the listing shelves
 	// under — the same value encodeListingRecord writes to
 	// STF.PRIMARY_CATEGORY, so the JSON a client reads and the FlatBuffer a
 	// peer verifies say one thing.
 	//
-	// DERIVED, never stored. It is stamped on read from the node's module
-	// catalog join, the one authority $PLG and $PMM also answer from; there is
-	// deliberately no storefront_listings column, because a persisted copy
-	// would keep the shelf a re-staged catalog moved. It is likewise never
-	// accepted on input: a client cannot declare its own category by POSTing
-	// one.
+	// Module listings are derived from the module catalog join. Data-stream and
+	// service listings can carry the provider's ratified $CCT classification,
+	// because those kinds do not have a module to join.
 	//
-	// UNSPECIFIED for every data-stream listing, and for a module listing whose
-	// module the catalog never categorized. $STF forbids re-deriving a category
-	// from DATA_TYPES, TAGS or TITLE, so unknown stays unknown.
+	// UNSPECIFIED for legacy data-stream listings that did not state a shelf,
+	// and for a module listing whose module the catalog never categorized. $STF
+	// forbids re-deriving a category from DATA_TYPES, TAGS or TITLE, so unknown
+	// stays unknown.
 	//
 	// IDL capitalization, per the SDS JSON key rule: this key mirrors a record
 	// field, not a synthesized one.
