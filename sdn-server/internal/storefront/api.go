@@ -67,6 +67,7 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux, authHandler *auth.Handle
 	mux.HandleFunc("/api/storefront/listings", optionalAuth(h.handleListings))
 	mux.HandleFunc("/api/storefront/listings/search", optionalAuth(h.handleSearchListings))
 	mux.HandleFunc("/api/storefront/listings/", optionalAuth(h.handleListingByID))
+	mux.HandleFunc("/api/v1/storefront/listings/publish", requireAuth(peers.Admin, h.handlePublishListing))
 
 	// Purchases — all require auth
 	mux.HandleFunc("/api/storefront/purchases", requireAuth(peers.Standard, h.handleCreatePurchase))
@@ -243,15 +244,23 @@ func (h *APIHandler) handleListings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) handleSearchListings(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var query SearchQuery
-	if err := json.NewDecoder(r.Body).Decode(&query); err != nil {
-		http.Error(w, "invalid query", http.StatusBadRequest)
+	switch r.Method {
+	case http.MethodGet:
+		query.SearchText = strings.TrimSpace(r.URL.Query().Get("q"))
+		if kind := strings.TrimSpace(r.URL.Query().Get("listing_kind")); kind != "" {
+			query.ListingKinds = []ListingKind{listingKindFromSDS(kind)}
+		}
+		query.Limit = queryInt(r, "limit", 20)
+		query.Offset = queryInt(r, "offset", 0)
+	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+		if err := json.NewDecoder(r.Body).Decode(&query); err != nil {
+			http.Error(w, "invalid query", http.StatusBadRequest)
+			return
+		}
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -262,6 +271,35 @@ func (h *APIHandler) handleSearchListings(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *APIHandler) handlePublishListing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var draft ListingDraft
+	if err := decoder.Decode(&draft); err != nil {
+		http.Error(w, "invalid SDS listing draft: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := draft.validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		http.Error(w, "invalid SDS listing draft: trailing JSON value", http.StatusBadRequest)
+		return
+	}
+	report, err := h.service.PublishListingDraft(r.Context(), draft)
+	if err != nil {
+		http.Error(w, "failed to publish listing: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, report)
 }
 
 func (h *APIHandler) handleListingByID(w http.ResponseWriter, r *http.Request) {
