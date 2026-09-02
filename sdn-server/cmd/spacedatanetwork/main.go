@@ -3380,6 +3380,9 @@ func isPublicReadAPIPath(path string) bool {
 		// also carries it.
 		"/api/v1/dashboard/stats",
 		"/api/v1/pubsub/topics",
+		// The embedded Space Data Standards registry (names + descriptions):
+		// public by design, the same text the schema files carry.
+		"/api/v1/standards",
 		"/api/v1/pubsub/messages",
 		// The node's security bond: public BY DESIGN — peers price trust by
 		// a bond anyone can verify (owner 2026-08-03; bond_attestation.go).
