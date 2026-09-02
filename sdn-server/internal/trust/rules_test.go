@@ -281,7 +281,7 @@ func TestEngineEvaluatesDirectorySubjectsWithoutTrustEdges(t *testing.T) {
 	var published []string
 	p := Policy{ID: "p", Active: true, EvaluationIntervalMs: 60_000, Root: Group{ID: "r", Combinator: CombinatorAll, Predicates: []Predicate{{ID: "c", Kind: PredicateTrustedConnections, RequiredCount: 1}}}}
 	eng, _, _ := newTestEngine(t, []Policy{p}, nil, &published)
-	eng.extraSubjects = func() []string { return []string{"peer-known-only", "me", ""} }
+	eng.extraSubjects = func() []string { return []string{"peer-known-only", eng.peerID, ""} }
 	eng.RunOnce(context.Background(), "test")
 	got := eng.Latest("p", "peer-known-only")
 	if len(got) != 1 || got[0].Passed {
@@ -290,7 +290,7 @@ func TestEngineEvaluatesDirectorySubjectsWithoutTrustEdges(t *testing.T) {
 	if got[0].Results[0].EvidenceText == "" {
 		t.Fatal("the failing verdict must say why")
 	}
-	if len(eng.Latest("p", "me")) != 0 {
+	if len(eng.Latest("p", eng.peerID)) != 0 {
 		t.Fatal("the evaluator never evaluates itself")
 	}
 }
