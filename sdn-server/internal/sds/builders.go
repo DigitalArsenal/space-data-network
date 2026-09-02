@@ -614,7 +614,6 @@ func NewCATBuilder() *CATBuilder {
 		noradCatID:   25544,
 		objectType:   "UNKNOWN",
 		opsStatus:    "UNKNOWN",
-		owner:        int8(CAT.EnumValueslegacyCountryCode["UNK"]),
 		launchDate:   "1998-11-20",
 		launchSite:   "TYMSC",
 		decayDate:    "",
