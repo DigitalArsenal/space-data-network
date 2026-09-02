@@ -912,10 +912,41 @@ func (b *engineIngestBatch) flush() error {
 		if err := b.onFlush(stream, b.source, n); err != nil {
 			return err
 		}
-	} else if _, err := b.store.engineDB.IngestWithSource(stream, b.source); err != nil {
+	} else if err := b.store.ingestEngineStreamLocked(stream, b.source); err != nil {
 		return err
 	}
 	b.total += int64(n)
+	return nil
+}
+
+// ingestEngineStreamLocked hands one size-prefixed stream to the engine INSIDE
+// ONE SQLite TRANSACTION on the control connection. Without it every record
+// of a standard with nested vectors ($TBS: provenance SOURCES -> junction
+// rows) is its own autocommit transaction — journal write, truncate and a
+// full fsync each — measured at 20 records/s; inside one transaction the same
+// batch runs at ~1,700/s with synchronous=FULL (2026-09-02). The engine's
+// record arena is unaffected; only its derived SQL rows ride the transaction.
+// A caller that already holds a transaction (BEGIN refused) ingests as-is.
+// Caller holds s.mu for writing.
+func (s *FlatSQLStore) ingestEngineStreamLocked(stream []byte, source string) error {
+	inTxn := false
+	if s.db != nil {
+		if _, err := s.db.Exec("BEGIN"); err == nil {
+			inTxn = true
+		}
+	}
+	if _, err := s.engineDB.IngestWithSource(stream, source); err != nil {
+		if inTxn {
+			_, _ = s.db.Exec("ROLLBACK")
+		}
+		return err
+	}
+	if inTxn {
+		if _, err := s.db.Exec("COMMIT"); err != nil {
+			_, _ = s.db.Exec("ROLLBACK")
+			return fmt.Errorf("commit engine ingest batch: %w", err)
+		}
+	}
 	return nil
 }
 
