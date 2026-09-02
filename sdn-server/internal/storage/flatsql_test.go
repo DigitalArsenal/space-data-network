@@ -2257,8 +2257,11 @@ func TestFlatSQLStoreDeferredBootRebuildsKeepStreamBackedRawRecordsAvailable(t *
 		t.Fatalf("reopen with deferred boot rebuilds: %v", err)
 	}
 	defer reopened.Close()
-	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 0 {
-		t.Fatalf("deferred engine count = %d err=%v, want 0 nil", count, err)
+	// A clean close flushed the engine's record state, so even with every
+	// boot rebuild deferred the record is already resident from disk
+	// (engine_state_persistence_test.go); nothing was re-derived to get it.
+	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 1 {
+		t.Fatalf("deferred engine count = %d err=%v, want 1 nil (persisted engine state)", count, err)
 	}
 	record, err := reopened.GetRawRecord("OMM.fbs", cid)
 	if err != nil {
