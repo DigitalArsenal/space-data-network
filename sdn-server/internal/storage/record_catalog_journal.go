@@ -734,6 +734,10 @@ func (j *recordCatalogJournal) ReplayEngineHotWindows(ctx context.Context, store
 	return j.ReplayEngineHotWindowsOpts(ctx, store, schemas, limitFor, engineReplayOptions{CallerHoldsStoreLock: true})
 }
 
+// engineHydrateFlushEveryBatches is how many ingest batches the hydration lets
+// accumulate in engine memory before flushing the record stream to disk.
+const engineHydrateFlushEveryBatches = 256
+
 // engineReplayOptions shapes one engine hot-window replay.
 type engineReplayOptions struct {
 	// From is the journal offset to start at (0 = the whole journal); see
@@ -1052,6 +1056,14 @@ func (j *recordCatalogJournal) loadEngineHotWindow(ctx context.Context, store *F
 		if flushed%64 == 0 {
 			log.Infof("FlatSQL engine compact hot-window rebuild: %s — %d record(s) ingested so far (%d batches, %s)",
 				window.schemaName, batch.total+int64(n), flushed, time.Since(loadStart).Round(time.Second))
+		}
+		// Persist the engine's record stream every so often (still inside
+		// this batch's lock) so a restart mid-rebuild opens what was loaded
+		// instead of a populated database with no stream.
+		if flushed%engineHydrateFlushEveryBatches == 0 {
+			if err := store.flushEngineStateLocked(); err != nil {
+				log.Warnf("FlatSQL engine compact hot-window rebuild: periodic record-state flush: %v", err)
+			}
 		}
 		return nil
 	}

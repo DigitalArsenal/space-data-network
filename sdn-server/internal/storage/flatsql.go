@@ -724,15 +724,15 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// the mark covers is already visible in the tables: the boot restores the
 	// Go-side residency from those tables and later ingests only the journal
 	// tail past the mark. Nothing is re-ingested to serve what is on disk.
-	if controlDBDurable && bootPlan.EngineState.Warm {
+	if controlDBDurable && bootPlan.EngineState.Warm && bootPlan.EngineOffset > 0 {
 		store.engineStateWarm = true
 		store.engineStateRecords = bootPlan.EngineState.Records
-		store.engineTailFrom.Store(resumeFrom)
+		store.engineTailFrom.Store(bootPlan.EngineOffset)
 		endPhase = bootBudget.phase("boot: restore engine residency from persisted record state")
 		restored := store.restoreEngineResidencyFromPersistedState()
 		endPhase()
 		log.Infof("FlatSQL engine records: WARM — %d persisted record(s) visible from disk without re-ingest (%d resident across routed standards); only the journal tail past offset %d will be ingested",
-			bootPlan.EngineState.Records, restored, resumeFrom)
+			bootPlan.EngineState.Records, restored, bootPlan.EngineOffset)
 	}
 
 	// Every live catalog mutation funnels through the journal append, which is
@@ -879,6 +879,11 @@ func (s *FlatSQLStore) RebuildDerivedState() error {
 	if err != nil {
 		return fmt.Errorf("engine records: %w", err)
 	}
+	// The synchronous rebuild leaves the window hydrated exactly as the
+	// background hydration does — the checkpoint's engine coverage mark
+	// depends on it (persistBootMarkLocked), and without it a synchronous
+	// open (CLI, tests) could never close into a warm engine boot.
+	s.engineHotHydrated.Store(true)
 	budget.summary()
 	return nil
 }
@@ -1051,6 +1056,9 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalogContext(ctx contex
 		defer s.lockWrite("engine hot-window: preregister sources")()
 		s.preregisterEngineSources()
 	}()
+	// The pass covers the journal up to its length NOW; frames appended while
+	// it runs are mirrored by their writers. That length is the engine mark.
+	coverage := s.recordCatalog.validLength()
 	var count int
 	var err error
 	if s.engineStateWarm {
@@ -1067,6 +1075,23 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalogContext(ctx contex
 		return count, err
 	}
 	s.engineHotHydrated.Store(true)
+	// FLUSH NOW, not at the next catalog checkpoint: the records just loaded
+	// exist only in the engine's memory until flatsql_flush_index, and a
+	// restart before the (minutes-long, cold) catalog replay's checkpoint
+	// would find a populated database with no record stream — the boot then
+	// discards it and rebuilds everything again (measured 2026-09-02).
+	func() {
+		defer s.lockWrite("engine hot-window: flush record state")()
+		if err := s.flushEngineStateLocked(); err != nil {
+			log.Warnf("FlatSQL engine record state not flushed after hydration (the next boot rebuilds it): %v", err)
+			return
+		}
+		if err := s.persistEngineMarkLocked(coverage); err != nil {
+			log.Warnf("FlatSQL engine coverage mark not written (the next boot rebuilds the engine): %v", err)
+			return
+		}
+		log.Infof("FlatSQL engine record state flushed to disk after hydration (%d records, journal coverage %d)", count, coverage)
+	}()
 	return count, nil
 }
 

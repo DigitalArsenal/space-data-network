@@ -117,7 +117,16 @@ const (
 	// warm catalog with a cold auxiliary journal (or the reverse) is legal and
 	// costs only the replay it names.
 	bootMarkAuxOffsetKey = "flatsql_boot.auxiliary_offset"
-	bootMarkAuxDigestKey = "flatsql_boot.auxiliary_digest"
+	// bootMarkEngineOffsetKey is the ENGINE's coverage of the record-catalog
+	// journal: every record whose frame lies below it has been flushed into
+	// the engine's on-disk record stream (flatsql_flush_index). It is written
+	// only right after such a flush — at the end of a complete hot-window
+	// hydration and at every catalog checkpoint once the window is hydrated —
+	// and it is judged against the SAME catalog digest as the catalog mark.
+	// A warm engine ingests the journal tail past THIS offset, not the
+	// catalog's; an engine state without it is discarded and rebuilt.
+	bootMarkEngineOffsetKey = "flatsql_boot.engine_offset"
+	bootMarkAuxDigestKey    = "flatsql_boot.auxiliary_digest"
 
 	// bootMarkFormat is bumped whenever the meaning of the mark changes. A
 	// different value takes the cold path rather than misreading an old mark.
@@ -190,11 +199,23 @@ type engineRecordState struct {
 	Warm bool
 }
 
+// engineReindexStreamCeiling bounds the record stream flatsql_reindex_all may
+// be asked to re-derive at boot. The engine re-derives ROW BY ROW inside one
+// uninterruptible guest call (flatsql-bulk-write-transactions): on the dev
+// store a populated database sent through it hit the 5-minute per-call
+// budget, poisoned the engine and cost a discard + cold rebuild anyway. Below
+// the ceiling a re-index is seconds; above it the database is discarded up
+// front and rebuilt from the journal and stream files, which is what the
+// poison path did after wasting five minutes.
+const engineReindexStreamCeiling = 32 << 20
+
 // openEngineRecordState opens the engine's persisted record index for a
-// disk-backed database. Absent/mismatched/corrupt/torn state is answered by
-// ReindexAll, which re-derives the index from the engine's own record stream
-// on disk (still no re-ingest). Only a filesystem refusal is fatal.
-func openEngineRecordState(db *flatsqlrt.Database) (engineRecordState, error) {
+// disk-backed database at dbPath. A usable index is opened as-is (warm). A
+// recoverable state error is answered by ReindexAll ONLY when the engine's
+// record stream is small enough to re-derive inside the per-call budget;
+// otherwise the caller discards the database (errEngineStateUnrecoverable).
+// Only a filesystem refusal is fatal.
+func openEngineRecordState(db *flatsqlrt.Database, dbPath string) (engineRecordState, error) {
 	n, err := db.OpenState()
 	if err == nil {
 		return engineRecordState{Records: n, Warm: true}, nil
@@ -202,8 +223,26 @@ func openEngineRecordState(db *flatsqlrt.Database) (engineRecordState, error) {
 	if !flatsqlrt.StateRecoverable(err) {
 		return engineRecordState{}, fmt.Errorf("open engine record state: %w", err)
 	}
+	var streamBytes int64
+	if info, statErr := os.Stat(dbPath + ".fsdata"); statErr == nil {
+		streamBytes = info.Size()
+	}
+	var dbBytes int64
+	if info, statErr := os.Stat(dbPath); statErr == nil {
+		dbBytes = info.Size()
+	}
+	if errors.Is(err, flatsqlrt.ErrStateAbsent) && streamBytes == 0 && dbBytes > engineReindexStreamCeiling {
+		// A populated database with NO flushed record stream: the previous
+		// process never reached a checkpoint (or predates persisted engine
+		// state). Its index rows point at records the engine cannot serve;
+		// re-deriving them row by row is the five-minute trap. Discard.
+		return engineRecordState{}, fmt.Errorf("%w: populated control database (%d MiB) has no flushed engine record stream", errEngineStateUnrecoverable, dbBytes>>20)
+	}
+	if streamBytes > engineReindexStreamCeiling {
+		return engineRecordState{}, fmt.Errorf("%w: %v and the record stream is %d MiB (re-index ceiling %d MiB)", errEngineStateUnrecoverable, err, streamBytes>>20, engineReindexStreamCeiling>>20)
+	}
 	if !errors.Is(err, flatsqlrt.ErrStateAbsent) {
-		log.Warnf("FlatSQL engine record state unusable (%v) — re-deriving the index from the engine's on-disk record stream", err)
+		log.Warnf("FlatSQL engine record state unusable (%v) — re-deriving the index from the engine's on-disk record stream (%d bytes)", err, streamBytes)
 	}
 	n, err = db.ReindexAll()
 	if err != nil {
@@ -211,6 +250,11 @@ func openEngineRecordState(db *flatsqlrt.Database) (engineRecordState, error) {
 	}
 	return engineRecordState{Records: n, Warm: n > 0}, nil
 }
+
+// errEngineStateUnrecoverable marks an engine record state the boot must not
+// try to repair in place; openControlDatabase answers it by discarding the
+// database and re-deriving from the journal and stream files.
+var errEngineStateUnrecoverable = errors.New("engine record state unrecoverable in place")
 
 // bootMark is the persisted resume point read out of a warm control database.
 // Offset/Digest name the record-catalog journal; AuxOffset/AuxDigest name the
@@ -220,6 +264,9 @@ type bootMark struct {
 	Digest    string
 	AuxOffset int64
 	AuxDigest string
+	// EngineOffset is the engine's journal coverage (bootMarkEngineOffsetKey);
+	// 0 = no flushed engine state is claimed.
+	EngineOffset int64
 }
 
 // bootResume is what the warm/cold decision yields: one resume offset per
@@ -470,8 +517,26 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 			// can never be honoured across a discard, and is dropped with it.
 			if resume.Keep || !hadFile {
 				// Warm, or a genuine first boot whose database is already empty.
-				// The engine's persisted records survive with the database.
+				// The engine's persisted records survive with the database —
+				// but only when the engine mark says what they cover. Flushed
+				// records with no mark (a crash between a flush and its mark, or
+				// a mark the catalog resume refused) would re-ingest on top of
+				// themselves: discard the record stream and rebuild the engine
+				// from the catalog, keeping the control tables.
 				plan.EngineState = engineState
+				plan.EngineOffset = 0
+				if resume.Keep && mark.EngineOffset > 0 && mark.EngineOffset <= resume.Catalog {
+					plan.EngineOffset = mark.EngineOffset
+				}
+				if engineState.Warm && plan.EngineOffset == 0 {
+					log.Warnf("FlatSQL engine record state carries %d record(s) but no journal coverage mark — discarding the engine record stream and rebuilding it from the catalog (control tables kept)", engineState.Records)
+					engineDB.Destroy()
+					engine.Close()
+					if rmErr := os.Remove(dbPath + ".fsdata"); rmErr != nil && !os.IsNotExist(rmErr) {
+						return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("discard engine record stream: %w", rmErr)
+					}
+					continue // reopen: the state is now absent and the DB is kept
+				}
 				return engine, engineDB, resume, plan, nil
 			}
 			// Cold with pre-existing state: discard and reopen so the replay
@@ -722,7 +787,7 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	// bookkeeping (engineResident) and the hot-window tombstones; both are
 	// restored from the tables right after open
 	// (restoreEngineResidencyFromPersistedState).
-	state, err := openEngineRecordState(db)
+	state, err := openEngineRecordState(db, dbPath)
 	if err != nil {
 		db.Destroy()
 		return nil, bootMark{}, false, engineRecordState{}, err
@@ -776,13 +841,13 @@ func verifyControlDatabase(db *flatsqlrt.Database) error {
 // which means "replay the auxiliary journal from the beginning".
 func readBootMark(db *flatsqlrt.Database) (bootMark, bool) {
 	res, err := db.Query(
-		`SELECT key, value FROM sdn_metadata WHERE key IN (?, ?, ?, ?, ?)`,
+		`SELECT key, value FROM sdn_metadata WHERE key IN (?, ?, ?, ?, ?, ?)`,
 		bootMarkFormatKey, bootMarkOffsetKey, bootMarkDigestKey,
-		bootMarkAuxOffsetKey, bootMarkAuxDigestKey)
+		bootMarkAuxOffsetKey, bootMarkAuxDigestKey, bootMarkEngineOffsetKey)
 	if err != nil || res == nil {
 		return bootMark{}, false
 	}
-	var format, offset, digest, auxOffset, auxDigest string
+	var format, offset, digest, auxOffset, auxDigest, engineOffset string
 	for _, row := range res.Rows {
 		if len(row) < 2 {
 			continue
@@ -800,6 +865,8 @@ func readBootMark(db *flatsqlrt.Database) (bootMark, bool) {
 			auxOffset = val
 		case bootMarkAuxDigestKey:
 			auxDigest = val
+		case bootMarkEngineOffsetKey:
+			engineOffset = val
 		}
 	}
 	// `warm` means "this database carries a mark in a format we understand" —
@@ -828,6 +895,11 @@ func readBootMark(db *flatsqlrt.Database) (bootMark, bool) {
 		if aux, err := strconv.ParseInt(auxOffset, 10, 64); err == nil && aux >= 0 {
 			mark.AuxOffset = aux
 			mark.AuxDigest = auxDigest
+		}
+	}
+	if engineOffset != "" {
+		if e, err := strconv.ParseInt(engineOffset, 10, 64); err == nil && e > 0 {
+			mark.EngineOffset = e
 		}
 	}
 	return mark, true
@@ -916,6 +988,9 @@ type engineBootPlan struct {
 	// EngineState is what the engine's persisted record state reported at
 	// open. Zero for a discarded or ephemeral database.
 	EngineState engineRecordState
+	// EngineOffset is the journal offset the engine's persisted records cover
+	// (validated against the catalog resume); 0 = rebuild the engine.
+	EngineOffset int64
 }
 
 // registeredSources is the store-side mirror of the sources enginePrepare
@@ -1532,15 +1607,36 @@ func (s *FlatSQLStore) checkpointCatalogMarkLocked() error {
 // Requires the store write lock. Deliberately three single-row upserts and
 // nothing else: this is the entire footprint of a checkpoint inside the lock.
 func (s *FlatSQLStore) persistBootMarkLocked(end int64, digest string) error {
-	if err := s.upsertBootMarkRowsLocked("record catalog", [][2]string{
+	rows := [][2]string{
 		{bootMarkFormatKey, bootMarkFormat},
 		{bootMarkOffsetKey, strconv.FormatInt(end, 10)},
 		{bootMarkDigestKey, digest},
-	}); err != nil {
+	}
+	// The engine claims the same coverage ONLY when its hot window is hydrated
+	// (every record below end was mirrored into it, live or by the pass) and
+	// the flush that precedes this mark succeeded — flushEngineStateLocked
+	// runs immediately before every caller of this function.
+	if s.engineHotHydrated.Load() {
+		rows = append(rows, [2]string{bootMarkEngineOffsetKey, strconv.FormatInt(end, 10)})
+	}
+	if err := s.upsertBootMarkRowsLocked("record catalog", rows); err != nil {
 		return err
 	}
 	s.checkpointedOffset.Store(end)
 	return nil
+}
+
+// persistEngineMarkLocked records the engine's journal coverage after a
+// complete hot-window hydration flushed its record stream: offset is the
+// journal length the pass snapshotted (live writes past it were mirrored by
+// the writer itself). Requires the store write lock.
+func (s *FlatSQLStore) persistEngineMarkLocked(offset int64) error {
+	if s.readOnly || !s.controlDBDurable || offset <= 0 {
+		return nil
+	}
+	return s.upsertBootMarkRowsLocked("engine coverage", [][2]string{
+		{bootMarkEngineOffsetKey, strconv.FormatInt(offset, 10)},
+	})
 }
 
 // persistAuxiliaryMarkLocked writes the auxiliary handshake rows. Same shape,
