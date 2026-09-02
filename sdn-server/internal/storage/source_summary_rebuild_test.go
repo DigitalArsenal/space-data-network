@@ -173,6 +173,83 @@ func TestMaintenanceSourceSummaryLaneYieldsToColdCATIndex(t *testing.T) {
 	}
 }
 
+// TestCloseWaitsForDerivedStateSourceSummaryMaintenance covers the other
+// derived-state lifetime boundary. RebuildDerivedState pauses after a source
+// summary slice has yielded s.mu but before it can rebuild the engine window;
+// Close must wait on the same ownership mutex rather than race teardown with
+// the remaining derived-state phases.
+func TestCloseWaitsForDerivedStateSourceSummaryMaintenance(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator, WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-satcat-csv", BatchID: "close-derived-state"}
+	data := sds.NewCATBuilder().WithNoradCatID(27559).WithObjectName("CLOSE-DERIVED-STATE").WithObjectType("PAYLOAD").Build()
+	if _, err := store.StoreWithSourceTags("CAT.fbs", data, "peer-close", nil, tags); err != nil {
+		t.Fatalf("store CAT: %v", err)
+	}
+	// Per-record writers keep their summary current, so explicitly model the
+	// replay lane that RebuildDerivedState must consume at daemon startup.
+	store.replayedSourceLanes.note(sourceSummaryLane{
+		SchemaName: "CAT.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, BatchID: tags.BatchID,
+	})
+
+	oldChunk := sourceSummaryRebuildChunk
+	sourceSummaryRebuildChunk = 1
+	defer func() { sourceSummaryRebuildChunk = oldChunk }()
+	started := make(chan struct{})
+	releaseSlice := make(chan struct{})
+	oldAfterSlice := sourceSummaryMaintenanceAfterSlice
+	fired := false
+	sourceSummaryMaintenanceAfterSlice = func() {
+		if fired {
+			return
+		}
+		fired = true
+		close(started)
+		<-releaseSlice
+	}
+	t.Cleanup(func() { sourceSummaryMaintenanceAfterSlice = oldAfterSlice })
+
+	rebuilt := make(chan error, 1)
+	go func() { rebuilt <- store.RebuildDerivedState() }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("derived-state rebuild did not reach source-summary yield")
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- store.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned while derived state was between chunks: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseSlice)
+	select {
+	case err := <-rebuilt:
+		if err != nil {
+			t.Fatalf("derived-state rebuild after source release: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("derived-state rebuild did not finish after source release")
+	}
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close after derived-state rebuild: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not finish after derived state released")
+	}
+}
+
 type summarySnapshotRow struct {
 	Schema, Provider, Source, Batch, PeerID, PubKey string
 	Count, Bytes, MaxRowID, FirstSeen               int64
