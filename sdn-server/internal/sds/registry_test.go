@@ -169,10 +169,14 @@ func TestGeneratedSchemasDescribeThemselves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSchemaRegistry: %v", err)
 	}
-	for _, name := range []string{"CAT.fbs", "OMM.fbs", "SPW.fbs"} {
+	for _, name := range []string{"CAT.fbs", "OMM.fbs", "SPW.fbs", "CNP.fbs"} {
 		desc := reg.GetDescription(name)
 		if desc == "" || strings.HasPrefix(desc, "Hash:") {
 			t.Errorf("%s description = %q", name, desc)
+		}
+		// The curated text wins over the schema's first field comment.
+		if want := schemaDescriptions[name]; want != "" && desc != want {
+			t.Errorf("%s description = %q, want the catalogue text %q", name, desc, want)
 		}
 	}
 }
