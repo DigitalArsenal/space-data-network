@@ -45,15 +45,16 @@ type AddressResolver func(peerID string) ([]ChainAddress, error)
 
 // Engine drives the evaluations.
 type Engine struct {
-	policies *PolicyStore
-	verdicts *VerdictStore
-	svc      *Service
-	balances BalanceSource
-	resolve  AddressResolver
-	publish  PublishFunc
-	key      ed25519.PrivateKey
-	peerID   string
-	nowMs    func() int64
+	policies      *PolicyStore
+	verdicts      *VerdictStore
+	svc           *Service
+	balances      BalanceSource
+	resolve       AddressResolver
+	publish       PublishFunc
+	key           ed25519.PrivateKey
+	peerID        string
+	nowMs         func() int64
+	extraSubjects func() []string
 
 	// overrideMs, when > 0, replaces every policy's own interval (the
 	// runtime setting `trust.evaluation_interval_ms`).
@@ -81,6 +82,11 @@ type EngineConfig struct {
 	Key      ed25519.PrivateKey
 	PeerID   string
 	NowMs    func() int64
+	// Subjects, when set, adds peers to evaluate beyond the trust graph's
+	// nodes — the daemon passes the directory's node profiles, so a node that
+	// has published no trust edge yet still gets an honest verdict per peer
+	// it knows (FAIL with the reason recorded) instead of no verdicts at all.
+	Subjects func() []string
 }
 
 // NewEngine validates the wiring.
@@ -97,7 +103,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	}
 	e := &Engine{
 		policies: cfg.Policies, verdicts: cfg.Verdicts, svc: cfg.Service, balances: cfg.Balances, resolve: cfg.Resolve,
-		publish: cfg.Publish, key: cfg.Key, peerID: strings.TrimSpace(cfg.PeerID), nowMs: now,
+		publish: cfg.Publish, key: cfg.Key, peerID: strings.TrimSpace(cfg.PeerID), nowMs: now, extraSubjects: cfg.Subjects,
 		trigger: make(chan string, 1), latest: map[string]Verdict{},
 	}
 	e.policiesList = func() ([]Policy, error) {
@@ -201,6 +207,13 @@ func (e *Engine) subjects() []string {
 	for _, id := range e.svc.Nodes() {
 		if id != "" && id != e.peerID {
 			seen[id] = true
+		}
+	}
+	if e.extraSubjects != nil {
+		for _, id := range e.extraSubjects() {
+			if id = strings.TrimSpace(id); id != "" && id != e.peerID {
+				seen[id] = true
+			}
 		}
 	}
 	e.mu.RLock()
