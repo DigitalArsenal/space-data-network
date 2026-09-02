@@ -394,6 +394,12 @@ func (j *recordCatalogJournal) replayFramesFrom(ctx context.Context, store *Flat
 		if progress != nil {
 			progress(count)
 		}
+		if chunked {
+			// Let a reader or a live writer that parked on the store lock
+			// during this window take it before the next one: re-locking
+			// immediately wins the race against them every time.
+			time.Sleep(time.Millisecond)
+		}
 	}
 	return count, nil
 }
