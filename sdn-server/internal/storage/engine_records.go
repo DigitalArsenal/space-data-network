@@ -1139,6 +1139,7 @@ func (s *FlatSQLStore) restoreEngineResidencyFromPersistedState() int64 {
 			continue
 		}
 		s.engineResidentSet(schemaName, n)
+		s.engineSchemaLoadedSet(schemaName)
 		total += n
 		if n == 0 {
 			continue
