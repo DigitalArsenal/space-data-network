@@ -23,6 +23,8 @@ var log = logging.Logger("storefront")
 // FlatSQL schema names for storefront record types.
 const (
 	SchemaSTF = "STF.fbs"
+	SchemaDPM = "DPM.fbs"
+	SchemaPNM = "PNM.fbs"
 	SchemaACL = "ACL.fbs"
 	SchemaPUR = "PUR.fbs"
 	SchemaREV = "REV.fbs"
@@ -124,6 +126,10 @@ func (s *Store) initTables() error {
 			license TEXT,
 			signature BLOB,
 			source_peer_id TEXT DEFAULT '',
+			source_connector_id TEXT DEFAULT '',
+			categories TEXT DEFAULT '[]',
+			primary_category TEXT DEFAULT '',
+			canonical_json_signature BLOB,
 			UNIQUE(listing_id)
 		);
 		CREATE INDEX IF NOT EXISTS idx_listings_provider ON storefront_listings(provider_peer_id);
@@ -140,6 +146,28 @@ func (s *Store) initTables() error {
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN listing_kind TEXT DEFAULT 'data_stream'`)
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN protected_delivery TEXT`)
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN source_peer_id TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN source_connector_id TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN categories TEXT DEFAULT '[]'`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN primary_category TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN canonical_json_signature BLOB`)
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_listing_publications (
+			listing_id TEXT PRIMARY KEY,
+			stf_cid TEXT NOT NULL,
+			stf_bytes BLOB NOT NULL,
+			canonical_json BLOB NOT NULL,
+			canonical_json_signature BLOB NOT NULL,
+			pnm_cid TEXT,
+			pnm_bytes BLOB,
+			dpm_cid TEXT,
+			dpm_bytes BLOB,
+			updated_at INTEGER NOT NULL
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create listing publications table: %w", err)
+	}
 
 	// Text search projection for listings. This replaced the former FTS5
 	// virtual table: FTS5 is not usable inside the FlatSQL engine (its
@@ -595,6 +623,68 @@ func (s *Store) CreateListing(listing *Listing) error {
 		log.Warnf("FlatSQL store failed for listing %s: %v", listing.ListingID, err)
 	}
 
+	return s.indexListingLocked(listing, cid)
+}
+
+// StorePublishedListing persists already-signed $STF bytes through the routed
+// FlatSQL engine and records the canonical JSON signature alongside the same
+// listing projection. Unlike CreateListing, it preserves the explicitly
+// validated $CCT classification used by the SDS-exact publish API.
+func (s *Store) StorePublishedListing(listing *Listing, stfBytes, canonicalJSON, canonicalJSONSignature []byte) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if listing == nil {
+		return "", errors.New("listing is required")
+	}
+	if len(stfBytes) == 0 || len(canonicalJSON) == 0 || len(canonicalJSONSignature) == 0 {
+		return "", errors.New("dual-format signed listing artifacts are required")
+	}
+	peerID := listing.ProviderPeerID
+	if listing.SourcePeerID != "" {
+		peerID = listing.SourcePeerID
+	}
+	cid, err := s.flatStore.StoreRoutedByProducer(SchemaSTF, stfBytes, peerID, listing.Signature)
+	if err != nil {
+		return "", fmt.Errorf("failed to store %s record in FlatSQL: %w", SchemaSTF, err)
+	}
+	listing.CanonicalJSONSig = append([]byte(nil), canonicalJSONSignature...)
+	if err := s.indexListingLocked(listing, cid); err != nil {
+		return "", err
+	}
+	_, err = s.db.Exec(`
+		INSERT OR REPLACE INTO storefront_listing_publications (
+			listing_id, stf_cid, stf_bytes, canonical_json,
+			canonical_json_signature, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`, listing.ListingID, cid, stfBytes, canonicalJSON, canonicalJSONSignature, listing.UpdatedAt.Unix())
+	if err != nil {
+		return "", fmt.Errorf("failed to index listing publication: %w", err)
+	}
+	return cid, nil
+}
+
+func (s *Store) StoreReceivedListing(listing *Listing, stfBytes []byte, sourcePeerID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if listing == nil || len(stfBytes) == 0 {
+		return "", errors.New("received listing and STF bytes are required")
+	}
+	sourcePeerID = strings.TrimSpace(sourcePeerID)
+	if sourcePeerID == "" {
+		return "", errors.New("received listing source peer is required")
+	}
+	cid, err := s.flatStore.StoreRoutedByProducer(SchemaSTF, stfBytes, sourcePeerID, listing.Signature)
+	if err != nil {
+		return "", fmt.Errorf("store received STF: %w", err)
+	}
+	listing.SourcePeerID = sourcePeerID
+	if err := s.indexListingLocked(listing, cid); err != nil {
+		return "", err
+	}
+	return cid, nil
+}
+
+func (s *Store) indexListingLocked(listing *Listing, cid string) error {
 	// Update index table
 	dataTypesJSON, _ := json.Marshal(listing.DataTypes)
 	tagsJSON, _ := json.Marshal(listing.Tags)
@@ -604,15 +694,17 @@ func (s *Store) CreateListing(listing *Listing) error {
 	pricingJSON, _ := json.Marshal(listing.Pricing)
 	acceptedPaymentsJSON, _ := json.Marshal(listing.AcceptedPayments)
 	reputationJSON, _ := json.Marshal(listing.Reputation)
+	categoriesJSON, _ := json.Marshal(listing.Categories)
 
-	_, err = s.db.Exec(`
+	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO storefront_listings (
 			listing_id, cid, listing_kind, provider_peer_id, provider_epm_cid, title, description,
 			data_types, tags, coverage, sample_cid, sample_record_count,
 			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
-			active, expires_at, terms_cid, license, signature, source_peer_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			active, expires_at, terms_cid, license, signature, source_peer_id,
+			source_connector_id, categories, primary_category, canonical_json_signature
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		listing.ListingID, cid, listing.ListingKind, listing.ProviderPeerID, listing.ProviderEPMCID,
 		listing.Title, listing.Description,
@@ -624,6 +716,7 @@ func (s *Store) CreateListing(listing *Listing) error {
 		listing.CreatedAt.Unix(), listing.UpdatedAt.Unix(),
 		listing.Version, listing.Active, listing.ExpiresAt.Unix(),
 		listing.TermsCID, listing.License, listing.Signature, listing.SourcePeerID,
+		listing.SourceConnectorID, string(categoriesJSON), listing.PrimaryCategory, listing.CanonicalJSONSig,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to index listing: %w", err)
@@ -646,6 +739,62 @@ func (s *Store) CreateListing(listing *Listing) error {
 	return nil
 }
 
+// StorePublicationArtifacts adds the PNM/DPM artifacts after the STF has been
+// durably stored. Both records are also stored through FlatSQL before this is
+// called; this table is a verification/readback projection only.
+func (s *Store) StorePublicationArtifacts(listingID, pnmCID string, pnmBytes []byte, dpmCID string, dpmBytes []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result, err := s.db.Exec(`
+		UPDATE storefront_listing_publications
+		SET pnm_cid = ?, pnm_bytes = ?, dpm_cid = ?, dpm_bytes = ?
+		WHERE listing_id = ?
+	`, pnmCID, pnmBytes, dpmCID, dpmBytes, listingID)
+	if err != nil {
+		return fmt.Errorf("failed to store listing announcement projection: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return fmt.Errorf("listing publication not found: %s", listingID)
+	}
+	return nil
+}
+
+// ListingPublication contains the immutable artifacts needed to verify one
+// publication without relying on the mutable search projection.
+type ListingPublication struct {
+	STFCID                 string
+	STFBytes               []byte
+	CanonicalJSON          []byte
+	CanonicalJSONSignature []byte
+	PNMCID                 string
+	PNMBytes               []byte
+	DPMCID                 string
+	DPMBytes               []byte
+}
+
+func (s *Store) GetListingPublication(listingID string) (*ListingPublication, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var publication ListingPublication
+	err := s.db.QueryRow(`
+		SELECT stf_cid, stf_bytes, canonical_json, canonical_json_signature,
+			COALESCE(pnm_cid, ''), COALESCE(pnm_bytes, X''),
+			COALESCE(dpm_cid, ''), COALESCE(dpm_bytes, X'')
+		FROM storefront_listing_publications WHERE listing_id = ?
+	`, listingID).Scan(
+		&publication.STFCID, &publication.STFBytes, &publication.CanonicalJSON,
+		&publication.CanonicalJSONSignature, &publication.PNMCID,
+		&publication.PNMBytes, &publication.DPMCID, &publication.DPMBytes,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read listing publication: %w", err)
+	}
+	return &publication, nil
+}
+
 // GetListing retrieves a listing by ID from the index.
 func (s *Store) GetListing(listingID string) (*Listing, error) {
 	s.mu.RLock()
@@ -656,7 +805,8 @@ func (s *Store) GetListing(listingID string) (*Listing, error) {
 			data_types, tags, coverage, sample_cid, sample_record_count,
 			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
-			active, expires_at, terms_cid, license, signature
+			active, expires_at, terms_cid, license, signature, source_peer_id,
+			source_connector_id, categories, primary_category, canonical_json_signature
 		FROM storefront_listings WHERE listing_id = ?
 	`, listingID)
 
@@ -667,6 +817,7 @@ func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 	var listing Listing
 	var dataTypesJSON, tagsJSON, coverageJSON, deliveryMethodsJSON string
 	var protectedDeliveryJSON, pricingJSON, acceptedPaymentsJSON, reputationJSON string
+	var categoriesJSON string
 	var createdAt, updatedAt, expiresAt int64
 
 	err := row.Scan(
@@ -679,7 +830,8 @@ func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 		&acceptedPaymentsJSON, &reputationJSON,
 		&createdAt, &updatedAt, &listing.Version,
 		&listing.Active, &expiresAt,
-		&listing.TermsCID, &listing.License, &listing.Signature,
+		&listing.TermsCID, &listing.License, &listing.Signature, &listing.SourcePeerID,
+		&listing.SourceConnectorID, &categoriesJSON, &listing.PrimaryCategory, &listing.CanonicalJSONSig,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -696,6 +848,7 @@ func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 	json.Unmarshal([]byte(pricingJSON), &listing.Pricing)
 	json.Unmarshal([]byte(acceptedPaymentsJSON), &listing.AcceptedPayments)
 	json.Unmarshal([]byte(reputationJSON), &listing.Reputation)
+	json.Unmarshal([]byte(categoriesJSON), &listing.Categories)
 	listing.CreatedAt = time.Unix(createdAt, 0)
 	listing.UpdatedAt = time.Unix(updatedAt, 0)
 	listing.ExpiresAt = time.Unix(expiresAt, 0)
@@ -852,7 +1005,8 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 			data_types, tags, coverage, sample_cid, sample_record_count,
 			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
-			active, expires_at, terms_cid, license, signature
+			active, expires_at, terms_cid, license, signature, source_peer_id,
+			source_connector_id, categories, primary_category, canonical_json_signature
 		FROM storefront_listings WHERE %s ORDER BY %s LIMIT ? OFFSET ?
 	`, whereClause, orderBy)
 
@@ -868,6 +1022,7 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		var listing Listing
 		var dataTypesJSON, tagsJSON, coverageJSON, deliveryMethodsJSON string
 		var protectedDeliveryJSON, pricingJSON, acceptedPaymentsJSON, reputationJSON string
+		var categoriesJSON string
 		var createdAt, updatedAt, expiresAt int64
 
 		err := rows.Scan(
@@ -880,7 +1035,8 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 			&acceptedPaymentsJSON, &reputationJSON,
 			&createdAt, &updatedAt, &listing.Version,
 			&listing.Active, &expiresAt,
-			&listing.TermsCID, &listing.License, &listing.Signature,
+			&listing.TermsCID, &listing.License, &listing.Signature, &listing.SourcePeerID,
+			&listing.SourceConnectorID, &categoriesJSON, &listing.PrimaryCategory, &listing.CanonicalJSONSig,
 		)
 		if err != nil {
 			log.Warnf("Failed to scan listing row: %v", err)
@@ -895,6 +1051,7 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		json.Unmarshal([]byte(pricingJSON), &listing.Pricing)
 		json.Unmarshal([]byte(acceptedPaymentsJSON), &listing.AcceptedPayments)
 		json.Unmarshal([]byte(reputationJSON), &listing.Reputation)
+		json.Unmarshal([]byte(categoriesJSON), &listing.Categories)
 		listing.CreatedAt = time.Unix(createdAt, 0)
 		listing.UpdatedAt = time.Unix(updatedAt, 0)
 		listing.ExpiresAt = time.Unix(expiresAt, 0)
