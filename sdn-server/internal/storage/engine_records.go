@@ -1007,6 +1007,190 @@ func (s *FlatSQLStore) rebuildEngineRecords() error {
 	return nil
 }
 
+// rebuildEngineRecordsForMaintenance is rebuildEngineRecords' live-service
+// counterpart. The ordinary helper is also used while a replacement engine is
+// being recovered under the writer lock. Maintenance runs while API traffic is
+// live, so it scopes that lock to a preparation step and one small hot-window
+// page at a time.
+func (s *FlatSQLStore) rebuildEngineRecordsForMaintenance() error {
+	release := s.lockWrite("RebuildDerivedState: prepare engine hot window")
+	s.preregisterEngineSources()
+	present, err := s.schemasWithRecordTables()
+	release()
+	if err != nil {
+		log.Warnf("FlatSQL engine rebuild: enumerate schemas with record tables: %v", err)
+		present = nil
+	}
+	for _, schemaName := range s.engineRoutedSchemaNames() {
+		if present != nil && !present[schemaName] {
+			release = s.lockWrite("RebuildDerivedState: clear empty engine schema")
+			s.engineResidentSet(schemaName, 0)
+			release()
+			continue
+		}
+		if err := s.rebuildEngineRecordsForSchemaForMaintenance(schemaName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rebuildEngineRecordsForSchemaForMaintenance obtains index rows and mutates
+// the engine in independently bounded chunks. File reads happen under a shared
+// store lock so compaction cannot swap their stream path, yet RecordIndexPage
+// readers still proceed concurrently. The exclusive ingest chunk is deliberately
+// much smaller than the query page: it is the maximum time an anonymous reader
+// can wait for maintenance after the schema-local seek returns.
+func (s *FlatSQLStore) rebuildEngineRecordsForSchemaForMaintenance(schemaName string) error {
+	release := s.lockWrite("RebuildDerivedState: prepare engine schema")
+	binding, routed := s.engineRoutedSchemaFor(schemaName)
+	if !routed {
+		s.engineResidentSet(schemaName, 0)
+		release()
+		return nil
+	}
+	readSource, err := s.recordReadSource(schemaName)
+	aliases := engineSchemaNameAliases(schemaName)
+	window := s.engineWindowFor(schemaName)
+	// Snapshot each alias' high-water rowid before allowing writers to
+	// interleave. Records written after this point are already mirrored by the
+	// live write path, so replaying them here would double-ingest them and make
+	// the final residency counter forget a concurrently landed record.
+	highWater, highWaterErr := s.engineHotWindowAliasHighWater(aliases)
+	if highWaterErr == nil {
+		s.engineResidentSet(schemaName, 0)
+	}
+	release()
+	if err != nil {
+		log.Warnf("FlatSQL engine rebuild: record read source: %v", err)
+		return nil
+	}
+	if highWaterErr != nil {
+		log.Warnf("FlatSQL engine rebuild: snapshot %s hot-window high water: %v", schemaName, highWaterErr)
+		return nil
+	}
+	if window <= 0 {
+		return nil
+	}
+
+	pager := newEngineHotWindowPager(aliases)
+	pager.setHighWater(highWater)
+
+	// Collect the bounded index pages before starting engine ingestion. The
+	// pager is newest-first, so ingesting a page as soon as it is read would
+	// reverse each page but still put an entire newer page ahead of an older
+	// one. That changes engine _rowid order and makes the next live write evict
+	// the wrong record. Retaining metadata only (not stream bytes) keeps every
+	// writer-lock hold bounded while preserving the historical global
+	// oldest-first ingest order below.
+	metadataPages := make([][]engineHotWindowRow, 0, (window+engineHotWindowMaintenanceChunk-1)/engineHotWindowMaintenanceChunk)
+	stats := engineHotWindowPageStats{}
+	remaining := window
+	for remaining > 0 {
+		chunk := engineHotWindowMaintenanceChunk
+		if chunk > remaining {
+			chunk = remaining
+		}
+		if chunk <= 0 {
+			chunk = 1
+		}
+
+		release = s.lockWrite("RebuildDerivedState: indexed hot-window page")
+		page, pageStats, err := pager.next(s, readSource, chunk)
+		release()
+		if err != nil {
+			log.Warnf("FlatSQL engine rebuild: query %s hot window: %v", schemaName, err)
+			return nil
+		}
+		if len(page) == 0 {
+			break
+		}
+		stats.pages += pageStats.pages
+		if pageStats.slowest > stats.slowest {
+			stats.slowest, stats.slowestRows = pageStats.slowest, pageStats.slowestRows
+		}
+		remaining -= len(page)
+		metadataPages = append(metadataPages, page)
+	}
+
+	files := map[string]*os.File{}
+	defer func() {
+		for _, f := range files {
+			_ = f.Close()
+		}
+	}()
+
+	rebuilt, skipped := 0, 0
+	// The last page contains the globally oldest rows. Reverse both page order
+	// and row order so every maintenance chunk preserves the single-statement
+	// rebuild's global ascending-rowid insertion sequence.
+	for pageIndex := len(metadataPages) - 1; pageIndex >= 0; pageIndex-- {
+		page := metadataPages[pageIndex]
+
+		pending := make([]engineIngest, 0, len(page))
+		releaseRead := s.lockRead("RebuildDerivedState: read hot-window streams")
+		// The pager is newest-first; the engine must receive the same rows
+		// oldest-first as the historical one-statement rebuild.
+		for i := len(page) - 1; i >= 0; i-- {
+			row := page[i]
+			data, readErr := s.readStreamRecordCached(files, row.streamPath, row.streamOffset, row.recordLength)
+			if readErr != nil {
+				log.Warnf("FlatSQL engine rebuild: read %s@%d: %v", row.streamPath, row.streamOffset, readErr)
+				skipped++
+				continue
+			}
+			payload, reason, ok := engineIngestablePayload(binding, data)
+			if !ok {
+				log.Warnf("FlatSQL engine rebuild: skip %s record at %s@%d: %s", schemaName, row.streamPath, row.streamOffset, reason)
+				skipped++
+				continue
+			}
+			source := strings.TrimSpace(row.sourceName)
+			if source == "" {
+				source = engineDefaultSource
+			}
+			pending = append(pending, engineIngest{data: payload, source: source})
+		}
+		releaseRead()
+
+		release = s.lockWrite("RebuildDerivedState: ingest hot-window page")
+		ingestedThisPage := 0
+		for _, item := range pending {
+			if ingestErr := s.ensureEngineSource(item.source); ingestErr != nil {
+				log.Warnf("FlatSQL engine rebuild: register source %q: %v", item.source, ingestErr)
+				if s.engine.Poisoned() {
+					release()
+					return fmt.Errorf("FlatSQL engine poisoned registering source %q: %w", item.source, ingestErr)
+				}
+				skipped++
+				continue
+			}
+			if _, ingestErr := s.engineDB.IngestOneWithSource(item.data, item.source); ingestErr != nil {
+				log.Warnf("FlatSQL engine rebuild: ingest record: %v", ingestErr)
+				if s.engine.Poisoned() {
+					release()
+					return fmt.Errorf("FlatSQL engine poisoned during rebuild ingest: %w", ingestErr)
+				}
+				skipped++
+				continue
+			}
+			rebuilt++
+			ingestedThisPage++
+		}
+		// The resident count was reset at the high-water snapshot. Updating it
+		// while this page's writer lock is held lets an ordinary live writer
+		// interleave safely between pages without its successful record being
+		// overwritten by a stale final Set.
+		s.engineResidentAdd(schemaName, int64(ingestedThisPage))
+		release()
+	}
+	if rebuilt > 0 || skipped > 0 {
+		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped, window %d, %d page(s), slowest page %s)",
+			rebuilt, schemaName, skipped, window, stats.pages, stats.slowest.Round(time.Millisecond))
+	}
+	return nil
+}
+
 // preregisterEngineSources registers every source the derived summary cache
 // knows about, in ONE batch, before the hot-window rebuild starts feeding
 // records in.
@@ -1380,6 +1564,12 @@ func (s *FlatSQLStore) EngineRecordCount(schemaName string) (int64, error) {
 // reproduces the single-statement result exactly.
 var engineHotWindowRebuildPage = 2000
 
+// engineHotWindowMaintenanceChunk bounds the exclusive engine ingest portion
+// of a live derived-state rebuild. It is intentionally smaller than the SQL
+// fetch page: a slow engine insert must not turn the API's 750 ms cold-reader
+// budget into a cache-only fallback.
+var engineHotWindowMaintenanceChunk = 64
+
 // engineHotWindowRow is one row of the paged hot-window read.
 type engineHotWindowRow struct {
 	rid          int64
@@ -1397,6 +1587,192 @@ type engineHotWindowPageStats struct {
 	slowestRows int
 }
 
+// engineHotWindowPager merges one indexed, descending rowid stream per schema
+// spelling. `sdn_record_index` keeps the spelling a writer supplied, while the
+// engine route uses the canonical .fbs spelling, so both streams are needed.
+// A pager owns its unconsumed heads; that is what lets it advance each alias
+// independently without losing a lower-rowid head from another alias.
+type engineHotWindowPager struct {
+	aliases   []string
+	cursors   map[string]int64
+	pending   map[string][]engineHotWindowRow
+	exhausted map[string]bool
+	intern    map[string]string
+}
+
+// engineHotWindowAliasHighWater snapshots the last durable row each spelling
+// may contribute to a maintenance rebuild. Callers hold s.mu for writing.
+func (s *FlatSQLStore) engineHotWindowAliasHighWater(aliases []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(aliases))
+	for _, alias := range aliases {
+		var rowid int64
+		if err := s.db.QueryRow(`
+			SELECT COALESCE(MAX(rowid), 0)
+			FROM sdn_record_index INDEXED BY idx_sdn_record_index_schema_rowid
+			WHERE schema_name = ?
+		`, alias).Scan(&rowid); err != nil {
+			return nil, err
+		}
+		out[alias] = rowid
+	}
+	return out, nil
+}
+
+func newEngineHotWindowPager(aliases []string) *engineHotWindowPager {
+	p := &engineHotWindowPager{
+		aliases:   append([]string(nil), aliases...),
+		cursors:   make(map[string]int64, len(aliases)),
+		pending:   make(map[string][]engineHotWindowRow, len(aliases)),
+		exhausted: make(map[string]bool, len(aliases)),
+		intern:    make(map[string]string),
+	}
+	for _, alias := range p.aliases {
+		p.cursors[alias] = math.MaxInt64
+	}
+	return p
+}
+
+// setHighWater limits the pager to the durable prefix present when maintenance
+// began. A newly appended row is left to the live engine mirror rather than
+// replayed a second time by a long-running rebuild.
+func (p *engineHotWindowPager) setHighWater(highWater map[string]int64) {
+	for _, alias := range p.aliases {
+		last := highWater[alias]
+		switch {
+		case last <= 0:
+			p.cursors[alias] = 1 // SQLite rowids are positive.
+		case last < math.MaxInt64:
+			p.cursors[alias] = last + 1
+		default:
+			p.cursors[alias] = last
+		}
+	}
+}
+
+func (p *engineHotWindowPager) keep(v string) string {
+	if got, ok := p.intern[v]; ok {
+		return got
+	}
+	p.intern[v] = v
+	return v
+}
+
+// next returns one newest-first global page. Every SQL call is a schema-local
+// seek into idx_sdn_record_index_schema_rowid; the Go merge is the only global
+// operation and considers at most aliases*limit rows.
+func (p *engineHotWindowPager) next(s *FlatSQLStore, readSource string, limit int) ([]engineHotWindowRow, engineHotWindowPageStats, error) {
+	stats := engineHotWindowPageStats{}
+	if limit <= 0 {
+		return nil, stats, nil
+	}
+	started := time.Now()
+	refill := func() error {
+		for _, alias := range p.aliases {
+			if len(p.pending[alias]) != 0 || p.exhausted[alias] {
+				continue
+			}
+			rows, err := s.readEngineHotWindowAliasPage(readSource, alias, p.cursors[alias], limit, p.keep)
+			if err != nil {
+				return err
+			}
+			p.pending[alias] = rows
+			if len(rows) < limit {
+				p.exhausted[alias] = true
+			}
+		}
+		return nil
+	}
+
+	page := make([]engineHotWindowRow, 0, limit)
+	for len(page) < limit {
+		// An alias can run out halfway through this global page. Refill it
+		// before choosing the next row or its next (possibly newer than the
+		// other alias' head) record would be skipped until a later page.
+		if err := refill(); err != nil {
+			return nil, stats, err
+		}
+		bestAlias := ""
+		var best engineHotWindowRow
+		for _, alias := range p.aliases {
+			rows := p.pending[alias]
+			if len(rows) == 0 {
+				continue
+			}
+			if bestAlias == "" || rows[0].rid > best.rid {
+				bestAlias, best = alias, rows[0]
+			}
+		}
+		if bestAlias == "" {
+			break
+		}
+		page = append(page, best)
+		p.pending[bestAlias] = p.pending[bestAlias][1:]
+		p.cursors[bestAlias] = best.rid
+	}
+	if len(page) > 0 {
+		stats.pages = 1
+		stats.slowest = time.Since(started)
+		stats.slowestRows = len(page)
+	}
+	return page, stats, nil
+}
+
+// readEngineHotWindowAliasPage reads one schema spelling only. Do not turn
+// this back into `IN (?, ?)` plus a global `ORDER BY rowid`: that shape starts
+// at the newest row in the entire multi-million-row table and filters aliases
+// after the walk. The explicit index is both an executable contract and a
+// guard against a planner regression silently restoring that outage.
+func (s *FlatSQLStore) readEngineHotWindowAliasPage(readSource, alias string, cursor int64, limit int, keep func(string) string) ([]engineHotWindowRow, error) {
+	query := fmt.Sprintf(`
+		SELECT page.rid, page.stream_path, page.stream_offset, page.record_length,
+		       COALESCE(tags.source_name, '') AS source_name
+		FROM (
+			SELECT idx.rowid AS rid,
+			       idx.cid AS cid,
+			       idx.schema_name AS schema_name,
+			       rr.stream_path AS stream_path,
+			       rr.stream_offset AS stream_offset,
+			       rr.record_length AS record_length
+			FROM sdn_record_index AS idx INDEXED BY idx_sdn_record_index_schema_rowid
+			JOIN %s rr ON rr.cid = idx.cid
+			WHERE idx.schema_name = ? AND idx.rowid < ?
+			ORDER BY idx.rowid DESC
+			LIMIT ?
+		) page
+		LEFT JOIN sdn_record_source_tags tags
+		  ON tags.schema_name = page.schema_name AND tags.cid = page.cid
+		ORDER BY page.rid DESC, tags.created_at ASC
+	`, readSource)
+	rows, err := s.db.Query(query, alias, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	page := make([]engineHotWindowRow, 0, limit)
+	for rows.Next() {
+		var row engineHotWindowRow
+		var streamPath, sourceName string
+		if err := rows.Scan(&row.rid, &streamPath, &row.streamOffset, &row.recordLength, &sourceName); err != nil {
+			return nil, err
+		}
+		row.streamPath = keep(streamPath)
+		row.sourceName = keep(sourceName)
+		// The LEFT JOIN returns a row for each source tag. created_at ASC
+		// means replacing the previous row makes the newest tag win, exactly
+		// like the historical correlated `ORDER BY created_at DESC LIMIT 1`.
+		if n := len(page); n > 0 && page[n-1].rid == row.rid {
+			page[n-1] = row
+			continue
+		}
+		page = append(page, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return page, nil
+}
+
 // readEngineHotWindowPages fills a schema's hot window newest-first, in bounded
 // pages, seeking on sdn_record_index.rowid.
 //
@@ -1411,118 +1787,31 @@ func (s *FlatSQLStore) readEngineHotWindowPages(schemaName, readSource string, a
 	if window <= 0 {
 		return nil, stats, nil
 	}
-	// THE PLAN IS THE FIX, and the engine's own EXPLAIN is what named it.
-	//
-	// This read used to resolve each record's source with a CORRELATED
-	// LIMIT-1 subquery:
-	//
-	//	COALESCE((SELECT tags.source_name FROM sdn_record_source_tags tags
-	//	          WHERE tags.schema_name = idx.schema_name AND tags.cid = idx.cid
-	//	          ORDER BY tags.created_at DESC LIMIT 1), '')
-	//
-	// The ORDER BY makes SQLite prefer the index that satisfies it —
-	// idx_sdn_record_source_tags_recent (schema_name, created_at DESC, cid) —
-	// which probes on schema_name ALONE and then walks that schema's tag rows
-	// looking for the cid. Per record. Measured on host-02's real store
-	// (159,835 CAT rows, 5,697,842 tag rows, AOT, 256 MiB page cache): 5m0s and
-	// a poisoned engine, with the working set fully cached (22,423 host reads).
-	// It was never I/O — with SQLite's default ~2 MB cache the same statement
-	// also read 64 GB back through the host shim, so it was BOTH, and fixing
-	// only the cache fixed nothing.
-	//
-	// A LEFT JOIN has no ORDER BY to satisfy, so the planner takes the
-	// two-column equality index instead:
-	//
-	//	SEARCH tags USING INDEX idx_sdn_record_source_tags_unique (schema_name=? AND cid=?)
-	//
-	// Rows arrive oldest-tag-first per record and the newest wins in Go, which
-	// is exactly what LIMIT 1 over `created_at DESC` meant.
-	query := fmt.Sprintf(`
-		SELECT page.rid, page.stream_path, page.stream_offset, page.record_length,
-		       COALESCE(tags.source_name, '') AS source_name
-		FROM (
-			SELECT idx.rowid AS rid,
-			       idx.cid AS cid,
-			       idx.schema_name AS schema_name,
-			       rr.stream_path AS stream_path,
-			       rr.stream_offset AS stream_offset,
-			       rr.record_length AS record_length
-			FROM sdn_record_index idx
-			JOIN %s rr ON rr.cid = idx.cid
-			WHERE idx.schema_name IN (%s) AND idx.rowid < ?
-			ORDER BY idx.rowid DESC
-			LIMIT ?
-		) page
-		LEFT JOIN sdn_record_source_tags tags
-		  ON tags.schema_name = page.schema_name AND tags.cid = page.cid
-		ORDER BY page.rid DESC, tags.created_at ASC
-	`, readSource, placeholders)
-
-	intern := map[string]string{}
-	keep := func(v string) string {
-		if got, ok := intern[v]; ok {
-			return got
-		}
-		intern[v] = v
-		return v
-	}
-
+	_ = schemaName
+	_ = placeholders // Retained for the baseline-parity test's historical SQL.
+	pager := newEngineHotWindowPager(aliases)
 	var pages [][]engineHotWindowRow
-	cursor := int64(math.MaxInt64)
 	remaining := window
 	for remaining > 0 {
 		limit := engineHotWindowRebuildPage
 		if limit > remaining {
 			limit = remaining
 		}
-		args := make([]any, 0, len(aliases)+2)
-		for _, alias := range aliases {
-			args = append(args, alias)
-		}
-		args = append(args, cursor, limit)
-
-		started := time.Now()
-		rows, err := s.db.Query(query, args...)
+		page, pageStats, err := pager.next(s, readSource, limit)
 		if err != nil {
 			return nil, stats, err
-		}
-		// The LEFT JOIN yields ONE ROW PER SOURCE TAG, so a record with two
-		// tags arrives twice, oldest first. Collapsing on rid with last-wins
-		// reproduces the LIMIT-1-over-created_at-DESC answer exactly.
-		page := make([]engineHotWindowRow, 0, limit)
-		for rows.Next() {
-			var row engineHotWindowRow
-			var streamPath, sourceName string
-			if err := rows.Scan(&row.rid, &streamPath, &row.streamOffset, &row.recordLength, &sourceName); err != nil {
-				rows.Close()
-				return nil, stats, err
-			}
-			row.streamPath = keep(streamPath)
-			row.sourceName = keep(sourceName)
-			if n := len(page); n > 0 && page[n-1].rid == row.rid {
-				page[n-1] = row
-				continue
-			}
-			page = append(page, row)
-		}
-		iterErr := rows.Err()
-		rows.Close()
-		held := time.Since(started)
-		if held > stats.slowest {
-			stats.slowest, stats.slowestRows = held, len(page)
-		}
-		if iterErr != nil {
-			return nil, stats, iterErr
 		}
 		if len(page) == 0 {
 			break
 		}
-		stats.pages++
+		stats.pages += pageStats.pages
+		if pageStats.slowest > stats.slowest {
+			stats.slowest, stats.slowestRows = pageStats.slowest, pageStats.slowestRows
+		}
 		pages = append(pages, page)
-		cursor = page[len(page)-1].rid
 		remaining -= len(page)
 		if len(page) < limit {
-			// Short page: the index is exhausted for this schema.
+			// Short page: every per-alias stream is exhausted.
 			break
 		}
 	}

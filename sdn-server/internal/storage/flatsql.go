@@ -157,10 +157,16 @@ type FlatSQLStore struct {
 	// store write lock: a replay must never hold that for its duration or it
 	// starves readers.
 	hydrateMu sync.Mutex
-	validator *sds.Validator
-	dbPath    string
-	basePath  string
-	streamDir string
+	// derivedStateMu serializes source-summary/hot-window maintenance without
+	// making the store's reader lock a whole-job mutex. RebuildDerivedState now
+	// deliberately yields s.mu between bounded chunks, so it needs this separate
+	// ownership lock to prevent two maintenance callers from interleaving their
+	// cursors and engine writes.
+	derivedStateMu sync.Mutex
+	validator      *sds.Validator
+	dbPath         string
+	basePath       string
+	streamDir      string
 	// localEPMKeyCache memoizes the derived candidate keys for the local-EPM
 	// row envelope (localEPMKeys) — scrypt is ~100ms per candidate and the
 	// env/password-file inputs cannot change within a process lifetime.
@@ -818,26 +824,59 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 // is safe to run after opening a store with WithDeferredBootRebuilds, but it
 // may be expensive on large catalogs and holds the store write lock.
 func (s *FlatSQLStore) RebuildDerivedState() error {
-	defer s.lockWrite("RebuildDerivedState")()
+	s.derivedStateMu.Lock()
+	defer s.derivedStateMu.Unlock()
 	// PHASE-STAMPED WHEREVER IT RUNS, not only at open. This is reachable from
-	// the store maintenance API and from every non-deferred open, so when it is
-	// the thing holding the single-threaded engine the log has to say so — it
-	// is the path whose CAT.fbs statement poisoned host-02's engine in
-	// rehearsal (sdn-boot-poisons-engine-on-a-large-store).
+	// the store maintenance API and from every non-deferred open. It MUST NOT
+	// hold s.mu across the whole job: this is the maintenance path that made a
+	// cold /api/v1/data/index CAT request wait behind a multi-minute TBS rebuild.
+	// The engine rebuild takes and releases the write lock around each bounded
+	// index/ingest chunk instead, so normal RecordIndexPage readers interleave.
 	budget := newBootPhaseBudget(s.engine)
 	end := budget.phase("maintenance: source-summary rebuild")
-	err := s.rebuildSourceSummariesFromDurableState()
+	err := s.rebuildSourceSummariesForMaintenance()
 	end()
 	if err != nil {
 		return fmt.Errorf("source summaries: %w", err)
 	}
-	end = budget.phase("maintenance: engine hot-window rebuild")
-	err = s.rebuildEngineRecords()
-	end()
-	if err != nil {
-		return fmt.Errorf("engine records: %w", err)
+	// A hot window is a process-local cache. Once this process has populated
+	// one, normal writes mirror their records into it synchronously; replaying
+	// the durable prefix again would append duplicate engine rows. The only
+	// callers permitted to rebuild it are the fresh-engine boot/recovery paths,
+	// which leave engineHotHydrated false until their first successful replay.
+	if !s.engineHotHydrated.Load() {
+		end = budget.phase("maintenance: engine hot-window rebuild")
+		err = s.rebuildEngineRecordsForMaintenance()
+		end()
+		if err != nil {
+			return fmt.Errorf("engine records: %w", err)
+		}
+		s.engineHotHydrated.Store(true)
 	}
 	budget.summary()
+	return nil
+}
+
+// rebuildSourceSummariesForMaintenance holds the store write lock only for one
+// source lane at a time. Source-summary lanes are normally tens of rows, while
+// a hot window can hold hundreds of thousands; keeping this phase lane-scoped
+// prevents an unrelated collection of summaries from extending the reader
+// blackout before the bounded engine phase starts.
+func (s *FlatSQLStore) rebuildSourceSummariesForMaintenance() error {
+	release := s.lockWrite("RebuildDerivedState: enumerate source-summary lanes")
+	lanes, err := s.sourceSummaryLanes("")
+	release()
+	if err != nil {
+		return err
+	}
+	for _, lane := range lanes {
+		release = s.lockWrite("RebuildDerivedState: source-summary lane")
+		err = s.rebuildSourceSummaryLane(lane)
+		release()
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -978,12 +1017,13 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalog() (int, error) {
 // HydrateEngineHotWindowFromRecordCatalogContext is
 // HydrateEngineHotWindowFromRecordCatalog that a shutdown can interrupt.
 //
-// TWO BOUNDS MAKE THIS SAFE AT 226 ROUTED STANDARDS. It holds the store write
-// lock, so its duration is a stop-the-world for every reader, writer and p2p
-// operation on the box: (1) the replay is ONE pass over the journal for ALL
-// schemas (ReplayEngineHotWindows), never one pass per schema — the journal is
-// multi-GB on both hosts and a per-schema pass would turn boot into hours; and
-// (2) it polls ctx, so Stop() is not left waiting on an uninterruptible scan.
+// TWO BOUNDS MAKE THIS SAFE AT 226 ROUTED STANDARDS. The replay is ONE pass
+// over the journal for ALL schemas, never one pass per schema — the journal is
+// multi-GB on both hosts and a per-schema pass would turn boot into hours. The
+// scanner deliberately does not hold s.mu: it yields that writer lock between
+// bounded engine-ingest chunks, so an otherwise cold /api/v1/data/index CAT
+// request remains live while a long journal pass runs. It also polls ctx, so
+// Stop() is not left waiting on an uninterruptible scan.
 // A cancelled hydration is NOT an error and does NOT mark the window hydrated:
 // the next boot redoes it from the journal, which is the durable source of
 // truth here.
@@ -991,15 +1031,22 @@ func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalogContext(ctx contex
 	if s.engineHotHydrated.Load() {
 		return 0, nil
 	}
+	// Serialize this cache fill with a direct derived-state rebuild, but never
+	// turn that ownership mutex into a reader blackout by retaining s.mu across
+	// the journal scan.
+	s.derivedStateMu.Lock()
+	defer s.derivedStateMu.Unlock()
+	if s.engineHotHydrated.Load() {
+		return 0, nil
+	}
 	s.engineHotHydrating.Store(true)
 	defer s.engineHotHydrating.Store(false)
 
-	defer s.lockWrite("HydrateEngineHotWindowFromRecordCatalogContext")()
 	if s.recordCatalog == nil {
 		s.engineHotHydrated.Store(true)
 		return 0, nil
 	}
-	count, err := s.recordCatalog.ReplayEngineHotWindows(ctx, s, s.engineRoutedSchemaNames(), s.engineWindowFor)
+	count, err := s.recordCatalog.ReplayEngineHotWindowsForMaintenance(ctx, s, s.engineRoutedSchemaNames(), s.engineWindowFor)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			log.Infof("FlatSQL compact engine hot-window hydration cancelled after %d records — the next boot resumes it", count)
@@ -1128,6 +1175,20 @@ func (s *FlatSQLStore) initTables() error {
 		ON sdn_record_index (schema_name, epoch_unix, source_timestamp DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create time window index: %w", err)
+	}
+	// A SQLite secondary index carries the table rowid as its final key. Keeping
+	// schema_name first therefore gives the hot-window reader a durable,
+	// schema-local monotonic rowid seek: `schema_name = ? AND rowid < ?` can
+	// descend directly to the next page instead of repeatedly walking the
+	// global rowid space and filtering aliases afterwards. This is REQUIRED for
+	// existing stores as well: SQLite backfills the index from every existing
+	// row during CREATE INDEX, which is the migration for the live multi-million
+	// row catalogs that exposed the outage.
+	if err := s.createRequiredStartupIndex("sdn_record_index", "idx_sdn_record_index_schema_rowid", `
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_schema_rowid
+		ON sdn_record_index (schema_name)
+	`); err != nil {
+		return fmt.Errorf("failed to create hot-window schema rowid index: %w", err)
 	}
 
 	sourceTagsExisted, err := s.initSourceTagsTable()
