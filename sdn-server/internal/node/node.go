@@ -2267,6 +2267,20 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 			default:
 			}
 
+			// (0) Timestamp index on every routed table that predates it. Before
+			// the catalog replay, because the replay's retention frames and the
+			// age-based GC delete by `timestamp < ?`; without the index each
+			// one scans the table under the write lock (335 ms per frame on a
+			// routed $TBS table, 2026-09-02). One lock hold per table; a no-op
+			// on stores that already carry it.
+			if created, err := n.store.EnsureRoutedTimestampIndexes(n.ctx); err != nil {
+				if n.ctx.Err() == nil {
+					log.Errorf("FlatSQL routed timestamp index backfill failed: %v", err)
+				}
+			} else if created > 0 {
+				log.Infof("FlatSQL routed timestamp index backfill complete: %d indexes created", created)
+			}
+
 			// (1) Full control-table replay + derived source summaries FIRST.
 			//
 			// ORDER MATTERS FOR SURVIVAL, not for speed. The catalog replay
