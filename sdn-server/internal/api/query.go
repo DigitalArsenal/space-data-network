@@ -42,7 +42,7 @@ func (h *CoreAPIHandler) handleSandboxQuery(w http.ResponseWriter, r *http.Reque
 	// Fail FAST while startup hydration holds the store lock — the same 503
 	// the table lane answers (tableStoreWarming); blocking here parked browser
 	// requests behind hours of catalog rebuild.
-	if h.tableStoreWarming(w) {
+	if h.tableStoreWarming(w, "") {
 		return
 	}
 	var req sandboxQueryRequest
