@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/status"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -188,6 +189,16 @@ func dashboardInputFrom(s storeStats) status.DashboardStatsInput {
 			Schema:      sc.SchemaName,
 			RecordCount: sc.Count,
 			TotalBytes:  sc.TotalBytes,
+		})
+	}
+	// TOPICS: the last minute's message observations per pubsub topic, from
+	// the exchange handler (protocol.DefaultTopicActivity). Subscribed is true
+	// for every topic listed — the node observes only topics it subscribes to.
+	for _, obs := range protocol.DefaultTopicActivity.Snapshot(time.Now()) {
+		in.Topics = append(in.Topics, status.DashboardTopicRow{
+			Topic:             obs.Topic,
+			Subscribed:        true,
+			MessageTimestamps: obs.MessageTimestamps,
 		})
 	}
 	for _, p := range s.Sources {
