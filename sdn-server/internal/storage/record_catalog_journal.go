@@ -5,7 +5,11 @@ import (
 	"container/heap"
 	"context"
 	"database/sql"
+	"encoding"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"hash/crc32"
@@ -39,6 +43,15 @@ type recordCatalogJournal struct {
 	path        string
 	readOnly    bool
 	replayLimit int64
+
+	// scanStart is where the open-time CRC scan began: 0 for a full scan,
+	// or the checkpoint sidecar's offset when its prefix was trusted (see
+	// trustedRecordCatalogPrefix). Tests and the boot log read it.
+	scanStart int64
+	// lastFrameStart is the start offset of the last frame folded into the
+	// running digest (-1 = unknown). It is what the sidecar's O(1) boundary
+	// check verifies on the next boot.
+	lastFrameStart int64
 
 	// onAppend observes every LIVE catalog mutation. It is the single funnel
 	// through which the hydration shield learns which records live traffic
@@ -150,19 +163,22 @@ func openRecordCatalogJournal(path string, readOnly bool) (*recordCatalogJournal
 			}
 			return nil, fmt.Errorf("record catalog: open read-only: %w", err)
 		}
-		valid, err := scanRecordCatalogValidLength(f)
+		j := &recordCatalogJournal{f: f, path: path, readOnly: true, lastFrameStart: -1}
+		valid, err := j.scanFromTrustedPrefix()
 		if err != nil {
 			f.Close()
 			return nil, err
 		}
-		return &recordCatalogJournal{f: f, path: path, readOnly: true, replayLimit: valid}, nil
+		j.replayLimit = valid
+		return j, nil
 	}
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("record catalog: open: %w", err)
 	}
-	valid, err := scanRecordCatalogValidLength(f)
+	j := &recordCatalogJournal{f: f, path: path, lastFrameStart: -1}
+	valid, err := j.scanFromTrustedPrefix()
 	if err != nil {
 		f.Close()
 		return nil, err
@@ -175,16 +191,164 @@ func openRecordCatalogJournal(path string, readOnly bool) (*recordCatalogJournal
 		f.Close()
 		return nil, err
 	}
-	return &recordCatalogJournal{f: f, path: path}, nil
+	return j, nil
+}
+
+// scanFromTrustedPrefix establishes the journal's CRC-valid length, reading
+// only the bytes past the last checkpoint when the checkpoint sidecar's
+// prefix verifies (trustedRecordCatalogPrefix), and the whole file otherwise.
+// On a trusted prefix the running digest is restored from the sidecar too, so
+// the warm-boot handshake (resumeOffset → digestPrefix) extends it over the
+// tail instead of walking every frame header from zero.
+//
+// WHY: the open-time scan and the handshake's digest walk were the two
+// O(journal) passes of a warm boot — 23 s + 11 s on a 9.7 GB journal
+// (measured 2026-09-02) — for a file whose prefix an earlier boot had
+// already validated and a checkpoint had already fingerprinted. A torn tail
+// can only be at the end; the tail is still scanned in full.
+func (j *recordCatalogJournal) scanFromTrustedPrefix() (int64, error) {
+	from := int64(0)
+	if mark, h, ok := trustedRecordCatalogPrefix(j.f, j.path); ok {
+		from = mark.Offset
+		j.digest = h
+		j.digestOffset = mark.Offset
+		j.lastFrameStart = mark.LastFrameStart
+	}
+	valid, err := scanRecordCatalogValidLengthFrom(j.f, from)
+	if err != nil {
+		return 0, err
+	}
+	j.scanStart = from
+	if from > 0 {
+		log.Infof("record catalog journal: trusted %d checkpointed bytes, CRC-scanned the %d-byte tail", from, valid-from)
+	}
+	return valid, nil
+}
+
+// recordCatalogPrefixMark is the checkpoint SIDECAR next to the journal
+// (<journal>.prefix): the same offset + sealed digest the control database's
+// boot mark carries, plus what a boot needs to trust that prefix WITHOUT
+// re-reading it — the running digest state at Offset and the start of the
+// prefix's last frame. It is an accelerator only: the boot mark in the
+// control database stays the authority for what is resumed, and every doubt
+// here falls back to the full scan.
+type recordCatalogPrefixMark struct {
+	Offset         int64  `json:"offset"`
+	LastFrameStart int64  `json:"last_frame_start"`
+	Digest         string `json:"digest"`
+	DigestState    string `json:"digest_state"`
+}
+
+func recordCatalogPrefixMarkPath(journalPath string) string {
+	return journalPath + ".prefix"
+}
+
+// writePrefixMark records the running digest state at end (which must be
+// exactly what digestPrefix last folded in) in the sidecar. Best-effort by
+// contract: a missing or stale sidecar only costs the next boot a full scan.
+func (j *recordCatalogJournal) writePrefixMark(end int64, digest string) error {
+	if j == nil || j.f == nil || j.readOnly {
+		return nil
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.digest == nil || j.digestOffset != end || j.lastFrameStart < 0 || j.lastFrameStart >= end {
+		return fmt.Errorf("record catalog prefix mark: digest state covers %d, not %d", j.digestOffset, end)
+	}
+	m, ok := j.digest.(encoding.BinaryMarshaler)
+	if !ok {
+		return errors.New("record catalog prefix mark: digest state is not marshalable")
+	}
+	state, err := m.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(recordCatalogPrefixMark{
+		Offset:         end,
+		LastFrameStart: j.lastFrameStart,
+		Digest:         digest,
+		DigestState:    base64.StdEncoding.EncodeToString(state),
+	})
+	if err != nil {
+		return err
+	}
+	final := recordCatalogPrefixMarkPath(j.path)
+	tmp := final + ".tmp"
+	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, final)
+}
+
+// trustedRecordCatalogPrefix reads the sidecar and verifies, in O(1), that
+// the journal still carries the prefix it describes: the file is at least
+// that long, the frame starting at LastFrameStart ends exactly at Offset and
+// its payload CRC holds, and the restored digest state seals to the recorded
+// digest. A compacted or replaced journal fails the boundary check (and the
+// reopen after compaction removes the sidecar outright); a truncated one
+// fails the length check. Returns the restored running digest on success.
+func trustedRecordCatalogPrefix(f *os.File, journalPath string) (recordCatalogPrefixMark, hash.Hash, bool) {
+	body, err := os.ReadFile(recordCatalogPrefixMarkPath(journalPath))
+	if err != nil {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	var mark recordCatalogPrefixMark
+	if err := json.Unmarshal(body, &mark); err != nil {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	if mark.Offset <= 0 || mark.LastFrameStart < 0 || mark.LastFrameStart+8 > mark.Offset || mark.Digest == "" || mark.DigestState == "" {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	info, err := f.Stat()
+	if err != nil || info.Size() < mark.Offset {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	var hdr [8]byte
+	if _, err := f.ReadAt(hdr[:], mark.LastFrameStart); err != nil {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	n := int64(binary.LittleEndian.Uint32(hdr[0:]))
+	crc := binary.LittleEndian.Uint32(hdr[4:])
+	if n <= 0 || mark.LastFrameStart+8+n != mark.Offset {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	payload := make([]byte, n)
+	if _, err := f.ReadAt(payload, mark.LastFrameStart+8); err != nil || crc32.ChecksumIEEE(payload) != crc {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	state, err := base64.StdEncoding.DecodeString(mark.DigestState)
+	if err != nil {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	h := newRecordCatalogDigest()
+	u, ok := h.(encoding.BinaryUnmarshaler)
+	if !ok || u.UnmarshalBinary(state) != nil {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	sealed, err := sealRecordCatalogDigest(h, mark.Offset)
+	if err != nil || sealed != mark.Digest {
+		return recordCatalogPrefixMark{}, nil, false
+	}
+	return mark, h, true
 }
 
 func scanRecordCatalogValidLength(f *os.File) (int64, error) {
+	return scanRecordCatalogValidLengthFrom(f, 0)
+}
+
+// scanRecordCatalogValidLengthFrom CRC-walks the frames from `from` (which
+// must be a frame boundary the caller has verified) to the first torn or
+// corrupt frame, and returns that offset.
+func scanRecordCatalogValidLengthFrom(f *os.File, from int64) (int64, error) {
 	info, err := f.Stat()
 	if err != nil {
 		return 0, err
 	}
 	size := info.Size()
-	var off int64
+	off := from
+	if off < 0 || off > size {
+		off = 0
+	}
 	var hdr [8]byte
 	for off < size {
 		if size-off < 8 {
@@ -1211,6 +1375,11 @@ func (j *recordCatalogJournal) reopen() error {
 	// the old journal and name offsets in the new one.
 	j.digest = nil
 	j.digestOffset = 0
+	j.lastFrameStart = -1
+	// The sidecar fingerprinted the old inode too.
+	if err := os.Remove(recordCatalogPrefixMarkPath(j.path)); err != nil && !os.IsNotExist(err) {
+		log.Warnf("record catalog: could not drop the prefix mark after reopen: %v", err)
+	}
 	if old != nil {
 		_ = old.Close()
 	}
