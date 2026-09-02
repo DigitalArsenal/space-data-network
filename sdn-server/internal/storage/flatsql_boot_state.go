@@ -169,6 +169,49 @@ func resolveCheckpointInterval() time.Duration {
 	return d
 }
 
+// engineRecordState is what the engine's OWN persisted record state said at
+// open: how many records its on-disk stream + index made visible without a
+// single re-ingest, and whether that state was usable at all.
+//
+// OWNER LAW 2026-09-02 (sdn-operating-model-streams-flatsql): "flatbuffers are
+// streamed to flatsql which persists it directly to disk ... any node restart
+// just uses whatever is on disk". The engine has always been able to do this
+// (flatsql_flush_index / flatsql_open_state); the store simply never flushed,
+// then reset the index at every boot and re-ingested every stream file through
+// WASM under the store lock — minutes to hours during which every reader lane
+// on the node hung. This type is the boot's evidence that the persisted state
+// was used.
+type engineRecordState struct {
+	// Records is the count the engine reports visible from its persisted
+	// state (OpenState / ReindexAll).
+	Records int
+	// Warm is true when the engine opened persisted record state, so the
+	// records are already resident and only the journal TAIL needs ingesting.
+	Warm bool
+}
+
+// openEngineRecordState opens the engine's persisted record index for a
+// disk-backed database. Absent/mismatched/corrupt/torn state is answered by
+// ReindexAll, which re-derives the index from the engine's own record stream
+// on disk (still no re-ingest). Only a filesystem refusal is fatal.
+func openEngineRecordState(db *flatsqlrt.Database) (engineRecordState, error) {
+	n, err := db.OpenState()
+	if err == nil {
+		return engineRecordState{Records: n, Warm: true}, nil
+	}
+	if !flatsqlrt.StateRecoverable(err) {
+		return engineRecordState{}, fmt.Errorf("open engine record state: %w", err)
+	}
+	if !errors.Is(err, flatsqlrt.ErrStateAbsent) {
+		log.Warnf("FlatSQL engine record state unusable (%v) — re-deriving the index from the engine's on-disk record stream", err)
+	}
+	n, err = db.ReindexAll()
+	if err != nil {
+		return engineRecordState{}, fmt.Errorf("reindex engine record state: %w", err)
+	}
+	return engineRecordState{Records: n, Warm: n > 0}, nil
+}
+
 // bootMark is the persisted resume point read out of a warm control database.
 // Offset/Digest name the record-catalog journal; AuxOffset/AuxDigest name the
 // auxiliary-metadata journal. Either pair may be absent (zero), independently.
@@ -411,7 +454,7 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 
 		engine.SetPhase("boot: open control database for writing")
 		openStart := time.Now()
-		engineDB, mark, warm, err := tryOpenControlDatabase(engine, dbPath,
+		engineDB, mark, warm, engineState, err := tryOpenControlDatabase(engine, dbPath,
 			engineSchemaTextExcluding(plan.Excluded), enginePrepare(plan))
 		engine.SetPhase("")
 		log.Infof("FlatSQL boot phase \"boot: open control database for writing\" took %s (views already current: %v)",
@@ -427,6 +470,8 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 			// can never be honoured across a discard, and is dropped with it.
 			if resume.Keep || !hadFile {
 				// Warm, or a genuine first boot whose database is already empty.
+				// The engine's persisted records survive with the database.
+				plan.EngineState = engineState
 				return engine, engineDB, resume, plan, nil
 			}
 			// Cold with pre-existing state: discard and reopen so the replay
@@ -620,31 +665,31 @@ func openEphemeralControlEngine(schemaText string) (*flatsqlrt.Runtime, *flatsql
 // persisted mark. One wipe-and-retry is attempted: a database that cannot be
 // opened or verified is worth exactly nothing, because everything it holds is
 // derivable from the journal and the stream files.
-func openControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, bool, error) {
-	db, mark, warm, err := tryOpenControlDatabase(engine, dbPath, schemaText, prepare)
+func openControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, bool, engineRecordState, error) {
+	db, mark, warm, state, err := tryOpenControlDatabase(engine, dbPath, schemaText, prepare)
 	if err == nil {
-		return db, mark, warm, nil
+		return db, mark, warm, state, nil
 	}
 	if errors.Is(err, errEnginePrepareFailed) {
 		// A registration failure says nothing about the file. Never trade a
 		// multi-GB control database for it.
-		return nil, bootMark{}, false, err
+		return nil, bootMark{}, false, engineRecordState{}, err
 	}
 	log.Warnf("FlatSQL control database at %s is unusable (%v) — discarding it and re-deriving from the journal", dbPath, err)
 	if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
-		return nil, bootMark{}, false, fmt.Errorf("discard unusable control database: %w", rmErr)
+		return nil, bootMark{}, false, engineRecordState{}, fmt.Errorf("discard unusable control database: %w", rmErr)
 	}
-	db, mark, warm, err = tryOpenControlDatabase(engine, dbPath, schemaText, prepare)
+	db, mark, warm, state, err = tryOpenControlDatabase(engine, dbPath, schemaText, prepare)
 	if err != nil {
-		return nil, bootMark{}, false, fmt.Errorf("open control database after discard: %w", err)
+		return nil, bootMark{}, false, engineRecordState{}, fmt.Errorf("open control database after discard: %w", err)
 	}
-	return db, mark, warm, nil
+	return db, mark, warm, state, nil
 }
 
-func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, bool, error) {
+func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, bool, engineRecordState, error) {
 	db, err := engine.OpenDatabase(schemaText, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
 	if err != nil {
-		return nil, bootMark{}, false, err
+		return nil, bootMark{}, false, engineRecordState{}, err
 	}
 	// BEFORE THE FIRST QUERY. IsDiskBacked/ReindexAll/verifyControlDatabase all
 	// query, and the engine's virtual-table registration is a one-shot at the
@@ -652,43 +697,44 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	if prepare != nil {
 		if err := prepare(db); err != nil {
 			db.Destroy()
-			return nil, bootMark{}, false, err
+			return nil, bootMark{}, false, engineRecordState{}, err
 		}
 	}
 	disk, err := db.IsDiskBacked()
 	if err != nil {
 		db.Destroy()
-		return nil, bootMark{}, false, err
+		return nil, bootMark{}, false, engineRecordState{}, err
 	}
 	if !disk {
 		// The engine reported RAM for a real path. Never treat that as durable
 		// — silently succeeding against memory is the exact defect this lane
 		// exists to remove.
 		db.Destroy()
-		return nil, bootMark{}, false, errors.New("engine opened a real path but reports NOT disk-backed")
+		return nil, bootMark{}, false, engineRecordState{}, errors.New("engine opened a real path but reports NOT disk-backed")
 	}
 
-	// The FlatBuffer record arena is NOT persisted in this slice: the store's
-	// hot window is a cache that RebuildDerivedState re-derives, and its Go-side
-	// bookkeeping (engineSources / engineResident / engineEpoch) does not
-	// survive a restart either. Index rows left on disk by the previous process
-	// would therefore point into an arena that no longer exists. ReindexAll
-	// re-derives the index from the (empty) stream, which makes index and arena
-	// consistent by construction. This is deliberate and is why the store never
-	// calls FlushIndex — nothing is ever written to <db>.fsdata, so it never
-	// grows.
-	if _, err := db.ReindexAll(); err != nil {
+	// THE RECORD ARENA IS PERSISTED, AND THE BOOT USES IT. Every checkpoint
+	// flushes the engine's record stream + index to <db>.fsdata before it
+	// writes the resume mark (flushEngineStateLocked), so a kept database
+	// always carries every record the mark covers. OpenState verifies that
+	// index and makes the records visible in milliseconds — no ReindexAll, no
+	// re-ingest through WASM. What OpenState does NOT carry is Go-side
+	// bookkeeping (engineResident) and the hot-window tombstones; both are
+	// restored from the tables right after open
+	// (restoreEngineResidencyFromPersistedState).
+	state, err := openEngineRecordState(db)
+	if err != nil {
 		db.Destroy()
-		return nil, bootMark{}, false, fmt.Errorf("reset engine record index: %w", err)
+		return nil, bootMark{}, false, engineRecordState{}, err
 	}
 
 	if err := verifyControlDatabase(db); err != nil {
 		db.Destroy()
-		return nil, bootMark{}, false, err
+		return nil, bootMark{}, false, engineRecordState{}, err
 	}
 
 	mark, warm := readBootMark(db)
-	return db, mark, warm, nil
+	return db, mark, warm, state, nil
 }
 
 // verifyControlDatabase is the integrity gate.
@@ -867,6 +913,9 @@ type engineBootPlan struct {
 	// ViewsCurrent reports that the persisted unified views already union
 	// exactly Sources for every routed standard.
 	ViewsCurrent bool
+	// EngineState is what the engine's persisted record state reported at
+	// open. Zero for a discarded or ephemeral database.
+	EngineState engineRecordState
 }
 
 // registeredSources is the store-side mirror of the sources enginePrepare
@@ -1407,7 +1456,31 @@ func (s *FlatSQLStore) checkpointCatalogMark() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.flushEngineStateLocked(); err != nil {
+		return err
+	}
 	return s.persistBootMarkLocked(end, digest)
+}
+
+// flushEngineStateLocked persists the engine's record stream + index
+// (flatsql_flush_index: append the new stream bytes, fsync them, then commit
+// the index pages and the high-water mark). It runs IMMEDIATELY BEFORE every
+// resume mark is written and never after: a mark may only ever claim journal
+// bytes whose records the engine can already serve from disk, so the next
+// boot ingests the tail past the mark and nothing else. A flush failure
+// therefore withholds the mark — the next boot replays more, never less.
+// Requires the store write lock.
+func (s *FlatSQLStore) flushEngineStateLocked() error {
+	if s.readOnly || !s.controlDBDurable || s.engineDB == nil {
+		return nil
+	}
+	if s.engine != nil && s.engine.Poisoned() {
+		return errors.New("checkpoint record catalog: engine poisoned — record state not flushed, mark withheld")
+	}
+	if err := s.engineDB.FlushIndex(); err != nil {
+		return fmt.Errorf("checkpoint record catalog: flush engine record state: %w", err)
+	}
+	return nil
 }
 
 // checkpointRecordCatalogLocked is the same operation for a caller that ALREADY
@@ -1448,6 +1521,9 @@ func (s *FlatSQLStore) checkpointCatalogMarkLocked() error {
 	digest, err := s.recordCatalog.digestPrefix(end)
 	if err != nil {
 		return fmt.Errorf("checkpoint record catalog: digest: %w", err)
+	}
+	if err := s.flushEngineStateLocked(); err != nil {
+		return err
 	}
 	return s.persistBootMarkLocked(end, digest)
 }
