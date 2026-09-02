@@ -9,11 +9,15 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
-// seedTwoSchemaStore writes records for TWO routed standards ($OMM and $IRM),
-// checkpoints them into the compact record catalog, and returns the base path
-// of the closed store.
+// seedTwoSchemaStore writes records for TWO routed standards ($OMM and $IRM)
+// into the compact record catalog and returns the base path of a store that
+// died WITHOUT a checkpoint, so the reopen is a COLD boot: these tests pin the
+// from-empty journal pass (its cost bound, cancellation and deferral). A clean
+// close would flush the engine's record state and the next boot would open it
+// from disk instead (engine_state_persistence_test.go).
 func seedTwoSchemaStore(t *testing.T, ommRecords, irmRecords int) string {
 	t.Helper()
+	t.Setenv(checkpointIntervalEnv, "0")
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newEngineRecordsStore(t, basePath)
 
@@ -31,12 +35,7 @@ func seedTwoSchemaStore(t *testing.T, ommRecords, irmRecords int) string {
 			t.Fatalf("store $IRM %d: %v", i, err)
 		}
 	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
-		t.Fatalf("checkpoint record catalog: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close store: %v", err)
-	}
+	simulateCrash(t, store)
 	return basePath
 }
 
