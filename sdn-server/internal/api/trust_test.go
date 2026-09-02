@@ -2,13 +2,17 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
 )
 
@@ -276,5 +280,159 @@ func TestTrustMutationProtection(t *testing.T) {
 	resp = getJSON(t, srv.URL+"/api/v1/trust/rank?evaluator=eve", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("read blocked: status %d", resp.StatusCode)
+	}
+}
+
+// ---- `$TRP` rules engine surface -----------------------------------------
+
+func newRulesHandler(t *testing.T, protect func(http.HandlerFunc) http.HandlerFunc) (*TrustHandler, *http.ServeMux, *uint32) {
+	t.Helper()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = flat.Close() })
+	_, key, _ := ed25519.GenerateKey(nil)
+	svc := trust.NewService(trust.NewGraph(), nil)
+	svc.TrackEvaluator("me")
+	if _, err := svc.SetEdge(trust.Edge{Truster: "eve", Trustee: "alice", Weight: 0.9, UpdatedAtMs: 1}); err != nil {
+		t.Fatal(err)
+	}
+	policies, err := trust.NewPolicyStore(flat, "me", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verdicts, err := trust.NewVerdictStore(flat, "me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := trust.NewEngine(trust.EngineConfig{Policies: policies, Verdicts: verdicts, Service: svc, Key: key, PeerID: "me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved uint32
+	h := NewTrustHandler(svc)
+	h.Policies, h.Verdicts, h.Engine, h.Protect = policies, verdicts, engine, protect
+	h.SaveInterval = func(ms uint32) error { saved = ms; return nil }
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	return h, mux, &saved
+}
+
+func rulesPolicyBody() string {
+	return `{"NAME":"one truster","ACTIVE":true,"ROOT":{"GROUP_ID":"root","COMBINATOR":"All","PREDICATES":[{"PREDICATE_ID":"c1","KIND":"TrustedConnections","REQUIRED_COUNT":1}]}}`
+}
+
+func TestTrustPolicyPostListsSignedAndVerdictsFollow(t *testing.T) {
+	h, mux, _ := newRulesHandler(t, nil)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/trust/policies", strings.NewReader(rulesPolicyBody())))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST policy: %d %s", rec.Code, rec.Body.String())
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &stored); err != nil {
+		t.Fatal(err)
+	}
+	policyID, _ := stored["POLICY_ID"].(string)
+	if !strings.HasPrefix(policyID, "trp-") || stored["EVALUATOR_SIGNATURE"] == nil || stored["EVALUATOR_PEER_ID"] != "me" {
+		t.Fatalf("stored policy is id-stamped and signed by the evaluator: %v", stored)
+	}
+	if rec.Header().Get("X-SDN-Record-CID") == "" {
+		t.Fatal("the stored record's CID is reported")
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/trust/policies", nil))
+	var list struct{ Policies []trust.Policy }
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Policies) != 1 || list.Policies[0].ID != policyID {
+		t.Fatalf("GET policies: %d %s", rec.Code, rec.Body.String())
+	}
+
+	h.Engine.RunOnce(context.Background(), "test")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/trust/verdicts?subject=alice", nil))
+	var got struct {
+		Source   string
+		Verdicts []trust.Verdict
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Source != "engine" || len(got.Verdicts) != 1 {
+		t.Fatalf("GET verdicts: %d %s", rec.Code, rec.Body.String())
+	}
+	if v := got.Verdicts[0]; !v.Passed || v.PolicyID != policyID || v.SubjectID != "alice" || v.EvaluatorPeerID != "me" {
+		t.Fatalf("alice has one truster so the policy passes: %+v", v)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/trust/verdicts?subject=alice&history=1", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Source != "history" || len(got.Verdicts) != 1 || !got.Verdicts[0].Passed {
+		t.Fatalf("the flip was persisted as a $TRV record: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTrustSettingsAndEvaluateEndpoints(t *testing.T) {
+	h, mux, saved := newRulesHandler(t, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/trust/settings", strings.NewReader(`{"EVALUATION_INTERVAL_MS":5000}`)))
+	if rec.Code != http.StatusOK || *saved != 5000 || h.Engine.IntervalOverride() != 5000 {
+		t.Fatalf("PUT settings: %d %s saved=%d", rec.Code, rec.Body.String(), *saved)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/trust/settings", nil))
+	var s map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &s); err != nil || s["EVALUATION_INTERVAL_MS"].(float64) != 5000 || s["MIN_INTERVAL_MS"].(float64) != float64(trust.MinEvaluationIntervalMs) {
+		t.Fatalf("GET settings: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/trust/settings", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("a PUT without the interval is refused: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/trust/evaluate", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("POST evaluate: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTrustRulesMutationsHonourProtect(t *testing.T) {
+	deny := func(http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { http.Error(w, "nope", http.StatusUnauthorized) }
+	}
+	_, mux, _ := newRulesHandler(t, deny)
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodPost, "/api/v1/trust/policies", rulesPolicyBody()},
+		{http.MethodPut, "/api/v1/trust/settings", `{"EVALUATION_INTERVAL_MS":5000}`},
+		{http.MethodPost, "/api/v1/trust/evaluate", ""},
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s bypassed Protect: %d", tc.method, tc.path, rec.Code)
+		}
+	}
+	for _, path := range []string{"/api/v1/trust/policies", "/api/v1/trust/verdicts", "/api/v1/trust/settings"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s is open: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestTrustRulesSurfaceAnswers503WhenUnwired(t *testing.T) {
+	h := NewTrustHandler(trust.NewService(trust.NewGraph(), nil))
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	for _, path := range []string{"/api/v1/trust/policies", "/api/v1/trust/verdicts"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("GET %s without stores: %d", path, rec.Code)
+		}
 	}
 }

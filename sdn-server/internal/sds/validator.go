@@ -166,6 +166,7 @@ var SupportedSchemas = []string{
 	"HEL.fbs",  // Helicopter Dynamics
 	"HFC.fbs",  // Hypersonic Flight Conditions
 	"HYP.fbs",  // Hyperbolic Orbit
+	"ICN.fbs",  // Ingest Connector
 	"IDM.fbs",  // Initial Data Message
 	"ION.fbs",  // Ionospheric Observation
 	"IQC.fbs",  // IQ Capture - archived baseband recording (SDS v1.177.0)
@@ -301,6 +302,8 @@ var SupportedSchemas = []string{
 	"TNR.fbs",  // Trust Node Record
 	"TPN.fbs",  // Transponder
 	"TRE.fbs",  // Trust Edge Record
+	"TRP.fbs",  // Trust Rule Policy
+	"TRV.fbs",  // Trust Rule Verdict
 	"TRK.fbs",  // Track
 	"TRN.fbs",  // Terrain Models
 	"TRS.fbs",  // Terrain Raster Solve (SDS v1.196.0)

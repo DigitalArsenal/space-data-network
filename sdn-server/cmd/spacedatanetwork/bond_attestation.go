@@ -18,9 +18,10 @@
 package main
 
 import (
-	_ "embed"
 	"context"
+	_ "embed"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -47,6 +48,9 @@ type bondAttestor struct {
 	latest     json.RawMessage
 	attestedAt time.Time
 	peerID     string
+	// onRefresh, when set, runs after every successful attestation (the
+	// trust rules engine takes it as an early-evaluation trigger).
+	onRefresh func()
 }
 
 // bondAddresses is the module's invoke payload: this node's own EPM-derived
@@ -113,27 +117,9 @@ func (b *bondAttestor) refresh(ctx context.Context, n *node.Node) {
 		log.Debugf("bond attestation: node EPM carries no chain addresses yet")
 		return
 	}
-	payload, err := json.Marshal(addrs)
+	out, err := invokeBondAttestation(ctx, addrs)
 	if err != nil {
-		return
-	}
-
-	// A fresh module instance per run: the guest is single-shot, ~70 KB, and
-	// a persistent instance would hold wasm memory hostage between hours.
-	capReg := modulert.NewCapabilityRegistry()
-	capReg.Register("http", caps.NewHTTPCapFactory())
-	mod, err := modulert.NewModule(bondAttestationWasm, capReg, bondModuleNodeContext())
-	if err != nil {
-		log.Warnf("bond attestation: module load failed: %v", err)
-		return
-	}
-	defer mod.Close()
-
-	invokeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	out, err := mod.InvokeCron(invokeCtx, "attest", payload)
-	if err != nil {
-		log.Warnf("bond attestation: attest invoke failed: %v", err)
+		log.Warnf("bond attestation: %v", err)
 		return
 	}
 
@@ -153,6 +139,36 @@ func (b *bondAttestor) refresh(ctx context.Context, n *node.Node) {
 	b.peerID = n.PeerID().String()
 	b.mu.Unlock()
 	log.Infof("bond attestation: refreshed (%d bytes, attested=%v)", len(out), *probe.Attested)
+	if b.onRefresh != nil {
+		b.onRefresh()
+	}
+}
+
+// invokeBondAttestation runs the embedded module once for the given
+// addresses and returns its verbatim JSON answer. The trust rules engine
+// reuses it for every subject it evaluates (trust_engine.go).
+func invokeBondAttestation(ctx context.Context, addrs bondAddresses) ([]byte, error) {
+	payload, err := json.Marshal(addrs)
+	if err != nil {
+		return nil, err
+	}
+	// A fresh module instance per run: the guest is single-shot, ~70 KB, and
+	// a persistent instance would hold wasm memory hostage between hours.
+	capReg := modulert.NewCapabilityRegistry()
+	capReg.Register("http", caps.NewHTTPCapFactory())
+	mod, err := modulert.NewModule(bondAttestationWasm, capReg, bondModuleNodeContext())
+	if err != nil {
+		return nil, fmt.Errorf("module load failed: %w", err)
+	}
+	defer mod.Close()
+
+	invokeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	out, err := mod.InvokeCron(invokeCtx, "attest", payload)
+	if err != nil {
+		return nil, fmt.Errorf("attest invoke failed: %w", err)
+	}
+	return out, nil
 }
 
 // start runs the hourly attestation loop until ctx ends.
