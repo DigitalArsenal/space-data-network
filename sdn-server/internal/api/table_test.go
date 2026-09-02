@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	MPE "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -245,4 +247,99 @@ func TestTablePageProjectsMPEWithTheExistingRecordDecoder(t *testing.T) {
 	if got := page.Rows[0]; got[0] != "mpe-entity-42" || got[1] != "1.7883936e+09" || got[2] != "15.25" {
 		t.Fatalf("MPE projection = %v", got)
 	}
+}
+
+func TestTablePageFiltersSearchesAndSortsAcrossTheFullStoredSet(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(
+		filepath.Join(t.TempDir(), "store"),
+		validator,
+		storage.WithEngineHotWindow(10),
+	)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	const lastPageMatch = "FULL-SET-LAST-PAGE-MATCH"
+	recordCount := tableMaxLimit + 2
+	records := make([][]byte, 0, recordCount)
+	for i := 0; i < recordCount; i++ {
+		name := fmt.Sprintf("ROW-%04d", i)
+		if i == 0 {
+			// The default durable order is newest first, so the first inserted
+			// record sits beyond the initial 1,000-row block.
+			name = lastPageMatch
+		}
+		records = append(records, sds.NewOMMBuilder().
+			WithNoradCatID(uint32(50000+i)).
+			WithObjectName(name).
+			WithEpoch("2026-09-02T00:00:00Z").
+			Build())
+	}
+	tags := storage.SourceTags{ProviderID: "test", SourceName: "full-scan", BatchID: "b1", ContentKeyID: "public"}
+	if inserted, err := store.StoreBatchWithSourceTags("OMM.fbs", records, "source:full-scan", nil, tags); err != nil || inserted != recordCount {
+		t.Fatalf("StoreBatchWithSourceTags = (%d, %v), want (%d, nil)", inserted, err, recordCount)
+	}
+
+	handler := NewCoreAPIHandler("", nil, nil, nil, store, nil, nil, nil, nil)
+	requestPage := func(path string, budget tableScanBudget) tableResponse {
+		t.Helper()
+		req := httptest.NewRequest("GET", path, nil)
+		req = req.WithContext(withTableScanBudget(context.Background(), budget))
+		res := httptest.NewRecorder()
+		handler.handleTablePage(res, req)
+		if res.Code != 200 {
+			t.Fatalf("table page -> %d: %s", res.Code, res.Body.String())
+		}
+		var page tableResponse
+		if err := json.Unmarshal(res.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decode table response: %v", err)
+		}
+		return page
+	}
+	exactBudget := tableScanBudget{MaxRecords: tableScanRecordBudget, MaxTime: time.Minute}
+
+	t.Run("column filter finds a match beyond the first durable block", func(t *testing.T) {
+		page := requestPage("/api/v1/data/table?schema=OMM&limit=10&cols=OBJECT_NAME&f.OBJECT_NAME=LAST-PAGE", exactBudget)
+		if page.Partial || page.Scanned != int64(recordCount) || page.Stored != int64(recordCount) {
+			t.Fatalf("scan metadata = partial %v, scanned %d, stored %d", page.Partial, page.Scanned, page.Stored)
+		}
+		if page.Total != 1 || len(page.Rows) != 1 || page.Rows[0][0] != lastPageMatch {
+			t.Fatalf("filtered page = total %d rows %v, want the last-page match", page.Total, page.Rows)
+		}
+	})
+
+	t.Run("global search finds a match beyond the first durable block", func(t *testing.T) {
+		page := requestPage("/api/v1/data/table?schema=OMM&limit=10&cols=OBJECT_NAME&q=FULL-SET", exactBudget)
+		if page.Partial || page.Total != 1 || len(page.Rows) != 1 || page.Rows[0][0] != lastPageMatch {
+			t.Fatalf("searched page = partial %v total %d rows %v", page.Partial, page.Total, page.Rows)
+		}
+	})
+
+	t.Run("projected sort orders the full durable set", func(t *testing.T) {
+		page := requestPage("/api/v1/data/table?schema=OMM&limit=2&cols=OBJECT_NAME&sort=OBJECT_NAME&dir=asc", exactBudget)
+		if page.Partial || page.Total != int64(recordCount) || len(page.Rows) != 2 {
+			t.Fatalf("sorted page = partial %v total %d rows %v", page.Partial, page.Total, page.Rows)
+		}
+		if page.Rows[0][0] != lastPageMatch || page.Rows[1][0] != "ROW-0001" {
+			t.Fatalf("full-set ascending order starts %v", page.Rows)
+		}
+	})
+
+	t.Run("record budget reports an honest partial result", func(t *testing.T) {
+		page := requestPage("/api/v1/data/table?schema=OMM&limit=5&cols=OBJECT_NAME&q=ROW", tableScanBudget{
+			MaxRecords: 10,
+			MaxTime:    time.Minute,
+		})
+		if !page.Partial || page.Scanned != 10 || page.Stored != int64(recordCount) {
+			t.Fatalf("partial scan metadata = partial %v, scanned %d, stored %d", page.Partial, page.Scanned, page.Stored)
+		}
+		if page.Total != 10 || len(page.Rows) != 5 {
+			t.Fatalf("partial result = total %d rows %d, want 10 matches and a 5-row page", page.Total, len(page.Rows))
+		}
+	})
 }
