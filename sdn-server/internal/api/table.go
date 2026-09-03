@@ -129,6 +129,7 @@ type tableSourceCount struct {
 func (h *CoreAPIHandler) RegisterTableRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/table", h.requireAuth(peers.Admin, h.handleTablePage))
 	mux.HandleFunc("/api/v1/data/table/sources", h.requireAuth(peers.Admin, h.handleTableSources))
+	mux.HandleFunc("/api/v1/data/chart", h.requireAuth(peers.Admin, h.handleChart))
 }
 
 func parseTableRequest(r *http.Request) (tableRequest, error) {
@@ -245,8 +246,11 @@ func buildTableSQL(req tableRequest, columns []string) (countSQL, pageSQL string
 		}
 		if lo, hi, ok := parseRangeFilter(val); ok {
 			// A range on a numeric or epoch column: `from..to`, `>=from`,
-			// `<=to`; bounds are seconds or UTC ISO time.
-			where = append(where, fmt.Sprintf(`CAST(%s AS REAL) BETWEEN %s AND %s`, resolved,
+			// `<=to`; bounds are seconds or UTC ISO time. Cells may hold
+			// seconds or ISO text, so ISO text is converted in SQL.
+			where = append(where, fmt.Sprintf(
+				`(CASE WHEN %s GLOB '[0-9][0-9][0-9][0-9]-*' THEN CAST(strftime('%%s', %s) AS REAL) ELSE CAST(%s AS REAL) END) BETWEEN %s AND %s`,
+				resolved, resolved, resolved,
 				strconv.FormatFloat(lo, 'f', -1, 64), strconv.FormatFloat(hi, 'f', -1, 64)))
 			continue
 		}
@@ -927,8 +931,8 @@ func fullTableCell(value interface{}) string {
 func fullTableRecordMatches(values map[string]string, projection []string, filters map[string]string, q string) bool {
 	for column, term := range filters {
 		if lo, hi, ok := parseRangeFilter(term); ok {
-			n, err := strconv.ParseFloat(strings.TrimSpace(values[column]), 64)
-			if err != nil || n < lo || n > hi {
+			n, ok := rangeCellValue(values[column])
+			if !ok || n < lo || n > hi {
 				return false
 			}
 			continue
@@ -994,6 +998,23 @@ func parseRangeFilter(term string) (lo, hi float64, ok bool) {
 		}
 	}
 	return 0, 0, false
+}
+
+// rangeCellValue reads a cell as a number, or as UTC ISO time in epoch seconds.
+func rangeCellValue(cell string) (float64, bool) {
+	cell = strings.TrimSpace(cell)
+	if cell == "" {
+		return 0, false
+	}
+	if n, err := strconv.ParseFloat(cell, 64); err == nil {
+		return n, true
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05Z", "2006-01-02T15:04:05", "2006-01-02"} {
+		if ts, err := time.Parse(layout, cell); err == nil {
+			return float64(ts.UTC().UnixNano()) / 1e9, true
+		}
+	}
+	return 0, false
 }
 
 func compareFullTableCells(left, right string) int {
