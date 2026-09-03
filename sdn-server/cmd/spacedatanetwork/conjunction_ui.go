@@ -12,12 +12,15 @@ package main
 // surfaces are Iris's (ui-oracle) domain.
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
@@ -77,6 +80,20 @@ var dashboardCSPRaw string
 //
 //go:embed embedded/fonts/*.woff2
 var dashboardFonts embed.FS
+
+// flatsqlBrowserWasm / flatsqlBrowserIntegrity are the browser build of the
+// FlatSQL engine (the same engine core the node runs under WasmEdge) and its
+// SHA-384 integrity file, served same-origin at /sdn-js/flatsql.wasm and
+// /sdn-js/integrity.json. The dashboard's local FlatSQL window is created
+// from them: the node hands over raw record frames, the browser engine
+// projects them. build-dashboard.mjs regenerates both files from the flatsql
+// pin on every embed build (embed == pin), so they are never hand-edited.
+//
+//go:embed embedded/sdn-js/flatsql.wasm
+var flatsqlBrowserWasm []byte
+
+//go:embed embedded/sdn-js/integrity.json
+var flatsqlBrowserIntegrity []byte
 
 // dashboardCSP returns the trimmed, build-generated CSP for the "/" dashboard.
 func dashboardCSP() string { return strings.TrimSpace(dashboardCSPRaw) }
@@ -143,6 +160,63 @@ func makeFontsHandler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(body)
+		}
+	})
+}
+
+// sdnJsAsset is one same-origin browser-engine artifact under /sdn-js/.
+type sdnJsAsset struct {
+	body        []byte
+	contentType string
+	etag        string
+}
+
+// sdnJsAssetETag is a strong ETag from the first 16 hex characters of the
+// body's SHA-256: stable across restarts, changes with the embedded bytes.
+func sdnJsAssetETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:])[:16] + `"`
+}
+
+// sdnJsAssets is the exact set of names /sdn-js/ serves: the flatsql
+// browser engine and its integrity file. Nothing else, no nested paths.
+func sdnJsAssets() map[string]sdnJsAsset {
+	return map[string]sdnJsAsset{
+		"flatsql.wasm":   {body: flatsqlBrowserWasm, contentType: "application/wasm", etag: sdnJsAssetETag(flatsqlBrowserWasm)},
+		"integrity.json": {body: flatsqlBrowserIntegrity, contentType: "application/json", etag: sdnJsAssetETag(flatsqlBrowserIntegrity)},
+	}
+}
+
+// makeSdnJsAssetsHandler serves /sdn-js/flatsql.wasm and
+// /sdn-js/integrity.json (GET/HEAD only, public, cacheable for a day, strong
+// ETag with If-None-Match). Every other name under /sdn-js/ is a 404. The
+// paths are exactly what flatsql's loader requests for
+// wasmPath=`${origin}/sdn-js`.
+func makeSdnJsAssetsHandler() http.Handler {
+	assets := sdnJsAssets()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/sdn-js/")
+		asset, ok := assets[name]
+		if !ok || name == "" || strings.Contains(name, "/") || len(asset.body) == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", asset.contentType)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("ETag", asset.etag)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, asset.etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(asset.body)))
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(asset.body)
 		}
 	})
 }

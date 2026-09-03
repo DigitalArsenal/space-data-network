@@ -436,6 +436,75 @@ func engineSchemaTextExcluding(excluded map[string]bool) string {
 	return strings.TrimSuffix(out.String(), "\n")
 }
 
+// EngineRelationSchemaText returns the engine's OWN table block for a routed
+// standard — the exact `table <T> { … }` text (indentation included) that
+// engineDatabaseSchema declares and every engine database is created from —
+// with the binding's table name and file identifier.
+//
+// It exists so a browser-hosted engine (sdn-js's local FlatSQL store, the
+// same engine core the Go host runs under WasmEdge) can be created from the
+// node's declaration and project the node's raw record frames IDENTICALLY:
+// same columns in the same order, same `_source`/`_rowid`/`_offset`/`_data`
+// meta columns, no per-standard projection code on either side. The node
+// never projects for the browser again; it hands over the DDL once and the
+// frames per window.
+//
+// The name is accepted as a code or a schema file name in any case ("CNP",
+// "cnp", "CNP.fbs") because every routed code is upper-case; resolution then
+// goes through engineRoutedSchemaFor so a sealed or unroutable standard is
+// refused exactly like everywhere else. The walk is the one
+// engineSchemaTextExcluding and parseEngineDeclaredColumns perform (`table X
+// {`, one field per line, `}`), so what this returns is by construction the
+// same block those readers see.
+func EngineRelationSchemaText(schemaName string) (text, table, fileID string, ok bool) {
+	code := strings.TrimSpace(schemaName)
+	if strings.HasSuffix(strings.ToLower(code), ".fbs") {
+		code = code[:len(code)-len(".fbs")]
+	}
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return "", "", "", false
+	}
+	binding, routed := engineRoutedSchemaFor(code)
+	if !routed {
+		return "", "", "", false
+	}
+	block, found := engineTableBlockText(engineDatabaseSchema, binding.Table)
+	if !found {
+		return "", "", "", false
+	}
+	return block, binding.Table, binding.FileID, true
+}
+
+// engineTableBlockText extracts one `table <name> {` … `}` block from an
+// engine schema text, lines kept verbatim (indentation included), terminated
+// by a single newline. It is the same line shape engineSchemaTextExcluding
+// walks.
+func engineTableBlockText(schema, tableName string) (string, bool) {
+	var out strings.Builder
+	inBlock := false
+	for _, line := range strings.Split(schema, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !inBlock {
+			if strings.HasPrefix(trimmed, "table ") && strings.HasSuffix(trimmed, "{") {
+				name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "table "), "{"))
+				if name == tableName {
+					inBlock = true
+					out.WriteString(line)
+					out.WriteString("\n")
+				}
+			}
+			continue
+		}
+		out.WriteString(line)
+		out.WriteString("\n")
+		if trimmed == "}" {
+			return out.String(), true
+		}
+	}
+	return "", false
+}
+
 // ==================== Declared columns (the listing is free) ====================
 
 // engineRelationMetaColumns are the columns the ENGINE appends to EVERY record

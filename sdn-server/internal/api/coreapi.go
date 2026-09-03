@@ -206,6 +206,8 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	// PubSub topic listing — public GET.
 	mux.HandleFunc("/api/v1/pubsub/topics", h.withRL(h.handleTopics))
 	mux.HandleFunc("/api/v1/standards", h.withRL(h.handleStandards))
+	// Engine DDL per standard for browser-hosted engines — public GET.
+	mux.HandleFunc("/api/v1/standards/", h.withRL(h.handleStandardSchemaText))
 
 	// PubSub publish — requires standard auth when authHandler is present.
 	mux.HandleFunc("/api/v1/pubsub/publish", h.withRL(h.requireAuth(peers.Standard, h.handlePubSubPublish)))
