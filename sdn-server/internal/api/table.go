@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -241,6 +242,13 @@ func buildTableSQL(req tableRequest, columns []string) (countSQL, pageSQL string
 		resolved, rerr := resolveColumn(col, columns)
 		if rerr != nil {
 			return "", "", nil, rerr
+		}
+		if lo, hi, ok := parseRangeFilter(val); ok {
+			// A range on a numeric or epoch column: `from..to`, `>=from`,
+			// `<=to`; bounds are seconds or UTC ISO time.
+			where = append(where, fmt.Sprintf(`CAST(%s AS REAL) BETWEEN %s AND %s`, resolved,
+				strconv.FormatFloat(lo, 'f', -1, 64), strconv.FormatFloat(hi, 'f', -1, 64)))
+			continue
 		}
 		where = append(where, fmt.Sprintf(`CAST(%s AS TEXT) LIKE '%%%s%%' ESCAPE '\'`, resolved, escapeTableLikeTerm(val)))
 	}
@@ -918,6 +926,13 @@ func fullTableCell(value interface{}) string {
 
 func fullTableRecordMatches(values map[string]string, projection []string, filters map[string]string, q string) bool {
 	for column, term := range filters {
+		if lo, hi, ok := parseRangeFilter(term); ok {
+			n, err := strconv.ParseFloat(strings.TrimSpace(values[column]), 64)
+			if err != nil || n < lo || n > hi {
+				return false
+			}
+			continue
+		}
 		if !strings.Contains(strings.ToLower(values[column]), strings.ToLower(term)) {
 			return false
 		}
@@ -940,6 +955,45 @@ func fullTableRecordMatches(values map[string]string, projection []string, filte
 		}
 	}
 	return false
+}
+
+// parseRangeFilter reads the range forms a column filter may take —
+// `from..to`, `>=from`, `<=to` — with each bound either a number (epoch
+// seconds for time columns) or a UTC ISO time / `YYYY-MM-DD` day, which is
+// converted to epoch seconds. Anything else is not a range.
+func parseRangeFilter(term string) (lo, hi float64, ok bool) {
+	t := strings.TrimSpace(term)
+	bound := func(v string) (float64, bool) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return 0, false
+		}
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
+			return n, true
+		}
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05Z", "2006-01-02"} {
+			if ts, err := time.Parse(layout, v); err == nil {
+				return float64(ts.UTC().UnixNano()) / 1e9, true
+			}
+		}
+		return 0, false
+	}
+	switch {
+	case strings.HasPrefix(t, ">="):
+		lo, ok = bound(t[2:])
+		return lo, math.MaxFloat64, ok
+	case strings.HasPrefix(t, "<="):
+		hi, ok = bound(t[2:])
+		return -math.MaxFloat64, hi, ok
+	}
+	if i := strings.Index(t, ".."); i > 0 {
+		lo, okLo := bound(t[:i])
+		hi, okHi := bound(t[i+2:])
+		if okLo && okHi && lo <= hi {
+			return lo, hi, true
+		}
+	}
+	return 0, 0, false
 }
 
 func compareFullTableCells(left, right string) int {
