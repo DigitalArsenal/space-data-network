@@ -56,6 +56,7 @@ type Service struct {
 	pendingListings map[string]pendingListingAnnouncement
 	pendingSTF      map[string]pendingListingSTF
 	subscribers     map[string]chan *Listing // listingID -> channel
+	inventory       *publishInventoryCache
 	mu              sync.RWMutex
 }
 
@@ -81,6 +82,7 @@ func NewService(store *Store, peerID string, signingKey, grantSigningKey ed25519
 		pendingListings: make(map[string]pendingListingAnnouncement),
 		pendingSTF:      make(map[string]pendingListingSTF),
 		listingDone:     make(chan struct{}),
+		inventory:       &publishInventoryCache{},
 	}
 
 	// Join PubSub topics if available
