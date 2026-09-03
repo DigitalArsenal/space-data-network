@@ -2388,6 +2388,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// and the APIs are unchanged.
 			// ----------------------------------------------------------------
 			adminMux.Handle("/fonts/", makeFontsHandler())
+			// The browser engine artifact (flatsql.wasm + integrity.json)
+			// the dashboard's local FlatSQL window runs on, same-origin.
+			adminMux.Handle("/sdn-js/", makeSdnJsAssetsHandler())
 			// The node's own documentation, shipped in the binary (owner
 			// 2026-08-28): version-exact guides + PDF at /docs/.
 			adminMux.Handle("/docs", makeDocsHandler())
@@ -3424,6 +3427,9 @@ func isPublicReadAPIPath(path string) bool {
 
 	return strings.HasPrefix(path, "/api/directory/") ||
 		strings.HasPrefix(path, "/api/v1/docs/") ||
+		// Engine DDL per standard (/api/v1/standards/{CODE}.fbs): the same
+		// text the schema files carry, anonymous like the registry above.
+		strings.HasPrefix(path, "/api/v1/standards/") ||
 		// $APP record bytes for an app this node offers — same anonymity
 		// argument as /api/v1/apps/default above.
 		strings.HasPrefix(path, "/api/v1/apps/records/") ||

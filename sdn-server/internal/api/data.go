@@ -44,6 +44,24 @@ const (
 	rawDataMaxQueryLimit           = datasync.MaxQueryLimit
 	rawDataMaxSyncChunkLimit       = datasync.MaxSyncChunkLimit
 	rawDataStreamRequestMaxBytes   = datasync.StreamRequestMaxBytes
+	// rawDataMaxRawStreamLimit caps one raw FlatBuffer stream page of
+	// /api/v1/data/query. A browser-hosted engine fills its window in
+	// batches of this order (never a mirror), so the raw lane admits far more
+	// per call than the JSON projection (rawDataMaxQueryLimit), while staying
+	// under storage's own rawRecordMaxQueryLimit.
+	rawDataMaxRawStreamLimit = 20000
+)
+
+// Raw-lane window headers (raw FlatBuffer stream responses of
+// /api/v1/data/query only). They let a client ingesting the frames into its
+// own engine know what the node holds for the same filter, where this page
+// sits, and which source lane each run of frames came from — without any
+// JSON projection of the records.
+const (
+	rawDataTotalCountHeader = "X-SDN-Total-Count"
+	rawDataOffsetHeader     = "X-SDN-Offset"
+	rawDataLimitHeader      = "X-SDN-Limit"
+	rawDataSourceRunsHeader = "X-SDN-Source-Runs"
 )
 
 // NewDataQueryHandler creates a new data query handler with a RAM-only index
@@ -383,12 +401,21 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "schema is required")
 		return
 	}
+	rawStream := requestedRawFlatBufferStream(r)
 	limit := req.Limit
 	if limit <= 0 {
 		limit = rawDataDefaultLimit
 	}
-	if limit > rawDataMaxQueryLimit {
-		limit = rawDataMaxQueryLimit
+	maxLimit := rawDataMaxQueryLimit
+	if rawStream {
+		maxLimit = rawDataMaxRawStreamLimit
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	offset := req.Offset
+	if offset < 0 {
+		offset = 0
 	}
 
 	queryStore, closeQueryStore, err := h.storeForDatastoreKey(req.DatastoreKey)
@@ -398,7 +425,7 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 	}
 	defer closeQueryStore()
 
-	records, err := queryStore.QueryRawRecords(storage.RawRecordQuery{
+	filter := storage.RawRecordQuery{
 		SchemaName:        schemaName,
 		ProviderID:        firstNonEmptyDataString(req.ProviderID, req.ProviderId),
 		SourceName:        req.SourceName,
@@ -408,14 +435,24 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 		PeerID:            firstNonEmptyDataString(req.PeerID, req.PeerId),
 		SyncFilter:        req.SyncFilter,
 		Limit:             limit,
-		Offset:            req.Offset,
-	})
+		Offset:            offset,
+	}
+	records, err := queryStore.QueryRawRecords(filter)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	if requestedRawFlatBufferStream(r) {
+	if rawStream {
+		// Window headers first: the stream writer calls WriteHeader.
+		countFilter := filter
+		countFilter.Limit, countFilter.Offset = 0, 0
+		if total, countErr := queryStore.CountRawRecords(countFilter); countErr == nil {
+			w.Header().Set(rawDataTotalCountHeader, strconv.FormatInt(total, 10))
+		}
+		w.Header().Set(rawDataOffsetHeader, strconv.Itoa(offset))
+		w.Header().Set(rawDataLimitHeader, strconv.Itoa(limit))
+		w.Header().Set(rawDataSourceRunsHeader, encodeRawRecordSourceRuns(records))
 		writeFlatBufferPayloadStreamWithContentType(w, schemaName, recordsToPayloads(records), rawFlatBufferStreamContentType)
 		return
 	}
@@ -1736,6 +1773,50 @@ func requestedRawFlatBufferStream(r *http.Request) bool {
 	accept := strings.ToLower(strings.TrimSpace(r.Header.Get("Accept")))
 	return strings.Contains(accept, rawFlatBufferStreamContentType) ||
 		strings.Contains(accept, "application/vnd.sdn.raw-flatbuffer-stream")
+}
+
+// encodeRawRecordSourceRuns run-length encodes the source lane of a raw
+// result set in frame order: consecutive records with the same
+// SourceTags.SourceName collapse into one `<name>:<count>` pair, pairs are
+// comma-joined, an empty source name is written as `-`. Names are
+// path-escaped (with `:` escaped too) so a client can split on `,`, then on
+// the last `:`, and decode the name with decodeURIComponent. Empty when there
+// are no records.
+func encodeRawRecordSourceRuns(records []*storage.Record) string {
+	if len(records) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	runName := ""
+	runCount := 0
+	flush := func() {
+		if runCount == 0 {
+			return
+		}
+		if out.Len() > 0 {
+			out.WriteByte(',')
+		}
+		if runName == "" {
+			out.WriteByte('-')
+		} else {
+			out.WriteString(strings.ReplaceAll(url.PathEscape(runName), ":", "%3A"))
+		}
+		out.WriteByte(':')
+		out.WriteString(strconv.Itoa(runCount))
+	}
+	for i, rec := range records {
+		name := ""
+		if rec != nil {
+			name = rec.SourceTags.SourceName
+		}
+		if i == 0 || name != runName {
+			flush()
+			runName, runCount = name, 0
+		}
+		runCount++
+	}
+	flush()
+	return out.String()
 }
 
 func recordsToPayloads(records []*storage.Record) [][]byte {
