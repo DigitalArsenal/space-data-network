@@ -7,9 +7,9 @@ package auth
 //	 it. All SDN nodes need to be able to pin all the EPMs that are created by
 //	 accounts tied to them"
 //
-// GET  /api/auth/epm -> {"cid","epm","updated_at"} for the signed-in account.
-// PUT  /api/auth/epm <- the SAME profile JSON PUT /api/node/epm accepts
-//                       (epm.Profile; the dashboard builds it with profileFrom()).
+// GET  /api/auth/epm -> size-prefixed $EPM, or a JSON display projection when
+//                      the caller does not request application/x-flatbuffers.
+// PUT  /api/auth/epm <- size-prefixed $EPM profile proposal.
 //
 // The node builds and signs the record — see internal/epm/account_epm.go for
 // why the account cannot sign one itself — then stores it in the EPM.fbs lane,
@@ -26,10 +26,10 @@ package auth
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -37,8 +37,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 )
 
-// maxAccountEPMProfileBytes bounds the profile JSON. A photo data URL is the
-// only field that can be large, and it is a face, not a payload.
+// maxAccountEPMProfileBytes bounds the proposed FlatBuffer record.
 const maxAccountEPMProfileBytes = 6 << 20
 
 // AccountEPMBuilder builds a signed $EPM record for one account subject.
@@ -198,7 +197,7 @@ func (h *Handler) handleAccountEPM(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		h.serveAccountEPM(w, session)
+		h.serveAccountEPM(w, r, session)
 	case http.MethodPut:
 		h.storeAccountEPM(w, r, session)
 	default:
@@ -207,7 +206,7 @@ func (h *Handler) handleAccountEPM(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) serveAccountEPM(w http.ResponseWriter, session *Session) {
+func (h *Handler) serveAccountEPM(w http.ResponseWriter, r *http.Request, session *Session) {
 	binding, ok, err := h.userStore.AccountEPM(session.XPub)
 	if err != nil {
 		log.Warnf("account EPM read failed for %s: %v", XPubFingerprint(session.XPub), err)
@@ -216,6 +215,14 @@ func (h *Handler) serveAccountEPM(w http.ResponseWriter, session *Session) {
 	}
 	if !ok {
 		writeJSON(w, http.StatusNotFound, errorResponse{Code: "not_found", Message: "this account has not published an identity yet"})
+		return
+	}
+	if strings.Contains(r.Header.Get("Accept"), epm.EPMContentType) {
+		w.Header().Set("Content-Type", epm.EPMContentType)
+		w.Header().Set("X-SDN-EPM-CID", binding.CID)
+		w.Header().Set("Last-Modified", binding.UpdatedAt.UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(binding.EPMData)
 		return
 	}
 	projection := epm.AccountEPMJSON(binding.EPMData, binding.PhotoDataURL)
@@ -258,6 +265,14 @@ func (h *Handler) storeAccountEPM(w http.ResponseWriter, r *http.Request, sessio
 		})
 		return
 	}
+	mediaType, _, contentTypeErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if contentTypeErr != nil || mediaType != epm.EPMContentType {
+		writeJSON(w, http.StatusUnsupportedMediaType, errorResponse{
+			Code:    "flatbuffer_required",
+			Message: "JSON profiles are not accepted. Send a size-prefixed EPM FlatBuffer.",
+		})
+		return
+	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxAccountEPMProfileBytes+1))
 	if err != nil {
@@ -271,14 +286,13 @@ func (h *Handler) storeAccountEPM(w http.ResponseWriter, r *http.Request, sessio
 		})
 		return
 	}
-	// The SAME decode the node lane runs: epm.Profile, nothing else.
-	var profile epm.Profile
-	if err := json.Unmarshal(body, &profile); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "invalid JSON: " + err.Error()})
+	profile, err := epm.DecodeProfileEPM(body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_epm", Message: err.Error()})
 		return
 	}
 
-	epmBytes, err := builder.BuildAccountEPM(&profile, epm.AccountSubject{SigningPubKeyHex: user.SigningPubKeyHex})
+	epmBytes, err := builder.BuildAccountEPM(profile, epm.AccountSubject{SigningPubKeyHex: user.SigningPubKeyHex})
 	if err != nil {
 		if epm.IsKeyPathValidationError(err) || errors.Is(err, epm.ErrNoAccountSigningKey) {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: err.Error()})
@@ -302,11 +316,20 @@ func (h *Handler) storeAccountEPM(w http.ResponseWriter, r *http.Request, sessio
 		writeJSON(w, http.StatusBadGateway, errorResponse{Code: "store_failed", Message: "the node could not store the identity record"})
 		return
 	}
-	if err := h.userStore.SaveAccountEPM(session.XPub, epmBytes, cid, profile.PhotoDataURL); err != nil {
+	// PHOTO is not present in the current canonical EPM schema. Keep any
+	// previously stored photo rather than erasing it on a FlatBuffer update.
+	photoDataURL := ""
+	if current, ok, readErr := h.userStore.AccountEPM(session.XPub); readErr == nil && ok {
+		photoDataURL = current.PhotoDataURL
+	}
+	if err := h.userStore.SaveAccountEPM(session.XPub, epmBytes, cid, photoDataURL); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Code: "server_error", Message: err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"cid": cid})
+	w.Header().Set("Content-Type", epm.EPMContentType)
+	w.Header().Set("X-SDN-EPM-CID", cid)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(epmBytes)
 }
 
 // AccountEPMSourceName is the SourceName every account EPM is tagged with: a

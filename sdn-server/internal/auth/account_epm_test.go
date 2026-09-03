@@ -7,11 +7,11 @@ package auth
 // when it cannot build or store, and what it stores is what it hands back.
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -118,7 +118,7 @@ func newAccountEPMFixture(t *testing.T, signingPubKeyHex string) accountEPMFixtu
 
 // newTestEPMService is a node EPM service holding only a signing key: enough to
 // ISSUE a custodial account record, which is all this endpoint needs.
-func newTestEPMService(t *testing.T) AccountEPMBuilder {
+func newTestEPMService(t *testing.T) *epm.Service {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -159,9 +159,34 @@ func (f accountEPMFixture) do(t *testing.T, method, body string, withSession boo
 	return rec
 }
 
+func (f accountEPMFixture) doEPM(t *testing.T, method string, body []byte, acceptFlatBuffer, withSession bool) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, "/api/auth/epm", bytes.NewReader(body))
+	req.Header.Set("Content-Type", epm.EPMContentType)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	if acceptFlatBuffer {
+		req.Header.Set("Accept", epm.EPMContentType)
+	}
+	if withSession {
+		req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: f.token})
+	}
+	rec := httptest.NewRecorder()
+	f.handler.handleAccountEPM(rec, req)
+	return rec
+}
+
+func accountProfileProposal(t *testing.T, profile *epm.Profile) []byte {
+	t.Helper()
+	data, err := newTestEPMService(t).BuildAccountEPM(profile, epm.AccountSubject{SigningPubKeyHex: testAccountSigningKey(t)})
+	if err != nil {
+		t.Fatalf("BuildAccountEPM proposal: %v", err)
+	}
+	return data
+}
+
 // The happy path: a profile goes in, a signed record is stored and pinned, the
-// CID comes back, and GET hands the same profile back through the same
-// projection the node EPM endpoint uses.
+// CID comes back in a response header, and GET hands the stored FlatBuffer
+// record back byte-for-byte.
 func TestAccountEPM_PutStoresPinsAndGetRoundTrips(t *testing.T) {
 	t.Parallel()
 
@@ -171,22 +196,25 @@ func TestAccountEPM_PutStoresPinsAndGetRoundTrips(t *testing.T) {
 		t.Fatalf("GET before any publish = %d, want 404; body %s", rec.Code, rec.Body.String())
 	}
 
-	profile := `{"dn":"Ada Lovelace","job_title":"Analyst","email":"ada@example.test",` +
-		`"photo_data_url":"data:image/png;base64,AAAA","address":{"country":"GB","locality":"London"}}`
-	rec := fixture.do(t, http.MethodPut, profile, true)
+	profile := &epm.Profile{
+		DN: "Ada Lovelace", JobTitle: "Analyst", Email: "ada@example.test",
+		Address: &epm.Address{Country: "GB", Locality: "London"},
+	}
+	rec := fixture.doEPM(t, http.MethodPut, accountProfileProposal(t, profile), true, true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT = %d, want 200; body %s", rec.Code, rec.Body.String())
 	}
-	var put struct {
-		CID string `json:"cid"`
+	putCID := rec.Header().Get("X-SDN-EPM-CID")
+	if putCID == "" {
+		t.Fatal("PUT returned no X-SDN-EPM-CID")
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &put); err != nil || put.CID == "" {
-		t.Fatalf("PUT body = %s (err %v)", rec.Body.String(), err)
+	if got := rec.Header().Get("Content-Type"); got != epm.EPMContentType {
+		t.Fatalf("PUT Content-Type = %q", got)
 	}
 
 	// PINNED, not merely stored: the lane reports the CID as held.
-	if pinned, _ := fixture.store.AccountEPMPinned(context.Background(), put.CID); !pinned {
-		t.Fatalf("stored CID %s is not pinned", put.CID)
+	if pinned, _ := fixture.store.AccountEPMPinned(context.Background(), putCID); !pinned {
+		t.Fatalf("stored CID %s is not pinned", putCID)
 	}
 
 	// The binding is durable — the row, not a cache.
@@ -194,40 +222,32 @@ func TestAccountEPM_PutStoresPinsAndGetRoundTrips(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("AccountEPM binding = (%v, %v)", ok, err)
 	}
-	if binding.CID != put.CID {
-		t.Fatalf("bound CID = %q, want %q", binding.CID, put.CID)
+	if binding.CID != putCID {
+		t.Fatalf("bound CID = %q, want %q", binding.CID, putCID)
+	}
+	if !bytes.Equal(binding.EPMData, rec.Body.Bytes()) {
+		t.Fatal("PUT did not return the stored EPM bytes")
 	}
 	if err := epm.VerifyEPMSignature(binding.EPMData); err != nil {
 		t.Fatalf("stored record does not verify: %v", err)
 	}
 
-	rec = fixture.do(t, http.MethodGet, "", true)
+	rec = fixture.doEPM(t, http.MethodGet, nil, true, true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET = %d, want 200; body %s", rec.Code, rec.Body.String())
 	}
-	var got struct {
-		CID       string                 `json:"cid"`
-		EPM       map[string]interface{} `json:"epm"`
-		UpdatedAt string                 `json:"updated_at"`
+	if rec.Header().Get("X-SDN-EPM-CID") != putCID {
+		t.Fatalf("GET cid = %q, want %q", rec.Header().Get("X-SDN-EPM-CID"), putCID)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("GET body: %v (%s)", err, rec.Body.String())
+	got, err := epm.DecodeProfileEPM(rec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("GET EPM: %v", err)
 	}
-	if got.CID != put.CID {
-		t.Fatalf("GET cid = %q, want %q", got.CID, put.CID)
+	if got.DN != profile.DN || got.JobTitle != profile.JobTitle || got.Email != profile.Email {
+		t.Fatalf("GET profile = %+v, want fields from %+v", got, profile)
 	}
-	if got.UpdatedAt == "" {
-		t.Fatal("GET returned no updated_at")
-	}
-	for field, want := range map[string]string{
-		"dn":             "Ada Lovelace",
-		"job_title":      "Analyst",
-		"email":          "ada@example.test",
-		"photo_data_url": "data:image/png;base64,AAAA",
-	} {
-		if value, _ := got.EPM[field].(string); value != want {
-			t.Fatalf("GET epm[%q] = %q, want %q", field, value, want)
-		}
+	if got.Address == nil || got.Address.Country != "GB" || got.Address.Locality != "London" {
+		t.Fatalf("GET address = %+v", got.Address)
 	}
 }
 
@@ -252,12 +272,12 @@ func TestAccountEPM_Refusals(t *testing.T) {
 			want:        http.StatusUnauthorized,
 		},
 		{
-			name:        "malformed JSON",
+			name:        "JSON string body",
 			signingKey:  testAccountSigningKey,
 			method:      http.MethodPut,
-			body:        `{"dn":`,
+			body:        `"{\"dn\":\"Ada\"}"`,
 			withSession: true,
-			want:        http.StatusBadRequest,
+			want:        http.StatusUnsupportedMediaType,
 		},
 		{
 			name:        "account with no bound signing key",
@@ -295,11 +315,23 @@ func TestAccountEPM_Refusals(t *testing.T) {
 			if rec.Code != tc.want {
 				t.Fatalf("status = %d, want %d; body %s", rec.Code, tc.want, rec.Body.String())
 			}
+			if tc.name == "JSON string body" && !strings.Contains(rec.Body.String(), "JSON profiles are not accepted") {
+				t.Fatalf("unclear JSON rejection: %s", rec.Body.String())
+			}
 			// Nothing may have been bound on a refused write.
 			if _, ok, _ := fixture.userStore.AccountEPM(fixture.xpub); ok {
 				t.Fatal("a refused request still bound an account EPM")
 			}
 		})
+	}
+}
+
+func TestAccountEPMRejectsMalformedFlatBuffer(t *testing.T) {
+	t.Parallel()
+	fixture := newAccountEPMFixture(t, testAccountSigningKey(t))
+	rec := fixture.doEPM(t, http.MethodPut, []byte("not a flatbuffer"), true, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -312,7 +344,7 @@ func TestAccountEPM_StoreFailureLeavesNoBinding(t *testing.T) {
 	fixture := newAccountEPMFixture(t, testAccountSigningKey(t))
 	fixture.store.failNow = true
 
-	rec := fixture.do(t, http.MethodPut, `{"dn":"Ada"}`, true)
+	rec := fixture.doEPM(t, http.MethodPut, accountProfileProposal(t, &epm.Profile{DN: "Ada"}), true, true)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502; body %s", rec.Code, rec.Body.String())
 	}
@@ -327,7 +359,7 @@ func TestAccountEPMReconciler_RepinsUnpinnedBinding(t *testing.T) {
 	t.Parallel()
 
 	fixture := newAccountEPMFixture(t, testAccountSigningKey(t))
-	rec := fixture.do(t, http.MethodPut, `{"dn":"Ada Lovelace"}`, true)
+	rec := fixture.doEPM(t, http.MethodPut, accountProfileProposal(t, &epm.Profile{DN: "Ada Lovelace"}), true, true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT = %d; body %s", rec.Code, rec.Body.String())
 	}
