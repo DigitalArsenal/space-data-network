@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -111,7 +113,7 @@ func TestBuildTableSQLRefusesInjection(t *testing.T) {
 
 func TestParseTableRequest(t *testing.T) {
 	r := httptest.NewRequest("GET",
-		"/api/v1/data/table?schema=cat.fbs&page=2&limit=9000&sort=OWNER&dir=DESC&q=iss&source=CAT%40celestrak-satcat&f.OWNER=US&cols=OBJECT_NAME,OWNER", nil)
+		"/api/v1/data/table?schema=cat.fbs&page=2&limit=9000&cursor=opaque&sort=OWNER&dir=DESC&q=iss&source=CAT%40celestrak-satcat&f.OWNER=US&cols=OBJECT_NAME,OWNER", nil)
 	req, err := parseTableRequest(r)
 	if err != nil {
 		t.Fatalf("parseTableRequest: %v", err)
@@ -124,6 +126,9 @@ func TestParseTableRequest(t *testing.T) {
 	}
 	if req.Dir != "desc" || req.Sort != "OWNER" || req.Q != "iss" {
 		t.Fatalf("sort/dir/q = %q/%q/%q", req.Sort, req.Dir, req.Q)
+	}
+	if req.Cursor != "opaque" {
+		t.Fatalf("cursor = %q", req.Cursor)
 	}
 	if req.Source != "CAT@celestrak-satcat" {
 		t.Fatalf("source = %q", req.Source)
@@ -140,10 +145,40 @@ func TestParseTableRequest(t *testing.T) {
 	}
 }
 
+func TestFullTableCursorRoundTripAndSchemaBinding(t *testing.T) {
+	want := storage.FullTablePageCursor{"sds_p_alpha__MPE": 42, "sds_p_beta__MPE": 17}
+	encoded := encodeFullTableCursor("MPE.fbs", want)
+	got, err := decodeFullTableCursor("MPE.fbs", encoded)
+	if err != nil {
+		t.Fatalf("decodeFullTableCursor: %v", err)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("cursor = %v, want %v", got, want)
+	}
+	if _, err := decodeFullTableCursor("OMM.fbs", encoded); err == nil {
+		t.Fatal("cursor for another schema must be refused")
+	}
+}
+
 func TestBuildSourcesSQL(t *testing.T) {
 	got := buildSourcesSQL("OMM")
 	if got != "SELECT _source, COUNT(*) FROM OMM GROUP BY _source ORDER BY COUNT(*) DESC" {
 		t.Fatalf("buildSourcesSQL = %q", got)
+	}
+}
+
+func TestFullTableUniformSourceRequiresCompleteSingleLaneCoverage(t *testing.T) {
+	summary := &storage.DataSummary{Sources: []storage.DataSourceSummary{
+		{SchemaName: "MPE.fbs", SourceName: "catalog", BatchID: "a", Count: 600},
+		{SchemaName: "MPE.fbs", SourceName: "catalog", BatchID: "b", Count: 400},
+	}}
+	if got := fullTableUniformSource(summary, "MPE.fbs", 1000); got != "catalog" {
+		t.Fatalf("uniform source = %q, want catalog", got)
+	}
+	summary.Sources = append(summary.Sources,
+		storage.DataSourceSummary{SchemaName: "MPE.fbs", SourceName: "other", Count: 1})
+	if got := fullTableUniformSource(summary, "MPE.fbs", 1001); got != "" {
+		t.Fatalf("mixed source = %q, want no shortcut", got)
 	}
 }
 
@@ -265,7 +300,7 @@ func TestTablePageFiltersSearchesAndSortsAcrossTheFullStoredSet(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	const lastPageMatch = "FULL-SET-LAST-PAGE-MATCH"
-	recordCount := tableMaxLimit + 2
+	recordCount := tableScanChunkSize + 2
 	records := make([][]byte, 0, recordCount)
 	for i := 0; i < recordCount; i++ {
 		name := fmt.Sprintf("ROW-%04d", i)
@@ -301,7 +336,32 @@ func TestTablePageFiltersSearchesAndSortsAcrossTheFullStoredSet(t *testing.T) {
 		}
 		return page
 	}
-	exactBudget := tableScanBudget{MaxRecords: tableScanRecordBudget, MaxTime: time.Minute}
+	exactBudget := tableScanBudget{MaxRecords: recordCount + 1, MaxTime: time.Minute}
+
+	t.Run("scan completes beyond the old 1500 record ceiling", func(t *testing.T) {
+		page := requestPage("/api/v1/data/table?schema=OMM&limit=10&q=ROW", exactBudget)
+		if page.Partial || page.Scanned != int64(recordCount) || page.Stored != int64(recordCount) {
+			t.Fatalf("complete scan metadata = partial %v, scanned %d, stored %d", page.Partial, page.Scanned, page.Stored)
+		}
+		if page.Total != int64(recordCount-1) || len(page.Rows) != 10 {
+			t.Fatalf("complete scan = total %d rows %d, want %d matches and one page", page.Total, len(page.Rows), recordCount-1)
+		}
+	})
+
+	t.Run("unfiltered pages continue with the returned rowid cursor", func(t *testing.T) {
+		first := requestPage("/api/v1/data/table?schema=OMM&limit=1000&cols=OBJECT_NAME", exactBudget)
+		if first.NextCursor == "" || len(first.Rows) != 1000 || first.Rows[0][0] != "ROW-2001" {
+			t.Fatalf("first cursor page = cursor %q rows %d first %v", first.NextCursor, len(first.Rows), first.Rows[0])
+		}
+		second := requestPage("/api/v1/data/table?schema=OMM&page=2&limit=1000&cols=OBJECT_NAME&cursor="+url.QueryEscape(first.NextCursor), exactBudget)
+		if len(second.Rows) != 1000 || second.Rows[0][0] != "ROW-1001" {
+			t.Fatalf("second cursor page = rows %d first %v", len(second.Rows), second.Rows[0])
+		}
+		fallback := requestPage("/api/v1/data/table?schema=OMM&page=3&limit=1000&cols=OBJECT_NAME", exactBudget)
+		if len(fallback.Rows) != 2 || fallback.Rows[0][0] != "ROW-0001" || fallback.Rows[1][0] != lastPageMatch {
+			t.Fatalf("OFFSET fallback page = %v", fallback.Rows)
+		}
+	})
 
 	t.Run("column filter finds a match beyond the first durable block", func(t *testing.T) {
 		page := requestPage("/api/v1/data/table?schema=OMM&limit=10&cols=OBJECT_NAME&f.OBJECT_NAME=LAST-PAGE", exactBudget)
@@ -342,4 +402,79 @@ func TestTablePageFiltersSearchesAndSortsAcrossTheFullStoredSet(t *testing.T) {
 			t.Fatalf("partial result = total %d rows %d, want 10 matches and a 5-row page", page.Total, len(page.Rows))
 		}
 	})
+}
+
+// TestTablePageMPELiveScaleMeasurements is an opt-in, same-size local
+// reproduction of the live MPE measurements. It logs observed latency and
+// coverage but deliberately has no timing assertion; normal unit runs skip it.
+func TestTablePageMPELiveScaleMeasurements(t *testing.T) {
+	if os.Getenv("SDN_TABLE_LIVE_SCALE") != "1" {
+		t.Skip("set SDN_TABLE_LIVE_SCALE=1 to seed and measure 32,324 MPE records")
+	}
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(
+		filepath.Join(t.TempDir(), "store"),
+		validator,
+		storage.WithEngineHotWindow(10),
+	)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	const recordCount = 32324
+	records := make([][]byte, 0, recordCount)
+	for i := 0; i < recordCount; i++ {
+		builder := flatbuffers.NewBuilder(128)
+		entity := fmt.Sprintf("2026-%05dE", i)
+		if i == 0 {
+			entity = "2026-175E"
+		}
+		entityID := builder.CreateString(entity)
+		MPE.MPEStart(builder)
+		MPE.MPEAddENTITY_ID(builder, entityID)
+		MPE.MPEAddEPOCH(builder, 1788393600+float64(i))
+		root := MPE.MPEEnd(builder)
+		MPE.FinishSizePrefixedMPEBuffer(builder, root)
+		records = append(records, append([]byte(nil), builder.FinishedBytes()...))
+	}
+	tags := storage.SourceTags{ProviderID: "perf", SourceName: "mpe-perf", BatchID: "b1", ContentKeyID: "public"}
+	if inserted, err := store.StoreBatchWithSourceTags("MPE.fbs", records, "source:mpe-perf", nil, tags); err != nil || inserted != recordCount {
+		t.Fatalf("StoreBatchWithSourceTags = (%d, %v), want (%d, nil)", inserted, err, recordCount)
+	}
+
+	handler := NewCoreAPIHandler("", nil, nil, nil, store, nil, nil, nil, nil)
+	measure := func(path string) (tableResponse, time.Duration) {
+		t.Helper()
+		req := httptest.NewRequest("GET", path, nil)
+		res := httptest.NewRecorder()
+		started := time.Now()
+		handler.handleTablePage(res, req)
+		elapsed := time.Since(started)
+		if res.Code != 200 {
+			t.Fatalf("%s -> %d: %s", path, res.Code, res.Body.String())
+		}
+		var page tableResponse
+		if err := json.Unmarshal(res.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		return page, elapsed
+	}
+
+	projected, projectedElapsed := measure("/api/v1/data/table?schema=MPE&q=2026-175E&limit=100&page=1&cols=ENTITY_ID")
+	projectedRate := float64(projected.Scanned) / projectedElapsed.Seconds()
+	t.Logf("filtered without source projection: latency=%s scanned=%d partial=%v rows=%d rate=%.0f records/s",
+		projectedElapsed, projected.Scanned, projected.Partial, len(projected.Rows), projectedRate)
+	filtered, filteredElapsed := measure("/api/v1/data/table?schema=MPE&q=2026-175E&limit=100&page=1")
+	rate := float64(filtered.Scanned) / filteredElapsed.Seconds()
+	t.Logf("filtered: latency=%s scanned=%d partial=%v rows=%d rate=%.0f records/s",
+		filteredElapsed, filtered.Scanned, filtered.Partial, len(filtered.Rows), rate)
+	unfiltered, unfilteredElapsed := measure("/api/v1/data/table?schema=MPE&limit=1000&page=20")
+	t.Logf("unfiltered page 20: latency=%s rows=%d total=%d", unfilteredElapsed, len(unfiltered.Rows), unfiltered.Total)
+	unfilteredProjected, unfilteredProjectedElapsed := measure("/api/v1/data/table?schema=MPE&limit=1000&page=20&cols=ENTITY_ID")
+	t.Logf("unfiltered page 20 without source projection: latency=%s rows=%d total=%d",
+		unfilteredProjectedElapsed, len(unfilteredProjected.Rows), unfilteredProjected.Total)
 }

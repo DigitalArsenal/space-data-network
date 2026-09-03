@@ -2,7 +2,9 @@ package storage
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -54,9 +56,10 @@ func TestFullTablePageUsesDurableRowsPastTheEngineWindow(t *testing.T) {
 	}
 
 	page, err := store.FullTablePage(FullTablePageQuery{
-		SchemaName: "OMM.fbs",
-		Limit:      2,
-		Offset:     4,
+		SchemaName:    "OMM.fbs",
+		Limit:         2,
+		Offset:        4,
+		IncludeSource: true,
 	})
 	if err != nil {
 		t.Fatalf("FullTablePage: %v", err)
@@ -73,6 +76,204 @@ func TestFullTablePageUsesDurableRowsPastTheEngineWindow(t *testing.T) {
 	}
 	if page[0].SourceTags.SourceName != "durable-page" || page[1].SourceTags.SourceName != "durable-page" {
 		t.Fatalf("source projection = [%q %q]", page[0].SourceTags.SourceName, page[1].SourceTags.SourceName)
+	}
+}
+
+func TestFullTableCandidatesUseRowIDSeekAndNoCorrelatedSourceLookup(t *testing.T) {
+	plain, _ := fullTableCandidatesSQL("sds_p_test__OMM", "OMM.fbs", "", math.MaxInt64, 2000, 0)
+	for _, banned := range []string{"SELECT tags.source_name", "EXISTS (", "sdn_record_source_tags"} {
+		if strings.Contains(plain, banned) {
+			t.Fatalf("plain candidates SQL contains %q:\n%s", banned, plain)
+		}
+	}
+	if !strings.Contains(plain, "WHERE records.rowid < ?") || !strings.Contains(plain, "LIMIT ?") || strings.Contains(plain, "OFFSET") {
+		t.Fatalf("plain candidates SQL is not rowid-cursor paged:\n%s", plain)
+	}
+
+	filtered, _ := fullTableCandidatesSQL("sds_p_test__OMM", "OMM.fbs", "catalog", math.MaxInt64, 2000, 0)
+	if !strings.Contains(filtered, "JOIN sdn_record_source_tags filter_tags") {
+		t.Fatalf("source filter does not use one join:\n%s", filtered)
+	}
+	for _, banned := range []string{"EXISTS (", "SELECT tags.source_name"} {
+		if strings.Contains(filtered, banned) {
+			t.Fatalf("source-filter candidates SQL contains %q:\n%s", banned, filtered)
+		}
+	}
+}
+
+func TestFullTablePageOffsetFallbackIsAPlainRoutedRowIDWalk(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	for i := 0; i < 4; i++ {
+		record := sds.NewOMMBuilder().
+			WithNoradCatID(uint32(42000 + i)).
+			WithObjectName(fmt.Sprintf("PLAN-%02d", i)).
+			WithEpoch("2026-09-02T00:00:00Z").
+			Build()
+		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:plan", nil,
+			SourceTags{ProviderID: "plan", SourceName: "plan", BatchID: "b1"}); err != nil {
+			t.Fatalf("store OMM %d: %v", i, err)
+		}
+	}
+
+	store.mu.RLock()
+	tables, err := store.fullTableReadTablesLocked("OMM.fbs")
+	store.mu.RUnlock()
+	if err != nil || len(tables) != 1 {
+		t.Fatalf("routed tables = %v, %v; want one table", tables, err)
+	}
+	statement, args := fullTableCandidatesSQL(tables[0], "OMM.fbs", "", math.MaxInt64, 1000, 20000)
+	rows, err := store.db.Query("EXPLAIN QUERY PLAN "+statement, args...)
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	joined := strings.Join(plan, "\n")
+	t.Logf("OFFSET fallback plan:\n%s", joined)
+	if strings.Contains(joined, "USE TEMP B-TREE") || strings.Contains(joined, "SCAN records") {
+		t.Fatalf("OFFSET fallback is not a plain routed index walk:\n%s", joined)
+	}
+	if !strings.Contains(joined, "SEARCH records USING INTEGER PRIMARY KEY (rowid<?)") {
+		t.Fatalf("OFFSET fallback lacks the routed rowid seek:\n%s", joined)
+	}
+}
+
+func TestFullTablePageBatchesNewestSourceNameAndCanSkipIt(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	record := sds.NewOMMBuilder().
+		WithNoradCatID(43000).
+		WithObjectName("SOURCE-ORDER").
+		WithEpoch("2026-09-02T00:00:00Z").
+		Build()
+	cid, err := store.StoreWithSourceTags("OMM.fbs", record, "source:old", nil,
+		SourceTags{ProviderID: "old", SourceName: "old", BatchID: "b1"})
+	if err != nil {
+		t.Fatalf("store OMM: %v", err)
+	}
+	if _, err := store.db.Exec(`
+		UPDATE sdn_record_source_tags SET created_at = 1
+		WHERE schema_name = ? AND cid = ?
+	`, "OMM.fbs", cid); err != nil {
+		t.Fatalf("age first source tag: %v", err)
+	}
+	if _, err := store.db.Exec(`
+		INSERT INTO sdn_record_source_tags (
+			schema_name, cid, provider_id, source_name, source_url, batch_id,
+			content_key_id, producer_peer_id, producer_public_key, created_at
+		) VALUES (?, ?, 'new', 'newest', '', 'b2', '', 'new', '', 2)
+	`, "OMM.fbs", cid); err != nil {
+		t.Fatalf("insert newer source tag: %v", err)
+	}
+
+	page, err := store.FullTablePage(FullTablePageQuery{
+		SchemaName:    "OMM.fbs",
+		Limit:         1,
+		IncludeSource: true,
+	})
+	if err != nil {
+		t.Fatalf("FullTablePage with source: %v", err)
+	}
+	if len(page) != 1 || page[0].SourceTags.SourceName != "newest" {
+		t.Fatalf("newest source projection = %#v", page)
+	}
+
+	if _, err := store.db.Exec(`DROP TABLE sdn_record_source_tags`); err != nil {
+		t.Fatalf("drop source tags: %v", err)
+	}
+	page, err = store.FullTablePage(FullTablePageQuery{SchemaName: "OMM.fbs", Limit: 1})
+	if err != nil {
+		t.Fatalf("FullTablePage without requested source must skip lookup: %v", err)
+	}
+	if len(page) != 1 || page[0].SourceTags.SourceName != "" {
+		t.Fatalf("skipped source projection = %#v", page)
+	}
+}
+
+func TestFullTablePageMergesProducerTablesWithIndependentCursors(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	want := make([]string, 0, 8)
+	for i := 0; i < 8; i++ {
+		producer := "producer-a"
+		if i%2 == 1 {
+			producer = "producer-b"
+		}
+		record := sds.NewOMMBuilder().
+			WithNoradCatID(uint32(44000 + i)).
+			WithObjectName(fmt.Sprintf("MERGE-%02d", i)).
+			WithEpoch("2026-09-02T00:00:00Z").
+			Build()
+		cid, err := store.StoreWithSourceTags("OMM.fbs", record, producer, nil,
+			SourceTags{ProviderID: producer, ProducerPeerID: producer, SourceName: "merge", BatchID: "b1"})
+		if err != nil {
+			t.Fatalf("store OMM %d: %v", i, err)
+		}
+		want = append([]string{cid}, want...)
+	}
+
+	var cursor FullTablePageCursor
+	var got []string
+	for {
+		page, err := store.FullTablePageWithCursor(FullTablePageQuery{
+			SchemaName: "OMM.fbs",
+			Limit:      3,
+			Cursor:     cursor,
+		})
+		if err != nil {
+			t.Fatalf("FullTablePageWithCursor: %v", err)
+		}
+		for _, record := range page.Records {
+			got = append(got, record.CID)
+		}
+		if len(page.Records) < 3 {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("merged cursor order = %v, want %v", got, want)
+	}
+
+	offsetPage, err := store.FullTablePage(FullTablePageQuery{SchemaName: "OMM.fbs", Limit: 3, Offset: 3})
+	if err != nil {
+		t.Fatalf("multi-table OFFSET fallback: %v", err)
+	}
+	if len(offsetPage) != 3 || offsetPage[0].CID != want[3] || offsetPage[2].CID != want[5] {
+		t.Fatalf("multi-table OFFSET fallback = %#v, want %v", offsetPage, want[3:6])
 	}
 }
 
