@@ -40,11 +40,16 @@ const (
 	tableQueryTimeout    = 20 * time.Second
 
 	// Filtered/sorted requests walk the durable catalog in bounded store-lock
-	// windows. The record and wall-clock ceilings keep an interactive request
-	// from monopolising decoding work on exceptionally large selections.
+	// windows. The RECORD ceiling is the bound that shapes a request; the
+	// wall-clock ceiling is a safety net only. Measured 2026-09-02 on the dev
+	// store: a 32,324-record MPE scan takes ~1.7 s alone, but the engine is
+	// single-threaded, so one concurrent reader (the grid's own block fetch,
+	// the 5 s stats lane) doubled that and a 2 s ceiling cut the scan at
+	// 20,000 records — an honest "partial" answer for a set that the record
+	// budget says must be scanned whole.
 	tableScanChunkSize    = 2000
 	tableScanRecordBudget = 250_000
-	tableScanTimeBudget   = 2 * time.Second
+	tableScanTimeBudget   = 10 * time.Second
 )
 
 var (
