@@ -335,6 +335,26 @@ func (c *adminClient) do(ctx context.Context, method, path string, body any, out
 	return json.Unmarshal(payload, out)
 }
 
+// putRaw sends body verbatim with the given media type (FlatBuffer wires such
+// as PUT /api/node/epm, which refuse JSON).
+func (c *adminClient) putRaw(ctx context.Context, path, contentType string, body []byte) error {
+	req, err := c.newRequest(ctx, http.MethodPut, path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("PUT %s: daemon unavailable at %s: %w", path, c.baseURL, err)
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("PUT %s: %s: %s", path, resp.Status, strings.TrimSpace(string(payload)))
+	}
+	return nil
+}
+
 func (c *adminClient) get(ctx context.Context, path string, out any) error {
 	return c.do(ctx, http.MethodGet, path, nil, out)
 }

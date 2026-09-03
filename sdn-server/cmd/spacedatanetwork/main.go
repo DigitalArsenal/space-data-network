@@ -1607,8 +1607,21 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// The auth handler is constructed further below (it needs the
 			// storage path), so the gate resolves it per request rather than
 			// capturing a nil pointer at mount time.
+			// The node identity wire is the raw $EPM FlatBuffer (owner
+			// 2026-09-03: "everything should be flatbuffers"); JSON stays a
+			// derived read projection on /api/node/epm/json.
 			adminMux.HandleFunc("/api/node/epm", gateNodeEPMWrite(
-				handleNodeEPM(n),
+				api.NewNodeEPMHandler(nodeEPMWireService(n), func(ctx context.Context, _ []byte) error {
+					if err := n.IndexLocalNodeEPM(); err != nil {
+						return err
+					}
+					if svc := n.EPMService(); svc != nil {
+						if err := svc.PublishEPM(ctx, n); err != nil {
+							log.Warnf("Failed to publish updated EPM PNM: %v", err)
+						}
+					}
+					return nil
+				}).ServeHTTP,
 				cfg.Admin.RequireAuth,
 				func() *auth.Handler { return authHandler },
 			))
@@ -5338,6 +5351,15 @@ func handleNodeEPMQR(n *node.Node) http.HandlerFunc {
 }
 
 // handleNodeEPM handles GET (binary EPM) and PUT (update profile) for the node's EPM.
+// nodeEPMWireService adapts the node's EPM service to the wire handler
+// without leaking a typed nil into the interface.
+func nodeEPMWireService(n *node.Node) api.NodeEPMService {
+	if svc := n.EPMService(); svc != nil {
+		return svc
+	}
+	return nil
+}
+
 func handleNodeEPM(n *node.Node) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		epmSvc := n.EPMService()
