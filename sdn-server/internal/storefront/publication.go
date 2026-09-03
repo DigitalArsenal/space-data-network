@@ -80,12 +80,15 @@ type ListingTemporalCoverageDraft struct {
 }
 
 type ListingPropagationReport struct {
-	ListingID        string `json:"listing_id"`
-	STFCID           string `json:"stf_cid"`
-	PNMCID           string `json:"pnm_cid"`
-	DPMCID           string `json:"dpm_cid,omitempty"`
-	AnnouncedToPeers int    `json:"announced_to_peers"`
-	PropagationError string `json:"propagation_error,omitempty"`
+	ListingID        string             `json:"listing_id"`
+	STFCID           string             `json:"stf_cid"`
+	PNMCID           string             `json:"pnm_cid"`
+	DPMCID           string             `json:"dpm_cid,omitempty"`
+	AnnouncedToPeers int                `json:"announced_to_peers"`
+	PropagationError string             `json:"propagation_error,omitempty"`
+	State            string             `json:"state"`
+	Listing          *Listing           `json:"listing,omitempty"`
+	Publication      PublicationOptions `json:"publication"`
 }
 
 type canonicalSTFDocument struct {
@@ -450,11 +453,26 @@ func (s *Service) resolveProviderEPMCID() (string, error) {
 	return storage.ComputeCID(epmBytes), nil
 }
 
-// PublishListingDraft performs the durable part first and returns propagation
-// failure explicitly without rolling back the locally useful listing.
+// PublishListingDraft preserves the SDS-only operator API while the dashboard
+// uses PublishListing with its node-local source and retention choices.
 func (s *Service) PublishListingDraft(ctx context.Context, draft ListingDraft) (*ListingPropagationReport, error) {
-	if err := draft.validate(); err != nil {
+	return s.PublishListing(ctx, ListingPublicationRequest{
+		Listing: draft,
+		Publication: PublicationOptions{
+			AnnounceTo: []string{"storefront"},
+		},
+	})
+}
+
+// PublishListing performs the durable part first and returns propagation
+// failure explicitly without rolling back the locally useful listing.
+func (s *Service) PublishListing(ctx context.Context, request ListingPublicationRequest) (*ListingPropagationReport, error) {
+	if err := request.validate(); err != nil {
 		return nil, err
+	}
+	draft := request.Listing
+	if request.Publication.RetentionDays > 0 && draft.ExpiresAt == 0 {
+		draft.ExpiresAt = uint64(time.Now().UTC().Add(time.Duration(request.Publication.RetentionDays) * 24 * time.Hour).Unix())
 	}
 	epmCID, err := s.resolveProviderEPMCID()
 	if err != nil {
@@ -462,6 +480,10 @@ func (s *Service) PublishListingDraft(ctx context.Context, draft ListingDraft) (
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	listing := listingFromDraft(draft, s.peerID, epmCID, now)
+	if request.Upload != nil {
+		listing.SampleCID = strings.TrimSpace(request.Upload.CID)
+		listing.SampleRecordCount = 1
+	}
 
 	s.store.mu.RLock()
 	moduleCategory := s.store.moduleCategory
@@ -487,7 +509,7 @@ func (s *Service) PublishListingDraft(ctx context.Context, draft ListingDraft) (
 	var dpmBytes []byte
 	var dpmCID string
 	if listing.ListingKind == ListingKindDataStream && listing.AccessType == AccessTypeOneTime {
-		dpmBytes, err = s.buildListingDPM(listing, fileID)
+		dpmBytes, err = s.buildListingDPM(listing, fileID, request.Dataset, request.Upload)
 		if err != nil {
 			return nil, fmt.Errorf("build OneTime dataset DPM: %w", err)
 		}
@@ -510,7 +532,13 @@ func (s *Service) PublishListingDraft(ctx context.Context, draft ListingDraft) (
 		return nil, err
 	}
 
-	report := &ListingPropagationReport{ListingID: listing.ListingID, STFCID: stfCID, PNMCID: pnmCID, DPMCID: dpmCID}
+	report := &ListingPropagationReport{
+		ListingID: listing.ListingID, STFCID: stfCID, PNMCID: pnmCID, DPMCID: dpmCID,
+		State: "published", Listing: listing, Publication: request.Publication,
+	}
+	if !request.Publication.announcesTo("storefront") {
+		return report, nil
+	}
 	if s.listingTopic == nil {
 		report.PropagationError = "storefront listing pubsub is disabled"
 		return report, nil
@@ -634,7 +662,7 @@ type listingDatasetRecord struct {
 	Data   []byte
 }
 
-func (s *Service) buildListingDPM(listing *Listing, fileID string) ([]byte, error) {
+func (s *Service) buildListingDPM(listing *Listing, fileID string, selection *DatasetSelection, upload *UploadReference) ([]byte, error) {
 	if len(s.signingKey) != ed25519.PrivateKeySize {
 		return nil, errors.New("ed25519 node signing key is required for DPM")
 	}
@@ -657,13 +685,20 @@ func (s *Service) buildListingDPM(listing *Listing, fileID string) ([]byte, erro
 		return nil, errors.New("OneTime dataset listing has no stored SDS DATA_TYPES")
 	}
 	sort.Strings(schemaNames)
+	if selection != nil && strings.TrimSpace(selection.SchemaName) != "" {
+		selectedSchema := canonicalListingSchema(selection.SchemaName)
+		if !stringSliceContains(schemaNames, selectedSchema) {
+			return nil, fmt.Errorf("selected dataset schema %q is not in DATA_TYPES", selectedSchema)
+		}
+		schemaNames = []string{selectedSchema}
+	}
+	if upload != nil {
+		return s.buildUploadedListingDPM(listing, fileID, schemaNames, upload)
+	}
 	var records []listingDatasetRecord
 	for _, schema := range schemaNames {
 		for offset := 0; ; {
-			stored, err := s.store.flatStore.QueryIndexedRecords(storage.IndexedRecordQuery{
-				SchemaName: schema, AllowLargeResultSet: true, OrderByCID: true,
-				Limit: 250000, Offset: offset,
-			})
+			stored, err := s.store.flatStore.QueryIndexedRecords(selection.indexedQuery(schema, offset))
 			if err != nil {
 				return nil, fmt.Errorf("query %s records: %w", schema, err)
 			}
@@ -688,8 +723,16 @@ func (s *Service) buildListingDPM(listing *Listing, fileID string) ([]byte, erro
 
 	queryDocument := struct {
 		SchemaNames []string `json:"schema_names"`
+		ProviderID  string   `json:"provider_id,omitempty"`
+		SourceName  string   `json:"source_name,omitempty"`
+		BatchID     string   `json:"batch_id,omitempty"`
 		Order       string   `json:"order"`
 	}{SchemaNames: schemaNames, Order: "schema_name ASC, cid ASC"}
+	if selection != nil {
+		queryDocument.ProviderID = strings.TrimSpace(selection.ProviderID)
+		queryDocument.SourceName = strings.TrimSpace(selection.SourceName)
+		queryDocument.BatchID = strings.TrimSpace(selection.BatchID)
+	}
 	canonicalQuery, _ := json.Marshal(queryDocument)
 	queryHash := sha256.Sum256(canonicalQuery)
 	resultBytes := listingDatasetResultBytes(records)
@@ -703,6 +746,33 @@ func (s *Service) buildListingDPM(listing *Listing, fileID string) ([]byte, erro
 		return buildListingDPMBytes(listing, fileID, schemaNames, canonicalQuery,
 			hex.EncodeToString(queryHash[:]), hex.EncodeToString(resultHash[:]),
 			resultCID, uint64(len(resultBytes)), queryCID, dataRoot, fileIDRoot, signature)
+	}
+	unsigned := build(nil)
+	digest := sha256.Sum256(unsigned)
+	return build(ed25519.Sign(s.signingKey, digest[:])), nil
+}
+
+func (s *Service) buildUploadedListingDPM(listing *Listing, fileID string, schemaNames []string, upload *UploadReference) ([]byte, error) {
+	queryDocument := struct {
+		UploadCID string   `json:"upload_cid"`
+		FileName  string   `json:"file_name"`
+		MediaType string   `json:"media_type,omitempty"`
+		Schemas   []string `json:"schema_names"`
+	}{
+		UploadCID: upload.CID, FileName: upload.FileName, MediaType: upload.MediaType,
+		Schemas: schemaNames,
+	}
+	canonicalQuery, _ := json.Marshal(queryDocument)
+	queryHash := sha256.Sum256(canonicalQuery)
+	resultHash := strings.ToLower(upload.SHA256)
+	rootMaterial := sha256.Sum256([]byte(upload.CID + "\x00" + resultHash))
+	dataRoot := hex.EncodeToString(rootMaterial[:])
+	fileIDRoot := ComputeListingFileIDMerkleRoot(fileID, [][]byte{[]byte(upload.CID)})
+	queryCID := storage.ComputeCID(canonicalQuery)
+	build := func(signature []byte) []byte {
+		return buildListingDPMBytes(listing, fileID, schemaNames, canonicalQuery,
+			hex.EncodeToString(queryHash[:]), resultHash, upload.CID, uint64(upload.ByteLength),
+			queryCID, dataRoot, fileIDRoot, signature)
 	}
 	unsigned := build(nil)
 	digest := sha256.Sum256(unsigned)
