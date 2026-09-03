@@ -1900,6 +1900,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					credstore.IDSpaceTrack: credstore.NewSpaceTrackVerifier(),
 				})
 				credAPI.RegisterRoutes(adminMux)
+				api.NewAIProvidersHandler(credStore, authHandler, cfg.Admin.RequireAuth).RegisterRoutes(adminMux)
 				if cfg.Admin.RequireAuth {
 					log.Infof("Provider credential API at %s://%s/api/v1/admin/credentials (admin auth required)", adminScheme, adminAddr)
 				} else {
