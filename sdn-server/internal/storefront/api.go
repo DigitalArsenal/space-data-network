@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	nodeapi "github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
@@ -67,7 +68,9 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux, authHandler *auth.Handle
 	mux.HandleFunc("/api/storefront/listings", optionalAuth(h.handleListings))
 	mux.HandleFunc("/api/storefront/listings/search", optionalAuth(h.handleSearchListings))
 	mux.HandleFunc("/api/storefront/listings/", optionalAuth(h.handleListingByID))
-	mux.HandleFunc("/api/v1/storefront/listings/publish", requireAuth(peers.Admin, h.handlePublishListing))
+	nodeapi.RegisterStorefrontListingRoutes(mux, storefrontListingBackend{handler: h}, func(next http.HandlerFunc) http.HandlerFunc {
+		return requireAuth(peers.Admin, next)
+	})
 
 	// Purchases — all require auth
 	mux.HandleFunc("/api/storefront/purchases", requireAuth(peers.Standard, h.handleCreatePurchase))
