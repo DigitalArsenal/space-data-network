@@ -13,10 +13,12 @@ package main
 // of them bypass the auth wall.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spf13/cobra"
 )
 
@@ -200,7 +202,15 @@ it silently drops the node's photo.`,
 		if err != nil {
 			return err
 		}
-		if err := client.do(cmd.Context(), "PUT", "/api/node/epm", jsonRaw(payload), nil); err != nil {
+		var profile epm.Profile
+		if err := json.Unmarshal(payload, &profile); err != nil {
+			return fmt.Errorf("parse %s as an epm.Profile: %w", identitySetFile, err)
+		}
+		wire, err := epm.EncodeProfileEPM(&profile)
+		if err != nil {
+			return fmt.Errorf("encode EPM: %w", err)
+		}
+		if err := client.putRaw(cmd.Context(), "/api/node/epm", epm.EPMContentType, wire); err != nil {
 			return err
 		}
 		fmt.Fprintln(cmd.ErrOrStderr(), "profile replaced; EPM re-signed and republished")
