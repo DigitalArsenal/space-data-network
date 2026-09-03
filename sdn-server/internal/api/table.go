@@ -42,14 +42,15 @@ const (
 	// Filtered/sorted requests walk the durable catalog in bounded store-lock
 	// windows. The record and wall-clock ceilings keep an interactive request
 	// from monopolising decoding work on exceptionally large selections.
-	tableScanChunkSize    = 250
+	tableScanChunkSize    = 2000
 	tableScanRecordBudget = 250_000
 	tableScanTimeBudget   = 2 * time.Second
 )
 
 var (
-	tableSchemaCodePattern = regexp.MustCompile(`^[A-Za-z0-9]{2,8}$`)
-	tableIdentPattern      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
+	tableSchemaCodePattern  = regexp.MustCompile(`^[A-Za-z0-9]{2,8}$`)
+	tableIdentPattern       = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
+	tableCursorTablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 // tableRequest is one parsed, not-yet-validated table page request.
@@ -58,6 +59,7 @@ type tableRequest struct {
 	Cols    []string
 	Page    int
 	Limit   int
+	Cursor  string
 	Sort    string
 	Dir     string
 	Q       string
@@ -66,17 +68,18 @@ type tableRequest struct {
 }
 
 type tableResponse struct {
-	Schema    string     `json:"schema"`
-	Columns   []string   `json:"columns"`
-	Rows      [][]string `json:"rows"`
-	Total     int64      `json:"total"`
-	Page      int        `json:"page"`
-	Limit     int        `json:"limit"`
-	Truncated bool       `json:"truncated"`
-	Source    string     `json:"source,omitempty"`
-	Partial   bool       `json:"partial,omitempty"`
-	Scanned   int64      `json:"scanned,omitempty"`
-	Stored    int64      `json:"stored,omitempty"`
+	Schema     string     `json:"schema"`
+	Columns    []string   `json:"columns"`
+	Rows       [][]string `json:"rows"`
+	Total      int64      `json:"total"`
+	Page       int        `json:"page"`
+	Limit      int        `json:"limit"`
+	Truncated  bool       `json:"truncated"`
+	Source     string     `json:"source,omitempty"`
+	Partial    bool       `json:"partial,omitempty"`
+	Scanned    int64      `json:"scanned,omitempty"`
+	Stored     int64      `json:"stored,omitempty"`
+	NextCursor string     `json:"next_cursor,omitempty"`
 }
 
 type tableScanBudget struct {
@@ -128,6 +131,7 @@ func parseTableRequest(r *http.Request) (tableRequest, error) {
 		Schema:  strings.ToUpper(strings.TrimSpace(strings.TrimSuffix(v.Get("schema"), ".fbs"))),
 		Page:    parsePositiveIntParam(v.Get("page"), 1),
 		Limit:   parsePositiveIntParam(v.Get("limit"), tableDefaultLimit),
+		Cursor:  strings.TrimSpace(v.Get("cursor")),
 		Sort:    strings.TrimSpace(v.Get("sort")),
 		Dir:     strings.ToLower(strings.TrimSpace(v.Get("dir"))),
 		Q:       strings.TrimSpace(v.Get("q")),
@@ -342,6 +346,12 @@ func (h *CoreAPIHandler) handleTablePage(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	cursor, err := decodeFullTableCursor(req.Schema+".fbs", req.Cursor)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	includeSource := fullTableNeedsSource(projection, filters, sortColumn, sourceName)
 
 	// Count and page are intentionally separate store calls. Each takes one
 	// bounded read-lock window; maintenance never waits behind a whole request.
@@ -351,10 +361,14 @@ func (h *CoreAPIHandler) handleTablePage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	total := fullTableStoredCount(summary, req.Schema+".fbs", sourceName)
+	knownSourceName := ""
+	if includeSource {
+		knownSourceName = fullTableUniformSource(summary, req.Schema+".fbs", total)
+	}
 	if req.Q != "" || len(filters) > 0 || sortColumn != "" {
 		rows, matched, scanned, partial, err := h.scanFullTableSelection(
 			r.Context(), req, projection, filters, sortColumn, sourceName,
-			total, tableScanBudgetForContext(r.Context()),
+			knownSourceName, total, tableScanBudgetForContext(r.Context()),
 		)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -384,26 +398,33 @@ func (h *CoreAPIHandler) handleTablePage(w http.ResponseWriter, r *http.Request)
 	}
 	pageLimit := req.Limit
 	pageOffset := (req.Page - 1) * req.Limit
+	if len(cursor) > 0 {
+		pageOffset = 0
+	}
 	// A selected set that fits in one bounded block keeps exact historical
 	// sort/filter/search semantics. Larger sets deliberately project only the
 	// requested page so neither memory nor the store lock grows with total.
-	completeSelection := total <= tableMaxLimit
+	completeSelection := total <= tableMaxLimit && len(cursor) == 0
 	if completeSelection {
 		pageLimit = int(total)
 		pageOffset = 0
 	}
-	records, err := h.store.FullTablePage(storage.FullTablePageQuery{
-		SchemaName: req.Schema + ".fbs",
-		SourceName: sourceName,
-		Limit:      pageLimit,
-		Offset:     pageOffset,
-		Sort:       globalSort,
-		Descending: req.Dir == "desc",
+	pageResult, err := h.store.FullTablePageWithCursor(storage.FullTablePageQuery{
+		SchemaName:      req.Schema + ".fbs",
+		SourceName:      sourceName,
+		Limit:           pageLimit,
+		Offset:          pageOffset,
+		Cursor:          cursor,
+		IncludeSource:   includeSource,
+		KnownSourceName: knownSourceName,
+		Sort:            globalSort,
+		Descending:      req.Dir == "desc",
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	records := pageResult.Records
 	rows, err := projectFullTablePage(req.Schema, records, projection, filters, req.Q, sortColumn, req.Dir)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -422,15 +443,20 @@ func (h *CoreAPIHandler) handleTablePage(w http.ResponseWriter, r *http.Request)
 			rows = rows[start:end]
 		}
 	}
+	nextCursor := ""
+	if !completeSelection {
+		nextCursor = encodeFullTableCursor(req.Schema+".fbs", pageResult.NextCursor)
+	}
 	writeJSON(w, http.StatusOK, tableResponse{
-		Schema:    req.Schema + ".fbs",
-		Columns:   projection,
-		Rows:      rows,
-		Total:     total,
-		Page:      req.Page,
-		Limit:     req.Limit,
-		Truncated: false,
-		Source:    req.Source,
+		Schema:     req.Schema + ".fbs",
+		Columns:    projection,
+		Rows:       rows,
+		Total:      total,
+		Page:       req.Page,
+		Limit:      req.Limit,
+		Truncated:  false,
+		Source:     req.Source,
+		NextCursor: nextCursor,
 	})
 }
 
@@ -488,6 +514,63 @@ func durableTableSourceName(schema, source string) (string, error) {
 	return strings.TrimPrefix(source, prefix), nil
 }
 
+type fullTableCursorEnvelope struct {
+	Schema string                      `json:"schema"`
+	Rows   storage.FullTablePageCursor `json:"rows"`
+}
+
+func encodeFullTableCursor(schema string, cursor storage.FullTablePageCursor) string {
+	if len(cursor) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(fullTableCursorEnvelope{Schema: schema, Rows: cursor})
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeFullTableCursor(schema, encoded string) (storage.FullTablePageCursor, error) {
+	if strings.TrimSpace(encoded) == "" {
+		return nil, nil
+	}
+	if len(encoded) > 64*1024 {
+		return nil, fmt.Errorf("table cursor is too large")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("table cursor is invalid")
+	}
+	var envelope fullTableCursorEnvelope
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return nil, fmt.Errorf("table cursor is invalid")
+	}
+	if envelope.Schema != schema || len(envelope.Rows) == 0 || len(envelope.Rows) > 1024 {
+		return nil, fmt.Errorf("table cursor does not match %s", schema)
+	}
+	for table, rowID := range envelope.Rows {
+		if len(table) > 1024 || !tableCursorTablePattern.MatchString(table) || rowID <= 0 {
+			return nil, fmt.Errorf("table cursor is invalid")
+		}
+	}
+	return envelope.Rows, nil
+}
+
+func fullTableNeedsSource(projection []string, filters map[string]string, sortColumn, sourceName string) bool {
+	if strings.TrimSpace(sourceName) != "" || sortColumn == "_source" {
+		return true
+	}
+	if _, filtered := filters["_source"]; filtered {
+		return true
+	}
+	for _, column := range projection {
+		if column == "_source" {
+			return true
+		}
+	}
+	return false
+}
+
 func fullTableStoredCount(summary *storage.DataSummary, schemaName, sourceName string) int64 {
 	if summary == nil {
 		return 0
@@ -509,6 +592,29 @@ func fullTableStoredCount(summary *storage.DataSummary, schemaName, sourceName s
 	return total
 }
 
+func fullTableUniformSource(summary *storage.DataSummary, schemaName string, stored int64) string {
+	if summary == nil || stored <= 0 {
+		return ""
+	}
+	name := ""
+	var count int64
+	for _, source := range summary.Sources {
+		if source.SchemaName != schemaName || strings.TrimSpace(source.SourceName) == "" {
+			continue
+		}
+		if name == "" {
+			name = source.SourceName
+		} else if name != source.SourceName {
+			return ""
+		}
+		count += source.Count
+	}
+	if count != stored {
+		return ""
+	}
+	return name
+}
+
 // scanFullTableSelection walks one durable standard/source selection newest to
 // oldest. Every FullTablePage call owns only one small read-lock window; the
 // decoder and predicates run after that lock has been released.
@@ -519,6 +625,7 @@ func (h *CoreAPIHandler) scanFullTableSelection(
 	filters map[string]string,
 	sortColumn string,
 	sourceName string,
+	knownSourceName string,
 	stored int64,
 	budget tableScanBudget,
 ) (rows [][]string, matched, scanned int64, partial bool, err error) {
@@ -528,7 +635,7 @@ func (h *CoreAPIHandler) scanFullTableSelection(
 	rows = make([][]string, 0, req.Limit)
 	sortable := make([]fullTableProjectedRecord, 0)
 	var binding *bulkBinding
-	var beforeRowID int64
+	var cursor storage.FullTablePageCursor
 	exhausted := false
 
 scan:
@@ -545,15 +652,18 @@ scan:
 		if remaining := budget.MaxRecords - int(scanned); remaining < chunkLimit {
 			chunkLimit = remaining
 		}
-		chunk, err := h.store.FullTablePage(storage.FullTablePageQuery{
-			SchemaName:  req.Schema + ".fbs",
-			SourceName:  sourceName,
-			Limit:       chunkLimit,
-			BeforeRowID: beforeRowID,
+		page, err := h.store.FullTablePageWithCursor(storage.FullTablePageQuery{
+			SchemaName:      req.Schema + ".fbs",
+			SourceName:      sourceName,
+			Limit:           chunkLimit,
+			Cursor:          cursor,
+			IncludeSource:   fullTableNeedsSource(projection, filters, sortColumn, sourceName),
+			KnownSourceName: knownSourceName,
 		})
 		if err != nil {
 			return nil, 0, scanned, false, err
 		}
+		chunk := page.Records
 		if len(chunk) == 0 {
 			break
 		}
@@ -587,7 +697,7 @@ scan:
 			matched++
 		}
 
-		beforeRowID = chunk[len(chunk)-1].RowID
+		cursor = page.NextCursor
 		if len(chunk) < chunkLimit {
 			break
 		}
