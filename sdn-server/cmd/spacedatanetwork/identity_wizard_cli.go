@@ -506,11 +506,11 @@ func runIdentityWizardWithDaemonProfile(ctx context.Context, out io.Writer, opti
 }
 
 func updateIdentityWizardDaemonProfile(ctx context.Context, baseURL string, profile *epm.Profile, options identityWizardOptions) ([]byte, error) {
-	body, err := json.Marshal(profile)
+	body, err := epm.EncodeProfileEPM(profile)
 	if err != nil {
 		return nil, fmt.Errorf("encode EPM profile update: %w", err)
 	}
-	epmBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodPut, baseURL, "/api/node/epm", bytes.NewReader(body), "application/json", identityWizardSessionToken(options))
+	epmBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodPut, baseURL, "/api/node/epm", bytes.NewReader(body), epm.EPMContentType, identityWizardSessionToken(options))
 	if err != nil {
 		return nil, err
 	}
