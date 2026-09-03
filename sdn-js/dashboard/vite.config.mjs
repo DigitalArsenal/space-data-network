@@ -75,6 +75,92 @@ function stubHeliaOnlyDeps() {
 }
 
 /**
+ * flatsql's wasm loader imports the Node builtins `module`, `node:crypto`,
+ * `fs`, `path` and `url` on its Node-only code paths. In a browser bundle
+ * those specifiers are mapped to sdn-js's runtime-conditional shims (real
+ * builtins in Node, inert in browsers) — the same mapping
+ * scripts/build-package-entry.mjs applies to the published package entries,
+ * ported to rollup's resolveId. Scoped to importers inside
+ * node_modules/flatsql so no other dependency resolution changes.
+ *
+ * Two lanes, one mapping. The page bundle ('es') takes the shim FILES. The
+ * data worker is bundled by its own rollup pass (`plugins` never reaches a
+ * worker build) as an 'iife' blob: worker, and rollup refuses top-level
+ * await in iife output — which is exactly how the file shims decide between
+ * Node and browser. A blob: worker can never be Node, so that lane takes the
+ * shims' browser branch directly: virtual modules with the same named
+ * exports, all inert (`inert: true`).
+ */
+const FLATSQL_BUILTIN_SHIMS = new Map([
+  ['module', 'flatsql-node-module'],
+  ['node:crypto', 'flatsql-node-crypto'],
+  ['fs', 'flatsql-node-builtins'],
+  ['path', 'flatsql-node-builtins'],
+  ['url', 'flatsql-node-builtins']
+]);
+const FLATSQL_INERT_SHIM_SOURCE = {
+  'flatsql-node-module': 'export const createRequire = undefined;\nexport default null;\n',
+  'flatsql-node-crypto': 'export const createHash = undefined;\nexport default null;\n',
+  'flatsql-node-builtins': [
+    'readFileSync', 'existsSync', 'dirname', 'join', 'fileURLToPath', 'pathToFileURL'
+  ].map((name) => `export const ${name} = undefined;`).join('\n') +
+    '\nexport const fs = null;\nexport const path = null;\nexport const url = null;\n'
+};
+function flatsqlNodeBuiltinShims({ inert = false } = {}) {
+  const flatsqlDir = `node_modules${path.sep}flatsql${path.sep}`;
+  const VIRTUAL = '\0sdn-dashboard:flatsql-node-shim:';
+  return {
+    name: `sdn-dashboard-flatsql-node-builtin-shims${inert ? '-inert' : ''}`,
+    enforce: 'pre',
+    resolveId(id, importer) {
+      if (!importer || !importer.includes(flatsqlDir)) return null;
+      const shim = FLATSQL_BUILTIN_SHIMS.get(id);
+      if (!shim) return null;
+      return inert ? `${VIRTUAL}${shim}` : path.resolve(__dirname, `../src/shims/${shim}.ts`);
+    },
+    load(id) {
+      if (!id.startsWith(VIRTUAL)) return null;
+      return FLATSQL_INERT_SHIM_SOURCE[id.slice(VIRTUAL.length)] ?? null;
+    }
+  };
+}
+
+/**
+ * The worker client's DEFAULT worker — `new Worker(new URL('./local-flatsql.worker.ts',
+ * import.meta.url))` in local-flatsql-worker-client.ts — is the libp2p SYNC
+ * worker, the webUI's mirror lane. The dashboard never spawns it (the data
+ * runtime injects the store-only worker through `createWorker`), but vite
+ * bundles every `new Worker(new URL(...))` it can see, so without this the
+ * embed build drags the entire libp2p sync graph through rollup for a chunk
+ * no page ever loads. Vite resolves that relative URL on the filesystem (not
+ * through resolveId) and then bundles the file as its own worker entry — and
+ * the entry of THAT sub-build does go through resolveId, which is why this
+ * plugin lives in `worker.plugins` only: it swaps the sync worker entry for a
+ * stub that refuses every message, and leaves the page bundle untouched.
+ */
+const SYNC_WORKER_ENTRY = path.resolve(__dirname, '../src/ui/runtime/local-flatsql.worker.ts');
+function stubSyncWorkerFallback() {
+  const VIRTUAL = '\0sdn-dashboard:sync-worker-stub';
+  return {
+    name: 'sdn-dashboard-stub-sync-worker-fallback',
+    enforce: 'pre',
+    resolveId(id) {
+      return id.split('?')[0] === SYNC_WORKER_ENTRY ? VIRTUAL : null;
+    },
+    load(id) {
+      if (id !== VIRTUAL) return null;
+      return [
+        'self.onmessage = (event) => {',
+        '  self.postMessage({ id: event.data?.id ?? 0, ok: false,',
+        "    error: 'the libp2p sync worker is not bundled in the dashboard; the data runtime injects the store-only worker' });",
+        '};',
+        ''
+      ].join('\n');
+    }
+  };
+}
+
+/**
  * Scope-hash pin + its safety net. Hashing CSS instead of the path buys
  * reproducibility but introduces a failure mode the path version could not
  * have: two DIFFERENT components whose <style> blocks are byte-identical now
@@ -128,6 +214,7 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     stubHeliaOnlyDeps(),
+    flatsqlNodeBuiltinShims(),
     // cssHash PINNED to the component's CSS, not its path. IRIS ruling
     // 2026-07-30 (ui-design-lib-two-way-sync), option 2.
     //
@@ -170,24 +257,48 @@ export default defineConfig({
     assertNoCssHashCollision()
   ],
   resolve: {
-    alias: {
+    // Array form: a regex alias (the inlined data worker) needs it, and the
+    // entries are matched in order, so the longer hd-wallet-ui key must still
+    // precede the bare key.
+    alias: [
       // NODE-owned transport the app imports by name (see apps/sdn-node/main.js).
-      'sdn-node-status-runtime': path.resolve(__dirname, '../src/ui/runtime/status-dashboard'),
-      // Insertion order matters: the longer style key must precede the bare key.
-      'hd-wallet-ui/external/style': path.join(hdWalletExternalRoot, 'wallet-ui/styles/external-panel.css'),
-      'hd-wallet-ui/external': path.join(hdWalletExternalRoot, 'wallet-ui/src/external/index.js')
-    },
+      { find: 'sdn-node-status-runtime', replacement: path.resolve(__dirname, '../src/ui/runtime/status-dashboard') },
+      // NODE-owned data runtime: the FlatSQL window over the node's raw
+      // FlatBuffer lane (owner ruling 2026-09-03), imported by name.
+      { find: 'sdn-node-data-runtime', replacement: path.resolve(__dirname, '../src/ui/runtime/dashboard-data-runtime') },
+      // The store-only FlatSQL worker, imported as
+      // `sdn-node-data-worker?worker&inline` so vite inlines it into the
+      // single file and spawns it from a blob: URL (worker.format 'iife'
+      // below). `$1` carries the ?worker&inline query through the alias.
+      {
+        find: /^sdn-node-data-worker(\?.*)?$/,
+        replacement: path.resolve(__dirname, '../src/ui/runtime/local-flatsql-store.worker.ts') + '$1'
+      },
+      { find: 'hd-wallet-ui/external/style', replacement: path.join(hdWalletExternalRoot, 'wallet-ui/styles/external-panel.css') },
+      { find: 'hd-wallet-ui/external', replacement: path.join(hdWalletExternalRoot, 'wallet-ui/src/external/index.js') }
+    ],
     dedupe: ['svelte']
   },
-  // The semantic engine runs in a Web Worker (semantic.worker.js), imported
-  // with ?worker&inline so vite bakes it into the single bundle and spawns it
-  // from a blob: URL — no second served file, which is what keeps the
-  // single-file law and `worker-src 'self' blob:` in agreement.
+  // The semantic engine and the FlatSQL data worker run in Web Workers,
+  // imported with ?worker&inline so vite bakes them into the single bundle
+  // and spawns them from blob: URLs — no second served file, which is what
+  // keeps the single-file law and `worker-src 'self' blob:` in agreement.
   // format MUST be 'iife' (vite's default), NOT 'es': with 'es' vite spawns
   // an inline worker from a `data:text/javascript` URL, which this page's
   // `worker-src 'self' blob:` correctly refuses. 'iife' emits the blob: path
   // (atob → Blob → createObjectURL) the CSP was written for.
-  worker: { format: 'iife' },
+  // The worker bundle is its own rollup pass: the flatsql builtin shims must
+  // be repeated here, and flatsql.wasm is never inlined (the worker loads it
+  // from the node's /sdn-js lane with an integrity check). The data worker
+  // reaches the engine through dynamic imports (`import('flatsql/wasm')`, the
+  // shims' runtime-conditional builtin loads); rollup treats those as
+  // code-splitting, which 'iife' forbids — inline them into the one worker
+  // chunk instead.
+  worker: {
+    format: 'iife',
+    plugins: () => [stubSyncWorkerFallback(), flatsqlNodeBuiltinShims({ inert: true })],
+    rollupOptions: { output: { inlineDynamicImports: true } }
+  },
   build: {
     target: 'es2022',
     /*

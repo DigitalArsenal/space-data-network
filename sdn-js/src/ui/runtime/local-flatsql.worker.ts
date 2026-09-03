@@ -4,6 +4,7 @@ import {
   type LocalFlatSqlPinLedgerEntry,
   type LocalFlatSqlPinLedgerQuery,
   type LocalFlatSqlQueryOptions,
+  type LocalFlatSqlSchema,
   type LocalFlatSqlStandardStats,
   type LocalFlatSqlStatsOptions,
   type LocalFlatSqlStore,
@@ -50,6 +51,7 @@ import type {
 
 type WorkerRequest =
   | { id: number; type: 'init'; options: LocalFlatSqlStoreOptions }
+  | { id: number; type: 'addStandard'; schema: LocalFlatSqlSchema }
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: unknown }
   | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
   | { id: number; type: 'clearStandard'; standardId: string; options?: LocalFlatSqlClearOptions }
@@ -107,6 +109,10 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         store?.destroy();
         await syncBackendCache.destroy();
         store = await createLocalFlatSqlStore(request.options);
+        postSuccess(request.id, undefined, await stats({ includeCachedBytes: false }));
+        return;
+      case 'addStandard':
+        await requireStore().addStandard(request.schema);
         postSuccess(request.id, undefined, await stats({ includeCachedBytes: false }));
         return;
       case 'ingestRecords': {
