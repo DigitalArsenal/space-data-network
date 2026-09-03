@@ -6,6 +6,7 @@ import {
   type LocalFlatSqlPinLedgerQuery,
   type LocalFlatSqlQueryOptions,
   type LocalFlatSqlQueryResult,
+  type LocalFlatSqlSchema,
   type LocalFlatSqlStandardStats,
   type LocalFlatSqlStatsOptions,
   type LocalFlatSqlStore,
@@ -120,6 +121,7 @@ export interface WorkerLocalFlatSqlStore extends LocalFlatSqlStore {
 
 type WorkerRequest =
   | { id: number; type: 'init'; options: LocalFlatSqlStoreOptions }
+  | { id: number; type: 'addStandard'; schema: LocalFlatSqlSchema }
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: string | LocalFlatSqlIngestOptions | null }
   | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
   | { id: number; type: 'clearStandard'; standardId: string; options?: LocalFlatSqlClearOptions }
@@ -146,10 +148,27 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
-export async function createWorkerLocalFlatSqlStore(options: LocalFlatSqlStoreOptions): Promise<WorkerLocalFlatSqlStore> {
-  if (typeof Worker === 'undefined') return await createLocalFlatSqlStore(options) as WorkerLocalFlatSqlStore;
+/**
+ * Worker construction hooks. The dashboard's single-file embed cannot spawn
+ * the sync worker by URL (there is no second served file), so it injects a
+ * bundler-inlined worker (`import DataWorker from 'sdn-node-data-worker?worker&inline'`)
+ * through `createWorker`; without a hook the default module worker is used.
+ */
+export interface WorkerLocalFlatSqlStoreOptions {
+  createWorker?: () => Worker;
+}
 
-  const worker = new Worker(new URL('./local-flatsql.worker.ts', import.meta.url), { type: 'module' });
+export async function createWorkerLocalFlatSqlStore(
+  options: LocalFlatSqlStoreOptions,
+  hooks?: WorkerLocalFlatSqlStoreOptions | null,
+): Promise<WorkerLocalFlatSqlStore> {
+  if (typeof Worker === 'undefined' && !hooks?.createWorker) {
+    return await createLocalFlatSqlStore(options) as WorkerLocalFlatSqlStore;
+  }
+
+  const worker = hooks?.createWorker
+    ? hooks.createWorker()
+    : new Worker(new URL('./local-flatsql.worker.ts', import.meta.url), { type: 'module' });
   const store = new WorkerLocalFlatSqlStoreClient(worker);
   await store.init(options);
   return store;
@@ -175,7 +194,11 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
   }
 
   init(options: LocalFlatSqlStoreOptions): Promise<void> {
-    return this.request<void>({ id: 0, type: 'init', options });
+    return this.request<void>({ id: 0, type: 'init', options: workerInitOptions(options) });
+  }
+
+  addStandard(schema: LocalFlatSqlSchema): Promise<void> {
+    return this.request<void>({ id: 0, type: 'addStandard', schema });
   }
 
   async ingestRecords(
@@ -363,6 +386,16 @@ function decodeWorkerSchemaSyncWireUpdate(update: WorkerSchemaSyncWireUpdate): W
     progress: decodeWorkerSchemaSyncProgressFlatBuffer(update.progressBytes),
     stats: update.stats,
   };
+}
+
+/**
+ * Init options as they cross postMessage. A `computeSHA384` function cannot
+ * be structured-cloned; the worker's engine store supplies its own WebCrypto
+ * SHA-384 for a `wasmPath` init, so only the path travels.
+ */
+function workerInitOptions(options: LocalFlatSqlStoreOptions): LocalFlatSqlStoreOptions {
+  if (!options.engine) return options;
+  return { ...options, engine: { wasmPath: options.engine.wasmPath ?? null } };
 }
 
 function prepareRecordsForWorker(records: RawDataRecord[], transfer: boolean): { records: RawDataRecord[]; transferables: Transferable[] } {

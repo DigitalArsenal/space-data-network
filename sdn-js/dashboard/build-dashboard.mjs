@@ -40,6 +40,67 @@ function guard(mode) {
 }
 guard('--sources');
 
+// --- 0b. Browser engine artifact (embed == pin law) --------------------------
+// The dashboard's data worker runs flatsql's wasm from the node's /sdn-js lane
+// (same-origin, integrity-checked), so the node embeds the engine binary and
+// its integrity manifest. Both are regenerated from the installed flatsql on
+// every embed build, and the build refuses an install that does not satisfy
+// sdn-js's flatsql pin: the embedded engine must equal the pin, never drift
+// behind it (sdn-server's own engine is held to the same law).
+const sdnJsPkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'));
+const flatsqlPin = sdnJsPkg.dependencies?.flatsql ?? sdnJsPkg.devDependencies?.flatsql ?? null;
+const flatsqlPkgPath = path.resolve(__dirname, '../node_modules/flatsql/package.json');
+if (!flatsqlPin || !fs.existsSync(flatsqlPkgPath)) {
+  console.error(`[build-dashboard] flatsql pin ${flatsqlPin ?? '(none)'} / install ${fs.existsSync(flatsqlPkgPath) ? 'present' : 'missing'} — run npm install in sdn-js`);
+  process.exit(1);
+}
+const flatsqlVersion = JSON.parse(fs.readFileSync(flatsqlPkgPath, 'utf8')).version;
+if (!versionSatisfiesPin(flatsqlVersion, flatsqlPin)) {
+  console.error(
+    `[build-dashboard] installed flatsql ${flatsqlVersion} does not satisfy the sdn-js pin ${flatsqlPin} — ` +
+      'the embedded engine must equal the pin (embed == pin law); reinstall before building'
+  );
+  process.exit(1);
+}
+const engineWasmSrc = path.resolve(__dirname, '../node_modules/flatsql/wasm/flatsql.wasm');
+const engineDir = path.join(embedDir, 'sdn-js');
+const engineWasm = fs.readFileSync(engineWasmSrc);
+const engineHash = createHash('sha384').update(engineWasm).digest('base64');
+fs.mkdirSync(engineDir, { recursive: true });
+fs.writeFileSync(path.join(engineDir, 'flatsql.wasm'), engineWasm);
+// The shape flatsql's loadIntegrityFile reads: {hash, sri, size}. Compact +
+// trailing newline, byte-for-byte what the node tracks, so a rebuild on an
+// unchanged pin leaves the embed tree clean.
+fs.writeFileSync(
+  path.join(engineDir, 'integrity.json'),
+  JSON.stringify({ hash: engineHash, sri: `sha384-${engineHash}`, size: engineWasm.byteLength }) + '\n'
+);
+console.log(
+  `[build-dashboard] staged ${path.relative(process.cwd(), path.join(engineDir, 'flatsql.wasm'))} ` +
+    `(flatsql ${flatsqlVersion}, ${engineWasm.byteLength} bytes, sha384-${engineHash})`
+);
+
+/**
+ * Exact / caret / tilde pin check for the flatsql dependency — the only range
+ * forms package.json uses here. Anything else is refused loudly rather than
+ * guessed at.
+ */
+function versionSatisfiesPin(version, pin) {
+  const parse = (value) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(value).trim());
+    if (!m) throw new Error(`[build-dashboard] unsupported flatsql version/pin form: ${value}`);
+    return m.slice(1).map(Number);
+  };
+  const range = String(pin).trim();
+  const op = /^[\^~=]/.test(range) ? range[0] : '';
+  const base = parse(op ? range.slice(1) : range);
+  const actual = parse(version);
+  const cmp = actual[0] - base[0] || actual[1] - base[1] || actual[2] - base[2];
+  if (op === '^') return actual[0] === base[0] && cmp >= 0;
+  if (op === '~') return actual[0] === base[0] && actual[1] === base[1] && cmp >= 0;
+  return cmp === 0;
+}
+
 // --- 1. Build ---------------------------------------------------------------
 const viteBin = path.resolve(__dirname, '../node_modules/vite/bin/vite.js');
 const build = spawnSync(process.execPath, [viteBin, 'build'], {

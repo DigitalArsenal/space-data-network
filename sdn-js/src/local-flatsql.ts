@@ -90,8 +90,36 @@ export interface LocalFlatSqlSchema {
  */
 export const LOCAL_FLATSQL_DEFAULT_SOURCE = 'local';
 
+/**
+ * How the shared engine instance is initialised (dashboard window model,
+ * owner ruling 2026-09-03). The FIRST store opened in a JS context decides:
+ * with `wasmPath` the engine is fetched from that directory with integrity
+ * REQUIRED; without it, the Node/vitest lane loads the wasm beside flatsql's
+ * own index.js with the integrity check skipped, exactly as before.
+ */
+export interface LocalFlatSqlEngineOptions {
+  /**
+   * Absolute URL of the directory serving `flatsql.wasm` and `integrity.json`
+   * (the node serves both same-origin under `/sdn-js`). flatsql fetches
+   * `${wasmPath}/integrity.json`, then `${wasmPath}/flatsql.wasm`, verifies
+   * the SHA-384 and fails closed on a mismatch or a missing manifest. MUST be
+   * absolute: inside a blob: worker a relative URL has nothing to resolve
+   * against.
+   */
+  wasmPath?: string | null;
+  /**
+   * SHA-384 provider for the integrity check (base64 digest or raw digest
+   * bytes). Defaults to WebCrypto (`crypto.subtle.digest('SHA-384')`) when
+   * the context has it; functions do not survive structured clone, so the
+   * worker lane always relies on that default.
+   */
+  computeSHA384?: (data: ArrayBuffer) => Promise<Uint8Array | string> | Uint8Array | string;
+}
+
 export interface LocalFlatSqlStoreOptions {
   schemas: LocalFlatSqlSchema[];
+  /** Engine initialisation; honoured by the first store opened in this JS context. */
+  engine?: LocalFlatSqlEngineOptions | null;
   persistenceKey?: string | null;
   desktopPersistenceBaseUrl?: string | null;
   fetch?: FetchLike | null;
@@ -211,6 +239,13 @@ export interface FlatSqlSizePrefixedStreamInfo {
 }
 
 export interface LocalFlatSqlStore {
+  /**
+   * Open one more standard on this store, on demand (dashboard window model:
+   * any of the node's standards, opened when its screen is first shown).
+   * Idempotent per standard id; the open sequence is byte-identical to the
+   * constructor's.
+   */
+  addStandard(schema: LocalFlatSqlSchema): Promise<void>;
   ingestRecords(standardId: string, records: LocalFlatSqlIngestRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number>;
   ingestFlatBufferStream(standardId: string, streamBytes: Uint8Array, options?: LocalFlatSqlStreamIngestOptions | null): Promise<number>;
   /** Registered source partitions (shadow tables `<Table>@<source>`) for a standard. */
@@ -403,16 +438,49 @@ async function openDurableStandardDatabase(
   return { db, restoredRecords: Math.max(0, restored.restored), rederived: restored.rederived };
 }
 
-/** Shared FlatSQL-WASM engine instance for this JS context, disk-capable. */
-export async function getSharedFlatSql(): Promise<FlatSQL> {
+/**
+ * Shared FlatSQL-WASM engine instance for this JS context, disk-capable.
+ *
+ * The FIRST call decides how the engine is loaded (there is exactly one
+ * instance per context, so later callers inherit that decision):
+ *   - `engine.wasmPath` set: `initFlatSQL({ io, wasmPath, computeSHA384,
+ *     requireIntegrity: true })` — flatsql fetches `${wasmPath}/integrity.json`
+ *     and `${wasmPath}/flatsql.wasm`, verifies the SHA-384 and FAILS CLOSED
+ *     (the browser lane: the node serves both files same-origin).
+ *   - otherwise `initFlatSQL({ skipIntegrityCheck: true, io })` — the
+ *     Node/vitest lane, unchanged.
+ * A failed initialisation leaves no handles behind, so it is forgotten and the
+ * next call may try again.
+ */
+export async function getSharedFlatSql(engine?: LocalFlatSqlEngineOptions | null): Promise<FlatSQL> {
   if (!sharedFlatSqlPromise) {
     const io = getSharedFlatSqlIoRouter();
+    const wasmPath = normalizeEngineWasmPath(engine?.wasmPath);
+    const computeSHA384 = engine?.computeSHA384 ?? (wasmPath ? webCryptoSha384Provider() : undefined);
     // flatsql >= 1.4.5 declares `io` on InitOptions, so this is a typed call:
     // the seven imports are bound from the router at instantiation, once.
-    sharedFlatSqlPromise = import('flatsql/wasm').then(({ initFlatSQL }) =>
-      initFlatSQL({ skipIntegrityCheck: true, io }));
+    const pending = import('flatsql/wasm').then(({ initFlatSQL }) => (wasmPath
+      ? initFlatSQL({ io, wasmPath, computeSHA384, requireIntegrity: true })
+      : initFlatSQL({ skipIntegrityCheck: true, io })));
+    sharedFlatSqlPromise = pending;
+    pending.catch(() => {
+      if (sharedFlatSqlPromise === pending) sharedFlatSqlPromise = null;
+    });
   }
   return sharedFlatSqlPromise;
+}
+
+/** Trimmed, trailing-slash-free engine directory URL, or null for the default lane. */
+function normalizeEngineWasmPath(value: string | null | undefined): string | null {
+  const trimmed = typeof value === 'string' ? value.trim().replace(/\/+$/, '') : '';
+  return trimmed || null;
+}
+
+/** WebCrypto SHA-384 for flatsql's integrity check; undefined where the context has no `crypto.subtle`. */
+function webCryptoSha384Provider(): LocalFlatSqlEngineOptions['computeSHA384'] | undefined {
+  const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
+  if (!subtle || typeof subtle.digest !== 'function') return undefined;
+  return async (data: ArrayBuffer) => new Uint8Array(await subtle.digest('SHA-384', data));
 }
 
 /**
@@ -438,62 +506,14 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
   if (options.persistenceKey && persistenceStore.available) {
     registerFlatSqlIoStore(options.persistenceKey, persistenceStore);
   }
-  const flatsql = await getSharedFlatSql();
+  const flatsql = await getSharedFlatSql(options.engine ?? null);
   const io = getSharedFlatSqlIoRouter();
-  const durable = Boolean(options.persistenceKey) && persistenceStore.available;
+  const persistenceKey = options.persistenceKey ?? null;
   const states = new Map<string, StandardDatabaseState>();
 
   for (const schema of options.schemas) {
-    const standardId = normalizeStandardId(schema.standardId);
-    const dbPath = durable ? flatSqlDatabasePathForKey(options.persistenceKey as string, standardId) : null;
-
-    // DURABLE OPEN. The engine restores its own base tables, source partitions
-    // and unified views from the index file — nothing is re-registered and
-    // nothing is re-ingested. An ephemeral store (no persistence key, or a
-    // store that reports itself unavailable) still gets the in-memory engine.
-    const opened = dbPath
-      ? await openDurableStandardDatabase(flatsql, io, { ...schema, standardId }, dbPath)
-      : null;
-    const db = opened ? opened.db : createEphemeralStandardDatabase(flatsql, { ...schema, standardId });
-
-    const sources = new Set<string>(opened ? db.listSources() : []);
-    let migrated = false;
-    if (options.persistenceKey) {
-      // ONE-TIME migration off the retired snapshot-export layout. Read only
-      // when the engine's own state restored nothing: once the disk-backed
-      // state carries the records, a leftover blob (e.g. a crash before its
-      // delete) must never double-ingest.
-      const engineRestoredNothing = !opened || opened.restoredRecords === 0;
-      migrated = engineRestoredNothing
-        ? await migrateLegacySnapshots(db, persistenceStore, options.persistenceKey, standardId, sources)
-        : false;
-      if (!engineRestoredNothing) {
-        await deleteLegacySnapshotKeys(persistenceStore, options.persistenceKey, standardId);
-      }
-      if (migrated && opened && dbPath) {
-        // Fold the migrated records into the engine's durable state
-        // immediately, so the legacy keys are never needed again.
-        opened.db.flushIndex();
-        await io.flushFor(dbPath);
-      }
-    }
-
-    const ingestedKeys = options.persistenceKey
-      ? await readPersistedRecordKeys(persistenceStore, persistedRecordKey(options.persistenceKey, standardId))
-      : new Set<string>();
-    const persistedRecordCount = recordCountForDatabase(db, schema.tableName);
-    const repairedIngestedKeys = ingestedKeys.size > persistedRecordCount
-      ? new Set<string>()
-      : ingestedKeys;
-    states.set(standardId, {
-      schema: { ...schema, standardId },
-      db,
-      dbPath,
-      ingestedKeys: repairedIngestedKeys,
-      sources,
-      cachedBytes: cachedBytesForDatabase(db),
-      dirty: repairedIngestedKeys !== ingestedKeys || migrated,
-    });
+    const state = await openStandardState(flatsql, io, persistenceStore, persistenceKey, schema);
+    states.set(state.schema.standardId, state);
   }
 
   const pinLedger = options.persistenceKey
@@ -509,6 +529,72 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
     options.queryProfiles ?? null,
     options.nowSeconds ?? null,
   );
+}
+
+/**
+ * THE per-standard open sequence, in one place because the constructor loop
+ * and `addStandard` must perform it identically: durable open (or the
+ * ephemeral engine), the one-time legacy-snapshot fold, the persisted
+ * ingest-key ledger and its repair against the engine's own record count.
+ */
+async function openStandardState(
+  flatsql: FlatSQL,
+  io: FlatSqlIoRouter,
+  persistenceStore: LocalFlatSqlPersistenceStore,
+  persistenceKey: string | null,
+  schema: LocalFlatSqlSchema,
+): Promise<StandardDatabaseState> {
+  const standardId = normalizeStandardId(schema.standardId);
+  const durable = Boolean(persistenceKey) && persistenceStore.available;
+  const dbPath = durable ? flatSqlDatabasePathForKey(persistenceKey as string, standardId) : null;
+
+  // DURABLE OPEN. The engine restores its own base tables, source partitions
+  // and unified views from the index file — nothing is re-registered and
+  // nothing is re-ingested. An ephemeral store (no persistence key, or a
+  // store that reports itself unavailable) still gets the in-memory engine.
+  const opened = dbPath
+    ? await openDurableStandardDatabase(flatsql, io, { ...schema, standardId }, dbPath)
+    : null;
+  const db = opened ? opened.db : createEphemeralStandardDatabase(flatsql, { ...schema, standardId });
+
+  const sources = new Set<string>(opened ? db.listSources() : []);
+  let migrated = false;
+  if (persistenceKey) {
+    // ONE-TIME migration off the retired snapshot-export layout. Read only
+    // when the engine's own state restored nothing: once the disk-backed
+    // state carries the records, a leftover blob (e.g. a crash before its
+    // delete) must never double-ingest.
+    const engineRestoredNothing = !opened || opened.restoredRecords === 0;
+    migrated = engineRestoredNothing
+      ? await migrateLegacySnapshots(db, persistenceStore, persistenceKey, standardId, sources)
+      : false;
+    if (!engineRestoredNothing) {
+      await deleteLegacySnapshotKeys(persistenceStore, persistenceKey, standardId);
+    }
+    if (migrated && opened && dbPath) {
+      // Fold the migrated records into the engine's durable state
+      // immediately, so the legacy keys are never needed again.
+      opened.db.flushIndex();
+      await io.flushFor(dbPath);
+    }
+  }
+
+  const ingestedKeys = persistenceKey
+    ? await readPersistedRecordKeys(persistenceStore, persistedRecordKey(persistenceKey, standardId))
+    : new Set<string>();
+  const persistedRecordCount = recordCountForDatabase(db, schema.tableName);
+  const repairedIngestedKeys = ingestedKeys.size > persistedRecordCount
+    ? new Set<string>()
+    : ingestedKeys;
+  return {
+    schema: { ...schema, standardId },
+    db,
+    dbPath,
+    ingestedKeys: repairedIngestedKeys,
+    sources,
+    cachedBytes: cachedBytesForDatabase(db),
+    dirty: repairedIngestedKeys !== ingestedKeys || migrated,
+  };
 }
 
 /** In-memory engine database — no persistence key, or a store that is not available. */
@@ -640,6 +726,25 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     private readonly queryProfiles: EngineEpochQueryProfilesConfig | null = null,
     private readonly nowSeconds: (() => number) | null = null,
   ) {}
+
+  /** Standards whose open sequence is in flight, so a concurrent add shares it instead of opening twice. */
+  private readonly openingStandards = new Map<string, Promise<void>>();
+
+  async addStandard(schema: LocalFlatSqlSchema): Promise<void> {
+    const standardId = normalizeStandardId(schema.standardId);
+    if (this.states.has(standardId)) return;
+    const inFlight = this.openingStandards.get(standardId);
+    if (inFlight) return inFlight;
+    const opening = openStandardState(this.flatsql, this.io, this.persistenceStore, this.persistenceKey, schema)
+      .then((state) => {
+        this.states.set(standardId, state);
+      })
+      .finally(() => {
+        this.openingStandards.delete(standardId);
+      });
+    this.openingStandards.set(standardId, opening);
+    return opening;
+  }
 
   async ingestRecords(
     standardId: string,
