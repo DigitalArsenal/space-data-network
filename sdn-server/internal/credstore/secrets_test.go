@@ -405,6 +405,25 @@ func TestPutValidation(t *testing.T) {
 	}
 }
 
+func TestSecretStoreAcceptsAIProviderDashedKey(t *testing.T) {
+	st, _ := newTestStore(t)
+	const id = "ai-openai-device-code"
+	if err := st.Put(id, "ChatGPT account", "token-canary"); err != nil {
+		t.Fatalf("Put(%q): %v", id, err)
+	}
+	status, err := st.Status(id)
+	if err != nil {
+		t.Fatalf("Status(%q): %v", id, err)
+	}
+	if !status.Configured || status.ID != id {
+		t.Fatalf("status = %#v", status)
+	}
+	stored, err := st.Reveal(id)
+	if err != nil || stored.Secret.Reveal() != "token-canary" {
+		t.Fatalf("Reveal(%q) failed: %v", id, err)
+	}
+}
+
 // A corrupt or foreign keystore must fail closed rather than be misparsed.
 func TestUnrecognizedFileFailsClosed(t *testing.T) {
 	st, _ := newTestStore(t)
