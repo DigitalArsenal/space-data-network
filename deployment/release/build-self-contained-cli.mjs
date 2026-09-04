@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { cp, chmod, lstat, mkdir, readFile, readdir, readlink, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,11 @@ const defaultUpdateFeedBaseUrl = 'https://sdn.spaceaware.io/updates';
 const updaterModuleId = 'org.spacedatanetwork.updater';
 const updaterWasmPath = 'runtime/modules/org.spacedatanetwork.updater.wasm';
 const hdWalletWasmPath = 'runtime/modules/hd-wallet-wasi.wasm';
+// The fleet's update trust roots live beside this script. A bundle without
+// trust/update-roots.json can never self-update (the updater refuses to apply
+// an unsigned-by-a-known-root payload), so every bundle stages them unless
+// the caller names another roots file.
+const defaultTrustRootsPath = join(dirname(fileURLToPath(import.meta.url)), 'fleet-trust-roots.json');
 
 export async function stageBundle(options) {
   const version = safeToken(options.version, 'version');
@@ -56,9 +62,10 @@ export async function stageBundle(options) {
   );
   await cp(required(options.licensePath, 'licensePath'), join(root, 'LICENSE'));
   await cp(required(options.readmePath, 'readmePath'), join(root, 'README.md'));
-  if (options.trustRootsPath) {
+  const trustRootsPath = options.trustRootsPath || (existsSync(defaultTrustRootsPath) ? defaultTrustRootsPath : '');
+  if (trustRootsPath) {
     await mkdir(join(root, 'trust'), { recursive: true });
-    await cp(options.trustRootsPath, join(root, 'trust', 'update-roots.json'));
+    await cp(trustRootsPath, join(root, 'trust', 'update-roots.json'));
   }
 
   if (osName === 'windows') {
