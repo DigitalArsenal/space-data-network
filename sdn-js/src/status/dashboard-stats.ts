@@ -1,7 +1,7 @@
 /**
  * Dashboard stats view model.
  *
- * Decodes a size-prefixed `DashboardStatsSet` FlatBuffer (file identifier
+ * Decodes a size-prefixed `NDS` FlatBuffer (file identifier
  * `$NDS`) into a plain, JSON-friendly view model. The node builds these frames
  * on a background lane and serves them from RAM at
  * `GET /api/v1/dashboard/stats`, and pushes the same bytes on `/ws/status`
@@ -15,7 +15,7 @@
 
 import * as flatbuffers from 'flatbuffers';
 
-import { DashboardIngestEventKind, DashboardStatsSet } from './generated/nst.js';
+import { NDS, ndsIngestEventKind } from './generated/nst/main.js';
 
 /** One schema's record footprint in the node's store. */
 export interface DashboardSchemaStatView {
@@ -82,6 +82,10 @@ export interface DashboardStatsView {
   asOf: number;
   totalRecords: number;
   totalBytes: number;
+  /** Bytes available on the node data-store volume; 0 = unknown. */
+  storageFreeBytes: number;
+  /** Total bytes on the node data-store volume; 0 = unknown. */
+  storageCapacityBytes: number;
   schemas: DashboardSchemaStatView[];
   sources: DashboardSourceStatView[];
   events: DashboardIngestEventView[];
@@ -105,13 +109,13 @@ export function isDashboardStatsFrame(bytes: Uint8Array): boolean {
 }
 
 /**
- * Decode size-prefixed `DashboardStatsSet` bytes into the plain view model.
+ * Decode size-prefixed `NDS` bytes into the plain view model.
  *
  * @throws if the bytes are not a valid size-prefixed `$NDS` buffer.
  */
 export function decodeDashboardStats(frame: Uint8Array): DashboardStatsView {
   const buffer = new flatbuffers.ByteBuffer(frame);
-  const set = DashboardStatsSet.getSizePrefixedRootAsDashboardStatsSet(buffer);
+  const set = NDS.getSizePrefixedRootAsNDS(buffer);
 
   const schemas: DashboardSchemaStatView[] = [];
   const schemaCount = set.schemasLength();
@@ -181,6 +185,8 @@ export function decodeDashboardStats(frame: Uint8Array): DashboardStatsView {
     asOf: Number(set.AS_OF()),
     totalRecords: Number(set.TOTAL_RECORDS()),
     totalBytes: Number(set.TOTAL_BYTES()),
+    storageFreeBytes: Number(set.STORAGE_FREE_BYTES()),
+    storageCapacityBytes: Number(set.STORAGE_CAPACITY_BYTES()),
     schemas,
     sources,
     events,
@@ -188,11 +194,11 @@ export function decodeDashboardStats(frame: Uint8Array): DashboardStatsView {
   };
 }
 
-function dashboardEventKind(kind: DashboardIngestEventKind): DashboardIngestEventKindView {
+function dashboardEventKind(kind: ndsIngestEventKind): DashboardIngestEventKindView {
   switch (kind) {
-    case DashboardIngestEventKind.Reject:
+    case ndsIngestEventKind.Reject:
       return 'reject';
-    case DashboardIngestEventKind.Recover:
+    case ndsIngestEventKind.Recover:
       return 'recover';
     default:
       return 'stall';
