@@ -42,23 +42,19 @@ Space Data Network enables real-time sharing of space situational awareness data
 
 ## Current UI Surfaces
 
-- `/` on a Kubo-integrated or production SDN node serves the **SDN Node
-  Console** from `kubo/sdn/sdnui/assets`. Its rail exposes Node, Peers, Data,
-  Channels, Apps, and Modules, backed by the node's `/sdn/v1` API.
-- `/apps/` on the standalone service is the installed-app launcher, with
-  application pages such as `/apps/conjunction/`. Kubo also exposes installed
-  application records and pages below `/sdn/v1/apps/`.
-- `/login` is the **legacy wallet-bootstrap surface** (wallet creation and
-  first-admin bootstrap for operators).
-- `/webui` is the upstream-style IPFS WebUI (unchanged).
-- `/admin` is reserved for admin and auth flows.
-
-The standalone `sdn-server` listener can still serve the embedded conjunction
-application at its own `/` route. Production reverse-proxy configuration must
-not use that sidecar root as a replacement for the Kubo SDN Node Console:
-normal public `/`, `/index.html`, and the console's exact assets route to the
-Kubo console, while `/apps/`, wallet, and application API fallbacks remain on
-the standalone service.
+- `/` serves the node dashboard, embedded in the binary: Watchfloor,
+  Identity, Sources, Store, Accounts, Data and Streams. Every dashboard
+  payload is a Space Data Standards FlatBuffer frame; record rows arrive as
+  size-prefixed streams and are queried in the browser by the same FlatSQL
+  engine the node runs.
+- `/apps/` is the installed-app launcher, with application pages such as
+  `/apps/conjunction/`.
+- `/login` is the wallet sign-in surface; `/wallet-ui/*` and `/wallet-wasm/*`
+  serve it same-origin.
+- `/webui` proxies the IPFS WebUI; `/ipfs/*` serves content this node holds.
+- `/docs` is the node's own documentation, version-exact, shipped in the binary.
+- `/health` and `/ready` are the liveness and readiness probes; `/metrics` is
+  Prometheus text for operators.
 
 The SDN browser path uses `sdn-js` plus the generic async capability surfaces from `space-data-module-sdk` and the existing `hd-wallet-wasm` and `hd-wallet-ui` identity stack. It uses direct SDN APIs and browser-safe package exports without a helper service.
 
@@ -418,7 +414,7 @@ SDN extends IPFS with space-specific optimizations:
 - FlatBuffers for zero-copy performance
 - Schema-validated data (Space Data Standards + OrbPro control schemas)
 - Topic-per-schema PubSub
-- SQLite storage with FlatBuffer virtual tables
+- FlatSQL storage: a FlatBuffer-native SQL engine over stream files on disk
 
 ---
 
@@ -467,7 +463,7 @@ npm run test:module-delivery
 | `internal/sds` | FlatBuffer builders for all SDS schemas with fluent API |
 | `internal/vcard` | EPM to vCard/QR code bidirectional conversion |
 | `internal/pubsub` | PubSub topics and PNM-based tip/queue system |
-| `internal/storage` | SQLite storage with FlatBuffer support |
+| `internal/storage` | FlatSQL storage: records, index and journal on disk |
 
 ---
 
@@ -611,7 +607,7 @@ CelesTrak provider / full node                  Browser, core node, archive node
 ### FlatSQL Storage
 
 FlatBuffer bytes are stored in FlatSQL stream files under the node data
-directory. SQLite schema tables are canonical SDS names such as `OMM`, `MPE`,
+directory. FlatSQL tables are canonical SDS names such as `OMM`, `MPE`,
 `CAT`, and `SPW`, and store only metadata needed to locate the bytes: `cid`,
 `peer_id`, `timestamp`, `stream_path`, `stream_offset`, `record_length`, and
 `signature_hex`. Source/provenance rows are keyed by provider, source, batch,
