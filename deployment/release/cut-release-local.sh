@@ -150,6 +150,16 @@ if [[ ",$targets," == *",darwin-arm64,"* && "$(uname -sm)" == "Darwin arm64" ]];
   rm -rf "$smoke"
 fi
 
+for linux_arch in amd64 arm64; do
+  if [[ ",$targets," == *",linux-${linux_arch},"* ]] && command -v docker >/dev/null; then
+    b="spacedatanetwork-${version}-linux-${linux_arch}"
+    log "smoke (linux/${linux_arch} in a clean Debian container)"
+    docker run --rm --platform "linux/${linux_arch}" -v "$dist/out:/rel:ro" debian:bookworm-slim sh -c \
+      "set -e; mkdir -p /tmp/s && tar -xzf /rel/${b}.tar.gz -C /tmp/s && /tmp/s/${b}/bin/spacedatanetwork version | head -1 && test -f /tmp/s/${b}/trust/update-roots.json && /tmp/s/${b}/runtime/kubo/ipfs version && test -f /tmp/s/${b}/runtime/ui/wallet-ui/compat/index.js" \
+      | sed 's/^/[cut-release]   /'
+  fi
+done
+
 # --- publish -----------------------------------------------------------------
 if [[ "$publish" == 1 ]]; then
   log "publishing GitHub pre-release ${tag} (target ${short})"
