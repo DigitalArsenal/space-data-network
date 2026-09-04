@@ -18,8 +18,8 @@ Please be respectful and constructive in all interactions. We're building infras
 
 ```bash
 # Clone the repository
-git clone https://github.com/DigitalArsenal/go-space-data-network.git
-cd go-space-data-network
+git clone https://github.com/DigitalArsenal/space-data-network.git
+cd space-data-network
 
 # Install Go dependencies
 cd sdn-server
@@ -83,7 +83,7 @@ docs(readme): update installation instructions
 ## Project Structure
 
 ```
-go-space-data-network/
+space-data-network/
 ├── sdn-server/           # Go server implementation
 │   ├── cmd/              # Command-line applications
 │   ├── internal/         # Internal packages
@@ -148,7 +148,7 @@ See [Agents.md](./Agents.md) for the full implementation roadmap.
 
 ## Questions?
 
-- Open a [GitHub Discussion](https://github.com/DigitalArsenal/go-space-data-network/discussions)
+- Open a [GitHub Discussion](https://github.com/DigitalArsenal/space-data-network/discussions)
 - Review existing documentation at [spacedatanetwork.org](https://spacedatanetwork.org/)
 
 ## License
