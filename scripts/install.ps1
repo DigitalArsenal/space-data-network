@@ -81,9 +81,9 @@ function Get-SdnArch {
 
 function Select-NodeReleaseTag {
   param([object[]]$Releases)
+  # Newest node release (v<digit>... tags, GitHub's newest-first order), never
+  # an sdn-js library tag; the prerelease flag is not consulted.
   $node = @($Releases | Where-Object { $_.tag_name -match '^v\d' -and -not $_.draft })
-  $stable = @($node | Where-Object { -not $_.prerelease })
-  if ($stable.Count -gt 0) { return $stable[0].tag_name }
   if ($node.Count -gt 0) { return $node[0].tag_name }
   return $null
 }
@@ -97,7 +97,7 @@ function Get-SdnVersion {
   Write-Info 'Fetching latest version...'
   # The repository also publishes library releases (sdn-js-v*), which
   # GitHub's latest-release endpoint happily returns; the node's own releases are the
-  # v<semver> tags. A stable node release wins; else the newest pre-release.
+  # v<semver> tags, newest first.
   $releases = @(Invoke-RestMethodCompat "https://api.github.com/repos/$Repo/releases?per_page=50")
   $tag = Select-NodeReleaseTag $releases
   if (-not $tag) {

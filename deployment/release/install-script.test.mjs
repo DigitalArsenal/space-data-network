@@ -108,7 +108,9 @@ test('install script resolves the newest node release, never an sdn-js library t
   assert.ok(selectorSource, 'select_node_release_tag is defined in scripts/install.sh');
   assert.doesNotMatch(script, /releases\/latest/);
   assert.equal(selectTag([rel('sdn-js-v3.0.0', false), rel('sdn-js-v2.9.0', false), rel('v1.0.3-beta.17', true), rel('v1.0.3-beta.16', true)]), 'v1.0.3-beta.17');
-  assert.equal(selectTag([rel('sdn-js-v3.0.0', false), rel('v1.0.5-beta.1', true), rel('v1.0.4', false), rel('v1.0.3-beta.17', true)]), 'v1.0.4');
+  // The newest node release wins whatever its prerelease flag: the June betas
+  // were labelled stable, and a new beta must still be what installs.
+  assert.equal(selectTag([rel('sdn-js-v3.0.0', false), rel('v1.0.4-beta.18', true), rel('v1.0.3-beta.17', false), rel('v1.0.3-beta.16', false)]), 'v1.0.4-beta.18');
   assert.equal(selectTag([rel('sdn-js-v3.0.0', false)]), '');
 });
 
@@ -117,4 +119,5 @@ test('PowerShell installer resolves the newest node release the same way', () =>
   assert.doesNotMatch(ps, /releases\/latest/);
   assert.match(ps, /function Select-NodeReleaseTag/);
   assert.match(ps, /tag_name -match '\^v\\d'/);
+  assert.doesNotMatch(ps, /prerelease \}/);
 });

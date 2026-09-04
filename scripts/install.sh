@@ -130,23 +130,13 @@ detect_platform() {
 }
 
 # select_node_release_tag reads a GitHub releases list (JSON) on stdin and
-# prints the tag of the newest node release: a tag of the form v<digit>...,
-# never the sdn-js-v* library tags. A stable (non-prerelease) node release
-# wins; when the node only has pre-releases, the newest pre-release is used.
-# GitHub lists releases newest first and, within one release object, emits
-# tag_name before prerelease, so a line-oriented pass suffices without jq.
+# prints the tag of the newest node release: the first tag of the form
+# v<digit>... in GitHub's newest-first order, never the sdn-js-v* library
+# tags. The prerelease flag is not consulted: this repository has labelled
+# every node beta both ways over time, and the newest build is what the
+# installer must resolve. Pin an older build with SDN_VERSION.
 select_node_release_tag() {
-    grep -oE '"(tag_name|prerelease)": *("[^"]*"|true|false)' | awk '
-        /"tag_name"/ { sub(/^"tag_name": *"/, ""); sub(/"$/, ""); tag = $0; next }
-        /"prerelease"/ {
-            if (tag ~ /^v[0-9]/) {
-                if ($0 ~ /false/) { if (stable == "") stable = tag }
-                else if (pre == "") pre = tag
-            }
-            tag = ""
-        }
-        END { if (stable != "") print stable; else if (pre != "") print pre }
-    '
+    grep -oE '"tag_name": *"[^"]*"' | sed -E 's/^"tag_name": *"//; s/"$//' | grep -E '^v[0-9]' | head -n 1
 }
 
 get_latest_version() {
@@ -156,8 +146,8 @@ get_latest_version() {
     else
         log_info "Fetching latest version..."
         # The repository also publishes library releases (sdn-js-v*), which
-        # GitHub's latest-release endpoint happily returns; the node's own releases
-        # are the v<semver> tags, and today they are all pre-releases.
+        # GitHub's latest-release endpoint may return; the node's own releases
+        # are the v<semver> tags, newest first.
         VERSION=$(fetch_url_stdout "https://api.github.com/repos/${REPO}/releases?per_page=50" | select_node_release_tag)
 
         if [ -z "$VERSION" ]; then
