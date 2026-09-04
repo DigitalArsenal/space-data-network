@@ -152,6 +152,9 @@ type OwnListing struct {
 	PNMCID      string      `json:"pnm_cid,omitempty"`
 	DPMCID      string      `json:"dpm_cid,omitempty"`
 	UpdatedAt   string      `json:"updated_at"`
+	// The publisher's recommended subscription rule (ReplaceCurrent |
+	// ArchiveAll), IDL capitalization like the listing's own JSON.
+	RecommendedRetention string `json:"RECOMMENDED_RETENTION"`
 }
 
 type OwnListingResult struct {
@@ -286,7 +289,8 @@ func (s *Store) OwnListings(ctx context.Context, providerPeerID string) ([]OwnLi
 		SELECT l.listing_id, l.listing_kind, l.title, l.description, l.data_types,
 		       l.active, l.updated_at,
 		       COALESCE(NULLIF(p.stf_cid, ''), l.cid, ''),
-		       COALESCE(p.pnm_cid, ''), COALESCE(p.dpm_cid, '')
+		       COALESCE(p.pnm_cid, ''), COALESCE(p.dpm_cid, ''),
+		       COALESCE(l.recommended_retention, '')
 		FROM storefront_listings l
 		LEFT JOIN storefront_listing_publications p ON p.listing_id = l.listing_id
 		WHERE l.provider_peer_id = ? AND COALESCE(l.source_peer_id, '') = ''
@@ -305,9 +309,11 @@ func (s *Store) OwnListings(ctx context.Context, providerPeerID string) ([]OwnLi
 		if err := rows.Scan(
 			&item.ListingID, &item.ListingKind, &item.Title, &item.Description,
 			&dataTypesJSON, &item.Active, &updatedAt, &item.STFCID, &item.PNMCID, &item.DPMCID,
+			&item.RecommendedRetention,
 		); err != nil {
 			return nil, fmt.Errorf("scan current listing: %w", err)
 		}
+		item.RecommendedRetention = retentionPolicyWord(item.RecommendedRetention)
 		_ = json.Unmarshal([]byte(dataTypesJSON), &item.DataTypes)
 		if item.DataTypes == nil {
 			item.DataTypes = []string{}

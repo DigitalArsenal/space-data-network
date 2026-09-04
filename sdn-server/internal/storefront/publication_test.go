@@ -122,6 +122,122 @@ func TestPublishListingRoundTripDualFormatAndTamper(t *testing.T) {
 	}
 }
 
+// TestPublishListingRecommendedRetention: a DataStream draft that recommends
+// ArchiveAll publishes under both signatures, reads back the word from JSON,
+// from the index and from the $STF bytes; a listing under the default rule
+// writes no RECOMMENDED_RETENTION key to its canonical JSON (so every
+// signature minted before the field existed keeps verifying); an unknown word
+// and a non-default rule on a non-data listing are refused.
+func TestPublishListingRecommendedRetention(t *testing.T) {
+	service, publicKey := publicationTestService(t)
+
+	draft := validPublicationDraft("DataStream")
+	draft.RecommendedRetention = "ArchiveAll"
+	report, err := service.PublishListingDraft(context.Background(), draft)
+	if err != nil {
+		t.Fatalf("PublishListingDraft(ArchiveAll): %v", err)
+	}
+	if report.Listing == nil || report.Listing.RecommendedRetention != "ArchiveAll" {
+		t.Fatalf("report listing = %+v", report.Listing)
+	}
+	publication, err := service.store.GetListingPublication(report.ListingID)
+	if err != nil || publication == nil {
+		t.Fatalf("GetListingPublication: %v, %+v", err, publication)
+	}
+	if err := VerifySTFBytes(publication.STFBytes, publicKey); err != nil {
+		t.Fatalf("FlatBuffer verification: %v", err)
+	}
+	if err := VerifyCanonicalSTFJSON(publication.CanonicalJSON, publicKey); err != nil {
+		t.Fatalf("canonical JSON verification: %v", err)
+	}
+	if !bytes.Contains(publication.CanonicalJSON, []byte(`"RECOMMENDED_RETENTION":"ArchiveAll"`)) {
+		t.Fatalf("canonical JSON lacks the rule: %s", publication.CanonicalJSON)
+	}
+	decoded, err := decodeListingRecord(publication.STFBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.RecommendedRetention != "ArchiveAll" {
+		t.Fatalf("STF bytes RECOMMENDED_RETENTION = %q", decoded.RecommendedRetention)
+	}
+	stored, err := service.store.GetListing(report.ListingID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetListing: %v, %+v", err, stored)
+	}
+	if stored.RecommendedRetention != "ArchiveAll" {
+		t.Fatalf("stored RECOMMENDED_RETENTION = %q", stored.RecommendedRetention)
+	}
+	asJSON, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(asJSON, []byte(`"RECOMMENDED_RETENTION":"ArchiveAll"`)) {
+		t.Fatalf("listing JSON lacks the IDL key: %s", asJSON)
+	}
+	own, err := service.OwnListings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundOwn := false
+	for _, item := range own.Listings {
+		if item.ListingID == report.ListingID {
+			foundOwn = true
+			if item.RecommendedRetention != "ArchiveAll" {
+				t.Fatalf("own listing RECOMMENDED_RETENTION = %q", item.RecommendedRetention)
+			}
+		}
+	}
+	if !foundOwn {
+		t.Fatal("own listings omit the published listing")
+	}
+
+	// The default rule: no key in the canonical JSON, ReplaceCurrent on read.
+	plain, err := service.PublishListingDraft(context.Background(), validPublicationDraft("DataStream"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainPublication, err := service.store.GetListingPublication(plain.ListingID)
+	if err != nil || plainPublication == nil {
+		t.Fatalf("GetListingPublication: %v, %+v", err, plainPublication)
+	}
+	if bytes.Contains(plainPublication.CanonicalJSON, []byte("RECOMMENDED_RETENTION")) {
+		t.Fatalf("default rule wrote a RECOMMENDED_RETENTION key: %s", plainPublication.CanonicalJSON)
+	}
+	if err := VerifyCanonicalSTFJSON(plainPublication.CanonicalJSON, publicKey); err != nil {
+		t.Fatalf("default-rule canonical JSON verification: %v", err)
+	}
+	if err := VerifySTFBytes(plainPublication.STFBytes, publicKey); err != nil {
+		t.Fatalf("default-rule FlatBuffer verification: %v", err)
+	}
+	plainStored, err := service.store.GetListing(plain.ListingID)
+	if err != nil || plainStored == nil {
+		t.Fatalf("GetListing: %v, %+v", err, plainStored)
+	}
+	if plainStored.RecommendedRetention != "ReplaceCurrent" {
+		t.Fatalf("default rule reads %q, want ReplaceCurrent", plainStored.RecommendedRetention)
+	}
+
+	// Refusals.
+	bad := validPublicationDraft("DataStream")
+	bad.RecommendedRetention = "KeepForever"
+	if _, err := service.PublishListingDraft(context.Background(), bad); err == nil || !strings.Contains(err.Error(), "RECOMMENDED_RETENTION must be ReplaceCurrent or ArchiveAll") {
+		t.Fatalf("unknown word published: %v", err)
+	}
+	for _, kind := range []string{"WasmModule", "Service"} {
+		wrong := validPublicationDraft(kind)
+		wrong.PrimaryCategory = "UNSPECIFIED"
+		wrong.Categories = nil
+		wrong.RecommendedRetention = "ArchiveAll"
+		if _, err := service.PublishListingDraft(context.Background(), wrong); err == nil || !strings.Contains(err.Error(), "only valid for DataStream listings") {
+			t.Fatalf("%s with ArchiveAll published: %v", kind, err)
+		}
+		wrong.RecommendedRetention = "ReplaceCurrent"
+		if _, err := service.PublishListingDraft(context.Background(), wrong); err != nil {
+			t.Fatalf("%s with the default rule refused: %v", kind, err)
+		}
+	}
+}
+
 func TestListingPNMResolvesSTFAndVerifies(t *testing.T) {
 	service, publicKey := publicationTestService(t)
 	report, err := service.PublishListingDraft(context.Background(), validPublicationDraft("Service"))

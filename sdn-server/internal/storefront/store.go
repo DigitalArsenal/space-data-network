@@ -130,6 +130,7 @@ func (s *Store) initTables() error {
 			categories TEXT DEFAULT '[]',
 			primary_category TEXT DEFAULT '',
 			canonical_json_signature BLOB,
+			recommended_retention TEXT DEFAULT '',
 			UNIQUE(listing_id)
 		);
 		CREATE INDEX IF NOT EXISTS idx_listings_provider ON storefront_listings(provider_peer_id);
@@ -150,6 +151,7 @@ func (s *Store) initTables() error {
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN categories TEXT DEFAULT '[]'`)
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN primary_category TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN canonical_json_signature BLOB`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN recommended_retention TEXT DEFAULT ''`)
 
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS storefront_listing_publications (
@@ -611,6 +613,9 @@ func (s *Store) CreateListing(listing *Listing) error {
 	// so the field is cleared before encoding and re-derived from the catalog
 	// join on the way out. Without this, self-classification would be one
 	// forged JSON key away.
+	//
+	// RECOMMENDED_RETENTION is the opposite case: the publisher declares it
+	// (it is a recommendation, not a derived fact), so it is kept as given.
 	listing.PrimaryCategory = ""
 
 	// Store canonical record through FlatSQL (content-addressed)
@@ -703,8 +708,9 @@ func (s *Store) indexListingLocked(listing *Listing, cid string) error {
 			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
 			active, expires_at, terms_cid, license, signature, source_peer_id,
-			source_connector_id, categories, primary_category, canonical_json_signature
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			source_connector_id, categories, primary_category, canonical_json_signature,
+			recommended_retention
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		listing.ListingID, cid, listing.ListingKind, listing.ProviderPeerID, listing.ProviderEPMCID,
 		listing.Title, listing.Description,
@@ -717,6 +723,7 @@ func (s *Store) indexListingLocked(listing *Listing, cid string) error {
 		listing.Version, listing.Active, listing.ExpiresAt.Unix(),
 		listing.TermsCID, listing.License, listing.Signature, listing.SourcePeerID,
 		listing.SourceConnectorID, string(categoriesJSON), listing.PrimaryCategory, listing.CanonicalJSONSig,
+		retentionPolicyWord(listing.RecommendedRetention),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to index listing: %w", err)
@@ -806,7 +813,8 @@ func (s *Store) GetListing(listingID string) (*Listing, error) {
 			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
 			active, expires_at, terms_cid, license, signature, source_peer_id,
-			source_connector_id, categories, primary_category, canonical_json_signature
+			source_connector_id, categories, primary_category, canonical_json_signature,
+			COALESCE(recommended_retention, '')
 		FROM storefront_listings WHERE listing_id = ?
 	`, listingID)
 
@@ -832,6 +840,7 @@ func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 		&listing.Active, &expiresAt,
 		&listing.TermsCID, &listing.License, &listing.Signature, &listing.SourcePeerID,
 		&listing.SourceConnectorID, &categoriesJSON, &listing.PrimaryCategory, &listing.CanonicalJSONSig,
+		&listing.RecommendedRetention,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -856,6 +865,8 @@ func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 		listing.ListingKind = ListingKindDataStream
 	}
 	s.stampPrimaryCategory(&listing)
+	// An index row older than the column reads as the default rule.
+	listing.RecommendedRetention = retentionPolicyWord(listing.RecommendedRetention)
 
 	return &listing, nil
 }
@@ -1006,7 +1017,8 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
 			active, expires_at, terms_cid, license, signature, source_peer_id,
-			source_connector_id, categories, primary_category, canonical_json_signature
+			source_connector_id, categories, primary_category, canonical_json_signature,
+			COALESCE(recommended_retention, '')
 		FROM storefront_listings WHERE %s ORDER BY %s LIMIT ? OFFSET ?
 	`, whereClause, orderBy)
 
@@ -1037,6 +1049,7 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 			&listing.Active, &expiresAt,
 			&listing.TermsCID, &listing.License, &listing.Signature, &listing.SourcePeerID,
 			&listing.SourceConnectorID, &categoriesJSON, &listing.PrimaryCategory, &listing.CanonicalJSONSig,
+			&listing.RecommendedRetention,
 		)
 		if err != nil {
 			log.Warnf("Failed to scan listing row: %v", err)
@@ -1059,6 +1072,7 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 			listing.ListingKind = ListingKindDataStream
 		}
 		s.stampPrimaryCategory(&listing)
+		listing.RecommendedRetention = retentionPolicyWord(listing.RecommendedRetention)
 
 		listings = append(listings, listing)
 	}

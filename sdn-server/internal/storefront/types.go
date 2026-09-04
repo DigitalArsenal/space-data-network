@@ -1,6 +1,7 @@
 package storefront
 
 import (
+	"strings"
 	"time"
 )
 
@@ -221,6 +222,30 @@ type Listing struct {
 	// IDL capitalization, per the SDS JSON key rule: this key mirrors a record
 	// field, not a synthesized one.
 	PrimaryCategory string `json:"PRIMARY_CATEGORY"`
+
+	// RecommendedRetention is the publisher's recommended subscription rule
+	// for a data-stream listing — the same word encodeListingRecord writes to
+	// STF.RECOMMENDED_RETENTION (ReplaceCurrent | ArchiveAll), so the JSON a
+	// client reads and the FlatBuffer a peer verifies say one thing.
+	//
+	// Unlike PRIMARY_CATEGORY this field IS declared by the publisher: a
+	// subscriber pre-fills its own $DSS.RETENTION choice from it and keeps its
+	// own rule. ReplaceCurrent is the default (ordinal 0, absent from the
+	// vtable), so every listing signed before the field existed reads as
+	// ReplaceCurrent and re-encodes byte-identically.
+	//
+	// IDL capitalization, per the SDS JSON key rule.
+	RecommendedRetention string `json:"RECOMMENDED_RETENTION"`
+}
+
+// retentionPolicyWord normalises a RECOMMENDED_RETENTION word: "" and any word
+// that is not a member of $STF.stfRetentionPolicy read as the default,
+// ReplaceCurrent; ArchiveAll is kept.
+func retentionPolicyWord(s string) string {
+	if strings.TrimSpace(s) == "ArchiveAll" {
+		return "ArchiveAll"
+	}
+	return "ReplaceCurrent"
 }
 
 // AccessGrant represents a data access grant (ACL)

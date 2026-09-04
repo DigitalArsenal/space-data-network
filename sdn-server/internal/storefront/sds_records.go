@@ -190,6 +190,12 @@ func encodeListingRecord(listing *Listing, moduleCategory func(string) string) [
 	if categories != 0 {
 		sdsstf.STFAddCATEGORIES(builder, categories)
 	}
+	// The publisher's recommended subscription rule. ReplaceCurrent is the
+	// enum default, and the builder omits a default scalar (PrependInt8Slot
+	// skips x == d), so a listing under the default rule — every listing
+	// signed before this field existed included — encodes byte-identically
+	// and its signature keeps verifying; only ArchiveAll adds a vtable slot.
+	sdsstf.STFAddRECOMMENDED_RETENTION(builder, sdsstf.EnumValuesstfRetentionPolicy[retentionPolicyWord(listing.RecommendedRetention)])
 	root := sdsstf.STFEnd(builder)
 	sdsstf.FinishSTFBuffer(builder, root)
 	return builder.FinishedBytes()
