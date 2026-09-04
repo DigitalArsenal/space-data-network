@@ -121,7 +121,19 @@ func (rl *rateLimiter) Allow(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // clientIP extracts the best-effort client IP from the request.
+//
+// Forwarding headers are honoured only when the direct peer is loopback —
+// a reverse proxy on this host. Anyone else can write X-Forwarded-For, and
+// trusting it from a remote peer let one caller pick its own bucket (or
+// someone else's) and walk past the per-IP limit (SEC-05).
 func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if !isLoopbackHost(host) {
+		return host
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		// Take the first (leftmost) address — that is the original client.
 		if idx := strings.Index(xff, ","); idx >= 0 {
@@ -129,9 +141,13 @@ func clientIP(r *http.Request) string {
 		}
 		return strings.TrimSpace(xff)
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
+		return real
 	}
 	return host
+}
+
+func isLoopbackHost(host string) bool {
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
 }

@@ -601,10 +601,20 @@ func TestRateLimiter_XRateLimitHeaders(t *testing.T) {
 }
 
 func TestClientIP_XForwardedFor(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-Forwarded-For", "203.0.113.1, 198.51.100.1")
-	if got := clientIP(req); got != "203.0.113.1" {
-		t.Errorf("clientIP = %q, want 203.0.113.1", got)
+	// A remote peer's X-Forwarded-For is not trusted: it keys by its own
+	// address (SEC-05). Only a loopback reverse proxy's header is honoured.
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "192.0.2.1:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.1, 10.0.0.1")
+	if ip := clientIP(req); ip != "192.0.2.1" {
+		t.Fatalf("clientIP = %q, want the remote peer's own address 192.0.2.1", ip)
+	}
+
+	proxied := httptest.NewRequest("GET", "/", nil)
+	proxied.RemoteAddr = "127.0.0.1:1234"
+	proxied.Header.Set("X-Forwarded-For", "203.0.113.1, 10.0.0.1")
+	if ip := clientIP(proxied); ip != "203.0.113.1" {
+		t.Fatalf("clientIP behind a loopback proxy = %q, want 203.0.113.1", ip)
 	}
 }
 
