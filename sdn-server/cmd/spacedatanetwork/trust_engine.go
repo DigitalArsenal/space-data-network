@@ -22,10 +22,8 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
-	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
-	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
 )
@@ -200,24 +198,19 @@ func directoryNodeSubjects(flat *storage.FlatSQLStore, selfPeerID string) func()
 	}
 }
 
-// startTrustRulesEngine loads the trust graph, starts the engine and mounts
-// the trust API (edges/scores + policies/verdicts/settings) on adminMux.
-func startTrustRulesEngine(ctx context.Context, n *node.Node, adminMux *http.ServeMux, storagePath string, requireAuth bool, resolveAuth func() *auth.Handler, bondAtt *bondAttestor) error {
+// startTrustRulesEngine starts the optional evaluator and mounts only its
+// score/policy/verdict surfaces. Baseline edges and claims are already mounted
+// by registerNodeFirstReadLanes.
+func startTrustRulesEngine(ctx context.Context, n *node.Node, adminMux *http.ServeMux, storagePath string, trustHandler *api.TrustHandler, bondAtt *bondAttestor) error {
 	flat := n.Store()
 	if flat == nil {
 		return errors.New("store is unavailable")
 	}
-	store, err := trust.NewStoreWithFlatSQL(flat)
-	if err != nil {
-		return fmt.Errorf("open trust store: %w", err)
+	if trustHandler == nil || trustHandler.Service == nil || trustHandler.Store == nil {
+		return errors.New("baseline trust lanes are unavailable")
 	}
-	graph, err := store.LoadGraph()
-	if err != nil {
-		return fmt.Errorf("load trust graph: %w", err)
-	}
-	svc := trust.NewService(graph, nil)
+	svc := trustHandler.Service
 	peerID := n.PeerID().String()
-	svc.TrackEvaluator(peerID)
 
 	key, err := storefrontSigningKeyFromRaw(n.SigningKey())
 	if err != nil {
@@ -251,46 +244,12 @@ func startTrustRulesEngine(ctx context.Context, n *node.Node, adminMux *http.Ser
 	}
 	go engine.Run(ctx)
 
-	h := api.NewTrustHandler(svc)
-	h.Store = store
-	h.Events = &trust.EventPublisher{SenderPriv: key, Publish: publish}
-	h.ResolveEPM = func(peerID string) []byte { return heldNodeEPM(n, peerID) }
-	h.Policies = policies
-	h.Verdicts = verdicts
-	h.Engine = engine
-	h.SaveInterval = func(ms uint32) error { return saveTrustSettings(storagePath, ms) }
-	h.Protect = func(inner http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if requireAuth {
-				var handler *auth.Handler
-				if resolveAuth != nil {
-					handler = resolveAuth()
-				}
-				if handler == nil {
-					http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
-					return
-				}
-				if !handler.RequireTrust(w, r, peers.Admin) {
-					return
-				}
-			}
-			inner(w, r)
-		}
-	}
-	h.RegisterRoutes(adminMux)
-
-	claims := api.NewClaimsHandler(api.ClaimsHandlerOptions{
-		SelfPeerID: peerID,
-		SigningKey: key,
-		Store:      api.NewFlatSQLClaimFrameStore(flat),
-		ResolveEPM: func(claimant string) []byte { return heldNodeEPM(n, claimant) },
-		Trusted: func(claimant string) bool {
-			status, ok := svc.Status(peerID, claimant)
-			return ok && status.Trusted
-		},
-		Protect: h.Protect,
-	})
-	claims.RegisterRoutes(adminMux)
+	trustHandler.Events = &trust.EventPublisher{SenderPriv: key, Publish: publish}
+	trustHandler.Policies = policies
+	trustHandler.Verdicts = verdicts
+	trustHandler.Engine = engine
+	trustHandler.SaveInterval = func(ms uint32) error { return saveTrustSettings(storagePath, ms) }
+	trustHandler.RegisterEngineRoutes(adminMux)
 	log.Infof("Trust rules engine started (evaluator %s, interval override %d ms)", peerID, engine.IntervalOverride())
 	return nil
 }

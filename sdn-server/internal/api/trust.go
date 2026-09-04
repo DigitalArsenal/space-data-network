@@ -21,6 +21,7 @@ package api
 // persist.
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -31,9 +32,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
 )
+
+// TrustPeerRegistry is the direct trust projection shared with the legacy
+// peer-management API. Keeping it as a small interface makes the frame lane
+// independently testable and prevents trust state from diverging between the
+// two operator surfaces.
+type TrustPeerRegistry interface {
+	ListPeers() []*peers.TrustedPeer
+	SetTrustLevel(peer.ID, peers.TrustLevel) error
+	IsTrusted(peer.ID) bool
+}
 
 // TrustHandler exposes the trust subsystem over the node HTTP API.
 type TrustHandler struct {
@@ -48,6 +62,13 @@ type TrustHandler struct {
 	// ResolveEPM returns the held signed profile for a TRE provider. POST uses
 	// its Signing keys to verify PROVIDER_SIGNATURE before changing the graph.
 	ResolveEPM func(peerID string) []byte
+	// SelfPeerID and SigningKey let an authenticated operator submit an
+	// unsigned local edge. The node fills the signer fields and signs the same
+	// canonical payload used for presigned network records.
+	SelfPeerID   string
+	SigningKey   ed25519.PrivateKey
+	PeerRegistry TrustPeerRegistry
+	Now          func() time.Time
 
 	// Policies, Verdicts and Engine wire the `$TRP` rules engine
 	// (sdn-trust-rules-engine). nil = the rules surface answers 503.
@@ -63,25 +84,42 @@ type TrustHandler struct {
 
 // NewTrustHandler creates a handler over a trust service.
 func NewTrustHandler(svc *trust.Service) *TrustHandler {
-	return &TrustHandler{Service: svc}
+	return &TrustHandler{Service: svc, Now: time.Now}
 }
 
 // RegisterRoutes registers the trust API routes.
 func (h *TrustHandler) RegisterRoutes(mux *http.ServeMux) {
+	h.RegisterEdgeRoutes(mux)
+	h.RegisterEngineRoutes(mux)
+}
+
+// RegisterEdgeRoutes mounts the node-first $TRE lane independently of the
+// optional trust rules engine.
+func (h *TrustHandler) RegisterEdgeRoutes(mux *http.ServeMux) {
 	protect := h.Protect
 	if protect == nil {
 		protect = func(f http.HandlerFunc) http.HandlerFunc { return f }
 	}
+	h.protectFn = protect
+	mux.HandleFunc("/api/v1/trust/edges", h.handleEdges)
+}
+
+// RegisterEngineRoutes mounts the evaluator/rules surfaces that only exist
+// when the optional trust engine starts. The edge lane is deliberately absent
+// here because RegisterEdgeRoutes already mounted it during baseline node
+// setup.
+func (h *TrustHandler) RegisterEngineRoutes(mux *http.ServeMux) {
+	protect := h.Protect
+	if protect == nil {
+		protect = func(f http.HandlerFunc) http.HandlerFunc { return f }
+	}
+	h.protectFn = protect
 	mux.HandleFunc("/api/v1/trust/score", h.handleScore)
 	mux.HandleFunc("/api/v1/trust/statuses", h.handleStatuses)
 	mux.HandleFunc("/api/v1/trust/rank", h.handleRank)
 	mux.HandleFunc("/api/v1/trust/neighborhood", h.handleNeighborhood)
 	mux.HandleFunc("/api/v1/trust/query", h.handleQuery)
-	// GET is a public signed-record lane. handleEdges applies protect only to
-	// POST/DELETE so the read cannot accidentally inherit the mutation gate.
-	mux.HandleFunc("/api/v1/trust/edges", h.handleEdges)
 	mux.HandleFunc("/api/v1/trust/funds", protect(h.handleFunds))
-	h.protectFn = protect
 	// Rules engine: policies and verdicts read openly (a policy is the
 	// evaluator's published rule; a verdict is its signed public opinion),
 	// mutations and settings behind the same admin gate as edges.
@@ -331,7 +369,28 @@ func (h *TrustHandler) protectMutation(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (h *TrustHandler) handleEdgeFrames(w http.ResponseWriter) {
-	frames := make([][]byte, 0)
+	recordsByID := make(map[string]trust.EdgeRecord)
+	// A service-only handler (unit tests and older embedders) still exposes its
+	// graph. Production also has Store and PeerRegistry, whose fuller durable
+	// projections below replace duplicates by stable EDGE_ID.
+	if h.Service != nil && h.Service.Evaluator() != nil && h.Service.Evaluator().Graph != nil {
+		for _, edge := range h.Service.Evaluator().Graph.Edges() {
+			record := trust.EdgeRecord{
+				EdgeID:         trust.EdgeRecordID(edge.Truster, edge.Trustee),
+				Edge:           edge,
+				ProviderPeerID: edge.Truster,
+			}
+			recordsByID[record.EdgeID] = record
+		}
+	}
+	// The peer registry is the source of truth for direct operator trust and
+	// config trusted peers. Project each positive marginal/full assignment as
+	// this node's weight-1 edge, timestamped at the peer's original AddedAt.
+	for _, known := range h.registryEdgeRecords() {
+		if _, exists := recordsByID[known.EdgeID]; !exists {
+			recordsByID[known.EdgeID] = known
+		}
+	}
 	if h.Store != nil {
 		records, err := h.Store.EdgeRecords()
 		if err != nil {
@@ -339,25 +398,58 @@ func (h *TrustHandler) handleEdgeFrames(w http.ResponseWriter) {
 			return
 		}
 		for _, record := range records {
-			frame, err := trust.EncodeEdgeFrame(record)
-			if err != nil {
-				continue
-			}
-			frames = append(frames, frame)
-		}
-	} else if h.Service != nil && h.Service.Evaluator() != nil && h.Service.Evaluator().Graph != nil {
-		for _, edge := range h.Service.Evaluator().Graph.Edges() {
-			frame, err := trust.EncodeEdgeFrame(trust.EdgeRecord{
-				EdgeID:         trust.EdgeRecordID(edge.Truster, edge.Trustee),
-				Edge:           edge,
-				ProviderPeerID: edge.Truster,
-			})
-			if err == nil {
-				frames = append(frames, frame)
-			}
+			recordsByID[record.EdgeID] = record
 		}
 	}
-	WriteFrameStream(w, http.StatusOK, frames, map[string]string{StreamSchemaHeader: "TRE.fbs"})
+	ids := make([]string, 0, len(recordsByID))
+	for id := range recordsByID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	frames := make([][]byte, 0, len(ids))
+	for _, id := range ids {
+		frame, err := trust.EncodeEdgeFrame(recordsByID[id])
+		if err == nil {
+			frames = append(frames, frame)
+		}
+	}
+	WriteFrameStream(w, http.StatusOK, frames, map[string]string{
+		StreamSchemaHeader: "TRE.fbs",
+		SelfPeerHeaderName: strings.TrimSpace(h.SelfPeerID),
+	})
+}
+
+func (h *TrustHandler) registryEdgeRecords() []trust.EdgeRecord {
+	if h == nil || h.PeerRegistry == nil || strings.TrimSpace(h.SelfPeerID) == "" {
+		return nil
+	}
+	self := strings.TrimSpace(h.SelfPeerID)
+	out := make([]trust.EdgeRecord, 0)
+	for _, known := range h.PeerRegistry.ListPeers() {
+		if known == nil || strings.TrimSpace(known.ID.String()) == "" {
+			continue
+		}
+		if known.TrustLevel != peers.Marginal && known.TrustLevel < peers.Full {
+			continue
+		}
+		record := trust.EdgeRecord{
+			EdgeID: trust.EdgeRecordID(self, known.ID.String()),
+			Edge: trust.Edge{
+				Truster:     self,
+				Trustee:     known.ID.String(),
+				Weight:      1,
+				UpdatedAtMs: known.AddedAt.UTC().UnixMilli(),
+			},
+			ProviderPeerID: self,
+		}
+		if len(h.SigningKey) == ed25519.PrivateKeySize {
+			if payload, err := trust.EdgeSigningPayload(record); err == nil {
+				record.ProviderSignature = ed25519.Sign(h.SigningKey, payload)
+			}
+		}
+		out = append(out, record)
+	}
+	return out
 }
 
 func (h *TrustHandler) handleEdgeFramePost(w http.ResponseWriter, r *http.Request) {
@@ -366,7 +458,17 @@ func (h *TrustHandler) handleEdgeFramePost(w http.ResponseWriter, r *http.Reques
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_trust_edge", "The request body must be exactly one size-prefixed $TRE frame.", 0)
 		return
 	}
-	record, err := trust.DecodeEdgeFrame(frames[0])
+	draft, err := trust.DecodeEdgeDraftFrame(frames[0])
+	if err != nil {
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_trust_edge", "The trust edge frame could not be decoded.", 0)
+		return
+	}
+	var record trust.EdgeRecord
+	if len(draft.ProviderSignature) == 0 {
+		record, err = h.signUnsignedEdge(draft)
+	} else {
+		record, err = trust.DecodeEdgeFrame(frames[0])
+	}
 	if err != nil || record.UpdatedAtMs <= 0 || record.ProviderPeerID == "" || record.ProviderPeerID != record.Truster || len(record.ProviderSignature) == 0 {
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_trust_edge", "The trust edge is missing required signer, timestamp, or signature fields.", 0)
 		return
@@ -376,6 +478,10 @@ func (h *TrustHandler) handleEdgeFramePost(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if h.Service == nil {
+		WriteErrorFrame(w, http.StatusServiceUnavailable, "trust_unavailable", "Trust edges are not available right now.", 5*time.Second)
+		return
+	}
 	var changes []trust.StatusChange
 	if record.Deleted {
 		changes, err = h.Service.RemoveEdge(record.Truster, record.Trustee)
@@ -395,9 +501,70 @@ func (h *TrustHandler) handleEdgeFramePost(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	if err := h.syncPeerRegistry(record); err != nil {
+		WriteErrorFrame(w, http.StatusInternalServerError, "peer_trust_not_updated", "The peer trust registry could not be updated.", 0)
+		return
+	}
 	h.trigger("edge-changed")
 	_ = h.fanOut(changes)
-	WriteFrameStream(w, http.StatusOK, frames, map[string]string{StreamSchemaHeader: "TRE.fbs"})
+	frame, err := trust.EncodeEdgeFrame(record)
+	if err != nil {
+		WriteErrorFrame(w, http.StatusInternalServerError, "trust_edge_encode_failed", "The trust edge could not be returned.", 0)
+		return
+	}
+	WriteFrameStream(w, http.StatusOK, [][]byte{frame}, map[string]string{StreamSchemaHeader: "TRE.fbs"})
+}
+
+func (h *TrustHandler) signUnsignedEdge(record trust.EdgeRecord) (trust.EdgeRecord, error) {
+	if h == nil || strings.TrimSpace(h.SelfPeerID) == "" || len(h.SigningKey) != ed25519.PrivateKeySize {
+		return trust.EdgeRecord{}, errors.New("this node cannot sign trust edges")
+	}
+	self := strings.TrimSpace(h.SelfPeerID)
+	if truster := strings.TrimSpace(record.Truster); truster != "" && truster != self {
+		return trust.EdgeRecord{}, errors.New("an unsigned edge cannot name another truster")
+	}
+	if provider := strings.TrimSpace(record.ProviderPeerID); provider != "" && provider != self {
+		return trust.EdgeRecord{}, errors.New("an unsigned edge cannot name another provider")
+	}
+	record.Truster = self
+	record.Trustee = strings.TrimSpace(record.Trustee)
+	record.ProviderPeerID = self
+	record.ProviderSignature = nil
+	if !record.Deleted {
+		record.Weight = 1
+	}
+	if record.EdgeID == "" {
+		record.EdgeID = trust.EdgeRecordID(self, record.Trustee)
+	}
+	now := h.Now
+	if now == nil {
+		now = time.Now
+	}
+	record.UpdatedAtMs = now().UTC().UnixMilli()
+	payload, err := trust.EdgeSigningPayload(record)
+	if err != nil {
+		return trust.EdgeRecord{}, err
+	}
+	record.ProviderSignature = ed25519.Sign(h.SigningKey, payload)
+	if !h.verifyEdgeSigner(record) {
+		return trust.EdgeRecord{}, errors.New("this node's signed profile does not verify the trust edge")
+	}
+	return record, nil
+}
+
+func (h *TrustHandler) syncPeerRegistry(record trust.EdgeRecord) error {
+	if h == nil || h.PeerRegistry == nil || strings.TrimSpace(record.Truster) != strings.TrimSpace(h.SelfPeerID) {
+		return nil
+	}
+	peerID, err := peer.Decode(strings.TrimSpace(record.Trustee))
+	if err != nil {
+		return err
+	}
+	level := peers.Full
+	if record.Deleted {
+		level = peers.Unknown
+	}
+	return h.PeerRegistry.SetTrustLevel(peerID, level)
 }
 
 func (h *TrustHandler) verifyEdgeSigner(record trust.EdgeRecord) (ok bool) {

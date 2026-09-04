@@ -84,6 +84,18 @@ func EncodeEdgeFrame(record EdgeRecord) ([]byte, error) {
 
 // DecodeEdgeFrame parses one canonical size-prefixed $TRE record.
 func DecodeEdgeFrame(frame []byte) (record EdgeRecord, err error) {
+	record, err = DecodeEdgeDraftFrame(frame)
+	if err != nil {
+		return EdgeRecord{}, err
+	}
+	return normalizeEdgeRecord(record)
+}
+
+// DecodeEdgeDraftFrame parses one size-prefixed $TRE frame without requiring
+// the signer fields. Operator clients use this form to ask the node to stamp
+// and sign its own edge; fully signed network records still pass through
+// DecodeEdgeFrame and its complete endpoint/identifier validation.
+func DecodeEdgeDraftFrame(frame []byte) (record EdgeRecord, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			record = EdgeRecord{}
@@ -106,7 +118,7 @@ func DecodeEdgeFrame(frame []byte) (record EdgeRecord, err error) {
 		ProviderPeerID:    strings.TrimSpace(string(root.PROVIDER_PEER_ID())),
 		ProviderSignature: append([]byte(nil), root.PROVIDER_SIGNATUREBytes()...),
 	}
-	return normalizeEdgeRecord(record)
+	return record, nil
 }
 
 func normalizeEdgeRecord(record EdgeRecord) (EdgeRecord, error) {

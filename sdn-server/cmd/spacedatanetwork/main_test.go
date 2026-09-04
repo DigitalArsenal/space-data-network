@@ -163,6 +163,49 @@ func TestNodeSecurityPublicAPIRequestPolicy(t *testing.T) {
 	}
 }
 
+func TestNodeFirstPublicAPILanesRegisteredWithoutTrustEngine(t *testing.T) {
+	mux := http.NewServeMux()
+	trustHandler := api.NewTrustHandler(nil)
+	claims := api.NewClaimsHandler(api.ClaimsHandlerOptions{SelfPeerID: "self"})
+	registerNodeFirstTrustAndClaimLanes(mux, trustHandler, claims)
+
+	tests := []struct {
+		path    string
+		pattern string
+	}{
+		{path: "/api/v1/trust/edges", pattern: "/api/v1/trust/edges"},
+		{path: "/api/v1/claims", pattern: "/api/v1/claims"},
+		{path: "/api/v1/claims/claim-id/verify", pattern: "/api/v1/claims/"},
+	}
+	for _, tc := range tests {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		_, pattern := mux.Handler(req)
+		if pattern != tc.pattern {
+			t.Errorf("route %s matched %q, want %q", tc.path, pattern, tc.pattern)
+		}
+	}
+}
+
+func TestNodeFirstPublicAPIClaimTrustFallsBackToPeerRegistry(t *testing.T) {
+	registry := peers.NewRegistry(false, nil)
+	peerID, err := peer.Decode("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.AddPeer(&peers.TrustedPeer{ID: peerID, TrustLevel: peers.Full}); err != nil {
+		t.Fatal(err)
+	}
+	if !peerRegistryTrusts(registry, peerID.String()) {
+		t.Fatal("full-trust claimant was not accepted by the no-engine registry fallback")
+	}
+	if err := registry.SetTrustLevel(peerID, peers.Marginal); err != nil {
+		t.Fatal(err)
+	}
+	if peerRegistryTrusts(registry, peerID.String()) {
+		t.Fatal("marginal claimant was accepted as fully trusted")
+	}
+}
+
 func TestIsAssetOIDCCapabilityRequestIsLiteralAndPOSTOnly(t *testing.T) {
 	t.Parallel()
 
