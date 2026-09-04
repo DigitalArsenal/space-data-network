@@ -539,7 +539,12 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-	} else if req.XPub != "" && !h.userStore.HasAdmin() {
+	} else if req.XPub != "" && !h.userStore.HasAdmin() && h.NodeRootIdentity() == nil {
+		// First-admin bootstrap only exists for a node with NO root identity:
+		// once the node's own HD root is bound, root sign-in is the admin path
+		// and any wallet that reaches this endpoint first must not be able to
+		// mint itself "Initial Admin" (a loopback check is no gate behind a
+		// reverse proxy, so the identity, not the address, disarms it).
 		// First-admin bootstrap is the ONE path that mints a new operator
 		// identity from whatever xpub the client presents, so it is the one
 		// path that must refuse a master key. See IsMasterXPub (xpub.go) for
@@ -705,7 +710,7 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	// Look up user trust level
 	user, err := h.userStore.GetUser(pending.xpub)
 	if (err == nil && user == nil) && pending.firstAdminBootstrap {
-		if h.userStore.HasAdmin() {
+		if h.userStore.HasAdmin() || h.NodeRootIdentity() != nil {
 			h.writeAuthenticationFailure(w)
 			return
 		}

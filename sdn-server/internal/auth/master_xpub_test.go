@@ -232,3 +232,31 @@ func TestBootstrapAcceptsOpaqueOperatorLabel(t *testing.T) {
 		t.Fatalf("verify status = %d, want %d", status, http.StatusOK)
 	}
 }
+
+// TestBootstrapDisarmedWhenRootIdentityBound: a node whose own HD root is
+// registered has an admin sign-in path already, so the first wallet to reach
+// the auth endpoint must not become "Initial Admin".
+func TestBootstrapDisarmedWhenRootIdentityBound(t *testing.T) {
+	t.Parallel()
+
+	h := newBootstrapHandler(t)
+	rootPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	h.SetNodeRootIdentity(&RootIdentity{XPub: makeXPub(t, 3), Name: "Node Root", SigningKeys: []ed25519.PublicKey{rootPub}})
+	if h.NodeRootIdentity() == nil {
+		t.Fatal("root identity did not register")
+	}
+
+	created, status := bootstrapAttempt(t, h, makeXPub(t, 3))
+	if created {
+		t.Fatal("a stranger's account xpub was written as the first admin although the node root is bound")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("verify status = %d, want %d", status, http.StatusForbidden)
+	}
+	if h.userStore.UserCount() != 0 {
+		t.Fatalf("user count = %d, want 0", h.userStore.UserCount())
+	}
+}
