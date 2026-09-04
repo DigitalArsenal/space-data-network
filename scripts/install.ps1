@@ -79,6 +79,15 @@ function Get-SdnArch {
   }
 }
 
+function Select-NodeReleaseTag {
+  param([object[]]$Releases)
+  $node = @($Releases | Where-Object { $_.tag_name -match '^v\d' -and -not $_.draft })
+  $stable = @($node | Where-Object { -not $_.prerelease })
+  if ($stable.Count -gt 0) { return $stable[0].tag_name }
+  if ($node.Count -gt 0) { return $node[0].tag_name }
+  return $null
+}
+
 function Get-SdnVersion {
   if ($env:SDN_VERSION) {
     Write-Info "Using specified version: $env:SDN_VERSION"
@@ -86,12 +95,16 @@ function Get-SdnVersion {
   }
 
   Write-Info 'Fetching latest version...'
-  $release = Invoke-RestMethodCompat "https://api.github.com/repos/$Repo/releases/latest"
-  if (-not $release.tag_name) {
-    Write-Fail 'Failed to fetch latest version'
+  # The repository also publishes library releases (sdn-js-v*), which
+  # GitHub's latest-release endpoint happily returns; the node's own releases are the
+  # v<semver> tags. A stable node release wins; else the newest pre-release.
+  $releases = @(Invoke-RestMethodCompat "https://api.github.com/repos/$Repo/releases?per_page=50")
+  $tag = Select-NodeReleaseTag $releases
+  if (-not $tag) {
+    Write-Fail "Failed to fetch latest version: no v<semver> node release found among the newest 50 releases of $Repo"
   }
-  Write-Info "Latest version: $($release.tag_name)"
-  return $release.tag_name
+  Write-Info "Latest version: $tag"
+  return $tag
 }
 
 function Normalize-SdnVersion {
