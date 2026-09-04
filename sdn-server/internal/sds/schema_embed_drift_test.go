@@ -11,8 +11,10 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/APP"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CCT"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EGP"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CNP"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/DSS"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EGP"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/ICN"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/IQC"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/LKS"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
@@ -77,6 +79,11 @@ var driftGuardedSchemas = []struct {
 	// so the embed and the binding must be provably the same authority from
 	// record zero.
 	{"EGP.fbs", &EGP.EGP{}},
+	// Subscription + connector lanes (SDS v1.210.0 retention pin): the node
+	// decodes $DSS on POST /api/v1/sync (RETENTION rides on Subscribe) and $ICN
+	// on /api/v1/connectors, so both embeds are held to the linked bindings.
+	{"DSS.fbs", &DSS.DSS{}},
+	{"ICN.fbs", &ICN.ICN{}},
 }
 
 func TestEmbeddedSchemasMatchLinkedBindings(t *testing.T) {
