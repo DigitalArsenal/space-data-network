@@ -163,7 +163,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print SDN version information",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Fprintf(cmd.OutOrStdout(), "version=%s\n", versioninfo.SuiteVersion)
+		fmt.Fprintf(cmd.OutOrStdout(), "version=%s\n", versioninfo.Version())
 		fmt.Fprintf(cmd.OutOrStdout(), "agent=%s\n", versioninfo.AgentVersion)
 		return nil
 	},
@@ -865,6 +865,17 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 	layout := bundle.ResolveCurrent()
 	applyBundleDefaults(cfg, layout)
+	if err := adminListenerSafety(cfg); err != nil {
+		return err
+	}
+	// Managed Kubo (INST-04): the bundle's Kubo runs under this daemon unless
+	// the operator named their own; the config is re-pointed at it before the
+	// node starts so every CID, pin and archive path uses it.
+	if sup, err := startManagedKubo(ctx, cfg, layout, managedKuboDataPath(cfg), log.Infof); err != nil {
+		return fmt.Errorf("managed Kubo: %w", err)
+	} else if sup != nil {
+		defer sup.Stop(15 * time.Second)
+	}
 	// Resolve empty frontend path to the built SDN Svelte UI when available,
 	// then fall back to the managed frontend directory.
 	cfg.Admin.FrontendPath = resolveFrontendPath(cfg.Admin.FrontendPath)
@@ -2182,7 +2193,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						SelfPeerID:       n.PeerID().String(),
 						SelfVCard:        selfVCard,
 						AgentVersion:     versioninfo.AgentVersion,
-						SuiteVersion:     versioninfo.SuiteVersion,
+						SuiteVersion:     versioninfo.Version(),
 						StandardsVersion: versioninfo.SpaceDataStandardsVersion,
 						Uptime:           time.Since(processStartTime),
 						Geo:              geoReader,
@@ -4530,7 +4541,7 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		info["mode"] = n.Config().Mode
 		info["version"] = versioninfo.AgentVersion
 		info["agent_version"] = versioninfo.AgentVersion
-		info["suite_version"] = versioninfo.SuiteVersion
+		info["suite_version"] = versioninfo.Version()
 		info["standards_version"] = versioninfo.SpaceDataStandardsVersion
 		info["advertisement_flag"] = versioninfo.CurrentAdvertisementFlag
 		// Peer populations, split: the raw libp2p/DHT swarm (ipfs) and the
@@ -5317,7 +5328,7 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 			Mode:              n.Config().Mode,
 			Version:           versioninfo.AgentVersion,
 			AgentVersion:      versioninfo.AgentVersion,
-			SuiteVersion:      versioninfo.SuiteVersion,
+			SuiteVersion:      versioninfo.Version(),
 			StandardsVersion:  versioninfo.SpaceDataStandardsVersion,
 			AdvertisementFlag: versioninfo.CurrentAdvertisementFlag,
 			UptimeSeconds:     int64(time.Since(processStartTime).Seconds()),
