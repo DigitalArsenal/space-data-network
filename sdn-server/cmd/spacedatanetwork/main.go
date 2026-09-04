@@ -1160,6 +1160,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// U4.2 (M2): grant issuances land in the node's activity ring.
 			channelOpts.ActivityRing = n.ActivityRing()
 			channelAPI := api.NewChannelHandlerWithOptions(n.Store(), channelOpts)
+			// Subscription retention: the node default every lane starts
+			// with (config subscriptions.default_retention).
+			channelAPI.SetDefaultRetention(cfg.Subscriptions.EffectiveDefaultRetention())
 			channelAPI.RegisterRoutes(adminMux)
 
 			// Log API routes (publication log queries)
@@ -1237,6 +1240,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				api.MountRegisteredAdmin(adminMux, adminMountDeps)
 				log.Infof("FlatBuffer admin lanes mounted at %s://%s: %s", adminScheme, adminAddr, strings.Join(api.RegisteredAdminMountNames(), ", "))
+				// Mounting the sync lane loaded the durable subscription list;
+				// from here the materializer applies each lane's retention
+				// rule, starting with one sweep over what is already held.
+				n.SetLaneRetentionResolver(channelAPI.LaneRetention)
 
 				publicationAPI := api.NewDatasetPublicationHandler(publicationService)
 				publicationAPI.RegisterRoutes(adminMux)

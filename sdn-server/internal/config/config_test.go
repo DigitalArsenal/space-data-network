@@ -404,3 +404,44 @@ func TestLoadExplicitFlowsStoragePathIsKept(t *testing.T) {
 		t.Fatalf("Flows.StoragePath = %q, want explicit %q", cfg.Flows.StoragePath, explicit)
 	}
 }
+
+func TestDefaultSubscriptionRetentionIsReplaceCurrent(t *testing.T) {
+	cfg := Default()
+	if cfg.Subscriptions.DefaultRetention != SubscriptionRetentionReplaceCurrent {
+		t.Fatalf("Default().Subscriptions.DefaultRetention = %q, want %q", cfg.Subscriptions.DefaultRetention, SubscriptionRetentionReplaceCurrent)
+	}
+	if got := (SubscriptionsConfig{}).EffectiveDefaultRetention(); got != SubscriptionRetentionReplaceCurrent {
+		t.Fatalf("an unset default_retention reads %q, want %q", got, SubscriptionRetentionReplaceCurrent)
+	}
+	if got := (SubscriptionsConfig{DefaultRetention: " Archive-All "}).EffectiveDefaultRetention(); got != SubscriptionRetentionArchiveAll {
+		t.Fatalf("EffectiveDefaultRetention(Archive-All) = %q, want %q", got, SubscriptionRetentionArchiveAll)
+	}
+}
+
+func TestLoadSubscriptionRetentionFromYAML(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("subscriptions:\n  default_retention: archive-all\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if got := cfg.Subscriptions.EffectiveDefaultRetention(); got != SubscriptionRetentionArchiveAll {
+		t.Fatalf("EffectiveDefaultRetention() = %q, want %q", got, SubscriptionRetentionArchiveAll)
+	}
+}
+
+func TestLoadRejectsAnUnknownSubscriptionRetention(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("subscriptions:\n  default_retention: forever\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("Load() accepted subscriptions.default_retention: forever")
+	}
+	if !strings.Contains(err.Error(), "subscriptions.default_retention must be replace-current or archive-all") {
+		t.Fatalf("Load() error = %q, want the retention sentence", err)
+	}
+}

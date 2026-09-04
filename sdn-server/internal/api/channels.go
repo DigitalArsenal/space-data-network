@@ -2245,6 +2245,42 @@ func datasetPublicationSourceID(providerID, sourceName string) string {
 	})
 }
 
+// SetDefaultRetention sets the retention rule a lane subscription starts
+// with (config subscriptions.default_retention).
+func (h *ChannelHandler) SetDefaultRetention(word string) {
+	if h == nil || h.subscriptions == nil {
+		return
+	}
+	h.subscriptions.SetDefaultRetention(word)
+}
+
+// LaneRetention answers the retention rule for one (schema, provider,
+// source) lane — the subscriber's choice, else the node default. schema is
+// either form ("OMM" or "OMM.fbs").
+func (h *ChannelHandler) LaneRetention(schema, providerID, sourceName string) string {
+	if h == nil || h.subscriptions == nil {
+		return channels.RetentionReplaceCurrent
+	}
+	fallback := h.subscriptions.DefaultRetention()
+	key := newLaneKey(schema, providerID, sourceName)
+	sourceID := datasetPublicationSourceID(key.providerID, key.sourceName)
+	if key.schema == "" || sourceID == "" {
+		return fallback
+	}
+	channelID, err := channels.FormatChannelID(channels.ChannelIDInput{SourceID: sourceID, StandardCode: key.code()})
+	if err != nil {
+		return fallback
+	}
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return fallback
+	}
+	if word, ok := channels.NormalizeRetention(h.subscriptions.Get(parsed).Retention); ok {
+		return word
+	}
+	return fallback
+}
+
 func channelMonitorTimings(timings map[string]int64) map[string]int64 {
 	if timings == nil {
 		return channelThroughputTimings{}.AsMilliseconds()

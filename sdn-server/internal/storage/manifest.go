@@ -96,6 +96,31 @@ type DatasetPublicationReplayResult struct {
 	Imported     int
 	QuerySHA256  string
 	ResultSHA256 string
+	// ProviderID / SourceName / BatchID name the lane and batch the
+	// publication carries (from its export index); PublishedAt is the
+	// manifest's PUBLISH_TIMESTAMP (zero when absent or unparsable). The
+	// subscription retention rule keys on them after an import.
+	ProviderID  string
+	SourceName  string
+	BatchID     string
+	PublishedAt time.Time
+}
+
+// datasetManifestPublishedAt reads the manifest's PUBLISH_TIMESTAMP as a
+// time; zero when absent or not RFC 3339.
+func datasetManifestPublishedAt(manifest *dpm.DPM) time.Time {
+	if manifest == nil {
+		return time.Time{}
+	}
+	raw := strings.TrimSpace(string(manifest.PUBLISH_TIMESTAMP()))
+	if raw == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed.UTC()
 }
 
 type DatasetPublicationManifestTrustEvidence struct {
@@ -302,6 +327,10 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 		RecordCount:  replayed.RecordCount,
 		QuerySHA256:  replayed.QuerySHA256,
 		ResultSHA256: replayed.ResultSHA256,
+		ProviderID:   filter.ProviderID,
+		SourceName:   filter.SourceName,
+		BatchID:      filter.BatchID,
+		PublishedAt:  datasetManifestPublishedAt(manifest),
 	}, nil
 }
 
@@ -382,6 +411,10 @@ func materializeDatasetPublicationFromBytes(ctx context.Context, store *FlatSQLS
 		Imported:     imported,
 		QuerySHA256:  index.QuerySHA256,
 		ResultSHA256: index.ResultSHA256,
+		ProviderID:   index.ProviderID,
+		SourceName:   index.SourceName,
+		BatchID:      index.BatchID,
+		PublishedAt:  datasetManifestPublishedAt(manifest),
 	}, nil
 }
 
@@ -421,6 +454,10 @@ func materializeDatasetPublicationFromFiles(ctx context.Context, store *FlatSQLS
 		Imported:     imported,
 		QuerySHA256:  index.QuerySHA256,
 		ResultSHA256: index.ResultSHA256,
+		ProviderID:   index.ProviderID,
+		SourceName:   index.SourceName,
+		BatchID:      index.BatchID,
+		PublishedAt:  datasetManifestPublishedAt(manifest),
 	}, nil
 }
 
