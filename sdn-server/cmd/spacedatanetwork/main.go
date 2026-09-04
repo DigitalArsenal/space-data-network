@@ -1194,6 +1194,40 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					publicationDir,
 				)
 				publicationService.SetChannelRecorder(channelAPI)
+
+				// FlatBuffer admin lanes (fbcs program): $ICN connectors,
+				// $DSS sync, export/archive. ONE deps struct from what the
+				// daemon already holds; lane files register from init().
+				// authHandler is bound later in this function, so the admin
+				// gate reads it at request time.
+				var publicationSigningKeyTyped ed25519.PrivateKey
+				if len(publicationSigningKey) == ed25519.PrivateKeySize {
+					publicationSigningKeyTyped = ed25519.PrivateKey(publicationSigningKey)
+				}
+				adminMountDeps := &api.AdminMountDeps{
+					Store:         n.Store(),
+					Config:        cfg,
+					NodePeerID:    n.PeerID().String(),
+					NodeEPMCID:    providerEPMCID,
+					SigningKey:    publicationSigningKeyTyped,
+					IPFSAPIURL:    cfg.Admin.IPFSAPIURL,
+					SourceMetrics: n.SourceMetrics(),
+					Channels:      channelAPI,
+					Publications:  publicationService,
+					RequireAdmin: func(inner http.HandlerFunc) http.HandlerFunc {
+						return func(w http.ResponseWriter, r *http.Request) {
+							gateAdminOnlyHandler(w, r, inner, authHandler, cfg.Admin.RequireAuth)
+						}
+					},
+					RunFlowNow:   runFlowServiceNow(n),
+					FlowServices: flowServiceInfos(n, cfg),
+					SyncLane:     n.SyncLane,
+					PinCID:       n.PinCID,
+					UnpinCID:     n.UnpinCID,
+				}
+				api.MountRegisteredAdmin(adminMux, adminMountDeps)
+				log.Infof("FlatBuffer admin lanes mounted at %s://%s: %s", adminScheme, adminAddr, strings.Join(api.RegisteredAdminMountNames(), ", "))
+
 				publicationAPI := api.NewDatasetPublicationHandler(publicationService)
 				publicationAPI.RegisterRoutes(adminMux)
 				log.Infof("Dataset publication API available at %s://%s/api/v1/admin/dataset-updates/publish", adminScheme, adminAddr)
@@ -3408,8 +3442,21 @@ func isPublicReadAPIPath(path string) bool {
 		// signed public opinions: both read as openly as the bond.
 		"/api/v1/trust/policies",
 		"/api/v1/trust/verdicts",
+		// FlatBuffer dashboard lanes (fbcs program): connector, sync-state
+		// and archive reads are operational facts about PUBLIC data
+		// retrieval — the same disclosure class as /api/apps and
+		// /api/v1/data/sources. Writes (run / sync actions / archive
+		// creation) are POSTs and stay behind the admin wall.
+		"/api/v1/connectors",
+		"/api/v1/sync",
+		"/api/v1/archives",
 		"/api/v1/peers":
 		return true
+	}
+	for _, prefix := range []string{"/api/v1/connectors/", "/api/v1/sync/", "/api/v1/archives/"} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
 	}
 
 	// Flow-served per-schema record retrieval (loop C.4: the data-retrieval
@@ -5871,4 +5918,101 @@ func runShowIdentity(cmd *cobra.Command, args []string) error {
 	fmt.Println(info.PeerID)
 
 	return nil
+}
+
+// runFlowServiceNow fires one timer-served flow's first trigger through its
+// retrieval gate, for the $ICN connector lane's FETCH NOW. The gate answers
+// within milliseconds when the debounce refuses the pull (skipped=true with its
+// reason); an admitted pull keeps running in the background and the call
+// returns accepted once the run has started.
+func runFlowServiceNow(n *node.Node) func(ctx context.Context, programID string) (bool, string, error) {
+	return func(ctx context.Context, programID string) (bool, string, error) {
+		if n == nil || n.PluginManager() == nil {
+			return false, "", fmt.Errorf("flow %q not found: no flow runtime on this node", programID)
+		}
+		programID = strings.TrimSpace(programID)
+		plugin := n.PluginManager().Get(programID)
+		if plugin == nil {
+			return false, "", fmt.Errorf("flow %q not found", programID)
+		}
+		cp, ok := plugin.(plugins.CronProvider)
+		if !ok {
+			return false, "", fmt.Errorf("flow %q not found: it exposes no timer trigger", programID)
+		}
+		methods := cp.CronMethods()
+		if len(methods) == 0 {
+			return false, "", fmt.Errorf("flow %q not found: it declares no timer trigger", programID)
+		}
+		method := methods[0].Method
+		type outcome struct {
+			out []byte
+			err error
+		}
+		done := make(chan outcome, 1)
+		go func() {
+			// Detached from the request: a full catalog pull outlives any
+			// HTTP client, and the gate result arrives long before it ends.
+			out, err := cp.InvokeCron(context.Background(), method, nil)
+			done <- outcome{out: out, err: err}
+		}()
+		select {
+		case result := <-done:
+			if result.err != nil {
+				return false, "", result.err
+			}
+			var gate struct {
+				Skipped bool   `json:"skipped"`
+				Reason  string `json:"reason"`
+			}
+			if err := json.Unmarshal(result.out, &gate); err == nil && gate.Skipped {
+				return true, gate.Reason, nil
+			}
+			return false, "", nil
+		case <-time.After(1500 * time.Millisecond):
+			// Still running: the gate admitted it.
+			return false, "", nil
+		case <-ctx.Done():
+			return false, "", nil
+		}
+	}
+}
+
+// flowServiceInfos lists the timer-served flows the plugin manager runs, with
+// their shortest timer and the operator's retrieval_interval, for the $ICN
+// connector lane (POLL_INTERVAL_MS / MIN_FETCH_INTERVAL_MS / owner status).
+func flowServiceInfos(n *node.Node, cfg *config.Config) func() []api.FlowServiceInfo {
+	return func() []api.FlowServiceInfo {
+		if n == nil || n.PluginManager() == nil {
+			return nil
+		}
+		snapshot := n.PluginManager().RuntimeSnapshot()
+		out := make([]api.FlowServiceInfo, 0, len(snapshot.Modules))
+		for _, entry := range snapshot.Modules {
+			if entry.Manifest == nil || !strings.EqualFold(entry.Manifest.PluginFamily, "FLOW") {
+				continue
+			}
+			info := api.FlowServiceInfo{ProgramID: entry.ID, Running: entry.Status == "running"}
+			for _, timer := range entry.Manifest.Timers {
+				if timer.DefaultIntervalMs == 0 {
+					continue
+				}
+				if info.TimerIntervalMs == 0 || int64(timer.DefaultIntervalMs) < info.TimerIntervalMs {
+					info.TimerIntervalMs = int64(timer.DefaultIntervalMs)
+				}
+			}
+			if cfg != nil {
+				for _, svc := range cfg.Flows.Services {
+					if strings.TrimSpace(svc.Flow) != entry.ID {
+						continue
+					}
+					if d, ok, err := svc.EffectiveRetrievalInterval(); err == nil && ok {
+						info.RetrievalInterval = d
+					}
+					break
+				}
+			}
+			out = append(out, info)
+		}
+		return out
+	}
 }
