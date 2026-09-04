@@ -59,6 +59,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/geoip"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
+	"github.com/spacedatanetwork/sdn-server/internal/metrics"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
@@ -2435,6 +2436,33 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// deployment/wallet-wasm/stage-wallet-wasm.sh; fail-open —
 			// absent assets 404 and the dashboard reports sign-in
 			// unavailable rather than reaching a CDN.
+			// Load-balancer and monitoring surface: /health, /ready (anonymous,
+			// a status word) and /metrics (operator session). OPS-08.
+			mountHealthRoutes(adminMux, healthDeps{
+				engineReady: func() bool {
+					store := n.Store()
+					if store == nil {
+						return false
+					}
+					rt, db := store.EngineRuntime()
+					return rt != nil && db != nil
+				},
+				peerCount: func() int {
+					h := n.Host()
+					if h == nil {
+						return -1
+					}
+					return len(h.Network().Peers())
+				},
+				requireAuth: cfg.Admin.RequireAuth,
+				authHandler: authHandler,
+			})
+			metrics.SetPeerCountFunc(func() int {
+				if h := n.Host(); h != nil {
+					return len(h.Network().Peers())
+				}
+				return 0
+			})
 			adminMux.Handle("/wallet-wasm/", makeWalletWasmHandler(cfg.WalletWasm.AssetsDir))
 			// hd-wallet-ui — the actual wallet sign-in experience, mounted
 			// IN-PAGE by the dashboard. Owner law 2026-07-27: "we do NOT load
@@ -3416,6 +3444,10 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/storefront/listings",
 		"/api/v1/catalog",
 		"/api/v1/data/health",
+		// Liveness and readiness: a probe cannot sign in; the body is a status
+		// word (health_api.go).
+		"/api/v1/health",
+		"/api/v1/ready",
 		// Anonymous per-record index page for explicitly selected schemas.
 		"/api/v1/data/index",
 		"/sdn/libp2p.js",
