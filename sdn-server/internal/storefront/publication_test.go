@@ -5,11 +5,14 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -40,7 +43,31 @@ func publicationTestService(t *testing.T) (*Service, ed25519.PublicKey) {
 		t.Fatal(err)
 	}
 	service.SetProviderEPMCID("bafy-provider-epm")
+	service.SetDatasetPublisher(&fakeListingDatasetPublisher{t: t, dir: t.TempDir()})
 	return service, publicKey
+}
+
+// fakeListingDatasetPublisher exports the shard exactly as the daemon's
+// publisher does (a real shard file on disk with its SHA-256 and length) and
+// stands in for Kubo with a deterministic CID; the DPM must carry what it
+// returns, never a hash of bytes that were never stored.
+type fakeListingDatasetPublisher struct {
+	t      *testing.T
+	dir    string
+	assets []*ListingDatasetAsset
+}
+
+func (f *fakeListingDatasetPublisher) PublishListingDataset(_ context.Context, listingID, updateID string, filter storage.IndexedRecordQuery, records []storage.DatasetExportRecord) (*ListingDatasetAsset, error) {
+	export, err := storage.ExportDatasetRecords(filepath.Join(f.dir, listingID, filter.SchemaName, updateID), filter, records)
+	if err != nil {
+		return nil, err
+	}
+	asset := &ListingDatasetAsset{
+		Schema: filter.SchemaName, CID: "bafyfake" + export.ShardSHA256[:24], SHA256: export.ShardSHA256,
+		ByteLength: uint64(export.ShardBytes), IndexCID: "bafyfakeindex" + export.IndexSHA256[:16], ShardPath: export.ShardPath,
+	}
+	f.assets = append(f.assets, asset)
+	return asset, nil
 }
 
 func validPublicationDraft(kind string) ListingDraft {
@@ -342,6 +369,41 @@ func TestOneTimeDatasetDPMMerkleRootAndFileID(t *testing.T) {
 	if dpm.INDEXESLength() != 2 {
 		t.Fatalf("DPM indexes = %d", dpm.INDEXESLength())
 	}
+	// PUB-03: the DATA_SHARD asset is the shard the publisher pinned — its CID
+	// is the one Kubo serves, its SHA-256 and length are those of the shard
+	// file on disk — never an in-memory hash nothing stores.
+	publisher := service.datasetPublisher.(*fakeListingDatasetPublisher)
+	if len(publisher.assets) != 1 {
+		t.Fatalf("shards pinned = %d, want 1 (one schema)", len(publisher.assets))
+	}
+	pinned := publisher.assets[0]
+	var shardAsset *sdsdpm.DPMAsset
+	for i := 0; i < dpm.ASSETSLength(); i++ {
+		var asset sdsdpm.DPMAsset
+		if dpm.ASSETS(&asset, i) && asset.ASSET_KIND().String() == "DATA_SHARD" {
+			shardAsset = &asset
+		}
+	}
+	if shardAsset == nil {
+		t.Fatal("DPM has no DATA_SHARD asset")
+	}
+	if got := string(shardAsset.CID()); got != pinned.CID {
+		t.Fatalf("DATA_SHARD CID = %s, want the pinned shard %s", got, pinned.CID)
+	}
+	shardBytes, err := os.ReadFile(pinned.ShardPath)
+	if err != nil {
+		t.Fatalf("pinned shard not on disk: %v", err)
+	}
+	shardSum := sha256.Sum256(shardBytes)
+	if got := string(shardAsset.BYTE_SHA256()); got != hex.EncodeToString(shardSum[:]) {
+		t.Fatalf("DATA_SHARD SHA-256 = %s, want the shard file's %s", got, hex.EncodeToString(shardSum[:]))
+	}
+	if got := shardAsset.BYTE_LENGTH(); got != uint64(len(shardBytes)) {
+		t.Fatalf("DATA_SHARD BYTE_LENGTH = %d, want %d", got, len(shardBytes))
+	}
+	if string(shardAsset.MULTIFORMAT_ADDRESS()) != "/ipfs/"+pinned.CID {
+		t.Fatalf("DATA_SHARD address = %s", shardAsset.MULTIFORMAT_ADDRESS())
+	}
 	indexes := make(map[string]string)
 	for i := 0; i < dpm.INDEXESLength(); i++ {
 		var index sdsdpm.DPMCompletenessIndex
@@ -562,4 +624,21 @@ func newListingPeerService(t *testing.T, h host.Host, key ed25519.PrivateKey, pu
 	}
 	service.SetProviderEPMCID("bafy-" + h.ID().ShortString())
 	return service
+}
+
+// Without a publisher (no Kubo) a stored-records listing is refused rather
+// than published with a CID no node can fetch.
+func TestOneTimeDatasetListingNeedsAPublisher(t *testing.T) {
+	service, _ := publicationTestService(t)
+	service.SetDatasetPublisher(nil)
+	record := sds.NewOMMBuilder().WithNoradCatID(43999).WithObjectID("FIXTURE-NOPIN").WithEpoch(time.Unix(1700000000, 0).UTC().Format(time.RFC3339)).Build()
+	if _, err := service.store.flatStore.Store("OMM.fbs", record, "fixture-provider", nil); err != nil {
+		t.Fatal(err)
+	}
+	draft := validPublicationDraft("DataStream")
+	draft.AccessType = "OneTime"
+	_, err := service.PublishListingDraft(context.Background(), draft)
+	if err == nil || !strings.Contains(err.Error(), "Kubo") {
+		t.Fatalf("publish without a shard publisher: err = %v, want a refusal naming Kubo", err)
+	}
 }

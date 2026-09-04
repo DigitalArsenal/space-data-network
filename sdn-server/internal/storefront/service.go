@@ -54,10 +54,14 @@ type Service struct {
 	listingCancel   context.CancelFunc
 	listingDone     chan struct{}
 	pendingListings map[string]pendingListingAnnouncement
-	pendingSTF      map[string]pendingListingSTF
-	subscribers     map[string]chan *Listing // listingID -> channel
-	inventory       *publishInventoryCache
-	mu              sync.RWMutex
+	// datasetPublisher pins a one-time listing's record set as a fetchable
+	// dataset shard (PUB-03). Nil refuses stored-records listings rather than
+	// advertising a CID nothing serves.
+	datasetPublisher ListingDatasetPublisher
+	pendingSTF       map[string]pendingListingSTF
+	subscribers      map[string]chan *Listing // listingID -> channel
+	inventory        *publishInventoryCache
+	mu               sync.RWMutex
 }
 
 // NewService creates a new storefront service.
@@ -1342,4 +1346,10 @@ func (s *Service) Close() error {
 		s.purchaseTopic.Close()
 	}
 	return s.store.Close()
+}
+
+// SetDatasetPublisher installs the publisher that pins one-time listing
+// record sets (the daemon uses KuboListingDatasetPublisher).
+func (s *Service) SetDatasetPublisher(publisher ListingDatasetPublisher) {
+	s.datasetPublisher = publisher
 }
