@@ -15,7 +15,19 @@ import (
 // returns the aligned size-prefixed FlatBuffer stream — the wire format.
 // This is the generic engine query surface for the module hostcall bridge
 // and the retrieval module (loop C.1).
+// readGate answers ErrEngineRebuilding while a poisoned engine is being
+// rebuilt under the write lock, so a reader fails fast instead of blocking.
+func (s *FlatSQLStore) readGate() error {
+	if s.engineRebuilding.Load() {
+		return ErrEngineRebuilding
+	}
+	return nil
+}
+
 func (s *FlatSQLStore) QueryRawStream(sql string, params ...interface{}) (*flatsqlrt.RawStream, error) {
+	if err := s.readGate(); err != nil {
+		return nil, err
+	}
 	// ACCOUNTED, because this is the reader that was starving. On host-01 the
 	// tile requests that took 3.3-90 s all reported `waited 0s` on the ENGINE
 	// lock: the seconds were spent here, waiting for s.mu behind a writer.
@@ -48,6 +60,9 @@ func (s *FlatSQLStore) ResponseArtifactCacheKey(schemaName, schemaVersion, sql s
 // structurally impossible (typed *flatsqlrt.SandboxError), no second store
 // open, no cache interaction.
 func (s *FlatSQLStore) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (*flatsqlrt.RawStream, error) {
+	if err := s.readGate(); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.engineDB == nil {

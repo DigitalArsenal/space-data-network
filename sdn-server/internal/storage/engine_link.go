@@ -59,6 +59,11 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 		return s.engineEpoch, nil
 	}
 
+	// Readers that arrive from here on are answered ErrEngineRebuilding at the
+	// gate (readGate) instead of queueing on s.mu for the whole rebuild.
+	s.engineRebuilding.Store(true)
+	defer s.engineRebuilding.Store(false)
+
 	log.Warnf("FlatSQL engine poisoned — rebuilding engine in place (epoch %d)", s.engineEpoch)
 
 	// ONE WRITER PER FILE, ALWAYS.
