@@ -248,6 +248,25 @@ const (
 	RecordTypeVCF  RecordType = 224
 	RecordTypeSTX  RecordType = 225
 	RecordTypeTXS  RecordType = 226
+	RecordTypeBPF  RecordType = 227
+	RecordTypeEVL  RecordType = 228
+	RecordTypePCE  RecordType = 229
+	RecordTypeNCD  RecordType = 230
+	RecordTypeMEM  RecordType = 231
+	RecordTypeODR  RecordType = 232
+	RecordTypeTRH  RecordType = 233
+	RecordTypeSLP  RecordType = 234
+	RecordTypePSS  RecordType = 235
+	RecordTypeICN  RecordType = 236
+	RecordTypeTRP  RecordType = 237
+	RecordTypeTRV  RecordType = 238
+	RecordTypeACT  RecordType = 239
+	RecordTypeAGR  RecordType = 240
+	RecordTypeNDS  RecordType = 241
+	RecordTypeNST  RecordType = 242
+	RecordTypeQRP  RecordType = 243
+	RecordTypeTCT  RecordType = 244
+	RecordTypeWXF  RecordType = 245
 )
 
 var EnumNamesRecordType = map[RecordType]string{
@@ -478,6 +497,25 @@ var EnumNamesRecordType = map[RecordType]string{
 	RecordTypeVCF:  "VCF",
 	RecordTypeSTX:  "STX",
 	RecordTypeTXS:  "TXS",
+	RecordTypeBPF:  "BPF",
+	RecordTypeEVL:  "EVL",
+	RecordTypePCE:  "PCE",
+	RecordTypeNCD:  "NCD",
+	RecordTypeMEM:  "MEM",
+	RecordTypeODR:  "ODR",
+	RecordTypeTRH:  "TRH",
+	RecordTypeSLP:  "SLP",
+	RecordTypePSS:  "PSS",
+	RecordTypeICN:  "ICN",
+	RecordTypeTRP:  "TRP",
+	RecordTypeTRV:  "TRV",
+	RecordTypeACT:  "ACT",
+	RecordTypeAGR:  "AGR",
+	RecordTypeNDS:  "NDS",
+	RecordTypeNST:  "NST",
+	RecordTypeQRP:  "QRP",
+	RecordTypeTCT:  "TCT",
+	RecordTypeWXF:  "WXF",
 }
 
 var EnumValuesRecordType = map[string]RecordType{
@@ -708,6 +746,25 @@ var EnumValuesRecordType = map[string]RecordType{
 	"VCF":  RecordTypeVCF,
 	"STX":  RecordTypeSTX,
 	"TXS":  RecordTypeTXS,
+	"BPF":  RecordTypeBPF,
+	"EVL":  RecordTypeEVL,
+	"PCE":  RecordTypePCE,
+	"NCD":  RecordTypeNCD,
+	"MEM":  RecordTypeMEM,
+	"ODR":  RecordTypeODR,
+	"TRH":  RecordTypeTRH,
+	"SLP":  RecordTypeSLP,
+	"PSS":  RecordTypePSS,
+	"ICN":  RecordTypeICN,
+	"TRP":  RecordTypeTRP,
+	"TRV":  RecordTypeTRV,
+	"ACT":  RecordTypeACT,
+	"AGR":  RecordTypeAGR,
+	"NDS":  RecordTypeNDS,
+	"NST":  RecordTypeNST,
+	"QRP":  RecordTypeQRP,
+	"TCT":  RecordTypeTCT,
+	"WXF":  RecordTypeWXF,
 }
 
 func (v RecordType) String() string {

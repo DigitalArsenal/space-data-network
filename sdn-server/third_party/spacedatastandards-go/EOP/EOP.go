@@ -452,8 +452,282 @@ func (rcv *EOP) MutateLengthOfDayUncertaintySeconds(n float32) bool {
 	return rcv.MutateLENGTH_OF_DAY_UNCERTAINTY_SECONDS(n)
 }
 
+/// x component of Pole Wander in radians, double precision. Authoritative
+/// over X_POLE_WANDER_RADIANS when present.
+func (rcv *EOP) X_POLE_WANDER_RADIANS_HP() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) XPoleWanderRadiansHp() float64 {
+	return rcv.X_POLE_WANDER_RADIANS_HP()
+}
+
+/// x component of Pole Wander in radians, double precision. Authoritative
+/// over X_POLE_WANDER_RADIANS when present.
+func (rcv *EOP) MutateX_POLE_WANDER_RADIANS_HP(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(40, n)
+}
+
+func (rcv *EOP) MutateXPoleWanderRadiansHp(n float64) bool {
+	return rcv.MutateX_POLE_WANDER_RADIANS_HP(n)
+}
+
+/// y component of Pole Wander in radians, double precision. Authoritative
+/// over Y_POLE_WANDER_RADIANS when present.
+func (rcv *EOP) Y_POLE_WANDER_RADIANS_HP() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) YPoleWanderRadiansHp() float64 {
+	return rcv.Y_POLE_WANDER_RADIANS_HP()
+}
+
+/// y component of Pole Wander in radians, double precision. Authoritative
+/// over Y_POLE_WANDER_RADIANS when present.
+func (rcv *EOP) MutateY_POLE_WANDER_RADIANS_HP(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(42, n)
+}
+
+func (rcv *EOP) MutateYPoleWanderRadiansHp(n float64) bool {
+	return rcv.MutateY_POLE_WANDER_RADIANS_HP(n)
+}
+
+/// x component of the Celestial Pole Offset in radians, double precision.
+/// Authoritative over X_CELESTIAL_POLE_OFFSET_RADIANS when present.
+func (rcv *EOP) X_CELESTIAL_POLE_OFFSET_RADIANS_HP() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) XCelestialPoleOffsetRadiansHp() float64 {
+	return rcv.X_CELESTIAL_POLE_OFFSET_RADIANS_HP()
+}
+
+/// x component of the Celestial Pole Offset in radians, double precision.
+/// Authoritative over X_CELESTIAL_POLE_OFFSET_RADIANS when present.
+func (rcv *EOP) MutateX_CELESTIAL_POLE_OFFSET_RADIANS_HP(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(44, n)
+}
+
+func (rcv *EOP) MutateXCelestialPoleOffsetRadiansHp(n float64) bool {
+	return rcv.MutateX_CELESTIAL_POLE_OFFSET_RADIANS_HP(n)
+}
+
+/// y component of the Celestial Pole Offset in radians, double precision.
+/// Authoritative over Y_CELESTIAL_POLE_OFFSET_RADIANS when present.
+func (rcv *EOP) Y_CELESTIAL_POLE_OFFSET_RADIANS_HP() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) YCelestialPoleOffsetRadiansHp() float64 {
+	return rcv.Y_CELESTIAL_POLE_OFFSET_RADIANS_HP()
+}
+
+/// y component of the Celestial Pole Offset in radians, double precision.
+/// Authoritative over Y_CELESTIAL_POLE_OFFSET_RADIANS when present.
+func (rcv *EOP) MutateY_CELESTIAL_POLE_OFFSET_RADIANS_HP(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(46, n)
+}
+
+func (rcv *EOP) MutateYCelestialPoleOffsetRadiansHp(n float64) bool {
+	return rcv.MutateY_CELESTIAL_POLE_OFFSET_RADIANS_HP(n)
+}
+
+/// UT1 minus UTC in seconds, double precision. Authoritative over
+/// UT1_MINUS_UTC_SECONDS when present.
+func (rcv *EOP) UT1_MINUS_UTC_SECONDS_HP() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) Ut1MinusUtcSecondsHp() float64 {
+	return rcv.UT1_MINUS_UTC_SECONDS_HP()
+}
+
+/// UT1 minus UTC in seconds, double precision. Authoritative over
+/// UT1_MINUS_UTC_SECONDS when present.
+func (rcv *EOP) MutateUT1_MINUS_UTC_SECONDS_HP(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(48, n)
+}
+
+func (rcv *EOP) MutateUt1MinusUtcSecondsHp(n float64) bool {
+	return rcv.MutateUT1_MINUS_UTC_SECONDS_HP(n)
+}
+
+/// Correction to Length of Day in seconds, double precision. Authoritative
+/// over LENGTH_OF_DAY_CORRECTION_SECONDS when present.
+func (rcv *EOP) LENGTH_OF_DAY_CORRECTION_SECONDS_HP() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) LengthOfDayCorrectionSecondsHp() float64 {
+	return rcv.LENGTH_OF_DAY_CORRECTION_SECONDS_HP()
+}
+
+/// Correction to Length of Day in seconds, double precision. Authoritative
+/// over LENGTH_OF_DAY_CORRECTION_SECONDS when present.
+func (rcv *EOP) MutateLENGTH_OF_DAY_CORRECTION_SECONDS_HP(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(50, n)
+}
+
+func (rcv *EOP) MutateLengthOfDayCorrectionSecondsHp(n float64) bool {
+	return rcv.MutateLENGTH_OF_DAY_CORRECTION_SECONDS_HP(n)
+}
+
+/// Epoch of the data set this row was published in, ISO 8601 UTC. Identifies
+/// WHICH issue of the series a consumer is holding; two rows for the same
+/// MJD from different data-set epochs are different values, not duplicates.
+func (rcv *EOP) DATA_SET_EPOCH() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EOP) DataSetEpoch() []byte {
+	return rcv.DATA_SET_EPOCH()
+}
+
+/// Epoch of the data set this row was published in, ISO 8601 UTC. Identifies
+/// WHICH issue of the series a consumer is holding; two rows for the same
+/// MJD from different data-set epochs are different values, not duplicates.
+/// Content identifier of the complete published data set this row was taken
+/// from. Every frames consumer that must agree bit-for-bit records this so
+/// the source is provable rather than assumed.
+func (rcv *EOP) DATA_SET_CID() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *EOP) DataSetCid() []byte {
+	return rcv.DATA_SET_CID()
+}
+
+/// Content identifier of the complete published data set this row was taken
+/// from. Every frames consumer that must agree bit-for-bit records this so
+/// the source is provable rather than assumed.
+/// Nutation correction in longitude (dPsi) against the IAU 1980 model,
+/// radians, as published beside the CIP offsets by combined rapid-service
+/// series.
+func (rcv *EOP) NUTATION_DPSI_RADIANS() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) NutationDpsiRadians() float64 {
+	return rcv.NUTATION_DPSI_RADIANS()
+}
+
+/// Nutation correction in longitude (dPsi) against the IAU 1980 model,
+/// radians, as published beside the CIP offsets by combined rapid-service
+/// series.
+func (rcv *EOP) MutateNUTATION_DPSI_RADIANS(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(56, n)
+}
+
+func (rcv *EOP) MutateNutationDpsiRadians(n float64) bool {
+	return rcv.MutateNUTATION_DPSI_RADIANS(n)
+}
+
+/// Nutation correction in obliquity (dEps) against the IAU 1980 model,
+/// radians.
+func (rcv *EOP) NUTATION_DEPS_RADIANS() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) NutationDepsRadians() float64 {
+	return rcv.NUTATION_DEPS_RADIANS()
+}
+
+/// Nutation correction in obliquity (dEps) against the IAU 1980 model,
+/// radians.
+func (rcv *EOP) MutateNUTATION_DEPS_RADIANS(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(58, n)
+}
+
+func (rcv *EOP) MutateNutationDepsRadians(n float64) bool {
+	return rcv.MutateNUTATION_DEPS_RADIANS(n)
+}
+
+/// 1-sigma uncertainty of NUTATION_DPSI_RADIANS, radians.
+func (rcv *EOP) NUTATION_DPSI_UNCERTAINTY_RADIANS() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) NutationDpsiUncertaintyRadians() float64 {
+	return rcv.NUTATION_DPSI_UNCERTAINTY_RADIANS()
+}
+
+/// 1-sigma uncertainty of NUTATION_DPSI_RADIANS, radians.
+func (rcv *EOP) MutateNUTATION_DPSI_UNCERTAINTY_RADIANS(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(60, n)
+}
+
+func (rcv *EOP) MutateNutationDpsiUncertaintyRadians(n float64) bool {
+	return rcv.MutateNUTATION_DPSI_UNCERTAINTY_RADIANS(n)
+}
+
+/// 1-sigma uncertainty of NUTATION_DEPS_RADIANS, radians.
+func (rcv *EOP) NUTATION_DEPS_UNCERTAINTY_RADIANS() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EOP) NutationDepsUncertaintyRadians() float64 {
+	return rcv.NUTATION_DEPS_UNCERTAINTY_RADIANS()
+}
+
+/// 1-sigma uncertainty of NUTATION_DEPS_RADIANS, radians.
+func (rcv *EOP) MutateNUTATION_DEPS_UNCERTAINTY_RADIANS(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(62, n)
+}
+
+func (rcv *EOP) MutateNutationDepsUncertaintyRadians(n float64) bool {
+	return rcv.MutateNUTATION_DEPS_UNCERTAINTY_RADIANS(n)
+}
+
 func EOPStart(builder *flatbuffers.Builder) {
-	builder.StartObject(18)
+	builder.StartObject(30)
 }
 func EOPAddDATE(builder *flatbuffers.Builder, DATE flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(DATE), 0)
@@ -562,6 +836,78 @@ func EOPAddLENGTH_OF_DAY_UNCERTAINTY_SECONDS(builder *flatbuffers.Builder, LENGT
 }
 func EOPAddLengthOfDayUncertaintySeconds(builder *flatbuffers.Builder, LENGTH_OF_DAY_UNCERTAINTY_SECONDS float32) {
 	EOPAddLENGTH_OF_DAY_UNCERTAINTY_SECONDS(builder, LENGTH_OF_DAY_UNCERTAINTY_SECONDS)
+}
+func EOPAddX_POLE_WANDER_RADIANS_HP(builder *flatbuffers.Builder, X_POLE_WANDER_RADIANS_HP float64) {
+	builder.PrependFloat64Slot(18, X_POLE_WANDER_RADIANS_HP, 0.0)
+}
+func EOPAddXPoleWanderRadiansHp(builder *flatbuffers.Builder, X_POLE_WANDER_RADIANS_HP float64) {
+	EOPAddX_POLE_WANDER_RADIANS_HP(builder, X_POLE_WANDER_RADIANS_HP)
+}
+func EOPAddY_POLE_WANDER_RADIANS_HP(builder *flatbuffers.Builder, Y_POLE_WANDER_RADIANS_HP float64) {
+	builder.PrependFloat64Slot(19, Y_POLE_WANDER_RADIANS_HP, 0.0)
+}
+func EOPAddYPoleWanderRadiansHp(builder *flatbuffers.Builder, Y_POLE_WANDER_RADIANS_HP float64) {
+	EOPAddY_POLE_WANDER_RADIANS_HP(builder, Y_POLE_WANDER_RADIANS_HP)
+}
+func EOPAddX_CELESTIAL_POLE_OFFSET_RADIANS_HP(builder *flatbuffers.Builder, X_CELESTIAL_POLE_OFFSET_RADIANS_HP float64) {
+	builder.PrependFloat64Slot(20, X_CELESTIAL_POLE_OFFSET_RADIANS_HP, 0.0)
+}
+func EOPAddXCelestialPoleOffsetRadiansHp(builder *flatbuffers.Builder, X_CELESTIAL_POLE_OFFSET_RADIANS_HP float64) {
+	EOPAddX_CELESTIAL_POLE_OFFSET_RADIANS_HP(builder, X_CELESTIAL_POLE_OFFSET_RADIANS_HP)
+}
+func EOPAddY_CELESTIAL_POLE_OFFSET_RADIANS_HP(builder *flatbuffers.Builder, Y_CELESTIAL_POLE_OFFSET_RADIANS_HP float64) {
+	builder.PrependFloat64Slot(21, Y_CELESTIAL_POLE_OFFSET_RADIANS_HP, 0.0)
+}
+func EOPAddYCelestialPoleOffsetRadiansHp(builder *flatbuffers.Builder, Y_CELESTIAL_POLE_OFFSET_RADIANS_HP float64) {
+	EOPAddY_CELESTIAL_POLE_OFFSET_RADIANS_HP(builder, Y_CELESTIAL_POLE_OFFSET_RADIANS_HP)
+}
+func EOPAddUT1_MINUS_UTC_SECONDS_HP(builder *flatbuffers.Builder, UT1_MINUS_UTC_SECONDS_HP float64) {
+	builder.PrependFloat64Slot(22, UT1_MINUS_UTC_SECONDS_HP, 0.0)
+}
+func EOPAddUt1MinusUtcSecondsHp(builder *flatbuffers.Builder, UT1_MINUS_UTC_SECONDS_HP float64) {
+	EOPAddUT1_MINUS_UTC_SECONDS_HP(builder, UT1_MINUS_UTC_SECONDS_HP)
+}
+func EOPAddLENGTH_OF_DAY_CORRECTION_SECONDS_HP(builder *flatbuffers.Builder, LENGTH_OF_DAY_CORRECTION_SECONDS_HP float64) {
+	builder.PrependFloat64Slot(23, LENGTH_OF_DAY_CORRECTION_SECONDS_HP, 0.0)
+}
+func EOPAddLengthOfDayCorrectionSecondsHp(builder *flatbuffers.Builder, LENGTH_OF_DAY_CORRECTION_SECONDS_HP float64) {
+	EOPAddLENGTH_OF_DAY_CORRECTION_SECONDS_HP(builder, LENGTH_OF_DAY_CORRECTION_SECONDS_HP)
+}
+func EOPAddDATA_SET_EPOCH(builder *flatbuffers.Builder, DATA_SET_EPOCH flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(DATA_SET_EPOCH), 0)
+}
+func EOPAddDataSetEpoch(builder *flatbuffers.Builder, DATA_SET_EPOCH flatbuffers.UOffsetT) {
+	EOPAddDATA_SET_EPOCH(builder, DATA_SET_EPOCH)
+}
+func EOPAddDATA_SET_CID(builder *flatbuffers.Builder, DATA_SET_CID flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(25, flatbuffers.UOffsetT(DATA_SET_CID), 0)
+}
+func EOPAddDataSetCid(builder *flatbuffers.Builder, DATA_SET_CID flatbuffers.UOffsetT) {
+	EOPAddDATA_SET_CID(builder, DATA_SET_CID)
+}
+func EOPAddNUTATION_DPSI_RADIANS(builder *flatbuffers.Builder, NUTATION_DPSI_RADIANS float64) {
+	builder.PrependFloat64Slot(26, NUTATION_DPSI_RADIANS, 0.0)
+}
+func EOPAddNutationDpsiRadians(builder *flatbuffers.Builder, NUTATION_DPSI_RADIANS float64) {
+	EOPAddNUTATION_DPSI_RADIANS(builder, NUTATION_DPSI_RADIANS)
+}
+func EOPAddNUTATION_DEPS_RADIANS(builder *flatbuffers.Builder, NUTATION_DEPS_RADIANS float64) {
+	builder.PrependFloat64Slot(27, NUTATION_DEPS_RADIANS, 0.0)
+}
+func EOPAddNutationDepsRadians(builder *flatbuffers.Builder, NUTATION_DEPS_RADIANS float64) {
+	EOPAddNUTATION_DEPS_RADIANS(builder, NUTATION_DEPS_RADIANS)
+}
+func EOPAddNUTATION_DPSI_UNCERTAINTY_RADIANS(builder *flatbuffers.Builder, NUTATION_DPSI_UNCERTAINTY_RADIANS float64) {
+	builder.PrependFloat64Slot(28, NUTATION_DPSI_UNCERTAINTY_RADIANS, 0.0)
+}
+func EOPAddNutationDpsiUncertaintyRadians(builder *flatbuffers.Builder, NUTATION_DPSI_UNCERTAINTY_RADIANS float64) {
+	EOPAddNUTATION_DPSI_UNCERTAINTY_RADIANS(builder, NUTATION_DPSI_UNCERTAINTY_RADIANS)
+}
+func EOPAddNUTATION_DEPS_UNCERTAINTY_RADIANS(builder *flatbuffers.Builder, NUTATION_DEPS_UNCERTAINTY_RADIANS float64) {
+	builder.PrependFloat64Slot(29, NUTATION_DEPS_UNCERTAINTY_RADIANS, 0.0)
+}
+func EOPAddNutationDepsUncertaintyRadians(builder *flatbuffers.Builder, NUTATION_DEPS_UNCERTAINTY_RADIANS float64) {
+	EOPAddNUTATION_DEPS_UNCERTAINTY_RADIANS(builder, NUTATION_DEPS_UNCERTAINTY_RADIANS)
 }
 func EOPEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
