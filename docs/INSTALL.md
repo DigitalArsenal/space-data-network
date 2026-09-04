@@ -59,13 +59,14 @@ writes a complete config. Edit these before binding anything non-loopback:
 |---|---|
 | `storage.path` | a directory on the disk that will hold the records |
 | `storage.max_size` | below the free space on that disk (the node refuses writes under 5 GiB free) |
-| `storage.kubo_repo_path` | your Kubo repo, or delete the line |
+| `asset_pins.kubo_repo_path` | your existing Kubo repo, or delete the line (the generated default names a production volume) |
 | `admin.listen_addr` | `127.0.0.1:5001` for a loopback dashboard; a routable address only with TLS and authentication on |
 | `admin.require_auth` | `true` (the default). Leave it on. |
 | `admin.tls_mode` / `admin.tls_hosts` | `managed` plus your hostname for a public dashboard |
 | `admin.ipfs_api_url` | the Kubo API from step 2 |
 | `status.allowed_origins` | your own origin, or delete the line |
 | `network.listen` | keep the defaults unless a port is taken (see step 4) |
+| `subscriptions.default_retention` | `replace-current` (the default: each publication replaces the lane's previous set) or `archive-all` (keep and pin every publication). A subscription can choose its own rule. |
 
 Sign in to the dashboard with the node's own root key, or seed operators
 under `users:` with their `signing_pubkey_hex`. A node whose root identity is
@@ -178,5 +179,3 @@ are pending.
 - Kubo is not supervised by the node.
 - Archives are not announced, and there is no restore-from-network.
 - Publishing has no dashboard or CLI front; it is the API above.
-- Subscription retention (replace current set by default, archive on request)
-  is landing; until then every publication accumulates.
