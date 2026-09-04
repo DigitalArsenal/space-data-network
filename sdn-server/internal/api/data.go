@@ -37,6 +37,9 @@ type DataQueryHandler struct {
 	// queue behind the ingest writer. Keyed by the full query. See
 	// boundedread.go.
 	indexCache *boundedReader
+	// publisher is the node's own identity and its held publisher profiles;
+	// see SetPublisherIdentity (sources.go).
+	publisher publisherIdentity
 }
 
 const (

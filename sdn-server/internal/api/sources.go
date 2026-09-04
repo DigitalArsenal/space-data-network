@@ -56,6 +56,36 @@ type resolvedOrganization struct {
 	Evidence []string `json:"evidence"`
 	PeerID   string   `json:"peer_id,omitempty"`
 	EPMCID   string   `json:"epm_cid,omitempty"`
+	// Self marks the node's own lanes: records this node signed itself.
+	Self bool `json:"self,omitempty"`
+	// Unnamed marks a verified profile that carries no organisation name yet
+	// (a fresh node's placeholder); the Name is then the plain word for that,
+	// never the placeholder string and never a hash.
+	Unnamed bool `json:"unnamed,omitempty"`
+}
+
+// unnamedPublisherName is what a verified but still unnamed publisher renders
+// as; the peer id beside it is the dashboard's business.
+const unnamedPublisherName = "Unnamed node"
+
+// publisherIdentity lets the resolver verify a publisher whose signed profile
+// the node holds OUTSIDE the directory: its own EPM (the directory hides the
+// local row from search, and until 2026-09-04 the local row carried no bytes
+// to verify), and the EPM bytes the exchange protocol caches in the peer
+// registry for every peer it has met. localPeerID marks the node's own lanes.
+type publisherIdentity struct {
+	localPeerID string
+	epmBytes    func(peerID string) []byte
+}
+
+// SetPublisherIdentity wires the node's own peer id and a lookup for signed
+// publisher EPM bytes (self first, then the peer registry) into the
+// resolved-sources lane. Without it the lane still resolves from the directory.
+func (h *DataQueryHandler) SetPublisherIdentity(localPeerID string, epmBytes func(peerID string) []byte) {
+	if h == nil {
+		return
+	}
+	h.publisher = publisherIdentity{localPeerID: strings.TrimSpace(localPeerID), epmBytes: epmBytes}
 }
 
 type resolvedSourceRow struct {
@@ -86,37 +116,61 @@ func (h *DataQueryHandler) RegisterResolvedSourcesRoute(mux *http.ServeMux) {
 // evaluator is optional because BondSource availability is deployment wiring;
 // nil and lookup errors intentionally stop at signed.
 func resolveProducerOrganization(store *storage.FlatSQLStore, sourceTag, peerID string, evaluator *trust.Evaluator) *resolvedOrganization {
+	return resolvePublisherOrganization(store, sourceTag, peerID, evaluator, publisherIdentity{})
+}
+
+// resolvePublisherOrganization is resolveProducerOrganization with the node's
+// own identity in hand: the directory row is tried first, then the signed
+// bytes the node holds for that peer (its own profile, or the registry copy
+// the exchange protocol fetched). A verified profile without a name is still
+// SIGNED — the operator has not named the node yet — and says so.
+func resolvePublisherOrganization(store *storage.FlatSQLStore, sourceTag, peerID string, evaluator *trust.Evaluator, identity publisherIdentity) *resolvedOrganization {
 	floor := sourceTagOrganization(sourceTag)
 	peerID = strings.TrimSpace(peerID)
-	if peerID == "" || store == nil {
+	if peerID == "" {
 		return floor
 	}
-	records, err := store.QueryDirectory(storage.DirectoryQuery{PeerID: peerID, Limit: 1})
-	if err != nil || len(records) == 0 {
-		return floor
+	self := identity.localPeerID != "" && peerID == identity.localPeerID
+	floor.Self = self
+
+	var epmRecord *standardsEPM.EPM
+	epmCID := ""
+	if store != nil {
+		if records, err := store.QueryDirectory(storage.DirectoryQuery{PeerID: peerID, Limit: 1}); err == nil && len(records) > 0 {
+			if rec, ok := verifiedPublisherEPM(records[0], peerID); ok {
+				epmRecord, epmCID = rec, records[0].EPMCID
+			}
+		}
 	}
-	rec := records[0]
-	epmRecord, ok := verifiedPublisherEPM(rec, peerID)
-	if !ok {
+	if epmRecord == nil && identity.epmBytes != nil {
+		if data := identity.epmBytes(peerID); len(data) > 0 {
+			if rec, ok := verifiedPublisherEPMBytes(data, peerID); ok {
+				epmRecord = rec
+				if cid, err := epm.ComputeEPMCID(data); err == nil {
+					epmCID = cid
+				}
+			}
+		}
+	}
+	if epmRecord == nil {
 		return floor
 	}
 
-	name := strings.TrimSpace(string(epmRecord.LEGAL_NAME()))
-	if name == "" {
-		name = strings.TrimSpace(string(epmRecord.DN()))
-	}
-	if name == "" {
-		return floor
-	}
+	name := publisherProfileName(epmRecord)
 	resolved := &resolvedOrganization{
-		Name:  name,
-		State: organizationStateSigned,
-		Evidence: []string{
-			"The publisher profile signature verifies for " + peerID + ".",
-			"The verified publisher profile names " + name + ".",
-		},
-		PeerID: peerID,
-		EPMCID: rec.EPMCID,
+		Name:     name,
+		State:    organizationStateSigned,
+		Evidence: []string{"The publisher profile signature verifies for " + peerID + "."},
+		PeerID:   peerID,
+		EPMCID:   epmCID,
+		Self:     self,
+	}
+	if name == "" {
+		resolved.Name = unnamedPublisherName
+		resolved.Unnamed = true
+		resolved.Evidence = append(resolved.Evidence, "The verified profile carries no organisation name yet.")
+	} else {
+		resolved.Evidence = append(resolved.Evidence, "The verified publisher profile names "+name+".")
 	}
 
 	if evaluator != nil {
@@ -157,6 +211,39 @@ func sourceTagOrganization(sourceTag string) *resolvedOrganization {
 	}
 }
 
+// publisherProfileName is the organisation name a verified profile carries:
+// the legal name, else the distinguished name — unless that is the placeholder
+// a fresh node signs before its operator names it, which is not a name.
+func publisherProfileName(rec *standardsEPM.EPM) string {
+	if rec == nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(rec.LEGAL_NAME()))
+	if name == "" {
+		name = strings.TrimSpace(string(rec.DN()))
+	}
+	if isPlaceholderNodeName(name) {
+		return ""
+	}
+	return name
+}
+
+// isPlaceholderNodeName recognises the names a node signs before anyone names
+// it: the current default and the legacy one that embedded the peer id's
+// debug form ("SDN Node <peer.ID 16*WPsJuA>").
+func isPlaceholderNodeName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.EqualFold(name, unnamedPublisherName) {
+		return true
+	}
+	for _, prefix := range []string{"SDN Node <peer.ID ", "SDN Node 16Uiu", "SDN Node 12D3Koo", "SDN Node Qm"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func verifiedPublisherEPM(rec storage.DirectoryRecord, peerID string) (*standardsEPM.EPM, bool) {
 	var stored struct {
 		EPMBase64 string `json:"epm_base64"`
@@ -165,7 +252,16 @@ func verifiedPublisherEPM(rec storage.DirectoryRecord, peerID string) (*standard
 		return nil, false
 	}
 	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(stored.EPMBase64))
-	if err != nil || !standardsEPM.SizePrefixedEPMBufferHasIdentifier(data) {
+	if err != nil {
+		return nil, false
+	}
+	return verifiedPublisherEPMBytes(data, peerID)
+}
+
+// verifiedPublisherEPMBytes admits signed EPM bytes only when the signature
+// verifies and the profile advertises exactly the peer that produced the lane.
+func verifiedPublisherEPMBytes(data []byte, peerID string) (*standardsEPM.EPM, bool) {
+	if len(data) == 0 || !standardsEPM.SizePrefixedEPMBufferHasIdentifier(data) {
 		return nil, false
 	}
 	if err := epm.VerifyEPMSignature(data); err != nil {
@@ -356,7 +452,7 @@ func (h *DataQueryHandler) handleResolvedSources(w http.ResponseWriter, r *http.
 		if unresolvedPeers[src.ProducerPeerID] {
 			org = sourceTagOrganization(sourceTag)
 		} else if !seen {
-			org = resolveProducerOrganization(h.store, sourceTag, src.ProducerPeerID, nil)
+			org = resolvePublisherOrganization(h.store, sourceTag, src.ProducerPeerID, nil, h.publisher)
 			if org.State == organizationStateSourceTag {
 				unresolvedPeers[src.ProducerPeerID] = true
 			} else {

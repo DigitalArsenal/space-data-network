@@ -1152,6 +1152,27 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// served by the data-retrieval flow mounted below via
 			// n.MountFlows (config flows.mounts) — loop C.4 cutover.
 			dataAPI := api.NewDataQueryHandlerWithUICache(n.Store(), uiCacheDir)
+			// The resolved-sources lane names publishers from the signed
+			// profiles this node holds: its own, and the registry copies the
+			// EPM exchange fetched from peers it met.
+			dataAPI.SetPublisherIdentity(n.PeerID().String(), func(peerID string) []byte {
+				if peerID == n.PeerID().String() {
+					if svc := n.EPMService(); svc != nil {
+						return svc.GetNodeEPM()
+					}
+					return nil
+				}
+				pid, err := peer.Decode(peerID)
+				if err != nil {
+					return nil
+				}
+				if reg := n.PeerRegistry(); reg != nil {
+					if tp, err := reg.GetPeer(pid); err == nil && tp != nil {
+						return tp.EPMData
+					}
+				}
+				return nil
+			})
 			dataAPI.RegisterRoutes(adminMux)
 
 			// Store maintenance (admin write): on-demand record-catalog

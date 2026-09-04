@@ -2,7 +2,9 @@ package node
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -199,6 +201,15 @@ func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
 	}
 	if got.EPMCID != expectedCID {
 		t.Fatalf("EPMCID = %q, want %q", got.EPMCID, expectedCID)
+	}
+	var row struct {
+		EPMBase64 string `json:"epm_base64"`
+	}
+	if err := json.Unmarshal([]byte(got.EPMJSON), &row); err != nil {
+		t.Fatalf("decode directory row: %v", err)
+	}
+	if row.EPMBase64 != base64.StdEncoding.EncodeToString(epmBytes) {
+		t.Fatal("directory row carries no signed EPM bytes; the resolved-sources lane verifies publishers from them")
 	}
 	if got.BitcoinAddress != "bc1qdiscoverwallet0000000000000000000000000" {
 		t.Fatalf("BitcoinAddress = %q, want %q", got.BitcoinAddress, "bc1qdiscoverwallet0000000000000000000000000")

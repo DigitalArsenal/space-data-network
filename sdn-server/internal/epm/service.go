@@ -2290,9 +2290,12 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-// defaultProfile creates a default profile with the node's PeerID as DN.
+// defaultProfile is the profile a node signs before its operator names it.
+// The name is the plain word for that state: the dashboard shows the peer id
+// beside it and treats it as unnamed (api.isPlaceholderNodeName), and it never
+// embeds the peer id's debug form as the old default did.
 func (s *Service) defaultProfile() *Profile {
 	return &Profile{
-		DN: "SDN Node " + s.peerID.ShortString(),
+		DN: "Unnamed node",
 	}
 }

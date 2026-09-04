@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -5308,7 +5309,17 @@ func (n *Node) indexLocalNodeEPM() error {
 	// (ops-browser-content-source-gap). Best effort — identity indexing must
 	// never fail because the local blockstore is unavailable.
 	n.publishLocalNodeEPMToBlockstore()
-	return n.directorySvc.UpsertNodeEPMJSON(n.epmService.DirectoryRecordJSON(), epmCID, "local-node")
+	info := n.epmService.DirectoryRecordJSON()
+	if info == nil {
+		return nil
+	}
+	if data := n.epmService.GetNodeEPM(); len(data) > 0 {
+		// The resolver verifies a publisher from the bytes in its row; the
+		// local row carried none, so this node's own lanes resolved to their
+		// source tag (2026-09-04).
+		info["epm_base64"] = base64.StdEncoding.EncodeToString(data)
+	}
+	return n.directorySvc.UpsertNodeEPMJSON(info, epmCID, "local-node")
 }
 
 // GrantSigningKey returns the 32-byte Ed25519 seed that signs LICENSING/ACCESS
