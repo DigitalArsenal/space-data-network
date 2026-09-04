@@ -99,3 +99,19 @@ func startManagedKubo(ctx context.Context, cfg *config.Config, layout bundle.Lay
 	logf("Kubo managed by this node (%s): API %s, gateway %s, repo %s", plan.Reason, sup.APIURL(), sup.GatewayURL(), plan.RepoPath)
 	return sup, nil
 }
+
+// managedKuboDataPath is where the managed repository lives when the config
+// names no existing one: the node's data directory, or the parent of the
+// storage path (the layout `init` writes).
+func managedKuboDataPath(cfg *config.Config) string {
+	if cfg == nil {
+		return "."
+	}
+	if base := strings.TrimSpace(cfg.Setup.DataPath); base != "" {
+		return base
+	}
+	if storagePath := strings.TrimSpace(cfg.Storage.Path); storagePath != "" {
+		return filepath.Dir(storagePath)
+	}
+	return "."
+}
