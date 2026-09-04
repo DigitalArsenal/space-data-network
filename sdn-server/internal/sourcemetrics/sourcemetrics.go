@@ -74,6 +74,11 @@ type Fetch struct {
 	DurationMs int64
 	Err        string
 	At         time.Time
+	// ETag / LastModified are the response validators a 2xx carried. They
+	// are stored only on a 2xx, so a 304 or a failure never blanks the
+	// validators the next request must present.
+	ETag         string
+	LastModified string
 }
 
 // Ingest is one provenance-tagged batch that reached the store through
@@ -94,6 +99,12 @@ type Ingest struct {
 	Records   int
 	Inserted  int
 	At        time.Time
+	// OriginID / OriginName / DatasetID name the upstream ORGANISATION and
+	// dataset the module declared for the batch (ingest meta origin_id /
+	// origin_name / dataset_id). Written when non-empty, never blanked.
+	OriginID   string
+	OriginName string
+	DatasetID  string
 }
 
 // PNM is the latest publication notification observed for a source.
@@ -150,6 +161,13 @@ type Source struct {
 
 	FetchCount  int64 `json:"fetch_count"`
 	IngestCount int64 `json:"ingest_count"`
+
+	// OriginID / OriginName / DatasetID are the upstream organisation and
+	// dataset the ingest module declared for this lane (empty when it never
+	// did; the $ICN resolver then falls back to config and the registry).
+	OriginID   string `json:"origin_id,omitempty"`
+	OriginName string `json:"origin_name,omitempty"`
+	DatasetID  string `json:"dataset_id,omitempty"`
 
 	LastPNM *PNM `json:"-"`
 }
@@ -287,6 +305,9 @@ func (s *Store) initTables() error {
 	if err := s.ensureSourceMetricsColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureFetchEventsColumns(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -303,12 +324,40 @@ func (s *Store) ensureSourceMetricsColumns() error {
 	for _, col := range []struct{ name, ddl string }{
 		{"invalidated_at", `ALTER TABLE source_metrics ADD COLUMN invalidated_at INTEGER NOT NULL DEFAULT 0`},
 		{"invalidated_reason", `ALTER TABLE source_metrics ADD COLUMN invalidated_reason TEXT NOT NULL DEFAULT ''`},
+		// Origin columns ($ICN provenance): the organisation and dataset the
+		// ingest module declared for the lane.
+		{"origin_id", `ALTER TABLE source_metrics ADD COLUMN origin_id TEXT NOT NULL DEFAULT ''`},
+		{"origin_name", `ALTER TABLE source_metrics ADD COLUMN origin_name TEXT NOT NULL DEFAULT ''`},
+		{"dataset_id", `ALTER TABLE source_metrics ADD COLUMN dataset_id TEXT NOT NULL DEFAULT ''`},
 	} {
 		if existing[col.name] {
 			continue
 		}
 		if _, err := s.db.Exec(col.ddl); err != nil {
 			return fmt.Errorf("sourcemetrics: add source_metrics.%s: %w", col.name, err)
+		}
+	}
+	return nil
+}
+
+// ensureFetchEventsColumns adds the response-validator columns to an existing
+// fetch_events table. Additive only, same contract as the other ensure*
+// helpers: a node upgraded in place keeps its retrieval history and gains the
+// ETag / Last-Modified gating the CelesTrak fetch policy asks for.
+func (s *Store) ensureFetchEventsColumns() error {
+	existing, err := s.columnSet("fetch_events")
+	if err != nil {
+		return err
+	}
+	for _, col := range []struct{ name, ddl string }{
+		{"last_etag", `ALTER TABLE fetch_events ADD COLUMN last_etag TEXT NOT NULL DEFAULT ''`},
+		{"last_modified", `ALTER TABLE fetch_events ADD COLUMN last_modified TEXT NOT NULL DEFAULT ''`},
+	} {
+		if existing[col.name] {
+			continue
+		}
+		if _, err := s.db.Exec(col.ddl); err != nil {
+			return fmt.Errorf("sourcemetrics: add fetch_events.%s: %w", col.name, err)
 		}
 	}
 	return nil
@@ -645,6 +694,9 @@ func (s *Store) RecordFetch(f Fetch) {
 		log.Debugf("record fetch %s: %v", url, err)
 		return
 	}
+	if f.Status >= 200 && f.Status < 300 && (strings.TrimSpace(f.ETag) != "" || strings.TrimSpace(f.LastModified) != "") {
+		s.recordValidatorsLocked(url, f.ETag, f.LastModified)
+	}
 	// A source already attributed to this URL adopts the fetch immediately, so
 	// last_retrieved_at is honest even when the pull carried no new records
 	// (304, unchanged payload, or a parse that produced nothing).
@@ -752,8 +804,9 @@ func (s *Store) RecordIngest(in Ingest) {
 			last_status, last_error, last_duration_ms,
 			last_batch_id, last_batch_repeated, last_fetch_seq,
 			last_schemas, last_records, last_inserted,
-			fetch_count, ingest_count, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
+			fetch_count, ingest_count, updated_at,
+			origin_id, origin_name, dataset_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)
 		ON CONFLICT(source_id) DO UPDATE SET
 			app_id               = CASE WHEN excluded.app_id = '' THEN source_metrics.app_id ELSE excluded.app_id END,
 			provider_id          = excluded.provider_id,
@@ -772,13 +825,17 @@ func (s *Store) RecordIngest(in Ingest) {
 			last_records         = excluded.last_records,
 			last_inserted        = excluded.last_inserted,
 			ingest_count         = source_metrics.ingest_count + 1,
-			updated_at           = excluded.updated_at`,
+			updated_at           = excluded.updated_at,
+			origin_id            = CASE WHEN excluded.origin_id = '' THEN source_metrics.origin_id ELSE excluded.origin_id END,
+			origin_name          = CASE WHEN excluded.origin_name = '' THEN source_metrics.origin_name ELSE excluded.origin_name END,
+			dataset_id           = CASE WHEN excluded.dataset_id = '' THEN source_metrics.dataset_id ELSE excluded.dataset_id END`,
 		id, strings.TrimSpace(in.AppID), strings.TrimSpace(in.ProviderID), strings.TrimSpace(in.SourceName), url,
 		retrievedAt, DefaultDebounceHours, pullBytes,
 		fetchStatus, fetchErr, fetchDuration,
 		in.BatchID, repeated, fetchSeq,
 		schemas, records, inserted,
-		unixOrZero(s.now())); err != nil {
+		unixOrZero(s.now()),
+		strings.TrimSpace(in.OriginID), strings.TrimSpace(in.OriginName), strings.TrimSpace(in.DatasetID)); err != nil {
 		log.Debugf("record ingest %s: %v", id, err)
 		return
 	}
@@ -984,7 +1041,8 @@ func (s *Store) Sources() ([]Source, error) {
 		       last_schemas, last_records, last_inserted,
 		       fetch_count, ingest_count,
 		       last_pnm_id, last_pnm_cid, last_pnm_schema, last_pnm_feed_head, last_pnm_records, last_pnm_at,
-		       invalidated_at, invalidated_reason
+		       invalidated_at, invalidated_reason,
+		       origin_id, origin_name, dataset_id
 		FROM source_metrics
 		ORDER BY last_retrieved_at DESC, source_id ASC`)
 	if err != nil {
@@ -1014,7 +1072,8 @@ func (s *Store) Sources() ([]Source, error) {
 			&schemas, &src.LastRecords, &src.LastInserted,
 			&src.FetchCount, &src.IngestCount,
 			&pnmID, &pnmCID, &pnmSchema, &pnmFeedHead, &pnmRecords, &pnmAt,
-			&invalidated, &src.InvalidatedReason); err != nil {
+			&invalidated, &src.InvalidatedReason,
+			&src.OriginID, &src.OriginName, &src.DatasetID); err != nil {
 			return nil, fmt.Errorf("sourcemetrics: scan source: %w", err)
 		}
 		src.Origin = "retrieved"
@@ -1044,4 +1103,81 @@ func (s *Store) Sources() ([]Source, error) {
 		out = append(out, src)
 	}
 	return out, rows.Err()
+}
+
+// recordValidatorsLocked stores the response validators for a URL. Caller
+// holds s.mu. Empty values never erase a stored validator.
+func (s *Store) recordValidatorsLocked(url, etag, lastModified string) {
+	etag = strings.TrimSpace(etag)
+	lastModified = strings.TrimSpace(lastModified)
+	if _, err := s.db.Exec(`
+		INSERT INTO fetch_events (url, last_etag, last_modified)
+		VALUES (?, ?, ?)
+		ON CONFLICT(url) DO UPDATE SET
+			last_etag     = CASE WHEN excluded.last_etag = '' THEN fetch_events.last_etag ELSE excluded.last_etag END,
+			last_modified = CASE WHEN excluded.last_modified = '' THEN fetch_events.last_modified ELSE excluded.last_modified END`,
+		strings.TrimSpace(url), etag, lastModified); err != nil {
+		log.Debugf("record validators %s: %v", url, err)
+	}
+}
+
+// RecordValidators books the ETag / Last-Modified a 2xx response carried for
+// a URL, so the next request for the same bytes can present them
+// (If-None-Match / If-Modified-Since) and be answered 304. Called from the
+// HTTP egress connector; never fails the caller.
+func (s *Store) RecordValidators(url, etag, lastModified string) {
+	if s == nil || s.db == nil {
+		return
+	}
+	url = strings.TrimSpace(url)
+	if url == "" || (strings.TrimSpace(etag) == "" && strings.TrimSpace(lastModified) == "") {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recordValidatorsLocked(url, etag, lastModified)
+}
+
+// Validators returns the stored response validators for a URL ("" when the
+// URL was never fetched or the publisher sent none).
+func (s *Store) Validators(url string) (etag, lastModified string) {
+	if s == nil || s.db == nil {
+		return "", ""
+	}
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return "", ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.db.QueryRow(
+		`SELECT last_etag, last_modified FROM fetch_events WHERE url = ?`, url).Scan(&etag, &lastModified); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(etag), strings.TrimSpace(lastModified)
+}
+
+// FetchEvent returns the last retrieval booked for a URL: its HTTP status,
+// duration, the running fetch counter, when it happened (zero when never) and
+// the validators the last 2xx carried.
+func (s *Store) FetchEvent(url string) (status int, durationMs, count int64, at time.Time, etag, lastModified string) {
+	if s == nil || s.db == nil {
+		return 0, 0, 0, time.Time{}, "", ""
+	}
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return 0, 0, 0, time.Time{}, "", ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var atUnix int64
+	if err := s.db.QueryRow(
+		`SELECT last_status, last_duration_ms, fetch_count, last_at, last_etag, last_modified FROM fetch_events WHERE url = ?`,
+		url).Scan(&status, &durationMs, &count, &atUnix, &etag, &lastModified); err != nil {
+		return 0, 0, 0, time.Time{}, "", ""
+	}
+	if t := timeOrNil(atUnix); t != nil {
+		at = *t
+	}
+	return status, durationMs, count, at, strings.TrimSpace(etag), strings.TrimSpace(lastModified)
 }

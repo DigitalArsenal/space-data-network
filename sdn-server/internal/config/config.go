@@ -49,6 +49,35 @@ type Config struct {
 	Status     StatusConfig     `yaml:"status"`
 	Apps       AppsConfig       `yaml:"apps"`
 	Update     UpdateConfig     `yaml:"update"`
+	Connectors ConnectorsConfig `yaml:"connectors"`
+}
+
+// ConnectorsConfig carries operator-declared metadata for ingest connectors —
+// the $ICN records /api/v1/connectors serves for every (provider_id,
+// source_name) lane this node holds or fetches.
+type ConnectorsConfig struct {
+	// Origins names the upstream ORGANISATION a lane pulls from when the
+	// ingest module did not declare it and the compiled registry does not
+	// know the lane. Provenance is an organisation, never a tag string.
+	Origins []ConnectorOriginConfig `yaml:"origins,omitempty"`
+}
+
+// ConnectorOriginConfig is one origin declaration. A lane matches when
+// provider_id + source_name equal its provenance pair, or when source_prefix
+// is a prefix of its source name. Every value here is DATA the operator
+// asserts; the host never invents one.
+type ConnectorOriginConfig struct {
+	SourcePrefix string `yaml:"source_prefix,omitempty"`
+	ProviderID   string `yaml:"provider_id,omitempty"`
+	SourceName   string `yaml:"source_name,omitempty"`
+	// OriginID is the organisation identifier (a host-like id such as
+	// celestrak.org); OriginName its display name.
+	OriginID   string `yaml:"origin_id"`
+	OriginName string `yaml:"origin_name,omitempty"`
+	DatasetID  string `yaml:"dataset_id,omitempty"`
+	License    string `yaml:"license,omitempty"`
+	LicenseURL string `yaml:"license_url,omitempty"`
+	Citation   string `yaml:"citation,omitempty"`
 }
 
 // UpdateConfig governs whether this install acts on pushed update signals.

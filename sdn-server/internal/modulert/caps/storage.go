@@ -567,6 +567,7 @@ func capBool(p map[string]interface{}, key string) bool {
 //	  "archive": {"source":"provider","name":"catalog.csv","raw":{"$bin":1}},
 //	  "provenance": {"source":"provider-gp","json":{"$bin":2}}
 //	}
+//
 // logIngestRefusal writes a REFUSED batch down.
 //
 // The guarded-persistence answer travels back INTO the guest, and every node of
@@ -805,6 +806,12 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 		PullBytes:  pullBytes,
 		Records:    len(records),
 		Inserted:   inserted,
+		// Upstream organisation + dataset, as the parser node declared them
+		// (optional meta keys). Provenance is an organisation, never a tag
+		// string, and only the module knows which site it pulled from.
+		OriginID:   strings.TrimSpace(str("origin_id")),
+		OriginName: strings.TrimSpace(str("origin_name")),
+		DatasetID:  strings.TrimSpace(str("dataset_id")),
 	})
 
 	return okCapJSON(result)
@@ -826,6 +833,11 @@ type IngestObservation struct {
 	PullBytes  int64
 	Records    int
 	Inserted   int
+	// OriginID / OriginName / DatasetID are the ingest meta keys origin_id /
+	// origin_name / dataset_id when the module declared them; empty otherwise.
+	OriginID   string
+	OriginName string
+	DatasetID  string
 }
 
 // IngestObserver books an ingest batch in the operational ledger. Nil disables

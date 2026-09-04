@@ -144,6 +144,9 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	for k, v := range req.Headers {
 		httpReq.Header.Set(k, v)
 	}
+	// Publisher politeness (fbcs): present the validators the last 2xx for
+	// this URL carried, unless the module set its own. See http_validators.go.
+	applyFetchValidators(httpReq)
 
 	client := &http.Client{Timeout: time.Duration(req.TimeoutMs) * time.Millisecond}
 	resp, err := client.Do(httpReq)
@@ -152,6 +155,22 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 		return errCapJSON("request failed: " + err.Error()), nil
 	}
 	defer resp.Body.Close()
+
+	// 304 Not Modified: the publisher confirmed the bytes we hold are current.
+	// No body is delivered; the parser treats the status as "unchanged".
+	if resp.StatusCode == http.StatusNotModified {
+		observeFetch(req.URL, resp.StatusCode, 0, time.Since(started).Milliseconds(), "")
+		respHeaders := make(map[string]string, len(resp.Header))
+		for k := range resp.Header {
+			respHeaders[k] = resp.Header.Get(k)
+		}
+		return okCapJSON(map[string]interface{}{
+			"status":        resp.StatusCode,
+			"headers":       respHeaders,
+			"body":          "",
+			"body_encoding": "utf8",
+		}), nil
+	}
 
 	limit := int64(httpCapMaxResponseBytes)
 	if req.MaxBytes > 0 && req.MaxBytes < limit {
@@ -168,6 +187,9 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 		return errCapJSON(msg), nil
 	}
 	observeFetch(req.URL, resp.StatusCode, int64(len(respBody)), time.Since(started).Milliseconds(), "")
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		observeFetchValidators(req.URL, resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"))
+	}
 
 	// Collect response headers
 	respHeaders := make(map[string]string)

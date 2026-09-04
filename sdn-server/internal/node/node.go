@@ -2863,6 +2863,13 @@ func (n *Node) runDatasetShardPublicationCatchup() {
 }
 
 func (n *Node) catchUpDatasetShardPublicationsFromTrustedPeers(ctx context.Context) (int, error) {
+	return n.catchUpDatasetShardPublicationsFromTrustedPeersCounting(ctx, nil)
+}
+
+// catchUpDatasetShardPublicationsFromTrustedPeersCounting is the trusted-peer
+// catch-up pass with an optional COUNT filter: every due publication is still
+// materialized, but only those the filter admits are counted (nil counts all).
+func (n *Node) catchUpDatasetShardPublicationsFromTrustedPeersCounting(ctx context.Context, count func(storage.DatasetShardPublication) bool) (int, error) {
 	if n == nil || n.host == nil || n.store == nil || n.peerRegistry == nil {
 		return 0, nil
 	}
@@ -2872,7 +2879,7 @@ func (n *Node) catchUpDatasetShardPublicationsFromTrustedPeers(ctx context.Conte
 		if !n.peerRegistry.IsTrusted(id) {
 			continue
 		}
-		materialized, err := n.catchUpDatasetShardPublicationsFromPeer(ctx, id)
+		materialized, err := n.catchUpDatasetShardPublicationsFromPeerCounting(ctx, id, count)
 		total += materialized
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", id.ShortString(), err))
@@ -2882,6 +2889,10 @@ func (n *Node) catchUpDatasetShardPublicationsFromTrustedPeers(ctx context.Conte
 }
 
 func (n *Node) catchUpDatasetShardPublicationsFromPeer(ctx context.Context, from peer.ID) (int, error) {
+	return n.catchUpDatasetShardPublicationsFromPeerCounting(ctx, from, nil)
+}
+
+func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Context, from peer.ID, count func(storage.DatasetShardPublication) bool) (int, error) {
 	if n == nil || n.host == nil || n.store == nil || n.validator == nil || n.peerRegistry == nil {
 		return 0, nil
 	}
@@ -2905,7 +2916,7 @@ func (n *Node) catchUpDatasetShardPublicationsFromPeer(ctx context.Context, from
 				errs = append(errs, fmt.Errorf("%s: materialize %s %s: %w", from.ShortString(), schema, publication.ShardCID, err))
 				continue
 			}
-			if imported > 0 {
+			if imported > 0 && (count == nil || count(publication)) {
 				total++
 			}
 		}
@@ -4800,6 +4811,8 @@ func (n *Node) StopContext(ctx context.Context) error {
 		// still in flight during shutdown cannot write to a closed handle.
 		caps.SetFetchObserver(nil)
 		caps.SetIngestObserver(nil)
+		caps.SetFetchValidatorSource(nil)
+		caps.SetFetchValidatorObserver(nil)
 		if err := n.sourceMetrics.Close(); err != nil {
 			log.Warnf("Error closing source metrics ledger: %v", err)
 		}
@@ -4860,7 +4873,77 @@ func (n *Node) installSourceMetricsObservers() {
 			PullBytes:  obs.PullBytes,
 			Records:    obs.Records,
 			Inserted:   obs.Inserted,
+			OriginID:   obs.OriginID,
+			OriginName: obs.OriginName,
+			DatasetID:  obs.DatasetID,
 		})
+	})
+	// Response validators (ETag / Last-Modified) live in the same ledger: the
+	// egress connector presents them on the next GET for a URL and books what
+	// a 2xx carried, so an unchanged CelesTrak payload costs a 304, not a body.
+	caps.SetFetchValidatorSource(metricsStore.Validators)
+	caps.SetFetchValidatorObserver(metricsStore.RecordValidators)
+}
+
+// PinCID pins one CID on this node's Kubo (admin.ipfs_api_url). Without an
+// IPFS API the answer is a plain error, never a panic.
+func (n *Node) PinCID(ctx context.Context, cidValue string) error {
+	if n == nil || n.config == nil {
+		return errors.New("IPFS is not configured on this node")
+	}
+	apiURL := strings.TrimSpace(n.config.Admin.IPFSAPIURL)
+	if apiURL == "" {
+		return errors.New("IPFS is not configured on this node")
+	}
+	return newIPFSTipPinner(apiURL).Pin(ctx, cidValue, 0)
+}
+
+// UnpinCID unpins one CID on this node's Kubo.
+func (n *Node) UnpinCID(ctx context.Context, cidValue string) error {
+	if n == nil || n.config == nil {
+		return errors.New("IPFS is not configured on this node")
+	}
+	apiURL := strings.TrimSpace(n.config.Admin.IPFSAPIURL)
+	if apiURL == "" {
+		return errors.New("IPFS is not configured on this node")
+	}
+	cidValue = strings.TrimSpace(cidValue)
+	if cidValue == "" {
+		return errors.New("cid is required")
+	}
+	return storage.UnpinIPFSCID(ctx, apiURL, cidValue)
+}
+
+// SyncLane runs ONE bounded catch-up pass over every connected trusted peer
+// (the same pass the periodic catch-up timer runs) and returns how many shards
+// it materialized for the requested (schema, provider, source) lane.
+//
+// The pass itself is not narrowed: trusted-peer catch-up lists every schema's
+// publications on every trusted peer and materializes whatever this node does
+// not hold yet, so a lane sync also lands whatever else was due. The lane
+// filter applies to the COUNT this call reports, which is what the $DSS
+// SYNCED_ROWS/status reflects.
+func (n *Node) SyncLane(ctx context.Context, schema, providerID, sourceName string) (int, error) {
+	if n == nil {
+		return 0, errors.New("node is not running")
+	}
+	if ctx == nil {
+		ctx = n.ctx
+	}
+	schema = strings.TrimSpace(schema)
+	providerID = strings.TrimSpace(providerID)
+	sourceName = strings.TrimSpace(sourceName)
+	return n.catchUpDatasetShardPublicationsFromTrustedPeersCounting(ctx, func(p storage.DatasetShardPublication) bool {
+		if schema != "" && !strings.EqualFold(p.SchemaName, schema) {
+			return false
+		}
+		if providerID != "" && p.ProviderID != providerID {
+			return false
+		}
+		if sourceName != "" && p.SourceName != sourceName {
+			return false
+		}
+		return true
 	})
 }
 
