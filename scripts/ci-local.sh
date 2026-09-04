@@ -3,8 +3,9 @@
 # This script is intentionally aligned with .github/workflows/ci.yml.
 #
 # Usage:
-#   ./scripts/ci-local.sh quick     # default: preflight + go + sdn-js + module-delivery + plugin-demo
-#   ./scripts/ci-local.sh full      # quick + encryption tests
+#   ./scripts/ci-local.sh quick     # default: preflight + go (minus heavy packages) + sdn-js + module-delivery + plugin-demo
+#   ./scripts/ci-local.sh heavy     # the heavy Go packages (internal/storage) with a 60-minute budget
+#   ./scripts/ci-local.sh full      # quick + heavy + race + encryption tests
 #   ./scripts/ci-local.sh go        # fast go checks only
 #   ./scripts/ci-local.sh race      # CI-only/full race suite
 #   ./scripts/ci-local.sh js        # sdn-js checks only
@@ -174,12 +175,39 @@ prepare_go_toolchain() {
   pass "go mod download"
 }
 
+# HEAVY_GO_PACKAGES take longer than the 20-minute per-package budget the
+# quick lane (ci.yml, the pre-push hook) can afford: internal/storage alone
+# exceeded it (.gotest-full.log, 2026-08-30) and made the gate fail every
+# time, so pushes went unguarded. quick runs every other package; heavy runs
+# these with the budget they need (full, and the gauntlet's go tier).
+HEAVY_GO_PACKAGES="github.com/spacedatanetwork/sdn-server/internal/storage"
+
+heavy_pkg_filter() {
+  local filter=""
+  for pkg in $HEAVY_GO_PACKAGES; do
+    filter="${filter}${filter:+|}^${pkg}\$"
+  done
+  echo "$filter"
+}
+
 run_go() {
   prepare_go_toolchain
 
-  step "Go tests"
-  "$ROOT/scripts/go-with-wasmedge.sh" test -p=1 -timeout=20m -count=1 ./...
-  pass "go test"
+  step "Go tests (quick: every package but the heavy set)"
+  local pkgs
+  pkgs=$("$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Ev "$(heavy_pkg_filter)")
+  # shellcheck disable=SC2086
+  "$ROOT/scripts/go-with-wasmedge.sh" test -p=1 -timeout=20m -count=1 $pkgs
+  pass "go test (quick)"
+}
+
+run_go_heavy() {
+  prepare_go_toolchain
+
+  step "Go tests (heavy: $HEAVY_GO_PACKAGES)"
+  # shellcheck disable=SC2086
+  "$ROOT/scripts/go-with-wasmedge.sh" test -p=1 -timeout=60m -count=1 $HEAVY_GO_PACKAGES
+  pass "go test (heavy)"
 }
 
 run_go_race() {
@@ -295,6 +323,7 @@ case "$MODE" in
   full|all)
     run_preflight
     run_go
+    run_go_heavy
     run_go_race
     run_go_builds
     run_sdn_js
@@ -304,6 +333,9 @@ case "$MODE" in
     ;;
   go)
     run_go
+    ;;
+  heavy|go-heavy)
+    run_go_heavy
     ;;
   race)
     run_go_race
@@ -318,7 +350,7 @@ case "$MODE" in
     run_plugin_demo
     ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|go|race|js|delivery|plugin|demo]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|go|heavy|race|js|delivery|plugin|demo]${NC}"
     exit 1
     ;;
 esac
