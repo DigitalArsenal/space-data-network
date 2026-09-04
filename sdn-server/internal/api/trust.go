@@ -10,24 +10,28 @@ package api
 //   GET  /api/v1/trust/neighborhood?node=X&depth=D     web-of-trust audience
 //   POST /api/v1/trust/query                           predicate query (see TrustQuery)
 //
-// Mutation surface (wrap with the node's auth in production via Protect):
-//   POST   /api/v1/trust/edges                         {truster,trustee,weight}
+// Mutation surface (wrapped with the node's auth in production via Protect):
+//   POST   /api/v1/trust/edges                         one signed $TRE frame
 //   DELETE /api/v1/trust/edges?truster=T&trustee=S
 //   PUT    /api/v1/trust/funds?node=X                  [{type,location,amount}...]
 //
-// Mutations return the trust-status flips they caused; when an
-// EventPublisher is wired the flips also fan out to the web-of-trust
-// gossipsub topics (WS11.4), and when a Store is wired edges persist.
+// POST returns the accepted $TRE frame. The legacy DELETE response still
+// returns trust-status flips; when an EventPublisher is wired flips fan out to
+// the web-of-trust gossipsub topics (WS11.4), and when a Store is wired edges
+// persist.
 
 import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
 )
 
@@ -41,6 +45,9 @@ type TrustHandler struct {
 	// Protect wraps the mutation endpoints (wire the node's admin auth
 	// here in production). nil = unprotected (tests/local).
 	Protect func(http.HandlerFunc) http.HandlerFunc
+	// ResolveEPM returns the held signed profile for a TRE provider. POST uses
+	// its Signing keys to verify PROVIDER_SIGNATURE before changing the graph.
+	ResolveEPM func(peerID string) []byte
 
 	// Policies, Verdicts and Engine wire the `$TRP` rules engine
 	// (sdn-trust-rules-engine). nil = the rules surface answers 503.
@@ -70,7 +77,9 @@ func (h *TrustHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/trust/rank", h.handleRank)
 	mux.HandleFunc("/api/v1/trust/neighborhood", h.handleNeighborhood)
 	mux.HandleFunc("/api/v1/trust/query", h.handleQuery)
-	mux.HandleFunc("/api/v1/trust/edges", protect(h.handleEdges))
+	// GET is a public signed-record lane. handleEdges applies protect only to
+	// POST/DELETE so the read cannot accidentally inherit the mutation gate.
+	mux.HandleFunc("/api/v1/trust/edges", h.handleEdges)
 	mux.HandleFunc("/api/v1/trust/funds", protect(h.handleFunds))
 	h.protectFn = protect
 	// Rules engine: policies and verdicts read openly (a policy is the
@@ -301,57 +310,137 @@ func (h *TrustHandler) fanOut(changes []trust.StatusChange) int {
 	return delivered
 }
 
-type edgeRequest struct {
-	Truster string  `json:"truster"`
-	Trustee string  `json:"trustee"`
-	Weight  float64 `json:"weight"`
-}
-
 func (h *TrustHandler) handleEdges(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
+	case http.MethodGet:
+		h.handleEdgeFrames(w)
 	case http.MethodPost:
-		var req edgeRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			trustError(w, http.StatusBadRequest, "invalid edge body: "+err.Error())
-			return
-		}
-		e := trust.Edge{Truster: req.Truster, Trustee: req.Trustee, Weight: req.Weight, UpdatedAtMs: time.Now().UnixMilli()}
-		changes, err := h.Service.SetEdge(e)
-		if err != nil {
-			trustError(w, http.StatusConflict, err.Error())
-			return
-		}
-		if h.Store != nil {
-			if err := h.Store.UpsertEdge(e); err != nil {
-				trustError(w, http.StatusInternalServerError, "persist: "+err.Error())
-				return
-			}
-		}
-		h.trigger("edge-changed")
-		writeTrustJSON(w, http.StatusOK, mutationResponse{Flips: changes, Delivered: h.fanOut(changes)})
+		h.protectMutation(h.handleEdgeFramePost)(w, r)
 	case http.MethodDelete:
-		truster := r.URL.Query().Get("truster")
-		trustee := r.URL.Query().Get("trustee")
-		if truster == "" || trustee == "" {
-			trustError(w, http.StatusBadRequest, "truster and trustee are required")
-			return
-		}
-		changes, err := h.Service.RemoveEdge(truster, trustee)
+		h.protectMutation(h.handleLegacyEdgeDelete)(w, r)
+	default:
+		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "Use GET or POST for trust edges.", 0)
+	}
+}
+
+func (h *TrustHandler) protectMutation(next http.HandlerFunc) http.HandlerFunc {
+	if h != nil && h.protectFn != nil {
+		return h.protectFn(next)
+	}
+	return next
+}
+
+func (h *TrustHandler) handleEdgeFrames(w http.ResponseWriter) {
+	frames := make([][]byte, 0)
+	if h.Store != nil {
+		records, err := h.Store.EdgeRecords()
 		if err != nil {
-			trustError(w, http.StatusNotFound, err.Error())
+			WriteErrorFrame(w, http.StatusServiceUnavailable, "trust_unavailable", "Trust edges are not available right now.", 5*time.Second)
 			return
 		}
-		if h.Store != nil {
-			if err := h.Store.DeleteEdge(truster, trustee); err != nil {
-				trustError(w, http.StatusInternalServerError, "persist: "+err.Error())
-				return
+		for _, record := range records {
+			frame, err := trust.EncodeEdgeFrame(record)
+			if err != nil {
+				continue
+			}
+			frames = append(frames, frame)
+		}
+	} else if h.Service != nil && h.Service.Evaluator() != nil && h.Service.Evaluator().Graph != nil {
+		for _, edge := range h.Service.Evaluator().Graph.Edges() {
+			frame, err := trust.EncodeEdgeFrame(trust.EdgeRecord{
+				EdgeID:         trust.EdgeRecordID(edge.Truster, edge.Trustee),
+				Edge:           edge,
+				ProviderPeerID: edge.Truster,
+			})
+			if err == nil {
+				frames = append(frames, frame)
 			}
 		}
-		h.trigger("edge-changed")
-		writeTrustJSON(w, http.StatusOK, mutationResponse{Flips: changes, Delivered: h.fanOut(changes)})
-	default:
-		trustError(w, http.StatusMethodNotAllowed, "POST or DELETE")
 	}
+	WriteFrameStream(w, http.StatusOK, frames, map[string]string{StreamSchemaHeader: "TRE.fbs"})
+}
+
+func (h *TrustHandler) handleEdgeFramePost(w http.ResponseWriter, r *http.Request) {
+	frames, err := ReadFrames(r.Body, MaxRequestFrameBytes)
+	if err != nil || len(frames) != 1 || FrameIdentifier(frames[0]) != "$TRE" {
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_trust_edge", "The request body must be exactly one size-prefixed $TRE frame.", 0)
+		return
+	}
+	record, err := trust.DecodeEdgeFrame(frames[0])
+	if err != nil || record.UpdatedAtMs <= 0 || record.ProviderPeerID == "" || record.ProviderPeerID != record.Truster || len(record.ProviderSignature) == 0 {
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_trust_edge", "The trust edge is missing required signer, timestamp, or signature fields.", 0)
+		return
+	}
+	if !h.verifyEdgeSigner(record) {
+		WriteErrorFrame(w, http.StatusBadRequest, "invalid_signature", "The trust edge signature does not verify against the truster's held profile.", 0)
+		return
+	}
+
+	var changes []trust.StatusChange
+	if record.Deleted {
+		changes, err = h.Service.RemoveEdge(record.Truster, record.Trustee)
+		if errors.Is(err, trust.ErrNotFound) {
+			err = nil // an idempotent tombstone still needs to be persisted
+		}
+	} else {
+		changes, err = h.Service.SetEdge(record.Edge)
+	}
+	if err != nil {
+		WriteErrorFrame(w, http.StatusConflict, "invalid_trust_edge", err.Error(), 0)
+		return
+	}
+	if h.Store != nil {
+		if err := h.Store.StoreEdgeRecord(record); err != nil {
+			WriteErrorFrame(w, http.StatusInternalServerError, "not_persisted", "The trust edge could not be stored.", 0)
+			return
+		}
+	}
+	h.trigger("edge-changed")
+	_ = h.fanOut(changes)
+	WriteFrameStream(w, http.StatusOK, frames, map[string]string{StreamSchemaHeader: "TRE.fbs"})
+}
+
+func (h *TrustHandler) verifyEdgeSigner(record trust.EdgeRecord) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	if h == nil || h.ResolveEPM == nil {
+		return false
+	}
+	profile := h.ResolveEPM(record.ProviderPeerID)
+	if len(profile) == 0 || epm.VerifyEPMSignature(profile) != nil {
+		return false
+	}
+	peerID, err := epm.PeerIDFromEPM(profile)
+	if err != nil || strings.TrimSpace(peerID) != record.ProviderPeerID {
+		return false
+	}
+	payload, err := trust.EdgeSigningPayload(record)
+	return err == nil && epm.VerifyDetachedSignature(profile, payload, record.ProviderSignature) == nil
+}
+
+func (h *TrustHandler) handleLegacyEdgeDelete(w http.ResponseWriter, r *http.Request) {
+	truster := r.URL.Query().Get("truster")
+	trustee := r.URL.Query().Get("trustee")
+	if truster == "" || trustee == "" {
+		trustError(w, http.StatusBadRequest, "truster and trustee are required")
+		return
+	}
+	changes, err := h.Service.RemoveEdge(truster, trustee)
+	if err != nil {
+		trustError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if h.Store != nil {
+		if err := h.Store.DeleteEdge(truster, trustee); err != nil {
+			trustError(w, http.StatusInternalServerError, "persist: "+err.Error())
+			return
+		}
+	}
+	h.trigger("edge-changed")
+	writeTrustJSON(w, http.StatusOK, mutationResponse{Flips: changes, Delivered: h.fanOut(changes)})
 }
 
 func (h *TrustHandler) handleFunds(w http.ResponseWriter, r *http.Request) {

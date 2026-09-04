@@ -1609,6 +1609,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/module-delivery/listings", handleModuleDeliveryListings(n.PluginRegistry()))
 			adminMux.HandleFunc("/api/v1/modules/runtime", handleModuleRuntimeSnapshot(n.PluginManager(), n.PluginRegistry()))
 			adminMux.HandleFunc("/api/v1/modules/runtime/", handleModuleRuntimeMutation(n.PluginManager()))
+			registerNodeFirstReadLanes(adminMux, n)
 			if capPolicy := n.CapabilityPolicy(); capPolicy != nil {
 				capAPI := modulert.NewCapabilityPolicyAPI(capPolicy)
 				adminMux.Handle("/api/modules/capabilities", capAPI)
@@ -3505,6 +3506,12 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/v1/id",
 		"/api/v1/version",
 		"/api/v1/stats",
+		// Signed node identities, installed-module metadata, and trust edges are
+		// public dashboard record lanes. Their mutations remain method-gated.
+		"/api/v1/nodes",
+		"/api/v1/modules",
+		"/api/v1/trust/edges",
+		"/api/v1/claims",
 		// The same numbers as /api/v1/stats, pre-serialized as a $NDS frame.
 		// Same disclosure, same anonymous posture as the /ws/status feed that
 		// also carries it.
@@ -3534,6 +3541,12 @@ func isPublicReadAPIPath(path string) bool {
 	}
 	for _, prefix := range []string{"/api/v1/connectors/", "/api/v1/sync/", "/api/v1/archives/"} {
 		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	if strings.HasPrefix(path, "/api/v1/nodes/") {
+		parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/api/v1/nodes/"), "/"), "/")
+		if len(parts) == 2 && parts[0] != "" && parts[1] == "profile" {
 			return true
 		}
 	}
@@ -4984,6 +4997,7 @@ func mergeModuleRuntimeCatalog(snapshot *plugins.RuntimeSnapshot, reg *license.P
 	}
 	for _, descriptor := range reg.ListPublic() {
 		catalog := &plugins.RuntimeModuleCatalog{
+			PluginType:      descriptor.PluginType,
 			RequiredScope:   descriptor.RequiredScope,
 			ContentType:     descriptor.ContentType,
 			CacheControl:    descriptor.CacheControl,

@@ -254,6 +254,7 @@ func startTrustRulesEngine(ctx context.Context, n *node.Node, adminMux *http.Ser
 	h := api.NewTrustHandler(svc)
 	h.Store = store
 	h.Events = &trust.EventPublisher{SenderPriv: key, Publish: publish}
+	h.ResolveEPM = func(peerID string) []byte { return heldNodeEPM(n, peerID) }
 	h.Policies = policies
 	h.Verdicts = verdicts
 	h.Engine = engine
@@ -277,6 +278,19 @@ func startTrustRulesEngine(ctx context.Context, n *node.Node, adminMux *http.Ser
 		}
 	}
 	h.RegisterRoutes(adminMux)
+
+	claims := api.NewClaimsHandler(api.ClaimsHandlerOptions{
+		SelfPeerID: peerID,
+		SigningKey: key,
+		Store:      api.NewFlatSQLClaimFrameStore(flat),
+		ResolveEPM: func(claimant string) []byte { return heldNodeEPM(n, claimant) },
+		Trusted: func(claimant string) bool {
+			status, ok := svc.Status(peerID, claimant)
+			return ok && status.Trusted
+		},
+		Protect: h.Protect,
+	})
+	claims.RegisterRoutes(adminMux)
 	log.Infof("Trust rules engine started (evaluator %s, interval override %d ms)", peerID, engine.IntervalOverride())
 	return nil
 }

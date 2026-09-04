@@ -115,6 +115,7 @@ type PluginCatalogEntry struct {
 type PluginDescriptor struct {
 	ID              string `json:"id"`
 	Version         string `json:"version"`
+	PluginType      string `json:"plugin_type,omitempty"`
 	RequiredScope   string `json:"required_scope"`
 	ContentType     string `json:"content_type"`
 	CacheControl    string `json:"cache_control"`
@@ -225,6 +226,7 @@ func (a *PluginAsset) Descriptor() PluginDescriptor {
 	return PluginDescriptor{
 		ID:              a.ID,
 		Version:         a.Version,
+		PluginType:      a.PluginType,
 		RequiredScope:   a.RequiredScope,
 		ContentType:     a.ContentType,
 		CacheControl:    a.CacheControl,

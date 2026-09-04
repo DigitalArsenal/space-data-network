@@ -41,7 +41,7 @@ func TestEveryEmbeddedStandardIsRoutedOrDeclaredUnroutable(t *testing.T) {
 		}
 	}
 	for schemaName := range engineRoutedSchemas {
-		if !sdsSupports(schemaName) {
+		if !sdsSupports(schemaName) && !sds.IsPublishedBindingSchema(schemaName) {
 			t.Errorf("%s is routed but is not an embedded standard", schemaName)
 		}
 	}
@@ -123,7 +123,7 @@ func TestRoutedBindingsMatchTheEmbeddedIDL(t *testing.T) {
 		if binding.Table != code {
 			t.Errorf("%s routes to table %q, want the standard code %q", schemaName, binding.Table, code)
 		}
-		if want := declared[schemaName]; binding.FileID != want {
+		if want := declared[schemaName]; !sds.IsPublishedBindingSchema(schemaName) && binding.FileID != want {
 			t.Errorf("%s routes file id %q, but its IDL declares %q", schemaName, binding.FileID, want)
 		}
 		if prev, dup := seen[binding.FileID]; dup {

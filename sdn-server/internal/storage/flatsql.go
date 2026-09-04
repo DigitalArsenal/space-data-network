@@ -4845,6 +4845,7 @@ type DirectoryQuery struct {
 	ExcludeSources []string
 	Search         string
 	Limit          int
+	Offset         int
 }
 
 // UpsertDirectoryRecord inserts or updates a directory record.
@@ -4953,6 +4954,10 @@ func (s *FlatSQLStore) QueryDirectory(query DirectoryQuery) ([]DirectoryRecord, 
 	if limit > 1000 {
 		limit = 1000
 	}
+	offset := query.Offset
+	if offset < 0 {
+		offset = 0
+	}
 
 	sqlBuilder := strings.Builder{}
 	sqlBuilder.WriteString(`
@@ -5011,8 +5016,8 @@ func (s *FlatSQLStore) QueryDirectory(query DirectoryQuery) ([]DirectoryRecord, 
 		}
 	}
 
-	sqlBuilder.WriteString(` ORDER BY updated_at DESC, peer_id ASC LIMIT ?`)
-	args = append(args, limit)
+	sqlBuilder.WriteString(` ORDER BY updated_at DESC, peer_id ASC LIMIT ? OFFSET ?`)
+	args = append(args, limit, offset)
 
 	rows, err := s.db.Query(sqlBuilder.String(), args...)
 	if err != nil {
