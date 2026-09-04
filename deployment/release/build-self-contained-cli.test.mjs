@@ -277,3 +277,51 @@ test('stageBundle rejects path traversal in bundle name fields', async () => {
     /version contains unsupported characters/,
   );
 });
+
+// OPS-02: a bundle staged without naming a roots file still carries the
+// fleet's update trust roots — without trust/update-roots.json the shipped
+// bundle could never verify an update and would be stranded on its version.
+test('stageBundle stages the fleet trust roots when none are named', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sdn-cli-bundle-default-trust-'));
+  const inputs = join(root, 'inputs');
+  const out = join(root, 'out');
+  await mkdir(join(inputs, 'sdn-ui'), { recursive: true });
+  await mkdir(join(inputs, 'webui'), { recursive: true });
+  await mkdir(join(inputs, 'modules'), { recursive: true });
+  await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
+  await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
+  await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
+  await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'modules', 'hd-wallet-wasi.wasm'), 'wallet-wasm');
+  await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'LICENSE'), 'license');
+  await writeFile(join(inputs, 'README.md'), 'readme');
+
+  const staged = await stageBundle({
+    version: '1.2.3',
+    os: 'linux',
+    arch: 'amd64',
+    channel: 'beta',
+    outputDir: out,
+    binaryPath: join(inputs, 'spacedatanetwork'),
+    kuboPath: join(inputs, 'ipfs'),
+    sdnUIPath: join(inputs, 'sdn-ui'),
+    webUIPath: join(inputs, 'webui'),
+    updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    hdWalletWasmPath: join(inputs, 'modules', 'hd-wallet-wasi.wasm'),
+    wasmedgePath: join(inputs, 'wasmedge'),
+    licensePath: join(inputs, 'LICENSE'),
+    readmePath: join(inputs, 'README.md'),
+    manifestSignature: 'test-signature',
+  });
+
+  const fleetRoots = JSON.parse(await readFile(new URL('./fleet-trust-roots.json', import.meta.url), 'utf8'));
+  const stagedRoots = JSON.parse(await readFile(join(staged.root, 'trust', 'update-roots.json'), 'utf8'));
+  assert.deepEqual(stagedRoots, fleetRoots);
+  assert.ok(Object.keys(fleetRoots).length >= 1, 'the fleet roots file names at least one root');
+  const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.artifacts.some((artifact) => artifact.path.startsWith('trust/')), false);
+  assert.equal(manifest.update.feedBaseUrl, 'https://sdn.spaceaware.io/updates');
+});
