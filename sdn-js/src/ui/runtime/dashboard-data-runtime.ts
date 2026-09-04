@@ -39,6 +39,7 @@ import type {
 import { createWorkerLocalFlatSqlStore, type WorkerLocalFlatSqlStoreOptions } from './local-flatsql-worker-client';
 import type { FetchLike } from './sdn-backend-adapter-utils';
 import { decodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
+import { sha384Digest } from '../../crypto/sha384';
 
 export {
   DASHBOARD_WINDOW_SYNC_PROTOCOL,
@@ -122,7 +123,7 @@ export function startDashboardDataRuntime(options: DashboardDataRuntimeOptions):
     schemas: [],
     engine: {
       wasmPath: options.wasmPath,
-      computeSHA384: webCryptoSha384,
+      computeSHA384: digestSha384,
     },
   };
   const store = createStore(storeOptions, { createWorker: options.createWorker });
@@ -176,6 +177,6 @@ export function getDashboardDataRuntimeGlobal(): SDNDataWindowGlobal | undefined
 const defaultStoreFactory: DashboardDataStoreFactory = (storeOptions, deps) =>
   createWorkerLocalFlatSqlStore(storeOptions, deps);
 
-async function webCryptoSha384(data: ArrayBuffer): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest('SHA-384', data));
+function digestSha384(data: ArrayBuffer): Uint8Array {
+  return sha384Digest(data);
 }

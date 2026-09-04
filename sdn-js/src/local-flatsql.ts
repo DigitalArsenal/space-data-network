@@ -52,6 +52,7 @@ import {
   flatSqlDurablePaths,
   type DurableFlatSqlDatabase,
 } from './flatsql-io-store';
+import { sha384Digest } from './crypto/sha384';
 
 /**
  * Minimal record surface the engine store ingests. Structurally compatible
@@ -109,9 +110,9 @@ export interface LocalFlatSqlEngineOptions {
   wasmPath?: string | null;
   /**
    * SHA-384 provider for the integrity check (base64 digest or raw digest
-   * bytes). Defaults to WebCrypto (`crypto.subtle.digest('SHA-384')`) when
-   * the context has it; functions do not survive structured clone, so the
-   * worker lane always relies on that default.
+   * bytes). Defaults to the pure-JS digest in src/crypto/sha384.ts; functions
+   * do not survive structured clone, so the worker lane always relies on that
+   * default.
    */
   computeSHA384?: (data: ArrayBuffer) => Promise<Uint8Array | string> | Uint8Array | string;
 }
@@ -456,7 +457,7 @@ export async function getSharedFlatSql(engine?: LocalFlatSqlEngineOptions | null
   if (!sharedFlatSqlPromise) {
     const io = getSharedFlatSqlIoRouter();
     const wasmPath = normalizeEngineWasmPath(engine?.wasmPath);
-    const computeSHA384 = engine?.computeSHA384 ?? (wasmPath ? webCryptoSha384Provider() : undefined);
+    const computeSHA384 = engine?.computeSHA384 ?? (wasmPath ? defaultSha384Provider() : undefined);
     // flatsql >= 1.4.5 declares `io` on InitOptions, so this is a typed call:
     // the seven imports are bound from the router at instantiation, once.
     const pending = import('flatsql/wasm').then(({ initFlatSQL }) => (wasmPath
@@ -476,11 +477,9 @@ function normalizeEngineWasmPath(value: string | null | undefined): string | nul
   return trimmed || null;
 }
 
-/** WebCrypto SHA-384 for flatsql's integrity check; undefined where the context has no `crypto.subtle`. */
-function webCryptoSha384Provider(): LocalFlatSqlEngineOptions['computeSHA384'] | undefined {
-  const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
-  if (!subtle || typeof subtle.digest !== 'function') return undefined;
-  return async (data: ArrayBuffer) => new Uint8Array(await subtle.digest('SHA-384', data));
+/** SHA-384 for flatsql's integrity check: the pure-JS digest, available in every context including the engine worker. */
+function defaultSha384Provider(): LocalFlatSqlEngineOptions['computeSHA384'] {
+  return (data: ArrayBuffer) => sha384Digest(data);
 }
 
 /**
