@@ -47,6 +47,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
+	"github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/credstore"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
@@ -197,6 +198,13 @@ type Node struct {
 	datasetMaterializeMu    sync.Mutex
 	datasetMaterializedPNMs map[string]time.Time
 	datasetSupersedeMu      sync.Mutex
+
+	// laneRetention resolves the subscription retention rule for one lane
+	// (schema, provider, source): the subscriber's choice, else the node
+	// default. Installed by SetLaneRetentionResolver once the sync lane is
+	// mounted; nil until then, in which case imports apply no rule.
+	laneRetentionMu sync.RWMutex
+	laneRetention   func(schema, providerID, sourceName string) string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -3877,6 +3885,13 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 	// publication may complete a newer batch for a pinned provider — evict
 	// the superseded batch so pins do not accumulate.
 	n.scheduleDatasetSupersede(ann.Schema)
+	// Subscription retention: the lane's rule decides whether this batch
+	// replaces the previous one or joins the archive.
+	if n.host == nil || from != n.host.ID() {
+		n.applyLaneRetention(ann.Schema, pub.ProviderID, pub.SourceName,
+			storage.RetainCandidate{BatchID: pub.BatchID, PublishedAt: pub.PublishedAt},
+			datasetPublicationPins(pub.ShardCID, pub.IndexCID, pub.ManifestCID, pub.PNMCID))
+	}
 	return imported, nil
 }
 
@@ -3979,6 +3994,10 @@ func (n *Node) supersedePinnedDatasetBatches(schema string, peers []string) {
 			}
 			if !ok {
 				continue // newest not fully materialized yet — keep waiting
+			}
+			if n.laneRetentionRule(schema, content.ProviderID, content.SourceName) == channels.RetentionArchiveAll {
+				log.Debugf("gateway.pin supersede %s %s: %s/%s keeps every version, batch %s left in place", peerID, schema, content.ProviderID, content.SourceName, content.BatchID)
+				break
 			}
 			result, err := n.store.SupersedeSourceBatches(schema, content.ProviderID, content.SourceName, content.BatchID)
 			if err != nil {
@@ -4210,12 +4229,17 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 	log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
 		from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
 
-	// Materialization fetched these blocks through the local Kubo API, so they
-	// are already in the blockstore — but UNPINNED, which made this node an
-	// incidental cache of the catalog rather than a durable provider of it
-	// (ops-browser-content-source-gap). Pin the whole referenced DAG so a
-	// browser dialling this box's endpoint keeps finding the bytes.
-	n.pinMaterializedDatasetDAG(result.ManifestCID, result.ShardCID, result.IndexCID)
+	// Materialization fetched these blocks through the local Kubo API, so
+	// they are already in the blockstore but unpinned. The lane's retention
+	// rule decides what happens next: ArchiveAll pins the whole referenced
+	// DAG (manifest, shard, index, PNM) and records it in the pin ledger;
+	// ReplaceCurrent keeps this batch as the lane's one current set and
+	// evicts the previous one.
+	if n.host == nil || from != n.host.ID() {
+		n.applyLaneRetention(result.SchemaName, result.ProviderID, result.SourceName,
+			storage.RetainCandidate{BatchID: result.BatchID, PublishedAt: result.PublishedAt},
+			datasetPublicationPins(result.ShardCID, result.IndexCID, result.ManifestCID, pnmCID))
+	}
 
 	// Storage quota enforcement (Task D3): a trusted peer materializing a
 	// large/frequent publication flood should evict this store's own
@@ -5499,4 +5523,362 @@ func (n *Node) untrustedBootstrapPeers(pinned []bootstrap.PeerInfo) []peer.ID {
 		out = append(out, id)
 	}
 	return out
+}
+
+// --- subscription retention ---------------------------------------------
+//
+// Owner ruling 2026-09-04: a lane subscription replaces the current set with
+// each update by default; keeping every version is the option. The rule is
+// per lane ($DSS RETENTION, persisted with the subscription list) and the
+// node applies it here, after each successful import:
+//
+//   replace-current  keep the newest fully materialized batch of the lane,
+//                    evict every other batch (storage.RetainNewestSourceBatch
+//                    over SupersedeSourceBatches) and release the pins of the
+//                    superseded publications;
+//   archive-all      pin the publication's CIDs, record them in the pin
+//                    ledger, never evict.
+//
+// Evaluations serialize on datasetSupersedeMu with the gateway.pin supersede
+// and are idempotent, so overlapping triggers (feed-head windows, PNM
+// arrival, the boot sweep) converge.
+
+// SetLaneRetentionResolver installs the per-lane rule lookup (the sync
+// lane's subscription registry) and schedules one sweep over every lane held
+// from a remote peer, so batches that accumulated before the rule existed
+// converge on it.
+func (n *Node) SetLaneRetentionResolver(fn func(schema, providerID, sourceName string) string) {
+	if n == nil {
+		return
+	}
+	n.laneRetentionMu.Lock()
+	n.laneRetention = fn
+	n.laneRetentionMu.Unlock()
+	if fn == nil || n.store == nil {
+		return
+	}
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		n.datasetSupersedeMu.Lock()
+		defer n.datasetSupersedeMu.Unlock()
+		n.retentionSweep()
+	}()
+}
+
+func (n *Node) laneRetentionResolver() func(schema, providerID, sourceName string) string {
+	if n == nil {
+		return nil
+	}
+	n.laneRetentionMu.RLock()
+	defer n.laneRetentionMu.RUnlock()
+	return n.laneRetention
+}
+
+// laneRetentionRule answers the lane's rule, or the default when no resolver
+// is installed.
+func (n *Node) laneRetentionRule(schema, providerID, sourceName string) string {
+	resolver := n.laneRetentionResolver()
+	if resolver == nil {
+		return channels.RetentionReplaceCurrent
+	}
+	if word, ok := channels.NormalizeRetention(resolver(schema, providerID, sourceName)); ok {
+		return word
+	}
+	return channels.RetentionReplaceCurrent
+}
+
+// datasetPublicationPins names the CIDs of one publication by role.
+func datasetPublicationPins(shardCID, indexCID, manifestCID, pnmCID string) map[string]string {
+	pins := map[string]string{}
+	for role, cid := range map[string]string{"shard": shardCID, "index": indexCID, "manifest": manifestCID, "pnm": pnmCID} {
+		if cid = strings.TrimSpace(cid); cid != "" {
+			pins[role] = cid
+		}
+	}
+	return pins
+}
+
+// applyLaneRetention applies the lane's rule in the background after an
+// import landed the candidate batch. pins names the publication's CIDs by
+// role (shard, index, manifest, pnm). A no-op until a resolver is installed.
+func (n *Node) applyLaneRetention(schema, providerID, sourceName string, imported storage.RetainCandidate, pins map[string]string) {
+	if n == nil || n.store == nil {
+		return
+	}
+	schema, providerID, sourceName = strings.TrimSpace(schema), strings.TrimSpace(providerID), strings.TrimSpace(sourceName)
+	if schema == "" || providerID == "" || sourceName == "" {
+		return
+	}
+	resolver := n.laneRetentionResolver()
+	if resolver == nil {
+		log.Debugf("Retention for %s %s/%s not applied: no rule resolver installed yet", schema, providerID, sourceName)
+		return
+	}
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		n.datasetSupersedeMu.Lock()
+		defer n.datasetSupersedeMu.Unlock()
+		n.applyLaneRetentionNow(resolver, schema, providerID, sourceName, imported, pins)
+	}()
+}
+
+// applyLaneRetentionNow runs one evaluation; the caller holds
+// datasetSupersedeMu.
+func (n *Node) applyLaneRetentionNow(resolver func(schema, providerID, sourceName string) string, schema, providerID, sourceName string, imported storage.RetainCandidate, pins map[string]string) {
+	rule := channels.RetentionReplaceCurrent
+	if word, ok := channels.NormalizeRetention(resolver(schema, providerID, sourceName)); ok {
+		rule = word
+	}
+	switch rule {
+	case channels.RetentionArchiveAll:
+		n.archiveLanePublication(schema, providerID, sourceName, imported, pins)
+	default:
+		n.replaceLaneCurrent(schema, providerID, sourceName, imported)
+	}
+}
+
+// retentionContext bounds one Kubo pin/unpin pass.
+func (n *Node) retentionContext() (context.Context, context.CancelFunc) {
+	base := n.ctx
+	if base == nil {
+		base = context.Background()
+	}
+	return context.WithTimeout(base, datasetDAGPinTimeout)
+}
+
+// archiveLanePublication (archive-all): pin every CID of the publication and
+// record verified permanent rows in the pin ledger, so GET $DSS reports the
+// lane as pinned. Nothing is ever evicted.
+func (n *Node) archiveLanePublication(schema, providerID, sourceName string, imported storage.RetainCandidate, pins map[string]string) {
+	if len(pins) == 0 {
+		return
+	}
+	ctx, cancel := n.retentionContext()
+	defer cancel()
+	// The batch's newest publication row, when the ledger holds one, carries
+	// the hashes and sizes the ledger row should repeat.
+	var pub *storage.DatasetShardPublication
+	if batchID := strings.TrimSpace(imported.BatchID); batchID != "" {
+		if rows, err := n.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+			SchemaName: schema, ProviderID: providerID, SourceName: sourceName, BatchID: batchID, QueryProfile: storage.DatasetPublicationQueryProfile,
+		}); err == nil && len(rows) > 0 {
+			pub = &rows[len(rows)-1]
+		}
+	}
+	self := ""
+	if n.host != nil {
+		self = n.host.ID().String()
+	}
+	now := time.Now().UTC()
+	pinned := 0
+	for _, role := range []string{"shard", "index", "manifest", "pnm"} {
+		cid := pins[role]
+		if cid == "" {
+			continue
+		}
+		if err := n.PinCID(ctx, cid); err != nil {
+			log.Warnf("Retention for %s %s/%s: could not pin %s %s: %v", schema, providerID, sourceName, role, cid, err)
+			continue
+		}
+		entry := storage.PinLedgerEntry{
+			CID:               cid,
+			SchemaName:        schema,
+			ProviderPeerID:    self,
+			ProviderID:        providerID,
+			SourceName:        sourceName,
+			BatchID:           strings.TrimSpace(imported.BatchID),
+			QueryProfile:      storage.DatasetPublicationQueryProfile,
+			SnapshotID:        pins["manifest"],
+			Role:              role,
+			TTL:               0,
+			VerificationState: "verified",
+			VerifiedAt:        now,
+			UpdatedAt:         now,
+		}
+		if pub != nil {
+			if pub.FeedHead != "" {
+				entry.SnapshotID, entry.Head = pub.FeedHead, pub.FeedHead
+			}
+			switch role {
+			case "shard":
+				entry.ByteHash, entry.RowCount, entry.ByteCount = pub.ShardSHA256, int64(pub.RecordCount), pub.ByteCount
+			case "index":
+				entry.ByteHash = pub.IndexSHA256
+			}
+		}
+		if err := n.store.UpsertPinLedgerEntry(entry); err != nil {
+			log.Warnf("Retention for %s %s/%s: pinned %s %s but could not record it: %v", schema, providerID, sourceName, role, cid, err)
+			continue
+		}
+		pinned++
+	}
+	if pinned > 0 {
+		log.Infof("Retention for %s %s/%s: keeping every version — pinned %d CIDs of batch %s", schema, providerID, sourceName, pinned, strings.TrimSpace(imported.BatchID))
+	}
+}
+
+// replaceLaneCurrent (replace-current): keep the newest fully materialized
+// batch, evict the rest, and release the superseded publications' pins.
+func (n *Node) replaceLaneCurrent(schema, providerID, sourceName string, imported storage.RetainCandidate) {
+	result, keep, err := n.store.RetainNewestSourceBatch(schema, providerID, sourceName, imported)
+	if err != nil {
+		log.Warnf("Retention for %s %s/%s: could not replace the current set: %v", schema, providerID, sourceName, err)
+		return
+	}
+	if keep == "" {
+		log.Debugf("Retention for %s %s/%s: no complete batch to keep yet", schema, providerID, sourceName)
+		return
+	}
+	released := n.releaseSupersededLanePins(schema, providerID, sourceName, keep)
+	if result.TagsDeleted > 0 || result.RecordsDeleted > 0 || result.FilesDeleted > 0 || released > 0 {
+		log.Infof("Retention for %s %s/%s: keeping batch %s as the current set — evicted %d source-tag rows, %d records, %d cached publication files; released %d pins",
+			schema, providerID, sourceName, keep, result.TagsDeleted, result.RecordsDeleted, result.FilesDeleted, released)
+	}
+}
+
+// releaseSupersededLanePins unpins every CID of the lane's other
+// publications (unless the kept batch shares it) and records them as
+// unpinned in the pin ledger. Rows already marked unpinned are skipped, so a
+// repeat pass costs nothing.
+func (n *Node) releaseSupersededLanePins(schema, providerID, sourceName, keep string) int {
+	if n.config == nil || strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
+		return 0
+	}
+	pubs, err := n.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName: schema, ProviderID: providerID, SourceName: sourceName, QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		log.Debugf("Retention for %s %s/%s: publications unavailable for pin release: %v", schema, providerID, sourceName, err)
+		return 0
+	}
+	kept := map[string]bool{}
+	for i := range pubs {
+		if pubs[i].BatchID != keep {
+			continue
+		}
+		for _, cid := range datasetPublicationPins(pubs[i].ShardCID, pubs[i].IndexCID, pubs[i].ManifestCID, pubs[i].PNMCID) {
+			kept[cid] = true
+		}
+	}
+	ledgerState := map[string]string{}
+	if entries, err := n.store.ListPinLedgerEntries(storage.PinLedgerQuery{SchemaName: schema, ProviderID: providerID, SourceName: sourceName}); err == nil {
+		for _, entry := range entries {
+			ledgerState[entry.CID] = entry.VerificationState
+		}
+	}
+	ctx, cancel := n.retentionContext()
+	defer cancel()
+	self := ""
+	if n.host != nil {
+		self = n.host.ID().String()
+	}
+	now := time.Now().UTC()
+	released := 0
+	seen := map[string]bool{}
+	for i := range pubs {
+		pub := &pubs[i]
+		if pub.BatchID == keep {
+			continue
+		}
+		snapshotID := pub.FeedHead
+		if snapshotID == "" {
+			snapshotID = pub.ManifestCID
+		}
+		for _, role := range []string{"shard", "index", "manifest", "pnm"} {
+			cid := datasetPublicationPins(pub.ShardCID, pub.IndexCID, pub.ManifestCID, pub.PNMCID)[role]
+			if cid == "" || kept[cid] || seen[cid] || ledgerState[cid] == "unpinned" {
+				continue
+			}
+			seen[cid] = true
+			if err := n.UnpinCID(ctx, cid); err != nil {
+				log.Debugf("Retention for %s %s/%s: could not unpin %s %s: %v", schema, providerID, sourceName, role, cid, err)
+				continue
+			}
+			entry := storage.PinLedgerEntry{
+				CID:               cid,
+				SchemaName:        schema,
+				ProviderPeerID:    self,
+				ProviderID:        pub.ProviderID,
+				SourceName:        pub.SourceName,
+				BatchID:           pub.BatchID,
+				QueryProfile:      pub.QueryProfile,
+				SnapshotID:        snapshotID,
+				Head:              pub.FeedHead,
+				Role:              role,
+				TTL:               0,
+				VerificationState: "unpinned",
+				VerifiedAt:        now,
+				UpdatedAt:         now,
+			}
+			switch role {
+			case "shard":
+				entry.ByteHash, entry.RowCount, entry.ByteCount = pub.ShardSHA256, int64(pub.RecordCount), pub.ByteCount
+			case "index":
+				entry.ByteHash = pub.IndexSHA256
+			}
+			if err := n.store.UpsertPinLedgerEntry(entry); err != nil {
+				log.Debugf("Retention for %s %s/%s: unpinned %s %s but could not record it: %v", schema, providerID, sourceName, role, cid, err)
+				continue
+			}
+			released++
+		}
+	}
+	return released
+}
+
+// retentionSweep re-evaluates every lane this node holds from a remote peer
+// against its rule. Lanes the node produces itself (the producer is this
+// peer, or not a libp2p peer at all — an xpub-keyed publisher identity) are
+// left alone: a producer manages its own publication history. Idempotent;
+// the caller holds datasetSupersedeMu.
+func (n *Node) retentionSweep() {
+	resolver := n.laneRetentionResolver()
+	if resolver == nil || n.store == nil || n.validator == nil || n.host == nil {
+		return
+	}
+	self := n.host.ID()
+	summary, err := n.store.DataSummary()
+	if err != nil {
+		log.Warnf("Retention sweep skipped: source summaries unavailable: %v", err)
+		return
+	}
+	type laneID struct{ schema, providerID, sourceName string }
+	producers := map[laneID]string{}
+	for _, src := range summary.Sources {
+		key := laneID{strings.TrimSpace(src.SchemaName), strings.TrimSpace(src.ProviderID), strings.TrimSpace(src.SourceName)}
+		if producers[key] == "" && strings.TrimSpace(src.ProducerPeerID) != "" {
+			producers[key] = strings.TrimSpace(src.ProducerPeerID)
+		}
+	}
+	known := map[string]bool{}
+	for _, schema := range n.validator.Schemas() {
+		known[schema] = true
+	}
+	pubs, err := n.store.ListDatasetShardPublicationsForProfile(storage.DatasetPublicationQueryProfile, "")
+	if err != nil {
+		log.Warnf("Retention sweep skipped: publication ledger unavailable: %v", err)
+		return
+	}
+	seen := map[laneID]bool{}
+	lanes := make([]laneID, 0)
+	for i := range pubs {
+		key := laneID{strings.TrimSpace(pubs[i].SchemaName), strings.TrimSpace(pubs[i].ProviderID), strings.TrimSpace(pubs[i].SourceName)}
+		if key.schema == "" || key.providerID == "" || key.sourceName == "" || !known[key.schema] || seen[key] {
+			continue
+		}
+		seen[key] = true
+		lanes = append(lanes, key)
+	}
+	checked := 0
+	for _, lane := range lanes {
+		producer, err := peer.Decode(producers[lane])
+		if err != nil || producer == self {
+			continue
+		}
+		n.applyLaneRetentionNow(resolver, lane.schema, lane.providerID, lane.sourceName, storage.RetainCandidate{}, nil)
+		checked++
+	}
+	log.Infof("Retention sweep: %d lanes held from remote peers checked against their rule", checked)
 }

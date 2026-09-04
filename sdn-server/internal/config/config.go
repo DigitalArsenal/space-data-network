@@ -50,6 +50,42 @@ type Config struct {
 	Apps       AppsConfig       `yaml:"apps"`
 	Update     UpdateConfig     `yaml:"update"`
 	Connectors ConnectorsConfig `yaml:"connectors"`
+	// Subscriptions carries the node-wide defaults for lane subscriptions
+	// (subscriptions.default_retention).
+	Subscriptions SubscriptionsConfig `yaml:"subscriptions"`
+}
+
+// Subscription retention words. These mirror
+// channels.RetentionReplaceCurrent / channels.RetentionArchiveAll; they are
+// duplicated here because config is a leaf package and must not import
+// channels.
+const (
+	SubscriptionRetentionReplaceCurrent = "replace-current"
+	SubscriptionRetentionArchiveAll     = "archive-all"
+)
+
+// SubscriptionsConfig carries the node-wide defaults for channel
+// subscriptions (the $DSS sync lane).
+type SubscriptionsConfig struct {
+	// DefaultRetention is the retention rule a lane subscription starts
+	// with when the subscriber does not choose one —
+	// subscriptions.default_retention in config.yaml:
+	//   replace-current  each publication supersedes the lane's previous
+	//                    batch, so the node holds one current set (default);
+	//   archive-all      every publication is kept and pinned.
+	// A subscriber may still pick either rule per lane ($DSS RETENTION on
+	// POST /api/v1/sync).
+	DefaultRetention string `yaml:"default_retention"`
+}
+
+// EffectiveDefaultRetention returns the configured default rule, or
+// replace-current when none is set.
+func (c SubscriptionsConfig) EffectiveDefaultRetention() string {
+	word := strings.ToLower(strings.TrimSpace(c.DefaultRetention))
+	if word == "" {
+		return SubscriptionRetentionReplaceCurrent
+	}
+	return word
 }
 
 // ConnectorsConfig carries operator-declared metadata for ingest connectors —
@@ -1790,6 +1826,11 @@ func Default() *Config {
 			DefaultQuotaBytes: 100 * 1024 * 1024, // 100MB
 			MinTrustLevel:     "standard",
 		},
+		Subscriptions: SubscriptionsConfig{
+			// Owner ruling 2026-09-04: a subscription replaces the current
+			// set with each update; archiving every version is the option.
+			DefaultRetention: SubscriptionRetentionReplaceCurrent,
+		},
 		AssetPins: AssetPinConfig{
 			Enabled:          false,
 			Issuer:           "https://token.actions.githubusercontent.com",
@@ -1947,6 +1988,11 @@ func Load(path string) (*Config, error) {
 // end of Load, on both the default config and a config file that was
 // successfully parsed.
 func (c *Config) validate() error {
+	switch c.Subscriptions.EffectiveDefaultRetention() {
+	case SubscriptionRetentionReplaceCurrent, SubscriptionRetentionArchiveAll:
+	default:
+		return fmt.Errorf("subscriptions.default_retention must be replace-current or archive-all")
+	}
 	if c.AssetPins.MaxUploadBytes < 0 {
 		return fmt.Errorf("asset_pins.max_upload_bytes must not be negative")
 	}

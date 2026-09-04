@@ -80,6 +80,33 @@ const (
 	DSSActionHydrate     int8 = 6
 )
 
+// $DSS RETENTION values (dssRetention): the lane's rule for what a
+// subscription keeps. ReplaceCurrent (the default) supersedes the lane's
+// previous batch with each publication; ArchiveAll keeps and pins every one.
+const (
+	DSSRetentionReplaceCurrent int8 = 0
+	DSSRetentionArchiveAll     int8 = 1
+)
+
+// retentionWordToOrdinal maps a registry word onto the $DSS enum ordinal.
+func retentionWordToOrdinal(word string) int8 {
+	if normalized, ok := channels.NormalizeRetention(word); ok && normalized == channels.RetentionArchiveAll {
+		return DSSRetentionArchiveAll
+	}
+	return DSSRetentionReplaceCurrent
+}
+
+// retentionOrdinalToWord maps a $DSS enum ordinal onto the registry word.
+func retentionOrdinalToWord(ordinal int8) (string, bool) {
+	switch ordinal {
+	case DSSRetentionReplaceCurrent:
+		return channels.RetentionReplaceCurrent, true
+	case DSSRetentionArchiveAll:
+		return channels.RetentionArchiveAll, true
+	}
+	return "", false
+}
+
 // laneKey names one sync lane. schema is the store form ("OMM.fbs").
 type laneKey struct {
 	schema     string
@@ -155,6 +182,7 @@ type SyncLane struct {
 	Topic       string
 	Subscribed  bool
 	PinPolicy   int8
+	Retention   int8
 	Visibility  string
 	Encryption  string
 	GrantState  string
@@ -229,9 +257,14 @@ func NewSyncHandler(deps *AdminMountDeps) *SyncHandler {
 			h.subsPath = filepath.Join(filepath.Dir(dir), SubscriptionRegistryFileName)
 		}
 	}
-	if deps.Channels != nil && deps.Channels.subscriptions != nil && h.subsPath != "" {
-		if err := deps.Channels.subscriptions.LoadFrom(h.subsPath); err != nil {
-			log.Warnf("Sync lane: subscription list %s not loaded: %v", h.subsPath, err)
+	if deps.Channels != nil && deps.Channels.subscriptions != nil {
+		if deps.Config != nil {
+			deps.Channels.subscriptions.SetDefaultRetention(deps.Config.Subscriptions.EffectiveDefaultRetention())
+		}
+		if h.subsPath != "" {
+			if err := deps.Channels.subscriptions.LoadFrom(h.subsPath); err != nil {
+				log.Warnf("Sync lane: subscription list %s not loaded: %v", h.subsPath, err)
+			}
 		}
 	}
 	return h
@@ -353,6 +386,13 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		log.Debugf("sync lane: pin ledger unavailable: %v", err)
 	}
 
+	// The node default rule: every lane reads it until the subscriber
+	// chooses otherwise.
+	defaultRetention := channels.RetentionReplaceCurrent
+	if deps.Channels != nil && deps.Channels.subscriptions != nil {
+		defaultRetention = deps.Channels.subscriptions.DefaultRetention()
+	}
+
 	out := make([]SyncLane, 0, len(order))
 	for _, key := range order {
 		agg := lanes[key]
@@ -364,6 +404,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			Visibility:   "public",
 			Encryption:   "none",
 			GrantState:   "not-required",
+			Retention:    retentionWordToOrdinal(defaultRetention),
 		}
 		lane.ProviderPeerID, lane.ProviderPublicKey = agg.producer, agg.producerPK
 
@@ -384,6 +425,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 				if parsed, err := channels.ParseChannelID(channelID); err == nil && deps.Channels != nil {
 					state := deps.Channels.subscriptions.Get(parsed)
 					lane.Subscribed = state.Subscribed
+					lane.Retention = retentionWordToOrdinal(state.Retention)
 					if state.Visibility != "" {
 						lane.Visibility = state.Visibility
 					}
@@ -600,6 +642,7 @@ func encodeDSS(l *SyncLane) []byte {
 	}
 	DSS.DSSAddSUBSCRIBED(b, l.Subscribed)
 	DSS.DSSAddPIN_POLICY(b, enumOf(DSS.EnumValuesdssPinPolicy, l.PinPolicy))
+	DSS.DSSAddRETENTION(b, enumOf(DSS.EnumValuesdssRetention, l.Retention))
 	if visibility != 0 {
 		DSS.DSSAddVISIBILITY(b, visibility)
 	}
@@ -640,6 +683,13 @@ func DecodeDSS(frame []byte) (*DSS.DSS, error) {
 // EncodeDSSAction builds the request frame a client posts to /api/v1/sync.
 func EncodeDSSAction(schema, providerID, sourceName string, action int8) []byte {
 	lane := SyncLane{Key: newLaneKey(schema, providerID, sourceName), RequestedAction: action}
+	return encodeDSS(&lane)
+}
+
+// EncodeDSSSubscribe builds a Subscribe request carrying the lane's retention
+// rule (DSSRetentionReplaceCurrent or DSSRetentionArchiveAll).
+func EncodeDSSSubscribe(schema, providerID, sourceName string, retention int8) []byte {
+	lane := SyncLane{Key: newLaneKey(schema, providerID, sourceName), RequestedAction: DSSActionSubscribe, Retention: retention}
 	return encodeDSS(&lane)
 }
 
@@ -727,13 +777,18 @@ func (h *SyncHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "The $DSS frame must carry a REQUESTED_ACTION.", 0)
 		return
 	}
+	retentionWord, ok := retentionOrdinalToWord(int8(req.RETENTION()))
+	if !ok {
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That retention rule is not one this node understands.", 0)
+		return
+	}
 	if running, name := h.runningAction(key); running {
 		WriteErrorFrame(w, http.StatusConflict, "busy", "A "+name+" is already running on that source.", 5*time.Second)
 		return
 	}
 	switch action {
 	case DSSActionSubscribe, DSSActionUnsubscribe:
-		h.toggleSubscription(key, action == DSSActionSubscribe)
+		h.toggleSubscription(key, action == DSSActionSubscribe, retentionWord)
 	case DSSActionSync:
 		h.startSync(key)
 	case DSSActionPin, DSSActionUnpin:
@@ -816,7 +871,10 @@ func plainActionError(action string, err error) string {
 	return "The " + action + " did not complete: " + msg + "."
 }
 
-func (h *SyncHandler) toggleSubscription(key laneKey, subscribe bool) {
+// toggleSubscription flips the lane's channel subscription. On Subscribe the
+// retention word becomes the lane's rule (re-subscribing an already
+// subscribed lane only changes the rule); Unsubscribe ignores it.
+func (h *SyncHandler) toggleSubscription(key laneKey, subscribe bool, retentionWord string) {
 	verb := "subscribe to"
 	if !subscribe {
 		verb = "unsubscribe from"
@@ -837,7 +895,7 @@ func (h *SyncHandler) toggleSubscription(key laneKey, subscribe bool) {
 		return
 	}
 	if subscribe {
-		h.deps.Channels.subscriptions.Subscribe(parsed)
+		h.deps.Channels.subscriptions.SubscribeWithRetention(parsed, retentionWord)
 	} else {
 		h.deps.Channels.subscriptions.Unsubscribe(parsed)
 	}

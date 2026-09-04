@@ -187,12 +187,15 @@ func TestSyncSubscribeFlipsTheLaneAndPersistsTheList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscription file %s: %v", h.SubscriptionFilePath(), err)
 	}
-	var listed []string
+	var listed []channels.SubscriptionEntry
 	if err := json.Unmarshal(raw, &listed); err != nil {
-		t.Fatalf("subscription file is not a JSON list: %v", err)
+		t.Fatalf("subscription file is not a JSON list of entries: %v", err)
 	}
-	if len(listed) != 1 || listed[0] != string(dss.ChannelId()) {
-		t.Fatalf("subscription file = %v, want [%s]", listed, string(dss.ChannelId()))
+	if len(listed) != 1 || listed[0].ChannelID != string(dss.ChannelId()) || listed[0].Retention != channels.RetentionReplaceCurrent {
+		t.Fatalf("subscription file = %v, want [{%s %s}]", listed, string(dss.ChannelId()), channels.RetentionReplaceCurrent)
+	}
+	if int8(dss.RETENTION()) != DSSRetentionReplaceCurrent {
+		t.Fatalf("RETENTION after a plain Subscribe = %d, want ReplaceCurrent", dss.RETENTION())
 	}
 
 	// A fresh handler over the same store reloads the list.
@@ -210,6 +213,88 @@ func TestSyncSubscribeFlipsTheLaneAndPersistsTheList(t *testing.T) {
 	raw, _ = os.ReadFile(h.SubscriptionFilePath())
 	if strings.TrimSpace(string(raw)) != "[]" {
 		t.Fatalf("subscription file after Unsubscribe = %q, want []", raw)
+	}
+}
+
+func TestSyncSubscribeCarriesRetentionAndPersistsIt(t *testing.T) {
+	store := newConnectorsTestStore(t)
+	deps := &AdminMountDeps{Store: store, Config: &config.Config{}, NodePeerID: "16Uiu2HAmLocalNodeForSyncTest", Channels: NewChannelHandler(store)}
+	mux, h := newSyncTestMux(t, deps)
+
+	// Before any choice the lane reads the node default (ReplaceCurrent).
+	_, before := syncFrames(t, mux, http.MethodGet, SyncPath+"?schema=OMM", nil)
+	if got := int8(findDSS(t, before, "OMM.fbs", "space-data-network-02", "celestrak-gp").RETENTION()); got != DSSRetentionReplaceCurrent {
+		t.Fatalf("RETENTION before subscribe = %d, want ReplaceCurrent", got)
+	}
+
+	rec, frames := syncFrames(t, mux, http.MethodPost, SyncPath, EncodeDSSSubscribe("OMM", "space-data-network-02", "celestrak-gp", DSSRetentionArchiveAll))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("POST Subscribe(ArchiveAll) status = %d body = %q", rec.Code, rec.Body.String())
+	}
+	dss := decodeDSSFrame(t, frames[0])
+	if !dss.SUBSCRIBED() || int8(dss.RETENTION()) != DSSRetentionArchiveAll {
+		t.Fatalf("after Subscribe(ArchiveAll): SUBSCRIBED=%v RETENTION=%d", dss.SUBSCRIBED(), dss.RETENTION())
+	}
+	_, listed := syncFrames(t, mux, http.MethodGet, SyncPath+"?schema=OMM", nil)
+	if got := int8(findDSS(t, listed, "OMM.fbs", "space-data-network-02", "celestrak-gp").RETENTION()); got != DSSRetentionArchiveAll {
+		t.Fatalf("GET RETENTION after Subscribe(ArchiveAll) = %d, want ArchiveAll", got)
+	}
+	if got := deps.Channels.LaneRetention("OMM.fbs", "space-data-network-02", "celestrak-gp"); got != channels.RetentionArchiveAll {
+		t.Fatalf("LaneRetention = %q, want %q", got, channels.RetentionArchiveAll)
+	}
+	if got := deps.Channels.LaneRetention("SPW", "space-data-network-02", "celestrak-space-weather"); got != channels.RetentionReplaceCurrent {
+		t.Fatalf("LaneRetention of an untouched lane = %q, want the node default", got)
+	}
+
+	raw, err := os.ReadFile(h.SubscriptionFilePath())
+	if err != nil {
+		t.Fatalf("subscription file %s: %v", h.SubscriptionFilePath(), err)
+	}
+	var entries []channels.SubscriptionEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("subscription file is not a JSON list of entries: %v (%s)", err, raw)
+	}
+	if len(entries) != 1 || entries[0].ChannelID != string(dss.ChannelId()) || entries[0].Retention != channels.RetentionArchiveAll {
+		t.Fatalf("subscription file = %v, want [{%s archive-all}]", entries, string(dss.ChannelId()))
+	}
+
+	// A fresh handler over the same store reloads the rule.
+	fresh := &AdminMountDeps{Store: store, Config: &config.Config{}, NodePeerID: "16Uiu2HAmLocalNodeForSyncTest", Channels: NewChannelHandler(store)}
+	freshMux, _ := newSyncTestMux(t, fresh)
+	_, reloaded := syncFrames(t, freshMux, http.MethodGet, SyncPath+"/OMM/space-data-network-02/celestrak-gp", nil)
+	if got := decodeDSSFrame(t, reloaded[0]); !got.SUBSCRIBED() || int8(got.RETENTION()) != DSSRetentionArchiveAll {
+		t.Fatalf("after reload: SUBSCRIBED=%v RETENTION=%d, want subscribed ArchiveAll", got.SUBSCRIBED(), got.RETENTION())
+	}
+
+	// Re-subscribing with ReplaceCurrent only changes the rule.
+	rec, frames = syncFrames(t, mux, http.MethodPost, SyncPath, EncodeDSSSubscribe("OMM.fbs", "space-data-network-02", "celestrak-gp", DSSRetentionReplaceCurrent))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("POST Subscribe(ReplaceCurrent) status = %d", rec.Code)
+	}
+	if got := decodeDSSFrame(t, frames[0]); !got.SUBSCRIBED() || int8(got.RETENTION()) != DSSRetentionReplaceCurrent {
+		t.Fatalf("after Subscribe(ReplaceCurrent): SUBSCRIBED=%v RETENTION=%d", got.SUBSCRIBED(), got.RETENTION())
+	}
+
+	// An ordinal the node does not know is refused with a $QRP error frame.
+	bogus := SyncLane{Key: newLaneKey("OMM", "space-data-network-02", "celestrak-gp"), RequestedAction: DSSActionSubscribe, Retention: 7}
+	rec, frames = syncFrames(t, mux, http.MethodPost, SyncPath, encodeDSS(&bogus))
+	if rec.Code != http.StatusBadRequest || len(frames) != 1 || FrameIdentifier(frames[0]) != "$QRP" {
+		t.Fatalf("POST Subscribe(retention 7) status = %d frames = %d (%q), want 400 with one $QRP", rec.Code, len(frames), FrameIdentifier(frames[0]))
+	}
+	_, unchanged := syncFrames(t, mux, http.MethodGet, SyncPath+"/OMM/space-data-network-02/celestrak-gp", nil)
+	if got := int8(decodeDSSFrame(t, unchanged[0]).RETENTION()); got != DSSRetentionReplaceCurrent {
+		t.Fatalf("a refused request changed the rule to %d", got)
+	}
+
+	// With the node default set to archive-all, an unsubscribed lane reads 1.
+	archiving := &config.Config{}
+	archiving.Subscriptions.DefaultRetention = "archive-all"
+	archivingDeps := &AdminMountDeps{Store: newConnectorsTestStore(t), Config: archiving, NodePeerID: "16Uiu2HAmLocalNodeForSyncTest", Channels: NewChannelHandler(store)}
+	archivingMux, _ := newSyncTestMux(t, archivingDeps)
+	_, defaults := syncFrames(t, archivingMux, http.MethodGet, SyncPath+"?schema=SPW", nil)
+	spw := findDSS(t, defaults, "SPW.fbs", "space-data-network-02", "celestrak-space-weather")
+	if spw.SUBSCRIBED() || int8(spw.RETENTION()) != DSSRetentionArchiveAll {
+		t.Fatalf("with default_retention archive-all: SUBSCRIBED=%v RETENTION=%d, want unsubscribed ArchiveAll", spw.SUBSCRIBED(), spw.RETENTION())
 	}
 }
 
