@@ -929,6 +929,18 @@ const engineStandardCatalogGraph = `
     Y_CELESTIAL_POLE_OFFSET_UNCERTAINTY_RADIANS:float;
     UT1_MINUS_UTC_UNCERTAINTY_SECONDS:float;
     LENGTH_OF_DAY_UNCERTAINTY_SECONDS:float;
+    X_POLE_WANDER_RADIANS_HP:double;
+    Y_POLE_WANDER_RADIANS_HP:double;
+    X_CELESTIAL_POLE_OFFSET_RADIANS_HP:double;
+    Y_CELESTIAL_POLE_OFFSET_RADIANS_HP:double;
+    UT1_MINUS_UTC_SECONDS_HP:double;
+    LENGTH_OF_DAY_CORRECTION_SECONDS_HP:double;
+    DATA_SET_EPOCH:string;
+    DATA_SET_CID:string;
+    NUTATION_DPSI_RADIANS:double;
+    NUTATION_DEPS_RADIANS:double;
+    NUTATION_DPSI_UNCERTAINTY_RADIANS:double;
+    NUTATION_DEPS_UNCERTAINTY_RADIANS:double;
   }
   table EPF {
     EPF_ID:string;
@@ -1294,6 +1306,28 @@ const engineStandardCatalogGraph = `
     UPDATED_AT:uint64;
     PROVIDER_PEER_ID:string;
     PROVIDER_SIGNATURE:[ubyte];
+    ORIGIN_ID:string;
+    ORIGIN_NAME:string;
+    DATASET_ID:string;
+    PROVIDER_ID:string;
+    SOURCE_NAME:string;
+    LICENSE:string;
+    LICENSE_URL:string;
+    CITATION:string;
+    MIN_FETCH_INTERVAL_MS:uint64;
+    NEXT_ELIGIBLE_AT:uint64;
+    LAST_HTTP_STATUS:uint16;
+    LAST_SOURCE_ETAG:string;
+    LAST_SOURCE_LAST_MODIFIED:string;
+    LAST_BATCH_ID:string;
+    LAST_RECORD_COUNT:uint64;
+    LAST_INSERTED_COUNT:uint64;
+    LAST_DURATION_MS:uint64;
+    FETCH_COUNT:uint64;
+    INGEST_COUNT:uint64;
+    LAST_PUBLICATION_CID:string;
+    LAST_PNM_CID:string;
+    FEED_HEAD:string;
   }
   table IDM {
     ID:string;
@@ -1401,6 +1435,11 @@ const engineStandardCatalogGraph = `
   }
   table LCC {
     OWNER:byte;
+    NAME:string;
+    DESCRIPTION:string;
+    ACTIVE:bool;
+    SOURCE_URL:string;
+    RETRIEVED_AT:string;
   }
   table LCF {
     MESSAGE_TYPE:byte;
@@ -2981,6 +3020,14 @@ const engineStandardCatalogGraph = `
     PAYLOAD_KIND:string;
     UPDATED_AT_MS:double;
     RESERVED:[ubyte];
+    CID:string;
+    BYTE_OFFSET:uint64;
+    BYTE_LENGTH:uint32;
+    EPOCH_MS:uint64;
+    ENTITY_KEY:string;
+    PROVIDER_ID:string;
+    SOURCE_NAME:string;
+    BATCH_ID:string;
   }
   table STF {
     LISTING_ID:string;
