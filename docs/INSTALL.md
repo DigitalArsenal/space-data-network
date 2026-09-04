@@ -3,16 +3,22 @@
 This is the operator path for a fresh node: what to install, which ports to
 open, what to change in the generated config before the node is reachable,
 how to keep the keys, how to mirror a publisher, and how to publish and
-archive. It describes the node as built from `main` on 2026-09-04. Where the
-public release still lags the source, the guide says so.
+archive. It describes v1.0.4-beta.18 (2026-09-04).
 
 ## 1. Get a build
 
-Until the next public release is cut, build from source. The one-line
-installers (`curl https://spacedatanetwork.org/install.sh | bash`,
-`irm https://spacedatanetwork.org/install.ps1 | iex`) pick the newest
-`v<semver>` node release on GitHub; the newest one today predates the
-FlatBuffer dashboard and the sync, export and archive lanes.
+```sh
+# macOS or Linux
+curl -fsSL https://spacedatanetwork.org/install.sh | bash
+# Windows PowerShell
+irm https://spacedatanetwork.org/install.ps1 | iex
+```
+
+The installers resolve the newest node release on GitHub (today
+v1.0.4-beta.18: macOS Apple Silicon and Linux x86-64), verify the checksum,
+unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
+`spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialise
+the node identity. Other platforms build from source:
 
 ```sh
 git clone https://github.com/DigitalArsenal/space-data-network.git
@@ -24,27 +30,28 @@ npm run server:build          # Go 1.25; produces sdn-server/spacedatanetwork
 A plain clone is enough. The dashboard is embedded in the binary; its source
 (`sdn-js/spaceaware-ui`) is a private submodule that clones skip.
 
-The daemon loads `hd-wallet-wasi.wasm` for its HD identity. From a source
-tree it finds the copy under `sdn-js/node_modules/hd-wallet-wasm/dist/`
-(after `npm ci` in `sdn-js`); a self-contained bundle carries it under
-`runtime/modules/`. Put it at `/usr/local/lib/hd-wallet-wasi.wasm` if you
-run the bare binary from somewhere else.
+A source build loads `hd-wallet-wasi.wasm` for its HD identity from
+`sdn-js/node_modules/hd-wallet-wasm/dist/` (after `npm ci` in `sdn-js`), or
+from `/usr/local/lib/hd-wallet-wasi.wasm`; a bundle carries it under
+`runtime/modules/`.
 
 ## 2. Kubo
 
 Content identifiers, pinning, dataset publication and archive restore all go
-through a Kubo (go-ipfs) daemon. The node does not start Kubo for you today;
-run it as its own service.
+through a Kubo (go-ipfs) daemon.
 
-- Kubo 0.39 or newer.
-- Put its RPC API on `127.0.0.1:5002`. The node's admin listener defaults to
-  `127.0.0.1:5001`, the same port Kubo's API defaults to; one of them has to
-  move, and moving Kubo keeps every SDN default valid.
-- Set `admin.ipfs_api_url: http://127.0.0.1:5002` and, if you want the
-  dashboard to open archive assets, `admin.ipfs_gateway_url:
-  http://127.0.0.1:8080`. The node proxies `/ipfs/*` to that gateway for
-  content it already holds only; it never fetches arbitrary CIDs for callers.
-- If you expose Kubo's own gateway anywhere, set `Gateway.NoFetch=true` on it.
+- **From a bundle** the node runs its own Kubo: the bundled binary, a
+  repository under the node's data directory, the RPC API on
+  `127.0.0.1:5002` (off the admin listener's 5001) and the gateway on
+  `127.0.0.1:8080` with network fetch turned off. Nothing to install.
+- **From a source build**, or to use a Kubo you already run, point
+  `admin.ipfs_api_url` at its API (and `admin.ipfs_gateway_url` at its
+  gateway for the dashboard's archive links); the node leaves it alone. A
+  bare binary can also name a Kubo binary with `SDN_KUBO_BINARY` to have
+  the node run it.
+- The node proxies `/ipfs/*` to the gateway for content it already holds
+  only; it never fetches arbitrary CIDs for callers. If you expose Kubo's own
+  gateway anywhere, set `Gateway.NoFetch=true` on it.
 
 ## 3. Initialise and edit the config
 
@@ -63,7 +70,7 @@ writes a complete config. Edit these before binding anything non-loopback:
 | `admin.listen_addr` | `127.0.0.1:5001` for a loopback dashboard; a routable address only with TLS and authentication on |
 | `admin.require_auth` | `true` (the default). Leave it on. |
 | `admin.tls_mode` / `admin.tls_hosts` | `managed` plus your hostname for a public dashboard |
-| `admin.ipfs_api_url` | the Kubo API from step 2 |
+| `admin.ipfs_api_url` | leave unset from a bundle (managed Kubo); your Kubo's API otherwise |
 | `status.allowed_origins` | your own origin, or delete the line |
 | `network.listen` | keep the defaults unless a port is taken (see step 4) |
 | `subscriptions.default_retention` | `replace-current` (the default: each publication replaces the lane's previous set) or `archive-all` (keep and pin every publication). A subscription can choose its own rule. |
@@ -169,13 +176,13 @@ still hold.
 ## 10. Updates
 
 Self-update needs the self-contained bundle layout with
-`trust/update-roots.json`; bundles built by the release tooling carry the
-fleet roots. The feed at `https://sdn.spaceaware.io/updates` publishes the
-`beta` channel for linux/amd64 only; other platforms and a `stable` channel
-are pending.
+`trust/update-roots.json`; bundles from the release carry the fleet roots.
+The feed at `https://sdn.spaceaware.io/updates` publishes the `beta` channel
+for linux/amd64 only; other platforms reinstall from the newest release, and
+a `stable` channel is pending.
 
 ## Known gaps on this date
 
-- Kubo is not supervised by the node.
+- A source build (not a bundle) still needs a Kubo of your own.
 - Archives are not announced, and there is no restore-from-network.
 - Publishing has no dashboard or CLI front; it is the API above.
