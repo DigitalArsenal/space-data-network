@@ -88,6 +88,43 @@ type AutoPublisher struct {
 	// onPublished reports the outcome of each attempt. Tests use it; the
 	// daemon leaves it nil and reads the log.
 	onPublished func(DatasetPublicationRequest, *DatasetPublicationResult, error)
+
+	// attempts counts publication attempts per batch key so a failure is
+	// retried with backoff instead of being logged and forgotten (PUB-04:
+	// 42 of 98 prod publications in a week failed and were never announced,
+	// 41 of them "catalog still hydrating" — a transient).
+	attempts map[string]int
+	// retryBackoff answers how long to wait before attempt n+1 (n >= 1).
+	// The daemon uses autoPublishRetryBackoff; tests shorten it.
+	retryBackoff func(attempt int) time.Duration
+	// counters are the operator-visible outcome tallies (Stats).
+	published, retrying, failed int64
+}
+
+// AutoPublishStats are the outcome tallies since start: publications that
+// succeeded, batches currently waiting for a retry, and batches given up on
+// after autoPublishMaxAttempts.
+type AutoPublishStats struct {
+	Published int64
+	Retrying  int64
+	Failed    int64
+}
+
+// autoPublishMaxAttempts bounds retries of one batch. With the default
+// backoff (30 s doubling, capped at 30 min) the last attempt lands about
+// 1 h 20 m after the first, comfortably past a catalog hydration.
+const autoPublishMaxAttempts = 6
+
+// autoPublishRetryBackoff is the daemon's wait before attempt n+1.
+func autoPublishRetryBackoff(attempt int) time.Duration {
+	wait := 30 * time.Second
+	for i := 1; i < attempt; i++ {
+		wait *= 2
+		if wait >= 30*time.Minute {
+			return 30 * time.Minute
+		}
+	}
+	return wait
 }
 
 // NewAutoPublisher builds the trigger for the configured lanes. It returns nil
@@ -118,10 +155,22 @@ func NewAutoPublisher(service DatasetPublicationService, lanes []config.AutoPubl
 		queue:            make(chan DatasetPublicationRequest, autoPublishQueueDepth),
 		lastPublished:    make(map[string]time.Time),
 		publishedBatches: make(map[string]struct{}),
+		attempts:         make(map[string]int),
+		retryBackoff:     autoPublishRetryBackoff,
 		stop:             make(chan struct{}),
 		done:             make(chan struct{}),
 		now:              func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// Stats reports the outcome tallies. Safe on a nil publisher.
+func (p *AutoPublisher) Stats() AutoPublishStats {
+	if p == nil {
+		return AutoPublishStats{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return AutoPublishStats{Published: p.published, Retrying: p.retrying, Failed: p.failed}
 }
 
 // Lanes reports the configured lanes (diagnostics; never mutated).
@@ -187,12 +236,35 @@ func (p *AutoPublisher) publish(ctx context.Context, req DatasetPublicationReque
 	defer cancel()
 
 	result, err := p.service.PublishDatasetUpdate(runCtx, req)
+	batchKey := autoPublishBatchKey(req)
 	if err != nil {
-		// A failed publication is an operational fact an operator acts on: the
-		// batch is stored and the network cannot see it.
-		log.Warnf("auto-publish failed for %s %s/%s batch %s: %v",
-			req.Schema, req.ProviderID, req.SourceName, req.BatchID, err)
+		// A failed publication is an operational fact: the batch is stored and
+		// the network cannot see it. Most failures are transient (the catalog
+		// is still hydrating after a boot, Kubo is restarting), so the batch
+		// is retried with backoff and only given up on after
+		// autoPublishMaxAttempts — and that is counted, not just logged.
+		p.mu.Lock()
+		p.attempts[batchKey]++
+		attempt := p.attempts[batchKey]
+		if attempt < autoPublishMaxAttempts {
+			p.retrying++
+			p.mu.Unlock()
+			wait := p.retryBackoff(attempt)
+			log.Warnf("auto-publish failed for %s %s/%s batch %s (attempt %d of %d, retry in %s): %v",
+				req.Schema, req.ProviderID, req.SourceName, req.BatchID, attempt, autoPublishMaxAttempts, wait, err)
+			go p.requeueAfter(wait, req)
+		} else {
+			p.failed++
+			delete(p.attempts, batchKey)
+			p.mu.Unlock()
+			log.Errorf("auto-publish gave up on %s %s/%s batch %s after %d attempts: %v",
+				req.Schema, req.ProviderID, req.SourceName, req.BatchID, attempt, err)
+		}
 	} else if result != nil {
+		p.mu.Lock()
+		p.published++
+		delete(p.attempts, batchKey)
+		p.mu.Unlock()
 		log.Infof("auto-published %s %s/%s batch %s: %d records, manifest %s",
 			req.Schema, req.ProviderID, req.SourceName, req.BatchID,
 			result.RecordCount, result.ManifestCID)
@@ -314,4 +386,34 @@ func normalizeAutoPublishSchema(schema string) string {
 		return strings.TrimSuffix(upper, ".FBS") + ".fbs"
 	}
 	return upper + ".fbs"
+}
+
+func autoPublishBatchKey(req DatasetPublicationRequest) string {
+	return normalizeAutoPublishSchema(req.Schema) + "|" + req.ProviderID + "|" + req.SourceName + "|" + req.BatchID
+}
+
+// requeueAfter puts a failed batch back on the queue once its backoff has
+// elapsed, unless the publisher stops first. A full queue drops the retry
+// and counts the batch as failed rather than blocking.
+func (p *AutoPublisher) requeueAfter(wait time.Duration, req DatasetPublicationRequest) {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-p.stop:
+		return
+	}
+	p.mu.Lock()
+	p.retrying--
+	p.mu.Unlock()
+	select {
+	case p.queue <- req:
+	default:
+		p.mu.Lock()
+		p.failed++
+		delete(p.attempts, autoPublishBatchKey(req))
+		p.mu.Unlock()
+		log.Warnf("auto-publish queue full; dropped retry of %s %s/%s batch %s",
+			req.Schema, req.ProviderID, req.SourceName, req.BatchID)
+	}
 }
