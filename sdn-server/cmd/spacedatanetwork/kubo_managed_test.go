@@ -69,3 +69,16 @@ func TestPlanManagedKubo(t *testing.T) {
 		t.Fatalf("a non-existent production default repo path was honoured: %+v", plan)
 	}
 }
+
+func TestManagedKuboDataPath(t *testing.T) {
+	cfg := config.Default()
+	cfg.Setup.DataPath = "/var/lib/sdn"
+	if got := managedKuboDataPath(cfg); got != "/var/lib/sdn" {
+		t.Fatalf("data path = %q", got)
+	}
+	cfg.Setup.DataPath = ""
+	cfg.Storage.Path = "/var/lib/sdn/store"
+	if got := managedKuboDataPath(cfg); got != "/var/lib/sdn" {
+		t.Fatalf("data path from storage = %q", got)
+	}
+}
