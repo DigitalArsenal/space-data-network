@@ -65,7 +65,7 @@ func buildAppRegistry(cfg config.AppsConfig, dashboard []byte) (*apps.Registry, 
 			apps.AppIdentity{
 				ID:          dashboardAppID,
 				Name:        dashboardAppName,
-				Version:     versioninfo.SuiteVersion,
+				Version:     versioninfo.Version(),
 				Description: dashboardAppDescription,
 			},
 			[]apps.InlinePage{{
