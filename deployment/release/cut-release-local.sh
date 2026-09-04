@@ -44,7 +44,7 @@ if [[ -z "$version" || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?
 fi
 tag="v${version}"
 commit="$(git -C "$root" rev-parse HEAD)"
-if [[ "$publish" == 1 && -n "$(git -C "$root" status --porcelain --untracked-files=no)" ]]; then
+if [[ "$publish" == 1 && -n "$(git -C "$root" status --porcelain --untracked-files=no --ignore-submodules=all)" ]]; then
   echo "refusing to publish from a dirty tree: commit or stash first (a release names one commit)" >&2
   exit 1
 fi
