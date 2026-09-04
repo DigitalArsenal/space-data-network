@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -534,7 +533,7 @@ func (s *Service) PublishListing(ctx context.Context, request ListingPublication
 	var dpmBytes []byte
 	var dpmCID string
 	if listing.ListingKind == ListingKindDataStream && listing.AccessType == AccessTypeOneTime {
-		dpmBytes, err = s.buildListingDPM(listing, fileID, request.Dataset, request.Upload)
+		dpmBytes, err = s.buildListingDPM(ctx, listing, fileID, request.Dataset, request.Upload)
 		if err != nil {
 			return nil, fmt.Errorf("build OneTime dataset DPM: %w", err)
 		}
@@ -687,7 +686,7 @@ type listingDatasetRecord struct {
 	Data   []byte
 }
 
-func (s *Service) buildListingDPM(listing *Listing, fileID string, selection *DatasetSelection, upload *UploadReference) ([]byte, error) {
+func (s *Service) buildListingDPM(ctx context.Context, listing *Listing, fileID string, selection *DatasetSelection, upload *UploadReference) ([]byte, error) {
 	if len(s.signingKey) != ed25519.PrivateKeySize {
 		return nil, errors.New("ed25519 node signing key is required for DPM")
 	}
@@ -720,21 +719,43 @@ func (s *Service) buildListingDPM(listing *Listing, fileID string, selection *Da
 	if upload != nil {
 		return s.buildUploadedListingDPM(listing, fileID, schemaNames, upload)
 	}
+	if s.datasetPublisher == nil {
+		return nil, errors.New("publishing a stored-records listing needs Kubo to pin the shard: set admin.ipfs_api_url (or run from a bundle, which manages Kubo)")
+	}
+	// One pinned shard per schema, through the same export pipeline dataset
+	// publications use: the DPM then advertises the CID Kubo serves, with the
+	// shard's SHA-256 and length, instead of an in-memory hash nothing stores.
+	updateID := fmt.Sprintf("%d", listing.UpdatedAt.Unix())
 	var records []listingDatasetRecord
+	var assets []listingDataAsset
 	for _, schema := range schemaNames {
+		var exportRecords []storage.DatasetExportRecord
 		for offset := 0; ; {
 			stored, err := s.store.flatStore.QueryIndexedRecords(selection.indexedQuery(schema, offset))
 			if err != nil {
 				return nil, fmt.Errorf("query %s records: %w", schema, err)
 			}
 			for _, record := range stored {
-				records = append(records, listingDatasetRecord{Schema: schema, CID: record.CID, Data: append([]byte(nil), record.Data...)})
+				data := append([]byte(nil), record.Data...)
+				records = append(records, listingDatasetRecord{Schema: schema, CID: record.CID, Data: data})
+				exportRecords = append(exportRecords, storage.DatasetExportRecord{CID: record.CID, Data: data})
 			}
 			if len(stored) < 250000 {
 				break
 			}
 			offset += len(stored)
 		}
+		if len(exportRecords) == 0 {
+			continue
+		}
+		sort.Slice(exportRecords, func(i, j int) bool { return exportRecords[i].CID < exportRecords[j].CID })
+		filter := selection.indexedQuery(schema, 0)
+		filter.Limit, filter.Offset = 0, 0
+		asset, err := s.datasetPublisher.PublishListingDataset(ctx, listing.ListingID, updateID, filter, exportRecords)
+		if err != nil {
+			return nil, err
+		}
+		assets = append(assets, listingDataAsset{Schema: schema, CID: asset.CID, SHA256: asset.SHA256, ByteLength: asset.ByteLength})
 	}
 	if len(records) == 0 {
 		return nil, errors.New("OneTime dataset listing query matched no stored records")
@@ -760,17 +781,14 @@ func (s *Service) buildListingDPM(listing *Listing, fileID string, selection *Da
 	}
 	canonicalQuery, _ := json.Marshal(queryDocument)
 	queryHash := sha256.Sum256(canonicalQuery)
-	resultBytes := listingDatasetResultBytes(records)
-	resultHash := sha256.Sum256(resultBytes)
 	dataRoot := ComputeListingMerkleRoot(recordData(records))
 	fileIDRoot := ComputeListingFileIDMerkleRoot(fileID, recordData(records))
-	resultCID := storage.ComputeCID(resultBytes)
 	queryCID := storage.ComputeCID(canonicalQuery)
 
 	build := func(signature []byte) []byte {
 		return buildListingDPMBytes(listing, fileID, schemaNames, canonicalQuery,
-			hex.EncodeToString(queryHash[:]), hex.EncodeToString(resultHash[:]),
-			resultCID, uint64(len(resultBytes)), queryCID, dataRoot, fileIDRoot, signature)
+			hex.EncodeToString(queryHash[:]), listingResultSHA256(assets),
+			assets, queryCID, dataRoot, fileIDRoot, signature)
 	}
 	unsigned := build(nil)
 	digest := sha256.Sum256(unsigned)
@@ -794,9 +812,10 @@ func (s *Service) buildUploadedListingDPM(listing *Listing, fileID string, schem
 	dataRoot := hex.EncodeToString(rootMaterial[:])
 	fileIDRoot := ComputeListingFileIDMerkleRoot(fileID, [][]byte{[]byte(upload.CID)})
 	queryCID := storage.ComputeCID(canonicalQuery)
+	assets := []listingDataAsset{{Schema: strings.Join(schemaNames, ","), CID: upload.CID, SHA256: resultHash, ByteLength: uint64(upload.ByteLength)}}
 	build := func(signature []byte) []byte {
 		return buildListingDPMBytes(listing, fileID, schemaNames, canonicalQuery,
-			hex.EncodeToString(queryHash[:]), resultHash, upload.CID, uint64(upload.ByteLength),
+			hex.EncodeToString(queryHash[:]), resultHash, assets,
 			queryCID, dataRoot, fileIDRoot, signature)
 	}
 	unsigned := build(nil)
@@ -804,15 +823,29 @@ func (s *Service) buildUploadedListingDPM(listing *Listing, fileID string, schem
 	return build(ed25519.Sign(s.signingKey, digest[:])), nil
 }
 
-func listingDatasetResultBytes(records []listingDatasetRecord) []byte {
-	var result bytes.Buffer
-	for _, record := range records {
-		_ = binary.Write(&result, binary.BigEndian, uint32(len(record.Schema)))
-		result.WriteString(record.Schema)
-		_ = binary.Write(&result, binary.BigEndian, uint32(len(record.Data)))
-		result.Write(record.Data)
+// listingDataAsset is one DATA_SHARD asset of a listing DPM: the shard Kubo
+// serves for one schema (or, for an uploaded dataset, the upload itself).
+type listingDataAsset struct {
+	Schema     string
+	CID        string
+	SHA256     string
+	ByteLength uint64
+}
+
+// listingResultSHA256 is the DPM QUERY.RESULT_SHA256 for a set of shards: the
+// single shard's SHA-256, or the SHA-256 over the shards' hex digests joined
+// in asset order when a listing spans several schemas.
+func listingResultSHA256(assets []listingDataAsset) string {
+	if len(assets) == 1 {
+		return assets[0].SHA256
 	}
-	return result.Bytes()
+	var joined strings.Builder
+	for _, asset := range assets {
+		joined.WriteString(asset.SHA256)
+		joined.WriteByte('\n')
+	}
+	sum := sha256.Sum256([]byte(joined.String()))
+	return hex.EncodeToString(sum[:])
 }
 
 func recordData(records []listingDatasetRecord) [][]byte {
@@ -897,8 +930,8 @@ func VerifyListingDPM(dpmBytes []byte, publicKey ed25519.PublicKey) (err error) 
 	for i := 0; i < query.SCHEMA_NAMESLength(); i++ {
 		schemaNames = append(schemaNames, string(query.SCHEMA_NAMES(i)))
 	}
-	var resultCID, queryCID, resultSHA, dataRoot, recordRoot, fileIDRoot string
-	var resultLength uint64
+	var queryCID, dataRoot, recordRoot, fileIDRoot string
+	var dataAssets []listingDataAsset
 	for i := 0; i < dpm.ASSETSLength(); i++ {
 		var asset sdsdpm.DPMAsset
 		if !dpm.ASSETS(&asset, i) {
@@ -906,10 +939,15 @@ func VerifyListingDPM(dpmBytes []byte, publicKey ed25519.PublicKey) (err error) 
 		}
 		switch asset.ASSET_KIND().String() {
 		case "DATA_SHARD":
-			resultCID = string(asset.CID())
-			resultLength = asset.BYTE_LENGTH()
-			resultSHA = string(asset.BYTE_SHA256())
-			dataRoot = string(asset.DATA_ROOT())
+			dataAssets = append(dataAssets, listingDataAsset{
+				Schema: string(asset.SCHEMA_NAME()), CID: string(asset.CID()),
+				SHA256: string(asset.BYTE_SHA256()), ByteLength: asset.BYTE_LENGTH(),
+			})
+			if root := string(asset.DATA_ROOT()); dataRoot == "" {
+				dataRoot = root
+			} else if root != dataRoot {
+				return errors.New("DPM DATA_SHARD assets disagree on DATA_ROOT")
+			}
 		case "QUERY_INDEX":
 			queryCID = string(asset.CID())
 		}
@@ -929,13 +967,18 @@ func VerifyListingDPM(dpmBytes []byte, publicKey ed25519.PublicKey) (err error) 
 			fileIDRoot = string(index.INDEX_ROOT())
 		}
 	}
-	if resultCID == "" || queryCID == "" || dataRoot == "" || recordRoot == "" || fileIDRoot == "" {
+	if len(dataAssets) == 0 || queryCID == "" || dataRoot == "" || recordRoot == "" || fileIDRoot == "" {
 		return errors.New("DPM missing listing dataset assets")
+	}
+	for _, asset := range dataAssets {
+		if strings.TrimSpace(asset.CID) == "" || strings.TrimSpace(asset.SHA256) == "" {
+			return errors.New("DPM DATA_SHARD asset without CID or SHA-256")
+		}
 	}
 	if recordRoot != dataRoot {
 		return errors.New("DPM record_cid index root does not match DATA_ROOT")
 	}
-	if resultSHA != string(query.RESULT_SHA256()) {
+	if listingResultSHA256(dataAssets) != string(query.RESULT_SHA256()) {
 		return errors.New("DPM DATA_SHARD hash does not match QUERY.RESULT_SHA256")
 	}
 	publishedAt, err := time.Parse(time.RFC3339Nano, string(dpm.PUBLISH_TIMESTAMP()))
@@ -948,7 +991,7 @@ func VerifyListingDPM(dpmBytes []byte, publicKey ed25519.PublicKey) (err error) 
 	}
 	unsigned := buildListingDPMBytes(listing, string(dpm.FILE_ID()), schemaNames,
 		append([]byte(nil), query.CANONICAL_QUERY()...), string(query.QUERY_SHA256()),
-		string(query.RESULT_SHA256()), resultCID, resultLength, queryCID, dataRoot, fileIDRoot, nil)
+		string(query.RESULT_SHA256()), dataAssets, queryCID, dataRoot, fileIDRoot, nil)
 	digest := sha256.Sum256(unsigned)
 	if !ed25519.Verify(publicKey, digest[:], dpm.PROVIDER_SIGNATUREBytes()) {
 		return errors.New("invalid DPM provider signature")
@@ -956,7 +999,7 @@ func VerifyListingDPM(dpmBytes []byte, publicKey ed25519.PublicKey) (err error) 
 	return nil
 }
 
-func buildListingDPMBytes(listing *Listing, fileID string, schemaNames []string, canonicalQuery []byte, queryHash, resultHash, resultCID string, resultLength uint64, queryCID, dataRoot, fileIDRoot string, signature []byte) []byte {
+func buildListingDPMBytes(listing *Listing, fileID string, schemaNames []string, canonicalQuery []byte, queryHash, resultHash string, dataAssets []listingDataAsset, queryCID, dataRoot, fileIDRoot string, signature []byte) []byte {
 	builder := flatbuffers.NewBuilder(2048)
 	version := builder.CreateString("1.0.0")
 	datasetID := builder.CreateString(listing.ListingID)
@@ -966,27 +1009,35 @@ func buildListingDPMBytes(listing *Listing, fileID string, schemaNames []string,
 	providerEPMCID := builder.CreateString(listing.ProviderEPMCID)
 	publishedAt := builder.CreateString(listing.UpdatedAt.UTC().Format(time.RFC3339Nano))
 
-	assetCID := builder.CreateString(resultCID)
-	assetAddress := builder.CreateString("/ipfs/" + resultCID)
-	assetName := builder.CreateString(listing.ListingID + ".dataset")
-	assetFileID := builder.CreateString(fileID)
-	assetProtocol := builder.CreateString("FlatSQL canonical record set v1")
-	assetSHA := builder.CreateString(resultHash)
-	assetRoot := builder.CreateString(dataRoot)
-	assetSchema := builder.CreateString(strings.Join(schemaNames, ","))
-	sdsdpm.DPMAssetStart(builder)
-	sdsdpm.DPMAssetAddASSET_KIND(builder, 0)
-	sdsdpm.DPMAssetAddTRANSPORT_KIND(builder, 0)
-	sdsdpm.DPMAssetAddCID(builder, assetCID)
-	sdsdpm.DPMAssetAddMULTIFORMAT_ADDRESS(builder, assetAddress)
-	sdsdpm.DPMAssetAddFILE_NAME(builder, assetName)
-	sdsdpm.DPMAssetAddFILE_ID(builder, assetFileID)
-	sdsdpm.DPMAssetAddTRANSPORT_PROTOCOL(builder, assetProtocol)
-	sdsdpm.DPMAssetAddBYTE_LENGTH(builder, resultLength)
-	sdsdpm.DPMAssetAddBYTE_SHA256(builder, assetSHA)
-	sdsdpm.DPMAssetAddDATA_ROOT(builder, assetRoot)
-	sdsdpm.DPMAssetAddSCHEMA_NAME(builder, assetSchema)
-	asset := sdsdpm.DPMAssetEnd(builder)
+	// One DATA_SHARD asset per pinned shard, in the order given; the verifier
+	// reads them back in the same order to rebuild the signed bytes.
+	dataAssetOffsets := make([]flatbuffers.UOffsetT, 0, len(dataAssets))
+	for _, data := range dataAssets {
+		assetCID := builder.CreateString(data.CID)
+		assetAddress := builder.CreateString("/ipfs/" + data.CID)
+		assetName := builder.CreateString(listing.ListingID + ".dataset")
+		if len(dataAssets) > 1 {
+			assetName = builder.CreateString(listing.ListingID + "." + strings.TrimSuffix(data.Schema, ".fbs") + ".dataset")
+		}
+		assetFileID := builder.CreateString(fileID)
+		assetProtocol := builder.CreateString("FlatSQL canonical record set v1")
+		assetSHA := builder.CreateString(data.SHA256)
+		assetRoot := builder.CreateString(dataRoot)
+		assetSchema := builder.CreateString(data.Schema)
+		sdsdpm.DPMAssetStart(builder)
+		sdsdpm.DPMAssetAddASSET_KIND(builder, 0)
+		sdsdpm.DPMAssetAddTRANSPORT_KIND(builder, 0)
+		sdsdpm.DPMAssetAddCID(builder, assetCID)
+		sdsdpm.DPMAssetAddMULTIFORMAT_ADDRESS(builder, assetAddress)
+		sdsdpm.DPMAssetAddFILE_NAME(builder, assetName)
+		sdsdpm.DPMAssetAddFILE_ID(builder, assetFileID)
+		sdsdpm.DPMAssetAddTRANSPORT_PROTOCOL(builder, assetProtocol)
+		sdsdpm.DPMAssetAddBYTE_LENGTH(builder, data.ByteLength)
+		sdsdpm.DPMAssetAddBYTE_SHA256(builder, assetSHA)
+		sdsdpm.DPMAssetAddDATA_ROOT(builder, assetRoot)
+		sdsdpm.DPMAssetAddSCHEMA_NAME(builder, assetSchema)
+		dataAssetOffsets = append(dataAssetOffsets, sdsdpm.DPMAssetEnd(builder))
+	}
 	queryAssetCID := builder.CreateString(queryCID)
 	queryAssetAddress := builder.CreateString("/ipfs/" + queryCID)
 	queryAssetName := builder.CreateString(listing.ListingID + ".query.json")
@@ -1006,10 +1057,12 @@ func buildListingDPMBytes(listing *Listing, fileID string, schemaNames []string,
 	sdsdpm.DPMAssetAddBYTE_SHA256(builder, queryAssetSHA)
 	sdsdpm.DPMAssetAddSCHEMA_NAME(builder, queryAssetSchema)
 	queryAsset := sdsdpm.DPMAssetEnd(builder)
-	sdsdpm.DPMStartASSETSVector(builder, 2)
+	sdsdpm.DPMStartASSETSVector(builder, len(dataAssetOffsets)+1)
 	builder.PrependUOffsetT(queryAsset)
-	builder.PrependUOffsetT(asset)
-	assets := builder.EndVector(2)
+	for i := len(dataAssetOffsets) - 1; i >= 0; i-- {
+		builder.PrependUOffsetT(dataAssetOffsets[i])
+	}
+	assets := builder.EndVector(len(dataAssetOffsets) + 1)
 
 	canonicalQueryOffset := builder.CreateString(string(canonicalQuery))
 	queryHashOffset := builder.CreateString(queryHash)

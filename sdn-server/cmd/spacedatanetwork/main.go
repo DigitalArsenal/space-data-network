@@ -1419,6 +1419,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						log.Warnf("Failed to initialize storefront service: %v", err)
 						_ = sfStore.Close()
 					} else {
+						// One-time listings pin their record set as a dataset shard
+						// through Kubo, like every publication (PUB-03).
+						sfSvc.SetDatasetPublisher(&storefront.KuboListingDatasetPublisher{
+							IPFSAPIURL: cfg.Admin.IPFSAPIURL,
+							OutputDir:  filepath.Join(filepath.Dir(cfg.Storage.Path), "dataset-publications", "listings"),
+						})
 						sfCatalog := storefront.NewCatalog(sfStore, nil)
 						sfDelivery := storefront.NewDeliveryService(storefront.DefaultDeliveryConfig(), nil)
 						var chainVerifiers []storefront.ChainVerifier
