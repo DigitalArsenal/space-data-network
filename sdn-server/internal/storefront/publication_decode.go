@@ -40,6 +40,9 @@ func decodeListingRecord(data []byte) (listing *Listing, err error) {
 		License:            string(record.LICENSE()),
 		SourcePeerID:       string(record.SOURCE_PEER_ID()),
 		PrimaryCategory:    record.PRIMARY_CATEGORY().String(),
+		// Absent slot → ordinal 0 → "ReplaceCurrent"; an ordinal this build
+		// does not know reads as the default on the way out (retentionPolicyWord).
+		RecommendedRetention: retentionPolicyWord(record.RECOMMENDED_RETENTION().String()),
 	}
 	for i := 0; i < record.DATA_TYPESLength(); i++ {
 		listing.DataTypes = append(listing.DataTypes, string(record.DATA_TYPES(i)))

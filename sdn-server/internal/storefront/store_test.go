@@ -267,3 +267,53 @@ func TestStoreCredits(t *testing.T) {
 		t.Errorf("Balance after withdrawal should be 7000, got %d", balance.Balance)
 	}
 }
+
+// TestStoreListingRecommendedRetention: the publisher's declared rule survives
+// the index round trip (GetListing and SearchListings), the default rule reads
+// as ReplaceCurrent, and a row older than the column reads as the default.
+func TestStoreListingRecommendedRetention(t *testing.T) {
+	store := newTestStoreHelper(t)
+	now := time.Now()
+	base := func(id, rule string) *Listing {
+		return &Listing{
+			ListingID: id, ListingKind: ListingKindDataStream, ProviderPeerID: "12D3KooWRetentionProvider",
+			Title: "Catalogue " + id, DataTypes: []string{"OMM"},
+			Pricing:          []PricingTier{{Name: "Open", PriceCurrency: "SDN"}},
+			AcceptedPayments: []PaymentMethod{PaymentMethodFree},
+			CreatedAt:        now, UpdatedAt: now, Version: 1, Active: true,
+			RecommendedRetention: rule,
+		}
+	}
+	for _, l := range []*Listing{base("keep-every", "ArchiveAll"), base("replace", "ReplaceCurrent"), base("unsaid", "")} {
+		if err := store.CreateListing(l); err != nil {
+			t.Fatalf("CreateListing(%s): %v", l.ListingID, err)
+		}
+	}
+	// A row indexed before the column existed holds ''.
+	if _, err := store.db.Exec(`UPDATE storefront_listings SET recommended_retention = '' WHERE listing_id = 'unsaid'`); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{"keep-every": "ArchiveAll", "replace": "ReplaceCurrent", "unsaid": "ReplaceCurrent"}
+	for id, rule := range want {
+		got, err := store.GetListing(id)
+		if err != nil || got == nil {
+			t.Fatalf("GetListing(%s): %v, %+v", id, err, got)
+		}
+		if got.RecommendedRetention != rule {
+			t.Errorf("GetListing(%s).RecommendedRetention = %q, want %q", id, got.RecommendedRetention, rule)
+		}
+	}
+	results, err := store.SearchListings(&SearchQuery{DataTypes: []string{"OMM"}, Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchListings: %v", err)
+	}
+	if len(results.Listings) != len(want) {
+		t.Fatalf("SearchListings returned %d listings, want %d", len(results.Listings), len(want))
+	}
+	for _, l := range results.Listings {
+		if l.RecommendedRetention != want[l.ListingID] {
+			t.Errorf("SearchListings %s RecommendedRetention = %q, want %q", l.ListingID, l.RecommendedRetention, want[l.ListingID])
+		}
+	}
+}

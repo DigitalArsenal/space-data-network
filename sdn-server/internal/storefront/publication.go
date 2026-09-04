@@ -44,6 +44,11 @@ type ListingDraft struct {
 	Coverage         ListingCoverageDraft  `json:"COVERAGE"`
 	ExpiresAt        uint64                `json:"EXPIRES_AT"`
 	SourceConnector  string                `json:"SOURCE_CONNECTOR_ID,omitempty"`
+	// RecommendedRetention is the publisher's recommended subscription rule
+	// ($STF.stfRetentionPolicy: ReplaceCurrent | ArchiveAll). "" reads as
+	// the default, ReplaceCurrent; a non-default word is only valid on a
+	// DataStream listing.
+	RecommendedRetention string `json:"RECOMMENDED_RETENTION"`
 }
 
 type ListingPricingDraft struct {
@@ -119,6 +124,11 @@ type canonicalSTFDocument struct {
 	SourcePeerID       string                `json:"SOURCE_PEER_ID"`
 	PrimaryCategory    string                `json:"PRIMARY_CATEGORY"`
 	Categories         []string              `json:"CATEGORIES"`
+	// Present only when the publisher recommends ArchiveAll: the default rule
+	// adds no key, so the canonical-JSON signature of every listing signed
+	// before the field existed keeps verifying — the same stability the
+	// FlatBuffer form gets from an omitted default scalar.
+	RecommendedRetention string `json:"RECOMMENDED_RETENTION,omitempty"`
 }
 
 func (d ListingDraft) validate() error {
@@ -168,6 +178,14 @@ func (d ListingDraft) validate() error {
 	if strings.TrimSpace(d.SourceConnector) != "" && strings.TrimSpace(d.ListingKind) != "DataStream" {
 		return errors.New("SOURCE_CONNECTOR_ID is only valid for DataStream listings")
 	}
+	if retention := strings.TrimSpace(d.RecommendedRetention); retention != "" {
+		if _, ok := sdsstf.EnumValuesstfRetentionPolicy[retention]; !ok {
+			return errors.New("RECOMMENDED_RETENTION must be ReplaceCurrent or ArchiveAll")
+		}
+		if retention != "ReplaceCurrent" && strings.TrimSpace(d.ListingKind) != "DataStream" {
+			return errors.New("RECOMMENDED_RETENTION is only valid for DataStream listings")
+		}
+	}
 	if len(d.Coverage.Spatial.GeoBounds) != 0 && len(d.Coverage.Spatial.GeoBounds) != 4 {
 		return errors.New("COVERAGE.SPATIAL.GEO_BOUNDS must be empty or contain four values")
 	}
@@ -195,6 +213,8 @@ func listingFromDraft(d ListingDraft, peerID, epmCID string, now time.Time) *Lis
 		License:           d.License,
 		TermsCID:          d.TermsCID,
 		SourceConnectorID: strings.TrimSpace(d.SourceConnector),
+		// Validated above; "" is the default rule.
+		RecommendedRetention: retentionPolicyWord(d.RecommendedRetention),
 		Coverage: DataCoverage{
 			Spatial: SpatialCoverage{
 				Type: d.Coverage.Spatial.Type, Regions: cleanStrings(d.Coverage.Spatial.Regions),
@@ -316,7 +336,7 @@ func canonicalDocumentForListing(listing *Listing) canonicalSTFDocument {
 			Description: tier.Description,
 		})
 	}
-	return canonicalSTFDocument{
+	document := canonicalSTFDocument{
 		ListingID: listing.ListingID, ProviderPeerID: listing.ProviderPeerID, ProviderEPMCID: listing.ProviderEPMCID,
 		Title: listing.Title, Description: listing.Description, DataTypes: jsonStrings(listing.DataTypes),
 		Coverage: ListingCoverageDraft{
@@ -342,6 +362,11 @@ func canonicalDocumentForListing(listing *Listing) canonicalSTFDocument {
 		SourcePeerID: listing.SourcePeerID, PrimaryCategory: listing.PrimaryCategory,
 		Categories: jsonStrings(listing.Categories),
 	}
+	// Only the non-default rule is written (see canonicalSTFDocument).
+	if retentionPolicyWord(listing.RecommendedRetention) == "ArchiveAll" {
+		document.RecommendedRetention = "ArchiveAll"
+	}
+	return document
 }
 
 func jsonStrings(values []string) []string {
