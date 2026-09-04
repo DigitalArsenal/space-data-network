@@ -45,6 +45,10 @@ const (
 	ArchiveImportPath = "/api/v1/archive/import"
 	// ArchivesPath lists archives and serves their assets.
 	ArchivesPath = "/api/v1/archives"
+	// ArchiveCIDsHeader names each listed manifest by its own CID, in frame
+	// order: a signed manifest cannot carry its own hash, and the client needs
+	// it to address the archive (re-import, /ipfs/<cid>, the asset route).
+	ArchiveCIDsHeader = "X-SDN-Archive-CIDs"
 	// ArchiveSchemaName is the store form of the $DPM standard.
 	ArchiveSchemaName = "DPM.fbs"
 
@@ -398,10 +402,12 @@ func (h *ArchiveHandler) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	frames := make([][]byte, 0, len(held))
+	cids := make([]string, 0, len(held))
 	for i := range held {
 		frames = append(frames, sizePrefixFrame(held[i].bytes))
+		cids = append(cids, held[i].manifestCID)
 	}
-	WriteFrameStream(w, http.StatusOK, frames, map[string]string{StreamSchemaHeader: ArchiveSchemaName})
+	WriteFrameStream(w, http.StatusOK, frames, map[string]string{StreamSchemaHeader: ArchiveSchemaName, ArchiveCIDsHeader: strings.Join(cids, ",")})
 }
 
 // handleAsset serves GET /api/v1/archives/{manifestCID}/asset/{assetCID}.
