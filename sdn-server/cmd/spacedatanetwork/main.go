@@ -671,6 +671,15 @@ func applyBundleDefaults(cfg *config.Config, layout bundle.Layout) {
 	if strings.TrimSpace(cfg.Admin.WebuiPath) == "" && pathExists(layout.WebUIPath) {
 		cfg.Admin.WebuiPath = layout.WebUIPath
 	}
+	// Wallet sign-in assets default to <data>/wallet-wasm and <data>/wallet-ui
+	// (an operator-staged tree wins when it exists); a bundle that carries
+	// them serves its own copies so a fresh install can sign in at once.
+	if !pathExists(cfg.WalletWasm.AssetsDir) && pathExists(layout.WalletWASMDir) {
+		cfg.WalletWasm.AssetsDir = layout.WalletWASMDir
+	}
+	if !pathExists(cfg.WalletWasm.UIAssetsDir) && pathExists(layout.WalletUIDir) {
+		cfg.WalletWasm.UIAssetsDir = layout.WalletUIDir
+	}
 }
 
 func pathExists(pathValue string) bool {

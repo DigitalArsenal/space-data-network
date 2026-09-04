@@ -52,6 +52,16 @@ export async function stageBundle(options) {
   await cp(required(options.kuboPath, 'kuboPath'), join(root, 'runtime', 'kubo', kuboName));
   await cp(required(options.sdnUIPath ?? options.sdnUiPath, 'sdnUIPath'), join(root, 'runtime', 'ui', 'sdn'), { recursive: true });
   await cp(required(options.webUIPath ?? options.webUiPath, 'webUIPath'), join(root, 'runtime', 'ui', 'webui'), { recursive: true });
+  // Wallet sign-in assets (hd-wallet-wasm + hd-wallet-ui dist trees, staged
+  // together at one pinned version by deployment/wallet-wasm/stage-wallet-wasm.sh).
+  // Optional for a smoke bundle; a release bundle without them leaves the
+  // dashboard unable to sign in until an operator stages them by hand.
+  if (options.walletWasmPath) {
+    await cp(options.walletWasmPath, join(root, 'runtime', 'ui', 'wallet-wasm'), { recursive: true });
+  }
+  if (options.walletUIPath ?? options.walletUiPath) {
+    await cp(options.walletUIPath ?? options.walletUiPath, join(root, 'runtime', 'ui', 'wallet-ui'), { recursive: true });
+  }
   await cp(
     required(options.updaterWasmPath, 'updaterWasmPath'),
     join(root, updaterWasmPath),

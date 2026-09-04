@@ -325,3 +325,52 @@ test('stageBundle stages the fleet trust roots when none are named', async () =>
   assert.equal(manifest.artifacts.some((artifact) => artifact.path.startsWith('trust/')), false);
   assert.equal(manifest.update.feedBaseUrl, 'https://sdn.spaceaware.io/updates');
 });
+
+// INST-03: a release bundle carries the wallet sign-in assets so a fresh
+// install's dashboard can sign in without an operator staging them by hand.
+test('stageBundle stages wallet sign-in assets under runtime/ui when given', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sdn-cli-bundle-wallet-'));
+  const inputs = join(root, 'inputs');
+  const out = join(root, 'out');
+  for (const dir of ['sdn-ui', 'webui', 'modules', join('wasmedge', 'bin'), join('wallet-wasm', 'runtime'), join('wallet-ui', 'compat')]) {
+    await mkdir(join(inputs, dir), { recursive: true });
+  }
+  await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
+  await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
+  await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'modules', 'hd-wallet-wasi.wasm'), 'wallet-wasm');
+  await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'LICENSE'), 'license');
+  await writeFile(join(inputs, 'README.md'), 'readme');
+  await writeFile(join(inputs, 'wallet-wasm', 'runtime', 'index.mjs'), 'export {};');
+  await writeFile(join(inputs, 'wallet-ui', 'compat', 'index.js'), 'export {};');
+
+  const staged = await stageBundle({
+    version: '1.2.3',
+    os: 'linux',
+    arch: 'amd64',
+    channel: 'beta',
+    outputDir: out,
+    binaryPath: join(inputs, 'spacedatanetwork'),
+    kuboPath: join(inputs, 'ipfs'),
+    sdnUIPath: join(inputs, 'sdn-ui'),
+    webUIPath: join(inputs, 'webui'),
+    updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    hdWalletWasmPath: join(inputs, 'modules', 'hd-wallet-wasi.wasm'),
+    wasmedgePath: join(inputs, 'wasmedge'),
+    licensePath: join(inputs, 'LICENSE'),
+    readmePath: join(inputs, 'README.md'),
+    manifestSignature: 'test-signature',
+    walletWasmPath: join(inputs, 'wallet-wasm'),
+    walletUIPath: join(inputs, 'wallet-ui'),
+  });
+
+  assert.equal(await readFile(join(staged.root, 'runtime', 'ui', 'wallet-wasm', 'runtime', 'index.mjs'), 'utf8'), 'export {};');
+  assert.equal(await readFile(join(staged.root, 'runtime', 'ui', 'wallet-ui', 'compat', 'index.js'), 'utf8'), 'export {};');
+  const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
+  const paths = manifest.artifacts.map((artifact) => artifact.path);
+  assert.ok(paths.includes('runtime/ui/wallet-wasm/runtime/index.mjs'), 'wallet-wasm is a checksummed bundle artifact');
+  assert.ok(paths.includes('runtime/ui/wallet-ui/compat/index.js'), 'wallet-ui is a checksummed bundle artifact');
+});

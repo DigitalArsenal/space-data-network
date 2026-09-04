@@ -86,6 +86,12 @@ func TestResolveFromExecutableInsideBundle(t *testing.T) {
 	if layout.HDWalletWASM != filepath.Join(root, "runtime", "modules", "hd-wallet-wasi.wasm") {
 		t.Fatalf("HDWalletWASM = %q", layout.HDWalletWASM)
 	}
+	if layout.WalletWASMDir != filepath.Join(root, "runtime", "ui", "wallet-wasm") {
+		t.Fatalf("WalletWASMDir = %q", layout.WalletWASMDir)
+	}
+	if layout.WalletUIDir != filepath.Join(root, "runtime", "ui", "wallet-ui") {
+		t.Fatalf("WalletUIDir = %q", layout.WalletUIDir)
+	}
 	if layout.ManifestPath != filepath.Join(root, "manifest.json") {
 		t.Fatalf("ManifestPath = %q", layout.ManifestPath)
 	}
