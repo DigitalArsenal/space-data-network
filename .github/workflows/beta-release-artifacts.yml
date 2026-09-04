@@ -313,6 +313,12 @@ jobs:
         run: |
           mkdir -p dist/cli-input
           GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" ./scripts/go-with-wasmedge.sh build -o "${PWD}/dist/cli-input/${BINARY_NAME}" ./cmd/spacedatanetwork
+      - name: Stage wallet sign-in assets
+        run: |
+          SDN_WALLET_NODE_MODULES="${PWD}/node_modules" deployment/wallet-wasm/stage-wallet-wasm.sh \
+            "${PWD}/dist/wallet-wasm" "${PWD}/dist/wallet-ui"
+          test -f dist/wallet-wasm/runtime/index.mjs
+          test -f dist/wallet-ui/compat/index.js
       - name: Build self-contained CLI archive
         run: |
           node deployment/release/build-self-contained-cli.mjs \
@@ -327,6 +333,8 @@ jobs:
             --webUIPath "${PWD}/dist/ipfs/ipfs-webui" \
             --updater-wasm-path "${PWD}/packages/sdn-updater-module/dist/isomorphic/module.wasm" \
             --hd-wallet-wasm-path "${PWD}/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" \
+            --wallet-wasm-path "${PWD}/dist/wallet-wasm" \
+            --wallet-ui-path "${PWD}/dist/wallet-ui" \
             --wasmedge-path "${WASMEDGE_DIR}" \
             --license-path "${PWD}/LICENSE" \
             --readme-path "${PWD}/README.md" \

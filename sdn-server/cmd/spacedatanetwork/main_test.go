@@ -2206,11 +2206,22 @@ func TestApplyBundleDefaultsUsesBundledAssetsWhenConfigIsEmpty(t *testing.T) {
 	if err := os.MkdirAll(layout.WebUIPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	layout.WalletWASMDir = filepath.Join(root, "runtime", "ui", "wallet-wasm")
+	layout.WalletUIDir = filepath.Join(root, "runtime", "ui", "wallet-ui")
+	for _, dir := range []string{layout.WalletWASMDir, layout.WalletUIDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cfg := config.Default()
 	cfg.Admin.FrontendPath = ""
 	cfg.Admin.WebuiPath = ""
 	cfg.Admin.IPFSAPIURL = ""
 	cfg.Admin.IPFSGatewayURL = ""
+	// The config defaults name <data>/wallet-wasm and <data>/wallet-ui, which a
+	// fresh install has never staged; the bundle's copies must take over.
+	cfg.WalletWasm.AssetsDir = filepath.Join(root, "data", "wallet-wasm")
+	cfg.WalletWasm.UIAssetsDir = filepath.Join(root, "data", "wallet-ui")
 
 	applyBundleDefaults(cfg, layout)
 
@@ -2219,6 +2230,23 @@ func TestApplyBundleDefaultsUsesBundledAssetsWhenConfigIsEmpty(t *testing.T) {
 	}
 	if cfg.Admin.WebuiPath != layout.WebUIPath {
 		t.Fatalf("WebuiPath = %q, want %q", cfg.Admin.WebuiPath, layout.WebUIPath)
+	}
+	if cfg.WalletWasm.AssetsDir != layout.WalletWASMDir {
+		t.Fatalf("WalletWasm.AssetsDir = %q, want the bundled %q", cfg.WalletWasm.AssetsDir, layout.WalletWASMDir)
+	}
+	if cfg.WalletWasm.UIAssetsDir != layout.WalletUIDir {
+		t.Fatalf("WalletWasm.UIAssetsDir = %q, want the bundled %q", cfg.WalletWasm.UIAssetsDir, layout.WalletUIDir)
+	}
+
+	// An operator-staged tree that exists keeps winning over the bundle's copy.
+	staged := filepath.Join(root, "data", "wallet-wasm")
+	if err := os.MkdirAll(staged, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.WalletWasm.AssetsDir = staged
+	applyBundleDefaults(cfg, layout)
+	if cfg.WalletWasm.AssetsDir != staged {
+		t.Fatalf("WalletWasm.AssetsDir = %q, want the operator-staged %q", cfg.WalletWasm.AssetsDir, staged)
 	}
 }
 

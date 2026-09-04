@@ -14,7 +14,13 @@ type Layout struct {
 	WebUIPath    string
 	UpdaterWASM  string
 	HDWalletWASM string
-	ManifestPath string
+	// WalletWASMDir and WalletUIDir hold the same-origin wallet sign-in
+	// assets (hd-wallet-wasm dist, hd-wallet-ui dist) staged into the bundle,
+	// so a fresh install can sign in to its dashboard without an operator
+	// running deployment/wallet-wasm/stage-wallet-wasm.sh first.
+	WalletWASMDir string
+	WalletUIDir   string
+	ManifestPath  string
 }
 
 func ResolveCurrent() Layout {
@@ -55,13 +61,15 @@ func ResolveFromExecutable(executablePath string) Layout {
 		kuboName = "ipfs.exe"
 	}
 	return Layout{
-		Root:         root,
-		BinDir:       binDir,
-		KuboBinary:   filepath.Join(root, "runtime", "kubo", kuboName),
-		SDNUIPath:    filepath.Join(root, "runtime", "ui", "sdn"),
-		WebUIPath:    filepath.Join(root, "runtime", "ui", "webui"),
-		UpdaterWASM:  filepath.Join(root, "runtime", "modules", "org.spacedatanetwork.updater.wasm"),
-		HDWalletWASM: filepath.Join(root, "runtime", "modules", "hd-wallet-wasi.wasm"),
-		ManifestPath: manifestPath,
+		Root:          root,
+		BinDir:        binDir,
+		KuboBinary:    filepath.Join(root, "runtime", "kubo", kuboName),
+		SDNUIPath:     filepath.Join(root, "runtime", "ui", "sdn"),
+		WebUIPath:     filepath.Join(root, "runtime", "ui", "webui"),
+		UpdaterWASM:   filepath.Join(root, "runtime", "modules", "org.spacedatanetwork.updater.wasm"),
+		HDWalletWASM:  filepath.Join(root, "runtime", "modules", "hd-wallet-wasi.wasm"),
+		WalletWASMDir: filepath.Join(root, "runtime", "ui", "wallet-wasm"),
+		WalletUIDir:   filepath.Join(root, "runtime", "ui", "wallet-ui"),
+		ManifestPath:  manifestPath,
 	}
 }

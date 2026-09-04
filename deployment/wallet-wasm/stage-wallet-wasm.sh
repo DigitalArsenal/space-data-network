@@ -54,9 +54,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 DEST="${1:-$HERE}"
 UI_DEST="${2:-$HERE/../wallet-ui}"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
-WALLET_PKG="$REPO_ROOT/sdn-js/node_modules/hd-wallet-wasm"
+# SDN_WALLET_NODE_MODULES names the node_modules tree holding the pinned
+# hd-wallet-wasm + hd-wallet-ui packages (the release workflow installs them
+# at the repo root; developers have them under sdn-js).
+WALLET_NODE_MODULES="${SDN_WALLET_NODE_MODULES:-$REPO_ROOT/sdn-js/node_modules}"
+WALLET_PKG="$WALLET_NODE_MODULES/hd-wallet-wasm"
 WALLET_DIST="$WALLET_PKG/dist"
-UI_PKG="$REPO_ROOT/sdn-js/node_modules/hd-wallet-ui"
+UI_PKG="$WALLET_NODE_MODULES/hd-wallet-ui"
 UI_DIST="$UI_PKG/dist"
 
 if [ ! -d "$WALLET_DIST" ]; then
