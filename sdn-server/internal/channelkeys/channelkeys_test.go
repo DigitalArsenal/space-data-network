@@ -5,8 +5,8 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/spacedatanetwork/sdn-server/internal/ecies"
 	secp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/spacedatanetwork/sdn-server/internal/ecies"
 	"golang.org/x/crypto/curve25519"
 )
 
@@ -56,7 +56,7 @@ func TestChannelWrapForMembers(t *testing.T) {
 	}
 
 	alice := x25519Party(t, "alice")
-	bob := secp256k1Party(t, "bob")   // mixed curve
+	bob := secp256k1Party(t, "bob") // mixed curve
 	carol := x25519Party(t, "carol")
 	for _, p := range []party{alice, bob, carol} {
 		if err := ch.AddMember(p.member()); err != nil {

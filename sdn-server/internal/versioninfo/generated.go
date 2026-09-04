@@ -3,15 +3,15 @@
 package versioninfo
 
 const (
-	SuiteVersion = "1.0.4"
+	SuiteVersion              = "1.0.4"
 	SpaceDataStandardsVersion = "1.210.0"
-	FlatSQLVersion = "1.4.5"
-	HDWalletWasmVersion = "2.0.29"
-	HDWalletUIVersion = "2.0.29"
-	IPFSWebUIVersion = "4.12.0"
-	KuboVersion = "0.40.0-dev"
-	DefaultUpdateChannel = "stable"
-	CurrentAdvertisementFlag = "spacedatanetwork/1.0.0"
+	FlatSQLVersion            = "1.4.5"
+	HDWalletWasmVersion       = "2.0.29"
+	HDWalletUIVersion         = "2.0.29"
+	IPFSWebUIVersion          = "4.12.0"
+	KuboVersion               = "0.40.0-dev"
+	DefaultUpdateChannel      = "stable"
+	CurrentAdvertisementFlag  = "spacedatanetwork/1.0.0"
 )
 
 var SupportedAdvertisementFlags = []string{

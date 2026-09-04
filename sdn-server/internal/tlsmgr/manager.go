@@ -21,15 +21,15 @@ const (
 )
 
 type Manager struct {
-	mu            sync.RWMutex
-	mode          string
-	staticCert    *tls.Certificate
+	mu             sync.RWMutex
+	mode           string
+	staticCert     *tls.Certificate
 	staticCertFile string
 	staticKeyFile  string
-	cacheDir      string
-	bootstrapCert *tls.Certificate
-	hosts         []string
-	acmeManager   *autocert.Manager
+	cacheDir       string
+	bootstrapCert  *tls.Certificate
+	hosts          []string
+	acmeManager    *autocert.Manager
 }
 
 func New(cfg config.AdminConfig) (*Manager, error) {

@@ -60,12 +60,12 @@ import (
 // renumber broke production — a test that agrees with the bug is worse than no
 // test.
 const (
-	testFlowSignatureEntryID                = "signature"
-	testFlowRECStandardMBL           string = "MBL"
-	testFlowRECRecordTypeMBLCurrent  byte   = 80
-	testFlowSignatureMagic    string = "$REC"
-	testFlowSignatureAlgo     string = "ed25519"
-	testFlowSignatureHashAlgo string = "sha256-canonical-module-hash"
+	testFlowSignatureEntryID               = "signature"
+	testFlowRECStandardMBL          string = "MBL"
+	testFlowRECRecordTypeMBLCurrent byte   = 80
+	testFlowSignatureMagic          string = "$REC"
+	testFlowSignatureAlgo           string = "ed25519"
+	testFlowSignatureHashAlgo       string = "sha256-canonical-module-hash"
 )
 
 // flowSignaturePayload mirrors modulert.moduleSignaturePayload's JSON shape

@@ -23,8 +23,8 @@ const ipfsPluginID = "io.spacedatanetwork.ipfs"
 
 // IPFSConfig holds the connection settings for the Kubo RPC API.
 type IPFSConfig struct {
-	APIURL     string        // e.g. "http://127.0.0.1:5002"
-	HTTPClient *http.Client  // optional; defaults to 30s timeout client
+	APIURL     string       // e.g. "http://127.0.0.1:5002"
+	HTTPClient *http.Client // optional; defaults to 30s timeout client
 }
 
 // NewIPFSHandlers returns flow handlers for IPFS operations.
@@ -55,17 +55,17 @@ func NewIPFSHandlers(cfg IPFSConfig) flowrt.HandlerMap {
 
 	handlers := flowrt.HandlerMap{
 		ipfsPluginID + ":pubsub_publish": c.pubsubPublish,
-		ipfsPluginID + ":ls":            c.ls,
-		ipfsPluginID + ":cat":           c.cat,
-		ipfsPluginID + ":add":           c.add,
-		ipfsPluginID + ":pin_add":       c.pinAdd,
-		ipfsPluginID + ":pin_rm":        c.pinRm,
-		ipfsPluginID + ":pin_ls":        c.pinLs,
-		ipfsPluginID + ":dag_get":       c.dagGet,
-		ipfsPluginID + ":name_resolve":  c.nameResolve,
-		ipfsPluginID + ":name_publish":  c.namePublish,
-		ipfsPluginID + ":id":            c.nodeID,
-		ipfsPluginID + ":swarm_peers":   c.swarmPeers,
+		ipfsPluginID + ":ls":             c.ls,
+		ipfsPluginID + ":cat":            c.cat,
+		ipfsPluginID + ":add":            c.add,
+		ipfsPluginID + ":pin_add":        c.pinAdd,
+		ipfsPluginID + ":pin_rm":         c.pinRm,
+		ipfsPluginID + ":pin_ls":         c.pinLs,
+		ipfsPluginID + ":dag_get":        c.dagGet,
+		ipfsPluginID + ":name_resolve":   c.nameResolve,
+		ipfsPluginID + ":name_publish":   c.namePublish,
+		ipfsPluginID + ":id":             c.nodeID,
+		ipfsPluginID + ":swarm_peers":    c.swarmPeers,
 	}
 	return handlers
 }
@@ -416,4 +416,3 @@ func (t *IPFSPubSubTrigger) run(ctx context.Context) {
 func (t *IPFSPubSubTrigger) Stop() {
 	t.cancel()
 }
-

@@ -357,7 +357,7 @@ func (rb *RegistryBuilder) Stats() map[string]int {
 	defer rb.mu.RUnlock()
 
 	return map[string]int{
-		"known_relays":     len(rb.knownRelays),
-		"connected_peers":  len(rb.host.Network().Peers()),
+		"known_relays":    len(rb.knownRelays),
+		"connected_peers": len(rb.host.Network().Peers()),
 	}
 }

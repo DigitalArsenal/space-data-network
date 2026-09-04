@@ -12,7 +12,7 @@ type HealthStatus struct {
 	PeerID        string    `json:"peer_id"`
 	OnionHost     string    `json:"onion_host"`
 	Role          Role      `json:"role"`
-	Load          float64   `json:"load"`           // 0.0–1.0
+	Load          float64   `json:"load"` // 0.0–1.0
 	Connections   int       `json:"connections"`
 	MaxConns      int       `json:"max_connections"`
 	TorAlive      bool      `json:"tor_alive"`

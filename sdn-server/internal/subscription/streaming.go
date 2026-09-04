@@ -33,18 +33,18 @@ var (
 
 // StreamingSession represents an active streaming session between peers
 type StreamingSession struct {
-	ID            string         `json:"id"`
-	SubscriptionID string       `json:"subscriptionId"`
-	PeerID        string         `json:"peerId"`
-	SchemaTypes   []string       `json:"schemaTypes"`
-	Mode          StreamMode     `json:"mode"`
-	EncMode       EncryptionMode `json:"encryptionMode"`
-	SessionKeyID  string         `json:"sessionKeyId,omitempty"`
-	CreatedAt     time.Time      `json:"createdAt"`
-	LastActivity  time.Time      `json:"lastActivity"`
-	MessagesSent  int64          `json:"messagesSent"`
-	BytesSent     int64          `json:"bytesSent"`
-	Active        bool           `json:"active"`
+	ID             string         `json:"id"`
+	SubscriptionID string         `json:"subscriptionId"`
+	PeerID         string         `json:"peerId"`
+	SchemaTypes    []string       `json:"schemaTypes"`
+	Mode           StreamMode     `json:"mode"`
+	EncMode        EncryptionMode `json:"encryptionMode"`
+	SessionKeyID   string         `json:"sessionKeyId,omitempty"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	LastActivity   time.Time      `json:"lastActivity"`
+	MessagesSent   int64          `json:"messagesSent"`
+	BytesSent      int64          `json:"bytesSent"`
+	Active         bool           `json:"active"`
 
 	// Internal
 	ctx    context.Context
@@ -406,8 +406,8 @@ func (sm *StreamingManager) Stats() StreamingStats {
 	defer sm.mu.RUnlock()
 
 	stats := StreamingStats{
-		ActiveSessions:   len(sm.sessions),
-		SessionsByMode:   make(map[StreamMode]int),
+		ActiveSessions:    len(sm.sessions),
+		SessionsByMode:    make(map[StreamMode]int),
 		SessionsByEncMode: make(map[EncryptionMode]int),
 	}
 

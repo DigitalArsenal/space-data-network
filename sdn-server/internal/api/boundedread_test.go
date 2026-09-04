@@ -174,7 +174,7 @@ func TestBoundedReaderKeysAreIndependent(t *testing.T) {
 func TestBoundedReaderEvictsWhenFull(t *testing.T) {
 	b := newBoundedReader(4)
 	for i := 0; i < 40; i++ {
-		key := string(rune('a' + i%26)) + string(rune('0'+i/26))
+		key := string(rune('a'+i%26)) + string(rune('0'+i/26))
 		b.read(key, time.Second, 0, func() (interface{}, error) { return i, nil })
 	}
 	b.mu.Lock()

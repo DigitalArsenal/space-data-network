@@ -34,9 +34,9 @@ func NewPubSubCapFactory(ps *pubsub.PubSub) modulert.CapFactory {
 }
 
 type pubsubCapHandler struct {
-	ps   *pubsub.PubSub
-	mod  *modulert.Module
-	mu   sync.Mutex
+	ps     *pubsub.PubSub
+	mod    *modulert.Module
+	mu     sync.Mutex
 	topics map[string]*pubsub.Topic
 	subs   map[string]*pubsub.Subscription
 }

@@ -190,8 +190,20 @@ heavy_pkg_filter() {
   echo "$filter"
 }
 
+run_gofmt() {
+  step "gofmt (hand-written Go; generated bindings excluded)"
+  local unformatted
+  unformatted=$(cd "$ROOT/sdn-server" && git ls-files '*.go' | grep -vE '^(third_party/|internal/sds/|internal/status/nst/)' | xargs gofmt -l)
+  if [ -n "$unformatted" ]; then
+    echo "$unformatted" | sed 's/^/  /'
+    fail "gofmt: the files above are not formatted (run gofmt -w)"
+  fi
+  pass "gofmt"
+}
+
 run_go() {
   prepare_go_toolchain
+  run_gofmt
 
   step "Go tests (quick: every package but the heavy set)"
   local pkgs

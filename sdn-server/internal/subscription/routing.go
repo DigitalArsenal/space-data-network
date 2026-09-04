@@ -9,10 +9,10 @@ import (
 
 // Routing errors
 var (
-	ErrInvalidHeader    = errors.New("invalid routing header")
-	ErrHeaderTooShort   = errors.New("routing header too short")
-	ErrTTLExpired       = errors.New("message TTL expired")
-	ErrInvalidPriority  = errors.New("invalid priority level")
+	ErrInvalidHeader   = errors.New("invalid routing header")
+	ErrHeaderTooShort  = errors.New("routing header too short")
+	ErrTTLExpired      = errors.New("message TTL expired")
+	ErrInvalidPriority = errors.New("invalid priority level")
 )
 
 // SerializeRoutingHeader serializes a routing header to binary format
@@ -29,7 +29,7 @@ func SerializeRoutingHeader(header *RoutingHeader) ([]byte, error) {
 
 	// Calculate size
 	size := 1 + len(schemaBytes) // schema type length + schema type
-	size += 1                     // destination count
+	size += 1                    // destination count
 
 	destBytes := make([][]byte, len(header.DestinationPeers))
 	for i, dest := range header.DestinationPeers {
@@ -289,10 +289,10 @@ func DeserializeRoutingHeader(data []byte) (*RoutingHeader, error) {
 
 // Router handles message routing based on headers
 type Router struct {
-	manager      *Manager
-	localPeerID  string
-	relayMode    bool // If true, forward messages without processing
-	onForward    func(header *RoutingHeader, payload []byte) error
+	manager     *Manager
+	localPeerID string
+	relayMode   bool // If true, forward messages without processing
+	onForward   func(header *RoutingHeader, payload []byte) error
 }
 
 // NewRouter creates a new message router

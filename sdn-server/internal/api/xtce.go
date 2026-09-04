@@ -106,11 +106,11 @@ func (h *XTCEHandler) handleInfo(w http.ResponseWriter, r *http.Request) {
 				"description":  "Convert XTCE XML to JSON Schema",
 				"content_type": "application/xml or text/xml",
 				"parameters": map[string]string{
-					"namespace":  "FlatBuffer namespace (optional)",
-					"schema_id":  "JSON Schema $id (optional)",
-					"telemetry":  "Include telemetry parameters (default: true)",
-					"commands":   "Include command definitions (default: true)",
-					"enums":      "Generate FlatBuffer enums (default: true)",
+					"namespace": "FlatBuffer namespace (optional)",
+					"schema_id": "JSON Schema $id (optional)",
+					"telemetry": "Include telemetry parameters (default: true)",
+					"commands":  "Include command definitions (default: true)",
+					"enums":     "Generate FlatBuffer enums (default: true)",
 				},
 				"accept": map[string]string{
 					"application/json":          "Returns JSON Schema (default)",
@@ -137,13 +137,13 @@ type ConversionOptions struct {
 
 // ConversionResult holds the result of XTCE conversion.
 type ConversionResult struct {
-	Name              string
-	Description       string
-	JSONSchemaString  string
-	FlatBufferSchema  string
-	TelemetryCount    int
-	CommandCount      int
-	Warnings          []string
+	Name             string
+	Description      string
+	JSONSchemaString string
+	FlatBufferSchema string
+	TelemetryCount   int
+	CommandCount     int
+	Warnings         []string
 }
 
 // XTCEConverter converts XTCE XML to JSON Schema and FlatBuffer schema.
@@ -178,13 +178,13 @@ func (c *XTCEConverter) Convert(ctx context.Context, xmlContent string, options 
 	fbsSchema := c.generateFlatBufferSchema(parsed, options)
 
 	return &ConversionResult{
-		Name:              parsed.Name,
-		Description:       parsed.Description,
-		JSONSchemaString:  string(jsonSchemaBytes),
-		FlatBufferSchema:  fbsSchema,
-		TelemetryCount:    len(parsed.TelemetryParams),
-		CommandCount:      len(parsed.CommandArgs),
-		Warnings:          parsed.Warnings,
+		Name:             parsed.Name,
+		Description:      parsed.Description,
+		JSONSchemaString: string(jsonSchemaBytes),
+		FlatBufferSchema: fbsSchema,
+		TelemetryCount:   len(parsed.TelemetryParams),
+		CommandCount:     len(parsed.CommandArgs),
+		Warnings:         parsed.Warnings,
 	}, nil
 }
 
@@ -272,7 +272,7 @@ func (c *XTCEConverter) parseXTCE(xmlContent string) (*ParsedXTCE, error) {
 	}
 
 	type XMLStringDataEncoding struct {
-		Encoding   string       `xml:"encoding,attr"`
+		Encoding   string        `xml:"encoding,attr"`
 		SizeInBits XMLSizeInBits `xml:"SizeInBits"`
 	}
 
@@ -292,22 +292,22 @@ func (c *XTCEConverter) parseXTCE(xmlContent string) (*ParsedXTCE, error) {
 	}
 
 	type XMLIntegerParameterType struct {
-		Name                 string                 `xml:"name,attr"`
-		Signed               string                 `xml:"signed,attr"`
-		SizeInBits           string                 `xml:"sizeInBits,attr"`
-		ShortDescription     string                 `xml:"shortDescription,attr"`
-		UnitSet              XMLUnitSet             `xml:"UnitSet"`
-		IntegerDataEncoding  XMLIntegerDataEncoding `xml:"IntegerDataEncoding"`
-		ValidRange           XMLValidRange          `xml:"ValidRange"`
+		Name                string                 `xml:"name,attr"`
+		Signed              string                 `xml:"signed,attr"`
+		SizeInBits          string                 `xml:"sizeInBits,attr"`
+		ShortDescription    string                 `xml:"shortDescription,attr"`
+		UnitSet             XMLUnitSet             `xml:"UnitSet"`
+		IntegerDataEncoding XMLIntegerDataEncoding `xml:"IntegerDataEncoding"`
+		ValidRange          XMLValidRange          `xml:"ValidRange"`
 	}
 
 	type XMLFloatParameterType struct {
-		Name               string               `xml:"name,attr"`
-		SizeInBits         string               `xml:"sizeInBits,attr"`
-		ShortDescription   string               `xml:"shortDescription,attr"`
-		UnitSet            XMLUnitSet           `xml:"UnitSet"`
-		FloatDataEncoding  XMLFloatDataEncoding `xml:"FloatDataEncoding"`
-		ValidRange         XMLValidRange        `xml:"ValidRange"`
+		Name              string               `xml:"name,attr"`
+		SizeInBits        string               `xml:"sizeInBits,attr"`
+		ShortDescription  string               `xml:"shortDescription,attr"`
+		UnitSet           XMLUnitSet           `xml:"UnitSet"`
+		FloatDataEncoding XMLFloatDataEncoding `xml:"FloatDataEncoding"`
+		ValidRange        XMLValidRange        `xml:"ValidRange"`
 	}
 
 	type XMLStringParameterType struct {
@@ -355,8 +355,8 @@ func (c *XTCEConverter) parseXTCE(xmlContent string) (*ParsedXTCE, error) {
 	}
 
 	type XMLArgument struct {
-		Name            string `xml:"name,attr"`
-		ArgumentTypeRef string `xml:"argumentTypeRef,attr"`
+		Name             string `xml:"name,attr"`
+		ArgumentTypeRef  string `xml:"argumentTypeRef,attr"`
 		ShortDescription string `xml:"shortDescription,attr"`
 	}
 
@@ -375,15 +375,15 @@ func (c *XTCEConverter) parseXTCE(xmlContent string) (*ParsedXTCE, error) {
 	}
 
 	type XMLCommandMetaData struct {
-		ArgumentTypeSet  XMLParameterTypeSet `xml:"ArgumentTypeSet"`
-		MetaCommandSet   XMLMetaCommandSet   `xml:"MetaCommandSet"`
+		ArgumentTypeSet XMLParameterTypeSet `xml:"ArgumentTypeSet"`
+		MetaCommandSet  XMLMetaCommandSet   `xml:"MetaCommandSet"`
 	}
 
 	type XMLSpaceSystem struct {
-		Name               string              `xml:"name,attr"`
-		ShortDescription   string              `xml:"shortDescription,attr"`
-		TelemetryMetaData  XMLTelemetryMetaData `xml:"TelemetryMetaData"`
-		CommandMetaData    XMLCommandMetaData   `xml:"CommandMetaData"`
+		Name              string               `xml:"name,attr"`
+		ShortDescription  string               `xml:"shortDescription,attr"`
+		TelemetryMetaData XMLTelemetryMetaData `xml:"TelemetryMetaData"`
+		CommandMetaData   XMLCommandMetaData   `xml:"CommandMetaData"`
 	}
 
 	// Parse XML

@@ -8,21 +8,21 @@
 //
 // # Security Model
 //
-// 1. Token Generation: A cryptographically random 32-character token is generated
-//    and displayed in the terminal. The token is formatted as:
-//    SETUP-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
+//  1. Token Generation: A cryptographically random 32-character token is generated
+//     and displayed in the terminal. The token is formatted as:
+//     SETUP-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
 //
-// 2. Token Storage: Only the SHA-256 hash of the token is stored, never the
-//    plaintext. This prevents token theft from disk.
+//  2. Token Storage: Only the SHA-256 hash of the token is stored, never the
+//     plaintext. This prevents token theft from disk.
 //
-// 3. Token Expiry: The token expires after 10 minutes or first use, whichever
-//    comes first.
+//  3. Token Expiry: The token expires after 10 minutes or first use, whichever
+//     comes first.
 //
 // 4. Setup Completion: After token verification, the server generates:
-//    - Ed25519 signing keypair for identity/signatures
-//    - X25519 encryption keypair for secure communication
-//    - Admin account with password authentication
-//    - EPM (Entity Profile Message) for the server identity
+//   - Ed25519 signing keypair for identity/signatures
+//   - X25519 encryption keypair for secure communication
+//   - Admin account with password authentication
+//   - EPM (Entity Profile Message) for the server identity
 //
 // # Usage
 //

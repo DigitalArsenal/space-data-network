@@ -105,4 +105,3 @@ func (s *storageAdapter) deleteRecord(ctx context.Context, args *flowrt.Invocati
 	resp, _ := json.Marshal(map[string]string{"status": "deleted", "cid": cid})
 	return jsonOutput(resp), nil
 }
-

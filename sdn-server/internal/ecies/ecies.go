@@ -31,9 +31,9 @@ import (
 
 	"crypto/sha256"
 
-	secp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	enc "github.com/DigitalArsenal/spacedatastandards.org/lib/go/ENC"
 	kmf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/KMF"
+	secp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/hkdf"
@@ -62,8 +62,8 @@ const (
 
 // WrapOptions configures a wrap. Context defaults to DefaultGrantContext.
 type WrapOptions struct {
-	KeyExchange KeyExchange
-	Context     string
+	KeyExchange    KeyExchange
+	Context        string
 	RecipientKeyID []byte
 	// rand is injectable for deterministic conformance vectors; nil = crypto/rand.
 	rand io.Reader

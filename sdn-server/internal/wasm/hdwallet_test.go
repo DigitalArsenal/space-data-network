@@ -18,8 +18,10 @@ const testMnemonic = "abandon abandon abandon abandon abandon abandon abandon ab
 // NOTE: The HD wallet WASM must be built with WASI (not Emscripten) for Go integration.
 // The Emscripten build (for JavaScript) won't work with wazero.
 // To build the hardened WASI version:
-//   emcmake cmake -B build-wasi -S . -DHD_WALLET_BUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
-//   cmake --build build-wasi --target hd_wallet_wasm_wasi
+//
+//	emcmake cmake -B build-wasi -S . -DHD_WALLET_BUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
+//	cmake --build build-wasi --target hd_wallet_wasm_wasi
+//
 // Or set HD_WALLET_WASM_PATH to a WASI build.
 func testHDWalletModule(t *testing.T) *HDWalletModule {
 	t.Helper()
