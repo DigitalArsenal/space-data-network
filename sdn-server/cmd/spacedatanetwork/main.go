@@ -1326,23 +1326,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					log.Warnf("Invalid admin.ipfs_gateway_url %q: expected base URL like http://127.0.0.1:8080", rawGWURL)
 				} else {
 					gwTarget.Path = ""
-					gwProxy := httputil.NewSingleHostReverseProxy(gwTarget)
-					origGWDirector := gwProxy.Director
-					gwProxy.Director = func(req *http.Request) {
-						origGWDirector(req)
-						req.Header.Del("Origin")
-						req.Header.Del("Referer")
-						req.Header.Del("User-Agent")
-					}
-					gwProxy.ModifyResponse = func(resp *http.Response) error {
-						normalizeIPFSGatewayCORSHeaders(resp.Header)
-						return nil
-					}
-					gwProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-						http.Error(w, "upstream IPFS gateway unavailable", http.StatusBadGateway)
-					}
-					adminMux.Handle("/ipfs/", gwProxy)
-					log.Infof("Proxying /ipfs/* to %s", rawGWURL)
+					// Held content only (only-if-cached): the node is not a public
+					// fetch gateway for arbitrary CIDs. See newIPFSGatewayProxy.
+					adminMux.Handle("/ipfs/", newIPFSGatewayProxy(gwTarget))
+					log.Infof("Proxying /ipfs/* to %s (held content only)", rawGWURL)
 				}
 			}
 
