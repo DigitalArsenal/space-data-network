@@ -8,6 +8,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -439,6 +440,10 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 	}
 	records, err := queryStore.QueryRawRecords(filter)
 	if err != nil {
+		if errors.Is(err, storage.ErrEngineRebuilding) {
+			writeEngineRebuilding(w, r)
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1900,4 +1905,18 @@ func decodeMPE(data []byte) (*MPE.MPE, error) {
 	default:
 		return nil, fmt.Errorf("invalid MPE buffer")
 	}
+}
+
+// writeEngineRebuilding answers a reader that arrived while a poisoned engine
+// is being rebuilt: 503 with Retry-After, as an error frame for a stream
+// client and as JSON otherwise. The reader never waits on the rebuild
+// (storage.ErrEngineRebuilding; OPS-07).
+func writeEngineRebuilding(w http.ResponseWriter, r *http.Request) {
+	const retry = 30 * time.Second
+	if requestedRawFlatBufferStream(r) {
+		WriteErrorFrame(w, http.StatusServiceUnavailable, "engine_rebuilding", "The record engine is rebuilding; retry shortly.", retry)
+		return
+	}
+	w.Header().Set("Retry-After", "30")
+	writeError(w, http.StatusServiceUnavailable, "record engine is rebuilding; retry shortly")
 }

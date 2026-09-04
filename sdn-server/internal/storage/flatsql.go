@@ -56,6 +56,14 @@ var ErrStoreReadOnly = errors.New("datastore is open read-only")
 // handles an error return.
 var ErrStoreClosed = errors.New("datastore is closed")
 
+// ErrEngineRebuilding is returned by the engine query paths while
+// RecoverPoisonedEngine holds the store write lock to rebuild a poisoned
+// engine (26 minutes observed on host-02, 2026-09-02). A reader that arrives
+// during the rebuild is answered at once with this error — mapped to 503 +
+// Retry-After on the wire — instead of queueing behind the writer for the
+// whole rebuild: reads never wait on the data layer (owner 2026-09-02).
+var ErrEngineRebuilding = errors.New("engine is rebuilding; retry shortly")
+
 const (
 	flatSQLStreamDirName         = "flatsql-streams"
 	legacyBlobMigrationBatchSize = 50000
@@ -129,8 +137,11 @@ type FlatSQLStore struct {
 	assetPinLedgerRecovery atomic.Bool
 	recordCatalogHydrating atomic.Bool
 	recordCatalogHydrated  atomic.Bool
-	engineHotHydrating     atomic.Bool
-	engineHotHydrated      atomic.Bool
+	// engineRebuilding is set while RecoverPoisonedEngine holds the write
+	// lock; readGate answers ErrEngineRebuilding meanwhile.
+	engineRebuilding   atomic.Bool
+	engineHotHydrating atomic.Bool
+	engineHotHydrated  atomic.Bool
 	// hydrationShield protects records that LIVE traffic (re)writes while a
 	// background record-catalog replay is in flight, so a historical
 	// delete/GC/batch-clear frame can never land on top of a live re-add of the
@@ -6346,6 +6357,9 @@ const rawRecordRefLookupBatchSize = 500
 
 // QueryRawRecords returns raw FlatBuffer records with metadata and source tags.
 func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error) {
+	if err := s.readGate(); err != nil {
+		return nil, err
+	}
 	return s.queryRawRecords(filter, true)
 }
 
