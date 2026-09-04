@@ -523,12 +523,19 @@ func TestIdentityWizardDaemonUpdatePreservesRuntimeAddress(t *testing.T) {
 				http.Error(w, "missing cli CSRF header", http.StatusForbidden)
 				return
 			}
-			var profile epm.Profile
-			if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+			// The CLI sends the EPM as a FlatBuffer (identity: JSON wire
+			// retired); the stub daemon decodes exactly what the real one does.
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			if err := daemonService.UpdateProfile(&profile); err != nil {
+			profile, err := epm.DecodeProfileEPM(body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := daemonService.UpdateProfile(profile); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
