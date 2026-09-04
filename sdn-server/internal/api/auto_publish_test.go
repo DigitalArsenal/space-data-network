@@ -286,3 +286,67 @@ func (s *blockingPublicationService) PublishDatasetUpdate(_ context.Context, _ D
 	<-s.release
 	return &DatasetPublicationResult{}, nil
 }
+
+// PUB-04: a transient failure (the catalog still hydrating after a boot) is
+// retried with backoff until it publishes; the tallies say what happened.
+func TestAutoPublisherRetriesATransientFailureUntilItPublishes(t *testing.T) {
+	service := newRecordingPublicationService()
+	service.err = errors.New("catalog still hydrating")
+	publisher := NewAutoPublisher(service, []config.AutoPublishLane{{Schema: "OMM.fbs"}})
+	if publisher == nil {
+		t.Fatal("NewAutoPublisher returned nil")
+	}
+	publisher.retryBackoff = func(int) time.Duration { return 10 * time.Millisecond }
+	publisher.Start(context.Background())
+	t.Cleanup(publisher.Stop)
+
+	publisher.ObserveIngest(IngestedBatch{Schema: "OMM.fbs", ProviderID: "p", SourceName: "s", BatchID: "b1", Inserted: 1})
+	service.waitForPublications(t, 2) // two failed attempts
+	service.mu.Lock()
+	service.err = nil
+	service.mu.Unlock()
+	service.waitForPublications(t, 1) // the third attempt publishes
+
+	deadline := time.Now().Add(2 * time.Second)
+	for publisher.Stats().Published != 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	stats := publisher.Stats()
+	if stats.Published != 1 || stats.Failed != 0 || stats.Retrying != 0 {
+		t.Fatalf("stats = %+v, want 1 published, 0 failed, 0 retrying", stats)
+	}
+	if got := len(service.snapshot()); got != 3 {
+		t.Fatalf("attempts = %d, want 3 (two failures, then success)", got)
+	}
+	for _, req := range service.snapshot() {
+		if req.BatchID != "b1" {
+			t.Fatalf("a retry named batch %q, want b1", req.BatchID)
+		}
+	}
+}
+
+// A batch that keeps failing is given up on after autoPublishMaxAttempts and
+// counted as failed, never retried forever.
+func TestAutoPublisherGivesUpAfterMaxAttempts(t *testing.T) {
+	service := newRecordingPublicationService()
+	service.err = errors.New("ipfs api url is required")
+	publisher := NewAutoPublisher(service, []config.AutoPublishLane{{Schema: "OMM.fbs"}})
+	publisher.retryBackoff = func(int) time.Duration { return time.Millisecond }
+	publisher.Start(context.Background())
+	t.Cleanup(publisher.Stop)
+
+	publisher.ObserveIngest(IngestedBatch{Schema: "OMM.fbs", ProviderID: "p", SourceName: "s", BatchID: "b1", Inserted: 1})
+	service.waitForPublications(t, autoPublishMaxAttempts)
+	deadline := time.Now().Add(2 * time.Second)
+	for publisher.Stats().Failed != 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	stats := publisher.Stats()
+	if stats.Failed != 1 || stats.Published != 0 || stats.Retrying != 0 {
+		t.Fatalf("stats = %+v, want 1 failed", stats)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := len(service.snapshot()); got != autoPublishMaxAttempts {
+		t.Fatalf("attempts = %d, want exactly %d", got, autoPublishMaxAttempts)
+	}
+}
