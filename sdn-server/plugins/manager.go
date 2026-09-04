@@ -388,6 +388,7 @@ type RuntimeModuleInputState struct {
 // RuntimeModuleCatalog contains public catalog metadata when this runtime
 // module came from the module-delivery catalog.
 type RuntimeModuleCatalog struct {
+	PluginType      string `json:"pluginType,omitempty"`
 	RequiredScope   string `json:"requiredScope,omitempty"`
 	ContentType     string `json:"contentType,omitempty"`
 	CacheControl    string `json:"cacheControl,omitempty"`

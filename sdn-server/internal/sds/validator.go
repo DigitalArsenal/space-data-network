@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	standardsCLM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CLM"
 	logging "github.com/ipfs/go-log/v2"
 
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
@@ -69,6 +70,15 @@ func ValidateSchemaName(name string) error {
 }
 
 var log = logging.Logger("sds")
+
+// publishedBindingOnlySchemas are newly ratified standards whose published Go
+// binding is available before the next embedded-IDL refresh. They are admitted
+// by their binding's canonical file identifier, never by a repo-local shadow
+// schema. Full field validation for code that decodes one remains the typed
+// binding's responsibility (the claims handler does that for $CLM).
+var publishedBindingOnlySchemas = map[string]string{
+	"CLM.fbs": standardsCLM.CLMIdentifier,
+}
 
 //go:embed schemas/*.fbs
 var schemasFS embed.FS
@@ -350,8 +360,25 @@ func NewValidator(flatc *wasm.FlatcModule) (*Validator, error) {
 		log.Warnf("Failed to load embedded schemas: %v", err)
 		// Continue without embedded schemas - they may be loaded later
 	}
+	v.registerPublishedBindingSchemas()
 
 	return v, nil
+}
+
+func (v *Validator) registerPublishedBindingSchemas() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for name, ident := range publishedBindingOnlySchemas {
+		v.identifiers[name] = ident
+		switch {
+		case v.ambiguousIdents[ident]:
+		case v.identifierSchemas[ident] == "" || v.identifierSchemas[ident] == name:
+			v.identifierSchemas[ident] = name
+		default:
+			delete(v.identifierSchemas, ident)
+			v.ambiguousIdents[ident] = true
+		}
+	}
 }
 
 func (v *Validator) loadEmbeddedSchemas(ctx context.Context) error {
@@ -454,7 +481,8 @@ func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte
 	schemaID, ok := v.schemas[schemaName]
 	v.mu.RUnlock()
 
-	if !ok {
+	_, bindingOnly := publishedBindingOnlySchemas[schemaName]
+	if !ok && !bindingOnly {
 		return fmt.Errorf("unknown schema: %s", schemaName)
 	}
 
@@ -464,13 +492,21 @@ func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte
 
 	// When the WASM module is available, additionally parse the buffer through
 	// flatc for full field-level validation.
-	if v.flatc != nil {
+	if v.flatc != nil && ok {
 		if _, err := v.flatc.BinaryToJSON(ctx, schemaID, data); err != nil {
 			return fmt.Errorf("validation failed for %s: %w", schemaName, err)
 		}
 	}
 
 	return nil
+}
+
+// IsPublishedBindingSchema reports whether name is admitted directly from a
+// published generated binding while its IDL is intentionally not copied into
+// this repository.
+func IsPublishedBindingSchema(name string) bool {
+	_, ok := publishedBindingOnlySchemas[name]
+	return ok
 }
 
 // FlatBuffers envelope constants.

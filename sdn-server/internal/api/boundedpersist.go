@@ -268,7 +268,7 @@ func decodeRecordIndexPageValue(_ string, raw json.RawMessage) (interface{}, err
 	return &page, nil
 }
 
-// decodeStatsValue restores the /api/v1/stats lane's two concrete types, keyed
+// decodeStatsValue restores the /api/v1/stats lane's concrete types, keyed
 // by the cache key dashboard_stats.go uses. An unknown key is dropped.
 func decodeStatsValue(key string, raw json.RawMessage) (interface{}, error) {
 	switch key {
@@ -284,6 +284,12 @@ func decodeStatsValue(key string, raw json.RawMessage) (interface{}, error) {
 			return nil, err
 		}
 		return rows, nil
+	case statsCacheKeyStorageUsage:
+		var used int64
+		if err := json.Unmarshal(raw, &used); err != nil {
+			return nil, err
+		}
+		return used, nil
 	default:
 		return nil, errUnknownPersistKey
 	}

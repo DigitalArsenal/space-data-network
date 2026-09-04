@@ -47,6 +47,25 @@ func mustNewDirectoryStore(t *testing.T) *storage.FlatSQLStore {
 	return store
 }
 
+type pagedDirectoryStore struct {
+	rows    []storage.DirectoryRecord
+	offsets []int
+}
+
+func (s *pagedDirectoryStore) UpsertDirectoryRecord(storage.DirectoryRecord) error { return nil }
+
+func (s *pagedDirectoryStore) QueryDirectory(query storage.DirectoryQuery) ([]storage.DirectoryRecord, error) {
+	s.offsets = append(s.offsets, query.Offset)
+	if query.Offset >= len(s.rows) {
+		return nil, nil
+	}
+	end := query.Offset + query.Limit
+	if end > len(s.rows) {
+		end = len(s.rows)
+	}
+	return s.rows[query.Offset:end], nil
+}
+
 func TestDirectoryService_IndexesNodeEPMJSON(t *testing.T) {
 	store := mustNewDirectoryStore(t)
 	svc := NewService(store)
@@ -170,6 +189,28 @@ func TestDirectoryService_SearchNodesExcludesSelfAndGenericPeerConnectRows(t *te
 	}
 	if nodes[0].PeerID != "16Uiu2HAmAdvertised" {
 		t.Fatalf("PeerID = %q, want advertised peer", nodes[0].PeerID)
+	}
+}
+
+func TestDirectoryService_HeldNodeProfilesReadsEveryPage(t *testing.T) {
+	store := &pagedDirectoryStore{rows: make([]storage.DirectoryRecord, 1001)}
+	for i := range store.rows {
+		data := []byte{byte(i), byte(i >> 8)}
+		store.rows[i] = storage.DirectoryRecord{
+			Kind:    KindNode,
+			PeerID:  fmt.Sprintf("peer-%04d", i),
+			EPMJSON: `{"epm_base64":"` + base64.StdEncoding.EncodeToString(data) + `"}`,
+		}
+	}
+	profiles, err := NewService(store).HeldNodeProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != len(store.rows) {
+		t.Fatalf("profiles = %d, want %d", len(profiles), len(store.rows))
+	}
+	if got, want := fmt.Sprint(store.offsets), "[0 1000]"; got != want {
+		t.Fatalf("query offsets = %s, want %s", got, want)
 	}
 }
 
@@ -548,5 +589,33 @@ func TestSearchNodesHonorsRequestedLimit(t *testing.T) {
 	}
 	if len(nodes) != 120 {
 		t.Fatalf("SearchNodes returned %d records, want 120", len(nodes))
+	}
+}
+
+func TestHeldNodeProfilesIncludesPeerConnectRowsAndBinaryEPM(t *testing.T) {
+	store := mustNewDirectoryStore(t)
+	svc := NewService(store)
+	svc.SetLocalPeerID("self")
+	wire := []byte{1, 2, 3, 4, 5}
+	if err := svc.UpsertNodeEPMJSON(map[string]any{
+		"peer_id":    "peer-a",
+		"dn":         "Peer A",
+		"epm_base64": base64.StdEncoding.EncodeToString(wire),
+	}, "bafy-peer-a", "peer-connect"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpsertNodeEPMJSON(map[string]any{
+		"peer_id":    "peer-b",
+		"dn":         "Peer B",
+		"epm_base64": "not-base64",
+	}, "bafy-peer-b", "dht-discovery"); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := svc.HeldNodeProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || profiles[0].PeerID != "peer-a" || !bytes.Equal(profiles[0].EPMBytes, wire) {
+		t.Fatalf("held profiles = %+v", profiles)
 	}
 }

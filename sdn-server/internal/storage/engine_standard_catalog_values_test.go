@@ -45,9 +45,9 @@ func TestGeneratedColumnsReadTheirOwnFieldValue(t *testing.T) {
 	if got, want := len(store.engineRoutedSchemaNames()), len(engineRoutedSchemas); got != want {
 		t.Fatalf("fresh store routes %d schemas, want every routed schema (%d)", got, want)
 	}
-	if got, want := len(engineRoutedSchemas), len(catalog.Bindings)+len(enginePinnedSchemas); got != want {
-		t.Fatalf("%d routed schemas, want %d generated + %d pinned",
-			got, len(catalog.Bindings), len(enginePinnedSchemas))
+	if got, want := len(engineRoutedSchemas), len(catalog.Bindings)+len(enginePinnedSchemas)+len(enginePublishedBindingSchemas); got != want {
+		t.Fatalf("%d routed schemas, want %d generated + %d pinned + %d published-binding",
+			got, len(catalog.Bindings), len(enginePinnedSchemas), len(enginePublishedBindingSchemas))
 	}
 
 	checked, junk := 0, 0

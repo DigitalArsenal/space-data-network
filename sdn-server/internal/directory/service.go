@@ -1,6 +1,7 @@
 package directory
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,13 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
+
+// NodeProfile is one held binary EPM profile from the directory index.
+// EPMBytes keeps the canonical size-prefixed wire record intact.
+type NodeProfile struct {
+	PeerID   string
+	EPMBytes []byte
+}
 
 // Service normalizes EPM JSON into indexed directory records.
 type Service struct {
@@ -66,6 +74,49 @@ func (s *Service) SearchUsers(search string, limit int) ([]storage.DirectoryReco
 		Search:        search,
 		Limit:         limit,
 	})
+}
+
+// HeldNodeProfiles returns the signed-profile bytes retained in node directory
+// rows. Unlike SearchNodes, this internal lane includes peer-connect rows: the
+// node dashboard needs every profile the exchange protocol has actually held,
+// not only records eligible for public directory search.
+func (s *Service) HeldNodeProfiles() ([]NodeProfile, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("directory store is not configured")
+	}
+	const pageSize = 1000
+	profiles := make([]NodeProfile, 0)
+	for offset := 0; ; offset += pageSize {
+		records, err := s.store.QueryDirectory(storage.DirectoryQuery{
+			Kind:          KindNode,
+			ExcludePeerID: s.localPeerID,
+			Limit:         pageSize,
+			Offset:        offset,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, record := range records {
+			var stored struct {
+				EPMBase64 string `json:"epm_base64"`
+			}
+			if json.Unmarshal([]byte(record.EPMJSON), &stored) != nil || strings.TrimSpace(stored.EPMBase64) == "" {
+				continue
+			}
+			data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(stored.EPMBase64))
+			if err != nil || len(data) == 0 {
+				continue
+			}
+			profiles = append(profiles, NodeProfile{
+				PeerID:   strings.TrimSpace(record.PeerID),
+				EPMBytes: data,
+			})
+		}
+		if len(records) < pageSize {
+			break
+		}
+	}
+	return profiles, nil
 }
 
 func (s *Service) upsertEPMJSON(kind string, epmJSON map[string]any, epmCID, source string) error {

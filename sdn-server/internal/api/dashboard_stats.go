@@ -50,6 +50,7 @@ const (
 	// with a stale file must miss, never decode into the wrong type.
 	statsCacheKeySummary        = "summary"
 	statsCacheKeySourceProgress = "source_batch_progress"
+	statsCacheKeyStorageUsage   = "storage_usage_bytes"
 
 	// statsCacheFileName is the stats cache's backing file inside the UI cache
 	// directory.
@@ -63,6 +64,11 @@ type storeStats struct {
 	Sources      []storage.SourceBatchProgress
 	TotalRecords int64
 	TotalBytes   int64
+	// StorageBytes is the actual FlatSQL on-disk footprint used for the root
+	// $NDS TOTAL_BYTES storage figure. TotalBytes above remains the live record
+	// byte total used by the compatibility JSON response.
+	StorageBytes      int64
+	StorageBytesKnown bool
 	// Stale is true when a read hit its budget and these are last-known-good.
 	Stale bool
 	// AsOf is when the numbers were last true; zero = never read.
@@ -137,7 +143,7 @@ func (h *CoreAPIHandler) readStoreStats() storeStats {
 		return out
 	}
 
-	// ONE budget for the whole snapshot: the two reads are independent and
+	// ONE budget for the whole snapshot: the three reads are independent and
 	// wait together (see boundedread.go readAll).
 	results := h.statsCache.readAll(storeReadBudget, storeReadMinRefresh,
 		boundedRequest{Key: statsCacheKeySummary, Load: func() (interface{}, error) {
@@ -146,9 +152,13 @@ func (h *CoreAPIHandler) readStoreStats() storeStats {
 		boundedRequest{Key: statsCacheKeySourceProgress, Load: func() (interface{}, error) {
 			return h.store.SourceBatchProgress()
 		}},
+		boundedRequest{Key: statsCacheKeyStorageUsage, Load: func() (interface{}, error) {
+			return h.store.DiskUsageBytes()
+		}},
 	)
 	summaryRes := results[statsCacheKeySummary]
 	progressRes := results[statsCacheKeySourceProgress]
+	storageRes := results[statsCacheKeyStorageUsage]
 
 	if summaryRes.OK {
 		if summary, _ := summaryRes.Value.(*storage.DataSummary); summary != nil {
@@ -171,14 +181,30 @@ func (h *CoreAPIHandler) readStoreStats() storeStats {
 	if progressRes.OK && (out.AsOf.IsZero() || progressRes.AsOf.Before(out.AsOf)) {
 		out.AsOf = progressRes.AsOf
 	}
+	if storageRes.OK {
+		if used, ok := storageRes.Value.(int64); ok {
+			out.StorageBytes = used
+			out.StorageBytesKnown = true
+		}
+	}
+	if !storageRes.Fresh {
+		out.Stale = true
+	}
+	if storageRes.OK && (out.AsOf.IsZero() || storageRes.AsOf.Before(out.AsOf)) {
+		out.AsOf = storageRes.AsOf
+	}
 	return out
 }
 
 // dashboardInputFrom maps the store rows onto the $NDS transport rows.
 func dashboardInputFrom(s storeStats) status.DashboardStatsInput {
+	rootTotalBytes := s.TotalBytes
+	if s.StorageBytesKnown {
+		rootTotalBytes = s.StorageBytes
+	}
 	in := status.DashboardStatsInput{
 		TotalRecords: s.TotalRecords,
-		TotalBytes:   s.TotalBytes,
+		TotalBytes:   rootTotalBytes,
 		Stale:        s.Stale,
 		AsOf:         s.AsOf,
 		Schemas:      make([]status.DashboardSchemaRow, 0, len(s.Schemas)),

@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/NDS"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/status"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -87,6 +91,45 @@ func TestHandleDashboardStatsServesCachedFrame(t *testing.T) {
 	}
 	if rec.Body.Len() != 0 {
 		t.Errorf("304 body = %d bytes, want 0", rec.Body.Len())
+	}
+}
+
+func TestDashboardStatsFrameUsesPhysicalStorageBytes(t *testing.T) {
+	s := sampleStats()
+	s.StorageBytes = 9_900_000
+	s.StorageBytesKnown = true
+	h := laneWith(t, s)
+	frame, _, ok := h.DashboardStatsFrame()
+	if !ok || !NDS.SizePrefixedNDSBufferHasIdentifier(frame) {
+		t.Fatal("dashboard frame is not a size-prefixed $NDS")
+	}
+	root := NDS.GetSizePrefixedRootAsNDS(frame, 0)
+	if got := root.TOTAL_BYTES(); got != s.StorageBytes {
+		t.Fatalf("NDS TOTAL_BYTES = %d, want physical usage %d", got, s.StorageBytes)
+	}
+	if got := root.TOTAL_RECORDS(); got != s.TotalRecords {
+		t.Fatalf("NDS TOTAL_RECORDS = %d, want %d", got, s.TotalRecords)
+	}
+}
+
+func TestReadStoreStatsMeasuresFlatSQLDiskUsage(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	h := &CoreAPIHandler{store: store, statsCache: newBoundedReader(8)}
+	stats := h.readStoreStats()
+	want, err := store.DiskUsageBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stats.StorageBytesKnown || stats.StorageBytes != want {
+		t.Fatalf("storage usage = %d known=%v, want %d", stats.StorageBytes, stats.StorageBytesKnown, want)
 	}
 }
 

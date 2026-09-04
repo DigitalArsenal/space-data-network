@@ -136,6 +136,16 @@ var engineDecoratedSchemas = map[string]engineRoutedSchema{
 	engineTBSSchemaName: {Table: "TBS", FileID: "$TBS"},
 }
 
+// enginePublishedBindingSchemas covers a ratified standard whose published Go
+// binding has landed before the next embedded-IDL refresh. The projection is
+// deliberately only the leading representable field run from that binding;
+// `_data` remains the complete canonical record. Keeping this separate from
+// the generated embedded-schema catalog means the repo does not invent or copy
+// a local CLM.fbs authority.
+var enginePublishedBindingSchemas = map[string]engineRoutedSchema{
+	"CLM.fbs": {Table: "CLM", FileID: "$CLM"},
+}
+
 // engineRoutedSchemas is THE list of SDS schemas routed into the engine: the
 // two decorated standards plus EVERY other embedded standard that declares a
 // file identifier (engine_standard_catalog.go, generated from the embedded
@@ -145,8 +155,11 @@ var engineDecoratedSchemas = map[string]engineRoutedSchema{
 var engineRoutedSchemas = buildEngineRoutedSchemas()
 
 func buildEngineRoutedSchemas() map[string]engineRoutedSchema {
-	routed := make(map[string]engineRoutedSchema, len(engineDecoratedSchemas)+len(engineGeneratedStandardBindings))
+	routed := make(map[string]engineRoutedSchema, len(engineDecoratedSchemas)+len(enginePublishedBindingSchemas)+len(engineGeneratedStandardBindings))
 	for name, binding := range engineDecoratedSchemas {
+		routed[name] = binding
+	}
+	for name, binding := range enginePublishedBindingSchemas {
 		routed[name] = binding
 	}
 	for name, binding := range engineGeneratedStandardBindings {
@@ -361,6 +374,28 @@ const engineTBSTableGraph = `
   }
 `
 
+// enginePublishedBindingTableGraph projects the leading scalar/string run of
+// SDS $CLM v1.211.0. COUNTERSIGNATURES is the first non-byte-vector nested
+// field and is intentionally not projected; it remains intact in `_data`.
+// Field order and scalar widths come from the linked generated CLM binding.
+const enginePublishedBindingTableGraph = `
+  table CLM {
+    CLAIM_ID:string;
+    CLAIMANT_PEER_ID:string;
+    CLAIMANT_PROFILE_CID:string;
+    OBJECT_KIND:byte;
+    OBJECT_ID:string;
+    OBJECT_NAME:string;
+    ROLE:byte;
+    STATEMENT:string;
+    EVIDENCE_URL:string;
+    CREATED_AT:uint64;
+    UPDATED_AT:uint64;
+    DELETED:bool;
+    SIGNATURE:[ubyte];
+  }
+`
+
 // engineDatabaseSchema is the schema every engine database is created from:
 // the parity-pinned OMM surface, the pinned TBS surface, and the generated
 // table graph for every OTHER embedded standard.
@@ -369,7 +404,7 @@ const engineTBSTableGraph = `
 // byte-identical (shared-test-vectors/flatsql-parity.json pins it and both
 // hosts build their parity database from it); appending can never change what
 // the OMM table means.
-const engineDatabaseSchema = engineRecordSchema + engineTBSTableGraph + engineStandardCatalogGraph
+const engineDatabaseSchema = engineRecordSchema + engineTBSTableGraph + enginePublishedBindingTableGraph + engineStandardCatalogGraph
 
 // Engine-native epoch query shapes over the unified OMM view. Positional
 // params, in this exact order: ?1 source shadow name (” = all sources),

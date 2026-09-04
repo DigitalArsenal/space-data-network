@@ -111,6 +111,9 @@ func AssertStandardCode(value string) (string, error) {
 			return code, nil
 		}
 	}
+	if sds.IsPublishedBindingSchema(code + internalSchemaSuffix) {
+		return code, nil
+	}
 	return "", fmt.Errorf("unknown standardCode %q", value)
 }
 

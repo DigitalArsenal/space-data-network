@@ -48,6 +48,37 @@ func newTrustServer(t *testing.T, h *TrustHandler) *httptest.Server {
 	return srv
 }
 
+func signedTREFixture(t *testing.T, record trust.EdgeRecord, privateKey ed25519.PrivateKey) []byte {
+	t.Helper()
+	payload, err := trust.EdgeSigningPayload(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.ProviderSignature = ed25519.Sign(privateKey, payload)
+	frame, err := trust.EncodeEdgeFrame(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frame
+}
+
+func postTRE(t *testing.T, url string, frame []byte, operator bool) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(frame))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", StreamContentType)
+	if operator {
+		req.Header.Set("X-Test-Operator", "yes")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
 func getJSON(t *testing.T, url string, out any) *http.Response {
 	t.Helper()
 	resp, err := http.Get(url)
@@ -195,6 +226,18 @@ func TestTrustMutationsFlipsAndFanOut(t *testing.T) {
 			},
 		},
 	}
+	eveEPM, evePrivateKey := signedNodeEPMFixture(t, "eve", "Eve")
+	daveEPM, davePrivateKey := signedNodeEPMFixture(t, "dave", "Dave")
+	h.ResolveEPM = func(peerID string) []byte {
+		switch peerID {
+		case "eve":
+			return eveEPM
+		case "dave":
+			return daveEPM
+		default:
+			return nil
+		}
+	}
 	// Rebuild the tracked baseline under the pinned threshold.
 	srv := newTrustServer(t, h)
 
@@ -224,22 +267,24 @@ func TestTrustMutationsFlipsAndFanOut(t *testing.T) {
 	}
 
 	// Cycle via API → 409.
-	resp, err = http.Post(srv.URL+"/api/v1/trust/edges", "application/json",
-		strings.NewReader(`{"truster":"dave","trustee":"eve","weight":0.5}`))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cycle := signedTREFixture(t, trust.EdgeRecord{
+		EdgeID:         trust.EdgeRecordID("dave", "eve"),
+		Edge:           trust.Edge{Truster: "dave", Trustee: "eve", Weight: 0.5, UpdatedAtMs: 1_788_000_001},
+		ProviderPeerID: "dave",
+	}, davePrivateKey)
+	resp = postTRE(t, srv.URL+"/api/v1/trust/edges", cycle, false)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("cycle edge: status %d, want 409", resp.StatusCode)
 	}
 
 	// Legal edge insert → 200.
-	resp, err = http.Post(srv.URL+"/api/v1/trust/edges", "application/json",
-		strings.NewReader(`{"truster":"eve","trustee":"bob","weight":0.9}`))
-	if err != nil {
-		t.Fatal(err)
-	}
+	insert := signedTREFixture(t, trust.EdgeRecord{
+		EdgeID:         trust.EdgeRecordID("eve", "bob"),
+		Edge:           trust.Edge{Truster: "eve", Trustee: "bob", Weight: 0.9, UpdatedAtMs: 1_788_000_002},
+		ProviderPeerID: "eve",
+	}, evePrivateKey)
+	resp = postTRE(t, srv.URL+"/api/v1/trust/edges", insert, false)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("edge insert: status %d", resp.StatusCode)
@@ -280,6 +325,117 @@ func TestTrustMutationProtection(t *testing.T) {
 	resp = getJSON(t, srv.URL+"/api/v1/trust/rank?evaluator=eve", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("read blocked: status %d", resp.StatusCode)
+	}
+}
+
+func TestTrustEdgeFrameAuthPersistenceAndPublicRead(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = flat.Close() })
+	edgeStore, err := trust.NewStoreWithFlatSQL(flat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, privateKey := signedNodeEPMFixture(t, "self", "Self Node")
+	h := NewTrustHandler(trust.NewService(trust.NewGraph(), nil))
+	h.Store = edgeStore
+	h.ResolveEPM = func(peerID string) []byte {
+		if peerID == "self" {
+			return profile
+		}
+		return nil
+	}
+	h.Protect = func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Test-Operator") != "yes" {
+				http.Error(w, "operator required", http.StatusUnauthorized)
+				return
+			}
+			next(w, r)
+		}
+	}
+	srv := newTrustServer(t, h)
+	record := trust.EdgeRecord{
+		EdgeID:         trust.EdgeRecordID("self", "peer-a"),
+		Edge:           trust.Edge{Truster: "self", Trustee: "peer-a", Weight: 1, UpdatedAtMs: 1_788_000_010},
+		ProviderPeerID: "self",
+	}
+	frame := signedTREFixture(t, record, privateKey)
+
+	resp := postTRE(t, srv.URL+"/api/v1/trust/edges", frame, false)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated POST = %d, want 401", resp.StatusCode)
+	}
+	if records, err := edgeStore.EdgeRecords(); err != nil || len(records) != 0 {
+		t.Fatalf("unauthenticated edge was persisted: records=%d err=%v", len(records), err)
+	}
+
+	tampered, err := trust.DecodeEdgeFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered.ProviderSignature[0] ^= 0xff
+	tamperedFrame, err := trust.EncodeEdgeFrame(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp = postTRE(t, srv.URL+"/api/v1/trust/edges", tamperedFrame, true)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid signature POST = %d, want 400", resp.StatusCode)
+	}
+	if records, err := edgeStore.EdgeRecords(); err != nil || len(records) != 0 {
+		t.Fatalf("invalid signed edge was persisted: records=%d err=%v", len(records), err)
+	}
+
+	resp = postTRE(t, srv.URL+"/api/v1/trust/edges", frame, true)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("operator POST = %d", resp.StatusCode)
+	}
+	records, err := edgeStore.EdgeRecords()
+	posted, decodeErr := trust.DecodeEdgeFrame(frame)
+	if err != nil || decodeErr != nil || len(records) != 1 || records[0].Deleted || !bytes.Equal(records[0].ProviderSignature, posted.ProviderSignature) {
+		t.Fatalf("persisted edge = %+v, err=%v", records, err)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/v1/trust/edges")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := new(bytes.Buffer)
+	_, _ = body.ReadFrom(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("public GET = %d", resp.StatusCode)
+	}
+	frames, err := SplitFrames(body.Bytes())
+	if err != nil || len(frames) != 1 {
+		t.Fatalf("GET frames=%d err=%v", len(frames), err)
+	}
+	decoded, err := trust.DecodeEdgeFrame(frames[0])
+	if err != nil || decoded.Truster != "self" || decoded.Trustee != "peer-a" || decoded.Deleted {
+		t.Fatalf("decoded GET edge = %+v, err=%v", decoded, err)
+	}
+
+	record.Deleted = true
+	record.UpdatedAtMs++
+	tombstone := signedTREFixture(t, record, privateKey)
+	resp = postTRE(t, srv.URL+"/api/v1/trust/edges", tombstone, true)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("operator tombstone POST = %d", resp.StatusCode)
+	}
+	records, err = edgeStore.EdgeRecords()
+	if err != nil || len(records) != 1 || !records[0].Deleted {
+		t.Fatalf("persisted tombstone = %+v, err=%v", records, err)
 	}
 }
 

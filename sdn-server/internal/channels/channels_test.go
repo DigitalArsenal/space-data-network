@@ -109,4 +109,14 @@ func TestChannelFormattingAndInternalSchemaMapping(t *testing.T) {
 	if DiscoveryTopic("OMM") != "/spacedatanetwork/channels/OMM" {
 		t.Fatalf("DiscoveryTopic returned unexpected topic")
 	}
+
+	// CLM is ratified through its published SDS binding while the repository's
+	// embedded IDL mirror catches up. It still uses the ordinary channel path.
+	claimSchema, err := SchemaNameFromStandardCode("CLM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode(CLM) returned error: %v", err)
+	}
+	if claimSchema != "CLM"+testInternalSchemaSuffix {
+		t.Fatalf("SchemaNameFromStandardCode(CLM) = %q", claimSchema)
+	}
 }

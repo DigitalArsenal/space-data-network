@@ -131,7 +131,8 @@ func NewCoreAPIHandler(
 		authHandler: authHandler,
 		rl:          newRateLimiter(),
 		listenAddrs: listenAddrs,
-		// Two fixed keys ("summary", "source_batch_progress"); the ceiling is
+		// Three fixed keys (summary, source progress, physical storage usage);
+		// the ceiling is
 		// nominal, this surface takes no parameters.
 		statsCache: newBoundedReader(8),
 	}

@@ -70,6 +70,28 @@ func VerifyEPMSignatureBindingKey(epmData []byte, signAliasKey []byte) error {
 	return ErrInvalidEPMSignature
 }
 
+// VerifyDetachedSignature verifies a detached signature against any Signing
+// key carried by an already-held EPM. Callers that use the EPM as an identity
+// binding must first verify the EPM's own signature and peer ID; this helper
+// deliberately does only the detached-signature operation so it is reusable by
+// SDS records such as TRE.
+func VerifyDetachedSignature(epmData, payload, signature []byte) error {
+	if len(epmData) == 0 {
+		return ErrEmptyEPMData
+	}
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmData) {
+		return ErrInvalidEPMData
+	}
+	if len(payload) == 0 || len(signature) == 0 {
+		return ErrInvalidEPMSignature
+	}
+	record := EPM.GetSizePrefixedRootAsEPM(epmData, 0)
+	if verifyEPMSignatureAgainstKeys(record, payload, signature) {
+		return nil
+	}
+	return ErrInvalidEPMSignature
+}
+
 // verifyEPMSignaturePrep loads and validates an EPM buffer, returning the parsed
 // record, its decoded SIGNATURE bytes, and the canonical signing payload.
 func verifyEPMSignaturePrep(epmData []byte) (*EPM.EPM, []byte, []byte, error) {
