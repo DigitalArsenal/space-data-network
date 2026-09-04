@@ -31,7 +31,8 @@ WORKDIR /build
 COPY sdn-server/ ./sdn-server/
 
 WORKDIR /build/sdn-server
-RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/spacedatanetwork ./cmd/spacedatanetwork \
+ARG SDN_RELEASE_TAG=""
+RUN CGO_ENABLED=1 go build -ldflags="-s -w -X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=${SDN_RELEASE_TAG}" -o /out/spacedatanetwork ./cmd/spacedatanetwork \
   && CGO_ENABLED=0 go build -tags edge -ldflags="-s -w" -o /out/spacedatanetwork-edge ./cmd/spacedatanetwork-edge
 
 FROM debian:bookworm-slim
