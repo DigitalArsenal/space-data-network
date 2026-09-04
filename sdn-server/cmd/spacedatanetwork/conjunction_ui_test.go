@@ -322,12 +322,12 @@ func TestEmbeddingAssets(t *testing.T) {
 	}
 
 	for _, bad := range []string{
-		"/embedding/",                  // no name
-		"/embedding/missing.onnx",      // absent file
-		"/embedding/model.html",        // extension not allow-listed
-		"/embedding/sub/model.onnx",    // nested path
-		"/embedding/..%2Fmodel.onnx",   // encoded traversal
-		"/embedding/.hidden.txt",       // dotfile
+		"/embedding/",                // no name
+		"/embedding/missing.onnx",    // absent file
+		"/embedding/model.html",      // extension not allow-listed
+		"/embedding/sub/model.onnx",  // nested path
+		"/embedding/..%2Fmodel.onnx", // encoded traversal
+		"/embedding/.hidden.txt",     // dotfile
 	} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, bad, nil))

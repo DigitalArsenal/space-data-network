@@ -15,7 +15,7 @@ import (
 // index — norad_cat_id / entity_id / object_type / ops_status_code / epoch —
 // and keeps the newest row in each partition. That is right for $OMM and $CAT
 // and catastrophic for every standard that populates none of those columns: all
-// of its rows land in the single partition (-1, '', '', '', -1, '') and every
+// of its rows land in the single partition (-1, ”, ”, ”, -1, ”) and every
 // one of them but the newest is deleted as a "duplicate".
 //
 // It is not hypothetical and it is not rare: "duplicates" is the DEFAULT mode of

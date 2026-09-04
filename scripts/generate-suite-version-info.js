@@ -105,15 +105,17 @@ function renderGo(manifest) {
 package versioninfo
 
 const (
-\tSuiteVersion = ${escapeForGo(manifest.suiteVersion)}
-\tSpaceDataStandardsVersion = ${escapeForGo(manifest.dependencies.spacedatastandards)}
-\tFlatSQLVersion = ${escapeForGo(manifest.dependencies.flatsql)}
-\tHDWalletWasmVersion = ${escapeForGo(manifest.dependencies.hdWalletWasm)}
-\tHDWalletUIVersion = ${escapeForGo(manifest.dependencies.hdWalletUI)}
-\tIPFSWebUIVersion = ${escapeForGo(manifest.dependencies.ipfsWebUI)}
-\tKuboVersion = ${escapeForGo(manifest.kuboVersion)}
-\tDefaultUpdateChannel = ${escapeForGo(manifest.updates.defaultChannel)}
-\tCurrentAdvertisementFlag = ${escapeForGo(manifest.advertisement.currentFlag)}
+${goConstBlock([
+  ["SuiteVersion", manifest.suiteVersion],
+  ["SpaceDataStandardsVersion", manifest.dependencies.spacedatastandards],
+  ["FlatSQLVersion", manifest.dependencies.flatsql],
+  ["HDWalletWasmVersion", manifest.dependencies.hdWalletWasm],
+  ["HDWalletUIVersion", manifest.dependencies.hdWalletUI],
+  ["IPFSWebUIVersion", manifest.dependencies.ipfsWebUI],
+  ["KuboVersion", manifest.kuboVersion],
+  ["DefaultUpdateChannel", manifest.updates.defaultChannel],
+  ["CurrentAdvertisementFlag", manifest.advertisement.currentFlag],
+])}
 )
 
 var SupportedAdvertisementFlags = []string{
@@ -124,6 +126,13 @@ func CopySupportedAdvertisementFlags() []string {
 \treturn append([]string(nil), SupportedAdvertisementFlags...)
 }
 `;
+}
+
+// goConstBlock renders `name = value` lines with the names padded so the
+// output is gofmt-clean (gofmt aligns consecutive constant assignments).
+function goConstBlock(entries) {
+  const width = Math.max(...entries.map(([name]) => name.length));
+  return entries.map(([name, value]) => `\t${name.padEnd(width)} = ${escapeForGo(value)}`).join("\n");
 }
 
 function writeFile(targetPath, content) {

@@ -31,16 +31,16 @@ type SandboxCaps struct {
 // Sandbox rejection codes (the "<code>" of the engine's latched
 // "sandbox: <code>: ..." error text).
 const (
-	SandboxCodeNotAuthorized  = "not-authorized"   // PRAGMA/ATTACH/DDL/DML/denied table
-	SandboxCodeMultiStatement = "multi-statement"  // more than one statement
-	SandboxCodeEmptyStatement = "empty-statement"  // no statement / comment only
-	SandboxCodeReadOnly       = "read-only"        // stmt_readonly false
-	SandboxCodeNotSelect      = "not-select"       // no result columns
-	SandboxCodeTimeout        = "timeout"          // progress-handler deadline
-	SandboxCodeRowCap         = "row-cap"          // result exceeds MaxRows
-	SandboxCodeByteCap        = "byte-cap"         // result exceeds MaxBytes
+	SandboxCodeNotAuthorized   = "not-authorized"      // PRAGMA/ATTACH/DDL/DML/denied table
+	SandboxCodeMultiStatement  = "multi-statement"     // more than one statement
+	SandboxCodeEmptyStatement  = "empty-statement"     // no statement / comment only
+	SandboxCodeReadOnly        = "read-only"           // stmt_readonly false
+	SandboxCodeNotSelect       = "not-select"          // no result columns
+	SandboxCodeTimeout         = "timeout"             // progress-handler deadline
+	SandboxCodeRowCap          = "row-cap"             // result exceeds MaxRows
+	SandboxCodeByteCap         = "byte-cap"            // result exceeds MaxBytes
 	SandboxCodeNotRecordStream = "not-a-record-stream" // stream mode, non-BLOB cell
-	SandboxCodeParams         = "params"           // bind-parameter count mismatch
+	SandboxCodeParams          = "params"              // bind-parameter count mismatch
 )
 
 // SandboxError is a typed sandbox rejection. Plain SQL errors (bad syntax,

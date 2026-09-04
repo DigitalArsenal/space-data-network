@@ -50,11 +50,11 @@ func (h *AdminAPIHandler) RegisterRoutes(mux *http.ServeMux) {
 
 // RoutingConfigResponse is the routing configuration API response
 type RoutingConfigResponse struct {
-	LocalPeerID    string   `json:"localPeerId"`
-	RelayMode      bool     `json:"relayMode"`
-	ActiveTopics   []string `json:"activeTopics"`
-	SchemaTopics   []string `json:"schemaTopics"`
-	PeerTopics     []string `json:"peerTopics"`
+	LocalPeerID  string   `json:"localPeerId"`
+	RelayMode    bool     `json:"relayMode"`
+	ActiveTopics []string `json:"activeTopics"`
+	SchemaTopics []string `json:"schemaTopics"`
+	PeerTopics   []string `json:"peerTopics"`
 }
 
 func (h *AdminAPIHandler) handleRoutingConfig(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +114,7 @@ type CreateSessionRequest struct {
 	SubscriptionID string   `json:"subscriptionId"`
 	PeerID         string   `json:"peerId"`
 	SchemaTypes    []string `json:"schemaTypes"`
-	Mode           int      `json:"mode"` // 0=single, 1=streaming, 2=batch
+	Mode           int      `json:"mode"`           // 0=single, 1=streaming, 2=batch
 	EncryptionMode int      `json:"encryptionMode"` // 0=none, 1=ECIES, 2=sessionKey, 3=hybrid
 }
 

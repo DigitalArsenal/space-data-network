@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
 )
 
 // RegisterAPI registers flow management REST endpoints on the given mux.

@@ -30,8 +30,8 @@ type CoinAddresses struct {
 // Standard BIP-44/84 derivation paths (account 0, external chain, index 0)
 const (
 	BitcoinDerivePath  = "m/84'/0'/0'/0/0"  // BIP-84 Native SegWit
-	EthereumDerivePath = "m/44'/60'/0'/0/0"  // BIP-44 Ethereum
-	SolanaDerivePath   = "m/44'/501'/0'/0'"  // BIP-44 Solana (all hardened for Ed25519)
+	EthereumDerivePath = "m/44'/60'/0'/0/0" // BIP-44 Ethereum
+	SolanaDerivePath   = "m/44'/501'/0'/0'" // BIP-44 Solana (all hardened for Ed25519)
 )
 
 // Curve constants matching the WASM enum (types.h)

@@ -1394,16 +1394,17 @@ func TestCachedLoginPage_UsesBundledWalletDistArtifactsInsteadOfSourceModules(t 
 		t.Fatalf("WriteFile dist/index.html: %v", err)
 	}
 
-	prevOnce := loginPageOnce
 	prevCache := loginPageCache
 	prevJS := walletJSFile
 	prevCSS := walletCSSFile
+	// A sync.Once cannot be copied (vet copylocks); the cache is re-armed
+	// with a fresh Once before and after, and the cached values restored.
 	loginPageOnce = sync.Once{}
 	loginPageCache = ""
 	walletJSFile = ""
 	walletCSSFile = ""
 	defer func() {
-		loginPageOnce = prevOnce
+		loginPageOnce = sync.Once{}
 		loginPageCache = prevCache
 		walletJSFile = prevJS
 		walletCSSFile = prevCSS

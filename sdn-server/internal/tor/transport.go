@@ -41,10 +41,10 @@ func NewTorTransport(socksAddr string) (*http.Transport, error) {
 
 	return &http.Transport{
 		DialContext:           contextDialer.DialContext,
-		MaxIdleConns:         100,
-		MaxIdleConnsPerHost:  10,
-		IdleConnTimeout:      90 * time.Second,
-		TLSHandshakeTimeout:  30 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   30 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		Proxy:                 nil, // bypass env vars — we dial through SOCKS directly
 	}, nil

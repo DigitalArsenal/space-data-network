@@ -37,13 +37,13 @@ func Handler(basePath string, mgr *flowrt.FlowManager) http.Handler {
 			"title":       "SDN Runtime Editor",
 			"engineLabel": "Space Data Network",
 			"api": map[string]string{
-				"bootstrapUrl":      basePath + "/api/bootstrap",
-				"compilePreviewUrl": basePath + "/api/compile-preview",
-				"runtimeStatusUrl":  basePath + "/api/runtime-status",
+				"bootstrapUrl":       basePath + "/api/bootstrap",
+				"compilePreviewUrl":  basePath + "/api/compile-preview",
+				"runtimeStatusUrl":   basePath + "/api/runtime-status",
 				"runtimeArtifactUrl": basePath + "/api/runtime-artifact",
 				"runtimeSettingsUrl": basePath + "/api/runtime-settings",
-				"archivesUrl":       basePath + "/api/archives",
-				"downloadWasmUrl":   basePath + "/api/download/wasm",
+				"archivesUrl":        basePath + "/api/archives",
+				"downloadWasmUrl":    basePath + "/api/download/wasm",
 			},
 		})
 	})
@@ -58,7 +58,7 @@ func Handler(basePath string, mgr *flowrt.FlowManager) http.Handler {
 			"user":               map[string]interface{}{"anonymous": false, "username": "sdn-runtime", "permissions": "*"},
 			"httpNodeRoot":       "/",
 			"paletteCategories":  []string{"common", "function", "network", "sequence", "parser", "storage"},
-			"editorTheme":       map[string]interface{}{},
+			"editorTheme":        map[string]interface{}{},
 			"flowEncryptionType": "system",
 		})
 	})
