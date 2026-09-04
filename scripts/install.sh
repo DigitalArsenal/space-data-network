@@ -129,16 +129,39 @@ detect_platform() {
     log_info "Detected platform: $PLATFORM"
 }
 
+# select_node_release_tag reads a GitHub releases list (JSON) on stdin and
+# prints the tag of the newest node release: a tag of the form v<digit>...,
+# never the sdn-js-v* library tags. A stable (non-prerelease) node release
+# wins; when the node only has pre-releases, the newest pre-release is used.
+# GitHub lists releases newest first and, within one release object, emits
+# tag_name before prerelease, so a line-oriented pass suffices without jq.
+select_node_release_tag() {
+    grep -oE '"(tag_name|prerelease)": *("[^"]*"|true|false)' | awk '
+        /"tag_name"/ { sub(/^"tag_name": *"/, ""); sub(/"$/, ""); tag = $0; next }
+        /"prerelease"/ {
+            if (tag ~ /^v[0-9]/) {
+                if ($0 ~ /false/) { if (stable == "") stable = tag }
+                else if (pre == "") pre = tag
+            }
+            tag = ""
+        }
+        END { if (stable != "") print stable; else if (pre != "") print pre }
+    '
+}
+
 get_latest_version() {
     if [ -n "$SDN_VERSION" ]; then
         VERSION="$SDN_VERSION"
         log_info "Using specified version: $VERSION"
     else
         log_info "Fetching latest version..."
-        VERSION=$(fetch_url_stdout "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+        # The repository also publishes library releases (sdn-js-v*), which
+        # GitHub's latest-release endpoint happily returns; the node's own releases
+        # are the v<semver> tags, and today they are all pre-releases.
+        VERSION=$(fetch_url_stdout "https://api.github.com/repos/${REPO}/releases?per_page=50" | select_node_release_tag)
 
         if [ -z "$VERSION" ]; then
-            log_error "Failed to fetch latest version"
+            log_error "Failed to fetch latest version: no v<semver> node release found among the newest 50 releases of ${REPO}"
             exit 1
         fi
         log_info "Latest version: $VERSION"
