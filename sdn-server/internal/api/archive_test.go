@@ -126,6 +126,9 @@ func TestArchiveCreateListsAndReimportsWithTheOriginalProducer(t *testing.T) {
 	if string(decodeDPMFrame(t, listed[0]).DATASET_ID()) != "archive-omm-api-1" {
 		t.Fatalf("listed archive is not the one created")
 	}
+	if got := rec.Header().Get(ArchiveCIDsHeader); got != manifestCID {
+		t.Fatalf("%s = %q, want the manifest CID %q", ArchiveCIDsHeader, got, manifestCID)
+	}
 	if _, filtered := archiveFrames(t, mux, http.MethodGet, ArchivesPath+"?schema=CAT", nil); len(filtered) != 0 {
 		t.Fatalf("schema filter listed %d archives, want 0", len(filtered))
 	}
