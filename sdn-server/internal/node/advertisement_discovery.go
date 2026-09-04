@@ -3,6 +3,7 @@ package node
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -311,6 +312,10 @@ func discoveredNodeEPMJSON(epmBytes []byte, pid peer.ID) (map[string]any, error)
 	info := map[string]any{
 		"directory_kind": "node",
 		"peer_id":        pid.String(),
+		// The signed bytes travel with the row: the resolved-sources lane
+		// verifies a publisher from them, and a row without them named
+		// nothing (every lane fell to its source tag, 2026-09-04).
+		"epm_base64": base64.StdEncoding.EncodeToString(epmBytes),
 	}
 
 	if dn := epmRecord.DN(); dn != nil {

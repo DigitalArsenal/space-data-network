@@ -60,6 +60,13 @@ func upsertSignedPublisherFixture(t *testing.T, store *storage.FlatSQLStore, pee
 
 func buildSignedPublisherEPM(t *testing.T, peerID, name, chain, address, domain string) []byte {
 	t.Helper()
+	return buildSignedPublisherEPMProfile(t, peerID, name, "", chain, address, domain)
+}
+
+// buildSignedPublisherEPMProfile signs a publisher profile with a legal name
+// and/or a distinguished name; either may be empty.
+func buildSignedPublisherEPMProfile(t *testing.T, peerID, name, dn, chain, address, domain string) []byte {
+	t.Helper()
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate signing key: %v", err)
@@ -77,7 +84,13 @@ func buildSignedPublisherEPM(t *testing.T, peerID, name, chain, address, domain 
 
 	build := func(epmSignature string) []byte {
 		b := flatbuffers.NewBuilder(1024)
-		nameOffset := b.CreateString(name)
+		var nameOffset, dnOffset flatbuffers.UOffsetT
+		if name != "" {
+			nameOffset = b.CreateString(name)
+		}
+		if dn != "" {
+			dnOffset = b.CreateString(dn)
+		}
 		publicOffset := b.CreateString(publicHex)
 		algorithmOffset := b.CreateString("ed25519")
 		addressTypeOffset := b.CreateString("ed25519")
@@ -137,7 +150,12 @@ func buildSignedPublisherEPM(t *testing.T, peerID, name, chain, address, domain 
 			signatureOffset = b.CreateString(epmSignature)
 		}
 		standardsEPM.EPMStart(b)
-		standardsEPM.EPMAddLEGAL_NAME(b, nameOffset)
+		if name != "" {
+			standardsEPM.EPMAddLEGAL_NAME(b, nameOffset)
+		}
+		if dn != "" {
+			standardsEPM.EPMAddDN(b, dnOffset)
+		}
 		standardsEPM.EPMAddKEYS(b, keysOffset)
 		standardsEPM.EPMAddMULTIFORMAT_ADDRESS(b, addressesOffset)
 		standardsEPM.EPMAddENTITY_TYPE(b, standardsEPM.EntityTypeNode)
@@ -301,4 +319,82 @@ func TestResolvedSourcesComposesDirectoryIdentity(t *testing.T) {
 	if len(unknown.Organization.Evidence) == 0 {
 		t.Fatal("unknown lane has no evidence")
 	}
+}
+
+func TestResolvePublisherOrganizationFromHeldBytesAndSelf(t *testing.T) {
+	store := newResolvedSourcesStore(t)
+	const local = "16UiuLOCALNODE"
+	const trusted = "16UiuTRUSTEDPEER"
+	const placeholder = "16UiuPLACEHOLDER"
+	held := map[string][]byte{
+		local:       buildSignedPublisherEPMProfile(t, local, "Digital Arsenal", "sdn.spaceaware.io", "", "", ""),
+		trusted:     buildSignedPublisherEPMProfile(t, trusted, "", "celestrak.eth", "", "", ""),
+		placeholder: buildSignedPublisherEPMProfile(t, placeholder, "", "SDN Node <peer.ID 16*HOLDER>", "", "", ""),
+	}
+	identity := publisherIdentity{localPeerID: local, epmBytes: func(peerID string) []byte { return held[peerID] }}
+
+	self := resolvePublisherOrganization(store, "account", local, nil, identity)
+	if !self.Self || self.State != organizationStateSigned || self.Name != "Digital Arsenal" || self.EPMCID == "" || self.Unnamed {
+		t.Fatalf("self = %+v, want signed, named from the legal name, marked self, with a CID", self)
+	}
+	peerOrg := resolvePublisherOrganization(store, "celestrak-gp", trusted, nil, identity)
+	if peerOrg.Self || peerOrg.State != organizationStateSigned || peerOrg.Name != "celestrak.eth" || peerOrg.Unnamed {
+		t.Fatalf("trusted peer = %+v, want signed, named from the dn, not self", peerOrg)
+	}
+	unnamed := resolvePublisherOrganization(store, "mlab-ndt-statistics", placeholder, nil, identity)
+	if unnamed.State != organizationStateSigned || !unnamed.Unnamed || unnamed.Name != unnamedPublisherName {
+		t.Fatalf("placeholder profile = %+v, want signed but unnamed", unnamed)
+	}
+	if strings.Contains(strings.Join(unnamed.Evidence, " "), "<peer.ID") {
+		t.Fatalf("placeholder leaked into evidence: %v", unnamed.Evidence)
+	}
+	wrong := publisherIdentity{epmBytes: func(string) []byte { return held[trusted] }}
+	if got := resolvePublisherOrganization(store, "lane", "16UiuSOMEONEELSE", nil, wrong); got.State != organizationStateSourceTag || got.Name != "lane" {
+		t.Fatalf("bytes advertising another peer named a lane: %+v", got)
+	}
+	bare := resolvePublisherOrganization(store, "account", local, nil, publisherIdentity{localPeerID: local})
+	if bare.State != organizationStateSourceTag || !bare.Self {
+		t.Fatalf("without held bytes the local lane = %+v, want the source-tag floor still marked self", bare)
+	}
+	if got := resolveProducerOrganization(store, "lane", trusted, nil); got.State != organizationStateSourceTag {
+		t.Fatalf("without identity the directory-only path = %+v", got)
+	}
+}
+
+func TestResolvedSourcesMarksLocalLanesSelf(t *testing.T) {
+	store := newResolvedSourcesStore(t)
+	const local = "16UiuLOCALNODE"
+	tags := storage.SourceTags{ProviderID: "account", SourceName: "596a40d90204321e", BatchID: "b-1", ContentKeyID: "public", ProducerPeerID: local}
+	record := sds.NewOMMBuilder().WithNoradCatID(50001).WithObjectName("SELF-01").WithEpoch("2026-05-12T00:00:00Z").Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:self", nil, tags); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	localEPM := buildSignedPublisherEPMProfile(t, local, "Digital Arsenal", "", "", "", "")
+	h := &DataQueryHandler{store: store}
+	h.SetPublisherIdentity(local, func(peerID string) []byte {
+		if peerID == local {
+			return localEPM
+		}
+		return nil
+	})
+	r := httptest.NewRequest("GET", "/api/v1/data/sources", nil)
+	w := httptest.NewRecorder()
+	h.handleResolvedSources(w, r)
+	if w.Code != 200 {
+		t.Fatalf("resolved sources -> %d: %s", w.Code, w.Body.String())
+	}
+	var resp resolvedSourcesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, row := range resp.Sources {
+		if row.ProducerPeerID != local {
+			continue
+		}
+		if row.Organization == nil || !row.Organization.Self || row.Organization.Name != "Digital Arsenal" || row.Organization.State != organizationStateSigned {
+			t.Fatalf("local lane = %+v, want the node's own verified name marked self", row.Organization)
+		}
+		return
+	}
+	t.Fatalf("local lane missing from %+v", resp.Sources)
 }

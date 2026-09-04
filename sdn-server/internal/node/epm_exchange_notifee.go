@@ -72,6 +72,12 @@ func (n *Node) directoryEPMSourceForPeer(pid peer.ID, source string) string {
 	if n.hasSDNAdvertisementPeer(pid) {
 		return "sdn-advertisement-discovery"
 	}
+	// A peer this node TRUSTS is a publisher whose records it accepts, and its
+	// signed profile is what names those records in the dashboard — so it is
+	// asked on every connect whether or not it advertises.
+	if n.peerRegistry != nil && n.peerRegistry.IsTrusted(pid) {
+		return "trusted-peer"
+	}
 	return ""
 }
 
