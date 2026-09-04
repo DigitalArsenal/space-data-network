@@ -82,7 +82,7 @@ build_native_darwin_arm64() {
   mkdir -p "$out"
   [[ -d "$HOST_WASMEDGE_DIR/lib" ]] || { echo "host WasmEdge SDK not found at $HOST_WASMEDGE_DIR" >&2; exit 1; }
   log "building darwin/arm64 binary with WasmEdge ${WASMEDGE_VERSION}"
-  (cd "$root/sdn-server" && WASMEDGE_DIR="$HOST_WASMEDGE_DIR" GOOS=darwin GOARCH=arm64 "$root/scripts/go-with-wasmedge.sh" build -ldflags="-s -w" -o "$out/spacedatanetwork" ./cmd/spacedatanetwork)
+  (cd "$root/sdn-server" && WASMEDGE_DIR="$HOST_WASMEDGE_DIR" GOOS=darwin GOARCH=arm64 "$root/scripts/go-with-wasmedge.sh" build -ldflags="-s -w -X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=${tag}" -o "$out/spacedatanetwork" ./cmd/spacedatanetwork)
   echo "$HOST_WASMEDGE_DIR"
 }
 
@@ -90,7 +90,7 @@ build_docker_linux() { # <arch>
   local arch="$1" out="$dist/inputs/bin/linux-$1" image="${DOCKER_IMAGE_PREFIX}:linux-$1"
   mkdir -p "$out" "$dist/inputs/wasmedge/linux-$arch"
   log "building linux/${arch} binary in Docker (${image})"
-  docker buildx build --platform "linux/${arch}" --target builder --load -t "$image" -f "$root/deployment/docker/Dockerfile" "$root" >/dev/null
+  docker buildx build --platform "linux/${arch}" --target builder --load -t "$image" --build-arg "SDN_RELEASE_TAG=${tag}" -f "$root/deployment/docker/Dockerfile" "$root" >/dev/null
   local container
   container="$(docker create --platform "linux/${arch}" "$image")"
   docker cp "$container:/out/spacedatanetwork" "$out/spacedatanetwork"
