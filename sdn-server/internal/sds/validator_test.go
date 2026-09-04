@@ -423,7 +423,15 @@ func TestEmbeddedSchemasParse(t *testing.T) {
 			t.Errorf("Schema %s has unbalanced braces", name)
 		}
 
-		// All include targets must also be registered schemas.
+		// All include targets must also be registered schemas. REC.fbs is the
+		// exception by construction: it is the union wrapper over EVERY ratified
+		// record type, and the node embeds a curated subset of the standard. The
+		// host reads REC by Record.standard (internal/modulert/publication_signature.go)
+		// and the validator loads each embed standalone, so an include of a
+		// standard the node does not carry is expected there and resolved nowhere.
+		if name == "REC.fbs" {
+			continue
+		}
 		for _, match := range includeRegex.FindAllStringSubmatch(text, -1) {
 			target := match[1] + ".fbs"
 			if !supported[target] {
