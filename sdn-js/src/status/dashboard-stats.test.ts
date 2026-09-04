@@ -3,54 +3,56 @@ import { describe, expect, it } from 'vitest';
 
 import { decodeDashboardStats, isDashboardStatsFrame } from './dashboard-stats';
 import {
-  DashboardIngestEvent,
-  DashboardIngestEventKind,
-  DashboardSchemaStat,
-  DashboardSourceStat,
-  DashboardStatsSet,
-  DashboardTopicStat,
   NodeStatusSet,
 } from './generated/nst.js';
+import {
+  NDS,
+  NDSIngestEvent,
+  NDSSchemaStat,
+  NDSSourceStat,
+  NDSTopicStat,
+  ndsIngestEventKind,
+} from './generated/nst/main.js';
 
 /** Build the same frame shape the node emits, with the generated builders. */
-function buildFrame(): Uint8Array {
+function buildFrame(includeStorage = true): Uint8Array {
   const b = new flatbuffers.Builder(1024);
 
   const schemaName = b.createString('OMM');
-  DashboardSchemaStat.startDashboardSchemaStat(b);
-  DashboardSchemaStat.addSchema(b, schemaName);
-  DashboardSchemaStat.addRecordCount(b, BigInt(10847));
-  DashboardSchemaStat.addTotalBytes(b, BigInt(4200000));
-  const schema = DashboardSchemaStat.endDashboardSchemaStat(b);
-  const schemas = DashboardStatsSet.createSchemasVector(b, [schema]);
+  NDSSchemaStat.startNDSSchemaStat(b);
+  NDSSchemaStat.addSchema(b, schemaName);
+  NDSSchemaStat.addRecordCount(b, BigInt(10847));
+  NDSSchemaStat.addTotalBytes(b, BigInt(4200000));
+  const schema = NDSSchemaStat.endNDSSchemaStat(b);
+  const schemas = NDS.createSchemasVector(b, [schema]);
 
   const srcSchema = b.createString('OMM');
   const provider = b.createString('celestrak');
   const sourceName = b.createString('gp');
   const batchId = b.createString('b-1');
-  DashboardSourceStat.startDashboardSourceStat(b);
-  DashboardSourceStat.addSchema(b, srcSchema);
-  DashboardSourceStat.addProviderId(b, provider);
-  DashboardSourceStat.addSourceName(b, sourceName);
-  DashboardSourceStat.addBatchId(b, batchId);
-  DashboardSourceStat.addRecordCount(b, BigInt(10847));
-  DashboardSourceStat.addTotalBytes(b, BigInt(4200000));
-  DashboardSourceStat.addFirstIngestAt(b, BigInt(1755999000));
-  DashboardSourceStat.addLastIngestAt(b, BigInt(1756000000));
-  DashboardSourceStat.addUpdatedAt(b, BigInt(1756000000));
-  DashboardSourceStat.addWindowRecords(b, BigInt(17));
-  DashboardSourceStat.addPriorWindowRecords(b, BigInt(11));
-  DashboardSourceStat.addWindowMs(b, BigInt(300000));
-  const source = DashboardSourceStat.endDashboardSourceStat(b);
-  const sources = DashboardStatsSet.createSourcesVector(b, [source]);
+  NDSSourceStat.startNDSSourceStat(b);
+  NDSSourceStat.addSchema(b, srcSchema);
+  NDSSourceStat.addProviderId(b, provider);
+  NDSSourceStat.addSourceName(b, sourceName);
+  NDSSourceStat.addBatchId(b, batchId);
+  NDSSourceStat.addRecordCount(b, BigInt(10847));
+  NDSSourceStat.addTotalBytes(b, BigInt(4200000));
+  NDSSourceStat.addFirstIngestAt(b, BigInt(1755999000));
+  NDSSourceStat.addLastIngestAt(b, BigInt(1756000000));
+  NDSSourceStat.addUpdatedAt(b, BigInt(1756000000));
+  NDSSourceStat.addWindowRecords(b, BigInt(17));
+  NDSSourceStat.addPriorWindowRecords(b, BigInt(11));
+  NDSSourceStat.addWindowMs(b, BigInt(300000));
+  const source = NDSSourceStat.endNDSSourceStat(b);
+  const sources = NDS.createSourcesVector(b, [source]);
 
   const eventSchema = b.createString('OMM');
   const eventProvider = b.createString('celestrak');
   const eventSource = b.createString('gp');
   const eventMessage = b.createString('Ingest resumed after a quiet period.');
-  const event = DashboardIngestEvent.createDashboardIngestEvent(
+  const event = NDSIngestEvent.createNDSIngestEvent(
     b,
-    DashboardIngestEventKind.Recover,
+    ndsIngestEventKind.Recover,
     eventSchema,
     eventProvider,
     eventSource,
@@ -58,31 +60,35 @@ function buildFrame(): Uint8Array {
     BigInt(1),
     BigInt(1756000010),
   );
-  const events = DashboardStatsSet.createEventsVector(b, [event]);
+  const events = NDS.createEventsVector(b, [event]);
 
   const topicName = b.createString('/sdn/OMM/v1');
-  const topic = DashboardTopicStat.createDashboardTopicStat(
+  const topic = NDSTopicStat.createNDSTopicStat(
     b,
     topicName,
     2.5,
     BigInt(1756000005),
     true,
   );
-  const topics = DashboardStatsSet.createTopicsVector(b, [topic]);
+  const topics = NDS.createTopicsVector(b, [topic]);
 
-  DashboardStatsSet.startDashboardStatsSet(b);
-  DashboardStatsSet.addGeneratedAt(b, BigInt(1756000123));
-  DashboardStatsSet.addSchemas(b, schemas);
-  DashboardStatsSet.addSources(b, sources);
-  DashboardStatsSet.addTotalRecords(b, BigInt(10847));
-  DashboardStatsSet.addTotalBytes(b, BigInt(4200000));
-  DashboardStatsSet.addStale(b, true);
-  DashboardStatsSet.addAsOf(b, BigInt(1756000000));
-  DashboardStatsSet.addEvents(b, events);
-  DashboardStatsSet.addTopics(b, topics);
-  const set = DashboardStatsSet.endDashboardStatsSet(b);
+  NDS.startNDS(b);
+  NDS.addGeneratedAt(b, BigInt(1756000123));
+  NDS.addSchemas(b, schemas);
+  NDS.addSources(b, sources);
+  NDS.addTotalRecords(b, BigInt(10847));
+  NDS.addTotalBytes(b, BigInt(4200000));
+  NDS.addStale(b, true);
+  NDS.addAsOf(b, BigInt(1756000000));
+  NDS.addEvents(b, events);
+  NDS.addTopics(b, topics);
+  if (includeStorage) {
+    NDS.addStorageFreeBytes(b, BigInt(274877906944));
+    NDS.addStorageCapacityBytes(b, BigInt(549755813888));
+  }
+  const set = NDS.endNDS(b);
 
-  DashboardStatsSet.finishSizePrefixedDashboardStatsSetBuffer(b, set);
+  NDS.finishSizePrefixedNDSBuffer(b, set);
   return b.asUint8Array();
 }
 
@@ -108,6 +114,8 @@ describe('dashboard stats frames', () => {
       asOf: 1756000000,
       totalRecords: 10847,
       totalBytes: 4200000,
+      storageFreeBytes: 274877906944,
+      storageCapacityBytes: 549755813888,
       schemas: [{ schema: 'OMM', recordCount: 10847, totalBytes: 4200000 }],
       sources: [
         {
@@ -145,6 +153,13 @@ describe('dashboard stats frames', () => {
         },
       ],
     });
+  });
+
+  it('defaults storage sizes to zero when decoding a pre-1.212 NDS frame', () => {
+    const view = decodeDashboardStats(buildFrame(false));
+
+    expect(view.storageFreeBytes).toBe(0);
+    expect(view.storageCapacityBytes).toBe(0);
   });
 
   it('tells $NDS frames apart from the $NST frames on the same socket', () => {

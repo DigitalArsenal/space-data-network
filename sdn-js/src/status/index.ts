@@ -48,3 +48,14 @@ export {
   DashboardStatsSet,
   DashboardTopicStat,
 } from './generated/nst.js';
+export {
+  NDS,
+  NDSIngestEvent,
+  NDSModuleStat,
+  NDSSchemaStat,
+  NDSSourceStat,
+  NDSTopicStat,
+  NDSTrustEngineStat,
+  ndsIngestEventKind,
+  ndsPublisherRung,
+} from './generated/nst/main.js';
