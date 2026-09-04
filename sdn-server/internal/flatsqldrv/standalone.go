@@ -30,6 +30,17 @@ func OpenStandalone(dbPath string) (*sql.DB, func() error, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return nil, nil, fmt.Errorf("flatsqldrv: create standalone db directory: %w", err)
 	}
+	// These files hold operator accounts and session tokens: owner-only,
+	// whatever the process umask says (SEC-12). Create the file with 0600
+	// before SQLite touches it and tighten one that already exists.
+	if f, err := os.OpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o600); err != nil {
+		return nil, nil, fmt.Errorf("flatsqldrv: create standalone db file: %w", err)
+	} else {
+		_ = f.Close()
+	}
+	if err := os.Chmod(dbPath, 0o600); err != nil {
+		return nil, nil, fmt.Errorf("flatsqldrv: restrict standalone db file: %w", err)
+	}
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("flatsqldrv: open standalone sqlite db: %w", err)
