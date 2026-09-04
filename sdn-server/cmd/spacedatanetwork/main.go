@@ -1437,7 +1437,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 							OutputDir:  filepath.Join(filepath.Dir(cfg.Storage.Path), "dataset-publications", "listings"),
 						})
 						sfCatalog := storefront.NewCatalog(sfStore, nil)
-						sfDelivery := storefront.NewDeliveryService(storefront.DefaultDeliveryConfig(), nil)
+						// The delivery lane pins signed publications through the node's
+						// Kubo, never a hardcoded localhost (Kubo refuses that host).
+						sfDeliveryConfig := storefront.DefaultDeliveryConfig()
+						if ipfsURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL); ipfsURL != "" {
+							sfDeliveryConfig.IPFSAPIEndpoint = ipfsURL
+						}
+						sfDelivery := storefront.NewDeliveryService(sfDeliveryConfig, nil)
 						var chainVerifiers []storefront.ChainVerifier
 						if cfg.Blockchain.Ethereum.RPCURL != "" {
 							chainVerifiers = append(chainVerifiers, storefront.NewEthereumVerifier(storefront.ChainConfig{
