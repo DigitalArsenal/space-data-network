@@ -415,7 +415,11 @@ func TestProjectedStringColumnsAreJSONSafe(t *testing.T) {
 	//
 	// 179 -> 182 on the SDS v1.207.0 pin: $ICN, $TRP and $TRV (the trust
 	// rules engine's standards) each project string columns.
-	const stringProjectingRoutedStandards = 182
+	//
+	// 182 -> 183 on the SDS v1.210.0 pin: the embedded $LCC caught up with the
+	// published six-field table and now projects NAME, DESCRIPTION, SOURCE_URL
+	// and RETRIEVED_AT, so it earns hostile-string coverage for the first time.
+	const stringProjectingRoutedStandards = 183
 	if len(targets) != stringProjectingRoutedStandards {
 		t.Fatalf("the hostile-string guard covers %d generically routed standards, want exactly %d — a catalog change moved the projected-string set (or the flatc oracle is incomplete); confirm with `awk '/^  table [A-Z]/{tbl=$2; has=0} /:string;/{if(tbl)has=1} /^  }$/{if(tbl&&has)n++; tbl=\"\"} END{print n}' internal/storage/engine_standard_catalog.go` minus the unvendored standards",
 			len(targets), stringProjectingRoutedStandards)
