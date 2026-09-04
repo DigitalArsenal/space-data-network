@@ -86,6 +86,12 @@ npm run install:wasmedge
 npm run server:build
 ```
 
+A plain clone is enough to build the node: the dashboard ships as a prebuilt,
+embedded bundle (`sdn-server/cmd/spacedatanetwork/embedded/dashboard.html`).
+Its source, the `sdn-js/spaceaware-ui` submodule, is private and is skipped by
+`--recurse-submodules` and by CI; contributors with access who want to rebuild
+the embed run `git submodule update --init --checkout sdn-js/spaceaware-ui`.
+
 The one-line installers are user-scoped by default. They install the bundle
 under `~/.spacedatanetwork/bundles` and command launchers under
 `~/.spacedatanetwork/bin`; set `SDN_INSTALL_DIR` or `SDN_BUNDLE_DIR` only when

@@ -47,6 +47,14 @@ guard('--sources');
 // every embed build, and the build refuses an install that does not satisfy
 // sdn-js's flatsql pin: the embedded engine must equal the pin, never drift
 // behind it (sdn-server's own engine is held to the same law).
+// The dashboard source is the private SpaceAware-UI submodule, which clones
+// and CI skip (update = none in .gitmodules): the embedded build ships in the
+// repo, so the node builds without it. Rebuilding the embed needs it.
+const uiPkgPath = path.resolve(__dirname, '../spaceaware-ui/package.json');
+if (!fs.existsSync(uiPkgPath)) {
+  console.error('[build-dashboard] sdn-js/spaceaware-ui is not checked out. The dashboard source is a private submodule; with access, run: git submodule update --init --checkout sdn-js/spaceaware-ui');
+  process.exit(1);
+}
 const sdnJsPkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'));
 const flatsqlPin = sdnJsPkg.dependencies?.flatsql ?? sdnJsPkg.devDependencies?.flatsql ?? null;
 const flatsqlPkgPath = path.resolve(__dirname, '../node_modules/flatsql/package.json');
