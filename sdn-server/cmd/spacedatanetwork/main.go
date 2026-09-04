@@ -1609,7 +1609,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/module-delivery/listings", handleModuleDeliveryListings(n.PluginRegistry()))
 			adminMux.HandleFunc("/api/v1/modules/runtime", handleModuleRuntimeSnapshot(n.PluginManager(), n.PluginRegistry()))
 			adminMux.HandleFunc("/api/v1/modules/runtime/", handleModuleRuntimeMutation(n.PluginManager()))
-			registerNodeFirstReadLanes(adminMux, n)
+			nodeFirstTrustHandler := registerNodeFirstReadLanes(adminMux, n, cfg.Admin.RequireAuth, func() *auth.Handler { return authHandler })
 			if capPolicy := n.CapabilityPolicy(); capPolicy != nil {
 				capAPI := modulert.NewCapabilityPolicyAPI(capPolicy)
 				adminMux.Handle("/api/modules/capabilities", capAPI)
@@ -1668,7 +1668,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/v1/trust/bond", bondAtt.handleBond)
 			// Trust rules engine (`$TRP` policies → signed `$TRV` verdicts) and
 			// the trust graph API over it (trust_engine.go).
-			if err := startTrustRulesEngine(ctx, n, adminMux, cfg.Storage.Path, cfg.Admin.RequireAuth, func() *auth.Handler { return authHandler }, bondAtt); err != nil {
+			if err := startTrustRulesEngine(ctx, n, adminMux, cfg.Storage.Path, nodeFirstTrustHandler, bondAtt); err != nil {
 				log.Warnf("Trust rules engine not started: %v", err)
 			}
 

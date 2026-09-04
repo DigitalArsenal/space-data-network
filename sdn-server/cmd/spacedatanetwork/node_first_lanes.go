@@ -5,15 +5,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"github.com/spacedatanetwork/sdn-server/internal/api"
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/trust"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
 
-// registerNodeFirstReadLanes mounts the identity and installed-module frame
-// lanes. Trust edges are mounted with the trust engine because they share its
-// graph, persistence store, event publisher, and operator gate.
-func registerNodeFirstReadLanes(mux *http.ServeMux, n *node.Node) {
+// registerNodeFirstReadLanes mounts every baseline node-first frame lane.
+// Trust edges and claims live here rather than behind the optional rules
+// engine, so a node without that service still has the complete dashboard API.
+func registerNodeFirstReadLanes(mux *http.ServeMux, n *node.Node, requireAuth bool, resolveAuth func() *auth.Handler) *api.TrustHandler {
 	nodes := api.NewNodesHandler(api.NodesHandlerOptions{
 		SelfPeerID: n.PeerID().String(),
 		Self:       n.EPMService(),
@@ -36,6 +41,86 @@ func registerNodeFirstReadLanes(mux *http.ServeMux, n *node.Node) {
 		return snapshot
 	})
 	mux.Handle(api.ModulesPath, modules)
+
+	selfPeerID := n.PeerID().String()
+	graph := trust.NewGraph()
+	var edgeStore *trust.Store
+	if flat := n.Store(); flat != nil {
+		var err error
+		edgeStore, err = trust.NewStoreWithFlatSQL(flat)
+		if err != nil {
+			log.Warnf("Trust edge store unavailable: %v", err)
+		} else if heldGraph, loadErr := edgeStore.LoadGraph(); loadErr != nil {
+			log.Warnf("Stored trust graph unavailable: %v", loadErr)
+		} else {
+			graph = heldGraph
+		}
+	}
+	service := trust.NewService(graph, nil)
+	service.TrackEvaluator(selfPeerID)
+	signingKey, signingErr := storefrontSigningKeyFromRaw(n.SigningKey())
+	if signingErr != nil {
+		log.Warnf("Node-first trust and claim signing unavailable: %v", signingErr)
+	}
+	protect := nodeFirstOperatorProtect(requireAuth, resolveAuth)
+	trustHandler := api.NewTrustHandler(service)
+	trustHandler.Store = edgeStore
+	trustHandler.ResolveEPM = func(peerID string) []byte { return heldNodeEPM(n, peerID) }
+	trustHandler.SelfPeerID = selfPeerID
+	trustHandler.SigningKey = signingKey
+	trustHandler.PeerRegistry = n.PeerRegistry()
+	trustHandler.Protect = protect
+
+	claims := api.NewClaimsHandler(api.ClaimsHandlerOptions{
+		SelfPeerID: selfPeerID,
+		SigningKey: signingKey,
+		Store:      api.NewFlatSQLClaimFrameStore(n.Store()),
+		ResolveEPM: func(claimant string) []byte { return heldNodeEPM(n, claimant) },
+		Trusted: func(claimant string) bool {
+			if trustHandler.Engine != nil {
+				status, ok := trustHandler.Service.Status(selfPeerID, claimant)
+				return ok && status.Trusted
+			}
+			return peerRegistryTrusts(n.PeerRegistry(), claimant)
+		},
+		Protect: protect,
+	})
+	registerNodeFirstTrustAndClaimLanes(mux, trustHandler, claims)
+	return trustHandler
+}
+
+func registerNodeFirstTrustAndClaimLanes(mux *http.ServeMux, trustHandler *api.TrustHandler, claims *api.ClaimsHandler) {
+	trustHandler.RegisterEdgeRoutes(mux)
+	claims.RegisterRoutes(mux)
+}
+
+func nodeFirstOperatorProtect(requireAuth bool, resolveAuth func() *auth.Handler) func(http.HandlerFunc) http.HandlerFunc {
+	return func(inner http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if requireAuth {
+				var handler *auth.Handler
+				if resolveAuth != nil {
+					handler = resolveAuth()
+				}
+				if handler == nil {
+					http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				if !handler.RequireTrust(w, r, peers.Admin) {
+					return
+				}
+			}
+			inner(w, r)
+		}
+	}
+}
+
+func peerRegistryTrusts(registry api.TrustPeerRegistry, peerID string) bool {
+	if registry == nil {
+		return false
+	}
+	id, err := peer.Decode(strings.TrimSpace(peerID))
+	return err == nil && registry.IsTrusted(id)
 }
 
 // heldNodeProfiles joins the registry's live EPM copies with the directory's

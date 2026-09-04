@@ -10,7 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	sdstre "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TRE"
+	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
@@ -60,6 +66,52 @@ func signedTREFixture(t *testing.T, record trust.EdgeRecord, privateKey ed25519.
 		t.Fatal(err)
 	}
 	return frame
+}
+
+func unsignedTREFixture(record trust.EdgeRecord) []byte {
+	b := flatbuffers.NewBuilder(256)
+	edgeID := b.CreateString(record.EdgeID)
+	truster := b.CreateString(record.Truster)
+	trustee := b.CreateString(record.Trustee)
+	provider := b.CreateString(record.ProviderPeerID)
+	sdstre.TREStart(b)
+	sdstre.TREAddEDGE_ID(b, edgeID)
+	sdstre.TREAddTRUSTER_ID(b, truster)
+	sdstre.TREAddTRUSTEE_ID(b, trustee)
+	sdstre.TREAddWEIGHT(b, record.Weight)
+	sdstre.TREAddUPDATED_AT(b, uint64(record.UpdatedAtMs))
+	sdstre.TREAddDELETED(b, record.Deleted)
+	sdstre.TREAddPROVIDER_PEER_ID(b, provider)
+	root := sdstre.TREEnd(b)
+	sdstre.FinishSizePrefixedTREBuffer(b, root)
+	return append([]byte(nil), b.FinishedBytes()...)
+}
+
+type fakeTrustPeerRegistry struct {
+	peers map[peer.ID]*peers.TrustedPeer
+}
+
+func (r *fakeTrustPeerRegistry) ListPeers() []*peers.TrustedPeer {
+	out := make([]*peers.TrustedPeer, 0, len(r.peers))
+	for _, known := range r.peers {
+		copy := *known
+		out = append(out, &copy)
+	}
+	return out
+}
+
+func (r *fakeTrustPeerRegistry) SetTrustLevel(id peer.ID, level peers.TrustLevel) error {
+	known, ok := r.peers[id]
+	if !ok {
+		return peers.ErrPeerNotFound
+	}
+	known.TrustLevel = level
+	return nil
+}
+
+func (r *fakeTrustPeerRegistry) IsTrusted(id peer.ID) bool {
+	known, ok := r.peers[id]
+	return ok && known.TrustLevel >= peers.Full
 }
 
 func postTRE(t *testing.T, url string, frame []byte, operator bool) *http.Response {
@@ -436,6 +488,141 @@ func TestTrustEdgeFrameAuthPersistenceAndPublicRead(t *testing.T) {
 	records, err = edgeStore.EdgeRecords()
 	if err != nil || len(records) != 1 || !records[0].Deleted {
 		t.Fatalf("persisted tombstone = %+v, err=%v", records, err)
+	}
+}
+
+func TestTrustEdgesWithoutEngineDeriveRegistryAndSignOperatorMutations(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = flat.Close() })
+	edgeStore, err := trust.NewStoreWithFlatSQL(flat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedEdge := trust.EdgeRecord{
+		EdgeID: "remote-a->remote-b",
+		Edge: trust.Edge{
+			Truster:     "remote-a",
+			Trustee:     "remote-b",
+			Weight:      0.75,
+			UpdatedAtMs: 1_788_000_000_050,
+		},
+		ProviderPeerID:    "remote-a",
+		ProviderSignature: []byte("held-signature"),
+	}
+	if err := edgeStore.StoreEdgeRecord(storedEdge); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		fullPeer      = "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
+		marginalPeer  = "12D3KooWNvSZnPi3RrhrTwEY4LuuBeB6K6facKUCJcyWG1aoDd2p"
+		untrustedPeer = "12D3KooWP5MYTnN8DcQDw7aDUFZY2vQAhvMwZZZ1XN3U9Wh3mJUW"
+	)
+	fullID, _ := peer.Decode(fullPeer)
+	marginalID, _ := peer.Decode(marginalPeer)
+	untrustedID, _ := peer.Decode(untrustedPeer)
+	fullAdded := time.UnixMilli(1_788_000_000_111)
+	marginalAdded := time.UnixMilli(1_788_000_000_222)
+	registry := &fakeTrustPeerRegistry{peers: map[peer.ID]*peers.TrustedPeer{
+		fullID:      {ID: fullID, TrustLevel: peers.Full, AddedAt: fullAdded},
+		marginalID:  {ID: marginalID, TrustLevel: peers.Marginal, AddedAt: marginalAdded},
+		untrustedID: {ID: untrustedID, TrustLevel: peers.Unknown, AddedAt: time.UnixMilli(1_788_000_000_333)},
+	}}
+	profile, signingKey := signedNodeEPMFixture(t, "self", "Self Node")
+	h := NewTrustHandler(trust.NewService(trust.NewGraph(), nil))
+	h.Store = edgeStore
+	h.SelfPeerID = "self"
+	h.SigningKey = signingKey
+	h.PeerRegistry = registry
+	h.ResolveEPM = func(peerID string) []byte {
+		if peerID == "self" {
+			return profile
+		}
+		return nil
+	}
+	h.Now = func() time.Time { return time.UnixMilli(1_788_000_999_000) }
+	srv := newTrustServer(t, h)
+
+	resp, err := http.Get(srv.URL + "/api/v1/trust/edges")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := new(bytes.Buffer)
+	_, _ = body.ReadFrom(resp.Body)
+	resp.Body.Close()
+	frames, err := SplitFrames(body.Bytes())
+	if err != nil || len(frames) != 3 {
+		t.Fatalf("registry GET frames=%d err=%v", len(frames), err)
+	}
+	derived := map[string]trust.EdgeRecord{}
+	storedSeen := false
+	for _, frame := range frames {
+		record, decodeErr := trust.DecodeEdgeFrame(frame)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		if record.EdgeID == storedEdge.EdgeID {
+			storedSeen = record.Truster == storedEdge.Truster && record.Trustee == storedEdge.Trustee
+			continue
+		}
+		derived[record.Trustee] = record
+		if record.Truster != "self" || record.ProviderPeerID != "self" || record.Weight != 1 || len(record.ProviderSignature) == 0 || !h.verifyEdgeSigner(record) {
+			t.Fatalf("derived registry edge is not a signed local weight-1 edge: %+v", record)
+		}
+	}
+	if derived[fullPeer].UpdatedAtMs != fullAdded.UnixMilli() || derived[marginalPeer].UpdatedAtMs != marginalAdded.UnixMilli() {
+		t.Fatalf("derived timestamps = full:%d marginal:%d", derived[fullPeer].UpdatedAtMs, derived[marginalPeer].UpdatedAtMs)
+	}
+	if _, exists := derived[untrustedPeer]; exists {
+		t.Fatal("an untrusted registry peer produced a trust edge")
+	}
+	if !storedSeen {
+		t.Fatal("GET omitted the stored trust edge")
+	}
+
+	unsigned := unsignedTREFixture(trust.EdgeRecord{Edge: trust.Edge{Trustee: untrustedPeer}})
+	resp = postTRE(t, srv.URL+"/api/v1/trust/edges", unsigned, false)
+	body.Reset()
+	_, _ = body.ReadFrom(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unsigned operator POST = %d: %s", resp.StatusCode, body.String())
+	}
+	postedFrames, err := SplitFrames(body.Bytes())
+	if err != nil || len(postedFrames) != 1 {
+		t.Fatalf("signed response frames=%d err=%v", len(postedFrames), err)
+	}
+	posted, err := trust.DecodeEdgeFrame(postedFrames[0])
+	if err != nil || posted.Truster != "self" || posted.ProviderPeerID != "self" || posted.EdgeID == "" || posted.Weight != 1 || posted.UpdatedAtMs != 1_788_000_999_000 || len(posted.ProviderSignature) == 0 || !h.verifyEdgeSigner(posted) {
+		t.Fatalf("server-signed edge = %+v err=%v", posted, err)
+	}
+	if got := registry.peers[untrustedID].TrustLevel; got != peers.Full {
+		t.Fatalf("registry trust after edge = %s, want full", got)
+	}
+	stored, err := edgeStore.EdgeRecords()
+	if err != nil || len(stored) != 2 || stored[1].Deleted || !bytes.Equal(stored[1].ProviderSignature, posted.ProviderSignature) {
+		t.Fatalf("stored signed edge=%+v err=%v", stored, err)
+	}
+
+	h.Now = func() time.Time { return time.UnixMilli(1_788_001_000_000) }
+	tombstone := unsignedTREFixture(trust.EdgeRecord{Edge: trust.Edge{Trustee: untrustedPeer, Weight: 1}, Deleted: true})
+	resp = postTRE(t, srv.URL+"/api/v1/trust/edges", tombstone, false)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unsigned tombstone POST = %d", resp.StatusCode)
+	}
+	if got := registry.peers[untrustedID].TrustLevel; got != peers.Unknown {
+		t.Fatalf("registry trust after tombstone = %s, want unknown", got)
+	}
+	stored, err = edgeStore.EdgeRecords()
+	if err != nil || len(stored) != 2 || !stored[1].Deleted || stored[1].UpdatedAtMs != 1_788_001_000_000 || len(stored[1].ProviderSignature) == 0 {
+		t.Fatalf("stored tombstone=%+v err=%v", stored, err)
 	}
 }
 

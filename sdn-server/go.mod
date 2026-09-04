@@ -3,7 +3,7 @@ module github.com/spacedatanetwork/sdn-server
 go 1.25.0
 
 require (
-	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.211.0
+	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.212.0
 	github.com/caddyserver/certmagic v0.21.6
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0

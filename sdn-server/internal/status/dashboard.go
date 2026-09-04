@@ -3,6 +3,7 @@ package status
 import (
 	"time"
 
+	standardsNDS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/NDS"
 	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/spacedatanetwork/sdn-server/internal/status/nst"
@@ -78,8 +79,10 @@ type DashboardStatsInput struct {
 	Events  []DashboardIngestEventRow
 	Topics  []DashboardTopicRow
 
-	TotalRecords int64
-	TotalBytes   int64
+	TotalRecords         int64
+	TotalBytes           int64
+	StorageFreeBytes     int64
+	StorageCapacityBytes int64
 
 	// Stale is true when the assembling read hit its budget and these numbers
 	// are last-known-good. Reported as stale, never as a confident zero.
@@ -198,19 +201,21 @@ func buildDashboardStatsSet(in DashboardStatsInput) []byte {
 	}
 	topicsVec := b.EndVector(len(topicOffsets))
 
-	nst.DashboardStatsSetStart(b)
-	nst.DashboardStatsSetAddGeneratedAt(b, now.Unix())
-	nst.DashboardStatsSetAddSchemas(b, schemasVec)
-	nst.DashboardStatsSetAddSources(b, sourcesVec)
-	nst.DashboardStatsSetAddTotalRecords(b, in.TotalRecords)
-	nst.DashboardStatsSetAddTotalBytes(b, in.TotalBytes)
-	nst.DashboardStatsSetAddStale(b, in.Stale)
-	nst.DashboardStatsSetAddAsOf(b, asOf)
-	nst.DashboardStatsSetAddEvents(b, eventsVec)
-	nst.DashboardStatsSetAddTopics(b, topicsVec)
-	set := nst.DashboardStatsSetEnd(b)
+	standardsNDS.NDSStart(b)
+	standardsNDS.NDSAddGeneratedAt(b, now.Unix())
+	standardsNDS.NDSAddSchemas(b, schemasVec)
+	standardsNDS.NDSAddSources(b, sourcesVec)
+	standardsNDS.NDSAddTotalRecords(b, in.TotalRecords)
+	standardsNDS.NDSAddTotalBytes(b, in.TotalBytes)
+	standardsNDS.NDSAddStale(b, in.Stale)
+	standardsNDS.NDSAddAsOf(b, asOf)
+	standardsNDS.NDSAddEvents(b, eventsVec)
+	standardsNDS.NDSAddTopics(b, topicsVec)
+	standardsNDS.NDSAddStorageFreeBytes(b, in.StorageFreeBytes)
+	standardsNDS.NDSAddStorageCapacityBytes(b, in.StorageCapacityBytes)
+	set := standardsNDS.NDSEnd(b)
 
-	nst.FinishSizePrefixedDashboardStatsSetBuffer(b, set)
+	standardsNDS.FinishSizePrefixedNDSBuffer(b, set)
 	return b.FinishedBytes()
 }
 

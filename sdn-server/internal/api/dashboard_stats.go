@@ -19,9 +19,13 @@ package api
 // read so a cold node still answers with something true.
 
 import (
+	"math"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
@@ -69,6 +73,10 @@ type storeStats struct {
 	// byte total used by the compatibility JSON response.
 	StorageBytes      int64
 	StorageBytesKnown bool
+	// StorageFreeBytes and StorageCapacityBytes describe the filesystem
+	// containing the store. Zero means statfs could not provide the value.
+	StorageFreeBytes     int64
+	StorageCapacityBytes int64
 	// Stale is true when a read hit its budget and these are last-known-good.
 	Stale bool
 	// AsOf is when the numbers were last true; zero = never read.
@@ -142,6 +150,7 @@ func (h *CoreAPIHandler) readStoreStats() storeStats {
 	if h.store == nil {
 		return out
 	}
+	out.StorageFreeBytes, out.StorageCapacityBytes = storeFilesystemBytes(h.store.Path())
 
 	// ONE budget for the whole snapshot: the three reads are independent and
 	// wait together (see boundedread.go readAll).
@@ -203,12 +212,14 @@ func dashboardInputFrom(s storeStats) status.DashboardStatsInput {
 		rootTotalBytes = s.StorageBytes
 	}
 	in := status.DashboardStatsInput{
-		TotalRecords: s.TotalRecords,
-		TotalBytes:   rootTotalBytes,
-		Stale:        s.Stale,
-		AsOf:         s.AsOf,
-		Schemas:      make([]status.DashboardSchemaRow, 0, len(s.Schemas)),
-		Sources:      make([]status.DashboardSourceRow, 0, len(s.Sources)),
+		TotalRecords:         s.TotalRecords,
+		TotalBytes:           rootTotalBytes,
+		StorageFreeBytes:     s.StorageFreeBytes,
+		StorageCapacityBytes: s.StorageCapacityBytes,
+		Stale:                s.Stale,
+		AsOf:                 s.AsOf,
+		Schemas:              make([]status.DashboardSchemaRow, 0, len(s.Schemas)),
+		Sources:              make([]status.DashboardSourceRow, 0, len(s.Sources)),
 	}
 	for _, sc := range s.Schemas {
 		in.Schemas = append(in.Schemas, status.DashboardSchemaRow{
@@ -241,6 +252,26 @@ func dashboardInputFrom(s storeStats) status.DashboardStatsInput {
 		})
 	}
 	return in
+}
+
+func storeFilesystemBytes(storePath string) (freeBytes, capacityBytes int64) {
+	storePath = strings.TrimSpace(storePath)
+	if storePath == "" {
+		return 0, 0
+	}
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(filepath.Dir(storePath), &stat); err != nil || stat.Bsize <= 0 {
+		return 0, 0
+	}
+	return statfsByteCount(uint64(stat.Bavail), uint64(stat.Bsize)),
+		statfsByteCount(uint64(stat.Blocks), uint64(stat.Bsize))
+}
+
+func statfsByteCount(blocks, blockSize uint64) int64 {
+	if blocks == 0 || blockSize == 0 || blocks > uint64(math.MaxInt64)/blockSize {
+		return 0
+	}
+	return int64(blocks * blockSize)
 }
 
 // DashboardStatsFrame returns the cached $NDS frame and its generation, for the

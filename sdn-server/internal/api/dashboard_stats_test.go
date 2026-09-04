@@ -131,6 +131,15 @@ func TestReadStoreStatsMeasuresFlatSQLDiskUsage(t *testing.T) {
 	if !stats.StorageBytesKnown || stats.StorageBytes != want {
 		t.Fatalf("storage usage = %d known=%v, want %d", stats.StorageBytes, stats.StorageBytesKnown, want)
 	}
+	if stats.StorageFreeBytes <= 0 || stats.StorageCapacityBytes <= 0 || stats.StorageFreeBytes > stats.StorageCapacityBytes {
+		t.Fatalf("filesystem storage = free:%d capacity:%d, want positive free <= capacity", stats.StorageFreeBytes, stats.StorageCapacityBytes)
+	}
+	frame := status.BuildDashboardStatsSet(dashboardInputFrom(stats))
+	root := NDS.GetSizePrefixedRootAsNDS(frame, 0)
+	if root.STORAGE_FREE_BYTES() != stats.StorageFreeBytes || root.STORAGE_CAPACITY_BYTES() != stats.StorageCapacityBytes {
+		t.Fatalf("NDS filesystem storage = free:%d capacity:%d, want free:%d capacity:%d",
+			root.STORAGE_FREE_BYTES(), root.STORAGE_CAPACITY_BYTES(), stats.StorageFreeBytes, stats.StorageCapacityBytes)
+	}
 }
 
 func TestHandleDashboardStatsColdLane(t *testing.T) {
