@@ -597,7 +597,7 @@ func formatParam() openAPIObj {
 // purpose (docs/gateway-api.md §4 records where each native route lands).
 func nativeRouteDecls() []staticRouteDecl {
 	githubOIDCSecurity := []openAPIObj{{"githubOIDC": []string{}}}
-	return []staticRouteDecl{
+	return append([]staticRouteDecl{
 		{
 			path: "/api/v1/assets/pin", method: "POST",
 			tag: "asset-review", tagDescription: "License-cleared 3D asset review ingestion and lifecycle state.",
@@ -733,7 +733,7 @@ func nativeRouteDecls() []staticRouteDecl {
 				},
 			},
 		},
-	}
+	}, sourcesRouteDecls()...)
 }
 
 // plannedRouteDecls are the Phase G gateway routes: designed shapes, not

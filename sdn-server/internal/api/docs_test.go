@@ -574,3 +574,39 @@ func TestGenerateOpenAPIG5PublicQueryShadowsPlanned(t *testing.T) {
 		}
 	}
 }
+
+// API-01: the sources workflow (connectors, sync, export, archives) and the
+// probe routes are documented in the served spec as native routes.
+func TestGenerateOpenAPIDocumentsSourcesArchivesAndProbes(t *testing.T) {
+	doc := generateTestSpec(t)
+	for _, want := range []struct{ path, method string }{
+		{"/api/v1/connectors", "get"},
+		{"/api/v1/connectors/{connectorId}/run", "post"},
+		{"/api/v1/sync", "get"},
+		{"/api/v1/sync", "post"},
+		{"/api/v1/sync/{schema}/{providerId}/{sourceName}", "get"},
+		{"/api/v1/data/{code}/export", "get"},
+		{"/api/v1/archive", "post"},
+		{"/api/v1/archives", "get"},
+		{"/api/v1/archives/{manifestCid}/asset/{assetCid}", "get"},
+		{"/api/v1/archive/import", "post"},
+		{"/health", "get"},
+		{"/ready", "get"},
+		{"/metrics", "get"},
+	} {
+		op := opAt(t, doc, want.path, want.method)
+		if op["x-sdn-served-by"] != "native" {
+			t.Fatalf("%s %s x-sdn-served-by = %v, want native", want.method, want.path, op["x-sdn-served-by"])
+		}
+		if op["x-sdn-status"] == "planned" {
+			t.Fatalf("%s %s is marked planned but is served", want.method, want.path)
+		}
+	}
+	archives := opAt(t, doc, "/api/v1/archives", "get")
+	responses, _ := archives["responses"].(map[string]interface{})
+	ok, _ := responses["200"].(map[string]interface{})
+	content, _ := ok["content"].(map[string]interface{})
+	if _, has := content[ContentTypeFlatBufferStream]; !has {
+		t.Fatalf("/api/v1/archives 200 does not declare the FlatBuffer stream content type: %v", content)
+	}
+}
