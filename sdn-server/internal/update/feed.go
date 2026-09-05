@@ -67,8 +67,25 @@ func (u ProviderFeedUpdate) AssertMatchesPayload(m *Manifest, carrierLen int) er
 	if u.Version != "" && m.Version != u.Version {
 		return fmt.Errorf("update provider feed entry %s: index version %s != manifest version %s", u.UpdateID, u.Version, m.Version)
 	}
-	if u.Sequence != 0 && m.Sequence != nil && *m.Sequence != u.Sequence {
-		return fmt.Errorf("update provider feed entry %s: index sequence %d != manifest sequence %d", u.UpdateID, u.Sequence, *m.Sequence)
+	if u.Sequence != 0 {
+		if m.Sequence == nil {
+			return fmt.Errorf("update provider feed entry %s: manifest sequence is missing", u.UpdateID)
+		}
+		if *m.Sequence != u.Sequence {
+			return fmt.Errorf("update provider feed entry %s: index sequence %d != manifest sequence %d", u.UpdateID, u.Sequence, *m.Sequence)
+		}
+	}
+	if u.Channel != "" && !strings.EqualFold(u.Channel, m.Channel) {
+		return fmt.Errorf("update provider feed entry %s: index channel %s != manifest channel %s", u.UpdateID, u.Channel, m.Channel)
+	}
+	if u.Target.Platform != "" && !platformMatches(u.Target.Platform, m.Target.Platform) {
+		return fmt.Errorf("update provider feed entry %s: index platform %s != manifest platform %s", u.UpdateID, u.Target.Platform, m.Target.Platform)
+	}
+	if u.Target.Arch != "" && !archMatches(u.Target.Arch, m.Target.Arch) {
+		return fmt.Errorf("update provider feed entry %s: index architecture %s != manifest architecture %s", u.UpdateID, u.Target.Arch, m.Target.Arch)
+	}
+	if u.Target.Kind != "" && u.Target.Kind != m.Target.Kind {
+		return fmt.Errorf("update provider feed entry %s: index kind %s != manifest kind %s", u.UpdateID, u.Target.Kind, m.Target.Kind)
 	}
 	if u.BundleHash != "" && !strings.EqualFold(u.BundleHash, m.Bundle.Hash) {
 		return fmt.Errorf("update provider feed entry %s: index bundle hash %s != manifest bundle hash %s", u.UpdateID, u.BundleHash, m.Bundle.Hash)
