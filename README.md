@@ -66,6 +66,11 @@ Marketplace discovery is driven by the canonical `PLG` manifest from `spacedatas
 
 ## Quick Start
 
+For a read-only public record endpoint with a shared hot cache, follow the
+[CDN and Tor serving guide](./deployment/public-origin/README.md). It forwards
+selected record routes to the node's WASM flow and leaves operator access on
+the node's private interface.
+
 ### Install the Server
 
 ```bash
