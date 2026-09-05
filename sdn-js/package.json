@@ -36,6 +36,7 @@
     "build:core": "rm -rf dist && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/build-package-entry.mjs",
     "build:browser-external-wallet": "SDN_JS_EXTERNAL_WALLET=1 npm run build:core",
     "build:dashboard": "node dashboard/build-dashboard.mjs",
+    "dev:dashboard": "vite --config dashboard/vite.config.mjs",
     "build:docs-network-ecosystem": "vite build --config docs-network-ecosystem.config.mts",
     "dev": "tsc --emitDeclarationOnly --watch",
     "test": "npm run build:core && vitest run",

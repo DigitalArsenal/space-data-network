@@ -135,6 +135,28 @@ propagates sink errors, and releases accepted queued bytes on abort.
 
 ## Browser UI Runtime
 
+### Develop the node dashboard
+
+With the local SDN backend running on `http://127.0.0.1:7173`, install the
+dependencies for this package and the `spaceaware-ui` checkout, then run from
+`sdn-js`:
+
+```bash
+npm run dev:dashboard
+```
+
+Open `http://127.0.0.1:5181`. This serves the standalone node dashboard and
+proxies its API, WebSocket and runtime-asset requests to the backend. Its peer
+globe uses Three.js; page and worker imports reject Orbital Console, OrbPro and
+terrain engines. The port is strict, so an occupied port produces an error
+instead of silently starting another server.
+
+To use another local backend, set `SDN_DASHBOARD_NODE_URL` to its loopback
+HTTP(S) origin. HTTPS backends must have a trusted certificate. The backend
+must serve the FlatSQL WASM and wallet assets used by the dashboard.
+
+### Embed the runtime
+
 Use the explicit UI subpath when embedding the SDN browser UI/runtime helpers in
 your own app.
 
