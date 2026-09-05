@@ -6,7 +6,8 @@
 
 export * from './version-info.generated';
 export { SDNNode } from './node';
-export { createHeliaSDNNode, fetchCIDBytesFromHelia } from './helia';
+export { createHeliaSDNNode, fetchCIDBytesFromHelia, streamCIDFromHelia } from './helia';
+export type { FetchCIDBytesFromHeliaOptions } from './helia';
 export type { HeliaSDNNode } from './helia';
 export type { SDNConfig, SDNNodeEvents } from './node';
 export { IPFS_BOOTSTRAP_PEERS, LEGACY_ID_EXCHANGE_PROTOCOL } from './node';
@@ -141,13 +142,14 @@ export type {
   EpochProfileSqlOptions,
 } from './epoch-query-sql';
 // HTTP transport flatbuffers-first (loop D.3): ONE conditional stream
-// request; 304 served from the local engine store.
+// request; 304 replays the retained response representation.
 export { RemoteEpochStreamClient } from './remote-epoch-stream';
 export type {
   EpochStreamTransport,
   EpochStreamLocalStore,
   RemoteEpochStreamRequest,
   RemoteEpochStreamResult,
+  RemoteEpochStreamCacheOptions,
 } from './remote-epoch-stream';
 // Per-standard engine store surface (per-source shadow tables + unified views).
 export {

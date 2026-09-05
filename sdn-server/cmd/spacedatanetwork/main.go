@@ -2491,6 +2491,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Load-balancer and monitoring surface: /health, /ready (anonymous,
 			// a status word) and /metrics (operator session). OPS-08.
 			mountHealthRoutes(adminMux, healthDeps{
+				dataReady: func() bool {
+					if len(cfg.Flows.Mounts) == 0 {
+						return true
+					}
+					store := n.Store()
+					return store != nil && !store.EngineHotWindowHydrating() && store.EngineHotWindowHydrated()
+				},
 				engineReady: func() bool {
 					store := n.Store()
 					if store == nil {

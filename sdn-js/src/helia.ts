@@ -77,6 +77,8 @@ export interface FetchCIDBytesFromHeliaOptions {
   providerAddrs?: string[];
   maxProviders?: number;
   onProgress?: (event: unknown) => void;
+  /** Maximum object size. Whole-object reads default to 128 MiB; streaming has no default total-size limit. */
+  maxBytes?: number;
 }
 
 type IncomingStreamData = {
@@ -105,6 +107,7 @@ type LegacyWritableStreamCompat = {
   sink?: (source: AsyncIterable<Uint8Array>) => Promise<void>;
   close?: (options?: unknown) => Promise<void>;
   closeWrite?: (options?: unknown) => Promise<void>;
+  abort?: (error: Error) => void;
 };
 
 type LegacyEventedStreamCompat = {
@@ -227,10 +230,25 @@ function addLegacyWritableStreamCompat<T>(stream: T): T {
 
   const originalClose = candidate.close?.bind(candidate);
   const originalCloseWrite = candidate.closeWrite?.bind(candidate);
+  const originalAbort = candidate.abort?.bind(candidate);
   const chunks: Uint8Array[] = [];
   const waiters: Array<() => void> = [];
+  const drainWaiters = new Set<() => void>();
+  // send(false) accepts the chunk and asks the producer to await onDrain.
+  // A producer that ignores this signal is stopped at the hard limit.
+  const highWaterBytes = 1024 * 1024;
+  const maxBufferedBytes = 8 * 1024 * 1024;
+  let bufferedBytes = 0;
+  let bufferedChunks = 0;
   let sourceClosed = false;
+  let failure: Error | null = null;
   let sinkPromise: Promise<void> | undefined;
+  let rejectFailure!: (error: Error) => void;
+  const failed = new Promise<never>((_resolve, reject) => { rejectFailure = reject; });
+  void failed.catch(() => {});
+
+  const writable = () => bufferedBytes < highWaterBytes && bufferedChunks < 64;
+  const wakeDrain = () => { for (const check of [...drainWaiters]) check(); };
 
   const wakeSource = () => {
     for (const resolve of waiters.splice(0)) {
@@ -238,11 +256,29 @@ function addLegacyWritableStreamCompat<T>(stream: T): T {
     }
   };
 
+  const fail = (cause: unknown) => {
+    failure ??= cause instanceof Error ? cause : new Error(String(cause));
+    rejectFailure(failure);
+    sourceClosed = true;
+    chunks.length = 0;
+    bufferedBytes = 0;
+    bufferedChunks = 0;
+    wakeSource();
+    wakeDrain();
+  };
+
   async function* queuedSource(): AsyncGenerator<Uint8Array, void, unknown> {
     while (true) {
       const chunk = chunks.shift();
       if (chunk) {
-        yield chunk;
+        // Include the chunk held by the sink in the budget until it requests
+        // another chunk or closes the iterator.
+        try { yield chunk; }
+        finally {
+          bufferedBytes = Math.max(0, bufferedBytes - chunk.byteLength);
+          bufferedChunks = Math.max(0, bufferedChunks - 1);
+          wakeDrain();
+        }
         continue;
       }
       if (sourceClosed) {
@@ -256,7 +292,15 @@ function addLegacyWritableStreamCompat<T>(stream: T): T {
 
   const ensureSinkStarted = () => {
     if (!sinkPromise) {
-      sinkPromise = candidate.sink?.(queuedSource()) ?? Promise.resolve();
+      sinkPromise = Promise.resolve().then(() => candidate.sink!(queuedSource())).then(() => {
+        if (!sourceClosed || bufferedChunks > 0) fail(new Error('Stream sink ended before queued writes completed'));
+        sourceClosed = true;
+        wakeDrain();
+        if (failure) throw failure;
+      }, (error) => { fail(error); throw failure; });
+      // send is synchronous; drain/close observe the saved failure. Avoid an
+      // unhandled rejection when the producer has not awaited either yet.
+      void sinkPromise.catch(() => {});
     }
     return sinkPromise;
   };
@@ -264,37 +308,59 @@ function addLegacyWritableStreamCompat<T>(stream: T): T {
   const closeQueuedSource = async () => {
     sourceClosed = true;
     wakeSource();
+    wakeDrain();
     if (sinkPromise) {
-      await sinkPromise;
+      await Promise.race([sinkPromise, failed]);
     }
+    if (failure) throw failure;
   };
 
   candidate.send = (chunk: Uint8Array) => {
+    if (failure) throw failure;
     if (sourceClosed) {
       throw new Error('Cannot send on a closed stream.');
     }
+    if (chunk.byteLength === 0) return writable();
+    if (chunk.byteLength > maxBufferedBytes - bufferedBytes || bufferedChunks >= 1024) {
+      throw new Error('Stream buffer limit exceeded; await onDrain() after send() returns false');
+    }
     chunks.push(chunk.slice());
+    bufferedBytes += chunk.byteLength;
+    bufferedChunks++;
     ensureSinkStarted();
     wakeSource();
-    return true;
+    return writable();
   };
   candidate.onDrain = async (options?: { signal?: AbortSignal }) => {
-    if (options?.signal?.aborted === true) {
-      throw options.signal.reason instanceof Error
-        ? options.signal.reason
-        : new Error(String(options.signal.reason ?? 'Stream drain aborted'));
-    }
+    const signal = options?.signal;
+    signal?.throwIfAborted();
+    if (failure) throw failure;
+    if (sourceClosed) throw new Error('Cannot drain a closed stream');
+    if (writable()) return;
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => { drainWaiters.delete(check); signal?.removeEventListener('abort', aborted); };
+      const aborted = () => { cleanup(); reject(signal?.reason ?? new Error('Stream drain aborted')); };
+      const check = () => {
+        if (failure) { cleanup(); reject(failure); }
+        else if (sourceClosed) { cleanup(); reject(new Error('Cannot drain a closed stream')); }
+        else if (writable()) { cleanup(); resolve(); }
+      };
+      drainWaiters.add(check);
+      signal?.addEventListener('abort', aborted, { once: true });
+      check();
+    });
   };
   candidate.closeWrite = async (options?: unknown) => {
-    if (!sinkPromise) {
-      await originalCloseWrite?.(options);
-      return;
-    }
     await closeQueuedSource();
+    await originalCloseWrite?.(options);
   };
   candidate.close = async (options?: unknown) => {
-    await closeQueuedSource();
-    await originalClose?.(options);
+    try { await closeQueuedSource(); }
+    finally { await originalClose?.(options); }
+  };
+  candidate.abort = (error: Error) => {
+    fail(error);
+    originalAbort?.(error);
   };
   candidate.__heliaLegacyWriteCompatApplied = true;
 
@@ -426,16 +492,23 @@ function providerSessionMaxProviders(
   return Math.max(providerCount, configuredMaxProviders ?? providerCount);
 }
 
-export async function fetchCIDBytesFromHelia(
+/**
+ * Stream verified UnixFS content on demand. Early return closes the iterator
+ * and provider session. Copy a chunk if it must outlive the next iteration.
+ */
+export async function* streamCIDFromHelia(
   helia: Helia,
   cid: string,
   options: FetchCIDBytesFromHeliaOptions = {},
-): Promise<Uint8Array> {
+): AsyncGenerator<Uint8Array, void, undefined> {
+  options.signal?.throwIfAborted();
+  const maxBytes = options.maxBytes ?? Number.MAX_SAFE_INTEGER;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new Error('maxBytes must be a non-negative safe integer');
   const rootCid = CID.parse(cid);
-  let blockstoreSession: { close?: () => void } | undefined;
+  let blockstoreSession: { close?: () => void | Promise<void> } | undefined;
   let unixFsTarget: Parameters<typeof unixfs>[0] = helia;
-  const bytes: Uint8Array[] = [];
-  const { providerAddrs = [], ...catOptions } = options;
+  let totalBytes = 0;
+  const { providerAddrs = [], maxBytes: _maxBytes, ...catOptions } = options;
   if (providerAddrs.length > 0) {
     const providerMultiaddrs = providerAddrs.map((addr) => multiaddr(addr));
     const providerHints = providerHintsFromAddrs(providerMultiaddrs);
@@ -446,7 +519,7 @@ export async function fetchCIDBytesFromHelia(
     ];
     const blockstore = (helia as Helia & {
       blockstore?: {
-        createSession?: (root: CID, options?: unknown) => { close?: () => void };
+        createSession?: (root: CID, options?: unknown) => { close?: () => void | Promise<void> };
       };
     }).blockstore;
     if (typeof blockstore?.createSession === 'function') {
@@ -462,14 +535,30 @@ export async function fetchCIDBytesFromHelia(
   }
 
   try {
+    options.signal?.throwIfAborted();
     const fs = unixfs(unixFsTarget);
     for await (const chunk of fs.cat(rootCid, catOptions as never)) {
-      bytes.push(chunk.slice());
+      options.signal?.throwIfAborted();
+      if (chunk.byteLength > maxBytes - totalBytes) throw new Error(`CID byte limit ${maxBytes} exceeded; use streaming or an explicit larger limit`);
+      totalBytes += chunk.byteLength;
+      yield chunk;
+      options.signal?.throwIfAborted();
     }
   } finally {
-    blockstoreSession?.close?.();
+    await blockstoreSession?.close?.();
   }
+}
 
+/** Buffer an object up to maxBytes (default 128 MiB); prefer streaming for datasets. */
+export async function fetchCIDBytesFromHelia(
+  helia: Helia,
+  cid: string,
+  options: FetchCIDBytesFromHeliaOptions = {},
+): Promise<Uint8Array> {
+  const bytes: Uint8Array[] = [];
+  for await (const chunk of streamCIDFromHelia(helia, cid, { ...options, maxBytes: options.maxBytes ?? 128 * 1024 * 1024 })) {
+    bytes.push(chunk.slice());
+  }
   return concatBytes(bytes);
 }
 
