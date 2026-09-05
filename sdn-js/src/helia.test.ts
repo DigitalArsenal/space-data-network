@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Uint8ArrayList } from 'uint8arraylist';
 
 const createHeliaMock = vi.fn(async (init: any) => ({
   init,
@@ -119,6 +120,81 @@ describe('createHeliaFromLibp2p', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+  });
+
+  async function writable(sink: (source: AsyncIterable<Uint8Array>) => Promise<void>, close = vi.fn(async () => {})) {
+    const { createHeliaFromLibp2p } = await import('./helia');
+    await createHeliaFromLibp2p({ handle: vi.fn(), dialProtocol: async () => ({ sink, close }) } as any);
+    return createHeliaMock.mock.calls[0][0].libp2p.dialProtocol('peer', '/test');
+  }
+
+  it('backpressures a stalled sink and refuses writes beyond its byte budget', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let received = 0;
+    const stream = await writable(async (source) => {
+      await blocked;
+      for await (const chunk of source) received += chunk.byteLength;
+    });
+    expect(stream.send(new Uint8Array(1024 * 1024))).toBe(false);
+    expect(() => stream.send(new Uint8Array(8 * 1024 * 1024))).toThrow(/buffer|limit|budget/i);
+    let drained = false;
+    const drain = stream.onDrain().then(() => { drained = true; });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    release();
+    await drain;
+    await stream.close();
+    expect(received).toBe(1024 * 1024);
+  });
+
+  it('propagates sink failure to drain, subsequent writes and close', async () => {
+    const close = vi.fn(async () => {});
+    const stream = await writable(async () => { throw new Error('sink failed'); }, close);
+    stream.send(new Uint8Array(1024 * 1024));
+    await expect(stream.onDrain()).rejects.toThrow('sink failed');
+    expect(() => stream.send(new Uint8Array([1]))).toThrow('sink failed');
+    await expect(stream.close()).rejects.toThrow('sink failed');
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('accepts the length-prefixed Uint8ArrayList used by real Bitswap', async () => {
+    const received: number[] = [];
+    const stream = await writable(async (source) => {
+      for await (const chunk of source) received.push(...chunk);
+    });
+    const chunk = new Uint8ArrayList(new Uint8Array([2]), new Uint8Array([7, 8]));
+    expect(stream.send(chunk)).toBe(true);
+    chunk.set(1, 99);
+    await stream.close();
+    expect(received).toEqual([2, 7, 8]);
+  });
+
+  it('aborts queued writes and releases a pending close even if the sink stalls', async () => {
+    const stream = await writable(async () => new Promise<void>(() => {}));
+    stream.send(new Uint8Array([1]));
+    const closing = stream.close();
+    stream.abort(new Error('transport cancelled'));
+    await expect(closing).rejects.toThrow('transport cancelled');
+    expect(() => stream.send(new Uint8Array([2]))).toThrow('transport cancelled');
+  });
+
+  it('cancels a drain waiter without losing the accepted bytes', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let received = 0;
+    const stream = await writable(async (source) => {
+      await blocked;
+      for await (const chunk of source) received += chunk.byteLength;
+    });
+    stream.send(new Uint8Array(1024 * 1024));
+    const controller = new AbortController();
+    const drain = stream.onDrain({ signal: controller.signal });
+    controller.abort(new Error('cancelled'));
+    await expect(drain).rejects.toThrow('cancelled');
+    release();
+    await stream.close();
+    expect(received).toBe(1024 * 1024);
   });
 
   it('adapts two-argument stream handlers to incoming stream data objects', async () => {
@@ -248,6 +324,50 @@ describe('fetchCIDBytesFromHelia', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+  });
+
+  it('stops a bounded whole-object read before retaining an oversized chunk', async () => {
+    let closed = false;
+    unixfsCatMock.mockImplementation(async function* () {
+      try { yield new Uint8Array([1, 2]); yield new Uint8Array([3, 4]); }
+      finally { closed = true; }
+    });
+    const { fetchCIDBytesFromHelia } = await import('./helia');
+    await expect(fetchCIDBytesFromHelia({} as any,
+      'bafybeictmtgyw4re2xa3afwvxi4gq3n5nmzkeoasg2ltasd53f343f3meu',
+      { maxBytes: 3 })).rejects.toThrow(/limit.*3|3.*limit/i);
+    expect(closed).toBe(true);
+  });
+
+  it('streams on demand and closes the iterator and provider session on early return', async () => {
+    let produced = 0;
+    let closed = false;
+    unixfsCatMock.mockImplementation(async function* () {
+      try { produced++; yield new Uint8Array([1]); produced++; yield new Uint8Array([2]); }
+      finally { closed = true; }
+    });
+    const close = vi.fn(async () => {});
+    const { streamCIDFromHelia } = await import('./helia');
+    const helia = { blockstore: { createSession: () => ({ close }) }, libp2p: { peerStore: { merge: vi.fn() } } } as any;
+    for await (const chunk of streamCIDFromHelia(helia,
+      'bafybeictmtgyw4re2xa3afwvxi4gq3n5nmzkeoasg2ltasd53f343f3meu',
+      { providerAddrs: ['/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j'] })) {
+      expect([...chunk]).toEqual([1]);
+      break;
+    }
+    expect(produced).toBe(1);
+    expect(closed).toBe(true);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('refuses an already aborted retrieval without starting UnixFS', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled'));
+    const { fetchCIDBytesFromHelia } = await import('./helia');
+    await expect(fetchCIDBytesFromHelia({} as any,
+      'bafybeictmtgyw4re2xa3afwvxi4gq3n5nmzkeoasg2ltasd53f343f3meu',
+      { signal: controller.signal })).rejects.toThrow('cancelled');
+    expect(unixfsCatMock).not.toHaveBeenCalled();
   });
 
   it('passes abort signals through to UnixFS cat', async () => {

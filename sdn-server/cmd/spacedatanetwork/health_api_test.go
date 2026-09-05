@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -46,7 +49,7 @@ func TestHealthRoutesReportLivenessReadinessAndGateMetrics(t *testing.T) {
 		probeTimeout: 50 * time.Millisecond,
 	})
 	rec := get(busy, "/ready")
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "store busy") {
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "probe busy") {
 		t.Fatalf("busy store: status %d body %q", rec.Code, rec.Body.String())
 	}
 	if time.Since(started) > time.Second {
@@ -67,5 +70,65 @@ func TestHealthRoutesReportLivenessReadinessAndGateMetrics(t *testing.T) {
 	// Liveness stays green while readiness is red: the process is serving.
 	if rec := get(none, "/health"); rec.Code != http.StatusOK {
 		t.Fatalf("/health on an unready node: status %d", rec.Code)
+	}
+}
+
+func TestReadinessReportsDataWarmup(t *testing.T) {
+	var ready atomic.Bool
+	mux := http.NewServeMux()
+	mountHealthRoutes(mux, healthDeps{
+		engineReady: func() bool { return true },
+		dataReady:   ready.Load,
+		peerCount:   func() int { return 0 },
+	})
+	get := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
+		return w
+	}
+	if w := get(); w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "data services warming") {
+		t.Fatalf("warmup: %d %s", w.Code, w.Body.String())
+	}
+	ready.Store(true)
+	if w := get(); w.Code != http.StatusOK {
+		t.Fatalf("ready status = %d", w.Code)
+	}
+}
+
+func TestReadinessSharesBlockedProbeAndHonorsRequestCancellation(t *testing.T) {
+	var calls atomic.Int32
+	release := make(chan struct{})
+	defer close(release)
+	mux := http.NewServeMux()
+	mountHealthRoutes(mux, healthDeps{
+		engineReady:  func() bool { calls.Add(1); <-release; return true },
+		peerCount:    func() int { return 0 },
+		probeTimeout: 10 * time.Millisecond,
+	})
+	var requests sync.WaitGroup
+	for i := 0; i < 24; i++ {
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
+			if w.Code != http.StatusServiceUnavailable {
+				t.Errorf("blocked probe status = %d", w.Code)
+			}
+		}()
+	}
+	requests.Wait()
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("blocked engine probe calls = %d, want one shared call", n)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil).WithContext(ctx))
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "probe cancelled") {
+		t.Fatalf("cancelled probe: %d %s", w.Code, w.Body.String())
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("cancelled request started another probe: %d", n)
 	}
 }
