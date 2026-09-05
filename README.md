@@ -37,14 +37,14 @@ Space Data Network enables real-time sharing of space situational awareness data
 - **Standardized Data Exchange** - All Space Data Standards schemas supported
 - **Decentralized Architecture** - No central server required
 - **Real-time PubSub** - Subscribe to data streams by type (OMM, CDM, EPM, etc.)
-- **Cryptographic Verification** - Ed25519 signatures on all data
+- **Cryptographic Verification** - Signed publications and modules, with content verification independent of the delivery transport
 - **Cross-Platform** - Server (Go), Browser (TypeScript), Desktop, Edge Relay support
 
 ## Current UI Surfaces
 
-- `/` serves the node dashboard, embedded in the binary: Watchfloor,
-  Identity, Sources, Store, Accounts, Data and Streams. Every dashboard
-  payload is a Space Data Standards FlatBuffer frame; record rows arrive as
+- `/` serves the node dashboard, embedded in the binary, with the three main
+  destinations This node, Nodes and Store. Dashboard record
+  payloads use Space Data Standards FlatBuffer frames; record rows arrive as
   size-prefixed streams and are queried in the browser by the same FlatSQL
   engine the node runs.
 - `/apps/` is the installed-app launcher, with application pages such as
@@ -189,29 +189,32 @@ spacedatanetwork update stage
 spacedatanetwork update apply
 ```
 
-The update feed is rooted at `sdn.spaceaware.io/updates`. The daemon update
-path stages the replacement, swaps the running bundle in place, restarts the
-daemon, checks health, and rolls back if the updated daemon does not come back
-healthy.
+The update feed is rooted at `sdn.spaceaware.io/updates`. The installed bundle's
+Go updater verifies the signed manifest and carrier, stages the replacement,
+then hands activation to an external helper. That helper swaps the bundle,
+restarts the daemon, checks health, and rolls back an unhealthy installation.
+A standalone source-built binary has no managed bundle to replace. See the
+[signed updater guide](docs/sdn-signed-updater.md) for the active path and the
+unfinished WASM updater boundary.
 
 ### Browser Usage
 
 ```typescript
-import { SDNNode, SchemaRegistry } from './path/to/sdn-js/dist/esm/index.js';
+import { HttpTransport } from '@spacedatanetwork/sdn-js/http';
 
-// Create and start a node
-const node = new SDNNode();
-await node.start();
-
-// Subscribe to Orbital Mean-Elements Messages
-node.subscribe('OMM', (data, peerId) => {
-  console.log(`Received OMM from ${peerId}:`, data);
-});
-
-// Publish data
-const ommData = { /* your OMM data */ };
-await node.publish('OMM', ommData);
+// Use a running node that serves OMM records. No browser identity is needed
+// for an anonymous read; replace this address with your node's HTTP endpoint.
+const transport = new HttpTransport('http://127.0.0.1:5001');
+const result = await transport.queryData({ schema: 'OMM', profile: 'nearest', limit: 10 });
+for (const record of result.frames()) {
+  console.log('FlatBuffer record bytes:', record.byteLength);
+}
 ```
+
+Install the client with `npm install @spacedatanetwork/sdn-js`. Empty results
+mean no matching records; HTTP errors report unavailable or denied requests.
+The [client guide](sdn-js/README.md) covers channel discovery, publishing encoded
+records with provider authorization, and starting a peer with `SDNNode.create()`.
 
 ---
 

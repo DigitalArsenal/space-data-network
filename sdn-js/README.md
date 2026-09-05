@@ -8,6 +8,8 @@ Browser and Node.js client for the [Space Data Network](https://github.com/Digit
 npm install @spacedatanetwork/sdn-js
 ```
 
+The HTTP-only `@spacedatanetwork/sdn-js/http` entry uses fetch and FlatBuffer
+framing without loading a wallet, peer node, compiler or storage engine.
 The package root exports the core SDN SDK. Browser UI/runtime helpers are
 published at `@spacedatanetwork/sdn-js/ui`, and marketplace purchase helpers are
 published at `@spacedatanetwork/sdn-js/storefront`.
@@ -19,7 +21,7 @@ address below; `http://127.0.0.1:5001` is the local example. The node's homepage
 lets you inspect its datasets and providers before writing client code.
 
 ```typescript
-import { HttpTransport } from '@spacedatanetwork/sdn-js';
+import { HttpTransport } from '@spacedatanetwork/sdn-js/http';
 
 const transport = new HttpTransport('http://127.0.0.1:5001');
 const result = await transport.queryData({ schema: 'OMM', profile: 'nearest', limit: 10 });
