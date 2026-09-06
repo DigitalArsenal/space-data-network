@@ -222,6 +222,7 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	// yields its peer read surface to a gateway flow still gets the signing
 	// door. See module_signing.go for why this route lives here.
 	h.registerModuleSigningRoutes(mux)
+	h.registerModuleCustomerRoutes(mux)
 
 	// Update-manifest signing (POST, Admin) and the public update feed (GET).
 	// Same reason as above for living here rather than in main.go's route
