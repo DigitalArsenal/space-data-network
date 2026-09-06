@@ -28,6 +28,27 @@ func TestModulesConfigDefaultsToUnsetScheduledTimeout(t *testing.T) {
 	}
 }
 
+func TestSavePreservesExplicitlyEmptyFlowAssignments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("flows:\n  mounts: []\n  services: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// init saves a loaded configuration. Subsequent saves must not restore
+	// default HTTP mounts or scheduled ingestion on a dedicated compute node.
+	for round := 0; round < 3; round++ {
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.Flows.Mounts) != 0 || len(cfg.Flows.Services) != 0 {
+			t.Fatalf("save/load round %d restored flow assignments: %d mounts, %d services", round, len(cfg.Flows.Mounts), len(cfg.Flows.Services))
+		}
+		if err := Save(path, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestLoadModulesScheduledInvokeTimeoutFromYAML(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	yamlDoc := "modules:\n  scheduled_invoke_timeout: 20m\n"
