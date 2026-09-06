@@ -55,6 +55,12 @@ test('dashboard dev entry loads without Orbital Console and proxies the node sam
   t.after(() => server.close());
   await server.listen();
   const base = `http://127.0.0.1:${server.httpServer.address().port}`;
+  const navigation = await fetch(`${base}/?screen=store`, { headers: { Accept: 'text/html' }, redirect: 'manual' });
+  assert.equal(navigation.status, 307);
+  assert.equal(navigation.headers.get('location'), `http://localhost:${server.httpServer.address().port}/?screen=store`);
+  assert.equal(navigation.headers.get('cache-control'), 'no-store');
+  const canonical = await fetch(base.replace('127.0.0.1', 'localhost'), { headers: { Accept: 'text/html' }, redirect: 'manual' });
+  assert.equal(canonical.status, 200);
   const response = await fetch(base);
   const html = await response.text();
   assert.equal(response.status, 200);
