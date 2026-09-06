@@ -618,7 +618,9 @@ type FlowsConfig struct {
 	// artifact on first request. The HTTP handler is pure socket plumbing
 	// ($HTQ request frames in, $HTR response frames out) with zero
 	// request-level decisions in the host.
-	Mounts []FlowMount `yaml:"mounts,omitempty"`
+	// Preserve an explicitly empty list when saving: omission restores the
+	// default mounts on the next Load.
+	Mounts []FlowMount `yaml:"mounts"`
 
 	// FirstFireWhenDue runs a timer-served flow's triggers once shortly after
 	// it starts, but ONLY when the node's retrieval ledger says its sources are
@@ -637,7 +639,8 @@ type FlowsConfig struct {
 	// registers it with the plugin manager's cron scheduler. Which flow runs
 	// on which schedule with which node CONFIG is configuration, never Go
 	// code.
-	Services []FlowService `yaml:"services,omitempty"`
+	// As with Mounts, an empty assignment must survive init/save/reload.
+	Services []FlowService `yaml:"services"`
 }
 
 // FlowService declares one timer-served flow.
