@@ -224,6 +224,25 @@ export function dashboardDependencyBoundary() {
   };
 }
 
+/** Keep browser navigation on the development catalogue's signed hostname. */
+export function dashboardDevOrigin() {
+  return {
+    name: 'sdn-dashboard-dev-origin',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.method !== 'GET' || !String(req.headers.accept ?? '').includes('text/html')) return next();
+        let url;
+        try { url = new URL(req.url, `http://${req.headers.host}`); } catch { return next(); }
+        if (!['127.0.0.1', '[::1]'].includes(url.hostname)) return next();
+        url.hostname = 'localhost';
+        res.writeHead(307, { Location: url.href, 'Cache-Control': 'no-store' });
+        res.end();
+      });
+    }
+  };
+}
+
 /** Same-origin dev transport for the same entry used by the embedded app. */
 export function dashboardDevServer(nodeOrigin = process.env.SDN_DASHBOARD_NODE_URL || 'http://127.0.0.1:7173') {
   const node = new URL(nodeOrigin);
@@ -255,6 +274,7 @@ export default defineConfig({
   server: dashboardDevServer(),
   optimizeDeps: { entries: [path.join(appRoot, 'index.html')], esbuildOptions: { target: 'es2022' } },
   plugins: [
+    dashboardDevOrigin(),
     dashboardDependencyBoundary(),
     tailwindcss(),
     stubHeliaOnlyDeps(),
