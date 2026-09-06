@@ -10,7 +10,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const defaultPlacement = JSON.parse(fs.readFileSync(path.join(root, 'deployment/module-placement.json')));
 
-export function assignedNode(modulePath, placement = defaultPlacement) {
+export function assignedNode(modulePath, placement = defaultPlacement, pluginId = '') {
+  if (placement.moduleOwners?.[pluginId]) return placement.moduleOwners[pluginId];
   const normalized = `${modulePath.replaceAll('\\', '/').replace(/\/$/, '')}/`;
   return placement.rules.find(rule => rule.paths.some(prefix => normalized.startsWith(prefix)))?.node ?? placement.defaultNode;
 }
@@ -20,6 +21,7 @@ export function validatePlacement(placement) {
   const peers = Object.values(placement.nodes).map(node => node.peerId);
   if (peers.some(peer => !peer) || new Set(peers).size !== peers.length) throw new Error('Every role needs a distinct existing peer');
   for (const rule of placement.rules) if (!placement.nodes[rule.node] || !rule.paths?.length) throw new Error('Invalid placement rule');
+  for (const owner of Object.values(placement.moduleOwners ?? {})) if (!placement.nodes[owner]) throw new Error('Invalid explicit module owner');
 }
 
 const excluded = /(^|\/)(node_modules|test|tests|fixtures|examples|\.build|build|deps)(\/|$)/;
@@ -92,7 +94,7 @@ export async function inventory({ publicRoot, closedRoot, placement = defaultPla
   for (const item of items) {
     const m = item.manifest;
     const modulePath = path.dirname(item.manifestPath).replace(/\/dist$/, '');
-    const owner = assignedNode(modulePath, placement);
+    const owner = assignedNode(modulePath, placement, m.pluginId);
     const row = {
       pluginId: m.pluginId, version: m.version, name: m.name || m.pluginId,
       owner, providerPeerId: placement.nodes[owner].peerId, protected: item.protected,
