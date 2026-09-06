@@ -31,6 +31,11 @@
       "role": "Satellite history, storage, delivery and customer execution"
     }
   },
+  "moduleOwners": {
+    "com.digitalarsenal.flatsql.store": "local",
+    "com.digitalarsenal.propagator.ephemeris": "tu-delft",
+    "org.sdn.flows.supplemental-omm.od": "cu-boulder"
+  },
   "rules": [
     { "node": "tu-delft", "paths": ["propagator/", "basilisk/", "attitude/", "models/", "foundation/attitude-math/", "foundation/math-bspline/", "foundation/numerics/", "foundation/time/", "foundation/frames/", "foundation/orbits/", "analysis/lambert-izzo/", "analysis/launch-ascent/", "analysis/reentry/", "analysis/targeting/", "packages/poly-coverage/"] },
     { "node": "cu-boulder", "paths": ["analysis/od/", "analysis/od-fit-pipeline/", "analysis/estimation/", "analysis/covariance/", "analysis/access/", "analysis/dop/", "analysis/parameters/", "gnss/", "packages/sensor-", "packages/validator/", "flows/supplemental-omm/nodes/orbit-determination/"] },

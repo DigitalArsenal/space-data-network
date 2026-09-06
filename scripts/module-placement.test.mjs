@@ -41,3 +41,12 @@ test('unidentified modules and duplicate node identities fail instead of produci
   assert.throws(() => validatePlacement(placement), /distinct/);
   assert.doesNotThrow(() => validatePlacement(defaultPlacement));
 });
+
+test('a shared module keeps its functional owner when its source lives inside an ingestion flow', () => {
+  assert.equal(assignedNode('flows/supplemental-omm/nodes/flatsql', defaultPlacement, 'com.digitalarsenal.flatsql.store'), 'local');
+  assert.equal(assignedNode('flows/supplemental-omm/nodes/od', defaultPlacement, 'org.sdn.flows.supplemental-omm.od'), 'cu-boulder');
+  assert.equal(assignedNode('data-source/spk-source', defaultPlacement, 'com.digitalarsenal.propagator.ephemeris'), 'tu-delft');
+  const bad = structuredClone(defaultPlacement);
+  bad.moduleOwners['com.digitalarsenal.flatsql.store'] = 'missing-node';
+  assert.throws(() => validatePlacement(bad), /explicit module owner/);
+});

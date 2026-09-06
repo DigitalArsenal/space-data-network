@@ -80,14 +80,17 @@ Rebuild and validate that shared licensing path before enabling paid checkout.
 
 | Node role | Assigned | Validated and pinned | Protected assigned / ready |
 | --- | ---: | ---: | ---: |
-| CelesTrak products | 54 | 44 | 2 / 1 |
-| TU Delft | 19 | 17 | 1 / 0 |
-| CU Boulder | 11 | 7 | 4 / 2 |
+| CelesTrak products | 51 | 41 | 2 / 1 |
+| TU Delft | 20 | 18 | 1 / 0 |
+| CU Boulder | 12 | 8 | 4 / 2 |
 | UT Austin | 17 | 14 | 14 / 13 |
-| Local customer | 35 | 28 | 2 / 1 |
+| Local customer | 36 | 29 | 2 / 1 |
 | Total | 136 | 110 | 23 / 17 |
 
 These are deployment observations from 2026-09-06, not hardcoded UI totals.
+Explicit PLG ownership keeps shared FlatSQL, OD and ephemeris propagation
+modules with their functional owner even when their source lives in an
+ingestion flow's directory.
 The live catalog supplies counts. Failed builds remain assigned and visible,
 with checkout unavailable until verified ciphertext is published.
 
