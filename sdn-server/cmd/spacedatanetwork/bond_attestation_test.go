@@ -15,14 +15,13 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 )
 
-// Before the first successful module run there is NO bond — the endpoint
-// 404s rather than inventing a zero (the dashboard renders absence).
+// Startup is pending, so the UI continues polling without displaying an error.
 func TestBondHandlerBeforeFirstAttestation(t *testing.T) {
 	b := &bondAttestor{}
 	rec := httptest.NewRecorder()
 	b.handleBond(rec, httptest.NewRequest(http.MethodGet, "/api/v1/trust/bond", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 before first attestation, got %d", rec.Code)
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"pending":true`) {
+		t.Fatalf("expected pending before first attestation, got %d", rec.Code)
 	}
 }
 
@@ -244,8 +243,35 @@ func TestBondPeerCacheAndLookupBounds(t *testing.T) {
 	defer b.peerMu.Unlock()
 	rec = httptest.NewRecorder()
 	b.handleBond(rec, httptest.NewRequest("GET", "/api/v1/trust/bond?peer=remote", nil))
-	if rec.Code != 429 {
-		t.Fatalf("unbounded simultaneous lookup: %d", rec.Code)
+	if rec.Code != 200 {
+		t.Fatalf("cached balances blocked by another lookup: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	b.handleBond(rec, httptest.NewRequest("GET", "/api/v1/trust/bond?peer=other", nil))
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"pending":true`) {
+		t.Fatalf("busy lookup must remain pending: %d", rec.Code)
+	}
+}
+
+func TestBondPeerRetriesIncompleteResultAndPreservesConfirmedZero(t *testing.T) {
+	calls := 0
+	b := &bondAttestor{
+		lookupPeer: func(string) (bondAddresses, error) { return bondAddresses{Btc: "known-address"}, nil },
+		invoke: func(context.Context, bondAddresses) ([]byte, error) {
+			calls++
+			return []byte(`{"attested":true,"bond_usd":0,"holdings":[{"symbol":"BTC","amount":0,"usd":0}]}`), nil
+		},
+		peerCache: map[string]bondPeerResult{"remote": {body: json.RawMessage(`{"attested":false,"bond_usd":null}`), at: time.Now().Add(-bondRetryInterval - time.Second)}},
+	}
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		b.handleBond(rec, httptest.NewRequest("GET", "/api/v1/trust/bond?peer=remote", nil))
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"bond_usd":0`) {
+			t.Fatalf("zero balance: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("expected one retry followed by cached zero, got %d", calls)
 	}
 }
 
