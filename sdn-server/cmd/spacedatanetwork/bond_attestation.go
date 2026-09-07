@@ -38,6 +38,7 @@ var bondAttestationWasm []byte
 // bondRefreshInterval is how often the attestation is refreshed. Free public
 // APIs are rate-limited, so requests reuse results for fifteen minutes.
 const bondRefreshInterval = 15 * time.Minute
+const bondRetryInterval = 10 * time.Second
 
 // bondInitialDelay lets the node finish its boot replay before the first
 // outbound attestation runs.
@@ -54,6 +55,7 @@ type bondAttestor struct {
 	peerMu     sync.Mutex
 	peerCache  map[string]bondPeerResult
 	lookupPeer func(string) (bondAddresses, error)
+	invoke     func(context.Context, bondAddresses) ([]byte, error)
 }
 
 type bondPeerResult struct {
@@ -178,7 +180,14 @@ func invokeBondAttestation(ctx context.Context, addrs bondAddresses) ([]byte, er
 	return out, nil
 }
 
-// start runs the hourly attestation loop until ctx ends.
+func bondComplete(raw []byte) bool {
+	var answer struct {
+		Attested bool `json:"attested"`
+	}
+	return json.Unmarshal(raw, &answer) == nil && answer.Attested
+}
+
+// start refreshes successful balances periodically and retries incomplete reads.
 func (b *bondAttestor) start(ctx context.Context, n *node.Node) {
 	b.peerID = n.PeerID().String()
 	b.lookupPeer = func(id string) (bondAddresses, error) {
@@ -208,22 +217,35 @@ func (b *bondAttestor) start(ctx context.Context, n *node.Node) {
 			return
 		case <-time.After(bondInitialDelay):
 		}
-		b.refresh(ctx, n)
-		ticker := time.NewTicker(bondRefreshInterval)
-		defer ticker.Stop()
 		for {
+			b.refresh(ctx, n)
+			b.mu.RLock()
+			complete := bondComplete(b.latest)
+			b.mu.RUnlock()
+			delay := bondRefreshInterval
+			if !complete {
+				delay = bondRetryInterval
+			}
+			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
-				b.refresh(ctx, n)
+			case <-timer.C:
 			}
 		}
 	}()
 }
 
-// handleBond serves the latest attestation. 404 until the first successful
-// run — an absent bond renders as absent, never as an invented zero.
+func writeBondPending(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", "3")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte(`{"pending":true}`))
+}
+
+// A warming node reports pending while its automatic lookup runs.
 func (b *bondAttestor) handleBond(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -244,7 +266,7 @@ func (b *bondAttestor) handleBond(w http.ResponseWriter, r *http.Request) {
 	peerID := b.peerID
 	b.mu.RUnlock()
 	if len(latest) == 0 {
-		http.Error(w, "no bond attestation yet", http.StatusNotFound)
+		writeBondPending(w)
 		return
 	}
 	// Wrap the module's verbatim answer with the node identity + timestamp.
@@ -256,6 +278,7 @@ func (b *bondAttestor) handleBond(w http.ResponseWriter, r *http.Request) {
 	body["node"] = peerID
 	body["attested_at"] = at.Format(time.RFC3339)
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(body)
 }
 
@@ -266,25 +289,36 @@ func (b *bondAttestor) handlePeerBond(w http.ResponseWriter, r *http.Request, id
 		http.NotFound(w, r)
 		return
 	}
-	if !b.peerMu.TryLock() {
-		w.Header().Set("Retry-After", "5")
-		http.Error(w, "lookup busy", 429)
-		return
+	b.mu.RLock()
+	cached, ok := b.peerCache[id]
+	b.mu.RUnlock()
+	ttl := bondRetryInterval
+	if bondComplete(cached.body) {
+		ttl = bondRefreshInterval
 	}
-	defer b.peerMu.Unlock()
-	if cached, ok := b.peerCache[id]; ok && time.Since(cached.at) < bondRefreshInterval {
+	if ok && time.Since(cached.at) < ttl {
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(cached.body)
 		return
 	}
+	if !b.peerMu.TryLock() {
+		writeBondPending(w)
+		return
+	}
+	defer b.peerMu.Unlock()
 	addresses, err := b.lookupPeer(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	raw, err := invokeBondAttestation(r.Context(), addresses)
+	invoke := b.invoke
+	if invoke == nil {
+		invoke = invokeBondAttestation
+	}
+	raw, err := invoke(r.Context(), addresses)
 	if err != nil {
-		http.Error(w, "balance lookup failed", 502)
+		writeBondPending(w)
 		return
 	}
 	var body map[string]any
@@ -300,6 +334,7 @@ func (b *bondAttestor) handlePeerBond(w http.ResponseWriter, r *http.Request, id
 		http.Error(w, "invalid balance response", 502)
 		return
 	}
+	b.mu.Lock()
 	if b.peerCache == nil {
 		b.peerCache = make(map[string]bondPeerResult)
 	}
@@ -310,6 +345,8 @@ func (b *bondAttestor) handlePeerBond(w http.ResponseWriter, r *http.Request, id
 		}
 	}
 	b.peerCache[id] = bondPeerResult{out, stamp}
+	b.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(out)
 }
