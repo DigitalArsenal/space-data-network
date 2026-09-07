@@ -35,7 +35,11 @@ func TestModuleApplicationRoutesRequireAdminAndPinPage(t *testing.T) {
 	apps := &testModuleApps{}
 	handler := NewCoreAPIHandler("", nil, nil, apps, nil, nil, nil, auth.NewHandler(nil, nil, time.Hour, "", ""), nil)
 	mux := http.NewServeMux()
-	handler.registerModuleApplicationRoutes(mux)
+	// Register the real runtime subtree first: a module-ID wildcard at this
+	// level conflicts with it and prevents the whole daemon from starting.
+	mux.HandleFunc("/api/v1/modules/runtime", func(http.ResponseWriter, *http.Request) {})
+	mux.HandleFunc("/api/v1/modules/runtime/", func(http.ResponseWriter, *http.Request) {})
+	handler.RegisterRoutes(mux)
 	hash := sha256.Sum256([]byte("APP"))
 	query := "?sha256=" + hex.EncodeToString(hash[:])
 	for _, tc := range []struct {
@@ -47,7 +51,7 @@ func TestModuleApplicationRoutesRequireAdminAndPinPage(t *testing.T) {
 		{"app", "POST", true, 405}, {"app", "GET", true, 200}, {"artifact", "GET", true, 200},
 		{"app/page", "GET", true, 409}, {"app/page?sha256=bad", "GET", true, 409}, {"app/page" + query, "GET", true, 200},
 	} {
-		r := httptest.NewRequest(tc.method, "/api/v1/modules/test.editor/"+tc.path, nil)
+		r := httptest.NewRequest(tc.method, "/api/v1/modules/apps/test.editor/"+tc.path, nil)
 		r.RemoteAddr = "203.0.113.9:1234"
 		if tc.admin {
 			r = r.WithContext(auth.ContextWithSession(r.Context(), &auth.Session{XPub: "admin", TrustLevel: peers.Admin}))

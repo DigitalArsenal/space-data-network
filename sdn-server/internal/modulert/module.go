@@ -269,7 +269,7 @@ func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContex
 		return nil, err
 	}
 	if _, err := m.ApplicationRecord(); err == nil {
-		m.SetUIURL("/api/v1/modules/" + url.PathEscape(m.manifest.PluginID) + "/app")
+		m.SetUIURL("/api/v1/modules/apps/" + url.PathEscape(m.manifest.PluginID) + "/app")
 	} else if !errors.Is(err, ErrNoModuleApplication) {
 		log.Debugf("Module %q has no launchable embedded application: %v", m.manifest.PluginID, err)
 	}
