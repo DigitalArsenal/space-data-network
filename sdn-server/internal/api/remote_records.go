@@ -55,6 +55,7 @@ func (h *CoreAPIHandler) handleRemoteRecords(w http.ResponseWriter, r *http.Requ
 	case remoteRecordSlots <- struct{}{}:
 		defer func() { <-remoteRecordSlots }()
 	default:
+		w.Header().Set("Retry-After", "1")
 		writeError(w, http.StatusTooManyRequests, "Remote page capacity is busy")
 		return
 	}
