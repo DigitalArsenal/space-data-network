@@ -48,6 +48,7 @@ import {
 import { SerialTaskQueue } from './serial-task-queue';
 import { syncRowCountSummary } from './sync-progress';
 import { encodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
+import { encodeFlatSqlSyncRequest, decodeFlatSqlSyncChunk } from '../../flatsql-sync';
 
 /** Window mode row cap: batches stop once the window holds this many rows. */
 export const WINDOW_MAX_ROWS = 20_000;
@@ -79,6 +80,8 @@ export interface DashboardWindowState {
   /** UI source lane (`OMM@celestrak-gp`), the bare source name, or '' for every source. */
   source?: string | null;
   range?: DashboardWindowRange | null;
+  /** A remote cursor is opaque; it is never replaced with a local row offset. */
+  remote?: { peerId: string; providerId?: string; cursor?: string; snapshotId?: string; head?: string; totalCount?: number; highWaterMark?: string };
 }
 
 export type DashboardWindowMode = 'page' | 'window';
@@ -115,6 +118,11 @@ export interface DashboardWindowLoad {
   batches: number;
   /** UTC ISO timestamp of the load. */
   loadedAt: string;
+  nextCursor?: string;
+  cursor?: string;
+  highWaterMark?: string;
+  snapshotId?: string;
+  head?: string;
 }
 
 export interface DashboardWindowStandard {
@@ -207,6 +215,11 @@ interface RawLanePage {
   recordCount: number;
   totalCount: number | null;
   runs: DashboardWindowSourceRun[] | null;
+  nextCursor?: string;
+  cursor?: string;
+  highWaterMark?: string;
+  snapshotId?: string;
+  head?: string;
 }
 
 interface NormalizedRange {
@@ -246,7 +259,8 @@ export function sourceNameForState(state: DashboardWindowState, code = normalize
 export function dashboardWindowStateKey(state: DashboardWindowState): string {
   const code = normalizeStandardCode(state.schema);
   const range = normalizeRange(state.range);
-  return [code, (state.source ?? '').trim(), range?.column ?? '', range?.from ?? '', range?.to ?? ''].join('|');
+  const key = [code, (state.source ?? '').trim(), range?.column ?? '', range?.from ?? '', range?.to ?? ''].join('|');
+  return state.remote ? `${key}|${JSON.stringify(state.remote)}` : key;
 }
 
 /** Parse `X-SDN-Source-Runs` (`<pathEscaped source or ->:<count>` pairs, comma-joined, frame order). */
@@ -398,12 +412,15 @@ class DashboardWindow implements DashboardWindowRuntime {
       const source = sourceNameForState(state, standardId);
 
       await this.dropWindow(window, standardId);
-      const fetched = await this.fetchRawPage({
+      const query = {
         schema: `${standardId}.fbs`,
         ...(source ? { sourceName: source } : {}),
         limit,
         offset,
-      });
+      };
+      const fetched = state.remote
+        ? await this.fetchRemotePage(query, state.remote)
+        : await this.fetchRawPage(query);
       this.assertCurrent(window, generation, standardId);
       const bytes = fetched.bytes.byteLength;
       await this.ingestRuns(standardId, fetched, key, offset, source);
@@ -429,6 +446,7 @@ class DashboardWindow implements DashboardWindowRuntime {
         pageSize: limit,
         batches: 1,
         loadedAt: new Date().toISOString(),
+        ...(state.remote ? { cursor: fetched.cursor, nextCursor: fetched.nextCursor, snapshotId: fetched.snapshotId, head: fetched.head, highWaterMark: fetched.highWaterMark } : {}),
       };
       window.load = load;
       return { ...load };
@@ -436,6 +454,7 @@ class DashboardWindow implements DashboardWindowRuntime {
   }
 
   loadWindow(state: DashboardWindowState, options: DashboardWindowLoadOptions = {}): Promise<DashboardWindowLoad> {
+    if (state.remote) return Promise.reject(new Error('Remote records are requested one page at a time.'));
     const standardId = normalizeStandardCode(state.schema);
     const window = this.stateFor(standardId);
     const generation = ++window.generation;
@@ -666,6 +685,29 @@ class DashboardWindow implements DashboardWindowRuntime {
       totalCount: headerInteger(response, 'x-sdn-total-count'),
       runs: parseSourceRunsHeader(response.headers?.get?.('x-sdn-source-runs')),
     };
+  }
+
+  private async fetchRemotePage(query: RawDataQuery, remote: NonNullable<DashboardWindowState['remote']>): Promise<RawLanePage> {
+    if (!remote.peerId || query.limit! > 1000) throw new Error('A remote node and a page of at most 1,000 records are required.');
+    const url = joinUrl(this.baseUrl, `/api/v1/data/remote/${encodeURIComponent(remote.peerId)}`);
+    const response = await this.fetch(url, {
+      method: 'POST', credentials: 'same-origin', signal: AbortSignal.timeout(25_000),
+      headers: { 'Content-Type': 'application/octet-stream', Accept: 'application/octet-stream', 'X-Requested-With': 'XMLHttpRequest' },
+      body: new Uint8Array(encodeFlatSqlSyncRequest({ ...query, ...remote, targetPeerId: remote.peerId, peerId: undefined })).buffer,
+    });
+    if (!response.ok) {
+      let message = '';
+      try { const error = await response.json(); message = error?.error?.message || error?.message || ''; } catch { /* transport may return an empty body */ }
+      throw new Error(message || 'The remote node could not serve this page. Try again.');
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > 8 * 1024 * 1024) throw new Error('The remote page exceeds the viewer byte limit.');
+    const chunk = decodeFlatSqlSyncChunk(bytes);
+    if (normalizeStandardCode(chunk.header.schema) !== normalizeStandardCode(query.schema)) throw new Error('The remote node returned a different dataset.');
+    if (chunk.records.length > query.limit! || chunk.records.length !== chunk.header.count) throw new Error('The remote page has an inconsistent record count.');
+    if (remote.snapshotId && chunk.header.snapshotId !== remote.snapshotId) throw new Error('The remote snapshot changed. Refresh to start again.');
+    return { bytes: chunk.recordStream, recordCount: chunk.records.length, totalCount: chunk.header.totalCount, runs: null,
+      cursor: chunk.header.cursor, nextCursor: chunk.header.nextCursor, snapshotId: chunk.header.snapshotId, head: chunk.header.head, highWaterMark: chunk.header.highWaterMark };
   }
 
   /**

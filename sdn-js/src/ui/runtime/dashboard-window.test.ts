@@ -284,6 +284,41 @@ describe('dashboard window runtime', () => {
     store.destroy();
   });
 
+  it('replaces the browser window with each remote FlatBuffer page and forwards its cursor', async () => {
+    const catalogue = buildCatalogue();
+    const node = createFakeNode(catalogue);
+    const requests: any[] = [];
+    const remoteFetch: FetchLike = async (url, init) => {
+      if (!url.includes('/data/remote/')) return node.fetch(url, init);
+      const body = new Uint8Array(init!.body as Uint8Array);
+      const request = JSON.parse(new TextDecoder().decode(body.subarray(4)));
+      requests.push(request);
+      expect(url).toBe('http://node.test/api/v1/data/remote/provider-peer');
+      const rows = catalogue.slice(request.cursor ? 3 : 0, request.cursor ? 6 : 3);
+      const header = new TextEncoder().encode(JSON.stringify({ schema:'OMM.fbs', count:3, total_count:12, snapshot_id:'snapshot-a', next_cursor:'cursor-next' }));
+      const bytes = new Uint8Array(4 + header.length + rows.reduce((n, r) => n + r.frame.length, 0));
+      new DataView(bytes.buffer).setUint32(0, header.length, false);
+      bytes.set(header, 4);
+      let offset = 4 + header.length;
+      for (const row of rows) { bytes.set(row.frame, offset); offset += row.frame.length; }
+      return new Response(bytes);
+    };
+    const store = await createOmmStore();
+    const runtime = createDashboardWindow({ store, fetch: remoteFetch, baseUrl:'http://node.test' });
+    try {
+      const remote = { peerId:'provider-peer', providerId:'celestrak' };
+      const first = await runtime.loadPage({schema:'OMM',source:'celestrak-gp',remote}, {page:1,limit:3});
+      expect(first).toMatchObject({windowRows:3,storedRows:12,nextCursor:'cursor-next',snapshotId:'snapshot-a'});
+      await runtime.loadPage({schema:'OMM',source:'celestrak-gp',remote:{...remote,cursor:first.nextCursor,snapshotId:first.snapshotId}}, {page:2,limit:3});
+      const result = await runtime.query('SELECT NORAD_CAT_ID FROM OMM ORDER BY _rowid ASC','OMM');
+      expect(result.records.map((r) => r.NORAD_CAT_ID)).toEqual([1003,1004,1005]);
+      expect(requests).toHaveLength(2);
+      expect(requests[1]).toMatchObject({op:'read_chunk',limit:3,source_name:'celestrak-gp',provider_id:'celestrak',cursor:'cursor-next',snapshot_id:'snapshot-a'});
+      expect(node.requests.some((r) => r.url.includes('/data/query'))).toBe(false);
+      await expect(runtime.loadWindow({schema:'OMM',remote})).rejects.toThrow('one page');
+    } finally { store.destroy(); }
+  });
+
   it('adds a standard through the store when the engine DDL lane serves it', async () => {
     const catalogue = buildCatalogue();
     const node = createFakeNode(catalogue);
