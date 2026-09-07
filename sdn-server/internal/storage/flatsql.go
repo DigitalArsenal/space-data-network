@@ -4622,6 +4622,13 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 		return 0, err
 	}
 	defer s.lockWrite("GarbageCollectToQuota")()
+	// A partial replay cannot establish global age or occupancy. Evicting from
+	// it destroys whichever records happened to replay first and appends those
+	// premature decisions to the durable journal. Resume normal enforcement
+	// after recovery, including when a forced replay began from a warm store.
+	if !s.recordCatalogHydrated.Load() || s.recordCatalogHydrating.Load() {
+		return 0, nil
+	}
 
 	liveBytes, err := s.liveRecordBytesLocked()
 	if err != nil {

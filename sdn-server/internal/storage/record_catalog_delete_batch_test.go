@@ -32,7 +32,7 @@ func seedCatalogDeleteBatch(t *testing.T, count int) *FlatSQLStore {
 	}
 	defer tx.Rollback()
 	for i := 0; i < count; i++ {
-		event := recordCatalogEvent{SchemaName: "OMM.fbs", CID: fmt.Sprintf("cid-%06d", i), PeerID: "peer-a", Timestamp: 100, CreatedAt: 100,
+		event := recordCatalogEvent{SchemaName: "OMM.fbs", CID: fmt.Sprintf("cid-%06d", i), PeerID: "peer-a", Timestamp: 100, CreatedAt: 100, RecordLength: 200,
 			Tags: SourceTags{ProviderID: "provider", SourceName: "catalog", BatchID: "old"}}
 		if err := store.applyRecordCatalogRecordUpsertTo(tx, event, table); err != nil {
 			t.Fatal(err)
@@ -45,6 +45,43 @@ func seedCatalogDeleteBatch(t *testing.T, count int) *FlatSQLStore {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func TestCatalogQuotaWaitsForCompleteReplay(t *testing.T) {
+	for _, state := range []struct {
+		name                string
+		hydrated, hydrating bool
+	}{{"before replay", false, false}, {"cold replay", false, true}, {"forced replay", true, true}} {
+		t.Run(state.name, func(t *testing.T) {
+			store := seedCatalogDeleteBatch(t, 7)
+			before, err := store.recordCatalog.f.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.recordCatalogHydrated.Store(state.hydrated)
+			store.recordCatalogHydrating.Store(state.hydrating)
+			defer func() {
+				store.recordCatalogHydrated.Store(true)
+				store.recordCatalogHydrating.Store(false)
+			}()
+			if deleted, err := store.GarbageCollectToQuota(200); err != nil || deleted != 0 {
+				t.Fatalf("quota must defer until the full catalog is known: deleted=%d err=%v", deleted, err)
+			}
+			after, err := store.recordCatalog.f.Stat()
+			if err != nil || after.Size() != before.Size() {
+				t.Fatalf("partial replay appended a durable eviction: before=%d after=%v err=%v", before.Size(), after, err)
+			}
+			var remaining int
+			if err := store.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_index`).Scan(&remaining); err != nil || remaining != 7 {
+				t.Fatalf("records changed before recovery: count=%d err=%v", remaining, err)
+			}
+			store.recordCatalogHydrated.Store(true)
+			store.recordCatalogHydrating.Store(false)
+			if deleted, err := store.GarbageCollectToQuota(200); err != nil || deleted == 0 {
+				t.Fatalf("quota must resume after recovery: deleted=%d err=%v", deleted, err)
+			}
+		})
+	}
 }
 
 func catalogDeleteEvent(kind byte) recordCatalogEvent {
