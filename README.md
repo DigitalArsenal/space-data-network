@@ -134,6 +134,18 @@ Foreground/manual mode is still available:
 spacedatanetwork daemon
 ```
 
+Set a record-storage budget for a foreground instance without changing its
+configuration file:
+
+```bash
+spacedatanetwork daemon --storage-max-size 64GiB
+```
+
+The flag overrides `storage.max_size` for that run and accepts the same byte
+sizes or filesystem percentages. Automatic quota eviction waits until catalog
+recovery completes. The budget controls retained records; the Store's automatic
+overwrite-only offering cache has no retention setting.
+
 Service controls:
 
 ```bash
