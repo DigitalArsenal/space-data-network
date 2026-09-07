@@ -589,9 +589,11 @@ type ConnectionStats struct {
 
 // Registry manages the trusted peer registry.
 type Registry struct {
-	mu     sync.RWMutex
-	peers  map[peer.ID]*TrustedPeer
-	groups map[string]*PeerGroup
+	mu sync.RWMutex
+	// Serialize durable snapshots separately; peer admission must never wait on storage.
+	persistMu sync.Mutex
+	peers     map[peer.ID]*TrustedPeer
+	groups    map[string]*PeerGroup
 
 	// strictMode ("only connect to peers in registry") is ATOMIC, not
 	// mu-guarded, and that is load-bearing rather than a micro-optimisation.
@@ -911,10 +913,11 @@ func (r *Registry) AddPeer(tp *TrustedPeer) error {
 
 	old := r.unknownPeerDirectTrustLevel()
 	r.peers[tp.ID] = tp
-	saveErr := r.save()
+	id, level := tp.ID, tp.TrustLevel
 	r.mu.Unlock()
+	saveErr := r.save()
 
-	r.fireTrustChange(tp.ID, old, tp.TrustLevel)
+	r.fireTrustChange(id, old, level)
 	return saveErr
 }
 
@@ -934,10 +937,11 @@ func (r *Registry) UpdatePeer(tp *TrustedPeer) error {
 
 	old := existing.TrustLevel
 	r.peers[tp.ID] = tp
-	saveErr := r.save()
+	id, level := tp.ID, tp.TrustLevel
 	r.mu.Unlock()
+	saveErr := r.save()
 
-	r.fireTrustChange(tp.ID, old, tp.TrustLevel)
+	r.fireTrustChange(id, old, level)
 	return saveErr
 }
 
@@ -953,8 +957,8 @@ func (r *Registry) RemovePeer(id peer.ID) error {
 
 	old := existing.TrustLevel
 	delete(r.peers, id)
-	saveErr := r.save()
 	r.mu.Unlock()
+	saveErr := r.save()
 
 	r.fireTrustChange(id, old, r.unknownPeerDirectTrustLevel())
 	return saveErr
@@ -1059,8 +1063,8 @@ func (r *Registry) SetTrustLevel(id peer.ID, level TrustLevel) error {
 
 	old := tp.TrustLevel
 	tp.TrustLevel = level
-	saveErr := r.save()
 	r.mu.Unlock()
+	saveErr := r.save()
 
 	r.fireTrustChange(id, old, level)
 	return saveErr
@@ -1217,9 +1221,9 @@ func (r *Registry) AddGroup(group *PeerGroup) error {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if _, exists := r.groups[group.Name]; exists {
+		r.mu.Unlock()
 		return ErrGroupAlreadyExists
 	}
 
@@ -1228,19 +1232,21 @@ func (r *Registry) AddGroup(group *PeerGroup) error {
 	}
 
 	r.groups[group.Name] = group
+	r.mu.Unlock()
 	return r.save()
 }
 
 // RemoveGroup removes a peer group.
 func (r *Registry) RemoveGroup(name string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if _, exists := r.groups[name]; !exists {
+		r.mu.Unlock()
 		return ErrGroupNotFound
 	}
 
 	delete(r.groups, name)
+	r.mu.Unlock()
 	return r.save()
 }
 
@@ -1273,42 +1279,46 @@ func (r *Registry) ListGroups() []*PeerGroup {
 // AddPeerToGroup adds a peer to a group.
 func (r *Registry) AddPeerToGroup(peerID peer.ID, groupName string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	group, exists := r.groups[groupName]
 	if !exists {
+		r.mu.Unlock()
 		return ErrGroupNotFound
 	}
 
 	tp, exists := r.peers[peerID]
 	if !exists {
+		r.mu.Unlock()
 		return ErrPeerNotFound
 	}
 
 	// Check if already in group
 	for _, m := range group.Members {
 		if m == peerID {
+			r.mu.Unlock()
 			return nil // Already in group
 		}
 	}
 
 	group.Members = append(group.Members, peerID)
 	tp.Groups = append(tp.Groups, groupName)
+	r.mu.Unlock()
 	return r.save()
 }
 
 // RemovePeerFromGroup removes a peer from a group.
 func (r *Registry) RemovePeerFromGroup(peerID peer.ID, groupName string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	group, exists := r.groups[groupName]
 	if !exists {
+		r.mu.Unlock()
 		return ErrGroupNotFound
 	}
 
 	tp, exists := r.peers[peerID]
 	if !exists {
+		r.mu.Unlock()
 		return ErrPeerNotFound
 	}
 
@@ -1330,6 +1340,7 @@ func (r *Registry) RemovePeerFromGroup(peerID peer.ID, groupName string) error {
 	}
 	tp.Groups = newGroups
 
+	r.mu.Unlock()
 	return r.save()
 }
 
@@ -1388,8 +1399,6 @@ func (r *Registry) RecordMessage(id peer.ID, sent bool, bytes int64) {
 // mode ON must never wait on a disk/WASM round-trip.
 func (r *Registry) SetStrictMode(strict bool) {
 	r.strictMode.Store(strict)
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	_ = r.save()
 }
 
@@ -1455,7 +1464,6 @@ func (r *Registry) Import(data []byte, merge bool) error {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if !merge {
 		r.peers = make(map[peer.ID]*TrustedPeer)
@@ -1480,10 +1488,11 @@ func (r *Registry) Import(data []byte, merge bool) error {
 		r.groups[g.Name] = g
 	}
 
+	r.mu.Unlock()
 	return r.save()
 }
 
-// save persists the registry if a persistence provider is configured, and
+// save must be called without mu held. It persists a detached snapshot and
 // REPORTS whether that succeeded.
 //
 // It used to return nothing and merely log a warning. That is how the owner's
@@ -1501,7 +1510,21 @@ func (r *Registry) save() error {
 	if r.persistence == nil {
 		return nil
 	}
-	if err := r.persistence.Save(r.peers, r.groups); err != nil {
+	// Snapshot AFTER acquiring the persistence lock. Otherwise an older
+	// statistics snapshot could overwrite a newer trust update.
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
+	r.mu.RLock()
+	peersCopy := make(map[peer.ID]*TrustedPeer, len(r.peers))
+	for id, tp := range r.peers {
+		peersCopy[id] = tp.clone()
+	}
+	groupsCopy := make(map[string]*PeerGroup, len(r.groups))
+	for name, group := range r.groups {
+		groupsCopy[name] = group.clone()
+	}
+	r.mu.RUnlock()
+	if err := r.persistence.Save(peersCopy, groupsCopy); err != nil {
 		log.Warnf("Failed to persist peer registry: %v", err)
 		return fmt.Errorf("%w: %v", ErrNotPersisted, err)
 	}
