@@ -128,6 +128,11 @@ func EngineAOTCacheDir() string { return engineAOTCacheDir() }
 // mismatched, or an engine with no filesystem — discards it and rebuilds
 // everything from them exactly as this store always did.
 type FlatSQLStore struct {
+	fullTextMu             sync.Mutex
+	fullTextStates         map[string]*fullTextIndexState
+	fullTextSlots          chan struct{}
+	fullTextWorkers        sync.WaitGroup
+	fullTextClosing        bool
 	db                     *sql.DB
 	engine                 *flatsqlrt.Runtime
 	engineDB               *flatsqlrt.Database
@@ -3171,6 +3176,7 @@ type RawRecordQuery struct {
 	ProducerPublicKey string
 	PeerID            string
 	SyncFilter        string
+	Search            string
 	Limit             int
 	Offset            int
 	UseRowIDCursor    bool
@@ -3359,7 +3365,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			if err != nil {
 				return inserted, fmt.Errorf("store %s record %s: %w", schemaName, cid, err)
 			}
-			if err := upsertRecordIndexExec(tx, &s.recordIndexRowIDs, schemaName, cid, now, data); err != nil {
+			if err := upsertRecordIndexExec(tx, &s.recordIndexRowIDs, schemaName, cid, now, data, s.fullTextState(schemaName)); err != nil {
 				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
 			}
 			event, err := s.recordCatalogUpsertEvent(tx, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now, data)
@@ -4685,6 +4691,7 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 
 // Close closes the database handle, record catalog, and engine.
 func (s *FlatSQLStore) Close() error {
+	s.stopFullTextIndexes()
 	// Stop AND JOIN the background checkpointer before taking the write lock.
 	// Signalling alone is not enough: the loop may already be blocked on s.mu
 	// inside a checkpoint, and it would then run against a store this function
@@ -5896,12 +5903,18 @@ func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow
 // CountRawRecords returns a filtered raw-record count without hydrating
 // FlatBuffer payloads from stream files.
 func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
+	if err := s.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
+		return 0, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.countRawRecordsLocked(filter)
 }
 
 func (s *FlatSQLStore) countRawRecordsLocked(filter RawRecordQuery) (int64, error) {
+	if err := s.checkFullTextReadyLocked(filter); err != nil {
+		return 0, err
+	}
 	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
 	if filter.SchemaName == "" {
 		return 0, errors.New("schema name is required")
@@ -6054,8 +6067,34 @@ func (s *FlatSQLStore) countRawRecordsLocked(filter RawRecordQuery) (int64, erro
 // RawRecordHead returns cursor/snapshot metadata for a raw-record result set
 // without opening the FlatSQL backing stream files.
 func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, error) {
+	if err := s.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
+		return RawRecordHead{}, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.rawRecordHeadLocked(filter)
+}
+
+// RawRecordSnapshot reads the count and head under one catalog lock so live
+// ingestion cannot place a newer boundary beside an older result count.
+func (s *FlatSQLStore) RawRecordSnapshot(filter RawRecordQuery) (int64, RawRecordHead, error) {
+	if err := s.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
+		return 0, RawRecordHead{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count, err := s.countRawRecordsLocked(filter)
+	if err != nil {
+		return 0, RawRecordHead{}, err
+	}
+	head, err := s.rawRecordHeadLocked(filter)
+	return count, head, err
+}
+
+func (s *FlatSQLStore) rawRecordHeadLocked(filter RawRecordQuery) (RawRecordHead, error) {
+	if err := s.checkFullTextReadyLocked(filter); err != nil {
+		return RawRecordHead{}, err
+	}
 
 	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
 	if filter.SchemaName == "" {
@@ -6476,8 +6515,14 @@ func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName stri
 }
 
 func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+	if err := s.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.checkFullTextReadyLocked(filter); err != nil {
+		return nil, err
+	}
 
 	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
 	if filter.SchemaName == "" {
@@ -7494,7 +7539,7 @@ type indexedFields struct {
 }
 
 func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp int64, data []byte) error {
-	return upsertRecordIndexExec(s.db, &s.recordIndexRowIDs, schemaName, cid, sourceTimestamp, data)
+	return upsertRecordIndexExec(s.db, &s.recordIndexRowIDs, schemaName, cid, sourceTimestamp, data, s.fullTextState(schemaName))
 }
 
 // upsertRecordIndexExec writes the LIVE index row.
@@ -7512,7 +7557,7 @@ func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp
 // the ON CONFLICT(schema_name, cid) DO UPDATE branch and KEEPS the rowid it
 // already had, so a record's durable datasync cursor never moves. A rowid burned
 // that way is simply skipped — the counter is monotonic and gaps are legal.
-func upsertRecordIndexExec(exec sqlExecer, rowIDs *recordIndexRowIDs, schemaName, cid string, sourceTimestamp int64, data []byte) error {
+func upsertRecordIndexExec(exec sqlExecer, rowIDs *recordIndexRowIDs, schemaName, cid string, sourceTimestamp int64, data []byte, textIndex *fullTextIndexState) error {
 	fields, err := extractIndexedFields(schemaName, data)
 	if err != nil {
 		// The index is the global record catalog + sync cursor (WS7.3d): every
@@ -7577,7 +7622,7 @@ func upsertRecordIndexExec(exec sqlExecer, rowIDs *recordIndexRowIDs, schemaName
 		return fmt.Errorf("failed to upsert index row: %w", err)
 	}
 
-	return nil
+	return upsertFullTextExec(exec, textIndex, schemaName, cid, data)
 }
 
 func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error) {

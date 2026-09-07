@@ -34,6 +34,7 @@ export interface FlatSqlSyncQuery {
   chunkHash?: string;
   queryProfile?: string;
   syncFilter?: string;
+  search?: string;
   limit?: number;
   offset?: number;
   records?: FlatSqlSyncRecordRef[];
@@ -84,6 +85,7 @@ export interface FlatSqlSyncDatastoreList {
 
 export interface FlatSqlSyncHeader {
   schema: string;
+  search?: string;
   totalCount: number;
   count: number;
   limit: number;
@@ -326,6 +328,7 @@ export function encodeFlatSqlSyncRequest(query: FlatSqlSyncQuery): Uint8Array {
     ...(query.chunkHash ? { chunk_hash: query.chunkHash } : {}),
     ...(query.queryProfile ? { query_profile: query.queryProfile } : {}),
     ...(query.syncFilter ? { sync_filter: query.syncFilter } : {}),
+    ...(query.search ? { search: query.search } : {}),
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
     ...(query.records ? { records: query.records.map(flatSqlSyncRecordRefPayload) } : {}),
@@ -369,7 +372,10 @@ export function decodeFlatSqlSyncChunk(bytes: Uint8Array): FlatSqlSyncChunk {
   const status = readString(headerPayload, 'status');
   if (status === 'error') {
     const message = readNestedString(headerPayload, 'error', 'message') ?? 'FlatSQL sync request failed';
-    throw new Error(message);
+    throw Object.assign(new Error(message), {
+      code: readNestedString(headerPayload, 'error', 'code'),
+      retryAfterMs: readNumber(headerPayload, 'retry_after_ms'),
+    });
   }
 
   const recordStream = bytes.slice(first.nextOffset);
@@ -512,6 +518,7 @@ function normalizeFlatSqlSyncHeader(payload: unknown): FlatSqlSyncHeader {
   const results = Array.isArray(record.results) ? record.results : [];
   return {
     schema: readString(record, 'schema') ?? 'unknown',
+    search: readString(record, 'search') ?? '',
     totalCount: readNumber(record, 'total_count', 'totalCount') ?? 0,
     count: readNumber(record, 'count') ?? 0,
     limit: readNumber(record, 'limit') ?? 0,

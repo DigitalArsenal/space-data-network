@@ -438,11 +438,19 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 		ProducerPublicKey: firstNonEmptyDataString(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
 		PeerID:            firstNonEmptyDataString(req.PeerID, req.PeerId),
 		SyncFilter:        req.SyncFilter,
+		Search:            req.Search,
 		Limit:             limit,
 		Offset:            offset,
 	}
 	records, err := queryStore.QueryRawRecords(filter)
 	if err != nil {
+		if errors.Is(err, storage.ErrSearchIndexBuilding) {
+			w.Header().Set("Retry-After", "2")
+			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+				"error": map[string]interface{}{"code": "SEARCH_INDEX_BUILDING", "message": err.Error()},
+			})
+			return
+		}
 		if errors.Is(err, storage.ErrEngineRebuilding) {
 			writeEngineRebuilding(w, r)
 			return
@@ -453,6 +461,9 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 
 	if rawStream {
 		// Window headers first: the stream writer calls WriteHeader.
+		if strings.TrimSpace(req.Search) != "" {
+			w.Header().Set("X-SDN-Search-Applied", "fts5-v1")
+		}
 		countFilter := filter
 		countFilter.Limit, countFilter.Offset = 0, 0
 		if total, countErr := queryStore.CountRawRecords(countFilter); countErr == nil {
@@ -690,6 +701,7 @@ type rawDataQueryRequest struct {
 	Head                   string `json:"head"`
 	QueryProfile           string `json:"query_profile"`
 	SyncFilter             string `json:"sync_filter"`
+	Search                 string `json:"search,omitempty"`
 	Limit                  int    `json:"limit"`
 	Offset                 int    `json:"offset"`
 	IncludeData            bool   `json:"include_data"`
@@ -709,6 +721,7 @@ type rawDataStreamRequest struct {
 	HighWaterMark string                `json:"high_water_mark"`
 	QueryProfile  string                `json:"query_profile"`
 	SyncFilter    string                `json:"sync_filter"`
+	Search        string                `json:"search,omitempty"`
 	Records       []rawDataStreamRecord `json:"records"`
 }
 
@@ -750,6 +763,7 @@ func rawQueryToSyncRequest(req rawDataQueryRequest) datasync.QueryRequest {
 		Head:                   req.Head,
 		QueryProfile:           req.QueryProfile,
 		SyncFilter:             req.SyncFilter,
+		Search:                 req.Search,
 		Limit:                  req.Limit,
 		Offset:                 req.Offset,
 		IncludeData:            req.IncludeData,
@@ -786,6 +800,7 @@ func rawStreamToSyncRequest(req rawDataStreamRequest) datasync.StreamRequest {
 			Head:         req.Head,
 			QueryProfile: req.QueryProfile,
 			SyncFilter:   req.SyncFilter,
+			Search:       req.Search,
 		},
 		ScanHash:      req.ScanHash,
 		ChunkHash:     req.ChunkHash,
