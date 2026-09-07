@@ -7,15 +7,14 @@
  * `X-SDN-Record-Count`, 304 on matching `If-None-Match`) serves engine
  * streams recorded in shared-test-vectors/flatsql-parity.json — the same
  * byte-exact corpus the Go host's store produces. The client feeds the HTTP
- * body STRAIGHT into a real FlatSQL-WASM engine store
- * (ingestFlatBufferStream, zero re-encode) and serves 304s from the local
- * store via queryEpochRawStream.
+ * body directly into a real FlatSQL-WASM engine store without re-encoding.
+ * Conditional replay uses a bounded cache of those exact response bytes.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { FlatSQLEngineRecordStore } from './engine-record-store';
 import { RemoteEpochStreamClient } from './remote-epoch-stream';
@@ -88,7 +87,127 @@ async function recordedNearestCelestrakBody(): Promise<Uint8Array> {
 }
 
 describe('RemoteEpochStreamClient (loop D.3 — conditional stream requests)', () => {
-  it('ingests the 200 stream zero-copy and serves the 304 from the local engine store', async () => {
+  it('replays exact bytes after mapped ingestion, local teardown and caller mutation', async () => {
+    const body = await recordedNearestCelestrakBody();
+    const store = await openEngineStore();
+    const queryData = vi.fn(async (options) => ({
+      format: 'flatbuffers' as const, status: options.ifNoneMatch ? 304 : 200,
+      notModified: Boolean(options.ifNoneMatch), etag: '"snapshot"',
+      stream: options.ifNoneMatch ? new Uint8Array() : body.slice(),
+      recordCount: vectors.expected.epochStoreStreams.nearest_celestrak.frameCount,
+      frames: function* () {},
+    }));
+    const client = new RemoteEpochStreamClient({ queryData }, store);
+    const request = { schema: 'OMM', profile: 'nearest', source: 'celestrak-gp', ingestSource: 'local-mirror' };
+    try {
+      const first = await client.fetchEpochStream(request);
+      expect(first.ingested).toBeGreaterThan(0);
+      first.stream.fill(0);
+      // The response is still valid even when the local query corpus is gone.
+      await store.close();
+      const second = await client.fetchEpochStream(request);
+      expect(second.stream).toEqual(body);
+      expect(second.fromCache).toBe(true);
+      second.stream.fill(0);
+      expect((await client.fetchEpochStream(request)).stream).toEqual(body);
+    } finally { await store.close(); }
+  });
+
+  it('bounds cache entries and bytes, evicts validators, and isolates ingest partitions', async () => {
+    const body = await recordedNearestCelestrakBody();
+    const seen: Array<{ source?: string; ifNoneMatch?: string | null }> = [];
+    const queryData = vi.fn(async (options) => {
+      seen.push(options);
+      return {
+        format: 'flatbuffers' as const, status: options.ifNoneMatch ? 304 : 200,
+        notModified: Boolean(options.ifNoneMatch), etag: '"snapshot"',
+        stream: options.ifNoneMatch ? new Uint8Array() : body.slice(),
+        recordCount: 999, frames: function* () {},
+      };
+    });
+    const store = { ingestFlatBufferStream: vi.fn(async () => 1), queryEpochRawStream: () => new Uint8Array() };
+    const client = new RemoteEpochStreamClient({ queryData }, store, { maxEntries: 2, maxBytes: body.length * 2 });
+    const request = { schema: 'OMM', source: 'one' };
+    for (const source of ['one', 'two', 'one', 'three', 'two']) await client.fetchEpochStream({ ...request, source });
+    expect(seen.map((item) => item.ifNoneMatch ?? null)).toEqual([null, null, '"snapshot"', null, null]);
+    await client.fetchEpochStream({ ...request, ingestSource: 'different' });
+    expect(seen.at(-1)?.ifNoneMatch).toBeUndefined();
+    client.clearCache();
+    expect(client.cachedEtag(request)).toBeNull();
+    const tiny = new RemoteEpochStreamClient({ queryData }, store, { maxBytes: body.length - 1 });
+    await tiny.fetchEpochStream(request);
+    await tiny.fetchEpochStream(request);
+    expect(seen.at(-1)?.ifNoneMatch).toBeUndefined();
+  });
+
+  it('retries an unexpected 304 once and refuses a second bodyless response', async () => {
+    const queryData = vi.fn(async () => ({
+      format: 'flatbuffers' as const, status: 304, notModified: true,
+      etag: '"missing"', stream: new Uint8Array(), recordCount: 0, frames: function* () {},
+    }));
+    const store = { ingestFlatBufferStream: vi.fn(async () => 0), queryEpochRawStream: () => new Uint8Array() };
+    const client = new RemoteEpochStreamClient({ queryData }, store);
+    await expect(client.fetchEpochStream({ schema: 'OMM' })).rejects.toThrow(/304.*retained/i);
+    expect(queryData).toHaveBeenCalledTimes(2);
+    expect(store.ingestFlatBufferStream).not.toHaveBeenCalled();
+  });
+
+  it('does not retain no-store responses or failed ingestions', async () => {
+    const body = await recordedNearestCelestrakBody();
+    const queryData = vi.fn(async () => ({
+      format: 'flatbuffers' as const, status: 200, notModified: false,
+      etag: '"private"', cacheControl: 'private, no-store', stream: body.slice(),
+      recordCount: 0, frames: function* () {},
+    }));
+    const store = { ingestFlatBufferStream: vi.fn(async () => 1), queryEpochRawStream: () => new Uint8Array() };
+    const client = new RemoteEpochStreamClient({ queryData }, store);
+    const request = { schema: 'OMM' };
+    expect((await client.fetchEpochStream(request)).recordCount).toBe(vectors.expected.epochStoreStreams.nearest_celestrak.frameCount);
+    expect(client.cachedEtag(request)).toBeNull();
+    store.ingestFlatBufferStream.mockRejectedValueOnce(new Error('disk unavailable'));
+    await expect(client.fetchEpochStream(request)).rejects.toThrow('disk unavailable');
+    expect(client.cachedEtag(request)).toBeNull();
+  });
+
+  it('rejects truncated framing before ingestion or caching', async () => {
+    const queryData = vi.fn(async () => ({
+      format: 'flatbuffers' as const, status: 200, notModified: false,
+      etag: '"broken"', stream: new Uint8Array([20, 0, 0, 0, 1]),
+      recordCount: 1, frames: function* () {},
+    }));
+    const store = { ingestFlatBufferStream: vi.fn(async () => 1), queryEpochRawStream: () => new Uint8Array() };
+    const client = new RemoteEpochStreamClient({ queryData }, store);
+    await expect(client.fetchEpochStream({ schema: 'OMM' })).rejects.toThrow(/truncated frame/);
+    expect(store.ingestFlatBufferStream).not.toHaveBeenCalled();
+    expect(client.cachedEtag({ schema: 'OMM' })).toBeNull();
+  });
+
+  it('applies no-store on a 304 and recovers from a bodyless response after eviction', async () => {
+    const body = await recordedNearestCelestrakBody();
+    const seen: Array<string | null> = [];
+    let call = 0;
+    const queryData = vi.fn(async (options) => {
+      seen.push(options.ifNoneMatch ?? null);
+      call++;
+      const notModified = call === 2 || call === 3;
+      return {
+        format: 'flatbuffers' as const, status: notModified ? 304 : 200, notModified,
+        etag: '"snapshot"', cacheControl: call === 2 ? 'no-store' : null,
+        stream: notModified ? new Uint8Array() : body.slice(), recordCount: 0, frames: function* () {},
+      };
+    });
+    const store = { ingestFlatBufferStream: vi.fn(async () => 1), queryEpochRawStream: () => new Uint8Array() };
+    const client = new RemoteEpochStreamClient({ queryData }, store);
+    const request = { schema: 'OMM' };
+    await client.fetchEpochStream(request);
+    expect((await client.fetchEpochStream(request)).stream).toEqual(body);
+    expect(client.cachedEtag(request)).toBeNull();
+    expect((await client.fetchEpochStream(request)).stream).toEqual(body);
+    expect(seen).toEqual([null, '"snapshot"', null, null]);
+    expect(store.ingestFlatBufferStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('ingests the original 200 stream and replays the validated response on 304', async () => {
     const body = await recordedNearestCelestrakBody();
     const etag = `W/"fnv1a64-${sha256Hex(body).slice(0, 16)}"`;
     const expected = vectors.expected.epochStoreStreams.nearest_celestrak;
@@ -138,7 +257,7 @@ describe('RemoteEpochStreamClient (loop D.3 — conditional stream requests)', (
       expect(sha256Hex(first.stream)).toBe(expected.sha256);
       expect(client.cachedEtag(request)).toBe(etag);
 
-      // Second call: conditional, 304, byte-identical stream from the LOCAL store.
+      // Second call: conditional, 304, byte-identical retained response.
       const second = await client.fetchEpochStream(request);
       expect(requests).toHaveLength(2);
       expect(requests[1].ifNoneMatch).toBe(etag);

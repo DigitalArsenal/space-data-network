@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "customer": "local",
+  "nodes": {
+    "celestrak": {
+      "name": "CelesTrak products",
+      "peerId": "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U",
+      "ssh": "space-data-network-02",
+      "role": "Data ingestion and catalog products"
+    },
+    "tu-delft": {
+      "name": "TU Delft",
+      "peerId": "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45",
+      "ssh": "space-data-network-01",
+      "role": "Propagators, dynamics and numerical methods"
+    },
+    "cu-boulder": {
+      "name": "CU Boulder",
+      "peerId": "16Uiu2HAmNVJAQmy2DCajxSJ9by9wp4qF75pHujexHUVYrhW1Ktwi",
+      "ssh": "vm-orbit-det-01",
+      "role": "Orbit determination, estimation and sensor processing"
+    },
+    "ut-austin": {
+      "name": "UT Austin",
+      "peerId": "16Uiu2HAmHQVqnn8VjmZJAGmiQyLowFiaJwok5oWgeJvmmAtwefnz",
+      "role": "Conjunction assessment, maneuver and communications services"
+    },
+    "local": {
+      "name": "This node",
+      "peerId": "16Uiu2HAkuSSuf8u32gYjS24jmER35Le5GFYLJfJeaQNfPEWPsJuA",
+      "role": "Satellite history, storage, delivery and customer execution"
+    }
+  },
+  "moduleOwners": {
+    "com.digitalarsenal.flatsql.store": "local",
+    "com.digitalarsenal.propagator.ephemeris": "tu-delft",
+    "org.sdn.flows.supplemental-omm.od": "cu-boulder"
+  },
+  "rules": [
+    { "node": "tu-delft", "paths": ["propagator/", "basilisk/", "attitude/", "models/", "foundation/attitude-math/", "foundation/math-bspline/", "foundation/numerics/", "foundation/time/", "foundation/frames/", "foundation/orbits/", "analysis/lambert-izzo/", "analysis/launch-ascent/", "analysis/reentry/", "analysis/targeting/", "packages/poly-coverage/"] },
+    { "node": "cu-boulder", "paths": ["analysis/od/", "analysis/od-fit-pipeline/", "analysis/estimation/", "analysis/covariance/", "analysis/access/", "analysis/dop/", "analysis/parameters/", "gnss/", "packages/sensor-", "packages/validator/", "flows/supplemental-omm/nodes/orbit-determination/"] },
+    { "node": "ut-austin", "paths": ["analysis/conjunction-assessment/", "analysis/maneuver/", "maneuver/", "comms/", "packages/rf-", "packages/fastest-path/"] },
+    { "node": "celestrak", "paths": ["data-source/", "analysis/catalog-synthesis/", "flows/celestrak-", "flows/supplemental-omm/", "flows/terrain-ingest/", "flows/satnogs-ingest/", "flows/sigmf-captures-ingest/", "flows/weathernext-ingest/", "flows/mlab-connectivity-ingest/", "packages/spacex-starlink-source/", "packages/starlink-parser/"] },
+    { "node": "local", "paths": ["foundation/", "hostcap/", "host-capabilities/", "host/", "licensing/", "protection/", "delivery/", "files/", "exporter/", "packages/exporter-", "flows/"] }
+  ],
+  "defaultNode": "local"
+}

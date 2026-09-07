@@ -109,6 +109,9 @@ const (
 
 // Node represents a Space Data Network node.
 type Node struct {
+	// Serializes customer download/installation receipt updates.
+	customerModuleMu sync.Mutex
+
 	host           host.Host
 	dht            *dht.IpfsDHT
 	pubsub         *pubsub.PubSub
@@ -1072,6 +1075,8 @@ func (n *Node) init() error {
 			log.Warnf("Plugin catalog runtime registration completed with errors: %v", err)
 		}
 	}
+
+	n.restoreCustomerModules()
 
 	// Initialize flow runtime manager and load installed flows.
 	if n.config.Flows.Enabled {

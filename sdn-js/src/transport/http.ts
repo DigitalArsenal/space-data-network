@@ -53,7 +53,7 @@ export interface DataQueryOptions {
   /**
    * Cached entity tag for a conditional request. Sent as `If-None-Match`;
    * a 304 response comes back as `notModified: true` with an empty body —
-   * serve the local engine store copy.
+   * serve only the retained response representation validated by that tag.
    */
   ifNoneMatch?: string | null;
 }
@@ -70,6 +70,8 @@ export interface DataQueryStreamResult {
   notModified: boolean;
   /** `ETag` header (`W/"fnv1a64-<hex>"`), for the next conditional request. */
   etag: string | null;
+  /** Cache directives associated with this response, including a 304 update. */
+  cacheControl?: string | null;
   /** `X-SDN-Record-Count` header (0 when absent / not modified). */
   recordCount: number;
   /** Aligned size-prefixed (u32 LE) FlatBuffer frames — the verbatim body. */
@@ -579,6 +581,7 @@ export class HttpTransport {
       status: resp.status,
       notModified,
       etag,
+      cacheControl: resp.headers?.get?.('cache-control') ?? null,
       recordCount,
       stream,
       frames: () => iterateSizePrefixedFrames(stream),

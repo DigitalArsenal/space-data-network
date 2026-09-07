@@ -9,6 +9,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs"
     },
+    "./http": {
+      "types": "./dist/transport/http.d.ts",
+      "import": "./dist/transport/http.mjs"
+    },
     "./ui": {
       "types": "./dist/ui/index.d.ts",
       "import": "./dist/ui/index.mjs"
@@ -32,6 +36,7 @@
     "build:core": "rm -rf dist && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/build-package-entry.mjs",
     "build:browser-external-wallet": "SDN_JS_EXTERNAL_WALLET=1 npm run build:core",
     "build:dashboard": "node dashboard/build-dashboard.mjs",
+    "dev:dashboard": "vite --config dashboard/vite.config.mjs",
     "build:docs-network-ecosystem": "vite build --config docs-network-ecosystem.config.mts",
     "dev": "tsc --emitDeclarationOnly --watch",
     "test": "npm run build:core && vitest run",
@@ -99,7 +104,7 @@
     "multiformats": "^13.3.7",
     "qrcode": "^1.5.3",
     "space-data-module-sdk": "https://github.com/DigitalArsenal/space-data-module-sdk/archive/72056a9231cdf88513514b6745b2238d1f103436.tar.gz",
-    "spacedatastandards.org": "https://github.com/DigitalArsenal/spacedatastandards.org/archive/refs/tags/v1.212.0.tar.gz",
+    "spacedatastandards.org": "1.212.0",
     "uint8arraylist": "^2.4.8",
     "uint8arrays": "^5.0.0",
     "vcard-cryptoperson": "^1.1.10"

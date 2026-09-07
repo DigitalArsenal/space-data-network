@@ -1,6 +1,6 @@
 # @spacedatanetwork/sdn-js
 
-Browser and Node.js SDK for the [Space Data Network](https://github.com/DigitalArsenal/space-data-network) -- a peer-to-peer network for space data standards built on libp2p.
+Browser and Node.js client for the [Space Data Network](https://github.com/DigitalArsenal/space-data-network). SDN adds standardized FlatBuffer records, identity, trust and signed WASM modules to IPFS and libp2p. The Go node wraps Kubo; this client integrates Helia.
 
 ## Install
 
@@ -8,55 +8,154 @@ Browser and Node.js SDK for the [Space Data Network](https://github.com/DigitalA
 npm install @spacedatanetwork/sdn-js
 ```
 
+The HTTP-only `@spacedatanetwork/sdn-js/http` entry uses fetch and FlatBuffer
+framing without loading a wallet, peer node, compiler or storage engine.
 The package root exports the core SDN SDK. Browser UI/runtime helpers are
 published at `@spacedatanetwork/sdn-js/ui`, and marketplace purchase helpers are
 published at `@spacedatanetwork/sdn-js/storefront`.
 
 ## Quick Start
 
-```typescript
-import { SDNClient, SDNNode, identityFromMnemonic, generateMnemonic } from '@spacedatanetwork/sdn-js';
+Start with a read from a running SDN node that serves OMM records. Use its HTTP
+address below; `http://127.0.0.1:5001` is the local example. The node's homepage
+lets you inspect its datasets and providers before writing client code.
 
-// Generate an HD wallet identity
+```typescript
+import { HttpTransport } from '@spacedatanetwork/sdn-js/http';
+
+const transport = new HttpTransport('http://127.0.0.1:5001');
+const result = await transport.queryData({ schema: 'OMM', profile: 'nearest', limit: 10 });
+for (const record of result.frames()) {
+  // Each record is a canonical FlatBuffer, ready for its SDS decoder.
+  console.log('Record bytes:', record.byteLength);
+}
+```
+
+A node with no matching records returns an empty stream. A not-ready or denied
+request rejects with an HTTP error; it is not an empty dataset. Reading via HTTP
+does not require starting a browser peer or generating an identity.
+
+For named publication streams, discover channels by `standardCode` and inspect
+their synchronization state. Handle a node with no advertised channel explicitly:
+
+```typescript
+import { SDNClient } from '@spacedatanetwork/sdn-js';
+
+const client = SDNClient.fromUrl('http://127.0.0.1:5001');
+const [channel] = await client.channels.list({ standardCode: 'OMM' });
+if (channel) console.log(await client.channels.monitor(channel.channelId));
+else console.log('This node has not advertised an OMM channel.');
+```
+
+Publishing requires an authorized provider session and actual encoded records.
+This example function targets the `spaceaware-OMM` channel; choose a channel your
+provider controls before calling it:
+
+```typescript
+async function publishRecords(flatbufferStreamBytes: Uint8Array) {
+  if (flatbufferStreamBytes.byteLength === 0) throw new Error('No records to publish');
+  await client.channels.publish('spaceaware-OMM', flatbufferStreamBytes);
+}
+```
+
+To participate directly as a peer:
+
+```typescript
+import { SDNNode, initHDWallet, identityFromMnemonic, generateMnemonic } from '@spacedatanetwork/sdn-js';
+
+await initHDWallet();
 const mnemonic = await generateMnemonic();
 const identity = await identityFromMnemonic(mnemonic);
 
-// Create and start a P2P node
+// create() starts the node. Keep the mnemonic private and back it up securely.
 const node = await SDNNode.create({
   identity,
-  enableRelayProbing: true, // load-balance across edge relays
+  enableRelayProbing: true,
 });
-
 console.log('Peer ID:', node.peerId);
 console.log('Connected peers:', node.peers);
-
-// Discover, subscribe, monitor, and publish native channel streams
-const client = SDNClient.fromUrl('https://spaceaware.io');
-const [channel] = await client.channels.list({ standardCode: 'OMM' });
-await client.channels.subscribe(channel.channelId);
-const monitor = await client.channels.monitor(channel.channelId);
-console.log('OMM channel sync:', monitor);
-
-const flatbufferStreamBytes = new Uint8Array(); // native size-prefixed FlatBuffers stream
-await client.channels.publish('spaceaware-OMM', flatbufferStreamBytes);
-
-// Clean up
 await node.stop();
 ```
+
+### Bulk records and conditional requests
+
+`RemoteEpochStreamClient` feeds original response bytes into a FlatSQL engine
+store. Supply an already opened `FlatSQLEngineRecordStore` with the required SDS
+schemas. Its optional third constructor argument sets `maxEntries` (default 16)
+and `maxBytes` (default 32 MiB of retained payloads); either zero disables caching.
+
+Every request still contacts the server. A 304 returns the exact retained
+representation, even when local records or source partitions have changed.
+Eviction removes the validator with the bytes, and `no-store` is respected.
+`fromCache` reports this replay; `fromLocalStore` is its deprecated compatibility
+alias. Call `clearCache()` when changing sessions or releasing the client.
+
+ETags are HTTP validators. They do not replace CID, signature or scientific
+validation. CDN delivery must preserve those checks and must not share private
+or authenticated responses between users.
+
+### Stream large IPFS objects
+
+```typescript
+import { createHeliaSDNNode, streamCIDFromHelia } from '@spacedatanetwork/sdn-js';
+
+const node = await createHeliaSDNNode();
+const controller = new AbortController();
+try {
+  for await (const chunk of streamCIDFromHelia(node.helia, cid, { signal: controller.signal })) {
+    await consumeChunk(chunk); // your storage or record-stream consumer
+  }
+} finally {
+  await node.stop();
+}
+```
+
+The iterator retrieves data on demand and closes its provider session on early
+return, cancellation or failure. Copy a chunk if retaining it beyond the next
+iteration. An optional `maxBytes` sets a total transfer limit.
+`fetchCIDBytesFromHelia` buffers a whole object with a default 128 MiB payload
+limit; concatenation also needs memory for the final result. Use the iterator
+for datasets, or pass an explicit larger limit for a known artifact.
+
+Helia's legacy write adapter asks producers to await `onDrain()` when `send()`
+returns false. It refuses further writes at its 8 MiB/1,024-chunk hard limit,
+propagates sink errors, and releases accepted queued bytes on abort.
 
 ## Features
 
 - **Peer-to-peer networking** -- libp2p with WebSocket, WebTransport, and circuit relay transports
 - **HD wallet identity** -- BIP-39 mnemonic, SLIP-10 key derivation (Ed25519 signing + X25519 encryption)
 - **Edge relay load balancing** -- automatic relay probing with weighted scoring (load, latency, reliability)
-- **40+ space data schemas** -- FlatBuffer-native CCSDS and SDS message types
+- **Space data standards** -- FlatBuffer-native CCSDS and SDS message types
 - **End-to-end encryption** -- X25519 ECDH key agreement + ChaCha20-Poly1305
 - **Module delivery** -- provider-identity grant exchange over `/space-data-network/module-delivery/1.0.0`
-- **Local storage** -- IndexedDB-backed record store with schema-based queries
+- **Local storage** -- FlatSQL WASM over canonical FlatBuffer records, with browser persistence adapters
 - **Data marketplace** -- storefront client for listing, purchasing, and reviewing space data
 - **EPM resolution** -- Entity Profile Manifest discovery and key exchange
 
 ## Browser UI Runtime
+
+### Develop the node dashboard
+
+With the local SDN backend running on `http://127.0.0.1:7173`, install the
+dependencies for this package and the `spaceaware-ui` checkout, then run from
+`sdn-js`:
+
+```bash
+npm run dev:dashboard
+```
+
+Open `http://127.0.0.1:5181`. This serves the standalone node dashboard and
+proxies its API, WebSocket and runtime-asset requests to the backend. Its peer
+globe uses Three.js; page and worker imports reject Orbital Console, OrbPro and
+terrain engines. The port is strict, so an occupied port produces an error
+instead of silently starting another server.
+
+To use another local backend, set `SDN_DASHBOARD_NODE_URL` to its loopback
+HTTP(S) origin. HTTPS backends must have a trusted certificate. The backend
+must serve the FlatSQL WASM and wallet assets used by the dashboard.
+
+### Embed the runtime
 
 Use the explicit UI subpath when embedding the SDN browser UI/runtime helpers in
 your own app.

@@ -27,7 +27,9 @@ func TestModulesLaneDecodesRuntimeSnapshotAsPMM(t *testing.T) {
 		}
 	})
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, ModulesPath, nil))
+	request := httptest.NewRequest(http.MethodGet, ModulesPath, nil)
+	request.Host = "node.example.test:8443"
+	h.ServeHTTP(rec, request)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET modules = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -42,6 +44,9 @@ func TestModulesLaneDecodesRuntimeSnapshotAsPMM(t *testing.T) {
 		t.Fatal("module lane frame is not size-prefixed $PMM")
 	}
 	manifest := sdspmm.GetSizePrefixedRootAsPMM(frames[0], 0)
+	if got := string(manifest.PROVIDER_DOMAIN()); got != "node.example.test" {
+		t.Fatalf("required PROVIDER_DOMAIN = %q, want request authority without port", got)
+	}
 	if manifest.MODULESLength() != 2 {
 		t.Fatalf("MODULES length = %d", manifest.MODULESLength())
 	}
@@ -69,5 +74,16 @@ func TestModulesLaneDecodesRuntimeSnapshotAsPMM(t *testing.T) {
 	}
 	if got := string(zeta.DESCRIPTION()); got != "runtime-state=error; startup failed" {
 		t.Fatalf("zeta runtime state = %q", got)
+	}
+}
+
+func TestModulesLaneRefusesMissingAuthority(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, ModulesPath, nil)
+	r.Host = ""
+	r.URL.Host = ""
+	w := httptest.NewRecorder()
+	NewModulesHandler(nil).ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing authority status = %d", w.Code)
 	}
 }
