@@ -209,6 +209,7 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	mux.HandleFunc("/api/v1/standards", h.withRL(h.handleStandards))
 	// Engine DDL per standard for browser-hosted engines — public GET.
 	mux.HandleFunc("/api/v1/standards/", h.withRL(h.handleStandardSchemaText))
+	mux.HandleFunc("POST /api/v1/data/remote/{peerID}", h.withRL(h.handleRemoteRecords))
 
 	// PubSub publish — requires standard auth when authHandler is present.
 	mux.HandleFunc("/api/v1/pubsub/publish", h.withRL(h.requireAuth(peers.Standard, h.handlePubSubPublish)))
