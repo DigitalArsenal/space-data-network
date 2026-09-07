@@ -115,24 +115,7 @@ func (r *Registry) markStatsDirty() {
 // structs at registry scale and buys the guarantee that NOTHING holds the
 // Registry lock while the store is being written.
 func (r *Registry) persistSnapshot() {
-	if r.persistence == nil {
-		return
-	}
-
-	r.mu.RLock()
-	peersCopy := make(map[peer.ID]*TrustedPeer, len(r.peers))
-	for id, tp := range r.peers {
-		peersCopy[id] = tp.clone()
-	}
-	groupsCopy := make(map[string]*PeerGroup, len(r.groups))
-	for name, g := range r.groups {
-		groupsCopy[name] = g.clone()
-	}
-	r.mu.RUnlock()
-
-	if err := r.persistence.Save(peersCopy, groupsCopy); err != nil {
-		log.Warnf("Failed to persist peer statistics: %v", err)
-	}
+	_ = r.save() // save reports failures and shares snapshot ordering with admin writes.
 }
 
 // StopStatsWriter shuts the background persister down. Exposed for tests and
