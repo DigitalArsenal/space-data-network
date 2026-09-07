@@ -44,11 +44,27 @@ func (h *CoreAPIHandler) handleRemoteRecords(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var request struct {
-		Op    string `json:"op"`
-		Limit int    `json:"limit"`
+		Op                string `json:"op"`
+		Limit             int    `json:"limit"`
+		PublicationLimit  int    `json:"publication_limit"`
+		PublicationOffset int    `json:"publication_offset"`
+		CID               string `json:"cid"`
+		ByteOffset        int64  `json:"byte_offset"`
+		ByteLength        int64  `json:"byte_length"`
 	}
-	if json.Unmarshal(body[4:], &request) != nil || request.Op != "read_chunk" || request.Limit < 1 || request.Limit > 1000 {
-		writeError(w, http.StatusBadRequest, "Only record pages of 1 to 1000 rows are allowed")
+	valid := json.Unmarshal(body[4:], &request) == nil
+	switch request.Op {
+	case "read_chunk":
+		valid = valid && request.Limit >= 1 && request.Limit <= 1000
+	case "list_published_shards":
+		valid = valid && request.PublicationLimit >= 1 && request.PublicationLimit <= 1000 && request.PublicationOffset >= 0 && request.PublicationOffset <= 16000
+	case "read_published_shard":
+		valid = valid && len(request.CID) >= 10 && len(request.CID) <= 128 && request.ByteOffset >= 0 && request.ByteLength >= 1 && request.ByteLength <= 4<<20
+	default:
+		valid = false
+	}
+	if !valid {
+		writeError(w, http.StatusBadRequest, "Only bounded record pages and published shard reads are allowed")
 		return
 	}
 	select {

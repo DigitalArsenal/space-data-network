@@ -63,7 +63,18 @@ func TestRemoteRecordsConnector(t *testing.T) {
 	if w.Header().Get("X-SDN-Remote-Peer") != remote.ID().String() {
 		t.Fatal("wrong remote identity")
 	}
-	for _, payload := range []string{`{"op":"ack_progress","limit":100}`, `{"op":"read_chunk","limit":1001}`, `{"op":"read_chunk","limit":0}`} {
+	for _, payload := range []string{
+		`{"op":"list_published_shards","publication_limit":1000,"publication_offset":0}`,
+		`{"op":"read_published_shard","cid":"bafyknownpublication","byte_offset":0,"byte_length":4194304}`,
+	} {
+		requestBody := frame(payload)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, r.URL.String(), bytes.NewReader(requestBody)))
+		if w.Code != http.StatusOK || !bytes.Equal(<-received, requestBody) {
+			t.Fatalf("read operation failed: %d", w.Code)
+		}
+	}
+	for _, payload := range []string{`{"op":"list_published_shards","publication_limit":0}`, `{"op":"read_published_shard","cid":"bafyknownpublication","byte_length":4194305}`, `{"op":"read_published_shard","cid":"bafyknownpublication","byte_length":0}`, `{"op":"ack_progress","limit":100}`, `{"op":"read_chunk","limit":1001}`, `{"op":"read_chunk","limit":0}`} {
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, r.URL.String(), bytes.NewReader(frame(payload))))
 		if w.Code != http.StatusBadRequest {
