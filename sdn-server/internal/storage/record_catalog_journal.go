@@ -564,7 +564,7 @@ func (j *recordCatalogJournal) replayFramesFrom(ctx context.Context, store *Flat
 		if err := ctx.Err(); err != nil {
 			return count, err
 		}
-		applied, next, err := j.replayWindow(store, off, size, knownProducerTables, rowIDs, chunked)
+		applied, next, err := j.replayWindow(ctx, store, off, size, knownProducerTables, rowIDs, chunked)
 		count += applied
 		if err != nil {
 			return count, err
@@ -650,6 +650,7 @@ func (j *recordCatalogJournal) scanRowIDsFrom(from, size int64, collect bool) (i
 }
 
 func (j *recordCatalogJournal) replayWindow(
+	ctx context.Context,
 	store *FlatSQLStore,
 	off, size int64,
 	knownProducerTables map[string]bool,
@@ -662,6 +663,18 @@ func (j *recordCatalogJournal) replayWindow(
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	var yield func()
+	if chunked {
+		yield = func() {
+			// Live writes take store.mu before appending to the journal. Release
+			// both locks, in reverse order, so they can finish between deletes.
+			j.mu.Unlock()
+			store.mu.Unlock()
+			time.Sleep(time.Millisecond)
+			store.mu.Lock()
+			j.mu.Lock()
+		}
+	}
 
 	var batch recordCatalogReplayBatch
 	tableOf := map[string]string{}
@@ -737,7 +750,7 @@ func (j *recordCatalogJournal) replayWindow(
 			if err := flush(); err != nil {
 				return applied, off, fmt.Errorf("record catalog frame at %d: %w", off, err)
 			}
-			if err := store.applyRecordCatalogEvent(event); err != nil {
+			if err := store.applyRecordCatalogEvent(ctx, event, yield); err != nil {
 				return applied, off, fmt.Errorf("record catalog frame at %d: %w", off, err)
 			}
 		}
@@ -2057,7 +2070,7 @@ func recordCatalogTagUpsertEvent(exec sqlQueryExecer, schemaName, cid string, ta
 	}, nil
 }
 
-func (s *FlatSQLStore) applyRecordCatalogEvent(event recordCatalogEvent) error {
+func (s *FlatSQLStore) applyRecordCatalogEvent(ctx context.Context, event recordCatalogEvent, yield func()) error {
 	switch event.Kind {
 	case recordCatalogEventRecordUpsert:
 		return s.applyRecordCatalogRecordUpsert(event)
@@ -2066,9 +2079,9 @@ func (s *FlatSQLStore) applyRecordCatalogEvent(event recordCatalogEvent) error {
 	case recordCatalogEventRecordDelete:
 		return s.applyRecordCatalogRecordDelete(event.SchemaName, event.CID)
 	case recordCatalogEventSourceKeep:
-		return s.applyRecordCatalogSourceKeep(event.SchemaName, event.Tags.ProviderID, event.Tags.SourceName, event.Tags.BatchID)
+		return s.applyRecordCatalogSourceKeep(ctx, event.SchemaName, event.Tags.ProviderID, event.Tags.SourceName, event.Tags.BatchID, yield)
 	case recordCatalogEventGCOlderThan:
-		return s.applyRecordCatalogGCOlderThan(event.SchemaName, event.CutoffUnix)
+		return s.applyRecordCatalogGCOlderThan(ctx, event.SchemaName, event.CutoffUnix, yield)
 	default:
 		return fmt.Errorf("unknown record catalog event kind %d", event.Kind)
 	}
@@ -2231,7 +2244,7 @@ func (s *FlatSQLStore) applyRecordCatalogRecordDelete(schemaName, cid string) er
 	return nil
 }
 
-func (s *FlatSQLStore) applyRecordCatalogSourceKeep(schemaName, providerID, sourceName, keepBatch string) error {
+func (s *FlatSQLStore) applyRecordCatalogSourceKeep(ctx context.Context, schemaName, providerID, sourceName, keepBatch string, yield func()) error {
 	if strings.TrimSpace(schemaName) == "" || strings.TrimSpace(providerID) == "" || strings.TrimSpace(sourceName) == "" || strings.TrimSpace(keepBatch) == "" {
 		return fmt.Errorf("source keep event requires schema, provider, source, and keep batch")
 	}
@@ -2252,21 +2265,18 @@ func (s *FlatSQLStore) applyRecordCatalogSourceKeep(schemaName, providerID, sour
 	`), schemaName, providerID, sourceName, keepBatch); err != nil {
 		return err
 	}
-	// Never let a historical batch-clear delete records that live traffic
-	// re-added mid-replay. Inert outside a replay.
-	if err := s.unshieldTempCIDs("temp_sdn_record_catalog_source_keep_cids", schemaName); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
-		DELETE FROM sdn_record_source_tags
-		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?
-	`), schemaName, providerID, sourceName, keepBatch); err != nil {
-		return err
-	}
-	return s.deleteOrphanedRecordCatalogRows(schemaName, tableName, `cid IN (SELECT cid FROM temp_sdn_record_catalog_source_keep_cids)`)
+	return s.replayRecordCatalogDeleteSet(ctx, "temp_sdn_record_catalog_source_keep_cids", schemaName, yield, func(where string, args []any) error {
+		if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
+			DELETE FROM sdn_record_source_tags
+			WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ? AND `+where),
+			append([]any{schemaName, providerID, sourceName, keepBatch}, args...)...); err != nil {
+			return err
+		}
+		return s.deleteOrphanedRecordCatalogRows(schemaName, tableName, where, args...)
+	})
 }
 
-func (s *FlatSQLStore) applyRecordCatalogGCOlderThan(schemaName string, cutoffUnix int64) error {
+func (s *FlatSQLStore) applyRecordCatalogGCOlderThan(ctx context.Context, schemaName string, cutoffUnix int64, yield func()) error {
 	tableName, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
 		return err
@@ -2287,28 +2297,71 @@ func (s *FlatSQLStore) applyRecordCatalogGCOlderThan(schemaName string, cutoffUn
 	`, readSource)), cutoffUnix); err != nil {
 		return err
 	}
-	// Never let a historical GC sweep delete records that live traffic re-added
-	// mid-replay. Inert outside a replay.
-	if err := s.unshieldTempCIDs("temp_sdn_record_catalog_gc_cids", schemaName); err != nil {
+	return s.replayRecordCatalogDeleteSet(ctx, "temp_sdn_record_catalog_gc_cids", schemaName, yield, func(where string, args []any) error {
+		if err := s.applyRecordCatalogRecordSetDelete(schemaName, tableName, where, args...); err != nil {
+			return err
+		}
+		_, err := s.db.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND `+where), append([]any{schemaName}, args...)...)
 		return err
+	})
+}
+
+// One journal frame can retire millions of records. Bound each deletion and
+// release the replay locks between batches instead of occupying the engine
+// until its execution deadline. The staged set preserves the event's original
+// scope; live writes are checked again immediately before every batch.
+const recordCatalogDeleteBatchSize = 256
+
+func (s *FlatSQLStore) replayRecordCatalogDeleteSet(ctx context.Context, stagedTable, schemaName string, yield func(), apply func(string, []any) error) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rows, err := s.db.Query(fmt.Sprintf(`SELECT cid FROM %s ORDER BY cid LIMIT %d`, stagedTable, recordCatalogDeleteBatchSize))
+		if err != nil {
+			return err
+		}
+		all := make([]any, 0, recordCatalogDeleteBatchSize)
+		unshielded := make([]any, 0, recordCatalogDeleteBatchSize)
+		for rows.Next() {
+			var cid string
+			if err := rows.Scan(&cid); err != nil {
+				rows.Close()
+				return err
+			}
+			all = append(all, cid)
+			if !s.hydrationShield.has(schemaName, cid) {
+				unshielded = append(unshielded, cid)
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if len(all) == 0 {
+			return nil
+		}
+		if len(unshielded) > 0 {
+			if err := apply(`cid IN (`+placeholders(len(unshielded), 1)+`)`, unshielded); err != nil {
+				return err
+			}
+		}
+		if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE cid IN (%s)`, stagedTable, placeholders(len(all), 1))), all...); err != nil {
+			return err
+		}
+		if yield != nil {
+			yield()
+		}
 	}
-	if err := s.applyRecordCatalogRecordSetDelete(schemaName, tableName, `cid IN (SELECT cid FROM temp_sdn_record_catalog_gc_cids)`); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
-		DELETE FROM sdn_record_source_tags
-		WHERE schema_name = ?
-		  AND cid IN (SELECT cid FROM temp_sdn_record_catalog_gc_cids)
-	`), schemaName); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (s *FlatSQLStore) deleteOrphanedRecordCatalogRows(schemaName, tableName, cidWhere string, args ...any) error {
-	where := cidWhere + ` AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`
-	args = append(args, schemaName)
-	return s.applyRecordCatalogRecordSetDelete(schemaName, tableName, where, args...)
+	// Bound the surviving-tag lookup to the same batch; materializing every tag
+	// in the schema for each small deletion would still stall a large replay.
+	where := cidWhere + ` AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ? AND ` + cidWhere + `)`
+	bound := append(append(append([]any{}, args...), schemaName), args...)
+	return s.applyRecordCatalogRecordSetDelete(schemaName, tableName, where, bound...)
 }
 
 func (s *FlatSQLStore) applyRecordCatalogRecordSetDelete(schemaName, tableName, where string, args ...any) error {
@@ -2317,7 +2370,17 @@ func (s *FlatSQLStore) applyRecordCatalogRecordSetDelete(schemaName, tableName, 
 			return err
 		}
 	}
-	s.deleteRoutedMirrorsWhere(s.db, tableName, where, args...)
+	producerTables, err := s.listProducerStandardTables()
+	if err != nil {
+		return err
+	}
+	for _, producer := range producerTables {
+		if producer.Standard == tableName {
+			if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE %s`, producer.TableName, where)), args...); err != nil {
+				return fmt.Errorf("replay delete from %s: %w", producer.TableName, err)
+			}
+		}
+	}
 	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM sdn_record_index WHERE schema_name = ? AND %s`, where)), append([]any{schemaName}, args...)...); err != nil {
 		return err
 	}
