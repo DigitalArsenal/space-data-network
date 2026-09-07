@@ -254,6 +254,7 @@ var identityExportCmd = &cobra.Command{
 var (
 	configPath           string
 	listenAddr           string
+	storageMaxSize       string
 	debug                bool
 	wasmPath             string
 	showMnemonic         bool
@@ -268,6 +269,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug logging")
 
 	daemonCmd.Flags().StringVarP(&listenAddr, "listen", "l", "", "override listen address")
+	daemonCmd.Flags().StringVar(&storageMaxSize, "storage-max-size", "", "override the record storage quota for this run (e.g. 64GiB or 50%)")
 	deriveXPubCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm (default: $HD_WALLET_WASM_PATH or ../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm)")
 	initCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm")
 	showIdentityCmd.Flags().BoolVar(&showMnemonic, "show-mnemonic", false, "display the decrypted mnemonic phrase (SENSITIVE)")
@@ -827,6 +829,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 	if err := validateAssetPinPreNodeConfig(cfg); err != nil {
 		return err
+	}
+	if override := strings.TrimSpace(storageMaxSize); override != "" {
+		cfg.Storage.MaxSize = override
+		if _, err := cfg.Storage.ResolveMaxSizeBytes(cfg.Storage.Path); err != nil {
+			return fmt.Errorf("invalid --storage-max-size: %w", err)
+		}
+		log.Infof("Record storage quota override: %s", override)
 	}
 
 	// Override listen address if specified
