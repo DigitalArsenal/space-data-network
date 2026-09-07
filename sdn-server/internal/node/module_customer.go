@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/license"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
 
 const customerModuleLimit = 64 << 20
@@ -32,6 +33,8 @@ type customerModule struct {
 	Protected         bool   `json:"protected"`
 	Status            string `json:"status"`
 	Published         bool   `json:"published"`
+	Installed         bool   `json:"installed"`
+	Downloaded        bool   `json:"downloaded"`
 	CustomerCID       string `json:"customerCid"`
 	CustomerSHA256    string `json:"customerSha256"`
 	CustomerPublicKey string `json:"customerPublicKey"`
@@ -84,12 +87,113 @@ func (n *Node) ModuleCustomerCatalog() (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	for i := range c.Modules {
+		m := &c.Modules[i]
+		if !m.Published {
+			continue
+		}
+		receipt := n.customerModuleReceipt(m)
+		m.Downloaded = receipt != nil
+		m.Installed = receipt != nil && receipt["status"] == "installed" && n.customerModuleRegistered(m)
+	}
 	return json.Marshal(c)
+}
+
+func (n *Node) customerModuleRegistered(m *customerModule) bool {
+	if n.plugins == nil {
+		return false
+	}
+	mod, ok := n.plugins.Get(m.PluginID).(*modulert.Module)
+	return ok && mod.Manifest() != nil && mod.Manifest().Version == m.Version && mod.ContentHash() == m.Artifact.CanonicalSHA256
+}
+
+func (n *Node) customerModuleReceipt(m *customerModule) map[string]any {
+	if _, err := decodeModuleHash(m.CustomerSHA256); err != nil {
+		return nil
+	}
+	raw, err := os.ReadFile(filepath.Join(n.config.Storage.Path, "customer-modules", m.CustomerSHA256, "receipt.json"))
+	if err != nil {
+		return nil
+	}
+	var receipt map[string]any
+	if json.Unmarshal(raw, &receipt) != nil || receipt["pluginId"] != m.PluginID || receipt["version"] != m.Version || receipt["sha256"] != m.Artifact.CanonicalSHA256 {
+		return nil
+	}
+	return receipt
+}
+
+// Loading uses the existing runtime's manifest, signature and capability gates.
+// The decrypted bytes are held only in memory; the persistent install is sealed.
+func (n *Node) installCustomerModule(m *customerModule, plain []byte) error {
+	if n.plugins == nil {
+		return errors.New("module runtime is unavailable")
+	}
+	if n.customerModuleRegistered(m) {
+		for _, entry := range n.plugins.RuntimeSnapshot().Modules {
+			if entry.ID == m.PluginID && entry.Status == "error" {
+				return n.plugins.RunRuntimeModuleAction(context.Background(), m.PluginID, "start")
+			}
+		}
+		return nil
+	}
+	if n.plugins.Get(m.PluginID) != nil {
+		return errors.New("a different version of this module is already installed")
+	}
+	nodeCtx, err := n.buildModuleNodeContextWithPolicy()
+	if err != nil {
+		return err
+	}
+	mod, err := modulert.NewModule(plain, n.buildCapRegistry(), nodeCtx)
+	if err != nil {
+		return fmt.Errorf("module installation failed: %w", err)
+	}
+	if mod.ID() != m.PluginID || mod.Manifest().Version != m.Version || mod.ContentHash() != m.Artifact.CanonicalSHA256 {
+		mod.Close()
+		return errors.New("module manifest does not match the selected publication")
+	}
+	if err := n.plugins.Register(mod); err != nil {
+		mod.Close()
+		return err
+	}
+	_, err = n.plugins.StartLateRegistered(mod)
+	return err
+}
+
+// Restore only explicit installations. A delivery cache is not an installation.
+func (n *Node) restoreCustomerModules() {
+	c, err := n.customerCatalog()
+	if err != nil {
+		return
+	}
+	for i := range c.Modules {
+		m := &c.Modules[i]
+		if !m.Published {
+			continue
+		}
+		receipt := n.customerModuleReceipt(m)
+		if receipt == nil || receipt["status"] != "installed" {
+			continue
+		}
+		encrypted, err := os.ReadFile(filepath.Join(n.config.Storage.Path, "customer-modules", m.CustomerSHA256, "module.wasm.enc"))
+		if err == nil {
+			var plain []byte
+			plain, err = verifyCustomerModule(encrypted, n.identity.EncryptionKey, m.CustomerSHA256, m.Artifact.CanonicalSHA256)
+			if err == nil {
+				err = n.installCustomerModule(m, plain)
+				clear(plain)
+			}
+		}
+		if err != nil {
+			n.recordModuleLoadFailure("customer-install", m.PluginID, err)
+		}
+	}
 }
 
 // The request selects a node-approved publication; it cannot supply a customer
 // identity, decryption key, CID, provider key, file path, price or expected hash.
 func (n *Node) TestPurchaseModule(ctx context.Context, request json.RawMessage) (json.RawMessage, error) {
+	n.customerModuleMu.Lock()
+	defer n.customerModuleMu.Unlock()
 	var req struct {
 		PluginID string `json:"pluginId"`
 		Version  string `json:"version"`
@@ -137,6 +241,9 @@ func (n *Node) TestPurchaseModule(ctx context.Context, request json.RawMessage) 
 		return nil, err
 	}
 	defer clear(plain)
+	if err := n.installCustomerModule(selected, plain); err != nil {
+		return nil, err
+	}
 	receipt := map[string]any{"pluginId": req.PluginID, "version": req.Version, "owner": req.Owner, "customerPeerId": c.CustomerPeerID, "providerPeerId": provider.PeerID, "testMode": true, "charged": false, "status": "downloaded", "encrypted": true, "delivery": "customer-sealed-test", "sha256": selected.Artifact.CanonicalSHA256, "bytes": len(plain), "cid": selected.CustomerCID, "cached": cached, "downloadedAt": time.Now().UTC().Format(time.RFC3339)}
 	result, err := json.Marshal(receipt)
 	if err != nil {
@@ -163,6 +270,28 @@ func (n *Node) TestPurchaseModule(ctx context.Context, request json.RawMessage) 
 				return nil, err
 			}
 		}
+	}
+	receipt["status"] = "installed"
+	receipt["installedAt"] = time.Now().UTC().Format(time.RFC3339)
+	result, err = json.Marshal(receipt)
+	if err != nil {
+		return nil, err
+	}
+	// Atomic replacement also upgrades an earlier download-only receipt.
+	tmp, err := os.CreateTemp(target, ".receipt-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(result); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmp.Name(), filepath.Join(target, "receipt.json")); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
