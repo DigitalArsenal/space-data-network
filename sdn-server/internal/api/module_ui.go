@@ -19,7 +19,7 @@ func (h *CoreAPIHandler) registerModuleApplicationRoutes(mux *http.ServeMux) {
 	}
 	for _, kind := range []string{"app", "artifact", "app/page"} {
 		kind := kind
-		mux.HandleFunc("/api/v1/modules/{moduleID}/"+kind, h.withRL(h.requireAdminStrict(func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/api/v1/modules/apps/{moduleID}/"+kind, h.withRL(h.requireAdminStrict(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			if r.Method != http.MethodGet {
