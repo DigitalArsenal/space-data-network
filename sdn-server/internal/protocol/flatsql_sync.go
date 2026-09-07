@@ -142,6 +142,11 @@ func (h *FlatSQLSyncHandler) handleReadChunk(writer io.Writer, req flatSQLSyncRe
 		return err
 	}
 	defer cleanup()
+	// A cold or partial catalog cannot produce accurate counts or cursors.
+	// Check the atomic readiness flag before any query can queue on storage.
+	if !activeStore.RecordCatalogHydrated() {
+		return fmt.Errorf("Remote record catalog is warming up. Retry shortly.")
+	}
 	if len(req.Records) > 0 {
 		streamReq := req.streamRequest()
 		chunkHash, records, err := datasync.ResolveStreamRecords(activeStore, streamReq)
