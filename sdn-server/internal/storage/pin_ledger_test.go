@@ -156,6 +156,52 @@ func TestFlatSQLStoreReportsLocalReplicaStatsFromRowsAndPinLedger(t *testing.T) 
 	}
 }
 
+func TestReplicaLedgerDiscoverySurvivesUnavailableRecordProjection(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	verifiedAt := time.Unix(1_778_436_120, 0).UTC()
+	if err := store.UpsertPinLedgerEntry(PinLedgerEntry{
+		CID: "bafkdiscoveryshard", SchemaName: "CAT.fbs",
+		ProviderID: "catalog-provider", SourceName: "catalog", BatchID: "edition-1",
+		ProviderPeerID: "16Uiu2HCatalogFixture", QueryProfile: DatasetPublicationQueryProfile,
+		Role: "shard", RowCount: 42, ByteCount: 8192,
+		Head: "verified-head", SnapshotID: "verified-snapshot", HighWaterMark: "verified-mark",
+		VerificationState: "verified", VerifiedAt: verifiedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// These derived record projections need not be available to advertise
+	// already-verified publication evidence during their reconstruction.
+	for _, table := range []string{"sdn_record_index", "sdn_record_source_summary", "sdn_record_source_tags"} {
+		if _, err := store.db.Exec("DROP TABLE " + table); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query := LocalReplicaStatsQuery{SchemaName: "CAT.fbs", ProviderID: "catalog-provider", SourceName: "catalog", QueryProfile: DatasetPublicationQueryProfile}
+	stats, err := store.LocalReplicaLedgerStats(query)
+	if err != nil || len(stats) != 1 {
+		t.Fatalf("ledger discovery: stats=%#v err=%v", stats, err)
+	}
+	got := stats[0]
+	if got.PinnedRows != 42 || got.PinnedBytes != 8192 || got.Head != "verified-head" ||
+		got.SnapshotID != "verified-snapshot" || got.HighWaterMark != "verified-mark" || !got.LastSyncedAt.Equal(verifiedAt) {
+		t.Fatalf("verified evidence changed: %#v", got)
+	}
+	if got.LocalRows != 0 || got.CachedBytes != 0 {
+		t.Fatalf("ledger evidence invented record-projection facts: %#v", got)
+	}
+	if _, err := store.LocalReplicaStats(query); err == nil {
+		t.Fatal("detailed replica reads must still report the unavailable record projection")
+	}
+}
+
 func TestFlatSQLStoreReportsLocalReplicaStatsFromDatasetShardPublications(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
