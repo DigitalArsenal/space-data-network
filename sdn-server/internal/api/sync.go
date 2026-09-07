@@ -315,12 +315,23 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		producerPK string
 	}
 	lanes := map[laneKey]*laneAgg{}
+	// Source provenance binds provider aliases to peers. An ambiguous alias
+	// cannot identify the publisher of a newly discovered dataset.
+	producerByProvider := map[string]*laneAgg{}
+	ambiguousProvider := map[string]bool{}
 	order := make([]laneKey, 0)
 	for _, src := range summary.Sources {
 		if src.Count <= 0 {
 			continue
 		}
 		key := newLaneKey(src.SchemaName, src.ProviderID, src.SourceName)
+		if producer := strings.TrimSpace(src.ProducerPeerID); producer != "" && key.providerID != "" {
+			if previous := producerByProvider[key.providerID]; previous != nil && previous.producer != producer {
+				ambiguousProvider[key.providerID] = true
+			} else {
+				producerByProvider[key.providerID] = &laneAgg{producer: producer, producerPK: strings.TrimSpace(src.ProducerPublicKey)}
+			}
+		}
 		if key.schema == "" || !laneMatches(key, filter) {
 			continue
 		}
@@ -365,6 +376,15 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		for i := range pubs {
 			pub := &pubs[i]
 			key := newLaneKey(pub.SchemaName, pub.ProviderID, pub.SourceName)
+			if !laneMatches(key, filter) {
+				continue
+			}
+			// A published lane must be discoverable before its first download.
+			// Its record count describes the publication, never local storage.
+			if lanes[key] == nil && pub.RecordCount > 0 && pub.ManifestCID != "" && pub.PNMCID != "" {
+				lanes[key] = &laneAgg{}
+				order = append(order, key)
+			}
 			cur := newestPub[key]
 			if cur == nil || pub.FeedSequence > cur.FeedSequence ||
 				(pub.FeedSequence == cur.FeedSequence && pub.PublishedAt.After(cur.PublishedAt)) {
@@ -407,6 +427,11 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			Retention:    retentionWordToOrdinal(defaultRetention),
 		}
 		lane.ProviderPeerID, lane.ProviderPublicKey = agg.producer, agg.producerPK
+		if lane.ProviderPeerID == "" && !ambiguousProvider[key.providerID] {
+			if producer := producerByProvider[key.providerID]; producer != nil {
+				lane.ProviderPeerID, lane.ProviderPublicKey = producer.producer, producer.producerPK
+			}
+		}
 
 		connectorKey := connectorLaneKey{providerID: key.providerID, sourceName: key.sourceName}
 		if c := connectorByLane[connectorKey]; c != nil {
@@ -448,7 +473,9 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		pub := newestPub[key]
 		if pub != nil {
 			lane.FeedHead, lane.LastPublicationCID, lane.LastPNMCID = pub.FeedHead, pub.ManifestCID, pub.PNMCID
-			lane.TotalRows = uint64(nonNegative(pub.RecordCount))
+			// The latest publication can be the final window of a larger feed.
+			// Include the preceding offset instead of counting only that shard.
+			lane.TotalRows = uint64(nonNegative(pub.Offset)) + uint64(nonNegative(pub.RecordCount))
 			if lane.TotalRows > lane.LocalRows {
 				lane.DeltaRows = lane.TotalRows - lane.LocalRows
 				lane.MissingRows = lane.DeltaRows

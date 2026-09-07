@@ -163,6 +163,40 @@ func TestSyncOneDSSPerLaneWithChannelAndOrigin(t *testing.T) {
 	}
 }
 
+func TestSyncDiscoversPublishedDatasetsBeforeDownload(t *testing.T) {
+	store := newConnectorsTestStore(t)
+	for _, schema := range []string{"CAT.fbs", "MPE.fbs"} {
+		if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+			SchemaName: schema, ProviderID: "space-data-network-02", SourceName: "catalog-publication",
+			BatchID: "batch-1", QueryProfile: storage.DatasetPublicationQueryProfile, Offset: 100, Limit: 100,
+			RecordCount: 50, ByteCount: 1000, ShardCID: "bafyshard", IndexCID: "bafyindex",
+			ManifestCID: "bafymanifest", PNMCID: "bafypnm", PublishedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deps := &AdminMountDeps{Store: store, Config: &config.Config{}, Channels: NewChannelHandler(store)}
+	mux, _ := newSyncTestMux(t, deps)
+	_, frames := syncFrames(t, mux, http.MethodGet, SyncPath, nil)
+	for _, schema := range []string{"CAT.fbs", "MPE.fbs"} {
+		lane := findDSS(t, frames, schema, "space-data-network-02", "catalog-publication")
+		if lane.LocalRows() != 0 || lane.TotalRows() != 150 || lane.MissingRows() != 150 || int8(lane.STATUS()) != DSSStateIdle {
+			t.Fatalf("%s: publication must be available without claiming local rows", schema)
+		}
+		if string(lane.ProviderPeerId()) != connectorsTestProducer || string(lane.LastPublicationCid()) != "bafymanifest" {
+			t.Fatalf("%s: missing provider or publication identity", schema)
+		}
+	}
+	_, filtered := syncFrames(t, mux, http.MethodGet, SyncPath+"?schema=CAT", nil)
+	if len(filtered) != 1 {
+		t.Fatalf("CAT filter returned %d lanes", len(filtered))
+	}
+	_, exact := syncFrames(t, mux, http.MethodGet, SyncPath+"/OMM/space-data-network-02/celestrak-gp", nil)
+	if len(exact) != 1 {
+		t.Fatalf("exact source returned %d lanes", len(exact))
+	}
+}
+
 func TestSyncSubscribeFlipsTheLaneAndPersistsTheList(t *testing.T) {
 	store := newConnectorsTestStore(t)
 	deps := &AdminMountDeps{Store: store, Config: &config.Config{}, NodePeerID: "16Uiu2HAmLocalNodeForSyncTest", Channels: NewChannelHandler(store)}
