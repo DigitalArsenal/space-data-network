@@ -1173,3 +1173,30 @@ func readFlatSQLSyncTestRawFrames(t *testing.T, reader io.Reader) [][]byte {
 		records = append(records, payload)
 	}
 }
+
+func TestFlatSQLSyncReadChunkReportsColdCatalogInsteadOfEmptyPage(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewFlatSQLStore(t.TempDir(), validator, storage.WithDeferredRecordCatalogReplay())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	handler := NewFlatSQLSyncHandler(store)
+	var output bytes.Buffer
+	request := flatSQLSyncRequest{Schema: "OMM.fbs", Limit: 100}
+	if err := handler.handleReadChunk(&output, request); err == nil || !strings.Contains(err.Error(), "warming up") {
+		t.Fatalf("cold catalog must be explicitly unavailable, got %v, %s", err, output.String())
+	}
+	if output.Len() != 0 {
+		t.Fatal("cold catalog produced a misleading partial page")
+	}
+	if _, err := store.HydrateRecordCatalog(); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.handleReadChunk(&output, request); err != nil {
+		t.Fatalf("hydrated catalog: %v", err)
+	}
+}
