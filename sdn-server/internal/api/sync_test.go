@@ -95,6 +95,19 @@ func TestSyncOneDSSPerLaneWithChannelAndOrigin(t *testing.T) {
 	if gp.LocalRows() != 2 {
 		t.Fatalf("OMM LOCAL_ROWS = %d, want 2", gp.LocalRows())
 	}
+	summary, err := store.DataSummary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var localBytes uint64
+	for _, source := range summary.Sources {
+		if source.SchemaName == "OMM.fbs" && source.ProviderID == "space-data-network-02" && source.SourceName == "celestrak-gp" {
+			localBytes += uint64(source.TotalBytes)
+		}
+	}
+	if localBytes == 0 || gp.CachedBytes() != localBytes {
+		t.Fatalf("OMM CACHED_BYTES = %d, want source summary %d", gp.CachedBytes(), localBytes)
+	}
 	wantChannel, err := channels.FormatChannelID(channels.ChannelIDInput{
 		SourceID:     datasetPublicationSourceID("space-data-network-02", "celestrak-gp"),
 		StandardCode: "OMM",

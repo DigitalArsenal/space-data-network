@@ -311,6 +311,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 
 	type laneAgg struct {
 		localRows  int64
+		localBytes int64
 		producer   string
 		producerPK string
 	}
@@ -342,6 +343,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			order = append(order, key)
 		}
 		agg.localRows += src.Count
+		agg.localBytes += src.TotalBytes
 		if agg.producer == "" && strings.TrimSpace(src.ProducerPeerID) != "" {
 			agg.producer = strings.TrimSpace(src.ProducerPeerID)
 			agg.producerPK = strings.TrimSpace(src.ProducerPublicKey)
@@ -419,6 +421,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		lane := SyncLane{
 			Key:          key,
 			LocalRows:    uint64(nonNegative64(agg.localRows)),
+			CachedBytes:  uint64(nonNegative64(agg.localBytes)),
 			QueryProfile: storage.DatasetPublicationQueryProfile,
 			SyncProtocol: datasync.ProtocolID,
 			Visibility:   "public",
@@ -482,9 +485,12 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			}
 		}
 
-		// Local replica facts, only where the ledger knows the lane.
+		// The source summary already supplies local rows and bytes. Reading
+		// raw counts and heads again per publication can scan the full archive
+		// many times and block discovery during recovery. Only pin/publication
+		// evidence is needed here; detailed replica routes still read records.
 		if pub != nil || len(pins) > 0 {
-			if stats, err := deps.Store.LocalReplicaStats(storage.LocalReplicaStatsQuery{
+			if stats, err := deps.Store.LocalReplicaLedgerStats(storage.LocalReplicaStatsQuery{
 				SchemaName: key.schema, ProviderID: key.providerID, SourceName: key.sourceName,
 			}); err == nil {
 				for i := range stats {
@@ -493,7 +499,6 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 						continue
 					}
 					lane.PinnedRows = uint64(nonNegative64(stat.PinnedRows))
-					lane.CachedBytes = uint64(nonNegative64(stat.CachedBytes))
 					lane.PinnedBytes = uint64(nonNegative64(stat.PinnedBytes))
 					lane.SnapshotID, lane.Head, lane.HighWaterMark = stat.SnapshotID, stat.Head, stat.HighWaterMark
 					if !stat.LastSyncedAt.IsZero() {
