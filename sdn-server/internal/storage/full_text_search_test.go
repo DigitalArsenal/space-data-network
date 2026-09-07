@@ -102,4 +102,21 @@ func TestFullTextIndexCoversColdRecordsAndResumes(t *testing.T) {
 	if indexed > 1 {
 		t.Fatalf("warm restart reindexed %d historical records", indexed)
 	}
+	// A changed schema/extractor identity must rebuild even when the previous
+	// checkpoint already covered every row.
+	if _, err := store.db.Exec(`UPDATE sdn_record_fts_progress SET fingerprint='previous-extractor'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE sdn_record_fts SET text='legacy-content'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = nil
+	store = newEngineRecordsStoreWithOptions(t, path, WithEngineGenericHotWindow(2))
+	waitFullTextIndex(t, store, "CAT.fbs")
+	if fullTextMatches(t, store, "optical") != 1 || fullTextMatches(t, store, "legacy") != 0 {
+		t.Fatal("extractor change reused previously indexed text")
+	}
 }
