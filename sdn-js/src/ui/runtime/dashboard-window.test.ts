@@ -212,7 +212,7 @@ async function until(predicate: () => boolean, attempts = 200): Promise<void> {
 }
 
 describe('dashboard window state helpers', () => {
-  it('keys a state by standard, lane and range only', () => {
+  it('keys a state by standard, lane, range and applied search', () => {
     expect(dashboardWindowStateKey({ schema: 'OMM' })).toBe('OMM||||');
     expect(dashboardWindowStateKey({ schema: 'omm.fbs', source: 'OMM@celestrak-gp' })).toBe('OMM|OMM@celestrak-gp|||');
     expect(dashboardWindowStateKey({
@@ -221,6 +221,7 @@ describe('dashboard window state helpers', () => {
       range: { column: 'epoch', from: '2026-05-01', to: '2026-05-31' },
     })).toBe('OMM||EPOCH|2026-05-01|2026-05-31');
     expect(dashboardWindowStateKey({ schema: 'OMM', range: { column: 'EPOCH', from: '', to: '' } })).toBe('OMM||||');
+    expect(dashboardWindowStateKey({ schema: 'OMM', search: ' optical ' })).toBe('OMM|||||search:"optical"');
   });
 
   it('resolves the source name the node is asked for', () => {
@@ -245,6 +246,29 @@ describe('dashboard window state helpers', () => {
 });
 
 describe('dashboard window runtime', () => {
+  it('requires search coverage and distinguishes indexing from an unrelated service failure', async () => {
+    const node = createFakeNode(buildCatalogue());
+    const store = await createOmmStore();
+    let failure: string | null = null;
+    const fetch: FetchLike = async (url, init) => {
+      if (!url.endsWith('/data/query') || failure === null) return node.fetch(url, init);
+      return new Response(JSON.stringify({ error: { message: failure, ...(failure === 'building' ? { code: 'SEARCH_INDEX_BUILDING' } : {}) } }), {
+        status: 503, headers: { 'content-type': 'application/json', 'retry-after': '2' },
+      });
+    };
+    const runtime = createDashboardWindow({ store, fetch, baseUrl: 'http://node.test' });
+    try {
+      const state = { schema: 'OMM', source: 'celestrak-gp', search: 'optical' };
+      const page = { page: 1, limit: 3 };
+      await expect(runtime.loadPage(state, page)).rejects.toThrow('search-capable update');
+      expect(node.queryRequests()[0].body).toMatchObject({ search: 'optical', source_name: 'celestrak-gp' });
+      failure = 'building';
+      await expect(runtime.loadPage(state, page)).rejects.toMatchObject({ code: 'SEARCH_INDEX_BUILDING', retryAfterMs: 2000 });
+      failure = 'offline';
+      await expect(runtime.loadPage(state, page)).rejects.toMatchObject({ message: 'offline', code: undefined });
+    } finally { store.destroy(); }
+  });
+
   it('registers a standard from the engine DDL lane and exposes the engine columns', async () => {
     const catalogue = buildCatalogue();
     const node = createFakeNode(catalogue);
@@ -314,6 +338,8 @@ describe('dashboard window runtime', () => {
       expect(result.records.map((r) => r.NORAD_CAT_ID)).toEqual([1003,1004,1005]);
       expect(requests).toHaveLength(2);
       expect(requests[1]).toMatchObject({op:'read_chunk',limit:3,source_name:'celestrak-gp',provider_id:'celestrak',cursor:'cursor-next',snapshot_id:'snapshot-a'});
+      await expect(runtime.loadPage({schema:'OMM', search:'optical', remote}, {page:1,limit:3})).rejects.toThrow('search-capable update');
+      expect(requests[2].search).toBe('optical');
       expect(node.requests.some((r) => r.url.includes('/data/query'))).toBe(false);
       await expect(runtime.loadWindow({schema:'OMM',remote})).rejects.toThrow('one page');
     } finally { store.destroy(); }
