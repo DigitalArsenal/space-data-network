@@ -322,7 +322,13 @@ func verifyCustomerModule(encrypted, key []byte, encryptedHash, plainHash string
 	if err != nil {
 		return nil, fmt.Errorf("this node cannot decrypt the customer module: %w", err)
 	}
-	actual = sha256.Sum256(plain)
+	portable, canonicalErr := modulert.CanonicalArtifactBytes(plain)
+	if canonicalErr != nil {
+		clear(plain)
+		return nil, fmt.Errorf("invalid decrypted module bundle: %w", canonicalErr)
+	}
+	actual = sha256.Sum256(portable)
+	clear(portable)
 	if !bytes.Equal(actual[:], expected) || len(plain) < 8 || !bytes.Equal(plain[:8], []byte{0, 97, 115, 109, 1, 0, 0, 0}) {
 		clear(plain)
 		return nil, errors.New("decrypted module differs from the verified artifact")

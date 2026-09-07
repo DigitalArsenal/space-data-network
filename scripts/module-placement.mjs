@@ -174,8 +174,8 @@ export async function stageArtifacts({ report, publicRoot, closedRoot, outputRoo
   if (!/^xpub[1-9A-HJ-NP-Za-km-z]+$/.test(customerXpub ?? '')) throw new Error('A customer public xpub is required; protected modules never default to open access');
   if (fs.existsSync(outputRoot)) throw new Error('Choose a new staging directory; existing staged keys must not be overwritten');
   const require = createRequire(path.join(publicRoot, 'package.json'));
-  const { protectModuleArtifact } = await import(pathToFileURL(require.resolve('space-data-module-sdk')));
-  const { stripPublicationRecordCollection, generateX25519Keypair } = await import(pathToFileURL(require.resolve('space-data-module-sdk/transport')));
+  const sdk = await import(pathToFileURL(require.resolve('space-data-module-sdk')));
+  const { generateX25519Keypair } = sdk;
   fs.mkdirSync(outputRoot, { recursive: true, mode: 0o700 });
   const staged = [];
   for (const [owner] of Object.entries(report.nodes)) {
@@ -184,18 +184,13 @@ export async function stageArtifacts({ report, publicRoot, closedRoot, outputRoo
     const plugins = [];
     for (const row of report.modules.filter(module => module.owner === owner && module.status === 'artifact-verified')) {
       const repoRoot = row.sourceRepository === 'space-data-network-closed-modules' ? closedRoot : publicRoot;
-      const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, row.manifestPath)));
       const disk = fs.readFileSync(path.join(repoRoot, row.artifact.path));
       if (hash(disk) !== row.artifact.sha256) throw new Error(`${row.pluginId}: artifact changed since verification`);
       const keypair = await generateX25519Keypair();
       try {
-        const artifact = await protectModuleArtifact({
-          manifest, wasmBytes: stripPublicationRecordCollection(disk),
-          recipientPublicKeyHex: Buffer.from(keypair.publicKey).toString('hex'),
-          singleFileBundle: true, artifactId: row.pluginId, programId: row.pluginId,
-        });
+        const artifact = await sealVerifiedArtifact(disk, row.artifact.canonicalSha256, keypair.publicKey, sdk);
         const stem = hash(`${row.pluginId}@${row.version}`).slice(0, 24);
-        const encrypted = Buffer.from(artifact.protectedArtifactBytes);
+        const encrypted = artifact;
         fs.writeFileSync(path.join(ownerRoot, `${stem}.wasm.enc`), encrypted, { mode: 0o600 });
         fs.writeFileSync(path.join(ownerRoot, `${stem}.key`), Buffer.from(keypair.privateKey).toString('hex'), { mode: 0o600 });
         plugins.push({ id: row.pluginId, version: row.version, required_scope: row.protected ? 'sdn:test-customer' : 'sdn:public', encrypted_path: `${stem}.wasm.enc`, key_path: `${stem}.key`, content_type: 'application/wasm+encrypted', grant_policy: row.protected ? 'allowlist' : 'open', allowed_xpubs: row.protected ? [customerXpub] : [], dependencies: (row.dependencies ?? []).map(dep => ({ plugin_id: dep.pluginId, min_version: dep.minVersion, max_version: dep.maxVersion })).filter(dep => dep.plugin_id) });
@@ -208,28 +203,36 @@ export async function stageArtifacts({ report, publicRoot, closedRoot, outputRoo
   return staged;
 }
 
+// Keep signed REC/MBL metadata and embedded APP bytes inside the ciphertext.
+// Repackaging a stripped payload loses the UI and can expose auxiliary entries.
+export async function sealVerifiedArtifact(disk, canonicalHash, publicKey, sdk) {
+  const canonical = await sdk.computeCanonicalModuleHash(disk);
+  if (canonical.hashHex !== canonicalHash) throw new Error('Module executable differs from the verified artifact');
+  const publication = sdk.extractPublicationRecordCollection(disk);
+  if (publication && hash(publication.payloadBytes) !== canonicalHash) throw new Error('Rebuild the signed bundle with a canonical executable before delivery');
+  const wrapped = await sdk.encryptBytesForRecipient({ plaintext: publication ? disk : canonical.canonicalWasmBytes,
+    recipientPublicKey: publicKey, context: 'space-data-module-sdk/package', rootType: 'WASM' });
+  return Buffer.from(wrapped.protectedBlobBase64, 'base64');
+}
+
 // No-charge checkout fixture: the provider hosts ciphertext sealed directly to
 // the customer's real node key. No recipient private key is generated/exported.
 export async function stageCustomerArtifacts({ report, publicRoot, closedRoot, outputRoot, customerPublicKey }) {
   if (!/^[0-9a-f]{64}$/i.test(customerPublicKey ?? '')) throw new Error('A 32-byte customer encryption public key is required');
   if (fs.existsSync(outputRoot)) throw new Error('Customer staging directory already exists');
   const require = createRequire(path.join(publicRoot, 'package.json'));
-  const { protectModuleArtifact } = await import(pathToFileURL(require.resolve('space-data-module-sdk')));
-  const { stripPublicationRecordCollection } = await import(pathToFileURL(require.resolve('space-data-module-sdk/transport')));
+  const sdk = await import(pathToFileURL(require.resolve('space-data-module-sdk')));
   fs.mkdirSync(outputRoot, { recursive: true, mode: 0o700 });
   const staged = [];
   for (const row of report.modules.filter(m => m.status === 'artifact-verified')) {
     const repo = row.sourceRepository === 'space-data-network-closed-modules' ? closedRoot : publicRoot;
     const disk = fs.readFileSync(path.join(repo, row.artifact.path));
     if (hash(disk) !== row.artifact.sha256) throw new Error(`${row.pluginId}: artifact changed after verification`);
-    const manifest = JSON.parse(fs.readFileSync(path.join(repo, row.manifestPath)));
-    const wrapped = await protectModuleArtifact({ manifest, wasmBytes: stripPublicationRecordCollection(disk), recipientPublicKeyHex: customerPublicKey, singleFileBundle: true, artifactId: row.pluginId, programId: row.pluginId });
-    if (wrapped.singleFileBundle.canonicalModuleHashHex !== row.artifact.canonicalSha256) throw new Error(`${row.pluginId}: packaged plaintext differs from the verified canonical artifact`);
-    const bytes = Buffer.from(wrapped.protectedArtifactBytes);
+    const bytes = await sealVerifiedArtifact(disk, row.artifact.canonicalSha256, Buffer.from(customerPublicKey, 'hex'), sdk);
     const owner = path.join(outputRoot, row.owner); fs.mkdirSync(owner, { recursive: true, mode: 0o700 });
     const file = `${hash(`${row.pluginId}@${row.version}`).slice(0, 24)}.wasm.enc`;
     fs.writeFileSync(path.join(owner, file), bytes, { mode: 0o600 });
-    staged.push({ pluginId: row.pluginId, version: row.version, owner: row.owner, file, customerPublicKey, sha256: hash(bytes), plaintextSha256: wrapped.singleFileBundle.canonicalModuleHashHex, bytes: bytes.length });
+    staged.push({ pluginId: row.pluginId, version: row.version, owner: row.owner, file, customerPublicKey, sha256: hash(bytes), plaintextSha256: row.artifact.canonicalSha256, bytes: bytes.length });
   }
   fs.writeFileSync(path.join(outputRoot, 'receipt.json'), JSON.stringify({ customerPeerId: report.customerPeerId, staged }, null, 2));
   return staged;

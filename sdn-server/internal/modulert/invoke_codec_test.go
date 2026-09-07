@@ -22,6 +22,8 @@ func TestEncodePluginInvokeRequestFramesEmitsPIV(t *testing.T) {
 			PortID:            "vectors",
 			Payload:           []byte{4, 5, 6, 7},
 			WireFormat:        payloadWireFormatAlignedBinary,
+			ByteLength:        4,
+			FixedStringLength: 2,
 			RequiredAlignment: 16,
 		},
 	})
@@ -74,6 +76,10 @@ func TestEncodePluginInvokeRequestFramesEmitsPIV(t *testing.T) {
 	}
 	if got := vectorFrame.Alignment(); got != 16 {
 		t.Fatalf("vectors ALIGNMENT = %d, want 16", got)
+	}
+	ref := vectorFrame.TypeRef(nil)
+	if ref == nil || ref.WireFormat() != piv.EnumValuespayloadWireFormat["ALIGNED_BINARY"] || ref.ByteLength() != 4 || ref.FixedStringLength() != 2 || ref.RequiredAlignment() != 16 {
+		t.Fatal("aligned frame lost the SDK type/layout descriptor")
 	}
 	if got := vectorFrame.Offset() % 16; got != 0 {
 		t.Fatalf("vectors OFFSET %% 16 = %d, want 0", got)
