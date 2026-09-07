@@ -62,6 +62,7 @@ func (h *CoreAPIHandler) handleRemoteRecords(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 	stream, err := h.h2pHost.NewStream(ctx, target, protocol.FlatSQLSyncProtocolID)
 	if err != nil {
+		log.Warnf("Remote records channel to %s: %v", target, err)
 		writeError(w, http.StatusBadGateway, "Could not connect to the remote node")
 		return
 	}
