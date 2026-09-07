@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,13 +36,12 @@ import (
 var bondAttestationWasm []byte
 
 // bondRefreshInterval is how often the attestation is refreshed. Free public
-// APIs (Blockstream, publicnode, Solana RPC, CoinGecko) are rate-limited;
-// hourly is polite and plenty for a bond figure.
-const bondRefreshInterval = time.Hour
+// APIs are rate-limited, so requests reuse results for fifteen minutes.
+const bondRefreshInterval = 15 * time.Minute
 
 // bondInitialDelay lets the node finish its boot replay before the first
 // outbound attestation runs.
-const bondInitialDelay = 90 * time.Second
+const bondInitialDelay = 5 * time.Second
 
 type bondAttestor struct {
 	mu         sync.RWMutex
@@ -50,7 +50,15 @@ type bondAttestor struct {
 	peerID     string
 	// onRefresh, when set, runs after every successful attestation (the
 	// trust rules engine takes it as an early-evaluation trigger).
-	onRefresh func()
+	onRefresh  func()
+	peerMu     sync.Mutex
+	peerCache  map[string]bondPeerResult
+	lookupPeer func(string) (bondAddresses, error)
+}
+
+type bondPeerResult struct {
+	body json.RawMessage
+	at   time.Time
 }
 
 // bondAddresses is the module's invoke payload: this node's own EPM-derived
@@ -152,8 +160,7 @@ func invokeBondAttestation(ctx context.Context, addrs bondAddresses) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	// A fresh module instance per run: the guest is single-shot, ~70 KB, and
-	// a persistent instance would hold wasm memory hostage between hours.
+	// A fresh module instance per run releases guest memory between refreshes.
 	capReg := modulert.NewCapabilityRegistry()
 	capReg.Register("http", caps.NewHTTPCapFactory())
 	mod, err := modulert.NewModule(bondAttestationWasm, capReg, bondModuleNodeContext())
@@ -173,6 +180,28 @@ func invokeBondAttestation(ctx context.Context, addrs bondAddresses) ([]byte, er
 
 // start runs the hourly attestation loop until ctx ends.
 func (b *bondAttestor) start(ctx context.Context, n *node.Node) {
+	b.peerID = n.PeerID().String()
+	b.lookupPeer = func(id string) (bondAddresses, error) {
+		addresses, err := directoryChainAddresses(n.Store())(id)
+		if err != nil {
+			return bondAddresses{}, err
+		}
+		var out bondAddresses
+		for _, a := range addresses {
+			switch strings.ToLower(a.ChainID) {
+			case "btc", "bitcoin":
+				out.Btc = a.Address
+			case "eth", "ethereum", "eip155:1":
+				out.Eth = a.Address
+			case "sol", "solana":
+				out.Sol = a.Address
+			}
+		}
+		if out == (bondAddresses{}) {
+			return out, fmt.Errorf("no linked addresses")
+		}
+		return out, nil
+	}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -200,6 +229,15 @@ func (b *bondAttestor) handleBond(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if id := r.URL.Query().Get("peer"); id != "" {
+		b.mu.RLock()
+		self := b.peerID
+		b.mu.RUnlock()
+		if id != self {
+			b.handlePeerBond(w, r, id)
+			return
+		}
+	}
 	b.mu.RLock()
 	latest := b.latest
 	at := b.attestedAt
@@ -219,4 +257,59 @@ func (b *bondAttestor) handleBond(w http.ResponseWriter, r *http.Request) {
 	body["attested_at"] = at.Format(time.RFC3339)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// Only directory-verified peers may initiate a lookup. Cache results and bound
+// concurrent upstream work; this is not an arbitrary address/URL proxy.
+func (b *bondAttestor) handlePeerBond(w http.ResponseWriter, r *http.Request, id string) {
+	if b.lookupPeer == nil || len(id) > 128 {
+		http.NotFound(w, r)
+		return
+	}
+	if !b.peerMu.TryLock() {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "lookup busy", 429)
+		return
+	}
+	defer b.peerMu.Unlock()
+	if cached, ok := b.peerCache[id]; ok && time.Since(cached.at) < bondRefreshInterval {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(cached.body)
+		return
+	}
+	addresses, err := b.lookupPeer(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	raw, err := invokeBondAttestation(r.Context(), addresses)
+	if err != nil {
+		http.Error(w, "balance lookup failed", 502)
+		return
+	}
+	var body map[string]any
+	if json.Unmarshal(raw, &body) != nil {
+		http.Error(w, "invalid balance response", 502)
+		return
+	}
+	stamp := time.Now().UTC()
+	body["node"] = id
+	body["attested_at"] = stamp.Format(time.RFC3339)
+	out, err := json.Marshal(body)
+	if err != nil {
+		http.Error(w, "invalid balance response", 502)
+		return
+	}
+	if b.peerCache == nil {
+		b.peerCache = make(map[string]bondPeerResult)
+	}
+	if len(b.peerCache) >= 128 {
+		for key := range b.peerCache {
+			delete(b.peerCache, key)
+			break
+		}
+	}
+	b.peerCache[id] = bondPeerResult{out, stamp}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(out)
 }
