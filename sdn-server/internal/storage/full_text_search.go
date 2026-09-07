@@ -13,9 +13,14 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 )
 
 var ErrSearchIndexBuilding = errors.New("Search index is building. Retry shortly.")
+
+// Persisted text depends on the extractor's actual implementation as well as
+// the schema. An engine upgrade must not reuse text derived by older code.
+var fullTextEngineHash = sha256.Sum256(flatsqlrt.EmbeddedWasm())
 
 // Search-box terms are literal text, never SQL or FTS operators. SQLite owns
 // Unicode tokenization; every whitespace-delimited term must match.
@@ -82,7 +87,7 @@ func (s *FlatSQLStore) CheckFullTextSearch(schema, search string) error {
 	if !ok {
 		return errors.New("Full-text search is unavailable for this schema")
 	}
-	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte("record-text-v1\n"+definition)))
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("record-text-v1\n%x\n%s", fullTextEngineHash, definition))))
 	s.fullTextMu.Lock()
 	defer s.fullTextMu.Unlock()
 	if s.fullTextClosing {
@@ -289,6 +294,7 @@ func (s *FlatSQLStore) buildFullTextIndex(ctx context.Context, state *fullTextIn
 				}
 				_, err = tx.Exec(flatsqldrv.WithoutJournal(`INSERT OR REPLACE INTO sdn_record_fts(rowid,text) SELECT rowid,flatsql_record_text(?,?) FROM sdn_record_index WHERE rowid=? AND schema_name=? AND cid=?`), state.table, record.data, record.rowID, state.schema, record.cid)
 				if err != nil {
+					err = fmt.Errorf("index %s record %s: %w", state.schema, record.cid, err)
 					break
 				}
 			}

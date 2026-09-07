@@ -1,6 +1,7 @@
 package flatsqlrt
 
 import (
+	"encoding/base64"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"strings"
 	"testing"
@@ -56,5 +57,34 @@ func TestFullTextRecordExtractionAndIndex(t *testing.T) {
 	result, err = db.Query(`SELECT rowid FROM record_fts WHERE record_fts MATCH 'optical'`)
 	if err != nil || len(result.Rows) != 0 {
 		t.Fatalf("stale search term: %#v %v", result, err)
+	}
+}
+
+func TestFullTextOrbitRecordWithNondefaultEnum(t *testing.T) {
+	rt := newTestRuntime(t)
+	db := newOMMDatabase(t, rt, "fts-typed-orbit")
+	b := flatbuffers.NewBuilder(128)
+	name := b.CreateString("searchable payload")
+	b.StartObject(40)
+	b.PrependUOffsetTSlot(3, name, 0)
+	// EPHEMERIS_TYPE has a byte layout; the engine's table-only schema
+	// does not declare the enum. It must never read this as a string offset.
+	b.PrependInt8Slot(25, 4, 0)
+	b.PrependUint32Slot(27, 12345, 0)
+	b.FinishWithFileIdentifier(b.EndObject(), []byte("$OMM"))
+	result, err := db.Query(`SELECT flatsql_record_text('OMM',?)`, b.FinishedBytes())
+	if err != nil || len(result.Rows) != 1 || result.Rows[0][0] != "searchable payload\n12345\n" {
+		t.Fatalf("nondefault orbital enum broke text extraction: %#v %v", result, err)
+	}
+	// Exact public CelesTrak NGRST record that stopped the live archive scan:
+	// bafkreigzy7naeyefjoo54wuxlwfgvs3dyzuglj5mel4sxvzv3473yzoubq.
+	const liveRecord = "SAAAACRPTU0AAD4AXAAAABQAEABYAFQAGAAAAAAAAAAAAAAATAAAAEQAPAA0ACwAJAAcAAAAAAAAAAAAAAAAAAcADABQAAgAPgAAAAAAAADnAwAAUAAAAFQAAABgAAAAeAAAAHE9CtejNHVASOF6FK6HWEAKaCJseDooQOxRuB6Fy0BA8WjjiLX4FD+yNCpPpFYwQFAAAAC0iAEAZAAAAHAAAAABAAAAVQAAAAkAAABDRUxFU1RSQUsAAAAUAAAAMjAyNi0wOC0zMFQxMTozNDozM1oAAAAABQAAAEVBUlRIAAAAFAAAADIwMjYtMDgtMzBUMTE6MzQ6MzNaAAAAAAkAAAAyMDI2LTE5OUEAAAAFAAAATkdSU1QAAAA="
+	data, err := base64.StdEncoding.DecodeString(liveRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = db.Query(`SELECT flatsql_record_text('OMM',?)`, data)
+	if err != nil || len(result.Rows) != 1 || !strings.Contains(result.Rows[0][0].(string), "NGRST\n") {
+		t.Fatalf("live orbital record remains unsearchable: %#v %v", result, err)
 	}
 }
