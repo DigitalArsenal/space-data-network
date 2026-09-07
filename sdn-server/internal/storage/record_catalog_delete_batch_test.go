@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,6 +88,53 @@ func TestCatalogQuotaWaitsForCompleteReplay(t *testing.T) {
 func catalogDeleteEvent(kind byte) recordCatalogEvent {
 	return recordCatalogEvent{Kind: kind, SchemaName: "OMM.fbs", CutoffUnix: 200,
 		Tags: SourceTags{ProviderID: "provider", SourceName: "catalog", BatchID: "new"}}
+}
+
+func TestCatalogDeleteBatchRollsBackEveryProjectionOnFailure(t *testing.T) {
+	for _, kind := range []byte{recordCatalogEventGCOlderThan, recordCatalogEventSourceKeep} {
+		t.Run(fmt.Sprint(kind), func(t *testing.T) {
+			store := seedCatalogDeleteBatch(t, 7)
+			// Fail after the routed rows (and, for SourceKeep, source tags)
+			// have been deleted. One failed statement must not strand partial
+			// metadata, and dropping the fault must allow a complete retry.
+			if _, err := store.db.Exec(`ALTER TABLE sdn_record_index RENAME TO saved_record_index`); err != nil {
+				t.Fatal(err)
+			}
+			// A read-only view preserves staging reads but rejects the later
+			// index delete without relying on trigger support in the engine.
+			if _, err := store.db.Exec(`CREATE VIEW sdn_record_index AS SELECT * FROM saved_record_index`); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.applyRecordCatalogEvent(context.Background(), catalogDeleteEvent(kind), nil); err == nil || !strings.Contains(err.Error(), "cannot modify sdn_record_index because it is a view") {
+				t.Fatalf("expected the injected index deletion failure, got %v", err)
+			}
+			source, err := store.recordReadSource("OMM.fbs")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, table := range []string{"sdn_record_index", "sdn_record_source_tags", source} {
+				var count int
+				if err := store.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil || count != 7 {
+					t.Fatalf("failed batch changed %s: count=%d err=%v", table, count, err)
+				}
+			}
+			if _, err := store.db.Exec(`DROP VIEW sdn_record_index`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.Exec(`ALTER TABLE saved_record_index RENAME TO sdn_record_index`); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.applyRecordCatalogEvent(context.Background(), catalogDeleteEvent(kind), nil); err != nil {
+				t.Fatal(err)
+			}
+			for _, table := range []string{"sdn_record_index", "sdn_record_source_tags", source} {
+				var count int
+				if err := store.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("retry did not finish %s: count=%d err=%v", table, count, err)
+				}
+			}
+		})
+	}
 }
 
 func TestCatalogDeleteBatchesPreserveLateLiveWrites(t *testing.T) {

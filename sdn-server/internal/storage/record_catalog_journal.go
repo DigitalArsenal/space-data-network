@@ -2265,14 +2265,14 @@ func (s *FlatSQLStore) applyRecordCatalogSourceKeep(ctx context.Context, schemaN
 	`), schemaName, providerID, sourceName, keepBatch); err != nil {
 		return err
 	}
-	return s.replayRecordCatalogDeleteSet(ctx, "temp_sdn_record_catalog_source_keep_cids", schemaName, yield, func(where string, args []any) error {
-		if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
+	return s.replayRecordCatalogDeleteSet(ctx, "temp_sdn_record_catalog_source_keep_cids", schemaName, tableName, yield, func(exec sqlExecer, tables []string, where string, args []any) error {
+		if _, err := exec.Exec(flatsqldrv.WithoutJournal(`
 			DELETE FROM sdn_record_source_tags
 			WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ? AND `+where),
 			append([]any{schemaName, providerID, sourceName, keepBatch}, args...)...); err != nil {
 			return err
 		}
-		return s.deleteOrphanedRecordCatalogRows(schemaName, tableName, where, args...)
+		return deleteOrphanedRecordCatalogRows(exec, schemaName, tables, where, args...)
 	})
 }
 
@@ -2297,11 +2297,11 @@ func (s *FlatSQLStore) applyRecordCatalogGCOlderThan(ctx context.Context, schema
 	`, readSource)), cutoffUnix); err != nil {
 		return err
 	}
-	return s.replayRecordCatalogDeleteSet(ctx, "temp_sdn_record_catalog_gc_cids", schemaName, yield, func(where string, args []any) error {
-		if err := s.applyRecordCatalogRecordSetDelete(schemaName, tableName, where, args...); err != nil {
+	return s.replayRecordCatalogDeleteSet(ctx, "temp_sdn_record_catalog_gc_cids", schemaName, tableName, yield, func(exec sqlExecer, tables []string, where string, args []any) error {
+		if err := applyRecordCatalogRecordSetDelete(exec, schemaName, tables, where, args...); err != nil {
 			return err
 		}
-		_, err := s.db.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND `+where), append([]any{schemaName}, args...)...)
+		_, err := exec.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND `+where), append([]any{schemaName}, args...)...)
 		return err
 	})
 }
@@ -2312,7 +2312,7 @@ func (s *FlatSQLStore) applyRecordCatalogGCOlderThan(ctx context.Context, schema
 // scope; live writes are checked again immediately before every batch.
 const recordCatalogDeleteBatchSize = 256
 
-func (s *FlatSQLStore) replayRecordCatalogDeleteSet(ctx context.Context, stagedTable, schemaName string, yield func(), apply func(string, []any) error) error {
+func (s *FlatSQLStore) replayRecordCatalogDeleteSet(ctx context.Context, stagedTable, schemaName, tableName string, yield func(), apply func(sqlExecer, []string, string, []any) error) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -2342,12 +2342,30 @@ func (s *FlatSQLStore) replayRecordCatalogDeleteSet(ctx context.Context, stagedT
 		if len(all) == 0 {
 			return nil
 		}
+		// Resolve tables before taking the transaction's database connection.
+		// Re-read each batch because live writers can create producer tables
+		// while the replay locks are yielded.
+		tables, err := s.recordCatalogDeleteTables(tableName)
+		if err != nil {
+			return err
+		}
+		// One durable commit per bounded batch, not a disk flush per table.
+		// A failed routed delete must also roll back any source-tag changes.
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
 		if len(unshielded) > 0 {
-			if err := apply(`cid IN (`+placeholders(len(unshielded), 1)+`)`, unshielded); err != nil {
+			if err := apply(tx, tables, `cid IN (`+placeholders(len(unshielded), 1)+`)`, unshielded); err != nil {
+				_ = tx.Rollback()
 				return err
 			}
 		}
-		if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE cid IN (%s)`, stagedTable, placeholders(len(all), 1))), all...); err != nil {
+		if _, err := tx.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE cid IN (%s)`, stagedTable, placeholders(len(all), 1))), all...); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
 			return err
 		}
 		if yield != nil {
@@ -2356,32 +2374,42 @@ func (s *FlatSQLStore) replayRecordCatalogDeleteSet(ctx context.Context, stagedT
 	}
 }
 
-func (s *FlatSQLStore) deleteOrphanedRecordCatalogRows(schemaName, tableName, cidWhere string, args ...any) error {
+func deleteOrphanedRecordCatalogRows(exec sqlExecer, schemaName string, tables []string, cidWhere string, args ...any) error {
 	// Bound the surviving-tag lookup to the same batch; materializing every tag
 	// in the schema for each small deletion would still stall a large replay.
 	where := cidWhere + ` AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ? AND ` + cidWhere + `)`
 	bound := append(append(append([]any{}, args...), schemaName), args...)
-	return s.applyRecordCatalogRecordSetDelete(schemaName, tableName, where, bound...)
+	return applyRecordCatalogRecordSetDelete(exec, schemaName, tables, where, bound...)
 }
 
-func (s *FlatSQLStore) applyRecordCatalogRecordSetDelete(schemaName, tableName, where string, args ...any) error {
-	if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
-		if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE %s`, tableName, where)), args...); err != nil {
-			return err
-		}
+func (s *FlatSQLStore) recordCatalogDeleteTables(tableName string) ([]string, error) {
+	legacyExists, err := s.tableExists(tableName)
+	if err != nil {
+		return nil, err
+	}
+	var tables []string
+	if legacyExists {
+		tables = append(tables, tableName)
 	}
 	producerTables, err := s.listProducerStandardTables()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, producer := range producerTables {
 		if producer.Standard == tableName {
-			if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE %s`, producer.TableName, where)), args...); err != nil {
-				return fmt.Errorf("replay delete from %s: %w", producer.TableName, err)
-			}
+			tables = append(tables, producer.TableName)
 		}
 	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM sdn_record_index WHERE schema_name = ? AND %s`, where)), append([]any{schemaName}, args...)...); err != nil {
+	return tables, nil
+}
+
+func applyRecordCatalogRecordSetDelete(exec sqlExecer, schemaName string, tables []string, where string, args ...any) error {
+	for _, table := range tables {
+		if _, err := exec.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE %s`, table, where)), args...); err != nil {
+			return fmt.Errorf("replay delete from %s: %w", table, err)
+		}
+	}
+	if _, err := exec.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM sdn_record_index WHERE schema_name = ? AND %s`, where)), append([]any{schemaName}, args...)...); err != nil {
 		return err
 	}
 	return nil
