@@ -199,22 +199,15 @@ type engineRecordState struct {
 	Warm bool
 }
 
-// engineReindexStreamCeiling bounds the record stream flatsql_reindex_all may
-// be asked to re-derive at boot. The engine re-derives ROW BY ROW inside one
-// uninterruptible guest call (flatsql-bulk-write-transactions): on the dev
-// store a populated database sent through it hit the 5-minute per-call
-// budget, poisoned the engine and cost a discard + cold rebuild anyway. Below
-// the ceiling a re-index is seconds; above it the database is discarded up
-// front and rebuilt from the journal and stream files, which is what the
-// poison path did after wasting five minutes.
+// A populated control database without a durable record stream cannot safely
+// resume. This threshold still bounds that legacy recovery case. Existing
+// streams use incremental engine recovery regardless of their byte size.
 const engineReindexStreamCeiling = 32 << 20
 
 // openEngineRecordState opens the engine's persisted record index for a
 // disk-backed database at dbPath. A usable index is opened as-is (warm). A
-// recoverable state error is answered by ReindexAll ONLY when the engine's
-// record stream is small enough to re-derive inside the per-call budget;
-// otherwise the caller discards the database (errEngineStateUnrecoverable).
-// Only a filesystem refusal is fatal.
+// recoverable state error is answered by bounded engine steps, retaining the
+// control tables and journal checkpoints across engine/schema upgrades.
 func openEngineRecordState(db *flatsqlrt.Database, dbPath string) (engineRecordState, error) {
 	n, err := db.OpenState()
 	if err == nil {
@@ -238,13 +231,30 @@ func openEngineRecordState(db *flatsqlrt.Database, dbPath string) (engineRecordS
 		// re-deriving them row by row is the five-minute trap. Discard.
 		return engineRecordState{}, fmt.Errorf("%w: populated control database (%d MiB) has no flushed engine record stream", errEngineStateUnrecoverable, dbBytes>>20)
 	}
-	if streamBytes > engineReindexStreamCeiling {
-		return engineRecordState{}, fmt.Errorf("%w: %v and the record stream is %d MiB (re-index ceiling %d MiB)", errEngineStateUnrecoverable, err, streamBytes>>20, engineReindexStreamCeiling>>20)
-	}
 	if !errors.Is(err, flatsqlrt.ErrStateAbsent) {
 		log.Warnf("FlatSQL engine record state unusable (%v) — re-deriving the index from the engine's on-disk record stream (%d bytes)", err, streamBytes)
 	}
-	n, err = db.ReindexAll()
+	if streamBytes > 0 {
+		started := time.Now()
+		for step := 1; ; step++ {
+			done, stepErr := db.ReindexStep(256)
+			if stepErr != nil {
+				return engineRecordState{}, fmt.Errorf("incremental engine record recovery: %w", stepErr)
+			}
+			if done {
+				break
+			}
+			if step%64 == 0 {
+				log.Infof("FlatSQL engine record recovery: %d bounded steps in %s", step, time.Since(started).Round(time.Millisecond))
+			}
+		}
+		// OpenState restores records into an empty runtime. Reopening on this
+		// populated handle would add them twice, so the caller must use a new
+		// runtime to validate the committed index and obtain its exact count.
+		return engineRecordState{}, errEngineStateReindexed
+	} else {
+		n, err = db.ReindexAll()
+	}
 	if err != nil {
 		return engineRecordState{}, fmt.Errorf("reindex engine record state: %w", err)
 	}
@@ -255,6 +265,10 @@ func openEngineRecordState(db *flatsqlrt.Database, dbPath string) (engineRecordS
 // try to repair in place; openControlDatabase answers it by discarding the
 // database and re-deriving from the journal and stream files.
 var errEngineStateUnrecoverable = errors.New("engine record state unrecoverable in place")
+
+// Incremental recovery committed the new index without touching control rows.
+// Reopen the runtime, retaining every file and journal checkpoint.
+var errEngineStateReindexed = errors.New("engine record state reindexed; reopen runtime")
 
 // bootMark is the persisted resume point read out of a warm control database.
 // Offset/Digest name the record-catalog journal; AuxOffset/AuxDigest name the
@@ -553,6 +567,10 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 
 		lastErr = err
 		engine.Close() // discards a poisoned runtime AND releases its file handles
+		if errors.Is(err, errEngineStateReindexed) {
+			log.Infof("FlatSQL engine record index rebuilt; reopening with control tables and journal checkpoints retained")
+			continue
+		}
 		if errors.Is(err, errEnginePrepareFailed) {
 			// The FILE is fine; the host-side registration is not. Fail the
 			// start and leave the control database untouched — exactly the
