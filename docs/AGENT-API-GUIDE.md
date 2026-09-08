@@ -6,6 +6,12 @@ Commands below ran against a live local daemon at `http://localhost:7173`
 Local nodes listen on `http://127.0.0.1:7173` by default; `spacedatanetwork status`
 prints the admin URL, `spacedatanetwork open` opens it.
 
+Public immutable downloads can also use an enabled publisher's full peer-ID
+subdomain. See [Peer-ID URLs and the public cache](peer-id-cdn.md) for the working
+CelesTrak example, CID verification, native discovery, and the distinction
+between cached artifacts and this node's paginated query API. The in-app API
+panel and `/api/v1/docs` include the same public example.
+
 ---
 
 ## 1. Verify a node is alive and read data anonymously

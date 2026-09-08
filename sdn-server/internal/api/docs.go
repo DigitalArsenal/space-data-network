@@ -303,7 +303,16 @@ func GenerateOpenAPI(opts DocsHandlerOptions) ([]byte, error) {
 				"IDL / JSON Schema capitalization EXACTLY (NORAD_CAT_ID, MEAN_MOTION, FILE_ID, " +
 				"CID, DN, …) — never lowercased. API-synthesized envelope fields that are not " +
 				"schema fields (signature_verified, attribution, peer_id, …) stay lowercase " +
-				"snake_case: the case distinction separates schema data from API metadata.",
+				"snake_case: the case distinction separates schema data from API metadata.\n\n" +
+				"Peer-ID CDN: explicitly enabled publishers use a lossless lowercase base36 " +
+				"CIDv1 libp2p-key encoding of their full peer ID as a spacedatanetwork.org subdomain. " +
+				"Cloudflare caches admitted public artifacts at /ipfs/{cid}, which may redirect " +
+				"to /artifacts/{cid}.bin. Follow redirects; verify the content CID and signed publication. " +
+				"Discovery alone does not enable a public route. Queries, search, subscriptions and " +
+				"private records use this node or native p2p; the CDN is not an API server or an " +
+				"advertised libp2p WebSocket address. No Workers or Tunnel are required.\n\n" +
+				"[Public CelesTrak CAT snapshot example](https://kzwfwjn5ji4pupxkysaraxurxv9mo7tb99iu3r2gna6hexozftkooiymx1qly67.spacedatanetwork.org/ipfs/bafybeiaa6fk4gi775ou2l366jgo3jxjl7ib33urp556lownphi4lyblrnu). " +
+				"This immutable example is a separately deployed replica, not the current query's results.",
 		},
 		"servers": []openAPIObj{{"url": "/"}},
 		"tags":    tags,
