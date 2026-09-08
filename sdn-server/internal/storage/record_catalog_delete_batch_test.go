@@ -90,6 +90,16 @@ func catalogDeleteEvent(kind byte) recordCatalogEvent {
 		Tags: SourceTags{ProviderID: "provider", SourceName: "catalog", BatchID: "new"}}
 }
 
+func TestCatalogQuotaAfterCloseReturnsError(t *testing.T) {
+	store := seedCatalogDeleteBatch(t, 1)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := store.GarbageCollectToQuota(1); deleted != 0 || !errors.Is(err, ErrStoreClosed) {
+		t.Fatalf("closed store quota: deleted=%d err=%v", deleted, err)
+	}
+}
+
 func TestCatalogDeleteBatchRollsBackEveryProjectionOnFailure(t *testing.T) {
 	for _, kind := range []byte{recordCatalogEventGCOlderThan, recordCatalogEventSourceKeep} {
 		t.Run(fmt.Sprint(kind), func(t *testing.T) {

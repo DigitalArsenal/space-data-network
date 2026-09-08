@@ -4622,6 +4622,10 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 		return 0, err
 	}
 	defer s.lockWrite("GarbageCollectToQuota")()
+	// Queued publication quota work may acquire this lock after Close.
+	if s.db == nil {
+		return 0, ErrStoreClosed
+	}
 	// A partial replay cannot establish global age or occupancy. Evicting from
 	// it destroys whichever records happened to replay first and appends those
 	// premature decisions to the durable journal. Resume normal enforcement
