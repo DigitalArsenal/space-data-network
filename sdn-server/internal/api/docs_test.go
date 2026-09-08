@@ -17,6 +17,27 @@ type fakeFlowDocSource struct {
 	doc       *flowrt.FlowAPIDoc
 }
 
+func TestDocsDescribePeerCDNWithoutAdvertisingItAsAPIServer(t *testing.T) {
+	data, err := GenerateOpenAPI(DocsHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	description := doc["info"].(map[string]interface{})["description"].(string)
+	for _, text := range []string{"CIDv1 libp2p-key", "Discovery alone does not enable", "Public CelesTrak CAT snapshot example", "kzwfwjn5ji4pupxkysaraxurxv9mo7tb99iu3r2gna6hexozftkooiymx1qly67.spacedatanetwork.org/ipfs/", "private records use this node"} {
+		if !strings.Contains(description, text) {
+			t.Fatalf("missing peer CDN explanation: %s", text)
+		}
+	}
+	servers := doc["servers"].([]interface{})
+	if len(servers) != 1 || servers[0].(map[string]interface{})["url"] != "/" {
+		t.Fatal("the public artifact replica must not become a query API server")
+	}
+}
+
 func (f *fakeFlowDocSource) ProgramID() string          { return f.programID }
 func (f *fakeFlowDocSource) FlowVersion() string        { return f.version }
 func (f *fakeFlowDocSource) MountPath() string          { return f.mountPath }
