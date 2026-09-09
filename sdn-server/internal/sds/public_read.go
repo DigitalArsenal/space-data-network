@@ -35,6 +35,8 @@ var publicReadSchemas = map[string]string{
 	"CAT.fbs": "catalogue entries (SATCAT lane) — public object metadata",
 	"MPE.fbs": "mean parameter ephemerides derived from the public catalogue",
 	"SPW.fbs": "space weather indices — a public feed by definition",
+	"WXF.fbs": "published weather forecast fields — attribution and source licence travel with each record and batch",
+	"NCD.fbs": "published native-container descriptors — source byte length, content hash and container metadata make public resources verifiable",
 
 	// RF spectrum (rf-data-suite-program). SatNOGS DB is CC-BY-SA-4.0: the
 	// licence obliges attribution and share-alike, both of which travel in

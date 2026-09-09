@@ -187,13 +187,13 @@ func TestEmbeddedSetIsTheWholePinnedStandardSet(t *testing.T) {
 		}
 		standards++
 	}
-	if standards != 230 {
-		t.Errorf("embedded SDS standards = %d, want 230 (spacedatastandards.org v1.207.0)", standards)
+	if standards != expectedStandardSchemaCount {
+		t.Errorf("embedded SDS standards = %d, want %d", standards, expectedStandardSchemaCount)
 	}
 	if internal != expectedInternalSchemaCount {
 		t.Errorf("embedded internal schemas = %d, want %d", internal, expectedInternalSchemaCount)
 	}
-	for _, name := range []string{"VCF.fbs", "TXS.fbs", "STX.fbs"} {
+	for _, name := range []string{"VCF.fbs", "TXS.fbs", "STX.fbs", "WXF.fbs", "NCD.fbs"} {
 		if !seen[name] {
 			t.Errorf("%s is absent: the v1.197.0/v1.198.0 bumps exist to embed it", name)
 		}
