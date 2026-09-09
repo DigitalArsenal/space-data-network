@@ -3,11 +3,11 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "6b76901ea9fad2e1fe8574261fe0f2e25c5fa666",
+  "design_commit": "d102ae10525d834829681f177e5edddd23003445",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 11345035,
-    "sha256": "dc22aea296a0e7b3f30465fe087928412e026badecbe2afbaf3b9dbd5edb9d2e"
+    "bytes": 11351814,
+    "sha256": "8c12bffa87ded283b4c91119e76bf3acab485ea895a43fb153101409bcb7a4b6"
   },
   "artifact_refresh": {
     "date": "2026-09-09",
@@ -17,7 +17,7 @@
       "bytes": 11346297,
       "sha256": "34eefc1d38f13c7641423bf81f9a1a4c41ca2ec9ebf7ae8066e3caff4a454dd1"
     },
-    "why": "Keep missing record dates empty and compile the viewer against released FlatSQL 2.0.3, matching both embedded engines."
+    "why": "Render published peer datasets, bounded verified module catalogs and installed module pin/open controls."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
@@ -37,12 +37,12 @@
   },
   "build_provenance": {
     "consumerSource": "66db376c53bfd2b27d202638f2ad8f4429680635",
-    "uiSource": "6b76901ea9fad2e1fe8574261fe0f2e25c5fa666",
+    "uiSource": "d102ae10525d834829681f177e5edddd23003445",
     "hdWalletExternalSource": "3b92cb0d695ffc4102570ecc3aca4cf02e514117",
     "uiSourceMount": "export the exact UI commit at sdn-js/spaceaware-ui in a temporary tracked-source build tree",
     "command": "SPACEAWARE_UI_HD_WALLET_WASM=<verified wallet checkout> node dashboard/build-dashboard.mjs",
     "gitlinkCoordination": "UI gitlink is held by saw-beta-entity-wizard-catalog-20260908; no foreign gitlink edit. This compatibility artifact records its actual source independently of the older consumer pin. Final integrated release must reconcile that pin.",
-    "sourceVerification": "All 245 dashboard, client and build-helper files compared to exact UI commit before the build; only the two epoch files differed from the prior build snapshot.",
+    "sourceVerification": "Build from the private task UI snapshot at the recorded commit, with published FlatSQL 2.0.3.",
     "flatsqlVersion": "2.0.3"
   }
 }
