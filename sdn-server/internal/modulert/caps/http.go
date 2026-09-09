@@ -57,6 +57,7 @@ func observeFetch(url string, status int, bytes, durationMs int64, errMsg string
 //	    "timeout_ms": 30000,
 //	    "max_bytes": 16777216,           // optional response-size clamp
 //	    "follow_redirects": false,      // optional; defaults to true
+//	    "response_encoding": "binary", // optional; raw hostcall segment
 //	}
 //	→ {"status": 200, "headers": {...}, "header_values": {"Set-Cookie": ["..."]}, "body": "...", "body_encoding": "utf8|base64"}
 //
@@ -83,14 +84,15 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	}
 
 	var req struct {
-		Method          string            `json:"method"`
-		URL             string            `json:"url"`
-		Headers         map[string]string `json:"headers"`
-		Body            string            `json:"body"`
-		BodyEncoding    string            `json:"body_encoding"`
-		TimeoutMs       int               `json:"timeout_ms"`
-		MaxBytes        int64             `json:"max_bytes"`
-		FollowRedirects *bool             `json:"follow_redirects"`
+		Method           string            `json:"method"`
+		URL              string            `json:"url"`
+		Headers          map[string]string `json:"headers"`
+		Body             string            `json:"body"`
+		BodyEncoding     string            `json:"body_encoding"`
+		ResponseEncoding string            `json:"response_encoding"`
+		TimeoutMs        int               `json:"timeout_ms"`
+		MaxBytes         int64             `json:"max_bytes"`
+		FollowRedirects  *bool             `json:"follow_redirects"`
 	}
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return errCapJSON("invalid request payload: " + err.Error()), nil
@@ -205,6 +207,18 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	respHeaders := make(map[string]string)
 	for k := range resp.Header {
 		respHeaders[k] = resp.Header.Get(k)
+	}
+
+	// The existing binary hostcall envelope avoids JSON/base64 expansion for
+	// callers that need exact source bytes. Default responses remain unchanged.
+	if req.ResponseEncoding == "binary" {
+		return modulert.PreEncodedEnvelope(map[string]interface{}{
+			"ok": true, "result": map[string]interface{}{
+				"status": resp.StatusCode, "headers": respHeaders,
+				"header_values": resp.Header.Clone(),
+				"body":          map[string]int{"$bin": 0}, "body_encoding": "binary",
+			},
+		}, [][]byte{respBody}), nil
 	}
 
 	// Determine body encoding: use base64 for binary content
