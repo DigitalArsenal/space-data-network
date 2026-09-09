@@ -1701,7 +1701,7 @@ func cloneCronConfig(config map[string]CronScheduleConfig) map[string]CronSchedu
 	return out
 }
 
-func (m *Manager) restartCron(ctx context.Context) {
+func (m *Manager) restartCron(_ context.Context) {
 	if m == nil {
 		return
 	}
@@ -1709,15 +1709,16 @@ func (m *Manager) restartCron(ctx context.Context) {
 		m.cronCancel()
 		m.cronWg.Wait()
 	}
-	if ctx == nil {
-		ctx = m.runtimeCtx
-	}
+	// API request cancellation bounds the action, not the schedules it
+	// leaves running. Keep StartAll's lifetime as the scheduler parent and
+	// never replace it with a request context.
+	m.cronMu.Lock()
+	ctx := m.runtimeCtx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	cronCtx, cancel := context.WithCancel(ctx)
 	m.cronCancel = cancel
-	m.cronMu.Lock()
 	m.runtimeCtx = ctx
 	m.lateCronCtx = cronCtx
 	m.cronMu.Unlock()
