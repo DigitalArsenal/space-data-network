@@ -9,6 +9,42 @@ import (
 	"time"
 )
 
+func TestSignedRequestOriginConfiguration(t *testing.T) {
+	for _, origin := range []string{"", "https://provider.example", "https://192.168.1.5:8443", "https://xn--bcher-kva.example", "https://home"} {
+		t.Run("valid/"+origin, func(t *testing.T) {
+			cfg := Default()
+			cfg.Admin.SignedRequestOrigin = origin
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := Save(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Admin.SignedRequestOrigin != origin {
+				t.Fatal("configured origin changed during roundtrip")
+			}
+		})
+	}
+	for _, origin := range []string{"http://provider.example", "https://provider.example/", "https://PROVIDER.example", "https://user@provider.example", "https://provider.example?", "https://provider.example#x", "https://provider.example/path", "https://provider.example:443", "https://provider.example:0", "https://provider.example:08443", "https://provider.example:65536", "https://[::1]", "https://0177.0.0.1", "https://127.1", "https://0x7f000001", "https://host.123", "https://bad-.example", "https://provider.example."} {
+		t.Run("invalid/"+origin, func(t *testing.T) {
+			cfg := Default()
+			cfg.Admin.SignedRequestOrigin = origin
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := Save(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatal("noncanonical origin was accepted")
+			}
+		})
+	}
+	if Default().Admin.SignedRequestOrigin != "" {
+		t.Fatal("v2 must require explicit operator configuration")
+	}
+}
+
 func TestProductionIngestConfigHasNoDirectPublicCatalogFields(t *testing.T) {
 	forbiddenSource := strings.Join([]string{"celes", "trak"}, "")
 	typ := reflect.TypeOf(IngestConfig{})

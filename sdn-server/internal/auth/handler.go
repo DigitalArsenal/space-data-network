@@ -39,6 +39,7 @@ type Handler struct {
 	userStore            *UserStore
 	sessions             *SessionStore
 	challenges           map[string]pendingChallenge
+	signedRequestOrigin  string // trusted operator configuration; protected by mu
 	mu                   sync.Mutex
 	challengeTTL         time.Duration
 	sessionTTL           time.Duration

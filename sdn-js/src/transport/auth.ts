@@ -11,6 +11,13 @@
 import type { DerivedIdentity } from '../crypto/types';
 import { sign } from '../crypto/index';
 
+/** Exact request context for one-shot authorization. Body bytes are detached. */
+export interface AuthRequest {
+  readonly url: string;
+  readonly method: string;
+  readonly body?: Uint8Array;
+}
+
 /** Auth provider interface used by HttpTransport. */
 export interface AuthProvider {
   /** Authenticate with the server (call before making authenticated requests). */
@@ -19,6 +26,10 @@ export interface AuthProvider {
   getAuthHeaders(): Promise<Record<string, string>>;
   /** Whether the provider has an active session. */
   isAuthenticated(): boolean;
+  /** Required fetch credential mode, for example cookie-free signed requests. */
+  readonly requestCredentials?: RequestCredentials;
+  /** Optional request-bound authorization; replaces static getAuthHeaders(). */
+  authorizeRequest?(request: AuthRequest): Promise<Record<string, string>>;
 }
 
 /** Challenge response from the server. */
