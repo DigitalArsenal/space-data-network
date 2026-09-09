@@ -3,21 +3,21 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "d102ae10525d834829681f177e5edddd23003445",
+  "design_commit": "3a2f13cef6bd5f038547fa817990790ed426f158",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 11351814,
-    "sha256": "8c12bffa87ded283b4c91119e76bf3acab485ea895a43fb153101409bcb7a4b6"
+    "bytes": 11352032,
+    "sha256": "c095b6d3db8656ed770b393fe8cf65ff2db7c0d8367eae0b7601a747226abc06"
   },
   "artifact_refresh": {
     "date": "2026-09-09",
     "task": "ephemeris-provider-discovery-20260909",
     "was": {
       "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-      "bytes": 11346297,
-      "sha256": "34eefc1d38f13c7641423bf81f9a1a4c41ca2ec9ebf7ae8066e3caff4a454dd1"
+      "bytes": 11351814,
+      "sha256": "8c12bffa87ded283b4c91119e76bf3acab485ea895a43fb153101409bcb7a4b6"
     },
-    "why": "Render published peer datasets, bounded verified module catalogs and installed module pin/open controls."
+    "why": "Preserve installed module app identifiers during dashboard route normalization."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
