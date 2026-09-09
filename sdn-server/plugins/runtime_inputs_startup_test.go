@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 type startupInputPlugin struct {
@@ -15,6 +16,53 @@ type startupInputPlugin struct {
 	order    []string
 	values   []RuntimeModuleInputValue
 	applyErr error
+}
+
+func TestRuntimeScheduleOutlivesAPIRequestAndStopsWithManager(t *testing.T) {
+	for _, action := range []string{"restart", "save-schedule"} {
+		t.Run(action, func(t *testing.T) {
+			manager := New()
+			t.Cleanup(func() { _ = manager.Close() })
+			lifetime, stopLifetime := context.WithCancel(context.Background())
+			defer stopLifetime()
+			plugin := &lateCronPlugin{id: "request-lifetime-fixture", interval: "1s"}
+			if err := manager.Register(plugin); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.StartAll(lifetime, RuntimeContext{BaseDataPath: t.TempDir()}); err != nil {
+				t.Fatal(err)
+			}
+			request, finishRequest := context.WithCancel(lifetime)
+			defer finishRequest()
+			if action == "restart" {
+				if err := manager.RunRuntimeModuleAction(request, plugin.ID(), "restart"); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := manager.SaveRuntimeModuleSchedule(request, plugin.ID(), "tick", RuntimeModuleScheduleConfig{Enabled: true, Interval: "1s"}); err != nil {
+				t.Fatal(err)
+			}
+			before := plugin.ticks.Load()
+			finishRequest() // the HTTP response has completed
+			deadline := time.Now().Add(3 * time.Second)
+			for plugin.ticks.Load() == before && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if plugin.ticks.Load() == before {
+				t.Fatal("completing the API request stopped the persistent schedule")
+			}
+			stopLifetime()
+			stopped := make(chan struct{})
+			go func() {
+				manager.cronWg.Wait()
+				close(stopped)
+			}()
+			select {
+			case <-stopped:
+			case <-time.After(2 * time.Second):
+				t.Fatal("schedule did not stop with the manager lifetime")
+			}
+		})
+	}
 }
 
 func (p *startupInputPlugin) Start(context.Context, RuntimeContext) error {
