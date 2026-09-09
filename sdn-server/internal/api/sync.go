@@ -313,6 +313,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		localRows  int64
 		producer   string
 		producerPK string
+		catalog    *channels.DatasetCatalogEntry
 	}
 	lanes := map[laneKey]*laneAgg{}
 	order := make([]laneKey, 0)
@@ -335,6 +336,41 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			agg.producer = strings.TrimSpace(src.ProducerPeerID)
 			agg.producerPK = strings.TrimSpace(src.ProducerPublicKey)
 		}
+	}
+	// Remote catalogs describe available records, never local replicas.
+	// The current DSS identity has no publisher segment. Suppress conflicting
+	// remote claims rather than silently assigning one source to another peer.
+	if entries, err := channels.ReadDatasetCatalog(deps.Store, time.Now()); err == nil {
+		remote := map[laneKey]*channels.DatasetCatalogEntry{}
+		conflicts := map[laneKey]bool{}
+		for i := range entries {
+			entry := &entries[i]
+			key := newLaneKey(entry.SchemaName, entry.ProviderID, entry.SourceName)
+			if !laneMatches(key, filter) {
+				continue
+			}
+			if previous := remote[key]; previous != nil && previous.PeerID != entry.PeerID {
+				conflicts[key] = true
+			}
+			remote[key] = entry
+		}
+		for key, entry := range remote {
+			if conflicts[key] {
+				continue
+			}
+			agg := lanes[key]
+			if agg != nil && (agg.producer == "" || agg.producer != entry.PeerID) {
+				continue
+			}
+			if agg == nil {
+				agg = &laneAgg{producer: entry.PeerID, producerPK: entry.PublicKey}
+				lanes[key] = agg
+				order = append(order, key)
+			}
+			agg.catalog = entry
+		}
+	} else {
+		log.Debugf("sync lane: remote catalogs unavailable: %v", err)
 	}
 	if filter.Exact {
 		// The named lane answers even before it holds records (an import in
@@ -449,10 +485,14 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		if pub != nil {
 			lane.FeedHead, lane.LastPublicationCID, lane.LastPNMCID = pub.FeedHead, pub.ManifestCID, pub.PNMCID
 			lane.TotalRows = uint64(nonNegative(pub.RecordCount))
-			if lane.TotalRows > lane.LocalRows {
-				lane.DeltaRows = lane.TotalRows - lane.LocalRows
-				lane.MissingRows = lane.DeltaRows
-			}
+		}
+		if entry := agg.catalog; entry != nil && (pub == nil || entry.PublishedAt.After(pub.PublishedAt)) {
+			lane.LastPublicationCID, lane.LastPNMCID = entry.ManifestCID, entry.PNMCID
+			lane.TotalRows = entry.Rows
+		}
+		if lane.TotalRows > lane.LocalRows {
+			lane.DeltaRows = lane.TotalRows - lane.LocalRows
+			lane.MissingRows = lane.DeltaRows
 		}
 
 		// Local replica facts, only where the ledger knows the lane.
@@ -496,7 +536,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		}
 		h.mu.Unlock()
 		if lane.Status == DSSStateIdle {
-			if lane.LocalRows >= lane.TotalRows {
+			if lane.LocalRows >= lane.TotalRows && (agg.catalog == nil || lane.LocalRows > 0) {
 				lane.Status = DSSStateSynced
 			}
 		}
