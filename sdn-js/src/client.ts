@@ -38,6 +38,8 @@ export interface SDNClientOptions extends ResolveOptions {
   baseUrl?: string;
   /** Auth provider for authenticated requests. */
   authProvider?: AuthProvider;
+  /** Fetch credential policy; signed cross-origin publication requires omit. */
+  credentials?: RequestCredentials;
 }
 
 export interface SDNClientChannels {
@@ -123,7 +125,7 @@ export class SDNClient {
       );
     }
 
-    const transport = new HttpTransport(resolved.httpUrl, opts?.authProvider);
+    const transport = new HttpTransport(resolved.httpUrl, opts?.authProvider, { credentials: opts?.credentials });
     return new SDNClient(resolved, transport);
   }
 
@@ -133,7 +135,7 @@ export class SDNClient {
       httpUrl: url.replace(/\/+$/, ''),
       identifierType: 'http',
     };
-    const transport = new HttpTransport(resolved.httpUrl!, opts?.authProvider);
+    const transport = new HttpTransport(resolved.httpUrl!, opts?.authProvider, { credentials: opts?.credentials });
     return new SDNClient(resolved, transport);
   }
 

@@ -1569,6 +1569,11 @@ type AdminConfig struct {
 	// RequireAuth requires authentication for the admin interface.
 	RequireAuth bool `yaml:"require_auth"`
 
+	// SignedRequestOrigin is the operator-configured external HTTPS origin
+	// bound into v2 signed requests, including a nondefault port when needed.
+	// Empty disables v2 admission. It is never inferred from request/proxy headers.
+	SignedRequestOrigin string `yaml:"signed_request_origin"`
+
 	// DevAutoAdmin makes every loopback request that carries no session resolve
 	// as the node's first Admin user, so a local dev loop needs no wallet
 	// ceremony. Honored ONLY when the admin listener is bound to a loopback
@@ -1987,7 +1992,63 @@ func Load(path string) (*Config, error) {
 // with a security-relevant misconfiguration. It runs unconditionally at the
 // end of Load, on both the default config and a config file that was
 // successfully parsed.
+// ValidateSignedRequestOrigin accepts an exact HTTPS DNS/punycode or IPv4
+// origin. Empty leaves v2 disabled; aliases must use the configured origin.
+func ValidateSignedRequestOrigin(value string) error {
+	if value == "" {
+		return nil
+	}
+	fail := func() error {
+		return fmt.Errorf("admin.signed_request_origin must be a canonical HTTPS DNS or IPv4 origin")
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" ||
+		u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		value != "https://"+u.Host {
+		return fail()
+	}
+	host := u.Hostname()
+	if host == "" || len(host) > 253 || strings.HasSuffix(host, ".") || strings.Contains(host, ":") {
+		return fail()
+	}
+	if strings.Contains(u.Host, ":") {
+		port := u.Port()
+		parsed, err := strconv.Atoi(port)
+		if err != nil || parsed < 1 || parsed > 65535 || parsed == 443 || strconv.Itoa(parsed) != port {
+			return fail()
+		}
+	}
+	labels := strings.Split(host, ".")
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return fail()
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+				return fail()
+			}
+		}
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.To4() == nil || ip.String() != host {
+			return fail()
+		}
+		return nil
+	}
+	// Match browser origin canonicalization: a numeric final label is parsed
+	// as IPv4, not a DNS name. Reject abbreviated/octal/hex IPv4 spellings.
+	last := labels[len(labels)-1]
+	if strings.Trim(last, "0123456789") == "" ||
+		strings.HasPrefix(last, "0x") && strings.Trim(last[2:], "0123456789abcdef") == "" {
+		return fail()
+	}
+	return nil
+}
+
 func (c *Config) validate() error {
+	if err := ValidateSignedRequestOrigin(c.Admin.SignedRequestOrigin); err != nil {
+		return err
+	}
 	switch c.Subscriptions.EffectiveDefaultRetention() {
 	case SubscriptionRetentionReplaceCurrent, SubscriptionRetentionArchiveAll:
 	default:

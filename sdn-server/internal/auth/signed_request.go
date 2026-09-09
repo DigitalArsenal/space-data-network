@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
@@ -75,6 +76,23 @@ import (
 // credential.
 const SignedRequestScheme = "SDN-Signed"
 
+// SignedRequestSchemeV2 binds authority to this provider's configured origin.
+// Legacy v1 stays supported; a v2 signature is never retried as v1.
+const SignedRequestSchemeV2 = "SDN-Signed-v2"
+const SignedRequestCanonicalVersionV2 = "SDN-SIGNED-REQUEST/v2"
+
+// SetSignedRequestOrigin configures the trusted external provider origin.
+// Set at startup, including behind a reverse proxy. Empty disables only v2.
+func (h *Handler) SetSignedRequestOrigin(origin string) error {
+	if err := config.ValidateSignedRequestOrigin(origin); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	h.signedRequestOrigin = origin
+	h.mu.Unlock()
+	return nil
+}
+
 // SignedRequestCanonicalVersion prefixes the canonical request string. Every
 // signature is computed over it, so changing this string invalidates every
 // signature in flight — which is why it carries an explicit version and why a
@@ -98,6 +116,7 @@ var errNoSignedRequest = errors.New("no signed-request authorization")
 type signedRequestCredentials struct {
 	challengeID string
 	signature   []byte
+	originBound bool
 }
 
 // parseSignedRequestAuthorization pulls the credentials out of an Authorization
@@ -110,11 +129,12 @@ func parseSignedRequestAuthorization(raw string) (signedRequestCredentials, erro
 		return signedRequestCredentials{}, errNoSignedRequest
 	}
 	scheme, params, found := strings.Cut(value, " ")
-	if !found || !strings.EqualFold(strings.TrimSpace(scheme), SignedRequestScheme) {
+	originBound := strings.EqualFold(strings.TrimSpace(scheme), SignedRequestSchemeV2)
+	if !found || (!originBound && !strings.EqualFold(strings.TrimSpace(scheme), SignedRequestScheme)) {
 		return signedRequestCredentials{}, errNoSignedRequest
 	}
 
-	creds := signedRequestCredentials{}
+	creds := signedRequestCredentials{originBound: originBound}
 	for _, part := range strings.Split(params, ",") {
 		key, val, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok {
@@ -150,6 +170,16 @@ func parseSignedRequestAuthorization(raw string) (signedRequestCredentials, erro
 func canonicalRequestString(method string, requestURI string, bodyDigest []byte) string {
 	return strings.Join([]string{
 		SignedRequestCanonicalVersion,
+		strings.ToUpper(strings.TrimSpace(method)),
+		requestURI,
+		hex.EncodeToString(bodyDigest),
+	}, "\n")
+}
+
+func canonicalRequestStringV2(origin, method, requestURI string, bodyDigest []byte) string {
+	return strings.Join([]string{
+		SignedRequestCanonicalVersionV2,
+		origin,
 		strings.ToUpper(strings.TrimSpace(method)),
 		requestURI,
 		hex.EncodeToString(bodyDigest),
@@ -218,6 +248,7 @@ func (h *Handler) sessionFromSignedRequest(r *http.Request) (*Session, error) {
 	// Single use, consumed BEFORE verification: a signature that fails must
 	// burn its challenge too, or the header becomes an oracle to grind against.
 	h.mu.Lock()
+	providerOrigin := h.signedRequestOrigin
 	pending, ok := h.challenges[creds.challengeID]
 	if ok {
 		delete(h.challenges, creds.challengeID)
@@ -235,6 +266,15 @@ func (h *Handler) sessionFromSignedRequest(r *http.Request) (*Session, error) {
 	}
 
 	canonical := canonicalRequestString(r.Method, r.URL.RequestURI(), bodyDigest[:])
+	if creds.originBound {
+		if providerOrigin == "" {
+			return nil, errors.New("signed request v2: provider origin is not configured")
+		}
+		// Do not derive this from Host, Origin, Forwarded, or X-Forwarded-*.
+		// A malicious provider can relay another provider's nonce; only this
+		// independent configured origin prevents destination substitution.
+		canonical = canonicalRequestStringV2(providerOrigin, r.Method, r.URL.RequestURI(), bodyDigest[:])
+	}
 	if !ed25519.Verify(pending.pubKey, signedRequestMessage(pending.challenge, canonical), creds.signature) {
 		return nil, errors.New("signed request: signature does not cover this request")
 	}

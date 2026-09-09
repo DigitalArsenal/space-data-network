@@ -1795,6 +1795,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					cfgDisplayPath = config.DefaultPath()
 				}
 				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, legacyWalletUIPath, cfgDisplayPath)
+				if err := authHandler.SetSignedRequestOrigin(cfg.Admin.SignedRequestOrigin); err != nil {
+					return err
+				}
 				authHandler.SetTLSManager(tlsManager)
 				if cfg.Admin.DevAutoAdmin {
 					// Loopback-bound listeners only: dev_auto_admin on a
@@ -3445,6 +3448,15 @@ func isPublicAPIPath(path string) bool {
 func isPublicAPIRequest(method string, path string) bool {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	if method == http.MethodOptions {
+		// A signed browser POST needs a credential-free preflight. This opens
+		// only OPTIONS; the actual publication still passes the wallet wall,
+		// schema allowlist, trust, ABAC and quota checks.
+		if schema, ok := strings.CutPrefix(path, "/api/v1/data/publish/"); ok {
+			schema = strings.TrimPrefix(schema, "batch/")
+			if sds.ValidateSchemaName(schema) == nil {
+				return true
+			}
+		}
 		return isPublicAPIRequest(http.MethodGet, path) ||
 			isPublicAPIRequest(http.MethodPost, path)
 	}

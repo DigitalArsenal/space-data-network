@@ -507,7 +507,11 @@ export class HttpTransport {
   constructor(baseUrl: string, authProvider?: AuthProvider, options?: HttpTransportOptions) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.authProvider = authProvider;
-    this.credentials = options?.credentials ?? 'include';
+    if (authProvider?.requestCredentials && options?.credentials &&
+        authProvider.requestCredentials !== options.credentials) {
+      throw new Error('Transport credentials conflict with the authorization provider.');
+    }
+    this.credentials = authProvider?.requestCredentials ?? options?.credentials ?? 'include';
   }
 
   /** Fetch the node's schema catalog. */
@@ -856,13 +860,26 @@ export class HttpTransport {
       ...(init?.headers as Record<string, string>),
     };
 
+    let requestInit = init;
     if (this.authProvider) {
-      const authHeaders = await this.authProvider.getAuthHeaders();
+      let authHeaders: Record<string, string>;
+      if (this.authProvider.authorizeRequest) {
+        const body = await detachedRequestBody(init?.body);
+        // Request-bound authority cannot be carried to a redirected target.
+        requestInit = { ...init, redirect: 'error', body: body?.slice().buffer as ArrayBuffer | undefined };
+        authHeaders = await this.authProvider.authorizeRequest(Object.freeze({
+          url,
+          method: init?.method ?? 'GET',
+          body,
+        }));
+      } else {
+        authHeaders = await this.authProvider.getAuthHeaders();
+      }
       Object.assign(headers, authHeaders);
     }
 
     const resp = await globalThis.fetch(url, {
-      ...init,
+      ...requestInit,
       headers,
       // Default 'include' sends cookies for session auth; 'omit' enables
       // anonymous cross-origin data queries (see HttpTransportOptions).
@@ -876,6 +893,19 @@ export class HttpTransport {
 
     return resp;
   }
+}
+
+async function detachedRequestBody(body: BodyInit | null | undefined): Promise<Uint8Array | undefined> {
+  if (body == null) return undefined;
+  if (typeof body === 'string') return new TextEncoder().encode(body);
+  if (ArrayBuffer.isView(body)) {
+    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength).slice();
+  }
+  if (Object.prototype.toString.call(body) === '[object ArrayBuffer]') {
+    return new Uint8Array(body as ArrayBuffer).slice();
+  }
+  if (body instanceof Blob) return new Uint8Array(await body.arrayBuffer());
+  throw new Error('Request-bound authorization requires exact byte, text, or Blob body data.');
 }
 
 /** Flow-served bulk retrieval path for a schema (`OMM.fbs` → `/api/v1/data/omm/bulk`). */

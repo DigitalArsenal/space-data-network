@@ -523,7 +523,9 @@ export type {
   DefaultAppsDocument,
 } from './transport/http';
 export { SessionAuth } from './transport/auth';
-export type { AuthProvider } from './transport/auth';
+export type { AuthProvider, AuthRequest } from './transport/auth';
+export { SdnPublishAuth } from './transport/signed-request';
+export type { SdnPublishAuthOptions, SdnPublishRequest, SdnPublishSignature } from './transport/signed-request';
 // TLE text -> CCSDS OMM record. FORMAT CONVERSION ONLY (owner law 2026-08-09:
 // "There is no JS physics at all"). This is what remains of the retired
 // `./astro` subpath export, which shipped a JavaScript SGP4/SDP4 propagator,

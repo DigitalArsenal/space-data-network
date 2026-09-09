@@ -333,3 +333,60 @@ describe('HttpTransport default-$APP discovery', () => {
     await expect(transport.getAppRecord('spaceaware-orbital-console')).resolves.toBeNull();
   });
 });
+
+describe('request-bound authorization', () => {
+  it('authorizes and sends the same detached bytes while the caller changes its buffer', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let context: any;
+    const auth = {
+      requestCredentials: 'omit' as const,
+      authenticate: async () => {},
+      isAuthenticated: () => false,
+      getAuthHeaders: async () => { entered(); return {}; },
+      authorizeRequest: async (request: any) => {
+        context = request;
+        entered();
+        await pending;
+        return { Authorization: 'fixture-request-bound-signature' };
+      },
+    };
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{}'));
+    vi.stubGlobal('fetch', fetch);
+    const original = new Uint8Array([99, 1, 2, 3, 99]);
+    const operation = new HttpTransport(BASE, auth).publishData('CZM.fbs', original.subarray(1, 4));
+    await started;
+    original.fill(8);
+    release();
+    await operation;
+    expect(context?.url).toBe(`${BASE}/api/v1/data/publish/CZM.fbs`);
+    expect(context?.method).toBe('POST');
+    expect(context?.body).toEqual(new Uint8Array([1, 2, 3]));
+    const init = fetch.mock.calls[0]?.[1] as RequestInit;
+    expect(new Uint8Array(init.body as ArrayBuffer)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(init.credentials).toBe('omit');
+    expect(init.headers).toMatchObject({ Authorization: 'fixture-request-bound-signature' });
+  });
+
+  it('refuses a credentials mode that contradicts the request signer', () => {
+    const auth = { requestCredentials: 'omit' as const } as any;
+    expect(() => new HttpTransport(BASE, auth, { credentials: 'include' })).toThrow(/credentials/i);
+  });
+
+  it('does not send a publication after request authorization rejects', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const auth = {
+      requestCredentials: 'omit' as const,
+      authenticate: async () => {},
+      isAuthenticated: () => false,
+      getAuthHeaders: async () => ({}),
+      authorizeRequest: async () => { throw new Error('Wallet cancelled publication'); },
+    };
+    await expect(new HttpTransport(BASE, auth).publishData('CZM', new Uint8Array([1])))
+      .rejects.toThrow('Wallet cancelled publication');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});

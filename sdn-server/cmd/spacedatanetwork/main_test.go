@@ -3221,3 +3221,65 @@ func TestProviderDescriptorAdvertisesTheGrantVerifierKey(t *testing.T) {
 		t.Fatalf("the field should be omitted entirely when absent: %s", encodedSilent)
 	}
 }
+
+// A preflight carries no wallet credential. OPTIONS permits the following
+// signed request to reach the unchanged authentication wall; it grants no write.
+func TestNativeRecordPublicationPreflightRetainsAuthentication(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{
+		"/api/v1/data/publish/CZM.fbs",
+		"/api/v1/data/publish/batch/ETM.fbs",
+		"/api/v1/data/publish/OMM.fbs",
+	} {
+		t.Run(path, func(t *testing.T) {
+			called := false
+			mux := http.NewServeMux()
+			mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { called = true; w.WriteHeader(http.StatusAccepted) })
+			authHandler := auth.NewHandler(nil, nil, time.Hour, "", "")
+			wall := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				serveAdminMuxRequest(w, r, mux, true, false, authHandler, isPublicAPIRequest)
+			})
+			handler := adminSecurityMiddleware(wall, "disabled", isPublicAPIRequest)
+			preflight := httptest.NewRequest(http.MethodOptions, path, nil)
+			preflight.Header.Set("Origin", "https://spaceaware.io")
+			preflight.Header.Set("Access-Control-Request-Method", "POST")
+			preflight.Header.Set("Access-Control-Request-Headers", "authorization,content-type")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, preflight)
+			if rec.Code != http.StatusNoContent || called {
+				t.Fatalf("preflight status=%d handlerCalled=%v, want 204 without executing handler", rec.Code, called)
+			}
+			if rec.Header().Get("Access-Control-Allow-Origin") != "https://spaceaware.io" ||
+				!strings.Contains(rec.Header().Get("Access-Control-Allow-Headers"), "Authorization") ||
+				rec.Header().Get("Access-Control-Allow-Credentials") != "" {
+				t.Fatal("preflight must permit the signed header without cookie permission")
+			}
+			for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+				if isPublicAPIRequest(method, path) {
+					t.Fatalf("%s unexpectedly classified as anonymous", method)
+				}
+				req := httptest.NewRequest(method, path, strings.NewReader("untrusted bytes"))
+				req.Header.Set("Origin", "https://spaceaware.io")
+				rec = httptest.NewRecorder()
+				handler.ServeHTTP(rec, req)
+				if rec.Code != http.StatusUnauthorized || called {
+					t.Fatalf("%s status=%d handlerCalled=%v, want 401 before handler", method, rec.Code, called)
+				}
+			}
+		})
+	}
+}
+
+func TestNativeRecordPublicationPreflightRejectsMalformedPaths(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{
+		"/api/v1/data/publish/", "/api/v1/data/publish/batch/",
+		"/api/v1/data/publish/../CZM.fbs", "/api/v1/data/publish/CZM.fbs/extra",
+		"/api/v1/data/publish/batch/ETM.fbs/extra", "/api/v1/data/publish/%2e%2e",
+		"/api/v1/data/publish/CZM\\other", "/api/v1/data/publish/" + strings.Repeat("A", 300),
+	} {
+		if isPublicAPIRequest(http.MethodOptions, path) {
+			t.Errorf("malformed preflight path admitted: %q", path)
+		}
+	}
+}
