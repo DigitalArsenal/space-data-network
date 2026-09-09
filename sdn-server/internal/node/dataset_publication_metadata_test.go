@@ -191,3 +191,115 @@ func TestDatasetMetadataCrossesRelayWithoutGrantingTrustOrFetchingRecords(t *tes
 		t.Fatalf("test unexpectedly connected publisher directly: %v", connection)
 	}
 }
+
+func TestDatasetMetadataReplaysSkippedAnnouncementAfterRestartWithoutTrust(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	publisher, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer publisher.Close()
+	manifest, pnm := metadataPublication(t, publisher)
+	var fetches, unexpected atomic.Int32
+	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("arg") != manifest.CID {
+			unexpected.Add(1)
+			http.Error(w, "only the signed manifest may be fetched", 400)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v0/block/stat":
+			fmt.Fprintf(w, `{"Size":%d}`, len(manifest.Bytes))
+		case "/api/v0/cat":
+			fetches.Add(1)
+			w.Write(manifest.Bytes)
+		default:
+			unexpected.Add(1)
+			http.Error(w, "raw data and pins are forbidden", 400)
+		}
+	}))
+	defer ipfs.Close()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storePath := t.TempDir()
+	store, err := storage.NewFlatSQLStore(storePath, validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { store.Close() }()
+	registry := peers.NewRegistry(true, nil)
+	n := &Node{store: store, peerRegistry: registry, config: &config.Config{Admin: config.AdminConfig{IPFSAPIURL: ipfs.URL}}, ctx: ctx, protocol: protocol.NewSDSExchangeHandler(store, validator)}
+	n.protocol.SetPubSubPNMHandler(n.handleDatasetPublicationPNM)
+	// Another metadata fetch is in flight. The real protocol must preserve
+	// this announcement even though the immediate cache callback skips it.
+	n.datasetCatalogMu.Lock()
+	err = n.protocol.HandlePubSubMessage("PNM.fbs", pnm, publisher.ID())
+	n.datasetCatalogMu.Unlock()
+	if err != nil || fetches.Load() != 0 {
+		t.Fatalf("skipped live announcement: fetches=%d err=%v", fetches.Load(), err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = storage.NewFlatSQLStore(storePath, validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.store = store
+	if err := registry.AddPeer(&peers.TrustedPeer{ID: publisher.ID(), TrustLevel: peers.Never}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10); err != nil || fetches.Load() != 0 {
+		t.Fatalf("hard distrust must prevent catch-up fetch: %v", err)
+	}
+	if err := registry.RemovePeer(publisher.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if materialized, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10); err != nil || materialized != 0 {
+		t.Fatalf("metadata replay materialized records: %d %v", materialized, err)
+	}
+	entries, err := channels.ReadDatasetCatalog(store, time.Now())
+	if err != nil || len(entries) != 1 || entries[0].PeerID != publisher.ID().String() {
+		t.Fatalf("received announcement was not recovered after reopen: %+v %v", entries, err)
+	}
+	if _, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if fetches.Load() != 1 || unexpected.Load() != 0 || registry.IsTrusted(publisher.ID()) {
+		t.Fatalf("unexpected fetch/trust: fetches=%d unexpected=%d", fetches.Load(), unexpected.Load())
+	}
+	records, err := store.QueryIndexedRecords(storage.IndexedRecordQuery{SchemaName: "OMM.fbs", Limit: 10})
+	if err != nil || len(records) != 0 {
+		t.Fatalf("metadata replay fetched raw records: %v %v", records, err)
+	}
+	pins, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{})
+	if err != nil || len(pins) != 0 {
+		t.Fatalf("metadata replay pinned data: %v %v", pins, err)
+	}
+}
+
+func TestDatasetMetadataReplayRotatesWithinBoundsAndHonorsCancellation(t *testing.T) {
+	n := &Node{}
+	records := make([]*storage.Record, 300)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	n.cacheStoredDatasetCatalogs(ctx, records)
+	if n.datasetCatalogReplayAt != 0 {
+		t.Fatal("cancelled catch-up consumed work")
+	}
+	n.cacheStoredDatasetCatalogs(context.Background(), records)
+	if n.datasetCatalogReplayAt != 128 {
+		t.Fatalf("first bounded pass stopped at %d", n.datasetCatalogReplayAt)
+	}
+	n.cacheStoredDatasetCatalogs(context.Background(), records)
+	if n.datasetCatalogReplayAt != 256 {
+		t.Fatalf("second pass repeated the newest records: %d", n.datasetCatalogReplayAt)
+	}
+	n.cacheStoredDatasetCatalogs(context.Background(), records)
+	if n.datasetCatalogReplayAt != 84 {
+		t.Fatalf("replay failed to wrap the bounded snapshot: %d", n.datasetCatalogReplayAt)
+	}
+}
