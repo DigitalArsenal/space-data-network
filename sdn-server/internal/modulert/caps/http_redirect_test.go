@@ -1,6 +1,9 @@
 package caps
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,5 +79,52 @@ func TestHTTPCapPreservesRepeatedCookieHeaders(t *testing.T) {
 				t.Fatalf("cookie headers changed: %v", result)
 			}
 		})
+	}
+}
+
+func TestHTTPCapBinaryResponsePreservesExactBytes(t *testing.T) {
+	raw := []byte{0, 255, '<', '&', '>', '\n'}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Add("Set-Cookie", "first=fixture")
+		w.Header().Add("Set-Cookie", "second=fixture")
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(raw)
+	}))
+	defer server.Close()
+	payload, _ := json.Marshal(map[string]interface{}{"url": server.URL, "response_encoding": "binary", "max_bytes": len(raw)})
+	reply, err := httpCapHandle("http.request", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := []byte{0, 'S', 'D', 'N', 'E', 'N', 'V', '1'}
+	if !bytes.HasPrefix(reply, marker) {
+		t.Fatal("missing binary hostcall envelope")
+	}
+	wire := reply[len(marker):]
+	n := int(binary.LittleEndian.Uint32(wire))
+	var meta struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Status   int                 `json:"status"`
+			Encoding string              `json:"body_encoding"`
+			Body     map[string]int      `json:"body"`
+			Headers  map[string][]string `json:"header_values"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(wire[4:4+n], &meta); err != nil {
+		t.Fatal(err)
+	}
+	if !meta.OK || meta.Result.Status != 206 || meta.Result.Encoding != "binary" || meta.Result.Body["$bin"] != 0 || len(meta.Result.Headers["Set-Cookie"]) != 2 {
+		t.Fatalf("metadata: %+v", meta)
+	}
+	tail := wire[4+n:]
+	if binary.LittleEndian.Uint32(tail) != 1 || int(binary.LittleEndian.Uint32(tail[4:])) != len(raw) || !bytes.Equal(tail[8:], raw) {
+		t.Fatal("response bytes changed")
+	}
+	payload, _ = json.Marshal(map[string]interface{}{"url": server.URL, "response_encoding": "binary", "max_bytes": len(raw) - 1})
+	reply, err = httpCapHandle("http.request", payload)
+	if err != nil || bytes.HasPrefix(reply, marker) || !bytes.Contains(reply, []byte(`"ok":false`)) {
+		t.Fatal("oversized binary response was accepted")
 	}
 }
