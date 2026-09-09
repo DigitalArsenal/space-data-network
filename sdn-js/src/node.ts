@@ -184,6 +184,13 @@ export interface SDNConfig {
   enableAutoDial?: boolean;
   ipfsApiBaseUrl?: string;
   ipfsGatewayBaseUrl?: string;
+  /**
+   * Explicit HTTPS gateway origins for Helia's verified raw-block retrieval.
+   * Every block is checked against its CID before UnixFS reconstruction.
+   * Omitted or empty keeps bitswap-only retrieval; no public gateway defaults.
+   * Unlike ipfsGatewayBaseUrl, this applies to createHeliaSDNNode().
+   */
+  ipfsTrustlessGateways?: string[];
   ipfsFetchTimeoutMs?: number;
   idExchangeProtocol?: string;
   enableStorage?: boolean;

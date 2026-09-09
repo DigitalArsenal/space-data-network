@@ -23,8 +23,8 @@
 
 import { createHelia, type Helia } from 'helia';
 import { unixfs } from '@helia/unixfs';
-import { bitswap } from '@helia/block-brokers';
-import { libp2pRouting } from '@helia/routers';
+import { bitswap, trustlessGateway } from '@helia/block-brokers';
+import { libp2pRouting, httpGatewayRouting } from '@helia/routers';
 import { createLibp2p, type Libp2p } from 'libp2p';
 import { serviceCapabilities } from '@libp2p/interface';
 import { webSockets } from '@libp2p/websockets';
@@ -321,14 +321,42 @@ function withHeliaDialProtocolStreamCompat(libp2p: Libp2p): Libp2p {
   return candidate;
 }
 
-export async function createHeliaFromLibp2p(libp2p: Libp2p): Promise<Helia> {
+function normalizeTrustlessGateways(value: SDNConfig['ipfsTrustlessGateways']): string[] {
+  if (value === undefined) return [];
+  const message = 'ipfsTrustlessGateways must contain only HTTPS origins without credentials, paths, queries, or fragments.';
+  if (!Array.isArray(value)) throw new Error(message);
+  const gateways = new Set<string>();
+  for (const entry of value) {
+    let url: URL;
+    try {
+      if (typeof entry !== 'string' || !entry.trim()) throw new Error(message);
+      url = new URL(entry);
+    } catch {
+      throw new Error(message);
+    }
+    if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+      throw new Error(message);
+    }
+    gateways.add(url.origin);
+  }
+  return [...gateways];
+}
+
+export async function createHeliaFromLibp2p(
+  libp2p: Libp2p,
+  config: Pick<SDNConfig, 'ipfsTrustlessGateways'> = {},
+): Promise<Helia> {
+  const gateways = normalizeTrustlessGateways(config.ipfsTrustlessGateways);
   const compatibleLibp2p = withHeliaDialProtocolStreamCompat(
     withHeliaStreamHandlerCompat(libp2p),
   );
   return createHelia({
     libp2p: compatibleLibp2p,
-    blockBrokers: [bitswap()],
-    routers: [libp2pRouting(compatibleLibp2p as never)],
+    blockBrokers: [bitswap(), ...(gateways.length ? [trustlessGateway()] : [])],
+    routers: [
+      libp2pRouting(compatibleLibp2p as never),
+      ...(gateways.length ? [httpGatewayRouting({ gateways, shuffle: false })] : []),
+    ],
   } as never);
 }
 
@@ -482,6 +510,8 @@ export async function fetchCIDBytesFromHelia(
  * @param config  SDNConfig — same options accepted by SDNNode.create()
  */
 export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaSDNNode> {
+  // Reject invalid opt-ins before wallet or network initialization.
+  const ipfsTrustlessGateways = normalizeTrustlessGateways(config.ipfsTrustlessGateways);
   await initHDWallet();
 
   const rawRelays = config.edgeRelays ?? await getBootstrapRelays();
@@ -536,7 +566,7 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
   }
 
   const libp2p = await createLibp2p(libp2pOpts);
-  const helia = await createHeliaFromLibp2p(libp2p);
+  const helia = await createHeliaFromLibp2p(libp2p, { ipfsTrustlessGateways });
   await dialBootstrapAddrs(helia.libp2p as unknown as Libp2p, bootstrapList);
 
   return {
