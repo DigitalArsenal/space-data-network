@@ -1854,6 +1854,15 @@ const engineStandardCatalogGraph = `
     PROPULSION_TYPE:ubyte;
     RESERVED:[ubyte];
   }
+  table NCD {
+    FORMAT:ubyte;
+    PROVIDER_DEFINED_FORMAT_NAME:string;
+    FORMAT_VERSION:string;
+    PRODUCER:string;
+    CREATION_DATE:string;
+    ORIGINATOR:string;
+    INTERNAL_FILE_NAME:string;
+  }
   table NUM {
     ROOT_SOLVE_REQUEST:ubyte;
   }
@@ -3395,6 +3404,28 @@ const engineStandardCatalogGraph = `
     NUM_ELEMENTS:uint16;
     CHECKSUM:uint32;
   }
+  table WXF {
+    FIELD_ID:string;
+    MODEL_CLASS:byte;
+    MODEL_ID:string;
+    MODEL_VERSION:string;
+    INIT_TIME_MS:uint64;
+    LEAD_HOURS:float;
+    VALID_TIME_MS:uint64;
+    HORIZON_HOURS:uint16;
+    MEMBER_KIND:byte;
+    MEMBER_INDEX:uint16;
+    ENSEMBLE_SIZE:uint16;
+    PERCENTILE:float;
+    THRESHOLD_VALUE:float;
+    VARIABLE:byte;
+    VARIABLE_NAME:string;
+    UNITS:string;
+    LEVEL_KIND:byte;
+    LEVEL_VALUE:float;
+    TEMPORAL_KIND:byte;
+    ACCUMULATION_HOURS:float;
+  }
   table XTC {
     NAME:string;
     SHORT_DESCRIPTION:string;
@@ -3526,6 +3557,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"MST.fbs":  {Table: "MST", FileID: "$MST"},
 	"MTI.fbs":  {Table: "MTI", FileID: "$MTI"},
 	"NAV.fbs":  {Table: "NAV", FileID: "$NAV"},
+	"NCD.fbs":  {Table: "NCD", FileID: "$NCD"},
 	"NUM.fbs":  {Table: "NUM", FileID: "$NUM"},
 	"OBD.fbs":  {Table: "OBD", FileID: "$OBD"},
 	"OBT.fbs":  {Table: "OBT", FileID: "$OBT"},
@@ -3638,6 +3670,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"WKS.fbs":  {Table: "WKS", FileID: "$WKS"},
 	"WPN.fbs":  {Table: "WPN", FileID: "$WPN"},
 	"WTH.fbs":  {Table: "WTH", FileID: "$WTH"},
+	"WXF.fbs":  {Table: "WXF", FileID: "$WXF"},
 	"XTC.fbs":  {Table: "XTC", FileID: "$XTC"},
 }
 
