@@ -3,21 +3,21 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "3a2f13cef6bd5f038547fa817990790ed426f158",
+  "design_commit": "4b4dc03bc01e05d4fe660dc8ee388c3ab7795226",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 11352032,
-    "sha256": "c095b6d3db8656ed770b393fe8cf65ff2db7c0d8367eae0b7601a747226abc06"
+    "bytes": 11352093,
+    "sha256": "dc656372ab001fa4bb2c317917c635c4c56c611c23b5b57ce3901ca190a39d34"
   },
   "artifact_refresh": {
     "date": "2026-09-09",
     "task": "ephemeris-provider-discovery-20260909",
     "was": {
       "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-      "bytes": 11351814,
-      "sha256": "8c12bffa87ded283b4c91119e76bf3acab485ea895a43fb153101409bcb7a4b6"
+      "bytes": 11352032,
+      "sha256": "c095b6d3db8656ed770b393fe8cf65ff2db7c0d8367eae0b7601a747226abc06"
     },
-    "why": "Preserve installed module app identifiers during dashboard route normalization."
+    "why": "Use the same route state for module Open, pinned shortcut and Back navigation."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
