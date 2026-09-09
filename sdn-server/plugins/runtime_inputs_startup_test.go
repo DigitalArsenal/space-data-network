@@ -7,9 +7,57 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestConcurrentScheduleChangesDrainBeforeStartingNewTimers(t *testing.T) {
+	manager := New()
+	lifetime, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	plugin := &lateCronPlugin{id: "concurrent-schedules", interval: "1s"}
+	if err := manager.Register(plugin); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartAll(lifetime, RuntimeContext{BaseDataPath: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	var workers sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 24; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			_, err := manager.SaveRuntimeModuleSchedule(lifetime, plugin.ID(), "tick", RuntimeModuleScheduleConfig{Enabled: true, Interval: "1s"})
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	close(start)
+	done := make(chan struct{})
+	go func() { workers.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("concurrent schedule updates stranded a scheduler generation")
+	}
+	if _, err := manager.SaveRuntimeModuleSchedule(lifetime, plugin.ID(), "tick", RuntimeModuleScheduleConfig{Enabled: false, Interval: "1s"}); err != nil {
+		t.Fatal(err)
+	}
+	before := plugin.ticks.Load()
+	time.Sleep(1100 * time.Millisecond)
+	if plugin.ticks.Load() != before {
+		t.Fatal("disabled schedule still invoked an orphan timer")
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type startupInputPlugin struct {
 	*lateCronPlugin

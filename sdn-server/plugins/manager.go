@@ -464,10 +464,15 @@ type Manager struct {
 	states   map[string]pluginRuntimeState
 
 	// Cron scheduler state.
-	cronCancel context.CancelFunc
-	cronWg     sync.WaitGroup
-	runtimeCtx context.Context
-	runtime    RuntimeContext
+	// Serialize cancellation, draining and starting a generation. Otherwise
+	// concurrent schedule changes can overwrite a live generation's cancel
+	// function and leave its goroutines in the shared WaitGroup forever.
+	cronLifecycleMu sync.Mutex
+	cronClosed      bool
+	cronCancel      context.CancelFunc
+	cronWg          sync.WaitGroup
+	runtimeCtx      context.Context
+	runtime         RuntimeContext
 	// cronMu guards runtimeCtx/lateCronCtx against a plugin registered (and
 	// started) concurrently with StartAll. lateCronCtx is the same cancellable
 	// context StartAll's scheduled methods run under, retained so a
@@ -545,6 +550,13 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 	if m == nil {
 		return nil
 	}
+	m.cronLifecycleMu.Lock()
+	defer m.cronLifecycleMu.Unlock()
+	if m.cronCancel != nil {
+		m.cronCancel()
+		m.cronWg.Wait()
+	}
+	m.cronClosed = false
 	m.runtime = runtime
 	m.loadRuntimeModuleInputState(runtime.BaseDataPath)
 
@@ -622,6 +634,11 @@ func (m *Manager) StartLateRegistered(plugin Plugin) (bool, error) {
 	if m == nil || plugin == nil {
 		return false, nil
 	}
+	m.cronLifecycleMu.Lock()
+	defer m.cronLifecycleMu.Unlock()
+	if m.cronClosed {
+		return false, nil
+	}
 	m.cronMu.Lock()
 	started := m.runtimeCtx != nil
 	cronCtx := m.lateCronCtx
@@ -647,7 +664,7 @@ func (m *Manager) StartLateRegistered(plugin Plugin) (bool, error) {
 // goroutines for each enabled method based on the server config.
 func (m *Manager) scheduleCronMethods(ctx context.Context, pluginID string, cp CronProvider) {
 	m.cronConfigMu.RLock()
-	pluginConfig := m.cronConfig[pluginID]
+	pluginConfig := cloneCronConfig(m.cronConfig[pluginID])
 	m.cronConfigMu.RUnlock()
 
 	for _, spec := range cp.CronMethods() {
@@ -1318,6 +1335,9 @@ func (m *Manager) Close() error {
 	if m == nil {
 		return nil
 	}
+	m.cronLifecycleMu.Lock()
+	defer m.cronLifecycleMu.Unlock()
+	m.cronClosed = true
 
 	// Stop all cron goroutines first.
 	if m.cronCancel != nil {
@@ -1703,6 +1723,11 @@ func cloneCronConfig(config map[string]CronScheduleConfig) map[string]CronSchedu
 
 func (m *Manager) restartCron(_ context.Context) {
 	if m == nil {
+		return
+	}
+	m.cronLifecycleMu.Lock()
+	defer m.cronLifecycleMu.Unlock()
+	if m.cronClosed {
 		return
 	}
 	if m.cronCancel != nil {
