@@ -551,7 +551,7 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 	var errs []error
 	registered := m.registeredPlugins()
 	for _, plugin := range registered {
-		if err := plugin.Start(ctx, runtime); err != nil {
+		if err := m.startPluginWithSavedInputs(ctx, plugin, runtime); err != nil {
 			m.setPluginState(plugin.ID(), "error", err.Error(), time.Time{})
 			errs = append(errs, fmt.Errorf("%s: %w", plugin.ID(), err))
 			continue
@@ -581,6 +581,32 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 	return errors.Join(errs...)
 }
 
+// A fresh runtime needs its persisted inputs before its methods are scheduled.
+// Failed application closes only that runtime and leaves it unscheduled.
+func (m *Manager) startPluginWithSavedInputs(ctx context.Context, plugin Plugin, runtime RuntimeContext) error {
+	if err := plugin.Start(ctx, runtime); err != nil {
+		return err
+	}
+	state := m.runtimeModuleInputState(plugin.ID())
+	if len(state.Values) == 0 {
+		if state.RestartPending {
+			m.markRuntimeModuleInputsApplied(plugin.ID(), state.Values)
+		}
+		return nil
+	}
+	var err error
+	if applier, ok := plugin.(RuntimeModuleInputApplier); ok {
+		err = applier.ApplyRuntimeModuleInputs(ctx, state.Values)
+	} else {
+		err = fmt.Errorf("module %q does not support runtime input application", plugin.ID())
+	}
+	if err != nil {
+		return errors.Join(fmt.Errorf("apply saved runtime inputs: %w", err), plugin.Close())
+	}
+	m.markRuntimeModuleInputsApplied(plugin.ID(), state.Values)
+	return nil
+}
+
 // StartLateRegistered starts and schedules a plugin registered AFTER StartAll.
 //
 // StartAll only ever sees the plugins present when it runs. Flow services are
@@ -605,7 +631,7 @@ func (m *Manager) StartLateRegistered(plugin Plugin) (bool, error) {
 	}
 
 	id := plugin.ID()
-	if err := plugin.Start(m.runtimeCtx, m.runtime); err != nil {
+	if err := m.startPluginWithSavedInputs(m.runtimeCtx, plugin, m.runtime); err != nil {
 		m.setPluginState(id, "error", err.Error(), time.Time{})
 		return true, fmt.Errorf("%s: %w", id, err)
 	}
