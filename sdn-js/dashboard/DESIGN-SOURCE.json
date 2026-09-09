@@ -3,21 +3,21 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "ec1bb6c",
+  "design_commit": "3e1e090503efedd3eb5a137c88086bbe6cb04033",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 801824,
-    "sha256": "a12a59ddb2c88bab031f9b357fa5886ff5ca97575d30d0b630c683e3e861e5e3"
+    "bytes": 11346297,
+    "sha256": "34eefc1d38f13c7641423bf81f9a1a4c41ca2ec9ebf7ae8066e3caff4a454dd1"
   },
   "artifact_refresh": {
-    "date": "2026-08-28",
-    "task": "owner-directed TailAdmin rebuild",
+    "date": "2026-09-09",
+    "task": "ephemeris-provider-discovery-20260909",
     "was": {
-      "design_commit": "bd4e665",
-      "bytes": 600152,
-      "sha256": "8299efd30faec5a1b34f88d86bf9166bf08a611bbce7c01157694eea61bfe8d9"
+      "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
+      "bytes": 801824,
+      "sha256": "a12a59ddb2c88bab031f9b357fa5886ff5ca97575d30d0b630c683e3e861e5e3"
     },
-    "why": "Login wave: one wallet runtime instance (browser-native imports), external/local sessions kept, account-EPM identity page, ?v=2.0.30 pins, American spellings."
+    "why": "Show NCD native datasets and WXF weather forecasts while excluding internal control records; preserves the operational dashboard and includes the already-landed peer-ID CDN documentation."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
@@ -34,5 +34,13 @@
     "what": "sdn-js/dashboard reduced to the node-law build shim; ALL app source moved to the spaceaware-ui submodule (spec 2026-07-31 \u00a71.3, task ui-consolidation-single-svelte5-app)",
     "equivalence_proof": "artifact BYTE-IDENTICAL across the move: sha256 9e1089c17a51f0ff4faf36aa045452d096f51b389bade02d5fc6cddc01a53db4 (469695 bytes) built from dashboard/src pre-move and from spaceaware-ui/src/apps/sdn-node post-move \u2014 the cssHash content pin is what makes relocations provable byte-for-byte",
     "previous_design_commit": "38adb52beadac83b7b527b04264defb571b71311"
+  },
+  "build_provenance": {
+    "consumerSource": "8b8b18c9c9c8c7a91fa77abcd8bdedc936cd12af",
+    "uiSource": "3e1e090503efedd3eb5a137c88086bbe6cb04033",
+    "hdWalletExternalSource": "3b92cb0d695ffc4102570ecc3aca4cf02e514117",
+    "uiSourceMount": "export the exact UI commit at sdn-js/spaceaware-ui in a temporary tracked-source build tree",
+    "command": "SPACEAWARE_UI_HD_WALLET_WASM=<verified wallet checkout> node dashboard/build-dashboard.mjs",
+    "gitlinkCoordination": "UI gitlink is held by saw-beta-entity-wizard-catalog-20260908; no foreign gitlink edit. This compatibility artifact records its actual source independently of the older consumer pin. Final integrated release must reconcile that pin."
   }
 }
