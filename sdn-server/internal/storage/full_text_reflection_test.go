@@ -66,8 +66,12 @@ func TestFullTextNativeDescriptorIncludesLateAndNestedFields(t *testing.T) {
 	NCD.NCDAddCOMMENT_AREA(b, comments)
 	NCD.NCDAddSEGMENTS(b, segments)
 	NCD.NCDAddSOURCE_SHA256(b, hash)
-	NCD.FinishNCDBuffer(b, NCD.NCDEnd(b))
-	want := append([]byte(nil), b.FinishedBytes()...)
+	NCD.NCDAddSOURCE_BYTE_LENGTH(b, 31750)
+	NCD.FinishSizePrefixedNCDBuffer(b, NCD.NCDEnd(b))
+	// The provider builds a size-prefixed descriptor, then the ingestion
+	// boundary removes the stream prefix. Its 64-bit fields still use that
+	// original alignment origin, as in the live Intelsat descriptor.
+	want := append([]byte(nil), b.FinishedBytes()[4:]...)
 	cid, err := store.StoreWithSourceTags("NCD.fbs", want, "peer", nil, SourceTags{ProviderID: "provider", SourceName: "native"})
 	if err != nil {
 		t.Fatal(err)
