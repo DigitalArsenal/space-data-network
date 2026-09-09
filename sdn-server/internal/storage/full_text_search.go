@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,6 +23,18 @@ var ErrSearchIndexBuilding = errors.New("Search index is building. Retry shortly
 // Persisted text depends on the extractor's actual implementation as well as
 // the schema. An engine upgrade must not reuse text derived by older code.
 var fullTextEngineHash = sha256.Sum256(flatsqlrt.EmbeddedWasm())
+
+// Stored records may be slices of compiler-emitted size-prefixed buffers.
+// Restore the engine's stream frame before validation: the removed prefix was
+// part of the original alignment of 64-bit fields. FlatSQL also accepts a
+// transport frame around a buffer originally built without a size prefix.
+func fullTextRecordFrame(data []byte) []byte {
+	payload := engineRecordPayload(data)
+	frame := make([]byte, 4+len(payload))
+	binary.LittleEndian.PutUint32(frame, uint32(len(payload)))
+	copy(frame[4:], payload)
+	return frame
+}
 
 // Search-box terms are literal text, never SQL or FTS operators. SQLite owns
 // Unicode tokenization; every whitespace-delimited term must match.
@@ -93,7 +106,7 @@ func (s *FlatSQLStore) CheckFullTextSearch(schema, search string) error {
 	if !available {
 		return errors.New("Complete search schema is unavailable")
 	}
-	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("record-text-bfbs-v1\n%x\n%x", fullTextEngineHash, sha256.Sum256(binarySchema)))))
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("record-text-bfbs-framed-v1\n%x\n%x", fullTextEngineHash, sha256.Sum256(binarySchema)))))
 	s.fullTextMu.Lock()
 	defer s.fullTextMu.Unlock()
 	if s.fullTextClosing {
@@ -298,7 +311,7 @@ func (s *FlatSQLStore) buildFullTextIndex(ctx context.Context, state *fullTextIn
 				if len(record.data) == 0 {
 					continue
 				}
-				_, err = tx.Exec(flatsqldrv.WithoutJournal(`INSERT OR REPLACE INTO sdn_record_fts(rowid,text) SELECT rowid,flatsql_record_text(?,?,?) FROM sdn_record_index WHERE rowid=? AND schema_name=? AND cid=?`), state.table, record.data, state.binarySchema, record.rowID, state.schema, record.cid)
+				_, err = tx.Exec(flatsqldrv.WithoutJournal(`INSERT OR REPLACE INTO sdn_record_fts(rowid,text) SELECT rowid,flatsql_record_text(?,?,?) FROM sdn_record_index WHERE rowid=? AND schema_name=? AND cid=?`), state.table, fullTextRecordFrame(record.data), state.binarySchema, record.rowID, state.schema, record.cid)
 				if err != nil {
 					err = fmt.Errorf("index %s record %s: %w", state.schema, record.cid, err)
 					break
@@ -342,7 +355,7 @@ func upsertFullTextExec(exec sqlExecer, state *fullTextIndexState, schema, cid s
 	if !initialized {
 		return nil
 	}
-	_, err := exec.Exec(flatsqldrv.WithoutJournal(`INSERT OR REPLACE INTO sdn_record_fts(rowid,text) SELECT rowid,flatsql_record_text(?,?,?) FROM sdn_record_index WHERE schema_name=? AND cid=?`), state.table, data, state.binarySchema, schema, cid)
+	_, err := exec.Exec(flatsqldrv.WithoutJournal(`INSERT OR REPLACE INTO sdn_record_fts(rowid,text) SELECT rowid,flatsql_record_text(?,?,?) FROM sdn_record_index WHERE schema_name=? AND cid=?`), state.table, fullTextRecordFrame(data), state.binarySchema, schema, cid)
 	if err != nil {
 		state.mu.Lock()
 		state.ready = false
