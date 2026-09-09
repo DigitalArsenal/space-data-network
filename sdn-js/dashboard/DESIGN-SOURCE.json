@@ -3,21 +3,21 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "3e1e090503efedd3eb5a137c88086bbe6cb04033",
+  "design_commit": "6b76901ea9fad2e1fe8574261fe0f2e25c5fa666",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 11346297,
-    "sha256": "34eefc1d38f13c7641423bf81f9a1a4c41ca2ec9ebf7ae8066e3caff4a454dd1"
+    "bytes": 11346351,
+    "sha256": "d4b3f8a267e20040da5fead1df439423565c8489643274c38dd866a6a2714d0a"
   },
   "artifact_refresh": {
     "date": "2026-09-09",
     "task": "ephemeris-provider-discovery-20260909",
     "was": {
       "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-      "bytes": 801824,
-      "sha256": "a12a59ddb2c88bab031f9b357fa5886ff5ca97575d30d0b630c683e3e861e5e3"
+      "bytes": 11346297,
+      "sha256": "34eefc1d38f13c7641423bf81f9a1a4c41ca2ec9ebf7ae8066e3caff4a454dd1"
     },
-    "why": "Show NCD native datasets and WXF weather forecasts while excluding internal control records; preserves the operational dashboard and includes the already-landed peer-ID CDN documentation."
+    "why": "Keep missing native-record dates empty instead of converting null to January 1970. Preserve valid epoch zero and the existing provider catalog UI."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
@@ -36,11 +36,12 @@
     "previous_design_commit": "38adb52beadac83b7b527b04264defb571b71311"
   },
   "build_provenance": {
-    "consumerSource": "8b8b18c9c9c8c7a91fa77abcd8bdedc936cd12af",
-    "uiSource": "3e1e090503efedd3eb5a137c88086bbe6cb04033",
+    "consumerSource": "9fde64821afc1a7f799d4e3e1e985c1ebec4a4b0",
+    "uiSource": "6b76901ea9fad2e1fe8574261fe0f2e25c5fa666",
     "hdWalletExternalSource": "3b92cb0d695ffc4102570ecc3aca4cf02e514117",
     "uiSourceMount": "export the exact UI commit at sdn-js/spaceaware-ui in a temporary tracked-source build tree",
     "command": "SPACEAWARE_UI_HD_WALLET_WASM=<verified wallet checkout> node dashboard/build-dashboard.mjs",
-    "gitlinkCoordination": "UI gitlink is held by saw-beta-entity-wizard-catalog-20260908; no foreign gitlink edit. This compatibility artifact records its actual source independently of the older consumer pin. Final integrated release must reconcile that pin."
+    "gitlinkCoordination": "UI gitlink is held by saw-beta-entity-wizard-catalog-20260908; no foreign gitlink edit. This compatibility artifact records its actual source independently of the older consumer pin. Final integrated release must reconcile that pin.",
+    "sourceVerification": "All 245 dashboard, client and build-helper files compared to exact UI commit before the build; only the two epoch files differed from the prior build snapshot."
   }
 }
