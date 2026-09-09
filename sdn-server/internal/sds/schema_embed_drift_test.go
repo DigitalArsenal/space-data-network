@@ -18,6 +18,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/IQC"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/LKS"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/NCD"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	sdsplg "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
 	sdspmm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PMM"
@@ -60,6 +61,7 @@ var driftGuardedSchemas = []struct {
 	{"LKS.fbs", &LKS.LKS{}},
 	{"SPW.fbs", &SPW.SPW{}},
 	{"WXF.fbs", &WXF.WXF{}},
+	{"NCD.fbs", &NCD.NCD{}},
 	{"APP.fbs", &APP.APP{}},
 	// RF data suite (SDS v1.177.0). Guarded from the day they are embedded:
 	// both arrive with the pin bump, before any record exists, so the embed
