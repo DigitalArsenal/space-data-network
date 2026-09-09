@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
@@ -146,6 +147,7 @@ func TestDatasetMetadataCrossesRelayWithoutGrantingTrustOrFetchingRecords(t *tes
 	}
 	waitForTopicPeer(t, publisherTopic, relay.ID())
 	waitForTopicPeer(t, relayTopic, receiver.ID())
+	waitForDatasetMetadataRelay(t, ctx, publisherTopic, sub)
 	n.wg.Add(1)
 	go n.handleSubscription(sub, "PNM.fbs")
 	defer func() { cancel(); n.wg.Wait() }()
@@ -189,6 +191,47 @@ func TestDatasetMetadataCrossesRelayWithoutGrantingTrustOrFetchingRecords(t *tes
 	// Both end hosts only have a direct connection to the relay.
 	for _, connection := range receiver.Network().ConnsToPeer(peer.ID(publisher.ID())) {
 		t.Fatalf("test unexpectedly connected publisher directly: %v", connection)
+	}
+}
+
+// Subscription announcements can arrive before the relay's forwarding mesh is
+// ready. Establish both hops with non-record traffic before publishing the
+// single signed PNM whose handling this test measures.
+func waitForDatasetMetadataRelay(t *testing.T, ctx context.Context, topic *pubsub.Topic, sub *pubsub.Subscription) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	const probe = "dataset-catalog-relay-ready"
+	ready := make(chan error, 1)
+	go func() {
+		for {
+			message, err := sub.Next(ctx)
+			if err != nil {
+				ready <- err
+				return
+			}
+			if string(message.Data) == probe {
+				ready <- nil
+				return
+			}
+		}
+	}()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if err := topic.Publish(ctx, []byte(probe)); err != nil {
+			t.Fatalf("relay readiness publish: %v", err)
+		}
+		select {
+		case err := <-ready:
+			if err != nil {
+				t.Fatalf("relay readiness receive: %v", err)
+			}
+			return
+		case <-tick.C:
+		case <-ctx.Done():
+			t.Fatal("relay forwarding mesh never became ready")
+		}
 	}
 }
 
