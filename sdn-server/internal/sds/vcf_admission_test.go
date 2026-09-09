@@ -193,7 +193,7 @@ func TestEmbeddedSetIsTheWholePinnedStandardSet(t *testing.T) {
 	if internal != expectedInternalSchemaCount {
 		t.Errorf("embedded internal schemas = %d, want %d", internal, expectedInternalSchemaCount)
 	}
-	for _, name := range []string{"VCF.fbs", "TXS.fbs", "STX.fbs", "WXF.fbs"} {
+	for _, name := range []string{"VCF.fbs", "TXS.fbs", "STX.fbs", "WXF.fbs", "NCD.fbs"} {
 		if !seen[name] {
 			t.Errorf("%s is absent: the v1.197.0/v1.198.0 bumps exist to embed it", name)
 		}
