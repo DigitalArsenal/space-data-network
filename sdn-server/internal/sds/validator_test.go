@@ -300,8 +300,8 @@ const (
 	// TXSProvenance, so the two are ONE include closure and neither embeds
 	// alone. Only REC.fbs changed among the 225 already embedded; the rest of
 	// this pin is the two new standards and the re-vendored bindings.
-	// The admitted embedded set also includes WXF from SDS v1.215.0.
-	expectedStandardSchemaCount = 231
+	// The admitted embedded set also includes WXF and NCD from SDS v1.215.0.
+	expectedStandardSchemaCount = 232
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )
