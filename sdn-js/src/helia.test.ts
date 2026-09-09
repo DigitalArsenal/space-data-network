@@ -22,7 +22,9 @@ const unixfsMock = vi.fn(() => ({
 }));
 const bootstrapMock = vi.fn(({ list }: { list: string[] }) => ({ list }));
 const bitswapMock = vi.fn(() => ({ blockBroker: 'bitswap' }));
+const trustlessGatewayMock = vi.fn(() => ({ blockBroker: 'trustless-gateway' }));
 const libp2pRoutingMock = vi.fn((libp2p: unknown) => ({ router: 'libp2p', libp2p }));
+const httpGatewayRoutingMock = vi.fn((options: unknown) => ({ router: 'http-gateway', options }));
 const getBootstrapRelaysMock = vi.fn(async () => []);
 const initHDWalletMock = vi.fn(async () => true);
 const peerIdFromStringMock = vi.fn((peerId: string) => ({
@@ -49,10 +51,12 @@ vi.mock('@libp2p/bootstrap', () => ({
 
 vi.mock('@helia/block-brokers', () => ({
   bitswap: bitswapMock,
+  trustlessGateway: trustlessGatewayMock,
 }));
 
 vi.mock('@helia/routers', () => ({
   libp2pRouting: libp2pRoutingMock,
+  httpGatewayRouting: httpGatewayRoutingMock,
 }));
 
 vi.mock('@libp2p/websockets', () => ({
@@ -336,6 +340,45 @@ describe('createHeliaSDNNode', () => {
     vi.clearAllMocks();
     createdLibp2pNodes.length = 0;
     getBootstrapRelaysMock.mockResolvedValue([]);
+  });
+
+  it('enables verified HTTP blocks only for explicitly configured HTTPS gateway origins', async () => {
+    const { createHeliaSDNNode } = await import('./helia');
+    const node = await createHeliaSDNNode({
+      edgeRelays: [],
+      ipfsTrustlessGateways: ['https://sdn.example/', 'https://sdn.example', 'https://second.example:8443'],
+    });
+    expect(httpGatewayRoutingMock).toHaveBeenCalledExactlyOnceWith({
+      gateways: ['https://sdn.example', 'https://second.example:8443'],
+      shuffle: false,
+    });
+    expect(trustlessGatewayMock).toHaveBeenCalledExactlyOnceWith();
+    expect(createHeliaMock.mock.calls[0][0]).toMatchObject({
+      blockBrokers: [{ blockBroker: 'bitswap' }, { blockBroker: 'trustless-gateway' }],
+      routers: [{ router: 'libp2p' }, { router: 'http-gateway' }],
+    });
+    await node.stop();
+  });
+
+  it.each([undefined, []])('does not configure any HTTP gateway when omitted or empty (%j)', async (gateways) => {
+    const { createHeliaSDNNode } = await import('./helia');
+    const node = await createHeliaSDNNode({ edgeRelays: [], ipfsTrustlessGateways: gateways });
+    expect(trustlessGatewayMock).not.toHaveBeenCalled();
+    expect(httpGatewayRoutingMock).not.toHaveBeenCalled();
+    await node.stop();
+  });
+
+  it.each([
+    'https://sdn.example', null, [null], [''], ['http://sdn.example'],
+    ['https://user:password@sdn.example'], ['https://sdn.example/ipfs'],
+    ['https://sdn.example?query=1'], ['https://sdn.example#fragment'],
+    ['https://sdn.example', 'not a URL'],
+  ])('rejects invalid gateway configuration before creating a node (%j)', async (gateways) => {
+    const { createHeliaSDNNode } = await import('./helia');
+    await expect(createHeliaSDNNode({ edgeRelays: [], ipfsTrustlessGateways: gateways as any }))
+      .rejects.toThrow('ipfsTrustlessGateways');
+    expect(createLibp2pMock).not.toHaveBeenCalled();
+    expect(createHeliaMock).not.toHaveBeenCalled();
   });
 
   it('enables WebRTC-direct transport for browser-dialable full-node bootstrap addresses', async () => {
