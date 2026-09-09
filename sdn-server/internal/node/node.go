@@ -201,6 +201,8 @@ type Node struct {
 	autoTLSCertMgr          *p2pforge.P2PForgeCertMgr
 	datasetMaterializeMu    sync.Mutex
 	datasetCatalogMu        sync.Mutex
+	datasetCatalogReplayMu  sync.Mutex
+	datasetCatalogReplayAt  int
 	datasetMaterializedPNMs map[string]time.Time
 	datasetSupersedeMu      sync.Mutex
 
@@ -3106,6 +3108,7 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 	if err != nil {
 		return 0, fmt.Errorf("query stored PNM records: %w", err)
 	}
+	n.cacheStoredDatasetCatalogs(ctx, records)
 	records = n.catchupCandidateDatasetPublicationPNMs(records)
 	materialized := 0
 	var firstErr error
@@ -3356,6 +3359,40 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 	return err
 }
 
+// cacheStoredDatasetCatalogs retries announcements already received by the
+// protocol. GossipSub does not periodically republish unchanged catalogs, so
+// a skipped live fetch must not rely on another announcement. This also
+// recovers received announcements after restart without requiring peer trust.
+func (n *Node) cacheStoredDatasetCatalogs(ctx context.Context, records []*storage.Record) {
+	if n == nil || len(records) == 0 || !n.datasetCatalogReplayMu.TryLock() {
+		return
+	}
+	defer n.datasetCatalogReplayMu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	// Rotate across the bounded existing PNM snapshot so one busy source
+	// cannot permanently starve older announcements. Never queue more work
+	// than one pass can handle; the next existing catch-up tick resumes it.
+	for i := 0; i < min(len(records), 128) && ctx.Err() == nil; i++ {
+		n.datasetCatalogReplayAt %= len(records)
+		record := records[n.datasetCatalogReplayAt]
+		n.datasetCatalogReplayAt++
+		if record == nil || len(record.Data) < 12 || len(record.Data) > 65536 {
+			continue
+		}
+		from, err := peer.Decode(strings.TrimSpace(record.PeerID))
+		if err != nil {
+			continue
+		}
+		if err := n.cacheDatasetPublicationMetadata(ctx, "PNM.fbs", record.Data, from); err != nil {
+			log.Debugf("Stored dataset catalog from %s unavailable: %v", from.ShortString(), err)
+		}
+	}
+}
+
 // cacheDatasetPublicationMetadata discovers signed public source catalogs.
 // Admission to this small metadata cache grants no trust, subscription or pin.
 func (n *Node) cacheDatasetPublicationMetadata(ctx context.Context, schema string, raw []byte, from peer.ID) (err error) {
@@ -3393,8 +3430,8 @@ func (n *Node) cacheDatasetPublicationMetadata(ctx context.Context, schema strin
 	if _, err := cid.Decode(proof.CID); err != nil {
 		return err
 	}
-	// At most one metadata fetch at a time; a busy node will see the next
-	// periodic announcement rather than accumulating waiters/downloads.
+	// At most one metadata fetch at a time. The protocol stores announcements
+	// before this callback; bounded catch-up retries any skipped live fetch.
 	if !n.datasetCatalogMu.TryLock() {
 		return nil
 	}
