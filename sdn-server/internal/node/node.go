@@ -200,6 +200,7 @@ type Node struct {
 	// renewal goroutines.
 	autoTLSCertMgr          *p2pforge.P2PForgeCertMgr
 	datasetMaterializeMu    sync.Mutex
+	datasetCatalogMu        sync.Mutex
 	datasetMaterializedPNMs map[string]time.Time
 	datasetSupersedeMu      sync.Mutex
 
@@ -3258,13 +3259,15 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 			continue
 		}
 
-		// Skip messages from ourselves
-		if msg.ReceivedFrom == n.host.ID() {
+		// StrictSign authenticates the original publisher. ReceivedFrom is
+		// only the immediate relay and must not select the signing key.
+		from := msg.GetFrom()
+		if from == "" || from == n.host.ID() {
 			continue
 		}
 
 		// Process the message
-		if err := n.protocol.HandlePubSubMessage(schema, msg.Data, msg.ReceivedFrom); err != nil {
+		if err := n.protocol.HandlePubSubMessage(schema, msg.Data, from); err != nil {
 			log.Warnf("Failed to handle message on %s: %v", schema, err)
 		} else {
 			// Activity-ring tap (M2 activity capability, caps/
@@ -3272,7 +3275,7 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 			// HandlePubSubMessage validated AND stored the record (see its
 			// doc — every reject path returns a non-nil error), so this is
 			// the ACCEPTED/stored record, not every gossip delivery.
-			n.activityRing.Append("record_stored", msg.ReceivedFrom.String(), schema)
+			n.activityRing.Append("record_stored", from.String(), schema)
 		}
 
 		// The aggregate "PNM.fbs" topic is deliberately skipped by
@@ -3283,8 +3286,10 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 		// trust gate in this file (e.g. materializeDatasetPublicationPNM,
 		// catchUpDatasetShardPublicationsFromPeer) so an untrusted peer's
 		// PNM never reaches the queue's fetch/pin/materialize path.
-		if schema == "PNM.fbs" && n.tipQueue != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(msg.ReceivedFrom) {
-			n.tipQueue.HandleMessage(msg)
+		if schema == "PNM.fbs" && n.tipQueue != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(from) {
+			publication := *msg
+			publication.ReceivedFrom = from
+			n.tipQueue.HandleMessage(&publication)
 		}
 	}
 }
@@ -3335,6 +3340,9 @@ func (n *Node) handleDatasetFeedHeadSubscription(sub *pubsub.Subscription, schem
 }
 
 func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) error {
+	if err := n.cacheDatasetPublicationMetadata(ctx, schema, pnmBytes, from); err != nil {
+		log.Debugf("Dataset catalog from %s unavailable: %v", from.ShortString(), err)
+	}
 	materialized, err := n.materializeDatasetPublicationPNM(ctx, schema, pnmBytes, from)
 	if materialized {
 		// Activity-ring tap (M2 activity capability, caps/nodeactivity.go):
@@ -3346,6 +3354,67 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 		n.scheduleDatasetSupersede(schema)
 	}
 	return err
+}
+
+// cacheDatasetPublicationMetadata discovers signed public source catalogs.
+// Admission to this small metadata cache grants no trust, subscription or pin.
+func (n *Node) cacheDatasetPublicationMetadata(ctx context.Context, schema string, raw []byte, from peer.ID) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("malformed dataset catalog announcement")
+		}
+	}()
+	if n == nil || n.store == nil || n.config == nil || from == "" || (n.host != nil && from == n.host.ID()) || strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
+		return nil
+	}
+	if n.peerRegistry != nil && n.peerRegistry.GetTrustLevel(from) == peers.Never {
+		return nil
+	}
+	if len(raw) < 12 || len(raw) > 65536 {
+		return errors.New("dataset announcement exceeds catalog bounds")
+	}
+	key, err := ed25519PublicKeyFromPeerID(from)
+	if err != nil {
+		// EPM discovery already verifies the peer-bound profile. Do not open
+		// an extra discovery fetch for an unknown announcement signer here.
+		key, err = n.datasetPublicationPublicKeyFromDirectory(from)
+	}
+	if err != nil {
+		return err
+	}
+	proof, err := channels.VerifySignedPNMEnvelopeWithProviderKey(raw, key)
+	if err != nil {
+		return err
+	}
+	publicationSchema := datasetPublicationFileIDSchema(proof.FileID)
+	if publicationSchema == "" || (schema != "PNM.fbs" && schema != publicationSchema) {
+		return nil
+	}
+	if _, err := cid.Decode(proof.CID); err != nil {
+		return err
+	}
+	// At most one metadata fetch at a time; a busy node will see the next
+	// periodic announcement rather than accumulating waiters/downloads.
+	if !n.datasetCatalogMu.TryLock() {
+		return nil
+	}
+	defer n.datasetCatalogMu.Unlock()
+	entries, err := channels.ReadDatasetCatalog(n.store, time.Now())
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.PeerID == from.String() && entry.ManifestCID == proof.CID {
+			return nil
+		}
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	manifest, err := newIPFSTipFetcher(n.config.Admin.IPFSAPIURL, channels.MaxDatasetCatalogManifestBytes).Fetch(fetchCtx, proof.CID)
+	if err != nil {
+		return err
+	}
+	return channels.RememberDatasetCatalog(n.store, from.String(), key, raw, manifest, time.Now())
 }
 
 // newTipQueueConfig returns the TipQueueConfig buildTipQueue constructs the
