@@ -14,6 +14,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 var ErrSearchIndexBuilding = errors.New("Search index is building. Retry shortly.")
@@ -59,6 +60,7 @@ func (s *FlatSQLStore) checkFullTextReadyLocked(filter RawRecordQuery) error {
 type fullTextIndexState struct {
 	mu                          sync.Mutex
 	schema, table, fingerprint  string
+	binarySchema                []byte
 	initialized, running, ready bool
 	failure                     error
 	failedAt                    time.Time
@@ -83,11 +85,15 @@ func (s *FlatSQLStore) CheckFullTextSearch(schema, search string) error {
 		return ErrSearchIndexBuilding
 	}
 	schema = normalizeSchemaNameForEpoch(schema)
-	definition, table, _, ok := EngineRelationSchemaText(schema)
+	_, table, _, ok := EngineRelationSchemaText(schema)
 	if !ok {
 		return errors.New("Full-text search is unavailable for this schema")
 	}
-	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("record-text-v1\n%x\n%s", fullTextEngineHash, definition))))
+	binarySchema, available := sds.SearchSchema(schema)
+	if !available {
+		return errors.New("Complete search schema is unavailable")
+	}
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("record-text-bfbs-v1\n%x\n%x", fullTextEngineHash, sha256.Sum256(binarySchema)))))
 	s.fullTextMu.Lock()
 	defer s.fullTextMu.Unlock()
 	if s.fullTextClosing {
@@ -99,7 +105,7 @@ func (s *FlatSQLStore) CheckFullTextSearch(schema, search string) error {
 	}
 	state := s.fullTextStates[schema]
 	if state == nil {
-		state = &fullTextIndexState{schema: schema, table: table, fingerprint: fingerprint}
+		state = &fullTextIndexState{schema: schema, table: table, fingerprint: fingerprint, binarySchema: binarySchema}
 		s.fullTextStates[schema] = state
 	}
 	state.mu.Lock()
@@ -292,7 +298,7 @@ func (s *FlatSQLStore) buildFullTextIndex(ctx context.Context, state *fullTextIn
 				if len(record.data) == 0 {
 					continue
 				}
-				_, err = tx.Exec(flatsqldrv.WithoutJournal(`INSERT OR REPLACE INTO sdn_record_fts(rowid,text) SELECT rowid,flatsql_record_text(?,?) FROM sdn_record_index WHERE rowid=? AND schema_name=? AND cid=?`), state.table, record.data, record.rowID, state.schema, record.cid)
+				_, err = tx.Exec(flatsqldrv.WithoutJournal(`INSERT OR REPLACE INTO sdn_record_fts(rowid,text) SELECT rowid,flatsql_record_text(?,?,?) FROM sdn_record_index WHERE rowid=? AND schema_name=? AND cid=?`), state.table, record.data, state.binarySchema, record.rowID, state.schema, record.cid)
 				if err != nil {
 					err = fmt.Errorf("index %s record %s: %w", state.schema, record.cid, err)
 					break
@@ -336,7 +342,7 @@ func upsertFullTextExec(exec sqlExecer, state *fullTextIndexState, schema, cid s
 	if !initialized {
 		return nil
 	}
-	_, err := exec.Exec(flatsqldrv.WithoutJournal(`INSERT OR REPLACE INTO sdn_record_fts(rowid,text) SELECT rowid,flatsql_record_text(?,?) FROM sdn_record_index WHERE schema_name=? AND cid=?`), state.table, data, schema, cid)
+	_, err := exec.Exec(flatsqldrv.WithoutJournal(`INSERT OR REPLACE INTO sdn_record_fts(rowid,text) SELECT rowid,flatsql_record_text(?,?,?) FROM sdn_record_index WHERE schema_name=? AND cid=?`), state.table, data, state.binarySchema, schema, cid)
 	if err != nil {
 		state.mu.Lock()
 		state.ready = false
