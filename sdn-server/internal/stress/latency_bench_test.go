@@ -115,10 +115,11 @@ func TestPubsubLatencyBench(t *testing.T) {
 
 	// Warm-up: the first publishes after mesh formation can be dropped while
 	// gossipsub heartbeats settle; they are marked and excluded.
-	payload := make([]byte, latencyBenchPayloadSize)
-	payload[8] = 1
 	warmupDeadline := time.After(10 * time.Second)
 	for delivered := false; !delivered; {
+		// Publish retains the slice while GossipSub sends it asynchronously.
+		payload := make([]byte, latencyBenchPayloadSize)
+		payload[8] = 1
 		binary.BigEndian.PutUint64(payload[:8], uint64(time.Now().UnixNano()))
 		if err := pubTopic.Publish(ctx, payload); err != nil {
 			t.Fatalf("warm-up publish: %v", err)
@@ -132,8 +133,8 @@ func TestPubsubLatencyBench(t *testing.T) {
 		}
 	}
 
-	payload[8] = 0
 	for i := 0; i < latencyBenchMessages; i++ {
+		payload := make([]byte, latencyBenchPayloadSize)
 		binary.BigEndian.PutUint64(payload[:8], uint64(time.Now().UnixNano()))
 		if err := pubTopic.Publish(ctx, payload); err != nil {
 			t.Fatalf("publish %d: %v", i, err)
