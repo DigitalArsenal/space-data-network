@@ -320,6 +320,7 @@ var SupportedSchemas = []string{
 	"TXS.fbs",  // Terrestrial Transmitter Site - merged, source-attributed transmitter facility (REC 226) (SDS v1.198.0)
 	"VAM.fbs",  // Visual Asset Manifest - ranked visual representations for one entity
 	"VCF.fbs",  // vCard Projection Card - canonical contact-card projection of one published EPM (REC 224) (SDS v1.197.0)
+	"WXF.fbs",  // Weather forecast fields (SDS v1.215.0)
 	"VCM.fbs",  // Vector Covariance Message
 	"VEP.fbs",  // Vehicle Endurance Profile (SDS v1.196.0)
 	"VST.fbs",  // Viewer State - display and camera state for a scenario
