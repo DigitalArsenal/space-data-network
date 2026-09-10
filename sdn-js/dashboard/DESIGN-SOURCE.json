@@ -3,21 +3,21 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "b97be165c40d79693cd3c4b39c3f1173c5bf2d50",
+  "design_commit": "25bcd59d4de895f1eb96b69745520b92867ccbd4",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 11365954,
-    "sha256": "a90b05d866d9ac7861b88a794cb723e8b5f936b69571006b2958b947aaf5c82d"
+    "bytes": 11366291,
+    "sha256": "d730acaf16cff8a5838d8cea89385d24b4a398337dfa54a952c833956be0bfa3"
   },
   "artifact_refresh": {
     "date": "2026-09-09",
     "task": "ephemeris-provider-discovery-20260909",
     "was": {
       "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-      "bytes": 11353446,
-      "sha256": "7367463378018617a9b5032269aa3f7e2a62caf20716745286f867469c7d7fd2"
+      "bytes": 11365954,
+      "sha256": "a90b05d866d9ac7861b88a794cb723e8b5f936b69571006b2958b947aaf5c82d"
     },
-    "why": "Render cached menus immediately, keep live status statistics subscribed, and end Identity at Trust with secondary panels in tabs."
+    "why": "Preserve FlatBuffer int64 values in display caches and rehydrate the profile editor from canonical EPM bytes."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
@@ -36,8 +36,8 @@
     "previous_design_commit": "38adb52beadac83b7b527b04264defb571b71311"
   },
   "build_provenance": {
-    "consumerSource": "d134a9255cb97f62c686aa1a1cbcdd246b9cdd3d",
-    "uiSource": "b97be165c40d79693cd3c4b39c3f1173c5bf2d50",
+    "consumerSource": "c1181cda25e21241c479b8e353dc6cd3e446249e",
+    "uiSource": "25bcd59d4de895f1eb96b69745520b92867ccbd4",
     "hdWalletExternalSource": "3b92cb0d695ffc4102570ecc3aca4cf02e514117",
     "uiSourceMount": "export the exact UI commit at sdn-js/spaceaware-ui in a temporary tracked-source build tree",
     "command": "npm run build:dashboard",
