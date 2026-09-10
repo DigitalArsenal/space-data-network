@@ -211,6 +211,7 @@ var SupportedSchemas = []string{
 	"MST.fbs",  // Missile Track
 	"MTI.fbs",  // Moving Target Indicator
 	"NAV.fbs",  // Naval Vessels
+	"NCD.fbs",  // Native container descriptors (SDS v1.215.0)
 	"NUM.fbs",  // Numerical Methods
 	"OBD.fbs",  // Orbit Determination Results
 	"OBT.fbs",  // Orbit Track
@@ -326,6 +327,7 @@ var SupportedSchemas = []string{
 	"WKS.fbs",  // Workspace - scene snapshot + FlatSQL query state + share grants
 	"WPN.fbs",  // Weapons and Munitions
 	"WTH.fbs",  // Weather Data
+	"WXF.fbs",  // Weather forecast fields (SDS v1.215.0)
 	"XTC.fbs",  // XTCE SpaceSystem Document
 }
 

@@ -152,3 +152,27 @@ func TestProviderFeedReportsNoNewUpdateAtCurrentSequence(t *testing.T) {
 		t.Fatalf("Select error = %v, want no compatible update", err)
 	}
 }
+
+func TestProviderFeedChecksManifestChannelAndTarget(t *testing.T) {
+	sequence := int64(42)
+	manifest := &Manifest{Sequence: &sequence, Channel: "beta", Target: ManifestTarget{Platform: "windows", Arch: "amd64", Kind: "cli-bundle"}}
+	entry := ProviderFeedUpdate{Sequence: 42, Channel: "BETA", Target: ManifestTarget{Platform: "win32", Arch: "x64", Kind: "cli-bundle"}}
+	if err := entry.AssertMatchesPayload(manifest, 0); err != nil {
+		t.Fatalf("compatible platform aliases: %v", err)
+	}
+	for name, mutate := range map[string]func(*Manifest){
+		"channel":          func(m *Manifest) { m.Channel = "stable" },
+		"platform":         func(m *Manifest) { m.Target.Platform = "linux" },
+		"architecture":     func(m *Manifest) { m.Target.Arch = "arm64" },
+		"kind":             func(m *Manifest) { m.Target.Kind = "desktop-app" },
+		"missing sequence": func(m *Manifest) { m.Sequence = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := *manifest
+			mutate(&changed)
+			if err := entry.AssertMatchesPayload(&changed, 0); err == nil {
+				t.Fatal("feed/manifest disagreement was accepted")
+			}
+		})
+	}
+}

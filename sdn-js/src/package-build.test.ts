@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 const DIST_INDEX_PATH = path.resolve(__dirname, '../dist/index.mjs');
+const DIST_HTTP_PATH = path.resolve(__dirname, '../dist/transport/http.mjs');
 const DIST_UI_INDEX_PATH = path.resolve(__dirname, '../dist/ui/index.mjs');
 const DIST_STOREFRONT_INDEX_PATH = path.resolve(__dirname, '../dist/storefront/index.mjs');
 const DIST_PATH = path.resolve(__dirname, '../dist');
@@ -78,6 +79,21 @@ async function collectDistModulePaths(dir = DIST_PATH): Promise<string[]> {
 }
 
 describe('sdn-js package build', () => {
+  it('imports a self-contained HTTP reader within a 64 KiB JavaScript budget', async () => {
+    const source = await fs.readFile(DIST_HTTP_PATH, 'utf8');
+    expect(Buffer.byteLength(source)).toBeLessThanOrEqual(64 * 1024);
+    expect(collectBareSpecifiers(source)).toEqual([]);
+    expect(collectRelativeModuleSpecifiers(source)).toEqual([]);
+    const { stdout, stderr } = await execFileAsync(process.execPath, [
+      '--input-type=module', '--eval',
+      `const { HttpTransport, iterateSizePrefixedFrameStream } = await import('@spacedatanetwork/sdn-js/http');
+       console.log(typeof HttpTransport, typeof iterateSizePrefixedFrameStream);`,
+    ], { cwd: path.resolve(__dirname, '..'), timeout: 10_000 });
+    expect(stdout.trim()).toBe('function function');
+    expect(stderr).toBe('');
+    await fs.access(path.resolve(DIST_PATH, 'transport/http.d.ts'));
+  });
+
   it('ships a canonical root entry without unresolved package imports', async () => {
     const source = await fs.readFile(DIST_INDEX_PATH, 'utf8');
     expect(source.length).toBeGreaterThan(0);
@@ -129,6 +145,7 @@ describe('sdn-js package build', () => {
       'index.mjs',
       'status/index.mjs',
       'storefront/index.mjs',
+      'transport/http.mjs',
       'ui/index.mjs',
     ]);
     expect(relativeImports).toEqual({});
@@ -138,6 +155,8 @@ describe('sdn-js package build', () => {
     const packageJson = JSON.parse(await fs.readFile(PACKAGE_JSON_PATH, 'utf8'));
 
     expect(packageJson.exports?.['.']?.import).toBe('./dist/index.mjs');
+    expect(packageJson.exports?.['./http']?.import).toBe('./dist/transport/http.mjs');
+    expect(packageJson.exports?.['./http']?.types).toBe('./dist/transport/http.d.ts');
     expect(packageJson.exports?.['./ui']?.import).toBe('./dist/ui/index.mjs');
     expect(packageJson.exports?.['./ui']?.types).toBe('./dist/ui/index.d.ts');
     expect(packageJson.exports?.['./status']?.import).toBe('./dist/status/index.mjs');
@@ -178,6 +197,7 @@ describe('sdn-js package build', () => {
     expect(packageJson.exports?.['./astro']).toBeUndefined();
     expect(Object.keys(packageJson.exports ?? {})).toEqual([
       '.',
+      './http',
       './ui',
       './status',
       './storefront',

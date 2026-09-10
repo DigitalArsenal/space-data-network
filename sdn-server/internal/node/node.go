@@ -109,6 +109,9 @@ const (
 
 // Node represents a Space Data Network node.
 type Node struct {
+	// Serializes customer download/installation receipt updates.
+	customerModuleMu sync.Mutex
+
 	host           host.Host
 	dht            *dht.IpfsDHT
 	pubsub         *pubsub.PubSub
@@ -197,6 +200,9 @@ type Node struct {
 	// renewal goroutines.
 	autoTLSCertMgr          *p2pforge.P2PForgeCertMgr
 	datasetMaterializeMu    sync.Mutex
+	datasetCatalogMu        sync.Mutex
+	datasetCatalogReplayMu  sync.Mutex
+	datasetCatalogReplayAt  int
 	datasetMaterializedPNMs map[string]time.Time
 	datasetSupersedeMu      sync.Mutex
 
@@ -1072,6 +1078,8 @@ func (n *Node) init() error {
 			log.Warnf("Plugin catalog runtime registration completed with errors: %v", err)
 		}
 	}
+
+	n.restoreCustomerModules()
 
 	// Initialize flow runtime manager and load installed flows.
 	if n.config.Flows.Enabled {
@@ -3100,6 +3108,7 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 	if err != nil {
 		return 0, fmt.Errorf("query stored PNM records: %w", err)
 	}
+	n.cacheStoredDatasetCatalogs(ctx, records)
 	records = n.catchupCandidateDatasetPublicationPNMs(records)
 	materialized := 0
 	var firstErr error
@@ -3253,13 +3262,15 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 			continue
 		}
 
-		// Skip messages from ourselves
-		if msg.ReceivedFrom == n.host.ID() {
+		// StrictSign authenticates the original publisher. ReceivedFrom is
+		// only the immediate relay and must not select the signing key.
+		from := msg.GetFrom()
+		if from == "" || from == n.host.ID() {
 			continue
 		}
 
 		// Process the message
-		if err := n.protocol.HandlePubSubMessage(schema, msg.Data, msg.ReceivedFrom); err != nil {
+		if err := n.protocol.HandlePubSubMessage(schema, msg.Data, from); err != nil {
 			log.Warnf("Failed to handle message on %s: %v", schema, err)
 		} else {
 			// Activity-ring tap (M2 activity capability, caps/
@@ -3267,7 +3278,7 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 			// HandlePubSubMessage validated AND stored the record (see its
 			// doc — every reject path returns a non-nil error), so this is
 			// the ACCEPTED/stored record, not every gossip delivery.
-			n.activityRing.Append("record_stored", msg.ReceivedFrom.String(), schema)
+			n.activityRing.Append("record_stored", from.String(), schema)
 		}
 
 		// The aggregate "PNM.fbs" topic is deliberately skipped by
@@ -3278,8 +3289,10 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 		// trust gate in this file (e.g. materializeDatasetPublicationPNM,
 		// catchUpDatasetShardPublicationsFromPeer) so an untrusted peer's
 		// PNM never reaches the queue's fetch/pin/materialize path.
-		if schema == "PNM.fbs" && n.tipQueue != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(msg.ReceivedFrom) {
-			n.tipQueue.HandleMessage(msg)
+		if schema == "PNM.fbs" && n.tipQueue != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(from) {
+			publication := *msg
+			publication.ReceivedFrom = from
+			n.tipQueue.HandleMessage(&publication)
 		}
 	}
 }
@@ -3330,6 +3343,9 @@ func (n *Node) handleDatasetFeedHeadSubscription(sub *pubsub.Subscription, schem
 }
 
 func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) error {
+	if err := n.cacheDatasetPublicationMetadata(ctx, schema, pnmBytes, from); err != nil {
+		log.Debugf("Dataset catalog from %s unavailable: %v", from.ShortString(), err)
+	}
 	materialized, err := n.materializeDatasetPublicationPNM(ctx, schema, pnmBytes, from)
 	if materialized {
 		// Activity-ring tap (M2 activity capability, caps/nodeactivity.go):
@@ -3341,6 +3357,101 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 		n.scheduleDatasetSupersede(schema)
 	}
 	return err
+}
+
+// cacheStoredDatasetCatalogs retries announcements already received by the
+// protocol. GossipSub does not periodically republish unchanged catalogs, so
+// a skipped live fetch must not rely on another announcement. This also
+// recovers received announcements after restart without requiring peer trust.
+func (n *Node) cacheStoredDatasetCatalogs(ctx context.Context, records []*storage.Record) {
+	if n == nil || len(records) == 0 || !n.datasetCatalogReplayMu.TryLock() {
+		return
+	}
+	defer n.datasetCatalogReplayMu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	// Rotate across the bounded existing PNM snapshot so one busy source
+	// cannot permanently starve older announcements. Never queue more work
+	// than one pass can handle; the next existing catch-up tick resumes it.
+	for i := 0; i < min(len(records), 128) && ctx.Err() == nil; i++ {
+		n.datasetCatalogReplayAt %= len(records)
+		record := records[n.datasetCatalogReplayAt]
+		n.datasetCatalogReplayAt++
+		if record == nil || len(record.Data) < 12 || len(record.Data) > 65536 {
+			continue
+		}
+		from, err := peer.Decode(strings.TrimSpace(record.PeerID))
+		if err != nil {
+			continue
+		}
+		if err := n.cacheDatasetPublicationMetadata(ctx, "PNM.fbs", record.Data, from); err != nil {
+			log.Debugf("Stored dataset catalog from %s unavailable: %v", from.ShortString(), err)
+		}
+	}
+}
+
+// cacheDatasetPublicationMetadata discovers signed public source catalogs.
+// Admission to this small metadata cache grants no trust, subscription or pin.
+func (n *Node) cacheDatasetPublicationMetadata(ctx context.Context, schema string, raw []byte, from peer.ID) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("malformed dataset catalog announcement")
+		}
+	}()
+	if n == nil || n.store == nil || n.config == nil || from == "" || (n.host != nil && from == n.host.ID()) || strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
+		return nil
+	}
+	if n.peerRegistry != nil && n.peerRegistry.GetTrustLevel(from) == peers.Never {
+		return nil
+	}
+	if len(raw) < 12 || len(raw) > 65536 {
+		return errors.New("dataset announcement exceeds catalog bounds")
+	}
+	key, err := ed25519PublicKeyFromPeerID(from)
+	if err != nil {
+		// EPM discovery already verifies the peer-bound profile. Do not open
+		// an extra discovery fetch for an unknown announcement signer here.
+		key, err = n.datasetPublicationPublicKeyFromDirectory(from)
+	}
+	if err != nil {
+		return err
+	}
+	proof, err := channels.VerifySignedPNMEnvelopeWithProviderKey(raw, key)
+	if err != nil {
+		return err
+	}
+	publicationSchema := datasetPublicationFileIDSchema(proof.FileID)
+	if publicationSchema == "" || (schema != "PNM.fbs" && schema != publicationSchema) {
+		return nil
+	}
+	if _, err := cid.Decode(proof.CID); err != nil {
+		return err
+	}
+	// At most one metadata fetch at a time. The protocol stores announcements
+	// before this callback; bounded catch-up retries any skipped live fetch.
+	if !n.datasetCatalogMu.TryLock() {
+		return nil
+	}
+	defer n.datasetCatalogMu.Unlock()
+	entries, err := channels.ReadDatasetCatalog(n.store, time.Now())
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.PeerID == from.String() && entry.ManifestCID == proof.CID {
+			return nil
+		}
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	manifest, err := newIPFSTipFetcher(n.config.Admin.IPFSAPIURL, channels.MaxDatasetCatalogManifestBytes).Fetch(fetchCtx, proof.CID)
+	if err != nil {
+		return err
+	}
+	return channels.RememberDatasetCatalog(n.store, from.String(), key, raw, manifest, time.Now())
 }
 
 // newTipQueueConfig returns the TipQueueConfig buildTipQueue constructs the

@@ -48,6 +48,7 @@ import {
 import { SerialTaskQueue } from './serial-task-queue';
 import { syncRowCountSummary } from './sync-progress';
 import { encodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
+import { encodeFlatSqlSyncRequest, decodeFlatSqlSyncChunk } from '../../flatsql-sync';
 
 /** Window mode row cap: batches stop once the window holds this many rows. */
 export const WINDOW_MAX_ROWS = 20_000;
@@ -78,7 +79,11 @@ export interface DashboardWindowState {
   schema: string;
   /** UI source lane (`OMM@celestrak-gp`), the bare source name, or '' for every source. */
   source?: string | null;
+  /** Full-text search applied by the serving node before pagination. */
+  search?: string;
   range?: DashboardWindowRange | null;
+  /** A remote cursor is opaque; it is never replaced with a local row offset. */
+  remote?: { peerId: string; providerId?: string; cursor?: string; snapshotId?: string; head?: string; totalCount?: number; highWaterMark?: string };
 }
 
 export type DashboardWindowMode = 'page' | 'window';
@@ -115,6 +120,11 @@ export interface DashboardWindowLoad {
   batches: number;
   /** UTC ISO timestamp of the load. */
   loadedAt: string;
+  nextCursor?: string;
+  cursor?: string;
+  highWaterMark?: string;
+  snapshotId?: string;
+  head?: string;
 }
 
 export interface DashboardWindowStandard {
@@ -128,6 +138,7 @@ export interface DashboardWindowStandard {
 export interface DashboardWindowPageOptions {
   page: number;
   limit: number;
+  signal?: AbortSignal;
 }
 
 export interface DashboardWindowLoadOptions {
@@ -207,6 +218,11 @@ interface RawLanePage {
   recordCount: number;
   totalCount: number | null;
   runs: DashboardWindowSourceRun[] | null;
+  nextCursor?: string;
+  cursor?: string;
+  highWaterMark?: string;
+  snapshotId?: string;
+  head?: string;
 }
 
 interface NormalizedRange {
@@ -246,7 +262,9 @@ export function sourceNameForState(state: DashboardWindowState, code = normalize
 export function dashboardWindowStateKey(state: DashboardWindowState): string {
   const code = normalizeStandardCode(state.schema);
   const range = normalizeRange(state.range);
-  return [code, (state.source ?? '').trim(), range?.column ?? '', range?.from ?? '', range?.to ?? ''].join('|');
+  const key = [code, (state.source ?? '').trim(), range?.column ?? '', range?.from ?? '', range?.to ?? ''].join('|');
+  const searchKey = state.search?.trim() ? `${key}|search:${JSON.stringify(state.search.trim())}` : key;
+  return state.remote ? `${searchKey}|${JSON.stringify(state.remote)}` : searchKey;
 }
 
 /** Parse `X-SDN-Source-Runs` (`<pathEscaped source or ->:<count>` pairs, comma-joined, frame order). */
@@ -398,12 +416,16 @@ class DashboardWindow implements DashboardWindowRuntime {
       const source = sourceNameForState(state, standardId);
 
       await this.dropWindow(window, standardId);
-      const fetched = await this.fetchRawPage({
+      const query = {
         schema: `${standardId}.fbs`,
+        ...(state.search?.trim() ? { search: state.search.trim() } : {}),
         ...(source ? { sourceName: source } : {}),
         limit,
         offset,
-      });
+      };
+      const fetched = state.remote
+        ? await this.fetchRemotePage(query, state.remote, options.signal)
+        : await this.fetchRawPage(query, options.signal);
       this.assertCurrent(window, generation, standardId);
       const bytes = fetched.bytes.byteLength;
       await this.ingestRuns(standardId, fetched, key, offset, source);
@@ -429,6 +451,7 @@ class DashboardWindow implements DashboardWindowRuntime {
         pageSize: limit,
         batches: 1,
         loadedAt: new Date().toISOString(),
+        ...(state.remote ? { cursor: fetched.cursor, nextCursor: fetched.nextCursor, snapshotId: fetched.snapshotId, head: fetched.head, highWaterMark: fetched.highWaterMark } : {}),
       };
       window.load = load;
       return { ...load };
@@ -436,6 +459,7 @@ class DashboardWindow implements DashboardWindowRuntime {
   }
 
   loadWindow(state: DashboardWindowState, options: DashboardWindowLoadOptions = {}): Promise<DashboardWindowLoad> {
+    if (state.remote) return Promise.reject(new Error('Remote records are requested one page at a time.'));
     const standardId = normalizeStandardCode(state.schema);
     const window = this.stateFor(standardId);
     const generation = ++window.generation;
@@ -464,6 +488,7 @@ class DashboardWindow implements DashboardWindowRuntime {
         if (limit <= 0) break;
         const fetched = await this.fetchRawPage({
           schema: `${standardId}.fbs`,
+          ...(state.search?.trim() ? { search: state.search.trim() } : {}),
           ...(source ? { sourceName: source } : {}),
           ...(syncFilter ? { syncFilter } : {}),
           limit,
@@ -654,10 +679,19 @@ class DashboardWindow implements DashboardWindowRuntime {
     return flatSqlSizePrefixedStreamInfo(bytes).totalRecordCount > 0;
   }
 
-  private async fetchRawPage(query: RawDataQuery): Promise<RawLanePage> {
+  private async fetchRawPage(query: RawDataQuery, signal?: AbortSignal): Promise<RawLanePage> {
     const url = joinUrl(this.baseUrl, '/api/v1/data/query');
-    const response = await this.fetch(url, authRawFlatbufferStreamRequest(rawDataQueryPayload(query)));
-    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+    const response = await this.fetch(url, { ...authRawFlatbufferStreamRequest(rawDataQueryPayload(query)), ...(signal ? { signal } : {}) });
+    if (!response.ok) {
+      let message = '';
+      let code;
+      try { const error = await response.json(); message = error?.error?.message || error?.message || ''; code = error?.error?.code; } catch { /* no JSON error body */ }
+      throw Object.assign(new Error(message || `${url} returned HTTP ${response.status}`), {
+        retryAfterMs: Number(response.headers.get('retry-after')) * 1000 || undefined,
+        code,
+      });
+    }
+    if (query.search && response.headers.get('x-sdn-search-applied') !== 'fts5-v1') throw new Error('This node needs a search-capable update before it can search all records.');
     const bytes = new Uint8Array(await response.arrayBuffer());
     const info = flatSqlSizePrefixedStreamInfo(bytes);
     return {
@@ -666,6 +700,30 @@ class DashboardWindow implements DashboardWindowRuntime {
       totalCount: headerInteger(response, 'x-sdn-total-count'),
       runs: parseSourceRunsHeader(response.headers?.get?.('x-sdn-source-runs')),
     };
+  }
+
+  private async fetchRemotePage(query: RawDataQuery, remote: NonNullable<DashboardWindowState['remote']>, signal?: AbortSignal): Promise<RawLanePage> {
+    if (!remote.peerId || query.limit! > 1000) throw new Error('A remote node and a page of at most 1,000 records are required.');
+    const url = joinUrl(this.baseUrl, `/api/v1/data/remote/${encodeURIComponent(remote.peerId)}`);
+    const response = await this.fetch(url, {
+      method: 'POST', credentials: 'same-origin', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(25_000)]) : AbortSignal.timeout(25_000),
+      headers: { 'Content-Type': 'application/octet-stream', Accept: 'application/octet-stream', 'X-Requested-With': 'XMLHttpRequest' },
+      body: new Uint8Array(encodeFlatSqlSyncRequest({ ...query, ...remote, targetPeerId: remote.peerId, peerId: undefined })).buffer,
+    });
+    if (!response.ok) {
+      let message = '';
+      try { const error = await response.json(); message = error?.error?.message || error?.message || ''; } catch { /* transport may return an empty body */ }
+      throw new Error(message || 'The remote node could not serve this page. Try again.');
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > 8 * 1024 * 1024) throw new Error('The remote page exceeds the viewer byte limit.');
+    const chunk = decodeFlatSqlSyncChunk(bytes);
+    if (query.search && chunk.header.search !== query.search.trim()) throw new Error('This remote node needs a search-capable update before it can search all records.');
+    if (normalizeStandardCode(chunk.header.schema) !== normalizeStandardCode(query.schema)) throw new Error('The remote node returned a different dataset.');
+    if (chunk.records.length > query.limit! || chunk.records.length !== chunk.header.count) throw new Error('The remote page has an inconsistent record count.');
+    if (remote.snapshotId && chunk.header.snapshotId !== remote.snapshotId) throw new Error('The remote snapshot changed. Refresh to start again.');
+    return { bytes: chunk.recordStream, recordCount: chunk.records.length, totalCount: chunk.header.totalCount, runs: null,
+      cursor: chunk.header.cursor, nextCursor: chunk.header.nextCursor, snapshotId: chunk.header.snapshotId, head: chunk.header.head, highWaterMark: chunk.header.highWaterMark };
   }
 
   /**

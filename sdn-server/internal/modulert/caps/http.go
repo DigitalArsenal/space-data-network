@@ -56,8 +56,10 @@ func observeFetch(url string, status int, bytes, durationMs int64, errMsg string
 //	    "body_encoding": "utf8|base64",  // default: utf8
 //	    "timeout_ms": 30000,
 //	    "max_bytes": 16777216,           // optional response-size clamp
+//	    "follow_redirects": false,      // optional; defaults to true
+//	    "response_encoding": "binary", // optional; raw hostcall segment
 //	}
-//	→ {"status": 200, "headers": {...}, "body": "...", "body_encoding": "utf8|base64"}
+//	→ {"status": 200, "headers": {...}, "header_values": {"Set-Cookie": ["..."]}, "body": "...", "body_encoding": "utf8|base64"}
 //
 // Response bodies are bounded by httpCapMaxResponseBytes (100 MB — the same
 // ceiling the in-daemon ingest runner reads sources with; capability-gated,
@@ -82,13 +84,15 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	}
 
 	var req struct {
-		Method       string            `json:"method"`
-		URL          string            `json:"url"`
-		Headers      map[string]string `json:"headers"`
-		Body         string            `json:"body"`
-		BodyEncoding string            `json:"body_encoding"`
-		TimeoutMs    int               `json:"timeout_ms"`
-		MaxBytes     int64             `json:"max_bytes"`
+		Method           string            `json:"method"`
+		URL              string            `json:"url"`
+		Headers          map[string]string `json:"headers"`
+		Body             string            `json:"body"`
+		BodyEncoding     string            `json:"body_encoding"`
+		ResponseEncoding string            `json:"response_encoding"`
+		TimeoutMs        int               `json:"timeout_ms"`
+		MaxBytes         int64             `json:"max_bytes"`
+		FollowRedirects  *bool             `json:"follow_redirects"`
 	}
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return errCapJSON("invalid request payload: " + err.Error()), nil
@@ -149,6 +153,13 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	applyFetchValidators(httpReq)
 
 	client := &http.Client{Timeout: time.Duration(req.TimeoutMs) * time.Millisecond}
+	if req.FollowRedirects != nil && !*req.FollowRedirects {
+		// Return the original response, including its body and every header.
+		// In particular, do not replay a POST body on a 307 or 308 redirect.
+		client.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		observeFetch(req.URL, 0, 0, time.Since(started).Milliseconds(), err.Error())
@@ -167,6 +178,7 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 		return okCapJSON(map[string]interface{}{
 			"status":        resp.StatusCode,
 			"headers":       respHeaders,
+			"header_values": resp.Header.Clone(),
 			"body":          "",
 			"body_encoding": "utf8",
 		}), nil
@@ -197,6 +209,18 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 		respHeaders[k] = resp.Header.Get(k)
 	}
 
+	// The existing binary hostcall envelope avoids JSON/base64 expansion for
+	// callers that need exact source bytes. Default responses remain unchanged.
+	if req.ResponseEncoding == "binary" {
+		return modulert.PreEncodedEnvelope(map[string]interface{}{
+			"ok": true, "result": map[string]interface{}{
+				"status": resp.StatusCode, "headers": respHeaders,
+				"header_values": resp.Header.Clone(),
+				"body":          map[string]int{"$bin": 0}, "body_encoding": "binary",
+			},
+		}, [][]byte{respBody}), nil
+	}
+
 	// Determine body encoding: use base64 for binary content
 	bodyEncoding := "utf8"
 	contentType := resp.Header.Get("Content-Type")
@@ -214,6 +238,7 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	result := map[string]interface{}{
 		"status":        resp.StatusCode,
 		"headers":       respHeaders,
+		"header_values": resp.Header.Clone(),
 		"body":          bodyOut,
 		"body_encoding": bodyEncoding,
 	}

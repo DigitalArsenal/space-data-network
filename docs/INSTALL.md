@@ -158,6 +158,37 @@ curl -X POST http://127.0.0.1:5001/api/v1/admin/dataset-updates/publish \
 or configure `publishing.auto_publish` lanes, which fire for records ingested
 by modules. Verify with `/api/v1/log/OMM.fbs/heads` and `ipfs pin ls`.
 
+The default publication scope is `batch`. For a source that ingests several
+raw-resource batches, opt into a complete source snapshot:
+
+```yaml
+publishing:
+  auto_publish:
+    - schema: NCD.fbs
+      provider_id: example-provider
+      source_name: example-source
+      publish_scope: source
+      min_interval: 5m
+```
+
+Source scope requires an exact, case-sensitive provider and source. It
+publishes all currently stored records for that tuple, preserving each
+record's original batch provenance. Ingest during publication or the minimum
+interval remains pending and triggers a later snapshot without another
+ingest event. Failed snapshots remain pending with capped retry backoff.
+Starting the daemon also schedules a catchup snapshot for every configured
+source lane, including records stored before the restart.
+
+Saved module inputs from the runtime `/inputs` API are reapplied before
+startup cron scheduling. A module whose saved inputs cannot be applied stays
+in an error state while other modules continue starting.
+
+Modules using the generic HTTP capability can set `follow_redirects: false`
+to receive a redirect response directly. Redirect following remains enabled
+by default. Responses retain the first value of each header in `headers`
+and expose all values in `header_values`, including separate `Set-Cookie`
+values.
+
 ## 9. Archive and restore
 
 With an operator session:

@@ -50,7 +50,7 @@ function streamResponse(frames: Uint8Array[], etag: string): Response {
 }
 
 function notModifiedResponse(etag: string): Response {
-  return new Response(null, { status: 304, headers: { ETag: etag } });
+  return new Response(null, { status: 304, headers: { ETag: etag, 'Cache-Control': 'private, no-store' } });
 }
 
 afterEach(() => {
@@ -112,6 +112,7 @@ describe('HttpTransport.queryData (flatbuffers-first, loop D.3)', () => {
     expect((calls[0].init?.headers as Record<string, string>)['If-None-Match']).toBe(etag);
     expect(result.notModified).toBe(true);
     expect(result.status).toBe(304);
+    expect(result.cacheControl).toBe('private, no-store');
     expect(result.etag).toBe(etag);
     expect(result.stream.byteLength).toBe(0);
     expect([...result.frames()]).toEqual([]);
