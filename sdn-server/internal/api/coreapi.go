@@ -209,6 +209,7 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	mux.HandleFunc("/api/v1/standards", h.withRL(h.handleStandards))
 	// Engine DDL per standard for browser-hosted engines — public GET.
 	mux.HandleFunc("/api/v1/standards/", h.withRL(h.handleStandardSchemaText))
+	mux.HandleFunc("POST /api/v1/data/remote/{peerID}", h.withReadRL(h.handleRemoteRecords))
 
 	// PubSub publish — requires standard auth when authHandler is present.
 	mux.HandleFunc("/api/v1/pubsub/publish", h.withRL(h.requireAuth(peers.Standard, h.handlePubSubPublish)))
@@ -222,6 +223,8 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	// yields its peer read surface to a gateway flow still gets the signing
 	// door. See module_signing.go for why this route lives here.
 	h.registerModuleSigningRoutes(mux)
+	h.registerModuleCustomerRoutes(mux)
+	h.registerModuleApplicationRoutes(mux)
 
 	// Update-manifest signing (POST, Admin) and the public update feed (GET).
 	// Same reason as above for living here rather than in main.go's route
@@ -253,6 +256,15 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	mux.HandleFunc("/api/v1/peers", h.withRL(h.handlePeers))
 	mux.HandleFunc("/api/v1/peers/connect", h.withRL(h.requireAuth(peers.Admin, h.handlePeerConnect)))
 	mux.HandleFunc("/api/v1/peers/", h.withRL(h.handlePeerByID))
+}
+
+// withReadRL uses the read allowance for an explicitly read-only POST route.
+func (h *CoreAPIHandler) withReadRL(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.rl.AllowRead(w, r) {
+			next(w, r)
+		}
+	}
 }
 
 // withRL wraps a handler with rate-limit checking.

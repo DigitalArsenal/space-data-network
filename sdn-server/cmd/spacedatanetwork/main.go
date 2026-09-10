@@ -254,6 +254,7 @@ var identityExportCmd = &cobra.Command{
 var (
 	configPath           string
 	listenAddr           string
+	storageMaxSize       string
 	debug                bool
 	wasmPath             string
 	showMnemonic         bool
@@ -268,6 +269,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug logging")
 
 	daemonCmd.Flags().StringVarP(&listenAddr, "listen", "l", "", "override listen address")
+	daemonCmd.Flags().StringVar(&storageMaxSize, "storage-max-size", "", "override the record storage quota for this run (e.g. 64GiB or 50%)")
 	deriveXPubCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm (default: $HD_WALLET_WASM_PATH or ../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm)")
 	initCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm")
 	showIdentityCmd.Flags().BoolVar(&showMnemonic, "show-mnemonic", false, "display the decrypted mnemonic phrase (SENSITIVE)")
@@ -827,6 +829,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 	if err := validateAssetPinPreNodeConfig(cfg); err != nil {
 		return err
+	}
+	if override := strings.TrimSpace(storageMaxSize); override != "" {
+		cfg.Storage.MaxSize = override
+		if _, err := cfg.Storage.ResolveMaxSizeBytes(cfg.Storage.Path); err != nil {
+			return fmt.Errorf("invalid --storage-max-size: %w", err)
+		}
+		log.Infof("Record storage quota override: %s", override)
 	}
 
 	// Override listen address if specified
@@ -2491,6 +2500,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Load-balancer and monitoring surface: /health, /ready (anonymous,
 			// a status word) and /metrics (operator session). OPS-08.
 			mountHealthRoutes(adminMux, healthDeps{
+				dataReady: func() bool {
+					if len(cfg.Flows.Mounts) == 0 {
+						return true
+					}
+					store := n.Store()
+					return store != nil && !store.EngineHotWindowHydrating() && store.EngineHotWindowHydrated()
+				},
 				engineReady: func() bool {
 					store := n.Store()
 					if store == nil {
@@ -4584,6 +4600,14 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		info["suite_version"] = versioninfo.Version()
 		info["standards_version"] = versioninfo.SpaceDataStandardsVersion
 		info["advertisement_flag"] = versioninfo.CurrentAdvertisementFlag
+		// Build identity and serving surface (API-synthesized, lowercase):
+		// harnesses compare build_sha256 across a fleet before attributing a
+		// failure to transport, and read record_form to decode streams.
+		if sha := executableSHA256(); sha != "" {
+			info["build_sha256"] = sha
+		}
+		info["serving_api"] = servingAPI
+		info["record_form"] = recordForm
 		// Peer populations, split: the raw libp2p/DHT swarm (ipfs) and the
 		// subset that are real SDN nodes (sdn connected / sdn_known observed).
 		info["peers"] = nodeInfoPeerCounts(n)
@@ -4598,6 +4622,14 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		if torRuntime != nil && torRuntime.OnionHost() != "" {
 			info["onion_address"] = torRuntime.OnionHost()
 		}
+		if torRuntime != nil {
+			// Liveness of the managed tor process; an onion name alone can
+			// outlive the process that serves it.
+			info["tor_alive"] = torRuntime.Alive()
+		}
+		// Whether remote peers can dial this node (and its IPFS sidecar)
+		// directly or only through a relay circuit.
+		info["reachability"] = n.Reachability()
 
 		// Boot check surface (task sdn-licensing-module-load): every WASM
 		// module that failed to load this boot, so a fail-closed capability

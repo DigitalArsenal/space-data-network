@@ -1,6 +1,8 @@
 package node
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -8,10 +10,14 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,6 +35,130 @@ import (
 
 type countingTransport struct {
 	requests atomic.Int64
+}
+
+type updateFixtureTransport func(*http.Request) (*http.Response, error)
+
+func (f updateFixtureTransport) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func (h *signalHarness) manifestFixture(t *testing.T, mutate func(*update.Manifest)) ([]byte, []byte) {
+	t.Helper()
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	entry, err := writer.Create("runtime/sdn/spacedatanetwork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("test bundle executable")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	carrier := update.BuildCarrier(archive.Bytes())
+	sequence := int64(999)
+	manifest := update.Manifest{
+		Schema: update.ManifestSchema, UpdateID: "sdn-cli-bundle-9.9.9", Version: "9.9.9", Sequence: &sequence, Channel: "beta",
+		CreatedAt: "2026-01-01T00:00:00Z", ExpiresAt: "2030-01-01T00:00:00Z",
+		Target:  update.ManifestTarget{Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: "cli-bundle"},
+		Bundle:  update.ManifestBundle{Hash: fmt.Sprintf("%x", sha256.Sum256(archive.Bytes())), Size: int64(archive.Len()), Format: "zip"},
+		Wasm:    update.ManifestWasm{Hash: fmt.Sprintf("%x", sha256.Sum256(carrier))},
+		Signing: update.ManifestSigning{KeyID: h.keyID, Algorithm: "Ed25519", StatementDomain: sigdomain.DomainUpdateManifestV1},
+	}
+	if mutate != nil {
+		mutate(&manifest)
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := update.CanonicalManifestBytes(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(canonical)
+	statement, err := sigdomain.Statement(sigdomain.DomainUpdateManifestV1, hash[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Signing.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(h.priv, statement))
+	raw, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw, carrier
+}
+
+func TestUpdateSignalVerifiesManifestBeforeCarrierFetch(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		mutate     func(*update.Manifest)
+		forge      bool
+		wantLaunch bool
+	}{
+		{name: "verified", wantLaunch: true},
+		{name: "invalid signature", forge: true},
+		{name: "expired", mutate: func(m *update.Manifest) { m.ExpiresAt = "2000-01-01T00:00:00Z" }},
+		{name: "wrong channel", mutate: func(m *update.Manifest) { m.Channel = "stable" }},
+		{name: "wrong kind", mutate: func(m *update.Manifest) { m.Target.Kind = "desktop-app" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSignalHarness(t)
+			manifest, carrier := h.manifestFixture(t, tc.mutate)
+			if tc.forge {
+				manifest = bytes.Replace(manifest, []byte("2026-01-01"), []byte("2025-01-01"), 1)
+			}
+			var requests []string
+			h.sub.deps.Client = &http.Client{Transport: updateFixtureTransport(func(req *http.Request) (*http.Response, error) {
+				requests = append(requests, req.URL.Path)
+				body := manifest
+				if strings.HasSuffix(req.URL.Path, ".wasm") {
+					body = carrier
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header), ContentLength: int64(len(body)), Request: req}, nil
+			})}
+			h.sub.handle(context.Background(), h.sign(t, nil))
+			wantRequests, wantLaunches := 1, int64(0)
+			if tc.wantLaunch {
+				wantRequests, wantLaunches = 2, 1
+			}
+			if len(requests) != wantRequests || h.launches.Load() != wantLaunches {
+				t.Fatalf("requests=%v launches=%d, want %d requests and %d launches", requests, h.launches.Load(), wantRequests, wantLaunches)
+			}
+		})
+	}
+}
+
+func TestUpdateSignalFetchRefusesOversizedBodyBeforeReading(t *testing.T) {
+	h := newSignalHarness(t)
+	var read bytes.Buffer
+	h.sub.deps.Client = &http.Client{Transport: updateFixtureTransport(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, ContentLength: 100, Body: io.NopCloser(io.TeeReader(strings.NewReader("payload"), &read)), Header: make(http.Header), Request: req}, nil
+	})}
+	if _, err := h.sub.fetch(context.Background(), "https://feed.example/payload", 4); err == nil || !strings.Contains(err.Error(), "exceeds 4 bytes") {
+		t.Fatalf("expected size rejection, got %v", err)
+	}
+	if read.Len() != 0 {
+		t.Fatal("oversized response body was read")
+	}
+}
+
+func TestUpdateSignalFetchRefusesHTTPSDowngradeBeforeFollowing(t *testing.T) {
+	h := newSignalHarness(t)
+	var cleartextHits atomic.Int64
+	cleartext := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { cleartextHits.Add(1) }))
+	defer cleartext.Close()
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, cleartext.URL, http.StatusFound)
+	}))
+	defer secure.Close()
+	h.sub.deps.Client = secure.Client()
+	if _, err := h.sub.fetch(context.Background(), secure.URL, 100); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("expected HTTPS rejection, got %v", err)
+	}
+	if cleartextHits.Load() != 0 {
+		t.Fatal("HTTP redirect target was contacted")
+	}
 }
 
 func (c *countingTransport) RoundTrip(*http.Request) (*http.Response, error) {

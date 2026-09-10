@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -189,6 +190,62 @@ func TestSupervisorRefusesNonLoopbackAddresses(t *testing.T) {
 	}
 	if _, err := New(Config{Binary: "ipfs", RepoPath: t.TempDir(), GatewayAddr: "192.0.2.1:8080"}); err == nil {
 		t.Fatal("a non-loopback gateway address was accepted")
+	}
+}
+
+func TestSupervisorHealthRequiresSuccessfulVersionResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{"version", 200, `{"Version":"0.38.2"}`, true},
+		{"unauthorized", 401, `{"Message":"unauthorized"}`, false},
+		{"not found", 404, `{"Message":"not found"}`, false},
+		{"unavailable", 503, `{"Version":"0.38.2"}`, false},
+		{"HTML fallback", 200, `<html>dashboard</html>`, false},
+		{"empty version", 200, `{"Version":""}`, false},
+		{"malformed version", 200, `{"Version":42}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/v0/version" {
+					t.Errorf("unexpected health request: %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			sup, err := New(Config{Binary: "unused", RepoPath: t.TempDir(), APIAddr: strings.TrimPrefix(server.URL, "http://")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := sup.Healthy(context.Background()); got != tc.want {
+				t.Fatalf("Healthy = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSupervisorConfigUsesIPv6Multiaddresses(t *testing.T) {
+	sup, repo := newTestSupervisor(t)
+	sup.cfg.APIAddr = "[::1]:5002"
+	sup.cfg.GatewayAddr = "[::1]:8080"
+	if err := sup.ensureRepo(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := sup.applyConfig(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := os.ReadFile(filepath.Join(repo, "settings.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Addresses.API /ip6/::1/tcp/5002", "Addresses.Gateway /ip6/::1/tcp/8080"} {
+		if !strings.Contains(string(settings), want) {
+			t.Fatalf("missing %s in %s", want, settings)
+		}
 	}
 }
 

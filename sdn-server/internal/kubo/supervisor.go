@@ -14,8 +14,10 @@ package kubo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -55,6 +57,16 @@ const (
 	defaultStart       = 60 * time.Second
 	maxRestartBackoff  = 30 * time.Second
 )
+
+// Health is a direct check of the supervised loopback RPC listener. Neither
+// an ambient HTTP proxy nor a redirect may turn another service into Kubo.
+var localRPCClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns: 8, MaxIdleConnsPerHost: 2, IdleConnTimeout: time.Minute,
+		ResponseHeaderTimeout: 3 * time.Second,
+	},
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 // Supervisor runs and watches one Kubo daemon.
 type Supervisor struct {
@@ -143,12 +155,19 @@ func (s *Supervisor) Healthy(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := localRPCClient.Do(req)
 	if err != nil {
 		return false
 	}
-	_ = resp.Body.Close()
-	return resp.StatusCode < 500
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var version struct{ Version string }
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(&version); err != nil {
+		return false
+	}
+	return strings.TrimSpace(version.Version) != ""
 }
 
 // Stop terminates the child (SIGTERM, then SIGKILL after timeout) and waits.
@@ -201,11 +220,9 @@ func (s *Supervisor) ensureRepo(ctx context.Context) error {
 }
 
 func (s *Supervisor) applyConfig(ctx context.Context) error {
-	apiHost, apiPort, _ := net.SplitHostPort(s.cfg.APIAddr)
-	gwHost, gwPort, _ := net.SplitHostPort(s.cfg.GatewayAddr)
 	settings := [][]string{
-		{"config", "Addresses.API", "/ip4/" + apiHost + "/tcp/" + apiPort},
-		{"config", "Addresses.Gateway", "/ip4/" + gwHost + "/tcp/" + gwPort},
+		{"config", "Addresses.API", loopbackMultiaddr(s.cfg.APIAddr)},
+		{"config", "Addresses.Gateway", loopbackMultiaddr(s.cfg.GatewayAddr)},
 		{"config", "--json", "Gateway.NoFetch", boolJSON(!s.cfg.FetchFromNetwork)},
 	}
 	for _, args := range settings {
@@ -214,6 +231,17 @@ func (s *Supervisor) applyConfig(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// New has already validated the literal loopback address.
+func loopbackMultiaddr(addr string) string {
+	host, port, _ := net.SplitHostPort(addr)
+	ip := net.ParseIP(host)
+	protocol := "ip6"
+	if ip.To4() != nil {
+		protocol = "ip4"
+	}
+	return "/" + protocol + "/" + ip.String() + "/tcp/" + port
 }
 
 func boolJSON(v bool) string {
