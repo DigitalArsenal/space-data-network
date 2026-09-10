@@ -242,6 +242,23 @@ func (r *Runtime) Stop(ctx context.Context) error {
 	return r.stopErr
 }
 
+// Alive reports whether the managed tor process is still running. A stopped
+// runtime, or a process that exited on its own, reports false so operators
+// and harnesses can see a dead hidden service instead of a stale onion name.
+func (r *Runtime) Alive() bool {
+	if r == nil || r.cmd == nil || r.cmd.Process == nil {
+		return false
+	}
+	select {
+	case err := <-r.waitDone:
+		// Put the exit status back for Stop, which also reads this channel.
+		r.waitDone <- err
+		return false
+	default:
+		return true
+	}
+}
+
 // ProxyURL returns the SOCKS5h proxy URL exposed by this runtime.
 func (r *Runtime) ProxyURL() string {
 	if r == nil {
