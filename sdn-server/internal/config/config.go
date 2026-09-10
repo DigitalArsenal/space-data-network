@@ -812,9 +812,15 @@ type PublishingConfig struct {
 // publications when they land.
 //
 // Schema is REQUIRED; ProviderID/SourceName are optional narrowing filters
-// (empty = any). Matching is case-insensitive and the schema may be written
+// (empty = any). Batch-scope matching is case-insensitive; source scope
+// requires exact provider/source identities. The schema may be written
 // either as the standard code ("RFB") or the schema file ("RFB.fbs").
 type AutoPublishLane struct {
+	// PublishScope selects "batch" (the default) or "source". Source scope
+	// requires exact, case-sensitive provider and source names. It publishes
+	// all stored batches for that source and catches up once at startup.
+	PublishScope string `yaml:"publish_scope,omitempty"`
+
 	// Schema is the SDS schema whose batches publish, e.g. "RFB.fbs".
 	Schema string `yaml:"schema"`
 
@@ -826,8 +832,9 @@ type AutoPublishLane struct {
 	// "satnogs-db".
 	SourceName string `yaml:"source_name,omitempty"`
 
-	// MinInterval rate-limits this lane: a batch that lands sooner than this
-	// after the lane's last publication is skipped. Zero uses the built-in
+	// MinInterval rate-limits this lane. Source scope retains pending ingests
+	// until the interval elapses; batch scope skips a batch that lands sooner
+	// than this after the lane's last publication. Zero uses the built-in
 	// default (5m). A publication exports, pins and announces a whole shard,
 	// so a misconfigured 1-minute ingest timer must not turn into a
 	// publication storm.
