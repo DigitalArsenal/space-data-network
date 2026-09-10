@@ -4622,6 +4622,11 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		if torRuntime != nil && torRuntime.OnionHost() != "" {
 			info["onion_address"] = torRuntime.OnionHost()
 		}
+		if torRuntime != nil {
+			// Liveness of the managed tor process; an onion name alone can
+			// outlive the process that serves it.
+			info["tor_alive"] = torRuntime.Alive()
+		}
 
 		// Boot check surface (task sdn-licensing-module-load): every WASM
 		// module that failed to load this boot, so a fail-closed capability
