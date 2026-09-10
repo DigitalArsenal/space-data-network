@@ -12,7 +12,12 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"os"
+	"os/exec"
+	"runtime"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +60,16 @@ func percentile(sorted []time.Duration, p float64) time.Duration {
 func TestPubsubLatencyBench(t *testing.T) {
 	if testing.Short() {
 		t.Skip("latency benchmark skipped in -short mode")
+	}
+	// A latency benchmark measured on a CPU-saturated box is not evidence
+	// (docs/policies/evidence-and-verification.md): the 99 % delivery and 1 s
+	// p99 thresholds below hold on a quiet loopback and fail at ~80 % delivery
+	// when the owner box runs the local fleet. Skip, and say so, above half the
+	// cores busy unless the caller insists with SDN_STRESS_BENCH=1.
+	if os.Getenv("SDN_STRESS_BENCH") == "" {
+		if load, ok := oneMinuteLoad(); ok && load > 0.5*float64(runtime.NumCPU()) {
+			t.Skipf("latency benchmark skipped: 1-min loadavg %.1f on %d cores (set SDN_STRESS_BENCH=1 to force)", load, runtime.NumCPU())
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -174,4 +189,27 @@ collect:
 	if p99 > time.Second {
 		t.Fatalf("p99 publish->receive latency %s exceeds 1s on loopback", p99)
 	}
+}
+
+// oneMinuteLoad reads the 1-minute load average without cgo: /proc/loadavg on
+// Linux, `sysctl -n vm.loadavg` ("{ 1.23 4.56 7.89 }") on Darwin/BSD.
+func oneMinuteLoad() (float64, bool) {
+	if raw, err := os.ReadFile("/proc/loadavg"); err == nil {
+		fields := strings.Fields(string(raw))
+		if len(fields) > 0 {
+			if v, err := strconv.ParseFloat(fields[0], 64); err == nil {
+				return v, true
+			}
+		}
+	}
+	out, err := exec.Command("sysctl", "-n", "vm.loadavg").Output()
+	if err != nil {
+		return 0, false
+	}
+	fields := strings.Fields(strings.Trim(strings.TrimSpace(string(out)), "{}"))
+	if len(fields) == 0 {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(fields[0], 64)
+	return v, err == nil
 }
