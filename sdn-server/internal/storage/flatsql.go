@@ -1294,6 +1294,12 @@ func (s *FlatSQLStore) initTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create source tags source/cid index: %w", err)
 	}
+	if err := s.createRequiredStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_source_name_cid", `
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_source_name_cid
+		ON sdn_record_source_tags (schema_name, source_name, cid)
+	`); err != nil {
+		return fmt.Errorf("failed to create source tags source-name/cid index: %w", err)
+	}
 	if err := s.createRequiredStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_batch_cid", `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_batch_cid
 		ON sdn_record_source_tags (schema_name, provider_id, source_name, batch_id, cid)
@@ -5980,9 +5986,9 @@ func (s *FlatSQLStore) countRawRecordsLocked(filter RawRecordQuery) (int64, erro
 
 	taggedQuery := fmt.Sprintf(`
 		SELECT COUNT(*)
-		FROM sdn_record_source_tags tags
+		FROM %s
 		INNER JOIN %s records ON records.cid = tags.cid
-	`, tableName)
+	`, rawRecordSourceTagsReadSource(filter), tableName)
 	if indexFiltered {
 		taggedQuery += `
 		INNER JOIN sdn_record_index idx
@@ -6316,9 +6322,9 @@ func (s *FlatSQLStore) rawTaggedRecordHeadLocked(tableName string, filter RawRec
 	query := fmt.Sprintf(`
 		SELECT COALESCE(SUM(records.record_length), 0), COALESCE(MAX(records.timestamp), 0),
 		       COALESCE(MAX(tags.created_at), 0), COALESCE(MAX(records.rowid), 0)
-		FROM sdn_record_source_tags tags
+		FROM %s
 		INNER JOIN %s records ON records.cid = tags.cid
-	`, tableName)
+	`, rawRecordSourceTagsReadSource(filter), tableName)
 	if indexFilter.active() {
 		query += `
 		INNER JOIN sdn_record_index idx
@@ -6410,6 +6416,31 @@ func (s *FlatSQLStore) countSourceSummaryRecordsLocked(filter RawRecordQuery) (i
 const rawRecordMaxQueryLimit = 50000
 const rawRecordRefLookupBatchSize = 500
 
+const (
+	rawRecordSourceCIDIndex     = "idx_sdn_record_source_tags_source_cid"
+	rawRecordSourceNameCIDIndex = "idx_sdn_record_source_tags_source_name_cid"
+)
+
+// rawRecordSourceTagsReadSource selects an index whose leading columns match
+// the source filter that was actually supplied. A source_name-only sync request
+// cannot seek (schema_name, provider_id, source_name, cid): the missing
+// provider_id prefix turns each correlated lookup into a scan of the schema's
+// tag rows. The dedicated source-name index keeps count, head, and page reads
+// bounded to the requested source while preserving the provider-prefixed path.
+func rawRecordSourceTagsReadSource(filter RawRecordQuery) string {
+	indexName := ""
+	switch {
+	case strings.TrimSpace(filter.ProviderID) == "" && strings.TrimSpace(filter.SourceName) != "":
+		indexName = rawRecordSourceNameCIDIndex
+	case strings.TrimSpace(filter.ProviderID) != "":
+		indexName = rawRecordSourceCIDIndex
+	}
+	if indexName == "" {
+		return "sdn_record_source_tags tags"
+	}
+	return "sdn_record_source_tags tags INDEXED BY " + indexName
+}
+
 // QueryRawRecords returns raw FlatBuffer records with metadata and source tags.
 func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error) {
 	if err := s.readGate(); err != nil {
@@ -6471,7 +6502,7 @@ func appendRawRecordSourceTagFilters(query string, args []interface{}, qualifier
 	return query, args
 }
 
-func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName string, filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+func rawRecordRowIDSourceQuery(tableName string, filter RawRecordQuery) (string, []interface{}) {
 	query := fmt.Sprintf(`
 		WITH candidates AS (
 			SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
@@ -6489,15 +6520,15 @@ func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName stri
 		args = append(args, cid)
 	}
 	query, args = appendRawRecordRowIDCursorWhere(query, args, "records", filter)
-	query += `
+	query += fmt.Sprintf(`
 			  AND EXISTS (
 				SELECT 1
-				FROM sdn_record_source_tags tags INDEXED BY idx_sdn_record_source_tags_source_cid
+				FROM %s
 				WHERE tags.schema_name = ? AND tags.cid = records.cid
-	`
+	`, rawRecordSourceTagsReadSource(filter))
 	args = append(args, filter.SchemaName)
 	query, args = appendRawRecordSourceTagFilters(query, args, "tags", filter)
-	query += `
+	query += fmt.Sprintf(`
 			)
 			ORDER BY records.rowid ASC, records.cid ASC
 			LIMIT ?
@@ -6507,9 +6538,9 @@ func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName stri
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
 		FROM candidates
-		CROSS JOIN sdn_record_source_tags tags INDEXED BY idx_sdn_record_source_tags_source_cid
+		CROSS JOIN %s
 		WHERE tags.schema_name = ? AND tags.cid = candidates.cid
-	`
+	`, rawRecordSourceTagsReadSource(filter))
 	args = append(args, filter.Limit, filter.SchemaName)
 	query, args = appendRawRecordSourceTagFilters(query, args, "tags", filter)
 	query += `
@@ -6517,7 +6548,11 @@ func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName stri
 		LIMIT ?
 	`
 	args = append(args, filter.Limit)
+	return query, args
+}
 
+func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName string, filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+	query, args := rawRecordRowIDSourceQuery(tableName, filter)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("raw record rowid source query failed: %w", err)
@@ -6574,9 +6609,9 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
-		FROM sdn_record_source_tags tags
+		FROM %s
 		INNER JOIN %s records ON records.cid = tags.cid
-	`, tableName)
+	`, rawRecordSourceTagsReadSource(filter), tableName)
 	if indexFiltered {
 		taggedQuery += `
 		INNER JOIN sdn_record_index idx
