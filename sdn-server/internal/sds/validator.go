@@ -522,12 +522,19 @@ const (
 // VerifyEnvelope checks that data is a structurally valid FlatBuffer for
 // schemaName, without requiring the flatc WASM module.
 //
-// Two wire forms are accepted:
+// Two wire forms are accepted structurally:
 //
-//   - size-prefixed (the canonical SDN form — every internal builder finishes with
-//     FinishSizePrefixed<X>Buffer, and the FlatSQL store only decodes records that
-//     satisfy <X>.SizePrefixedXBufferHasIdentifier), and
-//   - a plain finished buffer, tolerated for producers that call Finish directly.
+//   - bare: a plain finished buffer, file identifier at bytes 4..8. This is the
+//     canonical STORED record: its CID is the sha256 of exactly these bytes and
+//     every stream reader hands consumers exactly these bytes after stripping
+//     the transport's own u32 length (verified across the serving fleet on
+//     2026-09-10: CAT, NCD, OMM, MPE, SPW and every other data schema).
+//   - size-prefixed: a builder's FinishSizePrefixed<X>Buffer output, the same
+//     buffer behind its own u32 length, identifier at bytes 8..12. The engine
+//     strips that prefix at ingest (engineRecordPayload) and the store's
+//     parsers accept both, but a record STORED in this form reaches clients
+//     behind two length prefixes. The publish boundary therefore refuses it
+//     (see DetectEnvelopeForm and PublishHandler.refuseSizePrefixed).
 //
 // In both forms the root table offset, the vtable it points at, and the table's
 // inline size must all land inside the buffer, and — when the schema declares a
@@ -571,6 +578,43 @@ func (v *Validator) VerifyEnvelope(schemaName string, data []byte) error {
 		)
 	}
 	return fmt.Errorf("invalid %s record: not a structurally valid FlatBuffer (%d bytes)", schemaName, len(data))
+}
+
+// EnvelopeForm names which accepted wire form a record arrived in.
+type EnvelopeForm string
+
+const (
+	// EnvelopeBare is the canonical stored record (identifier at bytes 4..8).
+	EnvelopeBare EnvelopeForm = "bare"
+	// EnvelopeSizePrefixed is builder output behind its own u32 length
+	// (identifier at bytes 8..12); refused at the publish boundary.
+	EnvelopeSizePrefixed EnvelopeForm = "size-prefixed"
+)
+
+// DetectEnvelopeForm reports which accepted wire form data is in for
+// schemaName, applying the same structural and identifier checks as
+// VerifyEnvelope. A buffer that satisfies neither form returns an error.
+func (v *Validator) DetectEnvelopeForm(schemaName string, data []byte) (EnvelopeForm, error) {
+	v.mu.RLock()
+	ident, hasIdent := v.identifiers[schemaName]
+	v.mu.RUnlock()
+
+	if len(data) < minFlatBufferLength {
+		return "", fmt.Errorf(
+			"invalid %s record: %d bytes is shorter than the minimum FlatBuffer (%d bytes)",
+			schemaName, len(data), minFlatBufferLength,
+		)
+	}
+	if verifyFlatBufferRoot(data) == nil && (!hasIdent || bufferHasIdentifier(data, ident)) {
+		return EnvelopeBare, nil
+	}
+	if inner, ok := sizePrefixedPayload(data); ok && verifyFlatBufferRoot(inner) == nil && (!hasIdent || bufferHasIdentifier(inner, ident)) {
+		return EnvelopeSizePrefixed, nil
+	}
+	if hasIdent {
+		return "", fmt.Errorf("invalid %s record: neither a bare nor a size-prefixed FlatBuffer carrying file identifier %q", schemaName, ident)
+	}
+	return "", fmt.Errorf("invalid %s record: not a structurally valid FlatBuffer (%d bytes)", schemaName, len(data))
 }
 
 // sizePrefixedPayload returns the inner buffer of a size-prefixed FlatBuffer when

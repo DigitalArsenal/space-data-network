@@ -4600,6 +4600,14 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		info["suite_version"] = versioninfo.Version()
 		info["standards_version"] = versioninfo.SpaceDataStandardsVersion
 		info["advertisement_flag"] = versioninfo.CurrentAdvertisementFlag
+		// Build identity and serving surface (API-synthesized, lowercase):
+		// harnesses compare build_sha256 across a fleet before attributing a
+		// failure to transport, and read record_form to decode streams.
+		if sha := executableSHA256(); sha != "" {
+			info["build_sha256"] = sha
+		}
+		info["serving_api"] = servingAPI
+		info["record_form"] = recordForm
 		// Peer populations, split: the raw libp2p/DHT swarm (ipfs) and the
 		// subset that are real SDN nodes (sdn connected / sdn_known observed).
 		info["peers"] = nodeInfoPeerCounts(n)

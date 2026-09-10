@@ -366,3 +366,97 @@ func upsertFullTextExec(exec sqlExecer, state *fullTextIndexState, schema, cid s
 	}
 	return err
 }
+
+// FullTextIndexState reports the derived search index for schema: "ready",
+// "building", "failed", or "cold" when nothing has requested it since boot.
+func (s *FlatSQLStore) FullTextIndexState(schema string) string {
+	if s == nil {
+		return "unavailable"
+	}
+	state := s.fullTextState(schema)
+	if state == nil {
+		return "cold"
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	switch {
+	case state.ready:
+		return "ready"
+	case state.running:
+		return "building"
+	case state.failure != nil:
+		return "failed"
+	default:
+		return "building"
+	}
+}
+
+// schemasWithRecords lists the schema names present in the record index.
+func (s *FlatSQLStore) schemasWithRecords() ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`SELECT DISTINCT schema_name FROM sdn_record_index ORDER BY schema_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var schemas []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		schemas = append(schemas, name)
+	}
+	return schemas, rows.Err()
+}
+
+// WarmFullTextIndexes starts the derived search index for every schema that
+// has records and a complete search schema, so a cold node does not answer
+// its first user search with SEARCH_INDEX_BUILDING (node-transfer tests,
+// 2026-09-10, required change 5). Builds share the single existing slot and
+// run in the background; the return names what was scheduled versus skipped.
+func (s *FlatSQLStore) WarmFullTextIndexes() (scheduled, skipped []string, err error) {
+	schemas, err := s.schemasWithRecords()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, schema := range schemas {
+		if _, ok := sds.SearchSchema(normalizeSchemaNameForEpoch(schema)); !ok {
+			skipped = append(skipped, schema)
+			continue
+		}
+		switch err := s.CheckFullTextSearch(schema, "warm"); {
+		case err == nil, errors.Is(err, ErrSearchIndexBuilding):
+			scheduled = append(scheduled, schema)
+		default:
+			skipped = append(skipped, schema+": "+err.Error())
+		}
+	}
+	return scheduled, skipped, nil
+}
+
+// WarmFullTextIndexesWhenHydrated polls until the record catalog is hydrated,
+// then warms every searchable schema. It returns early when the store starts
+// closing or ctx ends.
+func (s *FlatSQLStore) WarmFullTextIndexesWhenHydrated(ctx context.Context, poll time.Duration) (scheduled, skipped []string, err error) {
+	if poll <= 0 {
+		poll = 2 * time.Second
+	}
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for !s.RecordCatalogHydrated() {
+		s.fullTextMu.Lock()
+		closing := s.fullTextClosing
+		s.fullTextMu.Unlock()
+		if closing {
+			return nil, nil, errors.New("record store is closing")
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+	return s.WarmFullTextIndexes()
+}

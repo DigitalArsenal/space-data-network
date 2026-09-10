@@ -494,6 +494,18 @@ func (n *Node) init() error {
 		if err != nil {
 			return fmt.Errorf("failed to create storage: %w", err)
 		}
+		// Warm derived search indexes once the record catalog is hydrated so a
+		// restarted node serves its first cold search instead of answering
+		// SEARCH_INDEX_BUILDING (node-transfer tests, 2026-09-10). Builds run
+		// one at a time in the background on the store's existing slot.
+		go func(store *storage.FlatSQLStore) {
+			scheduled, skipped, err := store.WarmFullTextIndexesWhenHydrated(context.Background(), 2*time.Second)
+			if err != nil {
+				log.Warnf("search index warm-up not scheduled: %v", err)
+				return
+			}
+			log.Infof("search index warm-up scheduled for %d schema(s), %d skipped", len(scheduled), len(skipped))
+		}(n.store)
 
 		// Operational retrieval ledger. Its own database file beside the
 		// record store — a record-store rebuild must not take the node's
@@ -3658,6 +3670,18 @@ type ipfsTipFetcher struct {
 	apiURL   string
 	maxBytes int64
 	client   *http.Client
+	// providerAddrs, when set, name the publisher's Kubo multiaddrs. The
+	// fetch registers the first dialable one with the peering service for
+	// its duration (storage.PeerIPFSProvider): Bitswap broadcast control
+	// never asks a merely connected provider for a block.
+	providerAddrs []string
+}
+
+// withProviderAddrs returns a copy that peers with one of addrs for each fetch.
+func (f *ipfsTipFetcher) withProviderAddrs(addrs ...string) *ipfsTipFetcher {
+	copied := *f
+	copied.providerAddrs = append([]string(nil), addrs...)
+	return &copied
 }
 
 func newIPFSTipFetcher(apiURL string, maxBytes int64) *ipfsTipFetcher {
@@ -3689,6 +3713,16 @@ func (f *ipfsTipFetcher) Fetch(ctx context.Context, cidValue string) ([]byte, er
 		if size, ok := f.statSize(ctx, client, cidValue); ok && size > f.maxBytes {
 			return nil, fmt.Errorf("%w: cid %s reports size %d bytes (cap %d)", sdnpubsub.ErrFetchTooLarge, cidValue, size, f.maxBytes)
 		}
+	}
+
+	for _, addr := range f.providerAddrs {
+		release, err := storage.PeerIPFSProvider(ctx, f.apiURL, addr)
+		if err != nil {
+			log.Debugf("tip fetch %s: provider %s not peered: %v", cidValue, addr, err)
+			continue
+		}
+		defer release()
+		break
 	}
 
 	endpoint, err := url.JoinPath(strings.TrimRight(f.apiURL, "/"), "/api/v0/cat")
