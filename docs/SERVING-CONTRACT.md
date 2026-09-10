@@ -6,8 +6,9 @@ requires a change to this file in the same commit, a new `serving_api` entry
 or a renamed one, and a stack pin bump. Anything not listed here is internal
 and may change without notice.
 
-Frozen at space-data-network commit `c99845f6fe17cd252e35c85099a37ce6036560a2` (see the
-`build_sha256` a node reports; the fleet must show one value).
+Frozen at the space-data-network commit that carries this file on `main`
+(`git log -1 --format=%H -- docs/SERVING-CONTRACT.md`); nodes report the
+matching executable as `build_sha256`, and a fleet must show one value.
 
 ## Identity a node reports
 
