@@ -18,6 +18,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/IQC"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/LKS"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/NCD"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	sdsplg "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
 	sdspmm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PMM"
@@ -25,6 +26,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/RFB"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
 	sdsstf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STF"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/WXF"
 )
 
 // WHY THIS GUARD EXISTS (2026-08-04, sdn-server-rfb-schema-embed-stale).
@@ -58,6 +60,8 @@ var driftGuardedSchemas = []struct {
 	{"RFB.fbs", &RFB.RFB{}},
 	{"LKS.fbs", &LKS.LKS{}},
 	{"SPW.fbs", &SPW.SPW{}},
+	{"WXF.fbs", &WXF.WXF{}},
+	{"NCD.fbs", &NCD.NCD{}},
 	{"APP.fbs", &APP.APP{}},
 	// RF data suite (SDS v1.177.0). Guarded from the day they are embedded:
 	// both arrive with the pin bump, before any record exists, so the embed

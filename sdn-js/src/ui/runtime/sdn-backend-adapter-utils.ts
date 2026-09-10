@@ -247,6 +247,7 @@ export function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown
     ...(query.head ? { head: query.head } : {}),
     ...(query.queryProfile ? { query_profile: query.queryProfile } : {}),
     ...(query.syncFilter ? { sync_filter: query.syncFilter } : {}),
+    ...(query.search ? { search: query.search } : {}),
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
   };
@@ -328,6 +329,7 @@ export function rawDataStreamPayload(request: RawDataStreamRequest): Record<stri
     ...(request.highWaterMark ? { high_water_mark: request.highWaterMark } : {}),
     ...(request.queryProfile ? { query_profile: request.queryProfile } : {}),
     ...(request.syncFilter ? { sync_filter: request.syncFilter } : {}),
+    ...(request.search ? { search: request.search } : {}),
     records: request.records.map((record) => ({
       schema_name: record.schemaName,
       cid: record.cid,

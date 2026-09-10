@@ -3,21 +3,21 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "ec1bb6c",
+  "design_commit": "75947d69a1ec180728e4d86580db3c0358211fb2",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 801824,
-    "sha256": "a12a59ddb2c88bab031f9b357fa5886ff5ca97575d30d0b630c683e3e861e5e3"
+    "bytes": 11366324,
+    "sha256": "5bc0872dbf19303aff68ef856313eed088d179185f0c357ff4275d81cec46fe1"
   },
   "artifact_refresh": {
-    "date": "2026-08-28",
-    "task": "owner-directed TailAdmin rebuild",
+    "date": "2026-09-09",
+    "task": "ephemeris-provider-discovery-20260909",
     "was": {
-      "design_commit": "bd4e665",
-      "bytes": 600152,
-      "sha256": "8299efd30faec5a1b34f88d86bf9166bf08a611bbce7c01157694eea61bfe8d9"
+      "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
+      "bytes": 11366291,
+      "sha256": "d730acaf16cff8a5838d8cea89385d24b4a398337dfa54a952c833956be0bfa3"
     },
-    "why": "Login wave: one wallet runtime instance (browser-native imports), external/local sessions kept, account-EPM identity page, ?v=2.0.30 pins, American spellings."
+    "why": "Read self services locally; avoid a pointless libp2p request to self that hides cached services behind a disconnected-provider error."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
@@ -34,5 +34,15 @@
     "what": "sdn-js/dashboard reduced to the node-law build shim; ALL app source moved to the spaceaware-ui submodule (spec 2026-07-31 \u00a71.3, task ui-consolidation-single-svelte5-app)",
     "equivalence_proof": "artifact BYTE-IDENTICAL across the move: sha256 9e1089c17a51f0ff4faf36aa045452d096f51b389bade02d5fc6cddc01a53db4 (469695 bytes) built from dashboard/src pre-move and from spaceaware-ui/src/apps/sdn-node post-move \u2014 the cssHash content pin is what makes relocations provable byte-for-byte",
     "previous_design_commit": "38adb52beadac83b7b527b04264defb571b71311"
+  },
+  "build_provenance": {
+    "consumerSource": "1d803d42380ac64a204744a4f7d720a63561eda4",
+    "uiSource": "75947d69a1ec180728e4d86580db3c0358211fb2",
+    "hdWalletExternalSource": "3b92cb0d695ffc4102570ecc3aca4cf02e514117",
+    "uiSourceMount": "export the exact UI commit at sdn-js/spaceaware-ui in a temporary tracked-source build tree",
+    "command": "npm run build:dashboard",
+    "gitlinkCoordination": "UI gitlink is held by saw-beta-entity-wizard-catalog-20260908; no foreign gitlink edit. This compatibility artifact records its actual source independently of the older consumer pin. Final integrated release must reconcile that pin.",
+    "sourceVerification": "Exact committed UI snapshot in the existing private task build tree. Focused cache, settings, routing and identity tests; delayed-API browser verification; separate Go PublishScope build overlay recorded in the deployment checkpoint.",
+    "flatsqlVersion": "2.0.3"
   }
 }

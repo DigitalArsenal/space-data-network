@@ -79,13 +79,21 @@ test('stageBundle creates expected portable archive layout', async () => {
   await mkdir(installBin);
   await symlink(join(staged.root, 'bin', 'spacedatanetwork'), join(installBin, 'spacedatanetwork'));
   await symlink(join(staged.root, 'bin', 'sdn'), join(installBin, 'sdn'));
+  const bundledEnv = { ...process.env };
+  delete bundledEnv.WASMEDGE_DIR;
   for (const commandName of ['spacedatanetwork', 'sdn']) {
-    const result = spawnSync(join(installBin, commandName), ['version'], { encoding: 'utf8' });
+    const result = spawnSync(join(installBin, commandName), ['version'], { encoding: 'utf8', env: bundledEnv });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(
       result.stdout.trim(),
       `WASMEDGE_DIR=${join(staged.root, 'runtime', 'wasmedge')};ARGS=version`,
     );
+    const override = join(inputs, 'selected runtime');
+    const overridden = spawnSync(join(installBin, commandName), ['version'], {
+      encoding: 'utf8', env: { ...bundledEnv, WASMEDGE_DIR: override },
+    });
+    assert.equal(overridden.status, 0, overridden.stderr);
+    assert.equal(overridden.stdout.trim(), `WASMEDGE_DIR=${override};ARGS=version`);
   }
 
   const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));

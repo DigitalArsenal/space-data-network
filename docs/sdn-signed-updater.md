@@ -4,6 +4,31 @@ This document defines the SDN-owned updater target architecture. It replaces
 inherited IPFS Desktop application update behavior with signed SDN payloads
 while keeping Kubo/IPFS runtime refreshes explicit and separable.
 
+## Current CLI execution path
+
+The portable `bin/spacedatanetwork` launcher resolves symlinks, selects the
+bundled WasmEdge runtime unless `WASMEDGE_DIR` explicitly overrides it, and
+executes the bundled SDN daemon. The daemon supervises its separate Kubo child
+with loopback RPC and gateway listeners. Kubo readiness requires a successful
+version response, not merely an HTTP listener.
+
+For automatic updates, the running daemon verifies the small signed pubsub
+pointer, fetches and verifies its manifest, and checks their channel, target,
+version, sequence and hashes agree before downloading the carrier. Downloads
+remain HTTPS across redirects and use bounded sizes; a signed carrier size
+tightens the payload limit. Staging verifies the actual carrier and bundle
+hashes again. The copied helper then performs the shutdown, swap, restart and
+health/rollback sequence outside the replaceable bundle and service cgroup.
+
+This path is implemented in Go's generic artifact/update machinery. The
+`packages/sdn-updater-module` WASM package still contains stub methods and is
+not the executing update coordinator. Shipping that file does not establish
+module-driven updating. Its scheduling, upstream checks and orchestration
+still need an implemented SDK module and an approved host lifecycle capability.
+The current receiver listens for live signals; it does not reconcile updates
+missed while offline. A daemon launched from a scratch binary outside a portable
+bundle cannot use this in-place update path.
+
 ## Payload Envelope
 
 Every update is distributed as an SDN update payload with a signed manifest and
@@ -42,8 +67,8 @@ with missing, duplicated, or unknown critical fields.
 ## WASM Carrier And Bundle Extraction
 
 The WASM carrier is a storage envelope, not executable authority. The updater
-must never instantiate or execute the WASM module before all signature and hash
-checks pass.
+never instantiates or executes the carrier, including after verification; it
+extracts its embedded bundle as data.
 
 Bundle layout:
 

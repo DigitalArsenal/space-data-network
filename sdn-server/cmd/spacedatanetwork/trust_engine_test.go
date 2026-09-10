@@ -47,3 +47,11 @@ func TestTrustSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("persisted interval: %d", got)
 	}
 }
+
+func TestParseBondHoldingsRejectsTickerImpersonation(t *testing.T) {
+	raw := []byte(`{"attested":true,"holdings":[{"chain":"ETH","symbol":"ETH","contract":"0xFake","amount":999,"usd":999999},{"chain":"SOL","symbol":"ETH","amount":999},{"chain":"ETH","symbol":"ETH","address":"another-wallet","amount":999},{"chain":"ETH","symbol":"ETH","address":"wallet","amount":2,"usd":6000}]}`)
+	holdings, err := parseBondHoldings(raw, map[string]string{"ethereum": "wallet"}, 1000)
+	if err != nil || len(holdings) != 1 || holdings[0].Amount != 2 {
+		t.Fatalf("ticker impersonation accepted: %+v %v", holdings, err)
+	}
+}
