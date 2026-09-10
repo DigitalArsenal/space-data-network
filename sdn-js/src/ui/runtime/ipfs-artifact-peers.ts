@@ -1,16 +1,39 @@
 import { normalizeHttpEndpointUrl } from './endpoint-url';
 
+export interface IpfsArtifactPeeringOptions {
+  /**
+   * Register each artifact peer with Kubo's peering service before dialing it.
+   * Kubo 0.43's Bitswap broadcast control only broadcasts wants to peers that
+   * previously served blocks, LAN peers and peered peers; a merely connected
+   * provider is never asked for a CID and the gateway read times out
+   * (node-transfer tests, 2026-09-10: 0/13 connected-only, 13/13 peered).
+   * Default: enabled.
+   */
+  enabled?: boolean;
+  /**
+   * How long the peering entry is retained after connect before it is removed
+   * again; `swarm/peering/add` persists to the Kubo config, so retention is
+   * bounded (default 120 s) and callers may release earlier.
+   */
+  retainMs?: number;
+}
+
 export interface IpfsArtifactPeerConnectOptions {
   ipfsApiUrl?: string | null;
   artifactPeerAddrs?: unknown;
   timeoutMs?: number;
   fetch?: typeof fetch;
+  peering?: IpfsArtifactPeeringOptions;
 }
 
 export interface IpfsArtifactPeerConnectSummary {
   attempted: number;
   connected: number;
   failed: number;
+  /** Peer ids registered with the peering service for this connect. */
+  peered?: string[];
+  /** Remove the bounded peering entries now instead of at the retention deadline. */
+  release?: () => Promise<void>;
 }
 
 export interface IpfsArtifactProviderConnectOptions extends Omit<IpfsArtifactPeerConnectOptions, 'artifactPeerAddrs'> {
@@ -23,6 +46,7 @@ export interface IpfsArtifactProviderConnectSummary extends IpfsArtifactPeerConn
 }
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+const DEFAULT_PEERING_RETAIN_MS = 120_000;
 const DEFAULT_PROVIDER_DISCOVERY_COUNT = 20;
 const TRUSTED_ARTIFACT_SEED_LEVELS = new Set([
   'marginal',
@@ -82,14 +106,32 @@ export async function connectIpfsArtifactPeers(options: IpfsArtifactPeerConnectO
     return { attempted: 0, connected: 0, failed: artifactPeerAddrs.length };
   }
 
+  const timeoutMs = Math.max(1, Math.floor(options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS));
+  const peeringEnabled = options.peering?.enabled !== false;
+  const retainMs = Math.max(1, Math.floor(options.peering?.retainMs ?? DEFAULT_PEERING_RETAIN_MS));
+  const peered: string[] = [];
+
   let connected = 0;
   let failed = 0;
   for (const addr of artifactPeerAddrs) {
+    if (peeringEnabled) {
+      const peerId = peerIdFromMultiaddr(addr);
+      if (peerId) {
+        const peering = new URL(`${apiBase}/api/v0/swarm/peering/add`);
+        peering.searchParams.set('arg', addr);
+        try {
+          const response = await fetchWithTimeout(fetchLike, peering.toString(), { method: 'POST' }, timeoutMs, `IPFS peering add ${addr}`);
+          if (response.ok) peered.push(peerId);
+        } catch {
+          // A provider that cannot be peered is still dialed below; the
+          // broadcast-control limitation then applies to it alone.
+        }
+      }
+    }
     const url = new URL(`${apiBase}/api/v0/swarm/connect`);
     url.searchParams.set('arg', addr);
-    url.searchParams.set('timeout', `${Math.max(1, Math.floor(options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS))}ms`);
+    url.searchParams.set('timeout', `${timeoutMs}ms`);
     try {
-      const timeoutMs = Math.max(1, Math.floor(options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS));
       const response = await fetchWithTimeout(
         fetchLike,
         url.toString(),
@@ -107,11 +149,39 @@ export async function connectIpfsArtifactPeers(options: IpfsArtifactPeerConnectO
     }
   }
 
-  return {
+  const summary: IpfsArtifactPeerConnectSummary = {
     attempted: artifactPeerAddrs.length,
     connected,
     failed,
   };
+  if (peered.length > 0) {
+    let released = false;
+    const release = async () => {
+      if (released) return;
+      released = true;
+      clearTimeout(timer);
+      for (const peerId of peered) {
+        const removal = new URL(`${apiBase}/api/v0/swarm/peering/rm`);
+        removal.searchParams.set('arg', peerId);
+        try {
+          await fetchWithTimeout(fetchLike, removal.toString(), { method: 'POST' }, timeoutMs, `IPFS peering rm ${peerId}`);
+        } catch {
+          // Best effort: the entry is bounded by the next connect's release.
+        }
+      }
+    };
+    const timer = setTimeout(() => { void release(); }, retainMs);
+    (timer as { unref?: () => void }).unref?.();
+    summary.peered = [...peered];
+    summary.release = release;
+  }
+  return summary;
+}
+
+/** Peer id from a multiaddr's trailing /p2p/<id> (or legacy /ipfs/<id>). */
+export function peerIdFromMultiaddr(addr: string): string | null {
+  const match = /\/(?:p2p|ipfs)\/([^/]+)\/?$/.exec(addr.trim());
+  return match ? match[1] : null;
 }
 
 export async function connectIpfsArtifactProviders(options: IpfsArtifactProviderConnectOptions): Promise<IpfsArtifactProviderConnectSummary> {
