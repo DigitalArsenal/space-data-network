@@ -195,6 +195,12 @@ type Node struct {
 	epmExchangeLastRequest  map[peer.ID]time.Time
 	autoRelayPeerChan       chan peer.AddrInfo
 
+	// natWatchdog wraps go-libp2p's NAT manager and rebuilds it when the
+	// router forgets the mappings (nat_watchdog.go); reachability reports
+	// whether remote peers can dial this node directly (reachability.go).
+	natWatchdog  *natWatchdog
+	reachability reachabilityTracker
+
 	// autoTLSCertMgr is the p2p-forge certificate connector (autotls.go); nil
 	// unless network.autotls.enabled. Held only so Stop() can stop its
 	// renewal goroutines.
@@ -750,7 +756,7 @@ func (n *Node) init() error {
 			dhtRouting, err = dht.New(n.ctx, h, publicDHTOptions(n.dhtParticipation())...)
 			return dhtRouting, err
 		}),
-		libp2p.NATPortMap(),
+		libp2p.NATManager(natWatchdogConstructor(&n.natWatchdog)),
 		libp2p.EnableNATService(),
 		libp2p.BandwidthReporter(n.bandwidthCounter),
 	)...)
@@ -943,6 +949,7 @@ func (n *Node) init() error {
 	if runtimeIPFSAPIURL != "" && strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
 		log.Infof("Using detected local Kubo API for module runtime capabilities: %s", runtimeIPFSAPIURL)
 	}
+	go n.reachability.run(n.ctx, n.host, runtimeIPFSAPIURL)
 
 	pluginCtx := plugins.RuntimeContext{
 		Host:         n.host,

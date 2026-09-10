@@ -4627,6 +4627,9 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 			// outlive the process that serves it.
 			info["tor_alive"] = torRuntime.Alive()
 		}
+		// Whether remote peers can dial this node (and its IPFS sidecar)
+		// directly or only through a relay circuit.
+		info["reachability"] = n.Reachability()
 
 		// Boot check surface (task sdn-licensing-module-load): every WASM
 		// module that failed to load this boot, so a fail-closed capability
