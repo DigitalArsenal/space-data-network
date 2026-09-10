@@ -3,21 +3,21 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "25bcd59d4de895f1eb96b69745520b92867ccbd4",
+  "design_commit": "75947d69a1ec180728e4d86580db3c0358211fb2",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 11366291,
-    "sha256": "d730acaf16cff8a5838d8cea89385d24b4a398337dfa54a952c833956be0bfa3"
+    "bytes": 11366324,
+    "sha256": "5bc0872dbf19303aff68ef856313eed088d179185f0c357ff4275d81cec46fe1"
   },
   "artifact_refresh": {
     "date": "2026-09-09",
     "task": "ephemeris-provider-discovery-20260909",
     "was": {
       "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-      "bytes": 11365954,
-      "sha256": "a90b05d866d9ac7861b88a794cb723e8b5f936b69571006b2958b947aaf5c82d"
+      "bytes": 11366291,
+      "sha256": "d730acaf16cff8a5838d8cea89385d24b4a398337dfa54a952c833956be0bfa3"
     },
-    "why": "Preserve FlatBuffer int64 values in display caches and rehydrate the profile editor from canonical EPM bytes."
+    "why": "Read self services locally; avoid a pointless libp2p request to self that hides cached services behind a disconnected-provider error."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
@@ -36,8 +36,8 @@
     "previous_design_commit": "38adb52beadac83b7b527b04264defb571b71311"
   },
   "build_provenance": {
-    "consumerSource": "c1181cda25e21241c479b8e353dc6cd3e446249e",
-    "uiSource": "25bcd59d4de895f1eb96b69745520b92867ccbd4",
+    "consumerSource": "1d803d42380ac64a204744a4f7d720a63561eda4",
+    "uiSource": "75947d69a1ec180728e4d86580db3c0358211fb2",
     "hdWalletExternalSource": "3b92cb0d695ffc4102570ecc3aca4cf02e514117",
     "uiSourceMount": "export the exact UI commit at sdn-js/spaceaware-ui in a temporary tracked-source build tree",
     "command": "npm run build:dashboard",
