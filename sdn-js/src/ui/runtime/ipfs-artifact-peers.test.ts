@@ -24,10 +24,35 @@ describe('IPFS artifact peer routing', () => {
     ]);
   });
 
+  it('peers each artifact provider for a bounded window around the connect, then releases', async () => {
+    const calls: string[] = [];
+    const result = await connectIpfsArtifactPeers({
+      ipfsApiUrl: 'http://127.0.0.1:5001/',
+      artifactPeerAddrs: ['/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak'],
+      fetch: async (url, init) => {
+        calls.push(`${init?.method ?? 'GET'} ${String(url)}`);
+        return new Response(JSON.stringify({ Strings: ['ok'] }), { status: 200 });
+      },
+    });
+    expect(result.attempted).toBe(1);
+    expect(result.connected).toBe(1);
+    expect(result.peered).toEqual(['12D3KooWCelesTrak']);
+    expect(calls).toEqual([
+      'POST http://127.0.0.1:5001/api/v0/swarm/peering/add?arg=%2Fip4%2F167.172.219.213%2Ftcp%2F4002%2Fp2p%2F12D3KooWCelesTrak',
+      'POST http://127.0.0.1:5001/api/v0/swarm/connect?arg=%2Fip4%2F167.172.219.213%2Ftcp%2F4002%2Fp2p%2F12D3KooWCelesTrak&timeout=5000ms',
+    ]);
+    await result.release?.();
+    await result.release?.();
+    expect(calls.slice(2)).toEqual([
+      'POST http://127.0.0.1:5001/api/v0/swarm/peering/rm?arg=12D3KooWCelesTrak',
+    ]);
+  });
+
   it('connects local Kubo to artifact peers before gateway shard reads', async () => {
     const calls: string[] = [];
     const result = await connectIpfsArtifactPeers({
       ipfsApiUrl: 'http://127.0.0.1:5001/',
+      peering: { enabled: false },
       artifactPeerAddrs: [
         '/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak',
         '/ip4/159.203.150.8/tcp/4002/p2p/12D3KooWSpaceAware',
@@ -53,6 +78,7 @@ describe('IPFS artifact peer routing', () => {
     const calls: string[] = [];
     const result = await connectIpfsArtifactPeers({
       ipfsApiUrl: '/ip4/127.0.0.1/tcp/5001',
+      peering: { enabled: false },
       artifactPeerAddrs: ['/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak'],
       fetch: async (url, init) => {
         calls.push(`${init?.method ?? 'GET'} ${String(url)}`);
@@ -166,18 +192,24 @@ describe('IPFS artifact peer routing', () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       attempted: 2,
       connected: 2,
       failed: 0,
       discovered: 2,
     });
+    // Discovered providers are peered for a bounded window before the dial so
+    // Bitswap broadcast control treats them as want targets.
+    expect(result.peered).toEqual(['12D3KooWProviderA', '12D3KooWProviderB']);
     expect(calls).toEqual([
       'POST http://127.0.0.1:5001/api/v0/routing/findprovs?arg=bafyShardA&num-providers=8',
       'POST http://127.0.0.1:5001/api/v0/routing/findprovs?arg=bafyShardB&num-providers=8',
+      'POST http://127.0.0.1:5001/api/v0/swarm/peering/add?arg=%2Fip4%2F203.0.113.10%2Ftcp%2F4001%2Fp2p%2F12D3KooWProviderA',
       'POST http://127.0.0.1:5001/api/v0/swarm/connect?arg=%2Fip4%2F203.0.113.10%2Ftcp%2F4001%2Fp2p%2F12D3KooWProviderA&timeout=5000ms',
+      'POST http://127.0.0.1:5001/api/v0/swarm/peering/add?arg=%2Fdns4%2Fprovider-b.example%2Ftcp%2F4001%2Fp2p%2F12D3KooWProviderB',
       'POST http://127.0.0.1:5001/api/v0/swarm/connect?arg=%2Fdns4%2Fprovider-b.example%2Ftcp%2F4001%2Fp2p%2F12D3KooWProviderB&timeout=5000ms',
     ]);
+    await result.release?.();
   });
 
   it('bounds IPFS provider discovery requests', async () => {

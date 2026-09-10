@@ -285,6 +285,8 @@ func (s *UpdateSignalSubscriber) delay() time.Duration {
 // upgrade fetches, verifies, stages (all while the daemon keeps serving), then
 // hands the swap to a process that can outlive this one.
 func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Signal, state *update.State) error {
+	ctx, cancel := context.WithTimeout(ctx, signalFetchTimeout)
+	defer cancel()
 	log.Infof("Update signal accepted: %s version %s sequence %d (installed sequence %d). Fetching and verifying while this daemon keeps serving.",
 		signal.UpdateID, signal.Version, signal.Sequence, state.Sequence)
 
@@ -292,11 +294,6 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 	if err != nil {
 		return fmt.Errorf("fetch update manifest: %w", err)
 	}
-	carrierBytes, err := s.fetch(ctx, signal.CarrierURL, maxCarrierFetchBytes)
-	if err != nil {
-		return fmt.Errorf("fetch update carrier: %w", err)
-	}
-
 	// The SIGNAL and the SIGNED MANIFEST must describe the same artifact. The
 	// signal is unauthoritative by design, so this is not a trust check — it is
 	// a divergence check, the same one `update install` runs against the feed
@@ -307,11 +304,31 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 	if err != nil {
 		return err
 	}
-	if err := signalMatchesManifest(signal, parsed, len(carrierBytes)); err != nil {
+	if err := signalMatchesManifest(signal, parsed, 0); err != nil {
 		return err
 	}
 
 	verifyOpts := update.HostVerifyOptions(s.deps.TrustedRoots, state.Sequence, s.deps.Now())
+	// Validate the signed metadata before spending payload bandwidth or RAM.
+	// The hash argument here checks metadata only; Stage independently verifies
+	// the actual carrier and extracted bundle bytes against these signed hashes.
+	if _, err := parsed.Validate(parsed.Bundle.Hash, verifyOpts); err != nil {
+		return fmt.Errorf("verify update manifest: %w", err)
+	}
+	carrierLimit := int64(maxCarrierFetchBytes)
+	if signal.WasmSize < 0 || signal.WasmSize > carrierLimit {
+		return fmt.Errorf("update carrier size %d is outside the download limit", signal.WasmSize)
+	}
+	if signal.WasmSize > 0 {
+		carrierLimit = signal.WasmSize
+	}
+	carrierBytes, err := s.fetch(ctx, signal.CarrierURL, carrierLimit)
+	if err != nil {
+		return fmt.Errorf("fetch update carrier: %w", err)
+	}
+	if err := signalMatchesManifest(signal, parsed, len(carrierBytes)); err != nil {
+		return err
+	}
 	staged, err := update.Stage(s.deps.Paths, manifestBytes, carrierBytes, verifyOpts)
 	if err != nil {
 		return fmt.Errorf("stage update: %w", err)
@@ -349,13 +366,35 @@ func (s *UpdateSignalSubscriber) fetch(ctx context.Context, rawURL string, limit
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.deps.Client.Do(req)
+	if req.URL.Scheme != "https" {
+		return nil, errors.New("update fetch requires HTTPS")
+	}
+	// Preserve the caller's transport (including Tor) and redirect policy,
+	// while refusing a downgrade before contacting the redirected endpoint.
+	client := *s.deps.Client
+	originalRedirect := client.CheckRedirect
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if next.URL.Scheme != "https" {
+			return errors.New("update fetch redirected away from HTTPS")
+		}
+		if originalRedirect != nil {
+			return originalRedirect(next, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s returned HTTP %d", rawURL, resp.StatusCode)
+	}
+	if resp.ContentLength > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", rawURL, limit)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {

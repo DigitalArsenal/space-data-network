@@ -109,6 +109,9 @@ const (
 
 // Node represents a Space Data Network node.
 type Node struct {
+	// Serializes customer download/installation receipt updates.
+	customerModuleMu sync.Mutex
+
 	host           host.Host
 	dht            *dht.IpfsDHT
 	pubsub         *pubsub.PubSub
@@ -191,6 +194,12 @@ type Node struct {
 	epmExchangeMu           sync.Mutex
 	epmExchangeLastRequest  map[peer.ID]time.Time
 	autoRelayPeerChan       chan peer.AddrInfo
+
+	// natWatchdog wraps go-libp2p's NAT manager and rebuilds it when the
+	// router forgets the mappings (nat_watchdog.go); reachability reports
+	// whether remote peers can dial this node directly (reachability.go).
+	natWatchdog  *natWatchdog
+	reachability reachabilityTracker
 
 	// autoTLSCertMgr is the p2p-forge certificate connector (autotls.go); nil
 	// unless network.autotls.enabled. Held only so Stop() can stop its
@@ -491,6 +500,18 @@ func (n *Node) init() error {
 		if err != nil {
 			return fmt.Errorf("failed to create storage: %w", err)
 		}
+		// Warm derived search indexes once the record catalog is hydrated so a
+		// restarted node serves its first cold search instead of answering
+		// SEARCH_INDEX_BUILDING (node-transfer tests, 2026-09-10). Builds run
+		// one at a time in the background on the store's existing slot.
+		go func(store *storage.FlatSQLStore) {
+			scheduled, skipped, err := store.WarmFullTextIndexesWhenHydrated(context.Background(), 2*time.Second)
+			if err != nil {
+				log.Warnf("search index warm-up not scheduled: %v", err)
+				return
+			}
+			log.Infof("search index warm-up scheduled for %d schema(s), %d skipped", len(scheduled), len(skipped))
+		}(n.store)
 
 		// Operational retrieval ledger. Its own database file beside the
 		// record store — a record-store rebuild must not take the node's
@@ -735,7 +756,7 @@ func (n *Node) init() error {
 			dhtRouting, err = dht.New(n.ctx, h, publicDHTOptions(n.dhtParticipation())...)
 			return dhtRouting, err
 		}),
-		libp2p.NATPortMap(),
+		libp2p.NATManager(natWatchdogConstructor(&n.natWatchdog)),
 		libp2p.EnableNATService(),
 		libp2p.BandwidthReporter(n.bandwidthCounter),
 	)...)
@@ -928,6 +949,7 @@ func (n *Node) init() error {
 	if runtimeIPFSAPIURL != "" && strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
 		log.Infof("Using detected local Kubo API for module runtime capabilities: %s", runtimeIPFSAPIURL)
 	}
+	go n.reachability.run(n.ctx, n.host, runtimeIPFSAPIURL)
 
 	pluginCtx := plugins.RuntimeContext{
 		Host:         n.host,
@@ -1075,6 +1097,8 @@ func (n *Node) init() error {
 			log.Warnf("Plugin catalog runtime registration completed with errors: %v", err)
 		}
 	}
+
+	n.restoreCustomerModules()
 
 	// Initialize flow runtime manager and load installed flows.
 	if n.config.Flows.Enabled {
@@ -3653,6 +3677,18 @@ type ipfsTipFetcher struct {
 	apiURL   string
 	maxBytes int64
 	client   *http.Client
+	// providerAddrs, when set, name the publisher's Kubo multiaddrs. The
+	// fetch registers the first dialable one with the peering service for
+	// its duration (storage.PeerIPFSProvider): Bitswap broadcast control
+	// never asks a merely connected provider for a block.
+	providerAddrs []string
+}
+
+// withProviderAddrs returns a copy that peers with one of addrs for each fetch.
+func (f *ipfsTipFetcher) withProviderAddrs(addrs ...string) *ipfsTipFetcher {
+	copied := *f
+	copied.providerAddrs = append([]string(nil), addrs...)
+	return &copied
 }
 
 func newIPFSTipFetcher(apiURL string, maxBytes int64) *ipfsTipFetcher {
@@ -3684,6 +3720,16 @@ func (f *ipfsTipFetcher) Fetch(ctx context.Context, cidValue string) ([]byte, er
 		if size, ok := f.statSize(ctx, client, cidValue); ok && size > f.maxBytes {
 			return nil, fmt.Errorf("%w: cid %s reports size %d bytes (cap %d)", sdnpubsub.ErrFetchTooLarge, cidValue, size, f.maxBytes)
 		}
+	}
+
+	for _, addr := range f.providerAddrs {
+		release, err := storage.PeerIPFSProvider(ctx, f.apiURL, addr)
+		if err != nil {
+			log.Debugf("tip fetch %s: provider %s not peered: %v", cidValue, addr, err)
+			continue
+		}
+		defer release()
+		break
 	}
 
 	endpoint, err := url.JoinPath(strings.TrimRight(f.apiURL, "/"), "/api/v0/cat")

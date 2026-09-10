@@ -311,17 +311,29 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 
 	type laneAgg struct {
 		localRows  int64
+		localBytes int64
 		producer   string
 		producerPK string
 		catalog    *channels.DatasetCatalogEntry
 	}
 	lanes := map[laneKey]*laneAgg{}
+	// Source provenance binds provider aliases to peers. An ambiguous alias
+	// cannot identify the publisher of a newly discovered dataset.
+	producerByProvider := map[string]*laneAgg{}
+	ambiguousProvider := map[string]bool{}
 	order := make([]laneKey, 0)
 	for _, src := range summary.Sources {
 		if src.Count <= 0 {
 			continue
 		}
 		key := newLaneKey(src.SchemaName, src.ProviderID, src.SourceName)
+		if producer := strings.TrimSpace(src.ProducerPeerID); producer != "" && key.providerID != "" {
+			if previous := producerByProvider[key.providerID]; previous != nil && previous.producer != producer {
+				ambiguousProvider[key.providerID] = true
+			} else {
+				producerByProvider[key.providerID] = &laneAgg{producer: producer, producerPK: strings.TrimSpace(src.ProducerPublicKey)}
+			}
+		}
 		if key.schema == "" || !laneMatches(key, filter) {
 			continue
 		}
@@ -332,6 +344,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			order = append(order, key)
 		}
 		agg.localRows += src.Count
+		agg.localBytes += src.TotalBytes
 		if agg.producer == "" && strings.TrimSpace(src.ProducerPeerID) != "" {
 			agg.producer = strings.TrimSpace(src.ProducerPeerID)
 			agg.producerPK = strings.TrimSpace(src.ProducerPublicKey)
@@ -401,6 +414,15 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		for i := range pubs {
 			pub := &pubs[i]
 			key := newLaneKey(pub.SchemaName, pub.ProviderID, pub.SourceName)
+			if !laneMatches(key, filter) {
+				continue
+			}
+			// A published lane must be discoverable before its first download.
+			// Its record count describes the publication, never local storage.
+			if lanes[key] == nil && pub.RecordCount > 0 && pub.ManifestCID != "" && pub.PNMCID != "" {
+				lanes[key] = &laneAgg{}
+				order = append(order, key)
+			}
 			cur := newestPub[key]
 			if cur == nil || pub.FeedSequence > cur.FeedSequence ||
 				(pub.FeedSequence == cur.FeedSequence && pub.PublishedAt.After(cur.PublishedAt)) {
@@ -435,6 +457,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		lane := SyncLane{
 			Key:          key,
 			LocalRows:    uint64(nonNegative64(agg.localRows)),
+			CachedBytes:  uint64(nonNegative64(agg.localBytes)),
 			QueryProfile: storage.DatasetPublicationQueryProfile,
 			SyncProtocol: datasync.ProtocolID,
 			Visibility:   "public",
@@ -443,6 +466,11 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			Retention:    retentionWordToOrdinal(defaultRetention),
 		}
 		lane.ProviderPeerID, lane.ProviderPublicKey = agg.producer, agg.producerPK
+		if lane.ProviderPeerID == "" && !ambiguousProvider[key.providerID] {
+			if producer := producerByProvider[key.providerID]; producer != nil {
+				lane.ProviderPeerID, lane.ProviderPublicKey = producer.producer, producer.producerPK
+			}
+		}
 
 		connectorKey := connectorLaneKey{providerID: key.providerID, sourceName: key.sourceName}
 		if c := connectorByLane[connectorKey]; c != nil {
@@ -484,7 +512,9 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		pub := newestPub[key]
 		if pub != nil {
 			lane.FeedHead, lane.LastPublicationCID, lane.LastPNMCID = pub.FeedHead, pub.ManifestCID, pub.PNMCID
-			lane.TotalRows = uint64(nonNegative(pub.RecordCount))
+			// The latest publication can be the final window of a larger feed.
+			// Include the preceding offset instead of counting only that shard.
+			lane.TotalRows = uint64(nonNegative(pub.Offset)) + uint64(nonNegative(pub.RecordCount))
 		}
 		if entry := agg.catalog; entry != nil && (pub == nil || entry.PublishedAt.After(pub.PublishedAt)) {
 			lane.LastPublicationCID, lane.LastPNMCID = entry.ManifestCID, entry.PNMCID
@@ -495,9 +525,12 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			lane.MissingRows = lane.DeltaRows
 		}
 
-		// Local replica facts, only where the ledger knows the lane.
+		// The source summary already supplies local rows and bytes. Reading
+		// raw counts and heads again per publication can scan the full archive
+		// many times and block discovery during recovery. Only pin/publication
+		// evidence is needed here; detailed replica routes still read records.
 		if pub != nil || len(pins) > 0 {
-			if stats, err := deps.Store.LocalReplicaStats(storage.LocalReplicaStatsQuery{
+			if stats, err := deps.Store.LocalReplicaLedgerStats(storage.LocalReplicaStatsQuery{
 				SchemaName: key.schema, ProviderID: key.providerID, SourceName: key.sourceName,
 			}); err == nil {
 				for i := range stats {
@@ -506,7 +539,6 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 						continue
 					}
 					lane.PinnedRows = uint64(nonNegative64(stat.PinnedRows))
-					lane.CachedBytes = uint64(nonNegative64(stat.CachedBytes))
 					lane.PinnedBytes = uint64(nonNegative64(stat.PinnedBytes))
 					lane.SnapshotID, lane.Head, lane.HighWaterMark = stat.SnapshotID, stat.Head, stat.HighWaterMark
 					if !stat.LastSyncedAt.IsZero() {

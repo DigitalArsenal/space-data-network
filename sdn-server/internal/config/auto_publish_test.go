@@ -103,6 +103,7 @@ func TestLoadAutoPublishLanesFromYAML(t *testing.T) {
 		"      provider_id: space-data-network-02\n" +
 		"      source_name: satnogs-db\n" +
 		"      min_interval: 30m\n" +
+		"      publish_scope: source\n" +
 		"    - schema: OMM.fbs\n"
 	if err := os.WriteFile(configPath, []byte(yamlDoc), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -119,7 +120,7 @@ func TestLoadAutoPublishLanesFromYAML(t *testing.T) {
 	if lanes[0].Schema != "RFB.fbs" ||
 		lanes[0].ProviderID != "space-data-network-02" ||
 		lanes[0].SourceName != "satnogs-db" ||
-		lanes[0].MinInterval != 30*time.Minute {
+		lanes[0].MinInterval != 30*time.Minute || lanes[0].PublishScope != "source" {
 		t.Fatalf("first lane = %+v, want the SatNOGS RF lane", lanes[0])
 	}
 	if lanes[1].Schema != "OMM.fbs" || lanes[1].ProviderID != "" || lanes[1].SourceName != "" {
@@ -127,5 +128,8 @@ func TestLoadAutoPublishLanesFromYAML(t *testing.T) {
 	}
 	if lanes[1].MinInterval != 0 {
 		t.Fatalf("unset min_interval = %s, want 0 (the runtime default applies)", lanes[1].MinInterval)
+	}
+	if lanes[1].PublishScope != "" {
+		t.Fatalf("unset publish_scope = %q, want default batch behavior", lanes[1].PublishScope)
 	}
 }

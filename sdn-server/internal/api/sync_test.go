@@ -95,6 +95,19 @@ func TestSyncOneDSSPerLaneWithChannelAndOrigin(t *testing.T) {
 	if gp.LocalRows() != 2 {
 		t.Fatalf("OMM LOCAL_ROWS = %d, want 2", gp.LocalRows())
 	}
+	summary, err := store.DataSummary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var localBytes uint64
+	for _, source := range summary.Sources {
+		if source.SchemaName == "OMM.fbs" && source.ProviderID == "space-data-network-02" && source.SourceName == "celestrak-gp" {
+			localBytes += uint64(source.TotalBytes)
+		}
+	}
+	if localBytes == 0 || gp.CachedBytes() != localBytes {
+		t.Fatalf("OMM CACHED_BYTES = %d, want source summary %d", gp.CachedBytes(), localBytes)
+	}
 	wantChannel, err := channels.FormatChannelID(channels.ChannelIDInput{
 		SourceID:     datasetPublicationSourceID("space-data-network-02", "celestrak-gp"),
 		StandardCode: "OMM",
@@ -160,6 +173,40 @@ func TestSyncOneDSSPerLaneWithChannelAndOrigin(t *testing.T) {
 	_, after := syncFrames(t, mux, http.MethodGet, SyncPath+"?schema=OMM", nil)
 	if got := int8(findDSS(t, after, "OMM.fbs", "space-data-network-02", "celestrak-gp").PinPolicy()); got != DSSPinArchive {
 		t.Fatalf("PIN_POLICY after archive row = %d, want Archive", got)
+	}
+}
+
+func TestSyncDiscoversPublishedDatasetsBeforeDownload(t *testing.T) {
+	store := newConnectorsTestStore(t)
+	for _, schema := range []string{"CAT.fbs", "MPE.fbs"} {
+		if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+			SchemaName: schema, ProviderID: "space-data-network-02", SourceName: "catalog-publication",
+			BatchID: "batch-1", QueryProfile: storage.DatasetPublicationQueryProfile, Offset: 100, Limit: 100,
+			RecordCount: 50, ByteCount: 1000, ShardCID: "bafyshard", IndexCID: "bafyindex",
+			ManifestCID: "bafymanifest", PNMCID: "bafypnm", PublishedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deps := &AdminMountDeps{Store: store, Config: &config.Config{}, Channels: NewChannelHandler(store)}
+	mux, _ := newSyncTestMux(t, deps)
+	_, frames := syncFrames(t, mux, http.MethodGet, SyncPath, nil)
+	for _, schema := range []string{"CAT.fbs", "MPE.fbs"} {
+		lane := findDSS(t, frames, schema, "space-data-network-02", "catalog-publication")
+		if lane.LocalRows() != 0 || lane.TotalRows() != 150 || lane.MissingRows() != 150 || int8(lane.STATUS()) != DSSStateIdle {
+			t.Fatalf("%s: publication must be available without claiming local rows", schema)
+		}
+		if string(lane.ProviderPeerId()) != connectorsTestProducer || string(lane.LastPublicationCid()) != "bafymanifest" {
+			t.Fatalf("%s: missing provider or publication identity", schema)
+		}
+	}
+	_, filtered := syncFrames(t, mux, http.MethodGet, SyncPath+"?schema=CAT", nil)
+	if len(filtered) != 1 {
+		t.Fatalf("CAT filter returned %d lanes", len(filtered))
+	}
+	_, exact := syncFrames(t, mux, http.MethodGet, SyncPath+"/OMM/space-data-network-02/celestrak-gp", nil)
+	if len(exact) != 1 {
+		t.Fatalf("exact source returned %d lanes", len(exact))
 	}
 }
 

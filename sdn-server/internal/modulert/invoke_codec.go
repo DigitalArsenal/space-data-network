@@ -123,8 +123,13 @@ func packInvokeInputFrames(frames []InvokeInputFrame) ([]InvokeInputFrame, []byt
 		if frame.WireFormat == 0 {
 			frame.WireFormat = payloadWireFormatFlatbuffer
 		}
-		if frame.ByteLength == 0 && frame.WireFormat == payloadWireFormatAlignedBinary {
-			frame.ByteLength = uint32(len(payload))
+		if frame.WireFormat == payloadWireFormatAlignedBinary {
+			if frame.ByteLength == 0 {
+				frame.ByteLength = uint32(len(payload))
+			}
+			if frame.RequiredAlignment == 0 {
+				frame.RequiredAlignment = alignment
+			}
 		}
 		frame.Offset = alignedOffset
 		frame.Size = uint32(len(payload))
@@ -192,7 +197,8 @@ func buildPIVTAB(builder *flatbuffers.Builder, frame InvokeInputFrame) flatbuffe
 }
 
 func buildFlatBufferTypeRef(builder *flatbuffers.Builder, frame InvokeInputFrame) flatbuffers.UOffsetT {
-	if frame.SchemaName == "" && frame.FileIdentifier == "" && frame.RootTypeName == "" {
+	alignedBinary := frame.WireFormat == payloadWireFormatAlignedBinary
+	if !alignedBinary && frame.SchemaName == "" && frame.FileIdentifier == "" && frame.RootTypeName == "" {
 		return 0
 	}
 
@@ -218,6 +224,15 @@ func buildFlatBufferTypeRef(builder *flatbuffers.Builder, frame InvokeInputFrame
 	}
 	if rootTypeNameOffset != 0 {
 		piv.FlatBufferTypeRefAddRootType(builder, rootTypeNameOffset)
+	}
+	if alignedBinary {
+		// Aligned payloads may intentionally have no schema identity (for
+		// example a wildcard JSON port). Their layout is still a TypeRef
+		// contract and must agree with the packed TAB and payload arena.
+		piv.FlatBufferTypeRefAddWireFormat(builder, piv.EnumValuespayloadWireFormat["ALIGNED_BINARY"])
+		piv.FlatBufferTypeRefAddFixedStringLength(builder, frame.FixedStringLength)
+		piv.FlatBufferTypeRefAddByteLength(builder, frame.ByteLength)
+		piv.FlatBufferTypeRefAddRequiredAlignment(builder, frame.RequiredAlignment)
 	}
 	return piv.FlatBufferTypeRefEnd(builder)
 }
