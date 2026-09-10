@@ -25,15 +25,31 @@ var (
 
 func compileRawRecordSyncFilter(query RawRecordQuery) (rawRecordSyncFilter, error) {
 	text := strings.TrimSpace(query.SyncFilter)
-	if text == "" {
+	if text == "" && strings.TrimSpace(query.Search) == "" {
 		return rawRecordSyncFilter{}, nil
 	}
-	clauses, err := splitSyncFilterClauses(text)
-	if err != nil {
-		return rawRecordSyncFilter{}, err
+	var clauses []string
+	if text != "" {
+		var err error
+		clauses, err = splitSyncFilterClauses(text)
+		if err != nil {
+			return rawRecordSyncFilter{}, err
+		}
 	}
 	where := make([]string, 0, len(clauses))
 	args := make([]interface{}, 0, len(clauses))
+	if strings.TrimSpace(query.Search) != "" {
+		match, err := fullTextMatchExpression(query.Search)
+		if err != nil {
+			return rawRecordSyncFilter{}, err
+		}
+		where = append(where, "idx.rowid IN (SELECT rowid FROM sdn_record_fts WHERE text MATCH ?)")
+		args = append(args, match)
+		if query.MaxRowID > 0 {
+			where = append(where, "idx.rowid <= ?")
+			args = append(args, query.MaxRowID)
+		}
+	}
 	for _, clause := range clauses {
 		sqlText, sqlArgs, err := compileSyncFilterClause(clause)
 		if err != nil {

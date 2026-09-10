@@ -71,6 +71,10 @@ type AutoPublisher struct {
 	lanes   []config.AutoPublishLane
 
 	queue chan DatasetPublicationRequest
+	// Source scope uses bounded per-configured-source state, independent of
+	// the batch queue, so queue pressure cannot discard its final event.
+	sourceWake chan struct{}
+	sources    map[sourcePublicationKey]*sourcePublicationState
 
 	mu sync.Mutex
 	// lastPublished is the per-lane rate-limit clock, keyed by the matched
@@ -136,6 +140,15 @@ func NewAutoPublisher(service DatasetPublicationService, lanes []config.AutoPubl
 	}
 	valid := make([]config.AutoPublishLane, 0, len(lanes))
 	for _, lane := range lanes {
+		lane.PublishScope = strings.ToLower(strings.TrimSpace(lane.PublishScope))
+		if lane.PublishScope != "" && lane.PublishScope != "batch" && lane.PublishScope != "source" {
+			log.Warnf("publishing.auto_publish entry with unknown publish_scope %q ignored", lane.PublishScope)
+			continue
+		}
+		if lane.PublishScope == "source" && (strings.TrimSpace(lane.ProviderID) == "" || strings.TrimSpace(lane.SourceName) == "") {
+			log.Warnf("publishing.auto_publish source scope requires an exact provider_id and source_name")
+			continue
+		}
 		if normalizeAutoPublishSchema(lane.Schema) == "" {
 			// A lane without a schema matches everything, which is exactly the
 			// fail-open shape this surface must not have. Drop it loudly at
@@ -153,6 +166,8 @@ func NewAutoPublisher(service DatasetPublicationService, lanes []config.AutoPubl
 		service:          service,
 		lanes:            valid,
 		queue:            make(chan DatasetPublicationRequest, autoPublishQueueDepth),
+		sourceWake:       make(chan struct{}, 1),
+		sources:          make(map[sourcePublicationKey]*sourcePublicationState),
 		lastPublished:    make(map[string]time.Time),
 		publishedBatches: make(map[string]struct{}),
 		attempts:         make(map[string]int),
@@ -193,6 +208,7 @@ func (p *AutoPublisher) Start(ctx context.Context) {
 		return
 	}
 	p.started = true
+	p.seedSourcePublicationsLocked()
 	p.mu.Unlock()
 
 	go p.run(ctx)
@@ -220,13 +236,32 @@ func (p *AutoPublisher) Stop() {
 func (p *AutoPublisher) run(ctx context.Context) {
 	defer close(p.done)
 	for {
+		var timer *time.Timer
+		var timerC <-chan time.Time
+		if delay, pending := p.sourcePublicationDelay(); pending {
+			timer = time.NewTimer(delay)
+			timerC = timer.C
+		}
+		stopTimer := func() {
+			if timer != nil {
+				timer.Stop()
+			}
+		}
 		select {
 		case <-ctx.Done():
+			stopTimer()
 			return
 		case <-p.stop:
+			stopTimer()
 			return
 		case req := <-p.queue:
+			stopTimer()
 			p.publish(ctx, req)
+		case <-p.sourceWake:
+			stopTimer()
+			p.publishReadySource(ctx)
+		case <-timerC:
+			p.publishReadySource(ctx)
 		}
 	}
 }
@@ -300,6 +335,10 @@ func (p *AutoPublisher) ObserveIngest(batch IngestedBatch) {
 	if !ok {
 		return
 	}
+	if lane.PublishScope == "source" {
+		p.observeSourceIngest(lane)
+		return
+	}
 
 	laneKey := autoPublishLaneKey(lane)
 	batchKey := laneKey + "|" + batchID
@@ -355,6 +394,14 @@ func (p *AutoPublisher) ObserveIngest(batch IngestedBatch) {
 func (p *AutoPublisher) matchLane(schema, provider, source string) (config.AutoPublishLane, bool) {
 	for _, lane := range p.lanes {
 		if normalizeAutoPublishSchema(lane.Schema) != schema {
+			continue
+		}
+		if lane.PublishScope == "source" {
+			// Source exports use exact store identities, including during
+			// startup when no observation is available to supply their case.
+			if strings.TrimSpace(lane.ProviderID) == provider && strings.TrimSpace(lane.SourceName) == source {
+				return lane, true
+			}
 			continue
 		}
 		if want := strings.TrimSpace(lane.ProviderID); want != "" && !strings.EqualFold(want, provider) {

@@ -319,6 +319,9 @@ func hexLower(b []byte) string {
 // daemon's auth wall gates /api/ and /orbpro-key-broker/ only, so no allowlist
 // entry is needed and none is added.
 func (p *pmmPlugin) RegisterRoutes(mux *http.ServeMux) {
+	if p.node != nil {
+		registerPublicMetadataTransport(p.node.Host(), mux, pmm.Path, pmm.Handler(p.source))
+	}
 	p.mu.RLock()
 	mounted := p.mounted
 	p.mu.RUnlock()

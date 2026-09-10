@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,6 +51,7 @@ type flatSQLSyncRequest struct {
 	Head                   string               `json:"head"`
 	QueryProfile           string               `json:"query_profile"`
 	SyncFilter             string               `json:"sync_filter"`
+	Search                 string               `json:"search,omitempty"`
 	Limit                  int                  `json:"limit"`
 	Offset                 int                  `json:"offset"`
 	ScanHash               string               `json:"scan_hash"`
@@ -817,6 +819,7 @@ func (req flatSQLSyncRequest) queryRequest() datasync.QueryRequest {
 		HighWaterMark:          req.HighWaterMark,
 		QueryProfile:           req.QueryProfile,
 		SyncFilter:             req.SyncFilter,
+		Search:                 req.Search,
 		TotalCount:             req.TotalCount,
 		Limit:                  req.Limit,
 		Offset:                 req.Offset,
@@ -883,6 +886,10 @@ func WriteFlatSQLSyncJSONFrame(writer io.Writer, payload interface{}) error {
 }
 
 func flatSQLSyncErrorResponse(err error) map[string]interface{} {
+	if errors.Is(err, storage.ErrSearchIndexBuilding) {
+		return map[string]interface{}{"status": "error", "sync_protocol": FlatSQLSyncProtocolID,
+			"retry_after_ms": 2000, "error": map[string]interface{}{"code": "SEARCH_INDEX_BUILDING", "message": err.Error()}}
+	}
 	return map[string]interface{}{
 		"status":        "error",
 		"sync_protocol": FlatSQLSyncProtocolID,

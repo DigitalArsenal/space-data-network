@@ -336,6 +336,7 @@ func (h *PublishHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	data, envelope := h.canonicalRecordBytes(schema, data)
 
 	// Check quota
 	if h.quotas != nil {
@@ -368,6 +369,7 @@ func (h *PublishHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		"schema":    schema,
 		"stored_at": time.Now().UTC().Format(time.RFC3339),
 		"bytes":     len(data),
+		"envelope":  string(envelope),
 	})
 }
 
@@ -436,9 +438,10 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 	// its own store transaction and engine ingest per record — measured ~50x
 	// slower than the batch store on identical records.
 	type batchFrame struct {
-		schema string
-		data   []byte
-		errMsg string
+		schema   string
+		data     []byte
+		errMsg   string
+		envelope sds.EnvelopeForm
 	}
 	var frames []batchFrame
 	var lenBuf [4]byte
@@ -480,6 +483,8 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 				f.schema = decision.Schema
 				if err := h.validator.Validate(r.Context(), f.schema, data); err != nil {
 					f.errMsg = "validation failed: " + err.Error()
+				} else {
+					f.data, f.envelope = h.canonicalRecordBytes(f.schema, data)
 				}
 			}
 		}
@@ -559,8 +564,9 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 		}
 
 		results = append(results, map[string]interface{}{
-			"cid":   cid,
-			"bytes": len(f.data),
+			"cid":      cid,
+			"bytes":    len(f.data),
+			"envelope": string(f.envelope),
 		})
 	}
 
@@ -596,6 +602,27 @@ func (h *PublishHandler) isSchemaAllowed(schema string) bool {
 // the request identifies its lane via query params (?source_name= and/or
 // ?provider_id=, plus optional batch_id / source_url). The producer peer is
 // always recorded on tagged stores so tagged publishes stay attributable.
+// canonicalRecordBytes returns the bytes that are hashed and stored for a
+// published record: the bare finished FlatBuffer, file identifier at byte 4.
+// A builder's size-prefixed output (FinishSizePrefixed<X>Buffer) is accepted
+// and its own u32 length removed, so the stored record, its CID and every
+// stream frame carry exactly one length prefix. Stored verbatim, that form
+// reaches clients behind two prefixes: the staged GCAT edition failed every
+// independent consumer that way (node-transfer tests, 2026-09-10). The
+// returned form tells the publisher what arrived, so a client that computed
+// its expected CID over prefixed bytes sees the disagreement instead of a
+// silent change. Structural defects stay Validate's verdict.
+func (h *PublishHandler) canonicalRecordBytes(schema string, data []byte) ([]byte, sds.EnvelopeForm) {
+	if h.validator == nil {
+		return data, sds.EnvelopeBare
+	}
+	form, err := h.validator.DetectEnvelopeForm(schema, data)
+	if err != nil || form != sds.EnvelopeSizePrefixed {
+		return data, sds.EnvelopeBare
+	}
+	return data[4:], sds.EnvelopeSizePrefixed
+}
+
 func (h *PublishHandler) storeWithOptionalTags(schema string, data []byte, peerID string, r *http.Request) (string, error) {
 	tags, tagged := sourceTagsFromRequest(r, peerID)
 	if !tagged {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -95,6 +96,11 @@ type Module struct {
 	host      host.Host
 	paused    bool
 	mu        sync.Mutex
+	// Metadata reads must not wait for a guest invocation or its host calls.
+	// Lock order when both are needed is mu, then metadataMu. Memory sizes
+	// are sampled only while mu owns an idle VM, never by status readers.
+	metadataMu   sync.RWMutex
+	cachedMemory wasmrt.MemoryStats
 	// contentHash is the lowercase hex SHA-256 digest of wasmBytes — the
 	// capability policy identity (loop B1). Set once instantiateWASM reads
 	// the manifest.
@@ -267,6 +273,11 @@ func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContex
 	if err := m.Load(context.Background()); err != nil {
 		return nil, err
 	}
+	if _, err := m.ApplicationRecord(); err == nil {
+		m.SetUIURL("/api/v1/modules/apps/" + url.PathEscape(m.manifest.PluginID) + "/app")
+	} else if !errors.Is(err, ErrNoModuleApplication) {
+		log.Debugf("Module %q has no launchable embedded application: %v", m.manifest.PluginID, err)
+	}
 
 	return m, nil
 }
@@ -337,7 +348,10 @@ func (m *Module) Load(ctx context.Context) error {
 	}
 	m.mod = mod
 	m.bridge = bridge
+	m.metadataMu.Lock()
 	m.manifest = manifest
+	m.metadataMu.Unlock()
+	m.refreshMemoryStatsLocked()
 	m.paused = false
 	m.mu.Unlock()
 
@@ -370,9 +384,9 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 		return nil, nil, nil, sigErr
 	}
 	wasmBytes = portableBytes
-	m.mu.Lock()
+	m.metadataMu.Lock()
 	m.signatureStatus = sigStatus
-	m.mu.Unlock()
+	m.metadataMu.Unlock()
 
 	// Create the per-module host bridge (needs manifest first for capabilities,
 	// but we need the WASM loaded to read the manifest — chicken-and-egg.
@@ -446,9 +460,9 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 	// re-hashing, guaranteeing the capability-policy identity and the
 	// publication-signature identity can never drift apart.
 	contentHash := sigStatus.ContentHash
-	m.mu.Lock()
+	m.metadataMu.Lock()
 	m.contentHash = contentHash
-	m.mu.Unlock()
+	m.metadataMu.Unlock()
 	var policy *CapabilityPolicyStore
 	if m.nodeCtx != nil {
 		policy = m.nodeCtx.CapabilityPolicy
@@ -514,8 +528,8 @@ func capPrefixFromName(cap string) string {
 // --- plugins.Plugin interface ---
 
 func (m *Module) ID() string {
-	if m.manifest != nil {
-		return m.manifest.PluginID
+	if manifest := m.Manifest(); manifest != nil {
+		return manifest.PluginID
 	}
 	return "unknown-module"
 }
@@ -544,7 +558,9 @@ func (m *Module) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	m.cancel = cancel
 	m.host = runtime.Host
 	m.paused = false
+	m.metadataMu.Lock()
 	m.startedAt = time.Now().UTC()
+	m.metadataMu.Unlock()
 	manifest := m.manifest
 	m.mu.Unlock()
 	if manifest == nil {
@@ -599,7 +615,10 @@ func (m *Module) Close() error {
 	m.mod = nil
 	m.host = nil
 	m.paused = false
+	m.metadataMu.Lock()
 	m.startedAt = time.Time{}
+	m.cachedMemory = wasmrt.MemoryStats{}
+	m.metadataMu.Unlock()
 	m.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -731,7 +750,11 @@ func runtimeModuleInputWireFormat(value plugins.RuntimeModuleInputValue) byte {
 
 func (m *Module) CronMethods() []plugins.CronMethodSpec {
 	var specs []plugins.CronMethodSpec
-	for _, t := range m.manifest.Timers {
+	manifest := m.Manifest()
+	if manifest == nil {
+		return specs
+	}
+	for _, t := range manifest.Timers {
 		interval := fmt.Sprintf("%dms", t.DefaultIntervalMs)
 		if t.DefaultIntervalMs >= 1000 {
 			interval = fmt.Sprintf("%ds", t.DefaultIntervalMs/1000)
@@ -765,12 +788,16 @@ func (m *Module) InvokeCron(ctx context.Context, method string, input []byte) ([
 // --- plugins.UIProvider / plugins.UIURLSetter interfaces ---
 
 func (m *Module) UIDescriptor() plugins.UIDescriptor {
-	m.mu.Lock()
+	m.metadataMu.RLock()
 	url := m.uiURL
-	m.mu.Unlock()
+	manifest := m.manifest
+	m.metadataMu.RUnlock()
+	if manifest == nil {
+		return plugins.UIDescriptor{URL: url}
+	}
 	return plugins.UIDescriptor{
-		Title:       m.manifest.Name,
-		Description: fmt.Sprintf("%s v%s", m.manifest.PluginID, m.manifest.Version),
+		Title:       manifest.Name,
+		Description: fmt.Sprintf("%s v%s", manifest.PluginID, manifest.Version),
 		Icon:        "📦",
 		Color:       "#6366f1",
 		TextColor:   "#ffffff",
@@ -791,8 +818,8 @@ func (m *Module) SetUIURL(url string) {
 	if m == nil {
 		return
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.metadataMu.Lock()
+	defer m.metadataMu.Unlock()
 	m.uiURL = url
 }
 
@@ -817,6 +844,7 @@ func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputF
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.refreshMemoryStatsLocked()
 
 	if m.mod == nil {
 		return nil, fmt.Errorf("module not loaded")
@@ -887,24 +915,39 @@ func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputF
 	return extractPluginInvokePayload(response, "response")
 }
 
-// Manifest returns the parsed manifest.
-func (m *Module) Manifest() *Manifest { return m.manifest }
+// Manifest returns the immutable parsed manifest.
+func (m *Module) Manifest() *Manifest {
+	if m == nil {
+		return nil
+	}
+	m.metadataMu.RLock()
+	defer m.metadataMu.RUnlock()
+	return m.manifest
+}
+
+// Caller holds mu, so the VM is not executing or being unloaded. Keep this
+// snapshot for status requests while the next invocation is still running.
+func (m *Module) refreshMemoryStatsLocked() {
+	stats := wasmrt.MemoryStats{}
+	if m.mod != nil {
+		var err error
+		stats, err = m.mod.MemoryStats()
+		if err != nil {
+			return
+		}
+	}
+	m.metadataMu.Lock()
+	m.cachedMemory = stats
+	m.metadataMu.Unlock()
+}
 
 // RuntimeDescriptor returns a dashboard-safe summary of this module.
 func (m *Module) RuntimeDescriptor() plugins.RuntimeModuleDescriptor {
-	descriptor := plugins.RuntimeModuleDescriptor{
-		Manifest: runtimeManifestDescriptor(m.manifest),
-	}
-	if m != nil && m.mod != nil {
-		if stats, err := m.mod.MemoryStats(); err == nil {
-			descriptor.Stats.MemoryPages = stats.Pages
-			descriptor.Stats.MemoryBytes = stats.Bytes
-			descriptor.Stats.MaxMemoryPages = stats.MaxPages
-			descriptor.Stats.MaxMemoryBytes = stats.MaxBytes
-		}
-	}
+	descriptor := plugins.RuntimeModuleDescriptor{}
 	if m != nil {
-		m.mu.Lock()
+		m.metadataMu.RLock()
+		manifest := m.manifest
+		memory := m.cachedMemory
 		startedAt := m.startedAt
 		invokeCount := m.invokeCount
 		errorCount := m.errorCount
@@ -912,7 +955,12 @@ func (m *Module) RuntimeDescriptor() plugins.RuntimeModuleDescriptor {
 		lastInvokeAt := m.lastInvokeAt
 		timerRunCount := m.timerRunCount
 		lastTimerStatus := m.lastTimerStatus
-		m.mu.Unlock()
+		m.metadataMu.RUnlock()
+		descriptor.Manifest = runtimeManifestDescriptor(manifest)
+		descriptor.Stats.MemoryPages = memory.Pages
+		descriptor.Stats.MemoryBytes = memory.Bytes
+		descriptor.Stats.MaxMemoryPages = memory.MaxPages
+		descriptor.Stats.MaxMemoryBytes = memory.MaxBytes
 		if !startedAt.IsZero() {
 			descriptor.Stats.UptimeMs = time.Since(startedAt).Milliseconds()
 		}
@@ -934,8 +982,8 @@ func (m *Module) recordInvokeResult(started time.Time, err error) {
 	if m == nil {
 		return
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.metadataMu.Lock()
+	defer m.metadataMu.Unlock()
 	m.invokeCount++
 	m.totalLatency += time.Since(started)
 	m.lastInvokeAt = time.Now().UTC()
@@ -948,8 +996,8 @@ func (m *Module) recordTimerResult(err error) {
 	if m == nil {
 		return
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.metadataMu.Lock()
+	defer m.metadataMu.Unlock()
 	m.timerRunCount++
 	if err != nil {
 		m.lastTimerStatus = "error"
@@ -978,8 +1026,8 @@ func (m *Module) ContentHash() string {
 	if m == nil {
 		return ""
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.metadataMu.RLock()
+	defer m.metadataMu.RUnlock()
 	return m.contentHash
 }
 
@@ -992,8 +1040,8 @@ func (m *Module) SignatureStatus() ModuleSignatureStatus {
 	if m == nil {
 		return ModuleSignatureStatus{}
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.metadataMu.RLock()
+	defer m.metadataMu.RUnlock()
 	return m.signatureStatus
 }
 

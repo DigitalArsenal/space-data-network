@@ -7,6 +7,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -39,18 +40,30 @@ func (h *ModulesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "Use GET to read installed modules.", 0)
 		return
 	}
+	authority, err := url.Parse("//" + r.Host)
+	if err != nil || authority.User != nil || authority.Host != r.Host || authority.Hostname() == "" {
+		WriteErrorFrame(w, http.StatusBadRequest, "invalid_authority", "A valid Host header is required for the module inventory.", 0)
+		return
+	}
+	providerDomain := strings.TrimSuffix(strings.ToLower(authority.Hostname()), ".")
+	if providerDomain == "" {
+		WriteErrorFrame(w, http.StatusBadRequest, "invalid_authority", "A valid Host header is required for the module inventory.", 0)
+		return
+	}
 	snapshot := plugins.RuntimeSnapshot{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Modules: []plugins.RuntimeModuleEntry{}}
 	if h != nil && h.snapshot != nil {
 		snapshot = h.snapshot()
 	}
-	frame := BuildInstalledModulesFrame(snapshot)
+	frame := BuildInstalledModulesFrame(snapshot, providerDomain)
 	WriteFrameStream(w, http.StatusOK, [][]byte{frame}, map[string]string{StreamSchemaHeader: ModulesSchemaName})
 }
 
 // BuildInstalledModulesFrame maps the JSON runtime read model onto the fields
 // $PMM already owns: name, version and family on each entry, with runtime state
-// in DESCRIPTION because the pinned schema has no runtime-state field.
-func BuildInstalledModulesFrame(snapshot plugins.RuntimeSnapshot) []byte {
+// in DESCRIPTION because the pinned schema has no runtime-state field. The
+// required PROVIDER_DOMAIN names the serving request authority. This unsigned
+// inventory is not the signed provider manifest or evidence of domain ownership.
+func BuildInstalledModulesFrame(snapshot plugins.RuntimeSnapshot, providerDomain string) []byte {
 	modules := append([]plugins.RuntimeModuleEntry(nil), snapshot.Modules...)
 	sort.SliceStable(modules, func(i, j int) bool { return modules[i].ID < modules[j].ID })
 	stamp := strings.TrimSpace(snapshot.GeneratedAt)
@@ -125,8 +138,10 @@ func BuildInstalledModulesFrame(snapshot plugins.RuntimeSnapshot) []byte {
 	description := b.CreateString("Installed module runtime snapshot; each entry DESCRIPTION carries runtime-state=<state>.")
 	createdAt := b.CreateString(stamp)
 	updatedAt := b.CreateString(stamp)
+	domain := b.CreateString(providerDomain)
 
 	sdspmm.PMMStart(b)
+	sdspmm.PMMAddPROVIDER_DOMAIN(b, domain)
 	sdspmm.PMMAddDESCRIPTION(b, description)
 	sdspmm.PMMAddMODULES(b, modulesVector)
 	sdspmm.PMMAddCREATED_AT(b, createdAt)

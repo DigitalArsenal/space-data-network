@@ -351,6 +351,18 @@ func (s *FlatSQLStore) ListPinLedgerEntries(query PinLedgerQuery) ([]PinLedgerEn
 }
 
 func (s *FlatSQLStore) LocalReplicaStats(query LocalReplicaStatsQuery) ([]LocalReplicaStats, error) {
+	return s.localReplicaStats(query, true)
+}
+
+// LocalReplicaLedgerStats reads publication and verified pin evidence without
+// scanning record projections. LocalRows and CachedBytes are unset; collection
+// callers already obtain those values from DataSummary. This keeps discovery
+// usable while the record catalog is being reconstructed.
+func (s *FlatSQLStore) LocalReplicaLedgerStats(query LocalReplicaStatsQuery) ([]LocalReplicaStats, error) {
+	return s.localReplicaStats(query, false)
+}
+
+func (s *FlatSQLStore) localReplicaStats(query LocalReplicaStatsQuery, readRecords bool) ([]LocalReplicaStats, error) {
 	query = normalizeLocalReplicaStatsQuery(query)
 	statsByKey := map[string]*LocalReplicaStats{}
 	sourceStatsByKey := map[string]string{}
@@ -425,12 +437,14 @@ func (s *FlatSQLStore) LocalReplicaStats(query LocalReplicaStatsQuery) ([]LocalR
 
 	stats := make([]LocalReplicaStats, 0, len(statsByKey))
 	for _, stat := range statsByKey {
-		localRows, cachedBytes, err := s.localReplicaRawStats(*stat, query)
-		if err != nil {
-			return nil, err
+		if readRecords {
+			localRows, cachedBytes, err := s.localReplicaRawStats(*stat, query)
+			if err != nil {
+				return nil, err
+			}
+			stat.LocalRows = localRows
+			stat.CachedBytes = cachedBytes
 		}
-		stat.LocalRows = localRows
-		stat.CachedBytes = cachedBytes
 		stats = append(stats, *stat)
 	}
 	return stats, nil
