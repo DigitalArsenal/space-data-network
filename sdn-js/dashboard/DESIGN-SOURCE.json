@@ -3,21 +3,21 @@
   "design_repo": "https://github.com/DigitalArsenal/SpaceAware-UI",
   "mount_path": "sdn-js/spaceaware-ui",
   "alias": "spaceaware-student-sdn",
-  "design_commit": "4b4dc03bc01e05d4fe660dc8ee388c3ab7795226",
+  "design_commit": "b97be165c40d79693cd3c4b39c3f1173c5bf2d50",
   "artifact": {
     "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-    "bytes": 11352093,
-    "sha256": "dc656372ab001fa4bb2c317917c635c4c56c611c23b5b57ce3901ca190a39d34"
+    "bytes": 11365954,
+    "sha256": "a90b05d866d9ac7861b88a794cb723e8b5f936b69571006b2958b947aaf5c82d"
   },
   "artifact_refresh": {
     "date": "2026-09-09",
     "task": "ephemeris-provider-discovery-20260909",
     "was": {
       "path": "sdn-server/cmd/spacedatanetwork/embedded/dashboard.html",
-      "bytes": 11352032,
-      "sha256": "c095b6d3db8656ed770b393fe8cf65ff2db7c0d8367eae0b7601a747226abc06"
+      "bytes": 11353446,
+      "sha256": "7367463378018617a9b5032269aa3f7e2a62caf20716745286f867469c7d7fd2"
     },
-    "why": "Use the same route state for module Open, pinned shortcut and Back navigation."
+    "why": "Render cached menus immediately, keep live status statistics subscribed, and end Identity at Trust with secondary panels in tabs."
   },
   "byte_provenance_baseline": true,
   "ruling": "SpaceAware-UI/UI_SOURCE_OF_TRUTH.md",
@@ -36,13 +36,13 @@
     "previous_design_commit": "38adb52beadac83b7b527b04264defb571b71311"
   },
   "build_provenance": {
-    "consumerSource": "66db376c53bfd2b27d202638f2ad8f4429680635",
-    "uiSource": "d102ae10525d834829681f177e5edddd23003445",
+    "consumerSource": "d134a9255cb97f62c686aa1a1cbcdd246b9cdd3d",
+    "uiSource": "b97be165c40d79693cd3c4b39c3f1173c5bf2d50",
     "hdWalletExternalSource": "3b92cb0d695ffc4102570ecc3aca4cf02e514117",
     "uiSourceMount": "export the exact UI commit at sdn-js/spaceaware-ui in a temporary tracked-source build tree",
-    "command": "SPACEAWARE_UI_HD_WALLET_WASM=<verified wallet checkout> node dashboard/build-dashboard.mjs",
+    "command": "npm run build:dashboard",
     "gitlinkCoordination": "UI gitlink is held by saw-beta-entity-wizard-catalog-20260908; no foreign gitlink edit. This compatibility artifact records its actual source independently of the older consumer pin. Final integrated release must reconcile that pin.",
-    "sourceVerification": "Build from the private task UI snapshot at the recorded commit, with published FlatSQL 2.0.3.",
+    "sourceVerification": "Exact committed UI snapshot in the existing private task build tree. Focused cache, settings, routing and identity tests; delayed-API browser verification; separate Go PublishScope build overlay recorded in the deployment checkpoint.",
     "flatsqlVersion": "2.0.3"
   }
 }
