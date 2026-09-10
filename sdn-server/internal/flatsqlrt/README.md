@@ -13,12 +13,12 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 
 `flatsql-wasi-noeh.wasm` is the **no-exceptions** WASI build (CMake target
 `flatsql_wasi_noeh`, `-fignore-exceptions`) copied verbatim from the
-published `flatsql@2.0.2` npm package:
+published `flatsql@2.0.3` npm package:
 
 - source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
-- flatsql commit: `1f63ec23aa6b33f607b17c7391dec2f5628807db`, tag `v2.0.2`
-- npm package: `https://registry.npmjs.org/flatsql/-/flatsql-2.0.2.tgz`
-- sha256: `387a2e8655e4b011280472211a7045b947531a9f614857ddabd6824d4fdf9d51`
+- flatsql commit: `97ba3bb622a839843f1ce9e9d768f98f4d03d575` (npm `gitHead` of 2.0.3; "Search complete FlatBuffers using validated binary schemas")
+- npm package: `https://registry.npmjs.org/flatsql/-/flatsql-2.0.3.tgz`
+- sha256: `e1b8b120c2368a7b8877520efc4cb4dec0ef2a5e2bbae2300dce56e5598e955a`
 
 This version enables SQLite FTS5 and schema-directed `flatsql_record_text`
 extraction, including schemas registered after ingestion or behind unified
