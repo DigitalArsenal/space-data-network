@@ -258,6 +258,33 @@ func (d *Database) ReindexAll() (int, error) {
 	return int(code), nil
 }
 
+// ReindexStep rebuilds at most maxRecords durable frames per guest call.
+// A false result means more steps are required; queries remain unavailable
+// until the engine commits the completed rebuild. An error leaves the source
+// stream unchanged. Unlike ReindexAll, this releases the runtime between steps.
+func (d *Database) ReindexStep(maxRecords int) (bool, error) {
+	if maxRecords < 1 || maxRecords > 4096 {
+		return false, errors.New("flatsqlrt: reindex_step record budget must be between 1 and 4096")
+	}
+	if err := d.rt.checkUsable("reindex_step"); err != nil {
+		return false, err
+	}
+	d.rt.mod.Lock()
+	defer d.rt.mod.Unlock()
+	res, err := d.rt.mod.Execute("flatsql_reindex_step", int32(d.handle), int32(maxRecords))
+	if err != nil {
+		return false, d.rt.execErr("flatsql_reindex_step", err)
+	}
+	code := stateCode(res[0])
+	if code < 0 {
+		return false, stateErr("reindex_step", code)
+	}
+	if code > 1 {
+		return false, fmt.Errorf("flatsqlrt: reindex_step returned unexpected status %d", code)
+	}
+	return code == 0, nil
+}
+
 // FlushIndex appends the engine's new stream bytes, FSYNCS THEM, and only then
 // commits the index pages and the high-water mark. That order is the invariant
 // the whole design rests on — the index may only ever claim a mark the stream

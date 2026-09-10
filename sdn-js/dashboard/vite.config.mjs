@@ -209,9 +209,73 @@ const appRoot = path.resolve(__dirname, '../spaceaware-ui/src/dashboard-tailadmi
 const requireUi = createRequire(path.resolve(__dirname, '../spaceaware-ui/package.json'));
 const tailwindcss = (await import(requireUi.resolve('@tailwindcss/vite'))).default;
 
+/** The node dashboard is an independent app; its peer globe is Three.js. */
+export function dashboardDependencyBoundary() {
+  const forbidden = /(?:^|[/\\])(?:orbital-console|cesium-martini|cesium|OrbPro)(?:[/\\.]|$)|^@orbpro(?:\/|$)/;
+  return {
+    name: 'sdn-dashboard-no-orbital-engine',
+    enforce: 'pre',
+    resolveId(id, importer) {
+      if (forbidden.test(id) || (importer && forbidden.test(importer))) {
+        throw new Error(`The node dashboard must not import Orbital Console, OrbPro or terrain: ${id}`);
+      }
+      return null;
+    }
+  };
+}
+
+/** Keep browser navigation on the development catalogue's signed hostname. */
+export function dashboardDevOrigin() {
+  return {
+    name: 'sdn-dashboard-dev-origin',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.method !== 'GET' || !String(req.headers.accept ?? '').includes('text/html')) return next();
+        let url;
+        try { url = new URL(req.url, `http://${req.headers.host}`); } catch { return next(); }
+        if (!['127.0.0.1', '[::1]'].includes(url.hostname)) return next();
+        url.hostname = 'localhost';
+        res.writeHead(307, { Location: url.href, 'Cache-Control': 'no-store' });
+        res.end();
+      });
+    }
+  };
+}
+
+/** Same-origin dev transport for the same entry used by the embedded app. */
+export function dashboardDevServer(nodeOrigin = process.env.SDN_DASHBOARD_NODE_URL || 'http://127.0.0.1:7173') {
+  const node = new URL(nodeOrigin);
+  if (!['http:', 'https:'].includes(node.protocol) ||
+      !['localhost', '127.0.0.1', '[::1]'].includes(node.hostname) ||
+      node.username || node.password || node.pathname !== '/' || node.search || node.hash) {
+    throw new Error('SDN_DASHBOARD_NODE_URL must be a loopback HTTP(S) origin without credentials');
+  }
+  const proxy = Object.fromEntries([
+    '/api', '/ws', '/wallet-wasm', '/wallet-ui', '/sdn-js', '/fonts',
+    '/identity', '/docs', '/.well-known', '/modules', '/ipfs', '/webui'
+  ].map((route) => [route, { target: node.origin, changeOrigin: true, ...(route === '/ws' ? { ws: true } : {}) }]));
+  return {
+    host: '127.0.0.1',
+    port: 5181,
+    strictPort: true,
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp'
+    },
+    fs: { allow: [path.resolve(__dirname, '..'), hdWalletExternalRoot, fs.realpathSync(path.resolve(__dirname, '../spaceaware-ui/node_modules'))] },
+    proxy
+  };
+}
+
 export default defineConfig({
   root: appRoot,
+  cacheDir: path.resolve(__dirname, '../node_modules/.vite-dashboard'),
+  server: dashboardDevServer(),
+  optimizeDeps: { entries: [path.join(appRoot, 'index.html')], esbuildOptions: { target: 'es2022' } },
   plugins: [
+    dashboardDevOrigin(),
+    dashboardDependencyBoundary(),
     tailwindcss(),
     stubHeliaOnlyDeps(),
     flatsqlNodeBuiltinShims(),
@@ -296,7 +360,7 @@ export default defineConfig({
   // chunk instead.
   worker: {
     format: 'iife',
-    plugins: () => [stubSyncWorkerFallback(), flatsqlNodeBuiltinShims({ inert: true })],
+    plugins: () => [dashboardDependencyBoundary(), stubSyncWorkerFallback(), flatsqlNodeBuiltinShims({ inert: true })],
     rollupOptions: { output: { inlineDynamicImports: true } }
   },
   build: {

@@ -60,6 +60,7 @@ type QueryRequest struct {
 	HighWaterMark          string `json:"high_water_mark"`
 	QueryProfile           string `json:"query_profile"`
 	SyncFilter             string `json:"sync_filter"`
+	Search                 string `json:"search,omitempty"`
 	TotalCount             int64  `json:"total_count"`
 	Limit                  int    `json:"limit"`
 	Offset                 int    `json:"offset"`
@@ -96,6 +97,7 @@ type RecordRef struct {
 
 type ScanResponse struct {
 	Schema        string                   `json:"schema"`
+	Search        string                   `json:"search,omitempty"`
 	TotalCount    int64                    `json:"total_count"`
 	Count         int                      `json:"count"`
 	Limit         int                      `json:"limit"`
@@ -192,6 +194,7 @@ func FilterFromRequest(req QueryRequest, limit, offset int) storage.RawRecordQue
 		ProducerPublicKey: FirstNonEmpty(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
 		PeerID:            FirstNonEmpty(req.PeerID, req.PeerId),
 		SyncFilter:        req.SyncFilter,
+		Search:            strings.TrimSpace(req.Search),
 		Limit:             limit,
 		Offset:            offset,
 	}
@@ -233,12 +236,19 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 	}
 
 	filter := FilterFromRequest(req, limit, offset)
+	queryHash := rawRecordQueryHash(filter, NormalizeQueryProfile(req.QueryProfile))
+	if req.Cursor != "" && (cursor.QueryHash != "" || strings.TrimSpace(req.Search) != "" || strings.TrimSpace(req.SyncFilter) != "") && cursor.QueryHash != queryHash {
+		return nil, nil, fmt.Errorf("cursor belongs to a different search or data source; restart from the first page")
+	}
+	if cursor.SnapshotID != "" && req.SnapshotID != "" && cursor.SnapshotID != strings.TrimSpace(req.SnapshotID) {
+		return nil, nil, fmt.Errorf("cursor belongs to a different snapshot")
+	}
 	filter.UseRowIDCursor = true
 	filter.AfterRowID = cursor.AfterRowID
 	filter.MaxRowID = cursor.MaxRowID
 	var totalCount int64
 	var snapshot Snapshot
-	if hasProvidedSnapshot {
+	if hasProvidedSnapshot && strings.TrimSpace(req.Search) == "" {
 		totalCount = req.TotalCount
 		snapshot = Snapshot{
 			SnapshotID:    strings.TrimSpace(req.SnapshotID),
@@ -261,13 +271,14 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		}
 	} else {
 		var err error
-		totalCount, err = store.CountRawRecords(filter)
+		var recordHead storage.RawRecordHead
+		totalCount, recordHead, err = store.RawRecordSnapshot(filter)
 		if err != nil {
 			return nil, nil, err
 		}
-		snapshot, err = SnapshotForFilter(store, filter, totalCount, NormalizeQueryProfile(req.QueryProfile))
-		if err != nil {
-			return nil, nil, err
+		snapshot = snapshotFromHead(filter, totalCount, NormalizeQueryProfile(req.QueryProfile), recordHead)
+		if strings.TrimSpace(req.Search) != "" && cursor.SnapshotID != "" && snapshot.SnapshotID != cursor.SnapshotID {
+			return nil, nil, fmt.Errorf("search results changed; refresh to start from the first page")
 		}
 		filter.MaxRowID = snapshot.MaxRowID
 	}
@@ -280,16 +291,17 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		results = append(results, RecordRow(schemaName, rec, false))
 	}
 	nextCursor := ""
-	responseCursor := EncodeRawRecordCursor(filter.AfterRowID, filter.MaxRowID, snapshot.SnapshotID)
+	responseCursor := EncodeRawRecordCursor(filter.AfterRowID, filter.MaxRowID, snapshot.SnapshotID, queryHash)
 	if len(records) > 0 {
 		lastRowID := records[len(records)-1].RowID
 		if len(records) >= limit && filter.MaxRowID > 0 && lastRowID < filter.MaxRowID {
-			nextCursor = EncodeRawRecordCursor(lastRowID, filter.MaxRowID, snapshot.SnapshotID)
+			nextCursor = EncodeRawRecordCursor(lastRowID, filter.MaxRowID, snapshot.SnapshotID, queryHash)
 		}
 	}
 	chunkHash := ScanHash(schemaName, records)
 	response := &ScanResponse{
 		Schema:        schemaName,
+		Search:        strings.TrimSpace(req.Search),
 		TotalCount:    totalCount,
 		Count:         len(results),
 		Limit:         limit,
@@ -329,7 +341,7 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 		segmentLimit = maxLimit
 	}
 	queryProfile := NormalizeQueryProfile(req.QueryProfile)
-	hasSyncFilter := strings.TrimSpace(req.SyncFilter) != ""
+	hasSyncFilter := strings.TrimSpace(req.SyncFilter) != "" || strings.TrimSpace(req.Search) != ""
 	if queryProfile == storage.DatasetPublicationQueryProfile && !hasSyncFilter {
 		publishedManifest, err := OpenPublishedManifest(store, req, queryProfile, maxLimit)
 		if err != nil {
@@ -694,6 +706,10 @@ func SnapshotForFilter(store *storage.FlatSQLStore, filter storage.RawRecordQuer
 	if err != nil {
 		return Snapshot{}, err
 	}
+	return snapshotFromHead(filter, totalCount, queryProfile, head), nil
+}
+
+func snapshotFromHead(filter storage.RawRecordQuery, totalCount int64, queryProfile string, head storage.RawRecordHead) Snapshot {
 	queryProfile = NormalizeQueryProfile(queryProfile)
 	highWater := fmt.Sprintf("%d:%d:%d:%d", head.MaxRecordTimestampUnix, head.MaxSourceUpdatedAtUnix, head.MaxCreatedAtUnix, totalCount)
 	hash := sha256.New()
@@ -707,7 +723,7 @@ func SnapshotForFilter(store *storage.FlatSQLStore, filter storage.RawRecordQuer
 		filter.ProducerPeerID,
 		filter.ProducerPublicKey,
 		filter.PeerID,
-		queryProfile,
+		rawRecordQueryHash(filter, queryProfile),
 		totalCount,
 		head.TotalBytes,
 		head.MaxRecordTimestampUnix,
@@ -721,7 +737,7 @@ func SnapshotForFilter(store *storage.FlatSQLStore, filter storage.RawRecordQuer
 		Head:          id,
 		HighWaterMark: highWater,
 		MaxRowID:      head.MaxRowID,
-	}, nil
+	}
 }
 
 func RecordRow(schemaName string, rec *storage.Record, includeData bool) map[string]interface{} {
@@ -909,9 +925,20 @@ type rawRecordCursor struct {
 	AfterRowID int64  `json:"after_row_id"`
 	MaxRowID   int64  `json:"max_row_id"`
 	SnapshotID string `json:"snapshot_id,omitempty"`
+	QueryHash  string `json:"query_hash,omitempty"`
 }
 
-func EncodeRawRecordCursor(afterRowID, maxRowID int64, snapshotID string) string {
+func rawRecordQueryHash(filter storage.RawRecordQuery, profile string) string {
+	// JSON framing avoids ambiguous delimiters in source identifiers or text.
+	raw, _ := json.Marshal([]string{filter.SchemaName, filter.CID,
+		filter.ProviderID, filter.SourceName, filter.BatchID, filter.ProducerPeerID,
+		filter.ProducerPublicKey, filter.PeerID, strings.TrimSpace(filter.SyncFilter),
+		strings.TrimSpace(filter.Search), NormalizeQueryProfile(profile)})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func EncodeRawRecordCursor(afterRowID, maxRowID int64, snapshotID string, queryHash ...string) string {
 	if afterRowID < 0 {
 		afterRowID = 0
 	}
@@ -921,6 +948,9 @@ func EncodeRawRecordCursor(afterRowID, maxRowID int64, snapshotID string) string
 		AfterRowID: afterRowID,
 		MaxRowID:   maxRowID,
 		SnapshotID: strings.TrimSpace(snapshotID),
+	}
+	if len(queryHash) > 0 {
+		cursor.QueryHash = queryHash[0]
 	}
 	raw, err := json.Marshal(cursor)
 	if err != nil {

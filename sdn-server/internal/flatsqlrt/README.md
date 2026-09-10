@@ -13,13 +13,19 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 
 `flatsql-wasi-noeh.wasm` is the **no-exceptions** WASI build (CMake target
 `flatsql_wasi_noeh`, `-fignore-exceptions`) copied verbatim from the
-`flatsql` repo (superproject submodule `repos/main-packages/flatsql`):
+published `flatsql@2.0.2` npm package:
 
 - source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
-- flatsql commit: `fa3b186`, **1.4.5** (source PARTITIONS survive a teardown —
-  `_flatsql_sources` / `_flatsql_source_ranges` next to the mark; the same bytes
-  sdn-js pins as `flatsql@1.4.5`)
-- sha256: `6ba592213a8550269746afd6cfb3c7b87288ffcf8ddceda4d2722e4227b2c249`
+- flatsql commit: `1f63ec23aa6b33f607b17c7391dec2f5628807db`, tag `v2.0.2`
+- npm package: `https://registry.npmjs.org/flatsql/-/flatsql-2.0.2.tgz`
+- sha256: `387a2e8655e4b011280472211a7045b947531a9f614857ddabd6824d4fdf9d51`
+
+This version enables SQLite FTS5 and schema-directed `flatsql_record_text`
+extraction, including schemas registered after ingestion or behind unified
+source views. SDN indexes searchable values without converting its record
+store: result pages still contain the original size-prefixed FlatBuffers.
+The published no-exceptions artifact matches the locally verified build byte
+for byte; `sdn-js` pins the same package version for browser queries.
 
 ### The seven `env` imports are a HARD GATE
 
@@ -95,9 +101,9 @@ module is AOT-compiled by an explicit release/prewarm step and loaded from
 the sha256-keyed cache afterwards. `WithAOTCache(dir)` is only for tests and
 maintenance tools that intentionally compile on cache miss.
 
-When the flatsql submodule pin moves, rebuild + re-copy the artifact and
-update this block (`cmake --build build-wasm --target flatsql_wasi_noeh`
-in `flatsql/cpp`, then copy `flatsql/wasm/flatsql-wasi-noeh.wasm` here).
+When the flatsql dependency moves, copy its published no-exceptions artifact
+and update this block. Verify the package integrity and artifact SHA before
+copying `node_modules/flatsql/wasm/flatsql-wasi-noeh.wasm` here.
 The embedded sha256 is asserted by `TestEmbeddedArtifact`.
 
 ## ABI conventions (mirrors `flatsql/wasm/standalone.js`)

@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -86,6 +87,16 @@ func isWriteMethod(method string) bool {
 // Allow checks the rate limit for the request, sets X-RateLimit-* headers,
 // and returns false (writing a 429) if the limit is exceeded.
 func (rl *rateLimiter) Allow(w http.ResponseWriter, r *http.Request) bool {
+	return rl.allow(w, r, isWriteMethod(r.Method))
+}
+
+// AllowRead is reserved for routes whose handlers enforce a read-only operation,
+// including binary record queries carried by POST. It never changes r.Method.
+func (rl *rateLimiter) AllowRead(w http.ResponseWriter, r *http.Request) bool {
+	return rl.allow(w, r, false)
+}
+
+func (rl *rateLimiter) allow(w http.ResponseWriter, r *http.Request, write bool) bool {
 	ip := clientIP(r)
 	b := rl.bucket(ip)
 
@@ -94,7 +105,7 @@ func (rl *rateLimiter) Allow(w http.ResponseWriter, r *http.Request) bool {
 
 	var limit float64
 	var tokens *float64
-	if isWriteMethod(r.Method) {
+	if write {
 		limit = writeLimitPerMin
 		tokens = &b.writeTokens
 	} else {
@@ -105,6 +116,7 @@ func (rl *rateLimiter) Allow(w http.ResponseWriter, r *http.Request) bool {
 	resetTime := b.lastRefill.Add(time.Minute)
 
 	if *tokens < 1 {
+		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", math.Max(1, math.Ceil((1-*tokens)*60/limit))))
 		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%.0f", limit))
 		w.Header().Set("X-RateLimit-Remaining", "0")
 		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", resetTime.Unix()))

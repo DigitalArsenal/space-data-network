@@ -338,3 +338,15 @@ func decryptProtectedPublication(data []byte, recipientPrivateKey []byte) ([]byt
 		return nil, fmt.Errorf("unsupported $ENC symmetric algorithm %d", rec.Symmetric)
 	}
 }
+
+// DecryptProtectedPublication opens the SDK REC/ENC publication envelope. The
+// caller must authenticate the publication and authorize the recipient key.
+func DecryptProtectedPublication(data, recipientPrivateKey []byte) (plain []byte, err error) {
+	defer func() {
+		if recover() != nil {
+			plain = nil
+			err = errors.New("malformed protected publication")
+		}
+	}()
+	return decryptProtectedPublication(data, recipientPrivateKey)
+}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -271,6 +272,11 @@ func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContex
 
 	if err := m.Load(context.Background()); err != nil {
 		return nil, err
+	}
+	if _, err := m.ApplicationRecord(); err == nil {
+		m.SetUIURL("/api/v1/modules/apps/" + url.PathEscape(m.manifest.PluginID) + "/app")
+	} else if !errors.Is(err, ErrNoModuleApplication) {
+		log.Debugf("Module %q has no launchable embedded application: %v", m.manifest.PluginID, err)
 	}
 
 	return m, nil

@@ -114,6 +114,7 @@ export interface RawDataQuery {
   head?: string;
   queryProfile?: string;
   syncFilter?: string;
+  search?: string;
   limit?: number;
   offset?: number;
 }
@@ -384,6 +385,7 @@ export interface RawDataStreamRequest {
   highWaterMark?: string;
   queryProfile?: string;
   syncFilter?: string;
+  search?: string;
   records: RawDataRecord[];
 }
 

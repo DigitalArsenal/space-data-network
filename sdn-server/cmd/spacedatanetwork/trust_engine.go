@@ -107,9 +107,12 @@ func parseBondHoldings(out []byte, byChain map[string]string, nowMs int64) ([]tr
 	var ans struct {
 		Attested *bool `json:"attested"`
 		Holdings []struct {
-			Symbol string   `json:"symbol"`
-			Amount float64  `json:"amount"`
-			USD    *float64 `json:"usd"`
+			Symbol   string   `json:"symbol"`
+			Contract string   `json:"contract"`
+			Chain    string   `json:"chain"`
+			Address  string   `json:"address"`
+			Amount   float64  `json:"amount"`
+			USD      *float64 `json:"usd"`
 		} `json:"holdings"`
 	}
 	if err := json.Unmarshal(out, &ans); err != nil || ans.Attested == nil {
@@ -117,8 +120,12 @@ func parseBondHoldings(out []byte, byChain map[string]string, nowMs int64) ([]tr
 	}
 	holdings := make([]trust.Holding, 0, len(ans.Holdings))
 	for _, h := range ans.Holdings {
+		// Native-token rules must never credit an ERC20/SPL token reusing a ticker.
+		if h.Contract != "" || (h.Chain != "" && !strings.EqualFold(h.Chain, h.Symbol)) {
+			continue
+		}
 		chain, decimals := bondChainForSymbol(h.Symbol)
-		if chain == "" {
+		if chain == "" || byChain[chain] == "" || (h.Address != "" && h.Address != byChain[chain]) {
 			continue
 		}
 		holding := trust.Holding{
