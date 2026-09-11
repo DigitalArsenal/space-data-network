@@ -1,32 +1,14 @@
 // @ts-check
-const { screen, BrowserWindow, app, ipcMain } = require('electron')
+const { screen, BrowserWindow, app, ipcMain, shell } = require('electron')
 const { join } = require('path')
-const { URL } = require('url')
-const toUri = require('multiaddr-to-uri')
 const logger = require('../common/logger')
 const store = require('../common/store')
 const { OPEN_WEBUI_LAUNCH: CONFIG_KEY } = require('../common/config-keys')
 const dock = require('../utils/dock')
 const getCtx = require('../context')
-const registerStaticScheme = require('../static-scheme')
 const ipcMainEvents = require('../common/ipc-main-events')
-const { getDesktopStaticUrl } = require('../static-http-server')
-
-registerStaticScheme({ scheme: 'sdn', directory: 'assets/sdn-ui' })
-const introPath = join(__dirname, '../../assets/pages/sdn-intro.html')
-
-function isIntroRoute (path) {
-  return !path || path === '/'
-}
-
-function isIntroAdminNavigation (targetUrl) {
-  try {
-    const parsed = new URL(targetUrl)
-    return parsed.protocol === 'file:' && (parsed.pathname === '/admin' || parsed.pathname === '/admin/')
-  } catch {
-    return false
-  }
-}
+const { STATUS } = require('../daemon/consts')
+const { daemonDashboardRoute } = require('./routes')
 
 const createWindow = () => {
   logger.info('[dashboard] creating window')
@@ -42,7 +24,7 @@ const createWindow = () => {
     height: store.get('window.height', dimensions.height < 900 ? dimensions.height : 900),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
-      webSecurity: false,
+      webSecurity: true,
       allowRunningInsecureContent: false,
       enableRemoteModule: process.env.NODE_ENV === 'test',
       nodeIntegration: process.env.NODE_ENV === 'test'
@@ -75,64 +57,47 @@ module.exports = async function () {
   const window = createWindow()
   ctx.setProp('dashboard', window)
 
-  const url = await getDesktopStaticUrl('sdn')
-  let apiAddress = null
-  let gatewayAddress = null
+  const getSdnDaemon = ctx.getFn('getSdnDaemon')
   let dashboardAppLoaded = false
-  const loadIntroPage = () => window.loadFile(introPath)
-  const getIpfsd = ctx.getFn('getIpfsd')
+  let currentRoute = '/'
+  let currentOrigin = ''
 
-  function gatewayUrlFromAddr (addr) {
-    if (!addr) return null
-    const ma = addr.toString().includes('/http') ? addr : addr.encapsulate('/http')
-    return toUri(ma)
+  async function loadDashboardApp (path = '/') {
+    const daemon = await getSdnDaemon(true)
+    if (!daemon?.adminUrl) {
+      logger.error('[dashboard] SDN daemon is not running')
+      return false
+    }
+
+    const url = new URL(daemon.adminUrl)
+    url.hash = daemonDashboardRoute(path)
+    currentRoute = path
+    currentOrigin = url.origin
+    await window.webContents.loadURL(url.toString())
+    dashboardAppLoaded = true
+    return true
   }
 
-  async function syncIpfsAddresses () {
-    const ipfsd = await getIpfsd(true)
-    let changed = false
-
-    if (ipfsd && ipfsd.apiAddr !== apiAddress) {
-      apiAddress = ipfsd.apiAddr
-      url.searchParams.set('api', apiAddress.toString())
-      changed = true
-    }
-
-    if (ipfsd && ipfsd.gatewayAddr !== gatewayAddress) {
-      gatewayAddress = ipfsd.gatewayAddr
-      const gatewayUrl = gatewayUrlFromAddr(gatewayAddress)
-      if (gatewayUrl) {
-        url.searchParams.set('gateway', gatewayUrl)
-        changed = true
-      }
-    }
-
-    if (changed) {
-      window.webContents.loadURL(url.toString())
-      return true
-    }
-
-    return false
-  }
-
-  ipcMain.on(ipcMainEvents.IPFSD, () => {
-    if (dashboardAppLoaded) void syncIpfsAddresses()
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      if (new URL(url).origin === currentOrigin) return { action: 'allow' }
+    } catch (_) {}
+    shell.openExternal(url).catch(err => logger.error('[dashboard] failed to open external URL', err))
+    return { action: 'deny' }
   })
 
-  const loadDashboardApp = async (path) => {
-    url.hash = path || '/'
-    const addressesSynced = await syncIpfsAddresses()
-    if (!addressesSynced) window.webContents.loadURL(url.toString())
-    dashboardAppLoaded = true
-  }
-
   window.webContents.on('will-navigate', (event, targetUrl) => {
-    if (!isIntroAdminNavigation(targetUrl)) {
-      return
-    }
-
+    try {
+      if (new URL(targetUrl).origin === currentOrigin) return
+    } catch (_) {}
     event.preventDefault()
-    loadDashboardApp('/')
+    shell.openExternal(targetUrl).catch(err => logger.error('[dashboard] failed to open external URL', err))
+  })
+
+  ipcMain.on(ipcMainEvents.IPFSD, status => {
+    if (status === STATUS.STARTING_FINISHED || dashboardAppLoaded) {
+      loadDashboardApp(currentRoute).catch(err => logger.error('[dashboard] failed to reload daemon dashboard', err))
+    }
   })
 
   ctx.setProp('launchDashboard', async (path, { focus = true, forceRefresh = false } = {}) => {
@@ -141,14 +106,10 @@ module.exports = async function () {
       return
     }
 
-    if (forceRefresh) {
+    if (!dashboardAppLoaded || path) {
+      await loadDashboardApp(path || '/')
+    } else if (forceRefresh) {
       window.webContents.reload()
-    }
-
-    if (isIntroRoute(path)) {
-      loadIntroPage()
-    } else {
-      await loadDashboardApp(path)
     }
 
     if (focus) {
@@ -181,6 +142,6 @@ module.exports = async function () {
       resolve()
     })
 
-    loadIntroPage()
+    loadDashboardApp('/').catch(err => logger.error('[dashboard] failed to load daemon dashboard', err))
   }))
 }
