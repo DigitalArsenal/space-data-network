@@ -1,6 +1,7 @@
 package tor
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -15,6 +16,8 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
 )
+
+const keyBundleSeedFilename = ".sdn_ed25519_seed"
 
 // KeyBundle holds the Tor hidden service keys for a cluster.
 type KeyBundle struct {
@@ -195,7 +198,8 @@ func DecryptKeyBundle(encrypted []byte, clusterSecret []byte, clusterID string) 
 }
 
 // SaveKeyBundleToDir writes the Tor hidden service key files to a directory
-// so that Tor can load them. Also caches the encrypted bundle for re-distribution.
+// so that Tor can load them. It also caches the seed needed to reconstruct the
+// Go private-key representation; Tor's expanded secret-key format is one-way.
 func SaveKeyBundleToDir(dir string, bundle *KeyBundle) error {
 	if err := bundle.Validate(); err != nil {
 		return fmt.Errorf("invalid bundle: %w", err)
@@ -208,6 +212,9 @@ func SaveKeyBundleToDir(dir string, bundle *KeyBundle) error {
 	if err := writeHiddenServiceKeyFiles(dir, bundle.SecretKey, bundle.PublicKey); err != nil {
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(dir, keyBundleSeedFilename), bundle.SecretKey.Seed(), 0600); err != nil {
+		return fmt.Errorf("write key bundle seed: %w", err)
+	}
 
 	// Also write the hostname file for convenience.
 	return os.WriteFile(filepath.Join(dir, "hostname"), []byte(bundle.OnionHost+"\n"), 0600)
@@ -216,18 +223,42 @@ func SaveKeyBundleToDir(dir string, bundle *KeyBundle) error {
 // LoadKeyBundleFromDir reads cached key files from a directory and
 // reconstructs a KeyBundle.
 func LoadKeyBundleFromDir(dir, clusterID, createdBy string) (*KeyBundle, error) {
-	secretPath := filepath.Join(dir, "hs_ed25519_secret_key")
-	secretData, err := os.ReadFile(secretPath)
-	if err != nil {
-		return nil, fmt.Errorf("read secret key: %w", err)
+	seedData, err := os.ReadFile(filepath.Join(dir, keyBundleSeedFilename))
+	var priv ed25519.PrivateKey
+	switch {
+	case err == nil:
+		if len(seedData) != ed25519.SeedSize {
+			return nil, fmt.Errorf("invalid cached seed size: %d", len(seedData))
+		}
+		priv = ed25519.NewKeyFromSeed(seedData)
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, fmt.Errorf("read cached seed: %w", err)
+	default:
+		// Compatibility with directories written before Tor's expanded secret
+		// format was fixed, where the Tor secret body was a Go private key.
+		secretData, readErr := os.ReadFile(filepath.Join(dir, "hs_ed25519_secret_key"))
+		if readErr != nil {
+			return nil, fmt.Errorf("read secret key: %w", readErr)
+		}
+		if len(secretData) != 32+ed25519.PrivateKeySize ||
+			!bytes.Equal(secretData[:32], makeTorKeyHeader("== ed25519v1-secret: type0 ==")) {
+			return nil, errors.New("cannot reconstruct Go private key from Tor expanded secret without cached seed")
+		}
+		priv = append(ed25519.PrivateKey(nil), secretData[32:]...)
 	}
 
-	// Tor key files have a 32-byte header.
-	if len(secretData) < 32+ed25519.PrivateKeySize {
-		return nil, fmt.Errorf("secret key file too short: %d bytes", len(secretData))
+	publicData, err := os.ReadFile(filepath.Join(dir, "hs_ed25519_public_key"))
+	if err != nil {
+		return nil, fmt.Errorf("read public key: %w", err)
 	}
-	priv := ed25519.PrivateKey(secretData[32:])
-	pub := priv.Public().(ed25519.PublicKey)
+	if len(publicData) != 32+ed25519.PublicKeySize ||
+		!bytes.Equal(publicData[:32], makeTorKeyHeader("== ed25519v1-public: type0 ==")) {
+		return nil, fmt.Errorf("invalid public key file size or header: %d bytes", len(publicData))
+	}
+	pub := append(ed25519.PublicKey(nil), publicData[32:]...)
+	if !priv.Public().(ed25519.PublicKey).Equal(pub) {
+		return nil, errors.New("public key does not match cached seed")
+	}
 
 	host, err := onionAddressFromPublicKey(pub)
 	if err != nil {
