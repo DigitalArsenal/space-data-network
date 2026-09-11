@@ -462,6 +462,69 @@ func (r *PluginRegistry) Get(id string) (*PluginAsset, bool) {
 	return clone, true
 }
 
+// GrantAllowedXpub adds one requester identity to a plugin's persisted
+// allowlist. The mutation and catalog write are serialized with every other
+// registry update, and a failed write restores the in-memory value. Repeating
+// an existing grant is a successful no-op.
+func (r *PluginRegistry) GrantAllowedXpub(id, xpub string) (bool, error) {
+	return r.mutateAllowedXpub(id, xpub, true)
+}
+
+// RevokeAllowedXpub removes one requester identity from a plugin's persisted
+// allowlist. Repeating an already-applied revocation is a successful no-op.
+func (r *PluginRegistry) RevokeAllowedXpub(id, xpub string) (bool, error) {
+	return r.mutateAllowedXpub(id, xpub, false)
+}
+
+func (r *PluginRegistry) mutateAllowedXpub(id, xpub string, grant bool) (bool, error) {
+	if r == nil {
+		return false, errors.New("plugin registry is nil")
+	}
+	moduleID := strings.TrimSpace(id)
+	if moduleID == "" {
+		return false, errors.New("plugin id is required")
+	}
+	identity := strings.TrimSpace(xpub)
+	if identity == "" {
+		return false, errors.New("requester xpub is required")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	asset, ok := r.assets[moduleID]
+	if !ok {
+		return false, os.ErrNotExist
+	}
+	previous := append([]string(nil), asset.AllowedXpubs...)
+	contains := false
+	for _, allowed := range asset.AllowedXpubs {
+		if allowed == identity {
+			contains = true
+			break
+		}
+	}
+	if grant == contains {
+		return false, nil
+	}
+	if grant {
+		asset.AllowedXpubs = normalizeAllowedXpubs(append(asset.AllowedXpubs, identity))
+	} else {
+		next := make([]string, 0, len(asset.AllowedXpubs)-1)
+		for _, allowed := range asset.AllowedXpubs {
+			if allowed != identity {
+				next = append(next, allowed)
+			}
+		}
+		asset.AllowedXpubs = next
+	}
+	if err := r.saveCatalogLocked(); err != nil {
+		asset.AllowedXpubs = previous
+		return false, fmt.Errorf("persist allowed xpub mutation for plugin %q: %w", moduleID, err)
+	}
+	return true, nil
+}
+
 // ReadEncryptedBundle reads plugin bytes (encrypted or plain).
 func (r *PluginRegistry) ReadEncryptedBundle(id string) ([]byte, *PluginAsset, error) {
 	asset, ok := r.Get(id)
@@ -1018,7 +1081,7 @@ func (r *PluginRegistry) saveCatalogLocked() error {
 		return fmt.Errorf("marshal catalog: %w", err)
 	}
 	catalogPath := filepath.Join(r.rootPath, defaultPluginCatalogFile)
-	return os.WriteFile(catalogPath, data, 0600)
+	return writeFileAtomic(catalogPath, data, 0600)
 }
 
 // normalizeAllowedXpubs trims, drops empties, de-duplicates, and sorts the allowed
