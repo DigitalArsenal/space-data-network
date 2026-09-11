@@ -4,37 +4,32 @@ const path = require('path')
 const { test, expect } = require('@playwright/test')
 
 test.describe('SDN dashboard window', () => {
-  test('loads the shared intro page before the dashboard app', () => {
+  test('loads the daemon-served dashboard without a bundled SDN UI', () => {
     const source = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
+    const staticServer = fs.readFileSync(path.join(__dirname, '../../src/static-http-server.js'), 'utf8')
+    const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf8'))
 
-    expect(source).toContain('sdn-intro.html')
-    expect(source).toContain('loadIntroPage')
+    expect(source).toContain("ctx.getFn('getSdnDaemon')")
+    expect(source).toContain('new URL(daemon.adminUrl)')
+    expect(source).toContain('window.webContents.loadURL(url.toString())')
+    expect(source).not.toContain('getDesktopStaticUrl')
+    expect(source).not.toContain("registerStaticScheme({ scheme: 'sdn'")
+    expect(staticServer).not.toContain("sdn: 'assets/sdn-ui'")
+    expect(packageJson.scripts['build:sdn-ui']).toBeUndefined()
+    expect(packageJson.scripts['build:sdn-ui:build']).toBeUndefined()
+    expect(packageJson.scripts['build:sdn-ui:copy']).toBeUndefined()
   })
 
-  test('keeps SDN desktop shell surfaces draggable', () => {
+  test('keeps desktop shell windows native and secured', () => {
     const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
     const webuiSource = fs.readFileSync(path.join(__dirname, '../../src/webui/index.js'), 'utf8')
-    const intro = fs.readFileSync(path.join(__dirname, '../../assets/pages/sdn-intro.html'), 'utf8')
 
     expect(dashboardSource).toContain('frame: false')
     expect(webuiSource).toContain('frame: false')
     expect(dashboardSource).toContain("titleBarStyle: 'hiddenInset'")
     expect(webuiSource).toContain("titleBarStyle: 'hiddenInset'")
-    expect(intro).toContain('-webkit-app-region: drag')
-    expect(intro).toContain('-webkit-app-region: no-drag')
-  })
-
-  test('uses IPFS-style square, regular-weight intro buttons with the canonical SDN domain', () => {
-    const intro = fs.readFileSync(path.join(__dirname, '../../assets/pages/sdn-intro.html'), 'utf8')
-    const linkRule = intro.match(/\n {4}a \{[\s\S]*?\n {4}\}/)?.[0] || ''
-
-    expect(intro).toContain('https://spacedatanetwork.org')
-    expect(intro).toContain('>spacedatanetwork.org<')
-    expect(linkRule).toContain('border-radius: 2px;')
-    expect(linkRule).toContain('font-weight: 500;')
-    expect(intro).not.toContain('spacedatanet.org')
-    expect(linkRule).not.toContain('border-radius: 999px;')
-    expect(linkRule).not.toContain('font-weight: 800;')
+    expect(dashboardSource).toContain('webSecurity: true')
+    expect(dashboardSource).toContain('setWindowOpenHandler')
   })
 
   test('uses Space Data Network labels for desktop shell surfaces', () => {
@@ -137,26 +132,25 @@ test.describe('SDN dashboard window', () => {
     expect(autoUpdaterSource).not.toContain('github.com/ipfs-shipyard/ipfs-desktop')
   })
 
-  test('registers SDN and Web UI schemes as fetch-capable privileged schemes once', () => {
+  test('keeps the bundled custom protocol only for upstream Web UI', () => {
     const indexSource = fs.readFileSync(path.join(__dirname, '../../src/index.js'), 'utf8')
     const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
     const webuiSource = fs.readFileSync(path.join(__dirname, '../../src/webui/index.js'), 'utf8')
     const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf8'))
 
     expect(indexSource).toContain('protocol.registerSchemesAsPrivileged')
-    expect(indexSource).toContain("scheme: 'sdn'")
+    expect(indexSource).not.toContain("scheme: 'sdn'")
     expect(indexSource).toContain("scheme: 'webui'")
     expect(indexSource).toContain('supportFetchAPI: true')
     expect(indexSource).toContain('corsEnabled: true')
     expect(indexSource.match(/registerSchemesAsPrivileged/g)).toHaveLength(1)
-    expect(dashboardSource).toContain("registerStaticScheme({ scheme: 'sdn'")
+    expect(dashboardSource).not.toContain('registerStaticScheme')
     expect(webuiSource).toContain("registerStaticScheme({ scheme: 'webui'")
-    expect(dashboardSource).toContain("directory: 'assets/sdn-ui'")
+    expect(dashboardSource).not.toContain('assets/sdn-ui')
     expect(webuiSource).toContain("directory: 'assets/webui'")
     expect(dashboardSource).not.toContain("require('electron-serve')")
     expect(webuiSource).not.toContain("require('electron-serve')")
-    expect(packageJson.scripts['build:sdn-ui:build']).toBe('npm --prefix ../sdn-js run build:ui')
-    expect(packageJson.scripts['build:sdn-ui:copy']).toContain('../sdn-js/ui/dist')
+    expect(packageJson.scripts['build:sdn-runtime']).toBe('node scripts/build-sdn-runtime.js')
     expect(packageJson.scripts['build:webui:build']).toBe('npm --prefix ../webui run build')
     expect(packageJson.scripts['build:webui:copy']).toBe('shx rm -rf assets/webui && shx cp -r ../webui/build assets/webui')
     expect(packageJson.scripts['build:webui:download']).toBeUndefined()
@@ -317,23 +311,21 @@ test.describe('SDN dashboard window', () => {
     expect(storeSource).not.toContain('--agent-version-suffix=desktop')
   })
 
-  test('syncs the live Kubo RPC and gateway addresses before the SDN dashboard app first loads', () => {
+  test('loads the live SDN daemon URL and its hash routes', () => {
     const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
 
-    expect(dashboardSource).toContain('async function syncIpfsAddresses')
-    expect(dashboardSource).toContain("url.searchParams.set('api', apiAddress.toString())")
-    expect(dashboardSource).toContain("url.searchParams.set('gateway', gatewayUrl)")
-    expect(dashboardSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, () => {')
-    expect(dashboardSource).toContain('if (dashboardAppLoaded) void syncIpfsAddresses()')
-    expect(dashboardSource).toContain('const addressesSynced = await syncIpfsAddresses()')
-    expect(dashboardSource).toContain('if (!addressesSynced) window.webContents.loadURL(url.toString())')
+    expect(dashboardSource).toContain("const getSdnDaemon = ctx.getFn('getSdnDaemon')")
+    expect(dashboardSource).toContain('const url = new URL(daemon.adminUrl)')
+    expect(dashboardSource).toContain('url.hash = daemonDashboardRoute(path)')
+    expect(dashboardSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, status => {')
+    expect(dashboardSource).toContain('window.webContents.loadURL(url.toString())')
   })
 
-  test('does not load the hidden SDN dashboard app from Kubo address updates at desktop startup', () => {
+  test('reconnects the daemon dashboard after lifecycle updates', () => {
     const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
 
     expect(dashboardSource).toContain('let dashboardAppLoaded = false')
-    expect(dashboardSource).toContain('if (dashboardAppLoaded) void syncIpfsAddresses()')
+    expect(dashboardSource).toContain('status === STATUS.STARTING_FINISHED || dashboardAppLoaded')
     expect(dashboardSource).toContain('dashboardAppLoaded = true')
   })
 
@@ -344,7 +336,7 @@ test.describe('SDN dashboard window', () => {
     expect(webuiSource).toContain("url.searchParams.set('api', apiAddress.toString())")
     expect(webuiSource).toContain("url.searchParams.set('gateway', gatewayUrl)")
     expect(webuiSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, () => {')
-    expect(webuiSource).toContain('if (webUiLoaded) void syncIpfsAddresses()')
+    expect(webuiSource).toContain('if (webUiLoaded) syncIpfsAddresses().catch')
     expect(webuiSource).toContain('const addressesSynced = await syncIpfsAddresses()')
     expect(webuiSource).toContain('if (!addressesSynced) window.loadURL(url.toString())')
   })
@@ -382,25 +374,11 @@ test.describe('SDN dashboard window', () => {
     expect(traySource).not.toContain("click: () => { launchWebUI('/settings') }")
   })
 
-  test('uses SDN UI route and shell overrides instead of upstream WebUI routes', () => {
-    const appSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/overrides/App.js'), 'utf8')
-    const bundleSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/bundles/index.js'), 'utf8')
-    const routeSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/overrides/bundles/routes.js'), 'utf8')
-    const navSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/overrides/navigation/NavBar.js'), 'utf8')
-    const entrySource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/index.js'), 'utf8')
+  test('pins matching wallet UI and runtime versions for the daemon-served surface', () => {
+    const packageJson = require('../../package.json')
 
-    expect(appSource).toContain("import NavBar from './navigation/NavBar.js'")
-    expect(appSource).not.toContain('webui/src/navigation/NavBar.js')
-    expect(bundleSource).toContain("import routesBundle from '../overrides/bundles/routes.js'")
-    expect(bundleSource).not.toContain('webui/src/bundles/routes.js')
-    expect(entrySource).toContain('syncKuboGatewaySettingFromUrl')
-    expect(routeSource).toContain("import SettingsPage from '../settings/SettingsPage.js'")
-    expect(routeSource).toContain("import DirectoryPage from '../directory/DirectoryPage.js'")
-    expect(routeSource).toContain("import ModulesPage from '../modules/ModulesPage.js'")
-    expect(routeSource).toContain("import MarketplacePage from '../marketplace/MarketplacePage.js'")
-    expect(navSource).toContain("import sdnLogoMark from './sdn-logo-mark.svg'")
-    expect(navSource).toContain("<NavLink to='/modules'")
-    expect(navSource).toContain("<ExternalNavLink href='/webui'")
+    expect(packageJson.devDependencies['hd-wallet-ui']).toBe('2.0.29')
+    expect(packageJson.devDependencies['hd-wallet-wasm']).toBe('2.0.29')
   })
 
   test('uses SDN status labels in the tray menu instead of upstream IPFS labels', () => {

@@ -7,16 +7,6 @@ const { app, dialog, protocol } = require('electron')
 
 protocol.registerSchemesAsPrivileged([
   {
-    scheme: 'sdn',
-    privileges: {
-      standard: true,
-      secure: true,
-      allowServiceWorkers: true,
-      supportFetchAPI: true,
-      corsEnabled: true
-    }
-  },
-  {
     scheme: 'webui',
     privileges: {
       standard: true,
@@ -110,7 +100,7 @@ async function run () {
   try {
     await Promise.all([
       createSplashScreen(),
-      setupDaemon(), // ctx.getIpfsd, startIpfs, stopIpfs, restartIpfs
+      setupDaemon(), // ctx.getIpfsd, getSdnDaemon, startIpfs, stopIpfs, restartIpfs
       setupAnalytics(), // ctx.countlyDeviceId
       setupI18n(),
       setupAppMenu(),
