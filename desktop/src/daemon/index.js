@@ -6,12 +6,14 @@ const store = require('../common/store')
 const logger = require('../common/logger')
 const { STATUS } = require('./consts')
 const createDaemon = require('./daemon')
+const startSdnDaemon = require('./sdn-daemon')
 const ipcMainEvents = require('../common/ipc-main-events')
 const { analyticsKeys } = require('../analytics/keys')
 const getCtx = require('../context')
 
 async function setupDaemon () {
   let ipfsd = null
+  let sdnDaemon = null
   let status = null
   let wasOnline = null
 
@@ -30,6 +32,18 @@ async function setupDaemon () {
     }
 
     return ipfsd
+  }
+
+  const getSdnDaemon = async (optional = false) => {
+    if (optional) {
+      return sdnDaemon
+    }
+
+    if (!sdnDaemon) {
+      await ipfsNotRunningDialog()
+    }
+
+    return sdnDaemon
   }
 
   const runAndStatus = (fn) => async () => {
@@ -54,10 +68,30 @@ async function setupDaemon () {
       return
     }
 
-    ipfsd = res.ipfsd
+    const nextIpfsd = res.ipfsd
+    let nextSdnDaemon = null
+    try {
+      nextSdnDaemon = await startSdnDaemon({ ipfsd: nextIpfsd })
+    } catch (err) {
+      if (nextIpfsd?.subprocess) {
+        try {
+          await nextIpfsd.stop()
+        } catch (stopErr) {
+          logger.error(`[ipfsd] failed to stop after SDN daemon startup error: ${stopErr.toString()}`)
+        }
+      }
+      log.fail(err)
+      updateStatus(STATUS.STARTING_FAILED)
+      return
+    }
+
+    ipfsd = nextIpfsd
+    sdnDaemon = nextSdnDaemon
 
     logger.info(`[daemon] IPFS_PATH: ${ipfsd.path}`)
     logger.info(`[daemon] PeerID:    ${res.id}`)
+    logger.info(`[sdn-daemon] Admin: ${sdnDaemon.adminUrl}`)
+    logger.info(`[sdn-daemon] PeerID: ${sdnDaemon.peerId}`)
 
     // Update the path if it was blank previously.
     // This way we use the default path when it is
@@ -68,16 +102,32 @@ async function setupDaemon () {
     }
 
     log.end()
-    updateStatus(STATUS.STARTING_FINISHED, res.id)
+    updateStatus(STATUS.STARTING_FINISHED, sdnDaemon.peerId)
   }
 
   const stopIpfs = async () => {
-    if (!ipfsd) {
+    if (!ipfsd && !sdnDaemon) {
       return
     }
 
     const log = logger.start('[ipfsd] stop daemon', { withAnalytics: analyticsKeys.DAEMON_STOP })
     updateStatus(STATUS.STOPPING_STARTED)
+
+    if (sdnDaemon) {
+      try {
+        await sdnDaemon.stop()
+      } catch (err) {
+        logger.error(`[sdn-daemon] ${err.toString()}`)
+      } finally {
+        sdnDaemon = null
+      }
+    }
+
+    if (!ipfsd) {
+      log.end()
+      updateStatus(STATUS.STOPPING_FINISHED)
+      return
+    }
 
     if (!fs.pathExistsSync(join(ipfsd.path, 'config'))) {
       // Is remote api... ignore
@@ -106,6 +156,7 @@ async function setupDaemon () {
   getCtx().setProp('stopIpfs', runAndStatus(stopIpfs))
   getCtx().setProp('restartIpfs', runAndStatus(restartIpfs))
   getCtx().setProp('getIpfsd', getIpfsd)
+  getCtx().setProp('getSdnDaemon', getSdnDaemon)
 
   ipcMain.on(ipcMainEvents.IPFS_CONFIG_CHANGED, restartIpfs)
 

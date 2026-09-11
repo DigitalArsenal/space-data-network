@@ -215,7 +215,7 @@ module.exports = async function () {
   }
 
   ipcMain.on(ipcMainEvents.IPFSD, () => {
-    if (webUiLoaded) void syncIpfsAddresses()
+    if (webUiLoaded) syncIpfsAddresses().catch(err => logger.error('[web ui] failed to sync Kubo addresses', err))
   })
 
   // Set user agent
