@@ -2,6 +2,7 @@ package storefront
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,32 @@ func TestCryptoBuyerIntentIsSignedAndTamperRejected(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(result.Error), "signature") {
 		t.Fatalf("error = %q, want signature rejection", result.Error)
+	}
+}
+
+func TestVerifyCryptoPaymentDoesNotMutateUnverifiedPurchase(t *testing.T) {
+	svc, store := newTestService(t)
+	purchase := createStorefrontPurchaseForTest(t, svc, PaymentMethodCryptoETH)
+	processor := NewPaymentProcessor(store, "seller-peer", &mockChainVerifier{
+		chain:  "ethereum",
+		result: &CryptoPaymentResult{Verified: false, Error: "wrong recipient"},
+	})
+
+	result, err := processor.VerifyCryptoPayment(context.Background(), &CryptoPaymentRequest{
+		RequestID: purchase.RequestID, TxHash: "0xuntrusted", Chain: "ethereum",
+	})
+	if err != nil {
+		t.Fatalf("VerifyCryptoPayment: %v", err)
+	}
+	if result.Verified {
+		t.Fatal("unverified chain result was accepted")
+	}
+	stored, err := store.GetPurchaseRequest(purchase.RequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != PurchaseStatusPending || stored.PaymentTxHash != "" || stored.PaymentChain != "" {
+		t.Fatalf("verification-only call mutated purchase state: %+v", stored)
 	}
 }
 
@@ -93,6 +120,95 @@ func TestCryptoPaymentCompletionIssuesGrantAndIsIdempotent(t *testing.T) {
 	}
 	if again.GrantID != grant.GrantID {
 		t.Fatalf("duplicate completion issued new grant: got %s want %s", again.GrantID, grant.GrantID)
+	}
+}
+
+func TestSolanaRPCFixturePurchaseIssuesGrant(t *testing.T) {
+	const (
+		sender      = "2uKybz3g17aAE4RMs7PApjFstWRYBmfnrhgY3TzSr5WU"
+		recipient   = "FvyDaNUauFxd5eX4pAR4GzALijQtSdCj7ivnRh81uasv"
+		txSignature = "3EHLo1HanqcL3DNPuiEch1zgh4MENBWvWK9rPvhVcFEtcRKfY25a6BU18wuYr61EdFU4q8bP55pnbj7WhqeJtQf5"
+	)
+	t.Setenv("SDN_STOREFRONT_DEV_PAYMENTS", "0")
+	t.Setenv("SDN_CRYPTO_SOLANA_RECIPIENT", recipient)
+	svc, store := newTestService(t)
+
+	txResult := fmt.Sprintf(`{
+		"slot": 496453740,
+		"meta": {"err": null},
+		"transaction": {"message": {"instructions": [{
+			"programId": %q,
+			"parsed": {"type":"transfer","info":{"source":%q,"destination":%q,"lamports":1000}}
+		}]}}
+	}`, solSystemProgramID, sender, recipient)
+	rpc := newRPCMockServer(t, map[string]string{
+		"getTransaction":       txResult,
+		"getSignatureStatuses": `{"context":{"slot":496453760},"value":[{"slot":496453740,"confirmations":20,"err":null,"confirmationStatus":"confirmed"}]}`,
+	})
+
+	listing := testListing()
+	listing.Pricing[0].PriceAmount = 1000
+	listing.AcceptedPayments = []PaymentMethod{PaymentMethodCryptoSOL}
+	if err := svc.CreateListing(context.Background(), listing); err != nil {
+		t.Fatalf("CreateListing: %v", err)
+	}
+	purchase := &PurchaseRequest{
+		ListingID: listing.ListingID, TierName: "Basic", BuyerPeerID: "buyer-peer-solana",
+		PaymentMethod: PaymentMethodCryptoSOL,
+	}
+	if err := svc.CreatePurchaseRequest(context.Background(), purchase); err != nil {
+		t.Fatalf("CreatePurchaseRequest: %v", err)
+	}
+	processor := NewPaymentProcessor(store, "seller-peer", NewSolanaVerifier(ChainConfig{
+		RPCURL:                rpc.URL,
+		RequiredConfirmations: 1,
+	}))
+	intent, err := processor.CreateCryptoBuyerIntent(context.Background(), &CreateCryptoIntentRequest{
+		RequestID: purchase.RequestID,
+		Chain:     "solana",
+		Asset:     "SOL",
+		Recipient: recipient,
+	})
+	if err != nil {
+		t.Fatalf("CreateCryptoBuyerIntent: %v", err)
+	}
+	submission := cryptoSubmission(purchase.RequestID, intent.Reference, "solana", "SOL", 1000, recipient)
+	submission.TxHash = txSignature
+	result, err := processor.SubmitCryptoPayment(context.Background(), &submission)
+	if err != nil {
+		t.Fatalf("SubmitCryptoPayment: %v", err)
+	}
+	if !result.Verified || result.SenderAddress != sender || result.RecipientAddress != recipient || result.Amount != 1000 {
+		t.Fatalf("recorded Solana RPC result was not bound to the purchase: %+v", result)
+	}
+	grant, err := svc.CompleteCryptoPayment(context.Background(), purchase.RequestID, result)
+	if err != nil {
+		t.Fatalf("CompleteCryptoPayment: %v", err)
+	}
+	if grant.GrantID == "" || grant.PaymentTxHash != txSignature || grant.PaymentChain != "solana" {
+		t.Fatalf("settled Solana purchase did not issue a bound grant: %+v", grant)
+	}
+}
+
+func TestCryptoPaymentCompletionRejectsUnverifiedOrUnrecordedPayment(t *testing.T) {
+	svc, _ := newTestService(t)
+	purchase := createStorefrontPurchaseForTest(t, svc, PaymentMethodCryptoSOL)
+
+	if _, err := svc.CompleteCryptoPayment(context.Background(), purchase.RequestID, nil); err == nil {
+		t.Fatal("nil verification result issued a grant")
+	}
+	if _, err := svc.CompleteCryptoPayment(context.Background(), purchase.RequestID, &CryptoPaymentResult{Verified: false, Chain: "solana"}); err == nil {
+		t.Fatal("failed verification result issued a grant")
+	}
+	if _, err := svc.CompleteCryptoPayment(context.Background(), purchase.RequestID, &CryptoPaymentResult{Verified: true, Chain: "solana"}); err == nil {
+		t.Fatal("unrecorded on-chain payment issued a grant")
+	}
+	stored, err := svc.store.GetPurchaseRequest(purchase.RequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != PurchaseStatusPending || stored.GrantID != "" {
+		t.Fatalf("unpaid purchase mutated: %+v", stored)
 	}
 }
 

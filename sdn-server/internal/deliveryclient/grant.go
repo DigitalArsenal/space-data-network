@@ -24,6 +24,7 @@ type Grant struct {
 	RequestID        string
 	ModuleID         string
 	ModuleVersion    string
+	RequesterPeerID  string
 	GrantedDomain    string
 	GrantedTimeoutMs uint64
 	ExpiresAtMs      uint64
@@ -63,6 +64,7 @@ func DecodeGrant(data []byte) (*Grant, error) {
 		RequestID:        string(msg.REQUEST_ID()),
 		ModuleID:         string(msg.MODULE_ID()),
 		ModuleVersion:    string(msg.MODULE_VERSION()),
+		RequesterPeerID:  string(msg.REQUESTER_PEER_ID()),
 		GrantedDomain:    string(msg.GRANTED_DOMAIN()),
 		GrantedTimeoutMs: msg.GRANTED_TIMEOUT_MS(),
 		ExpiresAtMs:      msg.EXPIRES_AT(),
@@ -96,6 +98,7 @@ type GrantExpectations struct {
 	RequestID          string
 	ModuleID           string
 	ModuleVersion      string // if set, must match when the grant echoes a version
+	RequesterPeerID    string // if set, the grant must be issued to this requester
 	ExpectedDomain     string // if set, granted domain must match
 	RequestedTimeoutMs uint64 // granted timeout must be <= this when both set
 	NowMs              uint64 // if >0, grant must not be expired
@@ -123,6 +126,9 @@ func (g *Grant) Validate(exp GrantExpectations) error {
 	}
 	if exp.ModuleVersion != "" && g.ModuleVersion != "" && g.ModuleVersion != exp.ModuleVersion {
 		return errors.New("deliveryclient: grant module version mismatch")
+	}
+	if exp.RequesterPeerID != "" && g.RequesterPeerID != exp.RequesterPeerID {
+		return errors.New("deliveryclient: grant requester peer id mismatch")
 	}
 	if exp.ExpectedDomain != "" && g.GrantedDomain != "" && g.GrantedDomain != exp.ExpectedDomain {
 		return fmt.Errorf("deliveryclient: granted domain %q != expected %q", g.GrantedDomain, exp.ExpectedDomain)

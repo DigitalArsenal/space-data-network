@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	lch "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LCH"
@@ -42,11 +43,12 @@ func (f *fakeProvider) Dial(_ context.Context, _ string, request []byte) ([]byte
 			wrapped = []byte{0x11}
 		}
 		return encodeTestGrant(testGrant{
-			denied:        f.deny,
-			requestID:     string(m.REQUEST_ID()),
-			moduleID:      string(m.MODULE_ID()),
-			moduleVersion: string(m.MODULE_VERSION()),
-			grantedDomain: "orbpro.default", grantedTimeoutMs: 30_000, expiresAtMs: 9_000_000,
+			denied:          f.deny,
+			requestID:       string(m.REQUEST_ID()),
+			moduleID:        string(m.MODULE_ID()),
+			moduleVersion:   string(m.MODULE_VERSION()),
+			requesterPeerID: string(m.REQUESTER_PEER_ID()),
+			grantedDomain:   "orbpro.default", grantedTimeoutMs: 30_000, expiresAtMs: 9_000_000,
 			grantStatus: "granted", denialReason: "not authorized", moduleCID: f.moduleCID,
 			wrappedPayload: wrapped, verifierPubKey: []byte{0x22}, providerSig: []byte{0x33},
 		}), nil
@@ -150,6 +152,39 @@ func TestConsumerRequestGrantDenied(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for a denied grant")
 	}
+}
+
+func TestConsumerRejectsGrantIssuedToDifferentBuyer(t *testing.T) {
+	provider := &fakeProvider{peerID: "peerP", moduleCID: "bafycid"}
+	identity := testIdentity(nil)
+	c, _ := NewConsumer(provider, identity)
+
+	// Intercept the proof response and issue an otherwise-valid grant to buyer B.
+	providerForBuyerB := &wrongBuyerProvider{fakeProvider: provider, requesterPeerID: "peerB"}
+	c.transport = providerForBuyerB
+	_, err := c.PullModule(context.Background(), Provider{PeerID: "peerP"}, testPullParams(),
+		fakeUnwrapper{key: []byte("content-key")}, fakeDecryptor{key: []byte("content-key"), plaintext: []byte("WASM")})
+	if err == nil || !strings.Contains(err.Error(), "requester peer id mismatch") {
+		t.Fatalf("buyer A accepted buyer B grant: %v", err)
+	}
+}
+
+type wrongBuyerProvider struct {
+	*fakeProvider
+	requesterPeerID string
+}
+
+func (p *wrongBuyerProvider) Dial(ctx context.Context, providerPeerID string, request []byte) ([]byte, error) {
+	if !lpf.LPFBufferHasIdentifier(request) {
+		return p.fakeProvider.Dial(ctx, providerPeerID, request)
+	}
+	m := lpf.GetRootAsLPF(request, 0)
+	return encodeTestGrant(testGrant{
+		requestID: string(m.REQUEST_ID()), moduleID: string(m.MODULE_ID()), moduleVersion: string(m.MODULE_VERSION()),
+		requesterPeerID: p.requesterPeerID, grantedDomain: "orbpro.default", grantedTimeoutMs: 30_000,
+		expiresAtMs: 9_000_000, grantStatus: "granted", moduleCID: p.moduleCID,
+		wrappedPayload: []byte{0x11}, verifierPubKey: []byte{0x22}, providerSig: []byte{0x33},
+	}), nil
 }
 
 func TestConsumerFetchError(t *testing.T) {
