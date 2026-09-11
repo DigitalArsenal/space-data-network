@@ -11,6 +11,10 @@ files:
 directories:
   buildResources: assets/build
 
+extraResources:
+  - from: build/sdn-runtime
+    to: sdn-runtime
+
 asarUnpack: 'src/**/scripts/**/*'
 
 afterSign: './pkgs/macos/notarize-build.js'

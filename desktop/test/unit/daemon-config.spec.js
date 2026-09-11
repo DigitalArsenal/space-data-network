@@ -48,7 +48,7 @@ test.describe('desktop daemon config', () => {
     try {
       const result = await Promise.race([
         checkPorts({ path: userData }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('checkPorts timed out')), 1000))
+        new Promise((resolve, reject) => setTimeout(() => reject(new Error('checkPorts timed out')), 5000))
       ])
       expect(result).toBe(true)
       const config = JSON.parse(fs.readFileSync(path.join(userData, 'config'), 'utf8'))

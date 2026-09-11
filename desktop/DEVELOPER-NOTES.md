@@ -2,39 +2,28 @@
 
 Below are helpful notes for developers hacking on or releasing new versions of IPFS Desktop.
 
-## SDN UI packaging — conjunction-only ship (decision recorded 2026-07-13, C3)
+## SDN daemon dashboard packaging
 
-Status of the desktop app under the owner's 2026-07-11 **conjunction-only**
-directive (`SDN_SPACEAWARE_UI_LOOP.md` Phase C): **NEEDS WORK, release-gated —
-not implemented in C3.** No desktop code changes ship now (also under the
-no-deploy / no-node-upgrade hold).
+The desktop dashboard wraps the packaged SDN daemon's loopback-only HTTP root.
+`src/dashboard/index.js` loads the daemon URL as a top-level navigation, so the
+daemon's CSP and COOP/COEP headers apply without embedding it in a frame. The
+daemon-served conjunction artifact is the single source of truth: there is no
+second `assets/sdn-ui` bundle or custom `sdn:` protocol to keep in sync.
 
-Finding: the desktop dashboard does **not** wrap the daemon-served UI. The
-dashboard `BrowserWindow` (`src/dashboard/index.js`) loads its **own bundled
-copy** of the SDN UI from `assets/sdn-ui/` via a custom `sdn:` file protocol
-(`src/static-scheme.js` `registerFileProtocol` + `src/static-http-server.js`
-`ROUTES.sdn = 'assets/sdn-ui'`). That bundle is a stale pre-conjunction React
-SPA (`index.html` → `#root`, IPFS-webui-derived), independent of the daemon's
-in-binary conjunction artifact. So the daemon's conjunction-only ship (the
-Svelte app served at `/`, `cmd/spacedatanetwork/conjunction_ui.go`) does **not**
-automatically reach desktop.
+The existing Desktop Kubo lifecycle remains intact. After Kubo is ready,
+`src/daemon/sdn-daemon.js` starts the packaged `spacedatanetwork` companion and
+passes it the live Kubo RPC and gateway addresses. On shutdown, Desktop stops
+the companion before Kubo. The companion may instead adopt an already-running
+loopback daemon through `SDN_DESKTOP_DAEMON_URL`; a custom configuration can be
+selected with `SDN_DESKTOP_DAEMON_CONFIG`. Non-loopback admin URLs are rejected.
 
-To deliver the conjunction-only experience in desktop, a future (release-gated)
-change must do one of:
-
-1. **Recommended — wrap the daemon.** Repoint the dashboard window to load the
-   daemon's HTTP `/` (the conjunction UI) instead of the bundled `sdn:` scheme,
-   making the daemon-served, in-binary conjunction artifact the single source of
-   truth (no second bundle to keep in sync). Confirm COOP/COEP + the new CSP
-   (`connect-src 'self'`, `frame-ancestors 'none'`) are compatible with the
-   Electron `BrowserWindow` load (top-level navigation, not framed — CSP
-   `frame-ancestors` does not block it).
-2. **Alternative — rebundle.** Rebuild `assets/sdn-ui/` from the conjunction
-   single-file artifact (`sdn-js npm run build:conjunction`) and keep serving it
-   over the `sdn:` scheme. Simpler diff, but duplicates the artifact and must be
-   rebuilt every UI release.
-
-Neither is done here; C3 only records the decision (task item 5).
+`npm run build:sdn-runtime` creates `build/sdn-runtime` with the SDN daemon,
+Kubo, WasmEdge libraries, and the pinned `hd-wallet-ui` and `hd-wallet-wasm`
+assets. Electron Builder copies that directory into application resources. The
+wallet UI, wallet runtime, catalog, checkout, transaction history, and receipt
+views are therefore served from the same daemon origin and use the same daemon
+identity. Desktop forces `SDN_STOREFRONT_DEV_PAYMENTS=0` for the managed process;
+development payment bypasses are never enabled by the packaged lifecycle.
 
 ## Release checklist
 

@@ -25,7 +25,6 @@ const DESKTOP_SDN_SEED_PEERS = Object.freeze([
   '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'
 ])
 const ROUTES = Object.freeze({
-  sdn: 'assets/sdn-ui',
   webui: 'assets/webui'
 })
 
