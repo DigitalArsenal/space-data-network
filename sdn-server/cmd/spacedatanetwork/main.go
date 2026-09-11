@@ -1460,6 +1460,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						log.Warnf("Failed to initialize storefront service: %v", err)
 						_ = sfStore.Close()
 					} else {
+						sfSvc.SetSettledEntitlementBridge(node.NewSettledEntitlementBridge(n))
 						// One-time listings pin their record set as a dataset shard
 						// through Kubo, like every publication (PUB-03).
 						sfSvc.SetDatasetPublisher(&storefront.KuboListingDatasetPublisher{
