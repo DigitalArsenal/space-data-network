@@ -62,6 +62,10 @@ type Service struct {
 	subscribers      map[string]chan *Listing // listingID -> channel
 	inventory        *publishInventoryCache
 	mu               sync.RWMutex
+	// entitlementMu serializes settled/revoked projections so concurrent
+	// purchase completions cannot publish an older allowlist after a newer one.
+	entitlementMu     sync.Mutex
+	entitlementBridge SettledEntitlementBridge
 }
 
 // NewService creates a new storefront service.
@@ -318,6 +322,9 @@ func (s *Service) CompleteManualDevPayment(ctx context.Context, requestID string
 	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
 		existing, err := s.store.GetGrant(purchase.GrantID)
 		if err == nil && existing != nil {
+			if err := s.provisionSettledEntitlement(ctx, requestID); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
 	}
@@ -366,6 +373,9 @@ func (s *Service) CompleteManualDevPayment(ctx context.Context, requestID string
 		log.Warnf("Failed to record grant audit event for %s: %v", requestID, err)
 	}
 	s.recordGrantDeliveryAudit(requestID, actor, grant, PurchaseStatusCompleted)
+	if err := s.provisionSettledEntitlement(ctx, requestID); err != nil {
+		return nil, err
+	}
 
 	return grant, nil
 }
@@ -386,6 +396,9 @@ func (s *Service) CompleteCryptoPayment(ctx context.Context, requestID string, r
 	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
 		existing, err := s.store.GetGrant(purchase.GrantID)
 		if err == nil && existing != nil {
+			if err := s.provisionSettledEntitlement(ctx, requestID); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
 	}
@@ -436,6 +449,9 @@ func (s *Service) CompleteCryptoPayment(ctx context.Context, requestID string, r
 		log.Warnf("Failed to record crypto grant audit event for %s: %v", requestID, err)
 	}
 	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
+	if err := s.provisionSettledEntitlement(ctx, requestID); err != nil {
+		return nil, err
+	}
 
 	return grant, nil
 }
@@ -477,6 +493,9 @@ func (s *Service) ProcessCreditsPayment(ctx context.Context, requestID string, b
 		log.Warnf("Failed to record grant audit event for %s: %v", requestID, err)
 	}
 	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
+	if err := s.provisionSettledEntitlement(ctx, requestID); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -494,6 +513,9 @@ func (s *Service) CompleteCreditsPayment(ctx context.Context, requestID string) 
 	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
 		existing, err := s.store.GetGrant(purchase.GrantID)
 		if err == nil && existing != nil {
+			if err := s.provisionSettledEntitlement(ctx, requestID); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
 	}
@@ -518,6 +540,9 @@ func (s *Service) CompleteCreditsPayment(ctx context.Context, requestID string) 
 		log.Warnf("Failed to record credits grant audit event for %s: %v", requestID, err)
 	}
 	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
+	if err := s.provisionSettledEntitlement(ctx, requestID); err != nil {
+		return nil, err
+	}
 
 	return grant, nil
 }
@@ -542,6 +567,9 @@ func (s *Service) CompleteStripeCheckout(ctx context.Context, requestID, session
 	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
 		existing, err := s.store.GetGrant(purchase.GrantID)
 		if err == nil && existing != nil {
+			if err := s.provisionSettledEntitlement(ctx, requestID); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
 	}
@@ -574,6 +602,9 @@ func (s *Service) CompleteStripeCheckout(ctx context.Context, requestID, session
 		log.Warnf("Failed to record Stripe grant audit event for %s: %v", requestID, err)
 	}
 	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
+	if err := s.provisionSettledEntitlement(ctx, requestID); err != nil {
+		return nil, err
+	}
 
 	return grant, nil
 }
@@ -592,6 +623,9 @@ func (s *Service) ApplyStripeWebhookAction(ctx context.Context, action *StripeWe
 		action.Processed = true
 		purchase, err := s.store.GetPurchaseRequest(action.RequestID)
 		if err == nil && purchase != nil && purchase.GrantID != "" {
+			if err := s.provisionSettledEntitlement(ctx, action.RequestID); err != nil {
+				return nil, err
+			}
 			return s.store.GetGrant(purchase.GrantID)
 		}
 		return nil, err
@@ -1010,7 +1044,6 @@ func findPricingTierByName(listing *Listing, tierName string) *PricingTier {
 
 // RevokeGrant records a grant revocation and prevents future access checks from succeeding.
 func (s *Service) RevokeGrant(ctx context.Context, grantID, buyerPeerID, actorPeerID, reason string) (*AccessGrant, error) {
-	_ = ctx
 	grant, err := s.store.GetGrant(grantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get grant: %w", err)
@@ -1022,6 +1055,9 @@ func (s *Service) RevokeGrant(ctx context.Context, grantID, buyerPeerID, actorPe
 		return nil, fmt.Errorf("buyer mismatch")
 	}
 	if grant.Status == GrantStatusRevoked {
+		if err := s.revokeSettledEntitlement(ctx, grant); err != nil {
+			return nil, err
+		}
 		return grant, nil
 	}
 	actor := strings.TrimSpace(actorPeerID)
@@ -1031,6 +1067,13 @@ func (s *Service) RevokeGrant(ctx context.Context, grantID, buyerPeerID, actorPe
 	note := strings.TrimSpace(reason)
 	if note == "" {
 		note = "Grant revoked"
+	}
+	// Remove the runtime entitlement before making the storefront revocation
+	// durable. If the licensing projection fails, the grant remains visibly
+	// active and the caller can retry; it never appears revoked while its key is
+	// still obtainable.
+	if err := s.revokeSettledEntitlement(ctx, grant); err != nil {
+		return nil, err
 	}
 	if err := s.store.UpdateGrantStatus(grantID, GrantStatusRevoked, note); err != nil {
 		return nil, err
