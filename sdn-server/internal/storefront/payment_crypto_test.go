@@ -132,6 +132,8 @@ func TestSolanaRPCFixturePurchaseIssuesGrant(t *testing.T) {
 	t.Setenv("SDN_STOREFRONT_DEV_PAYMENTS", "0")
 	t.Setenv("SDN_CRYPTO_SOLANA_RECIPIENT", recipient)
 	svc, store := newTestService(t)
+	bridge := newRecordingEntitlementBridge()
+	svc.SetSettledEntitlementBridge(bridge)
 
 	txResult := fmt.Sprintf(`{
 		"slot": 496453740,
@@ -149,6 +151,14 @@ func TestSolanaRPCFixturePurchaseIssuesGrant(t *testing.T) {
 	listing := testListing()
 	listing.Pricing[0].PriceAmount = 1000
 	listing.AcceptedPayments = []PaymentMethod{PaymentMethodCryptoSOL}
+	listing.EncryptionRequired = true
+	listing.ListingKind = ListingKindWASMModule
+	listing.ProtectedDelivery = ProtectedDelivery{
+		ModuleID:         "com.example.solana-fixture",
+		ModuleVersion:    "1.0.0",
+		LicenseModuleID:  "licensing",
+		DeliveryProtocol: "/space-data-network/module-delivery/1.0.0",
+	}
 	if err := svc.CreateListing(context.Background(), listing); err != nil {
 		t.Fatalf("CreateListing: %v", err)
 	}
@@ -188,6 +198,10 @@ func TestSolanaRPCFixturePurchaseIssuesGrant(t *testing.T) {
 	if grant.GrantID == "" || grant.PaymentTxHash != txSignature || grant.PaymentChain != "solana" {
 		t.Fatalf("settled Solana purchase did not issue a bound grant: %+v", grant)
 	}
+	if !bridge.has(listing.ProtectedDelivery.ModuleID, purchase.BuyerPeerID) {
+		t.Fatal("settled Solana fixture did not provision the buyer's module entitlement")
+	}
+	t.Logf("recorded Solana fixture tx=%s grant=%s", txSignature, grant.GrantID)
 }
 
 func TestCryptoPaymentCompletionRejectsUnverifiedOrUnrecordedPayment(t *testing.T) {
