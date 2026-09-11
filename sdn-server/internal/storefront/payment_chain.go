@@ -336,15 +336,21 @@ const solSystemProgramID = "11111111111111111111111111111111"
 
 // SolanaVerifier verifies Solana transactions via JSON-RPC (getTransaction).
 type SolanaVerifier struct {
-	rpcURL string
-	client *http.Client
+	rpcURL        string
+	confirmations uint64
+	client        *http.Client
 }
 
 // NewSolanaVerifier creates a verifier for Solana.
 func NewSolanaVerifier(cfg ChainConfig) *SolanaVerifier {
+	confs := cfg.RequiredConfirmations
+	if confs == 0 {
+		confs = 1
+	}
 	return &SolanaVerifier{
-		rpcURL: cfg.RPCURL,
-		client: &http.Client{Timeout: 30 * time.Second},
+		rpcURL:        cfg.RPCURL,
+		confirmations: confs,
+		client:        &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -395,6 +401,20 @@ type solTransactionResult struct {
 	Transaction *solTransactionEnvelope `json:"transaction"`
 }
 
+type solSignatureStatus struct {
+	Slot               uint64      `json:"slot"`
+	Confirmations      *uint64     `json:"confirmations"`
+	Err                interface{} `json:"err"`
+	ConfirmationStatus string      `json:"confirmationStatus"`
+}
+
+type solSignatureStatusesResult struct {
+	Context struct {
+		Slot uint64 `json:"slot"`
+	} `json:"context"`
+	Value []*solSignatureStatus `json:"value"`
+}
+
 func (v *SolanaVerifier) VerifyTransaction(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
 	if v.rpcURL == "" {
 		return &CryptoPaymentResult{Verified: false, Error: "solana RPC URL not configured"}, nil
@@ -427,10 +447,54 @@ func (v *SolanaVerifier) VerifyTransaction(ctx context.Context, req *CryptoPayme
 		return &CryptoPaymentResult{Verified: false, Error: "transaction failed on chain"}, nil
 	}
 
+	statusRaw, err := rpcCall(ctx, v.client, v.rpcURL, "getSignatureStatuses", []interface{}{
+		[]string{req.TxHash},
+		map[string]interface{}{"searchTransactionHistory": true},
+	})
+	if err != nil {
+		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("getSignatureStatuses: %v", err)}, nil
+	}
+	var statuses solSignatureStatusesResult
+	if err := json.Unmarshal(statusRaw, &statuses); err != nil {
+		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("parse signature status: %v", err)}, nil
+	}
+	if len(statuses.Value) != 1 || statuses.Value[0] == nil {
+		return &CryptoPaymentResult{Verified: false, Error: "transaction confirmation status not found"}, nil
+	}
+	status := statuses.Value[0]
+	if status.Err != nil {
+		return &CryptoPaymentResult{Verified: false, Error: "transaction failed on chain"}, nil
+	}
+	if status.Slot != 0 && status.Slot != tx.Slot {
+		return &CryptoPaymentResult{Verified: false, Error: "transaction slot mismatch"}, nil
+	}
+
+	// A nil confirmations field means the transaction is rooted/finalized, so it
+	// satisfies any finite operator threshold. Report its observed slot depth
+	// instead of fabricating the configured threshold. Otherwise the RPC reports
+	// the live confirmation count and the configured minimum is enforced exactly.
+	confirmations := uint64(0)
+	if status.Confirmations != nil {
+		confirmations = *status.Confirmations
+		if confirmations < v.confirmations {
+			return &CryptoPaymentResult{
+				Verified:          false,
+				ConfirmationBlock: tx.Slot,
+				CurrentBlock:      statuses.Context.Slot,
+				Confirmations:     confirmations,
+				Error:             fmt.Sprintf("insufficient confirmations: %d/%d", confirmations, v.confirmations),
+			}, nil
+		}
+	} else if statuses.Context.Slot >= tx.Slot {
+		confirmations = statuses.Context.Slot - tx.Slot
+	}
+
 	result := &CryptoPaymentResult{
 		Verified:          true,
 		Chain:             "solana",
 		ConfirmationBlock: tx.Slot,
+		CurrentBlock:      statuses.Context.Slot,
+		Confirmations:     confirmations,
 	}
 
 	// Same non-fallback discipline as the Ethereum verifier: a claimed mint

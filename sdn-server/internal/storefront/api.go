@@ -403,6 +403,11 @@ func (h *APIHandler) handleCreatePurchase(w http.ResponseWriter, r *http.Request
 		http.Error(w, "tier_name is required", http.StatusBadRequest)
 		return
 	}
+	buyerPeerID, ok := authorizeStorefrontPeerQuery(w, r, req.BuyerPeerID, "buyer_peer_id")
+	if !ok {
+		return
+	}
+	req.BuyerPeerID = buyerPeerID
 
 	if err := h.service.CreatePurchaseRequest(r.Context(), &req); err != nil {
 		http.Error(w, "failed to create purchase", http.StatusInternalServerError)
@@ -563,6 +568,18 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 	}
 	if h.payment == nil {
 		http.Error(w, "crypto payments not configured", http.StatusServiceUnavailable)
+		return
+	}
+	purchase, err := h.service.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if purchase == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := authorizeStorefrontPeerQuery(w, r, purchase.BuyerPeerID, "buyer_peer_id"); !ok {
 		return
 	}
 

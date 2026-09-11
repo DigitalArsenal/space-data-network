@@ -233,10 +233,11 @@ func TestSolanaVerifierNativeTransferPopulatesFullResult(t *testing.T) {
 	}`, solSystemProgramID, source, destination)
 
 	srv := newRPCMockServer(t, map[string]string{
-		"getTransaction": txResult,
+		"getTransaction":       txResult,
+		"getSignatureStatuses": `{"context":{"slot":560},"value":[{"slot":555,"confirmations":5,"err":null,"confirmationStatus":"confirmed"}]}`,
 	})
 
-	v := NewSolanaVerifier(ChainConfig{RPCURL: srv.URL})
+	v := NewSolanaVerifier(ChainConfig{RPCURL: srv.URL, RequiredConfirmations: 2})
 	result, err := v.VerifyTransaction(context.Background(), &CryptoPaymentRequest{TxHash: "sometxsig"})
 	if err != nil {
 		t.Fatalf("VerifyTransaction returned error: %v", err)
@@ -258,6 +259,9 @@ func TestSolanaVerifierNativeTransferPopulatesFullResult(t *testing.T) {
 	}
 	if result.ConfirmationBlock != 555 {
 		t.Errorf("ConfirmationBlock (slot) = %d, want 555", result.ConfirmationBlock)
+	}
+	if result.CurrentBlock != 560 || result.Confirmations != 5 {
+		t.Errorf("confirmation accounting wrong: %+v", result)
 	}
 }
 
@@ -283,7 +287,8 @@ func TestSolanaVerifierSPLTransferPopulatesFullResult(t *testing.T) {
 	}`, mint, senderOwner, mint, recipientOwner, mint, senderOwner, mint, recipientOwner)
 
 	srv := newRPCMockServer(t, map[string]string{
-		"getTransaction": txResult,
+		"getTransaction":       txResult,
+		"getSignatureStatuses": `{"context":{"slot":800},"value":[{"slot":777,"confirmations":null,"err":null,"confirmationStatus":"finalized"}]}`,
 	})
 
 	v := NewSolanaVerifier(ChainConfig{RPCURL: srv.URL})
@@ -312,6 +317,33 @@ func TestSolanaVerifierSPLTransferPopulatesFullResult(t *testing.T) {
 	// sender: 5000 -> 3500 (delta -1500); recipient: 1000 -> 2500 (delta +1500).
 	if result.Amount != 1500 {
 		t.Errorf("Amount = %d, want 1500", result.Amount)
+	}
+}
+
+func TestSolanaVerifierRejectsInsufficientConfirmations(t *testing.T) {
+	txResult := fmt.Sprintf(`{
+		"slot": 555,
+		"meta": {"err": null},
+		"transaction": {"message": {"instructions": [{
+			"programId": %q,
+			"parsed": {"type":"transfer","info":{"source":"source","destination":"destination","lamports":42}}
+		}]}}
+	}`, solSystemProgramID)
+	srv := newRPCMockServer(t, map[string]string{
+		"getTransaction":       txResult,
+		"getSignatureStatuses": `{"context":{"slot":556},"value":[{"slot":555,"confirmations":1,"err":null,"confirmationStatus":"confirmed"}]}`,
+	})
+
+	v := NewSolanaVerifier(ChainConfig{RPCURL: srv.URL, RequiredConfirmations: 2})
+	result, err := v.VerifyTransaction(context.Background(), &CryptoPaymentRequest{TxHash: "sometxsig"})
+	if err != nil {
+		t.Fatalf("VerifyTransaction returned error: %v", err)
+	}
+	if result.Verified {
+		t.Fatal("expected verification to fail for insufficient confirmations")
+	}
+	if !strings.Contains(result.Error, "insufficient confirmations: 1/2") {
+		t.Fatalf("error = %q, want configured confirmation rejection", result.Error)
 	}
 }
 

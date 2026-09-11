@@ -147,6 +147,7 @@ func (c *Consumer) RequestGrant(ctx context.Context, provider Provider, p PullPa
 		RequestID:          p.RequestID,
 		ModuleID:           p.ModuleID,
 		ModuleVersion:      p.ModuleVersion,
+		RequesterPeerID:    c.identity.PeerID,
 		ExpectedDomain:     p.RequestedDomain,
 		RequestedTimeoutMs: p.RequestedTimeoutMs,
 		NowMs:              p.NowMs,

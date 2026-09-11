@@ -373,6 +373,9 @@ func (s *Service) CompleteManualDevPayment(ctx context.Context, requestID string
 // CompleteCryptoPayment finalizes a verifier-approved on-chain payment and
 // issues the purchase grant exactly once.
 func (s *Service) CompleteCryptoPayment(ctx context.Context, requestID string, result *CryptoPaymentResult) (*AccessGrant, error) {
+	if result == nil || !result.Verified {
+		return nil, fmt.Errorf("crypto payment is not verified")
+	}
 	purchase, err := s.store.GetPurchaseRequest(requestID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load purchase request: %w", err)
@@ -385,6 +388,20 @@ func (s *Service) CompleteCryptoPayment(ctx context.Context, requestID string, r
 		if err == nil && existing != nil {
 			return existing, nil
 		}
+	}
+	if purchase.PaymentMethod != PaymentMethodCryptoETH &&
+		purchase.PaymentMethod != PaymentMethodCryptoSOL &&
+		purchase.PaymentMethod != PaymentMethodCryptoBTC {
+		return nil, fmt.Errorf("purchase is not a crypto payment: %s", requestID)
+	}
+	if purchase.Status != PurchaseStatusPaymentDetected && purchase.Status != PurchaseStatusPaymentConfirmed {
+		return nil, fmt.Errorf("verified crypto payment was not recorded for purchase: %s", requestID)
+	}
+	if strings.TrimSpace(purchase.PaymentTxHash) == "" || strings.TrimSpace(purchase.PaymentChain) == "" {
+		return nil, fmt.Errorf("verified crypto payment evidence is incomplete for purchase: %s", requestID)
+	}
+	if strings.TrimSpace(result.Chain) == "" || normalizePaymentToken(result.Chain) != normalizePaymentToken(purchase.PaymentChain) {
+		return nil, fmt.Errorf("verified crypto payment chain does not match purchase: %s", requestID)
 	}
 
 	txHash := purchase.PaymentTxHash

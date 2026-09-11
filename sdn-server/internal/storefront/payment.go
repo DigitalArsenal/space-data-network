@@ -78,28 +78,20 @@ type CryptoPaymentResult struct {
 	Error             string `json:"error,omitempty"`
 }
 
-// VerifyCryptoPayment verifies a crypto payment on chain
-// In production, this would connect to blockchain RPC nodes.
-// Currently implements verification stub with status tracking.
+// VerifyCryptoPayment verifies a crypto payment on chain without mutating the
+// purchase. SubmitCryptoPayment is the settlement gate: it validates the
+// signed buyer intent, calls this method, applies the fail-closed result
+// policy, and only then records payment state.
 func (pp *PaymentProcessor) VerifyCryptoPayment(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
-	if req.TxHash == "" {
+	if req == nil || strings.TrimSpace(req.TxHash) == "" {
 		return &CryptoPaymentResult{Verified: false, Error: "tx_hash required"}, nil
 	}
 
-	// Update purchase with payment info
-	if err := pp.store.UpdatePurchasePayment(req.RequestID, req.TxHash, req.Chain, req.SenderAddress); err != nil {
-		return nil, fmt.Errorf("failed to update purchase payment: %w", err)
-	}
-
-	// Mark payment as detected
-	if err := pp.store.UpdatePurchaseStatus(req.RequestID, PurchaseStatusPaymentDetected, "Payment detected on "+req.Chain); err != nil {
-		return nil, err
-	}
-
 	// Chain-specific verification via registered verifier
-	verifier, ok := pp.chainVerifiers[req.Chain]
+	chain := normalizePaymentToken(req.Chain)
+	verifier, ok := pp.chainVerifiers[chain]
 	if !ok {
-		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("no verifier configured for chain: %s", req.Chain)}, nil
+		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("no verifier configured for chain: %s", chain)}, nil
 	}
 	return verifier.VerifyTransaction(ctx, req)
 }
@@ -197,6 +189,9 @@ func (pp *PaymentProcessor) CreateCryptoBuyerIntent(ctx context.Context, req *Cr
 // SubmitCryptoPayment validates a buyer-submitted transaction against the
 // server-created intent before consulting a chain verifier.
 func (pp *PaymentProcessor) SubmitCryptoPayment(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
+	if req == nil {
+		return &CryptoPaymentResult{Verified: false, Error: "payment request required"}, nil
+	}
 	if strings.TrimSpace(req.Reference) == "" {
 		return &CryptoPaymentResult{Verified: false, Error: "payment reference required"}, nil
 	}
@@ -243,11 +238,7 @@ func (pp *PaymentProcessor) SubmitCryptoPayment(ctx context.Context, req *Crypto
 		return &CryptoPaymentResult{Verified: false, Error: "wrong recipient"}, nil
 	}
 
-	verifier, ok := pp.chainVerifiers[intent.Chain]
-	if !ok {
-		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("no verifier configured for chain: %s", intent.Chain)}, nil
-	}
-	result, err := verifier.VerifyTransaction(ctx, req)
+	result, err := pp.VerifyCryptoPayment(ctx, req)
 	if err != nil || result == nil || !result.Verified {
 		return result, err
 	}

@@ -1,7 +1,9 @@
 package storefront
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +12,66 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
+
+func TestCreatePurchaseBindsAuthenticatedBuyer(t *testing.T) {
+	svc, _ := newTestService(t)
+	handler := NewAPIHandler(svc, nil, nil, nil, nil)
+	listing := testListing()
+	if err := svc.CreateListing(context.Background(), listing); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(PurchaseRequest{
+		ListingID: listing.ListingID, TierName: "Basic", BuyerPeerID: "buyer-beta",
+		PaymentMethod: PaymentMethodCryptoSOL,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/storefront/purchases", bytes.NewReader(body))
+	req = req.WithContext(auth.ContextWithSession(req.Context(), &auth.Session{XPub: "buyer-alpha", TrustLevel: peers.Standard}))
+	rec := httptest.NewRecorder()
+	handler.handleCreatePurchase(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign buyer purchase code = %d, want %d body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+
+	body, _ = json.Marshal(PurchaseRequest{
+		ListingID: listing.ListingID, TierName: "Basic", PaymentMethod: PaymentMethodCryptoSOL,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/storefront/purchases", bytes.NewReader(body))
+	req = req.WithContext(auth.ContextWithSession(req.Context(), &auth.Session{XPub: "buyer-alpha", TrustLevel: peers.Standard}))
+	rec = httptest.NewRecorder()
+	handler.handleCreatePurchase(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("self purchase code = %d, want %d body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var purchase PurchaseRequest
+	if err := json.Unmarshal(rec.Body.Bytes(), &purchase); err != nil {
+		t.Fatal(err)
+	}
+	if purchase.BuyerPeerID != "buyer-alpha" {
+		t.Fatalf("BuyerPeerID = %q, want authenticated buyer", purchase.BuyerPeerID)
+	}
+}
+
+func TestConfirmPaymentRejectsDifferentAuthenticatedBuyerBeforeChainCall(t *testing.T) {
+	svc, store := newTestService(t)
+	purchase := createStorefrontPurchaseForTest(t, svc, PaymentMethodCryptoETH)
+	spy := &spyChainVerifier{chain: "ethereum"}
+	handler := NewAPIHandler(svc, nil, nil, NewPaymentProcessor(store, "test-peer-id", spy), nil)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"txHash": "0xabc123", "chain": "ethereum", "reference": "crypto:private-reference",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/storefront/purchases/"+purchase.RequestID+"/confirm", bytes.NewReader(body))
+	req = req.WithContext(auth.ContextWithSession(req.Context(), &auth.Session{XPub: "buyer-beta", TrustLevel: peers.Standard}))
+	rec := httptest.NewRecorder()
+	handler.handleConfirmPayment(rec, req, purchase.RequestID)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("confirm code = %d, want %d body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if spy.called {
+		t.Fatal("chain verifier called for a different authenticated buyer")
+	}
+}
 
 func TestDashboardPeerQueryRejectsNonAdminTampering(t *testing.T) {
 	svc, store := newTestService(t)

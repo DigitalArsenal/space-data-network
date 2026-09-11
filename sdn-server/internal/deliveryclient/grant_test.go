@@ -13,6 +13,7 @@ type testGrant struct {
 	requestID        string
 	moduleID         string
 	moduleVersion    string
+	requesterPeerID  string
 	grantedDomain    string
 	grantedTimeoutMs uint64
 	expiresAtMs      uint64
@@ -41,6 +42,7 @@ func encodeTestGrant(g testGrant) []byte {
 	rid := b.CreateString(g.requestID)
 	mid := b.CreateString(g.moduleID)
 	mv := b.CreateString(g.moduleVersion)
+	rp := b.CreateString(g.requesterPeerID)
 	gd := b.CreateString(g.grantedDomain)
 	gs := b.CreateString(g.grantStatus)
 	dr := b.CreateString(g.denialReason)
@@ -65,6 +67,7 @@ func encodeTestGrant(g testGrant) []byte {
 	lgr.LGRAddREQUEST_ID(b, rid)
 	lgr.LGRAddMODULE_ID(b, mid)
 	lgr.LGRAddMODULE_VERSION(b, mv)
+	lgr.LGRAddREQUESTER_PEER_ID(b, rp)
 	lgr.LGRAddGRANTED_DOMAIN(b, gd)
 	lgr.LGRAddGRANTED_TIMEOUT_MS(b, g.grantedTimeoutMs)
 	lgr.LGRAddEXPIRES_AT(b, g.expiresAtMs)
@@ -89,7 +92,7 @@ func encodeTestGrant(g testGrant) []byte {
 
 func grantedFixture() testGrant {
 	return testGrant{
-		requestID: "req-1", moduleID: "com.orbpro.x", moduleVersion: "1.0.0",
+		requestID: "req-1", moduleID: "com.orbpro.x", moduleVersion: "1.0.0", requesterPeerID: "peerA",
 		grantedDomain: "orbpro.default", grantedTimeoutMs: 30_000, expiresAtMs: 1_000_000,
 		grantStatus: "granted", moduleCID: "bafymodulecid",
 		wrappedPayload: []byte{1, 2, 3}, verifierPubKey: []byte{4, 5}, providerSig: []byte{6, 7},
@@ -105,7 +108,7 @@ func TestDecodeGrant(t *testing.T) {
 	if !g.Granted() {
 		t.Error("Granted() = false, want true")
 	}
-	if g.RequestID != "req-1" || g.ModuleID != "com.orbpro.x" || g.ModuleVersion != "1.0.0" {
+	if g.RequestID != "req-1" || g.ModuleID != "com.orbpro.x" || g.ModuleVersion != "1.0.0" || g.RequesterPeerID != "peerA" {
 		t.Errorf("identity = %+v", g)
 	}
 	if g.GrantedDomain != "orbpro.default" || g.GrantedTimeoutMs != 30_000 || g.ExpiresAtMs != 1_000_000 {
@@ -171,6 +174,9 @@ func TestGrantValidateMismatchAndScope(t *testing.T) {
 	}
 	if err := g.Validate(GrantExpectations{ModuleID: "other"}); err == nil {
 		t.Error("expected module id mismatch error")
+	}
+	if err := g.Validate(GrantExpectations{RequesterPeerID: "peerB"}); err == nil {
+		t.Error("expected requester peer id mismatch error")
 	}
 	if err := g.Validate(GrantExpectations{ExpectedDomain: "other.domain"}); err == nil {
 		t.Error("expected domain mismatch error")
