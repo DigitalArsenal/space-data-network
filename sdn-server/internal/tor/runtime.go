@@ -498,7 +498,16 @@ func writeHiddenServiceKeyFiles(dir string, priv ed25519.PrivateKey, pub ed25519
 	secretHeader := makeTorKeyHeader("== ed25519v1-secret: type0 ==")
 	publicHeader := makeTorKeyHeader("== ed25519v1-public: type0 ==")
 
-	secretContent := append(secretHeader, priv...)
+	// Tor stores Ed25519 secret keys in expanded form so it can blind them:
+	// SHA-512(seed), with the first half clamped as the private scalar. Go's
+	// ed25519.PrivateKey is seed || public key, which has the same length but a
+	// different representation and is rejected by Tor.
+	expandedSecret := sha512.Sum512(priv.Seed())
+	expandedSecret[0] &= 248
+	expandedSecret[31] &= 63
+	expandedSecret[31] |= 64
+
+	secretContent := append(secretHeader, expandedSecret[:]...)
 	publicContent := append(publicHeader, pub...)
 
 	if err := os.WriteFile(filepath.Join(dir, "hs_ed25519_secret_key"), secretContent, 0600); err != nil {
