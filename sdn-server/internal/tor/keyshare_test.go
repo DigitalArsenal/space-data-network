@@ -3,10 +3,15 @@ package tor
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha512"
+	"encoding/base32"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
+
+	"golang.org/x/crypto/sha3"
 )
 
 func TestDeriveClusterSeedDeterministic(t *testing.T) {
@@ -324,6 +329,69 @@ func TestSaveAndLoadKeyBundleDir(t *testing.T) {
 	}
 	if !bytes.Equal(loaded.PublicKey, bundle.PublicKey) {
 		t.Fatal("loaded public key differs")
+	}
+}
+
+func TestSaveKeyBundleToDirWritesTorV3KeyFiles(t *testing.T) {
+	bundle, err := NewKeyBundleFromClusterSecret(
+		[]byte("tor-v3-key-file-format"),
+		"c-tor-format",
+		"p-tor-format",
+	)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+
+	dir := t.TempDir()
+	if err := SaveKeyBundleToDir(dir, bundle); err != nil {
+		t.Fatalf("save to dir: %v", err)
+	}
+
+	secretFile := mustReadFile(t, filepath.Join(dir, "hs_ed25519_secret_key"))
+	publicFile := mustReadFile(t, filepath.Join(dir, "hs_ed25519_public_key"))
+	hostnameFile := mustReadFile(t, filepath.Join(dir, "hostname"))
+	if got, want := len(secretFile), 32+ed25519.PrivateKeySize; got != want {
+		t.Fatalf("secret key file length = %d, want %d", got, want)
+	}
+	if got, want := len(publicFile), 32+ed25519.PublicKeySize; got != want {
+		t.Fatalf("public key file length = %d, want %d", got, want)
+	}
+
+	wantSecretHeader := make([]byte, 32)
+	copy(wantSecretHeader, "== ed25519v1-secret: type0 ==")
+	if !bytes.Equal(secretFile[:32], wantSecretHeader) {
+		t.Fatalf("secret key header = %q, want %q", secretFile[:32], wantSecretHeader)
+	}
+
+	expandedSecret := sha512.Sum512(bundle.SecretKey.Seed())
+	expandedSecret[0] &= 248
+	expandedSecret[31] &= 63
+	expandedSecret[31] |= 64
+	if !bytes.Equal(secretFile[32:], expandedSecret[:]) {
+		t.Fatal("secret key body is not Tor's expanded Ed25519 secret")
+	}
+
+	wantPublicHeader := make([]byte, 32)
+	copy(wantPublicHeader, "== ed25519v1-public: type0 ==")
+	if !bytes.Equal(publicFile[:32], wantPublicHeader) {
+		t.Fatalf("public key header = %q, want %q", publicFile[:32], wantPublicHeader)
+	}
+	if !bytes.Equal(publicFile[32:], bundle.PublicKey) {
+		t.Fatal("public key body does not equal the bundle's Ed25519 public key")
+	}
+
+	version := byte(3)
+	checksumInput := append([]byte(".onion checksum"), bundle.PublicKey...)
+	checksumInput = append(checksumInput, version)
+	checksum := sha3.Sum256(checksumInput)
+	addressBytes := append([]byte{}, bundle.PublicKey...)
+	addressBytes = append(addressBytes, checksum[0], checksum[1], version)
+	wantHostname := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(addressBytes)) + ".onion\n"
+	if got := string(hostnameFile); got != wantHostname {
+		t.Fatalf("hostname file = %q, want %q", got, wantHostname)
+	}
+	if strings.TrimSpace(wantHostname) != bundle.OnionHost {
+		t.Fatalf("computed hostname = %q, bundle OnionHost = %q", strings.TrimSpace(wantHostname), bundle.OnionHost)
 	}
 }
 
