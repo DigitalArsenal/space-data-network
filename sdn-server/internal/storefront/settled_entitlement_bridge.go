@@ -91,8 +91,6 @@ func (s *Service) revokeSettledEntitlement(ctx context.Context, grant *AccessGra
 		return fmt.Errorf("module grant %s has no buyer xpub", grant.GrantID)
 	}
 
-	s.entitlementMu.Lock()
-	defer s.entitlementMu.Unlock()
 	if s.entitlementBridge == nil {
 		return nil
 	}

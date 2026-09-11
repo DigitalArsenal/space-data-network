@@ -1055,9 +1055,12 @@ func (s *Service) RevokeGrant(ctx context.Context, grantID, buyerPeerID, actorPe
 		return nil, fmt.Errorf("buyer mismatch")
 	}
 	if grant.Status == GrantStatusRevoked {
+		s.entitlementMu.Lock()
 		if err := s.revokeSettledEntitlement(ctx, grant); err != nil {
+			s.entitlementMu.Unlock()
 			return nil, err
 		}
+		s.entitlementMu.Unlock()
 		return grant, nil
 	}
 	actor := strings.TrimSpace(actorPeerID)
@@ -1072,12 +1075,16 @@ func (s *Service) RevokeGrant(ctx context.Context, grantID, buyerPeerID, actorPe
 	// durable. If the licensing projection fails, the grant remains visibly
 	// active and the caller can retry; it never appears revoked while its key is
 	// still obtainable.
+	s.entitlementMu.Lock()
 	if err := s.revokeSettledEntitlement(ctx, grant); err != nil {
+		s.entitlementMu.Unlock()
 		return nil, err
 	}
 	if err := s.store.UpdateGrantStatus(grantID, GrantStatusRevoked, note); err != nil {
+		s.entitlementMu.Unlock()
 		return nil, err
 	}
+	s.entitlementMu.Unlock()
 	grant.Status = GrantStatusRevoked
 	grant.Notes = note
 	grant.UpdatedAt = time.Now()

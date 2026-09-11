@@ -43,6 +43,12 @@ func (b *recordingEntitlementBridge) has(moduleID, buyerXPub string) bool {
 	return ok
 }
 
+func (b *recordingEntitlementBridge) count(moduleID string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.entitlements[moduleID])
+}
+
 func newProtectedCryptoPurchase(t *testing.T, svc *Service) *PurchaseRequest {
 	t.Helper()
 	listing := testListing()
@@ -100,7 +106,7 @@ func TestSettledPurchaseEntitlementIsIdempotentAndRevocable(t *testing.T) {
 	if again.GrantID != grant.GrantID {
 		t.Fatalf("completion retry issued grant %q, want %q", again.GrantID, grant.GrantID)
 	}
-	if len(bridge.entitlements["com.example.protected"]) != 1 {
+	if bridge.count("com.example.protected") != 1 {
 		t.Fatalf("completion retry duplicated entitlement: %#v", bridge.entitlements)
 	}
 
@@ -130,5 +136,59 @@ func TestUnpaidOrUnverifiedPurchaseNeverProvisionsEntitlement(t *testing.T) {
 	}
 	if bridge.provisions != 0 || bridge.has("com.example.protected", purchase.BuyerPeerID) {
 		t.Fatalf("unpaid/unverified purchase provisioned entitlement: %+v", bridge)
+	}
+}
+
+func TestConcurrentRevocationsRemoveTheLastModuleEntitlement(t *testing.T) {
+	t.Setenv(DevPaymentsEnvVar, "0")
+	svc, store := newTestService(t)
+	bridge := newRecordingEntitlementBridge()
+	svc.SetSettledEntitlementBridge(bridge)
+
+	settle := func(purchase *PurchaseRequest, tx string) *AccessGrant {
+		t.Helper()
+		if err := store.UpdatePurchasePayment(purchase.RequestID, tx, "solana", "sender"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdatePurchaseStatus(purchase.RequestID, PurchaseStatusPaymentDetected, "verified on chain"); err != nil {
+			t.Fatal(err)
+		}
+		grant, err := svc.CompleteCryptoPayment(context.Background(), purchase.RequestID, &CryptoPaymentResult{
+			Verified: true, Chain: "solana", ConfirmationBlock: 42,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return grant
+	}
+
+	firstPurchase := newProtectedCryptoPurchase(t, svc)
+	secondPurchase := newProtectedCryptoPurchase(t, svc)
+	first := settle(firstPurchase, "devnet-tx-first")
+	second := settle(secondPurchase, "devnet-tx-second")
+	if bridge.count("com.example.protected") != 1 {
+		t.Fatal("two grants for one buyer/module did not share one entitlement")
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	for _, grant := range []*AccessGrant{first, second} {
+		grant := grant
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := svc.RevokeGrant(context.Background(), grant.GrantID, grant.BuyerPeerID, "provider", "concurrent revoke")
+			errCh <- err
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent RevokeGrant() failed: %v", err)
+		}
+	}
+	if bridge.has("com.example.protected", first.BuyerPeerID) {
+		t.Fatal("concurrent revocations left the final buyer/module entitlement active")
 	}
 }
