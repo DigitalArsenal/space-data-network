@@ -3432,7 +3432,7 @@ func (n *Node) cacheDatasetPublicationMetadata(ctx context.Context, schema strin
 	if len(raw) < 12 || len(raw) > 65536 {
 		return errors.New("dataset announcement exceeds catalog bounds")
 	}
-	key, err := ed25519PublicKeyFromPeerID(from)
+	key, err := publicKeyFromPeerID(from)
 	if err != nil {
 		// EPM discovery already verifies the peer-bound profile. Do not open
 		// an extra discovery fetch for an unknown announcement signer here.

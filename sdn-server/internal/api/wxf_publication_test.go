@@ -128,7 +128,7 @@ func TestWXFValidatedBatchAutoPublishesWithAttribution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := channels.VerifySignedDPMManifestWithProviderKey(manifestBytes, pnm.FileID, publicKey); err != nil {
+	if _, err := channels.VerifySignedDPMManifestWithProviderKey(manifestBytes, pnm.FileID, mustLibp2pEd25519(t, publicKey)); err != nil {
 		t.Fatal(err)
 	}
 	manifest := DPM.GetRootAsDPM(manifestBytes, 0)
@@ -149,7 +149,7 @@ func TestWXFValidatedBatchAutoPublishesWithAttribution(t *testing.T) {
 	}
 	defer consumer.Close()
 	replayOptions := storage.DatasetPublicationReplayOptions{
-		PNM: publisher.announcement.PNM, ProviderPublicKey: publicKey, WorkDir: filepath.Join(dir, "replay"),
+		PNM: publisher.announcement.PNM, ProviderPublicKey: mustLibp2pEd25519(t, publicKey), WorkDir: filepath.Join(dir, "replay"),
 		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
 			body, ok := pinned[cid]
 			if !ok {
