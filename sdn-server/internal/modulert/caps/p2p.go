@@ -46,11 +46,11 @@
 package caps
 
 import (
-	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"sort"
 	"strings"
 
@@ -77,7 +77,9 @@ type P2PPNMRecord struct {
 // P2PPublisherKey is one candidate Ed25519 dataset-publication public key
 // for a peer, with the provenance of how the host learned it.
 type P2PPublisherKey struct {
-	PublicKey ed25519.PublicKey
+	// Libp2p-marshalled public key: carries the ALGORITHM as well as the bytes,
+	// so an HD provider's secp256k1 key survives the trip.
+	PublicKey []byte
 	Source    string // "peer-id" (identity multihash) | "epm-directory"
 }
 
@@ -559,10 +561,11 @@ func (a *p2pCapAdapter) scanAttributedPNMs(peerID string) (entries []attributedP
 			}
 			if keysAvailable {
 				for _, key := range keys {
-					if len(key.PublicKey) != ed25519.PublicKeySize {
+					pub, err := crypto.UnmarshalPublicKey(key.PublicKey)
+					if err != nil {
 						continue
 					}
-					if _, err := channels.VerifySignedPNMEnvelopeWithProviderKey(record.Data, key.PublicKey); err == nil {
+					if _, err := channels.VerifySignedPNMEnvelopeWithProviderKey(record.Data, pub); err == nil {
 						entry.verified = true
 						entry.keyHex = hex.EncodeToString(key.PublicKey)
 						entry.keySource = key.Source

@@ -1,10 +1,11 @@
 package channels
 
 import (
-	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"strings"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
@@ -67,18 +68,25 @@ func VerifySignedPNMEnvelope(pnmBytes []byte) (PNMTrustEvidence, error) {
 	}, nil
 }
 
-func VerifySignedPNMEnvelopeWithProviderKey(pnmBytes []byte, providerPublicKey ed25519.PublicKey) (PNMTrustEvidence, error) {
-	if len(providerPublicKey) != ed25519.PublicKeySize {
-		return PNMTrustEvidence{}, fmt.Errorf("ed25519 provider public key is required")
+func VerifySignedPNMEnvelopeWithProviderKey(pnmBytes []byte, providerPublicKey crypto.PubKey) (PNMTrustEvidence, error) {
+	if providerPublicKey == nil {
+		return PNMTrustEvidence{}, fmt.Errorf("provider public key is required")
 	}
 	evidence, err := VerifySignedPNMEnvelope(pnmBytes)
 	if err != nil {
 		return PNMTrustEvidence{}, err
 	}
-	if !ed25519.Verify(providerPublicKey, datasetPublicationPNMSignaturePayload(evidence.CID, evidence.FileID), evidence.Signature) {
-		return PNMTrustEvidence{}, fmt.Errorf("invalid PNM signature")
+	if err := sds.VerifySDSSignature(
+		evidence.SignatureType,
+		providerPublicKey,
+		datasetPublicationPNMSignaturePayload(evidence.CID, evidence.FileID),
+		evidence.Signature,
+	); err != nil {
+		return PNMTrustEvidence{}, err
 	}
-	evidence.ProviderPublicKey = append([]byte(nil), providerPublicKey...)
+	if raw, err := crypto.MarshalPublicKey(providerPublicKey); err == nil {
+		evidence.ProviderPublicKey = raw
+	}
 	return evidence, nil
 }
 

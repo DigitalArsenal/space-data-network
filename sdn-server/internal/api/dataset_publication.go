@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"net"
 	"net/http"
 	"os"
@@ -127,7 +128,7 @@ type DatasetPublicationChannelUpdate struct {
 	SourceID          string
 	PNMBytes          []byte
 	ManifestBytes     []byte
-	ProviderPublicKey ed25519.PublicKey
+	ProviderPublicKey crypto.PubKey
 	PublishedShard    storage.DatasetShardPublication
 }
 
@@ -852,12 +853,16 @@ func (s *ConcreteDatasetPublicationService) recordDatasetPublicationChannel(
 	if sourceID == "" {
 		return nil
 	}
+	wrappedProviderKey, wrapErr := crypto.UnmarshalEd25519PublicKey(providerPublicKey)
+	if wrapErr != nil {
+		return wrapErr
+	}
 	return s.channelRecorder.RecordDatasetPublicationChannelUpdate(DatasetPublicationChannelUpdate{
 		Schema:            publishedShard.SchemaName,
 		SourceID:          sourceID,
 		PNMBytes:          pnmBytes,
 		ManifestBytes:     manifestBytes,
-		ProviderPublicKey: append(ed25519.PublicKey(nil), providerPublicKey...),
+		ProviderPublicKey: wrappedProviderKey,
 		PublishedShard:    publishedShard,
 	})
 }

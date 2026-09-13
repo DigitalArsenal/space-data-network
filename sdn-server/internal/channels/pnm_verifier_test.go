@@ -70,7 +70,7 @@ func TestVerifySignedPNMEnvelopeWithProviderKeyVerifiesSignature(t *testing.T) {
 		FileID:        "DPM",
 		Signature:     hex.EncodeToString(signature),
 		SignatureType: "Ed25519",
-	}), publicKey)
+	}), mustLibp2pEd25519(t, publicKey))
 	if err != nil {
 		t.Fatalf("VerifySignedPNMEnvelopeWithProviderKey failed: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestVerifySignedPNMEnvelopeWithProviderKeyRejectsMismatchedSignature(t *tes
 		FileID:        "DPM",
 		Signature:     hex.EncodeToString(signature),
 		SignatureType: "Ed25519",
-	}), publicKey)
+	}), mustLibp2pEd25519(t, publicKey))
 	if err == nil {
 		t.Fatal("expected mismatched provider key to reject PNM")
 	}

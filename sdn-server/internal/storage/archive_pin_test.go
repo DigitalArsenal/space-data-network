@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,7 +118,7 @@ func TestArchiveDatasetSelectionPinsPermanentLedgerEntries(t *testing.T) {
 
 	// The provider signature must verify with the feed-head auxiliary assets
 	// embedded (rebuildUnsignedDatasetManifest round-trip).
-	evidence, err := VerifySignedDatasetPublicationManifest(archive.Manifest.Bytes, providerPublicKey)
+	evidence, err := VerifySignedDatasetPublicationManifest(archive.Manifest.Bytes, mustLibp2pEd25519(t, providerPublicKey))
 	if err != nil {
 		t.Fatalf("archive manifest signature did not verify: %v", err)
 	}
@@ -298,4 +299,10 @@ func TestArchiveDatasetSelectionRequiresFeedHeadManifestCID(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no manifest CID") {
 		t.Fatalf("expected missing-manifest-CID refusal, got: %v", err)
 	}
+}
+
+// mustLibp2pEd25519FromAny accepts the comma-ok form some tests use.
+func mustLibp2pEd25519FromAny(t *testing.T, key ed25519.PublicKey) crypto.PubKey {
+	t.Helper()
+	return mustLibp2pEd25519(t, key)
 }

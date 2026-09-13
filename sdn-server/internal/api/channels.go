@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
@@ -924,7 +925,12 @@ func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	providerPublicKeyHex := hex.EncodeToString(providerPublicKey)
+	providerPublicKeyRaw, err := providerPublicKey.Raw()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "provider public key is unusable: "+err.Error())
+		return
+	}
+	providerPublicKeyHex := hex.EncodeToString(providerPublicKeyRaw)
 	if metadata.ProviderPublicKey != "" && metadata.ProviderPublicKey != providerPublicKeyHex {
 		writeError(w, http.StatusForbidden, "DPM provider public key does not match verified PNM provider")
 		return
@@ -1867,7 +1873,7 @@ func (h *ChannelHandler) isDPMManifestPublish(r *http.Request, body []byte) bool
 	return strings.HasPrefix(contentType, "application/vnd.sdn.dpm") || channels.IsDPMManifest(body)
 }
 
-func providerPublicKeyFromRequest(r *http.Request) (ed25519.PublicKey, error) {
+func providerPublicKeyFromRequest(r *http.Request) (crypto.PubKey, error) {
 	value := strings.TrimSpace(r.URL.Query().Get("providerPublicKey"))
 	if value == "" {
 		value = strings.TrimSpace(r.URL.Query().Get("provider_public_key"))
@@ -1882,10 +1888,17 @@ func providerPublicKeyFromRequest(r *http.Request) (ed25519.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode provider public key: %w", err)
 	}
-	if len(key) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("provider public key length = %d, want %d", len(key), ed25519.PublicKeySize)
+	// 32 bytes is Ed25519, 33 is a compressed secp256k1 key: an HD provider has
+	// only the latter, and demanding 32 rejected it before any signature was
+	// even checked.
+	switch len(key) {
+	case ed25519.PublicKeySize:
+		return crypto.UnmarshalEd25519PublicKey(key)
+	case 33:
+		return crypto.UnmarshalSecp256k1PublicKey(key)
+	default:
+		return nil, fmt.Errorf("provider public key length = %d, want 32 (Ed25519) or 33 (secp256k1)", len(key))
 	}
-	return ed25519.PublicKey(key), nil
 }
 
 func providerPublicKeyHexFromRequest(r *http.Request) (string, bool, error) {
@@ -1897,7 +1910,11 @@ func providerPublicKeyHexFromRequest(r *http.Request) (string, bool, error) {
 		}
 		return "", false, err
 	}
-	return hex.EncodeToString(key), true, nil
+	raw, rawErr := key.Raw()
+	if rawErr != nil {
+		return "", false, rawErr
+	}
+	return hex.EncodeToString(raw), true, nil
 }
 
 func (h *ChannelHandler) requestMatchesVerifiedProvider(r *http.Request, parsed channels.ChannelID) bool {

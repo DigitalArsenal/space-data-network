@@ -11,9 +11,9 @@ package storage
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,7 +28,7 @@ type ImportArchiveOptions struct {
 	// ManifestBytes is the signed $DPM, bare or size-prefixed.
 	ManifestBytes []byte
 	// ProviderPublicKey verifies the manifest's provider signature. Required.
-	ProviderPublicKey ed25519.PublicKey
+	ProviderPublicKey crypto.PubKey
 	// AssetDir is an additional directory holding shards/ and indexes/ (another
 	// node's archive plane, or an operator-supplied copy). The store's own
 	// archive plane is always searched first; verified assets found elsewhere
@@ -49,7 +49,7 @@ func ImportArchiveFromManifest(ctx context.Context, store *FlatSQLStore, opts Im
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if len(opts.ProviderPublicKey) != ed25519.PublicKeySize {
+	if opts.ProviderPublicKey == nil {
 		return nil, fmt.Errorf("provider public key is required")
 	}
 	manifestBytes := BareDPMBytes(opts.ManifestBytes)
@@ -124,7 +124,12 @@ func ImportArchiveFromManifest(ctx context.Context, store *FlatSQLStore, opts Im
 	for _, entry := range entries {
 		entry.SchemaName = index.SchemaName
 		entry.ProviderPeerID = providerPeerID
-		entry.ProviderPublicKey = hex.EncodeToString(opts.ProviderPublicKey)
+		// Ledger the key in its libp2p-marshalled form, which carries the key
+		// TYPE as well as the bytes — a bare hex blob cannot distinguish an
+		// Ed25519 key from a secp256k1 one.
+		if raw, err := crypto.MarshalPublicKey(opts.ProviderPublicKey); err == nil {
+			entry.ProviderPublicKey = hex.EncodeToString(raw)
+		}
 		entry.ProviderID = strings.TrimSpace(index.ProviderID)
 		entry.SourceName = strings.TrimSpace(index.SourceName)
 		entry.BatchID = archiveID
