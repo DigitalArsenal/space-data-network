@@ -29,6 +29,7 @@ import (
 	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
 	standardsEPM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -683,19 +684,19 @@ func archiveLane(manifest *dpm.DPM) (schema, providerID, sourceName string) {
 // node's own publication key for its own archives, else the peer identity key
 // or a signing key advertised in the provider's verified $EPM — whichever
 // actually verifies the manifest.
-func (h *ArchiveHandler) providerPublicKey(providerPeerID string, manifestBytes []byte) (ed25519.PublicKey, bool) {
-	var candidates []ed25519.PublicKey
+func (h *ArchiveHandler) providerPublicKey(providerPeerID string, manifestBytes []byte) (crypto.PubKey, bool) {
+	var candidates []crypto.PubKey
 	if providerPeerID != "" && providerPeerID == strings.TrimSpace(h.deps.NodePeerID) && len(h.deps.SigningKey) == ed25519.PrivateKeySize {
 		if pub, ok := h.deps.SigningKey.Public().(ed25519.PublicKey); ok {
-			candidates = append(candidates, pub)
+			if wrapped, err := crypto.UnmarshalEd25519PublicKey(pub); err == nil {
+				candidates = append(candidates, wrapped)
+			}
 		}
 	}
 	if providerPeerID != "" {
 		if id, err := peer.Decode(providerPeerID); err == nil {
 			if pubKey, err := id.ExtractPublicKey(); err == nil {
-				if raw, err := pubKey.Raw(); err == nil && len(raw) == ed25519.PublicKeySize {
-					candidates = append(candidates, ed25519.PublicKey(raw))
-				}
+				candidates = append(candidates, pubKey)
 			}
 		}
 		if h.deps.Store != nil {
@@ -715,8 +716,8 @@ func (h *ArchiveHandler) providerPublicKey(providerPeerID string, manifestBytes 
 }
 
 // epmSigningKeys lists the Ed25519 signing keys a verified $EPM advertises.
-func epmSigningKeys(record *standardsEPM.EPM) []ed25519.PublicKey {
-	var keys []ed25519.PublicKey
+func epmSigningKeys(record *standardsEPM.EPM) []crypto.PubKey {
+	var keys []crypto.PubKey
 	key := new(standardsEPM.CryptoKey)
 	for i := 0; i < record.KEYSLength(); i++ {
 		if !record.KEYS(key, i) || key.KEY_TYPE() != standardsEPM.KeyTypeSigning {
@@ -726,14 +727,28 @@ func epmSigningKeys(record *standardsEPM.EPM) []ed25519.PublicKey {
 		if algorithm == "" {
 			algorithm = strings.ToLower(strings.TrimSpace(string(key.ADDRESS_TYPE())))
 		}
-		if algorithm != "" && algorithm != "ed25519" {
+		// An HD node advertises secp256k1 here; excluding it hid the only
+		// signing key such a node has.
+		if algorithm != "" && algorithm != "ed25519" && algorithm != "secp256k1" {
 			continue
 		}
 		raw, err := hex.DecodeString(strings.TrimSpace(string(key.PUBLIC_KEY())))
-		if err != nil || len(raw) != ed25519.PublicKeySize {
+		if err != nil {
 			continue
 		}
-		keys = append(keys, ed25519.PublicKey(raw))
+		var pub crypto.PubKey
+		switch len(raw) {
+		case ed25519.PublicKeySize:
+			pub, err = crypto.UnmarshalEd25519PublicKey(raw)
+		case 33:
+			pub, err = crypto.UnmarshalSecp256k1PublicKey(raw)
+		default:
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		keys = append(keys, pub)
 	}
 	return keys
 }

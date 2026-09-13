@@ -163,7 +163,7 @@ func TestSourceBatchLicenseCarriesIntoSignedDPM(t *testing.T) {
 	// Signature verification rebuilds the unsigned manifest from the parsed
 	// DPM. If the rebuild dropped the licence the payload hash would change
 	// and this would fail — this is the round-trip assertion.
-	if _, err := VerifySignedDatasetPublicationManifest(manifest.Bytes, signingKey.Public().(ed25519.PublicKey)); err != nil {
+	if _, err := VerifySignedDatasetPublicationManifest(manifest.Bytes, mustLibp2pEd25519FromAny(t, signingKey.Public().(ed25519.PublicKey))); err != nil {
 		t.Fatalf("licensed DPM does not verify against its own signature: %v", err)
 	}
 }

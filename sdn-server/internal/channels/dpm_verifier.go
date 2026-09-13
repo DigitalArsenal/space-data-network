@@ -1,9 +1,9 @@
 package channels
 
 import (
-	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"strings"
 
 	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
@@ -72,9 +72,9 @@ func VerifySignedDPMManifest(manifestBytes []byte, expectedFileID string) (DPMTr
 	return evidence, nil
 }
 
-func VerifySignedDPMManifestWithProviderKey(manifestBytes []byte, expectedFileID string, providerPublicKey ed25519.PublicKey) (DPMTrustEvidence, error) {
-	if len(providerPublicKey) != ed25519.PublicKeySize {
-		return DPMTrustEvidence{}, fmt.Errorf("ed25519 provider public key is required")
+func VerifySignedDPMManifestWithProviderKey(manifestBytes []byte, expectedFileID string, providerPublicKey crypto.PubKey) (DPMTrustEvidence, error) {
+	if providerPublicKey == nil {
+		return DPMTrustEvidence{}, fmt.Errorf("provider public key is required")
 	}
 	structuralEvidence, err := VerifySignedDPMManifest(manifestBytes, expectedFileID)
 	if err != nil {

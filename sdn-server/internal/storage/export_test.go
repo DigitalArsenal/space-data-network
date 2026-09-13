@@ -818,7 +818,7 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 	}
 	result, err := VerifyDatasetPublicationReplay(context.Background(), store, DatasetPublicationReplayOptions{
 		PNM:               pnmBytes,
-		ProviderPublicKey: providerPublicKey,
+		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
 		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
 			data, ok := objects[cid]
 			if !ok {
@@ -847,7 +847,7 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 	tamperedPNM := bytes.Replace(append([]byte(nil), pnmBytes...), []byte(signatureHex), []byte(tamperedSignatureHex), 1)
 	if _, err := VerifyDatasetPublicationReplay(context.Background(), store, DatasetPublicationReplayOptions{
 		PNM:               tamperedPNM,
-		ProviderPublicKey: providerPublicKey,
+		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
 		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
 			return objects[cid], nil
 		},
@@ -948,7 +948,7 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 	fileFetchAttempts := make(map[string]int)
 	result, err := MaterializeDatasetPublication(context.Background(), subscriberStore, DatasetPublicationReplayOptions{
 		PNM:               pnmBytes,
-		ProviderPublicKey: providerPublicKey,
+		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
 		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
 			fetchAttempts[cid]++
 			if fetchAttempts[cid] == 1 {

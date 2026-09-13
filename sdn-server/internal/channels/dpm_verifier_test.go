@@ -2,6 +2,7 @@ package channels
 
 import (
 	"crypto/ed25519"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestVerifySignedDPMManifestWithProviderKeyAcceptsMatchingSignature(t *testi
 	}
 	manifest := buildChannelVerifierDPM(t, privateKey, "DPM")
 
-	evidence, err := VerifySignedDPMManifestWithProviderKey(manifest.Bytes, "DPM", publicKey)
+	evidence, err := VerifySignedDPMManifestWithProviderKey(manifest.Bytes, "DPM", mustLibp2pEd25519(t, publicKey))
 	if err != nil {
 		t.Fatalf("VerifySignedDPMManifestWithProviderKey failed: %v", err)
 	}
@@ -44,7 +45,7 @@ func TestVerifySignedDPMManifestWithProviderKeyRejectsMismatchedSignature(t *tes
 	}
 	manifest := buildChannelVerifierDPM(t, privateKey, "DPM")
 
-	if _, err := VerifySignedDPMManifestWithProviderKey(manifest.Bytes, "DPM", otherPublicKey); err == nil {
+	if _, err := VerifySignedDPMManifestWithProviderKey(manifest.Bytes, "DPM", mustLibp2pEd25519(t, otherPublicKey)); err == nil {
 		t.Fatal("expected mismatched DPM provider key to be rejected")
 	}
 }
@@ -95,4 +96,15 @@ func buildChannelVerifierDPM(t *testing.T, signingKey ed25519.PrivateKey, fileID
 		t.Fatalf("BuildSignedDatasetPublicationManifest failed: %v", err)
 	}
 	return manifest
+}
+
+// mustLibp2pEd25519 wraps a raw Ed25519 test key as a libp2p PubKey, which is
+// what the verifiers now take so a secp256k1 provider is equally valid.
+func mustLibp2pEd25519(t *testing.T, key ed25519.PublicKey) crypto.PubKey {
+	t.Helper()
+	pub, err := crypto.UnmarshalEd25519PublicKey(key)
+	if err != nil {
+		t.Fatalf("wrap ed25519 public key: %v", err)
+	}
+	return pub
 }

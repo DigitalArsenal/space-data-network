@@ -20,6 +20,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
 
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
@@ -78,8 +79,10 @@ type DatasetPublicationPNMOptions struct {
 
 // DatasetPublicationReplayOptions controls replay verification for a PNM/DPM publication.
 type DatasetPublicationReplayOptions struct {
-	PNM               []byte
-	ProviderPublicKey ed25519.PublicKey
+	PNM []byte
+	// Verified with the algorithm the record DECLARES, so an HD (secp256k1)
+	// provider is as valid as a legacy Ed25519 one.
+	ProviderPublicKey crypto.PubKey
 	FetchByCID        func(context.Context, string) ([]byte, error)
 	FetchByCIDToFile  func(context.Context, string, string) error
 	FetchRetryDelays  []time.Duration
@@ -134,7 +137,7 @@ type DatasetPublicationManifestTrustEvidence struct {
 	PolicyID       string
 }
 
-func VerifySignedDatasetPublicationManifest(manifestBytes []byte, providerPublicKey ed25519.PublicKey) (DatasetPublicationManifestTrustEvidence, error) {
+func VerifySignedDatasetPublicationManifest(manifestBytes []byte, providerPublicKey crypto.PubKey) (DatasetPublicationManifestTrustEvidence, error) {
 	manifest, _, err := parseAndVerifyDatasetManifest(manifestBytes, providerPublicKey)
 	if err != nil {
 		return DatasetPublicationManifestTrustEvidence{}, err
@@ -221,8 +224,8 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 	if len(opts.PNM) == 0 {
 		return nil, fmt.Errorf("PNM bytes are required")
 	}
-	if len(opts.ProviderPublicKey) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("ed25519 provider public key is required")
+	if opts.ProviderPublicKey == nil {
+		return nil, fmt.Errorf("provider public key is required")
 	}
 	if opts.FetchByCID == nil {
 		return nil, fmt.Errorf("CID fetcher is required")
@@ -243,15 +246,17 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 	if fileID == "" {
 		return nil, fmt.Errorf("PNM missing FILE_ID")
 	}
-	if sigType := strings.TrimSpace(string(pnm.SIGNATURE_TYPE())); sigType != "Ed25519" {
-		return nil, fmt.Errorf("PNM SIGNATURE_TYPE = %q, want Ed25519", sigType)
-	}
 	pnmSignature, err := hex.DecodeString(strings.TrimSpace(string(pnm.SIGNATURE())))
 	if err != nil {
 		return nil, fmt.Errorf("decode PNM signature: %w", err)
 	}
-	if !ed25519.Verify(opts.ProviderPublicKey, datasetPublicationPNMSignaturePayload(manifestCID, fileID), pnmSignature) {
-		return nil, fmt.Errorf("invalid PNM signature")
+	if err := sds.VerifySDSSignature(
+		strings.TrimSpace(string(pnm.SIGNATURE_TYPE())),
+		opts.ProviderPublicKey,
+		datasetPublicationPNMSignaturePayload(manifestCID, fileID),
+		pnmSignature,
+	); err != nil {
+		return nil, err
 	}
 
 	manifestBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, manifestCID)
@@ -565,12 +570,12 @@ func fetchDatasetPublicationCIDToFile(ctx context.Context, fetch func(context.Co
 	}
 }
 
-func verifyDatasetPublicationPNM(pnmBytes []byte, providerPublicKey ed25519.PublicKey) (string, string, error) {
+func verifyDatasetPublicationPNM(pnmBytes []byte, providerPublicKey crypto.PubKey) (string, string, error) {
 	if len(pnmBytes) == 0 {
 		return "", "", fmt.Errorf("PNM bytes are required")
 	}
-	if len(providerPublicKey) != ed25519.PublicKeySize {
-		return "", "", fmt.Errorf("ed25519 provider public key is required")
+	if providerPublicKey == nil {
+		return "", "", fmt.Errorf("provider public key is required")
 	}
 	if !PNM.SizePrefixedPNMBufferHasIdentifier(pnmBytes) {
 		return "", "", fmt.Errorf("PNM buffer missing identifier")
@@ -584,15 +589,17 @@ func verifyDatasetPublicationPNM(pnmBytes []byte, providerPublicKey ed25519.Publ
 	if fileID == "" {
 		return "", "", fmt.Errorf("PNM missing FILE_ID")
 	}
-	if sigType := strings.TrimSpace(string(pnm.SIGNATURE_TYPE())); sigType != "Ed25519" {
-		return "", "", fmt.Errorf("PNM SIGNATURE_TYPE = %q, want Ed25519", sigType)
-	}
 	pnmSignature, err := hex.DecodeString(strings.TrimSpace(string(pnm.SIGNATURE())))
 	if err != nil {
 		return "", "", fmt.Errorf("decode PNM signature: %w", err)
 	}
-	if !ed25519.Verify(providerPublicKey, datasetPublicationPNMSignaturePayload(manifestCID, fileID), pnmSignature) {
-		return "", "", fmt.Errorf("invalid PNM signature")
+	if err := sds.VerifySDSSignature(
+		strings.TrimSpace(string(pnm.SIGNATURE_TYPE())),
+		providerPublicKey,
+		datasetPublicationPNMSignaturePayload(manifestCID, fileID),
+		pnmSignature,
+	); err != nil {
+		return "", "", err
 	}
 	return manifestCID, fileID, nil
 }
@@ -1222,24 +1229,30 @@ type publicationAsset struct {
 	Schema string
 }
 
-func parseAndVerifyDatasetManifest(manifestBytes []byte, providerPublicKey ed25519.PublicKey) (*dpm.DPM, []byte, error) {
+func parseAndVerifyDatasetManifest(manifestBytes []byte, providerPublicKey crypto.PubKey) (*dpm.DPM, []byte, error) {
 	if !dpm.DPMBufferHasIdentifier(manifestBytes) {
 		return nil, nil, fmt.Errorf("DPM buffer missing identifier")
 	}
 	manifest := dpm.GetRootAsDPM(manifestBytes, 0)
-	if sigType := strings.TrimSpace(string(manifest.SIGNATURE_TYPE())); sigType != "Ed25519" {
-		return nil, nil, fmt.Errorf("DPM SIGNATURE_TYPE = %q, want Ed25519", sigType)
-	}
+
 	signature := manifest.PROVIDER_SIGNATUREBytes()
-	if len(signature) != ed25519.SignatureSize {
-		return nil, nil, fmt.Errorf("DPM provider signature length = %d, want %d", len(signature), ed25519.SignatureSize)
+	if len(signature) == 0 {
+		return nil, nil, fmt.Errorf("DPM provider signature is required")
 	}
 	unsigned, err := rebuildUnsignedDatasetManifest(manifest)
 	if err != nil {
 		return nil, nil, err
 	}
 	payloadHash := sha256.Sum256(unsigned)
-	if !ed25519.Verify(providerPublicKey, payloadHash[:], signature) {
+	if err := sds.VerifySDSSignature(
+		strings.TrimSpace(string(manifest.SIGNATURE_TYPE())),
+		providerPublicKey,
+		payloadHash[:],
+		signature,
+	); err != nil {
+		return nil, nil, err
+	}
+	if false {
 		return nil, nil, fmt.Errorf("invalid DPM provider signature")
 	}
 	return manifest, unsigned, nil

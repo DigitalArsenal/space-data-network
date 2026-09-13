@@ -11,6 +11,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 const pnmSchema = "PNM.fbs"
@@ -39,9 +41,19 @@ func (s *Service) PublishEPM(ctx context.Context, publisher TopicPublisher) erro
 		return err
 	}
 
-	// Sign the CID with Ed25519 signing key (via libp2p crypto.PrivKey)
+	// Sign the CID with the node's signing key and NAME THE ALGORITHM THE KEY
+	// ACTUALLY USES. This used to write "Ed25519" unconditionally while signing
+	// with whatever key the node held; on an HD node that key is secp256k1, so
+	// the record claimed an algorithm it was not signed with and every verifier
+	// rejected it.
 	var signatureHex string
+	signatureTypeName := sds.SignatureTypeEd25519
 	if identity != nil && identity.SigningPrivKey != nil {
+		resolved, err := sds.SignatureTypeForPrivKey(identity.SigningPrivKey)
+		if err != nil {
+			return fmt.Errorf("EPM signing key: %w", err)
+		}
+		signatureTypeName = resolved
 		sigBytes, err := identity.SigningPrivKey.Sign([]byte(epmCIDStr))
 		if err != nil {
 			log.Warnf("Failed to sign EPM CID: %v", err)
@@ -58,7 +70,7 @@ func (s *Service) PublishEPM(ctx context.Context, publisher TopicPublisher) erro
 	tsOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339))
 	addrOffset := builder.CreateString(fmt.Sprintf("/p2p/%s", peerID.String()))
 	sigOffset := builder.CreateString(signatureHex)
-	sigTypeOffset := builder.CreateString("Ed25519")
+	sigTypeOffset := builder.CreateString(signatureTypeName)
 
 	PNM.PNMStart(builder)
 	PNM.PNMAddCID(builder, cidOffset)

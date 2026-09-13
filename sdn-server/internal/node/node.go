@@ -1604,20 +1604,23 @@ func (n *Node) buildP2PCapOptions() caps.P2PCapOptions {
 			return nil
 		}
 		keys := make([]caps.P2PPublisherKey, 0, 2)
-		if key, err := ed25519PublicKeyFromPeerID(pid); err == nil {
-			keys = append(keys, caps.P2PPublisherKey{PublicKey: key, Source: "peer-id"})
-		}
-		if key, err := n.datasetPublicationPublicKeyFromDirectory(pid); err == nil {
-			duplicate := false
+		appendKey := func(key crypto.PubKey, source string) {
+			raw, err := crypto.MarshalPublicKey(key)
+			if err != nil {
+				return
+			}
 			for _, existing := range keys {
-				if string(existing.PublicKey) == string(key) {
-					duplicate = true
-					break
+				if string(existing.PublicKey) == string(raw) {
+					return
 				}
 			}
-			if !duplicate {
-				keys = append(keys, caps.P2PPublisherKey{PublicKey: key, Source: "epm-directory"})
-			}
+			keys = append(keys, caps.P2PPublisherKey{PublicKey: raw, Source: source})
+		}
+		if key, err := publicKeyFromPeerID(pid); err == nil {
+			appendKey(key, "peer-id")
+		}
+		if key, err := n.datasetPublicationPublicKeyFromDirectory(pid); err == nil {
+			appendKey(key, "epm-directory")
 		}
 		return keys
 	}
@@ -4515,23 +4518,22 @@ func (n *Node) clearDatasetPNMMaterialized(key string) {
 	delete(n.datasetMaterializedPNMs, key)
 }
 
-func ed25519PublicKeyFromPeerID(id peer.ID) (ed25519.PublicKey, error) {
+// publicKeyFromPeerID returns the peer's OWN key, whatever its algorithm. An HD
+// node's peer identity is secp256k1, and rejecting it here is what stopped
+// dataset publications from ever verifying.
+func publicKeyFromPeerID(id peer.ID) (crypto.PubKey, error) {
 	pubKey, err := id.ExtractPublicKey()
 	if err != nil {
 		return nil, err
 	}
-	raw, err := pubKey.Raw()
-	if err != nil {
+	if _, err := sds.SignatureTypeForPubKey(pubKey); err != nil {
 		return nil, err
 	}
-	if len(raw) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("peer public key length = %d, want %d", len(raw), ed25519.PublicKeySize)
-	}
-	return ed25519.PublicKey(append([]byte(nil), raw...)), nil
+	return pubKey, nil
 }
 
-func (n *Node) datasetPublicationPublicKey(ctx context.Context, id peer.ID) (ed25519.PublicKey, error) {
-	if key, err := ed25519PublicKeyFromPeerID(id); err == nil {
+func (n *Node) datasetPublicationPublicKey(ctx context.Context, id peer.ID) (crypto.PubKey, error) {
+	if key, err := publicKeyFromPeerID(id); err == nil {
 		return key, nil
 	}
 	if key, err := n.datasetPublicationPublicKeyFromDirectory(id); err == nil {
@@ -4548,10 +4550,10 @@ func (n *Node) datasetPublicationPublicKey(ctx context.Context, id peer.ID) (ed2
 			log.Debugf("Could not fetch provider EPM for dataset publication key from %s: %v", id.ShortString(), fetchErr)
 		}
 	}
-	return nil, fmt.Errorf("no Ed25519 signing key found in trusted provider EPM for %s", id.ShortString())
+	return nil, fmt.Errorf("no usable signing key found in trusted provider EPM for %s", id.ShortString())
 }
 
-func (n *Node) datasetPublicationPublicKeyFromDirectory(id peer.ID) (ed25519.PublicKey, error) {
+func (n *Node) datasetPublicationPublicKeyFromDirectory(id peer.ID) (crypto.PubKey, error) {
 	if n == nil || n.store == nil {
 		return nil, fmt.Errorf("directory store is unavailable")
 	}
@@ -4566,21 +4568,21 @@ func (n *Node) datasetPublicationPublicKeyFromDirectory(id peer.ID) (ed25519.Pub
 	if len(records) == 0 {
 		return nil, fmt.Errorf("no EPM directory record found for %s", id.ShortString())
 	}
-	return ed25519PublicKeyFromDirectoryJSON(records[0].EPMJSON)
+	return publicKeyFromDirectoryJSON(records[0].EPMJSON)
 }
 
-func ed25519PublicKeyFromDirectoryJSON(epmJSON string) (ed25519.PublicKey, error) {
+func publicKeyFromDirectoryJSON(epmJSON string) (crypto.PubKey, error) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(epmJSON), &payload); err != nil {
 		return nil, fmt.Errorf("parse EPM directory JSON: %w", err)
 	}
-	if key, err := decodeEd25519PublicKeyHex(firstDirectoryString(payload, "signing_pubkey_hex", "SIGNING_PUBKEY_HEX")); err == nil {
+	if key, err := decodeSigningPublicKeyHex(firstDirectoryString(payload, "signing_pubkey_hex", "SIGNING_PUBKEY_HEX")); err == nil {
 		return key, nil
 	}
 	keysAny := firstDirectoryAny(payload, "keys", "KEYS")
 	keys, ok := keysAny.([]any)
 	if !ok {
-		return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
+		return nil, fmt.Errorf("no signing public key in EPM directory record")
 	}
 
 	// PURPOSE-AWARE, ORDER-INDEPENDENT. This function picks the key that verifies
@@ -4595,7 +4597,7 @@ func ed25519PublicKeyFromDirectoryJSON(epmJSON string) (ed25519.PublicKey, error
 	// purpose, then require the remainder to be unambiguous. Ambiguity is an
 	// error, never a coin flip — a wrong key here fails closed at every peer and
 	// looks exactly like a corrupt signature.
-	var candidates []ed25519.PublicKey
+	var candidates []crypto.PubKey
 	for _, entry := range keys {
 		key, ok := entry.(map[string]any)
 		if !ok {
@@ -4603,14 +4605,16 @@ func ed25519PublicKeyFromDirectoryJSON(epmJSON string) (ed25519.PublicKey, error
 		}
 		keyType := strings.ToLower(strings.TrimSpace(firstDirectoryString(key, "key_type", "KEY_TYPE")))
 		addressType := strings.ToLower(strings.TrimSpace(firstDirectoryString(key, "address_type", "ADDRESS_TYPE")))
-		if keyType != "signing" || (addressType != "" && addressType != "ed25519") {
+		// An HD node advertises its signing key as secp256k1; refusing anything
+		// but ed25519 here is what hid that key from the publication verifier.
+		if keyType != "signing" || (addressType != "" && addressType != "ed25519" && addressType != "secp256k1") {
 			continue
 		}
 		keyPath := firstDirectoryString(key, "key_address", "KEY_ADDRESS")
 		if directoryKeyPathIsNonPublicationPurpose(keyPath) {
 			continue
 		}
-		pub, err := decodeEd25519PublicKeyHex(firstDirectoryString(key, "public_key", "PUBLIC_KEY"))
+		pub, err := decodeSigningPublicKeyHex(firstDirectoryString(key, "public_key", "PUBLIC_KEY"))
 		if err != nil {
 			continue
 		}
@@ -4619,15 +4623,15 @@ func ed25519PublicKeyFromDirectoryJSON(epmJSON string) (ed25519.PublicKey, error
 
 	switch len(candidates) {
 	case 0:
-		return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
+		return nil, fmt.Errorf("no signing public key in EPM directory record")
 	case 1:
 		return candidates[0], nil
 	default:
 		// All identical is not ambiguity — a record may legitimately repeat a key.
 		for _, c := range candidates[1:] {
-			if !c.Equal(candidates[0]) {
+			if !c.Equals(candidates[0]) {
 				return nil, fmt.Errorf(
-					"EPM directory record advertises %d DIFFERENT Ed25519 signing public keys with no publication purpose to tell them apart; refusing to guess which one signs dataset publications",
+					"EPM directory record advertises %d DIFFERENT signing public keys with no publication purpose to tell them apart; refusing to guess which one signs dataset publications",
 					len(candidates),
 				)
 			}
@@ -4675,19 +4679,26 @@ func firstDirectoryString(values map[string]any, keys ...string) string {
 	return ""
 }
 
-func decodeEd25519PublicKeyHex(value string) (ed25519.PublicKey, error) {
+// decodeSigningPublicKeyHex accepts either a 32-byte Ed25519 key or a 33-byte
+// compressed secp256k1 key, because an HD node's signing key is the latter and
+// an EPM may legitimately carry either.
+func decodeSigningPublicKeyHex(value string) (crypto.PubKey, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return nil, fmt.Errorf("empty Ed25519 public key")
+		return nil, fmt.Errorf("empty signing public key")
 	}
 	raw, err := hex.DecodeString(value)
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("public key length = %d, want %d", len(raw), ed25519.PublicKeySize)
+	switch len(raw) {
+	case ed25519.PublicKeySize:
+		return crypto.UnmarshalEd25519PublicKey(raw)
+	case 33:
+		return crypto.UnmarshalSecp256k1PublicKey(raw)
+	default:
+		return nil, fmt.Errorf("public key length = %d, want 32 (Ed25519) or 33 (secp256k1)", len(raw))
 	}
-	return ed25519.PublicKey(append([]byte(nil), raw...)), nil
 }
 
 // mdnsNotifee handles mDNS peer discovery events.

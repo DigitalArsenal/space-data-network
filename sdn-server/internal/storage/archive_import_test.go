@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,7 +53,7 @@ func TestImportArchiveFromManifestKeepsTheOriginalProducer(t *testing.T) {
 	target := newImportArchiveTargetStore(t)
 	result, err := ImportArchiveFromManifest(context.Background(), target, ImportArchiveOptions{
 		ManifestBytes:     archive.Manifest.Bytes,
-		ProviderPublicKey: providerPublicKey,
+		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
 		AssetDir:          source.ArchiveOutputDir(),
 	})
 	if err != nil {
@@ -106,7 +107,7 @@ func TestImportArchiveFromManifestKeepsTheOriginalProducer(t *testing.T) {
 	}
 	if _, err := ImportArchiveFromManifest(context.Background(), target, ImportArchiveOptions{
 		ManifestBytes:     archive.Manifest.Bytes,
-		ProviderPublicKey: providerPublicKey,
+		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
 		AssetDir:          source.ArchiveOutputDir(),
 	}); err != nil {
 		t.Fatalf("second import: %v", err)
@@ -137,7 +138,7 @@ func TestImportArchiveRejectsTamperedAssetsAndWrongKeys(t *testing.T) {
 	target := newImportArchiveTargetStore(t)
 	if _, err := ImportArchiveFromManifest(context.Background(), target, ImportArchiveOptions{
 		ManifestBytes:     archive.Manifest.Bytes,
-		ProviderPublicKey: otherKey,
+		ProviderPublicKey: mustLibp2pEd25519(t, otherKey),
 		AssetDir:          source.ArchiveOutputDir(),
 	}); err == nil {
 		t.Fatalf("import verified with a foreign key")
@@ -160,7 +161,7 @@ func TestImportArchiveRejectsTamperedAssetsAndWrongKeys(t *testing.T) {
 	}
 	if _, err := ImportArchiveFromManifest(context.Background(), target, ImportArchiveOptions{
 		ManifestBytes:     archive.Manifest.Bytes,
-		ProviderPublicKey: providerPublicKey,
+		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
 		AssetDir:          planeCopy,
 	}); err == nil {
 		t.Fatalf("import accepted a tampered shard")
@@ -180,9 +181,20 @@ func TestImportArchiveRejectsTamperedAssetsAndWrongKeys(t *testing.T) {
 	os.Remove(shardCopy)
 	if _, err := ImportArchiveFromManifest(context.Background(), target, ImportArchiveOptions{
 		ManifestBytes:     archive.Manifest.Bytes,
-		ProviderPublicKey: providerPublicKey,
+		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
 		AssetDir:          planeCopy,
 	}); err == nil {
 		t.Fatalf("import succeeded without the shard on disk")
 	}
+}
+
+// mustLibp2pEd25519 wraps a raw Ed25519 test key as a libp2p PubKey, which is
+// what the verifiers now take so a secp256k1 provider is equally valid.
+func mustLibp2pEd25519(t *testing.T, key ed25519.PublicKey) crypto.PubKey {
+	t.Helper()
+	pub, err := crypto.UnmarshalEd25519PublicKey(key)
+	if err != nil {
+		t.Fatalf("wrap ed25519 public key: %v", err)
+	}
+	return pub
 }
