@@ -19,12 +19,16 @@ func TestEd25519PublicKeyFromDirectoryJSONUsesSigningKeyEntry(t *testing.T) {
 		]
 	}`
 
-	got, err := ed25519PublicKeyFromDirectoryJSON(epmJSON)
+	got, err := publicKeyFromDirectoryJSON(epmJSON)
 	if err != nil {
-		t.Fatalf("ed25519PublicKeyFromDirectoryJSON failed: %v", err)
+		t.Fatalf("publicKeyFromDirectoryJSON failed: %v", err)
 	}
-	if string(got) != string(publicKey) {
-		t.Fatalf("public key mismatch: got %x want %x", got, publicKey)
+	raw, rawErr := got.Raw()
+	if rawErr != nil {
+		t.Fatalf("raw public key: %v", rawErr)
+	}
+	if string(raw) != string(publicKey) {
+		t.Fatalf("public key mismatch: got %x want %x", raw, publicKey)
 	}
 }
 
@@ -35,11 +39,15 @@ func TestEd25519PublicKeyFromDirectoryJSONUsesTopLevelSigningPubkeyHex(t *testin
 	}
 	epmJSON := `{"signing_pubkey_hex":"` + hex.EncodeToString(publicKey) + `"}`
 
-	got, err := ed25519PublicKeyFromDirectoryJSON(epmJSON)
+	got, err := publicKeyFromDirectoryJSON(epmJSON)
 	if err != nil {
-		t.Fatalf("ed25519PublicKeyFromDirectoryJSON failed: %v", err)
+		t.Fatalf("publicKeyFromDirectoryJSON failed: %v", err)
 	}
-	if string(got) != string(publicKey) {
-		t.Fatalf("public key mismatch: got %x want %x", got, publicKey)
+	raw, rawErr := got.Raw()
+	if rawErr != nil {
+		t.Fatalf("raw public key: %v", rawErr)
+	}
+	if string(raw) != string(publicKey) {
+		t.Fatalf("public key mismatch: got %x want %x", raw, publicKey)
 	}
 }
