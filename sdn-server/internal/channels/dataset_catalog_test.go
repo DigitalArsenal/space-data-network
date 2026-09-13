@@ -47,7 +47,7 @@ func TestDatasetCatalogReplacesPersistsAndDoesNotHoldRemoteRecords(t *testing.T)
 		t.Fatal(err)
 	}
 	for _, edition := range []struct{ manifest, pnm []byte }{{first.Bytes, pnm1}, {second.Bytes, pnm2}, {first.Bytes, pnm1}, {second.Bytes, pnm2}} {
-		if err := RememberDatasetCatalog(store, "publisher", pub, edition.pnm, edition.manifest, now); err != nil {
+		if err := RememberDatasetCatalog(store, "publisher", mustLibp2pEd25519(t, pub), edition.pnm, edition.manifest, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -86,7 +86,7 @@ func TestDatasetCatalogReplacesPersistsAndDoesNotHoldRemoteRecords(t *testing.T)
 	if err != nil || len(pins) != 0 {
 		t.Fatalf("unexpected data pins: %+v %v", pins, err)
 	}
-	if err := RememberDatasetCatalog(store, "publisher", pub, pnm1, second.Bytes, now); err == nil {
+	if err := RememberDatasetCatalog(store, "publisher", mustLibp2pEd25519(t, pub), pnm1, second.Bytes, now); err == nil {
 		t.Fatal("accepted mismatched PNM and DPM")
 	}
 }
@@ -95,26 +95,26 @@ func TestDatasetCatalogRejectsTamperingWrongIdentityFutureAndPartialPages(t *tes
 	pub, key, _ := ed25519.GenerateKey(nil)
 	now := time.Now().UTC()
 	manifest, _ := catalogFixture(t, key, now, 0)
-	if _, err := DecodeDatasetCatalog(manifest.Bytes, pub, "other", now); err == nil {
+	if _, err := DecodeDatasetCatalog(manifest.Bytes, mustLibp2pEd25519(t, pub), "other", now); err == nil {
 		t.Fatal("accepted wrong publisher")
 	}
 	other, _, _ := ed25519.GenerateKey(nil)
-	if _, err := DecodeDatasetCatalog(manifest.Bytes, other, "publisher", now); err == nil {
+	if _, err := DecodeDatasetCatalog(manifest.Bytes, mustLibp2pEd25519(t, other), "publisher", now); err == nil {
 		t.Fatal("accepted wrong signing key")
 	}
 	corrupt := append([]byte(nil), manifest.Bytes...)
 	corrupt[0] = 255
-	if _, err := DecodeDatasetCatalog(corrupt, pub, "publisher", now); err == nil {
+	if _, err := DecodeDatasetCatalog(corrupt, mustLibp2pEd25519(t, pub), "publisher", now); err == nil {
 		t.Fatal("accepted corrupted buffer")
 	}
-	if _, err := DecodeDatasetCatalog(manifest.Bytes, pub, "publisher", now.Add(-time.Hour)); err == nil {
+	if _, err := DecodeDatasetCatalog(manifest.Bytes, mustLibp2pEd25519(t, pub), "publisher", now.Add(-time.Hour)); err == nil {
 		t.Fatal("accepted future publication")
 	}
 	partial, _ := catalogFixture(t, key, now, 10)
-	if _, err := DecodeDatasetCatalog(partial.Bytes, pub, "publisher", now); err == nil {
+	if _, err := DecodeDatasetCatalog(partial.Bytes, mustLibp2pEd25519(t, pub), "publisher", now); err == nil {
 		t.Fatal("accepted paginated result as source catalog")
 	}
-	if _, err := DecodeDatasetCatalog(make([]byte, MaxDatasetCatalogManifestBytes+1), pub, "publisher", now); err == nil {
+	if _, err := DecodeDatasetCatalog(make([]byte, MaxDatasetCatalogManifestBytes+1), mustLibp2pEd25519(t, pub), "publisher", now); err == nil {
 		t.Fatal("accepted oversized manifest")
 	}
 }

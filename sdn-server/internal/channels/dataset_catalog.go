@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"io"
 	"os"
 	"path/filepath"
@@ -46,7 +47,7 @@ func (e DatasetCatalogEntry) sourceKey() string {
 // DecodeDatasetCatalog verifies the DPM before interpreting its discovery fields.
 // It accepts a single schema/provider/source scope; multi-source query results
 // cannot honestly describe one selectable dataset and are not catalog entries.
-func DecodeDatasetCatalog(raw []byte, publicKey ed25519.PublicKey, publisher string, now time.Time) (entry DatasetCatalogEntry, err error) {
+func DecodeDatasetCatalog(raw []byte, publicKey crypto.PubKey, publisher string, now time.Time) (entry DatasetCatalogEntry, err error) {
 	defer func() {
 		if recover() != nil {
 			entry = DatasetCatalogEntry{}
@@ -60,6 +61,11 @@ func DecodeDatasetCatalog(raw []byte, publicKey ed25519.PublicKey, publisher str
 	if err != nil {
 		return entry, err
 	}
+	publicKeyRaw, err := publicKey.Raw()
+	if err != nil {
+		return entry, err
+	}
+	publicKeyHex := hex.EncodeToString(publicKeyRaw)
 	if publisher == "" {
 		publisher = evidence.ProviderPeer
 	}
@@ -71,7 +77,7 @@ func DecodeDatasetCatalog(raw []byte, publicKey ed25519.PublicKey, publisher str
 	if query == nil || query.SCHEMA_NAMESLength() != 1 || query.PROVIDER_IDSLength() != 1 || query.SOURCE_NAMESLength() != 1 {
 		return entry, errors.New("dataset catalog requires an exact source scope")
 	}
-	entry = DatasetCatalogEntry{SchemaName: string(query.SCHEMA_NAMES(0)), ProviderID: string(query.PROVIDER_IDS(0)), SourceName: string(query.SOURCE_NAMES(0)), PeerID: publisher, PublicKey: hex.EncodeToString(publicKey), ManifestCID: evidence.ManifestCID}
+	entry = DatasetCatalogEntry{SchemaName: string(query.SCHEMA_NAMES(0)), ProviderID: string(query.PROVIDER_IDS(0)), SourceName: string(query.SOURCE_NAMES(0)), PeerID: publisher, PublicKey: publicKeyHex, ManifestCID: evidence.ManifestCID}
 	entry.fileID = evidence.FileID
 	fileSchema := ""
 	for _, part := range strings.Split(entry.fileID, ":") {
@@ -129,7 +135,7 @@ func datasetCatalogPath(store *storage.FlatSQLStore) string {
 // RememberDatasetCatalog is called serially by the node's announcement handler.
 // The signed publication time prevents rollback. Replacement overwrites the old
 // archive on disk instead of accumulating retired bytes in FlatSQL streams.
-func RememberDatasetCatalog(store *storage.FlatSQLStore, publisher string, key ed25519.PublicKey, pnm, manifest []byte, now time.Time) (err error) {
+func RememberDatasetCatalog(store *storage.FlatSQLStore, publisher string, key crypto.PubKey, pnm, manifest []byte, now time.Time) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = errors.New("malformed dataset announcement")
@@ -142,6 +148,10 @@ func RememberDatasetCatalog(store *storage.FlatSQLStore, publisher string, key e
 		return errors.New("dataset catalog store is read-only")
 	}
 	entry, err := DecodeDatasetCatalog(manifest, key, publisher, now)
+	if err != nil {
+		return err
+	}
+	keyRaw, err := key.Raw()
 	if err != nil {
 		return err
 	}
@@ -169,7 +179,7 @@ func RememberDatasetCatalog(store *storage.FlatSQLStore, publisher string, key e
 	for _, file := range []struct {
 		name string
 		data []byte
-	}{{"manifest.dpm", manifest}, {"announcement.pnm", pnm}, {"public-key.ed25519", key}} {
+	}{{"manifest.dpm", manifest}, {"announcement.pnm", pnm}, {"public-key.ed25519", keyRaw}} {
 		out, err := writer.CreateHeader(&zip.FileHeader{Name: file.name, Method: zip.Store})
 		if err != nil {
 			return err
@@ -293,11 +303,17 @@ func readDatasetCatalogArchive(path string, now time.Time) (result DatasetCatalo
 	manifest := parts["manifest.dpm"]
 	// DecodeDatasetCatalog performs the safe, signed parse. An empty
 	// expected publisher lets it use the signature-bound DPM identity.
-	entry, err := DecodeDatasetCatalog(manifest, parts["public-key.ed25519"], "", now)
+	// The cache stores the raw key bytes; wrap them as a libp2p key so a
+	// secp256k1 publisher round-trips as well as an Ed25519 one.
+	cachedKey, keyErr := crypto.UnmarshalEd25519PublicKey(parts["public-key.ed25519"])
+	if keyErr != nil {
+		return empty, keyErr
+	}
+	entry, err := DecodeDatasetCatalog(manifest, cachedKey, "", now)
 	if err != nil {
 		return empty, err
 	}
-	proof, err := VerifySignedPNMEnvelopeWithProviderKey(parts["announcement.pnm"], parts["public-key.ed25519"])
+	proof, err := VerifySignedPNMEnvelopeWithProviderKey(parts["announcement.pnm"], cachedKey)
 	if err != nil || proof.CID != entry.ManifestCID || proof.FileID != entry.fileID {
 		return empty, errors.New("cached announcement differs from manifest")
 	}

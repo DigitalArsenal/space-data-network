@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"path/filepath"
 	"testing"
 	"time"
@@ -101,7 +102,7 @@ func TestAutoPublisherSourceReplaysAllRawHashBatchesAfterStartup(t *testing.T) {
 	}
 	defer consumer.Close()
 	options := storage.DatasetPublicationReplayOptions{
-		PNM: announcer.announcement.PNM, ProviderPublicKey: publicKey, WorkDir: filepath.Join(dir, "replay"),
+		PNM: announcer.announcement.PNM, ProviderPublicKey: mustLibp2pEd25519(t, publicKey), WorkDir: filepath.Join(dir, "replay"),
 		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
 			if body, ok := pinned[cid]; ok {
 				return body, nil
@@ -125,4 +126,13 @@ func TestAutoPublisherSourceReplaysAllRawHashBatchesAfterStartup(t *testing.T) {
 			t.Fatalf("source descriptor digest changed: %s", hash)
 		}
 	}
+}
+
+func mustLibp2pEd25519(t *testing.T, key ed25519.PublicKey) crypto.PubKey {
+	t.Helper()
+	pub, err := crypto.UnmarshalEd25519PublicKey(key)
+	if err != nil {
+		t.Fatalf("wrap ed25519 public key: %v", err)
+	}
+	return pub
 }

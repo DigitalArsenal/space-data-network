@@ -35,7 +35,7 @@ func addRemoteSyncCatalog(t *testing.T, store *storage.FlatSQLStore, publisher, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := channels.RememberDatasetCatalog(store, publisher, public, pnm, manifest.Bytes, now); err != nil {
+	if err := channels.RememberDatasetCatalog(store, publisher, mustLibp2pEd25519(t, public), pnm, manifest.Bytes, now); err != nil {
 		t.Fatal(err)
 	}
 	return manifest.CID
@@ -82,7 +82,7 @@ func TestSyncLiveProviderCatalogs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		proof, err := channels.VerifySignedPNMEnvelopeWithProviderKey(pnm, key)
+		proof, err := channels.VerifySignedPNMEnvelopeWithProviderKey(pnm, mustLibp2pEd25519(t, key))
 		if err != nil || proof.CID != fixture.ManifestCID {
 			t.Fatalf("%s PNM: %v", fixture.SourceID, err)
 		}
@@ -95,7 +95,7 @@ func TestSyncLiveProviderCatalogs(t *testing.T) {
 		if err != nil || response.StatusCode != http.StatusOK {
 			t.Fatalf("%s independent Kubo fetch: status=%d err=%v", fixture.SourceID, response.StatusCode, err)
 		}
-		if err := channels.RememberDatasetCatalog(store, fixture.PeerID, key, pnm, manifest, time.Now()); err != nil {
+		if err := channels.RememberDatasetCatalog(store, fixture.PeerID, mustLibp2pEd25519(t, key), pnm, manifest, time.Now()); err != nil {
 			t.Fatalf("%s catalog: %v", fixture.SourceID, err)
 		}
 	}
