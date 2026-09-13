@@ -358,7 +358,7 @@ func TestGrantRoundTripVerifiesAgainstKRFAdvertisedPubkey(t *testing.T) {
 
 // TestDirectoryEd25519SelectorIgnoresTheGrantKey is HEPHAESTUS's Q2b trap, closed.
 //
-// ed25519PublicKeyFromDirectoryJSON picks the key that verifies DATASET
+// publicKeyFromDirectoryJSON picks the key that verifies DATASET
 // PUBLICATIONS. It used to take the FIRST ed25519 signing entry, which was safe
 // only while a node advertised exactly one. The node now also advertises the
 // licensing grant verifier key as an ed25519 Signing key — it must, or clients
@@ -382,18 +382,22 @@ func TestDirectoryEd25519SelectorIgnoresTheGrantKey(t *testing.T) {
 		"publication first": publication + "," + grant,
 		"grant first":       grant + "," + publication,
 	} {
-		got, err := ed25519PublicKeyFromDirectoryJSON(`{"keys":[` + keys + `]}`)
+		got, err := publicKeyFromDirectoryJSON(`{"keys":[` + keys + `]}`)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if !got.Equal(publicationPub) {
+		wantPub, wantErr := crypto.UnmarshalEd25519PublicKey(publicationPub)
+		if wantErr != nil {
+			t.Fatalf("%s: wrap expected key: %v", name, wantErr)
+		}
+		if !got.Equals(wantPub) {
 			t.Fatalf("%s: selected %x, want the publication key %x", name, got, publicationPub)
 		}
 	}
 
 	// A record carrying ONLY a grant key has no publication key — say so, do not
 	// hand back the grant key.
-	if _, err := ed25519PublicKeyFromDirectoryJSON(`{"keys":[` + grant + `]}`); err == nil {
+	if _, err := publicKeyFromDirectoryJSON(`{"keys":[` + grant + `]}`); err == nil {
 		t.Fatal("a record advertising only the grant key yielded a dataset publication key")
 	}
 
@@ -401,7 +405,7 @@ func TestDirectoryEd25519SelectorIgnoresTheGrantKey(t *testing.T) {
 	// than picking one. A wrong key here fails at every peer and is indistinguishable
 	// from a corrupt signature.
 	other := entry(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x33}, ed25519.SeedSize)).Public().(ed25519.PublicKey), "sdn/runtime-signing")
-	if _, err := ed25519PublicKeyFromDirectoryJSON(`{"keys":[` + publication + "," + other + `]}`); err == nil {
+	if _, err := publicKeyFromDirectoryJSON(`{"keys":[` + publication + "," + other + `]}`); err == nil {
 		t.Fatal("two different candidate publication keys were resolved by guessing instead of refused")
 	}
 
@@ -409,8 +413,12 @@ func TestDirectoryEd25519SelectorIgnoresTheGrantKey(t *testing.T) {
 	// unparseable path, both still resolve. The purpose filter is a DENY list
 	// precisely so it can never discard the only candidate.
 	legacy := entry(publicationPub, "")
-	if got, err := ed25519PublicKeyFromDirectoryJSON(`{"keys":[` + legacy + `]}`); err != nil || !got.Equal(publicationPub) {
-		t.Fatalf("a legacy single-key record no longer resolves: %x %v", got, err)
+	legacyWant, legacyErr := crypto.UnmarshalEd25519PublicKey(publicationPub)
+	if legacyErr != nil {
+		t.Fatalf("wrap expected key: %v", legacyErr)
+	}
+	if got, err := publicKeyFromDirectoryJSON(`{"keys":[` + legacy + `]}`); err != nil || !got.Equals(legacyWant) {
+		t.Fatalf("a legacy single-key record no longer resolves: %v %v", got, err)
 	}
 }
 
