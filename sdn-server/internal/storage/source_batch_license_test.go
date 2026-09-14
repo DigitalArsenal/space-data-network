@@ -338,13 +338,16 @@ func TestUnlicensedIngestRecordsNoLicenseRow(t *testing.T) {
 		t.Fatalf("unlicensed export invented licence terms: %+v", batch)
 	}
 
-	// The shard and index hashes an unlicensed publication advertises are the
-	// bytes the pre-change tree produced (main @ c0a9bc22) for the same store
-	// contents and the same query: SourceTags grew fields, so this pins that
-	// they stay absent from the serialized per-record provenance.
+	// The shard and index hashes an unlicensed publication advertises are
+	// pinned for the same store contents and the same query: SourceTags grew
+	// fields, so this pins that they stay absent from the serialized
+	// per-record provenance. The index golden moved once, deliberately, when
+	// $CAT records started carrying OBJECT_ID as entityId
+	// (sdn-stream-flatbuffers-into-flatsql: un-numbered objects need an
+	// identity); the shard bytes are unchanged from main @ c0a9bc22.
 	const (
 		goldenShardSHA256 = "ea928be73710cd3691364ac89b9dbc95fac95c9fb5e7f02884c977e7085f73ea"
-		goldenIndexSHA256 = "2afcec793ae8fd1fda0d2b39ff1553aaf0169df2a13dfa5cdd095fbfd7308ea4"
+		goldenIndexSHA256 = "f16dc42dfeff3785834176546d5fda93e8e838c106e225ddfe5c4b063dfa125f"
 	)
 	if export.ShardSHA256 != goldenShardSHA256 {
 		t.Fatalf("unlicensed shard bytes changed: %s, want %s", export.ShardSHA256, goldenShardSHA256)
