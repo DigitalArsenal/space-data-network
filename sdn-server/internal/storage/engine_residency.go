@@ -102,15 +102,31 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 		}
 		return 0, err
 	}
+	duplicates := 0
 	for i, payload := range payloads {
 		seq, err := s.engineDB.IngestOneWithSource(payload, source)
 		if err != nil {
 			return fail(err)
 		}
-		if _, err := s.db.Exec(
-			`INSERT OR REPLACE INTO sdn_engine_rows (schema_name, cid, source, seq) VALUES (?, ?, ?, ?)`,
-			schemaName, cids[i], source, int64(seq)); err != nil {
+		// ONE RESIDENT ROW PER RECORD. The ledger is keyed by (schema, cid);
+		// a record that is already resident keeps its row and the row just
+		// appended is tombstoned at once, so no caller can put a record in
+		// the window twice (INSERT OR REPLACE used to move the ledger to the
+		// new row and leave the old one visible: duplicate query results,
+		// found on the dev node 2026-09-14 — 48 PRR rows written live while
+		// the cold rebuild was ingesting the same records from the tables).
+		res, err := s.db.Exec(
+			`INSERT OR IGNORE INTO sdn_engine_rows (schema_name, cid, source, seq) VALUES (?, ?, ?, ?)`,
+			schemaName, cids[i], source, int64(seq))
+		if err != nil {
 			return fail(fmt.Errorf("record engine residency for %s: %w", cids[i], err))
+		}
+		if affected, _ := res.RowsAffected(); affected == 0 {
+			if err := s.engineDB.MarkDeleted(enginePartition(s.engineTableForLedger(schemaName), source), uint64(seq)); err != nil {
+				return fail(fmt.Errorf("tombstone duplicate engine row for %s: %w", cids[i], err))
+			}
+			duplicates++
+			continue
 		}
 		ingested++
 	}
@@ -120,8 +136,19 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 			return 0, fmt.Errorf("commit engine ingest batch: %w", err)
 		}
 	}
-	s.engineUnflushed.Add(int64(ingested))
+	if duplicates > 0 {
+		log.Infof("FlatSQL engine records: %s — %d record(s) were already resident; the duplicate rows were tombstoned", schemaName, duplicates)
+	}
+	s.engineUnflushed.Add(int64(ingested + duplicates))
 	return ingested, nil
+}
+
+// engineTableForLedger is the engine base table of a ledger schema name.
+func (s *FlatSQLStore) engineTableForLedger(schemaName string) string {
+	if binding, ok := engineRoutedSchemaFor(schemaName); ok {
+		return binding.Table
+	}
+	return strings.TrimSuffix(schemaName, ".fbs")
 }
 
 // engineResidencyRow is one sdn_engine_rows row.
@@ -642,8 +669,9 @@ func (s *FlatSQLStore) ingestEngineWindowPages(schemaName string, cursor int64, 
 
 // rebuildEngineWindowForSchema fills a routed schema's window from the
 // control tables: the newest `window` records by index rowid, ingested oldest
-// first so the engine's per-partition order is ingest order. The caller has
-// already cleared the schema's residency rows.
+// first so the engine's per-partition order is ingest order. Records the
+// ledger already holds — written live since the cold open, before this pass
+// or between its pages — are kept, not ingested a second time.
 func (s *FlatSQLStore) rebuildEngineWindowForSchema(schemaName string, locked engineLocker) (int, error) {
 	if _, routed := s.engineRoutedSchemaFor(schemaName); !routed {
 		s.engineResidentSet(schemaName, 0)
@@ -679,7 +707,8 @@ func (s *FlatSQLStore) rebuildEngineWindowForSchema(schemaName string, locked en
 		return 0, err
 	}
 	started := time.Now()
-	n, err := s.ingestEngineWindowPages(schemaName, cursor, "", nil, locked)
+	notInLedger := ` AND NOT EXISTS (SELECT 1 FROM sdn_engine_rows e WHERE e.schema_name = ? AND e.cid = idx.cid)`
+	n, err := s.ingestEngineWindowPages(schemaName, cursor, notInLedger, []any{engineLedgerSchema(schemaName)}, locked)
 	if err != nil {
 		return 0, err
 	}
@@ -789,6 +818,26 @@ func (s *FlatSQLStore) warmEngineSchema(schemaName string, fromRowID int64, lock
 	return restored + tail + backfilled, err
 }
 
+// settleEngineResidencyAtOpen makes the residency ledger describe the engine
+// that was just opened, BEFORE any write can land: a warm engine's ledger is
+// read back into the resident counts; a cold engine holds nothing, so its
+// ledger (rows of an arena that is gone) is emptied here rather than at
+// hydration time — a write that lands in between is resident and tracked,
+// and the rebuild leaves it alone. Caller holds the store exclusively.
+func (s *FlatSQLStore) settleEngineResidencyAtOpen() {
+	if s.engineStateWarm {
+		if resident, err := s.restoreEngineResidencyFromLedger(); err != nil {
+			log.Warnf("FlatSQL engine records: residency ledger not readable at open (%v); counts are restored by the hot-window hydration", err)
+		} else {
+			log.Infof("FlatSQL engine records: %d resident record(s) tracked by the ledger across routed standards", resident)
+		}
+		return
+	}
+	if _, err := s.db.Exec(`DELETE FROM sdn_engine_rows`); err != nil {
+		log.Warnf("FlatSQL engine records: could not reset the residency ledger for a cold engine (%v); the hot-window hydration reconciles it", err)
+	}
+}
+
 // restoreEngineResidencyFromLedger sets the Go-side resident counts from the
 // residency ledger at open, so a write that lands before the background
 // hydration has reconciled the window still evicts against the real count.
@@ -844,13 +893,9 @@ func (s *FlatSQLStore) hydrateEngineHotWindow(ctx context.Context, lockPerSchema
 			log.Warnf("FlatSQL engine hydrate: enumerate schemas with record tables: %v", err)
 			present = nil
 		}
-		if !warm {
-			// A cold engine holds nothing: the ledger is meaningless and is
-			// rebuilt from scratch below.
-			if _, err := s.db.Exec(`DELETE FROM sdn_engine_rows`); err != nil {
-				return fmt.Errorf("reset engine residency ledger: %w", err)
-			}
-		}
+		// A cold engine's ledger was emptied at OPEN (settleEngineResidencyAtOpen),
+		// before any write could land; whatever it holds now is resident and
+		// the rebuild below keeps it.
 		return nil
 	}); err != nil {
 		return 0, err

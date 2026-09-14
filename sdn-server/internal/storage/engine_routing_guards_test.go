@@ -213,7 +213,7 @@ func TestEnginePrepareFailureNeverDiscardsTheControlDatabase(t *testing.T) {
 	// failure, reached before the first query.
 	schema := engineSchemaTextExcluding(map[string]bool{"CDM.fbs": true})
 	prepare := enginePrepare(engineBootPlan{Excluded: map[string]bool{}, Sources: []string{engineDefaultSource}})
-	_, _, _, err = tryOpenControlDatabase(engine, dbPath, schema, prepare)
+	_, _, _, err = tryOpenControlDatabase(engine, dbPath, schema, prepare, false)
 	if err == nil {
 		t.Fatal("registering a file identifier for a table absent from the schema must fail the open")
 	}
@@ -310,7 +310,7 @@ func TestRecordsStoredWithTheBareStandardCodeSurviveARestart(t *testing.T) {
 	// control tables this test is about.
 	controlDBPath := reopened.controlDBPath
 	simulateCrash(t, reopened)
-	if err := removeEngineRecordStream(controlDBPath); err != nil {
+	if err := removeEngineRecordStreamForTest(controlDBPath); err != nil {
 		t.Fatalf("discard engine record stream: %v", err)
 	}
 

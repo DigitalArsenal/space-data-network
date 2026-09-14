@@ -128,6 +128,49 @@ until then it stays and `enforceEngineHotWindowLocked` keeps evicting.
 - Rollout is a fleet wipe: build locally, wipe every host's store, ship the
   binary, verify boot time and catalog completeness on each before declaring it.
 
+## Measured 2026-09-14 (dev node `data/admin-dev`, 72 GB store wiped, re-ingested)
+
+Baselines: 1 h 18 m cold / 37 s warm (2026-09-02); 5 m 06 s to ready
+(2026-09-10, warm, tombstone re-apply). After the cut (sdn `dcb457e6`):
+
+| boot                     | store open | API answers | `/api/v1/ready` 200 | window hydration (background) |
+|--------------------------|-----------:|------------:|--------------------:|------------------------------:|
+| crash-style (arena rebuilt) | 469 ms  | 9.18 s      | 19.09 s             | 8.5 s                         |
+| clean warm restart       | 332 ms     | 8.10 s      | 11.31 s             | 3.0 s                         |
+
+Records are served the moment the file opens; the engine hot window is the only
+thing that hydrates, in the background, and reads interleave with it. CAT holds
+62,108 rows — one per object — after replaying every stream copy. Ingest ceiling
+on this box ≈ 44 rec/s (one engine statement per row; a known follow-up, not a
+regression).
+
+**Found during verification — the engine's partition map survives an arena
+discard.** The engine routes every replayed frame by `_flatsql_source_ranges`
+(source → byte range of the arena). The boot's discard of a mostly-dead arena
+removed only the file; the rebuilt arena's IQC rows sat at offsets the old map
+gave to `cat-replay`; the next boot attributed 6,412 live rows to
+`IQC@cat-replay` and the residency reconcile tombstoned them as extras
+(engine 3,892 rows vs ledger 10,000). Fix: the record state is one unit — the
+mark and the map are checked against the file BEFORE `OpenState` and a state
+that cannot describe its stream (mark or range past the end, overlapping
+ranges) is discarded whole: map emptied, arena truncated to zero bytes, the
+engine's torn path clears the index rows (`engine_record_state_discard.go`,
+`engine_partition_map_test.go`). Engine follow-up for `flatsql`: a torn
+recovery should clamp in-memory ranges to the surviving stream and an absent
+stream should clear the map; until then the store's check bounds it to one
+rebuild.
+
+**Also found — the cold rebuild ingested live rows twice.** The residency
+ledger was emptied at hydration time, not at open, and the rebuild's page walk
+did not skip records already resident, so rows written before the pass and
+between its pages were ingested again; `INSERT OR REPLACE` then moved the
+ledger to the new row and left the old one visible (48 duplicate PRR rows on
+the dev node). Fix: the ledger is reset at open for a cold engine, the rebuild
+skips ledger-held records, and the ledger insert is `INSERT OR IGNORE` with the
+duplicate engine row tombstoned at once
+(`engine_cold_rebuild_live_writes_test.go`). Verified on the dev node: every
+partition equals its ledger count after the boot, map consistent.
+
 ## Escalation
 
 The engine-side disk path and ABI landed natively (§3.3,

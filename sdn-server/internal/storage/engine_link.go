@@ -123,6 +123,7 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	if err := s.initTables(); err != nil {
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: init tables: %w", err)
 	}
+	s.settleEngineResidencyAtOpen()
 	// EVERY ROUTED BASE NAME MUST RESOLVE AFTER RECOVERY TOO: a store whose
 	// tables hold no records for a standard registers nothing for it, and
 	// `SELECT _data FROM IRM` would then answer "no such table" — the answer

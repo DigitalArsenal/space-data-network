@@ -120,9 +120,28 @@ record store.
   (the engine does not persist tombstones); records past the coverage mark
   that the ledger does not hold are ingested; the window bound is re-applied.
   All of it per page under the store lock, in the background.
-- **Cold engine** (`.fsdata` absent or unusable — it is discarded, the
-  database is kept): the ledger is cleared and each window is filled with the
-  newest records from the control tables, page by page.
+- **Cold engine** (the engine's record state is discarded, the database is
+  kept): the ledger is emptied AT OPEN, before any write can land, and each
+  window is filled with the newest records the ledger does not already hold,
+  page by page — rows written live before or between pages are kept, never
+  ingested twice. The ledger insert is `INSERT OR IGNORE`: a record that is
+  already resident keeps its row and the duplicate engine row is tombstoned
+  at once (one resident row per record).
+- **The record state is one unit** — arena (`.fsdata`), index rows and the
+  PARTITION MAP (`_flatsql_source_ranges`: source → byte range of the arena,
+  which routes every replayed frame at open). It is checked against the file
+  BEFORE `OpenState` (`engine_record_state_discard.go`) and discarded WHOLE
+  when it cannot describe the stream: the mark lies past the end of the file,
+  a range reaches past it, or two ranges overlap. Discarding = empty the map
+  through SQL on the opening handle, truncate the arena to zero bytes (an
+  empty stream below the mark takes the engine's torn path, which clears the
+  index rows; an absent one returns before clearing anything). A mostly-dead
+  arena (more resurrected rows than the ledger holds) is discarded the same
+  way on a fresh runtime. Never remove only the file: the dev node did
+  (2026-09-14) and the next boot routed 6,412 live IQC rows to CAT's source,
+  where the reconcile tombstoned them. A torn tail after a crash is in the
+  discard set on purpose — the engine's own recovery keeps the ranges that
+  reached past the surviving stream.
 - **Poison recovery** (`RecoverPoisonedEngine`): a fresh runtime reopens the
   SAME database (the rollback journal discards what the trapped engine had in
   flight) and the window is brought current exactly as at boot.
