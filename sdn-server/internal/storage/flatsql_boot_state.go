@@ -1565,6 +1565,59 @@ func (s *FlatSQLStore) checkpointCatalogMark() error {
 	return s.persistBootMarkLocked(end, digest)
 }
 
+// checkpointReplayProgress writes a resume mark for the journal prefix a replay
+// has ALREADY applied, while that replay is still running.
+//
+// WHY THIS EXISTS. checkpointCatalogMark refuses to mark anything until
+// recordCatalogHydrated is set, on the grounds that the control tables do not
+// describe the whole journal prefix mid-hydration. That is true and irrelevant:
+// frames are applied IN ORDER, so a mark at the applied offset claims the prefix
+// [0, off) and nothing more — exactly what it claims after a clean finish, just
+// earlier. Without it a replay that is interrupted has written no mark at all,
+// the next boot finds a populated control database whose engine record stream
+// was never flushed, discards the database (flatsql_boot_state.go: "populated
+// control database … has no flushed engine record stream") and re-derives from
+// byte zero. A long replay then never survives a restart, which is
+// self-sustaining: too slow to finish ⇒ never checkpoints ⇒ discarded ⇒ replay
+// from zero. Measured on host-01 2026-09-14: a 21 GB control database thrown
+// away on every boot, hours of re-derivation each time.
+//
+// The ordering rule is unchanged and is the whole safety argument: the engine's
+// record stream is flushed BEFORE the mark is written, so a mark can only ever
+// claim bytes whose records the engine can already serve from disk. A flush
+// failure withholds the mark, and the next boot replays more, never less.
+//
+// digestPrefix is incremental (it extends a cached digest from digestOffset), so
+// calling this every N windows costs O(bytes since the last call), not O(prefix).
+func (s *FlatSQLStore) checkpointReplayProgress(off int64) error {
+	if s.readOnly || !s.controlDBDurable || s.recordCatalog == nil || s.recordCatalog.f == nil {
+		return nil
+	}
+	if valid := s.recordCatalog.validLength(); off > valid {
+		off = valid
+	}
+	if off <= 0 {
+		return nil
+	}
+	digest, err := s.recordCatalog.digestPrefix(off)
+	if err != nil {
+		return fmt.Errorf("checkpoint replay progress: digest: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.flushEngineStateLocked(); err != nil {
+		return err
+	}
+	if err := s.persistBootMarkLocked(off, digest); err != nil {
+		return err
+	}
+	// Keep the runtime applied offset in step so a later checkpointCatalogMark
+	// cannot write a mark BEHIND the one just persisted.
+	s.noteCatalogAppliedThrough(off)
+	return nil
+}
+
 // flushEngineStateLocked persists the engine's record stream + index
 // (flatsql_flush_index: append the new stream bytes, fsync them, then commit
 // the index pages and the high-water mark). It runs IMMEDIATELY BEFORE every
@@ -1848,4 +1901,26 @@ func digestRecordCatalogPrefix(f *os.File, limit int64) (string, error) {
 		return "", err
 	}
 	return sealRecordCatalogDigest(h, limit)
+}
+
+// recordCatalogTrimThreshold is how much proven-redundant journal must
+// accumulate before boot rewrites the file. Rewriting costs a full copy of the
+// retained tail, so trimming a few megabytes every boot would be pure churn;
+// trimming a gigabyte is the whole point.
+// var, not const, so a test can exercise the rewrite without building a
+// 256 MB fixture. Production never changes it.
+var recordCatalogTrimThreshold int64 = 256 << 20
+
+// resetBootMarkAfterTrim clears the persisted resume mark after the journal has
+// been rewritten. The retained tail now starts at offset zero, so the old mark
+// names bytes that no longer exist: a stale mark would tell the next boot to
+// skip frames it has never applied. Clearing it costs one replay of the (now
+// small) tail and can never skip anything.
+func (s *FlatSQLStore) resetBootMarkAfterTrim() error {
+	if s.readOnly || !s.controlDBDurable || s.engineDB == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistBootMarkLocked(0, "")
 }

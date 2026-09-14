@@ -556,6 +556,7 @@ func (j *recordCatalogJournal) replayFramesFrom(ctx context.Context, store *Flat
 		off = 0
 	}
 	count := 0
+	windows := 0
 	knownProducerTables := map[string]bool{}
 
 	for off < size {
@@ -575,6 +576,29 @@ func (j *recordCatalogJournal) replayFramesFrom(ctx context.Context, store *Flat
 		off = next
 		if progress != nil {
 			progress(count)
+		}
+		// CHECKPOINT THE PREFIX WE HAVE APPLIED, periodically, while the replay
+		// is still running. Frames apply in order, so a mark here claims
+		// [0, off) and nothing more. Without this an interrupted replay leaves
+		// a populated control database with no flushed engine record stream,
+		// which the next boot discards and re-derives from zero — the loop a
+		// slow replay can never climb out of.
+		//
+		// A checkpoint failure is logged and the replay continues: the mark is
+		// an optimisation for the NEXT boot, never a correctness requirement
+		// for this one, and withholding it costs re-replay, not data.
+		windows++
+		// ONLY on the chunked path. `chunked == false` means the caller already
+		// owns the store or already HOLDS the write lock (see replay's doc
+		// comment: initial open, and engine-poison recovery in engine_link.go),
+		// and checkpointReplayProgress takes s.mu — taking it there deadlocks.
+		// The chunked path is the one that matters anyway: it is the background
+		// post-boot hydration, the only replay long enough to be interrupted.
+		if chunked && windows%recordCatalogReplayCheckpointEveryWindows == 0 {
+			if err := store.checkpointReplayProgress(off); err != nil {
+				log.Warnf("FlatSQL record-catalog replay: progress checkpoint at offset %d failed "+
+					"(the next boot replays from the previous mark, nothing is lost): %v", off, err)
+			}
 		}
 		if chunked {
 			// Let a reader or a live writer that parked on the store lock
@@ -938,6 +962,13 @@ func (j *recordCatalogJournal) ReplayEngineHotWindows(ctx context.Context, store
 // engineHydrateFlushEveryBatches is how many ingest batches the hydration lets
 // accumulate in engine memory before flushing the record stream to disk.
 const engineHydrateFlushEveryBatches = 256
+
+// recordCatalogReplayCheckpointEveryWindows bounds how much of a long replay a
+// restart can cost. At recordCatalogReplayWindow (500) frames per window this
+// marks roughly every 10k frames: frequent enough that an interrupted
+// multi-hour replay resumes near where it stopped, rare enough that the fsync
+// in flushEngineStateLocked stays off the hot path.
+const recordCatalogReplayCheckpointEveryWindows = 20
 
 // engineReplayOptions shapes one engine hot-window replay.
 type engineReplayOptions struct {
@@ -2413,4 +2444,115 @@ func applyRecordCatalogRecordSetDelete(exec sqlExecer, schemaName string, tables
 		return err
 	}
 	return nil
+}
+
+// trimAppliedPrefix rewrites the journal keeping ONLY the frames at or above
+// `mark`, and returns the number of bytes reclaimed.
+//
+// WHY THIS EXISTS. A resume mark is a proof: every byte below it is already
+// described by the durable control database, and the engine record stream that
+// serves those rows has been flushed to disk (flushEngineStateLocked runs
+// immediately before the mark is written, and a failed flush withholds it).
+// Those bytes can therefore never be needed again — yet nothing deleted them,
+// so the journal grew without bound. Measured 2026-09-14: 89M frames retained
+// to describe ~140k live records, a ~600:1 ratio, which turned the fallback
+// replay into a multi-day operation on the one path that must stay cheap.
+//
+// The caller must hold the store write lock and must be at a QUIESCENT point —
+// no replay in flight, no concurrent Append. Boot, immediately after a warm
+// open, is that point. The rewrite is atomic (temp + fsync + rename) and the
+// journal is reopened afterwards, because a rename leaves the old fd pointing
+// at an unlinked inode whose writes would be silently lost.
+//
+// Offsets shift: the retained tail now begins at 0, so the caller MUST reset
+// the persisted mark to 0 in the same critical section. A crash between the
+// rename and the mark reset leaves a mark that over-claims, which is why the
+// caller writes the new mark before trusting the trimmed file again.
+func (j *recordCatalogJournal) trimAppliedPrefix(mark int64) (int64, error) {
+	if j == nil || j.f == nil {
+		return 0, nil
+	}
+	if j.readOnly {
+		return 0, fmt.Errorf("record catalog journal %s is read-only", j.path)
+	}
+	if mark <= 0 {
+		return 0, nil
+	}
+
+	j.mu.Lock()
+	valid, err := scanRecordCatalogValidLength(j.f)
+	if err != nil {
+		j.mu.Unlock()
+		return 0, err
+	}
+	if mark > valid {
+		// A mark past the valid tail names bytes this file does not have.
+		// Refuse rather than truncate to nothing.
+		j.mu.Unlock()
+		return 0, fmt.Errorf("record catalog: trim mark %d exceeds valid length %d", mark, valid)
+	}
+	if mark == valid {
+		// Everything is applied: the tail is empty. Keep an empty journal
+		// rather than a file full of dead bytes.
+		mark = valid
+	}
+
+	tmp := j.path + ".trim"
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o644)
+	if err != nil {
+		j.mu.Unlock()
+		return 0, fmt.Errorf("record catalog: trim temp: %w", err)
+	}
+	copied := int64(0)
+	if valid > mark {
+		buf := make([]byte, 1<<20)
+		for off := mark; off < valid; {
+			n := int64(len(buf))
+			if valid-off < n {
+				n = valid - off
+			}
+			read, rErr := j.f.ReadAt(buf[:n], off)
+			if read > 0 {
+				if _, wErr := out.Write(buf[:read]); wErr != nil {
+					out.Close()
+					os.Remove(tmp)
+					j.mu.Unlock()
+					return 0, fmt.Errorf("record catalog: trim write: %w", wErr)
+				}
+				copied += int64(read)
+				off += int64(read)
+			}
+			if rErr != nil {
+				out.Close()
+				os.Remove(tmp)
+				j.mu.Unlock()
+				return 0, fmt.Errorf("record catalog: trim read at %d: %w", off, rErr)
+			}
+		}
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		j.mu.Unlock()
+		return 0, fmt.Errorf("record catalog: trim fsync: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		j.mu.Unlock()
+		return 0, fmt.Errorf("record catalog: trim close: %w", err)
+	}
+	if err := os.Rename(tmp, j.path); err != nil {
+		os.Remove(tmp)
+		j.mu.Unlock()
+		return 0, fmt.Errorf("record catalog: trim rename: %w", err)
+	}
+	j.mu.Unlock()
+
+	// MANDATORY: the renamed file is a new inode; the open fd now points at an
+	// unlinked one whose writes would vanish. reopen() also resets the running
+	// digest, which fingerprinted the pre-trim file.
+	if err := j.reopen(); err != nil {
+		return 0, fmt.Errorf("record catalog: trim reopen: %w", err)
+	}
+	return mark, nil
 }

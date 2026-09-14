@@ -746,6 +746,35 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// is what made the resume legal in the first place.
 	store.appliedOffset.Store(resumeFrom)
 
+	// DROP THE BYTES THE MARK HAS ALREADY PROVEN REDUNDANT.
+	//
+	// Boot is the only quiescent point: no replay is in flight and nothing is
+	// appending yet. Everything below resumeFrom is described by the durable
+	// control tables and served by the flushed engine record stream, so those
+	// bytes can never be read again — and until now nothing deleted them, which
+	// is how a journal reaches 89M frames for 140k live records and turns the
+	// fallback replay into a multi-day operation.
+	//
+	// Trimming is an OPTIMISATION, never a correctness requirement: any failure
+	// is logged and the boot continues on the untrimmed journal.
+	if resumeFrom > recordCatalogTrimThreshold {
+		if reclaimed, err := recordCatalog.trimAppliedPrefix(resumeFrom); err != nil {
+			log.Warnf("FlatSQL store: journal trim at mark %d failed (continuing on the full journal): %v", resumeFrom, err)
+		} else if reclaimed > 0 {
+			// Offsets shifted: the retained tail now starts at zero, so every
+			// in-memory and persisted offset that named the old file must be
+			// reset in the same breath or the next boot would over-claim.
+			store.bootResumeFrom.Store(0)
+			store.appliedOffset.Store(0)
+			store.checkpointedOffset.Store(0)
+			store.bootReplayFrom = 0
+			if err := store.resetBootMarkAfterTrim(); err != nil {
+				log.Warnf("FlatSQL store: clearing the boot mark after a journal trim failed: %v", err)
+			}
+			log.Infof("FlatSQL store: journal trimmed — reclaimed %d bytes already covered by the control database", reclaimed)
+		}
+	}
+
 	// THE ENGINE'S RECORDS SURVIVED TOO. The mark was written only after the
 	// engine flushed its record state (flushEngineStateLocked), so every record
 	// the mark covers is already visible in the tables: the boot restores the
