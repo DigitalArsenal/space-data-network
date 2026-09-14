@@ -104,7 +104,7 @@
     "multiformats": "^13.3.7",
     "qrcode": "^1.5.3",
     "space-data-module-sdk": "https://github.com/DigitalArsenal/space-data-module-sdk/archive/72056a9231cdf88513514b6745b2238d1f103436.tar.gz",
-    "spacedatastandards.org": "1.215.0",
+    "spacedatastandards.org": "1.217.0",
     "uint8arraylist": "^2.4.8",
     "uint8arrays": "^5.0.0",
     "vcard-cryptoperson": "^1.1.10"
