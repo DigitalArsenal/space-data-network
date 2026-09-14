@@ -463,7 +463,7 @@ func exportLocalIdentity(ctx context.Context, out io.Writer, cfg *config.Config,
 	}
 	// The local EPM identity is a RECORD (QueryRawRecords over EPM.fbs), so the
 	// record catalog must be hydrated.
-	store, err := openStoreForReading(cfg.Storage.Path, validator, storeReadNeeds{recordCatalog: true})
+	store, err := openStoreForReading(cfg.Storage.Path, validator)
 	if err != nil {
 		return err
 	}
@@ -2782,7 +2782,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
-	n.StartBackgroundRecordCatalogHydration(ctx)
+	n.StartBackgroundEngineHydration(ctx)
 	n.StartConfiguredFlowServices(ctx)
 
 	// Wait for shutdown signal

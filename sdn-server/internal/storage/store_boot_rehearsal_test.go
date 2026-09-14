@@ -53,8 +53,8 @@ func TestOpenExistingStoreRehearsal(t *testing.T) {
 		t.Fatalf("NewValidator: %v", err)
 	}
 
-	opts := []StoreOption{WithDeferredRecordCatalogReplay(), WithDeferredBootRebuilds()}
-	shape := "production (deferred catalog replay + deferred derived rebuilds)"
+	opts := []StoreOption{WithDeferredBootRebuilds()}
+	shape := "production (deferred engine hot-window hydration)"
 	if os.Getenv("SDN_STORE_REHEARSAL_SYNCHRONOUS") == "1" {
 		opts = nil
 		shape = "synchronous (catalog replay + derived rebuilds ON the critical path)"
@@ -156,7 +156,7 @@ func TestHotWindowRebuildCostRehearsal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)
 	}
-	store, err := NewFlatSQLStore(base, validator, WithDeferredRecordCatalogReplay(), WithDeferredBootRebuilds())
+	store, err := NewFlatSQLStore(base, validator, WithDeferredBootRebuilds())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestHotWindowRebuildCostRehearsal(t *testing.T) {
 	ioBefore := engine.FileIO().Stats()
 	started := time.Now()
 	store.mu.Lock()
-	err = store.rebuildEngineRecordsForSchema(schemaName)
+	_, err = store.rebuildEngineWindowForSchema(schemaName, func(fn func() error) error { return fn() })
 	store.mu.Unlock()
 	elapsed := time.Since(started)
 	ioAfter := engine.FileIO().Stats()
@@ -206,7 +206,7 @@ func TestExplainHotWindowRehearsal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)
 	}
-	store, err := NewFlatSQLStore(base, validator, WithDeferredRecordCatalogReplay(), WithDeferredBootRebuilds())
+	store, err := NewFlatSQLStore(base, validator, WithDeferredBootRebuilds())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

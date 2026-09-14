@@ -1128,18 +1128,13 @@ func (h *SyncHandler) startHydrate(key laneKey) {
 	}
 	go func() {
 		store := h.deps.Store
-		replayed, err := store.ReplayRecordCatalog(false, nil)
-		if err != nil {
-			finish(replayed, err)
-			return
-		}
 		if err := store.RebuildSourceSummaries(); err != nil {
-			finish(replayed, err)
+			finish(0, err)
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), syncActionTimeout)
 		defer cancel()
-		n, err := store.HydrateEngineHotWindowFromRecordCatalogContext(ctx)
+		n, err := store.HydrateEngineHotWindowContext(ctx)
 		if err != nil {
 			finish(n, err)
 			return

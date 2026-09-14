@@ -100,13 +100,13 @@ func (h *StoreAdminHandler) handleHydrate(w http.ResponseWriter, r *http.Request
 	force := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("force")), "true")
 
 	start := time.Now()
-	replayed, err := h.store.ReplayRecordCatalog(force, nil)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "replay record catalog: "+err.Error())
-		return
-	}
 	if err := h.store.RebuildSourceSummaries(); err != nil {
 		writeError(w, http.StatusInternalServerError, "rebuild source summaries: "+err.Error())
+		return
+	}
+	replayed, err := h.store.HydrateEngineHotWindowContext(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "hydrate engine hot window: "+err.Error())
 		return
 	}
 	duration := time.Since(start)

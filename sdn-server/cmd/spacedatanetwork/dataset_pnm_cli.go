@@ -166,7 +166,7 @@ func openDatasetPNMStore() (*storage.FlatSQLStore, error) {
 	}
 	// dataset-pnm reads RECORDS (QueryRecentRecords -> recordReadSource over the
 	// per-producer control tables), so the record catalog must be hydrated.
-	store, err := openStoreForReading(cfg.Storage.Path, validator, storeReadNeeds{recordCatalog: true})
+	store, err := openStoreForReading(cfg.Storage.Path, validator)
 	if err != nil {
 		return nil, err
 	}

@@ -235,18 +235,6 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 		return 0, 0, fmt.Errorf("count orphaned superseded records: %w", err)
 	}
 	if recordsDeleted > 0 {
-		if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
-			if _, err := tx.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
-				DELETE FROM %s
-				WHERE cid IN (SELECT cid FROM temp_sdn_supersede_cids)
-				  AND NOT EXISTS (
-					SELECT 1 FROM sdn_record_source_tags tags
-					WHERE tags.schema_name = ? AND tags.cid = %s.cid
-				  )
-			`, tableName, tableName)), scope.SchemaName); err != nil {
-				return 0, 0, fmt.Errorf("delete orphaned superseded records: %w", err)
-			}
-		}
 		s.deleteRoutedMirrorsWhere(tx, tableName,
 			`cid IN (SELECT cid FROM temp_sdn_supersede_cids) AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
 			scope.SchemaName)
@@ -268,16 +256,8 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 		return 0, 0, fmt.Errorf("commit supersede chunk: %w", err)
 	}
 	committed = true
-	if err := s.appendCatalogEvent(recordCatalogEvent{
-		Kind:       recordCatalogEventSourceKeep,
-		SchemaName: scope.SchemaName,
-		Tags: SourceTags{
-			ProviderID: scope.ProviderID,
-			SourceName: scope.SourceName,
-			BatchID:    scope.KeepBatch,
-		},
-	}); err != nil {
-		return 0, 0, fmt.Errorf("append record catalog source keep event: %w", err)
+	if _, err := s.tombstoneOrphanedEngineRowsLocked(scope.SchemaName); err != nil {
+		return tagsDeleted, recordsDeleted, err
 	}
 	return tagsDeleted, recordsDeleted, nil
 }

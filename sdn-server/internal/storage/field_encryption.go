@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/crypto/curve25519"
 
@@ -104,9 +103,6 @@ func (s *FlatSQLStore) fieldEncryptionKeys() (priv, pub []byte, err error) {
 			return nil, nil, fmt.Errorf("decode field-encryption public key: %w", err)
 		}
 	case os.IsNotExist(readErr):
-		if s.readOnly {
-			return nil, nil, fmt.Errorf("field-encryption identity not yet provisioned and store is read-only: %w", ErrStoreReadOnly)
-		}
 		priv = make([]byte, 32)
 		if _, err := rand.Read(priv); err != nil {
 			return nil, nil, fmt.Errorf("generate field-encryption private key: %w", err)
@@ -178,15 +174,4 @@ func (s *FlatSQLStore) openRecordFields(schemaName string, data []byte) ([]byte,
 		return nil, fmt.Errorf("decrypt %s encrypted fields: %w", schemaName, err)
 	}
 	return opened, nil
-}
-
-// streamRecordSchemaName recovers the schema (table) name a FlatSQL stream
-// frame belongs to from its relative path
-// ("flatsql-streams/<table>.flatsql" -- see newFlatSQLStreamAppender), which
-// is all readFlatSQLStreamRecord has to go on (it is keyed by
-// streamPath/streamOffset/recordLength, not schemaName). sds.SchemaNameToTable
-// only strips the ".fbs" suffix, so this is exactly its inverse.
-func streamRecordSchemaName(streamPath string) string {
-	base := filepath.Base(streamPath)
-	return strings.TrimSuffix(base, filepath.Ext(base))
 }

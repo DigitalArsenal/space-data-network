@@ -344,7 +344,7 @@ func (s *FlatSQLStore) queryEpochIndexedRecords(query EpochRecordQuery) ([]*Reco
 	sourceFiltered := epochSourceFiltered(query)
 	sqlText := fmt.Sprintf(`
 		SELECT d.cid, d.peer_id, d.timestamp,
-		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex
+		       d.data, d.signature_hex
 		FROM %s d
 		INNER JOIN sdn_record_index idx
 		  ON idx.schema_name = ? AND idx.cid = d.cid
@@ -366,14 +366,13 @@ func (s *FlatSQLStore) queryEpochIndexedRecords(query EpochRecordQuery) ([]*Reco
 	for rows.Next() {
 		rec := &Record{}
 		var ts int64
-		var streamPath string
-		var streamOffset, recordLength int64
+		var data []byte
 		var signatureHex sql.NullString
-		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &streamPath, &streamOffset, &recordLength, &signatureHex); err != nil {
+		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &data, &signatureHex); err != nil {
 			return nil, fmt.Errorf("scan epoch indexed row: %w", err)
 		}
 		rec.Timestamp = time.Unix(ts, 0).UTC()
-		if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+		if err := s.hydrateRecordData(rec, query.SchemaName, data, signatureHex); err != nil {
 			return nil, fmt.Errorf("hydrate epoch indexed record: %w", err)
 		}
 		records = append(records, rec)
@@ -424,7 +423,7 @@ func (s *FlatSQLStore) queryPointEpochRecords(query EpochRecordQuery) ([]EpochRe
 	sqlText := fmt.Sprintf(`
 		WITH candidates AS (
 			SELECT d.cid, d.peer_id, d.timestamp,
-			       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
+			       d.data, d.signature_hex,
 			       %s AS entity_key,
 			       idx.epoch_unix AS matched_epoch_unix
 			FROM %s d
@@ -441,7 +440,7 @@ func (s *FlatSQLStore) queryPointEpochRecords(query EpochRecordQuery) ([]EpochRe
 			       ) AS rn
 			FROM candidates
 		)
-		SELECT cid, peer_id, timestamp, stream_path, stream_offset, record_length,
+		SELECT cid, peer_id, timestamp, data,
 		       signature_hex, entity_key, matched_epoch_unix
 		FROM ranked
 		WHERE rn = 1
@@ -478,16 +477,15 @@ func (s *FlatSQLStore) scanEpochRecordMatch(scanner interface {
 }, query EpochRecordQuery) (EpochRecordMatch, error) {
 	rec := &Record{}
 	var ts int64
-	var streamPath string
-	var streamOffset, recordLength int64
+	var data []byte
 	var signatureHex sql.NullString
 	var entityKey string
 	var matchedUnix int64
-	if err := scanner.Scan(&rec.CID, &rec.PeerID, &ts, &streamPath, &streamOffset, &recordLength, &signatureHex, &entityKey, &matchedUnix); err != nil {
+	if err := scanner.Scan(&rec.CID, &rec.PeerID, &ts, &data, &signatureHex, &entityKey, &matchedUnix); err != nil {
 		return EpochRecordMatch{}, fmt.Errorf("scan epoch record: %w", err)
 	}
 	rec.Timestamp = time.Unix(ts, 0).UTC()
-	if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+	if err := s.hydrateRecordData(rec, query.SchemaName, data, signatureHex); err != nil {
 		return EpochRecordMatch{}, fmt.Errorf("hydrate epoch record: %w", err)
 	}
 	matched := time.Unix(matchedUnix, 0).UTC()

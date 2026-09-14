@@ -119,3 +119,32 @@ func (l *storeLock) release() error {
 	}
 	return closeErr
 }
+
+// StoreMaintenanceLock is the store's exclusive writer lock held by a
+// maintenance verb (store wipe) instead of an open store, so nothing can open
+// the store while its files are being removed.
+type StoreMaintenanceLock struct{ lock *storeLock }
+
+// LockStoreForMaintenance takes the exclusive writer lock for the store rooted
+// at basePath without opening the store. It fails fast with ErrStoreLocked
+// when a daemon or another process holds it.
+func LockStoreForMaintenance(basePath string) (*StoreMaintenanceLock, error) {
+	lock, err := acquireStoreLock(basePath)
+	if err != nil {
+		return nil, err
+	}
+	return &StoreMaintenanceLock{lock: lock}, nil
+}
+
+// Release drops the lock. Idempotent.
+func (l *StoreMaintenanceLock) Release() error {
+	if l == nil || l.lock == nil {
+		return nil
+	}
+	err := l.lock.release()
+	l.lock = nil
+	return err
+}
+
+// StoreLockFileName is the name of the writer lock file inside a store.
+const StoreLockFileName = storeLockFileName

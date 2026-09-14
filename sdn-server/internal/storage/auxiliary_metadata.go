@@ -101,7 +101,7 @@ func openAuxiliaryMetadataStore(path string, readOnly bool) (*auxiliaryMetadataS
 			}
 			return nil, fmt.Errorf("auxiliary metadata: open read-only: %w", err)
 		}
-		valid, err := scanRecordCatalogValidLength(f)
+		valid, err := scanJournalValidLength(f)
 		if err != nil {
 			f.Close()
 			return nil, err
@@ -118,7 +118,7 @@ func openAuxiliaryMetadataStore(path string, readOnly bool) (*auxiliaryMetadataS
 	if err != nil {
 		return nil, fmt.Errorf("auxiliary metadata: open: %w", err)
 	}
-	valid, err := scanRecordCatalogValidLength(f)
+	valid, err := scanJournalValidLength(f)
 	if err != nil {
 		f.Close()
 		return nil, err
@@ -531,8 +531,8 @@ func (m *auxiliaryMetadataStore) validLength() int64 {
 }
 
 // digestPrefix fingerprints the auxiliary journal's frame headers over
-// [0, limit) — headers only, incrementally, for the reasons spelled out on
-// recordCatalogJournal.digestPrefix.
+// [0, limit) — headers only, and incrementally, so a periodic checkpoint costs
+// O(frames since the last one) instead of O(journal).
 func (m *auxiliaryMetadataStore) digestPrefix(limit int64) (string, error) {
 	if m == nil || m.f == nil {
 		return "", errors.New("auxiliary metadata journal is not open")
@@ -544,10 +544,10 @@ func (m *auxiliaryMetadataStore) digestPrefix(limit int64) (string, error) {
 		m.digest = newAuxiliaryMetadataDigest()
 		m.digestOffset = 0
 	}
-	if err := extendRecordCatalogDigest(m.digest, m.f, &m.digestOffset, limit); err != nil {
+	if err := extendJournalDigest(m.digest, m.f, &m.digestOffset, limit); err != nil {
 		return "", err
 	}
-	return sealRecordCatalogDigest(m.digest, limit)
+	return sealJournalDigest(m.digest, limit)
 }
 
 func (m *auxiliaryMetadataStore) Close() error {
@@ -754,4 +754,38 @@ func (s *FlatSQLStore) applyAuxiliaryMetadataEvent(event auxiliaryMetadataEvent)
 	default:
 		return fmt.Errorf("unknown auxiliary metadata event kind %q", event.Kind)
 	}
+}
+
+// scanJournalValidLength CRC-walks the {length, payload CRC32} frames of a
+// journal file to the first torn or corrupt frame and returns that offset.
+func scanJournalValidLength(f *os.File) (int64, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := info.Size()
+	off := int64(0)
+	var hdr [8]byte
+	for off < size {
+		if size-off < 8 {
+			break
+		}
+		if _, err := f.ReadAt(hdr[:], off); err != nil {
+			return 0, err
+		}
+		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
+		crc := binary.LittleEndian.Uint32(hdr[4:])
+		if n == 0 || off+8+n > size {
+			break
+		}
+		payload := make([]byte, n)
+		if _, err := f.ReadAt(payload, off+8); err != nil {
+			return 0, err
+		}
+		if crc32.ChecksumIEEE(payload) != crc {
+			break
+		}
+		off += 8 + n
+	}
+	return off, nil
 }

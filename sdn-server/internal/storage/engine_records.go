@@ -1,10 +1,10 @@
 package storage
 
 // engine_records.go wires SDS record vtabs into the store's FlatSQL-WASM
-// engine (loop B.3, docs/flatsql-store-v2.md §4/§5): the write path mirrors
-// every stored record of a ROUTED schema into a per-source shadow table
-// (`<Base>@<source-name>`), boot rebuilds the hot window from the durable
-// control tables + stream files, and epoch profile queries (nearest / as_of /
+// engine: the write path mirrors every stored record of a ROUTED schema into a
+// per-source shadow table (`<Base>@<source-name>`), a boot opens the engine's
+// persisted record state and reconciles it against the residency ledger
+// (engine_residency.go), and epoch profile queries (nearest / as_of /
 // forward) run natively inside the engine over the unified OMM view,
 // streaming aligned size-prefixed FlatBuffer frames out.
 //
@@ -28,7 +28,7 @@ package storage
 //
 // FIELD-ENCRYPTED STANDARDS ARE THE ONE THING THE DEFAULT DOES NOT SWALLOW.
 // A standard whose IDL declares an `(encrypted)` field is SEALED AT REST
-// (internal/encfield, field_encryption.go): the stream file holds an envelope
+// (internal/encfield, field_encryption.go): the stored row holds an envelope
 // and the plaintext lives only in the caller's buffer — which is exactly the
 // buffer this file mirrors into the engine, and the engine is the PUBLIC
 // /api/v1/query surface where `SELECT _data` returns the whole record. Routing
@@ -51,30 +51,19 @@ package storage
 // from resolving, and this file no longer claims otherwise. FAIL CLOSED: an
 // unrecognised standard is not routed rather than routed-and-hoped-about.
 //
-// The engine vtab is a pure cache: control rows + stream files remain the
-// source of truth, so ingest failures are logged and skipped — only a trapped
-// (poisoned) runtime is fatal.
-//
-// DELETE IS NOT MIRRORED. Store.Delete removes the control rows and the index
-// entry; it does NOT tombstone the engine row, so a deleted record keeps
-// answering from the sandboxed query surface until the next boot rebuild
-// (which reads sdn_record_index and therefore cannot see it). Residency is not
-// decremented either, so s.engineResident drifts HIGH after deletes. See
-// FlatSQLStore.Delete for the full statement of the semantics.
+// The engine vtab is a pure cache: the control tables remain the source of
+// truth, so ingest failures are logged and skipped — only a trapped (poisoned)
+// runtime is fatal. Deletes and supersedes ARE mirrored: the residency ledger
+// maps a CID to its engine row, so a removed record is tombstoned at once.
 
 //go:generate go run ./gen -schemas ../sds/schemas -out engine_standard_catalog.go
 
 import (
-	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -89,8 +78,8 @@ const (
 	// migration guidance's ~400K records. Configurable via
 	// WithEngineHotWindow (config storage.engine_hot_window). Enforced at
 	// boot rebuild (LIMIT) and at ingest (tombstone eviction of the oldest
-	// resident records). Eviction never touches stream files, the control
-	// journal, or datasync cursor rowids.
+	// resident records). Eviction never touches the control tables or the
+	// datasync cursor rowids.
 	engineDefaultHotWindow = 400_000
 
 	// engineDefaultGenericHotWindow bounds the records resident per
@@ -734,11 +723,6 @@ func (s *FlatSQLStore) engineResidentAdd(schemaName string, delta int64) {
 
 // engineIngest is one record queued for the engine vtab after its control
 // row committed.
-type engineIngest struct {
-	data   []byte
-	source string
-}
-
 // engineSourceName maps a record's source tags to the engine partition name.
 func engineSourceName(tags *SourceTags) string {
 	if tags != nil {
@@ -963,20 +947,17 @@ func (s *FlatSQLStore) ensureEngineSource(source string) error {
 }
 
 // engineIngestBatch accumulates consecutive records for ONE source and hands
-// them to the engine as a single size-prefixed stream (flatsql_ingest_with_source)
-// instead of one guest call + one journal fsync PER RECORD. Measured before
-// this existed: the boot replay ingested 1.2M TBS records at ~120/s, I/O bound
-// on a per-record fsync, holding the store lock for hours; batched, one fsync
-// covers up to engineIngestBatchRecords records.
+// them to the engine in one control transaction (ingestEngineBatchLocked):
+// per-record guest calls, but one journal write and one fsync per batch, and
+// one residency row per record in the same commit.
 type engineIngestBatch struct {
-	store   *FlatSQLStore
-	source  string
-	stream  []byte
-	records int
-	total   int64
-	// onFlush, when set, replaces the direct engine call so the caller can
-	// wrap one flush in its own locking/registration (the journal replay).
-	onFlush func(stream []byte, source string, n int) error
+	store      *FlatSQLStore
+	schemaName string
+	source     string
+	payloads   [][]byte
+	cids       []string
+	bytes      int
+	total      int64
 }
 
 const (
@@ -987,77 +968,39 @@ const (
 // add queues one bare FlatBuffer for source. A source change or a full batch
 // flushes first. Errors are the engine's: the caller decides whether a
 // poisoned runtime is fatal.
-func (b *engineIngestBatch) add(payload []byte, source string) error {
-	if b.records > 0 && (source != b.source || b.records >= engineIngestBatchRecords || len(b.stream)+4+len(payload) > engineIngestBatchBytes) {
+func (b *engineIngestBatch) add(payload []byte, cid, source string) error {
+	if len(b.payloads) > 0 && (source != b.source || len(b.payloads) >= engineIngestBatchRecords || b.bytes+len(payload) > engineIngestBatchBytes) {
 		if err := b.flush(); err != nil {
 			return err
 		}
 	}
 	b.source = source
-	var hdr [4]byte
-	binary.LittleEndian.PutUint32(hdr[:], uint32(len(payload)))
-	b.stream = append(b.stream, hdr[:]...)
-	b.stream = append(b.stream, payload...)
-	b.records++
+	b.payloads = append(b.payloads, payload)
+	b.cids = append(b.cids, cid)
+	b.bytes += len(payload)
 	return nil
 }
 
-// flush ingests the pending stream. On success the batch is empty and the
+// flush ingests the pending records. On success the batch is empty and the
 // records are counted in total.
 func (b *engineIngestBatch) flush() error {
-	if b.records == 0 {
+	if len(b.payloads) == 0 {
 		return nil
 	}
-	n := b.records
-	stream := b.stream
-	b.stream = b.stream[:0]
-	b.records = 0
-	if b.onFlush != nil {
-		if err := b.onFlush(stream, b.source, n); err != nil {
-			return err
-		}
-	} else if err := b.store.ingestEngineStreamLocked(stream, b.source); err != nil {
+	payloads, cids := b.payloads, b.cids
+	b.payloads, b.cids, b.bytes = nil, nil, 0
+	n, err := b.store.ingestEngineBatchLocked(b.schemaName, b.source, payloads, cids)
+	if err != nil {
 		return err
 	}
 	b.total += int64(n)
 	return nil
 }
 
-// ingestEngineStreamLocked hands one size-prefixed stream to the engine INSIDE
-// ONE SQLite TRANSACTION on the control connection. Without it every record
-// of a standard with nested vectors ($TBS: provenance SOURCES -> junction
-// rows) is its own autocommit transaction — journal write, truncate and a
-// full fsync each — measured at 20 records/s; inside one transaction the same
-// batch runs at ~1,700/s with synchronous=FULL (2026-09-02). The engine's
-// record arena is unaffected; only its derived SQL rows ride the transaction.
-// A caller that already holds a transaction (BEGIN refused) ingests as-is.
-// Caller holds s.mu for writing.
-func (s *FlatSQLStore) ingestEngineStreamLocked(stream []byte, source string) error {
-	inTxn := false
-	if s.db != nil {
-		if _, err := s.db.Exec("BEGIN"); err == nil {
-			inTxn = true
-		}
-	}
-	if _, err := s.engineDB.IngestWithSource(stream, source); err != nil {
-		if inTxn {
-			_, _ = s.db.Exec("ROLLBACK")
-		}
-		return err
-	}
-	if inTxn {
-		if _, err := s.db.Exec("COMMIT"); err != nil {
-			_, _ = s.db.Exec("ROLLBACK")
-			return fmt.Errorf("commit engine ingest batch: %w", err)
-		}
-	}
-	return nil
-}
-
 // ingestEngineRecords mirrors committed records into the engine vtab. The
-// control row + stream file are the source of truth, so per-record failures
-// are logged and skipped; only a poisoned (trapped) runtime is returned as an
-// error. Caller holds s.mu for writing.
+// control row is the source of truth, so per-record failures are logged and
+// skipped; only a poisoned (trapped) runtime is returned as an error. Caller
+// holds s.mu for writing.
 func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIngest) error {
 	binding, routed := s.engineRoutedSchemaFor(schemaName)
 	if !routed {
@@ -1069,7 +1012,7 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 		}
 		return nil
 	}
-	batch := &engineIngestBatch{store: s}
+	batch := &engineIngestBatch{store: s, schemaName: schemaName}
 	for _, p := range pending {
 		payload, reason, ok := engineIngestablePayload(binding, p.data)
 		if !ok {
@@ -1083,7 +1026,7 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 			}
 			continue
 		}
-		if err := batch.add(payload, p.source); err != nil {
+		if err := batch.add(payload, p.cid, p.source); err != nil {
 			log.Warnf("FlatSQL engine: ingest %s records into %q: %v", schemaName, batch.source, err)
 			if s.engine.Poisoned() {
 				return fmt.Errorf("FlatSQL engine poisoned during %s ingest: %w", schemaName, err)
@@ -1102,13 +1045,11 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 
 // enforceEngineHotWindowLocked evicts the OLDEST resident engine records
 // beyond the configured hot window by tombstoning them in their per-source
-// shadow tables (flatsql_mark_deleted): queries stop returning them
-// immediately, and the next boot rebuild (which loads at most the window)
-// reclaims the memory. The durable substrate is untouched — control rows,
-// stream files, and the datasync cursor rowid space keep every record.
-// Failures are logged and skipped (the window is a cache bound, not
-// correctness-critical state); only a poisoned runtime is fatal. Caller
-// holds s.mu for writing.
+// shadow tables (flatsql_mark_deleted) and dropping their residency rows:
+// queries stop returning them immediately. The control tables and the
+// datasync cursor rowid space keep every record. Failures are logged and
+// skipped (the window is a cache bound, not correctness-critical state); only
+// a poisoned runtime is fatal. Caller holds s.mu for writing.
 func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 	binding, routed := s.engineRoutedSchemaFor(schemaName)
 	window := s.engineWindowFor(schemaName)
@@ -1164,6 +1105,10 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 			}
 			continue
 		}
+		if _, err := s.db.Exec(`DELETE FROM sdn_engine_rows WHERE schema_name = ? AND source = ? AND seq = ?`,
+			engineLedgerSchema(schemaName), engineSourceOfPartition(binding.Table, source), seq); err != nil {
+			log.Warnf("FlatSQL engine: drop residency row %s seq %d: %v", source, seq, err)
+		}
 		evicted++
 	}
 	s.engineResidentAdd(schemaName, -evicted)
@@ -1172,112 +1117,6 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 			evicted, schemaName, window)
 	}
 	return nil
-}
-
-// rebuildEngineRecords reloads the engine vtab hot window from durable state
-// at boot, once per ROUTED schema: the newest engineHotWindow records of that
-// schema (by global index rowid), replayed in ascending rowid order from the
-// stream files. A no-op on empty stores. Never fails the open for per-record
-// problems — only a poisoned runtime is fatal. Called from NewFlatSQLStore
-// before the store is shared, so no locking is needed.
-//
-// The window is PER SCHEMA: a store that has ingested millions of $OMM must
-// still come back with its $TBS sites resident, so the two never share (and
-// never evict each other out of) one budget.
-func (s *FlatSQLStore) rebuildEngineRecords() error {
-	if s.engineStateWarm {
-		// The engine opened its persisted records; a from-index rebuild would
-		// ingest every one of them a second time. Only the journal tail past
-		// the resume mark can be missing.
-		_, err := s.applyEngineJournalTail(context.Background(), true)
-		return err
-	}
-	s.preregisterEngineSources()
-	present, err := s.schemasWithRecordTables()
-	if err != nil {
-		log.Warnf("FlatSQL engine rebuild: enumerate schemas with record tables: %v", err)
-		present = nil
-	}
-	for _, schemaName := range s.engineRoutedSchemaNames() {
-		// ONE schema-catalog query answers "which schemas could have a record
-		// at all", so a store that has never seen 219 of the 226 routed
-		// standards does not pay 219 hot-window queries at every boot. A nil
-		// map means the enumeration itself failed; fall back to probing each
-		// schema, which is what this always did.
-		if present != nil && !present[schemaName] {
-			s.engineResidentSet(schemaName, 0)
-			continue
-		}
-		if err := s.rebuildEngineRecordsForSchema(schemaName); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// restoreEngineResidencyFromPersistedState rebuilds the Go-side residency
-// bookkeeping from the tables the engine just opened from disk, and re-applies
-// the per-standard hot-window bound: the engine persists records and index but
-// NOT tombstones (measured: a MarkDeleted row is visible again after
-// FlushIndex + reopen), so the oldest rows beyond the window are evicted again
-// here, exactly as live ingest evicts them. Called from NewFlatSQLStore before
-// the store is shared, so no locking is needed. Returns the resident total.
-func (s *FlatSQLStore) restoreEngineResidencyFromPersistedState() int64 {
-	present, err := s.schemasWithRecordTables()
-	if err != nil {
-		log.Warnf("FlatSQL engine records: enumerate schemas with record tables: %v", err)
-		present = nil
-	}
-	var total int64
-	for _, schemaName := range s.engineRoutedSchemaNames() {
-		binding, routed := s.engineRoutedSchemaFor(schemaName)
-		if !routed || (present != nil && !present[schemaName]) {
-			s.engineResidentSet(schemaName, 0)
-			continue
-		}
-		var n int64
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM "` + binding.Table + `"`).Scan(&n); err != nil {
-			// A base name that does not resolve yet answers as zero resident;
-			// the first live record registers it.
-			s.engineResidentSet(schemaName, 0)
-			continue
-		}
-		s.engineResidentSet(schemaName, n)
-		s.engineSchemaLoadedSet(schemaName)
-		total += n
-		if n == 0 {
-			continue
-		}
-		if err := s.enforceEngineHotWindowLocked(schemaName); err != nil {
-			log.Warnf("FlatSQL engine records: re-apply %s hot window after warm open: %v", schemaName, err)
-		}
-		log.Infof("FlatSQL engine records: %s — %d persisted record(s) resident from disk (window %d)", schemaName, s.engineResidentCount(schemaName), s.engineWindowFor(schemaName))
-	}
-	return total
-}
-
-// applyEngineJournalTail ingests into the engine the records whose catalog
-// frames were journaled after the resume mark the engine state was flushed
-// against — the only records a warm engine can be missing. The offset is
-// consumed once; a second call is a no-op. callerHoldsLock says the caller
-// owns the store write lock (open before the store is shared,
-// RebuildDerivedState); the background hydration passes false and the replay
-// locks per batch.
-func (s *FlatSQLStore) applyEngineJournalTail(ctx context.Context, callerHoldsLock bool) (int, error) {
-	from := s.engineTailFrom.Swap(0)
-	if s.recordCatalog == nil || from <= 0 {
-		return 0, nil
-	}
-	count, err := s.recordCatalog.ReplayEngineHotWindowsOpts(ctx, s, s.engineRoutedSchemaNames(), s.engineWindowFor, engineReplayOptions{From: from, CallerHoldsStoreLock: callerHoldsLock})
-	if err != nil {
-		// Put the offset back: a cancelled or failed tail must be retried.
-		s.engineTailFrom.CompareAndSwap(0, from)
-		return count, err
-	}
-	if count > 0 {
-		log.Infof("FlatSQL engine records: ingested %d record(s) from the journal tail past offset %d", count, from)
-	}
-	return count, nil
 }
 
 // preregisterEngineSources registers every source the derived summary cache
@@ -1429,171 +1268,6 @@ func (s *FlatSQLStore) schemasWithRecordTables() (map[string]bool, error) {
 	return present, nil
 }
 
-func (s *FlatSQLStore) rebuildEngineRecordsForSchema(schemaName string) error {
-	binding, routed := s.engineRoutedSchemaFor(schemaName)
-	if !routed {
-		s.engineResidentSet(schemaName, 0)
-		return nil
-	}
-	readSource, err := s.recordReadSource(schemaName)
-	if err != nil {
-		log.Warnf("FlatSQL engine rebuild: record read source: %v", err)
-		return nil
-	}
-
-	// BOTH SPELLINGS. sdn_record_index.schema_name is written verbatim in
-	// whatever spelling the writer used, and the bare code is the shape the
-	// module SDK and the wasm provider sources actually pass
-	// (engineSchemaNameAliases). Matching only the canonical ".fbs" name meant
-	// a record stored as "IRM" was live-readable and then came back as ZERO
-	// rows after a restart.
-	aliases := engineSchemaNameAliases(schemaName)
-	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")
-
-	// PAGED BY ROWID, AND THAT IS THE WHOLE FIX.
-	//
-	// This used to be ONE statement: a join over every sdn_record_index row for
-	// the schema, a correlated source-tag lookup per row, an ORDER BY rowid
-	// DESC and a LIMIT of the whole hot window. One statement is one engine
-	// call, and an engine call that outlives the uninterruptible per-call
-	// budget abandons the execution thread and POISONS the instance — the node
-	// then answers nothing until a human intervenes.
-	//
-	// MEASURED on host-02's real store (3,535,562 index rows, 5,697,842
-	// source-tag rows, AOT, 2026-08-27): the single statement for CAT.fbs held
-	// the engine 5m0.001s and poisoned it. The window is now filled newest-first
-	// in pages of engineHotWindowRebuildPage rows, each its own bounded call,
-	// seeking on idx.rowid — so the cost per call is a function of the PAGE, not
-	// of the store.
-	//
-	// Order is preserved exactly: pages descend, and the ingest walks the pages
-	// in reverse and each page in reverse, so records still land oldest-first
-	// and the arena sequence is unchanged.
-	window := s.engineWindowFor(schemaName)
-	pages, pageStats, err := s.readEngineHotWindowPages(schemaName, readSource, aliases, placeholders, window)
-	if err != nil {
-		log.Warnf("FlatSQL engine rebuild: query %s hot window: %v", schemaName, err)
-		return nil
-	}
-	if pageStats.slowest*2 > s.engineExecBudget() {
-		log.Warnf("FlatSQL engine rebuild: the slowest %s hot-window page (%d rows) held the engine %s — over half the %s per-call budget. Lower the page size before this store grows again.",
-			schemaName, pageStats.slowestRows, pageStats.slowest.Round(time.Millisecond), s.engineExecBudget())
-	}
-
-	// Cache stream file handles across records: the hot window reads the same
-	// few append-only files millions of times otherwise.
-	files := map[string]*os.File{}
-	defer func() {
-		for _, f := range files {
-			_ = f.Close()
-		}
-	}()
-
-	skipped := 0
-	batch := &engineIngestBatch{store: s}
-	// Oldest first: pages descend by rowid, so walk them backwards and each
-	// page backwards. Same order the single ORDER BY rid ASC statement gave.
-	for p := len(pages) - 1; p >= 0; p-- {
-		page := pages[p]
-		for i := len(page) - 1; i >= 0; i-- {
-			row := page[i]
-			streamPath, sourceName := row.streamPath, row.sourceName
-			streamOffset, recordLength := row.streamOffset, row.recordLength
-			data, err := s.readStreamRecordCached(files, streamPath, streamOffset, recordLength)
-			if err != nil {
-				log.Warnf("FlatSQL engine rebuild: read %s@%d: %v", streamPath, streamOffset, err)
-				skipped++
-				continue
-			}
-			// readStreamRecordCached is the RAW reader: unlike
-			// readFlatSQLStreamRecord it does NOT run the field-decryption pass, so
-			// a sealed standard's frame arrives here as an encfield ENVELOPE. That
-			// envelope cannot ingest, and counting it as resident is what made a
-			// restart report rows it did not have.
-			payload, reason, ok := engineIngestablePayload(binding, data)
-			if !ok {
-				log.Warnf("FlatSQL engine rebuild: skip %s record at %s@%d: %s", schemaName, streamPath, streamOffset, reason)
-				skipped++
-				continue
-			}
-			source := strings.TrimSpace(sourceName)
-			if source == "" {
-				source = engineDefaultSource
-			}
-			if err := s.ensureEngineSource(source); err != nil {
-				log.Warnf("FlatSQL engine rebuild: register source %q: %v", source, err)
-				if s.engine.Poisoned() {
-					return fmt.Errorf("FlatSQL engine poisoned registering source %q: %w", source, err)
-				}
-				skipped++
-				continue
-			}
-			if err := batch.add(payload, source); err != nil {
-				log.Warnf("FlatSQL engine rebuild: ingest records: %v", err)
-				if s.engine.Poisoned() {
-					return fmt.Errorf("FlatSQL engine poisoned during rebuild ingest: %w", err)
-				}
-			}
-		}
-	}
-	if err := batch.flush(); err != nil {
-		log.Warnf("FlatSQL engine rebuild: ingest records: %v", err)
-		if s.engine.Poisoned() {
-			return fmt.Errorf("FlatSQL engine poisoned during rebuild ingest: %w", err)
-		}
-	}
-	rebuilt := int(batch.total)
-	s.engineResidentSet(schemaName, int64(rebuilt))
-	if rebuilt > 0 || skipped > 0 {
-		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped, window %d, %d page(s), slowest page %s)",
-			rebuilt, schemaName, skipped, window, pageStats.pages, pageStats.slowest.Round(time.Millisecond))
-	}
-	return nil
-}
-
-// readStreamRecordCached is readFlatSQLStreamRecord's RAW sibling with a
-// caller-owned open file cache (boot rebuild reads the same append-only stream
-// files record by record).
-//
-// RAW IS THE DIFFERENCE THAT MATTERS. readFlatSQLStreamRecord runs the
-// transparent field-level DECRYPTION pass (E1, the mirror of Append's seal);
-// this does not. For a sealed standard the bytes it returns are an encfield
-// envelope, not a FlatBuffer — which is precisely why every caller passes them
-// through engineIngestablePayload instead of straight to the engine.
-func (s *FlatSQLStore) readStreamRecordCached(files map[string]*os.File, streamPath string, streamOffset, recordLength int64) ([]byte, error) {
-	if streamOffset < 0 {
-		return nil, fmt.Errorf("negative FlatSQL stream offset %d", streamOffset)
-	}
-	if recordLength < 0 || recordLength > int64(^uint32(0)) {
-		return nil, fmt.Errorf("invalid FlatSQL record length %d", recordLength)
-	}
-	clean := filepath.Clean(streamPath)
-	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
-		return nil, fmt.Errorf("invalid FlatSQL stream path %q", streamPath)
-	}
-	file, ok := files[clean]
-	if !ok {
-		var err error
-		file, err = os.Open(filepath.Join(s.basePath, clean))
-		if err != nil {
-			return nil, err
-		}
-		files[clean] = file
-	}
-	var sizePrefix [4]byte
-	if _, err := file.ReadAt(sizePrefix[:], streamOffset); err != nil {
-		return nil, err
-	}
-	if length := int64(binary.LittleEndian.Uint32(sizePrefix[:])); length != recordLength {
-		return nil, fmt.Errorf("FlatSQL stream frame length = %d, want %d", length, recordLength)
-	}
-	data := make([]byte, recordLength)
-	if _, err := file.ReadAt(data, streamOffset+4); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
 // QueryEpochRawStream runs an engine-native epoch profile (nearest, as_of,
 // forward) over the unified OMM view and returns the aligned size-prefixed
 // FlatBuffer frame stream — the wire format served to the network — without
@@ -1673,169 +1347,6 @@ func (s *FlatSQLStore) EngineRecordCount(schemaName string) (int64, error) {
 		return 0, fmt.Errorf("unexpected engine count cell type %T", res.Rows[0][0])
 	}
 	return count, nil
-}
-
-// engineHotWindowRebuildPage bounds ONE hot-window rebuild statement in rows.
-//
-// It is deliberately small. The per-call budget is five minutes and the
-// measured single-statement cost on host-02's real store was over it, so the
-// page has to leave room for a store several times larger before any one call
-// gets close again. 2,000 rows against a 3.5M-row index is three orders of
-// magnitude of headroom, and the extra statements are free: the engine lock is
-// held for the same total time either way (measured at 0% of a 30-minute
-// production window).
-//
-// A var, not a const, so a test can shrink it and prove the paged read
-// reproduces the single-statement result exactly.
-var engineHotWindowRebuildPage = 2000
-
-// engineHotWindowRow is one row of the paged hot-window read.
-type engineHotWindowRow struct {
-	rid          int64
-	streamPath   string
-	streamOffset int64
-	recordLength int64
-	sourceName   string
-}
-
-// engineHotWindowPageStats reports what the paging cost, so a box that is
-// approaching the budget says so in its log instead of dying quietly.
-type engineHotWindowPageStats struct {
-	pages       int
-	slowest     time.Duration
-	slowestRows int
-}
-
-// readEngineHotWindowPages fills a schema's hot window newest-first, in bounded
-// pages, seeking on sdn_record_index.rowid.
-//
-// The returned pages are ordered newest page first, and each page's rows
-// descend by rowid — the caller reverses both to ingest oldest-first.
-//
-// Strings are interned across pages on purpose: a 400,000-row $OMM window
-// repeats the same handful of stream paths and source names, and interning
-// turns tens of megabytes of duplicate strings into pointers.
-func (s *FlatSQLStore) readEngineHotWindowPages(schemaName, readSource string, aliases []string, placeholders string, window int) ([][]engineHotWindowRow, engineHotWindowPageStats, error) {
-	stats := engineHotWindowPageStats{}
-	if window <= 0 {
-		return nil, stats, nil
-	}
-	// THE PLAN IS THE FIX, and the engine's own EXPLAIN is what named it.
-	//
-	// This read used to resolve each record's source with a CORRELATED
-	// LIMIT-1 subquery:
-	//
-	//	COALESCE((SELECT tags.source_name FROM sdn_record_source_tags tags
-	//	          WHERE tags.schema_name = idx.schema_name AND tags.cid = idx.cid
-	//	          ORDER BY tags.created_at DESC LIMIT 1), '')
-	//
-	// The ORDER BY makes SQLite prefer the index that satisfies it —
-	// idx_sdn_record_source_tags_recent (schema_name, created_at DESC, cid) —
-	// which probes on schema_name ALONE and then walks that schema's tag rows
-	// looking for the cid. Per record. Measured on host-02's real store
-	// (159,835 CAT rows, 5,697,842 tag rows, AOT, 256 MiB page cache): 5m0s and
-	// a poisoned engine, with the working set fully cached (22,423 host reads).
-	// It was never I/O — with SQLite's default ~2 MB cache the same statement
-	// also read 64 GB back through the host shim, so it was BOTH, and fixing
-	// only the cache fixed nothing.
-	//
-	// A LEFT JOIN has no ORDER BY to satisfy, so the planner takes the
-	// two-column equality index instead:
-	//
-	//	SEARCH tags USING INDEX idx_sdn_record_source_tags_unique (schema_name=? AND cid=?)
-	//
-	// Rows arrive oldest-tag-first per record and the newest wins in Go, which
-	// is exactly what LIMIT 1 over `created_at DESC` meant.
-	query := fmt.Sprintf(`
-		SELECT page.rid, page.stream_path, page.stream_offset, page.record_length,
-		       COALESCE(tags.source_name, '') AS source_name
-		FROM (
-			SELECT idx.rowid AS rid,
-			       idx.cid AS cid,
-			       idx.schema_name AS schema_name,
-			       rr.stream_path AS stream_path,
-			       rr.stream_offset AS stream_offset,
-			       rr.record_length AS record_length
-			FROM sdn_record_index idx
-			JOIN %s rr ON rr.cid = idx.cid
-			WHERE idx.schema_name IN (%s) AND idx.rowid < ?
-			ORDER BY idx.rowid DESC
-			LIMIT ?
-		) page
-		LEFT JOIN sdn_record_source_tags tags
-		  ON tags.schema_name = page.schema_name AND tags.cid = page.cid
-		ORDER BY page.rid DESC, tags.created_at ASC
-	`, readSource, placeholders)
-
-	intern := map[string]string{}
-	keep := func(v string) string {
-		if got, ok := intern[v]; ok {
-			return got
-		}
-		intern[v] = v
-		return v
-	}
-
-	var pages [][]engineHotWindowRow
-	cursor := int64(math.MaxInt64)
-	remaining := window
-	for remaining > 0 {
-		limit := engineHotWindowRebuildPage
-		if limit > remaining {
-			limit = remaining
-		}
-		args := make([]any, 0, len(aliases)+2)
-		for _, alias := range aliases {
-			args = append(args, alias)
-		}
-		args = append(args, cursor, limit)
-
-		started := time.Now()
-		rows, err := s.db.Query(query, args...)
-		if err != nil {
-			return nil, stats, err
-		}
-		// The LEFT JOIN yields ONE ROW PER SOURCE TAG, so a record with two
-		// tags arrives twice, oldest first. Collapsing on rid with last-wins
-		// reproduces the LIMIT-1-over-created_at-DESC answer exactly.
-		page := make([]engineHotWindowRow, 0, limit)
-		for rows.Next() {
-			var row engineHotWindowRow
-			var streamPath, sourceName string
-			if err := rows.Scan(&row.rid, &streamPath, &row.streamOffset, &row.recordLength, &sourceName); err != nil {
-				rows.Close()
-				return nil, stats, err
-			}
-			row.streamPath = keep(streamPath)
-			row.sourceName = keep(sourceName)
-			if n := len(page); n > 0 && page[n-1].rid == row.rid {
-				page[n-1] = row
-				continue
-			}
-			page = append(page, row)
-		}
-		iterErr := rows.Err()
-		rows.Close()
-		held := time.Since(started)
-		if held > stats.slowest {
-			stats.slowest, stats.slowestRows = held, len(page)
-		}
-		if iterErr != nil {
-			return nil, stats, iterErr
-		}
-		if len(page) == 0 {
-			break
-		}
-		stats.pages++
-		pages = append(pages, page)
-		cursor = page[len(page)-1].rid
-		remaining -= len(page)
-		if len(page) < limit {
-			// Short page: the index is exhausted for this schema.
-			break
-		}
-	}
-	return pages, stats, nil
 }
 
 // engineEvictionCandidate is one row the hot window may tombstone: the FULL

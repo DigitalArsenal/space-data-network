@@ -2,7 +2,6 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -45,8 +44,8 @@ func TestNewFlatSQLStore(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmpDir, "control.sdnj")); !os.IsNotExist(err) {
 		t.Fatalf("control.sdnj should not exist; statement logs are not a store artifact (err=%v)", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, recordCatalogJournalFileName)); err != nil {
-		t.Fatalf("compact record catalog was not created: %v", err)
+	if _, err := os.Stat(filepath.Join(tmpDir, flatSQLControlDBName)); err != nil {
+		t.Fatalf("control database was not created: %v", err)
 	}
 }
 
@@ -90,38 +89,6 @@ func TestNewFlatSQLStoreCreatesCanonicalSchemaTablesWithoutSQLiteBlobs(t *testin
 	assertHasColumns(t, store, routedTable, "cid", "peer_id", "timestamp", "stream_path", "stream_offset", "record_length", "signature_hex")
 }
 
-func TestFlatSQLStreamAppenderUsesBufferedWriter(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-buffered-appender-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("Failed to create validator: %v", err)
-	}
-	store, err := NewFlatSQLStore(tmpDir, validator)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	appender, err := store.newFlatSQLStreamAppender("OMM.fbs")
-	if err != nil {
-		t.Fatalf("newFlatSQLStreamAppender failed: %v", err)
-	}
-	if appender.writer == nil {
-		t.Fatal("FlatSQL stream appender must buffer small record writes")
-	}
-	if _, _, _, err := appender.Append([]byte("buffered-record")); err != nil {
-		t.Fatalf("Append failed: %v", err)
-	}
-	if err := appender.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
-}
-
 func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
@@ -133,20 +100,12 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 	}
 	defer store.Close()
 
-	appender, err := store.newFlatSQLStreamAppender("OMM.fbs")
-	if err != nil {
-		t.Fatalf("newFlatSQLStreamAppender failed: %v", err)
-	}
-	defer appender.Close()
 	record := sds.NewOMMBuilder().
 		WithNoradCatID(25544).
 		WithObjectID("1998-067A").
 		WithEpoch("2024-01-16T11:51:22Z").
 		Build()
-	streamPath, streamOffset, recordLength, err := appender.Append(record)
-	if err != nil {
-		t.Fatalf("Append failed: %v", err)
-	}
+	recordLength := int64(len(record))
 
 	// WS7.3d routed-only: the fast path inserts into the producer's table.
 	routedTable, err := store.ensureProducerStandardTable("source:catalogfixture", "OMM.fbs")
@@ -161,7 +120,7 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 	defer tx.Rollback()
 
 	cid := computeCID(record)
-	rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, cid, "source:catalogfixture", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000)
+	rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, storedRecord{cid: cid, peerID: "source:catalogfixture", timestamp: 1700000000, data: record, createdAt: 1700000000})
 	if err != nil {
 		t.Fatalf("insertSchemaMetadataReturningRowID failed: %v", err)
 	}
@@ -191,218 +150,6 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 	}
 	if recordCount != 1 || totalBytes != recordLength || maxRowID != rowID {
 		t.Fatalf("source summary = count:%d bytes:%d rowid:%d, want 1/%d/%d", recordCount, totalBytes, maxRowID, recordLength, rowID)
-	}
-}
-
-func TestNewFlatSQLStoreMigratesExistingCanonicalBlobTableToStreamMetadata(t *testing.T) {
-	t.Skip("obsolete: fabricates a legacy sdn.db; the engine store never reads sqlite files — legacy import is the B.7 migration CLI")
-	tmpDir, err := os.MkdirTemp("", "flatsql-existing-table-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	db, err := sql.Open("sqlite3", filepath.Join(tmpDir, "sdn.db"))
-	if err != nil {
-		t.Fatalf("open sqlite db failed: %v", err)
-	}
-	payload := []byte("canonical-omm-payload")
-	if _, err := db.Exec(`
-		CREATE TABLE OMM (
-			cid TEXT PRIMARY KEY,
-			peer_id TEXT NOT NULL,
-			timestamp INTEGER NOT NULL,
-			data BLOB NOT NULL,
-			signature BLOB,
-			created_at INTEGER DEFAULT (strftime('%s', 'now')),
-			UNIQUE(cid)
-		)
-	`); err != nil {
-		t.Fatalf("create existing schema table failed: %v", err)
-	}
-	if _, err := db.Exec(`
-		INSERT INTO OMM (cid, peer_id, timestamp, data, signature)
-		VALUES ('canonical-cid', 'source:catalogfixture', 1700000000, ?, x'010203')
-	`, payload); err != nil {
-		t.Fatalf("insert existing canonical record failed: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close sqlite db failed: %v", err)
-	}
-
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("Failed to create validator: %v", err)
-	}
-
-	store, err := NewFlatSQLStore(tmpDir, validator)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	assertNoSQLiteBlobColumns(t, store, "OMM")
-	record, err := store.Get("OMM.fbs", "canonical-cid")
-	if err != nil {
-		t.Fatalf("migrated canonical record lookup failed: %v", err)
-	}
-	if string(record) != string(payload) {
-		t.Fatalf("migrated canonical payload = %q, want %q", string(record), string(payload))
-	}
-}
-
-func TestNewFlatSQLStoreMigratesLegacySDSTableToCanonicalSchemaTable(t *testing.T) {
-	t.Skip("obsolete: fabricates a legacy sdn.db; the engine store never reads sqlite files — legacy import is the B.7 migration CLI")
-	tmpDir, err := os.MkdirTemp("", "flatsql-legacy-table-migration-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	db, err := sql.Open("sqlite3", filepath.Join(tmpDir, "sdn.db"))
-	if err != nil {
-		t.Fatalf("open sqlite db failed: %v", err)
-	}
-	legacyPayload := []byte("legacy-catalog-payload")
-	if _, err := db.Exec(`
-		CREATE TABLE sds_cat (
-			cid TEXT PRIMARY KEY,
-			peer_id TEXT NOT NULL,
-			timestamp INTEGER NOT NULL,
-			data BLOB NOT NULL,
-			signature BLOB,
-			created_at INTEGER DEFAULT (strftime('%s', 'now')),
-			UNIQUE(cid)
-		)
-	`); err != nil {
-		t.Fatalf("create legacy schema table failed: %v", err)
-	}
-	if _, err := db.Exec(`
-		INSERT INTO sds_cat (cid, peer_id, timestamp, data, signature)
-		VALUES ('legacy-cid', 'source:catalogfixture', 1700000000, ?, NULL)
-	`, legacyPayload); err != nil {
-		t.Fatalf("insert legacy record failed: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close sqlite db failed: %v", err)
-	}
-
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("Failed to create validator: %v", err)
-	}
-	store, err := NewFlatSQLStore(tmpDir, validator)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	if exists, err := store.tableExists("CAT"); err != nil {
-		t.Fatalf("canonical table lookup failed: %v", err)
-	} else if !exists {
-		t.Fatal("canonical CAT table was not created from the legacy fixture")
-	}
-	if exists, err := store.tableExists("sds_cat"); err != nil {
-		t.Fatalf("legacy table lookup failed: %v", err)
-	} else if exists {
-		t.Fatal("legacy fixture table still exists after migration")
-	}
-	assertNoSQLiteBlobColumns(t, store, "CAT")
-	assertHasColumns(t, store, "CAT", "stream_path", "stream_offset", "record_length", "signature_hex")
-	record, err := store.Get("CAT.fbs", "legacy-cid")
-	if err != nil {
-		t.Fatalf("migrated record lookup failed: %v", err)
-	}
-	if string(record) != string(legacyPayload) {
-		t.Fatalf("migrated payload = %q, want %q", string(record), string(legacyPayload))
-	}
-}
-
-func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-resume-migration-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("Failed to create validator: %v", err)
-	}
-	store, err := NewFlatSQLStore(tmpDir, validator)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	// EVERY embedded standard is engine-routed now, so every canonical name is
-	// a unified view in a healthy store and the blob->stream resume migration
-	// is only reachable where routing was EXCLUDED — a database that already
-	// held a plain table of that name. Dropping the view and excluding the
-	// standard reproduces exactly that store, which is the only shape this
-	// migration still runs against.
-	if _, err := store.db.Exec(`
-		CREATE TABLE sds_cat (
-			cid TEXT PRIMARY KEY,
-			peer_id TEXT NOT NULL,
-			timestamp INTEGER NOT NULL,
-			data BLOB NOT NULL,
-			signature BLOB,
-			UNIQUE(cid)
-		)
-	`); err != nil {
-		t.Fatalf("create legacy schema table failed: %v", err)
-	}
-	existingPayload := []byte("existing-cat-payload")
-	newPayload := []byte("new-cat-payload")
-	if _, err := store.db.Exec(`
-		INSERT INTO sds_cat (cid, peer_id, timestamp, data, signature)
-		VALUES
-			('existing-cid', 'source:catalogfixture', 1700000000, ?, NULL),
-			('new-cid', 'source:catalogfixture', 1700000001, ?, NULL)
-	`, existingPayload, newPayload); err != nil {
-		t.Fatalf("insert legacy records failed: %v", err)
-	}
-
-	streamPath, streamOffset, recordLength, err := store.appendFlatSQLStreamRecord("CAT.fbs", existingPayload)
-	if err != nil {
-		t.Fatalf("append existing stream record failed: %v", err)
-	}
-	// Simulate a pre-flip database: the canonical legacy table exists with rows.
-	store.engineExcluded["CAT.fbs"] = true
-	if _, err := store.db.Exec(`DROP VIEW IF EXISTS CAT`); err != nil {
-		t.Fatalf("drop routed CAT view: %v", err)
-	}
-	if err := store.createSchemaMetadataTable("CAT"); err != nil {
-		t.Fatalf("create canonical legacy table failed: %v", err)
-	}
-	if err := insertSchemaMetadata(store.db, "CAT", "existing-cid", "source:catalogfixture", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
-		t.Fatalf("insert existing metadata failed: %v", err)
-	}
-	streamFile := filepath.Join(tmpDir, streamPath)
-	before, err := os.Stat(streamFile)
-	if err != nil {
-		t.Fatalf("stat stream before migration failed: %v", err)
-	}
-
-	if err := store.copyBlobSchemaRowsToMetadataTable("CAT.fbs", "sds_cat", "CAT"); err != nil {
-		t.Fatalf("copy legacy rows failed: %v", err)
-	}
-
-	after, err := os.Stat(streamFile)
-	if err != nil {
-		t.Fatalf("stat stream after migration failed: %v", err)
-	}
-	expectedGrowth := int64(4 + len(newPayload))
-	if growth := after.Size() - before.Size(); growth != expectedGrowth {
-		t.Fatalf("stream file grew by %d bytes, want only new record growth %d", growth, expectedGrowth)
-	}
-	record, err := store.Get("CAT.fbs", "new-cid")
-	if err != nil {
-		t.Fatalf("migrated new record lookup failed: %v", err)
-	}
-	if string(record) != string(newPayload) {
-		t.Fatalf("migrated new payload = %q, want %q", string(record), string(newPayload))
 	}
 }
 
@@ -2276,90 +2023,6 @@ func TestFlatSQLStoreDeferredBootRebuildsKeepStreamBackedRawRecordsAvailable(t *
 	}
 	if len(raw) != 1 {
 		t.Fatalf("QueryRawRecords returned %d records, want 1", len(raw))
-	}
-}
-
-func TestFlatSQLStoreRecordCatalogUsesCompactMetadataJournal(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-record-catalog-journal-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("Failed to create validator: %v", err)
-	}
-
-	tags := SourceTags{
-		ProviderID:   "space-data-network-02",
-		SourceName:   "catalogfixture-gp",
-		BatchID:      "current-batch",
-		ContentKeyID: "public",
-	}
-	store, err := NewFlatSQLStore(tmpDir, validator)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	firstCID, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build(), "provider", nil, tags)
-	if err != nil {
-		t.Fatalf("store first source-tagged record: %v", err)
-	}
-	secondCID, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("SATELLITE").Build(), "provider", nil, tags)
-	if err != nil {
-		t.Fatalf("store second source-tagged record: %v", err)
-	}
-	liveHead, err := store.RawRecordHead(RawRecordQuery{SchemaName: "OMM.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName})
-	if err != nil {
-		t.Fatalf("live RawRecordHead: %v", err)
-	}
-	if liveHead.MaxRowID <= 0 {
-		t.Fatalf("live MaxRowID = %d, want populated cursor head", liveHead.MaxRowID)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close store: %v", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(tmpDir, "control.sdnj")); !os.IsNotExist(err) {
-		t.Fatalf("control.sdnj should not exist after record writes (err=%v)", err)
-	}
-	catalogBytes, err := os.ReadFile(filepath.Join(tmpDir, recordCatalogJournalFileName))
-	if err != nil {
-		t.Fatalf("read compact record catalog journal: %v", err)
-	}
-	if len(catalogBytes) == 0 {
-		t.Fatal("compact record catalog journal is empty")
-	}
-	if bytes.Contains(catalogBytes, []byte("INSERT INTO")) || bytes.Contains(catalogBytes, []byte("sdn_record_index")) {
-		t.Fatal("compact record catalog journal contains SQL text")
-	}
-
-	reopened, err := NewFlatSQLStore(tmpDir, validator, WithDeferredBootRebuilds())
-	if err != nil {
-		t.Fatalf("reopen with deferred boot rebuilds: %v", err)
-	}
-	defer reopened.Close()
-	raw, err := reopened.QueryRawRecords(RawRecordQuery{SchemaName: "OMM.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, Limit: 10})
-	if err != nil {
-		t.Fatalf("QueryRawRecords after compact replay: %v", err)
-	}
-	if len(raw) != 2 {
-		t.Fatalf("QueryRawRecords returned %d records, want 2", len(raw))
-	}
-	replayedHead, err := reopened.RawRecordHead(RawRecordQuery{SchemaName: "OMM.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName})
-	if err != nil {
-		t.Fatalf("replayed RawRecordHead: %v", err)
-	}
-	if replayedHead.MaxRowID != liveHead.MaxRowID {
-		t.Fatalf("replayed MaxRowID = %d, want live cursor head %d", replayedHead.MaxRowID, liveHead.MaxRowID)
-	}
-	if _, err := reopened.GetRawRecord("OMM.fbs", firstCID); err != nil {
-		t.Fatalf("first CID missing after compact replay: %v", err)
-	}
-	if gotTags, err := reopened.GetSourceTags("OMM.fbs", secondCID); err != nil {
-		t.Fatalf("second CID tags missing after compact replay: %v", err)
-	} else if gotTags.ProviderID != tags.ProviderID || gotTags.SourceName != tags.SourceName || gotTags.BatchID != tags.BatchID {
-		t.Fatalf("second CID tags = %+v, want provider/source/batch from compact replay", gotTags)
 	}
 }
 

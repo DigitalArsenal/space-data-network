@@ -512,13 +512,10 @@ deliberately NOT the materialization path:
   NOT trusted never materializes (no new import path was added) and serves
   503 + pointer — on-demand p2p fetch-through remains a possible
   G-follow-on, decided separately.
-- **NOT evicted** (deliberately): append-only FlatSQL stream file bytes
-  (control rows are the deletion unit, the payload substrate is append-only
-  by design — disk reclamation is a store-compaction concern, not a pin
-  concern) and the in-memory engine hot window (a bounded cache — max
-  `storage.engine_hot_window` records — rebuilt from the surviving control
-  rows at boot; live tombstoning would need a cid→vtab-sequence mapping the
-  control tables do not keep).
+- **Evicted with the row**: the record bytes live on the control row, so
+  deleting the row deletes the bytes (SQLite reuses the freed pages), and the
+  engine hot window's copy is tombstoned in the same call through the
+  residency ledger (`sdn_engine_rows`, the cid→vtab-sequence mapping).
 
 ### 404 vs 503 (documented choice)
 

@@ -98,86 +98,6 @@ func TestAnUnreadableControlDatabaseFailsClosedAtTheProbe(t *testing.T) {
 	}
 }
 
-// TestLegacyBlobTableKeepsItsStandardUnroutedUntilItsRowsMigrate is the
-// ruling's SECOND per-store exclusion.
-//
-// migrateLegacySchemaTable merges a pre-stream `sds_<lower>` BLOB table into
-// the canonical table, and DEFERS whenever the engine owns that canonical
-// name. Routing every standard therefore turned a 2-name carve-out into a
-// 226-name one: a store still holding `sds_cat` would never migrate those rows
-// into `CAT`, and Get / recordReadSource — which union the canonical table and
-// the (producer, standard) tables and nothing else — could never reach them
-// again. Nothing is destroyed; the rows simply stop existing as far as the
-// node is concerned, which is why the compatibility rule is "unrouted until
-// the blob migration runs".
-func TestLegacyBlobTableKeepsItsStandardUnroutedUntilItsRowsMigrate(t *testing.T) {
-	basePath := filepath.Join(t.TempDir(), "store")
-	store := newEngineRecordsStore(t, basePath)
-
-	// The store must come back WARM or the control database is discarded on
-	// the next boot and the legacy table goes with it.
-	if _, err := store.Store("OMM.fbs", buildEngineOMM(t, 25544, "ISS", 1700000000), "peer", nil); err != nil {
-		t.Fatalf("store $OMM: %v", err)
-	}
-	if _, err := store.db.Exec(`
-		CREATE TABLE sds_cat (
-			cid TEXT PRIMARY KEY,
-			peer_id TEXT NOT NULL,
-			timestamp INTEGER NOT NULL,
-			data BLOB NOT NULL,
-			signature BLOB,
-			UNIQUE(cid)
-		)`); err != nil {
-		t.Fatalf("create pre-stream blob table: %v", err)
-	}
-	if _, err := store.db.Exec(
-		`INSERT INTO sds_cat (cid, peer_id, timestamp, data) VALUES ('legacy-cid', 'peer', 1, ?)`,
-		[]byte("legacy-cat-bytes")); err != nil {
-		t.Fatalf("seed pre-stream blob row: %v", err)
-	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
-		t.Fatalf("checkpoint: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close store: %v", err)
-	}
-
-	reopened := newEngineRecordsStore(t, basePath)
-	defer reopened.Close()
-
-	if !reopened.engineExcluded["CAT.fbs"] {
-		t.Fatal("a standard whose store still holds its pre-stream blob table must not be routed")
-	}
-	if reopened.engineRoutesSchema("CAT.fbs") {
-		t.Fatal("the standard is still routed, so its blob rows can never migrate")
-	}
-	if exists, err := reopened.tableExists("sds_cat"); err != nil {
-		t.Fatalf("inspect legacy blob table: %v", err)
-	} else if exists {
-		t.Fatal("the legacy blob table was NOT migrated — its rows are unreachable through every production read path")
-	}
-	if exists, err := reopened.tableExists("CAT"); err != nil {
-		t.Fatalf("inspect canonical table: %v", err)
-	} else if !exists {
-		t.Fatal("the canonical table does not exist after migration")
-	}
-
-	// THE ASSERTION THE RULE EXISTS FOR: the rows are readable the ordinary
-	// way, through the production read path.
-	data, err := reopened.Get("CAT.fbs", "legacy-cid")
-	if err != nil {
-		t.Fatalf("migrated legacy row is unreachable through Get: %v", err)
-	}
-	if string(data) != "legacy-cat-bytes" {
-		t.Fatalf("migrated legacy row = %q, want %q", string(data), "legacy-cat-bytes")
-	}
-
-	// Per standard, not a blanket retreat.
-	if !reopened.engineRoutesSchema("IRM.fbs") || !reopened.engineRoutesSchema("OMM.fbs") {
-		t.Fatal("one legacy blob table must not un-route the rest of the catalog")
-	}
-}
-
 // TestLeftoverViewForAStandardThisBinaryDroppedIsSweptAtBoot covers the input
 // class a per-store exclusion set cannot see: a standard that LEAVES THE
 // CATALOG between binaries.
@@ -218,7 +138,7 @@ func TestLeftoverViewForAStandardThisBinaryDroppedIsSweptAtBoot(t *testing.T) {
 	if _, err := store.engineDB.Query(`CREATE VIEW "operator_report" AS SELECT count(*) AS n FROM "OMM"`); err != nil {
 		t.Fatalf("seed operator view: %v", err)
 	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
+	if err := store.Checkpoint(); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -266,7 +186,7 @@ func TestEnginePrepareFailureNeverDiscardsTheControlDatabase(t *testing.T) {
 	if _, err := store.Store("OMM.fbs", buildEngineOMM(t, 25544, "ISS", 1700000000), "peer", nil); err != nil {
 		t.Fatalf("store $OMM: %v", err)
 	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
+	if err := store.Checkpoint(); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -293,7 +213,7 @@ func TestEnginePrepareFailureNeverDiscardsTheControlDatabase(t *testing.T) {
 	// failure, reached before the first query.
 	schema := engineSchemaTextExcluding(map[string]bool{"CDM.fbs": true})
 	prepare := enginePrepare(engineBootPlan{Excluded: map[string]bool{}, Sources: []string{engineDefaultSource}})
-	_, _, _, _, err = openControlDatabase(engine, dbPath, schema, prepare)
+	_, _, _, err = tryOpenControlDatabase(engine, dbPath, schema, prepare)
 	if err == nil {
 		t.Fatal("registering a file identifier for a table absent from the schema must fail the open")
 	}
@@ -358,7 +278,7 @@ func TestRecordsStoredWithTheBareStandardCodeSurviveARestart(t *testing.T) {
 		}
 	}
 
-	if err := store.CheckpointRecordCatalog(); err != nil {
+	if err := store.Checkpoint(); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -386,24 +306,24 @@ func TestRecordsStoredWithTheBareStandardCodeSurviveARestart(t *testing.T) {
 	assertOneFrame(t, reopened, "IRM")
 	assertOneFrame(t, reopened, "OMM")
 	// A boot checkpoint persisted the engine's records and the mark, so Path 2
-	// must DISCARD the control database to be the cold journal hydration this
-	// test is about (a cold boot with pre-existing state discards it anyway).
+	// must DISCARD the engine's record arena to be the cold rebuild from the
+	// control tables this test is about.
 	controlDBPath := reopened.controlDBPath
 	simulateCrash(t, reopened)
-	if err := removeControlDatabaseFiles(controlDBPath); err != nil {
-		t.Fatalf("discard control database: %v", err)
+	if err := removeEngineRecordStream(controlDBPath); err != nil {
+		t.Fatalf("discard engine record stream: %v", err)
 	}
 
-	// Path 2: the ONE-PASS record-catalog journal hydration, whose frames carry
+	// Path 2: the cold hot-window rebuild, which reads sdn_record_index with
 	// the same bare spelling.
 	deferred := reopenDeferred(t, basePath)
 	defer deferred.Close()
-	loaded, err := deferred.HydrateEngineHotWindowFromRecordCatalog()
+	loaded, err := deferred.HydrateEngineHotWindow()
 	if err != nil {
-		t.Fatalf("HydrateEngineHotWindowFromRecordCatalog: %v", err)
+		t.Fatalf("HydrateEngineHotWindow: %v", err)
 	}
 	if loaded != 2 {
-		t.Fatalf("journal hydration loaded %d bare-spelled records, want 2", loaded)
+		t.Fatalf("cold hydration loaded %d bare-spelled records, want 2", loaded)
 	}
 	assertOneFrame(t, deferred, "IRM")
 	assertOneFrame(t, deferred, "OMM")
@@ -589,13 +509,9 @@ func TestFieldEncryptedStandardsAreNeverEngineRouted(t *testing.T) {
 	assertNoKMFOnTheQuerySurface(t, store, "live")
 
 	// STILL SEALED AT REST, and the seal is what the exclusion protects.
-	streamFile := filepath.Join(basePath, flatSQLStreamDirName, "KMF.flatsql")
-	sealed, err := os.ReadFile(streamFile)
-	if err != nil {
-		t.Fatalf("read KMF stream file: %v", err)
-	}
+	sealed := storedRecordBytesForTest(t, store, "KMF.fbs", cid)
 	if bytes.Contains(sealed, secret) {
-		t.Fatal("the durable stream file holds the plaintext key material")
+		t.Fatal("the stored row holds the plaintext key material")
 	}
 
 	// AND THE STANDARD STILL WORKS. Un-routing is not a quarantine: the record
@@ -608,7 +524,7 @@ func TestFieldEncryptedStandardsAreNeverEngineRouted(t *testing.T) {
 		t.Fatal("the ordinary read path did not return the decrypted key material")
 	}
 
-	if err := store.CheckpointRecordCatalog(); err != nil {
+	if err := store.Checkpoint(); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -669,7 +585,7 @@ func TestEngineIngestRefusesBytesItCannotRoute(t *testing.T) {
 			t.Fatalf("store $OMM: %v", err)
 		}
 	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
+	if err := store.Checkpoint(); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	if err := store.Close(); err != nil {

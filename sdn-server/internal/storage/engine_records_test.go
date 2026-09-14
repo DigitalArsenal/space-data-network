@@ -276,10 +276,10 @@ func TestEngineRecordsBootRebuild(t *testing.T) {
 	}
 }
 
-func TestEngineHotWindowHydratesFromCompactCatalogBeforeFullReplay(t *testing.T) {
-	// A COLD boot on purpose (crash, no checkpoint): this test pins the compact
-	// journal hydration itself. A clean close persists the engine's records and
-	// the reopen would answer without it.
+func TestEngineHotWindowHydratesFromTheControlTables(t *testing.T) {
+	// A COLD boot on purpose (crash, no checkpoint): this test pins the cold
+	// hot-window rebuild itself. A clean close persists the engine's records
+	// and the reopen would answer without it.
 	t.Setenv(checkpointIntervalEnv, "0")
 	basePath := filepath.Join(t.TempDir(), "store")
 	validator, err := sds.NewValidator(nil)
@@ -311,7 +311,6 @@ func TestEngineHotWindowHydratesFromCompactCatalogBeforeFullReplay(t *testing.T)
 
 	reopened, err := NewFlatSQLStore(basePath, validator,
 		WithDeferredBootRebuilds(),
-		WithDeferredRecordCatalogReplay(),
 		WithEngineHotWindow(10))
 	if err != nil {
 		t.Fatalf("deferred reopen failed: %v", err)
@@ -329,15 +328,12 @@ func TestEngineHotWindowHydratesFromCompactCatalogBeforeFullReplay(t *testing.T)
 		t.Fatalf("deferred reopen returned %d frames before hot-window hydration, want 0", len(frames))
 	}
 
-	loaded, err := reopened.HydrateEngineHotWindowFromRecordCatalog()
+	loaded, err := reopened.HydrateEngineHotWindow()
 	if err != nil {
-		t.Fatalf("HydrateEngineHotWindowFromRecordCatalog failed: %v", err)
+		t.Fatalf("HydrateEngineHotWindow failed: %v", err)
 	}
 	if loaded != 4 {
-		t.Fatalf("HydrateEngineHotWindowFromRecordCatalog loaded %d records, want 4", loaded)
-	}
-	if reopened.RecordCatalogHydrated() {
-		t.Fatal("engine hot-window hydration must not mark the full record catalog hydrated")
+		t.Fatalf("HydrateEngineHotWindow loaded %d records, want 4", loaded)
 	}
 	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 4 {
 		t.Fatalf("engine count after compact hot-window hydration = %d err=%v, want 4 nil", count, err)
@@ -949,9 +945,6 @@ func TestPlainControlTableCollisionExcludesTheStandardWithoutDroppingIt(t *testi
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newEngineRecordsStore(t, basePath)
 
-	// The store must come back WARM, or the control database is discarded on
-	// the next boot and the collision cannot exist to be guarded against. One
-	// stored record plus a checkpoint is what makes the resume mark usable.
 	if _, err := store.Store("OMM.fbs", buildEngineOMM(t, 25544, "ISS", 1700000000), "peer", nil); err != nil {
 		t.Fatalf("store $OMM: %v", err)
 	}
@@ -966,10 +959,10 @@ func TestPlainControlTableCollisionExcludesTheStandardWithoutDroppingIt(t *testi
 	if err := store.createSchemaMetadataTable("CDM"); err != nil {
 		t.Fatalf("create legacy canonical table: %v", err)
 	}
-	if _, err := store.db.Exec(`INSERT INTO CDM (cid, peer_id, timestamp, stream_path, stream_offset, record_length) VALUES ('bafyLegacyCDM', 'peer', 1, 'flatsql-streams/CDM.bin', 0, 8)`); err != nil {
+	if _, err := store.db.Exec(`INSERT INTO CDM (cid, peer_id, timestamp, data, record_length) VALUES ('bafyLegacyCDM', 'peer', 1, X'0102030405060708', 8)`); err != nil {
 		t.Fatalf("seed legacy canonical row: %v", err)
 	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
+	if err := store.Checkpoint(); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -1154,7 +1147,7 @@ func TestBootRebuildsUnifiedViewsAtMostOnce(t *testing.T) {
 			t.Fatalf("store $OMM for %s: %v", source, err)
 		}
 	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
+	if err := store.Checkpoint(); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	if err := store.Close(); err != nil {

@@ -151,6 +151,7 @@ type fullTableCandidate struct {
 	table       string
 	routedRowID int64
 	record      *Record
+	data        []byte
 	signature   sql.NullString
 }
 
@@ -230,13 +231,7 @@ func (s *FlatSQLStore) fullTablePageChunk(query FullTablePageQuery) (FullTablePa
 	for i := range selected {
 		candidate := &selected[i]
 		if !query.metadataOnly {
-			if err := s.hydrateRecordData(
-				candidate.record,
-				candidate.record.StreamPath,
-				candidate.record.StreamOffset,
-				candidate.record.RecordLength,
-				candidate.signature,
-			); err != nil {
+			if err := s.hydrateRecordData(candidate.record, query.SchemaName, candidate.data, candidate.signature); err != nil {
 				return FullTablePageResult{}, fmt.Errorf("failed reading full table record data: %w", err)
 			}
 		}
@@ -284,16 +279,14 @@ func fullTableCandidatesSQL(table, schemaName, sourceName string, beforeRowID in
 	statement := fmt.Sprintf(`
 		WITH candidates AS (
 			SELECT records.rowid AS routed_rowid, records.cid, records.peer_id,
-			       records.timestamp, records.stream_path, records.stream_offset,
-			       records.record_length, records.signature_hex
+			       records.timestamp, records.data, records.signature_hex
 			FROM %s records%s
 			WHERE records.rowid < ?%s
 			ORDER BY records.rowid DESC
 			%s
 		)
 		SELECT candidates.routed_rowid, idx.rowid, candidates.cid, candidates.peer_id,
-		       candidates.timestamp, candidates.stream_path, candidates.stream_offset,
-		       candidates.record_length, candidates.signature_hex
+		       candidates.timestamp, candidates.data, candidates.signature_hex
 		FROM candidates
 		CROSS JOIN sdn_record_index idx
 		  ON idx.schema_name = ? AND idx.cid = candidates.cid
@@ -314,14 +307,13 @@ func scanFullTableCandidateRows(rows *sql.Rows, table string) ([]fullTableCandid
 			&record.CID,
 			&record.PeerID,
 			&timestamp,
-			&record.StreamPath,
-			&record.StreamOffset,
-			&record.RecordLength,
+			&candidate.data,
 			&candidate.signature,
 		); err != nil {
 			return nil, fmt.Errorf("failed scanning full table candidate: %w", err)
 		}
 		record.Timestamp = time.Unix(timestamp, 0).UTC()
+		record.RecordLength = int64(len(candidate.data))
 		candidates = append(candidates, candidate)
 	}
 	if err := rows.Err(); err != nil {

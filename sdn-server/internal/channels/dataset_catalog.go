@@ -144,9 +144,6 @@ func RememberDatasetCatalog(store *storage.FlatSQLStore, publisher string, key c
 	if store == nil || len(pnm) < 12 || len(pnm) > 65536 {
 		return errors.New("dataset announcement exceeds catalog bounds")
 	}
-	if store.IsReadOnly() {
-		return errors.New("dataset catalog store is read-only")
-	}
 	entry, err := DecodeDatasetCatalog(manifest, key, publisher, now)
 	if err != nil {
 		return err

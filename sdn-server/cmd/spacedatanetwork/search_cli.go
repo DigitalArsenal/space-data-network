@@ -575,7 +575,7 @@ func openSearchStore() (*storage.FlatSQLStore, error) {
 	}
 	// search reports per-schema record counts through DataSummary, which reads
 	// the derived sdn_record_source_summary table.
-	store, err := openStoreForReading(cfg.Storage.Path, validator, storeReadNeeds{sourceSummaries: true})
+	store, err := openStoreForReading(cfg.Storage.Path, validator)
 	if err != nil {
 		return nil, err
 	}

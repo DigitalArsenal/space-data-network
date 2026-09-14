@@ -173,7 +173,6 @@ func runIdentityWizard(ctx context.Context, in io.Reader, out io.Writer, options
 // command must not rebuild state it never reads.
 func openIdentityWizardStore(storagePath string, validator *sds.Validator) (*storage.FlatSQLStore, error) {
 	return storage.NewFlatSQLStore(storagePath, validator,
-		storage.WithDeferredRecordCatalogReplay(),
 		storage.WithDeferredBootRebuilds())
 }
 

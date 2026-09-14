@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -56,47 +55,42 @@ func TestWireDiskQueryByteIdentity(t *testing.T) {
 	}
 	wireSHA := sha256Hexs(wire)
 
-	// QUERY: read every record back and re-frame it exactly as the stream does.
-	got, err := store.QueryIndexedRecords(IndexedRecordQuery{
-		SchemaName: "OMM.fbs", Limit: records, AllowLargeResultSet: true, OrderByCID: true,
-	})
+	// QUERY: read every record back in index-rowid order — the order the
+	// bytes were written, which is the order the wire produced them — and
+	// re-frame it exactly as the wire does.
+	got, err := store.QueryRawRecords(RawRecordQuery{SchemaName: "OMM.fbs", UseRowIDCursor: true, Limit: records})
 	if err != nil {
-		t.Fatalf("QueryIndexedRecords: %v", err)
+		t.Fatalf("QueryRawRecords: %v", err)
 	}
 	if len(got) != records {
 		t.Fatalf("query returned %d records, want %d", len(got), records)
 	}
-	byOffset := make(map[int64][]byte, len(got))
-	streamPath := ""
-	var queryBytes int
+	var queryStream []byte
 	for _, record := range got {
-		if streamPath == "" {
-			streamPath = record.StreamPath
-		} else if record.StreamPath != streamPath {
-			t.Fatalf("records span two streams (%s, %s); this fixture assumes one", streamPath, record.StreamPath)
-		}
-		byOffset[record.StreamOffset] = record.Data
-		queryBytes += len(record.Data)
-	}
-	// Reassemble in STREAM order — the order the bytes were written, which is
-	// the order the wire produced them.
-	queryStream := make([]byte, 0, queryBytes+4*len(got))
-	for offset := int64(0); len(byOffset) > 0; {
-		data, ok := byOffset[offset]
-		if !ok {
-			t.Fatalf("no record at stream offset %d; the read-back is not the stream", offset)
-		}
-		queryStream = append(queryStream, frame(data)...)
-		delete(byOffset, offset)
-		offset += int64(4 + len(data))
+		queryStream = append(queryStream, frame(record.Data)...)
 	}
 	querySHA := sha256Hexs(queryStream)
 
-	// DISK: the stream file itself, untouched.
-	diskBytes, err := os.ReadFile(filepath.Join(basePath, filepath.Clean(streamPath)))
+	// DISK: the stored rows themselves, read straight out of the producer
+	// table in index-rowid order, untouched by any read path.
+	readSource, err := store.recordReadSource("OMM.fbs")
 	if err != nil {
-		t.Fatalf("read stream file: %v", err)
+		t.Fatalf("read source: %v", err)
 	}
+	rows, err := store.db.Query(`SELECT rr.data FROM sdn_record_index idx JOIN ` + readSource + ` rr ON rr.cid = idx.cid WHERE idx.schema_name = 'OMM.fbs' ORDER BY idx.rowid ASC`)
+	if err != nil {
+		t.Fatalf("read stored rows: %v", err)
+	}
+	var diskBytes []byte
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			rows.Close()
+			t.Fatalf("scan stored row: %v", err)
+		}
+		diskBytes = append(diskBytes, frame(data)...)
+	}
+	rows.Close()
 	diskSHA := sha256Hexs(diskBytes)
 
 	if wireSHA != diskSHA || diskSHA != querySHA {
