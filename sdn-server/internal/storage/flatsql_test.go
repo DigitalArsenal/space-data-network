@@ -85,8 +85,8 @@ func TestNewFlatSQLStoreCreatesCanonicalSchemaTablesWithoutSQLiteBlobs(t *testin
 	if err != nil {
 		t.Fatalf("routed table name: %v", err)
 	}
-	assertNoSQLiteBlobColumns(t, store, routedTable)
-	assertHasColumns(t, store, routedTable, "cid", "peer_id", "timestamp", "stream_path", "stream_offset", "record_length", "signature_hex")
+	assertRecordBytesLiveOnTheRow(t, store, routedTable)
+	assertHasColumns(t, store, routedTable, "cid", "peer_id", "timestamp", "data", "record_length", "signature_hex", "supersede_key")
 }
 
 func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
@@ -1172,19 +1172,19 @@ func findSourceCount(sources []DataSourceSummary, schema, providerID, sourceName
 	return 0
 }
 
-func assertNoSQLiteBlobColumns(t *testing.T, store *FlatSQLStore, tableName string) {
+// assertRecordBytesLiveOnTheRow pins the record-store layout: the record's
+// bytes are a BLOB on its producer table row, and nothing points at a stream
+// file any more.
+func assertRecordBytesLiveOnTheRow(t *testing.T, store *FlatSQLStore, tableName string) {
 	t.Helper()
 	columns := tableColumnTypes(t, store, tableName)
-	for name, typ := range columns {
-		if typ == "BLOB" {
-			t.Fatalf("%s.%s is a SQLite BLOB column; schema tables must be stream-backed metadata only", tableName, name)
+	if typ, ok := columns["data"]; !ok || typ != "BLOB" {
+		t.Fatalf("%s.data must be a BLOB column holding the record bytes; columns=%v", tableName, columns)
+	}
+	for _, legacy := range []string{"stream_path", "stream_offset", "signature"} {
+		if _, ok := columns[legacy]; ok {
+			t.Fatalf("%s still has legacy %s column", tableName, legacy)
 		}
-	}
-	if _, ok := columns["data"]; ok {
-		t.Fatalf("%s still has legacy data column", tableName)
-	}
-	if _, ok := columns["signature"]; ok {
-		t.Fatalf("%s still has legacy signature column", tableName)
 	}
 }
 
@@ -1260,23 +1260,20 @@ func TestFlatSQLStoreStoreAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("routed table name: %v", err)
 	}
-	assertNoSQLiteBlobColumns(t, store, routedTable)
+	assertRecordBytesLiveOnTheRow(t, store, routedTable)
 
-	var streamPath string
-	var streamOffset, recordLength int64
+	var stored []byte
+	var recordLength int64
 	var signatureHex sql.NullString
 	if err := store.db.QueryRow(fmt.Sprintf(`
-		SELECT stream_path, stream_offset, record_length, signature_hex
+		SELECT data, record_length, signature_hex
 		FROM %s
 		WHERE cid = ?
-	`, routedTable), cid).Scan(&streamPath, &streamOffset, &recordLength, &signatureHex); err != nil {
-		t.Fatalf("stored metadata lookup failed: %v", err)
+	`, routedTable), cid).Scan(&stored, &recordLength, &signatureHex); err != nil {
+		t.Fatalf("stored row lookup failed: %v", err)
 	}
-	if streamPath == "" {
-		t.Fatal("stream_path is empty")
-	}
-	if streamOffset < 0 {
-		t.Fatalf("stream_offset = %d, want non-negative", streamOffset)
+	if string(stored) != string(testData) {
+		t.Fatal("the stored row does not hold the record bytes")
 	}
 	if recordLength != int64(len(testData)) {
 		t.Fatalf("record_length = %d, want %d", recordLength, len(testData))
@@ -1284,8 +1281,12 @@ func TestFlatSQLStoreStoreAndGet(t *testing.T) {
 	if !signatureHex.Valid || signatureHex.String == "" {
 		t.Fatal("signature_hex was not stored as text")
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, streamPath)); err != nil {
-		t.Fatalf("FlatSQL stream file was not created: %v", err)
+	if entries, err := os.ReadDir(tmpDir); err == nil {
+		for _, e := range entries {
+			if e.Name() == "flatsql-streams" || e.Name() == "record-catalog.flatsqlmeta" {
+				t.Fatalf("legacy record layer %s was created", e.Name())
+			}
+		}
 	}
 
 	// Get data back

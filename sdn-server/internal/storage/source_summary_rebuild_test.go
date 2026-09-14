@@ -114,17 +114,16 @@ func seedSummaryFixture(t *testing.T, store *FlatSQLStore) {
 	for _, tab := range tables {
 		if _, err := store.db.Exec(fmt.Sprintf(`CREATE TABLE %s (
 			cid TEXT PRIMARY KEY, peer_id TEXT NOT NULL, timestamp INTEGER NOT NULL,
-			stream_path TEXT NOT NULL, stream_offset INTEGER NOT NULL,
-			record_length INTEGER NOT NULL, signature_hex TEXT,
-			created_at INTEGER DEFAULT 0, UNIQUE(cid))`, tab)); err != nil {
+			data BLOB NOT NULL, record_length INTEGER NOT NULL, signature_hex TEXT,
+			supersede_key TEXT, created_at INTEGER DEFAULT 0, UNIQUE(cid))`, tab)); err != nil {
 			t.Fatalf("create %s: %v", tab, err)
 		}
 	}
 	insertRecord := func(tab, cid string, length int64) {
 		if _, err := store.db.Exec(fmt.Sprintf(`INSERT OR IGNORE INTO %s
-			(cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex)
-			VALUES (?,?,?,?,?,?,?)`, tab),
-			cid, "peer", int64(1786000000), "flatsql-streams/OMM.flatsql", int64(0), length, ""); err != nil {
+			(cid, peer_id, timestamp, data, record_length, signature_hex)
+			VALUES (?,?,?,zeroblob(?),?,?)`, tab),
+			cid, "peer", int64(1786000000), length, length, ""); err != nil {
 			t.Fatalf("insert record: %v", err)
 		}
 	}

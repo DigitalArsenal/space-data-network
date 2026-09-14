@@ -539,7 +539,7 @@ func TestRecordReadSourceFilteredMatchesUnfiltered(t *testing.T) {
 	read := func(source, cid string) [][]interface{} {
 		t.Helper()
 		rows, err := store.db.Query(fmt.Sprintf(
-			`SELECT cid, peer_id, stream_offset, record_length FROM %s WHERE cid = ?1`, source), cid)
+			`SELECT cid, peer_id, record_length FROM %s WHERE cid = ?1`, source), cid)
 		if err != nil {
 			t.Fatalf("query %s: %v", source, err)
 		}
@@ -547,11 +547,11 @@ func TestRecordReadSourceFilteredMatchesUnfiltered(t *testing.T) {
 		var out [][]interface{}
 		for rows.Next() {
 			var c, p string
-			var off, length int64
-			if err := rows.Scan(&c, &p, &off, &length); err != nil {
+			var length int64
+			if err := rows.Scan(&c, &p, &length); err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			out = append(out, []interface{}{c, p, off, length})
+			out = append(out, []interface{}{c, p, length})
 		}
 		return out
 	}

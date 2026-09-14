@@ -36,11 +36,10 @@ func newRawRecordSourceFilterStore(t *testing.T) (*FlatSQLStore, string) {
 			SELECT i + 1 FROM seq WHERE i < %d
 		)
 		INSERT INTO %s (
-			cid, peer_id, timestamp, stream_path, stream_offset,
-			record_length, signature_hex, created_at
+			cid, peer_id, timestamp, data, record_length, signature_hex, created_at
 		)
 		SELECT printf('source-filter-cid-%%05d', i), 'source:fixture', i,
-		       'unused.stream', 0, 32, NULL, i
+		       zeroblob(32), 32, NULL, i
 		FROM seq`, rawRecordSourceFilterFixtureRows, tableName)
 	if _, err := store.db.Exec(flatsqldrv.WithoutJournal(insertRecords)); err != nil {
 		t.Fatalf("insert fixture records: %v", err)
