@@ -106,3 +106,14 @@ func storedRecordBytesForTest(t *testing.T, s *FlatSQLStore, schemaName, cid str
 	}
 	return data
 }
+
+// removeEngineRecordStreamForTest deletes ONLY the engine's record arena, the
+// way the boot's discard used to (and an operator still might): the index
+// rows and the partition map stay behind. The next open must recognise that
+// state as one that cannot describe its stream and discard it whole.
+func removeEngineRecordStreamForTest(dbPath string) error {
+	if err := os.Remove(dbPath + ".fsdata"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("discard engine record stream: %w", err)
+	}
+	return nil
+}

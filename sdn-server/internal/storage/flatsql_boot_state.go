@@ -112,7 +112,7 @@ type engineRecordState struct {
 // disk-backed database at dbPath. A usable index is opened as-is (warm). A
 // recoverable state error is answered by bounded engine steps that re-derive
 // the index from the engine's own record stream, retaining the control tables.
-func openEngineRecordState(db *flatsqlrt.Database, dbPath string) (engineRecordState, error) {
+func openEngineRecordState(db *flatsqlrt.Database, dbPath string, discarded bool) (engineRecordState, error) {
 	n, err := db.OpenState()
 	if err == nil {
 		return engineRecordState{Records: n, Warm: true}, nil
@@ -120,11 +120,13 @@ func openEngineRecordState(db *flatsqlrt.Database, dbPath string) (engineRecordS
 	if !flatsqlrt.StateRecoverable(err) {
 		return engineRecordState{}, fmt.Errorf("%w: %v", errEngineStateUnrecoverable, err)
 	}
-	var streamBytes int64
-	if info, statErr := os.Stat(dbPath + ".fsdata"); statErr == nil {
-		streamBytes = info.Size()
-	}
-	if !errors.Is(err, flatsqlrt.ErrStateAbsent) {
+	streamBytes := int64(engineStreamSize(dbPath))
+	switch {
+	case discarded:
+		// discardEngineRecordState left an empty stream below the old mark on
+		// purpose: the torn path below is the one that clears the index rows.
+		log.Infof("FlatSQL engine record state discarded — starting an empty record arena; the hot window is rebuilt from the control tables")
+	case !errors.Is(err, flatsqlrt.ErrStateAbsent):
 		log.Warnf("FlatSQL engine record state unusable (%v) — re-deriving the index from the engine's on-disk record stream (%d bytes)", err, streamBytes)
 	}
 	if streamBytes > 0 {
@@ -254,7 +256,15 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 	// Up to three attempts, each with a FRESH RUNTIME. A poisoned runtime cannot
 	// be reused for anything — including the recovery open — so a retry has to
 	// replace the engine, not just the file.
+	//
+	// `discard` carries one decision from an attempt to the next: the engine's
+	// record state (arena + index + partition map) is a cache the next attempt
+	// must throw away BEFORE it opens that state. A mostly-dead arena is only
+	// recognisable once the state is open, and a poisoned runtime cannot be
+	// asked anything, so both are answered by a fresh runtime that discards
+	// first (tryOpenControlDatabase).
 	var lastErr error
+	discard := false
 	for attempt := 0; attempt < 3; attempt++ {
 		// PROBE FIRST, in its own runtime, then open for real. Both the
 		// exclusion set (which decides the schema text) and the persisted
@@ -277,10 +287,12 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 		engine.SetPhase("boot: open control database for writing")
 		openStart := time.Now()
 		engineDB, mark, engineState, err := tryOpenControlDatabase(engine, dbPath,
-			engineSchemaTextExcluding(plan.Excluded), enginePrepare(plan))
+			engineSchemaTextExcluding(plan.Excluded), enginePrepare(plan), discard)
 		engine.SetPhase("")
 		log.Infof("FlatSQL boot phase \"boot: open control database for writing\" took %s (views already current: %v)",
 			time.Since(openStart).Round(time.Millisecond), plan.ViewsCurrent)
+		discarded := discard
+		discard = false
 		if err == nil {
 			// THE ARENA IS A CACHE, AND A CACHE THAT IS MOSTLY DEAD IS REBUILT,
 			// NOT RECONCILED. The engine persists every row ever ingested and
@@ -292,13 +304,11 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 			// are live), discarding the arena and refilling the bounded
 			// window from the tables is cheaper, and the next flush writes an
 			// arena that holds the window and nothing else.
-			if engineState.Warm && engineArenaMostlyDead(engineDB, engineState.Records) {
-				log.Infof("FlatSQL engine record state holds %d rows but the residency ledger tracks far fewer — discarding the arena and rebuilding the hot window from the control tables", engineState.Records)
+			if !discarded && engineState.Warm && engineArenaMostlyDead(engineDB, engineState.Records) {
+				log.Infof("FlatSQL engine record state holds %d rows but the residency ledger tracks far fewer — discarding the engine record state and rebuilding the hot window from the control tables", engineState.Records)
 				engineDB.Destroy()
 				engine.Close()
-				if rmErr := removeEngineRecordStream(dbPath); rmErr != nil {
-					return nil, nil, bootMark{}, engineBootPlan{}, rmErr
-				}
+				discard = true
 				continue
 			}
 			plan.EngineState = engineState
@@ -312,13 +322,10 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 			log.Infof("FlatSQL engine record index rebuilt; reopening with the control tables retained")
 			continue
 		case errors.Is(err, errEngineStateUnrecoverable):
-			// The engine's record state is a cache. Drop the record stream and
-			// reopen: OpenState then finds no stream, re-derives an empty index
-			// and the hot window is rebuilt from the tables.
+			// The engine's record state is a cache. Discard it whole and
+			// reopen: the hot window is rebuilt from the tables.
 			log.Warnf("FlatSQL engine record state at %s.fsdata is unusable (%v) — discarding it; the hot window will be rebuilt from the control tables", dbPath, err)
-			if rmErr := removeEngineRecordStream(dbPath); rmErr != nil {
-				return nil, nil, bootMark{}, engineBootPlan{}, rmErr
-			}
+			discard = true
 			continue
 		case errors.Is(err, errEnginePrepareFailed):
 			// The FILE is fine; the host-side registration is not.
@@ -479,17 +486,7 @@ func checkDatabaseFile(dbPath string) error {
 	return fmt.Errorf("%w: %s is not a SQLite database", errControlDatabaseUnusable, dbPath)
 }
 
-// removeEngineRecordStream deletes the engine's persisted record arena. The
-// index tables it left inside the control database are cleared by the engine
-// itself on the next open (reindex over an absent stream re-derives empty).
-func removeEngineRecordStream(dbPath string) error {
-	if err := os.Remove(dbPath + ".fsdata"); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("discard engine record stream: %w", err)
-	}
-	return nil
-}
-
-func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, engineRecordState, error) {
+func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error, discard bool) (*flatsqlrt.Database, bootMark, engineRecordState, error) {
 	phase := time.Now()
 	db, err := engine.OpenDatabase(schemaText, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
 	if err != nil {
@@ -526,8 +523,27 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	// that index and makes the records visible without re-ingest. What it does
 	// NOT carry is the hot-window tombstones; engine_residency.go re-applies
 	// those from the residency table right after open.
+	//
+	// BUT ONLY A STATE THAT DESCRIBES ITS STREAM. The mark and the partition
+	// map are checked against the file first (engine_record_state_discard.go);
+	// a state that cannot be trusted is discarded whole, here, before the
+	// engine reads any of it.
+	phase = time.Now()
+	if !discard {
+		if reason, bad := engineRecordStateInconsistent(db, dbPath); bad {
+			log.Warnf("FlatSQL engine record state at %s.fsdata does not describe its record stream (%s) — discarding it; the hot window will be rebuilt from the control tables", dbPath, reason)
+			discard = true
+		}
+	}
+	if discard {
+		if err := discardEngineRecordState(db, dbPath); err != nil {
+			db.Destroy()
+			return nil, bootMark{}, engineRecordState{}, err
+		}
+	}
+	log.Infof("FlatSQL boot phase \"boot: check engine record state against its stream\" took %s (discarded: %v)", time.Since(phase).Round(time.Millisecond), discard)
 	endState := newBootPhaseBudget(engine).phase("boot: open engine record state (OpenState)")
-	state, err := openEngineRecordState(db, dbPath)
+	state, err := openEngineRecordState(db, dbPath, discard)
 	endState()
 	if err != nil {
 		db.Destroy()

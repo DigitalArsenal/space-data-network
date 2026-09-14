@@ -520,13 +520,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
 	endPhase()
-	if store.engineStateWarm {
-		if resident, err := store.restoreEngineResidencyFromLedger(); err != nil {
-			log.Warnf("FlatSQL engine records: residency ledger not readable at open (%v); counts are restored by the hot-window hydration", err)
-		} else {
-			log.Infof("FlatSQL engine records: %d resident record(s) tracked by the ledger across routed standards", resident)
-		}
-	}
+	store.settleEngineResidencyAtOpen()
 	// Complete engine source bring-up: the runtime half of every persisted
 	// source was restored before the database's first query (enginePrepare);
 	// this guarantees a default partition on an empty store and rebuilds the

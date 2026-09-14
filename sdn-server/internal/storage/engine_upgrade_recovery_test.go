@@ -72,7 +72,7 @@ func TestEngineUpgradeRecoversStreamAboveFormerDiscardLimit(t *testing.T) {
 	if _, err = db.OpenState(); !errors.Is(err, flatsqlrt.ErrStateVersionMismatch) {
 		t.Fatalf("expected schema mismatch: %v", err)
 	}
-	_, err = openEngineRecordState(db, path)
+	_, err = openEngineRecordState(db, path, false)
 	if !errors.Is(err, errEngineStateReindexed) {
 		t.Fatalf("expected committed incremental recovery, got %v", err)
 	}
@@ -81,7 +81,7 @@ func TestEngineUpgradeRecoversStreamAboveFormerDiscardLimit(t *testing.T) {
 	rt, db = open(strings.Replace(schema, "OBJECT_NAME:string", "OBJECT_NAME:[ubyte]", 1))
 	defer rt.Close()
 	defer db.Destroy()
-	state, err := openEngineRecordState(db, path)
+	state, err := openEngineRecordState(db, path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
