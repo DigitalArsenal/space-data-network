@@ -556,7 +556,6 @@ func (j *recordCatalogJournal) replayFramesFrom(ctx context.Context, store *Flat
 		off = 0
 	}
 	count := 0
-	windows := 0
 	knownProducerTables := map[string]bool{}
 
 	for off < size {
@@ -587,19 +586,29 @@ func (j *recordCatalogJournal) replayFramesFrom(ctx context.Context, store *Flat
 		// A checkpoint failure is logged and the replay continues: the mark is
 		// an optimisation for the NEXT boot, never a correctness requirement
 		// for this one, and withholding it costs re-replay, not data.
-		windows++
-		// ONLY on the chunked path. `chunked == false` means the caller already
-		// owns the store or already HOLDS the write lock (see replay's doc
-		// comment: initial open, and engine-poison recovery in engine_link.go),
-		// and checkpointReplayProgress takes s.mu — taking it there deadlocks.
-		// The chunked path is the one that matters anyway: it is the background
-		// post-boot hydration, the only replay long enough to be interrupted.
-		if chunked && windows%recordCatalogReplayCheckpointEveryWindows == 0 {
-			if err := store.checkpointReplayProgress(off); err != nil {
-				log.Warnf("FlatSQL record-catalog replay: progress checkpoint at offset %d failed "+
-					"(the next boot replays from the previous mark, nothing is lost): %v", off, err)
-			}
-		}
+		// NO MID-REPLAY CHECKPOINT. Tried and reverted 2026-09-14.
+		//
+		// Writing a resume mark partway through makes the NEXT boot resume into
+		// the MIDDLE of the journal — a case that cannot otherwise occur, because
+		// a mark from a completed hydration always covers the whole file and
+		// replayFramesFrom returns early (from >= size). Resuming mid-journal
+		// replays a tail whose frames carry EXPLICIT rowids that were allocated
+		// against a replay starting at zero, and they collide with the rows the
+		// prefix already inserted:
+		//
+		//   UNIQUE constraint failed: sdn_record_index.rowid
+		//
+		// observed on host-02, which then failed the same way on every subsequent
+		// boot. checkpointCatalogMark's guard ("a mark is only meaningful once the
+		// control tables actually describe the whole journal prefix") is load
+		// bearing for the rowid band, not just for the tables.
+		//
+		// Do NOT make this survivable. The journal is a legacy layer to converge
+		// away from, not to optimise (owner, 2026-09-02): records are SDS
+		// FlatBuffers and FlatSQL persists FlatBuffers to disk, so they stream
+		// straight into the engine and a boot opens the file. Every hour spent
+		// making a re-derivation resumable is an hour spent on a layer that
+		// should not exist.
 		if chunked {
 			// Let a reader or a live writer that parked on the store lock
 			// during this window take it before the next one: re-locking
