@@ -647,6 +647,17 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
     };
   }
 
+  // See `allowPrivateAddressDial` in SDNConfig: the browser gater's default
+  // denies private-IP dials outright, so a loopback publisher is unreachable
+  // until the caller says otherwise. Only `denyDialMultiaddr` is replaced —
+  // every other gate keeps libp2p's default.
+  if (config.allowPrivateAddressDial === true) {
+    libp2pOpts.connectionGater = {
+      ...(libp2pOpts.connectionGater ?? {}),
+      denyDialMultiaddr: async () => false,
+    };
+  }
+
   if (config.identity?.identityKey) {
     const rawKey = (config.identity as DerivedIdentity).identityKey.privateKey;
     libp2pOpts.privateKey = await keys.unmarshalPrivateKey(

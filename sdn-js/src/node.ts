@@ -239,6 +239,20 @@ export interface SDNConfig {
    * `connection-monitor-policy.ts` for the measurement.
    */
   connectionMonitor?: SdnConnectionMonitorConfig;
+
+  /**
+   * Permit dialling private and loopback addresses (127.0.0.1, 10/8, ::1, …).
+   *
+   * libp2p's BROWSER connection gater denies every private-IP multiaddr by
+   * default, and the denial happens before any transport is consulted: the dial
+   * rejects in a few milliseconds with ERR_NO_VALID_ADDRESSES, which reads
+   * downstream as "no providers" or "failed to load block" rather than as a
+   * policy decision. That default is right on the open web and wrong on a
+   * developer's machine, where the publisher IS on loopback.
+   *
+   * Off by default. Turn it on only for local publishers.
+   */
+  allowPrivateAddressDial?: boolean;
 }
 
 export interface SDNNodeEvents {
