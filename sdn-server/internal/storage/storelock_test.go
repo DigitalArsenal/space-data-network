@@ -126,9 +126,9 @@ func TestStoreLockSecondProcessOpenFailsCleanly(t *testing.T) {
 	}
 	defer store.Close()
 
-	catalogBefore, err := os.ReadFile(filepath.Join(base, recordCatalogJournalFileName))
+	catalogBefore, err := os.ReadFile(filepath.Join(base, flatSQLControlDBName))
 	if err != nil {
-		t.Fatalf("read record catalog: %v", err)
+		t.Fatalf("read control database: %v", err)
 	}
 
 	cmd, out := spawnLockHelper(t, base, "acquire")
@@ -149,12 +149,12 @@ func TestStoreLockSecondProcessOpenFailsCleanly(t *testing.T) {
 	}
 
 	// The failed contender must not have altered durable record metadata.
-	catalogAfter, err := os.ReadFile(filepath.Join(base, recordCatalogJournalFileName))
+	catalogAfter, err := os.ReadFile(filepath.Join(base, flatSQLControlDBName))
 	if err != nil {
-		t.Fatalf("read record catalog after: %v", err)
+		t.Fatalf("read control database after: %v", err)
 	}
 	if string(catalogBefore) != string(catalogAfter) {
-		t.Fatalf("record catalog changed after failed second-process open")
+		t.Fatalf("control database changed after failed second-process open")
 	}
 }
 

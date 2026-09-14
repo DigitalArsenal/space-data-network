@@ -755,17 +755,11 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 }
 
 // importDatasetShardChunk imports one chunk of shard records under one store
-// lock, stream-appender session, and control transaction (the pre-chunking
+// lock and one control transaction (the pre-chunking
 // importDatasetShardRecords body).
 func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, providerPeerID string, records []DatasetExportIndexRecord, readRecord datasetShardRecordReader) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	appender, err := s.newFlatSQLStreamAppender(index.SchemaName)
-	if err != nil {
-		return 0, fmt.Errorf("open imported %s FlatSQL stream: %w", index.SchemaName, err)
-	}
-	defer appender.Close()
 
 	// WS7.3d routed-only writes: imported rows land in the provider's
 	// (producer, standard) table (pre-created outside the tx — no DDL inside).
@@ -795,7 +789,6 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 
 	imported := 0
 	now := time.Now().Unix()
-	catalogEvents := make([]recordCatalogEvent, 0, len(records)*2)
 	// Records of a ROUTED schema are mirrored into the engine record vtabs
 	// after the chunk commits, exactly as StoreWithSourceTags does on the
 	// local write path. Without this, a materialized dataset shard was
@@ -806,6 +799,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 	// the aggregate cache still answers empty
 	// (sdn-tbs-feed-sync-for-cache-lane).
 	var enginePending []engineIngest
+	var superseded []string
 	engineRouted := s.engineRoutesSchema(index.SchemaName)
 	for _, record := range records {
 		data, err := readRecord(record)
@@ -843,37 +837,34 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 		switch {
 		case err == nil:
 			// Repeat CID: record it under this provider's table too.
-			s.mirrorRoutedRecordFromExisting(tx, index.SchemaName, record.CID, strings.TrimSpace(providerPeerID), nil)
+			gone := s.mirrorRoutedRecordFromExisting(tx, index.SchemaName, record.CID, strings.TrimSpace(providerPeerID), nil)
+			superseded = append(superseded, gone...)
 		case errors.Is(err, sql.ErrNoRows):
-			streamPath, streamOffset, recordLength, err := appender.Append(data)
+			stored, err := s.storableRecordBytes(index.SchemaName, data)
 			if err != nil {
-				return imported, fmt.Errorf("append imported %s record %s to FlatSQL stream: %w", index.SchemaName, record.CID, err)
+				return imported, err
 			}
-			rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now)
+			key := recordSupersedeKey(index.SchemaName, data)
+			gone, err := s.supersedeInProducerTableTx(tx, index.SchemaName, routedTable, key, record.CID)
+			if err != nil {
+				return imported, err
+			}
+			superseded = append(superseded, gone...)
+			rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, storedRecord{cid: record.CID, peerID: strings.TrimSpace(providerPeerID), timestamp: now, data: stored, createdAt: now, supersedeKey: key})
 			if err != nil {
 				return imported, fmt.Errorf("store imported %s record %s: %w", index.SchemaName, record.CID, err)
 			}
-			if err := upsertRecordIndexExec(tx, &s.recordIndexRowIDs, index.SchemaName, record.CID, now, data, s.fullTextState(index.SchemaName)); err != nil {
+			if err := upsertRecordIndexExec(tx, index.SchemaName, record.CID, now, data, s.fullTextState(index.SchemaName)); err != nil {
 				log.Warnf("Failed to index imported %s record %s: %v", index.SchemaName, record.CID[:16]+"...", err)
 			}
-			event, err := s.recordCatalogUpsertEvent(tx, index.SchemaName, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now, data)
-			if err != nil {
-				return imported, fmt.Errorf("record catalog event for imported %s record %s: %w", index.SchemaName, record.CID, err)
-			}
-			catalogEvents = append(catalogEvents, event)
 			if engineRouted {
-				enginePending = append(enginePending, engineIngest{data: data, source: engineSourceName(&tags)})
+				enginePending = append(enginePending, engineIngest{cid: record.CID, data: data, source: engineSourceName(&tags)})
 			}
 			imported++
 			if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
-				if err := insertNewSourceTagsTx(tx, index.SchemaName, record.CID, tags, recordLength, rowID); err != nil {
+				if err := insertNewSourceTagsTx(tx, index.SchemaName, record.CID, tags, int64(len(stored)), rowID); err != nil {
 					return imported, err
 				}
-				tagEvent, err := recordCatalogTagUpsertEvent(tx, index.SchemaName, record.CID, tags)
-				if err != nil {
-					return imported, fmt.Errorf("record catalog source tag event for imported %s record %s: %w", index.SchemaName, record.CID, err)
-				}
-				catalogEvents = append(catalogEvents, tagEvent)
 			}
 		default:
 			return imported, fmt.Errorf("check imported %s record %s: %w", index.SchemaName, record.CID, err)
@@ -883,22 +874,16 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 			if err := upsertSourceTagsTx(tx, readSource, index.SchemaName, record.CID, tags, record.Length); err != nil {
 				return imported, err
 			}
-			tagEvent, err := recordCatalogTagUpsertEvent(tx, index.SchemaName, record.CID, tags)
-			if err != nil {
-				return imported, fmt.Errorf("record catalog source tag event for imported %s record %s: %w", index.SchemaName, record.CID, err)
-			}
-			catalogEvents = append(catalogEvents, tagEvent)
 		}
-	}
-	if err := appender.Close(); err != nil {
-		return imported, fmt.Errorf("flush imported %s FlatSQL stream: %w", index.SchemaName, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return imported, fmt.Errorf("commit dataset shard import: %w", err)
 	}
 	committed = true
-	if err := s.appendCatalogEvents(catalogEvents); err != nil {
-		return imported, fmt.Errorf("append record catalog events: %w", err)
+	if len(superseded) > 0 {
+		if _, err := s.tombstoneEngineRecordsLocked(index.SchemaName, superseded); err != nil {
+			return imported, err
+		}
 	}
 	if len(enginePending) > 0 {
 		// The engine vtab is a cache over the durable substrate committed

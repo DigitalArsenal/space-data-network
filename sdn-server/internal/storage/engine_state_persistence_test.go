@@ -3,8 +3,8 @@ package storage
 // The engine's records live on disk and a restart USES them (owner law
 // 2026-09-02, sdn-operating-model-streams-flatsql): a warm boot answers from
 // the persisted record state without re-ingesting a single record, a crash
-// after a checkpoint costs exactly the journal tail, and the per-standard
-// hot-window bound holds across the restart.
+// after a checkpoint costs exactly the records written since it, and the
+// per-standard hot-window bound holds across the restart.
 
 import (
 	"fmt"
@@ -33,7 +33,7 @@ func TestWarmBootServesPersistedEngineRecordsWithoutReingest(t *testing.T) {
 	t.Setenv(checkpointIntervalEnv, "0")
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newEngineRecordsStore(t, basePath)
-	if !store.BootReplay().Durable {
+	if !store.BootState().Durable {
 		t.Skip("engine has no filesystem on this host — the persisted-state lane is inert")
 	}
 	for i, norad := range []uint32{25544, 43013, 48274} {
@@ -52,8 +52,8 @@ func TestWarmBootServesPersistedEngineRecordsWithoutReingest(t *testing.T) {
 	// run when the first query arrives.
 	warm := reopenDeferred(t, basePath)
 	defer warm.Close()
-	stats := warm.BootReplay()
-	if !stats.Warm || !stats.EngineWarm {
+	stats := warm.BootState()
+	if !stats.EngineWarm {
 		t.Fatalf("clean restart did not open persisted state: %+v", stats)
 	}
 	if stats.EngineRecords != 4 {
@@ -71,15 +71,12 @@ func TestWarmBootServesPersistedEngineRecordsWithoutReingest(t *testing.T) {
 	if resident != 3 {
 		t.Fatalf("resident bookkeeping restored %d OMM, want 3", resident)
 	}
-	loaded, err := warm.HydrateEngineHotWindowFromRecordCatalog()
+	loaded, err := warm.HydrateEngineHotWindow()
 	if err != nil {
 		t.Fatalf("hydrate: %v", err)
 	}
 	if loaded != 0 {
 		t.Fatalf("hydration re-ingested %d records on a clean restart, want 0", loaded)
-	}
-	if passes := warm.recordCatalog.EngineHotWindowPasses(); passes != 0 {
-		t.Fatalf("hydration scanned the journal %d time(s) on a clean restart, want 0", passes)
 	}
 	if got := engineFrameCount(t, warm, "OMM"); got != 3 {
 		t.Fatalf("OMM answers %d frames after hydration, want 3 (no duplicates)", got)
@@ -90,7 +87,7 @@ func TestCrashAfterCheckpointIngestsOnlyTheEngineTail(t *testing.T) {
 	t.Setenv(checkpointIntervalEnv, "0")
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newEngineRecordsStore(t, basePath)
-	if !store.BootReplay().Durable {
+	if !store.BootState().Durable {
 		t.Skip("engine has no filesystem on this host")
 	}
 	for i := 0; i < 2; i++ {
@@ -98,7 +95,7 @@ func TestCrashAfterCheckpointIngestsOnlyTheEngineTail(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
+	if err := store.Checkpoint(); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	// Two more records after the checkpoint, then die without one.
@@ -111,8 +108,8 @@ func TestCrashAfterCheckpointIngestsOnlyTheEngineTail(t *testing.T) {
 
 	// Synchronous open (the CLI shape): the tail is ingested during open.
 	reopened := newEngineRecordsStore(t, basePath)
-	stats := reopened.BootReplay()
-	if !stats.Warm || !stats.EngineWarm || stats.EngineRecords != 2 {
+	stats := reopened.BootState()
+	if !stats.EngineWarm || stats.EngineRecords != 2 {
 		t.Fatalf("crash boot: %+v (want warm with 2 persisted records)", stats)
 	}
 	if got := engineFrameCount(t, reopened, "OMM"); got != 4 {
@@ -131,7 +128,7 @@ func TestCrashAfterCheckpointIngestsOnlyTheEngineTail(t *testing.T) {
 	// And once more, clean: everything persisted, nothing re-ingested.
 	again := reopenDeferred(t, basePath)
 	defer again.Close()
-	if s := again.BootReplay(); !s.EngineWarm || s.EngineRecords != 4 {
+	if s := again.BootState(); !s.EngineWarm || s.EngineRecords != 4 {
 		t.Fatalf("second restart: %+v (want 4 persisted)", s)
 	}
 	if got := engineFrameCount(t, again, "OMM"); got != 4 {
@@ -142,8 +139,10 @@ func TestCrashAfterCheckpointIngestsOnlyTheEngineTail(t *testing.T) {
 func TestHotWindowBoundHoldsAcrossWarmBoot(t *testing.T) {
 	t.Setenv(checkpointIntervalEnv, "0")
 	basePath := filepath.Join(t.TempDir(), "store")
-	store := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(2))
-	if !store.BootReplay().Durable {
+	// Window 4 of 5 records: one evicted row is a minority of the arena, so
+	// the boot keeps the arena and RE-APPLIES the tombstone the engine forgot.
+	store := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(4))
+	if !store.BootState().Durable {
 		t.Skip("engine has no filesystem on this host")
 	}
 	for i := 0; i < 5; i++ {
@@ -151,43 +150,89 @@ func TestHotWindowBoundHoldsAcrossWarmBoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := engineFrameCount(t, store, "OMM"); got != 2 {
-		t.Fatalf("live window holds %d frames, want 2", got)
+	if got := engineFrameCount(t, store, "OMM"); got != 4 {
+		t.Fatalf("live window holds %d frames, want 4", got)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	warm := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(2), WithDeferredBootRebuilds(), WithDeferredRecordCatalogReplay())
+	warm := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(4), WithDeferredBootRebuilds())
 	defer warm.Close()
-	if !warm.BootReplay().EngineWarm {
-		t.Fatalf("not warm: %+v", warm.BootReplay())
+	if !warm.BootState().EngineWarm {
+		t.Fatalf("not warm: %+v", warm.BootState())
 	}
-	// The engine does not persist tombstones: the window is re-applied at open.
-	if got := engineFrameCount(t, warm, "OMM"); got != 2 {
-		t.Fatalf("window after warm boot holds %d frames, want 2", got)
+	// The engine does not persist tombstones: the daemon's background
+	// hydration re-applies the window from the residency ledger.
+	if loaded, err := warm.HydrateEngineHotWindow(); err != nil || loaded != 0 {
+		t.Fatalf("hydrate after a clean restart loaded %d (err %v), want 0", loaded, err)
+	}
+	if got := engineFrameCount(t, warm, "OMM"); got != 4 {
+		t.Fatalf("window after warm boot holds %d frames, want 4", got)
 	}
 	warm.mu.RLock()
 	resident := warm.engineResidentCount("OMM.fbs")
 	warm.mu.RUnlock()
-	if resident != 2 {
-		t.Fatalf("resident after warm boot = %d, want 2", resident)
+	if resident != 4 {
+		t.Fatalf("resident after warm boot = %d, want 4", resident)
+	}
+}
+
+// TestMostlyDeadArenaIsRebuiltAndShrinks: the engine keeps every row it ever
+// ingested and forgets its tombstones. Once the evicted rows outnumber the
+// live ones the boot discards the arena and refills the bounded window from
+// the tables — and the next flush writes an arena that holds the window only.
+func TestMostlyDeadArenaIsRebuiltAndShrinks(t *testing.T) {
+	t.Setenv(checkpointIntervalEnv, "0")
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(2))
+	if !store.BootState().Durable {
+		t.Skip("engine has no filesystem on this host")
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := store.Store("OMM", buildEngineOMM(t, uint32(3000+i), "D", 1700000000+int64(i)), "peer", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// 5 persisted rows, 2 live: rebuilt, not reconciled.
+	rebuilt := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(2))
+	if rebuilt.BootState().EngineWarm {
+		t.Fatalf("a mostly-dead arena was opened warm: %+v", rebuilt.BootState())
+	}
+	if got := engineFrameCount(t, rebuilt, "OMM"); got != 2 {
+		t.Fatalf("window after the rebuild holds %d frames, want 2", got)
+	}
+	if err := rebuilt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The flushed arena now holds the window and nothing else, so the next
+	// boot is warm with exactly the live rows.
+	again := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(2), WithDeferredBootRebuilds())
+	defer again.Close()
+	if s := again.BootState(); !s.EngineWarm || s.EngineRecords != 2 {
+		t.Fatalf("after the rebuild the arena should hold exactly the window: %+v", s)
+	}
+	if got := engineFrameCount(t, again, "OMM"); got != 2 {
+		t.Fatalf("window after the warm reopen holds %d frames, want 2", got)
 	}
 }
 
 // TestReadersInterleaveWithBackgroundHotWindowHydration is the acceptance for
 // the owner's 2026-09-02 ruling that reads are independent of data-layer
 // maintenance: while the background hydration rebuilds the engine hot window
-// from a cold journal, a reader that takes the store lock must answer
-// promptly between ingest batches instead of waiting for the whole pass.
+// from the control tables, a reader that takes the store lock must answer
+// promptly between pages instead of waiting for the whole pass.
 func TestReadersInterleaveWithBackgroundHotWindowHydration(t *testing.T) {
 	t.Setenv(checkpointIntervalEnv, "0")
 	basePath := filepath.Join(t.TempDir(), "store")
 	seed := newEngineRecordsStore(t, basePath)
-	if !seed.BootReplay().Durable {
+	if !seed.BootState().Durable {
 		t.Skip("engine has no filesystem on this host")
 	}
-	// Two sources so the pass flushes more than one batch even below the
-	// batch bound; then a crash so the reopen is cold.
+	// Two sources and a small page so the pass takes more than one lock hold;
+	// then a crash so the reopen is cold.
 	for src := 0; src < 2; src++ {
 		tags := SourceTags{ProviderID: "prov", SourceName: fmt.Sprintf("interleave-%d", src), BatchID: "b"}
 		records := make([][]byte, 0, 40)
@@ -202,9 +247,12 @@ func TestReadersInterleaveWithBackgroundHotWindowHydration(t *testing.T) {
 
 	cold := reopenDeferred(t, basePath)
 	defer cold.Close()
-	if cold.BootReplay().EngineWarm {
+	if cold.BootState().EngineWarm {
 		t.Fatal("expected a cold engine after a crash without checkpoint")
 	}
+	prevPage := engineHotWindowPage
+	engineHotWindowPage = 25
+	defer func() { engineHotWindowPage = prevPage }()
 	const hold = 400 * time.Millisecond
 	var batches atomic.Int32
 	cold.engineHydrateBatchHook = func() {
@@ -214,7 +262,7 @@ func TestReadersInterleaveWithBackgroundHotWindowHydration(t *testing.T) {
 	done := make(chan error, 1)
 	passStart := time.Now()
 	go func() {
-		_, err := cold.HydrateEngineHotWindowFromRecordCatalog()
+		_, err := cold.HydrateEngineHotWindow()
 		done <- err
 	}()
 	// Give the pass time to enter its first batch, then read repeatedly.
@@ -248,7 +296,7 @@ func TestReadersInterleaveWithBackgroundHotWindowHydration(t *testing.T) {
 		default:
 		}
 		start := time.Now()
-		_ = cold.BootReplay() // RLock reader
+		_ = cold.BootState() // RLock reader
 		rlock := time.Since(start)
 		if _, err := cold.EngineRecordCount("OMM.fbs"); err != nil {
 			t.Fatalf("read during hydration: %v", err)
@@ -264,14 +312,13 @@ func TestReadersInterleaveWithBackgroundHotWindowHydration(t *testing.T) {
 
 // TestEngineStateFlushedAfterHydrationSurvivesACrash: the hot-window hydration
 // flushes the engine's record stream as soon as it completes, so a crash before
-// the catalog checkpoint (the production shape: a cold catalog replay takes
-// minutes) still leaves a database the next boot opens WARM instead of one it
-// must discard.
+// the next periodic checkpoint still leaves an engine state the next boot
+// opens WARM.
 func TestEngineStateFlushedAfterHydrationSurvivesACrash(t *testing.T) {
 	t.Setenv(checkpointIntervalEnv, "0")
 	basePath := filepath.Join(t.TempDir(), "store")
 	seed := newEngineRecordsStore(t, basePath)
-	if !seed.BootReplay().Durable {
+	if !seed.BootState().Durable {
 		t.Skip("engine has no filesystem on this host")
 	}
 	for i := 0; i < 3; i++ {
@@ -282,30 +329,27 @@ func TestEngineStateFlushedAfterHydrationSurvivesACrash(t *testing.T) {
 	simulateCrash(t, seed) // cold next time
 
 	cold := reopenDeferred(t, basePath)
-	if cold.BootReplay().EngineWarm {
+	if cold.BootState().EngineWarm {
 		t.Fatal("expected a cold engine")
 	}
-	// The daemon's order: catalog first (its checkpoint makes the database
-	// survive), then the engine window (its flush + coverage mark make the
-	// engine survive). Die right after — no further checkpoint.
-	if _, err := cold.HydrateRecordCatalog(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cold.HydrateEngineHotWindowFromRecordCatalog(); err != nil {
+	// The daemon's order: the engine window hydrates in the background and
+	// its flush + coverage mark make the engine survive. Die right after — no
+	// further checkpoint.
+	if _, err := cold.HydrateEngineHotWindow(); err != nil {
 		t.Fatal(err)
 	}
 	simulateCrash(t, cold)
 
 	again := reopenDeferred(t, basePath)
 	defer again.Close()
-	stats := again.BootReplay()
+	stats := again.BootState()
 	if !stats.EngineWarm || stats.EngineRecords != 3 {
 		t.Fatalf("after a crash following hydration the engine state must be warm with 3 records: %+v", stats)
 	}
 	if got := engineFrameCount(t, again, "OMM"); got != 3 {
 		t.Fatalf("OMM answers %d frames, want 3", got)
 	}
-	if loaded, err := again.HydrateEngineHotWindowFromRecordCatalog(); err != nil || loaded != 0 {
+	if loaded, err := again.HydrateEngineHotWindow(); err != nil || loaded != 0 {
 		t.Fatalf("hydration after the warm reopen loaded %d (err=%v), want 0", loaded, err)
 	}
 	if got := engineFrameCount(t, again, "OMM"); got != 3 {

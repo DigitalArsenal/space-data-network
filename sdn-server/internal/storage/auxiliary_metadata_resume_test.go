@@ -376,9 +376,7 @@ func TestAuxiliaryReplayBatchedMatchesPerEventState(t *testing.T) {
 	// removed, so opening it replays the whole journal in chunk transactions.
 	batchedPath := filepath.Join(root, "batched")
 	copyDir(t, basePath, batchedPath)
-	if err := removeControlDatabaseFiles(filepath.Join(batchedPath, flatSQLControlDBName)); err != nil {
-		t.Fatalf("discard control database in %s: %v", batchedPath, err)
-	}
+	discardControlDatabaseForTest(t, batchedPath)
 	batched := newFixtureStore(t, batchedPath)
 	defer batched.Close()
 	if batched.bootAuxWarm {
@@ -482,25 +480,25 @@ func TestAuxiliaryResumeMarkRefusesForeignJournalDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("digestPrefix(): %v", err)
 	}
-	// The same bytes, fingerprinted in the record catalog's domain.
-	foreign, err := digestRecordCatalogPrefix(store.auxiliaryMetadata.f, end)
+	// The same bytes, fingerprinted in a different domain.
+	foreign, err := digestForeignPrefixForTest(store.auxiliaryMetadata.f, end)
 	if err != nil {
-		t.Fatalf("digestRecordCatalogPrefix(): %v", err)
+		t.Fatalf("digestForeignPrefixForTest(): %v", err)
 	}
 	if honest == foreign {
-		t.Fatal("auxiliary and record-catalog digests of the same bytes are equal; the domain prefix is not doing its job")
+		t.Fatal("auxiliary and foreign-domain digests of the same bytes are equal; the domain prefix is not doing its job")
 	}
-	if got := auxiliaryResumeOffset(bootMark{AuxOffset: end, AuxDigest: foreign}, true, store.auxiliaryMetadata); got != 0 {
+	if got := auxiliaryResumeOffset(bootMark{AuxOffset: end, AuxDigest: foreign}, store.auxiliaryMetadata); got != 0 {
 		t.Fatalf("resume with a foreign digest = %d, want 0 (full replay)", got)
 	}
-	if got := auxiliaryResumeOffset(bootMark{AuxOffset: end, AuxDigest: honest}, true, store.auxiliaryMetadata); got != end {
+	if got := auxiliaryResumeOffset(bootMark{AuxOffset: end, AuxDigest: honest}, store.auxiliaryMetadata); got != end {
 		t.Fatalf("resume with the honest digest = %d, want %d", got, end)
 	}
-	if got := auxiliaryResumeOffset(bootMark{AuxOffset: end + 1, AuxDigest: honest}, true, store.auxiliaryMetadata); got != 0 {
+	if got := auxiliaryResumeOffset(bootMark{AuxOffset: end + 1, AuxDigest: honest}, store.auxiliaryMetadata); got != 0 {
 		t.Fatalf("resume past the journal end = %d, want 0", got)
 	}
-	if got := auxiliaryResumeOffset(bootMark{AuxOffset: end, AuxDigest: honest}, false, store.auxiliaryMetadata); got != 0 {
-		t.Fatalf("resume from a COLD database = %d, want 0", got)
+	if got := auxiliaryResumeOffset(bootMark{}, store.auxiliaryMetadata); got != 0 {
+		t.Fatalf("resume from a database with no mark = %d, want 0", got)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close(): %v", err)
@@ -604,9 +602,7 @@ func TestAuxiliaryReplayChunkBoundaryIsExact(t *testing.T) {
 		t.Fatalf("Close(): %v", err)
 	}
 
-	if err := removeControlDatabaseFiles(filepath.Join(basePath, flatSQLControlDBName)); err != nil {
-		t.Fatalf("discard control database: %v", err)
-	}
+	discardControlDatabaseForTest(t, basePath)
 	cold := newFixtureStore(t, basePath)
 	defer cold.Close()
 	if cold.bootAuxFrames != frames {

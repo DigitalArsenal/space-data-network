@@ -7,21 +7,20 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-// TestIdentityWizardStoreOpenDoesNotHydrateRecordCatalog is the regression for
+// TestIdentityWizardStoreOpenDoesNotHydrateTheEngine is the regression for
 // sdn-host01-flatsql-engine-poison-blocks-epm.
 //
 // The wizard reads and writes ONLY auxiliary-journal-backed state (the local
-// EPM and the node-EPM directory row). A default open additionally replays the
-// compact record catalog, which on sdn.spaceaware.io is 450 MB / 1,344,427
-// frames: ~431 s of work the command does not need, and the replay traps in
-// the guest and poisons the engine, so the local-EPM read that follows fails.
+// EPM and the node-EPM directory row). A default open additionally brings the
+// engine hot window current for every routed standard — work the command does
+// not need, on a code path that once trapped in the guest and poisoned the
+// engine, so the local-EPM read that followed failed.
 //
 // The invariants asserted here are exactly the two that matter:
-//  1. the wizard's open does NOT hydrate the record catalog, so it can never
-//     enter the trapping replay;
-//  2. the local EPM — the only thing the wizard actually reads — is still
-//     served from that un-hydrated store.
-func TestIdentityWizardStoreOpenDoesNotHydrateRecordCatalog(t *testing.T) {
+//  1. the wizard's open does NOT hydrate the engine hot window;
+//  2. the local EPM — the only thing the wizard actually reads — is served
+//     from that store regardless.
+func TestIdentityWizardStoreOpenDoesNotHydrateTheEngine(t *testing.T) {
 	dir := t.TempDir()
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
@@ -49,16 +48,15 @@ func TestIdentityWizardStoreOpenDoesNotHydrateRecordCatalog(t *testing.T) {
 	}
 	defer store.Close()
 
-	if store.RecordCatalogHydrated() {
-		t.Fatal("identity wizard opened the store with record-catalog hydration ON: " +
-			"it would replay the whole catalog to read one auxiliary row, and on a " +
-			"catalog-scale store that replay traps and poisons the engine " +
+	if store.EngineHotWindowHydrated() {
+		t.Fatal("identity wizard opened the store with engine hot-window hydration ON: " +
+			"it would rebuild every routed window to read one auxiliary row " +
 			"(sdn-host01-flatsql-engine-poison-blocks-epm)")
 	}
 
 	got, err := store.LoadLocalEPM(peerID)
 	if err != nil {
-		t.Fatalf("LoadLocalEPM from an un-hydrated store: %v", err)
+		t.Fatalf("LoadLocalEPM from a deferred store: %v", err)
 	}
 	if string(got) != string(epmBytes) {
 		t.Fatalf("LoadLocalEPM = %q, want %q", got, epmBytes)

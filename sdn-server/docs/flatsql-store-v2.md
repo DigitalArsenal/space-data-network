@@ -24,29 +24,38 @@ database whose schema string concatenates:
 One SQLite context for everything means cursor queries can join control
 rows against record vtabs, exactly like today's `sdn.db`.
 
-Column extraction for query predicates (epoch, norad, entity) comes from the
-record vtabs natively — `sdn_record_index` keeps only what the sync/cursor
-and point-read paths need: `(rowid, schema_name, cid, table_ref, engine_seq,
-stream_path, stream_offset, record_length, peer_id, timestamp,
-signature_hex)`.
+`sdn_record_index` keeps what the sync/cursor, point-read and catalog-filter
+paths need: `(rowid, schema_name, cid, norad_cat_id, entity_id, object_type,
+ops_status_code, epoch_unix, epoch_day, source_timestamp)`; the record bytes
+and signature live on the producer table row.
 
-## 2. Durability (per A.4 decisions)
+## 2. Durability — the control database IS the record store
 
-- **Payloads**: the existing append-only `flatsql-streams/<table>.flatsql`
-  files, byte-unchanged (size-prefixed FlatBuffer frames).
-- **Metadata**: a compact append-only record catalog per datastore
-  (`record-catalog.flatsqlmeta`): one compact frame per ingested record
-  carrying `(seq u64, schema_id, cid, stream_path_ref, stream_offset u64,
-  record_length u32, peer_id, timestamp, source-tag tuple, signature)` —
-  i.e. today's `sdn_record_index` + `sdn_record_source_tags` rows as a flat
-  log. CRC per frame; torn tails truncated at boot.
-- **Boot**: replay the record catalog in `seq` order; for each frame, feed the
-  payload bytes (read from the stream file) to
-  `flatsql_ingest_one_with_source` and `INSERT` the control row **with the
-  explicit rowid = seq**. MEASURED (A.4): 493K records rebuild in ~145 ms;
-  ~1 s at 3M. No snapshots needed.
-- The engine is thereafter a pure cache: any crash loses nothing that the
-  journal + streams cannot reproduce.
+OWNER LAW 2026-09-02 (sdn-operating-model-streams-flatsql): "the flatbuffers
+are streamed to flatsql which persists it directly to disk, and builds the sql
+index / metadata which it writes to disk; any node restart just uses whatever
+is on disk ... it should NEVER re-ingest".
+
+- **One file.** Every record's bytes (`data BLOB` on its producer table),
+  its index row (`sdn_record_index`), its provenance (`sdn_record_source_tags`,
+  `sdn_record_source_summary`) and the node's auxiliary tables live in
+  `control.flatsqldb`, a SQLite database written by the FlatSQL engine through
+  its own VFS (`flatsql_io_*`, journal_mode=TRUNCATE, one writer). A record
+  write is one transaction; a crash costs nothing that was committed.
+- **Boot = open.** `NewFlatSQLStore` opens the file, replays the tail of the
+  auxiliary journal (the node's own EPM, pin ledger, publications, licences —
+  `auxiliary.flatsqlmeta`, the one journal the store keeps) and serves. There
+  is no record journal, no stream file, no replay and no hydration phase for
+  records. A file that does not open is a hard failure, never discarded
+  (`errControlDatabaseUnusable`): there is no second copy to rebuild from.
+- **Field-encrypted standards** are sealed BEFORE the row is written
+  (`storableRecordBytes`) and opened on read; the CID and the index are always
+  computed over the plaintext.
+- **CAT supersedes on ingest** (`record_supersede.go`): within one producer's
+  table a `$CAT` record replaces the producer's previous record for the same
+  object — identity `(CATALOG_URI, CATALOG_OBJECT_ID)`, else `NORAD_CAT_ID`,
+  else `OBJECT_ID`; no identity, no supersede. Two ingests of the same
+  edition leave one row per object. No historical CAT is stored.
 
 ## 3. The datasync cursor (the deployed-peer contract)
 
@@ -54,68 +63,69 @@ Wire cursor stays `(AfterRowID, MaxRowID, SnapshotID)`
 (`datasync.EncodeRawRecordCursor`), and the store keeps satisfying
 `RawRecordQuery{UseRowIDCursor, AfterRowID, MaxRowID}` + `RawRecordHead`:
 
-- **rowid ≡ journal seq**: a strictly-monotonic uint64 assigned at ingest,
-  durable in the journal, reproduced identically at every boot via explicit
-  `INSERT ... rowid = seq`. Paging = `WHERE rowid > :after AND rowid <=
-  :max ORDER BY rowid LIMIT :n` over `sdn_record_index`; head =
-  `MAX(rowid)`.
-- **GC / hot-window eviction never renumbers**: evicting old epochs from
-  the engine removes control rows + vtab records but seqs are never reused;
-  stream compaction rewrites offsets in a new journal generation while
-  preserving seqs. A cursor pointing at evicted rows simply pages past them
-  (same behavior as today's GC-resilient stream cache).
-- **Migration (B.7)**: the legacy importer replays `sdn.db` in
-  `sdn_record_index.rowid` order assigning `seq = legacy rowid`, so
-  deployed peers' cursors remain valid byte-for-byte. Where that ever
-  fails, `SnapshotID` mismatch already forces a clean resync.
+- **rowid = `sdn_record_index.rowid`**, durable in the control database.
+  Rows are only ever inserted (SQLite allocates MAX(rowid)+1; the store never
+  VACUUMs), and a repeat CID keeps its rowid, so a record's cursor position
+  never moves for the life of the store. Paging = `WHERE rowid > :after AND
+  rowid <= :max ORDER BY rowid LIMIT :n`; head = `MAX(rowid)`.
+- **GC / supersede / hot-window eviction never renumber**: a deleted record's
+  rowid is simply absent; a cursor pointing at it pages past.
 
 ## 4. Write path
 
 ```
 StoreWithSourceTags(schema, data, peer, sig, tags):
-  1. append size-prefixed data → stream file        (durable payload)
-  2. seq = nextSeq++; append journal frame          (durable metadata)
-  3. engineSeq = IngestOneWithSource(data, source)  (vtab row, indexed)
-  4. INSERT control rows (rowid = seq, engine_seq = engineSeq, tags…)
+  BEGIN
+    supersede: delete the producer's previous row for the same $CAT object
+    INSERT producer row (cid, peer_id, timestamp, data, record_length, ...)
+    INSERT OR UPDATE sdn_record_index row            (the datasync cursor)
+    INSERT source tags + increment the source summary
+  COMMIT                                             (the commit point)
+  tombstone superseded rows in the engine; mirror the new record into the
+  engine vtab and record its residency (engine_residency.go)
 ```
-Steps 1–2 are the commit point; 3–4 are engine-cache updates (recoverable
-by replay). Batch variants amortize one lock acquisition. The vtab
-`_rowid` equals the value returned by `flatsql_ingest_one*` (proven in the
-prototype), so payload fetch by control row is
-`SELECT _data FROM "<Table>@<source>" WHERE _rowid = :engine_seq` — or, for
-point reads that don't need the engine at all, a direct `ReadAt` on the
-stream file (today's hydrate path, unchanged).
+Batch variants amortize one lock acquisition and one transaction per chunk.
 
 ## 5. Query paths
 
-- Cursor/sync reads: control-table SQL (above) → refs; payload frames read
-  from stream files (`WriteRawRecordFrames` unchanged).
-- Epoch profiles (B.3): registered query templates over the bounded
-  per-provider vtabs (nearest/as_of/forward/day/window/coverage), raw
-  aligned streams out via `flatsql_query_raw_flatbuffer_stream`.
-- Point read `Get(schema,cid)`: control-table lookup → stream `ReadAt`.
-- `Query*`/`Count*`/`Stats`/`DataSummary`: SQL over control tables + vtabs.
+- Cursor/sync reads, `Get`, `Query*`, `Count*`, `DataSummary`, exports and
+  shard writes: control-table SQL; the record bytes come from the row.
+- Epoch profiles and the sandboxed public SQL surface: the engine vtabs
+  (§6), which hold a bounded hot window of the routed standards.
 
-## 6. Retention (per A.4 capacity ceiling — ENFORCED in loop C.4)
+## 6. The engine hot window (bounded cache, tracked by a durable ledger)
 
-Resident hot window bounded per schema (measured raw ceiling ≈1.5M $OMM:
-3M ≈ 2.2 GB and the next arena doubling traps; the vtabs share the 4 GiB
-engine with the control tables at ~4 control rows/record — B.7 — so the
-shipped DEFAULT is 400K records, configurable via
-`storage.engine_hot_window` / `storage.WithEngineHotWindow`). Enforcement
-(engine_records.go):
+Resident records per routed schema are bounded (measured raw ceiling ≈1.5M
+$OMM; the vtabs share the 4 GiB engine with the control tables, so the
+shipped DEFAULT is 400K records, `storage.engine_hot_window`, and 10K for
+generically routed standards, `storage.engine_generic_hot_window`). The
+window exists because `flatsql_open_state` reads the whole `.fsdata` arena
+into linear memory (flatsql-page-fsdata-not-slurp, Part B); it is not the
+record store.
 
-- **Boot**: the rebuild loads at most the window (newest records by global
-  index rowid).
-- **Ingest**: after mirroring a committed batch, the oldest resident engine
-  records beyond the window are TOMBSTONED (`flatsql_mark_deleted` keyed by
-  the unified view's `_source` + `_rowid`) — queries stop returning them
-  immediately; arena bytes are reclaimed by the next boot rebuild.
-
-History remains in streams+journal (eviction never touches control rows,
-stream files, or datasync cursor rowids — TestEngineHotWindowEviction);
-epoch queries beyond the hot window are served by transient engines over
-time-partitioned segments (wired after the hot path).
+- **Residency ledger** `sdn_engine_rows (schema_name, cid, source, seq)`:
+  one row per resident record, written in the SAME control transaction as
+  the engine ingest (`flatsql_ingest_one_with_source` returns `seq`, which is
+  the vtab's `_rowid`). It is what makes a delete or a supersede reach the
+  engine at once (`MarkDeleted(<Table>@<source>, seq)`), what the eviction
+  drops rows from, and what a warm boot reconciles against.
+- **Persistence**: every checkpoint (30 s, and at Close) flushes the engine's
+  record arena + index (`flatsql_flush_index`, into `control.flatsqldb.fsdata`
+  and the engine's own tables inside the database) and then records
+  `flatsql_boot.engine_rowid` — the index rowid the window has been mirrored
+  through. FLUSH FIRST, MARK SECOND.
+- **Warm boot** (`OpenState` succeeded): per routed schema, ledger rows whose
+  `seq` is above the engine's persisted max are re-ingested (the arena never
+  flushed them); engine rows the ledger does not hold are tombstoned again
+  (the engine does not persist tombstones); records past the coverage mark
+  that the ledger does not hold are ingested; the window bound is re-applied.
+  All of it per page under the store lock, in the background.
+- **Cold engine** (`.fsdata` absent or unusable — it is discarded, the
+  database is kept): the ledger is cleared and each window is filled with the
+  newest records from the control tables, page by page.
+- **Poison recovery** (`RecoverPoisonedEngine`): a fresh runtime reopens the
+  SAME database (the rollback journal discards what the trapped engine had in
+  flight) and the window is brought current exactly as at boot.
 
 ## 7. Migration & compatibility gates
 
@@ -129,10 +139,11 @@ time-partitioned segments (wired after the hot path).
 ## 8. Single-writer liveness lock + ingest topology (loop C.6b)
 
 The store is SINGLE-WRITER by construction: one in-process engine owns the
-compact record metadata and the stream appenders. Two independent processes
-on one basePath (the pre-C.6b legacy production shape: daemon +
-`spacedatanetwork-ingest.service`) would interleave metadata frames and
-stream appends — store corruption.
+control database and its rollback journal, and the engine's VFS carries no
+cross-process locks. Two independent processes on one basePath (the pre-C.6b
+legacy production shape: daemon + `spacedatanetwork-ingest.service`) would
+interleave page writes — store corruption. There is no read-only open either:
+a read verb that finds the store held reads through the daemon's API.
 
 - **Lock**: every `NewFlatSQLStore` takes a non-blocking EXCLUSIVE OS lock
   (`flock` on Unix, `LockFileEx` on Windows) on `<basePath>/store.lock`

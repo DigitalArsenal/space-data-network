@@ -10,8 +10,9 @@ package storage
 //   EngineEpoch           monotonic engine identity — bumped every time the
 //                          store REPLACES its engine; mounts re-instantiate
 //                          dependent flow instances when it moves
-//   RecoverPoisonedEngine replace a trapped engine in place: fresh runtime,
-//                          record-catalog replay, hot-window rebuild. The old
+//   RecoverPoisonedEngine replace a trapped engine in place: fresh runtime
+//                          over the SAME control database, hot window
+//                          reconciled from the residency ledger. The old
 //                          runtime is RETIRED, not closed — dependent VMs
 //                          may still hold borrowed references to its
 //                          instance; retired engines are released at store
@@ -19,7 +20,6 @@ package storage
 //                          engine previously meant a dead daemon).
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
@@ -44,10 +44,11 @@ func (s *FlatSQLStore) EngineEpoch() uint64 {
 }
 
 // RecoverPoisonedEngine replaces the engine if (and only if) it is poisoned:
-// new runtime + database, tables rebuilt from compact domain metadata when
-// already hydrated, and the hot window rebuilt from stream files. Holds the
-// store write lock for the duration. Idempotent and cheap when the engine is
-// healthy. Returns the (possibly bumped) epoch.
+// a new runtime opens the SAME control database — SQLite's rollback journal
+// discards whatever the trapped engine had in flight — and the hot window is
+// brought current from the residency ledger exactly as a boot does. Holds
+// the store write lock for the duration. Idempotent and cheap when the
+// engine is healthy. Returns the (possibly bumped) epoch.
 func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,68 +65,34 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	s.engineRebuilding.Store(true)
 	defer s.engineRebuilding.Store(false)
 
-	log.Warnf("FlatSQL engine poisoned — rebuilding engine in place (epoch %d)", s.engineEpoch)
+	log.Warnf("FlatSQL engine poisoned — reopening the control database on a replacement engine (epoch %d)", s.engineEpoch)
 
-	// ONE WRITER PER FILE, ALWAYS.
-	//
-	// A poisoned runtime is RETIRED, not closed: linked flow VMs may still hold
-	// borrowed references to its named instance. But a retired engine that still
-	// owns open file descriptors on the control database would be a SECOND
-	// WRITER against the file the replacement is about to open — the exact
-	// corruption the one-daemon-per-box law exists to prevent, reproduced inside
-	// one process. Closing only the host FILE LAYER severs that without touching
-	// the wasm instance those VMs still reference: any further I/O the dead
-	// engine attempts gets ioErrBadHandle, which is precisely what a poisoned
-	// engine should get.
-	//
-	// The replacement then starts from a DISCARDED file rather than recovering
-	// the trapped engine's half-written pages. Everything in that file is
-	// derivable — this function already replays the whole catalog below — so
-	// discarding is free, and trusting pages written by an engine that trapped
-	// mid-transaction is not.
-	//
-	// s.controlDBPath, NOT s.dbPath. Those are different files and this path had
-	// the wrong one: s.dbPath is the LEGACY v1 database (`sdn.db`, which
-	// MigrateLegacyControl still reads and which host-01 still has on disk),
-	// while the engine's control database is `control.flatsqldb`. As written it
-	// deleted the legacy database and then opened it as the control database —
-	// destroying data this store does not own, and handing the engine a file
-	// whose schema is not the control schema (or, once it is a non-database
-	// file, the flatsql_open_db trap: task flatsql-open-nondb-trap). Both marks
-	// are reset because a discarded database carries neither.
-	if s.controlDBDurable {
-		s.engine.FileIO().CloseAll()
-		if err := removeControlDatabaseFiles(s.controlDBPath); err != nil {
-			return s.engineEpoch, fmt.Errorf("recover poisoned engine: discard control database: %w", err)
-		}
-		s.checkpointedOffset.Store(0)
-		s.auxCheckpointedOffset.Store(0)
-		s.auxAppliedOffset.Store(0)
-	}
+	// ONE WRITER PER FILE, ALWAYS. A poisoned runtime is RETIRED, not closed:
+	// linked flow VMs may still hold borrowed references to its named
+	// instance. But a retired engine that still owns open file descriptors on
+	// the control database would be a SECOND WRITER against the file the
+	// replacement is about to open. Closing only the host FILE LAYER severs
+	// that without touching the wasm instance those VMs still reference: any
+	// further I/O the dead engine attempts gets ioErrBadHandle, which is
+	// precisely what a poisoned engine should get.
+	s.engine.FileIO().CloseAll()
 
-	opts := []flatsqlrt.Option{flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir())}
-	if s.controlDBDurable {
-		opts = append(opts, flatsqlrt.WithFileIORoot(s.basePath))
-	}
-	engine, err := flatsqlrt.New(opts...)
+	engine, engineDB, mark, plan, err := openControlEngine(s.basePath, s.controlDBPath)
 	if err != nil {
-		return s.engineEpoch, fmt.Errorf("recover poisoned engine: start replacement engine: %w", err)
+		return s.engineEpoch, fmt.Errorf("recover poisoned engine: %w", err)
 	}
-	var engineDB *flatsqlrt.Database
-	if s.controlDBDurable {
-		engineDB, _, _, _, err = openControlDatabase(engine, s.controlDBPath, engineSchemaTextExcluding(s.engineExcluded), nil)
-	} else {
-		engineDB, err = engine.CreateDatabase(engineSchemaTextExcluding(s.engineExcluded), "sdn-control")
-	}
-	if err != nil {
-		engine.Close()
-		return s.engineEpoch, fmt.Errorf("recover poisoned engine: create database: %w", err)
-	}
-	if err := registerEngineFileIDs(engineDB, s.engineExcluded); err != nil {
+	if err := registerEngineFileIDs(engineDB, plan.Excluded); err != nil {
 		engine.Close()
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: register file identifiers: %w", err)
 	}
+	if err := dropExcludedStandardViews(engineDB, plan.Excluded); err != nil {
+		engine.Close()
+		return s.engineEpoch, fmt.Errorf("recover poisoned engine: clear leftover views: %w", err)
+	}
 	db := flatsqldrv.Open(engineDB)
+	if mib := resolveEnginePageCacheMiB(); mib > 0 {
+		_, _ = db.Exec(fmt.Sprintf("PRAGMA cache_size = -%d", mib*1024))
+	}
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		engine.Close()
@@ -140,12 +107,14 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	s.db = db
 	s.engine = engine
 	s.engineDB = engineDB
-	s.engineSources = map[string]bool{}
+	s.engineSources = plan.registeredSources()
 	s.engineResident = map[string]int64{}
-	// The replacement started from discarded files: nothing is persisted, so
-	// the rebuild below is a genuine from-empty one.
-	s.engineStateWarm = false
-	s.engineTailFrom.Store(0)
+	s.engineSchemaLoaded = map[string]bool{}
+	s.engineExcluded = plan.Excluded
+	s.engineStateWarm = plan.EngineState.Warm
+	s.engineStateRecords = plan.EngineState.Records
+	s.engineMarkRowID.Store(mark.EngineRowID)
+	s.engineUnflushed.Store(0)
 	s.engineEpoch++
 	if oldDB != nil {
 		_ = oldDB.Close()
@@ -154,71 +123,22 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	if err := s.initTables(); err != nil {
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: init tables: %w", err)
 	}
-	// From ZERO, always: the replacement database was discarded above, so there
-	// is nothing for a mark to resume into. The replay is batched (one
-	// transaction per chunk) exactly as it is at boot, and the caller holds
-	// s.mu, which is what makes routing the appliers through the chunk
-	// transaction safe here.
-	if s.auxiliaryMetadata != nil {
-		applied, through, err := s.auxiliaryMetadata.ReplayFrom(s, 0)
-		if err != nil {
-			return s.engineEpoch, fmt.Errorf("recover poisoned engine: replay auxiliary metadata: %w", err)
-		}
-		s.noteAuxiliaryAppliedThrough(through)
-		s.auxReplayed.Store(true)
-		log.Infof("FlatSQL engine recovery: replayed %d auxiliary metadata frames through offset %d", applied, through)
-	}
-
-	catalogWasHydrated := s.recordCatalogHydrated.Load()
-	hotWindowWasHydrated := s.engineHotHydrated.Load()
-	s.recordCatalogHydrated.Store(false)
-	s.engineHotHydrated.Store(false)
-	if catalogWasHydrated && s.recordCatalog != nil {
-		if _, err := s.recordCatalog.Replay(s); err != nil {
-			return s.engineEpoch, fmt.Errorf("recover poisoned engine: replay record catalog: %w", err)
-		}
-		s.recordCatalogHydrated.Store(true)
-	}
-
-	if catalogWasHydrated {
-		if err := s.rebuildSourceSummariesFromDurableState(); err != nil {
-			return s.engineEpoch, fmt.Errorf("recover poisoned engine: source summaries: %w", err)
-		}
-		if err := s.rebuildEngineRecords(); err != nil {
-			return s.engineEpoch, fmt.Errorf("recover poisoned engine: hot-window rebuild: %w", err)
-		}
-		s.engineHotHydrated.Store(true)
-	} else if hotWindowWasHydrated && s.recordCatalog != nil {
-		// ONE journal pass for ALL routed schemas. Recovery runs on demand,
-		// under s.mu, while the node is serving traffic: a pass per schema
-		// would freeze every read and write on the box for as long as it takes
-		// to read the multi-GB journal 226 times.
-		if _, err := s.recordCatalog.ReplayEngineHotWindows(context.Background(), s, s.engineRoutedSchemaNames(), s.engineWindowFor); err != nil {
-			return s.engineEpoch, fmt.Errorf("recover poisoned engine: compact hot-window rebuild: %w", err)
-		}
-		s.engineHotHydrated.Store(true)
-	}
-
-	// EVERY ROUTED BASE NAME MUST RESOLVE AFTER RECOVERY TOO, and this is the
-	// only place that can guarantee it here. The replacement database is fresh
-	// (the old one was discarded above), so its lazy initializeSQLiteEngine
-	// latched with no tables and the unified views are gone with the file. The
-	// replays register a source per record they load — but a store whose
-	// journal yields no records for a standard registers nothing, and
-	// `SELECT _data FROM IRM` would then answer "no such table": the exact
-	// answer firstRunSemantics promises can never happen, and the answer the
-	// cellular ingest flow's resume-mark SQL cannot tell from a real failure.
-	// It also un-breaks PublicQuerySurface, which aborts the WHOLE surface on
-	// one unresolvable base name.
-	//
-	// ViewsCurrent is true only when the replays already registered sources —
-	// in that case ensureEngineSource has rebuilt the views once already, so
-	// this is a no-op rather than a second all-or-nothing rebuild.
-	if err := s.finishEngineSourceSetup(engineBootPlan{
-		Excluded:     s.engineExcluded,
-		ViewsCurrent: len(s.engineSources) > 0,
-	}); err != nil {
+	// EVERY ROUTED BASE NAME MUST RESOLVE AFTER RECOVERY TOO: a store whose
+	// tables hold no records for a standard registers nothing for it, and
+	// `SELECT _data FROM IRM` would then answer "no such table" — the answer
+	// no caller can tell from a real failure.
+	if err := s.finishEngineSourceSetup(plan); err != nil {
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: engine source setup: %w", err)
+	}
+	wasHydrated := s.engineHotHydrated.Load()
+	s.engineHotHydrated.Store(false)
+	if wasHydrated {
+		if err := s.rebuildEngineRecordsLocked(); err != nil {
+			return s.engineEpoch, fmt.Errorf("recover poisoned engine: hot-window hydration: %w", err)
+		}
+		if err := s.checkpointEngineLocked(); err != nil {
+			log.Warnf("FlatSQL engine recovery: record state not flushed (the next boot rebuilds the tail): %v", err)
+		}
 	}
 
 	log.Infof("FlatSQL engine rebuilt after poisoning (epoch %d)", s.engineEpoch)

@@ -3,8 +3,6 @@ package storage
 import (
 	"bytes"
 	"crypto/rand"
-	"os"
-	"path/filepath"
 	"testing"
 
 	kmf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/KMF"
@@ -76,18 +74,14 @@ func TestStoreEncryptsKMFKeyBytesAtRest(t *testing.T) {
 		t.Fatalf("Store: %v", err)
 	}
 
-	// The durable stream file backing KMF.fbs must not contain the plaintext
-	// key bytes anywhere -- this is the "stored form is ciphertext" check.
-	streamFile := filepath.Join(store.basePath, flatSQLStreamDirName, "KMF.flatsql")
-	onDisk, err := os.ReadFile(streamFile)
-	if err != nil {
-		t.Fatalf("read KMF stream file: %v", err)
-	}
+	// The stored row backing KMF.fbs must not contain the plaintext key bytes
+	// anywhere -- this is the "stored form is ciphertext" check.
+	onDisk := storedRecordBytesForTest(t, store, "KMF.fbs", cid)
 	if bytes.Contains(onDisk, plainKey) {
-		t.Fatal("plaintext KEY_BYTES found in the on-disk FlatSQL stream file")
+		t.Fatal("plaintext KEY_BYTES found in the stored record row")
 	}
 	if !bytes.Contains(onDisk, []byte(encfieldMagicForTest)) {
-		t.Fatal("on-disk stream frame is missing the encfield seal marker; record was not sealed")
+		t.Fatal("stored record is missing the encfield seal marker; record was not sealed")
 	}
 
 	// Get (the public read API) must transparently return the exact original
@@ -145,13 +139,9 @@ func TestStoreDoesNotSealNonEncryptedSchema(t *testing.T) {
 		t.Fatalf("Store: %v", err)
 	}
 
-	streamFile := filepath.Join(store.basePath, flatSQLStreamDirName, "OMM.flatsql")
-	onDisk, err := os.ReadFile(streamFile)
-	if err != nil {
-		t.Fatalf("read OMM stream file: %v", err)
-	}
+	onDisk := storedRecordBytesForTest(t, store, "OMM.fbs", cid)
 	if bytes.Contains(onDisk, []byte(encfieldMagicForTest)) {
-		t.Fatal("non-encrypted schema's stream frame was sealed")
+		t.Fatal("non-encrypted schema's stored record was sealed")
 	}
 
 	got, err := store.Get("OMM.fbs", cid)

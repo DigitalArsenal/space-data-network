@@ -64,7 +64,7 @@ func (s *FlatSQLStore) checkFullTextReadyLocked(filter RawRecordQuery) error {
 	if state.failure != nil {
 		return fmt.Errorf("Search index unavailable: %w", state.failure)
 	}
-	if !state.ready || !s.RecordCatalogHydrated() {
+	if !state.ready {
 		return ErrSearchIndexBuilding
 	}
 	return nil
@@ -93,9 +93,6 @@ func (s *FlatSQLStore) CheckFullTextSearch(schema, search string) error {
 	}
 	if s == nil {
 		return errors.New("Record store is unavailable")
-	}
-	if !s.RecordCatalogHydrated() {
-		return ErrSearchIndexBuilding
 	}
 	schema = normalizeSchemaNameForEpoch(schema)
 	_, table, _, ok := EngineRelationSchemaText(schema)
@@ -267,10 +264,6 @@ func (s *FlatSQLStore) buildFullTextIndex(ctx context.Context, state *fullTextIn
 		if ctx.Err() != nil {
 			return
 		}
-		if !s.RecordCatalogHydrated() {
-			failure = ErrSearchIndexBuilding
-			return
-		}
 		window, err := s.fullTextWindow(state.schema, last)
 		if err != nil {
 			failure = err
@@ -434,29 +427,4 @@ func (s *FlatSQLStore) WarmFullTextIndexes() (scheduled, skipped []string, err e
 		}
 	}
 	return scheduled, skipped, nil
-}
-
-// WarmFullTextIndexesWhenHydrated polls until the record catalog is hydrated,
-// then warms every searchable schema. It returns early when the store starts
-// closing or ctx ends.
-func (s *FlatSQLStore) WarmFullTextIndexesWhenHydrated(ctx context.Context, poll time.Duration) (scheduled, skipped []string, err error) {
-	if poll <= 0 {
-		poll = 2 * time.Second
-	}
-	ticker := time.NewTicker(poll)
-	defer ticker.Stop()
-	for !s.RecordCatalogHydrated() {
-		s.fullTextMu.Lock()
-		closing := s.fullTextClosing
-		s.fullTextMu.Unlock()
-		if closing {
-			return nil, nil, errors.New("record store is closing")
-		}
-		select {
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		case <-ticker.C:
-		}
-	}
-	return s.WarmFullTextIndexes()
 }

@@ -116,10 +116,6 @@ func (h *ExportHandler) exportHandler(code string) http.HandlerFunc {
 			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
 			return
 		}
-		if !store.RecordCatalogHydrated() {
-			WriteErrorFrame(w, http.StatusServiceUnavailable, "hydrating", "The record catalog is still loading; the export would be incomplete. Try again shortly.", 30*time.Second)
-			return
-		}
 		summary, err := store.DataSummary()
 		if err != nil {
 			WriteErrorFrame(w, http.StatusServiceUnavailable, "unavailable", "Record counts are not available right now.", 5*time.Second)

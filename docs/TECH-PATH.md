@@ -36,13 +36,14 @@ and persists **its own** structures:
   size/close`) with identical signatures in the browser and under WasmEdge.
   The browser satisfies them from chunked key-value persistence stores
   (IndexedDB and friends); the Go host satisfies them over real files.
-- **Boot is open + verify + tail**, not re-derivation: the control database
-  and auxiliary state carry resume marks, so a store-heavy node boots in
-  I/O-bound seconds (measured in production: sub-second store-open, tens of
-  seconds of tail hydration where it used to be minutes to hours). Full
-  re-derivation from the record journal remains the always-available
-  fallback — the journal is the source of truth; the persisted index is a
-  recovery accelerator that can cost time, never data.
+- **Boot is open**, not re-derivation: the control database holds every
+  record, its index and the node's auxiliary state, so a store-heavy node
+  boots in I/O-bound seconds and serves at once. The engine hot window (a
+  bounded cache of the routed standards) is reconciled in the background from
+  its own persisted arena plus a residency ledger; only the auxiliary journal
+  still carries a resume mark. There is no record journal and no fallback
+  re-derivation: the database is the record store, and a file that does not
+  open is refused, never discarded.
 
 ## 3. Compute: isomorphic WASM, host as connectors only
 
@@ -224,30 +225,29 @@ the client may fetch and the key material to decrypt it. No grant, no bytes.
 
 ### Data and storage
 
-**Record stream.**
-An append-only file of size-prefixed SDS FlatBuffer records in wire form —
-the same bytes that traveled the network. Streams are the durable source of
-truth for all payload data. Nothing rewrites a stream; new data appends.
-
-**Record journal.**
-The ordered log of record-catalog operations (adds, deletes, source
-retention) from which the queryable state can always be re-derived. Replay
-of the journal is the universal fallback recovery path.
-
 **Control database.**
-FlatSQL's own on-disk database file (`control.flatsqldb`) holding the
-derived state: tables, B-tree indexes, catalog metadata, resume marks. It is
-an accelerator, never the source of truth — deleting it costs a full
-re-derivation from the journal, not data.
+FlatSQL's own on-disk database file (`control.flatsqldb`) holding the record
+store: every record's bytes on its producer's table, the global record index
+(`sdn_record_index`, whose rowid is the datasync cursor), provenance tags and
+summaries, the node's auxiliary tables, and the engine's own index. It is the
+source of truth. It is written only by the node's single FlatSQL engine, in
+TRUNCATE journal mode; a crash loses nothing that was committed.
+
+**Engine record arena.**
+`control.flatsqldb.fsdata`, the FlatSQL engine's persisted copy of the
+records resident in its hot window. A cache: discarded and rebuilt from the
+control tables when it is unusable, never the other way round.
+
+**Auxiliary journal.**
+`auxiliary.flatsqlmeta`, the append-only log of the node's OWN state — its
+encrypted EPM, pin ledger, dataset shard publications, source-batch licences,
+asset-pin audit. Replayed from a resume mark at every boot. It is not records.
 
 **Resume mark.**
-A checkpoint stored inside the control database recording exactly how much
-of each journal (record catalog and auxiliary) is already reflected in the
-persisted state, with an integrity digest of the journal prefix it claims.
-Boot verifies the digest and replays only past the mark ("the tail"). A
-digest mismatch discards the mark and falls back to full replay — the mark
-can be wrong about *time*, never about *data*. Proven crash-safe: a SIGKILLed
-node's mark survived and verified.
+A checkpoint stored inside the control database recording how much of the
+auxiliary journal is already reflected in its tables, and the index rowid
+the engine hot window had been mirrored through when its arena was last
+flushed.
 
 **Zero-copy index.**
 A FlatSQL table/B-tree whose entries are `(key → stream offset, length)` —

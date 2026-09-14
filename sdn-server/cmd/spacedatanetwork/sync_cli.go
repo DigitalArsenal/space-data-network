@@ -191,7 +191,7 @@ func loadSyncStatusSnapshot(ctx context.Context, options syncStatusOptions) (syn
 	// sync status reads the pin ledger, dataset-shard publications and the
 	// directory — all auxiliary tables, which are never deferred. It needs
 	// neither the record catalog nor the derived summaries.
-	store, err := openStoreForReading(cfg.Storage.Path, validator, storeReadNeeds{})
+	store, err := openStoreForReading(cfg.Storage.Path, validator)
 	if err != nil {
 		return syncStatusSnapshot{}, err
 	}

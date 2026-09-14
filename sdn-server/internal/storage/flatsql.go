@@ -2,8 +2,6 @@
 package storage
 
 import (
-	"bufio"
-	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -43,10 +41,6 @@ import (
 
 var log = logging.Logger("storage")
 
-// ErrStoreReadOnly reports a write attempted on a store opened via
-// NewFlatSQLStoreReadOnly (loop C.8b). Callers can match it with errors.Is.
-var ErrStoreReadOnly = errors.New("datastore is open read-only")
-
 // ErrStoreClosed is returned by read accessors reached AFTER Close.
 //
 // It exists because "closed" must be an ERROR VALUE, not a segfault. Several
@@ -65,10 +59,8 @@ var ErrStoreClosed = errors.New("datastore is closed")
 var ErrEngineRebuilding = errors.New("engine is rebuilding; retry shortly")
 
 const (
-	flatSQLStreamDirName         = "flatsql-streams"
-	legacyBlobMigrationBatchSize = 50000
-	localEPMStoreSalt            = "space-data-network-local-epm-store-v1"
-	engineAOTCacheDirName        = "flatsql-aot"
+	localEPMStoreSalt     = "space-data-network-local-epm-store-v1"
+	engineAOTCacheDirName = "flatsql-aot"
 )
 
 // engineAOTCacheDir returns the machine-wide AOT artifact cache. It is keyed
@@ -116,17 +108,13 @@ func engineAOTCacheDir() string {
 // HOME/XDG_CACHE_HOME yields the same path).
 func EngineAOTCacheDir() string { return engineAOTCacheDir() }
 
-// FlatSQLStore provides storage over the in-process FlatSQL-WASM engine:
-// record payloads live in append-only stream files, and durable record
-// metadata lives in the compact record-catalog log.
-//
-// The engine's SQLite control tables are now DISK-BACKED (flatsql_boot_state.go)
-// and survive a restart, so a boot applies only the journal tail past a
-// persisted, digest-verified mark. That is an OPTIMISATION over an unchanged
-// baseline, not a new source of truth: the journal and the stream files remain
-// authoritative, and every doubt about the database — missing, corrupt,
-// mismatched, or an engine with no filesystem — discards it and rebuilds
-// everything from them exactly as this store always did.
+// FlatSQLStore is the node's record store over the in-process FlatSQL-WASM
+// engine. Every record's bytes, its index row, its provenance tags and the
+// node's own auxiliary tables live in ONE disk-backed database
+// (control.flatsqldb) written through the engine's VFS; a boot opens that
+// file and serves (flatsql_boot_state.go). The engine's record vtabs are a
+// bounded hot-window CACHE of the routed standards over the same records,
+// tracked by a durable residency ledger (engine_residency.go).
 type FlatSQLStore struct {
 	fullTextMu             sync.Mutex
 	fullTextStates         map[string]*fullTextIndexState
@@ -136,47 +124,17 @@ type FlatSQLStore struct {
 	db                     *sql.DB
 	engine                 *flatsqlrt.Runtime
 	engineDB               *flatsqlrt.Database
-	recordCatalog          *recordCatalogJournal
 	auxiliaryMetadata      *auxiliaryMetadataStore
 	assetPinTransactions   assetPinTransactionBeginner
 	assetPinLedgerRecovery atomic.Bool
-	recordCatalogHydrating atomic.Bool
-	recordCatalogHydrated  atomic.Bool
 	// engineRebuilding is set while RecoverPoisonedEngine holds the write
 	// lock; readGate answers ErrEngineRebuilding meanwhile.
 	engineRebuilding   atomic.Bool
 	engineHotHydrating atomic.Bool
 	engineHotHydrated  atomic.Bool
-	// hydrationShield protects records that LIVE traffic (re)writes while a
-	// background record-catalog replay is in flight, so a historical
-	// delete/GC/batch-clear frame can never land on top of a live re-add of the
-	// same content-addressed CID. See record_catalog_replay.go.
-	hydrationShield hydrationShield
-	// recordIndexRowIDs is the ONE sdn_record_index rowid allocator both writer
-	// lanes draw from while a record-catalog replay is in flight, so a replay
-	// and live traffic can never hand out the same rowid. Idle (and a complete
-	// no-op on the live write path) outside a replay. See
-	// record_catalog_replay.go.
-	recordIndexRowIDs recordIndexRowIDs
-	// replayedSourceLanes records every (schema, provider, source, batch) lane
-	// the BULK replay path wrote source tags for. It exists because
-	// insertSourceTagsBatch is the ONE tag writer that does not maintain
-	// sdn_record_source_summary (the per-record writers both call
-	// incrementSourceSummary), so it is the ONE reason a lane can exist in the
-	// tag table without a summary row — which is the entire reason the rebuild
-	// has to discover lanes at all. Recording them turns that discovery from a
-	// scan of the 1.8 M-row tag table into a read of the tens-of-rows summary
-	// plus this set. See sourceSummaryLanes.
-	replayedSourceLanes replayedSourceLaneSet
-	// hydrateMu serializes full record-catalog replays against each other (the
-	// post-boot background hydrate vs. the admin re-sync trigger). It is NOT the
-	// store write lock: a replay must never hold that for its duration or it
-	// starves readers.
-	hydrateMu sync.Mutex
-	validator *sds.Validator
-	dbPath    string
-	basePath  string
-	streamDir string
+	validator          *sds.Validator
+	dbPath             string
+	basePath           string
 	// localEPMKeyCache memoizes the derived candidate keys for the local-EPM
 	// row envelope (localEPMKeys) — scrypt is ~100ms per candidate and the
 	// env/password-file inputs cannot change within a process lifetime.
@@ -184,29 +142,20 @@ type FlatSQLStore struct {
 	localEPMKeyCache [][]byte
 	localEPMKeyErr   error
 	// lock is the exclusive single-writer liveness lock on
-	// <basePath>/store.lock (storelock.go, loop C.6b) — held for the
-	// store's whole lifetime, released by Close. Nil for read-only opens
-	// (loop C.8b), which never take the writer lock.
+	// <basePath>/store.lock (storelock.go) — held for the store's whole
+	// lifetime, released by Close.
 	lock *storeLock
-	// readOnly marks a store opened via NewFlatSQLStoreReadOnly: no writer
-	// lock, compact record metadata replayed from its CRC-valid prefix,
-	// stream appenders refused, and all public write verbs fail with
-	// ErrStoreReadOnly. Engine-local state (the private in-memory SQLite)
-	// may still mutate — it is never durable.
-	readOnly bool
-	mu       sync.RWMutex
+	mu   sync.RWMutex
 	// lockStats accounts s.mu itself — the lock the engine's slow-statement
 	// instrument cannot see (store_lock_accounting.go).
 	lockStats storeLockStats
 
 	// unsummarizedCounts caches the COUNT(*)/SUM(record_length) scan that
 	// DataSummary falls back to for a schema that has rows but no
-	// source-summary lane yet (a catalog replay in progress, before its
-	// summary rebuild). The dashboard stats lane calls DataSummary every 5 s
-	// and each such scan held the single-threaded engine 0.4–0.9 s per schema
-	// (measured 2026-09-02 on the dev store: ~20 scans/min, a fifth of the
-	// engine, every reader and the replay itself queued behind them). A
-	// provisional count may be a minute old; the summary lane replaces it.
+	// source-summary lane yet. The dashboard stats lane calls DataSummary
+	// every 5 s and each such scan held the single-threaded engine 0.4–0.9 s
+	// per schema. A provisional count may be a minute old; the summary lane
+	// replaces it.
 	unsummarizedMu     sync.Mutex
 	unsummarizedCounts map[string]unsummarizedCount
 	// engineSources tracks per-source shadow tables already registered on the
@@ -224,48 +173,38 @@ type FlatSQLStore struct {
 	engineGenericHotWindow int
 	// engineViewRebuilds counts CreateUnifiedViews invocations on this store.
 	// It is a BOUND, not a statistic: the rebuild is all-or-nothing across
-	// every routed standard, so "how many times did we run it" is the number
-	// that decides whether opening a store is O(routed tables) or
-	// O(routed tables x sources). Guarded by mu.
+	// every routed standard. Guarded by mu.
 	engineViewRebuilds int64
 	// engineExcluded names the routed standards THIS store does not route,
-	// keyed by schema name. Non-empty only on a database migrated from a
-	// pre-WS7.3d store that still holds a plain control table named like a
-	// standard code — routing it would DROP that table (engine_records.go
-	// probeControlDatabase). Fixed at open; never mutated afterwards.
+	// keyed by schema name: a plain control table already holds the
+	// standard's canonical name, so routing it would DROP that table
+	// (probeControlDatabase). Fixed at open; never mutated afterwards.
 	engineExcluded map[string]bool
 	// engineEpoch counts engine replacements (starts at 1); retiredEngines
 	// holds poisoned runtimes whose live instances dependent flow VMs may
-	// still reference — released at Close (engine_link.go, loop C.7). Both
-	// guarded by mu.
+	// still reference — released at Close (engine_link.go). Both guarded by mu.
 	engineEpoch    uint64
 	retiredEngines []*flatsqlrt.Runtime
 	// fieldEncMu guards the lazily-provisioned field-encryption identity
-	// (field_encryption.go). Deliberately separate from mu: Append and
-	// readFlatSQLStreamRecord are reached while mu is already held (Lock or
-	// RLock, or not at all, depending on the caller), and sync.RWMutex is not
-	// reentrant.
+	// (field_encryption.go). Deliberately separate from mu: the seal and open
+	// paths are reached while mu is already held (Lock or RLock, or not at
+	// all, depending on the caller), and sync.RWMutex is not reentrant.
 	fieldEncMu   sync.Mutex
 	fieldEncPriv []byte
 	fieldEncPub  []byte
 
-	// controlDBDurable reports that the engine's control database is backed by
-	// a REAL FILE under basePath. False keeps every pre-durability behaviour:
-	// read-only opens, and any host whose engine could not reach a filesystem,
-	// re-derive the whole catalog at boot exactly as they always did.
-	// See flatsql_boot_state.go.
 	// bootBudget times each boot phase against the engine's per-call budget
 	// (boot_phase_budget.go); nil outside boot.
 	bootBudget *bootPhaseBudget
 
+	// controlDBDurable reports that the engine's control database is backed by
+	// a REAL FILE under basePath. Always true for an opened store; a test
+	// clears it to simulate a crash that skips the final checkpoint.
 	controlDBDurable bool
 	// controlDBPath is the engine's own database file — deliberately NOT
-	// dbPath, which still names the legacy v1 database the migration reads.
+	// dbPath, which names the legacy v1 database path that still salts the
+	// local-EPM store key.
 	controlDBPath string
-	// checkpointedOffset is the record-catalog journal offset the persisted
-	// resume mark currently names. Read without the store lock to decide
-	// cheaply whether a checkpoint is worth taking at all.
-	checkpointedOffset atomic.Int64
 	// checkpointStop signals the background checkpoint loop to leave;
 	// checkpointDone is closed by the loop once it HAS left, and Close joins on
 	// it. checkpointRunning says whether there is anything to join.
@@ -274,49 +213,34 @@ type FlatSQLStore struct {
 	checkpointDone    chan struct{}
 	checkpointRunning atomic.Bool
 	checkpointOnce    sync.Once
-	// bootReplayFrom / bootReplayFrames record what the boot replay actually
-	// did, for the startup log line and for tests that must prove a WARM boot
-	// skipped work rather than merely being fast on a small fixture.
-	bootReplayFrom int64
-	bootReplayWarm bool
 	// engineStateWarm / engineStateRecords record that the engine opened its
-	// persisted record state at boot (flatsql_boot_state.go: openEngineRecordState);
-	// engineTailFrom is the journal offset the ENGINE replay resumes from —
-	// consumed exactly once, like bootResumeFrom, by whichever rebuild runs
-	// first (the synchronous open or the deferred hydration).
+	// persisted record state at boot (openEngineRecordState).
 	engineStateWarm    bool
 	engineStateRecords int
-	engineTailFrom     atomic.Int64
-	// engineHydrateBatchHook runs before each ingest batch of the background
+	// engineMarkRowID is the sdn_record_index rowid the engine hot window has
+	// been mirrored through as of the last flush (bootMarkEngineRowIDKey);
+	// engineUnflushed counts engine ingests since that flush, so the
+	// checkpoint loop knows whether there is anything to persist.
+	engineMarkRowID atomic.Int64
+	engineUnflushed atomic.Int64
+	// engineHydrateBatchHook runs before each schema of the background
 	// hot-window hydration, OUTSIDE the store lock. Tests use it to hold the
 	// pass open while proving readers interleave.
 	engineHydrateBatchHook func()
 	// engineSchemaLoaded names the routed schemas whose hot window the current
-	// hydration has already loaded (or restored from persisted state), so a
-	// reader of THAT standard answers while other standards are still being
-	// rebuilt. Guarded by s.mu.
+	// hydration has already loaded (or reconciled from disk), so a reader of
+	// THAT standard answers while other standards are still being rebuilt.
+	// Guarded by s.mu.
 	engineSchemaLoaded map[string]bool
-	bootReplayFrames   int
-	// bootResumeFrom carries the resume offset to a DEFERRED hydration — the
-	// path the daemon actually takes (node.go opens
-	// WithDeferredRecordCatalogReplay and hydrates in the background). It is
-	// consumed exactly once, by the first non-forced hydration.
-	bootResumeFrom atomic.Int64
-	// appliedOffset is the journal high-water mark this store has DEMONSTRABLY
-	// applied to its control tables — advanced only by the replay and by
-	// appendCatalogEvents (flatsql_boot_state.go), never by the raw file length.
-	// The persisted resume mark can never exceed it.
-	appliedOffset atomic.Int64
-	// auxAppliedOffset / auxCheckpointedOffset are the SAME two quantities for
-	// the auxiliary-metadata journal, which is a different file with its own
-	// mark. auxReplayed says the auxiliary replay has run in this process — no
-	// auxiliary mark may be written before it has.
+	// auxAppliedOffset / auxCheckpointedOffset are the auxiliary journal's
+	// applied high-water mark and its persisted resume mark. auxReplayed says
+	// the auxiliary replay has run in this process — no auxiliary mark may be
+	// written before it has.
 	auxAppliedOffset      atomic.Int64
 	auxCheckpointedOffset atomic.Int64
 	auxReplayed           atomic.Bool
 	// auxReplayWriter routes the auxiliary appliers into a batched replay's
-	// CHUNK TRANSACTION. Nil except inside such a replay; see auxWrite for why
-	// a plain field is race-free here.
+	// CHUNK TRANSACTION. Nil except inside such a replay; see auxWrite.
 	auxReplayWriter auxWriter
 	// bootAuxFrom / bootAuxWarm / bootAuxFrames record what the auxiliary boot
 	// replay did, for the startup log line and for tests that must prove a WARM
@@ -326,17 +250,8 @@ type FlatSQLStore struct {
 	bootAuxFrames int
 }
 
-// BootReplayStats reports what the last open's record-catalog replay did.
-// A warm boot resumes from a persisted mark; a cold one starts at zero.
-type BootReplayStats struct {
-	// Warm is true when a persisted resume mark was accepted.
-	Warm bool
-	// ResumeOffset is the journal byte offset the replay started at.
-	ResumeOffset int64
-	// FramesApplied is how many journal frames the boot replay applied.
-	FramesApplied int
-	// JournalBytes is the journal's CRC-valid length at open.
-	JournalBytes int64
+// BootStats reports what the last open did.
+type BootStats struct {
 	// Durable reports whether the control database is backed by a real file.
 	Durable bool
 	// EngineWarm is true when the engine's persisted record state was opened
@@ -345,23 +260,24 @@ type BootReplayStats struct {
 	// EngineRecords is the count the engine reported visible from its
 	// persisted state at open.
 	EngineRecords int
+	// AuxWarm is true when the auxiliary journal resumed from a persisted mark;
+	// AuxFrames is how many auxiliary frames the boot replay applied.
+	AuxWarm   bool
+	AuxFrames int
 }
 
-// BootReplay reports what this store's open replay did. The distinction that
-// matters operationally is Warm: a cold boot rebuilding a catalog-scale store
-// is the multi-minute start this lane exists to remove, and "it was fast" is
-// not evidence that the warm path was taken.
-func (s *FlatSQLStore) BootReplay() BootReplayStats {
+// BootState reports what this store's open did. The distinction that matters
+// operationally is EngineWarm: a cold engine rebuilds its hot window from the
+// tables, and "it was fast" is not evidence that the warm path was taken.
+func (s *FlatSQLStore) BootState() BootStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return BootReplayStats{
-		Warm:          s.bootReplayWarm,
-		ResumeOffset:  s.bootReplayFrom,
-		FramesApplied: s.bootReplayFrames,
-		JournalBytes:  s.recordCatalog.validLength(),
+	return BootStats{
 		Durable:       s.controlDBDurable,
 		EngineWarm:    s.engineStateWarm,
 		EngineRecords: s.engineStateRecords,
+		AuxWarm:       s.bootAuxWarm,
+		AuxFrames:     s.bootAuxFrames,
 	}
 }
 
@@ -369,18 +285,17 @@ func (s *FlatSQLStore) BootReplay() BootReplayStats {
 type StoreOption func(*storeConfig)
 
 type storeConfig struct {
-	engineHotWindow          int
-	engineGenericHotWindow   int
-	deferBootRebuilds        bool
-	deferRecordCatalogReplay bool
-	auxReplayChunkBytes      int64
+	engineHotWindow        int
+	engineGenericHotWindow int
+	deferBootRebuilds      bool
+	auxReplayChunkBytes    int64
 }
 
 // WithEngineHotWindow overrides the engine hot-window bound: the maximum
 // records resident in the engine vtabs per schema, enforced at boot rebuild
 // and by tombstone eviction at ingest. Values <= 0 keep the default
-// (engineDefaultHotWindow). Eviction only affects the in-memory engine
-// cache — stream files and compact record metadata are never touched.
+// (engineDefaultHotWindow). Eviction only affects the engine cache — the
+// control tables are never touched.
 func WithEngineHotWindow(records int) StoreOption {
 	return func(c *storeConfig) {
 		if records > 0 {
@@ -405,33 +320,20 @@ func WithEngineGenericHotWindow(records int) StoreOption {
 	}
 }
 
-// WithDeferredBootRebuilds skips the synchronous rebuild of derived source
-// summaries and the FlatSQL engine hot window during open. Stream-backed raw
-// record reads remain available from the compact record catalog +
-// flatsql-streams files. Callers can run RebuildDerivedState later as a
-// maintenance step.
+// WithDeferredBootRebuilds skips the synchronous engine hot-window hydration
+// during open. Every record read from the control tables is available
+// immediately; the engine's sandboxed query surface answers per standard as
+// HydrateEngineHotWindowContext brings each window current in the background.
 func WithDeferredBootRebuilds() StoreOption {
 	return func(c *storeConfig) {
 		c.deferBootRebuilds = true
 	}
 }
 
-// WithDeferredRecordCatalogReplay skips compact record-catalog hydration during
-// open. Call HydrateRecordCatalog after startup to rebuild record metadata from
-// record-catalog.flatsqlmeta while admin/network surfaces are already alive.
-func WithDeferredRecordCatalogReplay() StoreOption {
-	return func(c *storeConfig) {
-		c.deferRecordCatalogReplay = true
-	}
-}
-
 // WithAuxiliaryReplayChunkBytes bounds ONE auxiliary-journal replay
 // transaction in BYTES as well as in frames (auxiliaryReplayChunkFrames).
-//
-// Without a byte bound a 512-frame chunk is unbounded in size — 512 tiny
-// directory rows and 512 multi-megabyte payloads were the same "chunk". Values
-// <= 0 keep the default (auxiliaryReplayChunkBytes, 8 MiB). A single frame
-// larger than the budget is still applied whole: frames are never split.
+// Values <= 0 keep the default (auxiliaryReplayChunkBytes, 8 MiB). A single
+// frame larger than the budget is still applied whole: frames are never split.
 func WithAuxiliaryReplayChunkBytes(bytes int64) StoreOption {
 	return func(c *storeConfig) {
 		if bytes > 0 {
@@ -440,37 +342,12 @@ func WithAuxiliaryReplayChunkBytes(bytes int64) StoreOption {
 	}
 }
 
-// NewFlatSQLStore creates a new FlatSQL storage instance.
+// NewFlatSQLStore opens (or creates) the record store at basePath. The store
+// is single-writer: a second opener on the same path fails with
+// ErrStoreLocked. There is no read-only open — a second process cannot share
+// the engine's database file safely, and it has nothing to re-derive a
+// private copy from; read through the daemon's API instead.
 func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOption) (*FlatSQLStore, error) {
-	return newFlatSQLStore(basePath, validator, false, opts...)
-}
-
-// NewFlatSQLStoreReadOnly opens the store at basePath for READING while
-// another process (a live daemon) may hold the exclusive writer lock (loop
-// C.8b). It never takes the writer lock and never writes a single byte of
-// durable store state:
-//
-//   - compact record metadata is opened read-only and replayed up to the
-//     CRC-valid prefix captured at open (concurrent daemon appends after
-//     that point are simply not visible);
-//   - stream files are only ever read (ReadAt), and both the metadata log
-//     and stream files are append-only by design, so a point-in-time prefix
-//     is always internally consistent;
-//   - stream appenders and every public write verb fail with
-//     ErrStoreReadOnly; engine-local SQL still executes against this
-//     process's PRIVATE in-memory engine and is never persisted.
-//
-// Note on locking: flock shared locks conflict with the daemon's exclusive
-// writer lock, so a kernel shared lock on store.lock would either fail
-// against a running daemon (defeating the purpose) or, when acquired first,
-// block a daemon (re)start for the whole read session. Read-only opens
-// therefore take NO lock at all — safety comes from the append-only file
-// formats plus the read-only invariants above, not from mutual exclusion.
-func NewFlatSQLStoreReadOnly(basePath string, validator *sds.Validator, opts ...StoreOption) (*FlatSQLStore, error) {
-	return newFlatSQLStore(basePath, validator, true, opts...)
-}
-
-func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, opts ...StoreOption) (*FlatSQLStore, error) {
 	cfg := storeConfig{
 		engineHotWindow:        engineDefaultHotWindow,
 		engineGenericHotWindow: engineDefaultGenericHotWindow,
@@ -479,41 +356,21 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		o(&cfg)
 	}
 	if cfg.engineGenericHotWindow > cfg.engineHotWindow {
-		// HONOURED, NOT CLAMPED — and therefore said out loud. The generic
-		// window applies to every embedded standard except the two this host
-		// decorates, so setting it above storage.engine_hot_window means the
-		// standards nothing reads at scale each get a bigger share of the one
-		// 4 GiB engine than $OMM and $TBS do.
+		// HONOURED, NOT CLAMPED — and therefore said out loud.
 		log.Warnf("FlatSQL engine: storage.engine_generic_hot_window (%d) is LARGER than storage.engine_hot_window (%d) — every generically routed standard now holds more records resident than the two decorated ones; all of them share the engine's 4 GiB ceiling",
 			cfg.engineGenericHotWindow, cfg.engineHotWindow)
 	}
 
-	streamDir := filepath.Join(basePath, flatSQLStreamDirName)
-	var lock *storeLock
-	if readOnly {
-		// Never create or mutate anything: the store must already exist.
-		if info, err := os.Stat(basePath); err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("read-only open: storage directory %s does not exist", basePath)
-		}
-	} else {
-		// Ensure directory exists
-		if err := os.MkdirAll(basePath, 0700); err != nil {
-			return nil, fmt.Errorf("failed to create storage directory: %w", err)
-		}
-		if err := os.MkdirAll(streamDir, 0700); err != nil {
-			return nil, fmt.Errorf("failed to create FlatSQL stream directory: %w", err)
-		}
-
-		// Single-writer liveness lock (storelock.go): taken BEFORE any store
-		// file is touched, so a second writer process fails here with a clean
-		// ErrStoreLocked instead of corrupting metadata or stream files.
-		var err error
-		lock, err = acquireStoreLock(basePath)
-		if err != nil {
-			return nil, err
-		}
+	if err := os.MkdirAll(basePath, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
-
+	// Single-writer liveness lock (storelock.go): taken BEFORE any store file
+	// is touched, so a second writer process fails here with a clean
+	// ErrStoreLocked instead of corrupting the database.
+	lock, err := acquireStoreLock(basePath)
+	if err != nil {
+		return nil, err
+	}
 	// Release the lock on every failure path below; store.Close() releases
 	// it on the paths that already have a store (release is idempotent).
 	opened := false
@@ -523,63 +380,19 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		}
 	}()
 
-	// dbPath keeps its historical value and all its historical jobs: it salts
-	// the local-EPM store key, it is what Path() reports, and it is the LEGACY
-	// v1 database MigrateLegacyControl reads in place. The engine's control
-	// database is a DIFFERENT, new file — see flatSQLControlDBName for why
-	// sharing this one would be a two-writer hazard.
+	// dbPath keeps its historical value: it salts the local-EPM store key and
+	// it is what Path() reports. The engine's database is a different file.
 	dbPath := filepath.Join(basePath, "sdn.db")
 	controlDBPath := filepath.Join(basePath, flatSQLControlDBName)
 
-	// ORDER MATTERS AND CHANGED HERE. The record-catalog journal is opened
-	// BEFORE the engine, because the warm/cold decision needs both halves of the
-	// handshake at once: the mark lives in the control database, and verifying
-	// it needs the journal. Neither compaction recovery nor the journal open
-	// touches the engine, so hoisting them costs nothing and lets a cold boot
-	// discard the control database before anything has queried it.
-	if !readOnly {
-		// Resolve any compaction (compaction.go) left interrupted by a prior
-		// crash BEFORE the record-catalog journal is opened, so replay always
-		// sees a journal file that is unambiguously the pre- or post-compaction
-		// one -- never a leftover temp or a half-renamed one. Read-only opens
-		// take no writer lock and must never mutate the store, so they skip this
-		// entirely and simply read whatever is currently on disk.
-		if err := recoverPendingCompaction(basePath, streamDir); err != nil {
-			return nil, fmt.Errorf("failed to recover pending stream compaction: %w", err)
-		}
-	}
-	// PRE-ENGINE PHASES ARE TIMED TOO. They cannot poison the engine (no guest
-	// call crosses here), but on host-02 the wall clock from process start to
-	// the engine-mode line was 2m14s, and until now nothing said which of these
-	// four steps owned it.
-	journalOpenStart := time.Now()
-	recordCatalog, err := openRecordCatalogJournal(filepath.Join(basePath, recordCatalogJournalFileName), readOnly)
-	log.Infof("FlatSQL boot phase \"boot: open record-catalog journal (CRC-valid prefix scan)\" took %s",
-		time.Since(journalOpenStart).Round(time.Millisecond))
-	if err != nil {
-		return nil, fmt.Errorf("failed to open record catalog journal: %w", err)
-	}
-	catalogOpened := false
-	defer func() {
-		if !catalogOpened {
-			recordCatalog.Close()
-		}
-	}()
-
-	// The auxiliary journal is opened BEFORE the engine for the same reason the
-	// record-catalog journal is: the warm/cold decision needs BOTH journals in
-	// hand, because both marks live in the control database and verifying either
-	// one means fingerprinting its file.
 	auxOpenStart := time.Now()
-	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), readOnly)
+	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), false)
 	log.Infof("FlatSQL boot phase \"boot: open auxiliary metadata journal\" took %s",
 		time.Since(auxOpenStart).Round(time.Millisecond))
-	if auxiliaryMetadata != nil {
-		auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
-	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
 	}
+	auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
 	auxiliaryOpened := false
 	defer func() {
 		if !auxiliaryOpened {
@@ -587,27 +400,13 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		}
 	}()
 
-	// THE ENGINE'S CONTROL DATABASE, and the warm/cold decision in one step.
-	// A zero resume offset comes back with a GUARANTEED-EMPTY database, because
-	// a from-zero replay only rebuilds correctly into empty tables (see
-	// openControlEngine).
 	controlOpenStart := time.Now()
-	engine, engineDB, resume, bootPlan, err := openControlEngine(basePath, controlDBPath, readOnly,
-		func(mark bootMark, warm bool) bootResume {
-			catalog := resumeOffset(mark, warm, recordCatalog)
-			return bootResume{
-				Catalog:   catalog,
-				Auxiliary: auxiliaryResumeOffset(mark, warm, auxiliaryMetadata),
-				Keep:      controlDatabaseMayBeKept(catalog, warm, recordCatalog),
-			}
-		})
+	engine, engineDB, mark, bootPlan, err := openControlEngine(basePath, controlDBPath)
 	log.Infof("FlatSQL boot phase \"boot: probe + open control database\" took %s",
 		time.Since(controlOpenStart).Round(time.Millisecond))
 	if err != nil {
 		return nil, err
 	}
-	resumeFrom := resume.Catalog
-	controlDBDurable := !readOnly && engine.DiskBackedAvailable()
 	// Always log the engine mode at open — AOT vs interpreted, and WHICH artifact
 	// is executing. A stale AOT cache key (engine bytes or libwasmedge version
 	// bumped without re-running `prewarm-aot`) degrades silently to the
@@ -617,32 +416,16 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	if mode := engine.Mode(); mode.AOT {
 		log.Infof("FlatSQL engine mode: AOT (precompiled artifact %s)", mode.ArtifactPath)
 	} else {
-		// Interpreted execution is ~100x slower for query workloads (loop
-		// A.3). Static production daemons ship WITHOUT the AOT compiler —
-		// deploys must place a precompiled universal-wasm artifact into the
-		// cache dir (flatsql-<sha256[:8]>-we<runtime-version>.aot.wasm, keyed
-		// on the embedded engine bytes AND the libwasmedge version, loop C.9)
-		// so this warning never fires in production.
 		log.Warnf("FlatSQL engine mode: INTERPRETED — no precompiled AOT artifact loaded from %s (%s); "+
 			"daemon startup never compiles wasm artifacts. Run `spacedatanetwork prewarm-aot` as the daemon's user. "+
-			"Queries and record-catalog hydration will be ~100x slower.",
+			"Queries will be ~100x slower.",
 			mode.CacheDir, mode.MissReason)
 	}
-	if controlDBDurable {
-		log.Infof("FlatSQL control database: DISK-BACKED at %s (journal_mode=TRUNCATE)", controlDBPath)
-	} else if readOnly {
-		log.Infof("FlatSQL control database: ephemeral (read-only open never becomes a second writer)")
-	} else {
-		log.Warnf("FlatSQL control database: EPHEMERAL — the engine has no filesystem, so the whole record catalog is re-derived at every boot")
-	}
-	// Cold stores register here, AFTER the open's first query: enginePrepare
-	// already did it for a store whose persisted sources were pre-registered,
-	// and RegisterFileID is idempotent, so re-running it is a cheap no-op
-	// either way.
-	// EVERY BOOT PHASE IS NOW TIMED AGAINST THE ENGINE'S OWN PER-CALL BUDGET
+	log.Infof("FlatSQL control database: DISK-BACKED at %s (journal_mode=TRUNCATE)", controlDBPath)
+
+	// EVERY BOOT PHASE IS TIMED AGAINST THE ENGINE'S OWN PER-CALL BUDGET
 	// (boot_phase_budget.go). A phase that crosses it in one call abandons the
-	// execution thread and poisons the node until a human intervenes, and the
-	// only reason that was ever a surprise is that nothing measured it.
+	// execution thread and poisons the node until a human intervenes.
 	bootBudget := newBootPhaseBudget(engine)
 	endPhase := bootBudget.phase("boot: register engine file identifiers")
 	if err := registerEngineFileIDs(engineDB, bootPlan.Excluded); err != nil {
@@ -664,18 +447,12 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 
 	db := flatsqldrv.Open(engineDB)
 
-	// THE PAGE CACHE IS A CONNECTOR SETTING AND NOTHING WAS SETTING IT.
-	//
-	// SQLite's default page cache is ~2 MB. The control database on host-02 is
-	// 10.7 GB with 3.5M record-index rows and 5.7M source-tag rows, and every
-	// cache miss is a page read back through the engine's wasm host-IO shim.
-	// A statement whose working set does not fit re-reads the same index pages
-	// thousands of times, which is how a query that native SQLite answers in
-	// 0.97 s held the engine for 5m0s and poisoned it.
-	//
-	// Sized in MiB, overridable per box, and applied BEFORE the first real
-	// statement. Negative cache_size means "kibibytes", not "pages", so the
-	// bound holds whatever the page size is.
+	// THE PAGE CACHE IS A CONNECTOR SETTING. SQLite's default page cache is
+	// ~2 MB; on a multi-GB database every cache miss is a page read back
+	// through the engine's wasm host-IO shim, and a statement whose working
+	// set does not fit re-reads the same index pages thousands of times.
+	// Negative cache_size means "kibibytes", so the bound holds whatever the
+	// page size is.
 	if mib := resolveEnginePageCacheMiB(); mib > 0 {
 		if _, err := db.Exec(fmt.Sprintf("PRAGMA cache_size = -%d", mib*1024)); err != nil {
 			log.Warnf("FlatSQL control database: could not raise the page cache to %d MiB (%v) — large-store statements will re-read pages through the host shim", mib, err)
@@ -683,12 +460,8 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 			log.Infof("FlatSQL control database: page cache %d MiB (%s)", mib, enginePageCacheEnv)
 		}
 	}
-
-	// Enable foreign keys
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
-		auxiliaryMetadata.Close()
-		recordCatalog.Close()
 		engine.Close()
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
@@ -697,15 +470,12 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		db:                   db,
 		engine:               engine,
 		engineDB:             engineDB,
-		recordCatalog:        recordCatalog,
 		auxiliaryMetadata:    auxiliaryMetadata,
 		assetPinTransactions: sqlAssetPinTransactionBeginner{db: db},
 		validator:            validator,
 		dbPath:               dbPath,
 		basePath:             basePath,
-		streamDir:            streamDir,
 		lock:                 lock,
-		readOnly:             readOnly,
 		engineSources:        bootPlan.registeredSources(),
 
 		engineHotWindow:        cfg.engineHotWindow,
@@ -715,98 +485,48 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		engineExcluded:         bootPlan.Excluded,
 		engineEpoch:            1,
 
-		controlDBDurable: controlDBDurable,
+		controlDBDurable: true,
 		controlDBPath:    controlDBPath,
 		checkpointStop:   make(chan struct{}),
 		checkpointDone:   make(chan struct{}),
 	}
-	catalogOpened = true
 	auxiliaryOpened = true
 
-	// resumeFrom is 0 for EVERY doubt — no mark, wrong journal, mark past the
-	// valid length, unreadable prefix — and on that path openControlEngine has
-	// already guaranteed the control tables are empty, so a full replay behaves
-	// exactly as it always has.
-	if !controlDBDurable {
-		resumeFrom = 0
-		resume.Auxiliary = 0
-	}
-	store.bootAuxFrom = resume.Auxiliary
-	store.bootAuxWarm = resume.Auxiliary > 0
-	store.auxCheckpointedOffset.Store(resume.Auxiliary)
-	// A warm auxiliary boot inherits its mark's coverage for the same reason the
-	// catalog does: those frames ARE applied, which is what made the resume
-	// legal.
-	store.auxAppliedOffset.Store(resume.Auxiliary)
-	store.bootReplayFrom = resumeFrom
-	store.bootReplayWarm = resumeFrom > 0
-	store.checkpointedOffset.Store(resumeFrom)
-	store.bootResumeFrom.Store(resumeFrom)
-	// A warm boot inherits the mark's coverage: those frames ARE applied — that
-	// is what made the resume legal in the first place.
-	store.appliedOffset.Store(resumeFrom)
+	auxResume := auxiliaryResumeOffset(mark, auxiliaryMetadata)
+	store.bootAuxFrom = auxResume
+	store.bootAuxWarm = auxResume > 0
+	store.auxCheckpointedOffset.Store(auxResume)
+	// A warm auxiliary boot inherits its mark's coverage: those frames ARE
+	// applied, which is what made the resume legal.
+	store.auxAppliedOffset.Store(auxResume)
 
-	// DROP THE BYTES THE MARK HAS ALREADY PROVEN REDUNDANT.
-	//
-	// Boot is the only quiescent point: no replay is in flight and nothing is
-	// appending yet. Everything below resumeFrom is described by the durable
-	// control tables and served by the flushed engine record stream, so those
-	// bytes can never be read again — and until now nothing deleted them, which
-	// is how a journal reaches 89M frames for 140k live records and turns the
-	// fallback replay into a multi-day operation.
-	//
-	// Trimming is an OPTIMISATION, never a correctness requirement: any failure
-	// is logged and the boot continues on the untrimmed journal.
-	if resumeFrom > recordCatalogTrimThreshold {
-		if reclaimed, err := recordCatalog.trimAppliedPrefix(resumeFrom); err != nil {
-			log.Warnf("FlatSQL store: journal trim at mark %d failed (continuing on the full journal): %v", resumeFrom, err)
-		} else if reclaimed > 0 {
-			// Offsets shifted: the retained tail now starts at zero, so every
-			// in-memory and persisted offset that named the old file must be
-			// reset in the same breath or the next boot would over-claim.
-			store.bootResumeFrom.Store(0)
-			store.appliedOffset.Store(0)
-			store.checkpointedOffset.Store(0)
-			store.bootReplayFrom = 0
-			if err := store.resetBootMarkAfterTrim(); err != nil {
-				log.Warnf("FlatSQL store: clearing the boot mark after a journal trim failed: %v", err)
-			}
-			log.Infof("FlatSQL store: journal trimmed — reclaimed %d bytes already covered by the control database", reclaimed)
-		}
-	}
-
-	// THE ENGINE'S RECORDS SURVIVED TOO. The mark was written only after the
-	// engine flushed its record state (flushEngineStateLocked), so every record
-	// the mark covers is already visible in the tables: the boot restores the
-	// Go-side residency from those tables and later ingests only the journal
-	// tail past the mark. Nothing is re-ingested to serve what is on disk.
-	if controlDBDurable && bootPlan.EngineState.Warm && bootPlan.EngineOffset > 0 {
+	// THE ENGINE'S RECORDS SURVIVED. The mark was written only after the
+	// engine flushed its record state, so every record the mark covers is
+	// already visible in the vtabs: the hot-window hydration reconciles the
+	// residency ledger and ingests only the records written past the mark.
+	if bootPlan.EngineState.Warm {
 		store.engineStateWarm = true
 		store.engineStateRecords = bootPlan.EngineState.Records
-		store.engineTailFrom.Store(bootPlan.EngineOffset)
-		endPhase = bootBudget.phase("boot: restore engine residency from persisted record state")
-		restored := store.restoreEngineResidencyFromPersistedState()
-		endPhase()
-		log.Infof("FlatSQL engine records: WARM — %d persisted record(s) visible from disk without re-ingest (%d resident across routed standards); only the journal tail past offset %d will be ingested",
-			bootPlan.EngineState.Records, restored, bootPlan.EngineOffset)
+		store.engineMarkRowID.Store(mark.EngineRowID)
+		log.Infof("FlatSQL engine records: WARM — %d persisted record(s) visible from disk without re-ingest; records past index rowid %d will be ingested",
+			bootPlan.EngineState.Records, mark.EngineRowID)
 	}
 
-	// Every live catalog mutation funnels through the journal append, which is
-	// where the hydration shield learns what live traffic touched during a
-	// background replay (record_catalog_replay.go).
-	if recordCatalog != nil {
-		recordCatalog.onAppend = store.hydrationShield.note
-	}
-
-	// Initialize tables for all schemas
 	store.bootBudget = bootBudget
-	endPhase = bootBudget.phase("boot: initTables (control schema, indexes, legacy migrations)")
+	endPhase = bootBudget.phase("boot: initTables (control schema, indexes)")
 	if err := store.initTables(); err != nil {
 		endPhase()
 		store.Close()
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
 	endPhase()
+	if store.engineStateWarm {
+		if resident, err := store.restoreEngineResidencyFromLedger(); err != nil {
+			log.Warnf("FlatSQL engine records: residency ledger not readable at open (%v); counts are restored by the hot-window hydration", err)
+		} else {
+			log.Infof("FlatSQL engine records: %d resident record(s) tracked by the ledger across routed standards", resident)
+		}
+	}
 	// Complete engine source bring-up: the runtime half of every persisted
 	// source was restored before the database's first query (enginePrepare);
 	// this guarantees a default partition on an empty store and rebuilds the
@@ -818,27 +538,16 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		return nil, fmt.Errorf("failed to complete engine source setup: %w", err)
 	}
 	endPhase()
-	// THE AUXILIARY REPLAY STAYS ON THE CRITICAL PATH, DELIBERATELY.
-	//
-	// It was tempting to give it a `deferAux` sibling to
-	// deferRecordCatalogReplay and hydrate it in the background, and that would
-	// be WRONG. The record catalog can defer because it has a hydration shield
-	// (record_catalog_replay.go) that resolves replay-versus-live conflicts in
-	// favour of live traffic. The auxiliary tables have no such shield, and they
-	// are not a cache: they are the node's own state — its encrypted local EPM
-	// (read during identity bring-up, the instant this constructor returns), the
-	// directory, the pin ledger, dataset shard publications and their replay
-	// cursors, source licences, asset pin references. A daemon that answered
-	// queries or resumed publication with those tables half-populated would be
-	// serving and re-deriving from state it does not have yet, and a late
-	// historical delete/transition frame could land on top of a live row.
-	//
-	// So the fix for its cost is to make it CHEAP, not to move it: a resume mark
-	// (it now replays only the tail) plus chunk transactions (it no longer pays
-	// an fsync per event). Both are in auxiliary_metadata.go.
+	// THE AUXILIARY REPLAY STAYS ON THE CRITICAL PATH, DELIBERATELY. Its tables
+	// are the node's own state — its encrypted local EPM (read during identity
+	// bring-up, the instant this constructor returns), the directory, the pin
+	// ledger, dataset shard publications and their replay cursors, source
+	// licences, asset pin references. A daemon that resumed publication with
+	// those tables half-populated would be serving from state it does not
+	// have yet. It is cheap: a resume mark plus chunk transactions.
 	auxReplayStart := time.Now()
 	endPhase = bootBudget.phase("boot: auxiliary metadata replay")
-	auxApplied, auxThrough, err := auxiliaryMetadata.ReplayFrom(store, resume.Auxiliary)
+	auxApplied, auxThrough, err := auxiliaryMetadata.ReplayFrom(store, auxResume)
 	endPhase()
 	if err != nil {
 		store.Close()
@@ -849,61 +558,34 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	store.auxReplayed.Store(true)
 	if store.bootAuxWarm {
 		log.Infof("FlatSQL store: WARM auxiliary metadata — resumed at journal offset %d, applied %d frames in %s",
-			resume.Auxiliary, auxApplied, time.Since(auxReplayStart).Round(time.Millisecond))
+			auxResume, auxApplied, time.Since(auxReplayStart).Round(time.Millisecond))
 	} else {
 		log.Infof("FlatSQL store: cold auxiliary metadata — replayed %d frames from the beginning in %s",
 			auxApplied, time.Since(auxReplayStart).Round(time.Millisecond))
 	}
-	if cfg.deferRecordCatalogReplay {
-		log.Infof("FlatSQL store: deferred compact record-catalog replay at open")
-	} else {
-		replayStart := time.Now()
-		endPhase = bootBudget.phase("boot: record-catalog replay (synchronous)")
-		replayedThrough := recordCatalog.validLength()
-		applied, err := recordCatalog.ReplayFrom(store, store.bootResumeFrom.Swap(0))
-		endPhase()
-		if err != nil {
-			store.Close()
-			return nil, fmt.Errorf("failed to replay record catalog journal: %w", err)
-		}
-		// The replay applied everything up to the length it snapshotted, so that
-		// is genuinely applied — and it is the only thing that may be marked.
-		store.noteCatalogAppliedThrough(replayedThrough)
-		store.bootReplayFrames = applied
-		store.recordCatalogHydrated.Store(true)
-		if store.bootReplayWarm {
-			log.Infof("FlatSQL store: WARM boot — resumed the record catalog at journal offset %d, applied %d frames in %s",
-				resumeFrom, applied, time.Since(replayStart).Round(time.Millisecond))
-		} else {
-			log.Infof("FlatSQL store: cold boot — replayed %d record-catalog frames from the beginning in %s",
-				applied, time.Since(replayStart).Round(time.Millisecond))
-		}
-	}
 	if cfg.deferBootRebuilds {
-		log.Infof("FlatSQL store: deferred derived source-summary and engine hot-window rebuilds at open")
+		log.Infof("FlatSQL store: deferred engine hot-window hydration at open")
 	} else {
-		endPhase = bootBudget.phase("boot: derived-state rebuild (source summaries + engine hot window)")
+		endPhase = bootBudget.phase("boot: engine hot-window hydration")
 		if err := store.RebuildDerivedState(); err != nil {
 			endPhase()
 			store.Close()
-			return nil, fmt.Errorf("failed to rebuild derived state: %w", err)
+			return nil, fmt.Errorf("failed to hydrate the engine hot window: %w", err)
 		}
 		endPhase()
 	}
 
-	// Advance the mark to cover everything the boot just applied, then start the
-	// periodic checkpointer. Without the checkpointer a CRASH would cost a
+	// Advance the auxiliary mark to cover everything the boot just applied,
+	// then start the periodic checkpointer. Without it a CRASH would cost a
 	// replay of everything since the last boot; with it, at most one interval.
-	if store.controlDBDurable {
-		if err := store.CheckpointRecordCatalog(); err != nil {
-			log.Warnf("FlatSQL store: initial boot-state checkpoint failed (next boot replays more, nothing is lost): %v", err)
-		}
-		if interval := resolveCheckpointInterval(); interval > 0 {
-			store.checkpointRunning.Store(true)
-			go store.runCheckpointLoop(interval)
-		} else {
-			log.Warnf("FlatSQL store: background boot-state checkpointing DISABLED by %s=0", checkpointIntervalEnv)
-		}
+	if err := store.Checkpoint(); err != nil {
+		log.Warnf("FlatSQL store: initial checkpoint failed (nothing is lost): %v", err)
+	}
+	if interval := resolveCheckpointInterval(); interval > 0 {
+		store.checkpointRunning.Store(true)
+		go store.runCheckpointLoop(interval)
+	} else {
+		log.Warnf("FlatSQL store: background checkpointing DISABLED by %s=0", checkpointIntervalEnv)
 	}
 
 	bootBudget.summary()
@@ -911,267 +593,38 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	return store, nil
 }
 
-// RebuildDerivedState rebuilds durable-derived caches from compact record
-// metadata and stream files: source summaries and the engine hot window. This
-// is safe to run after opening a store with WithDeferredBootRebuilds, but it
-// may be expensive on large catalogs and holds the store write lock.
+// RebuildDerivedState brings the engine hot window current synchronously,
+// holding the store write lock: the non-deferred open (CLI verbs, tests) and
+// the store maintenance API. The daemon defers this and runs
+// HydrateEngineHotWindowContext in the background instead.
 func (s *FlatSQLStore) RebuildDerivedState() error {
 	defer s.lockWrite("RebuildDerivedState")()
-	// PHASE-STAMPED WHEREVER IT RUNS, not only at open. This is reachable from
-	// the store maintenance API and from every non-deferred open, so when it is
-	// the thing holding the single-threaded engine the log has to say so — it
-	// is the path whose CAT.fbs statement poisoned host-02's engine in
-	// rehearsal (sdn-boot-poisons-engine-on-a-large-store).
 	budget := newBootPhaseBudget(s.engine)
-	end := budget.phase("maintenance: source-summary rebuild")
-	err := s.rebuildSourceSummariesFromDurableState()
-	end()
-	if err != nil {
-		return fmt.Errorf("source summaries: %w", err)
-	}
-	end = budget.phase("maintenance: engine hot-window rebuild")
-	err = s.rebuildEngineRecords()
+	end := budget.phase("maintenance: engine hot-window hydration")
+	err := s.rebuildEngineRecordsLocked()
 	end()
 	if err != nil {
 		return fmt.Errorf("engine records: %w", err)
 	}
-	// The synchronous rebuild leaves the window hydrated exactly as the
-	// background hydration does — the checkpoint's engine coverage mark
-	// depends on it (persistBootMarkLocked), and without it a synchronous
-	// open (CLI, tests) could never close into a warm engine boot.
-	s.engineHotHydrated.Store(true)
 	budget.summary()
 	return nil
 }
 
-// ReplayRecordCatalog replays compact record metadata into the in-memory
-// control tables (the per-producer record tables, sdn_record_index, and
-// sdn_record_source_tags). It is intended for daemons opened with
-// WithDeferredRecordCatalogReplay so API surfaces can start before provider-
-// scale catalog hydration (catalogfixture nodes carry 150k+ records).
-//
-// force=false is a one-shot: it no-ops once the catalog is hydrated for this
-// process, which is how the post-boot background hydration runs it. force=true
-// always re-runs, for the on-demand admin re-sync — safe because every row
-// apply is an idempotent upsert (INSERT OR IGNORE on the record tables,
-// ON CONFLICT DO UPDATE on the index/tags), so replaying an already-current
-// catalog converges to the same rows.
-//
-// progress (may be nil) is invoked with the running replayed-record count at
-// each replay window boundary, for background progress logging.
-//
-// LOCKING. The replay does NOT hold the store write lock for its duration — an
-// earlier cut did, and it starved every reader (/api/v1/stats blocked for the
-// whole replay, so the board was dead exactly when operators looked at it; the
-// same failure mode as the 2026-07-06 blackout that produced storeWriteChunkSize).
-// Instead the journal replay takes and RELEASES the write lock around each
-// bounded window (recordCatalogReplayWindow frames), so s.mu.RLock readers
-// interleave throughout.
-//
-// Correctness with the lock released mid-replay:
-//
-//   - Records are CONTENT ADDRESSED, so a replayed historical upsert of a CID
-//     and a live re-add of that same CID carry identical derived index/tag
-//     values: whichever lands second is a no-op in substance (INSERT OR IGNORE
-//     on the record row, ON CONFLICT DO UPDATE to identical values elsewhere).
-//   - The dangerous case is the reverse ordering on a DESTRUCTIVE frame: a
-//     historical RecordDelete / SourceKeep / GCOlderThan must never be applied
-//     on top of a live re-add of the same CID. The hydration shield
-//     (record_catalog_replay.go) records every CID live traffic writes while the
-//     replay is in flight, and the destructive appliers skip shielded CIDs. Live
-//     state is by definition newer than the pre-boot journal prefix, so "live
-//     wins" is the correct — and only safe — resolution.
-func (s *FlatSQLStore) ReplayRecordCatalog(force bool, progress func(done int)) (int, error) {
-	return s.ReplayRecordCatalogContext(context.Background(), force, progress)
-}
-
-// ReplayRecordCatalogContext is ReplayRecordCatalog with cancellation. The
-// replay checks ctx between windows, so a daemon shutting down mid-hydration
-// stops within one window instead of making the process ignore SIGTERM until the
-// whole catalog has been replayed (the pre-fix daemon did exactly that: it sat
-// at 100% CPU through a 14-minute shutdown because the hydration goroutine was
-// still grinding and the node's WaitGroup could not drain). A cancelled replay
-// simply leaves the catalog un-hydrated; it is re-run on the next boot and every
-// row apply is an idempotent upsert.
-func (s *FlatSQLStore) ReplayRecordCatalogContext(ctx context.Context, force bool, progress func(done int)) (int, error) {
-	if !force && s.recordCatalogHydrated.Load() {
-		return 0, nil
-	}
-	if s.recordCatalog == nil {
-		s.recordCatalogHydrated.Store(true)
-		return 0, nil
-	}
-
-	// Serialize hydrations against each other (background boot hydrate vs. the
-	// admin re-sync trigger) without holding the store write lock.
-	s.hydrateMu.Lock()
-	defer s.hydrateMu.Unlock()
-	if !force && s.recordCatalogHydrated.Load() {
-		return 0, nil // another caller hydrated while we waited
-	}
-
-	s.recordCatalogHydrating.Store(true)
-	s.hydrationShield.activate()
-	defer func() {
-		s.hydrationShield.deactivate()
-		s.recordCatalogHydrating.Store(false)
-	}()
-
-	// THE WARM RESUME BELONGS HERE TOO, and this is the path production takes:
-	// node.go:365 opens the store WithDeferredRecordCatalogReplay and hydrates in
-	// the background, so the 5-minute boot was always THIS replay, not the
-	// synchronous one. The resume offset established at open is consumed exactly
-	// once, by the first hydration; a forced admin re-sync always starts at zero,
-	// because "re-sync" must mean re-derive and not "trust the mark I already
-	// have".
-	from := int64(0)
-	if !force {
-		from = s.bootResumeFrom.Swap(0)
-	} else {
-		s.bootResumeFrom.Store(0)
-	}
-	replayStart := time.Now()
-	replayedThrough := s.recordCatalog.validLength()
-	count, err := s.recordCatalog.replayFramesFrom(ctx, s, progress, true, from)
-	if err != nil {
-		return count, err
-	}
-	s.noteCatalogAppliedThrough(replayedThrough)
-	s.recordCatalogHydrated.Store(true)
-	if from > 0 {
-		log.Infof("FlatSQL store: WARM hydration — resumed the record catalog at journal offset %d, applied %d frames in %s",
-			from, count, time.Since(replayStart).Round(time.Millisecond))
-	}
-	// The tail is applied and the tables now describe the whole journal prefix,
-	// so the mark may move. Without this a deferred-replay daemon (i.e. the
-	// production one) would never advance it until its first clean shutdown.
-	if err := s.CheckpointRecordCatalog(); err != nil {
-		log.Warnf("FlatSQL store: checkpoint after hydration failed (the next boot replays more, nothing is lost): %v", err)
-	}
-	return count, nil
-}
-
-// HydrateRecordCatalog is the one-shot, no-progress form of ReplayRecordCatalog,
-// used by the post-boot background hydration.
-func (s *FlatSQLStore) HydrateRecordCatalog() (int, error) {
-	return s.ReplayRecordCatalog(false, nil)
-}
-
 // RebuildSourceSummaries recomputes the derived sdn_record_source_summary
 // aggregate (which feeds /api/v1/stats sources[] and drives batch-clear
-// bookkeeping) from the durable source-tag + record tables. It is cheap — one
-// grouped aggregate per schema — and safe to run on demand; it holds the store
-// write lock. Run it after ReplayRecordCatalog so the summary reflects the
-// freshly replayed control tables (a daemon opened with
-// WithDeferredRecordCatalogReplay has no summaries until this runs).
+// bookkeeping) from the durable source-tag + record tables. Every writer
+// maintains the summary incrementally, so this is a maintenance verb for an
+// operator who suspects drift, not a boot step. It holds the store write lock.
 func (s *FlatSQLStore) RebuildSourceSummaries() error {
 	defer s.lockWrite("RebuildSourceSummaries")()
 	return s.rebuildSourceSummariesFromDurableState()
 }
 
-// HydrateEngineHotWindowFromRecordCatalog loads the engine hot window for every
-// routed schema from compact record metadata and stream files. It is cheaper
-// than full record-catalog replay and is intended to make linked
-// data-retrieval flows usable before the full metadata catalog finishes
-// hydrating.
-func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalog() (int, error) {
-	return s.HydrateEngineHotWindowFromRecordCatalogContext(context.Background())
-}
-
-// HydrateEngineHotWindowFromRecordCatalogContext is
-// HydrateEngineHotWindowFromRecordCatalog that a shutdown can interrupt.
-//
-// TWO BOUNDS MAKE THIS SAFE AT 226 ROUTED STANDARDS. It holds the store write
-// lock, so its duration is a stop-the-world for every reader, writer and p2p
-// operation on the box: (1) the replay is ONE pass over the journal for ALL
-// schemas (ReplayEngineHotWindows), never one pass per schema — the journal is
-// multi-GB on both hosts and a per-schema pass would turn boot into hours; and
-// (2) it polls ctx, so Stop() is not left waiting on an uninterruptible scan.
-// A cancelled hydration is NOT an error and does NOT mark the window hydrated:
-// the next boot redoes it from the journal, which is the durable source of
-// truth here.
-func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalogContext(ctx context.Context) (int, error) {
-	if s.engineHotHydrated.Load() {
-		return 0, nil
-	}
-	s.engineHotHydrating.Store(true)
-	defer s.engineHotHydrating.Store(false)
-
-	// NO STORE LOCK ACROSS THE PASS. The replay takes the write lock per
-	// ingest batch (engineReplayOptions.CallerHoldsStoreLock=false) so every
-	// reader lane keeps answering while a multi-GB journal is rebuilt.
-	if s.recordCatalog == nil {
-		s.engineHotHydrated.Store(true)
-		return 0, nil
-	}
-	// Register every source the durable summary cache knows in ONE short
-	// locked section up front: registering a source rebuilds every unified
-	// view (~0.4 s on a 226-standard store), and doing that inside an ingest
-	// batch is exactly the kind of lock hold readers must not pay for.
-	func() {
-		defer s.lockWrite("engine hot-window: preregister sources")()
-		s.preregisterEngineSources()
-	}()
-	// The pass covers the journal up to its length NOW; frames appended while
-	// it runs are mirrored by their writers. That length is the engine mark.
-	coverage := s.recordCatalog.validLength()
-	var count int
-	var err error
-	if s.engineStateWarm {
-		// Persisted records are already resident: ingest the journal tail only.
-		count, err = s.applyEngineJournalTail(ctx, false)
-	} else {
-		count, err = s.recordCatalog.ReplayEngineHotWindowsOpts(ctx, s, s.engineRoutedSchemaNames(), s.engineWindowFor, engineReplayOptions{})
-	}
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			log.Infof("FlatSQL compact engine hot-window hydration cancelled after %d records — the next boot resumes it", count)
-			return count, nil
-		}
-		return count, err
-	}
-	s.engineHotHydrated.Store(true)
-	// FLUSH NOW, not at the next catalog checkpoint: the records just loaded
-	// exist only in the engine's memory until flatsql_flush_index, and a
-	// restart before the (minutes-long, cold) catalog replay's checkpoint
-	// would find a populated database with no record stream — the boot then
-	// discards it and rebuilds everything again (measured 2026-09-02).
-	func() {
-		defer s.lockWrite("engine hot-window: flush record state")()
-		if err := s.flushEngineStateLocked(); err != nil {
-			log.Warnf("FlatSQL engine record state not flushed after hydration (the next boot rebuilds it): %v", err)
-			return
-		}
-		if err := s.persistEngineMarkLocked(coverage); err != nil {
-			log.Warnf("FlatSQL engine coverage mark not written (the next boot rebuilds the engine): %v", err)
-			return
-		}
-		log.Infof("FlatSQL engine record state flushed to disk after hydration (%d records, journal coverage %d)", count, coverage)
-	}()
-	return count, nil
-}
-
-// RecordCatalogHydrating reports whether compact metadata hydration is
-// currently holding or waiting for the store lock. Public flow-backed data
-// routes should fail fast while this is true instead of blocking browser
-// requests behind startup catch-up work.
-func (s *FlatSQLStore) RecordCatalogHydrating() bool {
-	return s != nil && s.recordCatalogHydrating.Load()
-}
-
-// RecordCatalogHydrated reports whether compact record metadata has been
-// replayed into the query catalog for this process.
-func (s *FlatSQLStore) RecordCatalogHydrated() bool {
-	return s == nil || s.recordCatalogHydrated.Load()
-}
-
-// EngineHotWindowHydrating reports whether the linked-query OMM engine window
-// is currently being rebuilt from compact metadata.
 // EngineSchemaReady reports whether a standard's engine table can answer a
 // query now: always once the hot window is hydrated, and during a hydration
-// as soon as that standard's window has been loaded (or restored from disk).
-// The table lane gates PER STANDARD on this instead of refusing every read
-// while any rebuild runs — a $TRE reader must not wait for $TBS.
+// as soon as that standard's window has been loaded (or reconciled from
+// disk). The table lane gates PER STANDARD on this instead of refusing every
+// read while any rebuild runs — a $TRE reader must not wait for $TBS.
 func (s *FlatSQLStore) EngineSchemaReady(schemaName string) bool {
 	if s == nil {
 		return false
@@ -1191,26 +644,21 @@ func (s *FlatSQLStore) engineSchemaLoadedSet(schemaName string) {
 	s.engineSchemaLoaded[normalizeSchemaNameForEpoch(schemaName)] = true
 }
 
+// EngineHotWindowHydrating reports whether the engine hot window is currently
+// being brought current.
 func (s *FlatSQLStore) EngineHotWindowHydrating() bool {
 	return s != nil && s.engineHotHydrating.Load()
 }
 
-// EngineHotWindowHydrated reports whether the linked-query OMM engine window
-// has been rebuilt for this process.
+// EngineHotWindowHydrated reports whether the engine hot window is current
+// for this process.
 func (s *FlatSQLStore) EngineHotWindowHydrated() bool {
 	return s == nil || s.engineHotHydrated.Load()
 }
 
-// IsReadOnly reports whether this store was opened via
-// NewFlatSQLStoreReadOnly.
-func (s *FlatSQLStore) IsReadOnly() bool { return s.readOnly }
-
-// requireWritable fails a public write verb on read-only stores with a
-// typed, actionable error.
+// requireWritable fails a public write verb with a typed, actionable error
+// while the store is frozen for asset-pin ledger recovery.
 func (s *FlatSQLStore) requireWritable(op string) error {
-	if s.readOnly {
-		return fmt.Errorf("%s requires a writable store open (this handle was opened read-only, e.g. because a daemon holds the writer lock): %w", op, ErrStoreReadOnly)
-	}
 	if s.assetPinLedgerRecovery.Load() {
 		return fmt.Errorf("%s requires closing and reopening the store to replay durable asset-pin state: %w", op, ErrAssetPinLedgerRecoveryRequired)
 	}
@@ -1228,6 +676,13 @@ func (s *FlatSQLStore) initTables() error {
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create metadata table: %w", err)
+	}
+	// The engine hot window's residency ledger (engine_residency.go).
+	if _, err := s.db.Exec(engineRowsTableSQL); err != nil {
+		return fmt.Errorf("failed to create engine residency table: %w", err)
+	}
+	if _, err := s.db.Exec(engineRowsSeqIndexSQL); err != nil {
+		return fmt.Errorf("failed to create engine residency index: %w", err)
 	}
 
 	// Fast lookup index for API queries (schema/day/object filters).
@@ -1438,46 +893,6 @@ func (s *FlatSQLStore) initTables() error {
 		ON sdn_log_index (schema_type, epoch_day, timestamp DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create log epoch index: %w", err)
-	}
-
-	// WS7.3d: v1 stores are routed-only — legacy per-standard tables are
-	// NEVER created anew. Existing tables (pre-flip databases) keep their
-	// migrations and indexes so their rows stay readable via the union
-	// read source.
-	for _, schemaName := range s.validator.Schemas() {
-		tableName, err := sds.SchemaNameToTable(schemaName)
-		if err != nil {
-			return fmt.Errorf("invalid schema name %q: %w", schemaName, err)
-		}
-		if err := s.migrateCanonicalSchemaTableIfNeeded(schemaName, tableName); err != nil {
-			return err
-		}
-		// Migrates a legacy blob table into the canonical layout when one
-		// exists (creates the canonical table only in that case).
-		if err := s.migrateLegacySchemaTable(schemaName, tableName); err != nil {
-			return err
-		}
-		tableExisted, err := s.tableExists(tableName)
-		if err != nil {
-			return err
-		}
-		if !tableExisted {
-			continue
-		}
-
-		// Create index on peer_id and timestamp
-		indexName, indexSQL := schemaPeerTimeIndexSQL(tableName)
-		if err := s.createStartupIndex(tableName, indexName, tableExisted, indexSQL); err != nil {
-			if tableExisted {
-				return err
-			}
-			log.Warnf("Failed to create index for %s: %v", tableName, err)
-		}
-
-		log.Debugf("Initialized table: %s", tableName)
-		if err := s.ensureSourceSummaryForSchema(schemaName, tableName); err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -1785,263 +1200,30 @@ func (s *FlatSQLStore) createSchemaMetadataTable(tableName string) error {
 	return err
 }
 
+// schemaMetadataTableSQL is the DDL of a (producer, standard) record table.
+// `data` IS the record: the FlatBuffer bytes exactly as stored (sealed when
+// the standard declares an `(encrypted)` field). `supersede_key` is the
+// within-producer identity a record replaces (record_supersede.go); NULL for
+// standards with no supersede rule.
 func schemaMetadataTableSQL(tableName string) string {
 	return fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			cid TEXT PRIMARY KEY,
 			peer_id TEXT NOT NULL,
 			timestamp INTEGER NOT NULL,
-			stream_path TEXT NOT NULL,
-			stream_offset INTEGER NOT NULL,
+			data BLOB NOT NULL,
 			record_length INTEGER NOT NULL,
 			signature_hex TEXT,
+			supersede_key TEXT,
 			created_at INTEGER DEFAULT (strftime('%%s', 'now')),
 			UNIQUE(cid)
 		)
 	`, tableName)
 }
 
-func (s *FlatSQLStore) migrateCanonicalSchemaTableIfNeeded(schemaName, tableName string) error {
-	exists, err := s.tableExists(tableName)
-	if err != nil || !exists {
-		return err
-	}
-	columns, err := s.tableColumnSet(tableName)
-	if err != nil {
-		return err
-	}
-	if !columns["data"] && columns["stream_path"] && columns["stream_offset"] && columns["record_length"] {
-		return nil
-	}
-	if !columns["data"] {
-		return fmt.Errorf("schema table %s has unsupported FlatSQL metadata layout", tableName)
-	}
-	return s.migrateBlobSchemaTableInPlace(schemaName, tableName)
-}
-
-func (s *FlatSQLStore) migrateLegacySchemaTable(schemaName, tableName string) error {
-	legacyTableName := legacySchemaTableName(schemaName)
-	if legacyTableName == tableName {
-		return nil
-	}
-	legacyExists, err := s.tableExists(legacyTableName)
-	if err != nil {
-		return err
-	}
-	if !legacyExists {
-		return nil
-	}
-	if s.engineOwnsTableName(tableName) {
-		// The canonical name is reserved by the engine's record vtab, so the
-		// legacy blob rows cannot be merged into a plain table of that name.
-		// Leave them for the B.7 legacy importer (which replays into the
-		// routed (producer, standard) tables) instead of failing the open.
-		log.Warnf("Deferring legacy FlatSQL table %s migration: canonical name %s is reserved by the engine record vtab (B.7 importer)", legacyTableName, tableName)
-		return nil
-	}
-	if err := s.createSchemaMetadataTable(tableName); err != nil {
-		return fmt.Errorf("create canonical schema table %s before legacy migration: %w", tableName, err)
-	}
-	hasCanonicalRows, err := s.schemaMetadataTableHasRows(tableName)
-	if err != nil {
-		return err
-	}
-	if hasCanonicalRows {
-		log.Warnf(
-			"Deferring legacy FlatSQL table %s migration into %s because canonical stream metadata already exists; run maintenance migration before dropping legacy bytes",
-			legacyTableName,
-			tableName,
-		)
-		return nil
-	}
-	if err := s.copyBlobSchemaRowsToMetadataTable(schemaName, legacyTableName, tableName); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(fmt.Sprintf(`DROP TABLE %s`, legacyTableName)); err != nil {
-		return fmt.Errorf("drop migrated legacy schema table %s: %w", legacyTableName, err)
-	}
-	log.Infof("Merged legacy FlatSQL table %s into %s", legacyTableName, tableName)
-	return nil
-}
-
-func (s *FlatSQLStore) schemaMetadataTableHasRows(tableName string) (bool, error) {
-	var cid string
-	err := s.db.QueryRow(fmt.Sprintf(`SELECT cid FROM %s LIMIT 1`, tableName)).Scan(&cid)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect schema metadata table %s: %w", tableName, err)
-	}
-	return true, nil
-}
-
-func (s *FlatSQLStore) migrateBlobSchemaTableInPlace(schemaName, tableName string) error {
-	nextTable := tableName + "_stream_migration"
-	if _, err := s.db.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, nextTable)); err != nil {
-		return fmt.Errorf("drop stale schema migration table %s: %w", nextTable, err)
-	}
-	if _, err := s.db.Exec(schemaMetadataTableSQL(nextTable)); err != nil {
-		return fmt.Errorf("create schema migration table %s: %w", nextTable, err)
-	}
-	if err := s.copyBlobSchemaRowsToMetadataTable(schemaName, tableName, nextTable); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(fmt.Sprintf(`DROP TABLE %s`, tableName)); err != nil {
-		return fmt.Errorf("drop migrated schema table %s: %w", tableName, err)
-	}
-	if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s RENAME TO %s`, nextTable, tableName)); err != nil {
-		return fmt.Errorf("rename schema migration table %s to %s: %w", nextTable, tableName, err)
-	}
-	indexName, indexSQL := schemaPeerTimeIndexSQL(tableName)
-	if _, err := s.db.Exec(indexSQL); err != nil {
-		return fmt.Errorf("create migrated schema index %s: %w", indexName, err)
-	}
-	log.Infof("Migrated FlatSQL schema table %s from SQLite BLOB rows to stream metadata", tableName)
-	return nil
-}
-
-func schemaPeerTimeIndexSQL(tableName string) (string, string) {
-	indexName := fmt.Sprintf("idx_%s_peer_time", tableName)
-	indexSQL := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS %s ON %s (peer_id, timestamp)
-	`, indexName, tableName)
-	return indexName, indexSQL
-}
-
-func (s *FlatSQLStore) copyBlobSchemaRowsToMetadataTable(schemaName, sourceTable, targetTable string) error {
-	columns, err := s.tableColumnSet(sourceTable)
-	if err != nil {
-		return err
-	}
-	if !columns["data"] {
-		return fmt.Errorf("legacy schema table %s has no data column", sourceTable)
-	}
-	signatureExpr := "NULL"
-	if columns["signature"] {
-		signatureExpr = "src.signature"
-	}
-	createdAtExpr := "src.timestamp"
-	if columns["created_at"] {
-		createdAtExpr = "src.created_at"
-	}
-
-	log.Infof("Migrating FlatSQL %s records from SQLite BLOB table %s to stream metadata", schemaName, sourceTable)
-
-	appender, err := s.newFlatSQLStreamAppender(schemaName)
-	if err != nil {
-		return fmt.Errorf("open migrated %s FlatSQL stream: %w", schemaName, err)
-	}
-	defer appender.Close()
-
-	var migratedRows int64
-	var lastRowID int64
-	for {
-		batchRows, err := func() (int64, error) {
-			tx, err := s.db.Begin()
-			if err != nil {
-				return 0, fmt.Errorf("begin schema table migration %s: %w", sourceTable, err)
-			}
-			committed := false
-			defer func() {
-				if !committed {
-					_ = tx.Rollback()
-				}
-			}()
-
-			rows, err := tx.Query(fmt.Sprintf(`
-			SELECT src.rowid, src.cid, src.peer_id, src.timestamp, src.data, %s, %s
-			FROM %s AS src
-			LEFT JOIN %s AS dst ON dst.cid = src.cid
-			WHERE src.rowid > ? AND dst.cid IS NULL
-			ORDER BY src.rowid ASC
-			LIMIT ?
-		`, signatureExpr, createdAtExpr, sourceTable, targetTable), lastRowID, legacyBlobMigrationBatchSize)
-			if err != nil {
-				return 0, fmt.Errorf("query legacy schema table %s: %w", sourceTable, err)
-			}
-
-			stmt, err := tx.Prepare(fmt.Sprintf(`
-			INSERT OR IGNORE INTO %s (
-				cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at
-			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, targetTable))
-			if err != nil {
-				_ = rows.Close()
-				return 0, fmt.Errorf("prepare migrated schema metadata insert %s: %w", targetTable, err)
-			}
-
-			var batchRows int64
-			for rows.Next() {
-				var rowID int64
-				var cid, peerID string
-				var timestamp, createdAt int64
-				var data []byte
-				var signature []byte
-				if err := rows.Scan(&rowID, &cid, &peerID, &timestamp, &data, &signature, &createdAt); err != nil {
-					_ = rows.Close()
-					_ = stmt.Close()
-					return 0, fmt.Errorf("scan legacy schema table %s: %w", sourceTable, err)
-				}
-				lastRowID = rowID
-				streamPath, streamOffset, recordLength, err := appender.Append(data)
-				if err != nil {
-					_ = rows.Close()
-					_ = stmt.Close()
-					return 0, fmt.Errorf("append migrated %s record %s to FlatSQL stream: %w", schemaName, cid, err)
-				}
-				var signatureHex any
-				if len(signature) > 0 {
-					signatureHex = hex.EncodeToString(signature)
-				}
-				if createdAt <= 0 {
-					createdAt = timestamp
-				}
-				if _, err := stmt.Exec(cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt); err != nil {
-					_ = rows.Close()
-					_ = stmt.Close()
-					return 0, fmt.Errorf("insert migrated %s metadata row %s: %w", schemaName, cid, err)
-				}
-				batchRows++
-				migratedRows++
-				if migratedRows%100000 == 0 {
-					log.Infof("Migrated %d FlatSQL %s records to stream metadata", migratedRows, schemaName)
-				}
-			}
-			if err := rows.Err(); err != nil {
-				_ = rows.Close()
-				_ = stmt.Close()
-				return 0, fmt.Errorf("iterate legacy schema table %s: %w", sourceTable, err)
-			}
-			if err := rows.Close(); err != nil {
-				_ = stmt.Close()
-				return 0, fmt.Errorf("close legacy schema rows %s: %w", sourceTable, err)
-			}
-			if err := stmt.Close(); err != nil {
-				return 0, fmt.Errorf("close migrated schema metadata insert %s: %w", targetTable, err)
-			}
-			if err := tx.Commit(); err != nil {
-				return 0, fmt.Errorf("commit migrated schema table %s: %w", sourceTable, err)
-			}
-			committed = true
-			return batchRows, nil
-		}()
-		if err != nil {
-			return err
-		}
-		if batchRows == 0 {
-			break
-		}
-	}
-	log.Infof("Migrated %d FlatSQL %s records from SQLite BLOB table %s to stream metadata", migratedRows, schemaName, sourceTable)
-	return nil
-}
-
-func legacySchemaTableName(schemaName string) string {
-	name := strings.TrimSuffix(schemaName, ".fbs")
-	name = strings.ToLower(name)
-	return "sds_" + name
+// schemaSupersedeIndexSQL is the per-table index the supersede lookup seeks on.
+func schemaSupersedeIndexSQL(tableName string) string {
+	return fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_supersede ON %s (supersede_key)`, tableName, tableName)
 }
 
 func (s *FlatSQLStore) tableExists(tableName string) (bool, error) {
@@ -2205,22 +1387,37 @@ type sqlExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-func insertSchemaMetadata(exec sqlExecer, tableName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte, createdAt int64) error {
-	_, err := insertSchemaMetadataWithMode(exec, tableName, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signature, createdAt, true)
+// storedRecord is one record as it lands in a (producer, standard) table.
+type storedRecord struct {
+	cid          string
+	peerID       string
+	timestamp    int64
+	data         []byte // sealed when the standard has encrypted fields
+	signature    []byte
+	createdAt    int64
+	supersedeKey string
+}
+
+func insertSchemaMetadata(exec sqlExecer, tableName string, rec storedRecord) error {
+	_, err := insertSchemaMetadataWithMode(exec, tableName, rec, true)
 	return err
 }
 
-func insertSchemaMetadataReturningRowID(exec sqlExecer, tableName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte, createdAt int64) (int64, error) {
-	return insertSchemaMetadataWithMode(exec, tableName, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signature, createdAt, false)
+func insertSchemaMetadataReturningRowID(exec sqlExecer, tableName string, rec storedRecord) (int64, error) {
+	return insertSchemaMetadataWithMode(exec, tableName, rec, false)
 }
 
-func insertSchemaMetadataWithMode(exec sqlExecer, tableName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte, createdAt int64, ignoreDuplicates bool) (int64, error) {
+func insertSchemaMetadataWithMode(exec sqlExecer, tableName string, rec storedRecord, ignoreDuplicates bool) (int64, error) {
 	var signatureHex any
-	if len(signature) > 0 {
-		signatureHex = hex.EncodeToString(signature)
+	if len(rec.signature) > 0 {
+		signatureHex = hex.EncodeToString(rec.signature)
 	}
-	if createdAt <= 0 {
-		createdAt = timestamp
+	if rec.createdAt <= 0 {
+		rec.createdAt = rec.timestamp
+	}
+	var supersedeKey any
+	if rec.supersedeKey != "" {
+		supersedeKey = rec.supersedeKey
 	}
 	insertMode := "INSERT INTO"
 	if ignoreDuplicates {
@@ -2228,14 +1425,11 @@ func insertSchemaMetadataWithMode(exec sqlExecer, tableName, cid, peerID string,
 	}
 	insertSQL := fmt.Sprintf(`
 		%s %s (
-			cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at
+			cid, peer_id, timestamp, data, record_length, signature_hex, supersede_key, created_at
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, insertMode, tableName)
-	if strings.HasPrefix(tableName, "sds_p_") {
-		insertSQL = flatsqldrv.WithoutJournal(insertSQL)
-	}
-	result, err := exec.Exec(insertSQL, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt)
+	result, err := exec.Exec(insertSQL, rec.cid, rec.peerID, rec.timestamp, rec.data, int64(len(rec.data)), signatureHex, supersedeKey, rec.createdAt)
 	if err != nil {
 		return 0, err
 	}
@@ -2246,175 +1440,52 @@ func insertSchemaMetadataWithMode(exec sqlExecer, tableName, cid, peerID string,
 	return rowID, nil
 }
 
-type flatSQLStreamAppender struct {
-	file         *os.File
-	writer       *bufio.Writer
-	relativePath string
-	offset       int64
-	closed       bool
-	// schemaName/store let Append transparently seal any schema's registered
-	// `(encrypted)` fields (field_encryption.go) before writing, without
-	// changing Append's signature or any of its callers (storeOne via
-	// appendFlatSQLStreamRecord, StoreRoutedByProducer, and storeBatchChunk's
-	// direct appender.Append loop all share this one path).
-	schemaName string
-	store      *FlatSQLStore
+// storableRecordBytes returns the bytes a record is stored as: sealed for a
+// standard with registered `(encrypted)` fields (field_encryption.go), the
+// caller's bytes unchanged otherwise. CID and indexing always happen against
+// the plaintext; only the stored bytes become ciphertext. encfield's registry
+// is keyed by the table name, not the ".fbs" schema name.
+func (s *FlatSQLStore) storableRecordBytes(schemaName string, data []byte) ([]byte, error) {
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, err
+	}
+	if !encfield.HasEncryptedFields(tableName) {
+		return data, nil
+	}
+	sealed, err := s.sealRecordFields(tableName, data)
+	if err != nil {
+		return nil, fmt.Errorf("seal %s record: %w", schemaName, err)
+	}
+	return sealed, nil
 }
 
-func (s *FlatSQLStore) newFlatSQLStreamAppender(schemaName string) (*flatSQLStreamAppender, error) {
-	// Choke point for every durable stream write (regular ingest AND legacy
-	// blob-table migrations): read-only opens must never append.
-	if err := s.requireWritable("stream append"); err != nil {
-		return nil, err
+// openStoredRecordBytes is the mirror of storableRecordBytes for a read:
+// encfield.IsSealed is a cheap magic check, false (and a no-op) for every
+// record that was never sealed.
+func (s *FlatSQLStore) openStoredRecordBytes(schemaName string, data []byte) ([]byte, error) {
+	if !encfield.IsSealed(data) {
+		return data, nil
 	}
 	tableName, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
 		return nil, err
 	}
-	relativePath := filepath.Join(flatSQLStreamDirName, tableName+".flatsql")
-	absolutePath := filepath.Join(s.basePath, relativePath)
-	if err := os.MkdirAll(filepath.Dir(absolutePath), 0700); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(absolutePath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
+	opened, err := s.openRecordFields(tableName, data)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decrypt %s record: %w", schemaName, err)
 	}
-
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	return &flatSQLStreamAppender{
-		file:         file,
-		writer:       bufio.NewWriterSize(file, 4*1024*1024),
-		relativePath: relativePath,
-		offset:       info.Size(),
-		// encfield's registry (and streamRecordSchemaName on the read side,
-		// which only has the table-derived stream path to go on) is keyed by
-		// the table name, not the raw ".fbs" schema name -- use the same
-		// tableName the stream file itself is named after.
-		schemaName: tableName,
-		store:      s,
-	}, nil
+	return opened, nil
 }
 
-func (a *flatSQLStreamAppender) Append(data []byte) (string, int64, int64, error) {
-	if a.closed {
-		return "", 0, 0, fmt.Errorf("FlatSQL stream appender is closed")
-	}
-	// Transparent field-level encryption (E1): a no-op for every schema with
-	// no registered `(encrypted)` field (encfield.HasEncryptedFields is the
-	// single guard, so the overwhelming majority of writes pay one bool-map
-	// lookup and nothing else). CID/indexing already happened against the
-	// caller's plaintext `data` before Append was called (storeOne,
-	// storeBatchChunk, StoreRoutedByProducer) -- only the durable stream
-	// bytes below become ciphertext.
-	if a.store != nil && encfield.HasEncryptedFields(a.schemaName) {
-		sealed, err := a.store.sealRecordFields(a.schemaName, data)
-		if err != nil {
-			return "", 0, 0, fmt.Errorf("seal %s stream record: %w", a.schemaName, err)
-		}
-		data = sealed
-	}
-	if len(data) > int(^uint32(0)) {
-		return "", 0, 0, fmt.Errorf("record exceeds uint32 FlatSQL stream frame length")
-	}
-	offset := a.offset
-	var sizePrefix [4]byte
-	binary.LittleEndian.PutUint32(sizePrefix[:], uint32(len(data)))
-	if _, err := a.writer.Write(sizePrefix[:]); err != nil {
-		return "", 0, 0, err
-	}
-	if _, err := a.writer.Write(data); err != nil {
-		return "", 0, 0, err
-	}
-	a.offset += int64(len(sizePrefix) + len(data))
-	return a.relativePath, offset, int64(len(data)), nil
-}
-
-func (a *flatSQLStreamAppender) Close() error {
-	if a == nil || a.closed {
-		return nil
-	}
-	a.closed = true
-	var flushErr error
-	if a.writer != nil {
-		flushErr = a.writer.Flush()
-	}
-	closeErr := a.file.Close()
-	if flushErr != nil {
-		return flushErr
-	}
-	return closeErr
-}
-
-func (s *FlatSQLStore) appendFlatSQLStreamRecord(schemaName string, data []byte) (string, int64, int64, error) {
-	appender, err := s.newFlatSQLStreamAppender(schemaName)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	defer appender.Close()
-	return appender.Append(data)
-}
-
-func (s *FlatSQLStore) readFlatSQLStreamRecord(streamPath string, streamOffset, recordLength int64) ([]byte, error) {
-	if streamOffset < 0 {
-		return nil, fmt.Errorf("negative FlatSQL stream offset %d", streamOffset)
-	}
-	if recordLength < 0 || recordLength > int64(^uint32(0)) {
-		return nil, fmt.Errorf("invalid FlatSQL record length %d", recordLength)
-	}
-	clean := filepath.Clean(streamPath)
-	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
-		return nil, fmt.Errorf("invalid FlatSQL stream path %q", streamPath)
-	}
-	absolutePath := filepath.Join(s.basePath, clean)
-	file, err := os.Open(absolutePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var sizePrefix [4]byte
-	if _, err := file.ReadAt(sizePrefix[:], streamOffset); err != nil {
-		return nil, err
-	}
-	length := int64(binary.LittleEndian.Uint32(sizePrefix[:]))
-	if length != recordLength {
-		return nil, fmt.Errorf("FlatSQL stream frame length = %d, want %d", length, recordLength)
-	}
-	data := make([]byte, recordLength)
-	if _, err := file.ReadAt(data, streamOffset+4); err != nil {
-		return nil, err
-	}
-	// Transparent field-level decryption (E1), the mirror of Append's seal:
-	// encfield.IsSealed is a cheap 5-byte magic/version check, false (and a
-	// no-op) for every record that was never sealed -- which, since
-	// streamRecordSchemaName derives the schema straight from streamPath
-	// (Append never seals a schema with no registered encrypted field), is
-	// every schema except KMF today.
-	if encfield.IsSealed(data) {
-		schemaName := streamRecordSchemaName(streamPath)
-		opened, err := s.openRecordFields(schemaName, data)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt %s FlatSQL stream record: %w", schemaName, err)
-		}
-		data = opened
-	}
-	return data, nil
-}
-
-func (s *FlatSQLStore) hydrateRecordData(record *Record, streamPath string, streamOffset, recordLength int64, signatureHex sql.NullString) error {
-	record.StreamPath = streamPath
-	record.StreamOffset = streamOffset
-	record.RecordLength = recordLength
-	data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+// hydrateRecordData fills a Record's bytes and signature from a scanned row.
+func (s *FlatSQLStore) hydrateRecordData(record *Record, schemaName string, data []byte, signatureHex sql.NullString) error {
+	opened, err := s.openStoredRecordBytes(schemaName, data)
 	if err != nil {
 		return err
 	}
-	record.Data = data
+	record.Data = opened
+	record.RecordLength = int64(len(data))
 	if signatureHex.Valid && strings.TrimSpace(signatureHex.String) != "" {
 		signature, err := hex.DecodeString(strings.TrimSpace(signatureHex.String))
 		if err != nil {
@@ -2498,17 +1569,13 @@ const sourceSummaryLaneScanLimit = 100000
 // So the rebuild does not look for what changed. It is TOLD:
 //
 //   - the per-record writers (insertNewSourceTagsTx, upsertSourceTagsTx) call
-//     incrementSourceSummary, so a lane they touch is already correct and needs
-//     no rebuild at all;
-//   - insertSourceTagsBatch — the bulk replay — is the ONLY tag writer that does
-//     not, and it records every lane it writes in replayedSourceLanes;
+//     incrementSourceSummary, so a lane they touch is already correct;
 //   - supersede / GC / batch reconciliation call the SCOPED form with the schema
 //     they just mutated, and every lane of that schema is rebuilt unconditionally
 //     because those verbs delete rows and the summary cannot be trusted for them.
 //
-// A boot therefore rebuilds exactly the lanes the replay landed — on a warm
-// resume, a handful — and issues no tag-table statement at all beyond those
-// lanes' own bounded slices.
+// No boot step calls this: the summaries are durable rows in the same database
+// as the records they describe.
 //
 // Pruning needs no separate pass: rebuildSourceSummaryLane DELETEs the lane's
 // summary rows before inserting what it found, so a lane whose tags are gone is
@@ -2524,41 +1591,6 @@ func (s *FlatSQLStore) rebuildSourceSummaryScope(schemaName string) error {
 		}
 	}
 	return nil
-}
-
-// replayedSourceLaneSet is the set of lanes the bulk replay wrote tags for since
-// the last summary rebuild. Guarded by its own mutex because the replay writes
-// it while holding the store write lock and the rebuild drains it under the same
-// lock, but the two are different call stacks and the set outlives either.
-type replayedSourceLaneSet struct {
-	mu    sync.Mutex
-	lanes map[sourceSummaryLane]struct{}
-}
-
-func (r *replayedSourceLaneSet) note(lane sourceSummaryLane) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.lanes == nil {
-		r.lanes = make(map[sourceSummaryLane]struct{}, 16)
-	}
-	r.lanes[lane] = struct{}{}
-}
-
-// drain returns and clears the set. The rebuild takes them once; a lane written
-// after the drain lands in the next set, which is correct because the rebuild
-// that follows it will see it.
-func (r *replayedSourceLaneSet) drain() []sourceSummaryLane {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.lanes) == 0 {
-		return nil
-	}
-	out := make([]sourceSummaryLane, 0, len(r.lanes))
-	for lane := range r.lanes {
-		out = append(out, lane)
-	}
-	r.lanes = nil
-	return out
 }
 
 // sourceSummaryLanes enumerates the (schema, provider, source, batch) lanes the
@@ -2582,11 +1614,8 @@ func (r *replayedSourceLaneSet) drain() []sourceSummaryLane {
 //  1. sdn_record_source_summary — tens of rows, and every lane written by the
 //     per-record path is there already, because insertNewSourceTagsTx and
 //     upsertSourceTagsTx both call incrementSourceSummary.
-//  2. replayedSourceLanes — the lanes the BULK replay wrote. insertSourceTagsBatch
-//     is the only tag writer that does not maintain the summary, so it is the
-//     only way a lane can exist in tags without a summary row.
 //
-// The union is exact for every writer in the tree. The fallback below covers the
+// That is exact for every writer in the tree. The fallback below covers the
 // one case it cannot: a summary that is EMPTY for the scope (a first boot, a
 // dropped/migrated summary table) is not evidence of an empty store, so that
 // path still pays the loose scan once — which is the right trade, because it
@@ -2605,43 +1634,34 @@ func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLan
 		lanes = append(lanes, lane)
 	}
 
-	// The lanes the BULK replay landed. On the boot path these are the ONLY
-	// lanes that can be wrong, because every other tag writer maintains the
-	// summary as it goes.
-	for _, lane := range s.replayedSourceLanes.drain() {
+	// Every lane the summary already names is rebuilt: a SCOPED call comes
+	// from supersede / GC / batch reconciliation, which have just DELETED rows,
+	// and the global call is an operator's explicit maintenance request. This
+	// reads the summary (tens of rows), not the tag table.
+	summaryLanes := 0
+	laneSQL := `SELECT DISTINCT schema_name, provider_id, source_name, batch_id FROM sdn_record_source_summary`
+	var laneArgs []any
+	if schemaName != "" {
+		laneSQL += ` WHERE schema_name = ?`
+		laneArgs = append(laneArgs, schemaName)
+	}
+	rows, err := s.db.Query(laneSQL, laneArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("enumerate summary lanes: %w", err)
+	}
+	for rows.Next() {
+		var lane sourceSummaryLane
+		if err := rows.Scan(&lane.SchemaName, &lane.ProviderID, &lane.SourceName, &lane.BatchID); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan summary lane: %w", err)
+		}
+		summaryLanes++
 		add(lane)
 	}
-
-	// A SCOPED call comes from supersede / GC / batch reconciliation, which have
-	// just DELETED rows. Their schema's summary cannot be trusted lane by lane,
-	// so every lane of it is rebuilt. This reads the summary (tens of rows), not
-	// the tag table.
-	summaryLanes := 0
-	if schemaName != "" {
-		rows, err := s.db.Query(`
-			SELECT DISTINCT schema_name, provider_id, source_name, batch_id
-			FROM sdn_record_source_summary WHERE schema_name = ?`, schemaName)
-		if err != nil {
-			return nil, fmt.Errorf("enumerate summary lanes: %w", err)
-		}
-		for rows.Next() {
-			var lane sourceSummaryLane
-			if err := rows.Scan(&lane.SchemaName, &lane.ProviderID, &lane.SourceName, &lane.BatchID); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan summary lane: %w", err)
-			}
-			summaryLanes++
-			add(lane)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return nil, fmt.Errorf("iterate summary lanes: %w", err)
-		}
-	} else {
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_source_summary`).Scan(&summaryLanes); err != nil {
-			return nil, fmt.Errorf("count summary lanes: %w", err)
-		}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("iterate summary lanes: %w", err)
 	}
 
 	if summaryLanes == 0 {
@@ -2940,7 +1960,7 @@ func (s *FlatSQLStore) RefreshSourceBatchSummary(schemaName, providerID, sourceN
 	return s.rebuildSourceSummaryForSourceBatch(schemaName, tableName, providerID, sourceName, batchID)
 }
 
-func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes, recordRowID int64) error {
+func incrementSourceSummary(tx sqlExecer, schemaName string, tags SourceTags, recordBytes, recordRowID int64) error {
 	tags = normalizeSourceTags(tags)
 	_, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		INSERT INTO sdn_record_source_summary (
@@ -2961,7 +1981,7 @@ func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, reco
 	return nil
 }
 
-func decrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes, recordRowID int64) error {
+func decrementSourceSummary(tx sqlExecer, schemaName string, tags SourceTags, recordBytes, recordRowID int64) error {
 	tags = normalizeSourceTags(tags)
 	_, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		UPDATE sdn_record_source_summary
@@ -3050,8 +2070,14 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	var existing int
 	if err := s.db.QueryRow(`SELECT 1 FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid).Scan(&existing); err == nil {
 		// Repeat CID (possibly from a different producer): still record it in
-		// the producer's (producer, standard) table.
-		s.mirrorRoutedRecordFromExisting(s.db, schemaName, cid, peerID, signature)
+		// the producer's (producer, standard) table, and let a $CAT copy
+		// supersede that producer's previous record for the object.
+		superseded := s.mirrorRoutedRecordFromExisting(s.db, schemaName, cid, peerID, signature)
+		if len(superseded) > 0 && s.engineRoutesSchema(schemaName) {
+			if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded); err != nil {
+				return "", err
+			}
+		}
 		return cid, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("failed to check existing record: %w", err)
@@ -3063,35 +2089,49 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	// dedupe above prevents a different peer from overwriting the original
 	// author's attribution.
 	now := time.Now().Unix()
-	streamPath, streamOffset, recordLength, err := s.appendFlatSQLStreamRecord(schemaName, data)
+	stored, err := s.storableRecordBytes(schemaName, data)
 	if err != nil {
-		return "", fmt.Errorf("failed to append FlatSQL stream record: %w", err)
+		return "", err
 	}
 	routedTable, err := s.ensureProducerStandardTable(routedProducerID(peerID), schemaName)
 	if err != nil {
 		return "", fmt.Errorf("ensure (producer, standard) table: %w", err)
 	}
-	if err := insertSchemaMetadata(s.db, routedTable, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", fmt.Errorf("begin store: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	key := recordSupersedeKey(schemaName, data)
+	superseded, err := s.supersedeInProducerTableTx(tx, schemaName, routedTable, key, cid)
+	if err != nil {
+		return "", err
+	}
+	if err := insertSchemaMetadata(tx, routedTable, storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key}); err != nil {
 		return "", fmt.Errorf("failed to store data: %w", err)
 	}
-
-	if err := s.upsertRecordIndex(schemaName, cid, now, data); err != nil {
+	if err := upsertRecordIndexExec(tx, schemaName, cid, now, data, s.fullTextState(schemaName)); err != nil {
 		// Do not fail writes if index extraction fails for a record.
 		log.Warnf("Failed to index %s record %s: %v", schemaName, cid[:16]+"...", err)
 	}
-	event, err := s.recordCatalogUpsertEvent(s.db, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now, data)
-	if err != nil {
-		return "", fmt.Errorf("record catalog event: %w", err)
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit store: %w", err)
 	}
-	if err := s.appendCatalogEvent(event); err != nil {
-		return "", fmt.Errorf("append record catalog event: %w", err)
-	}
+	committed = true
 
 	// Engine-cache mirror (same contract as storeBatch): live ingest paths
 	// write per record, and the vtab hot window must reflect them without
-	// waiting for a boot rebuild.
+	// waiting for a boot rebuild. Superseded records leave the window first.
 	if s.engineRoutesSchema(schemaName) {
-		if err := s.ingestEngineRecords(schemaName, []engineIngest{{data: data, source: engineSourceName(tags)}}); err != nil {
+		if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded); err != nil {
+			return "", err
+		}
+		if err := s.ingestEngineRecords(schemaName, []engineIngest{{cid: cid, data: data, source: engineSourceName(tags)}}); err != nil {
 			return "", err
 		}
 	}
@@ -3337,16 +2377,10 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 	return inserted, nil
 }
 
-// storeBatchChunk stores one chunk under one store lock, FlatSQL stream
-// appender, and control transaction (the pre-chunking storeBatch body).
+// storeBatchChunk stores one chunk under one store lock and one control
+// transaction (the pre-chunking storeBatch body).
 func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
 	defer s.lockWrite("storeBatchChunk")()
-
-	appender, err := s.newFlatSQLStreamAppender(schemaName)
-	if err != nil {
-		return 0, fmt.Errorf("open %s FlatSQL stream: %w", schemaName, err)
-	}
-	defer appender.Close()
 
 	// WS7.3d routed-only writes: pre-create the (producer, standard) table
 	// outside the batch transaction (no DDL inside the tx). This is the ONLY
@@ -3381,7 +2415,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 	// control transaction commits so a rollback never leaves phantom rows in
 	// the engine.
 	var enginePending []engineIngest
-	catalogEvents := make([]recordCatalogEvent, 0, len(records)*2)
+	var superseded []string
 	for _, data := range records {
 		cid := computeCID(data)
 		var existing int
@@ -3390,37 +2424,34 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		case err == nil:
 			// Repeat CID (possibly from another producer): record it in THIS
 			// producer's table too.
-			s.mirrorRoutedRecordFromExisting(tx, schemaName, cid, peerID, signature)
+			gone := s.mirrorRoutedRecordFromExisting(tx, schemaName, cid, peerID, signature)
+			superseded = append(superseded, gone...)
 		case errors.Is(err, sql.ErrNoRows):
-			streamPath, streamOffset, recordLength, err := appender.Append(data)
+			stored, err := s.storableRecordBytes(schemaName, data)
 			if err != nil {
-				return inserted, fmt.Errorf("append %s record %s to FlatSQL stream: %w", schemaName, cid, err)
+				return inserted, err
 			}
-			rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now)
+			key := recordSupersedeKey(schemaName, data)
+			gone, err := s.supersedeInProducerTableTx(tx, schemaName, routedTable, key, cid)
+			if err != nil {
+				return inserted, err
+			}
+			superseded = append(superseded, gone...)
+			rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key})
 			if err != nil {
 				return inserted, fmt.Errorf("store %s record %s: %w", schemaName, cid, err)
 			}
-			if err := upsertRecordIndexExec(tx, &s.recordIndexRowIDs, schemaName, cid, now, data, s.fullTextState(schemaName)); err != nil {
+			if err := upsertRecordIndexExec(tx, schemaName, cid, now, data, s.fullTextState(schemaName)); err != nil {
 				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
 			}
-			event, err := s.recordCatalogUpsertEvent(tx, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now, data)
-			if err != nil {
-				return inserted, fmt.Errorf("record catalog event for %s record %s: %w", schemaName, cid, err)
-			}
-			catalogEvents = append(catalogEvents, event)
 			inserted++
 			if tags != nil {
-				if err := insertNewSourceTagsTx(tx, schemaName, cid, *tags, recordLength, rowID); err != nil {
+				if err := insertNewSourceTagsTx(tx, schemaName, cid, *tags, int64(len(stored)), rowID); err != nil {
 					return inserted, err
 				}
-				tagEvent, err := recordCatalogTagUpsertEvent(tx, schemaName, cid, *tags)
-				if err != nil {
-					return inserted, fmt.Errorf("record catalog source tag event for %s record %s: %w", schemaName, cid, err)
-				}
-				catalogEvents = append(catalogEvents, tagEvent)
 			}
 			if s.engineRoutesSchema(schemaName) {
-				enginePending = append(enginePending, engineIngest{data: data, source: engineSourceName(tags)})
+				enginePending = append(enginePending, engineIngest{cid: cid, data: data, source: engineSourceName(tags)})
 			}
 		default:
 			return inserted, fmt.Errorf("check %s record %s: %w", schemaName, cid, err)
@@ -3430,26 +2461,20 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, *tags, int64(len(data))); err != nil {
 				return inserted, err
 			}
-			tagEvent, err := recordCatalogTagUpsertEvent(tx, schemaName, cid, *tags)
-			if err != nil {
-				return inserted, fmt.Errorf("record catalog source tag event for %s record %s: %w", schemaName, cid, err)
-			}
-			catalogEvents = append(catalogEvents, tagEvent)
 		}
-	}
-	if err := appender.Close(); err != nil {
-		return inserted, fmt.Errorf("flush %s FlatSQL stream: %w", schemaName, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return inserted, fmt.Errorf("commit batch store: %w", err)
 	}
 	committed = true
-	if err := s.appendCatalogEvents(catalogEvents); err != nil {
-		return inserted, fmt.Errorf("append record catalog events: %w", err)
+	if len(superseded) > 0 {
+		if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded); err != nil {
+			return inserted, err
+		}
 	}
 	if len(enginePending) > 0 {
-		// Engine-cache mirror: failures never fail the write (control rows +
-		// stream files are the source of truth), but a trapped runtime does.
+		// Engine-cache mirror: failures never fail the write (the control
+		// rows are the source of truth), but a trapped runtime does.
 		if err := s.ingestEngineRecords(schemaName, enginePending); err != nil {
 			return inserted, err
 		}
@@ -3486,20 +2511,13 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 	if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, tags, -1); err != nil {
 		return err
 	}
-	event, err := recordCatalogTagUpsertEvent(tx, schemaName, cid, tags)
-	if err != nil {
-		return fmt.Errorf("record catalog source tag event: %w", err)
-	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit source tag upsert: %w", err)
-	}
-	if err := s.appendCatalogEvent(event); err != nil {
-		return fmt.Errorf("append record catalog source tag event: %w", err)
 	}
 	return nil
 }
 
-func insertNewSourceTagsTx(tx *sql.Tx, schemaName, cid string, tags SourceTags, recordBytes, recordRowID int64) error {
+func insertNewSourceTagsTx(tx sqlExecer, schemaName, cid string, tags SourceTags, recordBytes, recordRowID int64) error {
 	tags = normalizeSourceTags(tags)
 	if err := ValidateSourceTags(tags); err != nil {
 		return err
@@ -3523,7 +2541,7 @@ func insertNewSourceTagsTx(tx *sql.Tx, schemaName, cid string, tags SourceTags, 
 	return nil
 }
 
-func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags SourceTags, recordBytes int64) error {
+func upsertSourceTagsTx(tx sqlQueryExecer, tableName, schemaName, cid string, tags SourceTags, recordBytes int64) error {
 	tags = normalizeSourceTags(tags)
 	if err := ValidateSourceTags(tags); err != nil {
 		return err
@@ -3732,7 +2750,7 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 	}
 	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT records.cid, records.peer_id, records.timestamp,
-		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex
+		       records.data, records.signature_hex
 		FROM %s records
 		INNER JOIN sdn_record_source_tags tags
 			ON tags.schema_name = ? AND tags.cid = records.cid
@@ -3749,14 +2767,13 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 	for rows.Next() {
 		var record Record
 		var ts int64
-		var streamPath string
-		var streamOffset, recordLength int64
+		var data []byte
 		var signatureHex sql.NullString
-		if err := rows.Scan(&record.CID, &record.PeerID, &ts, &streamPath, &streamOffset, &recordLength, &signatureHex); err != nil {
+		if err := rows.Scan(&record.CID, &record.PeerID, &ts, &data, &signatureHex); err != nil {
 			return nil, fmt.Errorf("failed to scan source tagged record: %w", err)
 		}
 		record.Timestamp = time.Unix(ts, 0)
-		if err := s.hydrateRecordData(&record, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+		if err := s.hydrateRecordData(&record, query.SchemaName, data, signatureHex); err != nil {
 			return nil, fmt.Errorf("failed to read source tagged record data: %w", err)
 		}
 		records = append(records, &record)
@@ -3850,28 +2867,13 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 		return result, fmt.Errorf("delete source batch tags: %w", err)
 	}
 	// Delete orphaned records (staged cids with no surviving source tag) from
-	// every backing table: the legacy per-standard table when it exists
-	// (pre-flip databases) and the (producer, standard) tables. Deleted counts
-	// LOGICAL records (per cid), independent of how many tables hold the row.
+	// every (producer, standard) table. Deleted counts LOGICAL records (per
+	// cid), independent of how many tables hold the row.
 	if err := tx.QueryRow(
 		`SELECT COUNT(*) FROM temp_sdn_reconcile_cids WHERE cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
 		result.SchemaName,
 	).Scan(&result.Deleted); err != nil {
 		return result, fmt.Errorf("count orphaned source batch records: %w", err)
-	}
-	if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
-		deleteRecordsSQL := fmt.Sprintf(`
-			DELETE FROM %s
-			WHERE cid IN (SELECT cid FROM temp_sdn_reconcile_cids)
-			  AND NOT EXISTS (
-				SELECT 1
-				FROM sdn_record_source_tags tags
-				WHERE tags.schema_name = ? AND tags.cid = %s.cid
-			  )
-		`, tableName, tableName)
-		if _, err := tx.Exec(flatsqldrv.WithoutJournal(deleteRecordsSQL), result.SchemaName); err != nil {
-			return result, fmt.Errorf("delete orphaned source batch records: %w", err)
-		}
 	}
 	s.deleteRoutedMirrorsWhere(tx, tableName,
 		`cid IN (SELECT cid FROM temp_sdn_reconcile_cids) AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
@@ -3892,16 +2894,8 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 	if err := tx.Commit(); err != nil {
 		return result, fmt.Errorf("commit source batch reconciliation: %w", err)
 	}
-	if err := s.appendCatalogEvent(recordCatalogEvent{
-		Kind:       recordCatalogEventSourceKeep,
-		SchemaName: result.SchemaName,
-		Tags: SourceTags{
-			ProviderID: result.ProviderID,
-			SourceName: result.SourceName,
-			BatchID:    result.KeepBatch,
-		},
-	}); err != nil {
-		return result, fmt.Errorf("append record catalog source keep event: %w", err)
+	if _, err := s.tombstoneOrphanedEngineRowsLocked(result.SchemaName); err != nil {
+		return result, err
 	}
 	if err := s.rebuildSourceSummaryForSchema(result.SchemaName, tableName); err != nil {
 		return result, err
@@ -4086,20 +3080,6 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 	).Scan(&result.Deleted); err != nil {
 		return result, fmt.Errorf("count orphaned duplicate records: %w", err)
 	}
-	if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
-		deleteRecordsSQL := fmt.Sprintf(`
-			DELETE FROM %s
-			WHERE cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids)
-			  AND NOT EXISTS (
-				SELECT 1
-				FROM sdn_record_source_tags tags
-				WHERE tags.schema_name = ? AND tags.cid = %s.cid
-			  )
-		`, tableName, tableName)
-		if _, err := tx.Exec(deleteRecordsSQL, result.SchemaName); err != nil {
-			return result, fmt.Errorf("delete orphaned duplicate records: %w", err)
-		}
-	}
 	s.deleteRoutedMirrorsWhere(tx, tableName,
 		`cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids) AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
 		result.SchemaName)
@@ -4118,6 +3098,9 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 	}
 	if err := tx.Commit(); err != nil {
 		return result, fmt.Errorf("commit source batch duplicate reconciliation: %w", err)
+	}
+	if _, err := s.tombstoneOrphanedEngineRowsLocked(result.SchemaName); err != nil {
+		return result, err
 	}
 	if err := s.rebuildSourceSummaryForSourceBatch(result.SchemaName, tableName, result.ProviderID, result.SourceName, result.BatchID); err != nil {
 		return result, err
@@ -4152,8 +3135,7 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Reads span the legacy per-standard table and all (producer, standard)
-	// tables (WS7.3b) so routed-only records hydrate too.
+	// Reads span every (producer, standard) table of the standard.
 	readSource, err := s.recordReadSource(schemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
@@ -4161,9 +3143,9 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 
 	var querySQL string
 	if whereClause != "" {
-		querySQL = fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s WHERE %s`, readSource, whereClause)
+		querySQL = fmt.Sprintf(`SELECT data FROM %s WHERE %s`, readSource, whereClause)
 	} else {
-		querySQL = fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s`, readSource)
+		querySQL = fmt.Sprintf(`SELECT data FROM %s`, readSource)
 	}
 
 	rows, err := s.db.Query(querySQL, args...)
@@ -4174,15 +3156,14 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 
 	var results [][]byte
 	for rows.Next() {
-		var streamPath string
-		var streamOffset, recordLength int64
-		if err := rows.Scan(&streamPath, &streamOffset, &recordLength); err != nil {
+		var stored []byte
+		if err := rows.Scan(&stored); err != nil {
 			log.Warnf("Failed to scan row: %v", err)
 			continue
 		}
-		data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+		data, err := s.openStoredRecordBytes(schemaName, stored)
 		if err != nil {
-			log.Warnf("Failed to read FlatSQL stream record: %v", err)
+			log.Warnf("Failed to open stored record: %v", err)
 			continue
 		}
 		results = append(results, data)
@@ -4221,7 +3202,7 @@ func (s *FlatSQLStore) QueryAllBounded(schemaName string, limit int, maxTotalByt
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
-	querySQL := fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s ORDER BY timestamp DESC LIMIT ?`, readSource)
+	querySQL := fmt.Sprintf(`SELECT data FROM %s ORDER BY timestamp DESC LIMIT ?`, readSource)
 	rows, err := s.db.Query(querySQL, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query bounded records: %w", err)
@@ -4231,15 +3212,14 @@ func (s *FlatSQLStore) QueryAllBounded(schemaName string, limit int, maxTotalByt
 	results := make([][]byte, 0, limit)
 	totalBytes := 0
 	for rows.Next() {
-		var streamPath string
-		var streamOffset, recordLength int64
-		if err := rows.Scan(&streamPath, &streamOffset, &recordLength); err != nil {
+		var stored []byte
+		if err := rows.Scan(&stored); err != nil {
 			log.Warnf("Failed to scan row: %v", err)
 			continue
 		}
-		data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+		data, err := s.openStoredRecordBytes(schemaName, stored)
 		if err != nil {
-			log.Warnf("Failed to read FlatSQL stream record: %v", err)
+			log.Warnf("Failed to open stored record: %v", err)
 			continue
 		}
 		if len(data) > maxTotalBytes {
@@ -4265,30 +3245,10 @@ func (s *FlatSQLStore) QuerySince(schemaName string, since time.Time) ([][]byte,
 	return s.Query(schemaName, "timestamp > ?", since.Unix())
 }
 
-// Delete removes a record by CID: the control rows (the per-standard record
-// table, the source tags, the global index) and the derived-summary
-// bookkeeping.
-//
-// IT DOES NOT REACH THE ENGINE, AND THAT IS A STATED SEMANTIC, NOT AN
-// OVERSIGHT. The engine record vtabs are a HOT-WINDOW CACHE of the durable
-// substrate (engine_records.go), and this store has no mapping from a CID to
-// the (source, _rowid) pair flatsql_mark_deleted keys on — the engine's rowid
-// space is its own ingest sequence. So until the process restarts:
-//
-//   - the deleted record keeps answering from the sandboxed public query
-//     surface (SELECT ... FROM "<STANDARD>" / "<STANDARD>@<source>"), WHOLE:
-//     `_data` is the record's own bytes;
-//   - s.engineResident is not decremented, so residency drifts HIGH after
-//     deletes and the hot-window eviction bound is enforced against a count
-//     that is a little too large (it evicts slightly early — the safe
-//     direction for a cache bound);
-//   - the next boot rebuilds the window from sdn_record_index, which no longer
-//     names the record, so it comes back gone.
-//
-// EVERY EMBEDDED STANDARD IS ROUTED NOW, so this applies to superseded, GC'd
-// and operator-removed records of all of them rather than to $OMM and $TBS
-// alone. Callers that need a delete to be immediately invisible on the query
-// surface must not rely on this method alone.
+// Delete removes a record by CID from every producer table that holds it,
+// then its index row, source tags and derived-summary bookkeeping, and
+// finally tombstones it in the engine hot window so the sandboxed query
+// surface stops answering with it at once (engine_residency.go).
 func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	if err := s.requireWritable("delete record"); err != nil {
 		return err
@@ -4318,84 +3278,17 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 		}
 		return fmt.Errorf("lookup deleted record bytes: %w", err)
 	}
-	tagRows, err := tx.Query(`
-		SELECT provider_id, source_name, source_url, batch_id, content_key_id,
-		       producer_peer_id, producer_public_key
-		FROM sdn_record_source_tags
-		WHERE schema_name = ? AND cid = ?
-	`, schemaName, cid)
-	if err != nil {
-		return fmt.Errorf("lookup deleted source tags: %w", err)
-	}
-	var deletedTags []SourceTags
-	for tagRows.Next() {
-		var tags SourceTags
-		if err := tagRows.Scan(
-			&tags.ProviderID,
-			&tags.SourceName,
-			&tags.SourceURL,
-			&tags.BatchID,
-			&tags.ContentKeyID,
-			&tags.ProducerPeerID,
-			&tags.ProducerPublicKey,
-		); err != nil {
-			tagRows.Close()
-			return fmt.Errorf("scan deleted source tags: %w", err)
-		}
-		deletedTags = append(deletedTags, tags)
-	}
-	if err := tagRows.Close(); err != nil {
-		return fmt.Errorf("close deleted source tags: %w", err)
-	}
-
-	// Delete from every backing table: the legacy per-standard table when it
-	// exists (pre-flip databases) and the (producer, standard) tables.
-	var affected int64
-	if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
-		result, err := tx.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, tableName)), cid)
-		if err != nil {
-			return fmt.Errorf("failed to delete: %w", err)
-		}
-		n, _ := result.RowsAffected()
-		affected += n
-	}
-	if producerTables, ptErr := s.listProducerStandardTables(); ptErr == nil {
-		for _, pt := range producerTables {
-			if pt.Standard != tableName {
-				continue
-			}
-			result, delErr := tx.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, pt.TableName)), cid)
-			if delErr != nil {
-				return fmt.Errorf("delete routed mirror %s: %w", pt.TableName, delErr)
-			}
-			n, _ := result.RowsAffected()
-			affected += n
-		}
-	}
-
-	if affected == 0 {
+	if affected := s.deleteRoutedMirrorsWhere(tx, tableName, `cid = ?`, cid); affected == 0 {
 		return fmt.Errorf("not found: %s", cid)
 	}
-
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
-		log.Warnf("Failed to delete index row for %s/%s: %v", schemaName, cid, err)
+	if err := s.removeRecordCatalogRowsTx(tx, schemaName, cid, recordBytes.Int64, recordRowID.Int64); err != nil {
+		return err
 	}
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
-		log.Warnf("Failed to delete source tags for %s/%s: %v", schemaName, cid, err)
-	}
-	for _, tags := range deletedTags {
-		if err := decrementSourceSummary(tx, schemaName, tags, recordBytes.Int64, recordRowID.Int64); err != nil {
-			return err
-		}
-	}
-
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if err := s.appendCatalogEvent(recordCatalogEvent{Kind: recordCatalogEventRecordDelete, SchemaName: schemaName, CID: cid}); err != nil {
-		return fmt.Errorf("append record catalog delete event: %w", err)
-	}
-	return nil
+	_, err = s.tombstoneEngineRecordsLocked(schemaName, []string{cid})
+	return err
 }
 
 // Count returns the number of records in a schema table.
@@ -4445,17 +3338,7 @@ func (s *FlatSQLStore) garbageCollectBeforeLocked(cutoff int64) (int64, error) {
 			continue
 		}
 
-		// Legacy table only on pre-flip databases; routed tables always swept.
-		var affected int64
-		if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
-			result, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE timestamp < ?`, tableName)), cutoff)
-			if err != nil {
-				log.Warnf("GC failed for %s: %v", tableName, err)
-				continue
-			}
-			affected, _ = result.RowsAffected()
-		}
-		affected += s.deleteRoutedMirrorsWhere(s.db, tableName, `timestamp < ?`, cutoff)
+		affected := s.deleteRoutedMirrorsWhere(s.db, tableName, `timestamp < ?`, cutoff)
 		totalDeleted += affected
 
 		// Keep index table in sync with GC deletes.
@@ -4478,8 +3361,8 @@ func (s *FlatSQLStore) garbageCollectBeforeLocked(cutoff int64) (int64, error) {
 			`, readSource)), schemaName); err != nil {
 				log.Warnf("GC source tag cleanup failed for %s: %v", schemaName, err)
 			}
-			if err := s.appendCatalogEvent(recordCatalogEvent{Kind: recordCatalogEventGCOlderThan, SchemaName: schemaName, CutoffUnix: cutoff}); err != nil {
-				return totalDeleted, fmt.Errorf("append record catalog GC event: %w", err)
+			if _, err := s.tombstoneOrphanedEngineRowsLocked(schemaName); err != nil {
+				return totalDeleted, err
 			}
 			if err := s.rebuildSourceSummaryForSchema(schemaName, tableName); err != nil {
 				log.Warnf("GC source summary rebuild failed for %s: %v", schemaName, err)
@@ -4578,44 +3461,31 @@ func (s *FlatSQLStore) liveRecordBytesLocked() (int64, error) {
 	return total, nil
 }
 
-// DiskUsageBytes sums the actual bytes currently on disk under the
-// store's FlatSQL stream directory plus its durable metadata logs (record
-// catalog journal, auxiliary metadata store). It reflects total
-// historical writes, not the live dataset — see LiveRecordBytes's doc for
-// why append-only stream files retain deleted records' bytes. Exposed for
-// operator-facing disk-pressure observability (Stats) and as an
-// additional quota-check trigger signal (node.go's enforceStorageQuota),
-// alongside LiveRecordBytes.
+// DiskUsageBytes sums the bytes the store holds on disk: the control
+// database (records, index, tags, auxiliary tables) and its rollback journal,
+// the engine's persisted record arena, and the auxiliary metadata journal.
+// SQLite reuses freed pages but never shrinks the file, so this reflects the
+// historical high-water mark, not the live dataset — see LiveRecordBytes.
 func (s *FlatSQLStore) DiskUsageBytes() (int64, error) {
 	s.mu.RLock()
 	basePath := s.basePath
-	streamDir := s.streamDir
+	controlDBPath := s.controlDBPath
 	s.mu.RUnlock()
 
 	var total int64
-	err := filepath.Walk(streamDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			if os.IsNotExist(walkErr) {
-				return nil
-			}
-			return walkErr
-		}
-		if !info.IsDir() {
-			total += info.Size()
-		}
-		return nil
-	})
-	if err != nil && !os.IsNotExist(err) {
-		return 0, fmt.Errorf("disk usage: walk stream dir: %w", err)
-	}
-	for _, name := range []string{recordCatalogJournalFileName, auxiliaryMetadataFileName} {
-		info, statErr := os.Stat(filepath.Join(basePath, name))
+	for _, path := range []string{
+		controlDBPath,
+		controlDBPath + "-journal",
+		controlDBPath + ".fsdata",
+		filepath.Join(basePath, auxiliaryMetadataFileName),
+	} {
+		info, statErr := os.Stat(path)
 		if statErr == nil {
 			total += info.Size()
 			continue
 		}
 		if !os.IsNotExist(statErr) {
-			return 0, fmt.Errorf("disk usage: stat %s: %w", name, statErr)
+			return 0, fmt.Errorf("disk usage: stat %s: %w", path, statErr)
 		}
 	}
 	return total, nil
@@ -4661,14 +3531,6 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 	if s.db == nil {
 		return 0, ErrStoreClosed
 	}
-	// A partial replay cannot establish global age or occupancy. Evicting from
-	// it destroys whichever records happened to replay first and appends those
-	// premature decisions to the durable journal. Resume normal enforcement
-	// after recovery, including when a forced replay began from a warm store.
-	if !s.recordCatalogHydrated.Load() || s.recordCatalogHydrating.Load() {
-		return 0, nil
-	}
-
 	liveBytes, err := s.liveRecordBytesLocked()
 	if err != nil {
 		return 0, fmt.Errorf("garbage collect to quota: measure live bytes: %w", err)
@@ -4747,23 +3609,16 @@ func (s *FlatSQLStore) Close() error {
 
 	defer s.lockWrite("Close")()
 
-	// A CLEAN shutdown always advances the mark: the next boot then replays
-	// nothing at all. This is the difference between "seconds" and "instant"
-	// on a restart, and it costs one small transaction.
-	if err := s.checkpointRecordCatalogLocked(); err != nil {
-		log.Warnf("FlatSQL store: final boot-state checkpoint failed (the next boot replays more, nothing is lost): %v", err)
+	// A CLEAN shutdown flushes the engine's record state and advances both
+	// marks: the next boot then opens warm and replays nothing.
+	if err := s.checkpointLocked(); err != nil {
+		log.Warnf("FlatSQL store: final checkpoint failed (the next boot rebuilds the engine tail, nothing is lost): %v", err)
 	}
 
 	var firstErr error
 	if s.db != nil {
 		firstErr = s.db.Close()
 		s.db = nil
-	}
-	if s.recordCatalog != nil {
-		if err := s.recordCatalog.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		s.recordCatalog = nil
 	}
 	if s.auxiliaryMetadata != nil {
 		if err := s.auxiliaryMetadata.Close(); err != nil && firstErr == nil {
@@ -4863,9 +3718,9 @@ type Record struct {
 	Signature      []byte
 	SourceTags     SourceTags
 	MaterializedAt time.Time
-	StreamPath     string
-	StreamOffset   int64
-	RecordLength   int64
+	// RecordLength is the stored byte length (the sealed length for a
+	// field-encrypted standard), the value the source summaries account.
+	RecordLength int64
 }
 
 // DirectoryRecord represents a normalized EPM directory entry.
@@ -5390,7 +4245,7 @@ func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid schema name %q: %w", schemaName, err)
 		}
-		rows, err := s.db.Query(fmt.Sprintf(`SELECT cid, timestamp, stream_path, stream_offset, record_length FROM %s`, tableName))
+		rows, err := s.db.Query(fmt.Sprintf(`SELECT cid, timestamp, data FROM %s`, tableName))
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s for reindex: %w", tableName, err)
 		}
@@ -5399,16 +4254,15 @@ func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 		for rows.Next() {
 			var cid string
 			var ts int64
-			var streamPath string
-			var streamOffset, recordLength int64
-			if err := rows.Scan(&cid, &ts, &streamPath, &streamOffset, &recordLength); err != nil {
+			var stored []byte
+			if err := rows.Scan(&cid, &ts, &stored); err != nil {
 				rows.Close()
 				return nil, fmt.Errorf("failed to scan %s row: %w", tableName, err)
 			}
-			data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+			data, err := s.openStoredRecordBytes(schemaName, stored)
 			if err != nil {
 				rows.Close()
-				return nil, fmt.Errorf("failed to read %s/%s stream record: %w", schemaName, cid, err)
+				return nil, fmt.Errorf("failed to open %s/%s record: %w", schemaName, cid, err)
 			}
 			if err := s.upsertRecordIndex(schemaName, cid, ts, data); err != nil {
 				log.Debugf("Skipping index row for %s/%s: %v", schemaName, cid, err)
@@ -5457,7 +4311,7 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 
 	taggedQuery := fmt.Sprintf(`
 		SELECT d.cid, d.peer_id, d.timestamp,
-		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
+		       d.data, d.signature_hex,
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
 		FROM sdn_record_source_tags tags
@@ -5471,7 +4325,7 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 		return nil, fmt.Errorf("recent records query failed: %w", err)
 	}
 
-	records, err := s.scanRecentRecords(rows)
+	records, err := s.scanRecentRecords(schemaName, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -5482,7 +4336,7 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	untaggedLimit := limit - len(records)
 	untaggedQuery := fmt.Sprintf(`
 		SELECT d.cid, d.peer_id, d.timestamp,
-		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
+		       d.data, d.signature_hex,
 		       '', '', '', '', '', '', '', NULL
 		FROM %s d
 		WHERE NOT EXISTS (
@@ -5497,7 +4351,7 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	if err != nil {
 		return nil, fmt.Errorf("recent untagged records query failed: %w", err)
 	}
-	untagged, err := s.scanRecentRecords(rows)
+	untagged, err := s.scanRecentRecords(schemaName, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -6535,7 +5389,7 @@ func rawRecordRowIDSourceQuery(tableName string, filter RawRecordQuery) (string,
 	query := fmt.Sprintf(`
 		WITH candidates AS (
 			SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
-			       records.stream_path, records.stream_offset, records.record_length, records.signature_hex
+			       records.data, records.signature_hex
 			FROM %s records
 			WHERE 1 = 1
 	`, tableName)
@@ -6563,7 +5417,7 @@ func rawRecordRowIDSourceQuery(tableName string, filter RawRecordQuery) (string,
 			LIMIT ?
 		)
 		SELECT candidates.rowid, candidates.cid, candidates.peer_id, candidates.timestamp,
-		       candidates.stream_path, candidates.stream_offset, candidates.record_length, candidates.signature_hex,
+		       candidates.data, candidates.signature_hex,
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
 		FROM candidates
@@ -6586,7 +5440,7 @@ func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName stri
 	if err != nil {
 		return nil, fmt.Errorf("raw record rowid source query failed: %w", err)
 	}
-	return s.scanRawRecordRows(rows, hydrate)
+	return s.scanRawRecordRows(filter.SchemaName, rows, hydrate)
 }
 
 func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
@@ -6635,7 +5489,7 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 
 	taggedQuery := fmt.Sprintf(`
 		SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
-		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
+		       records.data, records.signature_hex,
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
 		FROM %s
@@ -6676,7 +5530,7 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 	if err != nil {
 		return nil, fmt.Errorf("raw record query failed: %w", err)
 	}
-	records, err := s.scanRawRecordRows(rows, hydrate)
+	records, err := s.scanRawRecordRows(filter.SchemaName, rows, hydrate)
 	if err != nil {
 		return nil, err
 	}
@@ -6685,7 +5539,7 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		untaggedLimit := filter.Limit - len(records)
 		untaggedQuery := fmt.Sprintf(`
 			SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
-			       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
+			       records.data, records.signature_hex,
 			       '', '', '', '', '', '', '', NULL
 			FROM %s records
 		`, tableName)
@@ -6727,7 +5581,7 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		if err != nil {
 			return nil, fmt.Errorf("raw untagged record query failed: %w", err)
 		}
-		untagged, err := s.scanRawRecordRows(untaggedRows, hydrate)
+		untagged, err := s.scanRawRecordRows(filter.SchemaName, untaggedRows, hydrate)
 		if err != nil {
 			return nil, err
 		}
@@ -6747,8 +5601,8 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 }
 
 // QueryRawRecordRefsByRefs resolves scan-bound refs in batches and preserves
-// the requested order. Returned records include FlatSQL stream offsets but do
-// not hydrate Data.
+// the requested order. Returned records carry their STORED bytes (the
+// field-decryption pass is not run): WriteRawRecordFrames writes them verbatim.
 func (s *FlatSQLStore) QueryRawRecordRefsByRefs(schemaName string, refs []RawRecordRef) ([]*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -6836,7 +5690,7 @@ func (s *FlatSQLStore) loadRawRecordRefCandidatesLocked(schemaName, tableName st
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(cids)), ",")
 	taggedQuery := fmt.Sprintf(`
 		SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
-		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
+		       records.data, records.signature_hex,
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
 		FROM sdn_record_source_tags tags
@@ -6852,7 +5706,7 @@ func (s *FlatSQLStore) loadRawRecordRefCandidatesLocked(schemaName, tableName st
 	if err != nil {
 		return fmt.Errorf("raw record ref query failed: %w", err)
 	}
-	tagged, err := s.scanRawRecordRows(taggedRows, false)
+	tagged, err := s.scanRawRecordRows(schemaName, taggedRows, false)
 	if err != nil {
 		return err
 	}
@@ -6862,7 +5716,7 @@ func (s *FlatSQLStore) loadRawRecordRefCandidatesLocked(schemaName, tableName st
 
 	untaggedQuery := fmt.Sprintf(`
 		SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
-		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
+		       records.data, records.signature_hex,
 		       '', '', '', '', '', '', '', NULL
 		FROM %s records
 		WHERE records.cid IN (%s)
@@ -6881,7 +5735,7 @@ func (s *FlatSQLStore) loadRawRecordRefCandidatesLocked(schemaName, tableName st
 	if err != nil {
 		return fmt.Errorf("raw untagged record ref query failed: %w", err)
 	}
-	untagged, err := s.scanRawRecordRows(untaggedRows, false)
+	untagged, err := s.scanRawRecordRows(schemaName, untaggedRows, false)
 	if err != nil {
 		return err
 	}
@@ -6927,76 +5781,43 @@ func rawRecordMatchesRef(record *Record, ref RawRecordRef) bool {
 	return true
 }
 
-// WriteRawRecordFrames writes native FlatSQL size-prefixed FlatBuffer streams
-// directly from FlatSQL backing files. FlatSQL stream frame lengths are
-// little-endian uint32 values.
+// WriteRawRecordFrames writes native FlatSQL size-prefixed FlatBuffer frames
+// (little-endian uint32 length, then the record bytes) for the given records.
 func (s *FlatSQLStore) WriteRawRecordFrames(writer io.Writer, records []*Record) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	openFiles := make(map[string]*os.File)
-	defer func() {
-		for _, file := range openFiles {
-			_ = file.Close()
-		}
-	}()
-
 	var diskLength [4]byte
 	for _, record := range records {
-		if len(record.Data) > 0 && strings.TrimSpace(record.StreamPath) == "" {
-			if len(record.Data) > int(^uint32(0)) {
-				return fmt.Errorf("record %s exceeds uint32 stream frame length", record.CID)
-			}
-			binary.LittleEndian.PutUint32(diskLength[:], uint32(len(record.Data)))
-			if _, err := writer.Write(diskLength[:]); err != nil {
-				return err
-			}
-			if _, err := writer.Write(record.Data); err != nil {
-				return err
-			}
-			continue
+		if len(record.Data) == 0 {
+			return fmt.Errorf("record %s carries no bytes to frame", record.CID)
 		}
-		if record.StreamOffset < 0 {
-			return fmt.Errorf("record %s has negative FlatSQL stream offset %d", record.CID, record.StreamOffset)
+		if len(record.Data) > int(^uint32(0)) {
+			return fmt.Errorf("record %s exceeds uint32 stream frame length", record.CID)
 		}
-		if record.RecordLength < 0 || record.RecordLength > int64(^uint32(0)) {
-			return fmt.Errorf("record %s has invalid FlatSQL record length %d", record.CID, record.RecordLength)
-		}
-		file, err := s.openCachedFlatSQLStreamFile(openFiles, record.StreamPath)
-		if err != nil {
-			return fmt.Errorf("open FlatSQL stream for %s: %w", record.CID, err)
-		}
-		if _, err := file.ReadAt(diskLength[:], record.StreamOffset); err != nil {
-			return fmt.Errorf("read FlatSQL stream length for %s: %w", record.CID, err)
-		}
-		if got := int64(binary.LittleEndian.Uint32(diskLength[:])); got != record.RecordLength {
-			return fmt.Errorf("FlatSQL stream frame length for %s = %d, want %d", record.CID, got, record.RecordLength)
-		}
+		binary.LittleEndian.PutUint32(diskLength[:], uint32(len(record.Data)))
 		if _, err := writer.Write(diskLength[:]); err != nil {
 			return err
 		}
-		section := io.NewSectionReader(file, record.StreamOffset+4, record.RecordLength)
-		if _, err := io.Copy(writer, section); err != nil {
+		if _, err := writer.Write(record.Data); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *FlatSQLStore) openCachedFlatSQLStreamFile(openFiles map[string]*os.File, streamPath string) (*os.File, error) {
-	clean := filepath.Clean(streamPath)
-	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
-		return nil, fmt.Errorf("invalid FlatSQL stream path %q", streamPath)
-	}
-	if file := openFiles[clean]; file != nil {
-		return file, nil
-	}
-	file, err := os.Open(filepath.Join(s.basePath, clean))
+// storedRecordBytesLocked reads one record's bytes exactly as its producer
+// table holds them (sealed for a field-encrypted standard). Callers hold s.mu.
+func (s *FlatSQLStore) storedRecordBytesLocked(schemaName, cid string) ([]byte, error) {
+	readSource, err := s.recordReadSourceFiltered(schemaName, "cid = ?1")
 	if err != nil {
 		return nil, err
 	}
-	openFiles[clean] = file
-	return file, nil
+	var data []byte
+	if err := s.db.QueryRow(fmt.Sprintf(`SELECT data FROM %s WHERE cid = ?1`, readSource), cid).Scan(&data); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("not found: %s", cid)
+		}
+		return nil, err
+	}
+	return data, nil
 }
 
 // GetRawRecord returns one raw FlatBuffer record by schema and CID. Local EPM
@@ -7029,7 +5850,7 @@ func (s *FlatSQLStore) GetRawRecord(schemaName, cid string) (*Record, error) {
 	return nil, err
 }
 
-func (s *FlatSQLStore) scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
+func (s *FlatSQLStore) scanRecentRecords(schemaName string, rows *sql.Rows) ([]*Record, error) {
 	defer rows.Close()
 
 	records := make([]*Record, 0)
@@ -7037,16 +5858,13 @@ func (s *FlatSQLStore) scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
 		rec := &Record{}
 		var ts int64
 		var materializedAt sql.NullInt64
-		var streamPath string
-		var streamOffset, recordLength int64
+		var data []byte
 		var signatureHex sql.NullString
 		if err := rows.Scan(
 			&rec.CID,
 			&rec.PeerID,
 			&ts,
-			&streamPath,
-			&streamOffset,
-			&recordLength,
+			&data,
 			&signatureHex,
 			&rec.SourceTags.ProviderID,
 			&rec.SourceTags.SourceName,
@@ -7060,7 +5878,7 @@ func (s *FlatSQLStore) scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
 			return nil, fmt.Errorf("failed scanning recent row: %w", err)
 		}
 		rec.Timestamp = time.Unix(ts, 0).UTC()
-		if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+		if err := s.hydrateRecordData(rec, schemaName, data, signatureHex); err != nil {
 			return nil, fmt.Errorf("failed reading recent record data: %w", err)
 		}
 		if materializedAt.Valid && materializedAt.Int64 > 0 {
@@ -7074,7 +5892,7 @@ func (s *FlatSQLStore) scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
 	return records, nil
 }
 
-func (s *FlatSQLStore) scanRawRecordRows(rows *sql.Rows, hydrate bool) ([]*Record, error) {
+func (s *FlatSQLStore) scanRawRecordRows(schemaName string, rows *sql.Rows, hydrate bool) ([]*Record, error) {
 	defer rows.Close()
 
 	records := make([]*Record, 0)
@@ -7082,17 +5900,14 @@ func (s *FlatSQLStore) scanRawRecordRows(rows *sql.Rows, hydrate bool) ([]*Recor
 		rec := &Record{}
 		var ts int64
 		var materializedAt sql.NullInt64
-		var streamPath string
-		var streamOffset, recordLength int64
+		var data []byte
 		var signatureHex sql.NullString
 		if err := rows.Scan(
 			&rec.RowID,
 			&rec.CID,
 			&rec.PeerID,
 			&ts,
-			&streamPath,
-			&streamOffset,
-			&recordLength,
+			&data,
 			&signatureHex,
 			&rec.SourceTags.ProviderID,
 			&rec.SourceTags.SourceName,
@@ -7106,14 +5921,15 @@ func (s *FlatSQLStore) scanRawRecordRows(rows *sql.Rows, hydrate bool) ([]*Recor
 			return nil, fmt.Errorf("failed scanning raw record row: %w", err)
 		}
 		rec.Timestamp = time.Unix(ts, 0).UTC()
-		rec.StreamPath = streamPath
-		rec.StreamOffset = streamOffset
-		rec.RecordLength = recordLength
+		rec.RecordLength = int64(len(data))
 		if hydrate {
-			if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+			if err := s.hydrateRecordData(rec, schemaName, data, signatureHex); err != nil {
 				return nil, fmt.Errorf("failed reading raw record data: %w", err)
 			}
-		} else if signatureHex.Valid && strings.TrimSpace(signatureHex.String) != "" {
+		} else {
+			rec.Data = data
+		}
+		if !hydrate && signatureHex.Valid && strings.TrimSpace(signatureHex.String) != "" {
 			signature, err := hex.DecodeString(strings.TrimSpace(signatureHex.String))
 			if err != nil {
 				return nil, fmt.Errorf("decode signature_hex for %s: %w", rec.CID, err)
@@ -7272,10 +6088,10 @@ func (s *FlatSQLStore) countLocalEPMRecordsLocked(filter RawRecordQuery) (int64,
 }
 
 // QueryIndexedRecords returns records using materialized catalog/source indexes.
-// indexedRecordProjection is the full record read: the payload locator
-// (stream_path/offset/record_length) plus the projected source tags.
+// indexedRecordProjection is the full record read: the record bytes plus the
+// projected source tags.
 const indexedRecordProjection = `d.cid, d.peer_id, d.timestamp,
-		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
+		       d.data, d.signature_hex,
 		       tags.provider_id, tags.source_name, tags.batch_id`
 
 // indexedRecordLengthProjection is the BYTE PROBE: the frame length alone, the
@@ -7531,11 +6347,10 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 	for rows.Next() {
 		rec := &Record{}
 		var ts int64
-		var streamPath string
-		var streamOffset, recordLength int64
+		var data []byte
 		var signatureHex sql.NullString
 		var tagProviderID, tagSourceName, tagBatchID sql.NullString
-		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &streamPath, &streamOffset, &recordLength, &signatureHex,
+		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &data, &signatureHex,
 			&tagProviderID, &tagSourceName, &tagBatchID); err != nil {
 			return nil, fmt.Errorf("failed scanning indexed row: %w", err)
 		}
@@ -7545,7 +6360,7 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 			SourceName: tagSourceName.String,
 			BatchID:    tagBatchID.String,
 		}
-		if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+		if err := s.hydrateRecordData(rec, filter.SchemaName, data, signatureHex); err != nil {
 			return nil, fmt.Errorf("failed reading indexed record data: %w", err)
 		}
 		records = append(records, rec)
@@ -7572,22 +6387,19 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	}
 
 	querySQL := fmt.Sprintf(`
-		SELECT cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex
+		SELECT cid, peer_id, timestamp, data, signature_hex
 		FROM %s WHERE cid = ?1
 	`, readSource)
 
 	var record Record
 	var timestamp int64
-	var streamPath string
-	var streamOffset, recordLength int64
+	var data []byte
 	var signatureHex sql.NullString
 	err = s.db.QueryRow(querySQL, cid).Scan(
 		&record.CID,
 		&record.PeerID,
 		&timestamp,
-		&streamPath,
-		&streamOffset,
-		&recordLength,
+		&data,
 		&signatureHex,
 	)
 	if err != nil {
@@ -7598,7 +6410,7 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	}
 
 	record.Timestamp = time.Unix(timestamp, 0)
-	if err := s.hydrateRecordData(&record, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+	if err := s.hydrateRecordData(&record, schemaName, data, signatureHex); err != nil {
 		return nil, fmt.Errorf("failed to read record data: %w", err)
 	}
 	return &record, nil
@@ -7614,25 +6426,15 @@ type indexedFields struct {
 }
 
 func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp int64, data []byte) error {
-	return upsertRecordIndexExec(s.db, &s.recordIndexRowIDs, schemaName, cid, sourceTimestamp, data, s.fullTextState(schemaName))
+	return upsertRecordIndexExec(s.db, schemaName, cid, sourceTimestamp, data, s.fullTextState(schemaName))
 }
 
-// upsertRecordIndexExec writes the LIVE index row.
-//
-// rowIDs is the store's shared sdn_record_index rowid allocator. It is idle —
-// and this function byte-identical to what it always was — except while a
-// record-catalog replay is in flight, when it hands out an EXPLICIT rowid above
-// every rowid the journal can ask for. Without that, a live write takes
-// MAX(rowid)+1 of the half-hydrated table, i.e. a rowid the replay has not
-// reached yet and will later insert by name: "UNIQUE constraint failed:
-// sdn_record_index.rowid", which is why host-01's catalog never finished
-// hydrating. See recordIndexRowIDs in record_catalog_replay.go.
-//
-// The explicit rowid is only ever an INSERT candidate: a repeat CID still takes
-// the ON CONFLICT(schema_name, cid) DO UPDATE branch and KEEPS the rowid it
-// already had, so a record's durable datasync cursor never moves. A rowid burned
-// that way is simply skipped — the counter is monotonic and gaps are legal.
-func upsertRecordIndexExec(exec sqlExecer, rowIDs *recordIndexRowIDs, schemaName, cid string, sourceTimestamp int64, data []byte, textIndex *fullTextIndexState) error {
+// upsertRecordIndexExec writes the index row. sdn_record_index.rowid is the
+// WIRE-VISIBLE datasync cursor deployed peers hold: rows are only ever
+// inserted (SQLite allocates MAX(rowid)+1; the store never VACUUMs), and a
+// repeat CID takes the ON CONFLICT branch and KEEPS its rowid, so a record's
+// cursor position never moves for the life of the store.
+func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimestamp int64, data []byte, textIndex *fullTextIndexState) error {
 	fields, err := extractIndexedFields(schemaName, data)
 	if err != nil {
 		// The index is the global record catalog + sync cursor (WS7.3d): every
@@ -7683,16 +6485,6 @@ func upsertRecordIndexExec(exec sqlExecer, rowIDs *recordIndexRowIDs, schemaName
 			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` + conflictClause
-	if rowIDs != nil {
-		if rid, explicit := rowIDs.allocateLive(); explicit {
-			sqlText = `
-		INSERT INTO sdn_record_index (
-			rowid, schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` + conflictClause
-			args = append([]any{rid}, args...)
-		}
-	}
 	if _, err = exec.Exec(flatsqldrv.WithoutJournal(sqlText), args...); err != nil {
 		return fmt.Errorf("failed to upsert index row: %w", err)
 	}
@@ -7746,6 +6538,10 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 			idCopy := id
 			out.noradCatID = &idCopy
 		}
+		// The international designator is the object's identity when it has
+		// no NORAD number (un-numbered launches, analyst objects); without it
+		// such a record was invisible to every ?entity= lookup.
+		out.entityID = strings.TrimSpace(string(cat.OBJECT_ID()))
 		if objectType := strings.TrimSpace(cat.OBJECT_TYPE().String()); objectType != "" && objectType != "UNKNOWN" {
 			out.objectType = objectType
 		}
@@ -8098,7 +6894,7 @@ func (s *FlatSQLStore) QueryLogEntries(publisherPeerID, schemaType string, since
 	}
 
 	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT p.stream_path, p.stream_offset, p.record_length
+		SELECT p.data
 		FROM sdn_log_index li
 		INNER JOIN %s p ON p.cid = li.plg_cid
 		WHERE li.publisher_peer_id = ?
@@ -8114,15 +6910,14 @@ func (s *FlatSQLStore) QueryLogEntries(publisherPeerID, schemaType string, since
 
 	var results [][]byte
 	for rows.Next() {
-		var streamPath string
-		var streamOffset, recordLength int64
-		if err := rows.Scan(&streamPath, &streamOffset, &recordLength); err != nil {
+		var stored []byte
+		if err := rows.Scan(&stored); err != nil {
 			log.Warnf("Failed to scan log entry: %v", err)
 			continue
 		}
-		data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+		data, err := s.openStoredRecordBytes("PLOG.fbs", stored)
 		if err != nil {
-			log.Warnf("Failed to read log entry FlatSQL stream record: %v", err)
+			log.Warnf("Failed to open log entry record: %v", err)
 			continue
 		}
 		results = append(results, data)

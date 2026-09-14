@@ -21,8 +21,8 @@ package storage
 //   - Archive artifacts are written under their own sibling directory
 //     ("dataset-archives", ArchiveOutputDir) — no publication file sweep
 //     (SupersedeSourceBatches, RemoveStaleShardGroupCARFiles) ever computes
-//     a path inside it, and stream-file compaction (CompactStreams) only
-//     rewrites flatsql-streams/*.flatsql + the record-catalog journal, so
+//     a path inside it, and the record store never rewrites anything under
+//     that directory, so
 //     the archive plane is untouched by compaction by construction: even if
 //     every live row an archive was selected from is later evicted and
 //     compacted away, the archive shard still carries the record bytes.

@@ -281,57 +281,6 @@ func TestSourceSummaryRebuildChunkBoundary(t *testing.T) {
 	}
 }
 
-// TestSourceSummaryBootRebuildsOnlyReplayedLanes is the boot-path guarantee: a
-// rebuild with nothing recorded by the replay must touch NOTHING, and a rebuild
-// after the replay landed a lane must rebuild exactly that lane. This is what
-// keeps a boot off the 1.8 M-row tag table.
-func TestSourceSummaryBootRebuildsOnlyReplayedLanes(t *testing.T) {
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("NewValidator failed: %v", err)
-	}
-	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
-	if err != nil {
-		t.Fatalf("NewFlatSQLStore failed: %v", err)
-	}
-	defer store.Close()
-	seedSummaryFixture(t, store)
-	if err := store.rebuildSourceSummaryScope(""); err != nil {
-		t.Fatalf("first rebuild: %v", err)
-	}
-	before := snapshotSourceSummary(t, store)
-	if len(before) == 0 {
-		t.Fatal("fixture produced no summary rows; the test proves nothing")
-	}
-
-	// Nothing replayed since: the boot path must enumerate NO lanes at all.
-	store.replayedSourceLanes.drain()
-	lanes, err := store.sourceSummaryLanes("")
-	if err != nil {
-		t.Fatalf("sourceSummaryLanes: %v", err)
-	}
-	if len(lanes) != 0 {
-		t.Fatalf("a boot with nothing replayed enumerated %d lane(s): %+v — that is the full-rebuild defect returning", len(lanes), lanes)
-	}
-	if err := store.rebuildSourceSummaryScope(""); err != nil {
-		t.Fatalf("no-op rebuild: %v", err)
-	}
-	after := snapshotSourceSummary(t, store)
-	if len(after) != len(before) {
-		t.Fatalf("no-op rebuild changed the summary: %d rows -> %d", len(before), len(after))
-	}
-
-	// A SCOPED call still rebuilds every lane of its schema, because supersede
-	// and GC delete rows and cannot be trusted lane by lane.
-	scoped, err := store.sourceSummaryLanes("OMM.fbs")
-	if err != nil {
-		t.Fatalf("scoped sourceSummaryLanes: %v", err)
-	}
-	if len(scoped) == 0 {
-		t.Fatal("a scoped rebuild enumerated no lanes; supersede/GC would leave stale rows")
-	}
-}
-
 // TestSourceSummaryPrunesVanishedLanes proves a lane whose tags were superseded
 // or garbage-collected away stops being reported. It uses the SCOPED call
 // deliberately: that is the form SupersedeSourceBatches, ReconcileSourceBatch and
@@ -497,80 +446,6 @@ func TestSourceRecordCountsMatchesTheDurableTags(t *testing.T) {
 	}
 	if want["celestrak/gp"] != 12 {
 		t.Fatalf("fixture guard: celestrak/gp = %d, want 12 across two schemas", want["celestrak/gp"])
-	}
-}
-
-// TestReplayRecordsItsSourceLanes is the load-bearing half of the warm path:
-// insertSourceTagsBatch is the ONE tag writer that does not maintain the summary,
-// so if it stops recording its lanes the rebuild silently misses them (or goes
-// back to scanning the whole tag table to find them). Both halves are asserted:
-// the lane is recorded, and a rebuild afterwards actually books it.
-func TestReplayRecordsItsSourceLanes(t *testing.T) {
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("NewValidator failed: %v", err)
-	}
-	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
-	if err != nil {
-		t.Fatalf("NewFlatSQLStore failed: %v", err)
-	}
-	defer store.Close()
-	seedSummaryFixture(t, store)
-	if err := store.rebuildSourceSummaryScope(""); err != nil {
-		t.Fatalf("initial rebuild: %v", err)
-	}
-	// Drain whatever the fixture left so the assertion below is about the replay.
-	store.replayedSourceLanes.drain()
-
-	if _, err := store.db.Exec(`INSERT INTO sds_p_prodA__OMM
-		(cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex)
-		VALUES ('bafyREPLAY000000000000000000', 'peer', 1786000002, 'p', 0, 4242, '')`); err != nil {
-		t.Fatalf("insert replayed record: %v", err)
-	}
-	events := []recordCatalogEvent{{
-		Kind:       recordCatalogEventTagUpsert,
-		SchemaName: "OMM.fbs",
-		CID:        "bafyREPLAY000000000000000000",
-		CreatedAt:  1700005000,
-		Tags: SourceTags{
-			ProviderID:        "celestrak",
-			SourceName:        "gp",
-			BatchID:           "batch-replay",
-			ProducerPeerID:    "peerA",
-			ProducerPublicKey: "peerA-key",
-		},
-	}}
-	if err := store.insertSourceTagsBatch(store.db, events); err != nil {
-		t.Fatalf("insertSourceTagsBatch: %v", err)
-	}
-
-	want := sourceSummaryLane{SchemaName: "OMM.fbs", ProviderID: "celestrak", SourceName: "gp", BatchID: "batch-replay"}
-	lanes, err := store.sourceSummaryLanes("")
-	if err != nil {
-		t.Fatalf("sourceSummaryLanes: %v", err)
-	}
-	found := false
-	for _, lane := range lanes {
-		if lane == want {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("the replayed lane %+v is not in the enumeration %+v — the rebuild would never see it", want, lanes)
-	}
-
-	// And it is actually booked, with the record's bytes.
-	store.replayedSourceLanes.note(want)
-	if err := store.rebuildSourceSummaryScope(""); err != nil {
-		t.Fatalf("rebuild after replay: %v", err)
-	}
-	var count, bytes int64
-	if err := store.db.QueryRow(`SELECT record_count, total_bytes FROM sdn_record_source_summary
-		WHERE schema_name='OMM.fbs' AND batch_id='batch-replay'`).Scan(&count, &bytes); err != nil {
-		t.Fatalf("read replayed lane summary: %v", err)
-	}
-	if count != 1 || bytes != 4242 {
-		t.Fatalf("replayed lane booked count=%d bytes=%d, want 1 / 4242", count, bytes)
 	}
 }
 

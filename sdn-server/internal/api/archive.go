@@ -145,11 +145,6 @@ func (h *ArchiveHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		WriteErrorFrame(w, http.StatusServiceUnavailable, "no_identity", "This node has no peer identity to sign an archive with.", 0)
 		return
 	}
-	if !store.RecordCatalogHydrated() {
-		WriteErrorFrame(w, http.StatusServiceUnavailable, "hydrating", "The record catalog is still loading; an archive would be incomplete. Try again shortly.", 30*time.Second)
-		return
-	}
-
 	code := strings.TrimSuffix(schema, ".fbs")
 	filter := storage.IndexedRecordQuery{
 		SchemaName:          schema,
@@ -212,8 +207,6 @@ func (h *ArchiveHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	archive, err := store.ArchiveDatasetSelection(ctx, filter, opts)
 	if err != nil {
 		switch {
-		case errors.Is(err, storage.ErrRecordCatalogHydrating):
-			WriteErrorFrame(w, http.StatusServiceUnavailable, "hydrating", "The record catalog is still loading; an archive would be incomplete. Try again shortly.", 30*time.Second)
 		case strings.Contains(err.Error(), "no records match"):
 			WriteErrorFrame(w, http.StatusBadRequest, "empty_selection", "No records match that selection.", 0)
 		default:

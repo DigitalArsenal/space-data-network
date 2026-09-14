@@ -317,16 +317,18 @@ func (h *CoreAPIHandler) tableColumns(r *http.Request, schema string) ([]string,
 
 // tableStoreWarming answers 503 while THIS standard's engine table is not yet
 // loaded by a running hot-window hydration. It is per standard on purpose: the
-// hydration locks per ingest batch, so a standard whose window is already
-// loaded answers normally while a larger one is still being rebuilt (owner
-// 2026-09-02: reads are independent of data-layer maintenance).
+// hydration locks per page, so a standard whose window is already loaded
+// answers normally while a larger one is still being rebuilt (owner
+// 2026-09-02: reads are independent of data-layer maintenance). Before the
+// background hydration has started at all, nothing is ready: the engine may
+// still show rows a previous run evicted or deleted.
 func (h *CoreAPIHandler) tableStoreWarming(w http.ResponseWriter, schema string) bool {
 	if schema == "" {
 		// Free-form SQL names no single standard; it answers with whatever is
 		// loaded rather than being refused for the length of a rebuild.
 		return false
 	}
-	if h.store.EngineHotWindowHydrating() && !h.store.EngineSchemaReady(schema+".fbs") {
+	if !h.store.EngineSchemaReady(schema + ".fbs") {
 		writeError(w, http.StatusServiceUnavailable,
 			fmt.Sprintf("the store is still loading %s after a restart; retry shortly", schema))
 		return true
@@ -855,8 +857,6 @@ func projectFullTableRecord(
 		switch column {
 		case "_rowid":
 			values[column] = strconv.FormatInt(record.RowID, 10)
-		case "_offset":
-			values[column] = strconv.FormatInt(record.StreamOffset, 10)
 		case "_data":
 			values[column] = base64.StdEncoding.EncodeToString(record.Data)
 		case "_source":

@@ -1,63 +1,27 @@
 package storage
 
-// flatsql_boot_state.go — the WARM BOOT handshake between the disk-backed
-// FlatSQL control tables and the record-catalog journal.
+// flatsql_boot_state.go — opening the disk-backed control database.
 //
-// WHAT THIS REPLACES. Until this landed, `engine.CreateDatabase` opened a
-// brand-new IN-MEMORY database on every process start, so the control tables
-// that feed /api/v1/stats, /api/v1/data/index and every query-selected export
-// were empty at boot and had to be rebuilt by replaying the entire
-// record-catalog journal — 5 minutes on host-01, hours on the old host-02
-// shape. record_catalog_replay.go ruled a persisted replay cursor UNSOUND for
-// exactly that reason: "the control tables a saved cursor would resume into are
-// always EMPTY", and seeking past frame N without applying frames [0,N) would
-// silently drop every record those frames describe.
+// THE CONTROL DATABASE IS THE RECORD STORE. Every record's bytes, its index row,
+// its provenance tags and the node's own auxiliary tables live in ONE SQLite
+// file written through FlatSQL's VFS (owner law, sdn-operating-model-streams-
+// flatsql: "flatbuffers are streamed to flatsql which persists it directly to
+// disk ... any node restart just uses whatever is on disk"). A boot OPENS that
+// file. Nothing is re-derived, nothing is replayed, and a database that cannot
+// be opened is a hard failure — there is no second copy to rebuild it from,
+// so silently discarding it would be data loss dressed up as recovery.
 //
-// That ruling is now OBSOLETE, and this file is why: the control-table STATE
-// survives the restart, so an offset means something.
+// Two things still carry a mark inside the database:
 //
-// ── THE HANDSHAKE ─────────────────────────────────────────────────────────
-//
-// The mark is a byte offset into record-catalog.flatsqlmeta, stored in
-// sdn_metadata INSIDE the engine's own disk-backed database, together with a
-// digest that identifies WHICH journal it belongs to.
-//
-// Three properties make it sound, and each one is load-bearing:
-//
-//  1. THE MARK IS ONLY EVER WRITTEN UNDER THE STORE WRITE LOCK. Every live
-//     writer holds s.mu across the pair (commit control rows, append journal
-//     frames) — see storeRecordBatch's `tx.Commit()` then
-//     `recordCatalog.AppendAll`. Acquiring that same lock before persisting the
-//     mark means every writer that had already appended has necessarily
-//     RELEASED the lock, and therefore finished committing its rows, WITHOUT
-//     this file having to audit the internal ordering of all nine append sites.
-//     Under-estimating the mark is always safe (it costs replay);
-//     over-estimating it is the unsound thing, and the lock is what makes that
-//     unreachable. Note that the journal END is SAMPLED OUTSIDE the lock on
-//     purpose — see CheckpointRecordCatalog for why that stays sound and why
-//     it matters for reader latency.
-//
-//  2. THE MARK IS COMMITTED TO THE SAME DURABLE ARTIFACT AS THE ROWS. It is a
-//     row in a table in the same SQLite file, written through FlatSQL's VFS,
-//     in TRUNCATE journal mode. A crash cannot leave the mark committed and the
-//     rows not.
-//
-//  3. THE DIGEST BINDS THE MARK TO ONE JOURNAL. Compaction REWRITES the journal
-//     (writeCompactedJournalSnapshot + rename), which makes every prior offset
-//     meaningless. The digest covers the frame headers of the prefix [0, mark),
-//     each of which carries that frame's payload CRC, so a rewritten journal
-//     cannot match a mark taken against the old one. A mismatch degrades to the
-//     cold path, which is exactly today's behaviour.
-//
-// ── THE FALLBACK IS ALWAYS TODAY'S BEHAVIOUR ──────────────────────────────
-//
-// Missing file, unreadable file, refused filesystem, mismatched digest, engine
-// state error, mark past the journal's valid length: every one of them takes
-// the COLD path — wipe the database files, open fresh, replay the whole journal
-// from zero. The fail-closed export gate (ErrRecordCatalogHydrating, 2a2ffea5)
-// is unchanged and still guards every path until hydration completes. Warm boot
-// is strictly an optimisation over a correct baseline; it can never be the only
-// thing standing between the node and correct data.
+//   - the AUXILIARY journal (auxiliary.flatsqlmeta): the node's own state —
+//     encrypted local EPM, pin ledger, dataset shard publications, licences,
+//     asset-pin audit. It is replayed from its persisted resume mark at every
+//     boot, exactly as before, and it is the only journal this store keeps.
+//   - the ENGINE hot window: the FlatSQL record vtabs are a bounded CACHE of the
+//     routed standards, persisted by the engine into <db>.fsdata and its own
+//     index tables. The mark names the sdn_record_index rowid the engine had
+//     mirrored through when its record state was last flushed, so a warm boot
+//     ingests only the records written after it (engine_residency.go).
 
 import (
 	"crypto/sha256"
@@ -77,91 +41,44 @@ import (
 )
 
 const (
-	// flatSQLControlDBName is the file the engine's control tables live in.
+	// flatSQLControlDBName is the file the record store lives in.
 	//
-	// IT IS DELIBERATELY NOT "sdn.db", AND THAT IS NOT COSMETIC.
-	// `<basePath>/sdn.db` is the LEGACY v1 database — the modernc/go-sqlite file
-	// `MigrateLegacyControl` reads from, in place, at the same basePath
-	// (migrate_legacy.go, migrate_legacy_test.go's v1 fixture). While the engine
-	// was `:memory:` the string `<basePath>/sdn.db` named a file only the
-	// migration ever touched. Pointing the engine's disk-backed database at that
-	// same path would put TWO WRITERS on one SQLite file (the Go driver and the
-	// wasm engine) and — far worse — would let this file's own corrupt-database
-	// recovery DELETE A USER'S LEGACY DATABASE before it had been migrated.
-	//
-	// s.dbPath keeps its historical value and all its other jobs (it salts the
-	// local-EPM store key and is what Path() reports); the control database is a
-	// separate, new file.
+	// IT IS DELIBERATELY NOT "sdn.db": `<basePath>/sdn.db` is the legacy v1
+	// database whose path still salts the local-EPM store key and is what
+	// Path() reports. The engine's database is a separate file.
 	flatSQLControlDBName = "control.flatsqldb"
 
-	// bootMarkOffsetKey / bootMarkDigestKey / bootMarkFormatKey are the
-	// sdn_metadata keys carrying the handshake. They are SQL column values, not
-	// SDS record fields, so the IDL capitalization law does not apply.
-	bootMarkOffsetKey = "flatsql_boot.record_catalog_offset"
-	bootMarkDigestKey = "flatsql_boot.record_catalog_digest"
-	bootMarkFormatKey = "flatsql_boot.format"
+	// bootMarkFormatKey / bootMarkAuxOffsetKey / bootMarkAuxDigestKey carry the
+	// auxiliary journal's resume mark; bootMarkEngineRowIDKey carries the
+	// engine hot window's coverage. They are SQL column values, not SDS record
+	// fields, so the IDL capitalization law does not apply.
+	bootMarkFormatKey      = "flatsql_boot.format"
+	bootMarkAuxOffsetKey   = "flatsql_boot.auxiliary_offset"
+	bootMarkAuxDigestKey   = "flatsql_boot.auxiliary_digest"
+	bootMarkEngineRowIDKey = "flatsql_boot.engine_rowid"
 
-	// bootMarkAuxOffsetKey / bootMarkAuxDigestKey are the SECOND, independent
-	// half of the handshake, for the OTHER journal.
-	//
-	// THERE ARE TWO JOURNALS AND THEY ARE UNRELATED FILES:
-	// record-catalog.flatsqlmeta and auxiliary.flatsqlmeta. Until this landed
-	// only the first had a mark, so `auxiliaryMetadataStore.Replay` re-applied
-	// its whole file on EVERY boot — free while the control tables were
-	// `:memory:`, and 211 s of fsync-per-event once they became a
-	// TRUNCATE-journalled disk database (task flatsql-aux-replay-resume-mark,
-	// measured A/B/A on vm-orbit-det-01: 4.6 s -> 211 s, cold and warm
-	// identical, which is the signature of work with no resume mark).
-	//
-	// The two marks are read and written together but decided SEPARATELY: a
-	// warm catalog with a cold auxiliary journal (or the reverse) is legal and
-	// costs only the replay it names.
-	bootMarkAuxOffsetKey = "flatsql_boot.auxiliary_offset"
-	// bootMarkEngineOffsetKey is the ENGINE's coverage of the record-catalog
-	// journal: every record whose frame lies below it has been flushed into
-	// the engine's on-disk record stream (flatsql_flush_index). It is written
-	// only right after such a flush — at the end of a complete hot-window
-	// hydration and at every catalog checkpoint once the window is hydrated —
-	// and it is judged against the SAME catalog digest as the catalog mark.
-	// A warm engine ingests the journal tail past THIS offset, not the
-	// catalog's; an engine state without it is discarded and rebuilt.
-	bootMarkEngineOffsetKey = "flatsql_boot.engine_offset"
-	bootMarkAuxDigestKey    = "flatsql_boot.auxiliary_digest"
+	// bootMarkFormat is bumped whenever the meaning of a mark changes. Format 1
+	// carried a record-catalog journal offset; that journal no longer exists, so
+	// a format-1 mark reads as "no mark" — the auxiliary journal replays from
+	// the beginning once and the engine window is rebuilt from the tables.
+	bootMarkFormat = "2"
 
-	// bootMarkFormat is bumped whenever the meaning of the mark changes. A
-	// different value takes the cold path rather than misreading an old mark.
-	//
-	// The auxiliary keys did NOT bump it: they are additive and OPTIONAL under
-	// format 1. A database written before they existed simply has no auxiliary
-	// mark, which reads as "replay the auxiliary journal from the beginning" —
-	// the exact behaviour it had. Bumping instead would have forced every host
-	// to discard a perfectly good control database and re-derive the whole
-	// record catalog once, for nothing.
-	bootMarkFormat = "1"
-
-	// checkpointDirtyBytes is how much journal may accumulate past the mark
-	// before a checkpoint is worth taking. A checkpoint costs one small SQL
-	// transaction; 4 MiB of frames is tens of thousands of records, so this is
-	// cheap insurance against a CRASH (a clean shutdown always checkpoints).
-	checkpointDirtyBytes = 4 << 20
-
-	// auxiliaryCheckpointDirtyBytes is the same insurance for the auxiliary
-	// journal, at a much lower threshold: that journal is a slow trickle
-	// (directory upserts, publications, pin-ledger rows — 20–29 MB accumulated
-	// over the LIFETIME of a production box), so a 4 MiB threshold would in
-	// practice mean "only ever at shutdown". 256 KiB keeps a SIGKILLed daemon's
-	// auxiliary replay to a rounding error while still costing at most a few
-	// checkpoints a day.
+	// auxiliaryCheckpointDirtyBytes is how much auxiliary journal may accumulate
+	// past its mark before a checkpoint is worth taking. That journal is a slow
+	// trickle (20–29 MB over the lifetime of a production box), so the threshold
+	// is small enough that a SIGKILLed daemon replays a rounding error.
 	auxiliaryCheckpointDirtyBytes = 256 << 10
 
-	// checkpointInterval bounds how much wall-clock a crash can cost even on a
-	// slow trickle of writes.
+	// checkpointInterval bounds how much engine hot-window work a crash can
+	// cost: every interval the engine's record arena is flushed to disk and the
+	// coverage mark advanced, so a warm boot ingests at most one interval's
+	// worth of records into the window.
 	checkpointInterval = 30 * time.Second
 )
 
 // checkpointIntervalEnv lets an operator retune the cadence on a live host
 // without a rebuild. "0" disables the background checkpointer entirely (the
-// mark is then only advanced after boot replay and at Close).
+// marks are then only advanced at Close).
 const checkpointIntervalEnv = "SDN_FLATSQL_CHECKPOINT_INTERVAL"
 
 func resolveCheckpointInterval() time.Duration {
@@ -181,55 +98,31 @@ func resolveCheckpointInterval() time.Duration {
 // engineRecordState is what the engine's OWN persisted record state said at
 // open: how many records its on-disk stream + index made visible without a
 // single re-ingest, and whether that state was usable at all.
-//
-// OWNER LAW 2026-09-02 (sdn-operating-model-streams-flatsql): "flatbuffers are
-// streamed to flatsql which persists it directly to disk ... any node restart
-// just uses whatever is on disk". The engine has always been able to do this
-// (flatsql_flush_index / flatsql_open_state); the store simply never flushed,
-// then reset the index at every boot and re-ingested every stream file through
-// WASM under the store lock — minutes to hours during which every reader lane
-// on the node hung. This type is the boot's evidence that the persisted state
-// was used.
 type engineRecordState struct {
 	// Records is the count the engine reports visible from its persisted
 	// state (OpenState / ReindexAll).
 	Records int
 	// Warm is true when the engine opened persisted record state, so the
-	// records are already resident and only the journal TAIL needs ingesting.
+	// records are already resident and only the tail past the coverage mark
+	// needs ingesting.
 	Warm bool
 }
 
-// A populated control database without a durable record stream cannot safely
-// resume. This threshold still bounds that legacy recovery case. Existing
-// streams use incremental engine recovery regardless of their byte size.
-const engineReindexStreamCeiling = 32 << 20
-
 // openEngineRecordState opens the engine's persisted record index for a
 // disk-backed database at dbPath. A usable index is opened as-is (warm). A
-// recoverable state error is answered by bounded engine steps, retaining the
-// control tables and journal checkpoints across engine/schema upgrades.
+// recoverable state error is answered by bounded engine steps that re-derive
+// the index from the engine's own record stream, retaining the control tables.
 func openEngineRecordState(db *flatsqlrt.Database, dbPath string) (engineRecordState, error) {
 	n, err := db.OpenState()
 	if err == nil {
 		return engineRecordState{Records: n, Warm: true}, nil
 	}
 	if !flatsqlrt.StateRecoverable(err) {
-		return engineRecordState{}, fmt.Errorf("open engine record state: %w", err)
+		return engineRecordState{}, fmt.Errorf("%w: %v", errEngineStateUnrecoverable, err)
 	}
 	var streamBytes int64
 	if info, statErr := os.Stat(dbPath + ".fsdata"); statErr == nil {
 		streamBytes = info.Size()
-	}
-	var dbBytes int64
-	if info, statErr := os.Stat(dbPath); statErr == nil {
-		dbBytes = info.Size()
-	}
-	if errors.Is(err, flatsqlrt.ErrStateAbsent) && streamBytes == 0 && dbBytes > engineReindexStreamCeiling {
-		// A populated database with NO flushed record stream: the previous
-		// process never reached a checkpoint (or predates persisted engine
-		// state). Its index rows point at records the engine cannot serve;
-		// re-deriving them row by row is the five-minute trap. Discard.
-		return engineRecordState{}, fmt.Errorf("%w: populated control database (%d MiB) has no flushed engine record stream", errEngineStateUnrecoverable, dbBytes>>20)
 	}
 	if !errors.Is(err, flatsqlrt.ErrStateAbsent) {
 		log.Warnf("FlatSQL engine record state unusable (%v) — re-deriving the index from the engine's on-disk record stream (%d bytes)", err, streamBytes)
@@ -239,7 +132,7 @@ func openEngineRecordState(db *flatsqlrt.Database, dbPath string) (engineRecordS
 		for step := 1; ; step++ {
 			done, stepErr := db.ReindexStep(256)
 			if stepErr != nil {
-				return engineRecordState{}, fmt.Errorf("incremental engine record recovery: %w", stepErr)
+				return engineRecordState{}, fmt.Errorf("%w: incremental engine record recovery: %v", errEngineStateUnrecoverable, stepErr)
 			}
 			if done {
 				break
@@ -252,127 +145,48 @@ func openEngineRecordState(db *flatsqlrt.Database, dbPath string) (engineRecordS
 		// populated handle would add them twice, so the caller must use a new
 		// runtime to validate the committed index and obtain its exact count.
 		return engineRecordState{}, errEngineStateReindexed
-	} else {
-		n, err = db.ReindexAll()
 	}
+	n, err = db.ReindexAll()
 	if err != nil {
-		return engineRecordState{}, fmt.Errorf("reindex engine record state: %w", err)
+		return engineRecordState{}, fmt.Errorf("%w: reindex engine record state: %v", errEngineStateUnrecoverable, err)
 	}
 	return engineRecordState{Records: n, Warm: n > 0}, nil
 }
 
-// errEngineStateUnrecoverable marks an engine record state the boot must not
-// try to repair in place; openControlDatabase answers it by discarding the
-// database and re-deriving from the journal and stream files.
+// errEngineStateUnrecoverable marks an engine record state the boot cannot
+// repair in place. The engine's record state is a CACHE of the control tables,
+// so the answer is to discard <db>.fsdata and rebuild the hot window from the
+// tables — never to touch the control database itself.
 var errEngineStateUnrecoverable = errors.New("engine record state unrecoverable in place")
 
-// Incremental recovery committed the new index without touching control rows.
-// Reopen the runtime, retaining every file and journal checkpoint.
+// errEngineStateReindexed: incremental recovery committed the new index
+// without touching control rows. Reopen the runtime on the same files.
 var errEngineStateReindexed = errors.New("engine record state reindexed; reopen runtime")
 
-// bootMark is the persisted resume point read out of a warm control database.
-// Offset/Digest name the record-catalog journal; AuxOffset/AuxDigest name the
-// auxiliary-metadata journal. Either pair may be absent (zero), independently.
+// errControlDatabaseUnusable marks a control database this boot refuses to
+// open. It is the record store: the operator restores it or wipes the node.
+var errControlDatabaseUnusable = errors.New("control database unusable")
+
+// bootMark is what a control database says about itself at open.
 type bootMark struct {
-	Offset    int64
-	Digest    string
+	// AuxOffset/AuxDigest name the auxiliary-metadata journal prefix already
+	// applied to the tables. Zero means "replay the auxiliary journal from the
+	// beginning".
 	AuxOffset int64
 	AuxDigest string
-	// EngineOffset is the engine's journal coverage (bootMarkEngineOffsetKey);
-	// 0 = no flushed engine state is claimed.
-	EngineOffset int64
+	// EngineRowID is the sdn_record_index rowid the engine hot window had been
+	// mirrored through when its record state was last flushed. Zero means no
+	// coverage is claimed.
+	EngineRowID int64
 }
 
-// bootResume is what the warm/cold decision yields: one resume offset per
-// journal, and whether the control database may be KEPT at all. Zero offsets
-// mean "replay this journal from the beginning".
-type bootResume struct {
-	Catalog   int64
-	Auxiliary int64
-	Keep      bool
-}
-
-// controlDatabaseMayBeKept answers the question openControlEngine actually
-// needs, which is NOT "is the record catalog resuming?" but "can this
-// database's existing rows survive the replay that is about to happen?".
-//
-// Resuming answers yes. So does an EMPTY record-catalog journal, and that
-// second case is not hypothetical: a node that has published nothing yet still
-// accumulates auxiliary frames (directory records off the accounts feed, pin
-// ledger rows, licences). Keying the decision on the catalog offset alone made
-// such a node discard its control database — and therefore its auxiliary
-// mark — on EVERY boot, so it could never have a warm auxiliary boot at all.
-// With no catalog bytes to replay, a from-zero catalog replay applies nothing,
-// and "from zero must mean from empty" is vacuous.
-func controlDatabaseMayBeKept(catalogResume int64, warm bool, journal *recordCatalogJournal) bool {
-	if catalogResume > 0 {
-		return true
-	}
-	return warm && journal.validLength() == 0
-}
-
-// appendCatalogEvent / appendCatalogEvents are the ONLY way live code may add
-// record-catalog frames.
-//
-// THEY EXIST TO MAKE AN INVARIANT STRUCTURAL INSTEAD OF POLITE. A resume mark
-// may only ever cover frames whose control rows are already committed. Every
-// live writer does commit first (storeRecordBatch's `tx.Commit()` precedes its
-// append), but "every caller remembers to" is not a guarantee — and a caller
-// that journals WITHOUT applying would produce a mark that silently skips real
-// records on the next boot, which is the single worst outcome this whole lane
-// can produce.
-//
-// So the store advances its applied high-water mark HERE, at the one place that
-// is definitionally reached only after an apply. Anything that appends to the
-// journal by another route (tests fabricating a journal, a future path that
-// journals ahead of applying) simply does not move it, and the next boot
-// replays those frames — slower, and correct.
-func (s *FlatSQLStore) appendCatalogEvent(event recordCatalogEvent) error {
-	return s.appendCatalogEvents([]recordCatalogEvent{event})
-}
-
-func (s *FlatSQLStore) appendCatalogEvents(events []recordCatalogEvent) error {
-	if err := s.recordCatalog.AppendAll(events); err != nil {
-		return err
-	}
-	s.noteCatalogApplied()
-	return nil
-}
-
-// noteCatalogApplied records that the journal is now applied through its current
-// end. Monotonic: a shorter observation never lowers the mark.
-func (s *FlatSQLStore) noteCatalogApplied() {
-	if s == nil || s.recordCatalog == nil {
-		return
-	}
-	end := s.recordCatalog.validLength()
-	for {
-		cur := s.appliedOffset.Load()
-		if end <= cur || s.appliedOffset.CompareAndSwap(cur, end) {
-			return
-		}
-	}
-}
-
-// noteCatalogAppliedThrough records an explicit applied offset — used by the
-// replay, which knows exactly how far it got.
-func (s *FlatSQLStore) noteCatalogAppliedThrough(off int64) {
-	for {
-		cur := s.appliedOffset.Load()
-		if off <= cur || s.appliedOffset.CompareAndSwap(cur, off) {
-			return
-		}
-	}
-}
-
-// noteAuxiliaryApplied is the auxiliary journal's equivalent — and it is NOT a
-// copy of the record-catalog one, because the auxiliary lane has an EXCEPTION
-// that the catalog lane does not.
+// noteAuxiliaryApplied records that the auxiliary journal is applied through
+// its current end.
 //
 // ── THE ORDERING THAT MAKES SAMPLING THE FILE LENGTH LEGAL ────────────────
 //
 // Eight of the nine auxiliary writers APPLY, then APPEND, both under s.mu
-// (UpsertDirectoryRecord flatsql.go, SaveLocalEPM flatsql.go, pin_ledger.go,
+// (UpsertDirectoryRecord, SaveLocalEPM, pin_ledger.go,
 // dataset_shard_publication.go x2, dataset_publication_replay_state.go,
 // source_batch_license.go). For those, "the append returned" implies "my rows
 // are committed", and every OTHER frame in the file belongs to a writer that
@@ -394,8 +208,7 @@ func (s *FlatSQLStore) noteCatalogAppliedThrough(off int64) {
 // poisons the store (assetPinLedgerRecovery), and this function FAILS CLOSED on
 // that flag: once the asset-pin ledger needs recovery the mark stops moving
 // entirely, so the next boot replays from at or before the orphaned frame and
-// re-applies it. A crash between the append and the commit is covered for free
-// — a dead process advances nothing.
+// re-applies it.
 //
 // Callers must hold s.mu and must have completed BOTH their apply and their
 // append.
@@ -424,68 +237,18 @@ func (s *FlatSQLStore) noteAuxiliaryAppliedThrough(off int64) {
 }
 
 // openControlEngine starts the FlatSQL engine WITH A REAL FILESYSTEM rooted at
-// basePath and opens the control database, returning the journal offset the
-// caller's boot replay must start from. Zero means "replay everything", and on
-// that path the returned database is guaranteed EMPTY.
+// basePath and opens the control database. The database is ALWAYS kept: it is
+// the record store, and the only outcomes are "opened" or "the boot fails".
 //
-// decideResume is handed the persisted mark and answers where the replay may
-// resume; it closes over the already-open journal (resumeOffset).
-//
-// ── FROM-ZERO MUST MEAN FROM-EMPTY ────────────────────────────────────────
-//
-// This is the subtlety that makes the whole cold path correct, and getting it
-// wrong is silent. A replay is NOT a rebuild: producer-table rows are applied
-// with INSERT OR IGNORE (record_catalog_replay.go — "the FIRST frame for a CID
-// wins"), so replaying from zero over a table that already has rows CANNOT
-// correct them. Two real cases depend on it:
-//
-//   - COMPACTION rewrites the journal AND remaps stream offsets. If a crash
-//     interrupts it, roll-forward fixes the FILES and the from-zero replay of
-//     the rewritten journal is what re-derives the offsets — but only if the
-//     rows it is deriving into are absent.
-//   - Rows a live session wrote but never journaled (repeat-CID mirror
-//     attribution, producer_standard_tables.go) must not outlive the store that
-//     wrote them, or a reopen shows a CID under two producers.
-//
-// While the database was `:memory:` every open started empty and this was free.
-// Now it has to be paid for explicitly: whenever the mark is unusable, the
-// control database is DISCARDED and reopened, so "cold boot" is byte-for-byte
-// the behaviour this store had before the lane existed.
-//
-// BOTH journals are decided in the one callback, and the DISCARD below is why
-// that matters: when the control database is thrown away, every table it held
-// goes with it — including the auxiliary ones. The marks live INSIDE the
-// database they describe, so a discard drops both together and the next open
-// reads neither. There is no way to keep an auxiliary mark that outlives the
-// rows it claims are already applied.
-func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func(bootMark, bool) bootResume) (*flatsqlrt.Runtime, *flatsqlrt.Database, bootResume, engineBootPlan, error) {
-	// A READ-ONLY open takes no store lock, so it must never become a second
-	// writer against a file the live daemon owns. It therefore keeps the
-	// ephemeral engine and re-derives, exactly as it always has. This is not a
-	// limitation to fix later: opening the writer's database read-write from a
-	// second process is precisely the corruption the one-daemon-per-box law
-	// exists to prevent.
-	if readOnly {
-		// A read-only open builds an EPHEMERAL control database with no
-		// pre-existing tables, so no standard can collide with one and there
-		// is no persisted source to restore.
-		engine, db, err := openEphemeralControlEngine(engineDatabaseSchema)
-		return engine, db, bootResume{}, engineBootPlan{Excluded: map[string]bool{}}, err
-	}
-
-	// PRE-FLIGHT: never hand the engine a file that is not a database.
-	//
-	// MEASURED, and it is why this check exists rather than being paranoia:
-	// opening a garbage file with flatsql_open_db TRAPS the guest —
-	// `trap in "flatsql_open_db": unreachable`. The embedded engine is the
-	// -fignore-exceptions build, where a C++ throw lowers to `unreachable` and
-	// POISONS THE WHOLE RUNTIME (README, commit b26ed45), so a single corrupt
-	// byte range would otherwise cost the daemon its storage engine at boot.
-	// Filed for the engine owner (errors must be values on this entry point
-	// too); until then the host refuses to present the input that triggers it,
-	// and the retry loop below survives it anyway.
-	if err := discardNonDatabaseFile(dbPath); err != nil {
-		return nil, nil, bootResume{}, engineBootPlan{}, err
+// The engine's record state (<db>.fsdata plus its index tables inside the
+// database) is the one thing that may be thrown away here, because it is a
+// cache the hot-window rebuild re-derives from the tables (engine_residency.go).
+func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.Database, bootMark, engineBootPlan, error) {
+	// PRE-FLIGHT: never hand the engine a file that is not a database. Opening
+	// a garbage file with flatsql_open_db TRAPS the guest (-fignore-exceptions
+	// lowers a C++ throw to `unreachable`) and poisons the whole runtime.
+	if err := checkDatabaseFile(dbPath); err != nil {
+		return nil, nil, bootMark{}, engineBootPlan{}, err
 	}
 
 	// Up to three attempts, each with a FRESH RUNTIME. A poisoned runtime cannot
@@ -493,8 +256,6 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 	// replace the engine, not just the file.
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		hadFile := fileExists(dbPath)
-
 		// PROBE FIRST, in its own runtime, then open for real. Both the
 		// exclusion set (which decides the schema text) and the persisted
 		// source list (which must be registered before the real database's
@@ -510,89 +271,63 @@ func openControlEngine(basePath, dbPath string, readOnly bool, decideResume func
 			flatsqlrt.WithFileIORoot(basePath),
 		)
 		if err != nil {
-			return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("failed to start FlatSQL engine: %w", err)
+			return nil, nil, bootMark{}, engineBootPlan{}, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 		}
 
 		engine.SetPhase("boot: open control database for writing")
 		openStart := time.Now()
-		engineDB, mark, warm, engineState, err := tryOpenControlDatabase(engine, dbPath,
+		engineDB, mark, engineState, err := tryOpenControlDatabase(engine, dbPath,
 			engineSchemaTextExcluding(plan.Excluded), enginePrepare(plan))
 		engine.SetPhase("")
 		log.Infof("FlatSQL boot phase \"boot: open control database for writing\" took %s (views already current: %v)",
 			time.Since(openStart).Round(time.Millisecond), plan.ViewsCurrent)
 		if err == nil {
-			resume := bootResume{}
-			if decideResume != nil {
-				resume = decideResume(mark, warm)
-			}
-			// THE RECORD CATALOG DECIDES WHETHER THE DATABASE SURVIVES. A cold
-			// catalog replay must land in empty tables (above), and emptying them
-			// necessarily discards the auxiliary rows too — so an auxiliary mark
-			// can never be honoured across a discard, and is dropped with it.
-			if resume.Keep || !hadFile {
-				// Warm, or a genuine first boot whose database is already empty.
-				// The engine's persisted records survive with the database —
-				// but only when the engine mark says what they cover. Flushed
-				// records with no mark (a crash between a flush and its mark, or
-				// a mark the catalog resume refused) would re-ingest on top of
-				// themselves: discard the record stream and rebuild the engine
-				// from the catalog, keeping the control tables.
-				plan.EngineState = engineState
-				plan.EngineOffset = 0
-				if resume.Keep && mark.EngineOffset > 0 && mark.EngineOffset <= resume.Catalog {
-					plan.EngineOffset = mark.EngineOffset
+			// THE ARENA IS A CACHE, AND A CACHE THAT IS MOSTLY DEAD IS REBUILT,
+			// NOT RECONCILED. The engine persists every row ever ingested and
+			// forgets its tombstones, so a warm open resurrects every evicted
+			// row and the reconcile re-tombstones them ONE GUEST CALL EACH —
+			// measured on the dev node 2026-09-10: 5 minutes of boot for
+			// ~2.5M forgotten tombstones against ~60k live rows. Once the dead
+			// rows outnumber the live ones (the residency ledger says how many
+			// are live), discarding the arena and refilling the bounded
+			// window from the tables is cheaper, and the next flush writes an
+			// arena that holds the window and nothing else.
+			if engineState.Warm && engineArenaMostlyDead(engineDB, engineState.Records) {
+				log.Infof("FlatSQL engine record state holds %d rows but the residency ledger tracks far fewer — discarding the arena and rebuilding the hot window from the control tables", engineState.Records)
+				engineDB.Destroy()
+				engine.Close()
+				if rmErr := removeEngineRecordStream(dbPath); rmErr != nil {
+					return nil, nil, bootMark{}, engineBootPlan{}, rmErr
 				}
-				if engineState.Warm && plan.EngineOffset == 0 {
-					log.Warnf("FlatSQL engine record state carries %d record(s) but no journal coverage mark — discarding the engine record stream and rebuilding it from the catalog (control tables kept)", engineState.Records)
-					engineDB.Destroy()
-					engine.Close()
-					if rmErr := os.Remove(dbPath + ".fsdata"); rmErr != nil && !os.IsNotExist(rmErr) {
-						return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("discard engine record stream: %w", rmErr)
-					}
-					continue // reopen: the state is now absent and the DB is kept
-				}
-				return engine, engineDB, resume, plan, nil
+				continue
 			}
-			// Cold with pre-existing state: discard and reopen so the replay
-			// lands in empty tables. One extra engine start, on the path that
-			// was already the slow one.
-			log.Warnf("FlatSQL boot: no usable resume mark — discarding the control database so the full replay rebuilds from empty tables")
-			engineDB.Destroy()
-			engine.Close()
-			if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
-				return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("discard stale control database: %w", rmErr)
-			}
-			continue
+			plan.EngineState = engineState
+			return engine, engineDB, mark, plan, nil
 		}
 
 		lastErr = err
 		engine.Close() // discards a poisoned runtime AND releases its file handles
-		if errors.Is(err, errEngineStateReindexed) {
-			log.Infof("FlatSQL engine record index rebuilt; reopening with control tables and journal checkpoints retained")
+		switch {
+		case errors.Is(err, errEngineStateReindexed):
+			log.Infof("FlatSQL engine record index rebuilt; reopening with the control tables retained")
 			continue
-		}
-		if errors.Is(err, errEnginePrepareFailed) {
-			// The FILE is fine; the host-side registration is not. Fail the
-			// start and leave the control database untouched — exactly the
-			// non-destructive failure this was before the registration moved
-			// in front of the first query.
-			return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("failed to register engine file identifiers: %w", err)
-		}
-		if attempt == 2 {
-			break
-		}
-		log.Warnf("FlatSQL control database at %s is unusable (%v) — discarding it and re-deriving from the journal", dbPath, err)
-		if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
-			return nil, nil, bootResume{}, engineBootPlan{}, fmt.Errorf("discard unusable control database: %w", rmErr)
+		case errors.Is(err, errEngineStateUnrecoverable):
+			// The engine's record state is a cache. Drop the record stream and
+			// reopen: OpenState then finds no stream, re-derives an empty index
+			// and the hot window is rebuilt from the tables.
+			log.Warnf("FlatSQL engine record state at %s.fsdata is unusable (%v) — discarding it; the hot window will be rebuilt from the control tables", dbPath, err)
+			if rmErr := removeEngineRecordStream(dbPath); rmErr != nil {
+				return nil, nil, bootMark{}, engineBootPlan{}, rmErr
+			}
+			continue
+		case errors.Is(err, errEnginePrepareFailed):
+			// The FILE is fine; the host-side registration is not.
+			return nil, nil, bootMark{}, engineBootPlan{}, fmt.Errorf("failed to register engine file identifiers: %w", err)
+		default:
+			return nil, nil, bootMark{}, engineBootPlan{}, fmt.Errorf("%w: %s: %v", errControlDatabaseUnusable, dbPath, err)
 		}
 	}
-
-	// The store must still open. Falling all the way back to the ephemeral
-	// engine keeps the node ALIVE on exactly the pre-durability terms it ran on
-	// for the last year — a slow boot, never a dead one.
-	log.Errorf("FlatSQL control database could not be opened even after discarding it (%v) — falling back to an EPHEMERAL control database; every boot will re-derive the whole catalog until this is resolved", lastErr)
-	engine, db, err := openEphemeralControlEngine(engineDatabaseSchema)
-	return engine, db, bootResume{}, engineBootPlan{Excluded: map[string]bool{}}, err
+	return nil, nil, bootMark{}, engineBootPlan{}, fmt.Errorf("%w: %s: %v", errControlDatabaseUnusable, dbPath, lastErr)
 }
 
 // errEnginePrepareFailed marks a failure of the pre-first-query preparation
@@ -697,83 +432,68 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir() && info.Size() > 0
 }
 
+// engineArenaMostlyDead reports whether the engine's persisted rows outnumber
+// the residency ledger's live rows by more than the live rows themselves,
+// i.e. more than half the arena is evicted, deleted or superseded records
+// whose tombstones the engine forgot. A ledger the database does not have yet
+// (a first boot on this binary) counts as zero live rows: an untracked arena
+// is rebuilt.
+func engineArenaMostlyDead(db *flatsqlrt.Database, engineRecords int) bool {
+	if engineRecords <= 0 {
+		return false
+	}
+	var live int64
+	res, err := db.Query(`SELECT COUNT(*) FROM sdn_engine_rows`)
+	if err == nil && res != nil && len(res.Rows) == 1 && len(res.Rows[0]) == 1 {
+		live, _ = res.Rows[0][0].(int64)
+	}
+	dead := int64(engineRecords) - live
+	return dead > live
+}
+
 // sqliteFileHeader is the 16-byte magic every SQLite database starts with.
 const sqliteFileHeader = "SQLite format 3\x00"
 
-// discardNonDatabaseFile removes dbPath (and its derived files) when it is
-// present but is plainly not a SQLite database. Cheap, host-side, and it keeps
-// the common corruption case from costing an engine restart.
-func discardNonDatabaseFile(dbPath string) error {
+// checkDatabaseFile refuses to present a file that is plainly not a SQLite
+// database to the engine. A missing file is a first boot; a zero-length file
+// is what SQLite itself creates before the first write. Anything else that
+// does not start with the magic is a hard failure — the file is the record
+// store, and deleting it would be data loss.
+func checkDatabaseFile(dbPath string) error {
 	f, err := os.Open(dbPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // a missing database is a first boot, not a problem
+			return nil
 		}
 		return fmt.Errorf("inspect control database: %w", err)
 	}
 	hdr := make([]byte, len(sqliteFileHeader))
 	n, readErr := io.ReadFull(f, hdr)
 	f.Close()
-	// A zero-length file is what SQLite itself creates before the first write,
-	// and it opens cleanly. Anything else that does not start with the magic is
-	// not a database and must never reach the engine.
 	if n == 0 && (readErr == io.EOF || readErr == nil) {
 		return nil
 	}
 	if readErr == nil && string(hdr) == sqliteFileHeader {
 		return nil
 	}
-	log.Warnf("FlatSQL control database at %s is not a SQLite database — discarding it and re-deriving from the journal", dbPath)
-	return removeControlDatabaseFiles(dbPath)
+	return fmt.Errorf("%w: %s is not a SQLite database", errControlDatabaseUnusable, dbPath)
 }
 
-// openEphemeralControlEngine is the pre-durability shape: an engine with no
-// filesystem and an in-memory control database. Read-only opens and any host
-// that cannot reach a filesystem land here, and everything downstream behaves
-// exactly as it did before this lane existed.
-func openEphemeralControlEngine(schemaText string) (*flatsqlrt.Runtime, *flatsqlrt.Database, error) {
-	engine, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()))
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to start FlatSQL engine: %w", err)
+// removeEngineRecordStream deletes the engine's persisted record arena. The
+// index tables it left inside the control database are cleared by the engine
+// itself on the next open (reindex over an absent stream re-derives empty).
+func removeEngineRecordStream(dbPath string) error {
+	if err := os.Remove(dbPath + ".fsdata"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("discard engine record stream: %w", err)
 	}
-	db, err := engine.CreateDatabase(schemaText, "sdn-control")
-	if err != nil {
-		engine.Close()
-		return nil, nil, fmt.Errorf("failed to create FlatSQL database: %w", err)
-	}
-	return engine, db, nil
+	return nil
 }
 
-// openControlDatabase opens dbPath disk-backed, verifies it, and reports the
-// persisted mark. One wipe-and-retry is attempted: a database that cannot be
-// opened or verified is worth exactly nothing, because everything it holds is
-// derivable from the journal and the stream files.
-func openControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, bool, engineRecordState, error) {
-	db, mark, warm, state, err := tryOpenControlDatabase(engine, dbPath, schemaText, prepare)
-	if err == nil {
-		return db, mark, warm, state, nil
-	}
-	if errors.Is(err, errEnginePrepareFailed) {
-		// A registration failure says nothing about the file. Never trade a
-		// multi-GB control database for it.
-		return nil, bootMark{}, false, engineRecordState{}, err
-	}
-	log.Warnf("FlatSQL control database at %s is unusable (%v) — discarding it and re-deriving from the journal", dbPath, err)
-	if rmErr := removeControlDatabaseFiles(dbPath); rmErr != nil {
-		return nil, bootMark{}, false, engineRecordState{}, fmt.Errorf("discard unusable control database: %w", rmErr)
-	}
-	db, mark, warm, state, err = tryOpenControlDatabase(engine, dbPath, schemaText, prepare)
-	if err != nil {
-		return nil, bootMark{}, false, engineRecordState{}, fmt.Errorf("open control database after discard: %w", err)
-	}
-	return db, mark, warm, state, nil
-}
-
-func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, bool, engineRecordState, error) {
+func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error) (*flatsqlrt.Database, bootMark, engineRecordState, error) {
 	phase := time.Now()
 	db, err := engine.OpenDatabase(schemaText, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
 	if err != nil {
-		return nil, bootMark{}, false, engineRecordState{}, err
+		return nil, bootMark{}, engineRecordState{}, err
 	}
 	log.Infof("FlatSQL boot phase \"boot: engine OpenDatabase\" took %s", time.Since(phase).Round(time.Millisecond))
 	phase = time.Now()
@@ -783,50 +503,46 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	if prepare != nil {
 		if err := prepare(db); err != nil {
 			db.Destroy()
-			return nil, bootMark{}, false, engineRecordState{}, err
+			return nil, bootMark{}, engineRecordState{}, err
 		}
 	}
 	disk, err := db.IsDiskBacked()
 	if err != nil {
 		db.Destroy()
-		return nil, bootMark{}, false, engineRecordState{}, err
+		return nil, bootMark{}, engineRecordState{}, err
 	}
 	if !disk {
 		// The engine reported RAM for a real path. Never treat that as durable
-		// — silently succeeding against memory is the exact defect this lane
-		// exists to remove.
+		// — silently succeeding against memory is the exact defect the
+		// disk-backed law exists to remove.
 		db.Destroy()
-		return nil, bootMark{}, false, engineRecordState{}, errors.New("engine opened a real path but reports NOT disk-backed")
+		return nil, bootMark{}, engineRecordState{}, errors.New("engine opened a real path but reports NOT disk-backed")
 	}
+	log.Infof("FlatSQL boot phase \"boot: prepare + IsDiskBacked\" took %s", time.Since(phase).Round(time.Millisecond))
 
 	// THE RECORD ARENA IS PERSISTED, AND THE BOOT USES IT. Every checkpoint
 	// flushes the engine's record stream + index to <db>.fsdata before it
-	// writes the resume mark (flushEngineStateLocked), so a kept database
-	// always carries every record the mark covers. OpenState verifies that
-	// index and makes the records visible in milliseconds — no ReindexAll, no
-	// re-ingest through WASM. What OpenState does NOT carry is Go-side
-	// bookkeeping (engineResident) and the hot-window tombstones; both are
-	// restored from the tables right after open
-	// (restoreEngineResidencyFromPersistedState).
-	log.Infof("FlatSQL boot phase \"boot: prepare + IsDiskBacked\" took %s", time.Since(phase).Round(time.Millisecond))
-	phase = time.Now()
+	// writes the coverage mark (flushEngineStateLocked). OpenState verifies
+	// that index and makes the records visible without re-ingest. What it does
+	// NOT carry is the hot-window tombstones; engine_residency.go re-applies
+	// those from the residency table right after open.
 	endState := newBootPhaseBudget(engine).phase("boot: open engine record state (OpenState)")
 	state, err := openEngineRecordState(db, dbPath)
 	endState()
 	if err != nil {
 		db.Destroy()
-		return nil, bootMark{}, false, engineRecordState{}, err
+		return nil, bootMark{}, engineRecordState{}, err
 	}
 	phase = time.Now()
 
 	if err := verifyControlDatabase(db); err != nil {
 		db.Destroy()
-		return nil, bootMark{}, false, engineRecordState{}, err
+		return nil, bootMark{}, engineRecordState{}, err
 	}
 
-	mark, warm := readBootMark(db)
+	mark := readBootMark(db)
 	log.Infof("FlatSQL boot phase \"boot: verify + read boot mark\" took %s", time.Since(phase).Round(time.Millisecond))
-	return db, mark, warm, state, nil
+	return db, mark, state, nil
 }
 
 // verifyControlDatabase is the integrity gate.
@@ -859,89 +575,47 @@ func verifyControlDatabase(db *flatsqlrt.Database) error {
 	return nil
 }
 
-// readBootMark reads the persisted resume point. A missing table, a missing
-// row, a bad number or a format bump all mean "no mark" — never an error,
-// because "no mark" is simply a cold boot.
-// The AUXILIARY pair is optional: it may be absent (a database written before
-// this lane existed, or one whose auxiliary replay has not checkpointed yet)
-// without costing the record catalog its warm resume. Absent reads as zero,
-// which means "replay the auxiliary journal from the beginning".
-func readBootMark(db *flatsqlrt.Database) (bootMark, bool) {
+// readBootMark reads the persisted marks. A missing table, a missing row, a
+// bad number or a format bump all mean "no mark" — never an error.
+func readBootMark(db *flatsqlrt.Database) bootMark {
 	res, err := db.Query(
-		`SELECT key, value FROM sdn_metadata WHERE key IN (?, ?, ?, ?, ?, ?)`,
-		bootMarkFormatKey, bootMarkOffsetKey, bootMarkDigestKey,
-		bootMarkAuxOffsetKey, bootMarkAuxDigestKey, bootMarkEngineOffsetKey)
+		`SELECT key, value FROM sdn_metadata WHERE key IN (?, ?, ?, ?)`,
+		bootMarkFormatKey, bootMarkAuxOffsetKey, bootMarkAuxDigestKey, bootMarkEngineRowIDKey)
 	if err != nil || res == nil {
-		return bootMark{}, false
+		return bootMark{}
 	}
-	var format, offset, digest, auxOffset, auxDigest, engineOffset string
+	var format, auxOffset, auxDigest, engineRowID string
 	for _, row := range res.Rows {
 		if len(row) < 2 {
 			continue
 		}
-		key := fmt.Sprint(row[0])
-		val := fmt.Sprint(row[1])
-		switch key {
+		switch fmt.Sprint(row[0]) {
 		case bootMarkFormatKey:
-			format = val
-		case bootMarkOffsetKey:
-			offset = val
-		case bootMarkDigestKey:
-			digest = val
+			format = fmt.Sprint(row[1])
 		case bootMarkAuxOffsetKey:
-			auxOffset = val
+			auxOffset = fmt.Sprint(row[1])
 		case bootMarkAuxDigestKey:
-			auxDigest = val
-		case bootMarkEngineOffsetKey:
-			engineOffset = val
+			auxDigest = fmt.Sprint(row[1])
+		case bootMarkEngineRowIDKey:
+			engineRowID = fmt.Sprint(row[1])
 		}
 	}
-	// `warm` means "this database carries a mark in a format we understand" —
-	// NOT "the record catalog is resuming". Each journal's pair is then judged
-	// on its own (resumeOffset / auxiliaryResumeOffset), because a store can
-	// legitimately have one and not the other: a node with no records at all
-	// still checkpoints an auxiliary mark, and gating that behind a
-	// record-catalog mark it will never have would cost it a full auxiliary
-	// replay on every boot forever.
 	if format != bootMarkFormat {
-		return bootMark{}, false
-	}
-	if offset == "" && auxOffset == "" {
-		return bootMark{}, false
+		return bootMark{}
 	}
 	mark := bootMark{}
-	if offset != "" && digest != "" {
-		n, err := strconv.ParseInt(offset, 10, 64)
-		if err != nil || n < 0 {
-			return bootMark{}, false
-		}
-		mark.Offset = n
-		mark.Digest = digest
-	}
 	if auxOffset != "" && auxDigest != "" {
 		if aux, err := strconv.ParseInt(auxOffset, 10, 64); err == nil && aux >= 0 {
 			mark.AuxOffset = aux
 			mark.AuxDigest = auxDigest
 		}
 	}
-	if engineOffset != "" {
-		if e, err := strconv.ParseInt(engineOffset, 10, 64); err == nil && e > 0 {
-			mark.EngineOffset = e
+	if engineRowID != "" {
+		if e, err := strconv.ParseInt(engineRowID, 10, 64); err == nil && e > 0 {
+			mark.EngineRowID = e
 		}
 	}
-	return mark, true
-}
-
-// removeControlDatabaseFiles deletes the control database and everything the
-// engine derives from it. Nothing here is a source of truth: the journal and
-// the stream files are.
-func removeControlDatabaseFiles(dbPath string) error {
-	for _, p := range []string{dbPath, dbPath + "-journal", dbPath + ".fsdata"} {
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove %s: %w", p, err)
-		}
-	}
-	return nil
+	return mark
 }
 
 // finishEngineSourceSetup completes engine source bring-up after the store is
@@ -1013,11 +687,8 @@ type engineBootPlan struct {
 	// exactly Sources for every routed standard.
 	ViewsCurrent bool
 	// EngineState is what the engine's persisted record state reported at
-	// open. Zero for a discarded or ephemeral database.
+	// open.
 	EngineState engineRecordState
-	// EngineOffset is the journal offset the engine's persisted records cover
-	// (validated against the catalog resume); 0 = rebuild the engine.
-	EngineOffset int64
 }
 
 // registeredSources is the store-side mirror of the sources enginePrepare
@@ -1173,7 +844,6 @@ func probeControlDatabase(basePath, dbPath string) engineBootPlan {
 	}
 
 	collided := []string{}
-	legacyBlob := []string{}
 	for name, binding := range engineRoutedSchemas {
 		if _, decorated := engineDecoratedSchemas[name]; decorated {
 			// $OMM and $TBS have owned their canonical names since loop B.3
@@ -1185,32 +855,11 @@ func probeControlDatabase(basePath, dbPath string) engineBootPlan {
 		case plain[binding.Table]:
 			plan.Excluded[name] = true
 			collided = append(collided, name)
-		case plain[legacySchemaTableName(name)]:
-			// THE SECOND PER-STORE EXCLUSION, and it is a REACHABILITY guard
-			// rather than a destruction one. migrateLegacySchemaTable merges a
-			// pre-stream `sds_<lower>` BLOB table into the canonical table, and
-			// it DEFERS whenever the engine owns that canonical name. Routing a
-			// standard whose store still holds its blob table would therefore
-			// pin those rows outside every production read path — Get and
-			// recordReadSource both union the canonical table and the
-			// (producer, standard) tables, neither of which the blob rows are
-			// in — with nothing to un-pin them.
-			//
-			// So the standard stays UNROUTED until the blob migration runs.
-			// That migration merges the rows into the plain canonical table,
-			// and the NEXT boot keeps the standard unrouted for the collision
-			// reason above, with its rows readable the ordinary way.
-			plan.Excluded[name] = true
-			legacyBlob = append(legacyBlob, name)
 		}
 	}
 	sort.Strings(collided)
-	sort.Strings(legacyBlob)
 	if len(collided) > 0 {
 		log.Errorf("FlatSQL boot: %v are NOT engine-routed in this store — a plain control table already holds each standard's canonical name and routing it would DROP that table. Their rows stay readable through the ordinary record read source.", collided)
-	}
-	if len(legacyBlob) > 0 {
-		log.Errorf("FlatSQL boot: %v are NOT engine-routed in this store — a pre-stream sds_<lower> BLOB table still holds their rows, and routing the canonical name would stop the legacy migration from ever merging them into the record read path. They route on the boot after that migration runs.", legacyBlob)
 	}
 
 	plan.Sources = make([]string, 0, len(sourceSet))
@@ -1319,67 +968,11 @@ func quotedSQLIdentifiers(fragment string) []string {
 	return out
 }
 
-// resumeOffset decides where the boot replay starts.
-//
-// It returns 0 — a full replay — for every doubt. The only way to get a warm
-// resume is: a mark was persisted, it names THIS journal (digest match), and it
-// does not point past the journal's CRC-valid length.
-func resumeOffset(mark bootMark, warm bool, journal *recordCatalogJournal) int64 {
-	if !warm || journal == nil || journal.f == nil {
-		return 0
-	}
-	if mark.Offset <= 0 {
-		return 0
-	}
-	valid := journal.validLength()
-	if mark.Offset > valid {
-		// The journal is SHORTER than the mark: it was compacted, replaced, or
-		// truncated at a torn tail. Offsets from the old file mean nothing.
-		log.Warnf("FlatSQL boot: persisted mark %d is past the journal's valid length %d — replaying from the beginning",
-			mark.Offset, valid)
-		return 0
-	}
-	digest, err := journal.digestPrefix(mark.Offset)
-	if err != nil {
-		log.Warnf("FlatSQL boot: could not verify the journal prefix (%v) — replaying from the beginning", err)
-		return 0
-	}
-	if digest != mark.Digest {
-		log.Warnf("FlatSQL boot: journal prefix digest changed (compaction or replacement) — replaying from the beginning")
-		return 0
-	}
-	return mark.Offset
-}
-
-// auxiliaryResumeOffset is resumeOffset for the OTHER journal, and it answers
-// the same way: 0 for every doubt.
-//
-// ── WHY A FROM-ZERO AUXILIARY REPLAY IS SAFE OVER POPULATED TABLES ────────
-//
-// The record catalog needs "from zero means from empty" (openControlEngine)
-// because its appliers are INSERT OR IGNORE — a from-zero replay cannot correct
-// a row that is already there. The auxiliary appliers are not like that, and
-// this lane depends on the difference, so it is stated rather than assumed:
-//
-//   - every auxiliary upsert is ON CONFLICT DO UPDATE (sdn_directory,
-//     sdn_local_epms, sdn_pin_ledger, sdn_dataset_shard_publications,
-//     sdn_dataset_publication_replay_state, sdn_source_batch_license), so
-//     re-applying converges to the same row rather than losing to the first
-//     writer;
-//   - the asset-pin frames short-circuit on their own stable event ID
-//     (assetPinAuditEventAlreadyApplied) or on the receipt digest, and a
-//     conflicting re-apply is an ERROR, not a silent overwrite;
-//   - the one destructive frame (dataset shard publication delete) is replayed
-//     IN JOURNAL ORDER against the same prefix that produced the rows, so its
-//     effect is idempotent.
-//
-// That is why a warm catalog may sit next to a cold auxiliary journal: the
-// worst outcome is the work this task exists to avoid, never a wrong row.
-func auxiliaryResumeOffset(mark bootMark, warm bool, aux *auxiliaryMetadataStore) int64 {
-	if !warm || aux == nil || aux.f == nil {
-		return 0
-	}
-	if mark.AuxOffset <= 0 {
+// auxiliaryResumeOffset decides where the auxiliary replay starts. It returns
+// 0 — a full replay — for every doubt: no mark, a mark past the journal's
+// valid length, an unreadable prefix, or a digest that names a different file.
+func auxiliaryResumeOffset(mark bootMark, aux *auxiliaryMetadataStore) int64 {
+	if aux == nil || aux.f == nil || mark.AuxOffset <= 0 {
 		return 0
 	}
 	valid := aux.validLength()
@@ -1400,98 +993,54 @@ func auxiliaryResumeOffset(mark bootMark, warm bool, aux *auxiliaryMetadataStore
 	return mark.AuxOffset
 }
 
-// digestPrefix fingerprints the journal's frame headers over [0, limit).
+// Checkpoint flushes the engine's record state to disk, advances the engine
+// coverage mark, and advances the auxiliary resume mark. It is what the
+// background loop runs every interval and what Close runs once at the end.
 //
-// Headers only: each 8-byte header carries the frame length and the CRC32 of
-// that frame's payload, so a digest over the headers transitively covers every
-// payload byte in the prefix without reading any of them. That keeps the cost
-// O(frames) in cheap 8-byte reads instead of O(bytes).
-//
-// It is also INCREMENTAL. A periodic checkpoint must never re-fingerprint the
-// whole catalog: the journal lock is the same one live appends take, so an
-// O(catalog) walk here would become a new writer stall every interval — and
-// reader starvation behind long lock holds is an ALREADY MEASURED production
-// symptom (task sdn-flatsql-sync-discovery-latency-resets: anonymous
-// list_published_shards reads at 22–42 s). The running state covers [0, off);
-// a checkpoint extends it by the handful of frames written since the last one.
-func (j *recordCatalogJournal) digestPrefix(limit int64) (string, error) {
-	if j == nil || j.f == nil {
-		return "", errors.New("record catalog journal is not open")
-	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-
-	if j.digest == nil || limit < j.digestOffset {
-		// First call, or a limit BEHIND what we have folded in (a compacted or
-		// replaced journal). Restart the running state rather than trying to
-		// rewind a hash.
-		j.digest = newRecordCatalogDigest()
-		j.digestOffset = 0
-		j.lastFrameStart = -1
-	}
-	if err := extendRecordCatalogDigestTracking(j.digest, j.f, &j.digestOffset, limit, &j.lastFrameStart); err != nil {
-		// Leave the running state consistent with what it actually covers so a
-		// later call can still extend from there.
-		return "", err
-	}
-	return sealRecordCatalogDigest(j.digest, limit)
+// The expensive half of the auxiliary mark (fingerprinting the journal
+// prefix) is computed OUTSIDE the store lock; only small upserts happen inside
+// it. Observing the journal end outside the lock is sound: any writer that had
+// already appended below `end` still held s.mu at that moment, so it commits
+// its rows before we can take the lock. Under-covering is always safe.
+func (s *FlatSQLStore) Checkpoint() error {
+	return errors.Join(s.checkpointEngine(), s.checkpointAuxiliaryMark())
 }
 
-// validLength reports the journal's CRC-valid length as established when it was
-// opened (a torn tail is truncated away for writers, and bounded for readers).
-func (j *recordCatalogJournal) validLength() int64 {
-	if j == nil || j.f == nil {
-		return 0
+func (s *FlatSQLStore) checkpointEngine() error {
+	if !s.controlDBDurable {
+		return nil
 	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.readOnly {
-		return j.replayLimit
-	}
-	info, err := j.f.Stat()
-	if err != nil {
-		return 0
-	}
-	return info.Size()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.checkpointEngineLocked()
 }
 
-// CheckpointRecordCatalog advances the persisted resume mark to the journal's
-// current end, so the NEXT boot replays only what arrives after this moment.
-//
-// ── WHY THE EXPENSIVE HALF IS OUTSIDE THE STORE LOCK ──────────────────────
-//
-// Measuring the journal end and fingerprinting its prefix happen BEFORE
-// s.mu.Lock(); only three tiny sdn_metadata upserts happen inside it. Reader
-// starvation behind long store-lock holds is a measured production symptom, not
-// a theoretical one (task sdn-flatsql-sync-discovery-latency-resets: anonymous
-// list_published_shards answers at 22–42 s while writers hold the store), and a
-// periodic maintenance task that took the write lock for an O(catalog) walk
-// would be a new instance of exactly that class.
-//
-// Observing `end` outside the lock stays SOUND, and the argument is worth
-// stating because it is not obvious: any writer that had already appended
-// frames below `end` when we sampled it still held s.mu at that moment, so it
-// necessarily RELEASES that lock before we acquire it — and it commits its
-// control rows inside its own hold. By the time we write the mark, every frame
-// the mark covers is backed by committed rows, regardless of the order an
-// individual writer uses internally. A writer that appends AFTER our sample is
-// simply not covered, and under-covering is always safe: it costs replay, never
-// correctness.
-//
-// It advances BOTH marks. They are gated separately and on purpose: the
-// record-catalog mark waits for hydration, which on the production daemon
-// happens in the BACKGROUND minutes after boot, while the auxiliary mark is
-// ready the moment the synchronous auxiliary replay finishes at open. Gating
-// them together would have meant a deferred-hydration daemon — i.e. every real
-// node — never persisting an auxiliary mark until its first clean shutdown, and
-// this whole fix would have been dead on the boxes it was written for.
-func (s *FlatSQLStore) CheckpointRecordCatalog() error {
-	return errors.Join(s.checkpointCatalogMark(), s.checkpointAuxiliaryMark())
+// checkpointEngineLocked flushes the engine record arena and, if the window is
+// hydrated, records the index rowid it covers. FLUSH FIRST, MARK SECOND: a
+// mark may only ever claim records the engine can already serve from disk. A
+// crash between the two costs one interval of re-ingest into the window on
+// the next boot (engine_residency.go reconciles the duplicates away), never a
+// missing record. Requires the store write lock.
+func (s *FlatSQLStore) checkpointEngineLocked() error {
+	if !s.controlDBDurable || s.engineDB == nil || s.db == nil {
+		return nil
+	}
+	if err := s.flushEngineStateLocked(); err != nil {
+		return err
+	}
+	s.engineUnflushed.Store(0)
+	if !s.engineHotHydrated.Load() {
+		return nil
+	}
+	var maxRowID int64
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM sdn_record_index`).Scan(&maxRowID); err != nil {
+		return fmt.Errorf("checkpoint engine: read index high-water mark: %w", err)
+	}
+	return s.persistEngineMarkLocked(maxRowID)
 }
 
 // checkpointAuxiliaryMark advances the auxiliary resume mark to the offset this
-// store has demonstrably applied. Same shape as the catalog half: the digest is
-// computed OUTSIDE the store lock, only the upserts are inside it.
+// store has demonstrably applied.
 func (s *FlatSQLStore) checkpointAuxiliaryMark() error {
 	end, digest, ok, err := s.auxiliaryMarkCandidate()
 	if err != nil || !ok {
@@ -1503,10 +1052,9 @@ func (s *FlatSQLStore) checkpointAuxiliaryMark() error {
 }
 
 // auxiliaryMarkCandidate answers "what auxiliary mark may be written right now",
-// or ok=false when none may be. Shared by the locked and unlocked checkpoint
-// paths so the eligibility rules exist once.
+// or ok=false when none may be.
 func (s *FlatSQLStore) auxiliaryMarkCandidate() (int64, string, bool, error) {
-	if s.readOnly || !s.controlDBDurable || s.auxiliaryMetadata == nil || s.auxiliaryMetadata.f == nil {
+	if !s.controlDBDurable || s.auxiliaryMetadata == nil || s.auxiliaryMetadata.f == nil {
 		return 0, "", false, nil
 	}
 	// Nothing may be marked before the replay has actually run: until then the
@@ -1533,120 +1081,29 @@ func (s *FlatSQLStore) auxiliaryMarkCandidate() (int64, string, bool, error) {
 	return end, digest, true, nil
 }
 
-func (s *FlatSQLStore) checkpointCatalogMark() error {
-	if s.readOnly || !s.controlDBDurable || s.recordCatalog == nil || s.recordCatalog.f == nil {
-		return nil
-	}
-	// A mark is only meaningful once the control tables actually describe the
-	// whole journal prefix. While hydration is in flight they do not.
-	if !s.recordCatalogHydrated.Load() {
-		return nil
-	}
-	// THE MARK FOLLOWS THE APPLIED OFFSET, NOT THE FILE LENGTH. Journal bytes
-	// past what this store has actually applied are exactly the bytes the next
-	// boot must replay.
-	end := s.appliedOffset.Load()
-	if valid := s.recordCatalog.validLength(); end > valid {
-		end = valid
-	}
-	if end <= 0 {
-		return nil
-	}
-	digest, err := s.recordCatalog.digestPrefix(end)
-	if err != nil {
-		return fmt.Errorf("checkpoint record catalog: digest: %w", err)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.flushEngineStateLocked(); err != nil {
-		return err
-	}
-	return s.persistBootMarkLocked(end, digest)
-}
-
-// checkpointReplayProgress writes a resume mark for the journal prefix a replay
-// has ALREADY applied, while that replay is still running.
-//
-// WHY THIS EXISTS. checkpointCatalogMark refuses to mark anything until
-// recordCatalogHydrated is set, on the grounds that the control tables do not
-// describe the whole journal prefix mid-hydration. That is true and irrelevant:
-// frames are applied IN ORDER, so a mark at the applied offset claims the prefix
-// [0, off) and nothing more — exactly what it claims after a clean finish, just
-// earlier. Without it a replay that is interrupted has written no mark at all,
-// the next boot finds a populated control database whose engine record stream
-// was never flushed, discards the database (flatsql_boot_state.go: "populated
-// control database … has no flushed engine record stream") and re-derives from
-// byte zero. A long replay then never survives a restart, which is
-// self-sustaining: too slow to finish ⇒ never checkpoints ⇒ discarded ⇒ replay
-// from zero. Measured on host-01 2026-09-14: a 21 GB control database thrown
-// away on every boot, hours of re-derivation each time.
-//
-// The ordering rule is unchanged and is the whole safety argument: the engine's
-// record stream is flushed BEFORE the mark is written, so a mark can only ever
-// claim bytes whose records the engine can already serve from disk. A flush
-// failure withholds the mark, and the next boot replays more, never less.
-//
-// digestPrefix is incremental (it extends a cached digest from digestOffset), so
-// calling this every N windows costs O(bytes since the last call), not O(prefix).
-func (s *FlatSQLStore) checkpointReplayProgress(off int64) error {
-	if s.readOnly || !s.controlDBDurable || s.recordCatalog == nil || s.recordCatalog.f == nil {
-		return nil
-	}
-	if valid := s.recordCatalog.validLength(); off > valid {
-		off = valid
-	}
-	if off <= 0 {
-		return nil
-	}
-	digest, err := s.recordCatalog.digestPrefix(off)
-	if err != nil {
-		return fmt.Errorf("checkpoint replay progress: digest: %w", err)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.flushEngineStateLocked(); err != nil {
-		return err
-	}
-	if err := s.persistBootMarkLocked(off, digest); err != nil {
-		return err
-	}
-	// Keep the runtime applied offset in step so a later checkpointCatalogMark
-	// cannot write a mark BEHIND the one just persisted.
-	s.noteCatalogAppliedThrough(off)
-	return nil
-}
-
 // flushEngineStateLocked persists the engine's record stream + index
 // (flatsql_flush_index: append the new stream bytes, fsync them, then commit
-// the index pages and the high-water mark). It runs IMMEDIATELY BEFORE every
-// resume mark is written and never after: a mark may only ever claim journal
-// bytes whose records the engine can already serve from disk, so the next
-// boot ingests the tail past the mark and nothing else. A flush failure
-// therefore withholds the mark — the next boot replays more, never less.
-// Requires the store write lock.
+// the index pages and the high-water mark in the same transaction). Requires
+// the store write lock.
 func (s *FlatSQLStore) flushEngineStateLocked() error {
-	if s.readOnly || !s.controlDBDurable || s.engineDB == nil {
+	if !s.controlDBDurable || s.engineDB == nil {
 		return nil
 	}
 	if s.engine != nil && s.engine.Poisoned() {
-		return errors.New("checkpoint record catalog: engine poisoned — record state not flushed, mark withheld")
+		return errors.New("checkpoint: engine poisoned — record state not flushed, mark withheld")
 	}
 	if err := s.engineDB.FlushIndex(); err != nil {
-		return fmt.Errorf("checkpoint record catalog: flush engine record state: %w", err)
+		return fmt.Errorf("checkpoint: flush engine record state: %w", err)
 	}
 	return nil
 }
 
-// checkpointRecordCatalogLocked is the same operation for a caller that ALREADY
-// holds the store write lock (Close). It is the only path that pays for the
-// digest under the lock, and it runs exactly once per process. It too advances
-// both marks — a clean shutdown is precisely when the auxiliary mark is most
-// worth having.
-func (s *FlatSQLStore) checkpointRecordCatalogLocked() error {
+// checkpointLocked is Checkpoint for a caller that ALREADY holds the store
+// write lock (Close). It pays for the auxiliary digest under the lock, once
+// per process.
+func (s *FlatSQLStore) checkpointLocked() error {
 	auxErr := s.checkpointAuxiliaryMarkLocked()
-	return errors.Join(s.checkpointCatalogMarkLocked(), auxErr)
+	return errors.Join(s.checkpointEngineLocked(), auxErr)
 }
 
 func (s *FlatSQLStore) checkpointAuxiliaryMarkLocked() error {
@@ -1657,76 +1114,23 @@ func (s *FlatSQLStore) checkpointAuxiliaryMarkLocked() error {
 	return s.persistAuxiliaryMarkLocked(end, digest)
 }
 
-func (s *FlatSQLStore) checkpointCatalogMarkLocked() error {
-	if s.readOnly || !s.controlDBDurable || s.recordCatalog == nil || s.recordCatalog.f == nil {
+// persistEngineMarkLocked records the index rowid the engine hot window has
+// been mirrored through. Requires the store write lock.
+func (s *FlatSQLStore) persistEngineMarkLocked(rowID int64) error {
+	if !s.controlDBDurable || rowID <= 0 {
 		return nil
 	}
-	if !s.recordCatalogHydrated.Load() {
-		return nil
-	}
-	// THE MARK FOLLOWS THE APPLIED OFFSET, NOT THE FILE LENGTH. Journal bytes
-	// past what this store has actually applied are exactly the bytes the next
-	// boot must replay.
-	end := s.appliedOffset.Load()
-	if valid := s.recordCatalog.validLength(); end > valid {
-		end = valid
-	}
-	if end <= 0 {
-		return nil
-	}
-	digest, err := s.recordCatalog.digestPrefix(end)
-	if err != nil {
-		return fmt.Errorf("checkpoint record catalog: digest: %w", err)
-	}
-	if err := s.flushEngineStateLocked(); err != nil {
-		return err
-	}
-	return s.persistBootMarkLocked(end, digest)
-}
-
-// persistBootMarkLocked writes the three record-catalog handshake rows.
-// Requires the store write lock. Deliberately three single-row upserts and
-// nothing else: this is the entire footprint of a checkpoint inside the lock.
-func (s *FlatSQLStore) persistBootMarkLocked(end int64, digest string) error {
-	rows := [][2]string{
+	if err := s.upsertBootMarkRowsLocked("engine coverage", [][2]string{
 		{bootMarkFormatKey, bootMarkFormat},
-		{bootMarkOffsetKey, strconv.FormatInt(end, 10)},
-		{bootMarkDigestKey, digest},
-	}
-	// The engine claims the same coverage ONLY when its hot window is hydrated
-	// (every record below end was mirrored into it, live or by the pass) and
-	// the flush that precedes this mark succeeded — flushEngineStateLocked
-	// runs immediately before every caller of this function.
-	if s.engineHotHydrated.Load() {
-		rows = append(rows, [2]string{bootMarkEngineOffsetKey, strconv.FormatInt(end, 10)})
-	}
-	if err := s.upsertBootMarkRowsLocked("record catalog", rows); err != nil {
+		{bootMarkEngineRowIDKey, strconv.FormatInt(rowID, 10)},
+	}); err != nil {
 		return err
 	}
-	s.checkpointedOffset.Store(end)
-	// The sidecar lets the next boot trust [0, end) without re-reading it.
-	// Best-effort: without it the boot scans the whole journal, as before.
-	if err := s.recordCatalog.writePrefixMark(end, digest); err != nil {
-		log.Warnf("FlatSQL checkpoint: prefix mark not written (next boot scans the whole journal): %v", err)
-	}
+	s.engineMarkRowID.Store(rowID)
 	return nil
 }
 
-// persistEngineMarkLocked records the engine's journal coverage after a
-// complete hot-window hydration flushed its record stream: offset is the
-// journal length the pass snapshotted (live writes past it were mirrored by
-// the writer itself). Requires the store write lock.
-func (s *FlatSQLStore) persistEngineMarkLocked(offset int64) error {
-	if s.readOnly || !s.controlDBDurable || offset <= 0 {
-		return nil
-	}
-	return s.upsertBootMarkRowsLocked("engine coverage", [][2]string{
-		{bootMarkEngineOffsetKey, strconv.FormatInt(offset, 10)},
-	})
-}
-
-// persistAuxiliaryMarkLocked writes the auxiliary handshake rows. Same shape,
-// same lock, three more small upserts.
+// persistAuxiliaryMarkLocked writes the auxiliary handshake rows.
 func (s *FlatSQLStore) persistAuxiliaryMarkLocked(end int64, digest string) error {
 	if err := s.upsertBootMarkRowsLocked("auxiliary metadata", [][2]string{
 		{bootMarkFormatKey, bootMarkFormat},
@@ -1757,15 +1161,12 @@ func (s *FlatSQLStore) upsertBootMarkRowsLocked(what string, rows [][2]string) e
 	return nil
 }
 
-// runCheckpointLoop advances the mark periodically so a CRASH costs at most one
-// interval of replay. A clean shutdown checkpoints unconditionally in Close.
+// runCheckpointLoop advances the marks periodically so a CRASH costs at most one
+// interval. A clean shutdown checkpoints unconditionally in Close.
 //
 // It closes checkpointDone on the way out, and Close WAITS on that before it
-// tears anything down. That handshake is not decoration: without it the loop can
-// already be inside CheckpointRecordCatalog, blocked on s.mu, when Close takes
-// the lock and nils s.db — and the loop then dereferences a nil *sql.DB the
-// instant Close releases. Measured as a SIGSEGV in the node package's quota-GC
-// test, which closes a store while the daemon is still running.
+// tears anything down: without the handshake the loop can already be inside
+// Checkpoint, blocked on s.mu, when Close takes the lock and nils s.db.
 func (s *FlatSQLStore) runCheckpointLoop(interval time.Duration) {
 	defer close(s.checkpointDone)
 	ticker := time.NewTicker(interval)
@@ -1776,8 +1177,8 @@ func (s *FlatSQLStore) runCheckpointLoop(interval time.Duration) {
 			return
 		case <-ticker.C:
 			if s.checkpointDirty() {
-				if err := s.CheckpointRecordCatalog(); err != nil {
-					log.Warnf("FlatSQL boot-state checkpoint failed: %v", err)
+				if err := s.Checkpoint(); err != nil {
+					log.Warnf("FlatSQL checkpoint failed: %v", err)
 				}
 			}
 		}
@@ -1798,14 +1199,10 @@ func (s *FlatSQLStore) stopCheckpointLoop() {
 	})
 }
 
-// checkpointDirty reports whether enough journal has accumulated past the mark
-// to be worth a checkpoint. Reading the file size is far cheaper than taking
-// the store write lock, so the cheap question is asked first.
-// Either journal being dirty is enough; the checkpoint itself re-checks each
-// half's own eligibility.
+// checkpointDirty reports whether there is anything worth a checkpoint: engine
+// ingests since the last flush, or enough auxiliary journal past its mark.
 func (s *FlatSQLStore) checkpointDirty() bool {
-	if s.recordCatalog != nil && s.recordCatalog.f != nil &&
-		s.appliedOffset.Load()-s.checkpointedOffset.Load() >= checkpointDirtyBytes {
+	if s.engineUnflushed.Load() > 0 {
 		return true
 	}
 	if s.auxiliaryMetadata != nil && s.auxiliaryMetadata.f != nil &&
@@ -1815,37 +1212,20 @@ func (s *FlatSQLStore) checkpointDirty() bool {
 	return false
 }
 
-// newRecordCatalogDigest starts a running frame-header digest. The frame
-// version is mixed in first so a format change can never produce a colliding
-// fingerprint.
-func newRecordCatalogDigest() hash.Hash {
-	h := sha256.New()
-	fmt.Fprintf(h, "record-catalog-v%d\n", recordCatalogFrameVersion)
-	return h
-}
-
-// newAuxiliaryMetadataDigest is the same running state for the auxiliary
-// journal, with its OWN domain prefix. The two files share the 8-byte
-// {length, payload CRC32} frame header, so the walker below is shared; the
-// prefix is what makes a catalog digest and an auxiliary digest of the same
-// bytes different values, so neither journal's mark can ever be honoured
-// against the other's file.
+// newAuxiliaryMetadataDigest starts a running frame-header digest for the
+// auxiliary journal. The frame version and a domain prefix are mixed in first
+// so a format change can never produce a colliding fingerprint.
 func newAuxiliaryMetadataDigest() hash.Hash {
 	h := sha256.New()
 	fmt.Fprintf(h, "auxiliary-metadata-v%d\n", auxiliaryMetadataFrameVersion)
 	return h
 }
 
-// extendRecordCatalogDigest folds the frame headers in [*off, limit) into h and
-// advances *off. Caller holds the journal lock.
-func extendRecordCatalogDigest(h hash.Hash, f *os.File, off *int64, limit int64) error {
-	return extendRecordCatalogDigestTracking(h, f, off, limit, nil)
-}
-
-// extendRecordCatalogDigestTracking is extendRecordCatalogDigest that also
-// reports, through last (nil = don't care), the start offset of the final
-// frame it folded in — the boundary the checkpoint sidecar records.
-func extendRecordCatalogDigestTracking(h hash.Hash, f *os.File, off *int64, limit int64, last *int64) error {
+// extendJournalDigest folds the {length, payload CRC32} frame headers in
+// [*off, limit) into h and advances *off. Headers only: each carries the CRC of
+// its payload, so the digest transitively covers every payload byte in the
+// prefix in cheap 8-byte reads. Caller holds the journal lock.
+func extendJournalDigest(h hash.Hash, f *os.File, off *int64, limit int64) error {
 	var hdr [8]byte
 	for *off < limit {
 		if limit-*off < 8 {
@@ -1859,22 +1239,18 @@ func extendRecordCatalogDigestTracking(h hash.Hash, f *os.File, off *int64, limi
 			return fmt.Errorf("journal prefix %d ends mid-frame at %d", limit, *off)
 		}
 		h.Write(hdr[:])
-		if last != nil {
-			*last = *off
-		}
 		*off += 8 + n
 	}
 	return nil
 }
 
-// sealRecordCatalogDigest snapshots the running state and binds it to a
-// specific length. It CLONES rather than finalising, so the running state stays
-// usable for the next checkpoint — a Sum() on a live hash.Hash does not
-// consume it, but mixing the limit in would, so the clone is mandatory.
-func sealRecordCatalogDigest(h hash.Hash, limit int64) (string, error) {
+// sealJournalDigest snapshots the running state and binds it to a specific
+// length. It CLONES rather than finalising, so the running state stays usable
+// for the next checkpoint.
+func sealJournalDigest(h hash.Hash, limit int64) (string, error) {
 	m, ok := h.(encoding.BinaryMarshaler)
 	if !ok {
-		return "", errors.New("record catalog digest is not cloneable")
+		return "", errors.New("journal digest is not cloneable")
 	}
 	state, err := m.MarshalBinary()
 	if err != nil {
@@ -1883,44 +1259,11 @@ func sealRecordCatalogDigest(h hash.Hash, limit int64) (string, error) {
 	clone := sha256.New()
 	u, ok := clone.(encoding.BinaryUnmarshaler)
 	if !ok {
-		return "", errors.New("record catalog digest clone is not restorable")
+		return "", errors.New("journal digest clone is not restorable")
 	}
 	if err := u.UnmarshalBinary(state); err != nil {
 		return "", err
 	}
 	fmt.Fprintf(clone, ":%d", limit)
 	return hex.EncodeToString(clone.Sum(nil)), nil
-}
-
-// digestRecordCatalogPrefix fingerprints a journal file from scratch, for tests
-// and for any caller that has no running state.
-func digestRecordCatalogPrefix(f *os.File, limit int64) (string, error) {
-	h := newRecordCatalogDigest()
-	off := int64(0)
-	if err := extendRecordCatalogDigest(h, f, &off, limit); err != nil {
-		return "", err
-	}
-	return sealRecordCatalogDigest(h, limit)
-}
-
-// recordCatalogTrimThreshold is how much proven-redundant journal must
-// accumulate before boot rewrites the file. Rewriting costs a full copy of the
-// retained tail, so trimming a few megabytes every boot would be pure churn;
-// trimming a gigabyte is the whole point.
-// var, not const, so a test can exercise the rewrite without building a
-// 256 MB fixture. Production never changes it.
-var recordCatalogTrimThreshold int64 = 256 << 20
-
-// resetBootMarkAfterTrim clears the persisted resume mark after the journal has
-// been rewritten. The retained tail now starts at offset zero, so the old mark
-// names bytes that no longer exist: a stale mark would tell the next boot to
-// skip frames it has never applied. Clearing it costs one replay of the (now
-// small) tail and can never skip anything.
-func (s *FlatSQLStore) resetBootMarkAfterTrim() error {
-	if s.readOnly || !s.controlDBDurable || s.engineDB == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.persistBootMarkLocked(0, "")
 }

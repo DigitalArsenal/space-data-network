@@ -64,7 +64,8 @@ func TestEngineUpgradeRecoversStreamAboveFormerDiscardLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Size() <= engineReindexStreamCeiling {
+	const formerDiscardLimit = 32 << 20
+	if info.Size() <= formerDiscardLimit {
 		t.Fatal("fixture did not exceed former discard limit")
 	}
 	rt, db = open(strings.Replace(schema, "OBJECT_NAME:string", "OBJECT_NAME:[ubyte]", 1))
@@ -94,39 +95,5 @@ func TestEngineUpgradeRecoversStreamAboveFormerDiscardLimit(t *testing.T) {
 	rows, err = db.Query("SELECT COUNT(*) FROM CAT")
 	if err != nil || len(rows.Rows) != 1 || rows.Rows[0][0] != int64(66) {
 		t.Fatalf("records lost: %#v %v", rows, err)
-	}
-}
-
-func TestEngineFormatUpgradeKeepsJournalResumeAndServesExactlyOnce(t *testing.T) {
-	t.Setenv(checkpointIntervalEnv, "0")
-	base := filepath.Join(t.TempDir(), "store")
-	store := newEngineRecordsStore(t, base)
-	for i := 0; i < 4; i++ {
-		if _, err := store.Store("OMM", buildEngineOMM(t, uint32(30000+i), "Upgrade", 1700000000+int64(i)), "peer", nil); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.engineDB.Query("UPDATE _flatsql_state SET v='old-format' WHERE k='format_version'"); err != nil {
-		t.Fatal(err)
-	}
-	// Preserve the old-format checkpoint exactly as an older binary leaves it.
-	simulateCrash(t, store)
-	warm := reopenDeferred(t, base)
-	defer warm.Close()
-	stats := warm.BootReplay()
-	if !stats.Warm || !stats.EngineWarm || stats.EngineRecords != 4 || stats.FramesApplied != 0 {
-		t.Fatalf("upgrade lost warm resume: %+v", stats)
-	}
-	if got := engineFrameCount(t, warm, "OMM"); got != 4 {
-		t.Fatalf("upgrade serves %d rows, want exactly 4", got)
-	}
-	if loaded, err := warm.HydrateEngineHotWindowFromRecordCatalog(); err != nil || loaded != 0 {
-		t.Fatalf("upgrade reingested %d rows: %v", loaded, err)
-	}
-	if got := engineFrameCount(t, warm, "OMM"); got != 4 {
-		t.Fatalf("post-hydration duplicate rows: %d", got)
 	}
 }

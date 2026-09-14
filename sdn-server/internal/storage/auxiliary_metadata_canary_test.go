@@ -52,9 +52,7 @@ func TestAuxiliaryReplayCanaryStoreOpen(t *testing.T) {
 	}
 
 	// COLD: no control database at all, so the whole journal is replayed.
-	if err := removeControlDatabaseFiles(filepath.Join(basePath, flatSQLControlDBName)); err != nil {
-		t.Fatalf("discard control database: %v", err)
-	}
+	discardControlDatabaseForTest(t, basePath)
 	coldStart := time.Now()
 	cold := newFixtureStore(t, basePath)
 	coldOpen := time.Since(coldStart)

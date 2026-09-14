@@ -190,7 +190,7 @@ func TestAStaleViewProjectionIsRebuiltSoTheDerivedColumnsStayTrue(t *testing.T) 
 	if _, err := store.engineDB.Query(`CREATE VIEW "IRM" AS ` + stale); err != nil {
 		t.Fatalf("seed the stale view: %v", err)
 	}
-	if err := store.CheckpointRecordCatalog(); err != nil {
+	if err := store.Checkpoint(); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	if err := store.Close(); err != nil {

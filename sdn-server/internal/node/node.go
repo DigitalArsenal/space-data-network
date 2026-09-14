@@ -495,17 +495,15 @@ func (n *Node) init() error {
 			storage.WithEngineHotWindow(n.config.Storage.EngineHotWindow),
 			storage.WithEngineGenericHotWindow(n.config.Storage.EngineGenericHotWindow),
 			storage.WithAuxiliaryReplayChunkBytes(n.config.Storage.AuxiliaryReplayChunkBytes),
-			storage.WithDeferredBootRebuilds(),
-			storage.WithDeferredRecordCatalogReplay())
+			storage.WithDeferredBootRebuilds())
 		if err != nil {
 			return fmt.Errorf("failed to create storage: %w", err)
 		}
-		// Warm derived search indexes once the record catalog is hydrated so a
-		// restarted node serves its first cold search instead of answering
-		// SEARCH_INDEX_BUILDING (node-transfer tests, 2026-09-10). Builds run
+		// Warm derived search indexes so a restarted node serves its first
+		// cold search instead of answering SEARCH_INDEX_BUILDING. Builds run
 		// one at a time in the background on the store's existing slot.
 		go func(store *storage.FlatSQLStore) {
-			scheduled, skipped, err := store.WarmFullTextIndexesWhenHydrated(context.Background(), 2*time.Second)
+			scheduled, skipped, err := store.WarmFullTextIndexes()
 			if err != nil {
 				log.Warnf("search index warm-up not scheduled: %v", err)
 				return
@@ -2265,27 +2263,13 @@ func (n *Node) StartConfiguredFlowServices(ctx context.Context) {
 	}()
 }
 
-// recordCatalogHydrationLogEvery bounds how often the background record-catalog
-// replay logs progress (roughly every N applied records).
-const recordCatalogHydrationLogEvery = 25000
-
-// StartBackgroundRecordCatalogHydration primes provider query state after the
-// daemon has bound its admin/network surfaces. It runs entirely in a background
-// goroutine so daemon boot time is unaffected:
-//
-//  1. the linked-query OMM engine hot window is loaded from compact metadata
-//     (fast — makes epoch/nearest linked-data flows usable first), then
-//  2. the FULL record-catalog metadata is replayed into the SQL control tables
-//     and the derived source summaries are rebuilt, so records written before
-//     the last restart become visible again to /api/v1/stats sources[],
-//     /api/v1/data/index, and batch clear.
-//
-// Without step (2) — the historical bug this method fixes — pre-restart records
-// live only in the journal/stream files after a daemon (re)start and silently
-// vanish from the board on every restart / prod deploy, because boot hydrates
-// only the engine hot window and the full catalog replay was never wired to a
-// caller.
-func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
+// StartBackgroundEngineHydration brings the FlatSQL engine hot window current
+// after the daemon has bound its admin/network surfaces. It runs entirely in
+// a background goroutine so daemon boot time is unaffected: the record store
+// itself is complete the moment it opens, and the engine's sandboxed query
+// surface answers per standard as each window is reconciled (warm open) or
+// filled from the tables (cold engine).
+func (n *Node) StartBackgroundEngineHydration(ctx context.Context) {
 	if n == nil || n.store == nil {
 		return
 	}
@@ -2295,7 +2279,7 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 			defer n.wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					log.Errorf("FlatSQL background record-catalog hydration panicked: %v", r)
+					log.Errorf("FlatSQL background engine hydration panicked: %v", r)
 				}
 			}()
 			select {
@@ -2306,160 +2290,38 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 			default:
 			}
 
-			// (0) Timestamp index on every routed table that predates it. Before
-			// the catalog replay, because the replay's retention frames and the
-			// age-based GC delete by `timestamp < ?`; without the index each
-			// one scans the table under the write lock (335 ms per frame on a
-			// routed $TBS table, 2026-09-02). One lock hold per table; a no-op
-			// on stores that already carry it.
-			if created, err := n.store.EnsureRoutedTimestampIndexes(n.ctx); err != nil {
-				if n.ctx.Err() == nil {
-					log.Errorf("FlatSQL routed timestamp index backfill failed: %v", err)
-				}
-			} else if created > 0 {
-				log.Infof("FlatSQL routed timestamp index backfill complete: %d indexes created", created)
-			}
+			// The store can answer "do I hold this source's records?" from
+			// the moment it opens, so the retrieval ledger is reconciled
+			// first. Flow services may already have registered against the
+			// unreconciled ledger and skipped their first fire on a claim
+			// that has just been withdrawn — hence refire.
+			n.reconcileRetrievalLedger(true)
 
-			// (1) Full control-table replay + derived source summaries FIRST.
-			//
-			// ORDER MATTERS FOR SURVIVAL, not for speed. The catalog replay
-			// ends in a checkpoint that writes the resume mark; without that
-			// mark the next boot discards the whole control database — and
-			// the engine's flushed record state with it. Running the engine
-			// hot window first (the old order) meant a restart anywhere in
-			// its minutes-long cold pass, or before the catalog replay after
-			// it, threw everything away (measured 2026-09-02: three cold
-			// rebuilds in a row). Catalog first: a few minutes into a cold
-			// boot the database is already safe to keep; the engine window
-			// then flushes and writes its own coverage mark, after which a
-			// restart opens both in milliseconds. On a WARM boot both steps
-			// are tail-only and this order costs nothing.
-			//
-			// n.ctx, NOT ctx. This goroutine is tracked by n.wg, and Stop()
-			// signals shutdown with n.cancel(), which cancels n.ctx only —
-			// n.ctx is a CHILD of the daemon ctx (see New). Watching the
-			// parent here made n.wg.Wait() in Stop() UNSATISFIABLE: the
-			// parent's cancel is deferred in runDaemon and therefore does
-			// not fire until after Stop() has already returned. The replay
-			// is written to be cancellable and logs its own early exit; it
-			// simply never received the signal. Measured consequence on
-			// host-01: 15 of 22 stops on 2026-08-09 ran the full 90 s
-			// TimeoutStopSec and died on SIGKILL, every restart a 2-4 minute
-			// public outage. n.ctx also fires on parent cancellation, so this
-			// is strictly more responsive, never less.
-			n.hydrateFullRecordCatalog(n.ctx)
-
-			// (2) Engine hot window: on a warm boot only the journal tail
-			// past the engine's coverage mark; on a cold boot the batched,
-			// per-batch-locked rebuild that readers interleave with.
-			//
-			// n.ctx for the same reason as above: this goroutine is tracked
-			// by n.wg and Stop() cancels n.ctx only.
-			count, err := n.store.HydrateEngineHotWindowFromRecordCatalogContext(n.ctx)
+			// n.ctx, NOT ctx: this goroutine is tracked by n.wg, and Stop()
+			// signals shutdown with n.cancel(), which cancels n.ctx only.
+			// Watching the parent made n.wg.Wait() in Stop() unsatisfiable
+			// (measured on host-01: 15 of 22 stops ran the full 90 s
+			// TimeoutStopSec and died on SIGKILL).
+			start := time.Now()
+			count, err := n.store.HydrateEngineHotWindowContext(n.ctx)
 			if err != nil {
-				log.Errorf("FlatSQL compact engine hot-window hydration failed: %v", err)
-			} else {
-				log.Infof("FlatSQL compact engine hot-window hydration complete: %d records", count)
+				if n.ctx.Err() == nil {
+					log.Errorf("FlatSQL engine hot-window hydration failed: %v", err)
+				}
+				// A hydration that TRAPPED leaves the engine poisoned, and a
+				// poisoned engine fails every later query for the life of the
+				// process. Rebuild it here: recovery reopens the same database
+				// and brings the window current itself.
+				if epoch, rerr := n.store.RecoverPoisonedEngine(); rerr != nil {
+					log.Errorf("FlatSQL engine recovery after failed hydration also failed: %v", rerr)
+				} else {
+					log.Warnf("FlatSQL engine recovered after failed hot-window hydration (epoch %d)", epoch)
+				}
+				return
 			}
+			log.Infof("FlatSQL engine hot-window hydration complete: %d records ingested in %s", count, time.Since(start).Round(time.Millisecond))
 		}()
 	})
-}
-
-// hydrateFullRecordCatalog replays the full compact record catalog into the SQL
-// control tables and rebuilds the derived source summaries, with progress and
-// completion logging (counts + duration). Panic-safe on its own so a replay bug
-// is contained to this goroutine and never brings the daemon down.
-//
-// The replay itself takes and releases the store write lock per window, so it
-// never starves readers, and it honours ctx so a shutdown mid-hydration drains
-// promptly instead of leaving the process grinding through SIGTERM.
-func (n *Node) hydrateFullRecordCatalog(ctx context.Context) {
-	if n == nil || n.store == nil {
-		return
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			log.Errorf("FlatSQL full record-catalog replay panicked: %v", r)
-		}
-	}()
-
-	start := time.Now()
-	log.Info("FlatSQL full record-catalog metadata replay starting (background post-boot)")
-	logged := 0
-	progress := func(done int) {
-		if done-logged >= recordCatalogHydrationLogEvery {
-			logged = done
-			log.Infof("FlatSQL record-catalog replay progress: %d records in %s", done, time.Since(start).Round(time.Millisecond))
-		}
-	}
-	replayed, err := n.store.ReplayRecordCatalogContext(ctx, false, progress)
-	if err != nil {
-		if ctx.Err() != nil {
-			log.Infof("FlatSQL full record-catalog replay cancelled at %d records after %s (shutdown); "+
-				"the in-memory control tables hold NO durable state of their own, so this is NOT a checkpoint — "+
-				"next boot restarts the replay from the beginning of the journal, not from %d",
-				replayed, time.Since(start).Round(time.Millisecond), replayed)
-			return
-		}
-		log.Errorf("FlatSQL full record-catalog replay failed after %s: %v", time.Since(start).Round(time.Millisecond), err)
-		// A replay that TRAPPED leaves the engine poisoned, and a poisoned
-		// engine fails every later query for the life of the process — the
-		// daemon would keep answering /api/* with errors and never recover
-		// without an operator restart, which is what host-02 did all of
-		// 2026-07-29. Rebuild it here: recovery does NOT re-run this replay
-		// (recordCatalogHydrated is false precisely because it failed), so
-		// there is no trap-recover-trap loop. The catalog stays unhydrated —
-		// degraded and honest — while the hot window is rebuilt from the
-		// stream files, which is what serving actually needs.
-		if epoch, rerr := n.store.RecoverPoisonedEngine(); rerr != nil {
-			log.Errorf("FlatSQL engine recovery after failed replay also failed: %v", rerr)
-		} else {
-			log.Warnf("FlatSQL engine recovered after failed record-catalog replay (epoch %d); the compact catalog is NOT hydrated", epoch)
-		}
-		return
-	}
-	// RebuildSourceSummaries takes no context and holds the single global
-	// engine lock for its whole duration, so once it starts, shutdown waits
-	// for it. Do not start it if shutdown has already been signalled: the
-	// summaries are a DERIVED cache with no durable state of their own, and
-	// the next boot rebuilds them.
-	if ctx.Err() != nil {
-		log.Infof("FlatSQL source-summary rebuild skipped: shutdown signalled (%v); summaries are derived and rebuild on next boot", ctx.Err())
-		return
-	}
-	if err := n.store.RebuildSourceSummaries(); err != nil {
-		log.Errorf("FlatSQL source-summary rebuild after replay failed: %v", err)
-		return
-	}
-
-	sources, total := 0, int64(0)
-	if summary, sErr := n.store.DataSummary(); sErr == nil && summary != nil {
-		sources = len(summary.Sources)
-		total = summary.TotalRecords
-	}
-	log.Infof("FlatSQL full record-catalog hydration complete: replayed=%d sources=%d total_records=%d in %s",
-		replayed, sources, total, time.Since(start).Round(time.Millisecond))
-
-	// The boot-time registry Load ran against this store BEFORE the PRR
-	// stream was replayed and silently came up empty of learned rows —
-	// EPMData, vCards and owner-set trust vanished on every restart
-	// (sdn-peer-registry-load-races-hydration; owner-visible as peer cards
-	// falling back to "SDN Node" after a deploy). Now that hydration is
-	// complete the projection is finally readable in full: merge it in.
-	if n.peerRegistry != nil {
-		if adopted, rErr := n.peerRegistry.ReloadFromPersistence(); rErr != nil {
-			log.Errorf("peer-registry reload after hydration failed: %v", rErr)
-		} else if adopted > 0 {
-			log.Infof("peer-registry reload after hydration: %d peer row(s) restored from the persisted projection", adopted)
-		}
-	}
-
-	// The store can now answer "do I hold this source's records?" honestly, so
-	// this is the first moment the retrieval ledger can be reconciled against
-	// it. Flow services may already have registered against the unreconciled
-	// ledger and skipped their first fire on a claim that has just been
-	// withdrawn — hence refire.
-	n.reconcileRetrievalLedger(true)
 }
 
 func (n *Node) setupSchemaPubSubTopics(ctx context.Context) {
@@ -2660,18 +2522,10 @@ func (n *Node) firstFireFlowServiceIfDue(sf *flowrt.ServiceFlow) {
 // records did not is not a reporting glitch: the ledger is what GATES
 // re-fetch, so every stale row shuts a lane that has no data to serve.
 //
-// SAFETY. The evidence is only trustworthy once the compact record catalog has
-// been replayed — on a node that deferred that replay the provenance tables are
-// legitimately empty, and treating that as data loss would send this node back
-// to a publisher it does not owe a pull. So an unhydrated (or mid-hydration)
-// store means SKIP, not invalidate; hydrateFullRecordCatalog calls this again
-// when the evidence is real.
+// The store's provenance tables are complete the moment it opens (the record
+// store is one disk-backed database), so the evidence is real from boot.
 func (n *Node) reconcileRetrievalLedger(refire bool) {
 	if n == nil || n.sourceMetrics == nil || n.store == nil {
-		return
-	}
-	if n.store.RecordCatalogHydrating() || !n.store.RecordCatalogHydrated() {
-		log.Infof("Retrieval ledger reconciliation deferred: the compact record catalog is not hydrated yet, so an empty store is not yet evidence of an empty store")
 		return
 	}
 	held, err := n.store.SourceRecordCounts()

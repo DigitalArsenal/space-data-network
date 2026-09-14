@@ -62,9 +62,7 @@ func TestAuxiliaryReplayByteBudgetSplitsChunksWithoutLosingFrames(t *testing.T) 
 		t.Fatalf("Close(): %v", err)
 	}
 
-	if err := removeControlDatabaseFiles(filepath.Join(basePath, flatSQLControlDBName)); err != nil {
-		t.Fatalf("discard control database: %v", err)
-	}
+	discardControlDatabaseForTest(t, basePath)
 	cold := newFixtureStoreWithOptions(t, basePath, WithAuxiliaryReplayChunkBytes(4<<10))
 	defer cold.Close()
 
@@ -98,9 +96,7 @@ func TestAuxiliaryReplayByteBudgetNeverStallsOnAnOversizedFrame(t *testing.T) {
 		t.Fatalf("Close(): %v", err)
 	}
 
-	if err := removeControlDatabaseFiles(filepath.Join(basePath, flatSQLControlDBName)); err != nil {
-		t.Fatalf("discard control database: %v", err)
-	}
+	discardControlDatabaseForTest(t, basePath)
 	cold := newFixtureStoreWithOptions(t, basePath, WithAuxiliaryReplayChunkBytes(256))
 	defer cold.Close()
 

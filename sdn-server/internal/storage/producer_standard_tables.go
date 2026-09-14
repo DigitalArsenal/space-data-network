@@ -20,6 +20,7 @@ var producerStandardIdentRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 type sqlQueryExecer interface {
 	sqlExecer
 	QueryRow(query string, args ...any) *sql.Row
+	Query(query string, args ...any) (*sql.Rows, error)
 }
 
 func isSafeIdentifier(s string) bool { return producerStandardIdentRe.MatchString(s) }
@@ -87,6 +88,9 @@ func (s *FlatSQLStore) ensureProducerStandardTable(producerID, schemaName string
 		}
 		if _, err := s.db.Exec(flatsqldrv.WithoutJournal(routedTimestampIndexSQL(tableName))); err != nil {
 			return "", fmt.Errorf("create (producer, standard) timestamp index on %s: %w", tableName, err)
+		}
+		if _, err := s.db.Exec(schemaSupersedeIndexSQL(tableName)); err != nil {
+			return "", fmt.Errorf("create (producer, standard) supersede index on %s: %w", tableName, err)
 		}
 	}
 	return tableName, nil
@@ -164,28 +168,15 @@ func routedProducerID(peerID string) string {
 	return peerID
 }
 
-// mirrorRoutedRecord writes the (producer, standard) metadata row for a record
-// whose payload already lives in the shared FlatSQL stream. Used by the
-// repeat-CID path (the content row already exists under some producer; this
-// records that THIS producer also published it). Best-effort: a repeat-CID
-// mirror failure must never fail the caller. Callers hold s.mu.
-func (s *FlatSQLStore) mirrorRoutedRecord(exec sqlExecer, schemaName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte) {
-	tableName, err := s.ensureProducerStandardTable(routedProducerID(peerID), schemaName)
-	if err != nil {
-		log.Warnf("Routed mirror: ensure (producer, standard) table for %s/%s: %v", peerID, schemaName, err)
-		return
-	}
-	if err := insertSchemaMetadata(exec, tableName, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signature, timestamp); err != nil {
-		log.Warnf("Routed mirror: insert into %s for %s: %v", tableName, cid[:16]+"...", err)
-	}
-}
-
 // mirrorRoutedRecordFromExisting records a repeat CID (possibly from a
-// different producer) in that producer's (producer, standard) table: the
-// stream coordinates are read from the record read source (any table already
-// holding the content row — routed, or legacy on pre-flip databases).
+// different producer) in THIS producer's (producer, standard) table, copying
+// the stored bytes from whichever table already holds the content row. A
+// $CAT record supersedes the producer's previous record for the same object
+// exactly as a first-time store does; the CIDs whose last copy that removed
+// are returned for the caller to tombstone in the engine after its commit.
+// Best-effort: a repeat-CID mirror failure must never fail the caller.
 // Callers hold s.mu.
-func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schemaName, cid, peerID string, signature []byte) {
+func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schemaName, cid, peerID string, signature []byte) []string {
 	// Inlined cid predicate, not an outer one: this runs ONCE PER REPEAT RECORD
 	// on the ingest path, inside the store's WRITE lock. With the predicate
 	// outside the union's GROUP BY it full-scanned every (producer, standard)
@@ -196,34 +187,41 @@ func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schem
 	readSource, err := s.recordReadSourceFiltered(schemaName, "cid = ?1")
 	if err != nil {
 		log.Warnf("Routed mirror: read source for %s: %v", schemaName, err)
-		return
+		return nil
 	}
 	var (
 		timestamp    int64
-		streamPath   string
-		streamOffset int64
-		recordLength int64
+		stored       []byte
+		supersedeKey sql.NullString
 	)
 	err = exec.QueryRow(
-		fmt.Sprintf(`SELECT timestamp, stream_path, stream_offset, record_length FROM %s WHERE cid = ?1`, readSource),
+		fmt.Sprintf(`SELECT timestamp, data, supersede_key FROM %s WHERE cid = ?1`, readSource),
 		cid,
-	).Scan(&timestamp, &streamPath, &streamOffset, &recordLength)
+	).Scan(&timestamp, &stored, &supersedeKey)
 	if err != nil {
 		log.Warnf("Routed mirror: read existing %s record %s: %v", schemaName, cid[:16]+"...", err)
-		return
+		return nil
 	}
-	s.mirrorRoutedRecord(exec, schemaName, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signature)
+	tableName, err := s.ensureProducerStandardTable(routedProducerID(peerID), schemaName)
+	if err != nil {
+		log.Warnf("Routed mirror: ensure (producer, standard) table for %s/%s: %v", peerID, schemaName, err)
+		return nil
+	}
+	superseded, err := s.supersedeInProducerTableTx(exec, schemaName, tableName, supersedeKey.String, cid)
+	if err != nil {
+		log.Warnf("Routed mirror: supersede in %s for %s: %v", tableName, cid[:16]+"...", err)
+		return nil
+	}
+	if err := insertSchemaMetadata(exec, tableName, storedRecord{cid: cid, peerID: peerID, timestamp: timestamp, data: stored, signature: signature, createdAt: timestamp, supersedeKey: supersedeKey.String}); err != nil {
+		log.Warnf("Routed mirror: insert into %s for %s: %v", tableName, cid[:16]+"...", err)
+	}
+	return superseded
 }
 
 // StoreRoutedByProducer stores a record into the (producer, standard) table for
-// its producer (peerID) and schema — the (producer, standard) counterpart of
-// Store. It appends the payload to the shared FlatSQL stream and updates the
-// record index exactly like Store, but the metadata row lands in the producer's
-// own table, keeping each publisher's records separated. Content-addressed
-// records are immutable, so a repeat CID is a no-op.
-//
-// This adds the routed write path without changing the existing per-standard
-// Store; readers migrate to the (producer, standard) tables in WS7.3.
+// its producer (peerID) and schema, keyed by the raw peer id rather than the
+// routedProducerID normalisation Store applies. It is Store without the engine
+// mirror; a repeat CID in the producer's own table is a no-op.
 func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -242,23 +240,38 @@ func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, pee
 	}
 
 	now := time.Now().Unix()
-	streamPath, streamOffset, recordLength, err := s.appendFlatSQLStreamRecord(schemaName, data)
+	stored, err := s.storableRecordBytes(schemaName, data)
 	if err != nil {
-		return "", fmt.Errorf("failed to append FlatSQL stream record: %w", err)
+		return "", err
 	}
-	if err := insertSchemaMetadata(s.db, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", fmt.Errorf("begin store: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	key := recordSupersedeKey(schemaName, data)
+	superseded, err := s.supersedeInProducerTableTx(tx, schemaName, tableName, key, cid)
+	if err != nil {
+		return "", err
+	}
+	if err := insertSchemaMetadata(tx, tableName, storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key}); err != nil {
 		return "", fmt.Errorf("failed to store data: %w", err)
 	}
-	if err := s.upsertRecordIndex(schemaName, cid, now, data); err != nil {
+	if err := upsertRecordIndexExec(tx, schemaName, cid, now, data, s.fullTextState(schemaName)); err != nil {
 		// Do not fail writes if index extraction fails for a record.
 		log.Warnf("Failed to index %s record %s: %v", schemaName, cid[:16]+"...", err)
 	}
-	event, err := s.recordCatalogUpsertEvent(s.db, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now, data)
-	if err != nil {
-		return "", fmt.Errorf("record catalog event: %w", err)
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit store: %w", err)
 	}
-	if err := s.appendCatalogEvent(event); err != nil {
-		return "", fmt.Errorf("append record catalog event: %w", err)
+	committed = true
+	if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded); err != nil {
+		return "", err
 	}
 	return cid, nil
 }
@@ -409,19 +422,17 @@ func (s *FlatSQLStore) queryRoutedTables(match func(ProducerStandardTable) bool,
 
 // recordReadColumns is the shared column list of every record metadata table
 // (legacy per-standard and (producer, standard) alike).
-const recordReadColumns = "cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at"
+const recordReadColumns = "cid, peer_id, timestamp, data, record_length, signature_hex, supersede_key, created_at"
 
 // emptyRecordReadSource is a valid, always-empty FROM target with the shared
 // record-metadata column set — used when NO table (legacy or routed) exists
 // yet for a standard (v1 databases never pre-create legacy tables).
 const emptyRecordReadSource = "(SELECT 0 AS rowid, '' AS cid, '' AS peer_id, 0 AS timestamp, " +
-	"'' AS stream_path, 0 AS stream_offset, 0 AS record_length, '' AS signature_hex, 0 AS created_at WHERE 0)"
+	"X'' AS data, 0 AS record_length, '' AS signature_hex, '' AS supersede_key, 0 AS created_at WHERE 0)"
 
-// recordReadSource returns a SQL FROM/JOIN target spanning every table that
-// holds records for the standard: the (producer, standard) tables, plus the
-// legacy per-standard table when it exists (pre-flip databases; v1 stores are
-// routed-only and never create it). Rows are deduplicated by cid; rowid is
-// carried as an ordering tiebreaker only. With exactly one backing table the
+// recordReadSource returns a SQL FROM/JOIN target spanning every
+// (producer, standard) table that holds records for the standard. Rows are
+// deduplicated by cid; rowid is carried as an ordering tiebreaker only. With exactly one backing table the
 // bare table name is returned, keeping single-table query plans unchanged.
 // Callers hold s.mu.
 func (s *FlatSQLStore) recordReadSource(schemaName string) (string, error) {
@@ -468,20 +479,17 @@ func (s *FlatSQLStore) recordReadSource(schemaName string) (string, error) {
 //
 // Callers hold s.mu.
 func (s *FlatSQLStore) recordReadSourceFiltered(schemaName, branchWhere string) (string, error) {
-	legacy, err := sds.SchemaNameToTable(schemaName)
+	standard, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
 		return "", err
 	}
 	tables := []string{}
-	if exists, err := s.tableExists(legacy); err == nil && exists {
-		tables = append(tables, legacy)
-	}
 	producerTables, err := s.listProducerStandardTables()
 	if err != nil {
 		log.Warnf("recordReadSource: list (producer, standard) tables: %v", err)
 	} else {
 		for _, t := range producerTables {
-			if t.Standard == legacy {
+			if t.Standard == standard {
 				tables = append(tables, t.TableName)
 			}
 		}
@@ -526,8 +534,7 @@ func (s *FlatSQLStore) rawRecordReadSource(schemaName string) (string, error) {
 	schemaLiteral := strings.ReplaceAll(schemaName, "'", "''")
 	return fmt.Sprintf(
 		`(SELECT idx.rowid AS rowid, rr.cid AS cid, rr.peer_id AS peer_id, `+
-			`rr.timestamp AS timestamp, rr.stream_path AS stream_path, `+
-			`rr.stream_offset AS stream_offset, rr.record_length AS record_length, `+
+			`rr.timestamp AS timestamp, rr.data AS data, rr.record_length AS record_length, `+
 			`rr.signature_hex AS signature_hex, rr.created_at AS created_at `+
 			`FROM sdn_record_index idx JOIN %s rr ON rr.cid = idx.cid `+
 			`WHERE idx.schema_name = '%s')`,
