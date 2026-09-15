@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 )
 
 func TestIsSensitiveCapabilityTiering(t *testing.T) {
@@ -216,5 +218,50 @@ func TestCapabilityPolicyStoreListAndForModule(t *testing.T) {
 	forA := policy.ForModule("hash-a")
 	if len(forA) != 2 {
 		t.Fatalf("ForModule(hash-a) returned %d entries, want 2", len(forA))
+	}
+}
+
+// A denied capability is an operator-visible fact, not just an error string
+// handed back to whoever tried to mount the artifact — a flow refused at boot
+// otherwise leaves one log line and then nothing.
+func TestCapabilityDenialRaisesAndApprovalClearsTheAlert(t *testing.T) {
+	registry := ops.NewRegistry()
+	SetAlerts(registry)
+	t.Cleanup(func() { SetAlerts(nil) })
+
+	const pluginID = "celestrak-satcat-ingest"
+	hash := "beefcafe"
+
+	if err := checkCapabilityPolicy(nil, hash, pluginID, []string{"wallet_sign"}); err == nil {
+		t.Fatal("expected a denial with no policy")
+	}
+	active := registry.Active()
+	if len(active) != 1 {
+		t.Fatalf("Active() = %+v, want one alert", active)
+	}
+	if active[0].Kind != ops.KindFlowCapabilityDenied || active[0].Subject != pluginID {
+		t.Fatalf("alert = %s/%s, want %s/%s", active[0].Kind, active[0].Subject, ops.KindFlowCapabilityDenied, pluginID)
+	}
+	if active[0].Severity != ops.SeverityError {
+		t.Errorf("Severity = %q, want %q: the artifact did not load", active[0].Severity, ops.SeverityError)
+	}
+
+	policy, err := NewCapabilityPolicyStore("") // in-memory
+	if err != nil {
+		t.Fatalf("NewCapabilityPolicyStore: %v", err)
+	}
+	if _, err := policy.Approve(CapabilityApproval{
+		ModuleHash: hash,
+		PluginID:   pluginID,
+		Capability: "wallet_sign",
+		ApprovedBy: "operator",
+	}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if err := checkCapabilityPolicy(policy, hash, pluginID, []string{"wallet_sign"}); err != nil {
+		t.Fatalf("approved capability still denied: %v", err)
+	}
+	if got := registry.Active(); len(got) != 0 {
+		t.Fatalf("Active() = %+v, want empty once the plugin provisions", got)
 	}
 }

@@ -19,6 +19,12 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
+// ErrPNMAnnouncement marks a failure to handle a dataset publication
+// announcement. It is wrapped, not formatted, so a caller can tell a rejected
+// PUBLICATION from any other failed pubsub message (an operational alert is
+// raised for the former) without matching on log text.
+var ErrPNMAnnouncement = errors.New("failed to handle PNM announcement")
+
 // Protocol timeouts
 const (
 	// DefaultHandlerTimeout is the default timeout for protocol handlers
@@ -568,7 +574,7 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 		}
 		if h.pnmHandler != nil {
 			if err := h.pnmHandler(ctx, schema, data, from); err != nil {
-				return fmt.Errorf("failed to handle PNM announcement: %w", err)
+				return fmt.Errorf("%w: %w", ErrPNMAnnouncement, err)
 			}
 		}
 		log.Debugf("PubSub PNM announcement accepted from %s on %s", from.ShortString(), schema)

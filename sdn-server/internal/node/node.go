@@ -64,6 +64,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/metrics"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
@@ -131,6 +132,12 @@ type Node struct {
 	mountedFlows   []*flowrt.MountedFlow
 	config         *config.Config
 	identityBundle *IdentityBundle
+
+	// alerts is the node's OPERATIONAL ALERT registry (internal/ops): what
+	// is currently wrong with this node, kept in memory, rebuilt at boot from
+	// durable state, and surfaced on /health, /api/v1/status/alerts and
+	// /metrics. Never nil after New().
+	alerts *ops.Registry
 
 	// sourceMetrics is the node's OPERATIONAL retrieval ledger — its own
 	// sqlite file beside (never inside) the record store, holding what the
@@ -296,7 +303,12 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 		epmExchangeLastRequest:  make(map[peer.ID]time.Time),
 		autoRelayPeerChan:       make(chan peer.AddrInfo, 64),
 		datasetMaterializedPNMs: make(map[string]time.Time),
+		alerts:                  ops.NewRegistry(),
 	}
+
+	// The capability gate lives two packages down and is reached from paths
+	// that carry no node context, so it is handed the registry once here.
+	modulert.SetAlerts(n.alerts)
 
 	if err := n.init(); err != nil {
 		cancel()
@@ -521,6 +533,11 @@ func (n *Node) init() error {
 		} else {
 			n.sourceMetrics = metricsStore
 			n.installSourceMetricsObservers()
+			// A lane that was failing when this daemon stopped is still
+			// failing now. The streak is in app_attempts; rebuild the
+			// alerts from it so a restart does not hide an outage.
+			metricsStore.SetAlerts(n.alerts)
+			metricsStore.SeedLaneAlerts()
 		}
 	}
 
@@ -2312,10 +2329,21 @@ func (n *Node) StartBackgroundEngineHydration(ctx context.Context) {
 				// poisoned engine fails every later query for the life of the
 				// process. Rebuild it here: recovery reopens the same database
 				// and brings the window current itself.
-				if epoch, rerr := n.store.RecoverPoisonedEngine(); rerr != nil {
+				//
+				// Both alerts go up for the duration: engine_poisoned is
+				// the fault, engine_rebuilding is the window in which the
+				// read gate answers ErrEngineRebuilding
+				// (storage.engineRebuilding is set for exactly this call).
+				n.alerts.Raise(ops.KindEnginePoisoned, "", ops.SeverityError, err.Error())
+				n.alerts.Raise(ops.KindEngineRebuilding, "", ops.SeverityWarning, "hot-window hydration trapped")
+				epoch, rerr := n.store.RecoverPoisonedEngine()
+				n.alerts.Clear(ops.KindEngineRebuilding, "")
+				if rerr != nil {
 					log.Errorf("FlatSQL engine recovery after failed hydration also failed: %v", rerr)
+					n.alerts.Raise(ops.KindEnginePoisoned, "", ops.SeverityError, rerr.Error())
 				} else {
 					log.Warnf("FlatSQL engine recovered after failed hot-window hydration (epoch %d)", epoch)
+					n.alerts.Clear(ops.KindEnginePoisoned, "")
 				}
 				return
 			}
@@ -2691,6 +2719,10 @@ func (n *Node) runDatasetPublicationPNMCatchup() {
 			return
 		case <-timer.C:
 			if materialized, err := n.materializeStoredDatasetPublicationPNMs(n.ctx, datasetPublicationCatchupLimit); err != nil {
+				// No alert here: this is the SUMMARY of the per-record
+				// failures inside, each of which already raised
+				// publication_rejected against the producer that published
+				// it. An alert keyed on this line would have no subject.
 				log.Warnf("Dataset publication PNM catch-up completed with errors after materializing %d update(s): %v", materialized, err)
 			} else if materialized > 0 {
 				log.Infof("Dataset publication PNM catch-up materialized %d update(s)", materialized)
@@ -3011,6 +3043,7 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 				firstErr = err
 			}
 			log.Warnf("Stored dataset PNM catch-up failed on %s: %v", schema, err)
+			n.raisePublicationRejected(record.PeerID, err)
 			continue
 		}
 		if didMaterialize {
@@ -3152,6 +3185,7 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 		// Process the message
 		if err := n.protocol.HandlePubSubMessage(schema, msg.Data, from); err != nil {
 			log.Warnf("Failed to handle message on %s: %v", schema, err)
+			n.raisePubSubPublicationRejected(from.String(), err)
 		} else {
 			// Activity-ring tap (M2 activity capability, caps/
 			// nodeactivity.go): a nil error here means
@@ -3760,6 +3794,7 @@ func (n *Node) handleTipQueueTip(tip *sdnpubsub.Tip, _ sdnpubsub.ResolvedConfig)
 	materialized, err := n.materializeDatasetPublicationPNM(n.ctx, schema, tip.RawPNM, from)
 	if err != nil {
 		log.Warnf("TipQueue: dataset PNM materialization failed for %s on %s from %s: %v", tip.CID, schema, from.ShortString(), err)
+		n.raisePublicationRejected(from.String(), err)
 		return
 	}
 	if materialized {
@@ -4235,6 +4270,9 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 	}
 	log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
 		from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
+	// A publication from this producer landed: whatever it was being rejected
+	// for, it is not being rejected now.
+	n.clearPublicationRejected(from.String())
 
 	// Materialization fetched these blocks through the local Kubo API, so
 	// they are already in the blockstore but unpinned. The lane's retention
@@ -5125,6 +5163,15 @@ func (n *Node) SyncLane(ctx context.Context, schema, providerID, sourceName stri
 		}
 		return true
 	})
+}
+
+// Alerts returns the node's operational alert registry — what is currently
+// wrong with this node. The health, status and metrics surfaces read it.
+func (n *Node) Alerts() *ops.Registry {
+	if n == nil {
+		return nil
+	}
+	return n.alerts
 }
 
 // SourceMetrics returns the operational retrieval ledger, or nil when it is

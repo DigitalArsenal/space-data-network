@@ -66,10 +66,59 @@ var (
 		Help:      "Records ingested from external sources, by source name.",
 	}, []string{"source"})
 
+	activeAlerts = newAlertsCollector()
+
 	mu               sync.RWMutex
 	peerCountFunc    func() int
 	storageCountFunc func() int64
+	alertCountsFunc  func() []AlertCount
 )
+
+// AlertCount is one (kind, severity) row of the node's operational alert
+// registry (internal/ops). It is repeated here rather than imported so the
+// metrics package keeps depending on nothing of the node's.
+type AlertCount struct {
+	Kind     string
+	Severity string
+	Count    int
+}
+
+// SetAlertCountsFunc wires the sdn_alerts_active gauge to the node's alert
+// registry. Call once at startup with ops.Registry.KindCounts.
+func SetAlertCountsFunc(f func() []AlertCount) {
+	mu.Lock()
+	defer mu.Unlock()
+	alertCountsFunc = f
+}
+
+// alertsCollector reports one gauge series per (kind, severity) AT SCRAPE
+// TIME. A GaugeVec would need explicit deletion of every series an alert used
+// to occupy, and a stale sdn_alerts_active{kind="lane_failing"} 1 left behind
+// after the lane recovered is worse than no gauge at all — so the collector
+// reads the live active set instead of holding its own copy.
+type alertsCollector struct{ desc *prometheus.Desc }
+
+func newAlertsCollector() *alertsCollector {
+	return &alertsCollector{desc: prometheus.NewDesc(
+		"sdn_alerts_active",
+		"Operational alerts currently active on this node, by kind and severity.",
+		[]string{"kind", "severity"}, nil,
+	)}
+}
+
+func (c *alertsCollector) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
+
+func (c *alertsCollector) Collect(ch chan<- prometheus.Metric) {
+	mu.RLock()
+	f := alertCountsFunc
+	mu.RUnlock()
+	if f == nil {
+		return
+	}
+	for _, a := range f() {
+		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, float64(a.Count), a.Kind, a.Severity)
+	}
+}
 
 // Registry returns the process-wide SDN metrics registry, initializing it on
 // first use with Go runtime/process collectors and the SDN instruments.
@@ -85,6 +134,7 @@ func Registry() *prometheus.Registry {
 			apiRequests,
 			storageRecords,
 			ingestRecords,
+			activeAlerts,
 		)
 	})
 	return registry

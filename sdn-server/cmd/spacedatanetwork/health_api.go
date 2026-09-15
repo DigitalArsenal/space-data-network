@@ -7,8 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/metrics"
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 )
 
 // healthDeps is what the operator-facing health surface needs from the daemon.
@@ -30,30 +32,31 @@ type healthDeps struct {
 	authHandler *auth.Handler
 	// probeTimeout bounds engineReady; zero means readyProbeTimeout.
 	probeTimeout time.Duration
+	// alerts is the node's operational alert registry. /health reports its
+	// severity COUNTS (a probe gets a number, never a subject) and
+	// /api/v1/status/alerts serves the full list to an operator session.
+	// Nil is tolerated and reports a node with nothing wrong.
+	alerts *ops.Registry
 }
 
 const readyProbeTimeout = 2 * time.Second
 
 // mountHealthRoutes serves the load-balancer and monitoring surface (OPS-08):
 //
-//	GET /health, /api/v1/health   200 "ok"          the process serves requests
+//	GET /health, /api/v1/health   200 {"status":"ok|degraded","alerts":{…}}
 //	GET /ready,  /api/v1/ready    200 "ready"       store linked, engine answering, host up
 //	                              503 "not ready: …" with the first failing component
+//	GET /api/v1/status/alerts     the active alerts in full; operator session required
 //	GET /metrics                  Prometheus text; operator session required
 //
 // /health and /ready are anonymous by design (a probe cannot sign in) and
-// disclose nothing beyond a status word.
+// disclose nothing beyond a status word and a count per alert severity. The
+// HTTP status of /health is unchanged by degradation: a failing CelesTrak lane
+// is not a reason for a load balancer to pull the node out of rotation, it is
+// a reason for an operator to look.
 func mountHealthRoutes(mux *http.ServeMux, deps healthDeps) {
 	probe := &boundedReadinessProbe{}
-	health := func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = fmt.Fprintln(w, "ok")
-	}
+	health := api.HealthHandler(deps.alerts)
 	ready := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -72,6 +75,10 @@ func mountHealthRoutes(mux *http.ServeMux, deps healthDeps) {
 	mux.HandleFunc("/api/v1/health", health)
 	mux.HandleFunc("/ready", ready)
 	mux.HandleFunc("/api/v1/ready", ready)
+	alertsHandler := api.AlertsHandler(deps.alerts)
+	mux.HandleFunc(api.AlertsStatusPath, func(w http.ResponseWriter, r *http.Request) {
+		gateAdminOnlyHandler(w, r, alertsHandler, deps.authHandler, deps.requireAuth)
+	})
 	promHandler := metrics.Handler()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		gateAdminOnlyHandler(w, r, promHandler, deps.authHandler, deps.requireAuth)
