@@ -18,7 +18,7 @@ env:
   REGISTRY: docker.io
   IMAGE_NAME: dockerdigitalarsenal/space-data-network
   KUBO_VERSION: v0.39.0
-  WASMEDGE_VERSION: 0.14.0
+  WASMEDGE_VERSION: 0.16.4
   NFPM_VERSION: v2.42.0
 
 jobs:
