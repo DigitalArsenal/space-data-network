@@ -332,7 +332,15 @@ echo "static prefix: $lld_staged lld archive(s) staged"
     # so the linker cannot prefer a shared one. -static-libgcc removes
     # libgcc_s.so.1 the same way. What is left is glibc, which stays dynamic —
     # a statically linked glibc breaks NSS and dlopen.
-    *)      printf -- '-static-libgcc -lm -ldl -lpthread -lz -ltinfo\n' ;;
+    #
+    # -lrt is NOT redundant. glibc merged librt into libc in 2.34, so on a
+    # modern build host the POSIX timer calls WasmEdge's WASI layer makes
+    # (timer_create/timer_settime/timer_delete, host/wasi/inode-linux.cpp)
+    # resolve out of libc and nobody notices. Building against 2.31 — which is
+    # the point, so the binary runs on Debian 12 and RHEL 9 — puts them back in
+    # a separate library, and the link fails on `timer_delete'. Naming it is
+    # harmless on newer glibc, where librt is kept as an empty stub.
+    *)      printf -- '-static-libgcc -lm -ldl -lpthread -lrt -lz -ltinfo\n' ;;
   esac
 } > "$STATIC/link.flags"
 
