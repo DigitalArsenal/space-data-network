@@ -612,7 +612,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fakeroot dpkg
       - name: Install Desktop dependencies
-        run: npm --prefix desktop ci
+        working-directory: desktop
+        # `npm --prefix desktop ci` resolved devDependencies against the REPO
+        # root, so electron was never installed in desktop/node_modules and
+        # electron-builder failed with "Cannot compute electron version from
+        # installed node modules". working-directory is unambiguous.
+        run: npm ci
       - name: Stage the node bundle
         run: |
           bundle="dist/cli/${CLI_BUNDLE/VERSION/${PACKAGE_VERSION}}"
@@ -625,7 +630,8 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           WIN_CSC_LINK: ''
           WIN_CSC_KEY_PASSWORD: ''
-        run: npm --prefix desktop exec -- electron-builder --publish never ${{ matrix.builder_args }}
+        working-directory: desktop
+        run: npm exec -- electron-builder --publish never ${{ matrix.builder_args }}
       - name: Collect Desktop artifacts
         run: |
           mkdir -p dist/desktop
