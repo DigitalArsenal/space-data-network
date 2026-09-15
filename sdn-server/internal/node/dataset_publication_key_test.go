@@ -4,10 +4,12 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 func TestEd25519PublicKeyFromDirectoryJSONUsesSigningKeyEntry(t *testing.T) {
@@ -56,45 +58,84 @@ func TestEd25519PublicKeyFromDirectoryJSONUsesTopLevelSigningPubkeyHex(t *testin
 	}
 }
 
-// An HD node publishes with the Ed25519 signing key its EPM carries, while
-// its peer identity is secp256k1. The verifier must take the key the
-// publication DECLARES — not the peer identity first — or every publication
-// between HD nodes is rejected as a signature-type mismatch (host-01,
-// 2026-09-13..15: 2,122 rejections, one shard materialized).
-func TestSelectDatasetPublicationKeyTakesTheDeclaredAlgorithm(t *testing.T) {
-	secpPriv, secpPub, err := crypto.GenerateSecp256k1Key(rand.Reader)
+// host-02's real EPM record (2026-09-15): the top-level signing_pubkey_hex is
+// the secp256k1 signing key, and keys[] holds that key, TWO different Ed25519
+// signing keys (the publication signer and the licensing-grant verifier) and
+// an encryption key. A verifier that resolves one key can only get this
+// wrong; it needs them all.
+func TestPublicKeysFromDirectoryJSONReturnsEveryAdvertisedSigningKey(t *testing.T) {
+	_, secpSigning, _ := crypto.GenerateSecp256k1Key(rand.Reader)
+	_, edSigning, _ := crypto.GenerateEd25519Key(rand.Reader)
+	_, edGrant, _ := crypto.GenerateEd25519Key(rand.Reader)
+	_, secpEncrypt, _ := crypto.GenerateSecp256k1Key(rand.Reader)
+	rawHex := func(k crypto.PubKey) string { raw, _ := k.Raw(); return hex.EncodeToString(raw) }
+	epmJSON := `{
+		"peer_id": "16Uiu2HAmProvider",
+		"signing_pubkey_hex": "` + rawHex(secpSigning) + `",
+		"keys": [
+			{"address_type": "secp256k1", "key_type": "signing", "public_key": "` + rawHex(secpSigning) + `"},
+			{"address_type": "ed25519", "key_type": "signing", "public_key": "` + rawHex(edSigning) + `"},
+			{"address_type": "secp256k1", "key_type": "encryption", "public_key": "` + rawHex(secpEncrypt) + `"},
+			{"address_type": "ed25519", "key_type": "signing", "public_key": "` + rawHex(edGrant) + `"}
+		]
+	}`
+	keys, err := publicKeysFromDirectoryJSON(epmJSON)
+	if err != nil {
+		t.Fatalf("publicKeysFromDirectoryJSON: %v", err)
+	}
+	has := func(want crypto.PubKey) bool {
+		for _, k := range keys {
+			if k.Equals(want) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(keys) != 3 || !has(secpSigning) || !has(edSigning) || !has(edGrant) || has(secpEncrypt) {
+		t.Fatalf("got %d keys (secp signing %v, ed signing %v, ed grant %v, encryption %v), want the three signing keys once each",
+			len(keys), has(secpSigning), has(edSigning), has(edGrant), has(secpEncrypt))
+	}
+}
+
+// The publication picks its own key: an Ed25519-labelled PNM signed with the
+// EPM's Ed25519 signing key verifies against exactly that key, even when the
+// provider is also known by a secp256k1 peer identity and another Ed25519
+// key. With only the peer identity known, the failure names the type
+// mismatch and reads as "wrong signer", so the catch-up tries the next
+// candidate instead of marking the publication permanently failed.
+func TestVerifyDatasetPublicationPNMPicksTheKeyThatSigned(t *testing.T) {
+	edPub, edPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = secpPriv
-	_, edPub, err := crypto.GenerateEd25519Key(rand.Reader)
+	signer, err := crypto.UnmarshalEd25519PublicKey(edPub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Peer identity first, as the resolver lists them.
-	candidates := []crypto.PubKey{secpPub, edPub}
-
-	key, ok := selectDatasetPublicationKey(sds.SignatureTypeEd25519, candidates...)
-	if !ok || key != edPub {
-		t.Fatalf("an Ed25519 publication must verify against the EPM signing key, got %v (ok=%v)", key, ok)
-	}
-	key, ok = selectDatasetPublicationKey(sds.SignatureTypeSecp256k1, candidates...)
-	if !ok || key != secpPub {
-		t.Fatalf("a Secp256k1 publication must verify against the peer identity, got %v (ok=%v)", key, ok)
-	}
-	key, ok = selectDatasetPublicationKey("", candidates...)
-	if !ok || key != secpPub {
-		t.Fatalf("an undeclared type takes the first key, got %v (ok=%v)", key, ok)
-	}
-	if _, ok := selectDatasetPublicationKey(sds.SignatureTypeEd25519, secpPub); ok {
-		t.Fatal("a peer identity of the wrong algorithm must not be selected for an Ed25519 publication")
+	_, peerIdentity, _ := crypto.GenerateSecp256k1Key(rand.Reader)
+	_, otherEd, _ := crypto.GenerateEd25519Key(rand.Reader)
+	pnmBytes, err := storage.BuildDatasetPublicationPNM(&storage.DatasetPublicationManifest{
+		CID:    "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+		FileID: "DPM:OMM.fbs",
+	}, storage.DatasetPublicationPNMOptions{SigningKey: edPriv})
+	if err != nil {
+		t.Fatalf("BuildDatasetPublicationPNM: %v", err)
 	}
 
-	// The exact production failure: verifying an Ed25519-labelled envelope
-	// with the secp256k1 peer identity is a type mismatch, not a bad
-	// signature, and the retry logic must treat it as "wrong signer".
-	err = sds.VerifySDSSignature(sds.SignatureTypeEd25519, secpPub, []byte("payload"), make([]byte, 64))
-	if err == nil || !isDatasetPublicationSignerMismatch(err) {
-		t.Fatalf("type mismatch must read as a signer mismatch, got %v", err)
+	key, proof, err := verifyDatasetPublicationPNM(pnmBytes, []crypto.PubKey{peerIdentity, otherEd, signer})
+	if err != nil {
+		t.Fatalf("verify with every known key: %v", err)
+	}
+	if !key.Equals(signer) || proof.SignatureType != sds.SignatureTypeEd25519 {
+		t.Fatalf("verified with %v (%s), want the Ed25519 signing key", key, proof.SignatureType)
+	}
+
+	_, _, err = verifyDatasetPublicationPNM(pnmBytes, []crypto.PubKey{peerIdentity})
+	if err == nil || !strings.Contains(err.Error(), "does not match the provider's") || !isDatasetPublicationSignerMismatch(err) {
+		t.Fatalf("peer identity alone must fail as a type mismatch that reads as a wrong signer, got %v", err)
+	}
+	_, _, err = verifyDatasetPublicationPNM(pnmBytes, []crypto.PubKey{peerIdentity, otherEd})
+	if err == nil || !isDatasetPublicationSignerMismatch(err) || isPermanentDatasetPublicationMaterializationError(err) {
+		t.Fatalf("a wrong Ed25519 key must fail as a retryable wrong signer, got %v", err)
 	}
 }
