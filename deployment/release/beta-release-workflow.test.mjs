@@ -204,6 +204,37 @@ test('Docker release image builds against published Go modules, never a local re
   );
 });
 
+// The AOT cache is keyed on the engine bytes AND the libwasmedge version, and a
+// miss does not fail — it silently falls back to the ~100x interpreter, which
+// has taken production down twice (memory: host01-aot-artifact-drift-recovery).
+// So every lane that builds a shipped artifact must install the SAME WasmEdge:
+// scripts/install-wasmedge.sh is the one pin, and the workflows had drifted two
+// minor versions behind it (0.14.0 vs 0.16.4) while the release cutter and the
+// Docker image were on 0.16.4.
+test('every workflow installs the WasmEdge the release cutter and Docker image use', () => {
+  const installer = readRepoFile('scripts/install-wasmedge.sh');
+  const canonical = /WASMEDGE_VERSION="\$\{WASMEDGE_VERSION:-([0-9.]+)\}"/.exec(installer);
+  assert.ok(canonical, 'scripts/install-wasmedge.sh must declare the default WasmEdge version');
+  const pin = canonical[1];
+
+  const cutter = readRepoFile('deployment/release/cut-release-local.sh');
+  assert.match(
+    cutter,
+    new RegExp(`WASMEDGE_VERSION:-${pin.replaceAll('.', '\\.')}\\}`),
+    'the release cutter must use the canonical WasmEdge pin',
+  );
+
+  for (const workflow of ['beta-release-artifacts.yml', 'live-dht-cross-platform.yml']) {
+    const text = readRepoFile(`.github/workflows/${workflow}`);
+    const declared = [...text.matchAll(/^\s*WASMEDGE_VERSION:\s*([0-9.]+)\s*$/gm)].map((m) => m[1]);
+    assert.deepEqual(
+      [...new Set(declared)],
+      [pin],
+      `${workflow} must pin WasmEdge ${pin}, the version install-wasmedge.sh installs`,
+    );
+  }
+});
+
 test('Docker release builder Go version matches the server module Go directive', () => {
   const dockerfile = readRepoFile('deployment/docker/Dockerfile');
   const goMod = readRepoFile('sdn-server/go.mod');
