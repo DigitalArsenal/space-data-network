@@ -517,3 +517,48 @@ test('nothing invokes an npm script its package.json does not declare', () => {
   }
   assert(checked > 0, 'the npm-script scan matched nothing — the pattern has rotted');
 });
+
+test('every containerised job prepares its container, and none of them uses sudo', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  const lines = workflow.split('\n');
+
+  // A bare image has no git and no curl, so a container job without its
+  // preparation step fails somewhere far from the cause — checkout silently
+  // falls back to a tarball download, and the failure surfaces later as
+  // "curl: command not found" in a completely different step. That is exactly
+  // how this went wrong: the step was inserted into the wrong job because the
+  // anchor text it matched appears in several.
+  const jobs = {};
+  let current = null;
+  for (const line of lines) {
+    const header = /^ {2}([a-z0-9_-]+):$/.exec(line);
+    if (header) {
+      current = header[1];
+      jobs[current] = { container: false, prepare: false, sudo: false };
+      continue;
+    }
+    if (!current) continue;
+    if (/^ {4}container:/.test(line)) jobs[current].container = true;
+    if (line.includes('- name: Prepare the container')) jobs[current].prepare = true;
+    // a comment saying "No sudo" is not a use of it
+    if (/\bsudo\b/.test(line) && !/^\s*#/.test(line.trim()) && !line.trim().startsWith('#')) {
+      jobs[current].sudo = true;
+    }
+  }
+
+  const containerised = Object.entries(jobs).filter(([, v]) => v.container);
+  assert(containerised.length > 0, 'no job declares a container any more — has the Linux build moved?');
+
+  for (const [name, v] of containerised) {
+    assert(v.prepare, `job "${name}" runs in a container but never installs git/curl into it`);
+    assert(!v.sudo, `job "${name}" runs in a container as root, where sudo does not exist`);
+  }
+
+  // And the inverse: a preparation step in a job with no container is dead
+  // code that will be silently skipped.
+  for (const [name, v] of Object.entries(jobs)) {
+    if (v.prepare && !v.container) {
+      assert.fail(`job "${name}" prepares a container it does not have`);
+    }
+  }
+});
