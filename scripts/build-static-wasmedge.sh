@@ -102,8 +102,18 @@ if [[ -f "$SRC/lib/api/CMakeLists.txt" ]]; then
   # failed "objs/*/*.o: Invalid argument" at 131/131. Splitting it in two keeps
   # the generator expression (a CMake list) out of the quoted shell command,
   # which would otherwise be re-split into separate arguments.
+  # TOLERATE AN EMPTY objs/. The merge extracts each component into objs/<t> and
+  # then re-archives `objs/*/*.o`, relying on a SHELL to expand it. cmd.exe does
+  # not glob, and on Windows the extraction leaves objs/ empty anyway, so ar got
+  # the literal pattern and failed "Invalid argument" at 131/131 — every object
+  # compiled, dying on the last command.
+  #
+  # The merged archive only has to carry the CAPI objects: the link line names
+  # every component archive individually (see GRP below), so nothing is lost if
+  # objs/ is empty. The second command adds them when they exist and is a no-op
+  # when they do not.
   perl -0pi -e 's{COMMAND \$\{CMAKE_AR\} -qcs libwasmedge\.a \$<TARGET_OBJECTS:wasmedgeCAPI> objs/\*/\*\.o}
-                 {COMMAND \${CMAKE_AR} -qcs libwasmedge.a \$<TARGET_OBJECTS:wasmedgeCAPI>\n      COMMAND sh -c "\${CMAKE_AR} -qcs libwasmedge.a objs/*/*.o"}g' \
+                 {COMMAND \${CMAKE_AR} -qcs libwasmedge.a \$<TARGET_OBJECTS:wasmedgeCAPI>\n      COMMAND sh -c "\${CMAKE_AR} -qcs libwasmedge.a objs/*/*.o || true"}g' \
     "$SRC/lib/api/CMakeLists.txt"
 fi
 
