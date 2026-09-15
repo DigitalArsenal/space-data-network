@@ -382,3 +382,50 @@ test('stageBundle stages wallet sign-in assets under runtime/ui when given', asy
   assert.ok(paths.includes('runtime/ui/wallet-wasm/runtime/index.mjs'), 'wallet-wasm is a checksummed bundle artifact');
   assert.ok(paths.includes('runtime/ui/wallet-ui/compat/index.js'), 'wallet-ui is a checksummed bundle artifact');
 });
+
+// A statically linked daemon carries WasmEdge. Omitting wasmedgePath must
+// produce a bundle with NOTHING to set up at run time: no runtime/wasmedge
+// tree, no wasmedge.dll beside the exe, and a launcher that exports no library
+// path. Each platform can adopt the static binary independently, so the two
+// shapes have to coexist.
+test('a static bundle stages no WasmEdge runtime and no library path', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sdn-cli-bundle-static-'));
+  const inputs = join(root, 'inputs');
+  const out = join(root, 'out');
+  await mkdir(join(inputs, 'sdn-ui'), { recursive: true });
+  await mkdir(join(inputs, 'webui'), { recursive: true });
+  await mkdir(join(inputs, 'modules'), { recursive: true });
+  await writeFile(join(inputs, 'spacedatanetwork'), 'bin');
+  await writeFile(join(inputs, 'ipfs'), 'ipfs');
+  await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
+  await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
+  await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'modules', 'hd-wallet-wasi.wasm'), 'wallet-wasm');
+  await writeFile(join(inputs, 'LICENSE'), 'license');
+  await writeFile(join(inputs, 'README.md'), 'readme');
+
+  const staged = await stageBundle({
+    version: '1.2.3',
+    os: 'linux',
+    arch: 'amd64',
+    outputDir: out,
+    binaryPath: join(inputs, 'spacedatanetwork'),
+    kuboPath: join(inputs, 'ipfs'),
+    sdnUIPath: join(inputs, 'sdn-ui'),
+    webUIPath: join(inputs, 'webui'),
+    updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    hdWalletWasmPath: join(inputs, 'modules', 'hd-wallet-wasi.wasm'),
+    licensePath: join(inputs, 'LICENSE'),
+    readmePath: join(inputs, 'README.md'),
+    manifestSignature: 'test-signature',
+  });
+
+  await assert.rejects(
+    stat(join(staged.root, 'runtime', 'wasmedge')),
+    'a static bundle must not carry a WasmEdge runtime tree',
+  );
+  const launcher = await readFile(join(staged.root, 'bin', 'spacedatanetwork'), 'utf8');
+  assert.ok(!launcher.includes('runtime/wasmedge'), 'the launcher must not point at a bundled runtime');
+  assert.match(launcher, /statically linked/, 'the launcher should say why it sets nothing up');
+  await stat(join(staged.root, 'runtime', 'sdn', 'spacedatanetwork'));
+});

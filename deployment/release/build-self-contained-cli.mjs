@@ -37,17 +37,27 @@ export async function stageBundle(options) {
   const exeName = osName === 'windows' ? 'spacedatanetwork.exe' : 'spacedatanetwork';
   const aliasName = osName === 'windows' ? 'sdn.exe' : 'sdn';
   const kuboName = osName === 'windows' ? 'ipfs.exe' : 'ipfs';
+  // A STATICALLY LINKED daemon carries WasmEdge inside it, so there is nothing
+  // to stage and no environment to set up: no runtime/wasmedge tree, no
+  // wasmedge.dll beside the exe, no launcher exporting WASMEDGE_DIR and
+  // LD_LIBRARY_PATH. Omitting wasmedgePath selects that shape, which lets each
+  // platform move to a static binary on its own rather than all at once.
+  const bundlesWasmEdge = Boolean(options.wasmedgePath);
   if (osName === 'windows') {
     await cp(required(options.binaryPath, 'binaryPath'), join(root, 'bin', exeName));
-    const bundledWasmEdgePath = join(root, 'runtime', 'wasmedge');
-    await cp(required(options.wasmedgePath, 'wasmedgePath'), bundledWasmEdgePath, { recursive: true });
-    await cp(join(bundledWasmEdgePath, 'bin', 'wasmedge.dll'), join(root, 'bin', 'wasmedge.dll'));
+    if (bundlesWasmEdge) {
+      const bundledWasmEdgePath = join(root, 'runtime', 'wasmedge');
+      await cp(options.wasmedgePath, bundledWasmEdgePath, { recursive: true });
+      await cp(join(bundledWasmEdgePath, 'bin', 'wasmedge.dll'), join(root, 'bin', 'wasmedge.dll'));
+    }
   } else {
     await cp(required(options.binaryPath, 'binaryPath'), join(root, 'runtime', 'sdn', exeName));
-    const bundledWasmEdgePath = join(root, 'runtime', 'wasmedge');
-    await cp(required(options.wasmedgePath, 'wasmedgePath'), bundledWasmEdgePath, { recursive: true });
-    await makeSymlinksPortable(bundledWasmEdgePath);
-    await writeFile(join(root, 'bin', exeName), unixLauncherScript(exeName));
+    if (bundlesWasmEdge) {
+      const bundledWasmEdgePath = join(root, 'runtime', 'wasmedge');
+      await cp(options.wasmedgePath, bundledWasmEdgePath, { recursive: true });
+      await makeSymlinksPortable(bundledWasmEdgePath);
+    }
+    await writeFile(join(root, 'bin', exeName), unixLauncherScript(exeName, bundlesWasmEdge));
   }
   await cp(required(options.kuboPath, 'kuboPath'), join(root, 'runtime', 'kubo', kuboName));
   await cp(required(options.sdnUIPath ?? options.sdnUiPath, 'sdnUIPath'), join(root, 'runtime', 'ui', 'sdn'), { recursive: true });
@@ -191,7 +201,7 @@ async function makeSymlinksPortable(root) {
   }
 }
 
-function unixLauncherScript(exeName) {
+function unixLauncherScript(exeName, bundlesWasmEdge = true) {
   return `#!/bin/sh
 set -eu
 
@@ -207,9 +217,9 @@ done
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 BUNDLE_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
-export WASMEDGE_DIR="\${WASMEDGE_DIR:-$BUNDLE_ROOT/runtime/wasmedge}"
+${bundlesWasmEdge ? `export WASMEDGE_DIR="\${WASMEDGE_DIR:-$BUNDLE_ROOT/runtime/wasmedge}"` : '# The daemon is statically linked: it carries WasmEdge and needs no library path.'}
 
-if [ -d "$WASMEDGE_DIR/lib" ]; then
+if [ -n "\${WASMEDGE_DIR:-}" ] && [ -d "$WASMEDGE_DIR/lib" ]; then
   if [ -n "\${LD_LIBRARY_PATH:-}" ]; then
     export LD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$LD_LIBRARY_PATH"
   else
