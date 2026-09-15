@@ -62,8 +62,10 @@ if [[ ! -f "$SRC/build/lib/api/libwasmedge.a" ]]; then
     -DWASMEDGE_BUILD_TOOLS=OFF \
     -DWASMEDGE_BUILD_PLUGINS=OFF \
     -DLLVM_DIR="${LLVM_DIR:-/usr/lib/llvm-16/lib/cmake/llvm}" \
-    -DLLD_DIR="${LLD_DIR:-/usr/lib/llvm-16/lib/cmake/lld}"
-  cmake --build "$SRC/build" -j"$(nproc)"
+    -DLLD_DIR="${LLD_DIR:-/usr/lib/llvm-16/lib/cmake/lld}" \
+    ${CMAKE_AR:+-DCMAKE_AR="$CMAKE_AR"}
+  JOBS="$( (command -v nproc >/dev/null && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo 4 )"
+  cmake --build "$SRC/build" -j"$JOBS"
 fi
 
 # 3. Stage archives + headers. The merged libwasmedge.a is INCOMPLETE (the
@@ -111,6 +113,10 @@ done
     # -lc++abi as well as -lc++: libc++'s exception ABI lives in libc++abi on
     # macOS, and without it the link dies on ___cxa_init_primary_exception.
     Darwin) printf -- '-lc++ -lc++abi -lm -lz -lncurses\n' ;;
+    # MinGW/clang on Windows: the C++ runtime and the sockets/crypto libraries
+    # the runtime calls into. MSVC's lib.exe cannot do the `ar -x` extraction
+    # WasmEdge's static merge performs, so CMAKE_AR must be llvm-ar there.
+    MINGW*|MSYS*|CYGWIN*) printf -- '-lstdc++ -lm -lws2_32 -lbcrypt -lole32 -luuid\n' ;;
     *)      printf -- '-lstdc++ -lm -ldl -lpthread -lz -ltinfo\n' ;;
   esac
 } > "$STATIC/link.flags"
@@ -136,9 +142,10 @@ go build -ldflags "-linkmode external -extldflags \"-Wl,--start-group $GRP $LLVM
   -o "$OUT" ./cmd/spacedatanetwork
 
 echo "built: $OUT"
-if ldd "$OUT" 2>/dev/null | grep -qi wasmedge; then
+DEPS_TOOL="$( (command -v ldd >/dev/null && echo ldd) || (command -v otool >/dev/null && echo 'otool -L') || echo '' )"
+if [[ -n "$DEPS_TOOL" ]] && $DEPS_TOOL "$OUT" 2>/dev/null | grep -qi wasmedge; then
   echo "WARNING: binary still references libwasmedge (not self-contained)" >&2
   exit 1
 fi
 echo "self-contained OK (no libwasmedge dependency):"
-ldd "$OUT" || true
+[[ -n "$DEPS_TOOL" ]] && $DEPS_TOOL "$OUT" || true
