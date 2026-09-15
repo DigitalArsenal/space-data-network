@@ -132,6 +132,18 @@ func (n *Node) loadOrCreateMnemonic(mnemonicPath, keyDir string) (string, error)
 			mnemonicPath, passwordErr, keys.DerivationFailureHint(keyDir))
 	}
 
+	// An EXISTING node already sealed under a container-default hostname is one
+	// `docker rm` from losing its identity. It still starts — refusing would
+	// strand a node that works today — but it says so on every start, because
+	// the moment to act is before the container is recreated, not after.
+	if reason, ephemeral := keys.EphemeralHostname(); ephemeral && n.usingDerivedKeyPassword() {
+		if _, err := os.Stat(mnemonicPath); err == nil {
+			log.Warnf("AT-RISK IDENTITY: %s. This node's keys are sealed to it, so recreating this container "+
+				"will leave them unopenable. Re-seal under a stable hostname (docker run --hostname ...) or a "+
+				"mounted SDN_KEY_PASSWORD_FILE with `spacedatanetwork key reseal` before that happens.", reason)
+		}
+	}
+
 	// Surface a hostname change (canary only — not part of the key).
 	if canary, cerr := keys.CheckAndUpdateHostnameCanary(keyDir); cerr != nil {
 		log.Warnf("Unable to update hostname canary in %s: %v", keyDir, cerr)
@@ -191,6 +203,14 @@ func (n *Node) loadOrCreateMnemonic(mnemonicPath, keyDir string) (string, error)
 		log.Infof("Mnemonic migrated to encrypted storage at %s", mnemonicPath)
 		n.recordKeyDerivation(keyDir)
 		return mnemonic, nil
+	}
+
+	// Nothing has been sealed yet, so this is the only moment the operator can
+	// still choose without cost. See keys.EphemeralHostname.
+	if n.usingDerivedKeyPassword() {
+		if reason, ephemeral := keys.EphemeralHostname(); ephemeral {
+			return "", keys.EphemeralHostnameSealError(reason)
+		}
 	}
 
 	newMnemonic, _, err := n.hdwallet.GenerateNewIdentity(n.ctx, 24)
