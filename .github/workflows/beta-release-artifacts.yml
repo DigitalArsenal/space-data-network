@@ -447,11 +447,39 @@ jobs:
           path: packages/sdn-updater-module/dist/isomorphic
       - name: Verify updater module wasm
         run: test -f packages/sdn-updater-module/dist/isomorphic/module.wasm
+      # The prefix is compiled by the MSYS2 this action installs. The runner
+      # ALSO ships a standalone MinGW at C:\mingw64 which wins on PATH, and the
+      # two have different libstdc++ builds: linking the prefix with the
+      # standalone one left std::__get_once_call/__get_once_callable (libstdc++
+      # internals behind std::call_once) undefined, among 455 symbols. Same
+      # toolchain on both sides or neither works.
+      - name: Install the MSYS2 toolchain (Windows)
+        if: matrix.target_os == 'windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-zstd
       - name: Install Windows CLI build tools
         if: matrix.target_os == 'windows'
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           choco install zip -y --no-progress
-          echo "/c/msys64/mingw64/bin" >> "$GITHUB_PATH"
+          # D:\a\_temp\msys64 -> /d/a/_temp/msys64 for git-bash.
+          unix_root="$(printf '%s' "${MSYS2_LOCATION}" | sed -e 's|\\|/|g' -e 's|^\([A-Za-z]\):|/\L\1|')"
+          mingw_bin="${unix_root}/mingw64/bin"
+          test -x "${mingw_bin}/gcc.exe" || { echo "no gcc at ${mingw_bin}"; ls "${unix_root}" || true; exit 1; }
+          # GITHUB_PATH PREPENDS, so this wins over C:\mingw64.
+          echo "${mingw_bin}" >> "$GITHUB_PATH"
+          echo "CC=${mingw_bin}/gcc.exe" >> "$GITHUB_ENV"
+          echo "CXX=${mingw_bin}/g++.exe" >> "$GITHUB_ENV"
+          echo "using ${mingw_bin}/gcc.exe"
+          "${mingw_bin}/gcc.exe" --version | head -1
       # EVERY target, Windows included, links the runtime INTO the binary; no
       # archive stages a DLL or a .so. The bundler still has an option to stage
       # a runtime for a platform that needs one, and nothing here passes it —
@@ -594,6 +622,11 @@ jobs:
   desktop:
     name: Build desktop app artifacts (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
+    # The Windows leg consumes the experimental Windows CLI archive, so it
+    # inherits that leg's policy: it must not be able to skip the release for
+    # the three platforms that DO build. Same reasoning as wasmedge-static —
+    # zero artifacts is worse than three, and the failure stays visible.
+    continue-on-error: ${{ matrix.experimental == true }}
     needs: [beta-version, cli]
     defaults:
       run:
@@ -617,6 +650,7 @@ jobs:
           - target_os: windows
             target_arch: x64
             runner: windows-latest
+            experimental: true
             cli_artifact: cli-windows-amd64
             cli_bundle: spacedatanetwork-VERSION-windows-amd64.zip
             builder_args: --win nsis portable --x64

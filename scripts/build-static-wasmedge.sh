@@ -246,6 +246,26 @@ for archive in $LLVMLIBS; do
 done
 [[ -n "${ZSTD_STATIC:-}" && -f "${ZSTD_STATIC}" ]] && cp -n "$ZSTD_STATIC" "$STATIC/lib/" 2>/dev/null || true
 
+# lld has gone missing from this prefix once before, and the symptom was 26
+# undefined lld:: symbols at the far end of a Go build on another machine.
+# Check it here, where the answer is one line.
+# A plain `if`, NOT `[[ -f ]] && count=…`: under `set -e` a false test on the
+# last iteration makes the loop return non-zero and kills the script before the
+# diagnosis below can print. That exact shape has bitten this file once already.
+lld_staged=0
+for archive in "$STATIC"/lib/liblld*.a; do
+  if [[ -f "$archive" ]]; then
+    lld_staged=$((lld_staged + 1))
+  fi
+done
+if [[ "$lld_staged" -eq 0 ]]; then
+  echo "static prefix: no lld archives staged — WasmEdge's AOT links through lld and will not resolve" >&2
+  echo "  LLVM_CONFIG=$LLVM_CONFIG libdir=${LLVM_LIBDIR:-<unset>}" >&2
+  ls "${LLVM_LIBDIR:-/nonexistent}"/liblld*.a 2>&1 | head -5 >&2 || true
+  exit 1
+fi
+echo "static prefix: $lld_staged lld archive(s) staged"
+
 {
   # --start-group on ELF: these archives depend on each other BOTH ways (lld
   # calls LLVM, lld's own ELF/Common halves call each other), and a single-pass
@@ -264,7 +284,16 @@ done
     # MinGW/clang on Windows: the C++ runtime and the sockets/crypto libraries
     # the runtime calls into. MSVC's lib.exe cannot do the `ar -x` extraction
     # WasmEdge's static merge performs, so CMAKE_AR must be llvm-ar there.
-    MINGW*|MSYS*|CYGWIN*) printf -- '-lstdc++ -lm -lws2_32 -lbcrypt -lole32 -luuid\n' ;;
+    # Every one of these was a name in the link error, not a guess:
+    #   ntdll   NtQueryInformationFile, NtSetInformationFile,
+    #           NtQueryTimerResolution, RtlGetLastNtStatus (WASI inode-win.cpp)
+    #   ktmw32  CreateTransaction, CommitTransaction (transactional file ops)
+    #   dbghelp SymInitializeW, SymGetModuleBase64, SymSetOptions … (LLVM's
+    #           Windows backtrace support)
+    #   xml2    xmlReadMemory, xmlDocDumpFormatMemoryEnc … (LLVM's
+    #           WindowsManifest merger, libLLVMWindowsManifest.a)
+    #   z       compress2, compressBound, crc32
+    MINGW*|MSYS*|CYGWIN*) printf -- '-lstdc++ -lm -lws2_32 -lbcrypt -lole32 -luuid -lntdll -lktmw32 -ldbghelp -lxml2 -lz\n' ;;
     *)      printf -- '-lstdc++ -lm -ldl -lpthread -lz -ltinfo\n' ;;
   esac
 } > "$STATIC/link.flags"
