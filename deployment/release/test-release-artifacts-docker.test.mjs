@@ -259,3 +259,26 @@ test('sdn-js package dependencies are installable without GitHub SSH access', ()
 
   assert.deepEqual(sshOnlySpecs, []);
 });
+
+test('the published-package smoke test asserts exports sdn-js actually has', () => {
+  // This drifted: the smoke test required `mountWalletUI` from
+  // @spacedatanetwork/sdn-js/ui long after the wallet UI moved out of the
+  // package, so every release run failed on an export the package's OWN test
+  // (sdn-js/src/package-build.test.ts) asserts must be undefined. The release
+  // gate and the package contract disagreed, and the release gate lost.
+  const smoke = generateInstallDockerfile({
+    artifactName: 'spacedatanetwork-sdn-js-2.0.12.tgz',
+    artifactType: 'sdn-js'
+  });
+  const contract = readFileSync(join(repoRoot, 'sdn-js/src/package-build.test.ts'), 'utf8');
+
+  // Anything package-build.test.ts pins as undefined must not be required here.
+  const removed = [...contract.matchAll(/expect\(runtime\.(\w+)\)\.toBeUndefined\(\)/g)].map((m) => m[1]);
+  assert(removed.length > 0, 'package-build.test.ts pins no removed exports — has it moved?');
+  for (const name of new Set(removed)) {
+    assert(
+      !smoke.includes(`ui.${name}`) && !smoke.includes(`root.${name}`),
+      `the smoke test requires "${name}", which sdn-js deliberately does not export`,
+    );
+  }
+});
