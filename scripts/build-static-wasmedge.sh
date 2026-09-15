@@ -136,15 +136,39 @@ cp "$SRC"/build/_deps/spdlog-build/libspdlog.a "$STATIC/lib/"
 cp -r "$SRC"/include/api/wasmedge             "$STATIC/include/"
 cp -r "$SRC"/build/include/api/wasmedge/*     "$STATIC/include/wasmedge/" 2>/dev/null || true
 
+# EVERY staged WasmEdge archive, not a hand-kept list. The list silently omitted
+# libwasmedgePluginWasiLogging.a, which left
+# WasmEdge::Host::WasiLoggingModule::PluginDescriptor undefined — a component
+# added upstream would fail the same way, and the failure is a link error a long
+# way from its cause.
 GRP="$STATIC/lib/libwasmedge.a"
-for a in Common Loader LoaderFileMgr Validator Executor VM HostModuleWasi PO Driver System Plugin AOT LLVM; do
-  [[ -f "$STATIC/lib/libwasmedge${a}.a" ]] && GRP="$GRP $STATIC/lib/libwasmedge${a}.a"
+for archive in "$STATIC"/lib/libwasmedge*.a; do
+  [[ -f "$archive" && "$archive" != "$STATIC/lib/libwasmedge.a" ]] && GRP="$GRP $archive"
 done
 GRP="$GRP $STATIC/lib/libspdlog.a $STATIC/lib/libfmt.a"
 
 # LLVM's own archives, in the order llvm-config gives them.
 LLVM_CONFIG="${LLVM_CONFIG:-llvm-config-16}"
 LLVMLIBS="$($LLVM_CONFIG --link-static --libfiles | tr '\n' ' ')"
+
+# LLD, EXPLICITLY. WasmEdge's AOT links its output through lld, but
+# `llvm-config --libfiles` never lists lld's archives — they only reached the
+# binary because the merge swept them into libwasmedge.a. Once the merge started
+# skipping components it could not resolve, the link failed on
+# `lld::CommonLinkerContext::destroy()`. Naming them here does not depend on how
+# the merge behaves.
+LLVM_LIBDIR="$($LLVM_CONFIG --libdir 2>/dev/null || true)"
+if [[ -n "$LLVM_LIBDIR" && -d "$LLVM_LIBDIR" ]]; then
+  for lld in "$LLVM_LIBDIR"/liblldCommon.a "$LLVM_LIBDIR"/liblldELF.a \
+             "$LLVM_LIBDIR"/liblldCOFF.a "$LLVM_LIBDIR"/liblldMachO.a \
+             "$LLVM_LIBDIR"/liblldMinGW.a "$LLVM_LIBDIR"/liblldWasm.a; do
+    [[ -f "$lld" ]] && LLD_LIBS="${LLD_LIBS:-} $lld"
+  done
+fi
+# lld BEFORE LLVM. A static archive must precede the archives it depends on, and
+# lld calls into LLVM (llvm::parallelFor out of Support). Appending it left those
+# undefined even though the archive was present.
+LLVMLIBS="${LLD_LIBS:-} $LLVMLIBS"
 
 
 # FIND THE STATIC ZSTD. LLVM's Support library calls ZSTD_decompress, so the
@@ -186,10 +210,16 @@ done
 [[ -n "${ZSTD_STATIC:-}" && -f "${ZSTD_STATIC}" ]] && cp -n "$ZSTD_STATIC" "$STATIC/lib/" 2>/dev/null || true
 
 {
+  # --start-group on ELF: these archives depend on each other BOTH ways (lld
+  # calls LLVM, lld's own ELF/Common halves call each other), and a single-pass
+  # linker cannot resolve that from any fixed order. ld64 on macOS already
+  # re-scans archives, so it needs no group and does not accept one.
+  case "$(uname -s)" in Darwin|MINGW*|MSYS*|CYGWIN*) : ;; *) printf -- '-Wl,--start-group ' ;; esac
   for archive in $GRP $LLVMLIBS ${ZSTD_STATIC:-}; do
     [[ -n "$archive" ]] || continue
     printf '@PREFIX@/lib/%s ' "$(basename "$archive")"
   done
+  case "$(uname -s)" in Darwin|MINGW*|MSYS*|CYGWIN*) : ;; *) printf -- '-Wl,--end-group ' ;; esac
   case "$(uname -s)" in
     # -lc++abi as well as -lc++: libc++'s exception ABI lives in libc++abi on
     # macOS, and without it the link dies on ___cxa_init_primary_exception.
