@@ -33,6 +33,7 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 )
 
 var log = logging.Logger("sourcemetrics")
@@ -182,6 +183,108 @@ type Store struct {
 	mu sync.Mutex
 	// now is injectable for tests.
 	now func() time.Time
+	// alerts is the node's operational alert registry, handed in by the node
+	// via SetAlerts. Nil until then, and every use tolerates nil: the ledger
+	// is the durable record, the registry is only how a CURRENT failure stays
+	// visible to an operator.
+	alerts ops.Sink
+}
+
+// Lane alert thresholds. A single failed retrieval is ordinary — a publisher
+// returning 304, a window not yet due — so nothing is raised for it. Two in a
+// row means the lane is not recovering on its own; four means it has burned
+// through the escalating backoff and is not coming back without a human.
+const (
+	LaneFailingWarningThreshold = 2
+	LaneFailingErrorThreshold   = 4
+)
+
+// SetAlerts hands this ledger the node's alert registry so a failing retrieval
+// lane surfaces on the operator probes instead of only in the logs. Safe to
+// call with a nil registry; safe to call before or after any recording.
+func (s *Store) SetAlerts(sink ops.Sink) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.alerts = sink
+}
+
+// laneSeverity maps a failure streak onto an alert severity, or "" when the
+// streak is too short to be worth an operator's attention.
+func laneSeverity(consecutiveFailures int) string {
+	switch {
+	case consecutiveFailures >= LaneFailingErrorThreshold:
+		return ops.SeverityError
+	case consecutiveFailures >= LaneFailingWarningThreshold:
+		return ops.SeverityWarning
+	}
+	return ""
+}
+
+// raiseLaneAlertLocked reports a failing retrieval lane. Caller holds s.mu.
+func (s *Store) raiseLaneAlertLocked(appID string, consecutiveFailures int, reason string) {
+	if s.alerts == nil {
+		return
+	}
+	severity := laneSeverity(consecutiveFailures)
+	if severity == "" {
+		return
+	}
+	s.alerts.Raise(ops.KindLaneFailing, appID, severity, reason)
+}
+
+// SeedLaneAlerts rebuilds the lane_failing alerts from the durable ledger, so a
+// daemon restart does not hide a lane that has been failing for days. Called
+// once at node start, right after SetAlerts.
+//
+// Restart amnesia is exactly how the 2026-09 outage stayed invisible: the
+// counters were in app_attempts the whole time and nothing read them back.
+func (s *Store) SeedLaneAlerts() int {
+	if s == nil || s.db == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.alerts == nil {
+		return 0
+	}
+	rows, err := s.db.Query(
+		`SELECT app_id, consecutive_failures, last_failure_reason
+		   FROM app_attempts
+		  WHERE consecutive_failures >= ?
+		  ORDER BY app_id`, LaneFailingWarningThreshold)
+	if err != nil {
+		log.Debugf("seed lane alerts: %v", err)
+		return 0
+	}
+	defer rows.Close()
+	seeded := 0
+	for rows.Next() {
+		var (
+			appID    string
+			failures int
+			reason   string
+		)
+		if err := rows.Scan(&appID, &failures, &reason); err != nil {
+			log.Debugf("seed lane alerts: %v", err)
+			continue
+		}
+		appID = strings.TrimSpace(appID)
+		if appID == "" {
+			continue
+		}
+		if strings.TrimSpace(reason) == "" {
+			reason = "failing since before this daemon started"
+		}
+		s.raiseLaneAlertLocked(appID, failures, reason)
+		seeded++
+	}
+	if seeded > 0 {
+		log.Warnf("Seeded %d failing retrieval lane(s) from the ledger; a restart does not clear a lane that is still down", seeded)
+	}
+	return seeded
 }
 
 // Open creates or opens the operational metrics database beside the record
@@ -503,6 +606,9 @@ func (s *Store) clearAppFailuresLocked(appID string) {
 		appID); err != nil {
 		log.Debugf("clear failures %s: %v", appID, err)
 	}
+	if s.alerts != nil {
+		s.alerts.Clear(ops.KindLaneFailing, appID)
+	}
 }
 
 // RecordAttemptOutcome closes the loop RecordAttempt opens. RecordAttempt
@@ -550,6 +656,7 @@ func (s *Store) RecordAttemptOutcome(appID string, runErr error) {
 	}
 	log.Warnf("Retrieval attempt failed for %s (%d consecutive; next window %.0fh): %s",
 		appID, failures, EffectiveDebounceHours(failures), reason)
+	s.raiseLaneAlertLocked(appID, failures, reason)
 }
 
 // AttemptFailureReason names the cause recorded for an app's current failure

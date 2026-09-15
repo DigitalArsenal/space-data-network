@@ -34,3 +34,34 @@ func TestMetricsHandlerServesSDNInstruments(t *testing.T) {
 		}
 	}
 }
+
+// The alert gauge is the third surface of the OPS ALERT lane (after /health
+// and /api/v1/status/alerts): one series per kind and severity, read live so a
+// recovered lane's series disappears instead of going stale at 1.
+func TestMetricsHandlerServesActiveAlertGauge(t *testing.T) {
+	counts := []AlertCount{
+		{Kind: "lane_failing", Severity: "error", Count: 2},
+		{Kind: "publication_rejected", Severity: "error", Count: 1},
+	}
+	SetAlertCountsFunc(func() []AlertCount { return counts })
+	t.Cleanup(func() { SetAlertCountsFunc(nil) })
+
+	recorder := httptest.NewRecorder()
+	Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`sdn_alerts_active{kind="lane_failing",severity="error"} 2`,
+		`sdn_alerts_active{kind="publication_rejected",severity="error"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics output missing %q\n%s", want, body[:min(len(body), 2000)])
+		}
+	}
+
+	counts = nil
+	recorder = httptest.NewRecorder()
+	Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if strings.Contains(recorder.Body.String(), "sdn_alerts_active{") {
+		t.Fatal("a cleared alert left a stale sdn_alerts_active series behind")
+	}
+}
