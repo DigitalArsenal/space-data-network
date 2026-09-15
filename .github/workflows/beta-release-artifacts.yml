@@ -315,16 +315,6 @@ jobs:
       RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
       NATIVE_PACKAGE_VERSION: ${{ needs.beta-version.outputs.native_package_version }}
     steps:
-      # Before checkout, for the same reason as wasmedge-static: no git in the
-      # bare image. build-essential/zlib/tinfo are what the link tail in
-      # link.flags names (-lz, -ltinfo) plus the compiler driver itself.
-      - name: Prepare the container
-        if: matrix.container != ''
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
-            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
@@ -486,6 +476,17 @@ jobs:
       KUBO_BINARY_NAME: ${{ matrix.kubo_binary_name }}
       WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
     steps:
+      # Before checkout, for the same reason as wasmedge-static: the bare image
+      # has no git, and download-kubo.sh needs curl. build-essential/zlib/tinfo
+      # are what the link tail in link.flags names (-lz, -ltinfo) plus the
+      # compiler driver itself.
+      - name: Prepare the container
+        if: matrix.container != ''
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
@@ -840,7 +841,9 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/bin"
           GOBIN="${RUNNER_TEMP}/bin" go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION}"
           echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin
+          # No sudo: this job runs as root inside ubuntu:20.04, and the image
+          # has no sudo at all ("sudo: not found").
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
           "${RUNNER_TEMP}/bin/nfpm" --version
           syft version
       - name: Build RPM and DEB artifacts
