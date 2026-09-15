@@ -47,7 +47,35 @@ func sourcesRouteDecls() []staticRouteDecl {
 	const sourcesTag = "sources"
 	const sourcesTagDescription = "Where records come from: connectors ($ICN), sync lanes ($DSS), export and signed archives ($DPM). FlatBuffer frames only."
 	const probesTag = "probes"
-	const probesTagDescription = "Liveness, readiness and metrics for load balancers and monitoring."
+	const probesTagDescription = "Liveness, readiness, operational alerts and metrics for load balancers and monitoring."
+
+	alertSchema := openAPIObj{
+		"type": "object",
+		"properties": openAPIObj{
+			"kind":       openAPIObj{"type": "string", "description": "lane_failing | publication_rejected | flow_capability_denied | engine_poisoned | engine_rebuilding | update_failed"},
+			"subject":    openAPIObj{"type": "string", "description": "What is failing: an app id, a producer peer id, a plugin id, or empty for a node-wide condition."},
+			"severity":   openAPIObj{"type": "string", "description": "warning | error"},
+			"since":      openAPIObj{"type": "string", "format": "date-time", "description": "When the alert first went active; a repeat does not reset it."},
+			"count":      openAPIObj{"type": "integer", "description": "Reports of this failure since `since`."},
+			"last_error": openAPIObj{"type": "string", "description": "Most recent error text."},
+			"last_at":    openAPIObj{"type": "string", "format": "date-time"},
+		},
+	}
+	alertsSchema := openAPIObj{
+		"type":       "object",
+		"properties": openAPIObj{"alerts": openAPIObj{"type": "array", "items": alertSchema}},
+	}
+	healthSchema := openAPIObj{
+		"type": "object",
+		"properties": openAPIObj{
+			"status": openAPIObj{"type": "string", "description": "ok | degraded"},
+			"alerts": openAPIObj{
+				"type":        "object",
+				"description": "Active alerts by severity. Counts only: the anonymous probe never sees a subject.",
+				"properties":  openAPIObj{"error": openAPIObj{"type": "integer"}, "warning": openAPIObj{"type": "integer"}},
+			},
+		},
+	}
 
 	return []staticRouteDecl{
 		{
@@ -184,8 +212,8 @@ func sourcesRouteDecls() []staticRouteDecl {
 			operation: openAPIObj{
 				"operationId": "getHealth",
 				"summary":     "Liveness",
-				"description": "Answers `ok` while the process serves requests. Also at /api/v1/health.",
-				"responses":   openAPIObj{"200": openAPIObj{"description": "ok", "content": openAPIObj{"text/plain": openAPIObj{"schema": openAPIObj{"type": "string"}}}}},
+				"description": "Answers 200 while the process serves requests, with `status` (`ok` or `degraded`) and a count of active operational alerts by severity. The HTTP status never changes with degradation — a failing lane is not a reason to pull the node out of rotation — and the anonymous body carries counts only. /api/v1/status/alerts has the detail. Also at /api/v1/health.",
+				"responses":   openAPIObj{"200": openAPIObj{"description": "Liveness with the alert summary.", "content": openAPIObj{"application/json": openAPIObj{"schema": healthSchema}}}},
 			},
 		},
 		{
@@ -198,6 +226,19 @@ func sourcesRouteDecls() []staticRouteDecl {
 				"responses": openAPIObj{
 					"200": openAPIObj{"description": "ready", "content": openAPIObj{"text/plain": openAPIObj{"schema": openAPIObj{"type": "string"}}}},
 					"503": openAPIObj{"description": "not ready: store not linked | store busy | engine not answering | libp2p host down", "content": openAPIObj{"text/plain": openAPIObj{"schema": openAPIObj{"type": "string"}}}},
+				},
+			},
+		},
+		{
+			path: "/api/v1/status/alerts", method: "GET",
+			tag: probesTag, tagDescription: probesTagDescription,
+			operation: openAPIObj{
+				"operationId": "getActiveAlerts",
+				"summary":     "Active operational alerts",
+				"description": "What is currently wrong with this node: failing retrieval lanes, rejected dataset publications, denied flow capabilities, a poisoned or rebuilding engine, a failed update. Each alert names its subject and how long it has been active. Subjects identify this node's apps, peers and plugins, so an operator session is required.",
+				"responses": openAPIObj{
+					"200": openAPIObj{"description": "The active alerts, errors first.", "content": openAPIObj{"application/json": openAPIObj{"schema": alertsSchema}}},
+					"401": operator,
 				},
 			},
 		},

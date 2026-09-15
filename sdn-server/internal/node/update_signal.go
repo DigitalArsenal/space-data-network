@@ -52,6 +52,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/adminaddr"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 )
 
@@ -108,6 +109,12 @@ type UpdateSignalSubscriberDeps struct {
 	// Launch performs the swap handoff. Nil uses update.LaunchSelfUpgrade —
 	// tests substitute it so the suite never actually swaps a bundle.
 	Launch func(update.Paths, update.SelfUpgradeOptions) (*update.SelfUpgradeLaunch, error)
+	// Alerts is the node's operational alert registry. A box that cannot
+	// install a pushed update is a box that silently falls behind the fleet,
+	// which is only visible if someone compares versions by hand — so the
+	// failure is raised here and cleared when a swap is handed off. Nil is
+	// tolerated (every Registry method is nil-safe).
+	Alerts *ops.Registry
 }
 
 // UpdateSignalSubscriber listens for update signals and upgrades this install.
@@ -235,9 +242,13 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 
 	if err := s.upgrade(ctx, signal, state); err != nil {
 		log.Errorf("update signal %s: self-upgrade did not start: %v", signal.UpdateID, err)
+		s.deps.Alerts.Raise(ops.KindUpdateFailed, signal.UpdateID, ops.SeverityError, err.Error())
 		s.release(signal.UpdateID)
 		return
 	}
+	// The helper has the swap. Whatever failed on an earlier attempt at this
+	// update is no longer the state of this box.
+	s.deps.Alerts.Clear(ops.KindUpdateFailed, signal.UpdateID)
 }
 
 // claim enforces once-per-update and the minimum interval between swaps.
@@ -484,6 +495,7 @@ func (n *Node) startUpdateSignalSubscriber() {
 		MinInterval:   cfg.MinInterval(),
 		MaxDelay:      time.Duration(cfg.MaxDelaySeconds) * time.Second,
 		Client:        n.updateFetchClient(),
+		Alerts:        n.alerts,
 	})
 	if err != nil {
 		log.Warnf("Update signal lane NOT started: %v", err)

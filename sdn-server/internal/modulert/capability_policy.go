@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 )
 
 // ---------------------------------------------------------------------
@@ -515,6 +517,11 @@ func ContentHashHex(wasmBytes []byte) string {
 // closed, no partial silent grant). A nil policy is equivalent to an empty
 // one — every sensitive capability is denied.
 func checkCapabilityPolicy(policy *CapabilityPolicyStore, moduleHash, pluginID string, capabilities []string) error {
+	label := strings.TrimSpace(pluginID)
+	if label == "" {
+		label = "unknown"
+	}
+
 	var denied []string
 	for _, capability := range capabilities {
 		capability = strings.TrimSpace(capability)
@@ -527,14 +534,15 @@ func checkCapabilityPolicy(policy *CapabilityPolicyStore, moduleHash, pluginID s
 		denied = append(denied, capability)
 	}
 	if len(denied) == 0 {
+		// This plugin provisioned: whatever it was denied before, it is not
+		// being denied now.
+		if sink := alertSink(); sink != nil {
+			sink.Clear(ops.KindFlowCapabilityDenied, label)
+		}
 		return nil
 	}
 	sort.Strings(denied)
 
-	label := strings.TrimSpace(pluginID)
-	if label == "" {
-		label = "unknown"
-	}
 	displayHash := moduleHash
 	if len(displayHash) > 16 {
 		displayHash = displayHash[:16]
@@ -543,8 +551,12 @@ func checkCapabilityPolicy(policy *CapabilityPolicyStore, moduleHash, pluginID s
 	if len(denied) != 1 {
 		suffix = "ies"
 	}
-	return fmt.Errorf(
+	err := fmt.Errorf(
 		"module capability policy: module %q (hash %s...) requests unapproved sensitive capabilit%s [%s] — record an operator approval for module_hash=%s before loading (fail closed)",
 		label, displayHash, suffix, strings.Join(denied, ", "), moduleHash,
 	)
+	if sink := alertSink(); sink != nil {
+		sink.Raise(ops.KindFlowCapabilityDenied, label, ops.SeverityError, err.Error())
+	}
+	return err
 }

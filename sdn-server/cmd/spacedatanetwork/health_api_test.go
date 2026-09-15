@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 )
 
 func TestHealthRoutesReportLivenessReadinessAndGateMetrics(t *testing.T) {
@@ -25,9 +27,15 @@ func TestHealthRoutesReportLivenessReadinessAndGateMetrics(t *testing.T) {
 		requireAuth: true,
 	})
 	for _, path := range []string{"/health", "/api/v1/health"} {
-		if rec := get(mux, path); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "ok" {
+		rec := get(mux, path)
+		if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"status":"ok","alerts":{"error":0,"warning":0}}` {
 			t.Fatalf("%s: status %d body %q", path, rec.Code, rec.Body.String())
 		}
+	}
+	// The alert list describes this node and its peers by name: operator
+	// session only, exactly like /metrics.
+	if rec := get(mux, "/api/v1/status/alerts"); rec.Code == http.StatusOK {
+		t.Fatalf("/api/v1/status/alerts served anonymously on a require_auth node (status %d)", rec.Code)
 	}
 	for _, path := range []string{"/ready", "/api/v1/ready"} {
 		if rec := get(mux, path); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "ready" {
@@ -70,6 +78,50 @@ func TestHealthRoutesReportLivenessReadinessAndGateMetrics(t *testing.T) {
 	// Liveness stays green while readiness is red: the process is serving.
 	if rec := get(none, "/health"); rec.Code != http.StatusOK {
 		t.Fatalf("/health on an unready node: status %d", rec.Code)
+	}
+}
+
+// The 31-hour publication outage of 2026-09-13..15 was invisible because
+// nothing an operator polls ever said anything was wrong. /health says so now,
+// and its HTTP status still does not change: a degraded node is still serving.
+func TestHealthReportsDegradedAndAlertsListsDetail(t *testing.T) {
+	registry := ops.NewRegistry()
+	registry.Raise(ops.KindPublicationRejected, "12*ab12cd", ops.SeverityError,
+		`SIGNATURE_TYPE "Ed25519" does not match the provider's Secp256k1 key`)
+	registry.Raise(ops.KindLaneFailing, "celestrak-satcat-ingest", ops.SeverityWarning, "parser returned HTTP 400")
+
+	mux := http.NewServeMux()
+	mountHealthRoutes(mux, healthDeps{
+		engineReady: func() bool { return true },
+		peerCount:   func() int { return 3 },
+		alerts:      registry,
+	})
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+
+	rec := get("/health")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/health status = %d, want 200 even while degraded", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"status":"degraded","alerts":{"error":1,"warning":1}}` {
+		t.Fatalf("/health body = %s", body)
+	}
+	if strings.Contains(rec.Body.String(), "celestrak") {
+		t.Fatal("anonymous /health leaked an alert subject")
+	}
+
+	// require_auth is off here, so the operator route answers in full.
+	rec = get("/api/v1/status/alerts")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/api/v1/status/alerts status = %d", rec.Code)
+	}
+	for _, want := range []string{"publication_rejected", "12*ab12cd", "celestrak-satcat-ingest", "Secp256k1"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("/api/v1/status/alerts missing %q: %s", want, rec.Body.String())
+		}
 	}
 }
 
