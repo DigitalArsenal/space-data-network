@@ -347,9 +347,29 @@ verify_installation() {
     fi
 
     if [ -x "$PRIMARY_COMMAND_PATH" ] && [ -x "$ALIAS_COMMAND_PATH" ]; then
+        # RUN IT BEFORE CLAIMING SUCCESS. This used to print "Installation
+        # successful!", then downgrade a binary that cannot execute at all to a
+        # warning, and finish by telling the operator to run it. The common way
+        # to hit that is a host whose glibc is older than the build's: the node
+        # links WasmEdge, libstdc++ and libgcc in, but glibc stays dynamic, so
+        # it is the one version that can still be wrong.
+        if ! version_output="$("$PRIMARY_COMMAND_PATH" version 2>&1)"; then
+            log_error "The installed binary cannot run on this host."
+            printf '%s\n' "$version_output" | head -3
+            if printf '%s' "$version_output" | grep -q 'GLIBC_'; then
+                needed="$(printf '%s' "$version_output" | grep -o 'GLIBC_2\.[0-9]*' | sort -uV | tail -1)"
+                present="$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+$' || true)"
+                log_error "This build needs glibc ${needed#GLIBC_} or newer; this host has ${present:-an older release}."
+                log_info "Use the container image, which carries its own glibc:"
+                log_info "  docker run -d --name sdn --hostname sdn -v sdn-data:/app/data \\"
+                log_info "    dockerdigitalarsenal/space-data-network:beta"
+            fi
+            log_info "Nothing was left running. Remove $INSTALL_DIR to undo this install."
+            exit 1
+        fi
         log_info "Installation successful!"
         echo ""
-        "$PRIMARY_COMMAND_PATH" version || log_warn "Installed binary did not print a version"
+        printf '%s\n' "$version_output"
         "$ALIAS_COMMAND_PATH" status >/dev/null 2>&1 || log_warn "Alias command did not print local status"
         echo ""
         if ! command -v "$PRIMARY_BINARY_NAME" &> /dev/null || ! command -v "$ALIAS_BINARY_NAME" &> /dev/null; then
