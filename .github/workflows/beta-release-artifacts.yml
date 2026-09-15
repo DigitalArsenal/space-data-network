@@ -127,7 +127,8 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         # msys2 on Windows so /mingw64 and its toolchain are on PATH; bash
         # elsewhere. Defined per-step because the job default is plain bash.
-        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
+        # `runner` is not available in a shell: expression; matrix is.
+        shell: ${{ matrix.label == 'windows-amd64' && 'msys2 {0}' || 'bash' }}
         run: |
           if [ "${RUNNER_OS}" = "Windows" ]; then
             L=/mingw64
