@@ -102,7 +102,8 @@ if [[ ! -f "$SRC/build/lib/api/libwasmedge.a" ]]; then
     -DWASMEDGE_BUILD_PLUGINS=OFF \
     -DLLVM_DIR="${LLVM_DIR:-/usr/lib/llvm-16/lib/cmake/llvm}" \
     -DLLD_DIR="${LLD_DIR:-/usr/lib/llvm-16/lib/cmake/lld}" \
-    ${CMAKE_AR:+-DCMAKE_AR="$CMAKE_AR"}
+    ${CMAKE_AR:+-DCMAKE_AR="$CMAKE_AR"} \
+    ${CMAKE_PREFIX_PATH:+-DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"}
   JOBS="$( (command -v nproc >/dev/null && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo 4 )"
   cmake --build "$SRC/build" -j"$JOBS"
 fi
