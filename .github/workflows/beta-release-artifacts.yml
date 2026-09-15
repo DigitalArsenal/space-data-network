@@ -74,10 +74,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          # Bump the suffix whenever the PREFIX LAYOUT changes, not just the
-          # WasmEdge version: a stale cache silently restores an old link.flags
-          # and every downstream job fails on paths that no longer exist.
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.label }}-relocatable-v2
+          # The key HASHES THE BUILD SCRIPT, so it moves whenever the recipe
+          # does. Hand-bumped suffixes went stale twice: once restoring a
+          # link.flags full of absolute paths, once restoring one missing
+          # -lc++abi, and in both cases the fix silently never ran.
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.label }}-${{ hashFiles('scripts/build-static-wasmedge.sh') }}
       - name: Install build toolchain (Linux)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
         run: |
@@ -116,7 +117,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-relocatable-v2
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-${{ hashFiles('scripts/build-static-wasmedge.sh') }}
           fail-on-cache-miss: true
       - uses: actions/setup-node@v4
         with:
@@ -393,7 +394,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-relocatable-v2
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-${{ hashFiles('scripts/build-static-wasmedge.sh') }}
           fail-on-cache-miss: true
       - name: Install Windows WasmEdge runtime
         if: matrix.target_os == 'windows'
