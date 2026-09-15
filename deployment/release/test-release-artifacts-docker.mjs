@@ -125,11 +125,14 @@ COPY ${artifactName} /tmp/${artifactName}
 RUN apt-get update \\
   && apt-get install -y --no-install-recommends ca-certificates curl /tmp/${artifactName} \\
   && rm -rf /var/lib/apt/lists/*
-ENV WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge
-ENV LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge/lib
+# No WASMEDGE_DIR, no LD_LIBRARY_PATH, and the package must not have installed a
+# runtime at all: the binary carries WasmEdge inside it. These images are
+# deliberately stock base images with no WasmEdge anywhere, so if the binary
+# needed one the --help below could not run.
 RUN test -x /opt/spacedatanetwork/bin/spacedatanetwork \\
-  && test -d /opt/spacedatanetwork/.wasmedge/lib \\
-  && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge/lib /opt/spacedatanetwork/bin/spacedatanetwork --help >/tmp/spacedatanetwork-help.txt
+  && ! test -e /opt/spacedatanetwork/.wasmedge \\
+  && ! ldd /opt/spacedatanetwork/bin/spacedatanetwork | grep -qi wasmedge \\
+  && /opt/spacedatanetwork/bin/spacedatanetwork --help >/tmp/spacedatanetwork-help.txt
 `;
 
     case 'edge-deb':
@@ -148,11 +151,14 @@ COPY ${artifactName} /tmp/${artifactName}
 RUN dnf install -y /tmp/${artifactName} \\
   && dnf clean all \\
   && command -v curl
-ENV WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge
-ENV LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge/lib
+# No WASMEDGE_DIR, no LD_LIBRARY_PATH, and the package must not have installed a
+# runtime at all: the binary carries WasmEdge inside it. These images are
+# deliberately stock base images with no WasmEdge anywhere, so if the binary
+# needed one the --help below could not run.
 RUN test -x /opt/spacedatanetwork/bin/spacedatanetwork \\
-  && test -d /opt/spacedatanetwork/.wasmedge/lib \\
-  && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge/lib /opt/spacedatanetwork/bin/spacedatanetwork --help >/tmp/spacedatanetwork-help.txt
+  && ! test -e /opt/spacedatanetwork/.wasmedge \\
+  && ! ldd /opt/spacedatanetwork/bin/spacedatanetwork | grep -qi wasmedge \\
+  && /opt/spacedatanetwork/bin/spacedatanetwork --help >/tmp/spacedatanetwork-help.txt
 `;
 
     case 'edge-rpm':
@@ -172,11 +178,14 @@ RUN apt-get update \\
   && apt-get install -y --no-install-recommends ca-certificates curl tar \\
   && tar -C / -xzf /tmp/${artifactName} \\
   && rm -rf /var/lib/apt/lists/*
-ENV WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge
-ENV LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge/lib
+# No WASMEDGE_DIR, no LD_LIBRARY_PATH, and the package must not have installed a
+# runtime at all: the binary carries WasmEdge inside it. These images are
+# deliberately stock base images with no WasmEdge anywhere, so if the binary
+# needed one the --help below could not run.
 RUN test -x /opt/spacedatanetwork/bin/spacedatanetwork \\
-  && test -d /opt/spacedatanetwork/.wasmedge/lib \\
-  && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge/lib /opt/spacedatanetwork/bin/spacedatanetwork --help >/tmp/spacedatanetwork-help.txt
+  && ! test -e /opt/spacedatanetwork/.wasmedge \\
+  && ! ldd /opt/spacedatanetwork/bin/spacedatanetwork | grep -qi wasmedge \\
+  && /opt/spacedatanetwork/bin/spacedatanetwork --help >/tmp/spacedatanetwork-help.txt
 `;
 
     case 'linux-cli': {
@@ -188,9 +197,11 @@ RUN apt-get update \\
   && mkdir -p /opt \\
   && tar -C /opt -xzf /tmp/${artifactName} \\
   && rm -rf /var/lib/apt/lists/*
-ENV WASMEDGE_DIR=/opt/${bundleRoot}/runtime/wasmedge
-ENV LD_LIBRARY_PATH=/opt/${bundleRoot}/runtime/wasmedge/lib
+# Same contract as the packages: the bundle stages no runtime directory and the
+# binary resolves nothing outside itself.
 RUN test -x /opt/${bundleRoot}/bin/spacedatanetwork \\
+  && ! test -e /opt/${bundleRoot}/runtime/wasmedge \\
+  && ! ldd /opt/${bundleRoot}/bin/spacedatanetwork | grep -qi wasmedge \\
   && test -x /opt/${bundleRoot}/bin/sdn \\
   && test -x /opt/${bundleRoot}/runtime/kubo/ipfs \\
   && test -f /opt/${bundleRoot}/runtime/modules/hd-wallet-wasi.wasm \\

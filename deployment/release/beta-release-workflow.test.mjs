@@ -255,7 +255,7 @@ test('beta release workflow builds updater wasm once before platform CLI archive
 
   assert.match(workflow, /updater-wasm:\s*\n\s*name:\s*Build updater module wasm/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, updater-wasm\]/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, updater-wasm, wasmedge-static\]/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic/);
   assert.match(workflow, /name:\s*Verify updater module wasm[\s\S]*test -f packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
 
@@ -299,14 +299,44 @@ test('beta release workflow downloads Kubo archives with retries and validation'
   assert.match(downloader, /unzip -tq/);
 });
 
-test('beta release workflow builds the Windows CLI with the Windows WasmEdge runtime', () => {
+test('every CLI target links WasmEdge in and ships no runtime beside the binary', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
   assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
-  assert.match(workflow, /WasmEdge-\$\{WASMEDGE_VERSION\}-windows\.zip/);
-  assert.match(workflow, /WasmEdge-\$\{WASMEDGE_VERSION\}-Windows/);
-  assert.match(workflow, /--wasmedge-path "\$\{WASMEDGE_DIR\}"/);
-  assert.match(workflow, /bin\/wasmedge\.dll/);
+
+  // Windows used to be the exception, shipping wasmedge.dll next to the exe.
+  // It is not any more: all five targets restore a static prefix and link the
+  // runtime into the executable. Nothing may download or stage a DLL, and
+  // nothing may pass --wasmedge-path, which is what tells the bundler to put a
+  // runtime in the archive.
+  assert.doesNotMatch(workflow, /wasmedge\.dll/);
+  assert.doesNotMatch(workflow, /WasmEdge-\$\{WASMEDGE_VERSION\}-(windows|Windows)/);
+  assert.doesNotMatch(workflow, /--wasmedge-path/);
+
+  const cliJob = workflow.slice(workflow.indexOf('  cli:'), workflow.indexOf('  cli-update-feed:'));
+  assert.match(cliJob, /name:\s*Restore the static WasmEdge prefix[\s\S]*fail-on-cache-miss:\s*true/);
+  assert.match(cliJob, /go-with-wasmedge\.sh build -o/);
+});
+
+test('the static WasmEdge cache key covers everything that shapes a prefix', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+
+  // Three separate outages came from a fix that landed but never ran, because a
+  // prefix built by older code stayed in the cache. The key must therefore move
+  // whenever the build script, the toolchain-selection script, or the installed
+  // package set (tagged by matrix.toolchain, since no hashFiles can see an
+  // action's literal inputs) changes.
+  const keys = [...workflow.matchAll(/key:\s*(wasmedge-static-[^\n]*)/g)].map((m) => m[1]);
+  assert(keys.length >= 4, `expected every consumer to name the key, saw ${keys.length}`);
+  for (const key of keys) {
+    assert.match(key, /hashFiles\('scripts\/build-static-wasmedge\.sh', 'scripts\/wasmedge-static-env\.sh'\)/);
+    assert.match(key, /apt-llvm16|brew-llvm18|msys2-mingw64|matrix\.toolchain/);
+  }
+
+  // Hashing the whole workflow was the previous, far too broad answer: it threw
+  // away five prefixes and rebuilt LLVM on five runners for an edit to an
+  // unrelated job.
+  assert.doesNotMatch(workflow, /hashFiles\([^)]*beta-release-artifacts\.yml[^)]*\)/);
 });
 
 test('beta release workflow builds signed CLI update feed artifacts', () => {
@@ -417,8 +447,16 @@ test('container publish workflow ships one Docker Hub image', () => {
 test('single Dockerfile defaults to full node and keeps edge mode as command override', () => {
   const dockerfile = readRepoFile('deployment/docker/Dockerfile');
 
-  assert.match(dockerfile, /go build[\s\S]*-o \/out\/spacedatanetwork \.\/cmd\/spacedatanetwork/);
+  // The image builds the daemon through the SAME wrapper every other build
+  // product uses, so the static link line has exactly one definition. It used
+  // to carry a hand-written copy of the archive list, which went stale and
+  // failed to link (missing libwasmedgePluginWasiLogging.a) while the CLI
+  // archives built fine off the real list.
+  assert.match(dockerfile, /go-with-wasmedge\.sh build -o \/out\/spacedatanetwork \.\/cmd\/spacedatanetwork/);
+  assert.doesNotMatch(dockerfile, /llvm-config-16 --link-static/);
   assert.match(dockerfile, /go build -tags edge[\s\S]*-o \/out\/spacedatanetwork-edge \.\/cmd\/spacedatanetwork-edge/);
+  // Fails the build rather than shipping an image that needs a runtime present.
+  assert.match(dockerfile, /ldd \/out\/spacedatanetwork \| grep -qi wasmedge/);
   assert.match(dockerfile, /ENTRYPOINT \["\/app\/spacedatanetwork"\]/);
   assert.match(dockerfile, /CMD \["daemon", "--config", "\/app\/config\/full-docker\.yaml"\]/);
 });

@@ -13,6 +13,24 @@ EOF
   exit 1
 fi
 
+# MSYS2/MinGW receives a native Windows path (D:\a\repo\repo, straight from
+# ${{ github.workspace }}). A backslash is an escape character to almost
+# everything it then passes through, and the damage is silent: sed read
+# "D:\a\space-data-network\..." as a replacement string, ate \a and turned \s
+# into s, and ld.exe was handed "D:space-data-networkspace-data-network/..." —
+# "cannot find libwasmedge.a: Invalid argument", once per archive. cygpath -m
+# gives the mixed form (D:/a/repo/repo) that ld.exe, cmake and the shell all
+# accept unchanged.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    if command -v cygpath >/dev/null 2>&1; then
+      WASMEDGE_DIR="$(cygpath -m "$WASMEDGE_DIR")"
+    else
+      WASMEDGE_DIR="${WASMEDGE_DIR//\\//}"
+    fi
+    ;;
+esac
+
 if [[ ! -f "$WASMEDGE_DIR/include/wasmedge/wasmedge.h" || ! -d "$WASMEDGE_DIR/lib" ]]; then
   printf '[wasmedge] invalid WASMEDGE_DIR: %s\n' "$WASMEDGE_DIR" >&2
   printf '[wasmedge] expected include/wasmedge/wasmedge.h and lib/ under that path\n' >&2
@@ -105,12 +123,23 @@ if [[ -f "$WASMEDGE_DIR/link.flags" ]]; then
   export CGO_LDFLAGS="-L${WASMEDGE_DIR}/lib"
   # @PREFIX@ is substituted here, which is what makes a prefix built elsewhere
   # (a cached CI artifact, another checkout) usable at whatever path it landed.
-  STATIC_LINK_FLAGS="$(tr -d '\n' < "$WASMEDGE_DIR/link.flags" | sed "s|@PREFIX@|${WASMEDGE_DIR}|g")"
+  # Literal replacement, not sed: sed's replacement text interprets backslashes
+  # and &, and a filesystem path is arbitrary text that must survive verbatim.
+  STATIC_LINK_TEMPLATE="$(tr -d '\n' < "$WASMEDGE_DIR/link.flags")"
+  STATIC_LINK_FLAGS="${STATIC_LINK_TEMPLATE//@PREFIX@/$WASMEDGE_DIR}"
   cd "$ROOT/sdn-server"
   case "${1:-}" in
     build|install|test)
       verb="$1"; shift
-      exec go "$verb" -ldflags "-linkmode external -extldflags \"${STATIC_LINK_FLAGS}\"" "$@"
+      # SDN_GO_LDFLAGS is the ONLY way a caller adds its own -ldflags here. go
+      # keeps the LAST -ldflags it is given, so a caller that passed its own as
+      # an argument would silently drop the static link line below and get a
+      # binary linked against whatever libwasmedge the machine happens to have
+      # — or no link at all. Merging them into one value is what the release
+      # stamp (-X ...ReleaseTag) needs.
+      exec go "$verb" \
+        -ldflags "${SDN_GO_LDFLAGS:+${SDN_GO_LDFLAGS} }-linkmode external -extldflags \"${STATIC_LINK_FLAGS}\"" \
+        "$@"
       ;;
     *)
       exec go "$@"
@@ -140,4 +169,16 @@ if [[ -d "$WASMEDGE_DIR/bin" ]]; then
 fi
 
 cd "$ROOT/sdn-server"
+
+# Same contract as the static branch: a caller's own -ldflags travel in
+# SDN_GO_LDFLAGS so the two paths behave identically.
+case "${1:-}" in
+  build|install|test)
+    if [[ -n "${SDN_GO_LDFLAGS:-}" ]]; then
+      verb="$1"; shift
+      exec go "$verb" -ldflags "${SDN_GO_LDFLAGS}" "$@"
+    fi
+    ;;
+esac
+
 exec go "$@"

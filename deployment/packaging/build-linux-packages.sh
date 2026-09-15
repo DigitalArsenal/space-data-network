@@ -7,7 +7,7 @@ out_dir="${OUT_DIR:-${root}/dist/packages}"
 work_dir="${WORK_DIR:-${root}/dist/package-root}"
 version="${VERSION:-$(git -C "${root}" describe --tags --always --dirty)}"
 arch="${ARCH:-amd64}"
-wasmedge_dir="${WASMEDGE_DIR:-${HOME}/.wasmedge}"
+wasmedge_dir="${WASMEDGE_DIR:?WASMEDGE_DIR must point at a WasmEdge prefix (static or dynamic)}"
 export WASMEDGE_DIR="${wasmedge_dir}"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -20,8 +20,18 @@ if ! command -v nfpm >/dev/null 2>&1; then
   exit 69
 fi
 
+# A STATIC prefix ships nothing: the runtime is already inside the binary, and
+# staging a copy beside it would put a second, unused WasmEdge in the package
+# that the daemon might then prefer. link.flags is the marker
+# build-static-wasmedge.sh leaves to say which kind of prefix this is.
 copy_wasmedge_runtime() {
   local target="$1"
+
+  if [[ -f "${wasmedge_dir}/link.flags" ]]; then
+    rm -rf "${target}"
+    echo "static WasmEdge prefix: nothing staged at ${target}"
+    return 0
+  fi
 
   if [[ ! -x "${wasmedge_dir}/bin/wasmedge" || ! -d "${wasmedge_dir}/lib" ]]; then
     echo "WasmEdge runtime is missing at ${wasmedge_dir}; run scripts/install-wasmedge.sh before packaging" >&2
