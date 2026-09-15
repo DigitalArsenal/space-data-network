@@ -55,7 +55,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.sdn-wasmedge-static
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-ubuntu-latest-v1
+          # Bump the suffix whenever the PREFIX LAYOUT changes, not just the
+          # WasmEdge version: a stale cache silently restores an old link.flags
+          # and every downstream job fails on paths that no longer exist.
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-ubuntu-latest-relocatable-v2
       - name: Build the static prefix
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
