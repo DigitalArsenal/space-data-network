@@ -108,7 +108,9 @@ done
     printf '@PREFIX@/lib/%s ' "$(basename "$archive")"
   done
   case "$(uname -s)" in
-    Darwin) printf -- '-lc++ -lm -lz -lncurses\n' ;;
+    # -lc++abi as well as -lc++: libc++'s exception ABI lives in libc++abi on
+    # macOS, and without it the link dies on ___cxa_init_primary_exception.
+    Darwin) printf -- '-lc++ -lc++abi -lm -lz -lncurses\n' ;;
     *)      printf -- '-lstdc++ -lm -ldl -lpthread -lz -ltinfo\n' ;;
   esac
 } > "$STATIC/link.flags"
