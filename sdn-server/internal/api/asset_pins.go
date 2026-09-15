@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -23,7 +22,6 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
-	"golang.org/x/sys/unix"
 
 	"github.com/spacedatanetwork/sdn-server/internal/assetpin"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -1045,19 +1043,11 @@ func validateAssetGatewayURL(raw string) (string, error) {
 type statFSAssetPinCapacity struct{}
 
 func (statFSAssetPinCapacity) AvailableBytes(path string) (uint64, error) {
-	var stat unix.Statfs_t
-	if err := unix.Statfs(path, &stat); err != nil {
-		return 0, err
+	available, _, ok := filesystemCapacity(path)
+	if !ok {
+		return 0, errors.New("could not read the filesystem capacity for " + path)
 	}
-	if stat.Bsize <= 0 {
-		return 0, errors.New("statfs returned a non-positive block size")
-	}
-	blocks := uint64(stat.Bavail)
-	blockSize := uint64(stat.Bsize)
-	if blocks > math.MaxUint64/blockSize {
-		return math.MaxUint64, nil
-	}
-	return blocks * blockSize, nil
+	return available, nil
 }
 
 // KuboAssetPinner binds the generic asset pinner contract to one Kubo API.
