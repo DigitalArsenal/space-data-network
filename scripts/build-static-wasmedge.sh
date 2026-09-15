@@ -77,6 +77,15 @@ cp "$SRC"/build/_deps/spdlog-build/libspdlog.a "$STATIC/lib/"
 cp -r "$SRC"/include/api/wasmedge             "$STATIC/include/"
 cp -r "$SRC"/build/include/api/wasmedge/*     "$STATIC/include/wasmedge/" 2>/dev/null || true
 
+# Stop here when the caller only wants the staged archives. A Docker layer that
+# builds LLVM + WasmEdge is expensive and depends ONLY on the version, so the
+# image builds it once and rebuilds it only when WASMEDGE_VERSION changes; the
+# Go build then lives in a later, cheap layer.
+if [[ -n "${WASMEDGE_STATIC_PREFIX_ONLY:-}" ]]; then
+  echo "staged static WasmEdge prefix: $STATIC"
+  exit 0
+fi
+
 # 4. Build the daemon. -extldflags places the C++ runtime + WasmEdge archives
 #    LAST on the external link line (after libwasmedge.a from the binding's
 #    -lwasmedge), so static symbols resolve. libstdc++/libc stay dynamic — they
