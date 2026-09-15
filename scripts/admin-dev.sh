@@ -183,12 +183,8 @@ ensure_sdn_ui_build() {
     "${repo_root}/sdn-js/ui/src" \
     "${repo_root}/sdn-js/src"
   then
-    echo "Building hosted SDN UI..."
-    (
-      cd "${repo_root}/sdn-js"
-      export VITE_SDN_DEFAULT_PROVIDER_URL="${remote_provider_url}"
-      npm run build:ui >/dev/null
-    )
+    echo "Staging hosted SDN UI from the embedded dashboard..."
+    sh "${repo_root}/deployment/scripts/stage-admin-ui.sh" "${repo_root}" >/dev/null
   fi
 }
 

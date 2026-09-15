@@ -114,11 +114,11 @@ jobs:
             sdn-js/package-lock.json
             webui/package-lock.json
 
-      - name: Build shared admin shell assets
-        working-directory: sdn-js
-        run: |
-          npm ci
-          npm run build:ui
+      # Staged, not built: build:ui was deleted by the UI consolidation and the
+      # dashboard the node serves is tracked in the tree. See
+      # deployment/scripts/stage-admin-ui.sh.
+      - name: Stage shared admin shell assets
+        run: sh deployment/scripts/stage-admin-ui.sh "${GITHUB_WORKSPACE}"
 
       - name: Build IPFS WebUI assets
         working-directory: webui

@@ -49,10 +49,7 @@ mkdir -p \
   "${STAGE_DIR}/etc/systemd/system" \
   "${STAGE_DIR}/var/lib/spacedatanetwork/frontend"
 
-(
-  cd "${PROJECT_ROOT}/sdn-js"
-  npm run build:ui
-)
+sh "${PROJECT_ROOT}/deployment/scripts/stage-admin-ui.sh" "${PROJECT_ROOT}"
 
 if [ ! -f "${PROJECT_ROOT}/webui/build/index.html" ]; then
   echo "webui/build is missing; build the IPFS WebUI before packaging" >&2

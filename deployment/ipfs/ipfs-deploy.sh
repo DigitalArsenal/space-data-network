@@ -27,27 +27,8 @@ run_with_timeout() {
 
 mkdir -p "${out_dir}"
 
-# THE NODE'S DASHBOARD IS THE ONE IN THE BINARY.
-#
-# It is built by `sdn-js run build:dashboard` straight into
-# sdn-server/cmd/spacedatanetwork/embedded/dashboard.html, which is tracked and
-# served by //go:embed (conjunction_ui.go). Building a SECOND copy here is how
-# this job broke: it ran `npm run build:ui`, a script the UI consolidation
-# deleted, so every release matrix that needed it died at checkout.
-#
-# Staging the tracked artifact instead means the bundle ships the exact bytes
-# the binary serves — no drift, no second build, and two 600 s npm steps off
-# the release critical path.
-sdn_ui_src="${root}/sdn-server/cmd/spacedatanetwork/embedded/dashboard.html"
-sdn_ui_dist="${root}/sdn-js/ui/dist"
-if [[ ! -f "${sdn_ui_src}" ]]; then
-  echo "missing embedded dashboard: ${sdn_ui_src}" >&2
-  exit 1
-fi
 log "Staging the embedded node dashboard as the SDN admin UI"
-rm -rf "${sdn_ui_dist}"
-mkdir -p "${sdn_ui_dist}"
-cp "${sdn_ui_src}" "${sdn_ui_dist}/index.html"
+sh "${root}/deployment/scripts/stage-admin-ui.sh" "${root}" >/dev/null
 
 if [[ ! -f "${root}/webui/build/index.html" ]]; then
   (

@@ -328,8 +328,8 @@ chmod 0755 \
 }
 
 prepare_full_node_assets() {
-    log_info "Building shared admin shell assets..."
-    (cd "${PROJECT_ROOT}/sdn-js" && npm run build:ui)
+    log_info "Staging the admin shell from the embedded dashboard..."
+    sh "${PROJECT_ROOT}/deployment/scripts/stage-admin-ui.sh" "${PROJECT_ROOT}"
 
     if [[ ! -f "${PROJECT_ROOT}/webui/build/index.html" ]]; then
         log_error "webui/build is missing. Build the IPFS WebUI before deploying a full node."
