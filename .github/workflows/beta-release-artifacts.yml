@@ -125,7 +125,14 @@ jobs:
                    LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld"
           elif [ "${RUNNER_OS}" = "macOS" ]; then
             L="$(brew --prefix llvm@18)"
-            export CC="$L/bin/clang" CXX="$L/bin/clang++" \
+            # COMPILE WITH APPLE CLANG, link LLVM from Homebrew. The two halves
+            # must agree on the C++ runtime: building WasmEdge against Homebrew's
+            # libc++ and then letting the Go link use /usr/bin/clang and the
+            # system libc++ leaves std::exception_ptr::__from_native_exception_pointer
+            # and ___cxa_init_primary_exception undefined. Only the LLVM ARCHIVES
+            # come from Homebrew; the toolchain is the system's, which is what
+            # go-with-wasmedge.sh links with.
+            export CC=/usr/bin/clang CXX=/usr/bin/clang++ \
                    LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld" \
                    LLVM_CONFIG="$L/bin/llvm-config" \
                    ZSTD_STATIC="$(brew --prefix zstd)/lib/libzstd.a"
