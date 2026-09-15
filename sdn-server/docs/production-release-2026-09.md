@@ -51,7 +51,12 @@ run unattended:
   Its SATCAT lane first-fired at 12:15:56Z (files changed upstream at 06:39Z)
   and ingested a fresh catalog; the current-batch reconcile drops the older
   batch when the ingest completes.
-- host-02 `/health` = `degraded`, four errors, all expected and visible for the
+- Final state after the quarantine build (feed sequence 1789478324, 13:4xZ):
+  host-01 `{"status":"ok","alerts":{"error":0,"warning":0}}`; host-02
+  `degraded` with exactly the two seeded `lane_failing` alerts (cellular, M-Lab),
+  which clear at their next successful tick; three junk stored publications
+  quarantined once on each host.
+- host-02 `/health` at the first roll = `degraded`, four errors, all expected and visible for the
   first time: two `lane_failing` seeded from the ledger (cellular 17, M-Lab 5
   consecutive failures; the rebuilt 304-aware bundles are loaded and run at the
   next tick), two `publication_rejected` for stored WXF and NCD PNMs attributed
