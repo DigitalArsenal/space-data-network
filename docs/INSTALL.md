@@ -57,10 +57,20 @@ docker run -d --name sdn --hostname sdn --restart unless-stopped \
 The image (`linux/amd64`) carries the node, WasmEdge with a prewarmed AOT
 engine, Kubo and the wallet sign-in assets; `config/full-docker.yaml` is baked
 in as `/app/config/full-docker.yaml` and everything the node owns lives in the `/app/data`
-volume (store, keys, auth, peers). Keep `--hostname` fixed: the key-at-rest
-password is derived from the container's hostname when no
-`SDN_KEY_PASSWORD` / `SDN_KEY_PASSWORD_FILE` is set, so a recreated container
-with a different hostname cannot open its own identity. `docker exec sdn
+volume (store, keys, auth, peers).
+
+`--hostname` is required, and the node enforces it. With no
+`SDN_KEY_PASSWORD` / `SDN_KEY_PASSWORD_FILE` set, the key-at-rest password is
+derived from the container's hostname; Docker's auto-generated one is a fresh
+container ID every time, so a recreated container could not open its own
+identity. Rather than sealing into a name that will not come back, a first
+start without `--hostname` refuses and prints the three ways forward — a fixed
+hostname, a mounted password file, or `SDN_ALLOW_EPHEMERAL_HOSTNAME=1` for a
+throwaway. Any stable value works; it is not a secret. A node already sealed
+under an auto-generated hostname keeps running and warns on every start: re-seal
+it with `spacedatanetwork key reseal` before recreating the container.
+
+`docker exec sdn
 /app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic`
 prints the recovery phrase. A `docker load` archive of the same image ships
 with each release (`spacedatanetwork-container-<version>-linux-amd64.tar.gz`).

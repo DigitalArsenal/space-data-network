@@ -498,6 +498,12 @@ export function buildFullNodeRunArgs({
     platform,
     '--name',
     containerName,
+    // A full node seals its at-rest keys to the container's hostname. Without
+    // this Docker invents a new container ID each run, the node refuses to
+    // create an identity it could never reopen, and the test is exercising a
+    // deployment nobody should make. Naming it is what a real operator does.
+    '--hostname',
+    containerName,
     '--network',
     networkName,
     '-v',
@@ -536,6 +542,8 @@ export function buildEdgeNodeRunArgs({
     '--platform',
     platform,
     '--name',
+    containerName,
+    '--hostname',
     containerName,
     '--network',
     networkName,

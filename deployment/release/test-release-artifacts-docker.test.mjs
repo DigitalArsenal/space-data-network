@@ -126,6 +126,33 @@ test('sdn-js install Dockerfile imports all published package subpaths on Node 2
   assert.match(sdnJs, /import\('@spacedatanetwork\/sdn-js\/storefront'\)/);
 });
 
+test('containers are launched with a stable hostname', () => {
+  // The at-rest key binds to (machine, user) and inside a container the machine
+  // half is its hostname. Docker's default is a fresh container ID per run, so
+  // a node started without --hostname refuses to seal an identity it could
+  // never reopen. Every launch here must therefore name the container.
+  const full = buildFullNodeRunArgs({
+    containerName: 'sdn-full-deb',
+    imageName: 'sdn-full-deb:test',
+    configPath: '/tmp/full.yaml',
+    networkName: 'sdn-test',
+    platform: 'linux/amd64'
+  });
+  const edge = buildEdgeNodeRunArgs({
+    containerName: 'sdn-edge-us',
+    imageName: 'sdn-edge-deb:test',
+    bootstrapPeer: '/dns4/sdn-full-deb/tcp/4001/p2p/12D3KooWSeed',
+    networkName: 'sdn-test',
+    platform: 'linux/amd64'
+  });
+
+  for (const [label, args] of [['full node', full], ['edge node', edge]]) {
+    const at = args.indexOf('--hostname');
+    assert(at !== -1, `${label} launch sets no --hostname`);
+    assert.equal(args[at + 1], args[args.indexOf('--name') + 1], `${label} hostname must match its container name`);
+  }
+});
+
 test('network configs bootstrap non-seed nodes to the seed peer', () => {
   const seedConfig = generateFullNodeConfig({ bootstrapPeers: [] });
   const joinedConfig = generateFullNodeConfig({
