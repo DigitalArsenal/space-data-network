@@ -3097,7 +3097,10 @@ func isDatasetPublicationSignerMismatch(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "invalid PNM signature") ||
+		strings.Contains(msg, "invalid Ed25519 signature") ||
+		strings.Contains(msg, "invalid Secp256k1 signature") ||
 		strings.Contains(msg, "no Ed25519 signing key found") ||
+		strings.Contains(msg, "no signing key known") ||
 		strings.Contains(msg, "does not match the provider's")
 }
 
@@ -3287,17 +3290,9 @@ func (n *Node) cacheDatasetPublicationMetadata(ctx context.Context, schema strin
 	if len(raw) < 12 || len(raw) > 65536 {
 		return errors.New("dataset announcement exceeds catalog bounds")
 	}
-	envelope, err := channels.VerifySignedPNMEnvelope(raw)
-	if err != nil {
-		return err
-	}
 	// EPM discovery already verifies the peer-bound profile. Do not open an
 	// extra discovery fetch for an unknown announcement signer here.
-	key, err := n.datasetPublicationPublicKeyFor(ctx, from, envelope.SignatureType, false)
-	if err != nil {
-		return err
-	}
-	proof, err := channels.VerifySignedPNMEnvelopeWithProviderKey(raw, key)
+	key, proof, err := verifyDatasetPublicationPNM(raw, n.datasetPublicationKeyCandidates(ctx, from, false))
 	if err != nil {
 		return err
 	}
@@ -4193,9 +4188,9 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 		return false, nil
 	}
 
-	providerPublicKey, err := n.datasetPublicationPublicKey(ctx, from, string(pnm.SIGNATURE_TYPE()))
+	providerPublicKey, _, err := verifyDatasetPublicationPNM(pnmBytes, n.datasetPublicationKeyCandidates(ctx, from, true))
 	if err != nil {
-		return false, fmt.Errorf("dataset provider public key unavailable for %s: %w", from.ShortString(), err)
+		return false, fmt.Errorf("dataset publication PNM from %s: %w", from.ShortString(), err)
 	}
 	workDir := filepath.Join(n.config.Storage.Path, "dataset-publication-replay")
 	materializeCtx, cancel := context.WithTimeout(n.ctx, 2*time.Minute)
@@ -4388,78 +4383,166 @@ func publicKeyFromPeerID(id peer.ID) (crypto.PubKey, error) {
 	return pubKey, nil
 }
 
-// datasetPublicationPublicKey returns the provider key that verifies a
-// publication DECLARING signatureType (the PNM/DPM SIGNATURE_TYPE field).
+// THE PROVIDER OF A DATASET PUBLICATION IS KNOWN BY SEVERAL KEYS. An HD node
+// has a secp256k1 peer identity, and its EPM advertises more signing keys:
+// a secp256k1 one (the EPM's top-level signing_pubkey_hex names it), the
+// Ed25519 signing key every publisher actually signs PNM and DPM with
+// (storage.BuildDatasetPublicationPNM, api/dataset_publication.go — labelled
+// Ed25519), and the Ed25519 licensing-grant verifier key. Resolving ONE key
+// for the provider therefore cannot work: the peer identity (c25e0fa1) and
+// the EPM's top-level key are both secp256k1, so every HD publication failed
+// `SIGNATURE_TYPE "Ed25519" does not match the provider's Secp256k1 key`
+// (host-01: 2,122 rejections, one shard materialized, 2026-09-13..15), and
+// the keys[] list holds two different Ed25519 keys with no purpose to tell
+// them apart.
 //
-// AN HD NODE HAS TWO KEYS A PUBLICATION CAN BE SIGNED WITH: its secp256k1
-// peer identity, and the Ed25519 signing key its EPM publishes. Every
-// publisher signs PNM and DPM with the EPM signing key and labels them
-// Ed25519 (storage.BuildDatasetPublicationPNM, api/dataset_publication.go),
-// so the verifier must dispatch on the label — which is the whole contract of
-// internal/sds/signature_type.go. Preferring the peer-id key unconditionally
-// (c25e0fa1) rejected EVERY publication between HD nodes as
-// `SIGNATURE_TYPE "Ed25519" does not match the provider's Secp256k1 key`:
-// host-01 logged 2,122 of those and materialized one shard in the 31 hours
-// before the 2026-09-15 fleet wipe made the empty catalog visible.
-//
-// A publication that declares Secp256k1 verifies against the peer identity.
-// When no key of the declared type is known, the first key found is returned
-// so the verifier names the mismatch instead of this function hiding it.
-func (n *Node) datasetPublicationPublicKey(ctx context.Context, id peer.ID, signatureType string) (crypto.PubKey, error) {
-	return n.datasetPublicationPublicKeyFor(ctx, id, signatureType, true)
-}
+// So the verifier is given every key the provider is known by and the
+// publication picks its own: the keys of the declared SIGNATURE_TYPE are
+// tried first (internal/sds/signature_type.go — verifiers dispatch on the
+// label), and the first one whose signature verifies is the provider key for
+// that publication.
 
-// datasetPublicationPublicKeyFor is datasetPublicationPublicKey with the
-// discovery fetch optional: the announcement cache must not open a fetch for
-// an unknown signer.
-func (n *Node) datasetPublicationPublicKeyFor(ctx context.Context, id peer.ID, signatureType string, allowFetch bool) (crypto.PubKey, error) {
-	candidates := make([]crypto.PubKey, 0, 2)
+// datasetPublicationKeyCandidates lists every public key the provider is known
+// by: its peer identity, then the signing keys its EPM advertises. With
+// allowFetch, a provider with no EPM in the directory is discovered first.
+func (n *Node) datasetPublicationKeyCandidates(ctx context.Context, id peer.ID, allowFetch bool) []crypto.PubKey {
+	var keys []crypto.PubKey
 	if key, err := publicKeyFromPeerID(id); err == nil {
-		candidates = append(candidates, key)
+		keys = append(keys, key)
 	}
-	if key, err := n.datasetPublicationPublicKeyFromDirectory(id); err == nil {
-		candidates = append(candidates, key)
-	}
-	if key, ok := selectDatasetPublicationKey(signatureType, candidates...); ok {
-		return key, nil
-	}
-	if allowFetch && n != nil && n.host != nil {
+	dirKeys, err := n.datasetPublicationPublicKeysFromDirectory(id)
+	if (err != nil || len(dirKeys) == 0) && allowFetch && n != nil && n.host != nil {
 		epmBytes, fetchErr := n.fetchDiscoveredNodeEPM(id)
 		if fetchErr == nil && len(epmBytes) > 0 {
 			n.indexFetchedDiscoveredNodeEPM(id, "dataset-publication", epmBytes)
-			if key, err := n.datasetPublicationPublicKeyFromDirectory(id); err == nil {
-				candidates = append(candidates, key)
-			}
+			dirKeys, _ = n.datasetPublicationPublicKeysFromDirectory(id)
 		} else if fetchErr != nil && ctx != nil && ctx.Err() == nil {
 			log.Debugf("Could not fetch provider EPM for dataset publication key from %s: %v", id.ShortString(), fetchErr)
 		}
-		if key, ok := selectDatasetPublicationKey(signatureType, candidates...); ok {
-			return key, nil
-		}
 	}
-	if len(candidates) > 0 {
-		return candidates[0], nil
-	}
-	return nil, fmt.Errorf("no usable signing key found in trusted provider EPM for %s", id.ShortString())
+	return dedupPublicKeys(append(keys, dirKeys...))
 }
 
-// selectDatasetPublicationKey picks, from the keys known for a provider, the
-// one whose algorithm is the publication's declared SIGNATURE_TYPE. An empty
-// declaration takes the first key.
-func selectDatasetPublicationKey(signatureType string, candidates ...crypto.PubKey) (crypto.PubKey, bool) {
+// verifyDatasetPublicationPNM verifies a PNM envelope against the keys its
+// provider is known by and returns the key that signed it. Keys of the
+// declared SIGNATURE_TYPE are tried first. The failure returned is the most
+// specific one: the first key of the declared type that did not verify, or,
+// when the provider has no key of that type, the type mismatch.
+func verifyDatasetPublicationPNM(pnmBytes []byte, candidates []crypto.PubKey) (crypto.PubKey, channels.PNMTrustEvidence, error) {
+	envelope, err := channels.VerifySignedPNMEnvelope(pnmBytes)
+	if err != nil {
+		return nil, channels.PNMTrustEvidence{}, err
+	}
+	ordered := orderDatasetPublicationKeys(envelope.SignatureType, candidates)
+	if len(ordered) == 0 {
+		return nil, channels.PNMTrustEvidence{}, fmt.Errorf("no signing key known for the publication's provider")
+	}
+	var firstErr error
+	for _, key := range ordered {
+		proof, err := channels.VerifySignedPNMEnvelopeWithProviderKey(pnmBytes, key)
+		if err == nil {
+			return key, proof, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return nil, channels.PNMTrustEvidence{}, firstErr
+}
+
+// orderDatasetPublicationKeys puts the keys whose algorithm is the declared
+// SIGNATURE_TYPE first, keeping the given order otherwise.
+func orderDatasetPublicationKeys(signatureType string, candidates []crypto.PubKey) []crypto.PubKey {
 	want := strings.TrimSpace(signatureType)
-	for _, key := range candidates {
+	ordered := make([]crypto.PubKey, 0, len(candidates))
+	var rest []crypto.PubKey
+	for _, key := range dedupPublicKeys(candidates) {
+		if got, err := sds.SignatureTypeForPubKey(key); err == nil && (want == "" || got == want) {
+			ordered = append(ordered, key)
+			continue
+		}
+		rest = append(rest, key)
+	}
+	return append(ordered, rest...)
+}
+
+func dedupPublicKeys(keys []crypto.PubKey) []crypto.PubKey {
+	out := make([]crypto.PubKey, 0, len(keys))
+	for _, key := range keys {
 		if key == nil {
 			continue
 		}
-		if want == "" {
-			return key, true
+		seen := false
+		for _, have := range out {
+			if have.Equals(key) {
+				seen = true
+				break
+			}
 		}
-		if got, err := sds.SignatureTypeForPubKey(key); err == nil && got == want {
-			return key, true
+		if !seen {
+			out = append(out, key)
 		}
 	}
-	return nil, false
+	return out
+}
+
+// datasetPublicationPublicKeysFromDirectory returns every signing key the
+// provider's EPM directory record advertises.
+func (n *Node) datasetPublicationPublicKeysFromDirectory(id peer.ID) ([]crypto.PubKey, error) {
+	if n == nil || n.store == nil {
+		return nil, fmt.Errorf("directory store is unavailable")
+	}
+	records, err := n.store.QueryDirectory(storage.DirectoryQuery{
+		Kind:   directory.KindNode,
+		PeerID: id.String(),
+		Limit:  1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, fmt.Errorf("no EPM directory record found for %s", id.ShortString())
+	}
+	return publicKeysFromDirectoryJSON(records[0].EPMJSON)
+}
+
+// publicKeysFromDirectoryJSON collects every signing key an EPM directory
+// record advertises — the top-level signing_pubkey_hex and each keys[] entry
+// of key_type signing, Ed25519 or secp256k1 — for a verifier that lets the
+// signature pick the key. publicKeyFromDirectoryJSON below still answers the
+// single-key question for callers that need one.
+func publicKeysFromDirectoryJSON(epmJSON string) ([]crypto.PubKey, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(epmJSON), &payload); err != nil {
+		return nil, fmt.Errorf("parse EPM directory JSON: %w", err)
+	}
+	var keys []crypto.PubKey
+	if key, err := decodeSigningPublicKeyHex(firstDirectoryString(payload, "signing_pubkey_hex", "SIGNING_PUBKEY_HEX")); err == nil {
+		keys = append(keys, key)
+	}
+	if entries, ok := firstDirectoryAny(payload, "keys", "KEYS").([]any); ok {
+		for _, entry := range entries {
+			key, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			keyType := strings.ToLower(strings.TrimSpace(firstDirectoryString(key, "key_type", "KEY_TYPE")))
+			addressType := strings.ToLower(strings.TrimSpace(firstDirectoryString(key, "address_type", "ADDRESS_TYPE")))
+			if keyType != "signing" || (addressType != "" && addressType != "ed25519" && addressType != "secp256k1") {
+				continue
+			}
+			pub, err := decodeSigningPublicKeyHex(firstDirectoryString(key, "public_key", "PUBLIC_KEY"))
+			if err != nil {
+				continue
+			}
+			keys = append(keys, pub)
+		}
+	}
+	keys = dedupPublicKeys(keys)
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no signing public key in EPM directory record")
+	}
+	return keys, nil
 }
 
 func (n *Node) datasetPublicationPublicKeyFromDirectory(id peer.ID) (crypto.PubKey, error) {
