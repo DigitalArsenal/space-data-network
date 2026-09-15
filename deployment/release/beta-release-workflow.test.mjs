@@ -276,16 +276,24 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
   assert.match(workflow, /desktop:\s*\n\s*name:\s*Build desktop app artifacts/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs\]/);
+  // The desktop app SHIPS the node, so it waits on the cli archives rather than
+  // on the IPFS asset job. It no longer stages its own copy of the dashboard:
+  // the node serves the one embedded in its binary (//go:embed dashboard.html),
+  // and a second copy in desktop/assets/sdn-ui was the old architecture.
+  assert.match(workflow, /desktop:[\s\S]*?needs:\s*\[beta-version, cli\]/);
+  assert.doesNotMatch(workflow, /desktop\/assets\/sdn-ui\//);
   assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-14/);
+  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-15-intel/);
   assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
   assert.match(workflow, /target_os:\s*linux[\s\S]*runner:\s*ubuntu-latest/);
   assert.match(workflow, /npm --prefix desktop ci/);
-  assert.match(workflow, /cp -R dist\/ipfs\/sdn-admin\/\. desktop\/assets\/sdn-ui\//);
-  assert.match(workflow, /cp -R dist\/ipfs\/ipfs-webui\/\. desktop\/assets\/webui\//);
-  assert.match(workflow, /electron-builder --publish never --mac dmg zip/);
-  assert.match(workflow, /electron-builder --publish never --win nsis portable/);
-  assert.match(workflow, /electron-builder --publish never --linux AppImage deb rpm/);
+  // Each app carries the bundle built for its own OS and architecture.
+  assert.match(workflow, /stage-node-bundle\.mjs --from/);
+  assert.match(workflow, /electron-builder --publish never \$\{\{ matrix\.builder_args \}\}/);
+  assert.match(workflow, /builder_args:\s*--mac dmg zip --arm64/);
+  assert.match(workflow, /builder_args:\s*--mac dmg zip --x64/);
+  assert.match(workflow, /builder_args:\s*--win nsis portable --x64/);
+  assert.match(workflow, /builder_args:\s*--linux AppImage deb tar\.xz --x64/);
   assert.match(workflow, /name:\s*desktop-\$\{\{ matrix\.target_os \}\}/);
   assert.match(workflow, /path:\s*dist\/desktop\/\*/);
   assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
