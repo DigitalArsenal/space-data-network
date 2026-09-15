@@ -40,11 +40,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -742,12 +739,5 @@ func keyDirOwner(dir string) string {
 	if err != nil {
 		return ""
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return ""
-	}
-	if u, err := user.LookupId(strconv.FormatUint(uint64(stat.Uid), 10)); err == nil {
-		return u.Username
-	}
-	return "uid " + strconv.FormatUint(uint64(stat.Uid), 10)
+	return fileOwnerName(info)
 }

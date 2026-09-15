@@ -2827,7 +2827,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		n := runtime.Stack(buf, true)
 		log.Errorf("SHUTDOWN WATCHDOG: still shutting down after %s — killing. Goroutine dump follows:\n%s",
 			shutdownWatchdogTimeout, buf[:n])
-		_ = syscall.Kill(syscall.Getpid(), syscall.SIGKILL)
+		killSelf()
 	})
 	defer shutdownWatchdog.Stop()
 
