@@ -115,7 +115,7 @@ jobs:
           msystem: MINGW64
           update: false
           install: >-
-            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-gcc
             mingw-w64-x86_64-llvm
             mingw-w64-x86_64-lld
             mingw-w64-x86_64-cmake
@@ -158,7 +158,11 @@ jobs:
             ls "$L/lib/cmake" 2>/dev/null >&2 || true
             exit 1
           }
-          export CC="$L/bin/clang.exe" CXX="$L/bin/clang++.exe" \
+          # GCC, not clang. MSYS2's clang rejects WasmEdge's own CRTP in
+          # include/host/wasi/inode.h:285 ("must name member"), which stopped the
+          # build at 100/131 objects; gcc accepts it, and the MinGW link branch
+          # already targets libstdc++, which is gcc's runtime.
+          export CC="$L/bin/gcc.exe" CXX="$L/bin/g++.exe" \
                  CMAKE_AR="$L/bin/ar.exe" \
                  LLVM_CONFIG="$L/bin/llvm-config.exe" \
                  LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld"
