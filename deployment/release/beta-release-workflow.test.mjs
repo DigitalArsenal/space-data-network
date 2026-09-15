@@ -460,3 +460,52 @@ test('single Dockerfile defaults to full node and keeps edge mode as command ove
   assert.match(dockerfile, /ENTRYPOINT \["\/app\/spacedatanetwork"\]/);
   assert.match(dockerfile, /CMD \["daemon", "--config", "\/app\/config\/full-docker\.yaml"\]/);
 });
+
+test('nothing invokes an npm script its package.json does not declare', () => {
+  // `npm run build:ui` outlived the script by months. Deleting it broke
+  // nothing at the time; the jobs failed one at a time, whenever each next ran
+  // — ipfs-deploy.sh first, then the release packages job, on the same missing
+  // script. A deleted script is invisible to every caller until that caller
+  // runs, which for a release job can be weeks.
+  const scriptsAt = (dir) => {
+    try {
+      return JSON.parse(readRepoFile(dir ? `${dir}/package.json` : 'package.json')).scripts ?? {};
+    } catch {
+      return null;
+    }
+  };
+  // Where an unprefixed `npm run` could be resolving from: the caller either
+  // cd'd or set working-directory, which this cannot see, so accept any.
+  const anyRoot = ['', 'sdn-js', 'webui'];
+  const callers = [
+    'deployment/scripts/package-linux-vm-bundle.sh',
+    'deployment/scripts/deploy.sh',
+    'deployment/ipfs/ipfs-deploy.sh',
+    'scripts/admin-dev.sh',
+    '.github/workflows/beta-release-artifacts.yml',
+    '.github/workflows/security.yml',
+  ];
+
+  let checked = 0;
+  for (const caller of callers) {
+    const text = readRepoFile(caller);
+    for (const m of text.matchAll(/npm(?:\s+--prefix\s+(\S+))?\s+run\s+([A-Za-z0-9:_-]+)/g)) {
+      const [, rawPrefix, script] = m;
+      if (script.includes('$')) continue;
+      const prefix = rawPrefix?.replace(/^\.\//, '').replace(/\/$/, '');
+      const dirs = prefix ? [prefix] : anyRoot;
+      const known = dirs.map(scriptsAt);
+      // A prefix naming no package.json at all is its own bug.
+      assert(
+        known.some((s) => s !== null),
+        `${caller} runs npm --prefix ${prefix}, where there is no package.json`,
+      );
+      assert(
+        known.some((s) => s?.[script]),
+        `${caller} runs "npm run ${script}", which no package.json in ${dirs.join(', ') || 'the repo root'} declares`,
+      );
+      checked += 1;
+    }
+  }
+  assert(checked > 0, 'the npm-script scan matched nothing — the pattern has rotted');
+});
