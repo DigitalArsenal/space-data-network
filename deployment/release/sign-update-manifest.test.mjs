@@ -15,7 +15,7 @@ import {
 } from './sign-update-manifest.mjs';
 
 const require = createRequire(import.meta.url);
-const { canonicalManifestBytes, sha256Hex } = require('../../desktop/src/sdn-updater/manifest');
+const { canonicalManifestBytes, sha256Hex } = require('./sdn-updater/manifest');
 
 const cliPath = fileURLToPath(new URL('./sign-update-manifest.mjs', import.meta.url));
 
@@ -101,7 +101,7 @@ test('signUpdateManifest accepts a PEM string and rejects non-Ed25519 keys', () 
 
 test('signed manifest passes the desktop verifier and rollback fields round-trip', () => {
   const keys = generateKeyPairSync('ed25519');
-  const { validateUpdateManifest } = require('../../desktop/src/sdn-updater/manifest');
+  const { validateUpdateManifest } = require('./sdn-updater/manifest');
   const { manifest, bundleBytes } = fixtureManifest(keys);
   const rollback = buildUpdateManifest({
     updateId: manifest.update_id,
