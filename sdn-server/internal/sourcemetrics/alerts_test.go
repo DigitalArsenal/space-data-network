@@ -114,3 +114,31 @@ func TestAttemptRecordingToleratesNoAlertRegistry(t *testing.T) {
 		t.Fatalf("SeedLaneAlerts() with no registry = %d, want 0", seeded)
 	}
 }
+
+// A conditional fetch that answers 304 is a success without a batch: the
+// publisher had nothing new. It must clear the streak and the alert exactly
+// as a landed batch does, or every lane whose upstream is quiet for two days
+// would show a node as degraded.
+func TestAnUnchangedAttemptClearsTheStreakAndTheAlert(t *testing.T) {
+	store := openLedger(t)
+	registry := ops.NewRegistry()
+	store.SetAlerts(registry)
+
+	const appID = "mlab-connectivity-ingest"
+	store.RecordAttempt(appID)
+	store.RecordAttemptOutcome(appID, errors.New("parse status 400"))
+	store.RecordAttempt(appID)
+	store.RecordAttemptOutcome(appID, errors.New("parse status 400"))
+	if active := registry.Active(); len(active) != 1 {
+		t.Fatalf("alerts after two failures = %d, want 1", len(active))
+	}
+
+	store.RecordAttempt(appID)
+	store.RecordAttemptUnchanged(appID)
+	if active := registry.Active(); len(active) != 0 {
+		t.Fatalf("alert still active after an unchanged attempt: %+v", active)
+	}
+	if _, failures := store.AttemptState(appID); failures != 0 {
+		t.Fatalf("consecutive failures after an unchanged attempt = %d, want 0", failures)
+	}
+}

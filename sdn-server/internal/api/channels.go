@@ -925,13 +925,16 @@ func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	providerPublicKeyRaw, err := providerPublicKey.Raw()
+	// The verified PNM recorded its provider key in libp2p's canonical
+	// encoding (channels.PNMTrustEvidence.ProviderPublicKey); compare in the
+	// same encoding, never the bare curve point.
+	providerPublicKeyRaw, err := crypto.MarshalPublicKey(providerPublicKey)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "provider public key is unusable: "+err.Error())
 		return
 	}
 	providerPublicKeyHex := hex.EncodeToString(providerPublicKeyRaw)
-	if metadata.ProviderPublicKey != "" && metadata.ProviderPublicKey != providerPublicKeyHex {
+	if metadata.ProviderPublicKey != "" && !strings.EqualFold(metadata.ProviderPublicKey, providerPublicKeyHex) {
 		writeError(w, http.StatusForbidden, "DPM provider public key does not match verified PNM provider")
 		return
 	}
@@ -1910,7 +1913,8 @@ func providerPublicKeyHexFromRequest(r *http.Request) (string, bool, error) {
 		}
 		return "", false, err
 	}
-	raw, rawErr := key.Raw()
+	// Same encoding as the verified PNM's provider key (libp2p canonical).
+	raw, rawErr := crypto.MarshalPublicKey(key)
 	if rawErr != nil {
 		return "", false, rawErr
 	}

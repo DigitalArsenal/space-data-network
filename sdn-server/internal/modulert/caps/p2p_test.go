@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	flatbuffers "github.com/google/flatbuffers/go"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 
 	EPM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	PNM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
@@ -344,6 +345,22 @@ func buildSignedTestPNM(t *testing.T, key ed25519.PrivateKey, fileID, cid, ts st
 	return b.FinishedBytes()
 }
 
+// publisherKeyBytes encodes an Ed25519 public key the way the node hands
+// publisher keys to the capability: libp2p protobuf (crypto.MarshalPublicKey),
+// never the raw 32 bytes.
+func publisherKeyBytes(t *testing.T, pub ed25519.PublicKey) []byte {
+	t.Helper()
+	key, err := libp2pcrypto.UnmarshalEd25519PublicKey(pub)
+	if err != nil {
+		t.Fatalf("unmarshal ed25519 public key: %v", err)
+	}
+	raw, err := libp2pcrypto.MarshalPublicKey(key)
+	if err != nil {
+		t.Fatalf("marshal publisher key: %v", err)
+	}
+	return raw
+}
+
 func pnmHistoryFixture(t *testing.T) (P2PCapOptions, ed25519.PublicKey, [][]byte) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -379,7 +396,7 @@ func pnmHistoryFixture(t *testing.T) (P2PCapOptions, ed25519.PublicKey, [][]byte
 		RecentPNMs: func(limit int) []P2PPNMRecord { return pnms },
 		PublisherKeys: func(peerID string) []P2PPublisherKey {
 			if peerID == testProviderID {
-				return []P2PPublisherKey{{PublicKey: pub, Source: "epm-directory"}}
+				return []P2PPublisherKey{{PublicKey: publisherKeyBytes(t, pub), Source: "epm-directory"}}
 			}
 			return nil
 		},
@@ -414,7 +431,7 @@ func TestP2PPNMHistorySignatureAttribution(t *testing.T) {
 		if entry["publisher_peer_id"] != testProviderID {
 			t.Fatalf("entry %d publisher: %v", i, entry)
 		}
-		if entry["publisher_key"] != hex.EncodeToString(pub) || entry["publisher_key_source"] != "epm-directory" {
+		if entry["publisher_key"] != hex.EncodeToString(publisherKeyBytes(t, pub)) || entry["publisher_key_source"] != "epm-directory" {
 			t.Fatalf("entry %d key: %v", i, entry)
 		}
 		if entry["pnm_index"] != float64(i) {
@@ -543,7 +560,7 @@ func latestDatasetFixture(t *testing.T, pinned bool, materialized map[string][]b
 		RecentPNMs: func(limit int) []P2PPNMRecord { return pnms },
 		PublisherKeys: func(peerID string) []P2PPublisherKey {
 			if peerID == testProviderID {
-				return []P2PPublisherKey{{PublicKey: pub, Source: "epm-directory"}}
+				return []P2PPublisherKey{{PublicKey: publisherKeyBytes(t, pub), Source: "epm-directory"}}
 			}
 			return nil
 		},
@@ -744,7 +761,7 @@ func TestP2PLatestDatasetSelfServesWithoutPin(t *testing.T) {
 	}
 	opts.PublisherKeys = func(peerID string) []P2PPublisherKey {
 		if peerID == testSelfID {
-			return []P2PPublisherKey{{PublicKey: pub, Source: "peer-id"}}
+			return []P2PPublisherKey{{PublicKey: publisherKeyBytes(t, pub), Source: "peer-id"}}
 		}
 		return nil
 	}

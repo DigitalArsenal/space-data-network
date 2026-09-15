@@ -611,6 +611,25 @@ func (s *Store) clearAppFailuresLocked(appID string) {
 	}
 }
 
+// RecordAttemptUnchanged closes an attempt whose conditional fetch answered
+// 304: the publisher had nothing new, the node holds the current set, and that
+// is a success without a batch. The streak RecordAttempt opened is cleared the
+// way an ingest clears it, so an unchanged upstream never widens the window
+// or raises a lane alert.
+func (s *Store) RecordAttemptUnchanged(appID string) {
+	if s == nil || s.db == nil {
+		return
+	}
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clearAppFailuresLocked(appID)
+	log.Infof("Retrieval attempt for %s: upstream unchanged (304), nothing new to land", appID)
+}
+
 // RecordAttemptOutcome closes the loop RecordAttempt opens. RecordAttempt
 // counts every started retrieval as a failure and an ingest clears it, so a
 // streak that is still standing when the run returns is a real failure — and

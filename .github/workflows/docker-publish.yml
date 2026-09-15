@@ -1,11 +1,22 @@
-name: Build and Sign Container Image
+name: Publish container image
+
+# Builds deployment/docker/Dockerfile for linux/amd64 and pushes it to Docker
+# Hub as dockerdigitalarsenal/space-data-network:<version> (plus `beta` for a
+# pre-release tag, `latest` for a release tag). Runs for every v* tag and on
+# demand for a named ref. The image carries the same inputs the local release
+# cut stages: the Kubo web UI build, the same-origin wallet sign-in assets
+# (deployment/wallet-wasm/stage-wallet-wasm.sh) and the HD wallet module from
+# the pinned hd-wallet-wasm package.
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag to build, for example v1.0.5-beta.1
+        required: true
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -17,134 +28,91 @@ permissions:
   id-token: write
 
 jobs:
-  build-and-sign:
-    name: Build and Sign Image
+  build-and-push:
+    name: Build, push and sign
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          ref="${{ inputs.ref || github.ref_name }}"
+          tag="${ref#refs/tags/}"
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "ref '$ref' is not a release tag (v<semver>)" >&2
+            exit 1
+          fi
+          channel=latest
+          [[ "$version" == *-* ]] && channel=beta
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: 'npm'
+          cache: npm
           cache-dependency-path: |
             sdn-js/package-lock.json
             webui/package-lock.json
 
-      - name: Build shared admin shell assets
+      - name: Install the pinned wallet packages
         working-directory: sdn-js
-        run: |
-          npm ci
-          npm run build:ui
+        run: npm ci --no-audit --fund=false
 
-      - name: Build IPFS WebUI assets
+      - name: Stage the same-origin wallet sign-in assets
+        run: |
+          deployment/wallet-wasm/stage-wallet-wasm.sh \
+            deployment/wallet-wasm/staged/wallet-wasm \
+            deployment/wallet-wasm/staged/wallet-ui
+
+      - name: Build the Kubo web UI
         working-directory: webui
         run: |
-          npm ci
+          npm ci --no-audit --fund=false
           npm run build
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3.4.0
-        with:
-          cosign-release: 'v2.2.3'
+          test -f build/index.html
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: dockerdigitalarsenal
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.4.0
 
-      - name: Build and push Docker image
-        id: build-and-push
+      - name: Build and push
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           file: deployment/docker/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            SDN_RELEASE_TAG=${{ steps.tag.outputs.tag }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.version }}
+            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.channel }}
           provenance: true
           sbom: true
 
-      - name: Sign container image
-        if: github.event_name != 'pull_request'
+      - name: Sign the pushed digest
         env:
-          DIGEST: ${{ steps.build-and-push.outputs.digest }}
-          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          images=""
-          for tag in ${TAGS}; do
-            images+="${tag}@${DIGEST} "
-          done
-          cosign sign --yes ${images}
-
-      - name: Attest SBOM
-        if: github.event_name != 'pull_request'
-        env:
-          DIGEST: ${{ steps.build-and-push.outputs.digest }}
-        run: |
-          IMAGE="${IMAGE_NAME}@${DIGEST}"
-          docker run --rm anchore/syft:latest packages "${IMAGE}" -o cyclonedx-json > sbom.json || true
-          if [ -f sbom.json ] && [ -s sbom.json ]; then
-            cosign attest --yes --predicate sbom.json --type cyclonedx "${IMAGE}"
-          else
-            echo "::warning::SBOM generation skipped or failed"
-          fi
-
-      - name: Output verification instructions
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "=== Verification Instructions ===" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "To verify the image signature:" >> "$GITHUB_STEP_SUMMARY"
-          echo '```bash' >> "$GITHUB_STEP_SUMMARY"
-          echo "cosign verify ${IMAGE_NAME}:${{ github.ref_name }} \\" >> "$GITHUB_STEP_SUMMARY"
-          echo "  --certificate-identity-regexp='https://github.com/${{ github.repository }}/.*' \\" >> "$GITHUB_STEP_SUMMARY"
-          echo "  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-  verify-signature:
-    name: Verify Image Signature
-    runs-on: ubuntu-latest
-    needs: build-and-sign
-    if: github.event_name != 'pull_request'
-
-    steps:
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3.4.0
-
-      - name: Verify image
-        run: |
-          cosign verify ${{ env.IMAGE_NAME }}:${{ github.ref_name }} \
-            --certificate-identity-regexp='https://github.com/${{ github.repository }}/.*' \
-            --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
-
-      - name: Summary
-        run: |
-          echo "# Container Image Signing Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Image | Tag | Signed |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|-------|-----|--------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| ${{ env.IMAGE_NAME }} | ${{ github.ref_name }} | yes |" >> "$GITHUB_STEP_SUMMARY"
+          cosign sign --yes \
+            "${IMAGE_NAME}:${{ steps.tag.outputs.version }}@${DIGEST}" \
+            "${IMAGE_NAME}:${{ steps.tag.outputs.channel }}@${DIGEST}"
+          echo "pushed ${IMAGE_NAME}:${{ steps.tag.outputs.version }} (${DIGEST})"

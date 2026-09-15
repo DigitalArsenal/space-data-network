@@ -15,8 +15,8 @@ irm https://spacedatanetwork.org/install.ps1 | iex
 ```
 
 The installers resolve the newest node release on GitHub (today
-v1.0.5-beta.1: macOS Apple Silicon, Linux x86-64 and arm64, Windows x86-64),
-verify the checksum,
+v1.0.5-beta.1: macOS Apple Silicon, Linux x86-64 and arm64; the Windows
+bundle follows in the next beta), verify the checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
 `spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialise
 the node identity. Other platforms build from source:
@@ -39,8 +39,8 @@ from `/usr/local/lib/hd-wallet-wasi.wasm`; a bundle carries it under
 ### Desktop app
 
 The desktop app (`space-data-network-desktop-<version>-<os>-<arch>` on the
-release page: macOS Apple Silicon and Intel, Windows x86-64, Linux x86-64)
-carries the same bundle. It starts the node on launch, opens the node's own
+release page: macOS Apple Silicon in this beta; Intel Macs, Windows and Linux
+follow) carries the same bundle. It starts the node on launch, opens the node's own
 dashboard in its window, and keeps the store and keys under the app's user-data
 directory. Its menu shows the node's recovery phrase once, on request. Nothing
 below applies to the app except sections 4 (ports, if you want to be reachable
