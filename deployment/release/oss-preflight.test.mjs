@@ -45,6 +45,8 @@ function createTempRepo() {
   mkdirSync(join(repo, 'scripts'), { recursive: true });
   copyFileSync(join(repoRoot, 'scripts/oss-preflight.sh'), join(repo, 'scripts/oss-preflight.sh'));
   chmodSync(join(repo, 'scripts/oss-preflight.sh'), 0o755);
+  // The preflight runs this check too; the fixture repo must carry it.
+  copyFileSync(join(repoRoot, 'scripts/check-no-app-specific-go.mjs'), join(repo, 'scripts/check-no-app-specific-go.mjs'));
   git(repo, ['init']);
   return repo;
 }

@@ -7,7 +7,7 @@ const {
   SDN_UPDATE_FEED_BASE_URL,
   buildReleaseIndex,
   updateFeedRoot
-} = require('../../desktop/src/sdn-updater/release-feed')
+} = require('./sdn-updater/release-feed')
 
 async function readJson (filePath) {
   return JSON.parse(await fs.readFile(filePath, 'utf8'))

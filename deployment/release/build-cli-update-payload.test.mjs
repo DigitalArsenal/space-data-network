@@ -17,7 +17,7 @@ const {
   canonicalManifestBytes,
   sha256Hex,
   verifyDownloadedUpdatePayload,
-} = require('../../desktop/src/sdn-updater/manifest');
+} = require('./sdn-updater/manifest');
 
 const cliPath = fileURLToPath(new URL('./build-cli-update-payload.mjs', import.meta.url));
 

@@ -156,11 +156,11 @@ function stageLaneInto(repoRoot) {
   ]) {
     execFileSync('cp', [join(here, file), join(target, file)]);
   }
-  // sign-update-manifest.mjs reaches into desktop/src/sdn-updater/manifest.
-  const manifestDir = join(repoRoot, 'desktop', 'src', 'sdn-updater');
+  // sign-update-manifest.mjs uses deployment/release/sdn-updater/manifest.js.
+  const manifestDir = join(repoRoot, 'deployment', 'release', 'sdn-updater');
   mkdirSync(manifestDir, { recursive: true });
   execFileSync('cp', [
-    join(here, '..', '..', 'desktop', 'src', 'sdn-updater', 'manifest.js'),
+    join(here, 'sdn-updater', 'manifest.js'),
     join(manifestDir, 'manifest.js'),
   ]);
 }

@@ -4,7 +4,7 @@
 // splits in half:
 //   - the SIGNER    sdn-server/internal/updatesign (Go, runs on host-01)
 //   - the FLEET     sdn-server/internal/update/manifest.go (Go, runs on nodes)
-//   - the DESKTOP   desktop/src/sdn-updater/manifest.js (Node, runs in Electron)
+//   - the RELEASE   deployment/release/sdn-updater/manifest.js (Node, the fleet lane signer)
 //
 // The Go halves share sigdomain.Statement and cannot drift from each other. The
 // JavaScript half reimplements it, and a reimplementation is exactly where a
@@ -27,7 +27,7 @@ import test from 'node:test';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
-const { validateUpdateManifest } = require('../../desktop/src/sdn-updater/manifest');
+const { validateUpdateManifest } = require('./sdn-updater/manifest');
 
 const golden = JSON.parse(await readFile(join(here, 'fixtures-update-manifest-golden.json'), 'utf8'));
 

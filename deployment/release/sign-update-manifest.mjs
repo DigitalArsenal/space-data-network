@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const crypto = require('crypto');
 // Shared with the verification side so signing and verification always agree
 // on the canonical manifest bytes (sorted keys, signing.signature omitted).
-const { canonicalManifestBytes, sha256Hex } = require('../../desktop/src/sdn-updater/manifest');
+const { canonicalManifestBytes, sha256Hex } = require('./sdn-updater/manifest');
 
 export const MANIFEST_SCHEMA = 'org.spacedatanetwork.update.v1';
 export const SIGNING_KEY_ENV = 'SDN_UPDATE_SIGNING_KEY_PEM';
