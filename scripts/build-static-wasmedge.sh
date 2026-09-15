@@ -95,6 +95,16 @@ if [[ -f "$SRC/lib/api/CMakeLists.txt" ]]; then
   # found above, so dropping it from the MERGE loses nothing.
   perl -0pi -e 's/(function\(wasmedge_add_libs_component_command target_path\)\n)/$1  if(NOT EXISTS "\${target_path}")\n    return()\n  endif()\n/' \
     "$SRC/lib/api/CMakeLists.txt"
+  # EXPAND THE OBJECT GLOB IN A SHELL. The merge ends with
+  #   ar -qcs libwasmedge.a <CAPI objects> objs/*/*.o
+  # and relies on a SHELL expanding `objs/*/*.o`. CMake runs it through cmd.exe
+  # on Windows, which does not glob, so ar received the pattern literally and
+  # failed "objs/*/*.o: Invalid argument" at 131/131. Splitting it in two keeps
+  # the generator expression (a CMake list) out of the quoted shell command,
+  # which would otherwise be re-split into separate arguments.
+  perl -0pi -e 's{COMMAND \$\{CMAKE_AR\} -qcs libwasmedge\.a \$<TARGET_OBJECTS:wasmedgeCAPI> objs/\*/\*\.o}
+                 {COMMAND \${CMAKE_AR} -qcs libwasmedge.a \$<TARGET_OBJECTS:wasmedgeCAPI>\n      COMMAND sh -c "\${CMAKE_AR} -qcs libwasmedge.a objs/*/*.o"}g' \
+    "$SRC/lib/api/CMakeLists.txt"
 fi
 
 # 2. Configure + build the static library (LLVM/AOT OFF).
