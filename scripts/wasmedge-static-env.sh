@@ -54,6 +54,16 @@ case "$(uname -s)" in
     export LLVM_CONFIG="${_L}/bin/llvm-config.exe"
     export LLVM_DIR="${_L}/lib/cmake/llvm"
     export LLD_DIR="${_L}/lib/cmake/lld"
+    # MSYS2 ships LLVM 22, new enough to carry the LLVM_ABI export annotations.
+    # llvm/Support/Compiler.h:185 reads
+    #   #if defined(LLVM_ENABLE_LLVM_EXPORT_ANNOTATIONS) && !defined(LLVM_BUILD_STATIC)
+    # and then makes LLVM_ABI __declspec(dllimport) — so WasmEdge compiled
+    # against those headers references LLVM through DLL import thunks that the
+    # static archives cannot satisfy (seen as
+    # `__imp__ZN4llvm8demangleB5cxx11E…'). Linux uses LLVM 16 and macOS 18,
+    # both predating the rollout, so this is Windows-only.
+    export CFLAGS="${CFLAGS:-} -DLLVM_BUILD_STATIC"
+    export CXXFLAGS="${CXXFLAGS:-} -DLLVM_BUILD_STATIC"
     unset _L
     ;;
   *)

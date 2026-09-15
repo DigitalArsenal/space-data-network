@@ -117,7 +117,13 @@ if [[ -f "$SRC/lib/api/CMakeLists.txt" ]]; then
     "$SRC/lib/api/CMakeLists.txt"
 fi
 
-# 2. Configure + build the static library (LLVM/AOT OFF).
+# 2. Configure + build the static library WITH LLVM.
+#
+# NOT optional, and the opposite of what this comment used to claim. In 0.16.4
+# WASMEDGE_BUILD_AOT_RUNTIME is deprecated and aliased to WASMEDGE_USE_LLVM
+# (CMakeLists.txt:69-72), so there is no load-only AOT mode: turning LLVM off
+# removes the ability to LOAD a precompiled artifact, not just to produce one,
+# and every query silently falls back to the interpreter at ~100x.
 if [[ ! -f "$SRC/build/lib/api/libwasmedge.a" ]]; then
   CC="${CC:-clang-16}" CXX="${CXX:-clang++-16}" \
   cmake -S "$SRC" -B "$SRC/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
