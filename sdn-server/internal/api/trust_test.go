@@ -109,6 +109,17 @@ func (r *fakeTrustPeerRegistry) SetTrustLevel(id peer.ID, level peers.TrustLevel
 	return nil
 }
 
+func (r *fakeTrustPeerRegistry) AddPeer(tp *peers.TrustedPeer) error {
+	if _, exists := r.peers[tp.ID]; exists {
+		return peers.ErrPeerAlreadyExists
+	}
+	if r.peers == nil {
+		r.peers = map[peer.ID]*peers.TrustedPeer{}
+	}
+	r.peers[tp.ID] = tp
+	return nil
+}
+
 func (r *fakeTrustPeerRegistry) IsTrusted(id peer.ID) bool {
 	known, ok := r.peers[id]
 	return ok && known.TrustLevel >= peers.Full
@@ -777,5 +788,75 @@ func TestTrustRulesSurfaceAnswers503WhenUnwired(t *testing.T) {
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("GET %s without stores: %d", path, rec.Code)
 		}
+	}
+}
+
+// A peer this node has never connected to is the ORDINARY case for a new trust
+// edge: an operator pastes a peer ID, imports a colleague's, or trusts a node
+// before it first dials in. It used to fail — SetTrustLevel only edits a row
+// the registry already holds and returns ErrPeerNotFound otherwise — and it
+// failed in the worst possible way: the edge was signed, applied and persisted
+// BEFORE the registry sync ran, so the operator got a bare 500 on a write that
+// had half landed, with the cause dropped and nothing written to the log.
+func TestTrustEdgeAdmitsAPeerTheRegistryHasNeverSeen(t *testing.T) {
+	const strangerPeer = "12D3KooWP5MYTnN8DcQDw7aDUFZY2vQAhvMwZZZ1XN3U9Wh3mJUW"
+	strangerID, err := peer.Decode(strangerPeer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No Store: this exercises the registry sync, which runs after the edge is
+	// already applied and persisted. Leaving it nil keeps FlatSQL out of it.
+	// Empty registry: this node has met nobody.
+	registry := &fakeTrustPeerRegistry{peers: map[peer.ID]*peers.TrustedPeer{}}
+	profile, signingKey := signedNodeEPMFixture(t, "self", "Self Node")
+	h := NewTrustHandler(trust.NewService(trust.NewGraph(), nil))
+	h.SelfPeerID = "self"
+	h.SigningKey = signingKey
+	h.PeerRegistry = registry
+	h.ResolveEPM = func(peerID string) []byte {
+		if peerID == "self" {
+			return profile
+		}
+		return nil
+	}
+	h.Now = func() time.Time { return time.UnixMilli(1_788_000_999_000) }
+	srv := newTrustServer(t, h)
+
+	unsigned := unsignedTREFixture(trust.EdgeRecord{Edge: trust.Edge{Trustee: strangerPeer}})
+	resp := postTRE(t, srv.URL+"/api/v1/trust/edges", unsigned, false)
+	body := new(bytes.Buffer)
+	_, _ = body.ReadFrom(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("trusting an unmet peer = %d: %s", resp.StatusCode, body.String())
+	}
+	known, ok := registry.peers[strangerID]
+	if !ok {
+		t.Fatal("no registry row was created for the trusted peer")
+	}
+	if known.TrustLevel != peers.Full {
+		t.Fatalf("registry trust for the new peer = %s, want full", known.TrustLevel)
+	}
+	if known.ID != strangerID {
+		t.Fatalf("registry row has ID %q, want %q", known.ID, strangerID)
+	}
+
+	// The tombstone path must not resurrect a row to demote it, and must not
+	// fail for a peer that was never there: no row and no trust is already the
+	// end state a delete asks for.
+	empty := &fakeTrustPeerRegistry{peers: map[peer.ID]*peers.TrustedPeer{}}
+	h.PeerRegistry = empty
+	h.Now = func() time.Time { return time.UnixMilli(1_788_001_000_000) }
+	tombstone := unsignedTREFixture(trust.EdgeRecord{Edge: trust.Edge{Trustee: strangerPeer, Weight: 1}, Deleted: true})
+	resp = postTRE(t, srv.URL+"/api/v1/trust/edges", tombstone, false)
+	body.Reset()
+	_, _ = body.ReadFrom(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("tombstone for an unmet peer = %d: %s", resp.StatusCode, body.String())
+	}
+	if _, exists := empty.peers[strangerID]; exists {
+		t.Fatal("a delete created a registry row it should have left absent")
 	}
 }

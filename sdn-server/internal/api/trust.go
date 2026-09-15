@@ -26,6 +26,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -46,6 +47,10 @@ import (
 type TrustPeerRegistry interface {
 	ListPeers() []*peers.TrustedPeer
 	SetTrustLevel(peer.ID, peers.TrustLevel) error
+	// AddPeer creates a row for a peer the registry does not hold yet.
+	// SetTrustLevel only edits an existing one, so trusting a peer this node
+	// has never met needs both — see syncPeerRegistry.
+	AddPeer(*peers.TrustedPeer) error
 	IsTrusted(peer.ID) bool
 }
 
@@ -502,7 +507,12 @@ func (h *TrustHandler) handleEdgeFramePost(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if err := h.syncPeerRegistry(record); err != nil {
-		WriteErrorFrame(w, http.StatusInternalServerError, "peer_trust_not_updated", "The peer trust registry could not be updated.", 0)
+		// The edge is already signed and stored at this point, so say so: the
+		// operator needs to know the write half-landed, and needs the reason.
+		// The bare sentence this used to return, with the cause dropped on the
+		// floor and nothing logged, was undiagnosable from either end.
+		WriteErrorFrame(w, http.StatusInternalServerError, "peer_trust_not_updated",
+			fmt.Sprintf("The trust edge was stored, but the peer trust registry could not be updated: %v", err), 0)
 		return
 	}
 	h.trigger("edge-changed")
@@ -558,13 +568,41 @@ func (h *TrustHandler) syncPeerRegistry(record trust.EdgeRecord) error {
 	}
 	peerID, err := peer.Decode(strings.TrimSpace(record.Trustee))
 	if err != nil {
-		return err
+		return fmt.Errorf("trustee %q is not a peer ID: %w", record.Trustee, err)
 	}
 	level := peers.Full
 	if record.Deleted {
 		level = peers.Unknown
 	}
-	return h.PeerRegistry.SetTrustLevel(peerID, level)
+	// SetTrustLevel only edits a peer the registry already holds, and the
+	// registry holds a peer once this node has MET it. Trusting someone you
+	// have not met yet — pasting a peer ID, importing a colleague's, trusting
+	// a node before it first dials in — is the ordinary case, and it was
+	// failing: the edge was already signed and stored by the time this ran, so
+	// the operator got "The peer trust registry could not be updated." on a
+	// write that had half landed, with nothing in the log to say why.
+	//
+	// A trust edge naming a peer is reason enough to hold a row for it. Create
+	// one at the requested level; the peer's addresses and name fill in when it
+	// actually connects.
+	if err := h.PeerRegistry.SetTrustLevel(peerID, level); err != nil {
+		if !errors.Is(err, peers.ErrPeerNotFound) {
+			return err
+		}
+		if record.Deleted {
+			// Nothing to demote: no row, no trust. Removing an edge for a peer
+			// the registry never held is already the desired end state.
+			return nil
+		}
+		if addErr := h.PeerRegistry.AddPeer(&peers.TrustedPeer{ID: peerID, TrustLevel: level}); addErr != nil {
+			// A racing writer may have created the row between the two calls.
+			if !errors.Is(addErr, peers.ErrPeerAlreadyExists) {
+				return addErr
+			}
+			return h.PeerRegistry.SetTrustLevel(peerID, level)
+		}
+	}
+	return nil
 }
 
 func (h *TrustHandler) verifyEdgeSigner(record trust.EdgeRecord) (ok bool) {
