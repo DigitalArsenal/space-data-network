@@ -88,6 +88,13 @@ if [[ -f "$SRC/lib/api/CMakeLists.txt" ]]; then
     "$SRC/lib/api/CMakeLists.txt"
   perl -0pi -e 's/objs\/\$\{target\}/objs\/\$\{_sanitized_target\}/g' \
     "$SRC/lib/api/CMakeLists.txt"
+  # SKIP COMPONENTS THAT ARE NOT REAL FILES. LLVM's component list can name a
+  # dependency without a path (zstd on MinGW), and the merge then runs
+  # `ar -x /libzstd.a` — an absolute path at the drive root — failing at 131/131
+  # with everything already compiled. We link zstd explicitly from the archive
+  # found above, so dropping it from the MERGE loses nothing.
+  perl -0pi -e 's/(function\(wasmedge_add_libs_component_command target_path\)\n)/$1  if(NOT EXISTS "\${target_path}")\n    return()\n  endif()\n/' \
+    "$SRC/lib/api/CMakeLists.txt"
 fi
 
 # 2. Configure + build the static library (LLVM/AOT OFF).
@@ -141,10 +148,18 @@ if [[ -z "${ZSTD_STATIC:-}" ]]; then
     /usr/lib/aarch64-linux-gnu/libzstd.a \
     /usr/lib/libzstd.a \
     /mingw64/lib/libzstd.a; do
-    [[ -f "$cand" ]] && { ZSTD_STATIC="$cand"; break; }
+    if [[ -f "$cand" ]]; then ZSTD_STATIC="$cand"; break; fi
   done
 fi
-[[ -n "${ZSTD_STATIC:-}" ]] && echo "static zstd: $ZSTD_STATIC" || echo "no static zstd found; relying on the link line" >&2
+# Plain ifs, not `[[ ]] && ...`: under `set -e` a trailing test that fails is
+# the script's exit status, so a no-match on the LAST candidate killed the build
+# outright. Linux matched its first candidate and never showed it; macOS, which
+# is handed ZSTD_STATIC and skips the loop entirely, died on the report line.
+if [[ -n "${ZSTD_STATIC:-}" ]]; then
+  echo "static zstd: $ZSTD_STATIC"
+else
+  echo "no static zstd found; relying on the link line" >&2
+fi
 
 # Make the prefix SELF-CONTAINED and RELOCATABLE.
 #
