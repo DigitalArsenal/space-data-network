@@ -73,6 +73,17 @@ run unattended:
   restarted (ready in 138 s, `/health` ok). host-01 now holds CAT/OMM/SPW only
   through host-02's signed publications; its leftover own-lane rows are
   superseded as those publications materialize.
+- Open item (host-01 store): its own-lane rows stay until host-02's next
+  publication for the same source evicts them (`ReplaceCurrent` retention
+  did that for `celestrak-satcat-csv` at 12:21Z: 78,950 records evicted) —
+  sources host-02 never publishes keep host-01's stale rows until an operator
+  purges them, and the catalog count on host-01 (120,713 at 13:08Z) is not one
+  catalog until then. Root cause to fix in the modules: the CelesTrak parser's
+  default `provider_id` is `space-data-network-02` on every node; an ingesting
+  node must tag with its own provider id. Not wiped: the dataset-shard catch-up
+  from host-02 materialized one CAT shard (20,472 rows) and reported the second
+  as `imported=0`, so a re-sync from publications alone is not yet proven
+  complete.
 - The fleet lane needed a repair first: the desktop rework had deleted the
   updater helpers `sign-update-manifest.mjs` required (`0cab9527` moves them to
   `deployment/release/sdn-updater/`).
