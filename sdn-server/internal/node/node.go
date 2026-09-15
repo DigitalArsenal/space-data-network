@@ -139,6 +139,14 @@ type Node struct {
 	// /metrics. Never nil after New().
 	alerts *ops.Registry
 
+	// quarantinedStoredPNMs holds the CIDs of stored dataset PNMs whose
+	// signature no key the node knows for the producer verifies. The
+	// stored-PNM catch-up walks the same records every five minutes; without
+	// this it re-verified, re-logged and re-alerted the same junk on every
+	// cycle. In memory on purpose: a restart gives each record exactly one
+	// more chance (a key the node learns later may verify it).
+	quarantinedStoredPNMs sync.Map
+
 	// sourceMetrics is the node's OPERATIONAL retrieval ledger — its own
 	// sqlite file beside (never inside) the record store, holding what the
 	// host's connectors did: last fetch per URL, last provenance-tagged batch
@@ -3042,8 +3050,21 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 		if schema == "" {
 			continue
 		}
+		if _, quarantined := n.quarantinedStoredPNMs.Load(record.CID); quarantined {
+			continue
+		}
 		didMaterialize, err := n.materializeStoredDatasetPublicationPNM(ctx, schema, record)
 		if err != nil {
+			if isDatasetPublicationSignerMismatch(err) {
+				// A stored frame no known key verifies is not a producer
+				// refusing us now; it is a record this node holds and cannot
+				// use. Say so once, with the CID an operator needs to purge
+				// it, and leave the publication_rejected alert to LIVE
+				// refusals (the pubsub path) and to the failures below.
+				n.quarantinedStoredPNMs.Store(record.CID, struct{}{})
+				log.Warnf("Stored dataset PNM catch-up quarantined %s on %s (stored from %s): %v", record.CID, schema, shortPeerID(record.PeerID), err)
+				continue
+			}
 			if firstErr == nil {
 				firstErr = err
 			}

@@ -84,6 +84,13 @@ run unattended:
   from host-02 materialized one CAT shard (20,472 rows) and reported the second
   as `imported=0`, so a re-sync from publications alone is not yet proven
   complete.
+- Alert noise found after the roll (13:10Z): the stored-PNM catch-up
+  re-verified the same unverifiable stored publications every five minutes
+  and raised a fresh `publication_rejected` per stored-from peer (host-01
+  error=3, host-02 error=8 within an hour). Fixed on main: a stored frame no
+  known key verifies is quarantined after one look (one WARN with its CID),
+  and `publication_rejected` is left to live refusals and transient failures.
+  Ships to the fleet through the update feed; in the next beta.
 - The fleet lane needed a repair first: the desktop rework had deleted the
   updater helpers `sign-update-manifest.mjs` required (`0cab9527` moves them to
   `deployment/release/sdn-updater/`).
