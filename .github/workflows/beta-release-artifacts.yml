@@ -65,6 +65,10 @@ jobs:
             runner: macos-14
           - label: darwin-amd64
             runner: macos-15-intel
+          # Windows: MSVC's lib.exe cannot perform the `ar -x` extraction
+          # WasmEdge's static merge does, so the toolchain is clang + llvm-ar.
+          - label: windows-amd64
+            runner: windows-latest
     defaults:
       run:
         shell: bash
@@ -89,10 +93,19 @@ jobs:
       - name: Install build toolchain (macOS)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS'
         run: brew install cmake ninja llvm@18 zstd
+      - name: Install build toolchain (Windows)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        run: choco install -y --no-progress llvm ninja
       - name: Build the static prefix
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          if [ "${RUNNER_OS}" = "macOS" ]; then
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            L="/c/Program Files/LLVM"
+            export CC="$L/bin/clang.exe" CXX="$L/bin/clang++.exe" \
+                   CMAKE_AR="$L/bin/llvm-ar.exe" \
+                   LLVM_CONFIG="$L/bin/llvm-config.exe" \
+                   LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld"
+          elif [ "${RUNNER_OS}" = "macOS" ]; then
             L="$(brew --prefix llvm@18)"
             export CC="$L/bin/clang" CXX="$L/bin/clang++" \
                    LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld" \
@@ -349,7 +362,7 @@ jobs:
       KUBO_ARCHIVE: ${{ matrix.kubo_archive }}
       BINARY_NAME: ${{ matrix.binary_name }}
       KUBO_BINARY_NAME: ${{ matrix.kubo_binary_name }}
-      WASMEDGE_DIR: ${{ matrix.target_os == 'windows' && format('{0}/dist/.wasmedge', github.workspace) || format('{0}/.sdn-wasmedge-static/prefix', github.workspace) }}
+      WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -390,29 +403,11 @@ jobs:
       # DLL. build-self-contained-cli.mjs takes --wasmedge-path only when a
       # platform still needs it, so the two shapes coexist.
       - name: Restore the static WasmEdge prefix
-        if: matrix.target_os != 'windows'
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-${{ hashFiles('scripts/build-static-wasmedge.sh') }}
           fail-on-cache-miss: true
-      - name: Install Windows WasmEdge runtime
-        if: matrix.target_os == 'windows'
-        run: |
-          mkdir -p dist/wasmedge
-          curl -L -o dist/wasmedge/wasmedge.zip "https://github.com/WasmEdge/WasmEdge/releases/download/${WASMEDGE_VERSION}/WasmEdge-${WASMEDGE_VERSION}-windows.zip"
-          rm -rf "${WASMEDGE_DIR}"
-          mkdir -p "${WASMEDGE_DIR}"
-          # 0.16.4 unpacks bin/ and include/ at the ROOT of the zip; 0.14.0 wrapped
-          # them in WasmEdge-<version>-Windows/. Take whichever shape arrived
-          # instead of assuming one.
-          unzip -q dist/wasmedge/wasmedge.zip -d dist/wasmedge
-          if [ -d "dist/wasmedge/WasmEdge-${WASMEDGE_VERSION}-Windows" ]; then
-            cp -R "dist/wasmedge/WasmEdge-${WASMEDGE_VERSION}-Windows/." "${WASMEDGE_DIR}/"
-          else
-            cp -R dist/wasmedge/. "${WASMEDGE_DIR}/"
-          fi
-          test -f "${WASMEDGE_DIR}/bin/wasmedge.dll"
       - name: Download target Kubo binary
         run: |
           deployment/release/download-kubo.sh \
@@ -432,13 +427,8 @@ jobs:
           test -f dist/wallet-ui/compat/index.js
       - name: Build self-contained CLI archive
         run: |
-          # Only a platform that still ships the runtime passes --wasmedge-path;
-          # a static binary stages nothing.
-          if [ "${TARGET_OS}" = "windows" ]; then
-            WASMEDGE_BUNDLE_ARG="--wasmedge-path ${WASMEDGE_DIR}"
-          else
-            WASMEDGE_BUNDLE_ARG=""
-          fi
+          # Every target links the runtime in, so no bundle stages one.
+          WASMEDGE_BUNDLE_ARG=""
           node deployment/release/build-self-contained-cli.mjs \
             --version "${PACKAGE_VERSION}" \
             --os "${TARGET_OS}" \
