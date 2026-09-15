@@ -109,6 +109,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg git xz-utils
+          git config --global --add safe.directory '*' 
       - uses: actions/checkout@v4
       - id: cache
         uses: actions/cache@v4
@@ -221,6 +222,7 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
         with:
@@ -487,6 +489,7 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
@@ -808,6 +811,11 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev rpm
+          # The workspace is owned by the runner user and this container is
+          # root, so git refuses it as "dubious ownership" and `go build`'s VCS
+          # stamping dies with exit status 128. Submodules make a single path
+          # insufficient.
+          git config --global --add safe.directory '*' 
       - uses: actions/checkout@v4
       - name: Restore the static WasmEdge prefix
         uses: actions/cache/restore@v4
