@@ -2522,9 +2522,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					}
 					return len(h.Network().Peers())
 				},
-				requireAuth: cfg.Admin.RequireAuth,
-				authHandler: authHandler,
-				alerts:      n.Alerts(),
+				reachability: func() any { return n.Reachability() },
+				requireAuth:  cfg.Admin.RequireAuth,
+				authHandler:  authHandler,
+				alerts:       n.Alerts(),
 			})
 			// Third surface for the same registry: one gauge series per
 			// (kind, severity), read live at scrape time.
