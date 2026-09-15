@@ -1,20 +1,18 @@
 // @ts-check
 const { app } = require('electron')
-const i18n = require('i18next')
-const os = require('os')
-const path = require('path')
+const os = require('node:os')
+const path = require('node:path')
 const fs = require('fs-extra')
 const untildify = require('untildify')
-const createToggler = require('./utils/create-toggler')
+
 const logger = require('./common/logger')
 const store = require('./common/store')
-const { IS_MAC, IS_WIN } = require('./common/consts')
+const { IS_MAC, IS_WIN, PRODUCT_NAME } = require('./common/consts')
 const { AUTO_LAUNCH: CONFIG_KEY } = require('./common/config-keys')
-const { showDialog, recoverableErrorDialog } = require('./dialogs')
 
 function isSupported () {
-  const plat = os.platform()
-  return plat === 'linux' || plat === 'win32' || plat === 'darwin'
+  const platform = os.platform()
+  return platform === 'linux' || platform === 'win32' || platform === 'darwin'
 }
 
 function getDesktopFile () {
@@ -22,91 +20,63 @@ function getDesktopFile () {
 }
 
 async function enable () {
-  if (app.setLoginItemSettings && (IS_MAC || IS_WIN)) {
+  if (IS_MAC || IS_WIN) {
     app.setLoginItemSettings({ openAtLogin: true })
     return
   }
-
-  const desktop = `[Desktop Entry]
+  await fs.outputFile(getDesktopFile(), `[Desktop Entry]
 Type=Application
 Version=1.0
-Name=Space Data Network
-Comment=Space Data Network Startup Script
+Name=${PRODUCT_NAME}
+Comment=Run the Space Data Network node at login
 Exec="${process.execPath}"
 Icon=space-data-network
 StartupNotify=false
-Terminal=false`
-
-  await fs.outputFile(getDesktopFile(), desktop)
+Terminal=false`)
 }
 
 async function disable () {
-  if (app.setLoginItemSettings && (IS_MAC || IS_WIN)) {
+  if (IS_MAC || IS_WIN) {
     app.setLoginItemSettings({ openAtLogin: false })
     return
   }
-
   await fs.remove(getDesktopFile())
 }
 
-module.exports = async function () {
-  const activate = async ({ newValue, oldValue, feedback }) => {
-    if (process.env.NODE_ENV === 'development') {
-      logger.info('[launch on startup] unavailable during development')
-
-      if (feedback) {
-        showDialog({
-          title: 'Launch at Login',
-          message: 'Not available during development.',
-          buttons: [i18n.t('close')]
-        })
-      }
-
-      return
-    }
-
-    if (!isSupported()) {
-      logger.info('[launch on startup] not supported on this platform')
-
-      if (feedback) {
-        showDialog({
-          title: i18n.t('launchAtLoginNotSupported.title'),
-          message: i18n.t('launchAtLoginNotSupported.message'),
-          buttons: [i18n.t('close')]
-        })
-      }
-
-      return false
-    }
-
-    if (newValue === oldValue) return
-
-    try {
-      if (newValue === true) {
-        await enable()
-        logger.info('[launch on startup] enabled')
-      } else {
-        await disable()
-        logger.info('[launch on startup] disabled')
-      }
-
-      return true
-    } catch (err) {
-      logger.error(`[launch on startup] ${err.toString()}`)
-
-      if (feedback) {
-        recoverableErrorDialog(err, {
-          title: i18n.t('launchAtLoginFailed.title'),
-          message: i18n.t('launchAtLoginFailed.message')
-        })
-      }
-
-      return false
-    }
-  }
-
-  activate({ newValue: store.get(CONFIG_KEY, false) })
-  createToggler(CONFIG_KEY, activate)
+/** @returns {boolean} whether the app is set to launch at login */
+function isEnabled () {
+  return store.get(CONFIG_KEY, false) === true
 }
 
-module.exports.isSupported = isSupported
+/**
+ * @param {boolean} enabled
+ * @returns {Promise<boolean>} the value that is now in force
+ */
+async function setEnabled (enabled) {
+  if (!isSupported() || process.env.NODE_ENV === 'development') {
+    logger.info('[auto-launch] not available here')
+    return isEnabled()
+  }
+  try {
+    if (enabled) await enable()
+    else await disable()
+    store.set(CONFIG_KEY, enabled)
+    logger.info(`[auto-launch] ${enabled ? 'enabled' : 'disabled'}`)
+    return enabled
+  } catch (err) {
+    logger.error(/** @type {Error} */(err))
+    return isEnabled()
+  }
+}
+
+/** Put the stored preference back in force at start-up. */
+async function applyStoredPreference () {
+  if (!isSupported() || process.env.NODE_ENV === 'development') return
+  try {
+    if (isEnabled()) await enable()
+  } catch (err) {
+    logger.error(/** @type {Error} */(err))
+  }
+}
+
+module.exports = { applyStoredPreference, isEnabled, isSupported, setEnabled }
