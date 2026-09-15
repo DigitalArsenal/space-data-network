@@ -43,12 +43,45 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: node deployment/release/prepare-beta-release.mjs
 
+  # One static WasmEdge, built once and reused. Building LLVM is expensive, so
+  # it is cached on the version alone; nothing here is installed into a job, it
+  # is linked INTO the binaries that ship.
+  wasmedge-static:
+    name: Build static WasmEdge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.sdn-wasmedge-static
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-ubuntu-latest-v1
+      - name: Build the static prefix
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev \
+            libzstd-dev zlib1g-dev
+          WASMEDGE_STATIC_WORK="$HOME/.sdn-wasmedge-static" \
+          WASMEDGE_STATIC_PREFIX_ONLY=1 \
+          bash scripts/build-static-wasmedge.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasmedge-static-prefix
+          path: ~/.sdn-wasmedge-static/prefix
+          retention-days: 1
+
   preflight:
     name: Preflight
     runs-on: ubuntu-latest
-    needs: beta-version
+    needs: [beta-version, wasmedge-static]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasmedge-static-prefix
+          path: ${{ github.workspace }}/wasmedge-prefix
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -64,9 +97,14 @@ jobs:
       - name: JS runtime tests
         working-directory: sdn-js
         run: npm test -- src/ui/runtime/modules.test.ts
-      - name: Go release/runtime tests
+      # Release SHAPE only. The module runtime belongs to the SDS runtime
+      # environment and is exercised by its own harnesses; a release cut has no
+      # business starting it.
+      - name: Go release-layout tests
         working-directory: sdn-server
-        run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'TestVerifyReleaseDirectory|TestHandleModuleRuntime'
+        env:
+          WASMEDGE_DIR: ${{ github.workspace }}/wasmedge-prefix
+        run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'TestVerifyReleaseDirectory'
 
   ipfs:
     name: Build and pin static assets

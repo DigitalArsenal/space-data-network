@@ -77,6 +77,30 @@ cp "$SRC"/build/_deps/spdlog-build/libspdlog.a "$STATIC/lib/"
 cp -r "$SRC"/include/api/wasmedge             "$STATIC/include/"
 cp -r "$SRC"/build/include/api/wasmedge/*     "$STATIC/include/wasmedge/" 2>/dev/null || true
 
+GRP="$STATIC/lib/libwasmedge.a"
+for a in Common Loader LoaderFileMgr Validator Executor VM HostModuleWasi PO Driver System Plugin AOT LLVM; do
+  [[ -f "$STATIC/lib/libwasmedge${a}.a" ]] && GRP="$GRP $STATIC/lib/libwasmedge${a}.a"
+done
+GRP="$GRP $STATIC/lib/libspdlog.a $STATIC/lib/libfmt.a"
+
+# LLVM's own archives, in the order llvm-config gives them.
+LLVM_CONFIG="${LLVM_CONFIG:-llvm-config-16}"
+LLVMLIBS="$($LLVM_CONFIG --link-static --libfiles | tr '\n' ' ')"
+
+
+# Record the EXACT link line beside the archives. go-with-wasmedge.sh reads this
+# file to decide it is looking at a static prefix and how to link it, so the
+# knowledge of archive order, LLVM's libraries and the per-platform extras lives
+# in one place — here, where they were built — instead of being re-derived by
+# every caller.
+{
+  printf '%s' "$GRP $LLVMLIBS"
+  case "$(uname -s)" in
+    Darwin) printf ' %s -lc++ -lm -lz -lncurses\n' "${ZSTD_STATIC:-}" ;;
+    *)      printf ' -lstdc++ -lm -ldl -lpthread -lz -lzstd -ltinfo\n' ;;
+  esac
+} > "$STATIC/link.flags"
+
 # Stop here when the caller only wants the staged archives. A Docker layer that
 # builds LLVM + WasmEdge is expensive and depends ONLY on the version, so the
 # image builds it once and rebuilds it only when WASMEDGE_VERSION changes; the
@@ -90,16 +114,6 @@ fi
 #    LAST on the external link line (after libwasmedge.a from the binding's
 #    -lwasmedge), so static symbols resolve. libstdc++/libc stay dynamic — they
 #    are base system libraries present on every Ubuntu host.
-GRP="$STATIC/lib/libwasmedge.a"
-for a in Common Loader LoaderFileMgr Validator Executor VM HostModuleWasi PO Driver System Plugin AOT LLVM; do
-  [[ -f "$STATIC/lib/libwasmedge${a}.a" ]] && GRP="$GRP $STATIC/lib/libwasmedge${a}.a"
-done
-GRP="$GRP $STATIC/lib/libspdlog.a $STATIC/lib/libfmt.a"
-
-# LLVM's own archives, in the order llvm-config gives them.
-LLVM_CONFIG="${LLVM_CONFIG:-llvm-config-16}"
-LLVMLIBS="$($LLVM_CONFIG --link-static --libfiles | tr '\n' ' ')"
-
 cd "$ROOT/sdn-server"
 CGO_ENABLED=1 \
 CGO_CFLAGS="-I$STATIC/include" \
