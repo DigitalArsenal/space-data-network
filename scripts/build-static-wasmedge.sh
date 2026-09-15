@@ -301,16 +301,21 @@ fi
 echo "static prefix: $lld_staged lld archive(s) staged"
 
 {
-  # --start-group on ELF: these archives depend on each other BOTH ways (lld
-  # calls LLVM, lld's own ELF/Common halves call each other), and a single-pass
-  # linker cannot resolve that from any fixed order. ld64 on macOS already
-  # re-scans archives, so it needs no group and does not accept one.
-  case "$(uname -s)" in Darwin|MINGW*|MSYS*|CYGWIN*) : ;; *) printf -- '-Wl,--start-group ' ;; esac
+  # --start-group wherever the linker is GNU ld: these archives depend on each
+  # other BOTH ways (lld calls LLVM, lld's own ELF/Common halves call each
+  # other), and a single-pass linker cannot resolve that from any fixed order.
+  #
+  # MinGW BELONGS IN THIS GROUP and was wrongly excluded with macOS. Only ld64
+  # re-scans archives on its own; MinGW links with GNU ld, which does not, so
+  # the Windows build was left with 26 undefined lld:: symbols plus
+  # llvm::demangle and three WasmEdge ones — every one of them a cycle. It hid
+  # behind the larger toolchain mismatch until that was fixed.
+  case "$(uname -s)" in Darwin) : ;; *) printf -- '-Wl,--start-group ' ;; esac
   for archive in $GRP $LLVMLIBS ${ZSTD_STATIC:-} ${STDCXX_STATIC:-}; do
     [[ -n "$archive" ]] || continue
     printf '@PREFIX@/lib/%s ' "$(basename "$archive")"
   done
-  case "$(uname -s)" in Darwin|MINGW*|MSYS*|CYGWIN*) : ;; *) printf -- '-Wl,--end-group ' ;; esac
+  case "$(uname -s)" in Darwin) : ;; *) printf -- '-Wl,--end-group ' ;; esac
   case "$(uname -s)" in
     # -lc++abi as well as -lc++: libc++'s exception ABI lives in libc++abi on
     # macOS, and without it the link dies on ___cxa_init_primary_exception.
