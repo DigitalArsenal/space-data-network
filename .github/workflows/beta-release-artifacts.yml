@@ -460,10 +460,18 @@ jobs:
         with:
           msystem: MINGW64
           update: false
+          # These are exactly what the MinGW tail in link.flags names and the
+          # compiler does not already provide. libxml2 is the easy one to miss:
+          # the wasmedge-static job gets it free as a dependency of the LLVM
+          # package, this job installs no LLVM, and the only symptom is
+          # "cannot find -lxml2" at the very end of a Go build. ws2_32, bcrypt,
+          # ole32, uuid, ntdll, ktmw32 and dbghelp all come from mingw-w64-crt
+          # with gcc; zstd is linked by full path out of the prefix.
           install: >-
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-zlib
             mingw-w64-x86_64-zstd
+            mingw-w64-x86_64-libxml2
       - name: Install Windows CLI build tools
         if: matrix.target_os == 'windows'
         env:
