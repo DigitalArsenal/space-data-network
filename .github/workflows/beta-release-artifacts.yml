@@ -211,6 +211,17 @@ jobs:
         with:
           name: ipfs-assets
           path: dist/ipfs
+      # The image COPYs sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm
+      # into the build context, so those dependencies must exist before buildx
+      # runs — otherwise the build fails computing that path's checksum.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: sdn-js/package-lock.json
+      - name: Install sdn-js dependencies
+        working-directory: sdn-js
+        run: npm ci
       - name: Restore exact IPFS-published assets
         run: |
           mkdir -p sdn-js/ui/dist webui/build
@@ -355,6 +366,12 @@ jobs:
           cache-dependency-path: sdn-server/go.sum
       - name: Install root JS dependencies
         run: npm ci
+      # hd-wallet-ui and hd-wallet-wasm are SDN-JS dependencies, not root ones,
+      # so staging the wallet out of the root node_modules could never find them
+      # ("hd-wallet-ui/dist missing — run 'npm ci' in sdn-js first").
+      - name: Install sdn-js dependencies
+        working-directory: sdn-js
+        run: npm ci
       - uses: actions/download-artifact@v4
         with:
           name: updater-module-wasm
@@ -383,10 +400,17 @@ jobs:
         run: |
           mkdir -p dist/wasmedge
           curl -L -o dist/wasmedge/wasmedge.zip "https://github.com/WasmEdge/WasmEdge/releases/download/${WASMEDGE_VERSION}/WasmEdge-${WASMEDGE_VERSION}-windows.zip"
-          unzip -q dist/wasmedge/wasmedge.zip -d dist/wasmedge
           rm -rf "${WASMEDGE_DIR}"
           mkdir -p "${WASMEDGE_DIR}"
-          cp -R "dist/wasmedge/WasmEdge-${WASMEDGE_VERSION}-Windows/." "${WASMEDGE_DIR}/"
+          # 0.16.4 unpacks bin/ and include/ at the ROOT of the zip; 0.14.0 wrapped
+          # them in WasmEdge-<version>-Windows/. Take whichever shape arrived
+          # instead of assuming one.
+          unzip -q dist/wasmedge/wasmedge.zip -d dist/wasmedge
+          if [ -d "dist/wasmedge/WasmEdge-${WASMEDGE_VERSION}-Windows" ]; then
+            cp -R "dist/wasmedge/WasmEdge-${WASMEDGE_VERSION}-Windows/." "${WASMEDGE_DIR}/"
+          else
+            cp -R dist/wasmedge/. "${WASMEDGE_DIR}/"
+          fi
           test -f "${WASMEDGE_DIR}/bin/wasmedge.dll"
       - name: Download target Kubo binary
         run: |
@@ -401,7 +425,7 @@ jobs:
           GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" ./scripts/go-with-wasmedge.sh build -o "${PWD}/dist/cli-input/${BINARY_NAME}" ./cmd/spacedatanetwork
       - name: Stage wallet sign-in assets
         run: |
-          SDN_WALLET_NODE_MODULES="${PWD}/node_modules" deployment/wallet-wasm/stage-wallet-wasm.sh \
+          SDN_WALLET_NODE_MODULES="${PWD}/sdn-js/node_modules" deployment/wallet-wasm/stage-wallet-wasm.sh \
             "${PWD}/dist/wallet-wasm" "${PWD}/dist/wallet-ui"
           test -f dist/wallet-wasm/runtime/index.mjs
           test -f dist/wallet-ui/compat/index.js
