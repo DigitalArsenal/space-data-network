@@ -102,29 +102,42 @@ jobs:
       - name: Install build toolchain (macOS)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS'
         run: brew install cmake ninja llvm@18 zstd
+      # MSYS2, not choco. The choco/official LLVM for Windows ships the
+      # toolchain WITHOUT lib/cmake/llvm or the static archives, so
+      # WASMEDGE_LINK_LLVM_STATIC cannot resolve LLVMConfig.cmake — a search of
+      # the whole C: drive found none. MSYS2's mingw-w64-x86_64-llvm ships both,
+      # and its GNU ar takes the same `ar -x` path WasmEdge's static merge uses
+      # on every non-Apple platform.
       - name: Install build toolchain (Windows)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
-        run: choco install -y --no-progress llvm ninja
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-llvm
+            mingw-w64-x86_64-lld
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-zstd
+            git
       - name: Build the static prefix
         if: steps.cache.outputs.cache-hit != 'true'
+        # msys2 on Windows so /mingw64 and its toolchain are on PATH; bash
+        # elsewhere. Defined per-step because the job default is plain bash.
+        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         run: |
           if [ "${RUNNER_OS}" = "Windows" ]; then
-            # Find LLVM rather than assume it: the runner image and the choco
-            # package disagree about where the cmake package lands, and a wrong
-            # guess fails as "could not find LLVMConfig.cmake".
-            L=""
-            for cand in "/c/Program Files/LLVM" "/c/ProgramData/chocolatey/lib/llvm/tools/LLVM" "$(dirname "$(dirname "$(command -v clang || true)")")"; do
-              if [ -n "$cand" ] && [ -f "$cand/lib/cmake/llvm/LLVMConfig.cmake" ]; then L="$cand"; break; fi
-            done
-            if [ -z "$L" ]; then
-              echo "no LLVM with a cmake package found; searched:" >&2
-              ls -d "/c/Program Files/LLVM" "/c/ProgramData/chocolatey/lib/llvm/tools/LLVM" 2>/dev/null >&2 || true
-              find /c -maxdepth 4 -name LLVMConfig.cmake 2>/dev/null | head -5 >&2
+            L=/mingw64
+            test -f "$L/lib/cmake/llvm/LLVMConfig.cmake" || {
+              echo "MSYS2 mingw-w64-x86_64-llvm did not provide LLVMConfig.cmake" >&2
+              ls "$L/lib/cmake" 2>/dev/null >&2 || true
               exit 1
-            fi
-            echo "using LLVM at $L"
+            }
             export CC="$L/bin/clang.exe" CXX="$L/bin/clang++.exe" \
-                   CMAKE_AR="$L/bin/llvm-ar.exe" \
+                   CMAKE_AR="$L/bin/ar.exe" \
                    LLVM_CONFIG="$L/bin/llvm-config.exe" \
                    LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld"
           elif [ "${RUNNER_OS}" = "macOS" ]; then
