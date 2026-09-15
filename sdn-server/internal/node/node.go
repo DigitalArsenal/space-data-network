@@ -2478,9 +2478,14 @@ func (n *Node) startFlowServices() error {
 		// all, and an operator reading "2 consecutive failures" has nothing to
 		// act on.
 		sf.SetRetrievalOutcome(func(runErr error) {
-			if n.sourceMetrics != nil {
-				n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
+			if n.sourceMetrics == nil {
+				return
 			}
+			if errors.Is(runErr, flowrt.ErrRetrievalUnchanged) {
+				n.sourceMetrics.RecordAttemptUnchanged(serviceID)
+				return
+			}
+			n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
 		})
 
 		if !started {

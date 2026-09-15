@@ -1,6 +1,7 @@
 package flowrt
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -94,5 +95,50 @@ func TestRetrievalDiagnosisPassesTheRunErrorThrough(t *testing.T) {
 	}}
 	if got := sf.retrievalDiagnosis(runErr); got != runErr {
 		t.Fatalf("the run's own error was replaced: %v", got)
+	}
+}
+
+// A conditional fetch that answers 304 starves the tail of the pipeline BY
+// DESIGN: the parser says so with an "unchanged" egress frame and lands
+// nothing. That is not a failure, and the ledger must not widen the
+// publisher's window or raise a lane alert over it.
+func TestRetrievalDiagnosisCallsAnUnchangedRunUnchanged(t *testing.T) {
+	sf := &ServiceFlow{lastRunUnchanged: true, lastNodeDigest: []nodeRunOutcome{
+		{NodeID: "http", PluginID: "h", MethodID: "request", Invocations: 1},
+		{NodeID: "parse", PluginID: "p", MethodID: "parse", Invocations: 1},
+		{NodeID: "ingest", PluginID: "h", MethodID: "ingest"},
+		{NodeID: "publish", PluginID: "h", MethodID: "request"},
+	}}
+
+	if err := sf.retrievalDiagnosis(nil); !errors.Is(err, ErrRetrievalUnchanged) {
+		t.Fatalf("an unchanged run was diagnosed as %v", err)
+	}
+
+	// A refusal still outranks the notice: the node that said no is the cause.
+	sf.lastNodeDigest[1].LastStatus = 400
+	err := sf.retrievalDiagnosis(nil)
+	if err == nil || errors.Is(err, ErrRetrievalUnchanged) || !strings.Contains(err.Error(), "parse (p:parse) status 400") {
+		t.Fatalf("a refusal beside an unchanged notice was diagnosed as %v", err)
+	}
+}
+
+func TestEgressReportsUnchangedReadsTheNotice(t *testing.T) {
+	for _, tc := range []struct {
+		frames []string
+		want   bool
+	}{
+		{[]string{`{"status":304,"unchanged":true,"source_name":"celestrak-satcat-txt"}`}, true},
+		{[]string{`{"status":200}`, `{"status":304}`}, true},
+		{[]string{`{"status":200,"inserted":12}`}, false},
+		{[]string{`"plain text frame"`, `{"unchanged":false}`}, false},
+		{nil, false},
+	} {
+		results := make([]json.RawMessage, 0, len(tc.frames))
+		for _, frame := range tc.frames {
+			results = append(results, json.RawMessage(frame))
+		}
+		if got := egressReportsUnchanged(results); got != tc.want {
+			t.Errorf("egressReportsUnchanged(%v) = %v, want %v", tc.frames, got, tc.want)
+		}
 	}
 }

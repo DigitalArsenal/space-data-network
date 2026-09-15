@@ -15,6 +15,7 @@ package flowrt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -69,6 +70,9 @@ type ServiceFlow struct {
 	// What the LAST drain's nodes reported, read straight off the artifact's
 	// node-state table. See nodeRunDigest.
 	lastNodeDigest []nodeRunOutcome
+	// lastRunUnchanged: the last drain's egress carried an "unchanged" notice —
+	// the conditional fetch answered 304 and the flow landed nothing on purpose.
+	lastRunUnchanged bool
 }
 
 // nodeRunOutcome is one node's mechanism-level result for one drain: how many
@@ -449,6 +453,7 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 	// died mid-drain is exactly the one whose per-node record is worth having.
 	sf.statsMu.Lock()
 	sf.lastNodeDigest = readNodeRunDigest(rt)
+	sf.lastRunUnchanged = egressReportsUnchanged(results)
 	sf.statsMu.Unlock()
 	if drainErr != nil {
 		return nil, fmt.Errorf("flow service %q trigger %q: %w", sf.programID, triggerID, drainErr)
@@ -505,6 +510,31 @@ func readNodeRunDigest(rt *FlowRuntime) []nodeRunOutcome {
 	return digest
 }
 
+// ErrRetrievalUnchanged is the diagnosis of a run whose conditional fetch
+// answered 304: the publisher had nothing new, the node keeps the set it has,
+// and the ledger must count the attempt as a success without a batch rather
+// than widen the publisher's window. The retrieval modules say so with one
+// egress frame {"status":304,"unchanged":true,...}.
+var ErrRetrievalUnchanged = errors.New("upstream unchanged: the conditional fetch answered 304 and there was nothing new to land")
+
+// egressReportsUnchanged reports whether any egress result frame of the run
+// is such an unchanged notice.
+func egressReportsUnchanged(results []json.RawMessage) bool {
+	for _, raw := range results {
+		var frame struct {
+			Unchanged bool `json:"unchanged"`
+			Status    int  `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &frame); err != nil {
+			continue
+		}
+		if frame.Unchanged || frame.Status == http.StatusNotModified {
+			return true
+		}
+	}
+	return false
+}
+
 // retrievalDiagnosis is what the run tells the source-metrics ledger.
 //
 // A drain error is already an answer, so it passes through untouched. The hard
@@ -525,10 +555,8 @@ func (sf *ServiceFlow) retrievalDiagnosis(runErr error) error {
 	}
 	sf.statsMu.Lock()
 	digest := sf.lastNodeDigest
+	unchanged := sf.lastRunUnchanged
 	sf.statsMu.Unlock()
-	if len(digest) == 0 {
-		return nil
-	}
 
 	var refused, starved []string
 	for _, node := range digest {
@@ -547,6 +575,10 @@ func (sf *ServiceFlow) retrievalDiagnosis(runErr error) error {
 	case len(refused) > 0:
 		return fmt.Errorf("run completed but landed no batch; node(s) refused: %s",
 			strings.Join(refused, "; "))
+	case unchanged:
+		// The tail of the pipeline is starved BY DESIGN: the fetch answered 304
+		// and the parser said so on egress. Nothing to store is not a failure.
+		return ErrRetrievalUnchanged
 	case len(starved) > 0:
 		return fmt.Errorf("run completed but landed no batch; node(s) never ran: %s",
 			strings.Join(starved, ", "))

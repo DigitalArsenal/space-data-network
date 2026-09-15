@@ -691,6 +691,20 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 		}
 	}
 
+	// Current-snapshot semantics: count the rows of OLDER batches before this
+	// one lands. Standards that supersede on ingest (a $CAT row replaces the
+	// previous row for the same object) drop those rows during the store
+	// itself, so the post-ingest reconcile below sees only what is left; the
+	// number the caller wants is every old-batch row that is gone afterwards.
+	var oldBatchRows int64
+	if reconcile == "current" {
+		before, err := s.store.ReconcileSourceBatch(schema, tags.ProviderID, tags.SourceName, tags.BatchID, false)
+		if err != nil {
+			return errCapJSON("pre-ingest current-batch count failed: " + err.Error())
+		}
+		oldBatchRows = before.Matched
+	}
+
 	inserted, err := s.store.StoreBatchWithSourceTags(schema, records, sourcePeer, nil, tags)
 	if err != nil {
 		return errCapJSON("ingest failed: " + err.Error())
@@ -714,7 +728,10 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 		if err != nil {
 			return errCapJSON("post-ingest current-batch reconcile failed: " + err.Error())
 		}
-		result["reconciled_old_batches"] = batchResult.Deleted
+		if batchResult.Deleted > oldBatchRows {
+			oldBatchRows = batchResult.Deleted
+		}
+		result["reconciled_old_batches"] = oldBatchRows
 	}
 	if reconcile != "none" {
 		dupResult, err := s.store.ReconcileSourceBatchIndexedDuplicates(schema, tags.ProviderID, tags.SourceName, tags.BatchID, true)
