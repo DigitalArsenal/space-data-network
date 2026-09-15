@@ -51,6 +51,17 @@ if [[ ! -d "$SRC" ]]; then
     https://github.com/WasmEdge/WasmEdge.git "$SRC"
 fi
 
+# DROP UPSTREAM'S -Werror. WasmEdge adds it unconditionally
+# (cmake/Helper.cmake) and then fails its OWN sources under every compiler it
+# did not test: gcc rejects component_type.cpp on -Wmaybe-uninitialized and
+# coredump.cpp on -Warray-bounds, MSYS2's clang rejects the CRTP in
+# host/wasi/inode.h. We consume this dependency rather than develop it, so its
+# warnings must not gate our build — and without this, each new toolchain
+# breaks the build again for reasons that are never ours.
+if [[ -f "$SRC/cmake/Helper.cmake" ]]; then
+  perl -0pi -e 's/^\s*-Werror\s*$//mg' "$SRC/cmake/Helper.cmake"
+fi
+
 # 2. Configure + build the static library (LLVM/AOT OFF).
 if [[ ! -f "$SRC/build/lib/api/libwasmedge.a" ]]; then
   CC="${CC:-clang-16}" CXX="${CXX:-clang++-16}" \
