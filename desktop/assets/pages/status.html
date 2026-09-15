@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">
+  <title>Space Data Network</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f14;
+      --fg: #e6edf3;
+      --muted: #8b98a5;
+      --accent: #58a6ff;
+      --accent-2: #69c4cd;
+      --warn: #e3b341;
+      --bad: #f85149;
+      --line: #1d2530;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+      padding: 24px;
+    }
+
+    main { width: 100%; max-width: 640px; text-align: center; }
+
+    .mark { width: 96px; height: 96px; margin: 0 auto 24px; }
+    .mark.spin { animation: pulse 2s ease-in-out infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: .55; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.04); }
+    }
+
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 6px; letter-spacing: .01em; }
+    p.detail { margin: 0; color: var(--muted); }
+    p.detail.bad { color: var(--bad); }
+
+    .phase {
+      display: inline-block;
+      margin-bottom: 18px;
+      padding: 3px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .phase[data-phase="ready"] { color: var(--accent-2); border-color: var(--accent-2); }
+    .phase[data-phase="hydrating"] { color: var(--warn); border-color: var(--warn); }
+    .phase[data-phase="failed"] { color: var(--bad); border-color: var(--bad); }
+
+    pre {
+      display: none;
+      margin: 22px 0 0;
+      padding: 12px 14px;
+      max-height: 34vh;
+      overflow: auto;
+      text-align: left;
+      background: #070a0e;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    pre.show { display: block; }
+
+    .actions { display: none; gap: 10px; justify-content: center; margin-top: 20px; }
+    .actions.show { display: flex; }
+
+    button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #131a23;
+      color: var(--fg);
+      border-radius: 6px;
+      padding: 7px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: var(--accent); }
+    footer { margin-top: 26px; color: #5c6875; font-size: 11px; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <svg class="mark spin" viewBox="0 0 200 200" aria-hidden="true">
+      <defs>
+        <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#58a6ff" />
+          <stop offset="100%" stop-color="#69c4cd" />
+        </linearGradient>
+      </defs>
+      <g transform="translate(100,100)">
+        <circle r="80" fill="none" stroke="url(#g)" stroke-width="3" />
+        <ellipse rx="80" ry="32" fill="none" stroke="url(#g)" stroke-width="2" />
+        <ellipse rx="80" ry="32" fill="none" stroke="url(#g)" stroke-width="2" transform="rotate(60)" />
+        <ellipse rx="80" ry="32" fill="none" stroke="url(#g)" stroke-width="2" transform="rotate(120)" />
+        <circle r="10" fill="#58a6ff" />
+      </g>
+    </svg>
+    <div class="phase" id="phase" data-phase="starting">starting</div>
+    <h1 id="headline">Starting your Space Data Network node</h1>
+    <p class="detail" id="detail">Preparing the node.</p>
+    <div class="actions" id="actions">
+      <button id="retry" type="button">Restart node</button>
+      <button id="logs" type="button">Show logs</button>
+    </div>
+    <pre id="log"></pre>
+    <footer id="footer"></footer>
+  </main>
+
+  <script>
+    const headlines = {
+      starting: 'Starting your Space Data Network node',
+      hydrating: 'Opening the node store',
+      ready: 'The node is ready',
+      failed: 'The node did not start',
+      stopped: 'The node is stopped'
+    }
+
+    const phaseEl = document.getElementById('phase')
+    const headEl = document.getElementById('headline')
+    const detailEl = document.getElementById('detail')
+    const logEl = document.getElementById('log')
+    const actionsEl = document.getElementById('actions')
+    const footerEl = document.getElementById('footer')
+    const markEl = document.querySelector('.mark')
+
+    function render (state) {
+      const phase = state.phase || 'starting'
+      phaseEl.textContent = phase
+      phaseEl.dataset.phase = phase
+      headEl.textContent = headlines[phase] || headlines.starting
+      detailEl.textContent = state.detail || ''
+      detailEl.classList.toggle('bad', phase === 'failed')
+      markEl.classList.toggle('spin', phase !== 'failed' && phase !== 'stopped')
+
+      const broken = phase === 'failed' || phase === 'stopped'
+      actionsEl.classList.toggle('show', broken)
+      const lines = Array.isArray(state.log) ? state.log : []
+      logEl.classList.toggle('show', broken && lines.length > 0)
+      logEl.textContent = lines.join('\n')
+      footerEl.textContent = state.version ? 'node ' + state.version : ''
+    }
+
+    document.getElementById('retry').addEventListener('click', () => window.sdn.restart())
+    document.getElementById('logs').addEventListener('click', () => window.sdn.showLogs())
+
+    if (window.sdn) {
+      window.sdn.onState(render)
+    }
+  </script>
+</body>
+
+</html>
