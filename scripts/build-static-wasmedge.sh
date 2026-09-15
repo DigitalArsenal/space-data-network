@@ -146,6 +146,33 @@ cp "$SRC"/build/_deps/spdlog-build/libspdlog.a "$STATIC/lib/"
 cp -r "$SRC"/include/api/wasmedge             "$STATIC/include/"
 cp -r "$SRC"/build/include/api/wasmedge/*     "$STATIC/include/wasmedge/" 2>/dev/null || true
 
+# WINDOWS: make the staged header describe the STATIC library it sits beside.
+#
+# wasmedge_basic.h has exactly two cases on Windows — WASMEDGE_COMPILE_LIBRARY
+# means __declspec(dllexport), anything else means __declspec(dllimport) — and
+# no third case for a consumer linking the static archive, which is what we are.
+# So every C API call compiled against it referenced the DLL import thunk and
+# the link died with "undefined reference to `__imp_WasmEdge_ASTModuleDelete'"
+# once per function, against archives that hold the plain symbols.
+#
+# Patched HERE rather than by defining a macro in the consumer, for the same
+# reason link.flags lives here: the prefix has to be self-describing. A consumer
+# that has to know a magic define is a consumer that will one day forget it.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    for header in "$STATIC"/include/wasmedge/*.h; do
+      [[ -f "$header" ]] || continue
+      perl -0pi -e 's/#define\s+(WASMEDGE_CAPI_(?:PLUGIN_)?EXPORT)\s+__declspec\(dllimport\)/#define $1/g' "$header"
+    done
+    if grep -rq 'dllimport' "$STATIC/include/wasmedge/"; then
+      echo "static prefix: a WasmEdge header still declares dllimport" >&2
+      grep -rn 'dllimport' "$STATIC/include/wasmedge/" >&2
+      exit 1
+    fi
+    echo "patched staged headers for static linkage (no dllimport)"
+    ;;
+esac
+
 # EVERY staged WasmEdge archive, not a hand-kept list. The list silently omitted
 # libwasmedgePluginWasiLogging.a, which left
 # WasmEdge::Host::WasiLoggingModule::PluginDescriptor undefined — a component
