@@ -88,7 +88,9 @@ func TestHealthReportsDegradedAndAlertsListsDetail(t *testing.T) {
 	registry := ops.NewRegistry()
 	registry.Raise(ops.KindPublicationRejected, "12*ab12cd", ops.SeverityError,
 		`SIGNATURE_TYPE "Ed25519" does not match the provider's Secp256k1 key`)
-	registry.Raise(ops.KindLaneFailing, "celestrak-satcat-ingest", ops.SeverityWarning, "parser returned HTTP 400")
+	// A neutral subject on purpose: the Go host is application-blind, and this
+	// assertion is about whether a subject LEAKS, never about which app it names.
+	registry.Raise(ops.KindLaneFailing, "example-source-ingest", ops.SeverityWarning, "parser returned HTTP 400")
 
 	mux := http.NewServeMux()
 	mountHealthRoutes(mux, healthDeps{
@@ -109,7 +111,7 @@ func TestHealthReportsDegradedAndAlertsListsDetail(t *testing.T) {
 	if body := strings.TrimSpace(rec.Body.String()); body != `{"status":"degraded","alerts":{"error":1,"warning":1}}` {
 		t.Fatalf("/health body = %s", body)
 	}
-	if strings.Contains(rec.Body.String(), "celestrak") {
+	if strings.Contains(rec.Body.String(), "example-source-ingest") {
 		t.Fatal("anonymous /health leaked an alert subject")
 	}
 
@@ -118,7 +120,7 @@ func TestHealthReportsDegradedAndAlertsListsDetail(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/api/v1/status/alerts status = %d", rec.Code)
 	}
-	for _, want := range []string{"publication_rejected", "12*ab12cd", "celestrak-satcat-ingest", "Secp256k1"} {
+	for _, want := range []string{"publication_rejected", "12*ab12cd", "example-source-ingest", "Secp256k1"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("/api/v1/status/alerts missing %q: %s", want, rec.Body.String())
 		}
