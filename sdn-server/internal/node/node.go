@@ -3097,7 +3097,8 @@ func isDatasetPublicationSignerMismatch(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "invalid PNM signature") ||
-		strings.Contains(msg, "no Ed25519 signing key found")
+		strings.Contains(msg, "no Ed25519 signing key found") ||
+		strings.Contains(msg, "does not match the provider's")
 }
 
 func isPermanentDatasetPublicationMaterializationError(err error) bool {
@@ -3286,12 +3287,13 @@ func (n *Node) cacheDatasetPublicationMetadata(ctx context.Context, schema strin
 	if len(raw) < 12 || len(raw) > 65536 {
 		return errors.New("dataset announcement exceeds catalog bounds")
 	}
-	key, err := publicKeyFromPeerID(from)
+	envelope, err := channels.VerifySignedPNMEnvelope(raw)
 	if err != nil {
-		// EPM discovery already verifies the peer-bound profile. Do not open
-		// an extra discovery fetch for an unknown announcement signer here.
-		key, err = n.datasetPublicationPublicKeyFromDirectory(from)
+		return err
 	}
+	// EPM discovery already verifies the peer-bound profile. Do not open an
+	// extra discovery fetch for an unknown announcement signer here.
+	key, err := n.datasetPublicationPublicKeyFor(ctx, from, envelope.SignatureType, false)
 	if err != nil {
 		return err
 	}
@@ -4191,7 +4193,7 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 		return false, nil
 	}
 
-	providerPublicKey, err := n.datasetPublicationPublicKey(ctx, from)
+	providerPublicKey, err := n.datasetPublicationPublicKey(ctx, from, string(pnm.SIGNATURE_TYPE()))
 	if err != nil {
 		return false, fmt.Errorf("dataset provider public key unavailable for %s: %w", from.ShortString(), err)
 	}
@@ -4386,25 +4388,78 @@ func publicKeyFromPeerID(id peer.ID) (crypto.PubKey, error) {
 	return pubKey, nil
 }
 
-func (n *Node) datasetPublicationPublicKey(ctx context.Context, id peer.ID) (crypto.PubKey, error) {
+// datasetPublicationPublicKey returns the provider key that verifies a
+// publication DECLARING signatureType (the PNM/DPM SIGNATURE_TYPE field).
+//
+// AN HD NODE HAS TWO KEYS A PUBLICATION CAN BE SIGNED WITH: its secp256k1
+// peer identity, and the Ed25519 signing key its EPM publishes. Every
+// publisher signs PNM and DPM with the EPM signing key and labels them
+// Ed25519 (storage.BuildDatasetPublicationPNM, api/dataset_publication.go),
+// so the verifier must dispatch on the label — which is the whole contract of
+// internal/sds/signature_type.go. Preferring the peer-id key unconditionally
+// (c25e0fa1) rejected EVERY publication between HD nodes as
+// `SIGNATURE_TYPE "Ed25519" does not match the provider's Secp256k1 key`:
+// host-01 logged 2,122 of those and materialized one shard in the 31 hours
+// before the 2026-09-15 fleet wipe made the empty catalog visible.
+//
+// A publication that declares Secp256k1 verifies against the peer identity.
+// When no key of the declared type is known, the first key found is returned
+// so the verifier names the mismatch instead of this function hiding it.
+func (n *Node) datasetPublicationPublicKey(ctx context.Context, id peer.ID, signatureType string) (crypto.PubKey, error) {
+	return n.datasetPublicationPublicKeyFor(ctx, id, signatureType, true)
+}
+
+// datasetPublicationPublicKeyFor is datasetPublicationPublicKey with the
+// discovery fetch optional: the announcement cache must not open a fetch for
+// an unknown signer.
+func (n *Node) datasetPublicationPublicKeyFor(ctx context.Context, id peer.ID, signatureType string, allowFetch bool) (crypto.PubKey, error) {
+	candidates := make([]crypto.PubKey, 0, 2)
 	if key, err := publicKeyFromPeerID(id); err == nil {
-		return key, nil
+		candidates = append(candidates, key)
 	}
 	if key, err := n.datasetPublicationPublicKeyFromDirectory(id); err == nil {
+		candidates = append(candidates, key)
+	}
+	if key, ok := selectDatasetPublicationKey(signatureType, candidates...); ok {
 		return key, nil
 	}
-	if n != nil && n.host != nil {
+	if allowFetch && n != nil && n.host != nil {
 		epmBytes, fetchErr := n.fetchDiscoveredNodeEPM(id)
 		if fetchErr == nil && len(epmBytes) > 0 {
 			n.indexFetchedDiscoveredNodeEPM(id, "dataset-publication", epmBytes)
 			if key, err := n.datasetPublicationPublicKeyFromDirectory(id); err == nil {
-				return key, nil
+				candidates = append(candidates, key)
 			}
 		} else if fetchErr != nil && ctx != nil && ctx.Err() == nil {
 			log.Debugf("Could not fetch provider EPM for dataset publication key from %s: %v", id.ShortString(), fetchErr)
 		}
+		if key, ok := selectDatasetPublicationKey(signatureType, candidates...); ok {
+			return key, nil
+		}
+	}
+	if len(candidates) > 0 {
+		return candidates[0], nil
 	}
 	return nil, fmt.Errorf("no usable signing key found in trusted provider EPM for %s", id.ShortString())
+}
+
+// selectDatasetPublicationKey picks, from the keys known for a provider, the
+// one whose algorithm is the publication's declared SIGNATURE_TYPE. An empty
+// declaration takes the first key.
+func selectDatasetPublicationKey(signatureType string, candidates ...crypto.PubKey) (crypto.PubKey, bool) {
+	want := strings.TrimSpace(signatureType)
+	for _, key := range candidates {
+		if key == nil {
+			continue
+		}
+		if want == "" {
+			return key, true
+		}
+		if got, err := sds.SignatureTypeForPubKey(key); err == nil && got == want {
+			return key, true
+		}
+	}
+	return nil, false
 }
 
 func (n *Node) datasetPublicationPublicKeyFromDirectory(id peer.ID) (crypto.PubKey, error) {
