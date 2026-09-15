@@ -84,34 +84,55 @@ function makeExecutable (root) {
   }
 }
 
-// On macOS the node records an ABSOLUTE path to the WasmEdge library it was
-// linked against, and relies on DYLD_LIBRARY_PATH to redirect it. The hardened
-// runtime a packaged .app is signed with strips DYLD_*, so the dependency is
-// rewritten to a path relative to the binary and the app stops depending on an
-// environment variable macOS is entitled to remove.
-function relocateWasmEdge (root) {
-  if (process.platform !== 'darwin') return
-  const binary = join(root, 'runtime', 'sdn', 'spacedatanetwork')
-  if (!existsSync(binary)) return
-  let libraries
-  try {
-    libraries = execFileSync('otool', ['-L', binary], { encoding: 'utf8' })
-  } catch {
-    console.warn('[stage-node] otool unavailable; leaving the WasmEdge path as linked')
+// The staged node must carry WasmEdge INSIDE it. Every CLI bundle is linked
+// against the static prefix (scripts/build-static-wasmedge.sh + link.flags), so
+// a dynamic libwasmedge reference here means something upstream regressed to a
+// dynamic SDK — and the app would ship depending on a library only the build
+// machine has.
+//
+// This replaces a relocation step that REWROTE such a reference to
+// @executable_path/../wasmedge/lib/<leaf>. That was right when the bundle
+// staged a runtime directory; it does not any more, so the rewrite would now
+// point at a path that does not exist and turn a clear build failure into a
+// dyld error on a user's machine. Verify instead of repair.
+function assertSelfContained (root) {
+  const binary = [
+    join(root, 'runtime', 'sdn', 'spacedatanetwork'),
+    join(root, 'bin', 'spacedatanetwork')
+  ].find((candidate) => existsSync(candidate))
+  if (!binary) return
+
+  let tool, args
+  if (process.platform === 'darwin') {
+    tool = 'otool'; args = ['-L', binary]
+  } else if (process.platform === 'linux') {
+    tool = 'ldd'; args = [binary]
+  } else {
+    // No dependable cross-platform equivalent on Windows; the release job
+    // already fails the image build there if the binary links libwasmedge.
     return
   }
-  for (const line of libraries.split('\n')) {
-    const path = line.trim().split(' ')[0]
-    if (!path || !/libwasmedge[^/]*\.dylib$/.test(path) || path.startsWith('@')) continue
-    const leaf = path.slice(path.lastIndexOf('/') + 1)
-    const relative = `@executable_path/../wasmedge/lib/${leaf}`
-    try {
-      execFileSync('install_name_tool', ['-change', path, relative, binary], { stdio: 'inherit' })
-      console.log(`[stage-node] WasmEdge dependency now ${relative}`)
-    } catch (err) {
-      console.warn(`[stage-node] could not rewrite the WasmEdge path: ${err.message}`)
-    }
+
+  let output
+  try {
+    output = execFileSync(tool, args, { encoding: 'utf8' })
+  } catch {
+    // ldd exits non-zero for a static binary with no dynamic section, which is
+    // the answer we wanted.
+    console.log(`[stage-node] ${tool} reported no dynamic dependencies`)
+    return
   }
+  const dynamic = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /libwasmedge/i.test(line))
+  if (dynamic.length > 0) {
+    throw new Error(
+      `staged node depends on WasmEdge outside the binary:\n  ${dynamic.join('\n  ')}\n` +
+      'every bundle must link the static prefix — check WASMEDGE_DIR and scripts/go-with-wasmedge.sh'
+    )
+  }
+  console.log('[stage-node] node is self-contained (no libwasmedge dependency)')
 }
 
 function main () {
@@ -139,7 +160,7 @@ function main () {
   }
 
   makeExecutable(destination)
-  relocateWasmEdge(destination)
+  assertSelfContained(destination)
 
   const manifest = JSON.parse(readFileSync(join(destination, 'manifest.json'), 'utf8'))
   console.log(`[stage-node] staged ${manifest.os}/${manifest.arch} node ${manifest.version} into ${destination}`)
