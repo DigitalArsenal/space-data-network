@@ -137,6 +137,47 @@ while IFS= read -r artifact; do
   printf -- '- `%s`\n' "${artifact}" >> "${release_dir}/SDN-BETA-RELEASE.md"
 done < <(find "${release_dir}" -maxdepth 1 -type f ! -name 'SDN-BETA-RELEASE.md' -exec basename {} \; | sort)
 
+# Requirements, MEASURED from the artifacts rather than written down.
+#
+# The binaries link WasmEdge, libstdc++ and libgcc statically, so glibc is the
+# only thing a Linux host still has to provide — and its required version is
+# decided by whichever runner built the archive, not by anything in this repo.
+# A number typed into these notes would be wrong the first time that runner
+# image changed, which is exactly how the rest of this release's documentation
+# went stale. Read it off the binary instead.
+#
+# Best-effort throughout: a missing tool or an unreadable archive drops the
+# section, it never fails the release.
+glibc_floor=""
+for linux_archive in "${release_dir}"/spacedatanetwork-*-linux-*.tar.gz; do
+  [[ -f "${linux_archive}" ]] || continue
+  found="$(tar -xzOf "${linux_archive}" --wildcards '*/runtime/sdn/spacedatanetwork' 2>/dev/null \
+    | grep -ao 'GLIBC_2\.[0-9]\+' 2>/dev/null \
+    | sort -uV | tail -1 || true)"
+  if [[ -n "${found}" ]]; then
+    if [[ -z "${glibc_floor}" ]] || [[ "$(printf '%s\n%s\n' "${glibc_floor}" "${found}" | sort -V | tail -1)" == "${found}" ]]; then
+      glibc_floor="${found}"
+    fi
+  fi
+done
+
+if [[ -n "${glibc_floor}" ]]; then
+  cat >> "${release_dir}/SDN-BETA-RELEASE.md" <<EOF
+
+## Requirements
+
+The node ships as a single binary: WasmEdge, libstdc++ and libgcc are linked in,
+so nothing has to be installed alongside it and no package manager is involved.
+
+On Linux the one remaining system dependency is glibc, and these builds need
+**${glibc_floor#GLIBC_} or newer**. Check yours with \`ldd --version\`. Hosts
+older than that should run the container image, which carries its own.
+
+macOS builds depend only on libraries that ship with the OS. Windows builds are
+self-contained.
+EOF
+fi
+
 cat >> "${release_dir}/SDN-BETA-RELEASE.md" <<'EOF'
 
 ## Container images
