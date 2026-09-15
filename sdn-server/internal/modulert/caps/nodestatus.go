@@ -77,8 +77,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
 
@@ -324,22 +322,7 @@ func nodeStatusBandwidthJSON(totalsFn func() (int64, int64, float64, float64, bo
 	}
 }
 
-// StatDisk is the production DiskStat implementation: a statfs(2) probe of
-// the filesystem holding path. darwin + linux only (golang.org/x/sys/unix
-// is already a direct module dependency; the `unix` package does not build
-// for windows — out of scope for this cycle, see the task's "darwin+linux
-// compatible" instruction). node.go wires this in as
-// NodeStatusMaterials.DiskStat; tests inject their own fake instead of
-// calling this.
-func StatDisk(path string) (DiskStat, error) {
-	var stat unix.Statfs_t
-	if err := unix.Statfs(path, &stat); err != nil {
-		return DiskStat{}, err
-	}
-	bsize := uint64(stat.Bsize)
-	return DiskStat{
-		CapacityBytes:  stat.Blocks * bsize,
-		FreeBytes:      stat.Bfree * bsize,
-		AvailableBytes: stat.Bavail * bsize,
-	}, nil
-}
+// StatDisk is the production DiskStat implementation. Its probe is
+// per-platform — statfs(2) on unix, GetDiskFreeSpaceEx on windows — so see
+// nodestatus_unix.go and nodestatus_windows.go. node.go wires this in as
+// NodeStatusMaterials.DiskStat; tests inject their own fake instead.
