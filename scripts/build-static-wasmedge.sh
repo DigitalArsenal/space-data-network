@@ -252,6 +252,34 @@ for archive in $LLVMLIBS; do
 done
 [[ -n "${ZSTD_STATIC:-}" && -f "${ZSTD_STATIC}" ]] && cp -n "$ZSTD_STATIC" "$STATIC/lib/" 2>/dev/null || true
 
+# libstdc++, INTO the prefix, on ELF platforms.
+#
+# The binary was carrying libstdc++.so.6 and libgcc_s.so.1 as external
+# dependencies. They are present on most Linux hosts, but "most" is not the
+# contract — the owner's is "no dependencies outside the binary, no need for
+# homebrew or any other package manager" — and a host with an older libstdc++
+# than the build machine's fails at exec, not at install.
+#
+# macOS keeps libc++ dynamic: it ships with the OS, is versioned as part of it,
+# and Apple does not support statically linking it. Windows links libstdc++
+# through MinGW's own static default.
+STDCXX_STATIC=""
+case "$(uname -s)" in
+  Darwin|MINGW*|MSYS*|CYGWIN*) : ;;
+  *)
+    _cxx_probe="${CXX:-${CC:-cc}}"
+    STDCXX_STATIC="$("$_cxx_probe" -print-file-name=libstdc++.a 2>/dev/null || true)"
+    if [[ -n "$STDCXX_STATIC" && -f "$STDCXX_STATIC" ]]; then
+      cp -n "$STDCXX_STATIC" "$STATIC/lib/" 2>/dev/null || true
+      echo "static prefix: staged $(basename "$STDCXX_STATIC")"
+    else
+      echo "static prefix: no libstdc++.a from $_cxx_probe; the binary will need libstdc++.so" >&2
+      STDCXX_STATIC=""
+    fi
+    unset _cxx_probe
+    ;;
+esac
+
 # lld has gone missing from this prefix once before, and the symptom was 26
 # undefined lld:: symbols at the far end of a Go build on another machine.
 # Check it here, where the answer is one line.
@@ -278,7 +306,7 @@ echo "static prefix: $lld_staged lld archive(s) staged"
   # linker cannot resolve that from any fixed order. ld64 on macOS already
   # re-scans archives, so it needs no group and does not accept one.
   case "$(uname -s)" in Darwin|MINGW*|MSYS*|CYGWIN*) : ;; *) printf -- '-Wl,--start-group ' ;; esac
-  for archive in $GRP $LLVMLIBS ${ZSTD_STATIC:-}; do
+  for archive in $GRP $LLVMLIBS ${ZSTD_STATIC:-} ${STDCXX_STATIC:-}; do
     [[ -n "$archive" ]] || continue
     printf '@PREFIX@/lib/%s ' "$(basename "$archive")"
   done
@@ -300,7 +328,11 @@ echo "static prefix: $lld_staged lld archive(s) staged"
     #           WindowsManifest merger, libLLVMWindowsManifest.a)
     #   z       compress2, compressBound, crc32
     MINGW*|MSYS*|CYGWIN*) printf -- '-lstdc++ -lm -lws2_32 -lbcrypt -lole32 -luuid -lntdll -lktmw32 -ldbghelp -lxml2 -lz\n' ;;
-    *)      printf -- '-lstdc++ -lm -ldl -lpthread -lz -ltinfo\n' ;;
+    # No -lstdc++: it is staged into the prefix above and named as an archive,
+    # so the linker cannot prefer a shared one. -static-libgcc removes
+    # libgcc_s.so.1 the same way. What is left is glibc, which stays dynamic —
+    # a statically linked glibc breaks NSS and dlopen.
+    *)      printf -- '-static-libgcc -lm -ldl -lpthread -lz -ltinfo\n' ;;
   esac
 } > "$STATIC/link.flags"
 
