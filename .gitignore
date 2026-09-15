@@ -145,3 +145,7 @@ sdn-server/internal/flowrt/editor/dist/*
 sdn-server/spacedatanetwork.prev*
 sdn-server/spacedatanetwork.next
 sdn-server/spacedatanetwork.old*
+
+# Static WasmEdge build tree (scripts/build-static-wasmedge.sh): LLVM + WasmEdge
+# sources and objects, hundreds of MB, reproducible from the script.
+.wasmedge-static-build/
