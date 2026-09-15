@@ -53,6 +53,9 @@ jobs:
   wasmedge-static:
     name: Build static WasmEdge (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
+    # Empty for the macOS and Windows legs, which have no container key and so
+    # run directly on the runner.
+    container: ${{ matrix.container }}
     continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
@@ -63,12 +66,22 @@ jobs:
           # actions that install it take literal inputs, so no hashFiles() can
           # see them. Everything else that shapes a prefix is hashed from
           # scripts/.
+          # ubuntu:20.04, NOT the runner's own image. glibc is the only thing
+          # these binaries still need from the host, and its required version is
+          # set by whatever built them: on ubuntu-24.04 that was 2.38, which does
+          # not exist on Debian 12, Ubuntu 22.04 or RHEL 9 — most of the server
+          # install base. The release install-tests proved it by refusing to run
+          # the package at all. focal's 2.31 covers everything current, and its
+          # apt.llvm.org repo carries the SAME llvm-16 used before, so nothing
+          # about the build changes except the floor.
           - label: linux-amd64
             runner: ubuntu-latest
-            toolchain: apt-llvm16
+            container: ubuntu:20.04
+            toolchain: focal-llvm16
           - label: linux-arm64
             runner: ubuntu-24.04-arm
-            toolchain: apt-llvm16
+            container: ubuntu:20.04
+            toolchain: focal-llvm16
           - label: darwin-arm64
             runner: macos-14
             toolchain: brew-llvm18
@@ -88,6 +101,14 @@ jobs:
       run:
         shell: bash
     steps:
+      # BEFORE checkout: actions/checkout needs git, and a bare ubuntu:20.04 has
+      # none. Nothing else in this job can run until the tree is present.
+      - name: Prepare the container
+        if: matrix.container != ''
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg git xz-utils
       - uses: actions/checkout@v4
       - id: cache
         uses: actions/cache@v4
@@ -107,13 +128,31 @@ jobs:
           # discarded five prefixes and paid a full LLVM + WasmEdge rebuild on
           # five runners to learn nothing had changed.
           key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.label }}-${{ matrix.toolchain }}-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
+      # No sudo: this runs as root inside the container. focal's own cmake is
+      # 3.16 and WasmEdge needs >= 3.18, so cmake comes from Kitware's release
+      # tarball; everything else is apt, with llvm-16 from apt.llvm.org because
+      # focal's archive stops at 10. liblld-16-dev is the package that matters —
+      # it ships the STATIC lld archives WasmEdge's AOT links through, which is
+      # why RHEL-family images were rejected: their lld-devel is headers only.
       - name: Install build toolchain (Linux)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
+        env:
+          CMAKE_VERSION: '3.31.6'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev \
-            libzstd-dev zlib1g-dev
+          export DEBIAN_FRONTEND=noninteractive
+          echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-16 main" > /etc/apt/sources.list.d/llvm.list
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev \
+            libzstd-dev zlib1g-dev libtinfo-dev build-essential
+          case "$(uname -m)" in
+            x86_64) cmake_arch=linux-x86_64 ;;
+            aarch64) cmake_arch=linux-aarch64 ;;
+            *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-${cmake_arch}.tar.gz" | tar -xz -C /opt
+          echo "/opt/cmake-${CMAKE_VERSION}-${cmake_arch}/bin" >> "$GITHUB_PATH"
       - name: Install build toolchain (macOS)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS'
         run: brew install cmake ninja llvm@18 zstd
@@ -169,13 +208,24 @@ jobs:
   preflight:
     name: Preflight
     runs-on: ubuntu-latest
+    # Same image as everything else that links the prefix. The Go test below
+    # does a real cgo link, so it has to agree with the archives it links; and
+    # if anything about the focal toolchain is wrong, failing HERE is much
+    # cheaper than finding out in five parallel build jobs.
+    container: ubuntu:20.04
     needs: [beta-version, wasmedge-static]
     steps:
+      - name: Prepare the container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-apt-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-focal-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
           fail-on-cache-miss: true
       - uses: actions/setup-node@v4
         with:
@@ -265,6 +315,16 @@ jobs:
       RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
       NATIVE_PACKAGE_VERSION: ${{ needs.beta-version.outputs.native_package_version }}
     steps:
+      # Before checkout, for the same reason as wasmedge-static: no git in the
+      # bare image. build-essential/zlib/tinfo are what the link tail in
+      # link.flags names (-lz, -ltinfo) plus the compiler driver itself.
+      - name: Prepare the container
+        if: matrix.container != ''
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
@@ -350,6 +410,8 @@ jobs:
   cli:
     name: Build self-contained CLI archives (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
+    # Empty for macOS and Windows, which run on the runner itself.
+    container: ${{ matrix.container }}
     continue-on-error: ${{ matrix.experimental == true }}
     needs: [beta-version, ipfs, updater-wasm, wasmedge-static]
     defaults:
@@ -363,8 +425,12 @@ jobs:
             target_arch: amd64
             runner: ubuntu-latest
             # Must match the wasmedge-static matrix entry for this platform;
-            # the cache restore below fails closed if it does not.
-            toolchain: apt-llvm16
+            # the cache restore below fails closed if it does not. The container
+            # must match too: the cgo LINK is what records the glibc version the
+            # binary demands, so linking on a newer image than the prefix was
+            # built in would put the floor straight back up.
+            container: ubuntu:20.04
+            toolchain: focal-llvm16
             kubo_platform: linux-amd64
             kubo_archive: tar.gz
             archive_extension: tar.gz
@@ -373,7 +439,8 @@ jobs:
           - target_os: linux
             target_arch: arm64
             runner: ubuntu-24.04-arm
-            toolchain: apt-llvm16
+            container: ubuntu:20.04
+            toolchain: focal-llvm16
             kubo_platform: linux-arm64
             kubo_archive: tar.gz
             archive_extension: tar.gz
@@ -722,6 +789,10 @@ jobs:
   packages:
     name: Build beta native packages and SBOM
     runs-on: ubuntu-latest
+    # Same image as the cli job, for the same reason: this builds the binary the
+    # RPM and DEB carry, and the link is what fixes the glibc floor. Building it
+    # anywhere newer is what made the install-tests refuse to run the package.
+    container: ubuntu:20.04
     needs: [beta-version, ipfs, wasmedge-static]
     env:
       VERSION: ${{ needs.beta-version.outputs.native_package_version }}
@@ -730,12 +801,18 @@ jobs:
       # runner has, so the job died on the first line of the packaging script.
       WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
     steps:
+      - name: Prepare the container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev rpm
       - uses: actions/checkout@v4
       - name: Restore the static WasmEdge prefix
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-apt-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-focal-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
           fail-on-cache-miss: true
       - uses: actions/download-artifact@v4
         with:
