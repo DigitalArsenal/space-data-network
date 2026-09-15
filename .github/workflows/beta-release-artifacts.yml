@@ -162,7 +162,12 @@ jobs:
           # include/host/wasi/inode.h:285 ("must name member"), which stopped the
           # build at 100/131 objects; gcc accepts it, and the MinGW link branch
           # already targets libstdc++, which is gcc's runtime.
-          export CC="$L/bin/gcc.exe" CXX="$L/bin/g++.exe" \
+          # CMAKE_PREFIX_PATH so LLVM's exported targets resolve zstd to a REAL
+          # path. Without it cmake reduced it to a bare name and the merge ran
+          # `ar /libzstd.a` — an absolute path at the drive root — failing at
+          # 131/131 after everything had already compiled.
+          export CMAKE_PREFIX_PATH="$L" \
+                 CC="$L/bin/gcc.exe" CXX="$L/bin/g++.exe" \
                  CMAKE_AR="$L/bin/ar.exe" \
                  LLVM_CONFIG="$L/bin/llvm-config.exe" \
                  LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld"
