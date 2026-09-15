@@ -25,7 +25,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
@@ -259,12 +258,18 @@ func storeFilesystemBytes(storePath string) (freeBytes, capacityBytes int64) {
 	if storePath == "" {
 		return 0, 0
 	}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(filepath.Dir(storePath), &stat); err != nil || stat.Bsize <= 0 {
+	available, capacity, ok := filesystemCapacity(filepath.Dir(storePath))
+	if !ok {
 		return 0, 0
 	}
-	return statfsByteCount(uint64(stat.Bavail), uint64(stat.Bsize)),
-		statfsByteCount(uint64(stat.Blocks), uint64(stat.Bsize))
+	return clampToInt64(available), clampToInt64(capacity)
+}
+
+func clampToInt64(bytes uint64) int64 {
+	if bytes > uint64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(bytes)
 }
 
 func statfsByteCount(blocks, blockSize uint64) int64 {
