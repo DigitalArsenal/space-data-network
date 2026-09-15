@@ -41,8 +41,10 @@ WORKDIR /build
 # into the image and the produced binary carries WasmEdge inside it.
 COPY --from=wasmedge-static /opt/wasmedge-static/prefix /opt/wasmedge-static/prefix
 
-ENV CGO_CFLAGS="-I/opt/wasmedge-static/prefix/include"
-ENV CGO_LDFLAGS="-L/opt/wasmedge-static/prefix/lib"
+# Deliberately NO CGO_CFLAGS/CGO_LDFLAGS here. go-with-wasmedge.sh builds both
+# from scratch for a static prefix, and an inherited CGO_LDFLAGS pointing at a
+# lib directory is precisely how a binary ends up resolving -lwasmedge to a
+# shared object instead of the archive.
 
 COPY sdn-server/go.mod sdn-server/go.sum ./sdn-server/
 COPY sdn-server/third_party/spacedatastandards-go/go.mod ./sdn-server/third_party/spacedatastandards-go/go.mod
@@ -50,24 +52,23 @@ WORKDIR /build/sdn-server
 RUN go mod download
 
 WORKDIR /build
+COPY scripts/go-with-wasmedge.sh ./scripts/go-with-wasmedge.sh
 COPY sdn-server/ ./sdn-server/
 
-WORKDIR /build/sdn-server
 ARG SDN_RELEASE_TAG=""
-# --start-group lets ld resolve the cycles between the WasmEdge sublibraries and
-# LLVM's archives; it pulls only the members it needs. libstdc++/libc stay
-# dynamic — they are base system libraries present on every host.
+# The link line is NOT written here. build-static-wasmedge.sh leaves link.flags
+# beside the archives naming every one it built, in the order ld needs, and
+# go-with-wasmedge.sh consumes it — the same path every other build product
+# takes. This file used to carry its own hand-written copy of that list; it went
+# stale the moment the prefix gained an archive (it was missing
+# libwasmedgePluginWasiLogging.a and every lld archive), and the image failed to
+# link while the CLI archives built fine. One source of truth or none.
 RUN set -eux; \
-    P=/opt/wasmedge-static/prefix; \
-    GRP="$P/lib/libwasmedge.a"; \
-    for a in Common Loader LoaderFileMgr Validator Executor VM HostModuleWasi PO Driver System Plugin AOT LLVM; do \
-      [ -f "$P/lib/libwasmedge${a}.a" ] && GRP="$GRP $P/lib/libwasmedge${a}.a"; \
-    done; \
-    GRP="$GRP $P/lib/libspdlog.a $P/lib/libfmt.a"; \
-    LLVMLIBS="$(llvm-config-16 --link-static --libfiles | tr '\n' ' ')"; \
-    CGO_ENABLED=1 go build \
-      -ldflags="-s -w -X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=${SDN_RELEASE_TAG} -linkmode external -extldflags \"-Wl,--start-group $GRP $LLVMLIBS -lstdc++ -Wl,--end-group -lm -ldl -lpthread -lz -lzstd -ltinfo\"" \
-      -o /out/spacedatanetwork ./cmd/spacedatanetwork; \
+    WASMEDGE_DIR=/opt/wasmedge-static/prefix \
+    CGO_ENABLED=1 \
+    SDN_GO_LDFLAGS="-s -w -X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=${SDN_RELEASE_TAG}" \
+    bash /build/scripts/go-with-wasmedge.sh build -o /out/spacedatanetwork ./cmd/spacedatanetwork; \
+    cd /build/sdn-server; \
     CGO_ENABLED=0 go build -tags edge -ldflags="-s -w" -o /out/spacedatanetwork-edge ./cmd/spacedatanetwork-edge; \
     ldd /out/spacedatanetwork | grep -qi wasmedge && { echo "binary still links libwasmedge"; exit 1; } || true
 

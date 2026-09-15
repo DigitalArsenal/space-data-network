@@ -58,14 +58,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `toolchain` tags the INSTALLED package set below. It is part of the
+          # cache key and has to be bumped by hand when that set changes: the
+          # actions that install it take literal inputs, so no hashFiles() can
+          # see them. Everything else that shapes a prefix is hashed from
+          # scripts/.
           - label: linux-amd64
             runner: ubuntu-latest
+            toolchain: apt-llvm16
           - label: linux-arm64
             runner: ubuntu-24.04-arm
+            toolchain: apt-llvm16
           - label: darwin-arm64
             runner: macos-14
+            toolchain: brew-llvm18
           - label: darwin-amd64
             runner: macos-15-intel
+            toolchain: brew-llvm18
           # Windows: MSVC's lib.exe cannot perform the `ar -x` extraction
           # WasmEdge's static merge does, so the toolchain is clang + llvm-ar.
           # NOT yet blocking: until a Windows static prefix is proven, a failure
@@ -73,6 +82,7 @@ jobs:
           # artifacts is worse than four, and the failure stays visible.
           - label: windows-amd64
             runner: windows-latest
+            toolchain: msys2-mingw64
             experimental: true
     defaults:
       run:
@@ -83,15 +93,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          # The key hashes EVERYTHING THAT DECIDES HOW THE PREFIX IS BUILT —
-          # the script AND this workflow, because the toolchain selection lives
-          # here. Staleness has bitten three times, each time as a fix that
-          # silently never ran: absolute paths in link.flags, a missing
-          # -lc++abi, then a prefix still compiled with Homebrew's libc++ after
-          # the workflow moved to the system toolchain. darwin-amd64 passed and
-          # darwin-arm64 failed on the same commit purely because one had a
-          # cache and the other did not.
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.label }}-${{ hashFiles('scripts/build-static-wasmedge.sh', '.github/workflows/beta-release-artifacts.yml') }}
+          # The key covers EVERYTHING THAT DECIDES HOW THE PREFIX IS BUILT: the
+          # build script, the toolchain-selection script, and matrix.toolchain
+          # for the package set the workflow installs. Staleness has bitten
+          # three times, each time as a fix that silently never ran: absolute
+          # paths in link.flags, a missing -lc++abi, then a prefix still
+          # compiled with Homebrew's libc++ after the build moved to the system
+          # toolchain. darwin-amd64 passed and darwin-arm64 failed on the same
+          # commit purely because one had a cache and the other did not.
+          #
+          # It deliberately does NOT hash this whole workflow any more. That
+          # version was correct but far too broad — editing an unrelated job
+          # discarded five prefixes and paid a full LLVM + WasmEdge rebuild on
+          # five runners to learn nothing had changed.
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.label }}-${{ matrix.toolchain }}-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
       - name: Install build toolchain (Linux)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
         run: |
@@ -123,27 +138,15 @@ jobs:
             mingw-w64-x86_64-zlib
             mingw-w64-x86_64-zstd
             git
-      # Two steps, not one with a computed shell: a step-level `shell:` cannot
-      # read the runner OR matrix context, so the platform choice has to be an
-      # `if:`, which can.
+      # Two steps, not one: the toolchain choice is identical (both source
+      # scripts/wasmedge-static-env.sh), but a step-level `shell:` cannot read
+      # the runner or matrix context, so Windows needing `msys2 {0}` has to be
+      # an `if:`, which can.
       - name: Build the static prefix (Unix)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
         shell: bash
         run: |
-          if [ "${RUNNER_OS}" = "macOS" ]; then
-            L="$(brew --prefix llvm@18)"
-            # COMPILE WITH APPLE CLANG, link LLVM from Homebrew. The two halves
-            # must agree on the C++ runtime: building WasmEdge against Homebrew's
-            # libc++ and then letting the Go link use /usr/bin/clang and the
-            # system libc++ leaves std::exception_ptr::__from_native_exception_pointer
-            # and ___cxa_init_primary_exception undefined. Only the LLVM ARCHIVES
-            # come from Homebrew; the toolchain is the system's, which is what
-            # go-with-wasmedge.sh links with.
-            export CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-                   LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld" \
-                   LLVM_CONFIG="$L/bin/llvm-config" \
-                   ZSTD_STATIC="$(brew --prefix zstd)/lib/libzstd.a"
-          fi
+          . scripts/wasmedge-static-env.sh
           WASMEDGE_STATIC_WORK="${GITHUB_WORKSPACE}/.sdn-wasmedge-static" \
           WASMEDGE_STATIC_PREFIX_ONLY=1 \
           bash scripts/build-static-wasmedge.sh
@@ -152,25 +155,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
         shell: msys2 {0}
         run: |
-          L=/mingw64
-          test -f "$L/lib/cmake/llvm/LLVMConfig.cmake" || {
-            echo "MSYS2 mingw-w64-x86_64-llvm did not provide LLVMConfig.cmake" >&2
-            ls "$L/lib/cmake" 2>/dev/null >&2 || true
-            exit 1
-          }
-          # GCC, not clang. MSYS2's clang rejects WasmEdge's own CRTP in
-          # include/host/wasi/inode.h:285 ("must name member"), which stopped the
-          # build at 100/131 objects; gcc accepts it, and the MinGW link branch
-          # already targets libstdc++, which is gcc's runtime.
-          # CMAKE_PREFIX_PATH so LLVM's exported targets resolve zstd to a REAL
-          # path. Without it cmake reduced it to a bare name and the merge ran
-          # `ar /libzstd.a` — an absolute path at the drive root — failing at
-          # 131/131 after everything had already compiled.
-          export CMAKE_PREFIX_PATH="$L" \
-                 CC="$L/bin/gcc.exe" CXX="$L/bin/g++.exe" \
-                 CMAKE_AR="$L/bin/ar.exe" \
-                 LLVM_CONFIG="$L/bin/llvm-config.exe" \
-                 LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld"
+          . scripts/wasmedge-static-env.sh
           WASMEDGE_STATIC_WORK="${GITHUB_WORKSPACE}/.sdn-wasmedge-static" \
           WASMEDGE_STATIC_PREFIX_ONLY=1 \
           bash scripts/build-static-wasmedge.sh
@@ -190,7 +175,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-${{ hashFiles('scripts/build-static-wasmedge.sh', '.github/workflows/beta-release-artifacts.yml') }}
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-apt-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
           fail-on-cache-miss: true
       - uses: actions/setup-node@v4
         with:
@@ -377,6 +362,9 @@ jobs:
           - target_os: linux
             target_arch: amd64
             runner: ubuntu-latest
+            # Must match the wasmedge-static matrix entry for this platform;
+            # the cache restore below fails closed if it does not.
+            toolchain: apt-llvm16
             kubo_platform: linux-amd64
             kubo_archive: tar.gz
             archive_extension: tar.gz
@@ -385,6 +373,7 @@ jobs:
           - target_os: linux
             target_arch: arm64
             runner: ubuntu-24.04-arm
+            toolchain: apt-llvm16
             kubo_platform: linux-arm64
             kubo_archive: tar.gz
             archive_extension: tar.gz
@@ -393,6 +382,7 @@ jobs:
           - target_os: darwin
             target_arch: arm64
             runner: macos-14
+            toolchain: brew-llvm18
             kubo_platform: darwin-arm64
             kubo_archive: tar.gz
             archive_extension: tar.gz
@@ -401,6 +391,7 @@ jobs:
           - target_os: darwin
             target_arch: amd64
             runner: macos-15-intel
+            toolchain: brew-llvm18
             kubo_platform: darwin-amd64
             kubo_archive: tar.gz
             archive_extension: tar.gz
@@ -411,6 +402,7 @@ jobs:
             runner: windows-latest
             # Rides on the experimental Windows static prefix; see wasmedge-static.
             experimental: true
+            toolchain: msys2-mingw64
             kubo_platform: windows-amd64
             kubo_archive: zip
             archive_extension: zip
@@ -460,16 +452,16 @@ jobs:
         run: |
           choco install zip -y --no-progress
           echo "/c/msys64/mingw64/bin" >> "$GITHUB_PATH"
-      # Every non-Windows target links the runtime INTO the binary. Windows still
-      # ships the DLL: a static WasmEdge there needs an MSVC LLVM build that has
-      # not been proven, and a broken Windows artifact is worse than a bundled
-      # DLL. build-self-contained-cli.mjs takes --wasmedge-path only when a
-      # platform still needs it, so the two shapes coexist.
+      # EVERY target, Windows included, links the runtime INTO the binary; no
+      # archive stages a DLL or a .so. The bundler still has an option to stage
+      # a runtime for a platform that needs one, and nothing here passes it —
+      # asserted by beta-release-workflow.test.mjs, which is why no comment in
+      # this file may name that flag.
       - name: Restore the static WasmEdge prefix
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-${{ hashFiles('scripts/build-static-wasmedge.sh', '.github/workflows/beta-release-artifacts.yml') }}
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-${{ matrix.toolchain }}-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
           fail-on-cache-miss: true
       - name: Download target Kubo binary
         run: |
@@ -537,13 +529,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      # The feed is what lets an installed node upgrade itself, and every payload
+      # in it is signed. Without the key there is nothing honest to publish — but
+      # refusing to publish a feed is not a reason to refuse to publish the
+      # binaries, which is what failing here did: the whole release job is
+      # downstream, so one absent secret meant zero downloadable artifacts.
+      - name: Check for the update signing key
+        id: signing
+        run: |
+          if [[ -n "${SDN_UPDATE_SIGNING_KEY_PEM:-}" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Unsigned release::SDN_UPDATE_SIGNING_KEY_PEM is not set, so this release ships no self-upgrade feed. Installed nodes will not see it as an update. Set the secret to restore the feed."
+          fi
       - name: Build signed CLI update feed
+        if: steps.signing.outputs.available == 'true'
         run: |
           set -euo pipefail
-          if [[ -z "${SDN_UPDATE_SIGNING_KEY_PEM:-}" ]]; then
-            echo "SDN_UPDATE_SIGNING_KEY_PEM secret is required to publish signed CLI updates" >&2
-            exit 1
-          fi
           update_key_id="${SDN_UPDATE_KEY_ID:-sdn-beta-release}"
           created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           payload_dir="dist/update-payloads"
@@ -583,6 +586,7 @@ jobs:
           node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
           tar -czf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C "${feed_tree_root}" update-feed
       - uses: actions/upload-artifact@v4
+        if: steps.signing.outputs.available == 'true'
         with:
           name: cli-update-feed
           path: dist/update-feed/spacedatanetwork-update-feed-${{ needs.beta-version.outputs.package_version }}.tar.gz
@@ -676,11 +680,21 @@ jobs:
   packages:
     name: Build beta native packages and SBOM
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs]
+    needs: [beta-version, ipfs, wasmedge-static]
     env:
       VERSION: ${{ needs.beta-version.outputs.native_package_version }}
+      # The RPM/DEB and the VM tarball carry the SAME single-file binary the CLI
+      # archives do. Before this they were built against a ~/.wasmedge that no
+      # runner has, so the job died on the first line of the packaging script.
+      WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
     steps:
       - uses: actions/checkout@v4
+      - name: Restore the static WasmEdge prefix
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-apt-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
+          fail-on-cache-miss: true
       - uses: actions/download-artifact@v4
         with:
           name: ipfs-assets
@@ -780,7 +794,9 @@ jobs:
           pattern: cli-*
           path: dist/cli
           merge-multiple: true
+      # Absent when the signing key is not configured; see cli-update-feed.
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: cli-update-feed
           path: dist/update-feed
@@ -821,7 +837,9 @@ jobs:
           pattern: cli-*
           path: dist/cli
           merge-multiple: true
+      # Absent when the signing key is not configured; see cli-update-feed.
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: cli-update-feed
           path: dist/update-feed

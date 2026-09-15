@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,7 +78,7 @@ test('parses docker load output for downloadable container image tars', () => {
   );
 });
 
-test('full-node install Dockerfiles assert the packaged WasmEdge runtime is present', () => {
+test('full-node install Dockerfiles prove the installed binary needs no runtime', () => {
   const fullDeb = generateInstallDockerfile({
     artifactName: 'spacedatanetwork-full_1.0.3~beta.1_amd64.deb',
     artifactType: 'full-deb'
@@ -92,15 +92,24 @@ test('full-node install Dockerfiles assert the packaged WasmEdge runtime is pres
     artifactType: 'full-rpm'
   });
 
-  assert.match(fullDeb, /WASMEDGE_DIR=\/opt\/spacedatanetwork\/\.wasmedge/);
-  assert.match(fullDeb, /test -d \/opt\/spacedatanetwork\/\.wasmedge\/lib/);
-  assert.match(fullDeb, /\/opt\/spacedatanetwork\/bin\/spacedatanetwork --help/);
+  // Flipped deliberately. These used to require a WasmEdge directory inside the
+  // package and to set WASMEDGE_DIR/LD_LIBRARY_PATH before running the binary,
+  // which proved only that a bundled runtime worked. The runtime is now linked
+  // in, so the meaningful proof is the negative one: nothing is installed
+  // beside the binary, it resolves no libwasmedge, and it still runs — inside a
+  // stock base image that has no WasmEdge to fall back on.
+  for (const [label, dockerfile] of [['full-deb', fullDeb], ['full-rpm', fullRpm]]) {
+    assert.doesNotMatch(dockerfile, /WASMEDGE_DIR=/, `${label} must not point at a runtime`);
+    assert.doesNotMatch(dockerfile, /LD_LIBRARY_PATH=/, `${label} must not widen the library path`);
+    assert.match(dockerfile, /! test -e \/opt\/spacedatanetwork\/\.wasmedge/, label);
+    assert.match(dockerfile, /! ldd \/opt\/spacedatanetwork\/bin\/spacedatanetwork \| grep -qi wasmedge/, label);
+    assert.match(dockerfile, /\/opt\/spacedatanetwork\/bin\/spacedatanetwork --help/, label);
+  }
   assert.doesNotMatch(edgeDeb, /WASMEDGE_DIR=\/opt\/spacedatanetwork\/\.wasmedge/);
   assert.match(edgeDeb, /\/opt\/spacedatanetwork\/bin\/spacedatanetwork-edge --help/);
   assert.match(fullRpm, /dnf install -y/);
   assert.doesNotMatch(fullRpm, /dnf install -y ca-certificates curl/);
   assert.match(fullRpm, /command -v curl/);
-  assert.match(fullRpm, /test -d \/opt\/spacedatanetwork\/\.wasmedge\/lib/);
 });
 
 test('sdn-js install Dockerfile imports all published package subpaths on Node 24', () => {
@@ -172,21 +181,48 @@ test('container image run args respect the image entrypoint', () => {
   assert(!containerEdgeArgs.slice(containerEdgeArgs.indexOf('dockerdigitalarsenal/space-data-network:v1.0.3-beta.1') + 1).includes('/app/spacedatanetwork-edge'));
 });
 
-test('full-node package and VM bundle scripts include the WasmEdge runtime', () => {
+test('full-node package and VM bundle scripts stage nothing for a static runtime', () => {
   const packageScript = readFileSync(join(repoRoot, 'deployment/packaging/build-linux-packages.sh'), 'utf8');
   const vmScript = readFileSync(join(repoRoot, 'deployment/scripts/package-linux-vm-bundle.sh'), 'utf8');
 
-  assert.match(packageScript, /copy_wasmedge_runtime/);
-  assert.match(packageScript, /full\/opt\/spacedatanetwork\/\.wasmedge/);
-  assert.match(vmScript, /copy_wasmedge_runtime/);
-  assert.match(vmScript, /opt\/spacedatanetwork\/\.wasmedge/);
+  for (const [label, script] of [['package', packageScript], ['vm bundle', vmScript]]) {
+    // Both still know how to stage a dynamic runtime — that path is what a
+    // non-static prefix needs — but a static prefix must stage nothing, or the
+    // artifact would carry a second, unused WasmEdge the daemon might prefer.
+    // link.flags is the marker that says which kind of prefix is in use.
+    assert.match(script, /copy_wasmedge_runtime/, label);
+    assert.match(script, /link\.flags/, `${label} must detect a static prefix`);
+    assert.match(script, /opt\/spacedatanetwork\/\.wasmedge/, label);
+    // And neither may silently fall back to a runtime the builder happens to
+    // have in its home directory; that default is what made the packages job
+    // fail on every runner.
+    assert.doesNotMatch(script, /\$\{HOME\}\/\.wasmedge/, `${label} must not default to ~/.wasmedge`);
+  }
 });
 
-test('sdn-js package includes the postinstall patch script it declares', () => {
+test('sdn-js declares no postinstall step it cannot run', () => {
   const packageJson = JSON.parse(readFileSync(join(repoRoot, 'sdn-js/package.json'), 'utf8'));
 
-  assert.equal(packageJson.scripts.postinstall, 'node scripts/patch-hd-wallet-ui.mjs');
-  assert(packageJson.files.includes('scripts/patch-hd-wallet-ui.mjs'));
+  // This used to require scripts/patch-hd-wallet-ui.mjs. That patch was deleted
+  // with the public wallet client (1c6a79c9, 2026-07-22) and hd-wallet-ui 2.0.29
+  // needs no patching, so the requirement outlived the thing it guarded. What
+  // still matters is the failure it was written to catch: a declared lifecycle
+  // script whose file is not in the package breaks `npm install` for everyone.
+  const lifecycle = ['preinstall', 'install', 'postinstall', 'prepare'];
+  for (const name of lifecycle) {
+    const script = packageJson.scripts?.[name];
+    if (!script) continue;
+    const local = script.match(/node\s+(scripts\/[\w./-]+)/);
+    if (!local) continue;
+    assert(
+      packageJson.files.includes(local[1]),
+      `${name} runs ${local[1]}, which package.json "files" does not ship`,
+    );
+    assert(
+      existsSync(join(repoRoot, 'sdn-js', local[1])),
+      `${name} runs ${local[1]}, which is not in the tree`,
+    );
+  }
 });
 
 test('sdn-js package dependencies are installable without GitHub SSH access', () => {

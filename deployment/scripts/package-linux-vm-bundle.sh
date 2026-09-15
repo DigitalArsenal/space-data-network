@@ -8,7 +8,7 @@ OUT_DIR="${OUT_DIR:-${PROJECT_ROOT}/dist/linux-vm}"
 STAGE_DIR="${OUT_DIR}/stage"
 VERSION="${VERSION:-$(git -C "${PROJECT_ROOT}" describe --tags --always --dirty)}"
 ARCHIVE_PATH="${OUT_DIR}/spacedatanetwork-linux-vm-${VERSION}.tar.gz"
-WASMEDGE_DIR="${WASMEDGE_DIR:-${HOME}/.wasmedge}"
+WASMEDGE_DIR="${WASMEDGE_DIR:?WASMEDGE_DIR must point at a WasmEdge prefix (static or dynamic)}"
 export WASMEDGE_DIR
 
 if [ "$(uname -s)" != "Linux" ]; then
@@ -17,8 +17,18 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 1
 fi
 
+# A STATIC prefix ships nothing: the runtime is already inside the binary, and
+# staging a copy beside it would put a second, unused WasmEdge in the bundle
+# that the daemon might then prefer. link.flags is the marker
+# build-static-wasmedge.sh leaves to say which kind of prefix this is.
 copy_wasmedge_runtime() {
   target="$1"
+
+  if [ -f "${WASMEDGE_DIR}/link.flags" ]; then
+    rm -rf "${target}"
+    echo "static WasmEdge prefix: nothing staged at ${target}"
+    return 0
+  fi
 
   if [ ! -x "${WASMEDGE_DIR}/bin/wasmedge" ] || [ ! -d "${WASMEDGE_DIR}/lib" ]; then
     echo "WasmEdge runtime is missing at ${WASMEDGE_DIR}; run scripts/install-wasmedge.sh before packaging" >&2
