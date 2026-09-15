@@ -6,7 +6,7 @@ network:
     - /ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U
 
 storage:
-  path: /app/data
+  path: /app/data/store
   max_size: 10GB
   gc_interval: 1h
 
@@ -17,8 +17,6 @@ admin:
   session_expiry: 24h
   totp_required: false
   tls_enabled: false
-  frontend_path: /app/admin-ui
-  admin_ui_path: /app/admin-ui
   webui_path: /app/webui
 
 peers:
@@ -35,3 +33,8 @@ flows:
 setup:
   token_expiry: 10m
   data_path: /app/data
+
+# Wallet sign-in assets staged into the image by deployment/wallet-wasm/stage-wallet-wasm.sh
+wallet_wasm:
+  assets_dir: /app/wallet-wasm
+  ui_assets_dir: /app/wallet-ui

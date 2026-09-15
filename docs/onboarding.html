@@ -11,9 +11,9 @@
   <title>Onboarding - Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
   <!-- SDN_CONSUMER_ASSETS_START -->
-<link rel="stylesheet" href="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.c3f68d1cfd88478f10d836a5e829d1dfc6a10157972cf0f7d4d319d0636f2cc4.css" integrity="sha384-fICuhN4I9xqOK1F5vGGzl26opuO+xQIvTZXMSV76lWTBiQ6AfzztMGLLDw8yRT8i" crossorigin="anonymous">
-<script defer src="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.f611e7e151a3b5c38384272f8894a4c6634f0a29bf925b0e02e0e27f8db0bfff.js" integrity="sha384-R+QqsKoWJIS7iWrtPmgJ49DVnb1hSGjZokupbLInJd1PLp8RwQhtF/hnaerc33ci" crossorigin="anonymous" data-sdn-wallet-public-client="v1"></script>
-<script defer src="https://static.spacedatanetwork.org/assets/sdn-stack-nav/1.0.0/sdn-stack-nav.52fde607eee38ffa116188201f50258ed50bd18c9f06c1af9678f763147a8fe5.js" integrity="sha384-dgeojhJ8vTszHXIbv7O7nZcEzqD10oUYYJjBmPrV7+kLQEUlXLQD4ek5Q7HOFiO5" crossorigin="anonymous" data-nav-style-url="https://static.spacedatanetwork.org/assets/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds" data-wallet-client-url="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.f611e7e151a3b5c38384272f8894a4c6634f0a29bf925b0e02e0e27f8db0bfff.js" data-wallet-client-integrity="sha384-R+QqsKoWJIS7iWrtPmgJ49DVnb1hSGjZokupbLInJd1PLp8RwQhtF/hnaerc33ci" data-wallet-style-url="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.c3f68d1cfd88478f10d836a5e829d1dfc6a10157972cf0f7d4d319d0636f2cc4.css" data-wallet-style-integrity="sha384-fICuhN4I9xqOK1F5vGGzl26opuO+xQIvTZXMSV76lWTBiQ6AfzztMGLLDw8yRT8i" data-wallet-client-id="sdn-landing-web-v1" data-wallet-callback-uri="https://spacedatanetwork.org/wallet-callback.html" data-wallet-registry-sha256="e1ce6fe903c9700484a8a87d96581c8cad97063dabf63030b4518a31a3bdaa93"></script>
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js"></script>
 <!-- SDN_CONSUMER_ASSETS_END -->
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -499,22 +499,35 @@
           <span class="step-num"><b>1</b></span>
           <h2>Set up your ID and start your node</h2>
         </div>
-        <p>One command installs everything &mdash; no admin rights needed:</p>
+        <p>Pick one of three ways to run a node. Each gives you the same node, the same dashboard and the same secure ID.</p>
         <div class="code-block">
-          <div class="code-header"><span>macOS / Linux</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>curl -fsSL https://spacedatanetwork.org/install.sh | bash</code></pre>
+          <div class="code-header"><span>Desktop app (easiest)</span></div>
+          <pre><code>1. Download the app for your computer from the <a href="index.html#downloads">downloads</a> section.
+2. Open it. It starts a node on your machine and shows the dashboard.
+3. The first run creates your secure ID; the menu item "Show recovery phrase" reveals it once.</code></pre>
         </div>
         <div class="code-block">
-          <div class="code-header"><span>Windows PowerShell</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>irm https://spacedatanetwork.org/install.ps1 | iex</code></pre>
+          <div class="code-header"><span>Terminal (macOS / Linux)</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
+          <pre><code>curl -fsSL https://spacedatanetwork.org/install.sh | bash
+spacedatanetwork start    <span class="code-comment"># creates your ID on first start, runs in the background</span>
+spacedatanetwork status   <span class="code-comment"># confirm it is up</span>
+spacedatanetwork open     <span class="code-comment"># opens the dashboard at http://127.0.0.1:5001/</span></code></pre>
         </div>
         <div class="code-block">
-          <div class="code-header"><span>Terminal</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>spacedatanetwork init     <span class="code-comment"># creates your secure ID</span>
-spacedatanetwork start    <span class="code-comment"># runs in the background</span>
-spacedatanetwork status   <span class="code-comment"># confirm it is up</span></code></pre>
+          <div class="code-header"><span>Terminal (Windows PowerShell)</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
+          <pre><code>irm https://spacedatanetwork.org/install.ps1 | iex
+spacedatanetwork start
+spacedatanetwork open</code></pre>
         </div>
-        <p>That's it &mdash; you're on the network. The <code>init</code> step created your <strong>secure ID</strong> automatically. There's no account to register and no password to remember. Your ID acts like a tamper-proof signature: everything you share carries it, so anyone can confirm it really came from you and wasn't changed along the way.</p>
+        <div class="code-block">
+          <div class="code-header"><span>Docker</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
+          <pre><code>docker run -d --name sdn --hostname sdn --restart unless-stopped \
+  -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
+  dockerdigitalarsenal/space-data-network:1.0.5-beta.1
+<span class="code-comment"># dashboard: http://127.0.0.1:5001/   identity and data live in the sdn-data volume</span></code></pre>
+        </div>
+        <p>To reveal your recovery phrase from a terminal node: <code>spacedatanetwork show-identity --show-mnemonic</code> (in Docker: <code>docker exec sdn /app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic</code>). Write it down and keep it offline.</p>
+        <p>That's it &mdash; you're on the network. The first start created your <strong>secure ID</strong> automatically. There's no account to register and no password to remember. Your ID acts like a tamper-proof signature: everything you share carries it, so anyone can confirm it really came from you and wasn't changed along the way.</p>
         <p>The one thing to protect is your <strong>recovery phrase</strong> &mdash; a short list of words the app keeps encrypted on your machine. It can rebuild your ID on a new computer, and anyone who has it can act as you. Back it up somewhere safe, like you would a passport.</p>
         <p>Next, tell the network who you are. A short wizard fills in your public listing &mdash; organization name, contact info, nothing sensitive:</p>
         <div class="code-block">
@@ -570,7 +583,7 @@ END:VCARD</code></pre>
             <p>The card does not need to carry individual keys &mdash; that is what derivation paths are for. It carries only the <strong>xPub</strong> and PeerID, encoded as email aliases (<code>&lt;xpub&gt;@xpub.spacedatanetwork.org</code>, <code>&lt;peerid&gt;@peerid.spacedatanetwork.org</code>) because iOS and Android contact apps preserve email fields but silently drop unknown <code>X-</code> extension fields. Role keys derive from the xPub at the SDK-specified BIP-44 paths: <code>buildSigningPath()</code> &rarr; <code>m/44'/coinType'/account'/0/index</code> and <code>buildEncryptionPath()</code> &rarr; <code>m/44'/coinType'/account'/1/index</code> (hd-wallet-wasm). The full vCard export additionally carries <code>X-SDN-EPM-B64</code> &mdash; the complete signed EPM bytes and the source of truth: SDN importers verify its embedded signature and prefer it over the editable display fields. Inspect your identity anytime with <code>spacedatanetwork show-identity</code>.</p>
           </div>
         </details>
-        <div class="note">Prefer a GUI? The <a href="index.html#downloads">desktop app</a> bundles a full node with a dashboard that walks you through the same steps. Docker images and native Linux packages are on the <a href="index.html#downloads">downloads page</a>.</div>
+        <div class="note">The dashboard signs you in with the same recovery phrase, so one ID follows you between the desktop app, a terminal node and a Docker node. Docker images and native Linux packages are on the <a href="index.html#downloads">downloads page</a>.</div>
       </div>
     </section>
 

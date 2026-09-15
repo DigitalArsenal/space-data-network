@@ -11,9 +11,9 @@
   <title>Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
   <!-- SDN_CONSUMER_ASSETS_START -->
-<link rel="stylesheet" href="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.c3f68d1cfd88478f10d836a5e829d1dfc6a10157972cf0f7d4d319d0636f2cc4.css" integrity="sha384-fICuhN4I9xqOK1F5vGGzl26opuO+xQIvTZXMSV76lWTBiQ6AfzztMGLLDw8yRT8i" crossorigin="anonymous">
-<script defer src="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.f611e7e151a3b5c38384272f8894a4c6634f0a29bf925b0e02e0e27f8db0bfff.js" integrity="sha384-R+QqsKoWJIS7iWrtPmgJ49DVnb1hSGjZokupbLInJd1PLp8RwQhtF/hnaerc33ci" crossorigin="anonymous" data-sdn-wallet-public-client="v1"></script>
-<script defer src="https://static.spacedatanetwork.org/assets/sdn-stack-nav/1.0.0/sdn-stack-nav.52fde607eee38ffa116188201f50258ed50bd18c9f06c1af9678f763147a8fe5.js" integrity="sha384-dgeojhJ8vTszHXIbv7O7nZcEzqD10oUYYJjBmPrV7+kLQEUlXLQD4ek5Q7HOFiO5" crossorigin="anonymous" data-nav-style-url="https://static.spacedatanetwork.org/assets/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds" data-wallet-client-url="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.f611e7e151a3b5c38384272f8894a4c6634f0a29bf925b0e02e0e27f8db0bfff.js" data-wallet-client-integrity="sha384-R+QqsKoWJIS7iWrtPmgJ49DVnb1hSGjZokupbLInJd1PLp8RwQhtF/hnaerc33ci" data-wallet-style-url="https://static.spacedatanetwork.org/assets/hd-wallet-ui/2.0.28/sdn-wallet-public-client.c3f68d1cfd88478f10d836a5e829d1dfc6a10157972cf0f7d4d319d0636f2cc4.css" data-wallet-style-integrity="sha384-fICuhN4I9xqOK1F5vGGzl26opuO+xQIvTZXMSV76lWTBiQ6AfzztMGLLDw8yRT8i" data-wallet-client-id="sdn-landing-web-v1" data-wallet-callback-uri="https://spacedatanetwork.org/wallet-callback.html" data-wallet-registry-sha256="e1ce6fe903c9700484a8a87d96581c8cad97063dabf63030b4518a31a3bdaa93"></script>
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js"></script>
 <!-- SDN_CONSUMER_ASSETS_END -->
   <style>
     /* ============================================
@@ -4227,38 +4227,91 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
     <div class="container">
       <div class="section-header">
         <h2 class="section-title">Downloads</h2>
-        <p class="section-subtitle">Get the Space Data Network tools for your use case</p>
+        <p class="section-subtitle">Space Data Network v1.0.5-beta.1. Every build carries the node, its dashboard, the wallet sign-in and the update lane; pick the shape that fits your machine.</p>
+      </div>
+
+      <!-- Desktop Downloads -->
+      <div class="download-category">
+        <div class="category-header">
+          <div class="category-icon icon-indigo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <div class="category-info">
+            <h3>Desktop Application</h3>
+            <p>Install, open, done: the app runs a full node on your machine and opens its dashboard. Start here if you are new.</p>
+          </div>
+        </div>
+        <div class="downloads-grid">
+          <div class="download-card">
+            <div class="download-icon icon-indigo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4.5a2.5 2.5 0 0 1 2.5-2.5M16.5 12c0-2.5 2-3.5 2-3.5-1.2-1.7-3-2-3.8-2-1.6 0-2.4.9-3.2.9s-1.7-.9-3.1-.9C6.3 6.5 4 8.5 4 12.3c0 3.7 2.6 8.2 4.5 8.2 1 0 1.6-.7 3-.7s1.9.7 3 .7c2 0 4.5-4.8 4.5-5.4-2.3-1-2.5-3.1-2.5-3.1z"/></svg>
+            </div>
+            <h3>macOS</h3>
+            <div class="download-links">
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/space-data-network-desktop-1.0.5-beta.1-mac-arm64.dmg" class="download-link" target="_blank" rel="noopener">
+                <span>Apple Silicon (.dmg)</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              </a>
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/space-data-network-desktop-1.0.5-beta.1-mac-x64.dmg" class="download-link" target="_blank" rel="noopener">
+                <span>Intel (.dmg)</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              </a>
+            </div>
+          </div>
+
+          <div class="download-card">
+            <div class="download-icon icon-gold">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="8" height="7"/><rect x="13" y="4" width="8" height="7"/><rect x="3" y="13" width="8" height="7"/><rect x="13" y="13" width="8" height="7"/></svg>
+            </div>
+            <h3>Windows</h3>
+            <div class="download-links">
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/space-data-network-desktop-1.0.5-beta.1-win-x64.exe" class="download-link" target="_blank" rel="noopener">
+                <span>64-bit installer (.exe)</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              </a>
+            </div>
+          </div>
+
+          <div class="download-card">
+            <div class="download-icon icon-green">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
+            </div>
+            <h3>Linux</h3>
+            <div class="download-links">
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/space-data-network-desktop-1.0.5-beta.1-linux-x64.AppImage" class="download-link" target="_blank" rel="noopener">
+                <span>64-bit AppImage</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              </a>
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/space-data-network-desktop-1.0.5-beta.1-linux-x64.deb" class="download-link" target="_blank" rel="noopener">
+                <span>64-bit Debian/Ubuntu package (.deb)</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              </a>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Server Downloads -->
       <div class="download-category">
         <div class="category-header">
           <div class="category-icon icon-purple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="2" width="20" height="8" rx="2"/>
-              <rect x="2" y="14" width="20" height="8" rx="2"/>
-              <line x1="6" y1="6" x2="6.01" y2="6"/>
-              <line x1="6" y1="18" x2="6.01" y2="18"/>
-            </svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
           </div>
           <div class="category-info">
             <h3>Server Node</h3>
-            <p>Versioned SDN release artifacts for infrastructure operators.</p>
+            <p>Self-contained bundles for operators: the node, WasmEdge, Kubo, the dashboard and the updater in one directory. One command installs and registers the background service.</p>
           </div>
         </div>
         <div class="downloads-grid">
           <div class="download-card">
             <div class="download-icon icon-indigo">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54"/>
-                <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54"/>
-              </svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4.5a2.5 2.5 0 0 1 2.5-2.5M16.5 12c0-2.5 2-3.5 2-3.5-1.2-1.7-3-2-3.8-2-1.6 0-2.4.9-3.2.9s-1.7-.9-3.1-.9C6.3 6.5 4 8.5 4 12.3c0 3.7 2.6 8.2 4.5 8.2 1 0 1.6-.7 3-.7s1.9.7 3 .7c2 0 4.5-4.8 4.5-5.4-2.3-1-2.5-3.1-2.5-3.1z"/></svg>
             </div>
             <h3>macOS</h3>
             <div class="download-links">
               <span class="download-coming">Install: curl -fsSL https://spacedatanetwork.org/install.sh | bash</span>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-darwin-arm64.tar.gz" class="download-link">
-                <span>64-bit Apple Silicon (ARM64) bundle (.tar.gz)</span>
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/spacedatanetwork-1.0.5-beta.1-darwin-arm64.tar.gz" class="download-link" target="_blank" rel="noopener">
+                <span>Apple Silicon bundle (.tar.gz)</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
               </a>
             </div>
@@ -4266,189 +4319,55 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
 
           <div class="download-card">
             <div class="download-icon icon-gold">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <circle cx="12" cy="12" r="10"/>
-                <circle cx="12" cy="12" r="4"/>
-                <line x1="12" y1="2" x2="12" y2="4"/>
-                <line x1="12" y1="20" x2="12" y2="22"/>
-                <line x1="2" y1="12" x2="4" y2="12"/>
-                <line x1="20" y1="12" x2="22" y2="12"/>
-              </svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
             </div>
             <h3>Linux</h3>
             <div class="download-links">
               <span class="download-coming">Install: curl -fsSL https://spacedatanetwork.org/install.sh | bash</span>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full_1.0.3.beta.1_amd64.deb" class="download-link">
-                <span>64-bit Intel/AMD (DEB) full node</span>
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/spacedatanetwork-1.0.5-beta.1-linux-amd64.tar.gz" class="download-link" target="_blank" rel="noopener">
+                <span>64-bit Intel/AMD bundle (.tar.gz)</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
               </a>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full-1.0.3.beta.1-1.x86_64.rpm" class="download-link">
-                <span>64-bit Intel/AMD (RPM) full node</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-linux-vm-1.0.3.beta.1.tar.gz" class="download-link">
-                <span>64-bit Intel/AMD VM bundle (.tar.gz)</span>
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/spacedatanetwork-1.0.5-beta.1-linux-arm64.tar.gz" class="download-link" target="_blank" rel="noopener">
+                <span>64-bit ARM bundle (.tar.gz)</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
               </a>
             </div>
           </div>
 
           <div class="download-card">
-            <div class="download-icon icon-teal">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                <line x1="8" y1="21" x2="16" y2="21"/>
-                <line x1="12" y1="17" x2="12" y2="21"/>
-              </svg>
+            <div class="download-icon icon-green">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="8" height="7"/><rect x="13" y="4" width="8" height="7"/><rect x="3" y="13" width="8" height="7"/><rect x="13" y="13" width="8" height="7"/></svg>
             </div>
             <h3>Windows</h3>
             <div class="download-links">
               <span class="download-coming">Install: irm https://spacedatanetwork.org/install.ps1 | iex</span>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-1.0.3-beta.1-windows-amd64.zip" class="download-link">
-                <span>64-bit Intel/AMD portable CLI (.zip)</span>
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/spacedatanetwork-1.0.5-beta.1-windows-amd64.zip" class="download-link" target="_blank" rel="noopener">
+                <span>64-bit bundle (.zip)</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
               </a>
             </div>
           </div>
 
           <div class="download-card">
-            <div class="download-icon icon-cyan">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="2" y="4" width="20" height="16" rx="2"/>
-                <path d="M6 8h.01M10 8h.01"/>
-                <path d="M6 12h12"/>
-                <path d="M6 16h12"/>
-              </svg>
+            <div class="download-icon icon-purple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="10" width="4" height="4"/><rect x="8" y="10" width="4" height="4"/><rect x="13" y="10" width="4" height="4"/><rect x="8" y="5" width="4" height="4"/><path d="M2 14h20c0 4-3 6-8 6H8c-4 0-6-2-6-6z"/></svg>
             </div>
             <h3>Docker</h3>
             <div class="download-links">
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-1.0.3.beta.1-linux-amd64.tar.gz" class="download-link">
-                <span>64-bit Intel/AMD Docker image (.tar.gz)</span>
+              <span class="download-coming">docker run -d --name sdn --hostname sdn --restart unless-stopped -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp dockerdigitalarsenal/space-data-network:1.0.5-beta.1</span>
+              <a href="https://hub.docker.com/r/dockerdigitalarsenal/space-data-network" class="download-link" target="_blank" rel="noopener">
+                <span>dockerdigitalarsenal/space-data-network:1.0.5-beta.1 on Docker Hub</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
               </a>
-              <a href="https://hub.docker.com/r/dockerdigitalarsenal/space-data-network" class="download-link" target="_blank">
-                <span>dockerdigitalarsenal/space-data-network:v1.0.3-beta.1</span>
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/spacedatanetwork-container-1.0.5-beta.1-linux-amd64.tar.gz" class="download-link" target="_blank" rel="noopener">
+                <span>Image archive for docker load (.tar.gz)</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
               </a>
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- Desktop Downloads -->
-      <div class="download-category">
-        <div class="category-header">
-          <div class="category-icon icon-green">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2"/>
-              <line x1="8" y1="21" x2="16" y2="21"/>
-              <line x1="12" y1="17" x2="12" y2="21"/>
-            </svg>
-          </div>
-          <div class="category-info">
-            <h3>Desktop Application</h3>
-            <p>GUI application for end users, published from the same beta release lane as CLI and server artifacts.</p>
-          </div>
-        </div>
-        <div class="downloads-grid">
-          <div class="download-card">
-            <div class="download-icon icon-indigo">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54"/>
-                <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54"/>
-              </svg>
-            </div>
-            <h3>macOS</h3>
-            <div class="download-links">
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/space-data-network-desktop-0.47.0-mac.dmg" class="download-link">
-                <span>macOS Desktop app (DMG)</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-            </div>
-          </div>
-
-          <div class="download-card">
-            <div class="download-icon icon-gold">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <circle cx="12" cy="12" r="10"/>
-                <circle cx="12" cy="12" r="4"/>
-                <line x1="12" y1="2" x2="12" y2="4"/>
-                <line x1="12" y1="20" x2="12" y2="22"/>
-                <line x1="2" y1="12" x2="4" y2="12"/>
-                <line x1="20" y1="12" x2="22" y2="12"/>
-              </svg>
-            </div>
-            <h3>Linux</h3>
-            <div class="download-links">
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/space-data-network-desktop-0.47.0-linux-x86_64.AppImage" class="download-link">
-                <span>Linux Desktop AppImage</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-            </div>
-          </div>
-
-          <div class="download-card">
-            <div class="download-icon icon-teal">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                <line x1="8" y1="21" x2="16" y2="21"/>
-                <line x1="12" y1="17" x2="12" y2="21"/>
-              </svg>
-            </div>
-            <h3>Windows</h3>
-            <div class="download-links">
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/space-data-network-desktop-setup-0.47.0-windows-x64.exe" class="download-link">
-                <span>Windows Desktop installer</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-            </div>
-          </div>
-
-          <div class="download-card download-card-coming">
-            <div class="download-icon icon-orange">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="5" y="2" width="14" height="20" rx="2"/>
-                <line x1="12" y1="18" x2="12.01" y2="18"/>
-              </svg>
-            </div>
-            <h3>Mobile</h3>
-            <div class="download-links">
-              <span class="download-coming">Coming Soon</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- SDK Download -->
-      <div class="sdk-download">
-        <h3>JavaScript SDK</h3>
-        <p>Connect from Node.js or browsers - lightweight client for web applications</p>
-        <div class="download-links" style="max-width: 620px; margin: 20px auto 0;">
-          <a href="https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1" class="download-link" target="_blank">
-            <span>v1.0.3-beta.1 release index</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
-          </a>
-          <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sdn-js-2.0.12.tgz" class="download-link">
-            <span>JavaScript SDK package tarball</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-          </a>
-          <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sbom.cdx.json" class="download-link">
-            <span>CycloneDX SBOM</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-          </a>
-          <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-checksums.txt" class="download-link">
-            <span>SHA-256 checksums</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-          </a>
-        </div>
-        <div class="code-block" style="max-width: 500px; margin: 20px auto 0;">
-          <div class="code-header">
-            <span class="code-lang">Terminal</span>
-            <button class="code-copy" onclick="copyCode(this)">Copy</button>
-          </div>
-          <pre><code>cd sdn-js
-npm install</code></pre>
-        </div>
+        <p class="section-subtitle" style="margin-top:1rem">Checksums for every file are in <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.1/spacedatanetwork-checksums.txt" target="_blank" rel="noopener">spacedatanetwork-checksums.txt</a>; all releases are on <a href="https://github.com/DigitalArsenal/space-data-network/releases" target="_blank" rel="noopener">GitHub</a>. After installing, follow the <a href="onboarding.html">onboarding</a> steps.</p>
       </div>
     </div>
   </section>

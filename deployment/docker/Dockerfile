@@ -74,16 +74,27 @@ COPY sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm /usr/local/lib/
 COPY deployment/wallet-wasm/staged/wallet-wasm/ /app/wallet-wasm/
 COPY deployment/wallet-wasm/staged/wallet-ui/ /app/wallet-ui/
 
-RUN mkdir -p /app/data /app/keys && chown -R sdn:sdn /app
-
-USER sdn
-
-EXPOSE 5001 4001 4001/udp 8080 8081
+RUN mkdir -p /app/data && chown -R sdn:sdn /app
 
 ENV WASMEDGE_DIR=/opt/wasmedge
 ENV LD_LIBRARY_PATH=/opt/wasmedge/lib
 ENV SDN_WEBUI_PATH=/app/webui
+ENV HOME=/home/sdn
 
+USER sdn
+
+# A container has no AOT cache. Without a precompiled artifact the daemon opens
+# the FlatSQL engine in the interpreter (~100x slower for every query) and says
+# so once at boot. Prewarm at build time, as the same user and HOME the daemon
+# runs under, so the running container finds a native artifact.
+RUN /app/spacedatanetwork prewarm-aot
+
+EXPOSE 5001 4001 4001/udp 8080 8081
+
+# Everything the node owns lives under /app/data: the record store, the keys
+# (identity), auth, flows. One volume keeps the identity across container
+# recreation. Set SDN_KEY_PASSWORD_FILE (a mounted secret) to decouple the
+# key-at-rest password from the container's machine fingerprint.
 VOLUME /app/data
 
 ENTRYPOINT ["/app/spacedatanetwork"]

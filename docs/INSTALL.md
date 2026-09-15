@@ -3,7 +3,7 @@
 This is the operator path for a fresh node: what to install, which ports to
 open, what to change in the generated config before the node is reachable,
 how to keep the keys, how to mirror a publisher, and how to publish and
-archive. It describes v1.0.4-beta.18 (2026-09-04).
+archive. It describes v1.0.5-beta.1 (2026-09-15).
 
 ## 1. Get a build
 
@@ -15,7 +15,8 @@ irm https://spacedatanetwork.org/install.ps1 | iex
 ```
 
 The installers resolve the newest node release on GitHub (today
-v1.0.4-beta.18: macOS Apple Silicon and Linux x86-64), verify the checksum,
+v1.0.5-beta.1: macOS Apple Silicon, Linux x86-64 and arm64, Windows x86-64),
+verify the checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
 `spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialise
 the node identity. Other platforms build from source:
@@ -34,6 +35,35 @@ A source build loads `hd-wallet-wasi.wasm` for its HD identity from
 `sdn-js/node_modules/hd-wallet-wasm/dist/` (after `npm ci` in `sdn-js`), or
 from `/usr/local/lib/hd-wallet-wasi.wasm`; a bundle carries it under
 `runtime/modules/`.
+
+### Desktop app
+
+The desktop app (`space-data-network-desktop-<version>-<os>-<arch>` on the
+release page: macOS Apple Silicon and Intel, Windows x86-64, Linux x86-64)
+carries the same bundle. It starts the node on launch, opens the node's own
+dashboard in its window, and keeps the store and keys under the app's user-data
+directory. Its menu shows the node's recovery phrase once, on request. Nothing
+below applies to the app except sections 4 (ports, if you want to be reachable
+from the internet) and 5 (keys).
+
+### Docker
+
+```sh
+docker run -d --name sdn --hostname sdn --restart unless-stopped \
+  -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
+  dockerdigitalarsenal/space-data-network:1.0.5-beta.1
+```
+
+The image (`linux/amd64`) carries the node, WasmEdge with a prewarmed AOT
+engine, Kubo and the wallet sign-in assets; `config/full-docker.yaml` is baked
+in as `/app/config/full-docker.yaml` and everything the node owns lives in the `/app/data`
+volume (store, keys, auth, peers). Keep `--hostname` fixed: the key-at-rest
+password is derived from the container's hostname when no
+`SDN_KEY_PASSWORD` / `SDN_KEY_PASSWORD_FILE` is set, so a recreated container
+with a different hostname cannot open its own identity. `docker exec sdn
+/app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic`
+prints the recovery phrase. A `docker load` archive of the same image ships
+with each release (`spacedatanetwork-container-<version>-linux-amd64.tar.gz`).
 
 ## 2. Kubo
 
