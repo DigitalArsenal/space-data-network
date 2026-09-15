@@ -54,7 +54,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -268,10 +267,10 @@ func launchViaSystemdRun(plan *HelperPlan, env []string, opts SelfUpgradeOptions
 func launchDetached(plan *HelperPlan, env []string) (*SelfUpgradeLaunch, error) {
 	cmd := exec.Command(plan.Executable, plan.Args...)
 	cmd.Env = env
-	// A new session detaches the helper from the daemon's controlling terminal
-	// and process group. On a box with no supervisor that is sufficient: there
-	// is no cgroup teardown to survive.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Detaching the helper from the daemon is per-platform: a new SESSION on
+	// unix, a new process GROUP on windows. See selfupgrade_unix.go and
+	// selfupgrade_windows.go.
+	detachProcess(cmd)
 	logPath := filepath.Join(filepath.Dir(plan.Executable), "self-upgrade.log")
 	if logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 		defer logFile.Close()
