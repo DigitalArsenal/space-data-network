@@ -2524,6 +2524,17 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				},
 				requireAuth: cfg.Admin.RequireAuth,
 				authHandler: authHandler,
+				alerts:      n.Alerts(),
+			})
+			// Third surface for the same registry: one gauge series per
+			// (kind, severity), read live at scrape time.
+			metrics.SetAlertCountsFunc(func() []metrics.AlertCount {
+				active := n.Alerts().KindCounts()
+				out := make([]metrics.AlertCount, 0, len(active))
+				for _, a := range active {
+					out = append(out, metrics.AlertCount{Kind: a.Kind, Severity: a.Severity, Count: a.Count})
+				}
+				return out
 			})
 			metrics.SetPeerCountFunc(func() int {
 				if h := n.Host(); h != nil {
