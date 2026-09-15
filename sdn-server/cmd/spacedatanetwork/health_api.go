@@ -32,6 +32,9 @@ type healthDeps struct {
 	authHandler *auth.Handler
 	// probeTimeout bounds engineReady; zero means readyProbeTimeout.
 	probeTimeout time.Duration
+	// reachability returns the node's own view of whether remote peers can
+	// dial it (node.ReachabilitySnapshot). Nil means the host is not up.
+	reachability func() any
 	// alerts is the node's operational alert registry. /health reports its
 	// severity COUNTS (a probe gets a number, never a subject) and
 	// /api/v1/status/alerts serves the full list to an operator session.
@@ -47,6 +50,7 @@ const readyProbeTimeout = 2 * time.Second
 //	GET /ready,  /api/v1/ready    200 "ready"       store linked, engine answering, host up
 //	                              503 "not ready: …" with the first failing component
 //	GET /api/v1/status/alerts     the active alerts in full; operator session required
+//	GET /api/v1/status/reachability  can remote peers dial this node; operator session
 //	GET /metrics                  Prometheus text; operator session required
 //
 // /health and /ready are anonymous by design (a probe cannot sign in) and
@@ -75,6 +79,10 @@ func mountHealthRoutes(mux *http.ServeMux, deps healthDeps) {
 	mux.HandleFunc("/api/v1/health", health)
 	mux.HandleFunc("/ready", ready)
 	mux.HandleFunc("/api/v1/ready", ready)
+	reachabilityHandler := api.ReachabilityHandler(deps.reachability)
+	mux.HandleFunc(api.ReachabilityStatusPath, func(w http.ResponseWriter, r *http.Request) {
+		gateAdminOnlyHandler(w, r, reachabilityHandler, deps.authHandler, deps.requireAuth)
+	})
 	alertsHandler := api.AlertsHandler(deps.alerts)
 	mux.HandleFunc(api.AlertsStatusPath, func(w http.ResponseWriter, r *http.Request) {
 		gateAdminOnlyHandler(w, r, alertsHandler, deps.authHandler, deps.requireAuth)
