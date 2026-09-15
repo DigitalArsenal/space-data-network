@@ -61,3 +61,10 @@ journalctl -u spacedatanetwork | grep "OPS ALERT"
 ```
 
 A plain repeat does not log; an escalation from `warning` to `error` does.
+
+Stored publications that no known key verifies are not `publication_rejected`:
+the stored-PNM catch-up quarantines such a frame after one look (one `WARN`
+line naming its CID and the peer it was stored from) and never re-verifies it
+until the node restarts. The alert is for a producer refusing the node now — a
+live announcement the pubsub loop rejected, or a catch-up that failed for a
+reason that can change (the producer unreachable, a shard missing).
