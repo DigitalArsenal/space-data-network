@@ -62,6 +62,20 @@ if [[ -f "$SRC/cmake/Helper.cmake" ]]; then
   perl -0pi -e 's/^\s*-Werror\s*$//mg' "$SRC/cmake/Helper.cmake"
 fi
 
+# GRANT THE CRTP BASE FRIENDSHIP (Windows WASI only).
+#
+# FindHolderBase<T>::Proxy reaches T's PROTECTED members by writing
+# `&T::doReset`, which names a protected member through T rather than through
+# the accessing class. [class.protected] forbids that; MSVC accepts it as an
+# extension, so this Windows-only header has never been compiled by anything
+# else — gcc rejects it ("declared protected here") and clang rejects it
+# ("must name member"). Upstream ships a non-conforming file, and there is no
+# compiler choice that avoids it, so the base is made a friend instead.
+if [[ -f "$SRC/include/host/wasi/inode.h" ]]; then
+  perl -0pi -e 's/(class FindHolder : public FindHolderBase<FindHolder> \{)/$1\n  friend class FindHolderBase<FindHolder>;/g' \
+    "$SRC/include/host/wasi/inode.h"
+fi
+
 # 2. Configure + build the static library (LLVM/AOT OFF).
 if [[ ! -f "$SRC/build/lib/api/libwasmedge.a" ]]; then
   CC="${CC:-clang-16}" CXX="${CXX:-clang++-16}" \
