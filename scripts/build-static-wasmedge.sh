@@ -76,6 +76,20 @@ if [[ -f "$SRC/include/host/wasi/inode.h" ]]; then
     "$SRC/include/host/wasi/inode.h"
 fi
 
+# SANITISE THE STATIC-MERGE SCRATCH DIRECTORIES (Windows).
+#
+# The merge extracts each component into objs/<target>, and one target is
+# literally named `fmt::fmt`. A colon cannot appear in a Windows path, so the
+# merge dies with `Error creating directory "objs/fmt::fmt": Invalid argument`
+# after every object has already compiled. The target name still has to reach
+# $<TARGET_FILE:...> intact, so only the DIRECTORY is renamed.
+if [[ -f "$SRC/lib/api/CMakeLists.txt" ]]; then
+  perl -0pi -e 's/(function\(wasmedge_add_static_lib_component_command target\)\n)/$1  string(REPLACE "::" "_" _sanitized_target "${target}")\n/' \
+    "$SRC/lib/api/CMakeLists.txt"
+  perl -0pi -e 's/objs\/\$\{target\}/objs\/\$\{_sanitized_target\}/g' \
+    "$SRC/lib/api/CMakeLists.txt"
+fi
+
 # 2. Configure + build the static library (LLVM/AOT OFF).
 if [[ ! -f "$SRC/build/lib/api/libwasmedge.a" ]]; then
   CC="${CC:-clang-16}" CXX="${CXX:-clang++-16}" \
