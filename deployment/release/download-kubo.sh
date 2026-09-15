@@ -79,11 +79,21 @@ extract_archive() {
   esac
 }
 
+# --retry-all-errors landed in curl 7.71. The Linux release artifacts are built
+# on ubuntu:20.04 so the binaries do not demand a glibc newer than most hosts
+# have, and focal ships curl 7.68, which rejects the flag outright rather than
+# ignoring it. Probed once instead of assumed: --retry on its own still covers
+# the transient network failures this loop exists for.
+retry_all_errors=""
+if curl --help all 2>/dev/null | grep -q -- '--retry-all-errors'; then
+  retry_all_errors="--retry-all-errors"
+fi
+
 for attempt in $(seq 1 "${attempts}"); do
   rm -f "${archive_path}"
   echo "Downloading Kubo ${version} for ${platform} (${archive}), attempt ${attempt}/${attempts}"
 
-  if curl -fL --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 30 --max-time 300 -o "${archive_path}" "${url}"; then
+  if curl -fL --retry 3 --retry-delay 5 ${retry_all_errors} --connect-timeout 30 --max-time 300 -o "${archive_path}" "${url}"; then
     byte_count="$(wc -c < "${archive_path}" | tr -d '[:space:]')"
     echo "Downloaded ${byte_count} bytes from ${url}"
 
