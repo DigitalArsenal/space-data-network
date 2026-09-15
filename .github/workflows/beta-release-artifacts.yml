@@ -46,34 +46,66 @@ jobs:
   # One static WasmEdge, built once and reused. Building LLVM is expensive, so
   # it is cached on the version alone; nothing here is installed into a job, it
   # is linked INTO the binaries that ship.
+  # One static WasmEdge PER PLATFORM. The cli job builds natively on five
+  # runners, and a Linux prefix cannot link a macOS or Windows binary, so the
+  # prefix is a matrix over the same runners. Building LLVM is expensive, so
+  # each is cached on the version + layout and rebuilt only when those change.
   wasmedge-static:
-    name: Build static WasmEdge
-    runs-on: ubuntu-latest
+    name: Build static WasmEdge (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-amd64
+            runner: ubuntu-latest
+          - label: linux-arm64
+            runner: ubuntu-24.04-arm
+          - label: darwin-arm64
+            runner: macos-14
+          - label: darwin-amd64
+            runner: macos-15-intel
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - id: cache
         uses: actions/cache@v4
         with:
-          path: ~/.sdn-wasmedge-static
+          path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           # Bump the suffix whenever the PREFIX LAYOUT changes, not just the
           # WasmEdge version: a stale cache silently restores an old link.flags
           # and every downstream job fails on paths that no longer exist.
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-ubuntu-latest-relocatable-v2
-      - name: Build the static prefix
-        if: steps.cache.outputs.cache-hit != 'true'
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.label }}-relocatable-v2
+      - name: Install build toolchain (Linux)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev \
             libzstd-dev zlib1g-dev
-          WASMEDGE_STATIC_WORK="$HOME/.sdn-wasmedge-static" \
+      - name: Install build toolchain (macOS)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS'
+        run: brew install cmake ninja llvm@18 zstd
+      - name: Build the static prefix
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          if [ "${RUNNER_OS}" = "macOS" ]; then
+            L="$(brew --prefix llvm@18)"
+            export CC="$L/bin/clang" CXX="$L/bin/clang++" \
+                   LLVM_DIR="$L/lib/cmake/llvm" LLD_DIR="$L/lib/cmake/lld" \
+                   LLVM_CONFIG="$L/bin/llvm-config" \
+                   ZSTD_STATIC="$(brew --prefix zstd)/lib/libzstd.a"
+          fi
+          WASMEDGE_STATIC_WORK="${GITHUB_WORKSPACE}/.sdn-wasmedge-static" \
           WASMEDGE_STATIC_PREFIX_ONLY=1 \
           bash scripts/build-static-wasmedge.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wasmedge-static-prefix
-          path: ~/.sdn-wasmedge-static/prefix
-          retention-days: 1
+      - name: Prove the prefix is relocatable
+        run: |
+          F="${GITHUB_WORKSPACE}/.sdn-wasmedge-static/prefix/link.flags"
+          grep -q '@PREFIX@' "$F"
+          ! grep -qE '/usr/lib/llvm|/opt/homebrew|/home/runner|/Users/' "$F"
 
   preflight:
     name: Preflight
@@ -81,10 +113,11 @@ jobs:
     needs: [beta-version, wasmedge-static]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/cache/restore@v4
         with:
-          name: wasmedge-static-prefix
-          path: ${{ github.workspace }}/wasmedge-prefix
+          path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-relocatable-v2
+          fail-on-cache-miss: true
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -106,7 +139,7 @@ jobs:
       - name: Go release-layout tests
         working-directory: sdn-server
         env:
-          WASMEDGE_DIR: ${{ github.workspace }}/wasmedge-prefix
+          WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
         run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'TestVerifyReleaseDirectory'
 
   ipfs:
@@ -247,7 +280,7 @@ jobs:
   cli:
     name: Build self-contained CLI archives (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
-    needs: [beta-version, ipfs, updater-wasm]
+    needs: [beta-version, ipfs, updater-wasm, wasmedge-static]
     defaults:
       run:
         shell: bash
@@ -304,7 +337,7 @@ jobs:
       KUBO_ARCHIVE: ${{ matrix.kubo_archive }}
       BINARY_NAME: ${{ matrix.binary_name }}
       KUBO_BINARY_NAME: ${{ matrix.kubo_binary_name }}
-      WASMEDGE_DIR: ${{ github.workspace }}/dist/.wasmedge
+      WASMEDGE_DIR: ${{ matrix.target_os == 'windows' && format('{0}/dist/.wasmedge', github.workspace) || format('{0}/.sdn-wasmedge-static/prefix', github.workspace) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -333,6 +366,18 @@ jobs:
         run: |
           choco install zip -y --no-progress
           echo "/c/msys64/mingw64/bin" >> "$GITHUB_PATH"
+      # Every non-Windows target links the runtime INTO the binary. Windows still
+      # ships the DLL: a static WasmEdge there needs an MSVC LLVM build that has
+      # not been proven, and a broken Windows artifact is worse than a bundled
+      # DLL. build-self-contained-cli.mjs takes --wasmedge-path only when a
+      # platform still needs it, so the two shapes coexist.
+      - name: Restore the static WasmEdge prefix
+        if: matrix.target_os != 'windows'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-relocatable-v2
+          fail-on-cache-miss: true
       - name: Install Windows WasmEdge runtime
         if: matrix.target_os == 'windows'
         run: |
@@ -362,6 +407,13 @@ jobs:
           test -f dist/wallet-ui/compat/index.js
       - name: Build self-contained CLI archive
         run: |
+          # Only a platform that still ships the runtime passes --wasmedge-path;
+          # a static binary stages nothing.
+          if [ "${TARGET_OS}" = "windows" ]; then
+            WASMEDGE_BUNDLE_ARG="--wasmedge-path ${WASMEDGE_DIR}"
+          else
+            WASMEDGE_BUNDLE_ARG=""
+          fi
           node deployment/release/build-self-contained-cli.mjs \
             --version "${PACKAGE_VERSION}" \
             --os "${TARGET_OS}" \
@@ -376,7 +428,7 @@ jobs:
             --hd-wallet-wasm-path "${PWD}/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" \
             --wallet-wasm-path "${PWD}/dist/wallet-wasm" \
             --wallet-ui-path "${PWD}/dist/wallet-ui" \
-            --wasmedge-path "${WASMEDGE_DIR}" \
+            ${WASMEDGE_BUNDLE_ARG} \
             --license-path "${PWD}/LICENSE" \
             --readme-path "${PWD}/README.md" \
             --manifest-signature "github-actions:${RELEASE_TAG}:${GITHUB_SHA}"
