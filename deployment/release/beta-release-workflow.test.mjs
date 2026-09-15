@@ -326,11 +326,19 @@ test('the static WasmEdge cache key covers everything that shapes a prefix', () 
   // whenever the build script, the toolchain-selection script, or the installed
   // package set (tagged by matrix.toolchain, since no hashFiles can see an
   // action's literal inputs) changes.
+  // The valid tags come from the matrix itself, not a list written here — a
+  // hardcoded list is the same staleness this test exists to catch, and it did
+  // go stale the first time the Linux toolchain moved.
+  const declared = [...workflow.matchAll(/^\s*toolchain:\s*([\w.-]+)\s*$/gm)].map((m) => m[1]);
+  assert(declared.length > 0, 'no matrix entry declares a toolchain tag');
+  const tags = [...new Set(declared)];
+
   const keys = [...workflow.matchAll(/key:\s*(wasmedge-static-[^\n]*)/g)].map((m) => m[1]);
   assert(keys.length >= 4, `expected every consumer to name the key, saw ${keys.length}`);
   for (const key of keys) {
     assert.match(key, /hashFiles\('scripts\/build-static-wasmedge\.sh', 'scripts\/wasmedge-static-env\.sh'\)/);
-    assert.match(key, /apt-llvm16|brew-llvm18|msys2-mingw64|matrix\.toolchain/);
+    const named = key.includes('matrix.toolchain') || tags.some((tag) => key.includes(tag));
+    assert(named, `key names no declared toolchain (${tags.join(', ')}): ${key}`);
   }
 
   // Hashing the whole workflow was the previous, far too broad answer: it threw
