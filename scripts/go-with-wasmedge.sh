@@ -103,7 +103,9 @@ if [[ -f "$WASMEDGE_DIR/link.flags" ]]; then
   # inherits them; static must not.
   export CGO_CFLAGS="-I${WASMEDGE_DIR}/include"
   export CGO_LDFLAGS="-L${WASMEDGE_DIR}/lib"
-  STATIC_LINK_FLAGS="$(tr -d '\n' < "$WASMEDGE_DIR/link.flags")"
+  # @PREFIX@ is substituted here, which is what makes a prefix built elsewhere
+  # (a cached CI artifact, another checkout) usable at whatever path it landed.
+  STATIC_LINK_FLAGS="$(tr -d '\n' < "$WASMEDGE_DIR/link.flags" | sed "s|@PREFIX@|${WASMEDGE_DIR}|g")"
   cd "$ROOT/sdn-server"
   case "${1:-}" in
     build|install|test)

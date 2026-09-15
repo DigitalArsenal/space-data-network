@@ -88,16 +88,28 @@ LLVM_CONFIG="${LLVM_CONFIG:-llvm-config-16}"
 LLVMLIBS="$($LLVM_CONFIG --link-static --libfiles | tr '\n' ' ')"
 
 
-# Record the EXACT link line beside the archives. go-with-wasmedge.sh reads this
-# file to decide it is looking at a static prefix and how to link it, so the
-# knowledge of archive order, LLVM's libraries and the per-platform extras lives
-# in one place — here, where they were built — instead of being re-derived by
-# every caller.
+# Make the prefix SELF-CONTAINED and RELOCATABLE.
+#
+# LLVM's archives are copied in beside WasmEdge's, and link.flags names every
+# archive through a @PREFIX@ placeholder that the consumer substitutes. Both
+# matter: a prefix that points at /usr/lib/llvm-16 or at the absolute path it
+# happened to be built in cannot be handed to another machine, another job, or
+# another checkout — which is exactly what a cached CI artifact is. Measured the
+# hard way: link.flags with absolute paths failed every downstream job with
+# "cannot find .../libwasmedgeAOT.a".
+for archive in $LLVMLIBS; do
+  [[ -f "$archive" ]] && cp -n "$archive" "$STATIC/lib/" 2>/dev/null || true
+done
+[[ -n "${ZSTD_STATIC:-}" && -f "${ZSTD_STATIC}" ]] && cp -n "$ZSTD_STATIC" "$STATIC/lib/" 2>/dev/null || true
+
 {
-  printf '%s' "$GRP $LLVMLIBS"
+  for archive in $GRP $LLVMLIBS ${ZSTD_STATIC:-}; do
+    [[ -n "$archive" ]] || continue
+    printf '@PREFIX@/lib/%s ' "$(basename "$archive")"
+  done
   case "$(uname -s)" in
-    Darwin) printf ' %s -lc++ -lm -lz -lncurses\n' "${ZSTD_STATIC:-}" ;;
-    *)      printf ' -lstdc++ -lm -ldl -lpthread -lz -lzstd -ltinfo\n' ;;
+    Darwin) printf -- '-lc++ -lm -lz -lncurses\n' ;;
+    *)      printf -- '-lstdc++ -lm -ldl -lpthread -lz -ltinfo\n' ;;
   esac
 } > "$STATIC/link.flags"
 
