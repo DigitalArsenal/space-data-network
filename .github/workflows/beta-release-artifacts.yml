@@ -53,6 +53,7 @@ jobs:
   wasmedge-static:
     name: Build static WasmEdge (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,8 +68,12 @@ jobs:
             runner: macos-15-intel
           # Windows: MSVC's lib.exe cannot perform the `ar -x` extraction
           # WasmEdge's static merge does, so the toolchain is clang + llvm-ar.
+          # NOT yet blocking: until a Windows static prefix is proven, a failure
+          # here must not skip the four platforms that ARE proven — zero
+          # artifacts is worse than four, and the failure stays visible.
           - label: windows-amd64
             runner: windows-latest
+            experimental: true
     defaults:
       run:
         shell: bash
@@ -100,7 +105,20 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           if [ "${RUNNER_OS}" = "Windows" ]; then
-            L="/c/Program Files/LLVM"
+            # Find LLVM rather than assume it: the runner image and the choco
+            # package disagree about where the cmake package lands, and a wrong
+            # guess fails as "could not find LLVMConfig.cmake".
+            L=""
+            for cand in "/c/Program Files/LLVM" "/c/ProgramData/chocolatey/lib/llvm/tools/LLVM" "$(dirname "$(dirname "$(command -v clang || true)")")"; do
+              if [ -n "$cand" ] && [ -f "$cand/lib/cmake/llvm/LLVMConfig.cmake" ]; then L="$cand"; break; fi
+            done
+            if [ -z "$L" ]; then
+              echo "no LLVM with a cmake package found; searched:" >&2
+              ls -d "/c/Program Files/LLVM" "/c/ProgramData/chocolatey/lib/llvm/tools/LLVM" 2>/dev/null >&2 || true
+              find /c -maxdepth 4 -name LLVMConfig.cmake 2>/dev/null | head -5 >&2
+              exit 1
+            fi
+            echo "using LLVM at $L"
             export CC="$L/bin/clang.exe" CXX="$L/bin/clang++.exe" \
                    CMAKE_AR="$L/bin/llvm-ar.exe" \
                    LLVM_CONFIG="$L/bin/llvm-config.exe" \
@@ -305,6 +323,7 @@ jobs:
   cli:
     name: Build self-contained CLI archives (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental == true }}
     needs: [beta-version, ipfs, updater-wasm, wasmedge-static]
     defaults:
       run:
@@ -348,6 +367,8 @@ jobs:
           - target_os: windows
             target_arch: amd64
             runner: windows-latest
+            # Rides on the experimental Windows static prefix; see wasmedge-static.
+            experimental: true
             kubo_platform: windows-amd64
             kubo_archive: zip
             archive_extension: zip
