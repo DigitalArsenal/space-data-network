@@ -83,11 +83,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          # The key HASHES THE BUILD SCRIPT, so it moves whenever the recipe
-          # does. Hand-bumped suffixes went stale twice: once restoring a
-          # link.flags full of absolute paths, once restoring one missing
-          # -lc++abi, and in both cases the fix silently never ran.
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.label }}-${{ hashFiles('scripts/build-static-wasmedge.sh') }}
+          # The key hashes EVERYTHING THAT DECIDES HOW THE PREFIX IS BUILT —
+          # the script AND this workflow, because the toolchain selection lives
+          # here. Staleness has bitten three times, each time as a fix that
+          # silently never ran: absolute paths in link.flags, a missing
+          # -lc++abi, then a prefix still compiled with Homebrew's libc++ after
+          # the workflow moved to the system toolchain. darwin-amd64 passed and
+          # darwin-arm64 failed on the same commit purely because one had a
+          # cache and the other did not.
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.label }}-${{ hashFiles('scripts/build-static-wasmedge.sh', '.github/workflows/beta-release-artifacts.yml') }}
       - name: Install build toolchain (Linux)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
         run: |
@@ -155,7 +159,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-${{ hashFiles('scripts/build-static-wasmedge.sh') }}
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-${{ hashFiles('scripts/build-static-wasmedge.sh', '.github/workflows/beta-release-artifacts.yml') }}
           fail-on-cache-miss: true
       - uses: actions/setup-node@v4
         with:
@@ -434,7 +438,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-${{ hashFiles('scripts/build-static-wasmedge.sh') }}
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-${{ hashFiles('scripts/build-static-wasmedge.sh', '.github/workflows/beta-release-artifacts.yml') }}
           fail-on-cache-miss: true
       - name: Download target Kubo binary
         run: |
