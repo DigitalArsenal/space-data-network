@@ -94,12 +94,31 @@ test('local Go suites serialize package builds while bypassing the test cache', 
 
   for (const [functionName, args] of [['run_go', goArgs], ['run_go_race', raceArgs]]) {
     assert.ok(args.includes('-p=1'), `${functionName} must serialize package builds with -p=1`);
-    assert.deepEqual(
-      args.slice(-2),
-      ['-count=1', './...'],
-      `${functionName} must bypass cached results for the complete module`,
-    );
+    assert.ok(args.includes('-count=1'), `${functionName} must bypass cached results`);
   }
+
+  // run_go no longer runs ./... — the packages that time out a cold runner are
+  // split into run_go_heavy at a 60-minute budget. That is only safe if the set
+  // it excludes is genuinely run somewhere, so assert BOTH halves exist and
+  // that nothing is quietly dropped between them.
+  assert.ok(
+    goArgs.at(-1) === '$pkgs',
+    'run_go must run the filtered package list, not ./...',
+  );
+  assert.match(script, /pkgs=\$\([^)]*list \.\/\.\.\.[^)]*grep -Ev "\$\(heavy_pkg_filter\)"/);
+  const heavyArgs = extractGoTestArguments(extractShellFunction(script, 'run_go_heavy'), 'run_go_heavy');
+  assert.ok(heavyArgs.includes('-p=1'), 'run_go_heavy must serialize package builds');
+  assert.ok(heavyArgs.includes('-count=1'), 'run_go_heavy must bypass cached results');
+  assert.deepEqual(
+    heavyArgs.filter((arg) => arg.startsWith('-timeout=')),
+    ['-timeout=60m'],
+    'run_go_heavy must carry the long budget the heavy packages were split out for',
+  );
+  assert.ok(
+    heavyArgs.at(-1) === '$HEAVY_GO_PACKAGES',
+    'run_go_heavy must run exactly the set heavy_pkg_filter excludes',
+  );
+  assert.deepEqual(raceArgs.at(-1), './...', 'run_go_race still covers the whole module');
 
   assert.deepEqual(
     goArgs.filter((arg) => arg.startsWith('-timeout=')),
@@ -163,21 +182,25 @@ test('IPFS asset release script skips browser downloads and bounds dependency in
   assert.match(script, /log "Installing IPFS WebUI dependencies"/);
 });
 
-test('Docker release image copies local Go replacement modules before dependency download', () => {
-  const dockerfile = readRepoFile('deployment/docker/Dockerfile');
+// The published-deps law: a build consumes PUBLISHED packages, never a local
+// gitlink copy. This test used to assert the OPPOSITE — that the Dockerfile
+// staged a `replace` onto sdn-server/third_party/spacedatastandards-go before
+// `go mod download`. That replacement is gone (SDS is required at a real
+// version), so the guarantee worth holding is that it does not come back: a
+// replace directive would make the released image build from whatever happened
+// to be in the working tree.
+test('Docker release image builds against published Go modules, never a local replacement', () => {
   const goMod = readRepoFile('sdn-server/go.mod');
 
-  const replacementModuleCopy = 'COPY sdn-server/third_party/spacedatastandards-go/go.mod ./sdn-server/third_party/spacedatastandards-go/go.mod';
-  const goModDownload = 'RUN go mod download';
-
-  assert.match(goMod, /replace github\.com\/DigitalArsenal\/spacedatastandards\.org\/lib\/go => \.\/third_party\/spacedatastandards-go/);
-  assert.ok(
-    dockerfile.indexOf(replacementModuleCopy) > -1,
-    'Dockerfile must copy the local SDS replacement module go.mod before go mod download',
-  );
-  assert.ok(
-    dockerfile.indexOf(replacementModuleCopy) < dockerfile.indexOf(goModDownload),
-    'local replacement module go.mod must be available before go mod download runs',
+  const replaces = goMod
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('replace ') || (line.includes('=>') && !line.startsWith('//')));
+  assert.deepEqual(replaces, [], 'sdn-server/go.mod must carry no replace directives');
+  assert.match(
+    goMod,
+    /github\.com\/DigitalArsenal\/spacedatastandards\.org\/lib\/go v\d+\.\d+\.\d+/,
+    'SDS must be required at a published version',
   );
 });
 
