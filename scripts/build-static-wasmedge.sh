@@ -129,6 +129,22 @@ LLVM_CONFIG="${LLVM_CONFIG:-llvm-config-16}"
 LLVMLIBS="$($LLVM_CONFIG --link-static --libfiles | tr '\n' ' ')"
 
 
+# FIND THE STATIC ZSTD. LLVM's Support library calls ZSTD_decompress, so the
+# archive must come with us or the link fails with undefined references to it.
+# Discovered rather than required from the caller: only macOS was setting
+# ZSTD_STATIC, which left Linux linking nothing at all for zstd once the
+# hand-written -lzstd came off the link line.
+if [[ -z "${ZSTD_STATIC:-}" ]]; then
+  for cand in \
+    /usr/lib/x86_64-linux-gnu/libzstd.a \
+    /usr/lib/aarch64-linux-gnu/libzstd.a \
+    /usr/lib/libzstd.a \
+    /mingw64/lib/libzstd.a; do
+    [[ -f "$cand" ]] && { ZSTD_STATIC="$cand"; break; }
+  done
+fi
+[[ -n "${ZSTD_STATIC:-}" ]] && echo "static zstd: $ZSTD_STATIC" || echo "no static zstd found; relying on the link line" >&2
+
 # Make the prefix SELF-CONTAINED and RELOCATABLE.
 #
 # LLVM's archives are copied in beside WasmEdge's, and link.flags names every
