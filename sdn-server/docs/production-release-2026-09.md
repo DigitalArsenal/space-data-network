@@ -39,3 +39,29 @@ run unattended:
 - CelesTrak politeness: one request per file per three hours from one address.
   A forced re-fire inside that window earned host-02 a 403 for seven hours on
   2026-09-15.
+
+## Fleet after the roll (2026-09-15 12:15Z)
+
+- Both hosts self-upgraded from feed sequence 1789474399 (`update signal` →
+  stage → helper swap → systemd restart): `version=1.0.5-beta.1` on host-01
+  (`/opt/spacedatanetwork/sdn-bundle`) and host-02 (`/opt/sdn-retriever/sdn-bundle`);
+  host-01 booted with the AOT engine, the control database open in about two
+  seconds, eight engine sources restored.
+- host-01 `/health` = `{"status":"ok","alerts":{"error":0,"warning":0}}`.
+  Its SATCAT lane first-fired at 12:15:56Z (files changed upstream at 06:39Z)
+  and ingested a fresh catalog; the current-batch reconcile drops the older
+  batch when the ingest completes.
+- host-02 `/health` = `degraded`, four errors, all expected and visible for the
+  first time: two `lane_failing` seeded from the ledger (cellular 17, M-Lab 5
+  consecutive failures; the rebuilt 304-aware bundles are loaded and run at the
+  next tick), two `publication_rejected` for stored WXF and NCD PNMs attributed
+  to host-01 that fail signature verification on every catch-up ("invalid
+  Ed25519 signature"). Open item: those two stored publications predate the
+  current signing scheme or key; drop them or teach the catch-up to stop
+  retrying a publication that can never verify.
+- Docker Hub: the rewritten `docker-publish.yml` ran for the tag and pushed
+  `dockerdigitalarsenal/space-data-network:1.0.5-beta.1` (+ `:beta`), digest
+  `sha256:af6af5ddf5851bf80e6ba84825cfe6b20f18c748375c892efb1ea483891d1081`, cosign-signed.
+- The fleet lane needed a repair first: the desktop rework had deleted the
+  updater helpers `sign-update-manifest.mjs` required (`0cab9527` moves them to
+  `deployment/release/sdn-updater/`).
