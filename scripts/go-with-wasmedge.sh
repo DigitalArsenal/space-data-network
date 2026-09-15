@@ -88,6 +88,34 @@ CGO_CFLAGS_VALUE="${CGO_CFLAGS:-}"
 CGO_LDFLAGS_VALUE="${CGO_LDFLAGS:-}"
 
 CGO_CFLAGS_VALUE="${CGO_CFLAGS_VALUE}${CGO_CFLAGS_VALUE:+ }-I${WASMEDGE_DIR}/include"
+
+# A STATIC prefix is self-describing: build-static-wasmedge.sh leaves link.flags
+# beside the archives holding the exact link line it built them for (archive
+# order, LLVM's own libraries, the per-platform extras). When that file is
+# present we link the runtime INTO the binary and skip every dynamic
+# concern below — no -lwasmedge, no rpath, nothing for a host to provide.
+if [[ -f "$WASMEDGE_DIR/link.flags" ]]; then
+  # BUILD THE FLAGS FROM SCRATCH. An inherited CGO_LDFLAGS pointing at another
+  # WasmEdge is the one thing that can silently undo all of this: the linker
+  # finds that -L first, resolves -lwasmedge to a DYLIB there, and the binary
+  # ships depending on a path only this machine has. Measured exactly that way
+  # on a shell exporting the dynamic SDK. The dynamic branch below deliberately
+  # inherits them; static must not.
+  export CGO_CFLAGS="-I${WASMEDGE_DIR}/include"
+  export CGO_LDFLAGS="-L${WASMEDGE_DIR}/lib"
+  STATIC_LINK_FLAGS="$(tr -d '\n' < "$WASMEDGE_DIR/link.flags")"
+  cd "$ROOT/sdn-server"
+  case "${1:-}" in
+    build|install|test)
+      verb="$1"; shift
+      exec go "$verb" -ldflags "-linkmode external -extldflags \"${STATIC_LINK_FLAGS}\"" "$@"
+      ;;
+    *)
+      exec go "$@"
+      ;;
+  esac
+fi
+
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     CGO_LDFLAGS_VALUE="${CGO_LDFLAGS_VALUE}${CGO_LDFLAGS_VALUE:+ }-L${WASMEDGE_DIR}/bin -L${WASMEDGE_DIR}/lib -lwasmedge"
