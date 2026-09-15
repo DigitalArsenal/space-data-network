@@ -417,9 +417,9 @@ jobs:
           path: dist/update-feed/spacedatanetwork-update-feed-${{ needs.beta-version.outputs.package_version }}.tar.gz
 
   desktop:
-    name: Build desktop app artifacts
+    name: Build desktop app artifacts (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
-    needs: [beta-version, ipfs]
+    needs: [beta-version, cli]
     defaults:
       run:
         shell: bash
@@ -428,17 +428,39 @@ jobs:
       matrix:
         include:
           - target_os: macos
+            target_arch: arm64
             runner: macos-14
+            cli_artifact: cli-darwin-arm64
+            cli_bundle: spacedatanetwork-VERSION-darwin-arm64.tar.gz
+            builder_args: --mac dmg zip --arm64
+          - target_os: macos
+            target_arch: x64
+            runner: macos-15-intel
+            cli_artifact: cli-darwin-amd64
+            cli_bundle: spacedatanetwork-VERSION-darwin-amd64.tar.gz
+            builder_args: --mac dmg zip --x64
           - target_os: windows
+            target_arch: x64
             runner: windows-latest
+            cli_artifact: cli-windows-amd64
+            cli_bundle: spacedatanetwork-VERSION-windows-amd64.zip
+            builder_args: --win nsis portable --x64
           - target_os: linux
+            target_arch: x64
             runner: ubuntu-latest
+            cli_artifact: cli-linux-amd64
+            cli_bundle: spacedatanetwork-VERSION-linux-amd64.tar.gz
+            builder_args: --linux AppImage deb tar.xz --x64
+    env:
+      PACKAGE_VERSION: ${{ needs.beta-version.outputs.package_version }}
     steps:
       - uses: actions/checkout@v4
+      # The desktop app SHIPS the node: each app carries the self-contained
+      # bundle the cli job built for its own operating system and architecture.
       - uses: actions/download-artifact@v4
         with:
-          name: ipfs-assets
-          path: dist/ipfs
+          name: ${{ matrix.cli_artifact }}
+          path: dist/cli
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -448,39 +470,29 @@ jobs:
         if: matrix.target_os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm fakeroot dpkg
+          sudo apt-get install -y fakeroot dpkg
       - name: Install Desktop dependencies
         run: npm --prefix desktop ci
-      - name: Restore exact IPFS-published assets
+      - name: Stage the node bundle
         run: |
-          rm -rf desktop/assets/sdn-ui desktop/assets/webui
-          mkdir -p desktop/assets/sdn-ui desktop/assets/webui
-          cp -R dist/ipfs/sdn-admin/. desktop/assets/sdn-ui/
-          cp -R dist/ipfs/ipfs-webui/. desktop/assets/webui/
-      - name: Build macOS Desktop artifacts
-        if: matrix.target_os == 'macos'
+          bundle="dist/cli/${CLI_BUNDLE/VERSION/${PACKAGE_VERSION}}"
+          test -f "${bundle}"
+          node desktop/scripts/stage-node-bundle.mjs --from "${bundle}"
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npm --prefix desktop exec -- electron-builder --publish never --mac dmg zip
-      - name: Build Windows Desktop artifacts
-        if: matrix.target_os == 'windows'
+          CLI_BUNDLE: ${{ matrix.cli_bundle }}
+      - name: Build Desktop artifacts
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           WIN_CSC_LINK: ''
           WIN_CSC_KEY_PASSWORD: ''
-        run: npm --prefix desktop exec -- electron-builder --publish never --win nsis portable
-      - name: Build Linux Desktop artifacts
-        if: matrix.target_os == 'linux'
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npm --prefix desktop exec -- electron-builder --publish never --linux AppImage deb rpm
+        run: npm --prefix desktop exec -- electron-builder --publish never ${{ matrix.builder_args }}
       - name: Collect Desktop artifacts
         run: |
           mkdir -p dist/desktop
           find desktop/dist -maxdepth 1 -type f -exec cp {} dist/desktop/ \;
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.target_os }}
+          name: desktop-${{ matrix.target_os }}-${{ matrix.target_arch }}
           path: dist/desktop/*
           if-no-files-found: error
 

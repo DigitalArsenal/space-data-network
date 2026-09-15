@@ -1,147 +1,140 @@
 // @ts-check
-const { registerAppStartTime, getSecondsSinceAppStart } = require('./metrics/appStart')
-registerAppStartTime()
+//
+// Space Data Network desktop: a shell that runs the bundled node and shows the
+// node's own dashboard.
+//
+// It owns four things and nothing else: the node child process, one window,
+// the tray, and the logs directory. The dashboard, the API, the wallet sign-in
+// assets and the Kubo the node needs are all inside the node bundle and are
+// served by the node itself.
 require('v8-compile-cache')
 
-const { app, dialog, protocol } = require('electron')
+const { app, ipcMain, shell } = require('electron')
+const { join } = require('node:path')
 
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'sdn',
-    privileges: {
-      standard: true,
-      secure: true,
-      allowServiceWorkers: true,
-      supportFetchAPI: true,
-      corsEnabled: true
-    }
-  },
-  {
-    scheme: 'webui',
-    privileges: {
-      standard: true,
-      secure: true,
-      allowServiceWorkers: true,
-      supportFetchAPI: true,
-      corsEnabled: true
-    }
-  }
-])
-
-if (process.env.NODE_ENV === 'test') {
-  const path = require('path')
-  if (process.env.HOME) {
-    app.setPath('home', process.env.HOME)
-    app.setPath('userData', path.join(process.env.HOME, 'data'))
-  }
+if (process.env.NODE_ENV === 'test' && process.env.HOME) {
+  app.setPath('home', process.env.HOME)
+  app.setPath('userData', join(process.env.HOME, 'data'))
 }
 
-const getCtx = require('./context')
-const fixPath = require('fix-path')
 const logger = require('./common/logger')
-const setupProtocolHandlers = require('./protocol-handlers')
-const setupI18n = require('./i18n')
-const setupDaemon = require('./daemon')
-const setupDashboard = require('./dashboard')
-const setupWebUI = require('./webui')
-const setupAutoLaunch = require('./auto-launch')
-const setupAutoGc = require('./automatic-gc')
-const setupPubsub = require('./enable-pubsub')
-const setupNamesysPubsub = require('./enable-namesys-pubsub')
-const setupTakeScreenshot = require('./take-screenshot')
 const setupAppMenu = require('./app-menu')
-const setupArgvFilesHandler = require('./argv-files-handler')
-const setupAutoUpdater = require('./auto-updater')
-const setupTray = require('./tray')
-const setupAnalytics = require('./analytics')
-const setupSecondInstance = require('./second-instance')
-const { analyticsKeys } = require('./analytics/keys')
-const handleError = require('./handleError')
-const createSplashScreen = require('./splash/create-splash-screen')
+const autoLaunch = require('./auto-launch')
+const { errorDialog, showDialog } = require('./dialogs')
+const { MainWindow } = require('./window')
+const { NodeTray } = require('./tray')
+const { NodeSupervisor } = require('./node/supervisor')
+const { showRecoveryPhrase } = require('./node/identity')
+const { PHASES } = require('./node/ready')
+const { IS_MAC } = require('./common/consts')
 
-configureWebAuthnPlatformAuthenticator()
-
-// Hide Dock
-if (app.dock) app.dock.hide()
-
-// Sets User Model Id so notifications work on Windows 10
 app.setAppUserModelId('org.spacedatanetwork.desktop')
 
-// Fixes $PATH on macOS
-fixPath()
-
-// Only one instance can run at a time
+// One node per machine, so one instance of the app that runs it.
 if (!app.requestSingleInstanceLock()) {
-  process.exit(0)
+  app.exit(0)
 }
 
-app.on('will-finish-launching', () => {
-  setupProtocolHandlers()
-})
+const window = new MainWindow()
+/** @type {NodeSupervisor|null} */
+let supervisor = null
+/** @type {NodeTray|null} */
+let tray = null
+let quitting = false
 
-process.on('uncaughtException', handleError)
-process.on('unhandledRejection', handleError)
-
-function configureWebAuthnPlatformAuthenticator () {
-  if (typeof app.configureWebAuthn !== 'function') return
-  const keychainAccessGroup = process.env.SDN_WEBAUTHN_KEYCHAIN_ACCESS_GROUP || process.env.SDN_WEB_AUTHN_KEYCHAIN_ACCESS_GROUP || ''
-  if (!keychainAccessGroup) {
-    logger.debug('Touch ID WebAuthn platform authenticator is available but no SDN_WEBAUTHN_KEYCHAIN_ACCESS_GROUP is configured')
-    return
-  }
+async function quit () {
+  if (quitting) return
+  quitting = true
+  logger.info('[app] quitting')
   try {
-    app.configureWebAuthn({
-      touchID: { keychainAccessGroup }
-    })
-    logger.info('Touch ID WebAuthn platform authenticator enabled')
+    await supervisor?.stop()
   } catch (err) {
-    logger.warn(`failed to enable Touch ID WebAuthn platform authenticator: ${err.message || err}`)
+    logger.error(/** @type {Error} */(err))
+  }
+  tray?.destroy()
+  app.exit(0)
+}
+
+function openDashboard () {
+  window.show()
+  if (supervisor?.state.phase === PHASES.READY && supervisor.dashboardUrl) {
+    window.showDashboard(supervisor.dashboardUrl)
   }
 }
+
+function showLogs () {
+  shell.openPath(logger.logsPath).then((err) => { if (err) logger.warn(`[app] could not open logs: ${err}`) })
+}
+
+function restartNode () {
+  window.show()
+  window.showStatus()
+  supervisor?.restart().catch((err) => {
+    logger.error(/** @type {Error} */(err))
+    errorDialog(err, 'Could not restart the node')
+  })
+}
+
+function recoveryPhrase () {
+  showRecoveryPhrase({
+    bundle: supervisor?.bundle ?? null,
+    configPath: supervisor?.configPath ?? '',
+    parent: window.window ?? undefined
+  }).catch((err) => logger.error(/** @type {Error} */(err)))
+}
+
+const actions = { openDashboard, restartNode, showLogs, showRecoveryPhrase: recoveryPhrase, quit }
 
 async function run () {
-  try {
-    await app.whenReady()
-  } catch (e) {
-    dialog.showErrorBox('Electron could not start', e.stack)
-    app.exit(1)
-  }
+  await app.whenReady()
 
-  try {
-    await Promise.all([
-      createSplashScreen(),
-      setupDaemon(), // ctx.getIpfsd, startIpfs, stopIpfs, restartIpfs
-      setupAnalytics(), // ctx.countlyDeviceId
-      setupI18n(),
-      setupAppMenu(),
+  supervisor = new NodeSupervisor({
+    userDataPath: app.getPath('userData'),
+    appPath: app.getAppPath(),
+    resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    logsPath: logger.logsPath
+  })
 
-      setupDashboard(), // ctx.dashboard, launchDashboard
-      setupWebUI(), // ctx.webui, launchWebUI
-      setupAutoUpdater(), // ctx.manualCheckForUpdates
-      setupTray(), // ctx.tray
-      setupArgvFilesHandler(),
-      setupAutoLaunch(),
-      setupAutoGc(),
-      setupPubsub(),
-      setupNamesysPubsub(),
-      setupSecondInstance(),
-      // Setup global shortcuts
-      setupTakeScreenshot()
-    ])
-    const submitAppReady = () => {
-      logger.addAnalyticsEvent({ withAnalytics: analyticsKeys.APP_READY, dur: getSecondsSinceAppStart() })
-    }
-    const dashboard = await getCtx().getProp('dashboard')
-    if (dashboard.webContents.isLoading()) {
-      dashboard.webContents.once('dom-ready', submitAppReady)
-    } else {
-      submitAppReady()
-    }
-  } catch (e) {
-    const splash = await getCtx().getProp('splashScreen')
-    if (splash && !splash.isDestroyed()) splash.hide()
-    handleError(e)
-  }
+  setupAppMenu(actions)
+  window.create()
+  tray = new NodeTray(actions)
+  tray.start()
+  await autoLaunch.applyStoredPreference()
+
+  supervisor.on('state', (state) => {
+    window.applyState(state)
+    tray?.update(state)
+  })
+
+  ipcMain.on('node-state-request', () => window.send(supervisor?.snapshot() ?? {}))
+  ipcMain.on('node-restart', () => restartNode())
+  ipcMain.on('node-show-logs', () => showLogs())
+
+  app.on('second-instance', () => openDashboard())
+  app.on('activate', () => window.show())
+  // Closing the window leaves the node running in the tray; Quit stops it.
+  app.on('window-all-closed', () => { if (!IS_MAC && quitting) app.exit(0) })
+  app.on('before-quit', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    quit()
+  })
+
+  await supervisor.start()
 }
 
-run()
+process.on('uncaughtException', onFatal)
+process.on('unhandledRejection', onFatal)
+
+/** @param {unknown} err */
+function onFatal (err) {
+  if (err == null) return
+  logger.error(/** @type {Error} */(err))
+  if (app.isReady()) errorDialog(err, 'Space Data Network hit an error')
+}
+
+run().catch((err) => {
+  logger.error(err)
+  showDialog({ title: 'Space Data Network could not start', message: String(err?.message ?? err), type: 'error' })
+  app.exit(1)
+})

@@ -2,12 +2,12 @@ node_modules
 dist
 .cache
 .env
-config.gypi
-assets/webui
-assets/sdn-ui
-*.nupkg
+# The staged node bundle: hundreds of megabytes of built binaries whose home is
+# the release pipeline, never this repository.
+assets/sdn-node
 *.bak
 combined.log
 error.log
+logs/
 assets/build/snap-hooks
 test-results/

@@ -1,34 +1,48 @@
 appId: org.spacedatanetwork.desktop
-generateUpdatesFilesForAllChannels: true
+productName: Space Data Network
+copyright: Copyright © Space Data Network
 
 files:
-  - filter:
-    - src/**/*
-    - assets/**/*
-    - node_modules/**/*
-    - package.json
+  - src/**/*
+  - assets/**/*
+  - '!assets/sdn-node/**/*'
+  - node_modules/**/*
+  - package.json
 
 directories:
   buildResources: assets/build
 
-asarUnpack: 'src/**/scripts/**/*'
+# The node bundle ships beside the asar, never inside it: its binaries have to
+# be executable files on disk, and an asar entry is not a file the OS can exec.
+extraResources:
+  - from: assets/sdn-node
+    to: sdn-node
+    filter: ['**/*']
 
+# Notarization runs only when APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
+# APPLE_TEAM_ID are all set; otherwise the hook returns immediately.
 afterSign: './pkgs/macos/notarize-build.js'
+# With no signing identity the app is ad-hoc signed, which is what lets it run
+# on Apple Silicon at all.
+afterPack: './pkgs/macos/adhoc-sign.js'
 
 mac:
-  artifactName: ${name}-${version}-squirrel.${ext}
+  artifactName: ${name}-${version}-mac-${arch}.${ext}
   category: public.app-category.utilities
   darkModeSupport: true
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: './pkgs/macos/entitlements.mac.plist'
   entitlementsInherit: './pkgs/macos/entitlements.mac.plist'
+  # NOT universal: the bundled node is one architecture, so each app is too.
   target:
-    - target: default
-      arch: ['universal']
+    - target: dmg
+      arch: ['arm64', 'x64']
+    - target: zip
+      arch: ['arm64', 'x64']
 
 dmg:
-  artifactName: ${name}-${version}-mac.${ext}
+  artifactName: ${name}-${version}-mac-${arch}.${ext}
   iconSize: 160
   iconTextSize: 12
   window:
@@ -44,17 +58,15 @@ dmg:
       path: /Applications
 
 win:
+  artifactName: ${name}-${version}-win-${arch}.${ext}
   target:
-    - nsis
-    - portable
-  azureSignOptions:
-    publisherName: 'Protocol Labs, Inc'
-    endpoint: 'https://eus.codesigning.azure.net'
-    certificateProfileName: 'ipfs-desktop'
-    codeSigningAccountName: 'pl-code-signing'
+    - target: nsis
+      arch: ['x64']
+    - target: portable
+      arch: ['x64']
 
 nsis:
-  artifactName: ${name}-setup-${version}-${os}-${arch}.${ext}
+  artifactName: ${name}-${version}-win-${arch}.${ext}
   include: assets/build/nsis.nsh
   oneClick: false
   warningsAsErrors: false
@@ -63,48 +75,27 @@ nsis:
   allowToChangeInstallationDirectory: true
 
 portable:
-  artifactName: ${name}-portable-${version}-${os}-${arch}.${ext}
+  artifactName: ${name}-portable-${version}-win-${arch}.${ext}
 
 linux:
-  artifactName: ${name}-${version}-${os}-${arch}.${ext}
+  artifactName: ${name}-${version}-linux-${arch}.${ext}
   executableName: space-data-network
   executableArgs:
     - --no-sandbox
   icon: space-data-network
-  category: Network;FileTransfer;P2P
-  synopsis: Space Data Network desktop client
+  category: Network
+  synopsis: Runs a Space Data Network node
+  description: Runs a Space Data Network node and opens the node's own dashboard.
   maintainer: release@spacedatanetwork.org
   target:
-    - tar.xz
-    - AppImage
-    - deb
-    - rpm
-    - snap
-    - freebsd
-
-snap:
-  confinement: strict
-  plugs:
-    - default
-    - network
-    - network-bind
-    - removable-media
-  publish:
-    - provider: github
-      owner: DigitalArsenal
-      repo: space-data-network
+    - target: AppImage
+      arch: ['x64']
+    - target: deb
+      arch: ['x64']
+    - target: tar.xz
+      arch: ['x64']
 
 publish:
   - provider: github
     owner: DigitalArsenal
     repo: space-data-network
-
-protocols:
-  - name: IPFS
-    role: Viewer
-    schemes:
-      - ipfs
-  - name: IPNS
-    role: Viewer
-    schemes:
-      - ipns
