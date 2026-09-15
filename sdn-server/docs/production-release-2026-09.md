@@ -62,6 +62,17 @@ run unattended:
 - Docker Hub: the rewritten `docker-publish.yml` ran for the tag and pushed
   `dockerdigitalarsenal/space-data-network:1.0.5-beta.1` (+ `:beta`), digest
   `sha256:af6af5ddf5851bf80e6ba84825cfe6b20f18c748375c892efb1ea483891d1081`, cosign-signed.
+- host-01 placement fix (12:53Z): its own three CelesTrak lanes tagged records
+  with the parser's default provider `space-data-network-02`, the same
+  (provider, source) namespace host-02's publications materialize into, so the
+  subscription retention and the local ingest kept dropping each other's rows
+  (CAT 106k → 14k → 112k within an hour). Per the owner's placement ruling
+  (2026-07-28: host-02 ingests, host-01 serves modules and consumes) the lanes
+  were removed from host-01's sidecar config (backup
+  `/root/config.module-delivery-sidecar.yaml.bak-<ts>`) and the service
+  restarted (ready in 138 s, `/health` ok). host-01 now holds CAT/OMM/SPW only
+  through host-02's signed publications; its leftover own-lane rows are
+  superseded as those publications materialize.
 - The fleet lane needed a repair first: the desktop rework had deleted the
   updater helpers `sign-update-manifest.mjs` required (`0cab9527` moves them to
   `deployment/release/sdn-updater/`).
