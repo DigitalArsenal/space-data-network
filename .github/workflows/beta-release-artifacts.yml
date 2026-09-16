@@ -754,6 +754,40 @@ jobs:
         run: |
           mkdir -p dist/cli-input
           GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" ./scripts/go-with-wasmedge.sh build -o "${PWD}/dist/cli-input/${BINARY_NAME}" ./cmd/spacedatanetwork
+      # THE WHOLE POINT OF THE STATIC PREFIX, ASSERTED PER TARGET.
+      #
+      # The Dockerfile has always checked this (`ldd | grep -qi wasmedge` and
+      # exit 1) but the five CLI archives did not. They set WASMEDGE_BUNDLE_ARG
+      # to empty so no runtime is STAGED beside the binary, which is a different
+      # claim: if the binary ever linked libwasmedge dynamically instead, the
+      # archive would ship something that cannot start on a machine without it,
+      # and nothing here would say so. That is the failure mode the whole static
+      # prefix exists to prevent, so it is worth one command per platform.
+      #
+      # Every leg builds natively (GOOS/GOARCH match the runner), so the host's
+      # own tools apply. Absence of the tool must not pass silently either.
+      - name: Prove the binary carries the runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="${PWD}/dist/cli-input/${BINARY_NAME}"
+          test -f "${bin}"
+          case "${TARGET_OS}" in
+            linux)
+              deps="$(ldd "${bin}" 2>&1 || true)"
+              printf '%s\n' "${deps}" | grep -i wasmedge && { echo "::error::${BINARY_NAME} links libwasmedge dynamically; the static prefix did not take"; exit 1; } || true
+              printf '%s\n' "${deps}" | grep -i 'libstdc++\|libgcc_s' && { echo "::error::${BINARY_NAME} links libstdc++/libgcc_s dynamically; they must be inlined"; exit 1; } || true
+              ;;
+            darwin)
+              deps="$(otool -L "${bin}")"
+              printf '%s\n' "${deps}" | grep -i wasmedge && { echo "::error::${BINARY_NAME} links libwasmedge dynamically; the static prefix did not take"; exit 1; } || true
+              ;;
+            windows)
+              deps="$(objdump -p "${bin}" | grep -i 'DLL Name' || true)"
+              printf '%s\n' "${deps}" | grep -i 'wasmedge\|libstdc++\|libgcc' && { echo "::error::${BINARY_NAME} imports a runtime DLL; it must be linked in"; exit 1; } || true
+              ;;
+          esac
+          echo "${BINARY_NAME}: no runtime library dependency"
       - name: Stage wallet sign-in assets
         run: |
           SDN_WALLET_NODE_MODULES="${PWD}/sdn-js/node_modules" deployment/wallet-wasm/stage-wallet-wasm.sh \
