@@ -7,18 +7,20 @@ network:
   listen:
     - /ip4/127.0.0.1/tcp/14001
     - /ip4/127.0.0.1/tcp/14080/ws
-  bootstrap:
-    - /ip4/159.203.150.8/tcp/4004/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
-    # Corrected 2026-07-30 against the live listeners. The older note here said
-    # the sdn.spaceaware.io sidecar has NO direct public libp2p listener; that is
-    # no longer true — it listens on 0.0.0.0:4004 ws (plus 127.0.0.1:18080), and
-    # the entry above is the route two sibling nodes hold open today with the
-    # peer id verified. The note was right about :4001: that is a kubo node, and
-    # 159.203.150.8:4001 measured CLOSED, so no 4001 entry survives here.
-    # wss/443 through nginx (the DEFAULT_EDGE_RELAYS path) stays as the
-    # browser-reachable alternate.
-    - /dns4/sdn.spaceaware.io/tcp/443/wss/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
-    - /ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U
+  # NO bootstrap list here, deliberately. A configured list REPLACES the
+  # built-in defaults instead of extending them, and the defaults are the only
+  # thing contributing a public Amino DHT bootstrapper. This file used to name
+  # the two SDN production peers and nothing else, which left every dev node
+  # with a near-empty routing table: not findable through the rendezvous, and
+  # unable to discover any peer it had not been handed directly. It reads as
+  # the obviously correct config and is why the discovery path was misdiagnosed
+  # three times.
+  #
+  # bootstrap.DefaultBootstrapAddresses() already includes BOTH SDN production
+  # peers (159.203.150.8:4004/ws spaceaware, 167.172.219.213:4001 celestrak)
+  # plus the public DHT bootstrappers, so the defaults are strictly better than
+  # what was here. The wss/443-through-nginx route stays the browser-reachable
+  # alternate via the edge-relay path.
   edge_relays: []
   max_connections: 100
   enable_relay: false

@@ -2196,6 +2196,25 @@ func (n *Node) Start(ctx context.Context) error {
 		log.Warn("Configured bootstrap peers were empty or invalid; falling back to built-in defaults")
 	}
 
+	// A CONFIGURED BOOTSTRAP LIST REPLACES THE DEFAULTS, IT DOES NOT EXTEND
+	// THEM, and the defaults are the only thing contributing a public Amino DHT
+	// bootstrapper. Naming just the SDN peers therefore reads as obviously
+	// right and leaves the node with no route into the public DHT: its routing
+	// table stays near empty, the rendezvous announce has nowhere to walk to,
+	// and no other node can ever find it — while the node itself looks
+	// completely healthy, has peers, and serves its API.
+	//
+	// This is the config that our own dev files shipped, and it was misread as
+	// a broken discovery implementation three separate times before anyone
+	// looked at the bootstrap list. Say it once, at startup, where it is cheap.
+	if !usedFallback && len(pinnedPeers) > 0 && !bootstrap.HasPublicDHTBootstrap(pinnedPeers) {
+		log.Warnf("None of the %d configured bootstrap peers is a public DHT bootstrapper. A configured "+
+			"bootstrap list REPLACES the built-in defaults, so unless these peers bridge to the public DHT "+
+			"themselves this node will not join it: it will not be findable through the SDN rendezvous and "+
+			"will not discover peers it was not explicitly told about. Remove network.bootstrap to use the "+
+			"defaults, which already include the SDN production peers.", len(pinnedPeers))
+	}
+
 	// Bootstrap says WHO WE DIAL; trusted_peers says WHOSE DATA WE ACCEPT.
 	// They are independent settings, and when they disagree the node behaves
 	// perfectly while doing nothing: it connects to the producer, subscribes
