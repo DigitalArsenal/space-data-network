@@ -114,14 +114,19 @@ RUN mkdir -p /app/data && chown -R sdn:sdn /app
 
 ENV SDN_WEBUI_PATH=/app/webui
 ENV HOME=/home/sdn
+# The AOT cache belongs in the VOLUME, not the image and not a container-local
+# home. It holds native code compiled for this host's CPU, so it must survive
+# container recreation (or every new container pays the compile again) and must
+# never be shared between hosts through the image.
+ENV XDG_CACHE_HOME=/app/data/cache
 
 USER sdn
 
-# A container has no AOT cache. Without a precompiled artifact the daemon opens
-# the FlatSQL engine in the interpreter (~100x slower for every query) and says
-# so once at boot. Prewarm at build time, as the same user and HOME the daemon
-# runs under, so the running container finds a native artifact.
-RUN /app/spacedatanetwork prewarm-aot
+# NOT prewarmed here. An AOT artifact is native code for the CPU that compiled
+# it, and this image is meant to run anywhere: built on a runner with AVX-512,
+# the baked artifact killed the node with "SIGILL: illegal instruction" inside
+# WasmEdge_VMExecuteRegistered on any host without it. The entrypoint compiles
+# on first start instead, for the CPU actually present, into the data volume.
 
 EXPOSE 5001 4001 4001/udp 8080 8081
 
@@ -131,5 +136,7 @@ EXPOSE 5001 4001 4001/udp 8080 8081
 # key-at-rest password from the container's machine fingerprint.
 VOLUME /app/data
 
-ENTRYPOINT ["/app/spacedatanetwork"]
+COPY deployment/docker/entrypoint.sh /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["daemon", "--config", "/app/config/full-docker.yaml"]

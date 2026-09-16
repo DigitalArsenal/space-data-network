@@ -465,7 +465,16 @@ test('single Dockerfile defaults to full node and keeps edge mode as command ove
   assert.match(dockerfile, /go build -tags edge[\s\S]*-o \/out\/spacedatanetwork-edge \.\/cmd\/spacedatanetwork-edge/);
   // Fails the build rather than shipping an image that needs a runtime present.
   assert.match(dockerfile, /ldd \/out\/spacedatanetwork \| grep -qi wasmedge/);
-  assert.match(dockerfile, /ENTRYPOINT \["\/app\/spacedatanetwork"\]/);
+  // The entrypoint is a thin wrapper, not the binary directly: an AOT artifact
+  // is native code for the CPU that compiles it, so it cannot be baked into a
+  // portable image (doing so killed nodes with SIGILL on hosts whose CPU lacked
+  // the builder's instruction set). The wrapper compiles on first start and
+  // must still exec the real binary with the container's command intact.
+  assert.match(dockerfile, /ENTRYPOINT \["\/app\/entrypoint\.sh"\]/);
+  assert.doesNotMatch(dockerfile, /^RUN \/app\/spacedatanetwork prewarm-aot$/m);
+  const entrypoint = readRepoFile('deployment/docker/entrypoint.sh');
+  assert.match(entrypoint, /exec \/app\/spacedatanetwork "\$@"/);
+  assert.match(entrypoint, /prewarm-aot/);
   assert.match(dockerfile, /CMD \["daemon", "--config", "\/app\/config\/full-docker\.yaml"\]/);
 });
 
