@@ -90,13 +90,15 @@ jobs:
             toolchain: brew-llvm18
           # Windows: MSVC's lib.exe cannot perform the `ar -x` extraction
           # WasmEdge's static merge does, so the toolchain is clang + llvm-ar.
-          # NOT yet blocking: until a Windows static prefix is proven, a failure
-          # here must not skip the four platforms that ARE proven — zero
-          # artifacts is worse than four, and the failure stays visible.
+          #
+          # NOW BLOCKING. This was non-blocking "until a Windows static prefix
+          # is proven"; it is proven — run 35095153877 built the prefix and
+          # linked a self-contained windows-amd64 CLI with zero undefined
+          # references. A regression here should stop the release rather than
+          # quietly ship four platforms out of five.
           - label: windows-amd64
             runner: windows-latest
             toolchain: msys2-mingw64
-            experimental: true
     defaults:
       run:
         shell: bash
@@ -547,8 +549,6 @@ jobs:
           - target_os: windows
             target_arch: amd64
             runner: windows-latest
-            # Rides on the experimental Windows static prefix; see wasmedge-static.
-            experimental: true
             toolchain: msys2-mingw64
             kubo_platform: windows-amd64
             kubo_archive: zip
@@ -828,10 +828,13 @@ jobs:
   desktop:
     name: Build desktop app artifacts (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
-    # The Windows leg consumes the experimental Windows CLI archive, so it
-    # inherits that leg's policy: it must not be able to skip the release for
-    # the three platforms that DO build. Same reasoning as wasmedge-static —
-    # zero artifacts is worse than three, and the failure stays visible.
+    # The Windows CLI archive it consumes is no longer experimental, but this
+    # leg still is: packaging that archive into an installer has never yet run
+    # to completion, because until the static link was fixed the archive did
+    # not exist. Its first known hazard is already fixed (stage-node-bundle.mjs
+    # assumed `unzip`, which Git for Windows does not ship); drop the flag once
+    # a Windows installer has actually been produced. Until then it must not be
+    # able to skip the release for the three platforms that DO build.
     continue-on-error: ${{ matrix.experimental == true }}
     needs: [beta-version, cli]
     defaults:
