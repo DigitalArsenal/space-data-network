@@ -999,9 +999,17 @@ type NetworkConfig struct {
 	// records (module-delivery provider discovery is unaffected) — it simply
 	// stops serving strangers' lookups off a 2-vCPU box.
 	//
-	// Set true only on a node that is deliberately deployed as public DHT
-	// infrastructure and sized for it.
-	DHTServer bool `yaml:"dht_server"`
+	// "always" is for a node deliberately deployed as public DHT
+	// infrastructure and sized for it: it serves even before AutoNAT has
+	// reached a verdict.
+	// DEFAULT IS "auto" (owner rule: a node must be able to discover AND be
+	// discovered through the DHT). Client mode gives only the first half — a
+	// client is never added to another peer's routing table and answers
+	// nothing, so FindPeer against it fails. Auto serves while AutoNAT reports
+	// this node reachable and falls back to client when it does not; an
+	// undialable node in a routing table is a dead entry that wastes every
+	// query walking through it. `dht_server: false` still means never.
+	DHTServer DHTServerMode `yaml:"dht_server"`
 
 	// Announce lists EXTRA multiaddrs this node advertises for itself, on top
 	// of what it actually binds. It exists because the browser-reachable
@@ -1742,8 +1750,10 @@ func Default() *Config {
 			// DHT SERVER stays opt-in. Serving the public IPFS DHT is an
 			// unbounded workload unrelated to anything this node is for, and
 			// it was the other half of that same incident.
-			EnableRelay:    RelayModeAuto,
-			DHTServer:      false,
+			EnableRelay: RelayModeAuto,
+			// Auto: serve the DHT while publicly reachable, so this node
+			// can be FOUND and not only find others.
+			DHTServer:      DHTServerModeAuto,
 			Announce:       []string{},
 			MaxMessageSize: 10 * 1024 * 1024, // 10MB default
 			MaxSchemaName:  256,              // 256 bytes max schema name

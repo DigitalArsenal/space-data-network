@@ -347,9 +347,24 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 // the DHT and still PROVIDES its own records, so module-delivery provider
 // discovery is unchanged. It only stops serving strangers' lookups.
 func publicDHTOptions(p dhtParticipation) []dht.Option {
-	mode := dht.ModeClient
-	if p == dhtParticipationServer {
+	// ModeAuto is the default and the point of the exercise: it switches
+	// between client and server on EvtLocalReachabilityChanged — the same
+	// event the relay watcher uses — so a reachable node SERVES the DHT and is
+	// therefore findable, while a node behind NAT stays a client.
+	//
+	// Being discoverable requires serving. A client is never added to another
+	// peer's routing table and answers no queries, so it can find everyone and
+	// nobody can find it.
+	mode := dht.ModeAuto
+	switch p {
+	case dhtParticipationServer:
+		// Serve even before AutoNAT has decided. For a node deployed as DHT
+		// infrastructure, where waiting for a verdict is the wrong default.
 		mode = dht.ModeAutoServer
+	case dhtParticipationClient:
+		// Explicit opt-out: query only, never answer. This is what host-01 set
+		// after 2026-08-08.
+		mode = dht.ModeClient
 	}
 	return []dht.Option{
 		dht.Mode(mode),
@@ -367,11 +382,17 @@ const (
 	// is never bootstrapped, so it joins nothing and answers nobody.
 	dhtParticipationOff dhtParticipation = iota
 	// dhtParticipationClient queries the DHT and publishes its own provider
-	// records without serving strangers' lookups.
+	// records without serving strangers' lookups. It also means this node
+	// CANNOT BE FOUND through the DHT: a client is in nobody's routing table.
+	// Explicit opt-out only.
 	dhtParticipationClient
-	// dhtParticipationServer serves the public Amino DHT. For nodes deliberately
-	// deployed as DHT infrastructure and sized for it.
+	// dhtParticipationServer serves the DHT regardless of reachability. For
+	// nodes deliberately deployed as DHT infrastructure and sized for it.
 	dhtParticipationServer
+	// dhtParticipationAuto serves while AutoNAT reports this node reachable
+	// and falls back to client when it does not. THE DEFAULT: a node must be
+	// able to discover and to be discovered, and only serving gives the second.
+	dhtParticipationAuto
 )
 
 // dhtParticipation resolves the two config knobs that govern DHT involvement.
@@ -389,10 +410,14 @@ func (n *Node) dhtParticipation() dhtParticipation {
 	if !n.config.Peers.EnableDHT {
 		return dhtParticipationOff
 	}
-	if n.config.Network.DHTServer {
+	switch n.config.Network.DHTServer {
+	case config.DHTServerModeAlways:
 		return dhtParticipationServer
+	case config.DHTServerModeNever:
+		return dhtParticipationClient
+	default:
+		return dhtParticipationAuto
 	}
-	return dhtParticipationClient
 }
 
 // announceAddrsFactory builds a libp2p AddrsFactory that APPENDS operator-set

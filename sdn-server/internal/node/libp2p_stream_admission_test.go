@@ -225,16 +225,22 @@ func TestPublicRelayServiceIsConditional(t *testing.T) {
 	}
 }
 
-// TestDHTDefaultsToClientMode pins the second donated workload. ModeAutoServer
-// was hardcoded, making every node a server for the public Amino DHT: 780
-// inbound connections from ~700 distinct internet IPs and 2105 kad-dht handler
-// warnings in 70 minutes on a box whose only job is module delivery.
-func TestDHTDefaultsToClientMode(t *testing.T) {
+// TestDHTServesOnlyWhenReachable pins the OWNER RULE: a node must be able to
+// discover AND be discovered through the DHT. Only the second needs serving —
+// a client is never added to another peer's routing table and answers nothing,
+// so it can find everyone and nobody can find it.
+//
+// What must never return is the UNCONDITIONAL version. ModeAutoServer was
+// hardcoded once: 780 inbound connections from ~700 distinct internet IPs and
+// 2105 kad-dht handler warnings in 70 minutes on a box whose only job was
+// module delivery. So: auto by default, tied to reachability, with an explicit
+// opt-out that is honoured.
+func TestDHTServesOnlyWhenReachable(t *testing.T) {
 	t.Parallel()
 
-	if config.Default().Network.DHTServer {
-		t.Fatalf("network.dht_server must default to false: serving the public IPFS DHT is an unbounded " +
-			"public workload unrelated to anything this node is for")
+	if got := config.Default().Network.DHTServer; got != config.DHTServerModeAuto {
+		t.Fatalf("network.dht_server defaults to %v, want auto: a reachable node must serve the DHT "+
+			"or it cannot be found through it", got)
 	}
 
 	// The observable difference between the two modes is whether the node
@@ -264,11 +270,18 @@ func TestDHTDefaultsToClientMode(t *testing.T) {
 	}
 
 	if registersKad(dhtParticipationClient) {
-		t.Fatalf("publicDHTOptions(dhtParticipationClient) must NOT serve /ipfs/kad/1.0.0: client mode still queries and " +
-			"still provides its own records, it just stops answering the whole internet's lookups")
+		t.Fatalf("publicDHTOptions(dhtParticipationClient) must NOT serve /ipfs/kad/1.0.0: an explicit opt-out has to " +
+			"be honoured — that is the setting host-01 made after 2026-08-08")
 	}
 	if !registersKad(dhtParticipationServer) {
 		t.Fatalf("publicDHTOptions(dhtParticipationServer) must serve /ipfs/kad/1.0.0 when a node is deliberately deployed as DHT infrastructure")
+	}
+	// AUTO must not serve until AutoNAT says this node is reachable. On a fresh
+	// host with no verdict that means client, so the unbounded workload can
+	// never be taken on by default — it is earned by being dialable.
+	if registersKad(dhtParticipationAuto) {
+		t.Fatalf("publicDHTOptions(dhtParticipationAuto) served /ipfs/kad/1.0.0 with no reachability verdict; " +
+			"auto must start as a client and become a server only once AutoNAT reports the node reachable")
 	}
 }
 
@@ -420,13 +433,17 @@ func TestOwnerSetEnableDHTIsHonoured(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		enableDHT bool
-		dhtServer bool
+		dhtServer config.DHTServerMode
 		want      dhtParticipation
 	}{
-		{"operator disabled the DHT", false, false, dhtParticipationOff},
-		{"operator disabled the DHT, server flag must not override", false, true, dhtParticipationOff},
-		{"DHT on, default is client", true, false, dhtParticipationClient},
-		{"DHT on, explicit server", true, true, dhtParticipationServer},
+		{"operator disabled the DHT", false, config.DHTServerModeNever, dhtParticipationOff},
+		{"operator disabled the DHT, server mode must not override", false, config.DHTServerModeAlways, dhtParticipationOff},
+		{"operator disabled the DHT, auto must not override either", false, config.DHTServerModeAuto, dhtParticipationOff},
+		// The default: serve once reachable, so this node can be FOUND.
+		{"DHT on, default is auto", true, config.DHTServerModeAuto, dhtParticipationAuto},
+		// The explicit opt-out host-01 made after 2026-08-08.
+		{"DHT on, explicit never", true, config.DHTServerModeNever, dhtParticipationClient},
+		{"DHT on, explicit always", true, config.DHTServerModeAlways, dhtParticipationServer},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n := &Node{config: &config.Config{}}
