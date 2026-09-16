@@ -277,6 +277,38 @@ func DefaultBootstrapAddresses() []string {
 	return out
 }
 
+// HasPublicDHTBootstrap reports whether the resolved set contains any of the
+// public Amino DHT bootstrappers.
+//
+// A configured bootstrap list REPLACES the built-in defaults rather than adding
+// to them, and the built-in defaults are the only thing putting a public
+// bootstrapper in the list. So a config that names only SDN peers — which reads
+// as the obviously correct thing to write — leaves the node with no route into
+// the public DHT at all: its routing table stays near empty, it cannot be found
+// through the rendezvous, and nothing about the node looks wrong. That
+// misconfiguration cost three separate misdiagnoses of the discovery path
+// before it was recognised as a config problem rather than a product one.
+//
+// Identity, not reachability: an operator running their own DHT-connected peers
+// is fine and will simply not match here, which is why the caller warns instead
+// of refusing.
+func HasPublicDHTBootstrap(peers []PeerInfo) bool {
+	defaults := make(map[peer.ID]struct{}, len(dht.DefaultBootstrapPeers))
+	for _, addr := range dht.DefaultBootstrapPeers {
+		info, err := peer.AddrInfoFromP2pAddr(addr)
+		if err != nil || info == nil {
+			continue
+		}
+		defaults[info.ID] = struct{}{}
+	}
+	for _, p := range peers {
+		if _, ok := defaults[p.AddrInfo.ID]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveBootstrapPeers parses the configured bootstrap list and falls back to
 // the built-in defaults if no valid pinned peers remain.
 func ResolveBootstrapPeers(addresses []string) ([]PeerInfo, bool, error) {

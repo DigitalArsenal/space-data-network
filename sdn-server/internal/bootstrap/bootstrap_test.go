@@ -298,3 +298,34 @@ func TestResolveBootstrapPeers_PreservesConfiguredPinnedPeers(t *testing.T) {
 		t.Fatalf("ResolveBootstrapPeers peer address = %q, want %q", peers[0].RawAddress, configured)
 	}
 }
+
+// A configured bootstrap list replaces the defaults rather than extending them,
+// so a list naming only SDN peers leaves the node with no route into the public
+// DHT. That config reads as obviously correct and made the discovery path look
+// broken three separate times, so the condition has to be detectable.
+func TestHasPublicDHTBootstrap(t *testing.T) {
+	sdnOnly, _, err := ResolveBootstrapPeers(productionBootstrapAddresses)
+	if err != nil {
+		t.Fatalf("resolving the SDN production peers: %v", err)
+	}
+	if len(sdnOnly) == 0 {
+		t.Fatal("the SDN production peers must resolve")
+	}
+	if HasPublicDHTBootstrap(sdnOnly) {
+		t.Error("the SDN production peers alone are not a public DHT bootstrapper")
+	}
+
+	// The built-in defaults are what a node gets when it does not override the
+	// list, and they must carry a public bootstrapper or nothing ever joins.
+	defaults, _, err := ResolveBootstrapPeers(DefaultBootstrapAddresses())
+	if err != nil {
+		t.Fatalf("resolving the defaults: %v", err)
+	}
+	if !HasPublicDHTBootstrap(defaults) {
+		t.Fatal("the built-in defaults must include a public DHT bootstrapper")
+	}
+
+	if HasPublicDHTBootstrap(nil) {
+		t.Error("an empty set cannot contain a bootstrapper")
+	}
+}
