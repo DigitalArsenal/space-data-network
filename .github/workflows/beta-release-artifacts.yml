@@ -366,12 +366,21 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: dockerdigitalarsenal
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # For the LABELS only. The tags this also computes are deliberately NOT
+      # passed to the build below: a push-by-digest leg must not claim them.
+      # Without this step the per-architecture images lose their OCI source,
+      # revision and created annotations, which the single-arch job did emit.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
       - id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           file: deployment/docker/Dockerfile
           platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           provenance: true
           sbom: true
