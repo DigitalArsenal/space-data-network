@@ -53,9 +53,39 @@ function findBundleRoot (path) {
   throw new Error(`no manifest.json under ${path}: that is not a node bundle`)
 }
 
+// A .zip only ever arrives on Windows (it is what the cli job uploads there),
+// and `unzip` is NOT part of Git for Windows, which is the bash the desktop job
+// runs in. Nothing installs it either — that job has no choco step. A missing
+// tool exits 127, which is exactly how the Windows release leg died once
+// already (shasum, in stage-wallet-wasm.sh), so try the alternatives instead of
+// assuming one binary is present.
+//
+// bsdtar at C:\Windows\System32\tar.exe reads zip; Git Bash's own GNU `tar`
+// does not, so it is named by full path rather than left to PATH order.
+// Expand-Archive is the last resort and needs no install at all.
+function extractZip (archive, into) {
+  const attempts = [
+    ['unzip', ['-q', archive, '-d', into]],
+    ['C:\\Windows\\System32\\tar.exe', ['-xf', archive, '-C', into]],
+    ['tar', ['-xf', archive, '-C', into]],
+    ['powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      `Expand-Archive -LiteralPath '${archive}' -DestinationPath '${into}' -Force`]],
+  ]
+  const failures = []
+  for (const [command, args] of attempts) {
+    try {
+      execFileSync(command, args, { stdio: 'inherit' })
+      return
+    } catch (error) {
+      failures.push(`${command}: ${error.code || error.message}`)
+    }
+  }
+  throw new Error(`could not unpack ${archive}; tried ${failures.join('; ')}`)
+}
+
 function extract (archive, into) {
   if (archive.endsWith('.zip')) {
-    execFileSync('unzip', ['-q', archive, '-d', into], { stdio: 'inherit' })
+    extractZip(archive, into)
   } else {
     execFileSync('tar', ['-xzf', archive, '-C', into], { stdio: 'inherit' })
   }
