@@ -300,6 +300,73 @@ if [[ "$lld_staged" -eq 0 ]]; then
 fi
 echo "static prefix: $lld_staged lld archive(s) staged"
 
+# PE IMPORT SLOTS FOR STATICALLY LINKED LLVM.
+#
+# MSYS2 ships lld as a PREBUILT package, compiled against LLVM as a DLL. Every
+# symbol LLVM annotates with LLVM_ABI therefore reaches lld's objects as an
+# import slot, `__imp_<mangled>`, and GNU ld will not synthesise an import slot
+# from a static definition. Setting -DLLVM_BUILD_STATIC (see
+# scripts/wasmedge-static-env.sh) fixes the sources WE compile; it cannot reach
+# an archive somebody else already built.
+#
+# Measured: liblldCOFF.a(Symbols.cpp.obj) wants
+#   __imp__ZN4llvm8demangleB5cxx11ESt17basic_string_viewIcSt11char_traitsIcEE
+# for lld::maybeDemangleSymbol, while libLLVMDemangle.a defines the plain
+# symbol. Five other archives referenced the same function WITHOUT the prefix
+# and linked fine, which is what pins this on the annotation rather than on
+# archive order.
+#
+# So synthesise the slots: an import slot is just a pointer-sized datum holding
+# the address of the real symbol. Derived from nm rather than hardcoded to the
+# one symbol that happens to fail today, because which symbols carry LLVM_ABI
+# changes between LLVM releases.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    _shim_dir="$STATIC/lib"
+    _shim_s="$(mktemp -t impshim.XXXXXX.s)"
+    _undef="$(mktemp)"
+    _defined="$(mktemp)"
+
+    {
+      for _a in "$STATIC"/lib/*.a; do
+        nm --undefined-only --format=posix "$_a" 2>/dev/null | awk '{print $1}'
+      done
+    } 2>/dev/null | grep '^__imp_' | sort -u > "$_undef" || true
+
+    {
+      for _a in "$STATIC"/lib/*.a; do
+        nm --defined-only --format=posix "$_a" 2>/dev/null | awk 'NF >= 2 && $2 != "" {print $1}'
+      done
+    } 2>/dev/null | sort -u > "$_defined" || true
+
+    printf '\t.section .rdata,"dr"\n' > "$_shim_s"
+    _shim_n=0
+    while IFS= read -r _imp; do
+      [[ -n "$_imp" ]] || continue
+      _real="${_imp#__imp_}"
+      # Only bridge slots whose target is actually defined in this prefix;
+      # anything else is a genuinely missing library, and hiding that behind a
+      # dangling pointer would turn a link error into a crash at runtime.
+      if grep -qxF "$_real" "$_defined"; then
+        printf '\t.globl %s\n\t.p2align 3\n%s:\n\t.quad %s\n' "$_imp" "$_imp" "$_real" >> "$_shim_s"
+        _shim_n=$((_shim_n + 1))
+      fi
+    done < "$_undef"
+
+    if [[ "$_shim_n" -gt 0 ]]; then
+      "${CC:-gcc}" -c "$_shim_s" -o "$_shim_dir/sdn-imp-shim.o"
+      "${AR:-ar}" rcs "$_shim_dir/libsdnimpshim.a" "$_shim_dir/sdn-imp-shim.o"
+      rm -f "$_shim_dir/sdn-imp-shim.o"
+      IMPSHIM_STATIC="$_shim_dir/libsdnimpshim.a"
+      echo "static prefix: bridged $_shim_n PE import slot(s) to static definitions"
+      sed -n 's/^\t\.globl //p' "$_shim_s" | sed 's/^/  slot: /'
+    else
+      echo "static prefix: no PE import slots needed"
+    fi
+    rm -f "$_shim_s" "$_undef" "$_defined"
+    ;;
+esac
+
 {
   # --start-group wherever the linker is GNU ld: these archives depend on each
   # other BOTH ways (lld calls LLVM, lld's own ELF/Common halves call each
@@ -311,7 +378,7 @@ echo "static prefix: $lld_staged lld archive(s) staged"
   # llvm::demangle and three WasmEdge ones — every one of them a cycle. It hid
   # behind the larger toolchain mismatch until that was fixed.
   case "$(uname -s)" in Darwin) : ;; *) printf -- '-Wl,--start-group ' ;; esac
-  for archive in $GRP $LLVMLIBS ${ZSTD_STATIC:-} ${STDCXX_STATIC:-}; do
+  for archive in $GRP $LLVMLIBS ${ZSTD_STATIC:-} ${STDCXX_STATIC:-} ${IMPSHIM_STATIC:-}; do
     [[ -n "$archive" ]] || continue
     printf '@PREFIX@/lib/%s ' "$(basename "$archive")"
   done

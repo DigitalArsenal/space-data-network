@@ -4960,8 +4960,8 @@ func (n *Node) announceSDNAdvertisement(target sdnAdvertisementDiscoveryTarget) 
 	defer cancel()
 
 	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
-	_, err := routingDiscovery.Advertise(ctx, target.Namespace)
-	n.sdnAdvertisementHealth.record(err)
+	ttl, err := routingDiscovery.Advertise(ctx, target.Namespace)
+	n.sdnAdvertisementHealth.record(ttl, err)
 
 	// THIS IS HOW A NODE BECOMES FINDABLE, and both outcomes used to be
 	// Debugf — so at normal log level an operator could not tell whether SDN
@@ -4990,8 +4990,15 @@ func (n *Node) announceSDNAdvertisement(target sdnAdvertisementDiscoveryTarget) 
 }
 
 // announceOnDHT announces our presence in the DHT discovery namespace.
+//
+// The timeout is sdnAdvertiseTimeout for the same reason its SDN-rendezvous
+// sibling above uses it: this is a Provide walking to the ~20 peers closest to
+// the key, which is tens of seconds on a real network. Ten seconds here meant
+// module-delivery availability was, in practice, never published. There is one
+// module target and both announces run sequentially on the discovery loop's
+// own goroutine, so a slow Provide coalesces ticks rather than stacking them.
 func (n *Node) announceOnDHT(discoveryCID cid.Cid) {
-	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(n.ctx, sdnAdvertiseTimeout)
 	defer cancel()
 
 	err := n.dht.Provide(ctx, discoveryCID, true)
