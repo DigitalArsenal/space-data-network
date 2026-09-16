@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
@@ -202,6 +203,13 @@ type Node struct {
 	modulePublishAuthorizer license.ModulePublishAuthorizer
 	moduleDeliveryDiscovery cid.Cid
 	sdnAdvertisementTarget  sdnAdvertisementDiscoveryTarget
+	// sdnAdvertisementHealth tracks whether this node is actually findable
+	// through the DHT rendezvous, so the answer is reportable rather than
+	// buried in debug logs. See announceSDNAdvertisement.
+	sdnAdvertisementHealth advertisementHealth
+	// sdnAdvertiseInFlight keeps one Provide in flight at a time: the announce
+	// ticker is faster than a Provide on the public DHT can complete.
+	sdnAdvertiseInFlight    atomic.Bool
 	sdnDiscoveryTargets     []sdnAdvertisementDiscoveryTarget
 	sdnDiscoveryMu          sync.RWMutex
 	sdnDiscoveryFlagsByPeer map[peer.ID]map[string]time.Time
@@ -4932,15 +4940,53 @@ func (n *Node) announceSDNAdvertisement(target sdnAdvertisementDiscoveryTarget) 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+	// TEN SECONDS WAS NOT ENOUGH, and it is why nodes were never findable. A
+	// Provide on the public Amino DHT walks to the ~20 peers closest to the
+	// rendezvous key and stores the record on each; that is tens of seconds on
+	// a real network, not ten. Measured on a publicly reachable node with a
+	// populated routing table: four attempts, four "context deadline
+	// exceeded", findable=false throughout.
+	//
+	// Single-flight rather than a slower tick: the announce ticker stays at 30s
+	// for the rest of the loop, and a Provide still running when the next tick
+	// arrives is skipped rather than stacked.
+	if !n.sdnAdvertiseInFlight.CompareAndSwap(false, true) {
+		log.Debugf("SDN advertisement announce still in flight for %s; skipping this tick", target.Flag)
+		return
+	}
+	defer n.sdnAdvertiseInFlight.Store(false)
+
+	ctx, cancel := context.WithTimeout(n.ctx, sdnAdvertiseTimeout)
 	defer cancel()
 
 	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
-	if _, err := routingDiscovery.Advertise(ctx, target.Namespace); err != nil {
-		log.Debugf("SDN advertisement announce failed for %s: %v", target.Flag, err)
-		return
+	_, err := routingDiscovery.Advertise(ctx, target.Namespace)
+	n.sdnAdvertisementHealth.record(err)
+
+	// THIS IS HOW A NODE BECOMES FINDABLE, and both outcomes used to be
+	// Debugf — so at normal log level an operator could not tell whether SDN
+	// discovery was working, failing, or running at all. It was failing:
+	// measured on a fresh node, "failed to find any peer in table", because
+	// the announce fires before the DHT routing table has anybody in it.
+	//
+	// Silence is the wrong default for the mechanism the whole network hangs
+	// on. Report the FIRST success and the transition into and out of failure,
+	// not every tick: a line every 30 seconds is its own kind of invisible.
+	switch {
+	case err != nil && n.sdnAdvertisementHealth.justStartedFailing():
+		log.Warnf("SDN discovery advertisement is FAILING for %s: %v. Until this succeeds other nodes "+
+			"cannot find this one through the DHT rendezvous (%s).", target.Flag, err, target.Namespace)
+	case err == nil && n.sdnAdvertisementHealth.justRecovered():
+		log.Infof("SDN discovery advertisement OK for %s after %d failed attempt(s): this node is now "+
+			"findable through the DHT rendezvous %s", target.Flag, n.sdnAdvertisementHealth.priorFailures(), target.Namespace)
+	case err == nil && n.sdnAdvertisementHealth.isFirstSuccess():
+		log.Infof("SDN discovery advertisement OK for %s: this node is findable through the DHT "+
+			"rendezvous %s", target.Flag, target.Namespace)
+	case err != nil:
+		log.Debugf("SDN advertisement announce still failing for %s: %v", target.Flag, err)
+	default:
+		log.Debugf("SDN advertisement announce completed for %s", target.Flag)
 	}
-	log.Debugf("SDN advertisement announce completed for %s", target.Flag)
 }
 
 // announceOnDHT announces our presence in the DHT discovery namespace.

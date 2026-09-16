@@ -92,6 +92,13 @@ type ReachabilitySnapshot struct {
 	Advertised  AdvertisedAddrClasses `json:"advertised"`
 	NAT         NATStatus             `json:"nat"`
 	IPFS        *SidecarReachability  `json:"ipfs,omitempty"`
+	// Discovery answers the OTHER half of the question. Reachability is "can a
+	// peer that already knows my address dial me?"; this is "can anyone find my
+	// address in the first place?" A node can be perfectly dialable and still
+	// invisible, because the SDN rendezvous announce on the public DHT is what
+	// publishes it — and that announce fails on a fresh node until the DHT
+	// routing table has peers in it.
+	Discovery AdvertisementStatus `json:"discovery"`
 }
 
 type reachabilityTracker struct {
@@ -218,5 +225,7 @@ func (n *Node) Reachability() ReachabilitySnapshot {
 	if n.host != nil {
 		advertised = n.host.Addrs()
 	}
-	return n.reachability.snapshot(advertised, nat)
+	snap := n.reachability.snapshot(advertised, nat)
+	snap.Discovery = n.SDNAdvertisement()
+	return snap
 }
