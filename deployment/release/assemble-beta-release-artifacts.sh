@@ -97,12 +97,23 @@ required_desktop_artifact_patterns=(
   "space-data-network-desktop-*-linux-*.tar.xz"
 )
 
-# The Windows desktop app is built from the Windows CLI archive, so it is absent
-# for exactly the same reason and under the same policy. Listed separately so
-# the omission is reported rather than silently tolerated.
+# The Windows desktop app now BUILDS (run 35095153877 produced both installers),
+# but its job is still continue-on-error, so absence must stay tolerated rather
+# than fail the release — promoting these to required would let a soft-failing
+# leg hard-fail publication.
+#
+# These patterns were wrong and could not have been noticed until Windows
+# actually produced something: electron-builder emits
+#   space-data-network-desktop-<version>-win-x64.exe            (nsis setup)
+#   space-data-network-desktop-portable-<version>-win-x64.exe   (portable)
+# i.e. "win", not "windows", and no "setup" infix on the installer. Since
+# copy_matches dist/desktop/* publishes whatever is there, the mismatch did not
+# drop the files — it listed them under "Not in this release" while they were
+# attached to it, which is worse than missing. The [0-9] class anchors the
+# setup pattern to the version so it cannot also swallow the portable build.
 optional_desktop_artifact_patterns=(
-  "space-data-network-desktop-setup-*-windows-*.exe"
-  "space-data-network-desktop-portable-*-windows-*.exe"
+  "space-data-network-desktop-[0-9]*-win-*.exe"
+  "space-data-network-desktop-portable-*-win-*.exe"
 )
 
 for required_desktop_artifact_pattern in "${required_desktop_artifact_patterns[@]}"; do
