@@ -42,6 +42,52 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: node deployment/release/prepare-beta-release.mjs
+      # CAN THIS TOKEN ACTUALLY PUBLISH? Ask now, in the first job, not after
+      # forty minutes of building every artifact for five platforms.
+      #
+      # Run 35095153877 built everything — including the first working Windows
+      # CLI — and then died in the publish step with 403 "Resource not
+      # accessible by integration", while the job log showed `Contents: write`
+      # granted. Declared permissions were correct, the repo default was write,
+      # there were no rulesets and no pre-existing tag; an admin PAT could
+      # create a release at the same moment the Actions token could not. That
+      # combination means the restriction is above the repository, and no
+      # amount of building will reveal it.
+      #
+      # A DRAFT release is the only honest probe: GitHub exposes no "may I?"
+      # endpoint, `permissions.push` still reads true in this state, and a
+      # draft creates no tag and is not publicly visible. It is deleted
+      # immediately, including when the step fails.
+      - name: Check the token can publish a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBE_TAG: zz-publish-probe-${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          probe_id=""
+          cleanup() {
+            if [ -n "${probe_id}" ]; then
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${probe_id}" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          response="$(gh api -X POST "repos/${GITHUB_REPOSITORY}/releases" \
+            -f tag_name="${PROBE_TAG}" \
+            -f name="publish permission probe" \
+            -F draft=true 2>&1)" || true
+          probe_id="$(printf '%s' "${response}" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).id||""))}catch(e){}})')"
+
+          if [ -z "${probe_id}" ]; then
+            echo "::error::This workflow's GITHUB_TOKEN cannot create a GitHub release, so the run would build every artifact and then fail at the final step."
+            echo "The API said:" >&2
+            printf '%s\n' "${response}" | head -5 >&2
+            echo "" >&2
+            echo "The repository side is not the problem if you see 'Contents: write' in this job's GITHUB_TOKEN Permissions group above." >&2
+            echo "Check the ORGANISATION policy: Settings -> Actions -> General -> Workflow permissions, and any org ruleset targeting tags." >&2
+            exit 1
+          fi
+          echo "publish permission OK (probe release ${probe_id}, deleted)"
 
   # One static WasmEdge, built once and reused. Building LLVM is expensive, so
   # it is cached on the version alone; nothing here is installed into a job, it
