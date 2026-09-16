@@ -237,7 +237,7 @@ cat >> "${release_dir}/SDN-BETA-RELEASE.md" <<'EOF'
 
 The same image defaults to a full node. Operators who need edge-relay mode can override the container command.
 
-Downloadable Docker image tarballs are also included as `spacedatanetwork-container-<native-package-version>-linux-amd64.tar.gz`.
+The published image is a multi-architecture manifest, so `docker pull` resolves to linux/amd64 or linux/arm64 automatically. Downloadable tarballs of each are also included as `spacedatanetwork-container-<native-package-version>-linux-amd64.tar.gz` and `...-linux-arm64.tar.gz`.
 Load them with `docker load --input <file>`.
 
 Verify downloaded files with `spacedatanetwork-checksums.txt`.
