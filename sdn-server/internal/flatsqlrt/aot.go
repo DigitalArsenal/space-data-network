@@ -203,13 +203,15 @@ func AOTArtifactPath(cacheDir, prefix string, wasm []byte) string {
 	return aotArtifactPath(cacheDir, prefix, wasm)
 }
 
+// The key carries everything an artifact's validity depends on: the engine
+// bytes, the libwasmedge runtime that compiled it, and THE CPU it was compiled
+// for. The last was missing, and its absence is not a slow path — an AVX-512
+// artifact loaded on a CPU without AVX-512 is an illegal instruction and a dead
+// process. See aot_cpu.go for the crash that proved it.
 func aotArtifactPath(cacheDir, prefix string, wasm []byte) string {
 	sum := sha256.Sum256(wasm)
-	ver := strings.Map(func(r rune) rune {
-		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '.' {
-			return r
-		}
-		return '_'
-	}, RuntimeVersion())
-	return filepath.Join(cacheDir, fmt.Sprintf("%s-%s-we%s.aot.wasm", prefix, hex.EncodeToString(sum[:8]), ver))
+	ver := sanitizeAOTKeyPart(RuntimeVersion())
+	cpuProfile := sanitizeAOTKeyPart(aotCPUProfile())
+	return filepath.Join(cacheDir, fmt.Sprintf("%s-%s-we%s-%s.aot.wasm",
+		prefix, hex.EncodeToString(sum[:8]), ver, cpuProfile))
 }
