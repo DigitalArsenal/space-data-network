@@ -1,10 +1,5 @@
 package config
 
-import (
-	"fmt"
-	"strings"
-)
-
 // RelayMode decides whether this node runs a public circuit-relay v2 HOP
 // service — donating CPU and bandwidth to carry traffic between other peers.
 //
@@ -34,44 +29,14 @@ const (
 	RelayModeNever
 )
 
-func (m RelayMode) String() string {
-	switch m {
-	case RelayModeAlways:
-		return "always"
-	case RelayModeNever:
-		return "never"
-	default:
-		return "auto"
-	}
-}
+func (m RelayMode) String() string { return autoModeString(int(m)) }
 
-// UnmarshalYAML accepts the historical booleans as well as the named modes, so
-// an existing `enable_relay: false` keeps meaning exactly what its author meant.
 func (m *RelayMode) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	var asBool bool
-	if err := unmarshal(&asBool); err == nil {
-		if asBool {
-			*m = RelayModeAlways
-		} else {
-			*m = RelayModeNever
-		}
-		return nil
+	parsed, err := parseAutoMode("network.enable_relay", unmarshal)
+	if err != nil {
+		return err
 	}
-
-	var asString string
-	if err := unmarshal(&asString); err != nil {
-		return fmt.Errorf("network.enable_relay: expected true, false, or one of auto/always/never: %w", err)
-	}
-	switch strings.ToLower(strings.TrimSpace(asString)) {
-	case "", "auto":
-		*m = RelayModeAuto
-	case "always", "true", "yes", "on":
-		*m = RelayModeAlways
-	case "never", "false", "no", "off":
-		*m = RelayModeNever
-	default:
-		return fmt.Errorf("network.enable_relay: unknown mode %q (want auto, always, or never)", asString)
-	}
+	*m = RelayMode(parsed)
 	return nil
 }
 
