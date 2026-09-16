@@ -612,18 +612,31 @@ async function waitForJson({ containerName, url, label, predicate, timeoutMs }) 
   throw new Error(`Timed out waiting for ${label} at ${containerName} (${url}). Last response: ${last}`);
 }
 
+// Go prints the fatal line FIRST and then every goroutine, so a plain tail of a
+// crashed node shows the middle of a stack dump and nothing about the cause.
+// That is exactly what happened: a container node died and the logs contained
+// 160 lines of "goroutine 2 gp=0x... [force gc (idle)]" with the reason cut off
+// above. Surface the cause explicitly, and keep a tail for everything else.
+const CRASH_MARKERS = /^(fatal error|panic|runtime:|\[signal )/i;
+
 function dumpContainerLogs(containerNames) {
   for (const containerName of containerNames) {
-    const logs = runDocker(['logs', '--tail', '160', containerName], { allowFailure: true });
-    if (logs.stdout || logs.stderr) {
-      console.error(`\n--- docker logs ${containerName} ---`);
-      if (logs.stdout) {
-        console.error(logs.stdout);
-      }
-      if (logs.stderr) {
-        console.error(logs.stderr);
-      }
+    const logs = runDocker(['logs', '--tail', '400', containerName], { allowFailure: true });
+    const text = `${logs.stdout || ''}${logs.stderr || ''}`;
+    if (!text) continue;
+
+    console.error(`\n--- docker logs ${containerName} ---`);
+
+    const lines = text.split('\n');
+    const crashAt = lines.findIndex((line) => CRASH_MARKERS.test(line.trim()));
+    if (crashAt !== -1) {
+      // The cause plus enough frames to place it, called out before the bulk so
+      // it cannot be lost in a wall of goroutines.
+      console.error(`--- CRASH in ${containerName} ---`);
+      console.error(lines.slice(crashAt, crashAt + 25).join('\n'));
+      console.error(`--- end crash (${lines.length - crashAt} lines followed) ---`);
     }
+    console.error(text);
   }
 }
 
