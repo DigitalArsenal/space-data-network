@@ -732,18 +732,22 @@ func (n *Node) init() error {
 		libp2p.UserAgent(versioninfo.AgentVersion),
 		libp2p.ListenAddrs(listenAddrs...),
 	}, hostTransportOptions(autoTLSTLSConfig)...)
-	// Donated public relay service: OPT-IN. `network.enable_relay` was declared
-	// and never read, so host-01's `enable_relay: false` bought nothing and the
-	// delivery sidecar advertised /libp2p/circuit/relay/0.2.0/hop to the open
-	// internet. Honour the operator's setting.
-	if n.config.Network.EnableRelay {
+	// Public relay service. "always" wires it at construction; "auto" — the
+	// default — waits for AutoNAT to say this node is publicly reachable and
+	// then starts it (startAutoRelayService), because a node behind NAT cannot
+	// relay for anyone and should not advertise that it can.
+	switch n.config.Network.EnableRelay {
+	case config.RelayModeAlways:
 		hostOptions = append(hostOptions, libp2p.EnableRelayService())
 		log.Warnf(
-			"Circuit-relay HOP service ENABLED (network.enable_relay: true): this node will relay traffic for arbitrary peers. " +
-				"That is donated CPU and bandwidth — disable it on any box whose job is serving its own protocols.",
+			"Circuit-relay HOP service ENABLED unconditionally (network.enable_relay: always): this node relays for " +
+				"arbitrary peers whether or not it is reachable. Donated CPU and bandwidth.",
 		)
-	} else {
-		log.Infof("Circuit-relay HOP service disabled (network.enable_relay: false); this node can still dial THROUGH relays")
+	case config.RelayModeNever:
+		log.Infof("Circuit-relay HOP service disabled (network.enable_relay: never); this node can still dial THROUGH relays")
+	default:
+		log.Infof("Circuit-relay HOP service in AUTO mode: it starts if AutoNAT reports this node publicly reachable, " +
+			"so the nodes that CAN carry firewalled peers do. Set network.enable_relay: never to opt out.")
 	}
 	if announceFactory, announced := announceAddrsFactory(n.config.Network.Announce); announceFactory != nil {
 		hostOptions = append(hostOptions, libp2p.AddrsFactory(announceFactory))
@@ -797,6 +801,9 @@ func (n *Node) init() error {
 		log.Infof("AutoTLS certificate manager started (domain %s)", autoTLSDomain(n.config.Network.AutoTLS))
 	}
 	go n.feedAutoRelayCandidates(n.ctx)
+	if n.config.Network.EnableRelay == config.RelayModeAuto {
+		go n.runAutoRelayService(n.ctx)
+	}
 	metrics.SetPeerCountFunc(func() int { return len(n.host.Network().Peers()) })
 
 	// PEER ADMISSION: protect the set that must never be gated out, then start

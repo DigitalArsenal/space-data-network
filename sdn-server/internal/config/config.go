@@ -978,7 +978,13 @@ type NetworkConfig struct {
 	//
 	// This never gates the CLIENT side: a node can always DIAL through someone
 	// else's relay (libp2p.EnableRelay) regardless of this setting.
-	EnableRelay bool `yaml:"enable_relay"`
+	//
+	// DEFAULT IS "auto" (owner rule): a node that AutoNAT reports as publicly
+	// reachable relays for others, because those are exactly the nodes able to
+	// carry the ones stuck behind corporate firewalls and CGNAT. A node behind
+	// NAT never relays. `enable_relay: false` still means never, so the
+	// decision host-01 made on 2026-08-08 is preserved verbatim; see RelayMode.
+	EnableRelay RelayMode `yaml:"enable_relay"`
 
 	// DHTServer controls whether this node serves the PUBLIC Amino/IPFS
 	// Kademlia DHT (dht.ModeAutoServer) instead of using it as a client
@@ -1726,12 +1732,17 @@ func Default() *Config {
 			Bootstrap:  bootstrap.DefaultBootstrapAddresses(),
 			EdgeRelays: []string{},
 			MaxConns:   1000,
-			// Donated public infrastructure is OPT-IN, not the default. See the
-			// field comments on EnableRelay/DHTServer: both ran unconditionally
-			// until 2026-08-08 and pinned host-01 at 98.5% CPU serving the
-			// public IPFS DHT and relaying strangers' traffic, while the
-			// module-delivery lane it exists for reset streams under load.
-			EnableRelay:    false,
+			// RELAY: auto — a node AutoNAT reports as publicly reachable
+			// relays for peers that cannot be dialled, which is the owner
+			// rule and the only way firewalled nodes get carried. It is
+			// conditional and bounded, unlike the 2026-08-08 behaviour that
+			// pinned host-01 at 98.5% CPU: see RelayMode and
+			// node/relay_service.go.
+			//
+			// DHT SERVER stays opt-in. Serving the public IPFS DHT is an
+			// unbounded workload unrelated to anything this node is for, and
+			// it was the other half of that same incident.
+			EnableRelay:    RelayModeAuto,
 			DHTServer:      false,
 			Announce:       []string{},
 			MaxMessageSize: 10 * 1024 * 1024, // 10MB default
