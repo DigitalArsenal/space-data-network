@@ -250,16 +250,18 @@ storage:
 
 admin:
   enabled: true
-  # Loopback, NOT 0.0.0.0. The daemon refuses to start with authentication off
-  # on a non-loopback address (cmd/spacedatanetwork/auth_off_guard.go) — a
-  # deliberate fail-closed, since a loopback check is no gate behind a proxy and
-  # auth-off is a local convenience, never a network posture.
+  # AUTH ON, which is what lets the API bind to the network at all. The daemon
+  # refuses a non-loopback listen_addr while require_auth is false
+  # (cmd/spacedatanetwork/auth_off_guard.go), and it is right to: a loopback
+  # check is no gate behind a reverse proxy, so auth-off is a local convenience
+  # and never a network posture. This test needs the wider bind — it curls
+  # between containers to prove the nodes serve each other — so it takes the
+  # posture that permits it, which is also the one an operator should run.
   #
-  # Nothing here needed the wider bind: every probe in this file runs
-  # "docker exec CONTAINER curl http://127.0.0.1:5001/..." from inside the
-  # container, and the run args publish no ports at all.
-  listen_addr: 127.0.0.1:5001
-  require_auth: false
+  # Every endpoint the probes use (/api/v1/data/health, /api/relay/status) is on
+  # the anonymous allowlist in main.go, so turning auth on costs them nothing.
+  listen_addr: 0.0.0.0:5001
+  require_auth: true
   session_expiry: 24h
   totp_required: false
   tls_enabled: false

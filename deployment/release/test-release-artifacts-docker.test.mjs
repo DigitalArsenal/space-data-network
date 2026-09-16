@@ -163,11 +163,11 @@ test('network configs bootstrap non-seed nodes to the seed peer', () => {
     healthPort: 8081
   });
 
-  assert.match(seedConfig, /require_auth: false/);
-  // Loopback, because require_auth is false and the daemon refuses any wider
-  // bind in that case. This previously pinned 0.0.0.0:5001 — the exact config
-  // that stopped every node in the install test from booting.
-  assert.match(seedConfig, /listen_addr: 127\.0\.0\.1:5001/);
+  // Auth ON with a network bind: the daemon refuses a non-loopback address
+  // while require_auth is false, and this test curls between containers, so it
+  // needs the posture that permits that — which is also the production one.
+  assert.match(seedConfig, /require_auth: true/);
+  assert.match(seedConfig, /listen_addr: 0\.0\.0\.0:5001/);
   assert.match(joinedConfig, /- \/dns4\/sdn-full-deb\/tcp\/4001\/p2p\/12D3KooWSeed/);
   assert.deepEqual(edgeArgs, [
     '--bootstrap',
