@@ -250,7 +250,15 @@ storage:
 
 admin:
   enabled: true
-  listen_addr: 0.0.0.0:5001
+  # Loopback, NOT 0.0.0.0. The daemon refuses to start with authentication off
+  # on a non-loopback address (cmd/spacedatanetwork/auth_off_guard.go) — a
+  # deliberate fail-closed, since a loopback check is no gate behind a proxy and
+  # auth-off is a local convenience, never a network posture.
+  #
+  # Nothing here needed the wider bind: every probe in this file runs
+  # "docker exec CONTAINER curl http://127.0.0.1:5001/..." from inside the
+  # container, and the run args publish no ports at all.
+  listen_addr: 127.0.0.1:5001
   require_auth: false
   session_expiry: 24h
   totp_required: false

@@ -164,7 +164,10 @@ test('network configs bootstrap non-seed nodes to the seed peer', () => {
   });
 
   assert.match(seedConfig, /require_auth: false/);
-  assert.match(seedConfig, /listen_addr: 0\.0\.0\.0:5001/);
+  // Loopback, because require_auth is false and the daemon refuses any wider
+  // bind in that case. This previously pinned 0.0.0.0:5001 — the exact config
+  // that stopped every node in the install test from booting.
+  assert.match(seedConfig, /listen_addr: 127\.0\.0\.1:5001/);
   assert.match(joinedConfig, /- \/dns4\/sdn-full-deb\/tcp\/4001\/p2p\/12D3KooWSeed/);
   assert.deepEqual(edgeArgs, [
     '--bootstrap',
@@ -279,6 +282,26 @@ test('the published-package smoke test asserts exports sdn-js actually has', () 
     assert(
       !smoke.includes(`ui.${name}`) && !smoke.includes(`root.${name}`),
       `the smoke test requires "${name}", which sdn-js deliberately does not export`,
+    );
+  }
+});
+
+test('the generated node config obeys the daemon\'s own auth-off rule', () => {
+  // The daemon refuses to start with authentication off on a non-loopback
+  // address (cmd/spacedatanetwork/auth_off_guard.go). The release test was
+  // generating exactly that config, so every node in the install-and-network
+  // test died at boot — the product was right and the test was wrong.
+  const config = generateFullNodeConfig({ bootstrapPeers: [] });
+  const listen = /^\s*listen_addr:\s*(\S+)\s*$/m.exec(config);
+  const requireAuth = /^\s*require_auth:\s*(\S+)\s*$/m.exec(config);
+  assert(listen, 'no admin.listen_addr in the generated config');
+  assert(requireAuth, 'no admin.require_auth in the generated config');
+
+  if (requireAuth[1] === 'false') {
+    const host = listen[1].replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+    assert(
+      host === '127.0.0.1' || host === '::1' || host === 'localhost',
+      `admin.require_auth is false, so listen_addr must be loopback, not ${listen[1]}`,
     );
   }
 });
