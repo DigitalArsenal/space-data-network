@@ -125,15 +125,16 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   assert.doesNotMatch(checksums, /spacedatanetwork-checksums\.txt/);
 });
 
-test('fails when a required CLI release artifact is missing', () => {
+test('fails when a PROVEN-platform CLI artifact is missing', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-beta-release-missing-cli-'));
   const distDir = join(tempRoot, 'dist');
   const releaseDir = join(distDir, 'release');
 
-  writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-linux-amd64.tar.gz', 'cli');
+  // linux-amd64 deliberately absent: a release without it is broken.
   writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-linux-arm64.tar.gz', 'cli');
   writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz', 'cli');
   writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz', 'cli');
+  writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-windows-amd64.zip', 'cli');
 
   assert.throws(() => {
     execFileSync('bash', [scriptPath], {
@@ -148,7 +149,55 @@ test('fails when a required CLI release artifact is missing', () => {
       },
       stdio: 'pipe'
     });
-  }, /missing required CLI release artifact: spacedatanetwork-1\.0\.3-beta\.42-windows-amd64\.zip/);
+  }, /missing required CLI release artifact: spacedatanetwork-1\.0\.3-beta\.42-linux-amd64\.tar\.gz/);
+});
+
+test('publishes without the Windows archive, and says it is absent', () => {
+  // Windows is experimental everywhere else in the pipeline
+  // (matrix.experimental + continue-on-error). Requiring it HERE quietly undid
+  // that: the leg was allowed to fail, every other artifact built, and then
+  // assembly refused, so a Windows toolchain problem meant nobody got a
+  // release at all. Four platforms beat zero — provided the gap is stated.
+  const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-beta-release-no-windows-'));
+  const distDir = join(tempRoot, 'dist');
+  const releaseDir = join(distDir, 'release');
+
+  for (const artifact of [
+    'cli/spacedatanetwork-1.0.3-beta.42-linux-amd64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-linux-arm64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz',
+    'desktop/space-data-network-desktop-0.47.0-mac.dmg',
+    'desktop/space-data-network-desktop-0.47.0-squirrel.zip',
+    'desktop/space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
+    'desktop/space-data-network-desktop-0.47.0-linux-amd64.deb',
+    'desktop/space-data-network-desktop-0.47.0-linux-x86_64.rpm',
+    'packages/spacedatanetwork-full_1.0.3~beta.42_amd64.deb',
+    'packages/spacedatanetwork-edge_1.0.3~beta.42_amd64.rpm',
+    'linux-vm/spacedatanetwork-linux-vm-1.0.3~beta.42.tar.gz',
+    'container-images/spacedatanetwork-container-1.0.3~beta.42-linux-amd64.tar.gz',
+    'sdn-js/spacedatanetwork-sdn-js-2.0.12.tgz',
+    'sbom/spacedatanetwork-sbom.cdx.json'
+  ]) {
+    writeFixture(distDir, artifact, 'fixture');
+  }
+
+  execFileSync('bash', [scriptPath], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      DIST_DIR: distDir,
+      RELEASE_DIR: releaseDir,
+      VERSION: '1.0.3-beta.42',
+      RELEASE_TAG: 'v1.0.3-beta.42',
+      GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567'
+    },
+    stdio: 'pipe'
+  });
+
+  const notes = readFileSync(join(releaseDir, 'SDN-BETA-RELEASE.md'), 'utf8');
+  assert.match(notes, /## Not in this release/);
+  assert.match(notes, /windows-amd64\.zip/);
 });
 
 test('fails when a required desktop release artifact class is missing', () => {

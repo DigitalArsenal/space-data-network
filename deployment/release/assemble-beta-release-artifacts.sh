@@ -37,11 +37,23 @@ copy_matches "${dist_dir}/update-feed/*.tar.gz"
 copy_matches "${dist_dir}/sdn-js/*.tgz"
 copy_matches "${dist_dir}/sbom/*.json"
 
+# The four platforms whose builds are proven. A release without one of these is
+# a broken release and must not be published.
 required_cli_artifacts=(
   "spacedatanetwork-${version}-darwin-amd64.tar.gz"
   "spacedatanetwork-${version}-darwin-arm64.tar.gz"
   "spacedatanetwork-${version}-linux-amd64.tar.gz"
   "spacedatanetwork-${version}-linux-arm64.tar.gz"
+)
+
+# Windows is EXPECTED, not required — the same policy the wasmedge-static, cli
+# and desktop jobs already carry (matrix.experimental + continue-on-error).
+# Requiring it here quietly undid all of that: the Windows leg was allowed to
+# fail, every other artifact built, and then this script refused to assemble
+# anything, so a Windows toolchain problem meant nobody got a release at all.
+# Zero artifacts is worse than four, and the absence stays visible — it is
+# logged here and stated in the notes rather than passed over.
+optional_cli_artifacts=(
   "spacedatanetwork-${version}-windows-amd64.zip"
 )
 
@@ -49,6 +61,14 @@ for required_cli_artifact in "${required_cli_artifacts[@]}"; do
   if [[ ! -f "${release_dir}/${required_cli_artifact}" ]]; then
     echo "missing required CLI release artifact: ${required_cli_artifact}" >&2
     exit 1
+  fi
+done
+
+missing_optional=()
+for optional_cli_artifact in "${optional_cli_artifacts[@]}"; do
+  if [[ ! -f "${release_dir}/${optional_cli_artifact}" ]]; then
+    missing_optional+=( "${optional_cli_artifact}" )
+    echo "NOTE: ${optional_cli_artifact} is absent; publishing without it" >&2
   fi
 done
 
@@ -66,15 +86,31 @@ require_match() {
 required_desktop_artifact_patterns=(
   "space-data-network-desktop-*-mac.dmg"
   "space-data-network-desktop-*-squirrel.zip"
-  "space-data-network-desktop-setup-*-windows-*.exe"
-  "space-data-network-desktop-portable-*-windows-*.exe"
   "space-data-network-desktop-*-linux-*.AppImage"
   "space-data-network-desktop-*-linux-*.deb"
   "space-data-network-desktop-*-linux-*.rpm"
 )
 
+# The Windows desktop app is built from the Windows CLI archive, so it is absent
+# for exactly the same reason and under the same policy. Listed separately so
+# the omission is reported rather than silently tolerated.
+optional_desktop_artifact_patterns=(
+  "space-data-network-desktop-setup-*-windows-*.exe"
+  "space-data-network-desktop-portable-*-windows-*.exe"
+)
+
 for required_desktop_artifact_pattern in "${required_desktop_artifact_patterns[@]}"; do
   require_match "${required_desktop_artifact_pattern}"
+done
+
+for optional_desktop_artifact_pattern in "${optional_desktop_artifact_patterns[@]}"; do
+  shopt -s nullglob
+  optional_matches=( "${release_dir}"/${optional_desktop_artifact_pattern} )
+  shopt -u nullglob
+  if [[ ${#optional_matches[@]} -eq 0 ]]; then
+    missing_optional+=( "${optional_desktop_artifact_pattern}" )
+    echo "NOTE: no artifact matching ${optional_desktop_artifact_pattern}; publishing without it" >&2
+  fi
 done
 
 if [[ -n "${SDN_UPDATE_SIGNING_KEY_PEM:-}" ]]; then
@@ -176,6 +212,15 @@ older than that should run the container image, which carries its own.
 macOS builds depend only on libraries that ship with the OS. Windows builds are
 self-contained.
 EOF
+fi
+
+if [[ ${#missing_optional[@]} -gt 0 ]]; then
+  {
+    printf '\n## Not in this release\n\n'
+    for absent in "${missing_optional[@]}"; do
+      printf -- '- `%s` — this platform did not build for this version.\n' "${absent}"
+    done
+  } >> "${release_dir}/SDN-BETA-RELEASE.md"
 fi
 
 cat >> "${release_dir}/SDN-BETA-RELEASE.md" <<'EOF'
