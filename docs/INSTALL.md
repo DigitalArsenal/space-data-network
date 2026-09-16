@@ -75,6 +75,20 @@ it with `spacedatanetwork key reseal` before recreating the container.
 prints the recovery phrase. A `docker load` archive of the same image ships
 with each release (`spacedatanetwork-container-<version>-linux-amd64.tar.gz`).
 
+### Relaying
+
+A node that is publicly reachable relays for peers that are not. This is the
+default: AutoNAT decides, and a node behind NAT never relays. It is how nodes
+on corporate networks and CGNAT — which can connect but cannot be dialled —
+reach anyone at all.
+
+It is bounded (32 reservations, 8 circuits per peer, 30-minute TTL), well under
+libp2p's own defaults, because this is spare capacity a node contributes rather
+than a service it exists to provide. Set `network.enable_relay: never` to opt
+out, or `always` to run it regardless of reachability with libp2p's larger
+limits. Check what your node decided with
+`curl -s localhost:5001/api/v1/status/reachability`.
+
 ## 2. Kubo
 
 Content identifiers, pinning, dataset publication and archive restore all go

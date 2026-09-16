@@ -183,16 +183,22 @@ func TestBlockedStreamIsCounted(t *testing.T) {
 
 // --- the donated public workloads that starved the delivery lane ---
 
-// TestPublicRelayServiceIsOptIn pins the config knob that was declared and
-// never read. host-01's sidecar has carried `enable_relay: false` since it was
-// written and the node ran the HOP service anyway: a live identify returned
-// /libp2p/circuit/relay/0.2.0/hop while the box sat at 98.5% CPU of 2 vCPUs.
-func TestPublicRelayServiceIsOptIn(t *testing.T) {
+// TestPublicRelayServiceIsConditional pins the OWNER RULE: a public node that
+// is not behind NAT relays by default, so the nodes that can be dialled carry
+// the ones that cannot. Measured: the same build behind a firewall that would
+// not map ports sat at 2 peers with zero relay reservations after seven
+// minutes, because nothing in the fleet offered one.
+//
+// What this must NEVER become again is unconditional. host-01's sidecar carried
+// `enable_relay: false` while the node ran the HOP service anyway — a live
+// identify returned /libp2p/circuit/relay/0.2.0/hop while the box sat at 98.5%
+// CPU of 2 vCPUs. So: default auto, never behind NAT, never ignoring the knob.
+func TestPublicRelayServiceIsConditional(t *testing.T) {
 	t.Parallel()
 
-	if config.Default().Network.EnableRelay {
-		t.Fatalf("network.enable_relay must default to false: running a public circuit-relay HOP service " +
-			"is donated CPU and bandwidth, and must be a deliberate choice")
+	if got := config.Default().Network.EnableRelay; got != config.RelayModeAuto {
+		t.Fatalf("network.enable_relay defaults to %v, want auto: a publicly reachable node must relay "+
+			"so firewalled peers have something to reserve on", got)
 	}
 
 	source, err := os.ReadFile(filepath.Join(".", "node.go"))
@@ -200,9 +206,18 @@ func TestPublicRelayServiceIsOptIn(t *testing.T) {
 		t.Fatalf("read node.go: %v", err)
 	}
 	text := string(source)
-	if !strings.Contains(text, "if n.config.Network.EnableRelay {") {
-		t.Fatalf("libp2p.EnableRelayService() must be gated on n.config.Network.EnableRelay; " +
-			"an operator-set false that the process ignores is worse than no knob at all")
+	// The operator's setting still decides. An enable_relay the process
+	// ignores is worse than no knob at all.
+	if !strings.Contains(text, "switch n.config.Network.EnableRelay {") {
+		t.Fatalf("libp2p.EnableRelayService() must be gated on n.config.Network.EnableRelay")
+	}
+	if !strings.Contains(text, "case config.RelayModeNever:") {
+		t.Fatalf("enable_relay: never must be honoured; that is the setting host-01 made after 2026-08-08")
+	}
+	// Auto must go through the reachability-driven path, not the construction
+	// option — a node behind NAT cannot relay and must not advertise that it can.
+	if !strings.Contains(text, "runAutoRelayService") {
+		t.Fatalf("auto mode must start the relay from the reachability watcher, not unconditionally at construction")
 	}
 	// EnableRelay() (client side: dial THROUGH a relay) must survive the gate.
 	if !strings.Contains(text, "libp2p.EnableRelay(),") {
