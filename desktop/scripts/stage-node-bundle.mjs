@@ -53,12 +53,20 @@ function findBundleRoot (path) {
   throw new Error(`no manifest.json under ${path}: that is not a node bundle`)
 }
 
-// A .zip only ever arrives on Windows (it is what the cli job uploads there),
-// and `unzip` is NOT part of Git for Windows, which is the bash the desktop job
-// runs in. Nothing installs it either — that job has no choco step. A missing
-// tool exits 127, which is exactly how the Windows release leg died once
-// already (shasum, in stage-wallet-wasm.sh), so try the alternatives instead of
-// assuming one binary is present.
+// A .zip only ever arrives on Windows — it is what the cli job uploads there.
+//
+// This fallback chain is DEFENSIVE, not a fix for an observed failure. It was
+// added predicting that `unzip` would be missing from the Git Bash the desktop
+// job runs in, since nothing in that job installs it (no choco step, unlike the
+// cli job). That prediction was WRONG: run 35095153877 staged the Windows
+// bundle successfully with the chain's first entry, so the runner's Git Bash
+// does provide unzip.
+//
+// It stays because the reasoning behind it still holds even though the premise
+// did not. A missing tool exits 127, which is exactly how the Windows release
+// leg died once already (shasum, in stage-wallet-wasm.sh) — and unzip's
+// presence here is a property of the runner image, not anything this repo
+// pins or asserts.
 //
 // bsdtar at C:\Windows\System32\tar.exe reads zip; Git Bash's own GNU `tar`
 // does not, so it is named by full path rather than left to PATH order.
