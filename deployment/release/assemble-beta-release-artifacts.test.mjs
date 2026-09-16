@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -198,6 +198,69 @@ test('publishes without the Windows archive, and says it is absent', () => {
   const notes = readFileSync(join(releaseDir, 'SDN-BETA-RELEASE.md'), 'utf8');
   assert.match(notes, /## Not in this release/);
   assert.match(notes, /windows-amd64\.zip/);
+});
+
+test('the real electron-builder Windows names are not reported as missing', () => {
+  // These are the EXACT names run 35095153877 produced, the first run in which
+  // Windows desktop artifacts existed at all:
+  //   space-data-network-desktop-<version>-win-x64.exe            (nsis setup)
+  //   space-data-network-desktop-portable-<version>-win-x64.exe   (portable)
+  //
+  // The patterns used to read "-setup-*-windows-*.exe" and
+  // "-portable-*-windows-*.exe" — "windows" not "win", and a "setup" infix that
+  // electron-builder does not emit. Because copy_matches publishes everything
+  // under dist/desktop, the mismatch did not drop the installers; it listed
+  // them under "Not in this release" while they were attached to it. Nothing
+  // caught it because Windows had never produced a desktop artifact before.
+  const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-beta-release-windows-desktop-'));
+  const distDir = join(tempRoot, 'dist');
+  const releaseDir = join(distDir, 'release');
+
+  for (const artifact of [
+    'cli/spacedatanetwork-1.0.3-beta.42-linux-amd64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-linux-arm64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-windows-amd64.zip',
+    'desktop/space-data-network-desktop-0.47.0-mac-arm64.dmg',
+    'desktop/space-data-network-desktop-0.47.0-mac-arm64.zip',
+    'desktop/space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
+    'desktop/space-data-network-desktop-0.47.0-linux-amd64.deb',
+    'desktop/space-data-network-desktop-0.47.0-linux-x64.tar.xz',
+    'desktop/space-data-network-desktop-0.47.0-win-x64.exe',
+    'desktop/space-data-network-desktop-portable-0.47.0-win-x64.exe',
+    'packages/spacedatanetwork-full_1.0.3~beta.42_amd64.deb',
+    'packages/spacedatanetwork-edge_1.0.3~beta.42_amd64.rpm',
+    'linux-vm/spacedatanetwork-linux-vm-1.0.3~beta.42.tar.gz',
+    'container-images/spacedatanetwork-container-1.0.3~beta.42-linux-amd64.tar.gz',
+    'sdn-js/spacedatanetwork-sdn-js-2.0.12.tgz',
+    'sbom/spacedatanetwork-sbom.cdx.json'
+  ]) {
+    writeFixture(distDir, artifact, 'fixture');
+  }
+
+  execFileSync('bash', [scriptPath], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      DIST_DIR: distDir,
+      RELEASE_DIR: releaseDir,
+      VERSION: '1.0.3-beta.42',
+      RELEASE_TAG: 'v1.0.3-beta.42',
+      GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567'
+    },
+    stdio: 'pipe'
+  });
+
+  // Both installers are published...
+  assert.ok(existsSync(join(releaseDir, 'space-data-network-desktop-0.47.0-win-x64.exe')));
+  assert.ok(existsSync(join(releaseDir, 'space-data-network-desktop-portable-0.47.0-win-x64.exe')));
+
+  // ...and nothing claims a Windows desktop artifact is absent. Everything is
+  // present here, so the section must not appear at all.
+  const notes = readFileSync(join(releaseDir, 'SDN-BETA-RELEASE.md'), 'utf8');
+  assert.doesNotMatch(notes, /## Not in this release/);
+  assert.doesNotMatch(notes, /win-\*\.exe/);
 });
 
 test('fails when a required desktop release artifact class is missing', () => {
