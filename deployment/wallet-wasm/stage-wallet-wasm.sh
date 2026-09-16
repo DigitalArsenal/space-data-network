@@ -50,6 +50,26 @@
 
 set -euo pipefail
 
+# sha256 of one file, portably.
+#
+# shasum is a PERL script, and the MSYS2 MINGW64 shell the Windows CLI release
+# job builds in does not have it: the call exited 127 and killed that leg
+# immediately after a successful compile and link. GNU coreutils' sha256sum is
+# present there and on Linux; macOS ships shasum and not always sha256sum, so
+# try both before falling back to openssl.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else
+    echo "[wallet-wasm] no sha256 tool (sha256sum, shasum or openssl) available" >&2
+    return 1
+  fi
+}
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DEST="${1:-$HERE}"
 UI_DEST="${2:-$HERE/../wallet-ui}"
@@ -106,7 +126,7 @@ echo "[wallet-wasm] staged hd-wallet-wasm@$VERSION in $DEST:"
 ( cd "$DEST" && find . \( -name '*.js' -o -name '*.mjs' -o -name '*.wasm' \) -type f -print0 ) |
   while IFS= read -r -d '' rel; do
     rel="${rel#./}"
-    SHA="$(shasum -a 256 "$DEST/$rel" | cut -d' ' -f1)"
+    SHA="$(sha256_of "$DEST/$rel")"
     SIZE="$(du -h "$DEST/$rel" | cut -f1)"
     printf '[wallet-wasm]   %-44s %s  %s\n' "$rel" "$SHA" "$SIZE"
   done
@@ -181,7 +201,7 @@ echo "[wallet-ui] staged hd-wallet-ui@$UI_VERSION in $UI_DEST:"
 ( cd "$UI_DEST" && find . \( -name '*.js' -o -name '*.mjs' -o -name '*.css' -o -name '*.wasm' \) -type f -print0 ) |
   while IFS= read -r -d '' rel; do
     rel="${rel#./}"
-    SHA="$(shasum -a 256 "$UI_DEST/$rel" | cut -d' ' -f1)"
+    SHA="$(sha256_of "$UI_DEST/$rel")"
     SIZE="$(du -h "$UI_DEST/$rel" | cut -f1)"
     printf '[wallet-ui]   %-44s %s  %s\n' "$rel" "$SHA" "$SIZE"
   done
