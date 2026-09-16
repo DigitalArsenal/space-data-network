@@ -147,7 +147,16 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /test:release-artifacts:docker/);
   assert.match(workflow, /container-image/);
   assert.match(workflow, /docker save/);
-  assert.match(workflow, /spacedatanetwork-container-\$\{NATIVE_PACKAGE_VERSION\}-linux-amd64\.tar\.gz/);
+  // Per architecture now: the image is published as a multi-architecture
+  // manifest, so `docker pull` on Apple Silicon and on ARM servers stops
+  // resolving to an amd64 image run under emulation.
+  assert.match(workflow, /spacedatanetwork-container-\$\{NATIVE_PACKAGE_VERSION\}-linux-\$\{\{ matrix\.arch \}\}\.tar\.gz/);
+  assert.match(workflow, /arch:\s*amd64[\s\S]*?runner:\s*ubuntu-latest/);
+  assert.match(workflow, /arch:\s*arm64[\s\S]*?runner:\s*ubuntu-24\.04-arm/);
+  // Tags belong to the manifest, never to a single-architecture push.
+  assert.match(workflow, /docker-manifest:/);
+  assert.match(workflow, /push-by-digest=true/);
+  assert.match(workflow, /docker buildx imagetools create/);
   assert.match(workflow, /Build self-contained CLI archives/);
   assert.match(workflow, /build-self-contained-cli\.mjs/);
   assert.match(workflow, /--hd-wallet-wasm-path "\$\{PWD\}\/node_modules\/hd-wallet-wasm\/dist\/hd-wallet-wasi\.wasm"/);
@@ -361,7 +370,7 @@ test('beta release workflow builds signed CLI update feed artifacts', () => {
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed\/spacedatanetwork-update-feed-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}\.tar\.gz/);
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed/);
   assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package\]/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
 });
 
 test('beta release workflow builds desktop app artifacts for every supported OS', () => {
@@ -388,7 +397,7 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   assert.match(workflow, /builder_args:\s*--linux AppImage deb tar\.xz --x64/);
   assert.match(workflow, /name:\s*desktop-\$\{\{ matrix\.target_os \}\}/);
   assert.match(workflow, /path:\s*dist\/desktop\/\*/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
   assert.match(workflow, /pattern:\s*desktop-\*[\s\S]*path:\s*dist\/desktop[\s\S]*merge-multiple:\s*true/);
 });
 

@@ -310,9 +310,31 @@ jobs:
           if-no-files-found: error
 
   docker:
-    name: Build beta container image
-    runs-on: ubuntu-latest
+    # ONE IMAGE PER ARCHITECTURE, MERGED INTO ONE MANIFEST BELOW.
+    #
+    # The image was linux/amd64 only, so `docker pull` on Apple Silicon and on
+    # ARM servers got an amd64 image and ran it under emulation. The Dockerfile
+    # builds WasmEdge and LLVM from source, which is exactly the workload that
+    # makes QEMU untenable, so each architecture builds on its own NATIVE
+    # runner: the amd64 leg measured 8.2 min, and ubuntu-24.04-arm is already
+    # proven in this workflow by the linux-arm64 wasmedge-static leg.
+    #
+    # Each leg pushes BY DIGEST and tags nothing. Tags belong to the manifest,
+    # and a per-arch push that claimed them would leave whichever leg finished
+    # last owning `:beta` as a single-architecture image.
+    name: Build beta container image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     needs: [beta-version, ipfs]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
     env:
       RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
       NATIVE_PACKAGE_VERSION: ${{ needs.beta-version.outputs.native_package_version }}
@@ -344,6 +366,66 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: dockerdigitalarsenal
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployment/docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          provenance: true
+          sbom: true
+      - name: Record this architecture's digest
+        run: |
+          mkdir -p dist/container-arch-digests
+          printf '%s' "${{ steps.build.outputs.digest }}" > "dist/container-arch-digests/${{ matrix.arch }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-arch-digest-${{ matrix.arch }}
+          path: dist/container-arch-digests/${{ matrix.arch }}
+      # The downloadable tarball is a SEPARATE --load build: `docker save` reads
+      # the local image store, and a push-by-digest build never lands there.
+      - name: Export downloadable Docker image
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          mkdir -p dist/container-images
+          image_ref="${IMAGE_NAME}:${RELEASE_TAG}-${{ matrix.arch }}"
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
+            --load \
+            -t "${image_ref}" \
+            -f deployment/docker/Dockerfile \
+            .
+          docker run --rm "${image_ref}" --help >/tmp/spacedatanetwork-container-help.txt
+          docker save "${image_ref}" | gzip -n > "dist/container-images/spacedatanetwork-container-${NATIVE_PACKAGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-image-${{ matrix.arch }}
+          path: dist/container-images/spacedatanetwork-container-${{ needs.beta-version.outputs.native_package_version }}-linux-${{ matrix.arch }}.tar.gz
+
+  docker-manifest:
+    # The tags point HERE, at a manifest listing both architectures, so that
+    # `docker pull` resolves to the puller's own platform. Signing also happens
+    # here and only here: cosign signs the manifest digest, which is what a
+    # consumer verifies after pulling.
+    name: Publish beta container manifest
+    runs-on: ubuntu-latest
+    needs: [beta-version, docker]
+    env:
+      RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: container-arch-digest-*
+          path: dist/container-arch-digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: dockerdigitalarsenal
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3.4.0
       - id: meta
         uses: docker/metadata-action@v5
@@ -353,51 +435,48 @@ jobs:
             type=raw,value=${{ needs.beta-version.outputs.release_tag }}
             type=raw,value=beta
             type=sha,prefix=
-      - id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: deployment/docker/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          provenance: true
-          sbom: true
-      - name: Sign image digest
+      - name: Create and push the multi-architecture manifest
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
+          set -euo pipefail
+          refs=""
+          for f in dist/container-arch-digests/*; do
+            [ -f "$f" ] || continue
+            digest="$(cat "$f")"
+            echo "  $(basename "$f") -> ${digest}"
+            refs="${refs} ${IMAGE_NAME}@${digest}"
+          done
+          if [ -z "${refs}" ]; then
+            echo "no per-architecture digests were published; refusing to tag an empty manifest" >&2
+            exit 1
+          fi
+          tag_args=""
+          for tag in ${TAGS}; do
+            tag_args="${tag_args} -t ${tag}"
+          done
+          docker buildx imagetools create ${tag_args} ${refs}
+      - name: Sign the manifest digest
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          digest="$(docker buildx imagetools inspect "${IMAGE_NAME}:${RELEASE_TAG}" \
+            --format '{{json .Manifest}}' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).digest))')"
+          echo "manifest digest: ${digest}"
           images=""
           for tag in ${TAGS}; do
-            images+="${tag}@${DIGEST} "
+            images="${images} ${tag}@${digest}"
           done
           cosign sign --yes ${images}
           mkdir -p dist/container-digests
-          printf '{"name":"%s","digest":"%s"}\n' "${{ env.IMAGE_NAME }}" "${DIGEST}" > dist/container-digests/image.json
-      - name: Export downloadable Docker image
-        env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-        run: |
-          mkdir -p dist/container-images
-          image_ref="${IMAGE_NAME}:${RELEASE_TAG}"
-          docker buildx build \
-            --platform linux/amd64 \
-            --load \
-            -t "${image_ref}" \
-            -f deployment/docker/Dockerfile \
-            .
-          docker run --rm "${image_ref}" --help >/tmp/spacedatanetwork-container-help.txt
-          docker save "${image_ref}" | gzip -n > "dist/container-images/spacedatanetwork-container-${NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
+          printf '{"name":"%s","digest":"%s"}\n' "${IMAGE_NAME}" "${digest}" > dist/container-digests/image.json
       - uses: actions/upload-artifact@v4
         with:
           name: container-digest
           path: dist/container-digests/image.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: container-image
-          path: dist/container-images/spacedatanetwork-container-${{ needs.beta-version.outputs.native_package_version }}-linux-amd64.tar.gz
 
   cli:
     name: Build self-contained CLI archives (${{ matrix.target_os }}-${{ matrix.target_arch }})
@@ -954,10 +1033,13 @@ jobs:
         with:
           name: sdn-js-package
           path: dist/sdn-js
+      # Both architectures land here; the test picks the amd64 tarball by name
+      # (see test-release-artifacts-docker.mjs), since this runner is amd64.
       - uses: actions/download-artifact@v4
         with:
-          name: container-image
+          pattern: container-image-*
           path: dist
+          merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
           pattern: cli-*
@@ -978,7 +1060,7 @@ jobs:
   release:
     name: Publish beta GitHub release
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs, docker, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test]
+    needs: [beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -995,8 +1077,9 @@ jobs:
           path: dist/sdn-js
       - uses: actions/download-artifact@v4
         with:
-          name: container-image
+          pattern: container-image-*
           path: dist/container-images
+          merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
           name: container-digest
