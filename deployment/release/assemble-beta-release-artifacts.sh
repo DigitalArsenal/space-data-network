@@ -83,12 +83,18 @@ require_match() {
   fi
 }
 
+# These must match what the desktop job is CONFIGURED to build — see
+# builder_args in the desktop matrix: "--mac dmg zip", "--linux AppImage deb
+# tar.xz". Three of these patterns never matched anything electron-builder
+# produces ("*-mac.dmg" against a real "-mac-arm64.dmg", a squirrel.zip that is
+# a Windows updater format, and an rpm the Linux leg is not asked to build).
+# Nobody noticed because the publish job had never run far enough to check.
 required_desktop_artifact_patterns=(
-  "space-data-network-desktop-*-mac.dmg"
-  "space-data-network-desktop-*-squirrel.zip"
+  "space-data-network-desktop-*-mac-*.dmg"
+  "space-data-network-desktop-*-mac-*.zip"
   "space-data-network-desktop-*-linux-*.AppImage"
   "space-data-network-desktop-*-linux-*.deb"
-  "space-data-network-desktop-*-linux-*.rpm"
+  "space-data-network-desktop-*-linux-*.tar.xz"
 )
 
 # The Windows desktop app is built from the Windows CLI archive, so it is absent

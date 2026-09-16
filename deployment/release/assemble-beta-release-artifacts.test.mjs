@@ -30,13 +30,13 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz', 'cli');
   writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz', 'cli');
   writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-windows-amd64.zip', 'cli');
-  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-mac.dmg', 'desktop dmg');
-  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-squirrel.zip', 'desktop mac zip');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-mac-arm64.dmg', 'desktop dmg');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-mac-arm64.zip', 'desktop mac zip');
   writeFixture(distDir, 'desktop/space-data-network-desktop-setup-0.47.0-windows-x64.exe', 'desktop windows installer');
   writeFixture(distDir, 'desktop/space-data-network-desktop-portable-0.47.0-windows-x64.exe', 'desktop windows portable');
   writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-linux-x86_64.AppImage', 'desktop appimage');
   writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-linux-amd64.deb', 'desktop deb');
-  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-linux-x86_64.rpm', 'desktop rpm');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-linux-x64.tar.xz', 'desktop linux tarball');
   writeFixture(distDir, 'sdn-js/spacedatanetwork-sdn-js-2.0.12.tgz', 'sdn js');
   writeFixture(distDir, 'sbom/spacedatanetwork-sbom.cdx.json', '{"bomFormat":"CycloneDX"}');
   writeFixture(distDir, 'ipfs/ipfs-deployment.json', '{"cid":"bafyfixture"}');
@@ -65,13 +65,13 @@ test('assembles beta release files, manifest, body, and checksums', () => {
     'spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz',
     'spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz',
     'spacedatanetwork-1.0.3-beta.42-windows-amd64.zip',
-    'space-data-network-desktop-0.47.0-mac.dmg',
-    'space-data-network-desktop-0.47.0-squirrel.zip',
+    'space-data-network-desktop-0.47.0-mac-arm64.dmg',
+    'space-data-network-desktop-0.47.0-mac-arm64.zip',
     'space-data-network-desktop-setup-0.47.0-windows-x64.exe',
     'space-data-network-desktop-portable-0.47.0-windows-x64.exe',
     'space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
     'space-data-network-desktop-0.47.0-linux-amd64.deb',
-    'space-data-network-desktop-0.47.0-linux-x86_64.rpm',
+    'space-data-network-desktop-0.47.0-linux-x64.tar.xz',
     'spacedatanetwork-sdn-js-2.0.12.tgz',
     'spacedatanetwork-sbom.cdx.json',
     'ipfs-deployment.json',
@@ -97,7 +97,7 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   assert(manifest.artifacts.some((artifact) => artifact.name === 'spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz'));
   assert(manifest.artifacts.some((artifact) => artifact.name === 'spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz'));
   assert(manifest.artifacts.some((artifact) => artifact.name === 'spacedatanetwork-1.0.3-beta.42-windows-amd64.zip'));
-  assert(manifest.artifacts.some((artifact) => artifact.name === 'space-data-network-desktop-0.47.0-mac.dmg'));
+  assert(manifest.artifacts.some((artifact) => artifact.name === 'space-data-network-desktop-0.47.0-mac-arm64.dmg'));
   assert(manifest.artifacts.some((artifact) => artifact.name === 'space-data-network-desktop-setup-0.47.0-windows-x64.exe'));
   assert(manifest.artifacts.some((artifact) => artifact.name === 'space-data-network-desktop-0.47.0-linux-x86_64.AppImage'));
 
@@ -108,7 +108,7 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   assert.match(releaseBody, /spacedatanetwork-container-1\.0\.3\.beta\.42-linux-amd64\.tar\.gz/);
   assert.match(releaseBody, /spacedatanetwork-1\.0\.3-beta\.42-linux-amd64\.tar\.gz/);
   assert.match(releaseBody, /spacedatanetwork-1\.0\.3-beta\.42-windows-amd64\.zip/);
-  assert.match(releaseBody, /space-data-network-desktop-0\.47\.0-mac\.dmg/);
+  assert.match(releaseBody, /space-data-network-desktop-0\.47\.0-mac-arm64\.dmg/);
   assert.match(releaseBody, /space-data-network-desktop-setup-0\.47\.0-windows-x64\.exe/);
   assert.match(releaseBody, /space-data-network-desktop-0\.47\.0-linux-x86_64\.AppImage/);
   assert.doesNotMatch(releaseBody, /space-data-network-full/);
@@ -119,7 +119,7 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   assert.match(checksums, /spacedatanetwork-container-1\.0\.3\.beta\.42-linux-amd64\.tar\.gz/);
   assert.match(checksums, /spacedatanetwork-1\.0\.3-beta\.42-linux-amd64\.tar\.gz/);
   assert.match(checksums, /spacedatanetwork-1\.0\.3-beta\.42-windows-amd64\.zip/);
-  assert.match(checksums, /space-data-network-desktop-0\.47\.0-mac\.dmg/);
+  assert.match(checksums, /space-data-network-desktop-0\.47\.0-mac-arm64\.dmg/);
   assert.match(checksums, /space-data-network-desktop-setup-0\.47\.0-windows-x64\.exe/);
   assert.match(checksums, /space-data-network-desktop-0\.47\.0-linux-x86_64\.AppImage/);
   assert.doesNotMatch(checksums, /spacedatanetwork-checksums\.txt/);
@@ -167,11 +167,11 @@ test('publishes without the Windows archive, and says it is absent', () => {
     'cli/spacedatanetwork-1.0.3-beta.42-linux-arm64.tar.gz',
     'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz',
     'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz',
-    'desktop/space-data-network-desktop-0.47.0-mac.dmg',
-    'desktop/space-data-network-desktop-0.47.0-squirrel.zip',
+    'desktop/space-data-network-desktop-0.47.0-mac-arm64.dmg',
+    'desktop/space-data-network-desktop-0.47.0-mac-arm64.zip',
     'desktop/space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
     'desktop/space-data-network-desktop-0.47.0-linux-amd64.deb',
-    'desktop/space-data-network-desktop-0.47.0-linux-x86_64.rpm',
+    'desktop/space-data-network-desktop-0.47.0-linux-x64.tar.xz',
     'packages/spacedatanetwork-full_1.0.3~beta.42_amd64.deb',
     'packages/spacedatanetwork-edge_1.0.3~beta.42_amd64.rpm',
     'linux-vm/spacedatanetwork-linux-vm-1.0.3~beta.42.tar.gz',
@@ -211,8 +211,8 @@ test('fails when a required desktop release artifact class is missing', () => {
     'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz',
     'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz',
     'cli/spacedatanetwork-1.0.3-beta.42-windows-amd64.zip',
-    'desktop/space-data-network-desktop-0.47.0-mac.dmg',
-    'desktop/space-data-network-desktop-0.47.0-squirrel.zip',
+    'desktop/space-data-network-desktop-0.47.0-mac-arm64.dmg',
+    'desktop/space-data-network-desktop-0.47.0-mac-arm64.zip',
     'desktop/space-data-network-desktop-setup-0.47.0-windows-x64.exe',
     'desktop/space-data-network-desktop-portable-0.47.0-windows-x64.exe',
     'desktop/space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
@@ -234,7 +234,7 @@ test('fails when a required desktop release artifact class is missing', () => {
       },
       stdio: 'pipe'
     });
-  }, /missing required desktop release artifact matching: space-data-network-desktop-\*-linux-\*\.rpm/);
+  }, /missing required desktop release artifact matching: space-data-network-desktop-\*-linux-\*\.tar\.xz/);
 });
 
 test('assembles signed CLI update feed artifacts when signing key is configured', () => {
@@ -250,13 +250,13 @@ test('assembles signed CLI update feed artifacts when signing key is configured'
     'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz',
     'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz',
     'cli/spacedatanetwork-1.0.3-beta.42-windows-amd64.zip',
-    'desktop/space-data-network-desktop-0.47.0-mac.dmg',
-    'desktop/space-data-network-desktop-0.47.0-squirrel.zip',
+    'desktop/space-data-network-desktop-0.47.0-mac-arm64.dmg',
+    'desktop/space-data-network-desktop-0.47.0-mac-arm64.zip',
     'desktop/space-data-network-desktop-setup-0.47.0-windows-x64.exe',
     'desktop/space-data-network-desktop-portable-0.47.0-windows-x64.exe',
     'desktop/space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
     'desktop/space-data-network-desktop-0.47.0-linux-amd64.deb',
-    'desktop/space-data-network-desktop-0.47.0-linux-x86_64.rpm',
+    'desktop/space-data-network-desktop-0.47.0-linux-x64.tar.xz',
   ]) {
     writeFixture(distDir, artifact, `fixture ${artifact}`);
   }
@@ -299,4 +299,55 @@ test('assembles signed CLI update feed artifacts when signing key is configured'
   assert.doesNotThrow(() => readFileSync(join(releaseDir, 'spacedatanetwork-update-feed-1.0.3-beta.42.tar.gz')));
   const checksums = readFileSync(join(releaseDir, 'spacedatanetwork-checksums.txt'), 'utf8');
   assert.match(checksums, /spacedatanetwork-update-feed-1\.0\.3-beta\.42\.tar\.gz/);
+});
+
+test('every desktop format the workflow builds has a pattern, and vice versa', () => {
+  // Three required patterns had never matched anything electron-builder
+  // produces — "*-mac.dmg" against a real "-mac-arm64.dmg", a squirrel.zip
+  // that is a Windows updater format, and an rpm the Linux leg is not asked to
+  // build. The publish job had simply never run far enough to check, so the
+  // list drifted for as long as it liked. Tie it to the source of truth.
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/beta-release-artifacts.yml'), 'utf8');
+  const script = readFileSync(scriptPath, 'utf8');
+
+  const formats = new Set();
+  for (const m of workflow.matchAll(/builder_args:\s*(.+)/g)) {
+    const args = m[1].trim();
+    for (const f of args.matchAll(/--(mac|win|linux)\s+([^-\n]+)/g)) {
+      for (const fmt of f[2].trim().split(/\s+/)) formats.add(`${f[1]}:${fmt}`);
+    }
+  }
+  assert(formats.size > 0, 'no builder_args found — has the desktop job moved?');
+
+  const patterns = [
+    ...script.matchAll(/"(space-data-network-desktop-[^"]+)"/g)
+  ].map((m) => m[1]);
+  assert(patterns.length > 0, 'no desktop patterns in the assemble script');
+
+  // Each built format must be claimed by some pattern (required or optional).
+  const extensionFor = {
+    'mac:dmg': '.dmg', 'mac:zip': '.zip',
+    'linux:AppImage': '.AppImage', 'linux:deb': '.deb',
+    'linux:tar.xz': '.tar.xz', 'linux:rpm': '.rpm',
+    'win:nsis': '.exe', 'win:portable': '.exe',
+  };
+  for (const format of formats) {
+    const ext = extensionFor[format];
+    if (!ext) continue;
+    assert(
+      patterns.some((pattern) => pattern.endsWith(ext)),
+      `the desktop job builds ${format} but no pattern in the assemble script claims a ${ext}`,
+    );
+  }
+
+  // And no pattern may demand a format nothing builds.
+  const builtExtensions = new Set([...formats].map((f) => extensionFor[f]).filter(Boolean));
+  for (const pattern of patterns) {
+    const ext = ['.tar.xz', '.AppImage', '.dmg', '.zip', '.deb', '.rpm', '.exe'].find((e) => pattern.endsWith(e));
+    if (!ext) continue;
+    assert(
+      builtExtensions.has(ext),
+      `the assemble script requires "${pattern}", but no desktop builder_args produce a ${ext}`,
+    );
+  }
 });
