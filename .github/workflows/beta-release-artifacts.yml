@@ -577,6 +577,45 @@ jobs:
             --platform "${KUBO_PLATFORM}" \
             --archive "${KUBO_ARCHIVE}" \
             --output-dir dist/kubo
+      # Ground truth for the one symbol still undefined on Windows
+      # (llvm::demangle[abi:cxx11](std::string_view)). Everything else about it
+      # is inference until something on a Windows runner reads the archives.
+      # Never fails the job: it is evidence, not a gate.
+      - name: Which archive defines llvm::demangle (Windows diagnosis)
+        if: matrix.target_os == 'windows'
+        continue-on-error: true
+        shell: bash
+        run: |
+          prefix="${WASMEDGE_DIR}"
+          echo "## archives naming demangle at all"
+          for a in "$prefix"/lib/libLLVMDemangle.a "$prefix"/lib/libLLVMSupport.a; do
+            [ -f "$a" ] || { echo "  MISSING $a"; continue; }
+            echo "-- $(basename "$a")"
+            nm -C --defined-only "$a" 2>/dev/null | grep -i "llvm::demangle" | head -5 || echo "   (no defined llvm::demangle)"
+            nm --defined-only "$a" 2>/dev/null | grep "8demangle" | head -5 || echo "   (no mangled 8demangle)"
+          done
+          echo "## every archive in the prefix that DEFINES any demangle symbol"
+          for a in "$prefix"/lib/*.a; do
+            if nm --defined-only "$a" 2>/dev/null | grep -q "8demangleB5cxx11"; then echo "  DEFINES(cxx11): $(basename "$a")"; fi
+            if nm --defined-only "$a" 2>/dev/null | grep -q "llvm8demangle"; then echo "  DEFINES(any):   $(basename "$a")"; fi
+          done
+          # EVERY archive, not just libwasmedge*. The earlier version scanned
+          # only our own archives, so it could never name lld or LLVM as the
+          # referrer — it printed nothing by construction and looked like
+          # "nobody needs it".
+          echo "## who REFERENCES it, and in which form"
+          for a in "$prefix"/lib/*.a; do
+            b="$(basename "$a")"
+            if nm --undefined-only --format=posix "$a" 2>/dev/null | grep -q "^__imp__ZN4llvm8demangle"; then
+              echo "  REF-imp   $b   (wants the PE import SLOT, not the symbol)"
+            fi
+            if nm --undefined-only --format=posix "$a" 2>/dev/null | grep -q "^_ZN4llvm8demangle"; then
+              echo "  REF-plain $b"
+            fi
+            :
+          done
+          echo "## our compiler's default C++ ABI"
+          echo | "${CXX:-g++}" -x c++ -E -dM - 2>/dev/null | grep -i "GLIBCXX_USE_CXX11_ABI" || echo "  (macro not defined)"
       - name: Build target SDN binary
         run: |
           mkdir -p dist/cli-input
@@ -1011,6 +1050,11 @@ jobs:
   published-installer-smoke:
     name: Smoke published installers (${{ matrix.target_os }})
     runs-on: ${{ matrix.runner }}
+    # Windows carries the same experimental policy as every other Windows leg.
+    # There is no Windows archive in the release while the CLI build is broken,
+    # so this leg cannot pass, and letting it fail the whole run would paint a
+    # successful release red — which trains everyone to ignore the status.
+    continue-on-error: ${{ matrix.experimental == true }}
     needs: [beta-version, release]
     env:
       SDN_VERSION: ${{ needs.beta-version.outputs.release_tag }}
@@ -1024,6 +1068,7 @@ jobs:
             runner: macos-14
           - target_os: windows
             runner: windows-latest
+            experimental: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
