@@ -3,6 +3,7 @@ package node
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 // The failure this exists for: on a fresh node the SDN rendezvous announce
@@ -18,7 +19,7 @@ func TestAdvertisementHealthReportsFindability(t *testing.T) {
 	}
 
 	boom := errors.New("failed to find any peer in table")
-	h.record(boom)
+	h.record(0, boom)
 	if !h.justStartedFailing() {
 		t.Error("the first failure must be reported as the transition into failure")
 	}
@@ -27,13 +28,13 @@ func TestAdvertisementHealthReportsFindability(t *testing.T) {
 	}
 
 	// Still failing: a transition must not re-fire, or the log becomes noise.
-	h.record(boom)
+	h.record(0, boom)
 	if h.justStartedFailing() {
 		t.Error("the second consecutive failure must not re-announce the transition")
 	}
 
 	// Recovery is the line an operator actually wants.
-	h.record(nil)
+	h.record(3*time.Hour, nil)
 	if !h.justRecovered() {
 		t.Error("recovery after failures must be reported")
 	}
@@ -53,7 +54,7 @@ func TestAdvertisementHealthReportsFindability(t *testing.T) {
 // recovered from something.
 func TestAdvertisementHealthFirstSuccessIsNotARecovery(t *testing.T) {
 	var h advertisementHealth
-	h.record(nil)
+	h.record(3*time.Hour, nil)
 	if !h.isFirstSuccess() {
 		t.Error("the first success must be reported")
 	}
@@ -65,16 +66,63 @@ func TestAdvertisementHealthFirstSuccessIsNotARecovery(t *testing.T) {
 	}
 }
 
-// Going from working to broken must be reported: a node that WAS findable and
-// silently stopped being so is the worst case, because nothing looks wrong.
-func TestAdvertisementHealthReportsRegression(t *testing.T) {
+// A published provider record outlives the announce that published it, so one
+// timed-out re-announce must NOT report the node as unfindable.
+//
+// Measured on a publicly reachable node: 104 successes in 285 attempts. Tying
+// findability to the last attempt made that node report findable=false while
+// other nodes were discovering it perfectly well, which sends an operator to
+// debug something that is not broken. The degradation still has to be visible,
+// so the failure transition and the counters must both still fire.
+func TestAdvertisementHealthSurvivesOneFailedReannounce(t *testing.T) {
 	var h advertisementHealth
-	h.record(nil)
-	h.record(errors.New("context deadline exceeded"))
+	h.record(3*time.Hour, nil)
+	h.record(0, errors.New("context deadline exceeded"))
+
 	if !h.justStartedFailing() {
-		t.Fatal("losing findability must be reported")
+		t.Fatal("a failing re-announce must still be reported to the operator")
 	}
-	if h.snapshot().Findable {
-		t.Fatal("still claiming findable while the announce is failing")
+	got := h.snapshot()
+	if !got.Findable {
+		t.Fatal("the provider record is still within its TTL; the node is still findable")
+	}
+	if got.ConsecutiveFailures != 1 || got.LastError == "" {
+		t.Fatalf("degradation must remain visible in the status: %+v", got)
+	}
+	if got.FindableUntil.IsZero() {
+		t.Fatal("FindableUntil must report when the record lapses")
+	}
+}
+
+// Findability does lapse: once the record's TTL passes with no fresh success,
+// the node really is gone from the rendezvous and must say so.
+func TestAdvertisementHealthLapsesAfterTTL(t *testing.T) {
+	var h advertisementHealth
+	h.record(time.Hour, nil)
+	if !h.snapshot().Findable {
+		t.Fatal("findable immediately after a success")
+	}
+
+	// Backdate the success past its TTL.
+	h.mu.Lock()
+	h.lastOK = time.Now().UTC().Add(-2 * time.Hour)
+	h.mu.Unlock()
+
+	if got := h.snapshot(); got.Findable {
+		t.Fatalf("record expired an hour ago, still claiming findable: %+v", got)
+	}
+}
+
+// With no TTL reported by Advertise, fall back to the default rather than
+// treating the record as instantly expired.
+func TestAdvertisementHealthDefaultsTTLWhenUnreported(t *testing.T) {
+	var h advertisementHealth
+	h.record(0, nil)
+	got := h.snapshot()
+	if !got.Findable {
+		t.Fatal("a success with no reported TTL must still count as findable")
+	}
+	if want := h.lastOK.Add(sdnAdvertiseDefaultTTL); !got.FindableUntil.Equal(want) {
+		t.Fatalf("FindableUntil = %v, want %v", got.FindableUntil, want)
 	}
 }

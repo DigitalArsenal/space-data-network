@@ -18,6 +18,19 @@ import (
 // again. Kubo bounds its own provides in the same order of magnitude.
 const sdnAdvertiseTimeout = 90 * time.Second
 
+// sdnAdvertiseDefaultTTL is how long ONE successful Provide keeps this node
+// findable, used when Advertise does not report a TTL of its own.
+//
+// This matters because "findable" is not "the last announce succeeded". A
+// provider record placed on the DHT stays valid for hours; go-libp2p's routing
+// discovery returns 3h as its republish recommendation against a 24h record
+// validity. Measured on a publicly reachable node: 104 successes in 285
+// attempts, i.e. a re-announce times out routinely while the node remains
+// perfectly discoverable. Reporting that node as not findable because the most
+// recent attempt lost a race tells an operator to go fix something that is not
+// broken.
+const sdnAdvertiseDefaultTTL = 3 * time.Hour
+
 // advertisementHealth is the answer to "can anyone find this node?", kept so it
 // can be logged on transitions and served over the status API instead of living
 // only in a Debugf nobody enables.
@@ -42,9 +55,10 @@ type advertisementHealth struct {
 	firstSuccess bool
 	startedFail  bool
 	priorFails   int
+	ttl          time.Duration
 }
 
-func (h *advertisementHealth) record(err error) {
+func (h *advertisementHealth) record(ttl time.Duration, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -76,6 +90,9 @@ func (h *advertisementHealth) record(err error) {
 	h.wasFailing = false
 	h.lastErr = ""
 	h.lastOK = time.Now().UTC()
+	if ttl > 0 {
+		h.ttl = ttl
+	}
 }
 
 func (h *advertisementHealth) justStartedFailing() bool {
@@ -104,8 +121,9 @@ func (h *advertisementHealth) priorFailures() int {
 
 // AdvertisementStatus is the reportable view of whether this node is findable.
 type AdvertisementStatus struct {
-	// Findable is true once the rendezvous announce has succeeded and is not
-	// currently failing. It is the single answer an operator wants.
+	// Findable is true while a published provider record is still within its
+	// TTL. It is the single answer an operator wants, and it deliberately does
+	// NOT drop on one failed re-announce: the record outlives the attempt.
 	Findable            bool      `json:"findable"`
 	Namespace           string    `json:"namespace"`
 	Flag                string    `json:"flag"`
@@ -116,13 +134,27 @@ type AdvertisementStatus struct {
 	LastError           string    `json:"last_error,omitempty"`
 	LastSuccess         time.Time `json:"last_success,omitempty"`
 	LastAttempt         time.Time `json:"last_attempt,omitempty"`
+	// FindableUntil is when the last published provider record lapses if no
+	// further announce succeeds. Zero means this node has never been findable.
+	FindableUntil time.Time `json:"findable_until,omitempty"`
 }
 
 func (h *advertisementHealth) snapshot() AdvertisementStatus {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	ttl := h.ttl
+	if ttl <= 0 {
+		ttl = sdnAdvertiseDefaultTTL
+	}
+	var findableUntil time.Time
+	if !h.lastOK.IsZero() {
+		findableUntil = h.lastOK.Add(ttl)
+	}
+
 	return AdvertisementStatus{
-		Findable:            h.successes > 0 && h.consecFails == 0,
+		Findable:            !findableUntil.IsZero() && time.Now().UTC().Before(findableUntil),
+		FindableUntil:       findableUntil,
 		Attempts:            h.attempts,
 		Successes:           h.successes,
 		Failures:            h.failures,
