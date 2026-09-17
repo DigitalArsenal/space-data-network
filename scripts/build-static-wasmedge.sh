@@ -261,8 +261,11 @@ done
 # than the build machine's fails at exec, not at install.
 #
 # macOS keeps libc++ dynamic: it ships with the OS, is versioned as part of it,
-# and Apple does not support statically linking it. Windows links libstdc++
-# through MinGW's own static default.
+# and Apple does not support statically linking it. Windows does NOT need a
+# staged libstdc++.a — MinGW ships one — but it does need to be ASKED for it;
+# see the -static-libstdc++ in link.flags below. The claim that once stood here,
+# that MinGW links libstdc++ statically by default, is false: objdump on the
+# produced spacedatanetwork.exe listed "DLL Name: libstdc++-6.dll".
 STDCXX_STATIC=""
 case "$(uname -s)" in
   Darwin|MINGW*|MSYS*|CYGWIN*) : ;;
@@ -399,7 +402,18 @@ esac
     #   xml2    xmlReadMemory, xmlDocDumpFormatMemoryEnc … (LLVM's
     #           WindowsManifest merger, libLLVMWindowsManifest.a)
     #   z       compress2, compressBound, crc32
-    MINGW*|MSYS*|CYGWIN*) printf -- '-lstdc++ -lm -lws2_32 -lbcrypt -lole32 -luuid -lntdll -lktmw32 -ldbghelp -lxml2 -lz\n' ;;
+    #
+    # -static-libstdc++ -static-libgcc ARE THE WHOLE POINT ON THIS PLATFORM.
+    # MinGW's gcc links the IMPORT library for libstdc++ unless told otherwise,
+    # so -lstdc++ alone produced an .exe importing libstdc++-6.dll — a binary
+    # that cannot start on a machine without MSYS2 installed, which is the exact
+    # failure the static prefix exists to prevent. It went unseen because the
+    # Windows leg carried continue-on-error: the job reported success while the
+    # step failed, and the release simply shipped no Windows archive at all.
+    # -Bstatic around winpthread covers the third GCC runtime DLL
+    # (libwinpthread-1.dll); the Windows system import libraries after it must
+    # stay dynamic, which is what -Bdynamic restores.
+    MINGW*|MSYS*|CYGWIN*) printf -- '-static-libstdc++ -static-libgcc -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -lm -lws2_32 -lbcrypt -lole32 -luuid -lntdll -lktmw32 -ldbghelp -lxml2 -lz\n' ;;
     # No -lstdc++: it is staged into the prefix above and named as an archive,
     # so the linker cannot prefer a shared one. -static-libgcc removes
     # libgcc_s.so.1 the same way. What is left is glibc, which stays dynamic —
