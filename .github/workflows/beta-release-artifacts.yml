@@ -989,6 +989,26 @@ jobs:
           node desktop/scripts/stage-node-bundle.mjs --from "${bundle}"
         env:
           CLI_BUNDLE: ${{ matrix.cli_bundle }}
+      # electron-builder takes the version from desktop/package.json, which is
+      # a checked-in literal nothing stamps — so every release so far shipped
+      # desktop artifacts labelled with whatever that file happened to say.
+      # v1.0.5-beta.59 published 11 assets named 1.0.5-beta.1 beside 10 named
+      # 1.0.5-beta.59: the installer a user downloads reports a version that is
+      # not the release it came from, which no support conversation or update
+      # check can recover from. Written with node rather than `npm version` so
+      # no lifecycle script runs and no git tag is attempted.
+      - name: Stamp the desktop version
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const path = "desktop/package.json";
+            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+            const version = process.env.PACKAGE_VERSION;
+            if (!version) { throw new Error("PACKAGE_VERSION is empty"); }
+            pkg.version = version;
+            fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+            console.log(`desktop/package.json version = ${version}`);
+          '
       - name: Build Desktop artifacts
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
