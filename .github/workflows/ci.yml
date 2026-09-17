@@ -44,3 +44,45 @@ jobs:
           chmod +x scripts/ci-local.sh scripts/oss-preflight.sh scripts/install-wasmedge.sh scripts/go-with-wasmedge.sh
           ./scripts/install-wasmedge.sh
           ./scripts/ci-local.sh quick
+
+  # THE RECORD STORE HAD NO CI AT ALL. internal/storage is 324 tests over the
+  # data path — the thing this whole node exists to be — and the quick lane
+  # deliberately excludes it (heavy_pkg_filter), because it exceeds the
+  # 20-minute per-package budget and made the gate fail every time, which left
+  # pushes unguarded. That was the right call for the quick lane and was then
+  # never followed by the other half: ci.yml only ever ran `quick`, so the
+  # exclusion became "the store is never tested on any commit".
+  #
+  # The heavy lane already exists for exactly this and just needed running, with
+  # the budget it was designed around. Separate job so a slow store cannot
+  # starve the fast feedback the quick lane gives every push.
+  heavy-go-packages:
+    name: Heavy Go packages (record store)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sdn-server/go.mod
+          cache-dependency-path: sdn-server/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: sdn-js/package-lock.json
+
+      - name: Run the heavy Go lane (internal/storage)
+        env:
+          WASMEDGE_DIR: ${{ runner.temp }}/.wasmedge
+        run: |
+          chmod +x scripts/ci-local.sh scripts/install-wasmedge.sh scripts/go-with-wasmedge.sh
+          ./scripts/install-wasmedge.sh
+          ./scripts/ci-local.sh heavy
