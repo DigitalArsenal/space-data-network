@@ -2502,10 +2502,48 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 	// Any of those and the whole chunk takes the original one-at-a-time path,
 	// so the fast path never has to reason about a mixed chunk.
 	batched, batchReqs := s.chunkIsBatchable(schemaName, records, tags), []flatsqlrt.QueryRequest(nil)
-	for _, data := range records {
-		cid := computeCID(data)
-		var existing int
-		err := tx.QueryRow(`SELECT 1 FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid).Scan(&existing)
+
+	// With the chunk cleared as batchable, the two per-record SELECTs become
+	// two per-CHUNK reads: nothing written inside the chunk can change either
+	// answer. That is the other half of the dispatch bill — the loop's probes
+	// were 4.2 of the 8.2 handoffs per record that remained.
+	var preExisting map[string]struct{}
+	var preSuperseded map[string][]string
+	chunkCIDs := make([]string, len(records))
+	for i, data := range records {
+		chunkCIDs[i] = computeCID(data)
+	}
+	if batched {
+		keys := make([]string, 0, len(records))
+		seen := make(map[string]struct{}, len(records))
+		for _, data := range records {
+			if k := recordSupersedeKey(schemaName, data); k != "" {
+				if _, dup := seen[k]; !dup {
+					seen[k] = struct{}{}
+					keys = append(keys, k)
+				}
+			}
+		}
+		var err error
+		preExisting, preSuperseded, err = s.prefetchChunkState(tx, schemaName, routedTable, chunkCIDs, keys)
+		if err != nil {
+			return inserted, err
+		}
+	}
+	for recIdx, data := range records {
+		cid := chunkCIDs[recIdx]
+		var err error
+		if batched {
+			// The prefetch already answered this. Shaped as the same
+			// sql.ErrNoRows the probe returned so the switch below is
+			// untouched — the branch logic must not fork with the fast path.
+			if _, ok := preExisting[cid]; !ok {
+				err = sql.ErrNoRows
+			}
+		} else {
+			var existing int
+			err = tx.QueryRow(`SELECT 1 FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid).Scan(&existing)
+		}
 		switch {
 		case err == nil:
 			// Repeat CID (possibly from another producer): record it in THIS
@@ -2518,7 +2556,15 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 				return inserted, err
 			}
 			key := recordSupersedeKey(schemaName, data)
-			gone, err := s.supersedeInProducerTableTx(tx, schemaName, routedTable, key, cid)
+			var gone []string
+			if batched {
+				// Same work, driven by the prefetched rows instead of a
+				// per-record SELECT. supersedeRowsTx still performs the DELETEs
+				// and the orphan check, so what is retired is unchanged.
+				gone, err = s.supersedeRowsTx(tx, schemaName, routedTable, preSuperseded[key], cid)
+			} else {
+				gone, err = s.supersedeInProducerTableTx(tx, schemaName, routedTable, key, cid)
+			}
 			if err != nil {
 				return inserted, err
 			}
@@ -6598,6 +6644,94 @@ func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimesta
 	}
 
 	return upsertFullTextExec(exec, textIndex, schemaName, cid, data)
+}
+
+// prefetchChunkState answers, for the whole chunk in two statements, the two
+// questions the per-record loop otherwise asks one record at a time: which CIDs
+// the record index already holds, and which rows the routed table already has
+// under each supersede key.
+//
+// This is only called for a chunk chunkIsBatchable has cleared, which is what
+// makes one up-front read equivalent to N interleaved ones: no write inside the
+// chunk can change either answer, because no CID and no supersede key repeats.
+//
+// The IN lists are split at 400 parameters. SQLite's default
+// SQLITE_MAX_VARIABLE_NUMBER is 999 and the adaptive write window reaches 1024
+// records, so an unsplit list would start failing exactly when the window grew
+// — a bug that would only appear on fast hardware under load.
+func (s *FlatSQLStore) prefetchChunkState(tx *sql.Tx, schemaName, routedTable string, cids []string, keys []string) (map[string]struct{}, map[string][]string, error) {
+	const maxParams = 400
+
+	existing := make(map[string]struct{}, len(cids))
+	for start := 0; start < len(cids); start += maxParams {
+		end := start + maxParams
+		if end > len(cids) {
+			end = len(cids)
+		}
+		slice := cids[start:end]
+		args := make([]interface{}, 0, len(slice)+1)
+		args = append(args, schemaName)
+		ph := make([]string, len(slice))
+		for i, c := range slice {
+			ph[i] = "?"
+			args = append(args, c)
+		}
+		rows, err := tx.Query(fmt.Sprintf(
+			`SELECT cid FROM sdn_record_index WHERE schema_name = ? AND cid IN (%s)`,
+			strings.Join(ph, ",")), args...)
+		if err != nil {
+			return nil, nil, fmt.Errorf("prefetch existing %s cids: %w", schemaName, err)
+		}
+		for rows.Next() {
+			var c string
+			if err := rows.Scan(&c); err != nil {
+				rows.Close()
+				return nil, nil, err
+			}
+			existing[c] = struct{}{}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	byKey := make(map[string][]string, len(keys))
+	for start := 0; start < len(keys); start += maxParams {
+		end := start + maxParams
+		if end > len(keys) {
+			end = len(keys)
+		}
+		slice := keys[start:end]
+		if len(slice) == 0 {
+			continue
+		}
+		args := make([]interface{}, 0, len(slice))
+		ph := make([]string, len(slice))
+		for i, k := range slice {
+			ph[i] = "?"
+			args = append(args, k)
+		}
+		rows, err := tx.Query(fmt.Sprintf(
+			`SELECT supersede_key, cid FROM %s WHERE supersede_key IN (%s)`,
+			routedTable, strings.Join(ph, ",")), args...)
+		if err != nil {
+			return nil, nil, fmt.Errorf("prefetch superseded %s rows: %w", schemaName, err)
+		}
+		for rows.Next() {
+			var k, c string
+			if err := rows.Scan(&k, &c); err != nil {
+				rows.Close()
+				return nil, nil, err
+			}
+			byKey[k] = append(byKey[k], c)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, nil, err
+		}
+	}
+	return existing, byKey, nil
 }
 
 // chunkIsBatchable reports whether this chunk's routed inserts and index
