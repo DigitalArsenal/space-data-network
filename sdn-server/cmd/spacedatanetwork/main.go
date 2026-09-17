@@ -827,6 +827,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	// libp2p's resource manager sizes its connection and stream budget from
+	// RLIMIT_NOFILE at construction, so this has to happen before the host is
+	// built, not merely before it is busy.
+	raiseFileDescriptorLimit(cmd.ErrOrStderr())
+
 	// COMPILE THE ENGINE BEFORE SERVING, not never.
 	//
 	// The daemon deliberately does not compile on the SERVICE path — a query
