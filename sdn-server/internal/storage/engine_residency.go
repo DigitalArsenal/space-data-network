@@ -102,33 +102,72 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 		}
 		return 0, err
 	}
-	duplicates := 0
+
+	// ONE RESIDENT ROW PER RECORD. The ledger is keyed by (schema, cid); a
+	// record that is already resident keeps its row and the row just appended
+	// is tombstoned, so no caller can put a record in the window twice
+	// (INSERT OR REPLACE used to move the ledger to the new row and leave the
+	// old one visible: duplicate query results, found on the dev node
+	// 2026-09-14 — 48 PRR rows written live while the cold rebuild was
+	// ingesting the same records from the tables).
+	//
+	// WHICH rows are already resident is asked ONCE for the whole batch. The
+	// per-record form was an Exec per record, and database/sql's Exec is TWO
+	// engine statements — the insert, then the `last_insert_rowid()/changes()`
+	// the driver adds to build its Result — each one a handoff to the engine's
+	// locked exec thread. On a 64-record window that was 128 of the 147
+	// statements the whole store path issued.
+	resident, err := s.residentCIDSet(schemaName, cids)
+	if err != nil {
+		return fail(fmt.Errorf("read engine residency for %s: %w", schemaName, err))
+	}
+
+	fresh := make([]engineResidencyRow, 0, len(payloads))
+	var duplicateSeqs []uint64
 	for i, payload := range payloads {
 		seq, err := s.engineDB.IngestOneWithSource(payload, source)
 		if err != nil {
 			return fail(err)
 		}
-		// ONE RESIDENT ROW PER RECORD. The ledger is keyed by (schema, cid);
-		// a record that is already resident keeps its row and the row just
-		// appended is tombstoned at once, so no caller can put a record in
-		// the window twice (INSERT OR REPLACE used to move the ledger to the
-		// new row and leave the old one visible: duplicate query results,
-		// found on the dev node 2026-09-14 — 48 PRR rows written live while
-		// the cold rebuild was ingesting the same records from the tables).
-		res, err := s.db.Exec(
-			`INSERT OR IGNORE INTO sdn_engine_rows (schema_name, cid, source, seq) VALUES (?, ?, ?, ?)`,
-			schemaName, cids[i], source, int64(seq))
-		if err != nil {
-			return fail(fmt.Errorf("record engine residency for %s: %w", cids[i], err))
-		}
-		if affected, _ := res.RowsAffected(); affected == 0 {
-			if err := s.engineDB.MarkDeleted(enginePartition(s.engineTableForLedger(schemaName), source), uint64(seq)); err != nil {
-				return fail(fmt.Errorf("tombstone duplicate engine row for %s: %w", cids[i], err))
-			}
-			duplicates++
+		cid := cids[i]
+		if _, already := resident[cid]; already {
+			duplicateSeqs = append(duplicateSeqs, uint64(seq))
 			continue
 		}
-		ingested++
+		// The same CID twice inside ONE batch is the second duplicate shape,
+		// and the per-record INSERT OR IGNORE caught it because the first
+		// insert had already landed. Held here in the set instead.
+		resident[cid] = struct{}{}
+		fresh = append(fresh, engineResidencyRow{cid: cid, source: source, seq: int64(seq)})
+	}
+
+	if len(fresh) > 0 {
+		ingested = len(fresh)
+		inserted, err := insertEngineResidencyBatch(s.db, schemaName, fresh)
+		if err != nil {
+			return fail(fmt.Errorf("record engine residency for %s: %w", schemaName, err))
+		}
+		if inserted != int64(len(fresh)) {
+			// OR IGNORE swallowed a row the probe said was absent. That must
+			// never go unnoticed: the record's arena row would stay visible
+			// with no ledger row pointing at it — the duplicate-results bug
+			// above. Find the rows whose ledger seq is NOT the one just
+			// ingested and tombstone those.
+			log.Warnf("FlatSQL engine residency: %s — %d of %d rows were already present; reconciling", schemaName, int64(len(fresh))-inserted, len(fresh))
+			ignored, err := s.residencySeqsNotStored(schemaName, fresh)
+			if err != nil {
+				return fail(err)
+			}
+			duplicateSeqs = append(duplicateSeqs, ignored...)
+			ingested -= len(ignored)
+		}
+	}
+
+	duplicates := len(duplicateSeqs)
+	for _, seq := range duplicateSeqs {
+		if err := s.engineDB.MarkDeleted(enginePartition(s.engineTableForLedger(schemaName), source), seq); err != nil {
+			return fail(fmt.Errorf("tombstone duplicate engine row in %s: %w", schemaName, err))
+		}
 	}
 	if inTxn {
 		if _, err := s.db.Exec("COMMIT"); err != nil {
@@ -156,6 +195,76 @@ type engineResidencyRow struct {
 	cid    string
 	source string
 	seq    int64
+}
+
+// residentCIDSet is engineResidencyRowsForCIDs reduced to the question the
+// ingest path asks: which of these CIDs already hold a place in the window.
+func (s *FlatSQLStore) residentCIDSet(schemaName string, cids []string) (map[string]struct{}, error) {
+	rows, err := s.engineResidencyRowsForCIDs(schemaName, cids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]struct{}, len(cids))
+	for _, row := range rows {
+		out[row.cid] = struct{}{}
+	}
+	return out, nil
+}
+
+// residencySeqsNotStored returns the ingest sequences of `fresh` rows whose
+// ledger row is NOT the one just written — the rows an OR IGNORE swallowed.
+// Their arena rows must be tombstoned or the window serves the record twice.
+func (s *FlatSQLStore) residencySeqsNotStored(schemaName string, fresh []engineResidencyRow) ([]uint64, error) {
+	cids := make([]string, len(fresh))
+	for i, row := range fresh {
+		cids[i] = row.cid
+	}
+	stored, err := s.engineResidencyRowsForCIDs(schemaName, cids)
+	if err != nil {
+		return nil, fmt.Errorf("reconcile engine residency for %s: %w", schemaName, err)
+	}
+	bySeq := make(map[string]int64, len(stored))
+	for _, row := range stored {
+		bySeq[row.cid] = row.seq
+	}
+	var ignored []uint64
+	for _, row := range fresh {
+		if seq, ok := bySeq[row.cid]; !ok || seq != row.seq {
+			ignored = append(ignored, uint64(row.seq))
+		}
+	}
+	return ignored, nil
+}
+
+// insertEngineResidencyBatch writes the window's ledger rows in multi-row
+// statements and returns how many rows were actually inserted. OR IGNORE is
+// kept from the per-record form: it is the backstop that makes a row already
+// present a detectable no-op rather than a failed write.
+func insertEngineResidencyBatch(exec sqlExecer, schemaName string, rows []engineResidencyRow) (int64, error) {
+	var inserted int64
+	for start := 0; start < len(rows); start += batchStatementRows {
+		end := start + batchStatementRows
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := rows[start:end]
+		args := make([]any, 0, len(batch)*4)
+		for _, row := range batch {
+			args = append(args, schemaName, row.cid, row.source, row.seq)
+		}
+		res, err := exec.Exec(
+			`INSERT OR IGNORE INTO sdn_engine_rows (schema_name, cid, source, seq) VALUES `+valueTupleList(len(batch), 4),
+			args...)
+		if err != nil {
+			return inserted, err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return inserted, err
+		}
+		inserted += affected
+	}
+	return inserted, nil
 }
 
 // engineResidencyRowsForCIDs reads the residency rows of the given CIDs.
