@@ -34,6 +34,7 @@ func TestHandlePubSubMessageStoresPNMAnnouncementsFromDatasetSchemaTopic(t *test
 
 	pnmBytes := buildProtocolTestPNM(t, "bafymanifest", "DPM")
 	handler := NewSDSExchangeHandler(store, validator)
+	handler.SetPushAuthorizer(AllowAnyPush) // these tests exercise store mechanics, not trust policy
 	if err := handler.HandlePubSubMessage("OMM.fbs", pnmBytes, peer.ID("12D3KooWDatasetPublisher")); err != nil {
 		t.Fatalf("HandlePubSubMessage failed: %v", err)
 	}
@@ -68,6 +69,7 @@ func TestHandlePubSubMessageCallsPNMHandlerForDatasetSchemaTopic(t *testing.T) {
 
 	pnmBytes := buildProtocolTestPNM(t, "bafymanifest", "dataset:OMM.fbs:batch")
 	handler := NewSDSExchangeHandler(store, validator)
+	handler.SetPushAuthorizer(AllowAnyPush) // these tests exercise store mechanics, not trust policy
 	called := false
 	fromPeer := peer.ID("12D3KooWDatasetPublisher")
 	handler.SetPubSubPNMHandler(func(ctx context.Context, schema string, data []byte, from peer.ID) error {
@@ -105,6 +107,7 @@ func TestHandlePubSubMessageSDSRecordNilStoreDoesNotPanic(t *testing.T) {
 
 	// nil store models an edge-mode node (config mode: edge, no FlatSQL store).
 	handler := NewSDSExchangeHandler(nil, validator)
+	handler.SetPushAuthorizer(AllowAnyPush) // these tests exercise store mechanics, not trust policy
 
 	ommBytes := buildFixtureOMM(t, 25544, "ISS (ZARYA)")
 	from := peer.ID("12D3KooWEdgePublisher")
@@ -135,6 +138,7 @@ func TestHandlePubSubMessagePNMNilStoreDoesNotPanic(t *testing.T) {
 	}
 
 	handler := NewSDSExchangeHandler(nil, validator)
+	handler.SetPushAuthorizer(AllowAnyPush) // these tests exercise store mechanics, not trust policy
 	pnmHandlerCalled := false
 	handler.SetPubSubPNMHandler(func(ctx context.Context, schema string, data []byte, from peer.ID) error {
 		pnmHandlerCalled = true
@@ -168,6 +172,7 @@ func TestHandlePubSubMessageStoresSDSRecordWhenStorePresent(t *testing.T) {
 	defer store.Close()
 
 	handler := NewSDSExchangeHandler(store, validator)
+	handler.SetPushAuthorizer(AllowAnyPush) // these tests exercise store mechanics, not trust policy
 	ommBytes := buildFixtureOMM(t, 25544, "ISS (ZARYA)")
 	if err := handler.HandlePubSubMessage("OMM.fbs", ommBytes, peer.ID("12D3KooWStorePublisher")); err != nil {
 		t.Fatalf("store-present HandlePubSubMessage failed: %v", err)
@@ -200,4 +205,92 @@ func buildProtocolTestPNM(t *testing.T, cid, fileID string) []byte {
 	pnm := PNM.PNMEnd(builder)
 	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
 	return append([]byte(nil), builder.FinishedBytes()...)
+}
+
+// The push lane used to go from a rate-limit check straight to store.Store with a
+// literal nil signature: any peer that could dial the node, or simply subscribe to a
+// pubsub topic, could inject records — which the node then served back on its
+// ANONYMOUS public data plane, unioned across every producer table. Discovery makes
+// reaching a node free, because it advertises itself on the public Amino DHT.
+//
+// There was no test on any of the three write paths, which is how it survived.
+func TestUntrustedPeerCannotWriteRecords(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "sdn-protocol-push-gate-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	pnmBytes := buildProtocolTestPNM(t, "bafyuntrusted", "DPM")
+	stranger := peer.ID("12D3KooWUntrustedStranger")
+
+	// UNWIRED IS DENY. A handler whose authorizer was never set must refuse, so
+	// that a future second construction path that forgets to wire one fails
+	// closed instead of silently reopening the hole.
+	unwired := NewSDSExchangeHandler(store, validator)
+	if err := unwired.HandlePubSubMessage("OMM.fbs", pnmBytes, stranger); err != nil {
+		t.Fatalf("an unwired handler should drop the record, not error: %v", err)
+	}
+	if got := countStored(t, store, "PNM.fbs"); got != 0 {
+		t.Fatalf("unwired handler stored %d PNM records; nil authorizer must deny", got)
+	}
+
+	// An explicit deny behaves the same way.
+	denied := NewSDSExchangeHandler(store, validator)
+	denied.SetPushAuthorizer(func(peer.ID) bool { return false })
+	if err := denied.HandlePubSubMessage("OMM.fbs", pnmBytes, stranger); err != nil {
+		t.Fatalf("a denied push should drop the record, not error: %v", err)
+	}
+	if got := countStored(t, store, "PNM.fbs"); got != 0 {
+		t.Fatalf("denied peer stored %d PNM records", got)
+	}
+
+	// And the trusted peer it is gating FOR still gets through, or the gate would
+	// be indistinguishable from the feature being broken.
+	allowed := NewSDSExchangeHandler(store, validator)
+	allowed.SetPushAuthorizer(func(id peer.ID) bool { return id == stranger })
+	if err := allowed.HandlePubSubMessage("OMM.fbs", pnmBytes, stranger); err != nil {
+		t.Fatalf("HandlePubSubMessage for a trusted peer failed: %v", err)
+	}
+	if got := countStored(t, store, "PNM.fbs"); got != 1 {
+		t.Fatalf("trusted peer stored %d PNM records, want 1", got)
+	}
+}
+
+// The authorizer must be consulted per peer, not cached or decided once.
+func TestPushAuthorizerIsConsultedPerPeer(t *testing.T) {
+	var asked []peer.ID
+	h := &SDSExchangeHandler{}
+	h.SetPushAuthorizer(func(id peer.ID) bool {
+		asked = append(asked, id)
+		return id == peer.ID("yes")
+	})
+	if h.mayPush(peer.ID("no")) {
+		t.Error("mayPush allowed a peer the authorizer rejected")
+	}
+	if !h.mayPush(peer.ID("yes")) {
+		t.Error("mayPush rejected a peer the authorizer allowed")
+	}
+	if len(asked) != 2 {
+		t.Fatalf("authorizer consulted %d times, want 2 (once per call)", len(asked))
+	}
+}
+
+func countStored(t *testing.T, store *storage.FlatSQLStore, schema string) int {
+	t.Helper()
+	recs, err := store.QueryAll(schema, 10)
+	if err != nil {
+		t.Fatalf("QueryAll %s failed: %v", schema, err)
+	}
+	return len(recs)
 }

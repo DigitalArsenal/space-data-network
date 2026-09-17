@@ -922,6 +922,7 @@ func (n *Node) init() error {
 	}
 
 	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, limits, rateLimiter)
+	n.protocol.SetPushAuthorizer(n.mayAcceptPush)
 	n.protocol.SetPubSubPNMHandler(n.handleDatasetPublicationPNM)
 	n.tipQueue = n.buildTipQueue()
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
@@ -3886,6 +3887,29 @@ func (n *Node) handleTipQueueTip(tip *sdnpubsub.Tip, _ sdnpubsub.ResolvedConfig)
 		n.scheduleDatasetSupersede(schema)
 		log.Infof("TipQueue: materialized dataset publication from %s on %s (cid=%s)", from.ShortString(), schema, tip.CID)
 	}
+}
+
+// mayAcceptPush decides whether a peer may write records into this node's
+// store, for protocol.PushAuthorizer.
+//
+// The default is trust, using the SAME predicate the dataset-PNM path has
+// always used (IsTrusted, i.e. >= Trusted). Deliberately not >= Standard:
+// cacheFetchedDiscoveredNodeEPM assigns Standard to every peer discovered
+// through the SDN rendezvous tag, so a Standard gate would be satisfied by
+// discovery and would gate nothing at all.
+//
+// No registry means no way to establish trust, so nothing is trusted.
+func (n *Node) mayAcceptPush(id peer.ID) bool {
+	if n == nil {
+		return false
+	}
+	if n.config != nil && strings.EqualFold(strings.TrimSpace(n.config.Network.AcceptPushFrom), config.AcceptPushFromAny) {
+		return true
+	}
+	if n.peerRegistry == nil {
+		return false
+	}
+	return n.peerRegistry.IsTrusted(id)
 }
 
 // handleTrustLevelChange is the Task D2 trust-change hook: it auto-
