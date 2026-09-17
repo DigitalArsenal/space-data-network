@@ -66,6 +66,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -91,6 +92,7 @@ func main() {
 		requireAOT  = flag.Bool("require-aot", true, "fail when the FlatSQL engine is running interpreted (measured ~2.8x off on this write path; runs are not comparable across modes)")
 		prewarm     = flag.Bool("prewarm", true, "AOT-compile the FlatSQL engine into the daemon's cache before opening the store")
 		minRatio    = flag.Float64("min-ratio", 0, "fail when the store sustains less than this fraction of the durable disk floor (0 disables the gate)")
+		cpuProfile  = flag.String("cpuprofile", "", "write a CPU profile of the STORE pass here (the other passes are excluded, so the profile is the store's own cost)")
 		verifyEng   = flag.Bool("verify-engine", true, "after the clock stops, count how many written records the engine actually holds")
 		keep        = flag.Bool("keep", false, "keep the temp directory this run created (a directory named by -dir is never removed)")
 		asJSON      = flag.Bool("json", false, "emit the report as JSON")
@@ -109,6 +111,7 @@ func main() {
 		requireAOT:  *requireAOT,
 		prewarm:     *prewarm,
 		minRatio:    *minRatio,
+		cpuProfile:  *cpuProfile,
 		verifyEng:   *verifyEng,
 		keep:        *keep,
 		asJSON:      *asJSON,
@@ -130,6 +133,7 @@ type runConfig struct {
 	requireAOT  bool
 	prewarm     bool
 	minRatio    float64
+	cpuProfile  string
 	verifyEng   bool
 	keep        bool
 	asJSON      bool
@@ -318,6 +322,22 @@ func run(cfg runConfig) error {
 		}
 	}
 
+	// PROFILE ONLY THE STORE PASS. The synthesis and baseline passes would
+	// otherwise dominate the profile with work that is not the store's.
+	if cfg.cpuProfile != "" {
+		f, perr := os.Create(cfg.cpuProfile)
+		if perr != nil {
+			return perr
+		}
+		if perr := pprof.StartCPUProfile(f); perr != nil {
+			f.Close()
+			return perr
+		}
+		defer func() {
+			pprof.StopCPUProfile()
+			f.Close()
+		}()
+	}
 	storeRes, perSchema, err := stream(passStore, templates, target, cfg.batch, &storeSink{
 		store:    store,
 		producer: cfg.producer,
