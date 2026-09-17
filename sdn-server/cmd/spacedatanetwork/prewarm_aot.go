@@ -170,3 +170,22 @@ func reportPrewarm(out io.Writer, label, path string, alreadyPresent bool) {
 	}
 	fmt.Fprintf(out, "  %s: %s (%s)\n", label, path, status)
 }
+
+// prewarmEngineAOTForDaemon compiles the FlatSQL engine artifact into the
+// daemon's cache before the store opens, if it is not already there.
+//
+// Split from prewarmAOTArtifacts so daemon startup does exactly the mandatory
+// part: the engine. Flows and the engine-link shim are prewarmed on demand or
+// by the explicit `prewarm-aot` command; only the engine decides whether every
+// query runs AOT or interpreted.
+func prewarmEngineAOTForDaemon(out io.Writer) error {
+	cacheDir := storage.EngineAOTCacheDir()
+	path, present, err := flatsqlrt.PrewarmEngineAOT(cacheDir)
+	if err != nil {
+		return err
+	}
+	if !present {
+		fmt.Fprintf(out, "compiled the FlatSQL engine AOT artifact for this host: %s\n", path)
+	}
+	return nil
+}
