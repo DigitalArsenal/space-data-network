@@ -270,7 +270,7 @@ func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, pee
 		return "", fmt.Errorf("commit store: %w", err)
 	}
 	committed = true
-	if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded); err != nil {
+	if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded, nil); err != nil {
 		return "", err
 	}
 	return cid, nil

@@ -84,23 +84,47 @@ func engineSourceOfPartition(table, partition string) string {
 // fsync per record. A rollback leaves the engine arena holding rows nothing
 // tracks; the next checkpoint's flush persists them and the next boot's
 // reconcile tombstones them. Caller holds s.mu for writing.
-func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloads [][]byte, cids []string) (int, error) {
+// ingestEngineBatchLocked mirrors a batch into the engine arena and records
+// its residency. When join is non-nil the ledger rows are written INTO that
+// transaction and this opens none of its own — see storeBatchChunk, which folds
+// the ledger into the same commit as the control rows so a window costs ONE
+// fsync instead of two.
+func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloads [][]byte, cids []string, join sqlQueryExecer) (int, []engineResidencyRow, error) {
 	if len(payloads) == 0 {
-		return 0, nil
+		return 0, nil, nil
 	}
 	schemaName = engineLedgerSchema(schemaName)
+	// exec is where the ledger statements go: the caller's transaction when it
+	// gave us one, otherwise the database with a transaction of our own.
+	var exec sqlQueryExecer = join
 	inTxn := false
-	if s.db != nil {
-		if _, err := s.db.Exec("BEGIN"); err == nil {
-			inTxn = true
+	if join == nil {
+		exec = s.db
+		if s.db != nil {
+			if _, err := s.db.Exec("BEGIN"); err == nil {
+				inTxn = true
+			}
 		}
 	}
 	ingested := 0
-	fail := func(err error) (int, error) {
+	// Sequences handed back by the arena this call. On a failure the caller's
+	// transaction (or ours) takes the ledger rows away, and these arena rows
+	// would be left behind with nothing pointing at them — rows the engine
+	// would keep SERVING until the next warm open reconciled them away. So they
+	// are tombstoned on the spot; the boot reconcile stays the backstop for a
+	// hard crash, which is the case it was written for.
+	var ingestedSeqs []uint64
+	fail := func(err error) (int, []engineResidencyRow, error) {
+		for _, seq := range ingestedSeqs {
+			if mErr := s.engineDB.MarkDeleted(enginePartition(s.engineTableForLedger(schemaName), source), seq); mErr != nil {
+				log.Warnf("FlatSQL engine: tombstone %s seq %d after a failed ingest: %v", source, seq, mErr)
+				break
+			}
+		}
 		if inTxn {
 			_, _ = s.db.Exec("ROLLBACK")
 		}
-		return 0, err
+		return 0, nil, err
 	}
 
 	// ONE RESIDENT ROW PER RECORD. The ledger is keyed by (schema, cid); a
@@ -117,7 +141,7 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 	// the driver adds to build its Result — each one a handoff to the engine's
 	// locked exec thread. On a 64-record window that was 128 of the 147
 	// statements the whole store path issued.
-	resident, err := s.residentCIDSet(schemaName, cids)
+	resident, err := s.residentCIDSet(schemaName, cids, exec)
 	if err != nil {
 		return fail(fmt.Errorf("read engine residency for %s: %w", schemaName, err))
 	}
@@ -154,9 +178,15 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 		fresh = append(fresh, engineResidencyRow{cid: cid, source: source, seq: int64(seq)})
 	}
 
+	// Only the FRESH rows: a duplicate's arena row is tombstoned unconditionally
+	// below, so the failure path must not tombstone it a second time.
+	for _, row := range fresh {
+		ingestedSeqs = append(ingestedSeqs, uint64(row.seq))
+	}
+
 	if len(fresh) > 0 {
 		ingested = len(fresh)
-		inserted, err := insertEngineResidencyBatch(s.db, schemaName, fresh)
+		inserted, err := insertEngineResidencyBatch(exec, schemaName, fresh)
 		if err != nil {
 			return fail(fmt.Errorf("record engine residency for %s: %w", schemaName, err))
 		}
@@ -167,7 +197,7 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 			// above. Find the rows whose ledger seq is NOT the one just
 			// ingested and tombstone those.
 			log.Warnf("FlatSQL engine residency: %s — %d of %d rows were already present; reconciling", schemaName, int64(len(fresh))-inserted, len(fresh))
-			ignored, err := s.residencySeqsNotStored(schemaName, fresh)
+			ignored, err := s.residencySeqsNotStored(schemaName, fresh, exec)
 			if err != nil {
 				return fail(err)
 			}
@@ -185,14 +215,14 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 	if inTxn {
 		if _, err := s.db.Exec("COMMIT"); err != nil {
 			_, _ = s.db.Exec("ROLLBACK")
-			return 0, fmt.Errorf("commit engine ingest batch: %w", err)
+			return 0, nil, fmt.Errorf("commit engine ingest batch: %w", err)
 		}
 	}
 	if duplicates > 0 {
 		log.Infof("FlatSQL engine records: %s — %d record(s) were already resident; the duplicate rows were tombstoned", schemaName, duplicates)
 	}
 	s.engineUnflushed.Add(int64(ingested + duplicates))
-	return ingested, nil
+	return ingested, fresh, nil
 }
 
 // engineTableForLedger is the engine base table of a ledger schema name.
@@ -212,8 +242,8 @@ type engineResidencyRow struct {
 
 // residentCIDSet is engineResidencyRowsForCIDs reduced to the question the
 // ingest path asks: which of these CIDs already hold a place in the window.
-func (s *FlatSQLStore) residentCIDSet(schemaName string, cids []string) (map[string]struct{}, error) {
-	rows, err := s.engineResidencyRowsForCIDs(schemaName, cids)
+func (s *FlatSQLStore) residentCIDSet(schemaName string, cids []string, exec sqlQueryExecer) (map[string]struct{}, error) {
+	rows, err := s.engineResidencyRowsForCIDs(schemaName, cids, exec)
 	if err != nil {
 		return nil, err
 	}
@@ -227,12 +257,12 @@ func (s *FlatSQLStore) residentCIDSet(schemaName string, cids []string) (map[str
 // residencySeqsNotStored returns the ingest sequences of `fresh` rows whose
 // ledger row is NOT the one just written — the rows an OR IGNORE swallowed.
 // Their arena rows must be tombstoned or the window serves the record twice.
-func (s *FlatSQLStore) residencySeqsNotStored(schemaName string, fresh []engineResidencyRow) ([]uint64, error) {
+func (s *FlatSQLStore) residencySeqsNotStored(schemaName string, fresh []engineResidencyRow, exec sqlQueryExecer) ([]uint64, error) {
 	cids := make([]string, len(fresh))
 	for i, row := range fresh {
 		cids[i] = row.cid
 	}
-	stored, err := s.engineResidencyRowsForCIDs(schemaName, cids)
+	stored, err := s.engineResidencyRowsForCIDs(schemaName, cids, exec)
 	if err != nil {
 		return nil, fmt.Errorf("reconcile engine residency for %s: %w", schemaName, err)
 	}
@@ -281,7 +311,12 @@ func insertEngineResidencyBatch(exec sqlExecer, schemaName string, rows []engine
 }
 
 // engineResidencyRowsForCIDs reads the residency rows of the given CIDs.
-func (s *FlatSQLStore) engineResidencyRowsForCIDs(schemaName string, cids []string) ([]engineResidencyRow, error) {
+func (s *FlatSQLStore) engineResidencyRowsForCIDs(schemaName string, cids []string, exec sqlQueryExecer) ([]engineResidencyRow, error) {
+	// Read through the caller's transaction when it has one: the ledger rows it
+	// is about to write are only visible inside it.
+	if exec == nil {
+		exec = s.db
+	}
 	schemaName = engineLedgerSchema(schemaName)
 	var out []engineResidencyRow
 	for start := 0; start < len(cids); start += engineTombstoneChunk {
@@ -295,7 +330,7 @@ func (s *FlatSQLStore) engineResidencyRowsForCIDs(schemaName string, cids []stri
 		for _, cid := range chunk {
 			args = append(args, cid)
 		}
-		rows, err := s.db.Query(fmt.Sprintf(
+		rows, err := exec.Query(fmt.Sprintf(
 			`SELECT cid, source, seq FROM sdn_engine_rows WHERE schema_name = ? AND cid IN (%s)`,
 			strings.TrimSuffix(strings.Repeat("?, ", len(chunk)), ", ")), args...)
 		if err != nil {
@@ -322,7 +357,11 @@ func (s *FlatSQLStore) engineResidencyRowsForCIDs(schemaName string, cids []stri
 // Records that were never resident (never routed, evicted, skipped) cost one
 // lookup and nothing else. Best-effort per row; only a poisoned runtime is
 // returned as an error. Caller holds s.mu for writing.
-func (s *FlatSQLStore) tombstoneEngineRecordsLocked(schemaName string, cids []string) (int, error) {
+// tombstoneEngineRecordsLocked removes records from the engine's hot window.
+// join, when non-nil, is a transaction the ledger deletes are written into —
+// without one each DELETE is its own autocommit, and under WAL + FULL that is
+// an fsync per superseded record.
+func (s *FlatSQLStore) tombstoneEngineRecordsLocked(schemaName string, cids []string, join sqlQueryExecer) (int, error) {
 	if len(cids) == 0 || s.engineDB == nil {
 		return 0, nil
 	}
@@ -330,16 +369,20 @@ func (s *FlatSQLStore) tombstoneEngineRecordsLocked(schemaName string, cids []st
 	if !routed {
 		return 0, nil
 	}
-	rows, err := s.engineResidencyRowsForCIDs(schemaName, cids)
+	rows, err := s.engineResidencyRowsForCIDs(schemaName, cids, join)
 	if err != nil {
 		return 0, fmt.Errorf("read engine residency for %s: %w", schemaName, err)
 	}
-	return s.tombstoneResidencyRowsLocked(schemaName, binding.Table, rows)
+	return s.tombstoneResidencyRowsLocked(schemaName, binding.Table, rows, join)
 }
 
 // tombstoneResidencyRowsLocked applies MarkDeleted for each row and deletes it
 // from the ledger. Caller holds s.mu for writing.
-func (s *FlatSQLStore) tombstoneResidencyRowsLocked(schemaName, table string, rows []engineResidencyRow) (int, error) {
+func (s *FlatSQLStore) tombstoneResidencyRowsLocked(schemaName, table string, rows []engineResidencyRow, join sqlQueryExecer) (int, error) {
+	var exec sqlQueryExecer = s.db
+	if join != nil {
+		exec = join
+	}
 	ledgerSchema := engineLedgerSchema(schemaName)
 	removed := 0
 	for _, row := range rows {
@@ -350,7 +393,7 @@ func (s *FlatSQLStore) tombstoneResidencyRowsLocked(schemaName, table string, ro
 			}
 			continue
 		}
-		if _, err := s.db.Exec(`DELETE FROM sdn_engine_rows WHERE schema_name = ? AND cid = ?`, ledgerSchema, row.cid); err != nil {
+		if _, err := exec.Exec(`DELETE FROM sdn_engine_rows WHERE schema_name = ? AND cid = ?`, ledgerSchema, row.cid); err != nil {
 			log.Warnf("FlatSQL engine: drop residency row %s/%s: %v", schemaName, row.cid, err)
 		}
 		removed++
@@ -402,7 +445,7 @@ func (s *FlatSQLStore) tombstoneOrphanedEngineRowsLocked(schemaName string) (int
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	return s.tombstoneResidencyRowsLocked(schemaName, binding.Table, orphans)
+	return s.tombstoneResidencyRowsLocked(schemaName, binding.Table, orphans, nil)
 }
 
 // tombstoneOrphanedEngineRowsAllLocked runs the anti-join for every routed

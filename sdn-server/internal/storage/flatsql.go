@@ -2095,7 +2095,7 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 		// supersede that producer's previous record for the object.
 		superseded := s.mirrorRoutedRecordFromExisting(s.db, schemaName, cid, peerID, signature)
 		if len(superseded) > 0 && s.engineRoutesSchema(schemaName) {
-			if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded); err != nil {
+			if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded, nil); err != nil {
 				return "", err
 			}
 		}
@@ -2149,10 +2149,10 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	// write per record, and the vtab hot window must reflect them without
 	// waiting for a boot rebuild. Superseded records leave the window first.
 	if s.engineRoutesSchema(schemaName) {
-		if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded); err != nil {
+		if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded, nil); err != nil {
 			return "", err
 		}
-		if err := s.ingestEngineRecords(schemaName, []engineIngest{{cid: cid, data: data, source: engineSourceName(tags)}}); err != nil {
+		if _, err := s.ingestEngineRecords(schemaName, []engineIngest{{cid: cid, data: data, source: engineSourceName(tags)}}, nil); err != nil {
 			return "", err
 		}
 	}
@@ -2490,9 +2490,26 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		return 0, fmt.Errorf("begin batch store: %w", err)
 	}
 	committed := false
+	// Arena rows the engine mirror added inside this transaction. The mirror
+	// runs BEFORE the commit so its ledger rows land in the same fsync, which
+	// means a transaction that does not commit leaves those rows in the arena
+	// with no ledger row and no control row — records the engine would keep
+	// SERVING until the next warm open reconciled them away. Retiring them here
+	// covers every path out of this function, including a COMMIT that fails
+	// after the mirror succeeded (ingestEngineBatchLocked's own failure path
+	// cannot see that one). A hard crash in between remains
+	// reconcileEngineResidencyLocked's job.
+	var arenaRows []engineResidencyRow
+	routedEngineBinding, _ := s.engineRoutedSchemaFor(schemaName)
 	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+		if committed {
+			return
+		}
+		_ = tx.Rollback()
+		if len(arenaRows) > 0 {
+			if _, err := s.tombstoneResidencyRowsLocked(schemaName, routedEngineBinding.Table, arenaRows, nil); err != nil {
+				log.Warnf("FlatSQL engine: retire %d arena row(s) after a rolled-back %s window: %v", len(arenaRows), schemaName, err)
+			}
 		}
 	}()
 
@@ -2612,22 +2629,46 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 	if err != nil {
 		return inserted, err
 	}
-	if err := tx.Commit(); err != nil {
-		return inserted, fmt.Errorf("commit batch store: %w", err)
-	}
-	committed = true
+	// THE ENGINE MIRROR RUNS BEFORE THE COMMIT, AND ITS LEDGER ROWS JOIN IT.
+	//
+	// The ledger (sdn_engine_rows) lives in this same control database, so when
+	// the mirror opened a transaction of its own a window cost TWO commits and,
+	// under WAL + synchronous=FULL, two fsyncs — against the one the durable
+	// floor pays for the same records. Measured: 2.0 fsyncs per window, and
+	// turning the barriers off entirely was worth 3.08x, which is what says the
+	// second one is worth removing.
+	//
+	// Folding it in also makes the ledger ATOMIC with the rows it describes,
+	// which two transactions could never be. What it costs is the old ordering
+	// guarantee: the arena ingest now happens before the commit, so a rollback
+	// leaves arena rows behind. Those are tombstoned on the spot by
+	// ingestEngineBatchLocked's failure path, and a hard crash in between is the
+	// exact drift reconcileEngineResidencyLocked repairs at the next warm open
+	// (its `extras` arm tombstones arena rows the ledger does not know).
+	//
+	// TOMBSTONE BEFORE INGEST, always. A window can supersede a CID and then
+	// carry that same CID again as a new record (the repeat-of-a-superseded-CID
+	// case); tombstoning after the ingest would retire the row just written and
+	// silently drop the record from the engine. That ordering was free when the
+	// mirror ran after the commit and is load-bearing now that it runs before.
 	if len(superseded) > 0 {
-		if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded); err != nil {
+		if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded, tx); err != nil {
 			return inserted, err
 		}
 	}
 	if len(enginePending) > 0 {
 		// Engine-cache mirror: failures never fail the write (the control
 		// rows are the source of truth), but a trapped runtime does.
-		if err := s.ingestEngineRecords(schemaName, enginePending); err != nil {
+		mirrored, err := s.ingestEngineRecords(schemaName, enginePending, tx)
+		arenaRows = append(arenaRows, mirrored...)
+		if err != nil {
 			return inserted, err
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return inserted, fmt.Errorf("commit batch store: %w", err)
+	}
+	committed = true
 	return inserted, nil
 }
 
@@ -3436,7 +3477,7 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	_, err = s.tombstoneEngineRecordsLocked(schemaName, []string{cid})
+	_, err = s.tombstoneEngineRecordsLocked(schemaName, []string{cid}, nil)
 	return err
 }
 
