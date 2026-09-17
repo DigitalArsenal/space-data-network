@@ -391,7 +391,7 @@ node deployment/release/build-cli-update-payload.mjs \
   --bundle-archive dist/release/spacedatanetwork-1.2.3-darwin-arm64.tar.gz \
   --version 1.2.3 \
   --sequence 7 \
-  --channel beta \
+  --channel release \
   --platform darwin \
   --arch arm64 \
   --key-id sdn-release-2026 \
@@ -407,8 +407,8 @@ node deployment/release/build-sdn-update-feed.js \
 
 # 3. Publish the feed tree, then on the target host stage and apply.
 spacedatanetwork update stage \
-  --manifest https://sdn.spaceaware.io/updates/cli-bundle/beta/darwin/arm64/1.2.3/manifest.json \
-  --carrier https://sdn.spaceaware.io/updates/cli-bundle/beta/darwin/arm64/1.2.3/update.wasm
+  --manifest https://sdn.spaceaware.io/updates/cli-bundle/release/darwin/arm64/1.2.3/manifest.json \
+  --carrier https://sdn.spaceaware.io/updates/cli-bundle/release/darwin/arm64/1.2.3/update.wasm
 spacedatanetwork update apply
 ```
 
