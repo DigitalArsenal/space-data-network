@@ -80,6 +80,9 @@ yarn-error.log*
 sdn-server/bin/
 sdn-server/spacedatanetwork
 sdn-server/spacedatanetwork-test
+# `go build ./cmd/sds-stream-bench` with no -o drops a ~35 MB Mach-O here, and
+# it was not ignored: a `git add -A` would have committed the build output.
+sdn-server/sds-stream-bench
 
 # Legacy vendored packages (removed)
 # packages/emsdk/ - replaced by flatc-wasm npm package
