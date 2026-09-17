@@ -67,6 +67,81 @@ function Invoke-RestMethodCompat {
   Invoke-RestMethod @parameters
 }
 
+# THE .NET PATH, NOT THE CMDLET.
+#
+# The published-installer smoke on a clean Windows runner died on
+#   The term 'Get-FileHash' is not recognized as the name of a cmdlet
+# at the checksum step, having already downloaded the archive through
+# Invoke-WebRequest — which lives in the SAME module (Microsoft.PowerShell
+# .Utility), so "the module did not load" does not explain it and the real
+# cause is still unknown. What is certain is that the .NET classes below need
+# no module, no autoloading and no minimum PowerShell beyond 2.0, so they
+# cannot fail this way on any machine a user is likely to run.
+#
+# Kept as a fallback rather than a replacement: where Get-FileHash does work it
+# is the better-tested path, and a disagreement between the two would be worth
+# knowing about rather than papering over.
+function Get-SdnFileHashSha256 {
+  param([string]$LiteralPath)
+
+  # Asked for, not assumed, and not inferred from an exception type: whether a
+  # missing command raises a catchable terminating error depends on how the
+  # script was invoked, and this one runs inside Invoke-Expression. Get-Command
+  # is Microsoft.PowerShell.Core, which is present wherever PowerShell is.
+  if (Get-Command -Name Get-FileHash -ErrorAction SilentlyContinue) {
+    return (Get-FileHash -LiteralPath $LiteralPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
+  Write-Info 'Get-FileHash unavailable; hashing with .NET'
+
+  $stream = [System.IO.File]::OpenRead($LiteralPath)
+  try {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      $bytes = $sha256.ComputeHash($stream)
+    } finally {
+      $sha256.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+  return ([System.BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
+}
+
+# Expand-Archive is Microsoft.PowerShell.Archive and is the NEXT line the
+# installer would have reached, so it gets the same treatment before it can
+# fail the same way for the same unexplained reason.
+function Expand-SdnArchive {
+  param(
+    [string]$LiteralPath,
+    [string]$DestinationPath
+  )
+
+  if (Get-Command -Name Expand-Archive -ErrorAction SilentlyContinue) {
+    Expand-Archive -LiteralPath $LiteralPath -DestinationPath $DestinationPath -Force
+    return
+  }
+  Write-Info 'Expand-Archive unavailable; extracting with .NET'
+
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  # ExtractToDirectory refuses an existing destination on PowerShell 5.1, and
+  # the installer re-runs into a directory it has already made.
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($LiteralPath)
+  try {
+    foreach ($entry in $archive.Entries) {
+      $target = Join-Path $DestinationPath $entry.FullName
+      $parent = Split-Path -Parent $target
+      if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+      }
+      if ($entry.Name) {
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+      }
+    }
+  } finally {
+    $archive.Dispose()
+  }
+}
+
 function Get-SdnArch {
   $machine = $env:PROCESSOR_ARCHITEW6432
   if (-not $machine) {
@@ -217,7 +292,7 @@ try {
     Write-Fail "Checksum for $archiveName not found in spacedatanetwork-checksums.txt"
   }
   $expected = (($checksumLine -split '\s+')[0]).ToLowerInvariant()
-  $actual = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $actual = Get-SdnFileHashSha256 -LiteralPath $archivePath
   if ($expected -ne $actual) {
     Write-Fail "Checksum mismatch. Expected $expected but got $actual"
   }
@@ -228,7 +303,7 @@ try {
   if (Test-Path -LiteralPath $bundleRoot) {
     Remove-Item -LiteralPath $bundleRoot -Recurse -Force
   }
-  Expand-Archive -LiteralPath $archivePath -DestinationPath $BundleParentDir -Force
+  Expand-SdnArchive -LiteralPath $archivePath -DestinationPath $BundleParentDir
 
   $PrimaryExe = Join-Path $bundleRoot 'bin\spacedatanetwork.exe'
   $AliasExe = Join-Path $bundleRoot 'bin\sdn.exe'

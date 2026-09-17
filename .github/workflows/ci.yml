@@ -15,6 +15,44 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # scripts/install.ps1 IS THE LIVE INSTALLER. The public entrypoint
+  # (https://spacedatanetwork.org/install.ps1, docs/install.ps1) is a 19-line
+  # shim that fetches this file from raw.githubusercontent.com/.../main and
+  # Invoke-Expressions it, so whatever is on main is what every Windows user
+  # running the documented install command gets — immediately, with no release
+  # and no Pages deploy in between. A syntax error here is a broken installer
+  # for everyone, and nothing was checking that it even parses.
+  #
+  # Parsing is all this does: it is deliberately not a run, because running the
+  # installer is the published-installer smoke's job in the release workflow.
+  powershell-installer-parses:
+    name: Installer script parses
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse scripts/install.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/install.ps1'), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) {
+            $errors | ForEach-Object { Write-Host "::error::install.ps1: $_" }
+            exit 1
+          }
+          Write-Host 'scripts/install.ps1 parses clean'
+      - name: Parse docs/install.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'docs/install.ps1'), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) {
+            $errors | ForEach-Object { Write-Host "::error::docs/install.ps1: $_" }
+            exit 1
+          }
+          Write-Host 'docs/install.ps1 parses clean'
+
   local-ci-equivalent:
     name: Local CI Equivalent
     runs-on: ubuntu-latest
