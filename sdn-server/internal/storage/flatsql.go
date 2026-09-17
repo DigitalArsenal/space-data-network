@@ -2328,6 +2328,55 @@ func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerI
 // records so one slow sync retains margin below the two-second reader budget.
 const storeWriteChunkSize = 64
 
+// storeWriteWindowBudget is the REAL invariant the chunk size exists to hold:
+// one lock window must stay comfortably inside the two-second reader budget.
+// The 2026-07-06 blackout was a window that ran for minutes, not a window that
+// contained too many records — the record count was only ever a proxy for time.
+const storeWriteWindowBudget = 2 * time.Second
+
+// storeWriteChunkMax bounds the adaptive window. 1024 is where the measured
+// gain flattens and is still ~0.7 s on hardware that can sustain it.
+const storeWriteChunkMax = 1024
+
+// adaptiveStoreChunk returns the next window size, growing while windows land
+// well inside the budget and shrinking the moment one approaches it.
+//
+// A FIXED 64 LEFT 6x ON THE TABLE. Measured 2026-09-16 (OMM, 4 MiB, engine
+// AOT): 64-record windows sustained 233 rec/s, 1024-record windows 1417 rec/s
+// — the cost is the per-window commit, so sixteen times fewer commits is
+// six times the throughput. But a fixed 1024 is not safe either: the same
+// comment that set 64 records a cold CI runner taking 1.7 s for a 128-record
+// window, which extrapolates to ~13 s at 1024 — far outside the budget the
+// constant exists to protect.
+//
+// So target the budget instead of guessing a count. Fast hardware earns big
+// windows; slow hardware keeps small ones; neither needs a human to tune it.
+func adaptiveStoreChunk(current int, lastWindow time.Duration) int {
+	if current <= 0 {
+		return storeWriteChunkSize
+	}
+	switch {
+	case lastWindow <= 0:
+		return current
+	// Comfortably inside budget: double, up to the cap. A quarter of the
+	// budget leaves 4x headroom for one slow sync, which is the margin the
+	// fixed 64 was chosen to preserve — the equilibrium this settles at is a
+	// window that TAKES about half a second, whatever hardware that is.
+	case lastWindow < storeWriteWindowBudget/4:
+		if next := current * 2; next <= storeWriteChunkMax {
+			return next
+		}
+		return storeWriteChunkMax
+	// Approaching budget: halve, down to the floor that was always safe.
+	case lastWindow > storeWriteWindowBudget/2:
+		if next := current / 2; next >= storeWriteChunkSize {
+			return next
+		}
+		return storeWriteChunkSize
+	}
+	return current
+}
+
 // StoreBatch stores FlatBuffer records in chunked store-lock windows
 // (storeWriteChunkSize records per lock hold + transaction) without
 // attaching per-record source tags.
@@ -2357,16 +2406,25 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 	}
 
 	inserted := 0
-	for start := 0; start < len(records); start += storeWriteChunkSize {
-		end := start + storeWriteChunkSize
+	// Window size adapts to how long the last window actually took; see
+	// adaptiveStoreChunk. Starts at the always-safe floor so the first window
+	// on unknown hardware behaves exactly as it always did.
+	window := storeWriteChunkSize
+	var lastWindow time.Duration
+	for start := 0; start < len(records); {
+		window = adaptiveStoreChunk(window, lastWindow)
+		end := start + window
 		if end > len(records) {
 			end = len(records)
 		}
+		began := time.Now()
 		n, err := s.storeBatchChunk(schemaName, records[start:end], peerID, signature, tags)
+		lastWindow = time.Since(began)
 		inserted += n
 		if err != nil {
 			return inserted, err
 		}
+		start = end
 	}
 	return inserted, nil
 }
