@@ -755,7 +755,29 @@ jobs:
           done
           echo "## our compiler's default C++ ABI"
           echo | "${CXX:-g++}" -x c++ -E -dM - 2>/dev/null | grep -i "GLIBCXX_USE_CXX11_ABI" || echo "  (macro not defined)"
+      # STAMP THE RELEASE TAG. versioninfo.Version() is "the one version string
+      # every surface reports" and falls back to the suite version when
+      # ReleaseTag is empty, so an unstamped binary from v1.0.5-beta.67 answers
+      # "1.0.5" — the same string beta.59 answers, and beta.58, and a dev build.
+      # so neither an operator nor a support conversation can tell two builds
+      # apart from what the node reports.
+      #
+      # This does NOT fix the libp2p agent string: versioninfo.AgentVersion is a
+      # compile-time const over SuiteVersion (runtime.go), so an -X on a var can
+      # never reach it and `version` still prints agent=spacedatanetwork/1.0.5.
+      # Making the peer-visible identity carry the build is a wire-format change
+      # and a product decision, not a release-plumbing fix, so it is left alone
+      # and called out rather than done quietly here.
+      #
+      # Every other path that produces this binary already stamps it: the
+      # Dockerfile, build-local-node-bundle.sh and cut-release-local.sh. Only the
+      # job that builds the PUBLISHED archives did not, and RELEASE_TAG was
+      # already in its env, unused. SDN_GO_LDFLAGS is the supported way in —
+      # go keeps the LAST -ldflags it is given, so passing it as an argument here
+      # would silently drop the static link line (see go-with-wasmedge.sh).
       - name: Build target SDN binary
+        env:
+          SDN_GO_LDFLAGS: -X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=${{ needs.beta-version.outputs.release_tag }}
         run: |
           mkdir -p dist/cli-input
           GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" ./scripts/go-with-wasmedge.sh build -o "${PWD}/dist/cli-input/${BINARY_NAME}" ./cmd/spacedatanetwork
