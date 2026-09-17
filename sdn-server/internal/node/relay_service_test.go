@@ -11,8 +11,8 @@ import (
 // CPU of 2 vCPUs with 780 inbound connections from ~700 distinct IPs while its
 // real work starved. A node contributes spare capacity here; it does not exist
 // to be a relay.
-func TestAutoRelayResourcesAreTighterThanLibp2pDefaults(t *testing.T) {
-	ours := autoRelayResources()
+func TestRelayResourcesAreTighterThanLibp2pDefaults(t *testing.T) {
+	ours := relayResources()
 	theirs := relay.DefaultResources()
 
 	if ours.MaxReservations >= theirs.MaxReservations {
@@ -44,7 +44,7 @@ func TestAutoRelayResourcesAreTighterThanLibp2pDefaults(t *testing.T) {
 
 // Every bound must be positive; a zero would read as "unlimited" to libp2p.
 func TestAutoRelayResourcesHaveNoUnlimitedFields(t *testing.T) {
-	r := autoRelayResources()
+	r := relayResources()
 	for name, value := range map[string]int{
 		"MaxReservations":       r.MaxReservations,
 		"MaxCircuits":           r.MaxCircuits,

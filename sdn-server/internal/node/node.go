@@ -42,6 +42,7 @@ import (
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/multiformats/go-multiaddr"
@@ -771,10 +772,24 @@ func (n *Node) init() error {
 	// relay for anyone and should not advertise that it can.
 	switch n.config.Network.EnableRelay {
 	case config.RelayModeAlways:
-		hostOptions = append(hostOptions, libp2p.EnableRelayService())
+		// BOUNDED, exactly as the auto path is. This used to be a bare
+		// EnableRelayService(), i.e. relay.DefaultResources(): 128 reservations
+		// and 16 circuits per peer, four times and twice what the auto path
+		// deliberately caps at. `enable_relay: true` parses to this mode, and
+		// true is what the deploy docs and the production configs carry — so
+		// the one mode operators actually select was the unbounded one.
+		//
+		// Unbounded relay is not hypothetical here: it is what pinned host-01
+		// at 98.5% CPU with ~780 inbound connections from ~700 IPs on
+		// 2026-08-08. The limits exist because of that day; choosing "always"
+		// asks for the service to run regardless of reachability, not for the
+		// caps to come off.
+		hostOptions = append(hostOptions, libp2p.EnableRelayService(relay.WithResources(relayResources())))
 		log.Warnf(
-			"Circuit-relay HOP service ENABLED unconditionally (network.enable_relay: always): this node relays for " +
-				"arbitrary peers whether or not it is reachable. Donated CPU and bandwidth.",
+			"Circuit-relay HOP service ENABLED unconditionally (network.enable_relay: always): this node relays for "+
+				"arbitrary peers whether or not it is reachable. Donated CPU and bandwidth, bounded to %d reservations "+
+				"and %d circuits per peer.",
+			relayResources().MaxReservations, relayResources().MaxCircuits,
 		)
 	case config.RelayModeNever:
 		log.Infof("Circuit-relay HOP service disabled (network.enable_relay: never); this node can still dial THROUGH relays")
