@@ -1401,7 +1401,13 @@ func insertSchemaMetadataReturningRowID(exec sqlExecer, tableName string, rec st
 	return insertSchemaMetadataWithMode(exec, tableName, rec, false)
 }
 
-func insertSchemaMetadataWithMode(exec sqlExecer, tableName string, rec storedRecord, ignoreDuplicates bool) (int64, error) {
+// schemaMetadataArgs shapes one record's bind parameters for a
+// (producer, standard) table insert: NULL rather than "" for an absent
+// signature or supersede key, record_length derived from the stored bytes, and
+// created_at defaulted to the record timestamp. Shared with the multi-row
+// batch insert (flatsql_batch_writes.go) so one row can never be shaped one
+// way here and another way there.
+func schemaMetadataArgs(rec storedRecord) []any {
 	var signatureHex any
 	if len(rec.signature) > 0 {
 		signatureHex = hex.EncodeToString(rec.signature)
@@ -1413,6 +1419,10 @@ func insertSchemaMetadataWithMode(exec sqlExecer, tableName string, rec storedRe
 	if rec.supersedeKey != "" {
 		supersedeKey = rec.supersedeKey
 	}
+	return []any{rec.cid, rec.peerID, rec.timestamp, rec.data, int64(len(rec.data)), signatureHex, supersedeKey, rec.createdAt}
+}
+
+func insertSchemaMetadataWithMode(exec sqlExecer, tableName string, rec storedRecord, ignoreDuplicates bool) (int64, error) {
 	insertMode := "INSERT INTO"
 	if ignoreDuplicates {
 		insertMode = "INSERT OR IGNORE INTO"
@@ -1423,7 +1433,7 @@ func insertSchemaMetadataWithMode(exec sqlExecer, tableName string, rec storedRe
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, insertMode, tableName)
-	result, err := exec.Exec(insertSQL, rec.cid, rec.peerID, rec.timestamp, rec.data, int64(len(rec.data)), signatureHex, supersedeKey, rec.createdAt)
+	result, err := exec.Exec(insertSQL, schemaMetadataArgs(rec)...)
 	if err != nil {
 		return 0, err
 	}
@@ -1562,8 +1572,9 @@ const sourceSummaryLaneScanLimit = 100000
 //
 // So the rebuild does not look for what changed. It is TOLD:
 //
-//   - the per-record writers (insertNewSourceTagsTx, upsertSourceTagsTx) call
-//     incrementSourceSummary, so a lane they touch is already correct;
+//   - the tag writers (insertNewSourceTagsTx, upsertSourceTagsTx, and the
+//     window writer chunkWriteBuffer.writeSourceTags) all increment the
+//     summary, so a lane they touch is already correct;
 //   - supersede / GC / batch reconciliation call the SCOPED form with the schema
 //     they just mutated, and every lane of that schema is rebuilt unconditionally
 //     because those verbs delete rows and the summary cannot be trusted for them.
@@ -1605,9 +1616,11 @@ func (s *FlatSQLStore) rebuildSourceSummaryScope(schemaName string) error {
 //
 // So the lanes are read from the two places that already know them:
 //
-//  1. sdn_record_source_summary — tens of rows, and every lane written by the
-//     per-record path is there already, because insertNewSourceTagsTx and
-//     upsertSourceTagsTx both call incrementSourceSummary.
+//  1. sdn_record_source_summary — tens of rows, and every lane written by an
+//     ingest path is there already, because insertNewSourceTagsTx,
+//     upsertSourceTagsTx and the batch window's writeSourceTags all increment
+//     the summary (the window folds its records into one increment;
+//     incrementSourceSummaryBy).
 //
 // That is exact for every writer in the tree. The fallback below covers the
 // one case it cannot: a summary that is EMPTY for the scope (a first boot, a
@@ -1955,20 +1968,34 @@ func (s *FlatSQLStore) RefreshSourceBatchSummary(schemaName, providerID, sourceN
 }
 
 func incrementSourceSummary(tx sqlExecer, schemaName string, tags SourceTags, recordBytes, recordRowID int64) error {
+	return incrementSourceSummaryBy(tx, schemaName, tags, 1, recordBytes, recordRowID)
+}
+
+// incrementSourceSummaryBy folds a whole window of records into ONE summary
+// statement. Every term aggregates exactly the way the per-record form
+// accumulated it — count adds, bytes add, max_rowid takes the maximum,
+// first_seen is kept once set — so a window of n records leaves the summary on
+// the values n separate increments would have reached. That equivalence is the
+// whole licence for batching it: the summary is what the dashboard and the
+// datasync high-water mark read.
+func incrementSourceSummaryBy(tx sqlExecer, schemaName string, tags SourceTags, recordCount, recordBytes, recordRowID int64) error {
+	if recordCount <= 0 {
+		return nil
+	}
 	tags = normalizeSourceTags(tags)
 	_, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
 			producer_public_key, record_count, total_bytes, max_rowid, first_seen, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
 		ON CONFLICT(schema_name, provider_id, source_name, batch_id, producer_peer_id, producer_public_key) DO UPDATE SET
-			record_count = record_count + 1,
+			record_count = record_count + excluded.record_count,
 			total_bytes = total_bytes + excluded.total_bytes,
 			max_rowid = MAX(max_rowid, excluded.max_rowid),
 			first_seen = CASE WHEN first_seen > 0 THEN first_seen ELSE excluded.first_seen END,
 			updated_at = excluded.updated_at
-	`), schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey, recordBytes, recordRowID)
+	`), schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey, recordCount, recordBytes, recordRowID)
 	if err != nil {
 		return fmt.Errorf("increment source summary: %w", err)
 	}
@@ -2477,145 +2504,93 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 	var enginePending []engineIngest
 	var superseded []string
 
-	// DEFER THE WRITES SO THE CHUNK COSTS ONE GUEST CALL, NOT HUNDREDS.
-	//
-	// Measured: 8.2 OS-thread handoffs per stored record, and a profile in
-	// which pthread_cond_signal + pthread_cond_wait are 48% of CPU. The engine
-	// already exposes flatsql_query_many, which runs a whole batch inside ONE
-	// RunOnExecThread — measured at 320 statements: 322 dispatches and 16 ms
-	// one at a time, 3 dispatches and 5 ms batched, 3.17x.
-	//
-	// The SELECTs stay where they are because their results choose the branch.
-	// Only the routed insert and the index upsert are deferred, and only when
-	// deferring cannot change the answer:
-	//
-	//   - tags == nil, because the source-tag path consults the rowid the
-	//     insert returns, and a batched insert does not hand one back.
-	//   - no live full-text index, because upsertFullTextExec issues further
-	//     statements per record.
-	//   - no CID appears twice in the chunk, or the second record's existence
-	//     probe would run BEFORE the first record's deferred insert and both
-	//     would be treated as new.
-	//   - no supersede key appears twice, for the same reason: the supersede
-	//     SELECT of a later record must see an earlier one's row.
-	//
-	// Any of those and the whole chunk takes the original one-at-a-time path,
-	// so the fast path never has to reason about a mixed chunk.
-	batched, batchReqs := s.chunkIsBatchable(schemaName, records, tags), []flatsqlrt.QueryRequest(nil)
-
-	// With the chunk cleared as batchable, the two per-record SELECTs become
-	// two per-CHUNK reads: nothing written inside the chunk can change either
-	// answer. That is the other half of the dispatch bill — the loop's probes
-	// were 4.2 of the 8.2 handoffs per record that remained.
-	var preExisting map[string]struct{}
-	var preSuperseded map[string][]string
-	chunkCIDs := make([]string, len(records))
+	// ONE existence probe for the whole window. This was
+	// "SELECT 1 FROM sdn_record_index WHERE schema_name=? AND cid=?" per
+	// record — one engine handoff each, and on a 100k-row index measured at
+	// 6.5 ms for 128 absent CIDs against 0.34 ms for the same 128 in one
+	// IN-list probe. The map is then maintained in Go exactly as the
+	// in-transaction probe behaved: a CID this window has already queued
+	// counts as present for every later record, so the same bytes twice in one
+	// window still take the repeat path.
+	cids := make([]string, len(records))
 	for i, data := range records {
-		chunkCIDs[i] = computeCID(data)
+		cids[i] = computeCID(data)
 	}
-	if batched {
-		keys := make([]string, 0, len(records))
-		seen := make(map[string]struct{}, len(records))
-		for _, data := range records {
-			if k := recordSupersedeKey(schemaName, data); k != "" {
-				if _, dup := seen[k]; !dup {
-					seen[k] = struct{}{}
-					keys = append(keys, k)
-				}
-			}
-		}
-		var err error
-		preExisting, preSuperseded, err = s.prefetchChunkState(tx, schemaName, routedTable, chunkCIDs, keys)
-		if err != nil {
-			return inserted, err
-		}
+	present, err := recordIndexPresence(tx, schemaName, cids)
+	if err != nil {
+		return 0, fmt.Errorf("check %s record batch: %w", schemaName, err)
 	}
-	for recIdx, data := range records {
-		cid := chunkCIDs[recIdx]
-		var err error
-		if batched {
-			// The prefetch already answered this. Shaped as the same
-			// sql.ErrNoRows the probe returned so the switch below is
-			// untouched — the branch logic must not fork with the fast path.
-			if _, ok := preExisting[cid]; !ok {
-				err = sql.ErrNoRows
-			}
-		} else {
-			var existing int
-			err = tx.QueryRow(`SELECT 1 FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid).Scan(&existing)
-		}
-		switch {
-		case err == nil:
+
+	// New rows are queued here and land as multi-row statements
+	// (flatsql_batch_writes.go). The buffer is flushed before ANY statement
+	// below that reads rows back, so what the engine sees is what the
+	// per-record path put there.
+	pending := &chunkWriteBuffer{
+		schemaName:  schemaName,
+		routedTable: routedTable,
+		textIndex:   s.fullTextState(schemaName),
+		tags:        tags,
+	}
+	for i, data := range records {
+		cid := cids[i]
+		if _, repeat := present[cid]; repeat {
 			// Repeat CID (possibly from another producer): record it in THIS
-			// producer's table too.
+			// producer's table too. The mirror COPIES the stored bytes back
+			// out of the read source and supersedes against the producer
+			// table, so anything this window still holds must be on disk
+			// first.
+			landed, err := pending.flush(tx)
+			inserted += landed
+			if err != nil {
+				return inserted, err
+			}
 			gone := s.mirrorRoutedRecordFromExisting(tx, schemaName, cid, peerID, signature)
 			superseded = append(superseded, gone...)
-		case errors.Is(err, sql.ErrNoRows):
-			stored, err := s.storableRecordBytes(schemaName, data)
-			if err != nil {
-				return inserted, err
-			}
-			key := recordSupersedeKey(schemaName, data)
-			var gone []string
-			if batched {
-				// Same work, driven by the prefetched rows instead of a
-				// per-record SELECT. supersedeRowsTx still performs the DELETEs
-				// and the orphan check, so what is retired is unchanged.
-				gone, err = s.supersedeRowsTx(tx, schemaName, routedTable, preSuperseded[key], cid)
-			} else {
-				gone, err = s.supersedeInProducerTableTx(tx, schemaName, routedTable, key, cid)
-			}
-			if err != nil {
-				return inserted, err
-			}
-			superseded = append(superseded, gone...)
-			var rowID int64
-			if batched {
-				insSQL, insArgs := schemaMetadataInsertStatement(routedTable, storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key})
-				idxSQL, idxArgs, idxErr := recordIndexUpsertStatement(schemaName, cid, now, data)
-				if idxErr != nil {
-					return inserted, idxErr
-				}
-				batchReqs = append(batchReqs,
-					flatsqlrt.QueryRequest{SQL: insSQL, Params: insArgs},
-					flatsqlrt.QueryRequest{SQL: idxSQL, Params: idxArgs})
-			} else {
-				var err error
-				rowID, err = insertSchemaMetadataReturningRowID(tx, routedTable, storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key})
-				if err != nil {
-					return inserted, fmt.Errorf("store %s record %s: %w", schemaName, cid, err)
-				}
-				if err := upsertRecordIndexExec(tx, schemaName, cid, now, data, s.fullTextState(schemaName)); err != nil {
-					log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
-				}
-			}
-			_ = rowID
-			inserted++
+			forgetPresence(present, gone)
+			enginePending = dropEnginePending(enginePending, gone)
 			if tags != nil {
-				if err := insertNewSourceTagsTx(tx, schemaName, cid, *tags, int64(len(stored)), rowID); err != nil {
+				if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, *tags, int64(len(data))); err != nil {
 					return inserted, err
 				}
 			}
-			if s.engineRoutesSchema(schemaName) {
-				enginePending = append(enginePending, engineIngest{cid: cid, data: data, source: engineSourceName(tags)})
-			}
-		default:
-			return inserted, fmt.Errorf("check %s record %s: %w", schemaName, cid, err)
+			continue
 		}
 
-		if tags != nil && err == nil {
-			if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, *tags, int64(len(data))); err != nil {
+		stored, err := s.storableRecordBytes(schemaName, data)
+		if err != nil {
+			return inserted, err
+		}
+		key := recordSupersedeKey(schemaName, data)
+		if key != "" {
+			// Supersede READS the producer table and the record index and
+			// DELETES what it finds (record_supersede.go). Two records with
+			// the same key in one window must supersede each other exactly as
+			// they did record by record, so the queue is emptied first. Only
+			// $CAT has a supersede rule; for every other standard the key is
+			// empty and no window is ever broken up here.
+			landed, err := pending.flush(tx)
+			inserted += landed
+			if err != nil {
 				return inserted, err
 			}
+			gone, err := s.supersedeInProducerTableTx(tx, schemaName, routedTable, key, cid)
+			if err != nil {
+				return inserted, err
+			}
+			superseded = append(superseded, gone...)
+			forgetPresence(present, gone)
+			enginePending = dropEnginePending(enginePending, gone)
+		}
+		pending.add(storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key}, data)
+		present[cid] = struct{}{}
+		if s.engineRoutesSchema(schemaName) {
+			enginePending = append(enginePending, engineIngest{cid: cid, data: data, source: engineSourceName(tags)})
 		}
 	}
-	// Before COMMIT, and on the same engine: flatsqldrv's pool is stateless
-	// proxies onto ONE engine SQLite context, so a QueryMany issued here lands
-	// inside the transaction tx opened, exactly as the per-record Execs did.
-	if len(batchReqs) > 0 {
-		if _, err := s.engineDB.QueryMany(batchReqs); err != nil {
-			return inserted, fmt.Errorf("batched store of %d %s statements: %w", len(batchReqs), schemaName, err)
-		}
+	landed, err := pending.flush(tx)
+	inserted += landed
+	if err != nil {
+		return inserted, err
 	}
 	if err := tx.Commit(); err != nil {
 		return inserted, fmt.Errorf("commit batch store: %w", err)
@@ -6583,12 +6558,27 @@ func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp
 	return upsertRecordIndexExec(s.db, schemaName, cid, sourceTimestamp, data, s.fullTextState(schemaName))
 }
 
-// upsertRecordIndexExec writes the index row. sdn_record_index.rowid is the
-// WIRE-VISIBLE datasync cursor deployed peers hold: rows are only ever
-// inserted (SQLite allocates MAX(rowid)+1; the store never VACUUMs), and a
-// repeat CID takes the ON CONFLICT branch and KEEPS its rowid, so a record's
-// cursor position never moves for the life of the store.
-func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimestamp int64, data []byte, textIndex *fullTextIndexState) error {
+// recordIndexConflictClause is why sdn_record_index.rowid is a stable cursor.
+// That rowid is the WIRE-VISIBLE datasync cursor deployed peers hold: rows are
+// only ever inserted (SQLite allocates MAX(rowid)+1; the store never VACUUMs),
+// and a repeat CID takes this ON CONFLICT branch and KEEPS its rowid, so a
+// record's cursor position never moves for the life of the store. Shared with
+// the multi-row batch upsert (flatsql_batch_writes.go): one record must land
+// the same way whether it arrived alone or inside a window.
+const recordIndexConflictClause = `
+		ON CONFLICT(schema_name, cid) DO UPDATE SET
+			norad_cat_id = excluded.norad_cat_id,
+			entity_id = excluded.entity_id,
+			object_type = excluded.object_type,
+			ops_status_code = excluded.ops_status_code,
+			epoch_unix = excluded.epoch_unix,
+			epoch_day = excluded.epoch_day,
+			source_timestamp = excluded.source_timestamp
+	`
+
+// recordIndexArgs shapes one record's index-row bind parameters: NULL for
+// every structured column the payload does not carry.
+func recordIndexArgs(schemaName, cid string, sourceTimestamp int64, data []byte) []any {
 	fields, err := extractIndexedFields(schemaName, data)
 	if err != nil {
 		// The index is the global record catalog + sync cursor (WS7.3d): every
@@ -6623,239 +6613,21 @@ func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimesta
 	if fields.epochDay != "" {
 		day = fields.epochDay
 	}
-	const conflictClause = `
-		ON CONFLICT(schema_name, cid) DO UPDATE SET
-			norad_cat_id = excluded.norad_cat_id,
-			entity_id = excluded.entity_id,
-			object_type = excluded.object_type,
-			ops_status_code = excluded.ops_status_code,
-			epoch_unix = excluded.epoch_unix,
-			epoch_day = excluded.epoch_day,
-			source_timestamp = excluded.source_timestamp
-	`
-	args := []any{schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, sourceTimestamp}
+	return []any{schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, sourceTimestamp}
+}
+
+// upsertRecordIndexExec writes one record's index row and its full-text row.
+func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimestamp int64, data []byte, textIndex *fullTextIndexState) error {
 	sqlText := `
 		INSERT INTO sdn_record_index (
 			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` + conflictClause
-	if _, err = exec.Exec(flatsqldrv.WithoutJournal(sqlText), args...); err != nil {
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` + recordIndexConflictClause
+	if _, err := exec.Exec(flatsqldrv.WithoutJournal(sqlText), recordIndexArgs(schemaName, cid, sourceTimestamp, data)...); err != nil {
 		return fmt.Errorf("failed to upsert index row: %w", err)
 	}
 
 	return upsertFullTextExec(exec, textIndex, schemaName, cid, data)
-}
-
-// prefetchChunkState answers, for the whole chunk in two statements, the two
-// questions the per-record loop otherwise asks one record at a time: which CIDs
-// the record index already holds, and which rows the routed table already has
-// under each supersede key.
-//
-// This is only called for a chunk chunkIsBatchable has cleared, which is what
-// makes one up-front read equivalent to N interleaved ones: no write inside the
-// chunk can change either answer, because no CID and no supersede key repeats.
-//
-// The IN lists are split at 400 parameters. SQLite's default
-// SQLITE_MAX_VARIABLE_NUMBER is 999 and the adaptive write window reaches 1024
-// records, so an unsplit list would start failing exactly when the window grew
-// — a bug that would only appear on fast hardware under load.
-func (s *FlatSQLStore) prefetchChunkState(tx *sql.Tx, schemaName, routedTable string, cids []string, keys []string) (map[string]struct{}, map[string][]string, error) {
-	const maxParams = 400
-
-	existing := make(map[string]struct{}, len(cids))
-	for start := 0; start < len(cids); start += maxParams {
-		end := start + maxParams
-		if end > len(cids) {
-			end = len(cids)
-		}
-		slice := cids[start:end]
-		args := make([]interface{}, 0, len(slice)+1)
-		args = append(args, schemaName)
-		ph := make([]string, len(slice))
-		for i, c := range slice {
-			ph[i] = "?"
-			args = append(args, c)
-		}
-		rows, err := tx.Query(fmt.Sprintf(
-			`SELECT cid FROM sdn_record_index WHERE schema_name = ? AND cid IN (%s)`,
-			strings.Join(ph, ",")), args...)
-		if err != nil {
-			return nil, nil, fmt.Errorf("prefetch existing %s cids: %w", schemaName, err)
-		}
-		for rows.Next() {
-			var c string
-			if err := rows.Scan(&c); err != nil {
-				rows.Close()
-				return nil, nil, err
-			}
-			existing[c] = struct{}{}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	byKey := make(map[string][]string, len(keys))
-	for start := 0; start < len(keys); start += maxParams {
-		end := start + maxParams
-		if end > len(keys) {
-			end = len(keys)
-		}
-		slice := keys[start:end]
-		if len(slice) == 0 {
-			continue
-		}
-		args := make([]interface{}, 0, len(slice))
-		ph := make([]string, len(slice))
-		for i, k := range slice {
-			ph[i] = "?"
-			args = append(args, k)
-		}
-		rows, err := tx.Query(fmt.Sprintf(
-			`SELECT supersede_key, cid FROM %s WHERE supersede_key IN (%s)`,
-			routedTable, strings.Join(ph, ",")), args...)
-		if err != nil {
-			return nil, nil, fmt.Errorf("prefetch superseded %s rows: %w", schemaName, err)
-		}
-		for rows.Next() {
-			var k, c string
-			if err := rows.Scan(&k, &c); err != nil {
-				rows.Close()
-				return nil, nil, err
-			}
-			byKey[k] = append(byKey[k], c)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, nil, err
-		}
-	}
-	return existing, byKey, nil
-}
-
-// chunkIsBatchable reports whether this chunk's routed inserts and index
-// upserts can be deferred into one flatsql_query_many call.
-//
-// Deferring is only safe while no statement inside the chunk depends on a
-// write made earlier in the SAME chunk. Two things can create that dependency,
-// and both are cheap to rule out here rather than reason about per record:
-//
-//   - A repeated CID. The second occurrence's existence probe runs before the
-//     first occurrence's deferred insert, so both would look new and both would
-//     be inserted.
-//   - A repeated supersede key. The later record's supersede SELECT must see
-//     the earlier record's row to retire it; deferred, it would not, and two
-//     rows would survive where one should.
-//
-// Source tags disqualify the chunk because insertNewSourceTagsTx consults the
-// rowid the insert returns, and a live full-text index does because
-// upsertFullTextExec issues further per-record statements.
-func (s *FlatSQLStore) chunkIsBatchable(schemaName string, records [][]byte, tags *SourceTags) bool {
-	if tags != nil || len(records) < 2 {
-		return false
-	}
-	if s.engineDB == nil || s.fullTextState(schemaName) != nil {
-		return false
-	}
-	cids := make(map[string]struct{}, len(records))
-	keys := make(map[string]struct{}, len(records))
-	for _, data := range records {
-		cid := computeCID(data)
-		if _, dup := cids[cid]; dup {
-			return false
-		}
-		cids[cid] = struct{}{}
-		if key := recordSupersedeKey(schemaName, data); key != "" {
-			if _, dup := keys[key]; dup {
-				return false
-			}
-			keys[key] = struct{}{}
-		}
-	}
-	return true
-}
-
-// recordIndexUpsertStatement returns the SAME index-row upsert
-// upsertRecordIndexExec runs, without running it, so a chunk's worth can be
-// sent to the engine in one guest call instead of one apiece.
-//
-// It deliberately does NOT cover the full-text half: upsertFullTextExec issues
-// further statements, so a schema with a live text index takes the one-at-a-time
-// path and this is never called for it.
-func recordIndexUpsertStatement(schemaName, cid string, sourceTimestamp int64, data []byte) (string, []interface{}, error) {
-	fields, err := extractIndexedFields(schemaName, data)
-	if err != nil {
-		// Same fail-open as upsertRecordIndexExec: every stored record must get
-		// an index row or it is invisible to a rowid-cursor scan. Structured
-		// columns stay NULL.
-		fields = &indexedFields{}
-	}
-	var norad interface{}
-	if fields.noradCatID != nil {
-		norad = int64(*fields.noradCatID)
-	}
-	var entity interface{}
-	if fields.entityID != "" {
-		entity = fields.entityID
-	}
-	var objectType interface{}
-	if fields.objectType != "" {
-		objectType = fields.objectType
-	}
-	var opsStatusCode interface{}
-	if fields.opsStatusCode != "" {
-		opsStatusCode = fields.opsStatusCode
-	}
-	var epoch interface{}
-	if fields.epochUnix != nil {
-		epoch = *fields.epochUnix
-	}
-	var day interface{}
-	if fields.epochDay != "" {
-		day = fields.epochDay
-	}
-	const conflictClause = `
-		ON CONFLICT(schema_name, cid) DO UPDATE SET
-			norad_cat_id = excluded.norad_cat_id,
-			entity_id = excluded.entity_id,
-			object_type = excluded.object_type,
-			ops_status_code = excluded.ops_status_code,
-			epoch_unix = excluded.epoch_unix,
-			epoch_day = excluded.epoch_day,
-			source_timestamp = excluded.source_timestamp
-	`
-	sqlText := `
-		INSERT INTO sdn_record_index (
-			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` + conflictClause
-	return flatsqldrv.WithoutJournal(sqlText),
-		[]interface{}{schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, sourceTimestamp}, nil
-}
-
-// schemaMetadataInsertStatement returns the routed-table insert without running
-// it. Mirrors insertSchemaMetadataWithMode's non-IGNORE form; the rowid that
-// function returns is only consulted when source tags are attached, and the
-// batched path is gated on tags being absent.
-func schemaMetadataInsertStatement(tableName string, rec storedRecord) (string, []interface{}) {
-	var signatureHex any
-	if len(rec.signature) > 0 {
-		signatureHex = hex.EncodeToString(rec.signature)
-	}
-	if rec.createdAt <= 0 {
-		rec.createdAt = rec.timestamp
-	}
-	var supersedeKey any
-	if rec.supersedeKey != "" {
-		supersedeKey = rec.supersedeKey
-	}
-	return fmt.Sprintf(`
-		INSERT INTO %s (
-			cid, peer_id, timestamp, data, record_length, signature_hex, supersede_key, created_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, tableName), []interface{}{rec.cid, rec.peerID, rec.timestamp, rec.data, int64(len(rec.data)), signatureHex, supersedeKey, rec.createdAt}
 }
 
 func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error) {

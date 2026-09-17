@@ -94,26 +94,6 @@ func (s *FlatSQLStore) supersedeInProducerTableTx(exec sqlQueryExecer, schemaNam
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return s.supersedeRowsTx(exec, schemaName, tableName, old, newCID)
-}
-
-// supersedeRowsTx retires an ALREADY-KNOWN set of superseded CIDs. It is the
-// second half of supersedeInProducerTableTx, split out so a batched caller that
-// prefetched the candidates for a whole chunk can reuse the retirement path
-// verbatim rather than reimplementing it — the DELETE and the orphan check are
-// what decide what is actually retired, and there must be exactly one copy of
-// them.
-//
-// candidates may contain newCID itself (a prefetch by supersede_key alone
-// cannot exclude it the way the per-record query's `cid <> ?` did), so it is
-// skipped here.
-func (s *FlatSQLStore) supersedeRowsTx(exec sqlQueryExecer, schemaName, tableName string, candidates []string, newCID string) ([]string, error) {
-	var old []string
-	for _, cid := range candidates {
-		if cid != newCID {
-			old = append(old, cid)
-		}
-	}
 	var orphaned []string
 	for _, cid := range old {
 		if _, err := exec.Exec(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, tableName), cid); err != nil {
