@@ -122,13 +122,26 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 		return fail(fmt.Errorf("read engine residency for %s: %w", schemaName, err))
 	}
 
+	// EVERY PAYLOAD IN ONE DISPATCH. Each IngestOneWithSource is a handoff to
+	// the engine's locked OS thread, so a 64-record window paid 64 of them here
+	// — a fifth of the whole store write path — to run the same export the same
+	// number of times. The arena sees an identical sequence of ingests; only the
+	// thread-boundary crossings collapse, N to one. Partial failure leaves the
+	// records before the failing one in the arena, exactly as the loop did, and
+	// the transaction below rolls back the ledger so the boot reconcile removes
+	// them.
+	seqs, err := s.engineDB.IngestManyWithSource(payloads, source)
+	if err != nil {
+		return fail(err)
+	}
+	if len(seqs) != len(payloads) {
+		return fail(fmt.Errorf("engine ingest batch for %s: %d sequences for %d payloads", schemaName, len(seqs), len(payloads)))
+	}
+
 	fresh := make([]engineResidencyRow, 0, len(payloads))
 	var duplicateSeqs []uint64
-	for i, payload := range payloads {
-		seq, err := s.engineDB.IngestOneWithSource(payload, source)
-		if err != nil {
-			return fail(err)
-		}
+	for i := range payloads {
+		seq := seqs[i]
 		cid := cids[i]
 		if _, already := resident[cid]; already {
 			duplicateSeqs = append(duplicateSeqs, uint64(seq))

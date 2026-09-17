@@ -148,3 +148,92 @@ func TestReadersMakeProgressUnderAContinuousWriter(t *testing.T) {
 }
 
 var _ = fmt.Sprintf
+
+// The batch path holds the ENGINE MODULE lock across a whole bounded batch —
+// IngestManyWithSource takes it once for up to engineIngestBatchRecords ingests
+// where the per-record ingest() took and released it each time. The control
+// database is opened on that same engine, so that lock gates reads too: a
+// reader can no longer slip between two records of a batch, only between two
+// batches.
+//
+// That is allowed — "maintenance passes take the store lock per bounded batch,
+// never across a scan" — but only while a reader still ANSWERS during one. The
+// sibling test above drives the per-record path and would not catch a long hold
+// here, because StoreWithSourceTags never enters the batched ingest at all.
+func TestReadersMakeProgressUnderABatchWriter(t *testing.T) {
+	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+	defer store.Close()
+
+	tags := SourceTags{ProviderID: "prov-batch", SourceName: "batch-src", BatchID: "batch-lock"}
+	for i := 0; i < 25; i++ {
+		record := buildEngineOMM(t, uint32(8500+i), "BATCH-SEED", int64(1700000000+i))
+		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "peer-batch", nil, tags); err != nil {
+			t.Fatalf("seed record %d: %v", i, err)
+		}
+	}
+
+	var (
+		wg          sync.WaitGroup
+		stop        atomic.Bool
+		readerCount atomic.Int64
+		worstWait   atomic.Int64
+		written     atomic.Int64
+	)
+
+	wg.Add(1)
+	go func() { // a writer streaming FULL windows, not single records
+		defer wg.Done()
+		next := uint32(9000)
+		for round := 0; round < 12 && !stop.Load(); round++ {
+			window := make([][]byte, 0, 256)
+			for i := 0; i < 256; i++ {
+				window = append(window, buildEngineOMM(t, next, "BATCH-WRITER", int64(1700002000+int64(next))))
+				next++
+			}
+			n, err := store.StoreBatchWithSourceTags("OMM.fbs", window, "peer-batch", nil, tags)
+			if err != nil {
+				return
+			}
+			written.Add(int64(n))
+		}
+	}()
+
+	started := time.Now()
+	wg.Add(1)
+	go func() { // the reader
+		defer wg.Done()
+		for time.Since(started) < 20*time.Second {
+			queued := time.Now()
+			_, err := store.QueryRawStream(`SELECT _data FROM "OMM" LIMIT 1`)
+			waited := time.Since(queued)
+			for {
+				prev := worstWait.Load()
+				if int64(waited) <= prev || worstWait.CompareAndSwap(prev, int64(waited)) {
+					break
+				}
+			}
+			if err == nil {
+				readerCount.Add(1)
+			}
+			if readerCount.Load() >= 30 {
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+	stop.Store(true)
+
+	worst := time.Duration(worstWait.Load())
+	if readerCount.Load() == 0 {
+		t.Fatalf("the reader completed ZERO queries while %d records were written in windows — the batched ingest is starving readers (worst wait %s)", written.Load(), worst)
+	}
+	// One bounded batch is the most a reader should ever queue behind. This is
+	// deliberately loose: it is a starvation gate, not a latency budget, and a
+	// tight number here would fail on a loaded box rather than on a regression.
+	if worst > 30*time.Second {
+		t.Fatalf("worst single reader acquisition was %s across %d batched records — a reader is queuing behind more than one bounded batch", worst, written.Load())
+	}
+	t.Logf("batched writer: %d records written; reader completed %d queries, worst wait %s",
+		written.Load(), readerCount.Load(), worst.Round(time.Millisecond))
+}
