@@ -349,14 +349,17 @@ test('assembles signed CLI update feed artifacts when signing key is configured'
     ['windows', 'amd64'],
   ]) {
     const [platform, arch] = target;
-    const index = JSON.parse(readFileSync(join(releaseDir, 'update-feed', 'cli-bundle', 'beta', platform, arch, 'index.json'), 'utf8'));
+    // 'release', not 'beta': public bundles are stamped with the public
+    // release channel so they can never resolve the internal fleet dev lane's
+    // binary-only payloads (which carry no runtime/ and would amputate it).
+    const index = JSON.parse(readFileSync(join(releaseDir, 'update-feed', 'cli-bundle', 'release', platform, arch, 'index.json'), 'utf8'));
     assert.equal(index.schema, 'org.spacedatanetwork.update.index.v1');
     assert.equal(index.updates[0].target.kind, 'cli-bundle');
     assert.equal(index.updates[0].target.platform, platform);
     assert.equal(index.updates[0].target.arch, arch);
     assert.equal(index.updates[0].sequence, 4242);
-    assert.match(index.updates[0].manifest_url, new RegExp(`/cli-bundle/beta/${platform}/${arch}/1\\.0\\.3-beta\\.42/manifest\\.json$`));
-    assert.match(index.updates[0].carrier_url, new RegExp(`/cli-bundle/beta/${platform}/${arch}/1\\.0\\.3-beta\\.42/update\\.wasm$`));
+    assert.match(index.updates[0].manifest_url, new RegExp(`/cli-bundle/release/${platform}/${arch}/1\\.0\\.3-beta\\.42/manifest\\.json$`));
+    assert.match(index.updates[0].carrier_url, new RegExp(`/cli-bundle/release/${platform}/${arch}/1\\.0\\.3-beta\\.42/update\\.wasm$`));
   }
 
   assert.doesNotThrow(() => readFileSync(join(releaseDir, 'spacedatanetwork-update-feed-1.0.3-beta.42.tar.gz')));

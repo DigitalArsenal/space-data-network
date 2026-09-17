@@ -154,11 +154,13 @@ if [[ -n "${SDN_UPDATE_SIGNING_KEY_PEM:-}" ]]; then
     read -r target_os target_arch target_ext <<< "${cli_update_target}"
     archive_path="${release_dir}/spacedatanetwork-${version}-${target_os}-${target_arch}.${target_ext}"
     payload_out_dir="${update_payload_dir}/${target_os}-${target_arch}"
+    # release, not beta: beta is the internal fleet dev lane (see
+    # build-self-contained-cli.mjs) and must stay invisible to public installs.
     node "${root}/deployment/release/build-cli-update-payload.mjs" \
       --bundle-archive "${archive_path}" \
       --version "${version}" \
       --sequence "${update_sequence}" \
-      --channel beta \
+      --channel release \
       --platform "${target_os}" \
       --arch "${target_arch}" \
       --key-id "${update_key_id}" \

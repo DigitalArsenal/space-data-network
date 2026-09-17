@@ -580,3 +580,28 @@ test('every containerised job prepares its container, and none of them uses sudo
     }
   }
 });
+
+test('released bundles and their update feed are stamped with the public release channel', () => {
+  // 2026-09-16: releases were stamped --channel beta, the same channel the
+  // internal fleet dev lane (publish-fleet-update.mjs) publishes binary-only
+  // payloads to, signed by the same root a release pins. A fresh install has
+  // no update state, so every feed entry looked newer and the highest
+  // sequence — a dev-lane payload with no runtime/ — was selected and
+  // applied, retiring the install's whole runtime/ tree. The channel is the
+  // only thing separating the two audiences, so it is pinned here.
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+
+  const bundleBuild = /build-self-contained-cli\.mjs[\s\S]*?--manifest-signature/.exec(workflow);
+  assert.ok(bundleBuild, 'the workflow must still build bundles with build-self-contained-cli.mjs');
+  assert.match(bundleBuild[0], /--channel release/);
+  assert.doesNotMatch(bundleBuild[0], /--channel beta/);
+
+  const feedBuild = /build-cli-update-payload\.mjs[\s\S]*?--out-dir/.exec(workflow);
+  assert.ok(feedBuild, 'the workflow must still build update payloads with build-cli-update-payload.mjs');
+  assert.match(feedBuild[0], /--channel release/);
+  assert.doesNotMatch(feedBuild[0], /--channel beta/);
+
+  // Same for the local/offline assembly lane, which publishes the same feed.
+  const assemble = readRepoFile('deployment/release/assemble-beta-release-artifacts.sh');
+  assert.doesNotMatch(assemble, /--channel beta/);
+});

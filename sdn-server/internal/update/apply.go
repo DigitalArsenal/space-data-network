@@ -146,6 +146,18 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		return nil, err
 	}
 	if opts.DryRun {
+		// A DRY RUN THAT CHECKS NOTHING IS A GREEN LIGHT FOR A DOOMED APPLY.
+		// This returned before the bundle was even extracted, so the payload
+		// guard below never ran: dry-running the very payload that amputates
+		// runtime/ reported success, which is the one question an operator
+		// runs a dry run to answer.
+		//
+		// Inspect for real — extract, validate, guard — then throw the
+		// extraction away. Nothing is recorded and nothing is swapped, so this
+		// stays a dry run; it just now means something.
+		if err := inspectCandidatePayload(paths, candidate); err != nil {
+			return nil, err
+		}
 		return &ApplyResult{
 			UpdateID: candidate.UpdateID,
 			Version:  candidate.Result.Version,
@@ -195,6 +207,15 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 
 	rollbackDir := filepath.Join(paths.Rollback, candidate.UpdateID)
 	moduleUpdate := candidate.Manifest.IsModuleUpdate()
+	// A full-bundle payload REPLACES the payload trees, so everything it
+	// omits is retired. A module-targeted update retires nothing (it only
+	// installs the artifacts its manifest declares), which is why the guard
+	// is scoped to the full-bundle paths below.
+	if !moduleUpdate {
+		if err := assertPayloadKeepsInstallCriticalTrees(paths, newRoot); err != nil {
+			return nil, err
+		}
+	}
 	var twoPhase bool
 	var swapErr error
 	switch {
@@ -789,4 +810,137 @@ func isBundlePayloadEntry(name string) bool {
 		return true
 	}
 	return false
+}
+
+// installCriticalPayloadTrees are the bundle-root payload directories an
+// install cannot survive losing: bin/ holds the launcher every operator,
+// service unit and desktop app invokes, and runtime/ holds Kubo, the daemon
+// binary, the updater and wallet wasm modules, and the dashboard/web UI
+// assets.
+var installCriticalPayloadTrees = []string{"bin", "runtime"}
+
+// assertPayloadKeepsInstallCriticalTrees refuses an incoming full-bundle
+// payload that would AMPUTATE one of those trees instead of replacing it.
+//
+// The swap retires every payload entry the incoming bundle omits
+// (isBundlePayloadEntry drives swapEntrySet), which is correct for a whole
+// bundle that dropped a file and catastrophic for a payload that was never a
+// whole bundle. A binary-only payload — the shape an internal publishing
+// lane produces when it stages just bin/spacedatanetwork and manifest.json —
+// moves the entire runtime/ tree into updates/rollback/ and installs nothing
+// in its place: Kubo, the daemon, the wallet and updater wasm and the UI
+// assets are gone, the node cannot start, and there is no updater left to
+// pull a fix — and the swap reports success while doing it. That is what a
+// release install did to itself when releases and the fleet dev lane shared
+// one channel and a fresh install (sequence 0) selected the lane's newest
+// entry (2026-09-16).
+//
+// Lane separation (public releases on their own channel) stops that specific
+// collision; this stops the class. A tree may only be retired by a bundle
+// that ships one.
+func assertPayloadKeepsInstallCriticalTrees(paths Paths, newRoot string) error {
+	for _, name := range installCriticalPayloadTrees {
+		// An absent or EMPTY tree has nothing to lose, and this guard is
+		// about loss, not about bundle shape: a bare-binary install (or a
+		// bundle layout that never populated the tree) still takes the same
+		// payload it always did.
+		current := filepath.Join(paths.Root, name)
+		info, err := os.Stat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			// A critical tree that is a plain file on this install: the
+			// existence check is all that is meaningful.
+			if _, statErr := os.Stat(filepath.Join(newRoot, name)); statErr == nil {
+				continue
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				return statErr
+			}
+			return payloadAmputationError(name, nil)
+		}
+		installed, err := os.ReadDir(current)
+		if err != nil {
+			return err
+		}
+		if len(installed) == 0 {
+			continue
+		}
+		// EXISTENCE IS NOT ENOUGH. A payload carrying a token tree — one
+		// runtime/.keep and nothing else — satisfies a bare os.Stat and then
+		// amputates exactly as before, because the swap replaces the WHOLE
+		// entry: every child the payload does not carry is retired with the
+		// old tree. That hole was demonstrated against the first version of
+		// this guard, so compare what is inside.
+		//
+		// Immediate children, not a full recursive file match: the install's
+		// runtime/ holds kubo/, sdn/, modules/, ui/, and losing any one of
+		// those is the failure. Churn INSIDE them between versions (a renamed
+		// wasm module, an extra asset) is normal and must stay allowed.
+		incoming := filepath.Join(newRoot, name)
+		incomingEntries, err := os.ReadDir(incoming)
+		if errors.Is(err, os.ErrNotExist) {
+			return payloadAmputationError(name, nil)
+		}
+		if err != nil {
+			return err
+		}
+		have := make(map[string]struct{}, len(incomingEntries))
+		for _, e := range incomingEntries {
+			have[e.Name()] = struct{}{}
+		}
+		var missing []string
+		for _, e := range installed {
+			if _, ok := have[e.Name()]; !ok {
+				missing = append(missing, e.Name())
+			}
+		}
+		if len(missing) > 0 {
+			return payloadAmputationError(name, missing)
+		}
+	}
+	return nil
+}
+
+// payloadAmputationError explains what applying the payload would destroy.
+// missing is the set of install children the payload does not carry; nil means
+// the tree is absent from the payload altogether.
+func payloadAmputationError(tree string, missing []string) error {
+	what := fmt.Sprintf("omits %s/", tree)
+	if len(missing) > 0 {
+		what = fmt.Sprintf("carries %s/ without %s", tree, strings.Join(missing, ", "))
+	}
+	return fmt.Errorf(
+		"update bundle %s but this install has them: applying it would retire them to the rollback directory and never reinstall them, leaving the install unable to run or update. A full-bundle update must ship every install-critical tree (%s) with its contents; a partial payload must be published as a module-targeted update instead",
+		what, strings.Join(installCriticalPayloadTrees, ", "))
+}
+
+// inspectCandidatePayload runs the checks an apply would run, without changing
+// anything: extract the bundle to a scratch directory, validate it, and refuse
+// a payload that would amputate an install-critical tree. Used by the dry-run
+// path so it answers the question it is asked.
+func inspectCandidatePayload(paths Paths, candidate *StagedUpdate) error {
+	scratch := filepath.Join(paths.Incoming, candidate.UpdateID+".dryrun")
+	if err := os.RemoveAll(scratch); err != nil {
+		return err
+	}
+	defer os.RemoveAll(scratch)
+
+	if err := extractBundleArchive(candidate.BundleFile, candidate.Manifest.Bundle.Format, scratch); err != nil {
+		return fmt.Errorf("extract update bundle: %w", err)
+	}
+	newRoot, err := locateBundleRoot(scratch)
+	if err != nil {
+		return err
+	}
+	if err := validateIncomingBundle(newRoot, candidate.Result.Version); err != nil {
+		return err
+	}
+	if candidate.Manifest.IsModuleUpdate() {
+		return nil
+	}
+	return assertPayloadKeepsInstallCriticalTrees(paths, newRoot)
 }
