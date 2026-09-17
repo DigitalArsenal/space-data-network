@@ -39,7 +39,7 @@ test('stageBundle creates expected portable archive layout', async () => {
     version: '1.2.3',
     os: 'linux',
     arch: 'amd64',
-    channel: 'beta',
+    channel: 'release',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
     kuboPath: join(inputs, 'ipfs'),
@@ -99,11 +99,11 @@ test('stageBundle creates expected portable archive layout', async () => {
   const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
   assert.equal(manifest.schema, 'org.spacedatanetwork.bundle.v1');
   assert.equal(manifest.version, '1.2.3');
-  assert.equal(manifest.channel, 'beta');
+  assert.equal(manifest.channel, 'release');
   assert.equal(manifest.signature, 'test-signature');
   assert.deepEqual(manifest.update, {
     feedBaseUrl: 'https://sdn.spaceaware.io/updates',
-    pubsubTopic: '/sdn/updates/v1/beta',
+    pubsubTopic: '/sdn/updates/v1/release',
     updaterModule: 'org.spacedatanetwork.updater',
     updaterWasm: 'runtime/modules/org.spacedatanetwork.updater.wasm',
   });
@@ -184,7 +184,7 @@ test('stageBundle creates Windows executable names and copied alias', async () =
   assert.equal(manifest.os, 'windows');
   assert.deepEqual(manifest.update, {
     feedBaseUrl: 'https://sdn.spaceaware.io/updates',
-    pubsubTopic: '/sdn/updates/v1/beta',
+    pubsubTopic: '/sdn/updates/v1/release',
     updaterModule: 'org.spacedatanetwork.updater',
     updaterWasm: 'runtime/modules/org.spacedatanetwork.updater.wasm',
   });
@@ -228,7 +228,7 @@ test('stageBundle stages trust roots outside manifest artifacts and checksums', 
     version: '1.2.3',
     os: 'linux',
     arch: 'amd64',
-    channel: 'beta',
+    channel: 'release',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
     kuboPath: join(inputs, 'ipfs'),
@@ -311,7 +311,7 @@ test('stageBundle stages the fleet trust roots when none are named', async () =>
     version: '1.2.3',
     os: 'linux',
     arch: 'amd64',
-    channel: 'beta',
+    channel: 'release',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
     kuboPath: join(inputs, 'ipfs'),
@@ -359,7 +359,7 @@ test('stageBundle stages wallet sign-in assets under runtime/ui when given', asy
     version: '1.2.3',
     os: 'linux',
     arch: 'amd64',
-    channel: 'beta',
+    channel: 'release',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
     kuboPath: join(inputs, 'ipfs'),
@@ -428,4 +428,32 @@ test('a static bundle stages no WasmEdge runtime and no library path', async () 
   assert.ok(!launcher.includes('runtime/wasmedge'), 'the launcher must not point at a bundled runtime');
   assert.match(launcher, /statically linked/, 'the launcher should say why it sets nothing up');
   await stat(join(staged.root, 'runtime', 'sdn', 'spacedatanetwork'));
+});
+
+test('stageBundle refuses to stamp a bundle with the internal fleet dev lane channel', async () => {
+  // The bundle's channel is what the installed updater resolves its feed
+  // index from. Stamping a distributable bundle 'beta' points it at the
+  // internal fleet lane, whose binary-only payloads carry no runtime/ — the
+  // 2026-09-16 bricking. The builder refuses instead of silently correcting,
+  // so a release lane that asks for the wrong channel fails in CI.
+  const root = await mkdtemp(join(tmpdir(), 'sdn-cli-bundle-channel-'));
+  await assert.rejects(
+    stageBundle({
+      version: '1.2.3',
+      os: 'linux',
+      arch: 'amd64',
+      channel: 'beta',
+      outputDir: join(root, 'out'),
+      binaryPath: join(root, 'spacedatanetwork'),
+      kuboPath: join(root, 'ipfs'),
+      sdnUIPath: join(root, 'sdn-ui'),
+      webUIPath: join(root, 'webui'),
+      updaterWasmPath: join(root, 'updater.wasm'),
+      hdWalletWasmPath: join(root, 'wallet.wasm'),
+      licensePath: join(root, 'LICENSE'),
+      readmePath: join(root, 'README.md'),
+      manifestSignature: 'test-signature',
+    }),
+    /internal fleet dev lane/,
+  );
 });

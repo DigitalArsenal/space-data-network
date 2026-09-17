@@ -798,11 +798,15 @@ jobs:
         run: |
           # Every target links the runtime in, so no bundle stages one.
           WASMEDGE_BUNDLE_ARG=""
+          # --channel release, NOT beta: 'beta' is the internal fleet dev
+          # lane's channel, and its binary-only payloads brick a public
+          # install (they carry no runtime/). A public bundle must only ever
+          # resolve the public feed.
           node deployment/release/build-self-contained-cli.mjs \
             --version "${PACKAGE_VERSION}" \
             --os "${TARGET_OS}" \
             --arch "${TARGET_ARCH}" \
-            --channel beta \
+            --channel release \
             --output-dir dist/cli \
             --binary-path "${PWD}/dist/cli-input/${BINARY_NAME}" \
             --kubo-path "${PWD}/dist/kubo/kubo/${KUBO_BINARY_NAME}" \
@@ -885,11 +889,13 @@ jobs:
               echo "missing CLI archive for update feed: ${archive_path}" >&2
               exit 1
             fi
+            # Must match the channel the bundles above were stamped with,
+            # or the shipped updater reads a feed index nobody publishes.
             node deployment/release/build-cli-update-payload.mjs \
               --bundle-archive "${archive_path}" \
               --version "${VERSION}" \
               --sequence "${SDN_UPDATE_SEQUENCE}" \
-              --channel beta \
+              --channel release \
               --platform "${target_os}" \
               --arch "${target_arch}" \
               --key-id "${update_key_id}" \

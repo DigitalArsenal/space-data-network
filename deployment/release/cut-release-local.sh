@@ -104,8 +104,11 @@ bundle() { # <os> <arch> <binary> <wasmedge-dir> <kubo-platform>
   local os="$1" arch="$2" binary="$3" wasmedge="$4" kubo_platform="$5"
   download_kubo "$kubo_platform"
   log "bundling ${os}/${arch}"
+  # --channel release: 'beta' belongs to the internal fleet dev lane, whose
+  # binary-only payloads would amputate runtime/ from anything that installs
+  # this bundle (see build-self-contained-cli.mjs).
   node "$root/deployment/release/build-self-contained-cli.mjs" \
-    --version "$version" --os "$os" --arch "$arch" --channel beta \
+    --version "$version" --os "$os" --arch "$arch" --channel release \
     --output-dir "$dist/out" \
     --binary-path "$binary" \
     --kubo-path "$dist/inputs/kubo/$kubo_platform/kubo/ipfs" \

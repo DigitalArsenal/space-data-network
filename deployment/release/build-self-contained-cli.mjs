@@ -7,6 +7,18 @@ import { fileURLToPath } from 'node:url';
 
 const executableMode = 0o755;
 const defaultUpdateFeedBaseUrl = 'https://sdn.spaceaware.io/updates';
+// LANE SEPARATION (2026-09-16). A bundle's channel decides which feed index
+// the installed updater reads: <feedBaseUrl>/cli-bundle/<channel>/<os>/<arch>/
+// index.json, and which pubsub topic it listens on. The internal fleet dev
+// lane (publish-fleet-update.mjs) publishes BINARY-ONLY payloads — bin/ and
+// manifest.json, no runtime/ — to 'beta', signed by the same root every
+// bundle pins. Public releases used to be stamped 'beta' too, so a fresh
+// install (update state sequence 0, every feed entry therefore newer) picked
+// the newest dev-lane payload and applied it: the swap retired runtime/ and
+// reinstalled nothing. Public releases get their own channel; nothing the
+// fleet lane publishes is visible from it.
+const publicReleaseChannel = 'release';
+const internalFleetLaneChannel = 'beta';
 const updaterModuleId = 'org.spacedatanetwork.updater';
 const updaterWasmPath = 'runtime/modules/org.spacedatanetwork.updater.wasm';
 const hdWalletWasmPath = 'runtime/modules/hd-wallet-wasi.wasm';
@@ -20,7 +32,18 @@ export async function stageBundle(options) {
   const version = safeToken(options.version, 'version');
   const osName = safeToken(options.os, 'os');
   const arch = safeToken(options.arch, 'arch');
-  const channel = options.channel || 'beta';
+  const channel = options.channel || publicReleaseChannel;
+  if (channel === internalFleetLaneChannel) {
+    // Refused rather than defaulted away from: a bundle stamped with the
+    // fleet lane's channel resolves that lane's binary-only payloads, which
+    // is how a public install lost its runtime/ tree. Build the public
+    // release channel, or publish to the fleet lane with
+    // publish-fleet-update.mjs, which stages a payload shaped for it.
+    throw new Error(
+      `channel "${internalFleetLaneChannel}" is the internal fleet dev lane and must not be stamped on a distributable bundle; ` +
+        `use --channel ${publicReleaseChannel}`,
+    );
+  }
   const signature = required(options.manifestSignature, 'manifestSignature');
   const bundleName = `spacedatanetwork-${version}-${osName}-${arch}`;
   const outputDir = resolve(required(options.outputDir, 'outputDir'));

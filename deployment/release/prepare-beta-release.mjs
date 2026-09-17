@@ -35,6 +35,11 @@ export function computeBetaRelease({ packageVersion, runNumber, inputVersion = '
     packageVersion: versionWithoutPrefix,
     nativePackageVersion,
     releaseName: `Space Data Network ${releaseTag} Beta`,
+    // Release MATURITY (and the npm dist-tag), not the update channel a
+    // bundle is stamped with. Never wire this into build-self-contained-cli
+    // or build-cli-update-payload: 'beta' is the internal fleet dev lane's
+    // channel, and a public bundle pointed at it installs binary-only
+    // payloads that amputate runtime/.
     channel: 'beta',
     npmTag: 'beta'
   };

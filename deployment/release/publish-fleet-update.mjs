@@ -124,6 +124,36 @@ if (!binaryPath || !sourceCommit) {
   process.exit(2);
 }
 const channel = arg('channel', 'beta');
+// LANE SEPARATION (2026-09-16). This lane stages a BINARY-ONLY bundle (bin/ +
+// manifest.json). Applied over a full install it retires runtime/ — kubo, the
+// daemon, the wallet and updater wasm, the UI — because a full-bundle swap
+// retires whatever the payload omits. It BRICKS a public install,
+// which is what happened when releases shared this channel and a fresh
+// install (sequence 0) selected the newest dev-lane entry.
+//
+// WHETHER THE FLEET SURVIVES IT IS UNVERIFIED. The assumption has been that
+// host-01 and host-02 keep their runtime outside the bundle, so there is
+// nothing for a binary-only payload to retire — but neither host was inspected
+// when this was written. The apply-side guard now refuses any payload that
+// would drop an install-critical tree, so if those boxes DO carry a populated
+// runtime/, the next fleet apply fails loudly instead of amputating. That is
+// the safe direction to be wrong in, but it does mean this lane may need a
+// module-targeted manifest (Manifest.IsModuleUpdate) rather than a
+// binary-only full bundle. Check a host before relying on either outcome.
+//
+// Public releases
+// are stamped 'release' now, and this lane refuses to publish there so the
+// two can never meet again.
+const publicReleaseChannel = 'release';
+if (channel === publicReleaseChannel) {
+  console.error(
+    `REFUSED: "${publicReleaseChannel}" is the PUBLIC release channel and this lane publishes ` +
+      `binary-only payloads that would amputate runtime/ from every public install that applied ` +
+      `them.\nPublish a public release with the release workflow ` +
+      `(.github/workflows/beta-release-artifacts.yml), which ships whole bundles.`,
+  );
+  process.exit(2);
+}
 const platform = arg('platform', 'linux');
 const arch = arg('arch', 'amd64');
 const publisherSSH = arg('publisher-ssh', 'space-data-network-01');

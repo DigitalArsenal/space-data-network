@@ -98,8 +98,11 @@ done
 
 # --- stage ------------------------------------------------------------------
 log "bundling ${target_os}/${target_arch} ${version}"
+# --channel release: the desktop app ships this bundle to users, so its
+# updater must read the public feed and never the internal fleet dev lane
+# (see build-self-contained-cli.mjs).
 node "$root/deployment/release/build-self-contained-cli.mjs" \
-  --version "$version" --os "$target_os" --arch "$target_arch" --channel beta \
+  --version "$version" --os "$target_os" --arch "$target_arch" --channel release \
   --output-dir "$output_dir/out" \
   --binary-path "$inputs/bin/spacedatanetwork" \
   --kubo-path "$inputs/kubo/kubo/ipfs" \

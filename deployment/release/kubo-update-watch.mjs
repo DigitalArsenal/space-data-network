@@ -22,6 +22,9 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
+// The INTERNAL fleet lane's channel by design: this watcher measures how far
+// behind main the fleet's own published payload is. Public releases live on
+// the 'release' channel and are published by the release workflow, not here.
 const feedIndexUrl =
   process.argv[2] ||
   'https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64/index.json';

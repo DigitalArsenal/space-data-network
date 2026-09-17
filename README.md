@@ -206,10 +206,21 @@ spacedatanetwork update stage
 spacedatanetwork update apply
 ```
 
-The update feed is rooted at `sdn.spaceaware.io/updates`. The installed bundle's
-Go updater verifies the signed manifest and carrier, stages the replacement,
-then hands activation to an external helper. That helper swaps the bundle,
-restarts the daemon, checks health, and rolls back an unhealthy installation.
+The update feed is rooted at `sdn.spaceaware.io/updates`, and a released bundle
+reads one channel of it:
+`sdn.spaceaware.io/updates/cli-bundle/release/<os>/<arch>/index.json`. That
+channel is new and not populated yet, so `update check` reports no update
+available until the first release is published to it. Releases previously shared
+a channel with an internal fleet lane whose payloads carry only the daemon
+binary; applying one of those to a released install retired the bundle's
+`runtime/` tree (Kubo, the daemon, the wallet and updater modules, the UI) and
+reinstalled nothing. The updater now also refuses, outright, any update that
+would retire a `runtime/` tree it does not replace.
+
+The installed bundle's Go updater verifies the signed manifest and carrier,
+stages the replacement, then hands activation to an external helper. That
+helper swaps the bundle, restarts the daemon, checks health, and rolls back an
+unhealthy installation.
 A standalone source-built binary has no managed bundle to replace. See the
 [signed updater guide](docs/sdn-signed-updater.md) for the active path and the
 unfinished WASM updater boundary.
