@@ -827,6 +827,30 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	// COMPILE THE ENGINE BEFORE SERVING, not never.
+	//
+	// The daemon deliberately does not compile on the SERVICE path — a query
+	// must never pay for an AOT compile. That rule was then read as "the
+	// daemon never compiles at all", which left a cache miss degrading
+	// silently to the interpreter at ~65-100x slower, recoverable only by an
+	// operator noticing and running `prewarm-aot` by hand.
+	//
+	// Nothing makes that miss more likely than shipping: the artifact is keyed
+	// on engine bytes + libwasmedge version + CPU microarchitecture, so every
+	// upgrade invalidates every warm cache on every host at once. Docker was
+	// already covered (entrypoint.sh prewarms); the systemd/native path — how
+	// the production fleet actually runs — was not.
+	//
+	// Startup is not the service path. Doing it here is the same work the
+	// operator was told to do, at the one moment it is guaranteed to happen,
+	// and it is idempotent: a warm cache returns immediately.
+	if err := prewarmEngineAOTForDaemon(cmd.ErrOrStderr()); err != nil {
+		// Never fatal. A libwasmedge without the AOT compiler still runs, just
+		// interpreted, and refusing to boot would turn a slow node into a dead
+		// one. The engine-mode line at store open states the outcome either way.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: AOT prewarm failed, the FlatSQL engine will run interpreted (~65-100x slower): %v\n", err)
+	}
+
 	if err := validateAssetPinPreNodeConfig(cfg); err != nil {
 		return err
 	}
