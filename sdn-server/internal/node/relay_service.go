@@ -30,7 +30,7 @@ import (
 // contribution a node makes with its spare capacity, not a service it exists to
 // provide. An operator who wants the bigger numbers sets enable_relay: always
 // and gets libp2p's own defaults.
-func autoRelayResources() relay.Resources {
+func relayResources() relay.Resources {
 	res := relay.DefaultResources()
 	res.MaxReservations = 32 // default 128
 	res.MaxCircuits = 8      // default 16, per peer
@@ -92,7 +92,7 @@ func (n *Node) runAutoRelayService(ctx context.Context) {
 				if already {
 					continue
 				}
-				started, startErr := relay.New(n.host, relay.WithResources(autoRelayResources()))
+				started, startErr := relay.New(n.host, relay.WithResources(relayResources()))
 				if startErr != nil {
 					log.Warnf("Could not start the circuit-relay HOP service: %v", startErr)
 					continue
@@ -100,7 +100,7 @@ func (n *Node) runAutoRelayService(ctx context.Context) {
 				mu.Lock()
 				running = started
 				mu.Unlock()
-				res := autoRelayResources()
+				res := relayResources()
 				log.Infof("Circuit-relay HOP service STARTED: AutoNAT reports this node publicly reachable, so it now "+
 					"carries traffic for peers that cannot be dialled (max %d reservations, %d circuits per peer, %s TTL). "+
 					"Set network.enable_relay: never to opt out.",
