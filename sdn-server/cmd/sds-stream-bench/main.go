@@ -28,6 +28,35 @@
 //
 //   - PER-SCHEMA COVERAGE. "Using all schemas" means all 236, not a sample,
 //     so the run reports how many standards actually took records.
+// WHERE THE COST ACTUALLY IS, measured 2026-09-16 on a Mac Studio (APFS,
+// arm64, libwasmedge 0.16.4, engine AOT, 236/236 standards). Recorded because
+// three of these are NEGATIVE results that each look like an obvious fix:
+//
+//   - IT IS NOT PER-TRANSACTION. Sweeping storeWriteChunkSize 64 -> 256 ->
+//     1024 gives 308 / 299 / 313 rec/s: a 16x larger commit window changes
+//     nothing. So DO NOT raise that constant to chase throughput — it is 64 to
+//     bound write-lock hold time after the 2026-07-06 blackout (API reads
+//     waited >11 min on RLock), and raising it spends that latency budget for
+//     no gain at all.
+//   - IT IS NOT SQL ROUND-TRIP LATENCY, mostly. Measured through the WASM
+//     engine: 38 us for a trivial SELECT, 95 us for an sdn_record_index
+//     lookup. At ~5 statements per record that is ~0.25-0.5 ms against a
+//     ~3 ms per-record cost — about 15%.
+//   - IT IS NOT THE 236-SCHEMA FAN-OUT. Round-robin across every standard is
+//     FASTER than concentrating on one (581 vs 423 rec/s for OMM alone).
+//
+//   - THE ENGINE VTAB MIRROR IS ~30-45%. An engine-routed standard sustains
+//     461 rec/s; the control-rows-only standards, which skip the mirror
+//     entirely, reach 599 (KMF) and 819 (VCM) rec/s.
+//   - THE REST IS THE CONTROL-DB WRITE PATH ITSELF. Even with no mirror at
+//     all, 819 rec/s is still ~10x under the fsync floor, because a store
+//     write is not an append: it dedupes by CID, supersedes by key, inserts
+//     the routed row, and maintains the record index.
+//
+// So the gap is structural and distributed, not a hotspot. Closing it means
+// changing what an ingest does — an append-only log with indexing and the
+// engine mirror moved off the write path — not tuning a constant.
+
 package main
 
 import (
