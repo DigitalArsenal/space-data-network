@@ -100,6 +100,11 @@ type SDSExchangeHandler struct {
 	syncHandler SyncLogHandler
 	pnmHandler  PubSubPNMHandler
 
+	// pushAuthorizer decides whether a peer may WRITE records into this
+	// node's store. Nil means DENY — see SetPushAuthorizer.
+	pushAuthorizer PushAuthorizer
+	warnedNoAuthz  atomic.Bool
+
 	// droppedNoStore counts protocol operations skipped because this node has
 	// no local store (config mode: edge). An edge node still subscribes to
 	// every schema pubsub topic and still exposes the SDS exchange stream
@@ -118,6 +123,47 @@ func (h *SDSExchangeHandler) DroppedNoStore() uint64 {
 
 // ErrRateLimited is returned when a peer exceeds the rate limit.
 var ErrRateLimited = errors.New("rate limit exceeded")
+
+// PushAuthorizer decides whether a peer may write records into this node's
+// store.
+//
+// THE DEFAULT IS DENY, DELIBERATELY. Before this existed, handleDataPush went
+// straight from a rate-limit check to store.Store with a literal nil signature:
+// any peer that could dial the node could inject records, and the node then
+// served them back on the ANONYMOUS public data plane, unioned across every
+// producer table (recordReadSourceFiltered). Discovery makes that free — the
+// node advertises itself on the public Amino DHT.
+//
+// A nil authorizer therefore refuses pushes rather than admitting them. The one
+// production caller wires this (see Node.mayAcceptPush); a nil here means
+// somebody added a second construction path and forgot, which must fail closed
+// rather than silently reopen the hole.
+type PushAuthorizer func(peer.ID) bool
+
+// AllowAnyPush restores the pre-2026-09-16 behaviour: accept records from any
+// peer that can open a stream. It exists so that tests and any operator who
+// genuinely wants open ingest have to SAY SO, rather than getting it by
+// omission.
+func AllowAnyPush(peer.ID) bool { return true }
+
+// SetPushAuthorizer installs the write gate. Passing nil leaves the handler in
+// its deny-by-default state.
+func (h *SDSExchangeHandler) SetPushAuthorizer(fn PushAuthorizer) {
+	h.pushAuthorizer = fn
+}
+
+// mayPush reports whether peerID may write. Unwired means no.
+func (h *SDSExchangeHandler) mayPush(peerID peer.ID) bool {
+	if h.pushAuthorizer == nil {
+		if h.warnedNoAuthz.CompareAndSwap(false, true) {
+			log.Warnf("SDS data push REFUSED for every peer: no push authorizer is installed on this handler. " +
+				"This is the fail-closed default; wire one with SetPushAuthorizer (production does), or pass " +
+				"protocol.AllowAnyPush to accept records from anyone.")
+		}
+		return false
+	}
+	return h.pushAuthorizer(peerID)
+}
 
 // NewSDSExchangeHandler creates a new SDS exchange handler.
 func NewSDSExchangeHandler(store *storage.FlatSQLStore, validator *sds.Validator) *SDSExchangeHandler {
@@ -382,6 +428,24 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 		return
 	}
 
+	// WHOSE DATA WE ACCEPT. Bootstrap says who we dial; trust says whose
+	// records we take. The dataset-PNM path has always enforced this
+	// (Node.materializeDatasetPublicationPNM refuses a non-trusted sender);
+	// this lane did not, so the strictest check in the system sat next to the
+	// most open one, writing into the same store.
+	//
+	// IsTrusted (>= Trusted) is the deliberate threshold, NOT >= Standard:
+	// cacheFetchedDiscoveredNodeEPM assigns Standard to every peer found
+	// through the SDN rendezvous tag, so a Standard gate would be satisfied by
+	// discovery itself and would gate nothing.
+	if !h.mayPush(peerID) {
+		log.Warnf("REFUSING data push for %s from untrusted peer %s: records are accepted only from trusted peers. "+
+			"Raise that peer's trust level, or set network.accept_push_from: any to accept from anyone.",
+			routedSchema, peerID.ShortString())
+		s.Write([]byte{RespReject})
+		return
+	}
+
 	// Store data
 	cid, err := h.store.Store(routedSchema, data, peerID.String(), nil)
 	if err != nil {
@@ -569,6 +633,14 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 			log.Debugf("edge mode (no store): dropping PNM announcement from %s on %s (dropped=%d)", from.ShortString(), schema, n)
 			return nil
 		}
+		// Same gate as the stream push lane. PNMs arrive on an OPEN pubsub
+		// topic, so this is the most reachable write path of the three, not
+		// the least: anyone who can subscribe can publish.
+		if !h.mayPush(from) {
+			log.Warnf("REFUSING PNM from untrusted peer %s on %s: records are accepted only from trusted peers.",
+				from.ShortString(), schema)
+			return nil
+		}
 		if _, err := h.store.Store(pnmSchemaName, data, from.String(), nil); err != nil {
 			return fmt.Errorf("failed to store PNM: %w", err)
 		}
@@ -603,6 +675,16 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	if h.store == nil {
 		n := h.droppedNoStore.Add(1)
 		log.Debugf("edge mode (no store): dropping %s record from %s (dropped=%d)", routedSchema, from.ShortString(), n)
+		return nil
+	}
+
+	// Same gate as the stream push lane above. A record arriving over pubsub
+	// is written to the same tables and served from the same anonymous read
+	// union as one arriving over a stream, so gating only the stream would
+	// have left the wider door open.
+	if !h.mayPush(from) {
+		log.Warnf("REFUSING pubsub record from untrusted peer %s on %s: records are accepted only from trusted peers.",
+			from.ShortString(), routedSchema)
 		return nil
 	}
 

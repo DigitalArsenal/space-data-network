@@ -956,11 +956,37 @@ type UserEntry struct {
 }
 
 // NetworkConfig contains network-related settings.
+// Accepted values for NetworkConfig.AcceptPushFrom.
+const (
+	// AcceptPushFromTrusted stores records only from peers at trust level
+	// Trusted or above — the same predicate the dataset-PNM path already
+	// uses. NOT Standard: discovery assigns Standard to every peer found
+	// through the SDN rendezvous tag, so a Standard gate gates nothing.
+	AcceptPushFromTrusted = "trusted"
+	// AcceptPushFromAny accepts records from any peer that can open a stream.
+	AcceptPushFromAny = "any"
+)
+
 type NetworkConfig struct {
 	Listen     []string `yaml:"listen"`
 	Bootstrap  []string `yaml:"bootstrap"`
 	EdgeRelays []string `yaml:"edge_relays"`
 	MaxConns   int      `yaml:"max_connections"`
+
+	// AcceptPushFrom controls WHOSE RECORDS THIS NODE WILL STORE over the SDS
+	// exchange stream: "trusted" (default) or "any".
+	//
+	// It defaults to trusted because the alternative was the shipped
+	// behaviour and it was not safe: handleDataPush went from a rate-limit
+	// check straight to store.Store, so any peer that could dial this node
+	// could inject OMM/CAT/EPM/PNM records, and the node then served them on
+	// its ANONYMOUS public data plane unioned across every producer table.
+	// The node advertises itself on the public Amino DHT, so reaching it is
+	// free. Bootstrap says who we dial; this says whose data we accept.
+	//
+	// "any" restores open ingest for operators who genuinely want it — a
+	// closed lab network, or a node deliberately acting as an open collector.
+	AcceptPushFrom string `yaml:"accept_push_from"`
 
 	// EnableRelay controls whether this node RUNS a public circuit-relay v2
 	// HOP service — i.e. donates its bandwidth and CPU to relay traffic
@@ -1737,9 +1763,10 @@ func Default() *Config {
 				"/ip4/0.0.0.0/udp/4001/quic-v1",
 				"/ip4/0.0.0.0/udp/4003/webrtc-direct",
 			},
-			Bootstrap:  bootstrap.DefaultBootstrapAddresses(),
-			EdgeRelays: []string{},
-			MaxConns:   1000,
+			Bootstrap:      bootstrap.DefaultBootstrapAddresses(),
+			EdgeRelays:     []string{},
+			MaxConns:       1000,
+			AcceptPushFrom: AcceptPushFromTrusted,
 			// RELAY: auto — a node AutoNAT reports as publicly reachable
 			// relays for peers that cannot be dialled, which is the owner
 			// rule and the only way firewalled nodes get carried. It is
