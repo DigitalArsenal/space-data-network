@@ -508,9 +508,6 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	// instead of write-journal, fsync, write-db, fsync, truncate. The 14.9x is
 	// there for the taking if the owner decides losing a few seconds of
 	// commits on power loss is acceptable; that is a product decision.
-	if _, err := db.Query("PRAGMA synchronous=FULL"); err != nil {
-		return nil, bootMark{}, engineRecordState{}, fmt.Errorf("set synchronous=FULL on the control database: %w", err)
-	}
 	log.Infof("FlatSQL boot phase \"boot: engine OpenDatabase\" took %s", time.Since(phase).Round(time.Millisecond))
 	phase = time.Now()
 	// BEFORE THE FIRST QUERY. IsDiskBacked/ReindexAll/verifyControlDatabase all
@@ -521,6 +518,16 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 			db.Destroy()
 			return nil, bootMark{}, engineRecordState{}, err
 		}
+	}
+	// AFTER prepare, deliberately. The comment above is load-bearing: the
+	// engine's virtual-table registration is a one-shot fired by the FIRST
+	// query, so issuing this pragma earlier consumed it and left the vtabs
+	// registered without prepare's own registration. Four cold-rebuild and
+	// hot-window hydration tests failed on exactly that, which is the whole
+	// reason this sits here and not next to the open.
+	if _, err := db.Query("PRAGMA synchronous=FULL"); err != nil {
+		db.Destroy()
+		return nil, bootMark{}, engineRecordState{}, fmt.Errorf("set synchronous=FULL on the control database: %w", err)
 	}
 	disk, err := db.IsDiskBacked()
 	if err != nil {
