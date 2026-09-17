@@ -504,6 +504,10 @@ func (r *Runtime) Close() {
 // MemoryStats reports the engine's current/max linear memory.
 func (r *Runtime) MemoryStats() (wasmrt.MemoryStats, error) { return r.mod.MemoryStats() }
 
+// ModuleDispatchStats exposes the guest-call account (calls, OS-thread
+// handoffs, batches) so a caller can measure dispatch cost per unit of work.
+func (r *Runtime) ModuleDispatchStats() wasmrt.DispatchStats { return r.mod.DispatchStats() }
+
 // lastError reads flatsql_get_error. Must be called with the module lock held.
 func (r *Runtime) lastError() string { return r.lastErrorVia(r.mod) }
 
