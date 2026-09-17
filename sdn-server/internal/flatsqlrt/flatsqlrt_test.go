@@ -134,7 +134,7 @@ func newOMMDatabase(t *testing.T, rt *Runtime, name string) *Database {
 func TestEmbeddedArtifact(t *testing.T) {
 	sum := sha256.Sum256(EmbeddedWasm())
 	// Must match the provenance block in README.md.
-	const want = "e1b8b120c2368a7b8877520efc4cb4dec0ef2a5e2bbae2300dce56e5598e955a"
+	const want = "19ba179354064a3e9e448548ff974f045649e469e2ede00836383df88ca1c3bc"
 	if got := hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("embedded flatsql-wasi-noeh.wasm sha256 = %s, want %s (update README provenance if the pin moved)", got, want)
 	}
@@ -208,8 +208,12 @@ func TestAOTCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read AOT cache dir: %v", err)
 	}
-	sum := sha256.Sum256(EmbeddedWasm())
-	wantName := "flatsql-" + hex.EncodeToString(sum[:])[:16] + "-we" + RuntimeVersion() + ".aot.wasm"
+	// Ask the PRODUCTION path for the name rather than rebuilding it here.
+	// This test hand-assembled "flatsql-<hash>-we<ver>.aot.wasm" and went stale
+	// the moment the cache key gained a CPU-microarchitecture suffix (an
+	// AVX-512-baked artifact SIGILLs on a host without it), so it failed for a
+	// reason that had nothing to do with what it was testing.
+	wantName := filepath.Base(aotArtifactPath(dir, engineAOTPrefix, EmbeddedWasm()))
 	found := false
 	engineArtifacts := 0
 	for _, entry := range entries {

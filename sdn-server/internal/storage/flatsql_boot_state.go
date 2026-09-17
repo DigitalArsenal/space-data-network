@@ -488,7 +488,7 @@ func checkDatabaseFile(dbPath string) error {
 
 func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string, prepare func(*flatsqlrt.Database) error, discard bool) (*flatsqlrt.Database, bootMark, engineRecordState, error) {
 	phase := time.Now()
-	db, err := engine.OpenDatabase(schemaText, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
+	db, err := engine.OpenDatabase(schemaText, "sdn-control", dbPath, flatsqlrt.JournalWAL)
 	if err != nil {
 		return nil, bootMark{}, engineRecordState{}, err
 	}
