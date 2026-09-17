@@ -991,6 +991,95 @@ func (d *Database) IngestOneWithSource(buf []byte, source string) (int, error) {
 	return d.ingest("flatsql_ingest_one_with_source", buf, source)
 }
 
+// IngestManyWithSource appends N FlatBuffers into ONE source's shadow tables
+// inside ONE cross-OS-thread dispatch, and returns the engine-assigned record
+// sequence of each in order.
+//
+// WHY IT IS NOT A LOOP OVER IngestOneWithSource. The engine module runs
+// WithDedicatedThread, so each IngestOneWithSource is a handoff to a locked OS
+// thread; measured on this tree (internal/storage probe, 64-record chunk), the
+// engine-vtab mirror cost 196 dispatches — 64 of them exactly these ingests —
+// for 15.3 ms, a fifth of the whole store write path. The guest calls
+// themselves are not the cost; the dispatch is (see
+// wasmrt.Module.RunOnExecThread, "The DISPATCH was the work"). Batching them
+// changes nothing the engine sees: the same export runs the same number of
+// times, in the same order, on the same locked thread. Only the number of
+// thread boundary crossings changes — N to one.
+//
+// IT DOES LENGTHEN THE MODULE LOCK HOLD, which ingest() takes and releases per
+// record. The control database is opened on this same engine, so that lock also
+// gates reads: a reader can no longer slip between two records of a batch, only
+// between two batches. That is why the batch is BOUNDED (engineIngestBatchRecords)
+// and why TestReadersMakeProgressUnderABatchWriter exists — "maintenance passes
+// take the store lock per bounded batch, never across a scan; readers must
+// answer during any rebuild".
+//
+// The source's C string is allocated ONCE for the whole batch rather than once
+// per record, which also removes 2N guest calls.
+//
+// Partial failure is reported as a failure of the WHOLE batch, but the records
+// before the failing one ARE in the arena — identical to what a loop over
+// IngestOneWithSource leaves behind, and what the residency reconcile at the
+// next boot is built to clean up.
+func (d *Database) IngestManyWithSource(payloads [][]byte, source string) ([]int, error) {
+	if len(payloads) == 0 {
+		return nil, nil
+	}
+	if err := d.rt.checkUsable("ingest batch"); err != nil {
+		return nil, err
+	}
+	d.rt.mod.Lock()
+	defer d.rt.mod.Unlock()
+
+	// An empty source takes the unsourced export, exactly as ingest() does —
+	// the source argument is not optional at the ABI, so passing a pointer to
+	// "" would create a shadow table named "" instead of ingesting untagged.
+	export := "flatsql_ingest_one_with_source"
+	if source == "" {
+		export = "flatsql_ingest_one"
+	}
+	seqs := make([]int, 0, len(payloads))
+	err := d.rt.mod.RunOnExecThread(context.Background(), func(inv wasmrt.GuestCaller) error {
+		srcPtr := uint32(0)
+		if source != "" {
+			p, err := d.rt.allocCStringVia(inv, source)
+			if err != nil {
+				return err
+			}
+			defer d.rt.freeVia(inv, p)
+			srcPtr = p
+		}
+
+		for _, payload := range payloads {
+			dataPtr, err := d.rt.allocBytesVia(inv, payload)
+			if err != nil {
+				return err
+			}
+			args := []interface{}{int32(d.handle), int32(dataPtr), int32(len(payload))}
+			if source != "" {
+				args = append(args, int32(srcPtr))
+			}
+			res, err := inv.Execute(export, args...)
+			if dataPtr != 0 {
+				d.rt.freeVia(inv, dataPtr)
+			}
+			if err != nil {
+				return fmt.Errorf("flatsqlrt: %s: %w", export, err)
+			}
+			n := toFloat64(res[0])
+			if n < 0 {
+				return d.rt.engineErrVia(inv, export)
+			}
+			seqs = append(seqs, int(n))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return seqs, nil
+}
+
 func (d *Database) ingest(export string, data []byte, source string) (int, error) {
 	d.rt.mod.Lock()
 	defer d.rt.mod.Unlock()
