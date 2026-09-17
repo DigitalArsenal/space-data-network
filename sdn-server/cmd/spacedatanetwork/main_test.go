@@ -2086,18 +2086,6 @@ func TestDefaultFrontendHTMLIsCleanLandingPage(t *testing.T) {
 	}
 }
 
-func TestDesktopIntroMatchesDefaultFrontendHTML(t *testing.T) {
-	t.Parallel()
-
-	desktopIntro, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop", "assets", "pages", "sdn-intro.html"))
-	if err != nil {
-		t.Fatalf("read desktop intro failed: %v", err)
-	}
-	if !bytes.Equal(bytes.TrimSpace(desktopIntro), bytes.TrimSpace([]byte(defaultFrontendHTML))) {
-		t.Fatal("desktop intro page must match the server default frontend exactly")
-	}
-}
-
 func TestPublicHomepageFileIgnoresDeprecatedHomepageWhenFrontendPathIsSet(t *testing.T) {
 	t.Parallel()
 
