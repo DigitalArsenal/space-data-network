@@ -282,6 +282,13 @@ for archive in $LLVMLIBS; do
   [[ -f "$archive" ]] && cp -n "$archive" "$STATIC/lib/" 2>/dev/null || true
 done
 [[ -n "${ZSTD_STATIC:-}" && -f "${ZSTD_STATIC}" ]] && cp -n "$ZSTD_STATIC" "$STATIC/lib/" 2>/dev/null || true
+# The Windows pair, for the same reason and by the same rule: link.flags names
+# every archive as @PREFIX@/lib/<basename>, so discovering one without copying
+# it produces a prefix that names a file it does not contain — which is exactly
+# how this failed the first time, with "cannot find .../libxml2.a" at the end of
+# a Go build.
+[[ -n "${XML2_STATIC:-}" && -f "${XML2_STATIC}" ]] && cp -n "$XML2_STATIC" "$STATIC/lib/" 2>/dev/null || true
+[[ -n "${ZLIB_STATIC:-}" && -f "${ZLIB_STATIC}" ]] && cp -n "$ZLIB_STATIC" "$STATIC/lib/" 2>/dev/null || true
 
 # libstdc++, INTO the prefix, on ELF platforms.
 #
@@ -466,6 +473,27 @@ esac
     *)      printf -- '-static-libgcc -lm -ldl -lpthread -lrt -lz -ltinfo\n' ;;
   esac
 } > "$STATIC/link.flags"
+
+# EVERY ARCHIVE link.flags NAMES MUST BE IN THE PREFIX.
+#
+# The file names archives as @PREFIX@/lib/<basename>, which is a promise about
+# the prefix's contents that nothing here checked. Discovering a library and
+# forgetting to copy it therefore produced a prefix that names a file it does
+# not contain, and the only symptom was "cannot find .../libxml2.a" at the far
+# end of a Go build on another machine, minutes later and with no hint that the
+# prefix was at fault. Checking it here costs one pass and fails where the
+# answer is.
+missing_named=""
+for named in $(tr ' ' '\n' < "$STATIC/link.flags" | grep '^@PREFIX@/lib/'); do
+  if [[ ! -f "$STATIC/lib/${named#@PREFIX@/lib/}" ]]; then
+    missing_named="${missing_named} ${named#@PREFIX@/lib/}"
+  fi
+done
+if [[ -n "$missing_named" ]]; then
+  echo "static prefix: link.flags names archive(s) the prefix does not contain:${missing_named}" >&2
+  exit 1
+fi
+echo "static prefix: link.flags names $(tr ' ' '\n' < "$STATIC/link.flags" | grep -c '^@PREFIX@/lib/') archive(s), all present"
 
 # Stop here when the caller only wants the staged archives. A Docker layer that
 # builds LLVM + WasmEdge is expensive and depends ONLY on the version, so the
