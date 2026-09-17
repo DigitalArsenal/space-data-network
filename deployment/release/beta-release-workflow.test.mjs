@@ -109,9 +109,14 @@ test('local Go suites serialize package builds while bypassing the test cache', 
   const heavyArgs = extractGoTestArguments(extractShellFunction(script, 'run_go_heavy'), 'run_go_heavy');
   assert.ok(heavyArgs.includes('-p=1'), 'run_go_heavy must serialize package builds');
   assert.ok(heavyArgs.includes('-count=1'), 'run_go_heavy must bypass cached results');
+  // 90m, and the number is a measurement rather than a preference:
+  // internal/storage runs -p=1 so it is single-thread and I/O bound, takes
+  // 1240s on a dev box under WAL, and could not finish inside 3600s under the
+  // TRUNCATE journal it used before. 60m left ~1.4x headroom over a 2x-slower
+  // CI runner, which is not enough for a gate expected to stay green.
   assert.deepEqual(
     heavyArgs.filter((arg) => arg.startsWith('-timeout=')),
-    ['-timeout=60m'],
+    ['-timeout=90m'],
     'run_go_heavy must carry the long budget the heavy packages were split out for',
   );
   assert.ok(
