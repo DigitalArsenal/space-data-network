@@ -3436,7 +3436,7 @@ func serveAdminMuxRequest(
 			// success while the OLD binary kept running). Let a request that
 			// is BOTH self-gated AND actually from loopback reach its
 			// handler; everything remote still hits the wallet wall.
-			if isLoopbackSelfGatedAdminPath(requestPath) && isLoopbackRequestAddr(r.RemoteAddr) {
+			if isLoopbackSelfGatedAdminPath(requestPath) && requestOriginatedOnThisBox(r) {
 				adminMux.ServeHTTP(w, r)
 				return
 			}
@@ -4130,6 +4130,24 @@ func isLoopbackListenAddr(listenAddr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// requestOriginatedOnThisBox is isLoopbackRequestAddr plus the proxy check.
+//
+// A loopback RemoteAddr proves the last hop was local, not that the REQUEST
+// was. With a reverse proxy on the same machine — the deployed shape here —
+// every remote caller arrives from 127.0.0.1. Forwarded headers are never
+// trusted to grant anything; their presence is used only to refuse.
+func requestOriginatedOnThisBox(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	for _, h := range []string{"X-Forwarded-For", "X-Real-Ip", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto"} {
+		if strings.TrimSpace(r.Header.Get(h)) != "" {
+			return false
+		}
+	}
+	return isLoopbackRequestAddr(r.RemoteAddr)
 }
 
 func isLoopbackRequestAddr(remoteAddr string) bool {

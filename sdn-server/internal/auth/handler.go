@@ -1179,6 +1179,19 @@ func (h *Handler) devAutoAdminSession(r *http.Request) *Session {
 	if !h.devAutoAdmin || h.userStore == nil || h.sessions == nil {
 		return nil
 	}
+	// A PROXY HOP MEANS IT DID NOT ORIGINATE HERE. Checking RemoteAddr and
+	// ignoring forwarded headers is the right way to decide WHO the caller is,
+	// but it silently inverts when something on this same box forwards for
+	// them: nginx in front of a loopback listener makes RemoteAddr 127.0.0.1
+	// for every remote client on the internet, and this gate would hand each
+	// of them an Admin session. That is the deployed shape here — host-01
+	// terminates TLS in nginx on the node's own box.
+	//
+	// So the headers are still never TRUSTED to grant anything; their mere
+	// presence is taken as proof that a hop happened, and refuses.
+	if requestCrossedAProxy(r) {
+		return nil
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -1397,4 +1410,21 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// requestCrossedAProxy reports whether r arrived through a forwarding hop.
+//
+// Used to REFUSE loopback-only privileges, never to grant anything: a caller
+// can set these headers freely, so they can only ever be evidence against
+// "this request originated on this machine", never evidence for it.
+func requestCrossedAProxy(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	for _, h := range []string{"X-Forwarded-For", "X-Real-Ip", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto"} {
+		if strings.TrimSpace(r.Header.Get(h)) != "" {
+			return true
+		}
+	}
+	return false
 }
