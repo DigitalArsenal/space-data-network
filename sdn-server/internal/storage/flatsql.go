@@ -2358,11 +2358,19 @@ func adaptiveStoreChunk(current int, lastWindow time.Duration) int {
 	switch {
 	case lastWindow <= 0:
 		return current
-	// Comfortably inside budget: double, up to the cap. A quarter of the
-	// budget leaves 4x headroom for one slow sync, which is the margin the
-	// fixed 64 was chosen to preserve — the equilibrium this settles at is a
-	// window that TAKES about half a second, whatever hardware that is.
-	case lastWindow < storeWriteWindowBudget/4:
+	// Grow only while it is nearly FREE to. A quarter of the budget was the
+	// right threshold when a commit fsynced the rollback journal and bigger
+	// windows bought 6x; under WAL they buy 6%, measured: at a 64-record
+	// window WAL sustains 1152 rec/s against 1222 at 1024. Spending four
+	// hundred milliseconds of reader latency for six percent is a bad trade,
+	// and the 2026-07-06 blackout is what reader latency costs when it goes
+	// wrong.
+	//
+	// So the threshold is tight enough that growth only happens where windows
+	// are very cheap — which keeps the TRUNCATE case (where growth really is
+	// worth 6x) while leaving WAL near the small window it no longer needs to
+	// leave.
+	case lastWindow < storeWriteWindowBudget/16:
 		if next := current * 2; next <= storeWriteChunkMax {
 			return next
 		}

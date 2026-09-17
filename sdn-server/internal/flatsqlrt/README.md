@@ -12,13 +12,38 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 ## Embedded artifact provenance
 
 `flatsql-wasi-noeh.wasm` is the **no-exceptions** WASI build (CMake target
-`flatsql_wasi_noeh`, `-fignore-exceptions`) copied verbatim from the
-published `flatsql@2.0.3` npm package:
+`flatsql_wasi_noeh`, `-fignore-exceptions`), built from `flatsql@2.0.3` **plus
+the WAL enablement** (see "journal_mode=WAL" below):
 
 - source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
 - flatsql commit: `97ba3bb622a839843f1ce9e9d768f98f4d03d575` (npm `gitHead` of 2.0.3; "Search complete FlatBuffers using validated binary schemas")
-- npm package: `https://registry.npmjs.org/flatsql/-/flatsql-2.0.3.tgz`
-- sha256: `e1b8b120c2368a7b8877520efc4cb4dec0ef2a5e2bbae2300dce56e5598e955a`
+- npm package baseline: `https://registry.npmjs.org/flatsql/-/flatsql-2.0.3.tgz`
+- local change on top: heap-backed `xShm*` in `cpp/src/flatsql_vfs.cpp` and
+  `SQLITE_OMIT_WAL` dropped from the two wasi CMake targets
+- sha256: `19ba179354064a3e9e448548ff974f045649e469e2ede00836383df88ca1c3bc`
+- previous (2.0.3 stock, no WAL): `e1b8b120c2368a7b8877520efc4cb4dec0ef2a5e2bbae2300dce56e5598e955a`
+
+### journal_mode=WAL
+
+This artifact can open a database in WAL. The stock build cannot: SQLite omits
+WAL wherever the VFS supplies no shared memory, and this VFS left
+`xShmMap/xShmLock/xShmBarrier/xShmUnmap` null. The wal-index only has to be
+SHARED when several processes attach, though, and SQLite's own unix VFS backs
+it with heap memory under an exclusive lock ("we do not really need shared
+memory ... simulated with heap memory", `unixOpenSharedMemory`). FlatSQL is
+opened by exactly one writer — the one-daemon-per-box law — so the same
+shortcut applies and the four methods are now implemented on the heap.
+
+Measured on this machine, same inserts and commit cadence, journal mode the
+only difference: TRUNCATE 1002 rows/s at 49.9 ms per commit, WAL 5301 rows/s
+at 9.4 ms — 5.3x. End to end through the SDN store, a 64-record write window
+goes from 233 to 1440 rec/s (6.2x) because TRUNCATE fsyncs the rollback
+journal on every commit.
+
+SAFE ONLY BECAUSE THERE IS ONE ENGINE CONNECTION. The heap wal-index is
+per-connection, so two SQLite connections onto one database would each hold
+their own and corrupt it. `flatsqldrv`'s pool is eight stateless proxies onto
+the ONE engine SQLite context; that is the invariant this depends on.
 
 This version enables SQLite FTS5 and schema-directed `flatsql_record_text`
 extraction, including schemas registered after ingestion or behind unified
