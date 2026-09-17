@@ -218,7 +218,13 @@ run_go_heavy() {
 
   step "Go tests (heavy: $HEAVY_GO_PACKAGES)"
   # shellcheck disable=SC2086
-  "$ROOT/scripts/go-with-wasmedge.sh" test -p=1 -timeout=60m -count=1 $HEAVY_GO_PACKAGES
+  # 90m, sized off a measurement rather than a guess. internal/storage runs
+  # -p=1 (serial), so this is single-thread and I/O bound and a CI runner is
+  # simply slower than a dev box: the suite takes 1240s here under WAL, and it
+  # could not finish in 3600s under the TRUNCATE journal it used before. A 60m
+  # budget left roughly 1.4x headroom over a 2x-slower runner, which is not
+  # enough for a gate that is supposed to stay green.
+  "$ROOT/scripts/go-with-wasmedge.sh" test -p=1 -timeout=90m -count=1 $HEAVY_GO_PACKAGES
   pass "go test (heavy)"
 }
 

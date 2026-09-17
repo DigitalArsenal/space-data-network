@@ -59,7 +59,10 @@ jobs:
   heavy-go-packages:
     name: Heavy Go packages (record store)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Above the lane's own 90m go-test budget, so an overrun surfaces as go
+    # test's timeout panic (which names the running test) instead of the job
+    # being killed with no diagnostic.
+    timeout-minutes: 110
 
     steps:
       - uses: actions/checkout@v4
