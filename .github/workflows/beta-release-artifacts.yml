@@ -784,7 +784,14 @@ jobs:
               ;;
             windows)
               deps="$(objdump -p "${bin}" | grep -i 'DLL Name' || true)"
-              printf '%s\n' "${deps}" | grep -i 'wasmedge\|libstdc++\|libgcc' && { echo "::error::${BINARY_NAME} imports a runtime DLL; it must be linked in"; exit 1; } || true
+              # libwinpthread is named too: it is the THIRD GCC runtime DLL on
+              # MinGW and just as absent from a machine without MSYS2 as the
+              # other two, so leaving it out of the pattern would let a binary
+              # that still needs a toolchain install pass as self-contained.
+              # Everything else objdump lists here is a Windows system import
+              # library, which is supplied by the OS and must stay dynamic.
+              printf '%s\n' "${deps}" | grep -i 'wasmedge\|libstdc++\|libgcc\|libwinpthread' && { echo "::error::${BINARY_NAME} imports a runtime DLL; it must be linked in"; exit 1; } || true
+              echo "--- ${BINARY_NAME} DLL imports ---"; printf '%s\n' "${deps}"
               ;;
           esac
           echo "${BINARY_NAME}: no runtime library dependency"
