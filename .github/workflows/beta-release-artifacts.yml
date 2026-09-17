@@ -225,6 +225,9 @@ jobs:
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-zlib
             mingw-w64-x86_64-zstd
+            mingw-w64-x86_64-libxml2
+            mingw-w64-x86_64-xz
+            mingw-w64-x86_64-libiconv
             git
       # Two steps, not one: the toolchain choice is identical (both source
       # scripts/wasmedge-static-env.sh), but a step-level `shell:` cannot read
@@ -677,6 +680,8 @@ jobs:
             mingw-w64-x86_64-zlib
             mingw-w64-x86_64-zstd
             mingw-w64-x86_64-libxml2
+            mingw-w64-x86_64-xz
+            mingw-w64-x86_64-libiconv
       - name: Install Windows CLI build tools
         if: matrix.target_os == 'windows'
         env:
@@ -783,15 +788,31 @@ jobs:
               printf '%s\n' "${deps}" | grep -i wasmedge && { echo "::error::${BINARY_NAME} links libwasmedge dynamically; the static prefix did not take"; exit 1; } || true
               ;;
             windows)
-              deps="$(objdump -p "${bin}" | grep -i 'DLL Name' || true)"
-              # libwinpthread is named too: it is the THIRD GCC runtime DLL on
-              # MinGW and just as absent from a machine without MSYS2 as the
-              # other two, so leaving it out of the pattern would let a binary
-              # that still needs a toolchain install pass as self-contained.
-              # Everything else objdump lists here is a Windows system import
-              # library, which is supplied by the OS and must stay dynamic.
-              printf '%s\n' "${deps}" | grep -i 'wasmedge\|libstdc++\|libgcc\|libwinpthread' && { echo "::error::${BINARY_NAME} imports a runtime DLL; it must be linked in"; exit 1; } || true
-              echo "--- ${BINARY_NAME} DLL imports ---"; printf '%s\n' "${deps}"
+              # AN ALLOWLIST, NOT A BLOCKLIST. Naming the runtime libraries
+              # to reject is a game this check kept losing: it passed a binary
+              # importing libstdc++-6.dll, and once that was fixed it passed one
+              # importing libxml2-16.dll and zlib1.dll — MSYS2 files that exist
+              # only on a build machine. The question worth asking is the
+              # opposite one, "is every import part of WINDOWS", because the set
+              # of OS DLLs is small and known while the set of libraries a
+              # toolchain might drag in is not.
+              imports="$(objdump -p "${bin}" | awk '/DLL Name/ {print tolower($3)}' | sort -u)"
+              echo "--- ${BINARY_NAME} DLL imports ---"; printf '%s\n' "${imports}"
+              foreign=""
+              for dll in ${imports}; do
+                case "${dll}" in
+                  advapi32.dll|bcrypt.dll|crypt32.dll|dbghelp.dll|dnsapi.dll|gdi32.dll|\
+                  iphlpapi.dll|kernel32.dll|ktmw32.dll|mswsock.dll|msvcrt.dll|netapi32.dll|\
+                  normaliz.dll|ntdll.dll|ole32.dll|oleaut32.dll|powrprof.dll|psapi.dll|\
+                  secur32.dll|setupapi.dll|shell32.dll|shlwapi.dll|user32.dll|userenv.dll|\
+                  uuid.dll|version.dll|winmm.dll|wldap32.dll|ws2_32.dll) ;;
+                  *) foreign="${foreign} ${dll}" ;;
+                esac
+              done
+              if [ -n "${foreign}" ]; then
+                echo "::error::${BINARY_NAME} imports DLL(s) Windows does not ship:${foreign} — they must be linked in"
+                exit 1
+              fi
               ;;
           esac
           echo "${BINARY_NAME}: no runtime library dependency"

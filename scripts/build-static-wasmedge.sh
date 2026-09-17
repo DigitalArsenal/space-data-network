@@ -238,6 +238,37 @@ else
   echo "no static zstd found; relying on the link line" >&2
 fi
 
+# FIND THE STATIC libxml2 AND zlib, ON WINDOWS ONLY.
+#
+# MSYS2's prebuilt LLVM is what supplies our archives, and two of its components
+# call out of the toolchain: WindowsManifest into libxml2, Support into zlib.
+# Naming them as -lxml2 -lz on the link line takes MSYS2's IMPORT libraries, and
+# the produced .exe then listed
+#   DLL Name: libxml2-16.dll
+#   DLL Name: zlib1.dll
+# — two files that exist only where MSYS2 is installed. That is the same defect
+# as the libstdc++-6.dll one directly above and it survived the first fix,
+# because the guard named specific runtime libraries instead of asking which
+# imports are NOT part of Windows. Both are now staged as archives, like zstd.
+XML2_STATIC=""
+ZLIB_STATIC=""
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    for cand in /mingw64/lib/libxml2.a; do
+      if [[ -f "$cand" ]]; then XML2_STATIC="$cand"; break; fi
+    done
+    for cand in /mingw64/lib/libz.a; do
+      if [[ -f "$cand" ]]; then ZLIB_STATIC="$cand"; break; fi
+    done
+    if [[ -n "$XML2_STATIC" ]]; then echo "static libxml2: $XML2_STATIC"; else
+      echo "no static libxml2 in /mingw64/lib; the .exe will import libxml2-*.dll" >&2
+    fi
+    if [[ -n "$ZLIB_STATIC" ]]; then echo "static zlib: $ZLIB_STATIC"; else
+      echo "no static zlib in /mingw64/lib; the .exe will import zlib1.dll" >&2
+    fi
+    ;;
+esac
+
 # Make the prefix SELF-CONTAINED and RELOCATABLE.
 #
 # LLVM's archives are copied in beside WasmEdge's, and link.flags names every
@@ -381,7 +412,7 @@ esac
   # llvm::demangle and three WasmEdge ones — every one of them a cycle. It hid
   # behind the larger toolchain mismatch until that was fixed.
   case "$(uname -s)" in Darwin) : ;; *) printf -- '-Wl,--start-group ' ;; esac
-  for archive in $GRP $LLVMLIBS ${ZSTD_STATIC:-} ${STDCXX_STATIC:-} ${IMPSHIM_STATIC:-}; do
+  for archive in $GRP $LLVMLIBS ${ZSTD_STATIC:-} ${STDCXX_STATIC:-} ${XML2_STATIC:-} ${ZLIB_STATIC:-} ${IMPSHIM_STATIC:-}; do
     [[ -n "$archive" ]] || continue
     printf '@PREFIX@/lib/%s ' "$(basename "$archive")"
   done
@@ -413,7 +444,13 @@ esac
     # -Bstatic around winpthread covers the third GCC runtime DLL
     # (libwinpthread-1.dll); the Windows system import libraries after it must
     # stay dynamic, which is what -Bdynamic restores.
-    MINGW*|MSYS*|CYGWIN*) printf -- '-static-libstdc++ -static-libgcc -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -lm -lws2_32 -lbcrypt -lole32 -luuid -lntdll -lktmw32 -ldbghelp -lxml2 -lz\n' ;;
+    # No -lxml2 -lz: both are staged into the prefix above and named as
+    # archives, so the linker cannot prefer MSYS2's import library for either.
+    # What is left after -Bdynamic is Windows' own system import libraries,
+    # which are supplied by the OS and must stay dynamic. -llzma and -liconv
+    # are libxml2.a's own dependencies, which an import library used to satisfy
+    # for us.
+    MINGW*|MSYS*|CYGWIN*) printf -- '-static-libstdc++ -static-libgcc -Wl,-Bstatic -lstdc++ -lwinpthread -llzma -liconv -Wl,-Bdynamic -lm -lws2_32 -lbcrypt -lole32 -luuid -lntdll -lktmw32 -ldbghelp\n' ;;
     # No -lstdc++: it is staged into the prefix above and named as an archive,
     # so the linker cannot prefer a shared one. -static-libgcc removes
     # libgcc_s.so.1 the same way. What is left is glibc, which stays dynamic —
