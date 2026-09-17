@@ -952,12 +952,15 @@ func (s *FlatSQLStore) ensureEngineSource(source string) error {
 // one residency row per record in the same commit.
 type engineIngestBatch struct {
 	store      *FlatSQLStore
+	join       sqlQueryExecer
 	schemaName string
 	source     string
 	payloads   [][]byte
 	cids       []string
 	bytes      int
 	total      int64
+	// arena rows this batch put in, for a caller whose COMMIT later fails.
+	ingested []engineResidencyRow
 }
 
 const (
@@ -989,10 +992,11 @@ func (b *engineIngestBatch) flush() error {
 	}
 	payloads, cids := b.payloads, b.cids
 	b.payloads, b.cids, b.bytes = nil, nil, 0
-	n, err := b.store.ingestEngineBatchLocked(b.schemaName, b.source, payloads, cids)
+	n, fresh, err := b.store.ingestEngineBatchLocked(b.schemaName, b.source, payloads, cids, b.join)
 	if err != nil {
 		return err
 	}
+	b.ingested = append(b.ingested, fresh...)
 	b.total += int64(n)
 	return nil
 }
@@ -1001,7 +1005,11 @@ func (b *engineIngestBatch) flush() error {
 // control row is the source of truth, so per-record failures are logged and
 // skipped; only a poisoned (trapped) runtime is returned as an error. Caller
 // holds s.mu for writing.
-func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIngest) error {
+// ingestEngineRecords mirrors records into the engine. join, when non-nil, is a
+// transaction the residency ledger rows are written into instead of one of this
+// function's own — the caller is mid-commit and wants the ledger to land in the
+// same fsync as its control rows.
+func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIngest, join sqlQueryExecer) ([]engineResidencyRow, error) {
 	binding, routed := s.engineRoutedSchemaFor(schemaName)
 	if !routed {
 		// Callers gate on engineRoutesSchema before queueing, so this is the
@@ -1010,9 +1018,9 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 		if len(pending) > 0 {
 			log.Warnf("FlatSQL engine: %d %s record(s) queued for a schema this store does not route — not mirrored", len(pending), schemaName)
 		}
-		return nil
+		return nil, nil
 	}
-	batch := &engineIngestBatch{store: s, schemaName: schemaName}
+	batch := &engineIngestBatch{store: s, schemaName: schemaName, join: join}
 	for _, p := range pending {
 		payload, reason, ok := engineIngestablePayload(binding, p.data)
 		if !ok {
@@ -1022,25 +1030,25 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 		if err := s.ensureEngineSource(p.source); err != nil {
 			log.Warnf("FlatSQL engine: register source %q for %s: %v", p.source, schemaName, err)
 			if s.engine.Poisoned() {
-				return fmt.Errorf("FlatSQL engine poisoned registering source %q: %w", p.source, err)
+				return batch.ingested, fmt.Errorf("FlatSQL engine poisoned registering source %q: %w", p.source, err)
 			}
 			continue
 		}
 		if err := batch.add(payload, p.cid, p.source); err != nil {
 			log.Warnf("FlatSQL engine: ingest %s records into %q: %v", schemaName, batch.source, err)
 			if s.engine.Poisoned() {
-				return fmt.Errorf("FlatSQL engine poisoned during %s ingest: %w", schemaName, err)
+				return batch.ingested, fmt.Errorf("FlatSQL engine poisoned during %s ingest: %w", schemaName, err)
 			}
 		}
 	}
 	if err := batch.flush(); err != nil {
 		log.Warnf("FlatSQL engine: ingest %s records into %q: %v", schemaName, batch.source, err)
 		if s.engine.Poisoned() {
-			return fmt.Errorf("FlatSQL engine poisoned during %s ingest: %w", schemaName, err)
+			return batch.ingested, fmt.Errorf("FlatSQL engine poisoned during %s ingest: %w", schemaName, err)
 		}
 	}
 	s.engineResidentAdd(schemaName, batch.total)
-	return s.enforceEngineHotWindowLocked(schemaName)
+	return batch.ingested, s.enforceEngineHotWindowLocked(schemaName)
 }
 
 // enforceEngineHotWindowLocked evicts the OLDEST resident engine records

@@ -85,7 +85,7 @@ func TestSecondIngestOfAResidentRecordIsTombstoned(t *testing.T) {
 		cids = append(cids, computeCID(data))
 	}
 	store.mu.Lock()
-	n, err := store.ingestEngineBatchLocked("OMM.fbs", "alpha", records, cids)
+	n, _, err := store.ingestEngineBatchLocked("OMM.fbs", "alpha", records, cids, nil)
 	store.mu.Unlock()
 	if err != nil {
 		t.Fatalf("second ingest: %v", err)

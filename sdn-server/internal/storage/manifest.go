@@ -881,7 +881,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 	}
 	committed = true
 	if len(superseded) > 0 {
-		if _, err := s.tombstoneEngineRecordsLocked(index.SchemaName, superseded); err != nil {
+		if _, err := s.tombstoneEngineRecordsLocked(index.SchemaName, superseded, nil); err != nil {
 			return imported, err
 		}
 	}
@@ -889,7 +889,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 		// The engine vtab is a cache over the durable substrate committed
 		// above, so a mirroring failure never unwinds the import; only a
 		// poisoned (trapped) runtime is returned.
-		if err := s.ingestEngineRecords(index.SchemaName, enginePending); err != nil {
+		if _, err := s.ingestEngineRecords(index.SchemaName, enginePending, nil); err != nil {
 			return imported, fmt.Errorf("mirror imported %s records into the engine: %w", index.SchemaName, err)
 		}
 	}

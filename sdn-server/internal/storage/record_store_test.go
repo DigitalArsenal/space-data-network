@@ -271,7 +271,7 @@ func TestDeleteAndSupersedeReachTheEngineAndSurviveARestart(t *testing.T) {
 	}
 	// The ledger and the engine agree on WHICH row survived.
 	warm.mu.RLock()
-	rows, err := warm.engineResidencyRowsForCIDs("CAT.fbs", []string{computeCID(v1), computeCID(v2)})
+	rows, err := warm.engineResidencyRowsForCIDs("CAT.fbs", []string{computeCID(v1), computeCID(v2)}, nil)
 	warm.mu.RUnlock()
 	if err != nil {
 		t.Fatal(err)
