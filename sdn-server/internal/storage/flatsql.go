@@ -2531,6 +2531,12 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		textIndex:   s.fullTextState(schemaName),
 		tags:        tags,
 	}
+	// Supersede keys carried by rows still sitting in the buffer. The supersede
+	// SELECT reads the producer TABLE, so it sees only what is on disk; a queued
+	// row is invisible to it. That only matters when a queued row carries the
+	// key the incoming record is about to retire, which is the one case this set
+	// detects.
+	queuedKeys := map[string]struct{}{}
 	for i, data := range records {
 		cid := cids[i]
 		if _, repeat := present[cid]; repeat {
@@ -2544,6 +2550,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			if err != nil {
 				return inserted, err
 			}
+			clear(queuedKeys)
 			gone := s.mirrorRoutedRecordFromExisting(tx, schemaName, cid, peerID, signature)
 			superseded = append(superseded, gone...)
 			forgetPresence(present, gone)
@@ -2563,15 +2570,25 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		key := recordSupersedeKey(schemaName, data)
 		if key != "" {
 			// Supersede READS the producer table and the record index and
-			// DELETES what it finds (record_supersede.go). Two records with
-			// the same key in one window must supersede each other exactly as
-			// they did record by record, so the queue is emptied first. Only
-			// $CAT has a supersede rule; for every other standard the key is
-			// empty and no window is ever broken up here.
-			landed, err := pending.flush(tx)
-			inserted += landed
-			if err != nil {
-				return inserted, err
+			// DELETES what it finds (record_supersede.go). Two records with the
+			// same key in one window must supersede each other exactly as they
+			// did record by record, and the queue is invisible to that SELECT —
+			// so the queue is emptied, but ONLY when it actually holds this key.
+			//
+			// Flushing unconditionally here is correct but throws the window
+			// away for the one standard that reaches this branch: every $CAT
+			// record has a supersede key, so every $CAT record would flush a
+			// buffer holding exactly itself, and the satellite catalog would
+			// write one row per statement while every other standard wrote 128.
+			// A catalog batch is overwhelmingly DISTINCT objects, so the
+			// collision is rare and the window survives.
+			if _, collides := queuedKeys[key]; collides {
+				landed, err := pending.flush(tx)
+				inserted += landed
+				if err != nil {
+					return inserted, err
+				}
+				clear(queuedKeys)
 			}
 			gone, err := s.supersedeInProducerTableTx(tx, schemaName, routedTable, key, cid)
 			if err != nil {
@@ -2583,6 +2600,9 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		}
 		pending.add(storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key}, data)
 		present[cid] = struct{}{}
+		if key != "" {
+			queuedKeys[key] = struct{}{}
+		}
 		if s.engineRoutesSchema(schemaName) {
 			enginePending = append(enginePending, engineIngest{cid: cid, data: data, source: engineSourceName(tags)})
 		}

@@ -162,3 +162,55 @@ func requireBatchMatchesPerRecord(t *testing.T, batched, perRec *FlatSQLStore, w
 		t.Logf("note: inserted=%d, surviving rows=%d", inserted, wantRows)
 	}
 }
+
+// A catalog window of DISTINCT objects must batch like any other standard.
+//
+// Every $CAT record carries a supersede key, so a window that flushed the
+// buffer on every key would flush once per record and write the satellite
+// catalog one row per statement while every other standard wrote 128. The
+// buffer only has to be emptied when it actually HOLDS the key being retired,
+// which in a real catalog batch — distinct objects — is never. This asserts the
+// semantics are unchanged either way and reports the handoff cost, which is the
+// thing the collision check is there to move.
+func TestStoreBatchCATDistinctObjectsStillMatchesPerRecord(t *testing.T) {
+	validator := bootTestValidator(t)
+	tags := SourceTags{ProviderID: "prov", SourceName: "catalog", BatchID: "b1", ContentKeyID: "public"}
+
+	const n = 64
+	window := make([][]byte, 0, n)
+	for i := 0; i < n; i++ {
+		window = append(window, buildCATForTest(
+			fmt.Sprintf("SAT-%d", i), fmt.Sprintf("1998-%03dA", i), uint32(30000+i), "", ""))
+	}
+
+	batched := openBootStore(t, filepath.Join(t.TempDir(), "batched"), validator)
+	defer batched.Close()
+	perRec := openBootStore(t, filepath.Join(t.TempDir(), "perrec"), validator)
+	defer perRec.Close()
+
+	before := batched.engine.ModuleDispatchStats()
+	requireBatchMatchesPerRecord(t, batched, perRec, window, tags, map[string]string{})
+	after := batched.engine.ModuleDispatchStats()
+	t.Logf("CAT window of %d distinct objects: dispatches=%d (%.2f/record) guest_calls=%d",
+		n, after.Dispatches-before.Dispatches, float64(after.Dispatches-before.Dispatches)/float64(n),
+		after.Calls-before.Calls)
+}
+
+// The same window with one repeated object: the collision MUST break the batch
+// so the later record still retires the earlier one.
+func TestStoreBatchCATCollidingKeyInWindowMatchesPerRecord(t *testing.T) {
+	validator := bootTestValidator(t)
+	tags := SourceTags{ProviderID: "prov", SourceName: "catalog", BatchID: "b1", ContentKeyID: "public"}
+
+	window := [][]byte{
+		buildCATForTest("SAT-A", "1998-001A", 30001, "", ""),
+		buildCATForTest("SAT-B", "1998-002A", 30002, "", ""),
+		buildCATForTest("SAT-A v2", "1998-001A", 30001, "", ""), // retires SAT-A
+		buildCATForTest("SAT-C", "1998-003A", 30003, "", ""),
+	}
+	batched := openBootStore(t, filepath.Join(t.TempDir(), "batched"), validator)
+	defer batched.Close()
+	perRec := openBootStore(t, filepath.Join(t.TempDir(), "perrec"), validator)
+	defer perRec.Close()
+	requireBatchMatchesPerRecord(t, batched, perRec, window, tags, map[string]string{})
+}
