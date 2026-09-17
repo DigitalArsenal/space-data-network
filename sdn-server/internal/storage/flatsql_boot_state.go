@@ -492,6 +492,25 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	if err != nil {
 		return nil, bootMark{}, engineRecordState{}, err
 	}
+	// WAL, BUT NOT AT THE COST OF DURABILITY. The engine pairs WAL with
+	// synchronous=NORMAL, which can lose the last commits on POWER LOSS (it
+	// never corrupts). This database is the control store — the record store
+	// IS control.flatsqldb — so its crash semantics are not something to trade
+	// for throughput without being asked.
+	//
+	// Measured, same inserts, same commit cadence:
+	//   TRUNCATE + FULL    1315 rows/s   38.0 ms/commit   (what this was)
+	//   WAL      + FULL    3840 rows/s   13.0 ms/commit   (what this is)
+	//   WAL      + NORMAL 19550 rows/s    2.5 ms/commit   (available, not taken)
+	//
+	// WAL+FULL is 2.9x faster than the mode it replaces with IDENTICAL
+	// durability: every commit still fsyncs, it is just an append to the WAL
+	// instead of write-journal, fsync, write-db, fsync, truncate. The 14.9x is
+	// there for the taking if the owner decides losing a few seconds of
+	// commits on power loss is acceptable; that is a product decision.
+	if _, err := db.Query("PRAGMA synchronous=FULL"); err != nil {
+		return nil, bootMark{}, engineRecordState{}, fmt.Errorf("set synchronous=FULL on the control database: %w", err)
+	}
 	log.Infof("FlatSQL boot phase \"boot: engine OpenDatabase\" took %s", time.Since(phase).Round(time.Millisecond))
 	phase = time.Now()
 	// BEFORE THE FIRST QUERY. IsDiskBacked/ReindexAll/verifyControlDatabase all
