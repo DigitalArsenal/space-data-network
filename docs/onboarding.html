@@ -249,6 +249,16 @@
       background: rgba(255, 255, 255, 0.03);
       border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     }
+    .spec-table { width: 100%; border-collapse: collapse; margin: 6px 0 16px; font-size: 14.5px; color: var(--text-secondary); }
+    .spec-table th, .spec-table td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--ui-border); }
+    .spec-table th { color: var(--text-primary); font-weight: 600; white-space: nowrap; }
+    .spec-table td code { white-space: nowrap; }
+    .spec-table-wrap { overflow-x: auto; }
+    .spec-link { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 14px; font-size: 14px; color: var(--text-secondary); }
+    .spec-link code { font-size: 13px; }
+    .spec-link button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--ui-border); background: transparent; color: var(--text-primary); cursor: pointer; }
+    .spec-link button:hover { border-color: #d8a94e; color: #d8a94e; }
+    .spec-h3 { font-size: 17px; font-weight: 600; color: var(--text-primary); margin: 18px 0 8px; }
     details.tech {
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 14px;
@@ -480,13 +490,14 @@
   <header class="page-head">
     <div class="container">
       <h1>Onboarding</h1>
-      <p class="lede">Get on the Space Data Network in five steps: set up your ID, tap into live space data, publish your own, run software modules, and sell on the built-in storefront.</p>
+      <p class="lede">Get on the Space Data Network in five steps: set up your ID, tap into live space data, publish your own, run software modules, and sell on the built-in storefront. Step 6 is the one-page spec sheet for your IT and security review.</p>
       <div class="steps-overview">
         <a href="#step-start">1 &middot; Start</a>
         <a href="#step-consume">2 &middot; Consume Data</a>
         <a href="#step-publish">3 &middot; Publish Data</a>
         <a href="#step-modules">4 &middot; Modules</a>
         <a href="#step-storefront">5 &middot; Storefront</a>
+        <a href="#security-review">6 &middot; Spec sheet</a>
       </div>
     </div>
   </header>
@@ -794,6 +805,95 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
       </div>
     </section>
 
+    <section class="step" id="security-review">
+      <div class="step-card">
+        <div class="step-head">
+          <span class="step-num"><b>6</b></span>
+          <h2>Spec sheet for IT and security review</h2>
+        </div>
+        <p class="spec-link"><span>Link to this section:</span> <code>https://spacedatanetwork.org/onboarding.html#security-review</code> <button type="button" onclick="copyLink(this, 'security-review')">Copy link</button></p>
+        <p>This is the short version of what a Space Data Network node is, what it runs, what it needs, and what it talks to &mdash; written for the people who approve software on your network. Everything here is the shipped default; every value can be changed in the node's configuration file.</p>
+
+        <h3 class="spec-h3">Architecture in one paragraph</h3>
+        <p>A node is <strong>one long-running process</strong> on one machine. It joins a peer-to-peer network (libp2p, the same networking stack as IPFS), receives and publishes small signed records in the <a href="https://spacedatastandards.org" target="_blank">Space Data Standards</a> formats (satellite orbits, catalog entries, conjunction warnings, space weather, and so on), stores them on local disk, and serves them to your own software over a local HTTP API and a browser dashboard. Optional analysis modules run inside a WebAssembly sandbox in the same process. There is no central server: your node talks to other nodes directly, and every record carries the publisher's signature, so provenance is verified rather than assumed.</p>
+
+        <h3 class="spec-h3">Software components</h3>
+        <div class="spec-table-wrap"><table class="spec-table">
+          <tr><th>Component</th><th>What it is</th><th>Runs as</th></tr>
+          <tr><td>Node daemon</td><td>Single Go binary <code>spacedatanetwork</code>: libp2p host, record store, HTTP API, dashboard, module runtime. Statically linked; no external database, no interpreter.</td><td>One background service (systemd, launchd, or the Docker container)</td></tr>
+          <tr><td>Record store (FlatSQL)</td><td>A SQL engine compiled to WebAssembly that indexes the FlatBuffer records in place. Append-only stream files under the node's data directory; no SQLite, no Postgres.</td><td>In-process, via the WasmEdge runtime bundled with the binary</td></tr>
+          <tr><td>Kubo (IPFS)</td><td>Content-addressed storage for larger published assets and archives. Bound to loopback only; it never fetches arbitrary content for outside callers.</td><td>Managed child process of the daemon (bundled), or an existing Kubo you already run</td></tr>
+          <tr><td>Module runtime</td><td>Optional signed WebAssembly modules and flows (analysis, ingestion). Each runs in a WASM sandbox with only the capabilities it declares (timer, HTTP egress, guarded persistence).</td><td>In-process, WasmEdge</td></tr>
+          <tr><td>Dashboard and API</td><td>Web dashboard and REST/WebSocket API on the admin listener. Sign-in is by cryptographic key; authentication is required by default.</td><td>Loopback listener <code>127.0.0.1:5001</code></td></tr>
+          <tr><td>Desktop app (optional)</td><td>Same node wrapped in a desktop application with the dashboard as its window.</td><td>User application</td></tr>
+        </table></div>
+
+        <h3 class="spec-h3">Hardware and platform</h3>
+        <div class="spec-table-wrap"><table class="spec-table">
+          <tr><th></th><th>Minimum</th><th>Recommended</th></tr>
+          <tr><td>CPU</td><td>2 vCPU, x86-64 or arm64</td><td>4 vCPU</td></tr>
+          <tr><td>Memory</td><td>4 GB</td><td>8 GB</td></tr>
+          <tr><td>Disk</td><td>40 GB SSD (the node refuses writes under 5 GiB free)</td><td>100 GB SSD or more, sized to the feeds you keep</td></tr>
+          <tr><td>Network</td><td>Any broadband; works behind NAT</td><td>A public IP if you want to relay for others</td></tr>
+          <tr><td>Operating system</td><td colspan="2">Linux x86-64 or arm64, macOS Apple Silicon, or Docker (<code>linux/amd64</code> image). Windows via the installer as it ships. Runs as an unprivileged user; never as root.</td></tr>
+        </table></div>
+        <p>For reference, the public production nodes that serve the live catalog run on 2 vCPU / 8 GB virtual machines.</p>
+
+        <h3 class="spec-h3">Ports</h3>
+        <p><strong>Inbound.</strong> None are required. A node behind a firewall or NAT still receives and publishes data through relays and hole punching. Opening the peer-to-peer ports makes the node directly reachable, which improves connectivity and lets it help other nodes.</p>
+        <div class="spec-table-wrap"><table class="spec-table">
+          <tr><th>Port</th><th>Protocol</th><th>Purpose</th><th>Exposure</th></tr>
+          <tr><td>4001</td><td>TCP and UDP (QUIC)</td><td>libp2p peer connections</td><td>Optional inbound; recommended open</td></tr>
+          <tr><td>8080</td><td>TCP (WebSocket)</td><td>libp2p for browser peers</td><td>Optional inbound</td></tr>
+          <tr><td>4003</td><td>UDP (WebRTC-direct)</td><td>libp2p for browser peers</td><td>Optional inbound</td></tr>
+          <tr><td>5001</td><td>TCP (HTTP, WebSocket)</td><td>Admin API and dashboard</td><td>Loopback only by default. Bind it wider only with TLS and authentication on.</td></tr>
+          <tr><td>443 / 80</td><td>TCP (HTTPS)</td><td>Public dashboard and status feed with managed TLS (Let's Encrypt)</td><td>Only if you choose <code>admin.tls_mode: managed</code></td></tr>
+          <tr><td>5002</td><td>TCP (HTTP)</td><td>Bundled Kubo RPC</td><td>Loopback only</td></tr>
+        </table></div>
+        <p><strong>Outbound.</strong> The node initiates these connections; nothing else.</p>
+        <div class="spec-table-wrap"><table class="spec-table">
+          <tr><th>Destination</th><th>Port</th><th>Why</th></tr>
+          <tr><td><code>sdn.spaceaware.io</code></td><td>443 TCP (WebSocket over TLS)</td><td>Bootstrap peer: first contact with the network, and the signed software-update feed</td></tr>
+          <tr><td><code>159.203.150.8</code>, <code>167.172.219.213</code></td><td>4004 TCP, 4001 TCP</td><td>Bootstrap peers (the two public production nodes)</td></tr>
+          <tr><td>Other network peers</td><td>4001 TCP/UDP typically; peers may listen on other ports</td><td>Peer-to-peer data exchange and the public Kademlia DHT used for discovery</td></tr>
+          <tr><td><code>spacedatanetwork.org</code></td><td>443 TCP</td><td>Installer and documentation only</td></tr>
+          <tr><td>Data sources you enable (for example <code>celestrak.org</code>, <code>space-track.org</code>)</td><td>443 TCP</td><td>Only if you turn on an ingestion module for that source; off by default</td></tr>
+        </table></div>
+        <p>A minimal egress rule set is therefore: TCP 443 to the hosts above, and TCP/UDP 4001 to the internet for peer traffic. The node sends no telemetry, crash reports, or usage data anywhere.</p>
+
+        <h3 class="spec-h3">Communication protocols</h3>
+        <ul>
+          <li><strong>Transport:</strong> libp2p over TCP, QUIC, WebSocket, and WebRTC-direct. Every peer connection is encrypted and mutually authenticated with libp2p TLS or Noise; a peer's identity is its Ed25519 public key.</li>
+          <li><strong>Discovery and routing:</strong> the public Kademlia DHT (the same one IPFS uses), tagged so nodes find other Space Data Network nodes; AutoNAT, hole punching, and circuit relay v2 for nodes behind NAT.</li>
+          <li><strong>Data distribution:</strong> GossipSub publish/subscribe topics per data type, plus content-addressed fetch of published record sets by SHA-256.</li>
+          <li><strong>Wire format:</strong> Space Data Standards FlatBuffers, size-prefixed. The same bytes travel the network, sit on disk, and come back out of the API; JSON is offered on HTTP responses.</li>
+          <li><strong>Local API:</strong> HTTP/1.1 and WebSocket on the admin listener; the served reference is at <code>/api/v1/docs</code> on any running node.</li>
+          <li><strong>Signatures and keys:</strong> every record is Ed25519-signed by its publisher and verified before it is stored. All of a node's keys derive from one BIP-39 mnemonic (SLIP-10, BIP-44 paths); the mnemonic is encrypted at rest with a machine-derived key and fails closed if the machine changes. Encrypted record types use X25519 key agreement.</li>
+          <li><strong>Software updates:</strong> signed update manifests over the update feed; a node verifies the signature, upgrades in place, and can roll back. No update is applied unsigned.</li>
+        </ul>
+
+        <h3 class="spec-h3">What leaves your network, and what does not</h3>
+        <ul>
+          <li><strong>Published by default:</strong> the node's identity record (organization name and contact details you enter in the wizard, plus its public keys) and any data you explicitly publish.</li>
+          <li><strong>Never published:</strong> private keys, the recovery phrase, configuration, and any record type not on the anonymous-read list. Anonymous read is decided per data type and is closed unless deliberately opened; today it covers the public catalog lanes (orbits, catalog entries, ephemerides, space weather, RF bands, link status, publication and dataset manifests, identity records, application manifests, entity groups).</li>
+          <li><strong>Administration:</strong> the dashboard and API require sign-in with a key the node knows. The node's own key is always an administrator; other operators are added by public key. No passwords are stored.</li>
+        </ul>
+
+        <details class="tech">
+          <summary>Where each of these facts comes from</summary>
+          <div class="tech-body">
+            <ul>
+              <li><a href="INSTALL.md">INSTALL.md</a> &mdash; installation, configuration keys, and the ports table.</li>
+              <li><a href="SERVER-OVERVIEW.md">SERVER-OVERVIEW.md</a> &mdash; the node's architecture: storage, identity, networking, modules.</li>
+              <li><a href="OPERATOR-ENROLLMENT.md">OPERATOR-ENROLLMENT.md</a> and <a href="AGENT-API-GUIDE.md">AGENT-API-GUIDE.md</a> &mdash; operator trust levels and the full API surface.</li>
+              <li><a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">Source code</a> &mdash; the node is open source; the defaults quoted above are in <code>sdn-server/internal/config</code>.</li>
+            </ul>
+            <p>Questions from a security review are welcome: open an issue on GitHub or reply to the person who sent you this link.</p>
+          </div>
+        </details>
+      </div>
+    </section>
+
     <section class="step" id="going-further">
       <div class="step-card">
         <div class="step-head">
@@ -870,6 +970,13 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
     bgVideo.addEventListener('loadeddata', () => bgVideo.classList.add('loaded'));
     bgVideo.play().catch(() => {});
 
+    function copyLink(button, id) {
+      const url = `${location.origin}${location.pathname}#${id}`;
+      navigator.clipboard.writeText(url).then(() => {
+        button.textContent = 'Copied';
+        setTimeout(() => { button.textContent = 'Copy link'; }, 1500);
+      });
+    }
     function copyCode(button) {
       const code = button.closest('.code-block').querySelector('code').textContent;
       navigator.clipboard.writeText(code).then(() => {
