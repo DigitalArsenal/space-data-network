@@ -35,15 +35,11 @@ vi.mock("@libp2p/websockets", () => ({
   webSockets: vi.fn(() => ({ transport: "webSockets" })),
 }));
 
-vi.mock("@libp2p/websockets/filters", () => ({
-  all: vi.fn(),
-}));
-
 vi.mock("@libp2p/webtransport", () => ({
   webTransport: vi.fn(() => ({ transport: "webTransport" })),
 }));
 
-vi.mock("@spacedatanetwork/libp2p-webrtc-v1", () => ({
+vi.mock("@libp2p/webrtc", () => ({
   webRTC: vi.fn(() => ({ transport: "webRTC" })),
   webRTCDirect: vi.fn(() => ({ transport: "webRTCDirect" })),
 }));
@@ -56,17 +52,21 @@ vi.mock("@libp2p/identify", () => ({
   identify: vi.fn(() => ({ service: "identify" })),
 }));
 
-vi.mock("@chainsafe/libp2p-gossipsub", () => ({
+vi.mock("@libp2p/gossipsub", () => ({
   gossipsub: vi.fn(() => ({ service: "pubsub" })),
   GossipSub: class {},
 }));
 
-vi.mock("@chainsafe/libp2p-noise", () => ({
+vi.mock("@libp2p/noise", () => ({
   noise: vi.fn(() => ({ encryption: "noise" })),
 }));
 
-vi.mock("@chainsafe/libp2p-yamux", () => ({
+vi.mock("@libp2p/yamux", () => ({
   yamux: vi.fn(() => ({ muxer: "yamux" })),
+}));
+
+vi.mock("@libp2p/ping", () => ({
+  ping: vi.fn(() => ({ service: "ping" })),
 }));
 
 vi.mock("@libp2p/kad-dht", () => ({

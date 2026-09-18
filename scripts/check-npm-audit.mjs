@@ -59,74 +59,26 @@ export const GATED_SEVERITIES = new Set(['high', 'critical']);
  * advisory and can say where it stops.
  */
 export const ALLOWLIST = [
-  {
-    package: '@libp2p/peer-store',
-    advisories: ['https://github.com/advisories/GHSA-vrf4-mx87-p53w'],
-    reviewed: '2026-09-18',
-    until: '2026-12-31',
-    reason:
-      'CVSS 8.2, and the one advisory here that genuinely applies: PeerStore accepts ' +
-      'attacker-signed PeerRecords for a victim peer ID. There is no in-range fix — libp2p 1.x ' +
-      'is EOL at 1.9.4 and the fix lands in @libp2p/peer-store >=12.0.24, reachable only by ' +
-      'taking libp2p 1.9.4 -> 3.x. That upgrade also deletes the helia.ts compat shims, so it is ' +
-      'tracked as its own reviewed step, not smuggled into a patch bump. DEADLINE IS REAL.',
-  },
-  {
-    package: 'libp2p',
-    advisories: [],
-    reviewed: '2026-09-18',
-    until: '2026-12-31',
-    reason:
-      'Reported only as a carrier of the @libp2p/peer-store advisory above; libp2p 1.9.4 is not ' +
-      'itself in the advisory range. Clears when peer-store does.',
-  },
-  {
-    package: '@libp2p/kad-dht',
-    advisories: ['https://github.com/advisories/GHSA-32mq-hpph-xfvr'],
-    reviewed: '2026-09-18',
-    until: '2026-12-31',
-    reason:
-      'Unvalidated PUT_VALUE records exhaust disk on DHT SERVER nodes. Both sdn-js entry points ' +
-      'construct the DHT with clientMode: true (src/helia.ts, src/node.ts), so the browser is ' +
-      'not the exposed surface. Residual exposure is a Node consumer of this package that turns ' +
-      'DHT server mode on itself. Fix requires kad-dht >=16.2.6, i.e. the same libp2p 3.x step.',
-  },
-  {
-    package: 'image-size',
-    advisories: [
-      'https://github.com/advisories/GHSA-w3rx-r6r6-pgpr',
-      'https://github.com/advisories/GHSA-5p2g-fcmc-qvqq',
-    ],
-    reviewed: '2026-09-18',
-    until: '2027-03-31',
-    reason:
-      'React Native build tooling, not runtime code. Path: @libp2p/webrtc -> react-native-webrtc ' +
-      '-> react-native (a PEER dependency npm auto-installs) -> metro -> image-size. Metro is a ' +
-      'bundler; it never executes in a browser or in the published dist/. Both @libp2p/webrtc@6 ' +
-      'and the @spacedatanetwork/libp2p-webrtc-v1 alias drag it in, so removing either one does ' +
-      'not clear it (measured: advisory count unchanged).',
-  },
-  {
-    package: 'metro',
-    advisories: [],
-    reviewed: '2026-09-18',
-    until: '2027-03-31',
-    reason: 'Carrier of the image-size advisories above. React Native bundler, never in a browser.',
-  },
-  {
-    package: 'metro-config',
-    advisories: [],
-    reviewed: '2026-09-18',
-    until: '2027-03-31',
-    reason: 'Carrier of the image-size advisories above. React Native bundler, never in a browser.',
-  },
-  {
-    package: 'metro-transform-worker',
-    advisories: [],
-    reviewed: '2026-09-18',
-    until: '2027-03-31',
-    reason: 'Carrier of the image-size advisories above. React Native bundler, never in a browser.',
-  },
+  // EMPTY, and that is the result of the libp2p 3 upgrade (2026-09-18).
+  //
+  // Every entry that stood here deferred an advisory that could not be fixed
+  // while sdn-js built its node on libp2p 1.9.4:
+  //
+  //   @libp2p/peer-store  GHSA-vrf4-mx87-p53w (8.2) — no in-range fix existed;
+  //                       libp2p 1.x is EOL at 1.9.4 and the fix lands in
+  //                       @libp2p/peer-store >=12.0.24. Now resolves 12.0.28.
+  //   libp2p              carrier of the above. Now 3.3.11.
+  //   @libp2p/kad-dht     GHSA-32mq-hpph-xfvr (7.5) — needed >=16.2.6.
+  //                       Now 16.4.5.
+  //   image-size + metro* React Native bundler chain reached through
+  //                       @libp2p/webrtc -> react-native-webrtc. The
+  //                       @libp2p/webrtc 6 bump moved it off the vulnerable
+  //                       versions; react-native-webrtc is still installed and
+  //                       still never runs in a browser or in dist/.
+  //
+  // `npm audit --omit=dev` reports 0 vulnerabilities. Do not add an entry to
+  // make a lane green - add one when you have read the advisory and can say
+  // where it stops, with a date on which that judgement expires.
 ];
 
 export function runAudit({ cwd = resolve(REPO_ROOT, 'sdn-js') } = {}) {
@@ -150,8 +102,8 @@ function advisoryUrls(entry) {
     .sort();
 }
 
-export function evaluate(report, { today = new Date() } = {}) {
-  const allowed = new Map(ALLOWLIST.map((e) => [e.package, e]));
+export function evaluate(report, { today = new Date(), allowlist = ALLOWLIST } = {}) {
+  const allowed = new Map(allowlist.map((e) => [e.package, e]));
   const seen = new Set();
   const failures = [];
   const deferred = [];
@@ -193,7 +145,7 @@ export function evaluate(report, { today = new Date() } = {}) {
     deferred.push(`${name} (${entry.severity}) until ${allowEntry.until}`);
   }
 
-  for (const entry of ALLOWLIST) {
+  for (const entry of allowlist) {
     if (!seen.has(entry.package)) {
       failures.push(
         `${entry.package}: allowlisted but no longer reported at high/critical. Remove the entry.`,

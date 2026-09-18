@@ -1,7 +1,32 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
 import { build } from 'esbuild';
+
+/**
+ * Assert that an in-place patch of a dependency's shipped source actually
+ * landed.
+ *
+ * esbuild's onLoad hooks below rewrite upstream files by exact string match, and
+ * String.replace on a string that is not there is a silent no-op. That is how a
+ * dependency bump quietly removes a workaround: the build stays green, the
+ * bundle loses the fix, and the failure shows up in a browser. Every patch below
+ * names a marker it must have produced, and the build fails here instead.
+ */
+function assertPatched(contents, markers, where) {
+  const missing = markers.filter((marker) => !contents.includes(marker));
+  if (missing.length > 0) {
+    throw new Error(
+      `[sdn-js] source patch no longer applies to ${where}: expected ${missing
+        .map((marker) => JSON.stringify(marker))
+        .join(', ')} after patching. The upstream file changed shape - re-derive ` +
+        'the patch against the new source or delete it deliberately; do not ship ' +
+        'the bundle without it.',
+    );
+  }
+  return contents;
+}
 
 import { resolveWalletBuildMode } from './wallet/external-wallet-build.mjs';
 
@@ -44,18 +69,65 @@ const sharedBuildOptions = {
   logLevel: 'info',
   mainFields: ['browser', 'module', 'main'],
   conditions: ['browser', 'import', 'module'],
+  // REPLACED with the libp2p 3 upgrade: the '@libp2p/crypto', '@libp2p/crypto/keys',
+  // '@libp2p/crypto/ciphers', '@libp2p/crypto/webcrypto' and '@libp2p/keychain'
+  // aliases, which substituted a 418-line hand-written reimplementation of the
+  // whole libp2p key API for upstream's, for EVERY module in the bundle. esbuild
+  // does not type-check an alias and vitest resolves the real package, so any
+  // drift between that reimplementation and the real key API landed as a runtime
+  // failure in the PUBLISHED bundle that no gate in the repo could see - on the
+  // noise handshake path, where it looks like a network fault.
+  //
+  // @libp2p/crypto 5 is noble + a `browser` field mapping every node:crypto path
+  // to a browser build, with no node-forge anywhere, so almost all of that
+  // substitution bought nothing. What still has to go is WebCrypto: this package
+  // routes every digest, signature and derivation through the hd-wallet-wasm
+  // native boundary (src/no-webcrypto-runtime.test.ts fails on any WebCrypto SubtleCrypto reference
+  // in dist/). Exactly four leaf modules reach for it, and only those are
+  // replaced now - see each shim's header for what it changes (nothing, versus
+  // the 3.0.0 bundle) and why.
+  //
+  // The multiformats aliases stay for the same reason: product behaviour, not a
+  // version bridge. SHA-1 stays disabled, SHA-2 keeps routing through the native
+  // boundary rather than shipping a second JS implementation.
   alias: {
     '@sds': path.join(packageRoot, 'node_modules/spacedatastandards.org'),
-    '@libp2p/crypto/ciphers': path.join(packageRoot, 'src/shims/libp2p-crypto-ciphers.ts'),
-    '@libp2p/crypto/webcrypto': path.join(packageRoot, 'src/shims/libp2p-crypto-webcrypto.ts'),
-    '@libp2p/crypto/keys': path.join(packageRoot, 'src/shims/libp2p-crypto-keys.ts'),
-    '@libp2p/crypto': path.join(packageRoot, 'src/shims/libp2p-crypto.ts'),
-    '@libp2p/keychain': path.join(packageRoot, 'src/shims/libp2p-keychain.ts'),
+    '@ipshipyard/crypto': path.join(packageRoot, 'src/shims/helia-crypto-disabled.ts'),
+    '@ipshipyard/keychain': path.join(packageRoot, 'src/shims/helia-keychain-disabled.ts'),
     'multiformats/basics': path.join(packageRoot, 'src/shims/multiformats-basics-native.ts'),
     'multiformats/hashes/sha1': path.join(packageRoot, 'src/shims/multiformats-sha1-disabled.ts'),
     'multiformats/hashes/sha2': path.join(packageRoot, 'src/shims/multiformats-sha2-native.ts'),
   },
   plugins: [
+    {
+      // @libp2p/crypto's ECDSA implementation is the one leaf of that package
+      // that uses the WebCrypto SubtleCrypto interface. It cannot be swapped by package alias because
+      // it is reached through a relative import, so match the resolved file.
+      // Everything else in @libp2p/crypto stays upstream's own code.
+      name: 'libp2p-crypto-ecdsa-disabled',
+      setup(pluginBuild) {
+        const ecdsaIndex = path.join(
+          packageRoot,
+          'node_modules/@libp2p/crypto/dist/src/keys/ecdsa/index.js',
+        );
+        if (!existsSync(ecdsaIndex)) {
+          throw new Error(
+            `[sdn-js] expected ${path.relative(packageRoot, ecdsaIndex)} to exist. ` +
+              '@libp2p/crypto moved its ECDSA implementation, so the WebCrypto it ' +
+              'contains would now be bundled unchecked. Re-point this plugin at the ' +
+              'new path before building.',
+          );
+        }
+        const replacement = path.join(packageRoot, 'src/shims/libp2p-crypto-ecdsa-disabled.ts');
+        pluginBuild.onResolve({ filter: /index\.js$/ }, (args) => {
+          if (!args.importer.includes(`@libp2p${path.sep}crypto${path.sep}`)) {
+            return null;
+          }
+          const resolved = path.resolve(path.dirname(args.importer), args.path);
+          return resolved === ecdsaIndex ? { path: replacement } : null;
+        });
+      },
+    },
     // REMOVED in 3.0.0: the `satellite-js-wasm-disabled` plugin, which resolved
     // satellite.js's optional WASM entry to an empty shim so the browser bundle
     // took the pure-JS SGP4 path. Under owner law 2026-08-09 ("There is no JS
@@ -125,7 +197,11 @@ const sharedBuildOptions = {
               "            const byteView = normalizeAppendableByteView(buf);\n            if (byteView != null) {\n                length += byteView.byteLength;\n                this.bufs.push(byteView);\n            }\n            else if (isUint8ArrayList(buf)) {",
             );
             return {
-              contents,
+              contents: assertPatched(
+                contents,
+                ['normalizeAppendableByteView(buf)'],
+                'uint8arraylist',
+              ),
               loader: args.path.endsWith('.ts') ? 'ts' : 'js',
             };
           },
@@ -221,7 +297,14 @@ const sharedBuildOptions = {
               "            metadata = createSortedMap([...metadata.entries()], {\n                validate: validateMetadata,\n                map: (_key, value) => normalizePeerMetadataValue(value) ?? value\n            });",
             );
             return {
-              contents,
+              contents: assertPatched(
+                contents,
+                [
+                  'normalizePeerMetadataValue(value) == null',
+                  'map: (_key, value) => normalizePeerMetadataValue(value) ?? value',
+                ],
+                '@libp2p/peer-store to-peer-pb',
+              ),
               loader: args.path.endsWith('.ts') ? 'ts' : 'js',
             };
           },

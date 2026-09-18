@@ -3,24 +3,24 @@
  */
 
 import { createLibp2p, Libp2p } from "libp2p";
-import { serviceCapabilities } from "@libp2p/interface";
+import { serviceCapabilities, type Stream } from "@libp2p/interface";
 import { webSockets } from "@libp2p/websockets";
-import { all as wsFilters } from "@libp2p/websockets/filters";
 import { webTransport } from "@libp2p/webtransport";
-import { webRTC, webRTCDirect } from "@spacedatanetwork/libp2p-webrtc-v1";
+import { webRTC, webRTCDirect } from "@libp2p/webrtc";
 import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { bootstrap } from "@libp2p/bootstrap";
 import { identify } from "@libp2p/identify";
-import { gossipsub, GossipSub } from "@chainsafe/libp2p-gossipsub";
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
+import { ping } from "@libp2p/ping";
+import { gossipsub, GossipSub } from "@libp2p/gossipsub";
+import { noise } from "@libp2p/noise";
+import { yamux } from "@libp2p/yamux";
 import { kadDHT } from "@libp2p/kad-dht";
 import { multiaddr } from "@multiformats/multiaddr";
 import { CID } from "multiformats/cid";
-import { peerIdFromKeys, peerIdFromString } from "@libp2p/peer-id";
+import { peerIdFromString } from "@libp2p/peer-id";
 import { isUint8ArrayList, Uint8ArrayList } from "uint8arraylist";
 
-import { unmarshalPrivateKey } from "@libp2p/crypto/keys";
+import { privateKeyFromProtobuf } from "@libp2p/crypto/keys";
 
 import type { StoredRecord, QueryFilter } from "./storage";
 import {
@@ -180,7 +180,15 @@ export interface SDNConfig {
    * NEVER enable it on a renderer main thread.
    */
   enableDHT?: boolean;
-  /** Let libp2p auto-dial discovered peers to satisfy minConnections. */
+  /**
+   * Historically: let libp2p auto-dial discovered peers to satisfy
+   * `minConnections`.
+   *
+   * libp2p 2 removed the autodialer and libp2p 3 has no `minConnections`, so
+   * a libp2p node now only dials when something asks it to — which is what
+   * `false` used to request. The option is kept because it is published API;
+   * it no longer changes the libp2p config.
+   */
   enableAutoDial?: boolean;
   ipfsApiBaseUrl?: string;
   ipfsGatewayBaseUrl?: string;
@@ -234,9 +242,9 @@ export interface SDNConfig {
    * an object to override single fields.
    *
    * NOT a cosmetic knob: libp2p's own default aborts a connection — and every
-   * stream on it — when one heartbeat misses a FIXED 2000 ms deadline, which a
-   * browser main thread routinely misses while a globe starts. See
-   * `connection-monitor-policy.ts` for the measurement.
+   * stream on it — when one heartbeat misses a deadline whose floor libp2p sets
+   * at 5000 ms, which a browser main thread routinely misses while a globe
+   * starts. See `connection-monitor-policy.ts` for the measurement.
    */
   connectionMonitor?: SdnConnectionMonitorConfig;
 
@@ -342,15 +350,19 @@ export class SDNNode {
     );
 
     // Build libp2p options
-    const services: NonNullable<
-      Parameters<typeof createLibp2p>[0]
-    >["services"] = {
+    const services: Record<string, unknown> = {
       pubsub: gossipsub({
         allowPublishToZeroTopicPeers: true,
         emitSelf: false,
       }),
     };
     if (dhtEnabled(this.config)) {
+      // kad-dht 16 declares `['@libp2p/identify', '@libp2p/ping']` as service
+      // dependencies AND calls ping.ping() when evicting a routing-table
+      // bucket, so a capability-only stub would fail there rather than at
+      // construction. Registered only with the DHT, so the default browser
+      // node still advertises nothing about itself.
+      services.ping = ping();
       services.dht = kadDHT({
         clientMode: true,
       });
@@ -361,34 +373,36 @@ export class SDNNode {
         : identifyCapabilityOnly();
 
     const libp2pOpts: Libp2pCreateOptions = {
+      // circuit-relay-v2 4.x removed `discoverRelays`. A `/p2p-circuit` listen
+      // address is how a node asks for relay reservations now, and it is what
+      // keeps a NAT-ed browser dialable through the SDN relays.
+      addresses: {
+        listen: ["/p2p-circuit"],
+      },
       transports: [
-        webSockets({ filter: wsFilters }),
+        // @libp2p/websockets 10 removed the `filter` option AND stopped
+        // shipping the ./filters subpath. Its dialFilter accepts /ws and /wss
+        // unconditionally, which is exactly what `filters.all` supplied.
+        webSockets(),
         webTransport(),
-        webRTCDirect() as unknown as ReturnType<typeof webTransport>,
-        webRTC() as unknown as ReturnType<typeof webTransport>,
-        circuitRelayTransport({
-          discoverRelays: 100,
-        }),
+        webRTCDirect(),
+        webRTC(),
+        circuitRelayTransport(),
       ],
-      connectionEncryption: [noise()],
+      connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
       peerDiscovery: [bootstrap({ list: bootstrapList })],
       // A heartbeat that misses its deadline tears down the connection AND
-      // every stream on it. libp2p's stock deadline is 2000 ms and does not
-      // adapt; a browser that is compiling wasm blows through it while the
-      // peer is perfectly healthy, which is how a granted module delivery
-      // still failed with `Read aborted`. See connection-monitor-policy.ts.
+      // every stream on it. libp2p's stock floor is 5000 ms (2000 ms on the
+      // 1.x this package used to build on); a browser that is compiling wasm
+      // blows through either while the peer is perfectly healthy, which is how
+      // a granted module delivery still failed with `Read aborted`. See
+      // connection-monitor-policy.ts.
       connectionMonitor: resolveConnectionMonitorInit(
         this.config.connectionMonitor,
       ),
-      services,
+      services: services as Libp2pCreateOptions["services"],
     };
-    if (this.config.enableAutoDial === false) {
-      libp2pOpts.connectionManager = {
-        minConnections: 0,
-      };
-    }
-
     // See `allowPrivateAddressDial` in SDNConfig. This option was declared and
     // documented here but only ever read by createHeliaSDNNode, so an SDNNode
     // created with it still refused every loopback dial with
@@ -401,15 +415,17 @@ export class SDNNode {
       };
     }
 
-    // If an HD wallet identity is provided, use its secp256k1 key for deterministic PeerID
+    // If an HD wallet identity is provided, use its secp256k1 key for deterministic PeerID.
+    //
+    // libp2p 2 removed `Libp2pInit.peerId` and @libp2p/peer-id 5 removed
+    // peerIdFromKeys(): the private key alone now determines the PeerID.
+    // Verified to derive the SAME PeerID as the old two-step form — see
+    // peer-id-derivation.test.ts, which pins a fixed identity key to its
+    // expected PeerID so a regression here cannot land silently.
     if (this.config.identity?.identityKey) {
       const rawKey = this.config.identity.identityKey.privateKey;
       const privateKeyBytes = marshalSecp256k1PrivateKey(rawKey);
-      const publicKeyBytes = marshalSecp256k1PublicKey(
-        this.config.identity.identityKey.publicKey,
-      );
-      libp2pOpts.peerId = await peerIdFromKeys(publicKeyBytes, privateKeyBytes);
-      libp2pOpts.privateKey = await unmarshalPrivateKey(privateKeyBytes);
+      libp2pOpts.privateKey = privateKeyFromProtobuf(privateKeyBytes);
       // Also set the Ed25519 signing key for message auth
       if (!this.privateKey) {
         this.privateKey = this.config.identity.signingKey.privateKey;
@@ -1223,28 +1239,47 @@ function cloneToLocalUint8Array(chunk: StreamChunk): Uint8Array {
   throw new Error("stream chunk must be Uint8Array-compatible bytes");
 }
 
+/**
+ * One SDN request/response exchange: write the whole payload, half-close the
+ * write side, read the reply to EOF.
+ *
+ * libp2p 3 replaced the duplex `sink`/`source` pair with an event-driven
+ * MessageStream: `send()` returns false when the transport's write buffer is
+ * full and the caller must await `onDrain()`, and `close()` closes only the
+ * WRITE side, leaving the stream readable until the remote closes theirs.
+ *
+ * The read loop is started BEFORE the write so no reply can arrive while
+ * nothing is listening: a MessageStream with no 'message' consumer buffers
+ * until `maxReadBufferLength` and then resets the stream.
+ *
+ * Every chunk is cloned on the way out — libp2p reuses its receive buffers.
+ */
 async function exchangeStream(
-  stream: Awaited<ReturnType<Libp2p["dialProtocol"]>>,
+  stream: Stream,
   payloadBytes: Uint8Array,
 ): Promise<Uint8Array> {
-  try {
-    await stream.sink(
-      (async function* source() {
-        yield cloneToLocalUint8Array(payloadBytes);
-      })(),
-    );
-
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of stream.source) {
+  const chunks: Uint8Array[] = [];
+  const draining = (async () => {
+    for await (const chunk of stream) {
       chunks.push(cloneToLocalUint8Array(chunk as StreamChunk));
     }
-    return concatBytes(chunks);
-  } finally {
-    try {
-      await stream.close();
-    } catch {
-      // Ignore close errors in probe/test path.
+  })();
+
+  try {
+    if (payloadBytes.byteLength > 0) {
+      if (!stream.send(cloneToLocalUint8Array(payloadBytes))) {
+        await stream.onDrain();
+      }
     }
+    // Half-close: the peer reads to EOF, then answers.
+    await stream.close();
+    await draining;
+    return concatBytes(chunks);
+  } catch (error) {
+    stream.abort(error instanceof Error ? error : new Error(String(error)));
+    throw error;
+  } finally {
+    await draining.catch(() => undefined);
   }
 }
 
@@ -1295,7 +1330,7 @@ function formatError(error: unknown): string {
  * Marshal a 32-byte secp256k1 private key into the libp2p protobuf format.
  * KeyType=2 (Secp256k1), Data=32-byte raw key.
  */
-function marshalSecp256k1PrivateKey(rawKey: Uint8Array): Uint8Array {
+export function marshalSecp256k1PrivateKey(rawKey: Uint8Array): Uint8Array {
   const buf = new Uint8Array(36);
   buf[0] = 0x08; // field 1 tag
   buf[1] = 0x02; // KeyType.Secp256k1
@@ -1308,8 +1343,13 @@ function marshalSecp256k1PrivateKey(rawKey: Uint8Array): Uint8Array {
 /**
  * Marshal a 33-byte compressed secp256k1 public key into the libp2p protobuf format.
  * KeyType=2 (Secp256k1), Data=33-byte compressed public key.
+ *
+ * No longer used to build the node - @libp2p/peer-id 5 removed peerIdFromKeys()
+ * and the private key alone determines the PeerID. Exported so
+ * peer-id-derivation.test.ts can prove the public-key route still yields the
+ * SAME PeerID as the private-key route the node now takes.
  */
-function marshalSecp256k1PublicKey(rawKey: Uint8Array): Uint8Array {
+export function marshalSecp256k1PublicKey(rawKey: Uint8Array): Uint8Array {
   const buf = new Uint8Array(37);
   buf[0] = 0x08; // field 1 tag
   buf[1] = 0x02; // KeyType.Secp256k1

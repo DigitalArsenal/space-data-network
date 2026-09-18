@@ -59,9 +59,10 @@ jobs:
         working-directory: sdn-js
         run: npm test
 
-      # sdn-js runs two incompatible libp2p majors bridged by hand-written shims
-      # in src/helia.ts. This is the last point before the tree reaches every
-      # consumer of the package, so assert the layering is the reviewed one.
+      # sdn-js ran two incompatible libp2p majors once, bridged by hand-written
+      # shims in src/helia.ts. The split is closed and the check now asserts one
+      # copy of each package on the critical path. This is the last point before
+      # the tree reaches every consumer of the package.
       - name: Verify helia/libp2p dependency layering
         run: node scripts/check-sdn-js-dependency-layering.mjs
 

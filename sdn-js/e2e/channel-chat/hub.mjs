@@ -13,11 +13,10 @@
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
-import { all as wsFilters } from '@libp2p/websockets/filters';
 import { identify } from '@libp2p/identify';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
-import { noise } from '@chainsafe/libp2p-noise';
-import { yamux } from '@chainsafe/libp2p-yamux';
+import { gossipsub } from '@libp2p/gossipsub';
+import { noise } from '@libp2p/noise';
+import { yamux } from '@libp2p/yamux';
 
 const CHANNEL_ID = 'ws9-e2e-room';
 // Mirrors channelChatTopic() in src/channel-keys.ts / Go channelkeys.ChatTopic.
@@ -27,8 +26,8 @@ const PLAINTEXT_UTF8 = 'ws9 encrypted browser chat';
 
 const node = await createLibp2p({
   addresses: { listen: ['/ip4/127.0.0.1/tcp/0/ws'] },
-  transports: [tcp(), webSockets({ filter: wsFilters })],
-  connectionEncryption: [noise()],
+  transports: [tcp(), webSockets()],
+  connectionEncrypters: [noise()],
   streamMuxers: [yamux()],
   services: {
     pubsub: gossipsub({ allowPublishToZeroTopicPeers: true, emitSelf: false }),

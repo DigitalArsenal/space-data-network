@@ -1,9 +1,52 @@
 # sdn-js: helia / libp2p layering audit
 
+> **STATUS 2026-09-18: THE SPLIT DESCRIBED BELOW IS CLOSED. This document is the
+> record of why it existed and what it cost, not a description of the tree.**
+>
+> `sdn-js` now resolves **one** libp2p (3.3.11), **one** `@libp2p/interface`
+> (3.3.0) and **one** helia (7.1.12), and every shim this audit catalogues —
+> `withHeliaStreamHandlerCompat`, `withHeliaDialProtocolStreamCompat`,
+> `addLegacyEventedStreamCompat`, `addLegacyWritableStreamCompat` — is deleted.
+> `identifyCapabilityOnly()` stays, because it was never a version bridge: see
+> its doc comment in `sdn-js/src/helia.ts`.
+>
+> Closing the split is also what fixed **GHSA-vrf4-mx87-p53w** (8.2,
+> `@libp2p/peer-store` PeerRecord poisoning). libp2p 1.x was EOL at 1.9.4, so
+> that advisory had no in-range fix while this arrangement stood.
+> `npm audit --omit=dev` went from 8 vulnerabilities (1 low, 7 high) to 0.
+>
+> What replaced the parts this audit names:
+>
+> | this audit | now |
+> |---|---|
+> | `libp2p@1.9.4` + nested `libp2p@3.2.0` | one hoisted `libp2p@3.3.11` |
+> | `@chainsafe/libp2p-{gossipsub,noise,yamux}` | `@libp2p/{gossipsub,noise,yamux}` (renamed into the js-libp2p monorepo) |
+> | `@spacedatanetwork/libp2p-webrtc-v1` (= `@libp2p/webrtc@4`) | `@libp2p/webrtc@6` |
+> | `@helia/block-brokers` | `@helia/bitswap` + `@helia/trustless-gateway-client` |
+> | `@helia/routers` | `@helia/fallback-router`, plus a libp2p router adapter in `helia.ts` that helia 7 no longer exports |
+> | `@libp2p/websockets/filters` | deleted; v10's `dialFilter` already accepts `/ws` and `/wss` |
+> | `circuitRelayTransport({ discoverRelays })` | a `/p2p-circuit` entry in `addresses.listen` |
+> | `peerIdFromKeys(pub, priv)` + `libp2pOpts.peerId` | `privateKeyFromProtobuf()` + `privateKey` alone, pinned by `src/peer-id-derivation.test.ts` |
+> | stream `sink`/`source` | `MessageStream` `send()`/`onDrain()`/`close()` plus async iteration |
+> | a 418-line replacement for `@libp2p/crypto/keys` in the bundle | upstream `@libp2p/crypto@5`, with only its WebCrypto leaf substituted |
+>
+> `scripts/check-sdn-js-dependency-layering.mjs` was rewritten to assert the
+> opposite invariant — exactly one copy of each critical package — so the split
+> cannot come back quietly.
+>
+> **The gap this audit ended on ("Not verified: I did not run a live
+> browser↔Go handshake") is now closed by two checked-in tests:**
+> `sdn-js/src/go-libp2p-interop.test.ts` dials a real go-libp2p host built from
+> `sdn-server/cmd/js-interop-host`, from source AND from the published bundle,
+> and `sdn-js/src/stream-exchange.test.ts` drives both SDN stream exchanges
+> against real libp2p 3 streams.
+
+---
+
 Audited 2026-09-18 against `sdn-js@3.0.0`. Everything below marked **verified**
 was executed, not reasoned about; everything marked **inferred** was not.
 
-## The shape
+## The shape (historical)
 
 `sdn-js` runs **two incompatible libp2p majors in one dependency tree**, and the
 compatibility shims in `sdn-js/src/helia.ts` are what hold them together.

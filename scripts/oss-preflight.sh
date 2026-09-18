@@ -85,9 +85,11 @@ node scripts/check-no-app-specific-go.mjs || fail=1
 echo "[oss-preflight] 5/7 Verifying the legacy-state purge migration..."
 node --test scripts/purge-legacy-supplemental-omm-state.test.mjs || fail=1
 
-# sdn-js runs two incompatible libp2p majors held together by hand-written shims
-# in sdn-js/src/helia.ts. One `npm i` walks the helia family forward inside its
-# carets, into exactly the code those shims are calibrated against, unreviewed.
+# sdn-js ran two incompatible libp2p majors once, held together by ~370 lines of
+# hand-written shims in sdn-js/src/helia.ts, and GHSA-vrf4-mx87-p53w had no
+# in-range fix for as long as that stood. The split is closed; this check now
+# asserts the opposite invariant - one copy of each package on the critical path
+# - so a dependency bump cannot re-split it quietly and bring the shims back.
 echo "[oss-preflight] 6/7 Checking the sdn-js helia/libp2p layering..."
 node scripts/check-sdn-js-dependency-layering.mjs || fail=1
 

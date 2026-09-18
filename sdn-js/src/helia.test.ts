@@ -1,11 +1,39 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Uint8ArrayList } from 'uint8arraylist';
 
-const createHeliaMock = vi.fn(async (init: any) => ({
-  init,
-  libp2p: init?.libp2p,
-  stop: vi.fn(async () => undefined),
-}));
+/**
+ * A minimal stand-in for helia 7's `createHeliaLight`.
+ *
+ * helia 7 no longer accepts a pre-built libp2p: a node is composed with
+ * `addMixin` / `addRouter` and then started. A mock that just returns a bag of
+ * properties would never run `attachLibp2p`, so this one keeps the mixin list
+ * and runs it on start(), which is what makes the assertions below mean
+ * anything.
+ */
+const createdHeliaNodes: any[] = [];
+const createHeliaLightMock = vi.fn((init: any) => {
+  const mixins: any[] = [];
+  const routers: any[] = [];
+  const helia: any = {
+    init,
+    mixins,
+    routers,
+    blockstore: {},
+    addMixin: (mixin: any) => mixins.push(mixin),
+    addRouter: (router: any) => routers.push(router),
+    hasRouter: (name: string) => routers.some((router) => router?.name === name),
+    async start() {
+      for (const mixin of mixins) await mixin.start?.(helia);
+      return helia;
+    },
+    async stop() {
+      for (const mixin of mixins) await mixin.stop?.(helia);
+      return helia;
+    },
+  };
+  createdHeliaNodes.push(helia);
+  return helia;
+});
 const createdLibp2pNodes: any[] = [];
 const createLibp2pMock = vi.fn(async (init: any) => {
   const node = {
@@ -22,20 +50,20 @@ const unixfsMock = vi.fn(() => ({
   cat: unixfsCatMock,
 }));
 const bootstrapMock = vi.fn(({ list }: { list: string[] }) => ({ list }));
-const bitswapMock = vi.fn(() => ({ blockBroker: 'bitswap' }));
+const withBitswapMock = vi.fn((helia: any) => helia);
 const trustlessGatewayMock = vi.fn(() => ({ blockBroker: 'trustless-gateway' }));
-const libp2pRoutingMock = vi.fn((libp2p: unknown) => ({ router: 'libp2p', libp2p }));
-const httpGatewayRoutingMock = vi.fn((options: unknown) => ({ router: 'http-gateway', options }));
+const fallbackRouterMock = vi.fn((options: unknown) => ({ name: 'fallback-router', options }));
 const getBootstrapRelaysMock = vi.fn(async () => []);
 const initHDWalletMock = vi.fn(async () => true);
 const peerIdFromStringMock = vi.fn((peerId: string) => ({
   multihash: { bytes: new Uint8Array([1, 2, 3]) },
   peerId,
+  toMultihash: () => ({ bytes: new Uint8Array([1, 2, 3]) }),
   toString: () => peerId,
 }));
 
 vi.mock('helia', () => ({
-  createHelia: createHeliaMock,
+  createHeliaLight: createHeliaLightMock,
 }));
 
 vi.mock('@helia/unixfs', () => ({
@@ -50,29 +78,27 @@ vi.mock('@libp2p/bootstrap', () => ({
   bootstrap: bootstrapMock,
 }));
 
-vi.mock('@helia/block-brokers', () => ({
-  bitswap: bitswapMock,
-  trustlessGateway: trustlessGatewayMock,
+vi.mock('@helia/bitswap', () => ({
+  withBitswap: withBitswapMock,
 }));
 
-vi.mock('@helia/routers', () => ({
-  libp2pRouting: libp2pRoutingMock,
-  httpGatewayRouting: httpGatewayRoutingMock,
+vi.mock('@helia/trustless-gateway-client', () => ({
+  trustlessGatewayBlockBroker: trustlessGatewayMock,
+}));
+
+vi.mock('@helia/fallback-router', () => ({
+  fallbackRouter: fallbackRouterMock,
 }));
 
 vi.mock('@libp2p/websockets', () => ({
   webSockets: vi.fn(() => ({ transport: 'webSockets' })),
 }));
 
-vi.mock('@libp2p/websockets/filters', () => ({
-  all: vi.fn(),
-}));
-
 vi.mock('@libp2p/webtransport', () => ({
   webTransport: vi.fn(() => ({ transport: 'webTransport' })),
 }));
 
-vi.mock('@spacedatanetwork/libp2p-webrtc-v1', () => ({
+vi.mock('@libp2p/webrtc', () => ({
   webRTCDirect: vi.fn(() => ({ transport: 'webRTCDirect' })),
 }));
 
@@ -84,16 +110,20 @@ vi.mock('@libp2p/identify', () => ({
   identify: vi.fn(() => ({ service: 'identify' })),
 }));
 
-vi.mock('@chainsafe/libp2p-gossipsub', () => ({
+vi.mock('@libp2p/gossipsub', () => ({
   gossipsub: vi.fn(() => ({ service: 'pubsub' })),
 }));
 
-vi.mock('@chainsafe/libp2p-noise', () => ({
+vi.mock('@libp2p/noise', () => ({
   noise: vi.fn(() => ({ encryption: 'noise' })),
 }));
 
-vi.mock('@chainsafe/libp2p-yamux', () => ({
+vi.mock('@libp2p/yamux', () => ({
   yamux: vi.fn(() => ({ muxer: 'yamux' })),
+}));
+
+vi.mock('@libp2p/ping', () => ({
+  ping: vi.fn(() => ({ service: 'ping' })),
 }));
 
 vi.mock('@libp2p/kad-dht', () => ({
@@ -102,12 +132,21 @@ vi.mock('@libp2p/kad-dht', () => ({
 
 vi.mock('@libp2p/peer-id', () => ({
   peerIdFromString: peerIdFromStringMock,
+  peerIdFromCID: vi.fn((cid: unknown) => cid),
 }));
 
 vi.mock('@multiformats/multiaddr', () => ({
   multiaddr: vi.fn((addr: string) => ({
     addr,
-    getPeerId: () => addr.split('/p2p/')[1] ?? null,
+    // multiaddr 13 ("lightweight multiaddrs") removed getPeerId(); components
+    // are the replacement, and the LAST /p2p component is the target peer.
+    getComponents: () =>
+      addr
+        .split('/')
+        .reduce<Array<{ name: string; value?: string }>>((components, segment, index, segments) => {
+          if (segment === 'p2p') components.push({ name: 'p2p', value: segments[index + 1] });
+          return components;
+        }, []),
     toString: () => addr,
   })),
 }));
@@ -120,207 +159,84 @@ vi.mock('./crypto/hd-wallet', () => ({
   initHDWallet: initHDWalletMock,
 }));
 
+/**
+ * The nine tests that used to live here covered withHeliaStreamHandlerCompat,
+ * addLegacyEventedStreamCompat and addLegacyWritableStreamCompat — a
+ * hand-written bridge that made a libp2p@1 node look like the libp2p@3 API
+ * helia@6 called. With one libp2p major in the tree that bridge is gone, so
+ * those tests have no subject: they were measuring sdn-js's impersonation of
+ * upstream, not upstream.
+ *
+ * What they protected is now covered where the behaviour actually lives:
+ * src/stream-exchange.test.ts drives both SDN stream exchanges against REAL
+ * libp2p 3 streams from @libp2p/utils' streamPair() — whole delivery of a
+ * multi-megabyte payload in both directions, back-pressure via send()/onDrain(),
+ * clone-on-read, and a reset peer failing instead of hanging — and
+ * src/go-libp2p-interop.test.ts runs the same exchanges over a socket against a
+ * real go-libp2p host.
+ */
 describe('createHeliaFromLibp2p', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    createdHeliaNodes.length = 0;
   });
 
-  async function writable(sink: (source: AsyncIterable<Uint8Array>) => Promise<void>, close = vi.fn(async () => {})) {
+  it('hands Helia the libp2p instance it was given, not one of its own', async () => {
+    const libp2p = { handle: vi.fn(), start: vi.fn(), stop: vi.fn(async () => undefined), status: 'started' };
     const { createHeliaFromLibp2p } = await import('./helia');
-    await createHeliaFromLibp2p({ handle: vi.fn(), dialProtocol: async () => ({ sink, close }) } as any);
-    return createHeliaMock.mock.calls[0][0].libp2p.dialProtocol('peer', '/test');
-  }
+    const helia: any = await createHeliaFromLibp2p(libp2p as any);
 
-  it('backpressures a stalled sink and refuses writes beyond its byte budget', async () => {
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
-    let received = 0;
-    const stream = await writable(async (source) => {
-      await blocked;
-      for await (const chunk of source) received += chunk.byteLength;
-    });
-    expect(stream.send(new Uint8Array(1024 * 1024))).toBe(false);
-    expect(() => stream.send(new Uint8Array(8 * 1024 * 1024))).toThrow(/buffer|limit|budget/i);
-    let drained = false;
-    const drain = stream.onDrain().then(() => { drained = true; });
-    await Promise.resolve();
-    expect(drained).toBe(false);
-    release();
-    await drain;
-    await stream.close();
-    expect(received).toBe(1024 * 1024);
+    expect(createLibp2pMock).not.toHaveBeenCalled();
+    expect(helia.libp2p).toBe(libp2p);
   });
 
-  it('propagates sink failure to drain, subsequent writes and close', async () => {
-    const close = vi.fn(async () => {});
-    const stream = await writable(async () => { throw new Error('sink failed'); }, close);
-    stream.send(new Uint8Array(1024 * 1024));
-    await expect(stream.onDrain()).rejects.toThrow('sink failed');
-    expect(() => stream.send(new Uint8Array([1]))).toThrow('sink failed');
-    await expect(stream.close()).rejects.toThrow('sink failed');
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it('accepts the length-prefixed Uint8ArrayList used by real Bitswap', async () => {
-    const received: number[] = [];
-    const stream = await writable(async (source) => {
-      for await (const chunk of source) received.push(...chunk);
-    });
-    const chunk = new Uint8ArrayList(new Uint8Array([2]), new Uint8Array([7, 8]));
-    expect(stream.send(chunk)).toBe(true);
-    chunk.set(1, 99);
-    await stream.close();
-    expect(received).toEqual([2, 7, 8]);
-  });
-
-  it('aborts queued writes and releases a pending close even if the sink stalls', async () => {
-    const stream = await writable(async () => new Promise<void>(() => {}));
-    stream.send(new Uint8Array([1]));
-    const closing = stream.close();
-    stream.abort(new Error('transport cancelled'));
-    await expect(closing).rejects.toThrow('transport cancelled');
-    expect(() => stream.send(new Uint8Array([2]))).toThrow('transport cancelled');
-  });
-
-  it('cancels a drain waiter without losing the accepted bytes', async () => {
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
-    let received = 0;
-    const stream = await writable(async (source) => {
-      await blocked;
-      for await (const chunk of source) received += chunk.byteLength;
-    });
-    stream.send(new Uint8Array(1024 * 1024));
-    const controller = new AbortController();
-    const drain = stream.onDrain({ signal: controller.signal });
-    controller.abort(new Error('cancelled'));
-    await expect(drain).rejects.toThrow('cancelled');
-    release();
-    await stream.close();
-    expect(received).toBe(1024 * 1024);
-  });
-
-  it('adapts two-argument stream handlers to incoming stream data objects', async () => {
-    const incoming = {
-      stream: { id: 'stream-1', protocol: '/ipfs/bitswap/1.2.0' },
-      connection: { remotePeer: 'peer-1' },
-    };
-    const originalHandle = vi.fn(async (_protocols, handler) => {
-      handler(incoming);
-    });
-
+  it('routes Helia content lookups through that libp2p', async () => {
+    const libp2p = { handle: vi.fn(), stop: vi.fn(async () => undefined), status: 'started' };
     const { createHeliaFromLibp2p } = await import('./helia');
-    await createHeliaFromLibp2p({ handle: originalHandle } as any);
+    const helia: any = await createHeliaFromLibp2p(libp2p as any);
 
-    const patchedLibp2p = createHeliaMock.mock.calls[0][0].libp2p;
-    const spy = vi.fn();
-    const handler = function (stream: unknown, connection: unknown) {
-      spy(stream, connection);
-    };
-    await patchedLibp2p.handle('/ipfs/bitswap/1.2.0', handler, {});
-
-    expect(spy).toHaveBeenCalledWith(incoming.stream, incoming.connection);
+    expect(helia.routers.map((router: any) => router.name)).toContain('libp2p-router');
   });
 
-  it('leaves single-argument stream handlers untouched', async () => {
-    const incoming = {
-      stream: { id: 'stream-1', protocol: '/ipfs/bitswap/1.2.0' },
-      connection: { remotePeer: 'peer-1' },
-    };
-    const originalHandle = vi.fn(async (_protocols, handler) => {
-      handler(incoming);
-    });
-
+  it('installs bitswap', async () => {
+    const libp2p = { handle: vi.fn(), stop: vi.fn(async () => undefined), status: 'started' };
     const { createHeliaFromLibp2p } = await import('./helia');
-    await createHeliaFromLibp2p({ handle: originalHandle } as any);
+    const helia = await createHeliaFromLibp2p(libp2p as any);
 
-    const patchedLibp2p = createHeliaMock.mock.calls[0][0].libp2p;
-    const handler = vi.fn();
-    await patchedLibp2p.handle('/test/1.0.0', handler, {});
-
-    expect(handler).toHaveBeenCalledWith(incoming);
-    expect(handler.mock.calls[0]).toHaveLength(1);
+    expect(withBitswapMock).toHaveBeenCalledWith(helia);
   });
 
-  it('adapts outgoing protocol streams to the legacy write API Helia Bitswap expects', async () => {
-    const written: Uint8Array[] = [];
-    let sourceEnded = false;
-    const originalClose = vi.fn(async () => undefined);
-    const stream = {
-      sink: vi.fn(async (source: AsyncIterable<Uint8Array>) => {
-        for await (const chunk of source) {
-          written.push(chunk.slice());
-        }
-        sourceEnded = true;
-      }),
-      close: originalClose,
-      closeRead: vi.fn(async () => undefined),
-      closeWrite: vi.fn(async () => undefined),
-    };
-    const originalDialProtocol = vi.fn(async () => stream);
-
+  it('stops the libp2p it was given when Helia stops', async () => {
+    const stop = vi.fn(async () => undefined);
+    const libp2p = { handle: vi.fn(), stop, status: 'started' };
     const { createHeliaFromLibp2p } = await import('./helia');
+    const helia: any = await createHeliaFromLibp2p(libp2p as any);
+
+    await helia.stop();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it('starts a libp2p that was created stopped, and leaves a started one alone', async () => {
+    const { createHeliaFromLibp2p } = await import('./helia');
+
+    const startedStart = vi.fn(async () => undefined);
     await createHeliaFromLibp2p({
       handle: vi.fn(),
-      dialProtocol: originalDialProtocol,
+      start: startedStart,
+      stop: vi.fn(async () => undefined),
+      status: 'started',
     } as any);
+    expect(startedStart).not.toHaveBeenCalled();
 
-    const patchedLibp2p = createHeliaMock.mock.calls[0][0].libp2p;
-    const patchedStream = await patchedLibp2p.dialProtocol(
-      'peer-1',
-      '/ipfs/bitswap/1.2.0',
-    );
-
-    expect(patchedStream.send).toEqual(expect.any(Function));
-    expect(patchedStream.onDrain).toEqual(expect.any(Function));
-    expect(patchedStream.send(new Uint8Array([7, 8, 9]))).toBe(true);
-    await patchedStream.close();
-
-    expect(stream.sink).toHaveBeenCalledTimes(1);
-    expect(written.map((chunk) => [...chunk])).toEqual([[7, 8, 9]]);
-    expect(sourceEnded).toBe(true);
-    expect(originalClose).toHaveBeenCalled();
-  });
-
-  it('adapts incoming source streams to the legacy event API Helia Bitswap expects', async () => {
-    const received: Uint8Array[] = [];
-    const originalClose = vi.fn(async () => undefined);
-    const stream = {
-      close: originalClose,
-      async *source() {
-        yield new Uint8Array([10, 11, 12]);
-      },
-    };
-    const incoming = {
-      stream,
-      connection: { remotePeer: 'peer-1' },
-    };
-    const originalHandle = vi.fn(async (_protocols, handler) => {
-      await handler(incoming);
-    });
-
-    const { createHeliaFromLibp2p } = await import('./helia');
-    await createHeliaFromLibp2p({ handle: originalHandle } as any);
-
-    const patchedLibp2p = createHeliaMock.mock.calls[0][0].libp2p;
-    await patchedLibp2p.handle(
-      '/ipfs/bitswap/1.2.0',
-      async (adaptedStream: any, _connection: unknown) => {
-        await adaptedStream.close();
-        const done = new Promise<void>((resolve) => {
-          adaptedStream.addEventListener('remoteCloseWrite', resolve);
-        });
-        adaptedStream.addEventListener('message', (event: { data: Uint8Array }) => {
-          received.push(event.data.slice());
-        });
-        await done;
-      },
-      {},
-    );
-
-    expect(originalClose).not.toHaveBeenCalled();
-    expect(received.map((chunk) => [...chunk])).toEqual([[10, 11, 12]]);
+    const stoppedStart = vi.fn(async () => undefined);
+    await createHeliaFromLibp2p({
+      handle: vi.fn(),
+      start: stoppedStart,
+      stop: vi.fn(async () => undefined),
+      status: 'stopped',
+    } as any);
+    expect(stoppedStart).toHaveBeenCalledOnce();
   });
 });
 
@@ -431,25 +347,22 @@ describe('fetchCIDBytesFromHelia', () => {
         multiaddrs: [expect.objectContaining({ addr: providerAddr })],
       },
     );
+    // helia 7 types a session provider as `CID | Multiaddr | Multiaddr[]` and
+    // calls getComponents() on it, so the hint has to be the MULTIADDR. Handing
+    // it a PeerId, as helia 6 accepted, throws inside the trustless-gateway
+    // session and the session never becomes ready - see
+    // helia-trustless-gateway.test.ts, which covers that end to end.
     expect(blockstore.createSession).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         maxProviders: 1,
-        providers: [
-          expect.objectContaining({
-            peerId: '12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j',
-            toMultihash: expect.any(Function),
-          }),
-        ],
+        providers: [expect.objectContaining({ addr: providerAddr })],
       }),
     );
     expect(unixfsMock).toHaveBeenCalledWith({ blockstore: session });
     expect(session.close).toHaveBeenCalled();
     expect(observedOptions?.providers).toEqual([
-      expect.objectContaining({
-        peerId: '12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j',
-        toMultihash: expect.any(Function),
-      }),
+      expect.objectContaining({ addr: providerAddr }),
     ]);
   });
 });
@@ -459,6 +372,7 @@ describe('createHeliaSDNNode', () => {
     vi.resetModules();
     vi.clearAllMocks();
     createdLibp2pNodes.length = 0;
+    createdHeliaNodes.length = 0;
     getBootstrapRelaysMock.mockResolvedValue([]);
   });
 
@@ -468,14 +382,14 @@ describe('createHeliaSDNNode', () => {
       edgeRelays: [],
       ipfsTrustlessGateways: ['https://sdn.example/', 'https://sdn.example', 'https://second.example:8443'],
     });
-    expect(httpGatewayRoutingMock).toHaveBeenCalledExactlyOnceWith({
+    expect(fallbackRouterMock).toHaveBeenCalledExactlyOnceWith({
       gateways: ['https://sdn.example', 'https://second.example:8443'],
       shuffle: false,
     });
     expect(trustlessGatewayMock).toHaveBeenCalledExactlyOnceWith();
-    expect(createHeliaMock.mock.calls[0][0]).toMatchObject({
-      blockBrokers: [{ blockBroker: 'bitswap' }, { blockBroker: 'trustless-gateway' }],
-      routers: [{ router: 'libp2p' }, { router: 'http-gateway' }],
+    expect(createHeliaLightMock.mock.calls[0][0]).toMatchObject({
+      blockBrokers: [{ blockBroker: 'trustless-gateway' }],
+      routers: [{ name: 'fallback-router' }],
     });
     await node.stop();
   });
@@ -484,7 +398,11 @@ describe('createHeliaSDNNode', () => {
     const { createHeliaSDNNode } = await import('./helia');
     const node = await createHeliaSDNNode({ edgeRelays: [], ipfsTrustlessGateways: gateways });
     expect(trustlessGatewayMock).not.toHaveBeenCalled();
-    expect(httpGatewayRoutingMock).not.toHaveBeenCalled();
+    expect(fallbackRouterMock).not.toHaveBeenCalled();
+    expect(createHeliaLightMock.mock.calls[0][0]).toMatchObject({
+      blockBrokers: [],
+      routers: [],
+    });
     await node.stop();
   });
 
@@ -498,7 +416,7 @@ describe('createHeliaSDNNode', () => {
     await expect(createHeliaSDNNode({ edgeRelays: [], ipfsTrustlessGateways: gateways as any }))
       .rejects.toThrow('ipfsTrustlessGateways');
     expect(createLibp2pMock).not.toHaveBeenCalled();
-    expect(createHeliaMock).not.toHaveBeenCalled();
+    expect(createHeliaLightMock).not.toHaveBeenCalled();
   });
 
   it('enables WebRTC-direct transport for browser-dialable full-node bootstrap addresses', async () => {
@@ -531,13 +449,17 @@ describe('createHeliaSDNNode', () => {
       ],
     });
 
-    expect(bitswapMock).toHaveBeenCalledWith();
+    // Bitswap over the libp2p this node built, and NO HTTP gateway broker or
+    // router unless the caller named one.
     const createdLibp2p = await createLibp2pMock.mock.results[0].value;
-    expect(libp2pRoutingMock).toHaveBeenCalledWith(createdLibp2p);
-    expect(createHeliaMock.mock.calls[0][0]).toMatchObject({
-      blockBrokers: [{ blockBroker: 'bitswap' }],
-      routers: [{ router: 'libp2p' }],
+    expect(withBitswapMock).toHaveBeenCalledTimes(1);
+    expect(createHeliaLightMock.mock.calls[0][0]).toMatchObject({
+      blockBrokers: [],
+      routers: [],
     });
+    const helia: any = createdHeliaNodes[0];
+    expect(helia.libp2p).toBe(createdLibp2p);
+    expect(helia.routers.map((router: any) => router.name)).toEqual(['libp2p-router']);
 
     await node.stop();
   });
@@ -579,6 +501,9 @@ describe('createHeliaSDNNode', () => {
     });
 
     expect(createLibp2pMock.mock.calls[0][0].services.dht).toBeUndefined();
+    // ...and no ping service either: a browser that never runs the DHT should
+    // still tell a Go peer nothing about itself.
+    expect(createLibp2pMock.mock.calls[0][0].services.ping).toBeUndefined();
 
     await node.stop();
   });
@@ -592,6 +517,11 @@ describe('createHeliaSDNNode', () => {
 
     expect(createLibp2pMock.mock.calls[0][0].services.dht).toEqual({
       service: 'dht',
+    });
+    // kad-dht 16 declares a @libp2p/ping service dependency AND calls ping()
+    // during routing-table eviction, so the DHT lane must register the real one.
+    expect(createLibp2pMock.mock.calls[0][0].services.ping).toEqual({
+      service: 'ping',
     });
 
     await node.stop();
@@ -609,9 +539,10 @@ describe('createHeliaSDNNode', () => {
     });
 
     expect(createLibp2pMock.mock.calls[0][0].services.dht).toBeUndefined();
-    expect(createLibp2pMock.mock.calls[0][0].connectionManager).toMatchObject({
-      minConnections: 0,
-    });
+    // libp2p 2 removed the autodialer and libp2p 3 has no `minConnections`, so
+    // `enableAutoDial: false` is the upstream default now and this config
+    // must NOT invent a connectionManager override for it.
+    expect(createLibp2pMock.mock.calls[0][0].connectionManager).toBeUndefined();
 
     await node.stop();
   });

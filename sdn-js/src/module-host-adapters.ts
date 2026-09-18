@@ -37,7 +37,7 @@ import { unixfs } from '@helia/unixfs';
 import { CID } from 'multiformats/cid';
 import type { Helia } from 'helia';
 import type { Libp2p } from 'libp2p';
-import type { GossipSub } from '@chainsafe/libp2p-gossipsub';
+import type { GossipSub } from '@libp2p/gossipsub';
 
 /** Minimal record-store contract (satisfied by the FlatSQL-WASM engine record store — THE SDNNode store). */
 export interface ModuleHostRecordStore {

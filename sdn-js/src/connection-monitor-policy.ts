@@ -19,32 +19,46 @@
  * connection carrying all in-flight deliveries is torn down, and each dying
  * stream's multistream-select read rejects with `Read aborted`.
  *
- * That timer belongs to libp2p's own `ConnectionMonitor`, and three properties
- * of libp2p 1.9.4 combine into an unmeetable deadline in a browser:
+ * That timer belongs to libp2p's own `ConnectionMonitor`, which pings EVERY
+ * connection every `pingInterval` (default 10 s) by opening a stream on that
+ * same connection, and aborts the whole connection when the ping fails.
  *
- * 1. `connection-monitor.js` pings EVERY connection every `pingInterval`
- *    (default 10 s) by opening a stream on that same connection, and its
- *    `.catch` calls `conn.abort(err)` on ANY error.
- * 2. The deadline comes from `AdaptiveTimeout`, whose `DEFAULT_MIN_TIMEOUT` is
- *    2000 ms (`@libp2p/utils/dist/src/adaptive-timeout.js`). It is adaptive in
- *    name only here: `ConnectionMonitor` never calls `cleanUp()`, so the moving
- *    average is never fed and `Math.max(round(0 * 1.2), minTimeout)` is a FIXED
- *    2000 ms forever.
- * 3. `connection-monitor.d.ts` declares `abortConnectionOnPingFailure` and the
- *    shipped `.js` never reads it — setting it type-checks and does nothing.
+ * On libp2p 1.9.4 the deadline was a FIXED 2000 ms: it came from an
+ * `AdaptiveTimeout` whose moving average was never fed, because
+ * `ConnectionMonitor` never called `cleanUp()`, so
+ * `Math.max(round(0 * 1.2), minTimeout)` collapsed to `DEFAULT_MIN_TIMEOUT`
+ * (2000 ms). `abortConnectionOnPingFailure` was declared in the .d.ts and never
+ * read in the .js, so the abort was unconditional and the flag was inert.
  *
  * A page that starts a globe, compiles WASM and decrypts module payloads runs
  * 2.6–3.0 s long tasks as a matter of course. A 2000 ms deadline cannot survive
  * one, and the failure mode is not "the ping is reported late" but "everything
  * in flight on that connection dies".
  *
+ * WHAT CHANGED IN libp2p 3.3.11 (verified against the installed bytes by
+ * connection-monitor-policy.test.ts, which fails if any of it stops holding):
+ *
+ * 1. `abortConnectionOnPingFailure` IS read now, defaulting to `true`
+ *    (`connection-monitor.js`), so the abort is still the default behaviour —
+ *    the net effect on an sdn-js node is unchanged — but the flag is now a real
+ *    lever rather than a lie.
+ * 2. `cleanUp(signal)` IS called now, so the moving average really does adapt
+ *    and the deadline is `max(movingAverage * timeoutMultiplier, minTimeout)`
+ *    clamped to `maxTimeout`.
+ * 3. `DEFAULT_MIN_TIMEOUT` rose from 2000 ms to 5000 ms, with a new
+ *    `DEFAULT_MAX_TIMEOUT` of 60 s.
+ *
+ * None of that rescues a browser: 5000 ms is still well under the 2.6–3.0 s
+ * stalls measured back to back, and an adaptive average computed from healthy
+ * pings makes the deadline SHORTER for a fast peer, not longer for a busy tab.
+ *
  * THE POLICY. Liveness is worth keeping — a relay can die silently and leave a
  * half-open circuit — so the monitor stays ON, with a deadline an order of
  * magnitude above the worst measured stall and a slower cadence. A missed
- * heartbeat then means the peer really is gone, not that the tab was busy.
- * Since `abortConnectionOnPingFailure` is inert in this libp2p, the ONLY lever
- * that separates "slow" from "dead" is the deadline itself; that is why these
- * numbers, and not the flag, are the fix.
+ * heartbeat then means the peer really is gone, not that the tab was busy. The
+ * deadline is still the lever that separates "slow" from "dead": switching
+ * `abortConnectionOnPingFailure` off instead would silence a genuinely dead
+ * relay rather than tolerate a busy one.
  *
  * Callers can override per node (`connectionMonitor` in {@link SDNConfig}),
  * including `false` to switch the monitor off entirely. An explicit override is
@@ -64,11 +78,18 @@ export const SDN_CONNECTION_MONITOR_PING_INTERVAL_MS = 30_000;
 /**
  * How long a heartbeat may take before the connection is judged dead, in ms.
  *
- * 15x libp2p's 2000 ms floor and 10x the worst main-thread stall measured on
- * the RF gallery under 6x throttling. A truly dead connection is still reaped
- * within ~one ping interval plus this deadline.
+ * 6x libp2p 3's 5000 ms floor (15x the 2000 ms floor of the 1.x this package
+ * used to build on) and 10x the worst main-thread stall measured on the RF
+ * gallery under 6x throttling. A truly dead connection is still reaped within
+ * ~one ping interval plus this deadline.
  */
 export const SDN_CONNECTION_MONITOR_TIMEOUT_MS = 30_000;
+
+/**
+ * libp2p's own floor, for the comparison the policy is justified against.
+ * 2000 ms on libp2p 1.9.4, 5000 ms on 3.x — both under one measured stall.
+ */
+export const LIBP2P_DEFAULT_MIN_TIMEOUT_MS = 5_000;
 
 /**
  * The subset of libp2p's `ConnectionMonitorInit` this policy sets. Structural,
@@ -89,6 +110,12 @@ export interface SdnConnectionMonitorInit {
   };
   /** Ping protocol prefix, passed through untouched. */
   protocolPrefix?: string;
+  /**
+   * Whether a failed heartbeat aborts the connection. libp2p 1.9.4 declared
+   * this and never read it; 3.x reads it and defaults it to `true`, which is
+   * the behaviour this policy wants, so it is left unset.
+   */
+  abortConnectionOnPingFailure?: boolean;
 }
 
 /**
@@ -111,11 +138,12 @@ export const SDN_CONNECTION_MONITOR_DEFAULTS: Readonly<SdnConnectionMonitorInit>
     enabled: true,
     pingInterval: SDN_CONNECTION_MONITOR_PING_INTERVAL_MS,
     pingTimeout: Object.freeze({
-      // `minTimeout` is the only field that matters while ConnectionMonitor
-      // never calls `cleanUp()` — the moving average stays 0, so the effective
-      // deadline is exactly this. The rest are set so that a libp2p which
-      // starts feeding the average cannot produce a SHORTER deadline than the
-      // floor: the multipliers only ever scale it up.
+      // `minTimeout` is the floor, and on libp2p 3.x - which really does feed
+      // the moving average - it is what holds. The effective deadline is
+      // `max(movingAverage * timeoutMultiplier, minTimeout)`, so an average
+      // measured from healthy pings can only ever RAISE it above this floor,
+      // never below; multipliers >= 1 keep that true if upstream changes how
+      // the average is fed.
       interval: SDN_CONNECTION_MONITOR_TIMEOUT_MS,
       minTimeout: SDN_CONNECTION_MONITOR_TIMEOUT_MS,
       timeoutMultiplier: 2,
@@ -143,7 +171,7 @@ export function resolveConnectionMonitorInit(
   }
   // An explicit object is a deliberate override: merge it over the policy so a
   // caller can change one field (say `pingInterval`) without silently
-  // reinstating libp2p's 2000 ms floor for the others.
+  // reinstating libp2p's own floor for the others.
   const pingTimeout = {
     ...SDN_CONNECTION_MONITOR_DEFAULTS.pingTimeout,
     ...(config.pingTimeout ?? {}),

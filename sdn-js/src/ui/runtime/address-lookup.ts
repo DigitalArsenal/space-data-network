@@ -1,5 +1,5 @@
 import type { AddressLookupChain, AddressLookupKey } from './types';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 const encoder = new TextEncoder();

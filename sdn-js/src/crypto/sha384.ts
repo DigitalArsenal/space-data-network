@@ -9,7 +9,7 @@
  * a public artifact, never key material, and never browser WebCrypto (the
  * runtime boundary, src/no-webcrypto-runtime.test.ts).
  */
-import { sha384 } from '@noble/hashes/sha2';
+import { sha384 } from '@noble/hashes/sha2.js';
 
 export function sha384Digest(data: ArrayBuffer | Uint8Array): Uint8Array {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);

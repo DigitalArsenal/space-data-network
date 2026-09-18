@@ -608,29 +608,35 @@ describe('libp2p FlatSQL sync backend', () => {
     });
   });
 
-  it('reads response bytes while the outbound request sink is still settling', async () => {
-    let releaseSink: (() => void) | undefined;
-    const sourceStarted = new Promise<void>((resolve) => {
-      releaseSink = resolve;
+  it('reads response bytes while the outbound request write is still settling', async () => {
+    // The reply can start arriving before close() resolves. The exchange must
+    // already be consuming it: a libp2p 3 stream with no 'message' consumer
+    // buffers inbound data until maxReadBufferLength and then RESETS, so an
+    // implementation that writes first and reads afterwards deadlocks or drops
+    // a shard rather than failing loudly.
+    const sent: number[][] = [];
+    let releaseClose: (() => void) | undefined;
+    const closeBlocked = new Promise<void>((resolve) => {
+      releaseClose = resolve;
     });
-    const stream = {
-      async sink(source: AsyncIterable<Uint8Array>) {
-        const chunks: Uint8Array[] = [];
-        for await (const chunk of source) chunks.push(chunk);
-        expect(chunks.map((chunk) => Array.from(chunk))).toEqual([[1, 2, 3, 4]]);
-        await sourceStarted;
+    const stream = messageStreamDouble({
+      onSend: (chunk) => {
+        sent.push(Array.from(chunk));
       },
-      source: (async function* source() {
-        releaseSink?.();
-        yield new Uint8Array([9, 8, 7, 6]);
-      })(),
-      async close() {},
-    };
+      onClose: async () => closeBlocked,
+    });
+
+    const exchange = exchangeFlatSqlSyncStream(stream, new Uint8Array([1, 2, 3, 4]));
+    await Promise.resolve();
+    stream.push(new Uint8Array([9, 8, 7, 6]));
+    stream.endRead();
+    releaseClose?.();
 
     await expect(Promise.race([
-      exchangeFlatSqlSyncStream(stream, new Uint8Array([1, 2, 3, 4])),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('exchange deadlocked')), 25)),
+      exchange,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('exchange deadlocked')), 500)),
     ])).resolves.toEqual(new Uint8Array([9, 8, 7, 6]));
+    expect(sent).toEqual([[1, 2, 3, 4]]);
   });
 
   it('does not clone every inbound response chunk before final concatenation', async () => {
@@ -641,25 +647,68 @@ describe('libp2p FlatSQL sync backend', () => {
   });
 
   it('bounds stream exchanges that never close', async () => {
-    const stream = {
-      async sink(source: AsyncIterable<Uint8Array>) {
-        for await (const _chunk of source) {
-          // Drain the request payload and then leave the remote response open.
-        }
-      },
-      source: (async function* source() {
-        yield new Uint8Array([9, 8, 7, 6]);
-        await new Promise(() => undefined);
-      })(),
-      async close() {},
-    };
+    // The peer answers once and then holds the stream open forever.
+    const stream = messageStreamDouble({});
+    stream.push(new Uint8Array([9, 8, 7, 6]));
 
     await expect(Promise.race([
       exchangeFlatSqlSyncStream(stream, new Uint8Array([1, 2, 3, 4]), { timeoutMs: 1, label: 'FlatSQL sync probe' }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('exchange did not time out')), 25)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('exchange did not time out')), 250)),
     ])).rejects.toThrow('FlatSQL sync probe timed out after 1 ms');
   });
 });
+
+/**
+ * The shape libp2p 3 gives a protocol dialer: send()/onDrain()/close()/abort()
+ * plus an async iterable of inbound messages. src/stream-exchange.test.ts
+ * drives the same code against the REAL @libp2p/utils stream implementation;
+ * this double exists so the timing cases here can be provoked deterministically.
+ */
+function messageStreamDouble(options: {
+  onSend?(chunk: Uint8Array): void;
+  onClose?(): Promise<void>;
+  writable?: boolean;
+}) {
+  const queue: Uint8Array[] = [];
+  const waiters: Array<() => void> = [];
+  let ended = false;
+  const wake = () => {
+    for (const resolve of waiters.splice(0)) resolve();
+  };
+  return {
+    push(chunk: Uint8Array) {
+      queue.push(chunk);
+      wake();
+    },
+    endRead() {
+      ended = true;
+      wake();
+    },
+    send(chunk: Uint8Array) {
+      options.onSend?.(chunk);
+      return options.writable ?? true;
+    },
+    async onDrain() {},
+    async close() {
+      await options.onClose?.();
+    },
+    abort() {
+      ended = true;
+      wake();
+    },
+    async *[Symbol.asyncIterator]() {
+      while (true) {
+        const chunk = queue.shift();
+        if (chunk != null) {
+          yield chunk;
+          continue;
+        }
+        if (ended) return;
+        await new Promise<void>((resolve) => waiters.push(resolve));
+      }
+    },
+  };
+}
 
 function headerOnlyChunk(schema: string, totalCount: number, patch: Partial<FlatSqlSyncChunk['header']> = {}): FlatSqlSyncChunk {
   return {
