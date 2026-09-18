@@ -1297,7 +1297,12 @@ func RegisterFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps Flow
 		mf, err := LoadMountedFlow(mount.Flow, mountDeps)
 		if err != nil {
 			if errors.Is(err, ErrFlowNotInstalled) {
-				log.Errorf("Flow mount %q skipped: %v", mount.Path, err)
+				// Same designed path as the cron services: default configs
+				// ship the /api/v1/data/ mount before the bundle is
+				// delivered, and TestFlowMountSkipsUninstalledFlow pins that
+				// this is a skip and not a failure. A skip taken on purpose
+				// is not an error.
+				log.Infof("Flow mount %q not registered: its bundle is not installed (install it to serve this path)", mount.Path)
 				continue
 			}
 			return fail(fmt.Errorf("mount %q: %w", mount.Path, err))

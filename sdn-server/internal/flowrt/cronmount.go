@@ -711,7 +711,13 @@ func LoadFlowServices(services []config.FlowService, deps FlowMountDeps) ([]*Ser
 		sf, err := LoadFlowService(service.Flow, service.Intervals, serviceDeps)
 		if err != nil {
 			if os.IsNotExist(err) || isFlowNotInstalled(err) {
-				log.Errorf("Flow service %q skipped: %v", service.Flow, err)
+				// NOT an error. The default config declares the CelesTrak
+				// services so an operator can enable them by installing the
+				// bundle, and skipping an uninstalled one is the DESIGNED
+				// path — see config.Default()'s Services block. Logged at
+				// ERROR, a stock node printed three red lines on its first
+				// boot, which is how people learn to ignore red lines.
+				log.Infof("Flow service %q not started: its bundle is not installed (install it to enable this service)", service.Flow)
 				continue
 			}
 			return fail(fmt.Errorf("flow service %q: %w", service.Flow, err))
