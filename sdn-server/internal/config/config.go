@@ -1761,6 +1761,22 @@ func Default() *Config {
 				"/ip4/0.0.0.0/tcp/4001",
 				"/ip4/0.0.0.0/tcp/8080/ws",
 				"/ip4/0.0.0.0/udp/4001/quic-v1",
+				// WEBTRANSPORT SHARES THE QUIC PORT — no second port is
+				// opened; go-libp2p's quicreuse multiplexes them on 4001, and
+				// a probe against this exact option set announces
+				// /udp/4001/quic-v1 and /udp/4001/quic-v1/webtransport
+				// together.
+				//
+				// Without this line the transport was registered and never
+				// listened on: hostTransportOptions has included
+				// webtransport.New since it was written, no config anywhere
+				// declared an address for it, and so no SDN node has ever
+				// offered a browser the webtransport path. A browser's only
+				// unrelayed routes to a node are this and webrtc-direct
+				// below; sdn-js dials both, and
+				// sdn-js/e2e/browser-direct-interop.spec.ts proves a real
+				// browser completes a request over each.
+				"/ip4/0.0.0.0/udp/4001/quic-v1/webtransport",
 				"/ip4/0.0.0.0/udp/4003/webrtc-direct",
 			},
 			Bootstrap:      bootstrap.DefaultBootstrapAddresses(),
