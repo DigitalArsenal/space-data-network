@@ -9,7 +9,7 @@ const (
 	HDWalletWasmVersion       = "2.0.29"
 	HDWalletUIVersion         = "2.0.29"
 	IPFSWebUIVersion          = "4.12.0"
-	KuboVersion               = "0.40.0-dev"
+	KuboVersion               = "0.39.0"
 	DefaultUpdateChannel      = "stable"
 	CurrentAdvertisementFlag  = "spacedatanetwork/1.0.0"
 )

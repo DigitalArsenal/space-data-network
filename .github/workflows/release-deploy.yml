@@ -22,6 +22,12 @@ env:
   IMAGE_NAME: dockerdigitalarsenal/space-data-network
   VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
   NFPM_VERSION: v2.42.0
+  # Mirrors suite.versions.json kubo.shipped. A workflow-level `env:` cannot
+  # call a script, so this is a literal — but scripts/check-kubo-pin.js fails
+  # the build if it stops matching the manifest, which is why it is a named
+  # variable at all: before, the tag was spelled twice inside a URL in a run
+  # block, where nothing could see it to check it.
+  KUBO_VERSION: v0.39.0
 
 jobs:
   preflight:
@@ -61,7 +67,7 @@ jobs:
           cache-dependency-path: sdn-js/package-lock.json
       - name: Install Kubo
         run: |
-          curl -L https://dist.ipfs.tech/kubo/v0.39.0/kubo_v0.39.0_linux-amd64.tar.gz | tar -xz
+          curl -L "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-amd64.tar.gz" | tar -xz
           sudo install kubo/ipfs /usr/local/bin/ipfs
           ipfs init --profile=server
           ipfs daemon > /tmp/ipfs.log 2>&1 &
