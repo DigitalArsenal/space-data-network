@@ -389,6 +389,18 @@ export class SDNNode {
       };
     }
 
+    // See `allowPrivateAddressDial` in SDNConfig. This option was declared and
+    // documented here but only ever read by createHeliaSDNNode, so an SDNNode
+    // created with it still refused every loopback dial with
+    // "connection gater denied all addresses". Only `denyDialMultiaddr` is
+    // replaced — every other gate keeps libp2p's default.
+    if (this.config.allowPrivateAddressDial === true) {
+      libp2pOpts.connectionGater = {
+        ...(libp2pOpts.connectionGater ?? {}),
+        denyDialMultiaddr: async () => false,
+      };
+    }
+
     // If an HD wallet identity is provided, use its secp256k1 key for deterministic PeerID
     if (this.config.identity?.identityKey) {
       const rawKey = this.config.identity.identityKey.privateKey;
