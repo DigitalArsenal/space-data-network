@@ -3,7 +3,16 @@
 
 name: Encryption Tests
 
+# Last ran 2026-02-24. Like security.yml, it was workflow_dispatch-only, so
+# the Playwright, Docker-compose and benchmark halves of this suite have not
+# executed in seven months. The Go half (tests/encryption/go) is cheap and
+# deterministic and now runs in the CI pipeline itself — scripts/ci-local.sh
+# encryption, in the preflight job — so a regression there is caught per
+# commit. This workflow keeps the parts that need a browser, a docker
+# network or a benchmark baseline, on a weekly cadence.
 on:
+  schedule:
+    - cron: '43 6 * * 1'
   workflow_dispatch:
     inputs:
       skip_go_tests:
@@ -161,7 +170,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Cache Docker layers
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ github.sha }}

@@ -1,0 +1,170 @@
+name: SDN Go environment
+description: >
+  Go toolchain, a pinned + cached WasmEdge, the private flow bundles when a
+  token is available, and a restored FlatSQL AOT cache. Every Go lane uses it.
+
+inputs:
+  wasmedge-version:
+    description: WasmEdge runtime to install (must match scripts/install-wasmedge.sh's default)
+    required: false
+    default: '0.16.4'
+  modules-token:
+    description: >
+      Read-only token for DigitalArsenal/space-data-network-modules, which
+      carries the COMPILED flow bundles the wire-contract suites mount.
+    required: false
+    default: ''
+  needs-flow-bundles:
+    description: >
+      'false' for a lane that never mounts a flow bundle (builds, sdn-js). Such
+      a lane passing no token is NORMAL, and must not print an ::error:: —
+      a red annotation on a fully green job teaches people to ignore
+      annotations, which is the opposite of what this gate is for.
+    required: false
+    default: 'true'
+  allow-missing-flow-bundles:
+    description: >
+      'true' lets a lane declare this checkout has no modules repo
+      (SDN_SKIP_MISSING_FLOW_BUNDLES=1). Only a fork PR — which cannot see
+      secrets — may set it. The push-to-main gate must never skip those tests.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: sdn-server/go.mod
+        cache-dependency-path: sdn-server/go.sum
+
+    - name: Make the repo's shell entrypoints executable
+      shell: bash
+      run: chmod +x scripts/*.sh
+
+    # WasmEdge, PINNED AND CACHED.
+    #
+    # scripts/install-wasmedge.sh's default installer URL is WasmEdge's MASTER
+    # branch: every CI run piped whatever was on master that minute into bash,
+    # so an upstream commit could change or break this build with no commit
+    # here. The version tag's copy of the same script is what we install
+    # against, so that is what we fetch.
+    - name: Restore WasmEdge
+      id: wasmedge-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/.wasmedge
+        key: wasmedge-${{ inputs.wasmedge-version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install WasmEdge
+      if: steps.wasmedge-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        WASMEDGE_DIR: ${{ runner.temp }}/.wasmedge
+        WASMEDGE_VERSION: ${{ inputs.wasmedge-version }}
+        WASMEDGE_INSTALL_SCRIPT_URL: https://raw.githubusercontent.com/WasmEdge/WasmEdge/${{ inputs.wasmedge-version }}/utils/install.sh
+      # The upstream installer draws a progress bar as thousands of
+      # "|===   5.01 %" lines. grep -v keeps the log readable; pipefail (on by
+      # default in an Actions bash step) keeps a failed install fatal.
+      run: ./scripts/install-wasmedge.sh 2>&1 | grep -vE '^\|=* +[0-9.]+ *%'
+
+    - name: Export WASMEDGE_DIR
+      shell: bash
+      run: echo "WASMEDGE_DIR=${{ runner.temp }}/.wasmedge" >> "$GITHUB_ENV"
+
+    # THE FLOW BUNDLES.
+    #
+    # internal/flowrt's public-query suites mount the REAL compiled bundle at
+    # its production path (/api/v1/query) and REFUSE to skip: they are the
+    # end-to-end proof of that wire contract, and the test says so itself
+    # (query_flow_integration_test.go:34-71). The bundle is COMMITTED in the
+    # modules repo — flows/public-query/dist/query, six tracked files — so
+    # this is a checkout, not a build. The same checkout supplies
+    # licensing/core/dist/isomorphic/module.wasm, which CI has been logging as
+    # "not found; artifact-dependent Go tests will skip" since forever.
+    #
+    # The repo is PRIVATE and this one is PUBLIC, so it takes a secret:
+    # MODULES_REPO_TOKEN, a fine-grained read-only PAT on
+    # DigitalArsenal/space-data-network-modules. Until it exists, the Go lane
+    # fails in internal/flowrt with the test's own instructions — loudly, and
+    # not by pretending the contract is proved.
+    - name: Check out space-data-network-modules
+      if: inputs.modules-token != ''
+      uses: actions/checkout@v4
+      with:
+        repository: DigitalArsenal/space-data-network-modules
+        token: ${{ inputs.modules-token }}
+        path: .ci-artifacts/space-data-network-modules
+        persist-credentials: false
+
+    - name: Export flow bundle paths
+      shell: bash
+      env:
+        HAVE_TOKEN: ${{ inputs.modules-token != '' }}
+        ALLOW_MISSING: ${{ inputs.allow-missing-flow-bundles }}
+        NEEDS_BUNDLES: ${{ inputs.needs-flow-bundles }}
+      run: |
+        modules="$PWD/.ci-artifacts/space-data-network-modules"
+        if [ -d "$modules" ]; then
+          echo "SDN_PUBLIC_QUERY_FLOW_DIST=$modules/flows/public-query/dist" >> "$GITHUB_ENV"
+          echo "ORBPRO_LICENSING_WASM_PATH=$modules/licensing/core/dist/isomorphic/module.wasm" >> "$GITHUB_ENV"
+          echo "flow bundles: $modules/flows/public-query/dist"
+          exit 0
+        fi
+        if [ "$HAVE_TOKEN" = "true" ]; then
+          echo "::error::modules-token was supplied but .ci-artifacts/space-data-network-modules is not there — see the checkout step above."
+          exit 1
+        fi
+        if [ "$ALLOW_MISSING" = "true" ]; then
+          # Fork PRs only. Greppable, never silent.
+          echo "::warning::no modules checkout (a fork PR cannot read secrets); flow-bundle suites will declare themselves skipped"
+          echo "SDN_SKIP_MISSING_FLOW_BUNDLES=1" >> "$GITHUB_ENV"
+          exit 0
+        fi
+        if [ "$NEEDS_BUNDLES" != "true" ]; then
+          # This lane mounts no bundle; absence is the expected state.
+          exit 0
+        fi
+        # Deliberately NOT a step failure: the go lane must still run, and the
+        # test that needs the bundle is the thing that should report it.
+        echo "::error::MODULES_REPO_TOKEN is not set, so the compiled public-query flow bundle is absent. internal/flowrt's /api/v1/query wire-contract suite will FAIL (by design — it must not pass by skipping). Add a read-only fine-grained PAT for DigitalArsenal/space-data-network-modules as the MODULES_REPO_TOKEN repository secret."
+
+    # THE FLATSQL AOT CACHE — AN OPTIMISATION, NEVER THE GUARANTEE.
+    #
+    # scripts/ci-local.sh prewarms and ASSERTS the artifact unconditionally, so
+    # every class of miss here self-heals (~49s to compile). What this cache
+    # must not do is look like a hit while being one: a WasmEdge AOT artifact
+    # is native code for the CPU that compiled it, the filename carries the
+    # psABI level (internal/flatsqlrt/aot_cpu.go), and GitHub's ubuntu pool
+    # mixes AMD EPYC (x86-64-v3) with Intel Ice Lake (x86-64-v4). A cache
+    # restored across that boundary is a miss BY FILENAME — silently
+    # interpreted again, which is the exact bug this pipeline was rebuilt to
+    # kill. So the key carries the level, computed the same way aot_cpu.go
+    # computes it.
+    - name: Runner CPU profile (mirrors internal/flatsqlrt/aot_cpu.go)
+      id: cpu
+      shell: bash
+      run: |
+        profile="$(uname -m)"
+        if [ "$profile" = "x86_64" ] && [ -r /proc/cpuinfo ]; then
+          flags="$(grep -m1 '^flags' /proc/cpuinfo || true)"
+          has() { case " $flags " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+          if has avx512f && has avx512bw && has avx512cd && has avx512dq && has avx512vl; then
+            profile=x86-64-v4
+          elif has avx2 && has bmi1 && has bmi2 && has fma && has avx; then
+            profile=x86-64-v3
+          elif has sse4_1 && has sse4_2 && has popcnt; then
+            profile=x86-64-v2
+          else
+            profile=x86-64-v1
+          fi
+        fi
+        echo "profile=$profile" >> "$GITHUB_OUTPUT"
+        echo "AOT CPU profile: $profile"
+
+    - name: Restore the FlatSQL AOT cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/flatsql-aot
+        key: >-
+          flatsql-aot-${{ runner.os }}-${{ steps.cpu.outputs.profile }}-we${{ inputs.wasmedge-version }}-${{ hashFiles('sdn-server/internal/flatsqlrt/flatsql-wasi-noeh.wasm', 'sdn-server/internal/flowrt/flatsql-link-shim.wasm') }}

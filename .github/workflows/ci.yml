@@ -1,5 +1,28 @@
 name: CI
 
+# WHAT WAS WRONG WITH THIS FILE.
+#
+# CI has not been green since 2026-07-24 (ddf0513f4). Its last 100 runs are 82
+# cancelled, 17 failed, 0 succeeded, and main has no branch protection, so
+# nothing was ever blocked by the red gate either. Three separate causes, all
+# fixed here:
+#
+# 1. The Go lanes ran the FlatSQL engine INTERPRETED. Nothing in CI ever
+#    prewarmed the AOT artifact the record store loads, so every
+#    store-touching package ran 6-12x slow, the job took 105.8 minutes, and
+#    four packages hit their go-test timeout. scripts/ci-local.sh now prewarms
+#    and asserts; .github/actions/sdn-go-env caches the artifact.
+# 2. cancel-in-progress: true on a ~105-minute job, on a branch pushed every
+#    few minutes, cannot ever reach a conclusion. Hence 82 cancellations.
+# 3. Every check lived in ONE `set -e` shell step, Go first. The Go failure
+#    meant the JS half of the gate never executed at all: run 35310122091's
+#    log contains zero occurrences of "sdn-js install", "Go build (full node)"
+#    or "plugin-demo". Those are separate jobs now, which is a correctness fix
+#    rather than a speed one.
+#
+# Every check still lives in scripts/ci-local.sh — one mode per job — so what
+# CI runs and what a developer runs before pushing are the same script.
+
 on:
   push:
     branches: [main]
@@ -9,7 +32,9 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel a superseded PR push. NEVER cancel main: a gate that is always
+  # cancelled can never produce the green record that makes it a gate.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -28,6 +53,7 @@ jobs:
   powershell-installer-parses:
     name: Installer script parses
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Parse scripts/install.ps1
@@ -53,77 +79,145 @@ jobs:
           }
           Write-Host 'docs/install.ps1 parses clean'
 
-  local-ci-equivalent:
-    name: Local CI Equivalent
+  # Cheap and first: secret/infra scan, gofmt, and the encryption module's Go
+  # suite — everything that needs neither WasmEdge nor the engine.
+  # tests/encryption/go is its own module and has had no CI at all: the
+  # workflow that ran it is workflow_dispatch-only and last executed
+  # 2026-02-24.
+  preflight:
+    name: Preflight (OSS scan, gofmt, encryption)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sdn-server/go.mod
+          cache-dependency-path: sdn-server/go.sum
+      - name: Preflight
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/ci-local.sh preflight
+      - name: Encryption tests (Go)
+        run: ./scripts/ci-local.sh encryption
 
+  # Every package but internal/storage.
+  #
+  # Budget: 427.6s and 492.5s of test time on two warm local runs (2026-09-18,
+  # -p=1), against a runner factor of 1.9x measured the same day — same
+  # package, interpreted on both sides: internal/directory 170.4s on CI
+  # against 90.1s here. That is ~15 minutes of `go test`, plus the build and
+  # the prewarm; 40 minutes is roughly 1.6x the whole job, and it replaces one
+  # that took 109.5. The per-package -timeout lives in ci-local.sh, next to
+  # the numbers it came from.
+  go-quick:
+    name: Go tests (quick)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: ./.github/actions/sdn-go-env
         with:
-          go-version-file: sdn-server/go.mod
-          cache-dependency-path: sdn-server/go.sum
+          modules-token: ${{ secrets.MODULES_REPO_TOKEN }}
+          allow-missing-flow-bundles: ${{ github.event.pull_request.head.repo.fork == true }}
+      - name: go test (quick)
+        run: ./scripts/ci-local.sh go
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: sdn-js/package-lock.json
-
-      - name: Run CI checks (same as pre-push)
-        env:
-          WASMEDGE_DIR: ${{ runner.temp }}/.wasmedge
-        run: |
-          chmod +x scripts/ci-local.sh scripts/oss-preflight.sh scripts/install-wasmedge.sh scripts/go-with-wasmedge.sh
-          ./scripts/install-wasmedge.sh
-          ./scripts/ci-local.sh quick
-
-  # THE RECORD STORE HAD NO CI AT ALL. internal/storage is 324 tests over the
-  # data path — the thing this whole node exists to be — and the quick lane
-  # deliberately excludes it (heavy_pkg_filter), because it exceeds the
-  # 20-minute per-package budget and made the gate fail every time, which left
-  # pushes unguarded. That was the right call for the quick lane and was then
-  # never followed by the other half: ci.yml only ever ran `quick`, so the
-  # exclusion became "the store is never tested on any commit".
+  # THE RECORD STORE. internal/storage is 324 tests over the data path — the
+  # thing this whole node exists to be — and it is excluded from the quick
+  # lane because one package should not starve fast feedback. Separate job so
+  # the two run in parallel instead of end to end.
   #
-  # The heavy lane already exists for exactly this and just needed running, with
-  # the budget it was designed around. Separate job so a slow store cannot
-  # starve the fast feedback the quick lane gives every push.
-  heavy-go-packages:
-    name: Heavy Go packages (record store)
+  # Budget: 296.6s warm locally, ~9.4 minutes projected on a runner at 1.9x.
+  # Was 110 minutes, against a lane that could not finish because it ran
+  # interpreted.
+  go-heavy:
+    name: Go tests (record store)
     runs-on: ubuntu-latest
-    # Above the lane's own 90m go-test budget, so an overrun surfaces as go
+    # Above the lane's own 25m go-test budget, so an overrun surfaces as go
     # test's timeout panic (which names the running test) instead of the job
     # being killed with no diagnostic.
-    timeout-minutes: 110
-
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: ./.github/actions/sdn-go-env
         with:
-          go-version-file: sdn-server/go.mod
-          cache-dependency-path: sdn-server/go.sum
+          modules-token: ${{ secrets.MODULES_REPO_TOKEN }}
+          allow-missing-flow-bundles: ${{ github.event.pull_request.head.repo.fork == true }}
+      - name: go test (record store)
+        run: ./scripts/ci-local.sh heavy
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+  go-builds:
+    name: Go builds (node + edge relay)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: go build
+        run: ./scripts/ci-local.sh builds
+
+  js:
+    name: sdn-js + module delivery + plugin demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: sdn-js/package-lock.json
+      # plugin-demo runs a REAL node, so this lane needs the Go toolchain and
+      # WasmEdge too.
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+        with:
+          modules-token: ${{ secrets.MODULES_REPO_TOKEN }}
+          allow-missing-flow-bundles: ${{ github.event.pull_request.head.repo.fork == true }}
+      - name: sdn-js
+        run: ./scripts/ci-local.sh js
+      - name: module delivery compatibility
+        run: ./scripts/ci-local.sh delivery
+      - name: plugin demo
+        run: ./scripts/ci-local.sh demo
 
-      - name: Run the heavy Go lane (internal/storage)
+  # ONE CHECK TO REQUIRE. Splitting the pipeline into parallel jobs changes
+  # what "CI passed" means: seven jobs must pass, not one. Branch protection can
+  # require this single job instead of enumerating them, and it fails if any
+  # needed job failed, was cancelled, or was skipped.
+  ci-complete:
+    name: CI complete
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs:
+      - powershell-installer-parses
+      - preflight
+      - go-quick
+      - go-heavy
+      - go-builds
+      - js
+    steps:
+      - name: Report
         env:
-          WASMEDGE_DIR: ${{ runner.temp }}/.wasmedge
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          chmod +x scripts/ci-local.sh scripts/install-wasmedge.sh scripts/go-with-wasmedge.sh
-          ./scripts/install-wasmedge.sh
-          ./scripts/ci-local.sh heavy
+          printf '%s\n' "$RESULTS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' | tee -a "$GITHUB_STEP_SUMMARY"
+          not_green="$(printf '%s\n' "$RESULTS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')"
+          if [ -n "$not_green" ]; then
+            echo "::error::CI is not green: $not_green"
+            exit 1
+          fi
+          echo "all CI jobs succeeded"
