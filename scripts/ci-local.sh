@@ -177,6 +177,17 @@ prepare_go_wasm_artifacts() {
 }
 
 run_preflight() {
+  # FIRST, and LOCAL-ONLY, because a workflow file GitHub cannot parse fails
+  # with zero jobs and no log line saying why — it reads exactly like a test
+  # failure and is not. A workflow cannot catch the defect that stopped it
+  # from starting, so this gate is only worth anything before the push; it
+  # also keeps the preflight lane off a root `npm ci` for one dev dependency.
+  if [[ "${CI:-}" != "true" && "${CI:-}" != "1" ]]; then
+    step "Workflow files parse"
+    (cd "$ROOT" && node scripts/check-workflow-yaml.mjs)
+    pass "workflow files parse"
+  fi
+
   step "OSS preflight"
   (cd "$ROOT" && ./scripts/oss-preflight.sh)
   pass "oss-preflight"
