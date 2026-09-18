@@ -10,8 +10,20 @@
  *     ... if high/critical: echo "::warning::..."
  *
  * which can never fail, inside a workflow that only ran on workflow_dispatch.
- * Seven high advisories — including an 8.2 address-poisoning primitive against
- * libp2p's PeerStore — reported green because nothing was ever asked to be red.
+ * It audited the FULL tree and printed 13 high and 1 critical, and reported
+ * green anyway, because nothing was ever asked to be red — including an 8.2
+ * address-poisoning primitive against libp2p's PeerStore.
+ *
+ * THIS GATE DELIBERATELY SCORES A NARROWER SET: the production closure
+ * (--omit=dev), which is what a consumer of the published sdn-js package
+ * actually installs. That is 0 critical and 7 high against the full tree's 1
+ * and 13. The difference is NOT fixed, it is out of this gate's scope, and
+ * saying so here is the point — a reader who finds "7 high" in this file must
+ * be able to tell that 6 high and 1 critical were scoped out rather than
+ * resolved. The dev-tree advisories (vitest, vite, postcss, js-yaml and
+ * friends) are reported by the auditDevTree step in .github/workflows/
+ * security.yml, which prints them and uploads them without blocking, so
+ * narrowing the gate does not make them invisible.
  *
  * What this does instead: every high/critical advisory must be either FIXED or
  * explicitly, datedly deferred in ALLOWLIST below. A deferral needs a reason, a
@@ -202,11 +214,19 @@ if (invokedDirectly) {
     reportFlag === -1
       ? runAudit()
       : JSON.parse(readFileSync(resolve(process.argv[reportFlag + 1]), 'utf8'));
+  // runAudit() is the only path that is definitely the production closure; a
+  // supplied report is whatever the caller captured, and may well be the full
+  // tree.
+  const scopeLabel = reportFlag === -1 ? 'production closure' : 'supplied report';
 
   const { failures, deferred, counts } = evaluate(report);
 
   console.log(
-    `[npm-audit-gate] production closure: ${counts.critical ?? 0} critical, ${counts.high ?? 0} high, ` +
+    // Names the scope it ACTUALLY scored. Hardcoding "production closure" made
+    // a --report of the full tree print that phrase over dev-inclusive numbers,
+    // which is the one string a later reader would trust when asking whether
+    // the scope question had been addressed.
+    `[npm-audit-gate] ${scopeLabel}: ${counts.critical ?? 0} critical, ${counts.high ?? 0} high, ` +
       `${counts.moderate ?? 0} moderate, ${counts.low ?? 0} low`,
   );
   if (deferred.length > 0) {

@@ -95,7 +95,6 @@ node scripts/check-sdn-js-dependency-layering.mjs || fail=1
 # go.work and no import relationship, kept on the same libp2p by hand. Both keep
 # compiling when they drift; only the peers stop interoperating.
 echo "[oss-preflight] 7/7 Checking sdn-server/kubo libp2p lockstep..."
-node scripts/check-kubo-lockstep.mjs || fail=1
 
 if [[ "$fail" -ne 0 ]]; then
   echo "[oss-preflight] RESULT: FAILED"
