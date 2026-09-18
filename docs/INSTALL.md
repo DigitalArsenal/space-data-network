@@ -39,12 +39,44 @@ from `/usr/local/lib/hd-wallet-wasi.wasm`; a bundle carries it under
 ### Desktop app
 
 The desktop app (`space-data-network-desktop-<version>-<os>-<arch>` on the
-release page: macOS Apple Silicon in this beta; Intel Macs, Windows and Linux
-follow) carries the same bundle. It starts the node on launch, opens the node's own
-dashboard in its window, and keeps the store and keys under the app's user-data
-directory. Its menu shows the node's recovery phrase once, on request. Nothing
-below applies to the app except sections 4 (ports, if you want to be reachable
-from the internet) and 5 (keys).
+release page) ships for macOS on Apple Silicon and Intel, for Windows x64 as
+both an installer and a portable exe, and for Linux x64 as an AppImage, a .deb
+and a .tar.xz. It carries the same bundle, starts the node on launch, opens the
+node's own dashboard in its window, and keeps the store and keys under the
+app's user-data directory. Its menu shows the node's recovery phrase once, on
+request. Nothing below applies to the app except sections 4 (ports, if you want
+to be reachable from the internet) and 5 (keys).
+
+#### First launch: the binaries are not signed
+
+Beta builds carry no Apple Developer ID and no Authenticode certificate, so
+both operating systems refuse them on first launch. This is the signature's
+absence, not a finding about the software — but you have to get past it, and
+the two systems differ in how hard they make that.
+
+**macOS.** Gatekeeper shows "Apple could not verify … is free of malware",
+and its only buttons are *Move to Trash* and *Done* — there is no "open
+anyway" in that dialog. Two ways through:
+
+    # either: strip the quarantine flag the browser attached
+    xattr -dr com.apple.quarantine "/Applications/Space Data Network.app"
+
+    # or: launch once, get the dialog, then
+    #     System Settings -> Privacy & Security -> "Open Anyway"
+
+The right-click → Open shortcut no longer works on macOS 15. The CLI tarball
+is unaffected when expanded with `tar` from a terminal, which does not carry
+the flag onto the extracted files.
+
+**Windows.** SmartScreen shows "Windows protected your PC"; click *More info*
+→ *Run anyway*. If you downloaded the zip with a browser, clear its
+mark-of-the-web before expanding, or the extracted exe may refuse to start:
+
+    Unblock-File .\spacedatanetwork-<version>-windows-amd64.zip
+
+A managed box with SmartScreen set to Block will refuse outright, and
+Defender may take several seconds to scan a 340 MB executable before the
+first output appears.
 
 ### Docker
 
@@ -73,7 +105,11 @@ it with `spacedatanetwork key reseal` before recreating the container.
 `docker exec sdn
 /app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic`
 prints the recovery phrase. A `docker load` archive of the same image ships
-with each release (`spacedatanetwork-container-<version>-linux-amd64.tar.gz`).
+with each release. Its name spells the version with DOTS, not the tag's
+hyphen — `spacedatanetwork-container-1.0.5.beta.69-linux-amd64.tar.gz`, not
+`…-1.0.5-beta.69-…`, which 404s. Native Linux packages use the same dotted
+spelling, for the same reason: a release asset name cannot carry SemVer's
+hyphen.
 
 ### Relaying
 
