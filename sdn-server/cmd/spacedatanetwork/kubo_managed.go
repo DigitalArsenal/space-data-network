@@ -11,6 +11,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/kubo"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // managedKuboPlan decides whether this node runs Kubo itself (INST-04):
@@ -76,6 +77,11 @@ func startManagedKubo(ctx context.Context, cfg *config.Config, layout bundle.Lay
 	plan, reason := planManagedKubo(cfg, layout, dataPath)
 	if plan == nil {
 		logf("Kubo not managed by this node: %s", reason)
+		// An unmanaged Kubo still has to identify as an SDN node — that is how
+		// peers find us on Kademlia, and it is the whole reason the supervised
+		// child gets Version.AgentSuffix. Nothing was doing this for the
+		// operator-run case, so those boxes announced a bare "kubo/<version>".
+		ensureExternalKuboIdentity(ctx, cfg, logf)
 		return nil, nil
 	}
 	sup, err := kubo.New(kubo.Config{
@@ -114,4 +120,30 @@ func managedKuboDataPath(cfg *config.Config) string {
 		return filepath.Dir(storagePath)
 	}
 	return "."
+}
+
+// ensureExternalKuboIdentity makes an operator-run Kubo identify as an SDN node.
+//
+// Never fatal: this node's own libp2p host is already correct, and refusing to
+// boot because a neighbouring daemon has the wrong user-agent would trade a
+// discovery problem for an outage. But it is never silent either — an
+// unidentified IPFS peer is network-visible, and the operator gets the exact
+// command when we cannot fix it ourselves.
+func ensureExternalKuboIdentity(ctx context.Context, cfg *config.Config, logf func(string, ...any)) {
+	apiURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL)
+	if apiURL == "" {
+		return
+	}
+	want := versioninfo.AgentVersion
+	status, err := kubo.EnsureExternalAgentSuffix(ctx, apiURL, want)
+	switch {
+	case err != nil:
+		logf("Kubo at %s could not be checked for its SDN identity (%v). If it does not present %q on identify, peers cannot tell it is an SDN node: run `ipfs config Version.AgentSuffix %s` against it and restart it.", apiURL, err, want, want)
+	case status.IsSDN:
+		logf("Kubo at %s identifies as an SDN node (%s)", apiURL, status.AgentVersion)
+	case status.RestartNeeded:
+		logf("Kubo at %s presents %q, which peers do NOT recognise as an SDN node. Version.AgentSuffix is now set to %s; that Kubo must be RESTARTED for it to take effect (Kubo reads the suffix once, at daemon start).", apiURL, status.AgentVersion, want)
+	default:
+		logf("Kubo at %s presents %q, which peers do NOT recognise as an SDN node. Run `ipfs config Version.AgentSuffix %s` against it and restart it.", apiURL, status.AgentVersion, want)
+	}
 }
