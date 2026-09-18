@@ -49,7 +49,35 @@ and `AgentVersion = AgentName + "/" + Version()` = `spacedatanetwork/1.0.5`
 (`internal/versioninfo/runtime.go`), enforced by `runtime_test.go`. The
 2026-07-28 owner rule is already honored by the binary that actually ships.
 
-### The real finding: a second, unaccounted public IPFS peer per box
+### A second IPFS peer per box — CLAIMED, then narrowed under review
+
+> **Correction, 2026-09-18.** This section originally asserted, as the audit's
+> headline, that *every* SDN box runs a second unaccounted public IPFS peer. An
+> adversarial review of the audit did not sustain that, and two facts in this
+> repo cut against it. The mechanism below is real; its SCOPE was overstated.
+>
+> 1. **Port collision.** Stock Kubo defaults `Addresses.Swarm` to
+>    `/ip4/0.0.0.0/tcp/4001` + `/udp/4001/quic-v1`, and the `server` profile
+>    does not change that. But sdn-server's OWN libp2p host defaults to the
+>    SAME `0.0.0.0:4001` (`internal/config/config.go`), as does
+>    `deployment/celestrak/config.yaml`. Two processes cannot both bind it, and
+>    `startManagedKubo` runs BEFORE `node.New`. So the steady state described
+>    here cannot be the common case: either the child is not running, or
+>    sdn-server's own swarm listeners are failing to bind — which would be a
+>    larger defect than this one and is not evidenced either.
+> 2. **Gated off where we actually deploy.** `planManagedKubo` returns nil when
+>    `admin.ipfs_api_url` is set to anything other than
+>    `config.DefaultIPFSAPIURL` ("http://127.0.0.1:5001"), and the one
+>    production config in this repo — `deployment/celestrak/config.yaml` — sets
+>    `http://127.0.0.1:5002`. No managed child starts on that host at all.
+>
+> What survives: WHEN a managed child does run (a bundle install on default
+> config), it is a stock Kubo with its own peer identity. What does not
+> survive: "every SDN box". Neither the port question nor the real fleet
+> topology was measured before this was written, and a security claim in a
+> document carries further than one in a chat message.
+
+### The mechanism, where a managed child does run
 
 `sdn-server/cmd/spacedatanetwork/kubo_managed.go` starts
 `internal/kubo.Supervisor`, which runs the bundled **stock** `ipfs` as a child:
