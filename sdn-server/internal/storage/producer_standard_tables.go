@@ -189,13 +189,21 @@ func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schem
 		log.Warnf("Routed mirror: read source for %s: %v", schemaName, err)
 		return nil
 	}
+	// supersede_key IS READ AS A BLOB, NOT AS TEXT, because the key can contain a
+	// NUL and a TEXT value comes back to Go truncated at the first one.
+	// recordSupersedeKey has always produced "uri:<CATALOG_URI>\x00<CATALOG_OBJECT_ID>"
+	// for a $CAT record carrying both fields, so this readback silently dropped
+	// the object id and mirrored the row under a key naming only the catalog:
+	// every object in one catalog collapsing to a single key, which supersede
+	// then treats as the same object. Measured on the shipped code — computed
+	// 36 bytes, TEXT readback 28, CAST(... AS BLOB) readback 36.
 	var (
 		timestamp    int64
 		stored       []byte
-		supersedeKey sql.NullString
+		supersedeKey []byte
 	)
 	err = exec.QueryRow(
-		fmt.Sprintf(`SELECT timestamp, data, supersede_key FROM %s WHERE cid = ?1`, readSource),
+		fmt.Sprintf(`SELECT timestamp, data, CAST(supersede_key AS BLOB) FROM %s WHERE cid = ?1`, readSource),
 		cid,
 	).Scan(&timestamp, &stored, &supersedeKey)
 	if err != nil {
@@ -207,12 +215,12 @@ func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schem
 		log.Warnf("Routed mirror: ensure (producer, standard) table for %s/%s: %v", peerID, schemaName, err)
 		return nil
 	}
-	superseded, err := s.supersedeInProducerTableTx(exec, schemaName, tableName, supersedeKey.String, cid)
+	superseded, err := s.supersedeInProducerTableTx(exec, schemaName, tableName, string(supersedeKey), cid)
 	if err != nil {
 		log.Warnf("Routed mirror: supersede in %s for %s: %v", tableName, cid[:16]+"...", err)
 		return nil
 	}
-	if err := insertSchemaMetadata(exec, tableName, storedRecord{cid: cid, peerID: peerID, timestamp: timestamp, data: stored, signature: signature, createdAt: timestamp, supersedeKey: supersedeKey.String}); err != nil {
+	if err := insertSchemaMetadata(exec, tableName, storedRecord{cid: cid, peerID: peerID, timestamp: timestamp, data: stored, signature: signature, createdAt: timestamp, supersedeKey: string(supersedeKey)}); err != nil {
 		log.Warnf("Routed mirror: insert into %s for %s: %v", tableName, cid[:16]+"...", err)
 	}
 	return superseded
