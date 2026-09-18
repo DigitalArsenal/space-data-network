@@ -31,10 +31,19 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
   # Cancel a superseded PR push. NEVER cancel main: a gate that is always
   # cancelled can never produce the green record that makes it a gate.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  #
+  # This used to be expressed as `cancel-in-progress: ${{ github.event_name ==
+  # 'pull_request' }}` on a ref-keyed group, and main runs were cancelled
+  # anyway — 4ab9ba0ab's run sat queued behind f27562864's and was cancelled
+  # the moment ceb2fe0fd pushed, so that commit has no CI record at all.
+  # The protection is in the GROUP instead, where no expression has to be
+  # read as a boolean: a PR keys on its ref, so a new push to it supersedes
+  # the old one; anything else keys on its own run id, which is unique, so
+  # there is never a second member to cancel.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
