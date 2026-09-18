@@ -55,7 +55,7 @@ import (
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/multiformats/go-multiaddr"
 
-	"github.com/spacedatanetwork/sdn-server/internal/node"
+	"github.com/spacedatanetwork/sdn-server/internal/libp2ptransports"
 )
 
 // The SDN request/response protocol IDs a browser client dials. Kept as literals
@@ -92,9 +92,11 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// node.HostTransportOptions is the node's OWN transport list, not a copy of
-	// it. A browser interop test that registers its own transports proves only
-	// that the test's transports work.
+	// libp2ptransports.Options is the node's OWN transport list, not a copy of
+	// it (internal/node re-exports this very function). A browser interop test
+	// that registers its own transports proves only that the test's transports
+	// work. The list lives in a leaf package so THIS fixture builds with a
+	// plain `go build`, with no WasmEdge headers on the machine.
 	opts := append([]libp2p.Option{
 		libp2p.ListenAddrStrings(
 			"/ip4/127.0.0.1/tcp/0/ws",
@@ -109,7 +111,7 @@ func run() error {
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.DisableRelay(),
-	}, node.HostTransportOptions(nil)...)
+	}, libp2ptransports.Options(nil)...)
 
 	h, err := libp2p.New(opts...)
 	if err != nil {
