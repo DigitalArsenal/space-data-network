@@ -163,7 +163,6 @@ run_preflight() {
   step "Dependency-drift check suites"
   (cd "$ROOT" && node --test \
     scripts/check-sdn-js-dependency-layering.test.mjs \
-    scripts/check-kubo-lockstep.test.mjs \
     scripts/check-npm-audit.test.mjs \
     scripts/check-govulncheck.test.mjs)
   pass "dependency-drift check suites"

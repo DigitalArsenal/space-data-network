@@ -142,12 +142,29 @@ jobs:
       - name: Gate high and critical advisories
         run: node scripts/check-npm-audit.mjs
 
-      - name: Capture audit report
+      # THE GATE ABOVE SCORES THE PRODUCTION CLOSURE ONLY, AND THAT IS A
+      # NARROWER SET THAN THE LANE IT REPLACED SCORED. Measured on this tree:
+      # --omit=dev is 0 critical + 7 high, the full tree is 1 critical + 13
+      # high. Gating on the production closure is the right call for a
+      # PUBLISHED package — it is what a consumer installs — but the difference
+      # must not become invisible, which is exactly what would happen if the
+      # only audit in CI were the narrowed one. No other lane audits dev
+      # dependencies.
+      #
+      # So the full tree is audited too, reported in the log and uploaded, and
+      # deliberately NOT blocking: a vitest advisory is a real thing to fix on
+      # its own schedule, not a reason to stop shipping the library.
+      - name: Capture audit report (production closure, and the full tree)
         if: always()
         working-directory: sdn-js
         run: |
           npm audit --omit=dev --json > npm-audit-report.json 2>&1 || true
           npm audit --omit=dev > npm-audit-report.txt 2>&1 || true
+          npm audit --json > npm-audit-report-full.json 2>&1 || true
+          npm audit > npm-audit-report-full.txt 2>&1 || true
+          echo "::group::dev-tree advisories NOT covered by the gate"
+          node ../scripts/check-npm-audit.mjs --report npm-audit-report-full.json || true
+          echo "::endgroup::"
 
       - name: Upload npm audit report
         uses: actions/upload-artifact@v4
@@ -157,6 +174,8 @@ jobs:
           path: |
             sdn-js/npm-audit-report.txt
             sdn-js/npm-audit-report.json
+            sdn-js/npm-audit-report-full.txt
+            sdn-js/npm-audit-report-full.json
           retention-days: 30
 
   dependency-layering:
@@ -177,15 +196,17 @@ jobs:
       - name: sdn-js helia/libp2p layering
         run: node scripts/check-sdn-js-dependency-layering.mjs
 
-      # sdn-server and the vendored kubo tree are separate Go modules kept on the
-      # same libp2p by hand. Both keep compiling when they drift apart.
-      - name: sdn-server / kubo lockstep
-        run: node scripts/check-kubo-lockstep.mjs
+      # There used to be a kubo-lockstep check here, comparing the vendored
+      # kubo/go.mod against sdn-server/go.mod. The fork is deleted, so it has no
+      # subject left. The CONCERN it existed for did not go away, it moved: this
+      # node's Go libp2p stack must still interoperate with the STOCK upstream
+      # Kubo we ship (suite.versions.json kubo.shipped), which we no longer pin
+      # by editing. That is a different check against a different reference and
+      # nothing writes it yet — see sdn-server/docs/kubo-fork-audit.md.
 
       - name: Check suites
         run: |
           node --test scripts/check-sdn-js-dependency-layering.test.mjs
-          node --test scripts/check-kubo-lockstep.test.mjs
           node --test scripts/check-npm-audit.test.mjs
           node --test scripts/check-govulncheck.test.mjs
 
