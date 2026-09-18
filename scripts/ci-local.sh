@@ -2,17 +2,40 @@
 # Canonical local CI runner.
 # This script is intentionally aligned with .github/workflows/ci.yml.
 #
+# ONE SCRIPT, TWO CALLERS. A developer runs `quick` (the pre-push gate); CI
+# runs the same modes, one per job. Splitting CI into parallel jobs is a
+# job-shape change only — every check still lives here, and no check lives in
+# the workflow file.
+#
+#   .github/workflows/ci.yml job   modes it runs
+#   ----------------------------   ---------------------------
+#   preflight                      preflight, encryption
+#   go-quick                       go
+#   go-heavy                       heavy
+#   go-builds                      builds
+#   js                             js, delivery, demo
+#   kubo-bolt-on                   kubo
+#
+# WHERE THEY DIVERGE, AND WHY. `quick` is all of the above except `heavy` —
+# internal/storage is ~5 minutes on its own and a pre-push gate should not
+# carry it, which is exactly why it is a separate CI job rather than a dropped
+# check. `race` is the other way round: local/`full` only, no CI job, as
+# before. `full` is the union of everything.
+#
 # Usage:
-#   ./scripts/ci-local.sh quick     # default: preflight + go (minus heavy packages) + sdn-js + module-delivery + plugin-demo
-#   ./scripts/ci-local.sh heavy     # the heavy Go packages (internal/storage) with a 60-minute budget
-#   ./scripts/ci-local.sh full      # quick + heavy + race + encryption tests
-#   ./scripts/ci-local.sh go        # fast go checks only
-#   ./scripts/ci-local.sh race      # CI-only/full race suite
-#   ./scripts/ci-local.sh js        # sdn-js checks only
-#   ./scripts/ci-local.sh kubo-pin  # the shipped Kubo version pin only
-#   ./scripts/ci-local.sh delivery  # focused module-delivery compatibility checks
-#   ./scripts/ci-local.sh plugin    # legacy alias for delivery
-#   ./scripts/ci-local.sh demo      # plugin-demo integration tests only
+#   ./scripts/ci-local.sh quick      # default: everything CI runs except the heavy lane
+#   ./scripts/ci-local.sh heavy      # the heavy Go packages (internal/storage) with the budget they need
+#   ./scripts/ci-local.sh full       # quick + heavy + race
+#   ./scripts/ci-local.sh preflight  # OSS preflight + gofmt only (no toolchain needed)
+#   ./scripts/ci-local.sh go         # fast go checks only
+#   ./scripts/ci-local.sh builds     # node + edge-relay builds only
+#   ./scripts/ci-local.sh race       # CI-only/full race suite
+#   ./scripts/ci-local.sh js         # sdn-js checks only
+#   ./scripts/ci-local.sh kubo-pin   # the shipped Kubo version pin only
+#   ./scripts/ci-local.sh delivery   # focused module-delivery compatibility checks
+#   ./scripts/ci-local.sh plugin     # legacy alias for delivery
+#   ./scripts/ci-local.sh demo       # plugin-demo integration tests only
+#   ./scripts/ci-local.sh encryption # tests/encryption/go
 
 set -euo pipefail
 
@@ -185,7 +208,61 @@ run_kubo_pin() {
   pass "kubo pin"
 }
 
+# THE ENGINE MUST NOT RUN INTERPRETED.
+#
+# The record store opens the FlatSQL engine with WithPrecompiledAOTCache
+# (internal/storage/flatsql_boot_state.go): it LOADS an AOT artifact when one
+# is in os.UserCacheDir()/flatsql-aot and NEVER compiles on a miss
+# (internal/flatsqlrt/aot.go). A checkout that has never prewarmed therefore
+# runs every store-touching test through the INTERPRETER, and the only symptom
+# is slowness — `go test` swallows a passing package's output, so the
+# "FlatSQL engine mode: INTERPRETED" warning never reaches the log.
+#
+# That was the whole of the CI blowup, and it is the same tax on a fresh
+# `git clone`. Measured here 2026-09-18, ONE prebuilt test binary run twice,
+# warm cache vs an empty HOME — both runs PASS, the only difference is time:
+# internal/directory 8.21s -> 90.08s (11.0x), internal/assetpin 3.56s ->
+# 18.80s (5.3x). CI ran cold on every commit: 105.8 minutes, with
+# cmd/spacedatanetwork, internal/api, internal/storefront and internal/storage
+# all hitting their go-test timeout.
+#
+# So every lane that runs Go tests prewarms first and ASSERTS the artifact is
+# on disk. The assert is the point, not the prewarm: a prewarm that resolved a
+# different HOME than the test process leaves exactly the silent
+# interpretation this exists to kill — how host-01 lost 8 hours in 2026-09.
+# Cheap to be certain: 0.25s when the artifact is already there, ~49s to
+# compile it from scratch.
+prewarm_engine_aot() {
+  step "FlatSQL engine AOT artifact (prewarm + assert)"
+
+  local bin="$ROOT/.ci-artifacts/spacedatanetwork-prewarm"
+  mkdir -p "$ROOT/.ci-artifacts"
+  "$ROOT/scripts/go-with-wasmedge.sh" build -o "$bin" ./cmd/spacedatanetwork
+
+  local out artifact
+  if ! out="$("$bin" prewarm-aot 2>&1)"; then
+    printf '%s\n' "$out"
+    fail "prewarm-aot failed — the linked libwasmedge has no AOT (LLVM) compiler, or compilation failed"
+  fi
+  printf '%s\n' "$out" | grep -v '^lld: warning' || true
+
+  artifact="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*flatsql engine: \(.*\) (.*)$/\1/p' | tail -n1)"
+  if [[ -z "$artifact" ]]; then
+    fail "prewarm-aot printed no engine artifact path; the Go suites would run INTERPRETED"
+  fi
+  if [[ ! -s "$artifact" ]]; then
+    fail "prewarm-aot reported $artifact but nothing is there; the Go suites would run INTERPRETED"
+  fi
+  pass "flatsql engine AOT artifact: $artifact"
+}
+
+# prepare_go_toolchain [no-aot]
+#   no-aot skips the prewarm for a lane that compiles but never executes the
+#   engine (the build lane), which would otherwise pay for an artifact nothing
+#   reads.
 prepare_go_toolchain() {
+  local aot_mode="${1:-aot}"
+
   prepare_go_wasm_artifacts
 
   step "WasmEdge headers/libs"
@@ -200,13 +277,61 @@ prepare_go_toolchain() {
   step "Go deps"
   "$ROOT/scripts/go-with-wasmedge.sh" mod download
   pass "go mod download"
+
+  if [[ "$aot_mode" != "no-aot" ]]; then
+    prewarm_engine_aot
+  fi
 }
 
-# HEAVY_GO_PACKAGES take longer than the 20-minute per-package budget the
-# quick lane (ci.yml, the pre-push hook) can afford: internal/storage alone
-# exceeded it (.gotest-full.log, 2026-08-30) and made the gate fail every
-# time, so pushes went unguarded. quick runs every other package; heavy runs
-# these with the budget they need (full, and the gauntlet's go tier).
+# Per-package timings for every go-test lane: printed at the end of the lane,
+# and appended to the GitHub step summary when CI exports GITHUB_STEP_SUMMARY.
+# The -timeout budgets below are set FROM this table, and it is what keeps
+# them honest: a package that doubles shows up here long before it starts
+# tripping a timeout, and a lane that starts running INTERPRETED again is a
+# 10x column, not a mystery.
+report_pkg_timings() {
+  local label="$1" log="$2"
+  local table
+  table="$(awk '($1 == "ok" || $1 == "FAIL") && $3 ~ /^[0-9.]+s$/ {
+      d = $3; sub(/s$/, "", d)
+      pkg = $2; sub("github.com/spacedatanetwork/sdn-server/", "", pkg)
+      printf "%s\t%s\t%s\n", d, $1, pkg
+    }' "$log" | sort -rn)"
+  [[ -n "$table" ]] || return 0
+  {
+    printf '\n### go test timings (%s)\n\n' "$label"
+    printf '| seconds | result | package |\n| ---: | :--- | :--- |\n'
+    printf '%s\n' "$table" | awk -F'\t' '{ printf "| %s | %s | %s |\n", $1, $2, $3 }'
+    printf '%s\n' "$table" | awk -F'\t' '{ t += $1; n++ } END { printf "| **%.1f** | **total** | **%d packages** |\n", t, n }'
+  } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+}
+
+# go test, keeping the lane's log so report_pkg_timings can read it. The exit
+# status is preserved: the table must be produced for a FAILING lane too,
+# which is exactly when someone needs to know what ran long.
+go_test_with_timings() {
+  local label="$1"; shift
+  local log="$ROOT/.ci-artifacts/gotest-${label}.log"
+  local rc=0
+  mkdir -p "$ROOT/.ci-artifacts"
+  set +e
+  "$ROOT/scripts/go-with-wasmedge.sh" test "$@" 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+  set -e
+  report_pkg_timings "$label" "$log"
+  return "$rc"
+}
+
+# HEAVY_GO_PACKAGES are split out of the quick lane. The original reason was
+# that internal/storage blew the quick lane's per-package budget
+# (.gotest-full.log, 2026-08-30) and made the gate fail every time, so pushes
+# went unguarded — but that was the INTERPRETED engine talking: warm, the
+# whole package is 296.6s, inside the quick budget.
+#
+# It stays separate for the reason that survives the fix: it is the single
+# longest package in the repo, and on CI the two lanes are parallel jobs, so
+# pulling it out is ~9 minutes off the critical path rather than a check
+# anybody skips. Locally `quick` leaves it out and `full` includes it.
 HEAVY_GO_PACKAGES="github.com/spacedatanetwork/sdn-server/internal/storage"
 
 heavy_pkg_filter() {
@@ -216,6 +341,38 @@ heavy_pkg_filter() {
   done
   echo "$filter"
 }
+
+# BUDGETS, SET FROM MEASUREMENT — see report_pkg_timings.
+#
+# `go test -timeout` is PER TEST BINARY, i.e. per package, not per lane. The
+# old 20m/90m pair was sized around the INTERPRETED engine and means nothing
+# now. Everything below was measured on 2026-09-18, on this repo at 050e58da7:
+#
+#   quick lane, warm, -p=1 ... 427.6s of test time (548s wall) on one run,
+#                              492.5s on a second; the difference is almost
+#                              all internal/flatsqlrt (5.8s vs 58.2s), which
+#                              compiles its OWN test AOT artifact on a miss
+#                              and so self-heals instead of staying slow.
+#     largest: internal/api 138.3s / 148.3s, internal/storefront 67.3s /
+#              74.7s, cmd/spacedatanetwork 70.0s / 52.0s
+#   heavy lane, warm ......... internal/storage 296.59s
+#
+# A GitHub ubuntu-latest runner is slower than this box, and the factor is
+# measured rather than assumed — same package, INTERPRETED on both sides, so
+# only the hardware differs: internal/directory 170.409s on CI (run
+# 35310122091) against 90.08s here = 1.89x; internal/assetpin 34.716s against
+# 18.80s here = 1.85x.
+#
+# So the worst quick package projects to 148.3s x 1.9 = ~282s of runner time
+# and the heavy lane to 296.6s x 1.9 = ~564s. Budgets are ~2.1x and ~2.7x of
+# that — enough that ordinary runner variance never trips them, small enough
+# that a package which has genuinely broken shows up in minutes instead of
+# after an hour. The timings table says which package if it ever does.
+QUICK_GO_TEST_TIMEOUT="10m"
+HEAVY_GO_TEST_TIMEOUT="25m"
+# Unchanged at 30m and NOT measured: -race is local/`full` only, no CI lane
+# runs it, and I have no timing for it. Do not treat this one as sized.
+RACE_GO_TEST_TIMEOUT="30m"
 
 run_gofmt() {
   step "gofmt (hand-written Go; generated bindings excluded)"
@@ -236,7 +393,8 @@ run_go() {
   local pkgs
   pkgs=$("$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Ev "$(heavy_pkg_filter)")
   # shellcheck disable=SC2086
-  "$ROOT/scripts/go-with-wasmedge.sh" test -p=1 -timeout=20m -count=1 $pkgs
+  go_test_with_timings quick -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
+    || fail "go test (quick)"
   pass "go test (quick)"
 }
 
@@ -245,13 +403,8 @@ run_go_heavy() {
 
   step "Go tests (heavy: $HEAVY_GO_PACKAGES)"
   # shellcheck disable=SC2086
-  # 90m, sized off a measurement rather than a guess. internal/storage runs
-  # -p=1 (serial), so this is single-thread and I/O bound and a CI runner is
-  # simply slower than a dev box: the suite takes 1240s here under WAL, and it
-  # could not finish in 3600s under the TRUNCATE journal it used before. A 60m
-  # budget left roughly 1.4x headroom over a 2x-slower runner, which is not
-  # enough for a gate that is supposed to stay green.
-  "$ROOT/scripts/go-with-wasmedge.sh" test -p=1 -timeout=90m -count=1 $HEAVY_GO_PACKAGES
+  go_test_with_timings heavy -p=1 -timeout="$HEAVY_GO_TEST_TIMEOUT" -count=1 $HEAVY_GO_PACKAGES \
+    || fail "go test (heavy)"
   pass "go test (heavy)"
 }
 
@@ -259,12 +412,14 @@ run_go_race() {
   prepare_go_toolchain
 
   step "Go tests (race)"
-  "$ROOT/scripts/go-with-wasmedge.sh" test -race -p=1 -timeout=30m -count=1 ./...
+  go_test_with_timings race -race -p=1 -timeout="$RACE_GO_TEST_TIMEOUT" -count=1 ./... \
+    || fail "go test -race"
   pass "go test -race"
 }
 
 run_go_builds() {
-  prepare_go_toolchain
+  # no-aot: this lane compiles, it never runs the engine.
+  prepare_go_toolchain no-aot
 
   step "Go build (full node)"
   "$ROOT/scripts/go-with-wasmedge.sh" build -o /tmp/spacedatanetwork ./cmd/spacedatanetwork
@@ -305,9 +460,12 @@ run_sdn_js() {
     echo "Skipping sdn-js lint (no ESLint config found in sdn-js)"
   fi
 
-  step "Upstream IPFS mirror check"
-  (cd "$ROOT" && ./scripts/update-upstream-ipfs.sh --check)
-  pass "upstream ipfs mirror check"
+  # REMOVED: "Upstream IPFS mirror check". It ran
+  # scripts/update-upstream-ipfs.sh --check, which since the 2026-07-24 UI
+  # clean slate prints "nothing to verify" and exits 0 UNCONDITIONALLY — a
+  # green check that checks nothing, which is worse than no check because it
+  # reads like coverage. If the mirror subtrees need verifying again, give
+  # that script a real --check and put it back.
 
   step "sdn-js tests"
   (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm test -- --run)
@@ -330,6 +488,13 @@ run_module_delivery_compat() {
 }
 
 run_plugin_demo() {
+  # The demo boots a REAL daemon and gives it 30 seconds to answer
+  # /api/node/info (plugin-demo/tests/helpers/test-server.mjs:242). A daemon
+  # that starts on a cold AOT cache compiles the engine artifact first —
+  # ~49s here, longer on a runner — and would blow that window before serving
+  # anything. Prewarm first, and the boot is a few hundred milliseconds.
+  prepare_go_toolchain
+
   step "plugin-demo install"
   ensure_npm_deps "$ROOT/plugin-demo/tests"
   pass "plugin-demo npm install"
@@ -344,7 +509,6 @@ run_plugin_demo() {
   node "$ROOT/plugin-demo/tests/integration.test.mjs"
   pass "plugin-demo integration tests"
 }
-
 run_encryption() {
   if [[ ! -d "$ROOT/tests/encryption/go" ]]; then
     echo "Encryption tests directory missing, skipping"
@@ -359,8 +523,12 @@ run_encryption() {
 case "$MODE" in
   quick)
     run_preflight
+    # run_kubo_pin stays in quick: it is the ONLY caller, and the split below
+    # enumerates leaf modes, so dropping it here would silently retire the
+    # shipped-Kubo pin gate the moment this landed.
     run_kubo_pin
-    run_go
+    run_encryption
+    run_go # runs gofmt too, which is why `quick` does not repeat it
     run_go_builds
     run_sdn_js
     run_module_delivery_compat
@@ -378,11 +546,18 @@ case "$MODE" in
     run_plugin_demo
     run_encryption
     ;;
+  preflight)
+    run_preflight
+    run_gofmt
+    ;;
   go)
     run_go
     ;;
   heavy|go-heavy)
     run_go_heavy
+    ;;
+  builds|go-builds)
+    run_go_builds
     ;;
   race)
     run_go_race
@@ -399,8 +574,11 @@ case "$MODE" in
   demo|plugin-demo)
     run_plugin_demo
     ;;
+  encryption)
+    run_encryption
+    ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|go|heavy|race|js|kubo-pin|delivery|plugin|demo]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|kubo-pin|delivery|plugin|demo|encryption]${NC}"
     exit 1
     ;;
 esac
