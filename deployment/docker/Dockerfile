@@ -74,10 +74,16 @@ RUN set -eux; \
 
 FROM debian:bookworm-slim
 
+# NO libsqlite3-0. It is a leftover from the go-sqlite era the FlatSQL
+# migration ended: the record store is the WASM engine now, nothing in the
+# image links libsqlite3 (verified against the published v1.0.5-beta.69 image
+# — `ldd` over every executable found none, and apt-cache rdepends reported no
+# reverse dependency), and the daemon itself needs only libm and libc.
+# curl and wget stay: they are how an operator probes a node from inside the
+# container.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    libsqlite3-0 \
     wget \
   && rm -rf /var/lib/apt/lists/*
 
