@@ -1095,6 +1095,15 @@ jobs:
         run: |
           mkdir -p dist/desktop
           find desktop/dist -maxdepth 1 -type f -exec cp {} dist/desktop/ \;
+          # The two macOS legs run on different runners and each writes a
+          # latest-mac.yml listing only its own architecture, so the release
+          # job's merge-multiple download let one overwrite the other —
+          # v1.0.5-beta.69 shipped the x64 one and would have updated every
+          # Apple Silicon install onto the Intel build. Name them apart here;
+          # scripts/merge-mac-update-feed.mjs puts them back together.
+          if [ -f dist/desktop/latest-mac.yml ]; then
+            mv dist/desktop/latest-mac.yml "dist/desktop/latest-mac-${{ matrix.target_arch }}.yml"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.target_os }}-${{ matrix.target_arch }}
@@ -1308,6 +1317,8 @@ jobs:
             .map((file) => JSON.parse(readFileSync(join(dir, file), 'utf8')));
           writeFileSync('dist/container-digests.json', `${JSON.stringify({ images }, null, 2)}\n`);
           NODE
+      - name: Merge the macOS update feeds into one latest-mac.yml
+        run: node scripts/merge-mac-update-feed.mjs dist/desktop
       - name: Assemble beta release artifacts
         env:
           VERSION: ${{ needs.beta-version.outputs.package_version }}
