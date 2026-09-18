@@ -20,12 +20,20 @@
 //
 // Usage:
 //
-//	go run ./cmd/js-interop-host            # listens on 127.0.0.1 ws + tcp
+//	go run ./cmd/js-interop-host            # listens on 127.0.0.1, every
+//	                                        # transport the node offers
 //
 // Stdout, first line, exactly one JSON object:
 //
-//	{"peerId":"12D3Koo...","addrs":[...],"wsAddr":"...","tcpAddr":"..."}
+//	{"peerId":"12D3Koo...","addrs":[...],"wsAddr":"...","tcpAddr":"...",
+//	 "webTransportAddr":"...","webRtcDirectAddr":"..."}
 //
+// The webtransport and webrtc-direct addresses are the DIRECT ones — a browser
+// dials them with no relay and no reverse proxy, which is how a browser client
+// is supposed to reach an SDN node. They carry /certhash components because
+// both transports authenticate a self-signed certificate by hash rather than
+// through a CA, and those components are what make a browser accept the
+// connection.
 // The process runs until stdin reaches EOF or it is signalled.
 package main
 
@@ -46,6 +54,8 @@ import (
 	noise "github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/multiformats/go-multiaddr"
+
+	"github.com/spacedatanetwork/sdn-server/internal/node"
 )
 
 // The SDN request/response protocol IDs a browser client dials. Kept as literals
@@ -63,10 +73,12 @@ const (
 const replyPrefix = "go-libp2p:"
 
 type handshake struct {
-	PeerID  string   `json:"peerId"`
-	Addrs   []string `json:"addrs"`
-	WSAddr  string   `json:"wsAddr"`
-	TCPAddr string   `json:"tcpAddr"`
+	PeerID           string   `json:"peerId"`
+	Addrs            []string `json:"addrs"`
+	WSAddr           string   `json:"wsAddr"`
+	TCPAddr          string   `json:"tcpAddr"`
+	WebTransportAddr string   `json:"webTransportAddr"`
+	WebRtcDirectAddr string   `json:"webRtcDirectAddr"`
 }
 
 func main() {
@@ -80,10 +92,16 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	h, err := libp2p.New(
+	// node.HostTransportOptions is the node's OWN transport list, not a copy of
+	// it. A browser interop test that registers its own transports proves only
+	// that the test's transports work.
+	opts := append([]libp2p.Option{
 		libp2p.ListenAddrStrings(
 			"/ip4/127.0.0.1/tcp/0/ws",
 			"/ip4/127.0.0.1/tcp/0",
+			// The two transports a browser can dial DIRECTLY.
+			"/ip4/127.0.0.1/udp/0/quic-v1/webtransport",
+			"/ip4/127.0.0.1/udp/0/webrtc-direct",
 		),
 		// Mirror sdn-server/internal/node/node.go: offer BOTH tls and noise and
 		// let the dialer choose, so the JS client's noise-only stack has to
@@ -91,7 +109,9 @@ func run() error {
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.DisableRelay(),
-	)
+	}, node.HostTransportOptions(nil)...)
+
+	h, err := libp2p.New(opts...)
 	if err != nil {
 		return fmt.Errorf("create host: %w", err)
 	}
@@ -142,9 +162,30 @@ func describe(h host.Host) (handshake, error) {
 			}
 			continue
 		}
+		if strings.Contains(addr.String(), "/webtransport") {
+			if hs.WebTransportAddr == "" {
+				hs.WebTransportAddr = full
+			}
+			continue
+		}
+		if strings.Contains(addr.String(), "/webrtc-direct") {
+			if hs.WebRtcDirectAddr == "" {
+				hs.WebRtcDirectAddr = full
+			}
+			continue
+		}
 		if hs.TCPAddr == "" && isPlainTCP(addr) {
 			hs.TCPAddr = full
 		}
+	}
+	// Both DIRECT addresses are required, not best-effort: a browser that
+	// cannot dial them has no unrelayed path to a node, and a fixture that
+	// quietly omits one turns its interop test into a no-op.
+	if hs.WebTransportAddr == "" {
+		return hs, fmt.Errorf("no webtransport listen address; got %v", hs.Addrs)
+	}
+	if hs.WebRtcDirectAddr == "" {
+		return hs, fmt.Errorf("no webrtc-direct listen address; got %v", hs.Addrs)
 	}
 	if hs.WSAddr == "" {
 		return hs, fmt.Errorf("no websocket listen address; got %v", hs.Addrs)

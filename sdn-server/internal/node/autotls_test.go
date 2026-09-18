@@ -133,7 +133,7 @@ func TestHostTransportsBindAutoTLSAddrOnlyWithTLSConfig(t *testing.T) {
 	}
 	host, err := libp2p.New(append([]libp2p.Option{
 		libp2p.ListenAddrStrings(listen...),
-	}, hostTransportOptions(mgr.TLSConfig())...)...)
+	}, HostTransportOptions(mgr.TLSConfig())...)...)
 	if err != nil {
 		t.Fatalf("libp2p.New with autotls transports: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestHostTransportsBindAutoTLSAddrOnlyWithTLSConfig(t *testing.T) {
 	// plaintext on a name browsers will treat as TLS.
 	plain, err := libp2p.New(append([]libp2p.Option{
 		libp2p.ListenAddrStrings(listen...),
-	}, hostTransportOptions(nil)...)...)
+	}, HostTransportOptions(nil)...)...)
 	if err == nil {
 		defer plain.Close()
 		for _, addr := range plain.Addrs() {
@@ -167,10 +167,10 @@ func TestHostTransportsBindAutoTLSAddrOnlyWithTLSConfig(t *testing.T) {
 // Guard against a future refactor handing the transport an empty tls.Config
 // (which would serve a certificate-less handshake) instead of the manager's.
 func TestHostTransportOptionsWithoutTLSConfigOmitsSharedListener(t *testing.T) {
-	if got := len(hostTransportOptions(nil)); got != 5 {
+	if got := len(HostTransportOptions(nil)); got != 5 {
 		t.Fatalf("transport option count without autotls = %d, want 5 (no ShareTCPListener)", got)
 	}
-	if got := len(hostTransportOptions(&tls.Config{})); got != 6 {
+	if got := len(HostTransportOptions(&tls.Config{})); got != 6 {
 		t.Fatalf("transport option count with autotls = %d, want 6 (ShareTCPListener added)", got)
 	}
 }
