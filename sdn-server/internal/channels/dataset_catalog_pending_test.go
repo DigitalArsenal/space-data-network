@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -220,5 +221,114 @@ func TestPendingDatasetAnnouncementRejectsOutOfBoundsInput(t *testing.T) {
 	}
 	if err := RememberPendingDatasetAnnouncement(nil, "publisher-a", announcementBytes(1), now); err == nil {
 		t.Fatal("a nil store was accepted")
+	}
+}
+
+// Concurrent parks must not lose each other's announcements.
+//
+// This lane is the ONE writer of its directory that is deliberately not
+// serialized: node.go calls it exactly at the `!datasetCatalogMu.TryLock()`
+// skip, which means another announcement goroutine is already in the path. So
+// concurrency is not an exotic case here — it is the only case the lane exists
+// for.
+//
+// The reaper used to delete any file carrying the temp prefix, and in-flight
+// writes lived beside the finished ones, so two concurrent parks removed each
+// other's half-written files. node.go swallows the resulting ENOENT at Debugf,
+// which made the loss invisible: the lane silently dropped exactly the
+// announcements it was built to preserve. In-flight writes now live in their
+// own directory that the reaper never reads.
+//
+// None of the lane's other tests run concurrently, which is why this was missed.
+func TestConcurrentPendingParksDoNotReapEachOther(t *testing.T) {
+	store, dir := pendingStore(t)
+	defer store.Close()
+
+	const parkers = 24
+	now := time.Now()
+	pnm := announcementBytes(1)
+
+	var wg sync.WaitGroup
+	errs := make([]error, parkers)
+	start := make(chan struct{})
+	for i := 0; i < parkers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = RememberPendingDatasetAnnouncement(store, fmt.Sprintf("publisher-%02d", i), pnm, now)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("park %d: %v", i, err)
+		}
+	}
+
+	entries, err := ReadPendingDatasetAnnouncements(store, now)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(entries) != parkers {
+		t.Fatalf("parked %d announcements concurrently but only %d survived — concurrent writers are reaping each other (files on disk: %d)",
+			parkers, len(entries), countPendingFiles(t, dir))
+	}
+
+	// Every publisher must be distinctly present: a count that happens to match
+	// while two parks collided on one name would still be a loss.
+	seen := map[string]bool{}
+	for _, e := range entries {
+		seen[e.PeerID] = true
+	}
+	if len(seen) != parkers {
+		t.Fatalf("%d distinct publishers survived out of %d", len(seen), parkers)
+	}
+}
+
+// A park racing a READER must also survive: ReadPendingDatasetAnnouncements
+// runs the same reaping scan, and it is called from the node's replay path
+// while announcements are still arriving.
+func TestPendingParkSurvivesAConcurrentReader(t *testing.T) {
+	store, _ := pendingStore(t)
+	defer store.Close()
+
+	now := time.Now()
+	pnm := announcementBytes(1)
+
+	stop := make(chan struct{})
+	var reader sync.WaitGroup
+	reader.Add(1)
+	go func() {
+		defer reader.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_, _ = ReadPendingDatasetAnnouncements(store, now)
+			}
+		}
+	}()
+
+	const parks = 50
+	for i := 0; i < parks; i++ {
+		if err := RememberPendingDatasetAnnouncement(store, fmt.Sprintf("racer-%02d", i), pnm, now); err != nil {
+			close(stop)
+			reader.Wait()
+			t.Fatalf("park %d while a reader scans: %v", i, err)
+		}
+	}
+	close(stop)
+	reader.Wait()
+
+	entries, err := ReadPendingDatasetAnnouncements(store, now)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(entries) != parks {
+		t.Fatalf("%d of %d parks survived a concurrent reader — the reader's reaping scan is deleting live writes", len(entries), parks)
 	}
 }
