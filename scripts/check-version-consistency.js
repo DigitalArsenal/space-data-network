@@ -7,6 +7,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { checkKuboPin } = require("./check-kubo-pin");
 
 const REPO_ROOT = path.resolve(__dirname, "..");
 const SUITE_MANIFEST_PATH = path.join(REPO_ROOT, "suite.versions.json");
@@ -499,6 +500,11 @@ if (fcUnique.length <= 1 && Object.keys(fcVersions).length > 0) {
 } else {
   skip("flatc-wasm not found in owned files");
 }
+
+heading("Shipped Kubo version pin");
+// Shared with scripts/check-kubo-pin.js, which ci-local.sh runs on its own so
+// the Kubo gate does not ride on the rest of this script's findings.
+checkKuboPin({ pass, fail, skip });
 
 console.log("\n=======================================");
 console.log(`  Checks run: ${checks}`);

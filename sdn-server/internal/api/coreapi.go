@@ -312,9 +312,16 @@ func (h *CoreAPIHandler) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"agent_version":     versioninfo.AgentVersion,
 		"suite_version":     versioninfo.SuiteVersion,
 		"standards_version": versioninfo.SpaceDataStandardsVersion,
-		// The Kubo fork this node is based on (kubo/version.go, read at
-		// generation time) — the dashboard header renders it beside the
-		// suite version (owner 2026-07-31).
+		// The Kubo this node actually RUNS: the upstream release pinned by
+		// suite.versions.json kubo.shipped, which is the build every release
+		// path downloads and internal/kubo.Supervisor execs.
+		//
+		// It used to be read from kubo/version.go — the in-repo fork — and so
+		// reported "0.40.0-dev" to this dashboard header while the fleet ran
+		// v0.39.0. The fork is linked by no go.mod and built by no CI lane, so
+		// the string named code that had never been in the binary serving it.
+		// scripts/check-kubo-pin.js now holds the pin and this constant
+		// together. See sdn-server/docs/kubo-fork-audit.md.
 		"kubo_version": versioninfo.KuboVersion,
 	})
 }

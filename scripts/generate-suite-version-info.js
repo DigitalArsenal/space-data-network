@@ -9,14 +9,38 @@ const TS_OUTPUT_PATH = path.join(REPO_ROOT, "sdn-js", "src", "version-info.gener
 const GO_OUTPUT_PATH = path.join(REPO_ROOT, "sdn-server", "internal", "versioninfo", "generated.go");
 const CHECK_MODE = process.argv.includes("--check");
 
-// The kubo fork in-repo is the single source of truth for the Kubo version
-// the node is based on (kubo/version.go CurrentVersionNumber) — read it,
-// never duplicate it into the manifest.
-function readKuboVersion() {
-  const src = fs.readFileSync(path.join(REPO_ROOT, "kubo", "version.go"), "utf8");
-  const m = src.match(/CurrentVersionNumber\s*=\s*"([^"]+)"/);
-  if (!m) throw new Error("kubo/version.go: CurrentVersionNumber not found");
-  return m[1];
+// KUBO_PIN_PATTERN is the shipped Kubo release tag: a dist.ipfs.tech tag,
+// `v` included, because that is the literal string the download URL is built
+// from (deployment/release/download-kubo.sh).
+const KUBO_PIN_PATTERN = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+// readKuboVersion returns the Kubo version this suite SHIPS.
+//
+// It used to read kubo/version.go CurrentVersionNumber — the in-repo fork —
+// and that was a lie with a straight face. The fork is not what runs: it is
+// linked by nothing (sdn-server/go.mod has no kubo require), COPYed by no
+// Dockerfile, and built by no CI lane. Every production path downloads a
+// stock upstream build pinned by suite.versions.json kubo.shipped, and the
+// managed daemon (sdn-server/internal/kubo/supervisor.go) execs that binary.
+// So the fork's "0.40.0-dev" was reported as `kubo_version` on
+// /api/v1/version and rendered in the dashboard header while the fleet ran
+// v0.39.0 — two releases apart, on a node that had never contained the code
+// the string named.
+//
+// The pin now lives in the manifest, beside every other shipped version, and
+// scripts/kubo-version.sh reads the SAME field for the release scripts and
+// workflows. check-version-consistency.js asserts the two cannot diverge.
+function readKuboVersion(manifest) {
+  const pin = manifest.kubo?.shipped;
+  if (typeof pin !== "string" || !KUBO_PIN_PATTERN.test(pin.trim())) {
+    throw new Error(
+      "suite.versions.json kubo.shipped must be a Kubo release tag like \"v0.39.0\"",
+    );
+  }
+  // The constants carry the bare version (no leading `v`): that is the shape
+  // /api/v1/version has always published and the shape internal/update's
+  // compareVersions parses.
+  return pin.trim().replace(/^v/, "");
 }
 
 function readManifest() {
@@ -149,7 +173,7 @@ function writeFile(targetPath, content) {
 
 function main() {
   const manifest = readManifest();
-  manifest.kuboVersion = readKuboVersion();
+  manifest.kuboVersion = readKuboVersion(manifest);
   writeFile(TS_OUTPUT_PATH, renderTS(manifest));
   writeFile(GO_OUTPUT_PATH, renderGo(manifest));
 }

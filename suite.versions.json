@@ -7,6 +7,9 @@
     "hdWalletUI": "2.0.29",
     "ipfsWebUI": "4.12.0"
   },
+  "kubo": {
+    "shipped": "v0.39.0"
+  },
   "advertisement": {
     "currentFlag": "spacedatanetwork/1.0.0",
     "supportedFlags": [

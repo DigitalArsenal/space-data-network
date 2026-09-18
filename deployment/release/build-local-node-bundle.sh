@@ -17,7 +17,9 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-KUBO_VERSION="${KUBO_VERSION:-v0.39.0}"
+# suite.versions.json kubo.shipped, never a literal: a pin that lived in five
+# scripts drifted from the version the node REPORTED for months.
+KUBO_VERSION="${KUBO_VERSION:-$("$root/scripts/kubo-version.sh")}"
 WASMEDGE_VERSION="${WASMEDGE_VERSION:-0.16.4}"
 
 os="$(uname -s)"

@@ -9,6 +9,7 @@
 #   ./scripts/ci-local.sh go        # fast go checks only
 #   ./scripts/ci-local.sh race      # CI-only/full race suite
 #   ./scripts/ci-local.sh js        # sdn-js checks only
+#   ./scripts/ci-local.sh kubo-pin  # the shipped Kubo version pin only
 #   ./scripts/ci-local.sh delivery  # focused module-delivery compatibility checks
 #   ./scripts/ci-local.sh plugin    # legacy alias for delivery
 #   ./scripts/ci-local.sh demo      # plugin-demo integration tests only
@@ -156,6 +157,23 @@ run_preflight() {
   step "OSS preflight"
   (cd "$ROOT" && ./scripts/oss-preflight.sh)
   pass "oss-preflight"
+}
+
+# The shipped Kubo pin. Cheap, and it closes a hole that stayed open for
+# months: the node reported `kubo_version` from the in-repo fork's
+# version.go while every release path downloaded a stock upstream v0.39.0,
+# and NOTHING compared the two — neither this script nor any workflow
+# mentioned kubo at all.
+#
+# Deliberately its own gate rather than `npm run check:versions`. That script
+# also reaches the network (npm view, go list, git ls-remote) and currently
+# reports a pre-existing, unrelated flatsql mismatch, so making the pre-push
+# gate depend on all of it would trade one silent hole for a lane that is red
+# for reasons nobody here introduced.
+run_kubo_pin() {
+  step "Shipped Kubo version pin"
+  (cd "$ROOT" && node scripts/check-kubo-pin.js)
+  pass "kubo pin"
 }
 
 prepare_go_toolchain() {
@@ -332,6 +350,7 @@ run_encryption() {
 case "$MODE" in
   quick)
     run_preflight
+    run_kubo_pin
     run_go
     run_go_builds
     run_sdn_js
@@ -340,6 +359,7 @@ case "$MODE" in
     ;;
   full|all)
     run_preflight
+    run_kubo_pin
     run_go
     run_go_heavy
     run_go_race
@@ -361,6 +381,9 @@ case "$MODE" in
   js)
     run_sdn_js
     ;;
+  kubo-pin|versions)
+    run_kubo_pin
+    ;;
   delivery|module-delivery|plugin)
     run_module_delivery_compat
     ;;
@@ -368,7 +391,7 @@ case "$MODE" in
     run_plugin_demo
     ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|go|heavy|race|js|delivery|plugin|demo]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|go|heavy|race|js|kubo-pin|delivery|plugin|demo]${NC}"
     exit 1
     ;;
 esac

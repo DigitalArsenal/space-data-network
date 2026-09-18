@@ -19,8 +19,11 @@ panel and `/api/v1/docs` include the same public example.
 ```bash
 # 1. Who is this node?
 curl http://localhost:7173/api/v1/version
-# -> {"agent_version":"spacedatanetwork/1.0.4","kubo_version":"0.40.0-dev",
-#     "standards_version":"1.186.0","suite_version":"1.0.4"}
+# -> {"agent_version":"spacedatanetwork/1.0.5","kubo_version":"0.39.0",
+#     "standards_version":"1.217.0","suite_version":"1.0.5"}
+# kubo_version is the upstream Kubo this node RUNS (suite.versions.json
+# kubo.shipped). It used to print "0.40.0-dev", read from the in-repo fork,
+# which no release path has ever shipped.
 
 curl http://localhost:7173/api/v1/id
 # -> {"peer_id":"16Uiu2HAku...","listen_addresses":["/ip4/...","..."],
