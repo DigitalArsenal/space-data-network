@@ -208,7 +208,7 @@ async function dialFromBrowser(
   );
 }
 
-test.describe('a browser dials a go-libp2p host directly', () => {
+test.describe('a browser dials a go-libp2p host', () => {
   test.skip(unavailable != null, unavailable ?? '');
 
   let workDir: string;
@@ -268,6 +268,29 @@ test.describe('a browser dials a go-libp2p host directly', () => {
     // so a non-zero count is proof the bytes went over webtransport and not
     // over some fallback the client chose on its own.
     expect(result.ok && result.usedWebTransport).toBeGreaterThan(0);
+    expect(result.ok && result.usedWebRtc).toBe(0);
+  });
+
+  // The path production ACTUALLY uses today. sdn.spaceaware.io announces only
+  // /tcp/4004/ws, /tcp/18080/ws and /dns4/sdn.spaceaware.io/tcp/443/wss — nginx
+  // terminates TLS on 443 and proxies the websocket to the node — so until a
+  // node exposes UDP directly, every browser reaches SDN over a websocket.
+  // Covering the two direct transports and not this one would gate the paths
+  // nobody is on and leave the one everybody is on untested in a browser.
+  test('websocket: request and response complete in the browser', async ({ page }) => {
+    await page.goto(`${origin}/`);
+    const result = await dialFromBrowser(
+      page,
+      `${origin}/dist/index.mjs`,
+      handshake.wsAddr,
+      handshake.peerId,
+      'websocket-browser-probe',
+    );
+    expect(result.ok ? '' : result.error).toBe('');
+    expect(result.ok && result.reply).toBe(`${REPLY_PREFIX}websocket-browser-probe`);
+    // Neither direct transport may be constructed: a websocket dial that
+    // quietly upgraded to one of them would prove the wrong thing.
+    expect(result.ok && result.usedWebTransport).toBe(0);
     expect(result.ok && result.usedWebRtc).toBe(0);
   });
 
