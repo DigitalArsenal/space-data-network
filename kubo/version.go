@@ -30,7 +30,18 @@ const SDNAgentName = "spacedatanetwork"
 
 // SDNAgentVersion is the Space Data Network suite version this node reports.
 // Keep in step with sdn-server's internal/versioninfo.SuiteVersion.
-const SDNAgentVersion = "1.0.4"
+//
+// It did not keep step: this said 1.0.4 while the suite was 1.0.5, because
+// nothing checked. scripts/check-kubo-pin.js now does, so the next suite bump
+// fails the lane instead of drifting quietly.
+//
+// Nothing ships this constant. This fork is required by no go.mod, COPYed by
+// no Dockerfile and built by no CI lane; the libp2p identity that reaches the
+// network belongs to sdn-server, which builds the same string in
+// internal/versioninfo (AgentVersion) and has its own test for it. Keeping
+// this correct is cheap insurance for a fork that is not deployed and,
+// per sdn-server/docs/kubo-fork-audit.md, is recommended for deletion.
+const SDNAgentVersion = "1.0.5"
 
 // GetUserAgentVersion is the libp2p user agent this node presents.
 //
