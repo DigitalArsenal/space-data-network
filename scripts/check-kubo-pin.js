@@ -104,7 +104,7 @@ function checkKuboPin(report) {
     // A literal tag anywhere else in the file is a pin that escaped the env
     // var — exactly how release-deploy.yml spelled v0.39.0 twice inside a URL
     // where nothing could see it.
-    const strays = [...src.matchAll(/kubo\/(v\d+\.\d+\.\d+)/g)].map((m) => m[1]);
+    const strays = [...src.matchAll(/kubo[\/_](v\d+\.\d+\.\d+)/g)].map((m) => m[1]);
     const badStrays = [...new Set(strays)].filter((v) => v !== shipped);
     if (badStrays.length > 0) {
       fail(`${rel}: hardcoded kubo ${badStrays.join(", ")} in a URL; use \${KUBO_VERSION}`);
