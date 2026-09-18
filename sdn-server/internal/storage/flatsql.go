@@ -1202,8 +1202,9 @@ func (s *FlatSQLStore) createSchemaMetadataTable(tableName string) error {
 // schemaMetadataTableSQL is the DDL of a (producer, standard) record table.
 // `data` IS the record: the FlatBuffer bytes exactly as stored (sealed when
 // the standard declares an `(encrypted)` field). `supersede_key` is the
-// within-producer identity a record replaces (record_supersede.go); NULL for
-// standards with no supersede rule.
+// supersede LANE a record belongs to within this producer's table —
+// "src:<source>\0<object identity>", or the bare identity for an unattributed
+// write (record_supersede.go); NULL for standards with no supersede rule.
 func schemaMetadataTableSQL(tableName string) string {
 	return fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -2097,8 +2098,9 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	if err := s.db.QueryRow(`SELECT 1 FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid).Scan(&existing); err == nil {
 		// Repeat CID (possibly from a different producer): still record it in
 		// the producer's (producer, standard) table, and let a $CAT copy
-		// supersede that producer's previous record for the object.
-		superseded := s.mirrorRoutedRecordFromExisting(s.db, schemaName, cid, peerID, signature)
+		// supersede this (producer, source) lane's previous record for the
+		// object.
+		superseded := s.mirrorRoutedRecordFromExisting(s.db, schemaName, cid, peerID, signature, sourceNameOf(tags))
 		if len(superseded) > 0 && s.engineRoutesSchema(schemaName) {
 			if _, err := s.tombstoneEngineRecordsLocked(schemaName, superseded, nil); err != nil {
 				return "", err
@@ -2133,12 +2135,12 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 			_ = tx.Rollback()
 		}
 	}()
-	key := recordSupersedeKey(schemaName, data)
-	superseded, err := s.supersedeInProducerTableTx(tx, schemaName, routedTable, key, cid)
+	keys := recordSupersedeKeys(schemaName, data, sourceNameOf(tags))
+	superseded, err := s.supersedeInProducerTableTx(tx, schemaName, routedTable, keys, cid)
 	if err != nil {
 		return "", err
 	}
-	if err := insertSchemaMetadata(tx, routedTable, storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key}); err != nil {
+	if err := insertSchemaMetadata(tx, routedTable, storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: keys.stored}); err != nil {
 		return "", fmt.Errorf("failed to store data: %w", err)
 	}
 	if err := upsertRecordIndexExec(tx, schemaName, cid, now, data, s.fullTextState(schemaName)); err != nil {
@@ -2566,6 +2568,9 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 	// key the incoming record is about to retire, which is the one case this set
 	// detects.
 	queuedKeys := map[string]struct{}{}
+	// One batch is one source's write, so every row in this window shares the
+	// supersede lane scope.
+	sourceName := sourceNameOf(tags)
 	for i, data := range records {
 		cid := cids[i]
 		if _, repeat := present[cid]; repeat {
@@ -2580,7 +2585,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 				return inserted, err
 			}
 			clear(queuedKeys)
-			gone := s.mirrorRoutedRecordFromExisting(tx, schemaName, cid, peerID, signature)
+			gone := s.mirrorRoutedRecordFromExisting(tx, schemaName, cid, peerID, signature, sourceName)
 			superseded = append(superseded, gone...)
 			forgetPresence(present, gone)
 			enginePending = dropEnginePending(enginePending, gone)
@@ -2596,8 +2601,8 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		if err != nil {
 			return inserted, err
 		}
-		key := recordSupersedeKey(schemaName, data)
-		if key != "" {
+		keys := recordSupersedeKeys(schemaName, data, sourceName)
+		if !keys.empty() {
 			// Supersede READS the producer table and the record index and
 			// DELETES what it finds (record_supersede.go). Two records with the
 			// same key in one window must supersede each other exactly as they
@@ -2611,7 +2616,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			// write one row per statement while every other standard wrote 128.
 			// A catalog batch is overwhelmingly DISTINCT objects, so the
 			// collision is rare and the window survives.
-			if _, collides := queuedKeys[key]; collides {
+			if queuedKeysCollide(queuedKeys, keys) {
 				landed, err := pending.flush(tx)
 				inserted += landed
 				if err != nil {
@@ -2619,7 +2624,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 				}
 				clear(queuedKeys)
 			}
-			gone, err := s.supersedeInProducerTableTx(tx, schemaName, routedTable, key, cid)
+			gone, err := s.supersedeInProducerTableTx(tx, schemaName, routedTable, keys, cid)
 			if err != nil {
 				return inserted, err
 			}
@@ -2627,10 +2632,10 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			forgetPresence(present, gone)
 			enginePending = dropEnginePending(enginePending, gone)
 		}
-		pending.add(storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key}, data)
+		pending.add(storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: keys.stored}, data)
 		present[cid] = struct{}{}
-		if key != "" {
-			queuedKeys[key] = struct{}{}
+		if !keys.empty() {
+			queuedKeys[keys.stored] = struct{}{}
 		}
 		if s.engineRoutesSchema(schemaName) {
 			enginePending = append(enginePending, engineIngest{cid: cid, data: data, source: engineSourceName(tags)})

@@ -171,12 +171,15 @@ func routedProducerID(peerID string) string {
 // mirrorRoutedRecordFromExisting records a repeat CID (possibly from a
 // different producer) in THIS producer's (producer, standard) table, copying
 // the stored bytes from whichever table already holds the content row. A
-// $CAT record supersedes the producer's previous record for the same object
-// exactly as a first-time store does; the CIDs whose last copy that removed
-// are returned for the caller to tombstone in the engine after its commit.
+// $CAT record supersedes this (producer, source) lane's previous record for
+// the same object exactly as a first-time store does; the CIDs whose last copy
+// that removed are returned for the caller to tombstone in the engine after
+// its commit. sourceName is THIS write's source ("" when unattributed): the
+// object identity comes off the existing row, but its source scope is the
+// other producer's lane and does not travel.
 // Best-effort: a repeat-CID mirror failure must never fail the caller.
 // Callers hold s.mu.
-func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schemaName, cid, peerID string, signature []byte) []string {
+func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schemaName, cid, peerID string, signature []byte, sourceName string) []string {
 	// Inlined cid predicate, not an outer one: this runs ONCE PER REPEAT RECORD
 	// on the ingest path, inside the store's WRITE lock. With the predicate
 	// outside the union's GROUP BY it full-scanned every (producer, standard)
@@ -215,12 +218,16 @@ func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schem
 		log.Warnf("Routed mirror: ensure (producer, standard) table for %s/%s: %v", peerID, schemaName, err)
 		return nil
 	}
-	superseded, err := s.supersedeInProducerTableTx(exec, schemaName, tableName, string(supersedeKey), cid)
+	// string(supersedeKey), not supersedeKey.String: the column is read as a BLOB
+	// so a key carrying a NUL arrives whole (see the SELECT above), which is what
+	// makes a source-scoped key readable at all — it has a NUL by construction.
+	keys := supersedeKeysForStoredKey(string(supersedeKey), sourceName)
+	superseded, err := s.supersedeInProducerTableTx(exec, schemaName, tableName, keys, cid)
 	if err != nil {
 		log.Warnf("Routed mirror: supersede in %s for %s: %v", tableName, cid[:16]+"...", err)
 		return nil
 	}
-	if err := insertSchemaMetadata(exec, tableName, storedRecord{cid: cid, peerID: peerID, timestamp: timestamp, data: stored, signature: signature, createdAt: timestamp, supersedeKey: string(supersedeKey)}); err != nil {
+	if err := insertSchemaMetadata(exec, tableName, storedRecord{cid: cid, peerID: peerID, timestamp: timestamp, data: stored, signature: signature, createdAt: timestamp, supersedeKey: keys.stored}); err != nil {
 		log.Warnf("Routed mirror: insert into %s for %s: %v", tableName, cid[:16]+"...", err)
 	}
 	return superseded
@@ -262,12 +269,14 @@ func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, pee
 			_ = tx.Rollback()
 		}
 	}()
-	key := recordSupersedeKey(schemaName, data)
-	superseded, err := s.supersedeInProducerTableTx(tx, schemaName, tableName, key, cid)
+	// No source tags reach this path (it serves $STF/$DPM/$PNM publication),
+	// so it writes in the unattributed lane.
+	keys := recordSupersedeKeys(schemaName, data, "")
+	superseded, err := s.supersedeInProducerTableTx(tx, schemaName, tableName, keys, cid)
 	if err != nil {
 		return "", err
 	}
-	if err := insertSchemaMetadata(tx, tableName, storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: key}); err != nil {
+	if err := insertSchemaMetadata(tx, tableName, storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: keys.stored}); err != nil {
 		return "", fmt.Errorf("failed to store data: %w", err)
 	}
 	if err := upsertRecordIndexExec(tx, schemaName, cid, now, data, s.fullTextState(schemaName)); err != nil {

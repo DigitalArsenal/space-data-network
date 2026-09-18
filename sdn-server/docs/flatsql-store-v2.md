@@ -51,11 +51,22 @@ is on disk ... it should NEVER re-ingest".
 - **Field-encrypted standards** are sealed BEFORE the row is written
   (`storableRecordBytes`) and opened on read; the CID and the index are always
   computed over the plaintext.
-- **CAT supersedes on ingest** (`record_supersede.go`): within one producer's
-  table a `$CAT` record replaces the producer's previous record for the same
-  object — identity `(CATALOG_URI, CATALOG_OBJECT_ID)`, else `NORAD_CAT_ID`,
-  else `OBJECT_ID`; no identity, no supersede. Two ingests of the same
-  edition leave one row per object. No historical CAT is stored.
+- **CAT supersedes on ingest** (`record_supersede.go`): a `$CAT` record
+  replaces the previous record for the same object in its own
+  **(producer, source)** lane — identity `(CATALOG_URI, CATALOG_OBJECT_ID)`,
+  else `NORAD_CAT_ID`, else `OBJECT_ID`; no identity, no supersede. Two
+  ingests of the same edition leave one row per object. No historical CAT is
+  stored.
+  The lane includes the SOURCE because one provider can publish the same
+  catalog as two sources — CelesTrak's `satcat.txt` and `satcat.csv`, one
+  producer peer, no catalog URI on either — and a producer-only lane made the
+  second source delete the first's entire edition every tick: neither source
+  ever converged, and every unchanged record kept moving in the cursor order
+  §3 promises is stable. Rows are keyed `src:<source>\0<identity>`; an
+  unattributed write (a relayed record, a direct `Store`) stores the bare
+  identity and is its own lane. A source-scoped write also retires bare-key
+  rows, which collapses a store written before this rule on its first
+  re-ingest — no `store-wipe`.
 
 ## 3. The datasync cursor (the deployed-peer contract)
 
@@ -76,7 +87,7 @@ Wire cursor stays `(AfterRowID, MaxRowID, SnapshotID)`
 ```
 StoreWithSourceTags(schema, data, peer, sig, tags):
   BEGIN
-    supersede: delete the producer's previous row for the same $CAT object
+    supersede: delete this (producer, source) lane's previous $CAT row for the object
     INSERT producer row (cid, peer_id, timestamp, data, record_length, ...)
     INSERT OR UPDATE sdn_record_index row            (the datasync cursor)
     INSERT source tags + increment the source summary

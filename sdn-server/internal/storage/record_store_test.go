@@ -10,8 +10,10 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -167,6 +169,217 @@ func TestCATSupersedeKeepsOneRowPerObject(t *testing.T) {
 	}
 	if n := engineCount(t, store, "CAT"); n != wantRows {
 		t.Fatalf("engine CAT rows after a repeat ingest = %d, want %d", n, wantRows)
+	}
+}
+
+// sourceRecordCounts is the live per-(schema, provider, source) record count,
+// which is what a node's board and /api/v1/stats report for a source.
+func sourceRecordCounts(t *testing.T, s *FlatSQLStore) map[string]int64 {
+	t.Helper()
+	progress, err := s.SourceBatchProgress()
+	if err != nil {
+		t.Fatalf("SourceBatchProgress: %v", err)
+	}
+	counts := map[string]int64{}
+	for _, p := range progress {
+		counts[p.SchemaName+"|"+p.ProviderID+"|"+p.SourceName] += p.Count
+	}
+	return counts
+}
+
+// indexRowID is a record's position in the datasync cursor order.
+func indexRowID(t *testing.T, s *FlatSQLStore, schemaName, cid string) int64 {
+	t.Helper()
+	var rowID int64
+	if err := s.db.QueryRow(`SELECT rowid FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid).Scan(&rowID); err != nil {
+		t.Fatalf("index rowid for %s/%s: %v", schemaName, cid, err)
+	}
+	return rowID
+}
+
+// The supersede lane is (producer, SOURCE), not the producer alone.
+//
+// One provider publishes the same catalog in two encodings as two distinct
+// SOURCES — CelesTrak's satcat.txt and satcat.csv — under one producer peer,
+// and neither form carries a catalog URI, so both reduce to the same object
+// identity. With the lane scoped to the producer alone, whichever source ran
+// second deleted the other's entire edition: the losing source reported a full
+// insert every single tick while holding zero records, and every unchanged
+// record kept moving in the datasync cursor, so every subscriber re-downloaded
+// the whole catalog each cycle.
+func TestCATSupersedeIsScopedToTheSource(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := openBootStore(t, basePath, bootTestValidator(t))
+	defer store.Close()
+
+	fixedWidth := SourceTags{ProviderID: "prov", SourceName: "satcat", BatchID: "edition-1"}
+	csv := SourceTags{ProviderID: "prov", SourceName: "satcat-csv", BatchID: "edition-1"}
+	// The two encodings disagree about the same object (the real SATCAT forms
+	// differ on MASS, OWNER and LAUNCH_SITE), which is exactly why collapsing
+	// them by fetch order was silently picking a winner.
+	txt := buildCATForTest("ISS (ZARYA) fixed-width", "1998-067A", 25544, "", "")
+	csvV1 := buildCATForTest("ISS (ZARYA) csv", "1998-067A", 25544, "", "")
+
+	if _, err := store.StoreBatchWithSourceTags("CAT.fbs", [][]byte{txt}, "peer", nil, fixedWidth); err != nil {
+		t.Fatalf("fixed-width ingest: %v", err)
+	}
+	if _, err := store.StoreBatchWithSourceTags("CAT.fbs", [][]byte{csvV1}, "peer", nil, csv); err != nil {
+		t.Fatalf("csv ingest: %v", err)
+	}
+
+	// One row per object PER SOURCE, and both sources keep their attribution.
+	if n, err := store.Count("CAT.fbs"); err != nil || n != 2 {
+		t.Fatalf("CAT rows = %d (err %v), want 2 — one per source", n, err)
+	}
+	if n := engineCount(t, store, "CAT"); n != 2 {
+		t.Fatalf("engine CAT rows = %d, want 2", n)
+	}
+	for label, cid := range map[string]string{"fixed-width": computeCID(txt), "csv": computeCID(csvV1)} {
+		if _, err := store.GetRecord("CAT.fbs", cid); err != nil {
+			t.Fatalf("the %s source's record is gone: %v", label, err)
+		}
+	}
+	if counts := sourceRecordCounts(t, store); counts["CAT.fbs|prov|satcat"] != 1 || counts["CAT.fbs|prov|satcat-csv"] != 1 {
+		t.Fatalf("per-source record counts = %v, want 1 for each source", counts)
+	}
+	txtRowID := indexRowID(t, store, "CAT.fbs", computeCID(txt))
+
+	// A new edition from ONE source retires that source's previous row and
+	// nothing else.
+	csvV2 := buildCATForTest("ISS (ZARYA) csv, next edition", "1998-067A", 25544, "", "")
+	csvNext := csv
+	csvNext.BatchID = "edition-2"
+	if _, err := store.StoreBatchWithSourceTags("CAT.fbs", [][]byte{csvV2}, "peer", nil, csvNext); err != nil {
+		t.Fatalf("csv second edition: %v", err)
+	}
+	if n, err := store.Count("CAT.fbs"); err != nil || n != 2 {
+		t.Fatalf("CAT rows after one source moved on = %d (err %v), want 2", n, err)
+	}
+	if _, err := store.GetRecord("CAT.fbs", computeCID(txt)); err != nil {
+		t.Fatalf("the fixed-width record was retired by another source: %v", err)
+	}
+	if _, err := store.GetRecord("CAT.fbs", computeCID(csvV1)); err == nil {
+		t.Fatal("the csv source's own previous record survived its new edition")
+	}
+	if _, err := store.GetRecord("CAT.fbs", computeCID(csvV2)); err != nil {
+		t.Fatalf("the csv source's current record is missing: %v", err)
+	}
+	if counts := sourceRecordCounts(t, store); counts["CAT.fbs|prov|satcat"] != 1 || counts["CAT.fbs|prov|satcat-csv"] != 1 {
+		t.Fatalf("per-source record counts = %v, want 1 for each source", counts)
+	}
+
+	// The store CONVERGES: re-ingesting what each source already published
+	// inserts nothing, deletes nothing, and moves no cursor position
+	// (flatsql-store-v2.md §3 — a record's cursor position never moves for the
+	// life of the store).
+	for tick := 0; tick < 2; tick++ {
+		if _, err := store.StoreBatchWithSourceTags("CAT.fbs", [][]byte{txt}, "peer", nil, fixedWidth); err != nil {
+			t.Fatalf("repeat fixed-width tick %d: %v", tick, err)
+		}
+		if _, err := store.StoreBatchWithSourceTags("CAT.fbs", [][]byte{csvV2}, "peer", nil, csvNext); err != nil {
+			t.Fatalf("repeat csv tick %d: %v", tick, err)
+		}
+		if n, err := store.Count("CAT.fbs"); err != nil || n != 2 {
+			t.Fatalf("CAT rows after repeat tick %d = %d (err %v), want 2", tick, n, err)
+		}
+		if n := indexCount(t, store, "CAT.fbs"); n != 2 {
+			t.Fatalf("index rows after repeat tick %d = %d, want 2", tick, n)
+		}
+		if n := engineCount(t, store, "CAT"); n != 2 {
+			t.Fatalf("engine CAT rows after repeat tick %d = %d, want 2", tick, n)
+		}
+		if got := indexRowID(t, store, "CAT.fbs", computeCID(txt)); got != txtRowID {
+			t.Fatalf("an unchanged record moved in the cursor order on tick %d: rowid %d -> %d", tick, txtRowID, got)
+		}
+	}
+}
+
+// The supersede SELECT runs ONCE PER $CAT RECORD on the ingest hot path, over
+// a producer table that holds the whole catalog, inside the store write lock.
+// Matching the lane key AND the pre-scoping bare key must still SEEK
+// <table>_supersede — an IN-list that degraded to a scan would put a full
+// table scan per record in front of every reader.
+func TestSupersedeLaneSelectSeeksTheSupersedeIndex(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := openBootStore(t, basePath, bootTestValidator(t))
+	defer store.Close()
+
+	tags := SourceTags{ProviderID: "prov", SourceName: "satcat", BatchID: "edition-1"}
+	if _, err := store.StoreBatchWithSourceTags("CAT.fbs", [][]byte{
+		buildCATForTest("ISS", "1998-067A", 25544, "", ""),
+	}, "peer", nil, tags); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	table, err := ProducerStandardTableName(routedProducerID("peer"), "CAT.fbs")
+	if err != nil {
+		t.Fatalf("producer table name: %v", err)
+	}
+	keys := recordSupersedeKeys("CAT.fbs", buildCATForTest("ISS", "1998-067A", 25544, "", ""), "satcat")
+	if len(keys.match) != 2 {
+		t.Fatalf("a source-scoped write must match its own lane key and the bare identity, got %d keys", len(keys.match))
+	}
+
+	rows, err := store.db.Query(fmt.Sprintf(
+		"EXPLAIN QUERY PLAN SELECT cid FROM %s WHERE supersede_key IN (%s) AND cid <> ?",
+		table, placeholderList(len(keys.match)),
+	), keys.match[0], keys.match[1], "cid")
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+	cols, _ := rows.Columns()
+	plan := ""
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		for _, v := range vals {
+			switch typed := v.(type) {
+			case string:
+				plan += typed + "\n"
+			case []byte:
+				plan += string(typed) + "\n"
+			}
+		}
+	}
+	if !strings.Contains(plan, table+"_supersede") || !strings.Contains(plan, "SEARCH") {
+		t.Fatalf("the supersede lane SELECT no longer seeks %s_supersede:\n%s", table, plan)
+	}
+}
+
+// A store written under the producer-only rule carries BARE supersede keys.
+// The first re-ingest of each object collapses them into the source's lane
+// instead of stranding a generation no source can reach again — which is what
+// makes this change safe to deploy without a store-wipe.
+func TestSourceScopedSupersedeCollapsesPreScopingRows(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := openBootStore(t, basePath, bootTestValidator(t))
+	defer store.Close()
+
+	// An unattributed write is the pre-scoping shape: it stores the bare
+	// object identity as its key.
+	legacy := buildCATForTest("ISS legacy row", "1998-067A", 25544, "", "")
+	if _, err := store.Store("CAT.fbs", legacy, "peer", nil); err != nil {
+		t.Fatalf("legacy write: %v", err)
+	}
+	current := buildCATForTest("ISS current edition", "1998-067A", 25544, "", "")
+	tags := SourceTags{ProviderID: "prov", SourceName: "satcat", BatchID: "edition-1"}
+	if _, err := store.StoreBatchWithSourceTags("CAT.fbs", [][]byte{current}, "peer", nil, tags); err != nil {
+		t.Fatalf("source-scoped ingest: %v", err)
+	}
+	if n, err := store.Count("CAT.fbs"); err != nil || n != 1 {
+		t.Fatalf("CAT rows = %d (err %v), want 1 — the bare-key row must be collapsed, not stranded", n, err)
+	}
+	if _, err := store.GetRecord("CAT.fbs", computeCID(legacy)); err == nil {
+		t.Fatal("the pre-scoping row survived the first source-scoped ingest")
+	}
+	if _, err := store.GetRecord("CAT.fbs", computeCID(current)); err != nil {
+		t.Fatalf("the current record is missing: %v", err)
 	}
 }
 

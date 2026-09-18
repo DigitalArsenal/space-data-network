@@ -3,13 +3,35 @@ package storage
 // record_supersede.go — CAT supersede on ingest, and the one record-removal
 // helper every delete path shares.
 //
-// OWNER 2026-09-02: "CAT should overwrite, no historical CAT stored". Within
-// one producer's table a $CAT record supersedes the previous record for the
-// same object. The identity is the one CAT.fbs itself defines: the
-// (CATALOG_URI, CATALOG_OBJECT_ID) pair when both are present, else
-// NORAD_CAT_ID, else OBJECT_ID. A record with none of them has no identity
-// and supersedes nothing. Superseding is what stops a re-ingested, unchanged
-// catalog from growing the store by a full edition every time.
+// OWNER 2026-09-02: "CAT should overwrite, no historical CAT stored". A $CAT
+// record supersedes the previous record for the same object. The identity is
+// the one CAT.fbs itself defines: the (CATALOG_URI, CATALOG_OBJECT_ID) pair
+// when both are present, else NORAD_CAT_ID, else OBJECT_ID. A record with none
+// of them has no identity and supersedes nothing. Superseding is what stops a
+// re-ingested, unchanged catalog from growing the store by a full edition
+// every time.
+//
+// THE SUPERSEDE LANE IS (PRODUCER, SOURCE), NOT THE PRODUCER ALONE. Scoping it
+// to the producer alone was a defect: one provider publishes the SAME catalog
+// in two encodings as two distinct SOURCES (CelesTrak's satcat.txt and
+// satcat.csv), both land under one producer peer, and neither carries a
+// catalog URI — so both reduced to `norad:<id>` and whichever source ran
+// second deleted the other's entire edition. The store then never converged
+// (each source reported a full insert every tick, forever, re-creating exactly
+// the re-ingest redundancy this rule exists to remove), and every unchanged
+// record kept moving in sdn_record_index — which flatsql-store-v2.md §3
+// promises never happens, and which makes every subscriber re-download the
+// whole catalog each cycle.
+//
+// Every other retention rule in this store is already keyed (provider,
+// source): SupersedeSourceBatches, ReconcileSourceBatch, the
+// sdn_record_source_tags uniqueness index, engineSourceName on the engine
+// mirror. This one now is too. Two encodings of one object from two sources
+// are two assertions with different provenance — the SATCAT forms disagree on
+// MASS, OWNER and LAUNCH_SITE for the same object — so collapsing them by
+// fetch order was silently picking a winner. One row per object PER SOURCE is
+// the rule; the lever for storing fewer is the FLOW, not a source-blind
+// supersede.
 
 import (
 	"database/sql"
@@ -31,9 +53,13 @@ const (
 	catCatalogObjectIDSlot = 54
 )
 
-// recordSupersedeKey returns the within-producer identity a record supersedes,
-// or "" for a record that supersedes nothing. Only $CAT has a supersede rule
-// today; every other standard is historical.
+// recordSupersedeKey returns a record's OBJECT IDENTITY — what CAT.fbs itself
+// says makes two records describe the same physical object — or "" for a
+// record that supersedes nothing. Only $CAT has a supersede rule today; every
+// other standard is historical.
+//
+// The identity is not the key a row is stored under: supersedeKeysForIdentity
+// scopes it to the source that wrote it.
 func recordSupersedeKey(schemaName string, data []byte) string {
 	if schemaName != "CAT.fbs" {
 		return ""
@@ -66,18 +92,119 @@ func tableStringField(tab flatbuffers.Table, slot flatbuffers.VOffsetT) []byte {
 	return tab.ByteVector(o + tab.Pos)
 }
 
+// supersedeSourcePrefix scopes a stored supersede key to the source that wrote
+// the row: "src:<source>\x00<object identity>". An unattributed write — a
+// relayed record, a direct Store, StoreRoutedByProducer — has no source and
+// stores the bare identity, which is its own lane.
+const supersedeSourcePrefix = "src:"
+
+// supersedeKeys is what one record contributes to the supersede lane: the key
+// its own row is STORED under, and the keys whose rows it retires.
+type supersedeKeys struct {
+	stored string
+	match  []string
+}
+
+func (k supersedeKeys) empty() bool { return len(k.match) == 0 }
+
+// sourceNameOf is the ingest source a write is attributed to, or "" when the
+// write carries no provenance.
+func sourceNameOf(tags *SourceTags) string {
+	if tags == nil {
+		return ""
+	}
+	return strings.TrimSpace(tags.SourceName)
+}
+
+// recordSupersedeKeys scopes a record's object identity to the source writing
+// it.
+func recordSupersedeKeys(schemaName string, data []byte, sourceName string) supersedeKeys {
+	return supersedeKeysForIdentity(recordSupersedeKey(schemaName, data), sourceName)
+}
+
+// supersedeKeysForStoredKey re-scopes a key read off an existing row to the
+// source performing THIS write. The repeat-CID mirror copies a row out of
+// whichever producer table already holds the content: the object identity in
+// that key is the shared fact, but the source scope on it belongs to the other
+// producer's lane and must not travel into this one.
+func supersedeKeysForStoredKey(storedKey, sourceName string) supersedeKeys {
+	return supersedeKeysForIdentity(supersedeIdentity(storedKey), sourceName)
+}
+
+// supersedeKeysForIdentity builds the stored key and the match set.
+//
+// A source-scoped write ALSO matches the bare identity, and that is the
+// migration for every store written under the producer-only rule: those rows
+// carry bare keys, and the first re-ingest of each object collapses them
+// instead of leaving behind a generation no source can ever reach again (no
+// store-wipe needed). It costs one thing, deliberately: while a bare row
+// exists, a source-scoped write also retires an UNATTRIBUTED row for the same
+// object under the same producer — which is precisely what the producer-only
+// rule already did to it, so nothing that survives today is lost. The reverse
+// does not hold: an unattributed write never touches a source's rows, because
+// a record carrying no provenance cannot speak for a source that has some.
+func supersedeKeysForIdentity(identity, sourceName string) supersedeKeys {
+	if identity == "" {
+		return supersedeKeys{}
+	}
+	// The NUL separator is ours, not the source's: one inside a source name
+	// would make the scope ambiguous to supersedeIdentity.
+	sourceName = strings.ReplaceAll(strings.TrimSpace(sourceName), "\x00", "")
+	if sourceName == "" {
+		return supersedeKeys{stored: identity, match: []string{identity}}
+	}
+	stored := supersedeSourcePrefix + sourceName + "\x00" + identity
+	return supersedeKeys{stored: stored, match: []string{stored, identity}}
+}
+
+// supersedeIdentity strips the source scope from a stored key. Cutting at the
+// FIRST NUL after the prefix is what keeps a "uri:<catalog>\x00<object>"
+// identity — which carries a NUL of its own — intact.
+func supersedeIdentity(storedKey string) string {
+	rest, scoped := strings.CutPrefix(storedKey, supersedeSourcePrefix)
+	if !scoped {
+		return storedKey
+	}
+	if _, identity, found := strings.Cut(rest, "\x00"); found {
+		return identity
+	}
+	return storedKey
+}
+
+// queuedKeysCollide reports whether a row still sitting in a batch write
+// buffer carries a key this record's supersede lane would retire. The buffer
+// is invisible to the supersede SELECT, so the caller flushes first when it
+// does.
+func queuedKeysCollide(queued map[string]struct{}, keys supersedeKeys) bool {
+	for _, key := range keys.match {
+		if _, collides := queued[key]; collides {
+			return true
+		}
+	}
+	return false
+}
+
 // supersedeInProducerTableTx removes, from ONE producer's table, every record
-// that carries the same supersede key as the record about to be inserted, and
-// returns the CIDs whose LAST copy went with it (removed from the index, the
-// tags, the summaries and the full-text index). Those CIDs must be tombstoned
-// in the engine after the caller's transaction commits
+// in the incoming record's supersede lane — its own (source, object identity),
+// plus the bare identity a pre-scoping store wrote — and returns the CIDs
+// whose LAST copy went with it (removed from the index, the tags, the
+// summaries and the full-text index). Those CIDs must be tombstoned in the
+// engine after the caller's transaction commits
 // (tombstoneEngineRecordsLocked). A CID still held by another producer's table
 // stays a record. Caller holds s.mu for writing.
-func (s *FlatSQLStore) supersedeInProducerTableTx(exec sqlQueryExecer, schemaName, tableName, key, newCID string) ([]string, error) {
-	if key == "" {
+func (s *FlatSQLStore) supersedeInProducerTableTx(exec sqlQueryExecer, schemaName, tableName string, keys supersedeKeys, newCID string) ([]string, error) {
+	if keys.empty() {
 		return nil, nil
 	}
-	rows, err := exec.Query(fmt.Sprintf(`SELECT cid FROM %s WHERE supersede_key = ? AND cid <> ?`, tableName), key, newCID)
+	args := make([]any, 0, len(keys.match)+1)
+	for _, key := range keys.match {
+		args = append(args, key)
+	}
+	args = append(args, newCID)
+	rows, err := exec.Query(fmt.Sprintf(
+		`SELECT cid FROM %s WHERE supersede_key IN (%s) AND cid <> ?`,
+		tableName, placeholderList(len(keys.match)),
+	), args...)
 	if err != nil {
 		return nil, fmt.Errorf("find superseded %s records: %w", schemaName, err)
 	}
