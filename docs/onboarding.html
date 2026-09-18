@@ -534,7 +534,7 @@ spacedatanetwork open</code></pre>
           <div class="code-header"><span>Docker</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
           <pre><code>docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:1.0.5-beta.1
+  dockerdigitalarsenal/space-data-network:1.0.5-beta.69
 <span class="code-comment"># dashboard: http://127.0.0.1:5001/   identity and data live in the sdn-data volume</span></code></pre>
         </div>
         <p>To reveal your recovery phrase from a terminal node: <code>spacedatanetwork show-identity --show-mnemonic</code> (in Docker: <code>docker exec sdn /app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic</code>). Write it down and keep it offline.</p>

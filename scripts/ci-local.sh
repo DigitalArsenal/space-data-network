@@ -202,6 +202,22 @@ run_preflight() {
 # reports a pre-existing, unrelated flatsql mismatch, so making the pre-push
 # gate depend on all of it would trade one silent hole for a lane that is red
 # for reasons nobody here introduced.
+# The published site (GitHub Pages serves main:/docs at spacedatanetwork.org)
+# advertised v1.0.5-beta.1 while the project shipped sixty-odd releases past it:
+# every Download button handed out an artifact from a different build, and one
+# container link had 404'd since the page was written. Links resolve or they do
+# not; a link to the WRONG build is worse, because nobody reports it.
+#
+# Network-dependent (it asks GitHub for the newest release), so it warns rather
+# than fails when offline — a developer without a network is not a stale site.
+run_docs_release() {
+  step "published site advertises the newest release"
+  if ! node "$ROOT/scripts/sync-docs-release.mjs" --check; then
+    fail "docs/ advertises a release that is not the newest — run: node scripts/sync-docs-release.mjs"
+  fi
+  pass "docs release links"
+}
+
 run_kubo_pin() {
   step "Shipped Kubo version pin"
   (cd "$ROOT" && node scripts/check-kubo-pin.js)
@@ -549,6 +565,7 @@ case "$MODE" in
   preflight)
     run_preflight
     run_gofmt
+    run_docs_release
     ;;
   go)
     run_go
