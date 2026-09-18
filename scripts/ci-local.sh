@@ -157,6 +157,16 @@ run_preflight() {
   step "OSS preflight"
   (cd "$ROOT" && ./scripts/oss-preflight.sh)
   pass "oss-preflight"
+
+  # The preflight runs the dependency-drift checks themselves; these are the
+  # checks' own suites, so a broken check cannot pass by failing open.
+  step "Dependency-drift check suites"
+  (cd "$ROOT" && node --test \
+    scripts/check-sdn-js-dependency-layering.test.mjs \
+    scripts/check-kubo-lockstep.test.mjs \
+    scripts/check-npm-audit.test.mjs \
+    scripts/check-govulncheck.test.mjs)
+  pass "dependency-drift check suites"
 }
 
 # The shipped Kubo pin. Cheap, and it closes a hole that stayed open for

@@ -7,6 +7,16 @@
  * The internal libp2p instance uses the same transport/security/pubsub config
  * as SDNNode so both can interoperate on the same network.
  *
+ * LAYERING WARNING. This file bridges TWO incompatible libp2p majors living in
+ * one dependency tree: sdn-js depends on libp2p 1.9.4, while helia@6 nests its
+ * own libp2p 3.2.0. The `with*Compat` wrappers and `addLegacy*Compat`
+ * synthesizers below are calibrated against those EXACT versions, and nothing in
+ * semver protects that — a helia 6.1.x patch that changes how it calls handle()
+ * or dialProtocol() breaks this with no major bump.
+ *
+ * scripts/check-sdn-js-dependency-layering.mjs fails CI when either half moves.
+ * Read docs/sdn-js-helia-libp2p-layering.md before bumping anything here.
+ *
  * Usage:
  *
  *   const { helia, libp2p } = await createHeliaSDNNode({ edgeRelays: [...] });
