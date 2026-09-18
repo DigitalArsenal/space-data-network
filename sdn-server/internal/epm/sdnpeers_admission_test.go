@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // These tests encode the owner's rulings of 2026-07-30 for the peer board:
@@ -197,5 +198,32 @@ func TestLiveBoardShapeCollapsesToRealNodes(t *testing.T) {
 	}
 	if _, ok := got[pinnedID]; !ok {
 		t.Fatal("the surviving row must be the pinned node")
+	}
+}
+
+// A RELEASE binary advertises "spacedatanetwork/<release tag>", not the bare
+// suite version, so the version half of the agent string now varies from build
+// to build. The membership gate has always matched the NAME half only
+// (isSDNAgentVersion uses strings.Contains), and this holds it to that:
+// whatever this build calls itself, this build must still recognise it.
+//
+// Without this, tightening the gate to an exact or version-sensitive match
+// would drop every release node off every board in the fleet, and nothing else
+// in the tree would notice.
+func TestThisBuildRecognisesItsOwnAgentString(t *testing.T) {
+	if !isSDNAgentVersion(versioninfo.AgentVersion) {
+		t.Fatalf("this build advertises %q and its own membership gate rejects it", versioninfo.AgentVersion)
+	}
+
+	// The shapes a peer can now present, including the stamped release form
+	// that did not exist before the agent string carried the build.
+	for _, agent := range []string{
+		versioninfo.AgentName + "/1.0.5",
+		versioninfo.AgentName + "/1.0.5-beta.67",
+		versioninfo.AgentName + "/2.0.0-rc.1+build.9",
+	} {
+		if !isSDNAgentVersion(agent) {
+			t.Fatalf("membership gate rejected an SDN peer advertising %q", agent)
+		}
 	}
 }
