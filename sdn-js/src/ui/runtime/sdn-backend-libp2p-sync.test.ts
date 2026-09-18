@@ -10,11 +10,21 @@ import {
 } from './sdn-backend-libp2p-sync';
 
 describe('libp2p FlatSQL sync backend', () => {
+  // The window sizes must sit where yamux 8 READS them. This asserted the flat
+  // shape, which yamux 8 ignores silently rather than rejecting — its Config
+  // extends StreamMuxerOptions<YamuxStreamOptions> and adds only keep-alive of
+  // its own. A test that only checked the constant's own shape would keep
+  // passing while the stream ran on upstream's much smaller defaults, so it
+  // checks the nesting explicitly.
   it('advertises a high-throughput yamux receive window for bulk FlatSQL shard streams', () => {
     expect(LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS).toMatchObject({
-      initialStreamWindowSize: 16 * 1024 * 1024,
-      maxStreamWindowSize: 128 * 1024 * 1024,
+      streamOptions: {
+        initialStreamWindowSize: 16 * 1024 * 1024,
+        maxStreamWindowSize: 128 * 1024 * 1024,
+      },
     });
+    // Nothing at the top level: anything there is silently dropped by yamux 8.
+    expect(Object.keys(LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS)).toEqual(['streamOptions']);
   });
 
   it('raises the outbound protocol stream ceiling for bulk FlatSQL shard ranges', async () => {

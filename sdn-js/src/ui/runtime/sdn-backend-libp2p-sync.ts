@@ -75,10 +75,24 @@ export interface Libp2pFlatSqlSyncClientOptions {
 
 const DEFAULT_SUMMARY_SCHEMAS = ['CAT.fbs', 'EPM.fbs', 'MPE.fbs', 'OMM.fbs', 'PNM.fbs', 'SPW.fbs'];
 export const DEFAULT_LIBP2P_FLATSQL_SYNC_REQUEST_TIMEOUT_MS = 60_000;
+// yamux 8 moved ALL of this under `streamOptions`. Its Config now extends
+// StreamMuxerOptions<YamuxStreamOptions> and adds only enableKeepAlive and
+// keepAliveInterval of its own, so initialStreamWindowSize and
+// maxStreamWindowSize passed at the TOP level are silently ignored — not
+// rejected — and the FlatSQL sync stream would have run on upstream's much
+// smaller default windows while this constant still claimed 16/128 MiB.
+//
+// maxMessageSize is gone as a name: yamux 8 has no such option. The nearest
+// equivalents are the read/write buffer bounds on @libp2p/interface's
+// StreamOptions, which is what actually bounds a paused stream's memory, so the
+// 1 MiB frame intent is expressed there instead of being dropped on the floor.
 export const LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS = {
-  initialStreamWindowSize: 16 * 1024 * 1024,
-  maxStreamWindowSize: 128 * 1024 * 1024,
-  maxMessageSize: 1024 * 1024,
+  streamOptions: {
+    initialStreamWindowSize: 16 * 1024 * 1024,
+    maxStreamWindowSize: 128 * 1024 * 1024,
+    maxReadBufferLength: 4 * 1024 * 1024,
+    maxWriteBufferLength: 4 * 1024 * 1024,
+  },
 };
 export const LIBP2P_FLATSQL_SYNC_MAX_OUTBOUND_STREAMS = 512;
 
@@ -512,9 +526,9 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
     transports.push(tcp());
   }
   if (transportSelection.webSockets) {
-    // @libp2p/websockets 10 removed the `filter` option and no longer ships the
-    // ./filters subpath; its dialFilter accepts /ws and /wss unconditionally,
-    // which is what `filters.all` was here for.
+    // @libp2p/websockets 10 removed the `filter` OPTION. The ./filters subpath
+    // itself still ships; nothing consumes it now, because dialFilter accepts
+    // /ws and /wss unconditionally — which is what `filters.all` was here for.
     const { webSockets } = await import('@libp2p/websockets');
     transports.push(webSockets());
   }

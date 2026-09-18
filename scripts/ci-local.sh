@@ -484,8 +484,20 @@ run_sdn_js() {
   # that script a real --check and put it back.
 
   step "sdn-js tests"
-  (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm test -- --run)
-  pass "sdn-js test"
+  # SDN_REQUIRE_GO_INTEROP=1 TURNS THE ONE LIVE INTEROP GATE INTO A GATE.
+  #
+  # src/go-libp2p-interop.test.ts builds a real go-libp2p host from the PRODUCT
+  # Go module and dials it with the browser client — the only thing in this repo
+  # that proves an sdn-js release can still talk to an sdn-server node after a
+  # libp2p bump. Without this variable it degrades to a console.warn and a
+  # describe.skip whenever a Go toolchain is missing, which is exactly the
+  # silent-skip blindness the test was written to remove: the suite would stay
+  # green through an interop break.
+  #
+  # This lane already requires Go (every other mode compiles sdn-server), so
+  # demanding it here costs nothing and closes that hole.
+  (cd "$ROOT/sdn-js" && SDN_REQUIRE_GO_INTEROP=1 npm_config_cache="$ROOT/.npm-cache" npm test -- --run)
+  pass "sdn-js test (go-libp2p interop required)"
 
   step "sdn-js build"
   (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm run build)

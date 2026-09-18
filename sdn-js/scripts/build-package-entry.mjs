@@ -100,31 +100,53 @@ const sharedBuildOptions = {
   },
   plugins: [
     {
-      // @libp2p/crypto's ECDSA implementation is the one leaf of that package
-      // that uses the WebCrypto SubtleCrypto interface. It cannot be swapped by package alias because
-      // it is reached through a relative import, so match the resolved file.
-      // Everything else in @libp2p/crypto stays upstream's own code.
-      name: 'libp2p-crypto-ecdsa-disabled',
+      // THREE leaves of @libp2p/crypto reach for the WebCrypto SubtleCrypto
+      // interface, not one. An earlier revision of this plugin substituted only
+      // ECDSA and asserted in its own comment that ECDSA was "the one leaf" —
+      // rsa/index.browser.js (7 subtle calls) and ecdh/index.browser.js (5)
+      // went straight into dist/, which is the 12 that shipped. They are
+      // reached through RELATIVE imports, so a package alias cannot see them;
+      // each resolved file is matched instead.
+      //
+      // Everything else in @libp2p/crypto stays upstream's own code: protobuf
+      // encoding, the key classes, Ed25519 and secp256k1.
+      name: 'libp2p-crypto-webcrypto-leaves-disabled',
       setup(pluginBuild) {
-        const ecdsaIndex = path.join(
-          packageRoot,
-          'node_modules/@libp2p/crypto/dist/src/keys/ecdsa/index.js',
-        );
-        if (!existsSync(ecdsaIndex)) {
-          throw new Error(
-            `[sdn-js] expected ${path.relative(packageRoot, ecdsaIndex)} to exist. ` +
-              '@libp2p/crypto moved its ECDSA implementation, so the WebCrypto it ' +
-              'contains would now be bundled unchecked. Re-point this plugin at the ' +
-              'new path before building.',
-          );
-        }
-        const replacement = path.join(packageRoot, 'src/shims/libp2p-crypto-ecdsa-disabled.ts');
-        pluginBuild.onResolve({ filter: /index\.js$/ }, (args) => {
+        // MATCH THE IMPORT PATH, NOT THE FILE THAT ENDS UP LOADED. keys/index.js
+        // imports './rsa/index.js'; package.json's "browser" field is what
+        // swaps in index.browser.js, and that happens AFTER this hook. Matching
+        // the .browser name therefore never fires. `guard` is the file that
+        // actually carries the WebCrypto, and existing-checks it so a
+        // reorganisation upstream fails the build instead of shipping quietly.
+        const leaves = [
+          ['keys/ecdsa/index.js', 'keys/ecdsa/index.js', 'src/shims/libp2p-crypto-ecdsa-disabled.ts'],
+          ['keys/rsa/index.js', 'keys/rsa/index.browser.js', 'src/shims/libp2p-crypto-rsa-disabled.ts'],
+          ['keys/ecdh/index.js', 'keys/ecdh/index.browser.js', 'src/shims/libp2p-crypto-ecdh-disabled.ts'],
+          // NOT disabled — re-implemented. go-libp2p peers are Ed25519, so this
+          // is on the live wire path; upstream's browser leaf only reaches for
+          // WebCrypto opportunistically and falls back to @noble/curves, so the
+          // shim makes that fallback unconditional.
+          ['keys/ed25519/index.js', 'keys/ed25519/index.browser.js', 'src/shims/libp2p-crypto-ed25519-noble.ts'],
+        ].map(([leaf, guard, shim]) => {
+          const resolved = path.join(packageRoot, 'node_modules/@libp2p/crypto/dist/src', leaf);
+          const guardPath = path.join(packageRoot, 'node_modules/@libp2p/crypto/dist/src', guard);
+          if (!existsSync(resolved) || !existsSync(guardPath)) {
+            throw new Error(
+              `[sdn-js] expected ${path.relative(packageRoot, guardPath)} to exist. ` +
+                '@libp2p/crypto moved a WebCrypto-bearing module, so the WebCrypto it ' +
+                'contains would now be bundled unchecked. Re-point this plugin at the ' +
+                'new path before building.',
+            );
+          }
+          return { resolved, replacement: path.join(packageRoot, shim) };
+        });
+        pluginBuild.onResolve({ filter: /index(\.browser)?\.js$/ }, (args) => {
           if (!args.importer.includes(`@libp2p${path.sep}crypto${path.sep}`)) {
             return null;
           }
           const resolved = path.resolve(path.dirname(args.importer), args.path);
-          return resolved === ecdsaIndex ? { path: replacement } : null;
+          const hit = leaves.find((l) => l.resolved === resolved);
+          return hit ? { path: hit.replacement } : null;
         });
       },
     },
