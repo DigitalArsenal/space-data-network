@@ -31,7 +31,7 @@ INFRA_REGEX='api\.spaceaware\.io|relay\.spaceaware\.io|tokyo\.relay\.digitalarse
 SECRET_ALLOWLIST_REGEX='^kubo/test/sharness/t0165-keystore-data/|^sdn-server/internal/storefront/payment_stripe_test.go:|^sdn-js/node_modules/|^docs/network-ecosystem-demo\.mjs:|^scripts/oss-preflight.sh:'
 INFRA_ALLOWLIST_REGEX='^scripts/oss-preflight.sh:'
 
-echo "[oss-preflight] 1/5 Checking blocked tracked paths..."
+echo "[oss-preflight] 1/7 Checking blocked tracked paths..."
 if [[ "$FILTER_CMD" == "rg" ]]; then
   blocked_hits="$(git ls-files | rg -n "$BLOCKED_PATHS_REGEX" || true)"
 else
@@ -45,7 +45,7 @@ else
   echo "[oss-preflight] PASS: no blocked tracked paths"
 fi
 
-echo "[oss-preflight] 2/5 Scanning tracked files for high-risk secret patterns..."
+echo "[oss-preflight] 2/7 Scanning tracked files for high-risk secret patterns..."
 secret_hits="$(git grep -n -I -E -e "$SECRET_REGEX" || true)"
 if [[ -n "$secret_hits" ]]; then
   if [[ "$FILTER_CMD" == "rg" ]]; then
@@ -62,7 +62,7 @@ else
   echo "[oss-preflight] PASS: no high-risk secret patterns detected"
 fi
 
-echo "[oss-preflight] 3/5 Checking tracked files for production endpoint leaks..."
+echo "[oss-preflight] 3/7 Checking tracked files for production endpoint leaks..."
 infra_hits="$(git grep -n -I -E -e "$INFRA_REGEX" || true)"
 if [[ -n "$infra_hits" ]]; then
   if [[ "$FILTER_CMD" == "rg" ]]; then
@@ -79,11 +79,23 @@ else
   echo "[oss-preflight] PASS: no production host leaks detected"
 fi
 
-echo "[oss-preflight] 4/5 Enforcing application-blind Go..."
+echo "[oss-preflight] 4/7 Enforcing application-blind Go..."
 node scripts/check-no-app-specific-go.mjs || fail=1
 
-echo "[oss-preflight] 5/5 Verifying the legacy-state purge migration..."
+echo "[oss-preflight] 5/7 Verifying the legacy-state purge migration..."
 node --test scripts/purge-legacy-supplemental-omm-state.test.mjs || fail=1
+
+# sdn-js runs two incompatible libp2p majors held together by hand-written shims
+# in sdn-js/src/helia.ts. One `npm i` walks the helia family forward inside its
+# carets, into exactly the code those shims are calibrated against, unreviewed.
+echo "[oss-preflight] 6/7 Checking the sdn-js helia/libp2p layering..."
+node scripts/check-sdn-js-dependency-layering.mjs || fail=1
+
+# sdn-server and the vendored kubo tree are two independent Go modules with no
+# go.work and no import relationship, kept on the same libp2p by hand. Both keep
+# compiling when they drift; only the peers stop interoperating.
+echo "[oss-preflight] 7/7 Checking sdn-server/kubo libp2p lockstep..."
+node scripts/check-kubo-lockstep.mjs || fail=1
 
 if [[ "$fail" -ne 0 ]]; then
   echo "[oss-preflight] RESULT: FAILED"

@@ -1,7 +1,61 @@
 name: Security Scanning
 
+# WHY THIS FILE WAS REWRITTEN (2026-09-18)
+#
+# The previous version could not report a problem, for two independent reasons:
+#
+#   1. It ran on `workflow_dispatch` only. Nothing scheduled it, no push or PR
+#      triggered it, so it only ran when somebody went looking — which is
+#      exactly when they already suspect something.
+#
+#   2. Every job ended in `exit 0` / `|| true` / `::warning::`. Seven high npm
+#      advisories — including an 8.2 address-poisoning primitive against
+#      libp2p's PeerStore, in the browser client the whole network depends on —
+#      reported green.
+#
+# Now: it runs on a schedule, on any PR that touches a dependency manifest, and
+# on demand; and the npm and Go scans are real gates with explicit, DATED
+# allowlists (scripts/check-npm-audit.mjs, scripts/check-govulncheck.mjs) rather
+# than a blanket severity threshold, which would recreate the same blindness one
+# notch down.
+#
+# Trivy and CodeQL remain reporting-only: neither has been triaged to a baseline
+# yet, and turning on a gate nobody has read the findings of just trains people
+# to ignore a red lane.
+
 on:
+  schedule:
+    # Mondays 07:00 UTC. Advisories land against a tree that is not changing;
+    # a push-only trigger would never catch them.
+    - cron: '0 7 * * 1'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sdn-js/package.json'
+      - 'sdn-js/package-lock.json'
+      - 'sdn-server/go.mod'
+      - 'sdn-server/go.sum'
+      - 'kubo/go.mod'
+      - 'kubo/go.sum'
+      - 'webui/package-lock.json'
+      - 'scripts/check-npm-audit.mjs'
+      - 'scripts/check-govulncheck.mjs'
+      - 'scripts/run-govulncheck.sh'
+      - '.github/workflows/security.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'sdn-js/package.json'
+      - 'sdn-js/package-lock.json'
+      - 'sdn-server/go.mod'
+      - 'sdn-server/go.sum'
+      - 'kubo/go.mod'
+      - 'kubo/go.sum'
   workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -14,34 +68,46 @@ jobs:
   go-vulnerability-scan:
     name: Go Vulnerability Scan
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sdn-server
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
+      # go-version was hardcoded '1.21' here while sdn-server/go.mod asks for
+      # 1.25 — the security lane was scanning a build the real lanes never make.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: sdn-server/go.mod
           cache-dependency-path: sdn-server/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      - name: Run govulncheck
+      - name: Install WasmEdge
+        env:
+          WASMEDGE_DIR: ${{ runner.temp }}/.wasmedge
         run: |
-          echo "=== Go Vulnerability Scan Results ==="
-          govulncheck ./... 2>&1 | tee govulncheck-report.txt
-          exit_code=${PIPESTATUS[0]}
-          echo ""
-          echo "=== Scan Complete ==="
-          if [ $exit_code -ne 0 ]; then
-            echo "::warning::Vulnerabilities found in Go dependencies"
-          fi
-          # Don't fail the build, just report
-          exit 0
+          chmod +x scripts/install-wasmedge.sh scripts/run-govulncheck.sh
+          ./scripts/install-wasmedge.sh
+
+      - name: Run govulncheck
+        env:
+          WASMEDGE_DIR: ${{ runner.temp }}/.wasmedge
+        run: ./scripts/run-govulncheck.sh --out sdn-server/govulncheck-report.txt
+
+      # Gates MODULE findings (decided by go.mod, identical on every runner)
+      # against a reviewed baseline. Stdlib findings are reported but not gated:
+      # they are decided by the Go toolchain patch level, so gating them would be
+      # flaky rather than informative.
+      - name: Gate module vulnerabilities against the reviewed baseline
+        run: node scripts/check-govulncheck.mjs --report sdn-server/govulncheck-report.txt
 
       - name: Upload govulncheck report
         uses: actions/upload-artifact@v4
@@ -54,9 +120,6 @@ jobs:
   npm-audit:
     name: npm Dependency Audit
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sdn-js
 
     steps:
       - uses: actions/checkout@v4
@@ -69,24 +132,22 @@ jobs:
           cache-dependency-path: sdn-js/package-lock.json
 
       - name: Install dependencies
+        working-directory: sdn-js
         run: npm ci
 
-      - name: Run npm audit
+      # A real gate. Every high/critical must be fixed or carry a dated,
+      # reasoned deferral in scripts/check-npm-audit.mjs; the script also fails
+      # on an expired deferral, a stale one, and a NEW advisory against an
+      # already-deferred package.
+      - name: Gate high and critical advisories
+        run: node scripts/check-npm-audit.mjs
+
+      - name: Capture audit report
+        if: always()
+        working-directory: sdn-js
         run: |
-          echo "=== npm Dependency Audit Results ==="
-          npm audit --json > npm-audit-report.json 2>&1 || true
-          npm audit 2>&1 | tee npm-audit-report.txt || true
-          echo ""
-          echo "=== Audit Summary ==="
-          # Check for high/critical vulnerabilities
-          high_count=$(cat npm-audit-report.json | jq '.metadata.vulnerabilities.high // 0' 2>/dev/null || echo "0")
-          critical_count=$(cat npm-audit-report.json | jq '.metadata.vulnerabilities.critical // 0' 2>/dev/null || echo "0")
-          echo "High vulnerabilities: $high_count"
-          echo "Critical vulnerabilities: $critical_count"
-          if [ "$critical_count" != "0" ] || [ "$high_count" != "0" ]; then
-            echo "::warning::Found $high_count high and $critical_count critical vulnerabilities"
-          fi
-          echo "=== Audit Complete ==="
+          npm audit --omit=dev --json > npm-audit-report.json 2>&1 || true
+          npm audit --omit=dev > npm-audit-report.txt 2>&1 || true
 
       - name: Upload npm audit report
         uses: actions/upload-artifact@v4
@@ -97,6 +158,36 @@ jobs:
             sdn-js/npm-audit-report.txt
             sdn-js/npm-audit-report.json
           retention-days: 30
+
+  dependency-layering:
+    name: Dependency layering and kubo lockstep
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # sdn-js runs two incompatible libp2p majors held together by ~370 lines of
+      # hand-written shims in sdn-js/src/helia.ts. Nothing in semver protects
+      # that; this makes a helia bump a reviewed act.
+      - name: sdn-js helia/libp2p layering
+        run: node scripts/check-sdn-js-dependency-layering.mjs
+
+      # sdn-server and the vendored kubo tree are separate Go modules kept on the
+      # same libp2p by hand. Both keep compiling when they drift apart.
+      - name: sdn-server / kubo lockstep
+        run: node scripts/check-kubo-lockstep.mjs
+
+      - name: Check suites
+        run: |
+          node --test scripts/check-sdn-js-dependency-layering.test.mjs
+          node --test scripts/check-kubo-lockstep.test.mjs
+          node --test scripts/check-npm-audit.test.mjs
+          node --test scripts/check-govulncheck.test.mjs
 
   docker-scan:
     name: Docker Image Scan
@@ -149,6 +240,9 @@ jobs:
           load: true
           tags: sdn-node:scan
 
+      # Reporting-only on purpose: the base-image findings have not been triaged
+      # to a baseline, and a gate over untriaged findings is a gate people learn
+      # to ignore. Baseline them the way check-govulncheck.mjs does, then gate.
       - name: Run Trivy vulnerability scanner
         if: steps.check.outputs.exists == 'true'
         uses: aquasecurity/trivy-action@master
@@ -187,14 +281,11 @@ jobs:
       fail-fast: false
       matrix:
         language: ['go', 'javascript']
-        include:
-          - language: go
-            working-directory: sdn-server
-          - language: javascript
-            working-directory: sdn-js
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -206,12 +297,14 @@ jobs:
         if: matrix.language == 'go'
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: sdn-server/go.mod
           cache-dependency-path: sdn-server/go.sum
 
       - name: Build Go code
         if: matrix.language == 'go'
         working-directory: sdn-server
+        env:
+          WASMEDGE_DIR: ${{ runner.temp }}/.wasmedge
         run: |
           chmod +x ../scripts/install-wasmedge.sh ../scripts/go-with-wasmedge.sh
           ../scripts/install-wasmedge.sh
@@ -226,12 +319,15 @@ jobs:
           cache: 'npm'
           cache-dependency-path: sdn-js/package-lock.json
 
+      # `npm run build || true` used to hide a broken build from the analysis:
+      # CodeQL then scanned whatever partial output existed and still reported
+      # success. A build failure here is a failure.
       - name: Build JavaScript code
         if: matrix.language == 'javascript'
         working-directory: sdn-js
         run: |
           npm ci
-          npm run build || true
+          npm run build
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
@@ -241,7 +337,7 @@ jobs:
   security-summary:
     name: Security Summary
     runs-on: ubuntu-latest
-    needs: [go-vulnerability-scan, npm-audit, docker-scan, codeql-analysis]
+    needs: [go-vulnerability-scan, npm-audit, dependency-layering, docker-scan, codeql-analysis]
     if: always()
 
     steps:
@@ -255,16 +351,15 @@ jobs:
         run: |
           echo "# Security Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Job Status" >> $GITHUB_STEP_SUMMARY
-          echo "| Scan | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Go Vulnerability Scan | ${{ needs.go-vulnerability-scan.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| npm Audit | ${{ needs.npm-audit.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Scan | ${{ needs.docker-scan.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| CodeQL Analysis | ${{ needs.codeql-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan | Gate | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Go Vulnerability Scan | gating (module findings) | ${{ needs.go-vulnerability-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm Audit | gating (high/critical) | ${{ needs.npm-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependency layering | gating | ${{ needs.dependency-layering.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Scan | reporting only | ${{ needs.docker-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL Analysis | reporting only | ${{ needs.codeql-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Reports" >> $GITHUB_STEP_SUMMARY
-          echo "Detailed reports are available as workflow artifacts." >> $GITHUB_STEP_SUMMARY
+          echo "Allowlists and baselines: \`scripts/check-npm-audit.mjs\`, \`scripts/check-govulncheck.mjs\`." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Go Vulnerabilities" >> $GITHUB_STEP_SUMMARY
           if [ -f reports/govulncheck-report/govulncheck-report.txt ]; then

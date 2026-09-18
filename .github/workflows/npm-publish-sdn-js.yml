@@ -49,6 +49,22 @@ jobs:
         working-directory: sdn-js
         run: npm ci
 
+      # This workflow publishes on `release: published` and on workflow_dispatch,
+      # neither of which is tied to a green CI run on the published commit —
+      # prepublishOnly is only `check:versions && build:package`. So the publish
+      # lane verified the package built, never that it worked. ci.yml runs this
+      # same suite on pushes to main; running it here is what makes the ARTIFACT
+      # gated rather than the branch.
+      - name: Test
+        working-directory: sdn-js
+        run: npm test
+
+      # sdn-js runs two incompatible libp2p majors bridged by hand-written shims
+      # in src/helia.ts. This is the last point before the tree reaches every
+      # consumer of the package, so assert the layering is the reviewed one.
+      - name: Verify helia/libp2p dependency layering
+        run: node scripts/check-sdn-js-dependency-layering.mjs
+
       - name: Build
         working-directory: sdn-js
         run: npm run build:package
