@@ -40,12 +40,25 @@ const FILES = ['docs/index.html', 'docs/onboarding.html', 'docs/INSTALL.md'];
 // authored, so this matches all three and puts each back in its own spelling.
 const RELEASE_LITERAL = /v?\d+\.\d+\.\d+[-.]beta[-.]\d+/g;
 
+// `gh` on a GitHub Actions runner is installed but UNAUTHENTICATED unless the
+// step passes GH_TOKEN, and it then exits 4 with a hint on stderr. Left raw
+// that surfaced as a Node stack trace inside a gofmt-and-links preflight,
+// which says nothing about the actual problem.
 function latestTag() {
-  const out = execFileSync('gh', [
-    'release', 'view', '--repo', 'DigitalArsenal/space-data-network',
-    '--json', 'tagName', '--jq', '.tagName',
-  ], { encoding: 'utf8' });
-  return out.trim();
+  try {
+    const out = execFileSync('gh', [
+      'release', 'view', '--repo', 'DigitalArsenal/space-data-network',
+      '--json', 'tagName', '--jq', '.tagName',
+    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return out.trim();
+  } catch (error) {
+    const stderr = (error.stderr || '').trim();
+    console.error('[docs-release] could not read the newest release tag from GitHub.');
+    if (stderr) console.error(`[docs-release] gh: ${stderr}`);
+    console.error('[docs-release] pass --tag <vX.Y.Z-beta.N> to check against a known tag,');
+    console.error('[docs-release] or give the step a token (GH_TOKEN: ${{ github.token }}).');
+    process.exit(1);
+  }
 }
 
 export function rewrite(text, tag) {
