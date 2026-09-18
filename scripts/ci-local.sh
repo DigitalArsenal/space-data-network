@@ -200,6 +200,17 @@ run_preflight() {
     scripts/check-npm-audit.test.mjs \
     scripts/check-govulncheck.test.mjs)
   pass "dependency-drift check suites"
+
+  # Release-assembly logic, which decides what a published release CONTAINS.
+  # assemble-beta-release-artifacts.test.mjs was run by no script and no
+  # workflow; a test nothing runs is a comment. Both suites are pure Node over
+  # temp directories — no toolchain, no network — so they belong in the
+  # cheapest gate there is.
+  step "Release artifact check suites"
+  (cd "$ROOT" && node --test \
+    deployment/release/assemble-beta-release-artifacts.test.mjs \
+    scripts/merge-mac-update-feed.test.mjs)
+  pass "release artifact check suites"
 }
 
 # The shipped Kubo pin. Cheap, and it closes a hole that stayed open for
