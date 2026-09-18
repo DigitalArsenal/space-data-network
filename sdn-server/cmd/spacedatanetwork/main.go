@@ -99,6 +99,11 @@ var rootCmd = &cobra.Command{
 It replaces generic content-addressed storage with FlatBuffer-native data handling
 and SQLite-based structured storage, optimized for space data standards.`,
 	PersistentPreRun: func(cmd *cobra.Command, _ []string) { configureCLILogging(cmd) },
+	// `sdn --version` is the first thing anyone types after installing, and it
+	// used to answer "unknown flag: --version". Setting Version makes cobra
+	// register the flag, and the template is the SAME two lines `sdn version`
+	// prints, so the two can never disagree.
+	Version: versioninfo.Version(),
 }
 
 // longRunningCommands are the ones an operator EXPECTS to narrate themselves:
@@ -159,12 +164,16 @@ var initCmd = &cobra.Command{
 	RunE:  runInit,
 }
 
+// versionReport is what BOTH `sdn version` and `sdn --version` print.
+func versionReport() string {
+	return fmt.Sprintf("version=%s\nagent=%s\n", versioninfo.Version(), versioninfo.AgentVersion)
+}
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print SDN version information",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Fprintf(cmd.OutOrStdout(), "version=%s\n", versioninfo.Version())
-		fmt.Fprintf(cmd.OutOrStdout(), "agent=%s\n", versioninfo.AgentVersion)
+		fmt.Fprint(cmd.OutOrStdout(), versionReport())
 		return nil
 	},
 }
@@ -294,6 +303,9 @@ func init() {
 }
 
 func main() {
+	// --version prints exactly what `sdn version` prints, not cobra's default
+	// "spacedatanetwork version X" one-liner, so scripts can parse either.
+	rootCmd.SetVersionTemplate(versionReport())
 	// Log level is set in rootCmd's PersistentPreRun, NOT here: at this point
 	// cobra has not parsed flags yet, so `debug` is always false and --debug
 	// never took effect. See configureCLILogging.

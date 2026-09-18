@@ -432,6 +432,14 @@ jobs:
           file: deployment/docker/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          # WITHOUT THIS the image's node advertises "spacedatanetwork/1.0.5"
+          # — the unstamped suite version — on libp2p identify, which is the
+          # exact defect versioninfo.ReleaseTag exists to fix: every 1.0.5
+          # build, release and dev alike, looked byte-identical to peers. The
+          # tarball build passed the stamp from the day it was added; this one
+          # never did, so v1.0.5-beta.69's published image reported 1.0.5.
+          build-args: |
+            SDN_RELEASE_TAG=${{ env.RELEASE_TAG }}
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           provenance: true
           sbom: true
@@ -455,9 +463,18 @@ jobs:
             --platform ${{ matrix.platform }} \
             --load \
             -t "${image_ref}" \
+            --build-arg "SDN_RELEASE_TAG=${RELEASE_TAG}" \
             -f deployment/docker/Dockerfile \
             .
           docker run --rm "${image_ref}" --help >/tmp/spacedatanetwork-container-help.txt
+          # The stamp is invisible at build time and only shows up as a wrong
+          # agent string on a live node, so assert it here where it is cheap.
+          want="version=${RELEASE_TAG#v}"
+          got="$(docker run --rm "${image_ref}" version | head -1)"
+          if [ "$got" != "$want" ]; then
+            echo "container reports '$got', expected '$want' — SDN_RELEASE_TAG did not reach the build" >&2
+            exit 1
+          fi
           docker save "${image_ref}" | gzip -n > "dist/container-images/spacedatanetwork-container-${NATIVE_PACKAGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
