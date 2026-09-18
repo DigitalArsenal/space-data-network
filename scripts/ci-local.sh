@@ -198,7 +198,8 @@ run_preflight() {
   (cd "$ROOT" && node --test \
     scripts/check-sdn-js-dependency-layering.test.mjs \
     scripts/check-npm-audit.test.mjs \
-    scripts/check-govulncheck.test.mjs)
+    scripts/check-govulncheck.test.mjs \
+    scripts/check-no-orphan-test-suites.test.mjs)
   pass "dependency-drift check suites"
 
   # Release-assembly logic, which decides what a published release CONTAINS.
@@ -211,6 +212,51 @@ run_preflight() {
     deployment/release/assemble-beta-release-artifacts.test.mjs \
     scripts/merge-mac-update-feed.test.mjs)
   pass "release artifact check suites"
+
+  # THE SUITES NOTHING RAN. A 2026-09-18 sweep found 35 of the 43 root-level
+  # *.test.mjs files were named by no npm script, no workflow and not by this
+  # one — covering what a release contains, how it installs, how the update
+  # manifest is signed, how the public host route renders. 29 passed; they had
+  # simply never been run, and two of that day's bugs sat squarely under them.
+  # Together they cost about 70 seconds.
+  step "Release and deployment check suites"
+  (cd "$ROOT" && node --test \
+    deployment/celestrak/service-units.test.mjs \
+    deployment/public-origin/nginx-smoke.test.mjs \
+    deployment/public-origin/render-nginx.test.mjs \
+    deployment/release/build-cli-update-payload.test.mjs \
+    deployment/release/build-self-contained-cli.test.mjs \
+    deployment/release/build-update-carrier.test.mjs \
+    deployment/release/extract-release-binary.test.mjs \
+    deployment/release/install-script.test.mjs \
+    deployment/release/live-dht-client-smoke.test.mjs \
+    deployment/release/live-dht-summary.test.mjs \
+    deployment/release/live-dht-workflow.test.mjs \
+    deployment/release/prepare-beta-release.test.mjs \
+    deployment/release/publish-fleet-update.test.mjs \
+    deployment/release/published-install-smoke.test.mjs \
+    deployment/release/sign-update-manifest.test.mjs \
+    deployment/release/test-release-artifacts-docker.test.mjs \
+    deployment/release/update-manifest-statement-domain.test.mjs \
+    deployment/release/verify-release-binary.test.mjs \
+    deployment/spaceaware/install-public-host-route.test.mjs \
+    deployment/spaceaware/install-spaceaware-public-host-route.test.mjs \
+    deployment/spaceaware/migrate-kubo-repo.test.mjs \
+    deployment/spaceaware/nginx-public-host-route-smoke.test.mjs \
+    deployment/spaceaware/verify-spaceaware-public-host-route.test.mjs \
+    scripts/check-no-app-specific-go.test.mjs \
+    scripts/module-placement.test.mjs \
+    scripts/purge-legacy-supplemental-omm-state.test.mjs \
+    tests/isomorphic/artifact-crypto.test.mjs \
+    tests/isomorphic/decryption-flow.test.mjs \
+    tests/isomorphic/seed-orbpro-module-catalog.test.mjs)
+  pass "release and deployment check suites"
+
+  # And the class cannot come back: every root-level suite must be named by
+  # something that runs it, or quarantined with the reason it cannot.
+  step "No orphan test suites"
+  (cd "$ROOT" && node scripts/check-no-orphan-test-suites.mjs)
+  pass "no orphan test suites"
 }
 
 # The shipped Kubo pin. Cheap, and it closes a hole that stayed open for
