@@ -113,7 +113,7 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 		},
 		PublisherKeys: func(peerID string) []caps.P2PPublisherKey {
 			if peerID == discoveryCelestrakID {
-				return []caps.P2PPublisherKey{{PublicKey: celestrakPub, Source: "epm-directory"}}
+				return []caps.P2PPublisherKey{{PublicKey: discoveryPublisherKey(t, celestrakPub), Source: "epm-directory"}}
 			}
 			return nil
 		},
@@ -238,7 +238,10 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 			entry["attribution"] != "signature" {
 			t.Fatalf("provenance fields: %v", entry)
 		}
-		if entry["publisher_key"] != hex.EncodeToString(celestrakPub) ||
+		// publisher_key is the libp2p-marshalled key the capability was handed
+		// (36 bytes / 72 hex for Ed25519), NOT the raw 32-byte key: since
+		// 982fc25d the surface must publish a key that names its own algorithm.
+		if entry["publisher_key"] != hex.EncodeToString(discoveryPublisherKey(t, celestrakPub)) ||
 			entry["publisher_key_source"] != "epm-directory" {
 			t.Fatalf("publisher key fields: %v", entry)
 		}
