@@ -48,9 +48,20 @@ const (
 // after 982fc25d changed the wire format.
 func discoveryFlowDist(t *testing.T, bundle string) string {
 	t.Helper()
+	// AN EXPLICIT OVERRIDE IS AN INSTRUCTION, NOT A HINT. When
+	// SDN_DISCOVERY_FLOW_DIST is set, it is the ONLY root considered: whoever set
+	// it is pointing at a specific build, and silently searching past a typo to
+	// run a DIFFERENT bundle answers a question nobody asked. Before this, a
+	// wrong path fell through to a discovered checkout and the run passed green
+	// — demonstrated with SDN_DISCOVERY_FLOW_DIST=/nonexistent/typo.
 	var roots []string
 	if env := strings.TrimSpace(os.Getenv("SDN_DISCOVERY_FLOW_DIST")); env != "" {
-		roots = append(roots, env)
+		dist := filepath.Join(env, bundle)
+		if _, err := os.Stat(filepath.Join(dist, "runtime.wasm")); err != nil {
+			t.Fatalf("SDN_DISCOVERY_FLOW_DIST=%s has no %s/runtime.wasm (%v); "+
+				"an explicit override is not searched past", env, bundle, err)
+		}
+		return dist
 	}
 	roots = append(roots, filepath.Join("..", "..", "..", "..",
 		"space-data-network-modules", "flows", "discovery", "dist"))
