@@ -233,6 +233,7 @@ type Node struct {
 	datasetCatalogMu        sync.Mutex
 	datasetCatalogReplayMu  sync.Mutex
 	datasetCatalogReplayAt  int
+	pendingDatasetCatalogAt int
 	datasetMaterializedPNMs map[string]time.Time
 	datasetSupersedeMu      sync.Mutex
 
@@ -3284,15 +3285,22 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 		}
 
 		// Process the message
-		if err := n.protocol.HandlePubSubMessage(schema, msg.Data, from); err != nil {
+		stored, err := n.protocol.HandlePubSubMessageStored(schema, msg.Data, from)
+		if err != nil {
 			log.Warnf("Failed to handle message on %s: %v", schema, err)
 			n.raisePubSubPublicationRejected(from.String(), err)
-		} else {
+		} else if stored {
 			// Activity-ring tap (M2 activity capability, caps/
-			// nodeactivity.go): a nil error here means
-			// HandlePubSubMessage validated AND stored the record (see its
-			// doc — every reject path returns a non-nil error), so this is
-			// the ACCEPTED/stored record, not every gossip delivery.
+			// nodeactivity.go): this is the ACCEPTED/stored record, not every
+			// gossip delivery.
+			//
+			// Read the bool, not the absence of an error. Since record writes
+			// were gated on peer trust (74c82735c) a nil error means HANDLED,
+			// which is no longer the same as STORED: a message from an
+			// untrusted peer is validated and — for a dataset-catalog
+			// announcement — dispatched for metadata discovery, all without
+			// becoming a row. Counting those as stored records would report
+			// ordinary public-topic traffic as ingest.
 			n.activityRing.Append("record_stored", from.String(), schema)
 		}
 
@@ -3378,8 +3386,14 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 // protocol. GossipSub does not periodically republish unchanged catalogs, so
 // a skipped live fetch must not rely on another announcement. This also
 // recovers received announcements after restart without requiring peer trust.
+//
+// It draws from two places, because since 74c82735c they hold different peers'
+// announcements: the stored PNM records (which only a TRUSTED peer can write)
+// and the pending lane (channels.RememberPendingDatasetAnnouncement), which is
+// where a verified announcement from any peer goes when the single metadata
+// fetch slot was busy.
 func (n *Node) cacheStoredDatasetCatalogs(ctx context.Context, records []*storage.Record) {
-	if n == nil || len(records) == 0 || !n.datasetCatalogReplayMu.TryLock() {
+	if n == nil || !n.datasetCatalogReplayMu.TryLock() {
 		return
 	}
 	defer n.datasetCatalogReplayMu.Unlock()
@@ -3402,64 +3416,162 @@ func (n *Node) cacheStoredDatasetCatalogs(ctx context.Context, records []*storag
 		if err != nil {
 			continue
 		}
-		if err := n.cacheDatasetPublicationMetadata(ctx, "PNM.fbs", record.Data, from); err != nil {
+		if _, err := n.admitDatasetPublicationMetadata(ctx, "PNM.fbs", record.Data, from); err != nil {
 			log.Debugf("Stored dataset catalog from %s unavailable: %v", from.ShortString(), err)
+		}
+	}
+	n.replayPendingDatasetCatalogs(ctx)
+}
+
+// replayPendingDatasetCatalogs retries the announcements parked by
+// admitDatasetPublicationMetadata when the metadata fetch slot was busy.
+//
+// Before 74c82735c the record store WAS this retry queue: the protocol stored
+// every PNM announcement, so a skipped one came back on the next catch-up pass
+// and, because the row was durable, after a restart too. That store write is
+// now correctly restricted to trusted peers, which left announcements from
+// everyone else with nowhere to wait. The pending lane is that queue, minus
+// the public data plane the store write exposes.
+//
+// Settled announcements are deleted; retryable ones are left for the next pass
+// and reaped by the lane's own TTL if no pass ever settles them.
+func (n *Node) replayPendingDatasetCatalogs(ctx context.Context) {
+	if n == nil || n.store == nil || ctx == nil || ctx.Err() != nil {
+		return
+	}
+	pending, err := channels.ReadPendingDatasetAnnouncements(n.store, time.Now())
+	if err != nil {
+		log.Debugf("Could not read parked dataset catalog announcements: %v", err)
+		return
+	}
+	if len(pending) == 0 {
+		return
+	}
+	// Same rotation discipline as the stored snapshot above: bounded work per
+	// pass, resuming where the last pass stopped.
+	for i := 0; i < min(len(pending), 128) && ctx.Err() == nil; i++ {
+		n.pendingDatasetCatalogAt %= len(pending)
+		entry := pending[n.pendingDatasetCatalogAt]
+		n.pendingDatasetCatalogAt++
+		from, decodeErr := peer.Decode(strings.TrimSpace(entry.PeerID))
+		if decodeErr != nil {
+			n.forgetPendingDatasetCatalog(entry)
+			continue
+		}
+		admission, err := n.admitDatasetPublicationMetadata(ctx, "PNM.fbs", entry.PNM, from)
+		if err != nil {
+			log.Debugf("Parked dataset catalog from %s unavailable: %v", from.ShortString(), err)
+		}
+		if admission == datasetCatalogSettled {
+			n.forgetPendingDatasetCatalog(entry)
 		}
 	}
 }
 
+func (n *Node) forgetPendingDatasetCatalog(entry channels.PendingDatasetAnnouncement) {
+	if err := channels.ForgetPendingDatasetAnnouncement(n.store, entry.PeerID, entry.PNM); err != nil {
+		log.Debugf("Could not drop parked dataset catalog from %s: %v", shortPeerID(entry.PeerID), err)
+	}
+}
+
+// datasetCatalogAdmission says what is still owed to an announcement that has
+// been offered to admitDatasetPublicationMetadata.
+type datasetCatalogAdmission int
+
+const (
+	// datasetCatalogRetryLater: nothing durable happened and the reason can
+	// change — the fetch slot was busy, a hard-distrust veto that an operator
+	// may lift, a manifest fetch that failed. The announcement must be kept.
+	datasetCatalogRetryLater datasetCatalogAdmission = iota
+	// datasetCatalogSettled: the announcement is cached, was already cached,
+	// is superseded, or can never be used (bad signature, wrong schema,
+	// undecodable CID). Nothing is owed to it.
+	datasetCatalogSettled
+)
+
 // cacheDatasetPublicationMetadata discovers signed public source catalogs.
 // Admission to this small metadata cache grants no trust, subscription or pin.
-func (n *Node) cacheDatasetPublicationMetadata(ctx context.Context, schema string, raw []byte, from peer.ID) (err error) {
+func (n *Node) cacheDatasetPublicationMetadata(ctx context.Context, schema string, raw []byte, from peer.ID) error {
+	_, err := n.admitDatasetPublicationMetadata(ctx, schema, raw, from)
+	return err
+}
+
+// admitDatasetPublicationMetadata is cacheDatasetPublicationMetadata plus the
+// answer the retry queue needs: whether this announcement still has a future.
+// An error is not that answer — most of the nil-error returns below are
+// "cannot act on this yet", not "done with it".
+func (n *Node) admitDatasetPublicationMetadata(ctx context.Context, schema string, raw []byte, from peer.ID) (admission datasetCatalogAdmission, err error) {
 	defer func() {
 		if recover() != nil {
-			err = errors.New("malformed dataset catalog announcement")
+			// Bytes that panic a parse will panic it again. Nothing to retry.
+			admission, err = datasetCatalogSettled, errors.New("malformed dataset catalog announcement")
 		}
 	}()
-	if n == nil || n.store == nil || n.config == nil || from == "" || (n.host != nil && from == n.host.ID()) || strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
-		return nil
+	if n == nil || n.store == nil || n.config == nil || from == "" || (n.host != nil && from == n.host.ID()) {
+		return datasetCatalogSettled, nil
+	}
+	if strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
+		// No fetcher configured yet. An operator can add one; the lane's TTL
+		// bounds how long announcements wait for that to happen.
+		return datasetCatalogRetryLater, nil
 	}
 	if n.peerRegistry != nil && n.peerRegistry.GetTrustLevel(from) == peers.Never {
-		return nil
+		// A veto an operator can lift. Keep the announcement, fetch nothing.
+		return datasetCatalogRetryLater, nil
 	}
 	if len(raw) < 12 || len(raw) > 65536 {
-		return errors.New("dataset announcement exceeds catalog bounds")
+		return datasetCatalogSettled, errors.New("dataset announcement exceeds catalog bounds")
 	}
 	// EPM discovery already verifies the peer-bound profile. Do not open an
 	// extra discovery fetch for an unknown announcement signer here.
 	key, proof, err := verifyDatasetPublicationPNM(raw, n.datasetPublicationKeyCandidates(ctx, from, false))
 	if err != nil {
-		return err
+		// The first candidate is always the key inside the announcer's own
+		// peer ID, which does not change. Bytes that fail here fail forever.
+		return datasetCatalogSettled, err
 	}
 	publicationSchema := datasetPublicationFileIDSchema(proof.FileID)
 	if publicationSchema == "" || (schema != "PNM.fbs" && schema != publicationSchema) {
-		return nil
+		return datasetCatalogSettled, nil
 	}
 	if _, err := cid.Decode(proof.CID); err != nil {
-		return err
+		return datasetCatalogSettled, err
 	}
-	// At most one metadata fetch at a time. The protocol stores announcements
-	// before this callback; bounded catch-up retries any skipped live fetch.
+	// At most one metadata fetch at a time.
 	if !n.datasetCatalogMu.TryLock() {
-		return nil
+		// GossipSub does not republish an unchanged catalog, so a dropped
+		// announcement is a catalog lost until the peer publishes a new one.
+		// Park the VERIFIED bytes where a later pass — in this process or the
+		// next — can retry them. This is not the record store and never
+		// reaches the public data plane; see channels/dataset_catalog_pending.
+		if err := channels.RememberPendingDatasetAnnouncement(n.store, from.String(), raw, time.Now()); err != nil {
+			log.Debugf("Could not park dataset catalog announcement from %s: %v", from.ShortString(), err)
+		}
+		return datasetCatalogRetryLater, nil
 	}
 	defer n.datasetCatalogMu.Unlock()
 	entries, err := channels.ReadDatasetCatalog(n.store, time.Now())
 	if err != nil {
-		return err
+		return datasetCatalogRetryLater, err
 	}
 	for _, entry := range entries {
 		if entry.PeerID == from.String() && entry.ManifestCID == proof.CID {
-			return nil
+			return datasetCatalogSettled, nil
 		}
 	}
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	manifest, err := newIPFSTipFetcher(n.config.Admin.IPFSAPIURL, channels.MaxDatasetCatalogManifestBytes).Fetch(fetchCtx, proof.CID)
 	if err != nil {
-		return err
+		// A CID that is not resolvable right now may be later.
+		return datasetCatalogRetryLater, err
 	}
-	return channels.RememberDatasetCatalog(n.store, from.String(), key, raw, manifest, time.Now())
+	if err := channels.RememberDatasetCatalog(n.store, from.String(), key, raw, manifest, time.Now()); err != nil {
+		// Capacity or a manifest/announcement mismatch. Neither is worth
+		// re-fetching on the next tick, but the lane's TTL reaps it either way.
+		return datasetCatalogRetryLater, err
+	}
+	return datasetCatalogSettled, nil
 }
 
 // newTipQueueConfig returns the TipQueueConfig buildTipQueue constructs the

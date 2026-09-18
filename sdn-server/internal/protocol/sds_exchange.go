@@ -105,6 +105,12 @@ type SDSExchangeHandler struct {
 	pushAuthorizer PushAuthorizer
 	warnedNoAuthz  atomic.Bool
 
+	// untrustedAnnouncements budgets the dataset-catalog announcements an
+	// untrusted peer may have dispatched to pnmHandler. Unlike pushAuthorizer
+	// this is a DoS control, not a trust gate, so nil ALLOWS — see
+	// untrustedAnnouncementLimiter.Allow.
+	untrustedAnnouncements *untrustedAnnouncementLimiter
+
 	// droppedNoStore counts protocol operations skipped because this node has
 	// no local store (config mode: edge). An edge node still subscribes to
 	// every schema pubsub topic and still exposes the SDS exchange stream
@@ -195,6 +201,12 @@ func NewSDSExchangeHandlerWithOptions(store *storage.FlatSQLStore, validator *sd
 		validator:   validator,
 		limits:      limits,
 		rateLimiter: rateLimiter,
+		// Installed unconditionally, not from config: the untrusted
+		// dataset-catalog announcement budget is a property of that lane (the
+		// announcer picks the CID this node then fetches), not an operator
+		// preference, and rateLimiter above is nil whenever network rate
+		// limiting is switched off.
+		untrustedAnnouncements: newUntrustedAnnouncementLimiter(),
 	}
 
 	return h
@@ -563,36 +575,53 @@ func (h *SDSExchangeHandler) SetPubSubPNMHandler(handler PubSubPNMHandler) {
 	h.pnmHandler = handler
 }
 
-// HandlePubSubMessage processes a message received via PubSub.
+// HandlePubSubMessage processes a message received via PubSub, discarding
+// whether a record was stored. Callers that report stored records (the
+// activity ring) must use HandlePubSubMessageStored instead: a nil error here
+// means HANDLED, which since the peer-trust gate is not the same as STORED.
 func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, from peer.ID) error {
+	_, err := h.HandlePubSubMessageStored(schema, data, from)
+	return err
+}
+
+// HandlePubSubMessageStored processes a message received via PubSub and
+// reports whether it became a row in this node's record store.
+//
+// The two answers came apart when record writes were gated on peer trust
+// (74c82735c): a message from an untrusted peer is now handled — validated,
+// and for a dataset-catalog announcement dispatched to the announcement
+// handler — without being stored, and returns a nil error because it is not a
+// failure. Anything that counts stored records must read the bool, not the
+// absence of an error.
+func (h *SDSExchangeHandler) HandlePubSubMessageStored(schema string, data []byte, from peer.ID) (stored bool, err error) {
 	// Check rate limit before processing
 	if h.rateLimiter != nil && !h.rateLimiter.Allow(from) {
 		log.Warnf("Rate limit exceeded for peer %s, rejecting PubSub message", from.ShortString())
-		return ErrRateLimited
+		return false, ErrRateLimited
 	}
 
 	// Validate schema name to prevent path traversal and injection attacks
 	if err := sds.ValidateSchemaName(schema); err != nil {
 		log.Warnf("PubSub message rejected: invalid schema name from %s: %v", from.ShortString(), err)
-		return fmt.Errorf("invalid schema name: %w", err)
+		return false, fmt.Errorf("invalid schema name: %w", err)
 	}
 	// The dashboard's TOPICS lane: every admitted message is one observation
 	// on its schema topic (the same name the topics endpoint lists).
 	DefaultTopicActivity.Observe("/spacedatanetwork/sds/"+schema, time.Now())
 
 	if len(data) == 0 {
-		return errors.New("message too short")
+		return false, errors.New("message too short")
 	}
 
 	// Validate message size.
 	if len(data) > h.limits.MaxMessageSize {
-		return fmt.Errorf("message too large: %d > %d bytes", len(data), h.limits.MaxMessageSize)
+		return false, fmt.Errorf("message too large: %d > %d bytes", len(data), h.limits.MaxMessageSize)
 	}
 
 	// Verify the schema name is in the list of supported schemas
 	if !h.validator.HasSchema(schema) {
 		log.Warnf("PubSub message rejected: unknown schema %s from %s", schema, from.ShortString())
-		return fmt.Errorf("unknown schema: %s", schema)
+		return false, fmt.Errorf("unknown schema: %s", schema)
 	}
 
 	// Create context with timeout for PubSub message handling.
@@ -608,7 +637,7 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	decision, routeErr := h.validator.RouteBuffer(schema, data)
 	if routeErr != nil {
 		log.Warnf("PubSub message rejected: unroutable record from %s on %s: %v", from.ShortString(), schema, routeErr)
-		return fmt.Errorf("unroutable record: %w", routeErr)
+		return false, fmt.Errorf("unroutable record: %w", routeErr)
 	}
 	routedSchema := decision.Schema
 	if decision.Mismatch {
@@ -621,7 +650,7 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 		routedSchema = pnmSchemaName
 		if err := h.validator.Validate(ctx, pnmSchemaName, data); err != nil {
 			log.Warnf("PubSub PNM rejected: validation failed from %s on %s: %v", from.ShortString(), schema, err)
-			return fmt.Errorf("PNM validation failed: %w", err)
+			return false, fmt.Errorf("PNM validation failed: %w", err)
 		}
 		// Edge-mode fail-safe: a node with no local store (config mode: edge)
 		// still subscribes to every schema pubsub topic, so PNM announcements
@@ -631,26 +660,65 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 		if h.store == nil {
 			n := h.droppedNoStore.Add(1)
 			log.Debugf("edge mode (no store): dropping PNM announcement from %s on %s (dropped=%d)", from.ShortString(), schema, n)
-			return nil
+			return false, nil
 		}
-		// Same gate as the stream push lane. PNMs arrive on an OPEN pubsub
+		// TWO EFFECTS, TWO THREAT MODELS — gate them separately.
+		//
+		// The STORE WRITE is the one 74c82735c closed, and it stays closed.
+		// Same gate as the stream push lane: PNMs arrive on an OPEN pubsub
 		// topic, so this is the most reachable write path of the three, not
-		// the least: anyone who can subscribe can publish.
-		if !h.mayPush(from) {
-			log.Warnf("REFUSING PNM from untrusted peer %s on %s: records are accepted only from trusted peers.",
-				from.ShortString(), schema)
-			return nil
-		}
-		if _, err := h.store.Store(pnmSchemaName, data, from.String(), nil); err != nil {
-			return fmt.Errorf("failed to store PNM: %w", err)
+		// the least — anyone who can subscribe can publish. A row written here
+		// is served back on the ANONYMOUS public data plane, which
+		// recordReadSourceFiltered unions across every producer table, so an
+		// untrusted writer would be laundering records through this node's
+		// identity. Do not move this behind the dispatch; do not widen it.
+		//
+		// The HANDLER DISPATCH is not that write, and gating it alongside the
+		// write was collateral damage. It closed untrusted dataset-catalog
+		// DISCOVERY whole — the feature whose entire premise is that a peer's
+		// dataset inventory crosses before trust does, so that an operator can
+		// see what a peer offers and then decide whether to trust it. Gating
+		// it inverted discovery-before-trust into trust-before-discovery, and
+		// nothing in 74c82735c intended that (see
+		// internal/node/dataset_publication_metadata_test.go, a week older
+		// than the gate, which the gate commit did not run).
+		//
+		// The dispatch is already independently defended, twice, downstream:
+		//   - Node.materializeDatasetPublicationPNM carries its own
+		//     peerRegistry.IsTrusted check and refuses to materialize any
+		//     record from a non-trusted peer (internal/node/node.go);
+		//   - Node.cacheDatasetPublicationMetadata is metadata-only: it vetoes
+		//     on peers.Never, verifies the PNM envelope against the
+		//     ANNOUNCER's own key before touching the network, makes at most
+		//     one bounded manifest fetch (channels.MaxDatasetCatalogManifest-
+		//     Bytes, serialized by datasetCatalogMu), and lands a ZIP under
+		//     dataset-catalogs/ — never a row in a record table, and so never
+		//     on the data plane the store gate exists to protect.
+		// What it did NOT have was a budget, so untrusted dispatch gets one
+		// below: the announcer picks the CID, and a fetch it steers is not
+		// free even when it is bounded.
+		trusted := h.mayPush(from)
+		if trusted {
+			if _, err := h.store.Store(pnmSchemaName, data, from.String(), nil); err != nil {
+				return false, fmt.Errorf("failed to store PNM: %w", err)
+			}
+		} else {
+			// Debug, not warn. On a public topic an announcement from a peer
+			// this node has not promoted is ordinary traffic, and a warn per
+			// message made normal operation look like an incident.
+			log.Debugf("PNM from untrusted peer %s on %s: not stored; metadata discovery only", from.ShortString(), schema)
+			if !h.untrustedAnnouncements.Allow(from) {
+				log.Warnf("Rate limited dataset-catalog announcements from untrusted peer %s on %s", from.ShortString(), schema)
+				return false, nil
+			}
 		}
 		if h.pnmHandler != nil {
 			if err := h.pnmHandler(ctx, schema, data, from); err != nil {
-				return fmt.Errorf("%w: %w", ErrPNMAnnouncement, err)
+				return trusted, fmt.Errorf("%w: %w", ErrPNMAnnouncement, err)
 			}
 		}
-		log.Debugf("PubSub PNM announcement accepted from %s on %s", from.ShortString(), schema)
-		return nil
+		log.Debugf("PubSub PNM announcement accepted from %s on %s (stored=%t)", from.ShortString(), schema, trusted)
+		return trusted, nil
 	}
 
 	// SDS v1 message format: [data...]
@@ -660,7 +728,7 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	// arrived on.
 	if err := h.validator.Validate(ctx, routedSchema, msgData); err != nil {
 		log.Warnf("PubSub message rejected: validation failed for %s from %s on %s: %v", routedSchema, from.ShortString(), schema, err)
-		return fmt.Errorf("validation failed: %w", err)
+		return false, fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Edge-mode fail-safe: a node with no local store (config mode: edge)
@@ -675,7 +743,7 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	if h.store == nil {
 		n := h.droppedNoStore.Add(1)
 		log.Debugf("edge mode (no store): dropping %s record from %s (dropped=%d)", routedSchema, from.ShortString(), n)
-		return nil
+		return false, nil
 	}
 
 	// Same gate as the stream push lane above. A record arriving over pubsub
@@ -685,17 +753,16 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	if !h.mayPush(from) {
 		log.Warnf("REFUSING pubsub record from untrusted peer %s on %s: records are accepted only from trusted peers.",
 			from.ShortString(), routedSchema)
-		return nil
+		return false, nil
 	}
 
 	// Store data
-	_, err := h.store.Store(routedSchema, msgData, from.String(), nil)
-	if err != nil {
-		return fmt.Errorf("failed to store: %w", err)
+	if _, err := h.store.Store(routedSchema, msgData, from.String(), nil); err != nil {
+		return false, fmt.Errorf("failed to store: %w", err)
 	}
 
 	log.Debugf("PubSub message accepted: %s record from %s on %s", routedSchema, from.ShortString(), schema)
-	return nil
+	return true, nil
 }
 
 // pnmSchemaName is the one schema the announcement lane treats specially —
