@@ -2259,7 +2259,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						SelfPeerID:       n.PeerID().String(),
 						SelfVCard:        selfVCard,
 						AgentVersion:     versioninfo.AgentVersion,
-						SuiteVersion:     versioninfo.Version(),
+						SuiteVersion:     versioninfo.SuiteVersion,
 						StandardsVersion: versioninfo.SpaceDataStandardsVersion,
 						Uptime:           time.Since(processStartTime),
 						Geo:              geoReader,
@@ -4656,7 +4656,14 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		info["mode"] = n.Config().Mode
 		info["version"] = versioninfo.AgentVersion
 		info["agent_version"] = versioninfo.AgentVersion
-		info["suite_version"] = versioninfo.Version()
+		// SuiteVersion, not Version(): "suite_version" is the monorepo's version
+		// from suite.versions.json, and the build's own identity is what
+		// "version"/"agent_version" above carry. The two used to agree by
+		// accident — Version() falls back to SuiteVersion on an unstamped build —
+		// so a release stamp made this endpoint answer 1.0.5-beta.NN for a key
+		// that /api/v1/version and the EPM service both answer 1.0.5 for. One key
+		// meaning two things across endpoints is worse than either value.
+		info["suite_version"] = versioninfo.SuiteVersion
 		info["standards_version"] = versioninfo.SpaceDataStandardsVersion
 		info["advertisement_flag"] = versioninfo.CurrentAdvertisementFlag
 		// Build identity and serving surface (API-synthesized, lowercase):
@@ -5460,7 +5467,7 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 			Mode:              n.Config().Mode,
 			Version:           versioninfo.AgentVersion,
 			AgentVersion:      versioninfo.AgentVersion,
-			SuiteVersion:      versioninfo.Version(),
+			SuiteVersion:      versioninfo.SuiteVersion,
 			StandardsVersion:  versioninfo.SpaceDataStandardsVersion,
 			AdvertisementFlag: versioninfo.CurrentAdvertisementFlag,
 			UptimeSeconds:     int64(time.Since(processStartTime).Seconds()),
