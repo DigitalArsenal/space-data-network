@@ -409,7 +409,7 @@ var errEnginePrepareFailed = errors.New("engine file-identifier registration")
 // THAT 2-5x IS NOW CONSERVATIVE, and deliberately left alone. It projects a
 // per-commit fsync onto block-volume latency, and this burst is a long run of
 // CREATE TABLE/INDEX commits — exactly the shape that stopped paying one when
-// the store moved to WAL+synchronous=NORMAL (2026-09-17, see the pragma in
+// the store moved to WAL+synchronous=NORMAL (2026-09-18, see the pragma in
 // tryOpenControlDatabase). So the real droplet burst should be SHORTER than
 // this says. It is not edited down by guess: the number that matters is the
 // one measured on host-01, and over-budgeting a health timeout is the safe
@@ -502,10 +502,12 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 		return nil, bootMark{}, engineRecordState{}, err
 	}
 	// WAL AT synchronous=NORMAL (the pragma is below, after prepare). This IS a
-	// durability trade, taken deliberately by the owner on 2026-09-17. Until
+	// durability trade, and it was made on the owner's instruction of
+	// 2026-09-18 after the cost of FULL was measured and reported to them. Until
 	// then this ran FULL, on the reasoning that the record store IS
 	// control.flatsqldb and its crash semantics were not something to trade for
-	// throughput without being asked. The trade was then priced, and taken.
+	// throughput without being asked. It was priced, put to the owner, and
+	// taken. No graph task records the ruling, so this comment is the record.
 	// What follows is what was traded, because a future reader deciding whether
 	// to move it back needs the shape of the risk and not just the number.
 	//
@@ -527,11 +529,21 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	// AN OS CRASH OR POWER LOSS CAN LOSE THE TAIL. That is the entire delta.
 	// FULL fsyncs the WAL on every commit; NORMAL fsyncs it before each
 	// checkpoint. So the window at risk is "everything committed since the last
-	// WAL fsync", and it is BOUNDED: wal_autocheckpoint is 1000 pages at a
-	// page_size of 4096 — ~3.9 MiB of modified pages, well under a second of
-	// ingest at the rate measured below. Both factors are asserted by
-	// TestControlDatabaseIsWALAtNormalDurability, so that bound cannot quietly
-	// stop being true.
+	// WAL fsync", and it is BOUNDED IN BYTES: wal_autocheckpoint is 1000 pages
+	// at a page_size of 4096 — ~3.9 MiB of modified pages. Both factors are
+	// asserted by TestControlDatabaseIsWALAtNormalDurability, so that bound
+	// cannot quietly stop being true.
+	//
+	// IT IS NOT BOUNDED IN TIME, and that distinction is the one worth keeping
+	// straight. Nothing fsyncs the WAL on a timer: there is no periodic
+	// wal_checkpoint anywhere in internal/ and the checkpoint loop is driven by
+	// writes, not by a clock. Under continuous ingest ~3.9 MiB is a fraction of
+	// a second; on an IDLE node the last few commits before a power cut can sit
+	// unsynced indefinitely — a record published at 03:00 on a quiet node and a
+	// power cut at 09:00 can still lose it. What replaces that guarantee is the
+	// network: records are replicated and re-announced, and a boot reconcile
+	// repairs the engine against the control tables. A single-node deployment
+	// holding records nothing else has is the case that should still run FULL.
 	//
 	// THE REWIND IS ALWAYS A COMMIT-ORDER PREFIX, never a mixed state: one
 	// writer (the one-daemon-per-box law), frames appended in commit order, and
@@ -543,7 +555,7 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	// high-water mark that rewinds together with the rows it describes. NORMAL
 	// widens those windows; it cannot invert one.
 	//
-	// WHAT IT IS WORTH, measured overnight 2026-09-17/18 on the REAL store
+	// WHAT IT IS WORTH, measured 2026-09-18 on the REAL store
 	// write path (Mac Studio, APFS, engine AOT, sds-stream-bench -bytes 48MiB
 	// -baseline=false), before/after binaries alternated run-by-run because
 	// this box's load drifts by 40% over a few minutes. Medians:
@@ -1385,4 +1397,42 @@ func sealJournalDigest(h hash.Hash, limit int64) (string, error) {
 	}
 	fmt.Fprintf(clone, ":%d", limit)
 	return hex.EncodeToString(clone.Sum(nil)), nil
+}
+
+// controlDurabilityDescription reports the control database's ACTUAL journal
+// mode and sync level, for the one boot line an operator reads when they are
+// working out how much a power cut could have cost them.
+//
+// Asked, never asserted. The line this feeds used to carry the literal string
+// "journal_mode=TRUNCATE" and kept carrying it for as long as the store has
+// been on WAL — telling the reader the store fsynced a rollback journal on
+// every commit while it was in fact appending to a WAL and syncing at NORMAL.
+// A constant cannot go stale if it is never a constant.
+func controlDurabilityDescription(db *flatsqlrt.Database) string {
+	if db == nil {
+		return "journal_mode=? synchronous=?"
+	}
+	journal := "?"
+	if res, err := db.Query("PRAGMA journal_mode"); err == nil && len(res.Rows) > 0 && len(res.Rows[0]) > 0 {
+		if v, ok := res.Rows[0][0].(string); ok {
+			journal = v
+		}
+	}
+	sync := "?"
+	if res, err := db.Query("PRAGMA synchronous"); err == nil && len(res.Rows) > 0 && len(res.Rows[0]) > 0 {
+		// The pragma answers a NUMBER; the names are what an operator knows it by.
+		switch v, _ := res.Rows[0][0].(int64); v {
+		case 0:
+			sync = "OFF"
+		case 1:
+			sync = "NORMAL"
+		case 2:
+			sync = "FULL"
+		case 3:
+			sync = "EXTRA"
+		default:
+			sync = fmt.Sprintf("%d", v)
+		}
+	}
+	return fmt.Sprintf("journal_mode=%s synchronous=%s", journal, sync)
 }
