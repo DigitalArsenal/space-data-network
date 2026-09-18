@@ -14,13 +14,9 @@
 const { execFileSync } = require('node:child_process')
 const { existsSync, readdirSync, statSync } = require('node:fs')
 const { join } = require('node:path')
+const { hasSigningIdentity } = require('./signing-identity')
 
 const MACH_O_MAGIC = ['cafebabe', 'feedface', 'feedfacf', 'cffaedfe', 'cefaedfe']
-
-function hasSigningIdentity () {
-  if (process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') return false
-  return Boolean(process.env.CSC_LINK || process.env.CSC_NAME || process.env.APPLE_TEAM_ID)
-}
 
 function isMachO (file) {
   try {
