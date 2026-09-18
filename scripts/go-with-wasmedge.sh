@@ -4,6 +4,65 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WASMEDGE_DIR="${WASMEDGE_DIR:-}"
 
+# ---------------------------------------------------------------------------
+# Which Go module this wrapper drives.
+#
+# It used to end in a bare `cd "$ROOT/sdn-server"` — twice, once per link
+# branch — with no way to say otherwise and no complaint when you meant
+# something else. Standing in kubo/ and asking for ./cmd/ipfs got you:
+#
+#   stat .../sdn-server/cmd/ipfs: directory not found
+#
+# naming a path the caller never typed, and `go list -m` from kubo/ answered
+# `github.com/spacedatanetwork/sdn-server`. The repo has nine go.mod files;
+# for eight of them this wrapper silently substituted a ninth.
+#
+# That is one reason no CI lane ever compiled the in-repo kubo fork: the
+# toolchain wrapper structurally could not be pointed at it. (With the override
+# below it builds clean — the fork is unbuilt, not broken. See
+# sdn-server/docs/kubo-fork-audit.md.)
+#
+# sdn-server stays the default — every existing caller means sdn-server.
+# SDN_GO_MODULE_DIR overrides it (absolute, or relative to the repo root).
+# Otherwise, if the caller is standing in a DIFFERENT module inside this repo,
+# fail loudly instead of quietly building something else.
+# ---------------------------------------------------------------------------
+if [[ -n "${SDN_GO_MODULE_DIR:-}" ]]; then
+  case "$SDN_GO_MODULE_DIR" in
+    /*) MODULE_DIR="$SDN_GO_MODULE_DIR" ;;
+    *) MODULE_DIR="$ROOT/$SDN_GO_MODULE_DIR" ;;
+  esac
+  if [[ ! -f "$MODULE_DIR/go.mod" ]]; then
+    printf '[go-wrapper] SDN_GO_MODULE_DIR has no go.mod: %s\n' "$MODULE_DIR" >&2
+    exit 1
+  fi
+else
+  MODULE_DIR="$ROOT/sdn-server"
+
+  # Nearest enclosing go.mod, searching upward but never past the repo root.
+  caller_module=""
+  probe="$PWD"
+  while [[ "$probe" == "$ROOT"/* ]]; do
+    if [[ -f "$probe/go.mod" ]]; then
+      caller_module="$probe"
+      break
+    fi
+    probe="$(dirname "$probe")"
+  done
+
+  if [[ -n "$caller_module" && "$caller_module" != "$MODULE_DIR" ]]; then
+    printf '[go-wrapper] refusing to build the wrong module.\n' >&2
+    printf '[go-wrapper]   you are in : %s\n' "$caller_module" >&2
+    printf '[go-wrapper]   default is : %s\n' "$MODULE_DIR" >&2
+    printf '[go-wrapper] This wrapper drives sdn-server unless told otherwise, and it used\n' >&2
+    printf '[go-wrapper] to do so SILENTLY from any directory. To build the module you are\n' >&2
+    printf '[go-wrapper] standing in:\n' >&2
+    printf '[go-wrapper]   SDN_GO_MODULE_DIR=%s %s %s\n' \
+      "${caller_module#"$ROOT"/}" "${0##*/}" "${*:-build ./...}" >&2
+    exit 1
+  fi
+fi
+
 if [[ -z "$WASMEDGE_DIR" ]]; then
   cat >&2 <<'EOF'
 [wasmedge] WASMEDGE_DIR must point to an existing WasmEdge header/library layout.
@@ -127,7 +186,7 @@ if [[ -f "$WASMEDGE_DIR/link.flags" ]]; then
   # and &, and a filesystem path is arbitrary text that must survive verbatim.
   STATIC_LINK_TEMPLATE="$(tr -d '\n' < "$WASMEDGE_DIR/link.flags")"
   STATIC_LINK_FLAGS="${STATIC_LINK_TEMPLATE//@PREFIX@/$WASMEDGE_DIR}"
-  cd "$ROOT/sdn-server"
+  cd "$MODULE_DIR"
   case "${1:-}" in
     build|install|test)
       verb="$1"; shift
@@ -168,7 +227,7 @@ if [[ -d "$WASMEDGE_DIR/bin" ]]; then
   export PATH="$WASMEDGE_DIR/bin:$PATH"
 fi
 
-cd "$ROOT/sdn-server"
+cd "$MODULE_DIR"
 
 # Same contract as the static branch: a caller's own -ldflags travel in
 # SDN_GO_LDFLAGS so the two paths behave identically.
