@@ -11,7 +11,11 @@ import (
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 )
 
-// hostTransportOptions returns the transports the full node registers.
+// HostTransportOptions returns the transports the full node registers.
+//
+// EXPORTED so cmd/js-interop-host builds its host from this exact list. A
+// browser interop test that registers its own transports proves only that the
+// test's transports work; the point is to dial what the node actually offers.
 // Registering explicit transports disables libp2p's defaults, so every
 // listen-address family in the default config must appear here — including
 // QUIC for /udp/4001/quic-v1.
@@ -21,7 +25,7 @@ import (
 // address, so the browser-dialable half of the node exists only when the
 // certificate connector supplied its TLS config — it can never come up
 // unauthenticated by accident.
-func hostTransportOptions(wsTLS *tls.Config) []libp2p.Option {
+func HostTransportOptions(wsTLS *tls.Config) []libp2p.Option {
 	wsOptions := []interface{}{}
 	if wsTLS != nil {
 		wsOptions = append(wsOptions, websocket.WithTLSConfig(wsTLS))

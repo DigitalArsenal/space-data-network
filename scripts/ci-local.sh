@@ -524,6 +524,29 @@ run_sdn_js() {
   step "sdn-js build"
   (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm run build)
   pass "sdn-js build"
+
+  # BROWSER-EXECUTED DIRECT INTEROP, and it runs on the bundle the step above
+  # just produced — dist/index.mjs, the file the npm package ships.
+  #
+  # The go-libp2p interop test above runs under NODE, over a websocket. A
+  # browser can do neither: no TCP, and its unrelayed paths to a node are
+  # webtransport and webrtc-direct, both built on APIs Node does not have
+  # (WebTransport, RTCPeerConnection) and on certificate-hash authentication
+  # only a browser enforces. Node interop passing is no evidence a browser can
+  # connect, which is the thing an SDN client has to do.
+  #
+  # Headless chromium only — never a window on the owner's machine.
+  step "sdn-js browser direct interop (webtransport + webrtc-direct)"
+  # --with-deps installs system libraries and needs sudo, which a runner has
+  # and the owner's machine must never be asked for.
+  local playwright_install_args=(install chromium)
+  if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+    playwright_install_args=(install --with-deps chromium)
+  fi
+  (cd "$ROOT/sdn-js" \
+    && npm_config_cache="$ROOT/.npm-cache" npx --yes playwright "${playwright_install_args[@]}" >/dev/null \
+    && SDN_REQUIRE_BROWSER_INTEROP=1 npm_config_cache="$ROOT/.npm-cache" npm run test:browser-interop)
+  pass "sdn-js browser direct interop"
 }
 
 run_module_delivery_compat() {

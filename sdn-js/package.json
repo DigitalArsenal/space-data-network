@@ -48,7 +48,8 @@
     "chaos:local": "node scripts/chaos-local-network.mjs",
     "lint": "eslint src --ext .ts",
     "check:versions": "node ../scripts/generate-suite-version-info.js --check && node ../scripts/check-version-consistency.js",
-    "prepublishOnly": "npm run check:versions && npm run build:package"
+    "prepublishOnly": "npm run check:versions && npm run build:package",
+    "test:browser-interop": "playwright test --config playwright.browser-interop.config.ts"
   },
   "keywords": [
     "space",

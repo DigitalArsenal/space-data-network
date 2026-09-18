@@ -766,7 +766,7 @@ func (n *Node) init() error {
 		libp2p.Identity(privKey),
 		libp2p.UserAgent(versioninfo.AgentVersion),
 		libp2p.ListenAddrs(listenAddrs...),
-	}, hostTransportOptions(autoTLSTLSConfig)...)
+	}, HostTransportOptions(autoTLSTLSConfig)...)
 	// Public relay service. "always" wires it at construction; "auto" — the
 	// default — waits for AutoNAT to say this node is publicly reachable and
 	// then starts it (startAutoRelayService), because a node behind NAT cannot
