@@ -12,11 +12,10 @@
 // Results are logged as `E2E_RESULT {json}` for the chrome-devtools driver.
 import { createLibp2p } from 'libp2p';
 import { webSockets } from '@libp2p/websockets';
-import { all as wsFilters } from '@libp2p/websockets/filters';
 import { identify } from '@libp2p/identify';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
-import { noise } from '@chainsafe/libp2p-noise';
-import { yamux } from '@chainsafe/libp2p-yamux';
+import { gossipsub } from '@libp2p/gossipsub';
+import { noise } from '@libp2p/noise';
+import { yamux } from '@libp2p/yamux';
 import { multiaddr } from '@multiformats/multiaddr';
 
 import {
@@ -39,8 +38,8 @@ const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(
 
 async function browserNode() {
   return createLibp2p({
-    transports: [webSockets({ filter: wsFilters })],
-    connectionEncryption: [noise()],
+    transports: [webSockets()],
+    connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
     // The browser default gater denies loopback; this E2E dials 127.0.0.1.
     connectionGater: { denyDialMultiaddr: () => false },

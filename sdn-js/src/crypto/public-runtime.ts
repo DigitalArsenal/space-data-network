@@ -1,6 +1,6 @@
-import { gcm } from '@noble/ciphers/aes';
-import { ed25519 } from '@noble/curves/ed25519';
-import { sha256 as nobleSha256 } from '@noble/hashes/sha256';
+import { gcm } from '@noble/ciphers/aes.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 
 /**
  * Public, non-wallet cryptographic primitives used by the read-only web UI.

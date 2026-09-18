@@ -7,15 +7,17 @@
  * The internal libp2p instance uses the same transport/security/pubsub config
  * as SDNNode so both can interoperate on the same network.
  *
- * LAYERING WARNING. This file bridges TWO incompatible libp2p majors living in
- * one dependency tree: sdn-js depends on libp2p 1.9.4, while helia@6 nests its
- * own libp2p 3.2.0. The `with*Compat` wrappers and `addLegacy*Compat`
- * synthesizers below are calibrated against those EXACT versions, and nothing in
- * semver protects that — a helia 6.1.x patch that changes how it calls handle()
- * or dialProtocol() breaks this with no major bump.
+ * ONE LIBP2P MAJOR. This file used to carry ~370 lines of hand-written
+ * compatibility shims because sdn-js built its node with libp2p 1.9.4 while
+ * helia@6 nested its own libp2p 3.2.0, and the two disagreed about stream
+ * handler arity and the stream read/write API. Both halves now resolve to a
+ * single hoisted libp2p 3.x, so helia calls the same object we build and every
+ * one of those shims is gone.
  *
- * scripts/check-sdn-js-dependency-layering.mjs fails CI when either half moves.
- * Read docs/sdn-js-helia-libp2p-layering.md before bumping anything here.
+ * The one integration that remains hand-written is `libp2pRouter` below: helia 7
+ * moved `libp2pRouting()` inside `@helia/libp2p`, which does not export it and
+ * builds its own libp2p rather than accepting ours. That is an adapter over a
+ * public libp2p API, not a bridge between two majors.
  *
  * Usage:
  *
@@ -31,25 +33,26 @@
  *   await helia.stop();
  */
 
-import { createHelia, type Helia } from 'helia';
+import { createHeliaLight, type Helia } from 'helia';
 import { unixfs } from '@helia/unixfs';
-import { bitswap, trustlessGateway } from '@helia/block-brokers';
-import { libp2pRouting, httpGatewayRouting } from '@helia/routers';
+import { withBitswap } from '@helia/bitswap';
+import { trustlessGatewayBlockBroker } from '@helia/trustless-gateway-client';
+import { fallbackRouter } from '@helia/fallback-router';
 import { createLibp2p, type Libp2p } from 'libp2p';
 import { serviceCapabilities } from '@libp2p/interface';
 import { webSockets } from '@libp2p/websockets';
-import { all as wsFilters } from '@libp2p/websockets/filters';
 import { webTransport } from '@libp2p/webtransport';
-import { webRTCDirect } from '@spacedatanetwork/libp2p-webrtc-v1';
+import { webRTCDirect } from '@libp2p/webrtc';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { bootstrap } from '@libp2p/bootstrap';
 import { identify } from '@libp2p/identify';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
-import { noise } from '@chainsafe/libp2p-noise';
-import { yamux } from '@chainsafe/libp2p-yamux';
+import { ping } from '@libp2p/ping';
+import { gossipsub } from '@libp2p/gossipsub';
+import { noise } from '@libp2p/noise';
+import { yamux } from '@libp2p/yamux';
 import { kadDHT } from '@libp2p/kad-dht';
-import { keys } from '@libp2p/crypto';
-import { peerIdFromString } from '@libp2p/peer-id';
+import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
+import { peerIdFromCID, peerIdFromString } from '@libp2p/peer-id';
 import { CID } from 'multiformats/cid';
 import { multiaddr } from '@multiformats/multiaddr';
 
@@ -91,310 +94,24 @@ export interface FetchCIDBytesFromHeliaOptions {
   maxBytes?: number;
 }
 
-type IncomingStreamData = {
-  stream: unknown;
-  connection: unknown;
-};
-
 type HeliaLibp2pCreateOptions = NonNullable<Parameters<typeof createLibp2p>[0]>;
 
-type CompatLibp2p = Libp2p & {
-  __heliaStreamHandlerCompatApplied?: boolean;
-  __heliaDialProtocolStreamCompatApplied?: boolean;
-};
-
+/**
+ * Advertise the `@libp2p/identify` capability without running identify.
+ *
+ * NOT a version shim, and not optional: gossipsub declares
+ * `serviceDependencies = ['@libp2p/identify']`, and libp2p throws
+ * `UnmetServiceDependenciesError` at construction when a declared capability is
+ * unmet. Running the real `identify()` instead would make browsers advertise
+ * their protocol list to the Go node, which is the behaviour
+ * sdn-server/internal/node/peer_admission_policy.go was rewritten to stop
+ * depending on after the 2026-08-06 outage.
+ */
 function identifyCapabilityOnly() {
   return () => ({
     [serviceCapabilities]: ['@libp2p/identify'],
     [Symbol.toStringTag]: 'sdn-js-identify-capability',
   });
-}
-
-type LegacyWritableStreamCompat = {
-  __heliaLegacyWriteCompatApplied?: boolean;
-  send?: (chunk: Uint8Array) => boolean;
-  onDrain?: (options?: { signal?: AbortSignal }) => Promise<void>;
-  sink?: (source: AsyncIterable<Uint8Array>) => Promise<void>;
-  close?: (options?: unknown) => Promise<void>;
-  closeWrite?: (options?: unknown) => Promise<void>;
-  abort?: (error: Error) => void;
-};
-
-type LegacyEventedStreamCompat = {
-  __heliaLegacyEventCompatApplied?: boolean;
-  source?: AsyncIterable<unknown> | (() => AsyncIterable<unknown>);
-  close?: (options?: unknown) => Promise<void>;
-  addEventListener?: (type: string, listener: (event: any) => void) => void;
-  removeEventListener?: (type: string, listener: (event: any) => void) => void;
-};
-
-// Helia 6 registers some stream handlers as `(stream, connection)`, while the
-// libp2p instance resolved in this workspace invokes handlers with a single
-// `{ stream, connection }` object. Adapt only the two-argument form.
-function withHeliaStreamHandlerCompat(libp2p: Libp2p): Libp2p {
-  const candidate = libp2p as CompatLibp2p;
-  if (candidate.__heliaStreamHandlerCompatApplied === true) {
-    return candidate;
-  }
-
-  const originalHandle = candidate.handle?.bind(candidate);
-  if (typeof originalHandle !== 'function') {
-    return candidate;
-  }
-
-  candidate.handle = (async (protocols, handler, options) => {
-    if (typeof handler === 'function' && handler.length >= 2) {
-      const twoArgHandler = handler as any;
-      return originalHandle(
-        protocols,
-        (incoming: IncomingStreamData) =>
-          twoArgHandler(
-            addLegacyEventedStreamCompat(incoming?.stream),
-            incoming?.connection,
-          ),
-        options,
-      );
-    }
-    return originalHandle(protocols, handler, options);
-  }) as Libp2p['handle'];
-  candidate.__heliaStreamHandlerCompatApplied = true;
-
-  return candidate;
-}
-
-function addLegacyEventedStreamCompat<T>(stream: T): T {
-  const candidate = stream as T & LegacyEventedStreamCompat;
-  if (
-    stream == null ||
-    candidate.__heliaLegacyEventCompatApplied === true ||
-    candidate.source == null ||
-    typeof candidate.addEventListener === 'function'
-  ) {
-    return stream;
-  }
-
-  const listeners = new Map<string, Set<(event: any) => void>>();
-  let pumpStarted = false;
-
-  const dispatchEvent = (type: string, event: any = {}) => {
-    for (const listener of listeners.get(type) ?? []) {
-      listener(event);
-    }
-  };
-
-  const streamSource = () => {
-    const source = candidate.source;
-    return typeof source === 'function' ? source.call(candidate) : source;
-  };
-
-  const startPump = () => {
-    if (pumpStarted) {
-      return;
-    }
-    pumpStarted = true;
-    queueMicrotask(() => {
-      void Promise.resolve()
-        .then(async () => {
-          const source = streamSource();
-          if (!source) {
-            return;
-          }
-          for await (const chunk of source) {
-            dispatchEvent('message', { data: chunk });
-          }
-          dispatchEvent('remoteCloseWrite');
-          dispatchEvent('close', { error: null });
-        })
-        .catch((error) => {
-          dispatchEvent('close', { error });
-        });
-    });
-  };
-
-  candidate.addEventListener = (type: string, listener: (event: any) => void) => {
-    const typeListeners = listeners.get(type) ?? new Set<(event: any) => void>();
-    typeListeners.add(listener);
-    listeners.set(type, typeListeners);
-    if (type === 'message') {
-      startPump();
-    }
-  };
-  candidate.removeEventListener = (type: string, listener: (event: any) => void) => {
-    listeners.get(type)?.delete(listener);
-  };
-  candidate.close = async () => undefined;
-  candidate.__heliaLegacyEventCompatApplied = true;
-
-  return candidate;
-}
-
-function addLegacyWritableStreamCompat<T>(stream: T): T {
-  const candidate = stream as T & LegacyWritableStreamCompat;
-  if (
-    candidate.__heliaLegacyWriteCompatApplied === true ||
-    typeof candidate.send === 'function' ||
-    typeof candidate.sink !== 'function'
-  ) {
-    return stream;
-  }
-
-  const originalClose = candidate.close?.bind(candidate);
-  const originalCloseWrite = candidate.closeWrite?.bind(candidate);
-  const originalAbort = candidate.abort?.bind(candidate);
-  const chunks: Uint8Array[] = [];
-  const waiters: Array<() => void> = [];
-  const drainWaiters = new Set<() => void>();
-  // send(false) accepts the chunk and asks the producer to await onDrain.
-  // A producer that ignores this signal is stopped at the hard limit.
-  const highWaterBytes = 1024 * 1024;
-  const maxBufferedBytes = 8 * 1024 * 1024;
-  let bufferedBytes = 0;
-  let bufferedChunks = 0;
-  let sourceClosed = false;
-  let failure: Error | null = null;
-  let sinkPromise: Promise<void> | undefined;
-  let rejectFailure!: (error: Error) => void;
-  const failed = new Promise<never>((_resolve, reject) => { rejectFailure = reject; });
-  void failed.catch(() => {});
-
-  const writable = () => bufferedBytes < highWaterBytes && bufferedChunks < 64;
-  const wakeDrain = () => { for (const check of [...drainWaiters]) check(); };
-
-  const wakeSource = () => {
-    for (const resolve of waiters.splice(0)) {
-      resolve();
-    }
-  };
-
-  const fail = (cause: unknown) => {
-    failure ??= cause instanceof Error ? cause : new Error(String(cause));
-    rejectFailure(failure);
-    sourceClosed = true;
-    chunks.length = 0;
-    bufferedBytes = 0;
-    bufferedChunks = 0;
-    wakeSource();
-    wakeDrain();
-  };
-
-  async function* queuedSource(): AsyncGenerator<Uint8Array, void, unknown> {
-    while (true) {
-      const chunk = chunks.shift();
-      if (chunk) {
-        // Include the chunk held by the sink in the budget until it requests
-        // another chunk or closes the iterator.
-        try { yield chunk; }
-        finally {
-          bufferedBytes = Math.max(0, bufferedBytes - chunk.byteLength);
-          bufferedChunks = Math.max(0, bufferedChunks - 1);
-          wakeDrain();
-        }
-        continue;
-      }
-      if (sourceClosed) {
-        return;
-      }
-      await new Promise<void>((resolve) => {
-        waiters.push(resolve);
-      });
-    }
-  }
-
-  const ensureSinkStarted = () => {
-    if (!sinkPromise) {
-      sinkPromise = Promise.resolve().then(() => candidate.sink!(queuedSource())).then(() => {
-        if (!sourceClosed || bufferedChunks > 0) fail(new Error('Stream sink ended before queued writes completed'));
-        sourceClosed = true;
-        wakeDrain();
-        if (failure) throw failure;
-      }, (error) => { fail(error); throw failure; });
-      // send is synchronous; drain/close observe the saved failure. Avoid an
-      // unhandled rejection when the producer has not awaited either yet.
-      void sinkPromise.catch(() => {});
-    }
-    return sinkPromise;
-  };
-
-  const closeQueuedSource = async () => {
-    sourceClosed = true;
-    wakeSource();
-    wakeDrain();
-    if (sinkPromise) {
-      await Promise.race([sinkPromise, failed]);
-    }
-    if (failure) throw failure;
-  };
-
-  candidate.send = (chunk: Uint8Array) => {
-    if (failure) throw failure;
-    if (sourceClosed) {
-      throw new Error('Cannot send on a closed stream.');
-    }
-    if (chunk.byteLength === 0) return writable();
-    if (chunk.byteLength > maxBufferedBytes - bufferedBytes || bufferedChunks >= 1024) {
-      throw new Error('Stream buffer limit exceeded; await onDrain() after send() returns false');
-    }
-    chunks.push(chunk.slice());
-    bufferedBytes += chunk.byteLength;
-    bufferedChunks++;
-    ensureSinkStarted();
-    wakeSource();
-    return writable();
-  };
-  candidate.onDrain = async (options?: { signal?: AbortSignal }) => {
-    const signal = options?.signal;
-    signal?.throwIfAborted();
-    if (failure) throw failure;
-    if (sourceClosed) throw new Error('Cannot drain a closed stream');
-    if (writable()) return;
-    await new Promise<void>((resolve, reject) => {
-      const cleanup = () => { drainWaiters.delete(check); signal?.removeEventListener('abort', aborted); };
-      const aborted = () => { cleanup(); reject(signal?.reason ?? new Error('Stream drain aborted')); };
-      const check = () => {
-        if (failure) { cleanup(); reject(failure); }
-        else if (sourceClosed) { cleanup(); reject(new Error('Cannot drain a closed stream')); }
-        else if (writable()) { cleanup(); resolve(); }
-      };
-      drainWaiters.add(check);
-      signal?.addEventListener('abort', aborted, { once: true });
-      check();
-    });
-  };
-  candidate.closeWrite = async (options?: unknown) => {
-    await closeQueuedSource();
-    await originalCloseWrite?.(options);
-  };
-  candidate.close = async (options?: unknown) => {
-    try { await closeQueuedSource(); }
-    finally { await originalClose?.(options); }
-  };
-  candidate.abort = (error: Error) => {
-    fail(error);
-    originalAbort?.(error);
-  };
-  candidate.__heliaLegacyWriteCompatApplied = true;
-
-  return candidate;
-}
-
-function withHeliaDialProtocolStreamCompat(libp2p: Libp2p): Libp2p {
-  const candidate = libp2p as CompatLibp2p;
-  if (candidate.__heliaDialProtocolStreamCompatApplied === true) {
-    return candidate;
-  }
-
-  const originalDialProtocol = candidate.dialProtocol?.bind(candidate);
-  if (typeof originalDialProtocol !== 'function') {
-    return candidate;
-  }
-
-  candidate.dialProtocol = (async (...args: Parameters<Libp2p['dialProtocol']>) => {
-    const stream = await originalDialProtocol(...args);
-    return addLegacyWritableStreamCompat(stream);
-  }) as Libp2p['dialProtocol'];
-  candidate.__heliaDialProtocolStreamCompatApplied = true;
-
-  return candidate;
 }
 
 function normalizeTrustlessGateways(value: SDNConfig['ipfsTrustlessGateways']): string[] {
@@ -418,22 +135,110 @@ function normalizeTrustlessGateways(value: SDNConfig['ipfsTrustlessGateways']): 
   return [...gateways];
 }
 
+type AnyRouter = Record<string, any>;
+
+/**
+ * Expose a libp2p instance to Helia's routing layer.
+ *
+ * helia 6 shipped this as `libp2pRouting()` in `@helia/routers`. helia 7 moved
+ * it into `@helia/libp2p`, which neither exports it nor accepts a pre-built
+ * libp2p — `withLibp2pLight()` always calls `createLibp2p()` itself. sdn-js
+ * hands Helia the SAME libp2p instance SDNNode uses, so the adapter lives here.
+ * It only forwards to libp2p's public contentRouting/peerRouting APIs.
+ */
+function libp2pRouter(libp2p: Libp2p): AnyRouter {
+  const anyLibp2p = libp2p as unknown as AnyRouter;
+  const toPeer = (info: any) => ({ ...info, id: info.id.toCID(), router: 'libp2p-router' });
+  return {
+    name: 'libp2p-router',
+    async provide(cid: CID, options?: unknown) {
+      await anyLibp2p.contentRouting.provide(cid, options);
+    },
+    async cancelReprovide(key: unknown, options?: unknown) {
+      await anyLibp2p.contentRouting.cancelReprovide(key, options);
+    },
+    async *findProviders(cid: CID, options?: unknown) {
+      for await (const provider of anyLibp2p.contentRouting.findProviders(cid, options)) {
+        yield { ...toPeer(provider), fallback: false };
+      }
+    },
+    async put(key: Uint8Array, value: Uint8Array, options?: unknown) {
+      await anyLibp2p.contentRouting.put(key, value, options);
+    },
+    async get(key: Uint8Array, options?: unknown) {
+      return anyLibp2p.contentRouting.get(key, options);
+    },
+    async findPeer(peerId: unknown, options?: unknown) {
+      return toPeer(await anyLibp2p.peerRouting.findPeer(peerIdFromCID(peerId as never), options));
+    },
+    async *getClosestPeers(key: Uint8Array, options?: unknown) {
+      for await (const peer of anyLibp2p.peerRouting.getClosestPeers(key, options)) {
+        yield toPeer(peer);
+      }
+    },
+    toString() {
+      return 'SdnLibp2pRouter()';
+    },
+  };
+}
+
+/**
+ * Attach an already-constructed libp2p to a Helia node.
+ *
+ * `helia.libp2p` becomes the passed instance, Helia routes content lookups
+ * through it, and `helia.stop()` stops it — the same lifecycle helia 6 gave a
+ * caller-supplied libp2p through `createHelia({ libp2p })`.
+ */
+function attachLibp2p(helia: Helia, libp2p: Libp2p): Helia {
+  const target = helia as unknown as {
+    hasRouter(name: string): boolean;
+    addRouter(router: unknown): void;
+    addMixin(mixin: unknown): void;
+  };
+  Object.defineProperty(helia, 'libp2p', {
+    configurable: true,
+    enumerable: true,
+    get: () => libp2p,
+  });
+  target.addMixin({
+    name: 'libp2p',
+    start: async () => {
+      if (!target.hasRouter('libp2p-router')) {
+        target.addRouter(libp2pRouter(libp2p));
+      }
+      // createLibp2p() returns a started node, and start() on a started node
+      // throws, so only start one the caller created with `start: false`.
+      if ((libp2p as unknown as { status?: string }).status === 'stopped') {
+        await libp2p.start();
+      }
+    },
+    stop: async () => {
+      await libp2p.stop();
+    },
+  });
+  return helia;
+}
+
+/** The libp2p instance attached to a Helia node by attachLibp2p(). */
+export function heliaLibp2p(helia: Helia): Libp2p {
+  return (helia as unknown as { libp2p: Libp2p }).libp2p;
+}
+
 export async function createHeliaFromLibp2p(
   libp2p: Libp2p,
   config: Pick<SDNConfig, 'ipfsTrustlessGateways'> = {},
 ): Promise<Helia> {
   const gateways = normalizeTrustlessGateways(config.ipfsTrustlessGateways);
-  const compatibleLibp2p = withHeliaDialProtocolStreamCompat(
-    withHeliaStreamHandlerCompat(libp2p),
-  );
-  return createHelia({
-    libp2p: compatibleLibp2p,
-    blockBrokers: [bitswap(), ...(gateways.length ? [trustlessGateway()] : [])],
-    routers: [
-      libp2pRouting(compatibleLibp2p as never),
-      ...(gateways.length ? [httpGatewayRouting({ gateways, shuffle: false })] : []),
-    ],
-  } as never);
+  const helia = createHeliaLight({
+    blockBrokers: gateways.length ? [trustlessGatewayBlockBroker()] : [],
+    routers: gateways.length ? [fallbackRouter({ gateways, shuffle: false })] : [],
+  });
+  attachLibp2p(helia, libp2p);
+  // withBitswap types its argument as HeliaWithLibp2p; attachLibp2p just defined
+  // that property, which the structural Helia type cannot express.
+  withBitswap(helia as never);
+  await helia.start();
+  return helia;
 }
 
 async function dialBootstrapAddrs(
@@ -477,44 +282,50 @@ type ProviderHint = {
   multiaddr: ReturnType<typeof multiaddr>;
 };
 
-type PeerIdWithMultihashCompat = {
-  multihash?: unknown;
-  toMultihash?: () => unknown;
-};
-
 async function seedProviderAddrs(
   helia: Helia,
   providers: readonly ProviderHint[],
 ): Promise<void> {
-  const peerStore = (helia as Helia & {
+  const peerStore = (helia as unknown as {
     libp2p?: { peerStore?: { merge?: (peerId: unknown, data: unknown) => Promise<unknown> } };
   }).libp2p?.peerStore;
   if (providers.length === 0 || typeof peerStore?.merge !== 'function') {
     return;
   }
 
+  const merge = peerStore.merge;
   await Promise.allSettled(
     providers.map(({ peerId, multiaddr: addr }) =>
-      peerStore.merge(peerId, { multiaddrs: [addr] }),
+      merge.call(peerStore, peerId, { multiaddrs: [addr] }),
     ),
   );
 }
 
+/**
+ * The /p2p component of a multiaddr.
+ *
+ * `Multiaddr.getPeerId()` was removed in @multiformats/multiaddr 13 ("lightweight
+ * multiaddrs"); `getComponents()` is the replacement. The LAST p2p component wins,
+ * which is what a `/…/p2p/<relay>/p2p-circuit/p2p/<target>` address needs.
+ */
+export function multiaddrPeerId(addr: ReturnType<typeof multiaddr>): string | null {
+  let found: string | null = null;
+  for (const component of addr.getComponents()) {
+    if (component.name === 'p2p' && typeof component.value === 'string') {
+      found = component.value;
+    }
+  }
+  return found;
+}
+
 function providerHintsFromAddrs(addrs: readonly ReturnType<typeof multiaddr>[]): ProviderHint[] {
   return addrs.map((addr) => {
-    const peerId = addr.getPeerId();
+    const peerId = multiaddrPeerId(addr);
     if (!peerId) {
       throw new Error('Provider bootstrap multiaddrs must include /p2p/<peer-id>.');
     }
-    const parsedPeerId = peerIdFromString(peerId) as PeerIdWithMultihashCompat;
-    if (
-      typeof parsedPeerId.toMultihash !== 'function' &&
-      parsedPeerId.multihash != null
-    ) {
-      parsedPeerId.toMultihash = () => parsedPeerId.multihash;
-    }
     return {
-      peerId: parsedPeerId,
+      peerId: peerIdFromString(peerId),
       multiaddr: addr,
     };
   });
@@ -551,9 +362,16 @@ export async function* streamCIDFromHelia(
     const providerMultiaddrs = providerAddrs.map((addr) => multiaddr(addr));
     const providerHints = providerHintsFromAddrs(providerMultiaddrs);
     await seedProviderAddrs(helia, providerHints);
+    // helia 7 types a session provider as `CID | Multiaddr | Multiaddr[]` and
+    // its trustless-gateway session calls `ma.getComponents()` on each one, so
+    // a PeerId - which helia 6 accepted - now throws a TypeError that aborts the
+    // whole provider search and the session never becomes ready. Hand it the
+    // multiaddrs the caller supplied; bitswap dials them directly and the
+    // gateway session correctly ignores the non-HTTP ones. The PeerStore is
+    // still seeded with the PeerId above so a later dial-by-peer-id resolves.
     catOptions.providers = [
       ...(catOptions.providers ?? []),
-      ...providerHints.map(({ peerId }) => peerId),
+      ...providerHints.map(({ multiaddr: addr }) => addr),
     ];
     const blockstore = (helia as Helia & {
       blockstore?: {
@@ -616,7 +434,7 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
   const rawRelays = config.edgeRelays ?? await getBootstrapRelays();
   const bootstrapList = rawRelays.length > 0 ? rawRelays : [];
 
-  const services: NonNullable<Parameters<typeof createLibp2p>[0]>['services'] = {
+  const services: Record<string, unknown> = {
     pubsub: gossipsub({
       allowPublishToZeroTopicPeers: true,
       emitSelf: false,
@@ -628,34 +446,39 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
   // directly (bitswap over the configured relays), which is exactly how
   // spaceaware.io/beta reads the live catalog.
   if (dhtEnabled(config)) {
+    // kad-dht 16 declares `['@libp2p/identify', '@libp2p/ping']` and CALLS
+    // ping.ping() during routing-table eviction, so a capability-only stub
+    // would crash there rather than at construction. Only registered when the
+    // DHT is on, so the default browser node still advertises nothing.
+    services.ping = ping();
     services.dht = kadDHT({ clientMode: true });
   }
   services.identify =
     config.enableIdentify === true ? identify() : identifyCapabilityOnly();
 
   const libp2pOpts: HeliaLibp2pCreateOptions = {
+    // circuit-relay-v2 4.x removed `discoverRelays`; a `/p2p-circuit` listen
+    // address is how a node now asks for relay reservations.
+    addresses: {
+      listen: ['/p2p-circuit'],
+    },
     transports: [
-      webSockets({ filter: wsFilters }),
+      webSockets(),
       webTransport(),
-      webRTCDirect() as unknown as ReturnType<typeof webTransport>,
-      circuitRelayTransport({ discoverRelays: 100 }),
+      webRTCDirect(),
+      circuitRelayTransport(),
     ],
-    connectionEncryption: [noise()],
+    connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
     peerDiscovery: bootstrapList.length
       ? [bootstrap({ list: bootstrapList })]
       : [],
     // Same policy as SDNNode: libp2p's stock heartbeat aborts the whole
-    // connection after a fixed 2000 ms, which a busy browser misses while the
-    // peer is healthy. See connection-monitor-policy.ts.
+    // connection after a deadline whose floor is 5000 ms, which a busy browser
+    // misses while the peer is healthy. See connection-monitor-policy.ts.
     connectionMonitor: resolveConnectionMonitorInit(config.connectionMonitor),
-    services,
+    services: services as HeliaLibp2pCreateOptions['services'],
   };
-  if (config.enableAutoDial === false) {
-    libp2pOpts.connectionManager = {
-      minConnections: 0,
-    };
-  }
 
   // See `allowPrivateAddressDial` in SDNConfig: the browser gater's default
   // denies private-IP dials outright, so a loopback publisher is unreachable
@@ -670,18 +493,18 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
 
   if (config.identity?.identityKey) {
     const rawKey = (config.identity as DerivedIdentity).identityKey.privateKey;
-    libp2pOpts.privateKey = await keys.unmarshalPrivateKey(
+    libp2pOpts.privateKey = privateKeyFromProtobuf(
       marshalSecp256k1PrivateKey(rawKey),
     );
   }
 
   const libp2p = await createLibp2p(libp2pOpts);
   const helia = await createHeliaFromLibp2p(libp2p, { ipfsTrustlessGateways });
-  await dialBootstrapAddrs(helia.libp2p as unknown as Libp2p, bootstrapList);
+  await dialBootstrapAddrs(heliaLibp2p(helia), bootstrapList);
 
   return {
     helia,
-    libp2p: helia.libp2p as unknown as Libp2p,
+    libp2p: heliaLibp2p(helia),
     async stop() {
       await helia.stop();
     },

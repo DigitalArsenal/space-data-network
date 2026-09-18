@@ -8,9 +8,10 @@
  *    policy cannot be silently dropped from `createLibp2p`;
  * 2. a CONTRACT check against the installed libp2p's own shipped source. The
  *    policy is a set of numbers whose justification lives entirely in that
- *    file: if a future libp2p starts honouring `abortConnectionOnPingFailure`,
- *    or stops aborting the connection outright, these numbers should be
- *    revisited rather than inherited. A failing test is how we find out.
+ *    file. libp2p 3 already changed two of the three premises the policy was
+ *    written against - it now reads `abortConnectionOnPingFailure` and now
+ *    feeds the AdaptiveTimeout - and these checks pin the NEW contract, so the
+ *    next change is found by a failing test rather than inherited in silence.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
@@ -127,35 +128,71 @@ describe("libp2p connection-monitor contract (installed version)", () => {
     ? join(libp2pDistDir, "connection-monitor.js")
     : "";
   const libp2pPath = libp2pDistDir ? join(libp2pDistDir, "libp2p.js") : "";
-  const installed =
-    libp2pDistDir != null && existsSync(monitorPath) && existsSync(libp2pPath);
-  const maybe = installed ? it : it.skip;
+  // NOT a conditional skip. These four are the only assertions in the package
+  // that check what libp2p ACTUALLY does rather than what sdn-js passes it, and
+  // a version bump is exactly when they matter most. If the installed files
+  // cannot be found, that is the finding.
+  it("can read the installed libp2p connection monitor", () => {
+    expect(
+      libp2pDistDir,
+      "node_modules/libp2p/dist/src not found - these contract checks are the only ones that read libp2p's own bytes and must not silently skip",
+    ).not.toBeNull();
+    expect(existsSync(monitorPath), `${monitorPath} is missing`).toBe(true);
+    expect(existsSync(libp2pPath), `${libp2pPath} is missing`).toBe(true);
+  });
 
-  maybe("reads `connectionMonitor.enabled`, so `false` really is off", () => {
+  it("reads `connectionMonitor.enabled`, so `false` really is off", () => {
     const source = readFileSync(libp2pPath, "utf8");
     expect(source).toMatch(/connectionMonitor\?\.enabled !== false/);
   });
 
-  maybe("still aborts the whole connection when a heartbeat fails", () => {
+  it("still aborts the whole connection when a heartbeat fails", () => {
     const source = readFileSync(monitorPath, "utf8");
     // If this stops being true the deadline stops being load-bearing.
     expect(source).toMatch(/conn\.abort\(err\)/);
   });
 
-  maybe("still ignores `abortConnectionOnPingFailure`", () => {
+  it("aborts on ping failure BY DEFAULT, now that the flag is read", () => {
     const source = readFileSync(monitorPath, "utf8");
-    // Declared in the .d.ts, never read in the .js. The day it IS read, the
-    // flag becomes the right lever and this policy should be reconsidered.
-    expect(source).not.toMatch(/abortConnectionOnPingFailure/);
+    // libp2p 1.9.4 declared `abortConnectionOnPingFailure` in the .d.ts and
+    // never read it, so the abort was unconditional. 3.x reads it and defaults
+    // it to true, which is the same net behaviour - so sdn-js leaves it unset.
+    // The day the DEFAULT flips to false, a dead relay stops being reaped and
+    // this policy needs a deliberate `abortConnectionOnPingFailure: true`.
+    expect(source).toMatch(/abortConnectionOnPingFailure/);
+    expect(source).toMatch(
+      /DEFAULT_ABORT_CONNECTION_ON_PING_FAILURE\s*=\s*true/,
+    );
+    expect(source).toMatch(
+      /abortConnectionOnPingFailure\s*=\s*init\.abortConnectionOnPingFailure\s*\?\?\s*DEFAULT_ABORT_CONNECTION_ON_PING_FAILURE/,
+    );
   });
 
-  maybe("takes its deadline from an AdaptiveTimeout it never feeds", () => {
+  it("feeds the AdaptiveTimeout, which can only raise the deadline above the floor", () => {
     const source = readFileSync(monitorPath, "utf8");
     expect(source).toMatch(/new AdaptiveTimeout\(/);
-    // No `cleanUp()` call means the moving average stays at zero and the
-    // effective deadline is exactly `minTimeout` — which is why the policy
-    // sets that field and not the multipliers.
-    expect(source).not.toMatch(/cleanUp\(/);
+    // libp2p 1.9.4 never called cleanUp(), so the moving average stayed at
+    // zero and the deadline was a fixed `minTimeout`. 3.x does call it, so the
+    // average is live - which is safe here only because getTimeoutSignal()
+    // takes max(average * multiplier, minTimeout): sdn-js's 30 s floor still
+    // holds, and the clamp above it is maxTimeout, which is higher still.
+    expect(source).toMatch(/cleanUp\(/);
+
+    const adaptivePath = join(
+      libp2pDistDir ?? "",
+      "../../../@libp2p/utils/dist/src/adaptive-timeout.js",
+    );
+    const adaptive = readFileSync(adaptivePath, "utf8");
+    expect(adaptive).toMatch(
+      /timeout\s*=\s*Math\.round\(this\.next\.movingAverage \* \(options\.timeoutFactor \?\? this\.timeoutMultiplier\)\)/,
+    );
+    expect(adaptive).toMatch(/if \(timeout < this\.minTimeout\)/);
+    const maxTimeout = /DEFAULT_MAX_TIMEOUT = (\d+)_?(\d*)/.exec(adaptive);
+    expect(maxTimeout, "DEFAULT_MAX_TIMEOUT not found").not.toBeNull();
+    expect(
+      Number(`${maxTimeout?.[1] ?? ""}${maxTimeout?.[2] ?? ""}`),
+      "maxTimeout must not clamp sdn-js's 30 s floor back down",
+    ).toBeGreaterThanOrEqual(SDN_CONNECTION_MONITOR_TIMEOUT_MS);
   });
 });
 
@@ -165,7 +202,36 @@ describe("libp2p connection-monitor contract (installed version)", () => {
  * ---------------------------------------------------------------------------
  */
 const createLibp2pMock = vi.fn();
-const createHeliaMock = vi.fn();
+/**
+ * A minimal stand-in for helia 7's `createHeliaLight`.
+ *
+ * helia 7 builds a node by composition - `addMixin` / `addRouter` / `start` -
+ * instead of taking a finished libp2p, so a mock that just returns a bag of
+ * properties never runs the code that attaches libp2p at all. This one runs the
+ * mixins, which is what makes the assertions below meaningful.
+ */
+const createHeliaLightMock = vi.fn((init?: unknown) => {
+  const mixins: Array<{ start?(helia: unknown): Promise<void>; stop?(helia: unknown): Promise<void> }> = [];
+  const routers: Array<{ name?: string }> = [];
+  const helia: Record<string, unknown> = {
+    init,
+    mixins,
+    routers,
+    blockstore: {},
+    addMixin: (mixin: { start?(helia: unknown): Promise<void> }) => mixins.push(mixin),
+    addRouter: (router: { name?: string }) => routers.push(router),
+    hasRouter: (name: string) => routers.some((router) => router.name === name),
+    async start() {
+      for (const mixin of mixins) await mixin.start?.(helia);
+      return helia;
+    },
+    async stop() {
+      for (const mixin of mixins) await mixin.stop?.(helia);
+      return helia;
+    },
+  };
+  return helia;
+});
 const getBootstrapRelaysMock = vi.fn();
 const initHDWalletMock = vi.fn(async () => true);
 
@@ -193,15 +259,11 @@ vi.mock("@libp2p/websockets", () => ({
   webSockets: vi.fn(() => ({ transport: "webSockets" })),
 }));
 
-vi.mock("@libp2p/websockets/filters", () => ({
-  all: vi.fn(),
-}));
-
 vi.mock("@libp2p/webtransport", () => ({
   webTransport: vi.fn(() => ({ transport: "webTransport" })),
 }));
 
-vi.mock("@spacedatanetwork/libp2p-webrtc-v1", () => ({
+vi.mock("@libp2p/webrtc", () => ({
   webRTC: vi.fn(() => ({ transport: "webRTC" })),
   webRTCDirect: vi.fn(() => ({ transport: "webRTCDirect" })),
 }));
@@ -214,17 +276,21 @@ vi.mock("@libp2p/identify", () => ({
   identify: vi.fn(() => ({ service: "identify" })),
 }));
 
-vi.mock("@chainsafe/libp2p-gossipsub", () => ({
+vi.mock("@libp2p/gossipsub", () => ({
   gossipsub: vi.fn(() => ({ service: "pubsub" })),
   GossipSub: class {},
 }));
 
-vi.mock("@chainsafe/libp2p-noise", () => ({
+vi.mock("@libp2p/noise", () => ({
   noise: vi.fn(() => ({ encryption: "noise" })),
 }));
 
-vi.mock("@chainsafe/libp2p-yamux", () => ({
+vi.mock("@libp2p/yamux", () => ({
   yamux: vi.fn(() => ({ muxer: "yamux" })),
+}));
+
+vi.mock("@libp2p/ping", () => ({
+  ping: vi.fn(() => ({ service: "ping" })),
 }));
 
 vi.mock("@libp2p/kad-dht", () => ({
@@ -241,12 +307,15 @@ vi.mock("./crypto/hd-wallet", () => ({
 }));
 
 vi.mock("helia", () => ({
-  createHelia: createHeliaMock,
+  createHeliaLight: createHeliaLightMock,
 }));
 
 vi.mock("@helia/unixfs", () => ({ unixfs: vi.fn(() => ({})) }));
-vi.mock("@helia/block-brokers", () => ({ bitswap: vi.fn(() => ({})) }));
-vi.mock("@helia/routers", () => ({ libp2pRouting: vi.fn(() => ({})) }));
+vi.mock("@helia/bitswap", () => ({ withBitswap: vi.fn((helia: unknown) => helia) }));
+vi.mock("@helia/trustless-gateway-client", () => ({
+  trustlessGatewayBlockBroker: vi.fn(() => ({})),
+}));
+vi.mock("@helia/fallback-router", () => ({ fallbackRouter: vi.fn(() => ({})) }));
 
 describe("SDNNode passes the policy to libp2p", () => {
   const relay = "/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider";
@@ -265,7 +334,7 @@ describe("SDNNode passes the policy to libp2p", () => {
     });
   });
 
-  it("configures the heartbeat by default — never libp2p's 2000 ms floor", async () => {
+  it("configures the heartbeat by default — never libp2p's own floor", async () => {
     const { SDNNode } = await import("./node");
 
     const node = await SDNNode.create({
@@ -334,10 +403,7 @@ describe("the Helia lane carries the same policy", () => {
       getConnections: vi.fn(() => []),
       dial: vi.fn(async () => ({})),
     });
-    createHeliaMock.mockResolvedValue({
-      libp2p: { getPeers: vi.fn(() => []) },
-      stop: vi.fn(async () => undefined),
-    });
+
   });
 
   it("configures the heartbeat for createHeliaSDNNode too", async () => {

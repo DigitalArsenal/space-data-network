@@ -190,9 +190,10 @@ jobs:
         with:
           node-version: '24'
 
-      # sdn-js runs two incompatible libp2p majors held together by ~370 lines of
-      # hand-written shims in sdn-js/src/helia.ts. Nothing in semver protects
-      # that; this makes a helia bump a reviewed act.
+      # sdn-js ran two incompatible libp2p majors held together by ~370 lines of
+      # hand-written shims in sdn-js/src/helia.ts, and GHSA-vrf4-mx87-p53w had no
+      # in-range fix while that stood. The split is closed; this asserts it stays
+      # closed, because re-splitting is what would bring the shims back.
       - name: sdn-js helia/libp2p layering
         run: node scripts/check-sdn-js-dependency-layering.mjs
 

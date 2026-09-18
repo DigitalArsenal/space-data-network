@@ -35,7 +35,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -241,4 +241,77 @@ describeInterop('sdn-js dials a live go-libp2p host', () => {
   it('records the go-libp2p peer as a connected peer', () => {
     expect(node!.peers).toContain(handshake.peerId);
   });
+
+  /**
+   * THE PUBLISHED BUNDLE, not the source.
+   *
+   * scripts/build-package-entry.mjs substitutes local modules for a handful of
+   * upstream ones at esbuild time - the WebCrypto-bearing key implementations
+   * and the multiformats hashers that must route through the native crypto
+   * boundary. esbuild does not type-check a substitution, and vitest resolves
+   * the REAL packages, so every test above this one runs code that is not what
+   * npm publishes. A mismatch between a substituted module and the real API
+   * lands as a runtime failure in a browser, after a green build and a green
+   * suite, on the noise handshake path where it looks like a network fault.
+   *
+   * This is the only check in the package that dials a real peer with the bytes
+   * that actually ship.
+   */
+  it('dials the same host from the PUBLISHED bundle, with its module substitutions in place', async () => {
+    const distEntry = resolve(HERE, '../dist/index.mjs');
+    expect(
+      existsSync(distEntry),
+      `${distEntry} is missing - run \`npm run build\` first; this check is about the published bytes, not src/`,
+    ).toBe(true);
+
+    const driver = join(workDir, 'dial-from-bundle.mjs');
+    writeFileSync(
+      driver,
+      `import { SDNNode } from '${distEntry}';
+const node = await SDNNode.create({
+  edgeRelays: [process.argv[2]],
+  includeIPFSBootstrap: false,
+  enableStorage: false,
+  enableRelayProbing: false,
+  allowPrivateAddressDial: true,
+});
+try {
+  const reply = await node.dialProtocol(
+    process.argv[3],
+    '${FLATSQL_SYNC_PROTOCOL}',
+    new TextEncoder().encode('bundle-probe'),
+    [process.argv[2]],
+  );
+  console.log('SDN_BUNDLE_RESULT ' + JSON.stringify({
+    ok: true,
+    reply: new TextDecoder().decode(reply),
+    peers: node.peers,
+  }));
+} catch (error) {
+  console.log('SDN_BUNDLE_RESULT ' + JSON.stringify({ ok: false, error: String(error?.stack ?? error) }));
+} finally {
+  await node.stop().catch(() => {});
+}
+process.exit(0);
+`,
+    );
+
+    const run = spawnSync(process.execPath, [driver, handshake.wsAddr, handshake.peerId], {
+      encoding: 'utf8',
+      timeout: 120_000,
+    });
+    const line = (run.stdout ?? '')
+      .split('\n')
+      .find((entry) => entry.startsWith('SDN_BUNDLE_RESULT '));
+    expect(
+      line,
+      `bundle driver produced no result.\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`,
+    ).toBeTruthy();
+
+    const result = JSON.parse(line!.slice('SDN_BUNDLE_RESULT '.length));
+    expect(result.error ?? null, 'the published bundle failed to dial').toBeNull();
+    expect(result.ok).toBe(true);
+    expect(result.reply).toBe(`${REPLY_PREFIX}bundle-probe`);
+    expect(result.peers).toContain(handshake.peerId);
+  }, 180_000);
 });

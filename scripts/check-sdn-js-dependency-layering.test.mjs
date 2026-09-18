@@ -8,38 +8,50 @@ import test from 'node:test';
 
 import {
   checkLayering,
-  REVIEWED_LAYERING,
-  REVIEWED_LIBP2P_COPIES,
+  KNOWN_DUPLICATE_LEAVES,
+  RETIRED_DEPENDENCIES,
+  SECURITY_FLOORS,
+  SINGLE_COPY_PACKAGES,
 } from './check-sdn-js-dependency-layering.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptsDir, '..');
 const checkerPath = resolve(scriptsDir, 'check-sdn-js-dependency-layering.mjs');
 
-/** Build a fixture tree that mirrors the reviewed layering exactly. */
+/** Build a fixture tree with one copy of every critical package. */
 function createFixture(t, { mutateLock, mutatePkg } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'sdn-js-layering-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
+  const versions = {
+    libp2p: '3.3.11',
+    '@libp2p/interface': '3.3.0',
+    '@libp2p/crypto': '5.1.23',
+    '@libp2p/peer-id': '6.0.15',
+    '@libp2p/peer-store': '12.0.28',
+    '@multiformats/multiaddr': '13.0.3',
+    helia: '7.1.12',
+    '@helia/interface': '7.1.1',
+    '@helia/utils': '3.0.5',
+  };
   const packages = { '': { name: 'fixture' } };
-  for (const { path, version } of REVIEWED_LAYERING) packages[path] = { version };
-  for (const path of REVIEWED_LIBP2P_COPIES) {
-    packages[path] ??= { version: '3.2.0' };
+  for (const { name } of SINGLE_COPY_PACKAGES) {
+    packages[`node_modules/${name}`] = { version: versions[name] };
   }
+  packages['node_modules/@libp2p/kad-dht'] = { version: '16.4.5' };
+  packages['node_modules/multiformats'] = { version: '14.0.5' };
   const lock = { packages };
 
   const pkg = {
     name: 'fixture',
     dependencies: {
-      libp2p: '^1.9.4',
-      helia: '^6.0.22',
-      '@helia/unixfs': '^7.1.0',
-      '@libp2p/interface': '^1.7.0',
+      libp2p: '^3.3.11',
+      helia: '^7.1.12',
+      '@libp2p/interface': '^3.3.0',
       // a non-networking dep must be ignored by the honest-floor rule
-      multiformats: '^13.3.7',
+      multiformats: '^14.0.0',
     },
   };
-  packages['node_modules/multiformats'] = { version: '13.4.2' };
 
   mutateLock?.(lock);
   mutatePkg?.(pkg);
@@ -50,115 +62,147 @@ function createFixture(t, { mutateLock, mutatePkg } = {}) {
   return root;
 }
 
-test('passes on the reviewed dual-stack layering', (t) => {
+test('passes on a single-major tree', (t) => {
   const root = createFixture(t);
   assert.deepEqual(checkLayering({ cwd: root }), []);
 });
 
-test('the real repository tree matches its reviewed layering', () => {
+test('the real repository tree still has one copy of each critical package', () => {
   const violations = checkLayering({ cwd: repoRoot });
   assert.deepEqual(
     violations,
     [],
-    `tracked sdn-js/package-lock.json drifted from REVIEWED_LAYERING:\n${violations.join('\n')}`,
+    `tracked sdn-js/package-lock.json re-split the libp2p/helia layering:\n${violations.join('\n')}`,
   );
 });
 
-test('catches a helia minor bump that the helia.ts shims were never reviewed against', (t) => {
-  // The exact scenario the check exists for: `npm update` walks helia 6.0.22 ->
-  // 6.1.4 inside the caret, unreviewed, into the code the shims are pinned to.
+test('catches the split that the helia.ts shims existed for', (t) => {
+  // The exact regression this check now guards: a dependency that still wants
+  // an older libp2p nests one, and the two majors are back in one tree.
   const root = createFixture(t, {
     mutateLock: (lock) => {
-      lock.packages['node_modules/helia'].version = '6.1.4';
-      lock.packages['node_modules/@helia/unixfs'].version = '7.2.1';
+      lock.packages['node_modules/some-dep/node_modules/libp2p'] = { version: '1.9.4' };
     },
   });
   const violations = checkLayering({ cwd: root }).join('\n');
-  assert.match(violations, /node_modules\/helia: reviewed 6\.0\.22, lockfile has 6\.1\.4/);
-  assert.match(violations, /@helia\/unixfs: reviewed 7\.1\.0, lockfile has 7\.2\.1/);
-  // The same bump also makes the declared caret floors stale, so both rules fire.
-  assert.match(violations, /declares "helia": "\^6\.0\.22" but resolves 6\.1\.4/);
+  assert.match(violations, /libp2p: expected ONE copy, found 2/);
+  assert.match(violations, /some-dep\/node_modules\/libp2p/);
 });
 
-test('catches either half of the dual stack moving', (t) => {
-  const ours = checkLayering({
-    cwd: createFixture(t, {
-      mutateLock: (lock) => {
-        lock.packages['node_modules/libp2p'].version = '1.9.5';
-      },
-    }),
-  }).join('\n');
-  assert.match(ours, /node_modules\/libp2p: reviewed 1\.9\.4, lockfile has 1\.9\.5/);
-
-  // helia's nested copy is invisible to our package.json, so ONLY the pin rule
-  // can catch it moving — which is exactly why the pin table exists.
-  const helias = checkLayering({
-    cwd: createFixture(t, {
-      mutateLock: (lock) => {
-        lock.packages['node_modules/helia/node_modules/libp2p'].version = '3.3.11';
-      },
-    }),
-  });
-  assert.equal(helias.length, 1);
-  assert.match(helias[0], /helia\/node_modules\/libp2p: reviewed 3\.2\.0, lockfile has 3\.3\.11/);
-});
-
-test('catches a package vanishing from the tree', (t) => {
+test('catches a second @libp2p/interface, which is how capability checks start failing', (t) => {
   const root = createFixture(t, {
     mutateLock: (lock) => {
-      delete lock.packages['node_modules/@helia/routers'];
+      lock.packages['node_modules/helia/node_modules/@libp2p/interface'] = { version: '2.11.0' };
+    },
+  });
+  const violations = checkLayering({ cwd: root }).join('\n');
+  assert.match(violations, /@libp2p\/interface: expected ONE copy, found 2/);
+});
+
+test('catches a critical package vanishing from the tree', (t) => {
+  const root = createFixture(t, {
+    mutateLock: (lock) => {
+      delete lock.packages['node_modules/@helia/utils'];
     },
   });
   const violations = checkLayering({ cwd: root });
   assert.equal(violations.length, 1);
-  assert.match(violations[0], /@helia\/routers: expected 5\.0\.3 but the package is ABSENT/);
+  assert.match(violations[0], /@helia\/utils: expected exactly one copy but the package is ABSENT/);
 });
 
-test('catches a third libp2p copy appearing', (t) => {
+test('catches a nested copy sliding back under a security floor', (t) => {
+  // GHSA-vrf4-mx87-p53w survived because the vulnerable copy was nested where
+  // our direct range could not reach it, so the floor applies to EVERY copy.
   const root = createFixture(t, {
     mutateLock: (lock) => {
-      lock.packages['node_modules/@libp2p/kad-dht/node_modules/libp2p'] = { version: '2.8.0' };
+      lock.packages['node_modules/@libp2p/peer-store'].version = '12.0.15';
     },
   });
   const violations = checkLayering({ cwd: root });
   assert.equal(violations.length, 1);
-  assert.match(violations[0], /libp2p copies changed/);
-  assert.match(violations[0], /kad-dht\/node_modules\/libp2p/);
+  assert.match(violations[0], /@libp2p\/peer-store: .* resolves 12\.0\.15, below the 12\.0\.24 security floor/);
+  assert.match(violations[0], /GHSA-vrf4-mx87-p53w/);
+});
+
+test('catches a retired dependency being declared again', (t) => {
+  const root = createFixture(t, {
+    mutatePkg: (pkg) => {
+      pkg.dependencies['@spacedatanetwork/libp2p-webrtc-v1'] = 'npm:@libp2p/webrtc@^4.1.10';
+      pkg.dependencies['@chainsafe/libp2p-gossipsub'] = '^14.1.2';
+    },
+  });
+  const violations = checkLayering({ cwd: root }).join('\n');
+  assert.match(violations, /@spacedatanetwork\/libp2p-webrtc-v1: retired by the libp2p 3 upgrade/);
+  assert.match(violations, /@chainsafe\/libp2p-gossipsub: retired by the libp2p 3 upgrade/);
+});
+
+test('tolerates the recorded duplicate leaves but not one more', (t) => {
+  const multiformats = KNOWN_DUPLICATE_LEAVES.find((entry) => entry.name === 'multiformats');
+  assert.ok(multiformats, 'multiformats must be recorded as a known duplicate leaf');
+
+  const atLimit = createFixture(t, {
+    mutateLock: (lock) => {
+      for (let index = 1; index < multiformats.maxCopies; index += 1) {
+        lock.packages[`node_modules/leaf-${index}/node_modules/multiformats`] = { version: '13.4.2' };
+      }
+    },
+  });
+  assert.deepEqual(checkLayering({ cwd: atLimit }), []);
+
+  const overLimit = createFixture(t, {
+    mutateLock: (lock) => {
+      for (let index = 1; index <= multiformats.maxCopies; index += 1) {
+        lock.packages[`node_modules/leaf-${index}/node_modules/multiformats`] = { version: '13.4.2' };
+      }
+    },
+  });
+  const violations = checkLayering({ cwd: overLimit }).join('\n');
+  assert.match(violations, /multiformats: \d+ copies, more than the \d+ recorded as understood/);
 });
 
 test('catches a declared range whose floor lies about what is resolved', (t) => {
   const root = createFixture(t, {
     mutatePkg: (pkg) => {
-      // the pre-audit state: ^1.2.0 advertises a libp2p we never build against
-      pkg.dependencies.libp2p = '^1.2.0';
+      pkg.dependencies.libp2p = '^3.0.6';
     },
   });
   const violations = checkLayering({ cwd: root });
   assert.equal(violations.length, 1);
-  assert.match(violations[0], /declares "libp2p": "\^1\.2\.0" but resolves 1\.9\.4/);
-  assert.match(violations[0], /raise the floor to \^1\.9\.4/);
+  assert.match(violations[0], /declares "libp2p": "\^3\.0\.6" but resolves 3\.3\.11/);
+  assert.match(violations[0], /raise the floor to \^3\.3\.11/);
 });
 
 test('leaves non-networking ranges alone', (t) => {
-  // multiformats resolves 13.4.2 under a ^13.3.7 floor in the fixture. Widening
+  // multiformats resolves 14.0.5 under a ^14.0.0 floor in the fixture. Widening
   // this rule to every dependency would force nested copies on consumers of
   // dedup-sensitive packages, so the honest-floor rule is scoped on purpose.
   const root = createFixture(t);
-  const violations = checkLayering({ cwd: root });
-  assert.deepEqual(violations, []);
+  assert.deepEqual(checkLayering({ cwd: root }), []);
 });
 
-test('CLI exits non-zero and points at the shims when the layering moved', (t) => {
+test('every security floor names an advisory', () => {
+  for (const floor of SECURITY_FLOORS) {
+    assert.match(floor.why, /GHSA-/, `${floor.name} floor must cite the advisory it exists for`);
+  }
+});
+
+test('every retired dependency says why it cannot come back', () => {
+  for (const retired of RETIRED_DEPENDENCIES) {
+    assert.ok(retired.why.length > 20, `${retired.name} needs a reason`);
+  }
+});
+
+test('CLI exits non-zero and explains the split when a package re-splits', (t) => {
   const root = createFixture(t, {
     mutateLock: (lock) => {
-      lock.packages['node_modules/helia'].version = '7.1.12';
+      lock.packages['node_modules/old-dep/node_modules/libp2p'] = { version: '1.9.4' };
     },
   });
   const result = spawnSync(process.execPath, [checkerPath, '--repo', root], { encoding: 'utf8' });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /FAIL: the reviewed helia\/libp2p layering moved/);
-  assert.match(result.stderr, /reviewed 6\.0\.22, lockfile has 7\.1\.12/);
-  assert.match(result.stderr, /sdn-js\/src\/helia\.ts carries hand-written shims/);
+  assert.match(result.stderr, /FAIL: the single-major libp2p\/helia layering moved/);
+  assert.match(result.stderr, /libp2p: expected ONE copy, found 2/);
+  assert.match(result.stderr, /GHSA-vrf4-mx87-p53w/);
 });
 
 test('CLI exits zero against the tracked repository tree', () => {
@@ -166,5 +210,5 @@ test('CLI exits zero against the tracked repository tree', () => {
     encoding: 'utf8',
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /PASS: reviewed dual-stack layering intact/);
+  assert.match(result.stdout, /PASS: one copy each of \d+ critical packages/);
 });

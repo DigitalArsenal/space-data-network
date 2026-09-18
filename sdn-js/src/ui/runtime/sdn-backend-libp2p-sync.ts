@@ -499,8 +499,8 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
   const requestTimeoutMs = normalizeTimeoutMs(options.requestTimeoutMs);
   const [{ createLibp2p }, { noise }, { yamux }, { multiaddr }, { peerIdFromString }] = await Promise.all([
     import('libp2p'),
-    import('@chainsafe/libp2p-noise'),
-    import('@chainsafe/libp2p-yamux'),
+    import('@libp2p/noise'),
+    import('@libp2p/yamux'),
     import('@multiformats/multiaddr'),
     import('@libp2p/peer-id'),
   ]);
@@ -512,11 +512,11 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
     transports.push(tcp());
   }
   if (transportSelection.webSockets) {
-    const [{ webSockets }, { all: wsFilters }] = await Promise.all([
-      import('@libp2p/websockets'),
-      import('@libp2p/websockets/filters'),
-    ]);
-    transports.push(webSockets({ filter: wsFilters }));
+    // @libp2p/websockets 10 removed the `filter` option and no longer ships the
+    // ./filters subpath; its dialFilter accepts /ws and /wss unconditionally,
+    // which is what `filters.all` was here for.
+    const { webSockets } = await import('@libp2p/websockets');
+    transports.push(webSockets());
   }
   if (transportSelection.webTransport) {
     const { webTransport } = await import('@libp2p/webtransport');
@@ -524,12 +524,16 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
   }
   if (transportSelection.webRtcRelay || transportSelection.webRtcDirect) {
     const [{ webRTC, webRTCDirect }, { circuitRelayTransport }, { identify }] = await Promise.all([
-      import('@spacedatanetwork/libp2p-webrtc-v1'),
+      import('@libp2p/webrtc'),
       import('@libp2p/circuit-relay-v2'),
       import('@libp2p/identify'),
     ]);
     if (transportSelection.webRtcRelay) {
-      transports.push(webRTC(), circuitRelayTransport({ discoverRelays: 0 }));
+      // circuit-relay-v2 4.x removed `discoverRelays`. This client dials a
+      // known relay address rather than discovering one, and it declares no
+      // /p2p-circuit listen address, so it reserves nothing — which is exactly
+      // what `discoverRelays: 0` asked for.
+      transports.push(webRTC(), circuitRelayTransport());
     }
     if (transportSelection.webRtcDirect) {
       transports.push(webRTCDirect());
@@ -538,7 +542,7 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
   }
   const libp2p = await createLibp2p({
     transports,
-    connectionEncryption: [noise()],
+    connectionEncrypters: [noise()],
     streamMuxers: [yamux(LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS)],
     peerDiscovery: [],
     services,
@@ -653,16 +657,38 @@ export interface ExchangeFlatSqlSyncStreamOptions {
   label?: string;
 }
 
+/**
+ * A libp2p 3 MessageStream, as much of it as this exchange needs.
+ *
+ * libp2p 3 replaced the duplex `sink`/`source` pair with an event-driven
+ * stream: `send()` reports back-pressure by returning false, `onDrain()` waits
+ * for the write buffer to empty, `close()` closes ONLY the write side, and the
+ * stream itself is the async iterable of inbound messages.
+ */
+interface FlatSqlSyncMessageStream extends AsyncIterable<unknown> {
+  send(data: Uint8Array): boolean;
+  onDrain(options?: { signal?: AbortSignal }): Promise<void>;
+  close(options?: { signal?: AbortSignal }): Promise<void>;
+  abort(error: Error): void;
+}
+
+/**
+ * PUBLISHED API, with a changed CONTRACT.
+ *
+ * The signature is unchanged (`stream` is `unknown`), but the object it accepts
+ * is now a libp2p 3 MessageStream rather than a libp2p 1 duplex with
+ * `sink`/`source`. Any caller handing this a stream from `libp2p.dialProtocol`
+ * gets the right shape automatically, because sdn-js resolves one libp2p; a
+ * caller passing a hand-rolled double has to update it. There is no version of
+ * this function that can accept both: `sink`/`source` do not exist on a libp2p 3
+ * stream, and `send`/`onDrain` do not exist on a libp2p 1 one.
+ */
 export async function exchangeFlatSqlSyncStream(
   stream: unknown,
   payloadBytes: Uint8Array,
   options: ExchangeFlatSqlSyncStreamOptions = {},
 ): Promise<Uint8Array> {
-  const libp2pStream = stream as {
-    sink(source: AsyncIterable<Uint8Array>): Promise<void>;
-    source: AsyncIterable<unknown>;
-    close(): Promise<void>;
-  };
+  const libp2pStream = stream as FlatSqlSyncMessageStream;
   const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
   return withAbortableTimeout(
     options.label ?? 'FlatSQL sync exchange',
@@ -673,32 +699,34 @@ export async function exchangeFlatSqlSyncStream(
 }
 
 async function performFlatSqlSyncStreamExchange(
-  libp2pStream: {
-    sink(source: AsyncIterable<Uint8Array>): Promise<void>;
-    source: AsyncIterable<unknown>;
-    close(): Promise<void>;
-  },
+  libp2pStream: FlatSqlSyncMessageStream,
   payloadBytes: Uint8Array,
 ): Promise<Uint8Array> {
-  const sinkDone = libp2pStream.sink((async function* source() {
-    yield cloneStreamBytes(payloadBytes);
-  })());
-  let responseError: unknown;
-  try {
-    const chunks: Uint8Array[] = [];
-    try {
-      for await (const chunk of libp2pStream.source) {
-        chunks.push(streamChunkBytes(chunk));
-      }
-    } catch (error) {
-      responseError = error;
+  const chunks: Uint8Array[] = [];
+  // Start reading BEFORE writing: a MessageStream with no consumer buffers
+  // inbound data until maxReadBufferLength and then resets the stream, and a
+  // FlatSQL shard is exactly the size that reaches it.
+  const draining = (async () => {
+    for await (const chunk of libp2pStream) {
+      chunks.push(streamChunkBytes(chunk));
     }
-    if (responseError) throw responseError;
-    await sinkDone;
+  })();
+
+  try {
+    if (payloadBytes.byteLength > 0) {
+      if (!libp2pStream.send(cloneStreamBytes(payloadBytes))) {
+        await libp2pStream.onDrain();
+      }
+    }
+    // Half-close so the peer reads to EOF and answers.
+    await libp2pStream.close();
+    await draining;
     return concatStreamBytes(chunks);
+  } catch (error) {
+    libp2pStream.abort(error instanceof Error ? error : new Error(String(error)));
+    throw error;
   } finally {
-    await libp2pStream.close().catch(() => undefined);
-    if (responseError) await sinkDone.catch(() => undefined);
+    await draining.catch(() => undefined);
   }
 }
 
