@@ -2393,6 +2393,13 @@ func adaptiveStoreChunk(current int, lastWindow time.Duration) int {
 	// and the 2026-07-06 blackout is what reader latency costs when it goes
 	// wrong.
 	//
+	// Those two rates were measured under WAL+synchronous=FULL and are STALE
+	// as absolutes — the store runs WAL+NORMAL since 2026-09-17 and both are
+	// now higher. The heuristic is unaffected, and in fact holds harder:
+	// dropping the per-commit fsync is precisely what made a bigger window
+	// stop paying, so the gap between a 64- and a 1024-record window can only
+	// have narrowed further. Re-measure before quoting either number.
+	//
 	// So the threshold is tight enough that growth only happens where windows
 	// are very cheap — which keeps the TRUNCATE case (where growth really is
 	// worth 6x) while leaving WAL near the small window it no longer needs to
@@ -2633,10 +2640,13 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 	//
 	// The ledger (sdn_engine_rows) lives in this same control database, so when
 	// the mirror opened a transaction of its own a window cost TWO commits and,
-	// under WAL + synchronous=FULL, two fsyncs — against the one the durable
-	// floor pays for the same records. Measured: 2.0 fsyncs per window, and
-	// turning the barriers off entirely was worth 3.08x, which is what says the
-	// second one is worth removing.
+	// under the WAL + synchronous=FULL this store ran at the time, two fsyncs —
+	// against the one the durable floor pays for the same records. Measured
+	// then: 2.0 fsyncs per window, and turning the barriers off entirely was
+	// worth 3.08x, which is what said the second one was worth removing. The
+	// store moved to WAL+NORMAL on 2026-09-17, so the fsync half of that
+	// argument has since been paid off a different way; the remaining reason to
+	// fold the ledger in is the one below, which never depended on fsyncs.
 	//
 	// Folding it in also makes the ledger ATOMIC with the rows it describes,
 	// which two transactions could never be. What it costs is the old ordering

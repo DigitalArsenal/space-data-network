@@ -406,6 +406,15 @@ var errEnginePrepareFailed = errors.New("engine file-identifier registration")
 // re-boots run the same statements as no-ops in 0.08-0.8 s. Engine memory is a
 // non-issue (1816 TableStores ~ 20 MB RSS).
 //
+// THAT 2-5x IS NOW CONSERVATIVE, and deliberately left alone. It projects a
+// per-commit fsync onto block-volume latency, and this burst is a long run of
+// CREATE TABLE/INDEX commits — exactly the shape that stopped paying one when
+// the store moved to WAL+synchronous=NORMAL (2026-09-17, see the pragma in
+// tryOpenControlDatabase). So the real droplet burst should be SHORTER than
+// this says. It is not edited down by guess: the number that matters is the
+// one measured on host-01, and over-budgeting a health timeout is the safe
+// direction to be wrong in.
+//
 // THE OPERATIONAL EDGE THAT FOLLOWS FROM THAT NUMBER: the fleet's post-restart
 // health budget (config UpdateConfig.HealthTimeout, default 600 s) covers the
 // burst with room, but a box whose update.health_timeout_seconds has been set
@@ -492,22 +501,81 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	if err != nil {
 		return nil, bootMark{}, engineRecordState{}, err
 	}
-	// WAL, BUT NOT AT THE COST OF DURABILITY. The engine pairs WAL with
-	// synchronous=NORMAL, which can lose the last commits on POWER LOSS (it
-	// never corrupts). This database is the control store — the record store
-	// IS control.flatsqldb — so its crash semantics are not something to trade
-	// for throughput without being asked.
+	// WAL AT synchronous=NORMAL (the pragma is below, after prepare). This IS a
+	// durability trade, taken deliberately by the owner on 2026-09-17. Until
+	// then this ran FULL, on the reasoning that the record store IS
+	// control.flatsqldb and its crash semantics were not something to trade for
+	// throughput without being asked. The trade was then priced, and taken.
+	// What follows is what was traded, because a future reader deciding whether
+	// to move it back needs the shape of the risk and not just the number.
 	//
-	// Measured, same inserts, same commit cadence:
-	//   TRUNCATE + FULL    1315 rows/s   38.0 ms/commit   (what this was)
-	//   WAL      + FULL    3840 rows/s   13.0 ms/commit   (what this is)
-	//   WAL      + NORMAL 19550 rows/s    2.5 ms/commit   (available, not taken)
+	// A PROCESS CRASH LOSES NOTHING. Panic, OOM kill, `kill -9` during a deploy
+	// swap: at NORMAL a committed transaction survives every one of them. The
+	// commit's WAL frames are in the OS page cache by the time COMMIT returns,
+	// and the next process reads that same cache. That holds only while there
+	// is no userspace buffering beneath the engine, and there is none —
+	// HostIO.WriteAt (flatsqlrt/hostio.go) is a bare os.File.WriteAt. It is a
+	// pinned fact rather than a quotation of the SQLite docs: the test
+	// flatsqlrt.TestWALProcessCrashKeepsCommittedRows SIGKILLs a child
+	// immediately after COMMIT and reopens the file in a fresh engine —
+	// 500/500 rows, recovered out of a -wal that was never fsynced, with the
+	// main database still a bare 4 KiB header. The wal-index
+	// is on the heap (flatsqlrt/diskstate.go), so it dies with the process and
+	// the reopen runs full WAL recovery off the WAL file itself, which is what
+	// makes that unsynced tail recoverable instead of lost.
 	//
-	// WAL+FULL is 2.9x faster than the mode it replaces with IDENTICAL
-	// durability: every commit still fsyncs, it is just an append to the WAL
-	// instead of write-journal, fsync, write-db, fsync, truncate. The 14.9x is
-	// there for the taking if the owner decides losing a few seconds of
-	// commits on power loss is acceptable; that is a product decision.
+	// AN OS CRASH OR POWER LOSS CAN LOSE THE TAIL. That is the entire delta.
+	// FULL fsyncs the WAL on every commit; NORMAL fsyncs it before each
+	// checkpoint. So the window at risk is "everything committed since the last
+	// WAL fsync", and it is BOUNDED: wal_autocheckpoint is 1000 pages at a
+	// page_size of 4096 — ~3.9 MiB of modified pages, well under a second of
+	// ingest at the rate measured below. Both factors are asserted by
+	// TestControlDatabaseIsWALAtNormalDurability, so that bound cannot quietly
+	// stop being true.
+	//
+	// THE REWIND IS ALWAYS A COMMIT-ORDER PREFIX, never a mixed state: one
+	// writer (the one-daemon-per-box law), frames appended in commit order, and
+	// recovery stopping at the last frame whose checksum validates. Nothing is
+	// corrupted, and a later commit can never outlive an earlier one. EVERY
+	// mark-lags-data invariant in this file rests on exactly that and is
+	// unharmed — checkpointEngineLocked's "flush first, mark second", the
+	// auxiliary resume mark written after the rows it covers, the datasync
+	// high-water mark that rewinds together with the rows it describes. NORMAL
+	// widens those windows; it cannot invert one.
+	//
+	// WHAT IT IS WORTH, measured overnight 2026-09-17/18 on the REAL store
+	// write path (Mac Studio, APFS, engine AOT, sds-stream-bench -bytes 48MiB
+	// -baseline=false), before/after binaries alternated run-by-run because
+	// this box's load drifts by 40% over a few minutes. Medians:
+	//   -batch 256   3114 -> 7312 rec/s   2.35x   (16 alternating pairs)
+	//   -batch  64   1959 -> 5517 rec/s   2.82x   (6 alternating pairs)
+	// The win GROWS as the commit window shrinks, which is the giveaway that
+	// what is being removed is a per-commit fsync.
+	//
+	// The engine microbenchmark agrees, which is worth recording because the
+	// old comment here implied it would not. Re-measured the same night, 7
+	// runs, medians (flatsqlrt.TestWALBeatsTruncateAtEqualDurability, 50-row
+	// commits): TRUNCATE+FULL 1363, WAL+FULL 4353, WAL+NORMAL 9460 rows/s, so
+	// NORMAL over FULL is 2.17x there against 2.35x here — the same effect, not
+	// a microbenchmark artefact. But do NOT reuse that test's RECORDED figures
+	// (1315 / 3840 / 19550, and the "14.9x" the old comment dangled): they do
+	// not reproduce on a loaded box, and 14.9x was NORMAL against TRUNCATE+FULL
+	// — a comparison this store stopped making when it left TRUNCATE. 2.35x is
+	// the number to plan with; re-measure rather than quote if it matters.
+	//
+	// THE RESIDUAL EXPOSURE, plainly: record BYTES, and only some of them.
+	// Records ingested upstream (CelesTrak, Space-Track) re-fetch on the next
+	// cycle, records pulled by datasync re-sync from a peer that still holds
+	// them, and the node's own auxiliary state is journalled separately with
+	// its frame fsynced AHEAD of the commit it describes (asset_pin_ledger.go,
+	// deliberately inverted). What has no replay path is a record ORIGINATED
+	// here over HTTP: api/publish.go has already answered 201 Created with the
+	// CID. A power loss inside the window above drops it. That cost is
+	// identical on every node role, which is the argument for making this
+	// unconditional rather than a per-box knob nobody can audit. Commerce is
+	// NOT in this database: storefront.db is a separate standalone open on the
+	// plain sqlite driver at SQLite's defaults (flatsqldrv.OpenStandalone), so
+	// the Stripe webhook's "HTTP 200 means durable" is untouched by this line.
 	log.Infof("FlatSQL boot phase \"boot: engine OpenDatabase\" took %s", time.Since(phase).Round(time.Millisecond))
 	phase = time.Now()
 	// BEFORE THE FIRST QUERY. IsDiskBacked/ReindexAll/verifyControlDatabase all
@@ -525,9 +593,18 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	// registered without prepare's own registration. Four cold-rebuild and
 	// hot-window hydration tests failed on exactly that, which is the whole
 	// reason this sits here and not next to the open.
-	if _, err := db.Query("PRAGMA synchronous=FULL"); err != nil {
+	//
+	// Re-confirmed 2026-09-18 while changing FULL to NORMAL, because a one-line
+	// pragma looks exactly like the kind of thing somebody tidies upward. One
+	// extra db.Query placed before prepare is enough to do it, and the symptom
+	// is not a durability failure or a pragma error — it is
+	//     SQL error: no such module: __flatsql_module_omm_alpha
+	// out of TestColdRebuildKeepsRowsWrittenBeforeAndDuringIt and
+	// TestEngineHotWindowHydratesFromTheControlTables. If you ever see that,
+	// something queried this database before prepare did.
+	if _, err := db.Query("PRAGMA synchronous=NORMAL"); err != nil {
 		db.Destroy()
-		return nil, bootMark{}, engineRecordState{}, fmt.Errorf("set synchronous=FULL on the control database: %w", err)
+		return nil, bootMark{}, engineRecordState{}, fmt.Errorf("set synchronous=NORMAL on the control database: %w", err)
 	}
 	disk, err := db.IsDiskBacked()
 	if err != nil {

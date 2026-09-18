@@ -359,8 +359,11 @@ func (s *FlatSQLStore) engineResidencyRowsForCIDs(schemaName string, cids []stri
 // returned as an error. Caller holds s.mu for writing.
 // tombstoneEngineRecordsLocked removes records from the engine's hot window.
 // join, when non-nil, is a transaction the ledger deletes are written into —
-// without one each DELETE is its own autocommit, and under WAL + FULL that is
-// an fsync per superseded record.
+// without one each DELETE is its own autocommit. That was an fsync per
+// superseded record under the WAL+synchronous=FULL this store ran until
+// 2026-09-17; under WAL+NORMAL it is no longer an fsync, but it is still a
+// full commit and its own WAL frame per record, so joining the caller's
+// transaction remains the right shape.
 func (s *FlatSQLStore) tombstoneEngineRecordsLocked(schemaName string, cids []string, join sqlQueryExecer) (int, error) {
 	if len(cids) == 0 || s.engineDB == nil {
 		return 0, nil
