@@ -762,12 +762,20 @@ jobs:
       # so neither an operator nor a support conversation can tell two builds
       # apart from what the node reports.
       #
-      # This does NOT fix the libp2p agent string: versioninfo.AgentVersion is a
-      # compile-time const over SuiteVersion (runtime.go), so an -X on a var can
-      # never reach it and `version` still prints agent=spacedatanetwork/1.0.5.
-      # Making the peer-visible identity carry the build is a wire-format change
-      # and a product decision, not a release-plumbing fix, so it is left alone
-      # and called out rather than done quietly here.
+      # This stamp ALSO reaches the libp2p agent string. versioninfo.AgentVersion
+      # was a compile-time const over SuiteVersion, which an -X on a var can never
+      # reach, so every 1.0.5 build advertised the identical
+      # "spacedatanetwork/1.0.5"; it is now a var over Version() (runtime.go), so
+      # a stamped binary presents "spacedatanetwork/<release tag>" to peers and
+      # `version` prints the tag in both version= and agent=. That is a deliberate
+      # wire-format change, taken by the owner. It is safe in both directions
+      # because every membership check matches the NAME half only
+      # (internal/epm/sdnpeers.go isSDNAgentVersion uses strings.Contains, and it
+      # has had that body since the day it was written).
+      #
+      # versioninfo.CurrentAdvertisementFlag ("spacedatanetwork/1.0.0") is NOT
+      # this string and must not follow it: it is the DHT rendezvous namespace,
+      # matched EXACTLY against SupportedAdvertisementFlags.
       #
       # Every other path that produces this binary already stamps it: the
       # Dockerfile, build-local-node-bundle.sh and cut-release-local.sh. Only the
