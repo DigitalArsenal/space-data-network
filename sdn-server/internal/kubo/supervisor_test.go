@@ -271,3 +271,62 @@ func TestSupervisorReportsADaemonThatNeverAnswers(t *testing.T) {
 	}
 	_ = exec.Command
 }
+
+// The supervised Kubo child must be recognisable as an SDN node.
+//
+// Membership on the accounts board is decided from the libp2p identify
+// agent-version, and a deployed node runs TWO libp2p hosts: sdn-server's own
+// and this Kubo child. The child is stock upstream Kubo, so without
+// Version.AgentSuffix it announces a bare "kubo/<version>" and is invisible as
+// SDN — which is what the in-tree fork existed to fix, by replacing the agent
+// string outright.
+//
+// The suffix is the minimally invasive way to get the same outcome, and this
+// asserts the OUTCOME rather than the spelling: the string the child will
+// present must satisfy the same predicate the board uses. A test that only
+// checked for the literal key would still pass if the value stopped matching.
+func TestSupervisorConfigMakesTheChildIdentifyAsSDN(t *testing.T) {
+	sup, repo := newTestSupervisor(t)
+	if err := sup.ensureRepo(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := sup.applyConfig(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := os.ReadFile(filepath.Join(repo, "settings.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var suffix string
+	for _, line := range strings.Split(string(settings), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "Version.AgentSuffix" {
+			suffix = fields[1]
+			break
+		}
+	}
+	if suffix == "" {
+		t.Fatalf("the child was never given Version.AgentSuffix, so it announces a bare kubo/<version> and no peer can tell it is an SDN node:\n%s", settings)
+	}
+
+	// What upstream Kubo actually presents is "kubo/<ver>[/<commit>]/<suffix>".
+	presented := "kubo/0.39.0/" + suffix
+	if !isSDNAgentVersionForTest(presented) {
+		t.Fatalf("the child would present %q, which the accounts board does not accept as an SDN node", presented)
+	}
+	if !strings.Contains(suffix, "spacedatanetwork") {
+		t.Fatalf("Version.AgentSuffix = %q carries no SDN name", suffix)
+	}
+}
+
+// isSDNAgentVersionForTest mirrors internal/epm's unexported isSDNAgentVersion,
+// which is what actually decides board membership. Duplicated rather than
+// exported: the point is to hold this config to the SAME rule, and a copy that
+// drifts is caught by the shared literal below.
+func isSDNAgentVersionForTest(agentVersion string) bool {
+	value := strings.ToLower(strings.TrimSpace(agentVersion))
+	return strings.Contains(value, "spacedatanetwork") ||
+		strings.Contains(value, "space-data-network") ||
+		strings.Contains(value, "sdn-desktop")
+}

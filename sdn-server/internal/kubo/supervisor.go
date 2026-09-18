@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // Config describes the Kubo instance to supervise.
@@ -224,6 +226,24 @@ func (s *Supervisor) applyConfig(ctx context.Context) error {
 		{"config", "Addresses.API", loopbackMultiaddr(s.cfg.APIAddr)},
 		{"config", "Addresses.Gateway", loopbackMultiaddr(s.cfg.GatewayAddr)},
 		{"config", "--json", "Gateway.NoFetch", boolJSON(!s.cfg.FetchFromNetwork)},
+		// THIS CHILD MUST IDENTIFY AS AN SDN NODE ON KADEMLIA.
+		//
+		// Peers decide SDN membership from the libp2p identify agent-version
+		// (internal/epm/sdnpeers.go isSDNAgentVersion, which asks
+		// strings.Contains for "spacedatanetwork"), and a node runs TWO libp2p
+		// hosts: sdn-server's own, which carries versioninfo.AgentVersion, and
+		// this supervised Kubo child. Left alone the child announces a bare
+		// "kubo/<version>" and is invisible as SDN — the owner ruling of
+		// 2026-07-28 is that an upstream kubo string made the node an
+		// unexplainable row on the accounts board and then dropped it off.
+		//
+		// Version.AgentSuffix is UPSTREAM Kubo's own config key
+		// (config/version.go, applied in cmd/ipfs/kubo/daemon.go), so this
+		// needs no patched binary: it is the whole reason the in-tree fork is
+		// not needed to carry the name. The child then answers
+		// "kubo/<ver>/spacedatanetwork/<suite ver>", which satisfies the
+		// Contains test that decides membership.
+		{"config", "Version.AgentSuffix", versioninfo.AgentVersion},
 	}
 	for _, args := range settings {
 		if _, err := s.run(ctx, args...); err != nil {
