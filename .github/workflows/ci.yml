@@ -121,7 +121,6 @@ jobs:
       - uses: ./.github/actions/sdn-go-env
         with:
           modules-token: ${{ secrets.MODULES_REPO_TOKEN }}
-          allow-missing-flow-bundles: ${{ github.event.pull_request.head.repo.fork == true }}
       - name: go test (quick)
         run: ./scripts/ci-local.sh go
 
@@ -147,7 +146,6 @@ jobs:
       - uses: ./.github/actions/sdn-go-env
         with:
           modules-token: ${{ secrets.MODULES_REPO_TOKEN }}
-          allow-missing-flow-bundles: ${{ github.event.pull_request.head.repo.fork == true }}
       - name: go test (record store)
         run: ./scripts/ci-local.sh heavy
 
@@ -185,7 +183,6 @@ jobs:
           needs-flow-bundles: 'false'
         with:
           modules-token: ${{ secrets.MODULES_REPO_TOKEN }}
-          allow-missing-flow-bundles: ${{ github.event.pull_request.head.repo.fork == true }}
       - name: sdn-js
         run: ./scripts/ci-local.sh js
       - name: module delivery compatibility
