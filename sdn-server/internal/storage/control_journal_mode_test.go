@@ -15,10 +15,10 @@ import (
 //
 // synchronous=NORMAL, because the pragma is issued EXPLICITLY rather than left
 // to the engine's WAL default, so a silent change to that default must not
-// silently change this database's durability. Until 2026-09-17 this asserted
+// silently change this database's durability. Until 2026-09-18 this asserted
 // FULL, on the reasoning that "this database is the control store, so it keeps
-// the durability it had; the speedup is the free part". THAT REASONING WAS
-// ABANDONED, deliberately, by the owner on 2026-09-17: FULL costs ~2.4x on the
+// the durability it had; the speedup is the free part". That reasoning was
+// abandoned on the owner's instruction of 2026-09-18: FULL costs ~2.4x on the
 // store write path, and what it buys is protection against OS crash and power
 // loss ONLY — a process crash, the `kill -9` of a deploy swap included, loses
 // nothing at NORMAL either (flatsqlrt.TestWALProcessCrashKeepsCommittedRows
@@ -36,6 +36,16 @@ import (
 // it earlier consumed that and broke four cold-rebuild and hydration tests.
 // A test that only checked journal_mode would not have noticed either mistake,
 // so it checks every value that the boot order has to produce.
+//
+// WHAT THIS TEST CANNOT TELL YOU, stated so nobody over-trusts it: it pins the
+// OBSERVABLE durability state, not the existence of the pragma. NORMAL is
+// already flatsqlrt.JournalWAL's own default (internal/flatsqlrt/diskstate.go:
+// "JournalWAL is journal_mode=WAL + synchronous=NORMAL"), so deleting the
+// explicit pragma block from boot leaves this test passing — verified by
+// deleting it and re-running. It therefore guards the durability the store
+// RUNS AT, which is the property that matters here, and would catch the engine
+// default moving underneath us. It would NOT catch the pragma being dropped
+// while the default still happens to agree.
 func TestControlDatabaseIsWALAtNormalDurability(t *testing.T) {
 	dir := t.TempDir()
 	v, err := sds.NewValidator(nil)

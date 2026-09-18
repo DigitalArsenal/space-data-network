@@ -421,7 +421,12 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 			"Queries will be ~100x slower.",
 			mode.CacheDir, mode.MissReason)
 	}
-	log.Infof("FlatSQL control database: DISK-BACKED at %s (journal_mode=TRUNCATE)", controlDBPath)
+	// The mode is ASKED FOR, not asserted. This line said "journal_mode=TRUNCATE"
+	// for as long as the store has been on WAL, which is the worst place to be
+	// wrong: it is what an operator reads while diagnosing a power-loss gap, and
+	// it told them the store fsyncs a rollback journal on every commit when it
+	// appends to a WAL and syncs at NORMAL.
+	log.Infof("FlatSQL control database: DISK-BACKED at %s (%s)", controlDBPath, controlDurabilityDescription(engineDB))
 
 	// EVERY BOOT PHASE IS TIMED AGAINST THE ENGINE'S OWN PER-CALL BUDGET
 	// (boot_phase_budget.go). A phase that crosses it in one call abandons the
