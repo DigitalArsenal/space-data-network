@@ -10,6 +10,29 @@ import {
 } from '../../flatsql-sync';
 import { withTimeout } from './async-timeout';
 import { Libp2pFlatSqlSyncBackendCache } from './libp2p-sync-backend-cache';
+
+// Both concurrency tests below fire N reads that park inside the fake client
+// and then assert WHICH peers they went to. They used to wait exactly one
+// microtask (`await Promise.resolve()`) before asserting, which assumes the
+// implementation reaches its dispatch point within one tick — an assumption
+// about how many awaits are on that path, not about the behaviour under test.
+// On a loaded CI runner the over-rotation test read
+// ['CelesTrak','CelesTrak','Mirror','CelesTrak'] and failed, while 947 other
+// tests passed and the same test passed locally three times running.
+//
+// Waiting for the reads to actually reach a peer is the same intent without
+// the assumption. `calls` is appended at the top of the fake client's
+// readFlatSqlPublishedShard for EVERY peer, so this waits on dispatch and not
+// on a particular routing decision — a wrong choice still lands in `calls` and
+// still fails the assertion that follows.
+async function waitForDispatchedReads(calls: string[], want: number): Promise<void> {
+  for (let tick = 0; tick < 1000 && calls.length < want; tick += 1) {
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+  }
+  if (calls.length < want) {
+    throw new Error(`only ${calls.length} of ${want} reads were dispatched: ${calls.join(', ')}`);
+  }
+}
 import type { Libp2pFlatSqlSyncClient } from './sdn-backend-libp2p-sync';
 
 describe('libp2p FlatSQL sync backend cache', () => {
@@ -661,7 +684,7 @@ describe('libp2p FlatSQL sync backend cache', () => {
       queryProfile: 'dataset-publication-offset-v1',
       cid: `bafkparallel-${index}`,
     }, 0)));
-    await Promise.resolve();
+    await waitForDispatchedReads(calls, 4);
 
     expect(calls).toContain('16Uiu2HCelesTrak');
     expect(calls).toContain('16Uiu2HMirror');
@@ -729,7 +752,7 @@ describe('libp2p FlatSQL sync backend cache', () => {
       queryProfile: 'dataset-publication-offset-v1',
       cid: `load-${index}`,
     }, 0));
-    await Promise.resolve();
+    await waitForDispatchedReads(calls, 4);
 
     expect(calls).toEqual([
       '16Uiu2HCelesTrak',
