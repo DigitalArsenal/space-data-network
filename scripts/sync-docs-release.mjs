@@ -29,6 +29,10 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FILES = ['docs/index.html', 'docs/onboarding.html', 'docs/INSTALL.md'];
+const DOCKER_IMAGE = 'dockerdigitalarsenal/space-data-network';
+// A Docker tag is [A-Za-z0-9_][A-Za-z0-9_.-]{0,127}; \S+ would swallow the
+// closing </span> in the HTML and report a tag nobody wrote.
+const TAG_CHARS = '[A-Za-z0-9_][A-Za-z0-9_.-]*';
 
 // Matches both spellings the site uses: the tag (v1.0.5-beta.1) and the bare
 // artifact version (1.0.5-beta.1), in URLs, filenames and prose.
@@ -64,10 +68,21 @@ function latestTag() {
 export function rewrite(text, tag) {
   const bare = tag.replace(/^v/, '');
   const dotted = bare.replace('-beta.', '.beta.');
-  return text.replace(RELEASE_LITERAL, (m) => {
+  const versioned = text.replace(RELEASE_LITERAL, (m) => {
     if (m.startsWith('v')) return tag;
     return m.includes('.beta.') ? dotted : bare;
   });
+  // A FOURTH spelling, and the only one that is not ours to choose: the Docker
+  // image tag is whatever the registry actually holds, and that is the
+  // v-prefixed one. index.html and onboarding.html were authored without the
+  // v, so `docker run ...:1.0.5-beta.69` on the front page has always failed
+  // with "manifest unknown" — the version sync faithfully kept the wrong
+  // spelling current. Anchored on the image name so it cannot touch anything
+  // else.
+  return versioned.replace(
+    new RegExp(`(${DOCKER_IMAGE.replace(/[/.]/g, '\\$&')}:)${TAG_CHARS}`, 'g'),
+    `$1${tag}`,
+  );
 }
 
 const args = process.argv.slice(2);
@@ -114,6 +129,46 @@ if (check) {
   if (broken.length > 0) {
     console.error(`[docs-release] the site links assets that are not in ${tag}:`);
     for (const b of broken) console.error(`    - ${b}`);
+    process.exit(1);
+  }
+}
+
+// AND EVERY DOCKER TAG MUST EXIST IN THE REGISTRY.
+// Same defect class as the asset links, different registry: the site's
+// `docker run` line is copied and pasted by hand, so a tag that resolves to
+// nothing is a broken front page. An anonymous pull token is enough to list
+// tags.
+async function dockerTags() {
+  const auth = await fetch(
+    `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${DOCKER_IMAGE}:pull`,
+  );
+  if (!auth.ok) throw new Error(`docker auth ${auth.status}`);
+  const { token } = await auth.json();
+  const res = await fetch(`https://registry-1.docker.io/v2/${DOCKER_IMAGE}/tags/list`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`docker tags ${res.status}`);
+  return new Set((await res.json()).tags ?? []);
+}
+
+if (check) {
+  let tags;
+  try {
+    tags = await dockerTags();
+  } catch (error) {
+    console.error(`[docs-release] could not list Docker Hub tags: ${error.message}`);
+    process.exit(1);
+  }
+  const missing = [];
+  for (const rel of FILES) {
+    const text = readFileSync(resolve(ROOT, rel), 'utf8');
+    for (const m of text.matchAll(new RegExp(`${DOCKER_IMAGE.replace(/[/.]/g, '\\$&')}:(${TAG_CHARS})`, 'g'))) {
+      if (!tags.has(m[1])) missing.push(`${rel}: ${DOCKER_IMAGE}:${m[1]}`);
+    }
+  }
+  if (missing.length > 0) {
+    console.error('[docs-release] the site names Docker tags that do not exist:');
+    for (const m of missing) console.error(`    - ${m}`);
     process.exit(1);
   }
 }
