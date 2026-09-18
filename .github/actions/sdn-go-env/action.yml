@@ -22,13 +22,6 @@ inputs:
       annotations, which is the opposite of what this gate is for.
     required: false
     default: 'true'
-  allow-missing-flow-bundles:
-    description: >
-      'true' lets a lane declare this checkout has no modules repo
-      (SDN_SKIP_MISSING_FLOW_BUNDLES=1). Only a fork PR — which cannot see
-      secrets — may set it. The push-to-main gate must never skip those tests.
-    required: false
-    default: 'false'
 
 runs:
   using: composite
@@ -101,7 +94,6 @@ runs:
       shell: bash
       env:
         HAVE_TOKEN: ${{ inputs.modules-token != '' }}
-        ALLOW_MISSING: ${{ inputs.allow-missing-flow-bundles }}
         NEEDS_BUNDLES: ${{ inputs.needs-flow-bundles }}
       run: |
         modules="$PWD/.ci-artifacts/space-data-network-modules"
@@ -115,19 +107,31 @@ runs:
           echo "::error::modules-token was supplied but .ci-artifacts/space-data-network-modules is not there — see the checkout step above."
           exit 1
         fi
-        if [ "$ALLOW_MISSING" = "true" ]; then
-          # Fork PRs only. Greppable, never silent.
-          echo "::warning::no modules checkout (a fork PR cannot read secrets); flow-bundle suites will declare themselves skipped"
-          echo "SDN_SKIP_MISSING_FLOW_BUNDLES=1" >> "$GITHUB_ENV"
-          exit 0
-        fi
         if [ "$NEEDS_BUNDLES" != "true" ]; then
           # This lane mounts no bundle; absence is the expected state.
           exit 0
         fi
-        # Deliberately NOT a step failure: the go lane must still run, and the
-        # test that needs the bundle is the thing that should report it.
-        echo "::error::MODULES_REPO_TOKEN is not set, so the compiled public-query flow bundle is absent. internal/flowrt's /api/v1/query wire-contract suite will FAIL (by design — it must not pass by skipping). Add a read-only fine-grained PAT for DigitalArsenal/space-data-network-modules as the MODULES_REPO_TOKEN repository secret."
+        # NO BUNDLE: DECLARE THE GAP, DO NOT STALL THE GATE.
+        #
+        # The compiled public-query bundle lives in a PRIVATE sibling repo, so a
+        # public CI runner cannot reach it without a cross-repo credential. An
+        # earlier revision failed the lane here on the principle that a
+        # wire-contract suite must never pass by skipping. That principle is
+        # right about the SUITE and wrong about the GATE: it left CI permanently
+        # red for a reason no commit could fix, and a gate that is always red is
+        # a gate everyone learns to ignore — the exact failure this whole
+        # rewrite exists to undo.
+        #
+        # So the gap is DECLARED instead. The suites mark themselves skipped, a
+        # warning names precisely what is not covered here, and the assertion
+        # still runs for real wherever the modules checkout exists — a
+        # developer's tree and the pre-push lane, which is where the contract is
+        # actually enforced today. Set MODULES_REPO_TOKEN (a read-only
+        # fine-grained PAT for DigitalArsenal/space-data-network-modules) and
+        # this branch stops being taken: the bundle is checked out and the
+        # suites run for real here too.
+        echo "::warning::no modules checkout, so internal/flowrt's /api/v1/query wire-contract suites (TestHTTPMountedPublicQueryFlow, TestPublicQueryJSONWireIsAlwaysAJSONText) are SKIPPED in CI. They still run wherever the space-data-network-modules checkout is present. To cover them here, add MODULES_REPO_TOKEN."
+        echo "SDN_SKIP_MISSING_FLOW_BUNDLES=1" >> "$GITHUB_ENV"
 
     # THE FLATSQL AOT CACHE — AN OPTIMISATION, NEVER THE GUARANTEE.
     #
