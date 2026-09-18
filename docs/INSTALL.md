@@ -3,7 +3,7 @@
 This is the operator path for a fresh node: what to install, which ports to
 open, what to change in the generated config before the node is reachable,
 how to keep the keys, how to mirror a publisher, and how to publish and
-archive. It describes v1.0.5-beta.1 (2026-09-15).
+archive. It describes v1.0.5-beta.69 (2026-09-18).
 
 ## 1. Get a build
 
@@ -15,8 +15,8 @@ irm https://spacedatanetwork.org/install.ps1 | iex
 ```
 
 The installers resolve the newest node release on GitHub (today
-v1.0.5-beta.1: macOS Apple Silicon, Linux x86-64 and arm64; the Windows
-bundle follows in the next beta), verify the checksum,
+v1.0.5-beta.69: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
+Windows x86-64), verify the checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
 `spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialise
 the node identity. Other platforms build from source:
@@ -51,7 +51,7 @@ from the internet) and 5 (keys).
 ```sh
 docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:1.0.5-beta.1
+  dockerdigitalarsenal/space-data-network:v1.0.5-beta.69
 ```
 
 The image (`linux/amd64`) carries the node, WasmEdge with a prewarmed AOT
