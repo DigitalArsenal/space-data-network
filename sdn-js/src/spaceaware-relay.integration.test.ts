@@ -15,6 +15,13 @@ const describeLive = runLiveRelayTest && hasRelayFixture ? describe : describe.s
 describeLive('spaceaware relay integration', () => {
   it('dials a live relay address from a runtime-supplied provider descriptor', { timeout: 120_000 }, async () => {
     const { SDNNode } = await import('./node');
+    // deriveProviderPeerId() reaches into the HD-wallet WASM module synchronously
+    // and throws "HD Wallet WASM module not loaded" if nothing has loaded it yet.
+    // SDNNode.create() is the only other caller of initHDWallet() in this flow and
+    // it runs AFTER this line, so without this the test could never have passed
+    // even with both fixture variables supplied.
+    const { initHDWallet } = await import('./crypto/hd-wallet');
+    await initHDWallet();
     const { peerId, candidates } = await resolveRelayCandidates();
     expect(candidates.length).toBeGreaterThan(0);
 
