@@ -837,20 +837,20 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 		switch {
 		case err == nil:
 			// Repeat CID: record it under this provider's table too.
-			gone := s.mirrorRoutedRecordFromExisting(tx, index.SchemaName, record.CID, strings.TrimSpace(providerPeerID), nil)
+			gone := s.mirrorRoutedRecordFromExisting(tx, index.SchemaName, record.CID, strings.TrimSpace(providerPeerID), nil, strings.TrimSpace(tags.SourceName))
 			superseded = append(superseded, gone...)
 		case errors.Is(err, sql.ErrNoRows):
 			stored, err := s.storableRecordBytes(index.SchemaName, data)
 			if err != nil {
 				return imported, err
 			}
-			key := recordSupersedeKey(index.SchemaName, data)
-			gone, err := s.supersedeInProducerTableTx(tx, index.SchemaName, routedTable, key, record.CID)
+			keys := recordSupersedeKeys(index.SchemaName, data, strings.TrimSpace(tags.SourceName))
+			gone, err := s.supersedeInProducerTableTx(tx, index.SchemaName, routedTable, keys, record.CID)
 			if err != nil {
 				return imported, err
 			}
 			superseded = append(superseded, gone...)
-			rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, storedRecord{cid: record.CID, peerID: strings.TrimSpace(providerPeerID), timestamp: now, data: stored, createdAt: now, supersedeKey: key})
+			rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, storedRecord{cid: record.CID, peerID: strings.TrimSpace(providerPeerID), timestamp: now, data: stored, createdAt: now, supersedeKey: keys.stored})
 			if err != nil {
 				return imported, fmt.Errorf("store imported %s record %s: %w", index.SchemaName, record.CID, err)
 			}

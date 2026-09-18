@@ -73,3 +73,69 @@ func TestMirrorKeepsDistinctObjectsWithinOneCatalog(t *testing.T) {
 		t.Fatalf("producer two's rows carry %d distinct supersede keys, want 2 — the object id was dropped on the way in", keys)
 	}
 }
+
+// A mirrored row must be retirable by the source that owns it.
+//
+// The repeat-CID mirror re-derives the supersede key from the key stored on
+// ANOTHER producer's row. When the lane became (producer, source) that key
+// already carried a scope, so re-applying this lane's scope on top produced
+// "src:<source>\x00src:<source>\x00<identity>" — a key no legitimate write's
+// match set contains, leaving a row no source could ever retire. The symptom is
+// not loss but NON-CONVERGENCE: one object under one source accumulating a row
+// per edition forever.
+//
+// supersedeKeysForStoredKey strips the stored scope before re-applying this
+// one. This holds it to that, through the store's real write path.
+func TestMirroredRowIsRetirableByItsOwnSource(t *testing.T) {
+	validator := bootTestValidator(t)
+	store := openBootStore(t, filepath.Join(t.TempDir(), "db"), validator)
+	defer store.Close()
+
+	tags := SourceTags{ProviderID: "prov", SourceName: "satcat", BatchID: "b1", ContentKeyID: "public"}
+	v1 := buildCATForTest("ISS v1", "1998-067A", 25544, "", "")
+	v2 := buildCATForTest("ISS v2", "1998-067A", 25544, "", "")
+
+	// Producer one publishes edition 1; producer two then sees the SAME CID,
+	// which is what drives the repeat-CID mirror into producer two's table.
+	if _, err := store.StoreWithSourceTags("CAT.fbs", v1, "peer-one", nil, tags); err != nil {
+		t.Fatalf("seed producer one: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("CAT.fbs", v1, "peer-two", nil, tags); err != nil {
+		t.Fatalf("mirror into producer two: %v", err)
+	}
+
+	table, err := store.ensureProducerStandardTable(routedProducerID("peer-two"), "CAT.fbs")
+	if err != nil {
+		t.Fatalf("table: %v", err)
+	}
+	var mirrored int
+	if err := store.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, table)).Scan(&mirrored); err != nil {
+		t.Fatalf("count mirrored: %v", err)
+	}
+	if mirrored != 1 {
+		t.Fatalf("producer two holds %d rows after the mirror, want 1", mirrored)
+	}
+
+	// Edition 2 of the SAME object from the SAME source must retire the mirrored
+	// row rather than sit beside it.
+	if _, err := store.StoreWithSourceTags("CAT.fbs", v2, "peer-two", nil, tags); err != nil {
+		t.Fatalf("second edition: %v", err)
+	}
+	var after int
+	if err := store.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, table)).Scan(&after); err != nil {
+		t.Fatalf("count after: %v", err)
+	}
+	if after != 1 {
+		var keys string
+		rows, _ := store.db.Query(fmt.Sprintf(`SELECT quote(CAST(supersede_key AS BLOB)) FROM %s`, table))
+		if rows != nil {
+			for rows.Next() {
+				var k string
+				_ = rows.Scan(&k)
+				keys += " " + k
+			}
+			rows.Close()
+		}
+		t.Fatalf("one object from one source left %d rows under producer two — the mirrored row is unreachable by its own source; keys:%s", after, keys)
+	}
+}
