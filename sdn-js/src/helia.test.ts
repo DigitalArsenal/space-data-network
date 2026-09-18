@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Uint8ArrayList } from 'uint8arraylist';
 
 /**
  * A minimal stand-in for helia 7's `createHeliaLight`.

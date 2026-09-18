@@ -373,16 +373,30 @@ export class SDNNode {
         : identifyCapabilityOnly();
 
     const libp2pOpts: Libp2pCreateOptions = {
-      // circuit-relay-v2 4.x removed `discoverRelays`. A `/p2p-circuit` listen
-      // address is how a node asks for relay reservations now, and it is what
-      // keeps a NAT-ed browser dialable through the SDN relays.
+      // circuit-relay-v2 4.x removed `discoverRelays`; a `/p2p-circuit` listen
+      // address is how a node asks for relay reservations now.
+      //
+      // MEASURED, NOT ASSUMED, and it does NOT by itself make a NAT-ed browser
+      // dialable in this node's DEFAULT configuration. Against a real Go relay:
+      // with enableIdentify:true the reservation is taken correctly, but with
+      // the default identifyCapabilityOnly stub there were ZERO reservations
+      // and ZERO listen addresses — v4 learns relays from a registrar topology
+      // on the HOP codec, which the stub never announces. gossipsub is inert
+      // under the same stub for the same reason.
+      //
+      // That trade predates this upgrade and is deliberate: running real
+      // identify() makes a browser advertise its whole protocol list to the Go
+      // node, which is the 2026-08-06 outage documented in
+      // sdn-server/internal/node/peer_admission_policy.go. Relay-reachability
+      // for browsers is therefore an OPEN question, not a solved one.
       addresses: {
         listen: ["/p2p-circuit"],
       },
       transports: [
-        // @libp2p/websockets 10 removed the `filter` option AND stopped
-        // shipping the ./filters subpath. Its dialFilter accepts /ws and /wss
-        // unconditionally, which is exactly what `filters.all` supplied.
+        // @libp2p/websockets 10 removed the `filter` OPTION. The ./filters
+        // subpath itself still ships — an earlier draft of this comment said it
+        // did not — but nothing consumes it now: dialFilter accepts /ws and
+        // /wss unconditionally, which is exactly what `filters.all` supplied.
         webSockets(),
         webTransport(),
         webRTCDirect(),
