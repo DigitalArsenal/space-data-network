@@ -59,8 +59,18 @@ test('native PowerShell installer installs Windows shims without elevation', () 
   assert.match(powershellScript, /'ARM64'\s+\{\s+return 'amd64'\s+\}/);
   assert.match(powershellScript, /spacedatanetwork\.cmd/);
   assert.match(powershellScript, /sdn\.cmd/);
-  assert.match(powershellScript, /\$PrimaryExe\s+init/);
-  assert.match(powershellScript, /\$PrimaryExe\s+show-identity\s+2>\$null\s+\|\s+Out-Null/);
+  // The installer must still init and verify the identity — but NOT by the old
+  // spelling. `& $PrimaryExe show-identity 2>$null | Out-Null` is what this
+  // asserted, and that line FAILED every Windows install: under
+  // $ErrorActionPreference = 'Stop' PowerShell turns a native command's stderr
+  // into a terminating NativeCommandError even at exit code 0, and
+  // show-identity prints "config: <path> (from home default)" to stderr. The
+  // redirection does not help — it still produces the ErrorRecord. So the
+  // assertions pin the INTENT, and the one below pins the fix.
+  assert.match(powershellScript, /Invoke-SdnCli[\s\S]*?-CliArgs @\('init'\)/);
+  assert.match(powershellScript, /Invoke-SdnCli[\s\S]*?-CliArgs @\('show-identity'\)/);
+  assert.doesNotMatch(powershellScript, /&\s+\$\w*Exe\s+\S+\s+2>\$null/,
+    'a native CLI call redirected with 2>$null still raises NativeCommandError under ErrorActionPreference=Stop');
   assert.doesNotMatch(powershellScript, /Start-Process[\s\S]*-Verb\s+RunAs/i);
   assert.doesNotMatch(powershellScript, /\bsudo\b/i);
 });

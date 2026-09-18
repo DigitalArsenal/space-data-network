@@ -142,6 +142,42 @@ function Expand-SdnArchive {
   }
 }
 
+# RUN THE CLI WITHOUT LETTING ITS STDERR FAIL THE INSTALL.
+#
+# This script runs under $ErrorActionPreference = 'Stop', and PowerShell turns a
+# NATIVE command's stderr into a terminating NativeCommandError even when the
+# command exited 0. `spacedatanetwork show-identity` prints one informational
+# line to stderr ("config: <path> (from home default)"), so a completely
+# successful install died at the last step with
+#   + FullyQualifiedErrorId : NativeCommandError
+# after the bundle was extracted, the shims were written and the identity was
+# created — telling the user it failed when nothing had.
+#
+# The exit CODE is the thing that says whether the command worked, so that is
+# what is checked. stderr is merged into the output stream and discarded by the
+# caller; suppressing it with 2>$null is not enough, because the redirection
+# still produces the ErrorRecord that ErrorActionPreference acts on.
+function Invoke-SdnCli {
+  param(
+    [string]$Exe,
+    [string[]]$CliArgs,
+    [switch]$PassThrough
+  )
+
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    if ($PassThrough) {
+      & $Exe @CliArgs 2>&1 | ForEach-Object { Write-Host $_ }
+    } else {
+      & $Exe @CliArgs 2>&1 | Out-Null
+    }
+    return $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+}
+
 function Get-SdnArch {
   $machine = $env:PROCESSOR_ARCHITEW6432
   if (-not $machine) {
@@ -323,14 +359,26 @@ try {
     Write-Info 'Skipping node identity initialization because SDN_SKIP_INIT=1'
   } else {
     Write-Info 'Initializing local node identity...'
-    & $PrimaryExe init
+    $code = Invoke-SdnCli -Exe $PrimaryExe -CliArgs @('init')
+    if ($code -ne 0) {
+      Write-Fail "node identity initialization failed (exit code $code)"
+    }
     Write-Info 'Verifying local node identity...'
-    & $PrimaryExe show-identity 2>$null | Out-Null
+    $code = Invoke-SdnCli -Exe $PrimaryExe -CliArgs @('show-identity')
+    if ($code -ne 0) {
+      Write-Fail "node identity verification failed (exit code $code)"
+    }
   }
 
   Write-Info 'Installation successful!'
-  & $PrimaryExe version
-  & $AliasExe status | Out-Null
+  # PassThrough: the version banner is the one thing the user should SEE.
+  $code = Invoke-SdnCli -Exe $PrimaryExe -CliArgs @('version') -PassThrough
+  if ($code -ne 0) {
+    Write-Fail "the installed binary could not report its version (exit code $code)"
+  }
+  # status is advisory: a freshly installed node has no daemon running, so a
+  # non-zero exit here is expected and must not fail the install.
+  Invoke-SdnCli -Exe $AliasExe -CliArgs @('status') | Out-Null
   Write-Info "Run '$PrimaryBinaryName start' to start the node as a persistent background service"
   Write-Info "Run '$PrimaryBinaryName daemon' for foreground/manual mode"
   Write-Info "Run '$AliasBinaryName status' to inspect the local node"
