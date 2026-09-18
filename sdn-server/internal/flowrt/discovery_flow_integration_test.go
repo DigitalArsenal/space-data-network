@@ -11,6 +11,7 @@ package flowrt
 // for OMM/CAT, and an anonymous DHT peer without a profile.
 
 import (
+	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"testing"
 
 	flatbuffers "github.com/google/flatbuffers/go"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 
 	EPM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	PNM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
@@ -37,18 +39,53 @@ const (
 	discoveryDHTPeerID   = "16Uiu2HAmDHTonlyPeerWithoutProfile"
 )
 
+// discoveryFlowDist locates one compiled discovery bundle. Roots are tried
+// most specific first: the env override, the canonical sibling layout, and
+// then modulesCheckoutCandidates — the same resolver the public-query suite
+// uses, which follows a LINKED WORKTREE's gitdir back to the stack it belongs
+// to. Without that last step every discovery test silently SKIPPED inside a
+// worktree, which is how the publisher-key fixtures below went stale unnoticed
+// after 982fc25d changed the wire format.
 func discoveryFlowDist(t *testing.T, bundle string) string {
 	t.Helper()
-	root := os.Getenv("SDN_DISCOVERY_FLOW_DIST")
-	if root == "" {
-		root = filepath.Join("..", "..", "..", "..",
-			"space-data-network-modules", "flows", "discovery", "dist")
+	var roots []string
+	if env := strings.TrimSpace(os.Getenv("SDN_DISCOVERY_FLOW_DIST")); env != "" {
+		roots = append(roots, env)
 	}
-	dist := filepath.Join(root, bundle)
-	if _, err := os.Stat(filepath.Join(dist, "runtime.wasm")); err != nil {
-		t.Skipf("discovery flow bundle not found at %s (set SDN_DISCOVERY_FLOW_DIST): %v", dist, err)
+	roots = append(roots, filepath.Join("..", "..", "..", "..",
+		"space-data-network-modules", "flows", "discovery", "dist"))
+	for _, checkout := range modulesCheckoutCandidates() {
+		roots = append(roots, filepath.Join(checkout, "flows", "discovery", "dist"))
 	}
-	return dist
+	for _, root := range roots {
+		dist := filepath.Join(root, bundle)
+		if _, err := os.Stat(filepath.Join(dist, "runtime.wasm")); err == nil {
+			return dist
+		}
+	}
+	t.Skipf("discovery flow %s bundle not found (set SDN_DISCOVERY_FLOW_DIST); checked %v", bundle, roots)
+	return ""
+}
+
+// discoveryPublisherKey encodes an Ed25519 public key the way the NODE hands
+// publisher keys to the p2p_read capability: libp2p protobuf
+// (crypto.MarshalPublicKey), never the raw 32 bytes. Node.buildP2PCapOptions
+// marshals every candidate key through appendKey (internal/node/node.go), and
+// since 982fc25d the capability unmarshals it with crypto.UnmarshalPublicKey so
+// the key carries its ALGORITHM — a raw Ed25519 key is invalid protobuf and
+// every attribution attempt against it fails, which reads on the wire as an
+// empty publication history.
+func discoveryPublisherKey(t *testing.T, pub ed25519.PublicKey) []byte {
+	t.Helper()
+	key, err := libp2pcrypto.UnmarshalEd25519PublicKey(pub)
+	if err != nil {
+		t.Fatalf("unmarshal ed25519 public key: %v", err)
+	}
+	raw, err := libp2pcrypto.MarshalPublicKey(key)
+	if err != nil {
+		t.Fatalf("marshal publisher key: %v", err)
+	}
+	return raw
 }
 
 func buildDiscoveryEPM(t *testing.T, dn string, alternateNames, addrs []string) []byte {

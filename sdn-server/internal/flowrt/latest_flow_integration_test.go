@@ -96,7 +96,7 @@ func TestHTTPMountedLatestDatasetFlow(t *testing.T) {
 		RecentPNMs: func(limit int) []caps.P2PPNMRecord { return pnms },
 		PublisherKeys: func(peerID string) []caps.P2PPublisherKey {
 			if peerID == discoveryCelestrakID {
-				return []caps.P2PPublisherKey{{PublicKey: celestrakPub, Source: "epm-directory"}}
+				return []caps.P2PPublisherKey{{PublicKey: discoveryPublisherKey(t, celestrakPub), Source: "epm-directory"}}
 			}
 			return nil
 		},
