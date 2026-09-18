@@ -95,6 +95,10 @@ jobs:
           go-version-file: sdn-server/go.mod
           cache-dependency-path: sdn-server/go.sum
       - name: Preflight
+        # The docs-release link check asks GitHub for the newest release tag;
+        # `gh` on a runner is installed but unauthenticated without this.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           chmod +x scripts/*.sh
           ./scripts/ci-local.sh preflight
