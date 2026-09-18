@@ -50,6 +50,18 @@ const (
 
 	pendingDatasetAnnouncementSuffix = ".pnm"
 	pendingDatasetAnnouncementTemp   = ".pending-"
+	// IN-FLIGHT WRITES LIVE IN THEIR OWN DIRECTORY, and the reaper never looks
+	// inside it. The temp file used to be created beside the finished ones,
+	// where the scan removed ANY name carrying the temp prefix — and this lane
+	// is, by construction, the one writer that is not serialized: it runs
+	// exactly at the `!datasetCatalogMu.TryLock()` skip, i.e. while another
+	// announcement is already in the path. So two concurrent parks reaped each
+	// other's half-written files. Measured before the fix: 24 concurrent parks
+	// lost 12-46% on every run, and node.go swallows the resulting ENOENT at
+	// Debugf, so the lane silently dropped the very announcements it exists to
+	// preserve. A subdirectory removes the race outright rather than betting on
+	// a grace period being longer than a write.
+	pendingDatasetAnnouncementInflight = ".inflight"
 	// pendingPeerPrefixLength is the hex sha256 of the publisher peer ID plus
 	// the "-" separator: the per-peer grouping key in a file name.
 	pendingPeerPrefixLength = 2*sha256.Size + 1
@@ -113,8 +125,13 @@ func scanPendingDatasetAnnouncements(dir string, now time.Time) ([]pendingDatase
 		if err != nil {
 			return nil, err
 		}
-		// Only this writer creates the temp names, and only between CreateTemp
-		// and Rename. One left behind is an interrupted write, never admitted.
+		// The in-flight directory belongs to writers, not to the reaper.
+		if name == pendingDatasetAnnouncementInflight {
+			continue
+		}
+		// A temp name at THIS level is a leftover from before in-flight writes
+		// moved into their own directory; reap it as the interrupted write it
+		// is. Live writes are no longer visible here at all.
 		if !info.Mode().IsRegular() ||
 			strings.HasPrefix(name, pendingDatasetAnnouncementTemp) ||
 			len(name) != pendingNameLength ||
@@ -210,7 +227,11 @@ func RememberPendingDatasetAnnouncement(store *storage.FlatSQLStore, publisher s
 	body = append(body, '\n')
 	body = append(body, pnm...)
 
-	file, err := os.CreateTemp(dir, pendingDatasetAnnouncementTemp)
+	inflight := filepath.Join(dir, pendingDatasetAnnouncementInflight)
+	if err := os.MkdirAll(inflight, 0o700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(inflight, pendingDatasetAnnouncementTemp)
 	if err != nil {
 		return err
 	}
