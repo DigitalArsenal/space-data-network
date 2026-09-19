@@ -605,15 +605,13 @@ run_module_delivery_compat() {
   # Belongs HERE, not in the preflight: it imports space-data-module-sdk, which
   # is a root dependency, and the preflight installs nothing on purpose. This
   # lane has already run the root install above.
-  # Both of these resolve space-data-module-sdk, and this lane is the one that
-  # has installed it — module-placement.test.mjs resolves it from sdn-js/
-  # rather than the root (createRequire over sdn-js/package.json), which is
-  # why hiding only the root node_modules did not reproduce its CI failure.
-  step "module placement and catalog seeding"
-  (cd "$ROOT" && npm_config_cache="$ROOT/.npm-cache" node --test \
-    tests/isomorphic/seed-orbpro-module-catalog.test.mjs \
-    scripts/module-placement.test.mjs)
-  pass "module placement and catalog seeding"
+  # module-placement.test.mjs resolves space-data-module-sdk from sdn-js/ rather
+  # than the root (createRequire over sdn-js/package.json), and this lane is the
+  # one that has installed both trees. Hiding only the root node_modules is why
+  # its CI failure did not reproduce locally.
+  step "module placement"
+  (cd "$ROOT" && npm_config_cache="$ROOT/.npm-cache" node --test scripts/module-placement.test.mjs)
+  pass "module placement"
 }
 
 run_plugin_demo() {

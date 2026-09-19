@@ -10,6 +10,13 @@
 #
 #   ./scripts/repro-clean-checkout.sh preflight
 #
+# WHAT IT DOES NOT CATCH: a suite that reaches OUTSIDE this repository.
+# tests/isomorphic/seed-orbpro-module-catalog.test.mjs resolves
+# repoRoot/../../../OrbPro/..., which exists in the stack-of-repos layout on a
+# developer's machine and in no CI checkout — hiding node_modules says nothing
+# about it. If a suite resolves a path above the repo root, it cannot run in
+# this repo's CI at all; quarantine it in scripts/check-no-orphan-test-suites.mjs.
+#
 # Any ci-local.sh mode works, but `preflight` is the one this exists for: it is
 # the only lane that runs Node suites with no install in front of them.
 set -u
