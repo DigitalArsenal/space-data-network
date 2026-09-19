@@ -39,6 +39,11 @@ export const QUARANTINE = new Map([
     'expects an id="network-ecosystem" section that has moved'],
   ['scripts/build-claude-designer-ui-package.test.mjs',
     'the template copy step fails against a temp directory'],
+  ['tests/isomorphic/decryption-flow.test.mjs',
+    'imports libp2p, @libp2p/tcp, @chainsafe/libp2p-noise and @chainsafe/libp2p-yamux, ' +
+    'none of which any root package.json declares — it passes only on a machine carrying ' +
+    'an undeclared install and fails on a fresh clone. Fix by moving it under sdn-js, ' +
+    'which declares libp2p, rather than by pulling the libp2p stack into the root'],
 ]);
 
 export function findSuites(root = ROOT) {
