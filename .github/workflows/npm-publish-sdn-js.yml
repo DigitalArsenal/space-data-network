@@ -108,8 +108,29 @@ jobs:
             esac
           fi
 
+      # EVERY SDN release fires this workflow, and an SDN release does not
+      # change sdn-js's version — so npm is asked to publish a version it
+      # already has and answers 403. That has failed on every release since at
+      # least v1.0.4-beta.18 (2026-09-04); the last genuine publish was
+      # sdn-js 3.0.0 in August. A job that is red on every release is one
+      # people stop reading, which is the opposite of what a publish gate is
+      # for. Ask npm first, and skip with a reason instead of failing.
+      - name: Is this version already on npm?
+        id: published
+        working-directory: sdn-js
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${name}@${version} is already on npm — nothing to publish. Bump sdn-js's version to publish a new one."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+            echo "${name}@${version} is not on npm yet; publishing."
+          fi
+
       - name: Publish to npm
-        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+        if: ${{ steps.published.outputs.already == 'false' && (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)) }}
         working-directory: sdn-js
         run: npm publish --provenance --access public --tag ${{ steps.tag.outputs.tag }}
 
@@ -132,7 +153,9 @@ jobs:
           echo "| Version | \`${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Tag | \`${{ steps.tag.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "${{ steps.published.outputs.already }}" = "true" ]; then
+            echo "| Status | Already on npm — skipped |" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "| Status | Dry run (not published) |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| Status | Published |" >> $GITHUB_STEP_SUMMARY
