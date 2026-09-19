@@ -705,8 +705,16 @@ describe('libp2p FlatSQL sync backend cache', () => {
       },
       async readFlatSqlPublishedShard(query: FlatSqlSyncQuery & { cid: string }): Promise<FlatSqlPublishedShard> {
         calls.push(options.targetPeerId);
+        // The margin has to survive a LOADED machine. Ordering scores a source
+        // as byteCount / max(1, elapsedMs), so with 300 vs 100 bytes a runner
+        // that takes 3ms on the primary and 1ms on the mirror scores both at
+        // 100 — a tie, which falls through to rank and in-flight counts and
+        // puts the mirror in the results. That is the CI flake, and injecting
+        // a 4ms delay on the primary's priming read reproduces it every time.
+        // 30000x leaves no wall-clock skew that can equalize them, and it is
+        // what "a much slower source" in this test's name actually means.
         const streamBytes = options.targetPeerId === '16Uiu2HCelesTrak'
-          ? new Uint8Array(300)
+          ? new Uint8Array(3_000_000)
           : new Uint8Array(100);
         if (query.cid.startsWith('load-')) {
           await new Promise<void>((resolve) => releaseLoadReads.push(resolve));
