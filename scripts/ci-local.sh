@@ -247,9 +247,7 @@ run_preflight() {
     scripts/check-no-app-specific-go.test.mjs \
     scripts/module-placement.test.mjs \
     scripts/purge-legacy-supplemental-omm-state.test.mjs \
-    tests/isomorphic/artifact-crypto.test.mjs \
-    tests/isomorphic/decryption-flow.test.mjs \
-    tests/isomorphic/seed-orbpro-module-catalog.test.mjs)
+    tests/isomorphic/artifact-crypto.test.mjs)
   pass "release and deployment check suites"
 
   # And the class cannot come back: every root-level suite must be named by
@@ -604,6 +602,13 @@ run_module_delivery_compat() {
   step "module-delivery compatibility"
   (cd "$ROOT" && npm_config_cache="$ROOT/.npm-cache" npm run test:module-delivery)
   pass "module-delivery compatibility"
+
+  # Belongs HERE, not in the preflight: it imports space-data-module-sdk, which
+  # is a root dependency, and the preflight installs nothing on purpose. This
+  # lane has already run the root install above.
+  step "orbpro module catalog seeding"
+  (cd "$ROOT" && npm_config_cache="$ROOT/.npm-cache" node --test tests/isomorphic/seed-orbpro-module-catalog.test.mjs)
+  pass "orbpro module catalog seeding"
 }
 
 run_plugin_demo() {
