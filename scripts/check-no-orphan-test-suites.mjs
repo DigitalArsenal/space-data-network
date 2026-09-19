@@ -39,6 +39,11 @@ export const QUARANTINE = new Map([
     'expects an id="network-ecosystem" section that has moved'],
   ['scripts/build-claude-designer-ui-package.test.mjs',
     'the template copy step fails against a temp directory'],
+  ['tests/isomorphic/seed-orbpro-module-catalog.test.mjs',
+    'reads OrbPro/packages/space-data-network-modules/... three directories ABOVE this repo ' +
+    '(workspaceRoot = repoRoot/../../..), so it only runs inside the stack-of-repos layout ' +
+    'and no CI checkout of this repo can ever satisfy it. Fix by moving it to the OrbPro repo ' +
+    'or by fixturing the manifest it reaches for'],
   ['tests/isomorphic/decryption-flow.test.mjs',
     'imports libp2p, @libp2p/tcp, @chainsafe/libp2p-noise and @chainsafe/libp2p-yamux, ' +
     'none of which any root package.json declares — it passes only on a machine carrying ' +
