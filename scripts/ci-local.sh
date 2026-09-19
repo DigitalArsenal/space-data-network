@@ -245,7 +245,6 @@ run_preflight() {
     deployment/spaceaware/nginx-public-host-route-smoke.test.mjs \
     deployment/spaceaware/verify-spaceaware-public-host-route.test.mjs \
     scripts/check-no-app-specific-go.test.mjs \
-    scripts/module-placement.test.mjs \
     scripts/purge-legacy-supplemental-omm-state.test.mjs \
     tests/isomorphic/artifact-crypto.test.mjs)
   pass "release and deployment check suites"
@@ -606,9 +605,15 @@ run_module_delivery_compat() {
   # Belongs HERE, not in the preflight: it imports space-data-module-sdk, which
   # is a root dependency, and the preflight installs nothing on purpose. This
   # lane has already run the root install above.
-  step "orbpro module catalog seeding"
-  (cd "$ROOT" && npm_config_cache="$ROOT/.npm-cache" node --test tests/isomorphic/seed-orbpro-module-catalog.test.mjs)
-  pass "orbpro module catalog seeding"
+  # Both of these resolve space-data-module-sdk, and this lane is the one that
+  # has installed it — module-placement.test.mjs resolves it from sdn-js/
+  # rather than the root (createRequire over sdn-js/package.json), which is
+  # why hiding only the root node_modules did not reproduce its CI failure.
+  step "module placement and catalog seeding"
+  (cd "$ROOT" && npm_config_cache="$ROOT/.npm-cache" node --test \
+    tests/isomorphic/seed-orbpro-module-catalog.test.mjs \
+    scripts/module-placement.test.mjs)
+  pass "module placement and catalog seeding"
 }
 
 run_plugin_demo() {
