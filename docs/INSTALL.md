@@ -3,7 +3,7 @@
 This is the operator path for a fresh node: what to install, which ports to
 open, what to change in the generated config before the node is reachable,
 how to keep the keys, how to mirror a publisher, and how to publish and
-archive. It describes v1.0.5-beta.69 (2026-09-18).
+archive. It describes v1.0.5-beta.70 (2026-09-18).
 
 ## 1. Get a build
 
@@ -15,7 +15,7 @@ irm https://spacedatanetwork.org/install.ps1 | iex
 ```
 
 The installers resolve the newest node release on GitHub (today
-v1.0.5-beta.69: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
+v1.0.5-beta.70: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
 Windows x86-64), verify the checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
 `spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialise
@@ -83,7 +83,7 @@ first output appears.
 ```sh
 docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:v1.0.5-beta.69
+  dockerdigitalarsenal/space-data-network:v1.0.5-beta.70
 ```
 
 The image (`linux/amd64`) carries the node, WasmEdge with a prewarmed AOT
@@ -106,8 +106,8 @@ it with `spacedatanetwork key reseal` before recreating the container.
 /app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic`
 prints the recovery phrase. A `docker load` archive of the same image ships
 with each release. Its name spells the version with DOTS, not the tag's
-hyphen — `spacedatanetwork-container-1.0.5.beta.69-linux-amd64.tar.gz`, not
-`…-1.0.5-beta.69-…`, which 404s. Native Linux packages use the same dotted
+hyphen — `spacedatanetwork-container-1.0.5.beta.70-linux-amd64.tar.gz`, not
+`…-1.0.5-beta.70-…`, which 404s. Native Linux packages use the same dotted
 spelling, for the same reason: a release asset name cannot carry SemVer's
 hyphen.
 
