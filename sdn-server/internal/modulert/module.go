@@ -25,6 +25,10 @@ import (
 
 var log = logging.Logger("modulert")
 
+// Bounded source downloads need simultaneous SDK, guest and pinning buffers.
+// The host owns this hard ceiling; memory grows only when the guest needs it.
+const defaultModuleMemoryPages uint32 = 4096 // 256 MiB
+
 // Default per-invocation resource limits for module-sdk WASM guests (loop
 // B3 — defensive hardening, fail closed). Every wasmrt.Module.Execute call
 // on a loaded module (plugin_invoke_stream, malloc/free, manifest reads,
@@ -409,7 +413,7 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 
 	mod, err := wasmrt.NewModule(wasmBytes,
 		wasmrt.WithWASI(),
-		wasmrt.WithMaxMemoryPages(1024),
+		wasmrt.WithMaxMemoryPages(defaultModuleMemoryPages),
 		wasmrt.WithExecTimeout(defaultInvokeTimeout),
 		wasmrt.WithCostLimit(defaultInvokeCostLimit),
 		wasmrt.WithMallocName("plugin_alloc"),
