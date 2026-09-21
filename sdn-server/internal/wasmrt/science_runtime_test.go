@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"net/http"
 	"net/http/httptest"
@@ -129,8 +130,21 @@ func TestScienceHTTPFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	for _, method := range []string{"GET", "POST"} {
-		request, err := os.ReadFile(filepath.Join(root, "socrates-1.fb"))
+	methods := []string{"GET", "POST"}
+	if os.Getenv("SDN_SCIENCE_STRESS") == "1" {
+		for i := 0; i < 100; i++ {
+			methods = append(methods, "POST")
+		}
+	}
+	for index, method := range methods {
+		name := "socrates-10-workers4"
+		if os.Getenv("SDN_SCIENCE_STRESS") == "1" {
+			name = fmt.Sprintf("socrates-%d", (index/2)%20)
+			if index%2 == 1 {
+				name += "-workers4"
+			}
+		}
+		request, err := os.ReadFile(filepath.Join(root, name+".fb"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -143,7 +157,7 @@ func TestScienceHTTPFlow(t *testing.T) {
 			continue
 		}
 		if rec.Code != http.StatusOK {
-			t.Fatalf("POST: %d: %s", rec.Code, rec.Body.String())
+			t.Fatalf("POST %s: %d: %s", name, rec.Code, rec.Body.String())
 		}
 		response := rec.Body.Bytes()
 		if len(response) < 12 {
@@ -156,7 +170,7 @@ func TestScienceHTTPFlow(t *testing.T) {
 		if string(response[8:12]) != "$CQR" {
 			t.Fatal("wrong result schema")
 		}
-		if err := os.WriteFile(filepath.Join(root, "result-flow-socrates-1.fb"), response[4:4+size], 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, "result-flow-"+name+".fb"), response[4:4+size], 0600); err != nil {
 			t.Fatal(err)
 		}
 	}

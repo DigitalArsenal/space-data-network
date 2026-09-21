@@ -96,3 +96,51 @@ func TestWorkerTrapInterruptsWaitingParent(t *testing.T) {
 		t.Fatal("parent waited for full timeout after child trapped")
 	}
 }
+
+func TestThreadedAtomicWaitReturnsWithinCancellationBudget(t *testing.T) {
+	bytes, err := os.ReadFile("testdata/wasi-threads.wasm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewModule(bytes, WithMaxMemoryPages(2), WithExecTimeout(50*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Release()
+	start := time.Now()
+	_, err = m.Execute("unbounded_atomic_wait")
+	if err == nil {
+		t.Fatal("unbounded wait succeeded")
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatal("native wait blocked caller beyond cancellation budget")
+	}
+	if !m.Poisoned() {
+		t.Fatal("timed out threaded module was reusable")
+	}
+}
+
+// The upstream 0.16.4 library fails this standard atomic-notify contract.
+// Run explicitly when validating the isolated runtime patch; keep upstream
+// library users able to run the unrelated host tests during rollout.
+func TestWasiAtomicNotifyWithoutStore(t *testing.T) {
+	if os.Getenv("SDN_WASM_ATOMIC_REGRESSION") != "1" {
+		t.Skip("set SDN_WASM_ATOMIC_REGRESSION=1 to verify the WasmEdge atomic-wait runtime fix")
+	}
+	bytes, err := os.ReadFile("testdata/wasi-threads.wasm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewModule(bytes, WithMaxMemoryPages(2), WithExecTimeout(200*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Release()
+	values, err := m.Execute("notify_without_store")
+	if err != nil {
+		t.Fatalf("notify must wake a waiter even without a store: %v", err)
+	}
+	if len(values) != 1 || ToInt32(values[0]) != 0 {
+		t.Fatalf("atomic wait returned %v, expected notified (0)", values)
+	}
+}
