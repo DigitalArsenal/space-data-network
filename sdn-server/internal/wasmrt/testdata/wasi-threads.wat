@@ -5,6 +5,10 @@
  (import "wasi" "thread-spawn" (func $spawn (param i32) (result i32)))
  (func (export "wasi_thread_start") (param $tid i32) (param $arg i32)
    (if (i32.eq (local.get $arg) (i32.const 8)) (then unreachable))
+   (if (i32.eq (local.get $arg) (i32.const 16)) (then
+     (loop $notify
+       (br_if $notify (i32.eqz (memory.atomic.notify (i32.const 16) (i32.const 1)))))
+     (return)))
    (if (i32.eq (local.get $arg) (i32.const 4)) (then
      (block $released (loop $wait
        (br_if $released (i32.ne (i32.atomic.load (i32.const 4)) (i32.const 0)))
@@ -35,4 +39,11 @@
  (func (export "join_trapped_worker")
   (drop (call $spawn (i32.const 8)))
   (loop $forever (br $forever)))
+ (func (export "unbounded_atomic_wait")
+  (i32.atomic.store (i32.const 12) (i32.const 0))
+  (drop (memory.atomic.wait32 (i32.const 12) (i32.const 0) (i64.const -1))))
+ (func (export "notify_without_store") (result i32)
+  (i32.atomic.store (i32.const 16) (i32.const 0))
+  (drop (call $spawn (i32.const 16)))
+  (memory.atomic.wait32 (i32.const 16) (i32.const 0) (i64.const -1)))
 )
