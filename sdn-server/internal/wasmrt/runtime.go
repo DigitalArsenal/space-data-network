@@ -103,9 +103,9 @@ func IsPoisoned(err error) bool { return errors.Is(err, ErrModulePoisoned) }
 // NOT poisoning:
 //   - ErrFuelExhausted: WasmEdge aborts the guest itself at a well-defined
 //     instruction boundary and documents the VM as reusable.
-//   - an interrupted async execution that was cancelled AND reaped
-//     (runAsyncWithTimeout waits for the cancellation to take effect), which is
-//     likewise a defined state.
+//   - a non-threaded async execution that was cancelled AND reaped. Threaded
+//     timeouts and cancellation that cannot be reaped are poisoned at the call
+//     site because guest invariants or native-thread ownership are uncertain.
 //   - ctx cancellation before the guest was ever entered.
 func poisonsModule(err error) bool {
 	if err == nil {
@@ -505,9 +505,9 @@ func (m *Module) HasFunction(name string) bool {
 // runAsyncWithTimeout invokes an export via WasmEdge's async-execute path
 // and hard-interrupts it (WasmEdge_AsyncCancel) if it has not completed
 // within timeout. On breach the in-flight execution is canceled and reaped
-// (via Async.GetResult, which blocks until the cancellation has actually
-// taken effect) before returning, so the VM is guaranteed idle — and safe
-// for the next Execute call — by the time this function returns.
+// before returning. If native cancellation does not finish within two seconds,
+// the instance is poisoned and its live resources retained; the caller returns
+// without freeing memory beneath an executing native thread.
 func (m *Module) runAsyncWithTimeout(timeout time.Duration, name string, params ...interface{}) ([]interface{}, error) {
 	var async *wasmedge.Async
 	if m.registeredName != "" {
@@ -518,7 +518,24 @@ func (m *Module) runAsyncWithTimeout(timeout time.Duration, name string, params 
 	if async == nil {
 		return nil, fmt.Errorf("failed to start async execution of %q", name)
 	}
-	defer async.Release()
+	releaseAsync := true
+	defer func() {
+		if releaseAsync {
+			async.Release()
+		}
+	}()
+	cancelAndReap := func() {
+		async.Cancel()
+		if !async.WaitFor(2000) {
+			// Some native atomic waits cannot be interrupted by WasmEdge.
+			// Never free their VM beneath them or leave the caller blocked.
+			releaseAsync = false
+			m.execThreadLost.Store(true)
+			m.MarkPoisoned(fmt.Errorf("native execution did not stop after cancellation in %q", name))
+			return
+		}
+		_, _ = async.GetResult()
+	}
 
 	ms := timeout.Milliseconds()
 	if ms <= 0 {
@@ -543,8 +560,7 @@ func (m *Module) runAsyncWithTimeout(timeout time.Duration, name string, params 
 		if m.threads != nil {
 			select {
 			case <-m.threads.failure:
-				async.Cancel()
-				_, _ = async.GetResult()
+				cancelAndReap()
 				return nil, m.poisonedErr()
 			default:
 			}
@@ -555,11 +571,13 @@ func (m *Module) runAsyncWithTimeout(timeout time.Duration, name string, params 
 		}
 	}
 
-	// Hard interrupt: cancel, then reap so the cancellation has fully taken
-	// effect (and any WasmEdge-internal execution thread has been joined)
-	// before we hand control back to the caller.
-	async.Cancel()
-	_, _ = async.GetResult()
+	// Cancel and reap within a bounded grace period. A native wait that does
+	// not stop poisons the instance and retains its resources safely.
+	cancelAndReap()
+	if m.threads != nil {
+		m.MarkPoisoned(fmt.Errorf("threaded invocation %q exceeded %s", name, timeout))
+		m.threads.stop()
+	}
 	return nil, fmt.Errorf("%w: %q exceeded %s", ErrExecutionTimeout, name, timeout)
 }
 
@@ -635,6 +653,11 @@ func (m *Module) executeDirect(ctx context.Context, name string, params ...inter
 	// still narrows the resulting wall-clock budget below.
 	costLimit := m.costLimit
 	base := m.execTimeout
+	// Bound threaded guests even when a flow caller supplies no deadline.
+	// A blocked parent must not retain an HTTP worker indefinitely.
+	if m.threads != nil && base == 0 {
+		base = 30 * time.Second
+	}
 	if b, ok := execBudgetFrom(ctx); ok {
 		if b.CostLimit > 0 {
 			costLimit = b.CostLimit
@@ -751,6 +774,11 @@ func (m *Module) exec(ctx context.Context, name string, params ...interface{}) (
 	// The budget resolution is identical to executeDirect's so the caller sees
 	// one consistent deadline regardless of dispatch mode.
 	base := m.execTimeout
+	// Bound threaded guests even when a flow caller supplies no deadline.
+	// A blocked parent must not retain an HTTP worker indefinitely.
+	if m.threads != nil && base == 0 {
+		base = 30 * time.Second
+	}
 	if b, ok := execBudgetFrom(ctx); ok && b.Timeout > 0 {
 		base = b.Timeout
 	}

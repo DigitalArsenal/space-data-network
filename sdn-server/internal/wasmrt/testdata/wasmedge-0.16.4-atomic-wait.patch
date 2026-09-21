@@ -1,0 +1,111 @@
+diff --git a/include/executor/engine/atomic.ipp b/include/executor/engine/atomic.ipp
+index 8568e24..8414705 100644
+--- a/include/executor/engine/atomic.ipp
++++ b/include/executor/engine/atomic.ipp
+@@ -478,40 +478,32 @@ Executor::atomicWait(Runtime::Instance::MemoryInstance &MemInst,
+   auto *AtomicObj = MemInst.getPointer<std::atomic<T> *>(Address);
+   assuming(AtomicObj);
+ 
++  // Compare, register, and sleep under the notifier's mutex. Otherwise a
++  // store+notify between the comparison and wait can be lost forever.
++  std::unique_lock<decltype(WaiterMapMutex)> Locker(WaiterMapMutex);
+   if (AtomicObj->load() != Expected.le()) {
+     return UINT32_C(1); // NotEqual
+   }
+-
+-  decltype(WaiterMap)::iterator WaiterIterator;
+-  {
+-    std::unique_lock<decltype(WaiterMapMutex)> Locker(WaiterMapMutex);
+-    WaiterIterator = WaiterMap.emplace(Address, &MemInst);
+-  }
+-
++  auto WaiterIterator = WaiterMap.emplace(Address, &MemInst);
+   cxx20::scope_exit ScopeExitHolder([&]() noexcept {
+-    std::unique_lock<decltype(WaiterMapMutex)> Locker(WaiterMapMutex);
+     WaiterMap.erase(WaiterIterator);
+   });
+-
+-  while (true) {
+-    std::unique_lock<decltype(WaiterIterator->second.Mutex)> Locker(
+-        WaiterIterator->second.Mutex);
+-    std::cv_status WaitResult = std::cv_status::no_timeout;
+-    if (!Until) {
+-      WaiterIterator->second.Cond.wait(Locker);
+-    } else {
+-      WaitResult = WaiterIterator->second.Cond.wait_until(Locker, *Until);
+-    }
+-    if (unlikely(StopToken.load(std::memory_order_relaxed) != 0)) {
+-      return Unexpect(ErrCode::Value::Interrupted);
+-    }
+-    if (likely(AtomicObj->load() != Expected.le())) {
+-      return UINT32_C(0); // ok
+-    }
+-    if (WaitResult == std::cv_status::timeout) {
+-      return UINT32_C(2); // Timed-out
+-    }
++  auto Ready = [&]() {
++    return WaiterIterator->second.Notified ||
++           StopToken.load(std::memory_order_relaxed) != 0;
++  };
++  bool Woken = true;
++  if (!Until) {
++    WaiterIterator->second.Cond.wait(Locker, Ready);
++  } else {
++    Woken = WaiterIterator->second.Cond.wait_until(Locker, *Until, Ready);
++  }
++  if (unlikely(StopToken.load(std::memory_order_relaxed) != 0)) {
++    return Unexpect(ErrCode::Value::Interrupted);
+   }
++  // A notification succeeds even when the memory value has not changed.
++  return Woken ? UINT32_C(0) : UINT32_C(2);
++
+ }
+ 
+ } // namespace Executor
+diff --git a/include/executor/executor.h b/include/executor/executor.h
+index fbcc6ac..6683ee9 100644
+--- a/include/executor/executor.h
++++ b/include/executor/executor.h
+@@ -28,6 +28,7 @@
+ #include "runtime/stackmgr.h"
+ #include "runtime/storemgr.h"
+ 
++#include <map>
+ #include <atomic>
+ #include <condition_variable>
+ #include <csignal>
+@@ -1103,7 +1104,7 @@ private:
+ 
+   /// Waiter struct for atomic instructions
+   struct Waiter {
+-    std::mutex Mutex;
++    bool Notified = false;
+     std::condition_variable Cond;
+     Runtime::Instance::MemoryInstance *MemInst;
+     Waiter(Runtime::Instance::MemoryInstance *Inst) noexcept : MemInst(Inst) {}
+@@ -1111,7 +1112,7 @@ private:
+   /// Waiter map mutex
+   std::mutex WaiterMapMutex;
+   /// Waiter multimap
+-  std::unordered_multimap<uint32_t, Waiter> WaiterMap;
++  std::multimap<uint32_t, Waiter> WaiterMap;
+ 
+   /// WasmEdge configuration
+   const Configure Conf;
+diff --git a/lib/executor/engine/threadInstr.cpp b/lib/executor/engine/threadInstr.cpp
+index 0d1ca70..5331e95 100644
+--- a/lib/executor/engine/threadInstr.cpp
++++ b/lib/executor/engine/threadInstr.cpp
+@@ -67,8 +67,10 @@ Executor::atomicNotify(Runtime::Instance::MemoryInstance &MemInst,
+   auto Range = WaiterMap.equal_range(Address);
+   for (auto Iterator = Range.first; Total < Count && Iterator != Range.second;
+        ++Iterator) {
+-    if (likely(&MemInst == Iterator->second.MemInst)) {
+-      Iterator->second.Cond.notify_all();
++    if (likely(&MemInst == Iterator->second.MemInst) &&
++        !Iterator->second.Notified) {
++      Iterator->second.Notified = true;
++      Iterator->second.Cond.notify_one();
+       ++Total;
+     }
+   }
