@@ -18,7 +18,7 @@ func TestSourceContainerMemoryBudget(t *testing.T) {
 	if err != nil || len(result) != 1 || result[0] != int32(1) {
 		t.Fatalf("96 MiB working set rejected: %v %v", result, err)
 	}
-	result, err = vm.Execute("grow", int32(2560))
+	result, err = vm.Execute("grow", int32(defaultModuleMemoryPages-1536))
 	if err != nil || len(result) != 1 || result[0] != int32(1536) {
 		t.Fatalf("bounded growth rejected: %v %v", result, err)
 	}
