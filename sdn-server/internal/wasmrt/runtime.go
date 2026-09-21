@@ -385,10 +385,13 @@ func WithNamedWasm(name string, bytes []byte) Option {
 // Module wraps a WasmEdge VM with convenience methods for memory management
 // and function execution.
 type Module struct {
-	conf     *wasmedge.Configure
-	vm       *wasmedge.VM
-	hostMods []*wasmedge.Module
-	mu       sync.Mutex
+	threads        *wasiThreadGroup
+	moduleAST      *wasmedge.AST
+	importedMemory *wasmedge.Memory // borrowed; owned by the env import module
+	conf           *wasmedge.Configure
+	vm             *wasmedge.VM
+	hostMods       []*wasmedge.Module
+	mu             sync.Mutex
 
 	// registeredName is non-empty when the main module lives in the VM store
 	// as a NAMED instance (WithRegisteredName) — required for cross-VM
@@ -521,9 +524,35 @@ func (m *Module) runAsyncWithTimeout(timeout time.Duration, name string, params 
 	if ms <= 0 {
 		ms = 1
 	}
-	if async.WaitFor(int(ms)) {
-		values, err := async.GetResult()
-		return values, classifyExecError(err)
+	// A trapped WASI worker terminates the whole invocation. Polling the
+	// failure channel alongside the guest keeps a parent waiting in join from
+	// consuming the entire budget after one child has already failed.
+	deadline := time.Now().Add(timeout)
+	for {
+		slice := ms
+		if m.threads != nil && slice > 10 {
+			slice = 10
+		}
+		if async.WaitFor(int(slice)) {
+			values, err := async.GetResult()
+			if m.Poisoned() {
+				return nil, m.poisonedErr()
+			}
+			return values, classifyExecError(err)
+		}
+		if m.threads != nil {
+			select {
+			case <-m.threads.failure:
+				async.Cancel()
+				_, _ = async.GetResult()
+				return nil, m.poisonedErr()
+			default:
+			}
+		}
+		ms = time.Until(deadline).Milliseconds()
+		if ms <= 0 {
+			break
+		}
 	}
 
 	// Hard interrupt: cancel, then reap so the cancellation has fully taken
@@ -795,6 +824,11 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 	for _, o := range opts {
 		o(cfg)
 	}
+	budget, budgetErr := artifactMemoryBudget(wasmBytes, cfg.maxMemoryPages)
+	if budgetErr != nil {
+		return nil, budgetErr
+	}
+	cfg.maxMemoryPages = budget
 
 	conf := wasmedge.NewConfigure()
 	conf.AddConfig(wasmedge.THREADS)
@@ -829,6 +863,29 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 		execTimeout:       cfg.execTimeout,
 		costLimit:         cfg.costLimit,
 	}
+	loader := wasmedge.NewLoaderWithConfig(conf)
+	ast, parseErr := loader.LoadBuffer(wasmBytes)
+	loader.Release()
+	if parseErr != nil {
+		m.Release()
+		return nil, parseErr
+	}
+	m.moduleAST = ast
+	validator := wasmedge.NewValidatorWithConfig(conf)
+	validationErr := validator.Validate(ast)
+	validator.Release()
+	if validationErr != nil {
+		m.Release()
+		return nil, validationErr
+	}
+	if err := admitDefinedMemory(wasmBytes, cfg.maxMemoryPages); err != nil {
+		m.Release()
+		return nil, err
+	}
+	if err := admitMemory(ast, cfg.maxMemoryPages); err != nil {
+		m.Release()
+		return nil, err
+	}
 
 	// Initialize WASI module if enabled.
 	// When WASI is in the Configure, the VM auto-registers a WASI module.
@@ -854,6 +911,12 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 		wasiMod.InitWasi(args, envs, preopens)
 	}
 
+	sharedMemory, threadErr := m.prepareWasiThreads(ast, cfg)
+	if threadErr != nil {
+		m.Release()
+		return nil, threadErr
+	}
+	m.importedMemory = sharedMemory
 	// Register host modules
 	for _, spec := range cfg.hostModules {
 		hostMod := wasmedge.NewModule(spec.name)
@@ -867,6 +930,11 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 			ft.Release()
 			hostMod.AddFunction(hf.Name, fn)
 		}
+		if spec.name == "env" && sharedMemory != nil {
+			hostMod.AddMemory("memory", sharedMemory)
+			m.importedMemory = hostMod.FindMemory("memory")
+			sharedMemory = nil
+		}
 		err := vm.RegisterModule(hostMod)
 		if err != nil {
 			hostMod.Release()
@@ -874,6 +942,17 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 			return nil, fmt.Errorf("failed to register host module %q: %w", spec.name, err)
 		}
 		m.hostMods = append(m.hostMods, hostMod)
+	}
+	if sharedMemory != nil {
+		env := wasmedge.NewModule("env")
+		env.AddMemory("memory", sharedMemory)
+		m.importedMemory = env.FindMemory("memory")
+		if err := vm.RegisterModule(env); err != nil {
+			env.Release()
+			m.Release()
+			return nil, err
+		}
+		m.hostMods = append(m.hostMods, env)
 	}
 
 	// Direct-linkage import sources (loop C.7): live instances borrowed from
@@ -972,6 +1051,9 @@ func (m *Module) memory() (*wasmedge.Memory, error) {
 		return nil, ErrNoModule
 	}
 	mem := mod.FindMemory("memory")
+	if mem == nil && m.importedMemory != nil {
+		mem = m.importedMemory
+	}
 	if mem == nil {
 		return nil, fmt.Errorf("%w: no 'memory' export found", ErrMemory)
 	}
@@ -1094,6 +1176,10 @@ func (m *Module) ReadCString(ptr, maxLen uint32) (string, error) {
 // alternative is either a hang or a segfault, and this module has already been
 // poisoned, so nothing will ever enter it again.
 func (m *Module) Release() {
+	if m.threads != nil && !m.threads.stop() {
+		m.MarkPoisoned(fmt.Errorf("WASI workers did not stop; retaining live VM resources"))
+		return
+	}
 	if m.execThreadLost.Load() {
 		fmt.Fprintf(os.Stderr, "[wasmrt] ERROR leaking VM and one OS thread for module %q: "+
 			"its execution thread is still inside an uninterruptible guest call; "+
@@ -1119,9 +1205,14 @@ func (m *Module) Release() {
 		}
 	}
 	m.hostMods = nil
+	m.importedMemory = nil
 	if m.conf != nil {
 		m.conf.Release()
 		m.conf = nil
+	}
+	if m.moduleAST != nil {
+		m.moduleAST.Release()
+		m.moduleAST = nil
 	}
 }
 
