@@ -29,8 +29,8 @@ func TestScienceArtifactsInProductionHost(t *testing.T) {
 		t.Skip("set SDN_SCIENCE_FIXTURES for the required science deployment gate")
 	}
 	var cases []struct {
-		Name, Artifact, SHA256, Method, Request, Output, Schema string
-		Pages                                                   uint32
+		Name, Artifact, SHA256, Method, Request, Output, Schema, Port string
+		Pages                                                         uint32
 	}
 	bytes, err := os.ReadFile(filepath.Join(root, "cases.json"))
 	if err != nil {
@@ -65,7 +65,17 @@ func TestScienceArtifactsInProductionHost(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			response, err := module.InvokeMethodFrames(ctx, c.Method, []modulert.InvokeInputFrame{{PortID: "request", Payload: request, SchemaName: c.Schema + ".fbs", FileIdentifier: "$" + c.Schema, RootTypeName: c.Schema}})
+			port := c.Port
+			if port == "" {
+				port = "request"
+			}
+			input := modulert.InvokeInputFrame{PortID: port, Payload: request}
+			if c.Schema != "" {
+				input.SchemaName = c.Schema + ".fbs"
+				input.FileIdentifier = "$" + c.Schema
+				input.RootTypeName = c.Schema
+			}
+			response, err := module.InvokeMethodFrames(ctx, c.Method, []modulert.InvokeInputFrame{input})
 			if err != nil {
 				t.Fatal(err)
 			}
