@@ -27,7 +27,7 @@ var log = logging.Logger("modulert")
 
 // Bounded source downloads need simultaneous SDK, guest and pinning buffers.
 // The host owns this hard ceiling; memory grows only when the guest needs it.
-const defaultModuleMemoryPages uint32 = 4096 // 256 MiB
+const defaultModuleMemoryPages uint32 = 16384 // 1 GiB
 
 // Default per-invocation resource limits for module-sdk WASM guests (loop
 // B3 — defensive hardening, fail closed). Every wasmrt.Module.Execute call
