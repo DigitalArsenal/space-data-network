@@ -105,6 +105,26 @@ Failure modes to avoid:
 
 ## 3. Path A — enrol from the CLI (and the config path)
 
+**`spacedatanetwork admin init`** is the CLI enrollment path, and the one a remote node with no desktop app uses. Run it on the server. It prints the node's public keys and the fingerprint of its encryption key, then enrolls an admin from one of three sources:
+
+| Source | The admin later signs in with | What the node stores |
+|---|---|---|
+| `password` | the same username and password in the dashboard | account xpub (`m/44'/0'/0'`) + sign-in key |
+| `mnemonic` | the same BIP-39 recovery phrase | account xpub + sign-in key |
+| `pubkey` | the wallet that owns the pasted 64-hex Ed25519 key | `ed25519:<hex>` + sign-in key |
+
+The password and phrase sources derive the key exactly as the dashboard wallet's `password-fast-v1-legacy` and `bip39-mnemonic-v1-legacy` profiles do (secp256k1 BIP-32 scalar at `m/44'/0'/0'/0/0` used as the Ed25519 seed), locked to hd-wallet-wasm's published vectors. Secrets are read without echo and never stored. Passwords must be at least 16 characters: the legacy password profile has no key stretching, and an admin's sign-in key is public.
+
+With the daemon running, the admin is added through `POST /api/auth/users` (signed in as the node root). With nothing listening on the admin port, it is written to `auth.db` directly. Non-interactive use:
+
+```
+spacedatanetwork admin init --name Ops --source pubkey --pubkey <64-hex> --yes
+printf '%s\n' "$PASSWORD" | spacedatanetwork admin init --name Ops \
+    --source password --username ops --secret-stdin --yes
+```
+
+The older paths below still work.
+
 `accounts trust --xpub` is the only CLI command that touches operator rows, and it **updates an existing operator — it cannot create one**. Proven on the wire against a live node:
 
 ```
@@ -115,7 +135,7 @@ Error: PUT /api/auth/users/xpub6Bosf...: 400 Bad Request:
 {"code":"update_failed","message":"user not found"}
 ```
 
-An xpub with no row gets "user not found" — nothing is created. The create endpoint (`POST /api/auth/users`) is called by the dashboard form alone; no CLI command performs it.
+An xpub with no row gets "user not found" — nothing is created. The create endpoint (`POST /api/auth/users`) is called by the dashboard form and by `admin init`.
 
 **The real CLI-compatible creation path is `config.yaml`** — also the path that works before any admin exists (Section 5):
 
@@ -229,13 +249,9 @@ Two more withdrawal facts:
 - **Config rows cannot be removed or trust-changed via the API at all** (errors are explicit: "config users cannot be removed" / "config-managed users cannot have trust changed through the API").
 - **Live sessions survive a demotion or removal.** A session carries the trust level minted when it was created; it is not re-validated against the row on every request. A withdrawn operator keeps what they already hold in an open session until it expires — withdrawal stops *future* sign-ins immediately (the row is gone from the resolution path) but does not retroactively void open sessions.
 
-## 8. Not yet supported, and the minimal scheme that would close it
+## 8. Formerly unsupported
 
-**Gap 1 — the CLI prints only half the handover.** `derive-xpub` prints the xpub but never the signing public key, so a CLI-only operator cannot produce both enrollment fields without a browser. **Proposed (not built):** extend `derive-xpub` to also derive and print the Ed25519 signing public key through the exact wallet unlock path sign-in uses (the same byte-identity guarantee the browser ceremony already guarantees), so its output becomes the complete handover block.
-
-**Gap 2 — no CLI create for operators.** `accounts trust --xpub` updates only; creation lives in the dashboard form, first-admin bootstrap, and config seeding. **Proposed (not built):** a `POST /api/auth/users` call from the CLI (e.g. an `accounts add --xpub ... --signing-pubkey-hex ... --level ...` mode that disambiguates from peer creation by requiring the xpub flag), or a first-class `users` command group. Until one exists, the CLI path is: `derive-xpub` → edit `config.yaml` → restart.
-
-Neither proposal exists in the shipped binary; treat both as design.
+Both gaps this section used to list are closed by `admin init` (Section 3): it derives and prints the sign-in public key through the same derivation the dashboard wallet uses, and it creates the operator row itself, through the daemon or directly in `auth.db`. Admin listing, removal and trust changes from the CLI are tracked as `sdn-admin-users-manage-20260922`.
 
 ## 9. Security notes: what never leaves the operator's machine
 
