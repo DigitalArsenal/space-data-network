@@ -251,7 +251,16 @@ Two more withdrawal facts:
 
 ## 8. Formerly unsupported
 
-Both gaps this section used to list are closed by `admin init` (Section 3): it derives and prints the sign-in public key through the same derivation the dashboard wallet uses, and it creates the operator row itself, through the daemon or directly in `auth.db`. Admin listing, removal and trust changes from the CLI are tracked as `sdn-admin-users-manage-20260922`.
+Both gaps this section used to list are closed by `admin init` (Section 3): it derives and prints the sign-in public key through the same derivation the dashboard wallet uses, and it creates the operator row itself, through the daemon or directly in `auth.db`. The rest of the lifecycle is on the CLI too, through the daemon or `auth.db` the same way:
+
+```
+spacedatanetwork admin list                          # admins first
+spacedatanetwork admin add                           # same sources and flags as init
+spacedatanetwork admin set-trust <account> standard  # unknown | marginal | standard | full | admin
+spacedatanetwork admin remove <account>
+```
+
+An account is named by display name, sign-in key or account key; an ambiguous name is refused. The last admin can be neither removed nor demoted (the API answers `409 last_admin`), and rows set in `config.yaml` are edited there.
 
 ## 9. Security notes: what never leaves the operator's machine
 

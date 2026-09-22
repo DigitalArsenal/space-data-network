@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -62,6 +63,62 @@ Non-interactive use:
 	RunE: runAdminInit,
 }
 
+var adminAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Enroll another admin (same sources and flags as init)",
+	RunE:  runAdminInit,
+}
+
+var adminListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List the accounts that can sign in to this node, admins first",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return withAdminStore(cmd, func(ctx context.Context, store admincli.ManageStore) error {
+			accounts, err := store.List(ctx)
+			if err != nil {
+				return err
+			}
+			admincli.PrintAccounts(os.Stdout, accounts)
+			return nil
+		})
+	},
+}
+
+var adminManageYes bool
+
+var adminRemoveCmd = &cobra.Command{
+	Use:   "remove <name | sign-in key | account>",
+	Short: "Remove an account (the last admin cannot be removed)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return withAdminStore(cmd, func(ctx context.Context, store admincli.ManageStore) error {
+			return admincli.Remove(ctx, adminTerminal(), store, args[0], adminManageYes)
+		})
+	},
+}
+
+var adminSetTrustCmd = &cobra.Command{
+	Use:   "set-trust <name | sign-in key | account> <unknown|marginal|standard|full|admin>",
+	Short: "Change an account's trust (the last admin cannot be demoted)",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return withAdminStore(cmd, func(ctx context.Context, store admincli.ManageStore) error {
+			return admincli.SetTrust(ctx, adminTerminal(), store, args[0], args[1], adminManageYes)
+		})
+	},
+}
+
+func init() {
+	for _, c := range []*cobra.Command{adminRemoveCmd, adminSetTrustCmd} {
+		c.Flags().BoolVar(&adminManageYes, "yes", false, "skip the confirmation")
+	}
+	for _, c := range []*cobra.Command{adminListCmd, adminRemoveCmd, adminSetTrustCmd} {
+		addSessionTokenFlag(c)
+		adminCmd.AddCommand(c)
+	}
+}
+
 func init() {
 	f := adminInitCmd.Flags()
 	f.StringVar(&adminInitName, "name", "", "admin display name")
@@ -70,8 +127,10 @@ func init() {
 	f.StringVar(&adminInitPublicKey, "pubkey", "", "64-hex Ed25519 sign-in public key (pubkey source)")
 	f.BoolVar(&adminInitSecretStdin, "secret-stdin", false, "read the password or recovery phrase as one line of stdin")
 	f.BoolVar(&adminInitYes, "yes", false, "enroll without the final confirmation")
+	adminAddCmd.Flags().AddFlagSet(f)
 	addSessionTokenFlag(adminInitCmd)
-	adminCmd.AddCommand(adminInitCmd)
+	addSessionTokenFlag(adminAddCmd)
+	adminCmd.AddCommand(adminInitCmd, adminAddCmd)
 	rootCmd.AddCommand(adminCmd)
 }
 
@@ -110,6 +169,20 @@ func runAdminInit(cmd *cobra.Command, _ []string) error {
 	}
 	defer closeStore()
 
+	_, err = admincli.Init(ctx, admincli.Options{
+		Name:            adminInitName,
+		Source:          source,
+		Username:        adminInitUsername,
+		PublicKey:       adminInitPublicKey,
+		SecretFromStdin: adminInitSecretStdin,
+		Yes:             adminInitYes,
+	}, adminTerminal(), keys, walletderive.HDWallet{HDWalletModule: hw}, store)
+	return err
+}
+
+// adminTerminal is the operator's console: prompts on stderr, and hidden
+// input when stdin is a terminal.
+func adminTerminal() admincli.Terminal {
 	terminal := admincli.Terminal{In: bufio.NewReader(os.Stdin), Out: os.Stderr}
 	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
 		terminal.ReadSecret = func(prompt string) ([]byte, error) {
@@ -119,16 +192,25 @@ func runAdminInit(cmd *cobra.Command, _ []string) error {
 			return secret, err
 		}
 	}
+	return terminal
+}
 
-	_, err = admincli.Init(ctx, admincli.Options{
-		Name:            adminInitName,
-		Source:          source,
-		Username:        adminInitUsername,
-		PublicKey:       adminInitPublicKey,
-		SecretFromStdin: adminInitSecretStdin,
-		Yes:             adminInitYes,
-	}, terminal, keys, walletderive.HDWallet{HDWalletModule: hw}, store)
-	return err
+// withAdminStore runs fn against the daemon, or auth.db when it is down.
+func withAdminStore(cmd *cobra.Command, fn func(context.Context, admincli.ManageStore) error) error {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cfg, _, err := config.LoadResolved(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	store, closeStore, err := adminStore(cmd, cfg)
+	if err != nil {
+		return err
+	}
+	defer closeStore()
+	return fn(ctx, store)
 }
 
 // adminServerKeys derives the node's public keys the way show-identity does,
@@ -157,7 +239,7 @@ func adminServerKeys(ctx context.Context, cfg *config.Config) (admincli.ServerKe
 // adminStore enrolls through the running daemon when there is one. Only a
 // refused connection — nothing listening — falls back to opening auth.db
 // directly, so a live daemon's database is never opened underneath it.
-func adminStore(cmd *cobra.Command, cfg *config.Config) (admincli.Store, func(), error) {
+func adminStore(cmd *cobra.Command, cfg *config.Config) (admincli.ManageStore, func(), error) {
 	client, err := newAdminClient(cmd)
 	if err == nil {
 		return daemonAdminStore{client: client}, func() {}, nil
@@ -219,3 +301,23 @@ func (s daemonAdminStore) AddUser(ctx context.Context, rowKey, name string, trus
 }
 
 func (s daemonAdminStore) Describe() string { return "running daemon at " + s.client.baseURL }
+
+func (s daemonAdminStore) List(ctx context.Context) ([]admincli.Account, error) {
+	users, err := s.users(ctx)
+	if err != nil {
+		return nil, err
+	}
+	accounts := make([]admincli.Account, 0, len(users))
+	for _, u := range users {
+		accounts = append(accounts, admincli.Account{RowKey: u.XPub, Name: u.Name, Trust: u.TrustLevel, SigningPubKeyHex: u.SigningPubKeyHex, Source: u.Source})
+	}
+	return accounts, nil
+}
+
+func (s daemonAdminStore) Remove(ctx context.Context, rowKey string) error {
+	return s.client.do(ctx, "DELETE", "/api/auth/users/"+url.PathEscape(rowKey), nil, nil)
+}
+
+func (s daemonAdminStore) SetTrust(ctx context.Context, rowKey string, trust peers.TrustLevel) error {
+	return s.client.do(ctx, "PUT", "/api/auth/users/"+url.PathEscape(rowKey), map[string]string{"trust_level": trust.String()}, nil)
+}
