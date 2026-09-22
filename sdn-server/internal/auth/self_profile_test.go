@@ -244,6 +244,11 @@ func TestPutUser_ActuallyWritesTheName(t *testing.T) {
 	t.Parallel()
 
 	h, token, xpub := profileFixture(t, peers.Admin, nil)
+	// A second admin, so demoting this one to standard is not refused by the
+	// last-admin guard (admin_guard_test.go covers that refusal).
+	if err := h.userStore.AddUser("ed25519:second-admin", "Second Admin", peers.Admin, strings.Repeat("c", 64)); err != nil {
+		t.Fatal(err)
+	}
 
 	body := `{"xpub":"` + xpub + `","name":"Renamed By Admin","trust_level":"standard"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/auth/users/"+xpub, strings.NewReader(body))

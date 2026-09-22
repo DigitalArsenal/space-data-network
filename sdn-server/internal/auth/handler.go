@@ -1070,6 +1070,10 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		if err := h.userStore.RemoveUser(xpub); err != nil {
+			if errors.Is(err, ErrLastAdmin) {
+				writeJSON(w, http.StatusConflict, errorResponse{Code: "last_admin", Message: err.Error()})
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "remove_failed", Message: err.Error()})
 			return
 		}
@@ -1091,6 +1095,10 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.userStore.UpdateTrust(xpub, trust); err != nil {
+			if errors.Is(err, ErrLastAdmin) {
+				writeJSON(w, http.StatusConflict, errorResponse{Code: "last_admin", Message: err.Error()})
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "update_failed", Message: err.Error()})
 			return
 		}
