@@ -169,7 +169,9 @@ func (s AuthDBStore) List(context.Context) ([]Account, error) {
 	return accounts, nil
 }
 
-func (s AuthDBStore) Remove(_ context.Context, rowKey string) error { return s.Users.RemoveUser(rowKey) }
+func (s AuthDBStore) Remove(_ context.Context, rowKey string) error {
+	return s.Users.RemoveUser(rowKey)
+}
 
 func (s AuthDBStore) SetTrust(_ context.Context, rowKey string, trust peers.TrustLevel) error {
 	return s.Users.UpdateTrust(rowKey, trust)
