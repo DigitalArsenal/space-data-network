@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -632,6 +633,9 @@ func (s *UserStore) RemoveUser(xpub string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := s.refuseLastAdminLocked(xpub, peers.Never); err != nil {
+		return err
+	}
 	result, err := s.db.Exec("DELETE FROM users WHERE xpub = ?", xpub)
 	if err != nil {
 		return fmt.Errorf("failed to remove user: %w", err)
@@ -650,6 +654,40 @@ func (s *UserStore) RemoveUser(xpub string) error {
 	return nil
 }
 
+// ErrLastAdmin refuses a change that would leave the node with no admin row.
+// The node's own root key always signs in as admin, but a node whose only
+// admin is its root has no one who can sign in from the dashboard.
+var ErrLastAdmin = errors.New("this is the last admin; enroll another admin before removing or demoting it")
+
+// refuseLastAdminLocked returns ErrLastAdmin when xpub is an admin row and
+// giving it newTrust (peers.Never for removal) would leave no admin at all.
+// The caller holds s.mu.
+func (s *UserStore) refuseLastAdminLocked(xpub string, newTrust peers.TrustLevel) error {
+	if newTrust >= peers.Admin {
+		return nil
+	}
+	var current int
+	if err := s.db.QueryRow("SELECT trust_level FROM users WHERE xpub = ?", xpub).Scan(&current); err != nil {
+		return nil // Unknown rows are reported by the caller's own write.
+	}
+	if peers.TrustLevel(current) < peers.Admin {
+		return nil
+	}
+	for key, u := range s.configUsers {
+		if key != xpub && u.TrustLevel >= peers.Admin {
+			return nil
+		}
+	}
+	var others int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM users WHERE trust_level >= ? AND xpub <> ?", int(peers.Admin), xpub).Scan(&others); err != nil {
+		return fmt.Errorf("count admins: %w", err)
+	}
+	if others == 0 {
+		return ErrLastAdmin
+	}
+	return nil
+}
+
 // UpdateTrust updates the trust level for a database user.
 func (s *UserStore) UpdateTrust(xpub string, trust peers.TrustLevel) error {
 	s.mu.Lock()
@@ -657,6 +695,9 @@ func (s *UserStore) UpdateTrust(xpub string, trust peers.TrustLevel) error {
 
 	if _, ok := s.configUsers[xpub]; ok {
 		return fmt.Errorf("config-managed users cannot have trust changed through the API")
+	}
+	if err := s.refuseLastAdminLocked(xpub, trust); err != nil {
+		return err
 	}
 
 	result, err := s.db.Exec("UPDATE users SET trust_level = ? WHERE xpub = ?", int(trust), xpub)
