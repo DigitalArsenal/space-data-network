@@ -255,3 +255,63 @@ export async function eciesWrapForRecipients(
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Whole-field sealing (Go twin: sdn-server internal/ecies/field.go). The same
+// derivation as the content-key wrap above, keyed by an arbitrary field id, for
+// records such as $RPC whose one encrypted field is the payload itself.
+// AES-CTR carries no integrity: sign the sealed record (encrypt-then-sign).
+// ---------------------------------------------------------------------------
+
+/** The content of an `$ENC` table for one sealed field. */
+export interface EciesFieldHeader {
+  keyExchange: EciesKeyExchange;
+  ephemeralPublicKey: Uint8Array;
+  nonceStart: Uint8Array;
+  context: string;
+  recipientKeyId?: Uint8Array;
+}
+
+async function fieldXOR(master: Uint8Array, fieldId: number, data: Uint8Array): Promise<Uint8Array> {
+  const fieldKey = await hkdf(master, concat(textEncoder.encode('flatbuffers-field'), be16(fieldId), be32(0)), AES_KEY_BYTES);
+  const fieldIV = await hkdf(master, concat(textEncoder.encode('flatbuffers-iv'), be16(fieldId), be32(0)), CTR_IV_BYTES);
+  return aesCtrDecryptWithIv(fieldKey, data, fieldIV);
+}
+
+/** Seal plaintext for a recipient as field `fieldId` (record 0). */
+export async function eciesSealField(
+  recipientPublicKey: Uint8Array,
+  plaintext: Uint8Array,
+  fieldId: number,
+  options: { keyExchange: EciesKeyExchange; context: string; ephemeralPrivateKey?: Uint8Array },
+): Promise<{ header: EciesFieldHeader; ciphertext: Uint8Array }> {
+  if (!options.context) throw new Error('ecies: eciesSealField needs an explicit context');
+  const ephPriv = options.ephemeralPrivateKey ?? randomBytes(32);
+  const ephPub = options.keyExchange === EciesKeyExchange.X25519
+    ? await x25519PublicKey(ephPriv)
+    : await secp256k1PublicKey(ephPriv);
+  const shared = await ecdh(options.keyExchange, ephPriv, recipientPublicKey);
+  const master = await deriveMasterKey(shared, options.context);
+  const ciphertext = await fieldXOR(master, fieldId, new Uint8Array(plaintext));
+  return {
+    header: { keyExchange: options.keyExchange, ephemeralPublicKey: ephPub, nonceStart: randomBytes(12), context: options.context },
+    ciphertext,
+  };
+}
+
+/** Open a field sealed by eciesSealField (or Go's ecies.SealField). */
+export async function eciesOpenField(
+  recipientPrivateKey: Uint8Array,
+  header: EciesFieldHeader,
+  ciphertext: Uint8Array,
+  fieldId: number,
+  wantContext?: string,
+): Promise<Uint8Array> {
+  if (wantContext !== undefined && header.context !== wantContext) {
+    throw new Error(`ecies: sealed for "${header.context}", not "${wantContext}"`);
+  }
+  if (!header.context) throw new Error('ecies: sealed field has no context');
+  const shared = await ecdh(header.keyExchange, recipientPrivateKey, header.ephemeralPublicKey);
+  const master = await deriveMasterKey(shared, header.context);
+  return fieldXOR(master, fieldId, new Uint8Array(ciphertext));
+}
