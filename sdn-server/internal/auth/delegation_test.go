@@ -117,3 +117,12 @@ func TestSessionKeyDelegation(t *testing.T) {
 		t.Fatal("revoked delegation still live")
 	}
 }
+
+// The digest is fixed across runtimes; sdn-js sealed-transport.test.ts pins
+// the same value.
+func TestDelegationDigestVector(t *testing.T) {
+	got := hex.EncodeToString(DelegationDigest(bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32), 1_800_000_000_000))
+	if got != "e99fd44556161b92b8a45f28428a516e960d4ec955c51405414e5da0f7eb47bf" {
+		t.Fatalf("digest %s", got)
+	}
+}
