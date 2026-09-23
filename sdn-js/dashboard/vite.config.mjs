@@ -330,6 +330,11 @@ export default defineConfig({
       // NODE-owned data runtime: the FlatSQL window over the node's raw
       // FlatBuffer lane (owner ruling 2026-09-03), imported by name.
       { find: 'sdn-node-data-runtime', replacement: path.resolve(__dirname, '../src/ui/runtime/dashboard-data-runtime') },
+      // The wallet module is loaded natively from /wallet-wasm/ and handed to
+      // sdn-js at sign-in; never inline the package's own WASM a second time.
+      { find: /^hd-wallet-wasm$/, replacement: path.resolve(__dirname, '../src/ui/runtime/hd-wallet-served-stub.ts') },
+      // NODE-owned sealed admin transport ($RPC): the remote dashboard's session.
+      { find: 'sdn-node-sealed-runtime', replacement: path.resolve(__dirname, '../src/ui/runtime/sealed-transport') },
       // The store-only FlatSQL worker, imported as
       // `sdn-node-data-worker?worker&inline` so vite inlines it into the
       // single file and spawns it from a blob: URL (worker.format 'iife'

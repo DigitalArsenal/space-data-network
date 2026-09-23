@@ -11,7 +11,10 @@
  */
 
 import { call, createSessionSigner, REVOKE_ROUTE, RPC_ROUTE, type NodeTransport, type RpcSigner } from '../../sealed-rpc';
-import { initHDWallet, sha256 } from '../../crypto/hd-wallet';
+import { sha256, useHDWalletModule } from '../../crypto/hd-wallet';
+
+/** Use the wallet module the page already loaded (see useHDWalletModule). */
+export const useWalletModule = useHDWalletModule;
 
 export const DELEGATION_PREFIX = 'SDN-RPC-DELEGATION/v1';
 /** Kept under the node's 12-hour ceiling. */
@@ -109,7 +112,6 @@ export interface PendingSession {
 
 /** Make the throwaway session key the wallet will delegate. */
 export async function beginSession(nowMs = Date.now()): Promise<PendingSession> {
-  await initHDWallet();
   const signer = await createSessionSigner();
   return { signer, sessionPubHex: toHex(signer.publicKey), expiresAtMs: nowMs + DELEGATION_MS };
 }
