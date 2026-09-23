@@ -65,6 +65,12 @@ type delegateRequest struct {
 	SessionPubKeyHex string `json:"session_pubkey_hex"`
 	ExpiresAtMs      uint64 `json:"expires_at_ms"`
 	SignatureHex     string `json:"signature_hex"`
+	// Scheme "siws": an external Solana wallet signed SIWSMessage (siws.go)
+	// instead of the raw digest; Origin and IssuedAtMs are the message
+	// fields the node cannot know on its own.
+	Scheme     string `json:"scheme,omitempty"`
+	Origin     string `json:"origin,omitempty"`
+	IssuedAtMs uint64 `json:"issued_at_ms,omitempty"`
 }
 
 // handleDelegate is POST /api/auth/delegate: consume a pending challenge and
@@ -111,8 +117,22 @@ func (h *Handler) handleDelegate(w http.ResponseWriter, r *http.Request) {
 		h.writeAuthenticationFailure(w)
 		return
 	}
-	digest := DelegationDigest(pending.challenge, sessionPub, req.ExpiresAtMs)
-	if !ed25519.Verify(pending.pubKey, digest, signature) {
+	var signed []byte
+	switch req.Scheme {
+	case "":
+		signed = DelegationDigest(pending.challenge, sessionPub, req.ExpiresAtMs)
+	case "siws":
+		message, ok := siwsMessageFor(r, req, pending.pubKey, pending.challenge, sessionPub, expiresAt, now)
+		if !ok {
+			h.writeAuthenticationFailure(w)
+			return
+		}
+		signed = []byte(message)
+	default:
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "unknown delegation scheme"})
+		return
+	}
+	if !ed25519.Verify(pending.pubKey, signed, signature) {
 		h.writeAuthenticationFailure(w)
 		return
 	}
@@ -152,4 +172,20 @@ func (h *Handler) RevokeDelegation(sessionPub ed25519.PublicKey) {
 	h.mu.Lock()
 	delete(h.delegations, string(sessionPub))
 	h.mu.Unlock()
+}
+
+// siwsMessageFor rebuilds the Sign-In With Solana text from the node's own
+// view: the host is this request's Host, and the origin the page names must
+// be that same host over http or https. The issue time must be recent.
+func siwsMessageFor(r *http.Request, req delegateRequest, wallet, challenge, sessionPub []byte, expiresAt, now time.Time) (string, bool) {
+	domain := strings.TrimSpace(r.Host)
+	origin := strings.TrimSpace(req.Origin)
+	if domain == "" || (origin != "https://"+domain && origin != "http://"+domain) {
+		return "", false
+	}
+	issuedAt := time.UnixMilli(int64(req.IssuedAtMs)).UTC()
+	if req.IssuedAtMs == 0 || issuedAt.After(now.Add(2*time.Minute)) || issuedAt.Before(now.Add(-5*time.Minute)) {
+		return "", false
+	}
+	return SIWSMessage(domain, origin, wallet, challenge, sessionPub, issuedAt, expiresAt), true
 }

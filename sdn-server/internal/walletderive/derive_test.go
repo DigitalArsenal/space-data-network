@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -83,7 +84,13 @@ func TestFromPublicKey(t *testing.T) {
 	if e.SigningPubKeyHex != passwordVectorSignIn || e.RowKey != PubKeyRowPrefix+passwordVectorSignIn || e.Source != SourcePublicKey {
 		t.Fatalf("unexpected enrollment %+v", e)
 	}
-	for _, bad := range []string{"", "zz", passwordVectorSignIn[:62], passwordVectorSignIn + "00"} {
+	// A Solana address is the same key in base58.
+	raw, _ := hex.DecodeString(passwordVectorSignIn)
+	sol, err := FromPublicKey(auth.Base58(raw))
+	if err != nil || sol.SigningPubKeyHex != passwordVectorSignIn || sol.RowKey != PubKeyRowPrefix+passwordVectorSignIn {
+		t.Fatalf("solana address enrollment %+v %v", sol, err)
+	}
+	for _, bad := range []string{"", "zz", passwordVectorSignIn[:62], passwordVectorSignIn + "00", "1111"} {
 		if _, err := FromPublicKey(bad); err == nil {
 			t.Errorf("accepted %q", bad)
 		}
