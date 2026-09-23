@@ -149,10 +149,15 @@ export async function sealedFetch(route: string, init: RequestInit = {}, fetchIm
   const result = await call(active.origin, active.node, active.signer, {
     method, route, body, contentType: headers.get('Content-Type') ?? undefined,
   }, { sessionId: active.sessionId, fetchImpl });
-  return new Response(result.body.length ? result.body : null, {
+  return new Response(result.body.length ? arrayBufferOf(result.body) : null, {
     status: result.status || 502,
     headers: result.contentType ? { 'Content-Type': result.contentType } : {},
   });
+}
+
+/** A standalone ArrayBuffer copy: what fetch/Response accept as a body. */
+function arrayBufferOf(bytes: Uint8Array): ArrayBuffer {
+  return bytes.slice().buffer as ArrayBuffer;
 }
 
 /** End the session here and on the node. */
