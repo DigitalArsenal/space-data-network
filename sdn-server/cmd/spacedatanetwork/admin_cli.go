@@ -9,18 +9,22 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/admincli"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/sealed"
 	"github.com/spacedatanetwork/sdn-server/internal/walletderive"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spf13/cobra"
@@ -143,14 +147,32 @@ func runAdminInit(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, _, err := config.LoadResolved(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	keys, err := adminServerKeys(ctx, cfg)
-	if err != nil {
-		return err
+	var (
+		cfg  *config.Config
+		keys admincli.ServerKeys
+	)
+	if remoteRequested() {
+		// The node being administered is the remote one: show its keys, as
+		// checked against --remote-fingerprint.
+		node, err := sealed.ReadNodeKeys(ctx, &http.Client{Timeout: 30 * time.Second}, remoteURL, remoteFingerprint)
+		if err != nil {
+			return err
+		}
+		keys = admincli.ServerKeys{
+			PeerID:            strings.TrimRight(remoteURL, "/"),
+			SigningPubKeyHex:  hex.EncodeToString(node.SigningKey),
+			SigningKeyPath:    "remote",
+			EncryptionPubHex:  hex.EncodeToString(node.EncryptionKey),
+			EncryptionKeyPath: "remote",
+		}
+	} else {
+		cfg, _, err = config.LoadResolved(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		if keys, err = adminServerKeys(ctx, cfg); err != nil {
+			return err
+		}
 	}
 
 	wp, err := resolveHDWalletWasmPath()
@@ -163,11 +185,21 @@ func runAdminInit(cmd *cobra.Command, _ []string) error {
 	}
 	defer hw.Close(ctx)
 
-	store, closeStore, err := adminStore(cmd, cfg)
-	if err != nil {
-		return err
+	var store admincli.Store
+	if remoteRequested() {
+		client, err := newRemoteAdminClient(cmd)
+		if err != nil {
+			return err
+		}
+		store = daemonAdminStore{client: client}
+	} else {
+		local, closeStore, err := adminStore(cmd, cfg)
+		if err != nil {
+			return err
+		}
+		defer closeStore()
+		store = local
 	}
-	defer closeStore()
 
 	_, err = admincli.Init(ctx, admincli.Options{
 		Name:            adminInitName,
@@ -200,6 +232,13 @@ func withAdminStore(cmd *cobra.Command, fn func(context.Context, admincli.Manage
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if remoteRequested() {
+		client, err := newRemoteAdminClient(cmd)
+		if err != nil {
+			return err
+		}
+		return fn(ctx, daemonAdminStore{client: client})
 	}
 	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {

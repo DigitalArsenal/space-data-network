@@ -84,6 +84,9 @@ func sessionTokenOverride(cmd *cobra.Command) string {
 
 // newAdminClient resolves config, locates the daemon, and obtains a session.
 func newAdminClient(cmd *cobra.Command) (*adminClient, error) {
+	if remoteRequested() {
+		return newRemoteAdminClient(cmd)
+	}
 	cfg, res, err := config.LoadResolved(configPath)
 	if err != nil {
 		return nil, err
