@@ -156,6 +156,23 @@ func SignInPublicKey(ctx context.Context, w Wallet, seed []byte) (ed25519.Public
 	return append(ed25519.PublicKey(nil), priv.Public().(ed25519.PublicKey)...), nil
 }
 
+// SignInPrivateKey derives the Ed25519 sign-in private key from a wallet
+// seed, for a CLI that signs as the admin itself. The caller zeroes it.
+func SignInPrivateKey(ctx context.Context, w Wallet, seed []byte) (ed25519.PrivateKey, error) {
+	if len(seed) != 64 {
+		return nil, fmt.Errorf("seed is %d bytes, want 64", len(seed))
+	}
+	scalar, err := w.DeriveSecp256k1PrivateKey(ctx, seed, SignInKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("derive %s: %w", SignInKeyPath, err)
+	}
+	defer zero(scalar)
+	if len(scalar) != ed25519.SeedSize {
+		return nil, fmt.Errorf("derived scalar is %d bytes, want %d", len(scalar), ed25519.SeedSize)
+	}
+	return ed25519.NewKeyFromSeed(scalar), nil
+}
+
 // FromSeed builds the enrollment for a seed-derived identity.
 func FromSeed(ctx context.Context, w Wallet, seed []byte, source Source) (Enrollment, error) {
 	defer zero(seed)
