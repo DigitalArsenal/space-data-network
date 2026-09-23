@@ -102,6 +102,16 @@ export function isHDWalletAvailable(): boolean {
 /**
  * Get the loaded module (throws if not loaded)
  */
+/**
+ * Adopt a wallet module the page has already initialized, instead of loading
+ * a second copy. The node dashboard loads the wallet from /wallet-wasm/ for
+ * sign-in; handing that instance here keeps the bundled module (megabytes of
+ * WASM) out of its single-file build.
+ */
+export function useHDWalletModule(module: HDWalletModule): void {
+  hdWalletModule = module;
+}
+
 function getModule(): HDWalletModule {
   if (!hdWalletModule) {
     throw new Error('HD Wallet WASM module not loaded - call initHDWallet() first');
