@@ -1651,6 +1651,25 @@ type AdminConfig struct {
 	// TOTPRequired requires TOTP 2FA for admin login.
 	TOTPRequired bool `yaml:"totp_required"`
 
+	// PublicPaths adds to the paths a require_auth node serves without an
+	// admin. Everything else is locked (owner order 2026-09-22). The built-in
+	// defaults (accessgate.DefaultPublic) cover what SpaceAware, OrbPro, the
+	// fleet updater and the dashboard's sign-in use. Entries:
+	//   "/ipfs/"                    reads (GET/HEAD) under a prefix
+	//   "/api/node/info"            reads of one exact path
+	//   "POST /api/auth/challenge"  one method; "GET,POST /x/" several
+	PublicPaths []string `yaml:"public_paths"`
+
+	// PublicPathsDeny closes a path the defaults or PublicPaths open, for
+	// every method. A denial wins over every other source.
+	PublicPathsDeny []string `yaml:"public_paths_deny"`
+
+	// RemoteRequiresSealed refuses admin requests that arrive from another
+	// machine by any transport except the signed, encrypted $RPC envelope
+	// (POST /api/rpc). Loopback requests (this box's CLI, the desktop app)
+	// are unaffected. Nil means true.
+	RemoteRequiresSealed *bool `yaml:"remote_requires_sealed"`
+
 	// TLSEnabled enables native HTTPS on the admin/API server.
 	TLSEnabled bool `yaml:"tls_enabled"`
 
@@ -2141,4 +2160,9 @@ func Save(path string, cfg *Config) error {
 	}
 
 	return os.WriteFile(path, data, 0600)
+}
+
+// RemoteAdminRequiresSealed reports admin.remote_requires_sealed, default true.
+func (a AdminConfig) RemoteAdminRequiresSealed() bool {
+	return a.RemoteRequiresSealed == nil || *a.RemoteRequiresSealed
 }

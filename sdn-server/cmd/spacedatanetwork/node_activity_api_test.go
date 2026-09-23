@@ -69,7 +69,7 @@ func TestNodeActivityRefusesAnonymousAndBelowAdmin(t *testing.T) {
 		handler, _ := newAdminSession(t, peers.Admin)
 		mux, calls := newMux()
 		rec := httptest.NewRecorder()
-		serveAdminMuxRequest(rec, httptest.NewRequest(http.MethodGet, path, nil), mux, true, false, handler, isPublicAPIRequest)
+		serveAdminMuxRequest(rec, httptest.NewRequest(http.MethodGet, path, nil), mux, true, false, handler, isPublicAPIRequest, nil, false)
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("anonymous GET status = %d, want %d", rec.Code, http.StatusUnauthorized)
 		}
@@ -87,7 +87,7 @@ func TestNodeActivityRefusesAnonymousAndBelowAdmin(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
 			rec := httptest.NewRecorder()
-			serveAdminMuxRequest(rec, req, mux, true, false, handler, isPublicAPIRequest)
+			serveAdminMuxRequest(rec, req, mux, true, false, handler, isPublicAPIRequest, nil, false)
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf("%s GET status = %d, want %d", trust, rec.Code, http.StatusForbidden)
 			}

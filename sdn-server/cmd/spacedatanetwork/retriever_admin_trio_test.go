@@ -130,7 +130,7 @@ func TestRetrieverProfileMountsTheAdminTrio(t *testing.T) {
 	rootPriv, ranNow := p.rootKey, p.ranNow
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// require_auth == FALSE — the retriever profile, verbatim.
-		serveAdminMuxRequest(w, r, p.mux, false, false, p.auth, retrieverProfileAnonymous)
+		serveAdminMuxRequest(w, r, p.mux, false, false, p.auth, retrieverProfileAnonymous, nil, false)
 	}))
 	defer srv.Close()
 
@@ -193,7 +193,7 @@ func TestRetrieverProfileFailsClosedWithoutAdmitPoint(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/modules/runtime/app/schedules/gp/run", nil)
-	serveAdminMuxRequest(rec, req, mux, false, false, nil, retrieverProfileAnonymous)
+	serveAdminMuxRequest(rec, req, mux, false, false, nil, retrieverProfileAnonymous, nil, false)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 (fail closed)", rec.Code)
@@ -211,7 +211,7 @@ func TestRetrieverProfileKeepsAnonymousReadsOpen(t *testing.T) {
 	p := retrieverProfileMux(t)
 	rec := httptest.NewRecorder()
 	serveAdminMuxRequest(rec, httptest.NewRequest(http.MethodGet, "/api/apps", nil),
-		p.mux, false, false, p.auth, retrieverProfileAnonymous)
+		p.mux, false, false, p.auth, retrieverProfileAnonymous, nil, false)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/api/apps status = %d, want 200 anonymous", rec.Code)
 	}
@@ -226,7 +226,7 @@ func TestAppsRunCommandSucceedsAgainstRetrieverProfileDaemon(t *testing.T) {
 	p := retrieverProfileMux(t)
 	ranNow := p.ranNow
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		serveAdminMuxRequest(w, r, p.mux, false, false, p.auth, retrieverProfileAnonymous)
+		serveAdminMuxRequest(w, r, p.mux, false, false, p.auth, retrieverProfileAnonymous, nil, false)
 	}))
 	defer srv.Close()
 
@@ -344,7 +344,7 @@ func TestLoopbackSelfGatedAdminPathsStayReachableWithoutSession(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
 		// require_auth:false, NO auth handler at all — the retriever's shape.
-		serveAdminMuxRequest(rec, req, mux, false, false, nil, retrieverProfileAnonymous)
+		serveAdminMuxRequest(rec, req, mux, false, false, nil, retrieverProfileAnonymous, nil, false)
 
 		if !reached || rec.Code != http.StatusOK {
 			t.Fatalf("%s was gated by the session wall (status %d); the publish trigger would break", path, rec.Code)
@@ -374,7 +374,7 @@ func TestRunNowIsNotLoopbackExempt(t *testing.T) {
 func TestAppsListFallsBackToAnonymousRead(t *testing.T) {
 	p := retrieverProfileMux(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		serveAdminMuxRequest(w, r, p.mux, false, false, p.auth, retrieverProfileAnonymous)
+		serveAdminMuxRequest(w, r, p.mux, false, false, p.auth, retrieverProfileAnonymous, nil, false)
 	}))
 	defer srv.Close()
 
@@ -434,7 +434,7 @@ func TestRequireAuthOffKeepsAdminClassifiedReadsOpen(t *testing.T) {
 
 			rec := httptest.NewRecorder()
 			serveAdminMuxRequest(rec, httptest.NewRequest(method, path, nil),
-				mux, false, false, nil, retrieverProfileAnonymous)
+				mux, false, false, nil, retrieverProfileAnonymous, nil, false)
 
 			if !served || rec.Code != http.StatusOK {
 				t.Fatalf("%s %s was closed on a require_auth:false node (status %d)", method, path, rec.Code)
@@ -463,7 +463,7 @@ func TestStateChangingMethodsAreGatedOnAuthDisabledNodes(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(method, "/api/v1/modules/runtime/app/schedules/gp/run", nil)
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
-		serveAdminMuxRequest(rec, req, mux, false, false, nil, retrieverProfileAnonymous)
+		serveAdminMuxRequest(rec, req, mux, false, false, nil, retrieverProfileAnonymous, nil, false)
 		if served {
 			t.Fatalf("%s reached the run-now handler unauthenticated", method)
 		}

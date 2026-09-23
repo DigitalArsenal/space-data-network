@@ -30,7 +30,7 @@ func TestAdminWalletWallAdmitsLoopbackSelfGatedUpdateControl(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/update/shutdown", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
 	rec := httptest.NewRecorder()
-	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI)
+	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI, nil, false)
 	if reached != 1 {
 		t.Fatalf("loopback self-gated request never reached its handler (status=%d)", rec.Code)
 	}
@@ -42,7 +42,7 @@ func TestAdminWalletWallAdmitsLoopbackSelfGatedUpdateControl(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/update/shutdown", nil)
 	req.RemoteAddr = "[::1]:54321"
 	rec = httptest.NewRecorder()
-	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI)
+	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI, nil, false)
 	if reached != 2 {
 		t.Fatalf("IPv6 loopback self-gated request never reached its handler (status=%d)", rec.Code)
 	}
@@ -51,7 +51,7 @@ func TestAdminWalletWallAdmitsLoopbackSelfGatedUpdateControl(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/update/shutdown", nil)
 	req.RemoteAddr = "192.0.2.9:44444"
 	rec = httptest.NewRecorder()
-	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI)
+	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI, nil, false)
 	if reached != 2 {
 		t.Fatal("REMOTE request to the self-gated path reached the handler — the wall is open")
 	}
@@ -67,7 +67,7 @@ func TestAdminWalletWallAdmitsLoopbackSelfGatedUpdateControl(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/api/peers/protected", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
 	rec = httptest.NewRecorder()
-	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI)
+	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI, nil, false)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("loopback non-self-gated admin path status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
