@@ -46,6 +46,15 @@ func AdmittedContext(ctx context.Context, session *auth.Session) context.Context
 	return context.WithValue(auth.ContextWithSession(ctx, session), admittedKey{}, true)
 }
 
+// Delegations is the session-key registry (auth/delegation.go).
+type Delegations interface {
+	DelegatedWallet(sessionPub ed25519.PublicKey) (wallet ed25519.PublicKey, root bool, ok bool)
+	RevokeDelegation(sessionPub ed25519.PublicKey)
+}
+
+// RevokeRoute, sent sealed, ends the signing session key's delegation.
+const RevokeRoute = "/api/auth/delegate/revoke"
+
 // Admins resolves a sign-in key to its account. *auth.UserStore satisfies it.
 type Admins interface {
 	GetUserBySigningPubKey(signingPubKeyHex string) (*auth.User, error)
@@ -67,6 +76,9 @@ type Handler struct {
 	// RootAccount is the account a root-key signer acts as (the node's own
 	// account xpub, as root sign-in uses).
 	RootAccount string
+	// Delegations resolves a browser session key to the wallet that
+	// delegated it at sign-in (auth.Handler satisfies it). May be nil.
+	Delegations Delegations
 	Next        http.Handler
 	Now         func() time.Time
 
@@ -122,7 +134,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, contentType, out := h.dispatch(r, body, account, trust)
+	var status int
+	var contentType string
+	var out []byte
+	if body.Route == RevokeRoute && h.Delegations != nil {
+		h.Delegations.RevokeDelegation(env.Signer)
+		status, contentType, out = http.StatusOK, "application/json", []byte(`{"status":"revoked"}`)
+	} else {
+		status, contentType, out = h.dispatch(r, body, account, trust)
+	}
 	reply, err := Seal(Body{
 		Status:        uint16(status),
 		Body:          out,
@@ -177,7 +197,21 @@ func (h *Handler) dispatch(outer *http.Request, body Body, account string, trust
 	return rec.Code, rec.Header().Get("Content-Type"), rec.Body.Bytes()
 }
 
+// trustOf is the signer's trust now: a sign-in key directly, or a delegated
+// session key at its delegating wallet's current trust.
 func (h *Handler) trustOf(signer ed25519.PublicKey) (peers.TrustLevel, string) {
+	if h.Delegations != nil {
+		if wallet, root, ok := h.Delegations.DelegatedWallet(signer); ok {
+			if root {
+				return peers.Admin, h.RootAccount
+			}
+			return h.keyTrust(wallet)
+		}
+	}
+	return h.keyTrust(signer)
+}
+
+func (h *Handler) keyTrust(signer ed25519.PublicKey) (peers.TrustLevel, string) {
 	for _, root := range h.RootKeys {
 		if bytes.Equal(root, signer) {
 			return peers.Admin, h.RootAccount

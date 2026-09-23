@@ -65,6 +65,7 @@ var DefaultPublic = []string{
 	"/bootstrap.crt",
 	"POST /api/auth/challenge",
 	"POST /api/auth/verify",
+	"POST /api/auth/delegate",
 	"/api/auth/me",
 	"POST /api/auth/logout",
 }

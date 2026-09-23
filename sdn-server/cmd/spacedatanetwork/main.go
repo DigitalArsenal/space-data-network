@@ -2714,6 +2714,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						Admins:         authHandler.UserStore(),
 						RootKeys:       rootKeys,
 						RootAccount:    rootXPub,
+						Delegations:    authHandler,
 						Next:           http.HandlerFunc(wall),
 					}
 					log.Infof("Sealed admin transport at %s://%s%s (encryption key path %s)", adminScheme, adminAddr, sealed.Route, encPath)
