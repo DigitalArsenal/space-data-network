@@ -21,13 +21,13 @@ import (
 )
 
 type fixture struct {
-	h        *Handler
-	nodeEnc  []byte // node's secp256k1 encryption public key
-	nodeSign ed25519.PublicKey
-	admin    ed25519.PrivateKey
-	viewer   ed25519.PrivateKey
+	h                   *Handler
+	nodeEnc             []byte // node's secp256k1 encryption public key
+	nodeSign            ed25519.PublicKey
+	admin               ed25519.PrivateKey
+	viewer              ed25519.PrivateKey
 	replyPriv, replyPub []byte
-	now      time.Time
+	now                 time.Time
 }
 
 type users map[string]*auth.User
