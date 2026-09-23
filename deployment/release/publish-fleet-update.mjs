@@ -550,8 +550,13 @@ try {
   run('scp', ['-q', unsignedPath, `${publisherSSH}:${remoteTmp}/manifest.unsigned.json`]);
   run('ssh', [
     publisherSSH,
+    // NO --node-url, for the same reason as the signal push below: the public
+    // hostname sends this admin call out through the CDN and back in as a
+    // proxied request, which the whole-server lock (2026-09-23) refuses as
+    // remote ("sealed_required"). Without it the client dials loopback and
+    // anchors to the daemon's own certificate.
     `${publisherBin} update sign-manifest --manifest ${remoteTmp}/manifest.unsigned.json ` +
-      `--out ${remoteTmp}/manifest.json --node-url https://sdn.spaceaware.io`,
+      `--out ${remoteTmp}/manifest.json`,
   ]);
   const signedPath = join(work, 'manifest.json');
   run('scp', ['-q', `${publisherSSH}:${remoteTmp}/manifest.json`, signedPath]);
