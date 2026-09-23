@@ -31,6 +31,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -205,13 +206,19 @@ func FromMnemonic(ctx context.Context, w Wallet, phrase string) (Enrollment, err
 	return FromSeed(ctx, w, seed, SourceMnemonic)
 }
 
-// FromPublicKey enrolls a pasted 64-hex Ed25519 sign-in public key.
+// FromPublicKey enrolls a pasted Ed25519 sign-in public key: 64 hex
+// characters, or a Solana address (the base58 of the same 32-byte key), which
+// is what an external Solana wallet such as Phantom shows.
 func FromPublicKey(pubHex string) (Enrollment, error) {
-	trimmed := strings.ToLower(strings.TrimSpace(pubHex))
-	raw, err := hex.DecodeString(trimmed)
+	trimmed := strings.TrimSpace(pubHex)
+	raw, err := hex.DecodeString(strings.ToLower(trimmed))
 	if err != nil || len(raw) != ed25519.PublicKeySize {
-		return Enrollment{}, errors.New("public key must be 64 hex characters (a 32-byte Ed25519 key)")
+		raw, err = auth.DecodeBase58(trimmed)
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			return Enrollment{}, errors.New("public key must be 64 hex characters or a Solana address (a 32-byte Ed25519 key)")
+		}
 	}
+	trimmed = hex.EncodeToString(raw)
 	return Enrollment{RowKey: PubKeyRowPrefix + trimmed, SigningPubKeyHex: trimmed, Source: SourcePublicKey}, nil
 }
 
