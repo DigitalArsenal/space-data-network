@@ -320,7 +320,7 @@ export async function call(
     credentials: 'omit',
     cache: 'no-store',
     headers: { 'Content-Type': RPC_CONTENT_TYPE },
-    body: envelope,
+    body: envelope.slice().buffer as ArrayBuffer,
   });
   if (!response.ok) {
     return { status: response.status, contentType: response.headers.get('Content-Type') ?? 'text/plain', body: new Uint8Array(await response.arrayBuffer()) };
