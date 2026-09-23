@@ -57,3 +57,31 @@ func TestIPFSGatewayProxyServesOnlyHeldContent(t *testing.T) {
 		t.Fatalf("missing not-held marker on 404")
 	}
 }
+
+// TestIPFSGatewayProxySingleAllowOrigin: the admin middleware writes its CORS
+// headers before the wall reaches /ipfs/; the proxied answer must still carry
+// exactly one Access-Control-Allow-Origin, or browsers refuse the response.
+func TestIPFSGatewayProxySingleAllowOrigin(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		_, _ = w.Write([]byte("tile"))
+	}))
+	defer upstream.Close()
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream: %v", err)
+	}
+	proxy := newIPFSGatewayProxy(target)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ipfs/terrain/3/7/2.png", nil)
+	req.Header.Set("Origin", "https://orbpro.edgesource.dev")
+	applyPublicAPICORSHeaders(rec.Header(), req.Header.Get("Origin"))
+	proxy.ServeHTTP(rec, req)
+	if got := rec.Header().Values("Access-Control-Allow-Origin"); len(got) != 1 || got[0] != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want exactly [\"*\"]", got)
+	}
+	if got := rec.Header().Values("Access-Control-Allow-Methods"); len(got) != 1 {
+		t.Fatalf("Access-Control-Allow-Methods = %q, want one value", got)
+	}
+}
