@@ -42,6 +42,7 @@ import (
 	qrgen "github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
 
+	"github.com/spacedatanetwork/sdn-server/internal/accessgate"
 	"github.com/spacedatanetwork/sdn-server/internal/adminui"
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/assetpin"
@@ -65,6 +66,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/sealed"
 	"github.com/spacedatanetwork/sdn-server/internal/sourcemetrics"
 	nodestatus "github.com/spacedatanetwork/sdn-server/internal/status"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -1611,8 +1613,24 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					})
 				}
 			}
+			// The static public set is the access gate: built-in defaults
+			// (what SpaceAware, OrbPro, the fleet updater and the dashboard's
+			// sign-in use) plus admin.public_paths, minus
+			// admin.public_paths_deny. Everything else on a require_auth node
+			// needs an admin (owner order 2026-09-22).
+			publicGate, gateErr := accessgate.New(accessgate.DefaultPublic, cfg.Admin.PublicPaths, cfg.Admin.PublicPathsDeny)
+			if gateErr != nil {
+				return fmt.Errorf("admin.public_paths: %w", gateErr)
+			}
+			publicGate.Extra = func(method, path string) bool {
+				if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
+					return false
+				}
+				code, ok := dataPlaneBulkSchema(path)
+				return ok && sds.IsPublicReadSchema(code)
+			}
 			anonymousPolicy := gateway.NewAnonymousPolicy(
-				isPublicAPIRequest,
+				publicGate.Public,
 				flowRouteDecls,
 				cfg.Gateway.Anonymous.Allow,
 				cfg.Gateway.Anonymous.Deny,
@@ -2671,6 +2689,37 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.Handle("/", makeRootHandler())
 			log.Infof("Node status dashboard at %s://%s/ (fed by /ws/status; admin portal remains at /admin)", adminScheme, adminAddr)
 
+			// The sealed $RPC transport: remote admin commands arrive signed
+			// by the admin's wallet key and encrypted to this node's
+			// advertised key, and run back through this same wall as that
+			// admin.
+			var sealedHandler *sealed.Handler
+			wall := func(w http.ResponseWriter, r *http.Request) {
+				serveAdminMuxRequest(w, r, adminMux, cfg.Admin.RequireAuth, assetOIDCCapabilityMounted, authHandler, publicAPIRequest, sealedHandler, cfg.Admin.RemoteAdminRequiresSealed())
+			}
+			if authHandler != nil {
+				var profile *epm.Profile
+				if p, perr := epm.LoadProfile(cfg.Storage.Path); perr == nil {
+					profile = p
+				}
+				_, encPath := epm.EffectiveKeyPaths(profile, 0)
+				encPriv, signer, kerr := n.SealedTransportKeys(encPath)
+				rootXPub, rootKeys, _ := n.RootAuthPublicKeys()
+				if kerr != nil {
+					log.Warnf("Sealed admin transport unavailable: %v", kerr)
+				} else {
+					sealedHandler = &sealed.Handler{
+						EncryptionPriv: encPriv,
+						Signer:         signer,
+						Admins:         authHandler.UserStore(),
+						RootKeys:       rootKeys,
+						RootAccount:    rootXPub,
+						Next:           http.HandlerFunc(wall),
+					}
+					log.Infof("Sealed admin transport at %s://%s%s (encryption key path %s)", adminScheme, adminAddr, sealed.Route, encPath)
+				}
+			}
+
 			adminServer = &http.Server{
 				Addr:              adminAddr,
 				ReadHeaderTimeout: 10 * time.Second,
@@ -2679,9 +2728,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				IdleTimeout:       120 * time.Second,
 				Handler: newAdminUpgradeRouter(
 					wsUpgradeProxy,
-					adminSecurityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						serveAdminMuxRequest(w, r, adminMux, cfg.Admin.RequireAuth, assetOIDCCapabilityMounted, authHandler, publicAPIRequest)
-					}), tlsManager.Mode(), publicAPIRequest),
+					adminSecurityMiddleware(http.HandlerFunc(wall), tlsManager.Mode(), publicAPIRequest),
 				),
 			}
 			go func() {
@@ -3427,12 +3474,24 @@ func serveAdminMuxRequest(
 	assetOIDCCapabilityMounted bool,
 	authHandler *auth.Handler,
 	publicAPIRequest func(method, path string) bool,
+	sealedHandler *sealed.Handler,
+	remoteRequiresSealed bool,
 ) {
-	// Default-deny: gate all API and plugin routes behind auth, except
-	// explicitly listed public endpoints and the two exact OIDC capabilities.
+	// Default-deny on EVERY path (owner order 2026-09-22: lock the whole
+	// server): a request is served without an admin only when the access
+	// gate opens it, it is one of the two exact OIDC capabilities, or it is a
+	// sealed command (which authenticates itself).
 	if requireAuth {
 		if assetOIDCCapabilityMounted && isAssetOIDCCapabilityRequest(r.Method, assetOIDCCapabilityRequestPath(r)) {
 			adminMux.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == sealed.Route {
+			if sealedHandler == nil {
+				http.Error(w, "sealed admin transport unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			sealedHandler.ServeHTTP(w, r)
 			return
 		}
 		if authHandler == nil {
@@ -3441,10 +3500,7 @@ func serveAdminMuxRequest(
 		}
 
 		requestPath := r.URL.Path
-		isAPIOrPlugin := strings.HasPrefix(requestPath, "/api/") ||
-			strings.HasPrefix(requestPath, "/orbpro-key-broker/")
-
-		if isAPIOrPlugin && !publicAPIRequest(r.Method, requestPath) {
+		if !publicAPIRequest(r.Method, requestPath) {
 			// Loopback self-gated admin paths (update/dataset control) carry
 			// their OWN designed gate — loopback RemoteAddr + a one-time
 			// control token consumed on use — and that gate never ran on
@@ -3457,12 +3513,17 @@ func serveAdminMuxRequest(
 				adminMux.ServeHTTP(w, r)
 				return
 			}
-			minTrust := peers.Standard
-			switch {
-			case isAdminOnlyAPIPath(requestPath):
-				minTrust = peers.Admin
-			case isAnyTierAuthenticatedAPIPath(requestPath):
+			// Session introspection (/api/auth/me, logout, own photo) answers
+			// any signed-in tier, so a wallet that is not an admin here can
+			// still see that and sign out. Everything else needs an admin.
+			minTrust := peers.Admin
+			if isAnyTierAuthenticatedAPIPath(requestPath) {
 				minTrust = anyTierAuthenticatedTrust
+			} else if remoteRequiresSealed && !requestOriginatedOnThisBox(r) && !sealed.Admitted(r.Context()) {
+				// A remote admin speaks only through the sealed transport; a
+				// cookie or bearer session from another machine is refused.
+				writeSealedRequired(w)
+				return
 			}
 			authHandler.RequireAuth(minTrust, func(w http.ResponseWriter, r *http.Request) {
 				adminMux.ServeHTTP(w, r)
@@ -3505,6 +3566,14 @@ func serveAdminMuxRequest(
 		return
 	}
 	adminMux.ServeHTTP(w, r)
+}
+
+// writeSealedRequired refuses a remote admin request that did not come through
+// the sealed transport.
+func writeSealedRequired(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(`{"code":"sealed_required","message":"remote admin requests must use the signed, encrypted transport at ` + sealed.Route + `"}`))
 }
 
 func isPublicAPIPath(path string) bool {

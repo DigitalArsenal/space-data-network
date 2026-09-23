@@ -313,7 +313,7 @@ func TestAdminWalletWallBypassesOnlyExactAssetOIDCCapabilities(t *testing.T) {
 	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		rec := httptest.NewRecorder()
-		serveAdminMuxRequest(rec, req, adminMux, true, true, authHandler, notPublicAPI)
+		serveAdminMuxRequest(rec, req, adminMux, true, true, authHandler, notPublicAPI, nil, false)
 		if rec.Code != http.StatusNoContent {
 			t.Fatalf("exact POST %s status = %d, want %d", path, rec.Code, http.StatusNoContent)
 		}
@@ -339,7 +339,7 @@ func TestAdminWalletWallBypassesOnlyExactAssetOIDCCapabilities(t *testing.T) {
 	for _, variant := range variants {
 		req := httptest.NewRequest(variant.method, variant.path, nil)
 		rec := httptest.NewRecorder()
-		serveAdminMuxRequest(rec, req, adminMux, true, true, authHandler, notPublicAPI)
+		serveAdminMuxRequest(rec, req, adminMux, true, true, authHandler, notPublicAPI, nil, false)
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("variant %s %s status = %d, want wallet-gated %d", variant.method, variant.path, rec.Code, http.StatusUnauthorized)
 		}
@@ -360,7 +360,7 @@ func TestAdminWalletWallExactAssetOIDCCapabilityDoesNotRequireWalletBackend(t *t
 	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, path, nil)
-		serveAdminMuxRequest(rec, req, adminMux, true, true, nil, notPublicAPI)
+		serveAdminMuxRequest(rec, req, adminMux, true, true, nil, notPublicAPI, nil, false)
 		if rec.Code != http.StatusNoContent {
 			t.Fatalf("exact POST %s with no wallet backend status = %d, want %d", path, rec.Code, http.StatusNoContent)
 		}
@@ -380,7 +380,7 @@ func TestAdminWalletWallExactAssetOIDCCapabilityDoesNotRequireWalletBackend(t *t
 	} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(variant.method, variant.path, nil)
-		serveAdminMuxRequest(rec, req, adminMux, true, true, nil, notPublicAPI)
+		serveAdminMuxRequest(rec, req, adminMux, true, true, nil, notPublicAPI, nil, false)
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("variant %s %s with no wallet backend status = %d, want legacy %d", variant.method, variant.path, rec.Code, http.StatusServiceUnavailable)
 		}
@@ -402,7 +402,7 @@ func TestAdminWalletWallDoesNotBypassUnmountedAssetOIDCPaths(t *testing.T) {
 	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, path, nil)
-		serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI)
+		serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI, nil, false)
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("unmounted POST %s status = %d, want wallet-gated %d", path, rec.Code, http.StatusUnauthorized)
 		}
@@ -413,7 +413,7 @@ func TestAdminWalletWallDoesNotBypassUnmountedAssetOIDCPaths(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/pin", nil)
-	serveAdminMuxRequest(rec, req, adminMux, true, false, nil, notPublicAPI)
+	serveAdminMuxRequest(rec, req, adminMux, true, false, nil, notPublicAPI, nil, false)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unmounted path without wallet backend status = %d, want legacy %d", rec.Code, http.StatusServiceUnavailable)
 	}

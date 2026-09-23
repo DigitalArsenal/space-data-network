@@ -31,6 +31,21 @@ const (
 	clockSkew = 2 * time.Minute
 )
 
+type admittedKey struct{}
+
+// Admitted reports whether a request is the unwrapped inner request of a
+// verified sealed command from an admin.
+func Admitted(ctx context.Context) bool {
+	v, _ := ctx.Value(admittedKey{}).(bool)
+	return v
+}
+
+// AdmittedContext is the context an unwrapped sealed command runs with: the
+// admin's session, and the mark Admitted reads.
+func AdmittedContext(ctx context.Context, session *auth.Session) context.Context {
+	return context.WithValue(auth.ContextWithSession(ctx, session), admittedKey{}, true)
+}
+
 // Admins resolves a sign-in key to its account. *auth.UserStore satisfies it.
 type Admins interface {
 	GetUserBySigningPubKey(signingPubKeyHex string) (*auth.User, error)
@@ -143,10 +158,16 @@ func (h *Handler) dispatch(outer *http.Request, body Body, account string, trust
 		return http.StatusBadRequest, "text/plain; charset=utf-8", []byte("sealed command has an invalid route")
 	}
 	session := &auth.Session{XPub: account, TrustLevel: trust, CreatedAt: h.now(), ExpiresAt: h.now()}
-	ctx := auth.ContextWithSession(context.WithoutCancel(outer.Context()), session)
+	ctx := AdmittedContext(context.WithoutCancel(outer.Context()), session)
 	inner := httptest.NewRequest(method, route, bytes.NewReader(body.Body)).WithContext(ctx)
 	inner.RemoteAddr = outer.RemoteAddr
 	inner.Host = outer.Host
+	// A command relayed by a proxy must still look remote once unwrapped.
+	for _, name := range []string{"X-Forwarded-For", "X-Real-Ip", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto", "Cf-Connecting-Ip"} {
+		if v := outer.Header.Values(name); len(v) > 0 {
+			inner.Header[name] = append([]string(nil), v...)
+		}
+	}
 	inner.Header.Set("X-Requested-With", "XMLHttpRequest")
 	if body.BodyFileID != "" {
 		inner.Header.Set("Content-Type", body.BodyFileID)

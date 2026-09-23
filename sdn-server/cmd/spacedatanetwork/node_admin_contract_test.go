@@ -8,6 +8,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/spacedatanetwork/sdn-server/internal/accessgate"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -231,7 +232,7 @@ func TestSessionIntrospectionIsReachableAtEveryTrustTier(t *testing.T) {
 				req := httptest.NewRequest(c.method, c.path, nil)
 				req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
 				rec := httptest.NewRecorder()
-				serveAdminMuxRequest(rec, req, mux, true, false, authHandler, notPublicAPI)
+				serveAdminMuxRequest(rec, req, mux, true, false, authHandler, notPublicAPI, nil, false)
 				if rec.Code != http.StatusOK {
 					t.Fatalf("%s %s at %s status = %d, want %d: %s",
 						c.method, c.path, trust, rec.Code, http.StatusOK, rec.Body.String())
@@ -251,7 +252,7 @@ func TestSessionIntrospectionIsReachableAtEveryTrustTier(t *testing.T) {
 		mux := newMux(&reached)
 		for _, c := range sessionCalls {
 			rec := httptest.NewRecorder()
-			serveAdminMuxRequest(rec, httptest.NewRequest(c.method, c.path, nil), mux, true, false, authHandler, notPublicAPI)
+			serveAdminMuxRequest(rec, httptest.NewRequest(c.method, c.path, nil), mux, true, false, authHandler, notPublicAPI, nil, false)
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("anonymous %s %s status = %d, want %d", c.method, c.path, rec.Code, http.StatusUnauthorized)
 			}
@@ -272,7 +273,7 @@ func TestSessionIntrospectionIsReachableAtEveryTrustTier(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/auth/attest", nil)
 			req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
 			rec := httptest.NewRecorder()
-			serveAdminMuxRequest(rec, req, mux, true, false, authHandler, notPublicAPI)
+			serveAdminMuxRequest(rec, req, mux, true, false, authHandler, notPublicAPI, nil, false)
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf("attest at %s status = %d, want %d", trust, rec.Code, http.StatusForbidden)
 			}
@@ -673,11 +674,16 @@ func TestWalletWasmSurfaceIsNotBehindTheAPIWall(t *testing.T) {
 	adminMux := http.NewServeMux()
 	adminMux.Handle("/wallet-wasm/", makeWalletWasmHandler(stageWalletWasm(t)))
 
-	// No session cookie: the wall must let this through anyway, because
-	// /wallet-wasm/ is neither an /api/ nor an /orbpro-key-broker/ path.
+	// No session cookie: the wall must let this through anyway, because the
+	// default public set opens /wallet-wasm/ (the whole server is otherwise
+	// locked, owner order 2026-09-22).
+	gate, err := accessgate.New(accessgate.DefaultPublic, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/wallet-wasm/runtime/index.mjs", nil)
 	rec := httptest.NewRecorder()
-	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI)
+	serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, gate.Public, nil, true)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d — the wallet must load before sign-in", rec.Code, http.StatusOK)
