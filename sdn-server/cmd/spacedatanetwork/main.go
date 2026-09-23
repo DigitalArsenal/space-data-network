@@ -76,6 +76,7 @@ import (
 	sdnupdate "github.com/spacedatanetwork/sdn-server/internal/update"
 	sdnvcard "github.com/spacedatanetwork/sdn-server/internal/vcard"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
+	"github.com/spacedatanetwork/sdn-server/internal/walletderive"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
@@ -2717,7 +2718,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						Delegations:    authHandler,
 						Next:           http.HandlerFunc(wall),
 					}
-					log.Infof("Sealed admin transport at %s://%s%s (encryption key path %s)", adminScheme, adminAddr, sealed.Route, encPath)
+					encPub := secp256k1.PrivKeyFromBytes(encPriv).PubKey().SerializeCompressed()
+					sealedTransportAdvert.Store(map[string]any{
+						"route":               sealed.Route,
+						"key_exchange":        "Secp256k1",
+						"encryption_key":      hex.EncodeToString(encPub),
+						"encryption_key_path": encPath,
+						"fingerprint":         walletderive.Fingerprint(encPub),
+						"signing_key":         hex.EncodeToString(signer.Public().(ed25519.PublicKey)),
+					})
+					log.Infof("Sealed admin transport at %s://%s%s (encryption key path %s, fingerprint %s)", adminScheme, adminAddr, sealed.Route, encPath, walletderive.Fingerprint(encPub))
 				}
 			}
 
@@ -3568,6 +3578,11 @@ func serveAdminMuxRequest(
 	}
 	adminMux.ServeHTTP(w, r)
 }
+
+// sealedTransportAdvert is what /api/node/info publishes about the sealed
+// admin transport: its route, the key commands are sealed to (and its
+// fingerprint, as `admin init` prints it), and the key replies are signed with.
+var sealedTransportAdvert atomic.Value
 
 // writeSealedRequired refuses a remote admin request that did not come through
 // the sealed transport.
@@ -4735,6 +4750,9 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 
 		// Overlay runtime metadata
 		info["peer_id"] = n.PeerID().String()
+		if advert, ok := sealedTransportAdvert.Load().(map[string]any); ok {
+			info["sealed_transport"] = advert
+		}
 		info["mode"] = n.Config().Mode
 		info["version"] = versioninfo.AgentVersion
 		info["agent_version"] = versioninfo.AgentVersion
