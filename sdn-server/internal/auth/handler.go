@@ -36,9 +36,12 @@ const (
 
 // Handler serves HTTP authentication endpoints using Ed25519 challenge-response.
 type Handler struct {
-	userStore            *UserStore
-	sessions             *SessionStore
-	challenges           map[string]pendingChallenge
+	userStore  *UserStore
+	sessions   *SessionStore
+	challenges map[string]pendingChallenge
+	// delegations maps a session key to the wallet that delegated it
+	// (delegation.go). Guarded by mu.
+	delegations          map[string]delegation
 	mu                   sync.Mutex
 	challengeTTL         time.Duration
 	sessionTTL           time.Duration
@@ -307,6 +310,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/epm", h.handleAccountEPM)
 	mux.HandleFunc("/api/auth/status", h.handleAuthStatus)
 	mux.HandleFunc("/api/auth/external/linked", h.handleExternalLinked)
+	mux.HandleFunc("/api/auth/delegate", h.handleDelegate)
 	mux.HandleFunc("/api/auth/users", h.handleUsers)
 	mux.HandleFunc("/api/auth/users/", h.handleUserByXPub)
 	mux.HandleFunc("/api/auth/attest", h.handleAttest)

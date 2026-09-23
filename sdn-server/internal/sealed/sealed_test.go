@@ -208,3 +208,51 @@ func getRoot(buf []byte) interface {
 } {
 	return rpcRoot(buf)
 }
+
+type fakeDelegations map[string]ed25519.PublicKey
+
+func (d fakeDelegations) DelegatedWallet(s ed25519.PublicKey) (ed25519.PublicKey, bool, bool) {
+	w, ok := d[string(s)]
+	return w, false, ok
+}
+func (d fakeDelegations) RevokeDelegation(s ed25519.PublicKey) { delete(d, string(s)) }
+
+// A browser session key signs commands at its delegating wallet's trust, now.
+func TestDelegatedSessionKeys(t *testing.T) {
+	f := newFixture(t)
+	_, viewerSessionPriv, _ := ed25519.GenerateKey(rand.Reader)
+	_, adminSessionPriv, _ := ed25519.GenerateKey(rand.Reader)
+	delegations := fakeDelegations{
+		string(adminSessionPriv.Public().(ed25519.PublicKey)):  f.admin.Public().(ed25519.PublicKey),
+		string(viewerSessionPriv.Public().(ed25519.PublicKey)): f.viewer.Public().(ed25519.PublicKey),
+	}
+	f.h.Delegations = delegations
+
+	rec := f.send(f.request(t, adminSessionPriv, "GET", "/api/echo", "", f.now))
+	env, err := Open(rec.Body.Bytes())
+	if rec.Code != http.StatusOK || err != nil {
+		t.Fatalf("admin session key: %d %v", rec.Code, err)
+	}
+	if body, _ := env.Decrypt(f.replyPriv); !strings.Contains(string(body.Body), "xpub-admin admin") {
+		t.Fatalf("ran as %q", body.Body)
+	}
+	if rec := f.send(f.request(t, viewerSessionPriv, "GET", "/api/echo", "", f.now)); rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer session key = %d, want 403", rec.Code)
+	}
+
+	// Demoting the wallet takes effect on the next command.
+	users := f.h.Admins.(users)
+	users[hex.EncodeToString(f.admin.Public().(ed25519.PublicKey))].TrustLevel = peers.Standard
+	if rec := f.send(f.request(t, adminSessionPriv, "GET", "/api/echo", "", f.now)); rec.Code != http.StatusForbidden {
+		t.Fatalf("demoted wallet's session key = %d, want 403", rec.Code)
+	}
+	users[hex.EncodeToString(f.admin.Public().(ed25519.PublicKey))].TrustLevel = peers.Admin
+
+	// Sign-out revokes the session key.
+	if rec := f.send(f.request(t, adminSessionPriv, "POST", RevokeRoute, "", f.now)); rec.Code != http.StatusOK {
+		t.Fatalf("revoke = %d", rec.Code)
+	}
+	if rec := f.send(f.request(t, adminSessionPriv, "GET", "/api/echo", "", f.now)); rec.Code != http.StatusForbidden {
+		t.Fatalf("revoked session key = %d, want 403", rec.Code)
+	}
+}
