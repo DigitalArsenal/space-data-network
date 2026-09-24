@@ -3,822 +3,239 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Get on the Space Data Network in five steps: set up your ID, tap into live space data, publish your own, run software modules, and sell on the built-in storefront.">
+  <meta name="description" content="Get on the Space Data Network: install a node, sign in, subscribe to live space data and publish your own. Step by step, with screenshots.">
   <meta name="theme-color" content="#000000">
-  <meta property="og:title" content="Onboarding - Space Data Network">
-  <meta property="og:description" content="Set up your ID, consume live space data, publish your own, and sell data products and modules on the open network.">
-  <meta property="og:type" content="website">
-  <title>Onboarding - Space Data Network</title>
+  <title>Get started &middot; Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
   <!-- SDN_CONSUMER_ASSETS_START -->
 <link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
 <script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
-<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
 <!-- SDN_CONSUMER_ASSETS_END -->
+  <link rel="stylesheet" href="site.css">
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #000000;
-      --text-primary: #F5F5F7;
-      --text-secondary: rgba(255, 255, 255, 0.8);
-      --text-muted: rgba(134, 134, 139, 1.0);
-      --ui-bg: rgba(42, 42, 45, 0.72);
-      --ui-hover: rgba(66, 66, 69, 0.72);
-      --ui-border: rgba(134, 134, 139, 0.3);
-      --ui-border-hover: rgba(134, 134, 139, 0.5);
-      --nav-bg: rgba(22, 22, 23, 0.95);
-      /* OWNER LAW 2026-07-27: "we do NOT load anything from a site." The
-         Inter / JetBrains Mono webfonts were deleted, not self-hosted: this is
-         a no-build Pages site, so self-hosting means committing binary blobs.
-         The system stacks below render the same intent with zero third
-         parties and zero bytes. */
-      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-      --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-      --radius: 14px;
-      --radius-sm: 10px;
-      --accent-cyan: #17ead9;
-      --accent-green: #38ef7d;
-      --accent-orange: #f5576c;
-      --accent-purple: #a78bfa;
-      --accent-indigo: #7e9bf5;
       --sdn-stack-footer-height: 40px;
       --sdn-stack-header-height: 52px;
+      --sdn-stack-header-brand-size: 15px;
+      --sdn-stack-header-link-size: 14px;
+      --sdn-stack-header-action-size: 13px;
+      --sdn-stack-header-mobile-link-size: 16px;
     }
-    html { scroll-behavior: smooth; }
-    body {
-      font-family: var(--font-sans);
-      background: var(--bg);
-      color: var(--text-primary);
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-      padding-bottom: var(--sdn-stack-footer-height, 40px);
+    .site-nav { height: var(--sdn-stack-header-height, 52px); }
+    .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
+
+    .intro { padding: 64px 0 24px; display: grid; gap: 18px; }
+    .toc { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; counter-reset: toc; }
+    .toc a { display: inline-block; text-decoration: none; font-size: 14px; color: var(--text-2); padding: 7px 14px; border: 1px solid var(--border); border-radius: 999px; background: rgba(255,255,255,.03); }
+    .toc a:hover { color: var(--text); border-color: var(--border-strong); }
+
+    .step { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.45fr); gap: 36px; align-items: center; padding: 44px 0; border-top: 1px solid var(--border); }
+    .step:first-of-type { border-top: 0; }
+    .step-text { display: grid; gap: 12px; align-content: start; }
+    .step-num { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 15px; color: #000; background: var(--accent); }
+    .step-text p { color: var(--text-2); }
+    .step-text ol { color: var(--text-2); padding-left: 20px; display: grid; gap: 4px; }
+    .step-text b { color: var(--text); font-weight: 600; }
+    .step-text .note { font-size: 14px; color: var(--muted); }
+    .shot { display: block; border-radius: 14px; overflow: hidden; border: 1px solid var(--border-strong); background: #f9fafb; box-shadow: 0 24px 60px rgba(0,0,0,.55); }
+    .shot img { width: 100%; height: auto; }
+    .shot.narrow { max-width: 560px; justify-self: center; }
+    figure { display: grid; gap: 10px; }
+    figcaption { font-size: 13px; color: var(--muted); text-align: center; }
+    @media (max-width: 860px) {
+      .step { grid-template-columns: 1fr; gap: 22px; }
     }
-    a { color: var(--text-primary); }
-    .page-video-bg {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      z-index: -2;
-      opacity: 0;
-      transition: opacity 1s ease;
-    }
-    .page-video-bg.loaded { opacity: 0.4; }
-    .page-video-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.35);
-      z-index: -1;
-    }
-    .top-nav {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      background: var(--nav-bg);
-      backdrop-filter: blur(20px);
-      border-bottom: 1px solid var(--ui-border);
-    }
-    .top-nav-inner {
-      max-width: 980px;
-      margin: 0 auto;
-      padding: 14px 22px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }
-    .top-nav a { text-decoration: none; font-size: 14px; color: var(--text-secondary); }
-    .top-nav a:hover { color: var(--text-primary); }
-    .top-nav .brand { font-weight: 600; color: var(--text-primary); font-size: 15px; }
-    .container { max-width: 980px; margin: 0 auto; padding: 0 22px; }
-    header.page-head { padding: 84px 0 30px; text-align: center; }
-    .page-head h1 {
-      font-family: var(--font-sans);
-      font-size: clamp(38px, 6vw, 60px);
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--text-primary);
-    }
-    .page-head p.lede {
-      margin: 18px auto 0;
-      max-width: 660px;
-      font-size: 18px;
-      color: var(--text-secondary);
-    }
-    .steps-overview {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 10px;
-      margin: 34px 0 10px;
-    }
-    .steps-overview a {
-      text-decoration: none;
-      font-size: 13px;
-      color: var(--text-secondary);
-      border: 1px solid var(--ui-border);
-      border-radius: 6px;
-      padding: 8px 16px;
-      background: var(--ui-bg);
-    }
-    .steps-overview a:hover { border-color: #d8a94e; color: #d8a94e; }
-    section.step { padding: 34px 0; scroll-margin-top: 80px; }
-    .step-card {
-      position: relative;
-      padding: 34px;
-      border-radius: 22px;
-      border: 1px solid rgba(255, 255, 255, 0.10);
-      background:
-        linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.05) 0%, rgba(0, 0, 0, 0) 55%),
-        rgba(14, 16, 22, 0.55);
-      backdrop-filter: blur(34px) saturate(170%);
-      -webkit-backdrop-filter: blur(34px) saturate(170%);
-      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    }
-    section.step, .share-qr {
-      --step-accent: #d8a94e;
-      --step-accent-dark: #6e5320;
-      --step-tint: 216, 169, 78;
-    }
-    .step-head {
-      display: flex;
-      align-items: center;
-      margin-bottom: 20px;
-    }
-    .step-card .step-head h2 {
-      font-family: var(--font-sans);
-      font-size: 31px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      margin: 0 0 0 -32px;
-      padding: 6px 30px 6px 50px;
-      color: var(--text-primary);
-      background: linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.16) 0%, rgba(var(--step-tint, 134, 134, 139), 0.06) 60%, rgba(9, 13, 21, 0.5) 100%);
-      border-radius: 0 12px 12px 0;
-      line-height: 1.2;
-      align-self: center;
-    }
-    .step-card .step-head h2:only-child {
-      margin-left: 0;
-      padding-left: 24px;
-    }
-    .step-num {
-      position: relative;
-      z-index: 1;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex: 0 0 auto;
-      width: 64px; height: 64px;
-      border-radius: 50%;
-      background: linear-gradient(180deg, var(--step-accent, #86868b) 0%, var(--step-accent-dark, #3a3a3e) 100%);
-      font-family: var(--font-sans);
-      font-size: 34px;
-      font-weight: 700;
-      line-height: 1;
-      color: #fff;
-      filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55));
-    }
-    .step-num::after {
-      content: '';
-      position: absolute;
-      inset: 5px;
-      border-radius: 50%;
-      background: linear-gradient(180deg, rgba(18, 20, 27, 0.94) 0%, rgba(32, 35, 45, 0.94) 100%);
-    }
-    .step-num b {
-      position: relative;
-      z-index: 1;
-      font-weight: 800;
-      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
-    }
-    .step-card h2 { font-size: 26px; font-weight: 600; margin-bottom: 10px; color: var(--text-primary); }
-    .step-card p { color: var(--text-secondary); font-size: 15px; margin-bottom: 12px; }
-    .step-card ul { margin: 0 0 12px 20px; color: var(--text-secondary); font-size: 15px; }
-    .step-card li { margin-bottom: 6px; }
-    .code-block {
-      background: #000;
-      border: 1px solid var(--ui-border);
-      border-radius: var(--radius-sm);
-      margin: 14px 0;
-      overflow: hidden;
-    }
-    .code-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 14px;
-      border-bottom: 1px solid var(--ui-border);
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-    .code-copy {
-      background: none;
-      border: 1px solid var(--ui-border);
-      border-radius: 8px;
-      color: var(--text-secondary);
-      font-size: 12px;
-      padding: 3px 10px;
-      cursor: pointer;
-      font-family: var(--font-sans);
-    }
-    .code-copy:hover { border-color: var(--ui-border-hover); color: var(--text-primary); }
-    .code-block pre {
-      padding: 14px 16px;
-      overflow-x: auto;
-      font-family: var(--font-mono);
-      font-size: 13px;
-      line-height: 1.7;
-      color: var(--text-primary);
-    }
-    .code-block pre code { background: none; padding: 0; border-radius: 0; }
-    .code-comment { color: var(--text-muted); }
-    .note {
-      border-left: 2px solid var(--step-accent, var(--ui-border-hover));
-      padding: 10px 16px;
-      margin: 14px 0;
-      font-size: 14px;
-      color: var(--text-secondary);
-      background: rgba(255, 255, 255, 0.03);
-      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    }
-    .spec-table { width: 100%; border-collapse: collapse; margin: 6px 0 16px; font-size: 14.5px; color: var(--text-secondary); }
-    .spec-table th, .spec-table td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--ui-border); }
-    .spec-table th { color: var(--text-primary); font-weight: 600; white-space: nowrap; }
-    .spec-table td code { white-space: nowrap; }
-    .spec-table-wrap { overflow-x: auto; }
-    .spec-link { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 14px; font-size: 14px; color: var(--text-secondary); }
-    .spec-link code { font-size: 13px; }
-    .spec-link button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--ui-border); background: transparent; color: var(--text-primary); cursor: pointer; }
-    .spec-link button:hover { border-color: #d8a94e; color: #d8a94e; }
-    .spec-h3 { font-size: 17px; font-weight: 600; color: var(--text-primary); margin: 18px 0 8px; }
-    details.tech {
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 14px;
-      margin: 14px 0;
-      background: rgba(0, 0, 0, 0.3);
-    }
-    details.tech summary {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 16px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text-secondary);
-      list-style: none;
-      user-select: none;
-    }
-    details.tech summary::-webkit-details-marker { display: none; }
-    details.tech summary::before {
-      content: 'i';
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex: 0 0 auto;
-      width: 18px; height: 18px;
-      border: 1px solid var(--ui-border-hover);
-      border-radius: 50%;
-      font-size: 11px;
-      font-style: italic;
-      font-family: Georgia, serif;
-      color: var(--text-muted);
-    }
-    details.tech summary::after {
-      content: '';
-      margin-left: auto;
-      width: 8px; height: 8px;
-      border-right: 1.5px solid var(--text-muted);
-      border-bottom: 1.5px solid var(--text-muted);
-      transform: rotate(45deg);
-      transition: transform 0.15s ease;
-    }
-    details.tech[open] summary::after { transform: rotate(225deg); }
-    details.tech summary:hover { color: var(--text-primary); }
-    details.tech .tech-body { padding: 4px 16px 14px; border-top: 1px solid var(--ui-border); }
-    details.tech .tech-body p { font-size: 14px; color: var(--text-secondary); margin: 10px 0; }
-    details.tech .tech-body ul { font-size: 14px; margin: 10px 0 10px 20px; }
-    table.schema-map {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 14px 0;
-      font-size: 14px;
-    }
-    table.schema-map th, table.schema-map td {
-      text-align: left;
-      padding: 8px 12px;
-      border-bottom: 1px solid var(--ui-border);
-      color: var(--text-secondary);
-    }
-    table.schema-map th { color: var(--text-muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
-    table.schema-map code, .step-card code {
-      font-family: var(--font-mono);
-      font-size: 13px;
-      background: rgba(0, 0, 0, 0.55);
-      border-radius: 6px;
-      padding: 1px 6px;
-      color: var(--text-primary);
-    }
-    .module-diagram {
-      margin: 18px 0;
-      padding: 10px 0;
-      overflow-x: auto;
-    }
-    .module-diagram svg {
-      display: block;
-      width: 100%;
-      min-width: 640px;
-      height: auto;
-    }
-    .identity-figure {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 20px;
-      align-items: stretch;
-      margin: 14px 0;
-    }
-    .qr-col {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 12px;
-      align-self: center;
-    }
-    .qr-tile {
-      --acc: var(--step-accent, #d8a94e);
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: fit-content;
-      padding: 26px;
-      background:
-        linear-gradient(var(--acc), var(--acc)) top 8px left 8px / 26px 2px no-repeat,
-        linear-gradient(var(--acc), var(--acc)) top 8px left 8px / 2px 26px no-repeat,
-        linear-gradient(var(--acc), var(--acc)) top 8px right 8px / 26px 2px no-repeat,
-        linear-gradient(var(--acc), var(--acc)) top 8px right 8px / 2px 26px no-repeat,
-        linear-gradient(var(--acc), var(--acc)) bottom 8px left 8px / 26px 2px no-repeat,
-        linear-gradient(var(--acc), var(--acc)) bottom 8px left 8px / 2px 26px no-repeat,
-        linear-gradient(var(--acc), var(--acc)) bottom 8px right 8px / 26px 2px no-repeat,
-        linear-gradient(var(--acc), var(--acc)) bottom 8px right 8px / 2px 26px no-repeat,
-        linear-gradient(180deg, rgba(16, 19, 27, 0.72) 0%, rgba(8, 10, 16, 0.72) 100%);
-      border: 1px solid rgba(255, 255, 255, 0.10);
-      border-radius: 16px;
-      backdrop-filter: blur(24px) saturate(160%);
-      -webkit-backdrop-filter: blur(24px) saturate(160%);
-    }
-    .qr-plate {
-      background: #fff;
-      padding: 12px;
-      border-radius: 12px;
-    }
-    .qr-plate img { display: block; width: 168px; height: 168px; }
-    .qr-caption {
-      font-family: var(--font-sans);
-      color: var(--step-accent, #d8a94e);
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      text-align: center;
-      margin: 0;
-      line-height: 1.4;
-    }
-    .next-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 16px;
-      margin-top: 14px;
-    }
-    .next-card {
-      display: block;
-      text-decoration: none;
-      background: rgba(0, 0, 0, 0.4);
-      border: 1px solid var(--ui-border);
-      border-radius: var(--radius-sm);
-      padding: 20px;
-    }
-    .next-card:hover { border-color: var(--ui-border-hover); background: var(--ui-hover); }
-    .next-card h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text-primary); }
-    .next-card p { font-size: 13px; color: var(--text-muted); margin: 0; }
-    .share-qr {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 12px;
-      padding: 40px 0 6px;
-      text-align: center;
-    }
-    .share-qr { --step-accent: var(--accent-cyan); }
-    .share-qr p { font-size: 14px; color: var(--text-muted); margin: 0; }
-    .contact-bar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      margin: 34px auto 0;
-    }
-    .contact-bar .contact-label {
-      font-family: var(--font-sans);
-      font-size: 14px;
-      font-weight: 700;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      margin-right: 6px;
-    }
-    .contact-bar a {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 14px;
-      border: 1px solid var(--ui-border);
-      background: rgba(12, 15, 22, 0.75);
-      color: var(--text-secondary);
-      font-size: 13px;
-      text-decoration: none;
-      border-radius: 10px;
-      transition: color 0.15s ease, background 0.15s ease;
-    }
-    .contact-bar a:hover { color: #d8a94e; background: rgba(216, 169, 78, 0.08); }
-    .contact-bar a svg { width: 15px; height: 15px; flex: 0 0 auto; }
-    footer {
-      border-top: 1px solid var(--ui-border);
-      margin-top: 40px;
-      padding: 30px 0 40px;
-      text-align: center;
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-    footer a { color: var(--text-secondary); text-decoration: none; margin: 0 10px; }
-    footer a:hover { color: var(--text-primary); }
-    @media (max-width: 734px) {
-      .step-card { padding: 24px 18px; border-radius: 18px; }
-      .step-card .step-head h2 { font-size: 22px; padding: 5px 20px 5px 44px; }
-      header.page-head { padding: 56px 0 20px; }
-      .identity-figure { grid-template-columns: 1fr; }
-      .qr-tile { padding: 14px; }
-    }
+    .next { display: grid; gap: 14px; }
   </style>
 </head>
 <body>
   <sdn-stack-nav active="sdn"></sdn-stack-nav>
-  <video class="page-video-bg" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
-  <div class="page-video-overlay"></div>
+  <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="bg-shade"></div>
 
-  <nav class="top-nav">
-    <div class="top-nav-inner">
-      <a class="brand" href="index.html">Space Data Network</a>
-      <div>
-        <a href="index.html#features">Features</a>&nbsp;&nbsp;
-        <a href="docs.html">Docs</a>&nbsp;&nbsp;
-        <a href="index.html#downloads">Downloads</a>&nbsp;&nbsp;
-        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">GitHub</a>
-      </div>
-    </div>
-  </nav>
-
-  <header class="page-head">
-    <div class="container">
-      <h1>Onboarding</h1>
-      <p class="lede">Get on the Space Data Network in five steps: set up your ID, tap into live space data, publish your own, run software modules, and sell on the built-in storefront. Step 6 is the one-page spec sheet for your IT and security review.</p>
-      <div class="steps-overview">
-        <a href="#step-start">1 &middot; Start</a>
-        <a href="#step-consume">2 &middot; Consume Data</a>
-        <a href="#step-publish">3 &middot; Publish Data</a>
-        <a href="#step-modules">4 &middot; Modules</a>
-        <a href="#step-storefront">5 &middot; Storefront</a>
-        <a href="#security-review">6 &middot; Spec sheet</a>
-      </div>
+  <header class="site-nav">
+    <div class="inner">
+      <a href="index.html" class="brand">
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4" aria-hidden="true"><circle cx="50" cy="50" r="45"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(60 50 50)"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/><circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/></svg>
+        Space Data Network
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="onboarding.html" aria-current="page">Get started</a>
+        <a href="index.html#whitepaper">Whitepaper</a>
+        <a href="index.html#download">Download</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="index.html#stack">Stack</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <details class="nav-menu">
+        <summary>Menu</summary>
+        <div class="menu-panel">
+          <a href="index.html">Home</a>
+          <a href="index.html#whitepaper">Whitepaper</a>
+          <a href="index.html#download">Download</a>
+          <a href="server-overview.html">Docs</a>
+          <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </details>
     </div>
   </header>
 
-  <main class="container">
-
-    <section class="step" id="step-start">
-      <div class="step-card">
-        <div class="step-head">
-          <span class="step-num"><b>1</b></span>
-          <h2>Set up your ID and start your node</h2>
-        </div>
-        <p>Pick one of three ways to run a node. Each gives you the same node, the same dashboard and the same secure ID.</p>
-        <div class="code-block">
-          <div class="code-header"><span>Desktop app (easiest)</span></div>
-          <pre><code>1. Download the app for your computer from the <a href="index.html#downloads">downloads</a> section.
-2. Open it. It starts a node on your machine and shows the dashboard.
-3. The first run creates your secure ID; the menu item "Show recovery phrase" reveals it once.</code></pre>
-        </div>
-        <div class="code-block">
-          <div class="code-header"><span>Terminal (macOS / Linux)</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>curl -fsSL https://spacedatanetwork.org/install.sh | bash
-spacedatanetwork start    <span class="code-comment"># creates your ID on first start, runs in the background</span>
-spacedatanetwork status   <span class="code-comment"># confirm it is up</span>
-spacedatanetwork open     <span class="code-comment"># opens the dashboard at http://127.0.0.1:5001/</span></code></pre>
-        </div>
-        <div class="code-block">
-          <div class="code-header"><span>Terminal (Windows PowerShell)</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>irm https://spacedatanetwork.org/install.ps1 | iex
-spacedatanetwork start
-spacedatanetwork open</code></pre>
-        </div>
-        <div class="code-block">
-          <div class="code-header"><span>Docker</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>docker run -d --name sdn --hostname sdn --restart unless-stopped \
-  -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:v1.0.5-beta.70
-<span class="code-comment"># dashboard: http://127.0.0.1:5001/   identity and data live in the sdn-data volume</span></code></pre>
-        </div>
-        <p>To reveal your recovery phrase from a terminal node: <code>spacedatanetwork show-identity --show-mnemonic</code> (in Docker: <code>docker exec sdn /app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic</code>). Write it down and keep it offline.</p>
-        <p>That's it &mdash; you're on the network. The first start created your <strong>secure ID</strong> automatically. There's no account to register and no password to remember. Your ID acts like a tamper-proof signature: everything you share carries it, so anyone can confirm it really came from you and wasn't changed along the way.</p>
-        <p>The one thing to protect is your <strong>recovery phrase</strong> &mdash; a short list of words the app keeps encrypted on your machine. It can rebuild your ID on a new computer, and anyone who has it can act as you. Back it up somewhere safe, like you would a passport.</p>
-        <p>Next, tell the network who you are. A short wizard fills in your public listing &mdash; organization name, contact info, nothing sensitive:</p>
-        <div class="code-block">
-          <div class="code-header"><span>Terminal</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code><span class="code-comment"># fill in your public listing</span>
-spacedatanetwork identity wizard
-
-<span class="code-comment"># share it as a contact card or QR code</span>
-spacedatanetwork identity export --format text
-spacedatanetwork identity export --format qrcode</code></pre>
-        </div>
-        <p><strong>Why bother? What running a node gets you:</strong></p>
-        <ul>
-          <li><strong>People can find you.</strong> Your listing shows up when anyone on the network searches for organizations or data like yours &mdash; no marketing, no sales calls, no integration contracts.</li>
-          <li><strong>You get the data, too.</strong> A running node can tune into every open feed on the network &mdash; satellite positions, collision warnings, space weather (that's step 2).</li>
-          <li><strong>Everything you share builds your reputation.</strong> Each record you publish is stamped with your ID, so your track record is provable, portable, and yours alone.</li>
-          <li><strong>Your contact card carries proof.</strong> Export your listing as a normal contact card or QR code. Scan it at a conference and the other side gets your details <em>plus</em> the built-in proof that the card is genuine.</li>
-        </ul>
-        <div class="identity-figure">
-          <div class="code-block" style="margin: 0;">
-            <div class="code-header"><span>Example contact card (vCard) &mdash; long values shortened</span></div>
-            <pre><code>BEGIN:VCARD
-VERSION:3.0
-N:Smith;Jane;;Dr.;
-FN:Dr. Jane Smith
-ORG:Example Space Agency
-TITLE:Chief Scientist
-EMAIL:jane@example-agency.org
-EMAIL;TYPE=INTERNET;TYPE=peerid:
- 12D3KooWQmVz&hellip;@peerid.spacedatanetwork.org
-EMAIL;TYPE=INTERNET;TYPE=xpub:
- xpub6CExampLe&hellip;@xpub.spacedatanetwork.org
-END:VCARD</code></pre>
-          </div>
-          <div class="qr-col">
-          <div class="qr-tile">
-            <div class="qr-plate"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4NSIgaGVpZ2h0PSI4NSIgY2xhc3M9InNlZ25vIj48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMCAwaDg1djg1aC04NXoiLz48cGF0aCBjbGFzcz0icXJsaW5lIiBzdHJva2U9IiMwMDAiIGQ9Ik0yIDIuNWg3bTEgMGgybTEgMGgxbTEgMGgybTIgMGgxbTIgMGgxbTUgMGgzbTEgMGgybTIgMGgybTIgMGgzbTEgMGgybTIgMGgzbTIgMGgxbTEgMGgxbTIgMGgybTEgMGg0bTIgMGgybTEgMGgybTQgMGg3bS04MSAxaDFtNSAwaDFtMSAwaDFtMyAwaDFtNCAwaDFtMyAwaDFtMSAwaDFtMiAwaDFtMSAwaDNtMyAwaDFtMSAwaDJtMSAwaDFtNCAwaDFtMSAwaDFtMiAwaDFtMiAwaDVtMSAwaDRtMiAwaDFtMiAwaDZtMSAwaDFtNSAwaDFtLTgxIDFoMW0xIDBoM20xIDBoMW0xIDBoMW0yIDBoM20xIDBoMW0xIDBoNG0xIDBoNG0zIDBoM20zIDBoMW0yIDBoMm0xIDBoNG0xIDBoMW0yIDBoMm0xIDBoNG0yIDBoM201IDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoM20xIDBoMW0tODEgMWgxbTEgMGgzbTEgMGgxbTUgMGgybTEgMGgzbTEgMGgxbTMgMGgxbTEgMGgzbTEgMGgzbTMgMGgybTIgMGgybTEgMGgzbTIgMGgybTEgMGgxbTIgMGgxbTMgMGgxbTMgMGgxbTIgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgzbTEgMGgxbS04MSAxaDFtMSAwaDNtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDNtMSAwaDdtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDRtMSAwaDFtMiAwaDdtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDRtOCAwaDFtMSAwaDNtMSAwaDFtLTgxIDFoMW01IDBoMW0yIDBoMW0xIDBoMW0xIDBoMm0xIDBoM20yIDBoNG0zIDBoMW0xIDBoMW0xIDBoMW0xIDBoM20yIDBoMW0xIDBoNG0xIDBoM20zIDBoMm0zIDBoMW0yIDBoM20xIDBoMW0zIDBoMm0xIDBoMW0yIDBoMW01IDBoMW0tODEgMWg3bTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGg3bS03MSAxaDFtMSAwaDJtMyAwaDFtNiAwaDFtMyAwaDZtMSAwaDFtMiAwaDFtNCAwaDFtMSAwaDJtMSAwaDFtMyAwaDFtMSAwaDFtMyAwaDFtMiAwaDVtMyAwaDFtLTcwIDFoMW0yIDBoNm0xIDBoMW0xIDBoNW0xIDBoMW0xIDBoM20xIDBoN20xIDBoMW0xIDBoMW0xIDBoMW0zIDBoMm01IDBoNm0xIDBoM20xIDBoMW0zIDBoMm0xIDBoMW0xIDBoMW0yIDBoMW0yIDBoMW0yIDBoMW0xIDBoM20tODEgMWgzbTEgMGgybTEgMGgybTEgMGg1bTExIDBoNG0xIDBoMW0xIDBoMm0xIDBoN20yIDBoMm0yIDBoMW01IDBoMm0xIDBoMW0xIDBoMW0xIDBoMW0zIDBoMW01IDBoMm0xIDBoNG0xIDBoMW0tNzkgMWgybTIgMGgybTQgMGgxbTEgMGgybTUgMGgybTEgMGgxbTMgMGgybTIgMGgxbTUgMGgxbTMgMGgxbTEgMGgybTIgMGgxbTIgMGgxbTExIDBoMW0yIDBoMW01IDBoM20xIDBoMW0xIDBoM20tODEgMWg0bTEgMGgxbTEgMGgxbTEgMGgxbTQgMGgxbTMgMGgxbTEgMGg0bTMgMGgzbTQgMGgybTEgMGgybTEgMGgxbTIgMGgxbTEgMGgzbTEgMGgybTMgMGgzbTEgMGgxbTYgMGgxbTEgMGgxbTQgMGgxbTIgMGgybTEgMGgxbS03OSAxaDFtMSAwaDJtMiAwaDJtMyAwaDRtMSAwaDNtMyAwaDEwbTQgMGgxbTEgMGgxbTEgMGgxbTMgMGg4bTEgMGg1bTEgMGgzbTEgMGgybTEgMGg1bTIgMGgybTIgMGgxbTEgMGgybS04MSAxaDFtMSAwaDRtMiAwaDFtMSAwaDFtMyAwaDFtMyAwaDFtMSAwaDZtMiAwaDNtMiAwaDFtMSAwaDRtMSAwaDFtMSAwaDFtMSAwaDFtMyAwaDJtNSAwaDJtMSAwaDFtMSAwaDNtNCAwaDFtMiAwaDFtNiAwaDRtLTgwIDFoMW0yIDBoN20yIDBoMW0yIDBoMm0xIDBoMm0yIDBoMm02IDBoM20yIDBoMm0xIDBoMm00IDBoMW0xIDBoM20xIDBoM200IDBoMW0xIDBoNG0xIDBoMW0xIDBoMm0yIDBoMm0yIDBoNG0tNzkgMWgxbTMgMGgxbTIgMGgzbTIgMGg4bTQgMGgxbTMgMGgxbTUgMGg1bTEgMGgybTEgMGgxbTEgMGg0bTEgMGgxbTIgMGgzbTEgMGgxbTEgMGgxbTEgMGgzbTEgMGgxbTEgMGgxbTEgMGgybTEgMGgybTEgMGg0bTEgMGgxbS04MSAxaDFtMyAwaDFtMSAwaDJtMSAwaDJtMiAwaDFtMiAwaDFtMyAwaDFtMSAwaDNtNSAwaDRtMiAwaDNtNSAwaDJtMiAwaDFtMSAwaDNtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDFtMyAwaDJtMyAwaDFtMiAwaDFtMSAwaDJtLTc5IDFoMW0yIDBoMW0xIDBoMW0xIDBoM20xIDBoMW0xIDBoMW03IDBoMW0xIDBoM20yIDBoMW0yIDBoMm0xIDBoMm0yIDBoMW0xIDBoMm0xIDBoMm0xIDBoMm0yIDBoM20xIDBoMW0zIDBoMW0yIDBoMW0xIDBoMW0yIDBoMW0yIDBoMW0xIDBoMW0zIDBoMW0xIDBoMW0tNzcgMWg1bTEgMGgybTIgMGgxbTIgMGgxbTMgMGgzbTEgMGg0bTIgMGgxbTEgMGgybTIgMGgxbTMgMGgxbTEgMGgxbTEgMGgybTIgMGgxbTIgMGgzbTEgMGgybTIgMGgxbTQgMGgxbTIgMGgxbTMgMGgxbTIgMGgzbTEgMGgxbTEgMGgxbS04MSAxaDJtMiAwaDJtMSAwaDFtMSAwaDRtMiAwaDRtMSAwaDRtNSAwaDJtMiAwaDJtMSAwaDFtMSAwaDFtMyAwaDFtMiAwaDFtMSAwaDFtNCAwaDFtMSAwaDJtMiAwaDFtMyAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtLTgxIDFoMW0zIDBoMW0xIDBoMW0yIDBoMTNtMyAwaDFtNCAwaDJtMSAwaDRtMyAwaDJtNCAwaDFtMiAwaDFtNSAwaDFtMSAwaDJtNCAwaDFtMiAwaDJtMiAwaDFtMiAwaDFtMiAwaDFtMSAwaDNtLTgxIDFoMW0xIDBoMW01IDBoMm0yIDBoM20xIDBoMW0xIDBoMW0xIDBoM20zIDBoMW0yIDBoMm0zIDBoNW0yIDBoNm04IDBoMm0yIDBoMW0zIDBoMm0yIDBoMm0xIDBoMW0yIDBoMW0zIDBoMW0tNzggMWgybTEgMGgybTEgMGg3bTEgMGgzbTEgMGgxbTEgMGgzbTIgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTEgMGgybTIgMGgzbTQgMGgybTEgMGg1bTIgMGgybTEgMGg0bTEgMGgxbTIgMGgzbTEgMGgybTEgMGg0bTEgMGgzbS03NiAxaDFtMSAwaDFtMiAwaDFtMyAwaDFtMSAwaDJtMiAwaDFtMSAwaDJtMyAwaDhtMiAwaDFtMiAwaDFtNCAwaDJtMSAwaDJtMSAwaDNtNCAwaDFtNCAwaDFtMSAwaDFtMSAwaDFtMiAwaDNtMSAwaDZtLTgwIDFoMW0xIDBoMW0xIDBoNW0zIDBoMW0xIDBoMW0xIDBoM200IDBoNm0yIDBoNG0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMTJtMSAwaDFtMSAwaDJtMSAwaDJtMiAwaDJtMSAwaDltMSAwaDJtLTc5IDFoM20zIDBoMW0xIDBoNW0yIDBoMW00IDBoM20zIDBoMW0yIDBoMm0yIDBoMm0xIDBoMW0xIDBoNG0xIDBoMW0xIDBoMm0zIDBoMW0yIDBoMW0yIDBoMm0xIDBoMW0yIDBoMW0xIDBoMm0zIDBoMm0zIDBoMW0zIDBoMW0tODEgMWgxbTEgMGgzbTEgMGgxbTEgMGgxbTQgMGgybTIgMGg0bTIgMGgybTEgMGgxbTEgMGgxbTIgMGgxbTMgMGgxbTMgMGgxbTIgMGgzbTEgMGgzbTEgMGgxbTEgMGgybTUgMGgybTEgMGgybTEgMGgxbTEgMGgxbTQgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbS03NyAxaDFtMSAwaDFtMyAwaDFtNiAwaDFtNCAwaDFtMSAwaDFtMSAwaDFtMyAwaDJtNSAwaDJtMyAwaDFtMSAwaDFtMiAwaDFtMSAwaDJtMyAwaDFtMSAwaDJtMiAwaDFtNiAwaDNtMyAwaDJtMyAwaDFtMSAwaDFtMSAwaDFtLTgxIDFoMm0xIDBoN200IDBoMm0yIDBoMW00IDBoNm0yIDBoM20yIDBoNG0xIDBoMm0xIDBoM20xIDBoN20xIDBoNW0yIDBoMW0yIDBoMW0xIDBoMW0yIDBoNm0zIDBoMW0tODEgMWgxbTMgMGgybTEgMGgxbTMgMGgxbTMgMGgxbTEgMGgybTcgMGgybTEgMGgxbTEgMGg1bTEgMGgxbTQgMGgxbTEgMGg0bTQgMGgzbTQgMGgxbTIgMGg0bTEgMGgybTEgMGg0bTEgMGgxbTEgMGgybTEgMGgxbS04MSAxaDJtMiAwaDNtMiAwaDRtNCAwaDJtMSAwaDFtMiAwaDJtMiAwaDRtMSAwaDJtMSAwaDFtMSAwaDFtMyAwaDFtMSAwaDNtMSAwaDNtMSAwaDFtNCAwaDFtNSAwaDFtMSAwaDJtMiAwaDJtNCAwaDFtMSAwaDFtMyAwaDFtLTgxIDFoMm0xIDBoMW00IDBoOG03IDBoMW0yIDBoMW0xIDBoM20zIDBoMW0xIDBoMW0yIDBoMW0xIDBoMm0zIDBoMm0xIDBoMW0yIDBoMW02IDBoMW0xIDBoMW0yIDBoMm0yIDBoMm0xIDBoMm0xIDBoN20tNzcgMWgxbTEgMGgxbTcgMGgybTEgMGgxbTIgMGgzbTEgMGgxbTEgMGgxbTEgMGgzbTEgMGgxbTIgMGgybTMgMGgybTEgMGgxbTMgMGgxbTEgMGgxbTIgMGgxbTEgMGgybTQgMGgxbTIgMGgybTEgMGgybTMgMGgybTEgMGgxbTEgMGgybS03NiAxaDRtMiAwaDFtNSAwaDJtMSAwaDNtMSAwaDFtNCAwaDNtMiAwaDFtMSAwaDJtMSAwaDNtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMyAwaDFtNCAwaDJtMSAwaDFtMyAwaDNtMiAwaDJtMSAwaDNtMSAwaDRtLTc4IDFoMm0zIDBoMm0yIDBoM20zIDBoMW00IDBoMW0xIDBoM20yIDBoMW0yIDBoMW0xIDBoMW0zIDBoMW0xIDBoMW0xIDBoN20xIDBoMm0xIDBoMm0xIDBoM20yIDBoMm00IDBoMW0yIDBoMW0xIDBoMm0yIDBoMW0xIDBoMm0yIDBoMW0tODEgMWgxbTIgMGgxbTQgMGgzbTEgMGgzbTIgMGgybTEgMGg1bTIgMGgybTEgMGgxbTEgMGgzbTEgMGgybTIgMGgxbTEgMGgxbTMgMGgzbTYgMGgxbTEgMGgxbTcgMGgxbTEgMGgybTMgMGgybTQgMGgxbTEgMGgxbS04MSAxaDJtMyAwaDJtMSAwaDJtMiAwaDJtMSAwaDFtNSAwaDFtMiAwaDVtNCAwaDRtMSAwaDNtMSAwaDFtMSAwaDFtMSAwaDJtMiAwaDJtMSAwaDFtMSAwaDFtMyAwaDFtMyAwaDdtMiAwaDJtMiAwaDJtMSAwaDFtLTgwIDFoMW0xIDBoMm0xIDBoMW0xIDBoNW0zIDBoMW00IDBoNG0yIDBoMm0yIDBoMm0xIDBoMW0xIDBoMm0xIDBoMW0yIDBoM20xIDBoMW0yIDBoMm0xIDBoMW03IDBoMW0xIDBoMW01IDBoMW0yIDBoMW0xIDBoMm00IDBoMW0tNzUgMWgzbTMgMGgybTEgMGgxbTIgMGgzbTEgMGgxbTEgMGgxbTMgMGgzbTIgMGgxbTEgMGgxbTIgMGgxbTIgMGgybTEgMGgybTEgMGgxbTEgMGgybTEgMGgzbTEgMGgxbTEgMGgxbTMgMGgxbTEgMGgybTEgMGgxbTEgMGgybTMgMGgxbTEgMGgzbTEgMGgzbS04MSAxaDNtMiAwaDFtMSAwaDFtMSAwaDJtMSAwaDNtMSAwaDJtMyAwaDFtMSAwaDFtMyAwaDNtMyAwaDNtMiAwaDJtMiAwaDJtMSAwaDJtMyAwaDltMyAwaDFtMyAwaDFtMyAwaDVtMiAwaDRtLTgxIDFoM20yIDBoMm0xIDBoM20yIDBoMW0yIDBoMW0xIDBoM20xIDBoNm03IDBoM20xIDBoMW0yIDBoMW0xIDBoMW0yIDBoMW0xIDBoNG0zIDBoMW0xIDBoMm0zIDBoMW0xIDBoMW00IDBoM200IDBoMm0xIDBoMW0tODAgMWg1bTEgMGgxbTMgMGgybTIgMGgxbTIgMGgxbTIgMGg1bTIgMGgxbTIgMGg2bTQgMGgybTEgMGgxbTEgMGgzbTEgMGg2bTQgMGgxbTEgMGg1bTMgMGg4bTEgMGgybS04MSAxaDFtMiAwaDFtMSAwaDJtMiAwaDJtMiAwaDRtMiAwaDFtMSAwaDdtMiAwaDFtMiAwaDJtMSAwaDFtMiAwaDJtMyAwaDFtMyAwaDFtMiAwaDJtMSAwaDFtMSAwaDJtMSAwaDNtMyAwaDNtMSAwaDFtMyAwaDFtMSAwaDJtMyAwaDFtLTgxIDFoMW0xIDBoMW0xIDBoMW0yIDBoNm00IDBoM20yIDBoMm0xIDBoMW0zIDBoMW01IDBoMW0xIDBoMm0xIDBoMm0xIDBoMm0yIDBoMW0yIDBoMm03IDBoMW0xIDBoMW0xIDBoMm0xIDBoMW01IDBoMW0xIDBoMW0xIDBoNW0tODEgMWgybTMgMGgybTEgMGgxbTEgMGgybTEgMGgxbTIgMGgxbTQgMGgxbTEgMGgybTEgMGgxbTIgMGgxbTEgMGgxbTIgMGgxbTEgMGgxbTMgMGgzbTQgMGgzbTEgMGgxbTEgMGgzbTIgMGgxbTEgMGg0bTMgMGgzbTEgMGgybTMgMGgybTEgMGgxbS03OCAxaDFtMiAwaDFtMSAwaDFtMSAwaDJtNiAwaDJtMSAwaDJtMSAwaDFtMSAwaDJtMiAwaDJtMyAwaDNtMSAwaDNtMSAwaDFtMSAwaDNtMSAwaDFtMiAwaDFtMyAwaDJtMSAwaDNtNSAwaDFtMSAwaDFtMiAwaDJtNCAwaDJtLTc5IDFoNG0xIDBoMm0xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMW0xIDBoMW0yIDBoMm0yIDBoMW0xIDBoMm00IDBoMW00IDBoM20xIDBoMm0xIDBoMm0xIDBoMW0zIDBoMm01IDBoMm0xIDBoMW0xIDBoMm02IDBoMW0xIDBoNG0xIDBoM20tNzggMWgzbTEgMGgybTIgMGgybTIgMGgybTEgMGgybTIgMGgybTMgMGgxbTQgMGgxbTIgMGgzbTIgMGgxbTEgMGg2bTYgMGgybTEgMGgybTIgMGgzbTIgMGg1bTEgMGgybTEgMGg2bS04MCAxaDFtMiAwaDVtNyAwaDRtMSAwaDFtMiAwaDVtMiAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDJtMiAwaDNtMSAwaDVtMiAwaDFtMyAwaDFtMyAwaDJtMSAwaDJtMiAwaDFtMSAwaDVtMyAwaDFtLTgxIDFoMm0yIDBoMW0zIDBoMW0yIDBoNG0xIDBoMW00IDBoNG0zIDBoMW0yIDBoM20xIDBoNG0xIDBoM20yIDBoMW0xIDBoMm0zIDBoMW0xIDBoMW0xIDBoMW00IDBoMm00IDBoMm0xIDBoMW0xIDBoMW0zIDBoMm0yIDBoMW0tODEgMWgzbTEgMGgxbTEgMGgxbTEgMGg0bTMgMGg1bTIgMGgzbTEgMGgxbTEgMGgzbTMgMGgxbTMgMGgybTIgMGgxbTEgMGgzbTEgMGgxbTEgMGgxbTEgMGgybTEgMGgybTEgMGgxbTQgMGgxbTIgMGg0bTIgMGgxbTEgMGgxbTEgMGgxbS03NiAxaDFtMiAwaDFtMyAwaDFtNSAwaDFtMiAwaDJtMyAwaDNtMyAwaDFtMiAwaDNtMSAwaDJtMiAwaDFtMSAwaDFtNCAwaDNtMyAwaDFtMSAwaDJtMSAwaDNtMSAwaDFtMyAwaDJtMyAwaDFtMSAwaDFtMyAwaDVtLTc5IDFoMW0xIDBoNW0yIDBoMW0zIDBoMW0xIDBoMm0yIDBoMW0xIDBoNm0xIDBoM20zIDBoMW02IDBoM20xIDBoN20yIDBoMW0yIDBoMm0xIDBoNW0zIDBoMW0xIDBoNm0tNzcgMWgxbTEgMGgxbTQgMGgybTEgMGgxbTMgMGgzbTEgMGgxbTQgMGg1bTIgMGgxbTEgMGgybTIgMGgxbTEgMGgybTEgMGgxbTIgMGgybTEgMGgxbTMgMGgybTEgMGgxbTIgMGgzbTEgMGgxbTEgMGgybTIgMGgxbTMgMGgxbTEgMGg2bS04MCAxaDFtNCAwaDJtMSAwaDFtMSAwaDNtMSAwaDFtMiAwaDJtMSAwaDFtMiAwaDFtNCAwaDFtMSAwaDFtMiAwaDFtMiAwaDNtMSAwaDNtMSAwaDFtMSAwaDFtMiAwaDJtNiAwaDFtMiAwaDJtMiAwaDVtMiAwaDRtMiAwaDFtMiAwaDFtLTgwIDFoMm0yIDBoMW0xIDBoMW0zIDBoMm02IDBoMW0xIDBoMm0yIDBoMW0xIDBoMW0xIDBoMW0xIDBoNG0xIDBoMm0xIDBoMW0yIDBoM20xIDBoM20xIDBoMW0zIDBoMW00IDBoMW0xIDBoMW0xIDBoMW0yIDBoMW00IDBoMW0xIDBoNG0xIDBoMm0tODAgMWgybTIgMGgxbTEgMGgybTMgMGgxbTIgMGgxbTcgMGg2bTIgMGgybTEgMGg1bTIgMGgxbTQgMGgzbTEgMGgzbTMgMGgybTEgMGgxbTQgMGgybTEgMGg3bTIgMGgybS03NyAxaDFtMiAwaDNtMSAwaDNtMiAwaDFtMSAwaDJtMyAwaDFtMSAwaDFtMiAwaDFtMiAwaDFtMiAwaDFtMSAwaDNtMiAwaDJtMiAwaDJtMSAwaDFtMSAwaDJtMSAwaDFtMiAwaDFtMyAwaDFtMSAwaDFtMSAwaDFtOSAwaDJtMyAwaDJtMSAwaDNtLTgwIDFoMm0xIDBoMW0xIDBoMm00IDBoMW0xIDBoMm0yIDBoM201IDBoNW0yIDBoMm01IDBoM20xIDBoMm0xIDBoMW0zIDBoM200IDBoMm0xIDBoMW0xIDBoMm01IDBoMm01IDBoMW0xIDBoMm0tODEgMWgybTcgMGgybTEgMGg0bTEgMGgzbTIgMGgybTEgMGgybTIgMGgybTEgMGgxbTIgMGg0bTEgMGgxbTEgMGgxbTEgMGgybTIgMGgzbTMgMGg2bTEgMGg3bTEgMGg1bTEgMGgybTEgMGgxbS03OCAxaDJtMSAwaDNtNSAwaDJtMSAwaDJtMSAwaDFtMyAwaDFtMSAwaDFtMiAwaDFtNCAwaDJtMiAwaDFtMSAwaDVtMSAwaDJtMiAwaDRtMSAwaDVtMSAwaDFtMyAwaDJtMSAwaDdtMSAwaDFtMiAwaDJtMSAwaDFtLTgxIDFoMW0yIDBoM20yIDBoMW0xIDBoMW00IDBoM20xIDBoMW0xIDBoNW0zIDBoNW0xIDBoMm0xIDBoMm0yIDBoNG0yIDBoMW0xIDBoMm0yIDBoMW0zIDBoMm0xIDBoMW0yIDBoMW0xIDBoMm0yIDBoMm0xIDBoM20xIDBoMW0xIDBoMW0tODAgMWgxbTQgMGgzbTMgMGgxbTIgMGgxbTEgMGg1bTEgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTIgMGgybTQgMGgxbTQgMGgxbTEgMGgybTEgMGg0bTEgMGgxbTEgMGgybTEgMGgzbTIgMGgxbTQgMGgybTEgMGgxbTEgMGgxbS03NyAxaDJtNCAwaDFtNSAwaDFtMSAwaDNtMSAwaDNtNCAwaDNtMSAwaDNtNSAwaDJtNCAwaDFtMyAwaDFtMyAwaDJtMiAwaDFtMiAwaDJtMSAwaDJtMSAwaDNtMiAwaDFtMyAwaDJtMiAwaDFtLTc5IDFoMW0xIDBoOG0yIDBoM20xIDBoM20xIDBoMW0xIDBoN20xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMW0yIDBoMW0xIDBoMW0yIDBoNG0xIDBoMW00IDBoM20yIDBoNW0xIDBoMm0xIDBoNG0xIDBoMm0tNzYgMWgxbTIgMGgxbTEgMGgxbTEgMGg3bTEgMGgxbTMgMGgybTEgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTEgMGgybTEgMGgybTEgMGgxbTIgMGgybTEgMGgybTUgMGg1bTEgMGgzbTIgMGgxbTEgMGgxbTIgMGgxbTEgMGgybTIgMGg0bTIgMGgxbS04MSAxaDFtMSAwaDNtMSAwaDJtNCAwaDFtNCAwaDNtOCAwaDVtMSAwaDVtMSAwaDNtMyAwaDJtMSAwaDFtMiAwaDFtMiAwaDJtMyAwaDFtMiAwaDJtMyAwaDFtMiAwaDJtNiAwaDJtLTc4IDFoMW0xIDBoMW0xIDBoM20yIDBoMW0xIDBoMW0yIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0yIDBoM200IDBoMW0yIDBoMW0yIDBoMm0xIDBoNW0zIDBoMW0xIDBoMW03IDBoMW0zIDBoMW0yIDBoMW0zIDBoMW0zIDBoMm0xIDBoMW0tODEgMWgzbTEgMGg1bTIgMGgzbTEgMGgybTMgMGgxbTEgMGgxbTIgMGgxbTQgMGgxbTUgMGgybTIgMGgzbTQgMGgxbTEgMGgxbTEgMGgxbTMgMGgybTEgMGgxbTEgMGg0bTMgMGgybTYgMGgybTEgMGgxbS03OSAxaDFtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtNCAwaDJtMSAwaDJtMiAwaDNtMSAwaDNtMyAwaDltMSAwaDFtMyAwaDFtMiAwaDJtMSAwaDFtNyAwaDFtMyAwaDJtMyAwaDJtMSAwaDJtLTc5IDFoM20yIDBoM20zIDBoN20xIDBoMW0xIDBoN20xIDBoMW02IDBoMW0zIDBoMW0yIDBoNG0yIDBoMW0xIDBoMW0zIDBoMW0yIDBoM20zIDBoMW0zIDBoNm0yIDBoNG0tODAgMWgxbTMgMGgxbTMgMGgxbTIgMGgxbTIgMGgzbTIgMGgzbTIgMGgxbTYgMGgzbTEgMGgxbTMgMGgxbTQgMGgxbTIgMGgybTMgMGgybTEgMGgxbTIgMGgxbTEgMGgybTEgMGgxbTIgMGgybTEgMGgxbTEgMGgybTEgMGgxbTIgMGgybS03OSAxaDNtMiAwaDJtNCAwaDNtMyAwaDFtMiAwaDltMiAwaDNtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDJtMiAwaDEwbTEgMGgybTEgMGgybTEgMGg1bTEgMGg3bTEgMGgxbS03MiAxaDFtMSAwaDNtMSAwaDNtMSAwaDFtMiAwaDFtMSAwaDJtMyAwaDFtMSAwaDFtMSAwaDJtMSAwaDJtMSAwaDJtMiAwaDFtMSAwaDJtMiAwaDFtMyAwaDFtMiAwaDJtMiAwaDNtMiAwaDFtMSAwaDJtNCAwaDFtMyAwaDNtLTc5IDFoN20xIDBoM20xIDBoMm0zIDBoMW0yIDBoMW0yIDBoMm0xIDBoMW0xIDBoMW0yIDBoMW0yIDBoMm0xIDBoMW0xIDBoMm0xIDBoNG0xIDBoMm0xIDBoMW0xIDBoMm0xIDBoMW0zIDBoMW0yIDBoMW0xIDBoMm0xIDBoMW0yIDBoM20xIDBoMW0xIDBoNG0tODAgMWgxbTUgMGgxbTEgMGgzbTEgMGgxbTMgMGgzbTEgMGgxbTIgMGgybTMgMGgxbTEgMGgxbTEgMGgxbTMgMGgxbTEgMGgxbTEgMGgxbTIgMGgzbTEgMGgybTMgMGg4bTEgMGg1bTUgMGgybTMgMGgzbTEgMGgxbS04MSAxaDFtMSAwaDNtMSAwaDFtMSAwaDNtMSAwaDFtMSAwaDhtMiAwaDVtMiAwaDFtMSAwaDFtMyAwaDFtMSAwaDFtMSAwaDFtMSAwaDJtMiAwaDZtMSAwaDFtMyAwaDRtMSAwaDJtMyAwaDEzbS04MSAxaDFtMSAwaDNtMSAwaDFtMSAwaDJtMyAwaDFtMiAwaDFtMSAwaDFtMiAwaDNtMiAwaDJtMSAwaDJtMSAwaDRtMSAwaDFtNCAwaDJtMSAwaDJtMyAwaDJtMSAwaDNtMyAwaDFtMiAwaDFtMSAwaDNtMyAwaDFtMSAwaDFtMyAwaDFtMSAwaDFtLTc5IDFoMW0xIDBoM20xIDBoMW01IDBoM201IDBoMW0xIDBoMW0xIDBoM20xIDBoMW00IDBoMm0yIDBoMW0xIDBoMW0xIDBoMW0xIDBoMm0yIDBoMW0xIDBoMm0xIDBoMm01IDBoMW0zIDBoMm0yIDBoMm0zIDBoMm0yIDBoMW0xIDBoM20tODEgMWgxbTUgMGgxbTIgMGgybTQgMGgybTEgMGgxbTIgMGgybTMgMGgybTEgMGgybTYgMGgybTEgMGg0bTEgMGgxbTIgMGgzbTMgMGgxbTEgMGgzbTIgMGgxbTMgMGgzbTUgMGgxbTQgMGgzbS04MSAxaDdtMSAwaDFtMyAwaDFtMSAwaDJtMSAwaDFtNSAwaDVtMiAwaDFtMiAwaDRtMSAwaDFtMSAwaDNtNiAwaDRtMSAwaDJtNCAwaDFtMiAwaDFtMyAwaDJtMSAwaDRtMiAwaDIiLz48L3N2Zz4K" alt="QR code encoding the example contact card" width="168" height="168"></div>
-          </div>
-          <p class="qr-caption">Scan to import<br>a verified contact</p>
-          </div>
-        </div>
-        <p style="margin-top: 14px;">Name, organization, and title import on any phone exactly as written. Only two identity values travel with the card &mdash; your network address and your <strong>xPub</strong> (master public key) &mdash; encoded as email addresses at <code>spacedatanetwork.org</code>, a format every contacts app keeps. Everything else derives from the xPub.</p>
-        <details class="tech">
-          <summary>Technical details: how your ID works</summary>
-          <div class="tech-body">
-            <p>Your ID is a hierarchical-deterministic (HD) key wallet. <code>spacedatanetwork init</code> generates a BIP-39 mnemonic, encrypts it at rest (XChaCha20-Poly1305), and derives all operational keys from it using BIP-44/SLIP-10 paths:</p>
-            <ul>
-              <li>Identity: <code>m/44'/0'/0'</code> &rarr; secp256k1 &rarr; PeerID + XPub</li>
-              <li>Signing: <code>m/44'/0'/0'/0'/0'</code> &rarr; Ed25519</li>
-              <li>Encryption: <code>m/44'/0'/0'/1'/0'</code> &rarr; X25519</li>
-            </ul>
-            <p>Your public listing is an <strong>Entity Profile Message (EPM)</strong> &mdash; a FlatBuffer record carrying an embedded Ed25519 <code>SIGNATURE</code> and <code>SIGNATURE_TIMESTAMP</code> over its canonical content. When it changes, the node announces the new EPM content ID (CID) to the network with a signed PNM message.</p>
-            <p>The card does not need to carry individual keys &mdash; that is what derivation paths are for. It carries only the <strong>xPub</strong> and PeerID, encoded as email aliases (<code>&lt;xpub&gt;@xpub.spacedatanetwork.org</code>, <code>&lt;peerid&gt;@peerid.spacedatanetwork.org</code>) because iOS and Android contact apps preserve email fields but silently drop unknown <code>X-</code> extension fields. Role keys derive from the xPub at the SDK-specified BIP-44 paths: <code>buildSigningPath()</code> &rarr; <code>m/44'/coinType'/account'/0/index</code> and <code>buildEncryptionPath()</code> &rarr; <code>m/44'/coinType'/account'/1/index</code> (hd-wallet-wasm). The full vCard export additionally carries <code>X-SDN-EPM-B64</code> &mdash; the complete signed EPM bytes and the source of truth: SDN importers verify its embedded signature and prefer it over the editable display fields. Inspect your identity anytime with <code>spacedatanetwork show-identity</code>.</p>
-          </div>
-        </details>
-        <div class="note">The dashboard signs you in with the same recovery phrase, so one ID follows you between the desktop app, a terminal node and a Docker node. Docker images and native Linux packages are on the <a href="index.html#downloads">downloads page</a>.</div>
-      </div>
+  <main class="wrap">
+    <section class="intro">
+      <p class="eyebrow">Get started</p>
+      <h1 style="font-size:clamp(36px,5.5vw,60px)">From install to live data in minutes</h1>
+      <p class="lede">Install a node, sign in, subscribe to a feed, then publish your own. Each step shows the screen you will see; the highlighted control is the one to click.</p>
+      <ul class="toc">
+        <li><a href="#install">1 &middot; Install</a></li>
+        <li><a href="#sign-in">2 &middot; Sign in</a></li>
+        <li><a href="#profile">3 &middot; Profile</a></li>
+        <li><a href="#find-data">4 &middot; Find data</a></li>
+        <li><a href="#subscribe">5 &middot; Subscribe</a></li>
+        <li><a href="#your-data">6 &middot; Your data</a></li>
+        <li><a href="#publish">7 &middot; Publish</a></li>
+        <li><a href="#network">8 &middot; The network</a></li>
+      </ul>
     </section>
 
-    <section class="step" id="step-consume">
-      <div class="step-card">
-        <div class="step-head">
-          <span class="step-num"><b>2</b></span>
-          <h2>Tune into live space data</h2>
-        </div>
-        <p>Your node can now receive live feeds shared across the network &mdash; satellite positions, collision warnings, launch events, space weather, and more, in 160+ standardized formats. Open data is free to use, and every record arrives with built-in proof of who published it.</p>
-        <p>See what's out there:</p>
-        <div class="code-block">
-          <div class="code-header"><span>Terminal</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code><span class="code-comment"># what data formats does the network carry?</span>
-spacedatanetwork search standards OMM --format json
+    <section class="step" id="install">
+      <div class="step-text">
+        <span class="step-num">1</span>
+        <h2>Install and open</h2>
+        <p>Get the <a href="index.html#download">desktop app</a>, or install from a terminal. A node starts on your machine and its dashboard opens.</p>
+        <div class="code"><span class="label">macOS / Linux</span><button class="copy" type="button">Copy</button><pre><code>curl -fsSL https://spacedatanetwork.org/install.sh | bash
+spacedatanetwork start
+spacedatanetwork open</code></pre></div>
+        <div class="code"><span class="label">Windows PowerShell</span><button class="copy" type="button">Copy</button><pre><code>irm https://spacedatanetwork.org/install.ps1 | iex
+spacedatanetwork start
+spacedatanetwork open</code></pre></div>
+        <p class="note">The dashboard lives at <code>http://127.0.0.1:5001/</code>. The icons on the left switch between <b>This node</b>, <b>Nodes</b> and <b>Store</b>.</p>
+      </div>
+      <a class="shot" href="img/onboarding/01-dashboard.webp"><img src="img/onboarding/01-dashboard.webp" width="1800" height="1125" alt="The node dashboard: record, dataset, storage and peer counts, with tabs for Identity, Data, Modules and Subscriptions" loading="lazy"></a>
+    </section>
 
-<span class="code-comment"># who publishes orbit data?</span>
-spacedatanetwork search providers celestrak --schema OMM
+    <section class="step" id="sign-in">
+      <div class="step-text">
+        <span class="step-num">2</span>
+        <h2>Sign in as the owner</h2>
+        <p>The first start created your node's ID. Its recovery phrase is the owner's key.</p>
+        <ol>
+          <li>Reveal the phrase: in the desktop app, <b>Node &rarr; Show recovery phrase</b>; in a terminal, <code>spacedatanetwork show-identity --show-mnemonic</code>.</li>
+          <li>Click <b>Sign in</b>, then <b>Use recovery phrase</b>.</li>
+        </ol>
+        <p class="note">Write the phrase down and keep it offline. It rebuilds your ID on a new machine, and anyone who has it can act as you. There is no account or password to register.</p>
+      </div>
+      <a class="shot narrow" href="img/onboarding/02-sign-in.webp"><img src="img/onboarding/02-sign-in.webp" width="1200" height="1098" alt="The wallet sign-in dialog with Use recovery phrase and Use an external wallet options" loading="lazy"></a>
+    </section>
 
-<span class="code-comment"># pull records</span>
-spacedatanetwork search data --schema OMM --format csv</code></pre>
-        </div>
-        <p>Or subscribe from your own software with a few lines of code:</p>
-        <div class="code-block">
-          <div class="code-header"><span>JavaScript / TypeScript</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
+    <section class="step" id="profile">
+      <div class="step-text">
+        <span class="step-num">3</span>
+        <h2>Fill in your profile</h2>
+        <p>Click <b>Edit profile</b> and add your organization and contact details. This becomes your signed public listing, so others can find you and check that your data is really yours.</p>
+        <p class="note">Share it as a contact card: the <b>VCARD</b> button or the QR code carries your details plus the proof that they are genuine.</p>
+      </div>
+      <a class="shot" href="img/onboarding/03-profile.webp"><img src="img/onboarding/03-profile.webp" width="1800" height="1125" alt="The Edit profile screen with name, contact and address fields beside the node's connection details and vCard QR code" loading="lazy"></a>
+    </section>
 
+    <section class="step" id="find-data">
+      <div class="step-text">
+        <span class="step-num">4</span>
+        <h2>Find data</h2>
+        <p>Open <b>Store &rarr; Data</b>. Each listing shows the data type, who publishes it and how many records it holds. Open data is free.</p>
+        <p class="note">Listings marked <b>On another node</b> can be subscribed to. Use <b>Search</b> to filter by type or provider.</p>
+      </div>
+      <a class="shot" href="img/onboarding/04-store.webp"><img src="img/onboarding/04-store.webp" width="1800" height="1125" alt="The Store's Data tab listing catalog, orbit, RF and space weather datasets with Open and Subscribe buttons" loading="lazy"></a>
+    </section>
+
+    <section class="step" id="subscribe">
+      <div class="step-text">
+        <span class="step-num">5</span>
+        <h2>Subscribe</h2>
+        <p>Click <b>Subscribe</b> on a listing, choose what to keep, and confirm.</p>
+        <ol>
+          <li><b>Replace with each update</b> keeps the latest version only.</li>
+          <li><b>Keep every version</b> keeps the history.</li>
+          <li><b>Pin</b> also stores the newest publication on your node.</li>
+        </ol>
+        <p class="note">New records stream in as they are published. Each one is checked against its publisher's signature before it is stored.</p>
+      </div>
+      <a class="shot narrow" href="img/onboarding/05-subscribe.webp"><img src="img/onboarding/05-subscribe.webp" width="1480" height="1520" alt="The Subscribe panel for a catalog dataset showing lane, retention choices and provider details" loading="lazy"></a>
+    </section>
+
+    <section class="step" id="your-data">
+      <div class="step-text">
+        <span class="step-num">6</span>
+        <h2>See what you hold</h2>
+        <p><b>This node &rarr; Data</b> shows every dataset on your node and how many records each has.</p>
+        <p class="note">Your own software reads the same data from the node's local API, or from a terminal: <code>spacedatanetwork search data --schema OMM --format csv</code>.</p>
+      </div>
+      <a class="shot" href="img/onboarding/06-data.webp"><img src="img/onboarding/06-data.webp" width="1800" height="1125" alt="The Data tab with a bar chart of records by dataset" loading="lazy"></a>
+    </section>
+
+    <section class="step" id="publish">
+      <div class="step-text">
+        <span class="step-num">7</span>
+        <h2>Publish your own</h2>
+        <p>Signed in as the owner, open <b>Subscriptions</b> and click <b>Publish a stream</b>. Pick a standard format (orbits are <code>OMM</code>, ephemerides <code>OEM</code>, conjunctions <code>CDM</code>, catalogs <code>CAT</code>) and list it.</p>
+        <p class="note">Every record you publish is signed with your ID, so anyone can confirm it came from you, unaltered. From code it is one call:</p>
+        <div class="code"><span class="label">JavaScript</span><button class="copy" type="button">Copy</button><pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
 const node = new SDNNode();
 await node.start();
-
-<span class="code-comment">// live orbit data, as it is published</span>
-node.subscribe('OMM', (data, peer) => {
-  console.log(`Received from ${peer}`);
-});</code></pre>
-        </div>
-        <details class="tech">
-          <summary>Technical details: verification and the read API</summary>
-          <div class="tech-body">
-            <p>Every message on the network is Ed25519-signed by its publisher. Before your node accepts a record, it verifies the signature against the publisher's EPM &mdash; provenance is checked automatically, not on trust.</p>
-            <p>Useful read endpoints on your local node (default <code>127.0.0.1:5001</code>):</p>
-            <ul>
-              <li><code>GET /api/v1/catalog</code> &mdash; every schema registered on the node (public)</li>
-              <li><code>GET /api/v1/data/records/{schema}/{cid}</code> &mdash; fetch a specific record by content ID</li>
-              <li><code>GET /api/v1/log/{schema}</code> &mdash; a provider's publication log (public)</li>
-              <li><code>GET /api/v1/stats</code> &mdash; connected peers, record counts, schemas</li>
-            </ul>
-            <p>All on-wire data is FlatBuffers (Space Data Standards schemas); JSON is available on HTTP responses. SQL-style queries over the binary data are available through FlatSQL.</p>
-          </div>
-        </details>
+await node.publish('OMM', ommData);</code></pre></div>
       </div>
+      <a class="shot" href="img/onboarding/07-publish.webp"><img src="img/onboarding/07-publish.webp" width="1800" height="1125" alt="The Subscriptions tab with the Publish a stream button, the streams you are subscribed to, and website fetches" loading="lazy"></a>
     </section>
 
-    <section class="step" id="step-publish">
-      <div class="step-card">
-        <div class="step-head">
-          <span class="step-num"><b>3</b></span>
-          <h2>Share your data with the network</h2>
-        </div>
-        <p>Data on the network uses shared, open formats &mdash; that's what lets everyone read and verify everyone else's records. Match your data to one of the standard formats:</p>
-        <table class="schema-map">
-          <tr><th>Your data</th><th>Format</th></tr>
-          <tr><td>TLEs / orbital elements</td><td><code>OMM</code></td></tr>
-          <tr><td>Ephemerides</td><td><code>OEM</code></td></tr>
-          <tr><td>Conjunction warnings</td><td><code>CDM</code></td></tr>
-          <tr><td>Maneuver plans</td><td><code>MPE</code></td></tr>
-          <tr><td>Object catalogs</td><td><code>CAT</code></td></tr>
-          <tr><td>Tracking / sensor data</td><td><code>TDM</code>, <code>EOO</code></td></tr>
-        </table>
-        <p>The SDKs include converters for common formats (TLE, CCSDS XML/KVN), and if nothing fits you can <a href="https://github.com/DigitalArsenal/spacedatastandards.org/issues" target="_blank">propose a new format</a>. Publishing itself is one call:</p>
-        <div class="code-block">
-          <div class="code-header"><span>JavaScript / TypeScript</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>await node.publish('OMM', ommData);</code></pre>
-        </div>
-        <p>Then confirm it's live &mdash; search for yourself the way your customers would:</p>
-        <div class="code-block">
-          <div class="code-header"><span>Terminal</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>spacedatanetwork search providers "Example Space Agency" --schema OMM
-spacedatanetwork search data --schema OMM --format json</code></pre>
-        </div>
-        <details class="tech">
-          <summary>Technical details: publishing over the REST API</summary>
-          <div class="tech-body">
-            <p>The REST publish endpoint requires an authenticated session at <strong>Standard</strong> trust or higher &mdash; there is no localhost bypass. Log in once at <code>http://127.0.0.1:5001/login</code> (the first account on a fresh node is bootstrapped as Admin), then use the session token from the <code>sdn_wallet_session</code> cookie:</p>
-            <div class="code-block">
-              <div class="code-header"><span>REST</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-              <pre><code>export SDN_SESSION_TOKEN='&lt;your-session-token&gt;'
-
-curl -X POST http://127.0.0.1:5001/api/v1/data/publish/OMM \
-  -H "Content-Type: application/octet-stream" \
-  -H "Accept: application/json" \
-  --cookie "sdn_wallet_session=${SDN_SESSION_TOKEN}" \
-  --data-binary @omm.fbs</code></pre>
-            </div>
-            <p>The session is delivered only as that cookie (bearer headers are not accepted). Automated pipelines can mint one programmatically: <code>POST /api/auth/challenge</code>, Ed25519-sign the challenge with the wallet signing key, then <code>POST /api/auth/verify</code> and capture the <code>Set-Cookie</code> value. CLI commands accept the same token via <code>--session-token</code> or <code>SDN_SESSION_TOKEN</code>.</p>
-          </div>
-        </details>
-        <details class="tech">
-          <summary>Technical details: what happens under the hood</summary>
-          <div class="tech-body">
-            <p>Every record is validated against its schema, content-addressed (SHA-256 CID), appended to your node's hash-chained publication log, Ed25519-signed, and announced to subscribers over GossipSub. Consumers can cryptographically verify that the data came from you and was never altered. REST checks: <code>/api/v1/log/{schema}</code> for your publication log, <code>/api/v1/data/records/{schema}/{cid}</code> for any record by content ID.</p>
-          </div>
-        </details>
+    <section class="step" id="network">
+      <div class="step-text">
+        <span class="step-num">8</span>
+        <h2>Explore the network</h2>
+        <p><b>Nodes</b> lists every node your node knows: whether it is online, whether its profile is verified, and what it publishes. The globe and trust map show where they are and who trusts whom.</p>
+        <p class="note">Mark the nodes you rely on as trusted with <b>Trust rules</b> on the <b>This node</b> screen.</p>
       </div>
+      <a class="shot" href="img/onboarding/08-nodes.webp"><img src="img/onboarding/08-nodes.webp" width="1800" height="1125" alt="The Nodes screen with node cards showing online and verified status above a globe of node locations" loading="lazy"></a>
     </section>
 
-    <section class="step" id="step-modules">
-      <div class="step-card">
-        <div class="step-head">
-          <span class="step-num"><b>4</b></span>
-          <h2>Software modules</h2>
+    <section class="block next">
+      <h2>Go further</h2>
+      <details class="more">
+        <summary>From a terminal</summary>
+        <div class="body">
+          <div class="code"><button class="copy" type="button">Copy</button><pre><code># is the node up?
+spacedatanetwork status
+# fill in your public listing, then share it as a QR code
+spacedatanetwork identity wizard
+spacedatanetwork identity export --format qrcode
+# data formats on the network, who publishes orbits, pull records
+spacedatanetwork search standards OMM --format json
+spacedatanetwork search providers celestrak --schema OMM
+spacedatanetwork search data --schema OMM --format csv
+# signed software updates
+spacedatanetwork update check</code></pre></div>
+          <p>Full reference: <a href="server-overview.html">server overview</a>, <a href="agent-api-guide.html">API guide</a>, <a href="operator-enrollment.html">operator enrollment</a>.</p>
         </div>
-        <p>The network doesn't just move data &mdash; it runs software. Propagators, conjunction screeners, sensor processing, analytics: all of these ship as <strong>modules</strong> that plug into any SDN node.</p>
-        <p>Modules are built on <strong>WebAssembly</strong>, a portable, sandboxed program format. Portable means you compile your algorithm once and that single file runs everywhere; sandboxed means a module can only touch what the host node explicitly hands it &mdash; it can't read files, open connections, or see anything else on the machine.</p>
-        <p>Because of that, modules are <strong>isomorphic</strong>: the exact same artifact runs in a web browser, on a server node, or on an edge device, with identical results. A demo running in someone's browser is executing the very same code as a production server &mdash; nothing is re-implemented per platform.</p>
-        <div class="module-diagram">
-          <svg viewBox="0 0 940 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram: your algorithm is compiled and signed by the Module SDK into one module.wasm artifact that runs identically in the browser, on server nodes, and on edge devices">
-            <defs>
-              <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 1 L 9 5 L 0 9 z" fill="#d8a94e"/>
-              </marker>
-            </defs>
-            <g font-family="Inter, sans-serif">
-              <rect x="20" y="115" width="180" height="86" rx="12" fill="rgba(216,169,78,0.06)" stroke="rgba(216,169,78,0.45)"/>
-              <text x="110" y="152" text-anchor="middle" fill="#F5F5F7" font-size="17" font-weight="600">Your algorithm</text>
-              <text x="110" y="178" text-anchor="middle" fill="#9a9aa0" font-size="13">C &#183; C++ &#183; Rust &#183; Go</text>
-
-              <line x1="200" y1="158" x2="248" y2="158" stroke="#d8a94e" stroke-width="1.6" marker-end="url(#arr)"/>
-
-              <rect x="252" y="115" width="196" height="86" rx="12" fill="rgba(216,169,78,0.06)" stroke="rgba(216,169,78,0.45)"/>
-              <text x="350" y="152" text-anchor="middle" fill="#F5F5F7" font-size="17" font-weight="600">Module SDK</text>
-              <text x="350" y="178" text-anchor="middle" fill="#9a9aa0" font-size="13">compile &#183; validate &#183; sign</text>
-
-              <line x1="448" y1="158" x2="496" y2="158" stroke="#d8a94e" stroke-width="1.6" marker-end="url(#arr)"/>
-
-              <rect x="500" y="112" width="186" height="92" rx="12" fill="rgba(216,169,78,0.12)" stroke="#d8a94e" stroke-width="1.8"/>
-              <text x="593" y="151" text-anchor="middle" fill="#F5F5F7" font-size="18" font-weight="700">module.wasm</text>
-              <text x="593" y="177" text-anchor="middle" fill="#c8a35a" font-size="13">signed &#183; sandboxed</text>
-
-              <line x1="686" y1="140" x2="744" y2="72" stroke="#d8a94e" stroke-width="1.6" marker-end="url(#arr)"/>
-              <line x1="686" y1="158" x2="744" y2="158" stroke="#d8a94e" stroke-width="1.6" marker-end="url(#arr)"/>
-              <line x1="686" y1="176" x2="744" y2="244" stroke="#d8a94e" stroke-width="1.6" marker-end="url(#arr)"/>
-
-              <rect x="748" y="40" width="172" height="60" rx="12" fill="rgba(216,169,78,0.06)" stroke="rgba(216,169,78,0.45)"/>
-              <text x="834" y="76" text-anchor="middle" fill="#F5F5F7" font-size="16" font-weight="600">Browser</text>
-              <rect x="748" y="128" width="172" height="60" rx="12" fill="rgba(216,169,78,0.06)" stroke="rgba(216,169,78,0.45)"/>
-              <text x="834" y="164" text-anchor="middle" fill="#F5F5F7" font-size="16" font-weight="600">Server node</text>
-              <rect x="748" y="216" width="172" height="60" rx="12" fill="rgba(216,169,78,0.06)" stroke="rgba(216,169,78,0.45)"/>
-              <text x="834" y="252" text-anchor="middle" fill="#F5F5F7" font-size="16" font-weight="600">Edge device</text>
-
-              <text x="470" y="312" text-anchor="middle" fill="#9a9aa0" font-size="14">One artifact &mdash; the same module runs in every runtime on the network</text>
-            </g>
-          </svg>
-        </div>
-        <p>The <a href="https://digitalarsenal.github.io/space-data-module-sdk/" target="_blank">Module SDK</a> handles the whole pipeline &mdash; compile, validate, sign, and package:</p>
-        <div class="code-block">
-          <div class="code-header"><span>Terminal</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>npx space-data-module compile --manifest ./manifest.json --source ./src/module.c --out ./dist/isomorphic/module.wasm
+      </details>
+      <details class="more">
+        <summary>Build a module</summary>
+        <div class="body">
+          <p>Modules are signed WebAssembly files. The same file runs in a browser, on a server or on an edge device, and can only touch what the node hands it.</p>
+          <div class="code"><button class="copy" type="button">Copy</button><pre><code>npx space-data-module compile --manifest ./manifest.json --source ./src/module.c --out ./dist/isomorphic/module.wasm
 npx space-data-module check   --manifest ./manifest.json --wasm ./dist/isomorphic/module.wasm
-npx space-data-module sign    --wasm ./dist/isomorphic/module.wasm --key ./keypair.json</code></pre>
+npx space-data-module sign    --wasm ./dist/isomorphic/module.wasm --key ./keypair.json</code></pre></div>
+          <p>See the <a href="https://digitalarsenal.github.io/space-data-module-sdk/" target="_blank" rel="noopener">Module SDK</a>.</p>
         </div>
-        <details class="tech">
-          <summary>Technical details: module architecture</summary>
-          <div class="tech-body">
-            <p>A module is a WebAssembly artifact with an embedded FlatBuffer manifest (<code>PLG</code>) declaring its identity, methods, and capability requirements. Host&harr;module calls use the SDS <code>PIV</code> invoke envelope, so any host runtime &mdash; browsers via the JS SDK, servers via WasmEdge &mdash; speaks the same contract. The canonical artifact path is <code>dist/isomorphic/module.wasm</code>.</p>
-            <p>The SDK ships a local module lab for interactive development: <code>npm run start:lab</code> then open <code>http://localhost:4318</code> to compile, validate, and package in the browser. Encrypt an artifact for protected distribution with <code>npx space-data-module protect</code>.</p>
-          </div>
-        </details>
-      </div>
-    </section>
+      </details>
+      <details class="more" id="security-review">
+        <summary>Spec sheet for IT and security review</summary>
+        <div class="body">
+<p>This is the short version of what a Space Data Network node is, what it runs, what it needs, and what it talks to &mdash; written for the people who approve software on your network. Everything here is the shipped default; every value can be changed in the node's configuration file.</p>
 
-    <section class="step" id="step-storefront">
-      <div class="step-card">
-        <div class="step-head">
-          <span class="step-num"><b>5</b></span>
-          <h2>Decentralized storefront</h2>
-        </div>
-        <p>The network has a built-in storefront for selling both <strong>data products</strong> and <strong>software modules</strong>. There is no central store and no middleman between you and your customers &mdash; your own node hosts your listings, and buyers purchase directly from you.</p>
-        <ul>
-          <li><strong>One signed listing per product.</strong> Each product and version gets a single listing, published from your node and visible across the entire network.</li>
-          <li><strong>Data: field-level access control.</strong> Mark each field in a stream as public or restricted &mdash; for example, share coarse positions openly while selling the high-precision values.</li>
-          <li><strong>Modules: encrypted delivery.</strong> Modules ship encrypted, so only paying customers can run them &mdash; and they run on the customer's machine, so your source never leaves yours.</li>
-          <li><strong>Per-customer keys.</strong> Every buyer receives their own key, so purchased content can't be shared or resold.</li>
-          <li><strong>Payments are built in.</strong> Card, crypto, or prepaid credits, with usage-based billing and enterprise invoicing supported.</li>
-        </ul>
-        <p>Publish your encrypted catalog to your provider node &mdash; the request is signed with your ID, and only the node's administrator can publish:</p>
-        <div class="code-block">
-          <div class="code-header"><span>Terminal</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>spacedatanetwork plugins publish-orbpro \
-  --plugin-root ./my-plugins \
-  --wallet-env ./wallet.env \
-  --wallet-wasm ./hd-wallet-wasi.wasm \
-  --target /dns4/&lt;host&gt;/tcp/&lt;port&gt;/wss/p2p/&lt;peer-id&gt;</code></pre>
-        </div>
-        <p>Buyers browse the storefront the same way they find your open data:</p>
-        <div class="code-block">
-          <div class="code-header"><span>Terminal</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
-          <pre><code>spacedatanetwork marketplace list
-spacedatanetwork marketplace search &lt;term&gt;
-spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
-        </div>
-        <details class="tech">
-          <summary>Technical details: listings, protection, and delivery</summary>
-          <div class="tech-body">
-            <p>Marketplace listings are canonical signed <code>PLG</code> records &mdash; exactly one per product ID and version &mdash; served from your provider node at <code>GET /api/module-delivery/listings</code>. Field-level data protection uses the SDS <code>FSM</code> record (each field marked Public, Encrypted, Redacted, or Unavailable). Delivery uses per-customer ECIES (X25519 + AES-256-GCM) key wrapping; payments run through Stripe (card), crypto, or credits.</p>
-            <p>The publish request is Ed25519-signed by your admin HD wallet and sent over the libp2p protocol <code>/space-data-network/module-publish/1.0.0</code>; the receiving node verifies the signer is an admin before accepting. For a single module over HTTP, <code>POST /api/v1/plugins/upload</code> takes a multipart bundle, <code>metadata</code> JSON (<code>id</code>, <code>version</code>), and <code>signature_hex</code> (Ed25519 over the bundle's SHA-256), using the same session cookie as publishing. A complete two-provider reference scenario ships with the repo: <code>npm run demo:hydra-marketplace</code>; buyer-side integration uses <code>createStorefrontClient</code> from <code>@spacedatanetwork/sdn-js/storefront</code>.</p>
-          </div>
-        </details>
-      </div>
-    </section>
-
-    <section class="step" id="security-review">
-      <div class="step-card">
-        <div class="step-head">
-          <span class="step-num"><b>6</b></span>
-          <h2>Spec sheet for IT and security review</h2>
-        </div>
-        <p class="spec-link"><span>Link to this section:</span> <code>https://spacedatanetwork.org/onboarding.html#security-review</code> <button type="button" onclick="copyLink(this, 'security-review')">Copy link</button></p>
-        <p>This is the short version of what a Space Data Network node is, what it runs, what it needs, and what it talks to &mdash; written for the people who approve software on your network. Everything here is the shipped default; every value can be changed in the node's configuration file.</p>
-
-        <h3 class="spec-h3">Architecture in one paragraph</h3>
+        <h3>Architecture in one paragraph</h3>
         <p>A node is <strong>one long-running process</strong> on one machine. It joins a peer-to-peer network (libp2p, the same networking stack as IPFS), receives and publishes small signed records in the <a href="https://spacedatastandards.org" target="_blank">Space Data Standards</a> formats (satellite orbits, catalog entries, conjunction warnings, space weather, and so on), stores them on local disk, and serves them to your own software over a local HTTP API and a browser dashboard. Optional analysis modules run inside a WebAssembly sandbox in the same process. There is no central server: your node talks to other nodes directly, and every record carries the publisher's signature, so provenance is verified rather than assumed.</p>
 
-        <h3 class="spec-h3">Software components</h3>
-        <div class="spec-table-wrap"><table class="spec-table">
+        <h3>Software components</h3>
+        <div class="table-wrap"><table>
           <tr><th>Component</th><th>What it is</th><th>Runs as</th></tr>
           <tr><td>Node daemon</td><td>Single Go binary <code>spacedatanetwork</code>: libp2p host, record store, HTTP API, dashboard, module runtime. Statically linked; no external database, no interpreter.</td><td>One background service (systemd, launchd, or the Docker container)</td></tr>
           <tr><td>Record store (FlatSQL)</td><td>A SQL engine compiled to WebAssembly that indexes the FlatBuffer records in place. Append-only stream files under the node's data directory; no SQLite, no Postgres.</td><td>In-process, via the WasmEdge runtime bundled with the binary</td></tr>
@@ -828,8 +245,8 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
           <tr><td>Desktop app (optional)</td><td>Same node wrapped in a desktop application with the dashboard as its window.</td><td>User application</td></tr>
         </table></div>
 
-        <h3 class="spec-h3">Hardware and platform</h3>
-        <div class="spec-table-wrap"><table class="spec-table">
+        <h3>Hardware and platform</h3>
+        <div class="table-wrap"><table>
           <tr><th></th><th>Minimum</th><th>Recommended</th></tr>
           <tr><td>CPU</td><td>2 vCPU, x86-64 or arm64</td><td>4 vCPU</td></tr>
           <tr><td>Memory</td><td>4 GB</td><td>8 GB</td></tr>
@@ -839,9 +256,9 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
         </table></div>
         <p>For reference, the public production nodes that serve the live catalog run on 2 vCPU / 8 GB virtual machines.</p>
 
-        <h3 class="spec-h3">Ports</h3>
+        <h3>Ports</h3>
         <p><strong>Inbound.</strong> None are required. A node behind a firewall or NAT still receives and publishes data through relays and hole punching. Opening the peer-to-peer ports makes the node directly reachable, which improves connectivity and lets it help other nodes.</p>
-        <div class="spec-table-wrap"><table class="spec-table">
+        <div class="table-wrap"><table>
           <tr><th>Port</th><th>Protocol</th><th>Purpose</th><th>Exposure</th></tr>
           <tr><td>4001</td><td>TCP and UDP (QUIC)</td><td>libp2p peer connections</td><td>Optional inbound; recommended open</td></tr>
           <tr><td>8080</td><td>TCP (WebSocket)</td><td>libp2p for browser peers</td><td>Optional inbound</td></tr>
@@ -851,7 +268,7 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
           <tr><td>5002</td><td>TCP (HTTP)</td><td>Bundled Kubo RPC</td><td>Loopback only</td></tr>
         </table></div>
         <p><strong>Outbound.</strong> The node initiates these connections; nothing else.</p>
-        <div class="spec-table-wrap"><table class="spec-table">
+        <div class="table-wrap"><table>
           <tr><th>Destination</th><th>Port</th><th>Why</th></tr>
           <tr><td><code>sdn.spaceaware.io</code></td><td>443 TCP (WebSocket over TLS)</td><td>Bootstrap peer: first contact with the network, and the signed software-update feed</td></tr>
           <tr><td><code>159.203.150.8</code>, <code>167.172.219.213</code></td><td>4004 TCP, 4001 TCP</td><td>Bootstrap peers (the two public production nodes)</td></tr>
@@ -861,7 +278,7 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
         </table></div>
         <p>A minimal egress rule set is therefore: TCP 443 to the hosts above, and TCP/UDP 4001 to the internet for peer traffic. The node sends no telemetry, crash reports, or usage data anywhere.</p>
 
-        <h3 class="spec-h3">Communication protocols</h3>
+        <h3>Communication protocols</h3>
         <ul>
           <li><strong>Transport:</strong> libp2p over TCP, QUIC, WebSocket, and WebRTC-direct. Every peer connection is encrypted and mutually authenticated with libp2p TLS or Noise; a peer's identity is its Ed25519 public key.</li>
           <li><strong>Discovery and routing:</strong> the public Kademlia DHT (the same one IPFS uses), tagged so nodes find other Space Data Network nodes; AutoNAT, hole punching, and circuit relay v2 for nodes behind NAT.</li>
@@ -872,16 +289,14 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
           <li><strong>Software updates:</strong> signed update manifests over the update feed; a node verifies the signature, upgrades in place, and can roll back. No update is applied unsigned.</li>
         </ul>
 
-        <h3 class="spec-h3">What leaves your network, and what does not</h3>
+        <h3>What leaves your network, and what does not</h3>
         <ul>
           <li><strong>Published by default:</strong> the node's identity record (organization name and contact details you enter in the wizard, plus its public keys) and any data you explicitly publish.</li>
           <li><strong>Never published:</strong> private keys, the recovery phrase, configuration, and any record type not on the anonymous-read list. Anonymous read is decided per data type and is closed unless deliberately opened; today it covers the public catalog lanes (orbits, catalog entries, ephemerides, space weather, RF bands, link status, publication and dataset manifests, identity records, application manifests, entity groups).</li>
           <li><strong>Administration:</strong> the dashboard and API require sign-in with a key the node knows. The node's own key is always an administrator; other operators are added by public key. No passwords are stored.</li>
         </ul>
 
-        <details class="tech">
-          <summary>Where each of these facts comes from</summary>
-          <div class="tech-body">
+        <h3>Where each of these facts comes from</h3>
             <ul>
               <li><a href="INSTALL.md">INSTALL.md</a> &mdash; installation, configuration keys, and the ports table.</li>
               <li><a href="SERVER-OVERVIEW.md">SERVER-OVERVIEW.md</a> &mdash; the node's architecture: storage, identity, networking, modules.</li>
@@ -889,101 +304,54 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
               <li><a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">Source code</a> &mdash; the node is open source; the defaults quoted above are in <code>sdn-server/internal/config</code>.</li>
             </ul>
             <p>Questions from a security review are welcome: open an issue on GitHub or reply to the person who sent you this link.</p>
-          </div>
-        </details>
-      </div>
-    </section>
-
-    <section class="step" id="going-further">
-      <div class="step-card">
-        <div class="step-head">
-          <h2>Where to next</h2>
         </div>
-        <div class="next-grid">
-          <a class="next-card" href="docs.html">
-            <h3>Read the full documentation</h3>
-            <p>Node operations, REST API reference, schema registry, and network internals.</p>
-          </a>
-          <a class="next-card" href="https://digitalarsenal.github.io/space-data-module-sdk/" target="_blank">
-            <h3>Module SDK reference</h3>
-            <p>Build, validate, sign, and package WASM modules for SDN host runtimes.</p>
-          </a>
-          <a class="next-card" href="https://spacedatastandards.org" target="_blank">
-            <h3>Space Data Standards</h3>
-            <p>The 160+ canonical schemas behind every record on the network.</p>
-          </a>
-          <a class="next-card" href="index.html#faq">
-            <h3>Questions?</h3>
-            <p>The FAQ covers data onboarding, trust, and network governance.</p>
-          </a>
+      </details>
+      <details class="more">
+        <summary>How the orbital catalog is built</summary>
+        <div class="body">
+          <p>The combined catalog keeps every provider's orbits as attributed records and selects among them with an explicit, reproducible policy, HPOP first. Read <a href="supporting/catalog-approach-whitepaper.pdf">the whitepaper (PDF)</a> or its <a href="supporting/catalog-approach-whitepaper.md">Markdown source</a>.</p>
         </div>
-      </div>
+      </details>
     </section>
-
-    <div class="share-qr">
-      <div class="qr-col">
-      <div class="qr-tile">
-        <div class="qr-plate"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MSIgaGVpZ2h0PSI0MSIgY2xhc3M9InNlZ25vIj48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMCAwaDQxdjQxaC00MXoiLz48cGF0aCBjbGFzcz0icXJsaW5lIiBzdHJva2U9IiMwMDAiIGQ9Ik0yIDIuNWg3bTEgMGgybTIgMGgxbTEgMGgzbTIgMGgybTEgMGg0bTIgMGgxbTEgMGg3bS0zNyAxaDFtNSAwaDFtMSAwaDJtMiAwaDRtMiAwaDFtMSAwaDJtMSAwaDFtMSAwaDNtMiAwaDFtNSAwaDFtLTM3IDFoMW0xIDBoM20xIDBoMW0xIDBoMW0xIDBoMm0xIDBoNG0yIDBoMW02IDBoMW0xIDBoMW0xIDBoMW0xIDBoM20xIDBoMW0tMzcgMWgxbTEgMGgzbTEgMGgxbTIgMGg0bTMgMGg1bTEgMGgybTEgMGgybTMgMGgxbTEgMGgzbTEgMGgxbS0zNyAxaDFtMSAwaDNtMSAwaDFtNCAwaDFtMSAwaDFtNSAwaDFtMiAwaDFtMSAwaDJtNCAwaDFtMSAwaDNtMSAwaDFtLTM3IDFoMW01IDBoMW0xIDBoMW0zIDBoNW00IDBoMW0xIDBoMW0zIDBoMm0xIDBoMW01IDBoMW0tMzcgMWg3bTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGg3bS0yOSAxaDJtMSAwaDFtMSAwaDFtMSAwaDFtNCAwaDRtNCAwaDFtLTI3IDFoM20xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMm0xIDBoMW0zIDBoMm0yIDBoM20yIDBoM20yIDBoM20tMzcgMWgxbTMgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgzbTEgMGgxbTUgMGgxbTEgMGgybTEgMGgxbTIgMGgxbTEgMGgxbTEgMGgxbS0zNSAxaDNtMSAwaDNtMiAwaDFtMSAwaDNtMSAwaDJtMSAwaDJtNCAwaDNtMiAwaDJtMyAwaDJtLTM3IDFoMm0yIDBoMW00IDBoMW0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW01IDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMW0tMzAgMWgybTEgMGgxbTIgMGgxbTQgMGgybTIgMGgybTEgMGgzbTIgMGgybTEgMGgxbTEgMGgybS0zMyAxaDNtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDNtMyAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDJtLTM1IDFoNG0xIDBoM20yIDBoM202IDBoMW0yIDBoMW0zIDBoM20xIDBoMW0xIDBoMm0xIDBoMm0tMzcgMWgxbTEgMGgxbTEgMGgybTEgMGgybTMgMGgxbTIgMGgybTEgMGgybTEgMGgxbTQgMGgxbTEgMGg1bTIgMGgybS0zNyAxaDJtMSAwaDFtMiAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtMiAwaDFtMiAwaDFtMiAwaDFtMSAwaDNtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDFtLTM3IDFoMW0xIDBoMW04IDBoM20xIDBoMW00IDBoMW00IDBoMm0xIDBoMm0xIDBoMW0xIDBoMW0tMzIgMWg1bTIgMGgzbTEgMGg1bTEgMGgxbTEgMGgzbTEgMGg1bTQgMGgzbS0zNyAxaDFtMyAwaDFtMiAwaDNtNiAwaDVtNSAwaDJtMSAwaDFtMSAwaDFtNCAwaDFtLTM0IDFoNG0yIDBoMm00IDBoMW0zIDBoMm0yIDBoNW0xIDBoN20tMzUgMWgxbTIgMGgxbTMgMGg0bTIgMGgybTEgMGgxbTMgMGgxbTcgMGgxbTEgMGgxbTEgMGgxbS0zMyAxaDJtMyAwaDFtMiAwaDRtMiAwaDJtMiAwaDJtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMyAwaDRtLTM3IDFoM20xIDBoMW0yIDBoMm0yIDBoMW0xIDBoMW0xIDBoMW0xIDBoNG0yIDBoMm02IDBoMW0zIDBoMW0tMzYgMWgxbTEgMGgxbTIgMGgybTMgMGgxbTIgMGgxbTMgMGgybTEgMGgxbTEgMGgxbTEgMGgzbTIgMGgybTEgMGg0bS0zNiAxaDJtMiAwaDFtMiAwaDNtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDFtMyAwaDFtMSAwaDFtNiAwaDFtMSAwaDFtLTM0IDFoMW0xIDBoMW0yIDBoM20xIDBoMm0yIDBoMm0xIDBoMm0yIDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0xIDBoMW0yIDBoNG0tMzcgMWgxbTIgMGgxbTEgMGgxbTQgMGgxbTIgMGgxbTIgMGgxbTIgMGgxbTYgMGgxbTEgMGgybTEgMGgxbTMgMGgxbS0zNiAxaDFtMiAwaDFtMSAwaDJtMyAwaDJtMyAwaDFtMiAwaDNtMiAwaDE0bS0yOSAxaDNtMiAwaDJtMSAwaDFtMSAwaDRtMSAwaDFtMiAwaDNtMyAwaDFtLTMzIDFoN200IDBoMW00IDBoN20xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0tMzcgMWgxbTUgMGgxbTMgMGgzbTMgMGgxbTIgMGgzbTEgMGgybTMgMGgxbTMgMGgxbTMgMGgxbS0zNyAxaDFtMSAwaDNtMSAwaDFtMSAwaDNtNCAwaDFtMiAwaDFtMSAwaDJtMiAwaDltMSAwaDFtMSAwaDFtLTM3IDFoMW0xIDBoM20xIDBoMW0xIDBoMW01IDBoMW0xIDBoNW0xIDBoMm0xIDBoNG0xIDBoMW0xIDBoMW0tMzMgMWgxbTEgMGgzbTEgMGgxbTEgMGgxbTQgMGgybTEgMGgxbTMgMGgxbTEgMGgxbTIgMGgzbTEgMGgxbTYgMGgxbS0zNyAxaDFtNSAwaDFtMyAwaDFtMyAwaDFtMSAwaDJtMSAwaDFtMSAwaDJtNCAwaDZtMyAwaDFtLTM3IDFoN20yIDBoM20xIDBoMm0yIDBoMTBtMyAwaDFtMSAwaDUiLz48cmVjdCB4PSIxNC41IiB5PSIxNi41IiB3aWR0aD0iMTIiIGhlaWdodD0iOCIgcng9IjIiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iIzAwMDAwMCIgc3Ryb2tlLXdpZHRoPSIwLjYiLz48dGV4dCB4PSIyMC41IiB5PSIyMC41IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0iY2VudHJhbCIgZm9udC1mYW1pbHk9IkludGVyLCBBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9IjgwMCIgZm9udC1zaXplPSI1LjAiIGZpbGw9IiMwMDAwMDAiPlNETjwvdGV4dD48L3N2Zz4K" alt="QR code linking to this onboarding guide" width="168" height="168"></div>
-      </div>
-      <p class="qr-caption">Onboarding &middot; SDN</p>
-      </div>
-      <p>Share this guide &mdash; the code points straight here.</p>
-    </div>
-
-    <div class="contact-bar">
-      <span class="contact-label">Contact</span>
-      <a href="mailto:tj@edgesource.com">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
-        tj@edgesource.com</a>
-      <a href="mailto:tjkoury@gmail.com">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
-        tjkoury@gmail.com</a>
-      <a href="https://x.com/TJKoury" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-        @TJKoury</a>
-      <a href="https://www.linkedin.com/in/anthony-k-5754554/" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-        LinkedIn</a>
-      <a href="https://signal.me/#eu/N3lZBb0uC3vueQt05SATYx6vFAbiLGtxxP1vhnUZyuIXYunr9WFEd6xJ9F3MzJXn" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-        Signal</a>
-    </div>
-
   </main>
 
   <footer>
-    <div class="container">
-      <div>
-        <a href="onboarding.html">Onboarding</a>
+    <div class="wrap">
+      <nav>
         <a href="index.html">Home</a>
-        <a href="docs.html">Documentation</a>
-        <a href="https://spacedatastandards.org" target="_blank">Space Data Standards</a>
-        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">GitHub</a>
-      </div>
-      <p style="margin-top: 12px;">Released under the MIT License. &copy; 2024 Digital Arsenal / Space Data Standards</p>
+        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
+      </nav>
+      <span>MIT License &middot; &copy; Digital Arsenal</span>
     </div>
   </footer>
 
   <script>
-    const bgVideo = document.getElementById('bgVideo');
-    bgVideo.src = 'space-bg.mp4';
-    bgVideo.addEventListener('loadeddata', () => bgVideo.classList.add('loaded'));
-    bgVideo.play().catch(() => {});
-
-    function copyLink(button, id) {
-      const url = `${location.origin}${location.pathname}#${id}`;
-      navigator.clipboard.writeText(url).then(() => {
-        button.textContent = 'Copied';
-        setTimeout(() => { button.textContent = 'Copy link'; }, 1500);
+    (function () {
+      var video = document.getElementById('bgVideo');
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        video.src = 'space-bg.mp4';
+        video.addEventListener('loadeddata', function () { video.classList.add('loaded'); });
+        video.play().catch(function () {});
+      }
+      document.querySelectorAll('.copy').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var text = button.parentElement.querySelector('code').textContent;
+          navigator.clipboard.writeText(text).then(function () {
+            button.textContent = 'Copied';
+            setTimeout(function () { button.textContent = 'Copy'; }, 1600);
+          });
+        });
       });
-    }
-    function copyCode(button) {
-      const code = button.closest('.code-block').querySelector('code').textContent;
-      navigator.clipboard.writeText(code).then(() => {
-        button.textContent = 'Copied';
-        setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+      document.querySelectorAll('.nav-menu a').forEach(function (a) {
+        a.addEventListener('click', function () { a.closest('details').removeAttribute('open'); });
       });
-    }
+      function openSpec() { if (location.hash === '#security-review') document.getElementById('security-review').open = true; }
+      openSpec();
+      window.addEventListener('hashchange', openSpec);
+    })();
   </script>
 </body>
 </html>
