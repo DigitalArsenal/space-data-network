@@ -35,8 +35,6 @@ export const QUARANTINE = new Map([
     'references desktop/test/unit/static-http-server-identity.spec.js, which no longer exists'],
   ['deployment/release/oss-preflight.test.mjs',
     'its temp-repo fixture never copies scripts/check-sdn-js-dependency-layering.mjs'],
-  ['deployment/release/docs-network-ecosystem.test.mjs',
-    'expects an id="network-ecosystem" section that has moved'],
   ['scripts/build-claude-designer-ui-package.test.mjs',
     'the template copy step fails against a temp directory'],
   ['tests/isomorphic/seed-orbpro-module-catalog.test.mjs',
