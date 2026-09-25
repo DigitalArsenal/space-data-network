@@ -29,7 +29,7 @@
     'in vec2 v;out vec4 o;',
     'uniform sampler2D uDay,uNight,uClouds;',
     'uniform vec2 uRes,uOff;uniform vec3 uCam,uSun;uniform mat3 uBasis;',
-    'uniform float uTan,uSpin,uCloudSpin,uFade;',
+    'uniform float uTan,uSpin,uCloudSpin,uFade,uLight;',
     'const float PI=3.14159265;',
     'float hash(vec3 p){p=fract(p*.3183099+.1);p*=17.;return fract(p.x*p.y*p.z*(p.x+p.y+p.z));}',
     'vec3 lin(vec3 c){return c*c;}',
@@ -48,10 +48,10 @@
     '  vec3 rd=normalize(uBasis*vec3(q,-1.));',
     '  vec3 ro=uCam;',
     '  float b=dot(ro,rd),c=dot(ro,ro)-1.,h=b*b-c;',
-    '  vec3 col=vec3(0.);',
+    '  vec3 col=vec3(0.);bool hit=false;float glowL=0.;',
     '  float closest=length(ro-rd*b);',
     '  vec3 cp=normalize(ro-rd*b);',
-    '  if(h>0.&&-b-sqrt(h)>0.){',
+    '  if(h>0.&&-b-sqrt(h)>0.){hit=true;',
     '    vec3 n=normalize(ro+rd*(-b-sqrt(h)));',
     '    float d=dot(n,uSun);',
     '    vec2 g=geo(n,uSpin);',
@@ -67,9 +67,11 @@
     '    dcol*=mix(vec3(1.),vec3(1.25,.8,.55),smoothstep(.35,0.,d)*lit);',
     '    vec3 ncol=night*vec3(1.6,1.25,.85)*(1.-cl*.85)*smoothstep(.12,-.12,d);',
     '    col=dcol*lit+ncol;',
+    // Light theme: a muted night side, so dark text stays readable over it.
+    '    if(uLight>.5)col=mix(col,vec3(.62,.68,.78),.55*(1.-lit));',
     '    float fr=pow(1.-max(dot(n,-rd),0.),3.);',
     '    col+=vec3(.25,.5,1.)*fr*smoothstep(-.3,.5,d)*.9;',
-    '  }else{',
+    '  }else if(uLight<.5){',
     '    vec3 s=rd*420.;vec3 cell=floor(s);float hs=hash(cell);',
     '    if(hs>.994){vec3 off=vec3(hash(cell+1.7),hash(cell+3.1),hash(cell+5.3))-.5;',
     '      float st=smoothstep(.22,0.,length(fract(s)-.5-off*.5));col+=vec3(.8,.85,1.)*st*(hs-.994)*140.;}',
@@ -81,10 +83,13 @@
     '    float glow=exp(-max(alt,0.)*55.)*smoothstep(-.02,.004,alt);',
     '    float day=smoothstep(-.35,.4,dot(cp,uSun));',
     '    float fwd=pow(max(dot(rd,uSun),0.),6.);',
-    '    col+=glow*(vec3(.3,.55,1.)*day*.9+vec3(1.,.55,.25)*fwd*2.2);',
+    '    col+=glow*(vec3(.3,.55,1.)*day*.9+vec3(1.,.55,.25)*fwd*2.2);glowL=glow*(.35+.65*day);',
     '  }',
-    '  col=1.-exp(-col*1.1);',
-    '  o=vec4(sqrt(col)*uFade,1.);',
+    '  col=sqrt(1.-exp(-col*1.1));',
+    // Light theme: a pale sky with a soft blue halo instead of stars and glare.
+    '  vec3 sky=uLight>.5?vec3(.961,.961,.969):vec3(0.);',
+    '  if(uLight>.5&&!hit)col=mix(sky,vec3(.55,.72,.98),clamp(glowL*.85,0.,1.));',
+    '  o=vec4(mix(sky,col,uFade),1.);',
     '}'
   ].join('\n');
 
@@ -118,7 +123,7 @@
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   gl.bindVertexArray(null);
   var U = {};
-  ['uDay', 'uNight', 'uClouds', 'uRes', 'uOff', 'uCam', 'uSun', 'uBasis', 'uTan', 'uSpin', 'uCloudSpin', 'uFade'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+  ['uDay', 'uNight', 'uClouds', 'uRes', 'uOff', 'uCam', 'uSun', 'uBasis', 'uTan', 'uSpin', 'uCloudSpin', 'uFade', 'uLight'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
 
   // Satellites. Each vertex is one orbit: radius (Earth radii), inclination,
   // node and starting angle. kind 0 = dot, 1 = a sample of the highlighted
@@ -159,19 +164,19 @@
   var ORB_FRAG = [
     '#version 300 es',
     'precision highp float;',
-    'in float vA;in float vKind;in float vRot;out vec4 o;uniform float uBubble,uAlert;',
+    'in float vA;in float vKind;in float vRot;out vec4 o;uniform float uBubble,uAlert,uLight;',
     'void main(){',
     '  float d=length(gl_PointCoord-.5);',
-    '  vec3 hue=vKind>=3.?vec3(.35,.85,1.):vec3(1.,.64,.14);',
+    '  vec3 hue=vKind>=3.?mix(vec3(.35,.85,1.),vec3(0.,.45,.75),uLight):mix(vec3(1.,.64,.14),vec3(.78,.47,0.),uLight);',
     '  if(uBubble>0.&&(vKind==2.||vKind==4.)){',
     '    vec2 q=gl_PointCoord-.5;q.y=-q.y;q=mat2(cos(vRot),-sin(vRot),sin(vRot),cos(vRot))*q;',
     '    float e=length(q/vec2(.48,.17));',
     '    vec3 col=mix(hue,vec3(1.,.23,.19),uAlert);',
     '    float fill=smoothstep(1.,.9,e)*.28,ring=smoothstep(.12,0.,abs(e-.93))*.9,core=smoothstep(.2,.1,length(q)/.3);',
-    '    o=vec4(mix(col,vec3(1.),core*.6),max(max(fill,ring),core)*vA);return;}',
-    '  if(vKind==2.||vKind==4.){float core=smoothstep(.22,.12,d),halo=smoothstep(.5,.1,d)*.45;o=vec4(mix(hue,vec3(1.,.95,.85),core),(core+halo)*vA);return;}',
+    '    o=vec4(mix(col,vec3(1.-uLight),core*.6),max(max(fill,ring),core)*vA);return;}',
+    '  if(vKind==2.||vKind==4.){float core=smoothstep(.22,.12,d),halo=smoothstep(.5,.1,d)*.45;o=vec4(mix(hue,mix(vec3(1.,.95,.85),hue,uLight),core),(core+halo)*vA);return;}',
     '  float a=smoothstep(.5,.15,d)*vA;',
-    '  o=vec4(vKind==1.||vKind==3.?hue:vec3(.7,.88,1.),vKind==1.||vKind==3.?a*.8:a);',
+    '  o=vec4(vKind==1.||vKind==3.?hue:mix(vec3(.7,.88,1.),vec3(.22,.28,.4),uLight),vKind==1.||vKind==3.?a*.8:a*mix(1.,.75,uLight));',
     '}'
   ].join('\n');
   var orbProg = gl.createProgram();
@@ -270,7 +275,7 @@
   gl.vertexAttribPointer(aKind, 1, gl.FLOAT, false, 20, 16);
   gl.bindVertexArray(null);
   var OU = {};
-  ['uCam', 'uSun', 'uBasis', 'uRes', 'uOff', 'uTan', 'uTime', 'uRate', 'uPx', 'uHiAngle', 'uHiAngleB', 'uFade', 'uBubble', 'uAlert'].forEach(function (k) { OU[k] = gl.getUniformLocation(orbProg, k); });
+  ['uCam', 'uSun', 'uBasis', 'uRes', 'uOff', 'uTan', 'uTime', 'uRate', 'uPx', 'uHiAngle', 'uHiAngleB', 'uFade', 'uBubble', 'uAlert', 'uLight'].forEach(function (k) { OU[k] = gl.getUniformLocation(orbProg, k); });
 
   var alertEl = null, alertLevel = 0;
   if (CONJ) {
@@ -388,7 +393,9 @@
     gl.uniform1f(U.uTan, Math.tan(22 * D));
     gl.uniform1f(U.uSpin, spin);
     gl.uniform1f(U.uCloudSpin, spin * 0.35);
+    var light = document.documentElement.getAttribute('data-theme') === 'light' ? 1 : 0;
     gl.uniform1f(U.uFade, fade);
+    gl.uniform1f(U.uLight, light);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     if (orbOk) {
       gl.useProgram(orbProg);
@@ -429,8 +436,10 @@
         gl.uniform1f(OU.uAlert, 0);
       }
       gl.uniform1f(OU.uFade, fade);
+      gl.uniform1f(OU.uLight, light);
       gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      // Additive glow on the dark sky; ordinary alpha blending on the light one.
+      gl.blendFunc(gl.SRC_ALPHA, light ? gl.ONE_MINUS_SRC_ALPHA : gl.ONE);
       gl.drawArrays(gl.POINTS, 0, orbCount);
       gl.disable(gl.BLEND);
     }

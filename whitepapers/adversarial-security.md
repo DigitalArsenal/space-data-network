@@ -5,6 +5,7 @@
 <h1 align="center">Persistent Adversarial Security</h1>
 <p align="center"><strong>Game-Theoretic Key Integrity Through Blockchain Economics</strong></p>
 <p align="center"><em>A whitepaper on using cryptocurrency balances as real-time, permissionless proof of cryptographic key integrity.</em></p>
+<p align="center">Anthony &quot;TJ&quot; Koury III</p>
 
 ---
 
