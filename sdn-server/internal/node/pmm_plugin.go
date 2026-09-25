@@ -320,7 +320,7 @@ func hexLower(b []byte) string {
 // entry is needed and none is added.
 func (p *pmmPlugin) RegisterRoutes(mux *http.ServeMux) {
 	if p.node != nil {
-		registerPublicMetadataTransport(p.node.Host(), mux, pmm.Path, pmm.Handler(p.source))
+		registerPublicMetadataTransport(p.node.Host(), mux, pmm.Path, p.publicMetadataHandler())
 	}
 	p.mu.RLock()
 	mounted := p.mounted
@@ -341,6 +341,24 @@ func (p *pmmPlugin) RegisterRoutes(mux *http.ServeMux) {
 // ANONYMOUS is served, by exact match. An ENTITLED module never carries a path,
 // so closed bytes are unreachable by construction, and nothing is derived from
 // the URL except a map lookup, so there is no traversal.
+// publicMetadataHandler answers the manifest over libp2p. A node that
+// publishes no catalog answers 404, exactly as its HTTP route does (the route
+// is simply not mounted); answering the source's error (503) made every
+// ingest or compute node read as a broken provider to remote dashboards.
+func (p *pmmPlugin) publicMetadataHandler() http.Handler {
+	serve := pmm.Handler(p.source)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.mu.RLock()
+		mounted := p.mounted
+		p.mu.RUnlock()
+		if !mounted {
+			http.Error(w, "this node publishes no module manifest", http.StatusNotFound)
+			return
+		}
+		serve.ServeHTTP(w, r)
+	})
+}
+
 func (p *pmmPlugin) artifactHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

@@ -169,3 +169,14 @@ func TestPMMPluginRefusesUnusableSigningKey(t *testing.T) {
 		t.Fatal("a node with no usable signing key must refuse to sign, never serve unsigned")
 	}
 }
+
+// Over libp2p, a node without a catalog answers 404 like its HTTP route, so a
+// remote dashboard can tell "publishes nothing" from a broken provider.
+func TestPMMPluginAnswers404OverLibp2pWithoutCatalog(t *testing.T) {
+	p := &pmmPlugin{source: &pmm.StaticSource{}, artifacts: map[string]string{}, stop: make(chan struct{})}
+	w := httptest.NewRecorder()
+	p.publicMetadataHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, pmm.Path, nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("no catalog answered %d over the metadata transport, want 404", w.Code)
+	}
+}
