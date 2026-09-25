@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 240" role="img" aria-labelledby="t d">
+  <title id="t">Orbit models form a spectrum of fidelity</title>
+  <desc id="d">From lower fidelity and less computation to higher fidelity and more computation: two-body, J2 secular, SGP4 and SDP4, Vinti (analytic models), semi-analytic theory such as DSST, and full numerical integration.</desc>
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#f5a524"/>
+    </linearGradient>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f5a524"/></marker>
+    <marker id="b" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0L0 5L10 10z" fill="#8e8e93"/></marker>
+  </defs>
+  <rect width="960" height="240" rx="18" fill="#0b0b0c"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle" fill="#f5f5f7">
+    <!-- bands -->
+    <rect x="40" y="40" width="520" height="30" rx="8" fill="#ffffff" fill-opacity=".05"/>
+    <text x="300" y="60" font-size="13" font-weight="700" letter-spacing="1.2" fill-opacity=".6">ANALYTIC</text>
+    <rect x="570" y="40" width="160" height="30" rx="8" fill="#f5a524" fill-opacity=".08"/>
+    <text x="650" y="60" font-size="13" font-weight="700" letter-spacing="1.2" fill="#f5a524" fill-opacity=".8">SEMI-ANALYTIC</text>
+    <rect x="740" y="40" width="180" height="30" rx="8" fill="#f5a524" fill-opacity=".16"/>
+    <text x="830" y="60" font-size="13" font-weight="700" letter-spacing="1.2" fill="#f5a524">NUMERICAL</text>
+    <!-- spectrum bar -->
+    <rect x="40" y="128" width="880" height="8" rx="4" fill="url(#g)"/>
+    <!-- stops -->
+    <g>
+      <circle cx="105" cy="132" r="9" fill="#0b0b0c" stroke="#ffffff" stroke-opacity=".5" stroke-width="2"/>
+      <text x="105" y="108" font-size="15" font-weight="700">Two-body</text>
+
+      <circle cx="230" cy="132" r="9" fill="#0b0b0c" stroke="#ffffff" stroke-opacity=".6" stroke-width="2"/>
+      <text x="230" y="108" font-size="15" font-weight="700">J2 secular</text>
+
+      <circle cx="365" cy="132" r="9" fill="#0b0b0c" stroke="#ffffff" stroke-opacity=".7" stroke-width="2"/>
+      <text x="365" y="108" font-size="15" font-weight="700">SGP4 / SDP4</text>
+
+      <circle cx="495" cy="132" r="9" fill="#0b0b0c" stroke="#ffffff" stroke-opacity=".8" stroke-width="2"/>
+      <text x="495" y="108" font-size="15" font-weight="700">Vinti</text>
+
+      <circle cx="650" cy="132" r="9" fill="#0b0b0c" stroke="#f5a524" stroke-opacity=".8" stroke-width="2"/>
+      <text x="650" y="108" font-size="15" font-weight="700">Semi-analytic</text>
+
+      <circle cx="830" cy="132" r="9" fill="#f5a524" stroke="#f5a524" stroke-width="2"/>
+      <text x="830" y="108" font-size="15" font-weight="700">Numerical (HPOP)</text>
+    </g>
+    <!-- axis -->
+    <line x1="120" y1="178" x2="840" y2="178" stroke="#8e8e93" stroke-width="1.5" marker-start="url(#b)" marker-end="url(#a)"/>
+    <text x="40" y="212" text-anchor="start" font-size="13" fill-opacity=".6">Lower fidelity &#183; less computation</text>
+    <text x="920" y="212" text-anchor="end" font-size="13" fill="#f5a524">Higher fidelity &#183; more computation</text>
+  </g>
+</svg>

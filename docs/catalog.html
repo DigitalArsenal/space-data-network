@@ -21,6 +21,8 @@
     .site-nav { height: var(--sdn-stack-header-height, 52px); }
     .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
     .catalog-hero { min-height: calc(100vh - 52px); justify-content: flex-start; padding-top: 16vh; }
+    .models td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; }
+    @media (max-width: 620px) { .models td:first-child { white-space: normal; } }
   </style>
 </head>
 <body class="centered">
@@ -119,17 +121,28 @@
 
         <div class="chapter">
           <p class="chapter-num">3</p>
-          <h3>Two ways to fit an orbit</h3>
+          <h3>From simple models to high-fidelity ones</h3>
+          <p>An orbit model is not a yes-or-no choice between &ldquo;good&rdquo; and &ldquo;rough.&rdquo; Models form a spectrum. Each step adds forces or keeps terms the simpler ones drop, and costs more computation. The military catalog publishes products from two points on it: SGP4 element sets and numerical special-perturbation orbits.</p>
         </div>
-        <div class="grid grid-2 narrow">
-          <div class="card">
-            <h3>General perturbations</h3>
-            <p>An analytic theory, SGP4, fit to the observations as a compact set of mean elements. Fast, small, and good to roughly a kilometer near its epoch. Errors grow by kilometers a day in low orbit. Published as two-line element sets and OMMs.</p>
-          </div>
-          <div class="card">
-            <h3>Special perturbations</h3>
-            <p>Numerical integration with full force models: Earth&rsquo;s gravity field, an atmosphere corrected in near real time, the Sun and Moon, and solar radiation pressure. Produces a state vector plus a covariance: the error bubble around the orbit.</p>
-          </div>
+        <figure class="figure figure-wide">
+          <img src="img/catalog/fidelity.svg" width="960" height="240" alt="A spectrum of orbit models from lower to higher fidelity: two-body, J2 secular, SGP4 and SDP4, Vinti, semi-analytic, and numerical">
+        </figure>
+        <div class="table-wrap narrow">
+          <table class="models">
+            <thead><tr><th>Model</th><th>What it includes</th><th>Where it fits</th></tr></thead>
+            <tbody>
+              <tr><td>Two-body (Keplerian)</td><td>Earth as a point mass. A closed-form ellipse.</td><td>Quick looks and first guesses. In low orbit it drifts off within hours, because Earth&rsquo;s bulge alone turns an orbit plane by several degrees a day.</td></tr>
+              <tr><td>J2 secular</td><td>The average effect of Earth&rsquo;s oblateness on the orbit plane and perigee.</td><td>Mission planning, constellation design and sun-synchronous orbits.</td></tr>
+              <tr><td>SGP4 / SDP4</td><td>An analytic general-perturbations theory: mean elements, zonal gravity terms, a simple drag term, and Sun, Moon and resonance terms for deep space.</td><td>The public element sets (two-line element sets and OMMs). Must be run with the same theory the elements were fit with. Good to about a kilometer near epoch, with errors growing by kilometers a day in low orbit.</td></tr>
+              <tr><td>Vinti</td><td>An analytic solution in oblate spheroidal coordinates that carries Earth&rsquo;s oblateness exactly, and much of the next zonal terms, instead of as a series approximation.</td><td>Fast, accurate zonal-gravity propagation where drag is small or handled separately.</td></tr>
+              <tr><td>Semi-analytic (for example DSST)</td><td>Averages out the fast, short-period motion, integrates the slowly changing mean elements with large steps, then adds the short-period terms back.</td><td>Long spans at modest cost: geostationary and high orbits, lifetime and reentry studies.</td></tr>
+              <tr><td>Numerical (HPOP)</td><td>Direct integration of the equations of motion with a high-degree gravity field, atmospheric drag from a density model corrected by observations, the Sun and Moon, solar radiation pressure, tides and relativity.</td><td>The high-accuracy catalog, precise ephemerides and conjunction screening, when the inputs support it.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="chapter">
+          <h3>Fidelity is not the same as accuracy</h3>
+          <p>A high-fidelity model fed a stale state or a wrong drag estimate can predict worse than SGP4 fit to fresh tracking. The right model depends on the orbit regime, how far ahead you need to predict, and how good the data is. Fitting is a separate step: batch least squares or a sequential filter estimates the state, and often drag and radiation-pressure parameters, that best match the observations under whichever model is chosen.</p>
         </div>
 
         <div class="chapter">
@@ -181,7 +194,7 @@
           <li><b>Publish</b><span>A sensor operator, satellite owner or lab digitally signs each record with its own private key and publishes it from its node. No contract, no gatekeeper.</span></li>
           <li><b>Keep the original</b><span>Nodes store the exact bytes with the publisher&rsquo;s digital signature. Reprocessing never overwrites a provider&rsquo;s record.</span></li>
           <li><b>Match</b><span>Records from different sources are matched to one physical object by designator, history and trajectory. Ambiguous matches stay separate.</span></li>
-          <li><b>Fit</b><span>Where the data supports it, orbits are fit with high-precision numerical propagation (HPOP). SGP4 elements stay available for compatibility.</span></li>
+          <li><b>Fit</b><span>Each orbit is fit with the model its evidence supports, up to full numerical propagation (HPOP). Every record names its model, so one theory&rsquo;s elements are never run through another&rsquo;s propagator.</span></li>
           <li><b>Publish a version</b><span>Each catalog version names its inputs, its recipe and the exact modules that ran. Anyone can rerun it.</span></li>
           <li><b>Screen</b><span>Conjunction screening runs as open WebAssembly modules. Operators can screen a maneuver encrypted, without handing it to a competitor.</span></li>
         </ol>
