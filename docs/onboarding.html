@@ -63,6 +63,7 @@
       <nav class="nav-links" aria-label="Site">
         <a href="onboarding.html" aria-current="page">Get started</a>
         <a href="catalog.html">Catalog</a>
+        <a href="whitepapers.html">Whitepapers</a>
         <a href="index.html#download">Download</a>
         <a href="server-overview.html">Docs</a>
         <a href="index.html#stack">Stack</a>
@@ -73,6 +74,7 @@
         <div class="menu-panel">
           <a href="index.html">Home</a>
           <a href="catalog.html">Catalog</a>
+          <a href="whitepapers.html">Whitepapers</a>
           <a href="index.html#download">Download</a>
           <a href="server-overview.html">Docs</a>
           <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
@@ -132,7 +134,7 @@ spacedatanetwork open</code></pre></div>
       <div class="step-text">
         <span class="step-num">3</span>
         <h2>Fill in your profile</h2>
-        <p>Click <b>Edit profile</b> and add your organization and contact details. This becomes your signed public listing, so others can find you and check that your data is really yours.</p>
+        <p>Click <b>Edit profile</b> and add your organization and contact details. This becomes your digitally signed public listing, so others can find you and check that your data is really yours.</p>
         <p class="note">Share it as a contact card: the <b>VCARD</b> button or the QR code carries your details plus the proof that they are genuine.</p>
       </div>
       <a class="shot" href="img/onboarding/03-profile.webp"><img src="img/onboarding/03-profile.webp" width="1800" height="1125" alt="The Edit profile screen with name, contact and address fields beside the node's connection details and vCard QR code" loading="lazy"></a>
@@ -178,7 +180,7 @@ spacedatanetwork open</code></pre></div>
         <span class="step-num">7</span>
         <h2>Publish your own</h2>
         <p>Signed in as the owner, open <b>Subscriptions</b> and click <b>Publish a stream</b>. Pick a standard format (orbits are <code>OMM</code>, ephemerides <code>OEM</code>, conjunctions <code>CDM</code>, catalogs <code>CAT</code>) and list it.</p>
-        <p class="note">Every record you publish is signed with your ID, so anyone can confirm it came from you, unaltered. From code it is one call:</p>
+        <p class="note">Every record you publish carries a digital signature from your ID, so anyone can confirm it came from you, unaltered. From code it is one call:</p>
         <div class="code"><span class="label">JavaScript</span><button class="copy" type="button">Copy</button><pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
 const node = new SDNNode();
 await node.start();
@@ -211,7 +213,7 @@ spacedatanetwork identity export --format qrcode
 spacedatanetwork search standards OMM --format json
 spacedatanetwork search providers celestrak --schema OMM
 spacedatanetwork search data --schema OMM --format csv
-# signed software updates
+# digitally signed software updates
 spacedatanetwork update check</code></pre></div>
           <p>Full reference: <a href="server-overview.html">server overview</a>, <a href="agent-api-guide.html">API guide</a>, <a href="operator-enrollment.html">operator enrollment</a>.</p>
         </div>
@@ -219,7 +221,7 @@ spacedatanetwork update check</code></pre></div>
       <details class="more">
         <summary>Build a module</summary>
         <div class="body">
-          <p>Modules are signed WebAssembly files. The same file runs in a browser, on a server or on an edge device, and can only touch what the node hands it.</p>
+          <p>Modules are digitally signed WebAssembly files. The same file runs in a browser, on a server or on an edge device, and can only touch what the node hands it.</p>
           <div class="code"><button class="copy" type="button">Copy</button><pre><code>npx space-data-module compile --manifest ./manifest.json --source ./src/module.c --out ./dist/isomorphic/module.wasm
 npx space-data-module check   --manifest ./manifest.json --wasm ./dist/isomorphic/module.wasm
 npx space-data-module sign    --wasm ./dist/isomorphic/module.wasm --key ./keypair.json</code></pre></div>
@@ -232,7 +234,7 @@ npx space-data-module sign    --wasm ./dist/isomorphic/module.wasm --key ./keypa
 <p>This is the short version of what a Space Data Network node is, what it runs, what it needs, and what it talks to &mdash; written for the people who approve software on your network. Everything here is the shipped default; every value can be changed in the node's configuration file.</p>
 
         <h3>Architecture in one paragraph</h3>
-        <p>A node is <strong>one long-running process</strong> on one machine. It joins a peer-to-peer network (libp2p, the same networking stack as IPFS), receives and publishes small signed records in the <a href="https://spacedatastandards.org" target="_blank">Space Data Standards</a> formats (satellite orbits, catalog entries, conjunction warnings, space weather, and so on), stores them on local disk, and serves them to your own software over a local HTTP API and a browser dashboard. Optional analysis modules run inside a WebAssembly sandbox in the same process. There is no central server: your node talks to other nodes directly, and every record carries the publisher's signature, so provenance is verified rather than assumed.</p>
+        <p>A node is <strong>one long-running process</strong> on one machine. It joins a peer-to-peer network (libp2p, the same networking stack as IPFS), receives and publishes small digitally signed records in the <a href="https://spacedatastandards.org" target="_blank">Space Data Standards</a> formats (satellite orbits, catalog entries, conjunction warnings, space weather, and so on), stores them on local disk, and serves them to your own software over a local HTTP API and a browser dashboard. Optional analysis modules run inside a WebAssembly sandbox in the same process. There is no central server: your node talks to other nodes directly, and every record carries the publisher's signature, so provenance is verified rather than assumed.</p>
 
         <h3>Software components</h3>
         <div class="table-wrap"><table>
@@ -240,7 +242,7 @@ npx space-data-module sign    --wasm ./dist/isomorphic/module.wasm --key ./keypa
           <tr><td>Node daemon</td><td>Single Go binary <code>spacedatanetwork</code>: libp2p host, record store, HTTP API, dashboard, module runtime. Statically linked; no external database, no interpreter.</td><td>One background service (systemd, launchd, or the Docker container)</td></tr>
           <tr><td>Record store (FlatSQL)</td><td>A SQL engine compiled to WebAssembly that indexes the FlatBuffer records in place. Append-only stream files under the node's data directory; no SQLite, no Postgres.</td><td>In-process, via the WasmEdge runtime bundled with the binary</td></tr>
           <tr><td>Kubo (IPFS)</td><td>Content-addressed storage for larger published assets and archives. Bound to loopback only; it never fetches arbitrary content for outside callers.</td><td>Managed child process of the daemon (bundled), or an existing Kubo you already run</td></tr>
-          <tr><td>Module runtime</td><td>Optional signed WebAssembly modules and flows (analysis, ingestion). Each runs in a WASM sandbox with only the capabilities it declares (timer, HTTP egress, guarded persistence).</td><td>In-process, WasmEdge</td></tr>
+          <tr><td>Module runtime</td><td>Optional digitally signed WebAssembly modules and flows (analysis, ingestion). Each runs in a WASM sandbox with only the capabilities it declares (timer, HTTP egress, guarded persistence).</td><td>In-process, WasmEdge</td></tr>
           <tr><td>Dashboard and API</td><td>Web dashboard and REST/WebSocket API on the admin listener. Sign-in is by cryptographic key; authentication is required by default.</td><td>Loopback listener <code>127.0.0.1:5001</code></td></tr>
           <tr><td>Desktop app (optional)</td><td>Same node wrapped in a desktop application with the dashboard as its window.</td><td>User application</td></tr>
         </table></div>
@@ -270,7 +272,7 @@ npx space-data-module sign    --wasm ./dist/isomorphic/module.wasm --key ./keypa
         <p><strong>Outbound.</strong> The node initiates these connections; nothing else.</p>
         <div class="table-wrap"><table>
           <tr><th>Destination</th><th>Port</th><th>Why</th></tr>
-          <tr><td><code>sdn.spaceaware.io</code></td><td>443 TCP (WebSocket over TLS)</td><td>Bootstrap peer: first contact with the network, and the signed software-update feed</td></tr>
+          <tr><td><code>sdn.spaceaware.io</code></td><td>443 TCP (WebSocket over TLS)</td><td>Bootstrap peer: first contact with the network, and the digitally signed software-update feed</td></tr>
           <tr><td><code>159.203.150.8</code>, <code>167.172.219.213</code></td><td>4004 TCP, 4001 TCP</td><td>Bootstrap peers (the two public production nodes)</td></tr>
           <tr><td>Other network peers</td><td>4001 TCP/UDP typically; peers may listen on other ports</td><td>Peer-to-peer data exchange and the public Kademlia DHT used for discovery</td></tr>
           <tr><td><code>spacedatanetwork.org</code></td><td>443 TCP</td><td>Installer and documentation only</td></tr>
@@ -285,8 +287,8 @@ npx space-data-module sign    --wasm ./dist/isomorphic/module.wasm --key ./keypa
           <li><strong>Data distribution:</strong> GossipSub publish/subscribe topics per data type, plus content-addressed fetch of published record sets by SHA-256.</li>
           <li><strong>Wire format:</strong> Space Data Standards FlatBuffers, size-prefixed. The same bytes travel the network, sit on disk, and come back out of the API; JSON is offered on HTTP responses.</li>
           <li><strong>Local API:</strong> HTTP/1.1 and WebSocket on the admin listener; the served reference is at <code>/api/v1/docs</code> on any running node.</li>
-          <li><strong>Signatures and keys:</strong> every record is Ed25519-signed by its publisher and verified before it is stored. All of a node's keys derive from one BIP-39 mnemonic (SLIP-10, BIP-44 paths); the mnemonic is encrypted at rest with a machine-derived key and fails closed if the machine changes. Encrypted record types use X25519 key agreement.</li>
-          <li><strong>Software updates:</strong> signed update manifests over the update feed; a node verifies the signature, upgrades in place, and can roll back. No update is applied unsigned.</li>
+          <li><strong>Signatures and keys:</strong> every record carries its publisher&rsquo;s Ed25519 digital signature and is verified before it is stored. All of a node's keys derive from one BIP-39 mnemonic (SLIP-10, BIP-44 paths); the mnemonic is encrypted at rest with a machine-derived key and fails closed if the machine changes. Encrypted record types use X25519 key agreement.</li>
+          <li><strong>Software updates:</strong> digitally signed update manifests over the update feed; a node verifies the signature, upgrades in place, and can roll back. No update is applied unsigned.</li>
         </ul>
 
         <h3>What leaves your network, and what does not</h3>
@@ -320,7 +322,7 @@ npx space-data-module sign    --wasm ./dist/isomorphic/module.wasm --key ./keypa
       <nav>
         <a href="index.html">Home</a>
         <a href="catalog.html">Catalog</a>
-        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="whitepapers.html">Whitepapers</a>
         <a href="server-overview.html">Docs</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
         <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>

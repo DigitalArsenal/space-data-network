@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="How the military builds its space object catalog, and how Space Data Network builds an open one from any number of signed sources.">
+  <meta name="description" content="How the military builds its space object catalog, and how Space Data Network builds an open one from any number of digitally signed sources.">
   <meta name="theme-color" content="#000000">
   <meta property="og:title" content="How A Space Catalog Is Built">
-  <meta property="og:description" content="Sensors, orbit determination and tiered access, and an open catalog built from any number of signed sources.">
+  <meta property="og:description" content="Sensors, orbit determination and tiered access, and an open catalog built from any number of digitally signed sources.">
   <meta property="og:type" content="article">
   <title>How A Space Catalog Is Built &middot; Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M5.8 7.9A13 13 0 0 1 28.6 12.6' stroke='%23f5a524' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='28.6' cy='12.6' r='2.5' fill='%23f5a524'/></svg>">
@@ -38,6 +38,7 @@
       <nav class="nav-links" aria-label="Site">
         <a href="onboarding.html">Get started</a>
         <a href="catalog.html" aria-current="page">Catalog</a>
+        <a href="whitepapers.html">Whitepapers</a>
         <a href="index.html#download">Download</a>
         <a href="server-overview.html">Docs</a>
         <a href="index.html#stack">Stack</a>
@@ -48,6 +49,7 @@
         <div class="menu-panel">
           <a href="onboarding.html">Get started</a>
           <a href="catalog.html">Catalog</a>
+          <a href="whitepapers.html">Whitepapers</a>
           <a href="index.html#download">Download</a>
           <a href="server-overview.html">Docs</a>
           <a href="index.html#stack">Stack</a>
@@ -169,15 +171,15 @@
         <div class="head">
           <p class="eyebrow">Part two</p>
           <h2>The Network Catalog</h2>
-          <p class="lede">No single sensor network sees everything. The network takes data from any number of sources, keeps each one signed with its uncertainty attached, and publishes the recipe that combined them.</p>
+          <p class="lede">No single sensor network sees everything. The network takes data from any number of sources, keeps each one digitally signed with its uncertainty attached, and publishes the recipe that combined them.</p>
         </div>
         <figure class="figure figure-wide">
-          <img src="img/catalog/network.svg" width="960" height="480" alt="Nine kinds of sources, from government elements to any new publisher, flow into signed records, then an open recipe that matches, fits and validates, then one catalog shared by every node">
+          <img src="img/catalog/network.svg" width="960" height="480" alt="Nine kinds of sources, from government elements to any new publisher, flow into digitally signed records, then an open recipe that matches, fits and validates, then one catalog shared by every node">
         </figure>
 
         <ol class="steps steps-3">
-          <li><b>Publish</b><span>A sensor operator, satellite owner or lab signs each record with its own key and publishes it from its node. No contract, no gatekeeper.</span></li>
-          <li><b>Keep the original</b><span>Nodes store the exact bytes and who signed them. Reprocessing never overwrites a provider&rsquo;s record.</span></li>
+          <li><b>Publish</b><span>A sensor operator, satellite owner or lab digitally signs each record with its own private key and publishes it from its node. No contract, no gatekeeper.</span></li>
+          <li><b>Keep the original</b><span>Nodes store the exact bytes with the publisher&rsquo;s digital signature. Reprocessing never overwrites a provider&rsquo;s record.</span></li>
           <li><b>Match</b><span>Records from different sources are matched to one physical object by designator, history and trajectory. Ambiguous matches stay separate.</span></li>
           <li><b>Fit</b><span>Where the data supports it, orbits are fit with high-precision numerical propagation (HPOP). SGP4 elements stay available for compatibility.</span></li>
           <li><b>Publish a version</b><span>Each catalog version names its inputs, its recipe and the exact modules that ran. Anyone can rerun it.</span></li>
@@ -194,8 +196,8 @@
         </figure>
 
         <div class="chapter">
-          <h3>Every record traces to its publisher</h3>
-          <p>Each node shows what it holds and who signed it. This node carries 882,941 signed records across seven datasets, including orbit elements, catalog entries and space weather.</p>
+          <h3>Every record carries a digital signature</h3>
+          <p>Each node shows what it holds and whose digital signature each record carries. This node carries 882,941 digitally signed records across seven datasets, including orbit elements, catalog entries and space weather.</p>
         </div>
         <figure class="figure figure-wide">
           <img src="img/onboarding/06-data.webp" width="1800" height="1125" alt="The Data tab of a node's dashboard, showing 882,941 records across seven datasets as a bar chart" loading="lazy">
@@ -216,14 +218,14 @@
               <tr><th>Who can add data</th><td>Sensors under contract</td><td>Anyone with a node and a key</td></tr>
               <tr><th>Who reads the best orbits</th><td>Agreement holders</td><td>Anyone, on the published terms</td></tr>
               <tr><th>Uncertainty</th><td>Withheld from most users</td><td>Carried with the orbit whenever the source has it</td></tr>
-              <tr><th>Terms of use</th><td>Private, deal by deal</td><td>Published in each signed listing</td></tr>
+              <tr><th>Terms of use</th><td>Private, deal by deal</td><td>Published in each digitally signed listing</td></tr>
               <tr><th>Checking a result</th><td>Not possible from outside</td><td>Rerun the recipe on the same inputs</td></tr>
               <tr><th>Your ephemeris</th><td>Feeds someone else&rsquo;s catalog</td><td>Stays yours; screen it encrypted</td></tr>
-              <tr><th>If a provider leaves</th><td>The data stops</td><td>Signed copies stay on other nodes</td></tr>
+              <tr><th>If a provider leaves</th><td>The data stops</td><td>Digitally signed copies stay on other nodes</td></tr>
             </tbody>
           </table>
         </div>
-        <p class="note">Methods, measured results and open work are in the <a href="supporting/catalog-approach-whitepaper.pdf">catalog whitepaper (PDF)</a>.</p>
+        <p class="note">Methods, measured results and open work are in the <a href="supporting/catalog-approach-whitepaper.html">catalog whitepaper</a>.</p>
       </div>
     </section>
 
@@ -231,7 +233,7 @@
       <div class="wrap">
         <div class="head">
           <h2>Add Your Source</h2>
-          <p class="lede">Radar, telescope, star tracker, laser ranging or your own ephemerides. Run a node, sign your data and set your own terms.</p>
+          <p class="lede">Radar, telescope, star tracker, laser ranging or your own ephemerides. Run a node, digitally sign your data and set your own terms.</p>
         </div>
         <div class="actions">
           <a href="onboarding.html" class="btn btn-primary">Get started</a>
@@ -246,7 +248,7 @@
       <nav>
         <a href="onboarding.html">Get started</a>
         <a href="catalog.html">Catalog</a>
-        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="whitepapers.html">Whitepapers</a>
         <a href="server-overview.html">Docs</a>
         <a href="onboarding.html#security-review">IT spec sheet</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
