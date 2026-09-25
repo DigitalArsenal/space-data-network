@@ -389,6 +389,21 @@ func (s *FlatSQLStore) tombstoneResidencyRowsLocked(schemaName, table string, ro
 	ledgerSchema := engineLedgerSchema(schemaName)
 	removed := 0
 	for _, row := range rows {
+		// The engine's markDeleted throws on a partition it never registered,
+		// and the noeh build turns that throw into an `unreachable` trap that
+		// poisons the whole runtime: every read (trust, data, the control DB
+		// itself) then answers ErrEngineRebuilding until the replacement engine
+		// is hydrated. A ledger row naming an unregistered source cannot be
+		// resident in the arena, so it is stale bookkeeping: drop it here.
+		if !s.engineSources[row.source] {
+			log.Warnf("FlatSQL engine: residency row %s %q names unregistered source %q (seq %d); dropping it without an engine tombstone", schemaName, row.cid, row.source, row.seq)
+			if _, err := exec.Exec(`DELETE FROM sdn_engine_rows WHERE schema_name = ? AND cid = ? AND source = ? AND seq = ?`, ledgerSchema, row.cid, row.source, row.seq); err != nil {
+				log.Warnf("FlatSQL engine: drop stale residency row %s/%q: %v", schemaName, row.cid, err)
+				continue
+			}
+			removed++
+			continue
+		}
 		if err := s.engineDB.MarkDeleted(enginePartition(table, row.source), uint64(row.seq)); err != nil {
 			log.Warnf("FlatSQL engine: tombstone %s %s (%s seq %d): %v", schemaName, row.cid, row.source, row.seq, err)
 			if s.engine.Poisoned() {
