@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="160" viewBox="0 0 500 160" fill="none">
+  <text x="250" y="15" text-anchor="middle" fill="#333" font-family="sans-serif" font-weight="bold" font-size="12">Nash Equilibrium: Verifier vs. Claimant</text>
+
+  <rect x="140" y="30" width="170" height="30" fill="#f0f0f0" stroke="#333" stroke-width="1"/>
+  <text x="225" y="50" text-anchor="middle" fill="#333" font-family="sans-serif" font-weight="bold" font-size="11">Honest Claimant</text>
+  <rect x="310" y="30" width="170" height="30" fill="#f0f0f0" stroke="#333" stroke-width="1"/>
+  <text x="395" y="50" text-anchor="middle" fill="#333" font-family="sans-serif" font-weight="bold" font-size="11">Dishonest Claimant</text>
+
+  <rect x="20" y="60" width="120" height="40" fill="#f0f0f0" stroke="#333" stroke-width="1"/>
+  <text x="80" y="84" text-anchor="middle" fill="#333" font-family="sans-serif" font-weight="bold" font-size="11">Fund Bond</text>
+  <rect x="20" y="100" width="120" height="40" fill="#f0f0f0" stroke="#333" stroke-width="1"/>
+  <text x="80" y="124" text-anchor="middle" fill="#333" font-family="sans-serif" font-weight="bold" font-size="11">No Bond</text>
+
+  <rect x="140" y="60" width="170" height="40" fill="#fff" stroke="#333" stroke-width="1"/>
+  <text x="225" y="84" text-anchor="middle" fill="#333" font-family="monospace" font-size="11">+Trust, +Access *</text>
+  <rect x="310" y="60" width="170" height="40" fill="#fff" stroke="#333" stroke-width="1"/>
+  <text x="395" y="84" text-anchor="middle" fill="#333" font-family="monospace" font-size="11">Cost &gt; Gain</text>
+  <rect x="140" y="100" width="170" height="40" fill="#fff" stroke="#333" stroke-width="1"/>
+  <text x="225" y="124" text-anchor="middle" fill="#666" font-family="monospace" font-size="11">No trust signal</text>
+  <rect x="310" y="100" width="170" height="40" fill="#fff" stroke="#333" stroke-width="1"/>
+  <text x="395" y="124" text-anchor="middle" fill="#666" font-family="monospace" font-size="11">Undetectable</text>
+
+  <text x="250" y="155" text-anchor="middle" fill="#666" font-family="sans-serif" font-size="10">* = Dominant strategy for honest actors  |  Dishonest actors rationally avoid bonding</text>
+</svg>

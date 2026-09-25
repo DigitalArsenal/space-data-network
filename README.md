@@ -934,7 +934,7 @@ npm run check:versions
 
 ## Documentation
 
-Full documentation is available at [spacedatanetwork.org](https://spacedatanetwork.org/) or locally at [docs/docs.html](./docs/docs.html).
+Full documentation is available at [spacedatanetwork.org](https://spacedatanetwork.org/) or locally at [docs/docs.html](./docs/docs.html). Whitepapers live in [whitepapers/](./whitepapers/).
 
 To preview the docs locally, start a webserver from the `docs/` directory:
 

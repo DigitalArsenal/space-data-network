@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200" fill="none">
+  <!-- Axes -->
+  <path d="M50 170h320" stroke="#333" stroke-width="1.5"/>
+  <path d="M50 170V20" stroke="#333" stroke-width="1.5"/>
+  <!-- Y axis labels -->
+  <text x="40" y="35" text-anchor="end" fill="#666" font-family="monospace" font-size="10">1.0</text>
+  <text x="40" y="100" text-anchor="end" fill="#666" font-family="monospace" font-size="10">0.5</text>
+  <text x="40" y="173" text-anchor="end" fill="#666" font-family="monospace" font-size="10">0.0</text>
+  <!-- X axis labels -->
+  <text x="50" y="185" text-anchor="middle" fill="#666" font-family="monospace" font-size="10">0</text>
+  <text x="210" y="185" text-anchor="middle" fill="#666" font-family="monospace" font-size="10">T/2</text>
+  <text x="370" y="185" text-anchor="middle" fill="#666" font-family="monospace" font-size="10">T</text>
+  <!-- Axis titles -->
+  <text x="210" y="198" text-anchor="middle" fill="#666" font-family="sans-serif" font-size="10">Key Age</text>
+  <text x="15" y="100" text-anchor="middle" fill="#666" font-family="sans-serif" font-size="10" transform="rotate(-90 15 100)">Trust</text>
+  <!-- Grid lines -->
+  <path d="M50 30h320M50 100h320" stroke="#ddd" stroke-width="0.5" stroke-dasharray="4 4"/>
+  <!-- Quadratic decay curve -->
+  <path d="M50 30 C130 32 210 50 250 75 C290 105 330 145 370 170" stroke="#333" stroke-width="2.5" fill="none"/>
+  <!-- Danger zone -->
+  <rect x="290" y="20" width="80" height="150" fill="#ccc" fill-opacity="0.2" rx="4"/>
+  <text x="330" y="50" text-anchor="middle" fill="#666" font-family="sans-serif" font-size="9">Rotate</text>
+  <text x="330" y="62" text-anchor="middle" fill="#666" font-family="sans-serif" font-size="9">urgency</text>
+  <!-- Safe zone -->
+  <rect x="50" y="20" width="120" height="150" fill="#eee" fill-opacity="0.3" rx="4"/>
+  <text x="110" y="50" text-anchor="middle" fill="#666" font-family="sans-serif" font-size="9">High trust</text>
+</svg>
