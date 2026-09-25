@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" role="img" aria-labelledby="t d">
+  <title id="t">Any number of sources, one open catalog</title>
+  <desc id="d">Government elements, operator ephemerides, commercial radar and telescopes, space-based sensors, laser ranging, universities and other nations publish signed records. An open recipe matches, fits and validates them into one catalog that every node receives on the same terms.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f5a524"/></marker>
+  </defs>
+  <rect width="960" height="480" rx="18" fill="#0b0b0c"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#f5f5f7">
+    <!-- sources -->
+    <g fill="none" stroke="#ffffff" stroke-opacity=".22">
+      <path d="M296 44C340 44 330 240 372 240"/><path d="M296 92C340 92 330 240 372 240"/><path d="M296 140C340 140 330 240 372 240"/>
+      <path d="M296 188C340 188 330 240 372 240"/><path d="M296 236C340 236 330 240 372 240"/><path d="M296 284C340 284 330 240 372 240"/>
+      <path d="M296 332C340 332 330 240 372 240"/><path d="M296 380C340 380 330 240 372 240"/><path d="M296 428C340 428 330 240 372 240" stroke="#f5a524" stroke-opacity=".7" stroke-dasharray="4 4"/>
+    </g>
+    <g>
+      <rect x="24" y="26" width="272" height="36" rx="18" fill="#ffffff" fill-opacity=".06" stroke="#ffffff" stroke-opacity=".18"/><text x="44" y="49">Government public elements</text>
+      <rect x="24" y="74" width="272" height="36" rx="18" fill="#ffffff" fill-opacity=".06" stroke="#ffffff" stroke-opacity=".18"/><text x="44" y="97">Operator ephemerides</text>
+      <rect x="24" y="122" width="272" height="36" rx="18" fill="#ffffff" fill-opacity=".06" stroke="#ffffff" stroke-opacity=".18"/><text x="44" y="145">Commercial radar</text>
+      <rect x="24" y="170" width="272" height="36" rx="18" fill="#ffffff" fill-opacity=".06" stroke="#ffffff" stroke-opacity=".18"/><text x="44" y="193">Commercial telescopes</text>
+      <rect x="24" y="218" width="272" height="36" rx="18" fill="#ffffff" fill-opacity=".06" stroke="#ffffff" stroke-opacity=".18"/><text x="44" y="241">Space-based sensors</text>
+      <rect x="24" y="266" width="272" height="36" rx="18" fill="#ffffff" fill-opacity=".06" stroke="#ffffff" stroke-opacity=".18"/><text x="44" y="289">Laser ranging stations</text>
+      <rect x="24" y="314" width="272" height="36" rx="18" fill="#ffffff" fill-opacity=".06" stroke="#ffffff" stroke-opacity=".18"/><text x="44" y="337">Universities and observers</text>
+      <rect x="24" y="362" width="272" height="36" rx="18" fill="#ffffff" fill-opacity=".06" stroke="#ffffff" stroke-opacity=".18"/><text x="44" y="385">Other nations&#8217; catalogs</text>
+      <rect x="24" y="410" width="272" height="36" rx="18" fill="#f5a524" fill-opacity=".1" stroke="#f5a524" stroke-dasharray="5 4"/><text x="44" y="433" fill="#f5a524" font-weight="600">Any new publisher</text>
+    </g>
+    <!-- signed records -->
+    <rect x="376" y="150" width="190" height="180" rx="16" fill="#1c1c1e" stroke="#ffffff" stroke-opacity=".25"/>
+    <text x="471" y="186" text-anchor="middle" font-size="17" font-weight="700">Signed records</text>
+    <text x="471" y="218" text-anchor="middle" fill-opacity=".75">Publisher&#8217;s key</text>
+    <text x="471" y="244" text-anchor="middle" fill-opacity=".75">Original bytes kept</text>
+    <text x="471" y="270" text-anchor="middle" fill-opacity=".75">Uncertainty attached</text>
+    <text x="471" y="296" text-anchor="middle" fill-opacity=".75">Terms in the listing</text>
+    <line x1="570" y1="240" x2="606" y2="240" stroke="#f5a524" stroke-width="2" marker-end="url(#a)"/>
+    <!-- recipe -->
+    <rect x="612" y="150" width="182" height="180" rx="16" fill="#f5a524" fill-opacity=".1" stroke="#f5a524" stroke-opacity=".7"/>
+    <text x="703" y="186" text-anchor="middle" font-size="17" font-weight="700">Open recipe</text>
+    <text x="703" y="218" text-anchor="middle" fill-opacity=".75">Match objects</text>
+    <text x="703" y="244" text-anchor="middle" fill-opacity=".75">Fit orbits (HPOP)</text>
+    <text x="703" y="270" text-anchor="middle" fill-opacity=".75">Validate</text>
+    <text x="703" y="296" text-anchor="middle" fill-opacity=".75">Publish a version</text>
+    <line x1="798" y1="240" x2="834" y2="240" stroke="#f5a524" stroke-width="2" marker-end="url(#a)"/>
+    <!-- everyone -->
+    <g fill="#f5f5f7">
+      <circle cx="890" cy="186" r="8"/><circle cx="866" cy="214" r="8"/><circle cx="914" cy="214" r="8"/>
+      <circle cx="850" cy="248" r="8"/><circle cx="890" cy="244" r="8"/><circle cx="930" cy="248" r="8"/>
+      <circle cx="866" cy="280" r="8"/><circle cx="914" cy="280" r="8"/><circle cx="890" cy="306" r="8"/>
+    </g>
+    <g stroke="#f5f5f7" stroke-opacity=".3" fill="none">
+      <path d="M890 186L866 214L850 248L866 280L890 306L914 280L930 248L914 214Z"/><path d="M890 186L890 306M866 214L914 280M914 214L866 280M850 248L930 248"/>
+    </g>
+    <text x="890" y="352" text-anchor="middle" font-weight="600">Same catalog</text>
+    <text x="890" y="372" text-anchor="middle" font-weight="600">for everyone</text>
+  </g>
+</svg>
