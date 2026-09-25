@@ -739,7 +739,10 @@ func (n *Node) init() error {
 		return fmt.Errorf("failed to create connection manager: %w", err)
 	}
 	log.Info(admissionPolicy.Summary())
-	resourceManager, err := newFlatSQLSyncResourceManager()
+	resourceManager, err := newNodeResourceManager(
+		resourceAllowlist(n.config.Network.Bootstrap, n.config.Peers.TrustedPeers),
+		admissionPolicy.HighWater,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create libp2p resource manager: %w", err)
 	}
