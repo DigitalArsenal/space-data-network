@@ -2,7 +2,7 @@
 
 An attributed orbital catalog for Space Data Network
 
-**Anthony "TJ" Koury III and Dr. Moriba Jah**
+**Anthony "TJ" Koury III**
 
 Technical whitepaper 1.1 | Revised 24 September 2026  
 Numerical evidence cutoff: 21 September 2026
