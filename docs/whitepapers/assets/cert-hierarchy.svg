@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="200" viewBox="0 0 420 200" fill="none">
+  <rect x="110" y="10" width="200" height="40" rx="8" fill="#f5f5f5" stroke="#333" stroke-width="1.5"/>
+  <text x="210" y="35" text-anchor="middle" fill="#333" font-family="monospace" font-size="12">Root CA (Org, P-384)</text>
+  <path d="M210 50v25" stroke="#666" stroke-width="1.5"/>
+  <text x="355" y="68" fill="#666" font-family="sans-serif" font-size="10">signs</text>
+
+  <rect x="90" y="75" width="240" height="40" rx="8" fill="#f5f5f5" stroke="#333" stroke-width="1.5"/>
+  <text x="210" y="100" text-anchor="middle" fill="#333" font-family="monospace" font-size="12">Intermediate CA (Dept, P-256)</text>
+  <path d="M210 115v25" stroke="#666" stroke-width="1.5"/>
+  <text x="355" y="133" fill="#666" font-family="sans-serif" font-size="10">signs</text>
+
+  <rect x="60" y="140" width="300" height="40" rx="8" fill="#f5f5f5" stroke="#333" stroke-width="1.5"/>
+  <text x="210" y="165" text-anchor="middle" fill="#333" font-family="monospace" font-size="12">End Entity (Personnel, P-256 + xpub sig)</text>
+</svg>

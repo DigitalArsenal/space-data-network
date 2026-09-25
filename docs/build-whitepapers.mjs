@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 /**
- * Render the whitepapers under docs/supporting into readable site pages.
+ * Render the whitepapers into readable site pages.
  *
- * The markdown stays the source of record; each paper gets an HTML page beside
- * it so relative figure paths keep working. Same rules as build-docs.mjs:
- * `marked` from the sdn-js workspace, no new dependency, zero external origin.
+ * The markdown under whitepapers/ at the repository root is the authoritative
+ * copy. This writes one page per paper to docs/whitepapers/ and copies the
+ * figures beside them, so the published site never holds a second, divergent
+ * copy of the text. Same rules as build-docs.mjs: `marked` from the sdn-js
+ * workspace, no new dependency, zero external origin.
  *
  * Usage: node docs/build-whitepapers.mjs
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -18,15 +20,36 @@ const REPO = resolve(HERE, '..');
 const require = createRequire(join(REPO, 'sdn-js', 'package.json'));
 const { marked } = require('marked');
 
+const SRC = join(REPO, 'whitepapers');
+const OUT = join(HERE, 'whitepapers');
+const GITHUB = 'https://github.com/DigitalArsenal/space-data-network/blob/main/whitepapers/';
+
+// GitHub-style heading ids, so the papers' own contents and reference links
+// resolve on the site exactly as they do on GitHub.
+let seen = new Map();
+function slug(text) {
+  const base = text.toLowerCase().trim().replace(/<[^>]+>/g, '').replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+  const n = seen.get(base) || 0;
+  seen.set(base, n + 1);
+  return n ? `${base}-${n}` : base;
+}
+marked.use({
+  renderer: {
+    heading({ tokens, depth, text }) {
+      return `<h${depth} id="${slug(text)}">${this.parser.parseInline(tokens)}</h${depth}>\n`;
+    },
+  },
+});
+
 /** Keep in step with the cards on whitepapers.html. */
 const PAPERS = [
   {
-    src: 'supporting/catalog-approach-whitepaper.md',
-    title: 'An Attributed, HPOP-First Orbital Catalog',
-    description: 'How Space Data Network builds a reproducible, multi-provider orbital catalog with attribution, uncertainty status and an explicit selection policy.',
+    src: 'evidence-supported-aso-catalog.md',
+    title: 'Evidence-Supported ASO Catalog',
+    description: 'An attributed orbital catalog for Space Data Network: evidence, provenance, uncertainty and reproducible selection for anthropogenic space objects.',
   },
   {
-    src: 'supporting/adversarial-security/adversarial-security-whitepaper.md',
+    src: 'adversarial-security.md',
     title: 'Persistent Adversarial Security',
     description: 'Cryptocurrency balances at deterministically derived addresses as continuous, publicly verifiable proof of key integrity.',
   },
@@ -82,7 +105,7 @@ ${links('          ')}
   </header>
   <main>
     <article class="paper wrap">
-      <p class="paper-back"><a href="${u('whitepapers.html')}">&larr; All whitepapers</a> &middot; <a href="${mdName}">Markdown source</a></p>
+      <p class="paper-back"><a href="${u('whitepapers.html')}">&larr; All whitepapers</a> &middot; <a href="${GITHUB}${mdName}">Markdown source</a></p>
 ${body}
     </article>
   </main>
@@ -104,12 +127,12 @@ ${body}
 `;
 }
 
+mkdirSync(OUT, { recursive: true });
+cpSync(join(SRC, 'assets'), join(OUT, 'assets'), { recursive: true });
 for (const paper of PAPERS) {
-  const src = join(HERE, paper.src);
-  const out = src.replace(/\.md$/, '.html');
-  const base = relative(dirname(out), HERE).split('\\').join('/');
-  const body = marked.parse(readFileSync(src, 'utf8'), { gfm: true });
-  const mdName = src.split('/').pop();
-  writeFileSync(out, page({ ...paper, body, base: base ? base + '/' : '', mdName }));
+  const out = join(OUT, paper.src.replace(/\.md$/, '.html'));
+  seen = new Map();
+  const body = marked.parse(readFileSync(join(SRC, paper.src), 'utf8'), { gfm: true });
+  writeFileSync(out, page({ ...paper, body, base: '../', mdName: paper.src }));
   console.log('wrote', relative(REPO, out));
 }
