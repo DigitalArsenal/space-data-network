@@ -31,21 +31,15 @@
     .hero { min-height: calc(82vh - 52px); display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: 64px 20px; }
     .hero .lede { max-width: 620px; }
 
-    .whitepaper { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; align-items: start; }
-    .whitepaper .facts { list-style: none; display: grid; gap: 12px; }
-    .whitepaper .facts li { border-left: 2px solid var(--accent); padding: 2px 0 2px 14px; color: var(--text-2); font-size: 15px; }
-    .whitepaper .facts strong { color: var(--text); display: block; font-size: 22px; letter-spacing: -0.01em; }
-    @media (max-width: 820px) { .whitepaper { grid-template-columns: 1fr; } }
 
     .dl h3 { margin-bottom: 4px; }
     .dl .os { margin-top: 14px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
-    .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px; margin-bottom: 28px; }
     .stack-links { display: flex; flex-wrap: wrap; gap: 10px; }
     .stack-links a { text-decoration: none; padding: 10px 16px; border: 1px solid var(--border); border-radius: 999px; font-size: 14px; color: var(--text-2); background: rgba(255,255,255,.03); }
     .stack-links a:hover, .stack-links a.active { color: var(--text); border-color: var(--border-strong); }
   </style>
 </head>
-<body>
+<body class="centered">
   <sdn-stack-nav active="sdn"></sdn-stack-nav>
   <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
   <div class="bg-shade"></div>
@@ -58,7 +52,7 @@
       </a>
       <nav class="nav-links" aria-label="Site">
         <a href="onboarding.html">Get started</a>
-        <a href="#whitepaper">Whitepaper</a>
+        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
         <a href="#download">Download</a>
         <a href="server-overview.html">Docs</a>
         <a href="#stack">Stack</a>
@@ -68,7 +62,7 @@
         <summary>Menu</summary>
         <div class="menu-panel">
           <a href="onboarding.html">Get started</a>
-          <a href="#whitepaper">Whitepaper</a>
+          <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
           <a href="#download">Download</a>
           <a href="server-overview.html">Docs</a>
           <a href="#stack">Stack</a>
@@ -85,68 +79,47 @@
       <div class="actions">
         <a href="onboarding.html" class="btn btn-primary">Get started</a>
         <a href="#download" class="btn">Download</a>
-        <a href="supporting/catalog-approach-whitepaper.pdf" class="btn">Catalog whitepaper</a>
       </div>
     </section>
 
     <section class="block" id="how">
       <div class="wrap">
-        <div class="grid grid-4">
-          <div class="card">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3l7 3v6c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
-            <h3>Signed at the source</h3>
-            <p>Every record carries its publisher's signature and is verified before your node stores it. Data uses the open <a href="https://spacedatastandards.org" target="_blank" rel="noopener">Space Data Standards</a> formats.</p>
-          </div>
-          <div class="card">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="5" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M7 11l10-5M7 13l10 5M19 7.2v9.6"/></svg>
-            <h3>No central server</h3>
+        <div class="cards">
+          <a class="card" href="security.html">
+            <div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3l7 3v6c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg><h3>Signed at the source</h3></div>
+            <p>Every record carries its publisher&rsquo;s signature and is verified before your node stores it, over encrypted connections with verifiable identities.</p>
+            <span class="more-link">Security and identity &rarr;</span>
+          </a>
+          <a class="card" href="network.html">
+            <div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="5" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M7 11l10-5M7 13l10 5M19 7.2v9.6"/></svg><h3>No central server</h3></div>
             <p>Nodes find each other over the public IPFS network and trade data directly. A node behind a firewall still works.</p>
-          </div>
-          <div class="card">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg>
-            <h3>Modules and a storefront</h3>
-            <p>Analysis modules run in a WebAssembly sandbox, the same file in a browser or on a server. Sell data or modules straight from your node.</p>
-          </div>
-          <div class="card">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-            <h3>Private screening</h3>
+            <span class="more-link">How the network works &rarr;</span>
+          </a>
+          <a class="card" href="modules.html">
+            <div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg><h3>Modules and a storefront</h3></div>
+            <p>Open-source astrodynamics runs as signed WebAssembly, the same file in a browser or on a server. Sell data or modules straight from your node.</p>
+            <span class="more-link">Modules and commerce &rarr;</span>
+          </a>
+          <a class="card" href="encrypted-ca.html">
+            <div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><h3>Private screening</h3></div>
             <p>Encrypted conjunction assessment screens maneuver ephemeris without broadcasting burns or intent to competitors.</p>
-          </div>
+            <span class="more-link">Encrypted conjunction assessment &rarr;</span>
+          </a>
+          <a class="card" href="supporting/catalog-approach-whitepaper.pdf">
+            <div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-25 12 12)"/><circle cx="12" cy="12" r="2.5"/></svg><h3>Combined orbital catalog</h3></div>
+            <p>One versioned catalog built from every provider, HPOP first. Each orbit keeps its source, its uncertainty status and the rule that selected it.</p>
+            <span class="more-link">Read the whitepaper (PDF) &rarr;</span>
+          </a>
         </div>
-      </div>
-    </section>
-
-    <section class="block" id="whitepaper">
-      <div class="wrap whitepaper">
-        <div>
-          <p class="eyebrow">Technical whitepaper &middot; September 2026</p>
-          <h2>An attributed, HPOP-first orbital catalog</h2>
-          <p class="lede" style="margin-top:14px">How SDN combines provider catalogs into one versioned catalog. Every orbit keeps its source, its uncertainty status and the rule that selected it. High-precision numerical propagation (HPOP) is the primary path; SGP4 stays for native GP products and comparison with SOCRATES.</p>
-          <div class="actions" style="margin-top:24px">
-            <a href="supporting/catalog-approach-whitepaper.pdf" class="btn btn-primary">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>
-              Read the PDF
-            </a>
-            <a href="supporting/catalog-approach-whitepaper.md" class="btn">Markdown</a>
-          </div>
-        </div>
-        <ul class="facts">
-          <li><strong>13,808</strong>Vimpel element rows converted to attributed epoch states, with native IDs and source hashes kept.</li>
-          <li><strong>6&ndash;11 km &rarr; 53&ndash;70 m</strong>Withheld-position RMS after one initial-state refinement, on three four-hour arcs.</li>
-          <li><strong>Every provider kept</strong>Original products stay as distinct records; the catalog records why one solution was chosen.</li>
-          <li class="small muted" style="border:0;padding-left:0">The results show consistency with provider products, not independent accuracy. The paper states its limits.</li>
-        </ul>
       </div>
     </section>
 
     <section class="block" id="download">
       <div class="wrap">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">v1.0.5-beta.70</p>
-            <h2>Run a node</h2>
-          </div>
-          <a href="onboarding.html" class="btn">Step-by-step guide &rarr;</a>
+        <div class="head">
+          <p class="eyebrow">v1.0.5-beta.70</p>
+          <h2>Run a node</h2>
+          <div class="actions"><a href="onboarding.html" class="btn">Step-by-step guide &rarr;</a></div>
         </div>
         <div class="grid grid-3">
           <div class="card dl">
@@ -195,15 +168,17 @@
             </ul>
           </div>
         </div>
-        <p class="small muted" style="margin-top:18px">Checksums: <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.70/spacedatanetwork-checksums.txt">spacedatanetwork-checksums.txt</a> &middot; <a href="https://github.com/DigitalArsenal/space-data-network/releases" target="_blank" rel="noopener">All releases</a></p>
+        <p class="small muted" style="margin-top:18px;text-align:center">Checksums: <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.5-beta.70/spacedatanetwork-checksums.txt">spacedatanetwork-checksums.txt</a> &middot; <a href="https://github.com/DigitalArsenal/space-data-network/releases" target="_blank" rel="noopener">All releases</a></p>
       </div>
     </section>
 
     <section class="block" id="stack">
       <div class="wrap">
-        <p class="eyebrow">SDN Stack</p>
-        <h2 style="margin-bottom:20px">Built on open standards</h2>
-        <div class="stack-links">
+        <div class="head">
+          <p class="eyebrow">SDN Stack</p>
+          <h2>Built on open standards</h2>
+        </div>
+        <div class="stack-links" style="justify-content:center">
           <a href="https://spacedatastandards.org/" target="_blank" rel="noopener">Space Data Standards</a>
           <a href="https://digitalarsenal.github.io/flatbuffers/" target="_blank" rel="noopener">FlatBuffers</a>
           <a href="https://digitalarsenal.github.io/flatsql/" target="_blank" rel="noopener">FlatSQL</a>
@@ -228,27 +203,6 @@
     </div>
   </footer>
 
-  <script>
-    (function () {
-      var video = document.getElementById('bgVideo');
-      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        video.src = 'space-bg.mp4';
-        video.addEventListener('loadeddata', function () { video.classList.add('loaded'); });
-        video.play().catch(function () {});
-      }
-      document.querySelectorAll('.copy').forEach(function (button) {
-        button.addEventListener('click', function () {
-          var text = button.parentElement.querySelector('code').textContent;
-          navigator.clipboard.writeText(text).then(function () {
-            button.textContent = 'Copied';
-            setTimeout(function () { button.textContent = 'Copy'; }, 1600);
-          });
-        });
-      });
-      document.querySelectorAll('.nav-menu a').forEach(function (a) {
-        a.addEventListener('click', function () { a.closest('details').removeAttribute('open'); });
-      });
-    })();
-  </script>
+  <script src="site.js"></script>
 </body>
 </html>

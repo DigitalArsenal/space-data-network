@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="How Space Data Network nodes find each other and move signed space data without a central server.">
+  <meta name="theme-color" content="#000000">
+  <title>No central server &middot; Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
+  <!-- SDN_CONSUMER_ASSETS_START -->
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
+<!-- SDN_CONSUMER_ASSETS_END -->
+  <link rel="stylesheet" href="site.css">
+  <style>
+    :root { --sdn-stack-footer-height: 40px; --sdn-stack-header-height: 52px; }
+    .site-nav { height: var(--sdn-stack-header-height, 52px); }
+    .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
+  </style>
+</head>
+<body class="centered">
+  <sdn-stack-nav active="sdn"></sdn-stack-nav>
+  <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="bg-shade"></div>
+  <header class="site-nav">
+    <div class="inner">
+      <a href="index.html" class="brand">
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4" aria-hidden="true"><circle cx="50" cy="50" r="45"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(60 50 50)"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/><circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/></svg>
+        Space Data Network
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="onboarding.html">Get started</a>
+        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="index.html#download">Download</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="index.html#stack">Stack</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <details class="nav-menu">
+        <summary>Menu</summary>
+        <div class="menu-panel">
+          <a href="onboarding.html">Get started</a>
+          <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+          <a href="index.html#download">Download</a>
+          <a href="server-overview.html">Docs</a>
+          <a href="index.html#stack">Stack</a>
+          <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </details>
+    </div>
+  </header>
+  <main>
+    <section class="page-hero wrap">
+      <p class="eyebrow">The network</p>
+      <h1>No central server</h1>
+      <p class="lede">Nodes find each other over the public IPFS network and exchange data directly. A node behind a firewall still works, and the network routes around failures.</p>
+    </section>
+
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Proven foundations</h2>
+          <p class="lede">Battle-tested building blocks for mission-critical space data.</p>
+        </div>
+        <div class="grid grid-3"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="5" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M7 11l10-5M7 13l10 5M19 7.2v9.6"/></svg><h3>Built on IPFS</h3></div><p>libp2p networking with DHT discovery, GossipSub messaging and circuit relay for browser connectivity. Content addressing guarantees data integrity.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg><h3>Google FlatBuffers</h3></div><p>Zero-copy serialization for 160+ Space Data Standards schemas. FlatSQL runs SQL directly over the binary data, with no conversion step.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="2" y="4" width="14" height="10" rx="1.5"/><path d="M6 18h6M9 14v4"/><rect x="17" y="8" width="5" height="10" rx="1"/></svg><h3>Cross-platform</h3></div><p>Run full nodes on servers, edge relays on embedded devices, or connect directly from a web browser.</p></div></div>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Network architecture</h2>
+          <p class="lede">Two tiers of peers for maximum reach and reliability.</p>
+        </div>
+        <div class="grid grid-2"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><h3>Full nodes</h3></div><p>Run on the open internet with public addresses. They route the DHT, relay traffic for firewalled peers and store pinned content: the backbone of the network.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h9M12 8v8"/></svg><h3>Light peers</h3></div><p>Browsers, phones, desktops and corporate networks behind NAT connect through relays. They subscribe, decrypt and verify signatures, but do not route.</p></div></div><p class="note"><b>Run a full node:</b> a node with a public IP relays and serves the DHT by default. Install it on a server and open 4001 TCP/UDP; more full nodes make the network more reliable.</p>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>How signed data moves</h2>
+          <p class="lede">Latest products are announced, verified, then fetched by peer identity.</p>
+        </div>
+        <ol class="steps"><li><b>Ingest</b><span>A provider node pulls source updates and materializes the current record set.</span></li><li><b>Sign</b><span>A signed data product manifest (DPM) binds the content IDs, source hashes, schema and provider signature.</span></li><li><b>Announce</b><span>A compact signed notification (PNM) announces the latest manifest for that provider and standard.</span></li><li><b>Verify and fetch</b><span>Clients verify both signatures, fetch the listed assets by content ID, then import or pin them.</span></li><li><b>Load modules</b><span>Analysis modules such as SGP4 are discovered as signed listings and delivered by grant.</span></li></ol>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Why space traffic management matters</h2>
+          <p class="lede">The orbital environment is becoming dangerously congested.</p>
+        </div>
+        <figure class="figure"><img src="iridium-cosmos-debris.jpg" alt="Debris from the Iridium 33 and Cosmos 2251 collision, still in orbit" loading="lazy"><figcaption>Debris from the Iridium 33 / Cosmos 2251 collision, still in orbit (Feb 2024). Credit: NASA SVS</figcaption></figure><p class="note">On 10 February 2009, Iridium 33, an active U.S. communications satellite, collided with the defunct Russian Cosmos 2251 at 11.7 km/s, 790 km above northern Siberia. Neither operator had warning. With shared data, a simple maneuver could have avoided it.</p><div class="stats"><div><strong>2,000+</strong><span>trackable fragments from that one collision</span></div><div><strong>~50,000</strong><span>conjunction warnings per day</span></div><div><strong>~30,000</strong><span>tracked objects in orbit</span></div><div><strong>100,000+</strong><span>satellites planned by 2030</span></div></div>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Who benefits from open infrastructure</h2>
+          
+        </div>
+        <div class="grid grid-3"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-25 12 12)"/><circle cx="12" cy="12" r="2.5"/></svg><h3>Space agencies</h3></div><p>Share conjunction warnings and tracking data globally and coordinate avoidance across borders without diplomatic overhead.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></svg><h3>Satellite operators</h3></div><p>Publish elements in real time, coordinate maneuvers with other operators, and receive warnings directly from the network.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg><h3>STM providers</h3></div><p>Build commercial services on open, verifiable data without vendor lock-in or exclusive data agreements.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><h3>Researchers</h3></div><p>Use live space data for analysis and algorithm development without expensive commercial licenses.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4zM20 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/></svg><h3>Academia</h3></div><p>Bring real-time space data into curricula, theses and collaborative research.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.6c2.6.3 4.6 2.1 5.3 5.4"/></svg><h3>Students and hobbyists</h3></div><p>Learn astrodynamics on production data, build trackers, and contribute to open space-safety tools.</p></div></div>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Questions</h2>
+          
+        </div>
+        <div class="faq">
+          <details class="more"><summary>Is SDN a blockchain?</summary><div class="body"><p>No. SDN uses cryptographic keys and signatures, but there are no tokens, no mining and no consensus mechanism. Identities can be derived from BIP-39 seed phrases and are compatible with blockchain ecosystems, but SDN itself is plain infrastructure for data exchange.</p></div></details>
+          <details class="more"><summary>Why decentralized for space data?</summary><div class="body"><p>Space traffic data is too critical to depend on one provider. Centralized systems create single points of failure and geopolitical dependencies. SDN keeps warnings and orbital data available when individual nodes or organizations go offline, and routes around failures.</p></div></details>
+          <details class="more"><summary>How does it compare to existing providers?</summary><div class="body"><p>SDN is complementary infrastructure that lets organizations share data directly. It can ingest and redistribute catalogs such as Space-Track, CelesTrak, ESA DISCOS, EU SST, JSC Vimpel, JAXA SSA and ISRO NETRA alongside commercial providers, adding real-time operator data and cryptographic provenance, with no single point of failure and no usage quotas.</p></div></details>
+          <details class="more"><summary>Can browsers connect?</summary><div class="body"><p>Yes. Edge relays bridge WebSocket connections into the peer-to-peer network, and the JavaScript SDK handles it automatically. Browsers can subscribe to real-time data, publish and verify signatures.</p></div></details>
+          <details class="more"><summary>Can data be removed from the network?</summary><div class="body"><p>There is no central authority that can remove data. Content is replicated and addressed by its hash; only the author holding the signing key can issue updates or retractions. Nodes can stop serving content, but other copies remain, so consider carefully what you publish.</p></div></details>
+        </div>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap actions" style="justify-content:center">
+        <a href="onboarding.html" class="btn btn-primary">Get started</a>
+        <a href="index.html#download" class="btn">Download</a>
+        <a href="index.html" class="btn">Back to overview</a>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <div class="wrap">
+      <nav>
+        <a href="onboarding.html">Get started</a>
+        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="onboarding.html#security-review">IT spec sheet</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
+      </nav>
+      <span>MIT License &middot; &copy; Digital Arsenal</span>
+    </div>
+  </footer>
+  <script src="site.js"></script>
+</body>
+</html>

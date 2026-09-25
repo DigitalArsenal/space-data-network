@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Compute collision risk on encrypted satellite positions: operators screen maneuver ephemeris without revealing orbits or intent.">
+  <meta name="theme-color" content="#000000">
+  <title>Private screening &middot; Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
+  <!-- SDN_CONSUMER_ASSETS_START -->
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
+<!-- SDN_CONSUMER_ASSETS_END -->
+  <link rel="stylesheet" href="site.css">
+  <style>
+    :root { --sdn-stack-footer-height: 40px; --sdn-stack-header-height: 52px; }
+    .site-nav { height: var(--sdn-stack-header-height, 52px); }
+    .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
+  </style>
+</head>
+<body class="centered">
+  <sdn-stack-nav active="sdn"></sdn-stack-nav>
+  <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="bg-shade"></div>
+  <header class="site-nav">
+    <div class="inner">
+      <a href="index.html" class="brand">
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4" aria-hidden="true"><circle cx="50" cy="50" r="45"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(60 50 50)"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/><circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/></svg>
+        Space Data Network
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="onboarding.html">Get started</a>
+        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="index.html#download">Download</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="index.html#stack">Stack</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <details class="nav-menu">
+        <summary>Menu</summary>
+        <div class="menu-panel">
+          <a href="onboarding.html">Get started</a>
+          <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+          <a href="index.html#download">Download</a>
+          <a href="server-overview.html">Docs</a>
+          <a href="index.html#stack">Stack</a>
+          <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </details>
+    </div>
+  </header>
+  <main>
+    <section class="page-hero wrap">
+      <p class="eyebrow">Encrypted conjunction assessment</p>
+      <h1>Private screening</h1>
+      <p class="lede">Compute collision risk on encrypted satellite positions. Nobody sees your orbit, and everyone stays safe.</p>
+    </section>
+
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Why operators don&rsquo;t share their best data today</h2>
+          
+        </div>
+        <div class="grid grid-2"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3l7 3v6c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg><h3>National security</h3></div><p>Classified orbits reveal capabilities, coverage gaps and mission intent to adversaries.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg><h3>Commercial IP</h3></div><p>Constellation geometry, station-keeping strategy and coverage patterns are multi-billion-dollar trade secrets.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.3 6.3C3.6 8.1 2 12 2 12s3.5 7 10 7c1.6 0 3-.4 4.3-1"/></svg><h3>Maneuver ephemeris</h3></div><p>Planned maneuvers can be the most sensitive data an operator holds. Encrypted CA screens maneuver ephemeris without broadcasting to competitors that burns, timing or intent are changing.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v18M5 7h14M5 7l-3 7a3.5 3.5 0 0 0 6 0L5 7zM19 7l-3 7a3.5 3.5 0 0 0 6 0l-3-7zM8 21h8"/></svg><h3>Liability exposure</h3></div><p>Sharing creates obligations: if you share ephemeris and a conjunction is missed, you may carry more liability than if you had shared nothing.</p></div></div>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>How homomorphic encryption changes that</h2>
+          
+        </div>
+        <div class="grid grid-3"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><h3>Math on ciphertext</h3></div><p>The network computes d&sup2; = &Delta;x&sup2; + &Delta;y&sup2; + &Delta;z&sup2; entirely on encrypted data. The math works; the data stays locked.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.3 6.3C3.6 8.1 2 12 2 12s3.5 7 10 7c1.6 0 3-.4 4.3-1"/></svg><h3>Only distance revealed</h3></div><p>Only the assessor can decrypt the result, and the result is a distance, not a position. Neither orbit is ever exposed.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h9M12 8v8"/></svg><h3>Private direct streams</h3></div><p>Encrypted ephemeris flows over direct authenticated libp2p streams to a mutually chosen assessor, never over public GossipSub.</p></div></div><p class="note">Operators send encrypted ephemeris to the assessor, which computes distance on ciphertext with Microsoft SEAL (BFV scheme). Ciphertexts never touch the public network.</p>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Why it matters</h2>
+          <p class="lede">The security and operational implications for the space industry.</p>
+        </div>
+        <div class="grid grid-3"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3l7 3v6c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg><h3>Classified satellites can take part</h3></div><p>Military and intelligence satellites can join global conjunction assessment without compromising operational security.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg><h3>Protects the investment</h3></div><p>Operators keep their most valuable IP, the precise positions behind their competitive advantage, while space stays safe.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.3 6.3C3.6 8.1 2 12 2 12s3.5 7 10 7c1.6 0 3-.4 4.3-1"/></svg><h3>No signaled intent</h3></div><p>Planned maneuvers and avoidance burns are screened without revealing timing, vectors or intent. The assessor sees risk, not the plan.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg><h3>Built into FlatBuffers</h3></div><p>Mark fields with the he_encrypted schema attribute; the toolchain handles keys, ciphertext serialization and homomorphic operations.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg><h3>Real time over P2P</h3></div><p>Assessments run continuously as new encrypted positions arrive, not as a periodic batch gated by a central coordinator.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><h3>Microsoft SEAL BFV</h3></div><p>SEAL v4.1.1, BFV with polynomial degree 4096: 128-bit security with about 2 KB of ciphertext per encrypted value.</p></div></div><p class="note">This is the minimum foundation for secure space traffic management. Without privacy-preserving computation, global coordination requires operators to trust a central authority with their most sensitive data, which most will not do.</p>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Anti-probing defenses</h2>
+          <p class="lede">What stops an adversary from spamming fake ephemeris to triangulate hidden satellites? Defense in depth.</p>
+        </div>
+        <div class="grid grid-3"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h9M12 8v8"/></svg><h3>Private data path</h3></div><p>Ciphertexts flow only over direct authenticated streams to the assessor. HE math is permissionless, so public ciphertexts would invite probing.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></svg><h3>Identity staking</h3></div><p>Identities post a bond or build reputation before joining assessments. Misbehavior is slashed, making Sybil attacks costly.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg><h3>Rate limiting</h3></div><p>Each identity gets a limited number of submissions and requests per epoch, scaled by reputation and stake.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><h3>Threshold-only output</h3></div><p>Assessments return SAFE or ALERT, not a distance. Precise distance is disclosed only when both parties opt in after an alert.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5M12 18h.01"/></svg><h3>Anomaly detection</h3></div><p>Grid-spaced positions, systematic sweeps and non-Keplerian ephemeris are flagged, with stake forfeited.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 12h2l2-6 3 12 3-9 2 6 2-3h4"/></svg><h3>Differential privacy</h3></div><p>Calibrated Laplace noise is added before the threshold comparison, so repeated queries cannot triangulate a target.</p></div></div><div class="stats"><div><strong>8</strong><span>HE operations per time step</span></div><div><strong>~2 KB</strong><span>ciphertext per encrypted value</span></div><div><strong>128-bit</strong><span>security (SEAL BFV 4096)</span></div><div><strong>0</strong><span>private positions revealed</span></div></div>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap actions" style="justify-content:center">
+        <a href="onboarding.html" class="btn btn-primary">Get started</a>
+        <a href="index.html#download" class="btn">Download</a>
+        <a href="index.html" class="btn">Back to overview</a>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <div class="wrap">
+      <nav>
+        <a href="onboarding.html">Get started</a>
+        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="onboarding.html#security-review">IT spec sheet</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
+      </nav>
+      <span>MIT License &middot; &copy; Digital Arsenal</span>
+    </div>
+  </footer>
+  <script src="site.js"></script>
+</body>
+</html>
