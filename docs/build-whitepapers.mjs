@@ -119,7 +119,7 @@ ${body}
         <a href="${u('server-overview.html')}">Docs</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
       </nav>
-      <span>MIT License &middot; &copy; Digital Arsenal</span>
+      <span>MIT License &middot; &copy; Edgesource Corporation</span>
     </div>
   </footer>
   <script src="${u('site.js')}"></script>
