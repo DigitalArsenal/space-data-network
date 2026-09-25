@@ -78,3 +78,30 @@ func TestPublicMetadataResponseBound(t *testing.T) {
 		t.Fatal("metadata limit not enforced")
 	}
 }
+
+// A provider that answers but publishes no catalog is relayed as 404, so the
+// dashboard can say "publishes no catalog" instead of listing a healthy
+// ingest node as a failed provider (HTTP 502).
+func TestPublicMetadataRelaysAMissingCatalogAs404(t *testing.T) {
+	a, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	registerPublicMetadataTransport(b, http.NewServeMux(), "/.well-known/sdn/modules.pmm", http.NotFoundHandler())
+	mux := http.NewServeMux()
+	registerPublicMetadataTransport(a, mux, "/.well-known/sdn/modules.pmm", http.NotFoundHandler())
+	if err := a.Connect(context.Background(), peer.AddrInfo{ID: b.ID(), Addrs: b.Addrs()}); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/.well-known/sdn/peers/"+b.ID().String()+"/modules.pmm", nil))
+	if w.Code != http.StatusNotFound || w.Header().Get("X-SDN-Remote-Peer") != b.ID().String() {
+		t.Fatalf("missing catalog relayed as %d (remote %q), want 404 from the provider", w.Code, w.Header().Get("X-SDN-Remote-Peer"))
+	}
+}

@@ -153,6 +153,14 @@ func registerPublicMetadataTransport(h host.Host, mux *http.ServeMux, path strin
 			http.Error(w, "Provider metadata exceeds limits", http.StatusBadGateway)
 			return
 		}
+		if response.StatusCode == http.StatusNotFound {
+			// The provider answered and publishes no catalog: a normal state for
+			// ingest and compute nodes, not a gateway failure. Relaying it as
+			// 502 made every such node read as a broken provider in the Store.
+			w.Header().Set("X-SDN-Remote-Peer", id.String())
+			http.Error(w, "Provider publishes no module manifest", http.StatusNotFound)
+			return
+		}
 		if response.StatusCode != http.StatusOK {
 			http.Error(w, "Provider has no available module manifest", http.StatusBadGateway)
 			return
