@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Open-source astrodynamics as signed WebAssembly modules, and a built-in storefront for data and software.">
+  <meta name="theme-color" content="#000000">
+  <title>Modules and a storefront &middot; Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
+  <!-- SDN_CONSUMER_ASSETS_START -->
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
+<!-- SDN_CONSUMER_ASSETS_END -->
+  <link rel="stylesheet" href="site.css">
+  <style>
+    :root { --sdn-stack-footer-height: 40px; --sdn-stack-header-height: 52px; }
+    .site-nav { height: var(--sdn-stack-header-height, 52px); }
+    .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
+  </style>
+</head>
+<body class="centered">
+  <sdn-stack-nav active="sdn"></sdn-stack-nav>
+  <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="bg-shade"></div>
+  <header class="site-nav">
+    <div class="inner">
+      <a href="index.html" class="brand">
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4" aria-hidden="true"><circle cx="50" cy="50" r="45"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(60 50 50)"/><ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/><circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/></svg>
+        Space Data Network
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="onboarding.html">Get started</a>
+        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="index.html#download">Download</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="index.html#stack">Stack</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <details class="nav-menu">
+        <summary>Menu</summary>
+        <div class="menu-panel">
+          <a href="onboarding.html">Get started</a>
+          <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+          <a href="index.html#download">Download</a>
+          <a href="server-overview.html">Docs</a>
+          <a href="index.html#stack">Stack</a>
+          <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </details>
+    </div>
+  </header>
+  <main>
+    <section class="page-hero wrap">
+      <p class="eyebrow">Software and commerce</p>
+      <h1>Modules and a storefront</h1>
+      <p class="lede">Analysis software ships as signed WebAssembly modules that run the same everywhere. A built-in storefront lets you sell data or modules straight from your node.</p>
+    </section>
+
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Open-source astrodynamics</h2>
+          <p class="lede">A complete SSA processing baseline, with no proprietary licenses.</p>
+        </div>
+        <div class="grid grid-2"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-25 12 12)"/><circle cx="12" cy="12" r="2.5"/></svg><h3>Orbit propagation</h3></div><p>SGP4/SDP4 for element sets, plus numerical integration for high-precision ephemeris.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></svg><h3>Observation association</h3></div><p>Correlate radar tracks, optical measurements and RF detections with cataloged objects, or flag new ones.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><h3>Orbit determination</h3></div><p>Batch least-squares and sequential filters; differential correction refines elements from tracking data.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5M12 18h.01"/></svg><h3>Conjunction assessment</h3></div><p>Screen close approaches, compute collision probability with hard-body-radius screening, and generate CDMs.</p></div></div><p class="note">Every function is <b>one WebAssembly artifact</b>, executed unchanged by the server, the WasmEdge runtime and the browser: the same bytes and the same numbers everywhere, not a port or a JavaScript approximation.</p>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>The storefront</h2>
+          <p class="lede">Monetize space data and software with built-in commerce.</p>
+        </div>
+        <ol class="steps"><li><b>Publish a listing</b><span>A provider publishes one signed listing per module version and stores the encrypted bundle by content ID.</span></li><li><b>Purchase access</b><span>Buyers pay through the storefront with credits, crypto, card, or a free grant.</span></li><li><b>Grant and fetch</b><span>The buyer&rsquo;s node requests a delivery grant, fetches the encrypted bundle and receives wrapped key material.</span></li><li><b>Decrypt and run</b><span>The key is unwrapped locally, the module is decrypted and loaded, and it runs on the buyer&rsquo;s machine.</span></li></ol><div class="grid grid-3"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg><h3>Data products</h3></div><p>High-precision ephemeris, proprietary conjunction analysis, historical catalogs, real-time tracking feeds and specialized sensor data.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 9l1.5 6 1.5-4 1.5 4L13 9M15 15l1.5-6 1.5 6M15.5 13h2"/></svg><h3>Software modules</h3></div><p>Analysis algorithms, visualization tools, format converters, integration connectors and custom propagators, delivered encrypted.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.5 12h11L21 7H6.2"/></svg><h3>Payments</h3></div><p>Cards, one-time purchases, subscriptions, usage-based billing per record and byte delivered, and enterprise invoicing.</p></div></div><p class="note">Field-level access control lets you share coarse data openly and sell the precise values. Every buyer gets their own key, so purchases cannot be shared or resold. Core data exchange stays free and open; commerce is opt-in.</p>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="head">
+          <h2>Put your data on the network</h2>
+          <p class="lede">Only Space Data Standards data is allowed, so every participant can parse and validate it.</p>
+        </div>
+        <div class="grid grid-3"><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg><h3>Use the SDK</h3></div><p>The JavaScript and Go SDKs convert common formats (TLE, CCSDS XML/KVN and more) to SDS FlatBuffers.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.6c2.6.3 4.6 2.1 5.3 5.4"/></svg><h3>AI assistant</h3></div><p>An assistant maps your existing schemas to SDS formats and generates the conversion code.</p></div><div class="card"><div class="card-head"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg><h3>Request a schema</h3></div><p>If nothing fits, propose an addition on the <a href="https://github.com/DigitalArsenal/spacedatastandards.org/issues" target="_blank" rel="noopener">SDS repository</a>. Schemas stay backwards compatible.</p></div></div><p class="note">Step-by-step instructions are in the <a href="onboarding.html">getting-started guide</a>; module tooling is in the <a href="https://digitalarsenal.github.io/space-data-module-sdk/" target="_blank" rel="noopener">Module SDK</a>.</p>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap actions" style="justify-content:center">
+        <a href="onboarding.html" class="btn btn-primary">Get started</a>
+        <a href="index.html#download" class="btn">Download</a>
+        <a href="index.html" class="btn">Back to overview</a>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <div class="wrap">
+      <nav>
+        <a href="onboarding.html">Get started</a>
+        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="onboarding.html#security-review">IT spec sheet</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
+      </nav>
+      <span>MIT License &middot; &copy; Digital Arsenal</span>
+    </div>
+  </footer>
+  <script src="site.js"></script>
+</body>
+</html>
