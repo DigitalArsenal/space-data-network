@@ -95,7 +95,7 @@ func TestFlatSQLStore_LocalEPMRecordsAreEncryptedAtRest(t *testing.T) {
 	store := mustNewFlatSQLStore(t)
 
 	peerID := "16Uiu2HAmLocalProfile"
-	epmBytes := []byte("$EPM binary bytes containing jane@example.com")
+	epmBytes := sds.NewEPMBuilder().WithLegalName("Jane Example").WithEmail("jane@example.com").Build()
 
 	if err := store.SaveLocalEPM(peerID, epmBytes); err != nil {
 		t.Fatalf("SaveLocalEPM failed: %v", err)
@@ -130,7 +130,6 @@ func TestFlatSQLStore_LocalEPMRecordsAreEncryptedAtRest(t *testing.T) {
 		epmBytes,
 		[]byte("Jane Example"),
 		[]byte("jane@example.com"),
-		[]byte("$EPM binary bytes"),
 	}
 	files, err := os.ReadDir(store.basePath)
 	if err != nil {

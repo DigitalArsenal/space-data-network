@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
@@ -4269,8 +4270,11 @@ func (s *FlatSQLStore) GetLocalEPMRecord(peerID string) (*LocalEPMRecord, error)
 		return nil, fmt.Errorf("read local EPM profile: %w", err)
 	}
 
-	epmBytes, err := s.decryptLocalEPMPayload(encryptedBytes)
+	epmBytes, err := s.openLocalEPM(encryptedBytes)
 	if err != nil {
+		if errors.Is(err, errCorruptLocalEPM) {
+			s.dropCorruptLocalEPM(peerID, encryptedBytes, err)
+		}
 		return nil, fmt.Errorf("decrypt local EPM bytes: %w", err)
 	}
 
@@ -4279,6 +4283,77 @@ func (s *FlatSQLStore) GetLocalEPMRecord(peerID string) (*LocalEPMRecord, error)
 		EPMBytes:  epmBytes,
 		UpdatedAt: updatedAt,
 	}, nil
+}
+
+// errCorruptLocalEPM marks a local EPM row that can never be read: an empty or
+// unparseable envelope, or plaintext that is not an $EPM FlatBuffer. Such a
+// row is deleted (journaled, so replay does not restore it). A row that is
+// well formed but fails authentication is NOT corrupt — the machine key
+// source may have changed — so it is skipped and kept.
+var errCorruptLocalEPM = errors.New("corrupt local EPM row")
+
+// openLocalEPM decrypts a stored row and checks the plaintext is an $EPM
+// FlatBuffer (plain or size-prefixed). FlatBuffers either read or they do not.
+func (s *FlatSQLStore) openLocalEPM(encrypted string) ([]byte, error) {
+	plaintext, err := s.decryptLocalEPMPayload(encrypted)
+	if err != nil {
+		return nil, err
+	}
+	if !EPM.EPMBufferHasIdentifier(plaintext) && !EPM.SizePrefixedEPMBufferHasIdentifier(plaintext) {
+		return nil, fmt.Errorf("%w: plaintext is not an $EPM FlatBuffer", errCorruptLocalEPM)
+	}
+	return plaintext, nil
+}
+
+// readLocalEPMRow is the guard rail every multi-row reader uses: one bad row
+// is skipped (and deleted when corrupt), never failing the lane it sits in.
+// On 2026-09-25 a single corrupt row failed every /api/v1/sync request, so
+// the Store could list no datasets at all.
+func (s *FlatSQLStore) readLocalEPMRow(peerID, encrypted string) ([]byte, bool) {
+	plaintext, err := s.openLocalEPM(encrypted)
+	if err == nil {
+		return plaintext, true
+	}
+	if errors.Is(err, errCorruptLocalEPM) {
+		s.dropCorruptLocalEPM(peerID, encrypted, err)
+	} else {
+		log.Warnf("Local EPM for %s could not be decrypted (%v); skipping it. It is kept: a key-source change is not corruption.", peerID, err)
+	}
+	return nil, false
+}
+
+// dropCorruptLocalEPM deletes a corrupt row in the background (readers hold
+// the store's read lock) and journals the delete. The delete is conditioned
+// on the exact bytes, so a good row written meanwhile is never removed.
+func (s *FlatSQLStore) dropCorruptLocalEPM(peerID, encrypted string, cause error) {
+	peerID = strings.TrimSpace(peerID)
+	if peerID == "" {
+		return
+	}
+	log.Warnf("Deleting corrupt local EPM for %s: %v", peerID, cause)
+	go func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		record := auxiliaryLocalEPMRecord{PeerID: peerID, EncryptedEPMBytes: encrypted}
+		if err := s.applyLocalEPMDelete(record); err != nil {
+			log.Warnf("Could not delete corrupt local EPM for %s: %v", peerID, err)
+			return
+		}
+		if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{Kind: auxiliaryEventLocalEPMDelete, LocalEPM: &record}); err != nil {
+			log.Warnf("Could not journal the corrupt local EPM delete for %s: %v", peerID, err)
+		}
+	}()
+}
+
+func (s *FlatSQLStore) applyLocalEPMDelete(record auxiliaryLocalEPMRecord) error {
+	if s.db == nil {
+		return nil
+	}
+	if _, err := s.auxWrite().Exec(`DELETE FROM sdn_local_epms WHERE peer_id = ? AND encrypted_epm_bytes = ?`,
+		strings.TrimSpace(record.PeerID), record.EncryptedEPMBytes); err != nil {
+		return fmt.Errorf("delete local EPM record: %w", err)
+	}
+	return nil
 }
 
 type localEPMEnvelope struct {
@@ -4321,15 +4396,15 @@ func (s *FlatSQLStore) encryptLocalEPMPayload(plaintext []byte) (string, error) 
 func (s *FlatSQLStore) decryptLocalEPMPayload(rawEnvelope string) ([]byte, error) {
 	var envelope localEPMEnvelope
 	if err := json.Unmarshal([]byte(rawEnvelope), &envelope); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: envelope: %v", errCorruptLocalEPM, err)
 	}
 	iv, err := base64.StdEncoding.DecodeString(envelope.IV)
-	if err != nil {
-		return nil, err
+	if err != nil || len(iv) == 0 {
+		return nil, fmt.Errorf("%w: iv: %v", errCorruptLocalEPM, err)
 	}
 	ciphertext, err := base64.StdEncoding.DecodeString(envelope.Ciphertext)
-	if err != nil {
-		return nil, err
+	if err != nil || len(ciphertext) == 0 {
+		return nil, fmt.Errorf("%w: ciphertext: %v", errCorruptLocalEPM, err)
 	}
 	keys, err := s.localEPMKeys()
 	if err != nil {
@@ -6189,7 +6264,7 @@ func localEPMFilterMatches(filter RawRecordQuery) bool {
 
 func (s *FlatSQLStore) localEPMSummaryLocked() (int64, int64, error) {
 	rows, err := s.db.Query(`
-		SELECT encrypted_epm_bytes
+		SELECT peer_id, encrypted_epm_bytes
 		FROM sdn_local_epms
 		WHERE schema_name = 'EPM.fbs'
 	`)
@@ -6201,13 +6276,13 @@ func (s *FlatSQLStore) localEPMSummaryLocked() (int64, int64, error) {
 	var count int64
 	var totalBytes int64
 	for rows.Next() {
-		var encrypted string
-		if err := rows.Scan(&encrypted); err != nil {
+		var peerID, encrypted string
+		if err := rows.Scan(&peerID, &encrypted); err != nil {
 			return 0, 0, fmt.Errorf("scan local EPM summary: %w", err)
 		}
-		raw, err := s.decryptLocalEPMPayload(encrypted)
-		if err != nil {
-			return 0, 0, fmt.Errorf("decrypt local EPM summary payload: %w", err)
+		raw, ok := s.readLocalEPMRow(peerID, encrypted)
+		if !ok {
+			continue
 		}
 		count++
 		totalBytes += int64(len(raw))
@@ -6253,9 +6328,9 @@ func (s *FlatSQLStore) queryLocalEPMRecordsLocked(filter RawRecordQuery, limit i
 		if err := rows.Scan(&peerID, &encrypted, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan local EPM record: %w", err)
 		}
-		epmBytes, err := s.decryptLocalEPMPayload(encrypted)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt local EPM record: %w", err)
+		epmBytes, ok := s.readLocalEPMRow(peerID, encrypted)
+		if !ok {
+			continue
 		}
 		records = append(records, &Record{
 			CID:       peerID,

@@ -816,6 +816,7 @@ func (h *SyncHandler) handleLane(w http.ResponseWriter, r *http.Request) {
 func (h *SyncHandler) writeLanes(w http.ResponseWriter, filter SyncFilter, status int) {
 	lanes, err := h.build(filter)
 	if err != nil {
+		log.Warnf("sync lanes unavailable: %v", err)
 		WriteErrorFrame(w, http.StatusServiceUnavailable, "unavailable", "Sync state is not available right now.", 5*time.Second)
 		return
 	}

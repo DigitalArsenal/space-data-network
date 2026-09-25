@@ -34,7 +34,7 @@ func newLocalEPMKeyTestStore(t *testing.T, dir string) *FlatSQLStore {
 // still decrypt after SDN_KEY_PASSWORD_FILE starts being honored.
 func TestLocalEPMRowSealedUnderFallbackReadableWithPasswordFile(t *testing.T) {
 	dir := t.TempDir()
-	epmBytes := []byte("epm-payload-fallback-era")
+	epmBytes := sds.NewEPMBuilder().WithLegalName("Fallback era node").Build()
 
 	t.Setenv("SDN_EPM_STORE_PASSWORD", "")
 	t.Setenv("SDN_KEY_PASSWORD", "")
@@ -69,7 +69,7 @@ func TestLocalEPMRowSealedUnderFallbackReadableWithPasswordFile(t *testing.T) {
 // via SDN_KEY_PASSWORD instead (the daemon/CLI asymmetry).
 func TestLocalEPMRowSealedUnderPasswordFileReadableWithPasswordEnv(t *testing.T) {
 	dir := t.TempDir()
-	epmBytes := []byte("epm-payload-password-file-era")
+	epmBytes := sds.NewEPMBuilder().WithLegalName("password-file-era node").Build()
 
 	passwordPath := filepath.Join(t.TempDir(), "key_password")
 	if err := os.WriteFile(passwordPath, []byte("unit-password\n"), 0o600); err != nil {
