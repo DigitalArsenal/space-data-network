@@ -188,7 +188,7 @@ ${navFor(active)}
 <main>
 ${bodyHtml}
 </main>
-<div class="foot">${SITE} documentation. <a href="space-data-network-docs.pdf">Download as PDF</a>.</div>
+<div class="foot">${SITE} documentation. <a href="space-data-network-docs.pdf">Download as PDF</a>. Contact <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>.</div>
 </body>
 </html>
 `;

@@ -121,6 +121,7 @@ ${body}
         <a href="${u('style-guide.html')}">Style guide</a>
         <a href="${u('server-overview.html')}">Docs</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
       </nav>
       <span>MIT License &middot; &copy; Edgesource Corporation</span>
     </div>
