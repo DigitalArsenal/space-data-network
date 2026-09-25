@@ -1,10 +1,25 @@
-// Shared page behavior for spacedatanetwork.org: background video, copy buttons, mobile menu.
+// Shared page behavior for spacedatanetwork.org: background video, scroll reveals, copy buttons, mobile menu.
 (function () {
   var video = document.getElementById('bgVideo');
-  if (video && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (video && !window.SDN_EARTH && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
     video.src = 'space-bg.mp4';
     video.addEventListener('loadeddata', function () { video.classList.add('loaded'); });
     video.play().catch(function () {});
+  }
+  // Content rises into place as it scrolls into view; siblings arrive in sequence.
+  if ('IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    var items = document.querySelectorAll('main section:not(.hero):not(.page-hero) :is(.head, .card, .figure, .chapter, .photo-grid figure, .steps li, .table-wrap, .note, .actions)');
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { rootMargin: '0px 0px -8% 0px' });
+    items.forEach(function (el) {
+      var i = Array.prototype.indexOf.call(el.parentElement.children, el);
+      el.style.setProperty('--reveal-delay', Math.min(i, 5) * 70 + 'ms');
+      el.classList.add('reveal');
+      io.observe(el);
+    });
   }
   document.querySelectorAll('.copy').forEach(function (button) {
     button.addEventListener('click', function () {

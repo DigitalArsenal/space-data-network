@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="How the military builds its space object catalog, and how Space Data Network builds an open one from any number of signed sources.">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:title" content="How A Space Catalog Is Built">
+  <meta property="og:description" content="Sensors, orbit determination and tiered access, and an open catalog built from any number of signed sources.">
+  <meta property="og:type" content="article">
+  <title>How A Space Catalog Is Built &middot; Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M5.8 7.9A13 13 0 0 1 28.6 12.6' stroke='%23f5a524' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='28.6' cy='12.6' r='2.5' fill='%23f5a524'/></svg>">
+  <!-- SDN_CONSUMER_ASSETS_START -->
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
+<!-- SDN_CONSUMER_ASSETS_END -->
+  <link rel="stylesheet" href="site.css">
+  <style>
+    :root { --sdn-stack-footer-height: 40px; --sdn-stack-header-height: 52px; }
+    .site-nav { height: var(--sdn-stack-header-height, 52px); }
+    .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
+    .catalog-hero { min-height: calc(100vh - 52px); justify-content: flex-start; padding-top: 16vh; }
+  </style>
+</head>
+<body class="centered">
+  <sdn-stack-nav active="sdn"></sdn-stack-nav>
+  <canvas id="earth" aria-hidden="true"></canvas>
+  <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="bg-shade"></div>
+
+  <header class="site-nav">
+    <div class="inner">
+      <a href="index.html" class="brand">
+        <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="13" stroke="#f5f5f7" stroke-width="1.6" opacity=".3"/><path d="M5.8 7.9A13 13 0 0 1 28.6 12.6" stroke="#f5a524" stroke-width="2.2" stroke-linecap="round"/><path d="M16 10.2L10.4 20.1H21.6Z" stroke="#f5f5f7" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="10.2" r="2.6" fill="#f5f5f7"/><circle cx="10.4" cy="20.1" r="2.6" fill="#f5f5f7"/><circle cx="21.6" cy="20.1" r="2.6" fill="#f5f5f7"/><circle cx="28.6" cy="12.6" r="2.5" fill="#f5a524"/></svg>
+        Space Data Network
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="onboarding.html">Get started</a>
+        <a href="catalog.html" aria-current="page">Catalog</a>
+        <a href="index.html#download">Download</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="index.html#stack">Stack</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <details class="nav-menu">
+        <summary>Menu</summary>
+        <div class="menu-panel">
+          <a href="onboarding.html">Get started</a>
+          <a href="catalog.html">Catalog</a>
+          <a href="index.html#download">Download</a>
+          <a href="server-overview.html">Docs</a>
+          <a href="index.html#stack">Stack</a>
+          <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-hero wrap catalog-hero" data-earth="1.62 -95 32 0 -2.25 30 20">
+      <p class="eyebrow">Catalogs</p>
+      <h1>How A Space Catalog Is Built</h1>
+      <p class="lede">Every collision warning starts with a catalog: where each tracked object is, and how sure anyone is about it. Here is how the military builds one, and how the network builds one that anyone can add to and check.</p>
+      <div class="actions">
+        <a href="#military" class="btn">The military catalog</a>
+        <a href="#network" class="btn btn-primary">The network catalog</a>
+      </div>
+    </section>
+
+    <!-- The military catalog -->
+    <section class="block" id="military" data-earth="2.7 -75 38 1.1 0.05 122 10">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part one</p>
+          <h2>The Military Catalog</h2>
+          <p class="lede">Fixed sensors, one operations center, and three tiers of access.</p>
+        </div>
+
+        <div class="chapter">
+          <p class="chapter-num">1</p>
+          <h3>A fixed network of sensors</h3>
+          <p>The U.S. Space Surveillance Network is about thirty radars and telescopes around the world, plus a few satellites. Phased-array radars watch low Earth orbit and routinely track objects down to about 10&nbsp;cm. Telescopes watch the geostationary belt on clear nights. Some sites track space full time. Others share time with missile warning.</p>
+        </div>
+        <div class="photo-grid">
+          <figure>
+            <img src="img/catalog/radar-eglin.webp" width="1400" height="934" alt="The AN/FPS-85 phased-array radar at Eglin, a sloped white building with a flat antenna face" loading="lazy">
+            <figcaption><b>Phased-array radar, Eglin, Florida.</b> Tracks thousands of objects a day in low and deep orbit. <span>U.S. Space Force photo</span></figcaption>
+          </figure>
+          <figure>
+            <img src="img/catalog/radar-beale.webp" width="1400" height="1050" alt="A PAVE PAWS radar at Beale, a tall pyramid-shaped building with two round antenna faces" loading="lazy">
+            <figcaption><b>Early-warning radar, Beale, California.</b> Built for missile warning. Tracks satellites between alerts. <span>Missile Defense Agency photo</span></figcaption>
+          </figure>
+          <figure>
+            <img src="img/catalog/telescope-diego-garcia.webp" width="1400" height="984" alt="White telescope domes of the GEODSS site on Diego Garcia, surrounded by palm trees" loading="lazy">
+            <figcaption><b>Deep-space telescopes, Diego Garcia.</b> Watch the geostationary belt from the Indian Ocean. <span>U.S. Air Force photo</span></figcaption>
+          </figure>
+          <figure>
+            <img src="img/catalog/telescope-sst.webp" width="1400" height="934" alt="The Space Surveillance Telescope mount inside its dome in Western Australia" loading="lazy">
+            <figcaption><b>Space Surveillance Telescope, Western Australia.</b> A wide-field survey telescope for faint, distant objects. <span>U.S. Space Force photo</span></figcaption>
+          </figure>
+        </div>
+        <figure class="figure figure-light">
+          <img src="img/catalog/ssn-map.webp" width="910" height="467" alt="World map of Space Surveillance Network sites: phased-array radars, mechanical radars and optical telescopes, with space-based sensors shown above" loading="lazy">
+          <figcaption>Space Surveillance Network sites and space-based sensors, 2022. U.S. Space Force.</figcaption>
+        </figure>
+
+        <div class="chapter">
+          <p class="chapter-num">2</p>
+          <h3>Observations go to one operations center</h3>
+          <p>Each site reports angles, range and range rate for what it sees. At Vandenberg Space Force Base, the 18th Space Defense Squadron matches every observation to a catalog object, flags new and maneuvering objects, and refits their orbits. No site sees everything, so each orbit is rebuilt from a few passes by a few sensors.</p>
+        </div>
+        <figure class="figure">
+          <img src="img/catalog/sensor-coverage.webp" width="1000" height="800" alt="Globe surrounded by the translucent green and red fields of view of nine ground sensors, with tracked objects shown as dots" loading="lazy">
+          <figcaption>Fields of view of nine network sites, modeled in OrbPro. At any instant most objects are outside every sensor&rsquo;s view.</figcaption>
+        </figure>
+
+        <div class="chapter">
+          <p class="chapter-num">3</p>
+          <h3>Two ways to fit an orbit</h3>
+        </div>
+        <div class="grid grid-2 narrow">
+          <div class="card">
+            <h3>General perturbations</h3>
+            <p>An analytic theory, SGP4, fit to the observations as a compact set of mean elements. Fast, small, and good to roughly a kilometer near its epoch. Errors grow by kilometers a day in low orbit. Published as two-line element sets and OMMs.</p>
+          </div>
+          <div class="card">
+            <h3>Special perturbations</h3>
+            <p>Numerical integration with full force models: Earth&rsquo;s gravity field, an atmosphere corrected in near real time, the Sun and Moon, and solar radiation pressure. Produces a state vector plus a covariance: the error bubble around the orbit.</p>
+          </div>
+        </div>
+
+        <div class="chapter">
+          <p class="chapter-num">4</p>
+          <h3>Who gets what</h3>
+          <p>One catalog is released in three tiers. The more accurate the product, the fewer people can read it.</p>
+        </div>
+        <figure class="figure">
+          <img src="img/catalog/tiers.svg" width="880" height="440" alt="Pyramid of three tiers: public general-perturbation elements at the base, a high-accuracy catalog by sharing agreement in the middle, and orbits with uncertainty closely held at the top">
+        </figure>
+        <div class="table-wrap narrow">
+          <table>
+            <thead><tr><th>Product</th><th>What it holds</th><th>Who can read it</th></tr></thead>
+            <tbody>
+              <tr><td>General-perturbation element sets</td><td>Mean elements for the public catalog</td><td>Anyone with a free account on Space-Track.org</td></tr>
+              <tr><td>High-accuracy catalog</td><td>Numerical special-perturbation orbits</td><td>Operators and governments with a sharing agreement</td></tr>
+              <tr><td>Vector covariance messages</td><td>State vectors with full covariance</td><td>Closely held to protect sensor capabilities; released case by case</td></tr>
+              <tr><td>Conjunction data messages</td><td>One close approach, with both objects&rsquo; uncertainty</td><td>Free, to the operators involved</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="chapter">
+          <p class="chapter-num">5</p>
+          <h3>Where the model strains</h3>
+        </div>
+        <div class="grid grid-2 narrow strains">
+          <div class="card"><h3>Accuracy follows access</h3><p>The best orbits and their error bubbles reach whoever holds an agreement. Everyone else screens with less.</p></div>
+          <div class="card"><h3>Terms stay private</h3><p>Access is negotiated one deal at a time. Nobody outside a deal can see what its data may be used for.</p></div>
+          <div class="card"><h3>Warnings can&rsquo;t be checked</h3><p>Operators get the answer, not the catalog behind it. Private catalogs repeat the pattern: send your ephemeris in, get warnings out.</p></div>
+          <div class="card"><h3>Free isn&rsquo;t open</h3><p>A free service that collects every operator&rsquo;s orbits improves with each one that joins, and what it learns stays with its owner.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- The network catalog -->
+    <section class="block" id="network" data-earth="1.34 10 18 0 -3.1 180 -3">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part two</p>
+          <h2>The Network Catalog</h2>
+          <p class="lede">No single sensor network sees everything. The network takes data from any number of sources, keeps each one signed with its uncertainty attached, and publishes the recipe that combined them.</p>
+        </div>
+        <figure class="figure figure-wide">
+          <img src="img/catalog/network.svg" width="960" height="480" alt="Nine kinds of sources, from government elements to any new publisher, flow into signed records, then an open recipe that matches, fits and validates, then one catalog shared by every node">
+        </figure>
+
+        <ol class="steps steps-3">
+          <li><b>Publish</b><span>A sensor operator, satellite owner or lab signs each record with its own key and publishes it from its node. No contract, no gatekeeper.</span></li>
+          <li><b>Keep the original</b><span>Nodes store the exact bytes and who signed them. Reprocessing never overwrites a provider&rsquo;s record.</span></li>
+          <li><b>Match</b><span>Records from different sources are matched to one physical object by designator, history and trajectory. Ambiguous matches stay separate.</span></li>
+          <li><b>Fit</b><span>Where the data supports it, orbits are fit with high-precision numerical propagation (HPOP). SGP4 elements stay available for compatibility.</span></li>
+          <li><b>Publish a version</b><span>Each catalog version names its inputs, its recipe and the exact modules that ran. Anyone can rerun it.</span></li>
+          <li><b>Screen</b><span>Conjunction screening runs as open WebAssembly modules. Operators can screen a maneuver encrypted, without handing it to a competitor.</span></li>
+        </ol>
+
+        <div class="chapter">
+          <h3>Uncertainty travels with the orbit</h3>
+          <p>A miss distance alone can&rsquo;t separate a near miss from a non-event. When a source provides covariance, the network carries it with the orbit in an Orbit Comprehensive Message. A record without covariance is labeled that way. The network never invents one.</p>
+        </div>
+        <figure class="figure">
+          <img src="img/catalog/uncertainty.svg" width="900" height="380" alt="Two close approaches, both 200 meters apart. Left: small uncertainty ellipses that never touch. Right: long ellipses that overlap, so a collision is possible" loading="lazy">
+          <figcaption>The same 200&nbsp;m miss distance. Only the uncertainty tells you which one needs a maneuver.</figcaption>
+        </figure>
+
+        <div class="chapter">
+          <h3>Every record traces to its publisher</h3>
+          <p>Each node shows what it holds and who signed it. This node carries 882,941 signed records across seven datasets, including orbit elements, catalog entries and space weather.</p>
+        </div>
+        <figure class="figure figure-wide">
+          <img src="img/onboarding/06-data.webp" width="1800" height="1125" alt="The Data tab of a node's dashboard, showing 882,941 records across seven datasets as a bar chart" loading="lazy">
+        </figure>
+      </div>
+    </section>
+
+    <section class="block" id="compare" data-earth="3.3 70 6 -1.25 0.05 162 6">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Side by side</p>
+          <h2>Tiered Catalog Or Open Catalog</h2>
+        </div>
+        <div class="table-wrap narrow">
+          <table class="compare">
+            <thead><tr><th></th><th>Tiered catalog</th><th>Network catalog</th></tr></thead>
+            <tbody>
+              <tr><th>Who can add data</th><td>Sensors under contract</td><td>Anyone with a node and a key</td></tr>
+              <tr><th>Who reads the best orbits</th><td>Agreement holders</td><td>Anyone, on the published terms</td></tr>
+              <tr><th>Uncertainty</th><td>Withheld from most users</td><td>Carried with the orbit whenever the source has it</td></tr>
+              <tr><th>Terms of use</th><td>Private, deal by deal</td><td>Published in each signed listing</td></tr>
+              <tr><th>Checking a result</th><td>Not possible from outside</td><td>Rerun the recipe on the same inputs</td></tr>
+              <tr><th>Your ephemeris</th><td>Feeds someone else&rsquo;s catalog</td><td>Stays yours; screen it encrypted</td></tr>
+              <tr><th>If a provider leaves</th><td>The data stops</td><td>Signed copies stay on other nodes</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Methods, measured results and open work are in the <a href="supporting/catalog-approach-whitepaper.pdf">catalog whitepaper (PDF)</a>.</p>
+      </div>
+    </section>
+
+    <section class="block story" data-earth="5.5 40 15 0.75 0 55 12">
+      <div class="wrap">
+        <div class="head">
+          <h2>Add Your Source</h2>
+          <p class="lede">Radar, telescope, star tracker, laser ranging or your own ephemerides. Run a node, sign your data and set your own terms.</p>
+        </div>
+        <div class="actions">
+          <a href="onboarding.html" class="btn btn-primary">Get started</a>
+          <a href="index.html#download" class="btn">Download</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <nav>
+        <a href="onboarding.html">Get started</a>
+        <a href="catalog.html">Catalog</a>
+        <a href="supporting/catalog-approach-whitepaper.pdf">Whitepaper</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="onboarding.html#security-review">IT spec sheet</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
+      </nav>
+      <span>MIT License &middot; &copy; Digital Arsenal &middot; Earth imagery: NASA Blue Marble and Black Marble</span>
+    </div>
+  </footer>
+
+  <script src="earth.js"></script>
+  <script src="site.js"></script>
+</body>
+</html>
