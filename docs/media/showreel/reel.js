@@ -1,11 +1,13 @@
-// Showreel player: plays only while on screen, never autoplays when reduced
-// motion is requested, seeks by chapter, and goes full screen (the stage on
+// Showreel player: plays once, then rests on the last card with a Play again
+// button. Plays only while on screen, never autoplays when reduced motion is
+// requested, seeks by chapter, and goes full screen (the stage on
 // desktop so the footer bar stays; the native player on iPhone). Muted.
 (function () {
   var video = document.getElementById('reelVideo');
   if (!video) return;
   var stage = video.parentElement;
   var big = stage.querySelector('.reel-big-play');
+  var again = stage.querySelector('.reel-again');
   var play = stage.querySelector('.reel-play');
   var fs = stage.querySelector('.reel-fs');
   var bar = stage.querySelector('.reel-progress span');
@@ -27,8 +29,20 @@
     if (video.paused) { userPaused = false; start(); } else { userPaused = true; video.pause(); }
   }
   big.addEventListener('click', toggle);
+  again.addEventListener('click', function () {
+    video.currentTime = 0;
+    userPaused = false;
+    start();
+  });
+  video.addEventListener('ended', function () {
+    userPaused = true; // do not replay just because it scrolls back into view
+    stage.classList.add('is-ended');
+    sync();
+    tick();
+  });
+  video.addEventListener('play', function () { stage.classList.remove('is-ended'); });
   play.addEventListener('click', toggle);
-  video.addEventListener('click', toggle);
+  video.addEventListener('click', function () { if (!stage.classList.contains('is-ended')) toggle(); });
   video.addEventListener('play', sync);
   video.addEventListener('pause', sync);
 

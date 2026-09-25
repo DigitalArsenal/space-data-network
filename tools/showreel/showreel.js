@@ -11,7 +11,7 @@
 const W = 1920;
 const H = 1080;
 const FPS = 30;
-const DURATION = 15;
+const DURATION = 17.5; // 15 s of motion, then a hold on the lockup
 const SUBFRAMES = 10;
 const SHUTTER = 0.5; // fraction of a frame the virtual shutter stays open
 
@@ -1216,7 +1216,8 @@ export async function createShowreel(base = "") {
     let ca = 0;
     for (const c of cuts) ca = Math.max(ca, Math.exp(-Math.pow((t - c) / 0.09, 2)));
     const flash = 0.35 * Math.exp(-Math.pow((t - 7.76) / 0.05, 2)) + 0.12 * Math.exp(-Math.pow((t - 11.47) / 0.06, 2));
-    const fade = seg(t, 0, 0.12) * (1 - easeInCubic(seg(t, DURATION - 0.22, DURATION - 0.02)));
+    // The piece plays once and rests on the lockup, so it fades in but never out.
+    const fade = seg(t, 0, 0.12);
     pgl.viewport(0, 0, W, H);
     pgl.useProgram(post);
     pgl.bindVertexArray(postVao);

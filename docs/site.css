@@ -334,6 +334,15 @@ body.centered .papers .card { text-align: left; }
 .reel-big-play svg { width: 28px; height: 28px; }
 .reel-big-play:hover { background: #f5f5f7; color: #000; }
 .reel-stage.is-playing .reel-big-play { display: none; }
+.reel-stage.is-ended .reel-big-play { display: none; }
+.reel-again { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); display: none; align-items: center; gap: 8px; padding: 11px 22px; border-radius: 999px; border: 1px solid #f5f5f7; background: #f5f5f7; color: #000; font: 600 15px var(--font-sans); cursor: pointer; white-space: nowrap; animation: reel-again-in .5s cubic-bezier(.2,.7,.2,1) both; }
+.reel-again svg { width: 17px; height: 17px; }
+.reel-again:hover { background: #fff; }
+.reel-stage.is-ended .reel-again { display: inline-flex; }
+.reel-stage.is-ended .reel-bar { opacity: 1; }
+@keyframes reel-again-in { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (prefers-reduced-motion: reduce) { .reel-again { animation: none; } }
+@media (max-width: 620px) { .reel-again { bottom: 64px; padding: 8px 16px; font-size: 14px; } }
 .reel-bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 36px 14px 10px; background: linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.72)); color: #f5f5f7; transition: opacity .3s; }
 .reel-stage.is-playing:not(:hover):not(:focus-within) .reel-bar { opacity: 0; }
 @media (hover: none) { .reel-stage.is-playing .reel-bar { opacity: 1; } }
