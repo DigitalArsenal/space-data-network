@@ -171,6 +171,10 @@ const csp = [
   "form-action 'none'",
   `script-src 'self' 'wasm-unsafe-eval' ${hashes.join(' ')}`,
   "worker-src 'self' blob:",
+  // The CONSOLE tab frames the SpaceAware console on its own origin, where the
+  // OrbPro engine key is licensed (the node never holds one). 'self' keeps the
+  // node's own module app pages frameable.
+  "frame-src 'self' https://spaceaware.io",
   "connect-src 'self' wss: https:",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
