@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" role="img" aria-labelledby="t d">
+  <title id="t">One close approach, four answers</title>
+  <desc id="d">Illustration. Four screening services report on the same close approach. One says maneuver, one says monitor, one sends no alert, and one says maneuver at a different time of closest approach. The operator cannot reconcile them because the inputs and algorithms are not open.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8e8e93"/></marker>
+  </defs>
+  <rect width="900" height="360" rx="18" fill="#0b0b0c"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#f5f5f7">
+    <g fill="none" stroke="#8e8e93" stroke-width="1.5">
+      <path d="M440 62C520 62 520 180 598 180" marker-end="url(#a)"/>
+      <path d="M440 142C520 142 520 180 598 180" marker-end="url(#a)"/>
+      <path d="M440 222C520 222 520 180 598 180" marker-end="url(#a)"/>
+      <path d="M440 302C520 302 520 180 598 180" marker-end="url(#a)"/>
+    </g>
+    <g>
+      <rect x="30" y="34" width="410" height="56" rx="14" fill="#1c1c1e" stroke="#ffffff" stroke-opacity=".18"/>
+      <text x="52" y="58" font-weight="700">Service A</text><text x="52" y="78" font-size="13" fill-opacity=".6">Own catalog, own propagator</text>
+      <rect x="300" y="48" width="122" height="28" rx="14" fill="#f5a524" fill-opacity=".2" stroke="#f5a524"/><text x="361" y="67" text-anchor="middle" font-size="13" font-weight="700" fill="#f5a524">MANEUVER</text>
+
+      <rect x="30" y="114" width="410" height="56" rx="14" fill="#1c1c1e" stroke="#ffffff" stroke-opacity=".18"/>
+      <text x="52" y="138" font-weight="700">Service B</text><text x="52" y="158" font-size="13" fill-opacity=".6">Different covariance model</text>
+      <rect x="300" y="128" width="122" height="28" rx="14" fill="#ffffff" fill-opacity=".08" stroke="#ffffff" stroke-opacity=".5"/><text x="361" y="147" text-anchor="middle" font-size="13" font-weight="700">MONITOR</text>
+
+      <rect x="30" y="194" width="410" height="56" rx="14" fill="#1c1c1e" stroke="#ffffff" stroke-opacity=".18"/>
+      <text x="52" y="218" font-weight="700">Service C</text><text x="52" y="238" font-size="13" fill-opacity=".6">Other object not in its catalog</text>
+      <rect x="300" y="208" width="122" height="28" rx="14" fill="none" stroke="#ffffff" stroke-opacity=".3" stroke-dasharray="4 3"/><text x="361" y="227" text-anchor="middle" font-size="13" font-weight="700" fill-opacity=".6">NO ALERT</text>
+
+      <rect x="30" y="274" width="410" height="56" rx="14" fill="#1c1c1e" stroke="#ffffff" stroke-opacity=".18"/>
+      <text x="52" y="298" font-weight="700">Service D</text><text x="52" y="318" font-size="13" fill-opacity=".6">Different threshold and timing</text>
+      <rect x="300" y="288" width="122" height="28" rx="14" fill="#f5a524" fill-opacity=".2" stroke="#f5a524"/><text x="361" y="307" text-anchor="middle" font-size="13" font-weight="700" fill="#f5a524">MANEUVER*</text>
+    </g>
+    <rect x="604" y="120" width="266" height="120" rx="16" fill="#f5a524" fill-opacity=".08" stroke="#f5a524" stroke-opacity=".7"/>
+    <text x="737" y="160" text-anchor="middle" font-size="18" font-weight="700">Your satellite</text>
+    <text x="737" y="186" text-anchor="middle" font-size="14" fill-opacity=".75">One close approach.</text>
+    <text x="737" y="208" text-anchor="middle" font-size="14" fill-opacity=".75">Four answers. Which is right?</text>
+    <text x="30" y="352" font-size="12" fill-opacity=".5">* at a different time of closest approach</text>
+    <text x="870" y="352" text-anchor="end" font-size="12" fill-opacity=".5">Illustration</text>
+  </g>
+</svg>

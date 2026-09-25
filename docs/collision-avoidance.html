@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="How satellite collision avoidance works, what changed after the 2009 Iridium-Cosmos collision, who screens today, and why space traffic management needs an open baseline with encrypted conjunction assessment.">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:title" content="How Collision Avoidance Works">
+  <meta property="og:description" content="From Iridium-Cosmos to today: why conflicting warnings and quadratic growth demand an open baseline with encrypted conjunction assessment.">
+  <meta property="og:type" content="article">
+  <title>How Collision Avoidance Works &middot; Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M5.8 7.9A13 13 0 0 1 28.6 12.6' stroke='%23f5a524' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='28.6' cy='12.6' r='2.5' fill='%23f5a524'/></svg>">
+  <!-- SDN_CONSUMER_ASSETS_START -->
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
+<!-- SDN_CONSUMER_ASSETS_END -->
+  <link rel="stylesheet" href="site.css">
+  <style>
+    :root { --sdn-stack-footer-height: 40px; --sdn-stack-header-height: 52px; }
+    .site-nav { height: var(--sdn-stack-header-height, 52px); }
+    .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
+    .catalog-hero { min-height: calc(100vh - 52px); justify-content: flex-start; padding-top: 16vh; }
+    .chart { width: 100%; height: auto; display: block; background: #0b0b0c; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    .chart .grid { stroke: rgba(255,255,255,.08); }
+    .chart .tick { fill: var(--muted); font: 12px var(--font-sans); }
+    .chart .axis { fill: var(--text-2); font: 13px var(--font-sans); }
+    .chart .val { fill: var(--text); font: 600 13px var(--font-sans); }
+    .chart .mark { fill: var(--accent); }
+    .chart .hit { fill: transparent; }
+    .chart .bar:hover .mark { fill: #ffc05a; }
+    .notes { max-width: 760px; margin: 0 auto; text-align: left; color: var(--text-2); font-size: 14px; padding-left: 20px; }
+    .notes li { margin-bottom: 10px; }
+    .notes a, .chapter a { color: var(--accent); }
+    sup a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .programs td:first-child { color: var(--text); white-space: nowrap; }
+    @media (max-width: 620px) { .programs td:first-child { white-space: normal; } }
+  </style>
+</head>
+<body class="centered">
+  <sdn-stack-nav active="sdn"></sdn-stack-nav>
+  <canvas id="earth" aria-hidden="true"></canvas>
+  <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="bg-shade"></div>
+
+  <header class="site-nav">
+    <div class="inner">
+      <a href="index.html" class="brand">
+        <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="13" stroke="#f5f5f7" stroke-width="1.6" opacity=".3"/><path d="M5.8 7.9A13 13 0 0 1 28.6 12.6" stroke="#f5a524" stroke-width="2.2" stroke-linecap="round"/><path d="M16 10.2L10.4 20.1H21.6Z" stroke="#f5f5f7" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="10.2" r="2.6" fill="#f5f5f7"/><circle cx="10.4" cy="20.1" r="2.6" fill="#f5f5f7"/><circle cx="21.6" cy="20.1" r="2.6" fill="#f5f5f7"/><circle cx="28.6" cy="12.6" r="2.5" fill="#f5a524"/></svg>
+        Space Data Network
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="onboarding.html">Get started</a>
+        <a href="catalog.html">Catalog</a>
+        <a href="whitepapers.html">Whitepapers</a>
+        <a href="index.html#download">Download</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="index.html#stack">Stack</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <details class="nav-menu">
+        <summary>Menu</summary>
+        <div class="menu-panel">
+          <a href="onboarding.html">Get started</a>
+          <a href="catalog.html">Catalog</a>
+          <a href="whitepapers.html">Whitepapers</a>
+          <a href="index.html#download">Download</a>
+          <a href="server-overview.html">Docs</a>
+          <a href="index.html#stack">Stack</a>
+          <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-hero wrap catalog-hero" data-earth="1.62 60 30 0 -2.25 35 20">
+      <p class="eyebrow">Collision avoidance</p>
+      <h1>How Collision Avoidance Works</h1>
+      <p class="lede">Every satellite operator asks the same question several times a day: will anything come too close? Here is how that question gets answered today, why the answers conflict, and why the problem gets harder with every launch.</p>
+      <div class="actions">
+        <a href="#routine" class="btn btn-primary">The routine</a>
+        <a href="#problem" class="btn">The problem</a>
+      </div>
+    </section>
+
+    <section class="block" id="routine" data-earth="2.7 100 25 1.1 0.05 120 10">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part one</p>
+          <h2>The Routine</h2>
+          <p class="lede">Collision avoidance is a loop that runs for every active satellite, every day.</p>
+        </div>
+        <ol class="steps steps-3">
+          <li><b>Screen</b><span>Propagate every catalog object a few days ahead and find each pair that comes within a set distance of a protected satellite.</span></li>
+          <li><b>Warn</b><span>Send the operator a conjunction data message (CDM): the time of closest approach, the miss distance, and both objects&rsquo; states and uncertainty.</span></li>
+          <li><b>Assess</b><span>Combine the two uncertainty regions into a probability of collision (Pc). Miss distance alone can&rsquo;t tell a near miss from a non-event.</span></li>
+          <li><b>Decide</b><span>Compare Pc with the operator&rsquo;s threshold, often around 1 in 10,000, and watch how it changes as newer tracking arrives.</span></li>
+          <li><b>Maneuver</b><span>Plan a burn that lowers the risk without creating a new close approach with something else.</span></li>
+          <li><b>Rescreen</b><span>Screen the planned trajectory before the burn. An unscreened maneuver can move the risk to someone else.</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="block" id="iridium" data-earth="3.3 70 10 -1.25 0.05 162 6">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part two</p>
+          <h2>The Collision That Changed The Routine</h2>
+          <p class="lede">On 10 February 2009, Iridium 33, an operational U.S. communications satellite, hit Cosmos 2251, a decommissioned Russian communications satellite, 790&nbsp;km above northern Siberia.<sup><a href="#n2">2</a></sup></p>
+        </div>
+        <div class="stats">
+          <div><strong>790 km</strong><span>altitude</span></div>
+          <div><strong>&gt;11 km/s</strong><span>collision speed</span></div>
+          <div><strong>823</strong><span>fragments cataloged in seven weeks</span></div>
+          <div><strong>2</strong><span>debris clouds across low Earth orbit</span></div>
+        </div>
+        <figure class="figure" style="margin-top:32px">
+          <img src="iridium-cosmos-debris.jpg" width="1024" height="576" alt="Earth with red streaks tracing the two debris clouds around the planet" loading="lazy">
+          <figcaption>The two debris clouds spread along both orbits within months. Illustration.</figcaption>
+        </figure>
+        <div class="chapter">
+          <h3>What changed</h3>
+          <p>It was the first accidental collision between two intact satellites. The orbital planes met at nearly a right angle, and neither object was being screened against the other. Afterward the U.S. military began screening every active satellite, not only its own, and sending warnings to their operators.</p>
+          <p>Space-Track.org, the public site that publishes the catalog and delivers those warnings, was rebuilt in the years that followed.<sup><a href="#n1">1</a></sup> Warnings became routine. Coordination did not.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="sharing" data-earth="2.9 20 28 1.05 0.05 118 12">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part three</p>
+          <h2>Sharing By Agreement</h2>
+          <p class="lede">The legal channel for sharing U.S. military tracking data with anyone outside the U.S. government is 10&nbsp;U.S.C. &sect;&nbsp;2274.<sup><a href="#n3">3</a></sup></p>
+        </div>
+        <div class="grid grid-2 narrow">
+          <div class="card"><h3>How it works</h3><p>The Secretary of Defense may provide space situational awareness services to, and obtain data from, states, U.S. and foreign companies, and foreign governments. Each recipient must sign an agreement first. Well over a hundred companies, nations and intergovernmental organizations have signed.</p></div>
+          <div class="card"><h3>What recipients agree to</h3><p>Not to transfer any data or analysis received, including their own analysis of it, to any other entity without the Secretary&rsquo;s express approval. The Department may also charge for the service.</p></div>
+          <div class="card"><h3>How it evolved</h3><p>Enacted in 2003 as a pilot, amended in 2006, 2008, 2009 and 2018. Since 1 January 2024, the Department shares only as far as national security requires; civil safety services are moving to the Department of Commerce.</p></div>
+          <div class="card"><h3>Why it matters here</h3><p>A system built on bilateral agreements and non-transfer clauses can deliver warnings. It cannot produce one shared picture that every operator can check.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="programs" data-earth="2.9 -160 20 -1.05 0.05 240 10">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part four</p>
+          <h2>Who Screens Today</h2>
+          <p class="lede">Governments and companies around the world now run their own sensors, catalogs and screening services.</p>
+        </div>
+        <div class="table-wrap narrow">
+          <table class="programs">
+            <thead><tr><th>Government and intergovernmental</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td>U.S. Space Force (18th and 19th Space Defense Squadrons)</td><td>Maintains the U.S. catalog, publishes it on Space-Track.org and sends free conjunction warnings to operators worldwide.</td></tr>
+              <tr><td>U.S. Office of Space Commerce: TraCSS</td><td>The Traffic Coordination System for Space, taking over basic safety services for civil and commercial operators.</td></tr>
+              <tr><td>NASA CARA</td><td>Conjunction assessment for NASA missions. Publishes its methods and open-source Pc tools.<sup><a href="#n4">4</a></sup></td></tr>
+              <tr><td>EU Space Surveillance and Tracking (EU SST)</td><td>A partnership of EU member states offering collision avoidance, reentry and fragmentation services.</td></tr>
+              <tr><td>European Space Agency</td><td>Collision avoidance for ESA missions and research into automated avoidance through its Space Safety programme.</td></tr>
+              <tr><td>UK National Space Operations Centre</td><td>Conjunction and reentry monitoring for UK-licensed operators.</td></tr>
+              <tr><td>France: CNES and Space Command</td><td>CNES&rsquo;s CAESAR conjunction analysis service, and military surveillance including the GRAVES radar.</td></tr>
+              <tr><td>Germany: GSSAC</td><td>The German Space Situational Awareness Centre, run jointly by the air force and the German Aerospace Center.</td></tr>
+              <tr><td>Japan: JAXA and the Japan Air Self-Defense Force</td><td>Radar and optical tracking for Japanese satellites and national space domain awareness.</td></tr>
+              <tr><td>India: ISRO</td><td>IS4OM, ISRO&rsquo;s system for safe and sustainable space operations, and the NETRA tracking project.</td></tr>
+              <tr><td>China: CNSA</td><td>The Space Debris Monitoring and Application Center, which screens Chinese missions and issues warnings.</td></tr>
+              <tr><td>Russia: Roscosmos</td><td>ASPOS OKP, the automated warning system for hazardous situations in near-Earth space.</td></tr>
+              <tr><td>United Nations COPUOS</td><td>Guidelines for the Long-term Sustainability of Outer Space Activities (2019). Guidance, not screening.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap narrow" style="margin-top:20px">
+          <table class="programs">
+            <thead><tr><th>Commercial</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td>SpaceX Stargaze</td><td>Star-tracker cameras on constellation satellites detect other objects. Free screening for operators that share their ephemerides.</td></tr>
+              <tr><td>LeoLabs</td><td>Ground phased-array radar network for low Earth orbit, with catalog and conjunction services.</td></tr>
+              <tr><td>Slingshot Aerospace</td><td>Global optical sensor network and a coordination platform for operators.</td></tr>
+              <tr><td>ExoAnalytic Solutions</td><td>A large network of optical telescopes, focused on geostationary orbit.</td></tr>
+              <tr><td>COMSPOC</td><td>Orbit determination and space situational awareness software and services.</td></tr>
+              <tr><td>Space Data Association</td><td>A consortium of satellite operators that pools ephemerides through its Space Data Center.</td></tr>
+              <tr><td>Kayhan Space</td><td>Conjunction screening and coordination between operators.</td></tr>
+              <tr><td>Privateer</td><td>Space situational awareness data and analytics.</td></tr>
+              <tr><td>NorthStar Earth &amp; Space</td><td>Space-based optical tracking from its own satellites.</td></tr>
+              <tr><td>Digantara</td><td>Space-based tracking and space situational awareness services, based in India.</td></tr>
+              <tr><td>Neuraspace</td><td>Automated collision avoidance for operators, based in Portugal.</td></tr>
+              <tr><td>Aldoria and Look Up Space</td><td>French optical and radar tracking companies.</td></tr>
+              <tr><td>Vyoma</td><td>Space-based tracking, based in Germany.</td></tr>
+              <tr><td>Space Mapper</td><td>A Chinese commercial catalog with its own and international orbit products.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Many of these services are very good. The problem below is not their quality. It is that there are many of them, and they don&rsquo;t share a baseline.</p>
+      </div>
+    </section>
+
+    <section class="block" id="problem" data-earth="1.34 150 14 0 -3.1 180 -3">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part five</p>
+          <h2>The Fundamental Problem</h2>
+          <p class="lede">Space traffic management needs one answer per close approach. Today an operator gets several.</p>
+        </div>
+
+        <div class="chapter">
+          <h3>Warnings that can&rsquo;t be reconciled</h3>
+          <p>Each service screens with its own catalog, its own propagator, its own covariance model, its own thresholds and its own probability method. Most of those are not fully open. When their warnings disagree, an operator cannot tell which one is right, because the inputs and algorithms behind them can&rsquo;t be compared.</p>
+        </div>
+        <figure class="figure figure-wide">
+          <img src="img/ca/conflicting-warnings.svg" width="900" height="360" alt="Four services report on the same close approach: maneuver, monitor, no alert, and maneuver at a different time">
+          <figcaption>More warnings do not add up to more safety when they cannot be checked against each other.</figcaption>
+        </figure>
+
+        <div class="chapter">
+          <h3>Every launch makes it harder</h3>
+          <p>Every object has to be screened against every other. The number of pairs is N(N&minus;1)/2, so it grows with the square of the catalog. Ten times the objects means a hundred times the pairs, and a hundred times the warnings that have to be triaged.</p>
+        </div>
+        <figure class="figure figure-wide">
+          <svg class="chart" viewBox="0 0 760 340" role="img" aria-labelledby="pairs-t pairs-d"><title id="pairs-t">Pairs to screen grow with the square of the catalog</title><desc id="pairs-d">Unique pairs N(N-1)/2: 1,000 objects, 499,500 pairs; 5,000 objects, 12,497,500 pairs; 10,000 objects, 49,995,000 pairs; 25,000 objects, 312,487,500 pairs; 50,000 objects, 1,249,975,000 pairs; 100,000 objects, 4,999,950,000 pairs.</desc>
+<line x1="64" x2="740" y1="292.0" y2="292.0" class="grid"/>
+<text x="54" y="296.0" class="tick" text-anchor="end">0</text>
+<line x1="64" x2="740" y1="238.4" y2="238.4" class="grid"/>
+<text x="54" y="242.4" class="tick" text-anchor="end">1 B</text>
+<line x1="64" x2="740" y1="184.8" y2="184.8" class="grid"/>
+<text x="54" y="188.8" class="tick" text-anchor="end">2 B</text>
+<line x1="64" x2="740" y1="131.2" y2="131.2" class="grid"/>
+<text x="54" y="135.2" class="tick" text-anchor="end">3 B</text>
+<line x1="64" x2="740" y1="77.6" y2="77.6" class="grid"/>
+<text x="54" y="81.6" class="tick" text-anchor="end">4 B</text>
+<line x1="64" x2="740" y1="24.0" y2="24.0" class="grid"/>
+<text x="54" y="28.0" class="tick" text-anchor="end">5 B</text>
+<g class="bar"><title>1,000 objects: 499,500 pairs</title><rect x="86.2" y="24" width="68.3" height="268" class="hit"/><path d="M92.2 292V291.2Q92.2 290.5 92.9 290.5H147.8Q148.5 290.5 148.5 291.2V292Z" class="mark"/>
+<text x="120.3" y="282.5" class="val" text-anchor="middle">0.5 M</text></g>
+<text x="120.3" y="312" class="tick" text-anchor="middle">1K</text>
+<g class="bar"><title>5,000 objects: 12,497,500 pairs</title><rect x="198.8" y="24" width="68.3" height="268" class="hit"/><path d="M204.8 292V291.2Q204.8 290.5 205.6 290.5H260.4Q261.2 290.5 261.2 291.2V292Z" class="mark"/>
+<text x="233.0" y="282.5" class="val" text-anchor="middle">12.5 M</text></g>
+<text x="233.0" y="312" class="tick" text-anchor="middle">5K</text>
+<g class="bar"><title>10,000 objects: 49,995,000 pairs</title><rect x="311.5" y="24" width="68.3" height="268" class="hit"/><path d="M317.5 292V290.7Q317.5 289.3 318.8 289.3H372.5Q373.8 289.3 373.8 290.7V292Z" class="mark"/>
+<text x="345.7" y="281.3" class="val" text-anchor="middle">50 M</text></g>
+<text x="345.7" y="312" class="tick" text-anchor="middle">10K</text>
+<g class="bar"><title>25,000 objects: 312,487,500 pairs</title><rect x="424.2" y="24" width="68.3" height="268" class="hit"/><path d="M430.2 292V279.3Q430.2 275.3 434.2 275.3H482.5Q486.5 275.3 486.5 279.3V292Z" class="mark"/>
+<text x="458.3" y="267.3" class="val" text-anchor="middle">312.5 M</text></g>
+<text x="458.3" y="312" class="tick" text-anchor="middle">25K</text>
+<g class="bar"><title>50,000 objects: 1,249,975,000 pairs</title><rect x="536.8" y="24" width="68.3" height="268" class="hit"/><path d="M542.8 292V229.0Q542.8 225.0 546.8 225.0H595.2Q599.2 225.0 599.2 229.0V292Z" class="mark"/>
+<text x="571.0" y="217.0" class="val" text-anchor="middle">1.25 B</text></g>
+<text x="571.0" y="312" class="tick" text-anchor="middle">50K</text>
+<g class="bar"><title>100,000 objects: 4,999,950,000 pairs</title><rect x="649.5" y="24" width="68.3" height="268" class="hit"/><path d="M655.5 292V28.0Q655.5 24.0 659.5 24.0H707.8Q711.8 24.0 711.8 28.0V292Z" class="mark"/>
+<text x="683.7" y="16.0" class="val" text-anchor="middle">5 B</text></g>
+<text x="683.7" y="312" class="tick" text-anchor="middle">100K</text>
+<text x="402.0" y="334" class="axis" text-anchor="middle">Objects in the catalog</text>
+</svg>
+          <figcaption>Unique pairs to screen at each catalog size. 10,000 objects: about 50 million pairs. 100,000: about 5 billion.</figcaption>
+        </figure>
+
+        <div class="chapter">
+          <h3>What can&rsquo;t be disclosed still has to be screened</h3>
+          <p>Some satellites are classified. Some maneuvers are commercial secrets until they happen. Neither appears in a public catalog in time to be screened, so other operators plan around trajectories that are about to change. That gap is where incidents come from.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="baseline" data-earth="5.5 40 15 0.75 0 55 12">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part six</p>
+          <h2>An Open Baseline With Encrypted Screening</h2>
+          <p class="lede">Services can keep competing on sensors, speed and analysis. What they need underneath is one baseline everyone can check, and a way to screen what can&rsquo;t be shared.</p>
+        </div>
+        <div class="grid grid-3">
+          <div class="card"><h3>One open catalog</h3><p>Every source, digitally signed, with its uncertainty attached and the recipe that combined them. Two operators looking at the same event see the same inputs.</p></div>
+          <div class="card"><h3>Open algorithms</h3><p>Propagation and conjunction assessment run as open WebAssembly modules. Same inputs, same modules, same answer, on any node.</p></div>
+          <div class="card"><h3>Encrypted conjunction assessment</h3><p>Operators submit encrypted ephemeris for a classified satellite or a planned maneuver. The assessor computes on ciphertext and returns SAFE or ALERT. Nobody sees the orbit.</p></div>
+        </div>
+        <div class="actions" style="margin-top:28px">
+          <a href="encrypted-ca.html" class="btn btn-primary">How encrypted screening works &rarr;</a>
+          <a href="catalog.html" class="btn">How the catalog is built</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="notes" style="padding-top:24px">
+      <div class="wrap">
+        <div class="head"><h2>Notes</h2></div>
+        <ol class="notes">
+          <li id="n1">The Space-Track.org site that served the catalog in 2013 was written by Anthony &ldquo;TJ&rdquo; Koury, co-author of the <a href="whitepapers.html">Evidence-Supported ASO Catalog whitepaper</a>. Its archived page source names him as the author: open <a href="https://web.archive.org/web/20130323001324/https://space-track.org/" target="_blank" rel="noopener">the 23 March 2013 capture</a> and view the source (<code>view-source:https://web.archive.org/web/20130323001324/https://space-track.org/</code>).</li>
+          <li id="n2">NASA Orbital Debris Program Office, &ldquo;Satellite Collision Leaves Significant Debris Clouds,&rdquo; <a href="https://orbitaldebris.jsc.nasa.gov/quarterly-news/pdfs/odqnv13i2.pdf" target="_blank" rel="noopener">Orbital Debris Quarterly News 13(2), April 2009</a>.</li>
+          <li id="n3"><a href="https://www.law.cornell.edu/uscode/text/10/2274" target="_blank" rel="noopener">10 U.S.C. &sect; 2274</a>, Space situational awareness services and information: provision to non-United States Government entities. Added by Pub. L. 108-136 (2003); amended by Pub. L. 109-364, 110-417, 111-84 and 115-232.</li>
+          <li id="n4"><a href="https://github.com/nasa/CARA_Analysis_Tools" target="_blank" rel="noopener">NASA CARA Analysis Tools</a>.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <nav>
+        <a href="onboarding.html">Get started</a>
+        <a href="catalog.html">Catalog</a>
+        <a href="collision-avoidance.html">Collision avoidance</a>
+        <a href="whitepapers.html">Whitepapers</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="onboarding.html#security-review">IT spec sheet</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
+      </nav>
+      <span>MIT License &middot; &copy; Digital Arsenal &middot; Earth imagery: NASA Blue Marble and Black Marble</span>
+    </div>
+  </footer>
+
+  <script src="earth.js"></script>
+  <script src="site.js"></script>
+</body>
+</html>
