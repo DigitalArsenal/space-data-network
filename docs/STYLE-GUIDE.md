@@ -17,15 +17,16 @@ Files: `docs/brand/sdn-mark-dark.svg` (for dark backgrounds) and
 | Part | Meaning |
 | --- | --- |
 | Faint ring | The Earth and the network around it |
-| Amber arc | An orbit |
-| Amber dot at the end of the arc | A satellite, the source of the data |
+| Amber dot at top center | The satellite being tracked, the source of the data |
+| Amber tail up the left side | Its orbit, fading in from 6 o'clock to full amber at the satellite |
 | Three linked nodes | Peers exchanging digitally signed data |
 
 Rules:
 
 - Use the SVG files. Never redraw, stretch, rotate or re-proportion the mark.
-- The arc and its dot are always amber. Everything else is the ink color of the
-  background variant.
+- The satellite and its tail are always amber; the tail is a gradient from
+  transparent at 6 o'clock to full amber at the satellite. Everything else is
+  the ink color of the background variant.
 - Minimum size: 16 px on screen, 6 mm in print.
 - Clear space on every side: at least one quarter of the mark's width.
 - No gradients, shadows, outlines, glows or badges. No other colors.
