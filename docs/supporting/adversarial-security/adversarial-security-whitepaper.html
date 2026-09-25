@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Cryptocurrency balances at deterministically derived addresses as continuous, publicly verifiable proof of key integrity.">
+  <meta name="theme-color" content="#000000">
+  <title>Persistent Adversarial Security &middot; Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M5.8 7.9A13 13 0 0 1 28.6 12.6' stroke='%23f5a524' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='28.6' cy='12.6' r='2.5' fill='%23f5a524'/></svg>">
+  <link rel="stylesheet" href="../../site.css">
+  <style>
+    :root { --sdn-stack-footer-height: 0px; --sdn-stack-header-height: 52px; }
+    .site-nav { height: var(--sdn-stack-header-height, 52px); }
+    .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
+  </style>
+</head>
+<body class="paper-page">
+  <header class="site-nav">
+    <div class="inner">
+      <a href="../../index.html" class="brand">
+        <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="13" stroke="#f5f5f7" stroke-width="1.6" opacity=".3"/><path d="M5.8 7.9A13 13 0 0 1 28.6 12.6" stroke="#f5a524" stroke-width="2.2" stroke-linecap="round"/><path d="M16 10.2L10.4 20.1H21.6Z" stroke="#f5f5f7" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="10.2" r="2.6" fill="#f5f5f7"/><circle cx="10.4" cy="20.1" r="2.6" fill="#f5f5f7"/><circle cx="21.6" cy="20.1" r="2.6" fill="#f5f5f7"/><circle cx="28.6" cy="12.6" r="2.5" fill="#f5a524"/></svg>
+        Space Data Network
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="../../onboarding.html">Get started</a>
+        <a href="../../catalog.html">Catalog</a>
+        <a href="../../whitepapers.html" aria-current="page">Whitepapers</a>
+        <a href="../../index.html#download">Download</a>
+        <a href="../../server-overview.html">Docs</a>
+        <a href="../../index.html#stack">Stack</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <details class="nav-menu">
+        <summary>Menu</summary>
+        <div class="menu-panel">
+          <a href="../../onboarding.html">Get started</a>
+          <a href="../../catalog.html">Catalog</a>
+          <a href="../../whitepapers.html" aria-current="page">Whitepapers</a>
+          <a href="../../index.html#download">Download</a>
+          <a href="../../server-overview.html">Docs</a>
+          <a href="../../index.html#stack">Stack</a>
+          <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </details>
+    </div>
+  </header>
+  <main>
+    <article class="paper wrap">
+      <p class="paper-back"><a href="../../whitepapers.html">&larr; All whitepapers</a> &middot; <a href="adversarial-security-whitepaper.md">Markdown source</a></p>
+<p align="center">
+  <img src="assets/shield.svg" alt="Adversarial Security" width="120"/>
+</p>
+
+<h1 align="center">Persistent Adversarial Security</h1>
+<p align="center"><strong>Game-Theoretic Key Integrity Through Blockchain Economics</strong></p>
+<p align="center"><em>A whitepaper on using cryptocurrency balances as real-time, permissionless proof of cryptographic key integrity.</em></p>
+
+<hr>
+<h2>Abstract</h2>
+<p>Traditional Public Key Infrastructure (PKI) relies on centralized Certificate Authorities (CAs) to establish trust. This model has been repeatedly undermined by breaches at RSA <sup><a href="#ref-1">1</a></sup>, Microsoft <sup><a href="#ref-2">2</a></sup>, DigiNotar, Symantec, and others <sup><a href="#ref-3">3</a></sup>. This paper presents <strong>Adversarial Security</strong>, a game-theoretic trust model in which cryptocurrency balances at deterministically derived addresses serve as continuous, publicly verifiable proof of key integrity. The core insight is that a rational actor who compromises a private key will drain its associated funds immediately, because withdrawal is instant, irreversible, and risk-free. Undrained value therefore implies an uncompromised key. This transforms blockchain state into a live security signal: not a point-in-time certificate, but a continuous, permissionless trust metric.</p>
+<hr>
+<h2>1. Background</h2>
+<p>Secure identity management and data distribution typically rely on centralized providers. Users establish trust relationships through certificate chains based on digital signatures, depending on Root Certificate Authorities (CAs). However, this model has proven vulnerable to compromise. The abstract nature of these relationships makes security quantification difficult, depending on key creation costs, entity value, compromise likelihood, technology administration, and protected system value.</p>
+<p>Compounding these structural problems is a <strong>security labor misalignment</strong>: the people most responsible for moving sensitive data and safeguarding cryptographic keys are often the lowest-paid members of an organization. The 2015 breach of the U.S. Office of Personnel Management (OPM) — which exposed the security-clearance background-investigation files of 21.5 million people — illustrates the consequences <sup><a href="#ref-4">4</a></sup>. Contractors earning modest salaries administered systems whose compromise caused damage measured in billions of dollars and untold national-security harm. When the economic value attached to a key is abstract or invisible, organizations rationally under-invest in protecting it. Adversarial Security corrects this by making key value <em>concrete and visible</em>: attaching real funds to a key forces the custodial organization to protect those funds at parity with — or in proportion to — the value of the data that key secures. A key holding $10 million in cryptocurrency will not be administered by an underfunded IT team with default passwords; the economic incentive to protect the key scales automatically with the value at stake.</p>
+<p>This model has fundamental weaknesses:</p>
+<ul>
+<li><strong>Single points of failure.</strong> A compromised CA undermines every certificate it has issued.</li>
+<li><strong>Opaque trust.</strong> The security of a CA&#39;s key management practices is not observable by relying parties.</li>
+<li><strong>Revocation lag.</strong> Certificate Revocation Lists (CRLs) and OCSP introduce latency between compromise and detection, sometimes measured in weeks or months.</li>
+<li><strong>Abstract trust.</strong> Security is qualitative, not quantitative. There is no way to measure how much trust a certificate deserves.</li>
+</ul>
+<p>In 2009, Bitcoin emerged as a decentralized PKI system for peer-to-peer electronic cash <sup><a href="#ref-5">5</a></sup>, secured by proof-of-work consensus operating at over 50,000 TH/s, making it &quot;the most secure public PKI network ever created in terms of the amount of compute power required to break its security.&quot; Ethereum followed, enabling decentralized applications through smart contracts <sup><a href="#ref-6">6</a></sup>. Cryptocurrency exchanges created markets establishing monetary value, allowing cryptographic principles to directly store value against keys without additional abstraction. This enabled more accurate security evaluation.</p>
+<hr>
+<h2>2. The Adversarial Trust Model</h2>
+<p>The system is called <em>Adversarial Security</em> because it deliberately recruits adversaries as the enforcement mechanism. Anyone can increase the trust level of — effectively paint a target on — any key they need to trust but currently don&#39;t. A hospital that must trust a medical-device vendor&#39;s signing key can unilaterally deposit funds to that key&#39;s derived addresses, raising the economic stakes of compromise without the vendor&#39;s permission. More critically, depositors can issue <strong>public bounties</strong>: by publishing the derived addresses alongside details about the key&#39;s purpose, custodial arrangements, and the schedule on which new funds will arrive, they invite the very actors most capable of compromise — hacker collectives, nation-state operators, organized crime — to attempt extraction. If those adversaries <em>cannot</em> drain the funds, the key&#39;s integrity is demonstrated against the most capable threat actors in the world. The name reflects this core inversion: security is not provided <em>despite</em> adversaries but <em>because of</em> them.</p>
+<p>Instead of trusting an authority&#39;s <em>assertion</em> that a key is valid, observers verify a key&#39;s integrity by checking the <em>economic state</em> of its derived addresses. This approach contrasts with centralized CA models by allowing anonymous, permissionless trust level increases: entities can transfer funds to addresses without owner permission to signal confidence.</p>
+<h3>2.1 Core Mechanism</h3>
+<p>Cryptographic public keys used for signing can mathematically derive addresses on multiple blockchain networks via hierarchical deterministic (HD) derivation (BIP-32 <sup><a href="#ref-7">7</a></sup>, BIP-44 <sup><a href="#ref-8">8</a></sup>, SLIP-10 <sup><a href="#ref-9">9</a></sup>). One key pair serves both authentication and value custody, requiring no additional infrastructure.</p>
+<p>By depositing value at those derived addresses, a keyholder or any third party creates a <strong>game-theoretic security bond</strong>:</p>
+<p align="center">
+  <img src="assets/flow.svg" alt="Protocol Flow: Public Key → Derive Addresses → Deposit Value → Monitor Balance → Infer Integrity" width="600"/>
+</p>
+
+<p>The network operates on the principle that the security value of data signed by a key should equal or exceed the funds that key can access:</p>
+<pre><code>S(k) ≥ F(k)
+</code></pre>
+<p>Where <code>S(k)</code> is the security assurance level and <code>F(k)</code> is the fund value accessible by key <code>k</code>. Unspent funds suggest secure, uncompromised private keys.</p>
+<h3>2.2 Four Pillars</h3>
+<p align="center">
+  <img src="assets/pillars.svg" alt="Four Pillars: Key Derivation, Value as Signal, Rational Actors, Real-Time Proof" width="680"/>
+</p>
+
+<ol>
+<li><p><strong>Key Derivation.</strong> A public key used for signing data can mathematically derive addresses on multiple blockchain networks (BIP-32/44). One key pair serves both authentication and value custody, requiring no additional infrastructure.</p>
+</li>
+<li><p><strong>Value as Trust Signal.</strong> Derived addresses are permissionless. Anyone can deposit funds to signal trust in a key. This enables both <em>self-bonding</em> (owner deposits) and <em>third-party bonding</em> (others deposit to signal confidence). The aggregate balance quantifies the economic cost of compromise.</p>
+</li>
+<li><p><strong>Rational Actor Assumption.</strong> A compromised key gives the attacker access to both impersonation <em>and</em> fund withdrawal. Draining funds is the <strong>dominant strategy</strong>: it is immediate, irreversible, and carries zero marginal risk since the key is already compromised. Multiple adversaries with the same key create a race condition that accelerates drainage. Undrained value therefore implies no compromise.</p>
+</li>
+<li><p><strong>Real-Time Verification.</strong> Blockchain state is publicly auditable and updates every block. This provides continuous, permissionless proof of key integrity. Any observer can independently verify the balance without trusting a certificate authority or revocation list.</p>
+</li>
+</ol>
+<h3>2.3 Trust Quantification</h3>
+<p>Trust evaluation depends on three observable signals:</p>
+<pre><code>T(a) = f(W(a), V(a), D(a))
+</code></pre>
+<p>Where:</p>
+<ul>
+<li><strong>T(a)</strong> = trust level of address <code>a</code></li>
+<li><strong>W(a)</strong> = web of trust score (network relationships and endorsements contribute to entity trustworthiness)</li>
+<li><strong>V(a)</strong> = fund value at address (stored blockchain value indicates trust)</li>
+<li><strong>D(a)</strong> = fund duration at address (duration of unspent funds implies private key security and integrity)</li>
+</ul>
+<p>The duration component provides critical evidence. Funds that have remained at an address for extended periods demonstrate that the private key has not been compromised over that interval. Time provides an axis of security evidence that certificate-based systems cannot replicate.</p>
+<hr>
+<h2>3. Game Theory of the Security Bond</h2>
+<p>This section formalizes the incentive structures, strategic interactions, and equilibrium conditions underlying adversarial security. The security bond and associated rules are <strong>mechanism design tools</strong>: they create conditions where rational actors are incentivized toward honest behavior.</p>
+<h3>3.1 The Security Bond as a Commitment Device</h3>
+<p>The security bond functions as a <strong>credible commitment mechanism</strong>. By locking value across multiple blockchain networks, a keyholder signals:</p>
+<ul>
+<li><strong>Costly signaling.</strong> Acquiring and holding assets across diverse networks is expensive. A well-funded bond is difficult to fake, making it a reliable signal of investment in the identity. This follows the <strong>handicap principle</strong> from signaling theory <sup><a href="#ref-10">10</a></sup>: the cost of the signal is what makes it credible.</li>
+<li><strong>Skin in the game.</strong> Value locked to derived addresses creates a direct economic loss if the associated private keys are compromised or the identity is used maliciously. This aligns with Nassim Taleb&#39;s asymmetry principle <sup><a href="#ref-11">11</a></sup>: the keyholder bears downside risk proportional to their claims.</li>
+<li><strong>Opportunity cost.</strong> Funds committed to the bond cannot be used elsewhere. The larger the bond, the greater the implied opportunity cost, and thus the stronger the commitment.</li>
+</ul>
+<p><strong>Formal model.</strong> Let <code>B</code> be the total bond value in a reference currency. Let <code>C(fraud)</code> be the expected cost of fraudulent behavior (reputation loss, legal liability, counterparty retaliation). The bond is credible when:</p>
+<pre><code>B &gt; P(detection) × C(fraud) + P(¬detection) × G(fraud)
+</code></pre>
+<p>Where <code>G(fraud)</code> is the gain from fraud. The bond must exceed the expected value of cheating for the commitment to hold.</p>
+<h3>3.2 M-of-N Funding as Distributed Trust</h3>
+<p>Requiring funds across M of N independent blockchain networks implements a <strong>distributed trust model</strong> analogous to threshold cryptography but applied to economic commitments:</p>
+<ul>
+<li><strong>No single point of failure.</strong> An attacker must compromise or simulate presence across multiple independent blockchain ecosystems simultaneously.</li>
+<li><strong>Byzantine fault tolerance.</strong> With an M-of-N threshold, the system tolerates up to <code>N - M</code> network failures (chain halts, bridge exploits, exchange delistings) without the trust signal collapsing.</li>
+<li><strong>Coordination cost for attackers.</strong> An adversary attempting to present a credible false identity must acquire and manage assets across M distinct networks, each with different address formats, fee structures, and liquidity pools. This is a <strong>coordination game</strong> where the defender sets the rules.</li>
+</ul>
+<p><strong>Nash equilibrium.</strong> In a two-player game between Verifier and Claimant:</p>
+<ul>
+<li>If Claimant is honest: funding M-of-N is a rational investment in reputation (positive expected return from trusted interactions).</li>
+<li>If Claimant is dishonest: the cost of funding M-of-N across real chains exceeds the expected gain from the deception (assuming the verifier&#39;s trust threshold is calibrated correctly).</li>
+<li><strong>Dominant strategy for honest actors</strong>: fund the bond. <strong>Dominant strategy for dishonest actors</strong>: do not fund (cost exceeds benefit), making them detectable.</li>
+</ul>
+<h3>3.3 Concentration Limits as Risk Diversification</h3>
+<p>Without concentration limits, an actor could hold all bond value in a single low-liquidity token, making the bond appear large in fiat terms while being illiquid and manipulable. Diversification requirements enforce real cross-chain commitment:</p>
+<ul>
+<li><strong>Correlated failure resistance.</strong> If 90% of bond value is in one network and that network suffers a consensus failure or price crash, the trust signal collapses. Diversification bounds the impact of any single-chain event.</li>
+<li><strong>Information-theoretic argument.</strong> Each independent chain with a non-zero balance provides an independent bit of trust evidence. N chains with balanced funding provide more information (higher entropy) than one chain with the same total value.</li>
+</ul>
+<p align="center">
+  <img src="assets/nash.svg" alt="Nash Equilibrium Payoff Matrix" width="500"/>
+</p>
+
+<h3>3.4 Separating Equilibrium</h3>
+<p>In a population of actors using this trust system, the bond mechanism creates a <strong>separating equilibrium</strong> between honest and dishonest actors:</p>
+<ul>
+<li>Honest actors with long time horizons invest in bonds because the ongoing benefits of trust (reduced transaction friction, access to higher-value interactions) exceed the bond cost.</li>
+<li>Dishonest actors with short time horizons find the bond cost prohibitive relative to their hit-and-run strategy.</li>
+<li>The two populations become distinguishable by their bond profiles.</li>
+</ul>
+<p><strong>Pooling prevention.</strong> Without multi-dimensional rules, a simple &quot;total value&quot; metric would allow pooling, where dishonest actors mimic honest ones cheaply. Adding dimensions (diversity, concentration, key age, M-of-N thresholds, certificate chains) increases the dimensionality of the signal space, making mimicry exponentially more expensive. Each additional rule type is an additional dimension the attacker must simulate.</p>
+<h3>3.5 Cooperative Equilibrium in Organizations</h3>
+<p>Within an organizational hierarchy, shared reputation creates a <strong>cooperative game</strong>. If one member&#39;s key is compromised and used maliciously, the organization&#39;s trust score drops for everyone. This creates mutual monitoring incentives. Personnel have reason to enforce key hygiene norms on each other, a form of peer punishment that sustains cooperation per Elinor Ostrom&#39;s work on commons governance <sup><a href="#ref-12">12</a></sup>.</p>
+<hr>
+<h2>4. Threat Model and Strategic Responses</h2>
+<table>
+<thead>
+<tr>
+<th>Threat</th>
+<th>Attacker Strategy</th>
+<th>System Response</th>
+<th>Game-Theoretic Defense</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Sybil attack</strong></td>
+<td>Create many low-cost identities</td>
+<td>Minimum bond value + M-of-N funding</td>
+<td>Makes identity creation expensive (proof of stake in identity)</td>
+</tr>
+<tr>
+<td><strong>Key compromise</strong></td>
+<td>Steal private key, impersonate</td>
+<td>Key age limits + certificate revocation</td>
+<td>Bounds exploit window; fund drain provides instant detection</td>
+</tr>
+<tr>
+<td><strong>Wash trading</strong></td>
+<td>Move funds between own addresses to fake diversity</td>
+<td>Concentration limits + key diversity rules</td>
+<td>Requires real cross-chain presence; on-chain movement is observable</td>
+</tr>
+<tr>
+<td><strong>Insider threat</strong></td>
+<td>Personnel misuses org-delegated authority</td>
+<td>Certificate chain + org hierarchy</td>
+<td>Org can revoke intermediate CA; accountability trace exists</td>
+</tr>
+<tr>
+<td><strong>Eclipse attack</strong></td>
+<td>Isolate verifier from seeing real chain state</td>
+<td>Multiple independent RPC endpoints per chain</td>
+<td>Byzantine fault tolerance at the data layer</td>
+</tr>
+<tr>
+<td><strong>Long-con identity farming</strong></td>
+<td>Build trust slowly, exploit once</td>
+<td>Per-key minimums + ongoing concentration rules</td>
+<td>Ongoing cost maintenance; large exploitation destroys large bond</td>
+</tr>
+<tr>
+<td><strong>Quantum threat</strong></td>
+<td>Future quantum computer breaks ECDSA</td>
+<td>Multi-curve requirements (NIST + blockchain curves)</td>
+<td>Curve diversity ensures not all keys fall to the same attack</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>5. PKI Integration</h2>
+<p>Adversarial security does not replace traditional PKI. It augments it. By binding X.509 certificates to HD wallet keys, the system bridges two trust domains.</p>
+<h3>5.1 Cross-Domain Identity Binding</h3>
+<p>The X.509 certificate contains a NIST-curve public key (P-256 or P-384) <sup><a href="#ref-13">13</a></sup> used for institutional PKI operations. To bind this certificate to a blockchain identity, the certificate&#39;s public key is signed using the cryptocurrency private key (e.g. secp256k1 at <code>m/44&#39;/0&#39;/0&#39;/0/0</code>). This signature is embedded in the X.509 certificate as a custom extension, along with the cryptocurrency public key that produced it.</p>
+<p>Any verifier can then:</p>
+<ol>
+<li>Extract the cryptocurrency public key and signature from the certificate extension</li>
+<li>Verify that the signature is valid over the certificate&#39;s NIST-curve public key</li>
+<li>Derive blockchain addresses from the cryptocurrency public key</li>
+<li>Check balances at those derived addresses to assess trust</li>
+</ol>
+<p>This creates a cryptographically verifiable chain: <strong>X.509 certificate public key ← signed by → cryptocurrency private key → whose public key → derives blockchain addresses → holding observable value</strong>. The two trust domains are bound:</p>
+<ul>
+<li><strong>X.509 PKI</strong>: institutional, NIST-curve (P-256/P-384), CA-hierarchical</li>
+<li><strong>HD Wallet</strong>: decentralized, secp256k1/ed25519, self-sovereign</li>
+</ul>
+<p>This prevents <strong>identity splitting</strong>, where an adversary presents a legitimate X.509 certificate and a legitimate HD wallet as belonging to different entities, playing different trust games with different counterparties. Because the cryptocurrency public key is embedded in the certificate alongside its signature over the certificate&#39;s public key, the binding is verifiable and non-repudiable. The keyholder cannot later deny the association between their institutional certificate and their blockchain identity.</p>
+<h3>5.2 Certificate Hierarchy as Delegated Trust</h3>
+<p>Organizations implement trust delegation through certificate chains:</p>
+<p align="center">
+  <img src="assets/cert-hierarchy.svg" alt="Certificate Hierarchy: Root CA → Intermediate CA → End Entity" width="420"/>
+</p>
+
+<p>This addresses the <strong>principal-agent problem</strong>: the organization (principal) delegates authority to personnel (agents), with accountability at every level. Revocation of an intermediate CA revokes all downstream personnel certificates simultaneously. End entity certificates have constrained <code>KeyUsage</code>, allowing signing but not certificate issuance, preventing unauthorized trust delegation.</p>
+<h3>5.3 Key Rotation and Temporal Dynamics</h3>
+<p>Regular key rotation introduces a temporal dimension to trust:</p>
+<ul>
+<li><strong>Forward secrecy analog.</strong> Rotation limits the blast radius of key compromise.</li>
+<li><strong>Liveness proof.</strong> A recently rotated key proves active identity management. Stale keys may indicate abandonment, compromise, or death.</li>
+<li><strong>Commitment renewal.</strong> Each rotation is a fresh costly signal.</li>
+</ul>
+<p>Trust decays quadratically as keys age:</p>
+<pre><code>trust_decay(t, T) = max(0, 1 - (t / T)²)
+</code></pre>
+<p align="center">
+  <img src="assets/trust-decay.svg" alt="Trust Decay Curve" width="400"/>
+</p>
+
+<p>This creates urgency for rotation as keys approach expiration without penalizing recently-rotated keys.</p>
+<hr>
+<h2>6. Mechanism Design Properties</h2>
+<p>The adversarial security system satisfies several desirable mechanism design properties:</p>
+<ul>
+<li><strong>Incentive compatibility.</strong> Honest keyholders maximize their trust score by following the protocol. No deviating strategy improves their outcome.</li>
+<li><strong>Individual rationality.</strong> Participation is voluntary. The cost of maintaining a trust profile (gas fees, opportunity cost of locked funds) is bounded and predictable. Actors participate only when the trust benefits exceed costs.</li>
+<li><strong>Sybil resistance.</strong> Each identity has a non-trivial cost floor. Creating N fake identities costs at least <code>N × minimum_bond_value</code>, scaling linearly with attack surface.</li>
+<li><strong>Composability.</strong> Trust scores are portable. An identity verified in one context carries its trust to another, reducing repeated verification costs (analogous to certificate pinning in TLS).</li>
+<li><strong>Monotonicity.</strong> Adding more funded networks, higher bond values, valid certificates, or fresh keys can only increase the trust score. This prevents pathological strategies where &quot;doing more&quot; hurts the score.</li>
+<li><strong>Transparency.</strong> All rules, thresholds, and evaluation logic are client-side and inspectable. No opaque reputation oracle or centralized scoring authority. This satisfies the verifiability requirement of mechanism design.</li>
+</ul>
+<hr>
+<h2>7. Implementation</h2>
+<p>The adversarial security model is implemented using hierarchical deterministic wallets supporting BIP-39 <sup><a href="#ref-14">14</a></sup> seed phrases with multi-chain address derivation. The network utilizes secp256k1 and ed25519 elliptic curve cryptography to generate multi-blockchain-compatible crypto addresses, ensuring widespread applicability and security.</p>
+<table>
+<thead>
+<tr>
+<th>Network</th>
+<th>Derivation Path</th>
+<th>Curve</th>
+<th>Address Format</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Bitcoin</td>
+<td><code>m/44&#39;/0&#39;/0&#39;/0/0</code></td>
+<td>secp256k1</td>
+<td>Base58Check (P2PKH)</td>
+</tr>
+<tr>
+<td>Ethereum</td>
+<td><code>m/44&#39;/60&#39;/0&#39;/0/0</code></td>
+<td>secp256k1</td>
+<td>Hex (EIP-55 checksum)</td>
+</tr>
+<tr>
+<td>Solana</td>
+<td><code>m/44&#39;/501&#39;/0&#39;/0&#39;</code></td>
+<td>ed25519</td>
+<td>Base58</td>
+</tr>
+<tr>
+<td>SUI</td>
+<td><code>m/44&#39;/784&#39;/0&#39;/0&#39;/0&#39;</code></td>
+<td>ed25519</td>
+<td>Hex (0x-prefixed)</td>
+</tr>
+<tr>
+<td>Cosmos</td>
+<td><code>m/44&#39;/118&#39;/0&#39;/0/0</code></td>
+<td>secp256k1</td>
+<td>Bech32 (cosmos1...)</td>
+</tr>
+<tr>
+<td>Cardano</td>
+<td><code>m/1852&#39;/1815&#39;/0&#39;/0/0</code></td>
+<td>ed25519</td>
+<td>Bech32 (addr1...)</td>
+</tr>
+</tbody></table>
+<p>Balance verification queries public blockchain explorers for each derived address, providing real-time trust assessment without requiring any infrastructure beyond the public blockchain networks themselves.</p>
+<p>The network employs AES-256-GCM <sup><a href="#ref-15">15</a></sup> encryption for all key material. Data published to IPFS <sup><a href="#ref-17">17</a></sup> can be securely encrypted at rest. WebAuthn/FIDO2 passkeys and PIN-based encryption protect wallet access in browser environments.</p>
+<hr>
+<h2>8. Voluntary Trust Enhancement</h2>
+<p>A unique property of adversarial security is that trust is <strong>permissionless and composable</strong>. Because blockchain addresses are derived deterministically from public keys, network members can voluntarily increase address trust levels by transferring funds without requiring owner permission, actively signaling confidence in entities or services.</p>
+<ul>
+<li><strong>Anyone</strong> can deposit funds to any derived address without the key owner&#39;s permission or knowledge.</li>
+<li>Third parties can <strong>actively signal confidence</strong> in an entity by increasing its bond value.</li>
+<li>Organizations can fund employee key bonds as a form of institutional endorsement.</li>
+<li>Counterparties in a transaction can require minimum bond values before proceeding.</li>
+</ul>
+<p>This creates a market dynamic where trust has a measurable, observable price, and where increasing someone&#39;s trust level is as simple as sending a transaction.</p>
+<hr>
+<h2>9. Conclusion</h2>
+<p>Adversarial Security represents a significant advancement in decentralized trust management and blockchain-integrated cryptographic security. By harmonizing game-theoretic incentive structures with publicly verifiable blockchain state, it establishes new standards for quantitative trust evaluation. The system provides:</p>
+<ol>
+<li><strong>Quantitative trust</strong>: measured in currency, not assertions</li>
+<li><strong>Real-time verification</strong>: updated every block, not every certificate renewal</li>
+<li><strong>Permissionless participation</strong>: no CA enrollment, no identity provider</li>
+<li><strong>Game-theoretic guarantees</strong>: rational adversaries reveal themselves by draining funds</li>
+<li><strong>Institutional compatibility</strong>: X.509 integration bridges sovereign and decentralized identity</li>
+</ol>
+<p>The security bond is not a replacement for traditional PKI but a complementary signal that provides something certificates cannot: continuous, economically-backed, publicly-verifiable proof of key integrity. Its scalable architecture and integration with existing cryptographic standards create opportunities for diverse applications across identity management, secure communication, and decentralized data networks.</p>
+<hr>
+<h2>References</h2>
+<p><a id="ref-1"></a><strong>[1]</strong> Greenberg, Andy. (2021). <a href="https://www.wired.com/story/the-full-story-of-the-stunning-rsa-hack-can-finally-be-told/">&quot;The Full Story of the Stunning RSA Hack Can Finally Be Told.&quot;</a> <em>Wired</em>.</p>
+<p><a id="ref-2"></a><strong>[2]</strong> Groll, Elias. (2023). <a href="https://cyberscoop.com/microsoft-china-signing-key">&quot;Mystery solved? Microsoft thinks it knows how Chinese hackers stole its signing key.&quot;</a> <em>CyberScoop</em>.</p>
+<p><a id="ref-3"></a><strong>[3]</strong> SSLMate. (2018). <a href="https://sslmate.com/resources/certificate_authority_failures">&quot;Timeline of Certificate Authority Failures.&quot;</a></p>
+<p><a id="ref-4"></a><strong>[4]</strong> Wikipedia. (2015). <a href="https://en.wikipedia.org/wiki/2015_Office_of_Personnel_Management_data_breach">&quot;2015 Office of Personnel Management data breach.&quot;</a></p>
+<p><a id="ref-5"></a><strong>[5]</strong> Nakamoto, Satoshi. (2009). <a href="https://bitcoin.org/bitcoin.pdf">&quot;Bitcoin: A Peer-to-Peer Electronic Cash System.&quot;</a></p>
+<p><a id="ref-6"></a><strong>[6]</strong> Buterin, Vitalik. (2014). <a href="https://github.com/ethereum/wiki/blob/f83c4692be242ad350bef0c5f8757b7b3c27b2d9/%5BEnglish%5D-White-Paper.md">&quot;A Next-Generation Smart Contract and Decentralized Application Platform.&quot;</a></p>
+<p><a id="ref-7"></a><strong>[7]</strong> Wuille, Pieter. (2012). <a href="https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki">&quot;BIP-32: Hierarchical Deterministic Wallets.&quot;</a></p>
+<p><a id="ref-8"></a><strong>[8]</strong> Palatinus, Marek &amp; Rusnak, Pavol. (2014). <a href="https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki">&quot;BIP-44: Multi-Account Hierarchy for Deterministic Wallets.&quot;</a></p>
+<p><a id="ref-9"></a><strong>[9]</strong> SatoshiLabs. (2016). <a href="https://github.com/satoshilabs/slips/blob/master/slip-0010.md">&quot;SLIP-0010: Universal Private Key Derivation from Master Private Key.&quot;</a></p>
+<p><a id="ref-10"></a><strong>[10]</strong> Zahavi, Amotz. (1975). <a href="https://doi.org/10.1016/0022-5193(75)90111-3">&quot;Mate selection: a selection for a handicap.&quot;</a> <em>Journal of Theoretical Biology</em>, 53(1), 205-214.</p>
+<p><a id="ref-11"></a><strong>[11]</strong> Taleb, Nassim Nicholas. (2018). <em>Skin in the Game: Hidden Asymmetries in Daily Life</em>. Random House.</p>
+<p><a id="ref-12"></a><strong>[12]</strong> Ostrom, Elinor. (1990). <em>Governing the Commons: The Evolution of Institutions for Collective Action</em>. Cambridge University Press.</p>
+<p><a id="ref-13"></a><strong>[13]</strong> NIST. (2020). <a href="https://nvlpubs.nist.gov/nistpubs/specialpublications/nist.sp.800-57pt1r5.pdf">&quot;SP 800-57 Part 1 Rev. 5: Recommendation for Key Management.&quot;</a></p>
+<p><a id="ref-14"></a><strong>[14]</strong> Palatinus, Marek et al. (2013). <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki">&quot;BIP-39: Mnemonic Code for Generating Deterministic Keys.&quot;</a></p>
+<p><a id="ref-15"></a><strong>[15]</strong> NIST. (2007). <a href="https://csrc.nist.gov/publications/detail/sp/800-38d/final">&quot;SP 800-38D: Recommendation for Block Cipher Modes of Operation: Galois/Counter Mode (GCM) and GMAC.&quot;</a></p>
+<p><a id="ref-16"></a><strong>[16]</strong> Cooper, D. et al. (2008). <a href="https://datatracker.ietf.org/doc/html/rfc5280">&quot;RFC 5280: Internet X.509 Public Key Infrastructure Certificate and CRL Profile.&quot;</a></p>
+<p><a id="ref-17"></a><strong>[17]</strong> Protocol Labs. (2024). <a href="https://docs.ipfs.tech/concepts/immutability/">&quot;Immutability.&quot;</a> <em>IPFS Documentation</em>.</p>
+<p><a id="ref-18"></a><strong>[18]</strong> SEAL. <a href="https://frameworks.securityalliance.org/wallet-security/secure-multisig-best-practices/">&quot;Secure Multisig Best Practices.&quot;</a> <em>Security Alliance Frameworks</em>.</p>
+
+    </article>
+  </main>
+  <footer>
+    <div class="wrap">
+      <nav>
+        <a href="../../onboarding.html">Get started</a>
+        <a href="../../catalog.html">Catalog</a>
+        <a href="../../whitepapers.html">Whitepapers</a>
+        <a href="../../server-overview.html">Docs</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <span>MIT License &middot; &copy; Digital Arsenal</span>
+    </div>
+  </footer>
+  <script src="../../site.js"></script>
+</body>
+</html>

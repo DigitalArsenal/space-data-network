@@ -9,7 +9,9 @@
 //   sunAz  Sun angle around the view: 0 behind the camera, 90 from the right,
 //          180 behind the planet
 //   sunEl  Sun elevation relative to the view, degrees
-// Without WebGL2, or with reduced motion requested, the page keeps its video.
+// Illustrative satellites ride circular orbits over the planet in a second GPU
+// pass; one carries its whole orbit as an arc. Without WebGL2, or with reduced
+// motion requested, the page keeps its video.
 (function () {
   var canvas = document.getElementById('earth');
   var sections = Array.prototype.slice.call(document.querySelectorAll('[data-earth]'));
@@ -106,14 +108,112 @@
     return;
   }
   gl.useProgram(prog);
+  var quadVao = gl.createVertexArray();
+  gl.bindVertexArray(quadVao);
   var buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   var loc = gl.getAttribLocation(prog, 'p');
   gl.enableVertexAttribArray(loc);
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
   var U = {};
   ['uDay', 'uNight', 'uClouds', 'uRes', 'uOff', 'uCam', 'uSun', 'uBasis', 'uTan', 'uSpin', 'uCloudSpin', 'uFade'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+
+  // Satellites. Each vertex is one orbit: radius (Earth radii), inclination,
+  // node and starting angle. kind 0 = dot, 1 = a sample of the highlighted
+  // orbit's arc, 2 = the highlighted satellite. Positions are computed on the GPU.
+  var ORB_VERT = [
+    '#version 300 es',
+    'in vec4 aOrb;in float aKind;',
+    'uniform vec3 uCam,uSun;uniform mat3 uBasis;uniform vec2 uRes,uOff;',
+    'uniform float uTan,uTime,uRate,uPx,uHiAngle,uFade;',
+    'out float vA;out float vKind;',
+    'void main(){',
+    '  float r=aOrb.x,inc=aOrb.y,node=aOrb.z;',
+    '  float ang=aKind==1.?aOrb.w:aKind==2.?uHiAngle:aOrb.w+uRate*pow(r,-1.5)*uTime;',
+    // Angle runs the same way as the planet's spin, so prograde orbits look prograde.
+    '  vec3 p=vec3(sin(ang),0.,cos(ang));',
+    '  p=vec3(p.x,-p.z*sin(inc),p.z*cos(inc));',
+    '  p=vec3(p.x*cos(node)+p.z*sin(node),p.y,-p.x*sin(node)+p.z*cos(node))*r;',
+    '  vec3 c=transpose(uBasis)*(p-uCam);',
+    '  vKind=aKind;',
+    '  if(c.z>-.02){gl_Position=vec4(2.,2.,0.,1.);gl_PointSize=0.;vA=0.;return;}',
+    '  float asp=uRes.x/uRes.y;',
+    '  gl_Position=vec4((c.xy/-c.z)/uTan/vec2(asp,1.)+uOff,0.,1.);',
+    '  vec3 d=p-uCam;float L=length(d);d/=L;',
+    '  float b=dot(uCam,d),h=b*b-dot(uCam,uCam)+1.,vis=1.;',
+    '  if(h>0.){float t=-b-sqrt(h);if(t>0.)vis=smoothstep(-.03,.01,t-L);}',
+    '  float s=dot(p,uSun);float shade=(s<0.&&length(p-s*uSun)<1.)?.28:1.;',
+    '  float near=clamp(1.7/-c.z,.55,2.);',
+    '  if(aKind==0.){gl_PointSize=2.6*uPx*near;vA=.85*shade;}',
+    '  else if(aKind==1.){float lag=mod(uHiAngle-ang,6.2831853);gl_PointSize=3.4*uPx*near;vA=.5+.5*exp(-lag*.7);}',
+    '  else{gl_PointSize=9.*uPx*near;vA=1.;}',
+    '  vA*=vis*uFade;',
+    '}'
+  ].join('\n');
+  var ORB_FRAG = [
+    '#version 300 es',
+    'precision highp float;',
+    'in float vA;in float vKind;out vec4 o;',
+    'void main(){',
+    '  float d=length(gl_PointCoord-.5);',
+    '  if(vKind==2.){float core=smoothstep(.22,.12,d),halo=smoothstep(.5,.1,d)*.45;o=vec4(mix(vec3(1.,.64,.14),vec3(1.,.95,.85),core),(core+halo)*vA);return;}',
+    '  float a=smoothstep(.5,.15,d)*vA;',
+    '  o=vec4(vKind==1.?vec3(1.,.64,.14):vec3(.7,.88,1.),vKind==1.?a*.8:a);',
+    '}'
+  ].join('\n');
+  var orbProg = gl.createProgram();
+  var orbOk = false;
+  try {
+    gl.attachShader(orbProg, shader(gl.VERTEX_SHADER, ORB_VERT));
+    gl.attachShader(orbProg, shader(gl.FRAGMENT_SHADER, ORB_FRAG));
+    gl.linkProgram(orbProg);
+    orbOk = gl.getProgramParameter(orbProg, gl.LINK_STATUS);
+    if (!orbOk) console.warn('earth: satellite shader failed', gl.getProgramInfoLog(orbProg));
+  } catch (err) {
+    console.warn('earth: satellite shader failed', err);
+  }
+
+  // A fixed seed keeps the sky the same on every visit.
+  var seed = 7;
+  function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+  var D0 = Math.PI / 180;
+  // Placed so its arc rises clear of the hero text and the satellite crosses it just after load.
+  var HI = { r: 1.2, inc: 60 * D0, node: 300 * D0, phase: 2.4 };
+  var orbs = [];
+  function shellInc() {
+    var x = rnd();
+    if (x < 0.38) return 53;
+    if (x < 0.62) return 97.5;
+    if (x < 0.72) return 43;
+    if (x < 0.8) return 70;
+    if (x < 0.87) return 87.9;
+    return rnd() * 100;
+  }
+  for (var n = 0; n < 1500; n++) orbs.push(1.06 + rnd() * rnd() * 0.16, (shellInc() + (rnd() - 0.5)) * D0, rnd() * 6.2832, rnd() * 6.2832, 0);
+  for (n = 0; n < 220; n++) orbs.push(1.35 + rnd() * 0.9, rnd() * 65 * D0, rnd() * 6.2832, rnd() * 6.2832, 0);
+  for (n = 0; n < 110; n++) orbs.push(6.62, rnd() * 1.5 * D0, rnd() * 6.2832, rnd() * 6.2832, 0);
+  var ARC = 4000;
+  for (n = 0; n < ARC; n++) orbs.push(HI.r, HI.inc, HI.node, n / ARC * 6.2832, 1);
+  orbs.push(HI.r, HI.inc, HI.node, 0, 2);
+  var orbCount = orbs.length / 5;
+  var orbVao = gl.createVertexArray();
+  gl.bindVertexArray(orbVao);
+  var orbBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, orbBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(orbs), gl.STATIC_DRAW);
+  var aOrb = gl.getAttribLocation(orbProg, 'aOrb'), aKind = gl.getAttribLocation(orbProg, 'aKind');
+  gl.enableVertexAttribArray(aOrb);
+  gl.vertexAttribPointer(aOrb, 4, gl.FLOAT, false, 20, 0);
+  gl.enableVertexAttribArray(aKind);
+  gl.vertexAttribPointer(aKind, 1, gl.FLOAT, false, 20, 16);
+  gl.bindVertexArray(null);
+  var OU = {};
+  ['uCam', 'uSun', 'uBasis', 'uRes', 'uOff', 'uTan', 'uTime', 'uRate', 'uPx', 'uHiAngle', 'uFade'].forEach(function (k) { OU[k] = gl.getUniformLocation(orbProg, k); });
+  // Kepler's period-radius ratio, scaled so the geostationary ring turns with the planet.
+  var SPIN = 0.008;
+  var RATE = SPIN * Math.pow(6.62, 1.5);
 
   var pending = 3;
   function texture(unit, url) {
@@ -168,6 +268,7 @@
   var ready = 0;
   var last = performance.now();
   var spin = 0;
+  var clock = 0;
   var visible = true;
   document.addEventListener('visibilitychange', function () {
     visible = !document.hidden;
@@ -187,7 +288,8 @@
     if (!visible) return;
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    spin += dt * 0.012;
+    spin += dt * SPIN;
+    clock += dt;
     var goal = target();
     var k = 1 - Math.exp(-dt * 3.2);
     for (var i = 0; i < state.length; i++) state[i] += (goal[i] - state[i]) * k;
@@ -200,8 +302,7 @@
     var rl = Math.hypot(r[0], r[1], r[2]) || 1;
     r = [r[0] / rl, r[1] / rl, r[2] / rl];
     var u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
-    // Columns: right, up, back (the shader looks down -z).
-    gl.uniformMatrix3fv(U.uBasis, false, [r[0], r[1], r[2], u[0], u[1], u[2], -f[0], -f[1], -f[2]]);
+    // Basis columns: right, up, back (the shaders look down -z).
     var az = state[5] * D, el = state[6] * D;
     var sv = [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)];
     var sun = [
@@ -209,6 +310,11 @@
       r[1] * sv[0] + u[1] * sv[1] - f[1] * sv[2],
       r[2] * sv[0] + u[2] * sv[1] - f[2] * sv[2]
     ];
+    var basis = [r[0], r[1], r[2], u[0], u[1], u[2], -f[0], -f[1], -f[2]];
+    var fade = ready ? Math.min(1, (now - ready) / 1200) : 0;
+    gl.useProgram(prog);
+    gl.bindVertexArray(quadVao);
+    gl.uniformMatrix3fv(U.uBasis, false, basis);
     gl.uniform3fv(U.uCam, cam);
     gl.uniform3fv(U.uSun, sun);
     gl.uniform2f(U.uRes, canvas.width, canvas.height);
@@ -216,8 +322,27 @@
     gl.uniform1f(U.uTan, Math.tan(22 * D));
     gl.uniform1f(U.uSpin, spin);
     gl.uniform1f(U.uCloudSpin, spin * 0.35);
-    gl.uniform1f(U.uFade, ready ? Math.min(1, (now - ready) / 1200) : 0);
+    gl.uniform1f(U.uFade, fade);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (orbOk) {
+      gl.useProgram(orbProg);
+      gl.bindVertexArray(orbVao);
+      gl.uniformMatrix3fv(OU.uBasis, false, basis);
+      gl.uniform3fv(OU.uCam, cam);
+      gl.uniform3fv(OU.uSun, sun);
+      gl.uniform2f(OU.uRes, canvas.width, canvas.height);
+      gl.uniform2f(OU.uOff, state[3], state[4]);
+      gl.uniform1f(OU.uTan, Math.tan(22 * D));
+      gl.uniform1f(OU.uTime, clock);
+      gl.uniform1f(OU.uRate, RATE);
+      gl.uniform1f(OU.uPx, canvas.width / window.innerWidth);
+      gl.uniform1f(OU.uHiAngle, HI.phase + RATE * Math.pow(HI.r, -1.5) * clock);
+      gl.uniform1f(OU.uFade, fade);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      gl.drawArrays(gl.POINTS, 0, orbCount);
+      gl.disable(gl.BLEND);
+    }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

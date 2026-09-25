@@ -231,3 +231,35 @@ body.centered .figure figcaption { text-align: center; }
 @media (max-width: 620px) { .compare tbody th { white-space: normal; } }
 .figure-pair { display: grid; gap: 28px; max-width: 900px; margin: 0 auto; }
 .figure-pair .figure { max-width: none; margin: 0; }
+
+/* Whitepaper reader pages (build-whitepapers.mjs) */
+.paper-page { background: #0b0b0c; }
+.paper { max-width: 780px; padding-top: 48px; padding-bottom: 48px; color: var(--text-2); font-size: 17px; line-height: 1.7; }
+.paper-back { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
+.paper-back a { color: var(--accent); text-decoration: none; }
+.paper h1 { font-size: clamp(30px, 4.6vw, 44px); color: var(--text); margin: 8px 0 18px; }
+.paper h2 { font-size: clamp(22px, 3vw, 28px); color: var(--text); margin: 48px 0 14px; }
+.paper h3 { font-size: 19px; color: var(--text); margin: 32px 0 10px; }
+.paper p, .paper ul, .paper ol, .paper table, .paper pre, .paper blockquote { margin: 0 0 16px; }
+.paper ul, .paper ol { padding-left: 24px; }
+.paper li { margin-bottom: 6px; }
+.paper a { color: var(--accent); }
+.paper strong { color: var(--text); }
+.paper hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
+.paper code { font-size: .88em; background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 5px; }
+.paper pre { background: #000; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 16px; overflow-x: auto; }
+.paper pre code { background: none; padding: 0; }
+.paper table { display: block; overflow-x: auto; font-size: 15px; }
+.paper img { display: inline-block; max-width: 100%; height: auto; background: #fafafa; border-radius: 10px; padding: 12px; }
+.paper p[align="center"], .paper h1[align="center"] { text-align: center; }
+.paper blockquote { border-left: 3px solid var(--accent); padding-left: 16px; }
+
+/* Whitepapers index */
+.papers { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; max-width: 980px; margin: 0 auto; }
+.papers .card { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+body.centered .papers .card { text-align: left; }
+.papers .card h3 { font-size: 21px; }
+.papers .meta { font-size: 13px; color: var(--muted); }
+.papers .formats { margin-top: auto; padding-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
+.papers .formats a { font-size: 14px; font-weight: 600; text-decoration: none; padding: 7px 14px; border: 1px solid var(--border-strong); border-radius: 999px; }
+.papers .formats a:first-child { background: var(--text); color: #000; border-color: var(--text); }
