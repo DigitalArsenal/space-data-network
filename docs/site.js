@@ -21,6 +21,14 @@
       io.observe(el);
     });
   }
+  // Light / dark theme: dark by default, the choice is remembered on this browser.
+  document.querySelectorAll('.theme-toggle').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('sdn-theme', next); } catch (e) {}
+    });
+  });
   document.querySelectorAll('.copy').forEach(function (button) {
     button.addEventListener('click', function () {
       var text = button.parentElement.querySelector('code').textContent;
