@@ -76,7 +76,7 @@ h3 { font-size: 19px; line-height: 1.3; font-weight: 600; }
 
 /* Buttons */
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
-.btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; font-size: 15px; font-weight: 600; text-decoration: none; border: 1px solid var(--border-strong); background: rgba(255,255,255,.04); transition: background .15s, border-color .15s; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; font-size: 15px; font-weight: 600; text-decoration: none; border: 1px solid var(--border-strong); background: rgba(255,255,255,.04); transition: background .18s, border-color .18s, color .18s; }
 .btn:hover { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.35); }
 .btn-primary { background: var(--text); color: #000; border-color: var(--text); }
 .btn-primary:hover { background: #fff; }
@@ -266,3 +266,8 @@ body.centered .papers .card { text-align: left; }
 .papers .formats { margin-top: auto; padding-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
 .papers .formats a { font-size: 14px; font-weight: 600; text-decoration: none; padding: 7px 14px; border: 1px solid var(--border-strong); border-radius: 999px; }
 .papers .formats a:first-child { background: var(--text); color: #000; border-color: var(--text); }
+
+/* Button groups: the hovered button turns white with black text, and the
+   primary gives up its white so only one button reads as selected. */
+.actions .btn:hover, .has-earth .actions .btn:hover { background: #fff; color: #000; border-color: #fff; }
+.actions:hover .btn-primary:not(:hover) { background: rgba(0,0,0,.5); color: var(--text); border-color: var(--border-strong); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }

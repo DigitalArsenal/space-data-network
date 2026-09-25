@@ -34,12 +34,20 @@
     .notes a, .chapter a { color: var(--accent); }
     sup a { color: var(--accent); text-decoration: none; font-weight: 600; }
     .programs td:first-child { color: var(--text); white-space: nowrap; }
+    .ca-alert { position: fixed; left: 0; top: 0; z-index: -1; pointer-events: none; opacity: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; filter: drop-shadow(0 0 12px rgba(255,59,48,.7)); will-change: transform, opacity; }
+    .ca-alert span { font: 700 11px var(--font-sans); letter-spacing: .12em; text-transform: uppercase; color: #fff; background: #ff3b30; border-radius: 6px; padding: 2px 7px; }
+    .emblem-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; max-width: 1080px; margin: 12px auto 0; }
+    .emblem-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px; display: grid; gap: 8px; justify-items: center; text-align: center; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+    .emblems { display: flex; gap: 10px; align-items: center; justify-content: center; min-height: 64px; }
+    .emblems img { width: 68px; height: 68px; object-fit: contain; background: #f5f5f7; border-radius: 50%; padding: 8px; }
+    .emblem-card h3 { font-size: 16px; margin: 0; }
+    .emblem-card p { color: var(--text-2); font-size: 13px; line-height: 1.45; }
     @media (max-width: 620px) { .programs td:first-child { white-space: normal; } }
   </style>
 </head>
 <body class="centered">
   <sdn-stack-nav active="sdn"></sdn-stack-nav>
-  <canvas id="earth" aria-hidden="true"></canvas>
+  <canvas id="earth" aria-hidden="true" data-conjunction></canvas>
   <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
   <div class="bg-shade"></div>
 
@@ -122,7 +130,7 @@
         <div class="chapter">
           <h3>What changed</h3>
           <p>It was the first accidental collision between two intact satellites. The orbital planes met at nearly a right angle, and neither object was being screened against the other. Afterward the U.S. military began screening every active satellite, not only its own, and sending warnings to their operators.</p>
-          <p>Space-Track.org, the public site that publishes the catalog and delivers those warnings, was rebuilt in the years that followed.<sup><a href="#n1">1</a></sup> Warnings became routine. Coordination did not.</p>
+          <p>The screening pipeline moved from classified systems onto Space-Track.org, the public site that publishes the catalog and delivers those warnings, and conjunction messages were standardized.<sup><a href="#n1">1</a></sup> Warnings became routine. Coordination did not.</p>
         </div>
       </div>
     </section>
@@ -253,9 +261,42 @@
           <figcaption>Unique pairs to screen at each catalog size. 10,000 objects: about 50 million pairs. 100,000: about 5 billion.</figcaption>
         </figure>
 
+      </div>
+    </section>
+
+    <section class="block" id="undisclosed" data-earth="2.8 100 -20 1.05 0.05 125 8">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part six</p>
+          <h2>What Can&rsquo;t Be Disclosed Still Has To Be Screened</h2>
+          <p class="lede">Some satellites are classified. Some maneuvers are commercial secrets until they happen. Neither appears in a public catalog in time to be screened, so other operators plan around trajectories that are about to change. That gap is where incidents come from.</p>
+        </div>
         <div class="chapter">
-          <h3>What can&rsquo;t be disclosed still has to be screened</h3>
-          <p>Some satellites are classified. Some maneuvers are commercial secrets until they happen. Neither appears in a public catalog in time to be screened, so other operators plan around trajectories that are about to change. That gap is where incidents come from.</p>
+          <h3>Governments that operate military and intelligence satellites</h3>
+          <p>At least sixteen governments operate reconnaissance or other military satellites. Their orbits, and especially their maneuvers, are not all published. Every one of them shares the same orbits with everyone else.</p>
+        </div>
+        <div class="emblem-grid">
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/us.webp" alt="" width="64" height="64" loading="lazy"><img src="img/emblems/us-nro.webp" alt="" width="64" height="64" loading="lazy"></div><h3>United States</h3><p>National Reconnaissance Office satellites; U.S. Space Force</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/ru.webp" alt="" width="64" height="64" loading="lazy"><img src="img/emblems/ru-space.webp" alt="" width="64" height="64" loading="lazy"></div><h3>Russia</h3><p>Bars-M, Persona and Lotos satellites; Russian Space Forces</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/cn.webp" alt="" width="64" height="64" loading="lazy"></div><h3>China</h3><p>Yaogan satellites; People&rsquo;s Liberation Army</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/fr.webp" alt="" width="64" height="64" loading="lazy"><img src="img/emblems/fr-dgse.webp" alt="" width="64" height="64" loading="lazy"></div><h3>France</h3><p>CSO imaging and CERES signals satellites; Space Command, with DGSE among their users</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/uk.webp" alt="" width="64" height="64" loading="lazy"><img src="img/emblems/uk-spoc.webp" alt="" width="64" height="64" loading="lazy"></div><h3>United Kingdom</h3><p>Tyche imaging satellite; UK Space Command</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/de.webp" alt="" width="64" height="64" loading="lazy"><img src="img/emblems/de-bnd.webp" alt="" width="64" height="64" loading="lazy"></div><h3>Germany</h3><p>SARah radar satellites; Bundeswehr, with the BND among their users</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/it.webp" alt="" width="64" height="64" loading="lazy"></div><h3>Italy</h3><p>COSMO-SkyMed radar satellites, military and civil</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/es.webp" alt="" width="64" height="64" loading="lazy"></div><h3>Spain</h3><p>PAZ radar satellite, military and civil</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/il.webp" alt="" width="64" height="64" loading="lazy"></div><h3>Israel</h3><p>Ofek reconnaissance satellites</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/jp.webp" alt="" width="64" height="64" loading="lazy"><img src="img/emblems/jp-csice.webp" alt="" width="64" height="64" loading="lazy"></div><h3>Japan</h3><p>Information Gathering Satellites; Cabinet Satellite Intelligence Center</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/in.webp" alt="" width="64" height="64" loading="lazy"></div><h3>India</h3><p>RISAT and EMISAT military satellites; Defence Space Agency</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/kr.webp" alt="" width="64" height="64" loading="lazy"></div><h3>South Korea</h3><p>425 Project reconnaissance satellites</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/kp.webp" alt="" width="64" height="64" loading="lazy"></div><h3>North Korea</h3><p>Malligyong reconnaissance satellites</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/ir.webp" alt="" width="64" height="64" loading="lazy"></div><h3>Iran</h3><p>Noor satellites of the Revolutionary Guard</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/tr.webp" alt="" width="64" height="64" loading="lazy"></div><h3>T&uuml;rkiye</h3><p>G&ouml;kt&uuml;rk reconnaissance satellites</p></div>
+          <div class="emblem-card"><div class="emblems"><img src="img/emblems/ae.webp" alt="" width="64" height="64" loading="lazy"></div><h3>United Arab Emirates</h3><p>Falcon Eye reconnaissance satellites</p></div>
+        </div>
+        <p class="note">Emblems identify each government for reference only. No affiliation or endorsement is implied. Credits are in the notes.<sup><a href="#n5">5</a></sup></p>
+        <div class="chapter">
+          <h3>Why this can&rsquo;t wait for disclosure</h3>
+          <p>No government will publish a classified orbit, and no operator will announce a maneuver to its competitors in advance. Screening has to work without either. That requires computing on data nobody else can read.</p>
         </div>
       </div>
     </section>
@@ -263,7 +304,7 @@
     <section class="block" id="baseline" data-earth="5.5 40 15 0.75 0 55 12">
       <div class="wrap">
         <div class="head">
-          <p class="eyebrow">Part six</p>
+          <p class="eyebrow">Part seven</p>
           <h2>An Open Baseline With Encrypted Screening</h2>
           <p class="lede">Services can keep competing on sensors, speed and analysis. What they need underneath is one baseline everyone can check, and a way to screen what can&rsquo;t be shared.</p>
         </div>
@@ -283,10 +324,11 @@
       <div class="wrap">
         <div class="head"><h2>Notes</h2></div>
         <ol class="notes">
-          <li id="n1">The Space-Track.org site that served the catalog in 2013 was written by Anthony &ldquo;TJ&rdquo; Koury, co-author of the <a href="whitepapers.html">Evidence-Supported ASO Catalog whitepaper</a>. Its archived page source names him as the author: open <a href="https://web.archive.org/web/20130323001324/https://space-track.org/" target="_blank" rel="noopener">the 23 March 2013 capture</a> and view the source (<code>view-source:https://web.archive.org/web/20130323001324/https://space-track.org/</code>).</li>
+          <li id="n1">Anthony &ldquo;TJ&rdquo; Koury, author of the <a href="whitepapers.html">Evidence-Supported ASO Catalog whitepaper</a>, created the entire conjunction assessment pipeline after the Iridium&ndash;Cosmos collision, from the classified SPADOC and CAVENET systems to Space-Track.org. He created the CCSDS standard messages that form the basis of today&rsquo;s conjunction messaging, and has worked on Space Data Network and its associated technologies since 2015. The archived Space-Track.org page source names him as its author: open <a href="https://web.archive.org/web/20130323001324/https://space-track.org/" target="_blank" rel="noopener">the 23 March 2013 capture</a> and view the source (<code>view-source:https://web.archive.org/web/20130323001324/https://space-track.org/</code>).</li>
           <li id="n2">NASA Orbital Debris Program Office, &ldquo;Satellite Collision Leaves Significant Debris Clouds,&rdquo; <a href="https://orbitaldebris.jsc.nasa.gov/quarterly-news/pdfs/odqnv13i2.pdf" target="_blank" rel="noopener">Orbital Debris Quarterly News 13(2), April 2009</a>.</li>
           <li id="n3"><a href="https://www.law.cornell.edu/uscode/text/10/2274" target="_blank" rel="noopener">10 U.S.C. &sect; 2274</a>, Space situational awareness services and information: provision to non-United States Government entities. Added by Pub. L. 108-136 (2003); amended by Pub. L. 109-364, 110-417, 111-84 and 115-232.</li>
           <li id="n4"><a href="https://github.com/nasa/CARA_Analysis_Tools" target="_blank" rel="noopener">NASA CARA Analysis Tools</a>.</li>
+          <li id="n5">Emblems via Wikimedia Commons. Public domain except: Armoiries de la R&eacute;publique fran&ccedil;aise by J&eacute;r&ocirc;me Blum, <a href="https://commons.wikimedia.org/wiki/File:Armoiries_r%C3%A9publique_fran%C3%A7aise.svg" target="_blank" rel="noopener">CC BY-SA 2.0 FR</a>; Royal coat of arms of the United Kingdom, Wikimedia Commons contributors, <a href="https://commons.wikimedia.org/wiki/File:Royal_coat_of_arms_of_the_United_Kingdom_(St._Edward%27s_Crown).svg" target="_blank" rel="noopener">CC BY-SA 3.0</a>; UK Space Operations Centre badge, contains public sector information licensed under the <a href="https://commons.wikimedia.org/wiki/File:UK_Space_Operations_Centre_badge.jpg" target="_blank" rel="noopener">Open Government Licence v3.0</a>; Cabinet Satellite Intelligence Center logo by Ominae, <a href="https://commons.wikimedia.org/wiki/File:Cabinet_Satellite_Intelligence_Center_Logo.jpg" target="_blank" rel="noopener">CC BY 4.0</a>.</li>
         </ol>
       </div>
     </section>
