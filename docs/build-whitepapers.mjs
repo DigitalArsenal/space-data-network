@@ -116,6 +116,7 @@ ${body}
         <a href="${u('catalog.html')}">Catalog</a>
         <a href="${u('collision-avoidance.html')}">Collision avoidance</a>
         <a href="${u('whitepapers.html')}">Whitepapers</a>
+        <a href="${u('style-guide.html')}">Style guide</a>
         <a href="${u('server-overview.html')}">Docs</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
       </nav>

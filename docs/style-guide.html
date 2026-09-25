@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Space Data Network style guide: logo, color, typography, components, imagery and voice.">
+  <meta name="theme-color" content="#000000">
+  <title>Style Guide &middot; Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M5.8 7.9A13 13 0 0 1 28.6 12.6' stroke='%23f5a524' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='28.6' cy='12.6' r='2.5' fill='%23f5a524'/></svg>">
+  <!-- SDN_CONSUMER_ASSETS_START -->
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
+<!-- SDN_CONSUMER_ASSETS_END -->
+  <link rel="stylesheet" href="site.css">
+  <style>
+    :root { --sdn-stack-footer-height: 40px; --sdn-stack-header-height: 52px; }
+    .site-nav { height: var(--sdn-stack-header-height, 52px); }
+    .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
+    .sg { max-width: 980px; margin: 0 auto; text-align: left; }
+    .sg h3 { margin: 28px 0 10px; }
+    .sg p, .sg li { color: var(--text-2); font-size: 16px; }
+    .sg ul { padding-left: 20px; display: grid; gap: 6px; }
+    .logo-row { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+    .logo-tile { border-radius: var(--radius-sm); border: 1px solid var(--border); padding: 36px 24px; display: grid; gap: 22px; justify-items: center; }
+    .logo-tile.light { background: #fff; }
+    .logo-tile.dark { background: #0b0b0c; }
+    .logo-tile img.mark { width: 96px; height: 96px; }
+    .logo-tile img.lockup { width: 260px; height: auto; }
+    .logo-tile a { font-size: 13px; color: var(--accent); }
+    .logo-tile.light a { color: #c77d00; }
+    .anatomy { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin-top: 16px; }
+    .anatomy div { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; }
+    .anatomy b { display: block; color: var(--text); font-size: 14px; } .anatomy span { color: var(--muted); font-size: 13px; }
+    .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+    .swatch { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--panel-solid); }
+    .swatch i { display: block; height: 72px; }
+    .swatch div { padding: 10px 12px; display: grid; gap: 2px; }
+    .swatch b { font-size: 14px; color: var(--text); } .swatch code { font-size: 12px; color: var(--text-2); } .swatch span { font-size: 12px; color: var(--muted); }
+    .type-row { display: grid; grid-template-columns: 160px 1fr; gap: 16px; align-items: baseline; padding: 14px 0; border-bottom: 1px solid var(--border); }
+    .type-row code { font-size: 12px; color: var(--muted); }
+    .demo { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 20px; background: #0b0b0c; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    @media (max-width: 720px) { .logo-row, .anatomy { grid-template-columns: 1fr 1fr; } .type-row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body class="centered">
+  <sdn-stack-nav active="sdn"></sdn-stack-nav>
+  <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="bg-shade"></div>
+  <header class="site-nav">
+    <div class="inner">
+      <a href="index.html" class="brand">
+        <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="13" stroke="#f5f5f7" stroke-width="1.6" opacity=".3"/><path d="M5.8 7.9A13 13 0 0 1 28.6 12.6" stroke="#f5a524" stroke-width="2.2" stroke-linecap="round"/><path d="M16 10.2L10.4 20.1H21.6Z" stroke="#f5f5f7" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="10.2" r="2.6" fill="#f5f5f7"/><circle cx="10.4" cy="20.1" r="2.6" fill="#f5f5f7"/><circle cx="21.6" cy="20.1" r="2.6" fill="#f5f5f7"/><circle cx="28.6" cy="12.6" r="2.5" fill="#f5a524"/></svg>
+        Space Data Network
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="onboarding.html">Get started</a>
+        <a href="catalog.html">Catalog</a>
+        <a href="whitepapers.html">Whitepapers</a>
+        <a href="index.html#download">Download</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="index.html#stack">Stack</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <details class="nav-menu">
+        <summary>Menu</summary>
+        <div class="menu-panel">
+          <a href="onboarding.html">Get started</a>
+          <a href="catalog.html">Catalog</a>
+          <a href="whitepapers.html">Whitepapers</a>
+          <a href="index.html#download">Download</a>
+          <a href="server-overview.html">Docs</a>
+          <a href="index.html#stack">Stack</a>
+          <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </details>
+    </div>
+  </header>
+  <main>
+    <section class="page-hero wrap">
+      <p class="eyebrow">Brand</p>
+      <h1>Style Guide</h1>
+      <p class="lede">The standard for every Space Data Network surface: the site, documentation, dashboard, desktop app, project sites, decks and print. The source of record is <a href="https://github.com/DigitalArsenal/space-data-network/blob/main/docs/STYLE-GUIDE.md">STYLE-GUIDE.md</a>.</p>
+    </section>
+
+    <section class="block" id="logo">
+      <div class="wrap sg">
+        <p class="eyebrow">1 &middot; Logo</p>
+        <h2>The Mark</h2>
+        <div class="logo-row" style="margin-top:20px">
+          <div class="logo-tile dark"><img class="mark" src="brand/sdn-mark-dark.svg" alt="Space Data Network mark for dark backgrounds"><img class="lockup" src="brand/sdn-lockup-dark.svg" alt="Space Data Network lockup for dark backgrounds"><span><a href="brand/sdn-mark-dark.svg" download>Mark SVG</a> &middot; <a href="brand/sdn-lockup-dark.svg" download>Lockup SVG</a></span></div>
+          <div class="logo-tile light"><img class="mark" src="brand/sdn-mark-light.svg" alt="Space Data Network mark for light backgrounds"><img class="lockup" src="brand/sdn-lockup-light.svg" alt="Space Data Network lockup for light backgrounds"><span><a href="brand/sdn-mark-light.svg" download>Mark SVG</a> &middot; <a href="brand/sdn-lockup-light.svg" download>Lockup SVG</a></span></div>
+        </div>
+        <div class="anatomy">
+          <div><b>Faint ring</b><span>The Earth and the network around it</span></div>
+          <div><b>Amber arc</b><span>An orbit</span></div>
+          <div><b>Amber dot</b><span>A satellite, the source of the data</span></div>
+          <div><b>Three linked nodes</b><span>Peers exchanging digitally signed data</span></div>
+        </div>
+        <h3>Rules</h3>
+        <ul>
+          <li>Use the SVG files. Never redraw, stretch, rotate or re-proportion the mark.</li>
+          <li>The arc and its dot are always amber; everything else takes the background variant&rsquo;s ink.</li>
+          <li>Minimum size 16&nbsp;px on screen, 6&nbsp;mm in print. Clear space: one quarter of the mark&rsquo;s width on every side.</li>
+          <li>No gradients, shadows, outlines, glows, badges or other colors.</li>
+          <li>Write &ldquo;Space Data Network&rdquo; in full in headings and titles. &ldquo;SDN&rdquo; is fine in body copy after first use, in the product and in code.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="block" id="color">
+      <div class="wrap sg">
+        <p class="eyebrow">2 &middot; Color</p>
+        <h2>Dark First, One Accent</h2>
+        <p style="margin-bottom:18px">Near-black surfaces, off-white text and amber. Supporting colors each do one job.</p>
+        <div class="swatches">
+          <div class="swatch"><i style="background:#000000"></i><div><b>Black</b><code>#000000 &middot; --bg</code><span>Page background</span></div></div>
+          <div class="swatch"><i style="background:#0b0b0c"></i><div><b>Diagram</b><code>#0b0b0c &middot; surface</code><span>Diagrams, charts, code</span></div></div>
+          <div class="swatch"><i style="background:#161617"></i><div><b>Panel</b><code>#161617 &middot; --panel-solid</code><span>Opaque panels</span></div></div>
+          <div class="swatch"><i style="background:#f5f5f7"></i><div><b>Text</b><code>#f5f5f7 &middot; --text</code><span>Headings, primary text</span></div></div>
+          <div class="swatch"><i style="background:#8e8e93"></i><div><b>Muted</b><code>#8e8e93 &middot; --muted</code><span>Captions, labels</span></div></div>
+          <div class="swatch"><i style="background:#f5a524"></i><div><b>Amber</b><code>#f5a524 &middot; --accent</code><span>The accent: links, eyebrows, orbits</span></div></div>
+          <div class="swatch"><i style="background:#59d9ff"></i><div><b>Signal cyan</b><code>#59d9ff &middot; second series</code><span>A second object beside amber</span></div></div>
+          <div class="swatch"><i style="background:#ff3b30"></i><div><b>Alert red</b><code>#ff3b30 &middot; alerts only</code><span>Warnings and conjunctions</span></div></div>
+          <div class="swatch"><i style="background:#b3e0ff"></i><div><b>Satellite</b><code>#b3e0ff &middot; globe dots</code><span>Satellites over the Earth</span></div></div>
+          <div class="swatch"><i style="background:#c77d00"></i><div><b>Amber on light</b><code>#c77d00 &middot; light surfaces</code><span>The accent on white</span></div></div>
+          <div class="swatch"><i style="background:#1d1d1f"></i><div><b>Ink on light</b><code>#1d1d1f &middot; light surfaces</code><span>Text and mark on white</span></div></div>
+        </div>
+        <h3>Rules</h3>
+        <ul>
+          <li>One accent. No other brand hues.</li>
+          <li>Never amber text on light backgrounds; use Amber on light or ink.</li>
+          <li>Red means danger, always with an icon or a word.</li>
+          <li>Text over imagery sits on a panel or carries the standard shadow. Buttons never do.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="block" id="type">
+      <div class="wrap sg">
+        <p class="eyebrow">3 &middot; Typography</p>
+        <h2>System Fonts Only</h2>
+        <p>Nothing loads from a font service. Sans: -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial. Mono: ui-monospace, SF Mono, Menlo, Consolas.</p>
+        <div style="margin-top:12px">
+          <div class="type-row"><code>Display &middot; h1<br>40&ndash;76px &middot; 700</code><span style="font-size:48px;font-weight:700;letter-spacing:-0.03em;line-height:1.04;color:var(--text)">Space Data Network</span></div>
+          <div class="type-row"><code>Section &middot; h2<br>28&ndash;40px &middot; 700 &middot; Title Case</code><span style="font-size:32px;font-weight:700;letter-spacing:-0.02em;color:var(--text)">What The Network Does</span></div>
+          <div class="type-row"><code>Card title &middot; h3<br>19px &middot; 600 &middot; Sentence case</code><span style="font-size:19px;font-weight:600;color:var(--text)">Digitally signed at the source</span></div>
+          <div class="type-row"><code>Eyebrow<br>12px &middot; 600 &middot; 0.12em</code><span class="eyebrow" style="margin:0">Why it exists</span></div>
+          <div class="type-row"><code>Lede<br>17&ndash;21px</code><span class="lede">One open network that hosts space data, modules and services.</span></div>
+          <div class="type-row"><code>Body<br>16&ndash;17px / 1.6</code><span style="color:var(--text-2)">Every record carries its publisher&rsquo;s Ed25519 digital signature, verified before your node stores it.</span></div>
+          <div class="type-row"><code>Code<br>13px mono</code><code style="font-size:13px;color:#e5e5ea">curl -fsSL https://spacedatanetwork.org/install.sh | bash</code></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="components">
+      <div class="wrap sg">
+        <p class="eyebrow">4 &middot; Layout and components</p>
+        <h2>Pills, Panels And Eyebrows</h2>
+        <div class="demo actions" style="justify-content:flex-start;margin-top:16px">
+          <a class="btn btn-primary" href="#components">Primary</a>
+          <a class="btn" href="#components">Secondary</a>
+          <a class="btn" href="#components">Hover me</a>
+        </div>
+        <ul style="margin-top:16px">
+          <li>Content width 1120&nbsp;px, reading columns 720&ndash;860&nbsp;px, 20&nbsp;px gutters, 72&nbsp;px section padding, centered pages.</li>
+          <li>Radii: 20&nbsp;px cards, 12&nbsp;px panels, images and tables, 18&nbsp;px diagram frames, pills for buttons.</li>
+          <li>Cards: translucent panel, hairline border, backdrop blur. Icons: 24&nbsp;px line icons, 1.7&nbsp;px stroke, amber.</li>
+          <li>Buttons: the hovered button turns white with black text; the primary gives up its white meanwhile.</li>
+          <li>Every section: eyebrow, Title Case heading, a one- or two-sentence lede. No horizontal scroll at 390&nbsp;px.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="block" id="imagery">
+      <div class="wrap sg">
+        <p class="eyebrow">5 &middot; Imagery</p>
+        <h2>The Earth, Orbits And Honest Pictures</h2>
+        <ul>
+          <li>The Earth: NASA Blue Marble and Black Marble, rendered live. Satellites are blue-white dots, highlighted orbits amber, a second orbit cyan, alerts red.</li>
+          <li>Diagrams: SVG on #0b0b0c, 18&nbsp;px radius, system font, white hairlines, amber emphasis, a title and description for screen readers.</li>
+          <li>Photos: public domain or licensed, always credited.</li>
+          <li>Screenshots: real data from a real node, 1440&times;900 at 2&times;, WebP quality 80, no personal names or network addresses.</li>
+          <li>Charts: one axis, thin marks, direct labels. Always alt text; honor reduced motion.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="block" id="voice">
+      <div class="wrap sg">
+        <p class="eyebrow">6 &middot; Voice</p>
+        <h2>Plain, Exact, Sourced</h2>
+        <ul>
+          <li>Open with the fact. No preamble, hype or filler.</li>
+          <li>Plain words; define a term the first time it appears.</li>
+          <li>&ldquo;Digitally signed&rdquo;, never just &ldquo;signed&rdquo;. &ldquo;Catalog&rdquo;, never &ldquo;catalogue&rdquo;.</li>
+          <li>Every number has a source. Say what is measured and what is still open.</li>
+          <li>Name organizations to state facts, never to disparage them. Credit every image and source.</li>
+          <li>No development notes, task names or build status in public copy. Copyright: &copy; Edgesource Corporation.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <nav>
+        <a href="onboarding.html">Get started</a>
+        <a href="catalog.html">Catalog</a>
+        <a href="collision-avoidance.html">Collision avoidance</a>
+        <a href="whitepapers.html">Whitepapers</a>
+        <a href="style-guide.html">Style guide</a>
+        <a href="server-overview.html">Docs</a>
+        <a href="onboarding.html#security-review">IT spec sheet</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+        <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
+      </nav>
+      <span>MIT License &middot; &copy; Edgesource Corporation</span>
+    </div>
+  </footer>
+  <script src="site.js"></script>
+</body>
+</html>
