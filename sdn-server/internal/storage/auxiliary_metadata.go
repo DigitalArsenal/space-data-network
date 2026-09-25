@@ -22,6 +22,7 @@ const (
 
 	auxiliaryEventDirectoryUpsert               = "directory_upsert"
 	auxiliaryEventLocalEPMUpsert                = "local_epm_upsert"
+	auxiliaryEventLocalEPMDelete                = "local_epm_delete"
 	auxiliaryEventDatasetShardPublicationUpsert = "dataset_shard_publication_upsert"
 	auxiliaryEventDatasetShardPublicationDelete = "dataset_shard_publication_delete"
 	auxiliaryEventPinLedgerUpsert               = "pin_ledger_upsert"
@@ -700,6 +701,11 @@ func (s *FlatSQLStore) applyAuxiliaryMetadataEvent(event auxiliaryMetadataEvent)
 			return fmt.Errorf("local EPM metadata event missing payload")
 		}
 		return s.applyLocalEPMEncryptedUpsert(*event.LocalEPM)
+	case auxiliaryEventLocalEPMDelete:
+		if event.LocalEPM == nil {
+			return fmt.Errorf("local EPM delete metadata event missing payload")
+		}
+		return s.applyLocalEPMDelete(*event.LocalEPM)
 	case auxiliaryEventDatasetShardPublicationUpsert:
 		if event.DatasetShardPublication == nil {
 			return fmt.Errorf("dataset shard publication metadata event missing payload")
