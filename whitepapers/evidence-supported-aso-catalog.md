@@ -2,30 +2,10 @@
 
 An attributed orbital catalog for Space Data Network
 
-**Anthony "TJ" Koury III**
+Anthony "TJ" Koury III and Dr. Moriba Jah
 
-Technical whitepaper 1.1 | Revised 24 September 2026  
+Technical whitepaper 1.2 | Revised 25 September 2026  
 Numerical evidence cutoff: 21 September 2026
-
-## Contents
-
-- [Executive summary](#executive-summary)
-- [1 Evidence and the five contributors](#1-evidence-and-the-five-contributors)
-- [2 Architecture and reproducible authority](#2-architecture-and-reproducible-authority)
-- [3 Data inventory and evidence boundaries](#3-data-inventory-and-evidence-boundaries)
-- [4 Normalization and epoch state physics](#4-normalization-and-epoch-state-physics)
-- [5 Initializing numerical propagation from a TLE](#5-initializing-numerical-propagation-from-a-tle)
-- [6 Estimation and model transfer validation](#6-estimation-and-model-transfer-validation)
-- [7 Object association and solution selection](#7-object-association-and-solution-selection)
-- [8 Dynamics and measurement models](#8-dynamics-and-measurement-models)
-- [9 Inference and supported uncertainty](#9-inference-and-supported-uncertainty)
-- [10 The measured Vimpel refinement study](#10-the-measured-vimpel-refinement-study)
-- [11 Chinese AOE catalog integration](#11-chinese-aoe-catalog-integration)
-- [12 Conjunction assessment and uncertainty](#12-conjunction-assessment-and-uncertainty)
-- [13 Publication and the operator experience](#13-publication-and-the-operator-experience)
-- [14 Acceptance gates and study design](#14-acceptance-gates-and-study-design)
-- [15 Reproducibility and evidence baseline](#15-reproducibility-and-evidence-baseline)
-- [References](#references)
 
 ## Executive summary
 
@@ -33,11 +13,11 @@ Space Data Network (SDN) is developing a reproducible, multi-provider catalog of
 
 The catalog preserves original provider products and records how each selected or derived solution was obtained. It distinguishes direct observations from provider estimates, identifies shared source lineage, and makes model assumptions and unresolved parameters visible. Versioned dynamics and measurement models, observability reports, and explicit uncertainty representations extend the catalog's existing commitments to attribution and bounded claims.
 
-A TLE evaluated through SGP4 at its epoch yields an estimated Cartesian state that can initialize numerical propagation after a proper frame transformation. This handoff is a legitimate computational operation. Its predictive benefit is an empirical question: errors in the estimated epoch state affect both propagation paths, while different dynamics change how those errors evolve. Neither retaining SGP4 nor switching to a numerical model guarantees the more accurate forecast.
+A TLE evaluated through SGP4 at its epoch yields an estimated Cartesian state that can initialize numerical propagation after a proper frame transformation. This handoff is a legitimate computational operation. Its predictive benefit is an empirical question: errors in the estimated epoch state affect both propagation paths, while different dynamics change how those errors evolve. Neither retaining SGP4 nor switching to a numerical model guarantees the more accurate forecast. A standard TLE supplies no covariance, however, and its epoch state is a point estimate whose errors are entangled with SGP4 dynamics. A TLE-seeded numerical product therefore carries an explicit epistemic uncertainty representation for its initial condition, or is marked as having none.
 
 The recorded Vimpel study converted all 13,808 acquired element rows and reduced withheld-position RMS discrepancies from 6.04–10.71 km to 52.82–69.93 m on three four-hour arcs. These are bounded consistency and model-reconciliation results against a provider ephemeris. Independent absolute accuracy, calibrated catalog-wide uncertainty, and operational collision probabilities remain to be established. [R1](#r1)–[R3](#r3)
 
-This edition retains the numerical evidence baseline of 21 September 2026. It adds a validation path for TLE-seeded numerical propagation, object-specific modeling and measurement requirements, and proposed admissible-set inference and screening. These additions describe requirements and research directions; they do not add completed experiments to the evidence record.
+This edition retains the numerical evidence baseline of 21 September 2026. It adds a classification of inputs by data level and of TLE fields by level of measurement, a validation path for TLE-seeded numerical propagation, object-specific modeling and measurement requirements, and proposed admissible-set inference and screening. These additions describe requirements and research directions; they do not add completed experiments to the evidence record.
 
 ## 1 Evidence and the five contributors
 
@@ -57,6 +37,21 @@ A provider ephemeris or element set already incorporates that provider's dynamic
 
 Independence depends on lineage. Products published through different channels may reuse the same measurements or solutions. Agreement among such products is useful consistency evidence but cannot be counted as repeated independent confirmation. Unknown lineage remains an explicit uncertainty.
 
+### Levels of data
+
+Orbit products sit at different distances from the observations. We use four processing levels, defined here for orbit data by analogy to Earth-science data levels. Each step adds model contributors and discards information that later steps cannot recover.
+
+| Level | Content | Examples among SDN inputs | What processing adds |
+| --- | --- | --- | --- |
+| 0 | Raw sensor data: detector counts, signal samples, images, time tags as recorded | Sensor output before reduction | Nothing yet; closest to contributor 1 |
+| 1 | Calibrated, time-tagged measurements: angles, ranges, range rates, photometry | Reduced observations from participating sensors | A measurement model (contributor 4) |
+| 2 | Estimated states and ephemerides: osculating state vectors or elements, and trajectories propagated from them | Vimpel elements and ephemerides, operator ephemerides, GNSS precise orbits, CPF predictions | A dynamics model and an inference method (contributors 2 and 5) |
+| 3 | Averaged, theory-specific elements fit to Level 2 states or Level 1 data | TLEs and GP/OMM element sets from CelesTrak, Space-Track, and Space Mapper; supplemental GP; SGP4 companions produced by SDN | A second, analytic theory (SGP4) and a second fit |
+
+Three consequences follow. First, a higher level is not a better level; it is a more processed one, and each level inherits every flaw of the levels beneath it. Second, a product that is re-epoched or re-propagated without new Level 1 data keeps its level but carries no new evidence, so update frequency is not a proxy for evidential support. Third, derived assessments such as conjunction reports inherit the limits of the lowest-quality input they depend on. Every source record therefore declares its level, and the catalog never treats a Level 2 or Level 3 product as a Level 1 observation.
+
+A TLE is a Level 3 product. Observations are reduced to measurements, measurements are fit to estimate osculating states, and those states, or the measurements directly, are averaged into SGP4 mean elements. The TLE records none of the intervening steps: not the observations used, the fit arc, the measurement weights, or the residuals. What it encodes is SGP4's best compromise over some unstated interval, expressed in quantities that are defined only within SGP4.
+
 ### Observability and observation design
 
 Observability describes which state and physical parameters the available measurements can constrain, and at what precision. The report should distinguish structural ambiguity from weak sensitivity or inadequate geometry. A solution may constrain position well while leaving drag, radiation pressure, or attitude poorly separated.
@@ -75,13 +70,13 @@ A source record retains provider, native identifier, edition, source hash, produ
 
 | Solution field | Required meaning |
 | --- | --- |
-| `stateRef` and validity | The selected or derived state, reference epoch, and applicable interval. |
-| `evidenceRefs` and lineage | Observations and provider claims, their classifications, dependencies, and source editions. |
-| `dynamicsModelRef` | Force model, environmental inputs, and parameters marked estimated, bounded, or assumed. |
-| `measurementModelRef` | Sensor geometry, timing, calibration, bias treatment, and known or undisclosed provider modeling. |
-| `inferenceRef` | Estimation or selection method, weights, priors, assumptions, and software version. |
-| `observabilityReport` | Constrained and unresolved parameters and the evidence supporting that assessment. |
-| `uncertaintyStatus` | Available covariance, admissible-set bounds or reference, calibration evidence, and limitations. |
+| stateRef and validity | The selected or derived state, reference epoch, and applicable interval. |
+| evidenceRefs and lineage | Observations and provider claims, their classifications, dependencies, and source editions. |
+| dynamicsModelRef | Force model, environmental inputs, and parameters marked estimated, bounded, or assumed. |
+| measurementModelRef | Sensor geometry, timing, calibration, bias treatment, and known or undisclosed provider modeling. |
+| inferenceRef | Estimation or selection method, weights, priors, assumptions, and software version. |
+| observabilityReport | Constrained and unresolved parameters and the evidence supporting that assessment. |
+| uncertaintyStatus | Available covariance, admissible-set bounds or reference, calibration evidence, and limitations. |
 
 These fields define a logical contract, not a claim of complete implementation in an SDS schema. Authority is reproducible within a declared policy: identical inputs, module artifacts, and policy should yield the same decisions within stated numerical tolerances. Hashes establish byte identity and signatures establish attribution; physical validity requires separate evidence.
 
@@ -112,7 +107,7 @@ Each edition retains format version, interval, access restrictions, retrieval re
 
 Vimpel's documented 15-column product includes native object number, first observation date, UTC reference epoch, update age, semimajor axis, inclination, ascending-node longitude, eccentricity, argument of latitude, argument of perigee, effective area-to-mass, magnitude, and two uncertainty indicators. Angles are in degrees, semimajor axis is in kilometres, and the stated frame is J2000. This is a provider-specific osculating product. [R3](#r3), [R10](#r10)
 
-At the reference epoch, true anomaly is the argument of latitude minus the argument of perigee. With consistent angles, Earth gravitational parameter $\mu$, eccentricity $e$, and semimajor axis $a$, the conversion is:
+Let a be the semimajor axis, e the eccentricity, i the inclination, $\Omega$ the ascending-node longitude, $\omega$ the argument of perigee, u the argument of latitude, $\nu$ the true anomaly, p the semilatus rectum, and $\mu$ Earth’s gravitational parameter. Let $\mathbf{r}_{\mathrm{pf}}$ and $\mathbf{v}_{\mathrm{pf}}$ be the position and velocity in the perifocal frame, $R_x$ and $R_z$ elementary rotations about the x and z axes, Q the rotation from perifocal to J2000 axes, and $\mathbf{r}_{\mathrm{J2000}}$ and $\mathbf{v}_{\mathrm{J2000}}$ the resulting J2000 position and velocity. At the reference epoch, true anomaly is the argument of latitude minus the argument of perigee. With consistent angles, Earth gravitational parameter $\mu$, eccentricity e, and semimajor axis a, the conversion is:
 
 $$
 \nu = u - \omega, \qquad p = a(1-e^2)
@@ -134,7 +129,7 @@ $$
 \mathbf{r}_{\mathrm{J2000}} = Q\mathbf{r}_{\mathrm{pf}}, \qquad \mathbf{v}_{\mathrm{J2000}} = Q\mathbf{v}_{\mathrm{pf}}
 $$
 
-Here $Q$ rotates the perifocal vectors using ascending-node longitude $\Omega$, inclination $i$, and argument of perigee $\omega$. The implemented reader uses $\mu = 398600.4418\,\mathrm{km}^3/\mathrm{s}^2$, explicit internal SI conversion, and canonical OPM output in km and km/s. It retains `vimpel:<nativeID>` and the source descriptor without fabricating a NORAD identifier or international designator. This is an instantaneous conversion, not propagation to another epoch. [R1](#r1)–[R3](#r3)
+Here Q rotates the perifocal vectors using ascending-node longitude $\Omega$, inclination i, and argument of perigee $\omega$. The implemented reader uses $\mu$ = 398600.4418 km³/s², explicit internal SI conversion, and canonical OPM output in km and km/s. It retains `vimpel:<nativeID>` and the source descriptor without fabricating a NORAD identifier or international designator. This is an instantaneous conversion, not propagation to another epoch. [R1](#r1)–[R3](#r3)
 
 ### Position samples and velocity
 
@@ -158,7 +153,7 @@ Second, transform the complete state from TEME to the numerical integration fram
 
 Third, declare the numerical force model, environmental inputs, integration settings, and object parameters. A TLE alone does not supply independently determined mass, attitude, drag coefficient, or radiation-pressure coefficient. Its $B^*$ parameter belongs to the SGP4 drag model; any mapping into a numerical drag model requires explicit assumptions and validation.
 
-Finally, publish the resulting trajectory as a derived, TLE-seeded numerical product with its parent state and model lineage. Retain the native SGP4 product and identify the interval over which the numerical product has been assessed.
+Finally, publish the resulting trajectory as a derived, TLE-seeded numerical product with its parent state, model lineage, and initial-condition uncertainty status. Retain the native SGP4 product and identify the interval over which the numerical product has been assessed.
 
 ### What the handoff establishes
 
@@ -167,6 +162,52 @@ The two paths start from the same estimated position and velocity, expressed in 
 A state error at epoch is an error for both paths. Continuing with SGP4 does not remove it, and switching models does not create it. Different models can nevertheless amplify, reduce, or partly compensate its effect on predicted positions. Neither model complexity nor model consistency alone decides which forecast is closer to the object.
 
 The reported Vimpel study used osculating elements and provider ephemerides; it did not test this TLE handoff. No predictive advantage for TLE-seeded numerical propagation is claimed from that experiment.
+
+### Levels of measurement of TLE elements
+
+The fields of a TLE are not measured on a common scale. We classify each by level of measurement: nominal (labels, supporting only equality), ordinal (ordering only), interval (meaningful differences, arbitrary zero), and ratio (meaningful differences and ratios, true zero). Angles that wrap around a circle form a further directional, or circular, scale on which ordinary arithmetic fails at the wrap point.
+
+| TLE field | Level of measurement | Implications for computation |
+| --- | --- | --- |
+| Catalog number | Nominal | Identifier only; equality tests, no arithmetic or ordering. Joined only with its namespace. |
+| Classification | Nominal | Category label; no arithmetic. |
+| International designator | Nominal | Composite identifier encoding launch year, launch number, and piece; its parts are labels, not quantities. |
+| Epoch (year, fractional day) | Interval | Differences are meaningful and define propagation age; ratios are not. The two-digit year needs an explicit century rule. |
+| First derivative of mean motion / 2 | Ratio (signed) | Not used by SGP4; carries no information into SGP4 propagation and should not be treated as a constraint. |
+| Second derivative of mean motion / 6 | Ratio (signed) | Not used by SGP4; same caution as above. |
+| $B^*$ | Ratio in form (signed) | A fitted SGP4 parameter that absorbs unmodeled forces and can be negative. Arithmetic is defined, but it is not a physical drag coefficient and does not map directly to one. |
+| Ephemeris type | Nominal | Label; normally zero in distributed sets. |
+| Element set number | Ordinal | Supports ordering only. Increments do not count new fits and may skip or repeat. |
+| Checksum | Nominal | Integrity check for the line; not data. |
+| Inclination | Ratio on a bounded range (0 to 180 degrees) | Typically the best-determined element. Not circular, but the geometry becomes singular near 0 and 180 degrees, where the node is undefined. |
+| Right ascension of ascending node | Directional (circular) | Differences must be wrapped; arithmetic means are invalid near the wrap point; circular statistics apply. Ill-defined for near-equatorial orbits. |
+| Eccentricity | Ratio on a bounded range (0 to 1) | True zero and meaningful ratios, but bounded; near zero the argument of perigee loses meaning. |
+| Argument of perigee | Directional (circular) | Wrapped differences and circular statistics; ill-defined for near-circular orbits, where it trades off against mean anomaly. |
+| Mean anomaly | Directional (circular) | Encodes along-track phase, usually the least-determined quantity and the fastest-growing error. Circular treatment required. |
+| Mean motion | Ratio | Tied to orbital energy and typically well determined. Defined under SGP4's own mean-motion convention, so it is not interchangeable with an osculating value. |
+| Revolution number at epoch | Ratio (count), stored modulo 100,000 | Wraps in the fixed-width format and is often unreliable; not suitable as a constraint. |
+
+These differences have direct mathematical consequences:
+
+1. The element set is not a vector space. Mixed scales and circular components mean that vector addition, arithmetic means, Euclidean distances, and ordinary covariance matrices over raw TLE fields are not well defined. Circular elements need wrapped differences and circular statistics, and near-circular or near-equatorial orbits require nonsingular element combinations or a Cartesian state representation before any averaging or differencing.
+
+2. Nominal and ordinal fields support identity and sequencing, not computation. In particular, a change in element set number or epoch does not show that new observations were fit.
+
+3. Determinability differs sharply across elements. Inclination and mean motion, and hence orbital energy, are usually well constrained, while along-track phase is weakly constrained and dominates forecast error as it grows with propagation age. Weighting all elements equally, or assigning them a common isotropic uncertainty, misrepresents what a TLE supports.
+
+4. The fixed-width format quantizes every value. Let a be the semimajor axis and $\Delta M$ the mean anomaly resolution in radians; the along-track position resolution is then approximately a × $\Delta M$. With $\Delta M$ equal to 0.0001 degree and a near 6,900 km, this is about 12 m per encoding increment for a near-circular orbit (about ±6 m for this component under round-to-nearest). This is encoding resolution, not a bound on total physical position error. Quantization is a hard, bounded error on what a TLE can represent and belongs in its uncertainty representation as a bounded term rather than a Gaussian one.
+
+5. TLE elements are theory-specific. Mean elements share names with osculating elements but denote different quantities, so a TLE cannot be compared field by field with Vimpel's osculating elements or any Level 2 product. Comparison happens only after evaluating SGP4 and transforming to a common state and frame.
+
+6. Some fields carry no information into propagation. The mean-motion derivatives are ignored by SGP4, and $B^*$ is a fitted compensator rather than a physical parameter. Any uncertainty method should say which fields it treats as evidence.
+
+### Carrying TLE uncertainty through the handoff
+
+Because a TLE is a Level 3 product, its errors are dominated by epistemic limits, such as an unknown fit arc, unknown observation geometry, and unmodeled forces absorbed into $B^*$, rather than by random noise, and a standard TLE supplies no covariance. The SGP4 epoch state inherits those limits. Its errors are correlated with SGP4's own dynamics, because the fit that produced the elements allowed initial-state and model errors to compensate (section 6). A numerical integrator does not share that compensation, so the point state alone understates what is unknown at the moment of handoff.
+
+We therefore require that a TLE-seeded numerical product carry an initial-condition uncertainty representation derived from the TLE, available supporting evidence, and explicitly declared assumptions: a set of epoch states, or an equivalent bounded region, that those inputs cannot rule out under those assumptions, together with a process-uncertainty allowance for the difference between SGP4 dynamics and the object's actual motion. The construction should respect the measurement scale and determinability of each element described above, include the format's quantization as a bounded error, and support updating one TLE-derived region with a later TLE while recognizing that the later element set may not reflect new Level 1 evidence. Because the element set is not a vector space, admissible-region methods of the kind described in section 9 are a natural fit.
+
+Methods of this kind based on TEAG and the ESPF are in development and are not part of the present evidence baseline. Until such a representation is validated, a TLE-seeded numerical product is published with its initial-condition uncertainty marked unknown, and its forecast is assessed only through the controlled comparison in section 6.
 
 ## 6 Estimation and model transfer validation
 
@@ -180,7 +221,7 @@ Formal covariance describes uncertainty under the estimator's assumed models and
 
 ### A controlled comparison
 
-For each test object and TLE edition, evaluate native SGP4 and numerical propagation initialized from its epoch state over the same forecast interval. Use common frame and time conventions and an independent reference with documented accuracy, lineage, and maneuver treatment. Report reference uncertainty along with position and velocity errors, radial/along-track/cross-track components, maxima, percentiles, and error growth with prediction age.
+For each test object and TLE edition, evaluate native SGP4 and numerical propagation initialized from its epoch state over the same forecast interval. Use common frame and time conventions and an independent reference with documented accuracy, lineage, and maneuver treatment. Report reference uncertainty along with position and velocity errors, radial/along-track/cross-track components, maxima, percentiles, and error growth with prediction age. Where an initial-condition uncertainty representation is available, also report how often the independent reference falls within the propagated region, so coverage is tested rather than assumed.
 
 Stratify by orbit regime, perigee altitude, eccentricity, source age, physical-parameter knowledge, maneuver status, and forecast length. Use the same test cases and include failures. Distinguish tests supplied with additional physical information from tests using only TLE information. Freeze models and tuning before evaluating an untouched forecast set.
 
@@ -194,7 +235,7 @@ An arc fit is an optional model-transfer technique, not a prerequisite for initi
 
 ### Candidate generation
 
-Candidate associations combine provider crosswalks, international designators, native-identifier histories, and coarse orbital compatibility. Vimpel's datefirst fields `Nvym`, `t_det_v`, `Nnor`, and `t_det_n` supply attributed identity evidence. Preserve dates, leading-zero normalization, and contradictory or duplicate declarations. Names and unqualified numeric identifiers are not sufficient join keys. [R3](#r3)
+Candidate associations combine provider crosswalks, international designators, native-identifier histories, and coarse orbital compatibility. Vimpel's datefirst fields Nvym, t_det_v, Nnor, and t_det_n supply attributed identity evidence. Preserve dates, leading-zero normalization, and contradictory or duplicate declarations. Names and unqualified numeric identifiers are not sufficient join keys. [R3](#r3)
 
 Similar trajectories can describe formation members, recent deployments, or fragments. Pairwise compatibility is not automatically transitive. Proposed identity groups need component-wide conflict checks and a consistent one-to-one assignment where the catalog semantics require it. Unresolved records remain separate, and observations that fit no existing candidate retain an unassigned or new-object hypothesis.
 
@@ -216,7 +257,7 @@ Review outcomes are compatible, rejected, ambiguous, or insufficient. Accepted l
 
 ### Shared physics and object parameters
 
-A dynamics model combines well-characterized shared physics, object-specific effects, and residual model error. A useful decomposition is:
+A dynamics model combines well-characterized shared physics, object-specific effects, and residual model error. Let r be the object position with time derivatives $\dot{\mathbf{r}}$ and $\ddot{\mathbf{r}}$, t time, $\mathbf{a}_{\mathrm{gen}}$ the acceleration from shared physics, $\mathbf{a}_{\mathrm{obj}}$ the object-specific acceleration depending on a parameter vector p, and $\delta(t)$ the residual model discrepancy. A useful decomposition is:
 
 $$
 \ddot{\mathbf{r}} = \mathbf{a}_{\mathrm{gen}}(\mathbf{r},\dot{\mathbf{r}},t) + \mathbf{a}_{\mathrm{obj}}(\mathbf{r},\dot{\mathbf{r}},t;\mathbf{p}) + \boldsymbol{\delta}(t)
@@ -230,13 +271,13 @@ The dominant errors depend on orbit, altitude, object behavior, measurement qual
 
 ### Measurement models as versioned artifacts
 
-A measurement model maps the object and sensor states to a predicted observable. It includes geometry, timing, calibration, frame conventions, and relevant corrections such as light-time, aberration, and atmospheric refraction. Bias, random error, and residual measurement-model discrepancy are represented distinctly:
+A measurement model maps the object and sensor states to a predicted observable. It includes geometry, timing, calibration, frame conventions, and relevant corrections such as light-time, aberration, and atmospheric refraction. Let y be the observable, x the object state, p its physical parameters, s the sensor state and calibration, t time, h the measurement model, b the modeled bias, e the random error, and $\varepsilon$ the residual measurement-model discrepancy. Bias, random error, and residual measurement-model discrepancy are represented distinctly:
 
 $$
 \mathbf{y} = h(\mathbf{x},\mathbf{p},\mathbf{s},t) + \mathbf{b} + \mathbf{e} + \boldsymbol{\varepsilon}
 $$
 
-Here $\mathbf{x}$ is the object state, $\mathbf{p}$ its physical parameters, $\mathbf{s}$ the sensor state and calibration, $\mathbf{b}$ the modeled bias, $\mathbf{e}$ random error, and $\boldsymbol{\varepsilon}$ residual model discrepancy. A missing or undisclosed provider measurement model is recorded as unknown.
+Here x is the object state, p its physical parameters, s the sensor state and calibration, b the modeled bias, e random error, and $\varepsilon$ residual model discrepancy. A missing or undisclosed provider measurement model is recorded as unknown.
 
 Each contributing sensor should publish a versioned model with location, timing provenance, pointing and calibration history, error characterization, and known limitations. At an illustrative speed of 7.5 km/s, a 1 ms timing offset corresponds to 7.5 m of travel; its measurement impact depends on geometry. Photometric inference states its reflectance and attitude assumptions.
 
@@ -264,13 +305,15 @@ We propose evaluating the Theory of Epistemic Abductive Geometry (TEAG) and the 
 
 The SDN evaluation must document bound construction, support resolution, treatment of outliers and inconsistent evidence, and behavior under model mismatch. It must compare against appropriate probabilistic and bounded-set baselines using independent cases. Published bounds must state whether they conservatively enclose the admissible trajectories or only summarize sampled support. TEAG/ESPF integration and catalog-scale validation are proposed work, not results of the Vimpel experiment.
 
+Disclosure: TEAG and the ESPF [R19](#r19), [R20](#r20) were developed by co-author M. K. Jah, who is also a co-founder of GaiaVerse Ltd., which develops implementations of these methods. Baselines and independent test cases for the SDN evaluation should therefore be selected and scored independently of the authors' own implementations.
+
 ## 10 The measured Vimpel refinement study
 
 ### Method and experimental configuration
 
 The implemented refinement estimates a six-component initial-state correction using finite-difference sensitivities from one nominal and six positively perturbed trajectories. It checks initial-state bindings and requires six numerically independent sensitivity columns. These derivatives measure sensitivity to the initial state; they do not differentiate coarse provider positions to obtain velocity. [R1](#r1)
 
-A regularized weighted least-squares update uses training positions. Corrections outside configured position and velocity scales are rejected. A candidate has stale Keplerian fields cleared and is returned as `candidate-needs-propagation`. Repropagation and validation are mandatory, with an optional prior withheld-RMS gate rejecting deterioration. The module does not emit a provider covariance or automatically promote a catalog solution. [R1](#r1)
+A regularized weighted least-squares update uses training positions. Corrections outside configured position and velocity scales are rejected. A candidate has stale Keplerian fields cleared and is returned as candidate-needs-propagation. Repropagation and validation are mandatory, with an optional prior withheld-RMS gate rejecting deterioration. The module does not emit a provider covariance or automatically promote a catalog solution. [R1](#r1)
 
 Each of three four-hour arcs contained 25 positions at 600-second spacing. Withheld indices 3, 7, 11, 15, 19, and 23 left 19 training and six validation positions. One update was performed. The force model used central Earth gravity, J2–J4, analytical Sun/Moon perturbations, and RKF78 integration; drag and solar-radiation pressure were disabled. [R1](#r1)
 
@@ -298,7 +341,7 @@ The documented orbit-list API uses bearer-token authentication and KY and INTERN
 
 ### Adapter and provenance requirements
 
-Maintain separate namespaces such as `spacemapper:KY` and `spacemapper:INTERNATIONAL`. Retain the requested channel, response metadata, native catalog identifier, asserted international links, epoch string, format, exact bytes, and upstream lineage. Normalize timezone-qualified epochs while preserving their original representation. Numeric identifiers are joined only with their namespaces and supporting association evidence.
+Maintain separate namespaces such as spacemapper:KY and spacemapper:INTERNATIONAL. Retain the requested channel, response metadata, native catalog identifier, asserted international links, epoch string, format, exact bytes, and upstream lineage. Normalize timezone-qualified epochs while preserving their original representation. Numeric identifiers are joined only with their namespaces and supporting association evidence.
 
 An SGP4 mean-element product is evaluated through SGP4 before any numerical initialization or fit. It does not pass through the Vimpel osculating-element converter. Missing frame, time, or model metadata yields a validation failure or explicitly incomplete product. The TLE handoff and validation requirements in sections 5 and 6 apply to derived numerical solutions.
 
@@ -340,7 +383,7 @@ Publication proceeds transactionally: acquire and preserve bytes, verify integri
 
 Content addressing, independent replication, and open computation support resilience. They do not guarantee availability or override provider restrictions. Pin receipts identify retained bytes and actual nodes. A public notice may reference a restricted product without publishing its contents or credentials. Module availability, successful invocation, and validated output publication are separate operational checks.
 
-The intended UT Austin conjunction service is one placement of an auditable service that other authorized nodes can reproduce. Its availability, placement, throughput, and restart behavior require live verification. The recorded offline study does not establish operational readiness.
+An intended conjunction service node is one placement of an auditable service that other authorized nodes can reproduce. Its availability, placement, throughput, and restart behavior require live verification. The recorded offline study does not establish operational readiness.
 
 ### Feedback and reversible decisions
 
@@ -364,9 +407,9 @@ An accepted numerical solution may be sampled and fitted with SGP4 mean elements
 | --- | --- | --- |
 | Acquisition | Exact bytes, source edition, integrity, permitted retention, and lineage. | Vimpel snapshots and historical fleet transport checks. |
 | Normalization | Preserved identity, epoch, units, frame, time scale, and model semantics. | 13,808 Vimpel rows converted. |
-| Evidence classification | Observations and provider claims tagged with dependencies and unknown lineage. | Expanded contract proposed. |
+| Evidence classification | Observations and provider claims tagged with dependencies and unknown lineage. Data level declared per source and measurement scale per field. | Expanded contract proposed. |
 | Model reconciliation | Training and withheld residuals, state shifts, sensitivity checks, and failure counts. | Three four-hour cases; decomposition pending. |
-| TLE model transfer | Verified epoch handoff and comparative forecasts against independent references. | Not established by the Vimpel study. |
+| TLE model transfer | Verified epoch handoff and comparative forecasts against independent references. Initial-condition uncertainty carried through the handoff, with coverage tested. | Not established by the Vimpel study. |
 | Object and sensor models | Versioned models, parameter observability, timing and bias treatment, and declared assumptions. | Expanded requirements proposed. |
 | Physical accuracy | Independent reference comparisons stratified by regime and prediction interval. | Not established. |
 | Uncertainty | Calibration of covariance or coverage and conservatism of declared trajectory bounds. | Not established. |
@@ -380,37 +423,37 @@ Reserve a final untouched validation set. Repeated tuning against withheld point
 
 ## 15 Reproducibility and evidence baseline
 
-The numerical baseline is modules commit `49e159d7003cac3d3e65b03170f11909fa86dd2c`, including `files/orbit-products` 0.1.1 and analysis/catalog-composer 0.1.8. The recorded package suites passed 68 tests. One opt-in parity test ran separately; one full-DE440s external-fixture test was skipped. Nine explicit parity cases exercised Chromium, native WasmEdge, and the SDK container with 45 comparisons. Required repository gates passed; an advisory repository-wide gate was blocked under machine overload. [R1](#r1)
+The numerical baseline is modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c, including files/orbit-products 0.1.1 and analysis/catalog-composer 0.1.8. The recorded package suites passed 68 tests. One opt-in parity test ran separately; one full-DE440s external-fixture test was skipped. Nine explicit parity cases exercised Chromium, native WasmEdge, and the SDK container with 45 comparisons. Required repository gates passed; an advisory repository-wide gate was blocked under machine overload. [R1](#r1)
 
 These checks establish selected software behavior across runtimes. They do not validate all inputs, establish independent orbit accuracy, or demonstrate operational readiness. The implementation statuses and measured results in this edition refer to that baseline; the revised architecture does not imply that the new requirements have been implemented.
 
 ### Immutable evidence identifiers
 
-**Acquired Vimpel element table**
+Acquired Vimpel element table
 
 ```text
 840cda6d499028c17a7e22228b1b22fe500078e996113ef5804c4fff7ba612fa
 ```
 
-**Acquired Vimpel ephemeris archive**
+Acquired Vimpel ephemeris archive
 
 ```text
 f46df9c310a8c33752d5baebf429a0583e7896f6714501b77d8fcc033c65e6bb
 ```
 
-**Normalizer WASM**
+Normalizer WASM
 
 ```text
 d9f8ea296eab142767a02eddcdc888899fdd8fdccd968a1b82479ff673698e82
 ```
 
-**Catalog WASM**
+Catalog WASM
 
 ```text
 7d87d552215685ee6a069f42f83d411af244e69d3cab7b4880f2e378cae30eed
 ```
 
-**HPOP WASM**
+HPOP WASM
 
 ```text
 7305c5ef6db04cfb5babc4f2c5f87b17b1e5901e4c14bd25cf9ca7b14b7b48b1
@@ -418,9 +461,64 @@ d9f8ea296eab142767a02eddcdc888899fdd8fdccd968a1b82479ff673698e82
 
 ### Reproduction contract
 
-Use the recorded commit, documented dependencies, exact artifact hashes, and authorized source files. The driver is `analysis/catalog-composer/tests/vimpel-live.mjs` with `ELEMENTS_FILE` and `EPHEMERIS_RAR` arguments. It routes existing C++/WASM reader, frame, time, propagation, and fitting modules. It does not acquire provider data, install modules, publish records, or create covariance. Per-case reference hashes and controls remain in the verification record. [R1](#r1)
+Use the recorded commit, documented dependencies, exact artifact hashes, and authorized source files. The driver is analysis/catalog-composer/tests/vimpel-live.mjs with ELEMENTS_FILE and EPHEMERIS_RAR arguments. It routes existing C++/WASM reader, frame, time, propagation, and fitting modules. It does not acquire provider data, install modules, publish records, or create covariance. Per-case reference hashes and controls remain in the verification record. [R1](#r1)
 
 Reproduction of the new TLE-transfer and uncertainty studies additionally requires frozen test editions, independent-reference lineage, force and measurement models, parameter assumptions, training and validation partitions, and prediction intervals. Report unavailable inputs and rejected cases rather than silently substituting a model or source.
+
+## Appendix A. Glossary and nomenclature
+
+### Terms
+
+| Term | Meaning |
+| --- | --- |
+| ASO | Anthropogenic space object |
+| Admissible set | States, parameters, and trajectories consistent with the evidence under declared assumptions and error allowances |
+| Provider claim | An attributed estimate (ephemeris, element set, identity link) that already embeds a provider's dynamics model, measurement model, and inference |
+| Observation | A direct measurement such as angles, range, range rate, or photometry |
+| Level 0 to Level 3 | Processing levels of orbit data: raw sensor data, calibrated measurements, estimated states and ephemerides, and averaged theory-specific elements (section 1) |
+| Nominal, ordinal, interval, ratio | Levels of measurement: labels; order only; differences with an arbitrary zero; differences and ratios with a true zero |
+| Directional (circular) scale | Angular values that wrap, requiring wrapped differences and circular statistics |
+| Mean elements | Averaged elements defined only within a specific analytic theory such as SGP4 |
+| Osculating elements | Instantaneous two-body elements matching a state at one epoch |
+| Quantization | The resolution limit imposed by a fixed-width numeric format |
+| Contributor | One of the five sources of evidential support for an orbit solution (section 1) |
+| Observability report | Statement of which state and physical parameters the evidence constrains |
+| TLE-seeded product | A numerical trajectory initialized from an SGP4 epoch state |
+| Initial-condition uncertainty | The set or distribution of epoch states not ruled out by the source product, carried into propagation |
+| Possibility | Degree to which a hypothesis is compatible with the evidence |
+| Necessity | Degree of support for a hypothesis through exclusion of alternatives |
+| TEAG | Theory of Epistemic Abductive Geometry |
+| ESPF | Epistemic Support-Point Filter |
+| HPOP | High-precision (numerical) orbit propagation |
+| SGP4, TLE, $B^*$ | Simplified General Perturbations 4 theory; two-line element set; SGP4 drag term |
+| GP, OMM, OPM, OEM | General perturbations element set; CCSDS Orbit Mean-elements, Parameter, and Ephemeris Messages |
+| TEME, GCRF, J2000 | True Equator Mean Equinox frame; Geocentric Celestial Reference Frame; J2000 reference frame |
+| UTC, TDB | Coordinated Universal Time; Barycentric Dynamical Time |
+| SOCRATES | CelesTrak conjunction screening service |
+| AOE, KY | Space Mapper's self-determined orbit family and its API channel |
+
+### Symbols
+
+| Symbol | Meaning |
+| --- | --- |
+| a, e, i | Semimajor axis, eccentricity, inclination |
+| $\Omega$, $\omega$ | Ascending-node longitude, argument of perigee |
+| u, $\nu$ | Argument of latitude, true anomaly |
+| M, $\Delta M$ | Mean anomaly; its format resolution |
+| n | Mean motion |
+| p (section 4) | Semilatus rectum |
+| $\mu$ | Earth's gravitational parameter |
+| $\mathbf{r}_{\mathrm{pf}}$, $\mathbf{v}_{\mathrm{pf}}$ | Perifocal position and velocity |
+| $R_x$, $R_z$, Q | Elementary rotations; perifocal-to-J2000 rotation |
+| $\mathbf{r}_{\mathrm{J2000}}$, $\mathbf{v}_{\mathrm{J2000}}$ | J2000 position and velocity |
+| r, $\dot{\mathbf{r}}$, $\ddot{\mathbf{r}}$ | Object position, velocity, acceleration |
+| t | Time |
+| $\mathbf{a}_{\mathrm{gen}}$, $\mathbf{a}_{\mathrm{obj}}$ | Shared-physics and object-specific accelerations |
+| p (sections 8 and 9) | Object physical parameter vector |
+| $\delta(t)$ | Residual dynamics-model discrepancy |
+| y, h | Observable; measurement model |
+| x, s | Object state; sensor state and calibration |
+| b, e, $\varepsilon$ | Modeled bias; random error; residual measurement-model discrepancy |
 
 ## References
 
@@ -428,120 +526,80 @@ R1–R15 retain the sources and evidence roles of the 21 September 2026 baseline
 
 ### R1
 
-Digital Arsenal. Epoch-state conversion, validation and refinement, with aggregate verification record. Modules commit `49e159d7003cac3d3e65b03170f11909fa86dd2c`.
-
-[Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/epoch-fitting.md) · [Verification record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/verification-vimpel-epoch-fit-20260921.json)
+Digital Arsenal. Epoch-state conversion, validation and refinement, with aggregate verification record. Modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c. [Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/epoch-fitting.md) · [Verification record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/verification-vimpel-epoch-fit-20260921.json)
 
 ### R2
 
-Digital Arsenal. Catalog Editor module: composition, coverage and matching contracts. Same baseline commit.
-
-[Module documentation](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/README.md)
+Digital Arsenal. Catalog Editor module: composition, coverage and matching contracts. Same baseline commit. [Module documentation](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/README.md)
 
 ### R3
 
-Digital Arsenal. Vimpel epoch normalization and catalog matching; 64-object diagnostic audit. Same baseline commit.
-
-[Normalization](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-normalization.md) · [Audit record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-epoch-audit-20260921.json)
+Digital Arsenal. Vimpel epoch normalization and catalog matching; 64-object diagnostic audit. Same baseline commit. [Normalization](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-normalization.md) · [Audit record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-epoch-audit-20260921.json)
 
 ### R4
 
-Space Mapper. AOE Catalog. Provider description.
-
-[AOE Catalog](https://spacemapper.cn/en-us/catalog/aoecat/)
+Space Mapper. AOE Catalog. Provider description. [AOE Catalog](https://spacemapper.cn/en-us/catalog/aoecat/)
 
 ### R5
 
-Space Mapper. Orbital Database. Standard, AOE, and international product families.
-
-[Orbital products](https://spacemapper.cn/en-us/satellite/orbital)
+Space Mapper. Orbital Database. Standard, AOE, and international product families. [Orbital products](https://spacemapper.cn/en-us/satellite/orbital)
 
 ### R6
 
-Space Mapper. Orbit-list API documentation. Channels, formats, and metadata examples.
-
-[Orbit API](https://spacemapper.cn/help/helpinfo/1613/)
+Space Mapper. Orbit-list API documentation. Channels, formats, and metadata examples. [Orbit API](https://spacemapper.cn/help/helpinfo/1613/)
 
 ### R7
 
-Digital Arsenal. Ephemeris provider test fleet. Historical development verification at stack snapshot 43f5506457; transport evidence and acquisition limitations.
-
-[Provider-fleet report](https://github.com/DigitalArsenal/spacedatanetwork-stack/blob/43f5506457/studies/orbital-console-data/deployment/EPHEMERIS-PROVIDERS.md)
+Digital Arsenal. Ephemeris provider test fleet. Historical development verification at stack snapshot 43f5506457; transport evidence and acquisition limitations. [Provider-fleet report](https://github.com/DigitalArsenal/spacedatanetwork-stack/blob/43f5506457/studies/orbital-console-data/deployment/EPHEMERIS-PROVIDERS.md)
 
 ### R8
 
-International Laser Ranging Service, NASA GSFC. Consolidated Prediction Format, version 2, and supporting material.
-
-[CPF documentation](https://ilrs.gsfc.nasa.gov/data_and_products/formats/cpf.html)
+International Laser Ranging Service, NASA GSFC. Consolidated Prediction Format, version 2, and supporting material. [CPF documentation](https://ilrs.gsfc.nasa.gov/data_and_products/formats/cpf.html)
 
 ### R9
 
-Space Mapper. Space-object API documentation. AOE, INTL, and MIXED sources and identifiers.
-
-[Catalog API](https://spacemapper.cn/help/helpinfo/1621/)
+Space Mapper. Space-object API documentation. AOE, INTL, and MIXED sources and identifiers. [Catalog API](https://spacemapper.cn/help/helpinfo/1621/)
 
 ### R10
 
-JSC Vimpel and Keldysh Institute of Applied Mathematics. Orbit parameters of newly detected HEO space debris objects. Public bulletin and format explanation; retained study interpretation in R3.
-
-[Provider bulletin](https://spacedata.vimpel.ru/en/)
+JSC Vimpel and Keldysh Institute of Applied Mathematics. Orbit parameters of newly detected HEO space debris objects. Public bulletin and format explanation; retained study interpretation in R3. [Provider bulletin](https://spacedata.vimpel.ru/en/)
 
 ### R11
 
-Petit, G., and Luzum, B., editors. IERS Conventions (2010). IERS Technical Note 36.
-
-[Technical note](https://iers-conventions.obspm.fr/conventions/content/tn36.pdf)
+Petit, G., and Luzum, B., editors. IERS Conventions (2010). IERS Technical Note 36. [Technical note](https://iers-conventions.obspm.fr/conventions/content/tn36.pdf)
 
 ### R12
 
-CelesTrak. Current Supplemental GP Element Sets. Methodology for fitting operator ephemerides with SGP4.
-
-[Supplemental GP methodology](https://www.celestrak.org/NORAD/elements/supplemental/)
+CelesTrak. Current Supplemental GP Element Sets. Methodology for fitting operator ephemerides with SGP4. [Supplemental GP methodology](https://www.celestrak.org/NORAD/elements/supplemental/)
 
 ### R13
 
-Vallado, D. A., Crawford, P., Hujsak, R., and Kelso, T. S. Revisiting Spacetrack Report #3. AIAA 2006-6753. SGP4 theory, verification, frame conventions, and model-dependent estimation cautions.
-
-[Paper](https://celestrak.org/publications/AIAA/2006-6753/AIAA-2006-6753.pdf)
+Vallado, D. A., Crawford, P., Hujsak, R., and Kelso, T. S. Revisiting Spacetrack Report #3. AIAA 2006-6753. SGP4 theory, verification, frame conventions, and model-dependent estimation cautions. [Paper](https://celestrak.org/publications/AIAA/2006-6753/AIAA-2006-6753.pdf)
 
 ### R14
 
-Consultative Committee for Space Data Systems. Orbit Data Messages. CCSDS 502.0-B-3, Issue 3, May 2023, including listed corrigenda.
-
-[Publication record](https://ccsds.org/publications/allpubs/entry/3073/)
+Consultative Committee for Space Data Systems. Orbit Data Messages. CCSDS 502.0-B-3, Issue 3, May 2023, including listed corrigenda. [Publication record](https://ccsds.org/publications/allpubs/entry/3073/)
 
 ### R15
 
-CelesTrak. SOCRATES Plus. Methodology and service description; cited as documentation, not a completed SDN parity result.
-
-[SOCRATES methodology](https://celestrak.org/SOCRATES/)
+CelesTrak. SOCRATES Plus. Methodology and service description; cited as documentation, not a completed SDN parity result. [SOCRATES methodology](https://celestrak.org/SOCRATES/)
 
 ### R16
 
-Orekit developer discussion. Using NRLMSISE-00 with numerical propagator. 3 August 2022. Clarifies the SGP4 initial state and its use to initialize numerical propagation.
-
-[Developer explanation](https://forum.orekit.org/t/using-nrlmsise-00-with-numerical-propagator/1875)
+Orekit developer discussion. Using NRLMSISE-00 with numerical propagator. 3 August 2022. Clarifies the SGP4 initial state and its use to initialize numerical propagation. [Developer explanation](https://forum.orekit.org/t/using-nrlmsise-00-with-numerical-propagator/1875)
 
 ### R17
 
-Orekit. Orbit Determination architecture. Measurement modeling, propagation, residuals, and estimation.
-
-[Estimation architecture](https://www.orekit.org/site-orekit-11.0.1/architecture/estimation.html)
+Orekit. Orbit Determination architecture. Measurement modeling, propagation, residuals, and estimation. [Estimation architecture](https://www.orekit.org/site-orekit-11.0.1/architecture/estimation.html)
 
 ### R18
 
-Levit, C., and Marshall, W. Improved orbit predictions using two-line elements. Advances in Space Research 47(7), 1107–1115, 2011; arXiv:1002.2277. Numerical fitting to states from successive TLEs and tested forecast improvements.
-
-[Research paper](https://arxiv.org/abs/1002.2277)
+Levit, C., and Marshall, W. Improved orbit predictions using two-line elements. Advances in Space Research 47(7), 1107–1115, 2011; arXiv:1002.2277. Numerical fitting to states from successive TLEs and tested forecast improvements. [Research paper](https://arxiv.org/abs/1002.2277)
 
 ### R19
 
-Jah, M. K. Theory of Epistemic Abductive Geometry (TEAG): A Unified Theory of Admissibility-Driven Inference Across Dynamical Systems, Measure Theory, and Language. Preprint, version 3, 2026. Proposed inference framework.
-
-[Versioned preprint](https://doi.org/10.20944/preprints202603.2010.v3)
+Jah, M. K. Theory of Epistemic Abductive Geometry (TEAG): A Unified Theory of Admissibility-Driven Inference Across Dynamical Systems, Measure Theory, and Language. Preprint, version 3, 2026. Proposed inference framework. [Versioned preprint](https://doi.org/10.20944/preprints202603.2010.v3)
 
 ### R20
 
-Jah, M. K. The Epistemic Support-Point Filter as a Tropical Hamilton–Jacobi System: Wavefront Propagation and Possibilistic Inference. Preprint, version 3, 2026. Proposed filtering framework.
-
-[Versioned preprint](https://doi.org/10.20944/preprints202603.2110.v3)
+Jah, M. K. The Epistemic Support-Point Filter as a Tropical Hamilton–Jacobi System: Wavefront Propagation and Possibilistic Inference. Preprint, version 3, 2026. Proposed filtering framework. [Versioned preprint](https://doi.org/10.20944/preprints202603.2110.v3)
