@@ -106,7 +106,7 @@
         <div class="head">
           <p class="eyebrow">In fifteen seconds</p>
           <h2>The Network In Motion</h2>
-          <p class="lede">The open catalog, peers trading digitally signed records, and a conjunction screened in the browser.</p>
+          <p class="lede">The open catalog and peers trading digitally signed records, built on open standards, open-source software and open algorithms. All of it free.</p>
         </div>
         <figure class="reel-frame">
           <div class="reel-stage">
@@ -114,22 +114,31 @@
               <source src="media/showreel/sdn-showreel.webm" type='video/webm; codecs="av01.0.08M.08"'>
               <source src="media/showreel/sdn-showreel.mp4" type="video/mp4">
             </video>
-            <button class="reel-toggle" type="button" aria-label="Play the showreel" aria-pressed="false">
-              <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
-              <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+            <button class="reel-big-play" type="button" aria-label="Play the showreel">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
             </button>
-            <div class="reel-progress" aria-hidden="true"><span></span></div>
+            <div class="reel-bar">
+              <div class="reel-progress" aria-hidden="true"><span></span></div>
+              <div class="reel-controls">
+                <button class="reel-btn reel-play" type="button" aria-label="Play the showreel" aria-pressed="false">
+                  <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
+                  <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+                </button>
+                <ol class="reel-chapters" aria-label="Chapters">
+                  <li><button type="button" data-t="0">Ignition</button></li>
+                  <li><button type="button" data-t="2">Catalog</button></li>
+                  <li><button type="button" data-t="5">Network</button></li>
+                  <li><button type="button" data-t="7.75">Record</button></li>
+                  <li><button type="button" data-t="10.1">Conjunction</button></li>
+                  <li><button type="button" data-t="12.6">Resolve</button></li>
+                </ol>
+                <button class="reel-btn reel-fs" type="button" aria-label="Full screen">
+                  <svg class="i-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+                  <svg class="i-exit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+                </button>
+              </div>
+            </div>
           </div>
-          <figcaption>
-            <ol class="reel-chapters" aria-label="Chapters">
-              <li><button type="button" data-t="0"><b>01</b>Ignition</button></li>
-              <li><button type="button" data-t="2"><b>02</b>Catalog</button></li>
-              <li><button type="button" data-t="5"><b>03</b>Network</button></li>
-              <li><button type="button" data-t="7.75"><b>04</b>Record</button></li>
-              <li><button type="button" data-t="10.1"><b>05</b>Conjunction</button></li>
-              <li><button type="button" data-t="12.6"><b>06</b>Resolve</button></li>
-            </ol>
-          </figcaption>
         </figure>
       </div>
     </section>
