@@ -294,6 +294,8 @@ body.centered .figure figcaption { text-align: center; }
 .paper img { display: inline-block; max-width: 100%; height: auto; background: #fafafa; border-radius: 10px; padding: 12px; }
 .paper p[align="center"], .paper h1[align="center"] { text-align: center; }
 .paper blockquote { border-left: 3px solid var(--accent); padding-left: 16px; }
+.paper .math-display { margin: 0 0 16px; overflow-x: auto; overflow-y: hidden; }
+.paper .math-display .katex-display { margin: 8px 0; }
 
 /* Whitepapers index */
 .papers { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; max-width: 980px; margin: 0 auto; }
