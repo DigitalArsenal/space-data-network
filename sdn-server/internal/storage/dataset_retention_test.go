@@ -70,13 +70,14 @@ func TestRetainNewestSourceBatchKeepsOnlyTheNewestBatch(t *testing.T) {
 	}
 }
 
-func TestRetainNewestSourceBatchUsesTheImportedBatchWithoutLedgerRows(t *testing.T) {
+func TestRetainNewestSourceBatchKeepsTheServableBatchWhileANewerImportHasNoLedgerRows(t *testing.T) {
 	tmpDir, provider, subscriber := newLatestTestStores(t)
 	publishAndReplicateBatch(t, tmpDir, provider, subscriber, "batch-a", 70000, 6, time.Now().UTC().Add(-2*time.Hour))
 	batchB := publishAndReplicateBatch(t, tmpDir, provider, subscriber, "batch-b", 70006, 3, time.Now().UTC().Add(-time.Hour))
 
 	// A verified-manifest import lands records under a batch tag but records
-	// no publication row (the PNM replay path). It is still the newest set.
+	// no publication row (the PNM replay path). Nothing can serve it until its
+	// row lands, so the servable batch-b must survive.
 	tags := SourceTags{
 		ProviderID:   batchB.tags.ProviderID,
 		SourceName:   batchB.tags.SourceName,
@@ -108,21 +109,18 @@ func TestRetainNewestSourceBatchUsesTheImportedBatchWithoutLedgerRows(t *testing
 	if err != nil {
 		t.Fatalf("RetainNewestSourceBatch: %v", err)
 	}
-	if keep != "batch-c" {
-		t.Fatalf("kept batch = %q, want the just-imported batch-c", keep)
-	}
-	if result.RecordsDeleted != 9 {
-		t.Fatalf("evicted records = %d, want 9 (batch-a + batch-b)", result.RecordsDeleted)
+	if keep != "" || result.RecordsDeleted != 0 || result.FilesDeleted != 0 {
+		t.Fatalf("retention switched to an unservable import: keep=%q evicted %d records, %d files; the lane must keep serving batch-b", keep, result.RecordsDeleted, result.FilesDeleted)
 	}
 	postTotal, err := subscriber.CountRawRecords(RawRecordQuery{SchemaName: "CAT.fbs"})
 	if err != nil {
 		t.Fatalf("CountRawRecords post: %v", err)
 	}
-	if postTotal != 4 {
-		t.Fatalf("post-retention total = %d, want 4 (batch-c only)", postTotal)
+	if postTotal != 13 {
+		t.Fatalf("post-retention total = %d, want 13 (nothing evicted)", postTotal)
 	}
-	if got := countBatchTaggedRecords(t, subscriber, tags.ProviderID, tags.SourceName, "batch-c"); got != 4 {
-		t.Fatalf("batch-c records after retention = %d, want 4", got)
+	if got := countBatchTaggedRecords(t, subscriber, tags.ProviderID, tags.SourceName, "batch-b"); got != 3 {
+		t.Fatalf("batch-b records after retention = %d, want 3 (still the servable set)", got)
 	}
 
 }
@@ -172,8 +170,8 @@ func TestRetainNewestSourceBatchKeepsANewerLedgerBatchOverAnOlderImport(t *testi
 		t.Fatalf("total after retention = %d, want 3 (batch-b only)", total)
 	}
 
-	// The stale ledger batches (files gone) never block a later, newer
-	// no-ledger import: batch-b is the current set and batch-new replaces it.
+	// A newer no-ledger import does not displace the servable batch-b while
+	// its publication row may still be on its way.
 	tags.BatchID = "batch-new"
 	records = records[:0]
 	for i := 0; i < 5; i++ {
@@ -191,12 +189,12 @@ func TestRetainNewestSourceBatchKeepsANewerLedgerBatchOverAnOlderImport(t *testi
 	if err != nil {
 		t.Fatalf("RetainNewestSourceBatch (batch-new): %v", err)
 	}
-	if keep != "batch-new" || result.RecordsDeleted != 3 {
-		t.Fatalf("batch-new pass kept %q and evicted %d records, want batch-new / 3", keep, result.RecordsDeleted)
+	if keep != "" || result.RecordsDeleted != 0 {
+		t.Fatalf("batch-new pass kept %q and evicted %d records, want no switch while batch-b is the servable set", keep, result.RecordsDeleted)
 	}
-	// And once the kept set has no ledger rows, a further no-ledger import
-	// still replaces it — the stale ledger rows left behind do not read as
-	// an import in flight.
+	// A second no-ledger import while batch-new STILL has no row means rows
+	// never come for this lane: switch, evicting batch-b and batch-new, so
+	// the lane holds at most one extra batch.
 	tags.BatchID = "batch-newer"
 	records = records[:0]
 	records = append(records, sds.NewCATBuilder().WithNoradCatID(70040).WithObjectName("NEWER-BATCH").WithObjectType("PAYLOAD").WithOpsStatus("OPERATIONAL").Build())
@@ -207,8 +205,8 @@ func TestRetainNewestSourceBatchKeepsANewerLedgerBatchOverAnOlderImport(t *testi
 	if err != nil {
 		t.Fatalf("RetainNewestSourceBatch (batch-newer): %v", err)
 	}
-	if keep != "batch-newer" || result.RecordsDeleted != 5 {
-		t.Fatalf("batch-newer pass kept %q and evicted %d records, want batch-newer / 5", keep, result.RecordsDeleted)
+	if keep != "batch-newer" || result.RecordsDeleted != 8 {
+		t.Fatalf("batch-newer pass kept %q and evicted %d records, want batch-newer / 8 (batch-b + batch-new)", keep, result.RecordsDeleted)
 	}
 	total, err = subscriber.CountRawRecords(RawRecordQuery{SchemaName: "CAT.fbs"})
 	if err != nil {

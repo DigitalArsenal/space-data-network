@@ -233,7 +233,10 @@ func (r *inboundAdmissionReporter) BlockStream(p peer.ID, dir network.Direction)
 	if dir != network.DirInbound {
 		return
 	}
-	r.logStreamDenial(n, "peer/system scope", string(p))
+	// p.String(), not string(p): a peer.ID is raw multihash bytes, and the raw
+	// form wrote a NUL and a newline into the journal, splitting each message
+	// in two and hiding which peers were refused.
+	r.logStreamDenial(n, "peer/system scope", p.String())
 }
 
 // BlockProtocolPeer records a stream denied at the per-protocol-per-peer scope.
@@ -244,7 +247,7 @@ func (r *inboundAdmissionReporter) BlockStream(p peer.ID, dir network.Direction)
 // whose budget is too small.
 func (r *inboundAdmissionReporter) BlockProtocolPeer(proto protocol.ID, p peer.ID) {
 	n := r.blockedProtocolPeers.Add(1)
-	r.logStreamDenial(n, "protocol-peer scope for "+string(proto), string(p))
+	r.logStreamDenial(n, "protocol-peer scope for "+string(proto), p.String())
 }
 
 // BlockProtocol records a stream denied at the whole-protocol scope.

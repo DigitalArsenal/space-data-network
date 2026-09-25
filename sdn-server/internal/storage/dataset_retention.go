@@ -15,11 +15,17 @@ package storage
 //     previous batch before the new one is complete would leave the lane
 //     with less than one current set;
 //   - a batch the node imported from a verified manifest without recording
-//     publication rows (the PNM replay path) is still the newest set when
-//     it is newer than anything the ledger knows.
+//     publication rows (the PNM replay path) becomes the set only when the
+//     ledger has nothing servable, or when an EARLIER such import never got
+//     its rows either. Otherwise it waits: its row normally lands minutes
+//     later through the feed-head path, and until then evicting the servable
+//     batch leaves the lane with nothing to serve (the 2026-09-25 host-01
+//     outage: an ~18 min blank catalog on spaceaware.io every six hours).
 
 import (
+	"database/sql"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -131,10 +137,45 @@ func (s *FlatSQLStore) NewestServableSourceBatch(schemaName, providerID, sourceN
 	return "", time.Time{}, false, pending, nil
 }
 
+// laneHasOtherUnledgeredBatch reports whether the lane holds records under a
+// batch id that is neither in the publication ledger nor the current import:
+// an earlier import whose publication row never arrived.
+func (s *FlatSQLStore) laneHasOtherUnledgeredBatch(schemaName, providerID, sourceName, importedID string, ledger []laneBatchState) (bool, error) {
+	known := map[string]bool{importedID: true, "": true}
+	for _, state := range ledger {
+		known[state.id] = true
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`SELECT DISTINCT batch_id FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ?`,
+		strings.TrimSpace(schemaName), strings.TrimSpace(providerID), strings.TrimSpace(sourceName))
+	if err != nil {
+		return false, fmt.Errorf("list lane batches: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id sql.NullString
+		if err := rows.Scan(&id); err != nil {
+			return false, fmt.Errorf("scan lane batch: %w", err)
+		}
+		if !known[strings.TrimSpace(id.String)] {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 // RetainNewestSourceBatch applies the ReplaceCurrent rule to one lane: keep
-// the newest servable batch (or the just-imported batch when it is newer and
-// carries no ledger rows, or when the ledger knows no servable batch) and
-// evict every other batch. Returns the supersede result and the kept batch
+// the newest servable batch (or the just-imported batch when the ledger knows
+// no servable batch) and evict every other batch.
+//
+// A just-imported batch with no ledger rows never displaces a servable one.
+// The verified-manifest (PNM) replay path lands a batch's records minutes
+// before its publication row and files arrive through the feed-head path, and
+// until then nothing can serve it. Switching to it early evicted the lane's
+// only servable publication: on host-01 every six-hourly OMM refresh left
+// spaceaware.io with zero objects for ~18 minutes (2026-09-25). The feed-head
+// path re-runs retention once the row lands, and the switch happens then. Returns the supersede result and the kept batch
 // id; an empty id with a zero result means nothing was done — an import
 // newer than the batch to keep is still in flight (pending) or there is no
 // batch to keep.
@@ -177,6 +218,17 @@ func (s *FlatSQLStore) RetainNewestSourceBatch(schemaName, providerID, sourceNam
 			}
 		case importedID == keep:
 		case !importedInLedger && imported.PublishedAt.After(states[answer].publishedAt):
+			// Newer, but not servable yet: keep what the lane can serve. Only a
+			// lane whose rows evidently never come (an EARLIER import is still
+			// unledgered) switches to the import, so such a lane holds at most
+			// one extra batch instead of accumulating every import.
+			stuck, err := s.laneHasOtherUnledgeredBatch(schemaName, providerID, sourceName, importedID, states)
+			if err != nil {
+				return DatasetSupersedeResult{}, "", err
+			}
+			if !stuck {
+				return DatasetSupersedeResult{}, "", nil
+			}
 			keep, keepIsImported = importedID, true
 		}
 	}
