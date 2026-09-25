@@ -399,6 +399,7 @@ func (h *TrustHandler) handleEdgeFrames(w http.ResponseWriter) {
 	if h.Store != nil {
 		records, err := h.Store.EdgeRecords()
 		if err != nil {
+			log.Warnf("trust edges: store projection unavailable: %v", err)
 			WriteErrorFrame(w, http.StatusServiceUnavailable, "trust_unavailable", "Trust edges are not available right now.", 5*time.Second)
 			return
 		}
