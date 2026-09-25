@@ -101,6 +101,79 @@
       </div>
     </section>
 
+    <section class="block reel" id="showreel">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">In fifteen seconds</p>
+          <h2>The Network In Motion</h2>
+          <p class="lede">The open catalog, peers trading digitally signed records, and a conjunction screened in the browser.</p>
+        </div>
+        <figure class="reel-frame">
+          <div class="reel-stage">
+            <video id="reelVideo" muted loop playsinline preload="metadata" poster="media/showreel/sdn-showreel-poster.webp" aria-label="Space Data Network showreel, 15 seconds, no sound">
+              <source src="media/showreel/sdn-showreel.webm" type='video/webm; codecs="av01.0.08M.08"'>
+              <source src="media/showreel/sdn-showreel.mp4" type="video/mp4">
+            </video>
+            <button class="reel-toggle" type="button" aria-label="Play the showreel" aria-pressed="false">
+              <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
+              <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+            </button>
+            <div class="reel-progress" aria-hidden="true"><span></span></div>
+          </div>
+          <figcaption>
+            <ol class="reel-chapters" aria-label="Chapters">
+              <li><button type="button" data-t="0"><b>01</b>Ignition</button></li>
+              <li><button type="button" data-t="2"><b>02</b>Catalog</button></li>
+              <li><button type="button" data-t="5"><b>03</b>Network</button></li>
+              <li><button type="button" data-t="7.75"><b>04</b>Record</button></li>
+              <li><button type="button" data-t="10.1"><b>05</b>Conjunction</button></li>
+              <li><button type="button" data-t="12.6"><b>06</b>Resolve</button></li>
+            </ol>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="block" id="take-part">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Ways to take part</p>
+          <h2>Join At Any Depth</h2>
+          <p class="lede">Start by reading. Run a node when you want an identity of your own. Host data, modules and services when you are ready. Each step keeps everything from the one before.</p>
+        </div>
+        <ol class="depth">
+          <li class="depth-step">
+            <span class="depth-num">1</span>
+            <p class="depth-tag">No install · no account</p>
+            <h3>Use the network</h3>
+            <p>Read the open catalog, watch live feeds and run open-source astrodynamics in your browser. Every record you read shows who digitally signed it.</p>
+            <a class="more-link" href="catalog.html">The open catalog &rarr;</a>
+          </li>
+          <li class="depth-step">
+            <span class="depth-num">2</span>
+            <p class="depth-tag">One node · your keys</p>
+            <h3>Declare your identity</h3>
+            <p>Run an identity node that publishes who you are and your public signing and encryption keys, digitally signed. Its tools sign, verify, encrypt and decrypt with those same keys in your own systems and external interfaces.</p>
+            <a class="more-link" href="security.html">Identity and keys &rarr;</a>
+          </li>
+          <li class="depth-step">
+            <span class="depth-num">3</span>
+            <p class="depth-tag">Your node · your data</p>
+            <h3>Host your data</h3>
+            <p>Publish orbits, observations, catalogs and warnings in Space Data Standards formats, digitally signed at the source. Share them free or sell them on your own terms.</p>
+            <a class="more-link" href="onboarding.html">Publish data &rarr;</a>
+          </li>
+          <li class="depth-step">
+            <span class="depth-num">4</span>
+            <p class="depth-tag">Full node · always on</p>
+            <h3>Host modules and services</h3>
+            <p>Serve WebAssembly modules and flows, relay for browsers, carry the network&rsquo;s routing, and run services other operators call and pay for.</p>
+            <a class="more-link" href="#host">What you can host &rarr;</a>
+          </li>
+        </ol>
+      </div>
+    </section>
+
     <section class="block story" id="why" data-earth="2.9 20 28 1.05 0.05 118 12">
       <div class="wrap">
         <div class="head">
@@ -350,6 +423,7 @@
     </div>
   </footer>
 
+  <script src="media/showreel/reel.js" defer></script>
   <script src="earth.js"></script>
   <script src="site.js"></script>
 </body>
