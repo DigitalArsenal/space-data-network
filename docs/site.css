@@ -174,3 +174,8 @@ body.centered footer nav { justify-content: center; }
 .faq { max-width: 820px; margin: 0 auto; display: grid; gap: 12px; }
 .code pre { text-align: left; }
 details.more > .body { text-align: left; }
+/* Dark scrollbars for code that still overflows on narrow screens */
+.code pre { scrollbar-color: rgba(255,255,255,.25) transparent; scrollbar-width: thin; }
+.code pre::-webkit-scrollbar { height: 6px; }
+.code pre::-webkit-scrollbar-track { background: transparent; }
+.code pre::-webkit-scrollbar-thumb { background: rgba(255,255,255,.25); border-radius: 3px; }
