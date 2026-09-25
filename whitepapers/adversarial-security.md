@@ -6,6 +6,7 @@
 <p align="center"><strong>Game-Theoretic Key Integrity Through Blockchain Economics</strong></p>
 <p align="center"><em>A whitepaper on using cryptocurrency balances as real-time, permissionless proof of cryptographic key integrity.</em></p>
 <p align="center">Anthony &quot;TJ&quot; Koury III</p>
+<p align="center">Revised 25 September 2026</p>
 
 ---
 

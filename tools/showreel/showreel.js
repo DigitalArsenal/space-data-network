@@ -829,25 +829,27 @@ export async function createShowreel(base = "") {
       sx.stroke();
     }
     sx.beginPath();
-    sx.moveTo(x0 + 330, y0 + 34);
-    sx.lineTo(x0 + 330, y0 + 34 + 506 * grid);
+    sx.moveTo(x0 + 350, y0 + 34);
+    sx.lineTo(x0 + 350, y0 + 34 + 506 * grid);
     sx.stroke();
     sx.restore();
 
-    maskText(sx, "OMM · ORBIT MEAN-ELEMENTS MESSAGE", x0, y0 - 84, 17, 600, AMBER, 7.8, 9.75, t, { tracking: 2.5, family: SANS });
+    maskText(sx, "OCM · ORBIT COMPREHENSIVE MESSAGE", x0, y0 - 84, 17, 600, AMBER, 7.8, 9.75, t, { tracking: 2.5, family: SANS });
     maskText(sx, "ISS (ZARYA)", x0, y0 - 6, 64, 700, INK, 7.85, 9.72, t, { dur: 0.8 });
+    // An Orbit Comprehensive Message: state vector, covariance and physical
+    // properties, not just mean elements.
     const FIELDS = [
-      ["NORAD_CAT_ID", "25544"],
-      ["EPOCH", "2026-09-25T12:00:00.000Z"],
-      ["MEAN_MOTION", "15.49872741"],
-      ["ECCENTRICITY", "0.0004183"],
-      ["INCLINATION", "51.6412"],
-      ["RA_OF_ASC_NODE", "211.2071"],
-      ["ARG_OF_PERICENTER", "84.1036"],
-      ["MEAN_ANOMALY", "276.0512"],
-      ["BSTAR", "0.00013452"],
-      ["CENTER · FRAME", "EARTH · TEME"],
+      ["OBJECT_DESIGNATOR", "25544"],
+      ["INTERNATIONAL_DESIGNATOR", "1998-067A"],
+      ["EPOCH_TZERO", "2026-09-25T12:00:00.000Z"],
       ["TIME_SYSTEM", "UTC"],
+      ["CENTER · FRAME", "EARTH · EME2000"],
+      ["TRAJ_TYPE", "CARTPV"],
+      ["X  Y  Z  (km)", "4523.712  -3811.204  3294.587"],
+      ["VX VY VZ (km/s)", "3.02411  6.11783  3.55820"],
+      ["COV_TYPE", "CARTPV · 6 × 6"],
+      ["MASS", "420000 kg"],
+      ["MANEUVERABLE", "YES"],
     ];
     sx.save();
     sx.globalAlpha = 1 - outK;
@@ -857,14 +859,14 @@ export async function createShowreel(base = "") {
       const a = seg(t, t0, t0 + 0.25);
       if (a <= 0) return;
       sx.globalAlpha = (1 - outK) * a;
-      sx.font = font(500, 18, MONO);
-      sx.letterSpacing = "1px";
+      sx.font = font(500, 17, MONO);
+      sx.letterSpacing = "0.5px";
       sx.fillStyle = MUTED;
       sx.textAlign = "left";
       sx.fillText(k, x0, y);
       sx.fillStyle = INK;
       sx.font = font(500, 22, MONO);
-      decodeText(sx, v, x0 + 350, y, t0 + 0.05, 0.55, t, 100 + i);
+      decodeText(sx, v, x0 + 372, y, t0 + 0.05, 0.55, t, 100 + i);
     });
     sx.restore();
 
@@ -889,7 +891,7 @@ export async function createShowreel(base = "") {
       sx.fillText(row.bytes.join(" "), hx + 90, y);
     });
     sx.restore();
-    maskText(sx, "FLATBUFFERS · 312 BYTES", hx, 168, 15, 600, CYAN, 7.9, 9.72, t, { tracking: 2.5 });
+    maskText(sx, "FLATBUFFERS · 1,184 BYTES", hx, 168, 15, 600, CYAN, 7.9, 9.72, t, { tracking: 2.5 });
 
     // signature and the stamp
     maskText(sx, "SIGNATURE  3045 0221 00c7 9a1f 5e83 b2d4 …", x0, y0 + 620, 18, 500, MUTED, 9.0, 9.7, t, { family: MONO });
@@ -1113,8 +1115,10 @@ export async function createShowreel(base = "") {
 
     // Typography per chapter.
     if (t > 2.3 && t < 5.2) {
+      // The count never settles: it keeps climbing until the text leaves,
+      // because the catalog only grows.
       const k = easeOutExpo(seg(FRAME_T, 2.45, 4.1));
-      const n = Math.round(46600 * k);
+      const n = Math.round(46600 * k + 900 * Math.max(0, FRAME_T - 3.1) + 260 * Math.pow(Math.max(0, FRAME_T - 3.1), 2));
       maskText(sx, "TRACKED OBJECTS", 150, 790, 18, 600, AMBER, 2.4, 4.75, t, { tracking: 4 });
       sx.save();
       const outK = easeInExpo(seg(t, 4.75, 5.2));
@@ -1167,8 +1171,10 @@ export async function createShowreel(base = "") {
     }
     drawRecord(t);
     if (t > 10.2 && t < 12.7) {
-      maskText(sx, "Screened in", 150, 830, 84, 700, INK, 11.9, 12.45, t, { tracking: -2 });
-      maskText(sx, "your browser.", 150, 922, 84, 700, INK, 12.0, 12.5, t, { tracking: -2 });
+      maskText(sx, "Open standards.", 150, 690, 72, 700, INK, 10.55, 12.25, t, { tracking: -1.5 });
+      maskText(sx, "Open-source software.", 150, 772, 72, 700, INK, 10.7, 12.3, t, { tracking: -1.5 });
+      maskText(sx, "Open algorithms.", 150, 854, 72, 700, INK, 10.85, 12.35, t, { tracking: -1.5 });
+      maskText(sx, "All free.", 150, 936, 72, 700, AMBER, 11.1, 12.4, t, { tracking: -1.5 });
     }
 
     // Bloom: the glow layer blurred at two radii, added over the scene.
