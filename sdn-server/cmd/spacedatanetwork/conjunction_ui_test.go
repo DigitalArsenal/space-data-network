@@ -71,10 +71,18 @@ func TestRootDashboard(t *testing.T) {
 		if got != dashboardCSP() {
 			t.Errorf("dashboard CSP header = %q, want %q", got, dashboardCSP())
 		}
-		for _, want := range []string{"script-src 'self'", "'wasm-unsafe-eval'", "'sha256-", "connect-src 'self' wss:", "font-src 'self' data:"} {
+		for _, want := range []string{"script-src 'self'", "'wasm-unsafe-eval'", "'sha256-", "connect-src 'self' wss:", "font-src 'self' data:", "frame-src 'self' https://spaceaware.io"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("dashboard CSP missing %q: %s", want, got)
 			}
+		}
+		// The embedded console's engine needs shared memory, which a frame only
+		// gets inside a cross-origin isolated page.
+		if coop := rec.Header().Get("Cross-Origin-Opener-Policy"); coop != "same-origin" {
+			t.Errorf("GET %s COOP = %q, want same-origin", path, coop)
+		}
+		if coep := rec.Header().Get("Cross-Origin-Embedder-Policy"); coep != "require-corp" {
+			t.Errorf("GET %s COEP = %q, want require-corp", path, coep)
 		}
 	}
 
