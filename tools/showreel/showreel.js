@@ -1097,10 +1097,9 @@ export async function createShowreel(base = "") {
         links: easeOutCubic(seg(t, 14.1, 14.32)),
         fade: 1,
       });
-      maskText(sx, "Space Data Network", W / 2 - 220, H / 2, 78, 650, INK, 14.22, null, t, { dur: 0.45, tracking: -1.5 });
-      maskText(sx, "An open network for space traffic management", W / 2 - 218, H / 2 + 56, 28, 400, MUTED, 14.3, null, t, { dur: 0.4 });
-      maskText(sx, "and a storefront with no middlemen", W / 2 - 218, H / 2 + 94, 28, 400, MUTED, 14.36, null, t, { dur: 0.4 });
-      maskText(sx, "SPACEDATANETWORK.ORG", W / 2 - 218, H / 2 - 100, 18, 600, AMBER, 14.34, null, t, { dur: 0.4, tracking: 4 });
+      maskText(sx, "Space Data Network", W / 2 - 220, H / 2 + 8, 78, 650, INK, 14.22, null, t, { dur: 0.45, tracking: -1.5 });
+      maskText(sx, "An open network for space traffic management", W / 2 - 218, H / 2 + 64, 28, 400, MUTED, 14.3, null, t, { dur: 0.4 });
+      maskText(sx, "SPACEDATANETWORK.ORG", W / 2 - 218, H / 2 - 92, 18, 600, AMBER, 14.34, null, t, { dur: 0.4, tracking: 4 });
     }
 
     // Typography per chapter.
