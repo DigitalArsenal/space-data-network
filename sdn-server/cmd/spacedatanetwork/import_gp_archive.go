@@ -56,7 +56,7 @@ var (
 	importGPArchiveSATCAT, importGPArchiveEpochStateModule                                string
 	importGPArchiveBatchSize, importGPArchiveMaxZipEntries, importGPArchiveMaxWindowFiles int
 	importGPArchiveSkipZip, importGPArchiveHistoryOnly                                    bool
-	importGPArchiveZipShard                                                               string
+	importGPArchiveZipShard, importGPArchiveJSONShard                                     string
 )
 
 var importGPArchiveCmd = &cobra.Command{
@@ -71,6 +71,7 @@ func init() {
 	f.StringVar(&importGPArchiveZipPath, "zip", gpArchiveDefaultZip, "historical GP archive zip (empty disables zip import)")
 	f.BoolVar(&importGPArchiveSkipZip, "skip-zip", false, "skip the historical zip and import JSON sources only")
 	f.StringVar(&importGPArchiveZipShard, "zip-shard", "", "import ZIP shard i/N using zero-based CSV entry ordinals")
+	f.StringVar(&importGPArchiveJSONShard, "json-shard", "", "import JSON history shard i/N using NORAD_CAT_ID modulo N")
 	f.BoolVar(&importGPArchiveHistoryOnly, "history-only", false, "write history only; skip JSON, catalog, and OEM tiers")
 	f.StringVar(&importGPArchiveWindowsRoot, "windows", gpArchiveDefaultWindows, "gp_history window root")
 	f.StringVar(&importGPArchiveLedger, "ledger", gpArchiveDefaultLedger, "Space-Track ledger")
@@ -91,6 +92,8 @@ type gpArchiveOptions struct {
 	SkipZip, HistoryOnly                                                bool
 	ZipShard                                                            string
 	ZipShardIndex, ZipShardCount                                        int
+	JSONShard                                                           string
+	JSONShardIndex, JSONShardCount                                      int
 	deriver                                                             gpEpochDeriver
 	moduleHash                                                          string
 }
@@ -349,8 +352,12 @@ type gpEpochReport struct {
 type gpWASMEpochDeriver struct{ module *modulert.Module }
 
 func runImportGPArchive(cmd *cobra.Command, _ []string) error {
-	batchSize := effectiveGPArchiveBatchSize(importGPArchiveZipShard, importGPArchiveBatchSize, cmd.Flags().Changed("batch-size"))
-	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: batchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, ZipShard: importGPArchiveZipShard}
+	shard := importGPArchiveZipShard
+	if strings.TrimSpace(shard) == "" {
+		shard = importGPArchiveJSONShard
+	}
+	batchSize := effectiveGPArchiveBatchSize(shard, importGPArchiveBatchSize, cmd.Flags().Changed("batch-size"))
+	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: batchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, ZipShard: importGPArchiveZipShard, JSONShard: importGPArchiveJSONShard}
 	if err := opts.normalize(); err != nil {
 		return err
 	}
@@ -479,6 +486,7 @@ func (o *gpArchiveOptions) normalize() error {
 	o.SATCATPath = strings.TrimSpace(o.SATCATPath)
 	o.EpochStateModule = strings.TrimSpace(o.EpochStateModule)
 	o.ZipShard = strings.TrimSpace(o.ZipShard)
+	o.JSONShard = strings.TrimSpace(o.JSONShard)
 	if o.Out == "" {
 		return fmt.Errorf("--out is required")
 	}
@@ -488,20 +496,30 @@ func (o *gpArchiveOptions) normalize() error {
 	if o.MaxZipEntries < 0 || o.MaxWindowFiles < 0 {
 		return fmt.Errorf("sample limits must be >= 0")
 	}
+	if o.ZipShard != "" && o.JSONShard != "" {
+		return fmt.Errorf("--zip-shard and --json-shard are mutually exclusive")
+	}
 	if o.ZipShard != "" {
-		parts := strings.Split(o.ZipShard, "/")
-		if len(parts) != 2 {
-			return fmt.Errorf("--zip-shard must be i/N")
-		}
-		index, indexErr := strconv.Atoi(parts[0])
-		count, countErr := strconv.Atoi(parts[1])
-		if indexErr != nil || countErr != nil || count <= 0 || index < 0 || index >= count {
-			return fmt.Errorf("--zip-shard must satisfy 0 <= i < N")
+		index, count, err := parseGPArchiveShard("--zip-shard", o.ZipShard)
+		if err != nil {
+			return err
 		}
 		o.ZipShardIndex, o.ZipShardCount = index, count
 		o.HistoryOnly = true
 		if o.SkipZip || o.ZipPath == "" {
 			return fmt.Errorf("--zip-shard requires ZIP import")
+		}
+	}
+	if o.JSONShard != "" {
+		index, count, err := parseGPArchiveShard("--json-shard", o.JSONShard)
+		if err != nil {
+			return err
+		}
+		o.JSONShardIndex, o.JSONShardCount = index, count
+		o.HistoryOnly = true
+		o.SkipZip = true
+		if o.LedgerPath == "" {
+			return fmt.Errorf("--json-shard requires --ledger")
 		}
 	}
 	if o.CheckpointPath == "" {
@@ -513,9 +531,25 @@ func (o *gpArchiveOptions) normalize() error {
 	return nil
 }
 
+func parseGPArchiveShard(flag, value string) (int, int, error) {
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("%s must be i/N", flag)
+	}
+	index, indexErr := strconv.Atoi(parts[0])
+	count, countErr := strconv.Atoi(parts[1])
+	if indexErr != nil || countErr != nil || count <= 0 || index < 0 || index >= count {
+		return 0, 0, fmt.Errorf("%s must satisfy 0 <= i < N", flag)
+	}
+	return index, count, nil
+}
+
 func (o gpArchiveOptions) historySourceName() string {
 	if o.ZipShardCount > 0 {
 		return fmt.Sprintf("gp-history-zip-shard-%d-of-%d", o.ZipShardIndex, o.ZipShardCount)
+	}
+	if o.JSONShardCount > 0 {
+		return fmt.Sprintf("gp-history-json-shard-%d-of-%d", o.JSONShardIndex, o.JSONShardCount)
 	}
 	return gpArchiveHistorySource
 }
@@ -614,7 +648,7 @@ func importGPArchive(ctx context.Context, opts gpArchiveOptions, sink gpArchiveS
 			return stopImport()
 		}
 	}
-	if opts.HistoryOnly {
+	if opts.HistoryOnly && opts.JSONShardCount == 0 {
 		if err = progress.save(true); err != nil {
 			return finish(err)
 		}
@@ -646,6 +680,13 @@ func importGPArchive(ctx context.Context, opts gpArchiveOptions, sink gpArchiveS
 		if ctx.Err() != nil {
 			return stopImport()
 		}
+	}
+	if opts.HistoryOnly {
+		if err = progress.save(true); err != nil {
+			return finish(err)
+		}
+		report.Sources = sortedGPArchiveSources(sources)
+		return finish(nil)
 	}
 	if err = foldGPArchiveShardCheckpoints(opts, cp, sources, report); err != nil {
 		return finish(err)
@@ -1120,7 +1161,7 @@ func importGPArchiveWindows(ctx context.Context, opts gpArchiveOptions, windows 
 		src.RowsStored = report.MPEStored - beforeStored
 		src.RowsRejected = report.RowsRejected - beforeRejected
 		sources[src.ID] = src
-		if err = upsertGPHistoryLicense(sink, sourceTags(src, gpArchiveHistorySource)); err != nil {
+		if err = upsertGPHistoryLicense(sink, sourceTags(src, opts.historySourceName())); err != nil {
 			return err
 		}
 		cp.CompletedWindowFiles[w.File] = actual
@@ -1169,7 +1210,7 @@ func importGPArchiveSnapshots(ctx context.Context, opts gpArchiveOptions, snapsh
 		src.RowsStored = report.MPEStored - beforeStored
 		src.RowsRejected = report.RowsRejected - beforeRejected
 		sources[src.ID] = src
-		if err = upsertGPHistoryLicense(sink, sourceTags(src, gpArchiveHistorySource)); err != nil {
+		if err = upsertGPHistoryLicense(sink, sourceTags(src, opts.historySourceName())); err != nil {
 			return err
 		}
 		cp.CompletedGPFiles[snapshot.File] = actual
@@ -1215,6 +1256,9 @@ func importGPArchiveJSONWindow(ctx context.Context, raw []byte, opts gpArchiveOp
 			report.RejectedReasons[reason]++
 			continue
 		}
+		if opts.JSONShardCount > 0 && int(rec.NORAD%uint32(opts.JSONShardCount)) != opts.JSONShardIndex {
+			continue
+		}
 		if rec.GPID != "" {
 			if string(raw.CreationDate) == lastCreationDate {
 				currentIDs = append(currentIDs, rec.GPID)
@@ -1239,7 +1283,9 @@ func importGPArchiveJSONWindow(ctx context.Context, raw []byte, opts gpArchiveOp
 			}
 			continue
 		}
-		observeGPLatest(cp, rec, mpe, cid, sourceID, "json", tie)
+		if opts.JSONShardCount == 0 {
+			observeGPLatest(cp, rec, mpe, cid, sourceID, "json", tie)
+		}
 		if sourceKind == "gp" && rec.GPID != "" {
 			cp.SnapshotGPIDs[rec.GPID] = true
 		}
