@@ -24,14 +24,19 @@ const MUTED = "rgba(245,245,247,0.55)";
 const SANS = '-apple-system, "SF Pro Display", system-ui, "Helvetica Neue", Arial, sans-serif';
 const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
 const D = Math.PI / 180;
-// Chapter starts, in seconds. Ignition and the catalog run from 0.
-const T_FORMAT = 7.2; // the old two-line format
-const T_STD = 10.0; // Space Data Standards
-const T_KEYS = 15.2; // keys, digital signatures, encryption
-const T_SIGN = T_KEYS + 2.6;
-const T_SEAL = T_KEYS + 5.2;
-const T_NET = 23.0; // the network and the storefront
-const T_CONJ = 30.6; // conjunction
+// The through line: three shifts, each a problem struck through and rewritten
+// as the network's answer. Chapter starts and the moments each word turns, in
+// seconds; ignition and the crowded sky run from 0.
+const T_ORG = 7.0; // disorganized → organized
+const M1 = T_ORG + 2.5;
+const T_SLOW = 13.4; // slow → fast
+const M2 = 15.45;
+const T_NET = 16.0; // …fast, on the network
+const T_STORE = T_NET + 3.9; // the storefront
+const T_SEC = 23.0; // insecure, unattributed → secure, attributed
+const M3 = T_SEC + 2.2;
+const T_SEAL = T_SEC + 5.0;
+const T_CONJ = 30.4; // the payoff: a close approach everyone can see
 const T_TCA = T_CONJ + 4.6;
 const T_END = 39.0; // pull back to the lockup
 // Text content (counters, scrambled glyphs) follows the frame, not the
@@ -206,10 +211,10 @@ const HOPS = (() => {
 // Listings on the storefront beat: node, what it offers, free or for sale,
 // and where the tag sits relative to the node (negative dx: tag to the left).
 const STORE = [
-  [17, "OD MODULE", "FOR SALE", 34, -62],
-  [5, "OCM CATALOG", "FREE", -40, -76],
-  [16, "RADAR TRACKS", "FOR SALE", 34, 52],
-  [3, "SCREENING SERVICE", "FOR SALE", -40, 44],
+  [17, "ORBIT SOFTWARE", "FOR SALE", 34, -78],
+  [5, "SATELLITE ORBITS", "FREE", -40, -76],
+  [16, "RADAR TRACKING", "FOR SALE", 34, 52],
+  [3, "COLLISION ALERTS", "FOR SALE", -40, 72],
   [15, "SPACE WEATHER", "FREE", 34, -56],
 ];
 
@@ -236,17 +241,16 @@ function ringRadius(t) {
   return lerp(150, 430, grow);
 }
 
-// Where the camera rests from the catalog through the crypto chapter.
+// Where the camera rests from the crowded sky through the slow half.
 function catalogCamera(t) {
   const k = easeInOutCubic(seg(t, 1.6, 5.0));
   const lon = lerp(-62, -30, k) + 12 * seg(t, 5.0, T_NET);
   const lat = lerp(18, 26, k);
   const d0 = distForRadius(ringRadius(Math.min(t, 2.25)));
-  const dist = lerp(d0, 7.4, easeInOutCubic(seg(t, 2.35, 4.6))) - 0.7 * easeInOutCubic(seg(t, 4.9, T_FORMAT));
+  const dist = lerp(d0, 7.4, easeInOutCubic(seg(t, 2.35, 4.6))) - 0.7 * easeInOutCubic(seg(t, 4.9, T_ORG));
   const s = easeInOutCubic(seg(t, 4.85, 5.55));
-  // A zoom kick on each hard cut into a chapter.
-  let zoom = 1;
-  for (const c of [T_STD, T_KEYS]) if (t >= c) zoom += 0.18 * (1 - easeOutExpo(seg(t, c, c + 0.5)));
+  // A zoom kick on the hard cut into the slow half.
+  const zoom = t >= T_SLOW ? 1 + 0.18 * (1 - easeOutExpo(seg(t, T_SLOW, T_SLOW + 0.5))) : 1;
   return { dir: geoDir(lat, lon, 0), dist, off: [0.36 * s, -0.03 * s], zoom };
 }
 
@@ -259,10 +263,12 @@ function cameraAt(t) {
   if (t < T_NET) {
     ({ dir, dist, off, zoom } = catalogCamera(t));
   } else if (t < T_CONJ) {
-    // Down from the resting pose to a hemisphere of nodes, then a slow pan east.
+    // A whip down to a hemisphere of nodes, then a slow pan east; it rests
+    // there, blurred, under the third shift.
     const from = catalogCamera(T_NET);
-    const k = easeInOutCubic(seg(t, T_NET, T_NET + 1.4));
-    const p = seg(t, T_NET, T_CONJ);
+    const k = easeOutExpo(seg(t, T_NET, T_NET + 1.1));
+    const p = seg(t, T_NET, T_SEC);
+    if (t >= T_SEC) zoom = 1 + 0.18 * (1 - easeOutExpo(seg(t, T_SEC, T_SEC + 0.5)));
     dir = norm(mix3(from.dir, geoDir(lerp(30, 36, p), lerp(-58, -34, p), spin), k));
     dist = lerp(from.dist, 2.75, k);
     off = [lerp(from.off[0], 0.42, k), lerp(from.off[1], -0.1, k)];
@@ -654,7 +660,7 @@ export async function createShowreel(base = "") {
     const s = Math.floor(frame / FPS);
     sx.textAlign = "right";
     sx.fillText(`00:00:${String(s).padStart(2, "0")}:${String(f).padStart(2, "0")}`, W - m - 12, m + 30);
-    sx.fillText("1920 × 1080 · 30 FPS · DIGITALLY SIGNED", W - m - 12, H - m - 16);
+    sx.fillText("SPACEDATANETWORK.ORG", W - m - 12, H - m - 16);
     sx.restore();
   }
 
@@ -792,12 +798,6 @@ export async function createShowreel(base = "") {
       path.forEach(([x, y], i) => (i ? gx.lineTo(x / 2, y / 2) : gx.moveTo(x / 2, y / 2)));
       gx.stroke();
     }
-  }
-  // A beat's headline: two big lines and a caps line under them, left column.
-  function headline(a, b, sub, t0, t1, t) {
-    maskText(sx, a, 150, 430, 80, 700, INK, t0, t1 - 0.32, t, { tracking: -2, outDur: 0.28 });
-    maskText(sx, b, 150, 522, 80, 700, AMBER, t0 + 0.13, t1 - 0.3, t, { tracking: -2, outDur: 0.28 });
-    maskText(sx, sub, 154, 590, 17, 600, MUTED, t0 + 0.4, t1 - 0.28, t, { tracking: 3, outDur: 0.28 });
   }
   function stamp(cx, cy, st, alpha) {
     const sc = easeOutBack(st);
@@ -974,10 +974,10 @@ export async function createShowreel(base = "") {
       const s = mul(p, 1.004);
       return occluded(cam, s) ? null : project(cam, s);
     };
-    // links
+    // links: the whole mesh lights up fast
     LINKS.forEach(([i, j], k) => {
-      const t0 = n0 + 0.45 + k * 0.035;
-      const draw = easeInOutCubic(seg(t, t0, t0 + 0.6));
+      const t0 = n0 + 0.25 + k * 0.02;
+      const draw = easeInOutCubic(seg(t, t0, t0 + 0.35));
       if (draw <= 0) return;
       strokeArc(cam, P[i], P[j], draw, AMBER, 1.4, alpha * 0.55, AMBER, alpha * 0.35);
       // packets riding the link once it exists
@@ -999,8 +999,8 @@ export async function createShowreel(base = "") {
     });
     // nodes
     P.forEach((p, i) => {
-      const t0 = n0 + 0.1 + i * 0.04;
-      const k = seg(t, t0, t0 + 0.5);
+      const t0 = n0 + 0.05 + i * 0.025;
+      const k = seg(t, t0, t0 + 0.4);
       if (k <= 0) return;
       const q = screen(p);
       if (!q) return;
@@ -1022,16 +1022,16 @@ export async function createShowreel(base = "") {
       dotGlow(q.x, q.y, 16 * sc, AMBER, alpha * 0.45);
     });
 
-    // One record, published once, fans out hop by hop.
-    const P0 = n0 + 3.15;
-    const HOP = 0.3;
-    const wave = alpha * seg(t, P0 - 0.3, P0) * (1 - seg(t, n0 + 4.8, n0 + 5.15));
+    // New orbit data, published once, races out hop by hop.
+    const P0 = n0 + 0.9;
+    const HOP = 0.22;
+    const wave = alpha * seg(t, P0 - 0.3, P0) * (1 - seg(t, n0 + 3.4, n0 + 3.75));
     if (wave > 0) {
       LINKS.forEach(([i, j]) => {
         if (HOPS[i] === HOPS[j]) return;
         const [a, b] = HOPS[i] < HOPS[j] ? [i, j] : [j, i];
         const t0 = P0 + HOPS[a] * HOP;
-        const f = easeInOutCubic(seg(t, t0, t0 + 0.34));
+        const f = easeInOutCubic(seg(t, t0, t0 + 0.3));
         if (f <= 0) return;
         strokeArc(cam, P[a], P[b], f, "#fff1d0", 2.4, wave * 0.9, AMBER, wave * 0.7, 40);
         if (f < 1) {
@@ -1044,7 +1044,7 @@ export async function createShowreel(base = "") {
         }
       });
       P.forEach((p, i) => {
-        const landed = P0 + HOPS[i] * HOP + (HOPS[i] ? 0.34 : 0);
+        const landed = P0 + HOPS[i] * HOP + (HOPS[i] ? 0.3 : 0);
         const k = seg(t, landed, landed + 0.6);
         if (k <= 0 || k >= 1) return;
         const q = screen(p);
@@ -1059,39 +1059,37 @@ export async function createShowreel(base = "") {
         sx.restore();
         dotGlow(q.x, q.y, 30 * (1 - k), AMBER, wave * (1 - k));
       });
-      // the content address rides beside the publishing node
       const q = screen(P[SOURCE]);
-      const ta = wave * seg(t, P0 - 0.2, P0 + 0.1);
+      const ta = wave * seg(t, P0 - 0.25, P0);
       if (q && ta > 0) {
-        const lx = q.x + 34;
-        const ly = q.y - 58;
+        const label = "NEW ORBIT DATA";
         sx.save();
         sx.globalAlpha = ta;
+        sx.font = font(600, 14, SANS);
+        sx.letterSpacing = "2.5px";
+        const w = sx.measureText(label).width + 40;
+        const lx = q.x + 34;
+        const ly = q.y - 76;
         sx.strokeStyle = "rgba(245,245,247,0.6)";
         sx.lineWidth = 1.2;
         sx.beginPath();
         sx.moveTo(q.x, q.y);
-        sx.lineTo(lx - 6, ly + 10);
+        sx.lineTo(lx + 16, ly + 34);
         sx.stroke();
-        sx.font = font(600, 13, SANS);
-        sx.letterSpacing = "2.5px";
-        sx.fillStyle = MUTED;
+        pill(lx, ly, w, 34, AMBER, "rgba(0,0,0,0.62)");
+        sx.fillStyle = AMBER;
         sx.textAlign = "left";
-        sx.fillText("PUBLISHED ONCE · CONTENT ADDRESS", lx, ly - 12);
-        sx.font = font(500, 17, MONO);
-        sx.letterSpacing = "0.5px";
-        sx.fillStyle = INK;
-        decodeText(sx, "bafkreih4v6ogq2c7xzfx3yfwq…", lx, ly + 14, P0 - 0.2, 0.4, t, 61);
+        sx.fillText(label, lx + 20, ly + 22.5);
         sx.restore();
       }
     }
 
     // The storefront: listings, free or for sale, straight from each node.
-    const S0 = n0 + 5.35;
+    const S0 = T_STORE + 0.25;
     STORE.forEach(([i, name, price, dx, dy], k) => {
       const t0 = S0 + k * 0.12;
       const pop = seg(t, t0, t0 + 0.35);
-      const a = alpha * clamp(pop * 3) * (1 - seg(t, T_CONJ - 0.45, T_CONJ - 0.2));
+      const a = alpha * clamp(pop * 3) * (1 - seg(t, T_SEC - 0.45, T_SEC - 0.2));
       if (a <= 0) return;
       const q = screen(P[i]);
       if (!q) return;
@@ -1133,368 +1131,484 @@ export async function createShowreel(base = "") {
     });
   }
 
-  // ------------------------------------------------------ the old format
-  const TLE = [
-    "1 25544U 98067A   26268.50000000  .00016717  00000+0  30306-3 0  9995",
-    "2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.49815361467582",
-  ];
-  function drawFormat(t) {
-    const f0 = T_FORMAT;
-    const f1 = T_STD;
-    if (t < f0 || t > f1 + 0.05) return;
-    const out = easeInExpo(seg(t, f1 - 0.32, f1 - 0.02));
-    const alpha = 1 - out;
-    const x0 = 150;
-    const ys = [490, 544];
-    maskText(sx, "THE MOST USED ORBIT FORMAT", x0, 254, 17, 600, AMBER, f0 + 0.05, f1 - 0.42, t, { tracking: 3, outDur: 0.3 });
-    maskText(sx, "The data hasn’t kept up.", x0, 350, 80, 700, INK, f0 + 0.1, f1 - 0.4, t, { tracking: -2, outDur: 0.3 });
-    // The two-line set types on, then scrambles on the way out.
-    sx.save();
-    sx.font = font(500, 32, MONO);
-    sx.letterSpacing = "0px";
-    sx.textAlign = "left";
-    const cw = sx.measureText("0").width;
-    const R = rng(900 + Math.round(FRAME_T * 30));
-    TLE.forEach((line, li) => {
-      const t0 = f0 + 0.2 + li * 0.32;
-      const n = Math.floor(clamp((FRAME_T - t0) / 0.5) * line.length);
-      if (n <= 0) return;
-      let str = "";
-      for (let c = 0; c < n; c++) str += out > 0 && line[c] !== " " && R() < out * 1.6 ? GLYPHS[Math.floor(R() * GLYPHS.length)] : line[c];
-      sx.globalAlpha = alpha;
-      sx.fillStyle = INK;
-      sx.fillText(str, x0, ys[li]);
-      const hk = seg(t, f0 + 1.35, f0 + 1.5);
-      if (hk > 0 && n >= 7 && out === 0) {
-        sx.globalAlpha = hk;
-        sx.fillStyle = AMBER;
-        sx.fillText(line.slice(2, 7), x0 + 2 * cw, ys[li]);
-      }
-      if (n < line.length) {
-        sx.globalAlpha = 1;
-        sx.fillStyle = AMBER;
-        sx.fillRect(x0 + n * cw + 2, ys[li] - 25, cw * 0.62, 31);
+  // ------------------------------------------------------ the through line
+  // Type always sits lower left: an eyebrow, one or two big lines, a caption.
+  const LX = 150;
+  const CAP_Y = 952;
+  const BIG = 96;
+  const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#%&*+=/<>";
+  const lineYs = (n) => Array.from({ length: n }, (_, i) => 870 - (n - 1 - i) * 100);
+  function caption(text, kind, tIn, tOut, t) {
+    const a = easeOutExpo(seg(t, tIn, tIn + 0.4)) * (tOut == null ? 1 : 1 - easeInExpo(seg(t, tOut, tOut + 0.28)));
+    if (kind) badge(kind, LX + 11, CAP_Y - 6, 22, kind === "cross" ? RED : AMBER, a);
+    maskText(sx, text, LX + (kind ? 34 : 2), CAP_Y, 17, 600, kind === "check" ? "rgba(245,245,247,0.85)" : MUTED, tIn, tOut, t, { tracking: 3, outDur: 0.28 });
+  }
+  function block(lines, cap, tIn, tOut, t, px = 88) {
+    const ys = lineYs(lines.length);
+    lines.forEach(([text, color], i) => maskText(sx, text, LX, ys[i], px, 700, color, tIn + i * 0.13, tOut + i * 0.03, t, { tracking: -2.5, outDur: 0.28 }));
+    if (cap) caption(cap, null, tIn + 0.4, tOut + 0.06, t);
+  }
+  // One shift: "TODAY" and the problem, struck through, scrambled and
+  // rewritten as the network's answer.
+  function shiftBlock(sh, t) {
+    const ys = lineYs(sh.before.length);
+    const eyeY = ys[0] - 100;
+    maskText(sx, "TODAY", LX + 2, eyeY, 17, 600, MUTED, sh.tIn, sh.tMorph + 0.1, t, { tracking: 3.5, outDur: 0.2 });
+    maskText(sx, "ON THE NETWORK", LX + 2, eyeY, 17, 600, AMBER, sh.tMorph + 0.3, sh.tOut, t, { tracking: 3.5, outDur: 0.28 });
+    sh.before.forEach((b, i) => {
+      const a = sh.after[i];
+      const y = ys[i];
+      const s0 = sh.tMorph + 0.2 + i * 0.08;
+      const s1 = s0 + 0.4;
+      if (t < s0) {
+        maskText(sx, b, LX, y, BIG, 700, "rgba(245,245,247,0.5)", sh.tIn + 0.08 + i * 0.1, null, t, { tracking: -3 });
+        const k = easeOutExpo(seg(t, sh.tMorph + i * 0.06, sh.tMorph + i * 0.06 + 0.18));
+        if (k > 0) {
+          sx.save();
+          sx.font = font(700, BIG);
+          sx.letterSpacing = "-3px";
+          const w = sx.measureText(b).width;
+          sx.strokeStyle = RED;
+          sx.lineWidth = 6;
+          sx.lineCap = "round";
+          sx.beginPath();
+          sx.moveTo(LX - 6, y - BIG * 0.3);
+          sx.lineTo(LX - 6 + (w + 12) * k, y - BIG * 0.3);
+          sx.stroke();
+          sx.restore();
+          dotGlow(LX + w * k, y - BIG * 0.3, 30, RED, 0.3 * (1 - k * 0.5));
+        }
+      } else if (t < s1) {
+        const k = seg(FRAME_T, s0, s1);
+        const R = rng(300 + i * 17 + Math.round(FRAME_T * 30));
+        const n = Math.max(b.length, a.length);
+        let str = "";
+        for (let c = 0; c < n; c++) {
+          const th = c / n;
+          if (k > th * 0.6 + 0.4) str += a[c] ?? "";
+          else if (k > th * 0.6) str += (a[c] ?? b[c]) === " " ? " " : LETTERS[Math.floor(R() * LETTERS.length)];
+          else str += b[c] ?? "";
+        }
+        sx.save();
+        sx.font = font(700, BIG);
+        sx.letterSpacing = "-3px";
+        sx.fillStyle = INK;
+        sx.textAlign = "left";
+        sx.fillText(str, LX, y);
+        sx.restore();
+      } else {
+        maskText(sx, a, LX, y, BIG, 700, AMBER, s1 - 5, sh.tOut + i * 0.03, t, { tracking: -3, outDur: 0.3 });
       }
     });
-    sx.restore();
-
+    caption(sh.why, "cross", sh.tIn + 0.35, sh.tMorph + 0.1, t);
+    caption(sh.fix, "check", sh.tMorph + 0.45, sh.fixOut ?? sh.tOut, t);
+  }
+  const SHIFTS = [
+    {
+      before: ["Disorganized."],
+      after: ["Organized."],
+      why: "EVERY SOURCE HAS ITS OWN WEBSITE, LOGIN AND FILE TYPE",
+      fix: "ONE OPEN STANDARD ANY SOFTWARE CAN READ",
+      tIn: T_ORG + 0.1,
+      tMorph: M1,
+      tOut: T_SLOW - 0.4,
+    },
+    {
+      before: ["Slow."],
+      after: ["Fast."],
+      why: "EVERYONE DOWNLOADS THE SAME BIG FILES, AGAIN AND AGAIN",
+      fix: "PUBLISHED ONCE, PASSED FROM NODE TO NODE",
+      tIn: T_SLOW + 0.1,
+      tMorph: M2,
+      tOut: T_STORE - 0.35,
+    },
+    {
+      before: ["Insecure.", "Unattributed."],
+      after: ["Secure.", "Attributed."],
+      why: "NO PROOF OF WHO MADE A FILE, OR THAT NOBODY CHANGED IT",
+      fix: "DIGITALLY SIGNED AT THE SOURCE, CHECKED BY EVERY NODE",
+      tIn: T_SEC + 0.1,
+      tMorph: M3,
+      tOut: T_CONJ - 0.4,
+      fixOut: T_SEAL - 0.3,
+    },
+  ];
+  // A corner badge with a question mark: nobody knows where this came from.
+  function questionBadge(cx, cy, size, alpha) {
+    if (alpha <= 0) return;
     sx.save();
     sx.globalAlpha = alpha;
-    sx.strokeStyle = "rgba(245,245,247,0.7)";
-    sx.lineWidth = 1.5;
-    // 69 characters: a bracket over the first line
-    const a1 = easeOutExpo(seg(t, f0 + 1.0, f0 + 1.35));
-    if (a1 > 0) {
-      const y = ys[0] - 42;
-      const x1 = x0 + 69 * cw;
-      sx.beginPath();
-      sx.moveTo(x0, y + 9);
-      sx.lineTo(x0, y);
-      sx.lineTo(lerp(x0, x1, a1), y);
-      if (a1 > 0.98) sx.lineTo(x1, y + 9);
-      sx.stroke();
-    }
-    // the catalog number: a bracket under columns 3–7 of the second line
-    const a2 = easeOutExpo(seg(t, f0 + 1.3, f0 + 1.6));
-    if (a2 > 0) {
-      const bx0 = x0 + 2 * cw;
-      const bx1 = x0 + 7 * cw;
-      const y = ys[1] + 16;
-      sx.strokeStyle = AMBER;
-      sx.beginPath();
-      sx.moveTo(bx0, y - 9);
-      sx.lineTo(bx0, y);
-      sx.lineTo(bx1, y);
-      sx.lineTo(bx1, y - 9);
-      sx.moveTo(bx0 + 20, y);
-      sx.lineTo(bx0 + 20, y + 30 * a2);
-      sx.stroke();
-    }
+    sx.fillStyle = "rgba(0,0,0,0.85)";
+    sx.strokeStyle = RED;
+    sx.lineWidth = 1.7 * (size / 24);
+    sx.beginPath();
+    sx.arc(cx, cy, size * 0.4, 0, Math.PI * 2);
+    sx.fill();
+    sx.stroke();
+    sx.fillStyle = RED;
+    sx.font = font(700, size * 0.55, SANS);
+    sx.letterSpacing = "0px";
+    sx.textAlign = "center";
+    sx.fillText("?", cx, cy + size * 0.2);
     sx.restore();
-    maskText(sx, "69 CHARACTERS · LAID OUT FOR PUNCH CARDS", x0, ys[0] - 56, 15, 600, INK, f0 + 1.08, f1 - 0.36, t, { tracking: 3, outDur: 0.3 });
-    maskText(sx, "FIVE-DIGIT CATALOG NUMBERS · RUNNING OUT", x0 + 2 * cw, ys[1] + 74, 15, 600, AMBER, f0 + 1.42, f1 - 0.35, t, { tracking: 3, outDur: 0.3 });
-    badge("cross", x0 + 14, 706, 30, RED, alpha * easeOutExpo(seg(t, f0 + 1.72, f0 + 1.95)));
-    maskText(sx, "NO FIELD FOR UNCERTAINTY", x0 + 42, 712, 17, 600, INK, f0 + 1.74, f1 - 0.34, t, { tracking: 3, outDur: 0.3 });
   }
 
-  // --------------------------------------------------- the standards chapter
-  const LANGS = ["C++", "C#", "Dart", "Go", "Java", "JavaScript", "Kotlin", "Lobster", "PHP", "Python", "Rust", "Swift", "TypeScript"];
-  function drawStandards(t) {
-    const s0 = T_STD;
-    const recOut = s0 + 2.85;
-    if (t < s0 || t > T_KEYS + 0.05) return;
-    const inK = seg(t, s0, s0 + 0.175);
-    const outK = easeInExpo(seg(t, recOut, recOut + 0.2));
-    if (inK > 0 && outK < 1) {
-      const x0 = 180 - outK * 260;
-      const y0 = 250;
-      sx.save();
-      sx.globalAlpha = 1 - outK;
-      // grid hairlines that draw on
-      const grid = easeOutExpo(seg(t, s0, s0 + 0.35));
-      sx.strokeStyle = "rgba(245,245,247,0.14)";
-      sx.lineWidth = 1;
-      for (let i = 0; i < 12; i++) {
-        const y = y0 + 34 + i * 46;
+  // --------------------------------------- shift 1: disorganized → organized
+  // Where space data lives today: separate sites, logins and file types.
+  const SOURCES = [
+    [1230, 300, 250, 150, -6, "login", "WEB PORTAL", false],
+    [1540, 250, 220, 160, 4, "text", "TEXT FILE", true],
+    [1780, 380, 170, 130, -3, "doc", "PDF", false],
+    [1190, 530, 230, 150, 3, "sheet", "SPREADSHEET", true],
+    [1480, 500, 210, 140, -8, "mail", "EMAIL", false],
+    [1760, 620, 180, 150, 6, "login", "LOGIN", false],
+    [1250, 760, 240, 150, -4, "text", "TEXT FILE", false],
+    [1520, 770, 230, 160, 7, "sheet", "DOWNLOAD", true],
+    [1780, 840, 160, 120, -5, "doc", "ARCHIVE", false],
+  ];
+  const GRID_NAMES = ["HUBBLE", "TIANGONG", "NOAA 20", "AQUA", "ISS", "SENTINEL-2A", "GOES-16", "TERRA", "LANDSAT 9"];
+  const JIT = SOURCES.map((_, i) => {
+    const R = rng(500 + i);
+    return [(R() - 0.5) * 320, (R() - 0.5) * 220, R() * 6, R()];
+  });
+  function kindBody(kind, L, T, w, h, seed) {
+    const R = rng(seed);
+    sx.strokeStyle = "rgba(245,245,247,0.3)";
+    sx.fillStyle = "rgba(245,245,247,0.35)";
+    sx.lineWidth = 1.2;
+    if (kind === "login") {
+      for (let j = 0; j < 2; j++) {
         sx.beginPath();
-        sx.moveTo(x0, y);
-        sx.lineTo(x0 + 860 * grid, y);
+        sx.roundRect(L + 16, T + 14 + j * 28, w - 32, 20, 4);
         sx.stroke();
       }
+      sx.fillStyle = "rgba(245,245,247,0.28)";
       sx.beginPath();
-      sx.moveTo(x0 + 350, y0 + 34);
-      sx.lineTo(x0 + 350, y0 + 34 + 506 * grid);
+      sx.roundRect(L + 16, T + 72, 74, 22, 11);
+      sx.fill();
+    } else if (kind === "text") {
+      for (let y = T + 16; y < T + h - 8; y += 14) sx.fillRect(L + 16, y, (w - 32) * (0.45 + 0.55 * R()), 5);
+    } else if (kind === "sheet") {
+      const gw = w - 28;
+      const gh = h - 20;
+      for (let c = 0; c <= 4; c++) {
+        sx.beginPath();
+        sx.moveTo(L + 14 + (gw * c) / 4, T + 10);
+        sx.lineTo(L + 14 + (gw * c) / 4, T + 10 + gh);
+        sx.stroke();
+      }
+      for (let r = 0; r <= 4; r++) {
+        sx.beginPath();
+        sx.moveTo(L + 14, T + 10 + (gh * r) / 4);
+        sx.lineTo(L + 14 + gw, T + 10 + (gh * r) / 4);
+        sx.stroke();
+      }
+    } else if (kind === "doc") {
+      const x = L + 16;
+      const y = T + 12;
+      sx.beginPath();
+      sx.moveTo(x, y);
+      sx.lineTo(x + 32, y);
+      sx.lineTo(x + 44, y + 12);
+      sx.lineTo(x + 44, y + 56);
+      sx.lineTo(x, y + 56);
+      sx.closePath();
+      sx.moveTo(x + 32, y);
+      sx.lineTo(x + 32, y + 12);
+      sx.lineTo(x + 44, y + 12);
       sx.stroke();
-      // the covariance row lights up: uncertainty travels with the orbit
-      const cov = easeOutExpo(seg(t, s0 + 1.25, s0 + 1.55));
-      if (cov > 0) {
-        const y = y0 + 68 + 8 * 46;
-        sx.fillStyle = "rgba(245,165,36,0.1)";
-        sx.fillRect(x0 - 14, y - 31, 874 * cov, 44);
-        sx.fillStyle = AMBER;
-        sx.fillRect(x0 - 14, y - 31, 3, 44);
-      }
-      sx.restore();
-
-      maskText(sx, "SPACE DATA STANDARDS · ORBIT COMPREHENSIVE MESSAGE", x0, y0 - 84, 17, 600, AMBER, s0 + 0.03, recOut, t, { tracking: 2.5, dur: 0.35, outDur: 0.2 });
-      maskText(sx, "ISS (ZARYA)", x0, y0 - 6, 64, 700, INK, s0 + 0.06, recOut - 0.015, t, { dur: 0.4, outDur: 0.2 });
-      // An Orbit Comprehensive Message: state vector, covariance and physical
-      // properties, not just mean elements.
-      const FIELDS = [
-        ["OBJECT_DESIGNATOR", "25544"],
-        ["INTERNATIONAL_DESIGNATOR", "1998-067A"],
-        ["EPOCH_TZERO", "2026-09-25T12:00:00.000Z"],
-        ["TIME_SYSTEM", "UTC"],
-        ["CENTER · FRAME", "EARTH · EME2000"],
-        ["TRAJ_TYPE", "CARTPV"],
-        ["X  Y  Z  (km)", "4523.712  -3811.204  3294.587"],
-        ["VX VY VZ (km/s)", "3.02411  6.11783  3.55820"],
-        ["COV_TYPE", "CARTPV · 6 × 6"],
-        ["MASS", "420000 kg"],
-        ["MANEUVERABLE", "YES"],
-      ];
-      sx.save();
-      FIELDS.forEach(([k, v], i) => {
-        const y = y0 + 68 + i * 46;
-        const t0 = s0 + 0.15 + i * 0.06;
-        const a = seg(t, t0, t0 + 0.15);
-        if (a <= 0) return;
-        sx.globalAlpha = (1 - outK) * a;
-        sx.font = font(500, 17, MONO);
-        sx.letterSpacing = "0.5px";
-        sx.fillStyle = MUTED;
-        sx.textAlign = "left";
-        sx.fillText(k, x0, y);
-        sx.fillStyle = INK;
-        sx.font = font(500, 22, MONO);
-        decodeText(sx, v, x0 + 372, y, t0 + 0.025, 0.35, t, 100 + i);
-      });
-      sx.restore();
-      const tagK = easeOutExpo(seg(t, s0 + 1.4, s0 + 1.7));
-      if (tagK > 0) {
-        const y = y0 + 68 + 8 * 46;
-        sx.save();
-        sx.globalAlpha = (1 - outK) * tagK;
-        sx.font = font(600, 14, SANS);
-        sx.letterSpacing = "2.5px";
-        const label = "UNCERTAINTY INCLUDED";
-        const w = sx.measureText(label).width + 40;
-        const lx = x0 + 846 - w + (1 - tagK) * 30;
-        pill(lx, y - 26, w, 34, AMBER, "rgba(0,0,0,0.6)");
-        sx.fillStyle = AMBER;
-        sx.textAlign = "left";
-        sx.fillText(label, lx + 20, y - 3.5);
-        sx.restore();
-      }
-
-      // FlatBuffer bytes streaming up the right side
-      const hx = 1180;
-      sx.save();
+      for (let j = 0; j < 4; j++) sx.fillRect(x + 58, y + 6 + j * 13, (w - 90) * (0.5 + 0.5 * R()), 5);
+    } else if (kind === "mail") {
+      const x = L + w / 2 - 45;
+      const y = T + h / 2 - 30;
       sx.beginPath();
-      sx.rect(hx - 10, 170, 620, 720);
-      sx.clip();
-      const scroll = (t - s0) * 120;
-      const hk = seg(t, s0 + 0.03, s0 + 0.23) * (1 - outK);
-      const scanY = 900 - (((t - s0) * 320) % 760);
-      sx.font = font(400, 17, MONO);
-      sx.letterSpacing = "0.5px";
-      HEX.forEach((row, i) => {
-        const y = 200 + i * 28 - scroll;
-        if (y < 160 || y > 900) return;
-        const scan = Math.abs(y - scanY) < 30;
-        sx.globalAlpha = hk * (scan ? 1 : 0.4) * clamp(1 - Math.abs(y - 530) / 380);
-        sx.fillStyle = MUTED;
-        sx.fillText(row.off, hx, y);
-        sx.fillStyle = scan ? CYAN : "rgba(89,217,255,0.75)";
-        sx.fillText(row.bytes.join(" "), hx + 90, y);
-      });
-      sx.restore();
-      maskText(sx, "FLATBUFFERS · 1,184 BYTES", hx, 168, 15, 600, CYAN, s0 + 0.075, recOut - 0.015, t, { tracking: 2.5, dur: 0.35, outDur: 0.2 });
-      const rk = easeOutExpo(seg(t, s0 + 1.7, s0 + 2.0));
-      if (rk > 0) {
-        sx.save();
-        sx.globalAlpha = (1 - outK) * rk;
-        sx.font = font(600, 14, SANS);
-        sx.letterSpacing = "2.5px";
-        const label = "READ IN PLACE · NO PARSING";
-        const w = sx.measureText(label).width + 40;
-        pill(hx, 902 + (1 - rk) * 20, w, 34, CYAN, "rgba(0,0,0,0.6)");
-        sx.fillStyle = CYAN;
-        sx.textAlign = "left";
-        sx.fillText(label, hx + 20, 925.5 + (1 - rk) * 20);
-        sx.restore();
-      }
+      sx.rect(x, y, 90, 56);
+      sx.moveTo(x, y);
+      sx.lineTo(x + 45, y + 32);
+      sx.lineTo(x + 90, y);
+      sx.stroke();
     }
-
-    // Typed schemas, generated code for every major language.
-    const L0 = recOut + 0.15;
-    const L1 = T_KEYS - 0.3;
-    if (t < L0) return;
-    maskText(sx, "Typed binary schemas.", 150, 400, 84, 700, INK, L0, L1, t, { tracking: -2, outDur: 0.28 });
-    maskText(sx, "Code for 13 languages.", 150, 495, 84, 700, AMBER, L0 + 0.13, L1 + 0.03, t, { tracking: -2, outDur: 0.28 });
-    maskText(sx, "ONE SET OF SCHEMAS FOR EVERY KIND OF SPACE DATA", 154, 566, 17, 600, MUTED, L0 + 0.35, L1 + 0.05, t, { tracking: 3, outDur: 0.28 });
-    const out = easeInExpo(seg(t, L1, L1 + 0.25));
-    sx.save();
-    sx.font = font(600, 21, SANS);
-    sx.letterSpacing = "0.5px";
-    sx.textAlign = "center";
-    let x = 150;
-    let y = 640;
-    const h = 48;
-    LANGS.forEach((name, i) => {
-      const w = sx.measureText(name).width + 44;
-      if (x + w > 1770) {
-        x = 150;
-        y += h + 12;
+  }
+  function drawSources(t) {
+    const s0 = T_ORG;
+    const s1 = T_SLOW;
+    if (t < s0 || t > s1 + 0.02) return;
+    const out = easeInExpo(seg(t, s1 - 0.35, s1 - 0.05));
+    const focus = easeInOutExpo(seg(t, s0 + 4.4, s0 + 4.9));
+    const order = [0, 1, 2, 3, 5, 6, 7, 8, 4]; // the ISS card last, so it can grow over the rest
+    order.forEach((i) => {
+      const [cx, cy, w0, h0, rot0, kind, label, unknown] = SOURCES[i];
+      const tin = s0 + 0.12 + i * 0.05;
+      const e = easeOutBack(seg(t, tin, tin + 0.4));
+      if (e <= 0) return;
+      const m = easeInOutExpo(seg(t, M1 + 0.15 + i * 0.03, M1 + 0.75 + i * 0.03));
+      const gx0 = 1245 + (i % 3) * 252;
+      const gy0 = 348 + Math.floor(i / 3) * 172;
+      const [jx, jy, ph] = JIT[i];
+      const wob = 1 - m;
+      let x = lerp(cx + jx * (1 - e), gx0, m) + wob * 7 * Math.sin(t * 2.3 + ph);
+      let y = lerp(cy + jy * (1 - e), gy0, m) + wob * 5 * Math.cos(t * 1.9 + ph * 1.3);
+      const r = lerp(rot0 + 2.5 * Math.sin(t * 1.7 + ph), 0, m) * D;
+      let w = lerp(w0, 230, m);
+      let h = lerp(h0, 150, m);
+      const center = i === 4;
+      const detail = center ? focus : 0;
+      if (center) {
+        w = lerp(w, 560, focus);
+        h = lerp(h, 360, focus);
+        x = lerp(x, 1497, focus);
+        y = lerp(y, 520, focus);
       }
-      const t0 = L0 + 0.45 + i * 0.045;
-      const k = seg(t, t0, t0 + 0.32);
-      if (k > 0 && out < 1) {
-        const sc = easeOutBack(k);
-        sx.save();
-        sx.globalAlpha = (1 - out) * clamp(k * 3);
-        sx.translate(x + w / 2, y + h / 2 - out * 30);
-        sx.scale(sc, sc);
-        pill(-w / 2, -h / 2, w, h, "rgba(245,245,247,0.35)", "rgba(245,245,247,0.05)");
-        sx.fillStyle = INK;
-        sx.fillText(name, 0, 7.5);
-        sx.restore();
+      const a = clamp(e * 2) * (1 - out) * (center ? 1 : 1 - 0.78 * focus);
+      if (a <= 0) return;
+      const L = -w / 2;
+      const T = -h / 2;
+      sx.save();
+      sx.globalAlpha = a;
+      sx.translate(x, y - out * 40);
+      sx.rotate(r);
+      sx.beginPath();
+      sx.roundRect(L, T, w, h, 10);
+      sx.fillStyle = "rgba(16,16,20,0.92)";
+      sx.fill();
+      sx.strokeStyle = m > 0.5 ? `rgba(245,165,36,${0.3 + 0.4 * m})` : "rgba(245,245,247,0.35)";
+      sx.lineWidth = 1.5;
+      sx.stroke();
+      sx.fillStyle = "rgba(245,245,247,0.07)";
+      sx.fillRect(L + 1, T + 1, w - 2, 28);
+      sx.font = font(600, 12, SANS);
+      sx.letterSpacing = "2px";
+      sx.textAlign = "left";
+      if (m < 1) {
+        sx.globalAlpha = a * (1 - m);
+        sx.fillStyle = MUTED;
+        sx.fillText(label, L + 12, T + 19);
+        kindBody(kind, L, T + 28, w, h - 28, 40 + i);
       }
-      x += w + 12;
+      if (m > 0) {
+        sx.globalAlpha = a * m;
+        sx.font = font(600, 12, SANS);
+        sx.letterSpacing = "2px";
+        sx.fillStyle = AMBER;
+        sx.fillText(center && detail > 0.5 ? "INTERNATIONAL SPACE STATION" : GRID_NAMES[i], L + 12, T + 19);
+        // every card the same three rows: where it is, how fast, how sure
+        sx.globalAlpha = a * m * (1 - detail);
+        ["POSITION", "SPEED", "UNCERTAINTY"].forEach((row, j) => {
+          const ry = T + 28 + 30 + j * 30;
+          sx.font = font(600, 11, SANS);
+          sx.letterSpacing = "1.5px";
+          sx.fillStyle = MUTED;
+          sx.fillText(row, L + 14, ry);
+          sx.fillStyle = j === 2 ? "rgba(245,165,36,0.8)" : "rgba(245,245,247,0.55)";
+          sx.fillRect(L + w * 0.52, ry - 7, w * (j === 2 ? 0.22 : 0.36), 6);
+        });
+      }
+      if (detail > 0) {
+        sx.globalAlpha = a * seg(detail, 0.5, 1);
+        [
+          ["AS OF", "25 Sep 2026 · 12:00 UTC"],
+          ["ALTITUDE", "418 km"],
+          ["SPEED", "7.66 km/s"],
+          ["UNCERTAINTY", "± 25 m"],
+        ].forEach(([k, v], j) => {
+          const ry = T + 28 + 72 + j * 70;
+          sx.font = font(600, 15, SANS);
+          sx.letterSpacing = "2.5px";
+          sx.fillStyle = MUTED;
+          sx.fillText(k, L + 28, ry);
+          sx.font = font(600, 28, SANS);
+          sx.letterSpacing = "0px";
+          sx.fillStyle = j === 3 ? AMBER : INK;
+          decodeText(sx, v, L + 200, ry + 2, s0 + 4.75 + j * 0.08, 0.35, t, 70 + j);
+        });
+      }
+      sx.restore();
+      // corner marks: unknown origin before, a check once organized
+      const cxr = x + Math.cos(r) * (w / 2 - 4) - Math.sin(r) * (-h / 2 + 4);
+      const cyr = y - out * 40 + Math.sin(r) * (w / 2 - 4) + Math.cos(r) * (-h / 2 + 4);
+      if (unknown) questionBadge(cxr, cyr, 30, a * (1 - m));
+      const ck = seg(t, M1 + 0.95 + i * 0.04, M1 + 1.25 + i * 0.04);
+      if (ck > 0) badge("check", cxr - 10, cyr + 24, 22 * easeOutBack(ck), AMBER, a * (1 - detail));
     });
-    sx.restore();
   }
 
-  // ------------------------------------------------------ the crypto chapter
-  // Keys: one recovery phrase (never shown) derives every key a node uses.
-  const WORDLEN = (() => {
-    const R = rng(24);
-    return Array.from({ length: 24 }, () => 3 + Math.floor(R() * 6));
-  })();
-  function drawKeys(t) {
-    const k0 = T_KEYS;
-    const k1 = T_SIGN;
-    if (t < k0 || t > k1 + 0.05) return;
-    const out = easeInExpo(seg(t, k1 - 0.3, k1 - 0.05));
-    const alpha = 1 - out;
-    const lift = out * 40;
-    headline("One recovery phrase.", "Every key.", "ENCRYPTED AT REST · BOUND TO YOUR MACHINE", k0 + 0.05, k1, t);
-    const gx0 = 1120;
-    const gy0 = 262;
-    const cw = 150;
-    const ch = 44;
-    maskText(sx, "RECOVERY PHRASE · 24 WORDS", gx0, 230, 15, 600, AMBER, k0 + 0.1, k1 - 0.3, t, { tracking: 3, outDur: 0.28 });
-    const scan = (t - k0 - 0.55) * 1500;
-    sx.save();
-    sx.textAlign = "left";
-    for (let i = 0; i < 24; i++) {
-      const x = gx0 + (i % 4) * (cw + 14);
-      const y0 = gy0 + Math.floor(i / 4) * (ch + 12);
-      const t0 = k0 + 0.15 + i * 0.018;
-      const e = easeOutExpo(seg(t, t0, t0 + 0.25));
-      if (e <= 0) continue;
-      const y = y0 + (1 - e) * 14 - lift;
-      sx.globalAlpha = e * alpha;
-      sx.strokeStyle = "rgba(245,245,247,0.2)";
+  // ------------------------------------------------ shift 2: slow → fast
+  // One website, everyone pulling the same big files, all of it crawling.
+  const USERS = Array.from({ length: 10 }, (_, i) => {
+    const R = rng(80 + i);
+    return { ang: -Math.PI / 2 + (i / 10) * Math.PI * 2 + (R() - 0.5) * 0.3, sp: 0.5 + R() * 0.9, p0: 0.04 + R() * 0.22, ph: R() * 6 };
+  });
+  function drawHub(t) {
+    const h0 = T_SLOW;
+    const h1 = T_NET;
+    if (t < h0 || t > h1 + 0.02) return;
+    const alpha = 1 - easeInExpo(seg(t, h1 - 0.3, h1 - 0.02));
+    const cx = 1480;
+    const cy = 470;
+    USERS.forEach((u, i) => {
+      const ux = cx + Math.cos(u.ang) * 370;
+      const uy = cy + Math.sin(u.ang) * 250;
+      const t0 = h0 + 0.15 + i * 0.04;
+      const k = easeOutExpo(seg(t, t0, t0 + 0.35));
+      if (k <= 0) return;
+      sx.save();
+      sx.globalAlpha = alpha * k * 0.6;
+      sx.strokeStyle = "rgba(245,245,247,0.5)";
       sx.lineWidth = 1.2;
+      sx.setLineDash([4, 6]);
       sx.beginPath();
-      sx.roundRect(x, y, cw, ch, 10);
+      sx.moveTo(cx, cy);
+      sx.lineTo(lerp(cx, ux, k), lerp(cy, uy, k));
       sx.stroke();
+      sx.restore();
+      const prog = (tt) => clamp(u.p0 + 0.1 * u.sp * Math.max(0, tt - t0));
+      const p = prog(t);
+      // the same heavy file, inching out to each user
+      const fx = lerp(cx, ux, 0.3 + 0.45 * p);
+      const fy = lerp(cy, uy, 0.3 + 0.45 * p);
+      sx.save();
+      sx.globalAlpha = alpha * k;
+      sx.fillStyle = "rgba(245,245,247,0.75)";
+      sx.fillRect(fx - 7, fy - 9, 14, 18);
+      sx.fillStyle = "#101014";
+      sx.fillRect(fx - 4, fy - 5, 8, 2);
+      sx.fillRect(fx - 4, fy - 1, 8, 2);
+      // the user, a spinner, a progress bar that barely moves
+      sx.fillStyle = "rgba(245,245,247,0.85)";
+      sx.beginPath();
+      sx.arc(ux, uy, 8 * k, 0, Math.PI * 2);
+      sx.fill();
+      sx.strokeStyle = "rgba(245,245,247,0.55)";
+      sx.lineWidth = 2;
+      sx.lineCap = "round";
+      const a0 = t * 5 + u.ph;
+      sx.beginPath();
+      sx.arc(ux, uy, 17, a0, a0 + 1.6);
+      sx.stroke();
+      sx.fillStyle = "rgba(245,245,247,0.15)";
+      sx.fillRect(ux - 48, uy + 28, 96, 6);
+      sx.fillStyle = "rgba(245,245,247,0.7)";
+      sx.fillRect(ux - 48, uy + 28, 96 * p, 6);
       sx.font = font(500, 13, MONO);
       sx.letterSpacing = "0px";
       sx.fillStyle = MUTED;
-      sx.fillText(String(i + 1).padStart(2, "0"), x + 14, y + 27);
-      const hot = clamp(1 - Math.abs(x + (y0 - gy0) * 0.6 - scan) / 110);
-      for (let d = 0; d < WORDLEN[i]; d++) {
-        sx.fillStyle = INK;
-        sx.globalAlpha = e * alpha * 0.75;
-        sx.beginPath();
-        sx.arc(x + 48 + d * 12, y + ch / 2, 3.2, 0, Math.PI * 2);
-        sx.fill();
-        if (hot > 0) {
-          sx.fillStyle = AMBER;
-          sx.globalAlpha = e * alpha * hot;
-          sx.fill();
-        }
-      }
-    }
-    sx.restore();
-    // Three keys branch off the phrase.
-    const bx = gx0 + (4 * cw + 3 * 14) / 2;
-    const by = gy0 + 6 * ch + 5 * 12 + 6 - lift;
-    const chipY = 712 - lift;
-    const chipW = 250;
-    const chipH = 86;
-    const CHIPS = [
-      ["NODE IDENTITY", "12D3KooWRk9x…Qm7t"],
-      ["SIGNING KEY", "Ed25519 · 7f3a9c21e8…"],
-      ["ENCRYPTION KEY", "X25519 · c84e10b7a2…"],
-    ];
-    CHIPS.forEach(([title, val], j) => {
-      const cx = bx + (j - 1) * 280;
-      const t0 = k0 + 0.75 + j * 0.07;
-      const pts = bezierPts([bx, by], [bx, by + 70], [cx, chipY - 70], [cx, chipY]);
-      strokeOn(pts, easeInOutCubic(seg(t, t0, t0 + 0.4)), AMBER, 1.6, 0.8 * alpha, 0.5 * alpha);
-      const c = seg(t, t0 + 0.3, t0 + 0.6);
-      if (c <= 0) return;
-      sx.save();
-      sx.globalAlpha = alpha * clamp(c * 3);
-      sx.translate(cx, chipY + chipH / 2);
-      const sc = easeOutBack(c);
-      sx.scale(sc, sc);
-      sx.beginPath();
-      sx.roundRect(-chipW / 2, -chipH / 2, chipW, chipH, 14);
-      sx.fillStyle = "rgba(245,245,247,0.05)";
-      sx.fill();
-      sx.strokeStyle = "rgba(245,165,36,0.7)";
-      sx.lineWidth = 1.5;
-      sx.stroke();
-      sx.textAlign = "left";
-      sx.font = font(600, 14, SANS);
-      sx.letterSpacing = "2.5px";
-      sx.fillStyle = INK;
-      sx.fillText(title, -chipW / 2 + 20, -8);
-      sx.font = font(500, 15, MONO);
-      sx.letterSpacing = "0.5px";
-      sx.fillStyle = AMBER;
-      decodeText(sx, val, -chipW / 2 + 20, 22, t0 + 0.45, 0.4, t, 40 + j);
+      sx.textAlign = "center";
+      sx.fillText(`${Math.floor(prog(FRAME_T) * 100)}%`, ux, uy + 54);
       sx.restore();
     });
+    const hk = easeOutBack(seg(t, h0 + 0.05, h0 + 0.4));
+    if (hk > 0) {
+      sx.save();
+      sx.globalAlpha = alpha * clamp(hk * 2);
+      sx.translate(cx, cy);
+      sx.scale(hk, hk);
+      sx.beginPath();
+      sx.roundRect(-100, -58, 200, 116, 14);
+      sx.fillStyle = "rgba(16,16,20,0.95)";
+      sx.fill();
+      sx.strokeStyle = "rgba(245,245,247,0.5)";
+      sx.lineWidth = 1.5;
+      sx.stroke();
+      for (let j = 2; j >= 0; j--) {
+        sx.fillStyle = j ? "rgba(245,245,247,0.25)" : "rgba(245,245,247,0.75)";
+        sx.fillRect(-18 + j * 6, -38 - j * 6, 34, 42);
+      }
+      sx.font = font(600, 13, SANS);
+      sx.letterSpacing = "2.5px";
+      sx.fillStyle = MUTED;
+      sx.textAlign = "center";
+      sx.fillText("ONE WEBSITE", 0, 36);
+      sx.restore();
+    }
   }
 
-  // Digitally signed at the source; every node checks before it stores.
+  // ------------------- shift 3: insecure, unattributed → secure, attributed
+  // A file of unknown origin passes along, is changed on the way, and is
+  // accepted anyway.
+  const CHAIN = [
+    [1160, "SOURCE"],
+    [1380, "WEBSITE"],
+    [1600, "EMAIL"],
+    [1820, "YOUR SYSTEM"],
+  ];
+  function drawChain(t) {
+    const c0 = T_SEC;
+    if (t < c0 || t > M3 + 0.35) return;
+    const alpha = 1 - easeInExpo(seg(t, M3, M3 + 0.3));
+    const cy = 560;
+    CHAIN.forEach(([x, label], i) => {
+      const k = easeOutBack(seg(t, c0 + 0.1 + i * 0.07, c0 + 0.45 + i * 0.07));
+      if (k <= 0) return;
+      sx.save();
+      sx.globalAlpha = alpha * clamp(k * 2);
+      if (i < CHAIN.length - 1) {
+        sx.strokeStyle = "rgba(245,245,247,0.3)";
+        sx.lineWidth = 1.2;
+        sx.setLineDash([4, 6]);
+        sx.beginPath();
+        sx.moveTo(x + 34, cy);
+        sx.lineTo(x + 34 + (CHAIN[i + 1][0] - x - 68) * k, cy);
+        sx.stroke();
+        sx.setLineDash([]);
+      }
+      sx.strokeStyle = "rgba(245,245,247,0.5)";
+      sx.lineWidth = 1.5;
+      sx.beginPath();
+      sx.arc(x, cy, 30 * k, 0, Math.PI * 2);
+      sx.stroke();
+      sx.fillStyle = "rgba(245,245,247,0.8)";
+      sx.beginPath();
+      sx.arc(x, cy, 6 * k, 0, Math.PI * 2);
+      sx.fill();
+      sx.font = font(600, 13, SANS);
+      sx.letterSpacing = "2.5px";
+      sx.fillStyle = MUTED;
+      sx.textAlign = "center";
+      sx.fillText(label, x, cy + 62);
+      sx.restore();
+      if (i === 0) questionBadge(x + 24, cy - 24, 28, alpha * clamp(k * 2));
+    });
+    // the file hops station to station
+    const legs = [0, 1, 2].map((i) => easeInOutCubic(seg(t, c0 + 0.35 + i * 0.42, c0 + 0.65 + i * 0.42)));
+    const fa = alpha * seg(t, c0 + 0.25, c0 + 0.4);
+    if (fa > 0) {
+      let li = 0;
+      while (li < 2 && legs[li] >= 1) li++;
+      const x = lerp(CHAIN[li][0], CHAIN[li + 1][0], legs[li]);
+      const y = cy - 96 - Math.sin(Math.PI * legs[li]) * 40;
+      const altered = legs[1] >= 1 && seg(t, c0 + 1.2, c0 + 1.3) > 0;
+      sx.save();
+      sx.globalAlpha = fa;
+      sx.beginPath();
+      sx.roundRect(x - 44, y - 30, 88, 60, 8);
+      sx.fillStyle = "rgba(16,16,20,0.95)";
+      sx.fill();
+      sx.strokeStyle = "rgba(245,245,247,0.6)";
+      sx.lineWidth = 1.5;
+      sx.stroke();
+      [52, 38, 60].forEach((bw, r) => {
+        sx.fillStyle = altered && r === 1 ? RED : "rgba(245,245,247,0.5)";
+        sx.fillRect(x - 30, y - 14 + r * 13, bw, 5);
+      });
+      sx.restore();
+      questionBadge(x + 42, y - 28, 26, fa);
+      const hit = seg(t, c0 + 1.2, c0 + 1.5);
+      if (hit > 0 && hit < 1) dotGlow(x, y, 60 * (1 - hit), RED, 0.5 * fa);
+    }
+    maskText(sx, "ACCEPTED ANYWAY", CHAIN[3][0], cy - 160, 14, 600, MUTED, c0 + 1.55, M3, t, { tracking: 3, align: "center", outDur: 0.25 });
+  }
+
+  // Digitally signed by its publisher; every node checks before it stores.
   function drawSignVerify(t) {
-    const v0 = T_SIGN;
+    const v0 = M3 + 0.3;
     const v1 = T_SEAL;
     if (t < v0 || t > v1 + 0.05) return;
-    const out = easeInExpo(seg(t, v1 - 0.3, v1 - 0.05));
-    const alpha = 1 - out;
-    headline("Digitally signed", "at the source.", "VERIFIED BEFORE ANY NODE STORES IT", v0 + 0.05, v1, t);
+    const alpha = 1 - easeInExpo(seg(t, v1 - 0.3, v1 - 0.05));
     const cx0 = 1110;
-    const cy0 = 200;
+    const cy0 = 190;
     const cwid = 480;
     const chei = 200;
-    const ck = easeOutExpo(seg(t, v0 + 0.08, v0 + 0.4));
+    const ck = easeOutExpo(seg(t, v0 + 0.05, v0 + 0.35));
     if (ck > 0) {
       sx.save();
       sx.globalAlpha = alpha * ck;
@@ -1510,39 +1624,31 @@ export async function createShowreel(base = "") {
       sx.letterSpacing = "2.5px";
       sx.fillStyle = AMBER;
       sx.textAlign = "left";
-      sx.fillText("OCM · ISS (ZARYA)", -cwid / 2 + 28, -chei / 2 + 42);
-      sx.font = font(500, 13, MONO);
-      sx.letterSpacing = "0.5px";
-      sx.fillStyle = MUTED;
-      sx.textAlign = "right";
-      sx.fillText("1,184 BYTES", cwid / 2 - 28, -chei / 2 + 42);
-      [220, 180, 260, 150].forEach((vw, r) => {
-        const y = -chei / 2 + 76 + r * 28;
-        sx.fillStyle = "rgba(245,245,247,0.28)";
-        sx.fillRect(-cwid / 2 + 28, y, 92, 7);
-        sx.fillStyle = "rgba(245,245,247,0.6)";
-        sx.fillRect(-cwid / 2 + 140, y, vw, 7);
+      sx.fillText("ORBIT UPDATE · ISS", -cwid / 2 + 28, -chei / 2 + 42);
+      [
+        ["PUBLISHED BY", "Station operator"],
+        ["AS OF", "25 Sep 2026 · 12:00 UTC"],
+        ["ALTITUDE", "418 km"],
+      ].forEach(([k, v], r) => {
+        const y = -chei / 2 + 88 + r * 36;
+        sx.font = font(600, 13, SANS);
+        sx.letterSpacing = "2px";
+        sx.fillStyle = MUTED;
+        sx.fillText(k, -cwid / 2 + 28, y);
+        sx.font = font(500, 19, SANS);
+        sx.letterSpacing = "0px";
+        sx.fillStyle = r === 0 ? AMBER : INK;
+        sx.fillText(v, -cwid / 2 + 190, y + 1);
       });
       sx.restore();
     }
-    maskText(sx, "Ed25519 DIGITAL SIGNATURE", cx0, cy0 + chei + 44, 14, 600, MUTED, v0 + 0.4, v1 - 0.3, t, { tracking: 2.5, outDur: 0.28 });
-    sx.save();
-    sx.globalAlpha = alpha;
-    sx.font = font(500, 18, MONO);
-    sx.letterSpacing = "1px";
-    sx.fillStyle = INK;
-    sx.textAlign = "left";
-    decodeText(sx, "3f9a c21e 8b04 77d1 e6a2 09fc 5b3d 11e8", cx0, cy0 + chei + 76, v0 + 0.45, 0.4, t, 31);
-    decodeText(sx, "c7a0 42be 9d15 f6c3 20a8 7e4b d902 5c61 …", cx0, cy0 + chei + 104, v0 + 0.55, 0.4, t, 32);
-    sx.restore();
-    const st = seg(t, v0 + 0.85, v0 + 1.02);
-    if (st > 0) stamp(cx0 + cwid / 2, 590, st, alpha);
+    const st = seg(t, v0 + 0.5, v0 + 0.67);
+    if (st > 0) stamp(cx0 + cwid / 2, cy0 + chei + 72, st, alpha);
 
-    // Two copies travel; one arrives intact, one was altered on the way.
-    const NODE_XY = [[1170, 856], [1530, 856]];
-    NODE_XY.forEach(([nx, ny], j) => {
+    // Two copies travel; one arrives intact, one was changed on the way.
+    [[1170, 836], [1530, 836]].forEach(([nx, ny], j) => {
       const bad = j === 1;
-      const nk = easeOutExpo(seg(t, v0 + 1.05 + j * 0.05, v0 + 1.35 + j * 0.05));
+      const nk = easeOutExpo(seg(t, v0 + 0.7 + j * 0.05, v0 + 1.0 + j * 0.05));
       if (nk > 0) {
         sx.save();
         sx.globalAlpha = alpha * nk;
@@ -1553,9 +1659,9 @@ export async function createShowreel(base = "") {
         sx.stroke();
         sx.restore();
       }
-      const t0 = v0 + 1.25 + j * 0.08;
-      const p = easeInOutCubic(seg(t, t0, t0 + 0.42));
-      const land = seg(t, t0 + 0.42, t0 + 0.52);
+      const t0 = v0 + 0.85 + j * 0.08;
+      const p = easeInOutCubic(seg(t, t0, t0 + 0.4));
+      const land = seg(t, t0 + 0.4, t0 + 0.5);
       if (p > 0 && land < 1) {
         const px = lerp(cx0 + cwid / 2, nx, p);
         const py = lerp(cy0 + chei / 2, ny, p) - Math.sin(Math.PI * p) * 70;
@@ -1581,7 +1687,7 @@ export async function createShowreel(base = "") {
       }
       if (land > 0) {
         badge(bad ? "cross" : "check", nx, ny, 46 * easeOutBack(land), bad ? RED : AMBER, alpha);
-        const ring = seg(t, t0 + 0.42, t0 + 1.0);
+        const ring = seg(t, t0 + 0.4, t0 + 1.0);
         if (ring < 1) {
           sx.save();
           sx.globalAlpha = alpha * (1 - ring) * 0.8;
@@ -1594,24 +1700,22 @@ export async function createShowreel(base = "") {
         }
         dotGlow(nx, ny, 60, bad ? RED : AMBER, 0.2 * alpha * (1 - ring));
       }
-      maskText(sx, bad ? "ALTERED · REJECTED" : "VERIFIED · STORED", nx, ny + 70, 15, 600, bad ? RED : AMBER, t0 + 0.48, v1 - 0.3, t, { tracking: 3, align: "center", outDur: 0.28 });
+      maskText(sx, bad ? "CHANGED · REJECTED" : "VERIFIED · STORED", nx, ny + 70, 15, 600, bad ? RED : AMBER, t0 + 0.46, v1 - 0.3, t, { tracking: 3, align: "center", outDur: 0.28 });
     });
   }
 
-  // Encrypted to the buyer's key: only the buyer's node can open it.
+  // Sold data is locked to the buyer's key: only the buyer's node opens it.
   function drawEncrypt(t) {
     const e0 = T_SEAL;
-    const e1 = T_NET;
+    const e1 = T_CONJ;
     if (t < e0 || t > e1 + 0.05) return;
-    const out = easeInExpo(seg(t, e1 - 0.3, e1 - 0.05));
-    const alpha = 1 - out;
-    headline("Encrypted to", "the buyer’s key.", "ONLY THE BUYER’S NODE CAN OPEN IT", e0 + 0.05, e1, t);
+    const alpha = 1 - easeInExpo(seg(t, e1 - 0.3, e1 - 0.05));
     const bx0 = 1150;
     const by0 = 196;
     const bw = 500;
     const bh = 230;
-    const bk = easeOutExpo(seg(t, e0 + 0.08, e0 + 0.4));
-    const lockK = easeInExpo(seg(t, e0 + 0.55, e0 + 0.72));
+    const bk = easeOutExpo(seg(t, e0 + 0.08, e0 + 0.38));
+    const lockK = easeInExpo(seg(t, e0 + 0.5, e0 + 0.65));
     if (bk > 0) {
       sx.save();
       sx.globalAlpha = alpha * bk;
@@ -1627,15 +1731,16 @@ export async function createShowreel(base = "") {
       sx.letterSpacing = "2.5px";
       sx.fillStyle = AMBER;
       sx.textAlign = "left";
-      sx.fillText("OD MODULE · WEBASSEMBLY", bx0 + 28, by0 + 42);
-      sx.font = font(500, 13, MONO);
-      sx.letterSpacing = "0.5px";
+      sx.fillText("RADAR TRACKING", bx0 + 28, by0 + 42);
+      sx.font = font(600, 13, SANS);
+      sx.letterSpacing = "2px";
       sx.fillStyle = MUTED;
       sx.textAlign = "right";
       sx.fillText("FOR SALE", bx0 + bw - 28, by0 + 42);
-      // bytes turn to ciphertext as the lock shuts, left to right
+      // the contents scramble as the lock shuts, left to right
       sx.textAlign = "left";
       sx.font = font(400, 16, MONO);
+      sx.letterSpacing = "0.5px";
       const R = rng(700 + Math.round(FRAME_T * 30));
       for (let r = 0; r < 5; r++) {
         const plain = HEX[r + 8].bytes.join(" ").slice(0, 44);
@@ -1648,40 +1753,37 @@ export async function createShowreel(base = "") {
         sx.fillText(s, bx0 + 28, by0 + 86 + r * 28);
       }
       sx.restore();
-      const lk = easeOutBack(seg(t, e0 + 0.3, e0 + 0.5));
+      const lk = easeOutBack(seg(t, e0 + 0.25, e0 + 0.45));
       padlock(bx0 + bw / 2, by0 + bh / 2 + 18, 110 * lk, 1 - lockK, lockK >= 1 ? AMBER : INK, alpha * clamp(lk * 2));
-      if (lockK > 0) dotGlow(bx0 + bw / 2, by0 + bh / 2 + 18, 120, AMBER, 0.25 * alpha * (1 - seg(t, e0 + 0.72, e0 + 1.2)));
+      if (lockK > 0) dotGlow(bx0 + bw / 2, by0 + bh / 2 + 18, 120, AMBER, 0.25 * alpha * (1 - seg(t, e0 + 0.65, e0 + 1.1)));
     }
-    maskText(sx, "ENCRYPTED · STORED BY CONTENT ID", bx0, by0 + bh + 40, 14, 600, MUTED, e0 + 0.75, e1 - 0.3, t, { tracking: 2.5, outDur: 0.28 });
+    maskText(sx, "LOCKED TO THE BUYER’S KEY", bx0, by0 + bh + 40, 14, 600, MUTED, e0 + 0.68, e1 - 0.3, t, { tracking: 2.5, outDur: 0.28 });
 
-    // Ciphertext to two nodes; the buyer's key opens one of them.
     const src = [bx0 + bw / 2, by0 + bh + 66];
-    const TARGETS = [
-      [[1210, 856], true],
-      [[1590, 856], false],
-    ];
-    TARGETS.forEach(([[nx, ny], buyer], j) => {
+    [
+      [[1210, 836], true],
+      [[1590, 836], false],
+    ].forEach(([[nx, ny], buyer], j) => {
       const pts = bezierPts(src, [src[0], src[1] + 90], [nx, ny - 150], [nx, ny - 34]);
-      const t0 = e0 + 0.85 + j * 0.06;
-      strokeOn(pts, easeInOutCubic(seg(t, t0, t0 + 0.35)), "rgba(245,245,247,0.5)", 1.4, alpha, 0, [5, 7]);
-      const p = easeInOutCubic(seg(t, t0 + 0.2, t0 + 0.6));
+      const t0 = e0 + 0.75 + j * 0.06;
+      strokeOn(pts, easeInOutCubic(seg(t, t0, t0 + 0.3)), "rgba(245,245,247,0.5)", 1.4, alpha, 0, [5, 7]);
+      const p = easeInOutCubic(seg(t, t0 + 0.15, t0 + 0.5));
       if (p > 0 && p < 1) {
         const [px, py] = pointOn(pts, p);
         padlock(px, py, 30, 0, AMBER, alpha);
         dotGlow(px, py, 30, AMBER, 0.35 * alpha);
       }
-      const arrive = seg(t, t0 + 0.6, t0 + 0.7);
+      const arrive = seg(t, t0 + 0.5, t0 + 0.6);
       if (arrive <= 0) return;
-      const open = buyer ? easeOutBack(seg(t, e0 + 1.62, e0 + 1.82)) : 0;
+      const open = buyer ? easeOutBack(seg(t, e0 + 1.45, e0 + 1.62)) : 0;
       if (buyer) {
-        const kp = easeInOutCubic(seg(t, e0 + 1.3, e0 + 1.6));
-        const ka = alpha * seg(t, e0 + 1.25, e0 + 1.35) * (1 - seg(t, e0 + 1.58, e0 + 1.66));
+        const kp = easeInOutCubic(seg(t, e0 + 1.15, e0 + 1.42));
+        const ka = alpha * seg(t, e0 + 1.1, e0 + 1.2) * (1 - seg(t, e0 + 1.4, e0 + 1.48));
         keyIcon(lerp(nx - 150, nx - 26, kp), ny + 4, 44, AMBER, ka);
-        maskText(sx, "X25519", lerp(nx - 150, nx - 26, kp), ny - 30, 13, 600, AMBER, e0 + 1.25, e0 + 1.5, t, { tracking: 2.5, align: "center", outDur: 0.15 });
       }
       padlock(nx, ny, 64 * easeOutBack(arrive), open, buyer && open > 0 ? AMBER : "rgba(245,245,247,0.7)", alpha);
       if (buyer && open > 0) {
-        const ring = seg(t, e0 + 1.62, e0 + 2.2);
+        const ring = seg(t, e0 + 1.45, e0 + 2.0);
         sx.save();
         sx.globalAlpha = alpha * (1 - ring) * 0.8;
         sx.strokeStyle = AMBER;
@@ -1692,19 +1794,11 @@ export async function createShowreel(base = "") {
         sx.restore();
         dotGlow(nx, ny, 70, AMBER, 0.22 * alpha * (1 - ring));
       }
-      maskText(
-        sx,
-        buyer ? "BUYER’S NODE · OPENED" : "ANY OTHER NODE · SEALED",
-        nx,
-        ny + 70,
-        15,
-        600,
-        buyer ? AMBER : MUTED,
-        buyer ? e0 + 1.7 : t0 + 0.7,
-        e1 - 0.3,
-        t,
-        { tracking: 3, align: "center", outDur: 0.28 },
-      );
+      maskText(sx, buyer ? "BUYER · OPENED" : "EVERYONE ELSE · LOCKED OUT", nx, ny + 70, 15, 600, buyer ? AMBER : MUTED, buyer ? e0 + 1.5 : t0 + 0.6, e1 - 0.3, t, {
+        tracking: 3,
+        align: "center",
+        outDur: 0.28,
+      });
     });
   }
 
@@ -1717,13 +1811,13 @@ export async function createShowreel(base = "") {
     drawOrbitPath(cam, A, T, AMBER, alpha * 0.18, 1, 1, false);
     drawOrbitPath(cam, B, T, CYAN, alpha * 0.18, 1, 1, false);
     if (!qa || !qb) return;
-    // Who produced each track, riding beside it until the alert takes over.
+    // Where each track comes from, riding beside it until the alert takes over.
     const lab = alpha * seg(t, T_CONJ + 1.1, T_CONJ + 1.5) * (1 - seg(t, T_TCA - 0.9, T_TCA - 0.6));
     if (lab > 0) {
       [
-        [qa, AMBER, "OPERATOR EPHEMERIS", "3f9a…c21e", 1, 64],
-        [qb, CYAN, "RADAR TRACK", "8b04…77d1", -1, 84],
-      ].forEach(([q, col, name, key, side, dy]) => {
+        [qa, AMBER, "SATELLITE A", "OPERATOR DATA · DIGITALLY SIGNED", 1, 64],
+        [qb, CYAN, "SATELLITE B", "RADAR DATA · DIGITALLY SIGNED", -1, 84],
+      ].forEach(([q, col, name, src, side, dy]) => {
         const lx = q.x + side * 60;
         const ly = q.y + dy;
         sx.save();
@@ -1737,19 +1831,19 @@ export async function createShowreel(base = "") {
         sx.stroke();
         sx.textAlign = side < 0 ? "right" : "left";
         const tx = lx + side * 40;
-        sx.font = font(600, 15, SANS);
+        sx.font = font(600, 16, SANS);
         sx.letterSpacing = "2.5px";
         sx.fillStyle = col;
         sx.fillText(name, tx, ly - 4);
-        sx.font = font(500, 14, MONO);
-        sx.letterSpacing = "0.5px";
+        sx.font = font(600, 13, SANS);
+        sx.letterSpacing = "2px";
         sx.fillStyle = "rgba(245,245,247,0.8)";
-        sx.fillText(`DIGITALLY SIGNED · Ed25519 ${key}`, tx, ly + 20);
+        sx.fillText(src, tx, ly + 20);
         sx.restore();
       });
     }
     const near = seg(t, T_TCA - 1.05, T_TCA - 0.375) * (1 - seg(t, T_END - 0.375, T_END + 0.05));
-    // covariance ellipses, aligned with each track's screen velocity
+    // uncertainty ellipses, aligned with each track's screen velocity
     [[A, qa, AMBER], [B, qb, CYAN]].forEach(([o, q, col]) => {
       const q2 = project(cam, orbitPos(o, o.u0 + o.w * (T + 0.02)));
       if (!q2) return;
@@ -1805,7 +1899,7 @@ export async function createShowreel(base = "") {
       sx.beginPath();
       sx.moveTo(mx, my);
       sx.lineTo(lerp(mx, lx, lk), lerp(my, ly + 40, lk));
-      sx.lineTo(lerp(mx, lx + 360, lk), lerp(my, ly + 40, lk));
+      sx.lineTo(lerp(mx, lx + 380, lk), lerp(my, ly + 40, lk));
       sx.stroke();
       // triangle with an exclamation mark: red means danger, never color alone
       sx.translate(lx + 22, ly);
@@ -1821,15 +1915,15 @@ export async function createShowreel(base = "") {
       sx.textAlign = "center";
       sx.fillText("!", 0, 11);
       sx.restore();
-      maskText(sx, "CONJUNCTION", lx + 58, ly + 12, 30, 700, RED, T_TCA - 0.375, T_END - 0.225, t, { tracking: 3 });
+      maskText(sx, "CLOSE APPROACH", lx + 58, ly + 12, 30, 700, RED, T_TCA - 0.375, T_END - 0.225, t, { tracking: 3 });
       sx.save();
       sx.globalAlpha = alpha * tca;
       sx.font = font(500, 19, MONO);
       sx.letterSpacing = "1px";
       sx.fillStyle = INK;
-      decodeText(sx, "TCA   2026-09-25 14:02:31Z", lx, ly + 76, T_TCA - 0.225, 0.5, t, 7);
+      decodeText(sx, "WHEN  25 SEP 2026 · 14:02 UTC", lx, ly + 76, T_TCA - 0.225, 0.5, t, 7);
       decodeText(sx, "MISS  214 m", lx, ly + 104, T_TCA - 0.075, 0.45, t, 8);
-      decodeText(sx, "Pc    1.2 × 10⁻⁴", lx, ly + 132, T_TCA + 0.075, 0.45, t, 9);
+      decodeText(sx, "RISK  1 IN 8,300", lx, ly + 132, T_TCA + 0.075, 0.45, t, 9);
       sx.restore();
     }
   }
@@ -1849,10 +1943,12 @@ export async function createShowreel(base = "") {
     gx.clearRect(0, 0, W / 2, H / 2);
     gx.globalCompositeOperation = "lighter";
 
-    // Earth: in during the match cut, dimmed and blurred under the type-led
-    // chapters, back for the network, gone into the lockup.
+    // Earth: in during the match cut, dimmed and blurred under the first
+    // shift, the slow half and the third shift, gone into the lockup.
     const earthIn = easeInOutCubic(seg(t, 1.55, 2.3));
-    const under = seg(t, T_FORMAT - 0.1, T_FORMAT + 0.15) * (1 - seg(t, T_NET - 0.05, T_NET + 0.3));
+    const under =
+      seg(t, T_ORG - 0.1, T_ORG + 0.15) * (1 - seg(t, T_NET - 0.05, T_NET + 0.3)) +
+      seg(t, T_SEC - 0.1, T_SEC + 0.15) * (1 - seg(t, T_CONJ - 0.05, T_CONJ + 0.3));
     const earthOut = 1 - easeInCubic(seg(t, T_END + 1.0, T_END + 1.5));
     const earthFade = earthIn * (1 - 0.8 * under) * earthOut;
     const rim = 0.9 * seg(t, 1.6, 2.1) * (1 - seg(t, 2.3, 3.0)) + 0.9 * seg(t, T_END + 0.9, T_END + 1.35);
@@ -1865,11 +1961,12 @@ export async function createShowreel(base = "") {
       sx.filter = "none";
     }
 
-    // Satellites: the swarm arrives with the catalog, leaves for the type-led
-    // chapters, dims under the network and the conjunction, returns.
+    // Satellites: the swarm fills the sky, leaves for the type-led beats,
+    // dims under the network and the close approach, returns for the finale.
     const satAlpha =
       seg(t, 2.1, 2.4) *
-      (1 - seg(t, T_FORMAT - 0.2, T_FORMAT + 0.05) * (1 - seg(t, T_NET, T_NET + 0.3))) *
+      (1 - seg(t, T_ORG - 0.2, T_ORG + 0.05) * (1 - seg(t, T_NET, T_NET + 0.3))) *
+      (1 - seg(t, T_SEC - 0.2, T_SEC + 0.05) * (1 - seg(t, T_CONJ, T_CONJ + 0.3))) *
       (1 - 0.72 * seg(t, T_NET, T_NET + 0.6) * (1 - seg(t, T_END + 0.05, T_END + 0.75))) *
       (1 - 0.55 * seg(t, T_CONJ, T_CONJ + 0.3) * (1 - seg(t, T_END, T_END + 0.35))) *
       earthOut;
@@ -1877,13 +1974,13 @@ export async function createShowreel(base = "") {
 
     // The amber satellite from the mark, in orbit with its arc.
     const heroA =
-      seg(t, 2.0, 2.4) * (1 - seg(t, T_FORMAT - 0.25, T_FORMAT)) +
-      seg(t, T_NET + 0.3, T_NET + 0.8) * (1 - seg(t, T_CONJ - 0.3, T_CONJ));
+      seg(t, 2.0, 2.4) * (1 - seg(t, T_ORG - 0.25, T_ORG)) +
+      seg(t, T_NET + 0.3, T_NET + 0.8) * (1 - seg(t, T_SEC - 0.3, T_SEC));
     if (heroA > 0) drawOrbitPath(cam, HERO, T, AMBER, heroA, 2.4, 0.42);
 
-    if (t > T_NET && t < T_CONJ) drawNetwork(cam, t, seg(t, T_NET, T_NET + 0.3) * (1 - seg(t, T_CONJ - 0.3, T_CONJ)));
-    // The network's type sits low and left, over the planet: wash it back.
-    scrim(seg(t, T_NET + 0.2, T_NET + 0.7) * (1 - seg(t, T_CONJ - 0.3, T_CONJ)));
+    if (t > T_NET && t < T_SEC) drawNetwork(cam, t, seg(t, T_NET, T_NET + 0.3) * (1 - seg(t, T_SEC - 0.3, T_SEC)));
+    // The type over the lit planet sits low and left: wash that corner back.
+    scrim(seg(t, T_NET + 0.1, T_NET + 0.5) * (1 - seg(t, T_SEC - 0.3, T_SEC)) + seg(t, T_CONJ, T_CONJ + 0.4) * (1 - seg(t, T_END, T_END + 0.9)));
     if (t > T_CONJ - 0.05 && t < T_END + 0.45) drawConjunction(cam, t, T, seg(t, T_CONJ, T_CONJ + 0.45) * (1 - seg(t, T_END, T_END + 0.45)));
 
     // The mark: opening build, then the closing lockup.
@@ -1919,13 +2016,13 @@ export async function createShowreel(base = "") {
       maskText(sx, "SPACEDATANETWORK.ORG", W / 2 - 218, H / 2 - 92, 18, 600, AMBER, T_END + 1.89, null, t, { dur: 0.4, tracking: 4 });
     }
 
-    // The catalog: the count and the orbit regimes.
+    // The crowded sky: the count and the orbit regimes.
     if (t > 2.3 && t < 5.2) {
       // The count never settles: it keeps climbing until the text leaves,
       // because the catalog only grows.
       const k = easeOutExpo(seg(FRAME_T, 2.45, 4.1));
       const n = Math.round(46600 * k + 900 * Math.max(0, FRAME_T - 3.1) + 260 * Math.pow(Math.max(0, FRAME_T - 3.1), 2));
-      maskText(sx, "TRACKED OBJECTS", 150, 790, 18, 600, AMBER, 2.4, 4.75, t, { tracking: 4 });
+      maskText(sx, "OBJECTS TRACKED IN ORBIT", 150, 790, 18, 600, AMBER, 2.4, 4.75, t, { tracking: 4 });
       sx.save();
       const outK = easeInExpo(seg(t, 4.75, 5.2));
       sx.beginPath();
@@ -1938,9 +2035,9 @@ export async function createShowreel(base = "") {
       sx.restore();
       // orbit regime labels with leader lines
       const labels = [
-        ["LEO", 1.1, -30, 4.0],
-        ["MEO · GNSS", 2.15, 150, 4.12],
-        ["GEO BELT", 3.0, 200, 4.24],
+        ["LOW EARTH ORBIT", 1.1, -30, 4.0],
+        ["NAVIGATION SATELLITES", 2.15, 150, 4.12],
+        ["GEOSTATIONARY RING", 3.0, 200, 4.24],
       ];
       labels.forEach(([name, r, ang, t0]) => {
         const k2 = easeOutExpo(seg(t, t0, t0 + 0.5)) * (1 - seg(t, 4.85, 5.1));
@@ -1963,43 +2060,81 @@ export async function createShowreel(base = "") {
         sx.beginPath();
         sx.arc(q.x, q.y, 3, 0, Math.PI * 2);
         sx.fill();
-        sx.font = font(600, 16, MONO);
-        sx.letterSpacing = "2px";
+        sx.font = font(600, 15, SANS);
+        sx.letterSpacing = "2.5px";
         sx.fillText(name, lx + 4, ly - 10);
         sx.restore();
       });
     }
-    if (t > 5.2 && t < T_FORMAT + 0.05) {
-      maskText(sx, "More satellites.", 150, 400, 80, 700, INK, 5.35, 6.85, t, { tracking: -2, outDur: 0.25 });
-      maskText(sx, "More operators.", 150, 490, 80, 700, INK, 5.5, 6.88, t, { tracking: -2, outDur: 0.25 });
-      maskText(sx, "More ephemeris,", 150, 580, 80, 700, INK, 5.65, 6.91, t, { tracking: -2, outDur: 0.25 });
-      maskText(sx, "several times a day.", 150, 670, 80, 700, AMBER, 5.8, 6.94, t, { tracking: -2, outDur: 0.25 });
+    if (t > 5.2 && t < T_ORG + 0.05) {
+      block(
+        [
+          ["More satellites.", INK],
+          ["More operators.", INK],
+          ["More close calls.", AMBER],
+        ],
+        "EVERY OPERATOR NEEDS TO SEE WHAT’S COMING",
+        5.3,
+        T_ORG - 0.4,
+        t,
+        84,
+      );
     }
-    drawFormat(t);
-    drawStandards(t);
-    drawKeys(t);
+    SHIFTS.forEach((sh) => {
+      if (t > sh.tIn - 0.05 && t < sh.tOut + 0.5) shiftBlock(sh, t);
+    });
+    drawSources(t);
+    drawHub(t);
+    drawChain(t);
     drawSignVerify(t);
     drawEncrypt(t);
-    if (t > T_NET + 0.3 && t < T_CONJ) {
-      const n0 = T_NET;
-      maskText(sx, "Peer to peer.", 150, 800, 80, 700, INK, n0 + 0.5, n0 + 2.55, t, { tracking: -2, outDur: 0.28 });
-      maskText(sx, "One open protocol.", 150, 892, 80, 700, AMBER, n0 + 0.63, n0 + 2.58, t, { tracking: -2, outDur: 0.28 });
-      maskText(sx, "ANY NODE FINDS, FETCHES, VERIFIES AND STREAMS FROM ANY OTHER", 154, 956, 17, 600, MUTED, n0 + 0.9, n0 + 2.6, t, { tracking: 3, outDur: 0.28 });
-      maskText(sx, "Fetched once.", 150, 800, 80, 700, INK, n0 + 2.95, n0 + 4.95, t, { tracking: -2, outDur: 0.28 });
-      maskText(sx, "Shared by every node.", 150, 892, 80, 700, AMBER, n0 + 3.08, n0 + 4.98, t, { tracking: -2, outDur: 0.28 });
-      maskText(sx, "COMPACT BINARY RECORDS, FETCHED BY CONTENT ADDRESS", 154, 956, 17, 600, MUTED, n0 + 3.35, n0 + 5.0, t, { tracking: 3, outDur: 0.28 });
-      maskText(sx, "A storefront", 150, 800, 80, 700, INK, n0 + 5.25, T_CONJ - 0.35, t, { tracking: -2, outDur: 0.28 });
-      maskText(sx, "with no middlemen.", 150, 892, 80, 700, AMBER, n0 + 5.38, T_CONJ - 0.32, t, { tracking: -2, outDur: 0.28 });
-      maskText(sx, "PUBLISH FREE OR SELL STRAIGHT FROM YOUR NODE", 154, 956, 17, 600, MUTED, n0 + 5.65, T_CONJ - 0.3, t, { tracking: 3, outDur: 0.28 });
+    if (t > T_SEAL - 0.1 && t < T_CONJ) caption("SOLD DATA OPENS ONLY FOR THE BUYER", "check", T_SEAL, T_CONJ - 0.4, t);
+    if (t > T_STORE - 0.1 && t < T_SEC) {
+      block(
+        [
+          ["A storefront", INK],
+          ["with no middlemen.", AMBER],
+        ],
+        "SHARE DATA FREE, OR SELL IT FROM YOUR OWN NODE",
+        T_STORE,
+        T_SEC - 0.4,
+        t,
+      );
     }
-    if (t > T_CONJ + 0.3 && t < T_END + 0.1) {
-      maskText(sx, "Two sources.", 150, 772, 72, 700, INK, T_CONJ + 0.6, T_TCA - 0.75, t, { tracking: -1.5, outDur: 0.3 });
-      maskText(sx, "Both digitally signed.", 150, 854, 72, 700, AMBER, T_CONJ + 0.75, T_TCA - 0.72, t, { tracking: -1.5, outDur: 0.3 });
-      maskText(sx, "SCREENED BY OPEN WEBASSEMBLY MODULES ANYONE CAN RERUN", 154, 916, 17, 600, MUTED, T_CONJ + 1.1, T_TCA - 0.7, t, { tracking: 3, outDur: 0.3 });
-      maskText(sx, "Open standards.", 150, 690, 72, 700, INK, T_TCA + 0.4, T_END - 0.3, t, { tracking: -1.5 });
-      maskText(sx, "Open-source software.", 150, 772, 72, 700, INK, T_TCA + 0.55, T_END - 0.225, t, { tracking: -1.5 });
-      maskText(sx, "Open algorithms.", 150, 854, 72, 700, INK, T_TCA + 0.7, T_END - 0.15, t, { tracking: -1.5 });
-      maskText(sx, "All free.", 150, 936, 72, 700, AMBER, T_TCA + 0.95, T_END - 0.075, t, { tracking: -1.5 });
+    if (t > T_CONJ + 0.3 && t < T_END + 1.2) {
+      block(
+        [
+          ["Two satellites.", INK],
+          ["Headed for a close call.", AMBER],
+        ],
+        "TRACKED BY TWO SOURCES, BOTH DIGITALLY SIGNED",
+        T_CONJ + 0.6,
+        T_TCA - 0.75,
+        t,
+        80,
+      );
+      block(
+        [
+          ["Everyone sees the warning.", INK],
+          ["Anyone can check the math.", AMBER],
+        ],
+        "OPEN STANDARDS · OPEN-SOURCE SOFTWARE · OPEN ALGORITHMS",
+        T_TCA + 0.4,
+        T_END - 1.0,
+        t,
+        80,
+      );
+      // The three shifts, together, on the way out.
+      maskText(sx, "ON THE NETWORK", LX + 2, 770, 17, 600, AMBER, T_END - 0.65, T_END + 0.8, t, { tracking: 3.5, outDur: 0.25 });
+      sx.save();
+      sx.font = font(700, BIG);
+      sx.letterSpacing = "-3px";
+      let x = LX;
+      ["Organized.", "Fast.", "Secure."].forEach((w, i) => {
+        maskText(sx, w, x, 870, BIG, 700, AMBER, T_END - 0.6 + i * 0.35, T_END + 0.8 + i * 0.03, t, { tracking: -3, outDur: 0.25 });
+        x += sx.measureText(`${w} `).width;
+      });
+      sx.restore();
     }
 
     // Bloom: the glow layer blurred at two radii, added over the scene.
@@ -2035,13 +2170,26 @@ export async function createShowreel(base = "") {
       ax.drawImage(scene, 0, 0);
     }
     ax.globalAlpha = 1;
-    // Finishing pass: chromatic aberration on each cut, a flash on the hard ones.
+    // Finishing pass: chromatic aberration on each cut and on each word that
+    // turns, a flash on the hard cuts.
     const t = t0;
-    const cuts = [[2.2, 1], [T_FORMAT, 0.5], [T_STD, 1], [T_KEYS, 1], [T_SIGN, 0.5], [T_SEAL, 0.5], [T_NET, 1], [T_CONJ, 1], [T_END + 1.05, 1]];
+    const cuts = [
+      [2.2, 1],
+      [T_ORG, 0.5],
+      [M1 + 0.3, 0.6],
+      [T_SLOW, 1],
+      [M2 + 0.3, 0.6],
+      [T_NET, 1],
+      [T_SEC, 1],
+      [M3 + 0.3, 0.6],
+      [T_SEAL, 0.5],
+      [T_CONJ, 1],
+      [T_END + 1.05, 1],
+    ];
     let ca = 0;
     for (const [c, w] of cuts) ca = Math.max(ca, w * Math.exp(-Math.pow((t - c) / 0.09, 2)));
     const pulse = (c, w) => Math.exp(-Math.pow((t - c) / w, 2));
-    const flash = 0.3 * pulse(T_STD + 0.01, 0.05) + 0.1 * pulse(T_KEYS + 0.01, 0.05) + 0.1 * pulse(T_NET + 0.01, 0.05) + 0.12 * pulse(T_TCA - 0.205, 0.06);
+    const flash = 0.1 * pulse(T_SLOW + 0.01, 0.05) + 0.25 * pulse(T_NET + 0.01, 0.05) + 0.1 * pulse(T_SEC + 0.01, 0.05) + 0.12 * pulse(T_TCA - 0.205, 0.06);
     // The piece plays once and rests on the lockup, so it fades in but never out.
     const fade = seg(t, 0, 0.12);
     pgl.viewport(0, 0, W, H);

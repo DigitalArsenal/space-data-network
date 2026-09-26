@@ -71,9 +71,9 @@ if (args.stills) {
   const input = ["-framerate", "30", "-start_number", String(a), "-i", join(outDir, "f%04d.png")];
   ff([...input, "-c:v", "libx264", "-preset", "slow", "-crf", "27", "-profile:v", "high", "-pix_fmt", "yuv420p", "-tune", "film", "-movflags", "+faststart", join(media, "sdn-showreel.mp4")]);
   ff([...input, "-c:v", "libsvtav1", "-preset", "5", "-crf", "36", "-pix_fmt", "yuv420p", "-svtav1-params", "tune=0", join(media, "sdn-showreel.webm")]);
-  // Poster: the storefront beat (frame 888). ImageMagick, because common
+  // Poster: the storefront beat (frame 645). ImageMagick, because common
   // ffmpeg builds lack a WebP encoder.
-  const poster = join(outDir, `f${String(Math.min(b, 888)).padStart(4, "0")}.png`);
+  const poster = join(outDir, `f${String(Math.min(b, 645)).padStart(4, "0")}.png`);
   const pm = spawnSync("magick", [poster, "-resize", "1600x", "-quality", "82", join(media, "sdn-showreel-poster.webp")], { stdio: "inherit" });
   if (pm.status !== 0) throw new Error("poster: magick failed");
   process.stdout.write(`encoded to ${media}\n`);
