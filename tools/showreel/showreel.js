@@ -611,17 +611,6 @@ export async function createShowreel(base = "") {
     const s = Math.floor(frame / FPS);
     sx.textAlign = "right";
     sx.fillText(`00:00:${String(s).padStart(2, "0")}:${String(f).padStart(2, "0")}`, W - m - 12, m + 30);
-    const chapters = [
-      [0, "01  IGNITION"], [2.0, "02  CATALOG"], [5.0, "03  NETWORK"],
-      [8.925, "04  CONJUNCTION"], [12.6, "05  RESOLVE"],
-    ];
-    let ch = chapters[0][1];
-    for (const [t0, name] of chapters) if (t >= t0) ch = name;
-    sx.textAlign = "left";
-    sx.fillStyle = AMBER;
-    sx.fillText(ch, m + 12, H - m - 16);
-    sx.fillStyle = INK;
-    sx.textAlign = "right";
     sx.fillText("1920 × 1080 · 30 FPS · DIGITALLY SIGNED", W - m - 12, H - m - 16);
     sx.restore();
   }

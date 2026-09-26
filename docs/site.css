@@ -324,7 +324,8 @@ body.centered .papers .card { text-align: left; }
 :root[data-theme="light"] .figure img[src$=".svg"], :root[data-theme="light"] .chart { box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06); }
 :root[data-theme="light"] .bg-video { display: none; }
 
-/* Showreel: the hero's framed 16:9 stage; controls live in a footer bar inside the frame. */
+/* Showreel: the hero's framed 16:9 stage; controls live in a footer bar inside the frame
+   and stay hidden until someone hovers, taps or tabs into it (reel.js sets .is-awake). */
 .reel-frame { max-width: 1040px; margin: 0 auto; }
 .reel-stage { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius); border: 1px solid var(--border-strong); background: #000; box-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 30px 80px rgba(0,0,0,.55), 0 0 120px rgba(245,165,36,.08); text-shadow: none; }
 .reel-stage video { display: block; width: 100%; height: 100%; object-fit: cover; background: #000; }
@@ -332,25 +333,26 @@ body.centered .papers .card { text-align: left; }
 .reel-stage:fullscreen video { object-fit: contain; }
 .reel-stage:-webkit-full-screen { border: 0; border-radius: 0; width: 100vw; height: 100vh; }
 .reel-stage:-webkit-full-screen video { object-fit: contain; }
-.reel-big-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 76px; height: 76px; border-radius: 50%; border: 1px solid rgba(255,255,255,.28); background: rgba(0,0,0,.55); color: #f5f5f7; cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); transition: background .2s, color .2s; }
+.reel-big-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 76px; height: 76px; border-radius: 50%; border: 1px solid rgba(255,255,255,.28); background: rgba(0,0,0,.55); color: #f5f5f7; cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); transition: background .2s, color .2s, opacity .25s; }
 .reel-big-play svg { width: 28px; height: 28px; }
 .reel-big-play:hover { background: #f5f5f7; color: #000; }
 .reel-stage.is-playing .reel-big-play { display: none; }
 .reel-stage.is-ended .reel-big-play, .reel-stage.is-starting .reel-big-play { display: none; }
-.reel-again { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); display: none; align-items: center; gap: 8px; padding: 11px 22px; border-radius: 999px; border: 1px solid #f5f5f7; background: #f5f5f7; color: #000; font: 600 15px var(--font-sans); cursor: pointer; white-space: nowrap; animation: reel-again-in .5s cubic-bezier(.2,.7,.2,1) both; }
+/* Before the reel has ever played (reduced motion, autoplay refused) the play button is the only cue, so it stays. */
+.reel-stage.has-played:not(.is-awake):not(:has(:focus-visible)) .reel-big-play { opacity: 0; pointer-events: none; }
+.reel-again { position: absolute; left: 50%; bottom: 84px; transform: translate(-50%, 8px); display: none; align-items: center; gap: 8px; padding: 11px 22px; border-radius: 999px; border: 1px solid #f5f5f7; background: #f5f5f7; color: #000; font: 600 15px var(--font-sans); cursor: pointer; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s cubic-bezier(.2,.7,.2,1); }
 .reel-again svg { width: 17px; height: 17px; }
 .reel-again:hover { background: #fff; }
 .reel-stage.is-ended .reel-again { display: inline-flex; }
-.reel-stage.is-ended .reel-bar { opacity: 1; }
-@keyframes reel-again-in { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
-@media (prefers-reduced-motion: reduce) { .reel-again { animation: none; } }
+.reel-stage.is-ended.is-awake .reel-again, .reel-stage.is-ended:has(:focus-visible) .reel-again { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
 @media (max-width: 620px) { .reel-again { bottom: 64px; padding: 8px 16px; font-size: 14px; } }
-.reel-bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 36px 14px 10px; background: linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.72)); color: #f5f5f7; transition: opacity .3s; }
-.reel-stage.is-playing:not(:hover):not(:focus-within) .reel-bar { opacity: 0; }
-@media (hover: none) { .reel-stage.is-playing .reel-bar { opacity: 1; } }
+.reel-bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 36px 14px 10px; background: linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.72)); color: #f5f5f7; opacity: 0; pointer-events: none; transition: opacity .3s; }
+.reel-stage.is-awake .reel-bar, .reel-stage:has(:focus-visible) .reel-bar { opacity: 1; pointer-events: auto; transition-duration: .15s; }
+.reel-stage.is-playing:not(.is-awake) { cursor: none; }
+@media (prefers-reduced-motion: reduce) { .reel-bar, .reel-again, .reel-big-play { transition: none; } }
 .reel-progress { height: 3px; margin: 0 4px 8px; border-radius: 2px; background: rgba(255,255,255,.2); overflow: hidden; }
 .reel-progress span { display: block; height: 100%; background: #f5a524; transform-origin: left center; transform: scaleX(0); }
-.reel-controls { display: flex; align-items: center; gap: 10px; }
+.reel-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .reel-btn { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 0; background: transparent; color: #f5f5f7; cursor: pointer; transition: background .15s; }
 .reel-btn:hover { background: rgba(255,255,255,.14); }
 .reel-btn svg { width: 18px; height: 18px; }
@@ -359,16 +361,13 @@ body.centered .papers .card { text-align: left; }
 .reel-stage.is-playing .reel-play .i-pause { display: block; }
 .reel-stage.is-full .reel-fs .i-enter { display: none; }
 .reel-stage.is-full .reel-fs .i-exit { display: block; }
-.reel-chapters { list-style: none; flex: 1; min-width: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 18px; }
-.reel-chapters button { border: 0; background: none; padding: 4px 0; font: 600 12px var(--font-sans); letter-spacing: .1em; text-transform: uppercase; color: rgba(245,245,247,.6); cursor: pointer; transition: color .15s; }
-.reel-chapters button:hover { color: #f5f5f7; }
-.reel-chapters button.is-active { color: #f5a524; }
 .reel-stage button:focus-visible { outline: 2px solid #f5a524; outline-offset: 2px; }
-@media (max-width: 760px) {
-  .reel-stage { border-radius: var(--radius-sm); }
-  .reel-chapters li { display: none; }
-  .reel-chapters li:has(.is-active) { display: block; }
-}
+@media (max-width: 760px) { .reel-stage { border-radius: var(--radius-sm); } }
+
+/* Problem cards: a red cross in the corner marks what is broken today. */
+.card.bad { position: relative; }
+.bad-mark { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: #fff; background: radial-gradient(circle at 35% 30%, #ff6e64, #ff3b30 55%, #d4261c); box-shadow: 0 0 0 4px rgba(255,59,48,.14), 0 6px 18px rgba(255,59,48,.32), inset 0 1px 0 rgba(255,255,255,.3); }
+.bad-mark svg { width: 18px; height: 18px; }
 
 /* Ways to take part: four steps on one rail, deeper to the right. */
 .depth { list-style: none; position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; max-width: 1120px; margin: 0 auto; padding-top: 22px; }
