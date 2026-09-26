@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,9 +27,11 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OEM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/RFB"
+	"github.com/google/flatbuffers/go"
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/crypto/scrypt"
 
@@ -6818,9 +6821,46 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 			return nil, err
 		}
 		out.entityID = strings.TrimSpace(string(mpe.ENTITY_ID()))
-		if epoch := int64(mpe.EPOCH()); epoch > 0 {
+		if epochValue := mpe.EPOCH(); epochValue != 0 {
+			// Go's float-to-int conversion truncates toward zero. Floor first so
+			// a fractional pre-1970 epoch remains on its correct UTC day.
+			epoch := int64(math.Floor(epochValue))
 			out.epochUnix = &epoch
 			out.epochDay = time.Unix(epoch, 0).UTC().Format("2006-01-02")
+		}
+
+	case "OEM.fbs":
+		oem, err := parseOEM(data)
+		if err != nil {
+			return nil, err
+		}
+		block, ok := firstOEMDataBlock(oem)
+		if !ok {
+			return out, nil
+		}
+		objectOffset := flatbuffers.UOffsetT(block.Offset(6))
+		if objectOffset == 0 {
+			// An OEM block without OBJECT has no stable object identity, so it
+			// contributes no structured index fields.
+			return out, nil
+		}
+		object := &OEM.CAT{}
+		object.Init(block.Bytes, block.Indirect(objectOffset+block.Pos))
+		out.entityID = strings.TrimSpace(string(object.OBJECT_ID()))
+		if id := object.NORAD_CAT_ID(); id > 0 {
+			idCopy := id
+			out.noradCatID = &idCopy
+		}
+
+		epochStr := flatBufferTableString(block, 18)
+		if epochStr == "" {
+			epochStr = firstOEMDataLineEpoch(block)
+		}
+		if epochStr != "" {
+			if epochUnix, parseErr := parseEpochString(epochStr); parseErr == nil {
+				out.epochUnix = &epochUnix
+				out.epochDay = time.Unix(epochUnix, 0).UTC().Format("2006-01-02")
+			}
 		}
 
 	case "CAT.fbs":
@@ -6959,6 +6999,51 @@ func parseMPE(data []byte) (mpe *MPE.MPE, err error) {
 	default:
 		return nil, errors.New("invalid MPE buffer")
 	}
+}
+
+func parseOEM(data []byte) (oem *OEM.OEM, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("malformed OEM buffer: %v", r)
+		}
+	}()
+	switch {
+	case OEM.SizePrefixedOEMBufferHasIdentifier(data):
+		return OEM.GetSizePrefixedRootAsOEM(data, 0), nil
+	case OEM.OEMBufferHasIdentifier(data):
+		return OEM.GetRootAsOEM(data, 0), nil
+	default:
+		return nil, errors.New("invalid OEM buffer")
+	}
+}
+
+// The current SDS Go binding leaves OEM's nested block and data-line types
+// unexported. Traverse those generated tables by their schema vtable offsets
+// while still using the generated OEM root and CAT object bindings.
+func firstOEMDataBlock(oem *OEM.OEM) (flatbuffers.Table, bool) {
+	root := oem.Table()
+	offset := flatbuffers.UOffsetT(root.Offset(12))
+	if offset == 0 || root.VectorLen(offset) == 0 {
+		return flatbuffers.Table{}, false
+	}
+	return flatbuffers.Table{Bytes: root.Bytes, Pos: root.Indirect(root.Vector(offset))}, true
+}
+
+func flatBufferTableString(table flatbuffers.Table, vtableOffset flatbuffers.VOffsetT) string {
+	offset := flatbuffers.UOffsetT(table.Offset(vtableOffset))
+	if offset == 0 {
+		return ""
+	}
+	return strings.TrimSpace(string(table.ByteVector(offset + table.Pos)))
+}
+
+func firstOEMDataLineEpoch(block flatbuffers.Table) string {
+	offset := flatbuffers.UOffsetT(block.Offset(36))
+	if offset == 0 || block.VectorLen(offset) == 0 {
+		return ""
+	}
+	line := flatbuffers.Table{Bytes: block.Bytes, Pos: block.Indirect(block.Vector(offset))}
+	return flatBufferTableString(line, 4)
 }
 
 func parseCAT(data []byte) (cat *CAT.CAT, err error) {
