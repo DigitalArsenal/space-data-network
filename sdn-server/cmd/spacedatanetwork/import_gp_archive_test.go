@@ -240,6 +240,60 @@ func TestGPArchiveZipShardUsesBulkBatchDefault(t *testing.T) {
 	}
 }
 
+func TestGPArchiveJSONShardFiltersHistoryAndTracksFiles(t *testing.T) {
+	root := t.TempDir()
+	ledgerPath := filepath.Join(root, "state", "spacetrack-ledger.json")
+	windowPath := filepath.Join(root, "spacetrack", "gp_history", "by-creation", "2026", "window.json.gz")
+	gpPath := filepath.Join(root, "spacetrack", "gp", "2026", "2026-09-26.json.gz")
+	if err := os.MkdirAll(filepath.Dir(windowPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(gpPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	windowHash := writeGPArchiveTestGzip(t, windowPath, []byte("["+gpArchiveTestJSONRecord("501", "1958-002B", "5")+","+gpArchiveTestJSONRecord("601", "1958-002C", "6")+"]"))
+	gpHash := writeGPArchiveTestGzip(t, gpPath, []byte("["+gpArchiveTestJSONRecord("501", "1958-002B", "5")+","+gpArchiveTestJSONRecord("9901", "2000-001A", "99")+"]"))
+	writeGPArchiveTestLedger(t, ledgerPath, []gpArchiveLedgerWindow{{File: "spacetrack/gp_history/by-creation/2026/window.json.gz", SHA256: windowHash, RetrievedAt: "2026-09-26T15:20:00Z"}})
+	setGPArchiveTestLedgerSnapshots(t, ledgerPath, []gpArchiveLedgerSATCAT{{File: "spacetrack/gp/2026/2026-09-26.json.gz", SHA256: gpHash, RetrievedAt: "2026-09-26T15:22:00Z"}})
+
+	opts := gpArchiveTestOptions(t, root, "", ledgerPath)
+	opts.JSONShard = "1/2"
+	sink := &gpArchiveMemorySink{}
+	report, err := importGPArchive(context.Background(), opts, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.RecordsRead != 4 || report.MPEStored != 2 || report.DuplicatesSkipped != 1 {
+		t.Fatalf("unexpected shard counts: %+v", report)
+	}
+	if opts.historySourceName() != gpArchiveHistorySource {
+		t.Fatal("unnormalized options should retain the default source name")
+	}
+	cp, err := loadGPArchiveCheckpoint(opts.CheckpointPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cp.CompletedWindowFiles) != 1 || len(cp.CompletedGPFiles) != 1 {
+		t.Fatalf("completed files = windows %d gp %d", len(cp.CompletedWindowFiles), len(cp.CompletedGPFiles))
+	}
+	if len(cp.Latest) != 0 {
+		t.Fatalf("JSON shard retained %d unnecessary latest records", len(cp.Latest))
+	}
+	normalized := opts
+	if err := normalized.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if !normalized.HistoryOnly || !normalized.SkipZip || normalized.historySourceName() != "gp-history-json-shard-1-of-2" {
+		t.Fatalf("unexpected normalized JSON shard options: %+v", normalized)
+	}
+}
+
+func TestGPArchiveJSONShardUsesBulkBatchDefault(t *testing.T) {
+	if got := effectiveGPArchiveBatchSize("1/4", 2000, false); got != gpArchiveShardBatchSize {
+		t.Fatalf("JSON shard default batch = %d", got)
+	}
+}
+
 func TestGPArchiveTwoZipShardsFoldToUnshardedCatalog(t *testing.T) {
 	zipPath := filepath.Join(t.TempDir(), "archive.zip")
 	rows := []string{
