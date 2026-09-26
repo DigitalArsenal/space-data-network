@@ -455,6 +455,39 @@ func TestGPArchiveSkipZipImportsJSONAndMaterializesCatalog(t *testing.T) {
 	}
 }
 
+func TestGPArchiveCatalogOnlyParsesJSONWithoutWritingHistory(t *testing.T) {
+	root := t.TempDir()
+	ledgerPath := filepath.Join(root, "state", "spacetrack-ledger.json")
+	windowPath := filepath.Join(root, "spacetrack", "gp_history", "by-creation", "2026", "window.json.gz")
+	if err := os.MkdirAll(filepath.Dir(windowPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hash := writeGPArchiveTestGzip(t, windowPath, []byte("["+gpArchiveTestJSONRecord("100", "1958-002B", "5")+"]"))
+	writeGPArchiveTestLedger(t, ledgerPath, []gpArchiveLedgerWindow{{File: "spacetrack/gp_history/by-creation/2026/window.json.gz", SHA256: hash, RetrievedAt: "2026-09-26T15:00:00Z"}})
+	opts := gpArchiveTestOptions(t, root, "", ledgerPath)
+	opts.CatalogOnly = true
+	sink := &gpArchiveMemorySink{}
+	report, err := importGPArchive(context.Background(), opts, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.MPEStored != 0 || len(sink.mpe) != 0 {
+		t.Fatalf("catalog-only wrote history: report=%d sink=%d", report.MPEStored, len(sink.mpe))
+	}
+	if len(sink.catalogMPE) != 1 || len(sink.cat) != 1 || report.CatalogEntities != 1 {
+		t.Fatalf("catalog-only failed to materialize catalog: MPE=%d CAT=%d report=%+v", len(sink.catalogMPE), len(sink.cat), report)
+	}
+
+	secondSink := &gpArchiveMemorySink{}
+	second, err := importGPArchive(context.Background(), opts, secondSink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.CompletedWindowFilesSkipped != 1 || len(secondSink.catalogMPE) != 0 || second.CatalogEntitiesChanged != 0 {
+		t.Fatalf("incremental catalog-only rerun changed data: report=%+v writes=%d", second, len(secondSink.catalogMPE))
+	}
+}
+
 func TestGPArchiveCancellationSavesStoppedReport(t *testing.T) {
 	root := t.TempDir()
 	zipPath := filepath.Join(root, "archive.zip")
