@@ -228,6 +228,18 @@ func TestGPArchiveZipShardSelectsOrdinalsAndIsHistoryOnly(t *testing.T) {
 	}
 }
 
+func TestGPArchiveZipShardUsesBulkBatchDefault(t *testing.T) {
+	if got := effectiveGPArchiveBatchSize("3/8", 2000, false); got != 100000 {
+		t.Fatalf("shard default batch = %d, want 100000", got)
+	}
+	if got := effectiveGPArchiveBatchSize("3/8", 20000, true); got != 20000 {
+		t.Fatalf("explicit shard batch = %d, want 20000", got)
+	}
+	if got := effectiveGPArchiveBatchSize("", 2000, false); got != 2000 {
+		t.Fatalf("normal default batch = %d, want 2000", got)
+	}
+}
+
 func TestGPArchiveTwoZipShardsFoldToUnshardedCatalog(t *testing.T) {
 	zipPath := filepath.Join(t.TempDir(), "archive.zip")
 	rows := []string{
