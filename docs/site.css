@@ -12,6 +12,7 @@
   --text-2: rgba(245, 245, 247, 0.78);
   --muted: #8e8e93;
   --accent: #f5a524;
+  --alert: #ff3b30;
   --accent-soft: rgba(245, 165, 36, 0.14);
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
@@ -271,8 +272,6 @@ body.centered .figure figcaption { text-align: center; }
 .compare td:last-child { color: var(--text); }
 .compare thead th:last-child { color: var(--accent); }
 @media (max-width: 620px) { .compare tbody th { white-space: normal; } }
-.figure-pair { display: grid; gap: 28px; max-width: 900px; margin: 0 auto; }
-.figure-pair .figure { max-width: none; margin: 0; }
 
 /* Whitepaper reader pages (build-whitepapers.mjs) */
 .paper-page { background: var(--paper-bg); }
@@ -364,10 +363,14 @@ body.centered .papers .card { text-align: left; }
 .reel-stage button:focus-visible { outline: 2px solid #f5a524; outline-offset: 2px; }
 @media (max-width: 760px) { .reel-stage { border-radius: var(--radius-sm); } }
 
-/* Problem cards: a red cross in the corner marks what is broken today. */
-.card.bad { position: relative; }
-.bad-mark { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: #fff; background: radial-gradient(circle at 35% 30%, #ff6e64, #ff3b30 55%, #d4261c); box-shadow: 0 0 0 4px rgba(255,59,48,.14), 0 6px 18px rgba(255,59,48,.32), inset 0 1px 0 rgba(255,255,255,.3); }
-.bad-mark svg { width: 18px; height: 18px; }
+/* Problem cards: a red cross in the corner marks what is broken today; the
+   footer line says what the network does about it. */
+.card.bad { position: relative; display: flex; flex-direction: column; }
+.card.bad .fix { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border); color: var(--text); font-weight: 500; }
+.card.bad > p:not(.fix) { margin-bottom: 16px; }
+.card.bad .card-head { padding: 0 30px; }
+.fix-tag { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.card .bad-mark { position: absolute; top: 18px; right: 18px; width: 24px; height: 24px; margin: 0; color: var(--alert); }
 
 /* Ways to take part: four steps on one rail, deeper to the right. */
 .depth { list-style: none; position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; max-width: 1120px; margin: 0 auto; padding-top: 22px; }
