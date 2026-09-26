@@ -7,7 +7,7 @@
   <meta name="description" content="How the military builds its space object catalog, and how Space Data Network builds an open one from any number of digitally signed sources.">
   <meta name="theme-color" content="#000000">
   <meta property="og:title" content="How A Space Catalog Is Built">
-  <meta property="og:description" content="Sensors, orbit determination and tiered access, and an open catalog built from any number of digitally signed sources.">
+  <meta property="og:description" content="Sensors, orbit determination and the products a catalog releases, and an open catalog built from any number of digitally signed sources.">
   <meta property="og:type" content="article">
   <title>How A Space Catalog Is Built &middot; Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><defs><linearGradient id='t' gradientUnits='userSpaceOnUse' x1='16' y1='29' x2='16' y2='3'><stop offset='0' stop-color='%23f5a524' stop-opacity='0'/><stop offset='.55' stop-color='%23f5a524' stop-opacity='.55'/><stop offset='1' stop-color='%23f5a524'/></linearGradient></defs><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M16 29A13 13 0 0 1 16 3' stroke='url(%23t)' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='16' cy='3' r='2.5' fill='%23f5a524'/></svg>">
@@ -80,7 +80,7 @@
         <div class="head">
           <p class="eyebrow">Part one</p>
           <h2>The Military Catalog</h2>
-          <p class="lede">Fixed sensors, one operations center, and three tiers of access.</p>
+          <p class="lede">Fixed sensors, one operations center, and products at several levels of accuracy.</p>
         </div>
 
         <div class="chapter">
@@ -149,15 +149,12 @@
 
         <div class="chapter">
           <p class="chapter-num">4</p>
-          <h3>Who gets what</h3>
-          <p>One catalog is released in three tiers. The more accurate the product, the fewer people can read it.</p>
+          <h3>What it releases</h3>
+          <p>The catalog is released as several products, from public element sets to high-accuracy orbits with full covariance.</p>
         </div>
-        <figure class="figure">
-          <img src="img/catalog/tiers.svg" width="880" height="440" alt="Pyramid of three tiers: public general-perturbation elements at the base, a high-accuracy catalog by sharing agreement in the middle, and orbits with uncertainty closely held at the top">
-        </figure>
         <div class="table-wrap narrow">
           <table>
-            <thead><tr><th>Product</th><th>What it holds</th><th>Who can read it</th></tr></thead>
+            <thead><tr><th>Product</th><th>What it holds</th><th>Available to</th></tr></thead>
             <tbody>
               <tr><td>General-perturbation element sets</td><td>Mean elements for the public catalog</td><td>Anyone with a free account on Space-Track.org</td></tr>
               <tr><td>High-accuracy catalog</td><td>Numerical special-perturbation orbits</td><td>Operators and governments with a sharing agreement</td></tr>
@@ -172,10 +169,10 @@
           <h3>Where the model strains</h3>
         </div>
         <div class="grid grid-2 narrow strains">
-          <div class="card"><h3>Accuracy follows access</h3><p>The best orbits and their error bubbles reach whoever holds an agreement. Everyone else screens with less.</p></div>
-          <div class="card"><h3>Terms stay private</h3><p>Access is negotiated one deal at a time. Nobody outside a deal can see what its data may be used for.</p></div>
-          <div class="card"><h3>Warnings can&rsquo;t be checked</h3><p>Operators get the answer, not the catalog behind it. Private catalogs repeat the pattern: send your ephemeris in, get warnings out.</p></div>
-          <div class="card"><h3>Free isn&rsquo;t open</h3><p>A free service that collects every operator&rsquo;s orbits improves with each one that joins, and what it learns stays with its owner.</p></div>
+          <div class="card"><h3>Formats built for punch cards</h3><p>Public element sets still ship as 69-character text lines. The five-digit catalog numbers are running out, and the format has no field for uncertainty.</p></div>
+          <div class="card"><h3>Elements tied to one theory</h3><p>Mean elements are only accurate through the theory they were fit with. Run them through another propagator and the error is silent.</p></div>
+          <div class="card"><h3>Owner ephemeris at scale</h3><p>Operators post predicted ephemeris for thousands of satellites several times a day. Every user downloads whole text files and parses them again.</p></div>
+          <div class="card"><h3>No common protocol</h3><p>Observations, elements, ephemerides and warnings each arrive through a different channel and format. Combining them takes custom code for every source.</p></div>
         </div>
       </div>
     </section>
@@ -193,7 +190,7 @@
         </figure>
 
         <ol class="steps steps-3">
-          <li><b>Publish</b><span>A sensor operator, satellite owner or lab digitally signs each record with its own private key and publishes it from its node. No contract, no gatekeeper.</span></li>
+          <li><b>Publish</b><span>A sensor operator, satellite owner or lab digitally signs each record with its own private key and publishes it from its node, free or for sale.</span></li>
           <li><b>Keep the original</b><span>Nodes store the exact bytes with the publisher&rsquo;s digital signature. Reprocessing never overwrites a provider&rsquo;s record.</span></li>
           <li><b>Match</b><span>Records from different sources are matched to one physical object by designator, history and trajectory. Ambiguous matches stay separate.</span></li>
           <li><b>Fit</b><span>Each orbit is fit with the model its evidence supports, up to full numerical propagation (HPOP). Every record names its model, so one theory&rsquo;s elements are never run through another&rsquo;s propagator.</span></li>
@@ -224,19 +221,20 @@
       <div class="wrap">
         <div class="head">
           <p class="eyebrow">Side by side</p>
-          <h2>Tiered Catalog Or Open Catalog</h2>
+          <h2>Files And Portals, Or A Network</h2>
         </div>
         <div class="table-wrap narrow">
           <table class="compare">
-            <thead><tr><th></th><th>Tiered catalog</th><th>Network catalog</th></tr></thead>
+            <thead><tr><th></th><th>Today</th><th>On the network</th></tr></thead>
             <tbody>
-              <tr><th>Who can add data</th><td>Sensors under contract</td><td>Anyone with a node and a key</td></tr>
-              <tr><th>Who reads the best orbits</th><td>Agreement holders</td><td>Anyone, on the published terms</td></tr>
-              <tr><th>Uncertainty</th><td>Withheld from most users</td><td>Carried with the orbit whenever the source has it</td></tr>
-              <tr><th>Terms of use</th><td>Private, deal by deal</td><td>Published in each digitally signed listing</td></tr>
-              <tr><th>Checking a result</th><td>Not possible from outside</td><td>Rerun the recipe on the same inputs</td></tr>
-              <tr><th>Your ephemeris</th><td>Feeds someone else&rsquo;s catalog</td><td>Stays yours; screen it encrypted</td></tr>
-              <tr><th>If a provider leaves</th><td>The data stops</td><td>Digitally signed copies stay on other nodes</td></tr>
+              <tr><th>Format</th><td>Fixed-width text and per-source variants</td><td>Space Data Standards: typed binary schemas</td></tr>
+              <tr><th>Getting data</th><td>A portal, login and API for each source</td><td>One peer-to-peer protocol, from any node</td></tr>
+              <tr><th>Updates</th><td>Download whole files and parse them again</td><td>Stream records; fetch each one once by its content address</td></tr>
+              <tr><th>Uncertainty</th><td>No field for it in the most used format</td><td>Carried with the orbit whenever the source has it</td></tr>
+              <tr><th>Who produced it</th><td>Taken on trust</td><td>Digitally signed by the producer, verified before storage</td></tr>
+              <tr><th>Checking a result</th><td>Depends on the provider</td><td>Rerun the recipe on the same inputs</td></tr>
+              <tr><th>Selling data</th><td>A separate delivery for each buyer</td><td>One digitally signed listing; buyers fetch from your node, no middlemen</td></tr>
+              <tr><th>If a source goes offline</th><td>The data stops</td><td>Digitally signed copies stay on other nodes</td></tr>
             </tbody>
           </table>
         </div>
