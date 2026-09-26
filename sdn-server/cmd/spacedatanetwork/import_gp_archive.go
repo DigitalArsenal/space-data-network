@@ -55,7 +55,7 @@ var (
 	importGPArchiveLedger, importGPArchiveCheckpoint, importGPArchiveReport               string
 	importGPArchiveSATCAT, importGPArchiveEpochStateModule                                string
 	importGPArchiveBatchSize, importGPArchiveMaxZipEntries, importGPArchiveMaxWindowFiles int
-	importGPArchiveSkipZip, importGPArchiveHistoryOnly                                    bool
+	importGPArchiveSkipZip, importGPArchiveHistoryOnly, importGPArchiveCatalogOnly        bool
 	importGPArchiveZipShard, importGPArchiveJSONShard                                     string
 )
 
@@ -73,6 +73,7 @@ func init() {
 	f.StringVar(&importGPArchiveZipShard, "zip-shard", "", "import ZIP shard i/N using zero-based CSV entry ordinals")
 	f.StringVar(&importGPArchiveJSONShard, "json-shard", "", "import JSON history shard i/N using NORAD_CAT_ID modulo N")
 	f.BoolVar(&importGPArchiveHistoryOnly, "history-only", false, "write history only; skip JSON, catalog, and OEM tiers")
+	f.BoolVar(&importGPArchiveCatalogOnly, "catalog-only", false, "read JSON sources and materialize catalog and OEM tiers without writing history")
 	f.StringVar(&importGPArchiveWindowsRoot, "windows", gpArchiveDefaultWindows, "gp_history window root")
 	f.StringVar(&importGPArchiveLedger, "ledger", gpArchiveDefaultLedger, "Space-Track ledger")
 	f.StringVar(&importGPArchiveSATCAT, "satcat", "", "SATCAT snapshot (default: newest snapshot under archive root)")
@@ -89,7 +90,7 @@ type gpArchiveOptions struct {
 	Out, ZipPath, WindowsRoot, LedgerPath, SATCATPath, EpochStateModule string
 	CheckpointPath, ReportPath                                          string
 	BatchSize, MaxZipEntries, MaxWindowFiles                            int
-	SkipZip, HistoryOnly                                                bool
+	SkipZip, HistoryOnly, CatalogOnly                                   bool
 	ZipShard                                                            string
 	ZipShardIndex, ZipShardCount                                        int
 	JSONShard                                                           string
@@ -357,7 +358,7 @@ func runImportGPArchive(cmd *cobra.Command, _ []string) error {
 		shard = importGPArchiveJSONShard
 	}
 	batchSize := effectiveGPArchiveBatchSize(shard, importGPArchiveBatchSize, cmd.Flags().Changed("batch-size"))
-	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: batchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, ZipShard: importGPArchiveZipShard, JSONShard: importGPArchiveJSONShard}
+	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: batchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, CatalogOnly: importGPArchiveCatalogOnly, ZipShard: importGPArchiveZipShard, JSONShard: importGPArchiveJSONShard}
 	if err := opts.normalize(); err != nil {
 		return err
 	}
@@ -392,8 +393,10 @@ func runImportGPArchive(cmd *cobra.Command, _ []string) error {
 		return storage.NewFlatSQLStoreForIdentity(opts.Out, validator, id)
 	}
 	s := &gpFlatSQLArchiveSink{}
-	if s.history, err = open(gpArchiveDatastoreIdentity("MPE.fbs", opts.historySourceName(), gpArchiveSourcePeer, "space-track")); err != nil {
-		return err
+	if !opts.CatalogOnly {
+		if s.history, err = open(gpArchiveDatastoreIdentity("MPE.fbs", opts.historySourceName(), gpArchiveSourcePeer, "space-track")); err != nil {
+			return err
+		}
 	}
 	defer s.Close()
 	if opts.HistoryOnly {
@@ -498,6 +501,15 @@ func (o *gpArchiveOptions) normalize() error {
 	}
 	if o.ZipShard != "" && o.JSONShard != "" {
 		return fmt.Errorf("--zip-shard and --json-shard are mutually exclusive")
+	}
+	if o.CatalogOnly && (o.HistoryOnly || o.ZipShard != "" || o.JSONShard != "") {
+		return fmt.Errorf("--catalog-only cannot be combined with history-only or shard modes")
+	}
+	if o.CatalogOnly {
+		o.SkipZip = true
+		if o.LedgerPath == "" {
+			return fmt.Errorf("--catalog-only requires --ledger")
+		}
 	}
 	if o.ZipShard != "" {
 		index, count, err := parseGPArchiveShard("--zip-shard", o.ZipShard)
@@ -964,11 +976,17 @@ type gpHistoryBatch struct {
 	records [][]byte
 	sink    gpArchiveSink
 	report  *gpArchiveRunReport
+	enabled bool
 }
 
-func (b *gpHistoryBatch) add(data []byte) error { b.records = append(b.records, data); return nil }
+func (b *gpHistoryBatch) add(data []byte) error {
+	if b.enabled {
+		b.records = append(b.records, data)
+	}
+	return nil
+}
 func (b *gpHistoryBatch) flush() error {
-	if len(b.records) == 0 {
+	if !b.enabled || len(b.records) == 0 {
 		return nil
 	}
 	n, e := b.sink.StoreHistoryMPE(b.records)
@@ -1074,7 +1092,7 @@ func importGPArchiveCSVEntry(ctx context.Context, entry *zip.File, entryOrdinal 
 		columns[strings.TrimSpace(n)] = i
 	}
 	dedup := map[string]struct{}{}
-	batch := &gpHistoryBatch{sink: sink, report: report}
+	batch := &gpHistoryBatch{sink: sink, report: report, enabled: !opts.CatalogOnly}
 	var entryRowOrder uint64
 	for {
 		if ctx.Err() != nil {
@@ -1161,8 +1179,10 @@ func importGPArchiveWindows(ctx context.Context, opts gpArchiveOptions, windows 
 		src.RowsStored = report.MPEStored - beforeStored
 		src.RowsRejected = report.RowsRejected - beforeRejected
 		sources[src.ID] = src
-		if err = upsertGPHistoryLicense(sink, sourceTags(src, opts.historySourceName())); err != nil {
-			return err
+		if !opts.CatalogOnly {
+			if err = upsertGPHistoryLicense(sink, sourceTags(src, opts.historySourceName())); err != nil {
+				return err
+			}
 		}
 		cp.CompletedWindowFiles[w.File] = actual
 		report.WindowFilesImported++
@@ -1210,8 +1230,10 @@ func importGPArchiveSnapshots(ctx context.Context, opts gpArchiveOptions, snapsh
 		src.RowsStored = report.MPEStored - beforeStored
 		src.RowsRejected = report.RowsRejected - beforeRejected
 		sources[src.ID] = src
-		if err = upsertGPHistoryLicense(sink, sourceTags(src, opts.historySourceName())); err != nil {
-			return err
+		if !opts.CatalogOnly {
+			if err = upsertGPHistoryLicense(sink, sourceTags(src, opts.historySourceName())); err != nil {
+				return err
+			}
 		}
 		cp.CompletedGPFiles[snapshot.File] = actual
 		report.GPFilesImported++
@@ -1241,7 +1263,7 @@ func importGPArchiveJSONWindow(ctx context.Context, raw []byte, opts gpArchiveOp
 		}
 	}
 	currentIDs := make([]string, 0)
-	batch := &gpHistoryBatch{sink: sink, report: report}
+	batch := &gpHistoryBatch{sink: sink, report: report, enabled: !opts.CatalogOnly}
 	for _, raw := range rows {
 		if ctx.Err() != nil {
 			if err := batch.flush(); err != nil {
