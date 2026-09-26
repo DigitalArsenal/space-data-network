@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -187,6 +188,41 @@ func TestGPArchiveCSVExactRepeatIsDeduplicated(t *testing.T) {
 	}
 	if report.RecordsRead != 2 || report.MPEStored != 1 || report.DuplicatesSkipped != 1 {
 		t.Fatalf("CSV report = %+v", report)
+	}
+}
+
+func TestGPArchiveZipShardSelectsOrdinalsAndIsHistoryOnly(t *testing.T) {
+	zipPath := filepath.Join(t.TempDir(), "archive.zip")
+	entries := make([]string, 4)
+	for i := range entries {
+		entries[i] = gpArchiveTestHeader + fmt.Sprintf(",1958-002B,2022-01-0%dT00:00:00.000001,15.1,.001,34,1,2,3,0,U,5,1,1,0,0,0,NORAD\n", i+1)
+	}
+	writeGPArchiveTestZipEntries(t, zipPath, entries)
+	for shard := 0; shard < 2; shard++ {
+		root := t.TempDir()
+		opts := gpArchiveTestOptions(t, root, zipPath, "")
+		opts.ZipShard = fmt.Sprintf("%d/2", shard)
+		sink := &gpArchiveMemorySink{}
+		report, err := importGPArchive(context.Background(), opts, sink)
+		if err != nil {
+			t.Fatalf("shard %d: %v", shard, err)
+		}
+		if report.RecordsRead != 2 || report.MPEStored != 2 || len(sink.catalogMPE) != 0 || len(sink.cat) != 0 {
+			t.Fatalf("shard %d report=%+v catalogMPE=%d CAT=%d", shard, report, len(sink.catalogMPE), len(sink.cat))
+		}
+		cp, err := loadGPArchiveCheckpoint(opts.CheckpointPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cp.CompletedZipEntries) != 2 || cp.ZipCSVEntries != 2 {
+			t.Fatalf("shard %d checkpoint completed=%d selected=%d", shard, len(cp.CompletedZipEntries), cp.ZipCSVEntries)
+		}
+		if err := opts.normalize(); err != nil {
+			t.Fatal(err)
+		}
+		if !opts.HistoryOnly || opts.historySourceName() != fmt.Sprintf("gp-history-zip-shard-%d-of-2", shard) {
+			t.Fatalf("shard %d options not normalized: %+v", shard, opts)
+		}
 	}
 }
 
@@ -625,18 +661,24 @@ func gpArchiveTestOptions(t *testing.T, root, zipPath, ledgerPath string) gpArch
 }
 
 func writeGPArchiveTestZip(t *testing.T, path, csvData string) {
+	writeGPArchiveTestZipEntries(t, path, []string{csvData})
+}
+
+func writeGPArchiveTestZipEntries(t *testing.T, path string, csvData []string) {
 	t.Helper()
 	file, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	zw := zip.NewWriter(file)
-	entry, err := zw.Create("Archives2/sat000000005.csv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := entry.Write([]byte(csvData)); err != nil {
-		t.Fatal(err)
+	for i, data := range csvData {
+		entry, createErr := zw.Create(fmt.Sprintf("Archives2/sat%09d.csv", i+5))
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, writeErr := entry.Write([]byte(data)); writeErr != nil {
+			t.Fatal(writeErr)
+		}
 	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
