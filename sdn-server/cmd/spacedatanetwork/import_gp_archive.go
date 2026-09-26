@@ -56,6 +56,7 @@ var (
 	importGPArchiveSATCAT, importGPArchiveEpochStateModule                                string
 	importGPArchiveBatchSize, importGPArchiveMaxZipEntries, importGPArchiveMaxWindowFiles int
 	importGPArchiveSkipZip, importGPArchiveHistoryOnly, importGPArchiveCatalogOnly        bool
+	importGPArchiveReindexCatalog                                                         bool
 	importGPArchiveZipShard, importGPArchiveJSONShard                                     string
 )
 
@@ -74,6 +75,7 @@ func init() {
 	f.StringVar(&importGPArchiveJSONShard, "json-shard", "", "import JSON history shard i/N using NORAD_CAT_ID modulo N")
 	f.BoolVar(&importGPArchiveHistoryOnly, "history-only", false, "write history only; skip JSON, catalog, and OEM tiers")
 	f.BoolVar(&importGPArchiveCatalogOnly, "catalog-only", false, "read JSON sources and materialize catalog and OEM tiers without writing history")
+	f.BoolVar(&importGPArchiveReindexCatalog, "reindex-catalog", false, "rebuild record indexes for the gp-catalog MPE/CAT and epoch-state OEM datastores")
 	f.StringVar(&importGPArchiveWindowsRoot, "windows", gpArchiveDefaultWindows, "gp_history window root")
 	f.StringVar(&importGPArchiveLedger, "ledger", gpArchiveDefaultLedger, "Space-Track ledger")
 	f.StringVar(&importGPArchiveSATCAT, "satcat", "", "SATCAT snapshot (default: newest snapshot under archive root)")
@@ -90,7 +92,7 @@ type gpArchiveOptions struct {
 	Out, ZipPath, WindowsRoot, LedgerPath, SATCATPath, EpochStateModule string
 	CheckpointPath, ReportPath                                          string
 	BatchSize, MaxZipEntries, MaxWindowFiles                            int
-	SkipZip, HistoryOnly, CatalogOnly                                   bool
+	SkipZip, HistoryOnly, CatalogOnly, ReindexCatalog                   bool
 	ZipShard                                                            string
 	ZipShardIndex, ZipShardCount                                        int
 	JSONShard                                                           string
@@ -358,7 +360,7 @@ func runImportGPArchive(cmd *cobra.Command, _ []string) error {
 		shard = importGPArchiveJSONShard
 	}
 	batchSize := effectiveGPArchiveBatchSize(shard, importGPArchiveBatchSize, cmd.Flags().Changed("batch-size"))
-	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: batchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, CatalogOnly: importGPArchiveCatalogOnly, ZipShard: importGPArchiveZipShard, JSONShard: importGPArchiveJSONShard}
+	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: batchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, CatalogOnly: importGPArchiveCatalogOnly, ReindexCatalog: importGPArchiveReindexCatalog, ZipShard: importGPArchiveZipShard, JSONShard: importGPArchiveJSONShard}
 	if err := opts.normalize(); err != nil {
 		return err
 	}
@@ -371,6 +373,13 @@ func runImportGPArchive(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	defer releaseLock()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		return err
+	}
+	if opts.ReindexCatalog {
+		return reindexGPArchiveCatalog(opts.Out, validator)
+	}
 	if opts.EpochStateModule != "" && !opts.HistoryOnly {
 		wasm, err := os.ReadFile(opts.EpochStateModule)
 		if err != nil {
@@ -384,10 +393,6 @@ func runImportGPArchive(cmd *cobra.Command, _ []string) error {
 		}
 		opts.deriver = &gpWASMEpochDeriver{module: m}
 		defer opts.deriver.Close()
-	}
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		return err
 	}
 	open := func(id storage.DatastoreIdentity) (*storage.FlatSQLStore, error) {
 		return storage.NewFlatSQLStoreForIdentity(opts.Out, validator, id)
@@ -502,6 +507,9 @@ func (o *gpArchiveOptions) normalize() error {
 	if o.ZipShard != "" && o.JSONShard != "" {
 		return fmt.Errorf("--zip-shard and --json-shard are mutually exclusive")
 	}
+	if o.ReindexCatalog && (o.HistoryOnly || o.CatalogOnly || o.ZipShard != "" || o.JSONShard != "") {
+		return fmt.Errorf("--reindex-catalog cannot be combined with import modes")
+	}
 	if o.CatalogOnly && (o.HistoryOnly || o.ZipShard != "" || o.JSONShard != "") {
 		return fmt.Errorf("--catalog-only cannot be combined with history-only or shard modes")
 	}
@@ -565,6 +573,34 @@ func (o gpArchiveOptions) historySourceName() string {
 	}
 	return gpArchiveHistorySource
 }
+
+func reindexGPArchiveCatalog(out string, validator *sds.Validator) error {
+	targets := []struct {
+		schema   string
+		identity storage.DatastoreIdentity
+	}{
+		{"MPE.fbs", gpArchiveDatastoreIdentity("MPE.fbs", gpArchiveCatalogSource, gpArchiveSourcePeer, "space-track")},
+		{"CAT.fbs", gpArchiveDatastoreIdentity("CAT.fbs", gpArchiveCatalogSource, gpArchiveSourcePeer, "space-track")},
+		{"OEM.fbs", gpArchiveDatastoreIdentity("OEM.fbs", "epoch-state", gpArchiveOEMSourcePeer, "sdn")},
+	}
+	for _, target := range targets {
+		store, err := storage.NewFlatSQLStoreForIdentity(out, validator, target.identity)
+		if err != nil {
+			return fmt.Errorf("open %s archive datastore for reindex: %w", target.schema, err)
+		}
+		summary, rebuildErr := store.RebuildIndex()
+		closeErr := store.Close()
+		if rebuildErr != nil {
+			return fmt.Errorf("reindex %s archive datastore: %w", target.schema, rebuildErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close %s archive datastore after reindex: %w", target.schema, closeErr)
+		}
+		log.Infof("Reindexed GP archive %s datastore: %d records", target.schema, summary[target.schema])
+	}
+	return nil
+}
+
 func gpArchiveDatastoreIdentity(schema, source, peer, provider string) storage.DatastoreIdentity {
 	return storage.DatastoreIdentity{SchemaName: schema, SourcePeerID: peer, ProviderID: provider, SourceName: source, QueryProfile: storage.DatasetPublicationQueryProfile}
 }
