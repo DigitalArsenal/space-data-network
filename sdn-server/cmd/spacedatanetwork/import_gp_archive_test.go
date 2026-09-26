@@ -76,6 +76,19 @@ func (s *gpArchiveMemorySink) DeleteOEM(cid string) error {
 
 func (s *gpArchiveMemorySink) Close() error { return nil }
 
+type gpArchiveCountingDeriver struct{ calls int }
+
+func (d *gpArchiveCountingDeriver) Derive(_ context.Context, inputs [][]byte) ([][]byte, gpEpochReport, error) {
+	d.calls++
+	outputs := make([][]byte, len(inputs))
+	for i := range inputs {
+		outputs[i] = append([]byte(nil), inputs[i]...)
+	}
+	return outputs, gpEpochReport{Records: int64(len(inputs)), Derived: int64(len(inputs))}, nil
+}
+
+func (d *gpArchiveCountingDeriver) Close() error { return nil }
+
 func TestGPArchiveCSVRowPreservesFractionalEpochAndZeroFields(t *testing.T) {
 	columns := gpArchiveTestColumns()
 	row := []string{
@@ -240,6 +253,60 @@ func TestGPArchiveZipShardUsesBulkBatchDefault(t *testing.T) {
 	}
 }
 
+func TestGPArchiveJSONShardFiltersHistoryAndTracksFiles(t *testing.T) {
+	root := t.TempDir()
+	ledgerPath := filepath.Join(root, "state", "spacetrack-ledger.json")
+	windowPath := filepath.Join(root, "spacetrack", "gp_history", "by-creation", "2026", "window.json.gz")
+	gpPath := filepath.Join(root, "spacetrack", "gp", "2026", "2026-09-26.json.gz")
+	if err := os.MkdirAll(filepath.Dir(windowPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(gpPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	windowHash := writeGPArchiveTestGzip(t, windowPath, []byte("["+gpArchiveTestJSONRecord("501", "1958-002B", "5")+","+gpArchiveTestJSONRecord("601", "1958-002C", "6")+"]"))
+	gpHash := writeGPArchiveTestGzip(t, gpPath, []byte("["+gpArchiveTestJSONRecord("501", "1958-002B", "5")+","+gpArchiveTestJSONRecord("9901", "2000-001A", "99")+"]"))
+	writeGPArchiveTestLedger(t, ledgerPath, []gpArchiveLedgerWindow{{File: "spacetrack/gp_history/by-creation/2026/window.json.gz", SHA256: windowHash, RetrievedAt: "2026-09-26T15:20:00Z"}})
+	setGPArchiveTestLedgerSnapshots(t, ledgerPath, []gpArchiveLedgerSATCAT{{File: "spacetrack/gp/2026/2026-09-26.json.gz", SHA256: gpHash, RetrievedAt: "2026-09-26T15:22:00Z"}})
+
+	opts := gpArchiveTestOptions(t, root, "", ledgerPath)
+	opts.JSONShard = "1/2"
+	sink := &gpArchiveMemorySink{}
+	report, err := importGPArchive(context.Background(), opts, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.RecordsRead != 4 || report.MPEStored != 2 || report.DuplicatesSkipped != 1 {
+		t.Fatalf("unexpected shard counts: %+v", report)
+	}
+	if opts.historySourceName() != gpArchiveHistorySource {
+		t.Fatal("unnormalized options should retain the default source name")
+	}
+	cp, err := loadGPArchiveCheckpoint(opts.CheckpointPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cp.CompletedWindowFiles) != 1 || len(cp.CompletedGPFiles) != 1 {
+		t.Fatalf("completed files = windows %d gp %d", len(cp.CompletedWindowFiles), len(cp.CompletedGPFiles))
+	}
+	if len(cp.Latest) != 0 {
+		t.Fatalf("JSON shard retained %d unnecessary latest records", len(cp.Latest))
+	}
+	normalized := opts
+	if err := normalized.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if !normalized.HistoryOnly || !normalized.SkipZip || normalized.historySourceName() != "gp-history-json-shard-1-of-2" {
+		t.Fatalf("unexpected normalized JSON shard options: %+v", normalized)
+	}
+}
+
+func TestGPArchiveJSONShardUsesBulkBatchDefault(t *testing.T) {
+	if got := effectiveGPArchiveBatchSize("1/4", 2000, false); got != gpArchiveShardBatchSize {
+		t.Fatalf("JSON shard default batch = %d", got)
+	}
+}
+
 func TestGPArchiveTwoZipShardsFoldToUnshardedCatalog(t *testing.T) {
 	zipPath := filepath.Join(t.TempDir(), "archive.zip")
 	rows := []string{
@@ -401,6 +468,39 @@ func TestGPArchiveSkipZipImportsJSONAndMaterializesCatalog(t *testing.T) {
 	}
 }
 
+func TestGPArchiveCatalogOnlyParsesJSONWithoutWritingHistory(t *testing.T) {
+	root := t.TempDir()
+	ledgerPath := filepath.Join(root, "state", "spacetrack-ledger.json")
+	windowPath := filepath.Join(root, "spacetrack", "gp_history", "by-creation", "2026", "window.json.gz")
+	if err := os.MkdirAll(filepath.Dir(windowPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hash := writeGPArchiveTestGzip(t, windowPath, []byte("["+gpArchiveTestJSONRecord("100", "1958-002B", "5")+"]"))
+	writeGPArchiveTestLedger(t, ledgerPath, []gpArchiveLedgerWindow{{File: "spacetrack/gp_history/by-creation/2026/window.json.gz", SHA256: hash, RetrievedAt: "2026-09-26T15:00:00Z"}})
+	opts := gpArchiveTestOptions(t, root, "", ledgerPath)
+	opts.CatalogOnly = true
+	sink := &gpArchiveMemorySink{}
+	report, err := importGPArchive(context.Background(), opts, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.MPEStored != 0 || len(sink.mpe) != 0 {
+		t.Fatalf("catalog-only wrote history: report=%d sink=%d", report.MPEStored, len(sink.mpe))
+	}
+	if len(sink.catalogMPE) != 1 || len(sink.cat) != 1 || report.CatalogEntities != 1 {
+		t.Fatalf("catalog-only failed to materialize catalog: MPE=%d CAT=%d report=%+v", len(sink.catalogMPE), len(sink.cat), report)
+	}
+
+	secondSink := &gpArchiveMemorySink{}
+	second, err := importGPArchive(context.Background(), opts, secondSink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.CompletedWindowFilesSkipped != 1 || len(secondSink.catalogMPE) != 0 || second.CatalogEntitiesChanged != 0 {
+		t.Fatalf("incremental catalog-only rerun changed data: report=%+v writes=%d", second, len(secondSink.catalogMPE))
+	}
+}
+
 func TestGPArchiveCancellationSavesStoppedReport(t *testing.T) {
 	root := t.TempDir()
 	zipPath := filepath.Join(root, "archive.zip")
@@ -556,6 +656,116 @@ func TestGPArchiveCurrentGPSnapshotDedupesWindowAndIsIncremental(t *testing.T) {
 	}
 	if second.RecordsRead != 0 || second.CompletedGPFilesSkipped != 1 {
 		t.Fatalf("incremental snapshot run = %+v", second)
+	}
+}
+
+func TestGPArchiveJSONShardsAndCatalogOnlyMatchUnsharded(t *testing.T) {
+	root := t.TempDir()
+	windowDir := filepath.Join(root, "spacetrack", "gp_history", "by-creation", "2026")
+	gpDir := filepath.Join(root, "spacetrack", "gp", "2026")
+	if err := os.MkdirAll(windowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(gpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w1Path := filepath.Join(windowDir, "window-1.json.gz")
+	w2Path := filepath.Join(windowDir, "window-2.json.gz")
+	gpPath := filepath.Join(gpDir, "2026-09-26.json.gz")
+	r5 := gpArchiveTestJSONRecord("501", "1958-002B", "5")
+	r6 := gpArchiveTestJSONRecord("601", "1958-002C", "6")
+	r99 := gpArchiveTestJSONRecord("9901", "2000-001A", "99")
+	r6New := strings.Replace(gpArchiveTestJSONRecord("602", "1958-002C", "6"), "1.00271749", "1.00281749", 1)
+	w1Hash := writeGPArchiveTestGzip(t, w1Path, []byte("["+r5+","+r6+"]"))
+	w2Hash := writeGPArchiveTestGzip(t, w2Path, []byte("["+r6+","+r99+"]"))
+	gpHash := writeGPArchiveTestGzip(t, gpPath, []byte("["+r5+","+r6New+"]"))
+	ledgerPath := filepath.Join(root, "state", "spacetrack-ledger.json")
+	writeGPArchiveTestLedger(t, ledgerPath, []gpArchiveLedgerWindow{
+		{File: "spacetrack/gp_history/by-creation/2026/window-1.json.gz", SHA256: w1Hash, RetrievedAt: "2026-09-26T15:00:00Z"},
+		{File: "spacetrack/gp_history/by-creation/2026/window-2.json.gz", SHA256: w2Hash, RetrievedAt: "2026-09-26T15:15:00Z"},
+	})
+	setGPArchiveTestLedgerSnapshots(t, ledgerPath, []gpArchiveLedgerSATCAT{{File: "spacetrack/gp/2026/2026-09-26.json.gz", SHA256: gpHash, RetrievedAt: "2026-09-26T15:22:00Z"}})
+	base := gpArchiveTestOptions(t, root, "", ledgerPath)
+	base.SkipZip = true
+
+	unshardedOpts := gpArchiveOptionsForTestRun(base, filepath.Join(root, "unsharded"))
+	unshardedSink := &gpArchiveMemorySink{}
+	if _, err := importGPArchive(context.Background(), unshardedOpts, unshardedSink); err != nil {
+		t.Fatal(err)
+	}
+
+	shardHistory := make(map[string]struct{})
+	for shard := 0; shard < 2; shard++ {
+		shardOpts := gpArchiveOptionsForTestRun(base, filepath.Join(root, "json-shards", strconv.Itoa(shard)))
+		shardOpts.JSONShard = fmt.Sprintf("%d/2", shard)
+		shardSink := &gpArchiveMemorySink{}
+		report, err := importGPArchive(context.Background(), shardOpts, shardSink)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.WindowFilesImported != 2 || report.GPFilesImported != 1 {
+			t.Fatalf("shard %d did not complete all JSON files: %+v", shard, report)
+		}
+		for _, record := range shardSink.mpe {
+			shardHistory[storage.ComputeCID(record)] = struct{}{}
+		}
+	}
+	wantHistory := make(map[string]struct{})
+	for _, record := range unshardedSink.mpe {
+		wantHistory[storage.ComputeCID(record)] = struct{}{}
+	}
+	if !reflect.DeepEqual(shardHistory, wantHistory) {
+		t.Fatalf("shard history union differs: got=%v want=%v", shardHistory, wantHistory)
+	}
+
+	catalogOpts := gpArchiveOptionsForTestRun(base, filepath.Join(root, "catalog-only"))
+	catalogOpts.CatalogOnly = true
+	catalogSink := &gpArchiveMemorySink{}
+	if _, err := importGPArchive(context.Background(), catalogOpts, catalogSink); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalogSink.mpe) != 0 {
+		t.Fatalf("catalog-only wrote %d history records", len(catalogSink.mpe))
+	}
+	if got, want := gpArchiveCatalogMPEByEntity(t, catalogSink.catalogMPE), gpArchiveCatalogMPEByEntity(t, unshardedSink.catalogMPE); !reflect.DeepEqual(got, want) {
+		t.Fatalf("catalog-only result differs: got=%v want=%v", got, want)
+	}
+}
+
+func TestGPArchiveExistingCheckpointSwitchesToCatalogOnlyWithoutRederive(t *testing.T) {
+	root := t.TempDir()
+	windowPath := filepath.Join(root, "spacetrack", "gp_history", "by-creation", "2026", "window.json.gz")
+	if err := os.MkdirAll(filepath.Dir(windowPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hash := writeGPArchiveTestGzip(t, windowPath, []byte("["+gpArchiveTestJSONRecord("501", "1958-002B", "5")+"]"))
+	ledgerPath := filepath.Join(root, "state", "spacetrack-ledger.json")
+	writeGPArchiveTestLedger(t, ledgerPath, []gpArchiveLedgerWindow{{File: "spacetrack/gp_history/by-creation/2026/window.json.gz", SHA256: hash, RetrievedAt: "2026-09-26T15:00:00Z"}})
+	opts := gpArchiveTestOptions(t, root, "", ledgerPath)
+	opts.SkipZip = true
+	firstDeriver := &gpArchiveCountingDeriver{}
+	opts.deriver = firstDeriver
+	opts.moduleHash = strings.Repeat("a", 64)
+	if _, err := importGPArchive(context.Background(), opts, &gpArchiveMemorySink{}); err != nil {
+		t.Fatal(err)
+	}
+	if firstDeriver.calls != 1 {
+		t.Fatalf("initial derivation calls = %d", firstDeriver.calls)
+	}
+
+	secondDeriver := &gpArchiveCountingDeriver{}
+	opts.CatalogOnly = true
+	opts.deriver = secondDeriver
+	sink := &gpArchiveMemorySink{}
+	report, err := importGPArchive(context.Background(), opts, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.CompletedWindowFilesSkipped != 1 || report.CatalogEntitiesChanged != 0 || report.EpochStatesDerived != 0 {
+		t.Fatalf("existing checkpoint was not an incremental no-op: %+v", report)
+	}
+	if len(sink.mpe) != 0 || len(sink.catalogMPE) != 0 || len(sink.oem) != 0 || secondDeriver.calls != 0 {
+		t.Fatalf("mode switch wrote data: history=%d catalog=%d OEM=%d derive_calls=%d", len(sink.mpe), len(sink.catalogMPE), len(sink.oem), secondDeriver.calls)
 	}
 }
 
@@ -767,6 +977,13 @@ func gpArchiveTestOptions(t *testing.T, root, zipPath, ledgerPath string) gpArch
 		ReportPath:     filepath.Join(root, "report.json"),
 		BatchSize:      2,
 	}
+}
+
+func gpArchiveOptionsForTestRun(base gpArchiveOptions, out string) gpArchiveOptions {
+	base.Out = out
+	base.CheckpointPath = filepath.Join(out, "gp-archive-checkpoint.json")
+	base.ReportPath = filepath.Join(out, "gp-archive-report.json")
+	return base
 }
 
 func writeGPArchiveTestZip(t *testing.T, path, csvData string) {
