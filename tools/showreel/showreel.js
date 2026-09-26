@@ -77,9 +77,9 @@ function canvas(w, h) {
 // closest approach and the finale snaps forward. τ(t) is integrated once.
 function rate(t) {
   let r = 1;
-  r += 2.2 * seg(t, 10.1, 10.5) * (1 - seg(t, 11.05, 11.45)); // rush in
-  r -= 0.86 * seg(t, 11.05, 11.45) * (1 - seg(t, 11.95, 12.25)); // slow-mo at TCA
-  r += 3.0 * seg(t, 12.25, 12.6) * (1 - seg(t, 13.2, 13.6)); // snap out
+  r += 0.6 * seg(t, 8.925, 9.525) * (1 - seg(t, 10.35, 10.95)); // approach
+  r -= 0.86 * seg(t, 10.35, 10.95) * (1 - seg(t, 11.7, 12.15)); // slow-mo at TCA
+  r += 3.0 * seg(t, 12.15, 12.6) * (1 - seg(t, 13.2, 13.6)); // snap out
   return r;
 }
 const TAU_STEP = 0.001;
@@ -156,7 +156,7 @@ const CONJ = (() => {
   const uAt = (o, p) => Math.atan2(dot(p, o.e2), dot(p, o.e1));
   A.w = OMEGA_K * Math.pow(A.r, -1.5);
   B.w = OMEGA_K * Math.pow(B.r, -1.5);
-  const tTCA = tau(11.6);
+  const tTCA = tau(11.175);
   A.u0 = uAt(A, X) - A.w * tTCA;
   B.u0 = uAt(B, X) - B.w * tTCA + 0.0035;
   return { A, B, X, tTCA };
@@ -217,20 +217,20 @@ function cameraAt(t) {
     dir = geoDir(lerp(26, 34, k), lerp(-30, -38, k) + 6 * seg(t, 6.4, 7.75), 0);
     dist = lerp(7.4, 2.75, k);
     off = [lerp(0, 0.34, k), lerp(0, -0.12, k)];
-    // Whip-zoom into a packet before the cut to the record.
+    // Whip-zoom into a packet: the record it carries fills the frame.
     zoom = 1 + 7 * easeInExpo(seg(t, 7.3, 7.75));
-  } else if (t < 10.1) {
-    dir = geoDir(28, -44 + 6 * seg(t, 7.75, 10.1), 0);
+  } else if (t < 8.925) {
+    dir = geoDir(28, -44 + 3 * seg(t, 7.75, 8.925), 0);
     dist = 3.1;
     off = [0.52, -0.08];
-    zoom = lerp(1.25, 1, easeOutExpo(seg(t, 7.75, 8.6)));
+    zoom = lerp(1.25, 1, easeOutExpo(seg(t, 7.75, 8.175)));
   } else {
     // Conjunction close-up, then the pull back to the whole network.
     const X = CONJ.X;
     const side = norm(cross(X, [0, 1, 0]));
     const camNear = add(add(mul(X, 1.5), mul(side, 0.34)), mul(norm(cross(side, X)), 0.12));
     const targetNear = mul(X, 1.08);
-    const drift = seg(t, 10.1, 12.6);
+    const drift = seg(t, 8.925, 12.6);
     const near = add(camNear, mul(side, -0.12 * drift));
     const pull = easeInOutExpo(seg(t, 12.45, 13.55));
     const farDir = norm(add(mul(X, 1), [0, 0.35, 0]));
@@ -466,7 +466,7 @@ export async function createShowreel(base = "") {
   // Text revealed upward out of a mask, the staple of kinetic typography.
   function maskText(ctx, text, x, y, px, weight, color, tIn, tOut, t, opts = {}) {
     const inK = easeOutExpo(seg(t, tIn, tIn + (opts.dur ?? 0.7)));
-    const outK = tOut == null ? 0 : easeInExpo(seg(t, tOut, tOut + 0.45));
+    const outK = tOut == null ? 0 : easeInExpo(seg(t, tOut, tOut + (opts.outDur ?? 0.45)));
     if (inK <= 0 || outK >= 1) return;
     ctx.save();
     ctx.font = font(weight, px, opts.family ?? SANS);
@@ -613,7 +613,7 @@ export async function createShowreel(base = "") {
     sx.fillText(`00:00:${String(s).padStart(2, "0")}:${String(f).padStart(2, "0")}`, W - m - 12, m + 30);
     const chapters = [
       [0, "01  IGNITION"], [2.0, "02  CATALOG"], [5.0, "03  NETWORK"],
-      [7.75, "04  RECORD"], [10.1, "05  CONJUNCTION"], [12.6, "06  RESOLVE"],
+      [8.925, "04  CONJUNCTION"], [12.6, "05  RESOLVE"],
     ];
     let ch = chapters[0][1];
     for (const [t0, name] of chapters) if (t >= t0) ch = name;
@@ -810,15 +810,15 @@ export async function createShowreel(base = "") {
   }
 
   function drawRecord(t) {
-    const inK = seg(t, 7.75, 8.1);
-    const outK = easeInExpo(seg(t, 9.75, 10.1));
+    const inK = seg(t, 7.75, 7.925);
+    const outK = easeInExpo(seg(t, 8.75, 8.925));
     if (inK <= 0 || outK >= 1) return;
     const x0 = 180 - outK * 260;
     const y0 = 250;
     sx.save();
     sx.globalAlpha = 1 - outK;
     // grid hairlines that draw on
-    const grid = easeOutExpo(seg(t, 7.75, 8.35));
+    const grid = easeOutExpo(seg(t, 7.75, 8.05));
     sx.strokeStyle = "rgba(245,245,247,0.14)";
     sx.lineWidth = 1;
     for (let i = 0; i < 12; i++) {
@@ -834,8 +834,8 @@ export async function createShowreel(base = "") {
     sx.stroke();
     sx.restore();
 
-    maskText(sx, "OCM · ORBIT COMPREHENSIVE MESSAGE", x0, y0 - 84, 17, 600, AMBER, 7.8, 9.75, t, { tracking: 2.5, family: SANS });
-    maskText(sx, "ISS (ZARYA)", x0, y0 - 6, 64, 700, INK, 7.85, 9.72, t, { dur: 0.8 });
+    maskText(sx, "OCM · ORBIT COMPREHENSIVE MESSAGE", x0, y0 - 84, 17, 600, AMBER, 7.775, 8.75, t, { tracking: 2.5, family: SANS, dur: 0.35, outDur: 0.225 });
+    maskText(sx, "ISS (ZARYA)", x0, y0 - 6, 64, 700, INK, 7.8, 8.735, t, { dur: 0.4, outDur: 0.225 });
     // An Orbit Comprehensive Message: state vector, covariance and physical
     // properties, not just mean elements.
     const FIELDS = [
@@ -855,8 +855,8 @@ export async function createShowreel(base = "") {
     sx.globalAlpha = 1 - outK;
     FIELDS.forEach(([k, v], i) => {
       const y = y0 + 68 + i * 46;
-      const t0 = 8.0 + i * 0.07;
-      const a = seg(t, t0, t0 + 0.25);
+      const t0 = 7.875 + i * 0.035;
+      const a = seg(t, t0, t0 + 0.125);
       if (a <= 0) return;
       sx.globalAlpha = (1 - outK) * a;
       sx.font = font(500, 17, MONO);
@@ -866,7 +866,7 @@ export async function createShowreel(base = "") {
       sx.fillText(k, x0, y);
       sx.fillStyle = INK;
       sx.font = font(500, 22, MONO);
-      decodeText(sx, v, x0 + 372, y, t0 + 0.05, 0.55, t, 100 + i);
+      decodeText(sx, v, x0 + 372, y, t0 + 0.025, 0.275, t, 100 + i);
     });
     sx.restore();
 
@@ -876,14 +876,14 @@ export async function createShowreel(base = "") {
     sx.beginPath();
     sx.rect(hx - 10, 170, 620, 720);
     sx.clip();
-    const scroll = (t - 7.75) * 90;
-    const hk = seg(t, 7.8, 8.2) * (1 - outK);
+    const scroll = (t - 7.75) * 180;
+    const hk = seg(t, 7.775, 7.975) * (1 - outK);
     sx.font = font(400, 17, MONO);
     sx.letterSpacing = "0.5px";
     HEX.forEach((row, i) => {
       const y = 200 + i * 28 - scroll;
       if (y < 160 || y > 900) return;
-      const scan = Math.abs(y - (760 - (t - 8.0) * 190)) < 30;
+      const scan = Math.abs(y - (760 - (t - 7.875) * 380)) < 30;
       sx.globalAlpha = hk * (scan ? 1 : 0.4) * clamp(1 - Math.abs(y - 530) / 380);
       sx.fillStyle = MUTED;
       sx.fillText(row.off, hx, y);
@@ -891,12 +891,12 @@ export async function createShowreel(base = "") {
       sx.fillText(row.bytes.join(" "), hx + 90, y);
     });
     sx.restore();
-    maskText(sx, "FLATBUFFERS · 1,184 BYTES", hx, 168, 15, 600, CYAN, 7.9, 9.72, t, { tracking: 2.5 });
+    maskText(sx, "FLATBUFFERS · 1,184 BYTES", hx, 168, 15, 600, CYAN, 7.825, 8.735, t, { tracking: 2.5, dur: 0.35, outDur: 0.225 });
 
     // signature and the stamp
-    maskText(sx, "SIGNATURE  3045 0221 00c7 9a1f 5e83 b2d4 …", x0, y0 + 620, 18, 500, MUTED, 9.0, 9.7, t, { family: MONO });
-    maskText(sx, "CID  bafkreih4v6ogq2c7xzfx3yfwq7o5lj2s3pd…", x0, y0 + 652, 18, 500, MUTED, 9.12, 9.7, t, { family: MONO });
-    const st = seg(t, 9.1, 9.45);
+    maskText(sx, "SIGNATURE  3045 0221 00c7 9a1f 5e83 b2d4 …", x0, y0 + 620, 18, 500, MUTED, 8.375, 8.725, t, { family: MONO, dur: 0.35, outDur: 0.225 });
+    maskText(sx, "CID  bafkreih4v6ogq2c7xzfx3yfwq7o5lj2s3pd…", x0, y0 + 652, 18, 500, MUTED, 8.435, 8.725, t, { family: MONO, dur: 0.35, outDur: 0.225 });
+    const st = seg(t, 8.425, 8.6);
     if (st > 0 && outK < 1) {
       const sc = easeOutBack(st);
       const cx = hx + 290;
@@ -943,7 +943,7 @@ export async function createShowreel(base = "") {
     drawOrbitPath(cam, A, T, AMBER, alpha * 0.18, 1, 1, false);
     drawOrbitPath(cam, B, T, CYAN, alpha * 0.18, 1, 1, false);
     if (!qa || !qb) return;
-    const near = seg(t, 10.9, 11.35) * (1 - seg(t, 12.2, 12.5));
+    const near = seg(t, 10.125, 10.8) * (1 - seg(t, 12.075, 12.5));
     const close = Math.hypot(qa.x - qb.x, qa.y - qb.y);
     // covariance ellipses, aligned with each track's screen velocity
     [[A, qa, AMBER], [B, qb, CYAN]].forEach(([o, q, col]) => {
@@ -967,12 +967,12 @@ export async function createShowreel(base = "") {
       sx.fill();
       sx.restore();
     });
-    const tca = seg(t, 11.25, 11.5) * (1 - seg(t, 12.3, 12.55));
+    const tca = seg(t, 10.65, 11.025) * (1 - seg(t, 12.225, 12.55));
     if (tca > 0) {
       const mx = (qa.x + qb.x) / 2;
       const my = (qa.y + qb.y) / 2;
       // shockwave ring at closest approach
-      const sw = seg(t, 11.45, 12.3);
+      const sw = seg(t, 10.95, 12.225);
       sx.save();
       sx.strokeStyle = RED;
       sx.globalAlpha = alpha * (1 - sw) * 0.9;
@@ -989,11 +989,11 @@ export async function createShowreel(base = "") {
       sx.stroke();
       sx.setLineDash([]);
       sx.restore();
-      dotGlow(mx, my, 50 * tca, RED, 0.22 * alpha * tca * (1 - seg(t, 11.9, 12.3)));
+      dotGlow(mx, my, 50 * tca, RED, 0.22 * alpha * tca * (1 - seg(t, 11.625, 12.225)));
       // alert block with a leader line
       const lx = mx + 150;
       const ly = my - 260;
-      const lk = easeOutExpo(seg(t, 11.35, 11.75));
+      const lk = easeOutExpo(seg(t, 10.8, 11.4));
       sx.save();
       sx.globalAlpha = alpha * tca;
       sx.strokeStyle = "rgba(255,59,48,0.8)";
@@ -1017,15 +1017,15 @@ export async function createShowreel(base = "") {
       sx.textAlign = "center";
       sx.fillText("!", 0, 11);
       sx.restore();
-      maskText(sx, "CONJUNCTION", lx + 58, ly + 12, 30, 700, RED, 11.35, 12.3, t, { tracking: 3 });
+      maskText(sx, "CONJUNCTION", lx + 58, ly + 12, 30, 700, RED, 10.8, 12.225, t, { tracking: 3 });
       sx.save();
       sx.globalAlpha = alpha * tca;
       sx.font = font(500, 19, MONO);
       sx.letterSpacing = "1px";
       sx.fillStyle = INK;
-      decodeText(sx, "TCA   2026-09-25 14:02:31Z", lx, ly + 76, 11.45, 0.4, t, 7);
-      decodeText(sx, "MISS  214 m", lx, ly + 104, 11.55, 0.35, t, 8);
-      decodeText(sx, "Pc    1.2 × 10⁻⁴", lx, ly + 132, 11.65, 0.35, t, 9);
+      decodeText(sx, "TCA   2026-09-25 14:02:31Z", lx, ly + 76, 10.95, 0.5, t, 7);
+      decodeText(sx, "MISS  214 m", lx, ly + 104, 11.1, 0.45, t, 8);
+      decodeText(sx, "Pc    1.2 × 10⁻⁴", lx, ly + 132, 11.25, 0.45, t, 9);
       sx.restore();
     }
     if (close < 0) return; // keep linters quiet about an unused binding
@@ -1046,18 +1046,18 @@ export async function createShowreel(base = "") {
     gx.clearRect(0, 0, W / 2, H / 2);
     gx.globalCompositeOperation = "lighter";
 
-    // Earth: in during the match cut, out for the record, back for the finale.
+    // Earth: in during the match cut, dimmed under the record, back for the finale.
     const earthIn = easeInOutCubic(seg(t, 1.55, 2.3));
-    const earthRecord = 1 - 0.8 * seg(t, 7.65, 7.9) * (1 - seg(t, 9.95, 10.15));
+    const earthRecord = 1 - 0.8 * seg(t, 7.65, 7.85) * (1 - seg(t, 8.85, 9.0));
     const earthOut = 1 - easeInCubic(seg(t, 13.45, 13.95));
     const earthFade = earthIn * earthRecord * earthOut;
     const rim = 0.9 * seg(t, 1.6, 2.1) * (1 - seg(t, 2.3, 3.0)) + 0.9 * seg(t, 13.35, 13.8);
-    const sunAz = t < 5 ? lerp(35, 60, seg(t, 2, 5)) : t < 7.75 ? lerp(60, 118, seg(t, 5, 7.2)) : t < 10.1 ? 90 : lerp(150, 60, seg(t, 12.4, 13.6));
-    const sunEl = t < 10.1 ? 18 : lerp(4, 18, seg(t, 12.4, 13.6));
+    const sunAz = t < 5 ? lerp(35, 60, seg(t, 2, 5)) : t < 7.75 ? lerp(60, 118, seg(t, 5, 7.2)) : t < 8.925 ? 90 : lerp(150, 60, seg(t, 12.4, 13.6));
+    const sunEl = t < 8.925 ? 18 : lerp(4, 18, seg(t, 12.4, 13.6));
     if (earthFade > 0.001) {
       renderEarth(cam, t, earthFade, rim, sunAz, sunEl);
-      if (t > 7.7 && t < 10.15) {
-        sx.filter = `blur(${lerp(0, 14, seg(t, 7.7, 7.95) * (1 - seg(t, 9.9, 10.15)))}px)`;
+      if (t > 7.7 && t < 9.0) {
+        sx.filter = `blur(${lerp(0, 14, seg(t, 7.7, 7.9) * (1 - seg(t, 8.825, 9.0)))}px)`;
       }
       sx.drawImage(glc, 0, 0);
       sx.filter = "none";
@@ -1067,18 +1067,18 @@ export async function createShowreel(base = "") {
     const satAlpha =
       seg(t, 2.1, 2.4) *
       (1 - 0.72 * seg(t, 5.0, 5.6) * (1 - seg(t, 12.5, 13.2))) *
-      (1 - seg(t, 7.6, 7.8) * (1 - seg(t, 10.0, 10.2))) *
-      (1 - 0.55 * seg(t, 10.1, 10.3) * (1 - seg(t, 12.45, 12.8))) *
+      (1 - seg(t, 7.6, 7.8) * (1 - seg(t, 8.875, 9.075))) *
+      (1 - 0.55 * seg(t, 8.925, 9.225) * (1 - seg(t, 12.45, 12.8))) *
       earthOut;
     if (satAlpha > 0.01) drawSatellites(cam, t, T, satAlpha, true);
 
     // The amber satellite from the mark, now in orbit with its arc.
     const heroA = seg(t, 2.0, 2.4) * (1 - seg(t, 7.55, 7.75)) * (1 - seg(t, 13.4, 13.8));
-    const heroB = t > 10.1 ? 0 : 1;
+    const heroB = t > 8.925 ? 0 : 1;
     if (heroA * heroB > 0) drawOrbitPath(cam, HERO, T, AMBER, heroA, 2.4, 0.42);
 
     if (t > 5.0 && t < 7.8) drawNetwork(cam, t, (1 - seg(t, 7.45, 7.75)) * seg(t, 5.0, 5.3));
-    if (t > 10.05 && t < 12.9) drawConjunction(cam, t, T, seg(t, 10.1, 10.4) * (1 - seg(t, 12.45, 12.9)));
+    if (t > 8.875 && t < 12.9) drawConjunction(cam, t, T, seg(t, 8.925, 9.375) * (1 - seg(t, 12.45, 12.9)));
 
     // The mark: opening build, then the closing lockup.
     if (t < 2.4) {
@@ -1109,7 +1109,7 @@ export async function createShowreel(base = "") {
         fade: 1,
       });
       maskText(sx, "Space Data Network", W / 2 - 220, H / 2 + 8, 78, 650, INK, 14.22, null, t, { dur: 0.45, tracking: -1.5 });
-      maskText(sx, "An open baseline for space traffic management", W / 2 - 218, H / 2 + 64, 28, 400, MUTED, 14.3, null, t, { dur: 0.4 });
+      maskText(sx, "An open network for space traffic management", W / 2 - 218, H / 2 + 64, 28, 400, MUTED, 14.3, null, t, { dur: 0.4 });
       maskText(sx, "SPACEDATANETWORK.ORG", W / 2 - 218, H / 2 - 92, 18, 600, AMBER, 14.34, null, t, { dur: 0.4, tracking: 4 });
     }
 
@@ -1170,11 +1170,11 @@ export async function createShowreel(base = "") {
       maskText(sx, "NODES ON EVERY CONTINENT · ONE OPEN CATALOG", 154, 680, 17, 600, MUTED, 6.3, 7.4, t, { tracking: 3 });
     }
     drawRecord(t);
-    if (t > 10.2 && t < 12.7) {
-      maskText(sx, "Open standards.", 150, 690, 72, 700, INK, 10.55, 12.25, t, { tracking: -1.5 });
-      maskText(sx, "Open-source software.", 150, 772, 72, 700, INK, 10.7, 12.3, t, { tracking: -1.5 });
-      maskText(sx, "Open algorithms.", 150, 854, 72, 700, INK, 10.85, 12.35, t, { tracking: -1.5 });
-      maskText(sx, "All free.", 150, 936, 72, 700, AMBER, 11.1, 12.4, t, { tracking: -1.5 });
+    if (t > 9.075 && t < 12.85) {
+      maskText(sx, "Open standards.", 150, 690, 72, 700, INK, 9.6, 12.15, t, { tracking: -1.5 });
+      maskText(sx, "Open-source software.", 150, 772, 72, 700, INK, 9.825, 12.225, t, { tracking: -1.5 });
+      maskText(sx, "Open algorithms.", 150, 854, 72, 700, INK, 10.05, 12.3, t, { tracking: -1.5 });
+      maskText(sx, "All free.", 150, 936, 72, 700, AMBER, 10.425, 12.375, t, { tracking: -1.5 });
     }
 
     // Bloom: the glow layer blurred at two radii, added over the scene.
@@ -1212,10 +1212,10 @@ export async function createShowreel(base = "") {
     ax.globalAlpha = 1;
     // Finishing pass.
     const t = t0;
-    const cuts = [2.2, 7.75, 10.1, 13.5];
+    const cuts = [2.2, 7.75, 8.925, 13.5];
     let ca = 0;
     for (const c of cuts) ca = Math.max(ca, Math.exp(-Math.pow((t - c) / 0.09, 2)));
-    const flash = 0.35 * Math.exp(-Math.pow((t - 7.76) / 0.05, 2)) + 0.12 * Math.exp(-Math.pow((t - 11.47) / 0.06, 2));
+    const flash = 0.35 * Math.exp(-Math.pow((t - 7.76) / 0.05, 2)) + 0.12 * Math.exp(-Math.pow((t - 10.97) / 0.06, 2));
     // The piece plays once and rests on the lockup, so it fades in but never out.
     const fade = seg(t, 0, 0.12);
     pgl.viewport(0, 0, W, H);

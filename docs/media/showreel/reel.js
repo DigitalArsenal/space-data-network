@@ -1,7 +1,8 @@
-// Showreel player: plays once, then rests on the last card with a Play again
-// button. Plays only while on screen, never autoplays when reduced motion is
-// requested, seeks by chapter, and goes full screen (the stage on
-// desktop so the footer bar stays; the native player on iPhone). Muted.
+// Showreel player: the hero feature. Starts as soon as the page loads, plays
+// once, then rests on the last card with a Play again button. Plays only while
+// on screen, never autoplays when reduced motion is requested (the poster shows
+// instead), seeks by chapter, and goes full screen (the stage on desktop so the
+// footer bar stays; the native player on iPhone). Muted.
 (function () {
   var video = document.getElementById('reelVideo');
   if (!video) return;
@@ -15,6 +16,16 @@
   var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   var userPaused = reduced;
 
+  // The poster is a mid-reel frame, so it only shows when the reel will not
+  // start on its own; otherwise it would flash before the opening black frame.
+  function showPoster() {
+    var src = video.getAttribute('data-poster');
+    if (src && !video.getAttribute('poster')) video.setAttribute('poster', src);
+    stage.classList.remove('is-starting');
+  }
+  if (reduced) showPoster(); else stage.classList.add('is-starting');
+  video.addEventListener('playing', function () { stage.classList.remove('is-starting'); });
+
   function sync() {
     var playing = !video.paused;
     stage.classList.toggle('is-playing', playing);
@@ -23,7 +34,7 @@
   }
   function start() {
     var p = video.play();
-    if (p && p.catch) p.catch(function () { sync(); });
+    if (p && p.catch) p.catch(function () { showPoster(); sync(); });
   }
   function toggle() {
     if (video.paused) { userPaused = false; start(); } else { userPaused = true; video.pause(); }
@@ -96,6 +107,8 @@
       if (visible && !userPaused) start();
       if (!visible && !video.paused && !fullElement()) video.pause();
     }, { threshold: 0.35 }).observe(stage);
+  } else if (!userPaused) {
+    start();
   }
   sync();
   tick();
