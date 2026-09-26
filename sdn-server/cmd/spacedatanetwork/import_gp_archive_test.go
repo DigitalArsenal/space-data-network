@@ -8,9 +8,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -187,6 +190,133 @@ func TestGPArchiveCSVExactRepeatIsDeduplicated(t *testing.T) {
 	}
 	if report.RecordsRead != 2 || report.MPEStored != 1 || report.DuplicatesSkipped != 1 {
 		t.Fatalf("CSV report = %+v", report)
+	}
+}
+
+func TestGPArchiveZipShardSelectsOrdinalsAndIsHistoryOnly(t *testing.T) {
+	zipPath := filepath.Join(t.TempDir(), "archive.zip")
+	entries := make([]string, 4)
+	for i := range entries {
+		entries[i] = gpArchiveTestHeader + fmt.Sprintf(",1958-002B,2022-01-0%dT00:00:00.000001,15.1,.001,34,1,2,3,0,U,5,1,1,0,0,0,NORAD\n", i+1)
+	}
+	writeGPArchiveTestZipEntries(t, zipPath, entries)
+	for shard := 0; shard < 2; shard++ {
+		root := t.TempDir()
+		opts := gpArchiveTestOptions(t, root, zipPath, "")
+		opts.ZipShard = fmt.Sprintf("%d/2", shard)
+		sink := &gpArchiveMemorySink{}
+		report, err := importGPArchive(context.Background(), opts, sink)
+		if err != nil {
+			t.Fatalf("shard %d: %v", shard, err)
+		}
+		if report.RecordsRead != 2 || report.MPEStored != 2 || len(sink.catalogMPE) != 0 || len(sink.cat) != 0 {
+			t.Fatalf("shard %d report=%+v catalogMPE=%d CAT=%d", shard, report, len(sink.catalogMPE), len(sink.cat))
+		}
+		cp, err := loadGPArchiveCheckpoint(opts.CheckpointPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cp.CompletedZipEntries) != 2 || cp.ZipCSVEntries != 2 {
+			t.Fatalf("shard %d checkpoint completed=%d selected=%d", shard, len(cp.CompletedZipEntries), cp.ZipCSVEntries)
+		}
+		if err := opts.normalize(); err != nil {
+			t.Fatal(err)
+		}
+		if !opts.HistoryOnly || opts.historySourceName() != fmt.Sprintf("gp-history-zip-shard-%d-of-2", shard) {
+			t.Fatalf("shard %d options not normalized: %+v", shard, opts)
+		}
+	}
+}
+
+func TestGPArchiveZipShardUsesBulkBatchDefault(t *testing.T) {
+	if got := effectiveGPArchiveBatchSize("3/8", 2000, false); got != 100000 {
+		t.Fatalf("shard default batch = %d, want 100000", got)
+	}
+	if got := effectiveGPArchiveBatchSize("3/8", 20000, true); got != 20000 {
+		t.Fatalf("explicit shard batch = %d, want 20000", got)
+	}
+	if got := effectiveGPArchiveBatchSize("", 2000, false); got != 2000 {
+		t.Fatalf("normal default batch = %d, want 2000", got)
+	}
+}
+
+func TestGPArchiveTwoZipShardsFoldToUnshardedCatalog(t *testing.T) {
+	zipPath := filepath.Join(t.TempDir(), "archive.zip")
+	rows := []string{
+		",1958-002B,2022-01-01T00:00:00.000001,15.1,.001,34,1,2,3,0,U,5,1,1,0,0,0,NORAD\n",
+		",1958-002C,2022-01-04T00:00:00.000001,15.2,.002,35,2,3,4,0,U,6,1,1,0,0,0,NORAD\n",
+		",1958-002B,2022-01-01T00:00:00.000001,15.1,.001,34,1,2,9,0,U,5,1,1,0,0,0,NORAD\n",
+		",2000-001A,2022-01-02T00:00:00.000001,15.3,.003,36,3,4,5,0,U,99,1,1,0,0,0,NORAD\n",
+		",1958-002C,2022-01-05T00:00:00.000001,15.2,.002,35,2,3,8,0,U,6,1,1,0,0,0,NORAD\n",
+	}
+	entries := make([]string, len(rows))
+	for i := range rows {
+		entries[i] = gpArchiveTestHeader + rows[i]
+	}
+	writeGPArchiveTestZipEntries(t, zipPath, entries)
+
+	unshardedRoot := t.TempDir()
+	unshardedSink := &gpArchiveMemorySink{}
+	if _, err := importGPArchive(context.Background(), gpArchiveTestOptions(t, unshardedRoot, zipPath, ""), unshardedSink); err != nil {
+		t.Fatal(err)
+	}
+
+	mainRoot := t.TempDir()
+	mainOpts := gpArchiveTestOptions(t, mainRoot, zipPath, "")
+	for shard := 0; shard < 2; shard++ {
+		shardOpts := mainOpts
+		shardOpts.Out = filepath.Join(mainOpts.Out, "zip-shards", strconv.Itoa(shard))
+		shardOpts.CheckpointPath = filepath.Join(shardOpts.Out, "gp-archive-checkpoint.json")
+		shardOpts.ReportPath = filepath.Join(shardOpts.Out, "gp-archive-report.json")
+		shardOpts.ZipShard = fmt.Sprintf("%d/2", shard)
+		if _, err := importGPArchive(context.Background(), shardOpts, &gpArchiveMemorySink{}); err != nil {
+			t.Fatalf("shard %d: %v", shard, err)
+		}
+	}
+	mainOpts.SkipZip = true
+	mainSink := &gpArchiveMemorySink{}
+	report, err := importGPArchive(context.Background(), mainOpts, mainSink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ShardCheckpointsFolded != 2 || report.ShardEntitiesUpdated == 0 {
+		t.Fatalf("fold report = %+v", report)
+	}
+	want := gpArchiveCatalogMPEByEntity(t, unshardedSink.catalogMPE)
+	got := gpArchiveCatalogMPEByEntity(t, mainSink.catalogMPE)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("folded catalog differs from unsharded\n got: %#v\nwant: %#v", got, want)
+	}
+	if len(mainSink.tags) == 0 || !strings.HasPrefix(mainSink.tags[0].BatchID, "zip:") {
+		t.Fatalf("folded catalog did not retain shard source batch: %+v", mainSink.tags)
+	}
+
+	secondSink := &gpArchiveMemorySink{}
+	second, err := importGPArchive(context.Background(), mainOpts, secondSink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ShardCheckpointsSkipped != 2 || len(secondSink.catalogMPE) != 0 {
+		t.Fatalf("unchanged shard checkpoints were not skipped: report=%+v writes=%d", second, len(secondSink.catalogMPE))
+	}
+}
+
+func TestGPArchiveShardFoldReportsSATCATMismatch(t *testing.T) {
+	out := t.TempDir()
+	shardDir := filepath.Join(out, "zip-shards", "0")
+	shard := gpArchiveTestCheckpoint()
+	shard.SATCATSHA256 = "shard-hash"
+	if err := saveGPArchiveCheckpoint(filepath.Join(shardDir, "gp-archive-checkpoint.json"), shard); err != nil {
+		t.Fatal(err)
+	}
+	cp := gpArchiveTestCheckpoint()
+	cp.SATCATSHA256 = "main-hash"
+	report := newGPArchiveRunReport()
+	if err := foldGPArchiveShardCheckpoints(gpArchiveOptions{Out: out}, cp, map[string]gpArchiveSource{}, report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.ShardSATCATMismatches) != 1 || report.ShardCheckpointsFolded != 0 {
+		t.Fatalf("SATCAT mismatch report = %+v", report)
 	}
 }
 
@@ -573,6 +703,20 @@ func gpArchiveTestColumns() map[string]int {
 	return columns
 }
 
+func gpArchiveCatalogMPEByEntity(t *testing.T, records [][]byte) map[string]string {
+	t.Helper()
+	out := make(map[string]string, len(records))
+	for _, record := range records {
+		mpe := MPEFB.GetSizePrefixedRootAsMPE(record, 0)
+		entity := string(mpe.ENTITY_ID())
+		if entity == "" {
+			t.Fatal("catalog MPE has empty entity")
+		}
+		out[entity] = storage.ComputeCID(record)
+	}
+	return out
+}
+
 func gpArchiveTestCheckpoint() *gpArchiveCheckpoint {
 	return &gpArchiveCheckpoint{
 		Version:              2,
@@ -580,6 +724,7 @@ func gpArchiveTestCheckpoint() *gpArchiveCheckpoint {
 		CompletedWindowFiles: make(map[string]string),
 		CompletedGPFiles:     make(map[string]string),
 		SnapshotGPIDs:        make(map[string]bool),
+		FoldedShardMTime:     make(map[string]int64),
 		CanonicalIDs:         make(map[string]string), Latest: make(map[string]*gpLatestState), CATNames: make(map[string]string),
 	}
 }
@@ -625,18 +770,24 @@ func gpArchiveTestOptions(t *testing.T, root, zipPath, ledgerPath string) gpArch
 }
 
 func writeGPArchiveTestZip(t *testing.T, path, csvData string) {
+	writeGPArchiveTestZipEntries(t, path, []string{csvData})
+}
+
+func writeGPArchiveTestZipEntries(t *testing.T, path string, csvData []string) {
 	t.Helper()
 	file, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	zw := zip.NewWriter(file)
-	entry, err := zw.Create("Archives2/sat000000005.csv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := entry.Write([]byte(csvData)); err != nil {
-		t.Fatal(err)
+	for i, data := range csvData {
+		entry, createErr := zw.Create(fmt.Sprintf("Archives2/sat%09d.csv", i+5))
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, writeErr := entry.Write([]byte(data)); writeErr != nil {
+			t.Fatal(writeErr)
+		}
 	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
