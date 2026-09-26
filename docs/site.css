@@ -236,6 +236,7 @@ details.more > .body { text-align: left; }
 .hero > :nth-child(2), .page-hero > :nth-child(2) { animation-delay: .12s; }
 .hero > :nth-child(3), .page-hero > :nth-child(3) { animation-delay: .24s; }
 .hero > :nth-child(4), .page-hero > :nth-child(4) { animation-delay: .36s; }
+.hero > :nth-child(5), .page-hero > :nth-child(5) { animation-delay: .48s; }
 @keyframes rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } .hero > *, .page-hero > * { animation: none; } }
 
@@ -323,10 +324,9 @@ body.centered .papers .card { text-align: left; }
 :root[data-theme="light"] .figure img[src$=".svg"], :root[data-theme="light"] .chart { box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06); }
 :root[data-theme="light"] .bg-video { display: none; }
 
-/* Showreel: a framed 16:9 stage; controls live in a footer bar inside the frame. */
-.reel .head { margin-bottom: 28px; }
+/* Showreel: the hero's framed 16:9 stage; controls live in a footer bar inside the frame. */
 .reel-frame { max-width: 1040px; margin: 0 auto; }
-.reel-stage { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius); border: 1px solid var(--border-strong); background: #000; box-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 30px 80px rgba(0,0,0,.55), 0 0 120px rgba(245,165,36,.08); }
+.reel-stage { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius); border: 1px solid var(--border-strong); background: #000; box-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 30px 80px rgba(0,0,0,.55), 0 0 120px rgba(245,165,36,.08); text-shadow: none; }
 .reel-stage video { display: block; width: 100%; height: 100%; object-fit: cover; background: #000; }
 .reel-stage:fullscreen { border: 0; border-radius: 0; aspect-ratio: auto; width: 100vw; height: 100vh; }
 .reel-stage:fullscreen video { object-fit: contain; }
@@ -336,7 +336,7 @@ body.centered .papers .card { text-align: left; }
 .reel-big-play svg { width: 28px; height: 28px; }
 .reel-big-play:hover { background: #f5f5f7; color: #000; }
 .reel-stage.is-playing .reel-big-play { display: none; }
-.reel-stage.is-ended .reel-big-play { display: none; }
+.reel-stage.is-ended .reel-big-play, .reel-stage.is-starting .reel-big-play { display: none; }
 .reel-again { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); display: none; align-items: center; gap: 8px; padding: 11px 22px; border-radius: 999px; border: 1px solid #f5f5f7; background: #f5f5f7; color: #000; font: 600 15px var(--font-sans); cursor: pointer; white-space: nowrap; animation: reel-again-in .5s cubic-bezier(.2,.7,.2,1) both; }
 .reel-again svg { width: 17px; height: 17px; }
 .reel-again:hover { background: #fff; }
