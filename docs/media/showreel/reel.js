@@ -1,8 +1,9 @@
 // Showreel player: the hero feature. Starts as soon as the page loads, plays
-// once, then rests on the last card with a Play again button. Plays only while
-// on screen, never autoplays when reduced motion is requested (the poster shows
-// instead), seeks by chapter, and goes full screen (the stage on desktop so the
-// footer bar stays; the native player on iPhone). Muted.
+// once, then rests on the last card. Plays only while on screen, never
+// autoplays when reduced motion is requested (the poster shows instead), and
+// goes full screen (the stage on desktop so the footer bar stays; the native
+// player on iPhone). Muted. Its controls and Play again stay hidden until
+// someone moves a mouse over it, taps it or tabs into it.
 (function () {
   var video = document.getElementById('reelVideo');
   if (!video) return;
@@ -12,7 +13,6 @@
   var play = stage.querySelector('.reel-play');
   var fs = stage.querySelector('.reel-fs');
   var bar = stage.querySelector('.reel-progress span');
-  var chapters = Array.prototype.slice.call(stage.querySelectorAll('.reel-chapters button'));
   var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   var userPaused = reduced;
 
@@ -24,7 +24,32 @@
     stage.classList.remove('is-starting');
   }
   if (reduced) showPoster(); else stage.classList.add('is-starting');
-  video.addEventListener('playing', function () { stage.classList.remove('is-starting'); });
+  video.addEventListener('playing', function () {
+    stage.classList.remove('is-starting');
+    stage.classList.add('has-played');
+  });
+
+  // Controls wake on interaction and sleep again after a short idle.
+  var idle = 0;
+  var wasAwake = false;
+  var pointer = 'mouse';
+  function wake() {
+    stage.classList.add('is-awake');
+    clearTimeout(idle);
+    idle = setTimeout(function () { stage.classList.remove('is-awake'); }, 2500);
+  }
+  function sleep() {
+    clearTimeout(idle);
+    stage.classList.remove('is-awake');
+  }
+  stage.addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse') wake(); });
+  stage.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') sleep(); });
+  stage.addEventListener('pointerdown', function (e) {
+    pointer = e.pointerType;
+    wasAwake = stage.classList.contains('is-awake');
+    wake();
+  });
+  stage.addEventListener('keydown', wake);
 
   function sync() {
     var playing = !video.paused;
@@ -53,7 +78,12 @@
   });
   video.addEventListener('play', function () { stage.classList.remove('is-ended'); });
   play.addEventListener('click', toggle);
-  video.addEventListener('click', function () { if (!stage.classList.contains('is-ended')) toggle(); });
+  // A tap on sleeping controls only wakes them; a click (or a tap once awake) plays or pauses.
+  video.addEventListener('click', function () {
+    if (stage.classList.contains('is-ended')) return;
+    if (pointer !== 'mouse' && !wasAwake) return;
+    toggle();
+  });
   video.addEventListener('play', sync);
   video.addEventListener('pause', sync);
 
@@ -81,21 +111,10 @@
   document.addEventListener('fullscreenchange', syncFull);
   document.addEventListener('webkitfullscreenchange', syncFull);
 
-  // Chapters and progress
-  chapters.forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      video.currentTime = Number(btn.getAttribute('data-t')) + 0.01;
-      userPaused = false;
-      start();
-    });
-  });
-  var starts = chapters.map(function (b) { return Number(b.getAttribute('data-t')); });
+  // Progress
   function tick() {
     var d = video.duration || 15;
     bar.style.transform = 'scaleX(' + (video.currentTime / d) + ')';
-    var active = 0;
-    for (var i = 0; i < starts.length; i++) if (video.currentTime >= starts[i]) active = i;
-    chapters.forEach(function (b, i) { b.classList.toggle('is-active', i === active); });
     if (!video.paused) requestAnimationFrame(tick);
   }
   video.addEventListener('play', function () { requestAnimationFrame(tick); });
