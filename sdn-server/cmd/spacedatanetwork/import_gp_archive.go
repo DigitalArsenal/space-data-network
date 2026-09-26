@@ -45,6 +45,7 @@ const (
 	gpArchiveCatalogSource  = "gp-catalog"
 	gpArchiveOEMSourcePeer  = "source:sdn-epoch-state"
 	gpArchiveSaveInterval   = 60 * time.Second
+	gpArchiveShardBatchSize = 100000
 )
 
 var errGPArchiveStopped = errors.New("GP archive import stopped")
@@ -77,7 +78,7 @@ func init() {
 	f.StringVar(&importGPArchiveEpochStateModule, "epoch-state-module", "", "epoch-state WASM module (empty disables OEM derivation)")
 	f.StringVar(&importGPArchiveCheckpoint, "checkpoint", "", "checkpoint path (default: <out>/gp-archive-checkpoint.json)")
 	f.StringVar(&importGPArchiveReport, "report", "", "run report path (default: <out>/gp-archive-report.json)")
-	f.IntVar(&importGPArchiveBatchSize, "batch-size", 2000, "records per FlatSQL batch")
+	f.IntVar(&importGPArchiveBatchSize, "batch-size", 2000, "records per FlatSQL batch (shard default: 100000)")
 	f.IntVar(&importGPArchiveMaxZipEntries, "max-zip-entries", 0, "process at most this many new CSV entries")
 	f.IntVar(&importGPArchiveMaxWindowFiles, "max-window-files", 0, "process at most this many new window files")
 	rootCmd.AddCommand(importGPArchiveCmd)
@@ -348,7 +349,8 @@ type gpEpochReport struct {
 type gpWASMEpochDeriver struct{ module *modulert.Module }
 
 func runImportGPArchive(cmd *cobra.Command, _ []string) error {
-	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: importGPArchiveBatchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, ZipShard: importGPArchiveZipShard}
+	batchSize := effectiveGPArchiveBatchSize(importGPArchiveZipShard, importGPArchiveBatchSize, cmd.Flags().Changed("batch-size"))
+	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: batchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, ZipShard: importGPArchiveZipShard}
 	if err := opts.normalize(); err != nil {
 		return err
 	}
@@ -415,6 +417,13 @@ func runImportGPArchive(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	return err
+}
+
+func effectiveGPArchiveBatchSize(zipShard string, requested int, explicitlySet bool) int {
+	if strings.TrimSpace(zipShard) != "" && !explicitlySet {
+		return gpArchiveShardBatchSize
+	}
+	return requested
 }
 
 func acquireGPArchiveRunLock(out string) (bool, func(), error) {
