@@ -349,8 +349,15 @@ body.centered .papers .card { text-align: left; }
 .reel-stage.is-awake .reel-bar, .reel-stage:has(:focus-visible) .reel-bar { opacity: 1; pointer-events: auto; transition-duration: .15s; }
 .reel-stage.is-playing:not(.is-awake) { cursor: none; }
 @media (prefers-reduced-motion: reduce) { .reel-bar, .reel-again, .reel-big-play { transition: none; } }
-.reel-progress { height: 3px; margin: 0 4px 8px; border-radius: 2px; background: rgba(255,255,255,.2); overflow: hidden; }
-.reel-progress span { display: block; height: 100%; background: #f5a524; transform-origin: left center; transform: scaleX(0); }
+/* The progress bar is a seek slider: a 22 px hit area around a 3 px track (5 px on hover or drag). */
+.reel-progress { position: relative; height: 22px; margin: 0 4px 2px; cursor: pointer; touch-action: none; }
+.reel-progress::before, .reel-progress span { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; transition: height .12s ease, margin-top .12s ease; }
+.reel-progress::before { background: rgba(255,255,255,.22); }
+.reel-progress span { display: block; background: #f5a524; transform-origin: left center; transform: scaleX(0); }
+.reel-progress:hover::before, .reel-progress:hover span, .reel-stage.is-seeking .reel-progress::before, .reel-stage.is-seeking .reel-progress span { height: 5px; margin-top: -2.5px; }
+.reel-knob { position: absolute; top: 50%; left: 0; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border-radius: 50%; background: #f5a524; box-shadow: 0 0 0 3px rgba(0,0,0,.35); transform: scale(0); transition: transform .12s ease; pointer-events: none; }
+.reel-progress:hover .reel-knob, .reel-progress:focus-visible .reel-knob, .reel-stage.is-seeking .reel-knob { transform: scale(1); }
+.reel-progress:focus-visible { outline: 2px solid #f5a524; outline-offset: 2px; border-radius: 4px; }
 .reel-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .reel-btn { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 0; background: transparent; color: #f5f5f7; cursor: pointer; transition: background .15s; }
 .reel-btn:hover { background: rgba(255,255,255,.14); }

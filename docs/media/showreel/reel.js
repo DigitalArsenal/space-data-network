@@ -2,7 +2,7 @@
 // once, then rests on the last card. Plays only while on screen, never
 // autoplays when reduced motion is requested (the poster shows instead), and
 // goes full screen (the stage on desktop so the footer bar stays; the native
-// player on iPhone). Muted. Its controls and Play again stay hidden until
+// player on iPhone), and the progress bar seeks (drag, click, arrow keys). Muted. Its controls and Play again stay hidden until
 // someone moves a mouse over it, taps it or tabs into it.
 (function () {
   var video = document.getElementById('reelVideo');
@@ -12,7 +12,9 @@
   var again = stage.querySelector('.reel-again');
   var play = stage.querySelector('.reel-play');
   var fs = stage.querySelector('.reel-fs');
-  var bar = stage.querySelector('.reel-progress span');
+  var track = stage.querySelector('.reel-progress');
+  var bar = track.querySelector('span');
+  var knob = track.querySelector('.reel-knob');
   var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   var userPaused = reduced;
 
@@ -111,14 +113,69 @@
   document.addEventListener('fullscreenchange', syncFull);
   document.addEventListener('webkitfullscreenchange', syncFull);
 
-  // Progress
+  // Progress and seeking
+  function duration() { return isFinite(video.duration) && video.duration > 0 ? video.duration : 45; }
+  function clock(s) { s = Math.round(s); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
   function tick() {
-    var d = video.duration || 15;
-    bar.style.transform = 'scaleX(' + (video.currentTime / d) + ')';
+    var d = duration();
+    var f = Math.min(1, video.currentTime / d);
+    bar.style.transform = 'scaleX(' + f + ')';
+    knob.style.left = (f * 100) + '%';
+    track.setAttribute('aria-valuemax', String(Math.round(d)));
+    track.setAttribute('aria-valuenow', String(Math.round(video.currentTime)));
+    track.setAttribute('aria-valuetext', clock(video.currentTime) + ' of ' + clock(d));
     if (!video.paused) requestAnimationFrame(tick);
   }
   video.addEventListener('play', function () { requestAnimationFrame(tick); });
   video.addEventListener('seeked', tick);
+  video.addEventListener('loadedmetadata', tick);
+
+  function seek(time) {
+    video.currentTime = Math.max(0, Math.min(duration() - 0.05, time));
+    if (stage.classList.contains('is-ended') && video.currentTime < duration() - 0.1) {
+      stage.classList.remove('is-ended');
+      sync();
+    }
+    tick();
+  }
+  function seekTo(clientX) {
+    var r = track.getBoundingClientRect();
+    seek(Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * duration());
+  }
+  var seeking = false;
+  var resume = false;
+  track.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    wake();
+    seeking = true;
+    resume = !video.paused;
+    if (resume) video.pause();
+    stage.classList.add('is-seeking');
+    if (track.setPointerCapture) track.setPointerCapture(e.pointerId);
+    seekTo(e.clientX);
+  });
+  track.addEventListener('pointermove', function (e) {
+    if (!seeking) return;
+    wake();
+    seekTo(e.clientX);
+  });
+  function endSeek() {
+    if (!seeking) return;
+    seeking = false;
+    stage.classList.remove('is-seeking');
+    if (resume) { userPaused = false; start(); }
+  }
+  track.addEventListener('pointerup', endSeek);
+  track.addEventListener('pointercancel', endSeek);
+  track.addEventListener('keydown', function (e) {
+    var step = { ArrowLeft: -2, ArrowDown: -2, ArrowRight: 2, ArrowUp: 2, PageDown: -10, PageUp: 10 }[e.key];
+    if (step) seek(video.currentTime + step);
+    else if (e.key === 'Home') seek(0);
+    else if (e.key === 'End') seek(duration());
+    else return;
+    e.preventDefault();
+  });
 
   if ('IntersectionObserver' in window) {
     new IntersectionObserver(function (entries) {
