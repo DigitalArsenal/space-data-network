@@ -189,6 +189,11 @@ type FlatSQLStore struct {
 	// still reference — released at Close (engine_link.go). Both guarded by mu.
 	engineEpoch    uint64
 	retiredEngines []*flatsqlrt.Runtime
+	// recoveryHydrate refills a cold hot window after an engine recovery
+	// (engine_link.go); poisonWatch replaces a poisoned engine without a
+	// restart (engine_poison_recovery.go).
+	recoveryHydrate recoveryHydration
+	poisonWatch     *enginePoisonWatch
 	// fieldEncMu guards the lazily-provisioned field-encryption identity
 	// (field_encryption.go). Deliberately separate from mu: the seal and open
 	// paths are reached while mu is already held (Lock or RLock, or not at
@@ -493,6 +498,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		engineSchemaLoaded:     map[string]bool{},
 		engineExcluded:         bootPlan.Excluded,
 		engineEpoch:            1,
+		poisonWatch:            newEnginePoisonWatch(),
 
 		controlDBDurable: true,
 		controlDBPath:    controlDBPath,
@@ -590,6 +596,8 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 	} else {
 		log.Warnf("FlatSQL store: background checkpointing DISABLED by %s=0", checkpointIntervalEnv)
 	}
+
+	store.startEnginePoisonWatch()
 
 	bootBudget.summary()
 	opened = true
@@ -3820,6 +3828,10 @@ func (s *FlatSQLStore) Close() error {
 	// has already nil'd. Must happen with the lock NOT held — the loop is
 	// waiting for it.
 	s.stopCheckpointLoop()
+	// Same for the poisoned-engine watch and a post-recovery refill: both
+	// take the write lock. A refill is cancelled between pages.
+	s.stopEnginePoisonWatch()
+	s.stopRecoveryHydration()
 
 	defer s.lockWrite("Close")()
 

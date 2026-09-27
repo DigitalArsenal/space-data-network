@@ -319,7 +319,7 @@ func unionEngineWindowPageForTest(readSource, placeholders, extraWhere string) s
 
 type pageRowForTest struct {
 	cid     string
-	data    []byte
+	size    int64
 	sources map[string]bool
 }
 
@@ -333,15 +333,14 @@ func readEnginePageForTest(t *testing.T, s *FlatSQLStore, query string, args []a
 	var order []int64
 	out := map[int64]*pageRowForTest{}
 	for rows.Next() {
-		var rid int64
+		var rid, size int64
 		var cid, source string
-		var data []byte
-		if err := rows.Scan(&rid, &cid, &data, &source); err != nil {
+		if err := rows.Scan(&rid, &cid, &size, &source); err != nil {
 			t.Fatal(err)
 		}
 		r, ok := out[rid]
 		if !ok {
-			r = &pageRowForTest{cid: cid, data: data, sources: map[string]bool{}}
+			r = &pageRowForTest{cid: cid, size: size, sources: map[string]bool{}}
 			out[rid] = r
 			order = append(order, rid)
 		}
@@ -351,7 +350,9 @@ func readEnginePageForTest(t *testing.T, s *FlatSQLStore, query string, args []a
 }
 
 // The engine hot-window page reads the rows the union page read, and seeks
-// each record by CID instead of materialising the standard per page.
+// each record by CID instead of materialising the standard per page: first
+// the page's references and sizes (no payload), then the bytes of the rows
+// that fit the page's byte budget.
 func TestEngineWindowPageSeeksRecordsByCID(t *testing.T) {
 	store := seedIndexedWindowStore(t)
 	tables, err := store.recordTablesForSchema("OMM.fbs")
@@ -364,22 +365,44 @@ func TestEngineWindowPageSeeksRecordsByCID(t *testing.T) {
 	}
 	aliases := engineSchemaNameAliases("OMM.fbs")
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")
+	unionRefs := strings.Replace(unionEngineWindowPageForTest(readSource, placeholders, ""), "page.data,", "length(page.data),", 1)
 	for _, cursor := range []int64{0, 7, 20} {
 		args := make([]any, 0, len(aliases)+2)
 		for _, a := range aliases {
 			args = append(args, a)
 		}
 		args = append(args, cursor, 9)
-		wantOrder, want := readEnginePageForTest(t, store, unionEngineWindowPageForTest(readSource, placeholders, ""), args)
-		gotOrder, got := readEnginePageForTest(t, store, engineWindowPagesSQL(tables, placeholders, ""), args)
+		wantOrder, want := readEnginePageForTest(t, store, unionRefs, args)
+		gotOrder, got := readEnginePageForTest(t, store, engineWindowPageRefsSQL(tables, placeholders, ""), args)
 		if fmt.Sprint(gotOrder) != fmt.Sprint(wantOrder) || len(wantOrder) == 0 {
 			t.Fatalf("cursor %d: page rowids %v, union page %v", cursor, gotOrder, wantOrder)
 		}
 		for _, rid := range wantOrder {
-			if got[rid].cid != want[rid].cid || !bytes.Equal(got[rid].data, want[rid].data) || fmt.Sprint(got[rid].sources) != fmt.Sprint(want[rid].sources) {
+			if got[rid].cid != want[rid].cid || got[rid].size != want[rid].size || fmt.Sprint(got[rid].sources) != fmt.Sprint(want[rid].sources) {
 				t.Fatalf("cursor %d rowid %d differs from the union page", cursor, rid)
 			}
 		}
+		// The bytes read by CID are the bytes the union page carried.
+		cids := make([]any, 0, len(gotOrder))
+		for _, rid := range gotOrder {
+			cids = append(cids, got[rid].cid)
+		}
+		rows, err := store.db.Query(engineRecordDataByCIDSQL(tables, len(cids)), cids...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var cid string
+			var data []byte
+			if err := rows.Scan(&cid, &data); err != nil {
+				t.Fatal(err)
+			}
+			var stored []byte
+			if err := store.db.QueryRow(fmt.Sprintf(`SELECT data FROM %s WHERE cid = ?`, readSource), cid).Scan(&stored); err != nil || !bytes.Equal(stored, data) {
+				t.Fatalf("record %s read by CID differs from the stored bytes (%v)", cid, err)
+			}
+		}
+		rows.Close()
 	}
 
 	notInLedger := ` AND NOT EXISTS (SELECT 1 FROM sdn_engine_rows e WHERE e.schema_name = ? AND e.cid = idx.cid)`
@@ -388,9 +411,18 @@ func TestEngineWindowPageSeeksRecordsByCID(t *testing.T) {
 		args = append(args, a)
 	}
 	args = append(args, int64(0), engineLedgerSchema("OMM.fbs"), 9)
-	plan := explainForTest(t, store, engineWindowPagesSQL(tables, placeholders, notInLedger), args)
-	if line, bad := planReadsWholeTables(plan); bad {
-		t.Fatalf("hot-window page plan reads whole tables at %q:\n  %s", line, strings.Join(plan, "\n  "))
+	for name, query := range map[string]string{
+		"page refs":  engineWindowPageRefsSQL(tables, placeholders, notInLedger),
+		"page bytes": engineRecordDataByCIDSQL(tables, 3),
+	} {
+		qargs := args
+		if name == "page bytes" {
+			qargs = []any{"a", "b", "c"}
+		}
+		plan := explainForTest(t, store, query, qargs)
+		if line, bad := planReadsWholeTables(plan); bad {
+			t.Fatalf("hot-window %s plan reads whole tables at %q:\n  %s", name, line, strings.Join(plan, "\n  "))
+		}
 	}
 	unionPlan := explainForTest(t, store, unionEngineWindowPageForTest(readSource, placeholders, notInLedger), args)
 	if _, bad := planReadsWholeTables(unionPlan); !bad {

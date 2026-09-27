@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
 const (
@@ -265,6 +266,7 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 	// first (tryOpenControlDatabase).
 	var lastErr error
 	discard := false
+	lastTimedOut := false
 	for attempt := 0; attempt < 3; attempt++ {
 		// PROBE FIRST, in its own runtime, then open for real. Both the
 		// exclusion set (which decides the schema text) and the persisted
@@ -286,6 +288,9 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 
 		engine.SetPhase("boot: open control database for writing")
 		openStart := time.Now()
+		if engineOpenAttemptHook != nil {
+			engineOpenAttemptHook(attempt, engine)
+		}
 		engineDB, mark, engineState, err := tryOpenControlDatabase(engine, dbPath,
 			engineSchemaTextExcluding(plan.Excluded), enginePrepare(plan), discard)
 		engine.SetPhase("")
@@ -316,7 +321,23 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 		}
 
 		lastErr = err
+		// A CALL THAT RAN OUT OF TIME SAYS NOTHING ABOUT THE FILE. Measured on
+		// host-02 (2026-09-27 17:46Z): the same arena that OpenState opened in
+		// 2.5 s at boot took past the 5-minute budget inside a poison
+		// recovery, while the abandoned thread of the statement that poisoned
+		// the first engine was still running beside it. That timeout was
+		// classified unrecoverable, the arena was DISCARDED, and the node
+		// re-ingested its whole hot window — a re-ingest for a state nothing
+		// was wrong with. A timeout is retried on a fresh runtime with the
+		// state kept, and if it keeps timing out the open fails with the state
+		// still on disk for the next attempt; it is never discarded for it.
+		lastTimedOut = engineCallRanOutOfTime(engine, err)
 		engine.Close() // discards a poisoned runtime AND releases its file handles
+		if lastTimedOut {
+			log.Warnf("FlatSQL engine ran out of time opening %s (%v) — keeping its record state and retrying on a fresh runtime (attempt %d of 3)", dbPath, err, attempt+1)
+			discard = discarded
+			continue
+		}
 		switch {
 		case errors.Is(err, errEngineStateReindexed):
 			log.Infof("FlatSQL engine record index rebuilt; reopening with the control tables retained")
@@ -334,7 +355,36 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 			return nil, nil, bootMark{}, engineBootPlan{}, fmt.Errorf("%w: %s: %v", errControlDatabaseUnusable, dbPath, err)
 		}
 	}
+	if lastTimedOut {
+		return nil, nil, bootMark{}, engineBootPlan{}, fmt.Errorf("%w: %s: %v", errEngineOpenTimedOut, dbPath, lastErr)
+	}
 	return nil, nil, bootMark{}, engineBootPlan{}, fmt.Errorf("%w: %s: %v", errControlDatabaseUnusable, dbPath, lastErr)
+}
+
+// errEngineOpenTimedOut: every attempt to open the control database ran past
+// the engine's per-call budget. The record state is untouched on disk; the
+// open can simply be tried again once the host is not starved.
+var errEngineOpenTimedOut = errors.New("engine ran out of time opening the control database (record state kept)")
+
+// engineOpenAttemptHook runs before each open attempt with its fresh runtime
+// (tests).
+var engineOpenAttemptHook func(attempt int, engine *flatsqlrt.Runtime)
+
+// engineCallRanOutOfTime reports that an engine call was abandoned on its
+// wall-clock budget, from the error or from the runtime's poison cause.
+func engineCallRanOutOfTime(engine *flatsqlrt.Runtime, err error) bool {
+	if errors.Is(err, wasmrt.ErrExecutionTimeout) {
+		return true
+	}
+	if engine == nil {
+		return false
+	}
+	if mod := engine.WasmModule(); mod != nil {
+		if cause := mod.PoisonCause(); cause != nil && errors.Is(cause, wasmrt.ErrExecutionTimeout) {
+			return true
+		}
+	}
+	return false
 }
 
 // errEnginePrepareFailed marks a failure of the pre-first-query preparation
