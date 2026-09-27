@@ -199,6 +199,7 @@ run_preflight() {
     scripts/check-sdn-js-dependency-layering.test.mjs \
     scripts/check-npm-audit.test.mjs \
     scripts/check-govulncheck.test.mjs \
+    scripts/run-govulncheck.test.mjs \
     scripts/check-no-orphan-test-suites.test.mjs)
   pass "dependency-drift check suites"
 
