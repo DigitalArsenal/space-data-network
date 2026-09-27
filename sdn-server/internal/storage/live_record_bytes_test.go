@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -459,5 +460,37 @@ func TestSchemaDateRangesFromTheCounterMatchTheIndex(t *testing.T) {
 		if (minEpoch == nil) != (r.OldestEpoch == nil) || (minEpoch != nil && (r.OldestEpoch.Unix() != *minEpoch || r.NewestEpoch.Unix() != *maxEpoch)) {
 			t.Fatalf("%s: epochs %v..%v, index says %v..%v", r.Schema, r.OldestEpoch, r.NewestEpoch, lo, hi)
 		}
+	}
+}
+
+// The engine returns every integer to Go as a float64, so the completion
+// sentinel must be one a float64 holds exactly — math.MaxInt64 read back as
+// MinInt64 on x86-64 and no partition there ever counted as done — and a
+// cursor an earlier build wrote as math.MaxInt64 must still read as complete.
+func TestPartitionCountCompleteSurvivesTheEngineReadPath(t *testing.T) {
+	if partitionCountComplete > 1<<53 {
+		t.Fatalf("partitionCountComplete = %d is not exact in a float64", partitionCountComplete)
+	}
+	store := openBootStore(t, filepath.Join(t.TempDir(), "store"), bootTestValidator(t))
+	defer store.Close()
+	var got int64
+	if err := store.db.QueryRow(`SELECT ?`, partitionCountComplete).Scan(&got); err != nil || got != partitionCountComplete {
+		t.Fatalf("the sentinel read back as %d (%v), want %d", got, err, partitionCountComplete)
+	}
+
+	if _, err := store.Store("RFM.fbs", liveTestPayload(5, 77), "peer-a", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE sdn_partition_record_bytes SET scanned_rowid = ?`, int64(math.MaxInt64)); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	err := store.installPartitionCounters()
+	store.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live, err := store.LiveRecordBytes(); err != nil || live != 77 {
+		t.Fatalf("LiveRecordBytes after a MaxInt64 cursor = %d (%v), want 77", live, err)
 	}
 }
