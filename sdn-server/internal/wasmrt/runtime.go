@@ -178,6 +178,17 @@ type config struct {
 	// costLimit is the default per-Execute WasmEdge instruction-cost budget
 	// (0 disables fuel enforcement — the pre-B3 behavior). See WithCostLimit.
 	costLimit uint
+
+	// maxThreads caps the WASI worker threads one module may run (0 = the
+	// default, DefaultMaxThreads). See WithMaxThreads.
+	maxThreads int
+	// serviceThreads marks a partition-store instance. See WithServiceThreads.
+	serviceThreads bool
+	// envInstaller adds natively implemented functions to the "env" host
+	// module before it is registered. See WithEnvInstaller.
+	envInstaller func(env *wasmedge.Module) error
+	// instructionCounting enables WasmEdge's interpreter instruction counter.
+	instructionCounting bool
 }
 
 type hostModuleSpec struct {
@@ -238,6 +249,54 @@ func WithExecTimeout(d time.Duration) Option {
 // regardless of dispatch mode.
 func WithCostLimit(limit uint) Option {
 	return func(c *config) { c.costLimit = limit }
+}
+
+// DefaultMaxThreads is the per-module WASI worker cap when none is configured.
+const DefaultMaxThreads = 32
+
+// WithMaxThreads caps how many WASI worker threads the module may run at
+// once; thread-spawn returns -1 beyond it. A partition-store instance sizes
+// this from its pool plus headroom (design §5.1: at least 8 spare).
+func WithMaxThreads(n int) Option {
+	return func(c *config) { c.maxThreads = n }
+}
+
+// WithServiceThreads marks a partition-store instance (design §5.4, A21, A29).
+// Its spawned threads are SERVICE threads: they run until the instance stops
+// them (a stop word in shared memory, then an executor stop), never under a
+// per-call budget. Such a module refuses WithCostLimit, because cost
+// measuring takes WasmEdge's statistics lock on every guest instruction
+// accounting step, which would be a lock shared by every thread (A29).
+func WithServiceThreads() Option {
+	return func(c *config) { c.serviceThreads = true }
+}
+
+// WithEnvInstaller runs install on the "env" host module after its shared
+// memory is attached and before it is registered, so natively implemented
+// host functions (the C host I/O module) can be added to it.
+func WithEnvInstaller(install func(env *wasmedge.Module) error) Option {
+	return func(c *config) { c.envInstaller = install }
+}
+
+// WithInstructionCounting turns on WasmEdge's instruction counter. Native AOT
+// code compiled without counting never advances it, which is how
+// InstructionCount distinguishes an artifact that really runs AOT from one
+// whose AOT section the loader silently dropped for the interpreter.
+func WithInstructionCounting() Option {
+	return func(c *config) { c.instructionCounting = true }
+}
+
+// InstructionCount returns the instructions the interpreter has executed
+// (always 0 for AOT code, and 0 unless WithInstructionCounting was set).
+func (m *Module) InstructionCount() uint64 {
+	if m == nil || m.vm == nil {
+		return 0
+	}
+	stats := m.vm.GetStatistics()
+	if stats == nil {
+		return 0
+	}
+	return uint64(stats.GetInstrCount())
 }
 
 // ExecBudget is a per-CALL resource-budget override, carried on the Go
@@ -857,6 +916,12 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 		return nil, budgetErr
 	}
 	cfg.maxMemoryPages = budget
+	if cfg.serviceThreads && (cfg.costLimit > 0 || cfg.instructionCounting) {
+		return nil, errors.New("wasmrt: a service-thread instance refuses cost limits and statistics (they take a lock every thread shares)")
+	}
+	if cfg.maxThreads < 0 || cfg.maxThreads > 1<<16 {
+		return nil, fmt.Errorf("wasmrt: thread cap %d out of range", cfg.maxThreads)
+	}
 
 	conf := wasmedge.NewConfigure()
 	conf.AddConfig(wasmedge.THREADS)
@@ -866,6 +931,9 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 	}
 	if cfg.maxMemoryPages > 0 {
 		conf.SetMaxMemoryPage(uint(cfg.maxMemoryPages))
+	}
+	if cfg.instructionCounting {
+		conf.SetStatisticsInstructionCounting(true)
 	}
 	if cfg.costLimit > 0 {
 		// Enables WasmEdge's instruction-cost accounting so
@@ -963,6 +1031,14 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 			m.importedMemory = hostMod.FindMemory("memory")
 			sharedMemory = nil
 		}
+		if spec.name == "env" && cfg.envInstaller != nil {
+			if err := cfg.envInstaller(hostMod); err != nil {
+				hostMod.Release()
+				m.Release()
+				return nil, fmt.Errorf("failed to install native env functions: %w", err)
+			}
+			cfg.envInstaller = nil
+		}
 		err := vm.RegisterModule(hostMod)
 		if err != nil {
 			hostMod.Release()
@@ -971,10 +1047,19 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 		}
 		m.hostMods = append(m.hostMods, hostMod)
 	}
-	if sharedMemory != nil {
+	if sharedMemory != nil || cfg.envInstaller != nil {
 		env := wasmedge.NewModule("env")
-		env.AddMemory("memory", sharedMemory)
-		m.importedMemory = env.FindMemory("memory")
+		if sharedMemory != nil {
+			env.AddMemory("memory", sharedMemory)
+			m.importedMemory = env.FindMemory("memory")
+		}
+		if cfg.envInstaller != nil {
+			if err := cfg.envInstaller(env); err != nil {
+				env.Release()
+				m.Release()
+				return nil, fmt.Errorf("failed to install native env functions: %w", err)
+			}
+		}
 		if err := vm.RegisterModule(env); err != nil {
 			env.Release()
 			m.Release()
