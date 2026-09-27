@@ -365,12 +365,12 @@ body.centered .papers .card { text-align: left; }
 
 /* Problem cards: a red cross in the corner marks what is broken today; the
    footer line says what the network does about it. */
-.card.bad { position: relative; display: flex; flex-direction: column; }
-.card.bad .fix { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border); color: var(--text); font-weight: 500; }
-.card.bad > p:not(.fix) { margin-bottom: 16px; }
-.card.bad .card-head { padding: 0 30px; }
-.fix-tag { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
-.card .bad-mark { position: absolute; top: 18px; right: 18px; width: 24px; height: 24px; margin: 0; color: var(--alert); }
+.card.shift { display: flex; flex-direction: column; }
+.card.shift .fix { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border); color: var(--text); font-weight: 500; }
+.card.shift > p:not(.fix) { margin-bottom: 16px; }
+.now-tag, .fix-tag { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.now-tag { color: var(--muted); }
+.fix-tag { color: var(--accent); }
 
 /* Ways to take part: four steps on one rail, deeper to the right. */
 .depth { list-style: none; position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; max-width: 1120px; margin: 0 auto; padding-top: 22px; }
