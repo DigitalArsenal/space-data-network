@@ -51,6 +51,289 @@ if [[ ! -d "$SRC" ]]; then
     https://github.com/WasmEdge/WasmEdge.git "$SRC"
 fi
 
+# THE SDN RUNTIME PATCHES (design A31, A21). Every binary this script links
+# carries them, so a host gets the fixed runtime by running the release binary;
+# there is no separate per-host library install to forget.
+#
+#   01-atomic-wait  compare, register and sleep under one mutex, and let a
+#                   notify wake a waiter without a store. Upstream loses wakeups
+#                   (sdn-server/internal/wasmrt/testdata/wasmedge-atomic-wait.md).
+#   02-stop-token   a stop is sticky for every invocation on the executor, and
+#                   is read (never consumed) by the interpreter and by
+#                   Interruptible AOT code. Upstream's exchange(0) stopped exactly
+#                   one thread per cancel, and put an RMW on one shared cache line
+#                   at every block of every thread.
+#
+# THE PATCH TEXT LIVES IN THIS FILE, deliberately. The CI prefix cache key and
+# the Dockerfile's static layer are both keyed on this file's bytes, so a patch
+# change can never reuse a prefix built without it. The copies in
+# sdn-server/internal/wasmrt/testdata are the regression-test inputs;
+# TestStaticBuildCarriesTheRuntimePatches fails if the two ever differ.
+#
+# The patches are written against one exact source commit. A different
+# WASMEDGE_VERSION has no series here and refuses to build unless the caller
+# says WASMEDGE_ALLOW_UNPATCHED=1, because an unpatched runtime loses wakeups
+# and cannot stop a threaded instance.
+write_sdn_patch_01_atomic_wait() {
+  cat <<'SDN_WASMEDGE_PATCH_EOF'
+diff --git a/include/executor/engine/atomic.ipp b/include/executor/engine/atomic.ipp
+index 8568e24..8414705 100644
+--- a/include/executor/engine/atomic.ipp
++++ b/include/executor/engine/atomic.ipp
+@@ -478,40 +478,32 @@ Executor::atomicWait(Runtime::Instance::MemoryInstance &MemInst,
+   auto *AtomicObj = MemInst.getPointer<std::atomic<T> *>(Address);
+   assuming(AtomicObj);
+ 
++  // Compare, register, and sleep under the notifier's mutex. Otherwise a
++  // store+notify between the comparison and wait can be lost forever.
++  std::unique_lock<decltype(WaiterMapMutex)> Locker(WaiterMapMutex);
+   if (AtomicObj->load() != Expected.le()) {
+     return UINT32_C(1); // NotEqual
+   }
+-
+-  decltype(WaiterMap)::iterator WaiterIterator;
+-  {
+-    std::unique_lock<decltype(WaiterMapMutex)> Locker(WaiterMapMutex);
+-    WaiterIterator = WaiterMap.emplace(Address, &MemInst);
+-  }
+-
++  auto WaiterIterator = WaiterMap.emplace(Address, &MemInst);
+   cxx20::scope_exit ScopeExitHolder([&]() noexcept {
+-    std::unique_lock<decltype(WaiterMapMutex)> Locker(WaiterMapMutex);
+     WaiterMap.erase(WaiterIterator);
+   });
+-
+-  while (true) {
+-    std::unique_lock<decltype(WaiterIterator->second.Mutex)> Locker(
+-        WaiterIterator->second.Mutex);
+-    std::cv_status WaitResult = std::cv_status::no_timeout;
+-    if (!Until) {
+-      WaiterIterator->second.Cond.wait(Locker);
+-    } else {
+-      WaitResult = WaiterIterator->second.Cond.wait_until(Locker, *Until);
+-    }
+-    if (unlikely(StopToken.load(std::memory_order_relaxed) != 0)) {
+-      return Unexpect(ErrCode::Value::Interrupted);
+-    }
+-    if (likely(AtomicObj->load() != Expected.le())) {
+-      return UINT32_C(0); // ok
+-    }
+-    if (WaitResult == std::cv_status::timeout) {
+-      return UINT32_C(2); // Timed-out
+-    }
++  auto Ready = [&]() {
++    return WaiterIterator->second.Notified ||
++           StopToken.load(std::memory_order_relaxed) != 0;
++  };
++  bool Woken = true;
++  if (!Until) {
++    WaiterIterator->second.Cond.wait(Locker, Ready);
++  } else {
++    Woken = WaiterIterator->second.Cond.wait_until(Locker, *Until, Ready);
++  }
++  if (unlikely(StopToken.load(std::memory_order_relaxed) != 0)) {
++    return Unexpect(ErrCode::Value::Interrupted);
+   }
++  // A notification succeeds even when the memory value has not changed.
++  return Woken ? UINT32_C(0) : UINT32_C(2);
++
+ }
+ 
+ } // namespace Executor
+diff --git a/include/executor/executor.h b/include/executor/executor.h
+index fbcc6ac..6683ee9 100644
+--- a/include/executor/executor.h
++++ b/include/executor/executor.h
+@@ -28,6 +28,7 @@
+ #include "runtime/stackmgr.h"
+ #include "runtime/storemgr.h"
+ 
++#include <map>
+ #include <atomic>
+ #include <condition_variable>
+ #include <csignal>
+@@ -1103,7 +1104,7 @@ private:
+ 
+   /// Waiter struct for atomic instructions
+   struct Waiter {
+-    std::mutex Mutex;
++    bool Notified = false;
+     std::condition_variable Cond;
+     Runtime::Instance::MemoryInstance *MemInst;
+     Waiter(Runtime::Instance::MemoryInstance *Inst) noexcept : MemInst(Inst) {}
+@@ -1111,7 +1112,7 @@ private:
+   /// Waiter map mutex
+   std::mutex WaiterMapMutex;
+   /// Waiter multimap
+-  std::unordered_multimap<uint32_t, Waiter> WaiterMap;
++  std::multimap<uint32_t, Waiter> WaiterMap;
+ 
+   /// WasmEdge configuration
+   const Configure Conf;
+diff --git a/lib/executor/engine/threadInstr.cpp b/lib/executor/engine/threadInstr.cpp
+index 0d1ca70..5331e95 100644
+--- a/lib/executor/engine/threadInstr.cpp
++++ b/lib/executor/engine/threadInstr.cpp
+@@ -67,8 +67,10 @@ Executor::atomicNotify(Runtime::Instance::MemoryInstance &MemInst,
+   auto Range = WaiterMap.equal_range(Address);
+   for (auto Iterator = Range.first; Total < Count && Iterator != Range.second;
+        ++Iterator) {
+-    if (likely(&MemInst == Iterator->second.MemInst)) {
+-      Iterator->second.Cond.notify_all();
++    if (likely(&MemInst == Iterator->second.MemInst) &&
++        !Iterator->second.Notified) {
++      Iterator->second.Notified = true;
++      Iterator->second.Cond.notify_one();
+       ++Total;
+     }
+   }
+SDN_WASMEDGE_PATCH_EOF
+}
+
+write_sdn_patch_02_stop_token() {
+  cat <<'SDN_WASMEDGE_PATCH_EOF'
+diff --git a/include/executor/executor.h b/include/executor/executor.h
+index 6683ee9..6bdccea 100644
+--- a/include/executor/executor.h
++++ b/include/executor/executor.h
+@@ -201,9 +201,15 @@ public:
+   asyncInvoke(const Runtime::Instance::FunctionInstance *FuncInst,
+               Span<const ValVariant> Params, Span<const ValType> ParamTypes);
+ 
+-  /// Stop execution
++  /// Stop execution.
++  ///
++  /// SDN patch (stop-token): a stop is STICKY for every invocation running on
++  /// this executor. Upstream consumed the token with exchange(0), so one stop
++  /// interrupted exactly one thread and every other wasi-thread on the same
++  /// executor kept running. The token is cleared only when the next
++  /// invocation starts on an idle executor (see invoke()).
+   void stop() noexcept {
+-    StopToken.store(1, std::memory_order_relaxed);
++    StopToken.store(1, std::memory_order_seq_cst);
+     atomicNotifyAll();
+   }
+ 
+@@ -1120,6 +1126,8 @@ private:
+   Statistics::Statistics *Stat;
+   /// Stop Execution
+   std::atomic_uint32_t StopToken = 0;
++  /// Invocations currently running on this executor (SDN stop-token patch).
++  std::atomic_uint32_t ActiveInvocations = 0;
+   /// Executor Host Function Handler
+   HostFuncHandler HostFuncHelper = {};
+ };
+diff --git a/lib/executor/engine/controlInstr.cpp b/lib/executor/engine/controlInstr.cpp
+index 935992a..55e08d7 100644
+--- a/lib/executor/engine/controlInstr.cpp
++++ b/lib/executor/engine/controlInstr.cpp
+@@ -134,7 +134,7 @@ Expect<void> Executor::runBrOnCastOp(Runtime::StackManager &StackMgr,
+ Expect<void> Executor::runReturnOp(Runtime::StackManager &StackMgr,
+                                    AST::InstrView::iterator &PC) noexcept {
+   // Check stop token
+-  if (unlikely(StopToken.exchange(0, std::memory_order_relaxed))) {
++  if (unlikely(StopToken.load(std::memory_order_relaxed))) {
+     spdlog::error(ErrCode::Value::Interrupted);
+     return Unexpect(ErrCode::Value::Interrupted);
+   }
+diff --git a/lib/executor/executor.cpp b/lib/executor/executor.cpp
+index 137131b..68ef4fe 100644
+--- a/lib/executor/executor.cpp
++++ b/lib/executor/executor.cpp
+@@ -140,6 +140,16 @@ Executor::invoke(const Runtime::Instance::FunctionInstance *FuncInst,
+     }
+   }
+ 
++  // SDN patch (stop-token): a stop issued while invocations run stays set
++  // until all of them have returned; the first invocation on an idle executor
++  // clears a token left over from an earlier stop.
++  if (ActiveInvocations.fetch_add(1, std::memory_order_acq_rel) == 0) {
++    StopToken.store(0, std::memory_order_seq_cst);
++  }
++  cxx20::scope_exit ActiveInvocationGuard([this]() noexcept {
++    ActiveInvocations.fetch_sub(1, std::memory_order_acq_rel);
++  });
++
+   Runtime::StackManager StackMgr;
+ 
+   // Call runFunction.
+diff --git a/lib/executor/helper.cpp b/lib/executor/helper.cpp
+index 96205cc..2ace419 100644
+--- a/lib/executor/helper.cpp
++++ b/lib/executor/helper.cpp
+@@ -51,7 +51,7 @@ Executor::enterFunction(Runtime::StackManager &StackMgr,
+   // RetIt: the return position when the entered function returns.
+ 
+   // Check if the interruption occurs.
+-  if (unlikely(StopToken.exchange(0, std::memory_order_relaxed))) {
++  if (unlikely(StopToken.load(std::memory_order_relaxed))) {
+     spdlog::error(ErrCode::Value::Interrupted);
+     return Unexpect(ErrCode::Value::Interrupted);
+   }
+@@ -251,7 +251,7 @@ Executor::branchToLabel(Runtime::StackManager &StackMgr,
+                         const AST::Instruction::JumpDescriptor &JumpDesc,
+                         AST::InstrView::iterator &PC) noexcept {
+   // Check the stop token.
+-  if (unlikely(StopToken.exchange(0, std::memory_order_relaxed))) {
++  if (unlikely(StopToken.load(std::memory_order_relaxed))) {
+     spdlog::error(ErrCode::Value::Interrupted);
+     return Unexpect(ErrCode::Value::Interrupted);
+   }
+diff --git a/lib/llvm/compiler.cpp b/lib/llvm/compiler.cpp
+index 8db12e3..f765db6 100644
+--- a/lib/llvm/compiler.cpp
++++ b/lib/llvm/compiler.cpp
+@@ -5670,12 +5670,13 @@ private:
+       return;
+     }
+     auto NotStopBB = LLVM::BasicBlock::create(LLContext, F.Fn, "NotStop");
+-    auto StopToken = Builder.createAtomicRMW(
+-        LLVMAtomicRMWBinOpXchg, Context.getStopToken(Builder, ExecCtx),
+-        LLContext.getInt32(0), LLVMAtomicOrderingMonotonic);
+-#if LLVM_VERSION_MAJOR >= 13
+-    StopToken.setAlignment(32);
+-#endif
++    // SDN patch (stop-token): read the token, never consume it. An exchange
++    // let one thread swallow a stop meant for all of them, and it made every
++    // block of every thread an RMW on one shared cache line.
++    auto StopToken = Builder.createLoad(
++        LLContext.getInt32Ty(), Context.getStopToken(Builder, ExecCtx), true);
++    StopToken.setOrdering(LLVMAtomicOrderingMonotonic);
++    StopToken.setAlignment(4);
+     auto NotStop = Builder.createLikely(
+         Builder.createICmpEQ(StopToken, LLContext.getInt32(0)));
+     Builder.createCondBr(NotStop, NotStopBB,
+SDN_WASMEDGE_PATCH_EOF
+}
+
+SDN_PATCH_DIR="${WORK}/sdn-patches"
+SDN_PATCH_STAMP=""
+if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
+  sdn_expected_commit=be85c2fbba68318f103b4a766728f6946e65abf8
+  sdn_actual_commit="$(git -C "$SRC" rev-parse HEAD)"
+  if [[ "$sdn_actual_commit" != "$sdn_expected_commit" ]]; then
+    echo "WasmEdge 0.16.4 source is at ${sdn_actual_commit}; the SDN patches are written against ${sdn_expected_commit}" >&2
+    exit 1
+  fi
+  rm -rf "$SDN_PATCH_DIR"
+  mkdir -p "$SDN_PATCH_DIR"
+  write_sdn_patch_01_atomic_wait > "$SDN_PATCH_DIR/01-atomic-wait.patch"
+  write_sdn_patch_02_stop_token > "$SDN_PATCH_DIR/02-stop-token.patch"
+  for sdn_patch in "$SDN_PATCH_DIR"/*.patch; do
+    if git -C "$SRC" apply --reverse --check "$sdn_patch" >/dev/null 2>&1; then
+      echo "WasmEdge patch already applied: $(basename "$sdn_patch")"
+      continue
+    fi
+    git -C "$SRC" apply --check "$sdn_patch"
+    git -C "$SRC" apply "$sdn_patch"
+    echo "WasmEdge patch applied: $(basename "$sdn_patch")"
+  done
+  SDN_PATCH_STAMP="$(cat "$SDN_PATCH_DIR"/*.patch | git hash-object --stdin)"
+elif [[ -z "${WASMEDGE_ALLOW_UNPATCHED:-}" ]]; then
+  echo "no SDN patch series for WasmEdge ${WASMEDGE_VERSION}; refusing to build an unpatched runtime (set WASMEDGE_ALLOW_UNPATCHED=1 to override)" >&2
+  exit 1
+fi
+
 # DROP UPSTREAM'S -Werror. WasmEdge adds it unconditionally
 # (cmake/Helper.cmake) and then fails its OWN sources under every compiler it
 # did not test: gcc rejects component_type.cpp on -Wmaybe-uninitialized and
@@ -124,7 +407,19 @@ fi
 # (CMakeLists.txt:69-72), so there is no load-only AOT mode: turning LLVM off
 # removes the ability to LOAD a precompiled artifact, not just to produce one,
 # and every query silently falls back to the interpreter at ~100x.
+#
+# A build directory left by an earlier run is reused incrementally, but only
+# when it was built from the same patch series: the stamp is the git hash of
+# the series, and a mismatch (or no stamp) rebuilds. Without that check a
+# workspace built before the patches existed would stage an unpatched runtime.
+SDN_BUILD_STAMP="$SRC/build/.sdn-patch-series"
+sdn_build_needed=0
 if [[ ! -f "$SRC/build/lib/api/libwasmedge.a" ]]; then
+  sdn_build_needed=1
+elif [[ "$(cat "$SDN_BUILD_STAMP" 2>/dev/null || true)" != "$SDN_PATCH_STAMP" ]]; then
+  sdn_build_needed=1
+fi
+if [[ "$sdn_build_needed" == 1 ]]; then
   CC="${CC:-clang-16}" CXX="${CXX:-clang++-16}" \
   cmake -S "$SRC" -B "$SRC/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DWASMEDGE_USE_LLVM=ON \
@@ -137,8 +432,9 @@ if [[ ! -f "$SRC/build/lib/api/libwasmedge.a" ]]; then
     -DLLD_DIR="${LLD_DIR:-/usr/lib/llvm-16/lib/cmake/lld}" \
     ${CMAKE_AR:+-DCMAKE_AR="$CMAKE_AR"} \
     ${CMAKE_PREFIX_PATH:+-DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"}
-  JOBS="$( (command -v nproc >/dev/null && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo 4 )"
+  JOBS="${WASMEDGE_BUILD_JOBS:-$( (command -v nproc >/dev/null && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo 4 )}"
   cmake --build "$SRC/build" -j"$JOBS"
+  printf '%s' "$SDN_PATCH_STAMP" > "$SDN_BUILD_STAMP"
 fi
 
 # 3. Stage archives + headers. The merged libwasmedge.a is INCOMPLETE (the
@@ -151,6 +447,17 @@ cp "$SRC"/build/_deps/fmt-build/libfmt.a      "$STATIC/lib/"
 cp "$SRC"/build/_deps/spdlog-build/libspdlog.a "$STATIC/lib/"
 cp -r "$SRC"/include/api/wasmedge             "$STATIC/include/"
 cp -r "$SRC"/build/include/api/wasmedge/*     "$STATIC/include/wasmedge/" 2>/dev/null || true
+# Say which runtime patches this prefix carries. Operators and the daemon's
+# `substrate-selftest` report read it; the self-test still measures behaviour
+# rather than trusting this file.
+{
+  echo "wasmedge ${WASMEDGE_VERSION}"
+  echo "series ${SDN_PATCH_STAMP:-none}"
+  for sdn_patch in "$SDN_PATCH_DIR"/*.patch; do
+    [[ -f "$sdn_patch" ]] || continue
+    echo "patch $(basename "$sdn_patch") $(git hash-object "$sdn_patch")"
+  done
+} > "$STATIC/sdn-runtime-patches.txt"
 
 # WINDOWS: make the staged header describe the STATIC library it sits beside.
 #

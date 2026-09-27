@@ -1,0 +1,111 @@
+diff --git a/include/executor/executor.h b/include/executor/executor.h
+index 6683ee9..6bdccea 100644
+--- a/include/executor/executor.h
++++ b/include/executor/executor.h
+@@ -201,9 +201,15 @@ public:
+   asyncInvoke(const Runtime::Instance::FunctionInstance *FuncInst,
+               Span<const ValVariant> Params, Span<const ValType> ParamTypes);
+ 
+-  /// Stop execution
++  /// Stop execution.
++  ///
++  /// SDN patch (stop-token): a stop is STICKY for every invocation running on
++  /// this executor. Upstream consumed the token with exchange(0), so one stop
++  /// interrupted exactly one thread and every other wasi-thread on the same
++  /// executor kept running. The token is cleared only when the next
++  /// invocation starts on an idle executor (see invoke()).
+   void stop() noexcept {
+-    StopToken.store(1, std::memory_order_relaxed);
++    StopToken.store(1, std::memory_order_seq_cst);
+     atomicNotifyAll();
+   }
+ 
+@@ -1120,6 +1126,8 @@ private:
+   Statistics::Statistics *Stat;
+   /// Stop Execution
+   std::atomic_uint32_t StopToken = 0;
++  /// Invocations currently running on this executor (SDN stop-token patch).
++  std::atomic_uint32_t ActiveInvocations = 0;
+   /// Executor Host Function Handler
+   HostFuncHandler HostFuncHelper = {};
+ };
+diff --git a/lib/executor/engine/controlInstr.cpp b/lib/executor/engine/controlInstr.cpp
+index 935992a..55e08d7 100644
+--- a/lib/executor/engine/controlInstr.cpp
++++ b/lib/executor/engine/controlInstr.cpp
+@@ -134,7 +134,7 @@ Expect<void> Executor::runBrOnCastOp(Runtime::StackManager &StackMgr,
+ Expect<void> Executor::runReturnOp(Runtime::StackManager &StackMgr,
+                                    AST::InstrView::iterator &PC) noexcept {
+   // Check stop token
+-  if (unlikely(StopToken.exchange(0, std::memory_order_relaxed))) {
++  if (unlikely(StopToken.load(std::memory_order_relaxed))) {
+     spdlog::error(ErrCode::Value::Interrupted);
+     return Unexpect(ErrCode::Value::Interrupted);
+   }
+diff --git a/lib/executor/executor.cpp b/lib/executor/executor.cpp
+index 137131b..68ef4fe 100644
+--- a/lib/executor/executor.cpp
++++ b/lib/executor/executor.cpp
+@@ -140,6 +140,16 @@ Executor::invoke(const Runtime::Instance::FunctionInstance *FuncInst,
+     }
+   }
+ 
++  // SDN patch (stop-token): a stop issued while invocations run stays set
++  // until all of them have returned; the first invocation on an idle executor
++  // clears a token left over from an earlier stop.
++  if (ActiveInvocations.fetch_add(1, std::memory_order_acq_rel) == 0) {
++    StopToken.store(0, std::memory_order_seq_cst);
++  }
++  cxx20::scope_exit ActiveInvocationGuard([this]() noexcept {
++    ActiveInvocations.fetch_sub(1, std::memory_order_acq_rel);
++  });
++
+   Runtime::StackManager StackMgr;
+ 
+   // Call runFunction.
+diff --git a/lib/executor/helper.cpp b/lib/executor/helper.cpp
+index 96205cc..2ace419 100644
+--- a/lib/executor/helper.cpp
++++ b/lib/executor/helper.cpp
+@@ -51,7 +51,7 @@ Executor::enterFunction(Runtime::StackManager &StackMgr,
+   // RetIt: the return position when the entered function returns.
+ 
+   // Check if the interruption occurs.
+-  if (unlikely(StopToken.exchange(0, std::memory_order_relaxed))) {
++  if (unlikely(StopToken.load(std::memory_order_relaxed))) {
+     spdlog::error(ErrCode::Value::Interrupted);
+     return Unexpect(ErrCode::Value::Interrupted);
+   }
+@@ -251,7 +251,7 @@ Executor::branchToLabel(Runtime::StackManager &StackMgr,
+                         const AST::Instruction::JumpDescriptor &JumpDesc,
+                         AST::InstrView::iterator &PC) noexcept {
+   // Check the stop token.
+-  if (unlikely(StopToken.exchange(0, std::memory_order_relaxed))) {
++  if (unlikely(StopToken.load(std::memory_order_relaxed))) {
+     spdlog::error(ErrCode::Value::Interrupted);
+     return Unexpect(ErrCode::Value::Interrupted);
+   }
+diff --git a/lib/llvm/compiler.cpp b/lib/llvm/compiler.cpp
+index 8db12e3..f765db6 100644
+--- a/lib/llvm/compiler.cpp
++++ b/lib/llvm/compiler.cpp
+@@ -5670,12 +5670,13 @@ private:
+       return;
+     }
+     auto NotStopBB = LLVM::BasicBlock::create(LLContext, F.Fn, "NotStop");
+-    auto StopToken = Builder.createAtomicRMW(
+-        LLVMAtomicRMWBinOpXchg, Context.getStopToken(Builder, ExecCtx),
+-        LLContext.getInt32(0), LLVMAtomicOrderingMonotonic);
+-#if LLVM_VERSION_MAJOR >= 13
+-    StopToken.setAlignment(32);
+-#endif
++    // SDN patch (stop-token): read the token, never consume it. An exchange
++    // let one thread swallow a stop meant for all of them, and it made every
++    // block of every thread an RMW on one shared cache line.
++    auto StopToken = Builder.createLoad(
++        LLContext.getInt32Ty(), Context.getStopToken(Builder, ExecCtx), true);
++    StopToken.setOrdering(LLVMAtomicOrderingMonotonic);
++    StopToken.setAlignment(4);
+     auto NotStop = Builder.createLikely(
+         Builder.createICmpEQ(StopToken, LLContext.getInt32(0)));
+     Builder.createCondBr(NotStop, NotStopBB,
