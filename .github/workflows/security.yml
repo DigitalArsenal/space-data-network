@@ -233,6 +233,18 @@ jobs:
       - name: Stage shared admin shell assets
         run: sh deployment/scripts/stage-admin-ui.sh "${GITHUB_WORKSPACE}"
 
+      # The image copies the pinned HD wallet module and the same-origin
+      # wallet sign-in assets exactly as docker-publish.yml stages them.
+      - name: Install the pinned wallet packages
+        working-directory: sdn-js
+        run: npm ci --no-audit --fund=false
+
+      - name: Stage the same-origin wallet sign-in assets
+        run: |
+          deployment/wallet-wasm/stage-wallet-wasm.sh \
+            deployment/wallet-wasm/staged/wallet-wasm \
+            deployment/wallet-wasm/staged/wallet-ui
+
       - name: Build IPFS WebUI assets
         working-directory: webui
         run: |
