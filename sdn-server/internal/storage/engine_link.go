@@ -20,7 +20,9 @@ package storage
 //                          engine previously meant a dead daemon).
 
 import (
+	"context"
 	"fmt"
+	"sync"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -133,15 +135,78 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	}
 	wasHydrated := s.engineHotHydrated.Load()
 	s.engineHotHydrated.Store(false)
-	if wasHydrated {
+	switch {
+	case !wasHydrated:
+	case plan.EngineState.Warm:
+		// The arena reopened: reconcile it and ingest the tail, here.
 		if err := s.rebuildEngineRecordsLocked(); err != nil {
 			return s.engineEpoch, fmt.Errorf("recover poisoned engine: hot-window hydration: %w", err)
 		}
 		if err := s.checkpointEngineLocked(); err != nil {
 			log.Warnf("FlatSQL engine recovery: record state not flushed (the next boot rebuilds the tail): %v", err)
 		}
+	default:
+		// A COLD window is refilled in the background, one bounded page per
+		// lock hold, exactly as a boot does — NOT under this lock. Refilling
+		// it here held the store write lock through the whole rebuild on
+		// host-02 (2026-09-27): no write landed, and an update shutdown could
+		// not drain and left the store open. Readers of a standard not yet
+		// refilled are gated per standard (EngineSchemaReady); Close cancels
+		// the refill between pages.
+		s.startRecoveryHydration()
 	}
 
 	log.Infof("FlatSQL engine rebuilt after poisoning (epoch %d)", s.engineEpoch)
 	return s.engineEpoch, nil
+}
+
+// recoveryHydration refills a cold hot window after an engine recovery, in
+// the background, cancellable by Close.
+type recoveryHydration struct {
+	mu     sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	closed bool
+}
+
+// startRecoveryHydration runs HydrateEngineHotWindowContext in the background.
+// Called with s.mu held; the refill takes the lock per page once it is
+// released.
+func (s *FlatSQLStore) startRecoveryHydration() {
+	h := &s.recoveryHydrate
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
+	if h.ctx == nil {
+		h.ctx, h.cancel = context.WithCancel(context.Background())
+	}
+	ctx := h.ctx
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		n, err := s.HydrateEngineHotWindowContext(ctx)
+		if err != nil {
+			log.Errorf("FlatSQL engine hot-window refill after recovery failed after %d records: %v", n, err)
+			return
+		}
+		if ctx.Err() == nil {
+			log.Infof("FlatSQL engine hot-window refill after recovery complete: %d records", n)
+		}
+	}()
+}
+
+// stopRecoveryHydration cancels a refill in progress and waits for it to
+// leave. Call it WITHOUT the store lock: the refill may be waiting for it.
+func (s *FlatSQLStore) stopRecoveryHydration() {
+	h := &s.recoveryHydrate
+	h.mu.Lock()
+	h.closed = true
+	if h.cancel != nil {
+		h.cancel()
+	}
+	h.mu.Unlock()
+	h.wg.Wait()
 }
