@@ -6377,16 +6377,19 @@ func (s *FlatSQLStore) countLocalEPMRecordsLocked(filter RawRecordQuery) (int64,
 
 // QueryIndexedRecords returns records using materialized catalog/source indexes.
 // indexedRecordProjection is the full record read: the record bytes plus the
-// projected source tags.
-const indexedRecordProjection = `d.cid, d.peer_id, d.timestamp,
-		       d.data, d.signature_hex,
-		       tags.provider_id, tags.source_name, tags.batch_id`
+// projected source tags. col maps a record-table column to its SQL.
+func indexedRecordProjection(col func(string) string) string {
+	return "w.cid, " + col("peer_id") + ", " + col("timestamp") + ", " + col("data") + ", " + col("signature_hex") +
+		", tags.provider_id, tags.source_name, tags.batch_id"
+}
 
 // indexedRecordLengthProjection is the BYTE PROBE: the frame length alone, the
 // value already recorded for every stored record. Reading it costs no payload
 // I/O, which is the whole point — a shard boundary must be decidable without
 // first materialising the shard it is trying to bound.
-const indexedRecordLengthProjection = `d.record_length`
+func indexedRecordLengthProjection(col func(string) string) string {
+	return col("record_length")
+}
 
 // normalizeIndexedRecordWindow applies the shared window rules (day/time
 // sanity, default and maximum limits) so a probe and its read agree on the
@@ -6421,24 +6424,32 @@ func normalizeIndexedRecordWindow(filter IndexedRecordQuery) (IndexedRecordQuery
 // record_length must describe EXACTLY the rows the export then materialises,
 // same filters, same ORDER BY, same LIMIT/OFFSET. Two hand-copied WHERE clauses
 // would be a silent mis-cut waiting to happen.
-func (s *FlatSQLStore) indexedRecordWindowSQL(filter IndexedRecordQuery, tableName, projection string) (string, []interface{}) {
-	query := fmt.Sprintf(`
-		SELECT %s
-		FROM %s d
-		INNER JOIN sdn_record_index idx
-		  ON idx.schema_name = ? AND idx.cid = d.cid
-		LEFT JOIN (
-			SELECT schema_name, cid, provider_id, source_name, batch_id
-			FROM sdn_record_source_tags
-			WHERE schema_name = ?
-			GROUP BY schema_name, cid
-		) tags ON tags.schema_name = idx.schema_name AND tags.cid = idx.cid
-	`, projection, tableName)
-
-	args := []interface{}{filter.SchemaName, filter.SchemaName}
-	query += `
-		WHERE 1=1
-	`
+//
+// THE WINDOW IS CHOSEN FROM THE INDEX, AND ONLY ITS ROWS TOUCH A RECORD TABLE.
+// This used to join sdn_record_index to the standard's union read source
+// (UNION ALL of every producer table, GROUP BY cid) and to every tag row of the
+// schema grouped by cid. SQLite cannot push a join or a LIMIT through either
+// GROUP BY, so both were materialised in full — every record's payload — on
+// every call. On host-02 (2026-09-27) the $IQC shard reads and byte probes ran
+// past 30 s and 1 min over two producer tables, readers queued 1m23s behind
+// them, heading for the 5-minute budget that poisons the engine.
+//
+// Now the inner query picks the window from sdn_record_index alone (its
+// filters, "held by some producer table" as one cid seek per table, the tag
+// filter as a seek on the tag index), orders and limits it; the outer query
+// seeks each window row's record row by cid in each producer table and its one
+// projected tag row. Same rows, same order; the payload read is the window's.
+// A CID several producers hold projects the first table's row (by name), where
+// the union's GROUP BY projected an arbitrary one.
+func indexedRecordWindowSQL(filter IndexedRecordQuery, tables []string, projection func(func(string) string) string) (string, []interface{}) {
+	held := recordHeldSQL(tables, "idx.cid")
+	query := `
+		SELECT idx.schema_name AS schema_name, idx.cid AS cid,
+		       COALESCE(idx.epoch_unix, idx.source_timestamp) AS window_at
+		FROM sdn_record_index idx
+		WHERE idx.schema_name = ?
+		  AND ` + held
+	args := []interface{}{filter.SchemaName}
 
 	if filter.Day != "" {
 		query += ` AND idx.epoch_day = ?`
@@ -6506,18 +6517,92 @@ func (s *FlatSQLStore) indexedRecordWindowSQL(filter IndexedRecordQuery, tableNa
 		query += `)`
 	}
 
+	innerOrder, outerOrder := ` ORDER BY window_at DESC, cid ASC`, ` ORDER BY w.window_at DESC, w.cid ASC`
 	if filter.OrderByCID {
-		query += ` ORDER BY d.cid ASC LIMIT ?`
-	} else {
-		query += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) DESC, d.cid ASC LIMIT ?`
+		innerOrder, outerOrder = ` ORDER BY cid ASC`, ` ORDER BY w.cid ASC`
 	}
+	query += innerOrder + ` LIMIT ?`
 	args = append(args, filter.Limit)
 	if filter.Offset > 0 {
 		query += ` OFFSET ?`
 		args = append(args, filter.Offset)
 	}
 
-	return query, args
+	col := func(name string) string { return recordColumnSQL(tables, name) }
+	joins := recordColumnJoinsSQL(tables, "w.cid")
+	// The one projected tag row: the newest written. A record can carry
+	// several (multi-producer mirrors, re-imports under a new batch); the old
+	// GROUP BY projected whichever its plan met last. MAX(rowid), not ORDER BY
+	// created_at: that ORDER BY lets the planner walk every tag of the schema
+	// on idx_sdn_record_source_tags_recent instead of seeking the CID. Tag
+	// FILTERS never use this row — they match ANY row (EXISTS above).
+	outer := fmt.Sprintf(`
+		SELECT %s
+		FROM (%s) w%s
+		LEFT JOIN sdn_record_source_tags tags ON tags.rowid = (
+			SELECT MAX(pt.rowid) FROM sdn_record_source_tags pt
+			WHERE pt.schema_name = w.schema_name AND pt.cid = w.cid)
+	`, projection(col), query, joins)
+	return outer + outerOrder, args
+}
+
+// recordHeldSQL is true when cidExpr is held by any of a standard's producer
+// tables: one CID seek per table. With no tables, nothing is held.
+func recordHeldSQL(tables []string, cidExpr string) string {
+	if len(tables) == 0 {
+		return "0"
+	}
+	parts := make([]string, 0, len(tables))
+	for _, t := range tables {
+		parts = append(parts, fmt.Sprintf("EXISTS (SELECT 1 FROM %s held WHERE held.cid = %s)", t, cidExpr))
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
+// recordColumnJoinsSQL LEFT JOINs each producer table as r0, r1, … on
+// cidExpr: a CID seek per table for rows already chosen, where joining the
+// union read source would materialise every record of the standard.
+func recordColumnJoinsSQL(tables []string, cidExpr string) string {
+	var b strings.Builder
+	for i, t := range tables {
+		fmt.Fprintf(&b, "\n\t\tLEFT JOIN %s r%d ON r%d.cid = %s", t, i, i, cidExpr)
+	}
+	return b.String()
+}
+
+// recordColumnSQL reads one record-table column from the first joined
+// producer table holding the row (recordColumnJoinsSQL).
+func recordColumnSQL(tables []string, column string) string {
+	if len(tables) == 0 {
+		return "NULL"
+	}
+	var b strings.Builder
+	b.WriteString("CASE")
+	for i := range tables {
+		fmt.Fprintf(&b, " WHEN r%d.cid IS NOT NULL THEN r%d.%s", i, i, column)
+	}
+	b.WriteString(" END")
+	return b.String()
+}
+
+// recordTablesForSchema lists the (producer, standard) tables holding a
+// standard's records, in name order. Callers hold s.mu.
+func (s *FlatSQLStore) recordTablesForSchema(schemaName string) ([]string, error) {
+	standard, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, err
+	}
+	producerTables, err := s.listProducerStandardTables()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, t := range producerTables {
+		if t.Standard == standard {
+			out = append(out, t.TableName)
+		}
+	}
+	return out, nil
 }
 
 // DatasetShardFrameOverheadBytes is the per-record cost a shard pays on top of
@@ -6560,7 +6645,7 @@ func (s *FlatSQLStore) IndexedRecordWindowLimitForBytes(filter IndexedRecordQuer
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := s.recordReadSource(filter.SchemaName)
+	tables, err := s.recordTablesForSchema(filter.SchemaName)
 	if err != nil {
 		return 0, false, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -6569,7 +6654,7 @@ func (s *FlatSQLStore) IndexedRecordWindowLimitForBytes(filter IndexedRecordQuer
 		return 0, false, err
 	}
 
-	query, args := s.indexedRecordWindowSQL(filter, tableName, indexedRecordLengthProjection)
+	query, args := indexedRecordWindowSQL(filter, tables, indexedRecordLengthProjection)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return 0, false, fmt.Errorf("shard byte probe failed: %w", err)
@@ -6605,7 +6690,7 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := s.recordReadSource(filter.SchemaName)
+	tables, err := s.recordTablesForSchema(filter.SchemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -6623,7 +6708,7 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 	// use this join: they must match ANY tag row (e.g. a record re-tagged under
 	// a second batch id still matches a query for that batch), so they run as an
 	// EXISTS over the raw table.
-	query, args := s.indexedRecordWindowSQL(filter, tableName, indexedRecordProjection)
+	query, args := indexedRecordWindowSQL(filter, tables, indexedRecordProjection)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
