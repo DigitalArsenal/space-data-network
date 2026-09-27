@@ -5,6 +5,41 @@ import (
 	"testing"
 )
 
+func TestTBSResidencyUsesRegisteredSource(t *testing.T) {
+	for _, tags := range []SourceTags{{}, {ProviderID: "opencellid", SourceName: "cell-tower-bulk"}} {
+		t.Run(tags.SourceName, func(t *testing.T) {
+			t.Setenv(checkpointIntervalEnv, "0")
+			store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
+			defer store.Close()
+			data := newTBSRecord("310-410-7-500", "opencellid", 310, 51.5, -0.12)
+			var cid string
+			var err error
+			if tags.SourceName == "" {
+				cid, err = store.Store("TBS.fbs", data, "peer", nil)
+			} else {
+				cid, err = store.StoreWithSourceTags("TBS.fbs", data, "peer", nil, tags)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := store.engineResidencyRowsForCIDs("TBS.fbs", []string{cid}, nil)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("residency rows=%v, err=%v", rows, err)
+			}
+			row := rows[0]
+			if row.cid != cid || row.source == "" || !store.engineSources[row.source] {
+				t.Fatalf("TBS residency does not name its registered partition: %+v", row)
+			}
+			if err := store.Delete("TBS.fbs", cid); err != nil {
+				t.Fatal(err)
+			}
+			if count, err := store.EngineRecordCount("TBS.fbs"); err != nil || count != 0 {
+				t.Fatalf("engine count after delete=%d, err=%v", count, err)
+			}
+		})
+	}
+}
+
 // At the wasm32 memory ceiling the old string reader returned empty CID and
 // source values for real ledger rows. Deleting those values matched nothing,
 // yet every retry claimed another removal and drifted the residency count.
