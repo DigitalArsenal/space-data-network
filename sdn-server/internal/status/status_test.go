@@ -270,3 +270,62 @@ func TestBuildNodeStatusSetPeerFallbackGeoAndVCard(t *testing.T) {
 		t.Errorf("emitted addr = %q, want the peerstore addr", got)
 	}
 }
+
+// Owner 2026-09-19: the offline list needs a node that has been seen AND the
+// time it was last seen. This walks the whole server path — peer registry to
+// observed-peer projection to the $NST frame the dashboard actually reads —
+// because every stage of it used to drop one half or the other.
+func TestOfflineSeenPeerCarriesItsLastSeenIntoTheFrame(t *testing.T) {
+	decoded, err := peer.Decode(peerIDFixture)
+	if err != nil {
+		t.Fatalf("decode peer id: %v", err)
+	}
+	seenAt := time.Date(2026, 9, 19, 10, 15, 0, 0, time.UTC)
+	registryPeer := &peers.TrustedPeer{
+		ID:              decoded,
+		Name:            "Quiet Node",
+		TrustLevel:      peers.Standard,
+		LastSeen:        seenAt,
+		LastConnected:   seenAt,
+		ConnectionCount: 3,
+		Metadata:        map[string]string{"agent_version": "spacedatanetwork/1.0.5"},
+	}
+	snapshot := &epm.PeerGraphSnapshot{
+		LocalPeerID: selfPeerIDFixture,
+		Nodes: []epm.PeerNode{
+			{PeerID: selfPeerIDFixture, IsOnline: true},
+			{PeerID: peerIDFixture, IsOnline: false, LastSeen: seenAt.Format(time.RFC3339)},
+		},
+	}
+	observed := epm.BuildObservedSDNPeers(snapshot, []*peers.TrustedPeer{registryPeer}, nil, nil)
+	if len(observed) != 1 {
+		t.Fatalf("observed %d peers, want the one offline node that has been seen", len(observed))
+	}
+
+	buf := BuildNodeStatusSet(Input{
+		Snapshot:   snapshot,
+		Observed:   observed,
+		SelfPeerID: selfPeerIDFixture,
+		Now:        time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC),
+	})
+	set := nst.GetSizePrefixedRootAsNodeStatusSet(buf, 0)
+	if set.NodesLength() != 2 {
+		t.Fatalf("NodesLength = %d, want self plus the offline node", set.NodesLength())
+	}
+	var row nst.NodeStatus
+	if !set.Nodes(&row, 1) {
+		t.Fatal("missing the offline node")
+	}
+	if row.IsOnline() {
+		t.Error("IS_ONLINE = true on a node that is not connected")
+	}
+	if got := row.LastSeen(); got != seenAt.Unix() {
+		t.Errorf("LAST_SEEN = %d, want %d — the offline row's whole content", got, seenAt.Unix())
+	}
+	if got := string(row.Source()); got != peers.PeerSourceSeen {
+		t.Errorf("SOURCE = %q, want %q", got, peers.PeerSourceSeen)
+	}
+	if got := string(row.Dn()); got != "Quiet Node" {
+		t.Errorf("DN = %q, want Quiet Node", got)
+	}
+}

@@ -35,9 +35,10 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 	}
 
 	out := make([]*peers.TrustedPeer, 0)
-	candidatePeerIDs := uniqueStrings(append(
+	candidatePeerIDs := uniqueStrings(append(append(
 		append(peerIDs(advertisementFlagsByPeer), pinnedPeerIDsFromSnapshot(snapshot)...),
-		sdnPeerIDsFromSnapshot(snapshot, registryByID)...))
+		sdnPeerIDsFromSnapshot(snapshot, registryByID)...),
+		seenPeerIDsFromSnapshot(snapshot, registryByID)...))
 	for _, peerID := range candidatePeerIDs {
 		if peerID == "" || peerID == snapshot.LocalPeerID {
 			continue
@@ -52,9 +53,10 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 		// network it should just disappear" / "I have no idea what these peers
 		// are that are in the table").
 		//
-		// A row is admitted for EXACTLY TWO reasons, and the row says which:
+		// A row is admitted for EXACTLY THREE reasons, and the row says which:
 		//   PINNED    — the operator or the config file deliberately kept it.
 		//   CONNECTED — it is on a live connection right now.
+		//   SEEN      — this node has met it before and recorded when.
 		//
 		// What this deliberately kills: DHT rendezvous advertisement
 		// discoveries. Measured on the live feed 2026-07-30, 34 of 35 rows were
@@ -65,13 +67,25 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 		// anyone can make; it is not evidence this node has ever met the peer,
 		// and it must not seat anyone on an operator's peer board.
 		//
-		// The disappearance rule falls out of this: an unpinned peer is here
-		// only while connected, so when it drops off it is simply absent from
-		// the next frame. No tombstones, no "last seen — never" accumulating.
-		if !node.Pinned && !node.IsOnline {
+		// SEEN BEFORE is the THIRD reason, added on the owner's 2026-09-19
+		// ruling: "there should be an 'offline nodes' menu as well that shows
+		// nodes that have been seen but are not currently online, and 'last
+		// seen' time".
+		//
+		// This does not reopen what 2026-07-30 closed. That ruling's target
+		// was peers that had NEVER been seen — advertisement rows with
+		// LAST_SEEN 0 that this node had never dialled — and they stay out,
+		// because an advertisement leaves no record of contact. What is
+		// admitted now is the opposite case: a node this box has actually
+		// met, carrying the registry's own timestamp to prove it. "When a
+		// peer drops off the network it should just disappear" still holds
+		// for the main list, which shows online nodes only; the offline list
+		// is the separate place the owner asked for.
+		seenBefore := hasBeenSeen(node, registryByID[peerID])
+		if !node.Pinned && !node.IsOnline && !seenBefore {
 			continue
 		}
-		if !node.Pinned && !isConnectedSDNPeer(node, protocolsByPeer[peerID], registryByID[peerID]) {
+		if !node.Pinned && !seenBefore && !isConnectedSDNPeer(node, protocolsByPeer[peerID], registryByID[peerID]) {
 			continue
 		}
 
@@ -122,6 +136,22 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 		if registryPeer != nil {
 			entry.EPMData = registryPeer.EPMData
 			entry.VCardData = registryPeer.VCardData
+			// THE CONTACT RECORD IS THE POINT OF AN OFFLINE ROW. This
+			// projection built a fresh TrustedPeer and never copied the
+			// registry's own timestamps, so every row on /api/peers/sdn read
+			// added_at / last_seen / last_connected "0001-01-01T00:00:00Z" and
+			// connection_count 0 — including peers that were connected at that
+			// moment. Zeroed here, no consumer downstream could tell when a
+			// node was last seen, which is exactly what the offline list has
+			// to say.
+			entry.AddedAt = registryPeer.AddedAt
+			entry.LastSeen = registryPeer.LastSeen
+			entry.LastConnected = registryPeer.LastConnected
+			entry.ConnectionCount = registryPeer.ConnectionCount
+			entry.MessagesReceived = registryPeer.MessagesReceived
+			entry.MessagesSent = registryPeer.MessagesSent
+			entry.BytesReceived = registryPeer.BytesReceived
+			entry.BytesSent = registryPeer.BytesSent
 		}
 
 		protocols := uniqueStrings(protocolsByPeer[peerID])
@@ -213,7 +243,31 @@ func observedPeerSource(node PeerNode) string {
 			return peers.PinSourceOperator
 		}
 	}
+	// "connected" means the row is listed BECAUSE there is a live connection
+	// right now. An offline row is listed for the other reason — this node has
+	// met it before — and must say so rather than claim a connection it does
+	// not have.
+	if !node.IsOnline {
+		return peers.PeerSourceSeen
+	}
 	return "connected"
+}
+
+// hasBeenSeen reports whether this node has ACTUALLY met the peer, as opposed
+// to having merely heard it advertise itself into a public DHT. The evidence
+// is the peer registry's own record of contact — a last-seen or last-connected
+// stamp, or a completed connection count — never a claim the peer made about
+// itself.
+func hasBeenSeen(node PeerNode, registryPeer *peers.TrustedPeer) bool {
+	if strings.TrimSpace(node.LastSeen) != "" {
+		return true
+	}
+	if registryPeer == nil {
+		return false
+	}
+	return !registryPeer.LastSeen.IsZero() ||
+		!registryPeer.LastConnected.IsZero() ||
+		registryPeer.ConnectionCount > 0
 }
 
 func pinnedPeerIDsFromSnapshot(snapshot *PeerGraphSnapshot) []string {
@@ -227,6 +281,28 @@ func pinnedPeerIDsFromSnapshot(snapshot *PeerGraphSnapshot) []string {
 			continue
 		}
 		out = append(out, peerID)
+	}
+	return out
+}
+
+// seenPeerIDsFromSnapshot offers the peers this node has MET but is not talking
+// to right now, so the admission rule above can decide on them. Without this
+// they never reach the loop: every other candidate source requires either a pin
+// or a live connection, which is exactly why an offline node had nowhere to be
+// listed before the 2026-09-19 ruling.
+func seenPeerIDsFromSnapshot(snapshot *PeerGraphSnapshot, registryByID map[string]*peers.TrustedPeer) []string {
+	if snapshot == nil {
+		return nil
+	}
+	out := make([]string, 0)
+	for _, node := range snapshot.Nodes {
+		peerID := strings.TrimSpace(node.PeerID)
+		if peerID == "" || peerID == snapshot.LocalPeerID || node.IsOnline {
+			continue
+		}
+		if hasBeenSeen(node, registryByID[peerID]) {
+			out = append(out, peerID)
+		}
 	}
 	return out
 }

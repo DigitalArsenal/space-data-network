@@ -243,7 +243,7 @@ List and manage accounts (network peers and login operators are one thing)
 <p>Four ways, and it matters which one you use:</p>
 <ol>
 <li><strong>Configuration</strong>: a <code>users:</code> block in <code>config.yaml</code> (xpub, trust level, optional name and signing public key). Config entries win over database rows on every read, cannot have their trust changed through the API, and cannot be removed through the API.</li>
-<li><strong>The dashboard</strong>: the ACCOUNTS view&#39;s &quot;Enrol a key&quot; form (xpub, name, trust, signing public key in hex), which creates the row through the admin API.</li>
+<li><strong>The dashboard</strong>: the ACCOUNTS view&#39;s &quot;Enroll a key&quot; form (xpub, name, trust, signing public key in hex), which creates the row through the admin API.</li>
 <li><strong>First-admin bootstrap</strong>: if no admin exists anywhere, the next wallet that signs in is minted as the initial admin. The node therefore cannot be permanently locked out at the operator level by deleting the last admin row.</li>
 <li><strong>The root ceremony</strong>: the node&#39;s own key is always admitted as an admin, with or without a stored row.</li>
 </ol>

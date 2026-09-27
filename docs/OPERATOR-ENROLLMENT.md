@@ -52,7 +52,7 @@ Sign-in works like this: the wallet sends a challenge request containing its Ed2
 
 ### Step 1 — the prospective operator generates a key on their own machine
 
-**Shipped path: the in-browser key ceremony** — the sanctioned way to generate an SDN key. Dashboard → **Accounts → Operator keys** → **"GENERATE A KEY"** dialog (the other half of the paste-an-xpub "APPROVE A KEY" form; both land in the same operator table). Some newer dashboard builds show a paste-only "Enrol a key" form without the generation button; the generation dialog's public output — xpub + signing public key + peer ID + fingerprint — is also reachable from the HD-wallet wallet UIs' copy buttons. The ceremony:
+**Shipped path: the in-browser key ceremony** — the sanctioned way to generate an SDN key. Dashboard → **Accounts → Operator keys** → **"GENERATE A KEY"** dialog (the other half of the paste-an-xpub "APPROVE A KEY" form; both land in the same operator table). Some newer dashboard builds show a paste-only "Enroll a key" form without the generation button; the generation dialog's public output — xpub + signing public key + peer ID + fingerprint — is also reachable from the HD-wallet wallet UIs' copy buttons. The ceremony:
 
 - generates a fresh 24-word recovery phrase entirely in the browser (HD-wallet module, seeded from the browser's own random source);
 - derives and shows **only public material**: the account xpub, the peer ID, an xpub fingerprint, and the Ed25519 **public** key;
@@ -176,7 +176,7 @@ Every admin command authenticates by signing in as the node's own root key again
 
 1. Sign in as an administrator.
 2. Open **Accounts**, then the **Operators** tab.
-3. In the **"Enrol a key"** form enter:
+3. In the **"Enroll a key"** form enter:
    - **Account xpub** — pasted from the prospective operator's key ceremony or from `derive-xpub`;
    - **Name** — optional, their display name;
    - **Trust** — one of: `unknown`, `marginal`, `standard`, `full`, `admin` (the dropdown offers exactly these; see Section 6);

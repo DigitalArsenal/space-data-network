@@ -57,9 +57,14 @@ type Handler struct {
 	externalLoginUI      bool // when true, an embedded UI owns GET /login; legacy page moves to /login/legacy
 	loginUIPolicySet     bool // distinguishes the backwards-compatible default from an explicit no-login production policy
 	root                 rootIdentityState
-	photoStore           ProfilePhotoStore // object storage port for operator profile photos; nil = endpoint fails closed
-	accountEPMBuilder    AccountEPMBuilder // builds+signs an account's $EPM; nil = /api/auth/epm PUT fails closed
-	accountEPMStore      AccountEPMStore   // record + pin lane for account $EPMs; nil = /api/auth/epm PUT fails closed
+	// admin.local_console (localConsoleSession): the loopback console's
+	// standing root session. Off unless EnableLocalConsole was called.
+	localConsole      bool
+	localConsoleMu    sync.Mutex
+	localConsoleToken string
+	photoStore        ProfilePhotoStore // object storage port for operator profile photos; nil = endpoint fails closed
+	accountEPMBuilder AccountEPMBuilder // builds+signs an account's $EPM; nil = /api/auth/epm PUT fails closed
+	accountEPMStore   AccountEPMStore   // record + pin lane for account $EPMs; nil = /api/auth/epm PUT fails closed
 
 	// admin.dev_auto_admin (loopback-only dev convenience; see
 	// devAutoAdminSession). devSessionMu guards devSessionToken; the flag
@@ -1150,6 +1155,13 @@ func (h *Handler) sessionFromRequest(r *http.Request) (*Session, error) {
 		if dev := h.devAutoAdminSession(r); dev != nil {
 			return dev, nil
 		}
+		// 4. The node's own console. There is no sign-in: a node always holds
+		//    its key, and this console is served by that node over loopback.
+		//    See localConsoleSession (root_identity.go) for why that is safe
+		//    and why it refuses the moment a proxy hop is in evidence.
+		if local := h.localConsoleSession(r); local != nil {
+			return local, nil
+		}
 	}
 	return session, err
 }
@@ -1177,6 +1189,13 @@ func (h *Handler) sessionFromRequestStrict(r *http.Request) (*Session, error) {
 // listener is loopback-bound.
 func (h *Handler) EnableDevAutoAdmin() {
 	h.devAutoAdmin = true
+}
+
+// EnableLocalConsole arms admin.local_console. Call once at startup, before
+// the admin listener opens; the caller (main.go) has already verified the
+// listener is loopback-bound.
+func (h *Handler) EnableLocalConsole() {
+	h.localConsole = true
 }
 
 // devAutoAdminSession implements admin.dev_auto_admin: a LOOPBACK request that
