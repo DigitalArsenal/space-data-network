@@ -766,8 +766,19 @@ func (s *FlatSQLStore) ingestEngineRecordSourcesLocked(schemaName string, record
 // CAT.fbs window held the engine 5m0s). A var so a test can shrink it.
 var engineHotWindowPage = 2000
 
-// engineWindowPagesSQL is the paged read of a routed schema's records with
-// their bytes and source name, ascending by index rowid from a cursor.
+// engineHotWindowPageBytes bounds the record payload ONE hot-window page call
+// reads. The row bound alone is not a bound on work: 2000 $IQC captures are
+// gigabytes, and one page of them is one uninterruptible engine call. A page
+// reads its rows' sizes first (from each row's header — no payload) and then
+// the bytes of as many rows as fit, never fewer than one. A var so a test can
+// shrink it.
+var engineHotWindowPageBytes int64 = 32 << 20
+
+// engineWindowPageRefsSQL is the paged read of a routed schema's records —
+// index rowid, CID, stored size and source name — ascending by index rowid
+// from a cursor. It reads no payload: length() of a column comes from the row
+// header. The bytes follow by CID (engineRecordDataByCIDSQL), as many as fit
+// the page's byte budget.
 //
 // A LEFT JOIN on the source tags (not a correlated LIMIT-1 subquery): the
 // ORDER BY inside such a subquery made the planner take the created_at index
@@ -778,14 +789,21 @@ var engineHotWindowPage = 2000
 // The page is chosen from the index alone and only its rows touch a record
 // table, by CID seek: joining the standard's union read source (GROUP BY cid
 // over every producer table) materialised every record of the standard, bytes
-// included, once PER PAGE — the whole rebuild quadratic for any standard two
-// producers publish, and engine recovery runs this rebuild.
-func engineWindowPagesSQL(tables []string, placeholders, extraWhere string) string {
-	// extraWhere may reference ?N placeholders only by position AFTER the
-	// aliases, cursor and limit; the catch-up clause below binds the ledger
-	// schema as the trailing argument.
+// included, once PER PAGE — measured on host-02 (2026-09-27 18:08Z) as a
+// $IQC page that ran past the 5-minute budget and poisoned the engine.
+func engineWindowPageRefsSQL(tables []string, placeholders, extraWhere string) string {
+	size := "NULL"
+	if len(tables) > 0 {
+		var b strings.Builder
+		b.WriteString("CASE")
+		for i := range tables {
+			fmt.Fprintf(&b, " WHEN r%d.cid IS NOT NULL THEN length(r%d.data)", i, i)
+		}
+		b.WriteString(" END")
+		size = b.String()
+	}
 	return fmt.Sprintf(`
-		SELECT page.rid, page.cid, %s AS data, COALESCE(tags.source_name, '') AS source_name
+		SELECT page.rid, page.cid, %s AS size, COALESCE(tags.source_name, '') AS source_name
 		FROM (
 			SELECT idx.rowid AS rid, idx.cid AS cid, idx.schema_name AS schema_name
 			FROM sdn_record_index idx
@@ -796,7 +814,22 @@ func engineWindowPagesSQL(tables []string, placeholders, extraWhere string) stri
 		LEFT JOIN sdn_record_source_tags tags
 		  ON tags.schema_name = page.schema_name AND tags.cid = page.cid
 		ORDER BY page.rid ASC, tags.created_at ASC
-	`, recordColumnSQL(tables, "data"), placeholders, extraWhere, recordHeldSQL(tables, "idx.cid"), recordColumnJoinsSQL(tables, "page.cid"))
+	`, size, placeholders, extraWhere, recordHeldSQL(tables, "idx.cid"), recordColumnJoinsSQL(tables, "page.cid"))
+}
+
+// engineRecordDataByCIDSQL reads the stored bytes of n records by CID, one
+// seek per record per producer table.
+func engineRecordDataByCIDSQL(tables []string, n int) string {
+	values := strings.TrimSuffix(strings.Repeat("(?), ", n), ", ")
+	return fmt.Sprintf(`WITH want(cid) AS (VALUES %s) SELECT want.cid, %s FROM want%s`,
+		values, recordColumnSQL(tables, "data"), recordColumnJoinsSQL(tables, "want.cid"))
+}
+
+type engineWindowPageRef struct {
+	rid    int64
+	cid    string
+	size   int64
+	source string
 }
 
 // engineLocker runs fn under the store write lock. hydrateEngineHotWindow
@@ -808,18 +841,22 @@ type engineLocker func(fn func() error) error
 // ingestEngineWindowPages walks the index from `cursor` (exclusive) upward for
 // one schema, reading and ingesting ONE PAGE PER LOCK HOLD, and returns the
 // count landed. extraWhere lets the caller exclude already-resident records.
+//
+// Every engine call is bounded: a page is at most engineHotWindowPage rows,
+// and the bytes it reads are at most engineHotWindowPageBytes (or one record,
+// if a single record is larger). A page whose rows do not all fit is ingested
+// as far as they do and the next page resumes after the last row taken.
 func (s *FlatSQLStore) ingestEngineWindowPages(schemaName string, cursor int64, extraWhere string, extraArgs []any, locked engineLocker) (int, error) {
 	aliases := engineSchemaNameAliases(schemaName)
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")
 	total := 0
 	for {
-		pageSize := 0
+		pageRows, taken := 0, 0
 		if err := locked(func() error {
 			tables, err := s.recordTablesForSchema(schemaName)
 			if err != nil {
 				return err
 			}
-			query := engineWindowPagesSQL(tables, placeholders, extraWhere)
 			args := make([]any, 0, len(aliases)+2+len(extraArgs))
 			for _, alias := range aliases {
 				args = append(args, alias)
@@ -828,48 +865,87 @@ func (s *FlatSQLStore) ingestEngineWindowPages(schemaName string, cursor int64, 
 			args = append(args, extraArgs...)
 			args = append(args, engineHotWindowPage)
 			started := time.Now()
-			rows, err := s.db.Query(query, args...)
+			rows, err := s.db.Query(engineWindowPageRefsSQL(tables, placeholders, extraWhere), args...)
 			if err != nil {
 				return err
 			}
-			page := make([]engineRecordSource, 0, engineHotWindowPage)
-			var lastRID int64
+			refs := make([]engineWindowPageRef, 0, engineHotWindowPage)
 			for rows.Next() {
-				var rid int64
-				var rec engineRecordSource
-				if err := rows.Scan(&rid, &rec.cid, &rec.data, &rec.source); err != nil {
+				var ref engineWindowPageRef
+				var size sql.NullInt64
+				if err := rows.Scan(&ref.rid, &ref.cid, &size, &ref.source); err != nil {
 					rows.Close()
 					return err
 				}
+				ref.size = size.Int64
 				// One row per source tag: collapse on rowid, newest tag wins.
-				if n := len(page); n > 0 && rid == lastRID {
-					page[n-1].source = rec.source
+				if n := len(refs); n > 0 && ref.rid == refs[n-1].rid {
+					refs[n-1].source = ref.source
 					continue
 				}
-				lastRID = rid
-				page = append(page, rec)
+				refs = append(refs, ref)
 			}
 			iterErr := rows.Err()
 			rows.Close()
 			if iterErr != nil {
 				return iterErr
 			}
-			if held := time.Since(started); held*2 > s.engineExecBudget() {
-				log.Warnf("FlatSQL engine rebuild: a %s hot-window page (%d rows) held the engine %s — over half the %s per-call budget. Lower the page size before this store grows again.",
-					schemaName, len(page), held.Round(time.Millisecond), s.engineExecBudget())
-			}
-			pageSize = len(page)
-			if pageSize == 0 {
+			pageRows = len(refs)
+			if pageRows == 0 {
 				return nil
+			}
+			var bytes int64
+			for taken < len(refs) {
+				if taken > 0 && bytes+refs[taken].size > engineHotWindowPageBytes {
+					break
+				}
+				bytes += refs[taken].size
+				taken++
+			}
+			want := refs[:taken]
+			dataArgs := make([]any, len(want))
+			for i, ref := range want {
+				dataArgs[i] = ref.cid
+			}
+			dataRows, err := s.db.Query(engineRecordDataByCIDSQL(tables, len(want)), dataArgs...)
+			if err != nil {
+				return err
+			}
+			data := make(map[string][]byte, len(want))
+			for dataRows.Next() {
+				var cid string
+				var blob []byte
+				if err := dataRows.Scan(&cid, &blob); err != nil {
+					dataRows.Close()
+					return err
+				}
+				if blob != nil {
+					data[cid] = blob
+				}
+			}
+			iterErr = dataRows.Err()
+			dataRows.Close()
+			if iterErr != nil {
+				return iterErr
+			}
+			if held := time.Since(started); held*2 > s.engineExecBudget() {
+				log.Warnf("FlatSQL engine rebuild: a %s hot-window page (%d rows, %d bytes) held the engine %s — over half the %s per-call budget. Lower the page size before this store grows again.",
+					schemaName, taken, bytes, held.Round(time.Millisecond), s.engineExecBudget())
+			}
+			page := make([]engineRecordSource, 0, len(want))
+			for _, ref := range want {
+				if blob, ok := data[ref.cid]; ok {
+					page = append(page, engineRecordSource{cid: ref.cid, data: blob, source: ref.source})
+				}
 			}
 			n, err := s.ingestEngineRecordSourcesLocked(schemaName, page)
 			total += n
-			cursor = lastRID
+			cursor = want[len(want)-1].rid
 			return err
 		}); err != nil {
 			return total, err
 		}
-		if pageSize < engineHotWindowPage {
+		if pageRows < engineHotWindowPage && taken == pageRows {
 			return total, nil
 		}
 	}
@@ -1041,10 +1117,22 @@ func (s *FlatSQLStore) settleEngineResidencyAtOpen() {
 		}
 		return
 	}
-	if _, err := s.db.Exec(`DELETE FROM sdn_engine_rows`); err != nil {
-		log.Warnf("FlatSQL engine records: could not reset the residency ledger for a cold engine (%v); the hot-window hydration reconciles it", err)
+	// In bounded chunks: one DELETE of the whole ledger held host-02's engine
+	// 1.5 minutes (2026-09-27, ~450k rows) on the way to the budget.
+	for {
+		res, err := s.db.Exec(`DELETE FROM sdn_engine_rows WHERE rowid IN (SELECT rowid FROM sdn_engine_rows LIMIT ?)`, engineLedgerResetChunk)
+		if err != nil {
+			log.Warnf("FlatSQL engine records: could not reset the residency ledger for a cold engine (%v); the hot-window hydration reconciles it", err)
+			return
+		}
+		if n, _ := res.RowsAffected(); n < engineLedgerResetChunk {
+			return
+		}
 	}
 }
+
+// engineLedgerResetChunk bounds one statement of the cold-open ledger reset.
+const engineLedgerResetChunk = 20000
 
 // restoreEngineResidencyFromLedger sets the Go-side resident counts from the
 // residency ledger at open, so a write that lands before the background
