@@ -238,8 +238,7 @@ func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schem
 // routedProducerID normalisation Store applies. It is Store without the engine
 // mirror; a repeat CID in the producer's own table is a no-op.
 func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("StoreRoutedByProducer")()
 
 	tableName, err := s.ensureProducerStandardTable(peerID, schemaName)
 	if err != nil {

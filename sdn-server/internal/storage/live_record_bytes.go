@@ -58,10 +58,11 @@ const (
 	// exact in a float64, and no rowid gets there.
 	partitionCountComplete int64 = 1<<53 - 1
 	// Counter triggers are named <family><version>_<ai|ad|au>_<partition>.
-	// Bump the version whenever what a trigger or a chunk counts changes: the
-	// install then drops the older triggers and recounts every partition.
+	// Bump the version whenever a trigger changes. The install drops older
+	// triggers, and recounts every partition unless the older version counts
+	// exactly what this one does (partitionTriggerCountCompatible).
 	partitionTriggerFamily  = "sdn_prb"
-	partitionTriggerVersion = "1"
+	partitionTriggerVersion = "2"
 
 	// Rebuild chunk bounds, in rows per statement. The chunk adapts toward
 	// partitionChunkTarget per statement so it stays far below the engine's
@@ -74,11 +75,21 @@ const (
 	partitionRebuildLogPeriod = 30 * time.Second
 )
 
+// partitionTriggerCountCompatible names older trigger versions that count
+// exactly what the current one does: replacing them keeps every counter.
+// Version 1 lacked only the `changed` marker.
+var partitionTriggerCountCompatible = map[string]bool{"1": true}
+
+// `changed` is total_changes() + 1 as of the row's last update: the snapshot
+// refresh after a write reads only the rows that moved. (+1 because inside a
+// statement total_changes() still reads what it was before the statement:
+// SQLite adds a statement's changes when it completes.)
 const partitionCounterTableSQL = `CREATE TABLE IF NOT EXISTS sdn_partition_record_bytes (
 	table_name    TEXT PRIMARY KEY,
 	scanned_rowid INTEGER NOT NULL DEFAULT 0,
 	record_count  INTEGER NOT NULL DEFAULT 0,
-	record_bytes  INTEGER NOT NULL DEFAULT 0
+	record_bytes  INTEGER NOT NULL DEFAULT 0,
+	changed       INTEGER NOT NULL DEFAULT 0
 )`
 
 // partitionCountRebuild is the background counting worker's state.
@@ -138,7 +149,7 @@ func partitionTriggerSQL(table string) [3]string {
 	names := partitionTriggerNames(table)
 	apply := func(ref, sign string) string {
 		return fmt.Sprintf(`UPDATE sdn_partition_record_bytes SET `+
-			`record_count = record_count %[2]s 1, record_bytes = record_bytes %[2]s %[1]s.record_length `+
+			`record_count = record_count %[2]s 1, record_bytes = record_bytes %[2]s %[1]s.record_length, changed = total_changes() + 1 `+
 			`WHERE table_name = '%[3]s' AND %[1]s.rowid <= scanned_rowid;`, ref, sign, table)
 	}
 	return [3]string{
@@ -153,10 +164,10 @@ func partitionTriggerSQL(table string) [3]string {
 // partitionChunkSQL counts a partition's rows in (?1, ?2] and moves its
 // cursor to ?3 in one statement, guarded on the cursor still being ?1.
 func partitionChunkSQL(table string) string {
-	return fmt.Sprintf(`UPDATE sdn_partition_record_bytes SET (record_count, record_bytes, scanned_rowid) = (
+	return fmt.Sprintf(`UPDATE sdn_partition_record_bytes SET (record_count, record_bytes, scanned_rowid, changed) = (
 		SELECT sdn_partition_record_bytes.record_count + COUNT(*),
 		       sdn_partition_record_bytes.record_bytes + COALESCE(SUM(chunk.record_length), 0),
-		       ?3
+		       ?3, total_changes() + 1
 		FROM %s AS chunk WHERE chunk.rowid > ?1 AND chunk.rowid <= ?2
 	) WHERE table_name = '%s' AND scanned_rowid = ?1`, table, table)
 }
@@ -227,6 +238,9 @@ func (s *FlatSQLStore) installPartitionCounters() error {
 	if _, err := s.db.Exec(partitionCounterTableSQL); err != nil {
 		return fmt.Errorf("create partition counter table: %w", err)
 	}
+	if err := s.ensureColumn("sdn_partition_record_bytes", "changed", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin partition counter install: %w", err)
@@ -242,13 +256,17 @@ func (s *FlatSQLStore) installPartitionCounters() error {
 	if err != nil {
 		return fmt.Errorf("list counter triggers: %w", err)
 	}
-	// A trigger of another version counted by other rules: drop it and count
-	// every partition again. (Dropping a partition drops its own triggers.)
+	// A trigger of another version is dropped (dropping a partition drops its
+	// own triggers). If it counted by other rules, every partition is counted
+	// again.
 	current := partitionTriggerFamily + partitionTriggerVersion + "_"
 	stale := false
 	for name := range existing {
 		if !strings.HasPrefix(name, current) {
-			stale = true
+			version, _, _ := strings.Cut(strings.TrimPrefix(name, partitionTriggerFamily), "_")
+			if !partitionTriggerCountCompatible[version] {
+				stale = true
+			}
 			if err := execSingle(tx, `DROP TRIGGER IF EXISTS `+name); err != nil {
 				return fmt.Errorf("drop counter trigger %s: %w", name, err)
 			}
@@ -313,6 +331,7 @@ func (s *FlatSQLStore) installPartitionCounters() error {
 		return fmt.Errorf("commit partition counter install: %w", err)
 	}
 	committed = true
+	s.refreshPartitionSnapshotFullLocked()
 	if pending > 0 {
 		log.Infof("Live record bytes: %d partition(s) written before the counter existed; counting them in the background (LiveRecordBytes reports %q until done)", pending, ErrLiveRecordBytesReconciling)
 		s.partitionRebuild.request()
@@ -387,10 +406,14 @@ func (s *FlatSQLStore) partitionCountsLocked() ([]partitionCount, error) {
 // schema name ("OMM" -> "OMM.fbs"): the standards the totals cover, exactly
 // as the old per-schema scans did.
 func (s *FlatSQLStore) recognizedStandards() map[string]string {
+	if cached := s.recognizedCache.Load(); cached != nil {
+		return *cached
+	}
 	out := map[string]string{}
 	if s.validator == nil {
 		return out
 	}
+	defer func() { s.recognizedCache.Store(&out) }()
 	for _, schemaName := range s.validator.Schemas() {
 		standard, err := sds.SchemaNameToTable(schemaName)
 		if err != nil {
@@ -401,14 +424,139 @@ func (s *FlatSQLStore) recognizedStandards() map[string]string {
 	return out
 }
 
-// liveRecordTotalsLocked sums the partitions of every recognized standard. It
-// refuses with ErrLiveRecordBytesReconciling while any of them is uncounted.
-// Callers hold s.mu.
+// partitionSnapshot is the partition counters as of the last write-lock
+// release. Counter reads take it without s.mu or the engine lock: a counter
+// only moves inside a write, and every write-lock release refreshes it, so
+// between writes it is exactly the counters on disk.
+type partitionSnapshot struct {
+	counts []partitionCount
+	closed bool
+	// changes and schema are total_changes() and schema_version when it was
+	// taken: unchanged marks mean nothing moved; a new schema (a partition
+	// created or dropped) means a full re-read; otherwise only rows whose
+	// `changed` passed the mark are read.
+	changes int64
+	schema  int64
+}
+
+// refreshPartitionSnapshotLocked brings the snapshot current. Callers hold
+// s.mu (read side is enough). It costs one tiny statement when nothing moved
+// and reads only the counter rows that did. An engine that cannot answer — a
+// poisoned one, say — keeps the last snapshot: nothing can have moved a
+// counter since, because no write can land on it either.
+func (s *FlatSQLStore) refreshPartitionSnapshotLocked() {
+	s.refreshPartitionSnapshot(false)
+}
+
+// refreshPartitionSnapshotFullLocked re-reads every counter: after an install,
+// on a connection whose total_changes() starts again from zero.
+func (s *FlatSQLStore) refreshPartitionSnapshotFullLocked() {
+	s.refreshPartitionSnapshot(true)
+}
+
+func (s *FlatSQLStore) refreshPartitionSnapshot(full bool) {
+	if s.db == nil {
+		return
+	}
+	var changes, schema int64
+	if err := s.db.QueryRow(`SELECT total_changes(), (SELECT schema_version FROM pragma_schema_version)`).Scan(&changes, &schema); err != nil {
+		return
+	}
+	prev := s.partitionSnap.Load()
+	if !full && prev != nil && !prev.closed && prev.counts != nil && prev.schema == schema {
+		if prev.changes == changes {
+			return
+		}
+		if changes > prev.changes {
+			if next, ok := s.partitionSnapshotDeltaLocked(prev, changes); ok {
+				s.partitionSnap.Store(next)
+				return
+			}
+		}
+	}
+	counts, err := s.partitionCountsLocked()
+	if err != nil {
+		return
+	}
+	if counts == nil {
+		counts = []partitionCount{}
+	}
+	s.partitionSnap.Store(&partitionSnapshot{counts: counts, changes: changes, schema: schema})
+}
+
+// partitionSnapshotDeltaLocked applies the counter rows changed since prev.
+// ok is false when a changed row names a partition prev does not hold.
+func (s *FlatSQLStore) partitionSnapshotDeltaLocked(prev *partitionSnapshot, changes int64) (*partitionSnapshot, bool) {
+	rows, err := s.db.Query(`SELECT table_name, scanned_rowid, record_count, record_bytes FROM sdn_partition_record_bytes WHERE changed > ?`, prev.changes)
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+	next := &partitionSnapshot{counts: append([]partitionCount(nil), prev.counts...), changes: changes, schema: prev.schema}
+	index := make(map[string]int, len(next.counts))
+	for i, c := range next.counts {
+		index[c.Table] = i
+	}
+	for rows.Next() {
+		var table string
+		var scanned, records, bytes int64
+		if err := rows.Scan(&table, &scanned, &records, &bytes); err != nil {
+			return nil, false
+		}
+		i, ok := index[table]
+		if !ok {
+			return nil, false
+		}
+		next.counts[i].Counted = scanned == partitionCountComplete
+		next.counts[i].Records = records
+		next.counts[i].Bytes = bytes
+	}
+	if rows.Err() != nil {
+		return nil, false
+	}
+	return next, true
+}
+
+// closePartitionSnapshot makes every later counter read answer ErrStoreClosed.
+func (s *FlatSQLStore) closePartitionSnapshot() {
+	s.partitionSnap.Store(&partitionSnapshot{closed: true})
+}
+
+// partitionCountsSnapshot returns the snapshot's counters, lock-free.
+func (s *FlatSQLStore) partitionCountsSnapshot() ([]partitionCount, error) {
+	snap := s.partitionSnap.Load()
+	switch {
+	case snap == nil:
+		return nil, fmt.Errorf("%w (no counter read yet)", ErrLiveRecordBytesReconciling)
+	case snap.closed:
+		return nil, ErrStoreClosed
+	}
+	return snap.counts, nil
+}
+
+// liveRecordTotals sums the snapshot's partitions of every recognized
+// standard, lock-free. It refuses with ErrLiveRecordBytesReconciling while
+// any of them is uncounted.
+func (s *FlatSQLStore) liveRecordTotals() (records, bytes int64, err error) {
+	counts, err := s.partitionCountsSnapshot()
+	if err != nil {
+		return 0, 0, err
+	}
+	return s.sumRecognizedPartitions(counts)
+}
+
+// liveRecordTotalsLocked is liveRecordTotals from a fresh read, for a caller
+// that holds the write lock and has just moved the counters itself
+// (GarbageCollectToQuota between evictions).
 func (s *FlatSQLStore) liveRecordTotalsLocked() (records, bytes int64, err error) {
 	counts, err := s.partitionCountsLocked()
 	if err != nil {
 		return 0, 0, err
 	}
+	return s.sumRecognizedPartitions(counts)
+}
+
+func (s *FlatSQLStore) sumRecognizedPartitions(counts []partitionCount) (records, bytes int64, err error) {
 	recognized := s.recognizedStandards()
 	pending, total := 0, 0
 	for _, c := range counts {
@@ -453,14 +601,9 @@ func schemaPartitionTotals(counts []partitionCount, schemaName string) (records,
 }
 
 // LiveRecordBytesReconciled reports whether every partition is counted, i.e.
-// whether LiveRecordBytes can answer.
+// whether LiveRecordBytes can answer. Lock-free.
 func (s *FlatSQLStore) LiveRecordBytesReconciled() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.db == nil {
-		return false
-	}
-	_, _, err := s.liveRecordTotalsLocked()
+	_, _, err := s.liveRecordTotals()
 	return err == nil
 }
 
@@ -514,6 +657,7 @@ func (s *FlatSQLStore) partitionRebuildStep(maxRows int) (done bool, counted int
 	if err := s.db.QueryRow(`SELECT record_count FROM sdn_partition_record_bytes WHERE table_name = ?`, table).Scan(&after); err != nil {
 		return false, 0, fmt.Errorf("read %s counter: %w", table, err)
 	}
+	s.refreshPartitionSnapshotLocked()
 	return false, after - before, nil
 }
 

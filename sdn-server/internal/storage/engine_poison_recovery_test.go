@@ -89,16 +89,20 @@ func TestPoisonedEngineRefusesStoreWritesUntilReplaced(t *testing.T) {
 
 	store := openBootStore(t, filepath.Join(t.TempDir(), "store"), bootTestValidator(t))
 	defer store.Close()
+	if _, err := store.Store("RFM.fbs", poisonTestPayload(3, 64), "peer", nil); err != nil {
+		t.Fatal(err)
+	}
 	engine, _ := store.EngineRuntime()
 	engine.WasmModule().MarkPoisoned(errors.New("dedicated execution thread abandoned mid-call"))
 
 	if _, err := store.Store("RFM.fbs", poisonTestPayload(2, 64), "peer", nil); !wasmrt.IsPoisoned(err) {
 		t.Fatalf("write on a poisoned engine = %v, want a poisoned-module refusal", err)
 	}
-	// A poisoned engine is not a zero: the old scan logged and skipped every
-	// schema and answered 0.
-	if _, err := store.LiveRecordBytes(); !wasmrt.IsPoisoned(err) {
-		t.Fatalf("LiveRecordBytes on a poisoned engine = %v, want a poisoned-module refusal", err)
+	// A poisoned engine is not a zero (the old scan logged, skipped every
+	// schema and answered 0): the counters answer from their last committed
+	// snapshot, which nothing can have moved since.
+	if live, err := store.LiveRecordBytes(); err != nil || live != 64 {
+		t.Fatalf("LiveRecordBytes on a poisoned engine = %d, %v; want the last committed 64", live, err)
 	}
 }
 
