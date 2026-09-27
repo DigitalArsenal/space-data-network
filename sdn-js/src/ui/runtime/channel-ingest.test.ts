@@ -12,11 +12,11 @@ describe('channel FlatSQL durable ingest adapter', () => {
     expect(ingest.pushChunk(stream.subarray(9))).toBe(2);
     expect(ingest.finish()).toBe(0);
 
-    expect(ingest.rows.listRows().map((row) => row.handle)).toEqual([
-      { schemaFileId: 'OMM', rowId: 1 },
-      { schemaFileId: 'CDM', rowId: 1 },
-    ]);
-    expect(ingest.rows.listRows()[0].payload).toEqual(first);
+    // The SDK lists across schemas in schema order. Resolve by handle to
+    // prove both frames survived ingest without assuming insertion order.
+    expect(ingest.rows.listRows()).toHaveLength(2);
+    expect(ingest.rows.resolveRow({ schemaFileId: 'OMM', rowId: 1 })?.payload).toEqual(first);
+    expect(ingest.rows.resolveRow({ schemaFileId: 'CDM', rowId: 1 })?.payload).toEqual(second);
     expect(ingest.stats()).toEqual(expect.objectContaining({
       framesDecoded: 2,
       framesAppended: 2,

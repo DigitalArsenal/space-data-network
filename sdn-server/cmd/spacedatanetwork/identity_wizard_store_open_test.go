@@ -28,7 +28,7 @@ func TestIdentityWizardStoreOpenDoesNotHydrateTheEngine(t *testing.T) {
 	}
 
 	const peerID = "16Uiu2HAmTestPeerIDForWizardStoreOpenRegression000000"
-	epmBytes := []byte("EPM-FIXTURE-BYTES-FOR-WIZARD-STORE-OPEN")
+	epmBytes := sds.NewEPMBuilder().WithLegalName("Wizard store fixture").Build()
 
 	seed, err := storage.NewFlatSQLStore(dir, validator)
 	if err != nil {
