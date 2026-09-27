@@ -115,6 +115,7 @@ static binary.
 | Check | Mac Studio (darwin/arm64, 28 CPU) | Linux arm64 VM (Docker Desktop, `--cpus 4`) |
 |---|---|---|
 | #1 4 threads vs 1, same work | 0.252 | 0.252 |
+| #1 writer + 2 readers, concurrent control calls, 30 min | — | 18.6 M control calls, 29.2 M rings and acks, 0 traps |
 | #3 guest pread / pwrite p99 over raw syscall (8 x 1M, 4 KiB) | +1.0 / +9.2 us (darwin raw pthreads write faster than any other thread, Go's included) | +0.51 / +0.51 us |
 | #3 10,000 files through the LRU at RLIMIT 256 | 0 errors | 0 errors |
 | #4 / A23 bytes after revoke, RLIMIT 64 + 1,000-file replacement | 0 / 0 foreign | 0 / 0 foreign |
@@ -124,10 +125,12 @@ static binary.
 | #7 / A24 ring->ack, 20k transitions | p50 11 us, p99 65 us, 0 timeout-with-work | p50 38 us, p99 129 us, 0 |
 | A21 one stop, 16 Interruptible AOT spinners | 0.5 ms | 0.5 ms |
 | A21 hung thread fenced | 10.8 s | 11.8 s |
-| #5 LazyFS power loss, durable head | n/a | 0 violations; negative control 100% caught |
+| #5 LazyFS power loss, durable head | n/a | 1,000 trials (of 4,104 run), 0 violations; negative control caught 1,000 of 1,000 |
 
 Latency and scaling thresholds are asserted under `SDN_PS_ACCEPTANCE=1` (the
-named machine); CI reports them.
+named machine); CI reports them. One observation for T6: a BULK thread (nice
++10) holding the store registry lock can be descheduled under load; the
+registry lock's max hold reached 3.2 ms on the Mac at load 60 (bound: 50 ms).
 
 ## Deviations from the design (with evidence)
 

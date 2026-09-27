@@ -515,3 +515,49 @@ func TestNativeHostIOLockClassesAreDisjoint(t *testing.T) {
 		}
 	}
 }
+
+// A close racing its own instance's revoke releases the path registration
+// exactly once: a double release would drop ANOTHER instance's hold, and
+// UNLINK_IF_UNUSED would then delete a file that instance still reads.
+func TestNativeHostIOCloseRacingRevokeReleasesOnce(t *testing.T) {
+	st, _ := newTestStore(t)
+	holder := newTestIO(t, st, HostIOReader, 8)
+	janitor := newTestIO(t, st, HostIOWriter, 8)
+	for i := 0; i < 20; i++ {
+		racer, err := NewNativeHostIO(st, HostIOWriter, 8, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Hold every close between claiming its slot and releasing the path,
+		// so the revoke below always lands inside that window.
+		racer.SetFault(3, 20*time.Millisecond)
+		name := fmt.Sprintf("seg-%03d.fsd", i)
+		fd := racer.Open(name, ioFlagRead|ioFlagWrite|ioFlagCreate)
+		held := holder.Open(name, ioFlagRead)
+		if fd <= 0 || held <= 0 {
+			t.Fatalf("iteration %d: open %d %d", i, fd, held)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); racer.Close(fd) }()
+		time.Sleep(2 * time.Millisecond) // the close is inside its window now
+		go func() { defer wg.Done(); racer.Revoke(); racer.ReleaseParked() }()
+		wg.Wait()
+		if rc := janitor.Open(name, ioFlagUnlinkIfUnused); rc != ioErrBusy {
+			t.Fatalf("iteration %d: unlink-if-unused while another instance holds the file returned %d, want BUSY", i, rc)
+		}
+		holder.Close(held)
+		if rc := janitor.Open(name, ioFlagUnlinkIfUnused); rc != 0 {
+			t.Fatalf("iteration %d: unlink once released: %d", i, rc)
+		}
+		for racer.Reap() > 0 {
+			runtime.Gosched()
+		}
+		if err := racer.Free(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := st.Stats().RegisteredPaths; n != 0 {
+		t.Fatalf("%d path registrations leaked", n)
+	}
+}

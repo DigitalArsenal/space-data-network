@@ -51,6 +51,7 @@ extern "C" {
 #define SDN_HIO_FAULT_WRITE 0
 #define SDN_HIO_FAULT_SYNC 1
 #define SDN_HIO_FAULT_SYNC_HARD 2 // not cut short by release: a stuck kernel call
+#define SDN_HIO_FAULT_CLOSE 3     // between a close claiming its slot and releasing it
 
 // Latency histogram shape shared with the probe (8 ns steps below 1 us, then
 // 32 sub-buckets per power of two up to 2^39 ns).
