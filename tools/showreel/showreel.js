@@ -1134,14 +1134,18 @@ export async function createShowreel(base = "") {
   // ------------------------------------------------------ the through line
   // Type always sits lower left: an eyebrow, one or two big lines, a caption.
   const LX = 150;
-  const CAP_Y = 952;
+  const CAP_Y = 956;
   const BIG = 96;
+  // Eyebrow and caption sizes are set for the site, where the reel plays
+  // 740-1100 px wide: 40 px and 30 px here read at roughly 15-23 px and 12-17 px.
+  const EYE = 40;
+  const CAP = 30;
   const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#%&*+=/<>";
   const lineYs = (n) => Array.from({ length: n }, (_, i) => 870 - (n - 1 - i) * 100);
   function caption(text, kind, tIn, tOut, t) {
     const a = easeOutExpo(seg(t, tIn, tIn + 0.4)) * (tOut == null ? 1 : 1 - easeInExpo(seg(t, tOut, tOut + 0.28)));
-    if (kind) badge(kind, LX + 11, CAP_Y - 6, 22, kind === "cross" ? RED : AMBER, a);
-    maskText(sx, text, LX + (kind ? 34 : 2), CAP_Y, 17, 600, kind === "check" ? "rgba(245,245,247,0.85)" : MUTED, tIn, tOut, t, { tracking: 3, outDur: 0.28 });
+    if (kind) badge(kind, LX + 17, CAP_Y - 10, 34, kind === "cross" ? RED : AMBER, a);
+    maskText(sx, text, LX + (kind ? 52 : 2), CAP_Y, CAP, 600, kind === "check" ? "rgba(245,245,247,0.85)" : MUTED, tIn, tOut, t, { tracking: 3, outDur: 0.28 });
   }
   function block(lines, cap, tIn, tOut, t, px = 88) {
     const ys = lineYs(lines.length);
@@ -1152,9 +1156,9 @@ export async function createShowreel(base = "") {
   // rewritten as the network's answer.
   function shiftBlock(sh, t) {
     const ys = lineYs(sh.before.length);
-    const eyeY = ys[0] - 100;
-    maskText(sx, "TODAY", LX + 2, eyeY, 17, 600, MUTED, sh.tIn, sh.tMorph + 0.1, t, { tracking: 3.5, outDur: 0.2 });
-    maskText(sx, "ON THE NETWORK", LX + 2, eyeY, 17, 600, AMBER, sh.tMorph + 0.3, sh.tOut, t, { tracking: 3.5, outDur: 0.28 });
+    const eyeY = ys[0] - 112;
+    maskText(sx, "TODAY", LX + 2, eyeY, EYE, 600, MUTED, sh.tIn, sh.tMorph + 0.1, t, { tracking: 3.5, outDur: 0.2 });
+    maskText(sx, "ON THE NETWORK", LX + 2, eyeY, EYE, 600, AMBER, sh.tMorph + 0.3, sh.tOut, t, { tracking: 3.5, outDur: 0.28 });
     sh.before.forEach((b, i) => {
       const a = sh.after[i];
       const y = ys[i];
@@ -1815,8 +1819,8 @@ export async function createShowreel(base = "") {
     const lab = alpha * seg(t, T_CONJ + 1.1, T_CONJ + 1.5) * (1 - seg(t, T_TCA - 0.9, T_TCA - 0.6));
     if (lab > 0) {
       [
-        [qa, AMBER, "SATELLITE A", "OPERATOR DATA · DIGITALLY SIGNED", 1, 64],
-        [qb, CYAN, "SATELLITE B", "RADAR DATA · DIGITALLY SIGNED", -1, 84],
+        [qa, AMBER, "OPERATOR DATA", "DIGITALLY SIGNED", 1, 64],
+        [qb, CYAN, "RADAR DATA", "DIGITALLY SIGNED", -1, 84],
       ].forEach(([q, col, name, src, side, dy]) => {
         const lx = q.x + side * 60;
         const ly = q.y + dy;
@@ -1831,14 +1835,14 @@ export async function createShowreel(base = "") {
         sx.stroke();
         sx.textAlign = side < 0 ? "right" : "left";
         const tx = lx + side * 40;
-        sx.font = font(600, 16, SANS);
-        sx.letterSpacing = "2.5px";
+        sx.font = font(600, 28, SANS);
+        sx.letterSpacing = "3px";
         sx.fillStyle = col;
-        sx.fillText(name, tx, ly - 4);
-        sx.font = font(600, 13, SANS);
-        sx.letterSpacing = "2px";
+        sx.fillText(name, tx, ly - 6);
+        sx.font = font(600, 21, SANS);
+        sx.letterSpacing = "2.5px";
         sx.fillStyle = "rgba(245,245,247,0.8)";
-        sx.fillText(src, tx, ly + 20);
+        sx.fillText(src, tx, ly + 28);
         sx.restore();
       });
     }
@@ -1899,8 +1903,16 @@ export async function createShowreel(base = "") {
       sx.beginPath();
       sx.moveTo(mx, my);
       sx.lineTo(lerp(mx, lx, lk), lerp(my, ly + 40, lk));
-      sx.lineTo(lerp(mx, lx + 380, lk), lerp(my, ly + 40, lk));
+      sx.lineTo(lerp(mx, lx + 470, lk), lerp(my, ly + 40, lk));
       sx.stroke();
+      // a dark card behind the readout, so orbit lines and the limb never cross the type
+      sx.save();
+      sx.globalAlpha = alpha * tca * lk;
+      sx.fillStyle = "rgba(0,0,0,0.66)";
+      sx.beginPath();
+      sx.roundRect(lx - 18, ly - 38, 512, 216, 14);
+      sx.fill();
+      sx.restore();
       // triangle with an exclamation mark: red means danger, never color alone
       sx.translate(lx + 22, ly);
       sx.fillStyle = RED;
@@ -1918,12 +1930,12 @@ export async function createShowreel(base = "") {
       maskText(sx, "CLOSE APPROACH", lx + 58, ly + 12, 30, 700, RED, T_TCA - 0.375, T_END - 0.225, t, { tracking: 3 });
       sx.save();
       sx.globalAlpha = alpha * tca;
-      sx.font = font(500, 19, MONO);
+      sx.font = font(500, 26, MONO);
       sx.letterSpacing = "1px";
       sx.fillStyle = INK;
-      decodeText(sx, "WHEN  25 SEP 2026 · 14:02 UTC", lx, ly + 76, T_TCA - 0.225, 0.5, t, 7);
-      decodeText(sx, "MISS  214 m", lx, ly + 104, T_TCA - 0.075, 0.45, t, 8);
-      decodeText(sx, "RISK  1 IN 8,300", lx, ly + 132, T_TCA + 0.075, 0.45, t, 9);
+      decodeText(sx, "WHEN  25 SEP 2026 · 14:02 UTC", lx, ly + 82, T_TCA - 0.225, 0.5, t, 7);
+      decodeText(sx, "MISS  214 m", lx, ly + 118, T_TCA - 0.075, 0.45, t, 8);
+      decodeText(sx, "RISK  1 IN 8,300", lx, ly + 154, T_TCA + 0.075, 0.45, t, 9);
       sx.restore();
     }
   }
@@ -2073,7 +2085,7 @@ export async function createShowreel(base = "") {
           ["More operators.", INK],
           ["More close calls.", AMBER],
         ],
-        "EVERY OPERATOR NEEDS TO SEE WHAT’S COMING",
+        "EVERY OPERATOR NEEDS TIMELY ACCESS TO VITAL DATA",
         5.3,
         T_ORG - 0.4,
         t,
@@ -2104,10 +2116,10 @@ export async function createShowreel(base = "") {
     if (t > T_CONJ + 0.3 && t < T_END + 1.2) {
       block(
         [
-          ["Two satellites.", INK],
-          ["Headed for a close call.", AMBER],
+          ["Infrastructure that", INK],
+          ["prevents close calls.", AMBER],
         ],
-        "TRACKED BY TWO SOURCES, BOTH DIGITALLY SIGNED",
+        "SIGNED DATA FROM EVERY SOURCE, SCREENED TOGETHER",
         T_CONJ + 0.6,
         T_TCA - 0.75,
         t,
@@ -2115,17 +2127,18 @@ export async function createShowreel(base = "") {
       );
       block(
         [
-          ["Everyone sees the warning.", INK],
+          ["Provided at the speed", INK],
+          ["of operations.", INK],
           ["Anyone can check the math.", AMBER],
         ],
-        "OPEN STANDARDS · OPEN-SOURCE SOFTWARE · OPEN ALGORITHMS",
+        "OPEN SOFTWARE AND ALGORITHMS, EVEN WHEN THE DATA IS ENCRYPTED",
         T_TCA + 0.4,
         T_END - 1.0,
         t,
         80,
       );
       // The three shifts, together, on the way out.
-      maskText(sx, "ON THE NETWORK", LX + 2, 770, 17, 600, AMBER, T_END - 0.65, T_END + 0.8, t, { tracking: 3.5, outDur: 0.25 });
+      maskText(sx, "ON THE NETWORK", LX + 2, 758, EYE, 600, AMBER, T_END - 0.65, T_END + 0.8, t, { tracking: 3.5, outDur: 0.25 });
       sx.save();
       sx.font = font(700, BIG);
       sx.letterSpacing = "-3px";
