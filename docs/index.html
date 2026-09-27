@@ -32,9 +32,10 @@
     .hero { display: flex; flex-direction: column; justify-content: flex-start; gap: 18px; padding: clamp(24px, 4vh, 56px) 20px 32px; }
     .hero-title { font-size: clamp(34px, 5.6vw, 68px); white-space: nowrap; }
     .hero .lede { max-width: 860px; text-wrap: balance; }
+    .hero .lede-mark { margin-top: -8px; color: var(--text); font-weight: 600; }
     .hero .eyebrow { text-wrap: balance; }
     /* The reel fills what the headline and buttons leave of the first screen, above the stack footer. */
-    .hero .reel-frame { width: min(100%, 1120px, max(560px, calc((100svh - 484px) * 16 / 9))); max-width: 100%; margin-top: 8px; }
+    .hero .reel-frame { width: min(100%, 1120px, max(560px, calc((100svh - 530px) * 16 / 9))); max-width: 100%; margin-top: 8px; }
     .hero .actions { margin-top: 10px; }
     /* Phones: the three buttons stay on one row and their labels wrap instead. */
     @media (max-width: 620px) {
@@ -102,7 +103,8 @@
     <section class="wrap hero" id="hero" data-earth="1.62 -48 36 0 -2.25 28 22">
       <p class="eyebrow">An open network for space traffic management</p>
       <h1 class="hero-title">Space Data Network</h1>
-      <p class="lede">An open, decentralized network for every kind of space data: the orbit catalog, observations, warnings, software and services. Digitally signed at the source, free or for sale with no middlemen. Built on open standards, software, and algorithms.</p>
+      <p class="lede">An open, decentralized network for every kind of space data: the orbit catalog, observations, warnings, software and services. Digitally signed at the source, free or for sale with no middlemen.</p>
+      <p class="lede lede-mark">Built on open standards, software, and algorithms.</p>
       <figure class="reel-frame" id="showreel">
         <div class="reel-stage">
           <video id="reelVideo" muted playsinline preload="auto" data-poster="media/showreel/sdn-showreel-poster.webp" aria-label="Space Data Network showreel, 45 seconds, no sound">
