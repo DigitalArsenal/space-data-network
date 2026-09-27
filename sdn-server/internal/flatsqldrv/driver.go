@@ -17,10 +17,30 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 )
+
+// statementHook, when set, sees every statement this driver sends to the
+// engine, with its parameters, just before it runs. Tests use it to EXPLAIN
+// what a store path actually executes (the storage plan guard). Unset in
+// production: one atomic load per statement.
+var statementHook atomic.Pointer[func(query string, params []interface{})]
+
+// SetStatementHook installs fn as the statement hook and returns a func that
+// restores the previous one.
+func SetStatementHook(fn func(query string, params []interface{})) (restore func()) {
+	prev := statementHook.Swap(&fn)
+	return func() { statementHook.Store(prev) }
+}
+
+func runStatementHook(query string, params []interface{}) {
+	if hook := statementHook.Load(); hook != nil && *hook != nil {
+		(*hook)(query, params)
+	}
+}
 
 // WithoutJournal is kept as a compatibility no-op for older storage call
 // sites. The FlatSQL driver no longer records SQL statements.
@@ -219,11 +239,13 @@ func (c *conn) ExecContext(_ context.Context, query string, args []driver.NamedV
 		return nil, errors.New("flatsqldrv: bind parameters not supported in multi-statement Exec")
 	}
 	if len(stmts) <= 1 {
+		runStatementHook(query, params)
 		if _, err := c.db.Query(query, params...); err != nil {
 			return nil, err
 		}
 	} else {
 		for _, stmt := range stmts {
+			runStatementHook(stmt, nil)
 			if _, err := c.db.Query(stmt); err != nil {
 				return nil, fmt.Errorf("%w (in multi-statement exec: %.60q)", err, stmt)
 			}
@@ -247,6 +269,7 @@ func (c *conn) QueryContext(_ context.Context, query string, args []driver.Named
 	if err != nil {
 		return nil, err
 	}
+	runStatementHook(query, params)
 	res, err := c.db.Query(query, params...)
 	if err != nil {
 		return nil, err
