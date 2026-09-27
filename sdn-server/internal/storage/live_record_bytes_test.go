@@ -140,7 +140,7 @@ func TestLiveRecordCounterFollowsEveryWritePath(t *testing.T) {
 
 	// Delete one producer's copy while another still holds the CID, then
 	// the last copy.
-	if _, err := store.db.Exec(`DELETE FROM sds_p_peer_b__RFM WHERE cid = ?`, rfm[0]); err != nil {
+	if err := writeForTest(store, `DELETE FROM sds_p_peer_b__RFM WHERE cid = ?`, rfm[0]); err != nil {
 		t.Fatalf("delete peer-b copy: %v", err)
 	}
 	requireCounterMatchesScan(t, store, "delete of a copy another producer holds")
@@ -311,7 +311,7 @@ func TestLiveRecordCounterRebuildsAStoreWrittenBeforeIt(t *testing.T) {
 			}
 		},
 		func(i int) { // delete from one producer only
-			if _, err := store.db.Exec(`DELETE FROM sds_p_peer_b__RFM WHERE rowid = (SELECT MIN(rowid) FROM sds_p_peer_b__RFM)`); err != nil {
+			if err := writeForTest(store, `DELETE FROM sds_p_peer_b__RFM WHERE rowid = (SELECT MIN(rowid) FROM sds_p_peer_b__RFM)`); err != nil {
 				t.Fatal(err)
 			}
 		},
@@ -397,10 +397,7 @@ func TestLiveRecordCounterForgetsADroppedPartition(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store.mu.Lock()
-	_, err := store.db.Exec(`DROP TABLE sds_p_peer_a__RFM`)
-	store.mu.Unlock()
-	if err != nil {
+	if err := writeForTest(store, `DROP TABLE sds_p_peer_a__RFM`); err != nil {
 		t.Fatal(err)
 	}
 	requireCounterMatchesScan(t, store, "after dropping a partition")
@@ -481,16 +478,87 @@ func TestPartitionCountCompleteSurvivesTheEngineReadPath(t *testing.T) {
 	if _, err := store.Store("RFM.fbs", liveTestPayload(5, 77), "peer-a", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`UPDATE sdn_partition_record_bytes SET scanned_rowid = ?`, int64(math.MaxInt64)); err != nil {
+	if err := writeForTest(store, `UPDATE sdn_partition_record_bytes SET scanned_rowid = ?`, int64(math.MaxInt64)); err != nil {
 		t.Fatal(err)
 	}
-	store.mu.Lock()
+	release := store.lockWrite("test: reinstall partition counters")
 	err := store.installPartitionCounters()
-	store.mu.Unlock()
+	release()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if live, err := store.LiveRecordBytes(); err != nil || live != 77 {
 		t.Fatalf("LiveRecordBytes after a MaxInt64 cursor = %d (%v), want 77", live, err)
+	}
+}
+
+// writeForTest runs a statement as a store write does: under the write lock,
+// whose release refreshes the counter snapshot.
+func writeForTest(s *FlatSQLStore, query string, args ...any) error {
+	defer s.lockWrite("test write")()
+	_, err := s.db.Exec(query, args...)
+	return err
+}
+
+// Counter reads take neither the store lock nor the engine: they answer while
+// a writer holds the lock, and from the last committed counters.
+func TestCounterReadsDoNotWaitOnTheStoreLock(t *testing.T) {
+	store := openBootStore(t, filepath.Join(t.TempDir(), "store"), bootTestValidator(t))
+	defer store.Close()
+	if _, err := store.Store("RFM.fbs", liveTestPayload(6, 88), "peer-a", nil); err != nil {
+		t.Fatal(err)
+	}
+	release := store.lockWrite("test: hold the write lock")
+	defer release()
+	done := make(chan string, 1)
+	go func() {
+		live, err := store.LiveRecordBytes()
+		if err != nil || live != 88 {
+			done <- fmt.Sprintf("LiveRecordBytes = %d, %v", live, err)
+			return
+		}
+		if peer, err := store.PeerStorageBytes("peer-a"); err != nil || peer != 88 {
+			done <- fmt.Sprintf("PeerStorageBytes = %d, %v", peer, err)
+			return
+		}
+		if !store.LiveRecordBytesReconciled() {
+			done <- "LiveRecordBytesReconciled = false"
+			return
+		}
+		if _, err := store.DiskUsageBytes(); err != nil {
+			done <- fmt.Sprintf("DiskUsageBytes: %v", err)
+			return
+		}
+		done <- ""
+	}()
+	select {
+	case msg := <-done:
+		if msg != "" {
+			t.Fatal(msg)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a counter read waited on the store write lock")
+	}
+}
+
+// The quota is on-disk bytes: a store whose file is under the cap evicts
+// nothing, however its records add up.
+func TestGarbageCollectToQuotaCapsOnDiskBytes(t *testing.T) {
+	store := openBootStore(t, filepath.Join(t.TempDir(), "store"), bootTestValidator(t))
+	defer store.Close()
+	for i := 0; i < 5; i++ {
+		if _, err := store.Store("RFM.fbs", liveTestPayload(i, 100), "peer-a", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	disk, err := store.DiskUsageBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := store.GarbageCollectToQuota(disk); err != nil || n != 0 {
+		t.Fatalf("GarbageCollectToQuota(on-disk size) = %d, %v; want nothing evicted", n, err)
+	}
+	if live, _ := store.LiveRecordBytes(); live != 500 {
+		t.Fatalf("LiveRecordBytes = %d after a no-op quota pass, want 500", live)
 	}
 }

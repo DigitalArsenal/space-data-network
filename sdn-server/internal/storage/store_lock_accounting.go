@@ -93,6 +93,10 @@ func (s *FlatSQLStore) lockWrite(site string) func() {
 	s.lockStats.writeAcquires.Add(1)
 	s.lockStats.writeWaitNs.Add(int64(waited))
 	return func() {
+		// Every write releases through here, so the lock-free counter
+		// snapshot (live_record_bytes.go) is current whenever the lock is
+		// free.
+		s.refreshPartitionSnapshotLocked()
 		holdFor := time.Since(held)
 		s.lockStats.writeHeldNs.Add(int64(holdFor))
 		s.mu.Unlock()

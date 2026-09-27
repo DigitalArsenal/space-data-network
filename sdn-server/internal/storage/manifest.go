@@ -758,8 +758,7 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 // lock and one control transaction (the pre-chunking
 // importDatasetShardRecords body).
 func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, providerPeerID string, records []DatasetExportIndexRecord, readRecord datasetShardRecordReader) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("importDatasetShardChunk")()
 
 	// WS7.3d routed-only writes: imported rows land in the provider's
 	// (producer, standard) table (pre-created outside the tx — no DDL inside).

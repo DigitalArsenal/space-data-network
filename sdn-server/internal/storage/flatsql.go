@@ -197,6 +197,12 @@ type FlatSQLStore struct {
 	recoveryHydrate  recoveryHydration
 	partitionRebuild *partitionCountRebuild
 	poisonWatch      *enginePoisonWatch
+	// partitionSnap is the partition counters as of the last write-lock
+	// release; counter reads take it without s.mu or the engine lock
+	// (live_record_bytes.go). recognizedCache memoizes the validator's
+	// standards, which never change.
+	partitionSnap   atomic.Pointer[partitionSnapshot]
+	recognizedCache atomic.Pointer[map[string]string]
 	// fieldEncMu guards the lazily-provisioned field-encryption identity
 	// (field_encryption.go). Deliberately separate from mu: the seal and open
 	// paths are reached while mu is already held (Lock or RLock, or not at
@@ -3650,41 +3656,26 @@ const maxQuotaEvictionRounds = 8
 // every partition of every schema this store recognizes. A record two
 // producers both hold is stored in both partitions and counted in each.
 //
-// This is the quantity GarbageCollectToQuota enforces a cap against: deleting
-// a record's rows shrinks it at once, while DiskUsageBytes (below) reports the
-// larger on-disk footprint SQLite never gives back.
+// GarbageCollectToQuota evicts in these bytes once DiskUsageBytes (below),
+// the on-disk footprint SQLite never gives back, is over the cap.
 //
 // It adds up the per-partition counters the write path keeps
-// (live_record_bytes.go), a few small reads however many records the store
-// holds. While partitions written before the counter existed are still being
-// counted it returns ErrLiveRecordBytesReconciling rather than a partial sum.
-func (s *FlatSQLStore) LiveRecordBytes() (int64, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	// A CLOSED store answers, it does not crash. node.go's quota bookkeeping is
-	// deliberately fire-and-forget (materializeDatasetPublicationPNM spawns it so
-	// quota work adds no latency to materialization), so it CAN outlive the
-	// store's Close — and Close nils s.db, which made this a SIGSEGV in a
-	// daemon rather than an error at a call site that already handles errors.
-	// Reproduced deterministically once the disk-backed boot changed shutdown
-	// timing; latent long before that.
-	if s.db == nil {
-		return 0, ErrStoreClosed
-	}
-	return s.liveRecordBytesLocked()
-}
-
-// liveRecordBytesLocked answers LiveRecordBytes from the partition counters.
+// (live_record_bytes.go). It used to be SELECT SUM(record_length) per schema:
+// O(records), and because record_length is stored after the data BLOB, every
+// overflow page of every record was read — on host-02 (2026-09-26) that held
+// the engine 21.9 s for OMM and past the 5-minute per-call budget for MPE,
+// which poisoned the engine and stopped ingest for 30 h. The counters cover
+// untagged writes too, which is why the per-lane source summary could never
+// stand in for it (TestLiveRecordBytesSumsRecordLength).
 //
-// It used to be SELECT SUM(record_length) per schema: O(records), and because
-// record_length is stored after the data BLOB, every overflow page of every
-// record was read. On host-02 (2026-09-26) that held the engine 21.9 s for
-// OMM and ran past the 5-minute per-call budget for MPE, which poisoned the
-// engine and stopped ingest for 30 h. The counters cover untagged writes
-// too, which is why the per-lane source summary could never stand in for it
-// (TestLiveRecordBytesSumsRecordLength).
-func (s *FlatSQLStore) liveRecordBytesLocked() (int64, error) {
-	_, bytes, err := s.liveRecordTotalsLocked()
+// It takes neither the store lock nor the engine: it reads the snapshot of
+// the counters that every write-lock release refreshes. While partitions
+// written before the counters existed are still being counted it returns
+// ErrLiveRecordBytesReconciling rather than a partial sum; a CLOSED store
+// answers ErrStoreClosed (node.go's quota bookkeeping is fire-and-forget and
+// can outlive Close).
+func (s *FlatSQLStore) LiveRecordBytes() (int64, error) {
+	_, bytes, err := s.liveRecordTotals()
 	if err != nil {
 		return 0, err
 	}
@@ -3696,11 +3687,11 @@ func (s *FlatSQLStore) liveRecordBytesLocked() (int64, error) {
 // the engine's persisted record arena, and the auxiliary metadata journal.
 // SQLite reuses freed pages but never shrinks the file, so this reflects the
 // historical high-water mark, not the live dataset — see LiveRecordBytes.
+//
+// Lock-free: the paths are fixed at open, and a stat needs no engine.
 func (s *FlatSQLStore) DiskUsageBytes() (int64, error) {
-	s.mu.RLock()
 	basePath := s.basePath
 	controlDBPath := s.controlDBPath
-	s.mu.RUnlock()
 
 	var total int64
 	for _, path := range []string{
@@ -3763,12 +3754,23 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 	if s.db == nil {
 		return 0, ErrStoreClosed
 	}
+	// THE CAP IS ON-DISK BYTES. What the operator bounds is the disk; the
+	// store's file never shrinks, so a store whose file is under the cap has
+	// nothing to evict whatever its records add up to.
+	diskBytes, err := s.DiskUsageBytes()
+	if err != nil {
+		return 0, fmt.Errorf("garbage collect to quota: measure disk usage: %w", err)
+	}
+	if diskBytes <= maxBytes {
+		return 0, nil
+	}
+	// Eviction itself is measured in live bytes: deleting records frees pages
+	// the file reuses for the next writes but never hands back, so on-disk
+	// bytes cannot say when enough is gone. Evict down to the low-water mark
+	// of live bytes; the file then stops growing until they are used up.
 	totalCount, liveBytes, err := s.liveRecordTotalsLocked()
 	if err != nil {
 		return 0, fmt.Errorf("garbage collect to quota: measure live bytes: %w", err)
-	}
-	if liveBytes <= maxBytes {
-		return 0, nil
 	}
 	lowWater := int64(float64(maxBytes) * quotaLowWaterMarkFraction)
 
@@ -3869,6 +3871,7 @@ func (s *FlatSQLStore) Close() error {
 		firstErr = s.db.Close()
 		s.db = nil
 	}
+	s.closePartitionSnapshot()
 	if s.auxiliaryMetadata != nil {
 		if err := s.auxiliaryMetadata.Close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -4791,9 +4794,9 @@ func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
 	// (live_record_bytes.go): the rows and bytes each partition holds, with
 	// no scan. Only a schema with a partition still being counted for the
 	// first time falls back to the cached scan.
-	partitions, partErr := s.partitionCountsLocked()
+	partitions, partErr := s.partitionCountsSnapshot()
 	if partErr != nil {
-		log.Warnf("DataSummary: partition counters unreadable, scanning unsummarized schemas: %v", partErr)
+		log.Warnf("DataSummary: no partition counters to read, scanning unsummarized schemas: %v", partErr)
 	}
 	for _, schemaName := range s.validator.Schemas() {
 		if summarizedSchemas[schemaName] {
@@ -7279,9 +7282,9 @@ func (s *FlatSQLStore) SchemaDateRanges() ([]SchemaDateRange, error) {
 	// record_length over every record here walked every overflow page of the
 	// store behind a public endpoint; only a schema with a partition still
 	// being counted for the first time is scanned.
-	partitions, partErr := s.partitionCountsLocked()
+	partitions, partErr := s.partitionCountsSnapshot()
 	if partErr != nil {
-		log.Warnf("SchemaDateRanges: partition counters unreadable, scanning byte totals: %v", partErr)
+		log.Warnf("SchemaDateRanges: no partition counters to read, scanning byte totals: %v", partErr)
 	}
 	for i := range ranges {
 		if _, bytesTotal, counted := schemaPartitionTotals(partitions, ranges[i].Schema); counted {
@@ -7312,13 +7315,38 @@ func (s *FlatSQLStore) SchemaDateRanges() ([]SchemaDateRange, error) {
 // still being counted for the first time is summed directly, which reads only
 // that partition.
 func (s *FlatSQLStore) PeerStorageBytes(peerID string) (int64, error) {
+	producer := sanitizeProducerID(routedProducerID(peerID))
+	recognized := s.recognizedStandards()
+	// Lock-free from the counter snapshot when every one of the peer's
+	// partitions is counted — the publish quota check on every write.
+	if partitions, err := s.partitionCountsSnapshot(); err == nil {
+		var total int64
+		counted := true
+		for _, p := range partitions {
+			if p.Producer != producer {
+				continue
+			}
+			if _, ok := recognized[p.Standard]; !ok {
+				continue
+			}
+			if !p.Counted {
+				counted = false
+				break
+			}
+			total += p.Bytes
+		}
+		if counted {
+			return total, nil
+		}
+	} else if errors.Is(err, ErrStoreClosed) {
+		return 0, err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.db == nil {
 		return 0, ErrStoreClosed
 	}
-	producer := sanitizeProducerID(routedProducerID(peerID))
-	recognized := s.recognizedStandards()
 	partitions, err := s.partitionCountsLocked()
 	if err != nil {
 		// No counters to read: sum the peer's partitions directly.

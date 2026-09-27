@@ -113,9 +113,9 @@ func (s *FlatSQLStore) SupersedeSourceBatches(schemaName, providerID, sourceName
 	}
 
 	if evictedAny {
-		s.mu.Lock()
+		release := s.lockWrite("dataset supersede: source summary")
 		summaryErr := s.rebuildSourceSummaryForSchema(result.SchemaName, tableName)
-		s.mu.Unlock()
+		release()
 		if summaryErr != nil {
 			return result, summaryErr
 		}
@@ -176,8 +176,7 @@ func (s *FlatSQLStore) SupersedeSourceBatches(schemaName, providerID, sourceName
 // supersedeSourceBatchChunk evicts up to supersedeChunkSize superseded CIDs
 // under one lock hold + transaction. Returns (tagsDeleted, recordsDeleted).
 func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, tableName string) (int64, int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockWrite("supersedeSourceBatchChunk")()
 
 	tx, err := s.db.Begin()
 	if err != nil {
