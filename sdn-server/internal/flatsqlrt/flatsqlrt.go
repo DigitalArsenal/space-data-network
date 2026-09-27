@@ -539,14 +539,17 @@ func (r *Runtime) readCStringVia(inv wasmrt.GuestCaller, ptr uint32) (string, er
 	if err != nil {
 		return "", err
 	}
-	memEnd := uint32(stats.Bytes)
+	// A wasm32 pointer fits in uint32, but its exclusive memory bound does
+	// not: 65,536 pages is 4 GiB. Narrowing that size made every string read
+	// return empty at the ceiling, including residency CIDs and source names.
+	memEnd := stats.Bytes
+	if uint64(ptr) >= memEnd {
+		return "", fmt.Errorf("flatsqlrt: string pointer %d outside memory of %d bytes", ptr, memEnd)
+	}
 	var buf []byte
-	for off := ptr; off < memEnd && len(buf) < cstringMaxLen; {
-		chunk := uint32(cstringReadChunk)
-		if off+chunk > memEnd {
-			chunk = memEnd - off
-		}
-		data, err := inv.ReadMemory(off, chunk)
+	for off := uint64(ptr); off < memEnd && len(buf) < cstringMaxLen; {
+		chunk := min(uint64(cstringReadChunk), memEnd-off, uint64(cstringMaxLen-len(buf)))
+		data, err := inv.ReadMemory(uint32(off), uint32(chunk))
 		if err != nil {
 			return "", err
 		}
@@ -556,7 +559,7 @@ func (r *Runtime) readCStringVia(inv wasmrt.GuestCaller, ptr uint32) (string, er
 		buf = append(buf, data...)
 		off += chunk
 	}
-	return string(buf), nil
+	return "", fmt.Errorf("flatsqlrt: unterminated guest string at %d after %d bytes", ptr, len(buf))
 }
 
 // engineErr wraps a benign engine error (error-sentinel return + populated

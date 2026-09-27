@@ -361,8 +361,9 @@ func (s *FlatSQLStore) engineResidencyRowsForCIDs(schemaName string, cids []stri
 // tombstoneEngineRecordsLocked removes the given records from the engine hot
 // window: MarkDeleted on each resident row and the residency row deleted.
 // Records that were never resident (never routed, evicted, skipped) cost one
-// lookup and nothing else. Best-effort per row; only a poisoned runtime is
-// returned as an error. Caller holds s.mu for writing.
+// lookup and nothing else. Engine tombstones are best-effort per row; a
+// poisoned runtime or failed stale-ledger delete is returned as an error.
+// Caller holds s.mu for writing.
 // tombstoneEngineRecordsLocked removes records from the engine's hot window.
 // join, when non-nil, is a transaction the ledger deletes are written into —
 // without one each DELETE is its own autocommit. That was an fsync per
