@@ -27,6 +27,8 @@ import (
 	"time"
 
 	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	MPEFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
+	"github.com/google/flatbuffers/go"
 )
 
 // The builder module the importer tests run against: the signed artifact of
@@ -688,11 +690,46 @@ func catFromBytes(b []byte) gpArchiveCATInput {
 	return gpArchiveCATInput{EntityID: string(c.OBJECT_ID()), NORAD: c.NORAD_CAT_ID(), Name: string(c.OBJECT_NAME())}
 }
 
-// Archive encoding v1 reference for the parity tests: the importer's original
-// Go builders.
-func legacyArchiveV1MPE(entity string, r gpArchiveRecord) []byte { return buildGPArchiveMPE(entity, r) }
+// Archive encoding v1 reference: the importer's original Go builders
+// (space-data-network 70c9d4884), kept verbatim and only for the parity tests.
+// They wrote the archive's records, so their bytes are the contract the module
+// is held to; the importer itself no longer builds records.
+func legacyArchiveV1MPE(entity string, r gpArchiveRecord) []byte {
+	b := flatbuffers.NewBuilder(256)
+	id := b.CreateString(entity)
+	MPEFB.MPEStart(b)
+	MPEFB.MPEAddENTITY_ID(b, id)
+	legacyArchiveV1Float64Slot(b, 1, r.Epoch)
+	legacyArchiveV1Float64Slot(b, 2, r.MeanMotion)
+	legacyArchiveV1Float64Slot(b, 3, r.Eccentricity)
+	legacyArchiveV1Float64Slot(b, 4, r.Inclination)
+	legacyArchiveV1Float64Slot(b, 5, r.RAOfAscNode)
+	legacyArchiveV1Float64Slot(b, 6, r.ArgOfPericenter)
+	legacyArchiveV1Float64Slot(b, 7, r.MeanAnomaly)
+	legacyArchiveV1Float64Slot(b, 8, r.BSTAR)
+	b.PrependInt8(0)
+	b.Slot(9) // SGP4 is enum value zero; force the field to be present.
+	root := MPEFB.MPEEnd(b)
+	MPEFB.FinishSizePrefixedMPEBuffer(b, root)
+	return append([]byte(nil), b.FinishedBytes()...)
+}
+
+func legacyArchiveV1Float64Slot(b *flatbuffers.Builder, slot int, value float64) {
+	b.PrependFloat64(value)
+	b.Slot(slot)
+}
+
 func legacyArchiveV1CAT(entity string, norad uint32, name string) []byte {
-	return buildGPArchiveCAT(entity, norad, name)
+	b := flatbuffers.NewBuilder(128)
+	id := b.CreateString(entity)
+	n := b.CreateString(name)
+	CATFB.CATStart(b)
+	CATFB.CATAddOBJECT_ID(b, id)
+	CATFB.CATAddNORAD_CAT_ID(b, norad)
+	CATFB.CATAddOBJECT_NAME(b, n)
+	root := CATFB.CATEnd(b)
+	CATFB.FinishSizePrefixedCATBuffer(b, root)
+	return append([]byte(nil), b.FinishedBytes()...)
 }
 
 // gpArchiveV1RecordBuilder builds with the frozen archive v1 reference, so an
