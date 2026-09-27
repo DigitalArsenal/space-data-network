@@ -387,6 +387,66 @@ func TestGPArchiveShardFoldReportsSATCATMismatch(t *testing.T) {
 	}
 }
 
+// Checkpoints written before gpLatestState took the SDS spelling carry
+// "epoch". They must load with the epoch intact, so latest-wins ordering holds
+// across the rename, and the next save writes "EPOCH".
+func TestGPArchiveCheckpointLoadsLowercaseEpochKey(t *testing.T) {
+	const oldCheckpoint = `{
+  "version": 2,
+  "canonical_ids": {"25544": "1998-067A"},
+  "latest": {
+    "1998-067A": {
+      "entity_id": "1998-067A",
+      "norad": 25544,
+      "epoch": 708193379.999232,
+      "tie_kind": "json",
+      "tie_value": 281474976710655,
+      "history_cid": "bafkreihistory",
+      "source_id": "gp-window-1",
+      "mpe": "AQID",
+      "gp_object_name": "ISS (ZARYA)"
+    }
+  },
+  "updated_at": "2026-09-27T15:46:00Z"
+}
+`
+	path := filepath.Join(t.TempDir(), "gp-archive-checkpoint.json")
+	if err := os.WriteFile(path, []byte(oldCheckpoint), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := loadGPArchiveCheckpoint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &gpLatestState{EntityID: "1998-067A", NORAD: 25544, Epoch: 708193379.999232, TieKind: "json", TieValue: 281474976710655, HistoryCID: "bafkreihistory", SourceID: "gp-window-1", MPE: []byte{1, 2, 3}, GPObjectName: "ISS (ZARYA)"}
+	got := cp.Latest["1998-067A"]
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("old-key latest state = %+v, want %+v", got, want)
+	}
+	older := &gpLatestState{Epoch: 708193379.0, TieKind: "json", TieValue: math.MaxUint64}
+	if gpLatestStateNewer(older, got) {
+		t.Fatal("an older epoch replaced the loaded latest state; the old epoch key did not load")
+	}
+
+	if err = saveGPArchiveCheckpoint(path, cp); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(saved, []byte(`"EPOCH": 708193379.999232`)) || bytes.Contains(saved, []byte(`"epoch"`)) {
+		t.Fatalf("saved checkpoint does not carry EPOCH only:\n%s", saved)
+	}
+	reloaded, err := loadGPArchiveCheckpoint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(reloaded.Latest["1998-067A"], want) {
+		t.Fatalf("reloaded latest state = %+v, want %+v", reloaded.Latest["1998-067A"], want)
+	}
+}
+
 func TestGPArchiveCheckpointCadenceAndForcedSave(t *testing.T) {
 	cp := gpArchiveTestCheckpoint()
 	base := time.Date(2026, 9, 26, 15, 0, 0, 0, time.UTC)
