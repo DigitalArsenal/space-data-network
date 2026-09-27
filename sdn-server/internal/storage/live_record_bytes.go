@@ -33,7 +33,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,7 +48,15 @@ var ErrLiveRecordBytesReconciling = errors.New("live record bytes: partitions wr
 
 const (
 	// partitionCountComplete is the cursor of a fully counted partition.
-	partitionCountComplete int64 = math.MaxInt64
+	//
+	// 2^53-1, NOT math.MaxInt64. The engine hands every integer result back
+	// to Go as a float64 (flatsql_result_cell_number), and MaxInt64 is not a
+	// float64: it reads back as 2^63, which Go converts to int64 by the
+	// CPU's rules — saturating to MaxInt64 on arm64, MinInt64 on amd64. So
+	// the sentinel matched on the Mac and never on CI's x86-64 runners,
+	// where no partition ever counted as done. Every integer up to 2^53 is
+	// exact in a float64, and no rowid gets there.
+	partitionCountComplete int64 = 1<<53 - 1
 	// Counter triggers are named <family><version>_<ai|ad|au>_<partition>.
 	// Bump the version whenever what a trigger or a chunk counts changes: the
 	// install then drops the older triggers and recounts every partition.
@@ -252,6 +259,12 @@ func (s *FlatSQLStore) installPartitionCounters() error {
 		if _, err := tx.Exec(`UPDATE sdn_partition_record_bytes SET scanned_rowid = 0, record_count = 0, record_bytes = 0`); err != nil {
 			return fmt.Errorf("reset partition counters: %w", err)
 		}
+	}
+	// A cursor written as math.MaxInt64 (the first release of this counter)
+	// means "complete" too.
+	if _, err := tx.Exec(`UPDATE sdn_partition_record_bytes SET scanned_rowid = ? WHERE scanned_rowid > ?`,
+		partitionCountComplete, partitionCountComplete); err != nil {
+		return fmt.Errorf("normalise partition counter cursors: %w", err)
 	}
 
 	partitions, err := s.listProducerStandardTables()
