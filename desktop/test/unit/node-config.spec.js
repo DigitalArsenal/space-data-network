@@ -26,6 +26,7 @@ test.describe('the node configuration this shell writes', () => {
     expect(config.admin.listen_addr).toBe('127.0.0.1:49222')
     expect(config.admin.enabled).toBe(true)
     expect(config.admin.require_auth).toBe(true)
+    expect(config.admin.local_console).toBe(true)
   })
 
   test('leaves ipfs_api_url unset so the node manages the bundle Kubo itself', () => {

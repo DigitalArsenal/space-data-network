@@ -1626,6 +1626,14 @@ type AdminConfig struct {
 	// an open admin surface. Never set this on a deployed node.
 	DevAutoAdmin bool `yaml:"dev_auto_admin"`
 
+	// LocalConsole admits a loopback request that carries no session as the
+	// node's own root account, so the console the node serves to its own
+	// machine needs no sign-in (owner ruling 2026-09-19). Honored ONLY when
+	// the admin listener is bound to a loopback address; any proxy header on
+	// the request refuses. Leave it off on a node whose console is reached
+	// through a reverse proxy on the same box.
+	LocalConsole bool `yaml:"local_console"`
+
 	// SessionExpiry is the duration for admin session tokens (default: 24h).
 	SessionExpiry string `yaml:"session_expiry"`
 

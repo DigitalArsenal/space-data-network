@@ -225,6 +225,49 @@ export function dashboardDependencyBoundary() {
 }
 
 /** Keep browser navigation on the development catalogue's signed hostname. */
+/**
+ * DEV ONLY — simulate the desktop app in a browser tab.
+ *
+ * The desktop app is an Electron window whose preload
+ * (desktop/src/preload.js) exposes `window.sdn.isDesktop`, and this dashboard
+ * keys desktop-only behaviour off it — above all hiding the external-wallet
+ * lane, which needs an extension-injected provider that cannot exist there.
+ * Without a way to fake that signal, every desktop change would need a full
+ * electron-builder run to look at.
+ *
+ * Append `?desktop=1` to any dev URL and this prepends the same shim the
+ * preload installs, BEFORE the app's own scripts, so the first render already
+ * sees it. Two tabs side by side give both modes at once:
+ *
+ *   http://localhost:5173/             browser
+ *   http://localhost:5173/?desktop=1   desktop
+ *
+ * `apply: 'serve'` keeps it out of every built artifact: the embedded
+ * dashboard never contains this, and the shipped app gets the real signal
+ * from its real preload.
+ */
+export function devDesktopShim() {
+  return {
+    name: 'sdn-dev-desktop-shim',
+    apply: 'serve',
+    transformIndexHtml(html, ctx) {
+      const query = String(ctx.originalUrl ?? '').split('?')[1] ?? '';
+      const wanted = new URLSearchParams(query).get('desktop');
+      if (wanted !== '1' && wanted !== 'true') return html;
+      return {
+        html,
+        tags: [{
+          tag: 'script',
+          injectTo: 'head-prepend',
+          children:
+            "window.sdn = Object.assign({}, window.sdn, { isDesktop: true });" +
+            "console.info('[dev] desktop simulated: window.sdn.isDesktop = true');"
+        }]
+      };
+    }
+  };
+}
+
 export function dashboardDevOrigin() {
   return {
     name: 'sdn-dashboard-dev-origin',
@@ -274,6 +317,7 @@ export default defineConfig({
   server: dashboardDevServer(),
   optimizeDeps: { entries: [path.join(appRoot, 'index.html')], esbuildOptions: { target: 'es2022' } },
   plugins: [
+    devDesktopShim(),
     dashboardDevOrigin(),
     dashboardDependencyBoundary(),
     tailwindcss(),

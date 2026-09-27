@@ -1875,6 +1875,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					authHandler.EnableDevAutoAdmin()
 					log.Warnf("admin.dev_auto_admin is ON: loopback requests are auto-admitted as the first Admin user (dev only)")
 				}
+				if cfg.Admin.LocalConsole {
+					if !isLoopbackListenAddr(cfg.Admin.ListenAddr) {
+						return fmt.Errorf("admin.local_console requires a loopback listen_addr (got %q)", cfg.Admin.ListenAddr)
+					}
+					authHandler.EnableLocalConsole()
+					log.Infof("admin.local_console is ON: loopback requests without a session are the node's own root account")
+				}
 				// Bind the operator profile-photo object store to the IPFS lane
 				// this node already runs. When admin.ipfs_api_url is unset the
 				// port stays nil and the endpoint refuses with 501 — a node

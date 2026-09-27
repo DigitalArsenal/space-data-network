@@ -70,10 +70,14 @@ function buildNodeConfig ({ home, adminPort, swarmPort, wsPort, quicPort, webrtc
       enabled: true,
       // Loopback only: the dashboard is this machine's operator surface.
       listen_addr: `127.0.0.1:${adminPort}`,
-      // require_auth, dev_auto_admin and ipfs_api_url are deliberately absent:
-      // the node's own defaults apply, and leaving ipfs_api_url at its default
-      // is what makes the node manage the bundle's Kubo itself.
-      require_auth: true
+      // dev_auto_admin and ipfs_api_url are deliberately absent: the node's own
+      // defaults apply, and leaving ipfs_api_url at its default is what makes
+      // the node manage the bundle's Kubo itself.
+      require_auth: true,
+      // This window is the node's own console on a loopback listener with
+      // nothing in front of it: it signs in as the node's root account
+      // without a wallet ceremony (admin.local_console).
+      local_console: true
     }
   }
 }

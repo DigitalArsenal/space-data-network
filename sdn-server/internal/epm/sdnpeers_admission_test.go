@@ -2,6 +2,9 @@ package epm
 
 import (
 	"testing"
+	"time"
+
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
@@ -98,7 +101,9 @@ func TestConnectedSDNPeerIsAdmittedAsConnected(t *testing.T) {
 	}
 }
 
-// "When a peer drops off the network it should just disappear."
+// "When a peer drops off the network it should just disappear." — still true
+// of a peer this node has NO record of ever having met. Nothing can be said
+// about it, so it says nothing.
 func TestUnpinnedPeerDisappearsWhenItGoesOffline(t *testing.T) {
 	online := &PeerGraphSnapshot{
 		LocalPeerID: localID,
@@ -225,5 +230,88 @@ func TestThisBuildRecognisesItsOwnAgentString(t *testing.T) {
 		if !isSDNAgentVersion(agent) {
 			t.Fatalf("membership gate rejected an SDN peer advertising %q", agent)
 		}
+	}
+}
+
+// Owner 2026-09-19: "there should be an 'offline nodes' menu as well that
+// shows nodes that have been seen but are not currently online, and 'last
+// seen' time". A node this box has actually met keeps a seat when it drops
+// off — and the row says it is not connected, rather than claiming it is.
+func TestSeenPeerKeepsItsSeatWhileOffline(t *testing.T) {
+	seenAt := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	snapshot := &PeerGraphSnapshot{
+		LocalPeerID: localID,
+		Nodes: []PeerNode{
+			{PeerID: localID, IsOnline: true},
+			{
+				PeerID:       connectedID,
+				IsOnline:     false,
+				AgentVersion: "spacedatanetwork/1.0.4",
+				LastSeen:     seenAt.Format(time.RFC3339),
+			},
+		},
+	}
+	entry, ok := observedIDs(t, snapshot, nil)[connectedID]
+	if !ok {
+		t.Fatal("an SDN node this box has met must stay listed while offline")
+	}
+	if entry.Metadata["source"] != peers.PeerSourceSeen {
+		t.Fatalf("source = %q, want %q", entry.Metadata["source"], peers.PeerSourceSeen)
+	}
+	if entry.Metadata["pinned"] == "true" {
+		t.Fatal("a seen peer is not pinned")
+	}
+}
+
+// The same seat, earned from the registry's own record rather than the
+// snapshot's — the shape a real offline row arrives in.
+func TestRegistryContactRecordAdmitsAnOfflinePeer(t *testing.T) {
+	decoded, err := peer.Decode(connectedID)
+	if err != nil {
+		t.Fatalf("decode peer id: %v", err)
+	}
+	registryPeer := &peers.TrustedPeer{
+		ID:              decoded,
+		Name:            "Test Node",
+		LastConnected:   time.Date(2026, 9, 18, 9, 30, 0, 0, time.UTC),
+		ConnectionCount: 4,
+		Metadata:        map[string]string{"agent_version": "spacedatanetwork/1.0.4"},
+	}
+	snapshot := &PeerGraphSnapshot{
+		LocalPeerID: localID,
+		Nodes: []PeerNode{
+			{PeerID: localID, IsOnline: true},
+			{PeerID: connectedID, IsOnline: false},
+		},
+	}
+	observed := BuildObservedSDNPeers(snapshot, []*peers.TrustedPeer{registryPeer}, nil, nil)
+	if len(observed) != 1 || observed[0].ID.String() != connectedID {
+		t.Fatalf("a peer with a recorded connection must be listed, got %d rows", len(observed))
+	}
+	if observed[0].Metadata["source"] != peers.PeerSourceSeen {
+		t.Fatalf("source = %q, want %q", observed[0].Metadata["source"], peers.PeerSourceSeen)
+	}
+	// The timestamp IS the offline row's content. This projection used to build
+	// a fresh TrustedPeer and drop it, so every row read "0001-01-01".
+	if !observed[0].LastConnected.Equal(registryPeer.LastConnected) {
+		t.Fatalf("last connected = %v, want %v", observed[0].LastConnected, registryPeer.LastConnected)
+	}
+	if observed[0].ConnectionCount != registryPeer.ConnectionCount {
+		t.Fatalf("connection count = %d, want %d", observed[0].ConnectionCount, registryPeer.ConnectionCount)
+	}
+}
+
+// An advertisement is not a meeting: a peer that only ever announced itself
+// stays out of BOTH lists, exactly as 2026-07-30 required.
+func TestAdvertisementOnlyPeerIsStillNotSeen(t *testing.T) {
+	snapshot := &PeerGraphSnapshot{
+		LocalPeerID: localID,
+		Nodes: []PeerNode{
+			{PeerID: localID, IsOnline: true},
+			{PeerID: strangerID, IsOnline: false, AgentVersion: "spacedatanetwork/1.0.0"},
+		},
+	}
+	if _, ok := observedIDs(t, snapshot, map[string][]string{strangerID: {"sdn/1.0.3"}})[strangerID]; ok {
+		t.Fatal("an advertisement with no record of contact was admitted as seen")
 	}
 }

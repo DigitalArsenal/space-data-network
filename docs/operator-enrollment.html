@@ -156,7 +156,7 @@ hr { border: 0; border-top: 1px solid var(--gray-200); margin: 2.5rem 0; }
 <p>The <code>name</code> is optional. The trust level is chosen by the enrolling admin, not by the key holder.</p>
 <p>Sign-in works like this: the wallet sends a challenge request containing its Ed25519 public key; the node looks the operator up <strong>by that signing key, not by xpub</strong>; the wallet then signs the challenge with the matching private key. So the row must carry the signing public key or the node has nothing to match. The xpub is the row&#39;s identity — every endpoint addresses the row by it — and the signing key is the possession proof.</p>
 <h3>Step 1 — the prospective operator generates a key on their own machine</h3>
-<p><strong>Shipped path: the in-browser key ceremony</strong> — the sanctioned way to generate an SDN key. Dashboard → <strong>Accounts → Operator keys</strong> → <strong>&quot;GENERATE A KEY&quot;</strong> dialog (the other half of the paste-an-xpub &quot;APPROVE A KEY&quot; form; both land in the same operator table). Some newer dashboard builds show a paste-only &quot;Enrol a key&quot; form without the generation button; the generation dialog&#39;s public output — xpub + signing public key + peer ID + fingerprint — is also reachable from the HD-wallet wallet UIs&#39; copy buttons. The ceremony:</p>
+<p><strong>Shipped path: the in-browser key ceremony</strong> — the sanctioned way to generate an SDN key. Dashboard → <strong>Accounts → Operator keys</strong> → <strong>&quot;GENERATE A KEY&quot;</strong> dialog (the other half of the paste-an-xpub &quot;APPROVE A KEY&quot; form; both land in the same operator table). Some newer dashboard builds show a paste-only &quot;Enroll a key&quot; form without the generation button; the generation dialog&#39;s public output — xpub + signing public key + peer ID + fingerprint — is also reachable from the HD-wallet wallet UIs&#39; copy buttons. The ceremony:</p>
 <ul>
 <li>generates a fresh 24-word recovery phrase entirely in the browser (HD-wallet module, seeded from the browser&#39;s own random source);</li>
 <li>derives and shows <strong>only public material</strong>: the account xpub, the peer ID, an xpub fingerprint, and the Ed25519 <strong>public</strong> key;</li>
@@ -275,7 +275,7 @@ spacedatanetwork accounts list
 <ol>
 <li>Sign in as an administrator.</li>
 <li>Open <strong>Accounts</strong>, then the <strong>Operators</strong> tab.</li>
-<li>In the <strong>&quot;Enrol a key&quot;</strong> form enter:<ul>
+<li>In the <strong>&quot;Enroll a key&quot;</strong> form enter:<ul>
 <li><strong>Account xpub</strong> — pasted from the prospective operator&#39;s key ceremony or from <code>derive-xpub</code>;</li>
 <li><strong>Name</strong> — optional, their display name;</li>
 <li><strong>Trust</strong> — one of: <code>unknown</code>, <code>marginal</code>, <code>standard</code>, <code>full</code>, <code>admin</code> (the dropdown offers exactly these; see Section 6);</li>

@@ -48,6 +48,12 @@ const (
 	// PinSourceOperator marks a pin created through the pin API.
 	PinSourceOperator = "pinned"
 
+	// PeerSourceSeen marks a row that is listed because this node has MET the
+	// peer and recorded when — not because of a pin, and not because of a live
+	// connection (owner 2026-09-19: an offline list of "nodes that have been
+	// seen but are not currently online, and 'last seen' time").
+	PeerSourceSeen = "seen"
+
 	// pinFileName is the pin store's file name inside the node's data dir.
 	pinFileName = "peer-pins.json"
 

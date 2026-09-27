@@ -35,6 +35,7 @@ import (
 	"crypto/ed25519"
 	"crypto/subtle"
 	"encoding/hex"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -223,4 +224,77 @@ func (h *Handler) completeRootSignIn(w http.ResponseWriter, r *http.Request, pen
 		},
 		ExpiresAt: time.Now().Add(h.sessionTTL).Unix(),
 	})
+}
+
+// localConsoleSession admits the node's OWN console, with no sign-in.
+//
+// OWNER 2026-09-19, verbatim: "there should never be a 'sign in' page, it
+// always has a key since it's always online."
+//
+// A node holds its identity from the moment it is initialised — that key signs
+// its records and answers the challenges this file already admits
+// unconditionally (isNodeRootSigningKey short-circuits handleChallenge before
+// any user lookup). The console is served BY that node, over a loopback-bound
+// admin listener. Whoever reaches it is sitting at the machine that holds the
+// key, so asking them to prove they hold it is a ceremony with no second party:
+// there is nobody else to be.
+//
+// The session is REAL — minted through the session store for the node's own
+// account xpub at rootTrustLevel — so every gate downstream (trust, ABAC, EPM
+// custody, /api/auth/me) sees exactly what the wallet ceremony produced. It
+// needs no user-store row, for the same reason completeRootSignIn does not:
+// losing an audit row must never lock a node's owner out of their own node.
+//
+// It is OPT-IN (admin.local_console) and refused at startup on a non-loopback
+// admin bind. A deployed node whose console sits behind a reverse proxy on
+// the same box leaves it off: the proxy test below depends on every proxy
+// route adding a forwarding header, and one route that does not would hand
+// the internet this console. The desktop app, whose admin listener is
+// loopback-only with nothing in front of it, turns it on.
+//
+// SAFETY, and it is the whole of it: loopback is checked on RemoteAddr
+// directly, and ANY evidence of a proxy hop refuses outright. That second test
+// is not paranoia — nginx terminating TLS on the node's own box makes
+// RemoteAddr 127.0.0.1 for every client on the internet, and without it this
+// would hand each of them the owner's console. requestCrossedAProxy is shared
+// with dev_auto_admin, which learned the same lesson.
+func (h *Handler) localConsoleSession(r *http.Request) *Session {
+	if h == nil || !h.localConsole || h.sessions == nil {
+		return nil
+	}
+	xpub := h.rootSessionXPub()
+	if xpub == "" {
+		return nil // no root identity yet: nothing to be
+	}
+	if requestCrossedAProxy(r) {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil || !ip.IsLoopback() {
+		return nil
+	}
+
+	h.localConsoleMu.Lock()
+	defer h.localConsoleMu.Unlock()
+	if h.localConsoleToken != "" {
+		if s, verr := h.sessions.ValidateSession(h.localConsoleToken); verr == nil {
+			return s
+		}
+		h.localConsoleToken = ""
+	}
+	token, cerr := h.sessions.CreateSession(xpub, rootTrustLevel, "127.0.0.1", "local-console", h.sessionTTL)
+	if cerr != nil {
+		return nil
+	}
+	s, verr := h.sessions.ValidateSession(token)
+	if verr != nil {
+		return nil
+	}
+	h.localConsoleToken = token
+	log.Infof("Local console admitted as the node's own root account (trust=%s)", rootTrustLevel)
+	return s
 }

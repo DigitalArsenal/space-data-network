@@ -256,7 +256,7 @@ Trust levels: `never`, `unknown`, `marginal`, `standard`, `full`, `admin`,
 Operator life cycle:
 
 - Operator rows are created by: the node's `users:` config block, the
-  dashboard's "Enrol a key" form (`POST /api/auth/users`, admin-only), the
+  dashboard's "Enroll a key" form (`POST /api/auth/users`, admin-only), the
   first-admin bootstrap, or the root sign-in's record row.
 - `spacedatanetwork accounts trust --xpub <xpub> --level <level>` UPDATEs an
   existing row (`PUT /api/auth/users/<xpub>`); never creates one. A nonexistent

@@ -144,7 +144,7 @@ Web-of-trust detail: the peer graph records each peer's role (standard, bootstra
 Four ways, and it matters which one you use:
 
 1. **Configuration**: a `users:` block in `config.yaml` (xpub, trust level, optional name and signing public key). Config entries win over database rows on every read, cannot have their trust changed through the API, and cannot be removed through the API.
-2. **The dashboard**: the ACCOUNTS view's "Enrol a key" form (xpub, name, trust, signing public key in hex), which creates the row through the admin API.
+2. **The dashboard**: the ACCOUNTS view's "Enroll a key" form (xpub, name, trust, signing public key in hex), which creates the row through the admin API.
 3. **First-admin bootstrap**: if no admin exists anywhere, the next wallet that signs in is minted as the initial admin. The node therefore cannot be permanently locked out at the operator level by deleting the last admin row.
 4. **The root ceremony**: the node's own key is always admitted as an admin, with or without a stored row.
 
