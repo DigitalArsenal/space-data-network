@@ -74,6 +74,7 @@ func TestPoisonedEngineIsReplacedWithoutARestart(t *testing.T) {
 	if liveAfter <= liveBefore {
 		t.Fatalf("LiveRecordBytes after recovery = %d, want more than %d", liveAfter, liveBefore)
 	}
+	requireCounterMatchesScan(t, store, "after engine recovery")
 	if _, err := store.DataSummary(); err != nil {
 		t.Fatalf("DataSummary after recovery: %v", err)
 	}
@@ -93,6 +94,11 @@ func TestPoisonedEngineRefusesStoreWritesUntilReplaced(t *testing.T) {
 
 	if _, err := store.Store("RFM.fbs", poisonTestPayload(2, 64), "peer", nil); !wasmrt.IsPoisoned(err) {
 		t.Fatalf("write on a poisoned engine = %v, want a poisoned-module refusal", err)
+	}
+	// A poisoned engine is not a zero: the old scan logged and skipped every
+	// schema and answered 0.
+	if _, err := store.LiveRecordBytes(); !wasmrt.IsPoisoned(err) {
+		t.Fatalf("LiveRecordBytes on a poisoned engine = %v, want a poisoned-module refusal", err)
 	}
 }
 
