@@ -1842,9 +1842,12 @@ func (s *FlatSQLStore) rebuildSourceSummaryLane(lane sourceSummaryLane) error {
 	// would never converge and would rebuild that lane on every boot forever.
 	// Reporting the row at zero bytes is both the honest answer for
 	// /api/v1/stats and the one that lets the skip work.
-	readSource, err := s.recordReadSourceFiltered(lane.SchemaName, "cid > ?1 AND (?2 = '' OR cid <= ?2)")
+	// Each tag's record is read by CID from the producer tables that hold it.
+	// The union read source, even with the slice bounds pushed into every
+	// branch, is a GROUP BY over a UNION ALL (plan guard).
+	tables, err := s.recordTablesForSchema(lane.SchemaName)
 	if err != nil {
-		return fmt.Errorf("read source for %s: %w", lane.SchemaName, err)
+		return fmt.Errorf("record tables for %s: %w", lane.SchemaName, err)
 	}
 	boundarySQL := fmt.Sprintf(`
 		SELECT cid FROM sdn_record_source_tags
@@ -1855,17 +1858,17 @@ func (s *FlatSQLStore) rebuildSourceSummaryLane(lane sourceSummaryLane) error {
 	aggSQL := fmt.Sprintf(`
 		SELECT t.producer_peer_id, t.producer_public_key,
 		       COUNT(*),
-		       COALESCE(SUM(records.record_length), 0),
-		       COALESCE(MAX(records.rowid), 0),
+		       COALESCE(SUM(%s), 0),
+		       COALESCE(MAX(%s), 0),
 		       COALESCE(MIN(t.created_at), 0)
 		FROM (
 			SELECT cid, producer_peer_id, producer_public_key, created_at
 			FROM sdn_record_source_tags
 			WHERE schema_name = ?3 AND provider_id = ?4 AND source_name = ?5 AND batch_id = ?6
 			  AND cid > ?1 AND (?2 = '' OR cid <= ?2)
-		) t
-		LEFT JOIN %s records ON records.cid = t.cid
-		GROUP BY t.producer_peer_id, t.producer_public_key`, readSource)
+		) t%s
+		GROUP BY t.producer_peer_id, t.producer_public_key`,
+		recordColumnSQL(tables, "record_length"), recordColumnSQL(tables, "rowid"), recordColumnJoinsSQL(tables, "t.cid"))
 
 	aggs := make(map[sourceSummaryProducerKey]*sourceSummaryProducerAgg, 4)
 	lastCID := ""
@@ -3060,20 +3063,22 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 
 	defer s.lockWrite("ReconcileSourceBatch")()
 
-	readSource, err := s.recordReadSource(result.SchemaName)
+	// Driven by the source's tag rows, each checked against the producer
+	// tables by CID: joining the union read source materialised every record
+	// of the standard, four times per module ingest (plan guard).
+	tables, err := s.recordTablesForSchema(result.SchemaName)
 	if err != nil {
-		return result, fmt.Errorf("record read source: %w", err)
+		return result, fmt.Errorf("record tables: %w", err)
 	}
 	args := []interface{}{result.SchemaName, result.ProviderID, result.SourceName, result.KeepBatch}
-	countSQL := fmt.Sprintf(`
+	countSQL := `
 		SELECT COUNT(*)
-		FROM %s records
-		INNER JOIN sdn_record_source_tags tags
-		  ON tags.schema_name = ? AND tags.cid = records.cid
-		WHERE tags.provider_id = ?
+		FROM sdn_record_source_tags tags
+		WHERE tags.schema_name = ?
+		  AND tags.provider_id = ?
 		  AND tags.source_name = ?
 		  AND tags.batch_id <> ?
-	`, readSource)
+		  AND ` + recordHeldSQL(tables, "tags.cid")
 	if err := s.db.QueryRow(countSQL, args...).Scan(&result.Matched); err != nil {
 		return result, fmt.Errorf("count source batch reconciliation records: %w", err)
 	}
@@ -3111,13 +3116,13 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 	// every (producer, standard) table. Deleted counts LOGICAL records (per
 	// cid), independent of how many tables hold the row.
 	if err := tx.QueryRow(
-		`SELECT COUNT(*) FROM temp_sdn_reconcile_cids WHERE cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
+		`SELECT COUNT(*) FROM temp_sdn_reconcile_cids staged WHERE NOT EXISTS (SELECT 1 FROM sdn_record_source_tags keep WHERE keep.schema_name = ? AND keep.cid = staged.cid)`,
 		result.SchemaName,
 	).Scan(&result.Deleted); err != nil {
 		return result, fmt.Errorf("count orphaned source batch records: %w", err)
 	}
 	s.deleteRoutedMirrorsWhere(tx, tableName,
-		`cid IN (SELECT cid FROM temp_sdn_reconcile_cids) AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
+		`cid IN (SELECT staged.cid FROM temp_sdn_reconcile_cids staged WHERE NOT EXISTS (SELECT 1 FROM sdn_record_source_tags keep WHERE keep.schema_name = ? AND keep.cid = staged.cid))`,
 		result.SchemaName)
 	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		DELETE FROM sdn_record_index
@@ -3180,10 +3185,16 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 
 	defer s.lockWrite("ReconcileSourceBatchIndexedDuplicates")()
 
-	readSource, err := s.recordReadSource(result.SchemaName)
+	// Each tag row's record is read by CID from the producer tables that
+	// hold it; joining the union read source materialised every record of the
+	// standard on each call (plan guard).
+	tables, err := s.recordTablesForSchema(result.SchemaName)
 	if err != nil {
-		return result, fmt.Errorf("record read source: %w", err)
+		return result, fmt.Errorf("record tables: %w", err)
 	}
+	recordTimestamp := recordColumnSQL(tables, "timestamp")
+	recordJoins := recordColumnJoinsSQL(tables, "tags.cid")
+	recordHeld := recordJoinedHeldSQL(tables)
 	args := []interface{}{result.SchemaName, result.ProviderID, result.SourceName, result.BatchID}
 	countSQL := fmt.Sprintf(`
 		WITH ranked AS (
@@ -3197,17 +3208,16 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 						COALESCE(idx.ops_status_code, ''),
 						COALESCE(idx.epoch_unix, -1),
 						COALESCE(idx.epoch_day, '')
-					ORDER BY tags.created_at DESC, records.timestamp DESC, tags.cid DESC
+					ORDER BY tags.created_at DESC, %s DESC, tags.cid DESC
 				) AS rn
 			FROM sdn_record_source_tags tags
 			INNER JOIN sdn_record_index idx
-			  ON idx.schema_name = tags.schema_name AND idx.cid = tags.cid
-			INNER JOIN %s records
-			  ON records.cid = tags.cid
+			  ON idx.schema_name = tags.schema_name AND idx.cid = tags.cid%s
 			WHERE tags.schema_name = ?
 			  AND tags.provider_id = ?
 			  AND tags.source_name = ?
 			  AND tags.batch_id = ?
+			  AND %s
 			  -- AN EMPTY INDEX IS NOT AN IDENTITY.
 			  --
 			  -- The partition above is the SATELLITE index. A standard that
@@ -3232,7 +3242,7 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 		SELECT COUNT(*)
 		FROM ranked
 		WHERE rn > 1
-	`, readSource)
+	`, recordTimestamp, recordJoins, recordHeld)
 	if err := s.db.QueryRow(countSQL, args...).Scan(&result.Matched); err != nil {
 		return result, fmt.Errorf("count source batch duplicate records: %w", err)
 	}
@@ -3265,17 +3275,16 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 						COALESCE(idx.ops_status_code, ''),
 						COALESCE(idx.epoch_unix, -1),
 						COALESCE(idx.epoch_day, '')
-					ORDER BY tags.created_at DESC, records.timestamp DESC, tags.cid DESC
+					ORDER BY tags.created_at DESC, %s DESC, tags.cid DESC
 				) AS rn
 			FROM sdn_record_source_tags tags
 			INNER JOIN sdn_record_index idx
-			  ON idx.schema_name = tags.schema_name AND idx.cid = tags.cid
-			INNER JOIN %s records
-			  ON records.cid = tags.cid
+			  ON idx.schema_name = tags.schema_name AND idx.cid = tags.cid%s
 			WHERE tags.schema_name = ?
 			  AND tags.provider_id = ?
 			  AND tags.source_name = ?
 			  AND tags.batch_id = ?
+			  AND %s
 			  -- AN EMPTY INDEX IS NOT AN IDENTITY.
 			  --
 			  -- The partition above is the SATELLITE index. A standard that
@@ -3300,7 +3309,7 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 		SELECT cid
 		FROM ranked
 		WHERE rn > 1
-	`, readSource)
+	`, recordTimestamp, recordJoins, recordHeld)
 	if _, err := tx.Exec(stageSQL, args...); err != nil {
 		return result, fmt.Errorf("stage source batch duplicate cids: %w", err)
 	}
@@ -3590,16 +3599,18 @@ func (s *FlatSQLStore) garbageCollectBeforeLocked(cutoff int64) (int64, error) {
 			log.Warnf("GC index cleanup failed for %s: %v", schemaName, err)
 		}
 		if affected > 0 {
-			readSource, rsErr := s.recordReadSource(schemaName)
-			if rsErr != nil {
-				log.Warnf("GC source tag cleanup read source for %s: %v", schemaName, rsErr)
+			tables, tErr := s.recordTablesForSchema(schemaName)
+			if tErr != nil {
+				log.Warnf("GC source tag cleanup record tables for %s: %v", schemaName, tErr)
 				continue
 			}
-			if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
+			// Each tag is checked against the producer tables by CID. `cid NOT
+			// IN (SELECT cid FROM <union read source>)` materialised every
+			// record of the standard (plan guard).
+			if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
 				DELETE FROM sdn_record_source_tags
 				WHERE schema_name = ?
-				  AND cid NOT IN (SELECT cid FROM %s)
-			`, readSource)), schemaName); err != nil {
+				  AND NOT `+recordHeldSQL(tables, "sdn_record_source_tags.cid")), schemaName); err != nil {
 				log.Warnf("GC source tag cleanup failed for %s: %v", schemaName, err)
 			}
 			if _, err := s.tombstoneOrphanedEngineRowsLocked(schemaName); err != nil {
@@ -5447,27 +5458,32 @@ func (s *FlatSQLStore) rawSourceSummaryHeadLocked(filter RawRecordQuery) (RawRec
 	}, summaryRows > 0, nil
 }
 
-func (s *FlatSQLStore) countSchemaRecordsLocked(tableName string, filter RawRecordQuery) (int64, error) {
+// countSchemaRecordsLocked counts a schema's indexed records held by any of
+// its producer tables. It is driven by sdn_record_index with one CID seek per
+// table; joining the union read source here materialised every record of a
+// standard two producers publish, payloads included, on every datasync count
+// (plan guard, TestPlanGuardTrustedReadPaths). A peer filter matches a record
+// any holding table stores under that peer.
+func (s *FlatSQLStore) countSchemaRecordsLocked(_ string, filter RawRecordQuery) (int64, error) {
 	indexFilter, err := compileRawRecordSyncFilter(filter)
 	if err != nil {
 		return 0, err
 	}
-	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s records`, tableName)
-	args := make([]interface{}, 0, len(indexFilter.args)+3)
-	if indexFilter.active() {
-		query += `
-		INNER JOIN sdn_record_index idx
-		  ON idx.schema_name = ? AND idx.cid = records.cid
-		`
-		args = append(args, filter.SchemaName)
+	tables, err := s.recordTablesForSchema(filter.SchemaName)
+	if err != nil {
+		return 0, err
 	}
-	query += ` WHERE 1=1`
+	query := `SELECT COUNT(*) FROM sdn_record_index idx WHERE idx.schema_name = ? AND ` + recordHeldSQL(tables, "idx.cid")
+	args := make([]interface{}, 0, len(indexFilter.args)+2+len(tables))
+	args = append(args, filter.SchemaName)
 	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
-		query += ` AND records.peer_id = ?`
-		args = append(args, peerID)
+		query += ` AND ` + recordHeldWhereSQL(tables, "idx.cid", "held.peer_id = ?")
+		for range tables {
+			args = append(args, peerID)
+		}
 	}
 	if cid := strings.TrimSpace(filter.CID); cid != "" {
-		query += ` AND records.cid = ?`
+		query += ` AND idx.cid = ?`
 		args = append(args, cid)
 	}
 	query, args = appendRawRecordSyncFilterWhere(query, args, indexFilter)
@@ -5479,31 +5495,36 @@ func (s *FlatSQLStore) countSchemaRecordsLocked(tableName string, filter RawReco
 	return total, nil
 }
 
-func (s *FlatSQLStore) rawSchemaRecordHeadLocked(tableName string, filter RawRecordQuery) (RawRecordHead, error) {
+// rawSchemaRecordHeadLocked is the head of a schema's indexed records held by
+// any of its producer tables, driven by sdn_record_index with each table
+// joined by CID (see countSchemaRecordsLocked). A record several producers
+// hold reads its columns from the first table (by name) holding it.
+func (s *FlatSQLStore) rawSchemaRecordHeadLocked(_ string, filter RawRecordQuery) (RawRecordHead, error) {
 	indexFilter, err := compileRawRecordSyncFilter(filter)
 	if err != nil {
 		return RawRecordHead{}, err
 	}
-	query := fmt.Sprintf(`
-		SELECT COALESCE(SUM(records.record_length), 0), COALESCE(MAX(records.timestamp), 0),
-		       COALESCE(MAX(records.created_at), 0), COALESCE(MAX(records.rowid), 0)
-		FROM %s records
-	`, tableName)
-	args := make([]interface{}, 0, len(indexFilter.args)+3)
-	if indexFilter.active() {
-		query += `
-		INNER JOIN sdn_record_index idx
-		  ON idx.schema_name = ? AND idx.cid = records.cid
-		`
-		args = append(args, filter.SchemaName)
+	tables, err := s.recordTablesForSchema(filter.SchemaName)
+	if err != nil {
+		return RawRecordHead{}, err
 	}
-	query += ` WHERE 1=1`
+	query := fmt.Sprintf(`
+		SELECT COALESCE(SUM(%s), 0), COALESCE(MAX(%s), 0),
+		       COALESCE(MAX(%s), 0), COALESCE(MAX(idx.rowid), 0)
+		FROM sdn_record_index idx%s
+		WHERE idx.schema_name = ? AND %s`,
+		recordColumnSQL(tables, "record_length"), recordColumnSQL(tables, "timestamp"),
+		recordColumnSQL(tables, "created_at"), recordColumnJoinsSQL(tables, "idx.cid"), recordJoinedHeldSQL(tables))
+	args := make([]interface{}, 0, len(indexFilter.args)+2+len(tables))
+	args = append(args, filter.SchemaName)
 	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
-		query += ` AND records.peer_id = ?`
-		args = append(args, peerID)
+		query += ` AND ` + recordHeldWhereSQL(tables, "idx.cid", "held.peer_id = ?")
+		for range tables {
+			args = append(args, peerID)
+		}
 	}
 	if cid := strings.TrimSpace(filter.CID); cid != "" {
-		query += ` AND records.cid = ?`
+		query += ` AND idx.cid = ?`
 		args = append(args, cid)
 	}
 	query, args = appendRawRecordSyncFilterWhere(query, args, indexFilter)
@@ -6579,6 +6600,33 @@ func indexedRecordWindowSQL(filter IndexedRecordQuery, tables []string, projecti
 			WHERE pt.schema_name = w.schema_name AND pt.cid = w.cid)
 	`, projection(col), query, joins)
 	return outer + outerOrder, args
+}
+
+// recordJoinedHeldSQL is true when any producer table joined by
+// recordColumnJoinsSQL holds the row. With no tables, nothing is held.
+func recordJoinedHeldSQL(tables []string) string {
+	if len(tables) == 0 {
+		return "0"
+	}
+	parts := make([]string, 0, len(tables))
+	for i := range tables {
+		parts = append(parts, fmt.Sprintf("r%d.cid IS NOT NULL", i))
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
+// recordHeldWhereSQL is recordHeldSQL with one more predicate on the holding
+// row, e.g. "held.peer_id = ?". It repeats once per table, so the caller binds
+// its argument len(tables) times.
+func recordHeldWhereSQL(tables []string, cidExpr, predicate string) string {
+	if len(tables) == 0 {
+		return "0"
+	}
+	parts := make([]string, 0, len(tables))
+	for _, t := range tables {
+		parts = append(parts, fmt.Sprintf("EXISTS (SELECT 1 FROM %s held WHERE held.cid = %s AND %s)", t, cidExpr, predicate))
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
 }
 
 // recordHeldSQL is true when cidExpr is held by any of a standard's producer
