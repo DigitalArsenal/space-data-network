@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
 // WithAOTCache enables ahead-of-time native compilation of the engine. This
@@ -132,7 +133,15 @@ func ensureAOTArtifact(cacheDir, prefix string, wasm []byte, prune bool) ([]byte
 		return nil, fmt.Errorf("flatsqlrt: create AOT cache dir: %w", err)
 	}
 
-	compiler := wasmedge.NewCompiler()
+	// The compile configuration matches the runtime's (wasmrt enables the
+	// THREADS proposal for every VM): code compiled for one proposal set and
+	// validated under another is exactly the mismatch design §5.4 names.
+	conf := wasmedge.NewConfigure(wasmedge.THREADS)
+	if conf == nil {
+		return nil, fmt.Errorf("flatsqlrt: cannot create an AOT compile configuration")
+	}
+	defer conf.Release()
+	compiler := wasmedge.NewCompilerWithConfig(conf)
 	if compiler == nil {
 		return nil, fmt.Errorf("flatsqlrt: WasmEdge AOT compiler unavailable")
 	}
@@ -214,4 +223,66 @@ func aotArtifactPath(cacheDir, prefix string, wasm []byte) string {
 	cpuProfile := sanitizeAOTKeyPart(aotCPUProfile())
 	return filepath.Join(cacheDir, fmt.Sprintf("%s-%s-we%s-%s.aot.wasm",
 		prefix, hex.EncodeToString(sum[:8]), ver, cpuProfile))
+}
+
+// Threaded, Interruptible artifacts (design §5.4, A21, A30).
+//
+// A partition-store instance runs only AOT code compiled with THREADS and
+// Interruptible, so an executor stop reaches its service threads even inside
+// a compute loop. Its cache key differs from the legacy engine's in two
+// parts, so neither can ever load the other's artifact:
+//   - "-intr": compiled Interruptible;
+//   - the runtime's stop-token behaviour (wasmrt.SubstrateReport.Tag): a
+//     patched runtime reads the stop token that an upstream one consumes, and
+//     the compiled check is part of the artifact.
+
+// ThreadedAOTPath reports where the threaded artifact for wasm lives.
+func ThreadedAOTPath(cacheDir, prefix string, wasm []byte) string {
+	return aotArtifactPath(cacheDir, threadedAOTKey(prefix), wasm)
+}
+
+func threadedAOTKey(prefix string) string {
+	return prefix + "-intr-" + wasmrt.SubstrateStatus().Tag()
+}
+
+// EnsureThreadedAOTArtifact returns the threaded Interruptible artifact for
+// wasm from cacheDir, compiling it on a miss only when compileOnMiss (tests,
+// prewarm). Returns the artifact bytes and its path.
+func EnsureThreadedAOTArtifact(cacheDir, prefix string, wasm []byte, compileOnMiss bool) ([]byte, string, error) {
+	if cacheDir == "" {
+		return nil, "", fmt.Errorf("flatsqlrt: a threaded instance needs an AOT cache directory")
+	}
+	key := threadedAOTKey(prefix)
+	path := aotArtifactPath(cacheDir, key, wasm)
+	if cached, err := os.ReadFile(path); err == nil && len(cached) > 0 {
+		return cached, path, nil
+	}
+	if !compileOnMiss {
+		return nil, path, fmt.Errorf("flatsqlrt: threaded AOT artifact not found at %s", path)
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return nil, path, fmt.Errorf("flatsqlrt: create AOT cache dir: %w", err)
+	}
+	conf, err := wasmrt.NewThreadedCompilerConfig()
+	if err != nil {
+		return nil, path, err
+	}
+	defer conf.Release()
+	compiler := wasmedge.NewCompilerWithConfig(conf)
+	if compiler == nil {
+		return nil, path, fmt.Errorf("flatsqlrt: WasmEdge AOT compiler unavailable")
+	}
+	defer compiler.Release()
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := compiler.CompileBuffer(wasm, tmp); err != nil {
+		os.Remove(tmp)
+		return nil, path, fmt.Errorf("flatsqlrt: threaded AOT compile: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return nil, path, fmt.Errorf("flatsqlrt: AOT cache rename: %w", err)
+	}
+	pruneAOTArtifacts(cacheDir, key, filepath.Base(path))
+	out, err := os.ReadFile(path)
+	return out, path, err
 }
