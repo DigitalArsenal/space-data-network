@@ -1819,8 +1819,8 @@ export async function createShowreel(base = "") {
     const lab = alpha * seg(t, T_CONJ + 1.1, T_CONJ + 1.5) * (1 - seg(t, T_TCA - 0.9, T_TCA - 0.6));
     if (lab > 0) {
       [
-        [qa, AMBER, "OPERATOR DATA", "DIGITALLY SIGNED", 1, 64],
-        [qb, CYAN, "RADAR DATA", "DIGITALLY SIGNED", -1, 84],
+        [qa, AMBER, "SATELLITE A", "OPERATOR DATA · DIGITALLY SIGNED", 1, 64],
+        [qb, CYAN, "SATELLITE B", "RADAR DATA · DIGITALLY SIGNED", -1, 84],
       ].forEach(([q, col, name, src, side, dy]) => {
         const lx = q.x + side * 60;
         const ly = q.y + dy;
