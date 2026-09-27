@@ -297,3 +297,103 @@ func TestIndexedRecordWindowPlanNeverScansTheRecordTables(t *testing.T) {
 		}
 	}
 }
+
+// unionEngineWindowPageForTest is the hot-window page the store used to read:
+// the index joined to the union read source.
+func unionEngineWindowPageForTest(readSource, placeholders, extraWhere string) string {
+	return fmt.Sprintf(`
+		SELECT page.rid, page.cid, page.data, COALESCE(tags.source_name, '') AS source_name
+		FROM (
+			SELECT idx.rowid AS rid, idx.cid AS cid, idx.schema_name AS schema_name, rr.data AS data
+			FROM sdn_record_index idx
+			JOIN %s rr ON rr.cid = idx.cid
+			WHERE idx.schema_name IN (%s) AND idx.rowid > ?%s
+			ORDER BY idx.rowid ASC
+			LIMIT ?
+		) page
+		LEFT JOIN sdn_record_source_tags tags
+		  ON tags.schema_name = page.schema_name AND tags.cid = page.cid
+		ORDER BY page.rid ASC, tags.created_at ASC
+	`, readSource, placeholders, extraWhere)
+}
+
+type pageRowForTest struct {
+	cid     string
+	data    []byte
+	sources map[string]bool
+}
+
+func readEnginePageForTest(t *testing.T, s *FlatSQLStore, query string, args []any) ([]int64, map[int64]*pageRowForTest) {
+	t.Helper()
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		t.Fatalf("page query: %v\n%s", err, query)
+	}
+	defer rows.Close()
+	var order []int64
+	out := map[int64]*pageRowForTest{}
+	for rows.Next() {
+		var rid int64
+		var cid, source string
+		var data []byte
+		if err := rows.Scan(&rid, &cid, &data, &source); err != nil {
+			t.Fatal(err)
+		}
+		r, ok := out[rid]
+		if !ok {
+			r = &pageRowForTest{cid: cid, data: data, sources: map[string]bool{}}
+			out[rid] = r
+			order = append(order, rid)
+		}
+		r.sources[source] = true
+	}
+	return order, out
+}
+
+// The engine hot-window page reads the rows the union page read, and seeks
+// each record by CID instead of materialising the standard per page.
+func TestEngineWindowPageSeeksRecordsByCID(t *testing.T) {
+	store := seedIndexedWindowStore(t)
+	tables, err := store.recordTablesForSchema("OMM.fbs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readSource, err := store.recordReadSource("OMM.fbs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliases := engineSchemaNameAliases("OMM.fbs")
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")
+	for _, cursor := range []int64{0, 7, 20} {
+		args := make([]any, 0, len(aliases)+2)
+		for _, a := range aliases {
+			args = append(args, a)
+		}
+		args = append(args, cursor, 9)
+		wantOrder, want := readEnginePageForTest(t, store, unionEngineWindowPageForTest(readSource, placeholders, ""), args)
+		gotOrder, got := readEnginePageForTest(t, store, engineWindowPagesSQL(tables, placeholders, ""), args)
+		if fmt.Sprint(gotOrder) != fmt.Sprint(wantOrder) || len(wantOrder) == 0 {
+			t.Fatalf("cursor %d: page rowids %v, union page %v", cursor, gotOrder, wantOrder)
+		}
+		for _, rid := range wantOrder {
+			if got[rid].cid != want[rid].cid || !bytes.Equal(got[rid].data, want[rid].data) || fmt.Sprint(got[rid].sources) != fmt.Sprint(want[rid].sources) {
+				t.Fatalf("cursor %d rowid %d differs from the union page", cursor, rid)
+			}
+		}
+	}
+
+	notInLedger := ` AND NOT EXISTS (SELECT 1 FROM sdn_engine_rows e WHERE e.schema_name = ? AND e.cid = idx.cid)`
+	args := make([]any, 0, len(aliases)+3)
+	for _, a := range aliases {
+		args = append(args, a)
+	}
+	args = append(args, int64(0), engineLedgerSchema("OMM.fbs"), 9)
+	plan := explainForTest(t, store, engineWindowPagesSQL(tables, placeholders, notInLedger), args)
+	if line, bad := planReadsWholeTables(plan); bad {
+		t.Fatalf("hot-window page plan reads whole tables at %q:\n  %s", line, strings.Join(plan, "\n  "))
+	}
+	unionPlan := explainForTest(t, store, unionEngineWindowPageForTest(readSource, placeholders, notInLedger), args)
+	if _, bad := planReadsWholeTables(unionPlan); !bad {
+		t.Fatalf("the plan check does not flag the union page:\n  %s", strings.Join(unionPlan, "\n  "))
+	}
+}
