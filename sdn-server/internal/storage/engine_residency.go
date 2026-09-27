@@ -33,7 +33,13 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 )
+
+// A stale ledger can contain an entire hot window. Report one batch summary,
+// at most once per minute, rather than one warning per record (or retry).
+var staleResidencyWarnings = rate.NewLimiter(rate.Every(time.Minute), 1)
 
 const (
 	engineRowsTableSQL = `
@@ -388,6 +394,14 @@ func (s *FlatSQLStore) tombstoneResidencyRowsLocked(schemaName, table string, ro
 	}
 	ledgerSchema := engineLedgerSchema(schemaName)
 	removed := 0
+	stale, staleRemoved := 0, 0
+	var example engineResidencyRow
+	defer func() {
+		s.engineResidentAdd(schemaName, -int64(removed))
+		if stale > 0 && staleResidencyWarnings.Allow() {
+			log.Warnf("FlatSQL engine: %s residency batch names unregistered sources: %d rows, %d deleted; example cid=%q source=%q seq=%d (warnings limited to once per minute)", schemaName, stale, staleRemoved, example.cid, example.source, example.seq)
+		}
+	}()
 	for _, row := range rows {
 		// The engine's markDeleted throws on a partition it never registered,
 		// and the noeh build turns that throw into an `unreachable` trap that
@@ -396,12 +410,18 @@ func (s *FlatSQLStore) tombstoneResidencyRowsLocked(schemaName, table string, ro
 		// is hydrated. A ledger row naming an unregistered source cannot be
 		// resident in the arena, so it is stale bookkeeping: drop it here.
 		if !s.engineSources[row.source] {
-			log.Warnf("FlatSQL engine: residency row %s %q names unregistered source %q (seq %d); dropping it without an engine tombstone", schemaName, row.cid, row.source, row.seq)
-			if _, err := exec.Exec(`DELETE FROM sdn_engine_rows WHERE schema_name = ? AND cid = ? AND source = ? AND seq = ?`, ledgerSchema, row.cid, row.source, row.seq); err != nil {
-				log.Warnf("FlatSQL engine: drop stale residency row %s/%q: %v", schemaName, row.cid, err)
-				continue
+			stale++
+			example = row
+			result, err := exec.Exec(`DELETE FROM sdn_engine_rows WHERE schema_name = ? AND cid = ? AND source = ? AND seq = ?`, ledgerSchema, row.cid, row.source, row.seq)
+			if err != nil {
+				return removed, fmt.Errorf("drop stale residency row %s/%q: %w", schemaName, row.cid, err)
 			}
-			removed++
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return removed, fmt.Errorf("count stale residency deletes for %s: %w", schemaName, err)
+			}
+			staleRemoved += int(affected)
+			removed += int(affected)
 			continue
 		}
 		if err := s.engineDB.MarkDeleted(enginePartition(table, row.source), uint64(row.seq)); err != nil {
@@ -416,7 +436,6 @@ func (s *FlatSQLStore) tombstoneResidencyRowsLocked(schemaName, table string, ro
 		}
 		removed++
 	}
-	s.engineResidentAdd(schemaName, -int64(removed))
 	return removed, nil
 }
 
