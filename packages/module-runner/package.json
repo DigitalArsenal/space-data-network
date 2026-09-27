@@ -11,7 +11,7 @@
     "test": "node --experimental-vm-modules tests/runner.test.mjs"
   },
   "dependencies": {
-    "space-data-module-sdk": "0.8.20"
+    "space-data-module-sdk": "0.8.21"
   },
   "engines": {
     "node": ">=20.0.0"
