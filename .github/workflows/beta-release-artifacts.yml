@@ -863,6 +863,24 @@ jobs:
               ;;
           esac
           echo "${BINARY_NAME}: no runtime library dependency"
+      # THE RUNTIME PATCHES, MEASURED IN THE BINARY THAT SHIPS (design A31).
+      # build-static-wasmedge.sh carries the atomic-wait and stop-token
+      # patches; this proves the binary behaves patched rather than trusting
+      # the version string, which reads 0.16.4 either way. It also installs
+      # and round-trips the partition store's C host I/O module (A30), which
+      # is POSIX-only, so Windows does not run it.
+      - name: Substrate self-test on the released binary
+        if: matrix.target_os != 'windows'
+        run: ./dist/cli-input/${BINARY_NAME} substrate-selftest --require-patched
+      # The same runtime, through the regression tests that pin each patch:
+      # notify without a store, one stop ending 16 Interruptible AOT threads.
+      - name: WasmEdge substrate regression tests
+        if: matrix.target_os != 'windows'
+        working-directory: sdn-server
+        env:
+          SDN_WASM_ATOMIC_REGRESSION: '1'
+          SDN_WASM_REQUIRE_PATCHED: '1'
+        run: ../scripts/go-with-wasmedge.sh test ./internal/wasmrt/ -count=1 -run 'TestWasiAtomicNotifyWithoutStore|TestSubstrateSelfTest|TestOneStopEndsSixteenInterruptibleAOTThreads|TestStaticBuildCarriesTheRuntimePatches' -v
       - name: Stage wallet sign-in assets
         run: |
           SDN_WALLET_NODE_MODULES="${PWD}/sdn-js/node_modules" deployment/wallet-wasm/stage-wallet-wasm.sh \

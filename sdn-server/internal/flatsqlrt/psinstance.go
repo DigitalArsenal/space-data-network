@@ -214,12 +214,14 @@ type PSInstance struct {
 	watchdog *wasmrt.Watchdog
 
 	state     atomic.Int32
+	ready     atomic.Bool // init finished; failures now fence and stop
 	accessors atomic.Int64
 	ctlMu     sync.Mutex
 
 	failOnce  sync.Once
 	failure   atomic.Value // error
 	fencedIn  atomic.Int64 // ns from failure detection to revoke done
+	fencedAt  atomic.Int64 // unix ns when the revoke finished
 	stopOnce  sync.Once
 	stopErr   error
 	stopped   chan struct{}
@@ -285,9 +287,22 @@ func OpenPSInstance(cfg PSConfig) (*PSInstance, error) {
 		return nil, fmt.Errorf("%w: %v", ErrPSSubstrate, err)
 	}
 	if err := p.init(); err != nil {
+		if p.doorbell != nil {
+			p.doorbell.Close()
+		}
+		if p.poller != nil {
+			p.poller.Close()
+		}
+		if p.watchdog != nil {
+			p.watchdog.Stop()
+		}
+		if p.mod.InterruptThreads(time.Now().Add(2*time.Second)) > 0 {
+			return nil, fmt.Errorf("%w (and its threads did not stop; retained)", err)
+		}
 		cleanup()
 		return nil, err
 	}
+	p.ready.Store(true)
 	go p.supervise()
 	return p, nil
 }
@@ -357,7 +372,13 @@ func (p *PSInstance) control(name string, params ...interface{}) ([]interface{},
 	p.ctlMu.Lock()
 	defer p.ctlMu.Unlock()
 	ctx := wasmrt.WithExecBudget(context.Background(), wasmrt.ExecBudget{Timeout: p.cfg.ControlBudget})
-	return p.mod.ExecuteContext(ctx, name, params...)
+	v, err := p.mod.ExecuteContext(ctx, name, params...)
+	if err != nil && p.mod.Poisoned() && p.ready.Load() && p.state.Load() == psLive {
+		// A control call that trapped or outran its budget has already
+		// stopped every invocation on the executor: the instance is gone.
+		p.fail(fmt.Errorf("control call %s: %w", name, err))
+	}
+	return v, err
 }
 
 func (p *PSInstance) init() error {
@@ -441,12 +462,16 @@ func (p *PSInstance) supervise() {
 // fail fences the instance once: revoke its host I/O first (so it cannot
 // write another byte), then stop it on another goroutine and tell the owner.
 func (p *PSInstance) fail(cause error) {
+	if !p.ready.Load() {
+		return // OpenPSInstance is still initializing and unwinds its own failure
+	}
 	p.failOnce.Do(func() {
 		start := time.Now()
 		p.failure.Store(cause)
 		p.mod.MarkPoisoned(cause)
 		p.io.Revoke()
 		p.fencedIn.Store(int64(time.Since(start)))
+		p.fencedAt.Store(time.Now().UnixNano())
 		fmt.Fprintf(os.Stderr, "[flatsqlrt] ERROR partition-store instance (role %d) fenced: %v\n", p.cfg.Role, cause)
 		go func() {
 			_ = p.Stop()
@@ -467,6 +492,14 @@ func (p *PSInstance) Failure() error {
 
 // FenceLatency is the time from failure detection to revoke completion.
 func (p *PSInstance) FenceLatency() time.Duration { return time.Duration(p.fencedIn.Load()) }
+
+// FencedAt is when a failure's revoke completed (zero if never fenced).
+func (p *PSInstance) FencedAt() time.Time {
+	if ns := p.fencedAt.Load(); ns != 0 {
+		return time.Unix(0, ns)
+	}
+	return time.Time{}
+}
 
 func (p *PSInstance) enter() bool {
 	p.accessors.Add(1)
@@ -593,6 +626,9 @@ func (p *PSInstance) shutdown() error {
 	}
 	deadline := p.cfg.StopDeadline
 	p.mem.Store32(p.layout.StopWord, 1)
+	// Threads parked in a revoked host call (A21) must come back to see the
+	// stop word; from here on a revoked call fails at once instead of parking.
+	p.io.ReleaseParked()
 	_ = p.doorbell.NotifyAll(p.layout.StopWord)
 	for i := 0; i < int(p.layout.DoorbellCount); i++ {
 		_ = p.doorbell.NotifyAll(p.layout.DoorbellBase + uint32(8*i))

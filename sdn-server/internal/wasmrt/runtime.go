@@ -1335,6 +1335,19 @@ func (m *Module) Lock() { m.mu.Lock() }
 // Unlock releases the module mutex.
 func (m *Module) Unlock() { m.mu.Unlock() }
 
+// HostModule returns the host module registered under name (nil if none).
+func (m *Module) HostModule(name string) *wasmedge.Module {
+	if m == nil {
+		return nil
+	}
+	for _, hm := range m.hostMods {
+		if hm != nil && hm.GetName() == name {
+			return hm
+		}
+	}
+	return nil
+}
+
 // VM returns the underlying WasmEdge VM (for advanced use cases).
 func (m *Module) VM() *wasmedge.VM { return m.vm }
 
