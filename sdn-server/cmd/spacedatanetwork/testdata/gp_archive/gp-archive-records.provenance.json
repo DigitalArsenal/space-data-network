@@ -1,0 +1,8 @@
+{
+  "artifact": "gp-archive-records.wasm",
+  "source": "space-data-network-modules data-source/gp-archive-records/dist/isomorphic/module.wasm",
+  "modulesCommit": "3940c35 (task branch; replaced by the modules main SHA at landing)",
+  "sha256": "71a1614382d4ff939123ee14cb23157fb060c5dd07023c877b49059499beb5c5",
+  "spacedatastandards": "1.226.0",
+  "encoding": "gp-archive-v1"
+}

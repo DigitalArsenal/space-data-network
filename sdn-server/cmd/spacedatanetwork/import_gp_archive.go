@@ -54,6 +54,7 @@ var (
 	importGPArchiveOut, importGPArchiveZipPath, importGPArchiveWindowsRoot                string
 	importGPArchiveLedger, importGPArchiveCheckpoint, importGPArchiveReport               string
 	importGPArchiveSATCAT, importGPArchiveEpochStateModule                                string
+	importGPArchiveRecordBuilderModule                                                    string
 	importGPArchiveBatchSize, importGPArchiveMaxZipEntries, importGPArchiveMaxWindowFiles int
 	importGPArchiveSkipZip, importGPArchiveHistoryOnly, importGPArchiveCatalogOnly        bool
 	importGPArchiveReindexCatalog                                                         bool
@@ -80,6 +81,7 @@ func init() {
 	f.StringVar(&importGPArchiveLedger, "ledger", gpArchiveDefaultLedger, "Space-Track ledger")
 	f.StringVar(&importGPArchiveSATCAT, "satcat", "", "SATCAT snapshot (default: newest snapshot under archive root)")
 	f.StringVar(&importGPArchiveEpochStateModule, "epoch-state-module", "", "epoch-state WASM module (empty disables OEM derivation)")
+	f.StringVar(&importGPArchiveRecordBuilderModule, "record-builder-module", "", "gp-archive-records WASM module that builds the archive's $MPE and $CAT records (default: "+gpArchiveRecordBuilderFile+" beside the executable)")
 	f.StringVar(&importGPArchiveCheckpoint, "checkpoint", "", "checkpoint path (default: <out>/gp-archive-checkpoint.json)")
 	f.StringVar(&importGPArchiveReport, "report", "", "run report path (default: <out>/gp-archive-report.json)")
 	f.IntVar(&importGPArchiveBatchSize, "batch-size", 2000, "records per FlatSQL batch (shard default: 100000)")
@@ -90,7 +92,7 @@ func init() {
 
 type gpArchiveOptions struct {
 	Out, ZipPath, WindowsRoot, LedgerPath, SATCATPath, EpochStateModule string
-	CheckpointPath, ReportPath                                          string
+	RecordBuilderModule, CheckpointPath, ReportPath                     string
 	BatchSize, MaxZipEntries, MaxWindowFiles                            int
 	SkipZip, HistoryOnly, CatalogOnly, ReindexCatalog                   bool
 	ZipShard                                                            string
@@ -99,6 +101,8 @@ type gpArchiveOptions struct {
 	JSONShardIndex, JSONShardCount                                      int
 	deriver                                                             gpEpochDeriver
 	moduleHash                                                          string
+	recordBuilder                                                       gpArchiveRecordBuilder
+	recordBuilderHash                                                   string
 }
 
 // EPOCH is an SDS key, so it takes the IDL spelling. The other keys are
@@ -201,6 +205,7 @@ type gpArchiveRunReport struct {
 	SATCATPath                                                                       string                         `json:"satcat_path,omitempty"`
 	SATCATSHA256                                                                     string                         `json:"satcat_sha256,omitempty"`
 	EpochStateModuleSHA256                                                           string                         `json:"epoch_state_module_sha256,omitempty"`
+	RecordBuilderModuleSHA256                                                        string                         `json:"record_builder_module_sha256,omitempty"`
 	EpochStatesDerived                                                               int64                          `json:"epoch_states_derived"`
 	EpochStatesFailed                                                                int64                          `json:"epoch_states_failed"`
 	EpochsOutsideLeapSecondTable                                                     int64                          `json:"epochs_outside_leap_second_table"`
@@ -258,6 +263,8 @@ func (s *gpJSONScalar) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// JSON keys: the gpKey table (import_gp_archive_convert.go); struct tags must
+// be literals, so TestGPArchiveKeysMatchSDSSchemas holds them to the table.
 type gpJSONRecord struct {
 	GPID            gpJSONScalar `json:"GP_ID"`
 	CreationDate    gpJSONScalar `json:"CREATION_DATE"`
@@ -364,7 +371,7 @@ func runImportGPArchive(cmd *cobra.Command, _ []string) error {
 		shard = importGPArchiveJSONShard
 	}
 	batchSize := effectiveGPArchiveBatchSize(shard, importGPArchiveBatchSize, cmd.Flags().Changed("batch-size"))
-	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: batchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, CatalogOnly: importGPArchiveCatalogOnly, ReindexCatalog: importGPArchiveReindexCatalog, ZipShard: importGPArchiveZipShard, JSONShard: importGPArchiveJSONShard}
+	opts := gpArchiveOptions{Out: importGPArchiveOut, ZipPath: importGPArchiveZipPath, WindowsRoot: importGPArchiveWindowsRoot, LedgerPath: importGPArchiveLedger, SATCATPath: importGPArchiveSATCAT, EpochStateModule: importGPArchiveEpochStateModule, RecordBuilderModule: importGPArchiveRecordBuilderModule, CheckpointPath: importGPArchiveCheckpoint, ReportPath: importGPArchiveReport, BatchSize: batchSize, MaxZipEntries: importGPArchiveMaxZipEntries, MaxWindowFiles: importGPArchiveMaxWindowFiles, SkipZip: importGPArchiveSkipZip, HistoryOnly: importGPArchiveHistoryOnly, CatalogOnly: importGPArchiveCatalogOnly, ReindexCatalog: importGPArchiveReindexCatalog, ZipShard: importGPArchiveZipShard, JSONShard: importGPArchiveJSONShard}
 	if err := opts.normalize(); err != nil {
 		return err
 	}
@@ -384,6 +391,15 @@ func runImportGPArchive(cmd *cobra.Command, _ []string) error {
 	if opts.ReindexCatalog {
 		return reindexGPArchiveCatalog(opts.Out, validator)
 	}
+	if opts.RecordBuilderModule == "" {
+		opts.RecordBuilderModule = defaultGPArchiveRecordBuilderPath()
+	}
+	builder, builderHash, err := loadGPArchiveRecordBuilder(opts.RecordBuilderModule)
+	if err != nil {
+		return err
+	}
+	defer builder.Close()
+	opts.recordBuilder, opts.recordBuilderHash = builder, builderHash
 	if opts.EpochStateModule != "" && !opts.HistoryOnly {
 		wasm, err := os.ReadFile(opts.EpochStateModule)
 		if err != nil {
@@ -497,6 +513,7 @@ func (o *gpArchiveOptions) normalize() error {
 	o.LedgerPath = strings.TrimSpace(o.LedgerPath)
 	o.SATCATPath = strings.TrimSpace(o.SATCATPath)
 	o.EpochStateModule = strings.TrimSpace(o.EpochStateModule)
+	o.RecordBuilderModule = strings.TrimSpace(o.RecordBuilderModule)
 	o.ZipShard = strings.TrimSpace(o.ZipShard)
 	o.JSONShard = strings.TrimSpace(o.JSONShard)
 	if o.Out == "" {
@@ -641,8 +658,12 @@ func importGPArchive(ctx context.Context, opts gpArchiveOptions, sink gpArchiveS
 	if err != nil {
 		return nil, err
 	}
+	if opts.recordBuilder == nil {
+		return nil, fmt.Errorf("GP archive import needs the record builder module (--record-builder-module)")
+	}
 	report := newGPArchiveRunReport()
 	report.EpochStateModuleSHA256 = opts.moduleHash
+	report.RecordBuilderModuleSHA256 = opts.recordBuilderHash
 	progress := newGPArchiveProgress(opts.CheckpointPath, sourcesPath, cp, sources)
 	finish := func(runErr error) (*gpArchiveRunReport, error) {
 		report.finalize()
@@ -1134,8 +1155,37 @@ func importGPArchiveCSVEntry(ctx context.Context, entry *zip.File, entryOrdinal 
 	dedup := map[string]struct{}{}
 	batch := &gpHistoryBatch{sink: sink, report: report, enabled: !opts.CatalogOnly}
 	var entryRowOrder uint64
+	// Rows are parsed and deduplicated as they are read; their records are
+	// built by the module a batch at a time, then applied in row order.
+	var pending []gpArchiveRecord
+	var pendingTies []uint64
+	drain := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		mpes, err := opts.recordBuilder.BuildMPE(ctx, pending)
+		if err != nil {
+			return err
+		}
+		for i, mpe := range mpes {
+			observeGPLatest(cp, pending[i], mpe, storage.ComputeCID(mpe), sourceID, "zip", pendingTies[i])
+			if err = batch.add(mpe); err != nil {
+				return err
+			}
+			if len(batch.records) >= opts.BatchSize {
+				if err = batch.flush(); err != nil {
+					return err
+				}
+			}
+		}
+		pending, pendingTies = pending[:0], pendingTies[:0]
+		return nil
+	}
 	for {
 		if ctx.Err() != nil {
+			if err = drain(); err != nil {
+				return err
+			}
 			if err = batch.flush(); err != nil {
 				return err
 			}
@@ -1166,20 +1216,18 @@ func importGPArchiveCSVEntry(ctx context.Context, entry *zip.File, entryOrdinal 
 			continue
 		}
 		dedup[key] = struct{}{}
-		mpe := buildGPArchiveMPE(rec.EntityID, rec)
-		cid := storage.ComputeCID(mpe)
 		// ZIP shards must retain the unsharded global ordering for equal-epoch
 		// tie breaks. Archive entries are tiny relative to the uint32 row space.
-		tie := uint64(entryOrdinal)<<32 | entryRowOrder
-		observeGPLatest(cp, rec, mpe, cid, sourceID, "zip", tie)
-		if err = batch.add(mpe); err != nil {
-			return err
-		}
-		if len(batch.records) >= opts.BatchSize {
-			if err = batch.flush(); err != nil {
+		pending = append(pending, rec)
+		pendingTies = append(pendingTies, uint64(entryOrdinal)<<32|entryRowOrder)
+		if len(pending) >= gpArchiveRecordBuildBatch {
+			if err = drain(); err != nil {
 				return err
 			}
 		}
+	}
+	if err = drain(); err != nil {
+		return err
 	}
 	return batch.flush()
 }
@@ -1304,8 +1352,49 @@ func importGPArchiveJSONWindow(ctx context.Context, raw []byte, opts gpArchiveOp
 	}
 	currentIDs := make([]string, 0)
 	batch := &gpHistoryBatch{sink: sink, report: report, enabled: !opts.CatalogOnly}
+	// Records are built by the module a batch at a time, then applied in row
+	// order: the checks below depend on the latest state earlier rows left.
+	var pending []gpArchiveRecord
+	var pendingTies []uint64
+	drain := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		mpes, err := opts.recordBuilder.BuildMPE(ctx, pending)
+		if err != nil {
+			return err
+		}
+		for i, mpe := range mpes {
+			rec, tie := &pending[i], pendingTies[i]
+			cid := storage.ComputeCID(mpe)
+			if old := cp.Latest[rec.EntityID]; rec.GPID != "" && old != nil && old.TieKind == "json" && old.TieValue == tie && old.HistoryCID == cid {
+				report.DuplicatesSkipped++
+				if sourceKind == "gp" {
+					cp.SnapshotGPIDs[rec.GPID] = true
+				}
+				continue
+			}
+			if opts.JSONShardCount == 0 {
+				observeGPLatest(cp, *rec, mpe, cid, sourceID, "json", tie)
+			}
+			if sourceKind == "gp" && rec.GPID != "" {
+				cp.SnapshotGPIDs[rec.GPID] = true
+			}
+			batch.add(mpe)
+			if len(batch.records) >= opts.BatchSize {
+				if err := batch.flush(); err != nil {
+					return err
+				}
+			}
+		}
+		pending, pendingTies = pending[:0], pendingTies[:0]
+		return nil
+	}
 	for _, raw := range rows {
 		if ctx.Err() != nil {
+			if err := drain(); err != nil {
+				return err
+			}
 			if err := batch.flush(); err != nil {
 				return err
 			}
@@ -1335,28 +1424,17 @@ func importGPArchiveJSONWindow(ctx context.Context, raw []byte, opts gpArchiveOp
 			seen[rec.GPID] = struct{}{}
 		}
 		canonicalizeGPRecord(&rec, satcat, cp, report)
-		mpe := buildGPArchiveMPE(rec.EntityID, rec)
-		cid := storage.ComputeCID(mpe)
 		tie, _ := strconv.ParseUint(rec.GPID, 10, 64)
-		if old := cp.Latest[rec.EntityID]; rec.GPID != "" && old != nil && old.TieKind == "json" && old.TieValue == tie && old.HistoryCID == cid {
-			report.DuplicatesSkipped++
-			if sourceKind == "gp" {
-				cp.SnapshotGPIDs[rec.GPID] = true
-			}
-			continue
-		}
-		if opts.JSONShardCount == 0 {
-			observeGPLatest(cp, rec, mpe, cid, sourceID, "json", tie)
-		}
-		if sourceKind == "gp" && rec.GPID != "" {
-			cp.SnapshotGPIDs[rec.GPID] = true
-		}
-		batch.add(mpe)
-		if len(batch.records) >= opts.BatchSize {
-			if err := batch.flush(); err != nil {
+		pending = append(pending, rec)
+		pendingTies = append(pendingTies, tie)
+		if len(pending) >= gpArchiveRecordBuildBatch {
+			if err := drain(); err != nil {
 				return err
 			}
 		}
+	}
+	if err := drain(); err != nil {
+		return err
 	}
 	if err := batch.flush(); err != nil {
 		return err
@@ -1579,8 +1657,7 @@ func materializeGPArchiveCatalog(ctx context.Context, opts gpArchiveOptions, cp 
 	}
 	report.CatalogEntities = int64(len(cp.Latest))
 	report.CATObjects = report.CatalogEntities
-	catBySource := map[string][][]byte{}
-	catNames := map[string][]string{}
+	catRows := map[string][]gpArchiveCATInput{}
 	entities := make([]string, 0, len(cp.Latest))
 	for id := range cp.Latest {
 		entities = append(entities, id)
@@ -1595,10 +1672,9 @@ func materializeGPArchiveCatalog(ctx context.Context, opts gpArchiveOptions, cp 
 		if previous, ok := cp.CATNames[id]; ok && previous == name {
 			continue
 		}
-		catBySource[st.SourceID] = append(catBySource[st.SourceID], buildGPArchiveCAT(id, st.NORAD, name))
-		catNames[st.SourceID] = append(catNames[st.SourceID], id)
+		catRows[st.SourceID] = append(catRows[st.SourceID], gpArchiveCATInput{EntityID: id, NORAD: st.NORAD, Name: name})
 	}
-	for _, sid := range sourceIDsUnion(catBySource) {
+	for _, sid := range sortedMapKeys(catRows) {
 		if ctx.Err() != nil {
 			return errGPArchiveStopped
 		}
@@ -1606,17 +1682,21 @@ func materializeGPArchiveCatalog(ctx context.Context, opts gpArchiveOptions, cp 
 		if !ok {
 			return fmt.Errorf("CAT source %q missing", sid)
 		}
-		if _, err := sink.StoreCatalogCAT(catBySource[sid], sourceTags(src, gpArchiveCatalogSource)); err != nil {
+		records, err := opts.recordBuilder.BuildCAT(ctx, catRows[sid])
+		if err != nil {
 			return err
 		}
-		for i, id := range catNames[sid] {
-			cat := CATFB.GetSizePrefixedRootAsCAT(catBySource[sid][i], 0)
-			cp.CATNames[id] = string(cat.OBJECT_NAME())
+		if _, err := sink.StoreCatalogCAT(records, sourceTags(src, gpArchiveCatalogSource)); err != nil {
+			return err
+		}
+		for i, row := range catRows[sid] {
+			cat := CATFB.GetSizePrefixedRootAsCAT(records[i], 0)
+			cp.CATNames[row.EntityID] = string(cat.OBJECT_NAME())
 		}
 	}
 	return progress.save(false)
 }
-func sourceIDsUnion(m map[string][][]byte) []string {
+func sortedMapKeys[V any](m map[string]V) []string {
 	a := make([]string, 0, len(m))
 	for k := range m {
 		a = append(a, k)
@@ -1784,7 +1864,7 @@ func gpArchiveRecordFromCSV(row []string, columns map[string]int) (gpArchiveReco
 		}
 		return strings.TrimSpace(row[i])
 	}
-	return parseGPArchiveRecord(get("OBJECT_ID"), get("OBJECT_NAME"), get("NORAD_CAT_ID"), get("EPOCH"), get("MEAN_MOTION"), get("ECCENTRICITY"), get("INCLINATION"), get("RA_OF_ASC_NODE"), get("ARG_OF_PERICENTER"), get("MEAN_ANOMALY"), get("BSTAR"), "")
+	return parseGPArchiveRecord(get(gpKeyObjectID), get(gpKeyObjectName), get(gpKeyNORADCatID), get(gpKeyEpoch), get(gpKeyMeanMotion), get(gpKeyEccentricity), get(gpKeyInclination), get(gpKeyRAOfAscNode), get(gpKeyArgOfPericenter), get(gpKeyMeanAnomaly), get(gpKeyBSTAR), "")
 }
 func gpArchiveRecordFromJSON(r gpJSONRecord) (gpArchiveRecord, string) {
 	return parseGPArchiveRecord(string(r.ObjectID), string(r.ObjectName), string(r.NORAD), string(r.Epoch), string(r.MeanMotion), string(r.Eccentricity), string(r.Inclination), string(r.RAOfAscNode), string(r.ArgOfPericenter), string(r.MeanAnomaly), string(r.BSTAR), string(r.GPID))
@@ -1792,23 +1872,23 @@ func gpArchiveRecordFromJSON(r gpJSONRecord) (gpArchiveRecord, string) {
 func parseGPArchiveRecord(objectID, name, noradS, epochS, mmS, eccS, incS, raanS, argS, maS, bstarS, gpid string) (gpArchiveRecord, string) {
 	n, err := parseUint32(noradS)
 	if err != nil {
-		return gpArchiveRecord{}, "invalid NORAD_CAT_ID"
+		return gpArchiveRecord{}, "invalid " + gpKeyNORADCatID
 	}
 	t, err := parseGPArchiveEpoch(epochS)
 	if err != nil {
-		return gpArchiveRecord{}, "invalid EPOCH"
+		return gpArchiveRecord{}, "invalid " + gpKeyEpoch
 	}
-	vals := []string{mmS, eccS, incS, raanS, argS, maS, bstarS}
-	out := make([]float64, len(vals))
-	names := []string{"MEAN_MOTION", "ECCENTRICITY", "INCLINATION", "RA_OF_ASC_NODE", "ARG_OF_PERICENTER", "MEAN_ANOMALY", "BSTAR"}
+	// In gpArchiveElementKeys order.
+	vals := [len(gpArchiveElementKeys)]string{mmS, eccS, incS, raanS, argS, maS, bstarS}
+	var out [len(gpArchiveElementKeys)]float64
 	for i, v := range vals {
 		out[i], err = strconv.ParseFloat(strings.TrimSpace(v), 64)
 		if err != nil || math.IsNaN(out[i]) || math.IsInf(out[i], 0) {
-			return gpArchiveRecord{}, "invalid " + names[i]
+			return gpArchiveRecord{}, "invalid " + gpArchiveElementKeys[i]
 		}
 	}
 	if out[1] < 0 || out[1] >= 1 {
-		return gpArchiveRecord{}, "invalid ECCENTRICITY"
+		return gpArchiveRecord{}, "invalid " + gpKeyEccentricity
 	}
 	return gpArchiveRecord{GPID: strings.TrimSpace(gpid), ObjectID: strings.TrimSpace(objectID), ObjectName: strings.TrimSpace(name), NORAD: n, Epoch: float64(t.Unix()) + float64(t.Nanosecond())/1e9, MeanMotion: out[0], Eccentricity: out[1], Inclination: out[2], RAOfAscNode: out[3], ArgOfPericenter: out[4], MeanAnomaly: out[5], BSTAR: out[6]}, ""
 }

@@ -99,7 +99,8 @@ func TestGPArchiveCSVRowPreservesFractionalEpochAndZeroFields(t *testing.T) {
 	if reason != "" {
 		t.Fatalf("gpArchiveRecordFromCSV rejected row: %s", reason)
 	}
-	data := buildGPArchiveMPE(record.ObjectID, record)
+	record.EntityID = record.ObjectID
+	data := testBuildMPE(t, record)[0]
 	mpe := MPEFB.GetSizePrefixedRootAsMPE(data, 0)
 	wantTime, err := parseGPArchiveEpoch("1959-05-23T00:19:59.047968")
 	if err != nil {
@@ -145,7 +146,7 @@ func TestGPArchiveMissingDesignatorUsesNamespacedEntityAndReportsObject(t *testi
 	report := newGPArchiveRunReport()
 	record := gpArchiveRecord{NORAD: 42, Epoch: 1, MeanMotion: 1}
 	canonicalizeGPRecord(&record, map[uint32]gpSATCATEntry{}, gpArchiveTestCheckpoint(), report)
-	mpeData := buildGPArchiveMPE(record.EntityID, record)
+	mpeData := testBuildMPE(t, record)[0]
 	report.finalize()
 	if report.ObjectsLackingDesignator != 1 || len(report.ObjectsWithoutDesignator) != 1 || report.ObjectsWithoutDesignator[0] != "NORAD:42" {
 		t.Fatalf("missing-designator report = %+v", report)
@@ -153,7 +154,7 @@ func TestGPArchiveMissingDesignatorUsesNamespacedEntityAndReportsObject(t *testi
 	if got := string(MPEFB.GetSizePrefixedRootAsMPE(mpeData, 0).ENTITY_ID()); got != "NORAD:42" {
 		t.Fatalf("MPE ENTITY_ID = %q, want NORAD:42", got)
 	}
-	cat := CATFB.GetSizePrefixedRootAsCAT(buildGPArchiveCAT(record.EntityID, record.NORAD, ""), 0)
+	cat := CATFB.GetSizePrefixedRootAsCAT(testBuildCAT(t, gpArchiveCATInput{EntityID: record.EntityID, NORAD: record.NORAD})[0], 0)
 	if got := string(cat.OBJECT_ID()); got != "NORAD:42" || cat.NORAD_CAT_ID() != 42 {
 		t.Fatalf("CAT crosswalk = (%q, %d), want (NORAD:42, 42)", got, cat.NORAD_CAT_ID())
 	}
@@ -178,7 +179,7 @@ func TestGPArchiveSATCATCanonicalIdentityIgnoresRowObjectID(t *testing.T) {
 func TestGPArchiveLatestTieBreaksByRowOrderAndGPID(t *testing.T) {
 	cp := gpArchiveTestCheckpoint()
 	r := gpArchiveRecord{EntityID: "2000-001A", NORAD: 1, Epoch: 10}
-	m := buildGPArchiveMPE(r.EntityID, r)
+	m := testBuildMPE(t, r)[0]
 	observeGPLatest(cp, r, m, "zip-1", "s", "zip", 1)
 	observeGPLatest(cp, r, m, "zip-2", "s", "zip", 2)
 	if cp.Latest[r.EntityID].HistoryCID != "zip-2" {
@@ -908,11 +909,12 @@ func TestGPArchiveEpochStateRealWASM(t *testing.T) {
 	if err = json.Unmarshal(b, &cases); err != nil {
 		t.Fatal(err)
 	}
-	inputs := make([][]byte, 100)
-	for i := range inputs {
+	records := make([]gpArchiveRecord, 100)
+	for i := range records {
 		c := cases[i%len(cases)]
-		inputs[i] = buildGPArchiveMPE(c.EntityID, gpArchiveRecord{EntityID: c.EntityID, NORAD: c.Satnum, Epoch: c.Epoch, MeanMotion: c.MeanMotion, Eccentricity: c.Eccentricity, Inclination: c.Inclination, RAOfAscNode: c.RAAN, ArgOfPericenter: c.Arg, MeanAnomaly: c.Anomaly, BSTAR: c.BSTAR})
+		records[i] = gpArchiveRecord{EntityID: c.EntityID, NORAD: c.Satnum, Epoch: c.Epoch, MeanMotion: c.MeanMotion, Eccentricity: c.Eccentricity, Inclination: c.Inclination, RAOfAscNode: c.RAAN, ArgOfPericenter: c.Arg, MeanAnomaly: c.Anomaly, BSTAR: c.BSTAR}
 	}
+	inputs := testBuildMPE(t, records...)
 	outputs, report, err := d.Derive(context.Background(), inputs)
 	if err != nil {
 		t.Fatal(err)
@@ -1036,6 +1038,7 @@ func gpArchiveTestOptions(t *testing.T, root, zipPath, ledgerPath string) gpArch
 		CheckpointPath: filepath.Join(root, "checkpoint.json"),
 		ReportPath:     filepath.Join(root, "report.json"),
 		BatchSize:      2,
+		recordBuilder:  testGPArchiveRecordBuilder(t),
 	}
 }
 
