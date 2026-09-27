@@ -162,6 +162,79 @@ jobs:
       - name: go test (record store)
         run: ./scripts/ci-local.sh heavy
 
+  # THE PATCHED WASMEDGE SUBSTRATE (design A21, A30, A31). Every Go lane above
+  # links the upstream 0.16.4 library, where the partition-store substrate
+  # tests skip: upstream loses atomic wake-ups and one stop reaches one thread.
+  # This lane links the patched static prefix the release ships and runs them.
+  # The prefix is cached under the release workflow's own linux-amd64 key and
+  # built by the same steps, so whichever workflow builds it first, the other
+  # reuses it. A miss (a change to the build script or its patches) costs one
+  # LLVM-free WasmEdge build, about half an hour.
+  wasmedge-substrate:
+    name: WasmEdge substrate (patched static prefix)
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    timeout-minutes: 90
+    env:
+      WASMEDGE_VERSION: '0.16.4'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Prepare the container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl gnupg git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-focal-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
+      # Exactly the release workflow's Linux toolchain, so a prefix built here
+      # is the prefix the release would have built.
+      - name: Install build toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          CMAKE_VERSION: '3.31.6'
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-16 main" > /etc/apt/sources.list.d/llvm.list
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev \
+            libzstd-dev zlib1g-dev libtinfo-dev build-essential
+          curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | tar -xz -C /opt
+          echo "/opt/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
+      - name: Build the static prefix
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          . scripts/wasmedge-static-env.sh
+          WASMEDGE_STATIC_WORK="${GITHUB_WORKSPACE}/.sdn-wasmedge-static" \
+          WASMEDGE_STATIC_PREFIX_ONLY=1 \
+          bash scripts/build-static-wasmedge.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sdn-server/go.mod
+          cache-dependency-path: sdn-server/go.sum
+      # Latency and scaling thresholds are acceptance numbers for named
+      # machines (SDN_PS_ACCEPTANCE=1 there); on a shared runner they are
+      # reported. Every functional outcome is asserted here.
+      - name: Substrate tests
+        working-directory: sdn-server
+        env:
+          WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
+          SDN_WASM_ATOMIC_REGRESSION: '1'
+          SDN_WASM_REQUIRE_PATCHED: '1'
+        run: |
+          ../scripts/go-with-wasmedge.sh test ./internal/wasmrt/ -count=1 -timeout 20m
+          ../scripts/go-with-wasmedge.sh test ./internal/flatsqlrt/ -count=1 -timeout 30m -v \
+            -run 'TestPS|TestParallelAOT|TestSharedMemoryBase|TestConcurrentControl|TestNativeHostIO'
+
   go-builds:
     name: Go builds (node + edge relay)
     runs-on: ubuntu-latest
@@ -215,6 +288,7 @@ jobs:
       - preflight
       - go-quick
       - go-heavy
+      - wasmedge-substrate
       - go-builds
       - js
     steps:
