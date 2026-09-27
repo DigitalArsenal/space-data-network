@@ -101,10 +101,14 @@ type gpArchiveOptions struct {
 	moduleHash                                                          string
 }
 
+// EPOCH is an SDS key, so it takes the IDL spelling. The other keys are
+// checkpoint bookkeeping and stay lowercase. Checkpoints written before the
+// rename carry "epoch"; encoding/json matches keys case-insensitively, so
+// they still load (TestGPArchiveCheckpointLoadsLowercaseEpochKey).
 type gpLatestState struct {
 	EntityID     string  `json:"entity_id"`
 	NORAD        uint32  `json:"norad"`
-	Epoch        float64 `json:"epoch"`
+	Epoch        float64 `json:"EPOCH"`
 	TieKind      string  `json:"tie_kind"`
 	TieValue     uint64  `json:"tie_value"`
 	HistoryCID   string  `json:"history_cid"`
