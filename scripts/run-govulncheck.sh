@@ -36,6 +36,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Resolve --out from the caller's directory before entering the Go module.
+# CI passes sdn-server/govulncheck-report.txt relative to the repository root.
+case "$OUT" in
+  /*) ;;
+  *) OUT="$PWD/$OUT" ;;
+esac
+
 if [[ -z "${WASMEDGE_DIR:-}" ]]; then
   echo "[govulncheck] WASMEDGE_DIR must point to a WasmEdge header/library layout." >&2
   exit 1
