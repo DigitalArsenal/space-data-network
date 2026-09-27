@@ -774,24 +774,29 @@ var engineHotWindowPage = 2000
 // and walk the schema's whole tag table per record — 5m0s and a poisoned
 // engine on host-02. The join takes the (schema_name, cid) equality index;
 // rows arrive oldest-tag-first and the newest wins in Go.
-func engineWindowPagesSQL(readSource, placeholders, extraWhere string) string {
+//
+// The page is chosen from the index alone and only its rows touch a record
+// table, by CID seek: joining the standard's union read source (GROUP BY cid
+// over every producer table) materialised every record of the standard, bytes
+// included, once PER PAGE — the whole rebuild quadratic for any standard two
+// producers publish, and engine recovery runs this rebuild.
+func engineWindowPagesSQL(tables []string, placeholders, extraWhere string) string {
 	// extraWhere may reference ?N placeholders only by position AFTER the
 	// aliases, cursor and limit; the catch-up clause below binds the ledger
 	// schema as the trailing argument.
 	return fmt.Sprintf(`
-		SELECT page.rid, page.cid, page.data, COALESCE(tags.source_name, '') AS source_name
+		SELECT page.rid, page.cid, %s AS data, COALESCE(tags.source_name, '') AS source_name
 		FROM (
-			SELECT idx.rowid AS rid, idx.cid AS cid, idx.schema_name AS schema_name, rr.data AS data
+			SELECT idx.rowid AS rid, idx.cid AS cid, idx.schema_name AS schema_name
 			FROM sdn_record_index idx
-			JOIN %s rr ON rr.cid = idx.cid
-			WHERE idx.schema_name IN (%s) AND idx.rowid > ?%s
+			WHERE idx.schema_name IN (%s) AND idx.rowid > ?%s AND %s
 			ORDER BY idx.rowid ASC
 			LIMIT ?
-		) page
+		) page%s
 		LEFT JOIN sdn_record_source_tags tags
 		  ON tags.schema_name = page.schema_name AND tags.cid = page.cid
 		ORDER BY page.rid ASC, tags.created_at ASC
-	`, readSource, placeholders, extraWhere)
+	`, recordColumnSQL(tables, "data"), placeholders, extraWhere, recordHeldSQL(tables, "idx.cid"), recordColumnJoinsSQL(tables, "page.cid"))
 }
 
 // engineLocker runs fn under the store write lock. hydrateEngineHotWindow
@@ -810,11 +815,11 @@ func (s *FlatSQLStore) ingestEngineWindowPages(schemaName string, cursor int64, 
 	for {
 		pageSize := 0
 		if err := locked(func() error {
-			readSource, err := s.recordReadSource(schemaName)
+			tables, err := s.recordTablesForSchema(schemaName)
 			if err != nil {
 				return err
 			}
-			query := engineWindowPagesSQL(readSource, placeholders, extraWhere)
+			query := engineWindowPagesSQL(tables, placeholders, extraWhere)
 			args := make([]any, 0, len(aliases)+2+len(extraArgs))
 			for _, alias := range aliases {
 				args = append(args, alias)
