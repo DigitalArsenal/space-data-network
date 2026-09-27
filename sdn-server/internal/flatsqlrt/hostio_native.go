@@ -20,6 +20,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 	"unsafe"
@@ -144,6 +145,17 @@ func (h *NativeHostIO) Install(env *wasmedge.Module) error {
 	return nil
 }
 
+// InstalledIn reports how many of the seven flatsql_io_* functions in env
+// are this instance's C functions. 7 proves no I/O call of that module can
+// reach a Go host function.
+func (h *NativeHostIO) InstalledIn(env *wasmedge.Module) (int, error) {
+	ctx, err := wasmrt.ModuleInstanceContext(env)
+	if err != nil {
+		return 0, err
+	}
+	return int(C.sdn_hio_installed_count(h.in, ctx)), nil
+}
+
 // Revoke fences the instance (A23) and returns how long the drain of
 // in-flight mutating calls took. After it returns, the instance cannot write
 // another byte, and none of its fd numbers can be handed to anyone else.
@@ -171,8 +183,9 @@ func (h *NativeHostIO) Free() error {
 	return nil
 }
 
-// SetFault injects a delay before every write (op 0) or sync (op 1) syscall.
-// Tests only.
+// SetFault injects a delay before every write (op 0) or sync (op 1) syscall;
+// ReleaseParked cuts those short. Op 2 stalls syncs and nothing cuts it
+// short (a thread stuck in the kernel). Tests only.
 func (h *NativeHostIO) SetFault(op int, delay time.Duration) {
 	C.sdn_hio_set_fault(h.in, C.int(op), C.uint32_t(delay/time.Microsecond))
 }
@@ -286,4 +299,63 @@ func benchRawIO(dir string, threads, ops, size, fileBytes int) ([]uint64, error)
 		return nil, fmt.Errorf("flatsqlrt: raw I/O baseline: errno %d", -int(rc))
 	}
 	return hist, nil
+}
+
+// NativeHostIOSelfTest exercises the C module end to end in a temporary
+// directory: install into a WasmEdge module, create with parents, write,
+// sync, read back, revoke, reap and free. The daemon's substrate self-test
+// reports it (design A30: format 2 needs this module).
+func NativeHostIOSelfTest() error {
+	if !NativeHostIOSupported() {
+		return ErrNativeHostIOUnavailable
+	}
+	dir, err := os.MkdirTemp("", "sdn-hostio-selftest-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	st, err := OpenNativeStore(dir)
+	if err != nil {
+		return err
+	}
+	defer st.Release()
+	h, err := NewNativeHostIO(st, HostIOControl, 8, 16)
+	if err != nil {
+		return err
+	}
+	env := wasmedge.NewModule(HostIOModule)
+	if env == nil {
+		return errors.New("flatsqlrt: cannot create a WasmEdge module")
+	}
+	defer env.Release()
+	if err := h.Install(env); err != nil {
+		return err
+	}
+	if n, err := h.InstalledIn(env); err != nil || n != 7 {
+		return fmt.Errorf("flatsqlrt: %d of 7 imports installed (%v)", n, err)
+	}
+	fd := h.Open("a/b/c.bin", ioFlagRead|ioFlagWrite|ioFlagCreate|ioFlagCreateParents)
+	if fd <= 0 {
+		return fmt.Errorf("flatsqlrt: open: %d", fd)
+	}
+	want := []byte("substrate self-test")
+	if n := h.WriteAt(fd, want, 0); n != int32(len(want)) {
+		return fmt.Errorf("flatsqlrt: write: %d", n)
+	}
+	if rc := h.Sync(fd); rc != 0 {
+		return fmt.Errorf("flatsqlrt: sync: %d", rc)
+	}
+	got := make([]byte, len(want))
+	if n := h.ReadAt(fd, got, 0); n != int32(len(want)) || string(got) != string(want) {
+		return fmt.Errorf("flatsqlrt: read back %d %q", n, got)
+	}
+	h.Revoke()
+	h.ReleaseParked()
+	if n := h.WriteAt(fd, want, 0); n >= 0 {
+		return fmt.Errorf("flatsqlrt: a revoked handle wrote %d bytes", n)
+	}
+	for i := 0; i < 1000 && h.Reap() != 0; i++ {
+		time.Sleep(time.Millisecond)
+	}
+	return h.Free()
 }

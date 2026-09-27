@@ -50,6 +50,7 @@ extern "C" {
 // Fault injection (tests): a delay before the syscall of one operation kind.
 #define SDN_HIO_FAULT_WRITE 0
 #define SDN_HIO_FAULT_SYNC 1
+#define SDN_HIO_FAULT_SYNC_HARD 2 // not cut short by release: a stuck kernel call
 
 // Latency histogram shape shared with the probe (8 ns steps below 1 us, then
 // 32 sub-buckets per power of two up to 2^39 ns).
@@ -93,6 +94,8 @@ void sdn_hio_get_stats(sdn_hio_inst *in, sdn_hio_stats *out);
 // Adds the seven flatsql_io_* functions to a WasmEdge module instance
 // (the "env" module). `env` is a WasmEdge_ModuleInstanceContext*.
 int sdn_hio_install(sdn_hio_inst *in, void *env);
+// How many of the seven imports in env are this instance's C functions.
+int sdn_hio_installed_count(sdn_hio_inst *in, void *env);
 
 // Revocation (A23): set revoked, point every fd at a closed-pipe sentinel
 // (dup2, so no fd number is ever reused), wait only for in-flight MUTATING

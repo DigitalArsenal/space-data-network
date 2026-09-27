@@ -471,7 +471,7 @@ struct sdn_hio_inst {
   stripe_t stripes[STRIPES];
   _Atomic uint64_t opens, reopens, closes, evictions, calls_after_revoke, writes_after_revoke, parked;
   _Atomic uint64_t dir_syncs, dirs_created, unlink_busy;
-  _Atomic uint32_t fault_write_us, fault_sync_us;
+  _Atomic uint32_t fault_write_us, fault_sync_us, fault_sync_hard_us;
 };
 
 static _Atomic uint32_t g_stripe_seq;
@@ -493,11 +493,20 @@ static void maybe_nice(sdn_hio_inst *in) {
 #endif
 }
 
+// Cache-line aligned, zeroed allocation: slots and stripes are written by
+// different threads and must not share a line.
+static void *zalloc_aligned(size_t n) {
+  void *p = NULL;
+  if (posix_memalign(&p, CACHELINE, n) != 0) return NULL;
+  memset(p, 0, n);
+  return p;
+}
+
 sdn_hio_inst *sdn_hio_inst_new(sdn_hio_store *st, int cls, uint32_t fd_budget, uint32_t max_handles) {
   if (!st || fd_budget == 0 || max_handles == 0 || max_handles > (1u << 23)) return NULL;
-  sdn_hio_inst *in = calloc(1, sizeof *in);
+  sdn_hio_inst *in = zalloc_aligned(sizeof *in);
   if (!in) return NULL;
-  in->slots = calloc(max_handles, sizeof(slot_t));
+  in->slots = zalloc_aligned((size_t)max_handles * sizeof(slot_t));
   int pipefd[2];
   if (!in->slots || pipe(pipefd) != 0) {
     free(in->slots);
@@ -976,6 +985,13 @@ int32_t sdn_hio_sync(sdn_hio_inst *in, int32_t h) {
   }
   uint32_t delay = atomic_load_explicit(&in->fault_sync_us, memory_order_relaxed);
   if (delay) wait_or_release(in, delay);
+  uint32_t hard = atomic_load_explicit(&in->fault_sync_hard_us, memory_order_relaxed);
+  if (hard) {
+    // A stall nothing can cut short: a thread stuck in the kernel.
+    struct timespec ts = {(time_t)(hard / 1000000u), (long)(hard % 1000000u) * 1000L};
+    while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+    }
+  }
   int r;
 #if defined(__APPLE__)
   r = fcntl(fd, F_FULLFSYNC);
@@ -1150,6 +1166,7 @@ int sdn_hio_inst_free(sdn_hio_inst *in) {
 void sdn_hio_set_fault(sdn_hio_inst *in, int op, uint32_t delay_us) {
   if (op == SDN_HIO_FAULT_WRITE) atomic_store(&in->fault_write_us, delay_us);
   if (op == SDN_HIO_FAULT_SYNC) atomic_store(&in->fault_sync_us, delay_us);
+  if (op == SDN_HIO_FAULT_SYNC_HARD) atomic_store(&in->fault_sync_hard_us, delay_us);
 }
 
 void sdn_hio_get_stats(sdn_hio_inst *in, sdn_hio_stats *o) {
@@ -1289,6 +1306,23 @@ int sdn_hio_install(sdn_hio_inst *in, void *envp) {
   return 0;
 }
 
+// Counts how many of the seven flatsql_io_* functions in env are THIS
+// instance's C functions (their host data is the instance). 7 means every I/O
+// call of the module reaches C directly and none reaches a Go host function.
+int sdn_hio_installed_count(sdn_hio_inst *in, void *envp) {
+  static const char *names[] = {"flatsql_io_open", "flatsql_io_read", "flatsql_io_write", "flatsql_io_truncate",
+                                "flatsql_io_sync", "flatsql_io_size", "flatsql_io_close"};
+  WasmEdge_ModuleInstanceContext *env = (WasmEdge_ModuleInstanceContext *)envp;
+  int n = 0;
+  for (int i = 0; i < 7; i++) {
+    WasmEdge_String name = WasmEdge_StringCreateByCString(names[i]);
+    WasmEdge_FunctionInstanceContext *f = WasmEdge_ModuleInstanceFindFunction(env, name);
+    WasmEdge_StringDelete(name);
+    if (f && WasmEdge_FunctionInstanceGetData(f) == (const void *)in) n++;
+  }
+  return n;
+}
+
 // ---- process limits and the raw baseline ------------------------------------------------------
 int sdn_hio_raise_nofile(uint64_t want, uint64_t *soft, uint64_t *hard) {
   struct rlimit rl;
@@ -1421,6 +1455,7 @@ sdn_hio_inst *sdn_hio_inst_new(sdn_hio_store *st, int cls, uint32_t b, uint32_t 
 int sdn_hio_inst_free(sdn_hio_inst *in) { (void)in; return 0; }
 void sdn_hio_get_stats(sdn_hio_inst *in, sdn_hio_stats *out) { (void)in; (void)out; }
 int sdn_hio_install(sdn_hio_inst *in, void *env) { (void)in; (void)env; return -1; }
+int sdn_hio_installed_count(sdn_hio_inst *in, void *env) { (void)in; (void)env; return 0; }
 uint64_t sdn_hio_revoke(sdn_hio_inst *in) { (void)in; return 0; }
 void sdn_hio_release_parked(sdn_hio_inst *in) { (void)in; }
 int sdn_hio_reap(sdn_hio_inst *in) { (void)in; return -1; }

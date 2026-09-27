@@ -8,20 +8,26 @@ package wasmrt
 // increment that lands at any point makes the wait return at once: no wakeup
 // is ever lost, notify or not. The host rings by adding to seq and asks for a
 // notify only when the thread says it is sleeping. Notifies are coalesced and
-// issued by ONE locked OS thread per instance, which invokes the guest's tiny
-// wake export (memory.atomic.notify) on the instance's own executor, where the
-// waiters are registered. It never runs inside a host function.
+// issued by ONE doorbell thread per instance (a C pthread, so waking it is one
+// futex wake), which invokes the guest's tiny wake export
+// (memory.atomic.notify) on the instance's own executor, where the waiters
+// are registered. It never runs inside a host function.
 //
 // COMPLETION POLLER. Waiters for an ack word (a u64 the guest advances
 // monotonically) are completed by one goroutine per instance that reads the
 // words every interval while any waiter exists, and parks otherwise. No
 // import, no guest call.
 
+/*
+#cgo CFLAGS: -std=gnu11 -O2
+#include "doorbell_native.h"
+*/
+import "C"
+
 import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,26 +56,22 @@ func (m *Module) exportedFunction(name string) *wasmedge.Function {
 type DoorbellStats struct {
 	Rings     int64 // Ring calls
 	Requested int64 // rings that found the thread sleeping and asked for a notify
-	Coalesced int64 // requests folded into a notify already pending
+	Signals   int64 // requests that had to wake the parked doorbell thread
 	Notifies  int64 // wake-export invocations issued
 	Errors    int64 // wake-export invocations that failed
 }
 
 // Doorbell rings a module's service threads (see the package note above).
+// The doorbell thread itself is C (doorbell_native.c).
 type Doorbell struct {
 	mem   *SharedMemory
-	exec  *wasmedge.Executor
-	wake  *wasmedge.Function
+	db    *C.sdn_doorbell
 	base  uint32
 	count int
-
-	pending []atomic.Uint32
-	kick    chan struct{}
-	stop    chan struct{}
-	done    chan struct{}
-	once    sync.Once
-
-	rings, requested, coalesced, notifies, errors atomic.Int64
+	once  sync.Once
+	mu    sync.RWMutex // Ring/NotifyAll (readers) against Close (writer)
+	done  bool
+	rings atomic.Int64
 }
 
 // StartDoorbell serves count doorbells at base ({seq, sleeping} u32 pairs)
@@ -82,26 +84,30 @@ func (m *Module) StartDoorbell(mem *SharedMemory, wakeExport string, base uint32
 	if fn == nil {
 		return nil, fmt.Errorf("wasmrt: module does not export %q", wakeExport)
 	}
-	exec := m.vm.GetExecutor()
-	if exec == nil {
-		return nil, errors.New("wasmrt: module has no executor")
-	}
 	for i := 0; i < count; i++ {
 		if err := mem.Check(base+uint32(8*i), 8); err != nil {
 			return nil, err
 		}
 	}
-	d := &Doorbell{mem: mem, exec: exec, wake: fn, base: base, count: count,
-		pending: make([]atomic.Uint32, count), kick: make(chan struct{}, 1),
-		stop: make(chan struct{}), done: make(chan struct{})}
-	go d.run()
-	return d, nil
+	exec, err := innerHandle(m.vm.GetExecutor(), "WasmEdge_ExecutorContext")
+	if err != nil {
+		return nil, err
+	}
+	wake, err := innerHandle(fn, "WasmEdge_FunctionInstanceContext")
+	if err != nil {
+		return nil, err
+	}
+	db := C.sdn_doorbell_start(exec, wake, C.uint32_t(base), C.uint32_t(count))
+	if db == nil {
+		return nil, errors.New("wasmrt: cannot start the doorbell thread")
+	}
+	return &Doorbell{mem: mem, db: db, base: base, count: count}, nil
 }
 
 func (d *Doorbell) seqAddr(i int) uint32 { return d.base + uint32(8*i) }
 
 // Ring advances doorbell i's sequence and, if its thread is sleeping, asks the
-// doorbell thread to notify it. Never blocks.
+// doorbell thread to notify it. Never blocks on the guest.
 func (d *Doorbell) Ring(i int) {
 	if i < 0 || i >= d.count {
 		return
@@ -111,15 +117,11 @@ func (d *Doorbell) Ring(i int) {
 	if d.mem.Load32(d.seqAddr(i)+4) == 0 {
 		return
 	}
-	d.requested.Add(1)
-	if d.pending[i].Swap(1) == 1 {
-		d.coalesced.Add(1)
-		return
+	d.mu.RLock()
+	if !d.done {
+		C.sdn_doorbell_request(d.db, C.uint32_t(i))
 	}
-	select {
-	case d.kick <- struct{}{}:
-	default:
-	}
+	d.mu.RUnlock()
 }
 
 // Sleeping reports whether doorbell i's thread says it is waiting.
@@ -128,45 +130,33 @@ func (d *Doorbell) Sleeping(i int) bool { return d.mem.Load32(d.seqAddr(i)+4) !=
 // Seq returns doorbell i's current sequence value.
 func (d *Doorbell) Seq(i int) uint32 { return d.mem.Load32(d.seqAddr(i)) }
 
-func (d *Doorbell) run() {
-	defer close(d.done)
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	for {
-		select {
-		case <-d.stop:
-			return
-		case <-d.kick:
-		}
-		for i := range d.pending {
-			if d.pending[i].Swap(0) == 0 {
-				continue
-			}
-			if _, err := d.exec.Invoke(d.wake, int32(d.seqAddr(i)), int32(1)); err != nil {
-				d.errors.Add(1)
-			} else {
-				d.notifies.Add(1)
-			}
-		}
-	}
-}
-
-// NotifyAll wakes every waiter on addr (used when stopping an instance).
-// Returns ErrClosed after Close.
+// NotifyAll wakes every waiter on addr now, on the calling thread (used when
+// stopping an instance; never call it from inside a host function). Returns
+// ErrClosed after Close.
 func (d *Doorbell) NotifyAll(addr uint32) error {
-	select {
-	case <-d.stop:
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.done {
 		return ErrClosed
-	default:
 	}
-	_, err := d.exec.Invoke(d.wake, int32(addr), int32(1<<30))
-	return err
+	if C.sdn_doorbell_notify_now(d.db, C.uint32_t(addr), C.int32_t(1<<30)) != 0 {
+		return errors.New("wasmrt: wake export failed")
+	}
+	return nil
 }
 
 // Stats snapshots the doorbell's counters.
 func (d *Doorbell) Stats() DoorbellStats {
-	return DoorbellStats{Rings: d.rings.Load(), Requested: d.requested.Load(), Coalesced: d.coalesced.Load(),
-		Notifies: d.notifies.Load(), Errors: d.errors.Load()}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	st := DoorbellStats{Rings: d.rings.Load()}
+	if d.done {
+		return st
+	}
+	var req, sig, not, errs C.uint64_t
+	C.sdn_doorbell_stats(d.db, &req, &sig, &not, &errs)
+	st.Requested, st.Signals, st.Notifies, st.Errors = int64(req), int64(sig), int64(not), int64(errs)
+	return st
 }
 
 // Close stops the doorbell thread and waits for it.
@@ -174,8 +164,12 @@ func (d *Doorbell) Close() {
 	if d == nil {
 		return
 	}
-	d.once.Do(func() { close(d.stop) })
-	<-d.done
+	d.once.Do(func() {
+		d.mu.Lock()
+		d.done = true
+		d.mu.Unlock()
+		C.sdn_doorbell_stop(d.db)
+	})
 }
 
 // CompletionPoller completes waiters on monotonically increasing u64 words.

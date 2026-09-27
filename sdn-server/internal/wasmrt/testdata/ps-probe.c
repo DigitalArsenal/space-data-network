@@ -65,6 +65,7 @@ static _Atomic uint64_t g_ack[MAX_THREADS];
 static _Atomic uint32_t g_memgen;
 static _Atomic uint32_t g_canary[MAX_THREADS];
 static _Atomic uint32_t g_live;
+static _Atomic uint32_t g_hang; // tid+1 of a MODE_CPU thread told to hang
 static struct ps_layout g_layout;
 
 // ---- configuration (flatsql_ps_init) ----------------------------------------
@@ -200,9 +201,12 @@ static void doorbell_loop(uint32_t tid) {
   }
 }
 
+static void spin_loop(uint32_t tid);
+
 static void cpu_loop(uint32_t tid) {
   uint64_t acc = tid;
   while (!stopping()) {
+    if (atomic_load_explicit(&g_hang, memory_order_relaxed) == tid + 1) spin_loop(tid);
     acc = compute(acc, 100000);
     atomic_fetch_add_explicit(&g_heartbeat[tid], 1, memory_order_relaxed);
     atomic_fetch_add_explicit(&g_tstats[tid].work, 1, memory_order_relaxed);
@@ -433,7 +437,8 @@ int64_t probe_parallel(int32_t threads, int64_t iters) {
     pthread_join(t[i], 0);
     acc ^= a[i].out;
   }
-  return started == threads ? (int64_t)acc : -2;
+  // Non-negative on success so the caller can tell it from -1/-2.
+  return started == threads ? (int64_t)(acc >> 1) : -2;
 }
 
 // Grows linear memory from inside the guest and bumps the generation word.
@@ -445,6 +450,10 @@ int32_t probe_grow(int32_t pages) {
 }
 
 EXPORT("probe_mem_pages") int32_t probe_mem_pages(void) { return (int32_t)__builtin_wasm_memory_size(0); }
+
+// Makes MODE_CPU thread `tid` stop beating and spin forever (a hung writer).
+EXPORT("probe_hang")
+void probe_hang(int32_t tid) { atomic_store(&g_hang, (uint32_t)tid + 1); }
 
 // Writes `value` at `addr` from the guest (base-stability cross-check).
 EXPORT("probe_store")
