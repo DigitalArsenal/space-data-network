@@ -27,8 +27,6 @@ import (
 	"time"
 
 	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
-	MPEFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
-	"github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -1910,43 +1908,6 @@ func parseUint32(v string) (uint32, error) {
 func gpArchiveCSVKey(r gpArchiveRecord) string {
 	return fmt.Sprintf("%d|%.9f|%.17g|%.17g|%.17g|%.17g|%.17g|%.17g|%.17g", r.NORAD, r.Epoch, r.MeanMotion, r.Eccentricity, r.Inclination, r.RAOfAscNode, r.ArgOfPericenter, r.MeanAnomaly, r.BSTAR)
 }
-func buildGPArchiveMPE(entity string, r gpArchiveRecord) []byte {
-	b := flatbuffers.NewBuilder(256)
-	id := b.CreateString(entity)
-	MPEFB.MPEStart(b)
-	MPEFB.MPEAddENTITY_ID(b, id)
-	forceGPFloat64Slot(b, 1, r.Epoch)
-	forceGPFloat64Slot(b, 2, r.MeanMotion)
-	forceGPFloat64Slot(b, 3, r.Eccentricity)
-	forceGPFloat64Slot(b, 4, r.Inclination)
-	forceGPFloat64Slot(b, 5, r.RAOfAscNode)
-	forceGPFloat64Slot(b, 6, r.ArgOfPericenter)
-	forceGPFloat64Slot(b, 7, r.MeanAnomaly)
-	forceGPFloat64Slot(b, 8, r.BSTAR)
-	b.PrependInt8(0)
-	b.Slot(9) // SGP4 is enum value zero; force the field to be present.
-	root := MPEFB.MPEEnd(b)
-	MPEFB.FinishSizePrefixedMPEBuffer(b, root)
-	return append([]byte(nil), b.FinishedBytes()...)
-}
-
-func forceGPFloat64Slot(b *flatbuffers.Builder, slot int, value float64) {
-	b.PrependFloat64(value)
-	b.Slot(slot)
-}
-func buildGPArchiveCAT(entity string, norad uint32, name string) []byte {
-	b := flatbuffers.NewBuilder(128)
-	id := b.CreateString(entity)
-	n := b.CreateString(name)
-	CATFB.CATStart(b)
-	CATFB.CATAddOBJECT_ID(b, id)
-	CATFB.CATAddNORAD_CAT_ID(b, norad)
-	CATFB.CATAddOBJECT_NAME(b, n)
-	root := CATFB.CATEnd(b)
-	CATFB.FinishSizePrefixedCATBuffer(b, root)
-	return append([]byte(nil), b.FinishedBytes()...)
-}
-
 func hashFile(path string) (string, error) {
 	f, e := os.Open(path)
 	if e != nil {
