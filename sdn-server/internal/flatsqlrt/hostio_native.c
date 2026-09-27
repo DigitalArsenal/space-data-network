@@ -471,7 +471,7 @@ struct sdn_hio_inst {
   stripe_t stripes[STRIPES];
   _Atomic uint64_t opens, reopens, closes, evictions, calls_after_revoke, writes_after_revoke, parked;
   _Atomic uint64_t dir_syncs, dirs_created, unlink_busy;
-  _Atomic uint32_t fault_write_us, fault_sync_us, fault_sync_hard_us;
+  _Atomic uint32_t fault_write_us, fault_sync_us, fault_sync_hard_us, fault_close_us;
 };
 
 static _Atomic uint32_t g_stripe_seq;
@@ -1054,6 +1054,8 @@ int32_t sdn_hio_close(sdn_hio_inst *in, int32_t h) {
     break;
   }
   ilock_unlock(&in->lock);
+  uint32_t delay = atomic_load_explicit(&in->fault_close_us, memory_order_relaxed);
+  if (delay) wait_or_release(in, delay);
   while (atomic_load_explicit(&s->pins, memory_order_seq_cst) != 0) sched_yield();
   int fd = atomic_exchange(&s->fd, -1);
   int r = 0;
@@ -1061,12 +1063,20 @@ int32_t sdn_hio_close(sdn_hio_inst *in, int32_t h) {
     r = close(fd);
     atomic_fetch_sub(&in->open_fds, 1);
   }
-  if (s->gflags & SDN_IO_DELETE_ON_CLOSE) {
+  // Exactly one of close and revoke releases the path registration: revoke
+  // releases every slot it finds not DEAD and marks it DEAD, so close releases
+  // only a slot revoke has not reached, and marks it DEAD in the same hold of
+  // the table lock so a later revoke skips it. Releasing twice would drop
+  // ANOTHER instance's hold on the path and let UNLINK_IF_UNUSED remove a
+  // file it still reads.
+  ilock_lock(&in->lock, in->cls);
+  int release = atomic_load(&s->state) != S_DEAD;
+  if (release) {
     reg_release(in->store, s->rel, in->cls);
-    (void)do_unlink(in, s->rel, 1);
-  } else {
-    reg_release(in->store, s->rel, in->cls);
+    atomic_store(&s->state, S_DEAD);
   }
+  ilock_unlock(&in->lock);
+  if (release && (s->gflags & SDN_IO_DELETE_ON_CLOSE)) (void)do_unlink(in, s->rel, 1);
   free_slot(in, idx);
   atomic_fetch_add(&in->closes, 1);
   leave(sp, 1);
@@ -1167,6 +1177,7 @@ void sdn_hio_set_fault(sdn_hio_inst *in, int op, uint32_t delay_us) {
   if (op == SDN_HIO_FAULT_WRITE) atomic_store(&in->fault_write_us, delay_us);
   if (op == SDN_HIO_FAULT_SYNC) atomic_store(&in->fault_sync_us, delay_us);
   if (op == SDN_HIO_FAULT_SYNC_HARD) atomic_store(&in->fault_sync_hard_us, delay_us);
+  if (op == SDN_HIO_FAULT_CLOSE) atomic_store(&in->fault_close_us, delay_us);
 }
 
 void sdn_hio_get_stats(sdn_hio_inst *in, sdn_hio_stats *o) {

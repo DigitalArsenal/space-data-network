@@ -183,7 +183,8 @@ func (h *NativeHostIO) Free() error {
 	return nil
 }
 
-// SetFault injects a delay before every write (op 0) or sync (op 1) syscall;
+// SetFault injects a delay before every write (op 0) or sync (op 1) syscall,
+// or inside a close between claiming its slot and releasing it (op 3);
 // ReleaseParked cuts those short. Op 2 stalls syncs and nothing cuts it
 // short (a thread stuck in the kernel). Tests only.
 func (h *NativeHostIO) SetFault(op int, delay time.Duration) {

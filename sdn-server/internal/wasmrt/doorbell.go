@@ -244,6 +244,9 @@ func (p *CompletionPoller) Sweeps() int64 { return p.sweeps.Load() }
 
 func (p *CompletionPoller) run() {
 	defer close(p.done)
+	tick := time.NewTimer(p.interval)
+	tick.Stop()
+	defer tick.Stop()
 	for {
 		p.mu.Lock()
 		n := len(p.waiters)
@@ -265,10 +268,11 @@ func (p *CompletionPoller) run() {
 			}
 		}
 		p.mu.Unlock()
+		tick.Reset(p.interval)
 		select {
 		case <-p.stop:
 			return
-		case <-time.After(p.interval):
+		case <-tick.C:
 		}
 	}
 }
