@@ -68,7 +68,7 @@ var closedStoreDB = sql.OpenDB(closedStoreConnector{})
 type closedStoreConnector struct{}
 
 func (closedStoreConnector) Connect(context.Context) (driver.Conn, error) { return nil, ErrStoreClosed }
-func (closedStoreConnector) Driver() driver.Driver                       { return closedStoreDriver{} }
+func (closedStoreConnector) Driver() driver.Driver                        { return closedStoreDriver{} }
 
 type closedStoreDriver struct{}
 
@@ -157,9 +157,7 @@ type FlatSQLStore struct {
 	fullTextWorkers        sync.WaitGroup
 	fullTextClosing        bool
 	db                     *sql.DB
-	// closed is set by Close before it tears anything down; s.db then points
-	// at closedStoreDB, never nil.
-	closed                 atomic.Bool
+	closed                 atomic.Bool // set by Close; s.db then points at closedStoreDB, never nil
 	engine                 *flatsqlrt.Runtime
 	engineDB               *flatsqlrt.Database
 	auxiliaryMetadata      *auxiliaryMetadataStore
