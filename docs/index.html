@@ -34,6 +34,8 @@
     .hero .lede { max-width: 860px; text-wrap: balance; }
     .hero .hero-title + .lede { margin-top: 6px; }
     .hero .lede-mark { margin-top: 2px; color: var(--text); font-weight: 600; }
+    /* Under the reel the lede sits on the bright limb of the Earth: full ink and a stronger halo. */
+    .hero .reel-frame ~ .lede { color: var(--text); text-shadow: var(--earth-text-shadow-strong); }
     .hero .eyebrow { text-wrap: balance; }
     /* The reel fills what the headline and buttons leave of the first screen, above the stack footer. */
     .hero .reel-frame { width: min(100%, 1120px, max(560px, calc((100svh - 566px) * 16 / 9))); max-width: 100%; margin-top: 8px; }
@@ -105,8 +107,6 @@
       <p class="eyebrow">An open network for space traffic management</p>
       <h1 class="hero-title">Space Data Network</h1>
       <p class="lede">An open, decentralized network for space data: space object catalog, weather, events, warnings, as well as software and services.</p>
-      <p class="lede">Digitally signed, optionally encrypted, free or for sale with no middlemen.</p>
-      <p class="lede lede-mark">Built on open standards, software, and algorithms.</p>
       <figure class="reel-frame" id="showreel">
         <div class="reel-stage">
           <video id="reelVideo" muted playsinline preload="auto" data-poster="media/showreel/sdn-showreel-poster.webp" aria-label="Space Data Network showreel, 45 seconds, no sound">
@@ -135,6 +135,8 @@
           </div>
         </div>
       </figure>
+      <p class="lede">Digitally signed, optionally encrypted, free or for sale with no middlemen.</p>
+      <p class="lede lede-mark">Built on open standards, software, and algorithms.</p>
       <div class="actions">
         <a href="catalog.html" class="btn btn-primary">The catalog</a>
         <a href="collision-avoidance.html" class="btn">Collision avoidance</a>

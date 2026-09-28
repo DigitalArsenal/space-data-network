@@ -28,6 +28,7 @@
   --paper-bg: #0b0b0c;
   --inline-code: rgba(255, 255, 255, 0.07);
   --earth-text-shadow: 0 1px 18px rgba(0,0,0,.85), 0 0 2px rgba(0,0,0,.6);
+  --earth-text-shadow-strong: 0 1px 3px rgba(0,0,0,.9), 0 0 22px rgba(0,0,0,.9), 0 0 44px rgba(0,0,0,.6);
   --shade: linear-gradient(180deg, rgba(0,0,0,.2) 0%, rgba(0,0,0,.55) 60%, rgba(0,0,0,.8) 100%);
   --earth-shade: linear-gradient(180deg, rgba(0,0,0,.35) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 70%, rgba(0,0,0,.35) 100%);
   color-scheme: dark;
@@ -54,6 +55,7 @@
   --paper-bg: #fafafa;
   --inline-code: rgba(0, 0, 0, 0.06);
   --earth-text-shadow: 0 1px 14px rgba(255,255,255,.9), 0 0 2px rgba(255,255,255,.8);
+  --earth-text-shadow-strong: 0 1px 3px rgba(255,255,255,.95), 0 0 20px rgba(255,255,255,.95), 0 0 40px rgba(255,255,255,.7);
   --shade: linear-gradient(180deg, rgba(245,245,247,.3) 0%, rgba(245,245,247,.6) 60%, rgba(245,245,247,.85) 100%);
   --earth-shade: linear-gradient(180deg, rgba(245,245,247,.45) 0%, rgba(245,245,247,0) 30%, rgba(245,245,247,0) 70%, rgba(245,245,247,.45) 100%);
   color-scheme: light;
