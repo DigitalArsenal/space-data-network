@@ -268,8 +268,9 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	if result.ShardCID == "" || result.IndexCID == "" || result.ManifestCID == "" || result.PNMCID == "" {
 		t.Fatalf("result missing CIDs: %#v", result)
 	}
-	if len(pinned) != 4 {
-		t.Fatalf("pinned object count = %d, want shard, index, manifest, and shard-group CAR", len(pinned))
+	// One window, so no shard-group CAR: it would pin the shard's bytes twice.
+	if len(pinned) != 3 {
+		t.Fatalf("pinned object count = %d, want shard, index and manifest (no one-shard CAR bundle)", len(pinned))
 	}
 	if _, ok := pinned[result.ShardCID]; !ok {
 		t.Fatalf("shard CID %q was not pinned", result.ShardCID)
@@ -332,8 +333,8 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	if err != nil {
 		t.Fatalf("ListPinLedgerEntries failed: %v", err)
 	}
-	if len(ledger) != 5 {
-		t.Fatalf("pin ledger entries = %d, want shard, index, manifest, pnm, and shard-group CAR: %#v", len(ledger), ledger)
+	if len(ledger) != 4 {
+		t.Fatalf("pin ledger entries = %d, want shard, index, manifest and pnm (no one-shard CAR bundle): %#v", len(ledger), ledger)
 	}
 	wantPublicKey := hex.EncodeToString(signingKey.Public().(ed25519.PublicKey))
 	entriesByRole := map[string]storage.PinLedgerEntry{}
@@ -364,8 +365,8 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	if entriesByRole["pnm"].CID != result.PNMCID {
 		t.Fatalf("pnm pin ledger mismatch: %#v result=%#v", entriesByRole["pnm"], result)
 	}
-	if carEntry := entriesByRole["shard-group-car"]; carEntry.CID == "" || carEntry.ByteHash == "" || carEntry.ByteCount <= 0 || carEntry.Head != publishedShard.FeedHead {
-		t.Fatalf("shard-group CAR pin ledger mismatch: %#v published=%#v", carEntry, publishedShard)
+	if carEntry, ok := entriesByRole["shard-group-car"]; ok {
+		t.Fatalf("a one-window publication recorded a shard-group CAR bundle: %#v", carEntry)
 	}
 }
 
@@ -1077,12 +1078,21 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 	if publications[0].Offset != 0 || publications[0].RecordCount != 2 {
 		t.Fatalf("remaining publication = %#v, want offset 0 record count 2", publications[0])
 	}
-	currentCAR := mustLatestShardGroupCAR(t, store, "CAT.fbs", "space-data-network-02", "provider-gp", "verified")
-	if currentCAR.CID == firstCAR.CID {
-		t.Fatalf("current shard-group CAR reused stale CID %q", currentCAR.CID)
+	// The shrunken scope is one window: its head needs no bundle (a one-shard
+	// CAR would pin the shard twice), and none is advertised.
+	currentCARs, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        "CAT.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "provider-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "verified",
+	})
+	if err != nil {
+		t.Fatalf("ListPinLedgerEntries verified failed: %v", err)
 	}
-	if currentCAR.Head != publications[0].FeedHead {
-		t.Fatalf("current shard-group CAR head = %q, want %q", currentCAR.Head, publications[0].FeedHead)
+	if len(currentCARs) != 0 {
+		t.Fatalf("one-window head kept %d verified shard-group CAR bundle(s): %#v", len(currentCARs), currentCARs)
 	}
 	staleCARs, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
 		CID:               firstCAR.CID,
@@ -1175,8 +1185,8 @@ func TestConcreteDatasetPublicationServiceDefaultsFullCatalogToLargeSyncChunks(t
 	if len(publisher.announcements) != 1 {
 		t.Fatalf("announcements = %d, want one large sync chunk", len(publisher.announcements))
 	}
-	if len(pinned) != 4 {
-		t.Fatalf("pinned object count = %d, want shard, index, manifest, and shard-group CAR", len(pinned))
+	if len(pinned) != 3 {
+		t.Fatalf("pinned object count = %d, want shard, index and manifest (one large chunk needs no CAR bundle)", len(pinned))
 	}
 	publishedShard, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   "CAT.fbs",

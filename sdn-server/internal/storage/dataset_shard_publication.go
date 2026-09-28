@@ -114,6 +114,58 @@ func DatasetShardPublicationCARGroups(publications []DatasetShardPublication, ma
 	return groups
 }
 
+// ShardGroupCARBundle is one shard-group CAR bundle a scope needs: the
+// shards it carries and the segment range of the scope it covers.
+type ShardGroupCARBundle struct {
+	Publications []DatasetShardPublication
+	SegmentStart int
+	SegmentCount int
+	Rows         int64
+}
+
+// PlanShardGroupCARBundles groups a scope's shards (DatasetShardPublicationCARGroups)
+// and returns the groups whose CAR adds something: two or more shards, which a
+// consumer then fetches and imports in one transfer.
+//
+// A group of ONE shard gets no CAR. The bundle would be that shard's own DAG
+// again, added to kubo as a second copy of its bytes (a UnixFS file of the CAR),
+// and a consumer is no better served by it: the shard's CID is one fetch, a
+// gateway serves it as a CAR on request (?format=car), and sdn-js hydrates a
+// segment no bundle covers from its shard and index CIDs. Measured on host-02:
+// single-shard TBS lanes carried 3.0 GB of CAR over 3.0 GB of shards.
+//
+// Segment indexes count every shard in feed order, so a bundle after a skipped
+// single-shard group still names the segments it really covers.
+func PlanShardGroupCARBundles(publications []DatasetShardPublication, maxSourceBytes int64) []ShardGroupCARBundle {
+	var bundles []ShardGroupCARBundle
+	segment := 0
+	for _, group := range DatasetShardPublicationCARGroups(publications, maxSourceBytes) {
+		start := segment
+		segment += len(group)
+		if len(group) < 2 {
+			continue
+		}
+		bundle := ShardGroupCARBundle{Publications: group, SegmentStart: start, SegmentCount: len(group)}
+		for _, publication := range group {
+			bundle.Rows += int64(publication.RecordCount)
+		}
+		bundles = append(bundles, bundle)
+	}
+	return bundles
+}
+
+// ShardGroupCARCoversOneSegment reports whether a recorded shard-group CAR
+// carries a single shard of a scope with segmentCount segments: the bundle
+// PlanShardGroupCARBundles no longer builds, because it only duplicates the
+// shard's bytes. A legacy entry without a segment range covers the whole
+// scope, which is one shard only when the scope has one.
+func ShardGroupCARCoversOneSegment(entry PinLedgerEntry, segmentCount int) bool {
+	if entry.SegmentCount == 1 {
+		return true
+	}
+	return entry.SegmentCount <= 0 && segmentCount == 1
+}
+
 func (s *FlatSQLStore) initDatasetShardPublicationTable() error {
 	existed, err := s.tableExists("sdn_dataset_shard_publications")
 	if err != nil {

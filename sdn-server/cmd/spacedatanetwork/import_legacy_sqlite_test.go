@@ -644,9 +644,12 @@ func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing
 	}
 	defer store.Close()
 
+	// Six 200 MiB shards: the 512 MiB bound cuts them into three bundles of
+	// two. (A shard over the bound stands alone and gets no bundle at all:
+	// legacy_publication_plan_car_test.go.)
 	publishedAt := time.Unix(1_778_666_000, 0).UTC()
-	publications := make([]storage.DatasetShardPublication, 0, 3)
-	for i := 0; i < 3; i++ {
+	publications := make([]storage.DatasetShardPublication, 0, 6)
+	for i := 0; i < 6; i++ {
 		shardCID := importLegacyCIDV1RawSHA256ForTest(t, []byte(fmt.Sprintf("large historical shard %d", i)))
 		indexCID := importLegacyCIDV1RawSHA256ForTest(t, []byte(fmt.Sprintf("large historical index %d", i)))
 		manifestCID := importLegacyCIDV1RawSHA256ForTest(t, []byte(fmt.Sprintf("large historical manifest %d", i)))
@@ -661,7 +664,7 @@ func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing
 			Offset:       i * 50_000,
 			Limit:        50_000,
 			RecordCount:  50_000,
-			ByteCount:    int64(700 << 20),
+			ByteCount:    int64(200 << 20),
 			ShardCID:     shardCID,
 			IndexCID:     indexCID,
 			ManifestCID:  manifestCID,
@@ -703,7 +706,7 @@ func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing
 		t.Fatalf("registered CAR bundles = %d, want 3 bounded bundles: %#v", len(entries), entries)
 	}
 	for _, entry := range entries {
-		if entry.Head != expectedHead || entry.RowCount != 50_000 || entry.ByteCount <= 0 {
+		if entry.Head != expectedHead || entry.RowCount != 100_000 || entry.SegmentCount != 2 || entry.ByteCount <= 0 {
 			t.Fatalf("unexpected bounded CAR ledger entry: %#v", entry)
 		}
 	}
@@ -806,8 +809,10 @@ func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t 
 	if err != nil {
 		t.Fatalf("rebuildDatasetPublicationShardGroupCARBundles failed: %v", err)
 	}
-	if result.Publications != 3 || result.Records != 150_000 || result.Bundles != 2 {
-		t.Fatalf("rebuild result = %#v, want 3 publications, 150000 records, 2 bundles", result)
+	// 3 x 256 MiB against the 512 MiB bound: [0,1] share a bundle; shard 2
+	// stands alone and is its own bundle (a one-shard CAR would pin it twice).
+	if result.Publications != 3 || result.Records != 150_000 || result.Bundles != 1 {
+		t.Fatalf("rebuild result = %#v, want 3 publications, 150000 records, 1 bundle", result)
 	}
 
 	// Reopen for the post-rebuild assertions below.
@@ -827,12 +832,11 @@ func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t 
 	if err != nil {
 		t.Fatalf("OpenManifest failed: %v", err)
 	}
-	if len(manifest.ArtifactBundles) != 2 {
-		t.Fatalf("manifest CAR bundles = %d, want 2 rebuilt bundles: %#v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	if len(manifest.ArtifactBundles) != 1 {
+		t.Fatalf("manifest CAR bundles = %d, want 1 rebuilt bundle: %#v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
 	}
-	if manifest.ArtifactBundles[0].SegmentStart != 0 || manifest.ArtifactBundles[0].SegmentCount != 2 ||
-		manifest.ArtifactBundles[1].SegmentStart != 2 || manifest.ArtifactBundles[1].SegmentCount != 1 {
-		t.Fatalf("rebuilt bundle coverage = %#v, want [0:2] and [2:1]", manifest.ArtifactBundles)
+	if manifest.ArtifactBundles[0].SegmentStart != 0 || manifest.ArtifactBundles[0].SegmentCount != 2 {
+		t.Fatalf("rebuilt bundle coverage = %#v, want [0:2] (segment 2 is served by its own shard)", manifest.ArtifactBundles)
 	}
 	staleEntries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
 		CID:               "bafy-old-partial-car",

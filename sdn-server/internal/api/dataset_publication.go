@@ -1105,6 +1105,11 @@ func (s *ConcreteDatasetPublicationService) announceDatasetFeedHead(ctx context.
 // recordShardGroupCARBundle makes sure shard-group CAR bundles cover the
 // scope's current head and returns their CIDs. Bundles live in kubo: the
 // staging file is removed as soon as kubo has pinned it.
+//
+// Only groups of two or more shards get a bundle (storage.PlanShardGroupCARBundles):
+// a one-shard CAR is the shard's bytes pinned a second time. A scope whose
+// shards all stand alone — every single-shard lane — gets none, and a
+// one-shard bundle recorded before this rule is released here.
 func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx context.Context, publications []storage.DatasetShardPublication, schema string) ([]string, error) {
 	if len(publications) == 0 {
 		return nil, nil
@@ -1134,16 +1139,25 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		totalRows += int64(publication.RecordCount)
 		totalBytes += publication.ByteCount
 	}
+	bundles := storage.PlanShardGroupCARBundles(publications, storage.DefaultShardGroupCARMaxSourceBytes)
+	var bundledRows int64
+	for _, bundle := range bundles {
+		bundledRows += bundle.Rows
+	}
 	var existingHeadRows int64
 	var existingHeadCIDs []string
 	for _, entry := range existing {
-		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
+		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 &&
+			!storage.ShardGroupCARCoversOneSegment(entry, len(publications)) {
 			existingHeadRows += entry.RowCount
 			existingHeadCIDs = append(existingHeadCIDs, entry.CID)
 		}
 	}
-	if totalRows > 0 && existingHeadRows >= totalRows {
-		return existingHeadCIDs, s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir)
+	if len(bundles) == 0 {
+		return nil, s.retireStaleShardGroupCARBundles(ctx, existing, head, len(publications), carOutputDir)
+	}
+	if bundledRows > 0 && existingHeadRows >= bundledRows {
+		return existingHeadCIDs, s.retireStaleShardGroupCARBundles(ctx, existing, head, len(publications), carOutputDir)
 	}
 
 	providerPublicKey := ""
@@ -1157,20 +1171,13 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		verifiedAt = s.now()
 	}
 	highWaterMark := datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes)
-	currentCARCIDs := make([]string, 0)
-	groups := storage.DatasetShardPublicationCARGroups(publications, storage.DefaultShardGroupCARMaxSourceBytes)
-	segmentStart := 0
-	for _, group := range groups {
-		groupSegmentStart := segmentStart
-		groupSegmentCount := len(group)
-		segmentStart += groupSegmentCount
-		rootCIDs := make([]string, 0, len(group))
-		var groupRows int64
-		for _, publication := range group {
+	currentCARCIDs := make([]string, 0, len(bundles))
+	for _, bundle := range bundles {
+		rootCIDs := make([]string, 0, len(bundle.Publications))
+		for _, publication := range bundle.Publications {
 			if publication.ShardCID != "" {
 				rootCIDs = append(rootCIDs, publication.ShardCID)
 			}
-			groupRows += int64(publication.RecordCount)
 		}
 		publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, carOutputDir, rootCIDs)
 		if err != nil {
@@ -1196,9 +1203,9 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 			HighWaterMark:     highWaterMark,
 			ByteHash:          publishedCAR.SHA256,
 			Role:              "shard-group-car",
-			SegmentStart:      groupSegmentStart,
-			SegmentCount:      groupSegmentCount,
-			RowCount:          groupRows,
+			SegmentStart:      bundle.SegmentStart,
+			SegmentCount:      bundle.SegmentCount,
+			RowCount:          bundle.Rows,
 			ByteCount:         publishedCAR.ByteCount,
 			VerificationState: "verified",
 			VerifiedAt:        verifiedAt,
@@ -1207,13 +1214,17 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 			return nil, fmt.Errorf("record shard-group CAR pin ledger: %w", err)
 		}
 	}
-	if err := s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir); err != nil {
+	if err := s.retireStaleShardGroupCARBundles(ctx, existing, head, len(publications), carOutputDir); err != nil {
 		return nil, err
 	}
 	return currentCARCIDs, nil
 }
 
-func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx context.Context, entries []storage.PinLedgerEntry, currentHead, carOutputDir string) error {
+// retireStaleShardGroupCARBundles releases a scope's bundles that no longer
+// serve its current head: bundles of a superseded head (marked stale), and
+// one-shard bundles of the current head, which only duplicate a shard
+// (released as redundant).
+func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx context.Context, entries []storage.PinLedgerEntry, currentHead string, segmentCount int, carOutputDir string) error {
 	for _, entry := range entries {
 		if entry.CID == "" {
 			continue
@@ -1226,6 +1237,11 @@ func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx 
 			continue
 		}
 		if entry.Head == currentHead || entry.SnapshotID == currentHead {
+			if storage.ShardGroupCARCoversOneSegment(entry, segmentCount) {
+				if _, err := s.releaseRedundantShardGroupCAR(ctx, entry); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if err := storage.UnpinIPFSCID(ctx, s.ipfsAPIURL, entry.CID); err != nil {
@@ -1245,6 +1261,29 @@ func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx 
 		}
 	}
 	return nil
+}
+
+// releaseRedundantShardGroupCAR unpins a one-shard bundle and marks its ledger
+// row retired, so no manifest advertises it again; the shard it duplicated
+// stays pinned under its own row. Returns the bytes kubo no longer pins.
+func (s *ConcreteDatasetPublicationService) releaseRedundantShardGroupCAR(ctx context.Context, entry storage.PinLedgerEntry) (int64, error) {
+	if err := storage.UnpinIPFSCID(ctx, s.ipfsAPIURL, entry.CID); err != nil {
+		return 0, fmt.Errorf("unpin one-shard CAR bundle %s: %w", entry.CID, err)
+	}
+	entry.VerificationState = storage.PinLedgerStateRetired
+	entry.UpdatedAt = s.now()
+	if err := s.store.UpsertPinLedgerEntry(entry); err != nil {
+		return 0, fmt.Errorf("retire one-shard CAR bundle %s: %w", entry.CID, err)
+	}
+	if len(entry.ByteHash) >= 16 && s.outputDir != "" {
+		staged := filepath.Join(s.outputDir, safeDatasetPathComponent(entry.SchemaName), "car", "shard-group-"+entry.ByteHash[:16]+".car")
+		if err := os.Remove(staged); err != nil && !os.IsNotExist(err) {
+			log.Warnf("remove staged one-shard CAR %s: %v", staged, err)
+		}
+	}
+	log.Infof("released one-shard CAR bundle %s (%d bytes) of %s %s/%s batch %s: the shard is its own bundle",
+		entry.CID, entry.ByteCount, entry.SchemaName, entry.ProviderID, entry.SourceName, entry.BatchID)
+	return entry.ByteCount, nil
 }
 
 func (s *ConcreteDatasetPublicationService) recordDatasetPublicationPins(
