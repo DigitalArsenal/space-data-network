@@ -4214,8 +4214,14 @@ func isStateChangingMethod(method string) bool {
 // enforces its own loopback-only gate, independently of any session. They are
 // machine-local control surfaces, not operator-authority-by-session:
 //
-//	/api/v1/admin/dataset-updates/publish  api/dataset_publication.go:120
-//	/api/v1/admin/update/shutdown          update/control.go:68
+//	/api/v1/admin/dataset-updates/publish    api/dataset_publication.go
+//	/api/v1/admin/dataset-updates/retention  api/dataset_publication.go
+//	/api/v1/admin/update/shutdown            update/control.go:68
+//
+// The two dataset-updates routes share ONE local-client rule
+// (api.requireLoopbackClient: loopback RemoteAddr and no reverse-proxy
+// headers). Retention answered "not authenticated" to the same loopback curl
+// that publish serves, because it was missing from this list.
 //
 // This matters only on a require_auth:false daemon, where the wall would
 // otherwise start demanding a session on a door that is already correctly hung
@@ -4227,6 +4233,7 @@ func isStateChangingMethod(method string) bool {
 func isLoopbackSelfGatedAdminPath(path string) bool {
 	switch path {
 	case "/api/v1/admin/dataset-updates/publish",
+		"/api/v1/admin/dataset-updates/retention",
 		"/api/v1/admin/update/shutdown":
 		return true
 	}

@@ -324,6 +324,7 @@ func TestLoopbackSelfGatedAdminPathsStayReachableWithoutSession(t *testing.T) {
 
 	for _, path := range []string{
 		"/api/v1/admin/dataset-updates/publish",
+		"/api/v1/admin/dataset-updates/retention",
 		"/api/v1/admin/update/shutdown",
 	} {
 		if !isAdminOnlyAPIPath(path) {
