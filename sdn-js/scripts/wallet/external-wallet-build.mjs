@@ -19,6 +19,11 @@
  * and the substitution point is a plain esbuild plugin over an adapter module,
  * so an embedder supplies its own adapter with an environment variable instead
  * of patching this package's source.
+ *
+ * Every package build ALSO emits the externalised form, with the committed
+ * adapter, under `dist/external-wallet/` and publishes it as the
+ * `./external-wallet` export subpath (docs/EXTERNAL_WALLET_BUILD.md), so an
+ * embedder consumes it from npm instead of building this package from source.
  */
 
 import path from 'node:path';
@@ -132,6 +137,28 @@ export async function resolveWalletBuildMode({ packageRoot, argv = [], env = pro
   const adapterPath = resolveExternalWalletAdapterPath({ packageRoot, env });
   return {
     external,
+    adapterPath,
+    plugins: [createExternalHdWalletPlugin({ adapterPath }), ...extraPlugins],
+  };
+}
+
+/**
+ * Directory under `dist/` of the published `./external-wallet` subpath. It
+ * mirrors `dist/` (index.mjs, ui/index.mjs, status/index.mjs, ...).
+ */
+export const PUBLISHED_EXTERNAL_WALLET_DIR = 'external-wallet';
+
+/**
+ * The build that `./external-wallet` publishes: always the COMMITTED adapter,
+ * whatever adapter an embedder selects for its own `dist/` build, so the
+ * published subpath reads the documented provider key and nothing else.
+ * Embedder-contributed plugins apply to it as to every build.
+ */
+export async function resolvePublishedExternalWalletBuild({ packageRoot, env = process.env } = {}) {
+  const adapterPath = defaultExternalWalletAdapterPath(packageRoot);
+  const extraPlugins = await loadExtraEsbuildPlugins({ packageRoot, env });
+  return {
+    outdir: path.join('dist', PUBLISHED_EXTERNAL_WALLET_DIR),
     adapterPath,
     plugins: [createExternalHdWalletPlugin({ adapterPath }), ...extraPlugins],
   };

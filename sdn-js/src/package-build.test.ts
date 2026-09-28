@@ -142,6 +142,11 @@ describe('sdn-js package build', () => {
 
     await expect(fs.access(path.resolve(DIST_PATH, 'chunks'))).rejects.toThrow();
     expect(modules.map((modulePath) => path.relative(DIST_PATH, modulePath))).toEqual([
+      'external-wallet/index.mjs',
+      'external-wallet/status/index.mjs',
+      'external-wallet/storefront/index.mjs',
+      'external-wallet/transport/http.mjs',
+      'external-wallet/ui/index.mjs',
       'index.mjs',
       'status/index.mjs',
       'storefront/index.mjs',
@@ -163,6 +168,20 @@ describe('sdn-js package build', () => {
     expect(packageJson.exports?.['./status']?.types).toBe('./dist/status/index.d.ts');
     expect(packageJson.exports?.['./storefront']?.import).toBe('./dist/storefront/index.mjs');
     expect(packageJson.exports?.['./storefront']?.types).toBe('./dist/storefront/index.d.ts');
+    // The externalised-wallet build of the three wallet-bearing entries: the
+    // same API (same declarations), runtime obtained from the host.
+    expect(packageJson.exports?.['./external-wallet']).toEqual({
+      types: './dist/index.d.ts',
+      import: './dist/external-wallet/index.mjs',
+    });
+    expect(packageJson.exports?.['./external-wallet/ui']).toEqual({
+      types: './dist/ui/index.d.ts',
+      import: './dist/external-wallet/ui/index.mjs',
+    });
+    expect(packageJson.exports?.['./external-wallet/status']).toEqual({
+      types: './dist/status/index.d.ts',
+      import: './dist/external-wallet/status/index.mjs',
+    });
     expect(
       Object.keys(packageJson.scripts ?? {}).some((name) =>
         name.includes('runtime-browser'),
@@ -201,6 +220,9 @@ describe('sdn-js package build', () => {
       './ui',
       './status',
       './storefront',
+      './external-wallet',
+      './external-wallet/ui',
+      './external-wallet/status',
     ]);
     expect(packageJson.dependencies?.['satellite.js']).toBeUndefined();
     expect(packageJson.devDependencies?.['satellite.js']).toBeUndefined();

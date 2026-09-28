@@ -28,7 +28,10 @@ function assertPatched(contents, markers, where) {
   return contents;
 }
 
-import { resolveWalletBuildMode } from './wallet/external-wallet-build.mjs';
+import {
+  resolvePublishedExternalWalletBuild,
+  resolveWalletBuildMode,
+} from './wallet/external-wallet-build.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -333,37 +336,59 @@ const sharedBuildOptions = {
         );
       },
     },
-    // Last so an embedder's substitutions win over the in-package shims.
-    ...walletBuildMode.plugins,
+    // The wallet plugins for each build are appended LAST (see
+    // buildPackageEntries) so an embedder's substitutions win over the
+    // in-package shims.
   ],
   loader: {
     '.wasm': 'file',
   },
 };
 
-await build({
-  ...sharedBuildOptions,
-  entryPoints: [
-    path.join(packageRoot, 'src/index.ts'),
-    path.join(packageRoot, 'src/transport/http.ts'),
-    path.join(packageRoot, 'src/ui/index.ts'),
-    path.join(packageRoot, 'src/status/index.ts'),
-    path.join(packageRoot, 'src/storefront/index.ts'),
-  ],
-  outdir: path.join(packageRoot, 'dist'),
-  outbase: path.join(packageRoot, 'src'),
-  splitting: false,
-  entryNames: '[dir]/[name]',
-  outExtension: {
-    '.js': '.mjs',
-  },
-});
-
 // The bundled flatsql emscripten glue locates its wasm binary relative to
 // the importing module's URL (new URL('flatsql.wasm', import.meta.url)).
 // Ship the engine binary beside every dist entry that may initialize it so
 // the lookup works from the published package in both Node and browsers.
 const flatsqlWasm = path.join(packageRoot, 'node_modules/flatsql/wasm/flatsql.wasm');
-for (const target of ['dist/flatsql.wasm', 'dist/ui/flatsql.wasm']) {
-  await fs.copyFile(flatsqlWasm, path.join(packageRoot, target));
+
+async function buildPackageEntries({ outdir, walletPlugins }) {
+  await build({
+    ...sharedBuildOptions,
+    plugins: [...sharedBuildOptions.plugins, ...walletPlugins],
+    entryPoints: [
+      path.join(packageRoot, 'src/index.ts'),
+      path.join(packageRoot, 'src/transport/http.ts'),
+      path.join(packageRoot, 'src/ui/index.ts'),
+      path.join(packageRoot, 'src/status/index.ts'),
+      path.join(packageRoot, 'src/storefront/index.ts'),
+    ],
+    outdir: path.join(packageRoot, outdir),
+    outbase: path.join(packageRoot, 'src'),
+    splitting: false,
+    entryNames: '[dir]/[name]',
+    outExtension: {
+      '.js': '.mjs',
+    },
+  });
+  for (const target of ['flatsql.wasm', 'ui/flatsql.wasm']) {
+    await fs.copyFile(flatsqlWasm, path.join(packageRoot, outdir, target));
+  }
 }
+
+await buildPackageEntries({ outdir: 'dist', walletPlugins: walletBuildMode.plugins });
+
+// The published `./external-wallet` subpath: the same entries with the HD
+// wallet runtime externalised through the committed adapter, under
+// dist/external-wallet/. Embedders that ship their own reviewed runtime
+// consume this from npm (docs/EXTERNAL_WALLET_BUILD.md).
+const publishedExternalWallet = await resolvePublishedExternalWalletBuild({
+  packageRoot,
+  env: process.env,
+});
+console.log(
+  `[sdn-js] ./external-wallet subpath: HD wallet runtime EXTERNALISED via ${path.relative(packageRoot, publishedExternalWallet.adapterPath)} into ${publishedExternalWallet.outdir}`,
+);
+await buildPackageEntries({
+  outdir: publishedExternalWallet.outdir,
+  walletPlugins: publishedExternalWallet.plugins,
+});
