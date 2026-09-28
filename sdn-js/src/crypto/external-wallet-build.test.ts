@@ -132,6 +132,20 @@ describe('external wallet build target', () => {
     }
   });
 
+  it('publishes the ./external-wallet subpath with the committed adapter only', async () => {
+    const published = await walletBuild.resolvePublishedExternalWalletBuild({
+      packageRoot,
+      // An embedder's own adapter selects ITS dist/ build, never the subpath.
+      env: { SDN_JS_HD_WALLET_ADAPTER: 'scripts/wallet/does-not-exist.mjs' },
+    });
+    expect(published.outdir).toBe(path.join('dist', 'external-wallet'));
+    expect(published.adapterPath).toBe(walletBuild.defaultExternalWalletAdapterPath(packageRoot));
+
+    const source = await bundleWalletEntry(published.plugins);
+    expect(embeddedRuntimeReason(source)).toBeNull();
+    expect(source).toContain('sdn.hd-wallet-wasm.provider.v1');
+  });
+
   it('declares the named build script', async () => {
     const manifest = JSON.parse(
       await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
@@ -139,6 +153,32 @@ describe('external wallet build target', () => {
     expect(manifest.scripts['build:browser-external-wallet']).toBe(
       'SDN_JS_EXTERNAL_WALLET=1 npm run build:core',
     );
+  });
+});
+
+// `npm test` runs `npm run build:core` first, so these read what the package
+// build emitted: the inlined default in dist/ and the published externalised
+// subpath in dist/external-wallet/, which mirrors it.
+describe('published ./external-wallet subpath', () => {
+  const distRoot = path.join(packageRoot, 'dist');
+
+  it.each(['index.mjs', 'ui/index.mjs', 'status/index.mjs'])(
+    'ships %s externalised beside the inlined default',
+    async (entry) => {
+      const external = await readFile(path.join(distRoot, 'external-wallet', entry), 'utf8');
+      const inlined = await readFile(path.join(distRoot, entry), 'utf8');
+      expect(embeddedRuntimeReason(external)).toBeNull();
+      expect(external).toContain('sdn.hd-wallet-wasm.provider.v1');
+      expect(embeddedRuntimeReason(inlined)).not.toBeNull();
+    },
+  );
+
+  it('ships the FlatSQL engine beside the externalised entries that load it', async () => {
+    for (const target of ['flatsql.wasm', 'ui/flatsql.wasm']) {
+      await expect(
+        readFile(path.join(distRoot, 'external-wallet', target)),
+      ).resolves.toEqual(await readFile(path.join(distRoot, target)));
+    }
   });
 });
 

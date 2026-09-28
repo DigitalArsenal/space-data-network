@@ -1,6 +1,24 @@
 # Building sdn-js with the HD wallet runtime externalised
 
-## The one command
+## From npm: the `./external-wallet` subpath
+
+Every package build emits the externalised form beside the default one, and
+the npm package publishes it:
+
+| import | file |
+| --- | --- |
+| `@spacedatanetwork/sdn-js/external-wallet` | `dist/external-wallet/index.mjs` |
+| `@spacedatanetwork/sdn-js/external-wallet/ui` | `dist/external-wallet/ui/index.mjs` |
+| `@spacedatanetwork/sdn-js/external-wallet/status` | `dist/external-wallet/status/index.mjs` |
+
+Same API and declarations as `.`, `./ui` and `./status`. The bundles are built
+with the committed adapter below, so they obtain the runtime from a provider
+the host installs under `globalThis['sdn.hd-wallet-wasm.provider.v1']` (or the
+node's staged runtime). `dist/external-wallet/` mirrors `dist/`, including the
+`flatsql.wasm` copies, so an embedder can serve the directory as a whole. The
+default `dist/` bytes are unchanged by it.
+
+## From source: the one command
 
 From a clean checkout of this package:
 
@@ -61,19 +79,26 @@ already-derived key material, so it stays bundled and works with no provider.
 `node scripts/build-package-entry.mjs --external-wallet` is equivalent to the
 environment variable.
 
-## Packaging ruling (2026-08-07, Hermes)
+## Packaging ruling (2026-09-28, supersedes 2026-08-07)
 
-The npm package **does not** ship a second, externalised `dist`, and there is no
-`dist-external/` export path or export condition.
+The npm package **ships** the externalised build, as the explicit
+`./external-wallet` subpath above.
 
-1. The externalised bundle is inert without a host-installed provider. Shipping
-   it behind an export condition would let a consumer resolve, with no
-   type-level signal, a bundle that throws at first wallet use.
-2. There is no single correct externalised artifact. An embedder's guard
-   requires *its* provider contract compiled in; a node UI wants the
-   `/wallet-wasm` staging path. One prebuilt tarball variant could serve at most
-   one of them.
+The 2026-08-07 ruling published only the build target and told embedders to
+build from source at the pin they track. The owner's published-dependencies law
+(2026-08-21) forbids exactly that: builds consume published packages, and local
+checkouts exist to develop and publish from. OrbPro therefore verified the npm
+tarball, which inlines the runtime, and its Pages build could not pass. The
+coordinator ruled on 2026-09-28 that the law outranks the packaging ruling.
 
-So the reproducible thing that is published is the **build target and the
-adapter contract**, not a second tarball. Consumers that need the externalised
-form build it from source at the pin they already track, with one command.
+Its two objections are answered this way:
+
+1. *Inert without a provider.* The subpath is opt-in by name; nothing resolves
+   to it through `.`, `./ui` or an export condition. Without a provider it
+   falls back to the node's same-origin staged runtime and otherwise fails
+   closed, naming the staging path.
+2. *No single correct artifact.* The published subpath has one contract: the
+   documented provider key. An embedder exposes its own runtime under that key
+   (OrbPro's engine does, immutably) instead of compiling its contract into
+   this package. `SDN_JS_HD_WALLET_ADAPTER` still selects an adapter for a
+   from-source `dist/` build; it never changes the published subpath.
