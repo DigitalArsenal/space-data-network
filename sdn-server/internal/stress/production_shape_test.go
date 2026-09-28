@@ -844,3 +844,74 @@ func TestProductionShapeUncleanStopChild(t *testing.T) {
 	// Wait to be killed; never Close.
 	time.Sleep(time.Hour)
 }
+
+// TestArenaWallFlatSQL drives the engine record arena at its ~1 GiB wall
+// (defect 4) with one $IQC lane of large records, written through the real
+// write path in one process with no restart: every routed record is mirrored
+// into the engine's one in-memory arena, which doubles in place and traps
+// ("flatsql_ingest_one_with_source: unreachable") once doubling past ~1 GiB
+// no longer fits the 4 GiB wasm32 memory. It fails when the engine is
+// poisoned. Opt in with STRESS_ARENA_WALL=1 (it writes about twice
+// STRESS_ARENA_WALL_MIB, default 1280 MiB, of records to STRESS_SHAPE_DIR).
+func TestArenaWallFlatSQL(t *testing.T) {
+	if os.Getenv("STRESS_ARENA_WALL") == "" {
+		t.Skip("set STRESS_ARENA_WALL=1 to write the arena-wall store")
+	}
+	workDir := strings.TrimSpace(os.Getenv("STRESS_SHAPE_DIR"))
+	if workDir == "" {
+		workDir = t.TempDir()
+	}
+	base := filepath.Join(workDir, "arena-wall")
+	_ = os.RemoveAll(base)
+	size := shapeEnvInt("STRESS_ARENA_RECORD_BYTES", 16<<10)
+	total := shapeEnvInt("STRESS_ARENA_WALL_MIB", 1280) << 20
+	lane := ShapePartition{Schema: "IQC.fbs", Producer: "source:sigmf", ProviderID: shapeProvider, SourceName: "IQEngine",
+		Batches: 1, Records: total / size, RecordBytes: size}
+	store := openShapeStore(t, base)
+	defer store.Close()
+	started := time.Now()
+	poisonedAt := -1
+	var lastLog time.Time
+	const batch = 200
+	for seq := 0; seq < lane.Records; seq += batch {
+		end := seq + batch
+		if end > lane.Records {
+			end = lane.Records
+		}
+		records, err := buildShapeBatch(lane, seq, end)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = store.StoreBatchWithSourceTags(lane.Schema, records, lane.Producer, nil,
+			storage.SourceTags{ProviderID: lane.ProviderID, SourceName: lane.SourceName, BatchID: lane.BatchID(seq)})
+		if rt, _ := store.EngineRuntime(); rt != nil && rt.Poisoned() {
+			poisonedAt = end
+			t.Logf("engine POISONED after %d records (%d MiB written): %v", end, (end*size)>>20, err)
+			break
+		}
+		if err != nil {
+			t.Fatalf("store records %d-%d: %v", seq, end, err)
+		}
+		if time.Since(lastLog) > 15*time.Second {
+			lastLog = time.Now()
+			used, _ := EngineMemory(store)
+			t.Logf("arena wall: %d/%d records (%d MiB written), engine memory %d MiB", end, lane.Records, (end*size)>>20, used>>20)
+		}
+	}
+	used, max := EngineMemory(store)
+	var arena int64
+	if poisonedAt < 0 {
+		if err := store.Checkpoint(); err != nil {
+			t.Errorf("checkpoint: %v", err)
+		}
+	}
+	if fi, err := os.Stat(filepath.Join(base, "control.flatsqldb.fsdata")); err == nil {
+		arena = fi.Size()
+	}
+	verdict := fmt.Sprintf("%d records of %d B (%d MiB) in %s; engine memory %d of %d MiB; flushed arena %d MiB",
+		lane.Records, size, (lane.Records*size)>>20, time.Since(started).Round(time.Second), used>>20, max>>20, arena>>20)
+	if poisonedAt >= 0 {
+		t.Fatalf("arena wall: the engine was POISONED after %d records; %s", poisonedAt, verdict)
+	}
+	t.Logf("arena wall: not poisoned; %s", verdict)
+}
