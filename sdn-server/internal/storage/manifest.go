@@ -400,7 +400,7 @@ func materializeDatasetPublicationFromBytes(ctx context.Context, store *FlatSQLS
 	if err := verifyBytesCIDAndHash("index", indexBytes, indexAsset.CID, indexAsset.SHA256); err != nil {
 		return nil, err
 	}
-	imported, index, err := store.ImportDatasetShard(shardBytes, indexBytes, string(manifest.PROVIDER_PEER_ID()))
+	imported, index, err := store.ImportDatasetShardContext(ctx, shardBytes, indexBytes, string(manifest.PROVIDER_PEER_ID()))
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +443,7 @@ func materializeDatasetPublicationFromFiles(ctx context.Context, store *FlatSQLS
 	if _, _, err := verifyFileCIDAndHash("index", indexPath, indexAsset.CID, indexAsset.SHA256); err != nil {
 		return nil, err
 	}
-	imported, index, err := store.ImportDatasetShardFromFiles(shardPath, indexPath, string(manifest.PROVIDER_PEER_ID()))
+	imported, index, err := store.ImportDatasetShardFromFilesContext(ctx, shardPath, indexPath, string(manifest.PROVIDER_PEER_ID()))
 	if err != nil {
 		return nil, err
 	}
@@ -608,6 +608,12 @@ func verifyDatasetPublicationPNM(pnmBytes []byte, providerPublicKey crypto.PubKe
 // its materialized export index. It is idempotent because records are content
 // addressed in the underlying FlatSQL tables.
 func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, providerPeerID string) (int, *DatasetExportIndex, error) {
+	return s.ImportDatasetShardContext(context.Background(), shardBytes, indexBytes, providerPeerID)
+}
+
+// ImportDatasetShardContext is ImportDatasetShard under ctx: see
+// importDatasetShardRecords for how the deadline holds.
+func (s *FlatSQLStore) ImportDatasetShardContext(ctx context.Context, shardBytes, indexBytes []byte, providerPeerID string) (int, *DatasetExportIndex, error) {
 	if s == nil {
 		return 0, nil, fmt.Errorf("store is required")
 	}
@@ -621,7 +627,7 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 	if index.ResultSHA256 != "" && sha256Hex(shardBytes) != index.ResultSHA256 {
 		return 0, nil, fmt.Errorf("shard result SHA-256 does not match index")
 	}
-	imported, importedIndex, err := s.importDatasetShardRecords(index, providerPeerID, func(record DatasetExportIndexRecord) ([]byte, error) {
+	imported, importedIndex, err := s.importDatasetShardRecords(ctx, index, providerPeerID, func(record DatasetExportIndexRecord) ([]byte, error) {
 		if record.Offset < 0 || record.Length < 0 || record.Offset+4+record.Length > int64(len(shardBytes)) {
 			return nil, fmt.Errorf("record %s offset/length outside shard", record.CID)
 		}
@@ -643,6 +649,12 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 // verified from the file and records are read one at a time, avoiding whole
 // shard hydration in memory.
 func (s *FlatSQLStore) ImportDatasetShardFromFiles(shardPath, indexPath, providerPeerID string) (int, *DatasetExportIndex, error) {
+	return s.ImportDatasetShardFromFilesContext(context.Background(), shardPath, indexPath, providerPeerID)
+}
+
+// ImportDatasetShardFromFilesContext is ImportDatasetShardFromFiles under ctx:
+// see importDatasetShardRecords for how the deadline holds.
+func (s *FlatSQLStore) ImportDatasetShardFromFilesContext(ctx context.Context, shardPath, indexPath, providerPeerID string) (int, *DatasetExportIndex, error) {
 	if s == nil {
 		return 0, nil, fmt.Errorf("store is required")
 	}
@@ -675,7 +687,7 @@ func (s *FlatSQLStore) ImportDatasetShardFromFiles(shardPath, indexPath, provide
 	}
 	defer shardFile.Close()
 
-	imported, importedIndex, err := s.importDatasetShardRecords(index, providerPeerID, func(record DatasetExportIndexRecord) ([]byte, error) {
+	imported, importedIndex, err := s.importDatasetShardRecords(ctx, index, providerPeerID, func(record DatasetExportIndexRecord) ([]byte, error) {
 		if record.Offset < 0 || record.Length < 0 || record.Offset+4+record.Length > shardSize {
 			return nil, fmt.Errorf("record %s offset/length outside shard", record.CID)
 		}
@@ -721,7 +733,20 @@ func parseDatasetExportIndexBytes(indexBytes []byte) (*DatasetExportIndex, error
 	return &index, nil
 }
 
-func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, providerPeerID string, readRecord datasetShardRecordReader) (int, *DatasetExportIndex, error) {
+// importDatasetShardRecords imports a shard chunk by chunk.
+//
+// THE CALLER'S DEADLINE HOLDS. The import took no context, so a replication
+// whose COMMIT stalled in the engine ran on past its caller's deadline — one
+// run sat 11 minutes inside the commit against a 2-minute deadline (stress
+// campaign 2026-09-27). ctx is checked before every chunk, and a chunk that is
+// still running when ctx ends is left to finish in the background (its
+// commit cannot be interrupted from Go; the engine's per-call budget bounds
+// it) while the caller gets ctx's error at once. No chunk starts after the
+// deadline; the import is CID-idempotent, so a retry converges.
+func (s *FlatSQLStore) importDatasetShardRecords(ctx context.Context, index *DatasetExportIndex, providerPeerID string, readRecord datasetShardRecordReader) (int, *DatasetExportIndex, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if index == nil {
 		return 0, nil, fmt.Errorf("dataset export index is required")
 	}
@@ -745,7 +770,10 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 		if end > len(records) {
 			end = len(records)
 		}
-		n, err := s.importDatasetShardChunk(index, providerPeerID, records[start:end], readRecord)
+		if err := ctx.Err(); err != nil {
+			return imported, nil, fmt.Errorf("dataset shard import of %s stopped before record %d of %d: %w", index.SchemaName, start, len(records), err)
+		}
+		n, err := s.importDatasetShardChunkWithin(ctx, index, providerPeerID, records[start:end], readRecord)
 		imported += n
 		if err != nil {
 			return imported, nil, err
@@ -754,11 +782,51 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 	return imported, index, nil
 }
 
+// importDatasetShardChunkHook runs inside each chunk's lock hold (tests: a
+// chunk that stalls the way a slow COMMIT does).
+var importDatasetShardChunkHook func()
+
+// importDatasetShardChunkWithin runs one chunk and waits for it no longer than
+// ctx allows.
+func (s *FlatSQLStore) importDatasetShardChunkWithin(ctx context.Context, index *DatasetExportIndex, providerPeerID string, records []DatasetExportIndexRecord, readRecord datasetShardRecordReader) (int, error) {
+	if ctx.Done() == nil {
+		return s.importDatasetShardChunk(index, providerPeerID, records, readRecord)
+	}
+	type chunkResult struct {
+		n   int
+		err error
+	}
+	done := make(chan chunkResult, 1)
+	started := time.Now()
+	go func() {
+		n, err := s.importDatasetShardChunk(index, providerPeerID, records, readRecord)
+		done <- chunkResult{n, err}
+	}()
+	select {
+	case r := <-done:
+		return r.n, r.err
+	case <-ctx.Done():
+		go func() {
+			r := <-done
+			log.Warnf("Dataset shard import of %s: a %d-record chunk the caller abandoned at its deadline finished %s later (%d imported, err=%v)",
+				index.SchemaName, len(records), time.Since(started).Round(time.Millisecond), r.n, r.err)
+		}()
+		return 0, fmt.Errorf("dataset shard import of %s: a %d-record chunk was still running at the deadline after %s (it finishes in the background; no further chunk starts): %w",
+			index.SchemaName, len(records), time.Since(started).Round(time.Millisecond), ctx.Err())
+	}
+}
+
 // importDatasetShardChunk imports one chunk of shard records under one store
 // lock and one control transaction (the pre-chunking
 // importDatasetShardRecords body).
 func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, providerPeerID string, records []DatasetExportIndexRecord, readRecord datasetShardRecordReader) (int, error) {
 	defer s.lockWrite("importDatasetShardChunk")()
+	if hook := importDatasetShardChunkHook; hook != nil {
+		hook()
+	}
+	if err := s.closedErr(); err != nil {
+		return 0, err
+	}
 
 	// WS7.3d routed-only writes: imported rows land in the provider's
 	// (producer, standard) table (pre-created outside the tx — no DDL inside).

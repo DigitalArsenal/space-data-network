@@ -64,6 +64,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -1048,83 +1050,256 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 		}
 	}
 	s.engineResidentAdd(schemaName, batch.total)
-	return batch.ingested, s.enforceEngineHotWindowLocked(schemaName)
+	return batch.ingested, s.enforceEngineHotWindowLocked(schemaName, join)
 }
 
-// enforceEngineHotWindowLocked evicts the OLDEST resident engine records
-// beyond the configured hot window by tombstoning them in their per-source
-// shadow tables (flatsql_mark_deleted) and dropping their residency rows:
-// queries stop returning them immediately. The control tables and the
-// datasync cursor rowid space keep every record. Failures are logged and
-// skipped (the window is a cache bound, not correctness-critical state); only
-// a poisoned runtime is fatal. Caller holds s.mu for writing.
-func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
+// engineEvictionStep bounds ONE hot-window eviction step: the rows tombstoned
+// and dropped from the residency ledger under one store write-lock hold. The
+// old eviction took the whole overflow at once, one guest call and one DELETE
+// per row: a warm open's 778,170-row overflow held the store write lock for
+// 220 s (stress campaign 2026-09-27). A step is one ledger read, one
+// tombstone dispatch and one range DELETE per partition, and one COMMIT.
+// Measured on the Mac Studio (TestEngineEvictionRunsInBoundedSteps, 2048
+// rows): ~25 ms of engine work; the COMMIT is the store's ordinary one and
+// varies with the disk (1 ms to seconds under a concurrent multi-GB write).
+// A var so a test can shrink it.
+var engineEvictionStep int64 = 2048
+
+// enforceEngineHotWindowLocked evicts one bounded step of the window's
+// overflow (evictEngineHotWindowStepLocked). A write path calls it once per
+// write, so a window over its bound converges over the writes that follow;
+// hydration drains the overflow step by step with the lock released between
+// steps (enforceEngineHotWindowSteps). Caller holds s.mu for writing.
+func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string, join sqlQueryExecer) error {
+	_, _, err := s.evictEngineHotWindowStepLocked(schemaName, join)
+	return err
+}
+
+// enforceEngineHotWindowSteps drains a schema's overflow in bounded steps,
+// each under its own lock hold (locked), and returns how many rows it evicted.
+func (s *FlatSQLStore) enforceEngineHotWindowSteps(schemaName string, locked engineLocker) (int64, error) {
+	var total int64
+	for {
+		var evicted int64
+		more := false
+		if err := locked(func() error {
+			var err error
+			evicted, more, err = s.evictEngineHotWindowStepLocked(schemaName, nil)
+			return err
+		}); err != nil {
+			return total, err
+		}
+		total += evicted
+		if !more || evicted == 0 {
+			return total, nil
+		}
+	}
+}
+
+// evictEngineHotWindowStepLocked evicts at most engineEvictionStep of the
+// OLDEST LIVE resident records beyond the window: it tombstones them in their
+// per-source shadow tables and drops their residency rows, so queries stop
+// returning them at once. more reports that the window is still over its
+// bound. The control tables and the datasync cursor rowids keep every record.
+// Tombstone failures are logged and skipped (the window is a cache bound, not
+// correctness-critical state); only a poisoned runtime is fatal. Caller holds
+// s.mu for writing.
+//
+// THE CANDIDATES COME FROM THE LEDGER, NOT FROM THE ENGINE. The engine does
+// not persist its tombstones, so after a warm open its partitions hold every
+// row ever flushed — evicted, deleted and superseded ones included — until
+// hydration's reconcile re-applies them. Asking the partitions for their
+// oldest rows picked those dead rows: the residency count never came down
+// (the MPE ledger held 89,200 rows against a 10,000 window) and a later call
+// had 778,170 rows to evict. sdn_engine_rows holds exactly the live resident
+// rows, keyed by (schema, source, seq), and `seq` is the engine's GLOBAL
+// ingest sequence, so ordering by it across sources is ingest order.
+func (s *FlatSQLStore) evictEngineHotWindowStepLocked(schemaName string, join sqlQueryExecer) (evicted int64, more bool, err error) {
 	binding, routed := s.engineRoutedSchemaFor(schemaName)
 	window := s.engineWindowFor(schemaName)
-	if !routed || window <= 0 {
-		return nil
+	if !routed || window <= 0 || s.engineDB == nil {
+		return 0, false, nil
 	}
 	overflow := s.engineResidentCount(schemaName) - int64(window)
-	if overflow <= 0 {
-		return nil
+	if overflow <= 0 || len(s.engineSources) == 0 {
+		return 0, false, nil
 	}
-	if len(s.engineSources) == 0 {
-		return nil
+	step := overflow
+	if step > engineEvictionStep {
+		step = engineEvictionStep
 	}
-
-	// Oldest live rows first. `_rowid` is the engine's per-source ingest
-	// sequence and both boot rebuild and live mirroring insert in ascending
-	// global-index order, so ascending `_rowid` is ingest order (exactly so
-	// for the dominant single-source case; near-ingest-order across
-	// concurrently written sources). Tombstoned rows are already skipped by
-	// the vtab scan.
-	// PER SOURCE, NOT OVER THE UNION. The unified view is a UNION ALL across
-	// every registered partition, so `ORDER BY _rowid ASC LIMIT 64` over it
-	// makes SQLite materialize and SORT the WHOLE relation to find 64 rows.
-	// Measured on host-01: 1,306 calls in one hour holding s.mu for 572.9 s
-	// total — and s.mu is write-preferring, so all 572.9 s came straight out
-	// of concurrent readers (sdn-flatsql-store-lock-starves-readers: /tiles/meta,
-	// ONE query on an EMPTY relation, median 1.2 s and max 90 s).
-	//
-	// Each partition is already in `_rowid` order, so asking each one for its
-	// oldest `overflow` rows and merging the (small) candidate lists in Go
-	// costs O(sources x overflow) instead of O(relation log relation). For the
-	// dominant single-source case it is one bounded query on one partition.
-	candidates, err := s.oldestEngineRowsPerSource(binding.Table, overflow)
+	started := time.Now()
+	candidates, err := s.oldestResidentRowsLocked(schemaName, step, join)
 	if err != nil {
 		log.Warnf("FlatSQL engine: hot-window eviction scan (%s): %v", schemaName, err)
-		if s.engine.Poisoned() {
-			return fmt.Errorf("FlatSQL engine poisoned during hot-window eviction scan: %w", err)
-		}
-		return nil
+		return 0, false, nil
 	}
-
-	evicted := int64(0)
-	for _, cand := range candidates {
-		source, seq := cand.source, cand.rowid
-		// source carries the FULL shadow-table name ("OMM@catalogfixture-gp",
-		// "TBS@cell-tower-bulk") as
-		// reported by the unified view — exactly the name MarkDeleted keys
-		// on, and guaranteed registered (it came from the engine itself).
-		if err := s.engineDB.MarkDeleted(source, uint64(seq)); err != nil {
-			log.Warnf("FlatSQL engine: tombstone %s seq %d: %v", source, seq, err)
+	if len(candidates) == 0 {
+		// The Go-side count says over, the ledger has nothing to give: the
+		// count drifted. Re-read it rather than looping on it.
+		if n, cErr := s.engineResidencyCount(schemaName); cErr == nil {
+			s.engineResidentSet(schemaName, n)
+		}
+		return 0, false, nil
+	}
+	bySource := make(map[string][]engineResidencyRow)
+	var order []string
+	for _, row := range candidates {
+		if _, seen := bySource[row.source]; !seen {
+			order = append(order, row.source)
+		}
+		bySource[row.source] = append(bySource[row.source], row)
+	}
+	ledgerSchema := engineLedgerSchema(schemaName)
+	var exec sqlQueryExecer = s.db
+	inTxn := false
+	if join != nil {
+		exec = join
+	} else if _, err := s.db.Exec("BEGIN"); err == nil {
+		// One commit for the step's ledger deletes, not one per statement.
+		inTxn = true
+	}
+	for _, source := range order {
+		rows := bySource[source]
+		seqs := make([]uint64, len(rows))
+		var maxSeq int64
+		for i, row := range rows {
+			seqs[i] = uint64(row.seq)
+			if row.seq > maxSeq {
+				maxSeq = row.seq
+			}
+		}
+		if err := s.engineDB.MarkDeletedMany(enginePartition(binding.Table, source), seqs); err != nil {
+			log.Warnf("FlatSQL engine: tombstone %d %s rows of %q: %v", len(seqs), schemaName, source, err)
 			if s.engine.Poisoned() {
-				return fmt.Errorf("FlatSQL engine poisoned during hot-window eviction: %w", err)
+				if inTxn {
+					_, _ = s.db.Exec("ROLLBACK")
+				}
+				return evicted, false, fmt.Errorf("FlatSQL engine poisoned during hot-window eviction: %w", err)
 			}
 			continue
 		}
-		if _, err := s.db.Exec(`DELETE FROM sdn_engine_rows WHERE schema_name = ? AND source = ? AND seq = ?`,
-			engineLedgerSchema(schemaName), engineSourceOfPartition(binding.Table, source), seq); err != nil {
-			log.Warnf("FlatSQL engine: drop residency row %s seq %d: %v", source, seq, err)
+		// The rows taken from a source are ITS oldest (a prefix by seq), so
+		// one range delete on (schema_name, source, seq) drops exactly them.
+		res, err := exec.Exec(`DELETE FROM sdn_engine_rows WHERE schema_name = ? AND source = ? AND seq <= ?`, ledgerSchema, source, maxSeq)
+		if err != nil {
+			log.Warnf("FlatSQL engine: drop %d residency rows of %s/%q: %v", len(rows), schemaName, source, err)
+		} else if n, _ := res.RowsAffected(); n != int64(len(rows)) {
+			log.Warnf("FlatSQL engine: eviction of %s/%q dropped %d residency rows for %d tombstones", schemaName, source, n, len(rows))
 		}
-		evicted++
+		evicted += int64(len(rows))
+	}
+	work := time.Since(started)
+	if inTxn {
+		if _, err := s.db.Exec("COMMIT"); err != nil {
+			_, _ = s.db.Exec("ROLLBACK")
+			log.Warnf("FlatSQL engine: commit an eviction step of %s: %v", schemaName, err)
+		}
 	}
 	s.engineResidentAdd(schemaName, -evicted)
+	more = s.engineResidentCount(schemaName) > int64(window)
+	engineEvictionAccount.note(evicted, work, time.Since(started))
 	if evicted > 0 {
-		log.Infof("FlatSQL engine: hot window evicted %d oldest %s records (window %d)",
-			evicted, schemaName, window)
+		log.Infof("FlatSQL engine: hot window evicted %d oldest %s records in %s (window %d, still over: %v)",
+			evicted, schemaName, time.Since(started).Round(time.Millisecond), window, more)
 	}
-	return nil
+	return evicted, more, nil
+}
+
+// engineEvictionAccount records the longest eviction step, for tests and the
+// stress harness.
+var engineEvictionAccount evictionAccount
+
+type evictionAccount struct {
+	mu          sync.Mutex
+	steps       int64
+	rows        int64
+	maxRows     int64
+	longest     time.Duration
+	longestWork time.Duration
+}
+
+func (a *evictionAccount) note(rows int64, work, took time.Duration) {
+	if rows == 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.steps++
+	a.rows += rows
+	if rows > a.maxRows {
+		a.maxRows = rows
+	}
+	if took > a.longest {
+		a.longest = took
+	}
+	if work > a.longestWork {
+		a.longestWork = work
+	}
+}
+
+// EngineEvictionStat is the hot-window eviction steps this process ran. Each
+// step runs under one store write-lock hold; Longest is the longest such step
+// including its COMMIT, LongestWork the same step's engine work before it.
+type EngineEvictionStat struct {
+	Steps, Rows, MaxRows int64
+	Longest, LongestWork time.Duration
+}
+
+// EngineEvictionStats reports the eviction steps run so far.
+func EngineEvictionStats() EngineEvictionStat {
+	engineEvictionAccount.mu.Lock()
+	defer engineEvictionAccount.mu.Unlock()
+	a := &engineEvictionAccount
+	return EngineEvictionStat{Steps: a.steps, Rows: a.rows, MaxRows: a.maxRows, Longest: a.longest, LongestWork: a.longestWork}
+}
+
+// oldestResidentRowsLocked returns the `limit` oldest resident rows of a
+// routed schema from the residency ledger, merged across registered sources
+// by the engine's global ingest sequence: one statement, each branch a bounded
+// seek on idx_sdn_engine_rows_seq (schema_name, source, seq).
+func (s *FlatSQLStore) oldestResidentRowsLocked(schemaName string, limit int64, join sqlQueryExecer) ([]engineResidencyRow, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	sources := make([]string, 0, len(s.engineSources))
+	for source := range s.engineSources {
+		sources = append(sources, source)
+	}
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	sort.Strings(sources)
+	var b strings.Builder
+	args := make([]any, 0, len(sources)+2)
+	args = append(args, engineLedgerSchema(schemaName), limit)
+	b.WriteString("SELECT source, seq, cid FROM (")
+	for i, source := range sources {
+		if i > 0 {
+			b.WriteString(" UNION ALL ")
+		}
+		fmt.Fprintf(&b, "SELECT * FROM (SELECT source, seq, cid FROM sdn_engine_rows WHERE schema_name = ?1 AND source = ?%d ORDER BY seq ASC LIMIT ?2)", i+3)
+		args = append(args, source)
+	}
+	b.WriteString(") ORDER BY seq ASC LIMIT ?2")
+	var q sqlQueryExecer = s.db
+	if join != nil {
+		q = join
+	}
+	rows, err := q.Query(b.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]engineResidencyRow, 0, limit)
+	for rows.Next() {
+		var row engineResidencyRow
+		if err := rows.Scan(&row.source, &row.seq, &row.cid); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 // preregisterEngineSources registers every source the derived summary cache
