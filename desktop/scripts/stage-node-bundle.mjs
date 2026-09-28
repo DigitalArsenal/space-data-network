@@ -77,7 +77,7 @@ function extractZip (archive, into) {
     ['C:\\Windows\\System32\\tar.exe', ['-xf', archive, '-C', into]],
     ['tar', ['-xf', archive, '-C', into]],
     ['powershell', ['-NoProfile', '-NonInteractive', '-Command',
-      `Expand-Archive -LiteralPath '${archive}' -DestinationPath '${into}' -Force`]],
+      `Expand-Archive -LiteralPath '${archive}' -DestinationPath '${into}' -Force`]]
   ]
   const failures = []
   for (const [command, args] of attempts) {
