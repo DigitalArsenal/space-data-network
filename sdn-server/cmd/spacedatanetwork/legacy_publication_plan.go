@@ -477,13 +477,23 @@ func rebuildDatasetPublicationShardGroupCARBundles(ctx context.Context, options 
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyShardGroupCARCoverage(current, len(publications), records); err != nil {
-		return nil, err
-	}
+	// A one-shard bundle recorded before bundles skipped single shards is
+	// neither counted nor marked stale here: marking would leave its kubo pin
+	// unledgered. The daemon's publication hygiene unpins and retires it.
 	keep := make(map[string]bool, len(current))
-	var carBytes int64
+	bundles := current[:0:0]
 	for _, entry := range current {
 		keep[entry.CID] = true
+		if !storage.ShardGroupCARCoversOneSegment(entry, len(publications)) {
+			bundles = append(bundles, entry)
+		}
+	}
+	planned := storage.PlanShardGroupCARBundles(publications, storage.DefaultShardGroupCARMaxSourceBytes)
+	if err := verifyShardGroupCARCoverage(bundles, planned, len(publications)); err != nil {
+		return nil, err
+	}
+	var carBytes int64
+	for _, entry := range bundles {
 		carBytes += entry.ByteCount
 	}
 	if err := markShardGroupCARsStale(store, query, keep); err != nil {
@@ -497,7 +507,7 @@ func rebuildDatasetPublicationShardGroupCARBundles(ctx context.Context, options 
 		QueryProfile: query.QueryProfile,
 		Publications: len(publications),
 		Records:      int(records),
-		Bundles:      len(current),
+		Bundles:      len(bundles),
 		Bytes:        firstPositiveInt64(carBytes, sourceBytes),
 		Head:         head,
 	}, nil
@@ -559,7 +569,11 @@ func currentShardGroupCARBundles(store *storage.FlatSQLStore, query storage.Data
 	return current, nil
 }
 
-func verifyShardGroupCARCoverage(entries []storage.PinLedgerEntry, segmentCount int, totalRows int64) error {
+// verifyShardGroupCARCoverage checks that the recorded bundles cover every
+// segment the plan bundles (storage.PlanShardGroupCARBundles) and at least its
+// rows. A segment the plan leaves unbundled is a shard standing alone: its own
+// CID is its bundle.
+func verifyShardGroupCARCoverage(entries []storage.PinLedgerEntry, planned []storage.ShardGroupCARBundle, segmentCount int) error {
 	if segmentCount <= 0 {
 		return fmt.Errorf("segment count must be positive")
 	}
@@ -578,13 +592,17 @@ func verifyShardGroupCARCoverage(entries []storage.PinLedgerEntry, segmentCount 
 		}
 		coveredRows += entry.RowCount
 	}
-	for index, ok := range covered {
-		if !ok {
-			return fmt.Errorf("rebuilt shard-group CAR bundles do not cover segment %d of %d", index, segmentCount)
+	var plannedRows int64
+	for _, bundle := range planned {
+		plannedRows += bundle.Rows
+		for index := bundle.SegmentStart; index < bundle.SegmentStart+bundle.SegmentCount && index < segmentCount; index++ {
+			if !covered[index] {
+				return fmt.Errorf("rebuilt shard-group CAR bundles do not cover segment %d of %d", index, segmentCount)
+			}
 		}
 	}
-	if totalRows > 0 && coveredRows < totalRows {
-		return fmt.Errorf("rebuilt shard-group CAR bundles cover %d rows, want at least %d", coveredRows, totalRows)
+	if plannedRows > 0 && coveredRows < plannedRows {
+		return fmt.Errorf("rebuilt shard-group CAR bundles cover %d rows, want at least %d", coveredRows, plannedRows)
 	}
 	return nil
 }
@@ -659,13 +677,24 @@ func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.Fla
 		totalRows += int64(publication.RecordCount)
 		totalBytes += publication.ByteCount
 	}
+	// Only groups of two or more shards get a bundle: a one-shard CAR is the
+	// shard's bytes pinned a second time (storage.PlanShardGroupCARBundles).
+	bundles := storage.PlanShardGroupCARBundles(publications, storage.DefaultShardGroupCARMaxSourceBytes)
+	if len(bundles) == 0 {
+		return nil
+	}
+	var bundledRows int64
+	for _, bundle := range bundles {
+		bundledRows += bundle.Rows
+	}
 	var existingHeadRows int64
 	for _, entry := range existing {
-		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
+		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 &&
+			!storage.ShardGroupCARCoversOneSegment(entry, len(publications)) {
 			existingHeadRows += entry.RowCount
 		}
 	}
-	if totalRows > 0 && existingHeadRows >= totalRows {
+	if bundledRows > 0 && existingHeadRows >= bundledRows {
 		return nil
 	}
 
@@ -675,19 +704,12 @@ func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.Fla
 	}
 	highWaterMark := datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes)
 	carOutputDir := filepath.Join(outputDir, legacyPublicationSafePathComponent(first.SchemaName), "car")
-	groups := storage.DatasetShardPublicationCARGroups(publications, storage.DefaultShardGroupCARMaxSourceBytes)
-	segmentStart := 0
-	for _, group := range groups {
-		groupSegmentStart := segmentStart
-		groupSegmentCount := len(group)
-		segmentStart += groupSegmentCount
-		rootCIDs := make([]string, 0, len(group))
-		var groupRows int64
-		for _, publication := range group {
+	for _, bundle := range bundles {
+		rootCIDs := make([]string, 0, len(bundle.Publications))
+		for _, publication := range bundle.Publications {
 			if publication.ShardCID != "" {
 				rootCIDs = append(rootCIDs, publication.ShardCID)
 			}
-			groupRows += int64(publication.RecordCount)
 		}
 		publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, ipfsAPIURL, carOutputDir, rootCIDs)
 		if err != nil {
@@ -707,9 +729,9 @@ func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.Fla
 			HighWaterMark:     highWaterMark,
 			ByteHash:          publishedCAR.SHA256,
 			Role:              "shard-group-car",
-			SegmentStart:      groupSegmentStart,
-			SegmentCount:      groupSegmentCount,
-			RowCount:          groupRows,
+			SegmentStart:      bundle.SegmentStart,
+			SegmentCount:      bundle.SegmentCount,
+			RowCount:          bundle.Rows,
 			ByteCount:         publishedCAR.ByteCount,
 			VerificationState: "verified",
 			VerifiedAt:        verifiedAt,

@@ -178,6 +178,7 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 			log.Warnf("publication retention %s %s/%s: %v", schema, req.ProviderID, req.SourceName, err)
 		}
 	}
+	s.releaseRedundantShardGroupCARs(ctx, lane)
 	if s.outputDir != "" {
 		sweep, err := s.store.SweepDatasetPublicationFiles(s.outputDir, schema, sweepAge, s.now())
 		if err != nil {
@@ -203,6 +204,95 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 			Lane:     schema + " " + req.ProviderID + "/" + req.SourceName,
 		})
 	}
+}
+
+// redundantShardGroupCARs lists a lane's verified one-shard CAR bundles in
+// every batch. recordShardGroupCARBundle releases those of the scope it
+// publishes, but a lane whose batches are parts (TBS chunks) never republishes
+// an old part, so its bundles are found here.
+func (s *ConcreteDatasetPublicationService) redundantShardGroupCARs(lane storage.DatasetPublicationLane) ([]storage.PinLedgerEntry, error) {
+	entries, err := s.store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        lane.SchemaName,
+		ProviderPeerID:    s.providerPeerID,
+		ProviderID:        lane.ProviderID,
+		SourceName:        lane.SourceName,
+		Role:              storage.PinLedgerRoleShardGroupCAR,
+		VerificationState: "verified",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list shard-group CAR bundles: %w", err)
+	}
+	// A bundle recorded without a segment range covers its whole scope; it is
+	// one shard only when the scope advertises one window.
+	scopeSegments := map[string]int{}
+	segmentsOf := func(entry storage.PinLedgerEntry) (int, error) {
+		key := strings.Join([]string{entry.ProviderID, entry.SourceName, entry.BatchID, entry.QueryProfile}, "\x00")
+		if count, ok := scopeSegments[key]; ok {
+			return count, nil
+		}
+		rows, err := s.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+			SchemaName:   entry.SchemaName,
+			ProviderID:   entry.ProviderID,
+			SourceName:   entry.SourceName,
+			BatchID:      entry.BatchID,
+			QueryProfile: entry.QueryProfile,
+		})
+		if err != nil {
+			return 0, err
+		}
+		count := 0
+		for _, row := range rows {
+			// The listing narrows by non-empty fields only; the scope is exact.
+			if row.ProviderID == entry.ProviderID && row.SourceName == entry.SourceName && row.BatchID == entry.BatchID {
+				count++
+			}
+		}
+		scopeSegments[key] = count
+		return count, nil
+	}
+	var redundant []storage.PinLedgerEntry
+	for _, entry := range entries {
+		if entry.CID == "" || entry.SegmentCount > 1 {
+			continue
+		}
+		segments := 1
+		if entry.SegmentCount <= 0 {
+			if segments, err = segmentsOf(entry); err != nil {
+				return nil, fmt.Errorf("count scope windows of CAR bundle %s: %w", entry.CID, err)
+			}
+		}
+		if storage.ShardGroupCARCoversOneSegment(entry, segments) {
+			redundant = append(redundant, entry)
+		}
+	}
+	return redundant, nil
+}
+
+// releaseRedundantShardGroupCARs releases every one-shard CAR bundle of a
+// lane. It never fails a publication; what it could not release is retried
+// after the lane's next one.
+func (s *ConcreteDatasetPublicationService) releaseRedundantShardGroupCARs(ctx context.Context, lane storage.DatasetPublicationLane) (released int, bytes int64) {
+	if s == nil || s.store == nil || s.ipfsAPIURL == "" {
+		return 0, 0
+	}
+	redundant, err := s.redundantShardGroupCARs(lane)
+	if err != nil {
+		log.Warnf("one-shard CAR bundles %s %s/%s: %v", lane.SchemaName, lane.ProviderID, lane.SourceName, err)
+		return 0, 0
+	}
+	for _, entry := range redundant {
+		freed, err := s.releaseRedundantShardGroupCAR(ctx, entry)
+		if err != nil {
+			log.Warnf("%v (retried after the lane's next publication)", err)
+			continue
+		}
+		released++
+		bytes += freed
+	}
+	if released > 0 {
+		log.Infof("one-shard CAR bundles %s %s/%s: released %d (%d bytes)", lane.SchemaName, lane.ProviderID, lane.SourceName, released, bytes)
+	}
+	return released, bytes
 }
 
 // applyPublicationRetention runs one retention pass over a lane of this node's
@@ -285,6 +375,11 @@ type DatasetPublicationRetentionReport struct {
 	SharedKept      []DatasetPublicationRetentionPin           `json:"sharedKeptPinned"`
 	RetireRows      []DatasetPublicationRetentionRow           `json:"retireRows"`
 	Result          *storage.DatasetPublicationRetentionResult `json:"result,omitempty"`
+	// RedundantCARs are the lane's one-shard CAR bundles: a second copy of a
+	// shard's bytes, released whatever the series policy keeps.
+	RedundantCARs         []DatasetPublicationRetentionPin `json:"redundantCars"`
+	RedundantCARBytes     int64                            `json:"redundantCarBytes"`
+	RedundantCARsReleased int                              `json:"redundantCarsReleased,omitempty"`
 }
 
 // DatasetPublicationRetentionRunner runs one retention pass on demand.
@@ -343,6 +438,14 @@ func (s *ConcreteDatasetPublicationService) RunPublicationRetention(ctx context.
 	for _, row := range plan.RetireRows {
 		report.RetireRows = append(report.RetireRows, DatasetPublicationRetentionRow{BatchID: row.BatchID, Offset: row.Offset, Limit: row.Limit, Records: row.RecordCount, ShardCID: row.ShardCID})
 	}
+	redundant, err := s.redundantShardGroupCARs(lane)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range redundant {
+		report.RedundantCARs = append(report.RedundantCARs, DatasetPublicationRetentionPin{CID: entry.CID, Role: entry.Role, BatchID: entry.BatchID, Bytes: entry.ByteCount})
+		report.RedundantCARBytes += entry.ByteCount
+	}
 	if !req.Apply {
 		return report, nil
 	}
@@ -352,6 +455,7 @@ func (s *ConcreteDatasetPublicationService) RunPublicationRetention(ctx context.
 	}
 	report.Applied = true
 	report.Result = &result
+	report.RedundantCARsReleased, _ = s.releaseRedundantShardGroupCARs(ctx, lane)
 	return report, nil
 }
 
