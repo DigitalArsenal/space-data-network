@@ -99,6 +99,44 @@ Interruptible AOT that really runs native) and round-trips the C host I/O
 module. A31: it is a start-up metric (logged when the first instance opens)
 and a release gate, not a format-2 refusal.
 
+## Building the static binary on macOS
+
+Needs Xcode (Apple clang) and `brew install cmake ninja llvm@18 zstd`. From
+the repo root:
+
+```sh
+. scripts/wasmedge-static-env.sh    # Apple clang; LLVM + lld archives from llvm@18
+OUT=/path/to/spacedatanetwork-static bash scripts/build-static-wasmedge.sh
+/path/to/spacedatanetwork-static substrate-selftest --require-patched
+```
+
+The work tree is `.wasmedge-static-build/` (override with
+`WASMEDGE_STATIC_WORK`); a build directory is reused while its patch-series
+stamp matches. `WASMEDGE_BUILD_JOBS` caps the compile. With
+`WASMEDGE_STATIC_PREFIX_ONLY=1` the script stops after staging the prefix,
+which links with
+`WASMEDGE_DIR=<work>/prefix scripts/go-with-wasmedge.sh build -o <out> ./cmd/spacedatanetwork`.
+
+What differs from Linux, all inside the script:
+
+- `-Wno-invalid-specialization` is added to the WasmEdge compile when the
+  compiler knows the warning. The Xcode 26 SDK's libc++ marks `std::is_class`
+  no-specializations, and `include/common/int128.h` specializes it; Apple
+  clang 21 makes that an error. Older clang rejects the option (clang 16 and
+  18, measured), so a probe decides, and there the configure line is unchanged.
+- `link.flags` takes its system libraries from `llvm-config --link-static
+  --system-libs` as `-l` names only: llvm@18 adds `-lxml2`, needed by
+  `libLLVMWindowsManifest.a`.
+- The daemon links through `go-with-wasmedge.sh`'s static branch
+  (`link.flags`), the same line the CI darwin legs use. The GNU
+  `--start-group` line stays Linux-only.
+
+The binary depends only on macOS system libraries (`otool -L`: libc++,
+libc++abi, libSystem, libz, libncurses, libxml2, libresolv, CoreFoundation,
+Security). Measured 2026-09-28 on the Mac Studio (Apple clang 21, Xcode SDK
+26.5, llvm@18 18.1.8, Go 1.26.1): 129/129 objects, 222 MB binary,
+`patched: true`, `aot_native: true`, `native_host_io: true`, AOT speedup 26x.
+
 ## Host rollout (coordinator ops)
 
 A31 removed the per-host library install: the patched runtime is inside the
