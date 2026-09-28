@@ -225,6 +225,7 @@ run_preflight() {
     deployment/celestrak/service-units.test.mjs \
     deployment/public-origin/nginx-smoke.test.mjs \
     deployment/public-origin/render-nginx.test.mjs \
+    deployment/release/beta-release-workflow.test.mjs \
     deployment/release/build-cli-update-payload.test.mjs \
     deployment/release/build-self-contained-cli.test.mjs \
     deployment/release/build-update-carrier.test.mjs \
