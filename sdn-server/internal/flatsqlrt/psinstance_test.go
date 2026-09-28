@@ -118,12 +118,16 @@ type probeConfig struct {
 	IOOps, IOSize, IOFileBytes, StackBytes  uint32
 	Marker, Files                           uint32
 	Prefix                                  string
+	// DropNotify > 0 makes the probe's wake export skip every Nth doorbell
+	// notify while recording it as issued: a runtime that loses wakeups (the
+	// negative control for the lost-wakeup count).
+	DropNotify uint32
 }
 
 func (c probeConfig) bytes() []byte {
 	b := make([]byte, 64+len(c.Prefix))
 	for i, v := range []uint32{c.Mode, c.Threads, c.ActiveWaitUs, c.IdleWaitUs, c.IOOps, c.IOSize, c.IOFileBytes,
-		c.StackBytes, c.Marker, c.Files, uint32(len(c.Prefix))} {
+		c.StackBytes, c.Marker, c.Files, uint32(len(c.Prefix)), c.DropNotify} {
 		binary.LittleEndian.PutUint32(b[4*i:], v)
 	}
 	copy(b[64:], c.Prefix)
@@ -207,13 +211,14 @@ func probeStats(t testing.TB, p *PSInstance, threads int) [][8]uint64 {
 }
 
 const (
-	statWakeups = iota
-	statTimeoutPending
+	statWakeups    = iota
+	statLostWakeup // a wait timed out although the notify for pending work had returned before its deadline
 	statWork
 	statIOOK
 	statIOErr
 	statBytesWritten
 	statChecksum
+	statLateRing // a wait timed out with a ring whose notify had not landed by the deadline
 )
 
 func TestPSInstanceDoorbellRoundTrip(t *testing.T) {
@@ -555,11 +560,23 @@ func ackValue(p *PSInstance, i int) uint64 {
 // T5 #7: <= 200 guest wakeups/s per instance after 1 s idle; first-request
 // doorbell latency p99 <= 1 ms. A24: over many idle-to-active transitions
 // (acceptance 10^6: SDN_PS_TRANSITIONS=1000000; default 20,000) the p99
-// holds and no wait ends by timeout while work is pending.
+// holds and no wakeup is lost.
+//
+// A wait that times out and then finds work is not by itself a lost wakeup.
+// A ring stores to seq and asks the doorbell thread for a notify, so a ring
+// that lands within one notify latency of the writer's deadline, or just
+// after it while the writer's sleeping flag is still set, meets a wait that
+// has already timed out; the writer takes the work on its next pass. Counting
+// those as failures made this test flake on loaded runners (1 in 20,000 on
+// CI, ed8b028c0). The probe counts them as late rings, and counts a lost
+// wakeup only when the notify for the pending work had returned before the
+// wait's deadline (ps-probe.c doorbell_loop). SDN_PS_ACTIVE_WAIT_US shortens
+// the writers' active wait, which makes late rings frequent.
 func TestPSIdleCostAndDoorbellLatency(t *testing.T) {
 	requirePatched(t)
 	const writers = 4
-	p := openProbe(t, probeConfig{Mode: probeDoorbell, Threads: writers}, probeOpts{})
+	p := openProbe(t, probeConfig{Mode: probeDoorbell, Threads: writers,
+		ActiveWaitUs: uint32(envInt(t, "SDN_PS_ACTIVE_WAIT_US", 5000))}, probeOpts{})
 	defer p.Stop()
 	time.Sleep(1100 * time.Millisecond)
 	w0 := probeStats(t, p, writers)
@@ -576,8 +593,62 @@ func TestPSIdleCostAndDoorbellLatency(t *testing.T) {
 	}
 
 	transitions := envInt(t, "SDN_PS_TRANSITIONS", 20000)
-	lat := make([]time.Duration, 0, transitions)
-	var viaPoller []time.Duration
+	lat, viaPoller := ringTransitions(t, p, writers, transitions)
+	lost, late := doorbellTimeouts(t, p, writers)
+	db := p.Stats().Doorbell
+	t.Logf("%d idle-to-active transitions (%s/%s): ring->ack p50 %s p99 %s p99.9 %s max %s; through the poller p99 %s; notifies %d of %d rings; lost wakeups %d; late rings %d",
+		transitions, runtime.GOOS, runtime.GOARCH, percentile(lat, 0.5), percentile(lat, 0.99), percentile(lat, 0.999),
+		percentile(lat, 1), percentile(viaPoller, 0.99), db.Notifies, db.Rings, lost, late)
+	if p99 := percentile(lat, 0.99); p99 > time.Millisecond && perfGate() {
+		t.Fatalf("doorbell p99 %s > 1 ms", p99)
+	}
+	if lost != 0 {
+		t.Fatalf("%d lost wakeups: a wait timed out after the notify for its pending work had returned", lost)
+	}
+}
+
+// A24 with the writers' active wait (200 us) close to the interval between
+// rings, so rings keep meeting waits at their deadline: the race behind the
+// ed8b028c0 flake, hundreds of times per run instead of once in a while.
+// Late rings are expected; a lost wakeup is not.
+func TestPSDoorbellRingsAtTheDeadlineAreNotLost(t *testing.T) {
+	requirePatched(t)
+	const writers = 4
+	p := openProbe(t, probeConfig{Mode: probeDoorbell, Threads: writers, ActiveWaitUs: 200}, probeOpts{})
+	defer p.Stop()
+	transitions := envInt(t, "SDN_PS_TRANSITIONS", 20000)
+	lat, _ := ringTransitions(t, p, writers, transitions)
+	lost, late := doorbellTimeouts(t, p, writers)
+	t.Logf("%d transitions against a 200 us active wait: ring->ack p99 %s max %s; lost wakeups %d; late rings %d",
+		transitions, percentile(lat, 0.99), percentile(lat, 1), lost, late)
+	if lost != 0 {
+		t.Fatalf("%d lost wakeups: a wait timed out after the notify for its pending work had returned", lost)
+	}
+}
+
+// The negative control: a wake export that drops every 10th doorbell notify
+// (a runtime that loses wakeups) must show up as lost wakeups, or the count
+// the two tests above assert on could never fail.
+func TestPSDoorbellCountsALostWakeup(t *testing.T) {
+	requirePatched(t)
+	const writers = 2
+	p := openProbe(t, probeConfig{Mode: probeDoorbell, Threads: writers, DropNotify: 10}, probeOpts{})
+	defer p.Stop()
+	lat, _ := ringTransitions(t, p, writers, 400)
+	lost, late := doorbellTimeouts(t, p, writers)
+	t.Logf("400 transitions, every 10th notify dropped: ring->ack max %s; lost wakeups %d; late rings %d",
+		percentile(lat, 1), lost, late)
+	if lost == 0 {
+		t.Fatal("dropped notifies were not counted as lost wakeups")
+	}
+}
+
+// ringTransitions rings writers round-robin, each once it has gone to sleep,
+// and waits for its ack. It returns ring->ack latencies; every 100th
+// transition also goes end to end through the completion poller.
+func ringTransitions(t *testing.T, p *PSInstance, writers, transitions int) (lat, viaPoller []time.Duration) {
+	t.Helper()
+	lat = make([]time.Duration, 0, transitions)
 	for n := 0; n < transitions; n++ {
 		w := n % writers
 		want := ackValue(p, w) + 1
@@ -591,7 +662,6 @@ func TestPSIdleCostAndDoorbellLatency(t *testing.T) {
 		t0 := time.Now()
 		p.Ring(w)
 		if n%100 == 0 {
-			// End to end through the completion poller as well.
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := p.WaitAck(ctx, w, want); err != nil {
 				t.Fatal(err)
@@ -607,21 +677,19 @@ func TestPSIdleCostAndDoorbellLatency(t *testing.T) {
 		}
 		lat = append(lat, time.Since(t0))
 	}
+	return lat, viaPoller
+}
+
+// doorbellTimeouts sums the probe's two kinds of timed-out wait that found
+// work: lost wakeups and late rings (ps-probe.c doorbell_loop).
+func doorbellTimeouts(t testing.TB, p *PSInstance, writers int) (lost, late uint64) {
+	t.Helper()
 	st := probeStats(t, p, writers)
-	var pending uint64
 	for i := 0; i < writers; i++ {
-		pending += st[i][statTimeoutPending]
+		lost += st[i][statLostWakeup]
+		late += st[i][statLateRing]
 	}
-	db := p.Stats().Doorbell
-	t.Logf("%d idle-to-active transitions (%s/%s): ring->ack p50 %s p99 %s p99.9 %s max %s; through the poller p99 %s; notifies %d of %d rings; waits ended by timeout with work pending: %d",
-		transitions, runtime.GOOS, runtime.GOARCH, percentile(lat, 0.5), percentile(lat, 0.99), percentile(lat, 0.999),
-		percentile(lat, 1), percentile(viaPoller, 0.99), db.Notifies, db.Rings, pending)
-	if p99 := percentile(lat, 0.99); p99 > time.Millisecond && perfGate() {
-		t.Fatalf("doorbell p99 %s > 1 ms", p99)
-	}
-	if pending != 0 {
-		t.Fatalf("%d waits ended by timeout while work was pending", pending)
-	}
+	return lost, late
 }
 
 // ---- A21: a hung service thread is fenced within 15 s --------------------------------------------
