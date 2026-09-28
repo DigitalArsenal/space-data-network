@@ -273,7 +273,7 @@ func RunLiveFlatSQLReplicationBenchmark(ctx context.Context, opts LiveFlatSQLRep
 	verificationDuration := time.Since(verifyStarted)
 
 	importStarted := time.Now()
-	imported, _, err := subscriberStore.ImportDatasetShardFromFiles(downloadPath, export.IndexPath, providerHost.ID().String())
+	imported, _, err := subscriberStore.ImportDatasetShardFromFilesContext(ctx, downloadPath, export.IndexPath, providerHost.ID().String())
 	if err != nil {
 		return nil, fmt.Errorf("import replicated FlatSQL shard: %w", err)
 	}
@@ -411,7 +411,7 @@ func RunLiveFlatSQLRangeResumeBenchmark(ctx context.Context, opts LiveFlatSQLRep
 	verificationDuration := time.Since(verifyStarted)
 
 	importStarted := time.Now()
-	imported, _, err := subscriberStore.ImportDatasetShardFromFiles(downloadPath, export.IndexPath, providerHost.ID().String())
+	imported, _, err := subscriberStore.ImportDatasetShardFromFilesContext(ctx, downloadPath, export.IndexPath, providerHost.ID().String())
 	if err != nil {
 		return nil, fmt.Errorf("import resumed FlatSQL shard: %w", err)
 	}
@@ -593,7 +593,7 @@ func RunLiveFlatSQLMultiProviderRangeBenchmark(ctx context.Context, opts LiveFla
 	verificationDuration := time.Since(verifyStarted)
 
 	importStarted := time.Now()
-	imported, _, err := subscriberStore.ImportDatasetShardFromFiles(downloadPath, exportA.IndexPath, providerHostA.ID().String())
+	imported, _, err := subscriberStore.ImportDatasetShardFromFilesContext(ctx, downloadPath, exportA.IndexPath, providerHostA.ID().String())
 	if err != nil {
 		return nil, fmt.Errorf("import multi-provider FlatSQL shard: %w", err)
 	}
