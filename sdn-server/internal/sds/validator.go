@@ -7,9 +7,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	standardsCLM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CLM"
 	logging "github.com/ipfs/go-log/v2"
@@ -331,10 +334,42 @@ var SupportedSchemas = []string{
 	"XTC.fbs",  // XTCE SpaceSystem Document
 }
 
+// FieldLevelValidationEnv is the named switch for Validate's field-level parse
+// through the flatc converter ("1"/"true" on, "0"/"false" off). The default is
+// DefaultFieldLevelValidation.
+const FieldLevelValidationEnv = "SDN_VALIDATE_FIELD_LEVEL"
+
+// DefaultFieldLevelValidation is off, on measurement (2026-09-28, 385,046
+// stored records of the 13 standards the dev node holds, via
+// TestValidatorFieldLevelSampleMeasurement):
+//
+//   - 289,716 false rejections: every stored OMM, MPE and 146,687 of 150,000
+//     CAT records fail the verifier's alignment check (8-byte fields at 4 mod
+//     8, the layout a stripped size prefix leaves) and all of them verify once
+//     realigned behind a 4-byte prefix;
+//   - cost under the WasmEdge interpreter: 0.26-1.2 ms per record for most
+//     standards, 5 ms for CNP and 149 ms for PRR, against ~1 ms of ingest.
+//
+// It can be enabled when both are fixed: an alignment-tolerant verify in the
+// converter, and an AOT-compiled converter.
+const DefaultFieldLevelValidation = false
+
 // Validator validates data against SDS schemas.
 type Validator struct {
-	flatc       *wasm.FlatcModule
-	schemas     map[string]int    // schema name -> schema ID
+	flatc   *wasm.FlatcModule
+	schemas map[string]int // schema name -> local schema number
+	// Converter state, guarded by convMu. Every schema's source sits in the
+	// converter's file map from AddSchema on; it is parsed on first use
+	// (flatcPending -> flatcIDs, or flatcErrs when it cannot be), because
+	// parsing all 236 embedded schemas up front costs ~6.5 s of boot. A
+	// schema the converter cannot parse stays registered for envelope
+	// validation and is only unavailable for conversion.
+	convMu       sync.Mutex
+	flatcPending map[string]bool
+	flatcIDs     map[string]int
+	flatcErrs    map[string]error
+	// fieldLevel turns on Validate's field-level parse (FieldLevelValidationEnv).
+	fieldLevel  atomic.Bool
 	identifiers map[string]string // schema name -> 4-byte FlatBuffers file_identifier
 	// identifierSchemas is the REVERSE index that makes header-only routing
 	// possible (route.go): 4-byte file_identifier -> schema name. An
@@ -345,15 +380,24 @@ type Validator struct {
 	mu                sync.RWMutex
 }
 
-// NewValidator creates a new SDS validator.
+// NewValidator creates a new SDS validator. flatc is the JSON⇄FlatBuffer
+// converter; nil gives an envelope-only validator with no conversion.
 func NewValidator(flatc *wasm.FlatcModule) (*Validator, error) {
 	v := &Validator{
 		flatc:             flatc,
 		schemas:           make(map[string]int),
+		flatcPending:      make(map[string]bool),
+		flatcIDs:          make(map[string]int),
+		flatcErrs:         make(map[string]error),
 		identifiers:       make(map[string]string),
 		identifierSchemas: make(map[string]string),
 		ambiguousIdents:   make(map[string]bool),
 	}
+	fieldLevel, err := fieldLevelValidationFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	v.fieldLevel.Store(fieldLevel)
 
 	ctx := context.Background()
 
@@ -364,7 +408,83 @@ func NewValidator(flatc *wasm.FlatcModule) (*Validator, error) {
 	}
 	v.registerPublishedBindingSchemas()
 
+	if flatc != nil {
+		v.convMu.Lock()
+		staged := len(v.flatcPending)
+		v.convMu.Unlock()
+		log.Infof("flatc converter %s: %d schema(s) staged (parsed on first use); field-level validation %s (%s)",
+			flatc.Version(), staged, onOff(fieldLevel), FieldLevelValidationEnv)
+	}
 	return v, nil
+}
+
+func fieldLevelValidationFromEnv() (bool, error) {
+	raw := strings.TrimSpace(os.Getenv(FieldLevelValidationEnv))
+	if raw == "" {
+		return DefaultFieldLevelValidation, nil
+	}
+	on, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s=%q: %w", FieldLevelValidationEnv, raw, err)
+	}
+	return on, nil
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
+}
+
+// SetFieldLevelValidation turns Validate's field-level parse on or off. It
+// has effect only with a converter.
+func (v *Validator) SetFieldLevelValidation(on bool) { v.fieldLevel.Store(on) }
+
+// FieldLevelValidation reports whether Validate runs the field-level parse:
+// the switch is on and a converter is loaded.
+func (v *Validator) FieldLevelValidation() bool {
+	return v.flatc != nil && v.fieldLevel.Load()
+}
+
+// HasConverter reports whether a JSON⇄FlatBuffer converter is loaded.
+func (v *Validator) HasConverter() bool { return v.flatc != nil }
+
+// ConverterError parses the schema in the converter if it has not been yet,
+// and reports why the converter cannot load it (nil when it can).
+func (v *Validator) ConverterError(ctx context.Context, schemaName string) error {
+	_, err := v.converterID(ctx, schemaName)
+	return err
+}
+
+// PreloadConverterSchemas parses every staged schema in the converter and
+// returns how many it holds and how many it cannot load.
+func (v *Validator) PreloadConverterSchemas(ctx context.Context) (loaded, failed int) {
+	v.convMu.Lock()
+	defer v.convMu.Unlock()
+	for name := range v.flatcPending {
+		v.parseConverterSchemaLocked(ctx, name)
+	}
+	return len(v.flatcIDs), len(v.flatcErrs)
+}
+
+// parseConverterSchemaLocked turns a staged schema into a converter id or a
+// recorded error. convMu must be held.
+func (v *Validator) parseConverterSchemaLocked(ctx context.Context, name string) {
+	delete(v.flatcPending, name)
+	id, err := v.flatc.AddSchema(ctx, converterSchemaPath(name), nil)
+	if err != nil {
+		v.flatcErrs[name] = err
+		log.Warnf("flatc converter cannot load schema %s (envelope validation only): %v", name, err)
+		return
+	}
+	v.flatcIDs[name] = id
+}
+
+// converterSchemaPath is where a schema sits in the converter's file map:
+// <FAMILY>/main.fbs, the layout the SDS includes ("../MET/main.fbs") expect.
+func converterSchemaPath(schemaName string) string {
+	return strings.TrimSuffix(schemaName, ".fbs") + "/main.fbs"
 }
 
 func (v *Validator) registerPublishedBindingSchemas() {
@@ -435,18 +555,29 @@ func (v *Validator) AddSchema(ctx context.Context, name string, content []byte) 
 		}
 	}
 
-	// If WASM module is available, use it
-	if v.flatc != nil {
-		id, err := v.flatc.AddSchema(ctx, name, content)
-		if err != nil {
-			return fmt.Errorf("failed to add schema to WASM: %w", err)
-		}
-		v.schemas[name] = id
-		return nil
+	if _, ok := v.schemas[name]; !ok {
+		v.schemas[name] = len(v.schemas) + 1
 	}
 
-	// Without WASM, just track schema names
-	v.schemas[name] = len(v.schemas) + 1
+	// Stage the source in the converter's file map; it is parsed on first
+	// use. A schema the converter cannot parse (REC.fbs includes standards
+	// the node does not embed) stays registered for envelope validation.
+	if v.flatc != nil {
+		v.convMu.Lock()
+		defer v.convMu.Unlock()
+		if err := v.flatc.PutFile(ctx, converterSchemaPath(name), content); err != nil {
+			v.flatcErrs[name] = err
+			delete(v.flatcPending, name)
+			log.Warnf("flatc converter cannot stage schema %s (envelope validation only): %v", name, err)
+			return nil
+		}
+		if old, ok := v.flatcIDs[name]; ok {
+			_ = v.flatc.RemoveSchema(ctx, old)
+			delete(v.flatcIDs, name)
+		}
+		delete(v.flatcErrs, name)
+		v.flatcPending[name] = true
+	}
 	return nil
 }
 
@@ -472,15 +603,14 @@ func (v *Validator) FileIdentifier(schemaName string) (string, bool) {
 
 // Validate validates data against a schema.
 //
-// Envelope verification (VerifyEnvelope) runs on EVERY path, with or without the
-// optional flatc WASM module. This is deliberate: findWasmPath() only probes a
-// handful of build-tree paths, so in every packaged deployment flatc is nil —
-// and the old "no WASM ⇒ just check the data is non-empty" fallback meant a
-// 1-byte junk body was stored as if it were a valid SDS record. Structure plus
-// the schema's declared file_identifier are now always enforced.
+// Envelope verification (VerifyEnvelope) runs on EVERY path, with or without
+// the flatc converter: structure plus the schema's declared file_identifier are
+// always enforced, so a 1-byte junk body is never stored as a valid SDS record.
+// The converter's field-level parse (full verification against the schema)
+// runs additionally only when FieldLevelValidation is on.
 func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte) error {
 	v.mu.RLock()
-	schemaID, ok := v.schemas[schemaName]
+	_, ok := v.schemas[schemaName]
 	v.mu.RUnlock()
 
 	_, bindingOnly := publishedBindingOnlySchemas[schemaName]
@@ -492,11 +622,17 @@ func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte
 		return err
 	}
 
-	// When the WASM module is available, additionally parse the buffer through
-	// flatc for full field-level validation.
-	if v.flatc != nil && ok {
-		if _, err := v.flatc.BinaryToJSON(ctx, schemaID, data); err != nil {
-			return fmt.Errorf("validation failed for %s: %w", schemaName, err)
+	// Field-level parse: only for a schema the converter can load; one it
+	// cannot keeps the envelope verdict.
+	if ok && v.FieldLevelValidation() {
+		if flatcID, err := v.converterID(ctx, schemaName); err == nil {
+			opts := wasm.FlatcOption(0)
+			if form, ferr := v.DetectEnvelopeForm(schemaName, data); ferr == nil && form == EnvelopeSizePrefixed {
+				opts = wasm.FlatcSizePrefixed
+			}
+			if err := v.flatc.VerifyBinary(ctx, flatcID, data, opts); err != nil {
+				return fmt.Errorf("validation failed for %s: %w", schemaName, err)
+			}
 		}
 	}
 
@@ -695,38 +831,63 @@ func sanitizeIdentifier(b []byte) string {
 	return string(out)
 }
 
-// JSONToFlatBuffer converts JSON data to FlatBuffer binary.
-func (v *Validator) JSONToFlatBuffer(ctx context.Context, schemaName string, jsonData []byte) ([]byte, error) {
+// StoredRecordOptions converts JSON into the node's canonical stored record:
+// a bare finished buffer (the publish boundary strips a size prefix, see
+// api.PublishHandler.canonicalRecordBytes) with every field the JSON gives
+// stored even when it equals its default. Add wasm.FlatcSizePrefixed for a
+// length-framed wire copy.
+const StoredRecordOptions = wasm.FlatcForceDefaults
+
+// converterID resolves a schema to its converter id, parsing it on first use.
+func (v *Validator) converterID(ctx context.Context, schemaName string) (int, error) {
 	v.mu.RLock()
-	schemaID, ok := v.schemas[schemaName]
+	_, known := v.schemas[schemaName]
 	v.mu.RUnlock()
-
-	if !ok {
-		return nil, fmt.Errorf("unknown schema: %s", schemaName)
+	if !known {
+		return 0, fmt.Errorf("unknown schema: %s", schemaName)
 	}
-
 	if v.flatc == nil {
-		return nil, wasm.ErrNoModule
+		return 0, wasm.ErrNoModule
 	}
 
-	return v.flatc.JSONToBinary(ctx, schemaID, jsonData)
+	v.convMu.Lock()
+	defer v.convMu.Unlock()
+	if v.flatcPending[schemaName] {
+		v.parseConverterSchemaLocked(ctx, schemaName)
+	}
+	if id, ok := v.flatcIDs[schemaName]; ok {
+		return id, nil
+	}
+	if cause := v.flatcErrs[schemaName]; cause != nil {
+		return 0, fmt.Errorf("schema %s is not loaded in the flatc converter: %w", schemaName, cause)
+	}
+	return 0, fmt.Errorf("schema %s is not staged in the flatc converter", schemaName)
 }
 
-// FlatBufferToJSON converts FlatBuffer binary to JSON data.
-func (v *Validator) FlatBufferToJSON(ctx context.Context, schemaName string, binaryData []byte) ([]byte, error) {
-	v.mu.RLock()
-	schemaID, ok := v.schemas[schemaName]
-	v.mu.RUnlock()
-
-	if !ok {
-		return nil, fmt.Errorf("unknown schema: %s", schemaName)
+// JSONToFlatBuffer converts JSON to a FlatBuffer with per-call options
+// (StoredRecordOptions for a record to store). flatc lays fields out by size,
+// so the values round-trip but the bytes need not match another builder's.
+func (v *Validator) JSONToFlatBuffer(ctx context.Context, schemaName string, jsonData []byte, opts wasm.FlatcOption) ([]byte, error) {
+	id, err := v.converterID(ctx, schemaName)
+	if err != nil {
+		return nil, err
 	}
+	return v.flatc.JSONToBinary(ctx, id, jsonData, opts)
+}
 
-	if v.flatc == nil {
-		return nil, wasm.ErrNoModule
+// FlatBufferToJSON verifies a record and prints it as JSON. Either stored
+// form reads: the size-prefix option is taken from the record's envelope, and
+// opts supplies the rest (wasm.FlatcCompactJSON, wasm.FlatcForceDefaults, ...).
+func (v *Validator) FlatBufferToJSON(ctx context.Context, schemaName string, binaryData []byte, opts wasm.FlatcOption) ([]byte, error) {
+	id, err := v.converterID(ctx, schemaName)
+	if err != nil {
+		return nil, err
 	}
-
-	return v.flatc.BinaryToJSON(ctx, schemaID, binaryData)
+	opts &^= wasm.FlatcSizePrefixed
+	if form, ferr := v.DetectEnvelopeForm(schemaName, binaryData); ferr == nil && form == EnvelopeSizePrefixed {
+		opts |= wasm.FlatcSizePrefixed
+	}
+	return v.flatc.BinaryToJSON(ctx, id, binaryData, opts)
 }
 
 // Schemas returns the list of loaded schema names.

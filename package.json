@@ -51,6 +51,8 @@
     "update:deps": "bash scripts/update-deps.sh",
     "generate:versions": "node scripts/generate-suite-version-info.js",
     "check:versions": "node scripts/generate-suite-version-info.js --check && node scripts/check-version-consistency.js",
+    "sync:flatc-wasi": "node scripts/sync-flatc-wasi.mjs",
+    "check:flatc-wasi": "node scripts/sync-flatc-wasi.mjs --check",
     "precommit": "npm run check:versions && npm run test",
     "prepare": "husky",
     "test:plugin-harness": "scripts/run-plugin-harness.sh",
@@ -82,6 +84,7 @@
   "license": "MIT",
   "devDependencies": {
     "baseline-browser-mapping": "^2.10.0",
+    "flatc-wasi": "npm:flatc-wasm@25.12.19-wasm.69",
     "flatc-wasm": "^26.1.32",
     "husky": "^9.1.7",
     "js-yaml": "^4.3.2",
