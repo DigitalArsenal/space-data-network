@@ -33,7 +33,9 @@
 # Requires: git, cmake, ninja, clang, and the STATIC LLVM archives —
 # on Debian/Ubuntu: llvm-16-dev liblld-16-dev libpolly-16-dev libzstd-dev
 # zlib1g-dev clang-16. libPolly.a ships separately and the final archive merge
-# fails without it.
+# fails without it. On macOS: Xcode (Apple clang) plus `brew install cmake
+# ninja llvm@18 zstd`, and `. scripts/wasmedge-static-env.sh` first; see
+# sdn-server/internal/wasmrt/SUBSTRATE.md for the darwin path.
 set -euo pipefail
 
 WASMEDGE_VERSION="${WASMEDGE_VERSION:-0.16.4}"
@@ -467,6 +469,34 @@ elif [[ "$(cat "$SDN_BUILD_STAMP" 2>/dev/null || true)" != "$SDN_PATCH_STAMP" ]]
   sdn_build_needed=1
 fi
 if [[ "$sdn_build_needed" == 1 ]]; then
+  # LIBC++ NOW REFUSES WASMEDGE'S std::is_class SPECIALIZATION.
+  #
+  # include/common/int128.h:545 specializes std::is_class for its uint128, and
+  # the libc++ in the Xcode 26 SDK marks that template
+  # _LIBCPP_NO_SPECIALIZATIONS. Apple clang 21 then stops lib/llvm/compiler.cpp
+  # and lib/plugin/plugin.cpp on -Winvalid-specialization, which is an ERROR by
+  # default: dropping -Werror above does not reach it. The specialization only
+  # restates that WasmEdge::uint128 is a class, so the diagnostic is silenced
+  # rather than the header patched.
+  #
+  # ONLY WHERE THE COMPILER KNOWS THE WARNING. Older clang rejects an unknown
+  # -Wno- option under -Werror (measured: clang 16, the Linux and Docker
+  # compiler, and clang 18 both do), so the flag is added only when a probe
+  # compiles cleanly with it. The probe names the POSITIVE form as well: gcc
+  # accepts ANY unknown -Wno- option in silence, so a -Wno- probe alone passes
+  # on MinGW's g++ and would change the Windows build for nothing. Everywhere
+  # the probe fails, the configure line is exactly what it was.
+  #
+  # Passed as -DCMAKE_CXX_FLAGS, not exported as CXXFLAGS: cmake reads the
+  # environment only on a FIRST configure, and a build directory reused after
+  # the patch series changed would otherwise keep a cached value without it.
+  # The caller's CXXFLAGS (Windows sets -DLLVM_BUILD_STATIC there) stay in front.
+  SDN_CMAKE_CXX_FLAGS=""
+  if printf '' | "${CXX:-clang++-16}" -x c++ -Werror -Winvalid-specialization \
+       -Wno-invalid-specialization -fsyntax-only - >/dev/null 2>&1; then
+    SDN_CMAKE_CXX_FLAGS="${CXXFLAGS:+${CXXFLAGS} }-Wno-invalid-specialization"
+    echo "compiler knows -Winvalid-specialization: building with -Wno-invalid-specialization"
+  fi
   CC="${CC:-clang-16}" CXX="${CXX:-clang++-16}" \
   cmake -S "$SRC" -B "$SRC/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DWASMEDGE_USE_LLVM=ON \
@@ -478,7 +508,8 @@ if [[ "$sdn_build_needed" == 1 ]]; then
     -DLLVM_DIR="${LLVM_DIR:-/usr/lib/llvm-16/lib/cmake/llvm}" \
     -DLLD_DIR="${LLD_DIR:-/usr/lib/llvm-16/lib/cmake/lld}" \
     ${CMAKE_AR:+-DCMAKE_AR="$CMAKE_AR"} \
-    ${CMAKE_PREFIX_PATH:+-DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"}
+    ${CMAKE_PREFIX_PATH:+-DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"} \
+    ${SDN_CMAKE_CXX_FLAGS:+-DCMAKE_CXX_FLAGS="$SDN_CMAKE_CXX_FLAGS"}
   JOBS="${WASMEDGE_BUILD_JOBS:-$( (command -v nproc >/dev/null && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo 4 )}"
   cmake --build "$SRC/build" -j"$JOBS"
   printf '%s' "$SDN_PATCH_STAMP" > "$SDN_BUILD_STAMP"
@@ -762,6 +793,50 @@ case "$(uname -s)" in
     ;;
 esac
 
+# THE SYSTEM LIBRARIES LLVM NEEDS ON DARWIN, FROM LLVM ITSELF.
+#
+# The hand-kept list (-lm -lz -lncurses) had no libxml2, and Homebrew's
+# llvm@18 is built with it: libLLVMWindowsManifest.a calls xmlAddChild and
+# friends, and lld's COFF driver (swept into the merged libwasmedge.a) calls
+# the merger. With Xcode 26's linker the Go link died on _xmlAddChild.
+# `llvm-config --link-static --system-libs` is the authority on what the
+# archives were built against, so the extras are derived from it (brew llvm@18:
+# -lm -lz -lzstd -lcurses -lxml2) rather than grown one link error at a time.
+#
+# Only -l<name> reaches link.flags. llvm-config can report a library as a
+# full path (Linux does, for libz3.so), and a path would break the prefix's
+# relocatability; the name resolves against the SDK instead, where libxml2,
+# libz and libncurses are part of macOS. Skipped: what the line already
+# carries, curses (the same library as ncurses on macOS), and zstd when its
+# archive is named in the prefix. Linux and Windows keep their literal lists.
+DARWIN_SYSTEM_LIBS="-lc++ -lc++abi -lm -lz -lncurses"
+if [[ "$(uname -s)" == Darwin ]]; then
+  for sys_lib in $($LLVM_CONFIG --link-static --system-libs 2>/dev/null || true); do
+    case "$sys_lib" in
+      -l*) sys_name="${sys_lib#-l}" ;;
+      */lib*)
+        sys_name="$(basename "$sys_lib")"
+        sys_name="${sys_name#lib}"
+        sys_name="${sys_name%%.*}"
+        ;;
+      *) continue ;;
+    esac
+    case "$sys_name" in
+      ''|curses) continue ;;
+      zstd)
+        if [[ -n "${ZSTD_STATIC:-}" ]]; then
+          continue
+        fi
+        ;;
+    esac
+    case " $DARWIN_SYSTEM_LIBS " in
+      *" -l${sys_name} "*) continue ;;
+    esac
+    DARWIN_SYSTEM_LIBS="$DARWIN_SYSTEM_LIBS -l${sys_name}"
+  done
+  echo "static prefix: darwin system libraries: $DARWIN_SYSTEM_LIBS"
+fi
+
 {
   # --start-group wherever the linker is GNU ld: these archives depend on each
   # other BOTH ways (lld calls LLVM, lld's own ELF/Common halves call each
@@ -781,7 +856,8 @@ esac
   case "$(uname -s)" in
     # -lc++abi as well as -lc++: libc++'s exception ABI lives in libc++abi on
     # macOS, and without it the link dies on ___cxa_init_primary_exception.
-    Darwin) printf -- '-lc++ -lc++abi -lm -lz -lncurses\n' ;;
+    # The rest is what llvm-config reports (DARWIN_SYSTEM_LIBS above).
+    Darwin) printf -- '%s\n' "$DARWIN_SYSTEM_LIBS" ;;
     # MinGW/clang on Windows: the C++ runtime and the sockets/crypto libraries
     # the runtime calls into. MSVC's lib.exe cannot do the `ar -x` extraction
     # WasmEdge's static merge performs, so CMAKE_AR must be llvm-ar there.
@@ -862,12 +938,30 @@ fi
 #    LAST on the external link line (after libwasmedge.a from the binding's
 #    -lwasmedge), so static symbols resolve. libstdc++/libc stay dynamic — they
 #    are base system libraries present on every Ubuntu host.
+#
+#    DARWIN LINKS THROUGH link.flags. The line below is GNU ld's (--start-group,
+#    -lstdc++, -ltinfo) and Apple's ld rejects it outright, so on macOS the
+#    daemon is linked the way every other macOS build links it:
+#    go-with-wasmedge.sh's static branch, which substitutes the prefix into
+#    link.flags. That is also the only line the CI darwin legs ever link with,
+#    so this script now proves the same one. GOCACHE stays the caller's (the
+#    wrapper would otherwise default it to a cold <repo>/.gocache).
 cd "$ROOT/sdn-server"
-CGO_ENABLED=1 \
-CGO_CFLAGS="-I$STATIC/include" \
-CGO_LDFLAGS="-L$STATIC/lib" \
-go build -ldflags "-linkmode external -extldflags \"-Wl,--start-group $GRP $LLVMLIBS -lstdc++ -Wl,--end-group -lm -ldl -lpthread -lz -lzstd -ltinfo\"" \
-  -o "$OUT" ./cmd/spacedatanetwork
+case "$(uname -s)" in
+  Darwin)
+    CGO_ENABLED=1 \
+    GOCACHE="${GOCACHE:-$(go env GOCACHE)}" \
+    WASMEDGE_DIR="$STATIC" \
+    bash "$ROOT/scripts/go-with-wasmedge.sh" build -o "$OUT" ./cmd/spacedatanetwork
+    ;;
+  *)
+    CGO_ENABLED=1 \
+    CGO_CFLAGS="-I$STATIC/include" \
+    CGO_LDFLAGS="-L$STATIC/lib" \
+    go build -ldflags "-linkmode external -extldflags \"-Wl,--start-group $GRP $LLVMLIBS -lstdc++ -Wl,--end-group -lm -ldl -lpthread -lz -lzstd -ltinfo\"" \
+      -o "$OUT" ./cmd/spacedatanetwork
+    ;;
+esac
 
 echo "built: $OUT"
 DEPS_TOOL="$( (command -v ldd >/dev/null && echo ldd) || (command -v otool >/dev/null && echo 'otool -L') || echo '' )"
