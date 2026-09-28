@@ -1292,6 +1292,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					publicationDir,
 				)
 				publicationService.SetChannelRecorder(channelAPI)
+				// Retention of this node's own publications and the
+				// config-gated IPNS pointer to each lane's current DPM
+				// (graph: sdn-publication-hygiene-20260928).
+				publicationService.SetPublicationPolicy(cfg.Publishing.Retention, cfg.Publishing.IPNSPointers)
+				if keep := cfg.Publishing.Retention.KeepSeries; keep > 0 {
+					log.Infof("Dataset publication retention: newest %d series per lane stay pinned (%d lane override(s))", keep, len(cfg.Publishing.Retention.Lanes))
+				} else {
+					log.Infof("Dataset publication retention: off (keep_series 0 keeps every series)")
+				}
+				for _, pointer := range cfg.Publishing.IPNSPointers {
+					log.Infof("IPNS pointer armed: schema %s provider %q source %q -> key %s", pointer.Schema, pointer.ProviderID, pointer.SourceName, pointer.Key)
+				}
 
 				// FlatBuffer admin lanes (fbcs program): $ICN connectors,
 				// $DSS sync, export/archive. ONE deps struct from what the

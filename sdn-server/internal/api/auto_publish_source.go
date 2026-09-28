@@ -115,6 +115,18 @@ func (p *AutoPublisher) publishReadySource(ctx context.Context) {
 	p.mu.Unlock()
 
 	runCtx, cancel := context.WithTimeout(ctx, autoPublishTimeout)
+	if p.unchangedSinceLastPublication(runCtx, req) {
+		cancel()
+		p.mu.Lock()
+		selected.attempts = 0
+		p.unchanged++
+		p.mu.Unlock()
+		log.Infof("auto-publish source %s %s/%s: the set is unchanged since its last publication; nothing to publish", req.Schema, req.ProviderID, req.SourceName)
+		if p.onPublished != nil {
+			p.onPublished(req, nil, nil)
+		}
+		return
+	}
 	result, err := p.service.PublishDatasetUpdate(runCtx, req)
 	cancel()
 
