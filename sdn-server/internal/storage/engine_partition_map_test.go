@@ -70,6 +70,11 @@ func assertPartitions(t *testing.T, s *FlatSQLStore, want map[string]int64) {
 // before.
 func TestArenaDiscardTakesThePartitionMapWithIt(t *testing.T) {
 	t.Setenv(checkpointIntervalEnv, "0")
+	// The boot's discard is taken past the compaction mark only; this
+	// arena is a few kilobytes.
+	prevCompact := engineArenaCompactBytes
+	engineArenaCompactBytes = 0
+	defer func() { engineArenaCompactBytes = prevCompact }()
 	basePath := filepath.Join(t.TempDir(), "store")
 	seed := newEngineRecordsStore(t, basePath)
 	if !seed.BootState().Durable {

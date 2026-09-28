@@ -4148,7 +4148,7 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 	if err != nil {
 		return 0, err
 	}
-	imported, index, err := n.store.ImportDatasetShardFromFiles(shardPath, indexPath, from.String())
+	imported, index, err := n.store.ImportDatasetShardFromFilesContext(ctx, shardPath, indexPath, from.String())
 	if err != nil {
 		return 0, fmt.Errorf("import dataset feed head %s: %w", ann.FeedHead, err)
 	}

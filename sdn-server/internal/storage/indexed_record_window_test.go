@@ -263,7 +263,14 @@ func planReadsWholeTables(plan []string) (string, bool) {
 		if !recordOrTag {
 			continue
 		}
-		if fields[0] == "SCAN" || (!strings.Contains(line, "cid=?") && !strings.Contains(line, "rowid=?")) {
+		// The one keyed walk allowed: the tag table searched BY THE TAG
+		// FILTER (provider and/or source, and the batch), which is the
+		// window's own row set — indexedRecordWindowSQL drives a
+		// source-filtered window from it instead of from the standard.
+		// windowDrivenByTagFilter checks the key matches the filter.
+		byTagFilter := fields[0] == "SEARCH" && name == "ft" &&
+			(strings.Contains(line, "provider_id=?") || strings.Contains(line, "source_name=?"))
+		if fields[0] == "SCAN" || (!strings.Contains(line, "cid=?") && !strings.Contains(line, "rowid=?") && !byTagFilter) {
 			return line, true
 		}
 	}
@@ -294,8 +301,61 @@ func TestIndexedRecordWindowPlanNeverScansTheRecordTables(t *testing.T) {
 			if line, bad := planReadsWholeTables(plan); bad {
 				t.Fatalf("%s: plan reads whole tables at %q:\n  %s", name, line, strings.Join(plan, "\n  "))
 			}
+			if problem := windowDrivenByTagFilter(filter, plan); problem != "" {
+				t.Fatalf("%s: %s:\n  %s", name, problem, strings.Join(plan, "\n  "))
+			}
 		}
 	}
+}
+
+// windowDrivenByTagFilter checks that a provider/source-filtered window is
+// DRIVEN by its tag filter: the tag table is searched on an index keyed by
+// every tag column the filter names (so the rows examined are the filter's
+// rows), and each of those rows is then looked up in the record index by
+// (schema_name, cid) — never a walk of the standard's index. It returns a
+// description of the first violation, or "".
+func windowDrivenByTagFilter(filter IndexedRecordQuery, plan []string) string {
+	if filter.ProviderID == "" && filter.SourceName == "" {
+		return ""
+	}
+	wantIndex := "idx_sdn_record_source_tags_source_cid"
+	switch {
+	case filter.ProviderID != "" && filter.SourceName != "" && filter.BatchID != "":
+		wantIndex = "idx_sdn_record_source_tags_batch_cid"
+	case filter.ProviderID == "":
+		wantIndex = "idx_sdn_record_source_tags_source_name_cid"
+	}
+	var tagSearch, idxSearch string
+	for _, line := range plan {
+		if strings.HasPrefix(line, "SEARCH ft ") {
+			tagSearch = line
+		}
+		if strings.HasPrefix(line, "SEARCH idx ") {
+			if !strings.Contains(line, "schema_name=? AND cid=?") {
+				return fmt.Sprintf("the record index is walked, not looked up by CID, at %q", line)
+			}
+			idxSearch = line
+		}
+		if strings.HasPrefix(line, "SCAN idx") {
+			return fmt.Sprintf("the record index is scanned at %q", line)
+		}
+	}
+	if tagSearch == "" || !strings.Contains(tagSearch, wantIndex) {
+		return fmt.Sprintf("the tag match does not search %s (got %q)", wantIndex, tagSearch)
+	}
+	for column, named := range map[string]bool{
+		"provider_id=?": filter.ProviderID != "",
+		"source_name=?": filter.SourceName != "",
+		"batch_id=?":    wantIndex == "idx_sdn_record_source_tags_batch_cid",
+	} {
+		if named && !strings.Contains(tagSearch, column) {
+			return fmt.Sprintf("the tag search is not keyed by %s: %q", column, tagSearch)
+		}
+	}
+	if idxSearch == "" {
+		return "no CID lookup of the record index"
+	}
+	return ""
 }
 
 // unionEngineWindowPageForTest is the hot-window page the store used to read:
