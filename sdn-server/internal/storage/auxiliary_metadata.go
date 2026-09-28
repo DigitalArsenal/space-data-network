@@ -91,6 +91,10 @@ type auxiliaryLocalEPMRecord struct {
 type auxiliaryDatasetShardPublicationDelete struct {
 	Query  DatasetShardPublicationQuery `json:"query"`
 	Offset int                          `json:"offset"`
+	// Exact deletes the ONE row keyed by (schema, profile, provider, source,
+	// batch, Offset, Query.Limit) — publication retention's delete — instead of
+	// every row at or after Offset.
+	Exact bool `json:"exact,omitempty"`
 }
 
 func openAuxiliaryMetadataStore(path string, readOnly bool) (*auxiliaryMetadataStore, error) {
@@ -714,6 +718,10 @@ func (s *FlatSQLStore) applyAuxiliaryMetadataEvent(event auxiliaryMetadataEvent)
 	case auxiliaryEventDatasetShardPublicationDelete:
 		if event.DatasetShardPublicationDelete == nil {
 			return fmt.Errorf("dataset shard publication delete metadata event missing payload")
+		}
+		if event.DatasetShardPublicationDelete.Exact {
+			_, err := s.applyDatasetShardPublicationDeleteExact(event.DatasetShardPublicationDelete.Query, event.DatasetShardPublicationDelete.Offset)
+			return err
 		}
 		_, err := s.applyDatasetShardPublicationDelete(event.DatasetShardPublicationDelete.Query, event.DatasetShardPublicationDelete.Offset)
 		return err

@@ -596,6 +596,69 @@ func (s *FlatSQLStore) applyDatasetShardPublicationDelete(query DatasetShardPubl
 	return deleted, nil
 }
 
+// DeleteDatasetShardPublication deletes ONE publication row, matched by its
+// full key (schema, profile, provider, source, batch, offset, limit). Empty
+// provider/source/batch match only rows stored with them empty. Publication
+// retention uses it to stop advertising a window whose content it unpins.
+func (s *FlatSQLStore) DeleteDatasetShardPublication(pub DatasetShardPublication) (bool, error) {
+	if err := s.requireWritable("delete dataset shard publication"); err != nil {
+		return false, err
+	}
+	pub = normalizeDatasetShardPublication(pub)
+	if pub.SchemaName == "" {
+		return false, errors.New("schema name is required")
+	}
+	if pub.QueryProfile == "" {
+		return false, errors.New("query profile is required")
+	}
+	if pub.Offset < 0 || pub.Limit <= 0 {
+		return false, errors.New("a positive window is required")
+	}
+	query := DatasetShardPublicationQuery{
+		SchemaName:   pub.SchemaName,
+		ProviderID:   pub.ProviderID,
+		SourceName:   pub.SourceName,
+		BatchID:      pub.BatchID,
+		QueryProfile: pub.QueryProfile,
+		Limit:        pub.Limit,
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted, err := s.applyDatasetShardPublicationDeleteExact(query, pub.Offset)
+	if err != nil {
+		return false, err
+	}
+	if deleted == 0 {
+		return false, nil
+	}
+	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
+		Kind: auxiliaryEventDatasetShardPublicationDelete,
+		DatasetShardPublicationDelete: &auxiliaryDatasetShardPublicationDelete{
+			Query:  query,
+			Offset: pub.Offset,
+			Exact:  true,
+		},
+	}); err != nil {
+		return true, fmt.Errorf("append dataset shard publication delete metadata: %w", err)
+	}
+	return true, nil
+}
+
+func (s *FlatSQLStore) applyDatasetShardPublicationDeleteExact(query DatasetShardPublicationQuery, offset int) (int64, error) {
+	result, err := s.auxWrite().Exec(`
+		DELETE FROM sdn_dataset_shard_publications
+		WHERE schema_name = ? AND query_profile = ? AND provider_id = ? AND source_name = ?
+		  AND batch_id = ? AND window_offset = ? AND window_limit = ?`,
+		query.SchemaName, query.QueryProfile, query.ProviderID, query.SourceName,
+		query.BatchID, offset, query.Limit)
+	if err != nil {
+		return 0, fmt.Errorf("delete dataset shard publication: %w", err)
+	}
+	deleted, _ := result.RowsAffected()
+	return deleted, nil
+}
+
 // FindLargestDatasetShardPublicationLimit returns the largest published shard
 // window for a dataset query. Manifest readers use this to follow the actual
 // provider artifact layout instead of the caller's UI page size.
