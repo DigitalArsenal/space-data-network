@@ -33,13 +33,70 @@ function extractShellFunction(script, functionName) {
   return remainder.slice(0, nextFunction?.index ?? remainder.length);
 }
 
-function extractGoTestArguments(functionBody, functionName) {
+// Every Go lane calls `go test` through go_test_with_timings <label>, which
+// hands the rest of its arguments to go-with-wasmedge.sh test unchanged (the
+// Go-suites test asserts that too). A quoted "$VAR" argument is resolved from
+// the script's top-level assignment, so a budget kept in a variable is
+// asserted by its value; an unquoted package list stays as written.
+function extractGoTestArguments(script, functionBody, functionName) {
   const invocations = [...functionBody.matchAll(
-    /^[ \t]*"\$ROOT\/scripts\/go-with-wasmedge\.sh"[ \t]+test((?:[ \t]+\S+)+)[ \t]*$/gm,
+    /^[ \t]*go_test_with_timings[ \t]+(.+?)[ \t]*\\?$/gm,
   )];
 
   assert.equal(invocations.length, 1, `${functionName} must contain exactly one active Go test invocation`);
-  return invocations[0][1].trim().split(/\s+/);
+  const [, ...args] = invocations[0][1].split(/\s+/);
+  return args.map((arg) => arg.replace(/"\$([A-Z_][A-Z0-9_]*)"/g, (_, name) => {
+    const assignments = [...script.matchAll(new RegExp(`^${name}="([^"$]*)"[ \\t]*$`, 'gm'))];
+    assert.equal(assignments.length, 1, `${name} must be assigned a literal exactly once at the top level`);
+    return assignments[0][1];
+  }));
+}
+
+// One `- name: <name>` step of a workflow or composite action, up to the next
+// step at the same indent or the end of the enclosing list.
+function extractYamlStep(text, name, indent) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const starts = [...text.matchAll(new RegExp(`^${indent}- name: ${escapedName}[ \\t]*$`, 'gm'))];
+  assert.equal(starts.length, 1, `exactly one step must be named "${name}"`);
+
+  const start = starts[0].index;
+  const rest = text.slice(start + starts[0][0].length);
+  const end = new RegExp(`^(?:${indent}- | {0,${Math.max(indent.length - 1, 0)}}\\S)`, 'm').exec(rest);
+  return text.slice(start, start + starts[0][0].length + (end?.index ?? rest.length));
+}
+
+function splitWorkflowJobs(workflow) {
+  const jobsStart = /^jobs:[ \t]*$/m.exec(workflow);
+  assert.ok(jobsStart, 'workflow must declare jobs');
+  const body = workflow.slice(jobsStart.index + jobsStart[0].length);
+  const headers = [...body.matchAll(/^ {2}([a-zA-Z0-9_-]+):[ \t]*$/gm)];
+  return Object.fromEntries(headers.map((header, i) => [
+    header[1],
+    body.slice(header.index, headers[i + 1]?.index ?? body.length),
+  ]));
+}
+
+// The ci-local.sh modes that reach prepare_go_toolchain, i.e. the ones that
+// fail without a WASMEDGE_DIR holding WasmEdge headers and libraries.
+function ciLocalModesNeedingWasmEdge(script) {
+  const needing = new Set(
+    [...script.matchAll(/^([_a-zA-Z][_a-zA-Z0-9]*)\(\) \{[ \t]*$/gm)]
+      .map((header) => header[1])
+      .filter((name) => name !== 'prepare_go_toolchain'
+        && /^[ \t]+prepare_go_toolchain\b/m.test(extractShellFunction(script, name).split(/^case "\$MODE" in/m)[0])),
+  );
+  assert.ok(needing.size > 0, 'no ci-local.sh lane calls prepare_go_toolchain any more');
+
+  const dispatch = /^case "\$MODE" in\n([\s\S]*?)^esac$/m.exec(script);
+  assert.ok(dispatch, 'ci-local.sh must dispatch on $MODE');
+  const modes = new Set();
+  for (const arm of dispatch[1].matchAll(/^ {2}([a-z|-]+)\)\n([\s\S]*?)^ {4};;$/gm)) {
+    const calls = [...arm[2].matchAll(/^[ \t]+([_a-zA-Z][_a-zA-Z0-9]*)\b/gm)].map((call) => call[1]);
+    if (calls.some((call) => needing.has(call))) {
+      for (const mode of arm[1].split('|')) modes.add(mode);
+    }
+  }
+  return modes;
 }
 
 test('workflows opt into Node 24 for GitHub actions and project scripts', () => {
@@ -59,66 +116,126 @@ test('workflows opt into Node 24 for GitHub actions and project scripts', () => 
   }
 });
 
-test('CI quick checks share an explicit step-local WasmEdge directory', () => {
+// CI used to run every check in one `Run CI checks (same as pre-push)` step
+// that installed WasmEdge and ran `ci-local.sh quick` in the same shell. Since
+// f80a4128d each lane is its own job, and every Go job gets WasmEdge from the
+// sdn-go-env composite action. The property is unchanged: the installer is
+// told the directory explicitly (its own default is $HOME/.wasmedge, and what
+// it exports dies with its shell), and the ci-local.sh steps that need it only
+// run after it is installed and exported.
+test('CI Go lanes share one explicit runner.temp WasmEdge directory', () => {
+  const action = readRepoFile('.github/actions/sdn-go-env/action.yml');
   const workflow = readRepoFile('.github/workflows/ci.yml');
-  const stepHeader = '      - name: Run CI checks (same as pre-push)';
-  const stepStarts = [...workflow.matchAll(/^      - name: Run CI checks \(same as pre-push\)$/gm)];
+  const script = readRepoFile('scripts/ci-local.sh');
 
-  assert.equal(stepStarts.length, 1, 'CI workflow must define exactly one local-equivalent checks step');
-
-  const stepStart = stepStarts[0].index;
-  const nextStepStart = workflow.indexOf('\n      - ', stepStart + stepHeader.length);
-  const ciStep = workflow.slice(stepStart, nextStepStart === -1 ? workflow.length : nextStepStart);
+  const restore = extractYamlStep(action, 'Restore WasmEdge', '    ');
+  const install = extractYamlStep(action, 'Install WasmEdge', '    ');
+  const exported = extractYamlStep(action, 'Export WASMEDGE_DIR', '    ');
 
   assert.match(
-    ciStep,
-    /^        env:\n          WASMEDGE_DIR: \$\{\{ runner\.temp \}\}\/\.wasmedge[ \t]*$/m,
-    'Run CI step must explicitly pass runner.temp/.wasmedge; installer defaults are shell-local',
+    restore,
+    /^ {8}path: \$\{\{ runner\.temp \}\}\/\.wasmedge[ \t]*$/m,
+    'the WasmEdge cache must restore runner.temp/.wasmedge, the directory the installer fills',
   );
-
-  const installCommand = /^          \.\/scripts\/install-wasmedge\.sh[ \t]*$/m.exec(ciStep);
-  const quickCheckCommand = /^          \.\/scripts\/ci-local\.sh quick[ \t]*$/m.exec(ciStep);
-
-  assert.ok(installCommand, 'Run CI step must install WasmEdge with an active shell command');
-  assert.ok(quickCheckCommand, 'Run CI step must run the quick local checks with an active shell command');
+  assert.match(
+    install,
+    /^ {6}env:\n(?: {8}\S.*\n)*? {8}WASMEDGE_DIR: \$\{\{ runner\.temp \}\}\/\.wasmedge[ \t]*$/m,
+    'the install step must explicitly pass runner.temp/.wasmedge; installer defaults are shell-local',
+  );
+  assert.match(
+    install,
+    /^ {6}run: \.\/scripts\/install-wasmedge\.sh\b/m,
+    'the install step must install WasmEdge with an active shell command',
+  );
+  assert.match(
+    exported,
+    /^ {6}run: echo "WASMEDGE_DIR=\$\{\{ runner\.temp \}\}\/\.wasmedge" >> "\$GITHUB_ENV"[ \t]*$/m,
+    'WASMEDGE_DIR must reach the later steps through GITHUB_ENV',
+  );
+  assert.doesNotMatch(
+    exported,
+    /^ {6}if:/m,
+    'WASMEDGE_DIR must be exported on a cache hit as well as after an install',
+  );
   assert.ok(
-    installCommand.index < quickCheckCommand.index,
-    'Run CI step must install WasmEdge before running quick checks',
+    action.indexOf(restore) < action.indexOf(install) && action.indexOf(install) < action.indexOf(exported),
+    'sdn-go-env must restore, then install, then export WasmEdge',
   );
+
+  const needsWasmEdge = ciLocalModesNeedingWasmEdge(script);
+  let lanes = 0;
+  for (const [job, body] of Object.entries(splitWorkflowJobs(workflow))) {
+    for (const run of body.matchAll(/^[ \t]+(?:run: )?\.\/scripts\/ci-local\.sh ([a-z-]+)[ \t]*$/gm)) {
+      if (!needsWasmEdge.has(run[1])) continue;
+      lanes += 1;
+      const setup = /^ {6}- uses: \.\/\.github\/actions\/sdn-go-env[ \t]*$/m.exec(body);
+      assert.ok(
+        setup && setup.index < run.index,
+        `CI job "${job}" runs ci-local.sh ${run[1]}, which needs WasmEdge, before sdn-go-env installs it`,
+      );
+      assert.doesNotMatch(
+        body,
+        /^[ \t]+WASMEDGE_DIR:/m,
+        `CI job "${job}" must not point WASMEDGE_DIR away from the directory sdn-go-env installed`,
+      );
+    }
+  }
+  assert.ok(lanes > 0, 'no CI job runs a ci-local.sh mode that needs WasmEdge any more');
 });
 
 test('local Go suites serialize package builds while bypassing the test cache', () => {
   const script = readRepoFile('scripts/ci-local.sh');
-  const goArgs = extractGoTestArguments(extractShellFunction(script, 'run_go'), 'run_go');
-  const raceArgs = extractGoTestArguments(extractShellFunction(script, 'run_go_race'), 'run_go_race');
+
+  // The lanes reach go test through go_test_with_timings, so what they pass it
+  // is only what go test gets if the wrapper forwards every argument, once,
+  // and keeps go test's exit status rather than tee's.
+  const wrapper = extractShellFunction(script, 'go_test_with_timings');
+  assert.equal(
+    [...wrapper.matchAll(/^[ \t]*"\$ROOT\/scripts\/go-with-wasmedge\.sh"[ \t]+test[ \t]+"\$@"(?=[ \t|])/gm)].length,
+    1,
+    'go_test_with_timings must pass its arguments to exactly one active Go test invocation',
+  );
+  assert.match(wrapper, /^[ \t]*rc=\$\{PIPESTATUS\[0\]\}[ \t]*$/m, 'go_test_with_timings must keep go test\'s exit status');
+  assert.match(wrapper, /^[ \t]*return "\$rc"[ \t]*$/m, 'go_test_with_timings must return go test\'s exit status');
+
+  const goArgs = extractGoTestArguments(script, extractShellFunction(script, 'run_go'), 'run_go');
+  const raceArgs = extractGoTestArguments(script, extractShellFunction(script, 'run_go_race'), 'run_go_race');
 
   for (const [functionName, args] of [['run_go', goArgs], ['run_go_race', raceArgs]]) {
     assert.ok(args.includes('-p=1'), `${functionName} must serialize package builds with -p=1`);
     assert.ok(args.includes('-count=1'), `${functionName} must bypass cached results`);
   }
 
-  // run_go no longer runs ./... — the packages that time out a cold runner are
-  // split into run_go_heavy at a 60-minute budget. That is only safe if the set
-  // it excludes is genuinely run somewhere, so assert BOTH halves exist and
-  // that nothing is quietly dropped between them.
+  // run_go no longer runs ./... — the record store is split into run_go_heavy,
+  // its own CI job. That is only safe if the set it excludes is genuinely run
+  // somewhere, so assert BOTH halves exist and that nothing is quietly dropped
+  // between them.
   assert.ok(
     goArgs.at(-1) === '$pkgs',
     'run_go must run the filtered package list, not ./...',
   );
   assert.match(script, /pkgs=\$\([^)]*list \.\/\.\.\.[^)]*grep -Ev "\$\(heavy_pkg_filter\)"/);
-  const heavyArgs = extractGoTestArguments(extractShellFunction(script, 'run_go_heavy'), 'run_go_heavy');
+  const heavyArgs = extractGoTestArguments(script, extractShellFunction(script, 'run_go_heavy'), 'run_go_heavy');
   assert.ok(heavyArgs.includes('-p=1'), 'run_go_heavy must serialize package builds');
   assert.ok(heavyArgs.includes('-count=1'), 'run_go_heavy must bypass cached results');
-  // 90m, and the number is a measurement rather than a preference:
-  // internal/storage runs -p=1 so it is single-thread and I/O bound, takes
-  // 1240s on a dev box under WAL, and could not finish inside 3600s under the
-  // TRUNCATE journal it used before. 60m left ~1.4x headroom over a 2x-slower
-  // CI runner, which is not enough for a gate expected to stay green.
+  // The budgets are measurements, recorded next to them in ci-local.sh
+  // (2026-09-18, with the FlatSQL AOT artifact prewarmed): internal/storage
+  // takes 296.6s warm, ~564s on a runner measured at 1.9x this box, so 25m;
+  // the slowest quick package (internal/api, 148.3s) projects to ~282s, so
+  // 10m. The old 90m/20m pair was sized around the engine running
+  // INTERPRETED, which is the bug the prewarm removed.
   assert.deepEqual(
     heavyArgs.filter((arg) => arg.startsWith('-timeout=')),
-    ['-timeout=90m'],
+    ['-timeout=25m'],
     'run_go_heavy must carry the long budget the heavy packages were split out for',
   );
+  // And go test must hit that budget before the CI job's own timeout kills the
+  // runner, so an overrun names the running test instead of vanishing.
+  const heavyJob = splitWorkflowJobs(readRepoFile('.github/workflows/ci.yml'))['go-heavy'];
+  assert.ok(heavyJob, 'CI must keep a go-heavy job for the record store');
+  assert.match(heavyJob, /^ {8}run: \.\/scripts\/ci-local\.sh heavy[ \t]*$/m, 'the go-heavy job must run the heavy lane');
+  const heavyJobMinutes = Number(/^ {4}timeout-minutes: (\d+)[ \t]*$/m.exec(heavyJob)?.[1]);
+  assert.ok(heavyJobMinutes > 25, 'the go-heavy job timeout must exceed the heavy lane\'s 25m go test budget');
   assert.ok(
     heavyArgs.at(-1) === '$HEAVY_GO_PACKAGES',
     'run_go_heavy must run exactly the set heavy_pkg_filter excludes',
@@ -127,8 +244,8 @@ test('local Go suites serialize package builds while bypassing the test cache', 
 
   assert.deepEqual(
     goArgs.filter((arg) => arg.startsWith('-timeout=')),
-    ['-timeout=20m'],
-    'run_go must have exactly one explicit 20-minute timeout for cold WasmEdge runners',
+    ['-timeout=10m'],
+    'run_go must have exactly one explicit 10-minute per-package timeout, sized from the warm-engine measurement',
   );
   assert.deepEqual(
     raceArgs.filter((arg) => arg.startsWith('-timeout=')),
@@ -167,7 +284,8 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /--hd-wallet-wasm-path "\$\{PWD\}\/node_modules\/hd-wallet-wasm\/dist\/hd-wallet-wasi\.wasm"/);
   assert.match(workflow, /--license-path "\$\{PWD\}\/LICENSE"/);
   assert.match(license, /MIT License/);
-  assert.match(license, /Space Data Network/);
+  // The owner re-attributed the copyright on 2026-09-25 (ffb562e13).
+  assert.match(license, /^Copyright \(c\) \d{4} Edgesource Corporation$/m);
   assert.match(workflow, /spacedatanetwork-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}-\$\{\{ matrix\.target_os \}\}-\$\{\{ matrix\.target_arch \}\}\.\$\{\{ matrix\.archive_extension \}\}/);
   assert.match(workflow, /name:\s*cli-\$\{\{ matrix\.target_os \}\}-\$\{\{ matrix\.target_arch \}\}/);
   assert.match(workflow, /pattern:\s*cli-\*/);
