@@ -904,6 +904,9 @@ type MemoryStats struct {
 // NewModule creates a WasmEdge VM, optionally enables WASI and host modules,
 // loads the WASM bytes, and instantiates the module.
 func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
+	// Before any AOT code can run in this process: keep Go's fault handler in
+	// charge (signals.go). Failure is logged there and is not fatal.
+	_ = EnsureGoSignalHandling()
 	cfg := &config{
 		mallocName: "malloc",
 		freeName:   "free",

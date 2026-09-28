@@ -21,6 +21,7 @@ func TestStaticBuildCarriesTheRuntimePatches(t *testing.T) {
 	for _, tc := range []struct{ fn, file string }{
 		{"write_sdn_patch_01_atomic_wait", "wasmedge-0.16.4-atomic-wait.patch"},
 		{"write_sdn_patch_02_stop_token", "wasmedge-0.16.4-stop-token.patch"},
+		{"write_sdn_patch_03_fault_jmp", "wasmedge-0.16.4-fault-jmp.patch"},
 	} {
 		re := regexp.MustCompile(`(?s)` + tc.fn + `\(\) \{\n  cat <<'SDN_WASMEDGE_PATCH_EOF'\n(.*?)SDN_WASMEDGE_PATCH_EOF\n\}`)
 		m := re.FindSubmatch(script)
