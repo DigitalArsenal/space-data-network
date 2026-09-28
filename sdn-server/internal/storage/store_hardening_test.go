@@ -470,8 +470,9 @@ func TestDatasetImportHonoursItsDeadline(t *testing.T) {
 	}
 
 	release := make(chan struct{})
-	importDatasetShardChunkHook = func() { <-release }
-	defer func() { importDatasetShardChunkHook = nil }()
+	stall := func() { <-release }
+	importDatasetShardChunkHook.Store(&stall)
+	defer importDatasetShardChunkHook.Store(nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -488,7 +489,7 @@ func TestDatasetImportHonoursItsDeadline(t *testing.T) {
 	// The abandoned chunk runs to its end (here it fails: the caller closed
 	// the shard file it reads from, so it rolls back); no further chunk starts.
 	time.Sleep(time.Second)
-	importDatasetShardChunkHook = nil
+	importDatasetShardChunkHook.Store(nil)
 	if n := indexCount(t, consumer, "OMM.fbs"); n > storeWriteChunkSize {
 		t.Fatalf("after the deadline %d records landed, more than the one abandoned chunk (%d)", n, storeWriteChunkSize)
 	}

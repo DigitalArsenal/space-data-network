@@ -1313,22 +1313,20 @@ func (s *FlatSQLStore) settleEngineResidencyAtOpen() {
 		}
 		return
 	}
-	// In bounded chunks: one DELETE of the whole ledger held host-02's engine
-	// 1.5 minutes (2026-09-27, ~450k rows) on the way to the budget.
-	for {
-		res, err := s.db.Exec(`DELETE FROM sdn_engine_rows WHERE rowid IN (SELECT rowid FROM sdn_engine_rows LIMIT ?)`, engineLedgerResetChunk)
-		if err != nil {
-			log.Warnf("FlatSQL engine records: could not reset the residency ledger for a cold engine (%v); the hot-window hydration reconciles it", err)
-			return
-		}
-		if n, _ := res.RowsAffected(); n < engineLedgerResetChunk {
-			return
-		}
+	// ONE UNQUALIFIED DELETE, which SQLite runs as its truncate optimization:
+	// it frees the table's and its indexes' pages without visiting a row. The
+	// chunked form (`WHERE rowid IN (SELECT rowid ... LIMIT 20000)`) visits
+	// every row and every index entry, once per chunk: on the 0.1-scale
+	// production-shape store (201,178 ledger rows) it took 71.5 s with one
+	// 20,000-row chunk holding the engine 54.8 s, against 650 ms for this
+	// statement on a clone of the same store (2026-09-27). It was introduced
+	// after a whole-ledger DELETE held host-02's engine 1.5 minutes (~450k
+	// rows); the chunked form measured slower per row than that here, and
+	// both stay inside the per-call budget.
+	if _, err := s.db.Exec(`DELETE FROM sdn_engine_rows`); err != nil {
+		log.Warnf("FlatSQL engine records: could not reset the residency ledger for a cold engine (%v); the hot-window hydration reconciles it", err)
 	}
 }
-
-// engineLedgerResetChunk bounds one statement of the cold-open ledger reset.
-const engineLedgerResetChunk = 20000
 
 // restoreEngineResidencyFromLedger sets the Go-side resident counts from the
 // residency ledger at open, so a write that lands before the background

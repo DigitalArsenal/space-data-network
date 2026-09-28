@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
@@ -784,7 +785,7 @@ func (s *FlatSQLStore) importDatasetShardRecords(ctx context.Context, index *Dat
 
 // importDatasetShardChunkHook runs inside each chunk's lock hold (tests: a
 // chunk that stalls the way a slow COMMIT does).
-var importDatasetShardChunkHook func()
+var importDatasetShardChunkHook atomic.Pointer[func()]
 
 // importDatasetShardChunkWithin runs one chunk and waits for it no longer than
 // ctx allows.
@@ -821,8 +822,8 @@ func (s *FlatSQLStore) importDatasetShardChunkWithin(ctx context.Context, index 
 // importDatasetShardRecords body).
 func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, providerPeerID string, records []DatasetExportIndexRecord, readRecord datasetShardRecordReader) (int, error) {
 	defer s.lockWrite("importDatasetShardChunk")()
-	if hook := importDatasetShardChunkHook; hook != nil {
-		hook()
+	if hook := importDatasetShardChunkHook.Load(); hook != nil {
+		(*hook)()
 	}
 	if err := s.closedErr(); err != nil {
 		return 0, err
