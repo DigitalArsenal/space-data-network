@@ -175,9 +175,14 @@ describe('published ./external-wallet subpath', () => {
 
   it('ships the FlatSQL engine beside the externalised entries that load it', async () => {
     for (const target of ['flatsql.wasm', 'ui/flatsql.wasm']) {
-      await expect(
+      const [external, inlined] = await Promise.all([
         readFile(path.join(distRoot, 'external-wallet', target)),
-      ).resolves.toEqual(await readFile(path.join(distRoot, target)));
+        readFile(path.join(distRoot, target)),
+      ]);
+      // Buffer#equals, not toEqual: a deep element-wise diff of a 2 MB binary
+      // runs past the test timeout on CI runners.
+      expect(external.byteLength).toBeGreaterThan(0);
+      expect(external.equals(inlined)).toBe(true);
     }
   });
 });
