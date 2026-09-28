@@ -19,8 +19,11 @@ extraResources:
     to: sdn-node
     filter: ['**/*']
 
-# Notarization runs only when APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
-# APPLE_TEAM_ID are all set; otherwise the hook returns immediately.
+# Notarization runs whenever pkgs/macos/signing-identity.js reports a Developer
+# ID (CSC_LINK or CSC_NAME), with an App Store Connect key (APPLE_API_KEY +
+# APPLE_API_KEY_ID + APPLE_API_ISSUER) or else an Apple ID (APPLE_ID +
+# APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID); with neither set complete the
+# build fails. An ad-hoc build is not notarized.
 afterSign: './pkgs/macos/notarize-build.js'
 # With no signing identity the app is ad-hoc signed, which is what lets it run
 # on Apple Silicon at all.

@@ -12,8 +12,15 @@
 #   3. run electron-builder for mac arm64.
 #
 # The result is desktop/dist/space-data-network-desktop-<version>-mac-arm64.dmg
-# (and .zip). Nothing is published and nothing is signed with a real identity
-# unless APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID are exported.
+# (and .zip). Nothing is published.
+#
+# Signing follows pkgs/macos/signing-identity.js, as the electron-builder hooks
+# do. With neither CSC_LINK (a .p12) nor CSC_NAME (a keychain identity, named
+# without its "Developer ID Application:" prefix) the app is ad-hoc signed and
+# not notarized, whatever the keychain holds and whether or not APPLE_TEAM_ID
+# is set. With either, it is Developer ID signed and notarized, and the build
+# fails without APPLE_API_KEY + APPLE_API_KEY_ID + APPLE_API_ISSUER or
+# APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID.
 #
 # Linux and Windows bundles are not built here. To cross-build them, run the
 # desktop build inside the electron-builder images, giving each one the matching
@@ -37,7 +44,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --node-bundle) node_bundle="${2:-}"; shift 2 ;;
     --version) version="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -83,9 +90,17 @@ fi
 log "running electron-builder (mac arm64)"
 (
   cd "${desktop}"
-  # No identity here: the app is ad-hoc signed by pkgs/macos/adhoc-sign.js so it
-  # runs on Apple Silicon. A real build exports APPLE_* and a signing identity.
-  if [[ -z "${APPLE_TEAM_ID:-}" ]]; then export CSC_IDENTITY_AUTO_DISCOVERY=false; fi
+  # An ad-hoc build switches discovery off: electron-builder would otherwise
+  # sign with any Developer ID in this Mac's keychain while the hooks skip
+  # notarization, and Gatekeeper blocks that app as hard as an unsigned one.
+  signing="$(node pkgs/macos/signing-identity.js)"
+  case "${signing}" in
+    developer-id) log "signing with the configured Developer ID; notarization credentials are required" ;;
+    ad-hoc)
+      export CSC_IDENTITY_AUTO_DISCOVERY=false
+      log "no signing identity: ad-hoc signed, not notarized" ;;
+    *) echo "pkgs/macos/signing-identity.js answered '${signing}'" >&2; exit 1 ;;
+  esac
   npx --no-install electron-builder --publish never --mac dmg zip --arm64
 )
 
