@@ -67,6 +67,13 @@ type ServiceFlow struct {
 	errorCount       uint64
 	lastTimerStatus  string
 	lastInvokeAt     time.Time
+
+	schedulePhase SchedulePhase
+	// scheduledIntervals: the interval the plugin manager actually resolved
+	// for each trigger (config pin, persisted dashboard schedule, declared
+	// minimum), learned when it asked for the first-run phase.
+	scheduledIntervals map[string]time.Duration
+
 	// What the LAST drain's nodes reported, read straight off the artifact's
 	// node-state table. See nodeRunDigest.
 	lastNodeDigest []nodeRunOutcome
@@ -305,6 +312,55 @@ func (sf *ServiceFlow) SetRetrievalOutcome(outcome RetrievalOutcome) {
 	sf.statsMu.Lock()
 	defer sf.statsMu.Unlock()
 	sf.retrievalOutcome = outcome
+}
+
+// SchedulePhase reports how long after scheduling a trigger's FIRST timer run
+// should come, given the interval the scheduler resolved; see
+// plugins.CronFirstRunDelayer. It is host policy expressed against the node's
+// retrieval ledger (when the flow's sources were last retrieved), injected like
+// the RetrievalGate. nil keeps the plain ticker.
+type SchedulePhase func(triggerID string, interval time.Duration) time.Duration
+
+// SetSchedulePhase installs the first-run phase. It must be installed before
+// the flow is scheduled (plugins.Manager.StartLateRegistered) to take effect.
+func (sf *ServiceFlow) SetSchedulePhase(phase SchedulePhase) {
+	sf.statsMu.Lock()
+	defer sf.statsMu.Unlock()
+	sf.schedulePhase = phase
+}
+
+// CronFirstRunDelay implements plugins.CronFirstRunDelayer.
+func (sf *ServiceFlow) CronFirstRunDelay(method string, interval time.Duration) time.Duration {
+	sf.statsMu.Lock()
+	if sf.scheduledIntervals == nil {
+		sf.scheduledIntervals = make(map[string]time.Duration)
+	}
+	sf.scheduledIntervals[method] = interval
+	phase := sf.schedulePhase
+	sf.statsMu.Unlock()
+	if phase == nil {
+		return 0
+	}
+	return phase(method, interval)
+}
+
+// ScheduledInterval is the cadence a trigger actually runs at: the interval
+// the scheduler resolved when it scheduled the trigger, or, before that, the
+// trigger's own interval (bundle default or config pin), which the scheduler
+// never undercuts.
+func (sf *ServiceFlow) ScheduledInterval(triggerID string) time.Duration {
+	sf.statsMu.Lock()
+	resolved, ok := sf.scheduledIntervals[triggerID]
+	sf.statsMu.Unlock()
+	if ok && resolved > 0 {
+		return resolved
+	}
+	for _, trigger := range sf.triggers {
+		if trigger.TriggerID == triggerID {
+			return time.Duration(trigger.IntervalMs) * time.Millisecond
+		}
+	}
+	return 0
 }
 
 // SetRetrievalGate installs the debounce gate. Injected by the node so this

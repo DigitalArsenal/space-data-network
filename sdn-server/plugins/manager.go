@@ -662,6 +662,11 @@ func (m *Manager) StartLateRegistered(plugin Plugin) (bool, error) {
 
 // scheduleCronMethods reads a plugin's declared cron methods and starts
 // goroutines for each enabled method based on the server config.
+//
+// A method's first run comes one interval after scheduling, unless the plugin
+// implements CronFirstRunDelayer and names an earlier point: then the first run
+// comes at that point and the ticker keeps that phase. Only the first run
+// moves; the cadence is the resolved interval either way.
 func (m *Manager) scheduleCronMethods(ctx context.Context, pluginID string, cp CronProvider) {
 	m.cronConfigMu.RLock()
 	pluginConfig := cloneCronConfig(m.cronConfig[pluginID])
@@ -675,43 +680,93 @@ func (m *Manager) scheduleCronMethods(ctx context.Context, pluginID string, cp C
 		}
 
 		method := spec.Method
+		firstRun := cronFirstRunDelay(cp, method, interval)
 		m.cronWg.Add(1)
 		go func() {
 			defer m.cronWg.Done()
 
+			if firstRun > 0 {
+				timer := time.NewTimer(firstRun)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+			// Started before the first phased run so later runs keep the phase
+			// (first + k*interval), exactly as an unphased ticker keeps its own.
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
+			if firstRun > 0 {
+				m.runScheduledCronMethod(ctx, pluginID, method, cp)
+			}
 
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					run := RuntimeModuleScheduleRun{
-						ID:        runtimeModuleCommandID(time.Now().UTC(), 1),
-						MethodID:  method,
-						Trigger:   "scheduled",
-						StartedAt: time.Now().UTC().Format(time.RFC3339),
-						Status:    "running",
-					}
-					if output, err := cp.InvokeCron(ctx, method, nil); err != nil {
-						run.Status = "error"
-						run.Message = err.Error()
-						log.Debugf("Plugin %q cron %q: %v", pluginID, method, err)
-					} else if len(output) > 0 {
-						run.Status = "ok"
-						run.OutputSize = len(output)
-						log.Debugf("Plugin %q cron %q: %d bytes output", pluginID, method, len(output))
-					} else {
-						run.Status = "ok"
-					}
-					run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-					m.recordRuntimeModuleScheduleRun(pluginID, method, run)
+					m.runScheduledCronMethod(ctx, pluginID, method, cp)
 				}
 			}
 		}()
-		log.Infof("Plugin %q: scheduled cron %q every %s", pluginID, spec.Method, interval)
+		if firstRun > 0 {
+			log.Infof("Plugin %q: scheduled cron %q every %s, first run in %s", pluginID, spec.Method, interval, firstRun.Round(time.Second))
+		} else {
+			log.Infof("Plugin %q: scheduled cron %q every %s", pluginID, spec.Method, interval)
+		}
 	}
+}
+
+// CronFirstRunDelayer is an optional CronProvider extension that anchors a
+// method's schedule to something the plugin knows and the ticker does not —
+// for a timer-served ingest flow, when its sources were last retrieved. Given
+// the interval the manager resolved, it returns how long after scheduling the
+// FIRST run should come. A result outside (0, interval) keeps the plain ticker
+// (first run one interval after scheduling).
+//
+// Without it every restart, and every dashboard schedule edit (which
+// reschedules every plugin), restarts every cadence from zero: a weekly lane
+// pulled six days before a restart waits another full week.
+type CronFirstRunDelayer interface {
+	CronFirstRunDelay(method string, interval time.Duration) time.Duration
+}
+
+func cronFirstRunDelay(cp CronProvider, method string, interval time.Duration) time.Duration {
+	delayer, ok := cp.(CronFirstRunDelayer)
+	if !ok {
+		return 0
+	}
+	delay := delayer.CronFirstRunDelay(method, interval)
+	if delay <= 0 || delay >= interval {
+		return 0
+	}
+	return delay
+}
+
+// runScheduledCronMethod runs one scheduled invocation and records it.
+func (m *Manager) runScheduledCronMethod(ctx context.Context, pluginID, method string, cp CronProvider) {
+	run := RuntimeModuleScheduleRun{
+		ID:        runtimeModuleCommandID(time.Now().UTC(), 1),
+		MethodID:  method,
+		Trigger:   "scheduled",
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+		Status:    "running",
+	}
+	if output, err := cp.InvokeCron(ctx, method, nil); err != nil {
+		run.Status = "error"
+		run.Message = err.Error()
+		log.Debugf("Plugin %q cron %q: %v", pluginID, method, err)
+	} else if len(output) > 0 {
+		run.Status = "ok"
+		run.OutputSize = len(output)
+		log.Debugf("Plugin %q cron %q: %d bytes output", pluginID, method, len(output))
+	} else {
+		run.Status = "ok"
+	}
+	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	m.recordRuntimeModuleScheduleRun(pluginID, method, run)
 }
 
 // resolveCronSchedule determines the interval and enabled state for a cron
