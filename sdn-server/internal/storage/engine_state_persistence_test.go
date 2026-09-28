@@ -178,11 +178,17 @@ func TestHotWindowBoundHoldsAcrossWarmBoot(t *testing.T) {
 }
 
 // TestMostlyDeadArenaIsRebuiltAndShrinks: the engine keeps every row it ever
-// ingested and forgets its tombstones. Once the evicted rows outnumber the
-// live ones the boot discards the arena and refills the bounded window from
-// the tables — and the next flush writes an arena that holds the window only.
+// ingested and forgets its tombstones. Once the arena is past the compaction
+// mark and the evicted rows outnumber the live ones, the boot discards the
+// arena and refills the bounded window from the tables — and the next flush
+// writes an arena that holds the window only.
 func TestMostlyDeadArenaIsRebuiltAndShrinks(t *testing.T) {
 	t.Setenv(checkpointIntervalEnv, "0")
+	// A boot compacts only an arena past the compaction mark
+	// (engineArenaNeedsCompaction); this one is a few kilobytes.
+	prevCompact := engineArenaCompactBytes
+	engineArenaCompactBytes = 0
+	defer func() { engineArenaCompactBytes = prevCompact }()
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(2))
 	if !store.BootState().Durable {
