@@ -292,6 +292,20 @@ func (n *Node) recordModuleLoadFailure(stage, ref string, err error) {
 	log.Errorf("SDN BOOT CHECK: MODULE LOAD FAILED (module NOT running, fail closed): stage=%s ref=%q err=%s", stage, ref, failure.Error)
 }
 
+// loadFlatcConverter loads the JSON⇄FlatBuffer converter embedded in the
+// binary. A node that cannot load it still validates envelopes but converts
+// nothing, so the failure goes to the boot-check ledger (/api/node/info
+// module_load_failures) and the log at ERROR — never a quiet nil.
+func (n *Node) loadFlatcConverter(load func(context.Context) (*wasm.FlatcModule, error)) *wasm.FlatcModule {
+	fm, err := load(n.ctx)
+	if err != nil {
+		n.recordModuleLoadFailure("flatc-converter", "embedded flatc-wasi.wasm ("+wasm.FlatcWasiPackage+")", err)
+		return nil
+	}
+	log.Infof("flatc converter loaded: %s, FlatBuffers %s, ABI %d", wasm.FlatcWasiPackage, fm.Version(), wasm.FlatcABIVersion)
+	return fm
+}
+
 // newGossipSub constructs the node's GossipSub router. It intentionally
 // passes no options so go-libp2p-pubsub's default message signature policy
 // (StrictSign: every outgoing message is signed and every incoming message
@@ -531,12 +545,7 @@ func (n *Node) init() error {
 		n.sdnDiscoveryTargets = discoverTargets
 	}
 
-	// Initialize WASM module for FlatBuffers (if available)
-	n.flatc, err = wasm.NewFlatcModule(n.ctx, n.findWasmPath())
-	if err != nil {
-		log.Warnf("FlatBuffer WASM not loaded (optional): %v", err)
-		// Continue without WASM - it's optional for basic operation
-	}
+	n.flatc = n.loadFlatcConverter(wasm.NewEmbeddedFlatcModule)
 
 	// Initialize validator (uses WASM if available)
 	n.validator, err = sds.NewValidator(n.flatc)
@@ -2030,21 +2039,6 @@ func (n *Node) generateRandomKey(keyDir, keyPath string) (crypto.PrivKey, error)
 
 	log.Infof("Generated and saved new node identity to %s", keyPath)
 	return privKey, nil
-}
-
-func (n *Node) findWasmPath() string {
-	// Look for flatc-wasm in common locations
-	paths := []string{
-		"../flatbuffers/wasm/flatc.wasm",
-		"../../flatbuffers/wasm/flatc.wasm",
-		"/usr/local/lib/flatc.wasm",
-	}
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
 }
 
 func (n *Node) findHDWalletWasmPath() string {

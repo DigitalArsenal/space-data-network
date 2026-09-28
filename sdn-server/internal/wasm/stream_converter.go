@@ -15,7 +15,7 @@ import (
 //
 // Usage pattern (publish pipeline):
 //
-//	converter := wasm.NewStreamConverter(flatc, schemaID)
+//	converter := wasm.NewStreamConverter(flatc, schemaID, wasm.FlatcForceDefaults)
 //	records, errs := converter.JSONStreamToFlatBuffers(ctx, httpBody)
 //	for _, rec := range records {
 //	    store.Put(rec.Binary)
@@ -27,14 +27,17 @@ import (
 type StreamConverter struct {
 	flatc    *FlatcModule
 	schemaID int
+	opts     FlatcOption
 }
 
-// NewStreamConverter creates a converter bound to a specific schema.
+// NewStreamConverter creates a converter bound to a specific schema and
+// per-call options (the same bits apply in both directions).
 // The schemaID must be obtained from flatc.AddSchema() or flatc.GetSchemaID().
-func NewStreamConverter(flatc *FlatcModule, schemaID int) *StreamConverter {
+func NewStreamConverter(flatc *FlatcModule, schemaID int, opts FlatcOption) *StreamConverter {
 	return &StreamConverter{
 		flatc:    flatc,
 		schemaID: schemaID,
+		opts:     opts,
 	}
 }
 
@@ -67,7 +70,7 @@ func (sc *StreamConverter) JSONStreamToFlatBuffers(ctx context.Context, reader i
 			continue
 		}
 
-		binaryData, err := sc.flatc.JSONToBinary(ctx, sc.schemaID, line)
+		binaryData, err := sc.flatc.JSONToBinary(ctx, sc.schemaID, line, sc.opts)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("line %d: %w", lineNum, err))
 			continue
@@ -90,13 +93,14 @@ func (sc *StreamConverter) JSONStreamToFlatBuffers(ctx context.Context, reader i
 }
 
 // FlatBuffersToJSONStream converts FlatBuffer binary records to
-// newline-delimited JSON written to the provided writer.
+// newline-delimited JSON written to the provided writer. Output is always
+// compact (FlatcCompactJSON), since an indented record would span lines.
 func (sc *StreamConverter) FlatBuffersToJSONStream(ctx context.Context, records [][]byte, writer io.Writer) (int, []error) {
 	var errs []error
 	written := 0
 
 	for i, binaryData := range records {
-		jsonData, err := sc.flatc.BinaryToJSON(ctx, sc.schemaID, binaryData)
+		jsonData, err := sc.flatc.BinaryToJSON(ctx, sc.schemaID, binaryData, sc.opts|FlatcCompactJSON)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("record %d: %w", i, err))
 			continue

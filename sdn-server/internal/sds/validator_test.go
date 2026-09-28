@@ -3,10 +3,20 @@ package sds
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
 func TestNewValidator(t *testing.T) {
@@ -456,5 +466,322 @@ func TestValidatorLoadsAllSupportedSchemas(t *testing.T) {
 		if !validator.HasSchema(name) {
 			t.Errorf("Validator missing supported schema %s", name)
 		}
+	}
+}
+
+// TestValidatorFieldLevelSampleMeasurement measures the converter's
+// field-level parse over real stored records before it is enabled on the
+// ingest path. SDN_VALIDATOR_SAMPLES names a directory of
+// "<STD>--<label>.hex" files, one hex-encoded record per line (for example
+// `select hex(data) from sds_p_<producer>__<STD>` against a copy of a node's
+// control.flatsqldb). It reports, per standard, how many records pass the
+// envelope, how many of those the field-level parse would reject, and what the
+// parse costs per record. A rejection of an envelope-valid stored record is a
+// false rejection: the record is already accepted by the network.
+func TestValidatorFieldLevelSampleMeasurement(t *testing.T) {
+	dir := os.Getenv("SDN_VALIDATOR_SAMPLES")
+	if dir == "" {
+		t.Skip("SDN_VALIDATOR_SAMPLES not set (measurement harness)")
+	}
+	ctx := context.Background()
+	fm, err := wasm.NewEmbeddedFlatcModule(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fm.Close(ctx)
+	v, err := NewValidator(fm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.SetFieldLevelValidation(true)
+
+	type row struct {
+		records, envelopeFail, rejected, realigned, skipped int
+		verified                                            int
+		parse, verifiedParse                                time.Duration
+		samples                                             []string
+	}
+	stats := map[string]*row{}
+	files, err := filepath.Glob(filepath.Join(dir, "*.hex"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no *.hex samples in %s (%v)", dir, err)
+	}
+	for _, file := range files {
+		std := strings.SplitN(filepath.Base(file), "--", 2)[0]
+		schema := std + ".fbs"
+		r := stats[std]
+		if r == nil {
+			r = &row{}
+			stats[std] = r
+		}
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, idErr := v.converterID(ctx, schema)
+		for _, line := range strings.Split(string(content), "\n") {
+			if line = strings.TrimSpace(line); line == "" {
+				continue
+			}
+			data, err := hex.DecodeString(line)
+			if err != nil {
+				t.Fatalf("%s: bad hex: %v", file, err)
+			}
+			r.records++
+			if err := v.VerifyEnvelope(schema, data); err != nil {
+				r.envelopeFail++
+				continue
+			}
+			if idErr != nil {
+				r.skipped++
+				continue
+			}
+			opts := wasm.FlatcOption(0)
+			if form, _ := v.DetectEnvelopeForm(schema, data); form == EnvelopeSizePrefixed {
+				opts = wasm.FlatcSizePrefixed
+			}
+			start := time.Now()
+			err = fm.VerifyBinary(ctx, id, data, opts)
+			took := time.Since(start)
+			r.parse += took
+			if err == nil {
+				r.verified++
+				r.verifiedParse += took
+			}
+			if err != nil {
+				r.rejected++
+				if len(r.samples) < 3 {
+					r.samples = append(r.samples, err.Error())
+				}
+				// The verifier checks alignment against the buffer start. A
+				// record whose size prefix was stripped has its 8-byte fields
+				// at 4 mod 8; behind a fresh 4-byte prefix it is aligned again.
+				if opts == 0 {
+					framed := binary.LittleEndian.AppendUint32(make([]byte, 0, len(data)+4), uint32(len(data)))
+					start := time.Now()
+					if fm.VerifyBinary(ctx, id, append(framed, data...), wasm.FlatcSizePrefixed) == nil {
+						r.realigned++
+						r.verified++
+						r.verifiedParse += time.Since(start)
+					}
+				}
+			}
+		}
+		if idErr != nil {
+			t.Logf("%s: converter cannot load %s: %v", filepath.Base(file), schema, idErr)
+		}
+	}
+
+	names := make([]string, 0, len(stats))
+	for std := range stats {
+		names = append(names, std)
+	}
+	sort.Strings(names)
+	var total row
+	// us/record: the parse as Validate would run it, per envelope-valid record.
+	// us/verified: the parse of a record that verifies (directly or realigned),
+	// the steady-state cost once the alignment rejections are resolved.
+	t.Logf("%-5s %9s %9s %9s %9s %9s %12s %12s", "STD", "records", "env-fail", "rejected", "realign", "skipped", "us/record", "us/verified")
+	for _, std := range names {
+		r := stats[std]
+		parsed := r.records - r.envelopeFail - r.skipped
+		per := float64(r.parse.Microseconds()) / float64(max(parsed, 1))
+		perOK := float64(r.verifiedParse.Microseconds()) / float64(max(r.verified, 1))
+		t.Logf("%-5s %9d %9d %9d %9d %9d %12.1f %12.1f", std, r.records, r.envelopeFail, r.rejected, r.realigned, r.skipped, per, perOK)
+		for _, s := range r.samples {
+			t.Logf("      %s", s)
+		}
+		total.records += r.records
+		total.envelopeFail += r.envelopeFail
+		total.rejected += r.rejected
+		total.realigned += r.realigned
+		total.skipped += r.skipped
+		total.parse += r.parse
+		total.verified += r.verified
+		total.verifiedParse += r.verifiedParse
+	}
+	parsed := total.records - total.envelopeFail - total.skipped
+	t.Logf("%-5s %9d %9d %9d %9d %9d %12.1f %12.1f", "ALL", total.records, total.envelopeFail, total.rejected, total.realigned, total.skipped,
+		float64(total.parse.Microseconds())/float64(max(parsed, 1)),
+		float64(total.verifiedParse.Microseconds())/float64(max(total.verified, 1)))
+}
+
+func newConverterValidator(t *testing.T) *Validator {
+	t.Helper()
+	fm, err := wasm.NewEmbeddedFlatcModule(context.Background())
+	if err != nil {
+		t.Fatalf("NewEmbeddedFlatcModule: %v", err)
+	}
+	t.Cleanup(func() { fm.Close(context.Background()) })
+	v, err := NewValidator(fm)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	return v
+}
+
+func jsonValues(t *testing.T, data []byte) map[string]interface{} {
+	t.Helper()
+	var out map[string]interface{}
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("decode %q: %v", data, err)
+	}
+	return out
+}
+
+func TestValidatorConverterRoundTrip(t *testing.T) {
+	v := newConverterValidator(t)
+	ctx := context.Background()
+
+	cases := map[string]string{
+		"OMM.fbs": `{"OBJECT_NAME":"ISS (ZARYA)","OBJECT_ID":"1998-067A","EPOCH":"2026-09-27T12:00:00.000000","MEAN_MOTION":15.50103472,"ECCENTRICITY":0.0006703,"NORAD_CAT_ID":25544,"BSTAR":0.0001027,"MEAN_MOTION_DDOT":0}`,
+		"MPE.fbs": `{"ENTITY_ID":"25544","EPOCH":1790000000.25,"MEAN_MOTION":15.50103472,"BSTAR":0.0001027,"MEAN_ELEMENT_THEORY":"SGP4"}`,
+		"CAT.fbs": `{"OBJECT_NAME":"ISS (ZARYA)","OBJECT_ID":"1998-067A","NORAD_CAT_ID":25544,"PERIOD":92.9}`,
+	}
+	for schema, record := range cases {
+		stored, err := v.JSONToFlatBuffer(ctx, schema, []byte(record), StoredRecordOptions)
+		if err != nil {
+			t.Fatalf("%s JSONToFlatBuffer: %v", schema, err)
+		}
+		if form, err := v.DetectEnvelopeForm(schema, stored); err != nil || form != EnvelopeBare {
+			t.Fatalf("%s stored form = %q, %v; want bare", schema, form, err)
+		}
+		if err := v.Validate(ctx, schema, stored); err != nil {
+			t.Fatalf("%s Validate: %v", schema, err)
+		}
+		framed, err := v.JSONToFlatBuffer(ctx, schema, []byte(record), StoredRecordOptions|wasm.FlatcSizePrefixed)
+		if err != nil {
+			t.Fatalf("%s size-prefixed JSONToFlatBuffer: %v", schema, err)
+		}
+		// Either form reads back; the prefix option follows the envelope.
+		for _, bin := range [][]byte{stored, framed} {
+			out, err := v.FlatBufferToJSON(ctx, schema, bin, wasm.FlatcCompactJSON)
+			if err != nil {
+				t.Fatalf("%s FlatBufferToJSON: %v", schema, err)
+			}
+			if got, want := jsonValues(t, out), jsonValues(t, []byte(record)); !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s round trip\n got %v\nwant %v", schema, got, want)
+			}
+		}
+	}
+}
+
+func TestValidatorConverterSchemaAvailability(t *testing.T) {
+	v := newConverterValidator(t)
+	ctx := context.Background()
+
+	// REC.fbs includes standards the node does not embed: registered for
+	// envelope validation, unavailable for conversion, and says why.
+	if !v.HasSchema("REC.fbs") {
+		t.Fatal("REC.fbs not registered")
+	}
+	if err := v.ConverterError(ctx, "REC.fbs"); err == nil || !strings.Contains(err.Error(), "include") {
+		t.Fatalf("REC.fbs converter error = %v, want an unresolved include", err)
+	}
+	if _, err := v.JSONToFlatBuffer(ctx, "REC.fbs", []byte(`{}`), 0); err == nil || !strings.Contains(err.Error(), "not loaded in the flatc converter") {
+		t.Fatalf("REC.fbs conversion: err = %v", err)
+	}
+	if _, err := v.JSONToFlatBuffer(ctx, "NOPE.fbs", []byte(`{}`), 0); err == nil || !strings.Contains(err.Error(), "unknown schema") {
+		t.Fatalf("unknown schema conversion: err = %v", err)
+	}
+
+	envelopeOnly, err := NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := envelopeOnly.JSONToFlatBuffer(ctx, "OMM.fbs", []byte(`{}`), 0); !errors.Is(err, wasm.ErrNoModule) {
+		t.Fatalf("no converter: err = %v, want ErrNoModule", err)
+	}
+	if envelopeOnly.FieldLevelValidation() {
+		t.Fatal("field-level validation reported on without a converter")
+	}
+}
+
+// Every embedded schema but REC.fbs parses in the converter with its
+// includes resolved through the <FAMILY>/main.fbs file map.
+func TestValidatorConverterLoadsEmbeddedSchemas(t *testing.T) {
+	v := newConverterValidator(t)
+	ctx := context.Background()
+	loaded, failed := v.PreloadConverterSchemas(ctx)
+	if failed != 1 || v.ConverterError(ctx, "REC.fbs") == nil {
+		for _, name := range v.Schemas() {
+			if err := v.ConverterError(ctx, name); err != nil {
+				t.Logf("%s: %v", name, err)
+			}
+		}
+		t.Fatalf("converter failed %d schema(s), want only REC.fbs", failed)
+	}
+	if loaded != expectedTotalSchemaCount-1 {
+		t.Fatalf("converter loaded %d schemas, want %d", loaded, expectedTotalSchemaCount-1)
+	}
+}
+
+// corruptStringOffset points OMM.OBJECT_NAME (field 3) past the end of a bare
+// buffer: the envelope still holds, the field does not.
+func corruptStringOffset(t *testing.T, buf []byte) []byte {
+	t.Helper()
+	out := append([]byte(nil), buf...)
+	root := int(binary.LittleEndian.Uint32(out))
+	vtable := root - int(int32(binary.LittleEndian.Uint32(out[root:])))
+	slot := vtable + 4 + 2*3
+	fieldOff := int(binary.LittleEndian.Uint16(out[slot:]))
+	if fieldOff == 0 {
+		t.Fatal("fixture has no OBJECT_NAME")
+	}
+	binary.LittleEndian.PutUint32(out[root+fieldOff:], 0x7ffffff0)
+	return out
+}
+
+func TestValidatorFieldLevelSwitch(t *testing.T) {
+	v := newConverterValidator(t)
+	ctx := context.Background()
+	if v.FieldLevelValidation() != DefaultFieldLevelValidation {
+		t.Fatalf("field-level validation = %v, want the default %v", v.FieldLevelValidation(), DefaultFieldLevelValidation)
+	}
+
+	good, err := v.JSONToFlatBuffer(ctx, "OMM.fbs", []byte(`{"OBJECT_NAME":"X","NORAD_CAT_ID":7}`), StoredRecordOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := corruptStringOffset(t, good)
+	if err := v.VerifyEnvelope("OMM.fbs", bad); err != nil {
+		t.Fatalf("fixture must pass the envelope: %v", err)
+	}
+
+	v.SetFieldLevelValidation(false)
+	if err := v.Validate(ctx, "OMM.fbs", bad); err != nil {
+		t.Fatalf("switch off: the envelope verdict stands, got %v", err)
+	}
+	v.SetFieldLevelValidation(true)
+	if err := v.Validate(ctx, "OMM.fbs", bad); err == nil || !strings.Contains(err.Error(), "INVALID_BINARY") {
+		t.Fatalf("switch on: err = %v, want INVALID_BINARY", err)
+	}
+	if err := v.Validate(ctx, "OMM.fbs", good); err != nil {
+		t.Fatalf("switch on, good record: %v", err)
+	}
+
+	// The in-repo record builders' output passes the field-level parse.
+	fixtures := map[string][]byte{
+		"OMM.fbs": NewOMMBuilder().WithNoradCatID(25544).Build(),
+		"CAT.fbs": NewCATBuilder().WithNoradCatID(25544).Build(),
+		"EPM.fbs": NewEPMBuilder().WithLegalName("Test Org").Build(),
+		"PNM.fbs": NewPNMBuilder().Build(),
+	}
+	for schema, record := range fixtures {
+		if err := v.Validate(ctx, schema, record); err != nil {
+			t.Errorf("builder %s record rejected by the field-level parse: %v", schema, err)
+		}
+	}
+}
+
+func TestFieldLevelValidationEnv(t *testing.T) {
+	t.Setenv(FieldLevelValidationEnv, "maybe")
+	if _, err := NewValidator(nil); err == nil || !strings.Contains(err.Error(), FieldLevelValidationEnv) {
+		t.Fatalf("invalid switch value: err = %v", err)
+	}
+	t.Setenv(FieldLevelValidationEnv, "1")
+	v := newConverterValidator(t)
+	if !v.FieldLevelValidation() {
+		t.Fatalf("%s=1 left field-level validation off", FieldLevelValidationEnv)
 	}
 }
