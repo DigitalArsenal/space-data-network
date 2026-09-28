@@ -58,6 +58,59 @@ interface GoHandshake {
   tcpAddr: string;
 }
 
+interface Completed {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+}
+
+/**
+ * Runs a command to completion WITHOUT blocking this worker's event loop.
+ *
+ * Never spawnSync anything slow here. Vitest talks to this worker over RPC
+ * with a 60 s reply timeout, and a synchronous child process holds the loop
+ * that reads the replies. The go build below takes about a minute with a cold
+ * cache on a 4-core runner; as a spawnSync it let an onTaskUpdate call time
+ * out and failed the run with `[vitest-worker]: Timeout calling
+ * "onTaskUpdate"` after all 7 tests had passed (SDN CI on ed8b028c0, where
+ * this file took 64.5 s).
+ */
+function runToCompletion(
+  command: string,
+  args: string[],
+  options: { cwd?: string; timeoutMs?: number } = {},
+): Promise<Completed> {
+  return new Promise((resolvePromise) => {
+    const proc = spawn(command, args, { cwd: options.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let failure: Error | undefined;
+    proc.stdout.setEncoding('utf8');
+    proc.stderr.setEncoding('utf8');
+    proc.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    proc.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    const timer =
+      options.timeoutMs == null
+        ? undefined
+        : setTimeout(() => {
+            failure = new Error(`${command} did not finish in ${options.timeoutMs} ms`);
+            proc.kill('SIGKILL');
+          }, options.timeoutMs);
+    proc.on('error', (error) => {
+      failure = error;
+    });
+    proc.on('close', (status) => {
+      clearTimeout(timer);
+      resolvePromise({ status, stdout, stderr, error: failure });
+    });
+  });
+}
+
 function goToolchainAvailable(): string | null {
   if (!existsSync(join(SDN_SERVER_DIR, 'go.mod'))) {
     return `sdn-server/go.mod not found at ${SDN_SERVER_DIR}`;
@@ -96,9 +149,8 @@ describeInterop('sdn-js dials a live go-libp2p host', () => {
     workDir = mkdtempSync(join(tmpdir(), 'sdn-js-interop-'));
     hostBin = join(workDir, 'js-interop-host');
 
-    const build = spawnSync('go', ['build', '-o', hostBin, FIXTURE_PKG], {
+    const build = await runToCompletion('go', ['build', '-o', hostBin, FIXTURE_PKG], {
       cwd: SDN_SERVER_DIR,
-      encoding: 'utf8',
     });
     if (build.status !== 0) {
       throw new Error(
@@ -296,16 +348,15 @@ process.exit(0);
 `,
     );
 
-    const run = spawnSync(process.execPath, [driver, handshake.wsAddr, handshake.peerId], {
-      encoding: 'utf8',
-      timeout: 120_000,
+    const run = await runToCompletion(process.execPath, [driver, handshake.wsAddr, handshake.peerId], {
+      timeoutMs: 120_000,
     });
-    const line = (run.stdout ?? '')
+    const line = run.stdout
       .split('\n')
       .find((entry) => entry.startsWith('SDN_BUNDLE_RESULT '));
     expect(
       line,
-      `bundle driver produced no result.\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`,
+      `bundle driver produced no result (${run.error?.message ?? `exit ${run.status}`}).\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`,
     ).toBeTruthy();
 
     const result = JSON.parse(line!.slice('SDN_BUNDLE_RESULT '.length));
