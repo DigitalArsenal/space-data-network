@@ -146,14 +146,29 @@ func runDeliveryBurst(t *testing.T, rm network.ResourceManager, clients int) (in
 		// loopback and never actually be concurrent, which is the difference
 		// between reproducing the defect and merely not seeing it.
 		connected sync.WaitGroup
+		// sampled holds every connected client at the barrier until the
+		// provider's count has been read. The count used to be read by a
+		// goroutine racing the clients' round trips, and a client that had
+		// already finished had also closed its host: under load (loadavg ~100
+		// on 28 cores) the fix case read 6/10 while the provider had admitted
+		// all 10 and all 20 round trips succeeded.
+		sampled = make(chan struct{})
 	)
 	connected.Add(clients)
 	for i := 0; i < clients; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// A client that fails before it can connect still reaches the
+			// barrier, or connected.Wait() below would never return.
+			var arrived sync.Once
+			arrive := func() { arrived.Do(connected.Done) }
+			defer arrive()
 			clientRM, err := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(rcmgr.InfiniteLimits))
 			if err != nil {
+				mu.Lock()
+				failures["client resource manager: "+err.Error()]++
+				mu.Unlock()
 				return
 			}
 			h, err := libp2p.New(
@@ -172,7 +187,7 @@ func runDeliveryBurst(t *testing.T, rm network.ResourceManager, clients int) (in
 
 			<-gate
 			connectErr := h.Connect(ctx, providerInfo)
-			connected.Done()
+			arrive()
 			if connectErr != nil {
 				mu.Lock()
 				failures["connect: "+connectErr.Error()]++
@@ -180,6 +195,7 @@ func runDeliveryBurst(t *testing.T, rm network.ResourceManager, clients int) (in
 				return
 			}
 			connected.Wait()
+			<-sampled
 			for rt := 0; rt < 2; rt++ {
 				if err := deliveryRoundTrip(ctx, h, provider.ID()); err != nil {
 					mu.Lock()
@@ -195,14 +211,15 @@ func runDeliveryBurst(t *testing.T, rm network.ResourceManager, clients int) (in
 	}
 	close(gate)
 	// Sample what the provider actually saw at the barrier, so a green result
-	// can never be a burst that quietly serialised.
-	admittedCh := make(chan int, 1)
-	go func() {
-		connected.Wait()
-		admittedCh <- len(provider.Network().ConnsToPeer(peerIDFromKey(t, priv)))
-	}()
+	// can never be a burst that quietly serialised. Every client that
+	// connected is still holding its connection open here: h.Connect returns
+	// only after identify, which the provider answers on a connection it has
+	// already added, so the count is complete.
+	connected.Wait()
+	admitted := len(provider.Network().ConnsToPeer(peerIDFromKey(t, priv)))
+	close(sampled)
 	wg.Wait()
-	return ok, <-admittedCh, failures
+	return ok, admitted, failures
 }
 
 func peerIDFromKey(t *testing.T, priv crypto.PrivKey) peer.ID {
