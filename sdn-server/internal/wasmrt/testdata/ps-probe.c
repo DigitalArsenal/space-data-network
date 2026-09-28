@@ -89,7 +89,8 @@ struct probe_cfg {
   uint32_t marker;         // MODE_HAMMER: byte written
   uint32_t files;          // MODE_HAMMER: files per thread
   uint32_t prefix_len;     // path prefix length (bytes follow the struct)
-  uint32_t reserved[5];
+  uint32_t drop_notify;    // negative control: skip every Nth doorbell notify (0 = never)
+  uint32_t reserved[4];
 };
 
 static struct probe_cfg g_cfg;
@@ -98,17 +99,24 @@ static char g_prefix[256];
 // ---- stats (flatsql_ps_stats) ------------------------------------------------
 #define HIST_BUCKETS 1088
 struct thread_stats {
-  _Atomic uint64_t wakeups;         // returns from a doorbell wait
-  _Atomic uint64_t timeout_pending; // a wait ended by timeout while work was pending
-  _Atomic uint64_t work;            // doorbell rings acknowledged / chunks computed
-  _Atomic uint64_t io_ok;           // successful I/O calls
-  _Atomic uint64_t io_err;          // failed I/O calls
-  _Atomic uint64_t bytes_written;   // bytes the guest believes it wrote
-  _Atomic uint64_t checksum;        // compute result (keeps the loop honest)
-  _Atomic uint64_t reserved;
+  _Atomic uint64_t wakeups;       // returns from a doorbell wait
+  _Atomic uint64_t lost_wakeup;   // timed out although the notify for pending work had landed
+  _Atomic uint64_t work;          // doorbell rings acknowledged / chunks computed
+  _Atomic uint64_t io_ok;         // successful I/O calls
+  _Atomic uint64_t io_err;        // failed I/O calls
+  _Atomic uint64_t bytes_written; // bytes the guest believes it wrote
+  _Atomic uint64_t checksum;      // compute result (keeps the loop honest)
+  _Atomic uint64_t late_ring;     // timed out with a ring whose notify had not landed yet
 };
 static struct thread_stats g_tstats[MAX_THREADS];
 static uint64_t g_hist[MAX_THREADS][2][HIST_BUCKETS]; // [thread][0=read,1=write]
+
+// The last notify flatsql_ps_wake issued for each doorbell: the doorbell's seq
+// when the call began (low 32 bits) and the monotonic clock in microseconds,
+// low 32 bits, when memory.atomic.notify had returned (high 32 bits). One
+// 64-bit word, so a waiter reads both halves of one notify.
+static _Atomic uint64_t g_notified[MAX_THREADS];
+static _Atomic uint32_t g_wake_calls; // doorbell notifies, for cfg.drop_notify
 
 static uint64_t now_ns(void) {
   struct timespec ts;
@@ -192,11 +200,33 @@ static void doorbell_loop(uint32_t tid) {
       atomic_store_explicit(&d->sleeping, 0, memory_order_relaxed);
       continue;
     }
+    uint64_t deadline = now_ns() + timeout_us * 1000ull;
     int r = wait_u32(&d->seq, s, timeout_us * 1000ull);
     atomic_store_explicit(&d->sleeping, 0, memory_order_relaxed);
     atomic_fetch_add_explicit(&g_tstats[tid].wakeups, 1, memory_order_relaxed);
     if (r == 2 && atomic_load(&d->seq) != s && !stopping()) {
-      atomic_fetch_add_explicit(&g_tstats[tid].timeout_pending, 1, memory_order_relaxed);
+      // The wait timed out and work is here. Finding it is not a lost wakeup:
+      // a ring is a store, then a notify the doorbell thread issues later, so
+      // one that lands within a notify's latency of the deadline (or after
+      // it, while `sleeping` is still set) meets a wait that has already
+      // timed out. The wakeup was LOST only if a notify for work past `s`
+      // had returned before the deadline. It was issued after that work's
+      // store, so after this wait compared `s` and registered. The runtime's
+      // deadline is no earlier than `deadline` (the runtime reads its clock
+      // after this one), and memory.atomic.notify marks a registered waiter
+      // under the lock the waiter re-takes when it times out, so that waiter
+      // must have returned 0. The slack covers the runtime timing the wait
+      // on another clock (1000 ppm of the wait, twice NTP's largest slew)
+      // and the microsecond flooring.
+      uint64_t rec = atomic_load(&g_notified[tid]);
+      uint32_t served = (uint32_t)rec, done_us = (uint32_t)(rec >> 32);
+      uint32_t slack_us = (uint32_t)(timeout_us / 1000) + 2;
+      uint32_t cutoff_us = (uint32_t)(deadline / 1000) - slack_us;
+      if ((int32_t)(served - s) > 0 && (int32_t)(cutoff_us - done_us) > 0) {
+        atomic_fetch_add_explicit(&g_tstats[tid].lost_wakeup, 1, memory_order_relaxed);
+      } else {
+        atomic_fetch_add_explicit(&g_tstats[tid].late_ring, 1, memory_order_relaxed);
+      }
     }
   }
 }
@@ -354,9 +384,26 @@ int32_t flatsql_ps_start(void) {
   return started;
 }
 
+// memory.atomic.notify(addr, n). For a doorbell it also records the notify
+// (g_notified) so a waiter can tell a lost wakeup from a late ring. With
+// cfg.drop_notify = N it skips every Nth doorbell notify and records it as
+// issued: a runtime that loses wakeups, which doorbell_loop must count.
 EXPORT("flatsql_ps_wake")
 int32_t flatsql_ps_wake(int32_t addr, int32_t n) {
-  return __builtin_wasm_memory_atomic_notify((int32_t *)(uintptr_t)addr, (uint32_t)n);
+  uint32_t a = (uint32_t)addr, base = (uint32_t)(uintptr_t)g_door;
+  uint32_t tid = (a - base) / (uint32_t)sizeof(struct doorbell);
+  int door = a >= base && tid < MAX_THREADS && (a - base) % sizeof(struct doorbell) == 0;
+  uint32_t served = door ? atomic_load(&g_door[tid].seq) : 0;
+  int32_t woke = 0;
+  if (!(door && n == 1 && g_cfg.drop_notify &&
+        atomic_fetch_add(&g_wake_calls, 1) % g_cfg.drop_notify == g_cfg.drop_notify - 1)) {
+    woke = __builtin_wasm_memory_atomic_notify((int32_t *)(uintptr_t)addr, (uint32_t)n);
+  }
+  if (door) {
+    uint64_t done_us = (uint32_t)(now_ns() / 1000);
+    atomic_store(&g_notified[tid], (done_us << 32) | served);
+  }
+  return woke;
 }
 
 // One cooperative iteration (design §5.2): used when no thread could spawn.
