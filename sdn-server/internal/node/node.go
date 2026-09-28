@@ -2535,6 +2535,14 @@ func (n *Node) startFlowServices() error {
 		// attached to a ticker, so it does not fire late, it never fires at
 		// all. Observed live on host-01: three CelesTrak flows registered,
 		// run_count 0, while modules present at StartAll showed "running".
+		serviceID := sf.ID()
+		// The flow's own timer, anchored to the ledger: installed BEFORE the
+		// flow is scheduled, so a weekly lane pulled two days before this boot
+		// next runs five days from now, not seven (firstFireFlowServiceIfDue
+		// covers the lane that is already due).
+		sf.SetSchedulePhase(func(_ string, interval time.Duration) time.Duration {
+			return n.flowServiceSchedulePhase(serviceID, interval)
+		})
 		started, err := n.plugins.StartLateRegistered(sf)
 		if err != nil {
 			log.Warnf("Flow service %q failed to start: %v", sf.ID(), err)
@@ -2543,7 +2551,6 @@ func (n *Node) startFlowServices() error {
 		// Publisher fetch policy, ENFORCED. Every pull — cron tick or admin
 		// run-now — passes this gate, so the debounce window the node
 		// advertises on /api/apps is the window it actually honours.
-		serviceID := sf.ID()
 		sf.SetRetrievalGate(func() (bool, string) {
 			allowed, reason := n.flowServiceRetrievalDue(serviceID)
 			if allowed && n.sourceMetrics != nil {
@@ -2587,11 +2594,17 @@ func (n *Node) startFlowServices() error {
 // would serve nothing ever. Firing unconditionally on boot is the opposite
 // failure: a crash-looping node would hammer the publisher on every restart.
 //
-// So the gate is the debounce window this node already publishes and already
-// persists: fire only when every source the flow feeds is past its
-// debounce_hours, or has never been retrieved at all. That makes debounce_hours
-// load-bearing rather than decorative, and it is honest — a node that pulled
-// five minutes before a restart will NOT pull again.
+// So the gate is twofold, and both halves are durable (the retrieval ledger):
+//
+//   - the debounce window this node publishes (flowServiceRetrievalDue): a
+//     node that pulled five minutes before a restart will NOT pull again;
+//   - the flow's OWN timer (flowServiceScheduleDue): a trigger fires at boot
+//     only when its interval has passed since the flow's last successful
+//     retrieval. The debounce alone let every restart re-pull a weekly source
+//     once three hours had passed (host-02: IQEngine's 31 MB index "last
+//     retrieved 5h14m0s ago (debounce 3h0m0s)"). A trigger that is not yet due
+//     is not lost: its ticker is phased to lastSuccess+interval
+//     (flowServiceSchedulePhase).
 func (n *Node) firstFireFlowServiceIfDue(sf *flowrt.ServiceFlow) {
 	if sf == nil {
 		return
@@ -2599,9 +2612,20 @@ func (n *Node) firstFireFlowServiceIfDue(sf *flowrt.ServiceFlow) {
 	if !n.config.Flows.FirstFireWhenDue {
 		return
 	}
-	due, reason := n.flowServiceRetrievalDue(sf.ID())
-	if !due {
-		log.Infof("Flow service %q first fire skipped: %s", sf.ID(), reason)
+	var (
+		due     []string
+		reasons = map[string]string{}
+	)
+	for _, trigger := range sf.Triggers() {
+		ok, reason := n.flowServiceFirstFireDue(sf.ID(), sf.ScheduledInterval(trigger.TriggerID))
+		if !ok {
+			log.Infof("Flow service %q first fire of %q skipped: %s", sf.ID(), trigger.TriggerID, reason)
+			continue
+		}
+		due = append(due, trigger.TriggerID)
+		reasons[trigger.TriggerID] = reason
+	}
+	if len(due) == 0 {
 		return
 	}
 	n.wg.Add(1)
@@ -2614,16 +2638,112 @@ func (n *Node) firstFireFlowServiceIfDue(sf *flowrt.ServiceFlow) {
 			return
 		case <-time.After(flowServiceFirstFireDelay):
 		}
-		for _, trigger := range sf.Triggers() {
+		for _, triggerID := range due {
 			if n.ctx.Err() != nil {
 				return
 			}
-			log.Infof("Flow service %q: first-fire trigger %q (%s)", sf.ID(), trigger.TriggerID, reason)
-			if _, err := sf.InvokeCron(n.ctx, trigger.TriggerID, nil); err != nil {
-				log.Warnf("Flow service %q first-fire trigger %q failed: %v", sf.ID(), trigger.TriggerID, err)
+			log.Infof("Flow service %q: first-fire trigger %q (%s)", sf.ID(), triggerID, reasons[triggerID])
+			if _, err := sf.InvokeCron(n.ctx, triggerID, nil); err != nil {
+				log.Warnf("Flow service %q first-fire trigger %q failed: %v", sf.ID(), triggerID, err)
 			}
 		}
 	}()
+}
+
+// flowServiceFirstFireDue answers the first-fire question for one timer of a
+// flow: past the retrieval debounce (flowServiceRetrievalDue) AND past the
+// timer's own interval since the flow's last successful retrieval.
+func (n *Node) flowServiceFirstFireDue(appID string, interval time.Duration) (bool, string) {
+	due, reason := n.flowServiceRetrievalDue(appID)
+	if !due {
+		return false, reason
+	}
+	scheduleDue, remaining, scheduleReason := n.flowServiceScheduleDue(appID, interval)
+	if !scheduleDue {
+		return false, fmt.Sprintf("%s; its timer next runs in %s", scheduleReason, remaining.Round(time.Minute))
+	}
+	return true, reason
+}
+
+// flowServiceScheduleDue reports whether a flow's own timer interval has passed
+// since its last successful retrieval, and otherwise how long remains. A flow
+// the ledger cannot vouch for (no source row, or any source never retrieved or
+// withdrawn by reconciliation) is due: it is owed a pull, not a schedule.
+func (n *Node) flowServiceScheduleDue(appID string, interval time.Duration) (bool, time.Duration, string) {
+	if interval <= 0 {
+		return true, 0, "the flow declares no timer interval"
+	}
+	last, ok := n.flowServiceLastSuccess(appID)
+	if !ok {
+		return true, 0, "the ledger holds no successful retrieval for every source"
+	}
+	age := time.Since(last)
+	if age >= interval {
+		return true, 0, fmt.Sprintf("last successful retrieval %s ago is past the flow's own %s timer",
+			age.Round(time.Minute), interval)
+	}
+	return false, interval - age, fmt.Sprintf("last successful retrieval %s ago is inside the flow's own %s timer",
+		age.Round(time.Minute), interval)
+}
+
+// flowServiceSchedulePhase is the first-run delay of a flow's timer (see
+// plugins.CronFirstRunDelayer): the time left until lastSuccess+interval, so a
+// restart neither re-pulls early nor restarts the cadence from zero. 0 keeps
+// the plain ticker (first run one interval out) — for a lane that is already
+// due, which firstFireFlowServiceIfDue fires now, and for a node that has
+// first-fire turned off.
+func (n *Node) flowServiceSchedulePhase(appID string, interval time.Duration) time.Duration {
+	if n == nil || n.config == nil || !n.config.Flows.FirstFireWhenDue {
+		return 0
+	}
+	due, remaining, _ := n.flowServiceScheduleDue(appID, interval)
+	if due || remaining >= interval {
+		return 0
+	}
+	// Never let a boot also be a fetch.
+	if remaining < flowServiceFirstFireDelay {
+		remaining = flowServiceFirstFireDelay
+	}
+	return remaining
+}
+
+// flowServiceLastSuccess is when the flow last retrieved successfully, from
+// the durable retrieval ledger: the newest landed batch across its sources, or
+// a later attempt that closed clean (a conditional fetch answered 304 — the
+// node already held the current set). ok is false when the ledger cannot
+// vouch for every source of the flow.
+func (n *Node) flowServiceLastSuccess(appID string) (time.Time, bool) {
+	if n == nil || n.sourceMetrics == nil {
+		return time.Time{}, false
+	}
+	sources, err := n.sourceMetrics.Sources()
+	if err != nil {
+		return time.Time{}, false
+	}
+	var newest time.Time
+	seen := 0
+	for _, src := range sources {
+		if src.AppID != appID {
+			continue
+		}
+		seen++
+		if src.LastRetrievedAt == nil {
+			return time.Time{}, false
+		}
+		if src.LastRetrievedAt.After(newest) {
+			newest = *src.LastRetrievedAt
+		}
+	}
+	if seen == 0 {
+		return time.Time{}, false
+	}
+	// A clean attempt: RecordAttempt counts every started attempt as a
+	// failure until a landed batch or a 304 clears it, so zero failures means
+	// the last attempt succeeded.
+	if last, failures := n.sourceMetrics.AttemptState(appID); last != nil && failures == 0 && last.After(newest) {
+		newest = *last
+	}
+	return newest, true
 }
 
 // reconcileRetrievalLedger withdraws every retrieval-ledger success claim this
