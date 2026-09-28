@@ -407,13 +407,21 @@ func (s *ConcreteDatasetPublicationService) pruneDatasetShardPublicationsOutside
 		gone = append(gone, row)
 		pruned++
 	}
+	// Every window the scope advertised before the series that it no longer
+	// advertises with the same content: pruned here, pruned by the
+	// full-catalog tail prune, or overwritten in place.
 	for _, row := range before {
 		if !inScope(row) {
 			continue
 		}
-		if replaced, ok := now[[2]int{row.Offset, row.Limit}]; ok && (replaced.ShardSHA256 != row.ShardSHA256 || replaced.IndexSHA256 != row.IndexSHA256) {
-			gone = append(gone, row)
+		replaced, ok := now[[2]int{row.Offset, row.Limit}]
+		if ok && replaced.ShardSHA256 == row.ShardSHA256 && replaced.IndexSHA256 == row.IndexSHA256 {
+			continue
 		}
+		if !current[[2]int{row.Offset, row.Limit}] && pruned > 0 && containsWindow(gone, row) {
+			continue
+		}
+		gone = append(gone, row)
 	}
 	if len(gone) == 0 {
 		return nil
@@ -425,6 +433,15 @@ func (s *ConcreteDatasetPublicationService) pruneDatasetShardPublicationsOutside
 	log.Infof("publication %s %s/%s batch %q: %d stale window(s) no longer advertised, %d superseded window file(s) removed (%d bytes)",
 		schema, scope.ProviderID, scope.SourceName, scope.BatchID, pruned, removed, bytes)
 	return nil
+}
+
+func containsWindow(rows []storage.DatasetShardPublication, row storage.DatasetShardPublication) bool {
+	for _, each := range rows {
+		if each.Offset == row.Offset && each.Limit == row.Limit && each.ShardSHA256 == row.ShardSHA256 {
+			return true
+		}
+	}
+	return false
 }
 
 // ipnsPointerJob is one pointer to (re)publish.
