@@ -84,6 +84,15 @@ copies in `testdata/` feed the tests (`TestStaticBuildCarriesTheRuntimePatches`)
   on one cache line: four Interruptible spinners ran 2.8x the interpreter
   unpatched against 17x patched (darwin/arm64).
 
+- `03-fault-jmp`: the fault handler jumps with `_setjmp`/`_longjmp`, which
+  carry no signal state. darwin's `longjmp` sets or clears the thread's
+  on-signal-stack flag from a `jmp_buf` word `setjmp` never writes: after a
+  trap on a Go thread, about half the time, Go's next signal there landed on a
+  goroutine stack and the runtime threw ("signal received but handler not on
+  signal stack"). Linux is unaffected (glibc keeps no such flag). Go's own
+  fault handler stays installed across WasmEdge calls (`signals.go`); this
+  patch is what makes a trap on darwin safe under it.
+
 `spacedatanetwork substrate-selftest [--require-patched]` measures them in the
 running binary (notify without store, one stop ending every thread,
 Interruptible AOT that really runs native) and round-trips the C host I/O

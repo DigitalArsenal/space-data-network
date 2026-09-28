@@ -1,0 +1,35 @@
+diff --git a/include/system/fault.h b/include/system/fault.h
+index 1f57d78..71dd6ea 100644
+--- a/include/system/fault.h
++++ b/include/system/fault.h
+@@ -43,4 +43,14 @@ private:
+ 
+ } // namespace WasmEdge
+ 
++// _setjmp/_longjmp carry no signal state. darwin's longjmp resets or sets the
++// thread's alternate-signal-stack flag from a jmp_buf word setjmp never
++// writes, so a trap could leave a thread marked as running on its signal stack
++// and the embedder's next signal (Go's preemption) lands on the wrong stack.
++// The fault handler unblocks its own signal before it jumps, so nothing needs
++// restoring.
++#if defined(_WIN32)
+ #define PREPARE_FAULT(f) (static_cast<uint32_t>(setjmp((f).buffer())))
++#else
++#define PREPARE_FAULT(f) (static_cast<uint32_t>(_setjmp((f).buffer())))
++#endif
+diff --git a/lib/system/fault.cpp b/lib/system/fault.cpp
+index e435d4e..c49f5ae 100644
+--- a/lib/system/fault.cpp
++++ b/lib/system/fault.cpp
+@@ -118,7 +118,11 @@ Fault::~Fault() noexcept {
+   assuming(localHandler != nullptr);
+   auto Buffer = stackTrace(localHandler->StackTraceBuffer);
+   localHandler->StackTraceSize = Buffer.size();
++#if defined(_WIN32)
+   longjmp(localHandler->Buffer, static_cast<int>(Error.operator uint32_t()));
++#else
++  _longjmp(localHandler->Buffer, static_cast<int>(Error.operator uint32_t()));
++#endif
+ }
+ 
+ } // namespace WasmEdge

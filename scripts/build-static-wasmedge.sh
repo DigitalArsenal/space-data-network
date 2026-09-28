@@ -63,6 +63,12 @@ fi
 #                   Interruptible AOT code. Upstream's exchange(0) stopped exactly
 #                   one thread per cancel, and put an RMW on one shared cache line
 #                   at every block of every thread.
+#   03-fault-jmp    the fault handler jumps with _setjmp/_longjmp, which carry
+#                   no signal state. darwin's longjmp sets or clears the
+#                   thread's on-signal-stack flag from a jmp_buf word setjmp
+#                   never writes; after a trap, half the time, Go's next signal
+#                   on that thread landed on a goroutine stack and the runtime
+#                   threw (sdn-server/internal/wasmrt/signals.go).
 #
 # THE PATCH TEXT LIVES IN THIS FILE, deliberately. The CI prefix cache key and
 # the Dockerfile's static layer are both keyed on this file's bytes, so a patch
@@ -306,6 +312,46 @@ index 8db12e3..f765db6 100644
 SDN_WASMEDGE_PATCH_EOF
 }
 
+write_sdn_patch_03_fault_jmp() {
+  cat <<'SDN_WASMEDGE_PATCH_EOF'
+diff --git a/include/system/fault.h b/include/system/fault.h
+index 1f57d78..71dd6ea 100644
+--- a/include/system/fault.h
++++ b/include/system/fault.h
+@@ -43,4 +43,14 @@ private:
+ 
+ } // namespace WasmEdge
+ 
++// _setjmp/_longjmp carry no signal state. darwin's longjmp resets or sets the
++// thread's alternate-signal-stack flag from a jmp_buf word setjmp never
++// writes, so a trap could leave a thread marked as running on its signal stack
++// and the embedder's next signal (Go's preemption) lands on the wrong stack.
++// The fault handler unblocks its own signal before it jumps, so nothing needs
++// restoring.
++#if defined(_WIN32)
+ #define PREPARE_FAULT(f) (static_cast<uint32_t>(setjmp((f).buffer())))
++#else
++#define PREPARE_FAULT(f) (static_cast<uint32_t>(_setjmp((f).buffer())))
++#endif
+diff --git a/lib/system/fault.cpp b/lib/system/fault.cpp
+index e435d4e..c49f5ae 100644
+--- a/lib/system/fault.cpp
++++ b/lib/system/fault.cpp
+@@ -118,7 +118,11 @@ Fault::~Fault() noexcept {
+   assuming(localHandler != nullptr);
+   auto Buffer = stackTrace(localHandler->StackTraceBuffer);
+   localHandler->StackTraceSize = Buffer.size();
++#if defined(_WIN32)
+   longjmp(localHandler->Buffer, static_cast<int>(Error.operator uint32_t()));
++#else
++  _longjmp(localHandler->Buffer, static_cast<int>(Error.operator uint32_t()));
++#endif
+ }
+ 
+ } // namespace WasmEdge
+SDN_WASMEDGE_PATCH_EOF
+}
+
 SDN_PATCH_DIR="${WORK}/sdn-patches"
 SDN_PATCH_STAMP=""
 if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
@@ -319,6 +365,7 @@ if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
   mkdir -p "$SDN_PATCH_DIR"
   write_sdn_patch_01_atomic_wait > "$SDN_PATCH_DIR/01-atomic-wait.patch"
   write_sdn_patch_02_stop_token > "$SDN_PATCH_DIR/02-stop-token.patch"
+  write_sdn_patch_03_fault_jmp > "$SDN_PATCH_DIR/03-fault-jmp.patch"
   for sdn_patch in "$SDN_PATCH_DIR"/*.patch; do
     if git -C "$SRC" apply --reverse --check "$sdn_patch" >/dev/null 2>&1; then
       echo "WasmEdge patch already applied: $(basename "$sdn_patch")"
