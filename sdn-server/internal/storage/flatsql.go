@@ -861,6 +861,12 @@ func (s *FlatSQLStore) initTables() error {
 	if err := s.initSourceBatchLicenseTable(); err != nil {
 		return err
 	}
+	if err := s.initRecordIngestIdentityTable(); err != nil {
+		return err
+	}
+	if err := s.initDatasetPublicationSeriesTables(); err != nil {
+		return err
+	}
 	if err := s.initDatasetShardPublicationTable(); err != nil {
 		return fmt.Errorf("failed to create dataset shard publication table: %w", err)
 	}
@@ -2188,6 +2194,23 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 		return "", fmt.Errorf("failed to check existing record: %w", err)
 	}
 
+	// A new CID whose ingest identity the lane already holds is the same
+	// record fetched again (record_ingest_identity.go). Nothing lands; the
+	// caller (StoreWithSourceTags) tags the held CID with this write's batch.
+	identity := ""
+	if ingestIdentityApplies(schemaName, tags) {
+		identity = recordIngestIdentity(schemaName, data)
+		if identity != "" {
+			held, err := heldIngestIdentities(s.db, schemaName, ingestIdentityLaneOf(tags), []string{identity})
+			if err != nil {
+				return "", err
+			}
+			if heldCID, ok := held[identity]; ok {
+				return heldCID, nil
+			}
+		}
+	}
+
 	// WS7.3d routed-only writes: the metadata row lands in the producer's
 	// (producer, standard) table — v1 stores never write the legacy
 	// per-standard tables. Content-addressed records are immutable; the index
@@ -2223,6 +2246,11 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	if err := upsertRecordIndexExec(tx, schemaName, cid, now, data, s.fullTextState(schemaName)); err != nil {
 		// Do not fail writes if index extraction fails for a record.
 		log.Warnf("Failed to index %s record %s: %v", schemaName, cid[:16]+"...", err)
+	}
+	if identity != "" {
+		if err := upsertIngestIdentities(tx, schemaName, ingestIdentityLaneOf(tags), []ingestIdentityRow{{identity: identity, cid: cid}}); err != nil {
+			return "", err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("commit store: %w", err)
@@ -2629,6 +2657,38 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		return 0, fmt.Errorf("check %s record batch: %w", schemaName, err)
 	}
 
+	// INGEST IDENTITY (record_ingest_identity.go). A record whose CID is new
+	// but whose identity the lane already holds is the same record fetched
+	// again: it lands nowhere, counts as nothing inserted, and the CID that
+	// holds it takes this window's source tag. Probed once per window, like
+	// the CID presence above, and maintained in Go as rows queue.
+	identityOn := ingestIdentityApplies(schemaName, tags)
+	var (
+		identityLane    ingestIdentityLane
+		identities      []string
+		identityHeld    map[string]string
+		identityRepeats []string
+		identityRows    []ingestIdentityRow
+	)
+	if identityOn {
+		identityLane = ingestIdentityLaneOf(tags)
+		identities = make([]string, len(records))
+		probe := make([]string, 0, len(records))
+		for i, data := range records {
+			if _, repeat := present[cids[i]]; repeat {
+				continue
+			}
+			identities[i] = recordIngestIdentity(schemaName, data)
+			if identities[i] != "" {
+				probe = append(probe, identities[i])
+			}
+		}
+		identityHeld, err = heldIngestIdentities(tx, schemaName, identityLane, probe)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	// New rows are queued here and land as multi-row statements
 	// (flatsql_batch_writes.go). The buffer is flushed before ANY statement
 	// below that reads rows back, so what the engine sees is what the
@@ -2673,6 +2733,12 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			}
 			continue
 		}
+		if identityOn && identities[i] != "" {
+			if held, ok := identityHeld[identities[i]]; ok {
+				identityRepeats = append(identityRepeats, held)
+				continue
+			}
+		}
 
 		stored, err := s.storableRecordBytes(schemaName, data)
 		if err != nil {
@@ -2711,6 +2777,10 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		}
 		pending.add(storedRecord{cid: cid, peerID: peerID, timestamp: now, data: stored, signature: signature, createdAt: now, supersedeKey: keys.stored}, data)
 		present[cid] = struct{}{}
+		if identityOn && identities[i] != "" {
+			identityHeld[identities[i]] = cid
+			identityRows = append(identityRows, ingestIdentityRow{identity: identities[i], cid: cid})
+		}
 		if !keys.empty() {
 			queuedKeys[keys.stored] = struct{}{}
 		}
@@ -2722,6 +2792,15 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 	inserted += landed
 	if err != nil {
 		return inserted, err
+	}
+	if identityOn {
+		// Every queued row is on disk now, so both writes see them.
+		if err := upsertIngestIdentities(tx, schemaName, identityLane, identityRows); err != nil {
+			return inserted, err
+		}
+		if err := tagIdentityRepeats(tx, readSource, schemaName, *tags, identityRepeats); err != nil {
+			return inserted, err
+		}
 	}
 	// THE ENGINE MIRROR RUNS BEFORE THE COMMIT, AND ITS LEDGER ROWS JOIN IT.
 	//
