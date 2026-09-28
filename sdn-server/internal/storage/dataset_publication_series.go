@@ -14,7 +14,14 @@ package storage
 //
 // Retention keeps the newest N series of each lane (publishing.retention,
 // default 2 = the current set and the one before it, which consumers still
-// mid-sync may be reading). Everything else the lane pinned is released:
+// mid-sync may be reading). An older series is released when it is
+// SUPERSEDED: a newer series of the same batch scope re-described it (the
+// IQC case: one batch republished fifteen times), the store no longer holds
+// its batch (a "current" snapshot lane dropped it), or the lane declares its
+// batches snapshots (retention.lanes[].snapshot_batches). A series whose
+// batch the store still holds is otherwise kept whatever its age: in a lane
+// whose batches are parts of one dataset (the cellular chunk lane) every
+// part stays published. Released means:
 //
 //   - kubo pins: every VERIFIED pin-ledger entry of the lane (shard, index,
 //     manifest, shard-group CAR) that no kept series or kept publication row
@@ -126,6 +133,8 @@ func (s *FlatSQLStore) initDatasetPublicationSeriesTables() error {
 			record_count INTEGER NOT NULL DEFAULT 0,
 			manifest_cid TEXT NOT NULL DEFAULT '',
 			fingerprint TEXT NOT NULL DEFAULT '',
+			-- Unix NANOSECONDS: two series of one lane can start within
+			-- the same second, and their order is what retention keeps.
 			published_at INTEGER NOT NULL,
 			PRIMARY KEY (schema_name, provider_id, source_name, series_id)
 		)
@@ -223,7 +232,7 @@ func (s *FlatSQLStore) LatestDatasetPublicationSeries(lane DatasetPublicationLan
 		SELECT schema_name, provider_id, source_name, series_id, batch_id, record_count, manifest_cid, fingerprint, published_at
 		FROM sdn_dataset_publication_series
 		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
-		ORDER BY published_at DESC, series_id DESC
+		ORDER BY published_at DESC, rowid DESC
 		LIMIT 1`, lane.SchemaName, lane.ProviderID, lane.SourceName, strings.TrimSpace(batchID)).Scan(
 		&series.SchemaName, &series.ProviderID, &series.SourceName, &series.SeriesID, &series.BatchID,
 		&series.RecordCount, &series.ManifestCID, &series.Fingerprint, &publishedAt)
@@ -233,7 +242,7 @@ func (s *FlatSQLStore) LatestDatasetPublicationSeries(lane DatasetPublicationLan
 		}
 		return DatasetPublicationSeries{}, false, fmt.Errorf("latest %s publication series: %w", lane.SchemaName, err)
 	}
-	series.PublishedAt = time.Unix(publishedAt, 0).UTC()
+	series.PublishedAt = time.Unix(0, publishedAt).UTC()
 	return series, true, nil
 }
 
@@ -250,7 +259,7 @@ func (s *FlatSQLStore) listDatasetPublicationSeriesLocked(lane DatasetPublicatio
 		SELECT series_id, batch_id, record_count, manifest_cid, fingerprint, published_at
 		FROM sdn_dataset_publication_series
 		WHERE schema_name = ? AND provider_id = ? AND source_name = ?
-		ORDER BY published_at DESC, series_id DESC`, lane.SchemaName, lane.ProviderID, lane.SourceName)
+		ORDER BY published_at DESC, rowid DESC`, lane.SchemaName, lane.ProviderID, lane.SourceName)
 	if err != nil {
 		return nil, fmt.Errorf("list %s publication series: %w", lane.SchemaName, err)
 	}
@@ -262,7 +271,7 @@ func (s *FlatSQLStore) listDatasetPublicationSeriesLocked(lane DatasetPublicatio
 			rows.Close()
 			return nil, err
 		}
-		series.PublishedAt = time.Unix(publishedAt, 0).UTC()
+		series.PublishedAt = time.Unix(0, publishedAt).UTC()
 		out = append(out, series)
 	}
 	err = rows.Err()
@@ -295,10 +304,11 @@ func (s *FlatSQLStore) listDatasetPublicationSeriesLocked(lane DatasetPublicatio
 	return out, nil
 }
 
-// RecordDatasetPublicationSeries records one completed series. When the lane
-// has no series yet, its existing publication rows are first adopted as one
-// legacy series per batch (see the file comment), excluding the windows this
-// series itself published.
+// RecordDatasetPublicationSeries records one completed series. Publication
+// rows of the lane that no recorded series names yet (every row written before
+// series existed, or by a path that records none) are first adopted as one
+// legacy series per batch, so retention always knows what each advertised row
+// belongs to. The windows this series published are never adopted.
 func (s *FlatSQLStore) RecordDatasetPublicationSeries(series DatasetPublicationSeries, providerPeerID string) error {
 	if err := s.requireWritable("record dataset publication series"); err != nil {
 		return err
@@ -313,18 +323,41 @@ func (s *FlatSQLStore) RecordDatasetPublicationSeries(series DatasetPublicationS
 		series.PublishedAt = time.Now().UTC()
 	}
 
-	var adopt []DatasetPublicationSeries
 	existing, err := s.ListDatasetPublicationSeries(lane)
 	if err != nil {
 		return err
 	}
-	if len(existing) == 0 {
-		adopt, err = s.legacyDatasetPublicationSeries(lane, providerPeerID, series)
-		if err != nil {
-			return err
-		}
+	adopt, err := s.unrecordedDatasetPublicationSeries(lane, providerPeerID, existing, series)
+	if err != nil {
+		return err
 	}
+	return s.writeDatasetPublicationSeries(lane, append(adopt, series))
+}
 
+// AdoptDatasetPublicationSeries records the lane's unrecorded publication rows
+// as legacy series (one per batch) without publishing anything, so a
+// retention pass can run on a lane that has not published since series
+// existed. Returns how many legacy series it wrote.
+func (s *FlatSQLStore) AdoptDatasetPublicationSeries(lane DatasetPublicationLane, providerPeerID string) (int, error) {
+	if err := s.requireWritable("adopt dataset publication series"); err != nil {
+		return 0, err
+	}
+	lane = lane.normalized()
+	if lane.SchemaName == "" {
+		return 0, errors.New("schema is required")
+	}
+	existing, err := s.ListDatasetPublicationSeries(lane)
+	if err != nil {
+		return 0, err
+	}
+	adopt, err := s.unrecordedDatasetPublicationSeries(lane, providerPeerID, existing, DatasetPublicationSeries{})
+	if err != nil || len(adopt) == 0 {
+		return 0, err
+	}
+	return len(adopt), s.writeDatasetPublicationSeries(lane, adopt)
+}
+
+func (s *FlatSQLStore) writeDatasetPublicationSeries(lane DatasetPublicationLane, all []DatasetPublicationSeries) error {
 	defer s.lockWrite("RecordDatasetPublicationSeries")()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -336,7 +369,7 @@ func (s *FlatSQLStore) RecordDatasetPublicationSeries(series DatasetPublicationS
 			_ = tx.Rollback()
 		}
 	}()
-	for _, each := range append(adopt, series) {
+	for _, each := range all {
 		if _, err := tx.Exec(`
 			INSERT INTO sdn_dataset_publication_series (
 				schema_name, provider_id, source_name, series_id, batch_id, record_count, manifest_cid, fingerprint, published_at
@@ -348,7 +381,7 @@ func (s *FlatSQLStore) RecordDatasetPublicationSeries(series DatasetPublicationS
 				fingerprint = excluded.fingerprint,
 				published_at = excluded.published_at`,
 			lane.SchemaName, lane.ProviderID, lane.SourceName, each.SeriesID, each.BatchID, each.RecordCount,
-			strings.TrimSpace(each.ManifestCID), strings.TrimSpace(each.Fingerprint), each.PublishedAt.Unix()); err != nil {
+			strings.TrimSpace(each.ManifestCID), strings.TrimSpace(each.Fingerprint), each.PublishedAt.UnixNano()); err != nil {
 			return fmt.Errorf("record publication series %s: %w", each.SeriesID, err)
 		}
 		for _, member := range each.Members {
@@ -372,8 +405,15 @@ func (s *FlatSQLStore) RecordDatasetPublicationSeries(series DatasetPublicationS
 	return nil
 }
 
-// legacyDatasetPublicationSeries groups a lane's pre-existing rows by batch.
-func (s *FlatSQLStore) legacyDatasetPublicationSeries(lane DatasetPublicationLane, providerPeerID string, current DatasetPublicationSeries) ([]DatasetPublicationSeries, error) {
+// legacySeriesID names the series that adopts a batch's unrecorded rows.
+func legacySeriesID(batchID string) string {
+	return "legacy:" + strings.TrimSpace(batchID)
+}
+
+// unrecordedDatasetPublicationSeries groups the lane's rows that no recorded
+// series (nor the series being recorded) names by batch, merging into an
+// existing legacy series of that batch.
+func (s *FlatSQLStore) unrecordedDatasetPublicationSeries(lane DatasetPublicationLane, providerPeerID string, existing []DatasetPublicationSeries, current DatasetPublicationSeries) ([]DatasetPublicationSeries, error) {
 	rows, err := s.ListDatasetShardPublications(DatasetShardPublicationQuery{
 		SchemaName:   lane.SchemaName,
 		ProviderID:   lane.ProviderID,
@@ -383,22 +423,34 @@ func (s *FlatSQLStore) legacyDatasetPublicationSeries(lane DatasetPublicationLan
 	if err != nil {
 		return nil, err
 	}
-	own := make(map[string]bool, len(current.Members))
+	recorded := make(map[string]bool)
+	legacyAt := make(map[string]time.Time)
+	for _, each := range existing {
+		for _, member := range each.Members {
+			recorded[member.CID] = true
+		}
+		if strings.HasPrefix(each.SeriesID, "legacy:") {
+			legacyAt[each.SeriesID] = each.PublishedAt
+		}
+	}
 	for _, member := range current.Members {
-		own[strings.TrimSpace(member.CID)] = true
+		recorded[strings.TrimSpace(member.CID)] = true
 	}
 	byBatch := map[string]*DatasetPublicationSeries{}
 	var order []string
 	for _, row := range rows {
-		if own[row.ShardCID] {
+		if recorded[row.ShardCID] || row.ProviderID != lane.ProviderID || row.SourceName != lane.SourceName {
 			continue
 		}
 		legacy := byBatch[row.BatchID]
 		if legacy == nil {
 			legacy = &DatasetPublicationSeries{
 				SchemaName: lane.SchemaName, ProviderID: lane.ProviderID, SourceName: lane.SourceName,
-				SeriesID: "legacy:" + row.BatchID, BatchID: row.BatchID, ManifestCID: row.ManifestCID,
+				SeriesID: legacySeriesID(row.BatchID), BatchID: row.BatchID, ManifestCID: row.ManifestCID,
 				PublishedAt: row.PublishedAt,
+			}
+			if at, ok := legacyAt[legacy.SeriesID]; ok && at.After(legacy.PublishedAt) {
+				legacy.PublishedAt = at
 			}
 			byBatch[row.BatchID] = legacy
 			order = append(order, row.BatchID)
@@ -429,11 +481,47 @@ func (s *FlatSQLStore) legacyDatasetPublicationSeries(lane DatasetPublicationLan
 			return nil, err
 		}
 		for _, car := range cars {
-			legacy.Members = append(legacy.Members, DatasetPublicationSeriesMember{CID: car.CID, Role: PinLedgerRoleShardGroupCAR})
+			if !recorded[car.CID] {
+				legacy.Members = append(legacy.Members, DatasetPublicationSeriesMember{CID: car.CID, Role: PinLedgerRoleShardGroupCAR})
+			}
 		}
 		out = append(out, *legacy)
 	}
 	return out, nil
+}
+
+// laneBatchHoldsRecords reports whether the store still holds any record of
+// the lane under batchID.
+func (s *FlatSQLStore) laneBatchHoldsRecords(lane DatasetPublicationLane, batchID string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var one int
+	err := s.db.QueryRow(`
+		SELECT 1 FROM sdn_record_source_tags
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+		LIMIT 1`, lane.SchemaName, lane.ProviderID, lane.SourceName, strings.TrimSpace(batchID)).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("probe %s batch %s: %w", lane.SchemaName, batchID, err)
+	}
+	return true, nil
+}
+
+// DatasetPublicationRetentionPolicy is the retention rule of one lane.
+type DatasetPublicationRetentionPolicy struct {
+	// KeepSeries is how many of the newest series stay regardless. <= 0
+	// retains everything.
+	KeepSeries int
+	// SnapshotBatches declares every batch of the lane a complete snapshot of
+	// it, so a series beyond the newest KeepSeries is superseded even while
+	// the store still holds its batch (OMM elset history, a daily SatNOGS
+	// pull). Without it such a series is retired only when a newer series of
+	// the SAME scope replaced it or the store no longer holds its batch: a
+	// lane whose batches are PARTS of one dataset (the cellular chunk lane)
+	// must never lose a part.
+	SnapshotBatches bool
 }
 
 // DatasetPublicationRetentionPlan is what one retention pass would release.
@@ -452,38 +540,64 @@ type DatasetPublicationRetentionPlan struct {
 }
 
 // PlanDatasetPublicationRetention computes a retention pass for one lane of
-// this node's own publications. keep <= 0 retains everything (ArchiveAll).
-// A lane with no recorded series plans nothing: nothing is known to be
-// current, and retention never releases blind.
-func (s *FlatSQLStore) PlanDatasetPublicationRetention(lane DatasetPublicationLane, providerPeerID string, keep int) (DatasetPublicationRetentionPlan, error) {
+// this node's own publications. A lane with no recorded series plans nothing:
+// nothing is known to be current, and retention never releases blind.
+//
+// Series are walked newest first. The newest policy.KeepSeries stay. An older
+// series is RETIRED when it is superseded: a newer series of the same batch
+// scope re-described it, the store no longer holds its batch, or the lane
+// declares snapshot batches. Otherwise it stays (see
+// DatasetPublicationRetentionPolicy). Every pin-ledger entry of the lane that
+// no remaining series or advertised row names — windows a later publication
+// overwrote or pruned — is released too.
+func (s *FlatSQLStore) PlanDatasetPublicationRetention(lane DatasetPublicationLane, providerPeerID string, policy DatasetPublicationRetentionPolicy) (DatasetPublicationRetentionPlan, error) {
 	lane = lane.normalized()
 	providerPeerID = strings.TrimSpace(providerPeerID)
-	plan := DatasetPublicationRetentionPlan{Lane: lane, Keep: keep}
-	if keep <= 0 || lane.SchemaName == "" {
-		return plan, nil
-	}
 	series, err := s.ListDatasetPublicationSeries(lane)
 	if err != nil {
-		return plan, err
+		return DatasetPublicationRetentionPlan{Lane: lane, Keep: policy.KeepSeries}, err
 	}
-	if len(series) == 0 {
+	return s.planDatasetPublicationRetention(lane, providerPeerID, policy, series)
+}
+
+func (s *FlatSQLStore) planDatasetPublicationRetention(lane DatasetPublicationLane, providerPeerID string, policy DatasetPublicationRetentionPolicy, series []DatasetPublicationSeries) (DatasetPublicationRetentionPlan, error) {
+	plan := DatasetPublicationRetentionPlan{Lane: lane, Keep: policy.KeepSeries}
+	if policy.KeepSeries <= 0 || lane.SchemaName == "" || len(series) == 0 {
 		return plan, nil
 	}
-	if keep > len(series) {
-		keep = len(series)
-	}
+	var err error
 	protected := map[string]bool{}
-	for _, kept := range series[:keep] {
-		plan.KeptSeries = append(plan.KeptSeries, kept.SeriesID)
-		for _, member := range kept.Members {
+	protect := func(each DatasetPublicationSeries) {
+		for _, member := range each.Members {
 			protected[member.CID] = true
 		}
 	}
-	for _, retired := range series[keep:] {
-		plan.RetiredSeries = append(plan.RetiredSeries, retired.SeriesID)
+	newerScope := map[string]bool{}
+	for i, each := range series {
+		superseded := newerScope[each.BatchID]
+		newerScope[each.BatchID] = true
+		if i < policy.KeepSeries {
+			plan.KeptSeries = append(plan.KeptSeries, each.SeriesID)
+			protect(each)
+			continue
+		}
+		if !superseded && !policy.SnapshotBatches {
+			held := true
+			if each.BatchID != "" {
+				if held, err = s.laneBatchHoldsRecords(lane, each.BatchID); err != nil {
+					return plan, err
+				}
+			}
+			if held {
+				plan.KeptSeries = append(plan.KeptSeries, each.SeriesID)
+				protect(each)
+				continue
+			}
+		}
+		plan.RetiredSeries = append(plan.RetiredSeries, each.SeriesID)
 	}
-	// Anything written after the newest kept series began is a publication
-	// still in flight on another path; it is never retired by this pass.
+	// Anything written after the newest series began is a publication still
+	// in flight on another path; this pass never retires it.
 	inFlightAfter := series[0].PublishedAt
 
 	rows, err := s.ListDatasetShardPublications(DatasetShardPublicationQuery{
@@ -496,6 +610,9 @@ func (s *FlatSQLStore) PlanDatasetPublicationRetention(lane DatasetPublicationLa
 		return plan, err
 	}
 	for _, row := range rows {
+		if row.ProviderID != lane.ProviderID || row.SourceName != lane.SourceName {
+			continue
+		}
 		if protected[row.ShardCID] || row.PublishedAt.After(inFlightAfter) {
 			protected[row.ShardCID] = true
 			protected[row.IndexCID] = true
@@ -504,8 +621,6 @@ func (s *FlatSQLStore) PlanDatasetPublicationRetention(lane DatasetPublicationLa
 		}
 		plan.RetireRows = append(plan.RetireRows, row)
 	}
-	// A retired row's CIDs are released below only through the ledger, so a
-	// kept row sharing a CID (identical bytes) keeps it pinned.
 
 	entries, err := s.ListPinLedgerEntries(PinLedgerQuery{
 		SchemaName:        lane.SchemaName,
@@ -538,6 +653,46 @@ func (s *FlatSQLStore) PlanDatasetPublicationRetention(lane DatasetPublicationLa
 		plan.Unpin = append(plan.Unpin, entry)
 	}
 	return plan, nil
+}
+
+// PlanDatasetPublicationRetentionWithAdoption plans as if the lane's
+// unrecorded rows had been adopted as legacy series, writing nothing — the
+// dry run of a pass on a lane that has not published since series existed.
+func (s *FlatSQLStore) PlanDatasetPublicationRetentionWithAdoption(lane DatasetPublicationLane, providerPeerID string, policy DatasetPublicationRetentionPolicy) (DatasetPublicationRetentionPlan, error) {
+	lane = lane.normalized()
+	existing, err := s.ListDatasetPublicationSeries(lane)
+	if err != nil {
+		return DatasetPublicationRetentionPlan{Lane: lane}, err
+	}
+	adopt, err := s.unrecordedDatasetPublicationSeries(lane, providerPeerID, existing, DatasetPublicationSeries{})
+	if err != nil {
+		return DatasetPublicationRetentionPlan{Lane: lane}, err
+	}
+	merged := mergeDatasetPublicationSeries(existing, adopt)
+	return s.planDatasetPublicationRetention(lane, providerPeerID, policy, merged)
+}
+
+// mergeDatasetPublicationSeries overlays adopted legacy series on the recorded
+// ones (same id: members unioned, newest time), newest first.
+func mergeDatasetPublicationSeries(existing, adopt []DatasetPublicationSeries) []DatasetPublicationSeries {
+	byID := make(map[string]int, len(existing))
+	out := append([]DatasetPublicationSeries(nil), existing...)
+	for i, each := range out {
+		byID[each.SeriesID] = i
+	}
+	for _, each := range adopt {
+		if i, ok := byID[each.SeriesID]; ok {
+			out[i].Members = append(out[i].Members, each.Members...)
+			if each.PublishedAt.After(out[i].PublishedAt) {
+				out[i].PublishedAt = each.PublishedAt
+			}
+			continue
+		}
+		byID[each.SeriesID] = len(out)
+		out = append(out, each)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].PublishedAt.After(out[j].PublishedAt) })
+	return out
 }
 
 // pinLedgerCIDNeededOutsideLane reports whether any verified ledger entry
@@ -707,6 +862,30 @@ func datasetPublicationRowFiles(schemaDir string, row DatasetShardPublication) [
 		out = append(out, filepath.Join(schemaDir, "indexes", row.QuerySHA256[:16]+"-"+row.IndexSHA256[:16]+".index.json"))
 	}
 	return out
+}
+
+// RemoveDatasetPublicationRowFiles removes the shard/index files of rows that
+// were just deleted, unless a remaining row of the schema serves the same
+// content. Returns the files and bytes removed.
+func (s *FlatSQLStore) RemoveDatasetPublicationRowFiles(outputDir, schemaName string, rows []DatasetShardPublication) (int, int64, error) {
+	if strings.TrimSpace(outputDir) == "" || len(rows) == 0 {
+		return 0, 0, nil
+	}
+	live, err := s.liveDatasetPublicationFiles(schemaName)
+	if err != nil {
+		return 0, 0, err
+	}
+	schemaDir := filepath.Join(outputDir, datasetPublicationPathComponent(schemaName))
+	result := DatasetPublicationRetentionResult{}
+	for _, row := range rows {
+		for _, path := range datasetPublicationRowFiles(schemaDir, row) {
+			if live.referenced(path) {
+				continue
+			}
+			result.removeFile(path)
+		}
+	}
+	return result.FilesRemoved, result.BytesRemoved, nil
 }
 
 // livePublicationFiles is the set of shard/index content hashes (16-hex

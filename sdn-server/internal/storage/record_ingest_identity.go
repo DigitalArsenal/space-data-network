@@ -549,19 +549,46 @@ func (s *FlatSQLStore) reconcileIdentityWindow(schemaName string, lane ingestIde
 		if _, err := tx.Exec(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND cid IN (`+in+`)`, dupArgs...); err != nil {
 			return false, fmt.Errorf("delete duplicate %s lane tags: %w", schemaName, err)
 		}
-		orphanArgs := make([]any, 0, len(duplicates)+2)
+		// A copy another lane still tags stays a record; the rest leave the
+		// store. Decided per window in Go: a NOT IN over the whole standard's
+		// tags per statement is quadratic on a 500k-row lane.
+		stillTagged := make(map[string]bool, len(duplicates))
+		tagArgs := make([]any, 0, len(duplicates)+1)
+		tagArgs = append(tagArgs, schemaName)
 		for _, cid := range duplicates {
-			orphanArgs = append(orphanArgs, cid)
+			tagArgs = append(tagArgs, cid)
 		}
-		orphanArgs = append(orphanArgs, schemaName)
-		orphanWhere := `cid IN (` + in + `) AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`
-		countArgs := append([]any{schemaName}, orphanArgs...)
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM sdn_record_index WHERE schema_name = ? AND `+orphanWhere, countArgs...).Scan(&deleted); err != nil {
-			return false, fmt.Errorf("count orphaned %s duplicates: %w", schemaName, err)
+		rows, err := tx.Query(`SELECT DISTINCT cid FROM sdn_record_source_tags WHERE schema_name = ? AND cid IN (`+in+`)`, tagArgs...)
+		if err != nil {
+			return false, fmt.Errorf("probe remaining %s tags: %w", schemaName, err)
 		}
-		s.deleteRoutedMirrorsWhere(tx, tableName, orphanWhere, orphanArgs...)
-		if _, err := tx.Exec(`DELETE FROM sdn_record_index WHERE schema_name = ? AND `+orphanWhere, countArgs...); err != nil {
-			return false, fmt.Errorf("delete orphaned %s duplicates: %w", schemaName, err)
+		for rows.Next() {
+			var cid string
+			if err := rows.Scan(&cid); err != nil {
+				rows.Close()
+				return false, err
+			}
+			stillTagged[cid] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return false, err
+		}
+		var orphans []any
+		for _, cid := range duplicates {
+			if !stillTagged[cid] {
+				orphans = append(orphans, cid)
+			}
+		}
+		if len(orphans) > 0 {
+			orphanIn := `cid IN (` + placeholderList(len(orphans)) + `)`
+			s.deleteRoutedMirrorsWhere(tx, tableName, orphanIn, orphans...)
+			indexArgs := append([]any{schemaName}, orphans...)
+			if _, err := tx.Exec(`DELETE FROM sdn_record_index WHERE schema_name = ? AND `+orphanIn, indexArgs...); err != nil {
+				return false, fmt.Errorf("delete orphaned %s duplicates: %w", schemaName, err)
+			}
+			deleted = int64(len(orphans))
 		}
 	}
 	if err := tx.Commit(); err != nil {

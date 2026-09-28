@@ -149,6 +149,39 @@ func NewDatasetPublicationHandler(service DatasetPublicationService) *DatasetPub
 // RegisterRoutes registers local admin dataset publication routes.
 func (h *DatasetPublicationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/admin/dataset-updates/publish", h.handlePublish)
+	mux.HandleFunc("/api/v1/admin/dataset-updates/retention", h.handleRetention)
+}
+
+// handleRetention plans (dry run) or applies one retention pass over a lane of
+// this node's own publications (dataset_publication_hygiene.go). Loopback
+// only, like publish.
+func (h *DatasetPublicationHandler) handleRetention(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isLoopbackRemoteAddr(r.RemoteAddr) {
+		writeError(w, http.StatusForbidden, "dataset publication retention is only available to local daemon clients")
+		return
+	}
+	runner, ok := h.service.(DatasetPublicationRetentionRunner)
+	if !ok || h.service == nil {
+		writeError(w, http.StatusServiceUnavailable, "dataset publication retention unavailable")
+		return
+	}
+	var req DatasetPublicationRetentionRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	report, err := runner.RunPublicationRetention(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
@@ -238,6 +271,10 @@ type ConcreteDatasetPublicationService struct {
 	outputDir       string
 	channelRecorder DatasetPublicationChannelRecorder
 	now             func() time.Time
+	// hygiene is the retention / IPNS pointer / change-detection policy
+	// (dataset_publication_hygiene.go). A pointer so the per-request copy
+	// PublishDatasetUpdate makes shares it.
+	hygiene *publicationHygiene
 }
 
 // NewConcreteDatasetPublicationService creates the production publication service.
@@ -259,6 +296,7 @@ func NewConcreteDatasetPublicationService(
 		ipfsAPIURL:     strings.TrimSpace(ipfsAPIURL),
 		outputDir:      strings.TrimSpace(outputDir),
 		now:            func() time.Time { return time.Now().UTC() },
+		hygiene:        newPublicationHygiene(),
 	}
 }
 
@@ -305,6 +343,25 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	if activeReq.AnnounceExisting {
 		return activeService.announceExistingDatasetPublications(ctx, activeReq, schema)
 	}
+	// One publication per lane at a time: retention decides what is current
+	// from what a lane has published, so two publications of one lane must
+	// not interleave their windows.
+	unlock := activeService.hygiene.lockLane(schema, activeReq.ProviderID, activeReq.SourceName)
+	defer unlock()
+	startedAt := activeService.now()
+	fingerprint := activeService.publicationFingerprint(activeReq, schema)
+
+	result, carCIDs, err := activeService.publishDatasetUpdateScope(ctx, activeReq, schema)
+	if err != nil {
+		return nil, err
+	}
+	activeService.afterPublication(ctx, activeReq, schema, result, carCIDs, fingerprint, startedAt)
+	return result, nil
+}
+
+// publishDatasetUpdateScope exports, pins, signs and announces the request's
+// scope and returns the shard-group CAR bundles that now cover it.
+func (s *ConcreteDatasetPublicationService) publishDatasetUpdateScope(ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, []string, error) {
 	// A request that NAMES a batch has already stated its scope, and the
 	// batch filter is what bounds the export. Truncating it to
 	// defaultDatasetPublicationLimit published 250 of a 32,141-record batch —
@@ -313,32 +370,33 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	// forever and its catalog never grew. That is not a default, it is a
 	// silent discard of the caller's stated scope. An explicit Limit still
 	// wins: asking for a head is a legitimate request, guessing one is not.
-	if activeReq.FullCatalog || activeReq.ChunkSize > 0 ||
-		datasetPublicationScopedToWholeBatch(activeReq) {
-		return activeService.publishDatasetUpdateSeries(ctx, activeReq, schema)
+	if req.FullCatalog || req.ChunkSize > 0 ||
+		datasetPublicationScopedToWholeBatch(req) {
+		return s.publishDatasetUpdateSeries(ctx, req, schema)
 	}
-	limit := activeReq.Limit
+	limit := req.Limit
 	if limit <= 0 {
 		limit = defaultDatasetPublicationLimit
 	}
 
-	filter, _, err := activeService.byteBoundedExportFilter(activeReq, schema, limit, 0)
+	filter, _, err := s.byteBoundedExportFilter(req, schema, limit, 0)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	sourceIdentity := datasetPublicationSourceIdentityFromRequest(activeReq)
-	result, err := activeService.publishDatasetUpdatePart(ctx, activeReq, schema, filter, sourceIdentity, datasetUpdateID(activeReq, activeService.now(), 0))
+	sourceIdentity := datasetPublicationSourceIdentityFromRequest(req)
+	result, err := s.publishDatasetUpdatePart(ctx, req, schema, filter, sourceIdentity, datasetUpdateID(req, s.now(), 0))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	published, err := activeService.publishedShardFromResult(schema, filter, sourceIdentity, result)
+	published, err := s.publishedShardFromResult(schema, filter, sourceIdentity, result)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := activeService.recordShardGroupCARBundle(ctx, []storage.DatasetShardPublication{published}, schema); err != nil {
-		return nil, err
+	carCIDs, err := s.recordShardGroupCARBundle(ctx, []storage.DatasetShardPublication{published}, schema)
+	if err != nil {
+		return nil, nil, err
 	}
-	return result, nil
+	return result, carCIDs, nil
 }
 
 func (s *ConcreteDatasetPublicationService) announceExistingDatasetPublications(ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, error) {
@@ -583,7 +641,7 @@ func datasetPublicationSourceIdentityFromRequest(req DatasetPublicationRequest) 
 	}
 }
 
-func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, error) {
+func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, []string, error) {
 	chunkSize := req.ChunkSize
 	if chunkSize <= 0 {
 		// A whole-batch publication is a sync payload, not a feed head: chunk
@@ -609,6 +667,26 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 	series := &DatasetPublicationResult{Schema: schema}
 	pruneStale := req.FullCatalog && req.Limit <= 0
 	pruneOffset := 0
+	// The windows this series published. A series with no head limit
+	// describes its whole scope, so any other window of the scope is a stale
+	// version of it (a byte-cut window that drifted, a tail that shrank) and
+	// stops being advertised before the CAR bundle is built over the scope.
+	var windows []storage.DatasetShardPublication
+	var before []storage.DatasetShardPublication
+	if req.Limit <= 0 {
+		scope := datasetPublicationSourceIdentityFromRequest(req)
+		listed, err := s.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+			SchemaName:   schema,
+			ProviderID:   scope.ProviderID,
+			SourceName:   scope.SourceName,
+			BatchID:      scope.BatchID,
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("list dataset shard publications before the series: %w", err)
+		}
+		before = listed
+	}
 	// The cursor advances by the EFFECTIVE window, not by the requested chunk:
 	// a byte-budget cut makes a part smaller than chunkSize, and advancing by
 	// chunkSize would skip the records the cut deferred.
@@ -621,7 +699,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		partReq.DatasetID = datasetID
 		filter, effectiveLimit, err := s.byteBoundedExportFilter(partReq, schema, limit, offset)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		limit = effectiveLimit
 		publication, err := s.publishDatasetUpdatePart(ctx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
@@ -632,8 +710,9 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 				}
 				break
 			}
-			return nil, err
+			return nil, nil, err
 		}
+		windows = append(windows, storage.DatasetShardPublication{Offset: filter.Offset, Limit: filter.Limit})
 		series.Publications = append(series.Publications, *publication)
 		series.RecordCount += publication.RecordCount
 		if pruneStale {
@@ -645,11 +724,16 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		offset += limit
 	}
 	if len(series.Publications) == 0 {
-		return nil, fmt.Errorf("export dataset window: no records match export query")
+		return nil, nil, fmt.Errorf("export dataset window: no records match export query")
 	}
 	if pruneStale {
 		if err := s.pruneStaleDatasetShardPublications(req, schema, pruneOffset); err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+	}
+	if req.Limit <= 0 {
+		if err := s.pruneDatasetShardPublicationsOutsideSeries(req, schema, windows, before); err != nil {
+			return nil, nil, err
 		}
 	}
 	publications, err := s.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
@@ -660,17 +744,18 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("load dataset shard publications for CAR bundle: %w", err)
+		return nil, nil, fmt.Errorf("load dataset shard publications for CAR bundle: %w", err)
 	}
-	if err := s.recordShardGroupCARBundle(ctx, publications, schema); err != nil {
-		return nil, err
+	carCIDs, err := s.recordShardGroupCARBundle(ctx, publications, schema)
+	if err != nil {
+		return nil, nil, err
 	}
 	first := series.Publications[0]
 	series.ShardCID = first.ShardCID
 	series.IndexCID = first.IndexCID
 	series.ManifestCID = first.ManifestCID
 	series.PNMCID = first.PNMCID
-	return series, nil
+	return series, carCIDs, nil
 }
 
 func (s *ConcreteDatasetPublicationService) pruneStaleDatasetShardPublications(req DatasetPublicationRequest, schema string, staleOffset int) error {
@@ -1012,9 +1097,12 @@ func (s *ConcreteDatasetPublicationService) announceDatasetFeedHead(ctx context.
 	return nil
 }
 
-func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx context.Context, publications []storage.DatasetShardPublication, schema string) error {
+// recordShardGroupCARBundle makes sure shard-group CAR bundles cover the
+// scope's current head and returns their CIDs. Bundles live in kubo: the
+// staging file is removed as soon as kubo has pinned it.
+func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx context.Context, publications []storage.DatasetShardPublication, schema string) ([]string, error) {
 	if len(publications) == 0 {
-		return nil
+		return nil, nil
 	}
 	last := publications[len(publications)-1]
 	head := last.FeedHead
@@ -1033,7 +1121,7 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		VerificationState: "verified",
 	})
 	if err != nil {
-		return fmt.Errorf("list existing shard-group CAR bundle pins: %w", err)
+		return nil, fmt.Errorf("list existing shard-group CAR bundle pins: %w", err)
 	}
 	var totalRows int64
 	var totalBytes int64
@@ -1042,13 +1130,15 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		totalBytes += publication.ByteCount
 	}
 	var existingHeadRows int64
+	var existingHeadCIDs []string
 	for _, entry := range existing {
 		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
 			existingHeadRows += entry.RowCount
+			existingHeadCIDs = append(existingHeadCIDs, entry.CID)
 		}
 	}
 	if totalRows > 0 && existingHeadRows >= totalRows {
-		return s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir)
+		return existingHeadCIDs, s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir)
 	}
 
 	providerPublicKey := ""
@@ -1062,7 +1152,7 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		verifiedAt = s.now()
 	}
 	highWaterMark := datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes)
-	currentCARPaths := make([]string, 0)
+	currentCARCIDs := make([]string, 0)
 	groups := storage.DatasetShardPublicationCARGroups(publications, storage.DefaultShardGroupCARMaxSourceBytes)
 	segmentStart := 0
 	for _, group := range groups {
@@ -1079,9 +1169,14 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		}
 		publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, carOutputDir, rootCIDs)
 		if err != nil {
-			return fmt.Errorf("publish shard-group CAR bundle: %w", err)
+			return nil, fmt.Errorf("publish shard-group CAR bundle: %w", err)
 		}
-		currentCARPaths = append(currentCARPaths, publishedCAR.Path)
+		// kubo holds the bundle now; the staging file is a second copy
+		// (host-02: 10.6 GB of CAR files beside kubo's own).
+		if err := os.Remove(publishedCAR.Path); err != nil && !os.IsNotExist(err) {
+			log.Warnf("remove staged shard-group CAR %s: %v", publishedCAR.Path, err)
+		}
+		currentCARCIDs = append(currentCARCIDs, publishedCAR.CID)
 		if err := s.store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
 			CID:               publishedCAR.CID,
 			SchemaName:        schema,
@@ -1104,16 +1199,16 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 			VerifiedAt:        verifiedAt,
 			UpdatedAt:         verifiedAt,
 		}); err != nil {
-			return fmt.Errorf("record shard-group CAR pin ledger: %w", err)
+			return nil, fmt.Errorf("record shard-group CAR pin ledger: %w", err)
 		}
 	}
-	if err := s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir, currentCARPaths...); err != nil {
-		return err
+	if err := s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir); err != nil {
+		return nil, err
 	}
-	return nil
+	return currentCARCIDs, nil
 }
 
-func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx context.Context, entries []storage.PinLedgerEntry, currentHead, carOutputDir string, currentCARPaths ...string) error {
+func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx context.Context, entries []storage.PinLedgerEntry, currentHead, carOutputDir string) error {
 	for _, entry := range entries {
 		if entry.CID == "" {
 			continue
@@ -1136,10 +1231,12 @@ func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx 
 		if err := s.store.UpsertPinLedgerEntry(entry); err != nil {
 			return fmt.Errorf("mark stale shard-group CAR %s: %w", entry.CID, err)
 		}
-	}
-	if len(currentCARPaths) > 0 {
-		if err := storage.RemoveStaleShardGroupCARFiles(carOutputDir, currentCARPaths...); err != nil {
-			return fmt.Errorf("remove stale shard-group CAR files: %w", err)
+		// A bundle staged before bundles were kept in kubo only.
+		if len(entry.ByteHash) >= 16 {
+			stale := filepath.Join(carOutputDir, "shard-group-"+entry.ByteHash[:16]+".car")
+			if err := os.Remove(stale); err != nil && !os.IsNotExist(err) {
+				log.Warnf("remove stale shard-group CAR %s: %v", stale, err)
+			}
 		}
 	}
 	return nil

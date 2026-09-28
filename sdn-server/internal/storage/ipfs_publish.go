@@ -325,6 +325,79 @@ func UnpinIPFSCID(ctx context.Context, ipfsAPIURL, cidValue string) error {
 	return fmt.Errorf("IPFS pin/rm failed with status %d: %s", resp.StatusCode, message)
 }
 
+// PublishIPNSName publishes path (e.g. /ipfs/<cid>) under a Kubo key through
+// the Kubo RPC name/publish command and returns the IPNS name and the value
+// Kubo recorded. The record is published even when Kubo is offline
+// (allow-offline): it is stored locally and re-provided when Kubo is online.
+// Zero lifetime/ttl leave Kubo's defaults.
+func PublishIPNSName(ctx context.Context, ipfsAPIURL, key, path string, lifetime, ttl time.Duration) (string, string, error) {
+	key = strings.TrimSpace(key)
+	path = strings.TrimSpace(path)
+	if strings.TrimSpace(ipfsAPIURL) == "" {
+		return "", "", fmt.Errorf("ipfs api url is required")
+	}
+	if key == "" {
+		return "", "", fmt.Errorf("ipns key is required")
+	}
+	if !strings.HasPrefix(path, "/ipfs/") {
+		return "", "", fmt.Errorf("ipns value must be an /ipfs/ path, got %q", path)
+	}
+	if _, err := cid.Decode(strings.TrimPrefix(path, "/ipfs/")); err != nil {
+		return "", "", fmt.Errorf("ipns value: %w", err)
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(ipfsAPIURL, "/"), "/api/v0/name/publish")
+	if err != nil {
+		return "", "", fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return "", "", fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := reqURL.Query()
+	query.Set("arg", path)
+	query.Set("key", key)
+	query.Set("resolve", "false")
+	query.Set("allow-offline", "true")
+	if lifetime > 0 {
+		query.Set("lifetime", lifetime.String())
+	}
+	if ttl > 0 {
+		query.Set("ttl", ttl.String())
+	}
+	reqURL.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return "", "", fmt.Errorf("create IPFS name/publish request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("post IPFS name/publish: %w", err)
+	}
+	defer resp.Body.Close()
+	body, truncated, err := readBoundedKuboBody(resp.Body, maxKuboCommandErrorBodyBytes)
+	if err != nil {
+		return "", "", fmt.Errorf("read IPFS name/publish response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if truncated {
+			message += " [truncated]"
+		}
+		return "", "", fmt.Errorf("IPFS name/publish failed with status %d: %s", resp.StatusCode, message)
+	}
+	var result struct {
+		Name  string `json:"Name"`
+		Value string `json:"Value"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", "", fmt.Errorf("decode IPFS name/publish response: %w", err)
+	}
+	if strings.TrimSpace(result.Name) == "" {
+		return "", "", fmt.Errorf("IPFS name/publish response names no IPNS name")
+	}
+	return strings.TrimSpace(result.Name), strings.TrimSpace(result.Value), nil
+}
+
 // RemoveStaleShardGroupCARFiles removes local CAR bundle files in outputDir
 // except for keepPaths. Kubo pins are managed separately.
 func RemoveStaleShardGroupCARFiles(outputDir string, keepPaths ...string) error {

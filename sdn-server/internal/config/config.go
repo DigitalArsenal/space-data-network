@@ -806,6 +806,126 @@ type PublishingConfig struct {
 	// is never permission to republish somebody else's data — which matters
 	// most for share-alike sources (SatNOGS DB is CC-BY-SA-4.0).
 	AutoPublish []AutoPublishLane `yaml:"auto_publish,omitempty"`
+
+	// Retention bounds what this node keeps of its OWN dataset publications
+	// (graph: sdn-publication-hygiene-20260928). A series is one complete
+	// publication of a lane (schema, provider, source): the shard, index and
+	// DPM of every window plus the shard-group CAR bundles over them. The
+	// newest keep_series series of each lane stay pinned and advertised. An
+	// older series is SUPERSEDED — unpinned from kubo (its GC then reclaims it
+	// under Datastore.StorageMax), no longer advertised, its shard/index/DPM
+	// files removed — when a newer series of the same batch scope re-described
+	// it, when the store no longer holds its batch, or, for a lane declared
+	// snapshot_batches, whenever it is older than the newest keep_series.
+	// Pins no advertised series names at all (windows a later publication
+	// overwrote) are always released. CAR bundles are kept in kubo only — the
+	// staging .car file is removed once kubo has pinned it.
+	//
+	// Before this existed every publication stayed pinned forever: host-02's
+	// kubo held 45 GB against a 10 GB StorageMax.
+	//
+	// This is the producer side of the subscription retention rule
+	// (subscriptions.default_retention, owner 2026-09-04): keep_series 0 is
+	// the producer's archive-all and retires nothing. What subscribers keep of
+	// what they receive is theirs, and pins of other providers' publications
+	// or of the archive plane are never touched.
+	Retention PublicationRetentionConfig `yaml:"retention,omitempty"`
+
+	// IPNSPointers publishes, after each successful dataset series of a
+	// matching lane, an IPNS record naming the series' current DPM
+	// (/ipfs/<manifest CID>) through the Kubo RPC name/publish call. OFF
+	// unless configured; each entry names the Kubo key to publish under.
+	//
+	//   publishing:
+	//     ipns_pointers:
+	//       - schema: OMM.fbs
+	//         source_name: celestrak-gp
+	//         key: self
+	IPNSPointers []IPNSPointerConfig `yaml:"ipns_pointers,omitempty"`
+}
+
+// DefaultPublicationRetentionKeepSeries keeps the current series and the one
+// before it, which a consumer still mid-sync may be reading.
+const DefaultPublicationRetentionKeepSeries = 2
+
+// PublicationRetentionConfig is publishing.retention.
+type PublicationRetentionConfig struct {
+	// KeepSeries is how many series per lane stay pinned. 0 keeps every
+	// series (archive-all). Default DefaultPublicationRetentionKeepSeries.
+	KeepSeries int `yaml:"keep_series"`
+
+	// Lanes override KeepSeries for matching lanes (first match wins).
+	Lanes []PublicationRetentionLane `yaml:"lanes,omitempty"`
+}
+
+// PublicationRetentionLane overrides retention for one lane. Schema is
+// required; ProviderID/SourceName narrow it (empty = any).
+type PublicationRetentionLane struct {
+	Schema     string `yaml:"schema"`
+	ProviderID string `yaml:"provider_id,omitempty"`
+	SourceName string `yaml:"source_name,omitempty"`
+	KeepSeries int    `yaml:"keep_series"`
+	// SnapshotBatches declares each batch of the lane a complete snapshot of
+	// it (a CelesTrak GP pull, a daily SatNOGS DB pull, an IQEngine metadata
+	// index), so a series older than the newest keep_series is superseded
+	// even while the store keeps that batch's records. Never set it on a lane
+	// whose batches are PARTS of one dataset (the cellular chunk lane): each
+	// part is published once and must stay published.
+	SnapshotBatches bool `yaml:"snapshot_batches,omitempty"`
+}
+
+// PolicyFor resolves one lane's retention: the series count and whether its
+// batches are snapshots. Schema matching accepts the standard code ("OMM")
+// or the schema file ("OMM.fbs"); provider/source match case-insensitively.
+func (c PublicationRetentionConfig) PolicyFor(schema, providerID, sourceName string) (keepSeries int, snapshotBatches bool) {
+	for _, lane := range c.Lanes {
+		if !PublishingLaneMatches(lane.Schema, lane.ProviderID, lane.SourceName, schema, providerID, sourceName) {
+			continue
+		}
+		return lane.KeepSeries, lane.SnapshotBatches
+	}
+	return c.KeepSeries, false
+}
+
+// IPNSPointerConfig is one publishing.ipns_pointers entry.
+type IPNSPointerConfig struct {
+	// Schema is required, e.g. "OMM.fbs".
+	Schema string `yaml:"schema"`
+	// ProviderID / SourceName narrow the lane (empty = any).
+	ProviderID string `yaml:"provider_id,omitempty"`
+	SourceName string `yaml:"source_name,omitempty"`
+	// Key is the Kubo key name to publish under ("self" = the Kubo node's
+	// own key). Required.
+	Key string `yaml:"key"`
+	// Lifetime and TTL are passed to name/publish when set (Kubo's defaults
+	// otherwise).
+	Lifetime time.Duration `yaml:"lifetime,omitempty"`
+	TTL      time.Duration `yaml:"ttl,omitempty"`
+}
+
+// PublishingLaneMatches reports whether a configured (schema, provider,
+// source) filter matches a publication lane. The configured schema may be the
+// standard code or the schema file; empty provider/source match any.
+func PublishingLaneMatches(wantSchema, wantProvider, wantSource, schema, providerID, sourceName string) bool {
+	if normalizePublishingSchema(wantSchema) == "" || normalizePublishingSchema(wantSchema) != normalizePublishingSchema(schema) {
+		return false
+	}
+	if want := strings.TrimSpace(wantProvider); want != "" && !strings.EqualFold(want, strings.TrimSpace(providerID)) {
+		return false
+	}
+	if want := strings.TrimSpace(wantSource); want != "" && !strings.EqualFold(want, strings.TrimSpace(sourceName)) {
+		return false
+	}
+	return true
+}
+
+func normalizePublishingSchema(schema string) string {
+	schema = strings.TrimSpace(schema)
+	if schema == "" {
+		return ""
+	}
+	upper := strings.ToUpper(schema)
+	return strings.TrimSuffix(upper, ".FBS")
 }
 
 // AutoPublishLane is one ingest lane whose batches are republished as dataset
@@ -1926,6 +2046,9 @@ func Default() *Config {
 			MaxRecordBytes:    10 * 1024 * 1024,  // 10MB
 			DefaultQuotaBytes: 100 * 1024 * 1024, // 100MB
 			MinTrustLevel:     "standard",
+			Retention: PublicationRetentionConfig{
+				KeepSeries: DefaultPublicationRetentionKeepSeries,
+			},
 		},
 		Subscriptions: SubscriptionsConfig{
 			// Owner ruling 2026-09-04: a subscription replaces the current
@@ -2093,6 +2216,28 @@ func (c *Config) validate() error {
 	case SubscriptionRetentionReplaceCurrent, SubscriptionRetentionArchiveAll:
 	default:
 		return fmt.Errorf("subscriptions.default_retention must be replace-current or archive-all")
+	}
+	if c.Publishing.Retention.KeepSeries < 0 {
+		return fmt.Errorf("publishing.retention.keep_series must not be negative (0 keeps every series)")
+	}
+	for i, lane := range c.Publishing.Retention.Lanes {
+		if strings.TrimSpace(lane.Schema) == "" {
+			return fmt.Errorf("publishing.retention.lanes[%d].schema is required", i)
+		}
+		if lane.KeepSeries < 0 {
+			return fmt.Errorf("publishing.retention.lanes[%d].keep_series must not be negative", i)
+		}
+	}
+	for i, pointer := range c.Publishing.IPNSPointers {
+		if strings.TrimSpace(pointer.Schema) == "" {
+			return fmt.Errorf("publishing.ipns_pointers[%d].schema is required", i)
+		}
+		if strings.TrimSpace(pointer.Key) == "" {
+			return fmt.Errorf("publishing.ipns_pointers[%d].key is required (e.g. self)", i)
+		}
+		if pointer.Lifetime < 0 || pointer.TTL < 0 {
+			return fmt.Errorf("publishing.ipns_pointers[%d] lifetime/ttl must not be negative", i)
+		}
 	}
 	if c.AssetPins.MaxUploadBytes < 0 {
 		return fmt.Errorf("asset_pins.max_upload_bytes must not be negative")

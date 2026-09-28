@@ -65,6 +65,14 @@ type IngestedBatch struct {
 	Inserted   int
 }
 
+// DatasetPublicationChangeDetector is implemented by a publication service
+// that remembers what each lane last exported. An unchanged set is never
+// republished (graph: sdn-publication-hygiene-20260928 — host-02 republished
+// its whole IQC lane on every restart).
+type DatasetPublicationChangeDetector interface {
+	DatasetPublicationUnchanged(ctx context.Context, req DatasetPublicationRequest) (bool, error)
+}
+
 // AutoPublisher republishes configured ingest lanes as dataset publications.
 type AutoPublisher struct {
 	service DatasetPublicationService
@@ -102,7 +110,7 @@ type AutoPublisher struct {
 	// The daemon uses autoPublishRetryBackoff; tests shorten it.
 	retryBackoff func(attempt int) time.Duration
 	// counters are the operator-visible outcome tallies (Stats).
-	published, retrying, failed int64
+	published, retrying, failed, unchanged int64
 }
 
 // AutoPublishStats are the outcome tallies since start: publications that
@@ -112,6 +120,9 @@ type AutoPublishStats struct {
 	Published int64
 	Retrying  int64
 	Failed    int64
+	// Unchanged counts publications skipped because the lane's set is
+	// exactly what its last publication exported.
+	Unchanged int64
 }
 
 // autoPublishMaxAttempts bounds retries of one batch. With the default
@@ -185,7 +196,23 @@ func (p *AutoPublisher) Stats() AutoPublishStats {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return AutoPublishStats{Published: p.published, Retrying: p.retrying, Failed: p.failed}
+	return AutoPublishStats{Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
+}
+
+// unchangedSinceLastPublication asks the service whether req's set is the one
+// its lane last published. An error or a service without change detection
+// publishes (the safe direction).
+func (p *AutoPublisher) unchangedSinceLastPublication(ctx context.Context, req DatasetPublicationRequest) bool {
+	detector, ok := p.service.(DatasetPublicationChangeDetector)
+	if !ok {
+		return false
+	}
+	unchanged, err := detector.DatasetPublicationUnchanged(ctx, req)
+	if err != nil {
+		log.Warnf("auto-publish %s %s/%s: change check failed, publishing: %v", req.Schema, req.ProviderID, req.SourceName, err)
+		return false
+	}
+	return unchanged
 }
 
 // Lanes reports the configured lanes (diagnostics; never mutated).
@@ -270,8 +297,20 @@ func (p *AutoPublisher) publish(ctx context.Context, req DatasetPublicationReque
 	runCtx, cancel := context.WithTimeout(ctx, autoPublishTimeout)
 	defer cancel()
 
-	result, err := p.service.PublishDatasetUpdate(runCtx, req)
 	batchKey := autoPublishBatchKey(req)
+	if p.unchangedSinceLastPublication(runCtx, req) {
+		p.mu.Lock()
+		p.unchanged++
+		delete(p.attempts, batchKey)
+		p.mu.Unlock()
+		log.Infof("auto-publish %s %s/%s batch %s: the set is unchanged since its last publication; nothing to publish",
+			req.Schema, req.ProviderID, req.SourceName, req.BatchID)
+		if p.onPublished != nil {
+			p.onPublished(req, nil, nil)
+		}
+		return
+	}
+	result, err := p.service.PublishDatasetUpdate(runCtx, req)
 	if err != nil {
 		// A failed publication is an operational fact: the batch is stored and
 		// the network cannot see it. Most failures are transient (the catalog
