@@ -932,6 +932,37 @@ func (d *Database) MarkDeleted(tableName string, sequence uint64) error {
 	return nil
 }
 
+// MarkDeletedMany tombstones many records of one table (sequences as in
+// MarkDeleted) in ONE dispatch to the engine's exec thread: the table name is
+// copied into the guest once and each tombstone is one guest call, with no
+// per-record thread handoff. MarkDeleted per record is what made a hot-window
+// eviction of 778,170 rows hold the store write lock for 220 s (stress
+// campaign 2026-09-27). The same caution applies: the table must be registered.
+// A failure part-way leaves the sequences before it tombstoned.
+func (d *Database) MarkDeletedMany(tableName string, sequences []uint64) error {
+	if len(sequences) == 0 {
+		return nil
+	}
+	if err := d.rt.checkUsable("mark deleted batch"); err != nil {
+		return err
+	}
+	d.rt.mod.Lock()
+	defer d.rt.mod.Unlock()
+	return d.rt.mod.RunOnExecThread(context.Background(), func(inv wasmrt.GuestCaller) error {
+		tblPtr, err := d.rt.allocCStringVia(inv, tableName)
+		if err != nil {
+			return err
+		}
+		defer d.rt.freeVia(inv, tblPtr)
+		for _, seq := range sequences {
+			if _, err := inv.Execute("flatsql_mark_deleted", int32(d.handle), int32(tblPtr), float64(seq)); err != nil {
+				return fmt.Errorf("flatsqlrt: flatsql_mark_deleted: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
 // DeletedCount reports how many records are tombstoned in a table (0 for
 // unknown tables — the engine treats that case as empty, not an error).
 func (d *Database) DeletedCount(tableName string) (int64, error) {

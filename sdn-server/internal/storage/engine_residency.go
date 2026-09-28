@@ -31,6 +31,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +59,101 @@ const (
 	// engineTombstoneChunk bounds one IN (...) list against sdn_engine_rows.
 	engineTombstoneChunk = 500
 )
+
+// ==================== The engine arena byte budget ====================
+//
+// THE ARENA HAS A WALL, AND THE WINDOW'S RECORD COUNTS NEVER BOUNDED IT. The
+// engine appends every ingested record to ONE in-memory vector that doubles in
+// place (flatsql cpp/src/storage.cpp ensureCapacity) and never gives bytes
+// back: evicted, deleted and superseded rows stay until the arena is
+// discarded. Inside the 4 GiB wasm32 memory, doubling past ~1 GiB of records
+// traps (`flatsql_ingest_one_with_source: unreachable`) and poisons the
+// engine — reproduced at host-02 shape at c0 (357,321 records) and during
+// population at a 1,073,608,552-byte arena (stress campaign 2026-09-27).
+//
+// So the node bounds the BYTES it puts there, measured rather than estimated:
+// engineArenaBytes starts from the engine's own flushed high-water mark
+// (FlushedOffset) at open, adds each ingest's frames (size prefix + payload,
+// exactly what the arena appends), and is re-read from the engine at every
+// flush. Below the budget the node mirrors as before; at the budget it stops
+// mirroring (the control tables keep every record; the hot window is a
+// cache) and says so, and hydration stops filling. A boot whose persisted
+// arena is past the compaction mark and mostly dead discards it and refills
+// the window (openControlEngine), which is the only way the engine shrinks.
+//
+// 512 MiB keeps the vector's largest doubling at 1 GiB (1.5 GiB transient)
+// with the SQLite page cache and the per-record index beside it; host-02's
+// whole hot window at the default windows is ~150 MB.
+const (
+	engineArenaBudgetEnv  = "SDN_FLATSQL_ENGINE_ARENA_MIB"
+	engineArenaCompactEnv = "SDN_FLATSQL_ENGINE_ARENA_COMPACT_MIB"
+)
+
+var (
+	engineArenaBudgetBytes  = resolveEngineArenaMiB(engineArenaBudgetEnv, 512)
+	engineArenaCompactBytes = resolveEngineArenaMiB(engineArenaCompactEnv, 256)
+)
+
+// Budget refusals are reported once per minute with their running total.
+var engineArenaFullWarnings = rate.NewLimiter(rate.Every(time.Minute), 1)
+
+func resolveEngineArenaMiB(env string, def int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(env))
+	if raw == "" {
+		return def << 20
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		log.Warnf("[storage] ignoring %s=%q; using %d MiB", env, raw, def)
+		return def << 20
+	}
+	return n << 20
+}
+
+// engineArenaFrameBytes is what the arena appends for these payloads.
+func engineArenaFrameBytes(payloads [][]byte) int64 {
+	var n int64
+	for _, p := range payloads {
+		n += int64(len(p)) + 4
+	}
+	return n
+}
+
+// EngineArenaBytes reports the engine record arena's size as the store
+// measures it, and the budget it is held under.
+func (s *FlatSQLStore) EngineArenaBytes() (bytes, budget int64) {
+	return s.engineArenaBytes.Load(), engineArenaBudgetBytes
+}
+
+// engineArenaRoomFor reports whether n more arena bytes fit the budget, and
+// counts (and, rate-limited, reports) a refusal.
+func (s *FlatSQLStore) engineArenaRoomFor(schemaName string, n int64) bool {
+	have := s.engineArenaBytes.Load()
+	if have+n <= engineArenaBudgetBytes {
+		return true
+	}
+	refused := s.engineArenaRefused.Add(n)
+	if engineArenaFullWarnings.Allow() {
+		log.Warnf("FlatSQL engine: record arena at %d MiB of its %d MiB budget — not mirroring %d more bytes of %s into the hot window (%d MiB refused so far). The control tables hold every record; the next boot compacts the arena when it is mostly dead.",
+			have>>20, engineArenaBudgetBytes>>20, n, schemaName, refused>>20)
+	}
+	return false
+}
+
+// syncEngineArenaBytesLocked re-reads the arena's size from the engine: its
+// flushed high-water mark, which a flush makes the whole arena. Caller holds
+// the store write lock (or owns the store exclusively).
+func (s *FlatSQLStore) syncEngineArenaBytesLocked() {
+	if s.engineDB == nil {
+		s.engineArenaBytes.Store(0)
+		return
+	}
+	off, err := s.engineDB.FlushedOffset()
+	if err != nil {
+		return
+	}
+	s.engineArenaBytes.Store(off)
+}
 
 // engineIngest is one committed record queued for the engine mirror.
 type engineIngest struct {
@@ -106,7 +203,7 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 	inTxn := false
 	if join == nil {
 		exec = s.db
-		if s.db != nil {
+		if s.closedErr() == nil {
 			if _, err := s.db.Exec("BEGIN"); err == nil {
 				inTxn = true
 			}
@@ -160,7 +257,18 @@ func (s *FlatSQLStore) ingestEngineBatchLocked(schemaName, source string, payloa
 	// records before the failing one in the arena, exactly as the loop did, and
 	// the transaction below rolls back the ledger so the boot reconcile removes
 	// them.
+	frameBytes := engineArenaFrameBytes(payloads)
+	if !s.engineArenaRoomFor(schemaName, frameBytes) {
+		if inTxn {
+			_, _ = s.db.Exec("ROLLBACK")
+		}
+		return 0, nil, nil
+	}
 	seqs, err := s.engineDB.IngestManyWithSource(payloads, source)
+	// Counted failure or not: a failed batch leaves the records before the
+	// failing one in the arena, and over-counting until the next flush
+	// re-reads the engine's own number is the safe side of a budget.
+	s.engineArenaBytes.Add(frameBytes)
 	if err != nil {
 		return fail(err)
 	}
@@ -558,9 +666,18 @@ func (s *FlatSQLStore) enginePartitionStates(table string, sources []string) (ma
 	return out, nil
 }
 
+// enginePartitionDead is the rows of one partition that the ledger does not
+// track: evicted, deleted or superseded before the last flush, resurrected by
+// a warm open because the engine does not persist tombstones.
+type enginePartitionDead struct {
+	partition string
+	seqs      []uint64
+}
+
 // reconcileEngineResidencyLocked makes the engine's persisted partitions of a
-// routed schema agree with the residency ledger after a WARM open, and
-// returns the residency rows whose records must be re-ingested.
+// routed schema agree with the residency ledger after a WARM open. It returns
+// the residency rows whose records must be re-ingested, and the rows the
+// engine resurrected that must be tombstoned again.
 //
 // The engine persisted a PREFIX of each partition's ingest sequence (its
 // flush is a prefix of the arena). So for each partition:
@@ -570,16 +687,24 @@ func (s *FlatSQLStore) enginePartitionStates(table string, sources []string) (ma
 //     records re-ingested from the control tables;
 //   - every ledger row with seq <= max IS in the engine (a prefix), so the
 //     engine's row count minus those rows is exactly the number of rows the
-//     engine holds that the ledger does not — evicted, deleted or superseded
-//     before the flush, whose tombstones the engine forgot. Only when that
-//     number is non-zero are the partition's sequences listed and the extras
-//     tombstoned.
+//     engine holds that the ledger does not. Only when that number is non-zero
+//     is the partition anti-joined against the ledger.
+//
+// THE ANTI-JOIN RUNS INSIDE THE ENGINE, AS ONE STATEMENT. The ledger lives in
+// the same database as the partitions, so the engine answers "which of my
+// rows does sdn_engine_rows not hold" itself and hands back one
+// group_concat'ed list, where this used to read every _rowid of the partition
+// back cell by cell and tombstone the extras one guest call each — minutes
+// for the dead rows a clean stop leaves (2.5M on the dev node, 3.0M in the
+// stress campaign), which is why a mostly-dead arena used to be discarded
+// rather than opened. The tombstones are applied by the caller in bounded
+// batches (applyEngineDeadRows).
 //
 // Caller holds s.mu for writing.
-func (s *FlatSQLStore) reconcileEngineResidencyLocked(schemaName string) ([]engineResidencyRow, error) {
+func (s *FlatSQLStore) reconcileEngineResidencyLocked(schemaName string) ([]engineResidencyRow, []enginePartitionDead, error) {
 	binding, routed := s.engineRoutedSchemaFor(schemaName)
 	if !routed {
-		return nil, nil
+		return nil, nil, nil
 	}
 	ledgerSchema := engineLedgerSchema(schemaName)
 	sources := make([]string, 0, len(s.engineSources))
@@ -588,82 +713,46 @@ func (s *FlatSQLStore) reconcileEngineResidencyLocked(schemaName string) ([]engi
 	}
 	states, err := s.enginePartitionStates(binding.Table, sources)
 	if err != nil {
-		return nil, fmt.Errorf("engine partition states for %s: %w", schemaName, err)
+		return nil, nil, fmt.Errorf("engine partition states for %s: %w", schemaName, err)
 	}
 	var lost []engineResidencyRow
+	var dead []enginePartitionDead
 	for _, source := range sources {
 		state := states[source]
 		// Rows the engine never flushed.
 		rows, err := s.db.Query(`SELECT cid, source, seq FROM sdn_engine_rows WHERE schema_name = ? AND source = ? AND seq > ?`,
 			ledgerSchema, source, state.maxSeq)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for rows.Next() {
 			var row engineResidencyRow
 			if err := rows.Scan(&row.cid, &row.source, &row.seq); err != nil {
 				rows.Close()
-				return nil, err
+				return nil, nil, err
 			}
 			lost = append(lost, row)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var tracked int64
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_engine_rows WHERE schema_name = ? AND source = ? AND seq <= ?`,
 			ledgerSchema, source, state.maxSeq).Scan(&tracked); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		extras := state.count - tracked
-		if extras <= 0 {
+		if state.count-tracked <= 0 {
 			continue
 		}
-		// The engine forgot these tombstones. List the partition's sequences,
-		// subtract the ledger's, and re-apply.
+		// The engine forgot these tombstones.
 		partition := enginePartition(binding.Table, source)
-		res, err := s.engineDB.Query("SELECT _rowid FROM " + quoteEngineRelation(partition))
+		seqs, err := s.engineUntrackedRows(partition, ledgerSchema, source)
 		if err != nil {
-			return nil, fmt.Errorf("list %s sequences: %w", partition, err)
+			return nil, nil, fmt.Errorf("list untracked rows of %s: %w", partition, err)
 		}
-		ledger := make(map[int64]struct{}, tracked)
-		seqRows, err := s.db.Query(`SELECT seq FROM sdn_engine_rows WHERE schema_name = ? AND source = ?`, ledgerSchema, source)
-		if err != nil {
-			return nil, err
-		}
-		for seqRows.Next() {
-			var seq int64
-			if err := seqRows.Scan(&seq); err != nil {
-				seqRows.Close()
-				return nil, err
-			}
-			ledger[seq] = struct{}{}
-		}
-		seqRows.Close()
-		tombstoned := 0
-		for _, row := range res.Rows {
-			if len(row) != 1 {
-				continue
-			}
-			seq, ok := row[0].(int64)
-			if !ok {
-				continue
-			}
-			if _, tracked := ledger[seq]; tracked {
-				continue
-			}
-			if err := s.engineDB.MarkDeleted(partition, uint64(seq)); err != nil {
-				log.Warnf("FlatSQL engine: re-apply tombstone %s seq %d: %v", partition, seq, err)
-				if s.engine.Poisoned() {
-					return nil, fmt.Errorf("FlatSQL engine poisoned re-applying tombstones: %w", err)
-				}
-				continue
-			}
-			tombstoned++
-		}
-		if tombstoned > 0 {
-			log.Infof("FlatSQL engine records: %s — re-applied %d tombstone(s) the engine did not persist", partition, tombstoned)
+		if len(seqs) > 0 {
+			dead = append(dead, enginePartitionDead{partition: partition, seqs: seqs})
 		}
 	}
 	if len(lost) > 0 {
@@ -679,11 +768,96 @@ func (s *FlatSQLStore) reconcileEngineResidencyLocked(schemaName string) ([]engi
 			}
 			if _, err := s.db.Exec(fmt.Sprintf(`DELETE FROM sdn_engine_rows WHERE schema_name = ? AND cid IN (%s)`,
 				strings.TrimSuffix(strings.Repeat("?, ", end-start), ", ")), args...); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
-	return lost, nil
+	return lost, dead, nil
+}
+
+// engineUntrackedRows lists the rows of one partition the residency ledger
+// does not hold, computed by the engine in one statement (see
+// reconcileEngineResidencyLocked).
+func (s *FlatSQLStore) engineUntrackedRows(partition, ledgerSchema, source string) ([]uint64, error) {
+	res, err := s.engineDB.Query(`SELECT group_concat(rid) FROM (
+		SELECT p._rowid AS rid FROM `+quoteEngineRelation(partition)+` p
+		WHERE NOT EXISTS (SELECT 1 FROM sdn_engine_rows e
+			WHERE e.schema_name = ?1 AND e.source = ?2 AND e.seq = p._rowid))`, ledgerSchema, source)
+	if err != nil {
+		return nil, err
+	}
+	if len(res.Rows) != 1 || len(res.Rows[0]) != 1 || res.Rows[0][0] == nil {
+		return nil, nil
+	}
+	list, ok := res.Rows[0][0].(string)
+	if !ok {
+		return nil, fmt.Errorf("group_concat returned %T", res.Rows[0][0])
+	}
+	return parseEngineRowIDList(list)
+}
+
+// parseEngineRowIDList parses a group_concat'ed list of row ids.
+func parseEngineRowIDList(list string) ([]uint64, error) {
+	if strings.TrimSpace(list) == "" {
+		return nil, nil
+	}
+	out := make([]uint64, 0, strings.Count(list, ",")+1)
+	for len(list) > 0 {
+		cut := strings.IndexByte(list, ',')
+		field := list
+		if cut >= 0 {
+			field, list = list[:cut], list[cut+1:]
+		} else {
+			list = ""
+		}
+		v, err := strconv.ParseUint(strings.TrimSpace(field), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("row id %q: %w", field, err)
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// engineDeadRowBatch bounds the tombstones applied under one lock hold while a
+// warm open re-applies the ones the engine forgot. A var so a test can shrink
+// it.
+var engineDeadRowBatch = 16384
+
+// applyEngineDeadRows re-applies forgotten tombstones in bounded batches, each
+// under its own lock hold (locked), and returns how many it applied. A dead
+// row stays dead whatever lands between batches: writes only ever add rows
+// with new sequences or tombstone rows.
+func (s *FlatSQLStore) applyEngineDeadRows(schemaName string, dead []enginePartitionDead, locked engineLocker) (int, error) {
+	applied := 0
+	for _, part := range dead {
+		for start := 0; start < len(part.seqs); start += engineDeadRowBatch {
+			end := start + engineDeadRowBatch
+			if end > len(part.seqs) {
+				end = len(part.seqs)
+			}
+			chunk := part.seqs[start:end]
+			if err := locked(func() error {
+				if s.engineDB == nil {
+					return ErrStoreClosed
+				}
+				if err := s.engineDB.MarkDeletedMany(part.partition, chunk); err != nil {
+					log.Warnf("FlatSQL engine: re-apply %d tombstones to %s: %v", len(chunk), part.partition, err)
+					if s.engine.Poisoned() {
+						return fmt.Errorf("FlatSQL engine poisoned re-applying tombstones: %w", err)
+					}
+					return nil
+				}
+				applied += len(chunk)
+				return nil
+			}); err != nil {
+				return applied, err
+			}
+		}
+		log.Infof("FlatSQL engine records: %s — re-applied %d tombstone(s) the engine did not persist", part.partition, len(part.seqs))
+	}
+	_ = schemaName
+	return applied, nil
 }
 
 // engineRecordSource is a record's bytes and the engine source it belongs to.
@@ -852,6 +1026,7 @@ func (s *FlatSQLStore) ingestEngineWindowPages(schemaName string, cursor int64, 
 	total := 0
 	for {
 		pageRows, taken := 0, 0
+		refusedBefore := s.engineArenaRefused.Load()
 		if err := locked(func() error {
 			tables, err := s.recordTablesForSchema(schemaName)
 			if err != nil {
@@ -945,6 +1120,11 @@ func (s *FlatSQLStore) ingestEngineWindowPages(schemaName string, cursor int64, 
 		}); err != nil {
 			return total, err
 		}
+		if s.engineArenaRefused.Load() > refusedBefore {
+			bytes, budget := s.EngineArenaBytes()
+			log.Warnf("FlatSQL engine rebuild: stopped filling the %s hot window after %d record(s) — the record arena is at %d MiB of its %d MiB budget", schemaName, total, bytes>>20, budget>>20)
+			return total, nil
+		}
 		if pageRows < engineHotWindowPage && taken == pageRows {
 			return total, nil
 		}
@@ -1017,11 +1197,13 @@ func (s *FlatSQLStore) rebuildEngineWindowForSchema(schemaName string, locked en
 // (the records the ledger does not hold), and re-apply the window bound.
 func (s *FlatSQLStore) warmEngineSchema(schemaName string, fromRowID int64, locked engineLocker) (int, error) {
 	restored := 0
+	var dead []enginePartitionDead
 	if err := locked(func() error {
-		lost, err := s.reconcileEngineResidencyLocked(schemaName)
+		lost, forgotten, err := s.reconcileEngineResidencyLocked(schemaName)
 		if err != nil {
 			return err
 		}
+		dead = forgotten
 		if len(lost) == 0 {
 			return nil
 		}
@@ -1036,6 +1218,9 @@ func (s *FlatSQLStore) warmEngineSchema(schemaName string, fromRowID int64, lock
 		log.Infof("FlatSQL engine records: %s — re-ingested %d record(s) the engine had not flushed", schemaName, restored)
 		return nil
 	}); err != nil {
+		return restored, err
+	}
+	if _, err := s.applyEngineDeadRows(schemaName, dead, locked); err != nil {
 		return restored, err
 	}
 	notInLedger := ` AND NOT EXISTS (SELECT 1 FROM sdn_engine_rows e WHERE e.schema_name = ? AND e.cid = idx.cid)`
@@ -1084,22 +1269,27 @@ func (s *FlatSQLStore) warmEngineSchema(schemaName string, fromRowID int64, lock
 	}); err != nil {
 		return restored + tail + backfilled, err
 	}
-	err = locked(func() error {
+	if err := locked(func() error {
 		resident, err := s.engineResidencyCount(schemaName)
 		if err != nil {
 			return err
 		}
 		s.engineResidentSet(schemaName, resident)
-		s.engineSchemaLoadedSet(schemaName)
-		if err := s.enforceEngineHotWindowLocked(schemaName); err != nil {
-			return err
-		}
 		if tail > 0 || backfilled > 0 {
 			log.Infof("FlatSQL engine records: %s — ingested %d record(s) written past the coverage mark and backfilled %d into the window", schemaName, tail, backfilled)
 		}
 		return nil
+	}); err != nil {
+		return restored + tail + backfilled, err
+	}
+	// The window bound, in bounded steps with the lock released between them.
+	if _, err := s.enforceEngineHotWindowSteps(schemaName, locked); err != nil {
+		return restored + tail + backfilled, err
+	}
+	return restored + tail + backfilled, locked(func() error {
+		s.engineSchemaLoadedSet(schemaName)
+		return nil
 	})
-	return restored + tail + backfilled, err
 }
 
 // settleEngineResidencyAtOpen makes the residency ledger describe the engine
@@ -1109,6 +1299,12 @@ func (s *FlatSQLStore) warmEngineSchema(schemaName string, fromRowID int64, lock
 // hydration time — a write that lands in between is resident and tracked,
 // and the rebuild leaves it alone. Caller holds the store exclusively.
 func (s *FlatSQLStore) settleEngineResidencyAtOpen() {
+	// The arena budget starts from what the engine opened with.
+	s.syncEngineArenaBytesLocked()
+	if bytes, budget := s.EngineArenaBytes(); bytes > budget {
+		log.Warnf("FlatSQL engine: opened a %d MiB record arena, past its %d MiB budget and not mostly dead — the hot windows alone are larger than the budget; nothing more is mirrored until they shrink (%s)",
+			bytes>>20, budget>>20, engineArenaBudgetEnv)
+	}
 	if s.engineStateWarm {
 		if resident, err := s.restoreEngineResidencyFromLedger(); err != nil {
 			log.Warnf("FlatSQL engine records: residency ledger not readable at open (%v); counts are restored by the hot-window hydration", err)

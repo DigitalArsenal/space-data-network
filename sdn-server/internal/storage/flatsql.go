@@ -2,11 +2,13 @@
 package storage
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -53,6 +55,35 @@ var log = logging.Logger("storage")
 // path), so they can and do outlive the store — and every one of them already
 // handles an error return.
 var ErrStoreClosed = errors.New("datastore is closed")
+
+// closedStoreDB is what s.db points at after Close: a *sql.DB whose every
+// connection attempt answers ErrStoreClosed. Leaving s.db nil made every read
+// entry point that reaches it after Close a nil dereference — a SIGSEGV with
+// no traceback once the engine had run (the stress campaign's read-after-Close,
+// host-02's SEGV exits). With the sentinel, every statement a closed store is
+// asked to run is an error value, whichever of the package's many read paths
+// asks it.
+var closedStoreDB = sql.OpenDB(closedStoreConnector{})
+
+type closedStoreConnector struct{}
+
+func (closedStoreConnector) Connect(context.Context) (driver.Conn, error) { return nil, ErrStoreClosed }
+func (closedStoreConnector) Driver() driver.Driver                       { return closedStoreDriver{} }
+
+type closedStoreDriver struct{}
+
+func (closedStoreDriver) Open(string) (driver.Conn, error) { return nil, ErrStoreClosed }
+
+// closedErr answers ErrStoreClosed for a store that Close has torn down (or
+// never finished opening). Read entry points call it under s.mu (it reads
+// s.db, which Close replaces under the write lock) before they touch the
+// database or the engine.
+func (s *FlatSQLStore) closedErr() error {
+	if s == nil || s.closed.Load() || s.db == nil || s.db == closedStoreDB {
+		return ErrStoreClosed
+	}
+	return nil
+}
 
 // ErrEngineRebuilding is returned by the engine query paths while
 // RecoverPoisonedEngine holds the store write lock to rebuild a poisoned
@@ -126,6 +157,9 @@ type FlatSQLStore struct {
 	fullTextWorkers        sync.WaitGroup
 	fullTextClosing        bool
 	db                     *sql.DB
+	// closed is set by Close before it tears anything down; s.db then points
+	// at closedStoreDB, never nil.
+	closed                 atomic.Bool
 	engine                 *flatsqlrt.Runtime
 	engineDB               *flatsqlrt.Database
 	auxiliaryMetadata      *auxiliaryMetadataStore
@@ -241,6 +275,11 @@ type FlatSQLStore struct {
 	// checkpoint loop knows whether there is anything to persist.
 	engineMarkRowID atomic.Int64
 	engineUnflushed atomic.Int64
+	// engineArenaBytes is the engine record arena's measured size and
+	// engineArenaRefused the bytes the budget kept out of it
+	// (engine_residency.go, "The engine arena byte budget").
+	engineArenaBytes   atomic.Int64
+	engineArenaRefused atomic.Int64
 	// engineHydrateBatchHook runs before each schema of the background
 	// hot-window hydration, OUTSIDE the store lock. Tests use it to hold the
 	// pass open while proving readers interleave.
@@ -3390,6 +3429,9 @@ func (s *FlatSQLStore) Get(schemaName, cid string) ([]byte, error) {
 func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}) ([][]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.closedErr(); err != nil {
+		return nil, err
+	}
 
 	// Reads span every (producer, standard) table of the standard.
 	readSource, err := s.recordReadSource(schemaName)
@@ -3453,6 +3495,9 @@ func (s *FlatSQLStore) QueryAllBounded(schemaName string, limit int, maxTotalByt
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.closedErr(); err != nil {
+		return nil, err
+	}
 
 	readSource, err := s.recordReadSource(schemaName)
 	if err != nil {
@@ -3551,6 +3596,9 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 func (s *FlatSQLStore) Count(schemaName string) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.closedErr(); err != nil {
+		return 0, err
+	}
 
 	readSource, err := s.recordReadSource(schemaName)
 	if err != nil {
@@ -3751,8 +3799,8 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 	}
 	defer s.lockWrite("GarbageCollectToQuota")()
 	// Queued publication quota work may acquire this lock after Close.
-	if s.db == nil {
-		return 0, ErrStoreClosed
+	if err := s.closedErr(); err != nil {
+		return 0, err
 	}
 	// THE CAP IS ON-DISK BYTES. What the operator bounds is the disk; the
 	// store's file never shrinks, so a store whose file is under the cap has
@@ -3866,11 +3914,12 @@ func (s *FlatSQLStore) Close() error {
 		log.Warnf("FlatSQL store: final checkpoint failed (the next boot rebuilds the engine tail, nothing is lost): %v", err)
 	}
 
+	s.closed.Store(true)
 	var firstErr error
-	if s.db != nil {
+	if s.db != nil && s.db != closedStoreDB {
 		firstErr = s.db.Close()
-		s.db = nil
 	}
+	s.db = closedStoreDB
 	s.closePartitionSnapshot()
 	if s.auxiliaryMetadata != nil {
 		if err := s.auxiliaryMetadata.Close(); err != nil && firstErr == nil {
@@ -3905,6 +3954,9 @@ func (s *FlatSQLStore) Close() error {
 
 // Stats returns storage statistics.
 func (s *FlatSQLStore) Stats() (map[string]int64, error) {
+	if s.closed.Load() {
+		return nil, ErrStoreClosed
+	}
 	stats := make(map[string]int64)
 
 	for _, schemaName := range s.validator.Schemas() {
@@ -4387,7 +4439,7 @@ func (s *FlatSQLStore) dropCorruptLocalEPM(peerID, encrypted string, cause error
 }
 
 func (s *FlatSQLStore) applyLocalEPMDelete(record auxiliaryLocalEPMRecord) error {
-	if s.db == nil {
+	if s.closedErr() != nil {
 		return nil
 	}
 	if _, err := s.auxWrite().Exec(`DELETE FROM sdn_local_epms WHERE peer_id = ? AND encrypted_epm_bytes = ?`,
@@ -4725,6 +4777,9 @@ func (s *FlatSQLStore) unsummarizedSchemaCountLocked(schemaName, tableName strin
 func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.closedErr(); err != nil {
+		return nil, err
+	}
 
 	summary := &DataSummary{
 		Schemas: make([]DataSchemaSummary, 0),
@@ -5145,6 +5200,9 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.closedErr(); err != nil {
+		return 0, err
+	}
 	return s.countRawRecordsLocked(filter)
 }
 
@@ -5796,6 +5854,9 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.closedErr(); err != nil {
+		return nil, err
+	}
 	if err := s.checkFullTextReadyLocked(filter); err != nil {
 		return nil, err
 	}
@@ -6500,15 +6561,74 @@ func normalizeIndexedRecordWindow(filter IndexedRecordQuery) (IndexedRecordQuery
 // projected tag row. Same rows, same order; the payload read is the window's.
 // A CID several producers hold projects the first table's row (by name), where
 // the union's GROUP BY projected an arbitrary one.
+//
+// A WINDOW FILTERED BY PROVIDER OR SOURCE IS DRIVEN FROM THE TAG INDEX. With
+// the tag filter as a correlated EXISTS, the plan walked every index row of
+// the STANDARD (`SEARCH idx USING INDEX idx_sdn_record_index_time_window
+// (schema_name=?)`), probed the tag table per row and sorted the survivors in
+// a temp B-tree: an OMM page of 250 rows from one of 53 batches cost 8.6-16.3 s
+// at host-02 shape (stress campaign 2026-09-27). Now the matching CIDs come
+// from the tag index — idx_sdn_record_source_tags_batch_cid (schema, provider,
+// source, batch, cid) when the batch is named — and only those rows are looked
+// up in the index by (schema_name, cid), so a page costs the batch, not the
+// standard. The ANY-row semantics are unchanged: a CID matches when one of its
+// tag rows satisfies every requested condition, and DISTINCT keeps a CID with
+// several such rows to one window row.
 func indexedRecordWindowSQL(filter IndexedRecordQuery, tables []string, projection func(func(string) string) string) (string, []interface{}) {
 	held := recordHeldSQL(tables, "idx.cid")
-	query := `
+	providerID := strings.TrimSpace(filter.ProviderID)
+	sourceName := strings.TrimSpace(filter.SourceName)
+	batchID := strings.TrimSpace(filter.BatchID)
+	tagDriven := providerID != "" || sourceName != ""
+
+	var query string
+	var args []interface{}
+	if tagDriven {
+		// The index is named, not left to the planner: without statistics it
+		// took the (schema_name, cid) unique index for its cid order and
+		// walked every tag row of the standard. Each of these is a required
+		// startup index (initTables), so it always exists.
+		tagIndex := "idx_sdn_record_source_tags_source_cid" // (schema, provider, source, cid)
+		switch {
+		case providerID != "" && sourceName != "" && batchID != "":
+			tagIndex = "idx_sdn_record_source_tags_batch_cid" // (schema, provider, source, batch, cid)
+		case providerID == "":
+			tagIndex = "idx_sdn_record_source_tags_source_name_cid" // (schema, source, cid)
+		}
+		match := `SELECT DISTINCT ft.cid AS cid FROM sdn_record_source_tags ft INDEXED BY ` + tagIndex + ` WHERE ft.schema_name = ?`
+		args = append(args, filter.SchemaName)
+		if providerID != "" {
+			match += ` AND ft.provider_id = ?`
+			args = append(args, providerID)
+		}
+		if sourceName != "" {
+			match += ` AND ft.source_name = ?`
+			args = append(args, sourceName)
+		}
+		if batchID != "" {
+			match += ` AND ft.batch_id = ?`
+			args = append(args, batchID)
+		}
+		// CROSS JOIN pins the tag match as the outer loop: SQLite never
+		// reorders a CROSS JOIN, so the plan cannot drift back to walking the
+		// standard's index.
+		query = `
+		SELECT idx.schema_name AS schema_name, idx.cid AS cid,
+		       COALESCE(idx.epoch_unix, idx.source_timestamp) AS window_at
+		FROM (` + match + `) m
+		CROSS JOIN sdn_record_index idx
+		WHERE idx.schema_name = ? AND idx.cid = m.cid
+		  AND ` + held
+		args = append(args, filter.SchemaName)
+	} else {
+		query = `
 		SELECT idx.schema_name AS schema_name, idx.cid AS cid,
 		       COALESCE(idx.epoch_unix, idx.source_timestamp) AS window_at
 		FROM sdn_record_index idx
 		WHERE idx.schema_name = ?
 		  AND ` + held
-	args := []interface{}{filter.SchemaName}
+		args = append(args, filter.SchemaName)
+	}
 
 	if filter.Day != "" {
 		query += ` AND idx.epoch_day = ?`
@@ -6552,12 +6672,10 @@ func indexedRecordWindowSQL(filter IndexedRecordQuery, tables []string, projecti
 		query += ` AND COALESCE(idx.epoch_unix, idx.source_timestamp) <= ?`
 		args = append(args, filter.To.Unix())
 	}
-	providerID := strings.TrimSpace(filter.ProviderID)
-	sourceName := strings.TrimSpace(filter.SourceName)
-	batchID := strings.TrimSpace(filter.BatchID)
-	if providerID != "" || sourceName != "" || batchID != "" {
+	if !tagDriven && batchID != "" {
 		// ANY-row semantics: all requested tag conditions must hold on a single
-		// tag row, but not necessarily the row the projection picked.
+		// tag row, but not necessarily the row the projection picked. (A batch
+		// id alone has no index prefix to drive from.)
 		query += ` AND EXISTS (
 			SELECT 1 FROM sdn_record_source_tags ft
 			WHERE ft.schema_name = idx.schema_name AND ft.cid = idx.cid`
@@ -6730,6 +6848,9 @@ func (s *FlatSQLStore) IndexedRecordWindowLimitForBytes(filter IndexedRecordQuer
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.closedErr(); err != nil {
+		return 0, false, err
+	}
 
 	tables, err := s.recordTablesForSchema(filter.SchemaName)
 	if err != nil {
@@ -6775,6 +6896,9 @@ func (s *FlatSQLStore) IndexedRecordWindowLimitForBytes(filter IndexedRecordQuer
 func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.closedErr(); err != nil {
+		return nil, err
+	}
 
 	tables, err := s.recordTablesForSchema(filter.SchemaName)
 	if err != nil {
@@ -6832,6 +6956,9 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.closedErr(); err != nil {
+		return nil, err
+	}
 
 	// The cid predicate is inlined into EVERY union branch, not just applied to
 	// the union's result: SQLite cannot push it through the read source's
@@ -7344,8 +7471,8 @@ func (s *FlatSQLStore) PeerStorageBytes(peerID string) (int64, error) {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.db == nil {
-		return 0, ErrStoreClosed
+	if err := s.closedErr(); err != nil {
+		return 0, err
 	}
 	partitions, err := s.partitionCountsLocked()
 	if err != nil {

@@ -309,8 +309,8 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 			// are live), discarding the arena and refilling the bounded
 			// window from the tables is cheaper, and the next flush writes an
 			// arena that holds the window and nothing else.
-			if !discarded && engineState.Warm && engineArenaMostlyDead(engineDB, engineState.Records) {
-				log.Infof("FlatSQL engine record state holds %d rows but the residency ledger tracks far fewer — discarding the engine record state and rebuilding the hot window from the control tables", engineState.Records)
+			if !discarded && engineState.Warm && engineArenaNeedsCompaction(engineDB, dbPath, engineState.Records) {
+				log.Infof("FlatSQL engine record state holds %d rows in a %d MiB arena (compaction mark %d MiB) but the residency ledger tracks far fewer — discarding the engine record state and rebuilding the hot window from the control tables", engineState.Records, engineStreamSize(dbPath)>>20, engineArenaCompactBytes>>20)
 				engineDB.Destroy()
 				engine.Close()
 				discard = true
@@ -496,6 +496,25 @@ func enginePrepare(plan engineBootPlan) func(*flatsqlrt.Database) error {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir() && info.Size() > 0
+}
+
+// engineArenaNeedsCompaction decides a warm open's one way to shrink the
+// arena: discard it and refill the window from the tables. It is taken only
+// when the arena is past the compaction mark in BYTES and mostly dead.
+//
+// A small mostly-dead arena used to be discarded too, because re-applying its
+// forgotten tombstones cost one guest call per row (5 minutes of boot for
+// ~2.5M on the dev node). That made a CLEAN stop worse than a crash: after a
+// clean stop the next boot discarded 2,994,276 dead rows and rebuilt for 4-6
+// minutes, where a SIGKILLed node booted warm in a second (stress campaign
+// 2026-09-27). The reconcile now anti-joins in the engine and tombstones in
+// batches (reconcileEngineResidencyLocked), so a warm open is the cheap path
+// until the dead bytes themselves are the problem — the arena budget.
+func engineArenaNeedsCompaction(db *flatsqlrt.Database, dbPath string, engineRecords int) bool {
+	if int64(engineStreamSize(dbPath)) <= engineArenaCompactBytes {
+		return false
+	}
+	return engineArenaMostlyDead(db, engineRecords)
 }
 
 // engineArenaMostlyDead reports whether the engine's persisted rows outnumber
@@ -1203,7 +1222,7 @@ func (s *FlatSQLStore) checkpointEngine() error {
 // the next boot (engine_residency.go reconciles the duplicates away), never a
 // missing record. Requires the store write lock.
 func (s *FlatSQLStore) checkpointEngineLocked() error {
-	if !s.controlDBDurable || s.engineDB == nil || s.db == nil {
+	if !s.controlDBDurable || s.engineDB == nil || s.closedErr() != nil {
 		return nil
 	}
 	if err := s.flushEngineStateLocked(); err != nil {
@@ -1276,6 +1295,9 @@ func (s *FlatSQLStore) flushEngineStateLocked() error {
 	if err := s.engineDB.FlushIndex(); err != nil {
 		return fmt.Errorf("checkpoint: flush engine record state: %w", err)
 	}
+	// The flushed high-water mark is now the whole arena: re-read the budget's
+	// measure from the engine rather than trusting the running sum.
+	s.syncEngineArenaBytesLocked()
 	return nil
 }
 
@@ -1327,7 +1349,7 @@ func (s *FlatSQLStore) persistAuxiliaryMarkLocked(end int64, digest string) erro
 func (s *FlatSQLStore) upsertBootMarkRowsLocked(what string, rows [][2]string) error {
 	// The store may have been closed while we waited for the lock. A mark is
 	// worth nothing next to a nil-pointer dereference in a daemon.
-	if s.db == nil {
+	if s.closedErr() != nil {
 		return nil
 	}
 	now := time.Now().Unix()
