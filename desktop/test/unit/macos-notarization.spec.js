@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { execFileSync } = require('node:child_process')
 const { test, expect } = require('@playwright/test')
 const proxyquire = require('proxyquire').noCallThru()
 const { validateNotaryToolAuthorizationArgs } = require('@electron/notarize/lib/validate-args')
@@ -18,6 +19,9 @@ const SIGNING_ENV = [
 ]
 
 const DEVELOPER_ID = { CSC_LINK: '/certs/developer-id.p12' }
+// electron-builder wants a keychain identity named without its
+// "Developer ID Application:" prefix.
+const KEYCHAIN_NAME = { CSC_NAME: 'Example Org (TEAMID0000)' }
 const API_KEY = {
   APPLE_API_KEY: '/runner/temp/asc-api-key.p8',
   APPLE_API_KEY_ID: 'KEYID00000',
@@ -114,6 +118,91 @@ function packagedApp () {
   return { outDir, app, machO }
 }
 
+// electron-builder's own choice of identity, as its mac sign step makes it
+// (MacTargetHelper.findSigningIdentity, no mac.identity configured), on a Mac
+// whose keychain holds a Developer ID. Only `security find-identity` is faked.
+const KEYCHAIN_LISTING = [
+  '  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Developer ID Application: Example Org (TEAMID0000)"',
+  '     1 valid identities found'
+].join('\n')
+
+function loadElectronBuilderSigning () {
+  const exec = async (command, args) => {
+    if (command === '/usr/bin/security' && args[0] === 'find-identity') return KEYCHAIN_LISTING
+    throw new Error(`unexpected command ${command}`)
+  }
+  const macCodeSign = proxyquire('app-builder-lib/out/codeSign/macCodeSign', {
+    'builder-util': { ...require('builder-util'), exec }
+  })
+  const { MacTargetHelper } = proxyquire('app-builder-lib/out/mac/MacTargetHelper', {
+    '../codeSign/macCodeSign': macCodeSign
+  })
+  // A CSC_LINK certificate is imported into a keychain of its own first.
+  return () => new MacTargetHelper({ forceCodeSigning: false })
+    .findSigningIdentity(false, false, undefined, process.env.CSC_LINK ? '/build/csc-link.keychain' : null, {})
+}
+
+// scripts/build-local.sh, run for real from a copy of its tree: uname answers
+// Apple Silicon, staging is a no-op, and `npx electron-builder` records the
+// signing environment it is handed. signing-identity.js is the real module.
+function runBuildLocal (env) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-build-local-'))
+  try {
+    const copy = path.join(root, 'desktop')
+    const bin = path.join(root, 'bin')
+    const record = path.join(root, 'electron-builder.json')
+    for (const relative of ['scripts/build-local.sh', 'pkgs/macos/signing-identity.js']) {
+      fs.mkdirSync(path.dirname(path.join(copy, relative)), { recursive: true })
+      fs.copyFileSync(path.join(desktop, relative), path.join(copy, relative))
+    }
+    fs.writeFileSync(path.join(copy, 'package.json'), '{"version":"0.0.0-test"}\n')
+    fs.writeFileSync(path.join(copy, 'scripts', 'stage-node-bundle.mjs'), '')
+    fs.mkdirSync(path.join(copy, 'node_modules'))
+    fs.mkdirSync(bin)
+    fs.writeFileSync(path.join(bin, 'uname'), '#!/bin/sh\necho "Darwin arm64"\n', { mode: 0o755 })
+    fs.writeFileSync(path.join(bin, 'npx'), [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs")',
+      `const names = ${JSON.stringify(SIGNING_ENV)}`,
+      'const env = Object.fromEntries(names.filter((name) => name in process.env).map((name) => [name, process.env[name]]))',
+      `fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), env }))`,
+      'fs.mkdirSync("dist", { recursive: true })'
+    ].join('\n'), { mode: 0o755 })
+
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !SIGNING_ENV.includes(name)))
+    execFileSync('bash', [path.join(copy, 'scripts', 'build-local.sh'), '--node-bundle', path.join(root, 'bundle')], {
+      env: { ...inherited, ...env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return JSON.parse(fs.readFileSync(record, 'utf8'))
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+}
+
+// One local build end to end: build-local.sh hands electron-builder its
+// environment, then afterPack, electron-builder's own signing, and afterSign.
+async function localBuild (env) {
+  const { outDir } = packagedApp()
+  try {
+    const builder = runBuildLocal(env)
+    expect(builder.args).toContain('electron-builder')
+    useEnv(builder.env)
+
+    const adhoc = loadAdhocHook()
+    await adhoc.hook(hookContext('darwin', outDir))
+    const identity = await loadElectronBuilderSigning()()
+    const notarize = loadNotarizeHook()
+    const refused = await notarize.hook(hookContext('darwin', outDir)).then(() => false, () => true)
+
+    if (refused) return 'refused'
+    if (identity) return notarize.submissions.length > 0 ? 'notarized' : 'half-signed'
+    return adhoc.codesign.length > 0 ? 'ad-hoc' : 'unsigned'
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true })
+  }
+}
+
 const valueAfter = (args, flag) => {
   const at = args.indexOf(flag)
   return at === -1 ? undefined : args[at + 1]
@@ -125,9 +214,11 @@ test.describe('the two macOS signing hooks', () => {
     { name: 'CI with no certificate secret', env: { CSC_LINK: '', CSC_KEY_PASSWORD: '', CSC_IDENTITY_AUTO_DISCOVERY: 'false' }, identity: false },
     { name: 'CI with the certificate secret', env: { ...DEVELOPER_ID, CSC_KEY_PASSWORD: 'p12-placeholder', CSC_IDENTITY_AUTO_DISCOVERY: 'true' }, identity: true },
     { name: 'a certificate file', env: DEVELOPER_ID, identity: true },
-    { name: 'a keychain identity name', env: { CSC_NAME: 'Developer ID Application: Example (TEAMID0000)' }, identity: true },
+    { name: 'a keychain identity name', env: KEYCHAIN_NAME, identity: true },
     { name: 'a team id and no certificate', env: { APPLE_TEAM_ID: 'TEAMID0000' }, identity: false },
-    { name: 'a certificate with signing switched off', env: { ...DEVELOPER_ID, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }, identity: false }
+    { name: 'a certificate with discovery switched off', env: { ...DEVELOPER_ID, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }, identity: false },
+    // electron-builder looks a named identity up with or without discovery.
+    { name: 'a keychain identity name with discovery switched off', env: { ...KEYCHAIN_NAME, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }, identity: true }
   ]
 
   test('the ad-hoc hook and the notarization hook agree in every state', async () => {
@@ -270,6 +361,28 @@ test.describe('ad-hoc signing (afterPack)', () => {
       ]))
     } finally {
       fs.rmSync(outDir, { recursive: true, force: true })
+    }
+  })
+})
+
+test.describe('local builds (scripts/build-local.sh)', () => {
+  test.skip(process.platform === 'win32', 'build-local.sh is a bash script')
+
+  // Every build runs on a Mac whose keychain holds a Developer ID, so
+  // electron-builder signs with it whenever it is allowed to look.
+  const builds = [
+    { name: 'APPLE_TEAM_ID and no CSC_LINK or CSC_NAME', env: { APPLE_TEAM_ID: APPLE_ID.APPLE_TEAM_ID }, outcome: 'ad-hoc' },
+    { name: 'Apple ID credentials and no CSC_LINK or CSC_NAME', env: APPLE_ID, outcome: 'ad-hoc' },
+    { name: 'nothing configured', env: {}, outcome: 'ad-hoc' },
+    { name: 'CSC_NAME and APPLE_TEAM_ID only', env: { ...KEYCHAIN_NAME, APPLE_TEAM_ID: APPLE_ID.APPLE_TEAM_ID }, outcome: 'refused' },
+    { name: 'CSC_NAME with auto-discovery off', env: { ...KEYCHAIN_NAME, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }, outcome: 'refused' },
+    { name: 'CSC_NAME and an App Store Connect key', env: { ...KEYCHAIN_NAME, ...API_KEY }, outcome: 'notarized' },
+    { name: 'CSC_LINK and an Apple ID', env: { ...DEVELOPER_ID, ...APPLE_ID }, outcome: 'notarized' }
+  ]
+
+  test('a keychain Developer ID is never shipped signed but unnotarized', async () => {
+    for (const build of builds) {
+      expect(await localBuild(build.env), build.name).toBe(build.outcome)
     }
   })
 })
