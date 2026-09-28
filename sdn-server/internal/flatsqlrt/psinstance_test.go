@@ -684,24 +684,45 @@ func TestPSRefusesAnArtifactThatWouldRunInterpreted(t *testing.T) {
 	}
 }
 
+// probeHammerSyncEvery: ps-probe.c's hammer_loop syncs after every 64th
+// write, before it checks the stop word again.
+const probeHammerSyncEvery = 64
+
 // A21 retention: an instance whose thread is stuck in the kernel cannot be
 // stopped; it is retained, and a second such instance demands a restart.
 func TestPSRetentionCap(t *testing.T) {
 	requirePatched(t)
 	psRetained.Store(0)
 	defer psRetained.Store(0)
+	// stuck returns once the hammer thread is inside a stalled sync, or
+	// committed to one, that began after the fault was armed. Syncs count on
+	// return, so waiting for Syncs > 0 returned when the first stalled sync
+	// ended, and Stop then met the thread in its next 64 writes, where it saw
+	// the stop word and left cleanly.
 	stuck := func() *PSInstance {
 		p := openProbe(t, probeConfig{Mode: probeHammer, Threads: 1, Files: 1, Marker: 0x22, Prefix: "s/"},
 			probeOpts{stop: 100 * time.Millisecond})
-		p.HostIO().SetFault(2, 3*time.Second) // every sync stalls 3 s in "the kernel"
-		deadline := time.Now().Add(5 * time.Second)
-		for p.HostIO().Stats().Syncs == 0 {
+		hio := p.HostIO()
+		hio.SetFault(2, 3*time.Second) // every sync from now on stalls 3 s in "the kernel"
+		armed := hio.Stats().Writes
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			// Stats reads writes before syncs. The write that ends a batch
+			// of 64 completed after the fault was armed, and the batch's sync
+			// has not returned: the thread is between that write and the end
+			// of a sync that sees the fault, with no stop check in between.
+			st := hio.Stats()
+			if st.Errors != 0 {
+				t.Fatalf("hammer I/O errors break the write/sync cadence: %+v", st)
+			}
+			if st.Writes > armed && st.Writes%probeHammerSyncEvery == 0 && st.Syncs < st.Writes/probeHammerSyncEvery {
+				return p
+			}
 			if time.Now().After(deadline) {
-				t.Fatal("no sync issued")
+				t.Fatalf("no sync issued after the fault was armed: %+v", st)
 			}
 			time.Sleep(time.Millisecond)
 		}
-		return p
 	}
 	first := stuck()
 	if err := first.Stop(); !errors.Is(err, ErrPSRetained) {
