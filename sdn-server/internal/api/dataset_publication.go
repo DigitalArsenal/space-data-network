@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -153,15 +152,14 @@ func (h *DatasetPublicationHandler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // handleRetention plans (dry run) or applies one retention pass over a lane of
-// this node's own publications (dataset_publication_hygiene.go). Loopback
-// only, like publish.
+// this node's own publications (dataset_publication_hygiene.go). Local daemon
+// clients only, by the same rule as publish (requireDatasetUpdatesLocalClient).
 func (h *DatasetPublicationHandler) handleRetention(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !isLoopbackRemoteAddr(r.RemoteAddr) {
-		writeError(w, http.StatusForbidden, "dataset publication retention is only available to local daemon clients")
+	if !requireDatasetUpdatesLocalClient(w, r, "dataset publication retention") {
 		return
 	}
 	runner, ok := h.service.(DatasetPublicationRetentionRunner)
@@ -189,8 +187,7 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !isLoopbackRemoteAddr(r.RemoteAddr) {
-		writeError(w, http.StatusForbidden, "dataset publication is only available to local daemon clients")
+	if !requireDatasetUpdatesLocalClient(w, r, "dataset publication") {
 		return
 	}
 	if h.service == nil {
@@ -250,13 +247,21 @@ func publicDatasetPublicationStandardCode(schema string) string {
 	return strings.TrimSpace(schema)
 }
 
-func isLoopbackRemoteAddr(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
-	if err != nil {
-		host = strings.TrimSpace(remoteAddr)
+// requireDatasetUpdatesLocalClient is the ONE local-client rule of the
+// dataset-updates routes (publish and retention). The daemon's wallet wall
+// waves both through from this box (cmd/spacedatanetwork
+// isLoopbackSelfGatedAdminPath), and on a require_auth:false node nothing else
+// stands in front of them, so the handler must refuse what the wall would:
+// a caller that is not on the loopback interface, and a loopback request that
+// carries reverse-proxy headers (a proxy on this host makes every internet
+// caller arrive from 127.0.0.1). The §19 publish trigger is a flow calling
+// 127.0.0.1 directly and sends no proxy headers.
+func requireDatasetUpdatesLocalClient(w http.ResponseWriter, r *http.Request, route string) bool {
+	if err := requireLoopbackClient(r); err != nil {
+		writeError(w, http.StatusForbidden, route+" is only available to local daemon clients: "+err.Error())
+		return false
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return true
 }
 
 // ConcreteDatasetPublicationService exports local records and publishes one
