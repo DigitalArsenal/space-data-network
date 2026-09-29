@@ -17,6 +17,7 @@
 #include <wasmedge/wasmedge.h>
 
 #include "doorbell_native.h"
+#include "sigstack_native.h"
 
 #define WORDS(n) (((n) + 63) / 64)
 
@@ -131,7 +132,14 @@ void sdn_doorbell_request(sdn_doorbell *db, uint32_t i) {
   }
 }
 
-int sdn_doorbell_notify_now(sdn_doorbell *db, uint32_t addr, int32_t n) { return invoke_wake(db, addr, n); }
+int sdn_doorbell_notify_now(sdn_doorbell *db, uint32_t addr, int32_t n) {
+  // On the calling Go thread: a wake that traps (a stop is set) can leave the
+  // thread marked as on its signal stack (sigstack.go); clear it before Go
+  // code runs there again, as a synchronous call does (syncNative).
+  int rc = invoke_wake(db, addr, n);
+  sdn_signal_stack_repair();
+  return rc;
+}
 
 void sdn_doorbell_stats(sdn_doorbell *db, uint64_t *requests, uint64_t *signals, uint64_t *notifies, uint64_t *errors) {
   *requests = atomic_load(&db->requests);
