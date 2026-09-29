@@ -4,7 +4,9 @@ package storage
 // write-lock hold; 13.5 s for 256 duplicates on host-02's $OMM shape) must
 // evict EXACTLY what the old single-hold reconcile evicted, must never walk the
 // schema's tags, residency ledger or index rows inside a hold, and must let a
-// reader in between every two lock windows.
+// reader in between every two lock windows. The one intended difference: the
+// old reconcile evicted a record for its own second tag in the batch, and the
+// new one never does (TestReconcileDuplicatesNeverEvictsARecordForItsOwnSecondTag).
 
 import (
 	"errors"
@@ -653,4 +655,152 @@ func TestReconcileDuplicatesNeverWalksTheSchema(t *testing.T) {
 	}
 	sort.Strings(oldViolations)
 	t.Logf("the pre-rework reconcile's schema walks:\n  %s", strings.Join(oldViolations, "\n  "))
+}
+
+// ── a record is never its own duplicate ────────────────────────────────────
+
+// buildMultiTagFixture lays out, in lane prov-m/gp batch m1, records that
+// carry two tags of the batch (the tag key includes the producer and the
+// content key, so one CID can be tagged twice in one batch) — n objects per
+// case, each case at its own NORAD range:
+//
+//	P  tagged by peer-a and peer-b; no other record shares its key
+//	Q  tagged by peer-a under content keys key-1 and key-2; no other record
+//	W  tagged by peer-a and peer-b, both newest (3000); L older (2000)
+//	V  tagged by peer-a newest (3000) and by peer-b oldest (1000); M between (2000)
+//
+// The window ranked every tag row, so each case's second row of one CID was
+// "rn > 1" and its CID was staged as a loser: P and Q, with no duplicate at
+// all, were deleted, and W and V were deleted along with the rows they beat.
+func buildMultiTagFixture(t *testing.T, dir string, sets duplicateFixtureSets) *FlatSQLStore {
+	t.Helper()
+	s := newLockWindowStore(t, dir)
+	batch := func(producer, contentKey string) SourceTags {
+		return SourceTags{ProviderID: "prov-m", SourceName: "gp", BatchID: "m1", ProducerPeerID: producer, ContentKeyID: contentKey}
+	}
+	supersedeFixtureStore(t, s, concatRecords(sets["PA"], sets["WA"], sets["LA"], sets["VA"], sets["MA"]), "peer-a", batch("peer-a", ""))
+	supersedeFixtureStore(t, s, concatRecords(sets["PA"], sets["WA"], sets["VA"]), "peer-b", batch("peer-b", ""))
+	supersedeFixtureStore(t, s, sets["QA"], "peer-a", batch("peer-a", "key-1"))
+	supersedeFixtureStore(t, s, sets["QA"], "peer-a", batch("peer-a", "key-2"))
+
+	tables, err := s.listProducerStandardTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := func(set, producer string, createdAt int64) {
+		for _, rec := range sets[set] {
+			cid := ComputeCID(rec)
+			res, err := s.db.Exec(`UPDATE sdn_record_source_tags SET created_at = ? WHERE schema_name = 'OMM.fbs' AND cid = ? AND batch_id = 'm1' AND producer_peer_id = ?`, createdAt, cid, producer)
+			if err != nil {
+				t.Fatalf("stamp %s tag: %v", set, err)
+			}
+			if n, _ := res.RowsAffected(); n != 1 {
+				t.Fatalf("stamp %s/%s: %d tag rows, want 1", set, producer, n)
+			}
+			for _, pt := range tables {
+				if _, err := s.db.Exec(fmt.Sprintf(`UPDATE %s SET timestamp = 5000 WHERE cid = ?`, pt.TableName), cid); err != nil {
+					t.Fatalf("stamp %s record: %v", set, err)
+				}
+			}
+		}
+	}
+	stamp("WA", "peer-a", 3000)
+	stamp("WA", "peer-b", 3000)
+	stamp("LA", "peer-a", 2000)
+	stamp("VA", "peer-a", 3000)
+	stamp("VA", "peer-b", 1000)
+	stamp("MA", "peer-a", 2000)
+	for _, set := range []string{"PA", "QA", "WA", "VA"} {
+		for _, rec := range sets[set] {
+			var tags int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_source_tags WHERE schema_name = 'OMM.fbs' AND cid = ? AND batch_id = 'm1'`, ComputeCID(rec)).Scan(&tags); err != nil || tags != 2 {
+				t.Fatalf("fixture: %s record has %d tags in m1 (%v), want 2", set, tags, err)
+			}
+		}
+	}
+	return s
+}
+
+// TestReconcileDuplicatesNeverEvictsARecordForItsOwnSecondTag: a record is
+// evicted only by a DIFFERENT record that wins its key. A second tag of the
+// same CID in the batch (another producer, another content key) is not a
+// duplicate of it, and neither makes the newest record of a key lose.
+func TestReconcileDuplicatesNeverEvictsARecordForItsOwnSecondTag(t *testing.T) {
+	const n = 3
+	sets := duplicateFixtureSets{}
+	duplicateFixtureGroup(t, sets, "P", 9100, n, "A")
+	duplicateFixtureGroup(t, sets, "Q", 9200, n, "A")
+	duplicateFixtureGroup(t, sets, "W", 9300, n, "A")
+	duplicateFixtureGroup(t, sets, "L", 9300, n, "A")
+	duplicateFixtureGroup(t, sets, "V", 9400, n, "A")
+	duplicateFixtureGroup(t, sets, "M", 9400, n, "A")
+	root := t.TempDir()
+
+	// The pre-rework reconcile, and the rework as it landed in sdn b75d1e89b,
+	// both deleted every one of these records.
+	legacy := buildMultiTagFixture(t, filepath.Join(root, "old"), sets)
+	old, err := legacyReconcileSourceBatchIndexedDuplicates(legacy, "OMM.fbs", "prov-m", "gp", "m1", true)
+	if err != nil {
+		t.Fatalf("old reconcile: %v", err)
+	}
+	if old.Matched != 6*n || old.Deleted != 6*n {
+		t.Fatalf("old reconcile matched %d / deleted %d, want %d / %d: the fixture no longer reproduces the defect", old.Matched, old.Deleted, 6*n, 6*n)
+	}
+
+	s := buildMultiTagFixture(t, filepath.Join(root, "new"), sets)
+	dry, err := s.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", "prov-m", "gp", "m1", false)
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if dry.Matched != 2*n {
+		t.Errorf("dry run matched %d, want %d (the L and M rows)", dry.Matched, 2*n)
+	}
+	result, err := s.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", "prov-m", "gp", "m1", true)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if result.Matched != 2*n || result.Deleted != 2*n {
+		t.Errorf("reconcile matched %d / deleted %d, want %d / %d (L and M only)", result.Matched, result.Deleted, 2*n, 2*n)
+	}
+
+	count := func(query, cid string) int {
+		var c int
+		if err := s.db.QueryRow(query, cid).Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	for _, c := range []struct {
+		set  string
+		tags int
+		kept bool
+	}{
+		{"PA", 2, true}, {"QA", 2, true}, {"WA", 2, true}, {"VA", 2, true},
+		{"LA", 0, false}, {"MA", 0, false},
+	} {
+		for i, rec := range sets[c.set] {
+			cid := ComputeCID(rec)
+			tags := count(`SELECT COUNT(*) FROM sdn_record_source_tags WHERE schema_name = 'OMM.fbs' AND cid = ? AND batch_id = 'm1'`, cid)
+			indexed := count(`SELECT COUNT(*) FROM sdn_record_index WHERE schema_name = 'OMM.fbs' AND cid = ?`, cid)
+			resident := count(`SELECT COUNT(*) FROM sdn_engine_rows WHERE schema_name = 'OMM.fbs' AND cid = ?`, cid)
+			_, getErr := s.GetRecord("OMM.fbs", cid)
+			if tags != c.tags {
+				t.Errorf("%s[%d]: %d tags in m1, want %d", c.set, i, tags, c.tags)
+			}
+			if c.kept && (indexed != 1 || resident == 0 || getErr != nil) {
+				t.Errorf("%s[%d] was evicted (index rows %d, residency rows %d, read %v); it has no duplicate but itself", c.set, i, indexed, resident, getErr)
+			}
+			if !c.kept && (indexed != 0 || resident != 0 || getErr == nil) {
+				t.Errorf("%s[%d] survived (index rows %d, residency rows %d); a newer record holds its key", c.set, i, indexed, resident)
+			}
+		}
+	}
+
+	again, err := s.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", "prov-m", "gp", "m1", true)
+	if err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if again.Matched != 0 || again.Deleted != 0 || again.Chunks != 0 {
+		t.Errorf("second reconcile %+v, want nothing", again)
+	}
 }

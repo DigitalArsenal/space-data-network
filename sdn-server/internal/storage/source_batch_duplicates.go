@@ -6,11 +6,14 @@ package storage
 //
 // Inside ONE (provider, source, batch), records that share a logical index key
 // (norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix,
-// epoch_day) are duplicates: the reconcile keeps the newest row of each key
-// (tag created_at, then record timestamp, then CID, all descending), deletes
-// the other rows' tags from the batch, and deletes a record only when no tag
-// of the schema names its CID any more — from every (producer, standard)
-// table, the record index and the engine hot window.
+// epoch_day) are duplicates: the reconcile keeps the record of each key's
+// newest tag row (tag created_at, then record timestamp, then CID, all
+// descending), deletes the batch's tags of every OTHER record of the key, and
+// deletes a record only when no tag of the schema names its CID any more —
+// from every (producer, standard) table, the record index and the engine hot
+// window. A record is never its own duplicate: one CID can carry several tags
+// of the batch (one per producer and content key), and none of them is ever
+// evicted by another (sourceBatchDuplicateRank).
 //
 // A CALL COSTS ITS OWN BATCH, NEVER THE SCHEMA, AND NO SINGLE LOCK HOLD PAYS
 // FOR THE WHOLE BATCH. host-02, 2026-09-28/29: this call held the store write
@@ -84,10 +87,11 @@ const (
 )
 
 // ReconcileSourceBatchIndexedDuplicates removes duplicate indexed records
-// inside a single provider/source/batch. It keeps the newest source-tagged row
-// for each logical indexed key and only deletes a record row when no source tags
-// remain for that CID. Matched counts the tag rows that are not their key's
-// newest; Deleted counts the records deleted. See the file comment for how the
+// inside a single provider/source/batch. It keeps the record of each logical
+// indexed key's newest source-tagged row, with every tag that record has in the
+// batch, and only deletes a record row when no source tags remain for that CID.
+// Matched counts the tag rows of the records that lose their key to another
+// record; Deleted counts the records deleted. See the file comment for how the
 // work is split into bounded lock holds.
 func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, providerID, sourceName, batchID string, apply bool) (SourceBatchDuplicateReconcileResult, error) {
 	if apply {
@@ -192,30 +196,70 @@ func (r sourceBatchDuplicateRow) newerThan(o sourceBatchDuplicateRow) bool {
 	return r.cid > o.cid
 }
 
-// sourceBatchDuplicateRank is ROW_NUMBER() OVER (PARTITION BY <index key>
-// ORDER BY created_at DESC, timestamp DESC, cid DESC) folded one row at a
-// time: every row except each key's first in that order (rn > 1) is a loser.
-// Rows of one CID compete like any other rows, as they did in the window: a
-// CID with two tag rows in the batch has one of them ranked after the other.
+// sourceBatchDuplicateRank picks each index key's newest tag row in the order
+// ROW_NUMBER() OVER (PARTITION BY <index key> ORDER BY created_at DESC,
+// timestamp DESC, cid DESC) gives it, one row at a time. The key's winner is
+// that row's RECORD: every other CID of the key loses, with all of its tag
+// rows, and no row of the winning CID ever does.
+//
+// A RECORD IS NEVER ITS OWN DUPLICATE. The tag key includes the producer and
+// the content key, so one CID can carry two tags of one batch (two producers
+// of it, a second content key). The window ranked those rows like any other
+// two rows and staged every rn > 1 CID, so the CID of the second row was
+// "evicted": a record with no duplicate at all was deleted, and a key's
+// newest record holding two tags was deleted along with the rows it beat
+// (TestReconcileDuplicatesNeverEvictsARecordForItsOwnSecondTag; the rework in
+// sdn b75d1e89b kept the window's behaviour exactly, defect included).
 type sourceBatchDuplicateRank struct {
-	newest  map[string]sourceBatchDuplicateRow
+	keys map[string]*sourceBatchDuplicateKey
+	// rows counts each CID's tag rows in the batch. A CID has one index row
+	// (primary key schema_name, cid), so all of its rows share one key.
+	rows    map[string]int64
 	losers  []string
 	matched int64
 }
 
+// sourceBatchDuplicateKey is one index key of the batch: its newest row so
+// far and every distinct CID ranked under it, the newest's included.
+type sourceBatchDuplicateKey struct {
+	newest sourceBatchDuplicateRow
+	cids   []string
+}
+
+func newSourceBatchDuplicateRank() *sourceBatchDuplicateRank {
+	return &sourceBatchDuplicateRank{keys: map[string]*sourceBatchDuplicateKey{}, rows: map[string]int64{}}
+}
+
 func (r *sourceBatchDuplicateRank) add(key string, row sourceBatchDuplicateRow) {
-	kept, ok := r.newest[key]
+	seen := r.rows[row.cid]
+	r.rows[row.cid] = seen + 1
+	k, ok := r.keys[key]
 	if !ok {
-		r.newest[key] = row
+		r.keys[key] = &sourceBatchDuplicateKey{newest: row, cids: []string{row.cid}}
 		return
 	}
-	r.matched++
-	if row.newerThan(kept) {
-		r.newest[key] = row
-		r.losers = append(r.losers, kept.cid)
-		return
+	if seen == 0 {
+		k.cids = append(k.cids, row.cid)
 	}
-	r.losers = append(r.losers, row.cid)
+	if row.newerThan(k.newest) {
+		k.newest = row
+	}
+}
+
+// finish settles every key once the whole batch is ranked: each CID of a key
+// other than its newest row's loses, and matched counts the losing CIDs' tag
+// rows.
+func (r *sourceBatchDuplicateRank) finish() {
+	r.losers, r.matched = r.losers[:0], 0
+	for _, k := range r.keys {
+		for _, cid := range k.cids {
+			if cid == k.newest.cid {
+				continue
+			}
+			r.losers = append(r.losers, cid)
+			r.matched += r.rows[cid]
+		}
+	}
 }
 
 // loserCIDs is the distinct loser CIDs in CID order, so a chunk's seeks walk
@@ -377,7 +421,7 @@ func duplicateKeyPart(key []byte, v any) []byte {
 // tags, one read hold each. A slice is a CLOSED cid range of the batch's tag
 // index, so every tag row of a CID lands in one slice.
 func (s *FlatSQLStore) rankSourceBatchDuplicates(scope SourceBatchDuplicateReconcileResult, noteHold func(time.Duration)) (*sourceBatchDuplicateRank, error) {
-	rank := &sourceBatchDuplicateRank{newest: map[string]sourceBatchDuplicateRow{}}
+	rank := newSourceBatchDuplicateRank()
 	lane := []any{scope.SchemaName, scope.ProviderID, scope.SourceName, scope.BatchID}
 	boundarySQL := fmt.Sprintf(`
 		SELECT cid FROM sdn_record_source_tags INDEXED BY idx_sdn_record_source_tags_batch_cid
@@ -410,6 +454,7 @@ func (s *FlatSQLStore) rankSourceBatchDuplicates(scope SourceBatchDuplicateRecon
 			rank.add(row.key, row.row)
 		}
 		if bound == "" {
+			rank.finish()
 			return rank, nil
 		}
 		if bound <= after {
