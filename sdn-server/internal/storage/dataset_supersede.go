@@ -236,7 +236,7 @@ func (s *FlatSQLStore) SupersedeSourceBatches(schemaName, providerID, sourceName
 		// The whole-schema residency sweep every old chunk ran after its
 		// commit, once and in pages: it tombstones residency rows orphaned by
 		// anything, not only by this supersede.
-		if err := s.sweepOrphanedEngineRowsPaged(&result); err != nil {
+		if err := s.sweepOrphanedEngineRowsPaged("dataset supersede: engine residency sweep", result.SchemaName, result.noteHold); err != nil {
 			return result, err
 		}
 		if err := s.rebuildSupersededSummaryLanes(&result); err != nil {
@@ -382,30 +382,10 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 	}
 	out.tags, _ = tagsResult.RowsAffected()
 
-	// Orphans: staged CIDs no tag of the schema names any more. Correlated,
-	// so each staged CID is one seek on the (schema_name, cid) prefix of the
-	// tag table's primary key — never the NOT IN list of every tag.
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
-		INSERT OR IGNORE INTO temp_sdn_supersede_orphans (cid)
-		SELECT staged.cid FROM temp_sdn_supersede_cids staged
-		WHERE NOT EXISTS (
-			SELECT 1 FROM sdn_record_source_tags tags
-			WHERE tags.schema_name = ? AND tags.cid = staged.cid
-		)
-	`), scope.SchemaName); err != nil {
-		return out, fmt.Errorf("stage orphaned superseded records: %w", err)
-	}
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM temp_sdn_supersede_orphans`).Scan(&out.records); err != nil {
-		return out, fmt.Errorf("count orphaned superseded records: %w", err)
-	}
-	if out.records > 0 {
-		s.deleteRoutedMirrorsWhere(tx, tableName, `cid IN (SELECT cid FROM temp_sdn_supersede_orphans)`)
-		if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
-			DELETE FROM sdn_record_index
-			WHERE schema_name = ? AND cid IN (SELECT cid FROM temp_sdn_supersede_orphans)
-		`), scope.SchemaName); err != nil {
-			return out, fmt.Errorf("delete orphaned superseded index rows: %w", err)
-		}
+	// Orphans: staged CIDs no tag of the schema names any more.
+	if out.records, err = s.deleteStagedOrphansTx(tx, scope.SchemaName, tableName,
+		"temp_sdn_supersede_cids", "temp_sdn_supersede_orphans"); err != nil {
+		return out, fmt.Errorf("superseded records: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -413,11 +393,50 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 	}
 	committed = true
 	if out.records > 0 {
-		if _, err := s.tombstoneSupersededEngineRowsLocked(scope.SchemaName); err != nil {
+		if _, err := s.tombstoneStagedEngineRowsLocked(scope.SchemaName, "temp_sdn_supersede_orphans"); err != nil {
 			return out, err
 		}
 	}
 	return out, nil
+}
+
+// deleteStagedOrphansTx is a chunk's orphan set, computed ONCE and used by
+// every delete that needs it. It stages into the orphans table the CIDs of the
+// staged table that no tag of the schema names any more — correlated, so each
+// staged CID is one seek on the (schema_name, cid) prefix of the tag table's
+// key (the primary key's, or idx_sdn_record_source_tags_unique on a migrated
+// table), never the NOT IN list of every tag of the schema — then deletes
+// those records from every (producer, standard) table and from the record
+// index, and returns how many there were. Both tables are (cid TEXT PRIMARY
+// KEY), the orphans table empty. Runs in the caller's transaction, under the
+// store write lock; the caller tombstones the orphans' engine rows
+// (tombstoneStagedEngineRowsLocked) after its commit.
+func (s *FlatSQLStore) deleteStagedOrphansTx(tx *sql.Tx, schemaName, tableName, staged, orphans string) (int64, error) {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
+		INSERT OR IGNORE INTO `+orphans+` (cid)
+		SELECT staged.cid FROM `+staged+` staged
+		WHERE NOT EXISTS (
+			SELECT 1 FROM sdn_record_source_tags tags
+			WHERE tags.schema_name = ? AND tags.cid = staged.cid
+		)
+	`), schemaName); err != nil {
+		return 0, fmt.Errorf("stage orphans: %w", err)
+	}
+	var n int64
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM ` + orphans).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count orphans: %w", err)
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	s.deleteRoutedMirrorsWhere(tx, tableName, `cid IN (SELECT cid FROM `+orphans+`)`)
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
+		DELETE FROM sdn_record_index
+		WHERE schema_name = ? AND cid IN (SELECT cid FROM `+orphans+`)
+	`), schemaName); err != nil {
+		return n, fmt.Errorf("delete orphaned index rows: %w", err)
+	}
+	return n, nil
 }
 
 // engineOrphanPredicate is the anti-join tombstoneOrphanedEngineRowsLocked
@@ -435,10 +454,11 @@ func engineOrphanPredicate(schemaName string) (string, []any) {
 		)`, strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")), args
 }
 
-// tombstoneSupersededEngineRowsLocked is tombstoneOrphanedEngineRowsLocked
-// restricted to the chunk's orphans (temp_sdn_supersede_orphans), whose index
-// rows the chunk has just deleted. Caller holds s.mu for writing.
-func (s *FlatSQLStore) tombstoneSupersededEngineRowsLocked(schemaName string) (int, error) {
+// tombstoneStagedEngineRowsLocked is tombstoneOrphanedEngineRowsLocked
+// restricted to a chunk's orphans (the orphans table of
+// deleteStagedOrphansTx), whose index rows the chunk has just deleted. Caller
+// holds s.mu for writing.
+func (s *FlatSQLStore) tombstoneStagedEngineRowsLocked(schemaName, orphans string) (int, error) {
 	if s.engineDB == nil {
 		return 0, nil
 	}
@@ -448,7 +468,7 @@ func (s *FlatSQLStore) tombstoneSupersededEngineRowsLocked(schemaName string) (i
 	}
 	orphaned, orphanArgs := engineOrphanPredicate(schemaName)
 	return s.tombstoneEngineResidencyWhereLocked(schemaName, binding.Table,
-		`e.cid IN (SELECT cid FROM temp_sdn_supersede_orphans) AND `+orphaned, orphanArgs)
+		`e.cid IN (SELECT cid FROM `+orphans+`) AND `+orphaned, orphanArgs)
 }
 
 // tombstoneEngineResidencyWhereLocked tombstones the residency rows of
@@ -499,11 +519,11 @@ func (s *FlatSQLStore) tombstoneEngineResidencyWhereLocked(schemaName, table, wh
 }
 
 // sweepOrphanedEngineRowsPaged is tombstoneOrphanedEngineRowsLocked in pages
-// of supersedeEngineSweepPage residency rows, one store-lock hold per page.
-// The residency ledger's key is (schema_name, cid), so a page is one index
-// range and the next page starts after the last cid of this one.
-func (s *FlatSQLStore) sweepOrphanedEngineRowsPaged(scope *DatasetSupersedeResult) error {
-	schemaName := scope.SchemaName
+// of supersedeEngineSweepPage residency rows, one store-lock hold per page,
+// named site; noteHold sees every hold. The residency ledger's key is
+// (schema_name, cid), so a page is one index range and the next page starts
+// after the last cid of this one.
+func (s *FlatSQLStore) sweepOrphanedEngineRowsPaged(site, schemaName string, noteHold func(time.Duration)) error {
 	if s.engineDB == nil {
 		return nil
 	}
@@ -517,7 +537,7 @@ func (s *FlatSQLStore) sweepOrphanedEngineRowsPaged(scope *DatasetSupersedeResul
 	for {
 		last := true
 		bound := ""
-		held, err := s.holdWrite("dataset supersede: engine residency sweep", func() error {
+		held, err := s.holdWrite(site, func() error {
 			if err := s.closedErr(); err != nil {
 				return err
 			}
@@ -542,7 +562,7 @@ func (s *FlatSQLStore) sweepOrphanedEngineRowsPaged(scope *DatasetSupersedeResul
 			last = bound == ""
 			return nil
 		})
-		scope.noteHold(held)
+		noteHold(held)
 		if err != nil {
 			return err
 		}
