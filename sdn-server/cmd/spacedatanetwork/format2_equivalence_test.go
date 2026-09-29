@@ -561,3 +561,70 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 		t.Logf("A18 %s: %d records, the same frames", rel, a.FrameCount)
 	}
 }
+
+// A6 through store-migrate: the legacy full-text index moves to its own file
+// (fts.flatsqldb) keyed by the legacy rowid, which is each record's gseq, so
+// format 2 searches it at once — the feed resumes from the migrated progress
+// instead of re-indexing — and every search answers as format 1 did.
+func TestFormat2SearchesTheMigratedFullTextIndex(t *testing.T) {
+	requirePSEngine(t)
+	if _, _, err := flatsqlrt.PrewarmPSThreadsAOT(storage.EngineAOTCacheDir()); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	buildLegacyStore(t, dir)
+	v, _ := sds.NewValidator(nil)
+	legacy, err := storage.NewFlatSQLStore(dir, v, storage.WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitSearch := func(s *storage.FlatSQLStore) {
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			err := s.CheckFullTextSearch("CAT.fbs", "sat")
+			if err == nil {
+				return
+			}
+			if !strings.Contains(err.Error(), "building") || time.Now().After(deadline) {
+				t.Fatalf("search index: %v", err)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	waitSearch(legacy)
+	want := map[string]int64{}
+	for _, q := range []string{"sat", "renamed", "sat 7"} {
+		n, err := legacy.CountRawRecords(storage.RawRecordQuery{SchemaName: "CAT.fbs", Search: q})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[q] = n
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := migrateStore(context.Background(), migrateOptions{Store: dir, AOTCacheDir: migrateTestAOTDir(t), CompileOnMiss: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fmt.Sprint(rep.Extra["control_copy"]), " FTS rows") || strings.Contains(fmt.Sprint(rep.Extra["control_copy"]), " 0 FTS rows") {
+		t.Fatalf("the control copy carried no FTS rows: %v", rep.Extra["control_copy"])
+	}
+	t.Setenv(format2.FormatEnv, "2")
+	f2, err := storage.NewFlatSQLStore(dir, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f2.Close()
+	waitSearch(f2)
+	for q, n := range want {
+		got, err := f2.CountRawRecords(storage.RawRecordQuery{SchemaName: "CAT.fbs", Search: q})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != n {
+			t.Fatalf("search %q on the migrated index: format 2 %d, format 1 %d", q, got, n)
+		}
+	}
+	t.Logf("the migrated full-text index answers %v as format 1 did (%v)", want, rep.Extra["control_copy"])
+}

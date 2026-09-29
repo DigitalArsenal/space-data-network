@@ -3,22 +3,28 @@ package storage
 // format2_daemon_fts.go — the interim full-text index on store format 2
 // (design A6, T6 scope 7), until T8 moves text search into FlatSQL.
 //
-// KEYED BY GSEQ. sdn_record_fts (FTS5) and sdn_record_fts_progress live in
-// the control instance, as store-migrate copied them. Their rowid was the
-// legacy sdn_record_index.rowid; store-migrate keeps every legacy rowid as
-// the record's gseq (flatsql 3.2.0 migrated_gseq), and gseqs come from one
-// store-global counter (A6), so a migrated index is valid as it stands and a
-// new record's text lands under its own gseq without colliding with another
-// type's.
+// ITS OWN INSTANCE AND FILE (A6). sdn_record_fts (FTS5) and
+// sdn_record_fts_progress live in fts.flatsqldb, on a legacy engine runtime
+// of their own with their own lock: the control instance holds only control
+// tables, so an identity, directory or EPM read never waits on an index
+// window. store-migrate writes the file from the legacy index.
+//
+// KEYED BY GSEQ. The legacy FTS rowid was the sdn_record_index rowid;
+// store-migrate keeps every legacy rowid as the record's gseq (flatsql 3.2.0
+// migrated_gseq), and gseqs come from one store-global counter (A6), so a
+// migrated index is valid as it stands and a new record's text lands under
+// its own gseq without colliding with another type's.
 //
 // THE FEED follows each searched type's arrivals in gseq order past its
 // progress mark (a datasync page on a reader lane), extracts the text with
-// the control instance's flatsql_record_text, and writes it in bounded
-// windows (32 records or 8 MiB of payload, one control transaction each).
-// Once it has caught up the type is "ready"; it then polls the type head
-// for new arrivals. A record that died keeps its text row until the store is
-// rebuilt: a search reads hits in gseq order and keeps only the gseqs the
-// type still holds live (A6 search paging), so a dead hit is never served.
+// the FTS instance's flatsql_record_text, and writes it in bounded windows
+// (256 records or 8 MiB of payload, one transaction each: the index is
+// derived data on its own lock, so a window amortizes its commit's fsync
+// instead of keeping a control read short). Once it has caught
+// up the type is "ready"; it then polls the type head for new arrivals. A
+// record that died keeps its text row: a search reads hits in gseq order and
+// keeps only the gseqs the type still holds live (A6 search paging), so a
+// dead hit is never served.
 
 import (
 	"context"
@@ -26,15 +32,23 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 )
+
+// format2FTSDBName is the full-text index's own database (A6).
+const format2FTSDBName = "fts.flatsqldb"
+
+// format2FTSWindow is the records one index window covers.
+const format2FTSWindow = 256
 
 // format2FTSPoll is how often a caught-up feed looks for new arrivals.
 var format2FTSPoll = 2 * time.Second
@@ -44,7 +58,72 @@ type format2FTS struct {
 	states  map[string]*f2FTSState
 	wg      sync.WaitGroup
 	closing bool
-	slot    chan struct{} // one feed extracts at a time (the control instance is one engine)
+	slot    chan struct{} // one feed extracts at a time (the FTS instance is one engine)
+
+	// The FTS instance: its runtime, database and lock (a window holds it
+	// for writing, a search for reading). Never s.mu.
+	dbMu   sync.RWMutex
+	engine *flatsqlrt.Runtime
+	edb    *flatsqlrt.Database
+	db     *sql.DB
+	path   string
+	root   string
+}
+
+// openFTSInstance opens (creating) fts.flatsqldb on a runtime of its own,
+// TRUNCATE. Caller holds f.dbMu for writing.
+func (f *format2FTS) openFTSInstanceLocked() error {
+	if err := checkDatabaseFile(f.path); err != nil {
+		return err
+	}
+	engine, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()), flatsqlrt.WithFileIORoot(f.root))
+	if err != nil {
+		return fmt.Errorf("full-text instance: %w", err)
+	}
+	edb, err := engine.OpenDatabase(engineDatabaseSchema, "sdn-fts", f.path, flatsqlrt.JournalTruncate)
+	if err != nil {
+		engine.Close()
+		return fmt.Errorf("full-text instance: open %s: %w", f.path, err)
+	}
+	if err := registerEngineFileIDs(edb, nil); err != nil {
+		edb.Destroy()
+		engine.Close()
+		return fmt.Errorf("full-text instance: %w", err)
+	}
+	f.engine, f.edb, f.db = engine, edb, flatsqldrv.Open(edb)
+	return nil
+}
+
+func (f *format2FTS) closeFTSInstanceLocked() {
+	if f.db != nil {
+		_ = f.db.Close()
+		f.db = nil
+	}
+	if f.edb != nil {
+		f.edb.Destroy()
+		f.edb = nil
+	}
+	if f.engine != nil {
+		f.engine.Close()
+		f.engine = nil
+	}
+}
+
+// ftsDB returns the FTS instance's database, reopening a poisoned runtime
+// (its own poison domain: the control instance and the partition store are
+// untouched). Caller holds f.dbMu for writing.
+func (f *format2FTS) ftsDBLocked() (*sql.DB, error) {
+	if f.engine != nil && f.engine.Poisoned() {
+		log.Warnf("format 2: the full-text instance was poisoned; reopening %s", f.path)
+		f.engine.FileIO().CloseAll()
+		f.closeFTSInstanceLocked()
+	}
+	if f.db == nil {
+		if err := f.openFTSInstanceLocked(); err != nil {
+			return nil, err
+		}
+	}
+	return f.db, nil
 }
 
 type f2FTSState struct {
@@ -58,7 +137,8 @@ type f2FTSState struct {
 }
 
 func (s *FlatSQLStore) startFormat2FTS() {
-	s.f2.fts = &format2FTS{states: map[string]*f2FTSState{}, slot: make(chan struct{}, 1)}
+	s.f2.fts = &format2FTS{states: map[string]*f2FTSState{}, slot: make(chan struct{}, 1),
+		path: filepath.Join(s.basePath, format2FTSDBName), root: s.basePath}
 }
 
 func (s *FlatSQLStore) stopFormat2FTS() {
@@ -73,6 +153,9 @@ func (s *FlatSQLStore) stopFormat2FTS() {
 		s.f2.cancel()
 	}
 	f.wg.Wait()
+	f.dbMu.Lock()
+	f.closeFTSInstanceLocked()
+	f.dbMu.Unlock()
 }
 
 // f2CheckFullTextSearch is CheckFullTextSearch on format 2: it starts the
@@ -177,12 +260,18 @@ func (s *FlatSQLStore) f2WarmFullTextIndexes() (scheduled, skipped []string, err
 }
 
 func (s *FlatSQLStore) f2InitFTS(st *f2FTSState) (int64, error) {
-	defer s.lockWrite("format2: initialize full-text index")()
+	f := s.f2.fts
+	f.dbMu.Lock()
+	defer f.dbMu.Unlock()
+	db, err := f.ftsDBLocked()
+	if err != nil {
+		return 0, err
+	}
 	for _, statement := range []string{
 		`CREATE VIRTUAL TABLE IF NOT EXISTS sdn_record_fts USING fts5(text, tokenize='unicode61 remove_diacritics 2')`,
 		`CREATE TABLE IF NOT EXISTS sdn_record_fts_progress (schema_name TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, last_rowid INTEGER NOT NULL DEFAULT 0)`,
 	} {
-		rows, err := s.db.Query(flatsqldrv.WithoutJournal(statement))
+		rows, err := db.Query(flatsqldrv.WithoutJournal(statement))
 		if err != nil {
 			return 0, err
 		}
@@ -192,14 +281,14 @@ func (s *FlatSQLStore) f2InitFTS(st *f2FTSState) (int64, error) {
 	}
 	var fingerprint string
 	var last int64
-	err := s.db.QueryRow(`SELECT fingerprint, last_rowid FROM sdn_record_fts_progress WHERE schema_name = ?`, st.schema).Scan(&fingerprint, &last)
+	err = db.QueryRow(`SELECT fingerprint, last_rowid FROM sdn_record_fts_progress WHERE schema_name = ?`, st.schema).Scan(&fingerprint, &last)
 	if err != nil && err != sql.ErrNoRows {
 		return 0, err
 	}
 	if fingerprint != st.fingerprint {
 		last = 0
 	}
-	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`INSERT INTO sdn_record_fts_progress(schema_name, fingerprint, last_rowid) VALUES(?, ?, ?)
+	if _, err := db.Exec(flatsqldrv.WithoutJournal(`INSERT INTO sdn_record_fts_progress(schema_name, fingerprint, last_rowid) VALUES(?, ?, ?)
 		ON CONFLICT(schema_name) DO UPDATE SET fingerprint = excluded.fingerprint, last_rowid = excluded.last_rowid`),
 		st.schema, st.fingerprint, last); err != nil {
 		return 0, err
@@ -265,7 +354,7 @@ func (s *FlatSQLStore) f2FTSWindow(ctx context.Context, st *f2FTSState, last int
 	case <-ctx.Done():
 		return 0, last, nil
 	}
-	recs, _, err := s.ps.SyncPage(ctx, format2.SyncQuery{Schema: st.schema, AfterGseq: last, Limit: 32})
+	recs, _, err := s.ps.SyncPage(ctx, format2.SyncQuery{Schema: st.schema, AfterGseq: last, Limit: format2FTSWindow})
 	if err != nil {
 		return 0, last, err
 	}
@@ -280,9 +369,13 @@ func (s *FlatSQLStore) f2FTSWindow(ctx context.Context, st *f2FTSState, last int
 			break
 		}
 	}
-	unlock := s.lockWrite("format2: index full-text window")
-	defer unlock()
-	tx, err := s.db.Begin()
+	f.dbMu.Lock()
+	defer f.dbMu.Unlock()
+	db, err := f.ftsDBLocked()
+	if err != nil {
+		return 0, last, err
+	}
+	tx, err := db.Begin()
 	if err != nil {
 		return 0, last, err
 	}
@@ -328,9 +421,13 @@ func (s *FlatSQLStore) f2SearchHits(match string, after, maxGseq int64, limit in
 		args = append(args, maxGseq)
 	}
 	query += fmt.Sprintf(` ORDER BY rowid LIMIT %d`, limit)
-	s.mu.RLock()
-	rows, err := s.db.Query(query, args...)
-	s.mu.RUnlock()
+	f := s.f2.fts
+	f.dbMu.RLock()
+	defer f.dbMu.RUnlock()
+	if f.db == nil {
+		return nil, ErrSearchIndexBuilding
+	}
+	rows, err := f.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}

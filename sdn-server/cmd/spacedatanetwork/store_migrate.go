@@ -1745,30 +1745,39 @@ func (m *migrator) deltaDeletes(ctx context.Context, t storage.LegacyTable) erro
 	return nil
 }
 
-// migrateControl2 is the interim control database's name (A5 step 1).
-const migrateControl2 = "control2.flatsqldb"
+// migrateControl2 is the interim control database's name (A5 step 1), and
+// migrateFTS the interim full-text index's (A6: its own instance and file).
+const (
+	migrateControl2 = "control2.flatsqldb"
+	migrateFTS      = "fts.flatsqldb"
+)
 
 func (m *migrator) copyControl() error {
 	start := time.Now()
-	st, err := m.src.CopyControl(migrateControl2)
+	st, err := m.src.CopyControl(migrateControl2, migrateFTS)
 	if err != nil {
 		return fmt.Errorf("control copy: %w", err)
 	}
-	src := filepath.Join(m.srcPath, migrateControl2)
-	dst := filepath.Join(m.outRoot, migrateControl2)
-	if src != dst {
-		if err := os.Rename(src, dst); err != nil {
-			return fmt.Errorf("move the control copy to %s: %w", dst, err)
+	for _, name := range []string{migrateControl2, migrateFTS} {
+		src := filepath.Join(m.srcPath, name)
+		dst := filepath.Join(m.outRoot, name)
+		if _, err := os.Stat(src); errors.Is(err, os.ErrNotExist) {
+			continue // no legacy full-text index: the daemon builds one
 		}
-	}
-	f, err := os.OpenFile(dst, os.O_RDWR, 0)
-	if err != nil {
-		return err
-	}
-	err = f.Sync()
-	f.Close()
-	if err != nil {
-		return err
+		if src != dst {
+			if err := os.Rename(src, dst); err != nil {
+				return fmt.Errorf("move the control copy to %s: %w", dst, err)
+			}
+		}
+		f, err := os.OpenFile(dst, os.O_RDWR, 0)
+		if err != nil {
+			return err
+		}
+		err = f.Sync()
+		f.Close()
+		if err != nil {
+			return err
+		}
 	}
 	if m.rep.Extra == nil {
 		m.rep.Extra = map[string]interface{}{}
