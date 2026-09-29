@@ -269,7 +269,7 @@ func TestReadsDuringSaturatingIngest(t *testing.T) {
 	baseline := ingest(baseDur, &noStop)
 	baseRate := float64(baseline) / baseDur.Seconds()
 
-	var counters, types, window, probe, srcFirst, getRec, queue latencies
+	var counters, types, window, probe, srcFirst, getRec, queue, pointQueue latencies
 	var readErrs atomic.Int64
 	var stop atomic.Bool
 	var wg sync.WaitGroup
@@ -320,8 +320,14 @@ func TestReadsDuringSaturatingIngest(t *testing.T) {
 		_, err := s.GetRecord(ctx, "OMM.fbs", r.CID)
 		return err
 	})
+	// SELECT 1 costs a lane nothing: its round trip is the instance's
+	// queue wait (T6 #3: no reader wait > 50 ms).
 	reader(&queue, func() error {
 		_, err := s.ri.Query(ctx, Request{SQL: "SELECT 1"})
+		return err
+	})
+	reader(&pointQueue, func() error {
+		_, err := s.rp.Query(ctx, Request{SQL: "SELECT 1"})
 		return err
 	})
 	loadStart := loadAvg()
@@ -330,7 +336,7 @@ func TestReadsDuringSaturatingIngest(t *testing.T) {
 	wg.Wait()
 	rate := float64(ingested) / dur.Seconds()
 	ns := s.native.Stats()
-	t.Logf("MEASURED reads during saturating ingest (%s, 1 writer, 50 partitions, %d interactive lanes, 7 concurrent readers, %s; load %.1f at start):",
+	t.Logf("MEASURED reads during saturating ingest (%s, 1 writer, 50 partitions, %d interactive lanes + 2 point lanes, 8 concurrent readers, %s; load %.1f at start):",
 		dur, envInt("SDN_FORMAT2_LANES", 2), machine(), loadStart)
 	t.Logf("  ingest %.0f records/s with reads, %.0f records/s alone (%.0f%%)", rate, baseRate, 100*rate/baseRate)
 	t.Logf("  LiveRecordBytes %s", counters.String())
@@ -339,7 +345,8 @@ func TestReadsDuringSaturatingIngest(t *testing.T) {
 	t.Logf("  %s source %q byte probe %s", srcSchema, srcName, probe.String())
 	t.Logf("  %s source %q first payload byte %s", srcSchema, srcName, srcFirst.String())
 	t.Logf("  GetRecord %s", getRec.String())
-	t.Logf("  SELECT 1 (lane queue wait) %s", queue.String())
+	t.Logf("  SELECT 1 (queue wait) on the interactive lanes %s", queue.String())
+	t.Logf("  SELECT 1 (queue wait) on the point lanes %s", pointQueue.String())
 	t.Logf("  host store lock: %d acquisitions, max hold %s; read errors %d", ns.LockAcquisitions, ns.LockHoldMax, readErrs.Load())
 	if readErrs.Load() != 0 {
 		t.Fatalf("%d reads failed during ingest", readErrs.Load())
