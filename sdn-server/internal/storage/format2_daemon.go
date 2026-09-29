@@ -100,8 +100,9 @@ type format2Daemon struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	fts   *format2FTS
-	lanes f2LaneCache
+	fts    *format2FTS
+	lanes  f2LaneCache
+	counts f2CountCache
 
 	// producers caches, per partition token, the raw peer id of a copy it
 	// holds: control entries (reconcile, tomb) are enqueued through it.

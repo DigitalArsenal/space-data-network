@@ -501,16 +501,29 @@ func (s *FlatSQLStore) f2SearchRawRecords(ctx context.Context, filter RawRecordQ
 // f2RecordsAtGseqs reads the live records of a type at the given gseqs that
 // meet f, in gseq order.
 func (s *FlatSQLStore) f2RecordsAtGseqs(schemaName string, gseqs []int64, f *f2RawFilter, hydrate bool) ([]*Record, error) {
-	g := &f2RawFilter{conds: append([]string(nil), f.conds...), params: append([]format2.Cell(nil), f.params...)}
-	var marks []string
-	var params []format2.Cell
-	for _, v := range gseqs {
-		marks = append(marks, "?")
-		params = append(params, format2.Int(v))
+	// 512 gseqs per statement: a request is one lane slot.
+	var out []*Record
+	for start := 0; start < len(gseqs); start += 512 {
+		end := min(start+512, len(gseqs))
+		g := &f2RawFilter{conds: append([]string(nil), f.conds...), params: append([]format2.Cell(nil), f.params...)}
+		marks := make([]string, 0, end-start)
+		params := make([]format2.Cell, 0, end-start)
+		for _, v := range gseqs[start:end] {
+			marks = append(marks, "?")
+			params = append(params, format2.Int(v))
+		}
+		g.add("_gseq IN ("+strings.Join(marks, ",")+")", params...)
+		recs, err := s.f2SelectPoint(schemaName, fmt.Sprintf("SELECT %s FROM %s%s ORDER BY _gseq", format2.RecColumns,
+			format2.QuoteIdent(format2.TypeName(schemaName)), g.where()), g.params, hydrate)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, recs...)
 	}
-	g.add("_gseq IN ("+strings.Join(marks, ",")+")", params...)
-	return s.f2SelectPoint(schemaName, fmt.Sprintf("SELECT %s FROM %s%s ORDER BY _gseq", format2.RecColumns,
-		format2.QuoteIdent(format2.TypeName(schemaName)), g.where()), g.params, hydrate)
+	if len(out) > 1 && len(gseqs) > 512 {
+		sort.Slice(out, func(i, j int) bool { return out[i].RowID < out[j].RowID })
+	}
+	return out, nil
 }
 
 // f2SearchCount counts the live hits (exact: every hit is checked against

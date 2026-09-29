@@ -305,6 +305,12 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 	t.Setenv(format2.FormatEnv, "")
 	t.Logf("format 2 open %s (the daemon's open: control instance + partition store)", time.Since(opened).Round(time.Millisecond))
 
+	// SDN_FORMAT2_FIXTURE_SECTIONS=windows,a17,a16,epoch,a18 runs those
+	// sections only (default: all).
+	section := func(name string) bool {
+		only := os.Getenv("SDN_FORMAT2_FIXTURE_SECTIONS")
+		return only == "" || strings.Contains(","+only+",", ","+name+",")
+	}
 	seq := func(recs []*storage.Record) []string {
 		var out []string
 		seen := map[string]bool{}
@@ -347,6 +353,9 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 		{SchemaName: "IQC.fbs", Limit: 1000, Offset: 100000, OrderByCID: true},
 	}
 	for _, q := range windows {
+		if !section("windows") {
+			break
+		}
 		start := time.Now()
 		a, err := legacy.QueryIndexedRecords(q)
 		if err != nil {
@@ -374,6 +383,9 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 	// A17: each shard window's export hashes as format 1's.
 	exports := 0
 	for _, schema := range []string{"OMM.fbs", "MPE.fbs"} {
+		if !section("a17") {
+			break
+		}
 		for _, b := range []string{batchOf[schema][0], batchOf[schema][len(batchOf[schema])/2], batchOf[schema][len(batchOf[schema])-1]} {
 			for _, off := range []int{0, 1000, 30000} {
 				q := storage.IndexedRecordQuery{SchemaName: schema, ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: b,
@@ -398,6 +410,9 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 		{SchemaName: "CAT.fbs", Limit: 2000, Offset: 4000, OrderByCID: true, AllowLargeResultSet: true},
 		{SchemaName: "IQC.fbs", SourceName: "IQEngine", Limit: 500, Offset: 2000, AllowLargeResultSet: true},
 	} {
+		if !section("a17") {
+			break
+		}
 		ea, err := legacy.ExportDatasetWindow(t.TempDir(), q)
 		if err != nil {
 			t.Fatal(err)
@@ -436,6 +451,9 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 		{SchemaName: "IQC.fbs", SourceName: "IQEngine", SyncFilter: "SOURCE_TIMESTAMP > 0"},
 	}
 	for _, q := range syncs {
+		if !section("a16") {
+			break
+		}
 		start := time.Now()
 		ca, err := legacy.CountRawRecords(q)
 		if err != nil {
@@ -507,6 +525,9 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 		{SchemaName: "OMM.fbs", Profile: storage.EpochProfileWindow, From: &from, To: &to, Limit: 5000},
 		{SchemaName: "OMM.fbs", Profile: storage.EpochProfileDay, Day: "2026-09-20", Limit: 3000},
 	} {
+		if !section("epoch") {
+			break
+		}
 		start := time.Now()
 		a, err := legacy.QueryEpochRecords(q)
 		if err != nil {
@@ -543,7 +564,7 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 		t.Logf("epoch %s %s: %d matches equal, count %d (format 1 %s, format 2 %s)", q.SchemaName, q.Profile, len(a), na,
 			la.Round(time.Millisecond), lb.Round(time.Millisecond))
 	}
-	if os.Getenv("SDN_FORMAT2_FIXTURE_SURFACE") != "1" {
+	if os.Getenv("SDN_FORMAT2_FIXTURE_SURFACE") != "1" || !section("a18") {
 		return
 	}
 	// A18: <TYPE>@<source> through the public query sandbox, bounded to the
