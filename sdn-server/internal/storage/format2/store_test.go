@@ -269,3 +269,62 @@ func TestLaneIntegersAreExactAbove2To53(t *testing.T) {
 }
 
 var _ = flatsqlrt.PSRoleBulk
+
+// A28: the counters read from the heads without a lane equal the engine's
+// own flatsql_partitions and flatsql_types rows.
+func TestHeadCountersEqualTheLaneCounters(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	ctx := context.Background()
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for p := 0; p < 5; p++ {
+		if _, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(200, p*150, base, "H"), fmt.Sprintf("source:h%d", p), nil,
+			&Tags{ProviderID: "prov", SourceName: fmt.Sprintf("h%d", p), BatchID: "b"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	heads, err := s.Partitions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Interactive().Query(ctx, Request{SQL: `SELECT pid, sql_name, live_count, live_bytes, total_count, disk_bytes FROM flatsql_partitions`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane := map[int64]string{}
+	for _, r := range res.Rows {
+		lane[r[0].Int64()] = fmt.Sprintf("%s %d %d %d %d", r[1].String(), r[2].I, r[3].I, r[4].I, r[5].I)
+	}
+	if len(heads) != len(lane) || len(heads) != 5 {
+		t.Fatalf("%d head partitions, %d lane partitions", len(heads), len(lane))
+	}
+	for _, h := range heads {
+		got := fmt.Sprintf("%s %d %d %d %d", h.SQLName, h.Live, h.LiveBytes, h.Total, h.DiskBytes)
+		if got != lane[h.PID] {
+			t.Fatalf("partition %d: heads %q, lane %q", h.PID, got, lane[h.PID])
+		}
+	}
+	// Types: wait for labeling, then compare.
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		types, err := s.Types(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := s.Interactive().Query(ctx, Request{SQL: `SELECT type, gseq_hi, arrivals, first_live_count, first_live_bytes FROM flatsql_types`})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(types) == 1 && len(res.Rows) == 1 {
+			r := res.Rows[0]
+			got := fmt.Sprintf("%s %d %d %d %d", types[0].Type, types[0].GseqHi, types[0].Arrivals, types[0].FirstLive, types[0].FirstLiveBytes)
+			want := fmt.Sprintf("%s %d %d %d %d", r[0].String(), r[1].I, r[2].I, r[3].I, r[4].I)
+			if got == want && types[0].FirstLive == 800 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("type heads %q, lane %q", got, want)
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
