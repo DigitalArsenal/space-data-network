@@ -192,38 +192,35 @@ func alignmentRecords(t *testing.T, sv *servedVerifier) map[string][][]byte {
 }
 
 func TestServedRecordsVerifyAtTheirOrigin(t *testing.T) {
-	formats := []struct {
-		name string
-		open func(*testing.T) *FlatSQLStore
-	}{
-		{"format1", func(t *testing.T) *FlatSQLStore { return reopenDeferred(t, t.TempDir()) }},
-		{"format2", func(t *testing.T) *FlatSQLStore { return openFormat2ForTest(t, t.TempDir()) }},
+	servedRecordsVerifyAtTheirOrigin(t, reopenDeferred(t, t.TempDir()))
+}
+
+// The format-2 half runs on the patched runtime (CI's substrate lane runs
+// TestFormat2*).
+func TestFormat2ServedRecordsVerifyAtTheirOrigin(t *testing.T) {
+	servedRecordsVerifyAtTheirOrigin(t, openFormat2ForTest(t, t.TempDir()))
+}
+
+func servedRecordsVerifyAtTheirOrigin(t *testing.T, s *FlatSQLStore) {
+	defer s.Close()
+	sv := newServedVerifier(t)
+	records := alignmentRecords(t, sv)
+	schemas := make([]string, 0, len(records))
+	for schema, recs := range records {
+		schemas = append(schemas, schema)
+		tags := SourceTags{ProviderID: "alignment-provider", SourceName: "alignment-" + strings.ToLower(strings.TrimSuffix(schema, ".fbs")), BatchID: "b-1"}
+		if n, err := s.StoreBatchWithSourceTags(schema, recs, "source:alignment", nil, tags); err != nil || n != len(recs) {
+			t.Fatalf("store %s: %d of %d, %v", schema, n, len(recs), err)
+		}
 	}
-	for _, format := range formats {
-		t.Run(format.name, func(t *testing.T) {
-			s := format.open(t)
-			defer s.Close()
-			sv := newServedVerifier(t)
-			records := alignmentRecords(t, sv)
-			schemas := make([]string, 0, len(records))
-			for schema, recs := range records {
-				schemas = append(schemas, schema)
-				tags := SourceTags{ProviderID: "alignment-provider", SourceName: "alignment-" + strings.ToLower(strings.TrimSuffix(schema, ".fbs")), BatchID: "b-1"}
-				if n, err := s.StoreBatchWithSourceTags(schema, recs, "source:alignment", nil, tags); err != nil || n != len(recs) {
-					t.Fatalf("store %s: %d of %d, %v", schema, n, len(recs), err)
-				}
-			}
-			sort.Strings(schemas)
-			if !s.Format2() {
-				if _, err := s.HydrateEngineHotWindow(); err != nil {
-					t.Fatalf("hydrate the engine: %v", err)
-				}
-			}
-			served := checkServingPaths(t, s, sv, schemas, records)
-			for _, path := range served {
-				t.Logf("%-34s %4d records, %3d copies, %6d bytes copied", path, sv.count[path], sv.copies[path], sv.bytes[path])
-			}
-		})
+	sort.Strings(schemas)
+	if !s.Format2() {
+		if _, err := s.HydrateEngineHotWindow(); err != nil {
+			t.Fatalf("hydrate the engine: %v", err)
+		}
+	}
+	for _, path := range checkServingPaths(t, s, sv, schemas, records) {
+		t.Logf("%-38s %4d records, %3d copies, %6d bytes copied", path, sv.count[path], sv.copies[path], sv.bytes[path])
 	}
 }
 
@@ -345,6 +342,12 @@ func TestServedRecordsVerifyOnStoreCopy(t *testing.T) {
 	if os.Getenv("SDN_RECORDALIGN_STORE_FORMAT") == "2" {
 		s = openFormat2ForTest(t, dir)
 	} else {
+		// The store opens the engine from a precompiled AOT artifact only;
+		// a cold cache means an interpreted engine (see
+		// TestOpenExistingStoreRehearsal).
+		if _, _, err := flatsqlrt.PrewarmAOTArtifact(engineAOTCacheDir(), "flatsql", flatsqlrt.EmbeddedWasm()); err != nil {
+			t.Logf("AOT prewarm failed (%v): the engine runs interpreted", err)
+		}
 		s = reopenDeferred(t, dir)
 	}
 	defer s.Close()
@@ -433,6 +436,7 @@ func TestServedRecordsVerifyOnStoreCopy(t *testing.T) {
 		}
 		seen := map[string]bool{}
 		var after int64
+		schemaStarted := time.Now()
 		for limit < 0 || len(seen) < limit {
 			page, err := s.QueryRawRecords(RawRecordQuery{SchemaName: schema, Limit: 5000, UseRowIDCursor: true, AfterRowID: after})
 			if err != nil {
@@ -468,6 +472,7 @@ func TestServedRecordsVerifyOnStoreCopy(t *testing.T) {
 				}
 			}
 		}
+		t.Logf("%s: %d records paged in %s", schema, len(seen), time.Since(schemaStarted).Round(time.Millisecond))
 	}
 	close(jobs)
 	wg.Wait()
