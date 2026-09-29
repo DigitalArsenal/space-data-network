@@ -124,6 +124,15 @@ func TestFormat2DashboardLaneNeverStaleDuringIngest(t *testing.T) {
 	}
 	core.StartDashboardSnapshots()
 	defer core.StopDashboardSnapshots()
+	// Every answer below comes from the lane. Before its first build the JSON
+	// surface reads inline, and that read can be newer than the lane's first
+	// build, which then lands with its own (older) as_of.
+	for deadline := time.Now().Add(30 * time.Second); !core.cachedStoreStats().Built; {
+		if time.Now().After(deadline) {
+			t.Fatal("the stats lane never built")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	dur := 20 * time.Second
 	if d, err := time.ParseDuration(os.Getenv("SDN_FORMAT2_API_FOR")); err == nil && d > 0 {
