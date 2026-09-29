@@ -8,14 +8,14 @@ import (
 // WriterLayout is the engine's FlatsqlPsLayout (flatsql_ps.h): where a ring
 // descriptor keeps each field, the slab pool, and the writer doorbells.
 type WriterLayout struct {
-	Version, NWriters, RingDescSize                              uint32
-	OffTail, OffHead, OffAckedRseq, OffAckGen, OffMapGen         uint32
-	OffWantPage, OffProdBusy, OffReclaim, OffProdWaiting         uint32
-	OffState, OffOwnerWord, OffHandoffTo                         uint32
-	OffRejectHead, OffRejectTail, OffRejects, OffPages           uint32
-	OffCap, OffMaxEntry, OffNSlots, OffSlabBytes, OffNextRseq    uint32
-	OffMappedPages, PoolBase, SlabBytes, EntryHeaderSize         uint32
-	WriterSeq, WriterSleeping                                    []uint32
+	Version, NWriters, RingDescSize                           uint32
+	OffTail, OffHead, OffAckedRseq, OffAckGen, OffMapGen      uint32
+	OffWantPage, OffProdBusy, OffReclaim, OffProdWaiting      uint32
+	OffState, OffOwnerWord, OffHandoffTo                      uint32
+	OffRejectHead, OffRejectTail, OffRejects, OffPages        uint32
+	OffCap, OffMaxEntry, OffNSlots, OffSlabBytes, OffNextRseq uint32
+	OffMappedPages, PoolBase, SlabBytes, EntryHeaderSize      uint32
+	WriterSeq, WriterSleeping                                 []uint32
 }
 
 // ParseWriterLayout decodes a flatsql_ps_layout block.
@@ -49,14 +49,14 @@ func ParseWriterLayout(b []byte) (WriterLayout, error) {
 
 // ReaderLayout is the engine's FlatsqlPsReaderLayout: the mailbox.
 type ReaderLayout struct {
-	Version, NLanes, NSlots, SlotBase, SlotStride, HeaderSize, ReqBytes, RingBytes uint32
-	OffState, OffCancel, OffOutSeq, OffSpaceSeq, OffFlags, OffLane, OffReqID       uint32
+	Version, NLanes, NSlots, SlotBase, SlotStride, HeaderSize, ReqBytes, RingBytes  uint32
+	OffState, OffCancel, OffOutSeq, OffSpaceSeq, OffFlags, OffLane, OffReqID        uint32
 	OffSQLLen, OffParamsLen, OffReqCap, OffRingCap                                  uint32
 	OffMaxRowsExamined, OffMaxBytesRead, OffMaxResultRows, OffMaxResultBytes        uint32
-	OffRingHead, OffRingTail, OffStatus, OffErrLen, OffRowsOut, OffRowsExamined    uint32
+	OffRingHead, OffRingTail, OffStatus, OffErrLen, OffRowsOut, OffRowsExamined     uint32
 	OffBytesRead, OffIndexEntries, OffFenceReads, OffSubmitNs, OffStartNs, OffEndNs uint32
 	OffErr                                                                          uint32
-	QueueCells, QueueMask, QueueEnq, QueueDeq, StopWord                            uint32
+	QueueCells, QueueMask, QueueEnq, QueueDeq, StopWord                             uint32
 	LaneDoorbell, LaneState, LaneAnnounce                                           []uint32
 }
 

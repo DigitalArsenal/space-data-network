@@ -25,8 +25,8 @@ import (
 // licence.
 type Tags struct {
 	ProviderID, SourceName, SourceURL, BatchID, ContentKeyID, ProducerPeerID, ProducerPublicKey string
-	License, LicenseURL, Citation                                                              string
-	ShareAlike                                                                                 bool
+	License, LicenseURL, Citation                                                               string
+	ShareAlike                                                                                  bool
 }
 
 func (t *Tags) sourceTag() SourceTag {

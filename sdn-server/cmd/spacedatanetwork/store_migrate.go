@@ -427,23 +427,23 @@ func syncDirectory(dir string) error {
 // ---- the migration --------------------------------------------------------------------
 
 type migrateReport struct {
-	Store          string                 `json:"store"`
-	Out            string                 `json:"out"`
-	Mode           string                 `json:"mode"`
-	Records        int64                  `json:"records"`
-	Entries        int64                  `json:"entries"`
-	RecordBytes    int64                  `json:"record_bytes"`
-	SourceBytes    int64                  `json:"source_bytes"`
-	Took           string                 `json:"took"`
-	RecordMBps     float64                `json:"record_mb_per_s"`
-	SourceMBps     float64                `json:"source_mb_per_s"`
-	Resumed        bool                   `json:"resumed"`
-	Rejected       []migrateReject        `json:"rejected,omitempty"`
-	Verification   *migrateVerification   `json:"verification,omitempty"`
-	Activated      bool                   `json:"activated"`
-	Notes          []string               `json:"notes,omitempty"`
-	Engine         format2.WriterStats    `json:"engine"`
-	Extra          map[string]interface{} `json:"extra,omitempty"`
+	Store        string                 `json:"store"`
+	Out          string                 `json:"out"`
+	Mode         string                 `json:"mode"`
+	Records      int64                  `json:"records"`
+	Entries      int64                  `json:"entries"`
+	RecordBytes  int64                  `json:"record_bytes"`
+	SourceBytes  int64                  `json:"source_bytes"`
+	Took         string                 `json:"took"`
+	RecordMBps   float64                `json:"record_mb_per_s"`
+	SourceMBps   float64                `json:"source_mb_per_s"`
+	Resumed      bool                   `json:"resumed"`
+	Rejected     []migrateReject        `json:"rejected,omitempty"`
+	Verification *migrateVerification   `json:"verification,omitempty"`
+	Activated    bool                   `json:"activated"`
+	Notes        []string               `json:"notes,omitempty"`
+	Engine       format2.WriterStats    `json:"engine"`
+	Extra        map[string]interface{} `json:"extra,omitempty"`
 }
 
 // migrator carries one run.
@@ -456,19 +456,19 @@ type migrator struct {
 	jpath   string
 	j       *migrateJournal
 
-	src     *storage.MigrationSource
-	native  *flatsqlrt.NativeStore
-	w       *format2.Writer
-	r       *format2.Reader
-	tables  []storage.LegacyTable
+	src      *storage.MigrationSource
+	native   *flatsqlrt.NativeStore
+	w        *format2.Writer
+	r        *format2.Reader
+	tables   []storage.LegacyTable
 	bySchema map[string][]storage.LegacyTable
-	specs   map[string]format2.TypeSpec
+	specs    map[string]format2.TypeSpec
 	licences map[string][]storage.SourceBatchLicense // schema -> licences
 	licKeys  map[string]bool                         // schema\x1fprovider\x1fsource\x1fbatch
 
-	parts   map[string]*format2.Partition // table name -> partition
-	pending map[*format2.Partition]*pendingAcks
-	rep     *migrateReport
+	parts       map[string]*format2.Partition // table name -> partition
+	pending     map[*format2.Partition]*pendingAcks
+	rep         *migrateReport
 	recordBytes int64
 	// Where the time goes (reported under extra).
 	readNs, enqueueNs, drainNs, journalNs, labelNs time.Duration

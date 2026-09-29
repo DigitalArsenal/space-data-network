@@ -51,16 +51,16 @@ const (
 
 // Reject codes the engine returns for an entry (flatsql ps/extract.h).
 const (
-	RejBadEntry     int32 = -100
-	RejFrameSize    int32 = -101
-	RejFid          int32 = -102
-	RejVerify       int32 = -103
-	RejCid          int32 = -104
-	RejSealed       int32 = -105
-	RejAttr         int32 = -106
-	RejQuarantined  int32 = -107
-	RejNoType       int32 = -108
-	RejTxnTooLarge  int32 = -109
+	RejBadEntry    int32 = -100
+	RejFrameSize   int32 = -101
+	RejFid         int32 = -102
+	RejVerify      int32 = -103
+	RejCid         int32 = -104
+	RejSealed      int32 = -105
+	RejAttr        int32 = -106
+	RejQuarantined int32 = -107
+	RejNoType      int32 = -108
+	RejTxnTooLarge int32 = -109
 )
 
 var (
