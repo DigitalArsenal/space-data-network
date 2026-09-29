@@ -564,11 +564,19 @@ func (n *Node) init() error {
 
 	// Initialize storage (if not edge mode)
 	if n.config.Mode != "edge" {
-		n.store, err = storage.NewFlatSQLStore(n.config.Storage.Path, n.validator,
+		storeOpts := []storage.StoreOption{
 			storage.WithEngineHotWindow(n.config.Storage.EngineHotWindow),
 			storage.WithEngineGenericHotWindow(n.config.Storage.EngineGenericHotWindow),
 			storage.WithAuxiliaryReplayChunkBytes(n.config.Storage.AuxiliaryReplayChunkBytes),
-			storage.WithDeferredBootRebuilds())
+			storage.WithDeferredBootRebuilds(),
+		}
+		// Store format 2 hands storage.max_size to the partition store's
+		// quota planner at open (§13); format 1 ignores the option and keeps
+		// its periodic GarbageCollectToQuota.
+		if maxBytes, qerr := n.config.Storage.ResolveMaxSizeBytes(n.config.Storage.Path); qerr == nil && maxBytes > 0 {
+			storeOpts = append(storeOpts, storage.WithQuotaBytes(maxBytes))
+		}
+		n.store, err = storage.NewFlatSQLStore(n.config.Storage.Path, n.validator, storeOpts...)
 		if err != nil {
 			return fmt.Errorf("failed to create storage: %w", err)
 		}

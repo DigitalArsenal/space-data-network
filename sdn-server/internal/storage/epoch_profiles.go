@@ -141,6 +141,9 @@ func (s *FlatSQLStore) QueryEpochCoverage(query EpochRecordQuery) ([]EpochCovera
 	if _, ok := EpochProfileForSchema(query.SchemaName); !ok {
 		return nil, fmt.Errorf("no epoch profile registered for %s", query.SchemaName)
 	}
+	if s.ps != nil {
+		return s.f2QueryEpochCoverage(query)
+	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -235,6 +238,9 @@ func (s *FlatSQLStore) CountEpochRecords(query EpochRecordQuery) (int64, error) 
 }
 
 func (s *FlatSQLStore) countEpochIndexedRows(query EpochRecordQuery) (int64, error) {
+	if s.ps != nil {
+		return s.f2CountEpochIndexedRows(query)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -261,6 +267,9 @@ func (s *FlatSQLStore) countEpochIndexedRows(query EpochRecordQuery) (int64, err
 }
 
 func (s *FlatSQLStore) countPointEpochEntities(query EpochRecordQuery) (int64, error) {
+	if s.ps != nil {
+		return s.f2CountPointEpochEntities(query)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -333,6 +342,9 @@ func (s *FlatSQLStore) countPointEpochEntities(query EpochRecordQuery) (int64, e
 }
 
 func (s *FlatSQLStore) queryEpochIndexedRecords(query EpochRecordQuery) ([]*Record, error) {
+	if s.ps != nil {
+		return s.f2QueryEpochIndexedRecords(query)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -384,6 +396,9 @@ func (s *FlatSQLStore) queryEpochIndexedRecords(query EpochRecordQuery) ([]*Reco
 }
 
 func (s *FlatSQLStore) queryPointEpochRecords(query EpochRecordQuery) ([]EpochRecordMatch, error) {
+	if s.ps != nil {
+		return s.f2QueryPointEpochRecords(query)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

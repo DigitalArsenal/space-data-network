@@ -131,7 +131,13 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	for _, record := range records {
 		cids = append(cids, record.CID)
 	}
-	sourceTags, err := s.sourceTagsForCIDs(filter.SchemaName, cids)
+	var sourceTags map[string]SourceTags
+	if s.ps != nil {
+		sourceTags, err = s.f2SourceTagsForCIDs(filter.SchemaName, cids, f2TagSpec{provider: strings.TrimSpace(filter.ProviderID),
+			source: strings.TrimSpace(filter.SourceName), batch: strings.TrimSpace(filter.BatchID)})
+	} else {
+		sourceTags, err = s.sourceTagsForCIDs(filter.SchemaName, cids)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load source tags: %w", err)
 	}

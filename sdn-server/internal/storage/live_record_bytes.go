@@ -455,6 +455,9 @@ func (s *FlatSQLStore) refreshPartitionSnapshotFullLocked() {
 }
 
 func (s *FlatSQLStore) refreshPartitionSnapshot(full bool) {
+	if s.ps != nil {
+		return // format 2: the partition heads are the counters
+	}
 	if s.db == nil {
 		return
 	}
@@ -603,6 +606,9 @@ func schemaPartitionTotals(counts []partitionCount, schemaName string) (records,
 // LiveRecordBytesReconciled reports whether every partition is counted, i.e.
 // whether LiveRecordBytes can answer. Lock-free.
 func (s *FlatSQLStore) LiveRecordBytesReconciled() bool {
+	if s.ps != nil {
+		return true // format 2: the heads count every partition from its first append
+	}
 	_, _, err := s.liveRecordTotals()
 	return err == nil
 }
