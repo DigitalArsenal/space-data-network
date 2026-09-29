@@ -22,7 +22,7 @@ package wasmrt
 //
 // The static release build carries WasmEdge patch 03-fault-jmp and never sets
 // the mark. For every other runtime a synchronous call clears a stale mark on
-// its own thread before returning (Module.runSync); crash_watchdog.go ends any
+// its own thread before returning (syncNative); crash_watchdog.go ends any
 // report that still stalls.
 
 /*
@@ -47,6 +47,22 @@ var (
 	signalStackRepairNote sync.Once
 	signalStackRepairFail sync.Once
 )
+
+// syncNative runs f, which calls into WasmEdge synchronously (an export, or
+// an instantiation that runs a start function), locked to the calling thread,
+// and clears a stale signal-stack mark on that thread before Go code up the
+// stack can take a signal there.
+func syncNative(f func() error) error {
+	if !signalStackRepairOn {
+		return f()
+	}
+	runtime.LockOSThread()
+	defer func() {
+		repairSignalStack()
+		runtime.UnlockOSThread()
+	}()
+	return f()
+}
 
 // repairSignalStack clears a stale signal-stack mark on the calling thread.
 // The caller must be locked to the thread that ran the native code.
