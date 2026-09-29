@@ -1,0 +1,271 @@
+package format2
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+)
+
+func openTestStore(t testing.TB, root string) *Store {
+	t.Helper()
+	requireEngine(t)
+	s, err := Open(StoreConfig{Root: root, AOTCacheDir: testAOTDir(t), CompileOnMiss: true, AllowFresh: true,
+		Topology: Topology{Writers: 2, InteractiveLanes: 2, BulkLanes: 1}, GatePeriod: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+func ommPuts(n, offset int, base time.Time, tag string) []Put {
+	out := make([]Put, n)
+	for i := range out {
+		out[i] = Put{Data: testOMM(uint32(30000+offset+i), base.Add(time.Duration(offset+i)*time.Minute), fmt.Sprintf("%s-%d", tag, offset+i))}
+	}
+	return out
+}
+
+// A5: format 2 refuses a store store-migrate did not activate.
+func TestOpenRefusesALegacyStoreWithoutMigrated(t *testing.T) {
+	requireEngine(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "control.flatsqldb"), []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(StoreConfig{Root: root, AOTCacheDir: testAOTDir(t), CompileOnMiss: true, AllowFresh: true}); err != ErrNotMigrated {
+		t.Fatalf("open of a legacy store: %v, want ErrNotMigrated", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, Dir)); !os.IsNotExist(err) {
+		t.Fatalf("the refused open created %s: %v", Dir, err)
+	}
+}
+
+// Router + reads: read-your-writes at ack (A20), windows, the byte probe,
+// datasync pages by gseq, counters.
+func TestRouterWritesAreReadableAtAck(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	ctx := context.Background()
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	tags := &Tags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "b1", License: "CC-BY-4.0"}
+	var all []string
+	misses := 0
+	for b := 0; b < 20; b++ {
+		res, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(50, b*50, base, "RYW"), "source:celestrak", nil, tags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range res {
+			if r.Err != nil {
+				t.Fatalf("record rejected: %v", r.Err)
+			}
+			all = append(all, r.CID)
+			// Immediately after the ack: GetRecord finds it.
+			if _, err := s.GetRecord(ctx, "OMM.fbs", r.CID); err != nil {
+				misses++
+			}
+		}
+	}
+	if misses != 0 {
+		t.Fatalf("%d of %d records not readable at ack", misses, len(all))
+	}
+	// A second producer: repeats of 100 CIDs and 50 new records.
+	if _, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(150, 900, base, "RYW"), "16Uiu2HAm1Lbvw", nil,
+		&Tags{ProviderID: "space-data-network-01", SourceName: "mirror", BatchID: "m1"}); err != nil {
+		t.Fatal(err)
+	}
+	parts, err := s.Partitions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("%d partitions", len(parts))
+	}
+	var live int64
+	for _, p := range parts {
+		live += p.Live
+	}
+	if live != 1150 {
+		t.Fatalf("live copies %d, want 1150 (1000 + 150)", live)
+	}
+	// Datasync v1: pages by gseq cover every FIRST copy once, in order.
+	deadline := time.Now().Add(20 * time.Second)
+	var seen map[string]bool
+	for {
+		seen = map[string]bool{}
+		var after, max int64
+		last := int64(0)
+		ok := true
+		for {
+			recs, m, err := s.SyncPage(ctx, SyncQuery{Schema: "OMM.fbs", AfterGseq: after, MaxGseq: max, Limit: 97})
+			if err != nil {
+				t.Fatal(err)
+			}
+			max = m
+			if len(recs) == 0 {
+				break
+			}
+			for _, r := range recs {
+				if r.Gseq <= last {
+					ok = false
+				}
+				last = r.Gseq
+				seen[r.CID] = true
+			}
+			after = recs[len(recs)-1].Gseq
+		}
+		if ok && len(seen) == 1050 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sync saw %d CIDs (ordered %v), want 1050", len(seen), ok)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Windows and the byte probe.
+	norad := uint32(30010)
+	w, err := s.Window(ctx, WindowQuery{Schema: "OMM.fbs", NoradCatID: &norad})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w) != 1 || w[0].Source != "celestrak-gp" {
+		t.Fatalf("NORAD window %+v", w)
+	}
+	src, err := s.Window(ctx, WindowQuery{Schema: "OMM.fbs", Source: "mirror", Limit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, bytes, err := s.ByteProbe(ctx, WindowQuery{Schema: "OMM.fbs", Source: "mirror", Limit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sum int64
+	for _, r := range src {
+		sum += int64(len(r.Data))
+	}
+	if n != int64(len(src)) || bytes != sum {
+		t.Fatalf("byte probe (%d, %d B), window (%d, %d B)", n, bytes, len(src), sum)
+	}
+	lrb, err := s.LiveRecordBytes(ctx)
+	if err != nil || lrb <= 0 {
+		t.Fatalf("LiveRecordBytes %d %v", lrb, err)
+	}
+}
+
+// A2: B1, RECONCILE(keep=B1), an identical B2, RECONCILE(keep=B2): 0 TOMB
+// rows and 0 new arrivals; a B3 with one record removed tombstones exactly
+// that record.
+func TestReconcileKeepsUnchangedRecordsAndDropsTheRemovedOne(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	ctx := context.Background()
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	puts := ommPuts(100, 0, base, "R")
+	lane := func(batch string) *Tags {
+		return &Tags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: batch}
+	}
+	peer := "source:celestrak"
+	if _, err := s.PutBatch(ctx, "OMM.fbs", puts, peer, nil, lane("B1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(ctx, "OMM.fbs", peer, "space-data-network-02", "celestrak-gp", "B1"); err != nil {
+		t.Fatal(err)
+	}
+	counts := func() (tombs, arrivals int64) {
+		parts, err := s.Partitions(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range parts {
+			tombs += p.Tombs
+		}
+		types, err := s.Types(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ty := range types {
+			arrivals += ty.Arrivals
+		}
+		return
+	}
+	waitArrivals := func(want int64) {
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			if _, a := counts(); a == want || time.Now().After(deadline) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitArrivals(100)
+	t0, a0 := counts()
+	if _, err := s.PutBatch(ctx, "OMM.fbs", puts, peer, nil, lane("B2")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(ctx, "OMM.fbs", peer, "space-data-network-02", "celestrak-gp", "B2"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	t1, a1 := counts()
+	if t1 != t0 || a1 != a0 {
+		t.Fatalf("an identical batch changed TOMB rows %d->%d and arrivals %d->%d", t0, t1, a0, a1)
+	}
+	// B3 drops record 42.
+	b3 := append(append([]Put(nil), puts[:42]...), puts[43:]...)
+	if _, err := s.PutBatch(ctx, "OMM.fbs", b3, peer, nil, lane("B3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(ctx, "OMM.fbs", peer, "space-data-network-02", "celestrak-gp", "B3"); err != nil {
+		t.Fatal(err)
+	}
+	gone := CIDText(CIDBytes(puts[42].Data))
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		_, err := s.GetRecord(ctx, "OMM.fbs", gone)
+		if err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the record B3 dropped is still live")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for i, p := range puts {
+		if i == 42 {
+			continue
+		}
+		if _, err := s.GetRecord(ctx, "OMM.fbs", CIDText(CIDBytes(p.Data))); err != nil {
+			t.Fatalf("record %d died with B3: %v", i, err)
+		}
+	}
+}
+
+// T6 #6: integers above 2^53 are exact through a lane (RB1), in both
+// directions.
+func TestLaneIntegersAreExactAbove2To53(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	vals := []int64{math.MinInt64, 1<<53 + 1, math.MaxInt64, -(1<<53 + 1)}
+	params := make([]Cell, len(vals))
+	for i, v := range vals {
+		params[i] = Int(v)
+	}
+	res, err := s.Interactive().Query(context.Background(), Request{SQL: "SELECT ?1, ?2, ?3, ?4, 9007199254740993 + 0", Params: params})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range vals {
+		if c := res.Rows[0][i]; c.Type != CellInt || c.I != v {
+			t.Fatalf("param %d came back %+v, want %d", i, c, v)
+		}
+	}
+	if c := res.Rows[0][4]; c.Type != CellInt || c.I != 1<<53+1 {
+		t.Fatalf("literal 2^53+1 came back %+v", c)
+	}
+}
+
+var _ = flatsqlrt.PSRoleBulk
