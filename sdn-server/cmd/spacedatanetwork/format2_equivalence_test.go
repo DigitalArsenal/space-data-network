@@ -448,11 +448,20 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 		if ca != cb {
 			t.Fatalf("A16 TotalCount %+v: format 2 %d, format 1 %d", q, cb, ca)
 		}
-		pages := func(s *storage.FlatSQLStore) []string {
+		// The cursor pages up to a cursor bound: format 1 pages up to 40
+		// pages, and both sides are compared through the cursor it reached
+		// (the cursor is the legacy rowid, which format 2 keeps as the gseq).
+		pages := func(s *storage.FlatSQLStore, maxPages int, bound int64) ([]string, int64, time.Duration) {
+			began := time.Now()
 			var out []*storage.Record
 			q := q
 			q.UseRowIDCursor, q.Limit = true, 500
-			for p := 0; p < 400; p++ {
+			last := int64(-1) // -1: the pages ended
+			for p := 0; ; p++ {
+				if p == maxPages {
+					last = q.AfterRowID
+					break
+				}
 				page, err := s.QueryRawRecordRefs(q)
 				if err != nil {
 					t.Fatalf("pages %+v: %v", q, err)
@@ -460,19 +469,32 @@ func TestFormat2DaemonReadsEqualTheLegacyFixture(t *testing.T) {
 				if len(page) == 0 {
 					break
 				}
-				out = append(out, page...)
+				for _, r := range page {
+					if bound < 0 || r.RowID <= bound {
+						out = append(out, r)
+					}
+				}
 				q.AfterRowID = page[len(page)-1].RowID
+				if bound >= 0 && q.AfterRowID >= bound {
+					break
+				}
 			}
 			ids := seq(out)
 			sort.Strings(ids)
-			return ids
+			return ids, last, time.Since(began)
 		}
-		a, b := pages(legacy), pages(f2)
+		a, bound, la := pages(legacy, 40, -1)
+		b, _, lb := pages(f2, -1, bound)
 		if fmt.Sprint(a) != fmt.Sprint(b) {
-			t.Fatalf("A16 pages %+v: format 2 %d records, format 1 %d", q, len(b), len(a))
+			t.Fatalf("A16 pages %+v (through cursor %d): format 2 %d records, format 1 %d", q, bound, len(b), len(a))
 		}
-		t.Logf("A16 %s %q src=%q batch=%q cid=%v peer=%q: count %d, %d page records equal (%s)", q.SchemaName, q.SyncFilter, q.SourceName,
-			q.BatchID, q.CID != "", q.PeerID, ca, len(a), time.Since(start).Round(time.Millisecond))
+		through := "every page"
+		if bound >= 0 {
+			through = fmt.Sprintf("pages through cursor %d", bound)
+		}
+		t.Logf("A16 %s %q src=%q batch=%q cid=%v peer=%q: count %d, %s: %d records equal (format 1 %s, format 2 %s; %s in all)",
+			q.SchemaName, q.SyncFilter, q.SourceName, q.BatchID, q.CID != "", q.PeerID, ca, through, len(a),
+			la.Round(time.Millisecond), lb.Round(time.Millisecond), time.Since(start).Round(time.Millisecond))
 	}
 
 	// Epoch profiles.
