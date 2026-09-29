@@ -66,6 +66,11 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	// gate (readGate) instead of queueing on s.mu for the whole rebuild.
 	s.engineRebuilding.Store(true)
 	defer s.engineRebuilding.Store(false)
+	if s.ps != nil {
+		// Format 2: only the control instance is replaced; the partition
+		// store's instances are their own poison domains (§15).
+		return s.recoverFormat2ControlInstanceLocked()
+	}
 
 	log.Warnf("FlatSQL engine poisoned — reopening the control database on a replacement engine (epoch %d)", s.engineEpoch)
 

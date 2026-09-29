@@ -187,6 +187,9 @@ func (s *FlatSQLStore) DatasetPublicationSetFingerprint(schemaName, providerID, 
 	if schemaName == "" || providerID == "" || sourceName == "" {
 		return "", 0, errors.New("schema, provider and source are required for a publication fingerprint")
 	}
+	if s.ps != nil {
+		return s.f2PublicationSetFingerprint(schemaName, providerID, sourceName, batchID)
+	}
 	query := `SELECT DISTINCT cid FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ?`
 	args := []any{schemaName, providerID, sourceName}
 	if batchID != "" {
@@ -493,6 +496,18 @@ func (s *FlatSQLStore) unrecordedDatasetPublicationSeries(lane DatasetPublicatio
 // laneBatchHoldsRecords reports whether the store still holds any record of
 // the lane under batchID.
 func (s *FlatSQLStore) laneBatchHoldsRecords(lane DatasetPublicationLane, batchID string) (bool, error) {
+	if s.ps != nil {
+		batches, err := s.f2DistinctBatches(lane.SchemaName, lane.ProviderID, lane.SourceName)
+		if err != nil {
+			return false, fmt.Errorf("probe %s batch %s: %w", lane.SchemaName, batchID, err)
+		}
+		for _, b := range batches {
+			if b == strings.TrimSpace(batchID) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var one int
