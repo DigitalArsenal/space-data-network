@@ -539,21 +539,19 @@ func (m *Module) startExecThread() {
 // runSync invokes an export synchronously on the calling goroutine, routing
 // through the named registered instance when the module was created
 // WithRegisteredName.
-func (m *Module) runSync(name string, params ...interface{}) ([]interface{}, error) {
-	if signalStackRepairOn {
-		// A trap leaves WasmEdge by longjmp, which on darwin can mark this
-		// thread as running on its signal stack (sigstack.go). Clear it on
-		// the same thread before Go code up the stack takes a signal.
-		runtime.LockOSThread()
-		defer func() {
-			repairSignalStack()
-			runtime.UnlockOSThread()
-		}()
-	}
-	if m.registeredName != "" {
-		return m.vm.ExecuteRegistered(m.registeredName, name, params...)
-	}
-	return m.vm.Execute(name, params...)
+func (m *Module) runSync(name string, params ...interface{}) (values []interface{}, err error) {
+	// A trap leaves WasmEdge by longjmp, which on darwin can leave this
+	// thread marked as running on its signal stack (sigstack.go).
+	err = syncNative(func() error {
+		var e error
+		if m.registeredName != "" {
+			values, e = m.vm.ExecuteRegistered(m.registeredName, name, params...)
+		} else {
+			values, e = m.vm.Execute(name, params...)
+		}
+		return e
+	})
+	return values, err
 }
 
 // HasFunction reports whether the instantiated module exports a function with
@@ -1097,34 +1095,37 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 			return nil, fmt.Errorf("failed to register linked module instance %q: %w", src.RegisteredName(), err)
 		}
 	}
-	for _, spec := range cfg.namedWasm {
-		if err := vm.RegisterWasmBuffer(spec.name, spec.bytes); err != nil {
-			m.Release()
-			return nil, fmt.Errorf("failed to register named wasm %q: %w", spec.name, err)
+	// Instantiating runs a module's start function, which can trap like any
+	// call (runSync).
+	if err := syncNative(func() error {
+		for _, spec := range cfg.namedWasm {
+			if err := vm.RegisterWasmBuffer(spec.name, spec.bytes); err != nil {
+				return fmt.Errorf("failed to register named wasm %q: %w", spec.name, err)
+			}
 		}
-	}
 
-	// Load, validate, and instantiate the WASM module (named when a
-	// registered name was requested — required to share the live instance
-	// into other VMs).
-	if cfg.registeredName != "" {
-		if err := vm.RegisterWasmBuffer(cfg.registeredName, wasmBytes); err != nil {
-			m.Release()
-			return nil, fmt.Errorf("failed to register WASM as %q: %w", cfg.registeredName, err)
+		// Load, validate, and instantiate the WASM module (named when a
+		// registered name was requested — required to share the live
+		// instance into other VMs).
+		if cfg.registeredName != "" {
+			if err := vm.RegisterWasmBuffer(cfg.registeredName, wasmBytes); err != nil {
+				return fmt.Errorf("failed to register WASM as %q: %w", cfg.registeredName, err)
+			}
+			return nil
 		}
-	} else {
 		if err := vm.LoadWasmBuffer(wasmBytes); err != nil {
-			m.Release()
-			return nil, fmt.Errorf("failed to load WASM: %w", err)
+			return fmt.Errorf("failed to load WASM: %w", err)
 		}
 		if err := vm.Validate(); err != nil {
-			m.Release()
-			return nil, fmt.Errorf("failed to validate WASM: %w", err)
+			return fmt.Errorf("failed to validate WASM: %w", err)
 		}
 		if err := vm.Instantiate(); err != nil {
-			m.Release()
-			return nil, fmt.Errorf("failed to instantiate WASM: %w", err)
+			return fmt.Errorf("failed to instantiate WASM: %w", err)
 		}
+		return nil
+	}); err != nil {
+		m.Release()
+		return nil, err
 	}
 
 	if cfg.dedicatedThread {
