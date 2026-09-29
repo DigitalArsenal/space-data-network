@@ -66,6 +66,12 @@ var (
 		Help:      "Records ingested from external sources, by source name.",
 	}, []string{"source"})
 
+	storageLabelWaitTimeouts = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "sdn",
+		Name:      "storage_label_wait_timeouts_total",
+		Help:      "Partitions whose durable writes were not yet visible to type-level reads when the write's label wait ended, by schema.",
+	}, []string{"schema"})
+
 	activeAlerts = newAlertsCollector()
 
 	mu               sync.RWMutex
@@ -134,6 +140,7 @@ func Registry() *prometheus.Registry {
 			apiRequests,
 			storageRecords,
 			ingestRecords,
+			storageLabelWaitTimeouts,
 			activeAlerts,
 		)
 	})
@@ -169,6 +176,14 @@ func PubsubReceived(schema string) { pubsubReceived.WithLabelValues(schema).Inc(
 // APIRequest records one served API request for a route group ("admin",
 // "data", "core", ...) and status class ("2xx", "4xx", "5xx").
 func APIRequest(route, status string) { apiRequests.WithLabelValues(route, status).Inc() }
+
+// StorageLabelWaitTimeouts adds partitions of a schema whose label wait
+// ended on its deadline (the records durable, not yet in type-level reads).
+func StorageLabelWaitTimeouts(schema string, partitions int) {
+	if partitions > 0 {
+		storageLabelWaitTimeouts.WithLabelValues(schema).Add(float64(partitions))
+	}
+}
 
 // IngestRecords adds ingested records for a named source.
 func IngestRecords(source string, count int) {

@@ -58,6 +58,7 @@ type HeadReader struct {
 	root string // <engine root>/fsql2
 
 	mu          sync.Mutex
+	closed      bool // Close ran: nothing reopens a head (h.mu, h.lmu)
 	incarnation uint32
 	fslRead     uint64
 	frames      uint64
@@ -68,25 +69,29 @@ type HeadReader struct {
 
 	// Label waits (A20) never take mu: each type has its own reader.
 	lmu          sync.Mutex
+	labelsClosed bool
 	labels       map[[4]byte]*typeLabels
 	waitTimeouts atomic.Uint64
-	lastTimeout  atomic.Int64 // unix ns of the last logged timeout
 }
 
-// Close releases the cached head descriptors.
+// Close releases the cached head descriptors. Reads after Close return
+// ErrStopped and open nothing.
 func (h *HeadReader) Close() {
 	h.mu.Lock()
+	h.closed = true
 	for _, f := range h.files {
 		f.Close()
 	}
 	h.files = nil
 	h.mu.Unlock()
 	h.lmu.Lock()
-	for _, t := range h.labels {
-		t.close()
-	}
+	h.labelsClosed = true
+	labels := h.labels
 	h.labels = nil
 	h.lmu.Unlock()
+	for _, t := range labels {
+		t.close()
+	}
 }
 
 type headPart struct {
@@ -261,6 +266,9 @@ func (h *HeadReader) refresh() error {
 func (h *HeadReader) Partitions() ([]PartitionCounter, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return nil, ErrStopped
+	}
 	if err := h.refresh(); err != nil {
 		return nil, err
 	}
@@ -294,6 +302,9 @@ func (h *HeadReader) Partitions() ([]PartitionCounter, error) {
 func (h *HeadReader) Types() ([]TypeCounter, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return nil, ErrStopped
+	}
 	if err := h.refresh(); err != nil {
 		return nil, err
 	}
@@ -346,9 +357,15 @@ func (h *HeadReader) partitionPseqHi(pid uint32) (uint64, error) {
 
 // labeledThrough returns labeled_through[pid] of a type (0 for a partition
 // not labeled yet). known is false when the labels could not be read this
-// time (no head yet, a torn or retired segment): the caller polls again.
+// time (no head yet, a torn or retired segment, another waiter folding a
+// table not yet known): the caller polls again. After Close it returns
+// ErrStopped.
 func (h *HeadReader) labeledThrough(fid [4]byte, pid uint32) (through uint64, known bool, err error) {
 	h.lmu.Lock()
+	if h.labelsClosed {
+		h.lmu.Unlock()
+		return 0, false, ErrStopped
+	}
 	t := h.labels[fid]
 	if t == nil {
 		if h.labels == nil {
@@ -369,15 +386,25 @@ func (h *HeadReader) labeledThrough(fid [4]byte, pid uint32) (through uint64, kn
 // changed, through the head's (mSeg, mEnd). The log is append-only below a
 // published mEnd, so the fold continues from where the last read stopped; a
 // batch whose FULL_LABELS flag starts a new checkpoint simply overwrites.
+//
+// Two locks: mu serializes the reads of the head and the log (a fold from
+// the checkpoint can replay a whole 64 MiB segment), and vmu guards the
+// table they publish. A waiter that finds mu held does not queue behind the
+// fold: it takes the table as it stands and polls again, so its own
+// deadline and context still bound it. A table read mid-fold only
+// under-reports (labeled_through rises in log order), never over-reports.
 type typeLabels struct {
 	dir string // <root>/fsql2/t/<fid hex>
 
+	vmu    sync.RWMutex
+	labels map[uint32]uint64
+	known  bool
+	readAt time.Time
+
 	mu     sync.Mutex
+	closed bool
 	head   *os.File
 	buf    [2 * headSlotBytes]byte
-	readAt time.Time
-	known  bool
-	labels map[uint32]uint64
 
 	// The type-log fold (nLabels 0xffff): labels applied through (seg, off).
 	folding     bool
@@ -393,6 +420,7 @@ type typeLabels struct {
 func (t *typeLabels) close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.closed = true
 	if t.head != nil {
 		t.head.Close()
 		t.head = nil
@@ -403,39 +431,66 @@ func (t *typeLabels) close() {
 	}
 }
 
-func (t *typeLabels) through(pid uint32) (uint64, bool, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if !t.known || time.Since(t.readAt) >= labelFreshFor {
-		if err := t.read(); err != nil {
-			return 0, false, err
-		}
-	}
-	if !t.known {
-		return 0, false, nil
-	}
-	return t.labels[pid], true, nil
+// published returns the table's value for pid and whether the table is
+// known and was read within labelFreshFor.
+func (t *typeLabels) published(pid uint32) (through uint64, known, fresh bool) {
+	t.vmu.RLock()
+	defer t.vmu.RUnlock()
+	return t.labels[pid], t.known, t.known && time.Since(t.readAt) < labelFreshFor
 }
 
-// read reads the type head and brings the table up to it.
+func (t *typeLabels) through(pid uint32) (uint64, bool, error) {
+	lt, known, fresh := t.published(pid)
+	if fresh {
+		return lt, true, nil
+	}
+	if !t.mu.TryLock() {
+		return lt, known, nil // another waiter is reading: poll again
+	}
+	defer t.mu.Unlock()
+	if t.closed {
+		return 0, false, ErrStopped
+	}
+	if lt, _, fresh := t.published(pid); fresh {
+		return lt, true, nil // read by the waiter that held mu
+	}
+	err := t.read()
+	lt, known, _ = t.published(pid)
+	if err != nil {
+		return 0, false, err
+	}
+	return lt, known, nil
+}
+
+// setKnown publishes whether the table is known, as of now (t.mu held).
+func (t *typeLabels) setKnown(known bool) {
+	t.vmu.Lock()
+	t.known, t.readAt = known, time.Now()
+	t.vmu.Unlock()
+}
+
+// read reads the type head and brings the table up to it (t.mu held).
 func (t *typeLabels) read() error {
-	t.known, t.readAt = false, time.Now()
 	if t.head == nil {
 		f, err := os.Open(filepath.Join(t.dir, "h.fsh"))
 		if errors.Is(err, os.ErrNotExist) {
+			t.setKnown(false)
 			return nil // the type owner has not written its head yet
 		}
 		if err != nil {
+			t.setKnown(false)
 			return err
 		}
 		t.head = f
 	}
 	n, err := t.head.ReadAt(t.buf[:], 0)
 	if err != nil && !errors.Is(err, io.EOF) {
+		t.setKnown(false)
 		return err
 	}
 	slot := bestHeadSlot(t.buf[:], n, headType)
 	if len(slot) < typeHeadFixedBytes+4 {
+		t.setKnown(false)
 		return nil
 	}
 	nL0 := int(binary.LittleEndian.Uint16(slot[92:]))
@@ -443,21 +498,24 @@ func (t *typeLabels) read() error {
 	at := typeHeadFixedBytes + typeL0DirBytes*nL0
 	if nLabels != labelsInLog {
 		if at+labelEntryBytes*nLabels+4 > len(slot) {
+			t.setKnown(false)
 			return nil
 		}
 		t.folding = false
+		t.vmu.Lock()
 		clear(t.labels)
 		for i := 0; i < nLabels; i, at = i+1, at+labelEntryBytes {
 			t.labels[binary.LittleEndian.Uint32(slot[at:])] = binary.LittleEndian.Uint64(slot[at+8:])
 		}
-		t.known = true
+		t.known, t.readAt = true, time.Now()
+		t.vmu.Unlock()
 		return nil
 	}
 	known, err := t.fold(slot)
 	if err != nil || !known {
 		t.folding = false // the next read starts again at the checkpoint
 	}
-	t.known = known
+	t.setKnown(known && err == nil)
 	return err
 }
 
@@ -472,7 +530,10 @@ func (t *typeLabels) fold(slot []byte) (bool, error) {
 		t.folding, t.incarnation = true, incarnation
 		t.seg = binary.LittleEndian.Uint32(slot[120:])
 		t.off = binary.LittleEndian.Uint64(slot[112:])
+		t.vmu.Lock()
 		clear(t.labels)
+		t.known = false // rebuilt from the checkpoint: unknown until the fold ends
+		t.vmu.Unlock()
 		if t.seg > mSeg {
 			return false, nil
 		}
@@ -512,9 +573,11 @@ func (t *typeLabels) fold(slot []byte) (bool, error) {
 				if _, err := f.ReadAt(e, int64(t.off+typeBatchHeaderBytes)); err != nil {
 					return false, err
 				}
+				t.vmu.Lock()
 				for i := 0; i < n; i += labelEntryBytes {
 					t.labels[binary.LittleEndian.Uint32(e[i:])] = binary.LittleEndian.Uint64(e[i+8:])
 				}
+				t.vmu.Unlock()
 			}
 			t.off += batchLen
 		}

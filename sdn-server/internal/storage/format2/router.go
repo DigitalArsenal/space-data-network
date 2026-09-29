@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -214,69 +213,168 @@ func frame(data []byte) []byte {
 	return append(f, data...)
 }
 
-// labelWaitMax bounds WaitLabeled. The type owner labels a commit within
-// milliseconds; a wait that outlives this returns anyway (the records are
-// durable and readable by CID, and type-level reads see them once the owner
-// catches up) and is counted in LabelWaitTimeouts.
-const labelWaitMax = 5 * time.Second
+// LabelWaitMax is the budget of a label wait: one per operation, however
+// many partitions it waits on. The type owner labels a commit within
+// milliseconds; a wait that outlives this ends with a *LabelWaitError
+// (ErrNotLabeled) and is counted in LabelWaitTimeouts.
+const LabelWaitMax = 5 * time.Second
+
+// ErrNotLabeled: a label wait reached its deadline. The records it waited on
+// are durable (acked) and readable by CID; type-level reads (windows,
+// datasync pages, <TYPE> SQL) see them once the type owner labels them.
+var ErrNotLabeled = errors.New("format2: records durable, not yet labeled for type-level reads")
+
+// LabelWaitError is how a label wait ends at its deadline; errors.Is(err,
+// ErrNotLabeled) holds.
+type LabelWaitError struct {
+	Schema string
+	// PID is the first partition not labeled at the deadline; Partitions
+	// counts them.
+	PID        uint32
+	Partitions int
+	// PseqHi is that partition's pseq_hi, LabeledThrough its labels as last
+	// read (Known false: they could not be read); PseqHi 0 with Err set: its
+	// head could not be read.
+	PseqHi, LabeledThrough uint64
+	Known                  bool
+	// Err is the last read error of the wait, if any.
+	Err    error
+	Waited time.Duration
+}
+
+func (e *LabelWaitError) Error() string {
+	msg := fmt.Sprintf("format2: %s partition %d not labeled through pseq %d after %v", e.Schema, e.PID, e.PseqHi,
+		e.Waited.Round(time.Millisecond))
+	if e.Known {
+		msg += fmt.Sprintf(" (labeled through %d)", e.LabeledThrough)
+	} else {
+		msg += " (labels unreadable)"
+	}
+	if e.Partitions > 1 {
+		msg += fmt.Sprintf(", %d partitions behind", e.Partitions)
+	}
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg + "; the records are durable"
+}
+
+func (e *LabelWaitError) Is(target error) bool { return target == ErrNotLabeled }
+func (e *LabelWaitError) Unwrap() error        { return e.Err }
 
 // WaitLabeled waits until the producer's partition of schema is labeled by
-// its type owner through every record acked so far, so type-level reads
-// (windows, datasync pages, <TYPE> SQL) see them (A20: the publish API and
-// module flows wait for labeling; stream push and datasync do not). It never
-// waits longer than labelWaitMax, whatever form the labels take (inline in
-// the type head up to 128 partitions, in the type log past that).
+// its type owner through every record acked so far, so type-level reads see
+// them (A20: the publish API and module flows wait for labeling; stream push
+// and datasync do not). It returns within LabelWaitMax of being called,
+// whatever form the labels take (inline in the type head up to 128
+// partitions, in the type log past that): nil once labeled, a
+// *LabelWaitError (ErrNotLabeled) at the deadline, the context's error or
+// ErrStopped.
 func (s *Store) WaitLabeled(ctx context.Context, schema, peerID string) error {
+	return s.WaitLabeledUntil(ctx, schema, []string{peerID}, time.Now().Add(LabelWaitMax))
+}
+
+// WaitLabeledUntil is WaitLabeled for the partitions of several producers of
+// one schema under one deadline: an operation that committed to many
+// partitions (delete, reconcile, retags) waits once, never LabelWaitMax per
+// partition. A partition this store never registered has nothing acked
+// through it and is skipped; the lookup takes no Writer lock, so a wait
+// never queues behind another producer's registration.
+func (s *Store) WaitLabeledUntil(ctx context.Context, schema string, peers []string, deadline time.Time) error {
+	start := time.Now()
 	spec, err := s.spec(schema)
 	if err != nil {
 		return err
 	}
-	p, err := s.w.Partition([]byte(peerID), spec.FID)
-	if err != nil {
-		return err
-	}
-	hi, err := s.heads.partitionPseqHi(p.PID)
-	if err != nil {
-		return err
-	}
-	timedOut, err := waitLabels(ctx, s.stop, hi, labelWaitMax, func() (uint64, bool, error) {
-		return s.heads.labeledThrough(spec.FID, p.PID)
-	})
-	if timedOut {
-		n := s.heads.waitTimeouts.Add(1)
-		now := time.Now().UnixNano()
-		if last := s.heads.lastTimeout.Load(); now-last >= int64(time.Minute) && s.heads.lastTimeout.CompareAndSwap(last, now) {
-			fmt.Fprintf(os.Stderr, "[format2] WARN %s partition %d of %s not labeled through pseq %d after %v (%d label waits timed out)\n",
-				schema, p.PID, peerID, hi, labelWaitMax, n)
+	var behind *LabelWaitError
+	seen := make(map[uint32]bool, len(peers))
+	for _, peer := range peers {
+		p := s.w.Registered([]byte(peer), spec.FID)
+		if p == nil || seen[p.PID] {
+			continue
 		}
+		seen[p.PID] = true
+		st, err := waitLabels(ctx, s.stop, deadline, func() (uint64, error) {
+			return s.heads.partitionPseqHi(p.PID)
+		}, func() (uint64, bool, error) {
+			return s.heads.labeledThrough(spec.FID, p.PID)
+		})
+		if err != nil {
+			return err
+		}
+		if !st.timedOut {
+			continue
+		}
+		s.heads.waitTimeouts.Add(1)
+		if behind == nil {
+			behind = &LabelWaitError{Schema: schema, PID: p.PID, PseqHi: st.hi, LabeledThrough: st.lt, Known: st.known,
+				Err: st.readErr}
+		}
+		behind.Partitions++
 	}
-	return err
+	if behind != nil {
+		behind.Waited = time.Since(start)
+		return behind
+	}
+	return nil
 }
 
-// LabelWaitTimeouts counts WaitLabeled calls that ended on the deadline.
+// LabelWaitTimeouts counts the partitions whose label wait ended on the
+// deadline.
 func (s *Store) LabelWaitTimeouts() uint64 { return s.heads.waitTimeouts.Load() }
 
-// waitLabels polls read until the labels reach hi, the deadline max passes
-// (timedOut) or ctx or stop ends the wait (err).
-func waitLabels(ctx context.Context, stop <-chan struct{}, hi uint64, max time.Duration, read func() (uint64, bool, error)) (timedOut bool, err error) {
-	if hi == 0 {
-		return false, nil // nothing committed, nothing to label
-	}
-	deadline := time.Now().Add(max)
+// labelWait is where a wait on one partition ended.
+type labelWait struct {
+	hi, lt   uint64
+	known    bool  // lt was read
+	readErr  error // the last read error (pseq_hi or labels)
+	timedOut bool
+}
+
+// waitLabels reads the partition's pseq_hi (readHi), then polls its labels
+// (readLabels) until they reach it or deadline passes (timedOut). A read
+// that fails counts as unknown and is polled again: the records are durable
+// already, so a transient error (EMFILE, a torn segment) must not fail the
+// write. err is set only when ctx or stop ends the wait.
+func waitLabels(ctx context.Context, stop <-chan struct{}, deadline time.Time, readHi func() (uint64, error),
+	readLabels func() (uint64, bool, error)) (st labelWait, err error) {
+	hiRead := false
 	var wait backoff
 	for {
-		lt, known, err := read()
-		if err != nil {
-			return false, err
+		select {
+		case <-stop:
+			return st, ErrStopped
+		default:
 		}
-		if known && lt >= hi {
-			return false, nil
+		if !hiRead {
+			if hi, err := readHi(); err != nil {
+				st.readErr = err
+			} else {
+				st.hi, hiRead = hi, true
+				if hi == 0 {
+					return st, nil // nothing committed, nothing to label
+				}
+			}
+		}
+		if hiRead {
+			if lt, known, err := readLabels(); err != nil {
+				if errors.Is(err, ErrStopped) {
+					return st, err
+				}
+				st.readErr, st.known = err, false
+			} else {
+				st.lt, st.known = lt, known
+				if known && lt >= st.hi {
+					return st, nil
+				}
+			}
 		}
 		if !time.Now().Before(deadline) {
-			return true, nil
+			st.timedOut = true
+			return st, nil
 		}
 		if err := wait.sleep(ctx, stop); err != nil {
-			return false, err
+			return st, err
 		}
 	}
 }
