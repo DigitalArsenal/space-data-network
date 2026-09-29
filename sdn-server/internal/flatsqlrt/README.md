@@ -139,12 +139,13 @@ by `psartifact.go` and run by `psinstance.go` (`PSABIEngine`) as separate
 writer and reader instances. It is the PUBLISHED release's file, byte for
 byte (published-deps law, design A34):
 
-- npm package: `flatsql@3.1.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.1.0.tgz`),
-  published by flatsql's `npm-publish.yml` from tag `v3.1.0` with provenance
-- gitHead: `6d5dbdc1002ba0db466e8cec4cb9c040c3d37923`
-- sha256: `075dd0a104694df39b2776c34dc6444be224442717967d9cea5dd9af15964379`
+- npm package: `flatsql@3.2.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.2.0.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.2.0` with provenance
+- gitHead: `71065d3c3191891d777be7138162eacf65b2c54a`
+- sha256: `a90d9488187e527bccd3f02ce3f68be6443690bc1a2ee6c6786c64c907376e36`
   (the package's `wasm/integrity.json`; `TestEmbeddedPSThreadsArtifact`)
-- 2,237,656 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 2,261,085 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- previous: `flatsql@3.1.0`, sha256 `075dd0a104694df39b2776c34dc6444be224442717967d9cea5dd9af15964379`
 
 It loads only as a THREADS + Interruptible AOT artifact (design A30: no
 interpreter fallback) under the prefix `fsqlps`. `spacedatanetwork

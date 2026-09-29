@@ -10,7 +10,8 @@ package format2
 //	table SourceTag  { provider_id, source_name, source_url, batch_id,
 //	                   content_key_id, producer_peer_id, producer_public_key: string }
 //	table RecordAttr { peer_id: [ubyte]; signature: [ubyte]; supersede_key: string;
-//	                   source_timestamp: long; licence_key: string; tags: [SourceTag] }
+//	                   source_timestamp: long; licence_key: string; tags: [SourceTag];
+//	                   migrated_gseq: ulong }
 
 import (
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -35,6 +36,11 @@ type RecordAttr struct {
 	SourceTimestamp int64  // unix seconds at ingest; 0 = absent
 	LicenceKey      string
 	Tag             SourceTag
+	// MigratedGseq is store-migrate's legacy sdn_record_index.rowid for a
+	// FIRST copy (flatsql 3.2.0, PARTITION-STORE.md §31): the engine keeps it
+	// as the copy's gseq when it is above the type's committed gseq_hi, and
+	// counts a fallback otherwise. 0 = absent.
+	MigratedGseq uint64
 }
 
 // BuildRecordAttr returns the RecordAttr FlatBuffer (finished with "FSRA").
@@ -71,7 +77,8 @@ func BuildRecordAttr(a RecordAttr) []byte {
 	if a.LicenceKey != "" {
 		lk = b.CreateString(a.LicenceKey)
 	}
-	b.StartObject(6)
+	b.StartObject(7)
+	b.PrependUint64Slot(6, a.MigratedGseq, 0)
 	b.PrependInt64Slot(3, a.SourceTimestamp, 0)
 	b.PrependUOffsetTSlot(5, tags, 0)
 	b.PrependUOffsetTSlot(4, lk, 0)
