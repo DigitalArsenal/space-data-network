@@ -1724,11 +1724,14 @@ const sourceSummaryLaneScanLimit = 100000
 //   - the tag writers (insertNewSourceTagsTx, upsertSourceTagsTx, and the
 //     window writer chunkWriteBuffer.writeSourceTags) all increment the
 //     summary, so a lane they touch is already correct;
-//   - GC / batch reconciliation call the SCOPED form with the schema they just
-//     mutated, and every lane of that schema is rebuilt unconditionally because
-//     those verbs delete rows and the summary cannot be trusted for them;
-//   - dataset supersede knows exactly which lanes it emptied and rebuilds only
-//     those, one lane per store-lock hold (dataset_supersede.go): it deletes a
+//   - GC and the ingest-identity reconcile call the SCOPED form with the
+//     schema they just mutated, and every lane of that schema is rebuilt
+//     unconditionally because those verbs delete rows and the summary cannot
+//     be trusted for them;
+//   - dataset supersede and the source-batch reconciles (current batch,
+//     duplicates) know exactly which lanes they emptied and rebuild only
+//     those, one lane per store-lock hold (dataset_supersede.go,
+//     source_batch_current.go, source_batch_duplicates.go): they delete a
 //     record only when no tag of the schema names it, so no other lane's
 //     inputs change.
 //
@@ -1795,7 +1798,7 @@ func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLan
 	}
 
 	// Every lane the summary already names is rebuilt: a SCOPED call comes
-	// from GC / batch reconciliation, which have just DELETED rows,
+	// from GC or the ingest-identity reconcile, which have just DELETED rows,
 	// and the global call is an operator's explicit maintenance request. This
 	// reads the summary (tens of rows), not the tag table.
 	summaryLanes := 0
@@ -3257,130 +3260,6 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 		return nil, fmt.Errorf("source tagged record rows: %w", err)
 	}
 	return records, nil
-}
-
-// ReconcileSourceBatch deletes source-tagged records outside the accepted
-// source batch. It is intended for DPM-series reconciliation after an operator
-// has selected the latest accepted source hash/batch ID.
-func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, keepBatch string, apply bool) (SourceBatchReconcileResult, error) {
-	if apply {
-		if err := s.requireWritable("reconcile source batch"); err != nil {
-			return SourceBatchReconcileResult{}, err
-		}
-	}
-	result := SourceBatchReconcileResult{
-		SchemaName: strings.TrimSpace(schemaName),
-		ProviderID: strings.TrimSpace(providerID),
-		SourceName: strings.TrimSpace(sourceName),
-		KeepBatch:  strings.TrimSpace(keepBatch),
-		Apply:      apply,
-	}
-	if result.SchemaName == "" {
-		return result, errors.New("schema name is required")
-	}
-	if result.ProviderID == "" {
-		return result, errors.New("provider id is required")
-	}
-	if result.SourceName == "" {
-		return result, errors.New("source name is required")
-	}
-	if result.KeepBatch == "" {
-		return result, errors.New("keep batch is required")
-	}
-	tableName, err := sds.SchemaNameToTable(result.SchemaName)
-	if err != nil {
-		return result, fmt.Errorf("invalid schema name: %w", err)
-	}
-	if s.ps != nil {
-		return s.f2ReconcileSourceBatch(result)
-	}
-
-	defer s.lockWrite("ReconcileSourceBatch")()
-
-	// Driven by the source's tag rows, each checked against the producer
-	// tables by CID: joining the union read source materialised every record
-	// of the standard, four times per module ingest (plan guard).
-	tables, err := s.recordTablesForSchema(result.SchemaName)
-	if err != nil {
-		return result, fmt.Errorf("record tables: %w", err)
-	}
-	args := []interface{}{result.SchemaName, result.ProviderID, result.SourceName, result.KeepBatch}
-	countSQL := `
-		SELECT COUNT(*)
-		FROM sdn_record_source_tags tags
-		WHERE tags.schema_name = ?
-		  AND tags.provider_id = ?
-		  AND tags.source_name = ?
-		  AND tags.batch_id <> ?
-		  AND ` + recordHeldSQL(tables, "tags.cid")
-	if err := s.db.QueryRow(countSQL, args...).Scan(&result.Matched); err != nil {
-		return result, fmt.Errorf("count source batch reconciliation records: %w", err)
-	}
-	if !apply || result.Matched == 0 {
-		return result, nil
-	}
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		return result, fmt.Errorf("begin source batch reconciliation: %w", err)
-	}
-	defer tx.Rollback()
-
-	cidSubquery := `
-		SELECT cid
-		FROM sdn_record_source_tags
-		WHERE schema_name = ?
-		  AND provider_id = ?
-		  AND source_name = ?
-		  AND batch_id <> ?
-	`
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`CREATE TEMP TABLE IF NOT EXISTS temp_sdn_reconcile_cids (cid TEXT PRIMARY KEY)`)); err != nil {
-		return result, fmt.Errorf("create reconcile cid table: %w", err)
-	}
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM temp_sdn_reconcile_cids`)); err != nil {
-		return result, fmt.Errorf("clear reconcile cid table: %w", err)
-	}
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`INSERT OR IGNORE INTO temp_sdn_reconcile_cids (cid) `+cidSubquery), args...); err != nil {
-		return result, fmt.Errorf("stage source batch cids: %w", err)
-	}
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?`), args...); err != nil {
-		return result, fmt.Errorf("delete source batch tags: %w", err)
-	}
-	// Delete orphaned records (staged cids with no surviving source tag) from
-	// every (producer, standard) table. Deleted counts LOGICAL records (per
-	// cid), independent of how many tables hold the row.
-	if err := tx.QueryRow(
-		`SELECT COUNT(*) FROM temp_sdn_reconcile_cids staged WHERE NOT EXISTS (SELECT 1 FROM sdn_record_source_tags keep WHERE keep.schema_name = ? AND keep.cid = staged.cid)`,
-		result.SchemaName,
-	).Scan(&result.Deleted); err != nil {
-		return result, fmt.Errorf("count orphaned source batch records: %w", err)
-	}
-	s.deleteRoutedMirrorsWhere(tx, tableName,
-		`cid IN (SELECT staged.cid FROM temp_sdn_reconcile_cids staged WHERE NOT EXISTS (SELECT 1 FROM sdn_record_source_tags keep WHERE keep.schema_name = ? AND keep.cid = staged.cid))`,
-		result.SchemaName)
-	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
-		DELETE FROM sdn_record_index
-		WHERE schema_name = ?
-		  AND cid IN (SELECT cid FROM temp_sdn_reconcile_cids)
-		  AND NOT EXISTS (
-			SELECT 1
-			FROM sdn_record_source_tags tags
-			WHERE tags.schema_name = sdn_record_index.schema_name
-			  AND tags.cid = sdn_record_index.cid
-		  )
-	`), result.SchemaName); err != nil {
-		return result, fmt.Errorf("delete orphaned source batch index rows: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return result, fmt.Errorf("commit source batch reconciliation: %w", err)
-	}
-	if _, err := s.tombstoneOrphanedEngineRowsLocked(result.SchemaName); err != nil {
-		return result, err
-	}
-	if err := s.rebuildSourceSummaryForSchema(result.SchemaName, tableName); err != nil {
-		return result, err
-	}
-	return result, nil
 }
 
 // ValidateSourceTags checks required provider/source fields.
