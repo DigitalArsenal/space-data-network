@@ -68,7 +68,7 @@ func (s *Store) GetRecord(ctx context.Context, schema, cidText string) (*Rec, er
 		return nil, err
 	}
 	typ := typeName(schema)
-	res, err := s.query(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(typ)),
+	res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(typ)),
 		Params: []Cell{Blob(c)}})
 	if noSuchType(err, schema) {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, cidText)
@@ -80,13 +80,15 @@ func (s *Store) GetRecord(ctx context.Context, schema, cidText string) (*Rec, er
 		r := recFromRow(res.Rows[0])
 		return &r, nil
 	}
-	parts, err := s.query(ctx, Request{SQL: `SELECT sql_name FROM flatsql_partitions WHERE type = ?1 ORDER BY sql_name`,
-		Params: []Cell{Text(typ)}})
+	// Not labeled yet: its partition holds it (the partitions from the
+	// heads, no lane).
+	parts, err := s.PartitionsOf(schema)
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range parts.Rows {
-		res, err := s.query(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(p[0].String())),
+	sort.Slice(parts, func(i, j int) bool { return parts[i].SQLName < parts[j].SQLName })
+	for _, p := range parts {
+		res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(p.SQLName)),
 			Params: []Cell{Blob(c)}})
 		if err != nil {
 			return nil, err

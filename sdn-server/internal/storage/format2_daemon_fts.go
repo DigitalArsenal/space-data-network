@@ -412,7 +412,7 @@ func (s *FlatSQLStore) f2RecordsAtGseqs(schemaName string, gseqs []int64, f *f2R
 		params = append(params, format2.Int(v))
 	}
 	g.add("_gseq IN ("+strings.Join(marks, ",")+")", params...)
-	return s.f2Select(schemaName, fmt.Sprintf("SELECT %s FROM %s%s ORDER BY _gseq", format2.RecColumns,
+	return s.f2SelectPoint(schemaName, fmt.Sprintf("SELECT %s FROM %s%s ORDER BY _gseq", format2.RecColumns,
 		format2.QuoteIdent(format2.TypeName(schemaName)), g.where()), g.params, hydrate)
 }
 

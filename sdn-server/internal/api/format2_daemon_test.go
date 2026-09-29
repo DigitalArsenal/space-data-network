@@ -109,8 +109,8 @@ func TestFormat2DashboardLaneNeverStaleDuringIngest(t *testing.T) {
 		recs := make([][]byte, n)
 		for i := range recs {
 			k := seq + i
-			recs[i] = sds.NewOMMBuilder().WithNoradCatID(uint32(1_000_000+peer*100_000+k%100_000)).
-				WithObjectName(fmt.Sprintf("I%d-%d", peer, k)).WithEpoch(base.Add(time.Duration(k)*time.Second).Format("2006-01-02T15:04:05Z")).
+			recs[i] = sds.NewOMMBuilder().WithNoradCatID(uint32(1_000_000 + peer*100_000 + k%100_000)).
+				WithObjectName(fmt.Sprintf("I%d-%d", peer, k)).WithEpoch(base.Add(time.Duration(k) * time.Second).Format("2006-01-02T15:04:05Z")).
 				WithMeanMotion(15.5).Build()[4:]
 		}
 		_, err := store.StoreBatchWithSourceTags("OMM.fbs", recs, fmt.Sprintf("source:ingest%02d", peer), nil,
