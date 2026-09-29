@@ -315,6 +315,14 @@ func (s *Store) StreamTrusted(ctx context.Context, sql string, params []Cell, fn
 	return o, err
 }
 
+// Scan runs a trusted statement and hands each row to fn as it arrives
+// (the cells are valid during the call only): the interactive lanes, the
+// bulk lanes when the plan is unbounded. A statement over a type that holds
+// no record yet answers ErrNoSuchType-shaped errors (NoSuchType).
+func (s *Store) Scan(ctx context.Context, req Request, fn func(row []Cell) error) error {
+	return s.scan(ctx, req, fn)
+}
+
 // QueryPoint runs an O(1) statement (a lookup by CID or gseq) on the point
 // lanes.
 func (s *Store) QueryPoint(ctx context.Context, req Request) (*Result, error) {

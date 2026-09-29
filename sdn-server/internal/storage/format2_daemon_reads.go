@@ -405,32 +405,38 @@ func (s *FlatSQLStore) f2WindowRecs(ctx context.Context, q format2.WindowQuery, 
 // plan walks every posting of the source). The lanes only choose the plan;
 // each match is checked (format2.WindowQuery.ByBatch).
 func (s *FlatSQLStore) f2ByBatch(ctx context.Context, q *format2.WindowQuery) error {
-	if q.Batch == "" || q.Source == "" {
-		return nil
+	drives, err := s.f2BatchDrives(ctx, q.Schema, f2TagSpec{provider: q.Provider, source: q.Source, batch: q.Batch})
+	q.ByBatch = drives
+	return err
+}
+
+// f2BatchDrives is f2ByBatch's rule for a tag spec with a source and a batch.
+func (s *FlatSQLStore) f2BatchDrives(ctx context.Context, schema string, tag f2TagSpec) (bool, error) {
+	if tag.batch == "" || tag.source == "" {
+		return false, nil
 	}
 	lanes, err := s.f2Lanes(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
-	typ := format2.TypeName(q.Schema)
+	typ := format2.TypeName(schema)
 	var batch, match, source int64
 	for _, l := range lanes {
 		if l.Type != typ || !l.Tuple || l.Count <= 0 {
 			continue
 		}
-		if l.Source == q.Source {
+		if l.Source == tag.source {
 			source += l.Count
 		}
-		if l.Batch != q.Batch {
+		if l.Batch != tag.batch {
 			continue
 		}
 		batch += l.Count
-		if l.Source == q.Source && (q.Provider == "" || l.Provider == q.Provider) {
+		if tag.matches(l) {
 			match += l.Count
 		}
 	}
-	q.ByBatch = batch <= 2*match+1024 && batch < source
-	return nil
+	return batch <= 2*match+1024 && batch < source, nil
 }
 
 // f2WindowMerged runs a window read on its targets and merges partition
@@ -1049,7 +1055,17 @@ func (s *FlatSQLStore) f2RawPage(ctx context.Context, schema string, f *f2RawFil
 	if len(targets) == 0 {
 		return nil, nil
 	}
-	if len(targets) == 1 && targets[0].table == "" {
+	byBatch := make([]bool, len(targets))
+	for i, t := range targets {
+		drives, err := s.f2BatchDrives(ctx, schema, t.tag)
+		if err != nil {
+			return nil, err
+		}
+		byBatch[i] = drives
+	}
+	// One type-level statement when the engine gives the order (gseq); the
+	// epoch order (seconds, then text CID) is a sort, which runs on keys.
+	if len(targets) == 1 && targets[0].table == "" && !byBatch[0] && order != "epoch" {
 		g := f.on(targets[0])
 		sql := fmt.Sprintf("SELECT %s FROM %s%s%s LIMIT %d", format2.RecColumns, targets[0].from(schema), g.where(), f2RawOrderSQL(order), limit)
 		if offset > 0 {
@@ -1062,7 +1078,17 @@ func (s *FlatSQLStore) f2RawPage(ctx context.Context, schema string, f *f2RawFil
 		cid         string
 	}
 	var keys []key
-	for _, t := range targets {
+	for i, t := range targets {
+		if byBatch[i] {
+			k, err := s.f2BatchKeys(ctx, schema, f, t)
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range k {
+				keys = append(keys, key{r.gseq, r.epoch, r.cid})
+			}
+			continue
+		}
 		g := f.on(t)
 		if t.table != "" {
 			g.add("_gseq > 0")
@@ -1121,6 +1147,75 @@ func (s *FlatSQLStore) f2RawPage(ctx context.Context, schema string, f *f2RawFil
 	}
 	sort.Slice(recs, func(i, j int) bool { return pos[recs[i].RowID] < pos[recs[j].RowID] })
 	return recs, nil
+}
+
+// f2RawKey is one match of a raw filter: its cursor, epoch and text CID.
+type f2RawKey struct {
+	gseq, epoch     int64
+	cid             string
+	length, arrival int64 // _len, _arrival
+}
+
+// f2BatchKeys reads every match of a (source, batch) target through its
+// batch (f2BatchDrives): the source plan would walk every posting of the
+// source and sort them for the page's order. A match whose own tag meets the
+// target's tag conditions is kept; any other is checked by CID with all of
+// them (A2: one live instance meets them all).
+func (s *FlatSQLStore) f2BatchKeys(ctx context.Context, schema string, f *f2RawFilter, t f2Target) ([]f2RawKey, error) {
+	narrow := t
+	narrow.tag.provider, narrow.tag.source = "", ""
+	g := f.on(narrow)
+	if t.table != "" {
+		g.add("_gseq > 0")
+	}
+	res, err := s.ps.Query(ctx, format2.Request{SQL: fmt.Sprintf("SELECT _gseq, _epoch, _cid_bin, _len, _arrival, _provider, _source_name, _batch FROM %s%s",
+		t.from(schema), g.where()), Params: g.params})
+	if format2.NoSuchType(err, schema) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []f2RawKey
+	var pending [][]byte
+	seen := map[string]bool{}
+	keep := func(r []format2.Cell) {
+		c := format2.CIDText(r[2].B)
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, f2RawKey{gseq: r[0].Int64(), epoch: r[1].Int64(), cid: c, length: r[3].Int64(), arrival: r[4].Int64()})
+		}
+	}
+	for _, r := range res.Rows {
+		if r[6].String() == t.tag.source && r[7].String() == t.tag.batch && (t.tag.provider == "" || r[5].String() == t.tag.provider) {
+			keep(r)
+			continue
+		}
+		pending = append(pending, r[2].B)
+	}
+	for start := 0; start < len(pending); start += 256 {
+		end := min(start+256, len(pending))
+		h := f.on(t)
+		if t.table != "" {
+			h.add("_gseq > 0")
+		}
+		marks := make([]string, 0, end-start)
+		cells := make([]format2.Cell, 0, end-start)
+		for _, c := range pending[start:end] {
+			marks = append(marks, "?")
+			cells = append(cells, format2.Blob(c))
+		}
+		h.add("_cid_bin IN ("+strings.Join(marks, ",")+")", cells...)
+		res, err := s.ps.Query(ctx, format2.Request{SQL: fmt.Sprintf("SELECT _gseq, _epoch, _cid_bin, _len, _arrival FROM %s%s", t.from(schema),
+			h.where()), Params: h.params})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range res.Rows {
+			keep(r)
+		}
+	}
+	return out, nil
 }
 
 func (s *FlatSQLStore) f2QueryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
@@ -1190,6 +1285,18 @@ func (s *FlatSQLStore) f2RawAggregate(ctx context.Context, schema string, f *f2R
 	}
 	out := make([]int64, len(exprs))
 	for _, t := range targets {
+		if agg, ok, err := s.f2BatchAggregate(ctx, schema, f, t, exprs); err != nil {
+			return nil, err
+		} else if ok {
+			for i, v := range agg {
+				if isMax[i] {
+					out[i] = max(out[i], v)
+				} else {
+					out[i] += v
+				}
+			}
+			continue
+		}
 		g := f.on(t)
 		res, err := s.ps.Query(ctx, format2.Request{SQL: fmt.Sprintf("SELECT %s FROM %s%s", strings.Join(exprs, ", "), t.from(schema), g.where()),
 			Params: g.params})
@@ -1208,6 +1315,40 @@ func (s *FlatSQLStore) f2RawAggregate(ctx context.Context, schema string, f *f2R
 		}
 	}
 	return out, nil
+}
+
+// f2BatchAggregate is a raw aggregate of a (source, batch) target its batch
+// drives (f2BatchKeys), for the aggregates the count and the head take.
+func (s *FlatSQLStore) f2BatchAggregate(ctx context.Context, schema string, f *f2RawFilter, t f2Target, exprs []string) ([]int64, bool, error) {
+	for _, e := range exprs {
+		switch e {
+		case "COUNT(*)", "COALESCE(SUM(_len - 4), 0)", "COALESCE(MAX(_arrival), 0)":
+		default:
+			return nil, false, nil
+		}
+	}
+	drives, err := s.f2BatchDrives(ctx, schema, t.tag)
+	if err != nil || !drives {
+		return nil, false, err
+	}
+	keys, err := s.f2BatchKeys(ctx, schema, f, t)
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]int64, len(exprs))
+	for i, e := range exprs {
+		for _, k := range keys {
+			switch e {
+			case "COUNT(*)":
+				out[i]++
+			case "COALESCE(SUM(_len - 4), 0)":
+				out[i] += k.length - 4
+			default:
+				out[i] = max(out[i], k.arrival)
+			}
+		}
+	}
+	return out, true, nil
 }
 
 // f2CountRawRecords counts without a payload byte: the type head, the lane
@@ -1591,11 +1732,13 @@ func (s *FlatSQLStore) f2QueryEpochIndexedRecords(query EpochRecordQuery) ([]*Re
 type f2EpochPick struct {
 	gseq, sec int64
 	cid, key  string
+	bin       []byte // the binary CID (cid is filled for the picks kept)
 }
 
-// f2PointEpochPicks ranks each entity's candidates on each target (SQL
-// window function on the lane) and keeps, per entity, the best of the
-// targets' bests (the rank is a total order, so that is the global best).
+// f2PointEpochPicks streams each target's candidates (keys only, no
+// payload) and keeps, per entity, the best by the profile's rank (a total
+// order, so the best over the targets is the global best). A window
+// function over a type of millions of records ran the lane out of memory.
 func (s *FlatSQLStore) f2PointEpochPicks(ctx context.Context, query EpochRecordQuery) ([]f2EpochPick, error) {
 	f, err := f2EpochFilter(query)
 	if err != nil {
@@ -1610,13 +1753,6 @@ func (s *FlatSQLStore) f2PointEpochPicks(ctx context.Context, query EpochRecordQ
 	case EpochProfileNearest:
 	default:
 		return nil, fmt.Errorf("unsupported point epoch profile %q", query.Profile)
-	}
-	rank := "matched DESC, cid ASC"
-	switch query.Profile {
-	case EpochProfileForward:
-		rank = "matched ASC, cid ASC"
-	case EpochProfileNearest:
-		rank = fmt.Sprintf("ABS(matched - %d) ASC, CASE WHEN matched <= %d THEN 0 ELSE 1 END ASC, matched DESC, cid ASC", target, target)
 	}
 	better := func(a, b f2EpochPick) bool {
 		switch query.Profile {
@@ -1640,7 +1776,8 @@ func (s *FlatSQLStore) f2PointEpochPicks(ctx context.Context, query EpochRecordQ
 				return a.sec > b.sec
 			}
 		}
-		return a.cid < b.cid
+		// Text CID order, computed for ties only.
+		return format2.CIDText(a.bin) < format2.CIDText(b.bin)
 	}
 	targets, err := s.f2Targets(ctx, query.SchemaName, f.tag, false)
 	if err != nil {
@@ -1649,26 +1786,28 @@ func (s *FlatSQLStore) f2PointEpochPicks(ctx context.Context, query EpochRecordQ
 	best := map[string]f2EpochPick{}
 	for _, t := range targets {
 		g := f.on(t)
-		sql := fmt.Sprintf(`SELECT g, cid, entity_key, matched FROM (
-			SELECT g, cid, entity_key, matched, ROW_NUMBER() OVER (PARTITION BY entity_key ORDER BY %s) AS rn FROM (
-				SELECT _gseq AS g, _cid AS cid, %s AS entity_key, %s AS matched FROM %s%s)) WHERE rn = 1`,
-			rank, f2EpochEntitySQL(query.SchemaName), f2EpochSecSQL, t.from(query.SchemaName), g.where())
-		res, err := s.ps.Query(ctx, format2.Request{SQL: sql, Params: g.params})
+		sql := fmt.Sprintf(`SELECT _gseq, _cid_bin, %s, _epoch FROM %s%s`, f2EpochEntitySQL(query.SchemaName), t.from(query.SchemaName), g.where())
+		err := s.ps.Scan(ctx, format2.Request{SQL: sql, Params: g.params}, func(r []format2.Cell) error {
+			p := f2EpochPick{gseq: r[0].Int64(), bin: r[1].B, sec: format2.EpochSeconds(r[3].Int64())}
+			cur, ok := best[string(r[2].B)]
+			if ok && !better(p, cur) {
+				return nil
+			}
+			p.bin = append([]byte(nil), r[1].B...)
+			p.key = r[2].String()
+			best[p.key] = p
+			return nil
+		})
 		if format2.NoSuchType(err, query.SchemaName) {
 			continue
 		}
 		if err != nil {
 			return nil, fmt.Errorf("epoch point query failed: %w", err)
 		}
-		for _, r := range res.Rows {
-			p := f2EpochPick{gseq: r[0].Int64(), cid: r[1].String(), key: r[2].String(), sec: r[3].Int64()}
-			if cur, ok := best[p.key]; !ok || better(p, cur) {
-				best[p.key] = p
-			}
-		}
 	}
 	out := make([]f2EpochPick, 0, len(best))
 	for _, p := range best {
+		p.cid = format2.CIDText(p.bin)
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].key < out[j].key })
