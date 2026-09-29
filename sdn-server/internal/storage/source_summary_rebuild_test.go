@@ -282,9 +282,11 @@ func TestSourceSummaryRebuildChunkBoundary(t *testing.T) {
 
 // TestSourceSummaryPrunesVanishedLanes proves a lane whose tags were superseded
 // or garbage-collected away stops being reported. It uses the SCOPED call
-// deliberately: that is the form SupersedeSourceBatches, ReconcileSourceBatch and
+// deliberately: that is the form ReconcileSourceBatch and
 // garbageCollectBeforeLocked actually use, and the only one that may assume the
-// schema it names was mutated. The boot path must NOT do this work — see
+// schema it names was mutated (SupersedeSourceBatches rebuilds only the lanes it
+// evicted, one at a time — TestSupersedeEvictsExactlyWhatTheOldChunkEvicted).
+// The boot path must NOT do this work — see
 // TestSourceSummaryBootRebuildsOnlyReplayedLanes.
 func TestSourceSummaryPrunesVanishedLanes(t *testing.T) {
 	validator, err := sds.NewValidator(nil)

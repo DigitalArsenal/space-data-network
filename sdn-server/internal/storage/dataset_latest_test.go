@@ -415,13 +415,13 @@ func TestSupersedeSourceBatchesKeepsRecordsSharedWithKeptBatch(t *testing.T) {
 }
 
 func TestSupersedeSourceBatchesChunksAcrossLockWindows(t *testing.T) {
-	// More superseded CIDs than one supersedeChunkSize window forces the
+	// More superseded CIDs than the largest supersede chunk forces the
 	// multi-chunk path; counts must stay exact across chunk boundaries.
 	if testing.Short() {
 		t.Skip("short mode")
 	}
 	tmpDir, provider, subscriber := newLatestTestStores(t)
-	const oldCount = supersedeChunkSize + 40 // > one chunk
+	const oldCount = supersedeChunkMax + 40 // > one chunk at any size
 	publishAndReplicateBatch(t, tmpDir, provider, subscriber, "batch-old", 100000, oldCount, time.Now().UTC().Add(-time.Hour))
 	batchNew := publishAndReplicateBatch(t, tmpDir, provider, subscriber, "batch-new", 100000+oldCount, 5, time.Now().UTC())
 

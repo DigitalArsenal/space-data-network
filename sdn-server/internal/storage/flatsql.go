@@ -1661,9 +1661,13 @@ const sourceSummaryLaneScanLimit = 100000
 //   - the tag writers (insertNewSourceTagsTx, upsertSourceTagsTx, and the
 //     window writer chunkWriteBuffer.writeSourceTags) all increment the
 //     summary, so a lane they touch is already correct;
-//   - supersede / GC / batch reconciliation call the SCOPED form with the schema
-//     they just mutated, and every lane of that schema is rebuilt unconditionally
-//     because those verbs delete rows and the summary cannot be trusted for them.
+//   - GC / batch reconciliation call the SCOPED form with the schema they just
+//     mutated, and every lane of that schema is rebuilt unconditionally because
+//     those verbs delete rows and the summary cannot be trusted for them;
+//   - dataset supersede knows exactly which lanes it emptied and rebuilds only
+//     those, one lane per store-lock hold (dataset_supersede.go): it deletes a
+//     record only when no tag of the schema names it, so no other lane's
+//     inputs change.
 //
 // No boot step calls this: the summaries are durable rows in the same database
 // as the records they describe.
@@ -1728,7 +1732,7 @@ func (s *FlatSQLStore) sourceSummaryLanes(schemaName string) ([]sourceSummaryLan
 	}
 
 	// Every lane the summary already names is rebuilt: a SCOPED call comes
-	// from supersede / GC / batch reconciliation, which have just DELETED rows,
+	// from GC / batch reconciliation, which have just DELETED rows,
 	// and the global call is an operator's explicit maintenance request. This
 	// reads the summary (tens of rows), not the tag table.
 	summaryLanes := 0
