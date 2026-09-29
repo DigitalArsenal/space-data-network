@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -274,6 +275,9 @@ func noSuchType(err error, schema string) bool {
 
 // Window returns an indexed record window.
 func (s *Store) Window(ctx context.Context, q WindowQuery) ([]Rec, error) {
+	if _, _, indexed := q.where(); indexed && q.Order == "" {
+		return s.windowByEpoch(ctx, q, recColumns)
+	}
 	sql, params := q.sql(recColumns)
 	res, err := s.query(ctx, Request{SQL: sql, Params: params})
 	if noSuchType(err, q.Schema) {
@@ -289,9 +293,112 @@ func (s *Store) Window(ctx context.Context, q WindowQuery) ([]Rec, error) {
 	return out, nil
 }
 
+// windowByEpoch serves an index-driven window (a source, provider, batch or
+// object filter) in the legacy order without sorting every match: it reads
+// the plan's epoch order (ORDER BY _epoch DESC, which the source plan emits
+// from its SOURCE_EPOCH postings: design §9, the IQC incident query) only
+// until the window is full and the epoch second of the last kept row is
+// complete, then orders that prefix by (whole seconds DESC, text CID ASC).
+// The statement is cancelled once it has given enough rows.
+func (s *Store) windowByEpoch(ctx context.Context, q WindowQuery, cols string) ([]Rec, error) {
+	where, params, _ := q.where()
+	sql := fmt.Sprintf("SELECT %s, _epoch FROM %s%s ORDER BY _epoch DESC", cols, quoteIdent(typeName(q.Schema)), where)
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	need := q.Offset + limit
+	var rows []Rec
+	var epochs []int64
+	errEnough := errors.New("enough")
+	run := func(r *Reader) error {
+		rows, epochs = rows[:0], epochs[:0]
+		st, err := r.Submit(ctx, Request{SQL: sql, Params: params})
+		if err != nil {
+			return err
+		}
+		dec := RB1Decoder{OnRow: func(row []Cell) error {
+			ep := row[len(row)-1].Int64()
+			if len(rows) >= need && epochSeconds(ep) < epochSeconds(epochs[need-1]) {
+				return errEnough
+			}
+			own := make([]Cell, len(row)-1)
+			for i := range own {
+				own[i] = row[i]
+				if row[i].B != nil {
+					own[i].B = append([]byte(nil), row[i].B...)
+				}
+			}
+			rows = append(rows, recFromRow(own))
+			epochs = append(epochs, ep)
+			return nil
+		}}
+		buf := make([]byte, 256<<10)
+		for {
+			n, err := st.Read(ctx, buf)
+			if n > 0 {
+				if ferr := dec.Feed(buf[:n]); ferr != nil {
+					st.Close()
+					if ferr == errEnough {
+						return nil
+					}
+					return ferr
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				st.Close()
+				return err
+			}
+		}
+		if o := st.Finish(); o.Status != 0 {
+			return &StatusError{Status: o.Status, Msg: o.Err}
+		}
+		return nil
+	}
+	err := run(s.ri)
+	if IsStatus(err, StatusNeedsBulk) {
+		err = run(s.rb)
+	}
+	if noSuchType(err, q.Schema) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	idx := make([]int, len(rows))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		sa, sb := epochSeconds(epochs[idx[a]]), epochSeconds(epochs[idx[b]])
+		if sa != sb {
+			return sa > sb
+		}
+		return rows[idx[a]].CID < rows[idx[b]].CID
+	})
+	out := make([]Rec, 0, limit)
+	for i := q.Offset; i < len(idx) && len(out) < limit; i++ {
+		out = append(out, rows[idx[i]])
+	}
+	return out, nil
+}
+
 // ByteProbe counts a window's records and record bytes without reading one
 // payload byte (§9: the probe sums rows' lengths).
 func (s *Store) ByteProbe(ctx context.Context, q WindowQuery) (count, bytes int64, err error) {
+	if _, _, indexed := q.where(); indexed && q.Order == "" {
+		recs, err := s.windowByEpoch(ctx, q, strings.Replace(recColumns, "_data", "NULL", 1))
+		if err != nil {
+			return 0, 0, err
+		}
+		for _, r := range recs {
+			bytes += r.Length
+		}
+		return int64(len(recs)), bytes, nil
+	}
 	inner, params := q.sql("_len")
 	res, err := s.query(ctx, Request{SQL: "SELECT COUNT(*), COALESCE(SUM(_len - 4), 0) FROM (" + inner + ")", Params: params})
 	if noSuchType(err, q.Schema) {
