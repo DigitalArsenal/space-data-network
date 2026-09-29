@@ -35,9 +35,11 @@ import (
 // has not activated as format 2.
 var ErrNotMigrated = errors.New("format2: the store is not MIGRATED; run `spacedatanetwork store-migrate` (format 2 refuses to start)")
 
-// Topology is the instance sizing.
+// Topology is the instance sizing. SandboxLanes (default 1) serve untrusted
+// SQL under the work budget (A28, §22.4-7): never the shared bulk lanes.
 type Topology struct {
 	Writers, InteractiveLanes, BulkLanes uint32
+	SandboxLanes                         uint32
 }
 
 // DefaultTopology is §5.1 for a machine with the given cores.
@@ -89,6 +91,7 @@ type Store struct {
 	w      *Writer
 	ri     *Reader
 	rb     *Reader
+	rs     *Reader // sandbox lanes (untrusted SQL)
 
 	regMu sync.Mutex
 	types map[string]TypeSpec // schema -> registered spec
@@ -148,6 +151,13 @@ func Open(cfg StoreConfig) (*Store, error) {
 	if s.rb, err = OpenReader(opt, flatsqlrt.PSRoleBulk, ReaderConfig{Root: cfg.EngineRoot, Lanes: cfg.Topology.BulkLanes}); err != nil {
 		return fail(fmt.Errorf("format2: bulk reader instance: %w", err))
 	}
+	sandbox := cfg.Topology.SandboxLanes
+	if sandbox == 0 {
+		sandbox = 1
+	}
+	if s.rs, err = OpenReader(opt, flatsqlrt.PSRoleSandbox, ReaderConfig{Root: cfg.EngineRoot, Lanes: sandbox}); err != nil {
+		return fail(fmt.Errorf("format2: sandbox reader instance: %w", err))
+	}
 	go s.gatePump()
 	s.OpenedIn = time.Since(start)
 	return s, nil
@@ -169,7 +179,10 @@ func (s *Store) gatePump() {
 	defer t.Stop()
 	for {
 		oldest := uint64(0)
-		for _, r := range []*Reader{s.ri, s.rb} {
+		for _, r := range []*Reader{s.ri, s.rb, s.rs} {
+			if r == nil {
+				continue
+			}
 			if v := r.OldestActiveStart(); v != 0 && (oldest == 0 || v < oldest) {
 				oldest = v
 			}
@@ -201,7 +214,7 @@ func (s *Store) SetQuota(bytes uint64) error { return s.w.SetQuota(bytes) }
 
 func (s *Store) shutdown() error {
 	var first error
-	for _, r := range []*Reader{s.ri, s.rb} {
+	for _, r := range []*Reader{s.ri, s.rb, s.rs} {
 		if r != nil {
 			if err := r.Stop(); err != nil && first == nil {
 				first = err

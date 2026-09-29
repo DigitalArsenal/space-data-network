@@ -24,6 +24,9 @@ import (
 // until the replay lands, and mistaking that for data loss would send the node
 // back to a publisher it does not owe a pull.
 func (s *FlatSQLStore) SourceRecordCounts() (map[string]int64, error) {
+	if s != nil && s.ps != nil {
+		return s.f2SourceRecordCounts()
+	}
 	if s == nil || s.db == nil {
 		return nil, nil
 	}

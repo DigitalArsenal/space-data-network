@@ -1489,6 +1489,11 @@ func (s *FlatSQLStore) QueryEpochRawStream(schemaName string, sourceName string,
 		limitParam = -1 // SQLite: LIMIT -1 = unlimited
 	}
 
+	if s.ps != nil {
+		// Format 2: the same statement on the reader lanes (A18: the
+		// relation, its fields and _source keep their names).
+		return s.f2QueryRawStream(sqlText, sourceShadow, epochUnix, limitParam)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.engineDB == nil {
@@ -1505,6 +1510,9 @@ func (s *FlatSQLStore) QueryEpochRawStream(schemaName string, sourceName string,
 // EngineRecordCount reports how many records are resident in the engine's
 // unified view for a schema (the hot window), 0 when nothing was ingested yet.
 func (s *FlatSQLStore) EngineRecordCount(schemaName string) (int64, error) {
+	if s.ps != nil {
+		return s.f2Count(schemaName)
+	}
 	binding, routed := s.engineRoutedSchemaFor(schemaName)
 	if !routed {
 		return 0, fmt.Errorf("%q is not routed into this store's engine", schemaName)

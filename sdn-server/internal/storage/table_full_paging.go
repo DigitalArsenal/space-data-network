@@ -90,6 +90,9 @@ func (s *FlatSQLStore) FullTablePageWithCursor(query FullTablePageQuery) (FullTa
 	if query.Offset < 0 {
 		query.Offset = 0
 	}
+	if s.ps != nil {
+		return s.f2FullTablePage(query)
+	}
 
 	// OFFSET remains a compatibility fallback for a client that cannot supply
 	// a cursor. It is safe as a single routed-table rowid walk. A multi-table

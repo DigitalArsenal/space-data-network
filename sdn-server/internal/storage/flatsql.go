@@ -43,6 +43,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 )
 
 var log = logging.Logger("storage")
@@ -303,6 +304,14 @@ type FlatSQLStore struct {
 	bootAuxFrom   int64
 	bootAuxWarm   bool
 	bootAuxFrames int
+
+	// ps is the partition store of a format-2 store (SDN_STORE_FORMAT=2,
+	// format2_daemon.go); nil on format 1. When set, every record read and
+	// write goes to it, and s.db is the control instance (control2.flatsqldb),
+	// which holds no record table.
+	ps *format2.Store
+	// f2 is the format-2 daemon state (nil on format 1).
+	f2 *format2Daemon
 }
 
 // BootStats reports what the last open did.
@@ -344,6 +353,19 @@ type storeConfig struct {
 	engineGenericHotWindow int
 	deferBootRebuilds      bool
 	auxReplayChunkBytes    int64
+	quotaBytes             int64
+}
+
+// WithQuotaBytes is the store's cap on on-disk bytes (storage.max_size).
+// Format 2 hands it to the partition store's quota planner at open (§13:
+// eviction in arrival order down to the 0.85 low-water mark). Format 1 keeps
+// its periodic GarbageCollectToQuota and ignores it.
+func WithQuotaBytes(bytes int64) StoreOption {
+	return func(c *storeConfig) {
+		if bytes > 0 {
+			c.quotaBytes = bytes
+		}
+	}
 }
 
 // WithEngineHotWindow overrides the engine hot-window bound: the maximum
@@ -409,6 +431,15 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 	}
 	for _, o := range opts {
 		o(&cfg)
+	}
+	// STORE FORMAT 2 (format2_daemon.go) runs only when selected; a format-1
+	// open of a store store-migrate activated is refused before it touches a
+	// file (A5).
+	if format2.Selected() {
+		return newFormat2Store(basePath, validator, cfg)
+	}
+	if err := newFormat1RefusesMigratedStore(basePath); err != nil {
+		return nil, err
 	}
 	if cfg.engineGenericHotWindow > cfg.engineHotWindow {
 		// HONOURED, NOT CLAMPED — and therefore said out loud.
@@ -657,6 +688,9 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 // the store maintenance API. The daemon defers this and runs
 // HydrateEngineHotWindowContext in the background instead.
 func (s *FlatSQLStore) RebuildDerivedState() error {
+	if s.ps != nil {
+		return nil // format 2: no hot window to hydrate
+	}
 	defer s.lockWrite("RebuildDerivedState")()
 	budget := newBootPhaseBudget(s.engine)
 	end := budget.phase("maintenance: engine hot-window hydration")
@@ -675,6 +709,9 @@ func (s *FlatSQLStore) RebuildDerivedState() error {
 // maintains the summary incrementally, so this is a maintenance verb for an
 // operator who suspects drift, not a boot step. It holds the store write lock.
 func (s *FlatSQLStore) RebuildSourceSummaries() error {
+	if s.ps != nil {
+		return nil // format 2: the lane counters are the writer's
+	}
 	defer s.lockWrite("RebuildSourceSummaries")()
 	return s.rebuildSourceSummariesFromDurableState()
 }
@@ -725,16 +762,8 @@ func (s *FlatSQLStore) requireWritable(op string) error {
 }
 
 func (s *FlatSQLStore) initTables() error {
-	// Create main metadata table
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS sdn_metadata (
-			key TEXT PRIMARY KEY,
-			value TEXT,
-			updated_at INTEGER
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create metadata table: %w", err)
+	if err := s.initMetadataTable(); err != nil {
+		return err
 	}
 	// The engine hot window's residency ledger (engine_residency.go).
 	if _, err := s.db.Exec(engineRowsTableSQL); err != nil {
@@ -881,6 +910,50 @@ func (s *FlatSQLStore) initTables() error {
 	}
 
 	// Directory index for node/user EPM records.
+	if err := s.initDirectoryTable(); err != nil {
+		return err
+	}
+
+	// Local EPM source-of-truth records. Only the size-prefixed EPM FlatBuffer
+	// bytes are persisted; editable forms and JSON views are derived from the
+	// FlatBuffer at the API edge.
+	if err := s.initLocalEPMTable(); err != nil {
+		return fmt.Errorf("failed to create local EPM table: %w", err)
+	}
+
+	if err := s.initLogIndexTable(); err != nil {
+		return err
+	}
+
+	// Per-partition live record counters (live_record_bytes.go). Not fatal: a
+	// counter that failed to install reports itself unavailable, never a
+	// wrong total, and ingest does not depend on it.
+	if err := s.installPartitionCounters(); err != nil {
+		log.Errorf("Live record bytes: partition counter install failed; LiveRecordBytes reports it unavailable until the next open: %v", err)
+	}
+
+	return nil
+}
+
+// initMetadataTable creates sdn_metadata (initTables; the format-2 control
+// instance, format2_daemon.go).
+func (s *FlatSQLStore) initMetadataTable() error {
+	_, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS sdn_metadata (
+			key TEXT PRIMARY KEY,
+			value TEXT,
+			updated_at INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create metadata table: %w", err)
+	}
+	return nil
+}
+
+// initDirectoryTable creates sdn_directory and its indexes (initTables; the
+// format-2 control instance).
+func (s *FlatSQLStore) initDirectoryTable() error {
 	directoryExisted, err := s.tableExists("sdn_directory")
 	if err != nil {
 		return err
@@ -916,14 +989,12 @@ func (s *FlatSQLStore) initTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create directory updated index: %w", err)
 	}
+	return nil
+}
 
-	// Local EPM source-of-truth records. Only the size-prefixed EPM FlatBuffer
-	// bytes are persisted; editable forms and JSON views are derived from the
-	// FlatBuffer at the API edge.
-	if err := s.initLocalEPMTable(); err != nil {
-		return fmt.Errorf("failed to create local EPM table: %w", err)
-	}
-
+// initLogIndexTable creates sdn_log_index and its indexes (initTables; the
+// format-2 control instance).
+func (s *FlatSQLStore) initLogIndexTable() error {
 	// Publication log index for PLG hash-chained logs.
 	logIndexExisted, err := s.tableExists("sdn_log_index")
 	if err != nil {
@@ -959,14 +1030,6 @@ func (s *FlatSQLStore) initTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create log epoch index: %w", err)
 	}
-
-	// Per-partition live record counters (live_record_bytes.go). Not fatal: a
-	// counter that failed to install reports itself unavailable, never a
-	// wrong total, and ingest does not depend on it.
-	if err := s.installPartitionCounters(); err != nil {
-		log.Errorf("Live record bytes: partition counter install failed; LiveRecordBytes reports it unavailable until the next open: %v", err)
-	}
-
 	return nil
 }
 
@@ -2035,6 +2098,9 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName,
 // RefreshSourceBatchSummary recomputes one provider/source/batch summary from
 // source tags and record metadata without scanning unrelated batches.
 func (s *FlatSQLStore) RefreshSourceBatchSummary(schemaName, providerID, sourceName, batchID string) error {
+	if s.ps != nil {
+		return nil // format 2: the lane counters are maintained on append
+	}
 	schemaName = strings.TrimSpace(schemaName)
 	providerID = strings.TrimSpace(providerID)
 	sourceName = strings.TrimSpace(sourceName)
@@ -2168,6 +2234,9 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 // engine-cache partition here; provenance rows are written by the callers'
 // UpsertSourceTags.
 func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, signature []byte, tags *SourceTags) (string, error) {
+	if s.ps != nil {
+		return s.f2StoreOne(schemaName, data, peerID, signature, tags)
+	}
 	if err := s.requireWritable("store record"); err != nil {
 		return "", err
 	}
@@ -2446,6 +2515,14 @@ type IndexedRecordQuery struct {
 
 // StoreWithSourceTags stores a FlatBuffer record and attaches provider/source metadata.
 func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerID string, signature []byte, tags SourceTags) (string, error) {
+	if s.ps != nil {
+		// The licence first (see below), then the record with its tag in one
+		// write: the engine keeps the tag on the record (A2).
+		if err := s.recordSourceBatchLicense(schemaName, tags); err != nil {
+			return "", err
+		}
+		return s.f2StoreOne(schemaName, data, peerID, signature, &tags)
+	}
 	// The batch's licence is recorded BEFORE the records land: a record whose
 	// licence could not be persisted must never become publishable, because
 	// republishing it without its terms is the thing this carriage exists to
@@ -2559,6 +2636,10 @@ func (s *FlatSQLStore) StoreBatchWithSourceTags(schemaName string, records [][]b
 }
 
 func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
+	if s.ps != nil {
+		n, _, err := s.f2StoreBatch(schemaName, records, peerID, signature, tags)
+		return n, err
+	}
 	if err := s.requireWritable("store batch"); err != nil {
 		return 0, err
 	}
@@ -2860,6 +2941,15 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 
 // UpsertSourceTags attaches or updates source tags for an existing record.
 func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags) error {
+	if s.ps != nil {
+		if err := s.requireWritable("upsert source tags"); err != nil {
+			return err
+		}
+		if _, err := sds.SchemaNameToTable(schemaName); err != nil {
+			return fmt.Errorf("invalid schema name: %w", err)
+		}
+		return s.f2Retag(schemaName, cid, tags)
+	}
 	if err := s.requireWritable("upsert source tags"); err != nil {
 		return err
 	}
@@ -2996,6 +3086,9 @@ func upsertSourceTagsTx(tx sqlQueryExecer, tableName, schemaName, cid string, ta
 
 // GetSourceTags returns provider/source tags for a stored record.
 func (s *FlatSQLStore) GetSourceTags(schemaName, cid string) (SourceTags, error) {
+	if s.ps != nil {
+		return s.f2GetSourceTags(schemaName, cid)
+	}
 	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
 		return SourceTags{}, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -3029,6 +3122,9 @@ func (s *FlatSQLStore) GetSourceTags(schemaName, cid string) (SourceTags, error)
 }
 
 func (s *FlatSQLStore) sourceTagsForCIDs(schemaName string, cids []string) (map[string]SourceTags, error) {
+	if s.ps != nil {
+		return s.f2SourceTagsForCIDs(schemaName, cids, f2TagSpec{})
+	}
 	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -3096,6 +3192,9 @@ func (s *FlatSQLStore) sourceTagsForCIDs(schemaName string, cids []string) (map[
 
 // QuerySourceTaggedRecords returns records matching provider/source/batch tags.
 func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record, error) {
+	if s.ps != nil {
+		return s.f2QuerySourceTaggedRecords(query)
+	}
 	if query.Limit <= 0 {
 		query.Limit = 100
 	}
@@ -3191,6 +3290,9 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 	tableName, err := sds.SchemaNameToTable(result.SchemaName)
 	if err != nil {
 		return result, fmt.Errorf("invalid schema name: %w", err)
+	}
+	if s.ps != nil {
+		return s.f2ReconcileSourceBatch(result)
 	}
 
 	defer s.lockWrite("ReconcileSourceBatch")()
@@ -3305,6 +3407,9 @@ func (s *FlatSQLStore) Get(schemaName, cid string) ([]byte, error) {
 // The whereClause MUST use ? placeholders for all values.
 // This method is only used internally with trusted where clauses.
 func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}) ([][]byte, error) {
+	if s.ps != nil {
+		return s.f2QueryData(schemaName, whereClause, 0, 0)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if err := s.closedErr(); err != nil {
@@ -3350,6 +3455,9 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 
 // QueryAll returns all records for a schema (no filtering). Safe for protocol use.
 func (s *FlatSQLStore) QueryAll(schemaName string, limit int) ([][]byte, error) {
+	if s.ps != nil {
+		return s.f2QueryData(schemaName, "", min(max(limit, 1), 10000), 0)
+	}
 	if limit <= 0 {
 		limit = 1000
 	}
@@ -3361,6 +3469,15 @@ func (s *FlatSQLStore) QueryAll(schemaName string, limit int) ([][]byte, error) 
 
 // QueryAllBounded returns recent records while enforcing both row and total-byte limits.
 func (s *FlatSQLStore) QueryAllBounded(schemaName string, limit int, maxTotalBytes int) ([][]byte, error) {
+	if s.ps != nil {
+		if limit <= 0 {
+			limit = 100
+		}
+		if maxTotalBytes <= 0 {
+			maxTotalBytes = 2 * 1024 * 1024
+		}
+		return s.f2QueryData(schemaName, "", min(limit, 1000), maxTotalBytes)
+	}
 	if limit <= 0 {
 		limit = 100
 	}
@@ -3429,6 +3546,9 @@ func (s *FlatSQLStore) QuerySince(schemaName string, since time.Time) ([][]byte,
 // finally tombstones it in the engine hot window so the sandboxed query
 // surface stops answering with it at once (engine_residency.go).
 func (s *FlatSQLStore) Delete(schemaName, cid string) error {
+	if s.ps != nil {
+		return s.f2Delete(schemaName, cid)
+	}
 	if err := s.requireWritable("delete record"); err != nil {
 		return err
 	}
@@ -3472,6 +3592,9 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 
 // Count returns the number of records in a schema table.
 func (s *FlatSQLStore) Count(schemaName string) (int64, error) {
+	if s.ps != nil {
+		return s.f2Count(schemaName)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if err := s.closedErr(); err != nil {
@@ -3494,6 +3617,9 @@ func (s *FlatSQLStore) Count(schemaName string) (int64, error) {
 
 // GarbageCollect removes old records based on age.
 func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
+	if s.ps != nil {
+		return 0, f2Unsupported("age-based garbage collection (the engine evicts by quota in arrival order, §13)")
+	}
 	if err := s.requireWritable("garbage collect"); err != nil {
 		return 0, err
 	}
@@ -3601,6 +3727,9 @@ const maxQuotaEvictionRounds = 8
 // answers ErrStoreClosed (node.go's quota bookkeeping is fire-and-forget and
 // can outlive Close).
 func (s *FlatSQLStore) LiveRecordBytes() (int64, error) {
+	if s.ps != nil {
+		return s.f2LiveRecordBytes()
+	}
 	_, bytes, err := s.liveRecordTotals()
 	if err != nil {
 		return 0, err
@@ -3616,6 +3745,9 @@ func (s *FlatSQLStore) LiveRecordBytes() (int64, error) {
 //
 // Lock-free: the paths are fixed at open, and a stat needs no engine.
 func (s *FlatSQLStore) DiskUsageBytes() (int64, error) {
+	if s.ps != nil {
+		return s.f2DiskUsageBytes()
+	}
 	basePath := s.basePath
 	controlDBPath := s.controlDBPath
 
@@ -3669,6 +3801,12 @@ func (s *FlatSQLStore) DiskUsageBytes() (int64, error) {
 // counted, this refuses with ErrLiveRecordBytesReconciling instead of
 // evicting against a partial total.
 func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
+	if s.ps != nil {
+		if maxBytes <= 0 {
+			return 0, nil
+		}
+		return s.f2GarbageCollectToQuota(maxBytes)
+	}
 	if maxBytes <= 0 {
 		return 0, nil
 	}
@@ -3771,6 +3909,7 @@ func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 // Close closes the database handle, record catalog, and engine.
 func (s *FlatSQLStore) Close() error {
 	s.stopFullTextIndexes()
+	s.stopFormat2FTS()
 	// Stop AND JOIN the background checkpointer before taking the write lock.
 	// Signalling alone is not enough: the loop may already be blocked on s.mu
 	// inside a checkpoint, and it would then run against a store this function
@@ -3794,8 +3933,15 @@ func (s *FlatSQLStore) Close() error {
 
 	s.closed.Store(true)
 	var firstErr error
+	// Format 2: the partition store's instances stop (bounded) before the
+	// control instance and the store lock go.
+	if err := s.closeFormat2Locked(); err != nil {
+		firstErr = err
+	}
 	if s.db != nil && s.db != closedStoreDB {
-		firstErr = s.db.Close()
+		if err := s.db.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	s.db = closedStoreDB
 	s.closePartitionSnapshot()
@@ -4489,6 +4635,9 @@ func (s *FlatSQLStore) localEPMKeys() ([][]byte, error) {
 
 // RebuildIndex scans all schema tables and repopulates sdn_record_index.
 func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
+	if s.ps != nil {
+		return map[string]int64{}, nil // format 2: the partitions index on append
+	}
 	if err := s.requireWritable("reindex"); err != nil {
 		return nil, err
 	}
@@ -4551,6 +4700,9 @@ func (s *FlatSQLStore) QueryByIndexedFields(schemaName, day string, noradCatID *
 // It avoids the materialized index join for unfiltered consumers that do not
 // require day/object predicates or source-batch snapshot semantics.
 func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Record, error) {
+	if s.ps != nil {
+		return s.f2QueryRecentRecords(schemaName, limit)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -4653,6 +4805,9 @@ func (s *FlatSQLStore) unsummarizedSchemaCountLocked(schemaName, tableName strin
 }
 
 func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
+	if s.ps != nil {
+		return s.f2DataSummary()
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if err := s.closedErr(); err != nil {
@@ -4791,6 +4946,9 @@ func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
 // per-record source-tags created_at column. It is a read-only aggregate, safe
 // for the anonymous /api/v1/stats pipeline-progress surface.
 func (s *FlatSQLStore) SourceBatchProgress() ([]SourceBatchProgress, error) {
+	if s.ps != nil {
+		return s.f2SourceBatchProgress()
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -4876,6 +5034,9 @@ type ProducerSourceProgress struct {
 // ProducerSourceProgress reports per-producer contribution to each source lane,
 // most recently updated first. Read-only; no side effects.
 func (s *FlatSQLStore) ProducerSourceProgress() ([]ProducerSourceProgress, error) {
+	if s.ps != nil {
+		return s.f2ProducerSourceProgress()
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -4986,6 +5147,9 @@ type RecordIndexRow struct {
 // the total match count, over sdn_record_index joined to sdn_record_source_tags
 // for the source-lane filter. No FlatBuffer payloads are hydrated.
 func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow, int64, error) {
+	if s.ps != nil {
+		return s.f2RecordIndexPage(q)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -5073,6 +5237,9 @@ func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow
 // CountRawRecords returns a filtered raw-record count without hydrating
 // FlatBuffer payloads from stream files.
 func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
+	if s.ps != nil {
+		return s.f2CountRawRecords(filter)
+	}
 	if err := s.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
 		return 0, err
 	}
@@ -5240,6 +5407,9 @@ func (s *FlatSQLStore) countRawRecordsLocked(filter RawRecordQuery) (int64, erro
 // RawRecordHead returns cursor/snapshot metadata for a raw-record result set
 // without opening the FlatSQL backing stream files.
 func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, error) {
+	if s.ps != nil {
+		return s.f2RawRecordHead(filter)
+	}
 	if err := s.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
 		return RawRecordHead{}, err
 	}
@@ -5251,6 +5421,17 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 // RawRecordSnapshot reads the count and head under one catalog lock so live
 // ingestion cannot place a newer boundary beside an older result count.
 func (s *FlatSQLStore) RawRecordSnapshot(filter RawRecordQuery) (int64, RawRecordHead, error) {
+	if s.ps != nil {
+		// The count and the head come from the same committed state: counters
+		// only move forward, and the head's MaxRowID bounds the pages.
+		head, err := s.f2RawRecordHead(filter)
+		if err != nil {
+			return 0, RawRecordHead{}, err
+		}
+		filter.MaxRowID = head.MaxRowID
+		count, err := s.f2CountRawRecords(filter)
+		return count, head, err
+	}
 	if err := s.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
 		return 0, RawRecordHead{}, err
 	}
@@ -5727,6 +5908,9 @@ func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName stri
 }
 
 func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+	if s.ps != nil {
+		return s.f2QueryRawRecords(filter, hydrate)
+	}
 	if err := s.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
 		return nil, err
 	}
@@ -5890,6 +6074,9 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 // the requested order. Returned records carry their STORED bytes (the
 // field-decryption pass is not run): WriteRawRecordFrames writes them verbatim.
 func (s *FlatSQLStore) QueryRawRecordRefsByRefs(schemaName string, refs []RawRecordRef) ([]*Record, error) {
+	if s.ps != nil {
+		return s.f2QueryRawRecordRefsByRefs(schemaName, refs)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -6721,6 +6908,9 @@ const DatasetShardFrameOverheadBytes = 4
 // then materialises (indexedRecordWindowSQL), so the count it returns is the
 // count the export produces.
 func (s *FlatSQLStore) IndexedRecordWindowLimitForBytes(filter IndexedRecordQuery, maxBytes int64) (int, bool, error) {
+	if s.ps != nil && maxBytes > 0 {
+		return s.f2IndexedRecordWindowLimitForBytes(filter, maxBytes)
+	}
 	if maxBytes <= 0 {
 		return filter.Limit, false, nil
 	}
@@ -6772,6 +6962,9 @@ func (s *FlatSQLStore) IndexedRecordWindowLimitForBytes(filter IndexedRecordQuer
 }
 
 func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record, error) {
+	if s.ps != nil {
+		return s.f2QueryIndexedRecords(filter)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if err := s.closedErr(); err != nil {
@@ -6832,6 +7025,9 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 
 // GetRecord retrieves a full record by CID.
 func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
+	if s.ps != nil {
+		return s.f2GetRecord(schemaName, cid)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if err := s.closedErr(); err != nil {
@@ -7249,6 +7445,9 @@ type SchemaDateRange struct {
 
 // SchemaDateRanges returns catalog metadata for all schemas with stored data.
 func (s *FlatSQLStore) SchemaDateRanges() ([]SchemaDateRange, error) {
+	if s.ps != nil {
+		return s.f2SchemaDateRanges()
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -7320,6 +7519,9 @@ func (s *FlatSQLStore) SchemaDateRanges() ([]SchemaDateRange, error) {
 // still being counted for the first time is summed directly, which reads only
 // that partition.
 func (s *FlatSQLStore) PeerStorageBytes(peerID string) (int64, error) {
+	if s.ps != nil {
+		return s.f2PeerStorageBytes(peerID)
+	}
 	producer := sanitizeProducerID(routedProducerID(peerID))
 	recognized := s.recognizedStandards()
 	// Lock-free from the counter snapshot when every one of the peer's
