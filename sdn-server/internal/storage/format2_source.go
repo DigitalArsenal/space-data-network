@@ -295,6 +295,43 @@ func (m *MigrationSource) TagsFor(schema string, cids []string) (map[string][]Le
 	return out, nil
 }
 
+// MaxTagRowID is max(rowid) over sdn_record_source_tags (0 when empty).
+func (m *MigrationSource) MaxTagRowID() (int64, error) {
+	var v sql.NullInt64
+	err := m.s.db.QueryRow(`SELECT MAX(rowid) FROM sdn_record_source_tags`).Scan(&v)
+	return v.Int64, err
+}
+
+// TagRow is one sdn_record_source_tags row with its rowid.
+type TagRow struct {
+	RowID  int64
+	Schema string
+	CID    string
+	LegacyTag
+}
+
+// TagsAfter returns up to limit tag rows with rowid > after, in rowid order
+// (the tags a store gained after a snapshot).
+func (m *MigrationSource) TagsAfter(after int64, limit int) ([]TagRow, error) {
+	rows, err := m.s.db.Query(`SELECT rowid, schema_name, cid, provider_id, source_name, COALESCE(source_url, ''), batch_id,
+		content_key_id, producer_peer_id, producer_public_key, COALESCE(created_at, 0)
+		FROM sdn_record_source_tags WHERE rowid > ? ORDER BY rowid LIMIT ?`, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TagRow
+	for rows.Next() {
+		var r TagRow
+		if err := rows.Scan(&r.RowID, &r.Schema, &r.CID, &r.ProviderID, &r.SourceName, &r.SourceURL, &r.BatchID,
+			&r.ContentKeyID, &r.ProducerPeerID, &r.ProducerPublicKey, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // PartitionCounter is one row of the sdn_partition_record_bytes oracle.
 type PartitionCounter struct {
 	Count int64

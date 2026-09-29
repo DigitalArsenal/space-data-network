@@ -483,3 +483,93 @@ func TestStoreMigrateInventoryOfStores(t *testing.T) {
 		}
 	}
 }
+
+// §22.4-2: --from-snapshot on a consistent copy while the store keeps
+// taking writes, then --delta on the stopped store, equals a full offline
+// migration of the same final state (partitions, counters, lanes, and every
+// type's cid sequence).
+func TestStoreMigrateSnapshotPlusDeltaEqualsAFullMigration(t *testing.T) {
+	requirePSEngine(t)
+	live := t.TempDir()
+	buildLegacyStore(t, live)
+	cloneLegacy := func(src string) string {
+		dst := filepath.Join(t.TempDir(), "store")
+		if err := os.MkdirAll(dst, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"control.flatsqldb", "control.flatsqldb-wal", "control.flatsqldb.fsdata", "auxiliary.flatsqlmeta"} {
+			if _, err := os.Stat(filepath.Join(src, name)); err != nil {
+				continue
+			}
+			if out, err := exec.Command("cp", filepath.Join(src, name), filepath.Join(dst, name)).CombinedOutput(); err != nil {
+				t.Fatalf("copy %s: %v %s", name, err, out)
+			}
+		}
+		return dst
+	}
+	snap := cloneLegacy(live)
+	ctx := context.Background()
+	opt := migrateOptions{Store: live, AOTCacheDir: migrateTestAOTDir(t), CompileOnMiss: true, PageRows: 64}
+	so := opt
+	so.Snapshot = snap
+	if _, err := migrateStore(ctx, so, nil); err != nil {
+		t.Fatalf("snapshot pass: %v", err)
+	}
+	// The daemon kept running: new records, re-tags of old ones, a new CAT
+	// edition (supersede), a new producer.
+	v, _ := sds.NewValidator(nil)
+	s, err := storage.NewFlatSQLStore(live, v, storage.WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	var omm [][]byte
+	for i := 0; i < 120; i++ {
+		omm = append(omm, migrateTestOMM(uint32(26000+i), base.Add(time.Duration(i)*time.Minute), fmt.Sprintf("NEW-%d", i)))
+	}
+	if _, err := s.StoreBatchWithSourceTags("OMM.fbs", omm, "source:celestrak", nil,
+		storage.SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "gp-010"}); err != nil {
+		t.Fatal(err)
+	}
+	old := make([][]byte, 0, 30)
+	obase := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for i := 150; i < 180; i++ {
+		old = append(old, migrateTestOMM(uint32(20000+i), obase.Add(time.Duration(i)*time.Minute), fmt.Sprintf("OBJ-%d", i)))
+	}
+	if _, err := s.StoreBatchWithSourceTags("OMM.fbs", old, "source:celestrak", nil,
+		storage.SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "gp-011"}); err != nil {
+		t.Fatal(err)
+	}
+	var cat [][]byte
+	for i := 0; i < 8; i++ {
+		cat = append(cat, migrateTestCAT(uint32(120+i), fmt.Sprintf("SAT %d (edition 3)", i)))
+	}
+	if _, err := s.StoreBatchWithSourceTags("CAT.fbs", cat, "source:celestrak", nil,
+		storage.SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-satcat", BatchID: "sc-3"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StoreBatchWithSourceTags("OMM.fbs", omm[:40], "16Uiu2HAmNewPeer", nil,
+		storage.SourceTags{ProviderID: "space-data-network-03", SourceName: "relay", BatchID: "r-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	full := cloneLegacy(live)
+	do := opt
+	do.Delta = true
+	do.NoActivate = true
+	rep, err := migrateStore(ctx, do, nil)
+	if err != nil {
+		t.Fatalf("delta: %v\nverification %+v", err, rep.Verification)
+	}
+	fo := opt
+	fo.Store = full
+	fo.NoActivate = true
+	if _, err := migrateStore(ctx, fo, nil); err != nil {
+		t.Fatalf("full migration: %v", err)
+	}
+	if got, want := migrationDigest(t, live), migrationDigest(t, full); got != want {
+		t.Fatalf("snapshot + delta differs from a full migration of the final state")
+	}
+}
