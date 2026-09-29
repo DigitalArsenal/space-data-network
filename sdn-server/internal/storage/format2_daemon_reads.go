@@ -661,13 +661,12 @@ func (s *FlatSQLStore) f2IndexedRecordWindowLimitForBytes(filter IndexedRecordQu
 // ---- tag targets ----------------------------------------------------------------------
 //
 // A tag condition (provider, source, batch, producer peer) matches a record
-// when ONE live tag instance meets all of them (flatsql 3.2.0 §31.1). The
-// engine's type-level fan-out evaluates it on the FIRST copy's instances;
-// the legacy tag table held every producer's tags per record. So while a
-// type holds live REPEAT copies (a record stored by two producers), a tag
-// read runs per partition — each partition with the instances of its own
-// copies — and the results merge by CID (A2: any live tag instance of a live
-// copy). A type without REPEAT copies reads at type level.
+// when ONE live tag instance of ONE live copy meets all of them: the
+// engine's type-level fan-out evaluates it on every copy (flatsql 3.2.0
+// §31.1, every copy since PARTITION-STORE.md §37), as the legacy tag table
+// held every producer's tags per record. So a tag read runs at type level,
+// in one statement; lane tuples split it only where a legacy count counted
+// tag rows (perTuple) or a producer key names tuples.
 
 // f2TagSpec is a filter's tag conditions.
 type f2TagSpec struct{ provider, source, batch, peer, key string }
@@ -700,27 +699,6 @@ type f2Target struct {
 	tag   f2TagSpec
 }
 
-// f2TypeHasRepeats reports live REPEAT copies in a type: its partitions hold
-// more live copies than it has live records (heads only).
-func (s *FlatSQLStore) f2TypeHasRepeats(schema string) (bool, error) {
-	parts, err := s.ps.PartitionsOf(schema)
-	if err != nil {
-		return false, err
-	}
-	if len(parts) < 2 {
-		return false, nil
-	}
-	var live int64
-	for _, p := range parts {
-		live += p.Live
-	}
-	tc, err := s.ps.TypeCounterOf(schema)
-	if err != nil {
-		return false, err
-	}
-	return live > tc.FirstLive, nil
-}
-
 // f2Targets resolves where a tag-filtered read runs. perTuple splits the
 // targets by lane tuple (a legacy count counts tag rows). No target: nothing
 // can match.
@@ -728,24 +706,12 @@ func (s *FlatSQLStore) f2Targets(ctx context.Context, schema string, tag f2TagSp
 	if tag.empty() {
 		return []f2Target{{}}, nil
 	}
-	repeats, err := s.f2TypeHasRepeats(schema)
-	if err != nil {
-		return nil, err
-	}
-	if !repeats && !perTuple && tag.key == "" {
+	if !perTuple && tag.key == "" {
 		return []f2Target{{tag: tag}}, nil
 	}
 	lanes, err := s.f2Lanes(ctx)
 	if err != nil {
 		return nil, err
-	}
-	parts, err := s.ps.PartitionsOf(schema)
-	if err != nil {
-		return nil, err
-	}
-	names := map[int64]string{}
-	for _, p := range parts {
-		names[p.PID] = p.SQLName
 	}
 	typ := format2.TypeName(schema)
 	var out []f2Target
@@ -754,16 +720,7 @@ func (s *FlatSQLStore) f2Targets(ctx context.Context, schema string, tag f2TagSp
 		if l.Type != typ || !tag.matches(l) {
 			continue
 		}
-		t := f2Target{tag: tag}
-		if repeats {
-			t.table = names[l.PID]
-			if t.table == "" {
-				continue
-			}
-		}
-		if perTuple || tag.key != "" {
-			t.tag = f2TagSpec{provider: l.Provider, source: l.Source, batch: l.Batch, peer: l.Peer}
-		}
+		t := f2Target{tag: f2TagSpec{provider: l.Provider, source: l.Source, batch: l.Batch, peer: l.Peer}}
 		if !seen[t] {
 			seen[t] = true
 			out = append(out, t)
@@ -1101,13 +1058,25 @@ func f2RawOrderSQL(order string) string {
 	return " ORDER BY _gseq DESC"
 }
 
-// f2RawPage runs a raw page over its targets. One type-level target is one
-// statement; several targets (or partition targets) run in two phases: each
-// target's page of keys (gseq, epoch, CID; no payload), merged, deduplicated
-// by CID and windowed in Go, then the records at type level by gseq.
+// f2RawPage runs a raw page over its targets. One type-level target in gseq
+// order is one statement: the engine pages a tag-filtered type in arrivals
+// order itself (per-row tag checks, or the tags' postings collected and
+// sorted when the lane counters say they are rare: flatsql
+// PARTITION-STORE.md §37, gap 5). Several targets, or the epoch order
+// (seconds, then text CID: a sort), run in two phases: each target's page of
+// keys (gseq, epoch, CID; no payload), merged, deduplicated by CID and
+// windowed in Go, then the records at type level by gseq.
 func (s *FlatSQLStore) f2RawPage(ctx context.Context, schema string, f *f2RawFilter, targets []f2Target, order string, limit, offset int, hydrate bool) ([]*Record, error) {
 	if len(targets) == 0 {
 		return nil, nil
+	}
+	if len(targets) == 1 && targets[0].table == "" && order != "epoch" {
+		g := f.on(targets[0])
+		sql := fmt.Sprintf("SELECT %s FROM %s%s%s LIMIT %d", format2.RecColumns, targets[0].from(schema), g.where(), f2RawOrderSQL(order), limit)
+		if offset > 0 {
+			sql += fmt.Sprintf(" OFFSET %d", offset)
+		}
+		return s.f2Select(schema, sql, g.params, hydrate)
 	}
 	byBatch := make([]bool, len(targets))
 	for i, t := range targets {
@@ -1116,16 +1085,6 @@ func (s *FlatSQLStore) f2RawPage(ctx context.Context, schema string, f *f2RawFil
 			return nil, err
 		}
 		byBatch[i] = drives
-	}
-	// One type-level statement when the engine gives the order (gseq); the
-	// epoch order (seconds, then text CID) is a sort, which runs on keys.
-	if len(targets) == 1 && targets[0].table == "" && !byBatch[0] && order != "epoch" {
-		g := f.on(targets[0])
-		sql := fmt.Sprintf("SELECT %s FROM %s%s%s LIMIT %d", format2.RecColumns, targets[0].from(schema), g.where(), f2RawOrderSQL(order), limit)
-		if offset > 0 {
-			sql += fmt.Sprintf(" OFFSET %d", offset)
-		}
-		return s.f2Select(schema, sql, g.params, hydrate)
 	}
 	type key struct {
 		gseq, epoch int64
@@ -1833,30 +1792,43 @@ func (s *FlatSQLStore) f2PointEpochPicks(ctx context.Context, query EpochRecordQ
 		// Text CID order, computed for ties only.
 		return format2.CIDText(a.bin) < format2.CIDText(b.bin)
 	}
-	targets, err := s.f2Targets(ctx, query.SchemaName, f.tag, false)
-	if err != nil {
-		return nil, err
-	}
 	best := map[string]f2EpochPick{}
-	for _, t := range targets {
-		g := f.on(t)
-		sql := fmt.Sprintf(`SELECT _gseq, _cid_bin, %s, _epoch FROM %s%s`, f2EpochEntitySQL(query.SchemaName), t.from(query.SchemaName), g.where())
-		err := s.ps.Scan(ctx, format2.Request{SQL: sql, Params: g.params}, func(r []format2.Cell) error {
-			p := f2EpochPick{gseq: r[0].Int64(), bin: r[1].B, sec: format2.EpochSeconds(r[3].Int64())}
-			cur, ok := best[string(r[2].B)]
-			if ok && !better(p, cur) {
-				return nil
+	keep := func(r []format2.Cell, key string) {
+		p := f2EpochPick{gseq: r[0].Int64(), bin: r[1].B, sec: format2.EpochSeconds(r[3].Int64())}
+		cur, ok := best[key]
+		if ok && !better(p, cur) {
+			return
+		}
+		p.bin = append([]byte(nil), r[1].B...)
+		p.key = key
+		best[key] = p
+	}
+	if sql, params, ok := f2ObjectPointSQL(query, target); ok {
+		// Per-object point plan (flatsql PARTITION-STORE.md §37, A18): the
+		// engine walks OBJECT_EPOCH (object key, epoch) and returns, per
+		// object, the live candidates at its best second; the entity key is
+		// the object key (_object, NULL when the record has none: then its
+		// CID). No payload is read to rank.
+		err := s.ps.Scan(ctx, format2.Request{SQL: sql, Params: params}, func(r []format2.Cell) error {
+			key := r[2].String()
+			if r[2].Type == format2.CellNull {
+				key = format2.CIDText(r[1].B)
 			}
-			p.bin = append([]byte(nil), r[1].B...)
-			p.key = r[2].String()
-			best[p.key] = p
+			keep(r, key)
 			return nil
 		})
-		if format2.NoSuchType(err, query.SchemaName) {
-			continue
-		}
-		if err != nil {
+		if err != nil && !format2.NoSuchType(err, query.SchemaName) {
 			return nil, fmt.Errorf("epoch point query failed: %w", err)
+		}
+	} else {
+		targets, err := s.f2Targets(ctx, query.SchemaName, f.tag, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range targets {
+			if err := s.f2EntityScan(ctx, query, f, t, keep); err != nil {
+				return nil, err
+			}
 		}
 	}
 	out := make([]f2EpochPick, 0, len(best))
@@ -1866,6 +1838,80 @@ func (s *FlatSQLStore) f2PointEpochPicks(ctx context.Context, query EpochRecordQ
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].key < out[j].key })
 	return out, nil
+}
+
+// f2ObjectPointSQL is the per-object point statement of a profile query,
+// when the engine's object key is the legacy entity key (OMM: NORAD, else
+// OBJECT_ID; MPE: ENTITY_ID; else the CID) and the filters are ones the
+// plan applies before it chooses: tag conditions and one epoch range. An
+// entity or NORAD filter keeps the column-index path (a few records).
+func f2ObjectPointSQL(query EpochRecordQuery, target int64) (string, []format2.Cell, bool) {
+	typ := format2.TypeName(query.SchemaName)
+	if (typ != "OMM" && typ != "MPE") || query.NoradCatID != nil || strings.TrimSpace(query.EntityID) != "" {
+		return "", nil, false
+	}
+	col := map[string]string{EpochProfileAsOf: "_asof", EpochProfileForward: "_forward", EpochProfileNearest: "_nearest"}[query.Profile]
+	if col == "" {
+		return "", nil, false
+	}
+	var lo, hi int64 = math.MinInt64, math.MaxInt64
+	narrow := func(l, h int64) {
+		if l > lo {
+			lo = l
+		}
+		if h < hi {
+			hi = h
+		}
+	}
+	if query.Day != "" {
+		dlo, dhi, err := f2DayRange(query.Day)
+		if err != nil {
+			return "", nil, false
+		}
+		narrow(dlo, dhi)
+	}
+	if query.From != nil {
+		narrow(query.From.UTC().Unix()*1000, math.MaxInt64)
+	}
+	if query.To != nil {
+		narrow(math.MinInt64, query.To.UTC().Unix()*1000)
+	}
+	params := []format2.Cell{format2.Int(target)}
+	conds := []string{col + " = ?1"}
+	if lo != math.MinInt64 {
+		params = append(params, format2.Int(lo))
+		conds = append(conds, fmt.Sprintf("_epoch >= ?%d", len(params)))
+	}
+	if hi != math.MaxInt64 {
+		params = append(params, format2.Int(hi))
+		conds = append(conds, fmt.Sprintf("_epoch < ?%d", len(params)))
+	}
+	tag := f2TagSpec{provider: strings.TrimSpace(query.ProviderID), source: strings.TrimSpace(query.SourceName), batch: strings.TrimSpace(query.BatchID)}
+	for _, c := range tag.conds() {
+		params = append(params, c.Params...)
+		conds = append(conds, strings.Replace(c.SQL, "?", fmt.Sprintf("?%d", len(params)), 1))
+	}
+	return fmt.Sprintf("SELECT _gseq, _cid_bin, _object, _epoch FROM %s WHERE %s", format2.QuoteIdent(typ), strings.Join(conds, " AND ")), params, true
+}
+
+// f2EntityScan streams a target's point-profile candidates with their
+// entity keys read from the records (the column-index path).
+func (s *FlatSQLStore) f2EntityScan(ctx context.Context, query EpochRecordQuery, f *f2RawFilter, t f2Target, keep func([]format2.Cell, string)) error {
+	{
+		g := f.on(t)
+		sql := fmt.Sprintf(`SELECT _gseq, _cid_bin, %s, _epoch FROM %s%s`, f2EpochEntitySQL(query.SchemaName), t.from(query.SchemaName), g.where())
+		err := s.ps.Scan(ctx, format2.Request{SQL: sql, Params: g.params}, func(r []format2.Cell) error {
+			keep(r, r[2].String())
+			return nil
+		})
+		if format2.NoSuchType(err, query.SchemaName) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("epoch point query failed: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *FlatSQLStore) f2QueryPointEpochRecords(query EpochRecordQuery) ([]EpochRecordMatch, error) {
@@ -2436,23 +2482,11 @@ func (s *FlatSQLStore) f2QuerySourceTaggedRecords(query SourceTagQuery) ([]*Reco
 }
 
 // f2TaggedTargets is one target per lane tuple of a type (every tagged
-// record), per partition while the type holds REPEAT copies.
+// record), each read at type level (tag conditions see every copy).
 func (s *FlatSQLStore) f2TaggedTargets(ctx context.Context, schema string) ([]f2Target, error) {
-	repeats, err := s.f2TypeHasRepeats(schema)
-	if err != nil {
-		return nil, err
-	}
 	lanes, err := s.f2Lanes(ctx)
 	if err != nil {
 		return nil, err
-	}
-	parts, err := s.ps.PartitionsOf(schema)
-	if err != nil {
-		return nil, err
-	}
-	names := map[int64]string{}
-	for _, p := range parts {
-		names[p.PID] = p.SQLName
 	}
 	typ := format2.TypeName(schema)
 	var out []f2Target
@@ -2462,11 +2496,6 @@ func (s *FlatSQLStore) f2TaggedTargets(ctx context.Context, schema string) ([]f2
 			continue
 		}
 		t := f2Target{tag: f2TagSpec{provider: l.Provider, source: l.Source, batch: l.Batch, peer: l.Peer}}
-		if repeats {
-			if t.table = names[l.PID]; t.table == "" {
-				continue
-			}
-		}
 		if !seen[t] {
 			seen[t] = true
 			out = append(out, t)
