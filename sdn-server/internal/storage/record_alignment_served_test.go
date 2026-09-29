@@ -55,7 +55,7 @@ func newServedVerifier(t testing.TB) *servedVerifier {
 func (sv *servedVerifier) record(path, schema string, served []byte) {
 	sv.t.Helper()
 	sv.identity(path, schema, served)
-	view := recordalign.Record(served)
+	view := sv.recordView(schema, served)
 	if view.Copied {
 		sv.copies[path]++
 		sv.bytes[path] += int64(len(view.Buf))
@@ -66,7 +66,7 @@ func (sv *servedVerifier) record(path, schema string, served []byte) {
 // frame checks one served frame [u32 len][record]: its view never copies.
 func (sv *servedVerifier) frame(path, schema string, frame []byte) {
 	sv.t.Helper()
-	view, ok := recordalign.Frame(frame)
+	view, ok := sv.frameView(schema, frame)
 	if !ok {
 		sv.t.Fatalf("%s: malformed frame (%d bytes)", path, len(frame))
 	}
@@ -76,6 +76,27 @@ func (sv *servedVerifier) frame(path, schema string, frame []byte) {
 	record := frame[recordalign.PrefixLen:]
 	sv.identity(path, schema, record)
 	sv.verify(path, schema, record, view)
+}
+
+// recordView places a served record the way VerifyRecord does: a record an
+// internal writer stored with its builder's own size prefix (PNM, the local
+// EPM) is its own origin; a bare one goes through recordalign.Record.
+func (sv *servedVerifier) recordView(schema string, record []byte) recordalign.View {
+	if form, err := sv.v.DetectEnvelopeForm(schema, record); err == nil && form == sds.EnvelopeSizePrefixed {
+		return recordalign.View{Buf: record, SizePrefixed: true}
+	}
+	return recordalign.Record(record)
+}
+
+// frameView is recordView for a record carried in a frame: never a copy.
+func (sv *servedVerifier) frameView(schema string, frame []byte) (recordalign.View, bool) {
+	if len(frame) >= recordalign.PrefixLen {
+		record := frame[recordalign.PrefixLen:]
+		if form, err := sv.v.DetectEnvelopeForm(schema, record); err == nil && form == sds.EnvelopeSizePrefixed {
+			return recordalign.View{Buf: record, SizePrefixed: true}, int(binary.LittleEndian.Uint32(frame)) == len(record)
+		}
+	}
+	return recordalign.Frame(frame)
 }
 
 // stream checks every frame of a served [u32 len][record]... stream.
@@ -327,7 +348,15 @@ func checkServingPaths(t *testing.T, s *FlatSQLStore, sv *servedVerifier, schema
 // cursor, then WriteRawRecordFrames). Each served frame must carry bytes
 // whose CID is the record's CID and verify with the stock verifier through
 // recordalign.Frame; every 100th record is also read as a single-record body
-// (GetRawRecord) and verified through recordalign.Record.
+// (GetRawRecord) and verified through recordalign.Record. A record stored
+// with its own size prefix is placed as its own origin, as VerifyRecord does.
+//
+// SDN_RECORDALIGN_BY_CID=1 serves a format-1 copy record by record instead:
+// every CID in sdn_record_index order through GetRawRecord (the
+// single-record body, verified through recordalign.Record) and then
+// WriteRawRecordFrames (the frame, through recordalign.Frame). The untagged
+// raw page query of a large format-1 store can outlast the engine's 5-minute
+// call budget.
 func TestServedRecordsVerifyOnStoreCopy(t *testing.T) {
 	dir := os.Getenv("SDN_RECORDALIGN_STORE_DIR")
 	if dir == "" {
@@ -379,9 +408,9 @@ func TestServedRecordsVerifyOnStoreCopy(t *testing.T) {
 				ok := true
 				if j.single {
 					record = j.frame
-					view = recordalign.Record(record)
+					view = sv.recordView(j.schema, record)
 				} else {
-					view, ok = recordalign.Frame(j.frame)
+					view, ok = sv.frameView(j.schema, j.frame)
 					record = j.frame[recordalign.PrefixLen:]
 				}
 				cidBad := !ok || ComputeCID(record) != j.cid
@@ -437,6 +466,51 @@ func TestServedRecordsVerifyOnStoreCopy(t *testing.T) {
 		seen := map[string]bool{}
 		var after int64
 		schemaStarted := time.Now()
+		if os.Getenv("SDN_RECORDALIGN_BY_CID") == "1" && !s.Format2() {
+			unserved := 0
+			for limit < 0 || len(seen) < limit {
+				rows, err := s.db.Query(`SELECT rowid, cid FROM sdn_record_index WHERE schema_name = ? AND rowid > ? ORDER BY rowid LIMIT 5000`, schema, after)
+				if err != nil {
+					t.Fatalf("list %s CIDs after %d: %v", schema, after, err)
+				}
+				var cids []string
+				for rows.Next() {
+					var cid string
+					if err := rows.Scan(&after, &cid); err != nil {
+						t.Fatal(err)
+					}
+					cids = append(cids, cid)
+				}
+				rows.Close()
+				if len(cids) == 0 {
+					break
+				}
+				for _, cid := range cids {
+					if seen[cid] || (limit >= 0 && len(seen) >= limit) {
+						continue
+					}
+					seen[cid] = true
+					rec, err := s.GetRawRecord(schema, cid)
+					if err != nil && strings.HasPrefix(err.Error(), "not found") {
+						// An index row whose record row is gone: the node
+						// serves nothing for it.
+						unserved++
+						continue
+					}
+					if err != nil {
+						t.Fatalf("GetRawRecord %s %s: %v", schema, cid, err)
+					}
+					jobs <- job{schema: schema, cid: cid, path: "single", frame: rec.Data, single: true}
+					var buf bytes.Buffer
+					if err := s.WriteRawRecordFrames(&buf, []*Record{rec}); err != nil {
+						t.Fatal(err)
+					}
+					jobs <- job{schema: schema, cid: cid, path: "frame", frame: buf.Bytes()}
+				}
+			}
+			t.Logf("%s: %d records served by CID in %s (%d index rows without a record)", schema, len(seen)-unserved, time.Since(schemaStarted).Round(time.Millisecond), unserved)
+			continue
+		}
 		for limit < 0 || len(seen) < limit {
 			page, err := s.QueryRawRecords(RawRecordQuery{SchemaName: schema, Limit: 5000, UseRowIDCursor: true, AfterRowID: after})
 			if err != nil {
