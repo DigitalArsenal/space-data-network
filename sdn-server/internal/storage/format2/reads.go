@@ -109,52 +109,54 @@ type PartitionCounter struct {
 	Quarantined                               bool
 }
 
-// Partitions returns every partition's counters (heads; O(partitions)).
+// Partitions returns every partition's counters, read from the heads
+// without a lane (A28).
 func (s *Store) Partitions(ctx context.Context) ([]PartitionCounter, error) {
-	res, err := s.ri.Query(ctx, Request{SQL: `SELECT pid, producer, sql_name, type, commit_seq, pseq_hi, total_count, total_bytes,
-		live_count, live_bytes, tomb_count, disk_bytes, min_epoch, max_epoch, latest_arrival, quarantined FROM flatsql_partitions`})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]PartitionCounter, 0, len(res.Rows))
-	for _, r := range res.Rows {
-		out = append(out, PartitionCounter{PID: r[0].Int64(), Producer: r[1].String(), SQLName: r[2].String(), Type: r[3].String(),
-			CommitSeq: r[4].Int64(), PseqHi: r[5].Int64(), Total: r[6].Int64(), TotalBytes: r[7].Int64(), Live: r[8].Int64(),
-			LiveBytes: r[9].Int64(), Tombs: r[10].Int64(), DiskBytes: r[11].Int64(), MinEpoch: r[12].Int64(),
-			MaxEpoch: r[13].Int64(), LatestArrival: r[14].Int64(), Quarantined: r[15].Int64() != 0})
-	}
-	return out, nil
+	return s.heads.Partitions()
 }
 
 // LiveRecordBytes is Σ live_bytes over partitions: the bytes each partition
 // holds, a record held by two producers counted once per partition (the
-// legacy semantics, §16.2).
+// legacy semantics, §16.2). From the heads: no lane, no scan.
 func (s *Store) LiveRecordBytes(ctx context.Context) (int64, error) {
-	res, err := s.ri.Query(ctx, Request{SQL: `SELECT COALESCE(SUM(live_bytes), 0) FROM flatsql_partitions`})
+	parts, err := s.heads.Partitions()
 	if err != nil {
 		return 0, err
 	}
-	return res.Rows[0][0].Int64(), nil
+	var n int64
+	for _, p := range parts {
+		n += p.LiveBytes
+	}
+	return n, nil
 }
 
 // DiskUsageBytes is Σ disk_bytes over partitions (§13: the quota's input;
 // on-disk bytes shrink after compaction).
 func (s *Store) DiskUsageBytes(ctx context.Context) (int64, error) {
-	res, err := s.ri.Query(ctx, Request{SQL: `SELECT COALESCE(SUM(disk_bytes), 0) FROM flatsql_partitions`})
+	parts, err := s.heads.Partitions()
 	if err != nil {
 		return 0, err
 	}
-	return res.Rows[0][0].Int64(), nil
+	var n int64
+	for _, p := range parts {
+		n += p.DiskBytes
+	}
+	return n, nil
 }
 
 // PeerStorageBytes is Σ live_bytes of a producer's partitions.
 func (s *Store) PeerStorageBytes(ctx context.Context, producerToken string) (int64, error) {
-	res, err := s.ri.Query(ctx, Request{SQL: `SELECT COALESCE(SUM(live_bytes), 0) FROM flatsql_partitions WHERE producer = ?1`,
-		Params: []Cell{Text(producerToken)}})
+	parts, err := s.heads.Partitions()
 	if err != nil {
 		return 0, err
 	}
-	return res.Rows[0][0].Int64(), nil
+	var n int64
+	for _, p := range parts {
+		if p.Producer == producerToken {
+			n += p.LiveBytes
+		}
+	}
+	return n, nil
 }
 
 // TypeCounter is one type's head (A16: MaxRowID = gseq_hi, TotalCount =
@@ -164,18 +166,9 @@ type TypeCounter struct {
 	CommitSeq, GseqHi, Arrivals, FirstLive, FirstLiveBytes, NP int64
 }
 
-// Types returns every type's head counters.
+// Types returns every type's head counters (from the heads, no lane).
 func (s *Store) Types(ctx context.Context) ([]TypeCounter, error) {
-	res, err := s.ri.Query(ctx, Request{SQL: `SELECT type, schema, commit_seq, gseq_hi, arrivals, first_live_count, first_live_bytes, partitions FROM flatsql_types`})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]TypeCounter, 0, len(res.Rows))
-	for _, r := range res.Rows {
-		out = append(out, TypeCounter{Type: r[0].String(), Schema: r[1].String(), CommitSeq: r[2].Int64(), GseqHi: r[3].Int64(),
-			Arrivals: r[4].Int64(), FirstLive: r[5].Int64(), FirstLiveBytes: r[6].Int64(), NP: r[7].Int64()})
-	}
-	return out, nil
+	return s.heads.Types()
 }
 
 // WindowQuery is an indexed record window (storage.IndexedRecordQuery).
@@ -330,14 +323,18 @@ func (s *Store) SyncPage(ctx context.Context, q SyncQuery) ([]Rec, int64, error)
 	typ := typeName(q.Schema)
 	max := q.MaxGseq
 	if max <= 0 {
-		res, err := s.ri.Query(ctx, Request{SQL: `SELECT gseq_hi FROM flatsql_types WHERE type = ?1`, Params: []Cell{Text(typ)}})
+		types, err := s.heads.Types()
 		if err != nil {
 			return nil, 0, err
 		}
-		if len(res.Rows) == 0 {
+		for _, ty := range types {
+			if ty.Type == typ {
+				max = ty.GseqHi
+			}
+		}
+		if max <= 0 {
 			return nil, 0, nil
 		}
-		max = res.Rows[0][0].Int64()
 	}
 	params := []Cell{Int(q.AfterGseq), Int(max)}
 	conds := []string{"_gseq > ?1", "_gseq <= ?2"}

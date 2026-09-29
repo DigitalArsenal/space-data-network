@@ -134,8 +134,10 @@ func fixtureOrFresh(t testing.TB) (root, engineRoot string, fresh bool) {
 func openAt(t testing.TB, root, engineRoot string, writers uint32) *Store {
 	t.Helper()
 	requireEngine(t)
+	// Two interactive lanes and one bulk lane: host-02's topology (§5.1);
+	// SDN_FORMAT2_LANES overrides the interactive count.
 	s, err := Open(StoreConfig{Root: root, EngineRoot: engineRoot, AOTCacheDir: testAOTDir(t), CompileOnMiss: true,
-		AllowFresh: true, Topology: Topology{Writers: writers, InteractiveLanes: 2, BulkLanes: 1}})
+		AllowFresh: true, Topology: Topology{Writers: writers, InteractiveLanes: uint32(envInt("SDN_FORMAT2_LANES", 2)), BulkLanes: 1}})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -328,7 +330,8 @@ func TestReadsDuringSaturatingIngest(t *testing.T) {
 	wg.Wait()
 	rate := float64(ingested) / dur.Seconds()
 	ns := s.native.Stats()
-	t.Logf("MEASURED reads during saturating ingest (%s, 1 writer, 50 partitions, %s; load %.1f at start):", dur, machine(), loadStart)
+	t.Logf("MEASURED reads during saturating ingest (%s, 1 writer, 50 partitions, %d interactive lanes, 7 concurrent readers, %s; load %.1f at start):",
+		dur, envInt("SDN_FORMAT2_LANES", 2), machine(), loadStart)
 	t.Logf("  ingest %.0f records/s with reads, %.0f records/s alone (%.0f%%)", rate, baseRate, 100*rate/baseRate)
 	t.Logf("  LiveRecordBytes %s", counters.String())
 	t.Logf("  flatsql_types (DataSummary) %s", types.String())

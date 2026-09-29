@@ -84,6 +84,7 @@ type StoreConfig struct {
 // Store is an open format-2 store: the writer and reader instances.
 type Store struct {
 	cfg    StoreConfig
+	heads  *HeadReader
 	native *flatsqlrt.NativeStore
 	w      *Writer
 	ri     *Reader
@@ -127,7 +128,8 @@ func Open(cfg StoreConfig) (*Store, error) {
 		}
 		create = true
 	}
-	s := &Store{cfg: cfg, types: map[string]TypeSpec{}, stop: make(chan struct{}), gateDone: make(chan struct{})}
+	s := &Store{cfg: cfg, types: map[string]TypeSpec{}, stop: make(chan struct{}), gateDone: make(chan struct{}),
+		heads: NewHeadReader(engineRoot)}
 	if s.native, err = flatsqlrt.OpenNativeStore(cfg.Root); err != nil {
 		return nil, err
 	}
@@ -213,6 +215,9 @@ func (s *Store) shutdown() error {
 	}
 	if s.native != nil {
 		s.native.Release()
+	}
+	if s.heads != nil {
+		s.heads.Close()
 	}
 	return first
 }
