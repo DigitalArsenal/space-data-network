@@ -331,6 +331,9 @@ func (s *Store) Scan(ctx context.Context, req Request, fn func(row []Cell) error
 type InstanceHealth struct {
 	Name, State      string
 	Poisoned         bool
+	Restarts         int64 // replacements (a fenced or recycled reader)
+	Fenced           int64 // of which a fenced (trapped) instance
+	Pages            uint64
 	LockAcquisitions int64
 	LockHoldMax      time.Duration
 }
@@ -338,21 +341,21 @@ type InstanceHealth struct {
 // Health reports every instance and the store-wide path registry lock (A29).
 func (s *Store) Health() (flatsqlrt.NativeStoreStats, []InstanceHealth) {
 	var out []InstanceHealth
-	add := func(name string, inst *flatsqlrt.PSInstance) {
+	add := func(name string, inst *flatsqlrt.PSInstance, restarts, fenced int64) {
 		if inst == nil {
 			return
 		}
 		st := inst.Stats()
-		out = append(out, InstanceHealth{Name: name, State: st.State, Poisoned: st.Poisoned,
-			LockAcquisitions: st.IO.LockAcquisitions, LockHoldMax: st.IO.LockHoldMax})
+		out = append(out, InstanceHealth{Name: name, State: st.State, Poisoned: st.Poisoned, Restarts: restarts, Fenced: fenced,
+			Pages: inst.Memory().Pages(), LockAcquisitions: st.IO.LockAcquisitions, LockHoldMax: st.IO.LockHoldMax})
 	}
-	add("writer", s.w.Instance())
+	add("writer", s.w.Instance(), 0, 0)
 	for _, r := range []struct {
 		name string
 		r    *Reader
 	}{{"interactive", s.ri}, {"bulk", s.rb}, {"sandbox", s.rs}, {"point", s.rp}} {
 		if r.r != nil {
-			add(r.name, r.r.Instance())
+			add(r.name, r.r.Instance(), r.r.Restarts(), r.r.Fenced())
 		}
 	}
 	return s.native.Stats(), out

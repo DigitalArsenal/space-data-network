@@ -2,6 +2,7 @@ package format2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -435,5 +436,79 @@ func TestSixteenWritersStart(t *testing.T) {
 	}
 	if _, err := OpenWriter(InstanceOptions{}, WriterConfig{Writers: 24}); err == nil || !strings.Contains(err.Error(), "guest threads") {
 		t.Fatalf("24 writers: %v, want the thread-budget refusal", err)
+	}
+}
+
+// §15: a trap fences its own reader instance, and the next call replaces
+// it. The 30-minute soak through the daemon lost the point instance to a
+// guest bad_alloc after 28 minutes; with no replacement every point read
+// and every ingest (its presence check reads the point lanes) failed until
+// restart.
+func TestAFencedReaderInstanceIsReplaced(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	ctx := context.Background()
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	res, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(20, 0, base, "R"), "source:celestrak", nil, &Tags{SourceName: "celestrak-gp", BatchID: "b1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WaitLabeled(ctx, "OMM.fbs", "source:celestrak"); err != nil {
+		t.Fatal(err)
+	}
+	cid := res[0].CID
+	if _, err := s.GetRecord(ctx, "OMM.fbs", cid); err != nil {
+		t.Fatal(err)
+	}
+	victim := s.Point().Instance()
+	victim.Fence(errors.New("injected trap"))
+	if victim.Failure() == nil {
+		t.Fatal("the point instance was not fenced")
+	}
+	if s.Interactive().Instance().Failure() != nil || s.Writer().Instance().Failure() != nil {
+		t.Fatal("a trap in the point instance fenced another instance")
+	}
+	if _, err := s.GetRecord(ctx, "OMM.fbs", cid); err != nil {
+		t.Fatalf("GetRecord after the point instance's trap: %v", err)
+	}
+	if s.Point().Restarts() != 1 || s.Point().Instance() == victim {
+		t.Fatalf("the point instance was not replaced (restarts %d)", s.Point().Restarts())
+	}
+	if _, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(20, 20, base, "R"), "source:celestrak", nil, &Tags{SourceName: "celestrak-gp", BatchID: "b1"}); err != nil {
+		t.Fatalf("ingest after the trap: %v", err)
+	}
+}
+
+// A reader instance whose memory reaches readerRecyclePages is replaced
+// before it can run out; the statements it had end first.
+func TestAFullReaderInstanceIsRecycled(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	ctx := context.Background()
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	res, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(20, 0, base, "F"), "source:celestrak", nil, &Tags{SourceName: "celestrak-gp", BatchID: "b1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := s.Point().Instance()
+	saved := readerRecyclePages
+	readerRecyclePages = old.Memory().Pages()
+	defer func() { readerRecyclePages = saved }()
+	for i := 0; i < 600; i++ {
+		if _, err := s.GetRecord(ctx, "OMM.fbs", res[i%len(res)].CID); err != nil {
+			t.Fatalf("GetRecord %d: %v", i, err)
+		}
+	}
+	if s.Point().Restarts() == 0 || s.Point().Instance() == old {
+		t.Fatal("the full point instance was not recycled")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for old.Enter() {
+		old.Exit()
+		if time.Now().After(deadline) {
+			t.Fatal("the recycled instance never stopped")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if old.Failure() != nil {
+		t.Fatalf("the recycled instance was fenced: %v", old.Failure())
 	}
 }

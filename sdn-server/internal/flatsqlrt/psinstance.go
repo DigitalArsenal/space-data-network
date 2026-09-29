@@ -673,6 +673,10 @@ func (p *PSInstance) fail(cause error) {
 	})
 }
 
+// Fence fences the instance as a service-thread trap does (§15): its host
+// I/O is revoked, it stops, and OnFailure runs. For fault injection.
+func (p *PSInstance) Fence(cause error) { p.fail(cause) }
+
 // Failure returns the error that fenced the instance, or nil.
 func (p *PSInstance) Failure() error {
 	if v, ok := p.failure.Load().(error); ok {

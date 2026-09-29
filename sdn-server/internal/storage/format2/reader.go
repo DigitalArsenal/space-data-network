@@ -14,6 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -118,13 +120,56 @@ func (c ReaderConfig) encode() []byte {
 	return t
 }
 
-// Reader is one reader instance (interactive, bulk or sandbox lanes).
+// Reader is one reader role's instance (interactive, bulk, sandbox or
+// point lanes). An instance that traps is fenced alone (§15) and replaced on
+// the next call: a reader keeps no state but committed files, so its
+// replacement serves the same statements. A statement that was running when
+// its instance died ends with ErrStopped and is not retried (it may be the
+// statement that trapped).
 type Reader struct {
+	opt  InstanceOptions
+	role flatsqlrt.PSRole
+	cfg  ReaderConfig
+
+	cur      atomic.Pointer[readerGen]
+	mu       sync.Mutex // one replacement at a time
+	closed   atomic.Bool
+	restarts atomic.Int64
+	fenced   atomic.Int64 // replacements of a fenced (trapped) instance
+	lastTry  atomic.Int64 // unix ns of the last replacement attempt
+}
+
+// readerRestartEvery bounds replacements: a crash loop does not reopen an
+// instance more than once per interval.
+const readerRestartEvery = time.Second
+
+// readerRecyclePages is the linear memory at which a reader instance is
+// replaced before it can run out (the cap is 32768 pages, 2 GiB). flatsql
+// 3.2.0's reader retains memory while the writer commits (about 5 MB per
+// 20,000 point statements under ingest, flat without it); the 30-minute
+// soak ran the point instance into a guest bad_alloc.
+var readerRecyclePages uint64 = 24576
+
+// readerRecycleGrace bounds how long a recycled instance keeps serving the
+// statements it had when it was replaced.
+var readerRecycleGrace = 2 * time.Minute
+
+// readerGen is one instance of a reader: its memory and mailbox layout.
+type readerGen struct {
 	inst      *flatsqlrt.PSInstance
 	mem       *wasmrt.SharedMemory
 	lay       ReaderLayout
 	role      flatsqlrt.PSRole
 	claimHint atomic.Uint32
+	calls     atomic.Uint32
+}
+
+// full reports, every 256th call, an instance past readerRecyclePages.
+func (g *readerGen) full() bool {
+	if g.calls.Add(1)%256 != 0 {
+		return false
+	}
+	return g.mem.Pages() >= readerRecyclePages
 }
 
 // OpenReader opens a reader instance of the given role.
@@ -132,6 +177,104 @@ func OpenReader(opt InstanceOptions, role flatsqlrt.PSRole, cfg ReaderConfig) (*
 	if role == flatsqlrt.PSRoleWriter {
 		return nil, errors.New("format2: a reader needs a reader role")
 	}
+	g, err := openReaderGen(opt, role, cfg)
+	if err != nil {
+		return nil, err
+	}
+	r := &Reader{opt: opt, role: role, cfg: cfg}
+	r.cur.Store(g)
+	return r, nil
+}
+
+// gen returns the live instance, replacing a fenced one, or one whose
+// memory reached readerRecyclePages (that one ends the statements it has,
+// then stops).
+func (r *Reader) gen() *readerGen {
+	g := r.cur.Load()
+	if r.closed.Load() {
+		return g
+	}
+	failed := g.inst.Failure() != nil
+	if !failed && !g.full() {
+		return g
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if now := r.cur.Load(); now != g || r.closed.Load() {
+		return now
+	}
+	if last := r.lastTry.Load(); last != 0 && time.Since(time.Unix(0, last)) < readerRestartEvery {
+		return g
+	}
+	r.lastTry.Store(time.Now().UnixNano())
+	ng, err := openReaderGen(r.opt, r.role, r.cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[format2] ERROR reader instance (role %d) replacement failed: %v\n", r.role, err)
+		return g
+	}
+	r.cur.Store(ng)
+	n := r.restarts.Add(1)
+	if failed {
+		r.fenced.Add(1)
+		fmt.Fprintf(os.Stderr, "[format2] WARN reader instance (role %d) replaced after %v (replacement %d)\n", r.role, g.inst.Failure(), n)
+		go func() { _ = g.inst.Stop() }()
+		return ng
+	}
+	fmt.Fprintf(os.Stderr, "[format2] INFO reader instance (role %d) recycled at %d pages (replacement %d)\n", r.role, g.mem.Pages(), n)
+	go func() {
+		deadline := time.Now().Add(readerRecycleGrace)
+		for g.oldestActiveStart() != 0 && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		_ = g.inst.Stop()
+	}()
+	return ng
+}
+
+// Restarts counts the instance's replacements (fenced or recycled).
+func (r *Reader) Restarts() int64 { return r.restarts.Load() }
+
+// Fenced counts the replacements of a fenced (trapped) instance.
+func (r *Reader) Fenced() int64 { return r.fenced.Load() }
+
+// Instance exposes the current substrate instance.
+func (r *Reader) Instance() *flatsqlrt.PSInstance { return r.cur.Load().inst }
+
+// Layout returns the mailbox layout.
+func (r *Reader) Layout() ReaderLayout { return r.cur.Load().lay }
+
+// Stop stops the instance for good.
+func (r *Reader) Stop() error {
+	r.closed.Store(true)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cur.Load().inst.Stop()
+}
+
+// OldestActiveStart is the start (engine monotonic ns) of the oldest running
+// or parked statement across the lanes, or 0 when none runs (A12).
+func (r *Reader) OldestActiveStart() uint64 { return r.cur.Load().oldestActiveStart() }
+
+// Submit claims a slot, writes the request and queues it. It waits for a
+// free slot while every slot is in use (bounded by ctx).
+func (r *Reader) Submit(ctx context.Context, req Request) (*Stmt, error) {
+	return r.gen().submit(ctx, req)
+}
+
+// Query runs a statement to completion and decodes its RB1 rows. A non-zero
+// status returns a *StatusError (with the rows decoded so far in Result).
+func (r *Reader) Query(ctx context.Context, req Request) (*Result, error) {
+	return r.gen().query(ctx, req)
+}
+
+// Stream runs a statement and hands each chunk of output to fn as it
+// arrives (RB1 bytes, or raw frames with ReqRawStream). Nothing is
+// materialized: a large window is bounded by the slot's ring.
+func (r *Reader) Stream(ctx context.Context, req Request, fn func([]byte) error) (Outcome, error) {
+	return r.gen().stream(ctx, req, fn)
+}
+
+func openReaderGen(opt InstanceOptions, role flatsqlrt.PSRole, cfg ReaderConfig) (*readerGen, error) {
 	inst, err := flatsqlrt.OpenPSInstance(flatsqlrt.PSConfig{
 		Role: role, ABI: flatsqlrt.PSABIEngine,
 		Wasm: flatsqlrt.PSThreadsWasm(), AOTCacheDir: opt.AOTCacheDir, AOTPrefix: flatsqlrt.PSThreadsAOTPrefix,
@@ -147,21 +290,10 @@ func OpenReader(opt InstanceOptions, role flatsqlrt.PSRole, cfg ReaderConfig) (*
 		_ = inst.Stop()
 		return nil, err
 	}
-	return &Reader{inst: inst, mem: inst.Memory(), lay: lay, role: role}, nil
+	return &readerGen{inst: inst, mem: inst.Memory(), lay: lay, role: role}, nil
 }
 
-// Instance exposes the substrate instance.
-func (r *Reader) Instance() *flatsqlrt.PSInstance { return r.inst }
-
-// Layout returns the mailbox layout.
-func (r *Reader) Layout() ReaderLayout { return r.lay }
-
-// Stop stops the instance.
-func (r *Reader) Stop() error { return r.inst.Stop() }
-
-// OldestActiveStart is the start (engine monotonic ns) of the oldest running
-// or parked statement across the lanes, or 0 when none runs (A12).
-func (r *Reader) OldestActiveStart() uint64 {
+func (r *readerGen) oldestActiveStart() uint64 {
 	if !r.inst.Enter() {
 		return 0
 	}
@@ -200,7 +332,7 @@ type Outcome struct {
 
 // Stmt is a submitted statement: read its output, then Finish.
 type Stmt struct {
-	r       *Reader
+	r       *readerGen
 	slot    uint32
 	hdr     uint32
 	ring    uint32
@@ -208,11 +340,9 @@ type Stmt struct {
 	done    bool
 }
 
-func (r *Reader) h(slot uint32) uint32 { return r.lay.SlotBase + slot*r.lay.SlotStride }
+func (r *readerGen) h(slot uint32) uint32 { return r.lay.SlotBase + slot*r.lay.SlotStride }
 
-// Submit claims a slot, writes the request and queues it. It waits for a
-// free slot while every slot is in use (bounded by ctx).
-func (r *Reader) Submit(ctx context.Context, req Request) (*Stmt, error) {
+func (r *readerGen) submit(ctx context.Context, req Request) (*Stmt, error) {
 	params := EncodeParams(req.Params)
 	if uint32(len(req.SQL)+len(params)) > r.lay.ReqBytes {
 		return nil, &StatusError{Status: StatusTooLarge, Msg: "request larger than a slot"}
@@ -273,7 +403,7 @@ func (r *Reader) Submit(ctx context.Context, req Request) (*Stmt, error) {
 
 // enqueue pushes a slot index on the Vyukov MPMC queue (cells of 16 bytes:
 // {seq u64, value u32}). Caller is inside Enter.
-func (r *Reader) enqueue(slot uint32) bool {
+func (r *readerGen) enqueue(slot uint32) bool {
 	lay := &r.lay
 	mem := r.mem
 	pos := mem.Load64(lay.QueueEnq)
@@ -298,7 +428,7 @@ func (r *Reader) enqueue(slot uint32) bool {
 // wakeIdleLane wakes the first idle lane (state 0), else one waiting on a
 // parked statement (state 3). A busy lane re-checks the queue before it
 // sleeps. Caller is inside Enter.
-func (r *Reader) wakeIdleLane() {
+func (r *readerGen) wakeIdleLane() {
 	pick := -1
 	for i, a := range r.lay.LaneState {
 		s := r.mem.Load32(a)
@@ -445,11 +575,9 @@ type Result struct {
 	Outcome
 }
 
-// Query runs a statement to completion and decodes its RB1 rows. A non-zero
-// status returns a *StatusError (with the rows decoded so far in Result).
-func (r *Reader) Query(ctx context.Context, req Request) (*Result, error) {
+func (r *readerGen) query(ctx context.Context, req Request) (*Result, error) {
 	req.Flags &^= ReqRawStream
-	st, err := r.Submit(ctx, req)
+	st, err := r.submit(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -479,11 +607,8 @@ func (r *Reader) Query(ctx context.Context, req Request) (*Result, error) {
 	return res, nil
 }
 
-// Stream runs a statement and hands each chunk of output to fn as it
-// arrives (RB1 bytes, or raw frames with ReqRawStream). Nothing is
-// materialized: a large window is bounded by the slot's ring.
-func (r *Reader) Stream(ctx context.Context, req Request, fn func([]byte) error) (Outcome, error) {
-	st, err := r.Submit(ctx, req)
+func (r *readerGen) stream(ctx context.Context, req Request, fn func([]byte) error) (Outcome, error) {
+	st, err := r.submit(ctx, req)
 	if err != nil {
 		return Outcome{}, err
 	}

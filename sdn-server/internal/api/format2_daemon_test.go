@@ -505,12 +505,15 @@ func TestFormat2SoakThroughTheDaemon(t *testing.T) {
 	t.Logf("  store path registry lock: %d acquisitions, max hold %s", storeLock.LockAcquisitions, storeLock.LockHoldMax)
 	poisoned := 0
 	for _, in := range insts {
-		t.Logf("  instance %-11s %-8s poisoned=%v host I/O lock: %d acquisitions, max hold %s", in.Name, in.State, in.Poisoned,
-			in.LockAcquisitions, in.LockHoldMax)
-		if in.Poisoned || in.State != "live" {
+		t.Logf("  instance %-11s %-8s poisoned=%v replacements=%d (fenced %d) memory %d MiB; host I/O lock: %d acquisitions, max hold %s",
+			in.Name, in.State, in.Poisoned, in.Restarts, in.Fenced, in.Pages*64/1024, in.LockAcquisitions, in.LockHoldMax)
+		if in.Poisoned || in.State != "live" || in.Fenced != 0 {
 			poisoned++
 		}
 	}
+	sl := store.StoreLockStats()
+	t.Logf("  store lock (control instance): %d writes (%s held), %d reads (%s held), %d over the slow threshold",
+		sl.WriteAcquires, sl.WriteHeld, sl.ReadAcquires, sl.ReadHeld, sl.Slow)
 	if ingestErrs.Load() != 0 || stale.Load() != 0 || poisoned != 0 || failed {
 		t.Fatalf("ingest errors %d, stale snapshots %d, poisoned instances %d, reader errors %v", ingestErrs.Load(), stale.Load(), poisoned, failed)
 	}
