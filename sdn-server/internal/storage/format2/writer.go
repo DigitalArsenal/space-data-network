@@ -101,6 +101,7 @@ type WriterConfig struct {
 	NoAutoCompact   bool
 	CompactThreads  uint32
 	CommitJournal   bool
+	MaxEntryBytes   uint64 // TLV 19 (flatsql 3.2.0): the largest ring entry
 }
 
 func (c WriterConfig) encode() []byte {
@@ -145,6 +146,9 @@ func (c WriterConfig) encode() []byte {
 		t = t.u32(17, c.CompactThreads)
 	}
 	t = t.u8(18, c.CommitJournal)
+	if c.MaxEntryBytes > 0 {
+		t = t.u64(19, c.MaxEntryBytes)
+	}
 	return t
 }
 
@@ -340,11 +344,14 @@ type WriterStats struct {
 	Merges, Seals, TypeCommits, FirstLabels, RepeatLabels, Promotions, NoticesDropped           uint64
 	FramesParsedAtOpen, OpenReadBytes, OpenDataBytes, OpenMetaBytes, AdoptedBatches             uint64
 	PoolSlabsInUse, PoolSlabsPeak, PoolCommittedBytes, CommittedBytes                           uint64
+	// flatsql 3.2.0 (entries 24, 25): store-migrate gseqs kept, and the
+	// fallbacks that allocated a gseq instead (verification needs 0).
+	MigratedGseqs, MigratedGseqFallbacks uint64
 }
 
 // Stats reads the writer's counters.
 func (w *Writer) Stats() (WriterStats, error) {
-	const n = 24 * 8
+	const n = 26 * 8
 	mod := w.inst.Module()
 	out, err := mod.AllocateSize(n)
 	if err != nil {
@@ -355,17 +362,23 @@ func (w *Writer) Stats() (WriterStats, error) {
 	if err != nil {
 		return WriterStats{}, err
 	}
-	if got := wasmrt.ToInt32(v[0]); got != n {
+	got := int(wasmrt.ToInt32(v[0]))
+	if got != n && got != 24*8 {
 		return WriterStats{}, fmt.Errorf("format2: writer stats %d bytes, want %d", got, n)
 	}
 	if !w.inst.Enter() {
 		return WriterStats{}, ErrStopped
 	}
-	b := w.mem.ReadBytes(out, n)
+	b := w.mem.ReadBytes(out, got)
 	w.inst.Exit()
-	u := func(i int) uint64 { return binary.LittleEndian.Uint64(b[8*i:]) }
+	u := func(i int) uint64 {
+		if 8*i+8 > len(b) {
+			return 0
+		}
+		return binary.LittleEndian.Uint64(b[8*i:])
+	}
 	return WriterStats{u(0), u(1), u(2), u(3), u(4), u(5), u(6), u(7), u(8), u(9), u(10), u(11), u(12), u(13), u(14),
-		u(15), u(16), u(17), u(18), u(19), u(20), u(21), u(22), u(23)}, nil
+		u(15), u(16), u(17), u(18), u(19), u(20), u(21), u(22), u(23), u(24), u(25)}, nil
 }
 
 // Entry is one ring entry (§6.2).

@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
@@ -61,14 +60,7 @@ func TestFormat2ReadsEqualTheLegacyStoreOnTheMigratedCopy(t *testing.T) {
 		"cat source page":  {SchemaName: "CAT.fbs", SourceName: "celestrak-satcat", Limit: 12, Offset: 7},
 	}
 	// Tag-filtered windows match ANY live tag instance of a record (the
-	// legacy ANY-row semantics). flatsql 3.1.0's xBestIndex leaves its tag
-	// constraints for SQLite to recheck against the PUT's own tag, which
-	// drops the records that matched through a RETAG instance; the fix is
-	// queued in the engine (flatsql-partition-hot-split-arrivals item 0).
-	// These cases are skipped for exactly that artifact and run again the
-	// moment the embedded engine changes.
-	tagCases := map[string]bool{"provider": true, "source and batch": true, "batch page": true}
-	engineRechecksTags := flatsqlrt.PSThreadsPackage == "flatsql@3.1.0"
+	// legacy ANY-row semantics; flatsql 3.2.0 PARTITION-STORE.md §31.1).
 	names := make([]string, 0, len(filters))
 	for n := range filters {
 		names = append(names, n)
@@ -76,10 +68,6 @@ func TestFormat2ReadsEqualTheLegacyStoreOnTheMigratedCopy(t *testing.T) {
 	sort.Strings(names)
 	for _, name := range names {
 		f := filters[name]
-		if tagCases[name] && engineRechecksTags {
-			t.Logf("%s: skipped on %s (the engine rechecks tag constraints against the PUT's tag)", name, flatsqlrt.PSThreadsPackage)
-			continue
-		}
 		want, err := legacy.QueryIndexedRecords(f)
 		if err != nil {
 			t.Fatalf("%s: legacy: %v", name, err)

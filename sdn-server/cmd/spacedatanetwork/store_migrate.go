@@ -25,15 +25,17 @@ package main
 //   Licences are LICENCE entries, enqueued in a partition before its records.
 //
 // VERIFICATION (§16.1 step 7), a hard fail before activation:
-//   - every partition's head (live_count, live_bytes) equals the legacy
-//     sdn_partition_record_bytes counters of its table;
-//   - lane counters, summed per tag tuple, equal sdn_record_source_summary;
+//   - every partition's head (live_count, live_bytes) equals a recount of its
+//     legacy table (the sdn_partition_record_bytes counters are checked
+//     against it);
+//   - lane counters, summed per tag tuple, equal a recount of the legacy tag
+//     rows of live records (sdn_record_source_summary drift is reported);
 //   - per schema, the v1 cid sequence (arrivals in gseq order) equals
-//     sdn_record_index in rowid order.
-//   MaxRowID and FTS rowids need gseq = legacy rowid, which the engine cannot
-//   take yet (flatsql-partition-hot-split-arrivals item 0: migrated_gseq).
-//   Until then gseqs are dense above the 22.3a-2 floor and both are reported,
-//   not enforced (the "dense interim").
+//     sdn_record_index in rowid order, position by position with gseq = the
+//     legacy rowid (each FIRST copy carries its rowid as RecordAttr
+//     migrated_gseq, flatsql 3.2.0), so MaxRowID equals and every FTS rowid
+//     resolves to the same CID; the engine's migrated-gseq fallback counter
+//     must be 0.
 //
 // RESUME. Progress is journalled only after the entries it covers are acked
 // (durable). A rerun continues from the journal; resent entries dedupe by CID
@@ -901,7 +903,7 @@ func (m *migrator) noteReject(pa *pendingAcks, rseq uint64, code int32) {
 }
 
 // recordEntry builds the ring entry of one legacy record copy with tag t.
-func (m *migrator) recordEntry(tbl storage.LegacyTable, r storage.LegacyRecord, tag *storage.LegacyTag) (*format2.Entry, error) {
+func (m *migrator) recordEntry(tbl storage.LegacyTable, r storage.LegacyRecord, tag *storage.LegacyTag, gseq int64) (*format2.Entry, error) {
 	c, err := cid.Decode(r.CID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: CID %q: %w", tbl.Name, r.CID, err)
@@ -911,6 +913,12 @@ func (m *migrator) recordEntry(tbl storage.LegacyTable, r storage.LegacyRecord, 
 		return nil, fmt.Errorf("%s: CID %s is not a CIDv1 raw sha2-256", tbl.Name, r.CID)
 	}
 	attr := format2.RecordAttr{PeerID: []byte(r.PeerID), SupersedeKey: r.SupersedeKey, SourceTimestamp: r.Timestamp}
+	if gseq > 0 {
+		// The FIRST copy's legacy sdn_record_index.rowid: the engine keeps it
+		// as the gseq (flatsql 3.2.0), so datasync cursors, MaxRowID and the
+		// FTS rowids carry over.
+		attr.MigratedGseq = uint64(gseq)
+	}
 	if r.SignatureHex != "" {
 		if sig, err := hex.DecodeString(r.SignatureHex); err == nil {
 			attr.Signature = sig
@@ -1122,7 +1130,7 @@ func (m *migrator) phaseA(ctx context.Context, schema string, upto int64) error 
 			if len(rt) > 0 {
 				tag0 = &rt[0]
 			}
-			e, err := m.recordEntry(t, r, tag0)
+			e, err := m.recordEntry(t, r, tag0, ir.RowID)
 			if err != nil {
 				return err
 			}
@@ -1131,7 +1139,7 @@ func (m *migrator) phaseA(ctx context.Context, schema string, upto int64) error 
 			}
 			m.recordBytes += int64(len(r.Stored))
 			for i := 1; i < len(rt); i++ {
-				e, err := m.recordEntry(t, r, &rt[i])
+				e, err := m.recordEntry(t, r, &rt[i], 0)
 				if err != nil {
 					return err
 				}
@@ -1228,7 +1236,7 @@ func (m *migrator) phaseB(ctx context.Context, t storage.LegacyTable, upto int64
 			if err != nil {
 				return err
 			}
-			e, err := m.recordEntry(t, r, nil)
+			e, err := m.recordEntry(t, r, nil, 0)
 			if err != nil {
 				return err
 			}
@@ -1300,7 +1308,9 @@ type migrateVerification struct {
 	Schemas         int      `json:"schemas"`
 	CIDSequences    bool     `json:"cid_sequences_equal"`
 	CIDsCompared    int64    `json:"cids_compared"`
-	MaxRowID        []string `json:"max_rowid_dense_interim,omitempty"`
+	MaxRowID        []string `json:"max_rowid,omitempty"`
+	MigratedGseqs   uint64   `json:"migrated_gseqs"`
+	GseqFallbacks   uint64   `json:"migrated_gseq_fallbacks"`
 	FTS             string   `json:"fts_rowids"`
 	Mismatches      []string `json:"mismatches,omitempty"`
 	Took            string   `json:"took"`
@@ -1308,7 +1318,7 @@ type migrateVerification struct {
 
 func (m *migrator) verify(ctx context.Context) (*migrateVerification, error) {
 	start := time.Now()
-	v := &migrateVerification{FTS: "blocked on the engine's migrated_gseq (dense interim: gseqs are not the legacy rowids)"}
+	v := &migrateVerification{}
 	bad := func(format string, args ...interface{}) {
 		if len(v.Mismatches) < 50 {
 			v.Mismatches = append(v.Mismatches, fmt.Sprintf(format, args...))
@@ -1454,14 +1464,31 @@ func (m *migrator) verify(ctx context.Context) (*migrateVerification, error) {
 			}
 			return v, err
 		}
-		v.MaxRowID = append(v.MaxRowID, fmt.Sprintf("%s: legacy MaxRowID %d, gseq_hi %d", s.Schema, s.MaxRowID, gseqHi))
+		if gseqHi != s.MaxRowID {
+			v.CIDSequences = false
+			bad("%s: MaxRowID: legacy %d, gseq_hi %d", s.Schema, s.MaxRowID, gseqHi)
+		}
+		v.MaxRowID = append(v.MaxRowID, fmt.Sprintf("%s: %d", s.Schema, gseqHi))
 	}
+	// Every migrated FIRST copy kept its legacy rowid as its gseq (checked
+	// position by position above), so each FTS row, keyed by that rowid,
+	// resolves to the same CID. The engine counts every copy that could not
+	// keep it.
+	st, err := m.w.Stats()
+	if err != nil {
+		return v, err
+	}
+	v.MigratedGseqs, v.GseqFallbacks = st.MigratedGseqs, st.MigratedGseqFallbacks
+	if st.MigratedGseqFallbacks != 0 {
+		bad("%d migrated gseqs fell back to allocated ones (flatsql_ps_stats entry 25)", st.MigratedGseqFallbacks)
+	}
+	v.FTS = "equal: every FTS rowid is the gseq of the same CID (gseq = legacy rowid)"
 	v.Took = time.Since(start).Round(time.Millisecond).String()
 	if len(m.j.Rejected) > 0 {
 		bad("%d record copies were rejected by the engine (first: %s %s code %d)", len(m.j.Rejected),
 			m.j.Rejected[0].Table, m.j.Rejected[0].CID, m.j.Rejected[0].Code)
 	}
-	if !v.PartitionsEqual || !v.LanesEqual || !v.CIDSequences || len(m.j.Rejected) > 0 {
+	if !v.PartitionsEqual || !v.LanesEqual || !v.CIDSequences || len(m.j.Rejected) > 0 || v.GseqFallbacks != 0 {
 		return v, fmt.Errorf("store-migrate verification failed (%d mismatches); format 2 was not activated", len(v.Mismatches))
 	}
 	return v, nil
@@ -1503,6 +1530,12 @@ func (m *migrator) compareCIDSequence(ctx context.Context, schema string, bad fu
 		for i := range legacy {
 			if !cidEqual(legacy[i].CID, res.Rows[i][1].B) {
 				bad("%s: position %d: legacy %s, engine %x", schema, n+int64(i), legacy[i].CID, res.Rows[i][1].B)
+				return n, gseq, errSequenceMismatch
+			}
+			// gseq = the legacy rowid (flatsql 3.2.0 migrated gseqs): the
+			// datasync cursor, MaxRowID and the FTS rowids carry over.
+			if g := res.Rows[i][0].Int64(); g != legacy[i].RowID {
+				bad("%s: position %d (%s): gseq %d, legacy rowid %d", schema, n+int64(i), legacy[i].CID, g, legacy[i].RowID)
 				return n, gseq, errSequenceMismatch
 			}
 		}
@@ -1641,7 +1674,7 @@ func (m *migrator) deltaTags(ctx context.Context) error {
 					return err
 				}
 				tag := tr.LegacyTag
-				e, err := m.recordEntry(t, recs[tr.CID], &tag)
+				e, err := m.recordEntry(t, recs[tr.CID], &tag, 0)
 				if err != nil {
 					return err
 				}
