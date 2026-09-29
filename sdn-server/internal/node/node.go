@@ -95,6 +95,15 @@ const (
 	datasetPublicationCatchupLimit        = 5000
 	datasetShardPublicationCatchupLimit   = 5000
 
+	// datasetPublicationFetchBudget bounds a PNM replay's manifest, shard and
+	// index fetches. The import that follows runs under the node context
+	// (see materializeDatasetPublicationPNM).
+	datasetPublicationFetchBudget = 2 * time.Minute
+
+	// The work roots of the two shard-fetching paths under storage.path.
+	datasetPublicationReplayWorkRoot = "dataset-publication-replay"
+	datasetFeedHeadSyncWorkRoot      = "dataset-feed-head-sync"
+
 	// tipQueueTTLSweepInterval is how often the TipQueue's background
 	// sweeper checks for expired auto-pinned content to unpin (Task D1).
 	// internal/config has no dedicated tip-queue knob yet (see
@@ -2174,6 +2183,10 @@ func (n *Node) findKeyBrokerWasmPath() string {
 
 // Start begins the node's network operations.
 func (n *Node) Start(ctx context.Context) error {
+	// Before anything can fetch a shard: clear what earlier processes left
+	// in the shard work roots.
+	n.pruneStaleDatasetPublicationWork(time.Now())
+
 	// Bootstrap DHT — unless the operator turned it off. Bootstrapping is what
 	// makes a node join the public Amino DHT at all; skipping it is how
 	// `peers.enable_dht: false` becomes true in fact and not just in the file.
@@ -4242,7 +4255,7 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 	if baseDir == "" {
 		baseDir = os.TempDir()
 	}
-	workRoot := filepath.Join(baseDir, "dataset-feed-head-sync")
+	workRoot := filepath.Join(baseDir, datasetFeedHeadSyncWorkRoot)
 	if err := os.MkdirAll(workRoot, 0o700); err != nil {
 		return 0, fmt.Errorf("create feed-head work root: %w", err)
 	}
@@ -4580,10 +4593,15 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 	if err != nil {
 		return false, fmt.Errorf("dataset publication PNM from %s: %w", from.ShortString(), err)
 	}
-	workDir := filepath.Join(n.config.Storage.Path, "dataset-publication-replay")
-	materializeCtx, cancel := context.WithTimeout(n.ctx, 2*time.Minute)
-	defer cancel()
-	result, err := storage.MaterializeDatasetPublication(materializeCtx, n.store, storage.DatasetPublicationReplayOptions{
+	workDir := filepath.Join(n.config.Storage.Path, datasetPublicationReplayWorkRoot)
+	// The 2-minute budget bounds the FETCH only. The import runs under the
+	// node context, like the feed-head path's: a 42K-record shard takes
+	// minutes on host-01, and while the budget also bounded the import every
+	// attempt stopped at the deadline and the next began again at record 0,
+	// so the shard never landed (2026-09-28). The import still takes the
+	// store lock one chunk at a time, and cancelling the node context (the
+	// shutdown drain) still stops it before the next chunk.
+	result, err := storage.MaterializeDatasetPublication(n.ctx, n.store, storage.DatasetPublicationReplayOptions{
 		PNM:               pnmBytes,
 		ProviderPublicKey: providerPublicKey,
 		FetchByCID: func(ctx context.Context, cid string) ([]byte, error) {
@@ -4593,6 +4611,7 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 			return storage.FetchIPFSBlockByCIDToFile(ctx, ipfsAPIURL, cid, path)
 		},
 		FetchRetryDelays: []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second},
+		FetchBudget:      datasetPublicationFetchBudget,
 		WorkDir:          workDir,
 	})
 	if err != nil {
@@ -4621,8 +4640,13 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 	}); err != nil {
 		log.Warnf("Failed to record dataset publication replay state for %s on %s: %v", from.ShortString(), schema, err)
 	}
-	log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
-		from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
+	if result.AlreadyImported {
+		log.Infof("Materialized trusted dataset update from %s on %s: schema=%s records=%d manifest=%s shard=%s already imported by the feed-head path (not fetched again)",
+			from.ShortString(), schema, result.SchemaName, result.RecordCount, result.ManifestCID, result.ShardCID)
+	} else {
+		log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
+			from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
+	}
 	// A publication from this producer landed: whatever it was being rejected
 	// for, it is not being rejected now.
 	n.clearPublicationRejected(from.String())
@@ -4651,6 +4675,34 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 		n.enforceStorageQuota()
 	}()
 	return true, nil
+}
+
+// pruneStaleDatasetPublicationWork removes the entries of the replay and
+// feed-head work roots last modified before cutoff. Both paths remove their
+// work when an attempt returns, so what is older than this process was left
+// by an earlier one: the replay's shards from before it cleaned up after
+// itself (host-01: 12 GB by 2026-09-28) and the directories of attempts a
+// restart cut short (host-01: 424 MB of feed-head-* directories). Only a
+// configured storage path is swept; the feed-head path's fallback root in
+// the shared temp dir is left alone.
+func (n *Node) pruneStaleDatasetPublicationWork(cutoff time.Time) {
+	if n == nil || n.config == nil {
+		return
+	}
+	base := strings.TrimSpace(n.config.Storage.Path)
+	if base == "" {
+		return
+	}
+	for _, name := range []string{datasetPublicationReplayWorkRoot, datasetFeedHeadSyncWorkRoot} {
+		root := filepath.Join(base, name)
+		removed, removedBytes, err := storage.PruneStaleDatasetPublicationWork(root, cutoff)
+		if err != nil {
+			log.Warnf("Pruning stale dataset publication work in %s: %v", root, err)
+		}
+		if removed > 0 {
+			log.Infof("Removed %d stale entries (%.1f MiB) an earlier process left in %s", removed, float64(removedBytes)/(1<<20), root)
+		}
+	}
 }
 
 func datasetPublicationFileIDSchema(fileID string) string {

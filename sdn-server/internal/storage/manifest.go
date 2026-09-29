@@ -87,7 +87,13 @@ type DatasetPublicationReplayOptions struct {
 	FetchByCID        func(context.Context, string) ([]byte, error)
 	FetchByCIDToFile  func(context.Context, string, string) error
 	FetchRetryDelays  []time.Duration
-	WorkDir           string
+	// FetchBudget, when positive, bounds the manifest, shard and index
+	// fetches together. It never bounds the import: see
+	// MaterializeDatasetPublication.
+	FetchBudget time.Duration
+	// WorkDir is the root under which each materialization makes its own
+	// directory for the fetched shard and index, removed when it returns.
+	WorkDir string
 }
 
 // DatasetPublicationReplayResult summarizes a verified publication replay.
@@ -108,6 +114,11 @@ type DatasetPublicationReplayResult struct {
 	SourceName  string
 	BatchID     string
 	PublishedAt time.Time
+	// AlreadyImported: the store already recorded this exact shard and index
+	// as a replicated dataset shard publication (the feed-head path writes
+	// that row only after its import completes), so nothing was fetched past
+	// the manifest and nothing was imported.
+	AlreadyImported bool
 }
 
 // datasetManifestPublishedAt reads the manifest's PUBLISH_TIMESTAMP as a
@@ -342,6 +353,20 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 
 // MaterializeDatasetPublication verifies a signed PNM/DPM publication, resolves
 // the advertised shard/index bytes, and imports the shard into the local store.
+//
+// THE FETCH BUDGET BOUNDS THE FETCH, NOT THE IMPORT. opts.FetchBudget covers
+// the manifest, shard and index fetches; the import runs under ctx alone.
+// When one budget covered both (d988d443d made the import honour it), a
+// shard that took longer to import than the budget left never landed: the
+// import stopped at the deadline, the retry started again at record 0, and
+// on host-01 (70-250 records/s) no 25-43K-record shard ever finished while
+// the store write lock was held about 90% of the time (2026-09-28). The
+// import still honours ctx (checked before every chunk, a stalled chunk
+// abandoned at once), so cancelling ctx still stops it promptly.
+//
+// A shard the store already recorded as a replicated publication (the
+// feed-head path writes that row only after its import completes) is not
+// fetched or imported again: see AlreadyImported.
 func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions) (*DatasetPublicationReplayResult, error) {
 	if store == nil {
 		return nil, fmt.Errorf("store is required")
@@ -349,12 +374,19 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 	if opts.FetchByCID == nil {
 		return nil, fmt.Errorf("CID fetcher is required")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	manifestCID, fileID, err := verifyDatasetPublicationPNM(opts.PNM, opts.ProviderPublicKey)
 	if err != nil {
 		return nil, err
 	}
-	_ = fileID
-	manifestBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, manifestCID)
+	fetchCtx, stopFetchBudget := ctx, context.CancelFunc(func() {})
+	if opts.FetchBudget > 0 {
+		fetchCtx, stopFetchBudget = context.WithTimeout(ctx, opts.FetchBudget)
+	}
+	defer stopFetchBudget()
+	manifestBytes, err := fetchDatasetPublicationCID(fetchCtx, opts.FetchByCID, opts.FetchRetryDelays, manifestCID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest CID %s: %w", manifestCID, err)
 	}
@@ -380,21 +412,77 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 	if !ok {
 		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
 	}
-	if opts.FetchByCIDToFile != nil {
-		return materializeDatasetPublicationFromFiles(ctx, store, opts, manifest, manifestCID, shardAsset, indexAsset)
+	if pub, ok := store.replicatedDatasetShardPublication(shardAsset, indexAsset); ok {
+		if err := recordManifestSourceBatchLicenses(store, manifest, pub.SchemaName); err != nil {
+			return nil, err
+		}
+		return &DatasetPublicationReplayResult{
+			ManifestCID:     manifestCID,
+			ShardCID:        shardAsset.CID,
+			IndexCID:        indexAsset.CID,
+			SchemaName:      pub.SchemaName,
+			RecordCount:     pub.RecordCount,
+			QuerySHA256:     pub.QuerySHA256,
+			ResultSHA256:    pub.ResultSHA256,
+			ProviderID:      pub.ProviderID,
+			SourceName:      pub.SourceName,
+			BatchID:         pub.BatchID,
+			PublishedAt:     datasetManifestPublishedAt(manifest),
+			AlreadyImported: true,
+		}, nil
 	}
-	return materializeDatasetPublicationFromBytes(ctx, store, opts, manifest, manifestCID, shardAsset, indexAsset)
+	if opts.FetchByCIDToFile != nil {
+		return materializeDatasetPublicationFromFiles(ctx, fetchCtx, store, opts, manifest, manifestCID, shardAsset, indexAsset)
+	}
+	return materializeDatasetPublicationFromBytes(ctx, fetchCtx, store, opts, manifest, manifestCID, shardAsset, indexAsset)
 }
 
-func materializeDatasetPublicationFromBytes(ctx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset) (*DatasetPublicationReplayResult, error) {
-	shardBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, shardAsset.CID)
+// replicatedDatasetShardPublication finds the store's publication row for
+// exactly this shard and index: same schema, shard CID and index CID, and the
+// same SHA-256s wherever both sides carry one. The feed-head path writes that
+// row only after its import of the shard completed, so the records are here.
+// A failed lookup answers "not recorded": the full path is always correct,
+// because the import is CID-idempotent.
+func (s *FlatSQLStore) replicatedDatasetShardPublication(shardAsset, indexAsset publicationAsset) (DatasetShardPublication, bool) {
+	schema := strings.TrimSpace(shardAsset.Schema)
+	shardCID := strings.TrimSpace(shardAsset.CID)
+	indexCID := strings.TrimSpace(indexAsset.CID)
+	if schema == "" || shardCID == "" || indexCID == "" {
+		return DatasetShardPublication{}, false
+	}
+	pub, found, err := s.FindDatasetShardPublicationByCID(DatasetShardPublicationQuery{
+		SchemaName:   schema,
+		QueryProfile: DatasetPublicationQueryProfile,
+	}, shardCID)
+	if err != nil {
+		log.Warnf("Dataset publication replay: look up shard %s on %s: %v (fetching it)", shardCID, schema, err)
+		return DatasetShardPublication{}, false
+	}
+	if !found || pub.IndexCID != indexCID || pub.RecordCount <= 0 {
+		return DatasetShardPublication{}, false
+	}
+	if !sameSHA256IfBothKnown(shardAsset.SHA256, pub.ShardSHA256) || !sameSHA256IfBothKnown(indexAsset.SHA256, pub.IndexSHA256) {
+		return DatasetShardPublication{}, false
+	}
+	return pub, true
+}
+
+func sameSHA256IfBothKnown(a, b string) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	return a == "" || b == "" || strings.EqualFold(a, b)
+}
+
+// materializeDatasetPublicationFromBytes fetches under fetchCtx and imports
+// under ctx.
+func materializeDatasetPublicationFromBytes(ctx, fetchCtx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset) (*DatasetPublicationReplayResult, error) {
+	shardBytes, err := fetchDatasetPublicationCID(fetchCtx, opts.FetchByCID, opts.FetchRetryDelays, shardAsset.CID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
 	}
 	if err := verifyBytesCIDAndHash("shard", shardBytes, shardAsset.CID, shardAsset.SHA256); err != nil {
 		return nil, err
 	}
-	indexBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, indexAsset.CID)
+	indexBytes, err := fetchDatasetPublicationCID(fetchCtx, opts.FetchByCID, opts.FetchRetryDelays, indexAsset.CID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
 	}
@@ -424,7 +512,9 @@ func materializeDatasetPublicationFromBytes(ctx context.Context, store *FlatSQLS
 	}, nil
 }
 
-func materializeDatasetPublicationFromFiles(ctx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset) (*DatasetPublicationReplayResult, error) {
+// materializeDatasetPublicationFromFiles fetches under fetchCtx and imports
+// under ctx, in a work directory of its own that it removes on return.
+func materializeDatasetPublicationFromFiles(ctx, fetchCtx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset) (*DatasetPublicationReplayResult, error) {
 	workDir, cleanup, err := datasetPublicationMaterializationWorkDir(opts.WorkDir)
 	if err != nil {
 		return nil, err
@@ -432,13 +522,13 @@ func materializeDatasetPublicationFromFiles(ctx context.Context, store *FlatSQLS
 	defer cleanup()
 	shardPath := filepath.Join(workDir, datasetPublicationPathComponent(shardAsset.CID)+".fbshard")
 	indexPath := filepath.Join(workDir, datasetPublicationPathComponent(indexAsset.CID)+".index.json")
-	if err := fetchDatasetPublicationCIDToFile(ctx, opts.FetchByCIDToFile, opts.FetchRetryDelays, shardAsset.CID, shardPath); err != nil {
+	if err := fetchDatasetPublicationCIDToFile(fetchCtx, opts.FetchByCIDToFile, opts.FetchRetryDelays, shardAsset.CID, shardPath); err != nil {
 		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
 	}
 	if _, _, err := verifyFileCIDAndHash("shard", shardPath, shardAsset.CID, shardAsset.SHA256); err != nil {
 		return nil, err
 	}
-	if err := fetchDatasetPublicationCIDToFile(ctx, opts.FetchByCIDToFile, opts.FetchRetryDelays, indexAsset.CID, indexPath); err != nil {
+	if err := fetchDatasetPublicationCIDToFile(fetchCtx, opts.FetchByCIDToFile, opts.FetchRetryDelays, indexAsset.CID, indexPath); err != nil {
 		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
 	}
 	if _, _, err := verifyFileCIDAndHash("index", indexPath, indexAsset.CID, indexAsset.SHA256); err != nil {
@@ -511,19 +601,99 @@ func recordManifestSourceBatchLicenses(store *FlatSQLStore, manifest *dpm.DPM, s
 	return nil
 }
 
+// datasetPublicationMaterializationWorkDir makes one attempt's work directory
+// and returns the cleanup that removes it. Under a configured root it is a
+// fresh subdirectory, never the root itself: the files used to land directly
+// in the root under their CIDs with a no-op cleanup, so every attempt's shard
+// stayed behind (host-01: 581 files, 12 GB in dataset-publication-replay by
+// 2026-09-28), and two attempts on one shard shared a path.
 func datasetPublicationMaterializationWorkDir(configured string) (string, func(), error) {
 	configured = strings.TrimSpace(configured)
 	if configured != "" {
 		if err := os.MkdirAll(configured, 0o700); err != nil {
 			return "", func() {}, fmt.Errorf("create dataset publication work dir: %w", err)
 		}
-		return configured, func() {}, nil
+		attemptDir, err := os.MkdirTemp(configured, "attempt-*")
+		if err != nil {
+			return "", func() {}, fmt.Errorf("create dataset publication attempt dir: %w", err)
+		}
+		return attemptDir, func() { _ = os.RemoveAll(attemptDir) }, nil
 	}
 	tmpDir, err := os.MkdirTemp("", "sdn-dataset-publication-*")
 	if err != nil {
 		return "", func() {}, fmt.Errorf("create dataset publication temp dir: %w", err)
 	}
 	return tmpDir, func() { _ = os.RemoveAll(tmpDir) }, nil
+}
+
+// PruneStaleDatasetPublicationWork removes every top-level entry of a
+// dataset-publication work root (the replay root, the feed-head sync root)
+// last modified before cutoff, and reports how many entries and file bytes it
+// removed. Each attempt removes its own work when it returns, so what is
+// older than this process was left by an earlier one: the shards the replay
+// kept before it cleaned up after itself, and the directories of attempts a
+// restart interrupted. Called at boot with the boot time as cutoff, it
+// cannot touch an attempt of this process. The root itself is kept; a
+// missing root is not an error.
+func PruneStaleDatasetPublicationWork(root string, cutoff time.Time) (int, int64, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return 0, 0, nil
+	}
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, fmt.Errorf("read dataset publication work root %s: %w", root, err)
+	}
+	removed := 0
+	var removedBytes int64
+	var errs []error
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
+		size := datasetPublicationWorkBytes(path, info)
+		if err := os.RemoveAll(path); err != nil {
+			errs = append(errs, fmt.Errorf("remove stale dataset publication work %s: %w", path, err))
+			continue
+		}
+		removed++
+		removedBytes += size
+	}
+	return removed, removedBytes, errors.Join(errs...)
+}
+
+// datasetPublicationWorkBytes sums the regular files at or under path
+// without following links.
+func datasetPublicationWorkBytes(path string, info os.FileInfo) int64 {
+	if info.Mode().IsRegular() {
+		return info.Size()
+	}
+	if !info.IsDir() {
+		return 0
+	}
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return nil
+		}
+		if fi, err := d.Info(); err == nil {
+			total += fi.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 func fetchDatasetPublicationCID(ctx context.Context, fetch func(context.Context, string) ([]byte, error), retryDelays []time.Duration, cidValue string) ([]byte, error) {
@@ -744,6 +914,11 @@ func parseDatasetExportIndexBytes(indexBytes []byte) (*DatasetExportIndex, error
 // commit cannot be interrupted from Go; the engine's per-call budget bounds
 // it) while the caller gets ctx's error at once. No chunk starts after the
 // deadline; the import is CID-idempotent, so a retry converges.
+//
+// A retry converges only if it can finish, so no caller gives the import a
+// deadline sized for something else: the publication replay bounds its fetch
+// and imports under the node context, as the feed-head path does, and that
+// context's cancellation at shutdown is what this check cuts short.
 func (s *FlatSQLStore) importDatasetShardRecords(ctx context.Context, index *DatasetExportIndex, providerPeerID string, readRecord datasetShardRecordReader) (int, *DatasetExportIndex, error) {
 	if ctx == nil {
 		ctx = context.Background()
