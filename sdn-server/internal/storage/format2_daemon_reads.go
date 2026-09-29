@@ -301,7 +301,7 @@ func f2WindowQuery(filter IndexedRecordQuery) (format2.WindowQuery, error) {
 		if !format2.TypeHasEpoch(filter.SchemaName) {
 			q.Conds = append(q.Conds, f2Never)
 		} else {
-			q.Conds = append(q.Conds, format2.Cond{SQL: "+_epoch >= ? AND +_epoch < ?", Params: []format2.Cell{format2.Int(lo), format2.Int(hi)}})
+			q.EpochRanges = append(q.EpochRanges, [2]int64{lo, hi})
 		}
 	}
 	objectType := normalizeIndexEnum(filter.ObjectType)
@@ -345,34 +345,100 @@ func f2WindowQuery(filter IndexedRecordQuery) (format2.WindowQuery, error) {
 
 // f2WindowRecs reads an indexed window. A tag-filtered window on a type
 // with live REPEAT copies reads each matching partition's top
-// (offset + limit) in the window's order and merges them by CID (the tag
-// targets comment above). meta leaves the payloads out.
+// (offset + limit) in the window's order without payloads, merges them by
+// CID (the tag targets comment above), and reads the window's payloads.
+// meta leaves the payloads out.
 func (s *FlatSQLStore) f2WindowRecs(ctx context.Context, q format2.WindowQuery, meta bool) ([]format2.Rec, error) {
-	read := func(q format2.WindowQuery) ([]format2.WindowRow, error) {
+	merged := false
+	rows, err := s.f2WindowMerged(ctx, q, func(sq format2.WindowQuery) ([]format2.WindowRow, error) {
 		var recs []format2.Rec
 		var err error
-		if meta {
-			recs, err = s.ps.WindowMeta(ctx, q)
+		if meta || sq.Table != "" {
+			merged = sq.Table != ""
+			recs, err = s.ps.WindowMeta(ctx, sq)
 		} else {
-			recs, err = s.ps.Window(ctx, q)
+			recs, err = s.ps.Window(ctx, sq)
 		}
 		rows := make([]format2.WindowRow, len(recs))
 		for i, r := range recs {
-			rows[i].Rec = r
+			rows[i] = format2.WindowRow{Rec: r, Table: sq.Table}
 		}
 		return rows, err
+	})
+	if err != nil {
+		return nil, err
 	}
-	rows, err := s.f2WindowMerged(ctx, q, read)
+	if merged && !meta {
+		byTable := map[string][][]byte{}
+		for _, r := range rows {
+			byTable[r.Table] = append(byTable[r.Table], r.Rec.CIDBin)
+		}
+		data := map[string]map[string][]byte{}
+		for table, cids := range byTable {
+			d, err := s.ps.Payloads(ctx, q.Schema, table, cids)
+			if err != nil {
+				return nil, err
+			}
+			data[table] = d
+		}
+		kept := rows[:0]
+		for _, r := range rows {
+			d, ok := data[r.Table][string(r.Rec.CIDBin)]
+			if !ok {
+				continue // deleted since
+			}
+			r.Rec.Data = d
+			kept = append(kept, r)
+		}
+		rows = kept
+	}
 	out := make([]format2.Rec, len(rows))
 	for i, r := range rows {
 		out[i] = r.Rec
 	}
-	return out, err
+	return out, nil
+}
+
+// f2ByBatch drives a (source, batch) window by its batch when the lanes say
+// the batch's records are about the window's own: at most twice the lanes
+// that meet every tag condition, and fewer than the source's (the source
+// plan walks every posting of the source). The lanes only choose the plan;
+// each match is checked (format2.WindowQuery.ByBatch).
+func (s *FlatSQLStore) f2ByBatch(ctx context.Context, q *format2.WindowQuery) error {
+	if q.Batch == "" || q.Source == "" {
+		return nil
+	}
+	lanes, err := s.f2Lanes(ctx)
+	if err != nil {
+		return err
+	}
+	typ := format2.TypeName(q.Schema)
+	var batch, match, source int64
+	for _, l := range lanes {
+		if l.Type != typ || !l.Tuple || l.Count <= 0 {
+			continue
+		}
+		if l.Source == q.Source {
+			source += l.Count
+		}
+		if l.Batch != q.Batch {
+			continue
+		}
+		batch += l.Count
+		if l.Source == q.Source && (q.Provider == "" || l.Provider == q.Provider) {
+			match += l.Count
+		}
+	}
+	q.ByBatch = batch <= 2*match+1024 && batch < source
+	return nil
 }
 
 // f2WindowMerged runs a window read on its targets and merges partition
 // results by the window's order, keeping each CID once.
 func (s *FlatSQLStore) f2WindowMerged(ctx context.Context, q format2.WindowQuery, read func(format2.WindowQuery) ([]format2.WindowRow, error)) ([]format2.WindowRow, error) {
+	if err := s.f2ByBatch(ctx, &q); err != nil {
+		return nil, err
+	}
 	tag := f2TagSpec{provider: q.Provider, source: q.Source, batch: q.Batch}
 	targets, err := s.f2Targets(ctx, q.Schema, tag, false)
 	if err != nil {
@@ -435,6 +501,9 @@ func (s *FlatSQLStore) f2WindowMerged(ctx context.Context, q format2.WindowQuery
 // f2WindowCount counts a window's records (its conditions; distinct CIDs
 // over the partitions of a REPEAT-holding type).
 func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery) (int64, error) {
+	if err := s.f2ByBatch(ctx, &q); err != nil {
+		return 0, err
+	}
 	tag := f2TagSpec{provider: q.Provider, source: q.Source, batch: q.Batch}
 	targets, err := s.f2Targets(ctx, q.Schema, tag, false)
 	if err != nil {
@@ -814,6 +883,18 @@ func f2CompileSyncFilterClause(schemaName, clause string) (string, []format2.Cel
 		if f.kind == "time" {
 			return f.expr + " >= ? AND " + f.expr + " < ?", []format2.Cell{format2.Int(lo.I * 1000), format2.Int((hi.I + 1) * 1000)}, nil
 		}
+		if f.kind == "day" {
+			// UTC days are an epoch range (an EPOCH_CID range scan).
+			a, _, err := f2DayRange(lo.String())
+			if err != nil {
+				return "", nil, err
+			}
+			_, b, err := f2DayRange(hi.String())
+			if err != nil {
+				return "", nil, err
+			}
+			return "_epoch >= ? AND _epoch < ?", []format2.Cell{format2.Int(a), format2.Int(b)}, nil
+		}
 		return f.expr + " BETWEEN ? AND ?", []format2.Cell{lo, hi}, nil
 	}
 	if m := syncFilterLikePattern.FindStringSubmatch(clause); len(m) == 3 {
@@ -878,6 +959,28 @@ func f2CompileSyncFilterClause(schemaName, clause string) (string, []format2.Cel
 				return f.expr + " < ?", []format2.Cell{format2.Int(lo)}, nil
 			case "<=":
 				return f.expr + " < ?", []format2.Cell{format2.Int(hi)}, nil
+			}
+		}
+		if f.kind == "day" {
+			// A UTC day is an epoch range; the legacy day text compares in
+			// day order.
+			lo, hi, err := f2DayRange(v.String())
+			if err != nil {
+				return "", nil, err
+			}
+			switch op {
+			case "=":
+				return "_epoch >= ? AND _epoch < ?", []format2.Cell{format2.Int(lo), format2.Int(hi)}, nil
+			case "!=":
+				return "(_epoch < ? OR _epoch >= ?)", []format2.Cell{format2.Int(lo), format2.Int(hi)}, nil
+			case ">":
+				return "_epoch >= ?", []format2.Cell{format2.Int(hi)}, nil
+			case ">=":
+				return "_epoch >= ?", []format2.Cell{format2.Int(lo)}, nil
+			case "<":
+				return "_epoch < ?", []format2.Cell{format2.Int(lo)}, nil
+			case "<=":
+				return "_epoch < ?", []format2.Cell{format2.Int(hi)}, nil
 			}
 		}
 		if f.kind == "enum" && v.I < 0 {
@@ -2270,6 +2373,9 @@ func (s *FlatSQLStore) f2DistinctBatches(schemaName, providerID, sourceName stri
 func (s *FlatSQLStore) f2PublicationSetFingerprint(schemaName, providerID, sourceName, batchID string) (string, int, error) {
 	ctx := s.f2ctx()
 	q := format2.WindowQuery{Schema: schemaName, Provider: providerID, Source: sourceName, Batch: batchID}
+	if err := s.f2ByBatch(ctx, &q); err != nil {
+		return "", 0, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+	}
 	tag := f2TagSpec{provider: providerID, source: sourceName, batch: batchID}
 	targets, err := s.f2Targets(ctx, schemaName, tag, false)
 	if err != nil {

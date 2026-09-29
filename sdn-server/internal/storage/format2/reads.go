@@ -194,6 +194,16 @@ type WindowQuery struct {
 	// Table reads one partition (its sql_name) instead of the type's
 	// fan-out: every copy it holds, FIRST or REPEAT, with its own tags.
 	Table string
+	// EpochRanges are further half-open [lo, hi) ranges on the record epoch
+	// in milliseconds (a UTC day): an EPOCH_CID range scan when nothing
+	// else drives the plan.
+	EpochRanges [][2]int64
+	// ByBatch drives a (source, batch) window by its batch: the source
+	// plan walks every posting of the source in epoch order, the batch plan
+	// only the batch's. The provider and source conditions are checked on
+	// each match (its own tag, else its live tag instances by CID). The
+	// caller sets it when the batch's lanes are about the window's own.
+	ByBatch bool
 }
 
 func (q WindowQuery) table() string {
@@ -268,17 +278,19 @@ func (q WindowQuery) where() (string, []Cell, bool) {
 			indexed = true
 		}
 	}
-	// A time range alone stays on the default plan (the legacy order) as a
-	// residual filter; with an index-driven plan it narrows the matches.
-	epoch := "_epoch"
-	if !indexed {
-		epoch = "+_epoch"
-	}
+	// A time range alone is an EPOCH_CID range scan: the default plan's
+	// order (the legacy order), second-granular keys, the exact millisecond
+	// bounds applied by SQLite. With an index-driven plan it narrows the
+	// matches.
 	if q.From != nil {
-		add(epoch+" >= ?%d", Int(q.From.Unix()*1000))
+		add("_epoch >= ?%d", Int(q.From.Unix()*1000))
 	}
 	if q.To != nil {
-		add(epoch+" < ?%d", Int((q.To.Unix()+1)*1000))
+		add("_epoch < ?%d", Int((q.To.Unix()+1)*1000))
+	}
+	for _, r := range q.EpochRanges {
+		add("_epoch >= ?%d", Int(r[0]))
+		add("_epoch < ?%d", Int(r[1]))
 	}
 	if len(conds) == 0 {
 		return "", nil, false
@@ -346,6 +358,7 @@ func (s *Store) WindowMeta(ctx context.Context, q WindowQuery) ([]Rec, error) {
 type WindowRow struct {
 	Rec   Rec
 	Extra Cell
+	Table string // the statement target the row came from ("" the type)
 }
 
 // WindowColumns returns a window without payloads and with one extra column
@@ -364,6 +377,11 @@ func (s *Store) WindowColumns(ctx context.Context, q WindowQuery, extra string) 
 
 // Count counts a window's matches (its conditions, no order, no limit).
 func (s *Store) Count(ctx context.Context, q WindowQuery) (int64, error) {
+	if q.byBatch() {
+		var n int64
+		err := s.matches(ctx, q, func([]byte, int64) error { n++; return nil })
+		return n, err
+	}
 	where, params, _ := q.where()
 	res, err := s.query(ctx, Request{SQL: fmt.Sprintf("SELECT COUNT(*) FROM %s%s", q.table(), where), Params: params})
 	if noSuchType(err, q.Schema) {
@@ -378,6 +396,11 @@ func (s *Store) Count(ctx context.Context, q WindowQuery) (int64, error) {
 // WindowCIDs returns the CIDs a window's conditions match (no order, no
 // limit, no payload): the distinct-record count of a union of partitions.
 func (s *Store) WindowCIDs(ctx context.Context, q WindowQuery) ([]string, error) {
+	if q.byBatch() {
+		var out []string
+		err := s.matches(ctx, q, func(cid []byte, _ int64) error { out = append(out, CIDText(cid)); return nil })
+		return out, err
+	}
 	where, params, _ := q.where()
 	res, err := s.query(ctx, Request{SQL: fmt.Sprintf("SELECT _cid_bin FROM %s%s", q.table(), where), Params: params})
 	if noSuchType(err, q.Schema) {
@@ -394,6 +417,9 @@ func (s *Store) WindowCIDs(ctx context.Context, q WindowQuery) ([]string, error)
 }
 
 func (s *Store) windowRows(ctx context.Context, q WindowQuery, cols string) ([][]Cell, error) {
+	if q.twoPhase() {
+		return s.windowTwoPhase(ctx, q, cols)
+	}
 	if _, _, indexed := q.where(); indexed && q.Order == "" {
 		return s.windowByEpoch(ctx, q, cols)
 	}
@@ -506,7 +532,7 @@ func (s *Store) windowByEpoch(ctx context.Context, q WindowQuery, cols string) (
 // ByteProbe counts a window's records and record bytes without reading one
 // payload byte (§9: the probe sums rows' lengths).
 func (s *Store) ByteProbe(ctx context.Context, q WindowQuery) (count, bytes int64, err error) {
-	if _, _, indexed := q.where(); indexed && q.Order == "" {
+	if _, _, indexed := q.where(); q.twoPhase() || (indexed && q.Order == "") {
 		recs, err := s.WindowMeta(ctx, q)
 		if err != nil {
 			return 0, 0, err
