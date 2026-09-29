@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+
+	"github.com/spacedatanetwork/sdn-server/internal/storage/recordalign"
 )
 
 // StreamConverter wraps a FlatcModule to provide streaming JSON↔FlatBuffer
@@ -95,12 +97,22 @@ func (sc *StreamConverter) JSONStreamToFlatBuffers(ctx context.Context, reader i
 // FlatBuffersToJSONStream converts FlatBuffer binary records to
 // newline-delimited JSON written to the provided writer. Output is always
 // compact (FlatcCompactJSON), since an indented record would span lines.
+// Without FlatcSizePrefixed the records are bare stored records, each
+// verified at its alignment origin (recordalign.Record).
 func (sc *StreamConverter) FlatBuffersToJSONStream(ctx context.Context, records [][]byte, writer io.Writer) (int, []error) {
 	var errs []error
 	written := 0
 
 	for i, binaryData := range records {
-		jsonData, err := sc.flatc.BinaryToJSON(ctx, sc.schemaID, binaryData, sc.opts|FlatcCompactJSON)
+		opts := sc.opts | FlatcCompactJSON
+		if opts&FlatcSizePrefixed == 0 {
+			view := recordalign.Record(binaryData)
+			if view.SizePrefixed {
+				opts |= FlatcSizePrefixed
+			}
+			binaryData = view.Buf
+		}
+		jsonData, err := sc.flatc.BinaryToJSON(ctx, sc.schemaID, binaryData, opts)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("record %d: %w", i, err))
 			continue

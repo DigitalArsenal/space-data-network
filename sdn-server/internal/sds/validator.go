@@ -17,6 +17,7 @@ import (
 	standardsCLM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CLM"
 	logging "github.com/ipfs/go-log/v2"
 
+	"github.com/spacedatanetwork/sdn-server/internal/storage/recordalign"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -350,8 +351,9 @@ const FieldLevelValidationEnv = "SDN_VALIDATE_FIELD_LEVEL"
 //   - cost under the WasmEdge interpreter: 0.26-1.2 ms per record for most
 //     standards, 5 ms for CNP and 149 ms for PRR, against ~1 ms of ingest.
 //
-// It can be enabled when both are fixed: an alignment-tolerant verify in the
-// converter, and an AOT-compiled converter.
+// The false rejections are gone: the parse now verifies a bare stored record
+// at its alignment origin (VerifyRecord, recordalign). The cost remains, so
+// the default stays off until the converter is AOT-compiled.
 const DefaultFieldLevelValidation = false
 
 // Validator validates data against SDS schemas.
@@ -626,17 +628,48 @@ func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte
 	// cannot keeps the envelope verdict.
 	if ok && v.FieldLevelValidation() {
 		if flatcID, err := v.converterID(ctx, schemaName); err == nil {
-			opts := wasm.FlatcOption(0)
-			if form, ferr := v.DetectEnvelopeForm(schemaName, data); ferr == nil && form == EnvelopeSizePrefixed {
-				opts = wasm.FlatcSizePrefixed
-			}
-			if err := v.flatc.VerifyBinary(ctx, flatcID, data, opts); err != nil {
+			buf, opts := v.placeForVerifier(schemaName, data, 0)
+			if err := v.flatc.VerifyBinary(ctx, flatcID, buf, opts); err != nil {
 				return fmt.Errorf("validation failed for %s: %w", schemaName, err)
 			}
 		}
 	}
 
 	return nil
+}
+
+// VerifyRecord runs the converter's full verification of a record (flatc's
+// reflection verifier, then nested buffers and unions) in either accepted
+// envelope form, whatever the field-level switch says. A bare stored record
+// is verified at its alignment origin, so one whose size prefix was stripped
+// at publish verifies as its builder produced it. Its bytes never change.
+func (v *Validator) VerifyRecord(ctx context.Context, schemaName string, data []byte) error {
+	id, err := v.converterID(ctx, schemaName)
+	if err != nil {
+		return err
+	}
+	buf, opts := v.placeForVerifier(schemaName, data, 0)
+	if err := v.flatc.VerifyBinary(ctx, id, buf, opts); err != nil {
+		return fmt.Errorf("verify %s: %w", schemaName, err)
+	}
+	return nil
+}
+
+// placeForVerifier returns data as the stock verifier must see it, with opts
+// carrying the matching size-prefix bit. A size-prefixed buffer is its own
+// origin. A bare stored record goes through recordalign.Record: itself when
+// its length is 0 mod 8, else one copy behind its u32 length (the builder's
+// original frame).
+func (v *Validator) placeForVerifier(schemaName string, data []byte, opts wasm.FlatcOption) ([]byte, wasm.FlatcOption) {
+	opts &^= wasm.FlatcSizePrefixed
+	if form, err := v.DetectEnvelopeForm(schemaName, data); err == nil && form == EnvelopeSizePrefixed {
+		return data, opts | wasm.FlatcSizePrefixed
+	}
+	view := recordalign.Record(data)
+	if view.SizePrefixed {
+		opts |= wasm.FlatcSizePrefixed
+	}
+	return view.Buf, opts
 }
 
 // IsPublishedBindingSchema reports whether name is admitted directly from a
@@ -876,18 +909,16 @@ func (v *Validator) JSONToFlatBuffer(ctx context.Context, schemaName string, jso
 }
 
 // FlatBufferToJSON verifies a record and prints it as JSON. Either stored
-// form reads: the size-prefix option is taken from the record's envelope, and
+// form reads: the size-prefix option is taken from the record's envelope, a
+// bare record is verified at its alignment origin (placeForVerifier), and
 // opts supplies the rest (wasm.FlatcCompactJSON, wasm.FlatcForceDefaults, ...).
 func (v *Validator) FlatBufferToJSON(ctx context.Context, schemaName string, binaryData []byte, opts wasm.FlatcOption) ([]byte, error) {
 	id, err := v.converterID(ctx, schemaName)
 	if err != nil {
 		return nil, err
 	}
-	opts &^= wasm.FlatcSizePrefixed
-	if form, ferr := v.DetectEnvelopeForm(schemaName, binaryData); ferr == nil && form == EnvelopeSizePrefixed {
-		opts |= wasm.FlatcSizePrefixed
-	}
-	return v.flatc.BinaryToJSON(ctx, id, binaryData, opts)
+	buf, opts := v.placeForVerifier(schemaName, binaryData, opts)
+	return v.flatc.BinaryToJSON(ctx, id, buf, opts)
 }
 
 // Schemas returns the list of loaded schema names.
