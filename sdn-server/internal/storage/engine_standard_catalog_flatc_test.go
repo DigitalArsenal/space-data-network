@@ -108,7 +108,13 @@ var engineFlatcUnvendoredStandards = map[string]string{
 
 var (
 	reFlatcIdentConst = regexp.MustCompile(`(?m)^const (\w+)Identifier = "([^"]*)"`)
-	reFlatcMutate     = regexp.MustCompile(`^Mutate[A-Z_]`)
+	// reFlatcFileIdentConst matches the FILE-IDENTIFIER-only naming flatc
+	// falls back to when <Root>Identifier would collide with a generated
+	// type of the same name (e.g. a table also named <Root>Identifier): the
+	// constant becomes <Root>FileIdentifier, and the root name is everything
+	// BEFORE that literal "FileIdentifier" suffix, not before "Identifier".
+	reFlatcFileIdentConst = regexp.MustCompile(`(?m)^const (\w+)FileIdentifier = "([^"]*)"`)
+	reFlatcMutate         = regexp.MustCompile(`^Mutate[A-Z_]`)
 )
 
 // prependKindToScalar maps flatc's Go builder call to the canonical scalar
@@ -219,10 +225,18 @@ func loadFlatcRoot(code string) (*flatcRoot, error) {
 	// THE ROOT IS FLATC'S TO NAME. flatc emits `const <Root>Identifier` only
 	// for the type the IDL declares as root_type, so the root name AND the
 	// four header bytes both come from the compiler here — neither is taken
-	// from the catalog under test.
+	// from the catalog under test. When <Root>Identifier would collide with
+	// a generated type of the same name, flatc instead emits
+	// <Root>FileIdentifier; that more specific suffix is checked FIRST so
+	// its root is never mis-split as "<Root>File".
 	root, fileID := "", ""
 	for _, src := range sources {
 		for _, m := range reFlatcIdentConst.FindAllStringSubmatch(src, -1) {
+			if m[2] == "$"+code || m[2] == code {
+				root, fileID = m[1], m[2]
+			}
+		}
+		for _, m := range reFlatcFileIdentConst.FindAllStringSubmatch(src, -1) {
 			if m[2] == "$"+code || m[2] == code {
 				root, fileID = m[1], m[2]
 			}
