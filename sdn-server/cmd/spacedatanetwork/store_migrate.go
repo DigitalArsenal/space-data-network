@@ -693,7 +693,12 @@ func (m *migrator) openJournal(mode string) error {
 		return fmt.Errorf("--delta needs the snapshot pass's journal at %s", m.jpath)
 	}
 	if _, err := os.Stat(m.staging); err == nil {
-		return fmt.Errorf("%s exists without a journal: it is not a migration this command started; remove it", m.staging)
+		// Killed between creating the staging directory and its first journal:
+		// it holds no engine file yet, so it is ours and empty. Anything else
+		// without a journal is not a migration this command started.
+		if _, err := os.Stat(filepath.Join(m.staging, format2.Dir)); err == nil {
+			return fmt.Errorf("%s exists without a journal: it is not a migration this command started; remove it", m.staging)
+		}
 	}
 	maxRowID, err := m.src.MaxIndexRowID()
 	if err != nil {
