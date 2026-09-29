@@ -64,7 +64,9 @@ type LaneCounter struct {
 // Lanes returns every lane counter of every partition (a meta statement on a
 // lane; counters come from the partitions' lane stores, never a record scan).
 func (s *Store) Lanes(ctx context.Context) ([]LaneCounter, error) {
-	res, err := s.query(ctx, Request{SQL: `SELECT pid, producer, type, lane_id, provider, source, batch, peer, pubkey,
+	// A meta statement over the partitions' lane stores: bounded, so it runs
+	// on the point lanes and never queues behind a window.
+	res, err := s.point(ctx, Request{SQL: `SELECT pid, producer, type, lane_id, provider, source, batch, peer, pubkey,
 		count, bytes, max_pseq, first_seen, updated FROM flatsql_lanes`})
 	if err != nil {
 		return nil, err
@@ -90,7 +92,7 @@ type Licence struct {
 
 // Licences returns every live licence entry.
 func (s *Store) Licences(ctx context.Context) ([]Licence, error) {
-	res, err := s.query(ctx, Request{SQL: `SELECT pid, producer, type, licence_key, pseq, arrival, data FROM flatsql_licences`})
+	res, err := s.point(ctx, Request{SQL: `SELECT pid, producer, type, licence_key, pseq, arrival, data FROM flatsql_licences`})
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +152,7 @@ func (s *Store) CopiesOf(ctx context.Context, schema, cidText string) ([]Rec, er
 	}
 	var out []Rec
 	for _, p := range parts {
-		res, err := s.query(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(p.SQLName)),
+		res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(p.SQLName)),
 			Params: []Cell{Blob(c)}})
 		if err != nil {
 			return nil, err
@@ -182,7 +184,7 @@ func (s *Store) Present(ctx context.Context, schema string, cidTexts []string) (
 		if len(params) == 0 {
 			continue
 		}
-		res, err := s.query(ctx, Request{SQL: fmt.Sprintf(`SELECT _cid_bin FROM %s WHERE _cid_bin IN (%s)`, typ, strings.Join(marks, ",")),
+		res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT _cid_bin FROM %s WHERE _cid_bin IN (%s)`, typ, strings.Join(marks, ",")),
 			Params: params})
 		if noSuchType(err, schema) {
 			return out, nil
@@ -237,7 +239,7 @@ func (s *Store) PresentInPartition(ctx context.Context, schema, peerID string, c
 		if len(params) == 0 {
 			continue
 		}
-		res, err := s.query(ctx, Request{SQL: fmt.Sprintf(`SELECT _cid_bin FROM %s WHERE _cid_bin IN (%s)`, quoteIdent(name), strings.Join(marks, ",")),
+		res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT _cid_bin FROM %s WHERE _cid_bin IN (%s)`, quoteIdent(name), strings.Join(marks, ",")),
 			Params: params})
 		if err != nil {
 			return nil, err
@@ -311,4 +313,10 @@ func (s *Store) StreamTrusted(ctx context.Context, sql string, params []Cell, fn
 		return run(s.rb)
 	}
 	return o, err
+}
+
+// QueryPoint runs an O(1) statement (a lookup by CID or gseq) on the point
+// lanes.
+func (s *Store) QueryPoint(ctx context.Context, req Request) (*Result, error) {
+	return s.point(ctx, req)
 }

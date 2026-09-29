@@ -162,8 +162,18 @@ func (s *FlatSQLStore) f2Records(ctx context.Context, schemaName string, rows []
 
 // f2Select runs a record statement and converts its rows.
 func (s *FlatSQLStore) f2Select(schemaName, sql string, params []format2.Cell, hydrate bool) ([]*Record, error) {
+	return s.f2SelectOn(s.ps.Query, schemaName, sql, params, hydrate)
+}
+
+// f2SelectPoint is f2Select for an O(1) statement (by CID or gseq): the
+// point lanes.
+func (s *FlatSQLStore) f2SelectPoint(schemaName, sql string, params []format2.Cell, hydrate bool) ([]*Record, error) {
+	return s.f2SelectOn(s.ps.QueryPoint, schemaName, sql, params, hydrate)
+}
+
+func (s *FlatSQLStore) f2SelectOn(run func(context.Context, format2.Request) (*format2.Result, error), schemaName, sql string, params []format2.Cell, hydrate bool) ([]*Record, error) {
 	ctx := s.f2ctx()
-	res, err := s.ps.Query(ctx, format2.Request{SQL: sql, Params: params})
+	res, err := run(ctx, format2.Request{SQL: sql, Params: params})
 	if format2.NoSuchType(err, schemaName) {
 		return nil, nil
 	}
@@ -1301,7 +1311,7 @@ func (s *FlatSQLStore) f2QueryRawRecordRefsByRefs(schemaName string, refs []RawR
 		if len(params) == 0 {
 			continue
 		}
-		recs, err := s.f2Select(schemaName, fmt.Sprintf("SELECT %s FROM %s WHERE _cid_bin IN (%s)", format2.RecColumns, typ, strings.Join(marks, ",")),
+		recs, err := s.f2SelectPoint(schemaName, fmt.Sprintf("SELECT %s FROM %s WHERE _cid_bin IN (%s)", format2.RecColumns, typ, strings.Join(marks, ",")),
 			params, false)
 		if err != nil {
 			return nil, fmt.Errorf("raw record ref query failed: %w", err)
@@ -2214,7 +2224,7 @@ func (s *FlatSQLStore) f2GetSourceTags(schemaName, cid string) (SourceTags, erro
 		if sqlName == "" {
 			break
 		}
-		res, err := s.ps.Query(ctx, format2.Request{SQL: fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE _cid_bin = ?1 AND _provider = ?2 AND _source_name = ?3 AND _batch = ?4 AND _peer_id = ?5`,
+		res, err := s.ps.QueryPoint(ctx, format2.Request{SQL: fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE _cid_bin = ?1 AND _provider = ?2 AND _source_name = ?3 AND _batch = ?4 AND _peer_id = ?5`,
 			format2.QuoteIdent(sqlName)), Params: []format2.Cell{format2.Blob(bin), format2.Text(l.Provider), format2.Text(l.Source), format2.Text(l.Batch), format2.Text(l.Peer)}})
 		if err != nil {
 			return SourceTags{}, fmt.Errorf("failed to get source tags: %w", err)
@@ -2340,7 +2350,7 @@ func (s *FlatSQLStore) f2SourceTagsForCIDs(schemaName string, cids []string, pre
 		if len(params) == 0 {
 			continue
 		}
-		res, err := s.ps.Query(ctx, format2.Request{SQL: fmt.Sprintf("SELECT %s FROM %s WHERE _cid_bin IN (%s)", format2.RecColumnsMeta,
+		res, err := s.ps.QueryPoint(ctx, format2.Request{SQL: fmt.Sprintf("SELECT %s FROM %s WHERE _cid_bin IN (%s)", format2.RecColumnsMeta,
 			format2.QuoteIdent(typ), strings.Join(marks, ",")), Params: params})
 		if format2.NoSuchType(err, schemaName) {
 			return out, nil
