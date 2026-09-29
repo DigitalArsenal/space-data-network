@@ -46,12 +46,20 @@ package wasmrt
 // no signal mask (Go's handler runs with every signal blocked), and darwin's
 // sets the thread's on-signal-stack flag from a jmp_buf word setjmp never
 // writes. The last is also why darwin needs WasmEdge patch 03-fault-jmp
-// (scripts/build-static-wasmedge.sh) even for this path.
+// (scripts/build-static-wasmedge.sh) even for this path: WasmEdge's jump from
+// sdn_fault_redirect, and its jump for every trap that is not a signal
+// (lib/executor/engine/proxy.cpp, emitFault), is the same longjmp. Without the
+// patch, synchronous calls clear the flag afterwards (sigstack.go).
 //
 // A fault inside the image that holds WasmEdge's own code is never a guest's
 // AOT code (that lives in anonymous mappings); neither is native code in the
 // image holding this file. Such a fault is named on stderr and takes the
-// signal's default action.
+// signal's default action. So does a fault on the thread's own stack (guest
+// recursion that exhausted it): there is no room to resume in, and on x86-64
+// the redirect's store of the return address, made inside this handler with
+// every signal blocked, would fault again where darwin retries it forever.
+//
+// If a Go crash report still stalls, crash_watchdog.go ends the process.
 
 /*
 #define _GNU_SOURCE
@@ -170,19 +178,19 @@ __attribute__((noinline)) static void sdn_fault_redirect(long sig, long code, ui
 	abort();
 }
 
-// sdn_redirect_context reports the interrupted PC and, with apply, makes the
-// interrupted context resume in sdn_fault_redirect(sig, code, addr) as if the
-// faulting instruction had called it: below the red zone, 16-byte aligned,
-// with the faulting PC as the return address so a backtrace reads through.
-// Returns 0 on an architecture it does not know.
-static int sdn_redirect_context(void *uctx, uintptr_t *pcOut, long sig, long code, uintptr_t addr, int apply) {
+// sdn_redirect_context reports the interrupted PC and SP and, with apply,
+// makes the interrupted context resume in sdn_fault_redirect(sig, code, addr)
+// as if the faulting instruction had called it: below the red zone, 16-byte
+// aligned, with the faulting PC as the return address so a backtrace reads
+// through. Returns 0 on an architecture it does not know.
+static int sdn_redirect_context(void *uctx, uintptr_t *pcOut, uintptr_t *spOut, long sig, long code, uintptr_t addr, int apply) {
 	ucontext_t *uc = (ucontext_t *)uctx;
 #if defined(__APPLE__) && defined(__aarch64__)
 	uintptr_t pc = (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
 	*pcOut = pc;
+	*spOut = (uintptr_t)__darwin_arm_thread_state64_get_sp(uc->uc_mcontext->__ss);
 	if (apply) {
-		uintptr_t sp = (uintptr_t)__darwin_arm_thread_state64_get_sp(uc->uc_mcontext->__ss);
-		sp = (sp - 128) & ~(uintptr_t)15;
+		uintptr_t sp = (*spOut - 128) & ~(uintptr_t)15;
 		uc->uc_mcontext->__ss.__x[0] = (uint64_t)sig;
 		uc->uc_mcontext->__ss.__x[1] = (uint64_t)code;
 		uc->uc_mcontext->__ss.__x[2] = (uint64_t)addr;
@@ -194,8 +202,9 @@ static int sdn_redirect_context(void *uctx, uintptr_t *pcOut, long sig, long cod
 #elif defined(__APPLE__) && defined(__x86_64__)
 	uintptr_t pc = (uintptr_t)uc->uc_mcontext->__ss.__rip;
 	*pcOut = pc;
+	*spOut = (uintptr_t)uc->uc_mcontext->__ss.__rsp;
 	if (apply) {
-		uintptr_t sp = (((uintptr_t)uc->uc_mcontext->__ss.__rsp - 128) & ~(uintptr_t)15) - 8;
+		uintptr_t sp = ((*spOut - 128) & ~(uintptr_t)15) - 8;
 		*(uintptr_t *)sp = pc;
 		uc->uc_mcontext->__ss.__rsp = sp;
 		uc->uc_mcontext->__ss.__rdi = (uint64_t)sig;
@@ -208,8 +217,9 @@ static int sdn_redirect_context(void *uctx, uintptr_t *pcOut, long sig, long cod
 	greg_t *g = uc->uc_mcontext.gregs;
 	uintptr_t pc = (uintptr_t)g[REG_RIP];
 	*pcOut = pc;
+	*spOut = (uintptr_t)g[REG_RSP];
 	if (apply) {
-		uintptr_t sp = (((uintptr_t)g[REG_RSP] - 128) & ~(uintptr_t)15) - 8;
+		uintptr_t sp = ((*spOut - 128) & ~(uintptr_t)15) - 8;
 		*(uintptr_t *)sp = pc;
 		g[REG_RSP] = (greg_t)sp;
 		g[REG_RDI] = (greg_t)sig;
@@ -221,8 +231,9 @@ static int sdn_redirect_context(void *uctx, uintptr_t *pcOut, long sig, long cod
 #elif defined(__linux__) && defined(__aarch64__)
 	uintptr_t pc = (uintptr_t)uc->uc_mcontext.pc;
 	*pcOut = pc;
+	*spOut = (uintptr_t)uc->uc_mcontext.sp;
 	if (apply) {
-		uintptr_t sp = ((uintptr_t)uc->uc_mcontext.sp - 128) & ~(uintptr_t)15;
+		uintptr_t sp = (*spOut - 128) & ~(uintptr_t)15;
 		uc->uc_mcontext.regs[0] = (uint64_t)sig;
 		uc->uc_mcontext.regs[1] = (uint64_t)code;
 		uc->uc_mcontext.regs[2] = (uint64_t)addr;
@@ -234,8 +245,17 @@ static int sdn_redirect_context(void *uctx, uintptr_t *pcOut, long sig, long cod
 #else
 	(void)uc; (void)sig; (void)code; (void)addr; (void)apply;
 	*pcOut = 0;
+	*spOut = 0;
 	return 0;
 #endif
+}
+
+// sdn_fault_on_stack reports whether a fault address lies within 256 KiB of
+// the interrupted SP: an access to the thread's own stack. A guest's linear
+// memory never does; WasmEdge reserves it in mappings of its own.
+static int sdn_fault_on_stack(uintptr_t addr, uintptr_t sp) {
+	const uintptr_t window = (uintptr_t)256 * 1024;
+	return sp != 0 && (addr >= sp ? addr - sp : sp - addr) < window;
 }
 
 // sdn_fault_forward receives the faults Go does not own: a fault in native
@@ -246,8 +266,9 @@ static int sdn_redirect_context(void *uctx, uintptr_t *pcOut, long sig, long cod
 static void sdn_fault_forward(int sig, siginfo_t *info, void *uctx) {
 	int i = sdn_fault_index(sig);
 	sdn_fault_fn fn = i < 0 ? NULL : (sdn_fault_fn)atomic_load(&sdn_wasmedge_fn[i]);
-	uintptr_t pc = 0;
-	int canRedirect = uctx != NULL && sdn_redirect_context(uctx, &pc, 0, 0, 0, 0);
+	uintptr_t pc = 0, sp = 0;
+	uintptr_t addr = info ? (uintptr_t)info->si_addr : 0;
+	int canRedirect = uctx != NULL && sdn_redirect_context(uctx, &pc, &sp, 0, 0, 0, 0);
 	if (fn == NULL || sdn_pc_is_native(pc)) {
 		sdn_fault_note(sig, info, pc, fn == NULL
 			? "in native code, before WasmEdge's handler was adopted: default action"
@@ -255,11 +276,22 @@ static void sdn_fault_forward(int sig, siginfo_t *info, void *uctx) {
 		signal(sig, SIG_DFL);
 		return; // the faulting instruction runs again and takes the default action
 	}
+	if (sig != SIGFPE && sdn_fault_on_stack(addr, sp)) {
+		// No room to resume in, and the x86-64 redirect would store to this
+		// stack from inside the handler (see the file comment).
+		sdn_fault_note(sig, info, pc, "on the thread's own stack (guest recursion exhausted it): default action");
+		signal(sig, SIG_DFL);
+		return;
+	}
 	if (canRedirect) {
-		sdn_redirect_context(uctx, &pc, sig, info ? info->si_code : 0, info ? (uintptr_t)info->si_addr : 0, 1);
+		sdn_redirect_context(uctx, &pc, &sp, sig, info ? info->si_code : 0, addr, 1);
 		return; // the thread resumes in sdn_fault_redirect
 	}
-	fn(sig, info, uctx); // an architecture without a redirect: WasmEdge's own way
+	// An architecture without a redirect: WasmEdge's own way, a jump out of
+	// this handler that leaves the thread's signal mask and signal-stack state
+	// to that architecture's longjmp. None ships (darwin and Linux on arm64 and
+	// x86-64 all redirect).
+	fn(sig, info, uctx);
 }
 
 __attribute__((constructor)) static void sdn_install_fault_forwarder(void) {
@@ -534,7 +566,9 @@ var (
 // it is idempotent and cheap after the first call. It costs one parked thread
 // and one tiny AOT compile per process. An error means the process still runs
 // with WasmEdge's handling, which is what every build before this one did.
+// It also arms the crash-report watchdog (crash_watchdog.go).
 func EnsureGoSignalHandling() error {
+	_ = startCrashWatchdog()
 	if signalPinDisabled {
 		return errors.New("disabled")
 	}

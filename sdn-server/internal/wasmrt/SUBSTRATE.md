@@ -92,6 +92,14 @@ copies in `testdata/` feed the tests (`TestStaticBuildCarriesTheRuntimePatches`)
   signal stack"). Linux is unaffected (glibc keeps no such flag). Go's own
   fault handler stays installed across WasmEdge calls (`signals.go`); this
   patch is what makes a trap on darwin safe under it.
+  Without it (the upstream library a darwin checkout links) that throw can
+  hang the process: it runs on the goroutine stack, overwrites the stacks
+  below, and its report faults with every signal blocked, which darwin
+  retries forever (the 54-minute storage test hang). So on darwin a
+  synchronous call clears a stale flag on its own thread (`sigstack.go`,
+  about 150 ns a call), and a crash report that prints nothing for 30 s ends
+  the process with SIGABRT and every thread's native state
+  (`crash_watchdog.go`).
 
 `spacedatanetwork substrate-selftest [--require-patched]` measures them in the
 running binary (notify without store, one stop ending every thread,

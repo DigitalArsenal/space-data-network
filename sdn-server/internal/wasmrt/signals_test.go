@@ -3,11 +3,12 @@
 package wasmrt
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,6 +36,24 @@ var signalFaultWasm = []byte{
 	0x41, 0x2a, 0x0b,
 }
 
+// signalRecurseWasm:
+//
+//	(module
+//	  (memory 1)
+//	  (func $f (export "recurse") (param i32)
+//	    local.get 0 i32.const 1 i32.add call $f
+//	    i32.const 0 local.get 0 i32.store))
+//
+// The store after the call keeps it from being a tail call, so as AOT code it
+// recurses until the native stack runs out.
+var signalRecurseWasm = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
+	0x01, 0x7f, 0x00, 0x03, 0x02, 0x01, 0x00, 0x05, 0x03, 0x01, 0x00, 0x01,
+	0x07, 0x0b, 0x01, 0x07, 0x72, 0x65, 0x63, 0x75, 0x72, 0x73, 0x65, 0x00,
+	0x00, 0x0a, 0x12, 0x01, 0x10, 0x00, 0x20, 0x00, 0x41, 0x01, 0x6a, 0x10,
+	0x00, 0x41, 0x00, 0x20, 0x00, 0x36, 0x02, 0x00, 0x0b,
+}
+
 const signalChildEnv = "SDN_WASMRT_SIGNAL_CHILD"
 
 // runSignalChild runs one scenario in a child process, because the failure
@@ -45,6 +64,18 @@ func runSignalChild(t *testing.T, scenario string) (string, error) {
 	cmd.Env = append(os.Environ(), signalChildEnv+"="+scenario)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// runSignalChildWithin is runSignalChild with a deadline, for scenarios whose
+// failure is a process that never ends.
+func runSignalChildWithin(t *testing.T, scenario string, limit time.Duration) (out string, err error, timedOut bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSignalChild$", "-test.v", "-test.count=1")
+	cmd.Env = append(os.Environ(), signalChildEnv+"="+scenario)
+	b, err := cmd.CombinedOutput()
+	return string(b), err, ctx.Err() != nil
 }
 
 func requireChildMarker(t *testing.T, scenario, marker string) {
@@ -91,11 +122,56 @@ func TestGoPanicRecoveredDuringCompiledCall(t *testing.T) {
 }
 
 func TestWasmFaultStillTrapsUnderGoHandler(t *testing.T) {
-	// Repeated: the failure this guards (a signal frame left behind by the
-	// trap) showed up in about half of single runs.
+	// Repeated: the failures this guards (a signal frame left behind by the
+	// trap; a darwin trap jump that leaves the thread marked as on its signal
+	// stack) each show up in some processes and not in others.
 	for i := 0; i < 5; i++ {
 		requireChildMarker(t, "wasm-trap", "TRAPPED")
 	}
+}
+
+// A synchronous call that returns with its thread marked as running on the
+// signal stack (what darwin's longjmp leaves after a WasmEdge trap, in some
+// processes) clears the mark before Go code runs on it again. Deterministic:
+// the child sets the mark itself before every call.
+func TestSynchronousCallClearsAStaleSignalStackMark(t *testing.T) {
+	out, err := runSignalChild(t, "stale-mark")
+	if strings.Contains(out, "NO SIGNAL-STACK MARK") {
+		t.Skip("this system keeps no signal-stack mark a jump can leave behind (darwin does)")
+	}
+	if err != nil || !strings.Contains(out, "CLEARED") {
+		t.Fatalf("stale-mark: child err=%v:\n%s", err, out)
+	}
+	t.Logf("stale-mark: %s", lastLines(out, "CLEARED"))
+}
+
+// Goroutines that trapped in WasmEdge (on their own thread, on WasmEdge's
+// async threads, and one parked inside a host function of a compiled call
+// after a trap on its thread) leave no foreign return address behind: a
+// traceback of every goroutine completes, and so does the crash report of a
+// panic with GOTRACEBACK=all. A foreign return address makes the report
+// fault inside itself (crash_watchdog.go); on darwin it never ends.
+func TestTrappedGoroutinesTraceBackCleanly(t *testing.T) {
+	out, err, timedOut := runSignalChildWithin(t, "trap-park-traceback", 2*time.Minute)
+	if timedOut {
+		t.Fatalf("the crash report never ended:\n%s", out)
+	}
+	var exit *exec.ExitError
+	if !errorsAs(err, &exit) || exit.ExitCode() != 2 {
+		t.Fatalf("child did not end with a Go panic's exit status 2 (err=%v):\n%s", err, out)
+	}
+	if !strings.Contains(out, "STACKS COMPLETE") || !strings.Contains(out, "panic: sdn-trap-park-traceback") {
+		t.Fatalf("child did not complete both tracebacks:\n%s", out)
+	}
+	if strings.Contains(out, "unexpected return pc") {
+		t.Fatalf("a goroutine's stack holds a return address outside Go code:\n%s", out)
+	}
+	for _, fn := range []string{"trapThenParkSync", "trapThenParkAsync", "trapThenParkInHostCall"} {
+		if !strings.Contains(out, "wasmrt."+fn) {
+			t.Fatalf("the panic's report lacks the goroutine in %s:\n%s", fn, out)
+		}
+	}
+	t.Logf("trap-park-traceback: %s", lastLines(out, "STACKS COMPLETE"))
 }
 
 // A fault in native code is not a guest trap: it is named and takes its
@@ -119,16 +195,29 @@ func TestNativeFaultIsNotTakenForAGuestTrap(t *testing.T) {
 	}
 }
 
-// runtimeCarriesFaultJmpPatch reports whether the linked WasmEdge jumps out
-// of a fault without touching signal state: always on Linux (glibc's longjmp
-// keeps no signal-stack flag), and on darwin only with the static build's
-// patch 03 (its prefix lists the series it carries).
-func runtimeCarriesFaultJmpPatch() bool {
-	if runtime.GOOS != "darwin" {
-		return true
+// Guest recursion that exhausts the native stack is not redirected: there is
+// no room to resume in, and on x86-64 the redirect would store to that stack
+// from inside the signal handler, where a second fault is never delivered
+// (darwin retries it forever). The process ends by the signal, naming it.
+func TestGuestStackExhaustionIsNamedNotRedirected(t *testing.T) {
+	out, err, timedOut := runSignalChildWithin(t, "stack-exhaustion", 2*time.Minute)
+	if timedOut {
+		t.Fatalf("the child never ended:\n%s", out)
 	}
-	list, err := os.ReadFile(filepath.Join(os.Getenv("WASMEDGE_DIR"), "sdn-runtime-patches.txt"))
-	return err == nil && strings.Contains(string(list), "03-fault-jmp.patch")
+	var exit *exec.ExitError
+	if !errorsAs(err, &exit) {
+		t.Fatalf("child survived exhausting its stack (err=%v):\n%s", err, out)
+	}
+	ws, ok := exit.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() || (ws.Signal() != syscall.SIGSEGV && ws.Signal() != syscall.SIGBUS) {
+		t.Fatalf("stack exhaustion did not end in SIGSEGV/SIGBUS (err=%v):\n%s", err, out)
+	}
+	if !strings.Contains(out, "on the thread's own stack") {
+		t.Fatalf("stack exhaustion was not named (err=%v):\n%s", err, out)
+	}
+	if strings.Contains(out, "RETURNED") {
+		t.Fatalf("stack exhaustion returned:\n%s", out)
+	}
 }
 
 func errorsAs(err error, target **exec.ExitError) bool {
@@ -137,6 +226,63 @@ func errorsAs(err error, target **exec.ExitError) bool {
 		*target = e
 	}
 	return ok
+}
+
+// spinSink keeps spinWithoutCalls from being optimized away.
+var spinSink uint64
+
+// spinWithoutCalls runs Go code with no calls in it, so only an asynchronous
+// preemption signal (SIGURG) interrupts it, on whatever stack the kernel
+// picks for the thread.
+func spinWithoutCalls(n uint64) uint64 {
+	var x uint64
+	for i := uint64(0); i < n; i++ {
+		x += i ^ (x >> 3)
+	}
+	return x
+}
+
+// trapThenParkSync traps on its own thread, then parks there.
+func trapThenParkSync(m *Module, traps int, ready chan<- error, park <-chan struct{}) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	for i := 0; i < traps; i++ {
+		if _, err := m.Execute("oob"); err == nil {
+			ready <- fmt.Errorf("sync trap %d did not trap", i)
+			return
+		}
+		m.poisoned.Store(false)
+	}
+	ready <- nil
+	<-park
+}
+
+// trapThenParkAsync traps on WasmEdge's async threads, then parks.
+func trapThenParkAsync(m *Module, traps int, ready chan<- error, park <-chan struct{}) {
+	for i := 0; i < traps; i++ {
+		if _, err := m.Execute("oob"); err == nil {
+			ready <- fmt.Errorf("async trap %d did not trap", i)
+			return
+		}
+		m.poisoned.Store(false)
+	}
+	ready <- nil
+	<-park
+}
+
+// trapThenParkInHostCall traps on its own thread, then parks inside a host
+// function of a compiled call on that thread.
+func trapThenParkInHostCall(trap, hold *Module, ready chan<- error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if _, err := trap.Execute("oob"); err == nil {
+		ready <- fmt.Errorf("trap before the host call did not trap")
+		return
+	}
+	trap.poisoned.Store(false)
+	if _, err := hold.Execute("pin"); err != nil {
+		ready <- fmt.Errorf("pin export: %v", err)
+	}
 }
 
 // derefNil dereferences a nil pointer inside recover and reports the panic.
@@ -244,26 +390,22 @@ func TestSignalChild(t *testing.T) {
 		defer runtime.UnlockOSThread()
 		direct := newSignalFaultModule(t)
 		defer direct.Release()
-		syncTraps := 50
-		if !runtimeCarriesFaultJmpPatch() {
-			// darwin's longjmp sets or clears the thread's on-signal-stack
-			// flag from a jmp_buf word setjmp never writes: without patch 03
-			// a trap on a Go thread can leave the flag set, and Go's next
-			// signal there lands on a goroutine stack. That is upstream
-			// WasmEdge on darwin, pinned or not; Linux has no such flag.
-			fmt.Println("SKIP sync traps: this darwin runtime lacks WasmEdge patch 03-fault-jmp")
-			syncTraps = 0
-		}
+		const syncTraps = 50
 		for i := 0; i < syncTraps; i++ {
 			if _, err := direct.Execute("oob"); err == nil {
 				t.Fatal("out-of-bounds load did not trap")
 			}
 			// The trap came back through Go's handler (all signals blocked)
-			// and WasmEdge's longjmp: this thread must not be left deaf.
+			// and WasmEdge's longjmp: this thread must not be left deaf, nor
+			// marked as running on its signal stack (darwin's longjmp can
+			// leave that mark; see sigstack.go).
 			for _, sig := range []syscall.Signal{syscall.SIGURG, syscall.SIGBUS, syscall.SIGSEGV, syscall.SIGPROF} {
 				if threadBlocksSignal(sig) {
 					t.Fatalf("trap %d left %v blocked on the calling thread", i, sig)
 				}
+			}
+			if signalStackMarked() {
+				t.Fatalf("trap %d left the calling thread marked as running on its signal stack", i)
 			}
 			direct.poisoned.Store(false) // the trap poisons; this test re-enters on purpose
 		}
@@ -299,10 +441,104 @@ func TestSignalChild(t *testing.T) {
 		for k := 0; k < 2*runtime.GOMAXPROCS(0); k++ {
 			<-spinners
 		}
+		// time.Now runs on the system stack on darwin, where a signal is
+		// taken even on the wrong stack; a loop with no calls is only ever
+		// interrupted on this goroutine's own stack.
+		spinSink = spinWithoutCalls(1 << 28)
 		if p := derefNil(); p == nil {
 			t.Fatal("no panic after traps")
 		}
-		fmt.Printf("TRAPPED %d sync + 20 async out-of-bounds loads; Go handler kept, nil dereference recovered\n", syncTraps)
+		fmt.Printf("TRAPPED %d sync + 20 async out-of-bounds loads; Go handler kept, nil dereference recovered; %d stale signal-stack marks cleared\n",
+			syncTraps, SignalStackRepairs())
+
+	case "stale-mark":
+		if err := EnsureGoSignalHandling(); err != nil {
+			t.Fatalf("pin: %v", err)
+		}
+		m := newSignalFaultModule(t)
+		defer m.Release()
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		before := SignalStackRepairs()
+		const calls = 50
+		for i := 0; i < calls; i++ {
+			// SIGURG and SIGPROF wait while the mark stands, so none lands on
+			// this goroutine's stack before the call has cleared it.
+			if !markSignalStackQuietly() {
+				unquietSignalStack()
+				fmt.Println("NO SIGNAL-STACK MARK on this system")
+				return
+			}
+			v, err := m.Execute("answer")
+			marked := signalStackMarked()
+			unquietSignalStack()
+			if err != nil || ToInt32(v[0]) != 42 {
+				t.Fatalf("answer: %v %v", v, err)
+			}
+			if marked {
+				t.Fatalf("call %d returned with its thread still marked as running on the signal stack", i)
+			}
+		}
+		if got := SignalStackRepairs() - before; got != calls {
+			t.Fatalf("%d marks cleared, want %d", got, calls)
+		}
+		spinSink = spinWithoutCalls(1 << 28)
+		if p := derefNil(); p == nil {
+			t.Fatal("no panic after the calls")
+		}
+		fmt.Printf("CLEARED %d stale signal-stack marks, one per call; preemption and a nil dereference after them handled\n", calls)
+
+	case "trap-park-traceback":
+		if err := EnsureGoSignalHandling(); err != nil {
+			t.Fatalf("pin: %v", err)
+		}
+		syncMod := newSignalFaultModule(t)
+		asyncMod := newSignalFaultModule(t, WithExecTimeout(5*time.Second))
+		hostTrapMod := newSignalFaultModule(t)
+		aot, err := compileAOTBytes(signalPinWasm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inside := make(chan struct{})
+		holdMod, err := NewModule(aot, WithHostModule("sdn_signal_pin", []HostFunc{{
+			Name: "hold",
+			Func: func(interface{}, *wasmedge.CallingFrame, []interface{}) ([]interface{}, wasmedge.Result) {
+				close(inside)
+				select {}
+			},
+		}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready := make(chan error, 3)
+		park := make(chan struct{})
+		go trapThenParkSync(syncMod, 20, ready, park)
+		go trapThenParkAsync(asyncMod, 10, ready, park)
+		go trapThenParkInHostCall(hostTrapMod, holdMod, ready)
+		for i := 0; i < 2; i++ {
+			if err := <-ready; err != nil {
+				t.Fatal(err)
+			}
+		}
+		select {
+		case <-inside:
+		case err := <-ready:
+			t.Fatalf("host call: %v", err)
+		}
+		buf := make([]byte, 8<<20)
+		n := runtime.Stack(buf, true)
+		dump := string(buf[:n])
+		if strings.Contains(dump, "unexpected return pc") {
+			t.Fatalf("runtime.Stack met a return address outside Go code:\n%s", dump)
+		}
+		for _, fn := range []string{"trapThenParkSync", "trapThenParkAsync", "trapThenParkInHostCall"} {
+			if !strings.Contains(dump, "wasmrt."+fn) {
+				t.Fatalf("runtime.Stack lacks the goroutine in %s:\n%s", fn, dump)
+			}
+		}
+		fmt.Printf("STACKS COMPLETE: %d bytes for every goroutine; %d stale signal-stack marks cleared\n", n, SignalStackRepairs())
+		debug.SetTraceback("all")
+		panic("sdn-trap-park-traceback")
 
 	case "native-crash":
 		if err := EnsureGoSignalHandling(); err != nil {
@@ -317,6 +553,28 @@ func TestSignalChild(t *testing.T) {
 		}
 		crashInNativeCode()
 		fmt.Println("RETURNED from a native bad store")
+
+	case "stack-exhaustion":
+		if err := EnsureGoSignalHandling(); err != nil {
+			t.Fatalf("pin: %v", err)
+		}
+		aot, err := compileAOTBytes(signalRecurseWasm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := NewModule(aot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtime.LockOSThread()
+		_, err = m.Execute("recurse", int32(0))
+		fmt.Printf("RETURNED from exhausting the stack: %v\n", err)
+
+	case "stalled-report":
+		stalledReportChild(t, true)
+
+	case "stalled-report-unwatched":
+		stalledReportChild(t, false)
 
 	default:
 		t.Fatalf("unknown scenario %q", scenario)

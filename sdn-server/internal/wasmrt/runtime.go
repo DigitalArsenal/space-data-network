@@ -540,6 +540,16 @@ func (m *Module) startExecThread() {
 // through the named registered instance when the module was created
 // WithRegisteredName.
 func (m *Module) runSync(name string, params ...interface{}) ([]interface{}, error) {
+	if signalStackRepairOn {
+		// A trap leaves WasmEdge by longjmp, which on darwin can mark this
+		// thread as running on its signal stack (sigstack.go). Clear it on
+		// the same thread before Go code up the stack takes a signal.
+		runtime.LockOSThread()
+		defer func() {
+			repairSignalStack()
+			runtime.UnlockOSThread()
+		}()
+	}
 	if m.registeredName != "" {
 		return m.vm.ExecuteRegistered(m.registeredName, name, params...)
 	}
