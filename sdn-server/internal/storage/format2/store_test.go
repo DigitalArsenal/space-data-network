@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -404,5 +405,35 @@ func TestSourceWindowKeepsTheLegacyOrderWithinASecond(t *testing.T) {
 		if err != nil || n != int64(len(want)) {
 			t.Fatalf("byte probe %+v: %d, %v", w, n, err)
 		}
+	}
+}
+
+// The §5.1 topology of a 24-core box (16 writers) starts: the writer
+// instance's thread budget covers the writers, the sync pool, the builders
+// and the urgent and checkpoint threads (16 + 8 + 1 + 2 = 27 of the cap of
+// 32). Under the substrate's default of 24 the start trapped at 14 writers.
+func TestSixteenWritersStart(t *testing.T) {
+	requireEngine(t)
+	start := time.Now()
+	s, err := Open(StoreConfig{Root: t.TempDir(), AOTCacheDir: testAOTDir(t), CompileOnMiss: true, AllowFresh: true,
+		Topology: Topology{Writers: 16, InteractiveLanes: 2, BulkLanes: 1}})
+	if err != nil {
+		t.Fatalf("16 writers: %v", err)
+	}
+	opened := time.Since(start)
+	ctx := context.Background()
+	if _, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(20, 0, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), "T16"), "source:t16", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	start = time.Now()
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("16 writers: open %s, close %s", opened.Round(time.Millisecond), time.Since(start).Round(time.Millisecond))
+	if got := (WriterConfig{Writers: 24}).writerThreads(); got <= writerMaxThreads {
+		t.Fatalf("24 writers need %d threads; the refusal above the cap is not exercised", got)
+	}
+	if _, err := OpenWriter(InstanceOptions{}, WriterConfig{Writers: 24}); err == nil || !strings.Contains(err.Error(), "guest threads") {
+		t.Fatalf("24 writers: %v, want the thread-budget refusal", err)
 	}
 }

@@ -178,10 +178,37 @@ type partKey struct {
 	fid  [4]byte
 }
 
+// writerThreads is the guest threads a writer instance spawns (flatsql
+// writer_pool.cpp start): the writers, the sync pool (syncThreads, or
+// clamp(writers, 4, 8)), the compaction builders (1 by default), and the
+// urgent and checkpoint threads.
+func (c WriterConfig) writerThreads() int {
+	writers := int(max(c.Writers, 1))
+	sync := int(c.SyncThreads)
+	if sync == 0 {
+		sync = min(8, max(4, writers))
+	}
+	compact := int(c.CompactThreads)
+	if compact == 0 {
+		compact = 1
+	}
+	return writers + sync + compact + 2
+}
+
+// writerMaxThreads is the §5.1 cap on one instance's guest threads.
+const writerMaxThreads = 32
+
 // OpenWriter opens (and, with Create, creates) the store's writer instance.
 func OpenWriter(opt InstanceOptions, cfg WriterConfig) (*Writer, error) {
+	// The instance's thread budget is sized to what the writer spawns: a
+	// start that cannot construct a thread traps (writers 14+ under the
+	// substrate's default of 24 did, on a 28-core machine's §5.1 topology).
+	threads := cfg.writerThreads()
+	if threads > writerMaxThreads {
+		return nil, fmt.Errorf("format2: %d writers need %d guest threads, over the instance cap of %d", cfg.Writers, threads, writerMaxThreads)
+	}
 	inst, err := flatsqlrt.OpenPSInstance(flatsqlrt.PSConfig{
-		Role: flatsqlrt.PSRoleWriter, ABI: flatsqlrt.PSABIEngine,
+		Role: flatsqlrt.PSRoleWriter, ABI: flatsqlrt.PSABIEngine, MaxThreads: max(threads+1, 24),
 		Wasm: flatsqlrt.PSThreadsWasm(), AOTCacheDir: opt.AOTCacheDir, AOTPrefix: flatsqlrt.PSThreadsAOTPrefix,
 		CompileOnMiss: opt.CompileOnMiss, Store: opt.Store, FDBudget: opt.FDBudget,
 		InitConfig: cfg.encode(), HeartbeatStale: -1, StopDeadline: 10 * time.Second,

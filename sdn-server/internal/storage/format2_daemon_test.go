@@ -7,11 +7,13 @@ package storage
 // read the node serves from is then compared.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1187,4 +1189,80 @@ func TestFormat2KMFSealedRecordsMatchFormat1(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// A6: identity, directory and EPM reads (control reads) while the full-text
+// feed indexes a standard and ingest saturates the writer. Record ingest
+// takes no control lock on format 2; the feed's windows are bounded, so a
+// control read waits for at most one of them.
+func TestFormat2ControlReadsWhileTheFeedAndIngestRun(t *testing.T) {
+	requireFormat2Engine(t)
+	prev := format2FTSPoll
+	format2FTSPoll = 20 * time.Millisecond
+	defer func() { format2FTSPoll = prev }()
+	f2 := openFormat2ForTest(t, t.TempDir())
+	defer f2.Close()
+	if err := f2.UpsertDirectoryRecord(DirectoryRecord{Kind: "peer", PeerID: "12D3KooWDirectoryPeer", Source: "test", EPMJSON: "{}", UpdatedAt: time.Now().Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	var cat [][]byte
+	for i := 0; i < 20000; i++ {
+		cat = append(cat, f2TestCAT(uint32(100000+i), fmt.Sprintf("Searchable object %d", i), "PAYLOAD", "OPERATIONAL"))
+	}
+	if _, err := f2.StoreBatchWithSourceTags("CAT.fbs", cat, "source:catalog", nil, SourceTags{ProviderID: "p", SourceName: "cat", BatchID: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	// The feed indexes 20,000 records while 20 producers ingest OMM.
+	if err := f2.CheckFullTextSearch("CAT.fbs", "searchable"); err != nil && !errors.Is(err, ErrSearchIndexBuilding) {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for p := 0; p < 20; p++ {
+		wg.Add(1)
+		go func(p int) {
+			defer wg.Done()
+			base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+			for k := 0; ; k += 50 {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				var recs [][]byte
+				for i := 0; i < 50; i++ {
+					recs = append(recs, f2TestOMM(uint32(3_000_000+p*100_000+k+i), base.Add(time.Duration(k+i)*time.Second), fmt.Sprintf("C%d-%d", p, k+i)))
+				}
+				if _, err := f2.StoreBatchWithSourceTags("OMM.fbs", recs, fmt.Sprintf("source:c%02d", p), nil,
+					SourceTags{ProviderID: "p", SourceName: fmt.Sprintf("c%02d", p), BatchID: "live"}); err != nil {
+					return
+				}
+			}
+		}(p)
+	}
+	var lat []time.Duration
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		start := time.Now()
+		if _, err := f2.QueryDirectory(DirectoryQuery{Kind: "peer", Limit: 10}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f2.GetLocalEPMRecord("12D3KooWNoLocalEPM"); err != nil && !strings.Contains(err.Error(), "not found") {
+			t.Fatal(err)
+		}
+		if _, _, err := f2.DatastoreIdentity(); err != nil {
+			t.Fatal(err)
+		}
+		lat = append(lat, time.Since(start))
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(stop)
+	wg.Wait()
+	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
+	p99 := lat[int(float64(len(lat)-1)*0.99)]
+	t.Logf("MEASURED control reads (directory + local EPM + datastore identity) during the full-text feed and 20-producer ingest: n=%d p50=%s p99=%s max=%s (%s)",
+		len(lat), lat[len(lat)/2].Round(time.Microsecond), p99.Round(time.Microsecond), lat[len(lat)-1].Round(time.Microsecond), f2.FullTextIndexState("CAT.fbs"))
+	if os.Getenv("SDN_PS_ACCEPTANCE") == "1" && p99 > 10*time.Millisecond {
+		t.Fatalf("control reads p99 %s > 10 ms", p99)
+	}
 }
