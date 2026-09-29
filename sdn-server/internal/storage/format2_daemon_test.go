@@ -1113,3 +1113,78 @@ func TestFormat2SearchMatchesFormat1(t *testing.T) {
 		t.Fatalf("FullTextIndexState: %s", st)
 	}
 }
+
+// A19: $KMF carries an (encrypted) field, so format 2 stores its sealed
+// frame (the plaintext only verified, extracted and hashed). KMF ingest has
+// 0 rejects, no plaintext key byte reaches a partition file, and every KMF
+// read answers the plaintext record format 1 answers.
+func TestFormat2KMFSealedRecordsMatchFormat1(t *testing.T) {
+	requireFormat2Engine(t)
+	legacy := reopenDeferred(t, t.TempDir())
+	defer legacy.Close()
+	dir := t.TempDir()
+	f2 := openFormat2ForTest(t, dir)
+	defer f2.Close()
+	var recs, keys [][]byte
+	for i := 0; i < 24; i++ {
+		key := make([]byte, 32)
+		for j := range key {
+			key[j] = byte(0x5a ^ (i*31 + j*7))
+		}
+		keys = append(keys, key)
+		recs = append(recs, buildKMFRecordForTest(t, fmt.Sprintf("kmf-key-%02d", i), key, uint32(i+1)))
+	}
+	for _, s := range []*FlatSQLStore{legacy, f2} {
+		n, err := s.StoreBatchWithSourceTags("KMF.fbs", recs, "source:keys", nil, SourceTags{ProviderID: "local", SourceName: "keys", BatchID: "k-1"})
+		if err != nil || n != len(recs) {
+			t.Fatalf("KMF ingest: %d inserted, %v", n, err)
+		}
+	}
+	st, err := f2.PartitionStore().Writer().Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Rejects != 0 {
+		t.Fatalf("KMF ingest: %d rejects", st.Rejects)
+	}
+	for _, q := range []IndexedRecordQuery{{SchemaName: "KMF.fbs", Limit: 1000}, {SchemaName: "KMF.fbs", Limit: 7, Offset: 5}, {SchemaName: "KMF.fbs", Limit: 50, OrderByCID: true}} {
+		a, err := legacy.QueryIndexedRecords(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := f2.QueryIndexedRecords(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprint(cidSeq(a)) != fmt.Sprint(cidSeq(b)) {
+			t.Fatalf("KMF window %+v: format 2 %v, format 1 %v", q, cidSeq(b), cidSeq(a))
+		}
+		for i := range a {
+			if string(a[i].Data) != string(b[i].Data) {
+				t.Fatalf("KMF window row %d: the plaintext differs", i)
+			}
+		}
+	}
+	for _, d := range recs {
+		got, err := f2.GetRecord("KMF.fbs", ComputeCID(d))
+		if err != nil || string(got.Data) != string(d) {
+			t.Fatalf("KMF GetRecord: %v", err)
+		}
+	}
+	// No plaintext key byte in any partition file.
+	_ = filepath.Walk(filepath.Join(dir, format2.Dir), func(p string, fi os.FileInfo, err error) error {
+		if err != nil || fi.IsDir() {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		for i, k := range keys {
+			if strings.Contains(string(b), string(k)) {
+				t.Fatalf("plaintext KEY_BYTES of record %d found in %s", i, p)
+			}
+		}
+		return nil
+	})
+}

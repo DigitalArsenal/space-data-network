@@ -68,7 +68,8 @@ var (
 )
 
 // format2TopologyEnv overrides the instance sizing: "writers/interactive/bulk"
-// (e.g. "1/2/1", host-02's §5.1 topology). Unset: §5.1 for the machine.
+// or "writers/interactive/bulk/point" (e.g. "1/2/1", host-02's §5.1
+// topology). Unset: §5.1 for the machine, 2 point lanes, 1 sandbox lane.
 const format2TopologyEnv = "SDN_FORMAT2_TOPOLOGY"
 
 func format2Topology() format2.Topology {
@@ -78,11 +79,11 @@ func format2Topology() format2.Topology {
 		return t
 	}
 	parts := strings.Split(raw, "/")
-	if len(parts) != 3 {
-		log.Warnf("format 2: ignoring %s=%q (want writers/interactive/bulk)", format2TopologyEnv, raw)
+	if len(parts) != 3 && len(parts) != 4 {
+		log.Warnf("format 2: ignoring %s=%q (want writers/interactive/bulk[/point])", format2TopologyEnv, raw)
 		return t
 	}
-	var v [3]uint32
+	var v [4]uint32
 	for i, p := range parts {
 		n, err := strconv.ParseUint(strings.TrimSpace(p), 10, 32)
 		if err != nil || n == 0 || n > 64 {
@@ -91,7 +92,7 @@ func format2Topology() format2.Topology {
 		}
 		v[i] = uint32(n)
 	}
-	return format2.Topology{Writers: v[0], InteractiveLanes: v[1], BulkLanes: v[2]}
+	return format2.Topology{Writers: v[0], InteractiveLanes: v[1], BulkLanes: v[2], PointLanes: v[3]}
 }
 
 // format2Daemon is the daemon-side state of a format-2 store.
@@ -240,6 +241,12 @@ func newFormat2Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		Topology:      format2Topology(),
 		QuotaBytes:    uint64(max(cfg.quotaBytes, 0)),
 		AllowFresh:    !migrated,
+		FileIdentifier: func(schema string) (string, bool) {
+			if validator == nil {
+				return "", false
+			}
+			return validator.FileIdentifier(schema)
+		},
 	})
 	if err != nil {
 		return fail(fmt.Errorf("format 2: open the partition store: %w", err))
@@ -262,7 +269,11 @@ func newFormat2Store(basePath string, validator *sds.Validator, cfg storeConfig)
 }
 
 func describeFormat2Topology(t format2.Topology) string {
-	return fmt.Sprintf("%d writer threads, %d interactive lanes, %d bulk lanes", t.Writers, t.InteractiveLanes, t.BulkLanes)
+	point := t.PointLanes
+	if point == 0 {
+		point = 2
+	}
+	return fmt.Sprintf("%d writer threads, %d interactive lanes, %d bulk lanes, %d point lanes, 1 sandbox lane", t.Writers, t.InteractiveLanes, t.BulkLanes, point)
 }
 
 // openFormat2ControlInstance opens the control instance: the legacy engine

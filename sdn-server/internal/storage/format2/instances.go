@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,9 +38,13 @@ var ErrNotMigrated = errors.New("format2: the store is not MIGRATED; run `spaced
 
 // Topology is the instance sizing. SandboxLanes (default 1) serve untrusted
 // SQL under the work budget (A28, §22.4-7): never the shared bulk lanes.
+// PointLanes (default 2) serve the O(1) statements — a record by CID, the
+// copies of a CID, records by gseq — on an instance of their own, so a point
+// read never queues behind a window on the interactive lanes (T6 #3:
+// GetRecord p99 ≤ 5 ms, no reader wait > 50 ms).
 type Topology struct {
 	Writers, InteractiveLanes, BulkLanes uint32
-	SandboxLanes                         uint32
+	SandboxLanes, PointLanes             uint32
 }
 
 // DefaultTopology is §5.1 for a machine with the given cores.
@@ -81,6 +86,10 @@ type StoreConfig struct {
 	AllowFresh bool
 	// GatePeriod is how often the reader gate is passed to the writer (A12).
 	GatePeriod time.Duration
+	// FileIdentifier names a standard's file identifier ("$KMF"): a
+	// standard with no embedded binary schema (the (encrypted) ones, whose
+	// fields are never extracted) registers with it and no BFBS.
+	FileIdentifier func(schemaName string) (string, bool)
 }
 
 // Store is an open format-2 store: the writer and reader instances.
@@ -92,6 +101,7 @@ type Store struct {
 	ri     *Reader
 	rb     *Reader
 	rs     *Reader // sandbox lanes (untrusted SQL)
+	rp     *Reader // point lanes (O(1) statements)
 
 	regMu sync.Mutex
 	types map[string]TypeSpec // schema -> registered spec
@@ -158,6 +168,13 @@ func Open(cfg StoreConfig) (*Store, error) {
 	if s.rs, err = OpenReader(opt, flatsqlrt.PSRoleSandbox, ReaderConfig{Root: cfg.EngineRoot, Lanes: sandbox}); err != nil {
 		return fail(fmt.Errorf("format2: sandbox reader instance: %w", err))
 	}
+	point := cfg.Topology.PointLanes
+	if point == 0 {
+		point = 2
+	}
+	if s.rp, err = OpenReader(opt, flatsqlrt.PSRoleReader, ReaderConfig{Root: cfg.EngineRoot, Lanes: point}); err != nil {
+		return fail(fmt.Errorf("format2: point reader instance: %w", err))
+	}
 	go s.gatePump()
 	s.OpenedIn = time.Since(start)
 	return s, nil
@@ -179,7 +196,7 @@ func (s *Store) gatePump() {
 	defer t.Stop()
 	for {
 		oldest := uint64(0)
-		for _, r := range []*Reader{s.ri, s.rb, s.rs} {
+		for _, r := range []*Reader{s.ri, s.rb, s.rs, s.rp} {
 			if r == nil {
 				continue
 			}
@@ -214,7 +231,7 @@ func (s *Store) SetQuota(bytes uint64) error { return s.w.SetQuota(bytes) }
 
 func (s *Store) shutdown() error {
 	var first error
-	for _, r := range []*Reader{s.ri, s.rb, s.rs} {
+	for _, r := range []*Reader{s.ri, s.rb, s.rs, s.rp} {
 		if r != nil {
 			if err := r.Stop(); err != nil && first == nil {
 				first = err
@@ -253,6 +270,17 @@ func (s *Store) spec(schema string) (TypeSpec, error) {
 		return t, nil
 	}
 	t, err := TypeSpecFor(schema)
+	if err != nil && s.cfg.FileIdentifier != nil {
+		// No embedded binary schema (an (encrypted) standard): the engine
+		// stores, dedupes and serves its frames by CID, arrival and tags;
+		// it extracts nothing (A19: the sealed bytes carry only a magic).
+		code := strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(schema), ".fbs"))
+		if ident, ok := s.cfg.FileIdentifier(code + ".fbs"); ok && len(ident) == 4 {
+			t = TypeSpec{SchemaName: code + ".fbs", Flags: TypeVerifyCID}
+			copy(t.FID[:], ident)
+			err = nil
+		}
+	}
 	if err != nil {
 		return TypeSpec{}, err
 	}
@@ -262,6 +290,22 @@ func (s *Store) spec(schema string) (TypeSpec, error) {
 	s.types[schema] = t
 	return t, nil
 }
+
+// point runs an O(1) trusted read (a CID or gseq lookup) on the point lanes;
+// a plan the engine finds unbounded moves on as query does.
+func (s *Store) point(ctx context.Context, req Request) (*Result, error) {
+	if s.rp == nil {
+		return s.query(ctx, req)
+	}
+	res, err := s.rp.Query(ctx, req)
+	if IsStatus(err, StatusNeedsBulk) {
+		return s.rb.Query(ctx, req)
+	}
+	return res, err
+}
+
+// Point returns the point reader instance (acceptance measurements).
+func (s *Store) Point() *Reader { return s.rp }
 
 // query runs a trusted read on the interactive lanes, resubmitting an
 // unbounded plan to the bulk lanes (§9 admission: FLATSQL_NEEDS_BULK).
