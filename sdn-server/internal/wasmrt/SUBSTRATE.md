@@ -100,12 +100,39 @@ copies in `testdata/` feed the tests (`TestStaticBuildCarriesTheRuntimePatches`)
   about 150 ns a call), and a crash report that prints nothing for 30 s ends
   the process with SIGABRT and every thread's native state
   (`crash_watchdog.go`).
+- `04-atomic-memarg-offset`: AOT `memory.atomic.notify` / `wait32` / `wait64`
+  call the runtime with the bare address operand, dropping the instruction's
+  memarg offset (the interpreter adds it, `threadInstr.cpp`). wasi-libc's
+  thread-list lock is notified as `i32.const 0; memory.atomic.notify
+  offset=<lock>`, so under AOT those wakeups went to address 0 and thread
+  exit/join hung: a plain spawn/join guest hung 11 of 20 runs on the
+  patched-01..03 runtime (0 of 30 interpreted, 0 of 40 with this patch), and
+  the partition store's `readers_under_saturating_writers_T2_1` hung at
+  teardown 9 of 60. flatsql's `sleepNs` waited on the wrong stack word and
+  returned at once (100 x 10 ms took 0.000 s). The fix computes the effective
+  address (operand + offset, bounds-checked against 4 GiB) before the
+  notify/wait call, in `lib/llvm/compiler.cpp`.
+
+**The substrate probe** (`substrate/substrate-probe.wat`, embedded as
+`substrate-probe.wasm`) exercises 04 directly: `memarg_offset_notify` spawns a
+thread that notifies word 32 through `offset=32` on `i32.const 0`, and the
+main thread waits on word 32 by address (0 = woken, 2 = timed out on an
+unpatched compiler that notified word 0 instead); `memarg_offset_wait` waits
+on word 32 through the same offset against a value stored only there (2 =
+correctly timed out waiting on 32, 1 = wrong-address not-equal on an unpatched
+compiler that compared word 0). `RunSubstrateSelfTest` runs both on the
+AOT-compiled probe and sets `SubstrateReport.AOTAtomicMemargOffset`.
+`Patched()` requires it whenever the AOT check ran, alongside
+`InterruptibleAOT`, and `Tag()` returns `"sdn3"` (instead of `"sdn2"`) once it
+holds — every threaded AOT artifact an unpatched-04 host had cached recompiles
+under the new key, because it does not carry the offset fix.
 
 `spacedatanetwork substrate-selftest [--require-patched]` measures them in the
 running binary (notify without store, one stop ending every thread,
-Interruptible AOT that really runs native) and round-trips the C host I/O
-module. A31: it is a start-up metric (logged when the first instance opens)
-and a release gate, not a format-2 refusal.
+Interruptible AOT that really runs native, and AOT atomic notify/wait
+addressed through the memarg offset) and round-trips the C host I/O module.
+A31: it is a start-up metric (logged when the first instance opens) and a
+release gate, not a format-2 refusal.
 
 ## Building the static binary on macOS
 
