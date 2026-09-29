@@ -10,6 +10,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 )
 
 // RecColumns is the column list RecFromRow decodes.
@@ -321,6 +324,38 @@ func (s *Store) StreamTrusted(ctx context.Context, sql string, params []Cell, fn
 // no record yet answers ErrNoSuchType-shaped errors (NoSuchType).
 func (s *Store) Scan(ctx context.Context, req Request, fn func(row []Cell) error) error {
 	return s.scan(ctx, req, fn)
+}
+
+// InstanceHealth is one instance's state, its poison flag and its host I/O
+// lock (the handle table: a shared critical section of T6 #3).
+type InstanceHealth struct {
+	Name, State      string
+	Poisoned         bool
+	LockAcquisitions int64
+	LockHoldMax      time.Duration
+}
+
+// Health reports every instance and the store-wide path registry lock (A29).
+func (s *Store) Health() (flatsqlrt.NativeStoreStats, []InstanceHealth) {
+	var out []InstanceHealth
+	add := func(name string, inst *flatsqlrt.PSInstance) {
+		if inst == nil {
+			return
+		}
+		st := inst.Stats()
+		out = append(out, InstanceHealth{Name: name, State: st.State, Poisoned: st.Poisoned,
+			LockAcquisitions: st.IO.LockAcquisitions, LockHoldMax: st.IO.LockHoldMax})
+	}
+	add("writer", s.w.Instance())
+	for _, r := range []struct {
+		name string
+		r    *Reader
+	}{{"interactive", s.ri}, {"bulk", s.rb}, {"sandbox", s.rs}, {"point", s.rp}} {
+		if r.r != nil {
+			add(r.name, r.r.Instance())
+		}
+	}
+	return s.native.Stats(), out
 }
 
 // QueryPoint runs an O(1) statement (a lookup by CID or gseq) on the point

@@ -504,6 +504,40 @@ func (s *FlatSQLStore) f2WindowMerged(ctx context.Context, q format2.WindowQuery
 	return out, nil
 }
 
+// f2CountCache keeps the distinct-record counts of tag windows over a
+// REPEAT-holding type's partitions (every matching CID read, then
+// deduplicated), while the type's partitions have not moved: the record
+// index page asks the same total for every page it serves.
+type f2CountCache struct {
+	mu sync.Mutex
+	m  map[string]f2CountEntry
+}
+
+type f2CountEntry struct {
+	heads string
+	n     int64
+}
+
+// f2PartitionsMark is the state of a type's partitions (commit sequence and
+// pseq high-water mark of each): it moves with every append, retag, tomb
+// and label.
+func (s *FlatSQLStore) f2PartitionsMark(schema string) (string, error) {
+	parts, err := s.ps.PartitionsOf(schema)
+	if err != nil {
+		return "", err
+	}
+	tc, err := s.ps.TypeCounterOf(schema)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d", tc.CommitSeq)
+	for _, p := range parts {
+		fmt.Fprintf(&b, ";%d:%d:%d", p.PID, p.CommitSeq, p.PseqHi)
+	}
+	return b.String(), nil
+}
+
 // f2WindowCount counts a window's records (its conditions; distinct CIDs
 // over the partitions of a REPEAT-holding type).
 func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery) (int64, error) {
@@ -518,6 +552,19 @@ func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery)
 	if len(targets) == 1 && targets[0].table == "" {
 		return s.ps.Count(ctx, q)
 	}
+	key := fmt.Sprintf("%s|%s|%s|%s|%v|%v|%v|%v|%s|%v|%v", q.Schema, q.Provider, q.Source, q.Batch, q.NoradCatID, q.EntityID,
+		q.From, q.To, fmt.Sprint(q.Conds), q.EpochRanges, q.ByBatch)
+	mark, err := s.f2PartitionsMark(q.Schema)
+	if err != nil {
+		return 0, err
+	}
+	c := &s.f2.counts
+	c.mu.Lock()
+	e, ok := c.m[key]
+	c.mu.Unlock()
+	if ok && e.heads == mark {
+		return e.n, nil
+	}
 	seen := map[string]bool{}
 	for _, t := range targets {
 		sq := q
@@ -530,7 +577,14 @@ func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery)
 			seen[c] = true
 		}
 	}
-	return int64(len(seen)), nil
+	n := int64(len(seen))
+	c.mu.Lock()
+	if c.m == nil || len(c.m) >= 256 {
+		c.m = map[string]f2CountEntry{}
+	}
+	c.m[key] = f2CountEntry{heads: mark, n: n}
+	c.mu.Unlock()
+	return n, nil
 }
 
 func (s *FlatSQLStore) f2QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record, error) {
