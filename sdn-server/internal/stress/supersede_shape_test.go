@@ -175,8 +175,13 @@ func summarize(m map[string]*LatencySet) []supersedeShapeLine {
 	return out
 }
 
-func TestSupersedeShapeHost02(t *testing.T) {
-	parts := Host02SupersedeShape(shapeEnvFloat("SUPERSEDE_SHAPE_SCALE", 1))
+// openSupersedeShapeStore opens the shape for one run, hydrated: a clone of
+// the SUPERSEDE_SHAPE_HYDRATED template when it holds one, else the populated
+// template (STRESS_SHAPE_TEMPLATE, built on first use) booted and hydrated —
+// and saved as the hydrated template when SUPERSEDE_SHAPE_HYDRATED names an
+// empty one. ok is false when the run asked only to populate or to hydrate.
+func openSupersedeShapeStore(t *testing.T, parts []ShapePartition) (store *storage.FlatSQLStore, stats PopulateStats, ok bool) {
+	t.Helper()
 	workDir := strings.TrimSpace(os.Getenv("SUPERSEDE_SHAPE_DIR"))
 	if workDir == "" {
 		workDir = t.TempDir()
@@ -192,7 +197,6 @@ func TestSupersedeShapeHost02(t *testing.T) {
 		}
 	}
 	var base string
-	var stats PopulateStats
 	if haveHydrated {
 		base = filepath.Join(workDir, "store")
 		_ = os.RemoveAll(base)
@@ -203,16 +207,12 @@ func TestSupersedeShapeHost02(t *testing.T) {
 	} else {
 		base, stats = prepareShapeStore(t, workDir, parts)
 	}
-	report := &ShapeReport{
-		Build: os.Getenv("STRESS_SHAPE_BUILD"), Scale: shapeEnvFloat("SUPERSEDE_SHAPE_SCALE", 1), Shape: parts,
-		Populate: stats, CPUs: runtime.NumCPU(), StartedAt: time.Now().UTC(), Path: os.Getenv("SUPERSEDE_SHAPE_OUT"),
-	}
 	if os.Getenv("SUPERSEDE_SHAPE_POPULATE_ONLY") != "" {
 		t.Logf("populated %d records in %s", stats.Records, stats.Duration)
-		return
+		return nil, stats, false
 	}
 
-	store := openShapeStore(t, base)
+	store = openShapeStore(t, base)
 	hydrateStart := time.Now()
 	hydrated, err := store.HydrateEngineHotWindowContext(context.Background())
 	if err != nil {
@@ -235,32 +235,33 @@ func TestSupersedeShapeHost02(t *testing.T) {
 		}
 		t.Logf("saved hydrated template %s", hydratedStore)
 		if os.Getenv("SUPERSEDE_SHAPE_HYDRATE_ONLY") != "" {
-			return
+			return nil, stats, false
 		}
 		store = openShapeStore(t, base)
 		if _, err := store.HydrateEngineHotWindowContext(context.Background()); err != nil {
 			t.Fatalf("hydrate after reopen: %v", err)
 		}
 	}
-	defer store.Close()
+	return store, stats, true
+}
 
-	dataset := parts[len(parts)-1]
-	celestrak := parts[0]
-	keep := dataset.BatchID(dataset.Records - 1)
+// shapeReaderOp is one API read the shape runs keep issuing.
+type shapeReaderOp struct {
+	name string
+	fn   func(*rand.Rand) error
+}
 
-	// Readers: records the supersede never touches (the celestrak lane), read
-	// by CID and by a batch page, plus the summary the dashboard polls.
-	cids := make([]string, 0, 256)
-	for i := 0; i < 256; i++ {
-		if data, err := BuildShapeRecord(celestrak, (i*104729)%celestrak.Records); err == nil {
+// celestrakShapeReaders reads the celestrak lane by CID (the lane records
+// seqs names) and by a 250-row page of batch 0.
+func celestrakShapeReaders(store *storage.FlatSQLStore, celestrak ShapePartition, seqs []int) []shapeReaderOp {
+	cids := make([]string, 0, len(seqs))
+	for _, seq := range seqs {
+		if data, err := BuildShapeRecord(celestrak, seq); err == nil {
 			cids = append(cids, storage.ComputeCID(data))
 		}
 	}
 	perBatch := celestrak.Records / maxInt(celestrak.Batches, 1)
-	ops := []struct {
-		name string
-		fn   func(*rand.Rand) error
-	}{
+	return []shapeReaderOp{
 		{"OMM by CID", func(rng *rand.Rand) error {
 			_, err := store.GetRecord("OMM.fbs", cids[rng.Intn(len(cids))])
 			return err
@@ -273,33 +274,61 @@ func TestSupersedeShapeHost02(t *testing.T) {
 			return err
 		}},
 	}
-	// The readers share ONE single-threaded engine, so a reader's latency is
-	// also the other readers' statements. A baseline phase with the same
-	// readers and no supersede separates that from what the supersede adds.
-	readers := shapeEnvInt("SUPERSEDE_SHAPE_READERS", 2)
-	startReaders := func() (stop func(), sets []*LatencySet) {
-		sets = make([]*LatencySet, len(ops))
-		for i := range sets {
-			sets[i] = &LatencySet{}
-		}
-		var halt atomic.Bool
-		var wg sync.WaitGroup
-		for r := 0; r < readers; r++ {
-			wg.Add(1)
-			go func(seed int64) {
-				defer wg.Done()
-				rng := rand.New(rand.NewSource(seed))
-				for !halt.Load() {
-					i := rng.Intn(len(ops))
-					started := time.Now()
-					err := ops[i].fn(rng)
-					sets[i].Add(time.Since(started), err)
-					time.Sleep(time.Duration(5+rng.Intn(20)) * time.Millisecond)
-				}
-			}(int64(r + 1))
-		}
-		return func() { halt.Store(true); wg.Wait() }, sets
+}
+
+// startShapeReaders runs readers goroutines over ops until stop. The readers
+// share ONE single-threaded engine, so a reader's latency is also the other
+// readers' statements: a baseline phase with the same readers and no writer
+// separates that from what the writer adds.
+func startShapeReaders(ops []shapeReaderOp, readers int) (stop func(), sets []*LatencySet) {
+	sets = make([]*LatencySet, len(ops))
+	for i := range sets {
+		sets[i] = &LatencySet{}
 	}
+	var halt atomic.Bool
+	var wg sync.WaitGroup
+	for r := 0; r < readers; r++ {
+		wg.Add(1)
+		go func(seed int64) {
+			defer wg.Done()
+			rng := rand.New(rand.NewSource(seed))
+			for !halt.Load() {
+				i := rng.Intn(len(ops))
+				started := time.Now()
+				err := ops[i].fn(rng)
+				sets[i].Add(time.Since(started), err)
+				time.Sleep(time.Duration(5+rng.Intn(20)) * time.Millisecond)
+			}
+		}(int64(r + 1))
+	}
+	return func() { halt.Store(true); wg.Wait() }, sets
+}
+
+func TestSupersedeShapeHost02(t *testing.T) {
+	parts := Host02SupersedeShape(shapeEnvFloat("SUPERSEDE_SHAPE_SCALE", 1))
+	store, stats, ok := openSupersedeShapeStore(t, parts)
+	if !ok {
+		return
+	}
+	defer store.Close()
+	report := &ShapeReport{
+		Build: os.Getenv("STRESS_SHAPE_BUILD"), Scale: shapeEnvFloat("SUPERSEDE_SHAPE_SCALE", 1), Shape: parts,
+		Populate: stats, CPUs: runtime.NumCPU(), StartedAt: time.Now().UTC(), Path: os.Getenv("SUPERSEDE_SHAPE_OUT"),
+	}
+
+	dataset := parts[len(parts)-1]
+	celestrak := parts[0]
+	keep := dataset.BatchID(dataset.Records - 1)
+
+	// Readers: records the supersede never touches (the celestrak lane), read
+	// by CID and by a batch page.
+	seqs := make([]int, 256)
+	for i := range seqs {
+		seqs[i] = (i * 104729) % celestrak.Records
+	}
+	ops := celestrakShapeReaders(store, celestrak, seqs)
+	readers := shapeEnvInt("SUPERSEDE_SHAPE_READERS", 2)
+	startReaders := func() (func(), []*LatencySet) { return startShapeReaders(ops, readers) }
 	stopBaseline, baselineSets := startReaders()
 	time.Sleep(shapeEnvDuration("SUPERSEDE_SHAPE_BASELINE", time.Minute))
 	stopBaseline()
@@ -331,37 +360,49 @@ func TestSupersedeShapeHost02(t *testing.T) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "supersede of %s/%s keep %s: %d tags, %d records in %s (load %.1f→%.1f)\n",
 		dataset.ProviderID, dataset.SourceName, keep, result.TagsDeleted, result.RecordsDeleted, took.Round(time.Millisecond), load, LoadAverage1())
-	line := func(kind string, l supersedeShapeLine) {
-		fmt.Fprintf(&b, "%-6s n=%-6d p50=%-9s p99=%-9s max=%-9s total=%-9s %s\n", kind, l.Summary.N, rd(l.Summary.P50), rd(l.Summary.P99), rd(l.Summary.Max), rd(l.Summary.Total), l.Name)
+	reportShapeRun(t, &b, report, logs, "supersede", supersedeShapeChunkLimit, ops, baselineSets, readerSets)
+	t.Logf("\n%s", b.String())
+	if err := report.Write(report.Path); err != nil {
+		t.Errorf("write report: %v", err)
 	}
-	for _, l := range summarize(logs.holds) {
+}
+
+// reportShapeRun appends one writer's store-lock holds, read-lock waits and
+// statements, and the readers' latencies next to their readers-alone
+// baseline, to b and report. A hold whose site names holder (any case) past
+// limit fails the test.
+func reportShapeRun(t *testing.T, b *strings.Builder, report *ShapeReport, logs *supersedeLogs, holder string, limit time.Duration, ops []shapeReaderOp, baseline, during []*LatencySet) {
+	t.Helper()
+	line := func(kind string, l supersedeShapeLine) {
+		fmt.Fprintf(b, "%-6s n=%-6d p50=%-9s p99=%-9s max=%-9s total=%-9s %s\n", kind, l.Summary.N, rd(l.Summary.P50), rd(l.Summary.P99), rd(l.Summary.Max), rd(l.Summary.Total), l.Name)
+	}
+	logs.mu.Lock()
+	holds, waits, statements := summarize(logs.holds), summarize(logs.waits), summarize(logs.statements)
+	logs.mu.Unlock()
+	for _, l := range holds {
 		line("hold", l)
 		report.Add(ShapeMetric{Name: "write-lock hold " + l.Name, Latency: l.Summary})
-		if strings.Contains(strings.ToLower(l.Name), "supersede") && l.Summary.Max > supersedeShapeChunkLimit {
-			t.Errorf("%s held the store lock %s (> %s)", l.Name, l.Summary.Max, supersedeShapeChunkLimit)
+		if strings.Contains(strings.ToLower(l.Name), strings.ToLower(holder)) && l.Summary.Max > limit {
+			t.Errorf("%s held the store lock %s (> %s)", l.Name, l.Summary.Max, limit)
 		}
 	}
-	for _, l := range summarize(logs.waits) {
+	for _, l := range waits {
 		line("wait", l)
 		report.Add(ShapeMetric{Name: "read-lock wait " + l.Name, Latency: l.Summary})
 	}
-	for _, l := range summarize(logs.statements) {
+	for _, l := range statements {
 		line("stmt", l)
 		report.Add(ShapeMetric{Name: "statement " + l.Name, Latency: l.Summary})
 	}
 	for i, op := range ops {
-		base := baselineSets[i].Summary()
+		base := baseline[i].Summary()
 		line("idle", supersedeShapeLine{Name: op.name + " (readers alone)", Summary: base})
-		report.Add(ShapeMetric{Name: "reader without supersede " + op.name, Latency: base})
-		sum := readerSets[i].Summary()
+		report.Add(ShapeMetric{Name: "reader without " + holder + " " + op.name, Latency: base})
+		sum := during[i].Summary()
 		line("reader", supersedeShapeLine{Name: op.name, Summary: sum})
-		report.Add(ShapeMetric{Name: "reader during supersede " + op.name, Latency: sum})
+		report.Add(ShapeMetric{Name: "reader during " + holder + " " + op.name, Latency: sum})
 		if sum.Errors > 0 {
 			t.Errorf("reader %s: %d errors", op.name, sum.Errors)
 		}
-	}
-	t.Logf("\n%s", b.String())
-	if err := report.Write(report.Path); err != nil {
-		t.Errorf("write report: %v", err)
 	}
 }
