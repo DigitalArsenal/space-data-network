@@ -287,3 +287,38 @@ func (h *HeadReader) Types() ([]TypeCounter, error) {
 	}
 	return out, nil
 }
+
+// partitionPseqHi reads one partition head's pseq_hi (0 when unwritten).
+func (h *HeadReader) partitionPseqHi(pid uint32) (uint64, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	slot, err := h.readHeadSlot(filepath.Join(h.root, "p", fmt.Sprintf("%08x", pid), "h.fsh"), headPartition)
+	if err != nil || slot == nil || len(slot) < 48 {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint64(slot[40:]), nil
+}
+
+// labeledThrough reads labeled_through[pid] from a type head's inline label
+// table (after the fixed head and its L0 directory). ok is false when the
+// type keeps its labels in a checkpoint block (more than 128 partitions).
+func (h *HeadReader) labeledThrough(fid [4]byte, pid uint32) (uint64, bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	slot, err := h.readHeadSlot(filepath.Join(h.root, "t", hex.EncodeToString(fid[:]), "h.fsh"), headType)
+	if err != nil || slot == nil || len(slot) < 160 {
+		return 0, slot != nil, err
+	}
+	nL0 := int(binary.LittleEndian.Uint16(slot[92:]))
+	nLabels := int(binary.LittleEndian.Uint16(slot[94:]))
+	if nLabels == 0 && binary.LittleEndian.Uint64(slot[112:]) != 0 {
+		return 0, false, nil // labels in a checkpoint block (A10)
+	}
+	at := 160 + 32*nL0
+	for i := 0; i < nLabels && at+16 <= len(slot); i, at = i+1, at+16 {
+		if binary.LittleEndian.Uint32(slot[at:]) == pid {
+			return binary.LittleEndian.Uint64(slot[at+8:]), true, nil
+		}
+	}
+	return 0, true, nil
+}

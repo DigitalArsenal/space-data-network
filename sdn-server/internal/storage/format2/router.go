@@ -212,3 +212,42 @@ func frame(data []byte) []byte {
 	f := binary.LittleEndian.AppendUint32(make([]byte, 0, 4+len(data)), uint32(len(data)))
 	return append(f, data...)
 }
+
+// WaitLabeled waits until the producer's partition of schema is labeled by
+// its type owner through every record acked so far, so type-level reads
+// (windows, datasync pages, <TYPE> SQL) see them (A20: the publish API and
+// module flows wait for labeling; stream push and datasync do not).
+func (s *Store) WaitLabeled(ctx context.Context, schema, peerID string) error {
+	spec, err := s.spec(schema)
+	if err != nil {
+		return err
+	}
+	p, err := s.w.Partition([]byte(peerID), spec.FID)
+	if err != nil {
+		return err
+	}
+	hi, err := s.heads.partitionPseqHi(p.PID)
+	if err != nil {
+		return err
+	}
+	var wait backoff
+	for {
+		lt, inline, err := s.heads.labeledThrough(spec.FID, p.PID)
+		if err != nil {
+			return err
+		}
+		if lt >= hi {
+			return nil
+		}
+		if !inline {
+			// More than 128 partitions keep labels in a checkpoint block this
+			// reader does not parse: fall back to the type's arrivals moving.
+			if wait.elapsed() > 5*time.Second {
+				return nil
+			}
+		}
+		if err := wait.sleep(ctx, s.stop); err != nil {
+			return err
+		}
+	}
+}

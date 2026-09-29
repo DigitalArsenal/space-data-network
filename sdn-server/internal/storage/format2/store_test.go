@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestRouterWritesAreReadableAtAck(t *testing.T) {
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	tags := &Tags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "b1", License: "CC-BY-4.0"}
 	var all []string
-	misses := 0
+	misses, typeMisses := 0, 0
 	for b := 0; b < 20; b++ {
 		res, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(50, b*50, base, "RYW"), "source:celestrak", nil, tags)
 		if err != nil {
@@ -71,9 +72,24 @@ func TestRouterWritesAreReadableAtAck(t *testing.T) {
 				misses++
 			}
 		}
+		// A publish acks once labeled (A20): then a type-level read sees
+		// every record of the batch.
+		if err := s.WaitLabeled(ctx, "OMM.fbs", "source:celestrak"); err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range res {
+			c, _ := CIDFromText(r.CID)
+			got, err := s.Interactive().Query(ctx, Request{SQL: `SELECT _gseq FROM "OMM" WHERE _cid_bin = ?1 LIMIT 1`, Params: []Cell{Blob(c)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Rows) != 1 {
+				typeMisses++
+			}
+		}
 	}
-	if misses != 0 {
-		t.Fatalf("%d of %d records not readable at ack", misses, len(all))
+	if misses != 0 || typeMisses != 0 {
+		t.Fatalf("of %d records, %d not readable at ack and %d not visible at type level once labeled", len(all), misses, typeMisses)
 	}
 	// A second producer: repeats of 100 CIDs and 50 new records.
 	if _, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(150, 900, base, "RYW"), "16Uiu2HAm1Lbvw", nil,
@@ -326,5 +342,67 @@ func TestHeadCountersEqualTheLaneCounters(t *testing.T) {
 			}
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// An index-driven window reads the plan's millisecond epoch order only until
+// the window and the epoch second of its last row are complete, then orders
+// that prefix like the legacy window: whole seconds DESC, text CID ASC. Many
+// records share each second here, with distinct milliseconds.
+func TestSourceWindowKeepsTheLegacyOrderWithinASecond(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	ctx := context.Background()
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	var puts []Put
+	for i := 0; i < 600; i++ {
+		// 12 records per second, 83 ms apart.
+		ep := base.Add(time.Duration(i/12)*time.Second + time.Duration(i%12)*83*time.Millisecond)
+		puts = append(puts, Put{Data: testOMM(uint32(70000+i), ep, fmt.Sprintf("S-%d", i))})
+	}
+	if _, err := s.PutBatch(ctx, "OMM.fbs", puts, "source:win", nil, &Tags{ProviderID: "p", SourceName: "win", BatchID: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	// Windows are type-level: they see a record once its type owner labeled
+	// it (A20).
+	if err := s.WaitLabeled(ctx, "OMM.fbs", "source:win"); err != nil {
+		t.Fatal(err)
+	}
+	type ref struct {
+		sec int64
+		cid string
+	}
+	var all []ref
+	for i, p := range puts {
+		ep := base.Add(time.Duration(i/12)*time.Second + time.Duration(i%12)*83*time.Millisecond)
+		all = append(all, ref{ep.Unix(), CIDText(CIDBytes(p.Data))})
+	}
+	sort.Slice(all, func(a, b int) bool {
+		if all[a].sec != all[b].sec {
+			return all[a].sec > all[b].sec
+		}
+		return all[a].cid < all[b].cid
+	})
+	for _, w := range []struct{ limit, offset int }{{10, 0}, {25, 7}, {100, 131}, {1000, 0}} {
+		got, err := s.Window(ctx, WindowQuery{Schema: "OMM.fbs", Source: "win", Limit: w.limit, Offset: w.offset})
+		if err != nil {
+			t.Fatal(err)
+		}
+		end := w.offset + w.limit
+		if end > len(all) {
+			end = len(all)
+		}
+		want := all[w.offset:end]
+		if len(got) != len(want) {
+			t.Fatalf("window %+v: %d rows, want %d", w, len(got), len(want))
+		}
+		for i := range want {
+			if got[i].CID != want[i].cid {
+				t.Fatalf("window %+v row %d: %s, want %s", w, i, got[i].CID, want[i].cid)
+			}
+		}
+		n, _, err := s.ByteProbe(ctx, WindowQuery{Schema: "OMM.fbs", Source: "win", Limit: w.limit, Offset: w.offset})
+		if err != nil || n != int64(len(want)) {
+			t.Fatalf("byte probe %+v: %d, %v", w, n, err)
+		}
 	}
 }

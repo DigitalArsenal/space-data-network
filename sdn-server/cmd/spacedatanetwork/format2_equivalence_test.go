@@ -58,6 +58,7 @@ func TestFormat2ReadsEqualTheLegacyStoreOnTheMigratedCopy(t *testing.T) {
 		"time range":       {SchemaName: "OMM.fbs", From: &from, To: &to, Limit: 1000},
 		"empty standard":   {SchemaName: "RFM.fbs", Limit: 10},
 		"cat":              {SchemaName: "CAT.fbs", Limit: 1000},
+		"cat source page":  {SchemaName: "CAT.fbs", SourceName: "celestrak-satcat", Limit: 12, Offset: 7},
 	}
 	// Tag-filtered windows match ANY live tag instance of a record (the
 	// legacy ANY-row semantics). flatsql 3.1.0's xBestIndex leaves its tag

@@ -302,9 +302,9 @@ func TestReadsDuringSaturatingIngest(t *testing.T) {
 	})
 	reader(&srcFirst, func() error {
 		// First payload byte of a source-filtered window.
-		q := WindowQuery{Schema: srcSchema, Source: srcName, Limit: 1000}
-		sql, params := q.sql("_data")
-		st, err := s.ri.Submit(ctx, Request{SQL: sql, Params: params, Flags: ReqRawStream})
+		// The window's own plan: SOURCE_EPOCH postings in epoch order.
+		st, err := s.ri.Submit(ctx, Request{SQL: fmt.Sprintf(`SELECT _data FROM %s WHERE _source_name = ?1 ORDER BY _epoch DESC LIMIT 1000`,
+			quoteIdent(typeName(srcSchema))), Params: []Cell{Text(srcName)}, Flags: ReqRawStream})
 		if err != nil {
 			return err
 		}
