@@ -15,11 +15,15 @@ package storage
 // connectors read (source_batch_license.go).
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
+	"github.com/spacedatanetwork/sdn-server/internal/metrics"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 )
@@ -172,7 +176,10 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 		log.Warnf("format 2: the engine refused %d of %d %s record(s) from %q (first: %v)", rejected, len(records), schemaName, peerID, firstReject)
 	}
 	s.f2.lanes.invalidate()
-	if err := s.ps.WaitLabeled(ctx, schemaName, peerID); err != nil {
+	// One label budget for the whole write: the batch's partition, then the
+	// partitions its identity repeats were retagged into.
+	labelsBy := time.Now().Add(format2.LabelWaitMax)
+	if err := s.f2WaitLabeled(ctx, schemaName, []string{peerID}, labelsBy); err != nil {
 		return inserted, cids, err
 	}
 	if identityOn {
@@ -184,10 +191,16 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 				return inserted, cids, err
 			}
 		}
+		var retagged []string
 		for _, cid := range dedupeStrings(repeats) {
-			if err := s.f2Retag(schemaName, cid, *tags); err != nil {
+			peer, err := s.f2RetagCommit(schemaName, cid, *tags)
+			if err != nil {
 				return inserted, cids, err
 			}
+			retagged = append(retagged, peer)
+		}
+		if err := s.f2WaitLabeled(ctx, schemaName, retagged, labelsBy); err != nil {
+			return inserted, cids, err
 		}
 	}
 	if rejected == len(records) && firstReject != nil {
@@ -284,21 +297,31 @@ func (s *FlatSQLStore) f2HeldIngestIdentities(schemaName string, lane ingestIden
 // that tag, into the partition of its FIRST copy (the engine appends a RETAG
 // row, or nothing when the copy already carries the tuple).
 func (s *FlatSQLStore) f2Retag(schemaName, cid string, tags SourceTags) error {
+	peer, err := s.f2RetagCommit(schemaName, cid, tags)
+	if err != nil {
+		return err
+	}
+	return s.f2WaitLabeled(s.f2ctx(), schemaName, []string{peer}, time.Now().Add(format2.LabelWaitMax))
+}
+
+// f2RetagCommit is f2Retag without the label wait: it returns once the
+// retag is durable, with the producer whose partition holds it.
+func (s *FlatSQLStore) f2RetagCommit(schemaName, cid string, tags SourceTags) (string, error) {
 	tags = normalizeSourceTags(tags)
 	if err := ValidateSourceTags(tags); err != nil {
-		return err
+		return "", err
 	}
 	ctx := s.f2ctx()
 	rec, err := s.ps.GetRecord(ctx, schemaName, cid)
 	if err != nil {
 		if errors.Is(err, format2.ErrNotFound) {
-			return fmt.Errorf("source-tagged record not found: %s/%s", schemaName, cid)
+			return "", fmt.Errorf("source-tagged record not found: %s/%s", schemaName, cid)
 		}
-		return err
+		return "", err
 	}
 	plain, err := s.openStoredRecordBytes(schemaName, rec.Data)
 	if err != nil {
-		return err
+		return "", err
 	}
 	put := format2.Put{Data: plain}
 	if encfield.IsSealed(rec.Data) {
@@ -310,13 +333,13 @@ func (s *FlatSQLStore) f2Retag(schemaName, cid string, tags SourceTags) error {
 	}
 	res, err := s.ps.PutBatch(ctx, schemaName, []format2.Put{put}, peer, rec.Signature, format2Tags(&tags))
 	if err != nil {
-		return err
+		return "", err
 	}
 	s.f2.lanes.invalidate()
 	if len(res) == 1 && res[0].Err != nil {
-		return fmt.Errorf("retag %s: %w", cid, res[0].Err)
+		return "", fmt.Errorf("retag %s: %w", cid, res[0].Err)
 	}
-	return s.ps.WaitLabeled(ctx, schemaName, peer)
+	return peer, nil
 }
 
 // f2Delete kills every live copy of a CID (a TOMB_CID in each partition
@@ -336,21 +359,26 @@ func (s *FlatSQLStore) f2Delete(schemaName, cid string) error {
 	if len(copies) == 0 {
 		return fmt.Errorf("not found: %s", cid)
 	}
+	// Every tomb first, then one label wait over their partitions under one
+	// budget: never LabelWaitMax per copy.
 	done := map[string]bool{}
+	var producers []string
 	for _, c := range copies {
 		if done[c.Producer] {
 			continue
 		}
 		done[c.Producer] = true
-		if err := s.ps.Delete(ctx, schemaName, c.Producer, cid); err != nil {
+		err := s.ps.Delete(ctx, schemaName, c.Producer, cid)
+		if err != nil {
+			if len(producers) > 0 {
+				s.f2.lanes.invalidate()
+			}
 			return err
 		}
-		s.f2.lanes.invalidate()
-		if err := s.ps.WaitLabeled(ctx, schemaName, c.Producer); err != nil {
-			return err
-		}
+		producers = append(producers, c.Producer)
 	}
-	return nil
+	s.f2.lanes.invalidate()
+	return s.f2WaitLabeled(ctx, schemaName, producers, time.Now().Add(format2.LabelWaitMax))
 }
 
 // f2ReconcileSourceBatch is ReconcileSourceBatch on format 2: RECONCILE(keep)
@@ -380,14 +408,22 @@ func (s *FlatSQLStore) f2ReconcileSourceBatch(result SourceBatchReconcileResult)
 	if err != nil {
 		return result, err
 	}
+	// Every reconcile first, then one label wait over their partitions under
+	// one budget: never LabelWaitMax per partition.
+	reconciled := make([]string, 0, len(tokens))
 	for token := range tokens {
-		if err := s.ps.Reconcile(ctx, result.SchemaName, token, result.ProviderID, result.SourceName, result.KeepBatch); err != nil {
+		err := s.ps.Reconcile(ctx, result.SchemaName, token, result.ProviderID, result.SourceName, result.KeepBatch)
+		if err != nil {
+			if len(reconciled) > 0 {
+				s.f2.lanes.invalidate()
+			}
 			return result, err
 		}
-		s.f2.lanes.invalidate()
-		if err := s.ps.WaitLabeled(ctx, result.SchemaName, token); err != nil {
-			return result, err
-		}
+		reconciled = append(reconciled, token)
+	}
+	s.f2.lanes.invalidate()
+	if err := s.f2WaitLabeled(ctx, result.SchemaName, reconciled, time.Now().Add(format2.LabelWaitMax)); err != nil {
+		return result, err
 	}
 	// Deleted counts logical records gone from the type (the legacy count):
 	// a copy another producer still holds stays live, promoted (A14).
@@ -399,6 +435,37 @@ func (s *FlatSQLStore) f2ReconcileSourceBatch(result SourceBatchReconcileResult)
 		result.Deleted = d
 	}
 	return result, nil
+}
+
+// f2WaitLabeled waits, until deadline, for the type owner to label the
+// partitions of peers (A20). A wait that reaches its deadline is not a
+// failed write: the records are durable, so it is logged and counted
+// (sdn_storage_label_wait_timeouts_total) and the write succeeds; type-level
+// reads see the records once the owner catches up.
+func (s *FlatSQLStore) f2WaitLabeled(ctx context.Context, schemaName string, peers []string, deadline time.Time) error {
+	if len(peers) == 0 {
+		return nil
+	}
+	return labelWaitOutcome(s.ps.WaitLabeledUntil(ctx, schemaName, peers, deadline), s.ps.LabelWaitTimeouts)
+}
+
+// f2LabelWarnAt is when a label-wait deadline was last logged (unix ns).
+var f2LabelWarnAt atomic.Int64
+
+// labelWaitOutcome maps a label wait's error to the write's: a
+// *format2.LabelWaitError is counted, logged at most once a minute with the
+// running count, and dropped; anything else is the write's error.
+func labelWaitOutcome(err error, total func() uint64) error {
+	var lw *format2.LabelWaitError
+	if !errors.As(err, &lw) {
+		return err
+	}
+	metrics.StorageLabelWaitTimeouts(lw.Schema, lw.Partitions)
+	now := time.Now().UnixNano()
+	if last := f2LabelWarnAt.Load(); now-last >= int64(time.Minute) && f2LabelWarnAt.CompareAndSwap(last, now) {
+		log.Warnf("format 2: %v (%d partition label waits have reached their deadline since start)", lw, total())
+	}
+	return nil
 }
 
 // f2GarbageCollectToQuota hands the cap to the engine's quota planner (§13):

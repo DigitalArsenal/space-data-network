@@ -171,6 +171,12 @@ type Writer struct {
 	types map[[4]byte]bool
 	parts map[partKey]*Partition
 	byPid map[uint32]*Partition
+
+	// registered holds every partition parts does (partKey -> *Partition),
+	// read without mu: a registered partition's writes, acks and label waits
+	// never queue behind another producer's registration, which holds mu
+	// across the engine's Control calls.
+	registered sync.Map
 }
 
 type partKey struct {
@@ -289,6 +295,9 @@ func (w *Writer) RegisterType(t TypeSpec) error {
 // first use (A3: the engine derives the producer token from the raw peer id).
 func (w *Writer) Partition(peer []byte, fid [4]byte) (*Partition, error) {
 	key := partKey{string(peer), fid}
+	if v, ok := w.registered.Load(key); ok {
+		return v.(*Partition), nil
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if p := w.parts[key]; p != nil {
@@ -318,6 +327,7 @@ func (w *Writer) Partition(peer []byte, fid [4]byte) (*Partition, error) {
 	if p := w.byPid[uint32(pid)]; p != nil {
 		// Two raw peer ids that sanitize to one token share a partition (A3).
 		w.parts[key] = p
+		w.registered.Store(key, p)
 		return p, nil
 	}
 	v, err = w.inst.Control("flatsql_ps_ring", pid)
@@ -349,7 +359,17 @@ func (w *Writer) Partition(peer []byte, fid [4]byte) (*Partition, error) {
 	}
 	w.parts[key] = p
 	w.byPid[p.PID] = p
+	w.registered.Store(key, p)
 	return p, nil
+}
+
+// Registered returns the (peer, type) partition when this writer has
+// registered it, and nil otherwise; it never registers and never takes mu.
+func (w *Writer) Registered(peer []byte, fid [4]byte) *Partition {
+	if v, ok := w.registered.Load(partKey{string(peer), fid}); ok {
+		return v.(*Partition)
+	}
+	return nil
 }
 
 // SetReaderGate passes the oldest running reader statement's start (the
