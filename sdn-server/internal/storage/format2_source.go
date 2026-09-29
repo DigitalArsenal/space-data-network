@@ -547,19 +547,22 @@ type ControlCopyStats struct {
 
 // CopyControl writes the interim control database (§14) as dstName inside
 // the store: every control table of control.flatsqldb with its rows and
-// indexes, and the interim FTS table (still keyed by the legacy rowid; A6
-// gives FTS its own file later). The record tables are not copied, so the
-// file is megabytes, not the record store. It runs on the legacy engine's
-// own connection (ATTACH through its file root), holding the store lock.
-func (m *MigrationSource) CopyControl(dstName string) (ControlCopyStats, error) {
+// indexes. The interim full-text index goes to its own file, ftsName (A6:
+// its own instance, so a control read never waits on an index window),
+// keyed as it was by the legacy rowid, which is each record's gseq. The
+// record tables are not copied, so the files are megabytes, not the record
+// store. It runs on the legacy engine's own connection (ATTACH through its
+// file root), holding the store lock.
+func (m *MigrationSource) CopyControl(dstName, ftsName string) (ControlCopyStats, error) {
 	var st ControlCopyStats
-	if strings.ContainsAny(dstName, "/\\'") || dstName == "" {
-		return st, errors.New("control copy name must be a plain file name")
-	}
-	dst := filepath.Join(m.base, dstName)
-	if _, err := os.Stat(dst); err == nil {
-		if err := os.Remove(dst); err != nil { // a copy an interrupted run left
-			return st, err
+	for _, name := range []string{dstName, ftsName} {
+		if strings.ContainsAny(name, "/\\'") || name == "" {
+			return st, errors.New("control copy names must be plain file names")
+		}
+		if p := filepath.Join(m.base, name); fileExistsAt(p) {
+			if err := os.Remove(p); err != nil { // a copy an interrupted run left
+				return st, err
+			}
 		}
 	}
 	type obj struct{ typ, name, tbl, sql string }
@@ -626,22 +629,36 @@ func (m *MigrationSource) CopyControl(dstName string) (ControlCopyStats, error) 
 		st.Indexes++
 	}
 	if exists, err := m.s.tableExists("sdn_record_fts_progress"); err == nil && exists {
-		if _, err := m.s.db.Exec(`CREATE VIRTUAL TABLE migrate_control.sdn_record_fts USING fts5(text, tokenize='unicode61 remove_diacritics 2')`); err != nil {
+		if _, err := m.s.db.Exec(fmt.Sprintf(`ATTACH DATABASE '%s' AS migrate_fts`, ftsName)); err != nil {
+			return st, fmt.Errorf("attach %s: %w", ftsName, err)
+		}
+		defer func() { _, _ = m.s.db.Exec(`DETACH DATABASE migrate_fts`) }()
+		if _, err := m.s.db.Exec(`CREATE VIRTUAL TABLE migrate_fts.sdn_record_fts USING fts5(text, tokenize='unicode61 remove_diacritics 2')`); err != nil {
 			return st, fmt.Errorf("create the FTS table in the copy: %w", err)
 		}
-		res, err := m.s.db.Exec(`INSERT INTO migrate_control.sdn_record_fts(rowid, text) SELECT rowid, text FROM main.sdn_record_fts`)
+		res, err := m.s.db.Exec(`INSERT INTO migrate_fts.sdn_record_fts(rowid, text) SELECT rowid, text FROM main.sdn_record_fts`)
 		if err != nil {
 			return st, fmt.Errorf("copy the FTS rows: %w", err)
 		}
 		st.FTSRows, _ = res.RowsAffected()
-		if _, err := m.s.db.Exec(`CREATE TABLE migrate_control.sdn_record_fts_progress AS SELECT * FROM main.sdn_record_fts_progress`); err != nil {
+		if _, err := m.s.db.Exec(`CREATE TABLE migrate_fts.sdn_record_fts_progress (schema_name TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, last_rowid INTEGER NOT NULL DEFAULT 0)`); err != nil {
+			return st, fmt.Errorf("create the FTS progress in the copy: %w", err)
+		}
+		if _, err := m.s.db.Exec(`INSERT INTO migrate_fts.sdn_record_fts_progress SELECT schema_name, fingerprint, last_rowid FROM main.sdn_record_fts_progress`); err != nil {
 			return st, fmt.Errorf("copy the FTS progress: %w", err)
 		}
 	}
-	if fi, err := os.Stat(dst); err == nil {
-		st.Bytes = fi.Size()
+	for _, name := range []string{dstName, ftsName} {
+		if fi, err := os.Stat(filepath.Join(m.base, name)); err == nil {
+			st.Bytes += fi.Size()
+		}
 	}
 	return st, nil
+}
+
+func fileExistsAt(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // Store exposes the opened legacy store (tests).
