@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -213,10 +214,18 @@ func frame(data []byte) []byte {
 	return append(f, data...)
 }
 
+// labelWaitMax bounds WaitLabeled. The type owner labels a commit within
+// milliseconds; a wait that outlives this returns anyway (the records are
+// durable and readable by CID, and type-level reads see them once the owner
+// catches up) and is counted in LabelWaitTimeouts.
+const labelWaitMax = 5 * time.Second
+
 // WaitLabeled waits until the producer's partition of schema is labeled by
 // its type owner through every record acked so far, so type-level reads
 // (windows, datasync pages, <TYPE> SQL) see them (A20: the publish API and
-// module flows wait for labeling; stream push and datasync do not).
+// module flows wait for labeling; stream push and datasync do not). It never
+// waits longer than labelWaitMax, whatever form the labels take (inline in
+// the type head up to 128 partitions, in the type log past that).
 func (s *Store) WaitLabeled(ctx context.Context, schema, peerID string) error {
 	spec, err := s.spec(schema)
 	if err != nil {
@@ -230,24 +239,44 @@ func (s *Store) WaitLabeled(ctx context.Context, schema, peerID string) error {
 	if err != nil {
 		return err
 	}
+	timedOut, err := waitLabels(ctx, s.stop, hi, labelWaitMax, func() (uint64, bool, error) {
+		return s.heads.labeledThrough(spec.FID, p.PID)
+	})
+	if timedOut {
+		n := s.heads.waitTimeouts.Add(1)
+		now := time.Now().UnixNano()
+		if last := s.heads.lastTimeout.Load(); now-last >= int64(time.Minute) && s.heads.lastTimeout.CompareAndSwap(last, now) {
+			fmt.Fprintf(os.Stderr, "[format2] WARN %s partition %d of %s not labeled through pseq %d after %v (%d label waits timed out)\n",
+				schema, p.PID, peerID, hi, labelWaitMax, n)
+		}
+	}
+	return err
+}
+
+// LabelWaitTimeouts counts WaitLabeled calls that ended on the deadline.
+func (s *Store) LabelWaitTimeouts() uint64 { return s.heads.waitTimeouts.Load() }
+
+// waitLabels polls read until the labels reach hi, the deadline max passes
+// (timedOut) or ctx or stop ends the wait (err).
+func waitLabels(ctx context.Context, stop <-chan struct{}, hi uint64, max time.Duration, read func() (uint64, bool, error)) (timedOut bool, err error) {
+	if hi == 0 {
+		return false, nil // nothing committed, nothing to label
+	}
+	deadline := time.Now().Add(max)
 	var wait backoff
 	for {
-		lt, inline, err := s.heads.labeledThrough(spec.FID, p.PID)
+		lt, known, err := read()
 		if err != nil {
-			return err
+			return false, err
 		}
-		if lt >= hi {
-			return nil
+		if known && lt >= hi {
+			return false, nil
 		}
-		if !inline {
-			// More than 128 partitions keep labels in a checkpoint block this
-			// reader does not parse: fall back to the type's arrivals moving.
-			if wait.elapsed() > 5*time.Second {
-				return nil
-			}
+		if !time.Now().Before(deadline) {
+			return true, nil
 		}
-		if err := wait.sleep(ctx, s.stop); err != nil {
-			return err
+		if err := wait.sleep(ctx, stop); err != nil {
+			return false, err
 		}
 	}
 }
