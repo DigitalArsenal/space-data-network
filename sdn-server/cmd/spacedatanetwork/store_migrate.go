@@ -342,7 +342,7 @@ type migrateJournal struct {
 	// Snapshot pass: what the delta starts after.
 	Watermarks map[string]int64 `json:"watermarks,omitempty"` // table -> max rowid at the snapshot
 	IndexMarks map[string]int64 `json:"index_marks,omitempty"`
-	TagMark    int64            `json:"tag_mark,omitempty"` // max tag rowid at the snapshot
+	TagMark    int64            `json:"tag_mark,omitempty"`  // max tag rowid at the snapshot
 	TagsDone   int64            `json:"tags_done,omitempty"` // delta: tag rows applied through this rowid
 	Delta      bool             `json:"delta,omitempty"`
 	Verified   bool             `json:"verified"`
