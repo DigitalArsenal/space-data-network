@@ -323,6 +323,8 @@ func TestFormat2DaemonAPIMatchesFormat1(t *testing.T) {
 		"provider":      {SchemaName: "OMM.fbs", ProviderID: "space-data-network-01"},
 		"source":        {SchemaName: "OMM.fbs", SourceName: "celestrak-gp"},
 		"batch":         {SchemaName: "OMM.fbs", ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "gp-002"},
+		"batch+filter":  {SchemaName: "OMM.fbs", SourceName: "celestrak-gp", BatchID: "gp-002", SyncFilter: "NORAD_CAT_ID >= 20010"},
+		"batch+epoch":   {SchemaName: "OMM.fbs", SourceName: "celestrak-gp", BatchID: "gp-001", SyncFilter: "EPOCH >= '2026-09-01T02:00:00Z'"},
 		"producer peer": {SchemaName: "OMM.fbs", ProducerPeerID: "space-data-network-01"},
 		"peer":          {SchemaName: "OMM.fbs", PeerID: "16Uiu2HAmRelayPeer"},
 		"cid":           {SchemaName: "OMM.fbs", CID: ComputeCID(scL.omm[130])},
