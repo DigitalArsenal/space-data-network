@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -311,15 +312,15 @@ func (s *Store) ByteProbe(ctx context.Context, q WindowQuery) (count, bytes int6
 
 // SyncQuery is one datasync v1 page over the type's arrivals (§8, A16).
 type SyncQuery struct {
-	Schema     string
-	AfterGseq  int64
-	MaxGseq    int64 // 0: the type head's gseq_hi now (the first page's MaxRowID)
-	Limit      int
-	Provider   string
-	Source     string
-	Batch      string
-	PeerID     string
-	MetaOnly   bool // no payload bytes (refs)
+	Schema    string
+	AfterGseq int64
+	MaxGseq   int64 // 0: the type head's gseq_hi now (the first page's MaxRowID)
+	Limit     int
+	Provider  string
+	Source    string
+	Batch     string
+	PeerID    string
+	MetaOnly  bool // no payload bytes (refs)
 }
 
 // SyncPage returns up to Limit records with AfterGseq < gseq <= MaxGseq in
@@ -392,4 +393,66 @@ func (s *Store) StreamRaw(ctx context.Context, sql string, params []Cell, fn fun
 		carry = append(carry[:0], rest...)
 		return nil
 	})
+}
+
+// SchemaRange is one type's catalog summary (storage.SchemaDateRange).
+type SchemaRange struct {
+	Schema      string
+	RecordCount int64
+	OldestEpoch *time.Time
+	NewestEpoch *time.Time
+	TotalBytes  int64
+}
+
+// SchemaDateRanges returns every type's record count (the type head's
+// first_live_count), its oldest and newest record epoch (two bounded index
+// seeks; none for a type without an epoch rule, as the legacy index held
+// none), and its bytes (Σ live_bytes of its partitions).
+func (s *Store) SchemaDateRanges(ctx context.Context) ([]SchemaRange, error) {
+	types, err := s.Types(ctx)
+	if err != nil {
+		return nil, err
+	}
+	parts, err := s.Partitions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	bytes := map[string]int64{}
+	for _, p := range parts {
+		bytes[p.Type] += p.LiveBytes
+	}
+	sort.Slice(types, func(i, j int) bool { return types[i].Schema < types[j].Schema })
+	var out []SchemaRange
+	for _, ty := range types {
+		if ty.FirstLive == 0 {
+			continue
+		}
+		r := SchemaRange{Schema: ty.Schema, RecordCount: ty.FirstLive, TotalBytes: bytes[ty.Type]}
+		if strings.Contains(typeRules[ty.Type], "epoch ") {
+			for _, dir := range []string{"ASC", "DESC"} {
+				res, err := s.query(ctx, Request{SQL: fmt.Sprintf(`SELECT _epoch FROM %s ORDER BY _epoch %s LIMIT 1`, quoteIdent(ty.Type), dir)})
+				if err != nil {
+					return nil, err
+				}
+				if len(res.Rows) == 1 {
+					t := time.Unix(epochSeconds(res.Rows[0][0].Int64()), 0).UTC()
+					if dir == "ASC" {
+						r.OldestEpoch = &t
+					} else {
+						r.NewestEpoch = &t
+					}
+				}
+			}
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// epochSeconds floors epoch milliseconds to seconds (the legacy epoch_unix).
+func epochSeconds(ms int64) int64 {
+	if ms >= 0 {
+		return ms / 1000
+	}
+	return -((999 - ms) / 1000)
 }

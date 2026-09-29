@@ -332,7 +332,7 @@ func (m *MigrationSource) TableCounter(t LegacyTable) (PartitionCounter, error) 
 // SourceSummaryRow is one sdn_record_source_summary lane.
 type SourceSummaryRow struct {
 	Schema, ProviderID, SourceName, BatchID, ProducerPeerID, ProducerPublicKey string
-	Count, Bytes                                                              int64
+	Count, Bytes                                                               int64
 }
 
 // SourceSummaries returns the lane oracle.

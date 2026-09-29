@@ -445,3 +445,41 @@ func loadAverage() float64 {
 	fmt.Sscanf(strings.Trim(strings.TrimSpace(string(out)), "{} "), "%f", &a)
 	return a
 }
+
+// TestStoreMigrateInventoryOfStores prints the --inventory of APFS clones of
+// the stores named in SDN_MIGRATE_INVENTORY (colon separated), read-only for
+// the originals: the largest record per type decides whether A27's jumbo
+// frames are needed (the published engine's ring entry is 1 MiB + 4 KiB).
+func TestStoreMigrateInventoryOfStores(t *testing.T) {
+	list := strings.TrimSpace(os.Getenv("SDN_MIGRATE_INVENTORY"))
+	if list == "" {
+		t.Skip("SDN_MIGRATE_INVENTORY names stores to inventory")
+	}
+	for _, src := range strings.Split(list, ":") {
+		dst := filepath.Join(t.TempDir(), "store")
+		if err := os.MkdirAll(dst, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"control.flatsqldb", "control.flatsqldb-wal", "control.flatsqldb.fsdata", "auxiliary.flatsqlmeta"} {
+			if _, err := os.Stat(filepath.Join(src, name)); err != nil {
+				continue
+			}
+			if out, err := exec.Command("cp", "-c", filepath.Join(src, name), filepath.Join(dst, name)).CombinedOutput(); err != nil {
+				t.Fatalf("clone %s: %v %s", name, err, out)
+			}
+		}
+		inv, err := migrateInventory(dst)
+		if err != nil {
+			t.Logf("inventory %s: %v", src, err)
+			continue
+		}
+		for _, ty := range inv.Types {
+			over := ""
+			if ty.Max > maxEngineEntryPayload {
+				over = "  <-- over the engine's ring entry"
+			}
+			t.Logf("INVENTORY %s %s: %d partitions, %d records, %d B, p50 %d p99 %d max %d%s", filepath.Base(filepath.Dir(src)), ty.Schema,
+				ty.Partitions, ty.Rows, ty.Bytes, ty.P50, ty.P99, ty.Max, over)
+		}
+	}
+}

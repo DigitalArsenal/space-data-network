@@ -165,6 +165,33 @@ func TestFormat2ReadsEqualTheLegacyStoreOnTheMigratedCopy(t *testing.T) {
 			t.Fatalf("%s: datasync v1 sequence differs (%d vs %d cids)", schema, len(seq), len(legacySeq))
 		}
 	}
+	wantRanges, err := legacy.SchemaDateRanges()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotRanges, err := ps.SchemaDateRanges(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmtRange := func(schema string, n int64, oldest, newest *time.Time, b int64) string {
+		f := func(t *time.Time) string {
+			if t == nil {
+				return "-"
+			}
+			return t.UTC().Format(time.RFC3339)
+		}
+		return fmt.Sprintf("%s n=%d %s..%s %dB", schema, n, f(oldest), f(newest), b)
+	}
+	var wantR, gotR []string
+	for _, r := range wantRanges {
+		wantR = append(wantR, fmtRange(r.Schema, r.RecordCount, r.OldestEpoch, r.NewestEpoch, r.TotalBytes))
+	}
+	for _, r := range gotRanges {
+		gotR = append(gotR, fmtRange(r.Schema, r.RecordCount, r.OldestEpoch, r.NewestEpoch, r.TotalBytes))
+	}
+	if fmt.Sprint(gotR) != fmt.Sprint(wantR) {
+		t.Fatalf("SchemaDateRanges:\n format 2 %v\n legacy   %v", gotR, wantR)
+	}
 	wantLRB, err := legacy.LiveRecordBytes()
 	if err != nil {
 		t.Fatal(err)
@@ -175,5 +202,71 @@ func TestFormat2ReadsEqualTheLegacyStoreOnTheMigratedCopy(t *testing.T) {
 	}
 	if gotLRB != wantLRB {
 		t.Fatalf("LiveRecordBytes: format 2 %d, legacy %d", gotLRB, wantLRB)
+	}
+}
+
+// T6 #8 (A3): after migration a production write registers no new
+// partition for an existing lane, and a CAT edition supersedes the migrated
+// one (the live CAT count per source is unchanged).
+func TestFlowsWriteIntoTheMigratedPartitions(t *testing.T) {
+	requirePSEngine(t)
+	dir := t.TempDir()
+	buildLegacyStore(t, dir)
+	if _, err := migrateStore(context.Background(), migrateOptions{Store: dir, AOTCacheDir: migrateTestAOTDir(t),
+		CompileOnMiss: true, NoActivate: true}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := format2.Open(format2.StoreConfig{Root: dir, EngineRoot: migrateStagingDir, AOTCacheDir: migrateTestAOTDir(t),
+		CompileOnMiss: true, Topology: format2.Topology{Writers: 1, InteractiveLanes: 2, BulkLanes: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ps.Close()
+	ctx := context.Background()
+	before, err := ps.Partitions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveCAT := func() (n int64) {
+		parts, err := ps.Partitions(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range parts {
+			if p.Type == "CAT" {
+				n += p.Live
+			}
+		}
+		return n
+	}
+	catBefore := liveCAT()
+	// The GP flow's next fetch, under the same producer ("source:celestrak").
+	base := time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	var omm []format2.Put
+	for i := 0; i < 20; i++ {
+		omm = append(omm, format2.Put{Data: migrateTestOMM(uint32(20000+i), base.Add(time.Duration(i)*time.Minute), fmt.Sprintf("OBJ-%d", i))})
+	}
+	if _, err := ps.PutBatch(ctx, "OMM.fbs", omm, "source:celestrak", nil,
+		&format2.Tags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "gp-003"}); err != nil {
+		t.Fatal(err)
+	}
+	// The SATCAT flow's next edition: 15 objects changed.
+	var cat []format2.Put
+	for i := 0; i < 15; i++ {
+		cat = append(cat, format2.Put{Data: migrateTestCAT(uint32(100+i), fmt.Sprintf("SAT %d (edition 3)", i))})
+	}
+	if _, err := ps.PutBatch(ctx, "CAT.fbs", cat, "source:celestrak", nil,
+		&format2.Tags{ProviderID: "space-data-network-02", SourceName: "celestrak-satcat", BatchID: "sc-3"}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := ps.Partitions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("the flows registered %d new partitions", len(after)-len(before))
+	}
+	if got := liveCAT(); got != catBefore {
+		t.Fatalf("live CAT %d after a new edition, %d before (supersede did not retire the migrated edition)", got, catBefore)
 	}
 }
