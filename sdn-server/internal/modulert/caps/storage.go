@@ -685,7 +685,12 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 	// Pre-ingest duplicate reconcile: replaying the SAME source batch (same
 	// batch_id) must not double records — mirror the runner's
 	// reconcile-before-ingest step.
-	if reconcile != "none" {
+	// Store format 2 dedupes by CID in the partition's writer and keeps no
+	// legacy record index to rank logical duplicates by: the index-key
+	// duplicate reconcile is a format-1 maintenance pass (see
+	// storage.FlatSQLStore.Format2).
+	dupReconcile := reconcile != "none" && !s.store.Format2()
+	if dupReconcile {
 		if _, err := s.store.ReconcileSourceBatchIndexedDuplicates(schema, tags.ProviderID, tags.SourceName, tags.BatchID, true); err != nil {
 			return errCapJSON("pre-ingest reconcile failed: " + err.Error())
 		}
@@ -733,12 +738,14 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 		}
 		result["reconciled_old_batches"] = oldBatchRows
 	}
-	if reconcile != "none" {
+	if dupReconcile {
 		dupResult, err := s.store.ReconcileSourceBatchIndexedDuplicates(schema, tags.ProviderID, tags.SourceName, tags.BatchID, true)
 		if err != nil {
 			return errCapJSON("post-ingest duplicate reconcile failed: " + err.Error())
 		}
 		result["reconciled_duplicates"] = dupResult.Deleted
+	} else if reconcile != "none" {
+		result["reconciled_duplicates"] = 0
 	}
 	// THE SUMMARY IS BOOKKEEPING, NOT RECONCILIATION, so it is refreshed for
 	// EVERY mode — including "none".

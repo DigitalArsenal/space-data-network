@@ -186,6 +186,29 @@ type WindowQuery struct {
 	// Order: "" is the default order (epoch seconds DESC, text CID ASC,
 	// A17/A19); "gseq" is arrival order; "cid" is text CID order.
 	Order string
+	// Conds are further conditions (the legacy index's object type, status,
+	// epoch day, entity column per type, ...).
+	Conds []Cond
+	// Table reads one partition (its sql_name) instead of the type's
+	// fan-out: every copy it holds, FIRST or REPEAT, with its own tags.
+	Table string
+}
+
+func (q WindowQuery) table() string {
+	if q.Table != "" {
+		return quoteIdent(q.Table)
+	}
+	return quoteIdent(typeName(q.Schema))
+}
+
+// Cond is one extra condition: SQL with unnumbered ? placeholders (numbered
+// in order when the statement is built; the SQL holds no ? of its own) and
+// its parameters. Indexed marks a condition an index drives (a COL or tag
+// EQ): a window with one reads in epoch order from that index.
+type Cond struct {
+	SQL     string
+	Params  []Cell
+	Indexed bool
 }
 
 // legacyWindowOrder is the legacy window order: whole epoch seconds DESC
@@ -226,6 +249,23 @@ func (q WindowQuery) where() (string, []Cell, bool) {
 		add("_batch = ?%d", Text(q.Batch))
 		indexed = true
 	}
+	for _, c := range q.Conds {
+		var b strings.Builder
+		pi := 0
+		for i := 0; i < len(c.SQL); i++ {
+			if c.SQL[i] != '?' || pi >= len(c.Params) {
+				b.WriteByte(c.SQL[i])
+				continue
+			}
+			params = append(params, c.Params[pi])
+			pi++
+			fmt.Fprintf(&b, "?%d", len(params))
+		}
+		conds = append(conds, "("+b.String()+")")
+		if c.Indexed {
+			indexed = true
+		}
+	}
 	// A time range alone stays on the default plan (the legacy order) as a
 	// residual filter; with an index-driven plan it narrows the matches.
 	epoch := "_epoch"
@@ -259,7 +299,7 @@ func (q WindowQuery) sql(cols string) (string, []Cell) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	sql := fmt.Sprintf("SELECT %s FROM %s%s%s LIMIT %d", cols, quoteIdent(typeName(q.Schema)), where, order, limit)
+	sql := fmt.Sprintf("SELECT %s FROM %s%s%s LIMIT %d", cols, q.table(), where, order, limit)
 	if q.Offset > 0 {
 		sql += fmt.Sprintf(" OFFSET %d", q.Offset)
 	}
@@ -275,10 +315,87 @@ func noSuchType(err error, schema string) bool {
 
 // Window returns an indexed record window.
 func (s *Store) Window(ctx context.Context, q WindowQuery) ([]Rec, error) {
-	if _, _, indexed := q.where(); indexed && q.Order == "" {
-		return s.windowByEpoch(ctx, q, recColumns)
+	rows, err := s.windowRows(ctx, q, recColumns)
+	if err != nil {
+		return nil, err
 	}
-	sql, params := q.sql(recColumns)
+	out := make([]Rec, len(rows))
+	for i, row := range rows {
+		out[i] = recFromRow(row)
+	}
+	return out, nil
+}
+
+// WindowMeta is Window without the payloads (_data projects NULL): the byte
+// probes read the lengths only.
+func (s *Store) WindowMeta(ctx context.Context, q WindowQuery) ([]Rec, error) {
+	rows, err := s.windowRows(ctx, q, RecColumnsMeta)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Rec, len(rows))
+	for i, row := range rows {
+		out[i] = recFromRow(row)
+	}
+	return out, nil
+}
+
+// WindowRow is a window row with one extra projected expression.
+type WindowRow struct {
+	Rec   Rec
+	Extra Cell
+}
+
+// WindowColumns returns a window without payloads and with one extra column
+// expression per row (a root field, e.g. NORAD_CAT_ID).
+func (s *Store) WindowColumns(ctx context.Context, q WindowQuery, extra string) ([]WindowRow, error) {
+	rows, err := s.windowRows(ctx, q, RecColumnsMeta+", "+extra)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WindowRow, len(rows))
+	for i, row := range rows {
+		out[i] = WindowRow{Rec: recFromRow(row), Extra: row[13]}
+	}
+	return out, nil
+}
+
+// Count counts a window's matches (its conditions, no order, no limit).
+func (s *Store) Count(ctx context.Context, q WindowQuery) (int64, error) {
+	where, params, _ := q.where()
+	res, err := s.query(ctx, Request{SQL: fmt.Sprintf("SELECT COUNT(*) FROM %s%s", q.table(), where), Params: params})
+	if noSuchType(err, q.Schema) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return res.Rows[0][0].Int64(), nil
+}
+
+// WindowCIDs returns the CIDs a window's conditions match (no order, no
+// limit, no payload): the distinct-record count of a union of partitions.
+func (s *Store) WindowCIDs(ctx context.Context, q WindowQuery) ([]string, error) {
+	where, params, _ := q.where()
+	res, err := s.query(ctx, Request{SQL: fmt.Sprintf("SELECT _cid_bin FROM %s%s", q.table(), where), Params: params})
+	if noSuchType(err, q.Schema) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(res.Rows))
+	for i, r := range res.Rows {
+		out[i] = CIDText(r[0].B)
+	}
+	return out, nil
+}
+
+func (s *Store) windowRows(ctx context.Context, q WindowQuery, cols string) ([][]Cell, error) {
+	if _, _, indexed := q.where(); indexed && q.Order == "" {
+		return s.windowByEpoch(ctx, q, cols)
+	}
+	sql, params := q.sql(cols)
 	res, err := s.query(ctx, Request{SQL: sql, Params: params})
 	if noSuchType(err, q.Schema) {
 		return nil, nil
@@ -286,11 +403,7 @@ func (s *Store) Window(ctx context.Context, q WindowQuery) ([]Rec, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Rec, len(res.Rows))
-	for i, row := range res.Rows {
-		out[i] = recFromRow(row)
-	}
-	return out, nil
+	return res.Rows, nil
 }
 
 // windowByEpoch serves an index-driven window (a source, provider, batch or
@@ -300,19 +413,20 @@ func (s *Store) Window(ctx context.Context, q WindowQuery) ([]Rec, error) {
 // until the window is full and the epoch second of the last kept row is
 // complete, then orders that prefix by (whole seconds DESC, text CID ASC).
 // The statement is cancelled once it has given enough rows.
-func (s *Store) windowByEpoch(ctx context.Context, q WindowQuery, cols string) ([]Rec, error) {
+func (s *Store) windowByEpoch(ctx context.Context, q WindowQuery, cols string) ([][]Cell, error) {
 	where, params, _ := q.where()
-	sql := fmt.Sprintf("SELECT %s, _epoch FROM %s%s ORDER BY _epoch DESC", cols, quoteIdent(typeName(q.Schema)), where)
+	sql := fmt.Sprintf("SELECT %s, _epoch FROM %s%s ORDER BY _epoch DESC", cols, q.table(), where)
 	limit := q.Limit
 	if limit <= 0 {
 		limit = 1000
 	}
 	need := q.Offset + limit
-	var rows []Rec
+	var rows [][]Cell
 	var epochs []int64
+	var cids []string
 	errEnough := errors.New("enough")
 	run := func(r *Reader) error {
-		rows, epochs = rows[:0], epochs[:0]
+		rows, epochs, cids = rows[:0], epochs[:0], cids[:0]
 		st, err := r.Submit(ctx, Request{SQL: sql, Params: params})
 		if err != nil {
 			return err
@@ -329,8 +443,9 @@ func (s *Store) windowByEpoch(ctx context.Context, q WindowQuery, cols string) (
 					own[i].B = append([]byte(nil), row[i].B...)
 				}
 			}
-			rows = append(rows, recFromRow(own))
+			rows = append(rows, own)
 			epochs = append(epochs, ep)
+			cids = append(cids, CIDText(own[0].B))
 			return nil
 		}}
 		buf := make([]byte, 256<<10)
@@ -377,9 +492,9 @@ func (s *Store) windowByEpoch(ctx context.Context, q WindowQuery, cols string) (
 		if sa != sb {
 			return sa > sb
 		}
-		return rows[idx[a]].CID < rows[idx[b]].CID
+		return cids[idx[a]] < cids[idx[b]]
 	})
-	out := make([]Rec, 0, limit)
+	out := make([][]Cell, 0, limit)
 	for i := q.Offset; i < len(idx) && len(out) < limit; i++ {
 		out = append(out, rows[idx[i]])
 	}
@@ -390,7 +505,7 @@ func (s *Store) windowByEpoch(ctx context.Context, q WindowQuery, cols string) (
 // payload byte (§9: the probe sums rows' lengths).
 func (s *Store) ByteProbe(ctx context.Context, q WindowQuery) (count, bytes int64, err error) {
 	if _, _, indexed := q.where(); indexed && q.Order == "" {
-		recs, err := s.windowByEpoch(ctx, q, strings.Replace(recColumns, "_data", "NULL", 1))
+		recs, err := s.WindowMeta(ctx, q)
 		if err != nil {
 			return 0, 0, err
 		}
