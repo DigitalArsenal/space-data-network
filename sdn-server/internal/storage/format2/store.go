@@ -1,0 +1,189 @@
+package format2
+
+// Store-level files and the format switch.
+//
+// SDN_STORE_FORMAT=2 selects format 2. Without it (the default, format 1)
+// nothing in this package runs: running nodes are unchanged. A5: format 2
+// ships dark for at least five releases before any box activates it, and an
+// existing store changes format only through store-migrate in a per-host ops
+// task; the daemon never migrates by itself.
+//
+// The engine's own markers live in <root>/fsql2/: STORE (written once) and
+// MIGRATED (flatsql ps/format.h StoreFile, MigratedFile). store-migrate
+// writes both itself, so the store it builds carries the migration's gseq
+// floor (22.3a-2) and migratedFrom = 1.
+
+import (
+	"crypto/rand"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"hash/crc32"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// FormatEnv is the environment switch for the store format.
+const FormatEnv = "SDN_STORE_FORMAT"
+
+// Selected reports whether this process runs store format 2.
+func Selected() bool { return strings.TrimSpace(os.Getenv(FormatEnv)) == "2" }
+
+// Dir is the engine directory under a store root.
+const Dir = "fsql2"
+
+const (
+	magicStore    = 0x32515346 // "FSQ2"
+	magicMigrated = 0x4d515346 // "FSQM"
+	storeFormat   = 2
+	storeFileLen  = 64
+	migratedLen   = 40
+)
+
+var castagnoli = crc32.MakeTable(crc32.Castagnoli)
+
+// StoreFile is fsql2/STORE.
+type StoreFile struct {
+	UUID         [16]byte
+	CreatedMs    int64
+	GseqFloor    uint64
+	MigratedFrom uint32 // 0 = fresh store, 1 = legacy flatsql
+}
+
+func (s StoreFile) encode() []byte {
+	b := make([]byte, storeFileLen)
+	binary.LittleEndian.PutUint32(b[0:], magicStore)
+	binary.LittleEndian.PutUint16(b[4:], storeFormat)
+	copy(b[8:24], s.UUID[:])
+	binary.LittleEndian.PutUint64(b[24:], uint64(s.CreatedMs))
+	binary.LittleEndian.PutUint64(b[32:], s.GseqFloor)
+	binary.LittleEndian.PutUint32(b[40:], s.MigratedFrom)
+	binary.LittleEndian.PutUint32(b[56:], crc32.Checksum(b[:56], castagnoli))
+	return b
+}
+
+// ReadStoreFile reads and checks fsql2/STORE under root.
+func ReadStoreFile(root string) (StoreFile, error) {
+	b, err := os.ReadFile(filepath.Join(root, Dir, "STORE"))
+	if err != nil {
+		return StoreFile{}, err
+	}
+	if len(b) != storeFileLen || binary.LittleEndian.Uint32(b) != magicStore ||
+		binary.LittleEndian.Uint16(b[4:]) != storeFormat ||
+		binary.LittleEndian.Uint32(b[56:]) != crc32.Checksum(b[:56], castagnoli) {
+		return StoreFile{}, errors.New("format2: fsql2/STORE is corrupt")
+	}
+	var s StoreFile
+	copy(s.UUID[:], b[8:24])
+	s.CreatedMs = int64(binary.LittleEndian.Uint64(b[24:]))
+	s.GseqFloor = binary.LittleEndian.Uint64(b[32:])
+	s.MigratedFrom = binary.LittleEndian.Uint32(b[40:])
+	return s, nil
+}
+
+// NewStoreFile returns a STORE for a new store with a random UUID.
+func NewStoreFile(gseqFloor uint64, migratedFrom uint32) (StoreFile, error) {
+	var s StoreFile
+	if _, err := rand.Read(s.UUID[:]); err != nil {
+		return s, err
+	}
+	s.CreatedMs = time.Now().UnixMilli()
+	if gseqFloor == 0 {
+		gseqFloor = 1
+	}
+	s.GseqFloor = gseqFloor
+	s.MigratedFrom = migratedFrom
+	return s, nil
+}
+
+// WriteStoreFile writes fsql2/STORE once (A5: temp file, fsync, rename,
+// fsync the directory). It refuses to replace an existing STORE.
+func WriteStoreFile(root string, s StoreFile) error {
+	dir := filepath.Join(root, Dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(dir, "STORE")); err == nil {
+		return errors.New("format2: fsql2/STORE already exists (it is written once)")
+	}
+	if err := writeDurable(dir, "STORE", s.encode()); err != nil {
+		return err
+	}
+	return syncDir(root)
+}
+
+// WriteMigrated writes fsql2/MIGRATED for the store's UUID, durably.
+func WriteMigrated(root string, uuid [16]byte) error {
+	b := make([]byte, migratedLen)
+	binary.LittleEndian.PutUint32(b[0:], magicMigrated)
+	binary.LittleEndian.PutUint16(b[4:], storeFormat)
+	copy(b[8:24], uuid[:])
+	binary.LittleEndian.PutUint64(b[24:], uint64(time.Now().UnixMilli()))
+	binary.LittleEndian.PutUint32(b[32:], crc32.Checksum(b[:32], castagnoli))
+	return writeDurable(filepath.Join(root, Dir), "MIGRATED", b)
+}
+
+// Migrated reports whether root holds a format-2 store marked MIGRATED for
+// its own STORE.
+func Migrated(root string) (bool, error) {
+	s, err := ReadStoreFile(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	b, err := os.ReadFile(filepath.Join(root, Dir, "MIGRATED"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(b) != migratedLen || binary.LittleEndian.Uint32(b) != magicMigrated ||
+		binary.LittleEndian.Uint32(b[32:]) != crc32.Checksum(b[:32], castagnoli) {
+		return false, errors.New("format2: fsql2/MIGRATED is corrupt")
+	}
+	var uuid [16]byte
+	copy(uuid[:], b[8:24])
+	if uuid != s.UUID {
+		return false, fmt.Errorf("format2: fsql2/MIGRATED names another store")
+	}
+	return true, nil
+}
+
+// writeDurable writes dir/name through a temp file: write, fsync, rename,
+// fsync the directory.
+func writeDurable(dir, name string, data []byte) error {
+	tmp := filepath.Join(dir, "."+name+".tmp")
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
+		return err
+	}
+	return syncDir(dir)
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}

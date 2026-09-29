@@ -31,6 +31,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
 )
@@ -66,8 +67,7 @@ type DoorbellStats struct {
 type Doorbell struct {
 	mem   *SharedMemory
 	db    *C.sdn_doorbell
-	base  uint32
-	count int
+	addrs []uint32 // doorbell i's sequence word; its sleeping word follows it
 	once  sync.Once
 	mu    sync.RWMutex // Ring/NotifyAll (readers) against Close (writer)
 	done  bool
@@ -77,6 +77,18 @@ type Doorbell struct {
 // StartDoorbell serves count doorbells at base ({seq, sleeping} u32 pairs)
 // through the module's wakeExport(addr i32, n i32) export.
 func (m *Module) StartDoorbell(mem *SharedMemory, wakeExport string, base uint32, count int) (*Doorbell, error) {
+	addrs := make([]uint32, count)
+	for i := range addrs {
+		addrs[i] = base + uint32(8*i)
+	}
+	return m.StartDoorbellAt(mem, wakeExport, addrs)
+}
+
+// StartDoorbellAt serves one doorbell per address: each is a {seq u32, word
+// u32} pair the guest owns (the FlatSQL engine keeps every writer's and every
+// lane's pair in its own object). Ring reads the second word as "sleeping";
+// Wake ignores it.
+func (m *Module) StartDoorbellAt(mem *SharedMemory, wakeExport string, addrs []uint32) (*Doorbell, error) {
 	if m == nil || m.vm == nil {
 		return nil, ErrNoModule
 	}
@@ -84,8 +96,8 @@ func (m *Module) StartDoorbell(mem *SharedMemory, wakeExport string, base uint32
 	if fn == nil {
 		return nil, fmt.Errorf("wasmrt: module does not export %q", wakeExport)
 	}
-	for i := 0; i < count; i++ {
-		if err := mem.Check(base+uint32(8*i), 8); err != nil {
+	for _, a := range addrs {
+		if err := mem.Check(a, 8); err != nil {
 			return nil, err
 		}
 	}
@@ -97,19 +109,26 @@ func (m *Module) StartDoorbell(mem *SharedMemory, wakeExport string, base uint32
 	if err != nil {
 		return nil, err
 	}
-	db := C.sdn_doorbell_start(exec, wake, C.uint32_t(base), C.uint32_t(count))
+	var first *C.uint32_t
+	if len(addrs) > 0 {
+		first = (*C.uint32_t)(unsafe.Pointer(&addrs[0]))
+	}
+	db := C.sdn_doorbell_start_addrs(exec, wake, first, C.uint32_t(len(addrs)))
 	if db == nil {
 		return nil, errors.New("wasmrt: cannot start the doorbell thread")
 	}
-	return &Doorbell{mem: mem, db: db, base: base, count: count}, nil
+	return &Doorbell{mem: mem, db: db, addrs: append([]uint32(nil), addrs...)}, nil
 }
 
-func (d *Doorbell) seqAddr(i int) uint32 { return d.base + uint32(8*i) }
+func (d *Doorbell) seqAddr(i int) uint32 { return d.addrs[i] }
+
+// Count returns the number of doorbells.
+func (d *Doorbell) Count() int { return len(d.addrs) }
 
 // Ring advances doorbell i's sequence and, if its thread is sleeping, asks the
 // doorbell thread to notify it. Never blocks on the guest.
 func (d *Doorbell) Ring(i int) {
-	if i < 0 || i >= d.count {
+	if i < 0 || i >= len(d.addrs) {
 		return
 	}
 	d.rings.Add(1)
@@ -117,6 +136,22 @@ func (d *Doorbell) Ring(i int) {
 	if d.mem.Load32(d.seqAddr(i)+4) == 0 {
 		return
 	}
+	d.request(i)
+}
+
+// Wake advances doorbell i's sequence and always asks for a notify: for
+// guests whose idle test is not a sleeping flag (the engine's lanes publish a
+// state word; the caller picks the lane). Never blocks on the guest.
+func (d *Doorbell) Wake(i int) {
+	if i < 0 || i >= len(d.addrs) {
+		return
+	}
+	d.rings.Add(1)
+	d.mem.Add32(d.seqAddr(i), 1)
+	d.request(i)
+}
+
+func (d *Doorbell) request(i int) {
 	d.mu.RLock()
 	if !d.done {
 		C.sdn_doorbell_request(d.db, C.uint32_t(i))

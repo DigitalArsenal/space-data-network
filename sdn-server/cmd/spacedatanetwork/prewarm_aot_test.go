@@ -89,6 +89,12 @@ func TestRunPrewarmAOTWritesEngineArtifactAndIsIdempotent(t *testing.T) {
 	if !strings.Contains(out2.String(), enginePath) {
 		t.Fatalf("run 2 output missing engine path %s:\n%s", enginePath, out2.String())
 	}
+	// The partition-store engine (store format 2) is prewarmed beside it, and
+	// is a cache hit on run 2 as well.
+	psPath := flatsqlrt.PSThreadsAOTPath(dir)
+	if !strings.Contains(out2.String(), psPath) || !strings.Contains(out2.String(), "partition-store engine ("+flatsqlrt.PSThreadsPackage+"): "+psPath+" (already present)") {
+		t.Fatalf("run 2 did not report the partition-store engine artifact %s as present:\n%s", psPath, out2.String())
+	}
 	info2, err := os.Stat(enginePath)
 	if err != nil {
 		t.Fatalf("engine artifact vanished after run 2: %v", err)
