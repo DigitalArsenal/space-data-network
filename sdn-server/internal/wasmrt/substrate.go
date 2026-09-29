@@ -12,6 +12,14 @@ package wasmrt
 //                             with THREADS, and that code really runs native
 //                             (the interpreter's instruction counter does not
 //                             move while it spins).
+//   AOTAtomicMemargOffset     AOT memory.atomic.notify and wait32 act on the
+//                             operand PLUS the instruction's memarg offset
+//                             (04-atomic-memarg-offset). The unpatched AOT
+//                             compiler dropped the offset, so a wasi-libc
+//                             thread-list-lock wakeup (`i32.const 0; notify
+//                             offset=<lock>`) went to address 0 and thread
+//                             exit/join hung; a wait on a stack local compared
+//                             another word and returned at once.
 //
 // AOTSpeedup is reported, not judged: on an unpatched runtime Interruptible
 // AOT code exchanges the shared stop token at every loop iteration, and the
@@ -47,6 +55,7 @@ type SubstrateReport struct {
 	AtomicNotifyWithoutStore bool          `json:"atomic_notify_without_store"`
 	StopReachesEveryThread   bool          `json:"stop_reaches_every_thread"`
 	InterruptibleAOT         bool          `json:"interruptible_aot"`
+	AOTAtomicMemargOffset    bool          `json:"aot_atomic_memarg_offset"`
 	AOTChecked               bool          `json:"aot_checked"`
 	ThreadsStoppedBySingle   int           `json:"threads_stopped_by_one_stop"`
 	ThreadsSpawned           int           `json:"threads_spawned"`
@@ -58,14 +67,22 @@ type SubstrateReport struct {
 
 // Patched reports whether the runtime behaves like the patched build.
 func (r SubstrateReport) Patched() bool {
-	return r.AtomicNotifyWithoutStore && r.StopReachesEveryThread && (!r.AOTChecked || r.InterruptibleAOT)
+	return r.AtomicNotifyWithoutStore && r.StopReachesEveryThread &&
+		(!r.AOTChecked || (r.InterruptibleAOT && r.AOTAtomicMemargOffset))
 }
 
 // Tag names the runtime behaviour for AOT cache keys of Interruptible
 // artifacts: code compiled by one stop-token semantics must not be loaded by
 // the other.
+//
+// "sdn3" adds AOTAtomicMemargOffset: artifacts compiled before the
+// atomic-memarg-offset patch carry the broken wait/notify addressing, so the
+// key changes and every host recompiles them.
 func (r SubstrateReport) Tag() string {
 	if r.AtomicNotifyWithoutStore && r.StopReachesEveryThread {
+		if r.AOTAtomicMemargOffset {
+			return "sdn3"
+		}
 		return "sdn2"
 	}
 	return "up"
@@ -128,6 +145,13 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 			}
 			rep.InterruptibleAOT = rep.AOTNative && aot.spawned > 0 && aot.stoppedBySingle == aot.spawned
 		}
+		if cerr == nil {
+			if ok, err := probeMemargOffset(compiled); err != nil {
+				fail("AOT atomic memarg offset: %v", err)
+			} else {
+				rep.AOTAtomicMemargOffset = ok
+			}
+		}
 	}
 	rep.Elapsed = time.Since(start)
 	return rep
@@ -147,10 +171,10 @@ func SubstrateStatus() SubstrateReport {
 		if !substrateReport.Patched() {
 			level = "WARN"
 		}
-		fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) in %s %v\n",
+		fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t in %s %v\n",
 			level, substrateReport.RuntimeVersion, substrateReport.AtomicNotifyWithoutStore,
 			substrateReport.StopReachesEveryThread, substrateReport.InterruptibleAOT, substrateReport.AOTSpeedup,
-			substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Errors)
+			substrateReport.AOTAtomicMemargOffset, substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Errors)
 	})
 	return substrateReport
 }
@@ -176,6 +200,40 @@ func probeNotifyWithoutStore(wasm []byte) (bool, error) {
 	default:
 		return false, fmt.Errorf("notify_without_store returned %d", ToInt32(v[0]))
 	}
+}
+
+// probeMemargOffset runs the two memarg-offset checks on the AOT-compiled
+// probe: a notify addressed through its offset wakes the waiter, and a wait
+// addressed that way compares the right word.
+func probeMemargOffset(compiled []byte) (bool, error) {
+	m, err := NewModule(compiled, WithMaxThreads(4), WithExecTimeout(3*time.Second))
+	if err != nil {
+		return false, err
+	}
+	defer m.Release()
+	v, err := m.Execute("memarg_offset_notify")
+	if err != nil {
+		return false, err
+	}
+	if len(v) != 1 {
+		return false, errors.New("unexpected result arity")
+	}
+	notify := ToInt32(v[0])
+	if notify != 0 && notify != 2 {
+		return false, fmt.Errorf("memarg_offset_notify returned %d", notify)
+	}
+	v, err = m.Execute("memarg_offset_wait")
+	if err != nil {
+		return false, err
+	}
+	if len(v) != 1 {
+		return false, errors.New("unexpected result arity")
+	}
+	wait := ToInt32(v[0])
+	if wait != 1 && wait != 2 {
+		return false, fmt.Errorf("memarg_offset_wait returned %d", wait)
+	}
+	return notify == 0 && wait == 2, nil
 }
 
 type stopProbe struct {

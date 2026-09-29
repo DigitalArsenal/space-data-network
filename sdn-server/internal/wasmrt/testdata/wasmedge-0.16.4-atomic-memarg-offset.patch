@@ -1,0 +1,46 @@
+diff --git a/lib/llvm/compiler.cpp b/lib/llvm/compiler.cpp
+index f765db6..5b1bfc3 100644
+--- a/lib/llvm/compiler.cpp
++++ b/lib/llvm/compiler.cpp
+@@ -3952,6 +3952,21 @@ public:
+     Builder.positionAtEnd(OkBB);
+   }
+ 
++  // memory.atomic.notify / wait32 / wait64 call the runtime with the
++  // effective address: the operand plus the memarg offset (as the interpreter
++  // does, threadInstr.cpp). Passing the bare operand notified and waited on
++  // the wrong word whenever the offset was not 0 (a global such as wasi-libc's
++  // __thread_list_lock at `i32.const 0; memory.atomic.notify offset=N`): lost
++  // wakeups. An address past 4 GiB is out of bounds.
++  LLVM::Value compileAtomicEffectiveAddress(LLVM::Value Addr) noexcept {
++    auto OkBB = LLVM::BasicBlock::create(LLContext, F.Fn, "address_in_bounds");
++    auto InBounds = Builder.createLikely(
++        Builder.createICmpULE(Addr, LLContext.getInt64(UINT32_MAX)));
++    Builder.createCondBr(InBounds, OkBB,
++                         getTrapBB(ErrCode::Value::MemoryOutOfBounds));
++    Builder.positionAtEnd(OkBB);
++    return Builder.createTrunc(Addr, Context.Int32Ty);
++  }
+   void compileMemoryFence() noexcept {
+     Builder.createFence(LLVMAtomicOrderingSequentiallyConsistent);
+   }
+@@ -3963,7 +3978,8 @@ public:
+       Addr = Builder.createAdd(Addr, LLContext.getInt64(MemoryOffset));
+     }
+     compileAtomicCheckOffsetAlignment(Addr, Context.Int32Ty);
+-    auto Offset = stackPop();
++    stackPop();
++    auto Offset = compileAtomicEffectiveAddress(Addr);
+ 
+     stackPush(Builder.createCall(
+         Context.getIntrinsic(
+@@ -3982,7 +3998,8 @@ public:
+       Addr = Builder.createAdd(Addr, LLContext.getInt64(MemoryOffset));
+     }
+     compileAtomicCheckOffsetAlignment(Addr, TargetType);
+-    auto Offset = stackPop();
++    stackPop();
++    auto Offset = compileAtomicEffectiveAddress(Addr);
+ 
+     stackPush(Builder.createCall(
+         Context.getIntrinsic(

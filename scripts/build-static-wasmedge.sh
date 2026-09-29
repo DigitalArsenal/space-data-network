@@ -71,6 +71,15 @@ fi
 #                   never writes; after a trap, half the time, Go's next signal
 #                   on that thread landed on a goroutine stack and the runtime
 #                   threw (sdn-server/internal/wasmrt/signals.go).
+#   04-atomic-memarg-offset
+#                   AOT memory.atomic.notify / wait32 / wait64 pass the runtime
+#                   the operand PLUS the instruction's memarg offset, as the
+#                   interpreter does. The upstream AOT compiler dropped the
+#                   offset: wasi-libc's thread-list-lock wakeups
+#                   (`i32.const 0; memory.atomic.notify offset=<lock>`) went to
+#                   address 0, so thread exit and join hung (a plain
+#                   spawn/join guest hung 11 of 20 runs), and flatsql's
+#                   sleepNs waited on the wrong stack word and never slept.
 #
 # THE PATCH TEXT LIVES IN THIS FILE, deliberately. The CI prefix cache key and
 # the Dockerfile's static layer are both keyed on this file's bytes, so a patch
@@ -354,6 +363,57 @@ index e435d4e..c49f5ae 100644
 SDN_WASMEDGE_PATCH_EOF
 }
 
+write_sdn_patch_04_atomic_memarg_offset() {
+  cat <<'SDN_WASMEDGE_PATCH_EOF'
+diff --git a/lib/llvm/compiler.cpp b/lib/llvm/compiler.cpp
+index f765db6..5b1bfc3 100644
+--- a/lib/llvm/compiler.cpp
++++ b/lib/llvm/compiler.cpp
+@@ -3952,6 +3952,21 @@ public:
+     Builder.positionAtEnd(OkBB);
+   }
+ 
++  // memory.atomic.notify / wait32 / wait64 call the runtime with the
++  // effective address: the operand plus the memarg offset (as the interpreter
++  // does, threadInstr.cpp). Passing the bare operand notified and waited on
++  // the wrong word whenever the offset was not 0 (a global such as wasi-libc's
++  // __thread_list_lock at `i32.const 0; memory.atomic.notify offset=N`): lost
++  // wakeups. An address past 4 GiB is out of bounds.
++  LLVM::Value compileAtomicEffectiveAddress(LLVM::Value Addr) noexcept {
++    auto OkBB = LLVM::BasicBlock::create(LLContext, F.Fn, "address_in_bounds");
++    auto InBounds = Builder.createLikely(
++        Builder.createICmpULE(Addr, LLContext.getInt64(UINT32_MAX)));
++    Builder.createCondBr(InBounds, OkBB,
++                         getTrapBB(ErrCode::Value::MemoryOutOfBounds));
++    Builder.positionAtEnd(OkBB);
++    return Builder.createTrunc(Addr, Context.Int32Ty);
++  }
+   void compileMemoryFence() noexcept {
+     Builder.createFence(LLVMAtomicOrderingSequentiallyConsistent);
+   }
+@@ -3963,7 +3978,8 @@ public:
+       Addr = Builder.createAdd(Addr, LLContext.getInt64(MemoryOffset));
+     }
+     compileAtomicCheckOffsetAlignment(Addr, Context.Int32Ty);
+-    auto Offset = stackPop();
++    stackPop();
++    auto Offset = compileAtomicEffectiveAddress(Addr);
+ 
+     stackPush(Builder.createCall(
+         Context.getIntrinsic(
+@@ -3982,7 +3998,8 @@ public:
+       Addr = Builder.createAdd(Addr, LLContext.getInt64(MemoryOffset));
+     }
+     compileAtomicCheckOffsetAlignment(Addr, TargetType);
+-    auto Offset = stackPop();
++    stackPop();
++    auto Offset = compileAtomicEffectiveAddress(Addr);
+ 
+     stackPush(Builder.createCall(
+         Context.getIntrinsic(
+SDN_WASMEDGE_PATCH_EOF
+}
+
 SDN_PATCH_DIR="${WORK}/sdn-patches"
 SDN_PATCH_STAMP=""
 if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
@@ -368,6 +428,7 @@ if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
   write_sdn_patch_01_atomic_wait > "$SDN_PATCH_DIR/01-atomic-wait.patch"
   write_sdn_patch_02_stop_token > "$SDN_PATCH_DIR/02-stop-token.patch"
   write_sdn_patch_03_fault_jmp > "$SDN_PATCH_DIR/03-fault-jmp.patch"
+  write_sdn_patch_04_atomic_memarg_offset > "$SDN_PATCH_DIR/04-atomic-memarg-offset.patch"
   for sdn_patch in "$SDN_PATCH_DIR"/*.patch; do
     if git -C "$SRC" apply --reverse --check "$sdn_patch" >/dev/null 2>&1; then
       echo "WasmEdge patch already applied: $(basename "$sdn_patch")"
