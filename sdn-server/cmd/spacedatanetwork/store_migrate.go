@@ -342,6 +342,8 @@ type migrateJournal struct {
 	// Snapshot pass: what the delta starts after.
 	Watermarks map[string]int64 `json:"watermarks,omitempty"` // table -> max rowid at the snapshot
 	IndexMarks map[string]int64 `json:"index_marks,omitempty"`
+	TagMark    int64            `json:"tag_mark,omitempty"` // max tag rowid at the snapshot
+	TagsDone   int64            `json:"tags_done,omitempty"` // delta: tag rows applied through this rowid
 	Delta      bool             `json:"delta,omitempty"`
 	Verified   bool             `json:"verified"`
 	Activated  bool             `json:"activated"`
@@ -958,6 +960,9 @@ func (m *migrator) runCopy(ctx context.Context) error {
 		for _, s := range idx {
 			m.j.IndexMarks[s.Schema] = s.MaxRowID
 		}
+		if m.j.TagMark, err = m.src.MaxTagRowID(); err != nil {
+			return err
+		}
 		if err := m.j.write(m.jpath); err != nil {
 			return err
 		}
@@ -1563,6 +1568,12 @@ func (m *migrator) runDelta(ctx context.Context) error {
 	if err := m.waitLabeled(ctx, schemas); err != nil {
 		return err
 	}
+	// Tags gained after the snapshot (a batch that re-tagged records the
+	// snapshot already held): each is the record's FIRST copy again with that
+	// tag, which the engine appends as a RETAG (a tag it holds is a no-op).
+	if err := m.deltaTags(ctx); err != nil {
+		return err
+	}
 	// Deletions and supersedes: a CID the partition holds that its live table
 	// no longer does is killed (TOMB_CID; the engine's supersede already
 	// killed a superseded CAT copy, so its TOMB is a no-op).
@@ -1575,6 +1586,83 @@ func (m *migrator) runDelta(ctx context.Context) error {
 		return err
 	}
 	return m.waitLabeled(ctx, schemas)
+}
+
+func (m *migrator) deltaTags(ctx context.Context) error {
+	after := m.j.TagMark
+	if m.j.TagsDone > after {
+		after = m.j.TagsDone
+	}
+	for {
+		rows, err := m.src.TagsAfter(after, m.opt.PageRows)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			break
+		}
+		bySchema := map[string][]storage.TagRow{}
+		for _, r := range rows {
+			bySchema[r.Schema] = append(bySchema[r.Schema], r)
+		}
+		for schema, trs := range bySchema {
+			cids := make([]string, 0, len(trs))
+			for _, r := range trs {
+				cids = append(cids, r.CID)
+			}
+			first := map[string]storage.LegacyTable{}
+			recs := map[string]storage.LegacyRecord{}
+			missing := cids
+			for _, t := range m.bySchema[schema] {
+				if len(missing) == 0 {
+					break
+				}
+				got, err := m.src.RecordsByCID(t, missing)
+				if err != nil {
+					return err
+				}
+				var still []string
+				for _, c := range missing {
+					if r, ok := got[c]; ok {
+						first[c], recs[c] = t, r
+					} else {
+						still = append(still, c)
+					}
+				}
+				missing = still
+			}
+			for _, tr := range trs {
+				t, ok := first[tr.CID]
+				if !ok {
+					continue // the record is gone (its deletion is reconciled below)
+				}
+				p, err := m.partition(ctx, t)
+				if err != nil {
+					return err
+				}
+				tag := tr.LegacyTag
+				e, err := m.recordEntry(t, recs[tr.CID], &tag)
+				if err != nil {
+					return err
+				}
+				if _, err := m.enqueue(ctx, p, t.Name, tr.CID, false, e); err != nil {
+					return err
+				}
+			}
+		}
+		if err := m.drain(ctx); err != nil {
+			return err
+		}
+		after = rows[len(rows)-1].RowID
+		m.j.TagsDone = after
+		if err := m.maybeJournal(false); err != nil {
+			return err
+		}
+		if len(rows) < m.opt.PageRows {
+			break
+		}
+	}
+	return m.maybeJournal(true)
 }
 
 func (m *migrator) deltaDeletes(ctx context.Context, t storage.LegacyTable) error {
