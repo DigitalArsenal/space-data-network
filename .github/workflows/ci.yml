@@ -233,7 +233,10 @@ jobs:
         run: |
           ../scripts/go-with-wasmedge.sh test ./internal/wasmrt/ -count=1 -timeout 20m
           ../scripts/go-with-wasmedge.sh test ./internal/flatsqlrt/ -count=1 -timeout 30m -v \
-            -run 'TestPS|TestParallelAOT|TestSharedMemoryBase|TestConcurrentControl|TestNativeHostIO'
+            -run 'TestPS|TestParallelAOT|TestSharedMemoryBase|TestConcurrentControl|TestNativeHostIO|TestEmbeddedPSThreads'
+          # Store format 2 on the published partition-store engine (T6): the
+          # writer and reader instances, rings, mailboxes, RB1, store-migrate.
+          ../scripts/go-with-wasmedge.sh test ./internal/storage/format2/ -count=1 -timeout 30m -v
 
   go-builds:
     name: Go builds (node + edge relay)

@@ -35,8 +35,13 @@ type SharedMemory struct {
 	mem  *wasmedge.Memory
 	base unsafe.Pointer
 	// size is the byte length the accessor admits without re-checking. Guest
-	// layout words live in the data segment, below the initial size.
-	size uint64
+	// layout words live in the data segment, below the initial size; anything
+	// the guest allocates later (the engine's slab pool, ring descriptors,
+	// request slots) may sit above it, so an access past size re-reads the
+	// page count once (growTo) before it is refused.
+	size atomic.Uint64
+	// growMu serializes the re-read (a C call) and the base re-check.
+	growMu sync.Mutex
 }
 
 var errNotShared = errors.New("wasmrt: module has no shared memory")
@@ -54,7 +59,9 @@ func (m *Module) SharedMemory() (*SharedMemory, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SharedMemory{mem: m.importedMemory, base: unsafe.Pointer(&first[0]), size: pages * 65536}, nil
+	s := &SharedMemory{mem: m.importedMemory, base: unsafe.Pointer(&first[0])}
+	s.size.Store(pages * 65536)
+	return s, nil
 }
 
 // BaseStable reports whether the memory still starts where it did when the
@@ -70,17 +77,51 @@ func (s *SharedMemory) Base() uintptr { return uintptr(s.base) }
 // Pages returns the memory's current size in pages (a C call; not hot).
 func (s *SharedMemory) Pages() uint64 { return uint64(s.mem.GetPageSize()) }
 
+// Size returns the byte length the accessor currently admits.
+func (s *SharedMemory) Size() uint64 { return s.size.Load() }
+
+// growTo re-reads the page count when [off, off+n) lies past the admitted
+// size: the guest grew its memory. The base must not have moved (WasmEdge
+// reserves the whole range; the package note); if it did, nothing past the
+// old size is admitted.
+func (s *SharedMemory) growTo(end uint64) bool {
+	if end <= s.size.Load() {
+		return true
+	}
+	s.growMu.Lock()
+	defer s.growMu.Unlock()
+	if end <= s.size.Load() {
+		return true
+	}
+	if !s.BaseStable() {
+		return false
+	}
+	now := uint64(s.mem.GetPageSize()) * 65536
+	if now > s.size.Load() {
+		s.size.Store(now)
+	}
+	return end <= now
+}
+
 func (s *SharedMemory) word(off uint32, width uint64) unsafe.Pointer {
-	if uint64(off)+width > s.size || uint64(off)%width != 0 {
-		panic(fmt.Sprintf("wasmrt: shared-memory word %#x (width %d) outside %d bytes or unaligned", off, width, s.size))
+	if uint64(off)%width != 0 || !s.growTo(uint64(off)+width) {
+		panic(fmt.Sprintf("wasmrt: shared-memory word %#x (width %d) outside %d bytes or unaligned", off, width, s.size.Load()))
 	}
 	return unsafe.Add(s.base, uintptr(off))
 }
 
 // Check reports whether a word of the given width at off is addressable.
 func (s *SharedMemory) Check(off uint32, width uint64) error {
-	if uint64(off)+width > s.size || uint64(off)%width != 0 {
-		return fmt.Errorf("wasmrt: shared-memory word %#x (width %d) outside %d bytes or unaligned", off, width, s.size)
+	if uint64(off)%width != 0 || !s.growTo(uint64(off)+width) {
+		return fmt.Errorf("wasmrt: shared-memory word %#x (width %d) outside %d bytes or unaligned", off, width, s.size.Load())
+	}
+	return nil
+}
+
+// CheckRange reports whether [off, off+n) is addressable (any alignment).
+func (s *SharedMemory) CheckRange(off uint32, n uint64) error {
+	if !s.growTo(uint64(off) + n) {
+		return fmt.Errorf("wasmrt: shared-memory range %#x+%d outside %d bytes", off, n, s.size.Load())
 	}
 	return nil
 }
@@ -94,8 +135,24 @@ func (s *SharedMemory) Store32(off uint32, v uint32) {
 func (s *SharedMemory) Add32(off uint32, d uint32) uint32 {
 	return atomic.AddUint32((*uint32)(s.word(off, 4)), d)
 }
+
+// CAS32 is a sequentially consistent compare-and-swap of a guest u32.
+func (s *SharedMemory) CAS32(off uint32, old, new uint32) bool {
+	return atomic.CompareAndSwapUint32((*uint32)(s.word(off, 4)), old, new)
+}
 func (s *SharedMemory) Load64(off uint32) uint64 {
 	return atomic.LoadUint64((*uint64)(s.word(off, 8)))
+}
+func (s *SharedMemory) Store64(off uint32, v uint64) {
+	atomic.StoreUint64((*uint64)(s.word(off, 8)), v)
+}
+func (s *SharedMemory) Add64(off uint32, d uint64) uint64 {
+	return atomic.AddUint64((*uint64)(s.word(off, 8)), d)
+}
+
+// CAS64 is a sequentially consistent compare-and-swap of a guest u64.
+func (s *SharedMemory) CAS64(off uint32, old, new uint64) bool {
+	return atomic.CompareAndSwapUint64((*uint64)(s.word(off, 8)), old, new)
 }
 
 // ReadBytes copies n bytes at off out of shared memory.
@@ -103,13 +160,33 @@ func (s *SharedMemory) ReadBytes(off uint32, n int) []byte {
 	if n == 0 {
 		return nil
 	}
-	if n < 0 || uint64(off)+uint64(n) > s.size {
+	out := make([]byte, n)
+	s.ReadInto(off, out)
+	return out
+}
+
+// ReadInto copies len(dst) bytes at off into dst (plain loads: the caller
+// orders them after an acquire load of the word that published the bytes).
+func (s *SharedMemory) ReadInto(off uint32, dst []byte) {
+	if len(dst) == 0 {
+		return
+	}
+	if !s.growTo(uint64(off) + uint64(len(dst))) {
 		panic("wasmrt: shared-memory read out of range")
 	}
-	src := unsafe.Slice((*byte)(s.word(off, 1)), n)
-	out := make([]byte, n)
-	copy(out, src)
-	return out
+	copy(dst, unsafe.Slice((*byte)(unsafe.Add(s.base, uintptr(off))), len(dst)))
+}
+
+// WriteBytes copies src into shared memory at off (plain stores: the caller
+// publishes them with a release store of the word the guest acquires).
+func (s *SharedMemory) WriteBytes(off uint32, src []byte) {
+	if len(src) == 0 {
+		return
+	}
+	if !s.growTo(uint64(off) + uint64(len(src))) {
+		panic("wasmrt: shared-memory write out of range")
+	}
+	copy(unsafe.Slice((*byte)(unsafe.Add(s.base, uintptr(off))), len(src)), src)
 }
 
 // Watchdog watches service-thread heartbeats (design A21).

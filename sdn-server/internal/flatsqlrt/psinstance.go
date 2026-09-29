@@ -32,6 +32,17 @@ package flatsqlrt
 // sets `sleeping`, re-reads `seq`, and waits on `seq` with the value it read;
 // flatsql_ps_wake(addr, n) is memory.atomic.notify(addr, n). Every address is
 // naturally aligned and below the memory's initial size.
+//
+// THE ENGINE ABI (PSABIEngine, T6). The FlatSQL engine (flatsql-ps-threads.wasm,
+// psartifact.go) publishes its own layouts instead of layout v1:
+// flatsql_ps_layout (a writer: ring descriptor offsets, the slab pool, one
+// {seq u32, sleeping u32} doorbell pair per writer, each in its own object) and
+// flatsql_ps_reader_layout (a reader: the mailbox, one {doorbell u32, state
+// u32} pair per lane, the stop word). Its buffers come from flatsql_ps_alloc /
+// flatsql_ps_free, and it has no heartbeat words: a writer is stopped by
+// flatsql_ps_stop alone, a reader by its stop word and flatsql_ps_stop. The
+// raw layout bytes are handed to the router (storage/format2), which programs
+// rings and mailboxes against them.
 
 import (
 	"context"
@@ -61,8 +72,26 @@ type PSRole int32
 
 const (
 	PSRoleWriter PSRole = 1
-	PSRoleReader PSRole = 2
+	PSRoleReader PSRole = 2 // the engine's interactive reader
 	PSRoleBulk   PSRole = 3
+	// PSRoleSandbox is the engine's capped lane for untrusted SQL (A28).
+	PSRoleSandbox PSRole = 4
+)
+
+// PSABI is the guest contract an instance programs against.
+type PSABI int
+
+const (
+	// PSABIProbe is substrate layout v1 (the T5 probe, testdata/ps-probe.wasm).
+	PSABIProbe PSABI = iota
+	// PSABIEngine is the FlatSQL engine's own ABI (see the note above).
+	PSABIEngine
+)
+
+// Engine layout sizes (flatsql_ps.h: FlatsqlPsLayout, FlatsqlPsReaderLayout).
+const (
+	PSEngineLayoutBytes       = 624
+	PSEngineReaderLayoutBytes = 932
 )
 
 func (r PSRole) ioClass() HostIOClass {
@@ -141,6 +170,8 @@ func (l PSLayout) check(mem *wasmrt.SharedMemory) error {
 // PSConfig configures one instance.
 type PSConfig struct {
 	Role PSRole
+	// ABI selects the guest contract (default PSABIProbe).
+	ABI PSABI
 	// Wasm is the portable ps artifact; it runs only AOT-compiled.
 	Wasm          []byte
 	AOTCacheDir   string
@@ -208,6 +239,10 @@ type PSInstance struct {
 	layout   PSLayout
 	aotPath  string
 	started  int
+	// engineLayout is the raw flatsql_ps_layout / flatsql_ps_reader_layout
+	// block (PSABIEngine); doorbellAddrs are the words the doorbell rings.
+	engineLayout  []byte
+	doorbellAddrs []uint32
 
 	doorbell *wasmrt.Doorbell
 	poller   *wasmrt.CompletionPoller
@@ -274,14 +309,18 @@ func OpenPSInstance(cfg PSConfig) (*PSInstance, error) {
 		cleanup()
 		return nil, fmt.Errorf("%w: %v", ErrPSSubstrate, err)
 	}
-	p.mod, err = wasmrt.NewModule(aot,
+	opts := []wasmrt.Option{
 		wasmrt.WithWASI(),
 		wasmrt.WithMaxMemoryPages(cfg.MaxMemoryPages),
 		wasmrt.WithMaxThreads(cfg.MaxThreads),
 		wasmrt.WithServiceThreads(),
 		wasmrt.WithEnvInstaller(p.io.Install),
 		wasmrt.WithExecTimeout(cfg.ControlBudget),
-	)
+	}
+	if cfg.ABI == PSABIEngine {
+		opts = append(opts, wasmrt.WithMallocName("flatsql_ps_alloc"), wasmrt.WithFreeName("flatsql_ps_free"))
+	}
+	p.mod, err = wasmrt.NewModule(aot, opts...)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("%w: %v", ErrPSSubstrate, err)
@@ -382,6 +421,9 @@ func (p *PSInstance) control(name string, params ...interface{}) ([]interface{},
 }
 
 func (p *PSInstance) init() error {
+	if p.cfg.ABI == PSABIEngine {
+		return p.initEngine()
+	}
 	if _, err := p.control("_initialize"); err != nil {
 		return fmt.Errorf("flatsqlrt: ps _initialize: %w", err)
 	}
@@ -448,6 +490,155 @@ func (p *PSInstance) init() error {
 	}
 	return nil
 }
+
+// initEngine brings up a FlatSQL engine instance (PSABIEngine): init with the
+// config TLVs, read the role's layout, start the doorbell over its words and
+// the completion poller, then start the service threads.
+func (p *PSInstance) initEngine() error {
+	if _, err := p.control("_initialize"); err != nil {
+		return fmt.Errorf("flatsqlrt: ps _initialize: %w", err)
+	}
+	mem, err := p.mod.SharedMemory()
+	if err != nil {
+		return err
+	}
+	p.mem = mem
+	var ptr uint32
+	if len(p.cfg.InitConfig) > 0 {
+		if ptr, err = p.mod.Allocate(p.cfg.InitConfig); err != nil {
+			return fmt.Errorf("flatsqlrt: ps config: %w", err)
+		}
+	}
+	v, err := p.control("flatsql_ps_init", int32(p.cfg.Role), int32(ptr), int32(len(p.cfg.InitConfig)))
+	if ptr != 0 {
+		p.mod.Deallocate(ptr)
+	}
+	if err != nil {
+		return fmt.Errorf("flatsqlrt: flatsql_ps_init: %w", err)
+	}
+	if rc := wasmrt.ToInt32(v[0]); rc < 0 {
+		return fmt.Errorf("flatsqlrt: flatsql_ps_init (role %d) returned %d", p.cfg.Role, rc)
+	}
+	export, want := "flatsql_ps_layout", PSEngineLayoutBytes
+	if p.cfg.Role != PSRoleWriter {
+		export, want = "flatsql_ps_reader_layout", PSEngineReaderLayoutBytes
+	}
+	out, err := p.mod.AllocateSize(uint32(want))
+	if err != nil {
+		return err
+	}
+	v, err = p.control(export, int32(out))
+	if err != nil {
+		p.mod.Deallocate(out)
+		return fmt.Errorf("flatsqlrt: %s: %w", export, err)
+	}
+	if n := int(wasmrt.ToInt32(v[0])); n != want {
+		p.mod.Deallocate(out)
+		return fmt.Errorf("flatsqlrt: %s wrote %d bytes, want %d (engine ABI changed)", export, n, want)
+	}
+	raw := p.mem.ReadBytes(out, want)
+	p.mod.Deallocate(out)
+	if binary.LittleEndian.Uint32(raw) != 1 {
+		return fmt.Errorf("flatsqlrt: %s version %d, want 1", export, binary.LittleEndian.Uint32(raw))
+	}
+	p.engineLayout = raw
+	u := func(off int) uint32 { return binary.LittleEndian.Uint32(raw[off:]) }
+	if p.cfg.Role == PSRoleWriter {
+		// FlatsqlPsLayout: nWriters at 4; writerSeq[64] at 112, writerSleeping[64] at 368.
+		n := int(u(4))
+		if n < 1 || n > 64 {
+			return fmt.Errorf("flatsqlrt: engine reports %d writers", n)
+		}
+		for i := 0; i < n; i++ {
+			seq, sleeping := u(112+4*i), u(368+4*i)
+			if sleeping != seq+4 {
+				return fmt.Errorf("flatsqlrt: writer %d doorbell words %#x/%#x are not a pair", i, seq, sleeping)
+			}
+			p.doorbellAddrs = append(p.doorbellAddrs, seq)
+		}
+	} else {
+		// FlatsqlPsReaderLayout: nLanes at 4; stopWord at 160; laneDoorbell[64]
+		// at 164, laneState[64] at 420 (each lane's state follows its doorbell).
+		n := int(u(4))
+		if n < 1 || n > 64 {
+			return fmt.Errorf("flatsqlrt: engine reports %d lanes", n)
+		}
+		for i := 0; i < n; i++ {
+			db, st := u(164+4*i), u(420+4*i)
+			if st != db+4 {
+				return fmt.Errorf("flatsqlrt: lane %d doorbell words %#x/%#x are not a pair", i, db, st)
+			}
+			p.doorbellAddrs = append(p.doorbellAddrs, db)
+		}
+		p.layout.StopWord = u(160)
+		if err := p.mem.Check(p.layout.StopWord, 4); err != nil {
+			return err
+		}
+	}
+	p.layout.DoorbellCount = uint32(len(p.doorbellAddrs))
+	if p.doorbell, err = p.mod.StartDoorbellAt(p.mem, "flatsql_ps_wake", p.doorbellAddrs); err != nil {
+		return err
+	}
+	p.poller = wasmrt.StartCompletionPoller(p.mem, p.cfg.PollInterval)
+	v, err = p.control("flatsql_ps_start")
+	if err != nil {
+		p.doorbell.Close()
+		p.poller.Close()
+		return fmt.Errorf("flatsqlrt: flatsql_ps_start: %w", err)
+	}
+	if rc := wasmrt.ToInt32(v[0]); rc < 0 {
+		p.doorbell.Close()
+		p.poller.Close()
+		return fmt.Errorf("flatsqlrt: flatsql_ps_start returned %d", rc)
+	} else {
+		p.started = int(rc)
+	}
+	return nil
+}
+
+// EngineLayout returns the engine's raw layout block (PSABIEngine): the
+// writer's FlatsqlPsLayout or a reader's FlatsqlPsReaderLayout.
+func (p *PSInstance) EngineLayout() []byte { return p.engineLayout }
+
+// Memory returns the instance's shared-memory accessor. Callers bracket every
+// access with Enter/Exit (A22) so the memory is never released under them.
+func (p *PSInstance) Memory() *wasmrt.SharedMemory { return p.mem }
+
+// Enter registers a Go accessor of the instance's shared memory (A22); it
+// returns false once the instance is stopping. Every true is paired with Exit.
+func (p *PSInstance) Enter() bool { return p.enter() }
+
+// Exit ends an access Enter began.
+func (p *PSInstance) Exit() { p.exit() }
+
+// Wake advances doorbell i and always asks the doorbell thread for a notify
+// (the engine's lanes: the caller picks an idle lane from its state word).
+func (p *PSInstance) Wake(i int) error {
+	if !p.enter() {
+		return ErrPSNotLive
+	}
+	defer p.exit()
+	p.doorbell.Wake(i)
+	return nil
+}
+
+// WaitWord waits until the u64 at addr is at least target (a ring's
+// ackedRseq, any monotonic engine word), through the completion poller.
+func (p *PSInstance) WaitWord(ctx context.Context, addr uint32, target uint64) error {
+	if !p.enter() {
+		return ErrPSNotLive
+	}
+	p.exit()
+	err := p.poller.Wait(ctx, addr, target)
+	if errors.Is(err, wasmrt.ErrClosed) {
+		return ErrPSNotLive
+	}
+	return err
+}
+
+// Stopping is closed once Stop has begun (callers waiting on instance words
+// select on it).
+func (p *PSInstance) Stopping() <-chan struct{} { return p.stopped }
 
 // supervise turns a service-thread trap into a fenced failure (§15).
 func (p *PSInstance) supervise() {
@@ -625,13 +816,21 @@ func (p *PSInstance) shutdown() error {
 		p.watchdog.Stop()
 	}
 	deadline := p.cfg.StopDeadline
-	p.mem.Store32(p.layout.StopWord, 1)
+	if p.cfg.ABI != PSABIEngine || p.layout.StopWord != 0 {
+		p.mem.Store32(p.layout.StopWord, 1)
+	}
 	// Threads parked in a revoked host call (A21) must come back to see the
 	// stop word; from here on a revoked call fails at once instead of parking.
 	p.io.ReleaseParked()
-	_ = p.doorbell.NotifyAll(p.layout.StopWord)
+	if p.cfg.ABI != PSABIEngine || p.layout.StopWord != 0 {
+		_ = p.doorbell.NotifyAll(p.layout.StopWord)
+	}
 	for i := 0; i < int(p.layout.DoorbellCount); i++ {
-		_ = p.doorbell.NotifyAll(p.layout.DoorbellBase + uint32(8*i))
+		if p.cfg.ABI == PSABIEngine {
+			_ = p.doorbell.NotifyAll(p.doorbellAddrs[i])
+		} else {
+			_ = p.doorbell.NotifyAll(p.layout.DoorbellBase + uint32(8*i))
+		}
 	}
 	if !p.mod.Poisoned() {
 		_, _ = p.control("flatsql_ps_stop", float64(deadline.Milliseconds()))

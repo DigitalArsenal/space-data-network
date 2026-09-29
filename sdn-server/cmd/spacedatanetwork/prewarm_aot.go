@@ -20,6 +20,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spf13/cobra"
 )
 
@@ -159,6 +160,22 @@ func prewarmAOTArtifacts(out io.Writer, cacheDir string) error {
 		fmt.Fprintf(out, "  flatsql-link shim: SKIPPED (%v)\n", shimErr)
 	} else {
 		reportPrewarm(out, "flatsql-link shim", shimPath, shimPresent)
+	}
+
+	// The partition-store engine (store format 2, flatsql-ps-threads.wasm):
+	// a format-2 instance loads ONLY this THREADS + Interruptible artifact and
+	// refuses to start without it (design A30: no interpreter fallback). It
+	// is compiled on every host so format 2 can be selected without another
+	// prewarm; a compile failure fails the command only on a node that has
+	// selected format 2, and is reported everywhere else.
+	psPath, psPresent, psErr := flatsqlrt.PrewarmPSThreadsAOT(cacheDir)
+	if psErr != nil {
+		if format2.Selected() {
+			return fmt.Errorf("prewarm the partition-store engine (%s): %w", flatsqlrt.PSThreadsPackage, psErr)
+		}
+		fmt.Fprintf(out, "  partition-store engine (%s): SKIPPED (%v)\n", flatsqlrt.PSThreadsPackage, psErr)
+	} else {
+		reportPrewarm(out, "partition-store engine ("+flatsqlrt.PSThreadsPackage+")", psPath, psPresent)
 	}
 	return nil
 }

@@ -23,7 +23,8 @@
 struct sdn_doorbell {
   WasmEdge_ExecutorContext *exec;
   const WasmEdge_FunctionInstanceContext *wake;
-  uint32_t base, count;
+  uint32_t count;
+  uint32_t *addrs; // doorbell i's sequence word (what the guest waits on)
   _Atomic uint64_t *pending;
   pthread_mutex_t mu;
   pthread_cond_t cv;
@@ -70,7 +71,7 @@ static void *run(void *arg) {
         uint32_t b = (uint32_t)__builtin_ctzll(bits);
         bits &= bits - 1;
         uint32_t i = w * 64 + b;
-        if (invoke_wake(db, db->base + 8 * i, 1) == 0) {
+        if (invoke_wake(db, db->addrs[i], 1) == 0) {
           atomic_fetch_add_explicit(&db->notifies, 1, memory_order_relaxed);
         } else {
           atomic_fetch_add_explicit(&db->errors, 1, memory_order_relaxed);
@@ -80,27 +81,41 @@ static void *run(void *arg) {
   }
 }
 
-sdn_doorbell *sdn_doorbell_start(void *exec, const void *wake, uint32_t base, uint32_t count) {
-  if (!exec || !wake || count > 4096) return NULL;
+sdn_doorbell *sdn_doorbell_start_addrs(void *exec, const void *wake, const uint32_t *addrs, uint32_t count) {
+  if (!exec || !wake || (count && !addrs) || count > 4096) return NULL;
   sdn_doorbell *db = calloc(1, sizeof *db);
   if (!db) return NULL;
   db->pending = calloc(WORDS(count) ? WORDS(count) : 1, sizeof(uint64_t));
-  if (!db->pending) {
+  db->addrs = calloc(count ? count : 1, sizeof(uint32_t));
+  if (!db->pending || !db->addrs) {
+    free(db->pending);
+    free(db->addrs);
     free(db);
     return NULL;
   }
+  if (count) memcpy(db->addrs, addrs, count * sizeof(uint32_t));
   db->exec = (WasmEdge_ExecutorContext *)exec;
   db->wake = (const WasmEdge_FunctionInstanceContext *)wake;
-  db->base = base;
   db->count = count;
   pthread_mutex_init(&db->mu, NULL);
   pthread_cond_init(&db->cv, NULL);
   if (pthread_create(&db->thread, NULL, run, db) != 0) {
     free(db->pending);
+    free(db->addrs);
     free(db);
     return NULL;
   }
   db->started = 1;
+  return db;
+}
+
+sdn_doorbell *sdn_doorbell_start(void *exec, const void *wake, uint32_t base, uint32_t count) {
+  if (count > 4096) return NULL;
+  uint32_t *addrs = calloc(count ? count : 1, sizeof(uint32_t));
+  if (!addrs) return NULL;
+  for (uint32_t i = 0; i < count; i++) addrs[i] = base + 8 * i;
+  sdn_doorbell *db = sdn_doorbell_start_addrs(exec, wake, addrs, count);
+  free(addrs);
   return db;
 }
 
@@ -135,5 +150,6 @@ void sdn_doorbell_stop(sdn_doorbell *db) {
   pthread_mutex_destroy(&db->mu);
   pthread_cond_destroy(&db->cv);
   free(db->pending);
+  free(db->addrs);
   free(db);
 }

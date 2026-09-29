@@ -131,6 +131,28 @@ and update this block. Verify the package integrity and artifact SHA before
 copying `node_modules/flatsql/wasm/flatsql-wasi-noeh.wasm` here.
 The embedded sha256 is asserted by `TestEmbeddedArtifact`.
 
+## The partition-store engine (store format 2)
+
+`flatsql-ps-threads.wasm` is the partition-store engine of store format 2
+(stack design `docs/architecture/flatsql-partition-store.md`, T6), embedded
+by `psartifact.go` and run by `psinstance.go` (`PSABIEngine`) as separate
+writer and reader instances. It is the PUBLISHED release's file, byte for
+byte (published-deps law, design A34):
+
+- npm package: `flatsql@3.1.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.1.0.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.1.0` with provenance
+- gitHead: `6d5dbdc1002ba0db466e8cec4cb9c040c3d37923`
+- sha256: `075dd0a104694df39b2776c34dc6444be224442717967d9cea5dd9af15964379`
+  (the package's `wasm/integrity.json`; `TestEmbeddedPSThreadsArtifact`)
+- 2,237,656 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+
+It loads only as a THREADS + Interruptible AOT artifact (design A30: no
+interpreter fallback) under the prefix `fsqlps`. `spacedatanetwork
+prewarm-aot` compiles it on every host (a failure fails the command only when
+`SDN_STORE_FORMAT=2` is set); a format-2 daemon never compiles on the service
+path. Bumping the artifact therefore needs a `prewarm-aot` run, exactly like
+the legacy engine below.
+
 ## ABI conventions (mirrors `flatsql/wasm/standalone.js`)
 
 - WASI reactor: instantiate with WASI + the exception-handling proposal
