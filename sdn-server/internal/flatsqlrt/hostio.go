@@ -60,6 +60,13 @@ const (
 	ioFlagUnlink        int32 = 0x0080
 )
 
+// ioFlagCreateParents / ioFlagUnlinkIfUnused (declared in hostio_native.go)
+// ask for durable directory entries. The engine's arena compaction creates and
+// removes its temp stream with them: CREATE_PARENTS fsyncs the parent
+// directory when the open created the file, UNLINK_IF_UNUSED fsyncs it after
+// the unlink. Parent directories are not created here — the engine's paths
+// live in the store directory, which exists.
+
 // Status codes — must stay byte-identical to flatsql_io.h. Every one is
 // negative; a caller can never confuse a status with a byte count.
 const (
@@ -258,6 +265,11 @@ func (h *HostIO) Open(guestPath string, flags int32) int32 {
 		if err := os.Remove(full); err != nil {
 			return hostIOStatusFor(err)
 		}
+		if flags&ioFlagUnlinkIfUnused != 0 {
+			if err := syncDir(filepath.Dir(full)); err != nil {
+				return hostIOStatusFor(err)
+			}
+		}
 		return ioStatusSuccess
 	}
 
@@ -278,11 +290,31 @@ func (h *HostIO) Open(guestPath string, flags int32) int32 {
 		oflags |= os.O_TRUNC
 	}
 
-	// 0600: the store directory is 0700 and nothing outside this process has
-	// any business reading a database page.
-	f, err := os.OpenFile(full, oflags, 0o600)
+	// A new directory entry is made durable only when asked (CREATE_PARENTS):
+	// whether this open creates the file is decided by trying O_EXCL first.
+	created := false
+	var f *os.File
+	var err error
+	if flags&ioFlagCreateParents != 0 && flags&ioFlagCreate != 0 && flags&ioFlagExcl == 0 {
+		f, err = os.OpenFile(full, oflags|os.O_EXCL, 0o600)
+		if err == nil {
+			created = true
+		} else if os.IsExist(err) {
+			f, err = os.OpenFile(full, oflags, 0o600)
+		}
+	} else {
+		// 0600: the store directory is 0700 and nothing outside this process
+		// has any business reading a database page.
+		f, err = os.OpenFile(full, oflags, 0o600)
+	}
 	if err != nil {
 		return hostIOStatusFor(err)
+	}
+	if created {
+		if err := syncDir(filepath.Dir(full)); err != nil {
+			f.Close()
+			return hostIOStatusFor(err)
+		}
 	}
 
 	h.mu.Lock()
@@ -609,4 +641,15 @@ func refusingHostFuncs() []wasmrt.HostFunc {
 		{Name: "flatsql_io_size", Func: refuseF64, Params: []*wasmedge.ValType{i32()}, Returns: []*wasmedge.ValType{f64()}},
 		{Name: "flatsql_io_close", Func: refuseI32, Params: []*wasmedge.ValType{i32()}, Returns: []*wasmedge.ValType{i32()}},
 	}
+}
+
+// syncDir fsyncs a directory so an entry added to or removed from it survives
+// a power loss.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }

@@ -12,16 +12,31 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 ## Embedded artifact provenance
 
 `flatsql-wasi-noeh.wasm` is the **no-exceptions** WASI build (CMake target
-`flatsql_wasi_noeh`, `-fignore-exceptions`), built from `flatsql@2.0.3` **plus
-the WAL enablement** (see "journal_mode=WAL" below):
+`flatsql_wasi_noeh`, `-fignore-exceptions`), the PUBLISHED release's file, byte
+for byte (published-deps law):
 
-- source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
-- flatsql commit: `97ba3bb622a839843f1ce9e9d768f98f4d03d575` (npm `gitHead` of 2.0.3; "Search complete FlatBuffers using validated binary schemas")
-- npm package baseline: `https://registry.npmjs.org/flatsql/-/flatsql-2.0.3.tgz`
-- local change on top: heap-backed `xShm*` in `cpp/src/flatsql_vfs.cpp` and
-  `SQLITE_OMIT_WAL` dropped from the two wasi CMake targets
-- sha256: `19ba179354064a3e9e448548ff974f045649e469e2ede00836383df88ca1c3bc`
-- previous (2.0.3 stock, no WAL): `e1b8b120c2368a7b8877520efc4cb4dec0ef2a5e2bbae2300dce56e5598e955a`
+- npm package: `flatsql@3.4.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.4.0.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.4.0` with provenance
+- gitHead: `14a307555c21d7c28342d664d13cb3f04a8a74b9`
+- sha256: `8f11fd49ee2e6961b9c1c22dd891d5a6645d0faf481f815408c0f1f5d3a385ab`
+  (the package's `wasm/integrity.json`; `TestEmbeddedArtifact`)
+- 2,154,784 bytes; emscripten/emsdk 4.0.23, FlatBuffers 8af3053e
+- what it adds over the previous embed: record-arena compaction at runtime
+  (`flatsql_compact_arena`, `flatsql_arena_stat`, `arena.go`; flatsql
+  docs/STORAGE-DURABILITY.md §6.4.2), a partition's vtab showing only its own
+  rows, idempotent index inserts, and everything flatsql released since 2.0.3.
+  WAL (below) is in the release itself since 3.4.0.
+- previous: `flatsql@2.0.3` plus the WAL commit `51471e7` (local build), sha256
+  `19ba179354064a3e9e448548ff974f045649e469e2ede00836383df88ca1c3bc`. On a copy
+  of a host-02-sized store the two answer identically: every partition's rows
+  and bytes, the ledger, the partition map and the unified views
+  (`TestEngineUpgradeAnswersIdenticallyOnHost02Fixture`).
+
+A store opened by this engine that compacted its arena writes engine state
+`format_version` 2 (sequence runs); the previous engine answers -2 on it and
+re-derives its index from the stream, renumbering the rows, and the warm-boot
+residency reconcile re-mirrors the window (by design; not measured). Rolling
+back after a compaction costs a re-derivation and a window refill, not data.
 
 ### journal_mode=WAL
 

@@ -278,10 +278,14 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 		log.Infof("FlatSQL boot phase \"boot: probe control database (second engine, schema read)\" took %s",
 			time.Since(probeStart).Round(time.Millisecond))
 
-		engine, err := flatsqlrt.New(
+		engineOpts := []flatsqlrt.Option{
 			flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()),
 			flatsqlrt.WithFileIORoot(basePath),
-		)
+		}
+		if engineWasmOverride != nil {
+			engineOpts = append(engineOpts, flatsqlrt.WithWasmBytes(engineWasmOverride))
+		}
+		engine, err := flatsqlrt.New(engineOpts...)
 		if err != nil {
 			return nil, nil, bootMark{}, engineBootPlan{}, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 		}
@@ -365,6 +369,11 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 // the engine's per-call budget. The record state is untouched on disk; the
 // open can simply be tried again once the host is not starved.
 var errEngineOpenTimedOut = errors.New("engine ran out of time opening the control database (record state kept)")
+
+// engineWasmOverride replaces the embedded engine for the store's control
+// database (tests: the upgrade-parity check opens the same store on the
+// previous engine and on this one).
+var engineWasmOverride []byte
 
 // engineOpenAttemptHook runs before each open attempt with its fresh runtime
 // (tests).
@@ -511,11 +520,18 @@ func fileExists(path string) bool {
 // batches (reconcileEngineResidencyLocked), so a warm open is the cheap path
 // until the dead bytes themselves are the problem — the arena budget.
 func engineArenaNeedsCompaction(db *flatsqlrt.Database, dbPath string, engineRecords int) bool {
-	if int64(engineStreamSize(dbPath)) <= engineArenaCompactBytes {
+	if !engineBootDiscardsMostlyDeadArena || int64(engineStreamSize(dbPath)) <= engineArenaCompactBytes {
 		return false
 	}
 	return engineArenaMostlyDead(db, engineRecords)
 }
+
+// engineBootDiscardsMostlyDeadArena turns the boot's discard off, so a warm
+// open keeps a mostly-dead arena for the runtime compaction to shrink
+// (engine_arena_compaction.go). On by default: the discard is the fallback
+// for an arena no runtime compaction kept small. The host-02 fixture
+// measurement turns it off to compact the real arena at runtime.
+var engineBootDiscardsMostlyDeadArena = true
 
 // engineArenaMostlyDead reports whether the engine's persisted rows outnumber
 // the residency ledger's live rows by more than the live rows themselves,
@@ -569,6 +585,12 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	db, err := engine.OpenDatabase(schemaText, "sdn-control", dbPath, flatsqlrt.JournalWAL)
 	if err != nil {
 		return nil, bootMark{}, engineRecordState{}, err
+	}
+	// The arena's allocation stays inside the mirror budget: without a cap it
+	// doubles (512 MiB -> 1 GiB at the first byte past 512 MiB). An eighth of
+	// headroom keeps the engine's own refusal behind the budget's.
+	if err := db.SetArenaLimit(engineArenaBudgetBytes + engineArenaBudgetBytes/8); err != nil && !errors.Is(err, flatsqlrt.ErrArenaStatUnsupported) {
+		log.Warnf("FlatSQL engine: could not cap the record arena at its budget: %v", err)
 	}
 	// WAL AT synchronous=NORMAL (the pragma is below, after prepare). This IS a
 	// durability trade, and it was made on the owner's instruction of
@@ -1210,6 +1232,9 @@ func (s *FlatSQLStore) checkpointEngine() error {
 	if !s.controlDBDurable {
 		return nil
 	}
+	// A compaction swapped in a write transaction is persisted in bounded
+	// steps first; the flush below would otherwise persist it in one hold.
+	s.persistPendingArenaCompaction("before a checkpoint")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.checkpointEngineLocked()
