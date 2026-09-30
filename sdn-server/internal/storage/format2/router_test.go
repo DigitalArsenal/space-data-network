@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	flatbuffers "github.com/google/flatbuffers/go"
 )
 
 // typeHeadLabelForm reads a type head's nLabels word straight from the file:
@@ -416,5 +418,39 @@ func TestWaitLabelsEndsAtTheDeadline(t *testing.T) {
 	}
 	if _, err := waitLabels(context.Background(), nil, time.Now().Add(time.Hour), hi7, func() (uint64, bool, error) { return 0, false, ErrStopped }); err != ErrStopped {
 		t.Fatalf("closed reader: %v", err)
+	}
+}
+
+// B1 (cutover rehearsal): a write's source URL, content key and producer
+// are kept in each copy's RecordAttr with its source timestamp (on
+// 98fdd37e9 the router dropped the URL, so a format-2 store never held it).
+// A tag without a URL keeps the engine's golden bytes (TestRecordAttrMatches
+// TheEngineGoldenBytes).
+func TestRecordAttrKeepsTheWritesProvenance(t *testing.T) {
+	tags := &Tags{ProviderID: "space-data-network-02", SourceName: "celestrak-satcat", SourceURL: "https://celestrak.org/pub/satcat.txt",
+		BatchID: "72257948", ContentKeyID: "public", ProducerPeerID: "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U",
+		ProducerPublicKey: "public"}
+	buf := BuildRecordAttr(RecordAttr{PeerID: []byte("source:celestrak"), SourceTimestamp: 1790000000, Tag: tags.sourceTag()})
+	if !flatbuffers.BufferHasIdentifier(buf, "FSRA") {
+		t.Fatal("no FSRA identifier")
+	}
+	root := flatbuffers.Table{Bytes: buf, Pos: flatbuffers.GetUOffsetT(buf)}
+	field := func(tab flatbuffers.Table, slot int) flatbuffers.UOffsetT {
+		return flatbuffers.UOffsetT(tab.Offset(flatbuffers.VOffsetT(4 + 2*slot)))
+	}
+	if o := field(root, 3); o == 0 || root.GetInt64(root.Pos+o) != 1790000000 {
+		t.Fatalf("source_timestamp not kept")
+	}
+	o := field(root, 5)
+	if o == 0 || root.VectorLen(o) != 1 {
+		t.Fatal("no tag")
+	}
+	tag := flatbuffers.Table{Bytes: buf, Pos: root.Indirect(root.Vector(o))}
+	for slot, want := range []string{tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID,
+		tags.ProducerPeerID, tags.ProducerPublicKey} {
+		o := field(tag, slot)
+		if o == 0 || string(tag.ByteVector(tag.Pos+o)) != want {
+			t.Errorf("SourceTag slot %d: want %q", slot, want)
+		}
 	}
 }

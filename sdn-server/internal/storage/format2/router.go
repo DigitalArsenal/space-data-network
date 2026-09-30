@@ -33,8 +33,8 @@ func (t *Tags) sourceTag() SourceTag {
 	if t == nil {
 		return SourceTag{}
 	}
-	return SourceTag{ProviderID: t.ProviderID, SourceName: t.SourceName, BatchID: t.BatchID, ContentKeyID: t.ContentKeyID,
-		ProducerPeerID: t.ProducerPeerID, ProducerPublicKey: t.ProducerPublicKey}
+	return SourceTag{ProviderID: t.ProviderID, SourceName: t.SourceName, SourceURL: t.SourceURL, BatchID: t.BatchID,
+		ContentKeyID: t.ContentKeyID, ProducerPeerID: t.ProducerPeerID, ProducerPublicKey: t.ProducerPublicKey}
 }
 
 func (t *Tags) hasLicence() bool {
