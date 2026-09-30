@@ -77,7 +77,7 @@ func (q WindowQuery) byBatch() bool {
 // twoPhase reports a window the engine cannot emit in its order without
 // sorting every match: text CID order under conditions (the engine emits
 // text CID order from the type's cid catalog, or a partition's CID
-// postings, only for the whole table: flatsql PARTITION-STORE.md §37), and
+// postings, only for the whole table: flatsql PARTITION-STORE.md §38), and
 // the default order on a tag plan (provider or batch postings are in
 // arrival order).
 func (q WindowQuery) twoPhase() bool {
