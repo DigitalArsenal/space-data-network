@@ -26,6 +26,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -2930,23 +2931,85 @@ func (s *FlatSQLStore) f2QuerySandboxedStream(sql string, caps flatsqlrt.Sandbox
 		return nil, err
 	}
 	defer cancel()
-	res, err := s.ps.SandboxQuery(ctx, req)
+	req.Flags |= format2.ReqSandbox
+	// The frames are appended as the rows decode (the cells are valid during
+	// the callback only): no row is materialized, no cell copied twice.
+	var payload []byte
+	var names []string
+	rows, frames := 0, 0
+	var notStream bool
+	run := func(r *format2.Reader) error {
+		payload, rows, frames, notStream = payload[:0], 0, 0, false
+		st, err := r.Submit(ctx, req)
+		if err != nil {
+			return err
+		}
+		dec := format2.RB1Decoder{OnRow: func(row []format2.Cell) error {
+			for _, c := range row {
+				if c.Type != format2.CellBlob {
+					notStream = true
+					return errF2NotStream
+				}
+				payload = binary.LittleEndian.AppendUint32(payload, uint32(len(c.B)))
+				payload = append(payload, c.B...)
+				if len(c.B) > 0 {
+					frames++
+				}
+			}
+			rows++
+			return nil
+		}}
+		buf := make([]byte, 256<<10)
+		for {
+			n, err := st.Read(ctx, buf)
+			if n > 0 {
+				if ferr := dec.Feed(buf[:n]); ferr != nil {
+					st.Close()
+					return ferr
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				st.Close()
+				return err
+			}
+		}
+		names = dec.Names
+		if o := st.Finish(); o.Status != 0 {
+			return &format2.StatusError{Status: o.Status, Msg: o.Err}
+		}
+		return nil
+	}
+	err = run(s.ps.Interactive())
+	if format2.IsStatus(err, format2.StatusNeedsBulk) && rows == 0 && !notStream {
+		err = run(s.ps.Sandbox())
+	}
+	if notStream {
+		return nil, &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeNotRecordStream,
+			Message: "sandbox: not-a-record-stream: raw response stream queries must return only BLOB cells (projection results are JSON-only — request format=json)"}
+	}
 	if err != nil {
 		return nil, f2SandboxError(err)
 	}
-	if err := f2RowCap(res, caps); err != nil {
-		return nil, err
+	if caps.MaxRows > 0 && uint64(rows) > caps.MaxRows {
+		return nil, &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeRowCap,
+			Message: fmt.Sprintf("sandbox: row-cap: result exceeds %d rows", caps.MaxRows)}
 	}
-	stream, err := f2RawStream(res)
-	if err != nil {
-		return nil, err
+	if payload == nil {
+		payload = []byte{}
 	}
-	if caps.MaxBytes > 0 && uint64(len(stream.Bytes)) > caps.MaxBytes {
+	if caps.MaxBytes > 0 && uint64(len(payload)) > caps.MaxBytes {
 		return nil, &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeByteCap,
 			Message: fmt.Sprintf("sandbox: byte-cap: result exceeds %d bytes", caps.MaxBytes)}
 	}
-	return stream, nil
+	return &flatsqlrt.RawStream{Bytes: payload, Rows: rows, Columns: len(names),
+		FNV1a64: flatsqlrt.FNV1a64WordFolded(payload), FrameCount: frames}, nil
 }
+
+// errF2NotStream ends a record-stream statement at its first non-BLOB cell.
+var errF2NotStream = errors.New("format2: not a record stream")
 
 // f2JSONEscape is the legacy engine's JSON string escape.
 func f2JSONEscape(out []byte, s []byte) []byte {
