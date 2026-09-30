@@ -25,6 +25,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
 // flowAOTPrefix scopes a flow's AOT artifact to that flow.
@@ -43,7 +44,23 @@ import (
 // the reference are folded to underscores so the "-" between prefix and hash
 // stays an unambiguous boundary, and a truncated-name digest keeps two long
 // references from colliding.
+//
+// The trailing "_"+tag segment carries wasmrt.SubstrateReport.Tag(): a flow is
+// AOT-compiled by the same linked WasmEdge as the partition store
+// (flatsqlrt.threadedAOTKey does the same thing for "fsqlps-intr-<Tag>"), so a
+// runtime fix that changes Tag() (e.g. 04-atomic-memarg-offset, "sdn2"->"sdn3")
+// must change this key too, or a host that already has a pre-fix artifact
+// cached keeps loading it forever under the new, patched runtime. Appended
+// with "_", not "-", so it stays inside the underscore-only segment
+// TestFlowAOTPrefixIsPerFlow requires after the prefix+"-" boundary.
 func flowAOTPrefix(flowRef string) string {
+	return flowAOTPrefixForTag(wasmrt.SubstrateStatus().Tag(), flowRef)
+}
+
+// flowAOTPrefixForTag is flowAOTPrefix with the substrate tag as an explicit
+// argument, so a test can prove the key changes when the tag does without
+// depending on the process-wide wasmrt.SubstrateStatus() singleton.
+func flowAOTPrefixForTag(tag, flowRef string) string {
 	sanitized := strings.Map(func(r rune) rune {
 		switch {
 		case r >= '0' && r <= '9', r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '.':
@@ -56,7 +73,7 @@ func flowAOTPrefix(flowRef string) string {
 		sanitized = sanitized[:48]
 	}
 	sum := sha256.Sum256([]byte(flowRef))
-	return flowAOTCachePrefix + "-" + sanitized + "_" + hex.EncodeToString(sum[:4])
+	return flowAOTCachePrefix + "-" + sanitized + "_" + hex.EncodeToString(sum[:4]) + "_" + tag
 }
 
 // PrewarmFlowAOT compiles one flow artifact into cacheDir and reports where it

@@ -14,12 +14,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
 // The embedded flatsql_link shim must stay byte-identical to the SDK's
@@ -37,6 +39,32 @@ func TestLinkShimBytesMatchSDK(t *testing.T) {
 	// flatsql.memory) — and nothing else.
 	if !wasmImportsModule(flatsqlLinkShimWasm, "flatsql") {
 		t.Fatal("shim does not import the flatsql module")
+	}
+}
+
+// TestLinkShimAOTCachePrefixChangesWithSubstrateTag is the flatsqllink half of
+// the flowmount-key/flatsqllink-key gap the coordinator found during the
+// beta.81 rollout: prewarm-aot reused pre-04-atomic-memarg-offset artifacts
+// (key "we0.16.4-x86-64-v3" only) because neither key carried
+// wasmrt.SubstrateReport.Tag(), unlike the partition store's
+// "fsqlps-intr-<Tag>" (flatsqlrt.threadedAOTKey). A threaded flow linked to
+// the engine loads this shim AOT too, so its key must be just as
+// tag-sensitive, or a host that already cached a pre-fix shim keeps loading
+// the broken atomics forever under the newly patched runtime.
+func TestLinkShimAOTCachePrefixChangesWithSubstrateTag(t *testing.T) {
+	sdn2 := linkShimAOTCachePrefixForTag("sdn2")
+	sdn3 := linkShimAOTCachePrefixForTag("sdn3")
+	if sdn2 == sdn3 {
+		t.Fatalf("link-shim AOT cache prefix did not change between substrate tags sdn2/sdn3: %q", sdn2)
+	}
+	if !strings.Contains(sdn2, "sdn2") || !strings.Contains(sdn3, "sdn3") {
+		t.Fatalf("link-shim AOT cache prefix does not carry the substrate tag: %q / %q", sdn2, sdn3)
+	}
+	// linkShimAOTCachePrefix() (the live entry point) must itself route
+	// through the tag, matching whatever wasmrt.SubstrateStatus().Tag()
+	// reports on this runtime.
+	if got, want := linkShimAOTCachePrefix(), linkShimAOTCachePrefixForTag(wasmrt.SubstrateStatus().Tag()); got != want {
+		t.Fatalf("linkShimAOTCachePrefix() = %q, want %q (live substrate tag)", got, want)
 	}
 }
 
