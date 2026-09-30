@@ -58,6 +58,14 @@ var f2LaneCacheTTL = time.Second
 type f2LaneCache struct {
 	mu   sync.Mutex
 	snap *f2LaneSnapshot
+	// The tuple index of the record reads, built from snapshot tuplesFrom.
+	// A write does not drop it (terabyte audit B7: a record read after a
+	// write rebuilt flatsql_lanes over every partition): a write only adds
+	// lanes, so it is rebuilt when a row's tuple is missing and a newer
+	// snapshot may hold it.
+	tuples     map[f2TupleKey][2]string
+	ambiguous  map[f2TupleKey]bool
+	tuplesFrom *f2LaneSnapshot
 }
 
 // invalidate drops the snapshot: a write just moved the lanes, and this
@@ -88,6 +96,13 @@ func (s *FlatSQLStore) f2Lanes(ctx context.Context) ([]format2.LaneCounter, erro
 type f2TupleKey struct{ producer, typ, provider, source, batch string }
 
 func f2TupleIndex(lanes []format2.LaneCounter) map[f2TupleKey][2]string {
+	out, _ := f2TupleIndexAmbiguous(lanes)
+	return out
+}
+
+// f2TupleIndexAmbiguous is f2TupleIndex and the keys it leaves out because
+// more than one tuple matches.
+func f2TupleIndexAmbiguous(lanes []format2.LaneCounter) (map[f2TupleKey][2]string, map[f2TupleKey]bool) {
 	out := map[f2TupleKey][2]string{}
 	ambiguous := map[f2TupleKey]bool{}
 	for _, l := range lanes {
@@ -104,7 +119,41 @@ func f2TupleIndex(lanes []format2.LaneCounter) map[f2TupleKey][2]string {
 	for k := range ambiguous {
 		delete(out, k)
 	}
-	return out
+	return out, ambiguous
+}
+
+// f2TuplesFor returns the tuple index holding keys: the index kept across
+// writes, rebuilt only when a key is in neither it nor its ambiguous set and
+// the lane snapshot is newer than the one it was built from (a write, or
+// the snapshot's TTL, dropped that one).
+func (s *FlatSQLStore) f2TuplesFor(ctx context.Context, keys []f2TupleKey) (map[f2TupleKey][2]string, error) {
+	c := &s.f2.lanes
+	c.mu.Lock()
+	idx, amb, from, cur := c.tuples, c.ambiguous, c.tuplesFrom, c.snap
+	c.mu.Unlock()
+	if idx != nil {
+		missing := false
+		for _, k := range keys {
+			if _, ok := idx[k]; !ok && !amb[k] {
+				missing = true
+				break
+			}
+		}
+		if !missing || (cur == from && cur != nil && time.Since(cur.at) < f2LaneCacheTTL) {
+			return idx, nil
+		}
+	}
+	lanes, err := s.f2Lanes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.tuples == nil || c.tuplesFrom != c.snap {
+		c.tuples, c.ambiguous = f2TupleIndexAmbiguous(lanes)
+		c.tuplesFrom = c.snap
+	}
+	return c.tuples, nil
 }
 
 // ---- records -------------------------------------------------------------------------
@@ -139,15 +188,17 @@ func (s *FlatSQLStore) f2Record(schemaName string, r format2.Rec, hydrate bool, 
 }
 
 func (s *FlatSQLStore) f2Records(ctx context.Context, schemaName string, rows [][]format2.Cell, hydrate bool) ([]*Record, error) {
-	var tuples map[f2TupleKey][2]string
+	var keys []f2TupleKey
 	for _, row := range rows {
 		if row[8].String() != "" || row[9].String() != "" {
-			lanes, err := s.f2Lanes(ctx)
-			if err != nil {
-				return nil, err
-			}
-			tuples = f2TupleIndex(lanes)
-			break
+			keys = append(keys, f2TupleKey{row[11].String(), format2.TypeName(schemaName), row[9].String(), row[8].String(), row[10].String()})
+		}
+	}
+	var tuples map[f2TupleKey][2]string
+	if len(keys) > 0 {
+		var err error
+		if tuples, err = s.f2TuplesFor(ctx, keys); err != nil {
+			return nil, err
 		}
 	}
 	out := make([]*Record, 0, len(rows))
@@ -519,11 +570,14 @@ type f2CountEntry struct {
 	n     int64
 }
 
-// f2PartitionsMark is the state of a type's partitions (commit sequence and
-// pseq high-water mark of each): it moves with every append, retag, tomb
-// and label.
+// f2PartitionsMark is the state of a type: its head's commit sequence (it
+// moves with every label, so with every change a type-level read can see),
+// and its partitions' count and summed commit sequences (they move with
+// every append, retag and tomb this node acked). O(1) from the head reader's
+// totals (terabyte audit B8); an engine-side commit shows in the type head
+// once labeled, and in the totals within one sweep period.
 func (s *FlatSQLStore) f2PartitionsMark(schema string) (string, error) {
-	parts, err := s.ps.PartitionsOf(schema)
+	tt, err := s.ps.TypeTotalsOf(schema)
 	if err != nil {
 		return "", err
 	}
@@ -531,12 +585,7 @@ func (s *FlatSQLStore) f2PartitionsMark(schema string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d", tc.CommitSeq)
-	for _, p := range parts {
-		fmt.Fprintf(&b, ";%d:%d:%d", p.PID, p.CommitSeq, p.PseqHi)
-	}
-	return b.String(), nil
+	return fmt.Sprintf("%d;%d;%d", tc.CommitSeq, tt.Partitions, tt.CommitSeqs), nil
 }
 
 // f2WindowCount counts a window's records (its conditions; distinct CIDs
@@ -566,19 +615,22 @@ func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery)
 	if ok && e.heads == mark {
 		return e.n, nil
 	}
-	seen := map[string]bool{}
+	// Every target's CIDs stream into one set held against the store's
+	// window budget (terabyte audit M8); past it the count fails with
+	// format2.ErrWindowTooLarge, never grows the heap with the store.
+	seen := s.ps.NewCIDSet()
+	defer seen.Release()
 	for _, t := range targets {
 		sq := q
 		sq.Table = t.table
-		cids, err := s.ps.WindowCIDs(ctx, sq)
-		if err != nil {
+		if err := s.ps.AddWindowCIDs(ctx, sq, seen); err != nil {
+			if errors.Is(err, format2.ErrWindowTooLarge) {
+				return 0, fmt.Errorf("count %s records: %w; narrow the window (a batch, a time range)", q.Schema, err)
+			}
 			return 0, err
 		}
-		for _, c := range cids {
-			seen[c] = true
-		}
 	}
-	n := int64(len(seen))
+	n := int64(seen.Len())
 	c.mu.Lock()
 	if c.m == nil || len(c.m) >= 256 {
 		c.m = map[string]f2CountEntry{}
@@ -1479,13 +1531,13 @@ func (s *FlatSQLStore) f2RawRecordHead(filter RawRecordQuery) (RawRecordHead, er
 	case f.nothing:
 	case len(f.conds) == 0 && f.tag.empty():
 		head.TotalBytes = tc.FirstLiveBytes
-		parts, err := s.ps.PartitionsOf(filter.SchemaName)
+		// The type's newest arrival from the head reader's totals (O(1),
+		// terabyte audit B8).
+		tt, err := s.ps.TypeTotalsOf(filter.SchemaName)
 		if err != nil {
 			return RawRecordHead{}, err
 		}
-		for _, p := range parts {
-			head.MaxRecordTimestampUnix = max(head.MaxRecordTimestampUnix, format2.EpochSeconds(p.LatestArrival))
-		}
+		head.MaxRecordTimestampUnix = max(head.MaxRecordTimestampUnix, format2.EpochSeconds(tt.LatestArrival))
 		head.MaxCreatedAtUnix = head.MaxRecordTimestampUnix
 	case len(f.conds) == 0:
 		lanes, err := s.f2Lanes(ctx)
@@ -2104,20 +2156,16 @@ func (s *FlatSQLStore) f2DataSummary() (*DataSummary, error) {
 		sources[k].Count += l.Count
 		sources[k].TotalBytes += l.Bytes
 	}
-	parts, err := s.ps.Partitions(ctx)
+	// Per type from the head reader's totals: no partition is copied
+	// (terabyte audit B8).
+	totals, err := s.ps.TypeTotals(ctx)
 	if err != nil {
 		return nil, err
 	}
 	partSchemas := map[string]*DataSchemaSummary{}
-	for _, p := range parts {
-		schema := p.Type + ".fbs"
-		ps := partSchemas[schema]
-		if ps == nil {
-			ps = &DataSchemaSummary{SchemaName: schema}
-			partSchemas[schema] = ps
-		}
-		ps.Count += p.Live
-		ps.TotalBytes += p.LiveBytes
+	for typ, tt := range totals {
+		schema := typ + ".fbs"
+		partSchemas[schema] = &DataSchemaSummary{SchemaName: schema, Count: tt.Live, TotalBytes: tt.LiveBytes}
 	}
 	var names []string
 	for n := range laneSchemas {
@@ -2528,15 +2576,24 @@ func (s *FlatSQLStore) f2GetSourceTags(schemaName, cid string) (SourceTags, erro
 	if err != nil {
 		return SourceTags{}, err
 	}
-	parts, err := s.ps.PartitionsOf(schemaName)
-	if err != nil {
-		return SourceTags{}, err
-	}
+	// The copy's partition from its lanes and one head (terabyte audit B8),
+	// not every partition's counters.
+	typ := format2.TypeName(schemaName)
 	var sqlName string
 	var pid int64 = -1
-	for _, p := range parts {
-		if p.Producer == r.Producer {
-			sqlName, pid = p.SQLName, p.PID
+	for _, l := range lanes {
+		if l.Producer == r.Producer && l.Type == typ {
+			pid = l.PID
+			break
+		}
+	}
+	if pid > 0 {
+		pc, ok, err := s.ps.PartitionByPID(pid)
+		if err != nil {
+			return SourceTags{}, err
+		}
+		if ok {
+			sqlName = pc.SQLName
 		}
 	}
 	var mine []format2.LaneCounter
@@ -2604,22 +2661,19 @@ func (s *FlatSQLStore) f2PublicationSetFingerprint(schemaName, providerID, sourc
 	if err != nil {
 		return "", 0, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 	}
-	seen := map[string]bool{}
+	// One set held against the store's window budget (terabyte audit M8):
+	// a set past it fails with format2.ErrWindowTooLarge (the publication
+	// is refused, the heap does not grow with the store).
+	seen := s.ps.NewCIDSet()
+	defer seen.Release()
 	for _, t := range targets {
 		sq := q
 		sq.Table = t.table
-		cids, err := s.ps.WindowCIDs(ctx, sq)
-		if err != nil {
+		if err := s.ps.AddWindowCIDs(ctx, sq, seen); err != nil {
 			return "", 0, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 		}
-		for _, c := range cids {
-			seen[c] = true
-		}
 	}
-	sorted := make([]string, 0, len(seen))
-	for c := range seen {
-		sorted = append(sorted, c)
-	}
+	sorted := seen.Texts()
 	sort.Strings(sorted)
 	hash := sha256.New()
 	fmt.Fprintf(hash, "sdn-dataset-publication-set-v1\x00%s\x00%s\x00%s\x00%s\n", schemaName, providerID, sourceName, batchID)
