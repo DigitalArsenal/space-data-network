@@ -154,19 +154,20 @@ by `psartifact.go` and run by `psinstance.go` (`PSABIEngine`) as separate
 writer and reader instances. It is the PUBLISHED release's file, byte for
 byte (published-deps law, design A34):
 
-- npm package: `flatsql@3.5.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.5.0.tgz`),
-  published by flatsql's `npm-publish.yml` from tag `v3.5.0` with provenance
-- gitHead: `d566293a75df5ecfd9e45dcb2e58c5323a840bc8`
-- sha256: `787adbcccf52a9e9fe2767d6679b6f2d94a4ead41985bf2a7bb0855f821abc72`
+- npm package: `flatsql@3.5.1` (`https://registry.npmjs.org/flatsql/-/flatsql-3.5.1.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.5.1` with provenance
+- gitHead: `965b16b1d48cf53257879ceac41dfadd2e39b359`
+- sha256: `3a215da45a53f3a7016257429c392720e728caf850d3a1213dc501bfb5844359`
   (the package's `wasm/integrity.json`; `TestEmbeddedPSThreadsArtifact`)
-- 2,484,927 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
-- 3.5.0 adds the query-gap plans the format-2 reads use (flatsql
-  PARTITION-STORE.md §39: text CID order from the cid catalog, the
-  `_asof`/`_forward`/`_nearest` per-object point plan and `_object`, the
-  sandbox window from arrivals, tag conditions on every copy) and accepts
-  records stored with their own size prefix; `flatsql_ps_stats` returns 36
-  entries since 3.3.0 (`Writer.Stats`)
-- previous: `flatsql@3.2.0`, sha256 `a90d9488187e527bccd3f02ce3f68be6443690bc1a2ee6c6786c64c907376e36`
+- 2,485,719 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 3.5.1 creates a fresh store in a crash-safe order (A5: the registry files,
+  MIGRATED, then STORE, whose one torn state the engine finishes from MIGRATED;
+  `format2/store_crash_test.go`) and keeps per-partition bookkeeping
+  O(1)/O(log S) per commit (flatsql PARTITION-STORE.md §40, B4, M3). 3.5.0
+  added the query-gap plans the format-2 reads use (§39) and records stored
+  with their own size prefix; `flatsql_ps_stats` returns 36 entries since
+  3.3.0 (`Writer.Stats`)
+- previous: `flatsql@3.5.0`, sha256 `787adbcccf52a9e9fe2767d6679b6f2d94a4ead41985bf2a7bb0855f821abc72`
 
 It loads only as a THREADS + Interruptible AOT artifact (design A30: no
 interpreter fallback) under the prefix `fsqlps`. `spacedatanetwork
