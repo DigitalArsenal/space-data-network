@@ -776,7 +776,7 @@ func listFormat2Dir(t *testing.T, dir string) []string {
 // A tag carried by a REPEAT copy (a record two producers stored under
 // different tags) matches as it did on format 1, where tags were per
 // record: the engine's type-level tag conditions see every live copy (A2:
-// any live tag instance of a live copy; flatsql PARTITION-STORE.md §38), so
+// any live tag instance of a live copy; flatsql PARTITION-STORE.md §39), so
 // every tag read is one type-level statement.
 func TestFormat2TagFiltersSeeEveryCopy(t *testing.T) {
 	requireFormat2Engine(t)

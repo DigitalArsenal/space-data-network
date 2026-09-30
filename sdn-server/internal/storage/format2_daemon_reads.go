@@ -664,7 +664,7 @@ func (s *FlatSQLStore) f2IndexedRecordWindowLimitForBytes(filter IndexedRecordQu
 // A tag condition (provider, source, batch, producer peer) matches a record
 // when ONE live tag instance of ONE live copy meets all of them: the
 // engine's type-level fan-out evaluates it on every copy (flatsql 3.2.0
-// §31.1, every copy since PARTITION-STORE.md §38), as the legacy tag table
+// §31.1, every copy since PARTITION-STORE.md §39), as the legacy tag table
 // held every producer's tags per record. So a tag read runs at type level,
 // in one statement; lane tuples split it only where a legacy count counted
 // tag rows (perTuple) or a producer key names tuples.
@@ -1063,7 +1063,7 @@ func f2RawOrderSQL(order string) string {
 // order is one statement: the engine pages a tag-filtered type in arrivals
 // order itself (per-row tag checks, or the tags' postings collected and
 // sorted when the lane counters say they are rare: flatsql
-// PARTITION-STORE.md §38, gap 5). Several targets, or the epoch order
+// PARTITION-STORE.md §39, gap 5). Several targets, or the epoch order
 // (seconds, then text CID: a sort), run in two phases: each target's page of
 // keys (gseq, epoch, CID; no payload), merged, deduplicated by CID and
 // windowed in Go, then the records at type level by gseq.
@@ -1805,7 +1805,7 @@ func (s *FlatSQLStore) f2PointEpochPicks(ctx context.Context, query EpochRecordQ
 		best[key] = p
 	}
 	if sql, params, ok := f2ObjectPointSQL(query, target); ok {
-		// Per-object point plan (flatsql PARTITION-STORE.md §38, A18): the
+		// Per-object point plan (flatsql PARTITION-STORE.md §39, A18): the
 		// engine walks OBJECT_EPOCH (object key, epoch) and returns, per
 		// object, the live candidates at its best second; the entity key is
 		// the object key (_object, NULL when the record has none: then its
