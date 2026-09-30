@@ -494,6 +494,9 @@ func (s *FlatSQLStore) f2BatchDrives(ctx context.Context, schema string, tag f2T
 // f2WindowMerged runs a window read on its targets and merges partition
 // results by the window's order, keeping each CID once.
 func (s *FlatSQLStore) f2WindowMerged(ctx context.Context, q format2.WindowQuery, read func(format2.WindowQuery) ([]format2.WindowRow, error)) ([]format2.WindowRow, error) {
+	if _, _, err := s.f2ElideCoveringTag(ctx, &q); err != nil {
+		return nil, err
+	}
 	if err := s.f2ByBatch(ctx, &q); err != nil {
 		return nil, err
 	}
@@ -556,10 +559,9 @@ func (s *FlatSQLStore) f2WindowMerged(ctx context.Context, q format2.WindowQuery
 	return out, nil
 }
 
-// f2CountCache keeps the distinct-record counts of tag windows over a
-// REPEAT-holding type's partitions (every matching CID read, then
-// deduplicated), while the type's partitions have not moved: the record
-// index page asks the same total for every page it serves.
+// f2CountCache keeps window counts that were read (not proven by the lane
+// counters) while the type's partitions have not moved: the record index
+// page asks the same total for every page it serves.
 type f2CountCache struct {
 	mu sync.Mutex
 	m  map[string]f2CountEntry
@@ -568,6 +570,22 @@ type f2CountCache struct {
 type f2CountEntry struct {
 	heads string
 	n     int64
+}
+
+func (c *f2CountCache) get(key, mark string) (int64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[key]
+	return e.n, ok && e.heads == mark
+}
+
+func (c *f2CountCache) put(key, mark string, n int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil || len(c.m) >= 256 {
+		c.m = map[string]f2CountEntry{}
+	}
+	c.m[key] = f2CountEntry{heads: mark, n: n}
 }
 
 // f2PartitionsMark is the state of a type: its head's commit sequence (it
@@ -588,9 +606,82 @@ func (s *FlatSQLStore) f2PartitionsMark(schema string) (string, error) {
 	return fmt.Sprintf("%d;%d;%d", tc.CommitSeq, tt.Partitions, tt.CommitSeqs), nil
 }
 
+// f2TagCovers reports whether the lane counters prove that a tag (a
+// provider, source or batch) selects every live record of the type, and the
+// type's live record count. They do when exactly one live lane of the type
+// meets every tag condition and its count equals the type head's live FIRST
+// count: a record holds one live instance per lane tuple and content key,
+// on any copy, and lane counters drop with every retire and tomb, so a lane
+// that counts as many instances as the type has records holds every record
+// (a record re-published in the same lane under a second content key would
+// count twice; no writer does that and the lane cannot tell). The type owner
+// must have labeled everything the partitions acked (lanes move at append,
+// type-level reads at label), and the type head is read before and after,
+// so the lanes, the labels and the count are one state.
+func (s *FlatSQLStore) f2TagCovers(ctx context.Context, schema string, tag f2TagSpec) (bool, int64, error) {
+	if tag.empty() {
+		return false, 0, nil
+	}
+	before, err := s.ps.TypeCounterOf(schema)
+	if err != nil || before.FirstLive == 0 {
+		return false, 0, err
+	}
+	lanes, err := s.ps.LanesWhere(ctx, format2.LaneFilter{Type: format2.TypeName(schema)})
+	if err != nil {
+		return false, 0, err
+	}
+	var match []format2.LaneCounter
+	for _, l := range lanes {
+		if !l.Tuple {
+			return false, 0, nil // a lane whose tuple cannot be read might match
+		}
+		if tag.matches(l) {
+			match = append(match, l)
+		}
+	}
+	if len(match) != 1 || match[0].Count != before.FirstLive {
+		return false, 0, nil
+	}
+	if caught, err := s.ps.LabelsCaughtUp(schema); err != nil || !caught {
+		return false, 0, err
+	}
+	after, err := s.ps.TypeCounterOf(schema)
+	if err != nil || after.CommitSeq != before.CommitSeq {
+		return false, 0, err
+	}
+	return true, after.FirstLive, nil
+}
+
+// f2ElideCoveringTag drops a window's tag conditions when the lanes prove
+// they select every record of the type (a tag plan walks every posting of
+// the tag; the unfiltered plans read only the window). It returns whether it
+// did and the type's live record count.
+func (s *FlatSQLStore) f2ElideCoveringTag(ctx context.Context, q *format2.WindowQuery) (bool, int64, error) {
+	covers, n, err := s.f2TagCovers(ctx, q.Schema, f2TagSpec{provider: q.Provider, source: q.Source, batch: q.Batch})
+	if covers {
+		q.Provider, q.Source, q.Batch, q.ByBatch = "", "", "", false
+	}
+	return covers, n, err
+}
+
+// f2TagOnly reports a window whose only conditions are its tag's.
+func f2TagOnly(q format2.WindowQuery) bool {
+	return q.NoradCatID == nil && q.EntityID == "" && q.From == nil && q.To == nil && len(q.Conds) == 0 &&
+		len(q.EpochRanges) == 0 && q.Table == ""
+}
+
 // f2WindowCount counts a window's records (its conditions; distinct CIDs
-// over the partitions of a REPEAT-holding type).
+// over the partitions of a REPEAT-holding type): the type head's count when
+// the lanes prove the tag selects every record, else read, and kept while
+// the type's partitions have not moved.
 func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery) (int64, error) {
+	covers, all, err := s.f2ElideCoveringTag(ctx, &q)
+	if err != nil {
+		return 0, err
+	}
+	if covers && f2TagOnly(q) {
+		return all, nil
+	}
 	if err := s.f2ByBatch(ctx, &q); err != nil {
 		return 0, err
 	}
@@ -599,44 +690,39 @@ func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery)
 	if err != nil {
 		return 0, err
 	}
-	if len(targets) == 1 && targets[0].table == "" {
-		return s.ps.Count(ctx, q)
-	}
 	key := fmt.Sprintf("%s|%s|%s|%s|%v|%v|%v|%v|%s|%v|%v", q.Schema, q.Provider, q.Source, q.Batch, q.NoradCatID, q.EntityID,
 		q.From, q.To, fmt.Sprint(q.Conds), q.EpochRanges, q.ByBatch)
 	mark, err := s.f2PartitionsMark(q.Schema)
 	if err != nil {
 		return 0, err
 	}
-	c := &s.f2.counts
-	c.mu.Lock()
-	e, ok := c.m[key]
-	c.mu.Unlock()
-	if ok && e.heads == mark {
-		return e.n, nil
+	if n, ok := s.f2.counts.get(key, mark); ok {
+		return n, nil
 	}
-	// Every target's CIDs stream into one set held against the store's
-	// window budget (terabyte audit M8); past it the count fails with
-	// format2.ErrWindowTooLarge, never grows the heap with the store.
-	seen := s.ps.NewCIDSet()
-	defer seen.Release()
-	for _, t := range targets {
-		sq := q
-		sq.Table = t.table
-		if err := s.ps.AddWindowCIDs(ctx, sq, seen); err != nil {
-			if errors.Is(err, format2.ErrWindowTooLarge) {
-				return 0, fmt.Errorf("count %s records: %w; narrow the window (a batch, a time range)", q.Schema, err)
-			}
+	var n int64
+	if len(targets) == 1 && targets[0].table == "" {
+		if n, err = s.ps.Count(ctx, q); err != nil {
 			return 0, err
 		}
+	} else {
+		// Every target's CIDs stream into one set held against the store's
+		// window budget (terabyte audit M8); past it the count fails with
+		// format2.ErrWindowTooLarge, never grows the heap with the store.
+		seen := s.ps.NewCIDSet()
+		defer seen.Release()
+		for _, t := range targets {
+			sq := q
+			sq.Table = t.table
+			if err := s.ps.AddWindowCIDs(ctx, sq, seen); err != nil {
+				if errors.Is(err, format2.ErrWindowTooLarge) {
+					return 0, fmt.Errorf("count %s records: %w; narrow the window (a batch, a time range)", q.Schema, err)
+				}
+				return 0, err
+			}
+		}
+		n = int64(seen.Len())
 	}
-	n := int64(seen.Len())
-	c.mu.Lock()
-	if c.m == nil || len(c.m) >= 256 {
-		c.m = map[string]f2CountEntry{}
-	}
-	c.m[key] = f2CountEntry{heads: mark, n: n}
-	c.mu.Unlock()
+	s.f2.counts.put(key, mark, n)
 	return n, nil
 }
 
