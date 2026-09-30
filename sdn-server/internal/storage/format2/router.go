@@ -102,6 +102,7 @@ func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID 
 	}
 	now := time.Now()
 	lk := ""
+	queued := false
 	if tags.hasLicence() {
 		lk = LicenceKey(tags.ProviderID, tags.SourceName, tags.BatchID)
 		body, _ := json.Marshal(struct {
@@ -119,6 +120,7 @@ func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID 
 			Attr: BuildRecordAttr(RecordAttr{PeerID: []byte(peerID), LicenceKey: lk}), Frame: frame(body)}); err != nil {
 			return nil, err
 		}
+		queued = true
 	}
 	attr := BuildRecordAttr(RecordAttr{PeerID: []byte(peerID), Signature: signature, SourceTimestamp: now.Unix(),
 		LicenceKey: lk, Tag: tags.sourceTag()})
@@ -134,13 +136,21 @@ func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID 
 			e.Sealed = put.Sealed
 		}
 		if rseqs[i], err = p.Enqueue(ctx, e); err != nil {
+			if queued || i > 0 {
+				// What was queued is committed without this call waiting
+				// for it: its head moves unseen by an ack.
+				s.heads.Touch(p.PID)
+			}
 			return out[:i], err
 		}
 	}
 	if len(puts) == 0 {
+		if queued {
+			s.heads.Touch(p.PID) // the licence alone, not waited for
+		}
 		return out, nil
 	}
-	err = p.WaitAck(ctx, rseqs[len(rseqs)-1])
+	err = s.waitAck(ctx, p, rseqs[len(rseqs)-1])
 	rejects := p.Rejects()
 	var last *RejectError
 	if errors.As(err, &last) {
@@ -184,7 +194,7 @@ func (s *Store) Reconcile(ctx context.Context, schema, peerID, provider, source,
 	if err != nil {
 		return err
 	}
-	return p.WaitAck(ctx, rseq)
+	return s.waitAck(ctx, p, rseq)
 }
 
 // Delete kills a record by CID in the producer's partition (TOMB_CID).
@@ -205,7 +215,16 @@ func (s *Store) Delete(ctx context.Context, schema, peerID, cidText string) erro
 	if err != nil {
 		return err
 	}
-	return p.WaitAck(ctx, rseq)
+	return s.waitAck(ctx, p, rseq)
+}
+
+// waitAck waits for rseq's ack and marks the partition however the wait
+// ends (acked, rejected, quarantined, cancelled): its head may have moved,
+// and the next counter read reads it again, and no other head (B8).
+func (s *Store) waitAck(ctx context.Context, p *Partition, rseq uint64) error {
+	err := p.WaitAck(ctx, rseq)
+	s.heads.Touch(p.PID)
+	return err
 }
 
 func frame(data []byte) []byte {

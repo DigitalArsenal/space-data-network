@@ -8,7 +8,9 @@ package format2
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -69,18 +71,64 @@ type LaneCounter struct {
 func (s *Store) Lanes(ctx context.Context) ([]LaneCounter, error) {
 	// A meta statement over the partitions' lane stores: bounded, so it runs
 	// on the point lanes and never queues behind a window.
+	return s.lanes(ctx, "", nil)
+}
+
+// LaneFilter selects lanes: every set field must match. Lanes whose count
+// fell to zero (a reconciled batch) are left out.
+type LaneFilter struct {
+	Type      string   // engine type ("OMM")
+	Producers []string // partition producer tokens (any of them)
+	PID       int64
+	Provider  string
+	Source    string
+	Batch     string
+}
+
+// LanesWhere returns the live lanes (count > 0) a filter selects: one
+// statement whose conditions the engine can serve from the named
+// partitions alone (flatsql_lanes on pid, producer and type), rather than
+// every lane of the store (terabyte audit B7).
+func (s *Store) LanesWhere(ctx context.Context, f LaneFilter) ([]LaneCounter, error) {
+	conds := []string{"count > 0"}
+	var params []Cell
+	eq := func(col, v string) {
+		if v != "" {
+			params = append(params, Text(v))
+			conds = append(conds, fmt.Sprintf("%s = ?%d", col, len(params)))
+		}
+	}
+	eq("type", f.Type)
+	if f.PID > 0 {
+		params = append(params, Int(f.PID))
+		conds = append(conds, fmt.Sprintf("pid = ?%d", len(params)))
+	}
+	if len(f.Producers) > 0 {
+		marks := make([]string, len(f.Producers))
+		for i, p := range f.Producers {
+			params = append(params, Text(p))
+			marks[i] = fmt.Sprintf("?%d", len(params))
+		}
+		conds = append(conds, "producer IN ("+strings.Join(marks, ",")+")")
+	}
+	eq("provider", f.Provider)
+	eq("source", f.Source)
+	eq("batch", f.Batch)
+	return s.lanes(ctx, " WHERE "+strings.Join(conds, " AND "), params)
+}
+
+func (s *Store) lanes(ctx context.Context, where string, params []Cell) ([]LaneCounter, error) {
 	res, err := s.point(ctx, Request{SQL: `SELECT pid, producer, type, lane_id, provider, source, batch, peer, pubkey,
-		count, bytes, max_pseq, first_seen, updated FROM flatsql_lanes`})
+		count, bytes, max_pseq, first_seen, updated FROM flatsql_lanes` + where, Params: params})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]LaneCounter, 0, len(res.Rows))
 	for _, r := range res.Rows {
-		lc := LaneCounter{PID: r[0].Int64(), Producer: r[1].String(), Type: r[2].String(), LaneID: r[3].Int64(),
+		out = append(out, LaneCounter{PID: r[0].Int64(), Producer: r[1].String(), Type: r[2].String(), LaneID: r[3].Int64(),
 			Provider: r[4].String(), Source: r[5].String(), Batch: r[6].String(), Peer: r[7].String(), PubKey: r[8].String(),
 			Count: r[9].Int64(), Bytes: r[10].Int64(), MaxPseq: r[11].Int64(), FirstSeenMs: r[12].Int64(), UpdatedMs: r[13].Int64(),
-			Tuple: r[4].Type != CellNull}
-		out = append(out, lc)
+			Tuple: r[4].Type != CellNull})
 	}
 	return out, nil
 }
@@ -107,64 +155,175 @@ func (s *Store) Licences(ctx context.Context) ([]Licence, error) {
 	return out, nil
 }
 
-// PartitionsOf returns the counters of the partitions of one type (from the
-// heads, no lane).
+// PartitionsOf returns the counters of the partitions of one type (the head
+// reader's, no lane; only the heads that moved are read).
 func (s *Store) PartitionsOf(schema string) ([]PartitionCounter, error) {
-	parts, err := s.heads.Partitions()
-	if err != nil {
-		return nil, err
+	return s.heads.PartitionsOfType(typeName(schema))
+}
+
+// PartitionByPID returns one partition's counters (ok false when it is not
+// registered): no other head is read.
+func (s *Store) PartitionByPID(pid int64) (PartitionCounter, bool, error) {
+	if pid <= 0 || pid > int64(^uint32(0)) {
+		return PartitionCounter{}, false, nil
 	}
-	typ := typeName(schema)
-	out := parts[:0]
-	for _, p := range parts {
-		if p.Type == typ {
-			out = append(out, p)
-		}
-	}
-	return out, nil
+	return s.heads.Partition(uint32(pid))
 }
 
 // TypeCounterOf returns one type's head counters (zero when the type holds
-// nothing yet).
+// nothing yet): one type head read.
 func (s *Store) TypeCounterOf(schema string) (TypeCounter, error) {
-	types, err := s.heads.Types()
+	typ := typeName(schema)
+	tc, ok, err := s.heads.TypeOf(typ)
 	if err != nil {
 		return TypeCounter{}, err
 	}
-	typ := typeName(schema)
-	for _, t := range types {
-		if t.Type == typ {
-			return t, nil
-		}
+	if !ok {
+		return TypeCounter{Type: typ, Schema: typ + ".fbs"}, nil
 	}
-	return TypeCounter{Type: typ, Schema: typ + ".fbs"}, nil
+	return tc, nil
 }
 
-// CopiesOf returns every live copy of a CID in the type's partitions: one
-// statement per partition of the type (a CID seek each). Used by the write
-// paths that act on every copy (delete, retag) and by read-your-writes before
-// a copy is labeled.
+// CopiesOf returns every live copy of a CID in the type's partitions. Used by
+// the write paths that act on every copy (delete) and by read-your-writes
+// before a copy is labeled.
+//
+// The catalog seek at type level shows the FIRST copy only; a labeled REPEAT
+// copy (the record held by a second producer) is found only in its
+// partition. So every partition is asked, one CID seek each, unless the type
+// provably holds no REPEAT copy and nothing acked but unlabeled
+// (copyTargets): then the catalog names the only partition that can hold a
+// copy, and that one partition is asked (terabyte audit M7).
 func (s *Store) CopiesOf(ctx context.Context, schema, cidText string) ([]Rec, error) {
 	c, err := CIDFromText(cidText)
 	if err != nil {
 		return nil, err
 	}
-	parts, err := s.PartitionsOf(schema)
+	parts, typeLevel, err := s.copyTargets(schema)
 	if err != nil {
 		return nil, err
 	}
-	var out []Rec
-	for _, p := range parts {
-		res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(p.SQLName)),
-			Params: []Cell{Blob(c)}})
+	if typeLevel {
+		r, err := s.typeCopy(ctx, schema, c)
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
+		}
 		if err != nil {
 			return nil, err
 		}
-		for _, row := range res.Rows {
-			out = append(out, recFromRow(row))
+		if r == nil {
+			return nil, nil
+		}
+		// The catalog's copy is confirmed in its partition: a kill acked
+		// since the proof is not reported as a live copy.
+		var own []PartitionCounter
+		for _, p := range parts {
+			if p.Producer == r.Producer {
+				own = append(own, p)
+			}
+		}
+		if len(own) == 0 {
+			if parts, err = s.PartitionsOf(schema); err != nil {
+				return nil, err
+			}
+		} else {
+			parts = own
+		}
+	}
+	var out []Rec
+	seen := map[string]bool{}
+	for _, p := range parts {
+		rows, err := s.partitionSeek(ctx, p.SQLName, c)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			r := recFromRow(row)
+			if k := fmt.Sprintf("%s/%d", r.Producer, r.Pseq); !seen[k] {
+				seen[k] = true
+				out = append(out, r)
+			}
 		}
 	}
 	return out, nil
+}
+
+// copyTargets returns the partitions CopiesOf asks: every partition of the
+// type, unless the type provably holds no REPEAT copy and nothing acked but
+// unlabeled (typeLevel; parts are then the type's partitions as just read).
+// The proof holds one type head (commit_seq c, first_live F) across:
+//   - its labels, read after it;
+//   - every partition head of the type, read after that;
+//   - each partition labeled through exactly the pseq_hi its head gave
+//     (nothing unlabeled: a partition's live count is its labeled state,
+//     including every kill, which F already counts);
+//   - Σ live over the partitions equal to F: every live copy is a FIRST
+//     copy, the one the catalog names.
+//
+// Anything else asks every partition: a partition behind or past its labels,
+// a quarantined one, a type commit during the reads, unreadable labels, or
+// published counters that already show a REPEAT copy or a partition behind
+// (checked first, without reading a head).
+func (s *Store) copyTargets(schema string) ([]PartitionCounter, bool, error) {
+	typ := typeName(schema)
+	all := func() ([]PartitionCounter, bool, error) {
+		parts, err := s.PartitionsOf(schema)
+		return parts, false, err
+	}
+	before, ok, err := s.heads.TypeOf(typ)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	if totals, err := s.TypeTotalsOf(schema); err != nil || totals.Live > before.FirstLive {
+		if err != nil {
+			return nil, false, err
+		}
+		return all()
+	}
+	if behind, err := s.behindLabels(schema); err != nil || len(behind) > 0 {
+		if err != nil {
+			return nil, false, err
+		}
+		return all()
+	}
+	fid, ok := s.heads.fidOfPublished(typ)
+	if !ok {
+		return all()
+	}
+	var labels map[uint32]uint64
+	known := false
+	if err := s.heads.withLabels(fid, func(l map[uint32]uint64, k bool) {
+		if known = k; k {
+			labels = maps.Clone(l)
+		}
+	}); err != nil {
+		return nil, false, err
+	}
+	if !known {
+		return all()
+	}
+	fresh, err := s.heads.PartitionsOfTypeFresh(typ)
+	if err != nil {
+		return nil, false, err
+	}
+	after, _, err := s.heads.TypeOf(typ)
+	if err != nil {
+		return nil, false, err
+	}
+	if after.CommitSeq != before.CommitSeq {
+		return all()
+	}
+	var live int64
+	for _, p := range fresh {
+		if p.Quarantined || labels[uint32(p.PID)] != uint64(max(p.PseqHi, 0)) {
+			return all()
+		}
+		live += p.Live
+	}
+	if live != before.FirstLive {
+		return all()
+	}
+	return fresh, true, nil
 }
 
 // Present returns which of the CIDs have a live copy at type level (the cid
@@ -213,18 +372,13 @@ func (s *Store) PresentInPartition(ctx context.Context, schema, peerID string, c
 	if err != nil {
 		return nil, err
 	}
-	name := ""
-	parts, err := s.heads.Partitions()
+	pc, ok, err := s.heads.Partition(p.PID)
 	if err != nil {
 		return nil, err
 	}
-	for _, pc := range parts {
-		if uint32(pc.PID) == p.PID {
-			name = pc.SQLName
-		}
-	}
+	name := pc.SQLName
 	out := make(map[string]bool, len(cidTexts))
-	if name == "" {
+	if !ok || name == "" {
 		return out, nil // registered, nothing committed yet
 	}
 	for start := 0; start < len(cidTexts); start += 256 {
