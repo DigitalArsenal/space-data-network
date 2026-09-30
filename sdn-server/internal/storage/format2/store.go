@@ -127,44 +127,88 @@ func WriteMigrated(root string, uuid [16]byte) error {
 
 // Migrated reports whether root holds a format-2 store marked MIGRATED for
 // its own STORE.
+//
+// It is also true for a store whose creation a crash cut short inside
+// STORE's own write. The engine creates a fresh store in this order: the
+// registry files, MIGRATED, then STORE, and STORE is the commit point (flatsql
+// ps/open.cpp, A5). A torn STORE beside a whole MIGRATED and an empty
+// registry is therefore that one state, with nothing registered and no data;
+// the engine finishes STORE from MIGRATED at its next open. Before STORE
+// exists the store reads as absent and is created again. So after a crash at
+// any instruction of a creation the store is either absent or MIGRATED, and
+// Open opens both.
 func Migrated(root string) (bool, error) {
 	s, err := ReadStoreFile(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
+		if unfinishedStore(root) {
+			return true, nil
+		}
 		return false, err
 	}
-	b, err := os.ReadFile(filepath.Join(root, Dir, "MIGRATED"))
+	uuid, err := readMigrated(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if len(b) != migratedLen || binary.LittleEndian.Uint32(b) != magicMigrated ||
-		binary.LittleEndian.Uint32(b[32:]) != crc32.Checksum(b[:32], castagnoli) {
-		return false, errors.New("format2: fsql2/MIGRATED is corrupt")
-	}
-	var uuid [16]byte
-	copy(uuid[:], b[8:24])
 	if uuid != s.UUID {
 		return false, fmt.Errorf("format2: fsql2/MIGRATED names another store")
 	}
 	return true, nil
 }
 
+// readMigrated reads and checks fsql2/MIGRATED, returning the store UUID it
+// names.
+func readMigrated(root string) ([16]byte, error) {
+	var uuid [16]byte
+	b, err := os.ReadFile(filepath.Join(root, Dir, "MIGRATED"))
+	if err != nil {
+		return uuid, err
+	}
+	if len(b) != migratedLen || binary.LittleEndian.Uint32(b) != magicMigrated ||
+		binary.LittleEndian.Uint32(b[32:]) != crc32.Checksum(b[:32], castagnoli) {
+		return uuid, errors.New("format2: fsql2/MIGRATED is corrupt")
+	}
+	copy(uuid[:], b[8:24])
+	return uuid, nil
+}
+
+// unfinishedStore reports the one torn state a fresh store's creation can
+// leave (see Migrated): STORE unreadable, MIGRATED whole, and a registry with
+// no frames, so nothing was ever registered.
+func unfinishedStore(root string) bool {
+	if _, err := readMigrated(root); err != nil {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(root, Dir, "registry.fsl"))
+	return errors.Is(err, os.ErrNotExist) || (err == nil && fi.Mode().IsRegular() && fi.Size() == 0)
+}
+
 // writeDurable writes dir/name through a temp file: write, fsync, rename,
-// fsync the directory.
+// fsync the directory. A kill at any step leaves the file absent (or as it
+// was) or whole, never torn; a leftover temp file is overwritten by the next
+// write.
 func writeDurable(dir, name string, data []byte) error {
 	tmp := filepath.Join(dir, "."+name+".tmp")
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
+	if crashAfter("created") {
+		f.Close()
+		return errSimulatedCrash
+	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
+	}
+	if crashAfter("written") {
+		f.Close()
+		return errSimulatedCrash
 	}
 	if err := f.Sync(); err != nil {
 		f.Close()
@@ -173,11 +217,26 @@ func writeDurable(dir, name string, data []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
+	if crashAfter("synced") {
+		return errSimulatedCrash
+	}
 	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
 		return err
 	}
+	if crashAfter("renamed") {
+		return errSimulatedCrash
+	}
 	return syncDir(dir)
 }
+
+// crashStep, set only by this package's tests, ends a durable write after the
+// named step as a kill there would: the steps taken stay on disk and nothing
+// after them runs.
+var crashStep string
+
+var errSimulatedCrash = errors.New("format2: simulated crash")
+
+func crashAfter(step string) bool { return crashStep != "" && crashStep == step }
 
 func syncDir(dir string) error {
 	d, err := os.Open(dir)
