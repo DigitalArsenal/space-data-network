@@ -220,6 +220,9 @@ type UpdateSubscriberDeps struct {
 	// compat, matching update.ApplyOptions.InstalledKuboVersion's own
 	// documented default.
 	InstalledKuboVersion string
+	// StoreRoot is this node's record store (storage.path). Apply's
+	// store-format guard refuses an update whose binary does not open it.
+	StoreRoot string
 	// CurrentSequence, when set, supplies the monotonic sequence number
 	// used for manifest freshness/rollback checks instead of the default
 	// (reading update.LoadState(Paths).Sequence on every message). Tests
@@ -257,6 +260,7 @@ type UpdateSubscriber struct {
 
 	hook                 update.KuboPhaseHook
 	installedKuboVersion string
+	storeRoot            string
 
 	sequenceFn func() int64
 	now        func() time.Time
@@ -312,6 +316,7 @@ func NewUpdateSubscriber(deps UpdateSubscriberDeps) (*UpdateSubscriber, error) {
 		recipientPriv:        append([]byte(nil), deps.RecipientPrivateKey...),
 		hook:                 hook,
 		installedKuboVersion: deps.InstalledKuboVersion,
+		storeRoot:            strings.TrimSpace(deps.StoreRoot),
 		sequenceFn:           deps.CurrentSequence,
 		now:                  nowFn,
 		autoApply:            deps.AutoApply,
@@ -471,6 +476,7 @@ func (s *UpdateSubscriber) applyStaged(staged *update.StagedUpdate) {
 		Now:                  s.now(),
 		KuboPhaseHook:        s.hook,
 		InstalledKuboVersion: s.installedKuboVersion,
+		StoreRoot:            s.storeRoot,
 	})
 	if err != nil {
 		log.Errorf("update subscriber: auto-apply of %s failed (rolled back): %v", staged.UpdateID, err)

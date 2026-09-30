@@ -43,6 +43,10 @@ type HelperPlanOptions struct {
 	// environment. See helperLoopbackTransport for the live failure that made
 	// this explicit.
 	AdminCAFile string
+	// StoreRoot is the daemon's record store (storage.path), handed to the
+	// helper so its store-format guard checks the store the daemon actually
+	// opens rather than one it re-derives from config.
+	StoreRoot string
 }
 
 type HelperPlan struct {
@@ -99,6 +103,9 @@ func PrepareHelperPlan(opts HelperPlanOptions) (*HelperPlan, error) {
 	}
 	if ca := strings.TrimSpace(opts.AdminCAFile); ca != "" {
 		args = append(args, "--admin-ca", ca)
+	}
+	if root := strings.TrimSpace(opts.StoreRoot); root != "" {
+		args = append(args, "--store-root", root)
 	}
 	if len(opts.RestartArgv) == 0 && (strings.TrimSpace(opts.AdminURL) == "" || strings.TrimSpace(opts.Token) == "") {
 		args = append(args, "--no-restart")

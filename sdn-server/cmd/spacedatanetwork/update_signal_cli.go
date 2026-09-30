@@ -186,8 +186,9 @@ var updateSlotsCmd = &cobra.Command{
 }
 
 var (
-	updateRollbackSlot   string
-	updateRollbackReason string
+	updateRollbackSlot      string
+	updateRollbackReason    string
+	updateRollbackStoreRoot string
 )
 
 var updateRollbackCmd = &cobra.Command{
@@ -207,8 +208,9 @@ var updateRollbackCmd = &cobra.Command{
 			return errors.New("--reason is required: an unexplained reversal is the defect this lane exists to end")
 		}
 		result, err := update.Rollback(update.PathsFor(layout.Root), update.RollbackOptions{
-			Slot:   strings.TrimSpace(updateRollbackSlot),
-			Reason: strings.TrimSpace(updateRollbackReason),
+			Slot:      strings.TrimSpace(updateRollbackSlot),
+			Reason:    strings.TrimSpace(updateRollbackReason),
+			StoreRoot: resolveUpdateStoreRoot(updateRollbackStoreRoot, cmd.ErrOrStderr()),
 		})
 		if err != nil {
 			return err
@@ -245,6 +247,7 @@ func init() {
 	updateRollbackCmd.Flags().StringVar(&updateRollbackSlot, "slot", "",
 		"which retained build to restore: an update id, a version, or a rollback path (default: the immediately-previous build)")
 	updateRollbackCmd.Flags().StringVar(&updateRollbackReason, "reason", "", "why this box is being reversed (required; recorded in the deploy ledger)")
+	updateRollbackCmd.Flags().StringVar(&updateRollbackStoreRoot, "store-root", "", storeRootFlagUsage)
 
 	updateCmd.AddCommand(updateSignalCmd)
 	updateCmd.AddCommand(updateSlotsCmd)

@@ -45,6 +45,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -98,6 +99,11 @@ type UpdateSignalSubscriberDeps struct {
 	AdminCAFile string
 	// HealthTimeout bounds the helper's post-restart health wait.
 	HealthTimeout time.Duration
+	// StoreRoot is this daemon's record store (storage.path). A staged update
+	// whose binary does not open the store's on-disk format is refused before
+	// the helper is launched, so a refusal never stops this daemon; the helper
+	// is handed the same root for Apply's own check and for any rollback.
+	StoreRoot string
 	// MinInterval is the floor between two self-upgrades on this box.
 	MinInterval time.Duration
 	// MaxDelay spreads a fleet-wide roll. Zero acts immediately.
@@ -243,7 +249,13 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	if err := s.upgrade(ctx, signal, state); err != nil {
 		log.Errorf("update signal %s: self-upgrade did not start: %v", signal.UpdateID, err)
 		s.deps.Alerts.Raise(ops.KindUpdateFailed, signal.UpdateID, ops.SeverityError, err.Error())
-		s.release(signal.UpdateID)
+		// A store-format refusal is not transient: the store will not step
+		// back down on its own, so the update stays claimed rather than being
+		// refetched on every duplicate delivery.
+		var refusal *update.StoreFormatRefusal
+		if !errors.As(err, &refusal) {
+			s.release(signal.UpdateID)
+		}
 		return
 	}
 	// The helper has the swap. Whatever failed on an earlier attempt at this
@@ -344,6 +356,12 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 	if err != nil {
 		return fmt.Errorf("stage update: %w", err)
 	}
+	// The store-format guard, here and not only in the helper's Apply: the
+	// helper stops this daemon before it applies, and a refused update must
+	// not cost a serving node its uptime.
+	if err := update.CheckStagedStoreFormat(s.deps.Paths, staged.UpdateID, s.deps.StoreRoot); err != nil {
+		return err
+	}
 	log.Infof("Update %s staged and verified (version %s, sequence %d). Handing the swap to the helper; this daemon stays up until the helper stops it.",
 		staged.UpdateID, staged.Result.Version, staged.Result.Sequence)
 
@@ -353,6 +371,7 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 		HealthTimeout: s.deps.HealthTimeout,
 		Trigger:       "signal",
 		AdminCAFile:   s.deps.AdminCAFile,
+		StoreRoot:     s.deps.StoreRoot,
 		SignalKeyID:   signal.Signing.KeyID,
 		// Never: see the rollback refusal above.
 		AllowRollback: false,
@@ -492,6 +511,7 @@ func (n *Node) startUpdateSignalSubscriber() {
 		AdminURL:      n.localAdminURL(),
 		AdminCAFile:   adminaddr.DaemonCertPath(n.config.Admin.TLSCertFile, n.config.Admin.TLSCacheDir),
 		HealthTimeout: cfg.HealthTimeout(),
+		StoreRoot:     absPathOr(n.config.Storage.Path),
 		MinInterval:   cfg.MinInterval(),
 		MaxDelay:      time.Duration(cfg.MaxDelaySeconds) * time.Second,
 		Client:        n.updateFetchClient(),
@@ -509,6 +529,19 @@ func (n *Node) startUpdateSignalSubscriber() {
 			log.Warnf("Update signal lane stopped: %v", err)
 		}
 	}()
+}
+
+// absPathOr returns p made absolute (the helper runs from another working
+// directory), or p itself when that fails.
+func absPathOr(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
 }
 
 // nodeTopicSubscriber subscribes through the NODE'S OWN join cache

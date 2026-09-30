@@ -85,6 +85,8 @@ type SelfUpgradeOptions struct {
 	// AdminCAFile is the certificate the daemon serves; see
 	// HelperPlanOptions.AdminCAFile.
 	AdminCAFile string
+	// StoreRoot is the daemon's record store; see HelperPlanOptions.StoreRoot.
+	StoreRoot string
 	// UnitPrefix names the transient systemd unit. Defaults to
 	// "sdn-self-upgrade".
 	UnitPrefix string
@@ -196,6 +198,7 @@ func LaunchSelfUpgrade(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 		Trigger:          opts.Trigger,
 		SignalKeyID:      opts.SignalKeyID,
 		AdminCAFile:      opts.AdminCAFile,
+		StoreRoot:        opts.StoreRoot,
 	})
 	if err != nil {
 		return nil, err

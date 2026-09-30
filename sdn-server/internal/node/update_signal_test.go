@@ -9,8 +9,10 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -402,5 +404,79 @@ func TestSubscriberRefusesToStartWithoutTrustRoots(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("a signal subscriber with no trust roots must refuse to exist")
+	}
+}
+
+// The store-format guard runs here, in the daemon, before the helper is
+// launched: the helper stops this daemon before it applies, so a staged update
+// whose binary cannot open the store must be refused while the node still
+// serves. On a format-1 store the same update is handed to the helper, with
+// the store root the helper's own Apply and any rollback will check.
+func TestSignalRefusedByTheStoreFormatGuardNeverLaunches(t *testing.T) {
+	storeFile := func(format uint16) []byte {
+		b := make([]byte, 64)
+		binary.LittleEndian.PutUint32(b[0:], 0x32515346) // "FSQ2"
+		binary.LittleEndian.PutUint16(b[4:], format)
+		binary.LittleEndian.PutUint32(b[56:], crc32.Checksum(b[:56], crc32.MakeTable(crc32.Castagnoli)))
+		return b
+	}
+	for _, tc := range []struct {
+		name       string
+		format2    bool
+		wantLaunch int64
+	}{
+		{name: "format-1 store: the forward update is launched", wantLaunch: 1},
+		{name: "format-2 store: a build that opens only format 1 is refused", format2: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := t.TempDir()
+			if err := os.WriteFile(filepath.Join(store, "control.flatsqldb"), []byte("legacy"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.format2 {
+				if err := os.MkdirAll(filepath.Join(store, "fsql2"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(store, "fsql2", "STORE"), storeFile(2), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(store, "fsql2", "MIGRATED"), make([]byte, 40), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h := newSignalHarness(t)
+			h.sub.deps.StoreRoot = store
+			var launchedWith string
+			h.sub.deps.Launch = func(_ update.Paths, opts update.SelfUpgradeOptions) (*update.SelfUpgradeLaunch, error) {
+				h.launches.Add(1)
+				launchedWith = opts.StoreRoot
+				return &update.SelfUpgradeLaunch{Mode: "test"}, nil
+			}
+			manifest, carrier := h.manifestFixture(t, nil)
+			var requests atomic.Int64
+			h.sub.deps.Client = &http.Client{Transport: updateFixtureTransport(func(req *http.Request) (*http.Response, error) {
+				requests.Add(1)
+				body := manifest
+				if strings.HasSuffix(req.URL.Path, ".wasm") {
+					body = carrier
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header), ContentLength: int64(len(body)), Request: req}, nil
+			})}
+			h.sub.handle(context.Background(), h.sign(t, nil))
+			if got := h.launches.Load(); got != tc.wantLaunch {
+				t.Fatalf("launches = %d, want %d", got, tc.wantLaunch)
+			}
+			if tc.wantLaunch == 1 && launchedWith != store {
+				t.Fatalf("the helper was launched with store root %q, want %q", launchedWith, store)
+			}
+			if tc.format2 {
+				// Not transient: a repeat delivery is neither refetched nor launched.
+				fetched := requests.Load()
+				h.sub.handle(context.Background(), h.sign(t, nil))
+				if requests.Load() != fetched || h.launches.Load() != 0 {
+					t.Fatalf("a refused update was retried: requests %d -> %d, launches %d", fetched, requests.Load(), h.launches.Load())
+				}
+			}
+		})
 	}
 }
