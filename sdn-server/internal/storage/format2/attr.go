@@ -32,9 +32,9 @@ func (t SourceTag) empty() bool {
 
 // RecordAttr is the router's per-record attribute set.
 type RecordAttr struct {
-	PeerID          []byte // the storing call's raw peer id (A3: the partition token comes from it)
-	Signature       []byte
-	SupersedeKey    string // stored verbatim when present (22.3a-9); absent: the engine derives it
+	PeerID       []byte // the storing call's raw peer id (A3: the partition token comes from it)
+	Signature    []byte
+	SupersedeKey string // stored verbatim when present (22.3a-9); absent: the engine derives it
 	// SourceTimestamp is when this copy's tag instance was stored, in unix
 	// seconds (the legacy tag row's created_at, served as materialized_at);
 	// 0 = absent.

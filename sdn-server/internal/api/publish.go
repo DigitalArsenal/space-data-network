@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -519,6 +520,9 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 	}
 	tags, tagged := sourceTagsFromRequest(r, peerID)
 	storeFailed := make(map[string]bool)
+	// refused: records the store refused while it stored the rest of their
+	// schema's batch (store format 2), by CID.
+	refused := make(map[string]error)
 	for groupSchema, records := range groups {
 		var err error
 		if tagged {
@@ -526,7 +530,13 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 		} else {
 			_, err = h.store.StoreBatch(groupSchema, records, peerID, nil)
 		}
-		if err != nil {
+		var some *storage.RefusedRecordsError
+		switch {
+		case errors.As(err, &some):
+			for cid, why := range some.Refused {
+				refused[cid] = why
+			}
+		case err != nil:
 			storeFailed[groupSchema] = true
 		}
 	}
@@ -543,6 +553,13 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 		}
 
 		cid := storage.ComputeCID(f.data)
+		if why, no := refused[cid]; no {
+			results = append(results, map[string]interface{}{
+				"error": "store failed: " + why.Error(),
+				"bytes": len(f.data),
+			})
+			continue
+		}
 		if storeFailed[f.schema] {
 			// The batch path failed for this schema, and a chunked commit may
 			// have landed part of it. Storing is CID-checked and idempotent,

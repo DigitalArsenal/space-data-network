@@ -79,7 +79,34 @@ type RejectError struct {
 }
 
 func (e *RejectError) Error() string {
-	return fmt.Sprintf("format2: entry %d rejected by the engine (code %d)", e.Rseq, e.Code)
+	return fmt.Sprintf("format2: entry %d rejected by the engine (code %d: %s)", e.Rseq, e.Code, RejectReason(e.Code))
+}
+
+// RejectReason names a reject code.
+func RejectReason(code int32) string {
+	switch code {
+	case RejBadEntry:
+		return "malformed entry"
+	case RejFrameSize:
+		return "frame size out of range"
+	case RejFid:
+		return "the buffer does not carry the type's file identifier"
+	case RejVerify:
+		return "the buffer fails the type's verifier"
+	case RejCid:
+		return "the CID is not the frame's"
+	case RejSealed:
+		return "sealed bytes refused"
+	case RejAttr:
+		return "malformed record attributes"
+	case RejQuarantined:
+		return "partition quarantined"
+	case RejNoType:
+		return "no such type"
+	case RejTxnTooLarge:
+		return "transaction too large"
+	}
+	return "unknown reject code"
 }
 
 // WriterConfig configures the writer instance (flatsql_ps_init TLVs 1-18).
@@ -344,7 +371,7 @@ func (w *Writer) Partition(peer []byte, fid [4]byte) (*Partition, error) {
 	if ringAddr <= 0 || ringAddr > math.MaxUint32 {
 		return nil, fmt.Errorf("format2: partition %d has no ring", pid)
 	}
-	p := &Partition{w: w, PID: uint32(pid), ring: uint32(ringAddr), rejects: map[uint64]int32{}}
+	p := &Partition{w: w, PID: uint32(pid), ring: uint32(ringAddr), rejects: map[uint64]int32{}, forgotten: map[uint64]struct{}{}}
 	if !w.inst.Enter() {
 		return nil, ErrStopped
 	}
@@ -482,9 +509,14 @@ type Partition struct {
 	nSlots   uint32
 	slab     uint32
 
-	mu      sync.Mutex // producers are serialized per partition (SPSC)
-	rejects map[uint64]int32
-	scratch []byte
+	mu sync.Mutex // producers are serialized per partition (SPSC)
+	// rejects are the drained rejects (rseq -> code) no waiter has taken
+	// yet. Every entry's reject is taken by its waiter (WaitAck, TakeRejects,
+	// Rejects) or given up (Forget); forgotten holds the given-up rseqs the
+	// engine has not acked, whose rejects are dropped when drained.
+	rejects   map[uint64]int32
+	forgotten map[uint64]struct{}
+	scratch   []byte
 
 	creditWaits atomic.Uint64
 }
@@ -632,6 +664,9 @@ func (p *Partition) Enqueue(ctx context.Context, e *Entry) (uint64, error) {
 			if !p.w.inst.Enter() {
 				return 0, ErrStopped
 			}
+			// A WaitAck cannot drain while this producer holds p.mu: keep the
+			// reject ring from stopping the staging this wait is waiting on.
+			p.drainRejects()
 			changed := mem.Load32(p.f(genOff)) != g || mem.Load32(p.f(lay.OffState)) != st
 			p.w.inst.Exit()
 			if changed || wait.elapsed() > time.Second {
@@ -642,17 +677,32 @@ func (p *Partition) Enqueue(ctx context.Context, e *Entry) (uint64, error) {
 }
 
 // drainRejects moves the engine's reject entries into p.rejects (the reject
-// ring has 32 slots and staging stops while it is full). Caller holds p.mu.
+// ring has 32 slots and staging stops while it is full), dropping those of
+// forgotten entries. Caller holds p.mu, inside Enter.
 func (p *Partition) drainRejects() {
 	lay := &p.w.lay
 	mem := p.w.mem
+	// The engine records an entry's reject before it acks the entry: every
+	// forgotten rseq at or below this ack HWM has its reject (if any) in the
+	// ring as read below, so it needs no further watch.
+	acked := mem.Load64(p.f(lay.OffAckedRseq))
 	t := mem.Load64(p.f(lay.OffRejectTail))
 	h := mem.Load64(p.f(lay.OffRejectHead))
 	for ; t < h; t++ {
 		e := p.ring + lay.OffRejects + uint32((t%rejectSlots)*16)
-		p.rejects[mem.Load64(e)] = int32(mem.Load32(e + 8))
+		rseq := mem.Load64(e)
+		if _, gone := p.forgotten[rseq]; gone {
+			delete(p.forgotten, rseq)
+			continue
+		}
+		p.rejects[rseq] = int32(mem.Load32(e + 8))
 	}
 	mem.Store64(p.f(lay.OffRejectTail), t)
+	for rseq := range p.forgotten {
+		if rseq <= acked {
+			delete(p.forgotten, rseq)
+		}
+	}
 }
 
 // Acked returns the partition's durable ack HWM.
@@ -665,6 +715,9 @@ func (p *Partition) Acked() (uint64, error) {
 }
 
 // WaitAck waits until rseq is durable. A rejected entry returns *RejectError.
+// The engine stops staging while its reject ring (32 slots) is full, so the
+// wait drains it as it polls: an entry behind more than 32 rejects is acked
+// too. A producer holding p.mu (a credit wait) drains it itself.
 func (p *Partition) WaitAck(ctx context.Context, rseq uint64) error {
 	lay := &p.w.lay
 	mem := p.w.mem
@@ -689,6 +742,10 @@ func (p *Partition) WaitAck(ctx context.Context, rseq uint64) error {
 			}
 			return nil
 		}
+		if p.mu.TryLock() {
+			p.drainRejects()
+			p.mu.Unlock()
+		}
 		p.w.inst.Exit()
 		if st == ringQuarantined {
 			return ErrQuarantined
@@ -699,8 +756,57 @@ func (p *Partition) WaitAck(ctx context.Context, rseq uint64) error {
 	}
 }
 
+// TakeRejects drains the reject ring and removes and returns the rejects
+// among rseqs (rseq -> code): a batch that waited on its last rseq takes its
+// own entries' rejects, never those of another batch on the partition.
+func (p *Partition) TakeRejects(rseqs []uint64) map[uint64]int32 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.w.inst.Enter() {
+		p.drainRejects()
+		p.w.inst.Exit()
+	}
+	out := map[uint64]int32{}
+	for _, r := range rseqs {
+		if code, ok := p.rejects[r]; ok {
+			out[r] = code
+			delete(p.rejects, r)
+		}
+	}
+	return out
+}
+
+// Forget gives up the rejects of entries whose caller stopped waiting for
+// them (a cancelled wait, a batch that failed part way): a reject already
+// drained is dropped, and one the engine records later is dropped as it is
+// drained. Nothing is kept for a waiter that is gone.
+func (p *Partition) Forget(rseqs []uint64) {
+	if len(rseqs) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.w.inst.Enter() {
+		// Stopped: no reject is drained again.
+		for _, r := range rseqs {
+			delete(p.rejects, r)
+		}
+		return
+	}
+	acked := p.w.mem.Load64(p.f(p.w.lay.OffAckedRseq))
+	p.drainRejects()
+	p.w.inst.Exit()
+	for _, r := range rseqs {
+		delete(p.rejects, r)
+		if r > acked {
+			p.forgotten[r] = struct{}{}
+		}
+	}
+}
+
 // Rejects drains and returns every reject recorded since the last call
-// (rseq -> code), for callers that wait on a batch's last rseq only.
+// (rseq -> code), for a partition's only producer (store-migrate) that waits
+// on its last rseq only.
 func (p *Partition) Rejects() map[uint64]int32 {
 	p.mu.Lock()
 	defer p.mu.Unlock()

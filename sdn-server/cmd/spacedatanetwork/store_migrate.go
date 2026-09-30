@@ -958,8 +958,13 @@ func (m *migrator) recordEntry(tbl storage.LegacyTable, r storage.LegacyRecord, 
 		}
 	}
 	if tag != nil {
-		attr.Tag = format2.SourceTag{ProviderID: tag.ProviderID, SourceName: tag.SourceName, BatchID: tag.BatchID,
-			ContentKeyID: tag.ContentKeyID, ProducerPeerID: tag.ProducerPeerID, ProducerPublicKey: tag.ProducerPublicKey}
+		attr.Tag = format2.SourceTag{ProviderID: tag.ProviderID, SourceName: tag.SourceName, SourceURL: tag.SourceURL,
+			BatchID: tag.BatchID, ContentKeyID: tag.ContentKeyID, ProducerPeerID: tag.ProducerPeerID,
+			ProducerPublicKey: tag.ProducerPublicKey}
+		// The copy's source timestamp is its tag row's created_at, served as
+		// materialized_at (absent when the row has none); the arrival stays
+		// the record's timestamp.
+		attr.SourceTimestamp = tag.CreatedAt
 		if lk := licenceKey(tag.ProviderID, tag.SourceName, tag.BatchID); m.licKeys[tbl.Schema+"\x1f"+lk] {
 			attr.LicenceKey = lk
 		}
@@ -1543,8 +1548,27 @@ func (m *migrator) verify(ctx context.Context) (*migrateVerification, error) {
 	v.FTS = "equal: every FTS rowid is the gseq of the same CID (gseq = legacy rowid)"
 	v.Took = time.Since(start).Round(time.Millisecond).String()
 	if len(m.j.Rejected) > 0 {
-		bad("%d record copies were rejected by the engine (first: %s %s code %d)", len(m.j.Rejected),
-			m.j.Rejected[0].Table, m.j.Rejected[0].CID, m.j.Rejected[0].Code)
+		// One line per (table, code): the inventory an operator decides on
+		// (1,050 identifier-less PLOG copies read as one line, not 1,050).
+		type group struct {
+			table string
+			code  int32
+		}
+		n := map[group]int{}
+		first := map[group]string{}
+		var order []group
+		for _, r := range m.j.Rejected {
+			g := group{r.Table, r.Code}
+			if n[g] == 0 {
+				order = append(order, g)
+				first[g] = r.CID
+			}
+			n[g]++
+		}
+		for _, g := range order {
+			bad("%s: %d record copies rejected by the engine, code %d (%s); first %s", g.table, n[g], g.code,
+				format2.RejectReason(g.code), first[g])
+		}
 	}
 	if !v.PartitionsEqual || !v.LanesEqual || !v.CIDSequences || len(m.j.Rejected) > 0 || v.GseqFallbacks != 0 {
 		return v, fmt.Errorf("store-migrate verification failed (%d mismatches); format 2 was not activated", len(v.Mismatches))

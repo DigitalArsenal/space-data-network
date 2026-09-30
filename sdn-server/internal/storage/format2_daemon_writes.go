@@ -45,47 +45,63 @@ func format2Tags(tags *SourceTags) *format2.Tags {
 // f2StoreBatch is storeBatch/storeOne on format 2. It returns how many
 // records were new to the standard (the legacy count: a CID some producer
 // already held, and an ingest-identity repeat, are not inserted) and each
-// record's CID. A record the engine refused is logged; the batch fails only
-// when every record was refused (f2BatchOpts.strict: when any was).
+// record's CID. Records the engine refused fail the batch, after the others
+// are stored, with a *RefusedRecordsError naming each.
 func (s *FlatSQLStore) f2StoreBatch(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, []string, error) {
-	return s.f2StoreBatchIdentity(schemaName, records, peerID, signature, tags, f2BatchOpts{identity: true})
+	return s.f2StoreBatchIdentity(schemaName, records, peerID, signature, tags, true)
 }
 
-// f2BatchOpts: identity applies the ingest identity (off for a dataset shard
-// import, which stores what the peer holds, as format 1's import did);
-// strict fails the batch when the engine refused any record, after the
-// others are stored (an ingest must not report or checkpoint past a record
-// it did not store).
-type f2BatchOpts struct {
-	identity, strict bool
+// RefusedRecordsError is a batch write the store refused some records of,
+// after storing the others: each refused record's CID and why. A caller
+// that reports per record (the publish API) reports these as failed and the
+// rest as stored; any other caller fails, and a feed's checkpoint does not
+// move past records it did not store.
+type RefusedRecordsError struct {
+	Schema  string
+	Records int
+	// Refused maps each refused record's CID to its reason, in the order
+	// Order lists them.
+	Refused map[string]error
+	Order   []string
+}
+
+func (e *RefusedRecordsError) Error() string {
+	if len(e.Order) == 0 {
+		return fmt.Sprintf("store %s batch: records refused", e.Schema)
+	}
+	first := e.Order[0]
+	if len(e.Order) == e.Records {
+		return fmt.Sprintf("store %s batch: every record was refused (first %s: %v)", e.Schema, first, e.Refused[first])
+	}
+	return fmt.Sprintf("store %s batch: the engine refused %d of %d record(s) (first %s: %v)", e.Schema, len(e.Order), e.Records, first, e.Refused[first])
+}
+
+func (e *RefusedRecordsError) refuse(cid string, err error) {
+	if e.Refused == nil {
+		e.Refused = map[string]error{}
+	}
+	if _, ok := e.Refused[cid]; !ok {
+		e.Order = append(e.Order, cid)
+	}
+	e.Refused[cid] = err
 }
 
 // StoreIngestBatch stores an ingest's batch of records of one standard:
-// StoreBatch, or StoreBatchWithSourceTags with tags, except that on store
-// format 2 a record the engine refused fails the batch (after the rest are
-// stored) instead of only being logged. A feed that fetched the records
-// then fails, and its checkpoint does not move past them, as when it stored
-// record by record (terabyte audit M9 review).
+// StoreBatch, or StoreBatchWithSourceTags with tags. A record the store
+// refused fails the batch (after the rest are stored), so a feed that
+// fetched the records fails and its checkpoint does not move past them, as
+// when it stored record by record (terabyte audit M9 review).
 func (s *FlatSQLStore) StoreIngestBatch(schemaName string, records [][]byte, peerID string, tags *SourceTags) (int, error) {
-	if !s.Format2() {
-		if tags == nil {
-			return s.StoreBatch(schemaName, records, peerID, nil)
-		}
-		return s.StoreBatchWithSourceTags(schemaName, records, peerID, nil, *tags)
+	if tags == nil {
+		return s.StoreBatch(schemaName, records, peerID, nil)
 	}
-	if tags != nil {
-		// See StoreWithSourceTags: licence first, then records.
-		if err := s.recordSourceBatchLicense(schemaName, *tags); err != nil {
-			return 0, err
-		}
-	}
-	n, _, err := s.f2StoreBatchIdentity(schemaName, records, peerID, nil, tags, f2BatchOpts{identity: true, strict: true})
-	return n, err
+	return s.StoreBatchWithSourceTags(schemaName, records, peerID, nil, *tags)
 }
 
-// f2StoreBatchIdentity is f2StoreBatch with its options.
-func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opts f2BatchOpts) (int, []string, error) {
-	identity := opts.identity
+// f2StoreBatchIdentity is f2StoreBatch; identity applies the ingest identity
+// (off for a dataset shard import, which stores what the peer holds, as
+// format 1's import did).
+func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, identity bool) (int, []string, error) {
 	if err := s.requireWritable("store batch"); err != nil {
 		return 0, nil, err
 	}
@@ -126,7 +142,7 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 		lane       ingestIdentityLane
 		identities []string
 		held       map[string]string
-		repeats    []string
+		repeats    [][2]string // (held CID, the repeat's CID)
 		newRows    []ingestIdentityRow
 	)
 	if identityOn {
@@ -150,8 +166,7 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 	seen := make(map[string]bool, len(records))
 	puts := make([]format2.Put, 0, min(len(records), format2PutChunk))
 	var putCIDs []string
-	var rejected int
-	var firstReject error
+	refused := &RefusedRecordsError{Schema: schemaName, Records: len(records)}
 	flush := func() error {
 		if len(puts) == 0 {
 			return nil
@@ -162,10 +177,7 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 		}
 		for i, r := range res {
 			if r.Err != nil {
-				rejected++
-				if firstReject == nil {
-					firstReject = fmt.Errorf("%s: %w", putCIDs[i], r.Err)
-				}
+				refused.refuse(putCIDs[i], r.Err)
 				continue
 			}
 			if !present[putCIDs[i]] && !seen[putCIDs[i]] {
@@ -179,7 +191,7 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 	for i, data := range records {
 		if identityOn && identities[i] != "" && !present[cids[i]] {
 			if h, ok := held[identities[i]]; ok && h != cids[i] {
-				repeats = append(repeats, h)
+				repeats = append(repeats, [2]string{h, cids[i]})
 				continue
 			}
 			held[identities[i]] = cids[i]
@@ -204,9 +216,6 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 	if err := flush(); err != nil {
 		return inserted, cids, err
 	}
-	if rejected > 0 {
-		log.Warnf("format 2: the engine refused %d of %d %s record(s) from %q (first: %v)", rejected, len(records), schemaName, peerID, firstReject)
-	}
 	s.f2.lanes.invalidate()
 	// One label budget for the whole write: the batch's partition, then the
 	// partitions its identity repeats were retagged into.
@@ -215,6 +224,16 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 		return inserted, cids, err
 	}
 	if identityOn {
+		// An identity is held by a stored CID only.
+		if len(refused.Order) > 0 {
+			kept := newRows[:0]
+			for _, r := range newRows {
+				if _, no := refused.Refused[r.cid]; !no {
+					kept = append(kept, r)
+				}
+			}
+			newRows = kept
+		}
 		if len(newRows) > 0 {
 			unlock := s.lockWrite("format2 ingest identities")
 			err := upsertIngestIdentities(s.db, schemaName, lane, newRows)
@@ -223,8 +242,18 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 				return inserted, cids, err
 			}
 		}
+		var retag []string
+		for _, r := range repeats {
+			if why, no := refused.Refused[r[0]]; no {
+				// Its identity's record was refused in this batch: nothing
+				// holds the repeat.
+				refused.refuse(r[1], fmt.Errorf("the record holding its ingest identity (%s) was refused: %w", r[0], why))
+				continue
+			}
+			retag = append(retag, r[0])
+		}
 		var retagged []string
-		for _, cid := range dedupeStrings(repeats) {
+		for _, cid := range dedupeStrings(retag) {
 			peer, err := s.f2RetagCommit(schemaName, cid, *tags)
 			if err != nil {
 				return inserted, cids, err
@@ -235,11 +264,8 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 			return inserted, cids, err
 		}
 	}
-	if rejected == len(records) && firstReject != nil {
-		return 0, cids, fmt.Errorf("store %s batch: every record was refused: %w", schemaName, firstReject)
-	}
-	if opts.strict && rejected > 0 {
-		return inserted, cids, fmt.Errorf("store %s batch: the engine refused %d of %d record(s): %w", schemaName, rejected, len(records), firstReject)
+	if len(refused.Order) > 0 {
+		return inserted, cids, refused
 	}
 	return inserted, cids, nil
 }
@@ -580,7 +606,7 @@ func (s *FlatSQLStore) f2ImportDatasetShardChunk(index *DatasetExportIndex, prov
 	imported := 0
 	for _, key := range order {
 		g := groups[key]
-		n, _, err := s.f2StoreBatchIdentity(index.SchemaName, g.data, provider, nil, g.tags, f2BatchOpts{})
+		n, _, err := s.f2StoreBatchIdentity(index.SchemaName, g.data, provider, nil, g.tags, false)
 		imported += n
 		if err != nil {
 			return imported, fmt.Errorf("store imported %s records: %w", index.SchemaName, err)

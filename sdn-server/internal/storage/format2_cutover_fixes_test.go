@@ -4,10 +4,49 @@ package storage
 // (sdn-format2-cutover-fixes-20260930), each held to format 1's answer.
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 )
+
+// B2: a batch reports each record the engine refused to its caller, after
+// storing the rest. The batch API returned nil for a partly refused batch,
+// so the publish API reported a refused record stored (HTTP 201 with its
+// CID) and logged a PLOG entry for a CID that was never stored.
+func TestFormat2BatchReportsEachRefusedRecord(t *testing.T) {
+	requireFormat2Engine(t)
+	f2 := openFormat2ForTest(t, t.TempDir())
+	defer f2.Close()
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	good := f2TestOMM(26100, base, "REFUSED-NEIGHBOUR")
+	other := f2TestOMM(26101, base.Add(time.Minute), "REFUSED-OTHER")
+	bad := append([]byte(nil), f2TestOMM(26102, base.Add(2*time.Minute), "REFUSED")...)
+	copy(bad[4:8], []byte{0, 0, 0, 0}) // no file identifier: the engine refuses it
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "refusals", BatchID: "r-1"}
+	n, err := f2.StoreBatchWithSourceTags("OMM.fbs", [][]byte{good, bad, other}, "source:refusals", nil, tags)
+	var refused *RefusedRecordsError
+	if !errors.As(err, &refused) {
+		t.Fatalf("StoreBatchWithSourceTags with a refused record: n %d, err %v; want a *RefusedRecordsError", n, err)
+	}
+	badCID := ComputeCID(bad)
+	if n != 2 || len(refused.Order) != 1 || refused.Order[0] != badCID || refused.Refused[badCID] == nil || refused.Records != 3 {
+		t.Fatalf("n %d, refused %+v; want 2 stored and %s refused", n, refused, badCID)
+	}
+	for _, c := range []string{ComputeCID(good), ComputeCID(other)} {
+		if _, err := f2.GetRecord("OMM.fbs", c); err != nil {
+			t.Fatalf("stored record %s: %v", c, err)
+		}
+	}
+	if _, err := f2.GetRecord("OMM.fbs", badCID); err == nil {
+		t.Fatalf("refused record %s is readable", badCID)
+	}
+	// Every record refused: the same error, nothing stored.
+	n, err = f2.StoreBatch("OMM.fbs", [][]byte{bad}, "source:refusals", nil)
+	if !errors.As(err, &refused) || n != 0 || len(refused.Order) != 1 {
+		t.Fatalf("a batch of one refused record: n %d, err %v", n, err)
+	}
+}
 
 // B4: a tag that selects every live record of its type (host-02's IQC:
 // one IQEngine lane holding all 1.1M records) is answered without walking
