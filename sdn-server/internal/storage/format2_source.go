@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -30,6 +31,10 @@ import (
 type MigrationSource struct {
 	s    *FlatSQLStore
 	base string
+
+	scanOnce sync.Once
+	scan     string // HeldIndexPage's access path (indexScan)
+	scanErr  error
 }
 
 // OpenMigrationSource opens the legacy store at basePath (it takes the
@@ -203,10 +208,23 @@ type IndexRow struct {
 	CID   string
 }
 
-// IndexPage returns up to limit index rows of schema with rowid > after.
-func (m *MigrationSource) IndexPage(schema string, after int64, limit int) ([]IndexRow, error) {
-	rows, err := m.s.db.Query(`SELECT rowid, cid FROM sdn_record_index WHERE schema_name = ? AND rowid > ? ORDER BY rowid LIMIT ?`,
-		schema, after, limit)
+// HeldIndexPage returns, in rowid order, up to limit index rows of schema
+// with rowid > after whose record one of tables (the schema's producer
+// tables) holds. These are the rows the legacy datasync serves
+// (recordHeldSQL) and the rows store-migrate copies. An orphan is an index
+// row no producer table holds (its record was deleted and the index row
+// stayed); it is never copied. With no tables every row is an orphan.
+func (m *MigrationSource) HeldIndexPage(schema string, tables []LegacyTable, after int64, limit int) ([]IndexRow, error) {
+	if len(tables) == 0 {
+		return nil, nil
+	}
+	scan, err := m.indexScan()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := m.s.db.Query(`SELECT idx.rowid, idx.cid FROM sdn_record_index idx `+scan+`
+		WHERE idx.schema_name = ? AND idx.rowid > ? AND `+migrateHeldSQL(tables, "idx.cid")+`
+		ORDER BY idx.rowid LIMIT ?`, schema, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +238,70 @@ func (m *MigrationSource) IndexPage(schema string, after int64, limit int) ([]In
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// indexScan is how HeldIndexPage walks one schema's index rows in rowid
+// order, a page at a time, without sorting. The full-text scan index
+// (schema_name, rowid) serves it when the store has one; otherwise the table
+// itself is walked in rowid order (NOT INDEXED: other schemas' rows are
+// skipped). Left to the planner, the (schema_name, cid) primary key can win
+// and every page then sorts every row of the schema, and probes every
+// producer table for each.
+func (m *MigrationSource) indexScan() (string, error) {
+	m.scanOnce.Do(func() {
+		var n int
+		m.scanErr = m.s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_sdn_record_fts_scan'
+			AND tbl_name = 'sdn_record_index'`).Scan(&n)
+		m.scan = "NOT INDEXED"
+		if n > 0 {
+			m.scan = "INDEXED BY idx_sdn_record_fts_scan"
+		}
+	})
+	return m.scan, m.scanErr
+}
+
+// OrphanIndexRows counts schema's index rows that none of tables holds.
+func (m *MigrationSource) OrphanIndexRows(schema string, tables []LegacyTable) (int64, error) {
+	q := `SELECT COUNT(*) FROM sdn_record_index idx WHERE idx.schema_name = ?`
+	if len(tables) > 0 {
+		q += ` AND NOT ` + migrateHeldSQL(tables, "idx.cid")
+	}
+	var n int64
+	err := m.s.db.QueryRow(q, schema).Scan(&n)
+	return n, err
+}
+
+// migrateHeldGroup is how many EXISTS terms migrateHeldSQL ORs flat.
+const migrateHeldGroup = 64
+
+// migrateHeldSQL is true when cidExpr is held by one of tables: an EXISTS
+// seek per table (recordHeldSQL's terms), OR'ed flat in parenthesised groups
+// of migrateHeldGroup and the groups again, so the expression's depth grows
+// with the logarithm of the table count. recordHeldSQL's single flat chain
+// passes SQLite's expression-depth limit (1000) at about 1,000 producer
+// tables of one standard. With no tables nothing is held.
+func migrateHeldSQL(tables []LegacyTable, cidExpr string) string {
+	if len(tables) == 0 {
+		return "0"
+	}
+	terms := make([]string, len(tables))
+	for i, t := range tables {
+		terms[i] = fmt.Sprintf("EXISTS (SELECT 1 FROM %s h WHERE h.cid = %s)", t.Name, cidExpr)
+	}
+	for {
+		next := make([]string, 0, (len(terms)+migrateHeldGroup-1)/migrateHeldGroup)
+		for i := 0; i < len(terms); i += migrateHeldGroup {
+			j := i + migrateHeldGroup
+			if j > len(terms) {
+				j = len(terms)
+			}
+			next = append(next, "("+strings.Join(terms[i:j], " OR ")+")")
+		}
+		if len(next) == 1 {
+			return next[0]
+		}
+		terms = next
+	}
 }
 
 // IndexStats is one schema's datasync index: its row count and MaxRowID.
@@ -392,24 +474,71 @@ func (m *MigrationSource) SourceSummaries() ([]SourceSummaryRow, error) {
 	return out, rows.Err()
 }
 
+// laneRecountChunk bounds one LaneRecount pass: about this many tag rows,
+// and so (CIDs are hashes, spread evenly) a proportionate share of each
+// table's records, sit in the engine's temp store at a time.
+var laneRecountChunk = 100000
+
 // LaneRecount recounts the lanes of schema from the tag rows of live
 // records: per tag tuple, the tag rows whose record's FIRST copy (the first
 // table by name holding the CID) exists, and their record bytes. It is the
 // ground truth sdn_record_source_summary is maintained to equal (the summary
-// is incremental and can drift; store-migrate reports any difference).
+// is incremental and can drift; store-migrate reports any difference). Tag
+// rows of orphans (no table holds the CID) count nowhere.
+//
+// Linear at any table count. The tag rows are taken in CID ranges of about
+// laneRecountChunk rows; for each range every table is read once, in name
+// order, into a TEMP table of each CID's FIRST copy length (INSERT OR IGNORE
+// keeps the first table's), which the range's tag rows join. A statement per
+// table excluding the CIDs of every earlier table (a chain of NOT EXISTS) hit
+// SQLite's expression-depth limit (1000) at about 1,000 tables, and cost a
+// quadratic number of probes and compiled subqueries below it. The engine's
+// temp store is memory (TEMP_STORE=3), hence the ranges: it holds one range,
+// never the schema, and nothing is written to the store file.
 func (m *MigrationSource) LaneRecount(schema string, tables []LegacyTable) ([]SourceSummaryRow, error) {
+	if len(tables) == 0 {
+		return nil, nil
+	}
+	const first = "temp.migrate_first_copy"
+	if _, err := m.s.db.Exec(`DROP TABLE IF EXISTS ` + first); err != nil {
+		return nil, err
+	}
+	if _, err := m.s.db.Exec(`CREATE TEMP TABLE migrate_first_copy (cid TEXT PRIMARY KEY, len INTEGER NOT NULL) WITHOUT ROWID`); err != nil {
+		return nil, fmt.Errorf("lane recount: %w", err)
+	}
+	defer func() { _, _ = m.s.db.Exec(`DROP TABLE IF EXISTS ` + first) }()
 	acc := map[[5]string]*SourceSummaryRow{}
-	for i, t := range tables {
-		var notEarlier strings.Builder
-		for _, e := range tables[:i] {
-			fmt.Fprintf(&notEarlier, " AND NOT EXISTS (SELECT 1 FROM %s e WHERE e.cid = t.cid)", e.Name)
+	var order [][5]string
+	for lo, last := "", false; !last; {
+		// The range is (lo, hi]: hi is the CID of the chunk's last tag row
+		// (every tag row of that CID included); the last range is open.
+		var hi string
+		err := m.s.db.QueryRow(`SELECT cid FROM sdn_record_source_tags WHERE schema_name = ? AND cid > ? ORDER BY cid LIMIT 1 OFFSET ?`,
+			schema, lo, laneRecountChunk-1).Scan(&hi)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			last = true
+		case err != nil:
+			return nil, fmt.Errorf("lane recount %s range after %q: %w", schema, lo, err)
 		}
-		rows, err := m.s.db.Query(fmt.Sprintf(`SELECT t.provider_id, t.source_name, t.batch_id, t.producer_peer_id,
-			t.producer_public_key, COUNT(*), COALESCE(SUM(r.record_length), 0)
-			FROM sdn_record_source_tags t JOIN %s r ON r.cid = t.cid
-			WHERE t.schema_name = ?%s
-			GROUP BY t.provider_id, t.source_name, t.batch_id, t.producer_peer_id, t.producer_public_key`,
-			t.Name, notEarlier.String()), schema)
+		inRange, args := func(col string) string { return col + " > ?" }, []any{lo}
+		if !last {
+			inRange, args = func(col string) string { return col + " > ? AND " + col + " <= ?" }, []any{lo, hi}
+		}
+		if _, err := m.s.db.Exec(`DELETE FROM ` + first); err != nil {
+			return nil, err
+		}
+		for _, t := range tables {
+			if _, err := m.s.db.Exec(fmt.Sprintf(`INSERT OR IGNORE INTO %s (cid, len) SELECT cid, record_length FROM %s WHERE %s`,
+				first, t.Name, inRange("cid")), args...); err != nil {
+				return nil, fmt.Errorf("lane recount %s: %w", t.Name, err)
+			}
+		}
+		rows, err := m.s.db.Query(`SELECT t.provider_id, t.source_name, t.batch_id, t.producer_peer_id, t.producer_public_key,
+			COUNT(*), COALESCE(SUM(f.len), 0)
+			FROM sdn_record_source_tags t JOIN `+first+` f ON f.cid = t.cid
+			WHERE t.schema_name = ? AND `+inRange("t.cid")+`
+			GROUP BY t.provider_id, t.source_name, t.batch_id, t.producer_peer_id, t.producer_public_key`, append([]any{schema}, args...)...)
 		if err != nil {
 			return nil, err
 		}
@@ -425,6 +554,7 @@ func (m *MigrationSource) LaneRecount(schema string, tables []LegacyTable) ([]So
 				r = &SourceSummaryRow{Schema: schema, ProviderID: k[0], SourceName: k[1], BatchID: k[2],
 					ProducerPeerID: k[3], ProducerPublicKey: k[4]}
 				acc[k] = r
+				order = append(order, k)
 			}
 			r.Count += n
 			r.Bytes += b
@@ -433,10 +563,11 @@ func (m *MigrationSource) LaneRecount(schema string, tables []LegacyTable) ([]So
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
+		lo = hi
 	}
-	out := make([]SourceSummaryRow, 0, len(acc))
-	for _, r := range acc {
-		out = append(out, *r)
+	out := make([]SourceSummaryRow, 0, len(order))
+	for _, k := range order {
+		out = append(out, *acc[k])
 	}
 	return out, nil
 }
@@ -542,6 +673,7 @@ type ControlCopyStats struct {
 	Tables, Indexes int
 	Rows            int64
 	FTSRows         int64
+	FTSOrphans      int64 // FTS rows of orphan index rows, not copied
 	Bytes           int64
 }
 
@@ -636,11 +768,38 @@ func (m *MigrationSource) CopyControl(dstName, ftsName string) (ControlCopyStats
 		if _, err := m.s.db.Exec(`CREATE VIRTUAL TABLE migrate_fts.sdn_record_fts USING fts5(text, tokenize='unicode61 remove_diacritics 2')`); err != nil {
 			return st, fmt.Errorf("create the FTS table in the copy: %w", err)
 		}
-		res, err := m.s.db.Exec(`INSERT INTO migrate_fts.sdn_record_fts(rowid, text) SELECT rowid, text FROM main.sdn_record_fts`)
+		// Only the rows of held records: an orphan's index row is not
+		// migrated, so its FTS row would name a gseq no record has.
+		producers, err := m.ProducerTables()
 		if err != nil {
-			return st, fmt.Errorf("copy the FTS rows: %w", err)
+			return st, err
 		}
-		st.FTSRows, _ = res.RowsAffected()
+		bySchema := map[string][]LegacyTable{}
+		var schemas []string
+		for _, t := range producers {
+			if bySchema[t.Schema] == nil {
+				schemas = append(schemas, t.Schema)
+			}
+			bySchema[t.Schema] = append(bySchema[t.Schema], t)
+		}
+		sort.Strings(schemas)
+		for _, schema := range schemas {
+			// CROSS JOIN keeps the index as the outer loop: one FTS rowid
+			// seek per held record, never an FTS scan per standard.
+			res, err := m.s.db.Exec(`INSERT INTO migrate_fts.sdn_record_fts(rowid, text)
+				SELECT f.rowid, f.text FROM main.sdn_record_index idx CROSS JOIN main.sdn_record_fts f ON f.rowid = idx.rowid
+				WHERE idx.schema_name = ? AND `+migrateHeldSQL(bySchema[schema], "idx.cid"), schema)
+			if err != nil {
+				return st, fmt.Errorf("copy the %s FTS rows: %w", schema, err)
+			}
+			n, _ := res.RowsAffected()
+			st.FTSRows += n
+		}
+		var all int64
+		if err := m.s.db.QueryRow(`SELECT COUNT(*) FROM main.sdn_record_fts`).Scan(&all); err != nil {
+			return st, fmt.Errorf("count the FTS rows: %w", err)
+		}
+		st.FTSOrphans = all - st.FTSRows
 		if _, err := m.s.db.Exec(`CREATE TABLE migrate_fts.sdn_record_fts_progress (schema_name TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, last_rowid INTEGER NOT NULL DEFAULT 0)`); err != nil {
 			return st, fmt.Errorf("create the FTS progress in the copy: %w", err)
 		}

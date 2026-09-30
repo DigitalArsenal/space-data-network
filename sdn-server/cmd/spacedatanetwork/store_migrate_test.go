@@ -12,6 +12,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -171,6 +173,9 @@ func TestStoreMigrateCopiesVerifiesAndActivates(t *testing.T) {
 	}
 	if v.Partitions != 3 || v.CIDsCompared != 340 {
 		t.Fatalf("verified %d partitions and %d cids, want 3 and 340 (300 OMM + 40 CAT)", v.Partitions, v.CIDsCompared)
+	}
+	if len(v.OrphanIndexRows) != 0 {
+		t.Fatalf("a store without orphans reported %v", v.OrphanIndexRows)
 	}
 	if !rep.Activated {
 		t.Fatal("not activated")
@@ -414,7 +419,8 @@ func TestStoreMigrateFixture(t *testing.T) {
 	for _, ty := range inv.Types {
 		t.Logf("inventory %s: %d partitions, %d records, %d B, p50 %d p99 %d max %d", ty.Schema, ty.Partitions, ty.Rows, ty.Bytes, ty.P50, ty.P99, ty.Max)
 	}
-	t.Logf("inventory took %s; source %d B; max rowid %d; gseq floor %d", inv.Took, inv.SourceBytes, inv.MaxRowID, inv.GseqFloor)
+	t.Logf("inventory took %s; source %d B; max rowid %d; gseq floor %d; orphan index rows %v", inv.Took, inv.SourceBytes,
+		inv.MaxRowID, inv.GseqFloor, inv.Orphans)
 	load := loadAverage()
 	var log bytes.Buffer
 	rep, err := migrateStore(context.Background(), migrateOptions{Store: dst, AOTCacheDir: migrateTestAOTDir(t),
@@ -427,9 +433,11 @@ func TestStoreMigrateFixture(t *testing.T) {
 		runtime.GOOS, runtime.GOARCH, runtime.NumCPU())
 	t.Logf("time: %v; engine %+v", rep.Extra, rep.Engine)
 	if v := rep.Verification; v != nil {
-		t.Logf("verification: partitions %v (%d), lanes %v (%d), cid sequences %v (%d cids), %s; %s", v.PartitionsEqual, v.Partitions,
-			v.LanesEqual, v.Lanes, v.CIDSequences, v.CIDsCompared, v.Took, strings.Join(v.MaxRowID, "; "))
+		t.Logf("verification: partitions %v (%d), lanes %v (%d), cid sequences %v (%d cids), orphan index rows %v, %s; %s",
+			v.PartitionsEqual, v.Partitions, v.LanesEqual, v.Lanes, v.CIDSequences, v.CIDsCompared, v.OrphanIndexRows, v.Took,
+			strings.Join(v.MaxRowID, "; "))
 	}
+	t.Logf("activated %v; notes %q; control copy %v", rep.Activated, rep.Notes, rep.Extra["control_copy"])
 }
 
 func loadAverage() float64 {
@@ -480,6 +488,10 @@ func TestStoreMigrateInventoryOfStores(t *testing.T) {
 			}
 			t.Logf("INVENTORY %s %s: %d partitions, %d records, %d B, p50 %d p99 %d max %d%s", filepath.Base(filepath.Dir(src)), ty.Schema,
 				ty.Partitions, ty.Rows, ty.Bytes, ty.P50, ty.P99, ty.Max, over)
+		}
+		for _, ix := range inv.Index {
+			t.Logf("INVENTORY %s index %s: %d rows, %d orphans (no producer table holds the record)", filepath.Base(filepath.Dir(src)),
+				ix.Schema, ix.Rows, inv.Orphans[ix.Schema])
 		}
 	}
 }
@@ -571,5 +583,192 @@ func TestStoreMigrateSnapshotPlusDeltaEqualsAFullMigration(t *testing.T) {
 	}
 	if got, want := migrationDigest(t, live), migrationDigest(t, full); got != want {
 		t.Fatalf("snapshot + delta differs from a full migration of the final state")
+	}
+}
+
+// buildLegacyFullText builds the legacy store's full-text index of schemas
+// (the dev node's store has one: 1,007,984 of its FTS rows belong to orphan
+// IQC index rows).
+func buildLegacyFullText(t *testing.T, dir string, schemas ...string) {
+	t.Helper()
+	v, _ := sds.NewValidator(nil)
+	s, err := storage.NewFlatSQLStore(dir, v, storage.WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, schema := range schemas {
+		deadline := time.Now().Add(2 * time.Minute)
+		for {
+			err := s.CheckFullTextSearch(schema, "warm")
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, storage.ErrSearchIndexBuilding) {
+				t.Fatalf("%s full-text index: %v", schema, err)
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s full-text index did not finish", schema)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// orphanLegacyIndexRows makes orphans the way the dev node's store holds
+// them: records leave their producer tables while their index, tag and FTS
+// rows stay (a plain SQLite connection on the closed store). The first 30
+// and the last OMM index rows lose every copy, the first of them at index
+// position 0; 10 records both producers hold lose the copy in the first
+// table by name, so their FIRST copy moves to the other table. It returns
+// the orphans' index rowids by CID.
+func orphanLegacyIndexRows(t *testing.T, dir string) map[string]int64 {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "control.flatsqldb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	strs := func(q string, args ...any) []string {
+		t.Helper()
+		rows, err := db.Query(q, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var v string
+			if err := rows.Scan(&v); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, v)
+		}
+		return out
+	}
+	tables := strs(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'sds\_p\_%\_\_OMM' ESCAPE '\' ORDER BY name`)
+	if len(tables) != 2 {
+		t.Fatalf("OMM producer tables %v, want 2", tables)
+	}
+	index := strs(`SELECT cid FROM sdn_record_index WHERE schema_name = 'OMM.fbs' ORDER BY rowid`)
+	if len(index) != 300 {
+		t.Fatalf("%d OMM index rows, want 300", len(index))
+	}
+	orphans := map[string]int64{}
+	for _, cid := range append(append([]string(nil), index[:30]...), index[len(index)-1]) {
+		for _, tb := range tables {
+			if _, err := db.Exec(`DELETE FROM `+tb+` WHERE cid = ?`, cid); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var rowid int64
+		if err := db.QueryRow(`SELECT rowid FROM sdn_record_index WHERE schema_name = 'OMM.fbs' AND cid = ?`, cid).Scan(&rowid); err != nil {
+			t.Fatal(err)
+		}
+		orphans[cid] = rowid
+	}
+	moved := strs(`SELECT a.cid FROM ` + tables[0] + ` a JOIN ` + tables[1] + ` b ON b.cid = a.cid ORDER BY a.cid LIMIT 10`)
+	if len(moved) != 10 {
+		t.Fatalf("%d CIDs both producers hold, want 10 or more", len(moved))
+	}
+	for _, cid := range moved {
+		if _, err := db.Exec(`DELETE FROM `+tables[0]+` WHERE cid = ?`, cid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return orphans
+}
+
+// Orphan index rows (no producer table holds the record) are reported per
+// schema and never migrated: the store verifies and activates with 0
+// mismatches, the engine and the interim FTS hold none of them.
+func TestStoreMigrateLeavesOutOrphanIndexRows(t *testing.T) {
+	requirePSEngine(t)
+	dir := t.TempDir()
+	buildLegacyStore(t, dir)
+	buildLegacyFullText(t, dir, "OMM.fbs", "CAT.fbs")
+	orphans := orphanLegacyIndexRows(t, dir)
+	const held = 340 - 31
+
+	inv, err := migrateInventory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inv.Orphans) != 1 || inv.Orphans["OMM.fbs"] != int64(len(orphans)) {
+		t.Fatalf("inventory orphans %v, want OMM.fbs: %d", inv.Orphans, len(orphans))
+	}
+
+	var log bytes.Buffer
+	rep, err := migrateStore(context.Background(), migrateOptions{Store: dir, AOTCacheDir: migrateTestAOTDir(t),
+		CompileOnMiss: true, PageRows: 64}, &log)
+	if err != nil {
+		t.Fatalf("migrate: %v\n%s\nreport %+v\nverification %+v", err, log.String(), rep, rep.Verification)
+	}
+	v := rep.Verification
+	if v == nil || !v.PartitionsEqual || !v.LanesEqual || !v.CIDSequences || len(v.Mismatches) != 0 || len(rep.Rejected) != 0 {
+		t.Fatalf("verification %+v, rejected %v", v, rep.Rejected)
+	}
+	if len(v.OrphanIndexRows) != 1 || v.OrphanIndexRows["OMM.fbs"] != int64(len(orphans)) {
+		t.Fatalf("reported orphans %v, want OMM.fbs: %d", v.OrphanIndexRows, len(orphans))
+	}
+	if v.CIDsCompared != held {
+		t.Fatalf("compared %d cids, want %d held", v.CIDsCompared, held)
+	}
+	if !rep.Activated {
+		t.Fatal("not activated")
+	}
+	t.Logf("notes: %v; control copy: %v", rep.Notes, rep.Extra["control_copy"])
+
+	// The engine holds every held OMM record and no orphan.
+	ns, err := flatsqlrt.OpenNativeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := format2.OpenReader(format2.InstanceOptions{Store: ns, AOTCacheDir: migrateTestAOTDir(t), CompileOnMiss: true},
+		flatsqlrt.PSRoleBulk, format2.ReaderConfig{Lanes: 1})
+	if err != nil {
+		ns.Release()
+		t.Fatal(err)
+	}
+	res, err := r.Query(context.Background(), format2.Request{SQL: `SELECT _cid_bin FROM "OMM"`})
+	_ = r.Stop()
+	ns.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 300-len(orphans) {
+		t.Fatalf("the engine holds %d OMM records, want %d", len(res.Rows), 300-len(orphans))
+	}
+	for _, row := range res.Rows {
+		for text := range orphans {
+			if cidEqual(text, row[0].B) {
+				t.Fatalf("orphan %s was migrated", text)
+			}
+		}
+	}
+
+	// The interim FTS has the held records' rows and none of the orphans'.
+	fts, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "fts.flatsqldb")+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fts.Close()
+	var ftsRows int64
+	if err := fts.QueryRow(`SELECT COUNT(*) FROM sdn_record_fts`).Scan(&ftsRows); err != nil {
+		t.Fatal(err)
+	}
+	if ftsRows != held {
+		t.Fatalf("interim FTS rows %d, want %d (the held records)", ftsRows, held)
+	}
+	for cid, rowid := range orphans {
+		var n int
+		if err := fts.QueryRow(`SELECT COUNT(*) FROM sdn_record_fts WHERE rowid = ?`, rowid).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Fatalf("the FTS row of orphan %s (rowid %d) was copied", cid, rowid)
+		}
 	}
 }
