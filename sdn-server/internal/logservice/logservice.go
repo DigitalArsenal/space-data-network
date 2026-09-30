@@ -27,6 +27,9 @@ var log = logging.Logger("logservice")
 const (
 	plgSchema = "PLOG.fbs"
 	plhSchema = "PLHD.fbs"
+	// The schemas' file identifiers (PLOG.fbs, PLHD.fbs).
+	plgFileID = "PLOG"
+	plhFileID = "PLHD"
 )
 
 // TopicPublisher is the interface for publishing to a PubSub topic.
@@ -421,8 +424,9 @@ func buildPLGFlatBuffer(sequence uint64, schemaType, publisherPeerID, recordCID,
 	builder.PrependUOffsetTSlot(10, epochDayOff, 0) // EPOCH_DAY
 	plg := builder.EndObject()
 
-	// Finish with size prefix and file identifier
-	builder.FinishSizePrefixed(plg)
+	// Finish with size prefix and file identifier (a format-2 store refuses
+	// a buffer without its schema's identifier).
+	builder.FinishSizePrefixedWithFileIdentifier(plg, []byte(plgFileID))
 
 	out := make([]byte, len(builder.FinishedBytes()))
 	copy(out, builder.FinishedBytes())
@@ -465,7 +469,7 @@ func buildPLHFlatBuffer(schemaType, publisherPeerID string, headSequence uint64,
 	builder.PrependUOffsetTSlot(10, newestOff, 0) // NEWEST_EPOCH_DAY
 	plh := builder.EndObject()
 
-	builder.FinishSizePrefixed(plh)
+	builder.FinishSizePrefixedWithFileIdentifier(plh, []byte(plhFileID))
 
 	out := make([]byte, len(builder.FinishedBytes()))
 	copy(out, builder.FinishedBytes())

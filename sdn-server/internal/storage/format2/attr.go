@@ -18,13 +18,15 @@ import (
 )
 
 // SourceTag is one tag instance of a record (design A2: at most one per
-// RecordAttr; a record's further tags are RETAG rows).
+// RecordAttr; a record's further tags are RETAG rows). Every field is kept
+// per copy; the engine's tag tuple (dedupe, reconcile) leaves SourceURL out,
+// as the legacy tag table's key did.
 type SourceTag struct {
-	ProviderID, SourceName, BatchID, ContentKeyID, ProducerPeerID, ProducerPublicKey string
+	ProviderID, SourceName, SourceURL, BatchID, ContentKeyID, ProducerPeerID, ProducerPublicKey string
 }
 
 func (t SourceTag) empty() bool {
-	return t.ProviderID == "" && t.SourceName == "" && t.BatchID == "" && t.ContentKeyID == "" &&
+	return t.ProviderID == "" && t.SourceName == "" && t.SourceURL == "" && t.BatchID == "" && t.ContentKeyID == "" &&
 		t.ProducerPeerID == "" && t.ProducerPublicKey == ""
 }
 
@@ -33,7 +35,10 @@ type RecordAttr struct {
 	PeerID          []byte // the storing call's raw peer id (A3: the partition token comes from it)
 	Signature       []byte
 	SupersedeKey    string // stored verbatim when present (22.3a-9); absent: the engine derives it
-	SourceTimestamp int64  // unix seconds at ingest; 0 = absent
+	// SourceTimestamp is when this copy's tag instance was stored, in unix
+	// seconds (the legacy tag row's created_at, served as materialized_at);
+	// 0 = absent.
+	SourceTimestamp int64
 	LicenceKey      string
 	Tag             SourceTag
 	// MigratedGseq is store-migrate's legacy sdn_record_index.rowid for a
@@ -44,12 +49,17 @@ type RecordAttr struct {
 }
 
 // BuildRecordAttr returns the RecordAttr FlatBuffer (finished with "FSRA").
+// An empty source URL is absent, so a tag without one has the engine's bytes.
 func BuildRecordAttr(a RecordAttr) []byte {
 	b := flatbuffers.NewBuilder(256)
 	var tags flatbuffers.UOffsetT
 	if !a.Tag.empty() {
 		provider := b.CreateString(a.Tag.ProviderID)
 		source := b.CreateString(a.Tag.SourceName)
+		var url flatbuffers.UOffsetT
+		if a.Tag.SourceURL != "" {
+			url = b.CreateString(a.Tag.SourceURL)
+		}
 		batch := b.CreateString(a.Tag.BatchID)
 		content := b.CreateString(a.Tag.ContentKeyID)
 		producerPeer := b.CreateString(a.Tag.ProducerPeerID)
@@ -59,6 +69,7 @@ func BuildRecordAttr(a RecordAttr) []byte {
 		b.PrependUOffsetTSlot(5, producerPeer, 0)
 		b.PrependUOffsetTSlot(4, content, 0)
 		b.PrependUOffsetTSlot(3, batch, 0)
+		b.PrependUOffsetTSlot(2, url, 0)
 		b.PrependUOffsetTSlot(1, source, 0)
 		b.PrependUOffsetTSlot(0, provider, 0)
 		tag := b.EndObject()
