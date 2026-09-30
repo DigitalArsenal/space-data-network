@@ -1050,7 +1050,9 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 		}
 	}
 	s.engineResidentAdd(schemaName, batch.total)
-	return batch.ingested, s.enforceEngineHotWindowLocked(schemaName, join)
+	err := s.enforceEngineHotWindowLocked(schemaName, join)
+	s.maybeCompactEngineArenaLocked("past the compaction mark, mostly dead")
+	return batch.ingested, err
 }
 
 // engineEvictionStep bounds ONE hot-window eviction step: the rows tombstoned

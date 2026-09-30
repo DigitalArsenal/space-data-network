@@ -322,6 +322,10 @@ func TestMostlyDeadArenaPastTheCompactionMarkIsDiscarded(t *testing.T) {
 	prev := engineArenaCompactBytes
 	engineArenaCompactBytes = 64 << 10
 	defer func() { engineArenaCompactBytes = prev }()
+	// The arena a binary without runtime compaction left behind: the boot's
+	// discard is the fallback for exactly that (engine_arena_compaction.go).
+	engineArenaRuntimeCompaction = false
+	defer func() { engineArenaRuntimeCompaction = true }()
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newEngineRecordsStoreWithOptions(t, basePath, WithEngineHotWindow(20))
 	if !store.BootState().Durable {

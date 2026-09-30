@@ -163,6 +163,8 @@ type Runtime struct {
 	aotMiss     string
 	aotCacheDir string
 	poisoned    bool
+	// arenaCompaction: the engine exports flatsql_compact_arena (arena.go).
+	arenaCompaction bool
 
 	// io is the file layer behind the engine's seven "env" imports. Nil when
 	// the runtime was created without WithFileIORoot, in which case the imports
@@ -400,6 +402,10 @@ func New(opts ...Option) (*Runtime, error) {
 		return nil, fmt.Errorf("flatsqlrt: _initialize: %w", err)
 	}
 	r := &Runtime{mod: mod, aot: aot, aotPath: aotPath, aotMiss: aotMiss, aotCacheDir: cfg.aotCacheDir, io: fileIO}
+	// Export names are plain bytes of the module's export section. Asked of
+	// the bytes, not of the VM: the engine runs as a REGISTERED module, whose
+	// functions the VM's anonymous-module list does not show.
+	r.arenaCompaction = bytes.Contains(cfg.wasmBytes, []byte("flatsql_compact_arena"))
 	r.startDispatchLog()
 	return r, nil
 }

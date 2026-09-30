@@ -72,14 +72,16 @@ const (
 // population at a 1,073,608,552-byte arena (stress campaign 2026-09-27).
 //
 // So the node bounds the BYTES it puts there, measured rather than estimated:
-// engineArenaBytes starts from the engine's own flushed high-water mark
-// (FlushedOffset) at open, adds each ingest's frames (size prefix + payload,
-// exactly what the arena appends), and is re-read from the engine at every
-// flush. Below the budget the node mirrors as before; at the budget it stops
-// mirroring (the control tables keep every record; the hot window is a
-// cache) and says so, and hydration stops filling. A boot whose persisted
-// arena is past the compaction mark and mostly dead discards it and refills
-// the window (openControlEngine), which is the only way the engine shrinks.
+// engineArenaBytes starts from the engine's own arena size at open, adds each
+// ingest's frames (size prefix + payload, exactly what the arena appends), and
+// is re-read from the engine at every flush and after every compaction. The
+// arena is compacted while the node runs (engine_arena_compaction.go): past
+// the compaction mark with more than half of it dead, in the background, in
+// bounded steps; and synchronously before a mirror that would pass the budget.
+// Only a mirror that still does not fit is refused (the control tables keep
+// every record; the hot window is a cache), and hydration stops filling. A
+// boot whose persisted arena is past the mark and mostly dead still discards
+// it and refills the window (openControlEngine) — the fallback.
 //
 // 512 MiB keeps the vector's largest doubling at 1 GiB (1.5 GiB transient)
 // with the SQLite page cache and the per-record index beside it; host-02's
@@ -132,20 +134,30 @@ func (s *FlatSQLStore) engineArenaRoomFor(schemaName string, n int64) bool {
 	if have+n <= engineArenaBudgetBytes {
 		return true
 	}
+	// Compact before refusing: whatever the arena holds dead is room.
+	if s.compactEngineArenaBeforeRefusalLocked(n) {
+		return true
+	}
+	have = s.engineArenaBytes.Load()
 	refused := s.engineArenaRefused.Add(n)
 	if engineArenaFullWarnings.Allow() {
-		log.Warnf("FlatSQL engine: record arena at %d MiB of its %d MiB budget — not mirroring %d more bytes of %s into the hot window (%d MiB refused so far). The control tables hold every record; the next boot compacts the arena when it is mostly dead.",
-			have>>20, engineArenaBudgetBytes>>20, n, schemaName, refused>>20)
+		log.Warnf("FlatSQL engine: record arena at %d MiB of its %d MiB budget with nothing left to compact — not mirroring %d more bytes of %s into the hot window (%d MiB refused so far). The control tables hold every record; the live hot windows alone fill the budget (%s).",
+			have>>20, engineArenaBudgetBytes>>20, n, schemaName, refused>>20, engineArenaBudgetEnv)
 	}
 	return false
 }
 
-// syncEngineArenaBytesLocked re-reads the arena's size from the engine: its
-// flushed high-water mark, which a flush makes the whole arena. Caller holds
-// the store write lock (or owns the store exclusively).
+// syncEngineArenaBytesLocked re-reads the arena's size from the engine: the
+// bytes of frames it holds (an engine without arena stats: its flushed
+// high-water mark, which a flush makes the whole arena). Caller holds the
+// store write lock (or owns the store exclusively).
 func (s *FlatSQLStore) syncEngineArenaBytesLocked() {
 	if s.engineDB == nil {
 		s.engineArenaBytes.Store(0)
+		return
+	}
+	if stats, err := s.engineDB.ArenaStats(); err == nil {
+		s.engineArenaBytes.Store(stats.Size)
 		return
 	}
 	off, err := s.engineDB.FlushedOffset()
@@ -1412,6 +1424,16 @@ func (s *FlatSQLStore) hydrateEngineHotWindow(ctx context.Context, lockPerSchema
 			return total, err
 		}
 	}
+	// A warm open re-applies every tombstone the engine forgot: the rows are
+	// dead again, and a mostly-dead arena past the mark is compacted now
+	// rather than carried until it refuses a mirror.
+	if lockPerSchema {
+		unlock := s.lockWrite("engine hot window: compaction check")
+		s.maybeCompactEngineArenaLocked("after the hot-window hydration")
+		unlock()
+	} else {
+		s.maybeCompactEngineArenaLocked("after the hot-window hydration")
+	}
 	return total, nil
 }
 
@@ -1438,6 +1460,7 @@ func (s *FlatSQLStore) HydrateEngineHotWindowContext(ctx context.Context) (int, 
 		return count, err
 	}
 	s.engineHotHydrated.Store(true)
+	s.persistPendingArenaCompaction("before the post-hydration flush")
 	func() {
 		defer s.lockWrite("engine hot window: flush record state")()
 		if err := s.checkpointEngineLocked(); err != nil {
