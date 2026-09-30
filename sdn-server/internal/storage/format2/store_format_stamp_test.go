@@ -109,3 +109,80 @@ func TestEmbeddedEngineStoreFormatIsTheBuildStamp(t *testing.T) {
 		t.Fatalf("reopen after restoring STORE: %v", err)
 	}
 }
+
+// A store at level 2 (what store-migrate wrote on host-02 with the 3.5.1
+// engine, reproduced with the SDN_F2_WRITE_FORMAT pin) is raised by the first
+// open of this engine: the writer's stats say so, SDN reads the raised STORE,
+// and the store starts again, twice, with its record (the raised store's
+// second start is what a STORE reader that knew only format 2 refused). A
+// pinned open never raises it.
+func TestAStoreTheEngineRaisesStartsAgain(t *testing.T) {
+	requireEngine(t)
+	top := uint64(versioninfo.PSEngineStoreFormatMax)
+	root := t.TempDir()
+	ctx := context.Background()
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	tags := &Tags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "raise", License: "CC-BY-4.0"}
+	start := func(pin string) (*Store, WriterStats) {
+		t.Helper()
+		t.Setenv(WriteFormatEnv, pin)
+		s, err := Open(StoreConfig{Root: root, AOTCacheDir: testAOTDir(t), CompileOnMiss: true, AllowFresh: true,
+			Topology: Topology{Writers: 1, InteractiveLanes: 1, BulkLanes: 1}, GatePeriod: 50 * time.Millisecond})
+		if err != nil {
+			t.Fatalf("open (pin %q): %v", pin, err)
+		}
+		st, err := s.w.Stats()
+		if err != nil {
+			_ = s.Close()
+			t.Fatalf("writer stats: %v", err)
+		}
+		return s, st
+	}
+	s, st := start("2")
+	if st.StoreFormat != 2 || st.EngineFormatMax != top {
+		t.Fatalf("pinned fresh store: level %d, engine max %d; want 2 and %d", st.StoreFormat, st.EngineFormatMax, top)
+	}
+	res, err := s.PutBatch(ctx, "OMM.fbs", ommPuts(3, 0, base, "RAISE"), "source:celestrak", nil, tags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range res {
+		if r.Err != nil {
+			t.Fatalf("record rejected: %v", r.Err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, st = start("2") // pinned again: stays
+	_ = s.Close()
+	if sf, err := ReadStoreFile(root); err != nil || sf.Format != 2 || st.RaisedFrom != 0 {
+		t.Fatalf("pinned reopen: STORE %+v, %v, raised from %d; want level 2, no raise", sf, err, st.RaisedFrom)
+	}
+	for i := 0; i < 2; i++ {
+		s, st = start("")
+		wantFrom := uint64(0)
+		if i == 0 && top > 2 {
+			wantFrom = 2
+		}
+		if st.StoreFormat != top || st.RaisedFrom != wantFrom {
+			_ = s.Close()
+			t.Fatalf("start %d: level %d raised from %d; want %d from %d", i+1, st.StoreFormat, st.RaisedFrom, top, wantFrom)
+		}
+		for _, r := range res {
+			if _, err := s.GetRecord(ctx, "OMM.fbs", r.CID); err != nil {
+				_ = s.Close()
+				t.Fatalf("start %d: record %s: %v", i+1, r.CID, err)
+			}
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if sf, err := ReadStoreFile(root); err != nil || uint64(sf.Format) != top {
+			t.Fatalf("start %d: STORE %+v, %v; want level %d", i+1, sf, err, top)
+		}
+		if ok, err := Migrated(root); err != nil || !ok {
+			t.Fatalf("start %d: Migrated = %v, %v", i+1, ok, err)
+		}
+	}
+}

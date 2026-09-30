@@ -34,6 +34,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
@@ -183,6 +184,15 @@ func TestStoreMigrateCopiesVerifiesAndActivates(t *testing.T) {
 	if ok, err := format2.Migrated(dir); err != nil || !ok {
 		t.Fatalf("fsql2 MIGRATED: %v %v", ok, err)
 	}
+	// The store is written at the engine's level from its first batch (the
+	// staging STORE carries it), not raised at the first daemon start.
+	if sf, err := format2.ReadStoreFile(dir); err != nil || int(sf.Format) != versioninfo.PSEngineStoreFormatMax {
+		t.Fatalf("migrated STORE %+v, %v; want level %d", sf, err, versioninfo.PSEngineStoreFormatMax)
+	}
+	if st := rep.Engine; int(st.StoreFormat) != versioninfo.PSEngineStoreFormatMax || st.RaisedFrom != 0 {
+		t.Fatalf("the copy ran at level %d (raised from %d); want %d from the start", st.StoreFormat, st.RaisedFrom,
+			versioninfo.PSEngineStoreFormatMax)
+	}
 	if fi, err := os.Stat(filepath.Join(dir, "control.flatsqldb")); err != nil || !fi.IsDir() {
 		t.Fatalf("control.flatsqldb placeholder: %v", err)
 	}
@@ -232,6 +242,9 @@ func TestStoreMigrateResumesAfterAnAbort(t *testing.T) {
 	}
 	if !rep.Resumed || rep.Verification == nil || rep.Verification.CIDsCompared != 340 {
 		t.Fatalf("resumed run %+v", rep)
+	}
+	if st := rep.Engine; int(st.StoreFormat) != versioninfo.PSEngineStoreFormatMax {
+		t.Fatalf("the resumed copy ran at level %d; want %d", st.StoreFormat, versioninfo.PSEngineStoreFormatMax)
 	}
 }
 

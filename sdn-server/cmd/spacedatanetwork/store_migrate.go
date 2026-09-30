@@ -753,7 +753,11 @@ func (m *migrator) openJournal(mode string) error {
 // ensureStagingStore writes the staging store's STORE (the journal's gseq
 // floor, migratedFrom = 1) and MIGRATED when absent. They sit inside the
 // staging root, so the engine and its readers open it; nothing outside the
-// staging directory names it until activation renames it into place.
+// staging directory names it until activation renames it into place. STORE
+// is written at the level this build writes (format2.StoreLevel), so the
+// copy runs at that level from its first batch: the engine raises a store
+// only once its registry is non-empty, and a STORE written at 2 would copy
+// the whole store with level-2 lane tables (and their 1,170-lane cap).
 func (m *migrator) ensureStagingStore() error {
 	sf, err := format2.ReadStoreFile(m.staging)
 	if errors.Is(err, os.ErrNotExist) {
@@ -784,8 +788,12 @@ func (m *migrator) openEngine() error {
 	if writers == 0 {
 		writers = 1
 	}
+	writeFormat, err := format2.WriteFormat()
+	if err != nil {
+		return err
+	}
 	if m.w, err = format2.OpenWriter(opt, format2.WriterConfig{Root: migrateStagingDir, Writers: writers, Create: true,
-		RequireMigrated: true}); err != nil {
+		RequireMigrated: true, WriteFormat: writeFormat}); err != nil {
 		return fmt.Errorf("open the partition-store writer (run prewarm-aot as this user first): %w", err)
 	}
 	if m.r, err = format2.OpenReader(opt, flatsqlrt.PSRoleBulk, format2.ReaderConfig{Root: migrateStagingDir, Lanes: 1}); err != nil {

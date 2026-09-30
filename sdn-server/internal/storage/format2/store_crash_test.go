@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 var durableWriteSteps = []string{"created", "written", "synced", "renamed"}
@@ -117,9 +118,10 @@ func TestMarkerWritesSurviveAKillAfterEveryStep(t *testing.T) {
 	}
 }
 
-// storeBytes is fsql2/STORE as the engine writes it for a fresh store.
+// storeBytes is fsql2/STORE as the engine writes it for a fresh store: at
+// its kFormatMax (the level it writes).
 func storeBytes(uuid [16]byte, createdMs int64) []byte {
-	return StoreFile{UUID: uuid, CreatedMs: createdMs, GseqFloor: 1}.encode()
+	return StoreFile{Format: versioninfo.PSEngineStoreFormatMax, UUID: uuid, CreatedMs: createdMs, GseqFloor: 1}.encode()
 }
 
 // creationCrashState is what a kill leaves at one point of the engine's

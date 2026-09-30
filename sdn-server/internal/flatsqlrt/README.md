@@ -154,20 +154,30 @@ by `psartifact.go` and run by `psinstance.go` (`PSABIEngine`) as separate
 writer and reader instances. It is the PUBLISHED release's file, byte for
 byte (published-deps law, design A34):
 
-- npm package: `flatsql@3.5.1` (`https://registry.npmjs.org/flatsql/-/flatsql-3.5.1.tgz`),
-  published by flatsql's `npm-publish.yml` from tag `v3.5.1` with provenance
-- gitHead: `965b16b1d48cf53257879ceac41dfadd2e39b359`
-- sha256: `3a215da45a53f3a7016257429c392720e728caf850d3a1213dc501bfb5844359`
+- npm package: `flatsql@3.6.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.6.0.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.6.0` with provenance
+- gitHead: `7df7140c88b0bfd23330a608bdb906d6c8cc16e6`
+- sha256: `87ea0c727eb3c0b889a2d3fb41f8dac631ec2af07f521fe9526556d094d2e119`
   (the package's `wasm/integrity.json`; `TestEmbeddedPSThreadsArtifact`)
-- 2,485,719 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
-- 3.5.1 creates a fresh store in a crash-safe order (A5: the registry files,
+- 2,629,364 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 3.6.0 writes store format level 3 (flatsql PARTITION-STORE.md §41, TB03):
+  a partition keeps committing past 1,170 live lanes (a batch carries only
+  the lanes it changed; past 32 the head names a paged lane checkpoint
+  `lk-<gen>.fsl`), and live-only candidate caps (N2). Its `kFormatMax` is 3
+  (`versioninfo.PSEngineStoreFormatMax`): an open raises fsql2/STORE to 3
+  once the registry is non-empty (through `fsql2/STORE.tmp`), a fresh store
+  is created at 3, and 3.5.1 refuses a raised store. `SDN_F2_WRITE_FORMAT=2`
+  holds a host at 2 (`format2.WriteFormatEnv`). `format2.ReadStoreFile`
+  reads levels 2 to `PSEngineStoreFormatMax`, and it and the update guard
+  read a torn STORE through STORE.tmp. `flatsql_ps_stats` returns 41 entries
+  (`Writer.Stats` sizes its buffer from the engine; entries 36-40 are the
+  store's level, `kFormatMax`, the level this open raised STORE from, lane
+  checkpoints cut and their bytes)
+- 3.5.1 created a fresh store in a crash-safe order (A5: the registry files,
   MIGRATED, then STORE, whose one torn state the engine finishes from MIGRATED;
   `format2/store_crash_test.go`) and keeps per-partition bookkeeping
-  O(1)/O(log S) per commit (flatsql PARTITION-STORE.md §40, B4, M3). 3.5.0
-  added the query-gap plans the format-2 reads use (§39) and records stored
-  with their own size prefix; `flatsql_ps_stats` returns 36 entries since
-  3.3.0 (`Writer.Stats`)
-- previous: `flatsql@3.5.0`, sha256 `787adbcccf52a9e9fe2767d6679b6f2d94a4ead41985bf2a7bb0855f821abc72`
+  O(1)/O(log S) per commit (flatsql PARTITION-STORE.md §40, B4, M3)
+- previous: `flatsql@3.5.1`, sha256 `3a215da45a53f3a7016257429c392720e728caf850d3a1213dc501bfb5844359`
 
 It loads only as a THREADS + Interruptible AOT artifact (design A30: no
 interpreter fallback) under the prefix `fsqlps`. `spacedatanetwork
