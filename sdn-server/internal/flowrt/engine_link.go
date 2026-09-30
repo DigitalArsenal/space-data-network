@@ -29,6 +29,7 @@ import (
 	"encoding/binary"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
 // EngineLinkCapability is the manifest capability the flow compiler stamps
@@ -40,10 +41,30 @@ const EngineLinkCapability = "storage_engine_link"
 // shim.
 const LinkShimModuleName = "flatsql_link"
 
-// linkShimAOTCachePrefix names the shim's AOT artifacts in the shared cache.
-// The mount-time compile (httpmount.go) and PrewarmLinkShimAOT MUST agree on
-// it or a prewarmed shim won't be found.
-const linkShimAOTCachePrefix = "flatsqllink"
+// linkShimAOTCachePrefixBase names the shim's AOT artifacts in the shared
+// cache. The mount-time compile (httpmount.go) and PrewarmLinkShimAOT MUST
+// agree on the full prefix (linkShimAOTCachePrefix) or a prewarmed shim won't
+// be found.
+const linkShimAOTCachePrefixBase = "flatsqllink"
+
+// linkShimAOTCachePrefix carries wasmrt.SubstrateReport.Tag(): the shim is
+// AOT-compiled by the same linked WasmEdge as everything else
+// (flatsqlrt.threadedAOTKey does the same for the partition store's
+// "fsqlps-intr-<Tag>"), so a runtime fix that changes Tag() (e.g.
+// 04-atomic-memarg-offset, "sdn2"->"sdn3") must change this key too, or a host
+// with a pre-fix shim artifact cached keeps loading it under the new, patched
+// runtime.
+func linkShimAOTCachePrefix() string {
+	return linkShimAOTCachePrefixForTag(wasmrt.SubstrateStatus().Tag())
+}
+
+// linkShimAOTCachePrefixForTag is linkShimAOTCachePrefix with the substrate
+// tag as an explicit argument, so a test can prove the key changes when the
+// tag does without depending on the process-wide wasmrt.SubstrateStatus()
+// singleton.
+func linkShimAOTCachePrefixForTag(tag string) string {
+	return linkShimAOTCachePrefixBase + "-" + tag
+}
 
 // flatsqlLinkShimWasm is the deterministic flatsql_link shim (assembled by
 // the SDK's src/flow/flatsqlLinkShim.js; also shipped in linked flow bundles
@@ -59,7 +80,7 @@ var flatsqlLinkShimWasm []byte
 // for engine-linked flows on runtimes with the linked-AOT fix; prewarming it
 // keeps a first-mount compile off the request path.
 func PrewarmLinkShimAOT(cacheDir string) (path string, alreadyPresent bool, err error) {
-	return flatsqlrt.PrewarmAOTArtifact(cacheDir, linkShimAOTCachePrefix, flatsqlLinkShimWasm)
+	return flatsqlrt.PrewarmAOTArtifact(cacheDir, linkShimAOTCachePrefix(), flatsqlLinkShimWasm)
 }
 
 // EngineLinkProvider is what a mount needs from the store to serve linked
