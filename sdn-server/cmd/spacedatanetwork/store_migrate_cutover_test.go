@@ -14,8 +14,10 @@ import (
 
 	flatbuffers "github.com/google/flatbuffers/go"
 
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 )
 
 // legacyPLOG is a publication log entry as the log service built it before
@@ -102,4 +104,76 @@ func TestStoreMigrateDeltaPastTheRejectRing(t *testing.T) {
 		}
 	}
 	t.Logf("--delta ended in %v with %d refused PLOG copies reported", time.Since(start).Round(time.Millisecond), len(rep.Rejected))
+}
+
+// B1 (cutover review): a record with two tag rows migrates as its FIRST copy
+// with the older row and a RETAG with the newer. The RETAG arrived at the
+// record's timestamp, so its lane could not order the rows, and GetSourceTags
+// answered the older batch on format 2 where format 1 answers the newer one.
+func TestStoreMigrateOrdersARecordsTagsByTheirRows(t *testing.T) {
+	requirePSEngine(t)
+	dir := t.TempDir()
+	v, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := storage.NewFlatSQLStore(dir, v, storage.WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	var omm [][]byte
+	for i := 0; i < 20; i++ {
+		omm = append(omm, migrateTestOMM(uint32(30000+i), base.Add(time.Duration(i)*time.Minute), fmt.Sprintf("RETAG-%d", i)))
+	}
+	gp := storage.SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "gp-001",
+		SourceURL: "https://example.test/gp-001"}
+	if _, err := s.StoreBatchWithSourceTags("OMM.fbs", omm, "source:celestrak", nil, gp); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond) // a later created_at
+	gp.BatchID, gp.SourceURL = "gp-002", "https://example.test/gp-002"
+	if _, err := s.StoreBatchWithSourceTags("OMM.fbs", omm[:12], "source:celestrak", nil, gp); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{}
+	for _, d := range omm {
+		c := storage.ComputeCID(d)
+		tags, err := s.GetSourceTags("OMM.fbs", c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[c] = tags.BatchID
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrateStore(context.Background(), migrateOptions{Store: dir, AOTCacheDir: migrateTestAOTDir(t), CompileOnMiss: true, PageRows: 64}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := flatsqlrt.PrewarmPSThreadsAOT(storage.EngineAOTCacheDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(format2.FormatEnv, "2")
+	f2, err := storage.NewFlatSQLStore(dir, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f2.Close()
+	newer := 0
+	for c, batch := range want {
+		tags, err := f2.GetSourceTags("OMM.fbs", c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tags.BatchID != batch {
+			t.Errorf("GetSourceTags %s: format 2 %q, format 1 %q", c, tags.BatchID, batch)
+		}
+		if batch == "gp-002" {
+			newer++
+		}
+	}
+	if newer != 12 {
+		t.Fatalf("format 1 answered gp-002 for %d records, want 12", newer)
+	}
 }

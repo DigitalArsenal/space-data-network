@@ -933,6 +933,20 @@ func (m *migrator) noteReject(pa *pendingAcks, rseq uint64, code int32) {
 	m.j.Rejected = append(m.j.Rejected, migrateReject{Table: e.table, CID: e.cid, Code: code})
 }
 
+// retagEntry is the entry of a record's further tag row: the record again,
+// with that tag, which the engine appends as a RETAG row keeping the entry's
+// RecordAttr. It arrives at the tag row's created_at (the record's timestamp
+// when the row has none), as a live RETAG arrives when its write does: its
+// lane's update time then orders a record's tags as format 1's rows were
+// (GetSourceTags reports the newest).
+func (m *migrator) retagEntry(tbl storage.LegacyTable, r storage.LegacyRecord, tag *storage.LegacyTag) (*format2.Entry, error) {
+	e, err := m.recordEntry(tbl, r, tag, 0)
+	if err == nil && tag.CreatedAt > 0 {
+		e.ArrivalMs = tag.CreatedAt * 1000
+	}
+	return e, err
+}
+
 // recordEntry builds the ring entry of one legacy record copy with tag t.
 func (m *migrator) recordEntry(tbl storage.LegacyTable, r storage.LegacyRecord, tag *storage.LegacyTag, gseq int64) (*format2.Entry, error) {
 	c, err := cid.Decode(r.CID)
@@ -1177,7 +1191,7 @@ func (m *migrator) phaseA(ctx context.Context, schema string, upto int64) error 
 			}
 			m.recordBytes += int64(len(r.Stored))
 			for i := 1; i < len(rt); i++ {
-				e, err := m.recordEntry(t, r, &rt[i], 0)
+				e, err := m.retagEntry(t, r, &rt[i])
 				if err != nil {
 					return err
 				}
@@ -1764,7 +1778,7 @@ func (m *migrator) deltaTags(ctx context.Context) error {
 					return err
 				}
 				tag := tr.LegacyTag
-				e, err := m.recordEntry(t, recs[tr.CID], &tag, 0)
+				e, err := m.retagEntry(t, recs[tr.CID], &tag)
 				if err != nil {
 					return err
 				}
