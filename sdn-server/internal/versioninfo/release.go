@@ -51,7 +51,7 @@ const (
 	// (flatsqlrt.PSThreadsSHA256). Repinning the engine changes that constant,
 	// and TestEmbeddedEngineStoreFormatIsTheBuildStamp (internal/storage/format2)
 	// fails until this pair is re-derived from the new engine.
-	PSEngineSHA256 = "a90d9488187e527bccd3f02ce3f68be6443690bc1a2ee6c6786c64c907376e36"
+	PSEngineSHA256 = "787adbcccf52a9e9fe2767d6679b6f2d94a4ead41985bf2a7bb0855f821abc72"
 
 	// PSEngineStoreFormatMax is that engine's kFormatMax: the highest
 	// fsql2/STORE format it opens (kFormat, 2, before TB03 added format levels).

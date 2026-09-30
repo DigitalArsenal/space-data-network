@@ -398,7 +398,7 @@ type WriterStats struct {
 
 // Stats reads the writer's counters.
 func (w *Writer) Stats() (WriterStats, error) {
-	const n = 26 * 8
+	const n = 36 * 8 // flatsql 3.3.0: entries 26-35 (hot split, arrivals compaction)
 	mod := w.inst.Module()
 	out, err := mod.AllocateSize(n)
 	if err != nil {
@@ -410,7 +410,7 @@ func (w *Writer) Stats() (WriterStats, error) {
 		return WriterStats{}, err
 	}
 	got := int(wasmrt.ToInt32(v[0]))
-	if got != n && got != 24*8 {
+	if got != n && got != 26*8 && got != 24*8 {
 		return WriterStats{}, fmt.Errorf("format2: writer stats %d bytes, want %d", got, n)
 	}
 	if !w.inst.Enter() {
