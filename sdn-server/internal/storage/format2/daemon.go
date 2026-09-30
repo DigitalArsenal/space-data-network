@@ -155,6 +155,14 @@ func (s *Store) Licences(ctx context.Context) ([]Licence, error) {
 	return out, nil
 }
 
+// LabelsCaughtUp reports whether every partition of a type was labeled by
+// its type owner through everything it had acked when the call was made: a
+// type-level read then sees what the lane counters count.
+func (s *Store) LabelsCaughtUp(schema string) (bool, error) {
+	behind, err := s.behindLabels(schema)
+	return len(behind) == 0, err
+}
+
 // PartitionsOf returns the counters of the partitions of one type (the head
 // reader's, no lane; only the heads that moved are read).
 func (s *Store) PartitionsOf(schema string) ([]PartitionCounter, error) {
