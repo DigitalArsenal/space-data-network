@@ -37,6 +37,14 @@ package main
 //     resolves to the same CID; the engine's migrated-gseq fallback counter
 //     must be 0.
 //
+// ORPHANS. An index row whose record no producer table holds (the record
+// was deleted and its index row stayed) is an orphan. The legacy store
+// never serves one (datasync reads and counts only held rows, recordHeldSQL),
+// so it is not migrated: phase A reads only held index rows, the cid
+// sequence is compared over held rows (MaxRowID = the last held row's), the
+// interim FTS leaves out the orphans' rows, and the report counts them per
+// schema.
+//
 // RESUME. Progress is journalled only after the entries it covers are acked
 // (durable). A rerun continues from the journal; resent entries dedupe by CID
 // in their partition (0 new rows). A journal that claims more records than
@@ -201,6 +209,7 @@ type inventoryReport struct {
 	Partitions  []inventoryPartition   `json:"partitions"`
 	Types       []inventoryType        `json:"types"`
 	Index       []storage.IndexStats   `json:"datasync_index"`
+	Orphans     map[string]int64       `json:"orphan_index_rows,omitempty"` // schema -> index rows no producer table holds
 	MaxRowID    int64                  `json:"max_rowid"`
 	FTS         map[string]int64       `json:"fts_progress,omitempty"`
 	GseqFloor   uint64                 `json:"gseq_floor"`
@@ -239,8 +248,10 @@ func migrateInventory(store string) (*inventoryReport, error) {
 		return nil, err
 	}
 	byType := map[string]*inventoryType{}
+	bySchema := map[string][]storage.LegacyTable{}
 	var lens = map[string][]int64{}
 	for _, t := range tables {
+		bySchema[t.Schema] = append(bySchema[t.Schema], t)
 		ts, err := src.TableSizes(t)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", t.Name, err)
@@ -277,6 +288,18 @@ func migrateInventory(store string) (*inventoryReport, error) {
 	sort.Slice(rep.Types, func(i, j int) bool { return rep.Types[i].Schema < rep.Types[j].Schema })
 	if rep.Index, err = src.IndexSchemas(); err != nil {
 		return nil, err
+	}
+	for _, s := range rep.Index {
+		n, err := src.OrphanIndexRows(s.Schema, bySchema[s.Schema])
+		if err != nil {
+			return nil, fmt.Errorf("%s orphans: %w", s.Schema, err)
+		}
+		if n > 0 {
+			if rep.Orphans == nil {
+				rep.Orphans = map[string]int64{}
+			}
+			rep.Orphans[s.Schema] = n
+		}
 	}
 	if rep.MaxRowID, err = src.MaxIndexRowID(); err != nil {
 		return nil, err
@@ -1053,7 +1076,9 @@ func (m *migrator) phaseA(ctx context.Context, schema string, upto int64) error 
 	pages := readPages(ctx, func() (*migratePage, bool) {
 		readStart := time.Now()
 		defer func() { m.readNs += time.Since(readStart) }()
-		page, err := m.src.IndexPage(schema, after, m.opt.PageRows)
+		// Held rows only: an orphan (no producer table holds its record)
+		// is never copied.
+		page, err := m.src.HeldIndexPage(schema, tables, after, m.opt.PageRows)
 		if err != nil {
 			return &migratePage{err: err}, false
 		}
@@ -1110,7 +1135,7 @@ func (m *migrator) phaseA(ctx context.Context, schema string, upto int64) error 
 		for _, ir := range pg.index {
 			t, ok := pg.first[ir.CID]
 			if !ok {
-				continue // an index row without a record (reported by verification)
+				continue // an orphan (HeldIndexPage leaves them out; counted by verification)
 			}
 			p, err := m.partition(ctx, t)
 			if err != nil {
@@ -1301,19 +1326,22 @@ func (m *migrator) waitLabeled(ctx context.Context, schemas []string) error {
 // ---- verification (§16.1 step 7) ------------------------------------------------------
 
 type migrateVerification struct {
-	Partitions      int      `json:"partitions"`
-	PartitionsEqual bool     `json:"partitions_equal"`
-	Lanes           int      `json:"lanes"`
-	LanesEqual      bool     `json:"lanes_equal"`
-	Schemas         int      `json:"schemas"`
-	CIDSequences    bool     `json:"cid_sequences_equal"`
-	CIDsCompared    int64    `json:"cids_compared"`
-	MaxRowID        []string `json:"max_rowid,omitempty"`
-	MigratedGseqs   uint64   `json:"migrated_gseqs"`
-	GseqFallbacks   uint64   `json:"migrated_gseq_fallbacks"`
-	FTS             string   `json:"fts_rowids"`
-	Mismatches      []string `json:"mismatches,omitempty"`
-	Took            string   `json:"took"`
+	Partitions      int   `json:"partitions"`
+	PartitionsEqual bool  `json:"partitions_equal"`
+	Lanes           int   `json:"lanes"`
+	LanesEqual      bool  `json:"lanes_equal"`
+	Schemas         int   `json:"schemas"`
+	CIDSequences    bool  `json:"cid_sequences_equal"`
+	CIDsCompared    int64 `json:"cids_compared"`
+	// OrphanIndexRows: per schema, the index rows no producer table holds
+	// (not migrated; absent when there are none).
+	OrphanIndexRows map[string]int64 `json:"orphan_index_rows,omitempty"`
+	MaxRowID        []string         `json:"max_rowid,omitempty"`
+	MigratedGseqs   uint64           `json:"migrated_gseqs"`
+	GseqFallbacks   uint64           `json:"migrated_gseq_fallbacks"`
+	FTS             string           `json:"fts_rowids"`
+	Mismatches      []string         `json:"mismatches,omitempty"`
+	Took            string           `json:"took"`
 }
 
 func (m *migrator) verify(ctx context.Context) (*migrateVerification, error) {
@@ -1440,22 +1468,33 @@ func (m *migrator) verify(ctx context.Context) (*migrateVerification, error) {
 			bad("lane %q: engine (%d, %d B), legacy none", k, got[0], got[1])
 		}
 	}
-	// 3. Per schema: the v1 cid sequence.
+	// 3. Per schema: the v1 cid sequence of the held index rows. Orphans
+	// (index rows no producer table holds) were not migrated; they are
+	// counted and reported.
 	v.CIDSequences = true
 	schemas, err := m.src.IndexSchemas()
 	if err != nil {
 		return v, err
 	}
 	for _, s := range schemas {
-		if _, ok := m.bySchema[s.Schema]; !ok {
-			if s.Rows > 0 {
-				v.CIDSequences = false
-				bad("schema %s: %d index rows but no producer table", s.Schema, s.Rows)
+		tables := m.bySchema[s.Schema]
+		orphans, err := m.src.OrphanIndexRows(s.Schema, tables)
+		if err != nil {
+			return v, fmt.Errorf("%s orphans: %w", s.Schema, err)
+		}
+		if orphans > 0 {
+			if v.OrphanIndexRows == nil {
+				v.OrphanIndexRows = map[string]int64{}
 			}
-			continue
+			v.OrphanIndexRows[s.Schema] = orphans
+			m.rep.Notes = append(m.rep.Notes, fmt.Sprintf("%s: %d of %d index rows are orphans (no producer table holds the record); not migrated",
+				s.Schema, orphans, s.Rows))
+		}
+		if len(tables) == 0 {
+			continue // every row is an orphan
 		}
 		v.Schemas++
-		n, gseqHi, err := m.compareCIDSequence(ctx, s.Schema, bad)
+		n, legacyHi, gseqHi, err := m.compareCIDSequence(ctx, s.Schema, tables, bad)
 		v.CIDsCompared += n
 		if err != nil {
 			if errors.Is(err, errSequenceMismatch) {
@@ -1464,9 +1503,20 @@ func (m *migrator) verify(ctx context.Context) (*migrateVerification, error) {
 			}
 			return v, err
 		}
-		if gseqHi != s.MaxRowID {
+		if n+orphans != s.Rows {
 			v.CIDSequences = false
-			bad("%s: MaxRowID: legacy %d, gseq_hi %d", s.Schema, s.MaxRowID, gseqHi)
+			bad("%s: %d held and %d orphan index rows, but the index has %d", s.Schema, n, orphans, s.Rows)
+		}
+		// The legacy datasync MaxRowID is the last held row's rowid
+		// (rawSchemaRecordHeadLocked); MAX(rowid) is larger only when the
+		// last rows are orphans.
+		if gseqHi != legacyHi {
+			v.CIDSequences = false
+			bad("%s: MaxRowID: legacy %d, gseq_hi %d", s.Schema, legacyHi, gseqHi)
+		}
+		if s.MaxRowID != legacyHi {
+			m.rep.Notes = append(m.rep.Notes, fmt.Sprintf("%s: the index's MAX(rowid) %d is an orphan's; the last held row's is %d",
+				s.Schema, s.MaxRowID, legacyHi))
 		}
 		v.MaxRowID = append(v.MaxRowID, fmt.Sprintf("%s: %d", s.Schema, gseqHi))
 	}
@@ -1496,21 +1546,24 @@ func (m *migrator) verify(ctx context.Context) (*migrateVerification, error) {
 
 var errSequenceMismatch = errors.New("cid sequence mismatch")
 
-func (m *migrator) compareCIDSequence(ctx context.Context, schema string, bad func(string, ...interface{})) (int64, int64, error) {
+// compareCIDSequence compares schema's held index rows (rowid order; tables
+// are its producer tables) with the engine's arrivals (gseq order), position
+// by position. It returns the rows compared, the last held row's rowid and
+// the last gseq.
+func (m *migrator) compareCIDSequence(ctx context.Context, schema string, tables []storage.LegacyTable,
+	bad func(string, ...interface{})) (n, legacyHi, gseq int64, err error) {
 	typ := strings.TrimSuffix(schema, ".fbs")
 	var after int64
-	var gseq int64
-	var n int64
 	const page = 5000
 	for {
-		legacy, err := m.src.IndexPage(schema, after, page)
+		legacy, err := m.src.HeldIndexPage(schema, tables, after, page)
 		if err != nil {
-			return n, gseq, err
+			return n, legacyHi, gseq, err
 		}
 		res, err := m.r.Query(ctx, format2.Request{SQL: fmt.Sprintf(`SELECT _gseq, _cid_bin FROM "%s" WHERE _gseq > ? ORDER BY _gseq LIMIT %d`, typ, page),
 			Params: []format2.Cell{format2.Int(gseq)}})
 		if err != nil {
-			return n, gseq, fmt.Errorf("%s arrivals: %w", typ, err)
+			return n, legacyHi, gseq, fmt.Errorf("%s arrivals: %w", typ, err)
 		}
 		if len(legacy) != len(res.Rows) {
 			// Compare what both have, then report the length difference.
@@ -1521,22 +1574,26 @@ func (m *migrator) compareCIDSequence(ctx context.Context, schema string, bad fu
 			for i := 0; i < k; i++ {
 				if !cidEqual(legacy[i].CID, res.Rows[i][1].B) {
 					bad("%s: position %d: legacy %s, engine %x", schema, n+int64(i), legacy[i].CID, res.Rows[i][1].B)
-					return n, gseq, errSequenceMismatch
+					return n, legacyHi, gseq, errSequenceMismatch
 				}
 			}
-			bad("%s: legacy has %d more cids than the engine after position %d", schema, len(legacy)-len(res.Rows), n+int64(k))
-			return n + int64(k), gseq, errSequenceMismatch
+			if len(legacy) > len(res.Rows) {
+				bad("%s: legacy has %d more cids than the engine after position %d", schema, len(legacy)-len(res.Rows), n+int64(k))
+			} else {
+				bad("%s: the engine has %d more cids than legacy after position %d", schema, len(res.Rows)-len(legacy), n+int64(k))
+			}
+			return n + int64(k), legacyHi, gseq, errSequenceMismatch
 		}
 		for i := range legacy {
 			if !cidEqual(legacy[i].CID, res.Rows[i][1].B) {
 				bad("%s: position %d: legacy %s, engine %x", schema, n+int64(i), legacy[i].CID, res.Rows[i][1].B)
-				return n, gseq, errSequenceMismatch
+				return n, legacyHi, gseq, errSequenceMismatch
 			}
 			// gseq = the legacy rowid (flatsql 3.2.0 migrated gseqs): the
 			// datasync cursor, MaxRowID and the FTS rowids carry over.
 			if g := res.Rows[i][0].Int64(); g != legacy[i].RowID {
 				bad("%s: position %d (%s): gseq %d, legacy rowid %d", schema, n+int64(i), legacy[i].CID, g, legacy[i].RowID)
-				return n, gseq, errSequenceMismatch
+				return n, legacyHi, gseq, errSequenceMismatch
 			}
 		}
 		n += int64(len(legacy))
@@ -1544,12 +1601,13 @@ func (m *migrator) compareCIDSequence(ctx context.Context, schema string, bad fu
 			break
 		}
 		after = legacy[len(legacy)-1].RowID
+		legacyHi = after
 		gseq = res.Rows[len(res.Rows)-1][0].Int64()
 		if len(legacy) < page {
 			break
 		}
 	}
-	return n, gseq, nil
+	return n, legacyHi, gseq, nil
 }
 
 func cidEqual(text string, bin []byte) bool {
@@ -1782,8 +1840,8 @@ func (m *migrator) copyControl() error {
 	if m.rep.Extra == nil {
 		m.rep.Extra = map[string]interface{}{}
 	}
-	m.rep.Extra["control_copy"] = fmt.Sprintf("%d tables, %d indexes, %d rows, %d FTS rows, %d bytes in %s",
-		st.Tables, st.Indexes, st.Rows, st.FTSRows, st.Bytes, time.Since(start).Round(time.Millisecond))
+	m.rep.Extra["control_copy"] = fmt.Sprintf("%d tables, %d indexes, %d rows, %d FTS rows (%d orphans' left out), %d bytes in %s",
+		st.Tables, st.Indexes, st.Rows, st.FTSRows, st.FTSOrphans, st.Bytes, time.Since(start).Round(time.Millisecond))
 	return syncDirectory(m.outRoot)
 }
 
