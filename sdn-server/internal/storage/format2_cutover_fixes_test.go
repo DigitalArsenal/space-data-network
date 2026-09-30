@@ -247,3 +247,122 @@ func TestFormat2CIDOrderTagScanEqualsFormat1(t *testing.T) {
 		}
 	}
 }
+
+// B1 (cutover review): after a source re-stores its unchanged records under a
+// new batch and reconciles to keep it, format 1 reports the kept batch's tag
+// row. Format 2 projected each record's FIRST copy's own tag, the retired
+// batch, on scans, indexed windows and the export. And a tag-filtered window
+// reports the tag that met the filter, not the FIRST copy's.
+func TestFormat2ReadsReportTheLiveTag(t *testing.T) {
+	requireFormat2Engine(t)
+	legacy := reopenDeferred(t, t.TempDir())
+	defer legacy.Close()
+	f2 := openFormat2ForTest(t, t.TempDir())
+	defer f2.Close()
+	var cat, both [][]byte
+	for i := 0; i < 20; i++ {
+		cat = append(cat, f2TestCAT(uint32(900+i), fmt.Sprintf("RECONCILED %d", i), "PAYLOAD", "OPERATIONAL"))
+	}
+	for i := 0; i < 8; i++ {
+		both = append(both, f2TestCAT(uint32(950+i), fmt.Sprintf("TWO PRODUCERS %d", i), "PAYLOAD", "OPERATIONAL"))
+	}
+	sc := func(batch, url string) SourceTags {
+		return SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-satcat", SourceURL: url, BatchID: batch}
+	}
+	for _, s := range []*FlatSQLStore{legacy, f2} {
+		if _, err := s.StoreBatchWithSourceTags("CAT.fbs", cat, "source:satcat", nil, sc("sc-1", "https://example.test/satcat-old")); err != nil {
+			t.Fatal(err)
+		}
+		// Peer B holds the records as celestrak-satcat first; peer A as IQEngine.
+		if _, err := s.StoreBatchWithSourceTags("CAT.fbs", both, "source:satcat-b", nil,
+			SourceTags{ProviderID: "space-data-network-03", SourceName: "celestrak-satcat", BatchID: "sc-b"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.StoreBatchWithSourceTags("CAT.fbs", both, "source:iqengine", nil,
+			SourceTags{ProviderID: "space-data-network-01", SourceName: "IQEngine", BatchID: "iq-1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(1100 * time.Millisecond)
+	for _, s := range []*FlatSQLStore{legacy, f2} {
+		if _, err := s.StoreBatchWithSourceTags("CAT.fbs", cat, "source:satcat", nil, sc("sc-2", "https://example.test/satcat-new")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ReconcileSourceBatch("CAT.fbs", "space-data-network-02", "celestrak-satcat", "sc-2", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tagsOf := func(recs []*Record) map[string]string {
+		out := map[string]string{}
+		for _, r := range recs {
+			out[r.CID] = r.SourceTags.ProviderID + "/" + r.SourceTags.SourceName + "/" + r.SourceTags.BatchID
+		}
+		return out
+	}
+	same := func(what string, a, b map[string]string) {
+		t.Helper()
+		if len(a) != len(b) {
+			t.Errorf("%s: format 1 %d records, format 2 %d", what, len(a), len(b))
+		}
+		for c, want := range a {
+			if b[c] != want {
+				t.Errorf("%s %s: format 2 %q, format 1 %q", what, c, b[c], want)
+			}
+		}
+	}
+	for _, q := range []RawRecordQuery{
+		{SchemaName: "CAT.fbs", SourceName: "celestrak-satcat", BatchID: "sc-2", Limit: 100},
+		{SchemaName: "CAT.fbs", SourceName: "celestrak-satcat", Limit: 100},
+	} {
+		a, err := legacy.QueryRawRecords(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := f2.QueryRawRecords(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if q.BatchID == "" {
+			// Format 1 repeats a record per tag row; the records held by
+			// two producers carry two celestrak-satcat rows only there.
+			for _, r := range append(a, b...) {
+				if r.SourceTags.BatchID == "sc-1" {
+					t.Errorf("raw %s: %s reports the retired batch sc-1", q.SourceName, r.CID)
+				}
+			}
+			continue
+		}
+		same(fmt.Sprintf("raw %s/%s", q.SourceName, q.BatchID), tagsOf(a), tagsOf(b))
+	}
+	for _, q := range []IndexedRecordQuery{
+		{SchemaName: "CAT.fbs", SourceName: "celestrak-satcat", BatchID: "sc-2", Limit: 100},
+		{SchemaName: "CAT.fbs", SourceName: "IQEngine", Limit: 100},
+	} {
+		a, err := legacy.QueryIndexedRecords(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := f2.QueryIndexedRecords(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		same(fmt.Sprintf("indexed %s/%s", q.SourceName, q.BatchID), tagsOf(a), tagsOf(b))
+	}
+	var cids []string
+	for _, d := range cat {
+		cids = append(cids, ComputeCID(d))
+	}
+	a, err := legacy.sourceTagsForCIDs("CAT.fbs", cids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := f2.sourceTagsForCIDs("CAT.fbs", cids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cids {
+		if a[c].BatchID != "sc-2" || b[c].ProviderID != a[c].ProviderID || b[c].SourceName != a[c].SourceName || b[c].BatchID != a[c].BatchID {
+			t.Errorf("export tags of %s: format 2 %+v, format 1 %+v", c, b[c], a[c])
+		}
+	}
+}
