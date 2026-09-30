@@ -4,7 +4,7 @@ package main
 // prefix (the dataset-publication PNMs and the local EPM, as SDN builds them
 // with FinishSizePrefixed): every copy is accepted, verification finds no
 // mismatch, format 2 is activated and serves the same bytes (flatsql
-// PARTITION-STORE.md §38).
+// PARTITION-STORE.md §39).
 
 import (
 	"bytes"

@@ -3,7 +3,7 @@ package storage
 // A record that carries its own size prefix (a FinishSizePrefixed buffer
 // stored as is: the dataset-publication PNM, the local EPM) is stored on
 // format 2 as on format 1: the same CID, the same bytes back, found by its
-// indexed column (flatsql PARTITION-STORE.md §38).
+// indexed column (flatsql PARTITION-STORE.md §39).
 
 import (
 	"bytes"
