@@ -373,11 +373,12 @@ func udlValueToString(value any) string {
 // through to the per-record OMM CLASSIFICATION_TYPE field via
 // OMMBuilder.WithClassificationType; markings are also counted and surfaced
 // through provenance metadata for audit purposes.
-func (r *Runner) ingestUDLElsetRecords(records []map[string]string, sourcePeer string, tags storage.SourceTags) (int, string, map[string]int, []string, error) {
-	count := 0
+func (r *Runner) ingestUDLElsetRecords(records []map[string]string, sourcePeer string, tags storage.SourceTags) (count int, normalizedHash string, markings map[string]int, warnings []string, err error) {
+	batch := r.newIngestBatcher(sourcePeer, tags)
+	defer batch.finish(&err)
 	skipped := 0
 	normalized := sha256.New()
-	markings := make(map[string]int)
+	markings = make(map[string]int)
 
 	for _, record := range records {
 		norad, ok := parseUint32(getValue(record, "NORAD_CAT_ID", "SAT_NO"))
@@ -457,14 +458,13 @@ func (r *Runner) ingestUDLElsetRecords(records []map[string]string, sourcePeer s
 		}
 
 		ommBytes := builder.Build()
-		if _, err := r.storeIngestRecord("OMM.fbs", ommBytes, sourcePeer, tags); err != nil {
+		if err := batch.add("OMM.fbs", ommBytes); err != nil {
 			return count, "", markings, nil, err
 		}
 		writeNormalizedHashRecord(normalized, "OMM.fbs", ommBytes)
 		count++
 	}
 
-	var warnings []string
 	if skipped > 0 {
 		warnings = append(warnings, fmt.Sprintf("skipped %d malformed UDL elset record(s)", skipped))
 	}
@@ -478,11 +478,12 @@ func (r *Runner) ingestUDLElsetRecords(records []map[string]string, sourcePeer s
 // FlatBuffers via the shared buildSPW normalization path.
 // Field mapping: SGI_DATE -> DATE, F10 -> F107_OBS, F10B -> F107_OBS_CENTER81,
 // AP -> AP_AVG (rounded), KP -> KP_SUM (stored in tenths).
-func (r *Runner) ingestUDLSGIRecords(records []map[string]string, sourcePeer string, tags storage.SourceTags) (int, string, map[string]int, []string, error) {
-	count := 0
+func (r *Runner) ingestUDLSGIRecords(records []map[string]string, sourcePeer string, tags storage.SourceTags) (count int, normalizedHash string, markings map[string]int, warnings []string, err error) {
+	batch := r.newIngestBatcher(sourcePeer, tags)
+	defer batch.finish(&err)
 	skipped := 0
 	normalized := sha256.New()
-	markings := make(map[string]int)
+	markings = make(map[string]int)
 
 	for _, record := range records {
 		rawDate := getValue(record, "SGI_DATE", "DATE")
@@ -511,14 +512,13 @@ func (r *Runner) ingestUDLSGIRecords(records []map[string]string, sourcePeer str
 		}
 
 		spwBytes := buildSPW(row, spwDate)
-		if _, err := r.storeIngestRecord("SPW.fbs", spwBytes, sourcePeer, tags); err != nil {
+		if err := batch.add("SPW.fbs", spwBytes); err != nil {
 			return count, "", markings, nil, err
 		}
 		writeNormalizedHashRecord(normalized, "SPW.fbs", spwBytes)
 		count++
 	}
 
-	var warnings []string
 	if skipped > 0 {
 		warnings = append(warnings, fmt.Sprintf("skipped %d malformed UDL sgi record(s)", skipped))
 	}

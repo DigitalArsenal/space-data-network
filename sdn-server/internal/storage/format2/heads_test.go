@@ -7,12 +7,14 @@ package format2
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
 	"maps"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -359,7 +361,645 @@ func TestHeadReaderReadsNothingAfterClose(t *testing.T) {
 	if _, err := h.Partitions(); !errors.Is(err, ErrStopped) {
 		t.Fatalf("Partitions after Close: %v, want ErrStopped", err)
 	}
-	if _, err := h.Types(); !errors.Is(err, ErrStopped) || h.files != nil {
-		t.Fatalf("Types after Close: %v (files reopened %v), want ErrStopped", err, h.files != nil)
+	if _, err := h.Types(); !errors.Is(err, ErrStopped) || h.fds.len() != 0 || h.typeHeads != nil || h.regHead != nil {
+		t.Fatalf("Types after Close: %v (descriptors reopened: %d heads, types %v, registry %v), want ErrStopped",
+			err, h.fds.len(), h.typeHeads != nil, h.regHead != nil)
 	}
+	if _, err := h.DiskBytes(); !errors.Is(err, ErrStopped) {
+		t.Fatalf("DiskBytes after Close: %v, want ErrStopped", err)
+	}
+}
+
+// synthStore writes a store's registry and partition heads as the engine
+// lays them out (flatsql ps/format.h RegistryHeadFixed, PartitionHeadFixed,
+// the registry frames of open.cpp).
+type synthStore struct {
+	t      *testing.T
+	root   string // engine root: <root>/fsql2
+	gen    uint64
+	inc    uint32
+	frames []byte
+	nFrame uint64
+	maxPid uint32
+	heads  map[uint32]uint64 // pid -> head generation
+}
+
+func newSynthStore(t *testing.T) *synthStore {
+	s := &synthStore{t: t, root: t.TempDir(), inc: 7, heads: map[uint32]uint64{}}
+	if err := os.MkdirAll(filepath.Join(s.root, Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func (s *synthStore) frame(kind uint16, payload []byte) {
+	body := binary.LittleEndian.AppendUint16(nil, kind)
+	body = append(body, payload...)
+	f := binary.LittleEndian.AppendUint32(nil, uint32(len(body)))
+	f = binary.LittleEndian.AppendUint32(f, crc32.Checksum(body, castagnoli))
+	s.frames = append(s.frames, append(f, body...)...)
+	s.nFrame++
+}
+
+func str16(b []byte, v string) []byte {
+	return append(binary.LittleEndian.AppendUint16(b, uint16(len(v))), v...)
+}
+
+func (s *synthStore) addType(fid, schema string) {
+	s.frame(regTypeAdd, str16([]byte(fid), schema))
+}
+
+func (s *synthStore) addPartition(pid uint32, fid, token string) {
+	p := binary.LittleEndian.AppendUint32(nil, pid)
+	p = append(p, fid...)
+	p = str16(p, token)
+	p = str16(p, fmt.Sprintf("%s_%08x", fid, pid))
+	s.frame(regPartitionAdd, p)
+	s.maxPid = max(s.maxPid, pid)
+}
+
+func (s *synthStore) drop(pid uint32) {
+	s.frame(regDrop, binary.LittleEndian.AppendUint32(nil, pid))
+}
+
+// publish writes registry.fsl and a registry head naming every frame.
+func (s *synthStore) publish() {
+	dir := filepath.Join(s.root, Dir)
+	if err := os.WriteFile(filepath.Join(dir, "registry.fsl"), s.frames, 0o644); err != nil {
+		s.t.Fatal(err)
+	}
+	s.gen++
+	slot := make([]byte, headSlotBytes)
+	const used = 64 + 4
+	binary.LittleEndian.PutUint32(slot[0:], magicHead)
+	binary.LittleEndian.PutUint16(slot[4:], storeFormat)
+	binary.LittleEndian.PutUint16(slot[6:], headRegistry)
+	binary.LittleEndian.PutUint64(slot[8:], s.gen)
+	binary.LittleEndian.PutUint32(slot[24:], used)
+	binary.LittleEndian.PutUint64(slot[32:], s.nFrame)
+	binary.LittleEndian.PutUint64(slot[40:], uint64(len(s.frames)))
+	binary.LittleEndian.PutUint32(slot[48:], s.maxPid)
+	binary.LittleEndian.PutUint32(slot[52:], s.inc)
+	binary.LittleEndian.PutUint32(slot[used-4:], crc32.Checksum(slot[:used-4], castagnoli))
+	s.writeSlot(filepath.Join(dir, "registry.fsh"), s.gen, slot)
+}
+
+func (s *synthStore) writeSlot(path string, gen uint64, slot []byte) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteAt(slot, int64(gen%2)*headSlotBytes); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// head publishes a partition head with the counters c (commit_seq, pseq_hi,
+// total, total bytes, live, live bytes, tombs, disk bytes, latest arrival).
+func (s *synthStore) head(pid uint32, c [9]int64) {
+	dir := filepath.Join(s.root, Dir, "p", fmt.Sprintf("%08x", pid))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		s.t.Fatal(err)
+	}
+	s.heads[pid]++
+	gen := s.heads[pid]
+	slot := make([]byte, headSlotBytes)
+	const used = 288 + 4
+	binary.LittleEndian.PutUint32(slot[0:], magicHead)
+	binary.LittleEndian.PutUint16(slot[4:], storeFormat)
+	binary.LittleEndian.PutUint16(slot[6:], headPartition)
+	binary.LittleEndian.PutUint64(slot[8:], gen)
+	binary.LittleEndian.PutUint32(slot[20:], pid)
+	binary.LittleEndian.PutUint32(slot[24:], used)
+	for i, off := range []int{32, 40, 120, 128, 136, 144, 152, 160, 184} {
+		binary.LittleEndian.PutUint64(slot[off:], uint64(c[i]))
+	}
+	binary.LittleEndian.PutUint32(slot[used-4:], crc32.Checksum(slot[:used-4], castagnoli))
+	s.writeSlot(filepath.Join(dir, "h.fsh"), gen, slot)
+}
+
+// clobber overwrites a partition head with zeros (a reader that reads it
+// again sees no valid slot).
+func (s *synthStore) clobber(pid uint32) {
+	path := filepath.Join(s.root, Dir, "p", fmt.Sprintf("%08x", pid), "h.fsh")
+	if err := os.WriteFile(path, make([]byte, 2*headSlotBytes), 0o644); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+func partCounters(pid uint32, seq int64) [9]int64 {
+	n := int64(pid)
+	return [9]int64{seq, 10 * seq, n + seq, 1000*n + seq, n, 900 * n, seq, 4096*n + seq, 1_700_000_000_000 + n}
+}
+
+// openFDs counts the process's open descriptors (-1 where it cannot). Names
+// only: stat of a /dev/fd entry fails on macOS.
+func openFDs() int {
+	for _, dir := range []string{"/proc/self/fd", "/dev/fd"} {
+		d, err := os.Open(dir)
+		if err != nil {
+			continue
+		}
+		names, err := d.Readdirnames(-1)
+		d.Close()
+		if err == nil {
+			return len(names)
+		}
+	}
+	return -1
+}
+
+// B8 (terabyte audit): a counter read reads only the heads that moved, keeps
+// at most maxHeadFDs head descriptors open, and serves the totals per type,
+// per producer and for the store from what it read. On 58a742f44 every
+// counter read read every head under one mutex and kept one descriptor per
+// head for good: the clobbered heads below read back as zero counters, and
+// the 300 partitions held 300 descriptors.
+func TestCounterReadsReadOnlyTheHeadsThatMoved(t *testing.T) {
+	const parts, fdCap = 300, 64 // the descriptor cap scaled down with the store
+	st := newSynthStore(t)
+	types := []string{"OMM ", "CAT ", "IQC "}
+	for i, fid := range types {
+		st.addType(fid, []string{"OMM.fbs", "CAT.fbs", "IQC.fbs"}[i])
+	}
+	want := map[uint32][9]int64{}
+	token := map[uint32]string{}
+	for pid := uint32(1); pid <= parts; pid++ {
+		token[pid] = fmt.Sprintf("peer%02d", pid%50)
+		st.addPartition(pid, types[pid%3], token[pid])
+		want[pid] = partCounters(pid, 1)
+		st.head(pid, want[pid])
+	}
+	st.publish()
+	sums := func() (total CounterTotals, byType map[string]CounterTotals, byProd map[string]int64) {
+		byType, byProd = map[string]CounterTotals{}, map[string]int64{}
+		for pid, c := range want {
+			typ := typeName([]string{"OMM.fbs", "CAT.fbs", "IQC.fbs"}[pid%3])
+			pc := PartitionCounter{CommitSeq: c[0], Total: c[2], TotalBytes: c[3], Live: c[4], LiveBytes: c[5], Tombs: c[6], DiskBytes: c[7]}
+			total.add(&pc, 1)
+			tt := byType[typ]
+			tt.add(&pc, 1)
+			tt.LatestArrival = max(tt.LatestArrival, c[8])
+			byType[typ] = tt
+			byProd[token[pid]] += c[5]
+		}
+		return
+	}
+	check := func(label string, h *HeadReader) {
+		t.Helper()
+		wantTotal, wantTypes, wantProd := sums()
+		got, err := h.Totals()
+		if err != nil || got != wantTotal {
+			t.Fatalf("%s: store totals %+v (%v), want %+v", label, got, err, wantTotal)
+		}
+		gotTypes, err := h.TypeTotals()
+		if err != nil || len(gotTypes) != len(wantTypes) {
+			t.Fatalf("%s: type totals %v (%v)", label, gotTypes, err)
+		}
+		for typ, w := range wantTypes {
+			if gotTypes[typ] != w {
+				t.Fatalf("%s: %s totals %+v, want %+v", label, typ, gotTypes[typ], w)
+			}
+		}
+		for token, w := range wantProd {
+			if p, err := h.ProducerTotals(token); err != nil || p.LiveBytes != w {
+				t.Fatalf("%s: producer %s live bytes %d (%v), want %d", label, token, p.LiveBytes, err, w)
+			}
+		}
+		list, err := h.Partitions()
+		if err != nil || len(list) != len(want) {
+			t.Fatalf("%s: %d partitions (%v), want %d", label, len(list), err, len(want))
+		}
+		for _, p := range list {
+			c := want[uint32(p.PID)]
+			if p.CommitSeq != c[0] || p.PseqHi != c[1] || p.Live != c[4] || p.DiskBytes != c[7] || p.LatestArrival != c[8] {
+				t.Fatalf("%s: partition %d counters %+v, want %v", label, p.PID, p, c)
+			}
+		}
+	}
+
+	fdsBefore := openFDs()
+	h := NewHeadReader(st.root)
+	h.sweepEvery = 0 // the sweep is driven by hand below
+	h.fds.max = fdCap
+	h.dirEvery = 0
+	defer h.Close()
+	check("first read", h)
+	if n := h.HeadReads(); n != parts {
+		t.Fatalf("the first counter read read %d heads, want each of the %d once", n, parts)
+	}
+	if n := h.OpenHeadFDs(); n > fdCap {
+		t.Fatalf("%d head descriptors open, want at most %d", n, fdCap)
+	}
+	if fdsBefore >= 0 {
+		if grew := openFDs() - fdsBefore; grew > fdCap+8 {
+			t.Fatalf("the process holds %d more descriptors after reading %d heads, want at most %d", grew, parts, fdCap+8)
+		}
+	}
+
+	// Nothing moved: no head is read again, whatever the files say now.
+	for pid := uint32(1); pid <= parts; pid++ {
+		st.clobber(pid)
+	}
+	reads := h.HeadReads()
+	check("nothing moved", h)
+	if n := h.HeadReads() - reads; n != 0 {
+		t.Fatalf("counter reads with nothing moved read %d heads", n)
+	}
+
+	// Three writes acked: exactly their heads are read again.
+	for _, pid := range []uint32{7, 70, 140} {
+		want[pid] = partCounters(pid, 5)
+		st.head(pid, want[pid])
+		h.Touch(pid)
+	}
+	reads = h.HeadReads()
+	check("three acked", h)
+	if n := h.HeadReads() - reads; n != 3 {
+		t.Fatalf("after three acks the counter reads read %d heads, want 3", n)
+	}
+
+	// An engine-side commit (no ack): the sweep finds it within one pass.
+	for pid := uint32(1); pid <= parts; pid++ {
+		st.head(pid, want[pid]) // valid heads again, same counters
+	}
+	want[190] = partCounters(190, 9)
+	st.head(190, want[190])
+	h.sweepEvery, h.sweepFull = time.Second, time.Second // one step covers every partition
+	h.sweepStep()
+	check("after the sweep", h)
+
+	// The registry adds a partition and drops another.
+	token[parts+1] = "peer99"
+	st.addPartition(parts+1, "CAT ", token[parts+1])
+	want[parts+1] = partCounters(parts+1, 2)
+	st.head(parts+1, want[parts+1])
+	st.drop(3)
+	delete(want, 3)
+	st.publish()
+	check("registry moved", h)
+
+	// Disk bytes count the type directories and the registry too.
+	tdir := filepath.Join(st.root, Dir, "t", hex.EncodeToString([]byte("OMM ")))
+	if err := os.MkdirAll(tdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tl := newSynthLog(t) // a type head, so the directory has a commit_seq
+	tl.dir = tdir
+	tl.head(0, 0, 0, 0, map[uint32]uint64{})
+	for name, n := range map[string]int{"m-000000.fsl": 12345, "g-000000.fsg": 777, "x-000001.fsx": 4096} {
+		if err := os.WriteFile(filepath.Join(tdir, name), make([]byte, n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var reg int64
+	for _, name := range []string{"registry.fsl", "registry.fsh"} {
+		fi, err := os.Stat(filepath.Join(st.root, Dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		reg += fi.Size()
+	}
+	total, _, _ := sums()
+	typeDir := int64(12345 + 777 + 4096 + 2*headSlotBytes)
+	h.sweepStep() // the sweep sums the type directories; no counter read scans one
+	if got, err := h.DiskBytes(); err != nil || got != total.DiskBytes+typeDir+reg {
+		t.Fatalf("disk bytes %d (%v), want %d partition + %d type directory + %d registry", got, err, total.DiskBytes, typeDir, reg)
+	}
+}
+
+// B8 with the engine's commit_seq words (flatsql_ps_ring_words): each sweep
+// reads exactly the heads whose published commit_seq moved, and a partition
+// whose word cannot be read.
+func TestSweepReadsOnlyTheHeadsWhoseCommitSeqMoved(t *testing.T) {
+	const parts = 60
+	st := newSynthStore(t)
+	st.addType("OMM ", "OMM.fbs")
+	published := map[uint32]uint64{}
+	for pid := uint32(1); pid <= parts; pid++ {
+		st.addPartition(pid, "OMM ", fmt.Sprintf("peer%02d", pid))
+		st.head(pid, partCounters(pid, 1))
+		published[pid] = 1
+	}
+	st.publish()
+	h := NewHeadReader(st.root)
+	h.sweepEvery = 0
+	defer h.Close()
+	var unreadable uint32
+	h.words = func(pid uint32) (uint64, uint64, bool, error) {
+		if pid == unreadable {
+			return 0, 0, false, nil
+		}
+		return published[pid], 0, true, nil
+	}
+	if _, err := h.Partitions(); err != nil {
+		t.Fatal(err)
+	}
+	sweep := func(label string, want int, check func()) {
+		t.Helper()
+		reads := h.HeadReads()
+		h.sweepStep()
+		if n := int(h.HeadReads() - reads); n != want {
+			t.Fatalf("%s: the sweep read %d heads, want %d", label, n, want)
+		}
+		if check != nil {
+			check()
+		}
+	}
+	sweep("nothing moved", 0, nil)
+	for _, pid := range []uint32{5, 17, 42} {
+		st.head(pid, partCounters(pid, 3))
+		published[pid] = 3
+	}
+	sweep("three moved", 3, func() {
+		list, err := h.Partitions()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range list {
+			want := int64(1)
+			if p.PID == 5 || p.PID == 17 || p.PID == 42 {
+				want = 3
+			}
+			if p.CommitSeq != want {
+				t.Fatalf("partition %d commit_seq %d, want %d", p.PID, p.CommitSeq, want)
+			}
+		}
+	})
+	sweep("settled", 0, nil)
+	unreadable = 9
+	sweep("one word unreadable", 1, nil)
+}
+
+// The published counters under a running sweep, concurrent counter reads,
+// acked writes and Close (run under -race in CI): every read answers or says
+// ErrStopped, and the totals equal the heads once the writes stop.
+func TestCountersUnderAConcurrentSweep(t *testing.T) {
+	const parts = 40
+	st := newSynthStore(t)
+	st.addType("OMM ", "OMM.fbs")
+	for pid := uint32(1); pid <= parts; pid++ {
+		st.addPartition(pid, "OMM ", fmt.Sprintf("peer%02d", pid%4))
+		st.head(pid, partCounters(pid, 1))
+	}
+	st.publish()
+	h := NewHeadReader(st.root)
+	h.sweepEvery, h.sweepFull, h.dirEvery = 5*time.Millisecond, 5*time.Millisecond, 0
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func(r int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				var err error
+				switch r {
+				case 0:
+					_, err = h.Totals()
+				case 1:
+					_, err = h.Partitions()
+				case 2:
+					_, err = h.ProducerTotals("peer01")
+				default:
+					_, err = h.DiskBytes()
+				}
+				if err != nil && !errors.Is(err, ErrStopped) {
+					t.Error(err)
+					return
+				}
+			}
+		}(r)
+	}
+	final := map[uint32]int64{}
+	for seq := int64(2); seq < 30; seq++ {
+		pid := uint32(seq%parts) + 1
+		st.head(pid, partCounters(pid, seq))
+		final[pid] = seq
+		h.Touch(pid)
+		time.Sleep(time.Millisecond)
+	}
+	close(stop)
+	wg.Wait()
+	list, err := h.Partitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range list {
+		want := final[uint32(p.PID)]
+		if want == 0 {
+			want = 1
+		}
+		if p.CommitSeq != want {
+			t.Fatalf("partition %d commit_seq %d, want %d", p.PID, p.CommitSeq, want)
+		}
+	}
+	h.Close()
+	if _, err := h.Totals(); !errors.Is(err, ErrStopped) {
+		t.Fatalf("Totals after Close: %v", err)
+	}
+}
+
+// synthParts publishes n partitions of one type with partCounters(pid, 1)
+// and returns their store.
+func synthParts(t *testing.T, n int) *synthStore {
+	st := newSynthStore(t)
+	st.addType("OMM ", "OMM.fbs")
+	for pid := uint32(1); pid <= uint32(n); pid++ {
+		st.addPartition(pid, "OMM ", fmt.Sprintf("peer%03d", pid))
+		st.head(pid, partCounters(pid, 1))
+	}
+	st.publish()
+	return st
+}
+
+// wantLive is Σ live of partCounters(pid, 1) over pids 1..n.
+func wantLive(n int) int64 {
+	var live int64
+	for pid := 1; pid <= n; pid++ {
+		live += partCounters(uint32(pid), 1)[4]
+	}
+	return live
+}
+
+// Review of B8: a counter read never waits on the sweep or on a type
+// directory sum. Both used to run under the reader's one mutex (the sweep's
+// chunks of 256 heads, and a ReadDir and a stat per file of every moved type
+// directory), so every counter read, TypeOf and GetRecord miss queued
+// behind them. Here the sweep's and the directory sum's locks are held for
+// the whole check, as a long pass would hold them.
+func TestCounterReadsNeverWaitOnTheSweepOrADirectorySum(t *testing.T) {
+	const parts = 50
+	st := synthParts(t, parts)
+	h := NewHeadReader(st.root)
+	h.sweepEvery = 0
+	defer h.Close()
+	if _, err := h.DiskBytes(); err != nil { // the first sum
+		t.Fatal(err)
+	}
+	h.swMu.Lock()
+	h.dirMu.Lock()
+	done := make(chan error, 1)
+	go func() {
+		st.head(9, partCounters(9, 4))
+		h.Touch(9)
+		tot, err := h.Totals()
+		if err == nil && tot.Live != wantLive(parts) {
+			err = fmt.Errorf("live %d, want %d", tot.Live, wantLive(parts))
+		}
+		if err == nil {
+			var pc PartitionCounter
+			if pc, _, err = h.Partition(9); err == nil && pc.CommitSeq != 4 {
+				err = fmt.Errorf("partition 9 commit_seq %d after its ack, want 4", pc.CommitSeq)
+			}
+		}
+		if err == nil {
+			_, err = h.DiskBytes()
+		}
+		if err == nil {
+			_, err = h.ProducerTotalsFresh("peer009")
+		}
+		if err == nil {
+			_, _, err = h.TypeOf("OMM")
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a counter read waited on the sweep or a directory sum")
+	}
+	h.dirMu.Unlock()
+	h.swMu.Unlock()
+}
+
+// Review of B8: the sweep reads heads without the descriptor cache, so a
+// pass over more partitions than the cache holds leaves the written
+// partitions' descriptors in place (it used to push every one of them out).
+func TestSweepKeepsTheWrittenPartitionsDescriptors(t *testing.T) {
+	const parts, fdCap = 120, 16
+	st := synthParts(t, parts)
+	h := NewHeadReader(st.root)
+	h.sweepEvery, h.sweepFull = 0, 0
+	h.fds.max = fdCap
+	defer h.Close()
+	if _, err := h.Totals(); err != nil {
+		t.Fatal(err)
+	}
+	written := []uint32{3, 30, 60, 90, 119}
+	for _, pid := range written {
+		st.head(pid, partCounters(pid, 2))
+		h.Touch(pid)
+	}
+	if _, err := h.Totals(); err != nil {
+		t.Fatal(err)
+	}
+	h.sweepStep()
+	h.sweepStep()
+	if n := h.OpenHeadFDs(); n != len(written) {
+		t.Fatalf("%d head descriptors open after two sweeps over %d partitions, want the %d written ones", n, parts, len(written))
+	}
+	h.mu.Lock()
+	for _, pid := range written {
+		if _, ok := h.fds.m[h.partHeadPath(pid)]; !ok {
+			h.mu.Unlock()
+			t.Fatalf("the sweep evicted written partition %d's descriptor", pid)
+		}
+	}
+	h.mu.Unlock()
+}
+
+// Review of B8: the first counter read loads every head in chunks of
+// sweepChunk per hold of the mutex, and concurrent first readers share the
+// load: every head is read exactly once and every reader gets the whole
+// totals. It used to read every head in one hold (441 ms at 10k partitions,
+// during which TypeOf and GetRecord misses waited).
+func TestFirstReadersShareTheChunkedLoad(t *testing.T) {
+	const parts = 4*sweepChunk + 17
+	st := synthParts(t, parts)
+	h := NewHeadReader(st.root)
+	h.sweepEvery = 0
+	defer h.Close()
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for r := 0; r < 8; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tot, err := h.Totals()
+			if err == nil && (tot.Partitions != parts || tot.Live != wantLive(parts)) {
+				err = fmt.Errorf("totals %+v, want %d partitions and %d live", tot, parts, wantLive(parts))
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := h.HeadReads(); n != parts {
+		t.Fatalf("8 concurrent first reads read %d heads, want each of the %d once", n, parts)
+	}
+}
+
+// Review of B8: Close is idempotent once the sweep runs (a second Close
+// closed the sweep's stop channel again and panicked).
+func TestHeadReaderCloseTwice(t *testing.T) {
+	st := synthParts(t, 3)
+	h := NewHeadReader(st.root)
+	h.sweepEvery = time.Millisecond
+	if _, err := h.Totals(); err != nil {
+		t.Fatal(err)
+	}
+	h.Close()
+	h.Close()
+	if _, err := h.Totals(); !errors.Is(err, ErrStopped) {
+		t.Fatalf("Totals after Close: %v", err)
+	}
+}
+
+// A read that must not lag reads its own heads now: ProducerTotalsFresh sees
+// an engine-side commit (an eviction's kills: no ack, no mark) at once,
+// where the published totals wait for the sweep.
+func TestProducerTotalsFreshSeesAnUnmarkedCommit(t *testing.T) {
+	st := synthParts(t, 20)
+	h := NewHeadReader(st.root)
+	h.sweepEvery = 0
+	defer h.Close()
+	before, err := h.ProducerTotals("peer007")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := partCounters(7, 3)
+	c[5] = 11 // live bytes after the eviction
+	st.head(7, c)
+	if got, err := h.ProducerTotals("peer007"); err != nil || got.LiveBytes != before.LiveBytes {
+		t.Fatalf("published producer totals moved without a mark or a sweep: %d (%v)", got.LiveBytes, err)
+	}
+	got, err := h.ProducerTotalsFresh("peer007")
+	if err != nil || got.LiveBytes != 11 {
+		t.Fatalf("fresh producer live bytes %d (%v), want 11", got.LiveBytes, err)
+	}
+	if tot, err := h.Totals(); err != nil || tot.LiveBytes != wantLiveBytes(20)-before.LiveBytes+11 {
+		t.Fatalf("store live bytes %d (%v) after the fresh read, want %d", tot.LiveBytes, err, wantLiveBytes(20)-before.LiveBytes+11)
+	}
+}
+
+func wantLiveBytes(n int) int64 {
+	var b int64
+	for pid := 1; pid <= n; pid++ {
+		b += partCounters(uint32(pid), 1)[5]
+	}
+	return b
 }

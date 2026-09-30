@@ -45,15 +45,47 @@ func format2Tags(tags *SourceTags) *format2.Tags {
 // f2StoreBatch is storeBatch/storeOne on format 2. It returns how many
 // records were new to the standard (the legacy count: a CID some producer
 // already held, and an ingest-identity repeat, are not inserted) and each
-// record's CID.
+// record's CID. A record the engine refused is logged; the batch fails only
+// when every record was refused (f2BatchOpts.strict: when any was).
 func (s *FlatSQLStore) f2StoreBatch(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, []string, error) {
-	return s.f2StoreBatchIdentity(schemaName, records, peerID, signature, tags, true)
+	return s.f2StoreBatchIdentity(schemaName, records, peerID, signature, tags, f2BatchOpts{identity: true})
 }
 
-// f2StoreBatchIdentity is f2StoreBatch; identity=false skips the ingest
-// identity (a dataset shard import stores what the peer holds, as format 1's
-// import did).
-func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, identity bool) (int, []string, error) {
+// f2BatchOpts: identity applies the ingest identity (off for a dataset shard
+// import, which stores what the peer holds, as format 1's import did);
+// strict fails the batch when the engine refused any record, after the
+// others are stored (an ingest must not report or checkpoint past a record
+// it did not store).
+type f2BatchOpts struct {
+	identity, strict bool
+}
+
+// StoreIngestBatch stores an ingest's batch of records of one standard:
+// StoreBatch, or StoreBatchWithSourceTags with tags, except that on store
+// format 2 a record the engine refused fails the batch (after the rest are
+// stored) instead of only being logged. A feed that fetched the records
+// then fails, and its checkpoint does not move past them, as when it stored
+// record by record (terabyte audit M9 review).
+func (s *FlatSQLStore) StoreIngestBatch(schemaName string, records [][]byte, peerID string, tags *SourceTags) (int, error) {
+	if !s.Format2() {
+		if tags == nil {
+			return s.StoreBatch(schemaName, records, peerID, nil)
+		}
+		return s.StoreBatchWithSourceTags(schemaName, records, peerID, nil, *tags)
+	}
+	if tags != nil {
+		// See StoreWithSourceTags: licence first, then records.
+		if err := s.recordSourceBatchLicense(schemaName, *tags); err != nil {
+			return 0, err
+		}
+	}
+	n, _, err := s.f2StoreBatchIdentity(schemaName, records, peerID, nil, tags, f2BatchOpts{identity: true, strict: true})
+	return n, err
+}
+
+// f2StoreBatchIdentity is f2StoreBatch with its options.
+func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opts f2BatchOpts) (int, []string, error) {
+	identity := opts.identity
 	if err := s.requireWritable("store batch"); err != nil {
 		return 0, nil, err
 	}
@@ -205,6 +237,9 @@ func (s *FlatSQLStore) f2StoreBatchIdentity(schemaName string, records [][]byte,
 	}
 	if rejected == len(records) && firstReject != nil {
 		return 0, cids, fmt.Errorf("store %s batch: every record was refused: %w", schemaName, firstReject)
+	}
+	if opts.strict && rejected > 0 {
+		return inserted, cids, fmt.Errorf("store %s batch: the engine refused %d of %d record(s): %w", schemaName, rejected, len(records), firstReject)
 	}
 	return inserted, cids, nil
 }
@@ -388,11 +423,13 @@ func (s *FlatSQLStore) f2Delete(schemaName, cid string) error {
 // left the type, from its head.
 func (s *FlatSQLStore) f2ReconcileSourceBatch(result SourceBatchReconcileResult) (SourceBatchReconcileResult, error) {
 	ctx := s.f2ctx()
-	lanes, err := s.ps.Lanes(ctx)
+	// The lane's own lanes only (terabyte audit B7), never every lane of the
+	// store.
+	typ := format2.TypeName(result.SchemaName)
+	lanes, err := s.ps.LanesWhere(ctx, format2.LaneFilter{Type: typ, Provider: result.ProviderID, Source: result.SourceName})
 	if err != nil {
 		return result, err
 	}
-	typ := format2.TypeName(result.SchemaName)
 	tokens := map[string]bool{}
 	for _, l := range lanes {
 		if l.Type != typ || !l.Tuple || l.Provider != result.ProviderID || l.Source != result.SourceName || l.Batch == result.KeepBatch || l.Count <= 0 {
@@ -543,7 +580,7 @@ func (s *FlatSQLStore) f2ImportDatasetShardChunk(index *DatasetExportIndex, prov
 	imported := 0
 	for _, key := range order {
 		g := groups[key]
-		n, _, err := s.f2StoreBatchIdentity(index.SchemaName, g.data, provider, nil, g.tags, false)
+		n, _, err := s.f2StoreBatchIdentity(index.SchemaName, g.data, provider, nil, g.tags, f2BatchOpts{})
 		imported += n
 		if err != nil {
 			return imported, fmt.Errorf("store imported %s records: %w", index.SchemaName, err)

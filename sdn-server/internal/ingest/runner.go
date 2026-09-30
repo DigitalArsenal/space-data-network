@@ -496,8 +496,7 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 // ingestGPRows builds OMM + MPE records from already-parsed GP rows. The
 // Space-Track CSV and UDL JSON adapters feed this shared core so the OMM/MPE
 // field mapping stays byte-identical across credentialed sources.
-func (r *Runner) ingestGPRows(rows []map[string]string, sourcePeer string, tags ...storage.SourceTags) (int, int, string, error) {
-	var countOMM, countMPE int
+func (r *Runner) ingestGPRows(rows []map[string]string, sourcePeer string, tags ...storage.SourceTags) (countOMM, countMPE int, normalizedHash string, err error) {
 	normalized := sha256.New()
 
 	if err := requireCSVColumn(rows, "GP", "NORAD_CAT_ID", "NORAD_CAT_NUM"); err != nil {
@@ -506,6 +505,8 @@ func (r *Runner) ingestGPRows(rows []map[string]string, sourcePeer string, tags 
 	if err := requireCSVColumn(rows, "GP", "EPOCH", "EPOCH_UTC"); err != nil {
 		return 0, 0, "", err
 	}
+	batch := r.newIngestBatcher(sourcePeer, tags...)
+	defer batch.finish(&err)
 
 	for _, row := range rows {
 		norad, ok := parseUint32(getValue(row, "NORAD_CAT_ID", "NORAD_CAT_NUM"))
@@ -575,7 +576,7 @@ func (r *Runner) ingestGPRows(rows []map[string]string, sourcePeer string, tags 
 		}
 
 		ommBytes := builder.Build()
-		if _, err := r.storeIngestRecord("OMM.fbs", ommBytes, sourcePeer, tags...); err != nil {
+		if err := batch.add("OMM.fbs", ommBytes); err != nil {
 			return countOMM, countMPE, "", err
 		}
 		writeNormalizedHashRecord(normalized, "OMM.fbs", ommBytes)
@@ -596,7 +597,7 @@ func (r *Runner) ingestGPRows(rows []map[string]string, sourcePeer string, tags 
 			parseFloatOrZero(getValue(row, "MEAN_ANOMALY", "MA")),
 			parseFloatOrZero(getValue(row, "BSTAR", "B_STAR")),
 		)
-		if _, err := r.storeIngestRecord("MPE.fbs", mpeBytes, sourcePeer, tags...); err != nil {
+		if err := batch.add("MPE.fbs", mpeBytes); err != nil {
 			return countOMM, countMPE, "", err
 		}
 		writeNormalizedHashRecord(normalized, "MPE.fbs", mpeBytes)
@@ -651,13 +652,14 @@ func deterministicOMMCreationDate(row map[string]string, parsedEpoch time.Time) 
 	return ""
 }
 
-func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, string, error) {
+func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...storage.SourceTags) (count int, normalizedHash string, err error) {
 	rows, err := parseSatcatRows(content)
 	if err != nil {
 		return 0, "", err
 	}
 
-	count := 0
+	batch := r.newIngestBatcher(sourcePeer, tags...)
+	defer batch.finish(&err)
 	normalized := sha256.New()
 	seenNORAD := make(map[uint32]struct{}, len(rows))
 	for _, row := range rows {
@@ -706,7 +708,7 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...sto
 		}
 
 		catBytes := builder.Build()
-		if _, err := r.storeIngestRecord("CAT.fbs", catBytes, sourcePeer, tags...); err != nil {
+		if err := batch.add("CAT.fbs", catBytes); err != nil {
 			return count, "", err
 		}
 		writeNormalizedHashRecord(normalized, "CAT.fbs", catBytes)
@@ -735,7 +737,7 @@ func satcatOwnerCode(value string) int8 {
 	return int8(owner)
 }
 
-func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, string, error) {
+func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string, tags ...storage.SourceTags) (count int, normalizedHash string, err error) {
 	rows, err := parseCSV(content)
 	if err != nil {
 		return 0, "", err
@@ -744,7 +746,8 @@ func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string, tags 
 		return 0, "", err
 	}
 
-	count := 0
+	batch := r.newIngestBatcher(sourcePeer, tags...)
+	defer batch.finish(&err)
 	normalized := sha256.New()
 	for _, row := range rows {
 		rawDate := getValue(row, "DATE")
@@ -758,7 +761,7 @@ func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string, tags 
 		spwDate := parsedDate.UTC().Format("2006-01-02")
 
 		spwBytes := buildSPW(row, spwDate)
-		if _, err := r.storeIngestRecord("SPW.fbs", spwBytes, sourcePeer, tags...); err != nil {
+		if err := batch.add("SPW.fbs", spwBytes); err != nil {
 			return count, "", err
 		}
 		writeNormalizedHashRecord(normalized, "SPW.fbs", spwBytes)
@@ -770,11 +773,122 @@ func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string, tags 
 	return count, hex.EncodeToString(normalized.Sum(nil)), nil
 }
 
-func (r *Runner) storeIngestRecord(schemaName string, data []byte, sourcePeer string, tags ...storage.SourceTags) (string, error) {
-	if len(tags) == 0 {
-		return r.store.Store(schemaName, data, sourcePeer, nil)
+// ingestBatchRecords is how many records of one standard an ingest hands the
+// store in one write (the format-2 router's chunk): one CID probe, one
+// durable commit and one label wait per batch, not per record (terabyte
+// audit M9). The store's batch path keeps the per-record semantics: dedupe,
+// ingest identity, CAT supersede and source tags.
+const ingestBatchRecords = 4096
+
+// ingestBatcher stores an ingest's records per standard, in batches, in the
+// order they were added. The next batch is built while the last one is
+// stored (at most one write in flight, so at most two batches are held); the
+// first write error stops the ingest.
+type ingestBatcher struct {
+	r          *Runner
+	sourcePeer string
+	tags       []storage.SourceTags
+	size       int
+	pending    map[string][][]byte
+	order      []string // standards, first added first
+	work       chan ingestBatch
+	done       chan struct{}
+	closed     bool
+
+	mu  sync.Mutex
+	err error
+}
+
+type ingestBatch struct {
+	schema  string
+	records [][]byte
+}
+
+func (r *Runner) newIngestBatcher(sourcePeer string, tags ...storage.SourceTags) *ingestBatcher {
+	b := &ingestBatcher{r: r, sourcePeer: sourcePeer, tags: tags, size: ingestBatchRecords,
+		pending: map[string][][]byte{}, work: make(chan ingestBatch), done: make(chan struct{})}
+	go b.run()
+	return b
+}
+
+func (b *ingestBatcher) run() {
+	defer close(b.done)
+	for batch := range b.work {
+		if b.failed() != nil {
+			continue
+		}
+		if err := b.r.storeIngestBatch(batch.schema, batch.records, b.sourcePeer, b.tags...); err != nil {
+			b.mu.Lock()
+			if b.err == nil {
+				b.err = err
+			}
+			b.mu.Unlock()
+		}
 	}
-	return r.store.StoreWithSourceTags(schemaName, data, sourcePeer, nil, tags[0])
+}
+
+func (b *ingestBatcher) failed() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.err
+}
+
+// add queues one record (a fresh buffer: it is held until its batch is
+// stored); a full batch goes to the store. It returns a write's error.
+func (b *ingestBatcher) add(schemaName string, data []byte) error {
+	if err := b.failed(); err != nil {
+		return err
+	}
+	recs, seen := b.pending[schemaName]
+	if !seen {
+		b.order = append(b.order, schemaName)
+	}
+	recs = append(recs, data)
+	if len(recs) >= b.size {
+		b.work <- ingestBatch{schema: schemaName, records: recs}
+		recs = nil
+	}
+	b.pending[schemaName] = recs
+	return nil
+}
+
+// close stores what is queued and returns the first write error. Every path
+// out of an ingest calls it once (deferred), so what was added before a
+// parse error is stored as the record-by-record ingest stored it.
+func (b *ingestBatcher) close() error {
+	if b.closed {
+		return b.failed()
+	}
+	b.closed = true
+	for _, schemaName := range b.order {
+		if recs := b.pending[schemaName]; len(recs) > 0 {
+			b.work <- ingestBatch{schema: schemaName, records: recs}
+			b.pending[schemaName] = nil
+		}
+	}
+	close(b.work)
+	<-b.done
+	return b.failed()
+}
+
+// finish closes the batcher on an ingest's way out: a write error replaces
+// a nil error, and a parse error stands.
+func (b *ingestBatcher) finish(err *error) {
+	if cerr := b.close(); cerr != nil && *err == nil {
+		*err = cerr
+	}
+}
+
+// storeIngestBatch stores one batch; a record the store refused fails it
+// (StoreIngestBatch), so the ingest fails and its checkpoint stays, as when
+// every record was its own write.
+func (r *Runner) storeIngestBatch(schemaName string, records [][]byte, sourcePeer string, tags ...storage.SourceTags) error {
+	var t *storage.SourceTags
+	if len(tags) > 0 {
+		t = &tags[0]
+	}
+	_, err := r.store.StoreIngestBatch(schemaName, records, sourcePeer, t)
+	return err
 }
 
 func sourceTags(providerID, sourceName, sourceURL string, data []byte) storage.SourceTags {

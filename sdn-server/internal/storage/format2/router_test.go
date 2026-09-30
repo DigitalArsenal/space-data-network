@@ -28,7 +28,7 @@ func typeHeadLabelForm(t *testing.T, s *Store, schema string) uint16 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	slot := bestHeadSlot(b, len(b), headType)
+	slot, _ := bestHeadSlot(b, len(b), headType)
 	if len(slot) < typeHeadFixedBytes {
 		t.Fatalf("%s: no valid type head", schema)
 	}

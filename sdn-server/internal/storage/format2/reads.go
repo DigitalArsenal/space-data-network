@@ -12,6 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -62,43 +65,117 @@ func typeName(schema string) string {
 // acked but not yet labeled by its type owner is found in its partition
 // (A20: read-your-writes at ack; partition-level visibility is the acked
 // HWM).
+//
+// A miss asks only the partitions whose labels are behind their pseq_hi
+// (terabyte audit M7): a partition labeled through its pseq_hi holds nothing
+// the catalog does not show. The type is asked again after the labels are
+// read, so a copy labeled in between is found at type level. A FIRST copy
+// whose kill is not labeled yet is still served at type level, as the
+// catalog shows it until then; a REPEAT copy's promotion is atomic with that
+// label, so no live copy is hidden in between.
 func (s *Store) GetRecord(ctx context.Context, schema, cidText string) (*Rec, error) {
 	c, err := CIDFromText(cidText)
 	if err != nil {
 		return nil, err
 	}
-	typ := typeName(schema)
-	res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(typ)),
-		Params: []Cell{Blob(c)}})
-	if noSuchType(err, schema) {
-		return nil, fmt.Errorf("%w: %s", ErrNotFound, cidText)
+	r, err := s.typeCopy(ctx, schema, c)
+	if r != nil || err != nil {
+		if errors.Is(err, ErrNotFound) {
+			err = fmt.Errorf("%w: %s", ErrNotFound, cidText)
+		}
+		return r, err
 	}
+	behind, err := s.behindLabels(schema)
 	if err != nil {
 		return nil, err
 	}
-	if len(res.Rows) > 0 {
-		r := recFromRow(res.Rows[0])
-		return &r, nil
+	if r, err := s.typeCopy(ctx, schema, c); r != nil || err != nil {
+		if errors.Is(err, ErrNotFound) {
+			err = fmt.Errorf("%w: %s", ErrNotFound, cidText)
+		}
+		return r, err
 	}
-	// Not labeled yet: its partition holds it (the partitions from the
-	// heads, no lane).
-	parts, err := s.PartitionsOf(schema)
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(parts, func(i, j int) bool { return parts[i].SQLName < parts[j].SQLName })
-	for _, p := range parts {
-		res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(p.SQLName)),
-			Params: []Cell{Blob(c)}})
+	sort.Slice(behind, func(i, j int) bool { return behind[i].SQLName < behind[j].SQLName })
+	for _, p := range behind {
+		rows, err := s.partitionSeek(ctx, p.SQLName, c)
 		if err != nil {
 			return nil, err
 		}
-		if len(res.Rows) > 0 {
-			r := recFromRow(res.Rows[0])
+		if len(rows) > 0 {
+			r := recFromRow(rows[0])
 			return &r, nil
 		}
 	}
 	return nil, fmt.Errorf("%w: %s", ErrNotFound, cidText)
+}
+
+// typeCopy is the catalog seek of a CID at type level: its FIRST copy, nil
+// when the type shows none, ErrNotFound when no partition registered the
+// type.
+func (s *Store) typeCopy(ctx context.Context, schema string, c []byte) (*Rec, error) {
+	res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(typeName(schema))),
+		Params: []Cell{Blob(c)}})
+	if noSuchType(err, schema) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(res.Rows) == 0 {
+		return nil, nil
+	}
+	r := recFromRow(res.Rows[0])
+	return &r, nil
+}
+
+// partitionSeek is a CID seek in one partition: every live copy it holds.
+func (s *Store) partitionSeek(ctx context.Context, sqlName string, c []byte) ([][]Cell, error) {
+	s.seeks.Add(1)
+	res, err := s.point(ctx, Request{SQL: fmt.Sprintf(`SELECT %s FROM %s WHERE _cid_bin = ?1`, recColumns, quoteIdent(sqlName)),
+		Params: []Cell{Blob(c)}})
+	if err != nil {
+		return nil, err
+	}
+	return res.Rows, nil
+}
+
+// PartitionSeeks counts the per-partition CID seeks the record reads made
+// (GetRecord misses, CopiesOf).
+func (s *Store) PartitionSeeks() uint64 { return s.seeks.Load() }
+
+// behindLabels returns the partitions of a type that can hold a live copy
+// the catalog does not show yet: those whose labeled_through is below their
+// pseq_hi, or all when the labels cannot be read (behindParts). The heads
+// are brought up to every write acked before the call first, and the labels
+// read after, so a partition left out was labeled through every entry acked
+// before the call: the next type-level statement sees it. A partition whose
+// labels are past its published pseq_hi moved without a mark (an ack not
+// seen): it is asked, and its head read again by the next counter read.
+// No table is copied: the check runs under the label table's read lock.
+func (s *Store) behindLabels(schema string) ([]PartitionCounter, error) {
+	typ := typeName(schema)
+	if err := s.heads.sync(); err != nil {
+		return nil, err
+	}
+	fid, ok := s.heads.fidOfPublished(typ)
+	if !ok {
+		return nil, nil
+	}
+	var out []PartitionCounter
+	var stale []uint32
+	err := s.heads.withLabels(fid, func(labels map[uint32]uint64, known bool) {
+		out, stale = s.heads.behindParts(typ, known, func(pid uint32) (uint64, bool) {
+			lt, ok := labels[pid]
+			return lt, ok
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, pid := range stale {
+		s.heads.Touch(pid)
+	}
+	return out, nil
 }
 
 // PartitionCounter is one partition's head counters (§4.4).
@@ -120,46 +197,45 @@ func (s *Store) Partitions(ctx context.Context) ([]PartitionCounter, error) {
 
 // LiveRecordBytes is Σ live_bytes over partitions: the bytes each partition
 // holds, a record held by two producers counted once per partition (the
-// legacy semantics, §16.2). From the heads: no lane, no scan.
+// legacy semantics, §16.2). The head reader's store total: no lane, no scan,
+// and only the heads that moved are read. An engine-side commit (a quota
+// eviction) shows within one sweep period.
 func (s *Store) LiveRecordBytes(ctx context.Context) (int64, error) {
-	parts, err := s.heads.Partitions()
-	if err != nil {
-		return 0, err
-	}
-	var n int64
-	for _, p := range parts {
-		n += p.LiveBytes
-	}
-	return n, nil
+	t, err := s.heads.Totals()
+	return t.LiveBytes, err
 }
 
-// DiskUsageBytes is Σ disk_bytes over partitions (§13: the quota's input;
-// on-disk bytes shrink after compaction).
+// DiskUsageBytes is the store's bytes on disk (§13: the quota's input;
+// on-disk bytes shrink after compaction): Σ disk_bytes over partitions, and
+// the type directories (logs, arrivals, catalog runs), the registry and the
+// commit journals, which no partition counts. It lags an engine-side commit
+// and the type directories by up to one sweep period.
 func (s *Store) DiskUsageBytes(ctx context.Context) (int64, error) {
-	parts, err := s.heads.Partitions()
-	if err != nil {
-		return 0, err
-	}
-	var n int64
-	for _, p := range parts {
-		n += p.DiskBytes
-	}
-	return n, nil
+	return s.heads.DiskBytes()
 }
 
-// PeerStorageBytes is Σ live_bytes of a producer's partitions.
+// PeerStorageBytes is Σ live_bytes of a producer's partitions: its heads
+// (one per type) are read now, since a publish's quota check decides on it.
 func (s *Store) PeerStorageBytes(ctx context.Context, producerToken string) (int64, error) {
-	parts, err := s.heads.Partitions()
-	if err != nil {
-		return 0, err
-	}
-	var n int64
-	for _, p := range parts {
-		if p.Producer == producerToken {
-			n += p.LiveBytes
-		}
-	}
-	return n, nil
+	t, err := s.heads.ProducerTotalsFresh(producerToken)
+	return t.LiveBytes, err
+}
+
+// StoreTotals is the head counters summed over every partition.
+func (s *Store) StoreTotals(ctx context.Context) (CounterTotals, error) {
+	return s.heads.Totals()
+}
+
+// TypeTotals is the head counters summed per type ("OMM"): its partition
+// count, live copies and bytes, disk bytes and newest arrival.
+func (s *Store) TypeTotals(ctx context.Context) (map[string]CounterTotals, error) {
+	return s.heads.TypeTotals()
+}
+
+// TypeTotalsOf is one schema's TypeTotals (zero when it holds nothing).
+func (s *Store) TypeTotalsOf(schema string) (CounterTotals, error) {
+	all, err := s.heads.TypeTotals()
+	return all[typeName(schema)], err
 }
 
 // TypeCounter is one type's head (A16: MaxRowID = gseq_hi, TotalCount =
@@ -393,27 +469,126 @@ func (s *Store) Count(ctx context.Context, q WindowQuery) (int64, error) {
 	return res.Rows[0][0].Int64(), nil
 }
 
-// WindowCIDs returns the CIDs a window's conditions match (no order, no
-// limit, no payload): the distinct-record count of a union of partitions.
-func (s *Store) WindowCIDs(ctx context.Context, q WindowQuery) ([]string, error) {
+// DefaultWindowCIDs is the default budget of distinct CIDs the window reads
+// of one store may hold in memory at once (CIDSet): about 1.6 GB of binary
+// keys (measured 101 B per CID in a Go set), less when GOMEMLIMIT is lower
+// (a quarter of it). A read past the budget ends in ErrWindowTooLarge
+// instead of growing the node's heap with the store (terabyte audit M8: a
+// count over 100M CIDs took 10-15 GB); such counts belong in the engine.
+const DefaultWindowCIDs = 1 << 24
+
+// windowCIDBytes is the measured heap per CID of a set of binary CIDs.
+const windowCIDBytes = 101
+
+// ErrWindowTooLarge: a window matches more records than the store's window
+// reads may hold in memory (DefaultWindowCIDs, shared by concurrent reads).
+var ErrWindowTooLarge = errors.New("format2: the window matches more records than one read may hold in memory")
+
+// defaultWindowBudget is DefaultWindowCIDs, or a quarter of GOMEMLIMIT at
+// windowCIDBytes per CID when that is lower.
+func defaultWindowBudget() int64 {
+	n := int64(DefaultWindowCIDs)
+	if lim := debug.SetMemoryLimit(-1); lim > 0 && lim < math.MaxInt64 {
+		n = min(n, max(lim/4/windowCIDBytes, 1<<16))
+	}
+	return n
+}
+
+// SetWindowCIDBudget sets how many distinct CIDs the store's window reads
+// may hold at once (tests; 0 restores the default).
+func (s *Store) SetWindowCIDBudget(n int64) {
+	if n <= 0 {
+		n = defaultWindowBudget()
+	}
+	s.windowMax.Store(n)
+}
+
+// CIDSet is a set of binary CIDs a window read collects, held against the
+// store's budget until Release (defer it). The distinct-record count of a
+// union of partitions' windows is Len after each partition's AddWindowCIDs.
+type CIDSet struct {
+	s    *Store
+	m    map[string]struct{}
+	held int64
+}
+
+// NewCIDSet returns an empty set charged to the store's window budget.
+func (s *Store) NewCIDSet() *CIDSet {
+	c := &CIDSet{s: s, m: map[string]struct{}{}}
+	runtime.SetFinalizer(c, (*CIDSet).Release) // a set never released still returns its budget
+	return c
+}
+
+// Len is the distinct CIDs in the set.
+func (c *CIDSet) Len() int { return len(c.m) }
+
+// Has reports whether the set holds a binary CID.
+func (c *CIDSet) Has(bin []byte) bool {
+	_, ok := c.m[string(bin)]
+	return ok
+}
+
+// Texts returns the set's CIDs as text.
+func (c *CIDSet) Texts() []string {
+	out := make([]string, 0, len(c.m))
+	for k := range c.m {
+		out = append(out, CIDText([]byte(k)))
+	}
+	return out
+}
+
+// Release empties the set and returns what it held to the budget.
+func (c *CIDSet) Release() {
+	if c.held != 0 {
+		c.s.windowHeld.Add(-c.held)
+		c.held = 0
+	}
+	c.m = map[string]struct{}{}
+}
+
+func (c *CIDSet) add(bin []byte) error {
+	if _, ok := c.m[string(bin)]; ok {
+		return nil
+	}
+	lim := c.s.windowMax.Load()
+	if lim <= 0 {
+		lim = DefaultWindowCIDs
+	}
+	if c.s.windowHeld.Add(1) > lim {
+		c.s.windowHeld.Add(-1)
+		return fmt.Errorf("%w (%d CIDs held by the store's window reads)", ErrWindowTooLarge, lim)
+	}
+	c.held++
+	c.m[string(bin)] = struct{}{}
+	return nil
+}
+
+// AddWindowCIDs adds the binary CIDs a window's conditions match (no order,
+// no limit, no payload) to set, streamed: no statement result is held. It
+// ends in ErrWindowTooLarge (the statement cancelled) once the store's window
+// reads would hold more than their budget.
+func (s *Store) AddWindowCIDs(ctx context.Context, q WindowQuery, set *CIDSet) error {
 	if q.byBatch() {
-		var out []string
-		err := s.matches(ctx, q, func(cid []byte, _ int64) error { out = append(out, CIDText(cid)); return nil })
-		return out, err
+		return s.matches(ctx, q, func(cid []byte, _ int64) error { return set.add(cid) })
 	}
 	where, params, _ := q.where()
-	res, err := s.query(ctx, Request{SQL: fmt.Sprintf("SELECT _cid_bin FROM %s%s", q.table(), where), Params: params})
+	err := s.scan(ctx, Request{SQL: fmt.Sprintf("SELECT _cid_bin FROM %s%s", q.table(), where), Params: params},
+		func(row []Cell) error { return set.add(row[0].B) })
 	if noSuchType(err, q.Schema) {
-		return nil, nil
+		return nil
 	}
-	if err != nil {
+	return err
+}
+
+// WindowCIDs returns the text CIDs a window's conditions match, each once
+// (AddWindowCIDs into a set of its own, released on return).
+func (s *Store) WindowCIDs(ctx context.Context, q WindowQuery) ([]string, error) {
+	set := s.NewCIDSet()
+	defer set.Release()
+	if err := s.AddWindowCIDs(ctx, q, set); err != nil {
 		return nil, err
 	}
-	out := make([]string, len(res.Rows))
-	for i, r := range res.Rows {
-		out[i] = CIDText(r[0].B)
-	}
-	return out, nil
+	return set.Texts(), nil
 }
 
 func (s *Store) windowRows(ctx context.Context, q WindowQuery, cols string) ([][]Cell, error) {
@@ -573,15 +748,11 @@ func (s *Store) SyncPage(ctx context.Context, q SyncQuery) ([]Rec, int64, error)
 	typ := typeName(q.Schema)
 	max := q.MaxGseq
 	if max <= 0 {
-		types, err := s.heads.Types()
+		tc, _, err := s.heads.TypeOf(typ)
 		if err != nil {
 			return nil, 0, err
 		}
-		for _, ty := range types {
-			if ty.Type == typ {
-				max = ty.GseqHi
-			}
-		}
+		max = tc.GseqHi
 		if max <= 0 {
 			return nil, 0, nil
 		}
@@ -660,13 +831,9 @@ func (s *Store) SchemaDateRanges(ctx context.Context) ([]SchemaRange, error) {
 	if err != nil {
 		return nil, err
 	}
-	parts, err := s.Partitions(ctx)
+	totals, err := s.heads.TypeTotals()
 	if err != nil {
 		return nil, err
-	}
-	bytes := map[string]int64{}
-	for _, p := range parts {
-		bytes[p.Type] += p.LiveBytes
 	}
 	sort.Slice(types, func(i, j int) bool { return types[i].Schema < types[j].Schema })
 	var out []SchemaRange
@@ -674,7 +841,7 @@ func (s *Store) SchemaDateRanges(ctx context.Context) ([]SchemaRange, error) {
 		if ty.FirstLive == 0 {
 			continue
 		}
-		r := SchemaRange{Schema: ty.Schema, RecordCount: ty.FirstLive, TotalBytes: bytes[ty.Type]}
+		r := SchemaRange{Schema: ty.Schema, RecordCount: ty.FirstLive, TotalBytes: totals[ty.Type].LiveBytes}
 		if strings.Contains(typeRules[ty.Type], "epoch ") {
 			for _, dir := range []string{"ASC", "DESC"} {
 				res, err := s.query(ctx, Request{SQL: fmt.Sprintf(`SELECT _epoch FROM %s ORDER BY _epoch %s LIMIT 1`, quoteIdent(ty.Type), dir)})

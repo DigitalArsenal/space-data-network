@@ -27,6 +27,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -111,6 +112,12 @@ type Store struct {
 	closeMu  sync.Once
 	closeErr error
 
+	seeks atomic.Uint64 // per-partition CID seeks (PartitionSeeks)
+
+	// The window reads' CID budget (CIDSet): the most they may hold at once,
+	// and what they hold now.
+	windowMax, windowHeld atomic.Int64
+
 	OpenedIn time.Duration
 }
 
@@ -155,6 +162,7 @@ func Open(cfg StoreConfig) (*Store, error) {
 		QuotaBytes: cfg.QuotaBytes, BallastBytes: cfg.BallastBytes, CommitJournal: cfg.CommitJournal}); err != nil {
 		return fail(fmt.Errorf("format2: writer instance: %w", err))
 	}
+	s.windowMax.Store(defaultWindowBudget())
 	if s.ri, err = OpenReader(opt, flatsqlrt.PSRoleReader, ReaderConfig{Root: cfg.EngineRoot, Lanes: cfg.Topology.InteractiveLanes}); err != nil {
 		return fail(fmt.Errorf("format2: interactive reader instance: %w", err))
 	}
