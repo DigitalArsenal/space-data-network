@@ -494,9 +494,6 @@ func (s *FlatSQLStore) f2BatchDrives(ctx context.Context, schema string, tag f2T
 // f2WindowMerged runs a window read on its targets and merges partition
 // results by the window's order, keeping each CID once.
 func (s *FlatSQLStore) f2WindowMerged(ctx context.Context, q format2.WindowQuery, read func(format2.WindowQuery) ([]format2.WindowRow, error)) ([]format2.WindowRow, error) {
-	if _, _, err := s.f2ElideCoveringTag(ctx, &q); err != nil {
-		return nil, err
-	}
 	if err := s.f2ByBatch(ctx, &q); err != nil {
 		return nil, err
 	}
@@ -559,35 +556,6 @@ func (s *FlatSQLStore) f2WindowMerged(ctx context.Context, q format2.WindowQuery
 	return out, nil
 }
 
-// f2CountCache keeps window counts that were read (not proven by the lane
-// counters) while the type's partitions have not moved: the record index
-// page asks the same total for every page it serves.
-type f2CountCache struct {
-	mu sync.Mutex
-	m  map[string]f2CountEntry
-}
-
-type f2CountEntry struct {
-	heads string
-	n     int64
-}
-
-func (c *f2CountCache) get(key, mark string) (int64, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.m[key]
-	return e.n, ok && e.heads == mark
-}
-
-func (c *f2CountCache) put(key, mark string, n int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.m == nil || len(c.m) >= 256 {
-		c.m = map[string]f2CountEntry{}
-	}
-	c.m[key] = f2CountEntry{heads: mark, n: n}
-}
-
 // f2PartitionsMark is the state of a type: its head's commit sequence (it
 // moves with every label, so with every change a type-level read can see),
 // and its partitions' count and summed commit sequences (they move with
@@ -606,82 +574,65 @@ func (s *FlatSQLStore) f2PartitionsMark(schema string) (string, error) {
 	return fmt.Sprintf("%d;%d;%d", tc.CommitSeq, tt.Partitions, tt.CommitSeqs), nil
 }
 
+// f2TagProof is what the lane counters prove about a tag at one state of
+// its type: covers when the tag selects every live record of the type, all
+// the type's live record count then, and seq the type head's commit
+// sequence the proof holds at.
+type f2TagProof struct {
+	covers bool
+	all    int64
+	seq    int64
+}
+
 // f2TagCovers reports whether the lane counters prove that a tag (a
-// provider, source or batch) selects every live record of the type, and the
-// type's live record count. They do when exactly one live lane of the type
-// meets every tag condition and its count equals the type head's live FIRST
-// count: a record holds one live instance per lane tuple and content key,
-// on any copy, and lane counters drop with every retire and tomb, so a lane
-// that counts as many instances as the type has records holds every record
-// (a record re-published in the same lane under a second content key would
-// count twice; no writer does that and the lane cannot tell). The type owner
-// must have labeled everything the partitions acked (lanes move at append,
-// type-level reads at label), and the type head is read before and after,
-// so the lanes, the labels and the count are one state.
-func (s *FlatSQLStore) f2TagCovers(ctx context.Context, schema string, tag f2TagSpec) (bool, int64, error) {
+// provider, source or batch) selects every live record of the type. They do
+// when exactly one live lane of the type meets every tag condition and its
+// count equals the type head's live FIRST count: a record holds one live
+// instance per lane tuple and content key, on any copy, and lane counters
+// drop with every retire and tomb, so a lane that counts as many instances
+// as the type has records holds every record (a record re-published in the
+// same lane under a second content key would count twice; no writer does
+// that and the lane cannot tell). The type owner must have labeled
+// everything the partitions acked (lanes move at append, type-level reads at
+// label), and the type head is read before and after, so the lanes, the
+// labels and the count are one state. A lookup that fails proves nothing.
+func (s *FlatSQLStore) f2TagCovers(ctx context.Context, schema string, tag f2TagSpec) f2TagProof {
 	if tag.empty() {
-		return false, 0, nil
+		return f2TagProof{}
 	}
 	before, err := s.ps.TypeCounterOf(schema)
 	if err != nil || before.FirstLive == 0 {
-		return false, 0, err
+		return f2TagProof{}
 	}
 	lanes, err := s.ps.LanesWhere(ctx, format2.LaneFilter{Type: format2.TypeName(schema)})
 	if err != nil {
-		return false, 0, err
+		return f2TagProof{}
 	}
 	var match []format2.LaneCounter
 	for _, l := range lanes {
 		if !l.Tuple {
-			return false, 0, nil // a lane whose tuple cannot be read might match
+			return f2TagProof{} // a lane whose tuple cannot be read might match
 		}
 		if tag.matches(l) {
 			match = append(match, l)
 		}
 	}
 	if len(match) != 1 || match[0].Count != before.FirstLive {
-		return false, 0, nil
+		return f2TagProof{}
 	}
 	if caught, err := s.ps.LabelsCaughtUp(schema); err != nil || !caught {
-		return false, 0, err
+		return f2TagProof{}
 	}
 	after, err := s.ps.TypeCounterOf(schema)
 	if err != nil || after.CommitSeq != before.CommitSeq {
-		return false, 0, err
+		return f2TagProof{}
 	}
-	return true, after.FirstLive, nil
-}
-
-// f2ElideCoveringTag drops a window's tag conditions when the lanes prove
-// they select every record of the type (a tag plan walks every posting of
-// the tag; the unfiltered plans read only the window). It returns whether it
-// did and the type's live record count.
-func (s *FlatSQLStore) f2ElideCoveringTag(ctx context.Context, q *format2.WindowQuery) (bool, int64, error) {
-	covers, n, err := s.f2TagCovers(ctx, q.Schema, f2TagSpec{provider: q.Provider, source: q.Source, batch: q.Batch})
-	if covers {
-		q.Provider, q.Source, q.Batch, q.ByBatch = "", "", "", false
-	}
-	return covers, n, err
-}
-
-// f2TagOnly reports a window whose only conditions are its tag's.
-func f2TagOnly(q format2.WindowQuery) bool {
-	return q.NoradCatID == nil && q.EntityID == "" && q.From == nil && q.To == nil && len(q.Conds) == 0 &&
-		len(q.EpochRanges) == 0 && q.Table == ""
+	return f2TagProof{covers: true, all: after.FirstLive, seq: after.CommitSeq}
 }
 
 // f2WindowCount counts a window's records (its conditions; distinct CIDs
-// over the partitions of a REPEAT-holding type): the type head's count when
-// the lanes prove the tag selects every record, else read, and kept while
-// the type's partitions have not moved.
+// over the partitions of a REPEAT-holding type) through the count cache.
 func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery) (int64, error) {
-	covers, all, err := s.f2ElideCoveringTag(ctx, &q)
-	if err != nil {
-		return 0, err
-	}
-	if covers && f2TagOnly(q) {
-		return all, nil
-	}
 	if err := s.f2ByBatch(ctx, &q); err != nil {
 		return 0, err
 	}
@@ -690,21 +641,17 @@ func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery)
 	if err != nil {
 		return 0, err
 	}
-	key := fmt.Sprintf("%s|%s|%s|%s|%v|%v|%v|%v|%s|%v|%v", q.Schema, q.Provider, q.Source, q.Batch, q.NoradCatID, q.EntityID,
-		q.From, q.To, fmt.Sprint(q.Conds), q.EpochRanges, q.ByBatch)
 	mark, err := s.f2PartitionsMark(q.Schema)
 	if err != nil {
 		return 0, err
 	}
-	if n, ok := s.f2.counts.get(key, mark); ok {
-		return n, nil
-	}
-	var n int64
-	if len(targets) == 1 && targets[0].table == "" {
-		if n, err = s.ps.Count(ctx, q); err != nil {
-			return 0, err
+	return s.f2.counts.count(f2CountKey(q), mark, func() (int64, error) {
+		// A recount can outlive the page that started it: the store's
+		// context, cancelled at Close.
+		ctx := s.f2ctx()
+		if len(targets) == 1 && targets[0].table == "" {
+			return s.ps.Count(ctx, q)
 		}
-	} else {
 		// Every target's CIDs stream into one set held against the store's
 		// window budget (terabyte audit M8); past it the count fails with
 		// format2.ErrWindowTooLarge, never grows the heap with the store.
@@ -720,10 +667,180 @@ func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery)
 				return 0, err
 			}
 		}
-		n = int64(seen.Len())
+		return int64(seen.Len()), nil
+	})
+}
+
+// f2CountKey is a window count's cache key: its conditions, by value.
+func f2CountKey(q format2.WindowQuery) string {
+	norad := "-"
+	if q.NoradCatID != nil {
+		norad = strconv.FormatUint(uint64(*q.NoradCatID), 10)
 	}
-	s.f2.counts.put(key, mark, n)
-	return n, nil
+	at := func(t *time.Time) string {
+		if t == nil {
+			return "-"
+		}
+		return strconv.FormatInt(t.Unix(), 10)
+	}
+	return fmt.Sprintf("%q|%q|%q|%q|%s|%q|%s|%s|%q|%v|%v", q.Schema, q.Provider, q.Source, q.Batch, norad, q.EntityID,
+		at(q.From), at(q.To), fmt.Sprint(q.Conds), q.EpochRanges, q.ByBatch)
+}
+
+// f2IndexWindow reads a record index page's window with its tag:
+//   - proven to cover the type (f2TagCovers), the unfiltered window, whose
+//     rows are checked to hold the tag when the type moved since the proof
+//     (a record labeled meanwhile may lack it), else read with the tag;
+//   - a CID-ordered window of a tag that selects most of the type, in the
+//     type's CID order filtered by the tag (f2TagWindowByCID);
+//   - otherwise the tag window.
+func (s *FlatSQLStore) f2IndexWindow(ctx context.Context, q format2.WindowQuery, tag f2TagSpec, proof f2TagProof,
+	cols func(format2.WindowQuery) ([]format2.WindowRow, error)) ([]format2.WindowRow, error) {
+	if proof.covers {
+		u := q
+		u.Provider, u.Source, u.Batch = "", "", ""
+		rows, err := s.f2WindowMerged(ctx, u, cols)
+		if err != nil {
+			return nil, err
+		}
+		if tc, err := s.ps.TypeCounterOf(q.Schema); err == nil && tc.CommitSeq == proof.seq {
+			return rows, nil
+		}
+		held, err := s.f2TaggedCIDs(ctx, q.Schema, tag, rows)
+		if err != nil {
+			return nil, err
+		}
+		if len(held) == len(rows) {
+			return rows, nil
+		}
+		return s.f2WindowMerged(ctx, q, cols)
+	}
+	if q.Order == "cid" && !tag.empty() {
+		rows, ok, err := s.f2TagWindowByCID(ctx, q, tag, cols)
+		if err != nil || ok {
+			return rows, err
+		}
+	}
+	return s.f2WindowMerged(ctx, q, cols)
+}
+
+// f2TagWindowByCID reads a CID-ordered tag window in the type's CID order (a
+// stream) and keeps the records holding a live instance of the tag. The tag
+// plan walks every posting of the tag and sorts it: about 2.4 us a posting
+// (0.96 s for a 419k-record IQC source). This plan reads the rows before the
+// page's end in CID order and checks each one's tag by CID: up to about
+// f2ByCIDRowCost a row. With the lanes' estimate of the tag's selectivity
+// (its matching lanes' counts over the type's records), it runs only when it
+// reads fewer rows than the tag holds postings by that factor, and gives up
+// (false) when the rows it scans hold fewer matches than the estimate.
+func (s *FlatSQLStore) f2TagWindowByCID(ctx context.Context, q format2.WindowQuery, tag f2TagSpec,
+	cols func(format2.WindowQuery) ([]format2.WindowRow, error)) ([]format2.WindowRow, bool, error) {
+	tc, err := s.ps.TypeCounterOf(q.Schema)
+	if err != nil || tc.FirstLive == 0 {
+		return nil, false, nil
+	}
+	lanes, err := s.f2Lanes(ctx)
+	if err != nil {
+		return nil, false, nil
+	}
+	typ := format2.TypeName(q.Schema)
+	var matching int64
+	for _, l := range lanes {
+		if l.Type == typ && tag.matches(l) {
+			matching += l.Count
+		}
+	}
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	want := q.Offset + limit
+	// The rows before the page's end in CID order, at the tag's selectivity.
+	rowsBefore := float64(want) * float64(tc.FirstLive) / math.Max(math.Min(float64(matching), float64(tc.FirstLive)), 1)
+	if rowsBefore*f2ByCIDRowCost > float64(matching) {
+		return nil, false, nil
+	}
+	return s.f2ScanTagByCID(ctx, q, tag, cols, 2*int(rowsBefore)+1024)
+}
+
+// f2ScanTagByCID is f2TagWindowByCID's scan: at most budget rows in CID
+// order.
+func (s *FlatSQLStore) f2ScanTagByCID(ctx context.Context, q format2.WindowQuery, tag f2TagSpec,
+	cols func(format2.WindowQuery) ([]format2.WindowRow, error), budget int) ([]format2.WindowRow, bool, error) {
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	want := q.Offset + limit
+	u := q
+	u.Provider, u.Source, u.Batch, u.ByBatch = "", "", "", false
+	out := make([]format2.WindowRow, 0, limit)
+	skip := q.Offset
+	for pos, chunk := 0, want+want/8+64; pos < budget; chunk = min(2*chunk, 8192) {
+		u.Offset, u.Limit = pos, chunk
+		rows, err := s.f2WindowMerged(ctx, u, cols)
+		if err != nil {
+			return nil, false, err
+		}
+		held, err := s.f2TaggedCIDs(ctx, q.Schema, tag, rows)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, r := range rows {
+			if !held[string(r.Rec.CIDBin)] {
+				continue
+			}
+			if skip > 0 {
+				skip--
+				continue
+			}
+			out = append(out, r)
+			if len(out) == limit {
+				return out, true, nil
+			}
+		}
+		if len(rows) < chunk {
+			return out, true, nil // the end of the type's records
+		}
+		pos += len(rows)
+	}
+	return nil, false, nil
+}
+
+// f2ByCIDRowCost is a CID-order row checked by tag (f2TagWindowByCID) in tag
+// postings walked by the tag plan: measured 25-130 us a row against 2.4 us a
+// posting on the host-02-sized fixture.
+const f2ByCIDRowCost = 64
+
+// f2TaggedCIDs returns which rows' records hold a live instance of a tag
+// (any copy: the type-level tag conditions), by binary CID: point reads of
+// the rows' CIDs.
+func (s *FlatSQLStore) f2TaggedCIDs(ctx context.Context, schema string, tag f2TagSpec, rows []format2.WindowRow) (map[string]bool, error) {
+	out := make(map[string]bool, len(rows))
+	for start := 0; start < len(rows); start += 256 {
+		end := min(start+256, len(rows))
+		f := &f2RawFilter{}
+		cids := make([]format2.Cell, 0, end-start)
+		for _, r := range rows[start:end] {
+			cids = append(cids, format2.Blob(r.Rec.CIDBin))
+		}
+		f.add("_cid_bin IN ("+strings.TrimSuffix(strings.Repeat("?,", len(cids)), ",")+")", cids...)
+		for _, c := range tag.conds() {
+			f.add(c.SQL, c.Params...)
+		}
+		res, err := s.ps.QueryPoint(ctx, format2.Request{SQL: "SELECT _cid_bin FROM " + format2.QuoteIdent(format2.TypeName(schema)) + f.where(),
+			Params: f.params})
+		if format2.NoSuchType(err, schema) {
+			return out, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("tag of %s records: %w", schema, err)
+		}
+		for _, row := range res.Rows {
+			out[string(row[0].B)] = true
+		}
+	}
+	return out, nil
 }
 
 func (s *FlatSQLStore) f2QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record, error) {
@@ -1766,18 +1883,29 @@ func (s *FlatSQLStore) f2RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexR
 				Params: []format2.Cell{format2.Text("%" + q.NoradLike + "%")}})
 		}
 	}
-	// The total: the type head when unfiltered, else a COUNT over the same
-	// conditions (a lane statement, no payload).
+	// A tag the lanes prove selects every record of the type is read as the
+	// unfiltered page and total (a tag plan walks every posting of the tag):
+	// proven once, for both.
+	tag := f2TagSpec{provider: wq.Provider, source: wq.Source, batch: wq.Batch}
+	proof := s.f2TagCovers(ctx, q.SchemaName, tag)
+	// The total: the type head when nothing else filters, else a COUNT over
+	// the same conditions (a lane statement, no payload).
 	var total int64
-	if wq.Provider == "" && wq.Source == "" && wq.Batch == "" && len(wq.Conds) == 0 {
+	switch {
+	case len(wq.Conds) == 0 && proof.covers:
+		total = proof.all
+	case len(wq.Conds) == 0 && tag.empty():
 		tc, err := s.ps.TypeCounterOf(q.SchemaName)
 		if err != nil {
 			return nil, 0, err
 		}
 		total = tc.FirstLive
-	} else {
-		n, err := s.f2WindowCount(ctx, format2.WindowQuery{Schema: wq.Schema, Provider: wq.Provider, Source: wq.Source, Batch: wq.Batch,
-			Conds: wq.Conds})
+	default:
+		cq := format2.WindowQuery{Schema: wq.Schema, Provider: wq.Provider, Source: wq.Source, Batch: wq.Batch, Conds: wq.Conds}
+		if proof.covers {
+			cq.Provider, cq.Source, cq.Batch = "", "", ""
+		}
+		n, err := s.f2WindowCount(ctx, cq)
 		if err != nil {
 			return nil, 0, fmt.Errorf("count record index page: %w", err)
 		}
@@ -1787,7 +1915,7 @@ func (s *FlatSQLStore) f2RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexR
 	if hasNorad {
 		extra = "NORAD_CAT_ID"
 	}
-	recs, err := s.f2WindowMerged(ctx, wq, func(q format2.WindowQuery) ([]format2.WindowRow, error) {
+	recs, err := s.f2IndexWindow(ctx, wq, tag, proof, func(q format2.WindowQuery) ([]format2.WindowRow, error) {
 		return s.ps.WindowColumns(ctx, q, extra)
 	})
 	if err != nil {

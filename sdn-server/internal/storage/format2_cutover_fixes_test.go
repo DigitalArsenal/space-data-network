@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 )
 
 // B2: a batch reports each record the engine refused to its caller, after
@@ -93,12 +95,9 @@ func TestFormat2IndexPagesOfACoveringTag(t *testing.T) {
 			}
 		}
 		for schema, want := range wantCovers {
-			covers, n, err := f2.f2TagCovers(f2.f2ctx(), schema, f2TagSpec{source: "IQEngine"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if covers != want {
-				t.Errorf("%s: %s source IQEngine covers the type = %v (count %d), want %v", step, schema, covers, n, want)
+			proof := f2.f2TagCovers(f2.f2ctx(), schema, f2TagSpec{source: "IQEngine"})
+			if proof.covers != want {
+				t.Errorf("%s: %s source IQEngine covers the type = %v (count %d), want %v", step, schema, proof.covers, proof.all, want)
 			}
 		}
 	}
@@ -153,4 +152,98 @@ func deref64(p *int64) any {
 		return nil
 	}
 	return *p
+}
+
+// B4 (cutover review): a page read with its tag elided is checked when the
+// type moved after the proof. An untagged record labeled between the proof
+// and the read would otherwise show on a source-filtered page.
+func TestFormat2ElidedTagPageIsCheckedWhenTheTypeMoved(t *testing.T) {
+	requireFormat2Engine(t)
+	f2 := openFormat2ForTest(t, t.TempDir())
+	defer f2.Close()
+	var cat [][]byte
+	for i := 0; i < 30; i++ {
+		cat = append(cat, f2TestCAT(uint32(700+i), fmt.Sprintf("ELIDED %d", i), "PAYLOAD", "OPERATIONAL"))
+	}
+	iq := SourceTags{ProviderID: "space-data-network-02", SourceName: "IQEngine", BatchID: "iq-1"}
+	if _, err := f2.StoreBatchWithSourceTags("CAT.fbs", cat, "source:iqengine", nil, iq); err != nil {
+		t.Fatal(err)
+	}
+	ctx := f2.f2ctx()
+	tag := f2TagSpec{source: "IQEngine"}
+	proof := f2.f2TagCovers(ctx, "CAT.fbs", tag)
+	if !proof.covers {
+		t.Fatal("one lane holding every record: the lanes do not prove it covers the type")
+	}
+	untagged := f2TestCAT(799, "UNTAGGED", "PAYLOAD", "OPERATIONAL")
+	if _, err := f2.Store("CAT.fbs", untagged, "16Uiu2HAmRelayPeer", nil); err != nil {
+		t.Fatal(err)
+	}
+	q := format2.WindowQuery{Schema: "CAT.fbs", Source: "IQEngine", Order: "cid", Limit: 100}
+	rows, err := f2.f2IndexWindow(ctx, q, tag, proof, func(q format2.WindowQuery) ([]format2.WindowRow, error) {
+		return f2.ps.WindowColumns(ctx, q, "NULL")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != len(cat) {
+		t.Fatalf("%d rows, want the %d IQEngine records", len(rows), len(cat))
+	}
+	for _, r := range rows {
+		if r.Rec.CID == ComputeCID(untagged) {
+			t.Fatal("the untagged record labeled after the proof is on the IQEngine page")
+		}
+	}
+}
+
+// B4: a CID-ordered tag window read in the type's CID order and filtered by
+// tag (f2ScanTagByCID) equals format 1's page, for a tag held by a record's
+// FIRST copy, by a REPEAT copy only, and by both.
+func TestFormat2CIDOrderTagScanEqualsFormat1(t *testing.T) {
+	requireFormat2Engine(t)
+	legacy := reopenDeferred(t, t.TempDir())
+	defer legacy.Close()
+	f2 := openFormat2ForTest(t, t.TempDir())
+	defer f2.Close()
+	var cat [][]byte
+	for i := 0; i < 60; i++ {
+		cat = append(cat, f2TestCAT(uint32(800+i), fmt.Sprintf("SCAN %d", i), "PAYLOAD", "OPERATIONAL"))
+	}
+	a := SourceTags{ProviderID: "space-data-network-02", SourceName: "scan-a", BatchID: "a-1"}
+	b := SourceTags{ProviderID: "space-data-network-01", SourceName: "scan-b", BatchID: "b-1"}
+	for _, s := range []*FlatSQLStore{legacy, f2} {
+		if _, err := s.StoreBatchWithSourceTags("CAT.fbs", cat[:40], "source:scan-a", nil, a); err != nil {
+			t.Fatal(err)
+		}
+		// Records 30..59 under scan-b from another producer: 30..39 are
+		// REPEAT copies there.
+		if _, err := s.StoreBatchWithSourceTags("CAT.fbs", cat[30:], "source:scan-b", nil, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := f2.f2ctx()
+	cols := func(q format2.WindowQuery) ([]format2.WindowRow, error) { return f2.ps.WindowColumns(ctx, q, "NULL") }
+	for _, source := range []string{"scan-a", "scan-b"} {
+		for _, page := range [][2]int{{0, 7}, {5, 7}, {26, 9}, {33, 10}} {
+			want, _, err := legacy.RecordIndexPage(RecordIndexPageQuery{SchemaName: "CAT.fbs", SourceName: source, Offset: page[0], Limit: page[1]})
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := format2.WindowQuery{Schema: "CAT.fbs", Source: source, Order: "cid", Offset: page[0], Limit: page[1]}
+			got, ok, err := f2.f2ScanTagByCID(ctx, q, f2TagSpec{source: source}, cols, 1<<20)
+			if err != nil || !ok {
+				t.Fatalf("%s %v: %v %v", source, page, ok, err)
+			}
+			var g, w []string
+			for _, r := range got {
+				g = append(g, r.Rec.CID)
+			}
+			for _, r := range want {
+				w = append(w, r.CID)
+			}
+			if fmt.Sprint(g) != fmt.Sprint(w) {
+				t.Errorf("%s offset %d limit %d: scan %v, format 1 %v", source, page[0], page[1], g, w)
+			}
+		}
+	}
 }

@@ -387,6 +387,7 @@ func (s *FlatSQLStore) recoverFormat2ControlInstanceLocked() (uint64, error) {
 func (s *FlatSQLStore) closeFormat2Locked() error {
 	if s.f2 != nil && s.f2.cancel != nil {
 		s.f2.cancel()
+		s.f2.counts.wait()
 	}
 	if s.ps == nil {
 		return nil
