@@ -10,11 +10,14 @@ package storage
 //   - a datasync v1 page carries each record once, in gseq order (the legacy
 //     page repeated a record once per tag row); RowID is the gseq, which for
 //     migrated records IS the legacy sdn_record_index rowid;
-//   - a record's projected source tag is its FIRST copy's (the PUT's) tag;
-//     tag FILTERS match any live tag instance (flatsql 3.2.0 §31.1);
+//   - a record's projected source tag is its FIRST copy's (the PUT's) tag
+//     while that instance is live and meets the read's tag filter, else the
+//     newest live lane that holds the record (f2LiveTags); tag FILTERS match
+//     any live tag instance (flatsql 3.2.0 §31.1);
 //   - the producer peer and key of a tag come from the partition's lane
-//     tuple, and only when that tuple is unambiguous; the source URL and
-//     content key of a tag are not kept per record;
+//     tuple, and only when that tuple is unambiguous; a copy keeps its PUT's
+//     source URL and content key (RecordAttr), which the engine does not
+//     project yet, and a RETAG instance keeps neither;
 //   - Timestamp is the arrival, floored to seconds (migrated records keep the
 //     legacy timestamp: store-migrate wrote it as the arrival).
 
@@ -188,26 +191,157 @@ func (s *FlatSQLStore) f2Record(schemaName string, r format2.Rec, hydrate bool, 
 }
 
 func (s *FlatSQLStore) f2Records(ctx context.Context, schemaName string, rows [][]format2.Cell, hydrate bool) ([]*Record, error) {
+	recs := make([]format2.Rec, len(rows))
 	var keys []f2TupleKey
-	for _, row := range rows {
-		if row[8].String() != "" || row[9].String() != "" {
-			keys = append(keys, f2TupleKey{row[11].String(), format2.TypeName(schemaName), row[9].String(), row[8].String(), row[10].String()})
+	for i, row := range rows {
+		recs[i] = format2.RecFromRow(row)
+		if r := recs[i]; r.Source != "" || r.Provider != "" {
+			keys = append(keys, f2TupleKey{r.Producer, format2.TypeName(schemaName), r.Provider, r.Source, r.Batch})
 		}
 	}
 	var tuples map[f2TupleKey][2]string
+	var live map[string]*format2.LaneCounter
 	if len(keys) > 0 {
 		var err error
 		if tuples, err = s.f2TuplesFor(ctx, keys); err != nil {
 			return nil, err
 		}
+		if live, err = s.f2LiveTags(ctx, schemaName, recs, f2TagSpec{}); err != nil {
+			return nil, err
+		}
 	}
 	out := make([]*Record, 0, len(rows))
-	for _, row := range rows {
-		rec, err := s.f2Record(schemaName, format2.RecFromRow(row), hydrate, tuples)
+	for _, r := range recs {
+		rec, err := s.f2Record(schemaName, r, hydrate, tuples)
 		if err != nil {
 			return nil, err
 		}
+		if l, ok := live[r.CID]; ok {
+			rec.SourceTags = f2LaneTags(l)
+			if l == nil {
+				rec.MaterializedAt = time.Time{}
+			}
+		}
 		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// f2LaneTags is a lane tuple as source tags (none for nil).
+func f2LaneTags(l *format2.LaneCounter) SourceTags {
+	if l == nil {
+		return SourceTags{}
+	}
+	return SourceTags{ProviderID: l.Provider, SourceName: l.Source, BatchID: l.Batch, ProducerPeerID: l.Peer, ProducerPublicKey: l.PubKey}
+}
+
+// f2LiveTags finds the tag format 1 reports for rows whose projected tag
+// (their FIRST copy's own) is not one: format 1 kept only live tag rows, and
+// a tag-filtered read reported the row that met the filter. A row needs one
+// when its own tag's lane counts no live instance (a RECONCILE kept another
+// batch of the source: the record lives on through the RETAG of the kept
+// batch), or it does not meet filter (the record met it through another
+// instance or copy). The tag is the newest live lane that holds the record:
+// of the same partition, provider and source, or, under a filter, any lane
+// that meets it; a probe of the rows' CIDs per lane (at most one statement per
+// 256 rows and lane). The map holds the rows it resolved (nil: no live lane
+// holds the record's tag). A RETAG instance keeps no source URL, content key
+// or time of its own: those stay format 1's only (engine).
+func (s *FlatSQLStore) f2LiveTags(ctx context.Context, schema string, recs []format2.Rec, filter f2TagSpec) (map[string]*format2.LaneCounter, error) {
+	lanes, err := s.f2Lanes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	typ := format2.TypeName(schema)
+	liveLane := map[f2TupleKey]bool{}
+	var cands []format2.LaneCounter
+	for _, l := range lanes {
+		if l.Type != typ || !l.Tuple || l.Count <= 0 {
+			continue
+		}
+		liveLane[f2TupleKey{l.Producer, typ, l.Provider, l.Source, l.Batch}] = true
+		cands = append(cands, l)
+	}
+	var todo []format2.Rec
+	seen := map[string]bool{}
+	for _, r := range recs {
+		if seen[r.CID] || (r.Provider == "" && r.Source == "" && filter.empty()) {
+			continue
+		}
+		seen[r.CID] = true
+		own := liveLane[f2TupleKey{r.Producer, typ, r.Provider, r.Source, r.Batch}]
+		if own && filter.meets(r.Provider, r.Source, r.Batch) {
+			continue
+		}
+		todo = append(todo, r)
+	}
+	if len(todo) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]*format2.LaneCounter, len(todo))
+	for _, r := range todo {
+		out[r.CID] = nil
+	}
+	sort.SliceStable(cands, func(i, j int) bool { return cands[i].UpdatedMs > cands[j].UpdatedMs })
+	for i := range cands {
+		l := &cands[i]
+		var probe []format2.Rec
+		rest := todo[:0]
+		for _, r := range todo {
+			if filter.empty() && (l.Producer != r.Producer || l.Provider != r.Provider || l.Source != r.Source) ||
+				!filter.empty() && !filter.matches(*l) {
+				rest = append(rest, r)
+				continue
+			}
+			probe = append(probe, r)
+		}
+		todo = rest
+		if len(probe) == 0 {
+			continue
+		}
+		held, err := s.f2LaneHolds(ctx, l, probe)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range probe {
+			if held[string(r.CIDBin)] {
+				out[r.CID] = l
+			} else {
+				todo = append(todo, r)
+			}
+		}
+		if len(todo) == 0 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// f2LaneHolds returns which records hold a live instance of a lane's tuple
+// on their copy in the lane's partition, by binary CID.
+func (s *FlatSQLStore) f2LaneHolds(ctx context.Context, l *format2.LaneCounter, recs []format2.Rec) (map[string]bool, error) {
+	pc, ok, err := s.ps.PartitionByPID(l.PID)
+	if err != nil || !ok {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for start := 0; start < len(recs); start += 256 {
+		end := min(start+256, len(recs))
+		f := &f2RawFilter{}
+		cids := make([]format2.Cell, 0, end-start)
+		for _, r := range recs[start:end] {
+			cids = append(cids, format2.Blob(r.CIDBin))
+		}
+		f.add("_cid_bin IN ("+strings.TrimSuffix(strings.Repeat("?,", len(cids)), ",")+")", cids...)
+		f.add("_provider = ? AND _source_name = ? AND _batch = ? AND _peer_id = ?", format2.Text(l.Provider), format2.Text(l.Source),
+			format2.Text(l.Batch), format2.Text(l.Peer))
+		res, err := s.ps.QueryPoint(ctx, format2.Request{SQL: "SELECT _cid_bin FROM " + format2.QuoteIdent(pc.SQLName) + f.where(), Params: f.params})
+		if err != nil {
+			return nil, fmt.Errorf("live tags of %s records: %w", l.Type, err)
+		}
+		for _, row := range res.Rows {
+			out[string(row[0].B)] = true
+		}
 	}
 	return out, nil
 }
@@ -863,6 +997,10 @@ func (s *FlatSQLStore) f2QueryIndexedRecords(filter IndexedRecordQuery) ([]*Reco
 	if err != nil {
 		return nil, fmt.Errorf("indexed query failed: %w", err)
 	}
+	live, err := s.f2LiveTags(ctx, filter.SchemaName, recs, f2TagSpec{provider: q.Provider, source: q.Source, batch: q.Batch})
+	if err != nil {
+		return nil, fmt.Errorf("indexed query failed: %w", err)
+	}
 	out := make([]*Record, 0, len(recs))
 	for _, r := range recs {
 		rec, err := s.f2Record(filter.SchemaName, r, true, nil)
@@ -871,6 +1009,10 @@ func (s *FlatSQLStore) f2QueryIndexedRecords(filter IndexedRecordQuery) ([]*Reco
 		}
 		// The legacy window projected (provider, source, batch) only.
 		rec.SourceTags = SourceTags{ProviderID: r.Provider, SourceName: r.Source, BatchID: r.Batch}
+		if l, ok := live[r.CID]; ok {
+			t := f2LaneTags(l)
+			rec.SourceTags = SourceTags{ProviderID: t.ProviderID, SourceName: t.SourceName, BatchID: t.BatchID}
+		}
 		rec.RowID = 0
 		rec.RecordLength = 0
 		rec.MaterializedAt = time.Time{}
@@ -929,6 +1071,12 @@ type f2TagSpec struct{ provider, source, batch, peer, key string }
 
 func (t f2TagSpec) empty() bool {
 	return t.provider == "" && t.source == "" && t.batch == "" && t.peer == "" && t.key == ""
+}
+
+// meets reports a tag (provider, source, batch) meeting the spec's
+// provider, source and batch conditions.
+func (t f2TagSpec) meets(provider, source, batch string) bool {
+	return (t.provider == "" || provider == t.provider) && (t.source == "" || source == t.source) && (t.batch == "" || batch == t.batch)
 }
 
 func (t f2TagSpec) matches(l format2.LaneCounter) bool {
@@ -2955,10 +3103,25 @@ func (s *FlatSQLStore) f2SourceTagsForCIDs(schemaName string, cids []string, pre
 		if err != nil {
 			return nil, fmt.Errorf("query source tags: %w", err)
 		}
-		for _, row := range res.Rows {
-			r := format2.RecFromRow(row)
+		recs := make([]format2.Rec, len(res.Rows))
+		for i, row := range res.Rows {
+			recs[i] = format2.RecFromRow(row)
+		}
+		var live map[string]*format2.LaneCounter
+		if only == nil {
+			if live, err = s.f2LiveTags(ctx, schemaName, recs, f2TagSpec{}); err != nil {
+				return nil, err
+			}
+		}
+		for _, r := range recs {
 			if only != nil {
 				out[r.CID] = *only
+				continue
+			}
+			if l, ok := live[r.CID]; ok {
+				if l != nil {
+					out[r.CID] = f2LaneTags(l)
+				}
 				continue
 			}
 			if r.Provider == "" && r.Source == "" {
