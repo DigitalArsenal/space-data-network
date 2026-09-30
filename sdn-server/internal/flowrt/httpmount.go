@@ -518,9 +518,9 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 		var compiledShim []byte
 		var shimErr error
 		if deps.AOTCompileOnMiss {
-			compiledShim, shimErr = flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, linkShimAOTCachePrefix, flatsqlLinkShimWasm)
+			compiledShim, shimErr = flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, linkShimAOTCachePrefix(), flatsqlLinkShimWasm)
 		} else {
-			compiledShim, shimErr = flatsqlrt.LoadAOTArtifact(deps.AOTCacheDir, linkShimAOTCachePrefix, flatsqlLinkShimWasm)
+			compiledShim, shimErr = flatsqlrt.LoadAOTArtifact(deps.AOTCacheDir, linkShimAOTCachePrefix(), flatsqlLinkShimWasm)
 		}
 		if shimErr == nil {
 			linkShim = compiledShim
