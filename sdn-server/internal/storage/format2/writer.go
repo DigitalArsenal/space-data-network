@@ -102,6 +102,9 @@ type WriterConfig struct {
 	CompactThreads  uint32
 	CommitJournal   bool
 	MaxEntryBytes   uint64 // TLV 19 (flatsql 3.2.0): the largest ring entry
+	// WriteFormat (TLV 31, flatsql 3.6.0) is the level the engine writes and
+	// raises the store to (0: its kFormatMax); see WriteFormatEnv.
+	WriteFormat uint16
 }
 
 func (c WriterConfig) encode() []byte {
@@ -148,6 +151,9 @@ func (c WriterConfig) encode() []byte {
 	t = t.u8(18, c.CommitJournal)
 	if c.MaxEntryBytes > 0 {
 		t = t.u64(19, c.MaxEntryBytes)
+	}
+	if c.WriteFormat > 0 {
+		t = t.u32(31, uint32(c.WriteFormat))
 	}
 	return t
 }
@@ -394,24 +400,42 @@ type WriterStats struct {
 	// flatsql 3.2.0 (entries 24, 25): store-migrate gseqs kept, and the
 	// fallbacks that allocated a gseq instead (verification needs 0).
 	MigratedGseqs, MigratedGseqFallbacks uint64
+	// flatsql 3.6.0 (entries 36-40, TB03): the store's level, the engine's
+	// kFormatMax, the level this open raised STORE from (0: none; 1: from a
+	// STORE a crash tore mid-raise), lane checkpoints cut and their bytes.
+	// 0 from an engine that predates them.
+	StoreFormat, EngineFormatMax, RaisedFrom, LaneCheckpoints, LaneCheckpointBytes uint64
 }
 
-// Stats reads the writer's counters.
+// writerStatsMinEntries is the oldest reply Stats reads (flatsql 3.1.0).
+const writerStatsMinEntries = 24
+
+// Stats reads the writer's counters. The engine says how many it has (a call
+// with no buffer returns the length); entries are only ever appended, so a
+// newer engine's longer reply reads, and the ones this build does not know
+// are ignored.
 func (w *Writer) Stats() (WriterStats, error) {
-	const n = 36 * 8 // flatsql 3.3.0: entries 26-35 (hot split, arrivals compaction)
+	v, err := w.inst.Control("flatsql_ps_stats", int32(0), int32(0))
+	if err != nil {
+		return WriterStats{}, err
+	}
+	n := int(wasmrt.ToInt32(v[0]))
+	if n < writerStatsMinEntries*8 || n%8 != 0 {
+		return WriterStats{}, fmt.Errorf("format2: writer stats %d bytes, want %d or more in whole entries",
+			n, writerStatsMinEntries*8)
+	}
 	mod := w.inst.Module()
-	out, err := mod.AllocateSize(n)
+	out, err := mod.AllocateSize(uint32(n))
 	if err != nil {
 		return WriterStats{}, err
 	}
 	defer mod.Deallocate(out)
-	v, err := w.inst.Control("flatsql_ps_stats", int32(out), int32(n))
-	if err != nil {
+	if v, err = w.inst.Control("flatsql_ps_stats", int32(out), int32(n)); err != nil {
 		return WriterStats{}, err
 	}
 	got := int(wasmrt.ToInt32(v[0]))
-	if got != n && got != 26*8 && got != 24*8 {
-		return WriterStats{}, fmt.Errorf("format2: writer stats %d bytes, want %d", got, n)
+	if got != n {
+		return WriterStats{}, fmt.Errorf("format2: writer stats %d bytes, then %d", n, got)
 	}
 	if !w.inst.Enter() {
 		return WriterStats{}, ErrStopped
@@ -425,7 +449,8 @@ func (w *Writer) Stats() (WriterStats, error) {
 		return binary.LittleEndian.Uint64(b[8*i:])
 	}
 	return WriterStats{u(0), u(1), u(2), u(3), u(4), u(5), u(6), u(7), u(8), u(9), u(10), u(11), u(12), u(13), u(14),
-		u(15), u(16), u(17), u(18), u(19), u(20), u(21), u(22), u(23), u(24), u(25)}, nil
+		u(15), u(16), u(17), u(18), u(19), u(20), u(21), u(22), u(23), u(24), u(25),
+		u(36), u(37), u(38), u(39), u(40)}, nil
 }
 
 // Entry is one ring entry (§6.2).

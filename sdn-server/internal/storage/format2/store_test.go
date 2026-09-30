@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 func openTestStore(t testing.TB, root string) *Store {
@@ -510,5 +512,123 @@ func TestAFullReaderInstanceIsRecycled(t *testing.T) {
 	}
 	if old.Failure() != nil {
 		t.Fatalf("the recycled instance was fenced: %v", old.Failure())
+	}
+}
+
+// STORE's level (flatsql format_level.h, terabyte design §3): SDN reads every
+// level the embedded engine opens and refuses a higher one; a STORE torn
+// inside the engine's level raise (STORE.tmp durable, STORE being rewritten in
+// place) reads through STORE.tmp, as the engine's next open finishes it. The
+// daemon's start (Open) and store-migrate's resume go through Migrated, so a
+// raised store starts again and a raise a crash cut short does not strand it.
+func TestStoreFileLevels(t *testing.T) {
+	top := uint16(versioninfo.PSEngineStoreFormatMax)
+	store := func(t *testing.T, format uint16, torn bool, tmpFormat uint16) (string, StoreFile) {
+		t.Helper()
+		root := t.TempDir()
+		sf, err := NewStoreFile(9, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sf.Format = format
+		dir := filepath.Join(root, Dir)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		b := sf.encode()
+		if torn {
+			copy(b[24:32], "torntorn")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "STORE"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if tmpFormat != 0 {
+			tmp := sf
+			tmp.Format = tmpFormat
+			if err := os.WriteFile(filepath.Join(dir, "STORE.tmp"), tmp.encode(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := WriteMigrated(root, sf.UUID); err != nil {
+			t.Fatal(err)
+		}
+		// Something registered: a torn STORE is never an unfinished creation.
+		if err := os.WriteFile(filepath.Join(dir, "registry.fsl"), []byte("frames"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return root, sf
+	}
+	for _, level := range []uint16{storeFormatMin, top} {
+		root, sf := store(t, level, false, 0)
+		got, err := ReadStoreFile(root)
+		if err != nil || got.Format != level || got.UUID != sf.UUID || got.GseqFloor != 9 {
+			t.Fatalf("level %d: ReadStoreFile = %+v, %v", level, got, err)
+		}
+		if ok, err := Migrated(root); err != nil || !ok {
+			t.Fatalf("level %d: Migrated = %v, %v", level, ok, err)
+		}
+	}
+	// A level above the engine's: refused, by ReadStoreFile and by Migrated.
+	root, _ := store(t, top+1, false, 0)
+	if _, err := ReadStoreFile(root); err == nil || !strings.Contains(err.Error(), "this build opens") {
+		t.Fatalf("level %d: ReadStoreFile err = %v, want a refusal", top+1, err)
+	}
+	if _, err := Migrated(root); err == nil {
+		t.Fatalf("level %d: Migrated accepted it", top+1)
+	}
+	// STORE torn inside a raise: STORE.tmp stands in for it, up to this build's level.
+	root, sf := store(t, storeFormatMin, true, top)
+	got, err := ReadStoreFile(root)
+	if err != nil || got.Format != top || got.UUID != sf.UUID {
+		t.Fatalf("torn STORE with STORE.tmp at %d: %+v, %v", top, got, err)
+	}
+	if ok, err := Migrated(root); err != nil || !ok {
+		t.Fatalf("torn STORE with STORE.tmp: Migrated = %v, %v", ok, err)
+	}
+	root, _ = store(t, storeFormatMin, true, top+1)
+	if _, err := ReadStoreFile(root); err == nil || !strings.Contains(err.Error(), "this build opens") {
+		t.Fatalf("torn STORE with STORE.tmp at %d: %v, want a refusal", top+1, err)
+	}
+	// Torn with no STORE.tmp and a registry: damage, as before.
+	root, _ = store(t, storeFormatMin, true, 0)
+	if _, err := Migrated(root); err == nil || !strings.Contains(err.Error(), "corrupt") {
+		t.Fatalf("torn STORE: Migrated err = %v, want corrupt", err)
+	}
+	// An intact STORE decides, whatever STORE.tmp says (a raise that never
+	// reached STORE: the engine removes or finishes it).
+	root, _ = store(t, storeFormatMin, false, top+1)
+	if got, err := ReadStoreFile(root); err != nil || got.Format != storeFormatMin {
+		t.Fatalf("intact STORE beside STORE.tmp at %d: %+v, %v", top+1, got, err)
+	}
+}
+
+// A new store is written at the level this build writes: the engine's
+// kFormatMax, or the SDN_F2_WRITE_FORMAT pin; a pin outside 2..kFormatMax is
+// refused, not clamped.
+func TestStoreLevelFollowsTheWriteFormatPin(t *testing.T) {
+	top := uint16(versioninfo.PSEngineStoreFormatMax)
+	t.Setenv(WriteFormatEnv, "")
+	if sf, err := NewStoreFile(1, 1); err != nil || sf.Format != top {
+		t.Fatalf("unpinned: %+v, %v; want level %d", sf, err, top)
+	}
+	t.Setenv(WriteFormatEnv, "2")
+	if sf, err := NewStoreFile(1, 1); err != nil || sf.Format != 2 {
+		t.Fatalf("pinned at 2: %+v, %v", sf, err)
+	}
+	root := t.TempDir()
+	if err := WriteStoreFile(root, StoreFile{GseqFloor: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if sf, err := ReadStoreFile(root); err != nil || sf.Format != 2 {
+		t.Fatalf("WriteStoreFile with no level, pinned at 2: %+v, %v", sf, err)
+	}
+	for _, bad := range []string{"1", strconv.Itoa(int(top) + 1), "three"} {
+		t.Setenv(WriteFormatEnv, bad)
+		if _, err := WriteFormat(); err == nil {
+			t.Fatalf("%s=%s accepted", WriteFormatEnv, bad)
+		}
+		if _, err := NewStoreFile(1, 1); err == nil {
+			t.Fatalf("NewStoreFile with %s=%s accepted", WriteFormatEnv, bad)
+		}
 	}
 }

@@ -8,10 +8,18 @@ package format2
 // existing store changes format only through store-migrate in a per-host ops
 // task; the daemon never migrates by itself.
 //
-// The engine's own markers live in <root>/fsql2/: STORE (written once) and
-// MIGRATED (flatsql ps/format.h StoreFile, MigratedFile). store-migrate
-// writes both itself, so the store it builds carries the migration's gseq
-// floor (22.3a-2) and migratedFrom = 1.
+// The engine's own markers live in <root>/fsql2/: STORE and MIGRATED
+// (flatsql ps/format.h StoreFile, MigratedFile). store-migrate writes both
+// itself, so the store it builds carries the migration's gseq floor (22.3a-2)
+// and migratedFrom = 1.
+//
+// STORE's format is the store's level (flatsql format_level.h, terabyte
+// design §3): 2 to the embedded engine's kFormatMax
+// (versioninfo.PSEngineStoreFormatMax). The engine raises it at open once the
+// registry is non-empty, to the level it writes (WriteFormatEnv pins that
+// lower), through fsql2/STORE.tmp: it writes STORE.tmp, then rewrites STORE in
+// place, then removes STORE.tmp. STORE is otherwise written once. MIGRATED and
+// the partition heads keep format 2.
 
 import (
 	"crypto/rand"
@@ -21,8 +29,11 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // FormatEnv is the environment switch for the store format.
@@ -31,21 +42,55 @@ const FormatEnv = "SDN_STORE_FORMAT"
 // Selected reports whether this process runs store format 2.
 func Selected() bool { return strings.TrimSpace(os.Getenv(FormatEnv)) == "2" }
 
+// WriteFormatEnv pins the level the partition-store engine writes and raises
+// stores to (flatsql writer TLV 31): unset or 0 is the embedded engine's
+// kFormatMax. A host held at 2 keeps a store the 3.5.1 engine still opens
+// (terabyte design O5, a staged rollout); a store never goes back down.
+const WriteFormatEnv = "SDN_F2_WRITE_FORMAT"
+
+// WriteFormat is the level WriteFormatEnv pins, 0 when unset. A value outside
+// 2 to versioninfo.PSEngineStoreFormatMax is an error: a pin the engine would
+// clamp silently is a misconfigured host.
+func WriteFormat() (uint16, error) {
+	raw := strings.TrimSpace(os.Getenv(WriteFormatEnv))
+	if raw == "" || raw == "0" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < storeFormatMin || v > versioninfo.PSEngineStoreFormatMax {
+		return 0, fmt.Errorf("format2: %s=%q: want %d to %d", WriteFormatEnv, raw, storeFormatMin,
+			versioninfo.PSEngineStoreFormatMax)
+	}
+	return uint16(v), nil
+}
+
+// StoreLevel is the level a new store is written at: the WriteFormatEnv pin,
+// else the embedded engine's kFormatMax.
+func StoreLevel() (uint16, error) {
+	wf, err := WriteFormat()
+	if err != nil || wf != 0 {
+		return wf, err
+	}
+	return versioninfo.PSEngineStoreFormatMax, nil
+}
+
 // Dir is the engine directory under a store root.
 const Dir = "fsql2"
 
 const (
-	magicStore    = 0x32515346 // "FSQ2"
-	magicMigrated = 0x4d515346 // "FSQM"
-	storeFormat   = 2
-	storeFileLen  = 64
-	migratedLen   = 40
+	magicStore     = 0x32515346 // "FSQ2"
+	magicMigrated  = 0x4d515346 // "FSQM"
+	storeFormat    = 2          // MIGRATED's format (and the partition heads')
+	storeFormatMin = 2          // the lowest STORE level
+	storeFileLen   = 64
+	migratedLen    = 40
 )
 
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 
 // StoreFile is fsql2/STORE.
 type StoreFile struct {
+	Format       uint16 // the store's level (0 when written: StoreLevel)
 	UUID         [16]byte
 	CreatedMs    int64
 	GseqFloor    uint64
@@ -55,7 +100,7 @@ type StoreFile struct {
 func (s StoreFile) encode() []byte {
 	b := make([]byte, storeFileLen)
 	binary.LittleEndian.PutUint32(b[0:], magicStore)
-	binary.LittleEndian.PutUint16(b[4:], storeFormat)
+	binary.LittleEndian.PutUint16(b[4:], s.Format)
 	copy(b[8:24], s.UUID[:])
 	binary.LittleEndian.PutUint64(b[24:], uint64(s.CreatedMs))
 	binary.LittleEndian.PutUint64(b[32:], s.GseqFloor)
@@ -64,18 +109,44 @@ func (s StoreFile) encode() []byte {
 	return b
 }
 
-// ReadStoreFile reads and checks fsql2/STORE under root.
+// errStoreCorrupt is a STORE whose length, magic or CRC is wrong.
+var errStoreCorrupt = errors.New("format2: fsql2/STORE is corrupt")
+
+// ReadStoreFile reads and checks fsql2/STORE under root, at any level from 2
+// to the embedded engine's kFormatMax. A STORE above that is refused: this
+// build's engine refuses the store. A torn STORE is read through a whole
+// fsql2/STORE.tmp, the one state a crash inside the engine's level raise
+// leaves (it rewrites STORE in place after STORE.tmp is durable); the engine
+// finishes the raise from it at its next open, as this reads it.
 func ReadStoreFile(root string) (StoreFile, error) {
 	b, err := os.ReadFile(filepath.Join(root, Dir, "STORE"))
 	if err != nil {
 		return StoreFile{}, err
 	}
+	s, err := decodeStoreFile(b)
+	if errors.Is(err, errStoreCorrupt) {
+		if tb, terr := os.ReadFile(filepath.Join(root, Dir, "STORE.tmp")); terr == nil {
+			if ts, terr := decodeStoreFile(tb); terr == nil {
+				return ts, nil
+			} else if !errors.Is(terr, errStoreCorrupt) {
+				return StoreFile{}, terr // a raise to a level this build does not open
+			}
+		}
+	}
+	return s, err
+}
+
+func decodeStoreFile(b []byte) (StoreFile, error) {
 	if len(b) != storeFileLen || binary.LittleEndian.Uint32(b) != magicStore ||
-		binary.LittleEndian.Uint16(b[4:]) != storeFormat ||
 		binary.LittleEndian.Uint32(b[56:]) != crc32.Checksum(b[:56], castagnoli) {
-		return StoreFile{}, errors.New("format2: fsql2/STORE is corrupt")
+		return StoreFile{}, errStoreCorrupt
 	}
 	var s StoreFile
+	s.Format = binary.LittleEndian.Uint16(b[4:])
+	if s.Format < storeFormatMin || int(s.Format) > versioninfo.PSEngineStoreFormatMax {
+		return StoreFile{}, fmt.Errorf("format2: fsql2/STORE is at level %d; this build opens %d to %d",
+			s.Format, storeFormatMin, versioninfo.PSEngineStoreFormatMax)
+	}
 	copy(s.UUID[:], b[8:24])
 	s.CreatedMs = int64(binary.LittleEndian.Uint64(b[24:]))
 	s.GseqFloor = binary.LittleEndian.Uint64(b[32:])
@@ -83,9 +154,15 @@ func ReadStoreFile(root string) (StoreFile, error) {
 	return s, nil
 }
 
-// NewStoreFile returns a STORE for a new store with a random UUID.
+// NewStoreFile returns a STORE for a new store with a random UUID, at the
+// level this build writes (StoreLevel).
 func NewStoreFile(gseqFloor uint64, migratedFrom uint32) (StoreFile, error) {
 	var s StoreFile
+	level, err := StoreLevel()
+	if err != nil {
+		return s, err
+	}
+	s.Format = level
 	if _, err := rand.Read(s.UUID[:]); err != nil {
 		return s, err
 	}
@@ -99,8 +176,16 @@ func NewStoreFile(gseqFloor uint64, migratedFrom uint32) (StoreFile, error) {
 }
 
 // WriteStoreFile writes fsql2/STORE once (A5: temp file, fsync, rename,
-// fsync the directory). It refuses to replace an existing STORE.
+// fsync the directory), at s.Format (0: StoreLevel). It refuses to replace an
+// existing STORE.
 func WriteStoreFile(root string, s StoreFile) error {
+	if s.Format == 0 {
+		level, err := StoreLevel()
+		if err != nil {
+			return err
+		}
+		s.Format = level
+	}
 	dir := filepath.Join(root, Dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err

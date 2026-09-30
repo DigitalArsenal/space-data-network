@@ -19,11 +19,11 @@ var psThreadsWasm []byte
 
 const (
 	// PSThreadsPackage is the npm release the artifact comes from.
-	PSThreadsPackage = "flatsql@3.5.1"
+	PSThreadsPackage = "flatsql@3.6.0"
 	// PSThreadsGitHead is that release's gitHead (flatsql main).
-	PSThreadsGitHead = "965b16b1d48cf53257879ceac41dfadd2e39b359"
+	PSThreadsGitHead = "7df7140c88b0bfd23330a608bdb906d6c8cc16e6"
 	// PSThreadsSHA256 is the artifact's sha256 (the package's integrity.json).
-	PSThreadsSHA256 = "3a215da45a53f3a7016257429c392720e728caf850d3a1213dc501bfb5844359"
+	PSThreadsSHA256 = "87ea0c727eb3c0b889a2d3fb41f8dac631ec2af07f521fe9526556d094d2e119"
 	// PSThreadsAOTPrefix names its threaded AOT artifacts in the engine cache
 	// (it must not start with "flatsql-": the legacy engine prunes that prefix).
 	PSThreadsAOTPrefix = DefaultPSAOTPrefix

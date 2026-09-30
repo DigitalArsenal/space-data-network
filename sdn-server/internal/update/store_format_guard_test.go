@@ -512,6 +512,17 @@ func TestReadStoreFormat(t *testing.T) {
 			activateFormat2(t, root, 2)
 			seedFile(t, root, "fsql2/STORE", "garbage")
 		}, 2, "unreadable"},
+		// The engine's level raise (flatsql open.cpp ratchetStore): STORE.tmp
+		// at the new level is durable before STORE is rewritten in place.
+		{"a raise cut short inside STORE's rewrite", func(t *testing.T, root string) {
+			activateFormat2(t, root, 2)
+			seedFile(t, root, "fsql2/STORE", "garbage")
+			seedFile(t, root, "fsql2/STORE.tmp", string(storeFileBytes(3)))
+		}, 3, "fsql2/STORE.tmp format 3"},
+		{"a raise cut short before STORE's rewrite", func(t *testing.T, root string) {
+			activateFormat2(t, root, 2)
+			seedFile(t, root, "fsql2/STORE.tmp", string(storeFileBytes(3)))
+		}, 2, "fsql2/STORE format 2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

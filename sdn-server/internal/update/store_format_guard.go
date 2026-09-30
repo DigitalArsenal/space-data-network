@@ -71,6 +71,7 @@ func init() {
 const (
 	storeEngineDir       = "fsql2"
 	storeMarkerFile      = "STORE"
+	storeRaiseFile       = "STORE.tmp" // the engine's level raise in flight (flatsql open.cpp ratchetStore)
 	storeMigratedFile    = "MIGRATED"
 	storeLegacyControlDB = "control.flatsqldb"
 	storeFileMagic       = 0x32515346 // "FSQ2"
@@ -124,6 +125,17 @@ func ReadStoreFormat(root string) (StoreFormat, error) {
 	}
 	format, err := readStoreFileFormat(filepath.Join(root, storeEngineDir, storeMarkerFile))
 	if err != nil {
+		// The engine raises a store's level by writing STORE.tmp, then
+		// rewriting STORE in place: a crash in that rewrite leaves STORE torn
+		// and STORE.tmp whole, and the engine's next open finishes the raise.
+		// The store is then at STORE.tmp's level (an engine below it refuses
+		// the store: the finished raise is the only way on).
+		if raised, rerr := readStoreFileFormat(filepath.Join(root, storeEngineDir, storeRaiseFile)); rerr == nil {
+			sf.Format = max(raised, 2)
+			sf.Evidence = fmt.Sprintf("%s, fsql2/STORE unreadable (%v), fsql2/STORE.tmp format %d (a level raise a crash cut short)",
+				activated, err, raised)
+			return sf, nil
+		}
 		// Activated, but STORE cannot be read: no engine opens this store as
 		// it stands, and every format-2 build opens at least 2.
 		sf.Format = 2

@@ -134,6 +134,10 @@ func Open(cfg StoreConfig) (*Store, error) {
 	if cfg.EngineRoot != "" && cfg.EngineRoot != "." {
 		engineRoot = filepath.Join(cfg.Root, cfg.EngineRoot)
 	}
+	writeFormat, err := WriteFormat()
+	if err != nil {
+		return nil, err
+	}
 	migrated, err := Migrated(engineRoot)
 	if err != nil {
 		return nil, err
@@ -159,7 +163,8 @@ func Open(cfg StoreConfig) (*Store, error) {
 		return nil, err
 	}
 	if s.w, err = OpenWriter(opt, WriterConfig{Root: cfg.EngineRoot, Writers: cfg.Topology.Writers, Create: create, RequireMigrated: true,
-		QuotaBytes: cfg.QuotaBytes, BallastBytes: cfg.BallastBytes, CommitJournal: cfg.CommitJournal}); err != nil {
+		QuotaBytes: cfg.QuotaBytes, BallastBytes: cfg.BallastBytes, CommitJournal: cfg.CommitJournal,
+		WriteFormat: writeFormat}); err != nil {
 		return fail(fmt.Errorf("format2: writer instance: %w", err))
 	}
 	s.windowMax.Store(defaultWindowBudget())
