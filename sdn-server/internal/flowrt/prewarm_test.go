@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
 // TestFlowAOTPrefixIsPerFlow is the regression that motivated the scoped
@@ -33,6 +35,40 @@ func TestFlowAOTPrefixIsPerFlow(t *testing.T) {
 	// Hyphens must not survive: they are the delimiter the prune relies on.
 	if strings.Contains(strings.TrimPrefix(gp, flowAOTCachePrefix+"-"), "-") {
 		t.Fatalf("prefix %q keeps a hyphen inside the flow segment, blurring the prune boundary", gp)
+	}
+}
+
+// TestFlowAOTPrefixChangesWithSubstrateTag is the flowmount half of the
+// flowmount-key/flatsqllink-key gap the coordinator found during the beta.81
+// rollout: prewarm-aot on host-02 reused flowmount-<flow>_<hash>-<hash>-
+// we0.16.4-x86-64-v3.aot.wasm entries compiled by the pre-patch-04 compiler
+// ("already present"), because the key never carried
+// wasmrt.SubstrateReport.Tag() the way the partition store's
+// "fsqlps-intr-<Tag>" does (flatsqlrt.threadedAOTKey). A threaded flow
+// compiled before a runtime fix like 04-atomic-memarg-offset would keep the
+// broken atomics forever without this.
+func TestFlowAOTPrefixChangesWithSubstrateTag(t *testing.T) {
+	t.Parallel()
+
+	ref := "com.digitalarsenal.flows.celestrak-gp-ingest"
+	sdn2 := flowAOTPrefixForTag("sdn2", ref)
+	sdn3 := flowAOTPrefixForTag("sdn3", ref)
+	if sdn2 == sdn3 {
+		t.Fatalf("flow AOT prefix did not change between substrate tags sdn2/sdn3: %q", sdn2)
+	}
+	if !strings.HasSuffix(sdn2, "_sdn2") || !strings.HasSuffix(sdn3, "_sdn3") {
+		t.Fatalf("flow AOT prefix does not carry the substrate tag as its trailing segment: %q / %q", sdn2, sdn3)
+	}
+	// The per-flow, per-prune-boundary invariants (TestFlowAOTPrefixIsPerFlow)
+	// must keep holding with the tag appended: no hyphen inside the segment
+	// after "flowmount-", for any tag.
+	if strings.Contains(strings.TrimPrefix(sdn3, flowAOTCachePrefix+"-"), "-") {
+		t.Fatalf("prefix %q keeps a hyphen inside the flow segment once the substrate tag is appended", sdn3)
+	}
+	// flowAOTPrefix() (the live entry point) must itself route through the
+	// tag, matching whatever wasmrt.SubstrateStatus().Tag() reports here.
+	if got, want := flowAOTPrefix(ref), flowAOTPrefixForTag(wasmrt.SubstrateStatus().Tag(), ref); got != want {
+		t.Fatalf("flowAOTPrefix(%q) = %q, want %q (live substrate tag)", ref, got, want)
 	}
 }
 
