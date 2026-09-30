@@ -465,3 +465,33 @@ func TestEngineUpgradeAnswersIdenticallyOnHost02Fixture(t *testing.T) {
 	t.Logf("%d partitions and %d control queries identical; open took %s on the previous engine, %s on this one",
 		partitions, len(after)-partitions, openedBefore.Round(time.Millisecond), openedAfter.Round(time.Millisecond))
 }
+
+// The checkpoint loop polls for a compaction left between steps every 30 s.
+// When none is, the poll takes no lock: it answers at once while a writer
+// holds the store lock (a store-lock read there queued behind writers for up
+// to 2.9 s per poll on host-02).
+func TestArenaCompactionPollTakesNoLockWhenNothingIsPending(t *testing.T) {
+	t.Setenv(checkpointIntervalEnv, "0")
+	store := newEngineRecordsStoreWithOptions(t, filepath.Join(t.TempDir(), "store"), WithEngineHotWindow(40))
+	defer store.Close()
+	if !store.BootState().Durable {
+		t.Skip("engine has no filesystem on this host")
+	}
+	seedHardeningOMM(t, store, "poll", 400000, 200)
+	store.mu.Lock()
+	returned := make(chan time.Duration, 1)
+	go func() {
+		started := time.Now()
+		store.persistPendingArenaCompaction("test")
+		returned <- time.Since(started)
+	}()
+	select {
+	case took := <-returned:
+		store.mu.Unlock()
+		t.Logf("poll answered in %s with the store lock held by a writer", took)
+	case <-time.After(5 * time.Second):
+		store.mu.Unlock()
+		<-returned
+		t.Fatal("the pending-compaction poll waited for the store lock")
+	}
+}

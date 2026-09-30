@@ -55,11 +55,21 @@ var engineArenaCompactStepHook func(step int)
 // store rather than in it (flatsql.go is the store's shared core).
 type engineArenaCompactor struct {
 	running atomic.Bool
+	// pending: the engine's last compaction step left work between steps (a
+	// swap made in a write transaction, or a pass that stopped part-way).
+	// Maintained from the steps' own answers so the checkpoint loop's poll
+	// reads an atomic and never queues for the store lock.
+	pending atomic.Bool
 	// runs counts compactions that changed the arena (tests, logs).
 	runs atomic.Int64
 	// history is the most recent compactions' accounts, oldest first.
 	mu      sync.Mutex
 	history []engineArenaCompactionAccount
+}
+
+// noteStep records what a compaction step left behind.
+func (c *engineArenaCompactor) noteStep(status flatsqlrt.CompactStatus) {
+	c.pending.Store(status != flatsqlrt.CompactDone)
 }
 
 // engineArenaCompactionHistory bounds the accounts a store keeps.
@@ -163,24 +173,17 @@ func (s *FlatSQLStore) maybeCompactEngineArenaLocked(reason string) {
 // above all one swapped in memory inside a write transaction, which a flush
 // would otherwise persist whole in one store-lock hold — in bounded steps, each
 // under its own hold. A background pass already at it is waited for instead.
-// Called WITHOUT s.mu.
+// Called WITHOUT s.mu, every checkpoint: when nothing is pending it reads two
+// atomics and takes no lock (a store-lock read here queued behind writers for
+// up to 2.9 s every 30 s on host-02).
 func (s *FlatSQLStore) persistPendingArenaCompaction(reason string) {
 	if !engineArenaRuntimeCompaction {
 		return
 	}
-	var pending bool
-	func() {
-		defer s.lockRead("engine arena compaction: pending?")()
-		if s.ps != nil || s.engineDB == nil || s.engine == nil || s.closedErr() != nil || !s.engine.HasArenaCompaction() {
-			return
-		}
-		stats, err := s.engineDB.ArenaStats()
-		pending = err == nil && stats.Compacting
-	}()
-	if !pending {
+	c := s.arenaCompactor()
+	if !c.pending.Load() && !c.running.Load() {
 		return
 	}
-	c := s.arenaCompactor()
 	if !c.running.CompareAndSwap(false, true) {
 		for deadline := time.Now().Add(2 * time.Minute); c.running.Load() && time.Now().Before(deadline); {
 			time.Sleep(20 * time.Millisecond)
@@ -188,6 +191,9 @@ func (s *FlatSQLStore) persistPendingArenaCompaction(reason string) {
 		return
 	}
 	defer c.running.Store(false)
+	if !c.pending.Load() {
+		return
+	}
 	if _, err := s.compactEngineArena(reason); err != nil && !errors.Is(err, errArenaCompactionStopped) {
 		log.Warnf("FlatSQL engine arena compaction (%s): %v", reason, err)
 	}
@@ -227,10 +233,14 @@ func (s *FlatSQLStore) compactEngineArena(reason string) (engineArenaCompactionA
 				// Finished by someone else (a flush persisted a swap made in
 				// a transaction): do not start a second one here.
 				status = flatsqlrt.CompactDone
+				s.arenaCompactor().noteStep(status)
 				return nil
 			}
 			t0 := time.Now()
 			status, stepErr = s.engineDB.CompactArenaStep(engineArenaCompactStepBytes)
+			if stepErr == nil {
+				s.arenaCompactor().noteStep(status)
+			}
 			held := time.Since(t0)
 			acct.Steps++
 			if held > acct.LongestHold {
@@ -311,6 +321,7 @@ func (s *FlatSQLStore) compactEngineArenaBeforeRefusalLocked(need int64) bool {
 			log.Warnf("FlatSQL engine arena compaction before a refusal failed: %v", err)
 			return false
 		}
+		s.arenaCompactor().noteStep(status)
 		if status == flatsqlrt.CompactDone {
 			break
 		}
