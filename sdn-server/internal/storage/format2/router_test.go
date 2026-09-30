@@ -454,3 +454,156 @@ func TestRecordAttrKeepsTheWritesProvenance(t *testing.T) {
 		}
 	}
 }
+
+// rejectedPuts are OMM records the engine refuses (RejFid): each carries
+// another type's file identifier.
+func rejectedPuts(n, offset int, base time.Time) []Put {
+	puts := ommPuts(n, offset, base, "REJ")
+	for i := range puts {
+		d := append([]byte(nil), puts[i].Data...)
+		copy(d[4:8], "$CAT")
+		puts[i].Data = d
+	}
+	return puts
+}
+
+// B2 (cutover rehearsal): the engine stops staging a partition while its 32
+// reject slots are undrained. A batch with more rejects than that must still
+// return, each refused record with its own *RejectError and every other
+// record stored (on 98fdd37e9 the wait drained only after its last entry was
+// acked, which it never was, so every publish past 32 rejects hung).
+func TestPutBatchPastTheRejectRing(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	peer := "source:reject-ring"
+	tags := &Tags{ProviderID: "space-data-network-02", SourceName: "reject-ring", BatchID: "r1"}
+	for _, tc := range []struct {
+		name            string
+		rejects, stored int
+	}{{"33 rejects", 33, 0}, {"1,000 rejects among 1,000 records", 1000, 1000}} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := rejectedPuts(tc.rejects, 0, base)
+			good := ommPuts(tc.stored, 5000, base, tc.name)
+			puts := make([]Put, 0, len(bad)+len(good))
+			isBad := make([]bool, 0, cap(puts))
+			for i := 0; i < max(len(bad), len(good)); i++ {
+				if i < len(bad) {
+					puts, isBad = append(puts, bad[i]), append(isBad, true)
+				}
+				if i < len(good) {
+					puts, isBad = append(puts, good[i]), append(isBad, false)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			start := time.Now()
+			res, err := s.PutBatch(ctx, "OMM.fbs", puts, peer, nil, tags)
+			if err != nil {
+				t.Fatalf("PutBatch of %d records (%d refused) returned %v after %v", len(puts), len(bad), err, time.Since(start))
+			}
+			if len(res) != len(puts) {
+				t.Fatalf("%d results for %d records", len(res), len(puts))
+			}
+			for i, r := range res {
+				var rej *RejectError
+				if isBad[i] != errors.As(r.Err, &rej) || (isBad[i] && rej.Code != RejFid) {
+					t.Fatalf("record %d (refused %v): %v", i, isBad[i], r.Err)
+				}
+				if isBad[i] {
+					continue
+				}
+				if _, err := s.GetRecord(ctx, "OMM.fbs", r.CID); err != nil {
+					t.Fatalf("stored record %d: %v", i, err)
+				}
+			}
+			t.Logf("%d records, %d refused: %v", len(puts), len(bad), time.Since(start))
+		})
+	}
+}
+
+// B2: concurrent batches on one partition each report their own rejects:
+// one batch's wait must not take another's (a record reported stored that
+// the engine refused, or the reverse).
+func TestConcurrentBatchesReportTheirOwnRejects(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	const workers, rounds, per = 6, 12, 20
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for k := 0; k < rounds; k++ {
+				off := 100000 + (w*rounds+k)*per
+				bad := rejectedPuts(per/2, off, base)
+				good := ommPuts(per/2, off+per/2, base, "CONC")
+				var puts []Put
+				for i := range bad {
+					puts = append(puts, bad[i], good[i])
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				res, err := s.PutBatch(ctx, "OMM.fbs", puts, "source:reject-conc", nil, nil)
+				cancel()
+				if err != nil {
+					t.Errorf("worker %d round %d: %v", w, k, err)
+					return
+				}
+				for i, r := range res {
+					var rej *RejectError
+					if refused := errors.As(r.Err, &rej); refused != (i%2 == 0) {
+						t.Errorf("worker %d round %d record %d: refused %v, want %v (%v)", w, k, i, refused, i%2 == 0, r.Err)
+					}
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+}
+
+// B2 (cutover review): a batch whose wait ends early (a cancelled or timed
+// out publish) gives its entries' rejects up. Rejects the engine records
+// after the caller left are dropped as they are drained, so a client that
+// keeps publishing refused records and cancelling cannot grow the
+// partition's reject set.
+func TestCancelledBatchesLeaveNoRejects(t *testing.T) {
+	s := openTestStore(t, t.TempDir())
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	const peer = "source:reject-cancel"
+	cancelled := 0
+	for k := 0; k < 40; k++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Microsecond)
+		if _, err := s.PutBatch(ctx, "OMM.fbs", rejectedPuts(25, 200000+k*25, base), peer, nil, nil); err != nil {
+			cancelled++
+		}
+		cancel()
+	}
+	// One batch waited to the end: every entry before it is acked, and its
+	// own rejects are taken.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := s.PutBatch(ctx, "OMM.fbs", append(rejectedPuts(5, 300000, base), ommPuts(5, 300005, base, "AFTER")...), peer, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range res {
+		var rej *RejectError
+		if refused := errors.As(r.Err, &rej); refused != (i < 5) {
+			t.Fatalf("record %d: refused %v (%v)", i, refused, r.Err)
+		}
+	}
+	spec, err := s.spec("OMM.fbs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.w.Partition([]byte(peer), spec.FID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	kept, watched := len(p.rejects), len(p.forgotten)
+	p.mu.Unlock()
+	if kept != 0 || watched != 0 {
+		t.Fatalf("after %d cancelled batches: %d rejects kept, %d given-up entries still watched; want none", cancelled, kept, watched)
+	}
+	t.Logf("%d of 40 batches cancelled; no reject kept", cancelled)
+}

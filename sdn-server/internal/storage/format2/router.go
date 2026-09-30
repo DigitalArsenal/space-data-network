@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -88,9 +89,12 @@ func CIDFromText(text string) ([]byte, error) {
 }
 
 // PutBatch stores records of one schema from one producer with one set of
-// tags, and returns once every record is durable (or rejected). A batch
-// licence is a LICENCE entry in the same ring before the records, so
-// "licence before records" holds by pseq order (§6.1).
+// tags, and returns once every record is durable (or rejected), each
+// refused record with its own *RejectError. A batch licence is a LICENCE
+// entry in the same ring before the records, so "licence before records"
+// holds by pseq order (§6.1); a licence the engine refused fails the batch
+// with a *LicenceRejectError (its records are stored, under a licence key
+// no licence holds).
 func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID string, signature []byte, tags *Tags) ([]PutResult, error) {
 	spec, err := s.spec(schema)
 	if err != nil {
@@ -102,30 +106,20 @@ func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID 
 	}
 	now := time.Now()
 	lk := ""
-	queued := false
+	// rseqs are the batch's entries: its licence, then its records.
+	rseqs := make([]uint64, 0, len(puts)+1)
 	if tags.hasLicence() {
 		lk = LicenceKey(tags.ProviderID, tags.SourceName, tags.BatchID)
-		body, _ := json.Marshal(struct {
-			SchemaName string `json:"schema_name"`
-			ProviderID string `json:"provider_id"`
-			SourceName string `json:"source_name"`
-			BatchID    string `json:"batch_id"`
-			License    string `json:"license,omitempty"`
-			LicenseURL string `json:"license_url,omitempty"`
-			Citation   string `json:"citation,omitempty"`
-			ShareAlike bool   `json:"share_alike,omitempty"`
-			UpdatedAt  int64  `json:"updated_at,omitempty"`
-		}{schema, tags.ProviderID, tags.SourceName, tags.BatchID, tags.License, tags.LicenseURL, tags.Citation, tags.ShareAlike, now.Unix()})
-		if _, err := p.Enqueue(ctx, &Entry{Kind: EntLicence, ArrivalMs: now.UnixMilli(),
-			Attr: BuildRecordAttr(RecordAttr{PeerID: []byte(peerID), LicenceKey: lk}), Frame: frame(body)}); err != nil {
+		rseq, err := p.Enqueue(ctx, licenceEntry(schema, peerID, tags, lk, now))
+		if err != nil {
 			return nil, err
 		}
-		queued = true
+		rseqs = append(rseqs, rseq)
 	}
+	first := len(rseqs) // the first record's entry
 	attr := BuildRecordAttr(RecordAttr{PeerID: []byte(peerID), Signature: signature, SourceTimestamp: now.Unix(),
 		LicenceKey: lk, Tag: tags.sourceTag()})
 	out := make([]PutResult, len(puts))
-	rseqs := make([]uint64, len(puts))
 	for i, put := range puts {
 		c := CIDBytes(put.Data)
 		out[i].CID = CIDText(c)
@@ -135,38 +129,78 @@ func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID 
 			e.Flags |= FlagSealed
 			e.Sealed = put.Sealed
 		}
-		if rseqs[i], err = p.Enqueue(ctx, e); err != nil {
-			if queued || i > 0 {
+		rseq, err := p.Enqueue(ctx, e)
+		if err != nil {
+			if len(rseqs) > 0 {
 				// What was queued is committed without this call waiting
-				// for it: its head moves unseen by an ack.
+				// for it: its head moves unseen by an ack, and its rejects
+				// have no waiter.
+				p.Forget(rseqs)
 				s.heads.Touch(p.PID)
 			}
 			return out[:i], err
 		}
+		rseqs = append(rseqs, rseq)
 	}
-	if len(puts) == 0 {
-		if queued {
-			s.heads.Touch(p.PID) // the licence alone, not waited for
-		}
+	if len(rseqs) == 0 {
 		return out, nil
 	}
 	err = s.waitAck(ctx, p, rseqs[len(rseqs)-1])
-	rejects := p.Rejects()
 	var last *RejectError
 	if errors.As(err, &last) {
-		rejects[last.Rseq] = last.Code
 		err = nil
 	}
 	if err != nil {
+		p.Forget(rseqs)
 		return out, err
 	}
-	for i, r := range rseqs {
+	// This batch's rejects only: another batch on the partition takes its own.
+	rejects := p.TakeRejects(rseqs)
+	if last != nil {
+		rejects[last.Rseq] = last.Code
+	}
+	for i, r := range rseqs[first:] {
 		if code, ok := rejects[r]; ok {
 			out[i].Err = &RejectError{Rseq: r, Code: code}
 		}
 	}
+	if first > 0 {
+		if code, ok := rejects[rseqs[0]]; ok {
+			return out, &LicenceRejectError{Key: lk, Reject: &RejectError{Rseq: rseqs[0], Code: code}}
+		}
+	}
 	return out, nil
 }
+
+// licenceEntry is a batch's LICENCE entry.
+func licenceEntry(schema, peerID string, tags *Tags, lk string, now time.Time) *Entry {
+	body, _ := json.Marshal(struct {
+		SchemaName string `json:"schema_name"`
+		ProviderID string `json:"provider_id"`
+		SourceName string `json:"source_name"`
+		BatchID    string `json:"batch_id"`
+		License    string `json:"license,omitempty"`
+		LicenseURL string `json:"license_url,omitempty"`
+		Citation   string `json:"citation,omitempty"`
+		ShareAlike bool   `json:"share_alike,omitempty"`
+		UpdatedAt  int64  `json:"updated_at,omitempty"`
+	}{schema, tags.ProviderID, tags.SourceName, tags.BatchID, tags.License, tags.LicenseURL, tags.Citation, tags.ShareAlike, now.Unix()})
+	return &Entry{Kind: EntLicence, ArrivalMs: now.UnixMilli(),
+		Attr: BuildRecordAttr(RecordAttr{PeerID: []byte(peerID), LicenceKey: lk}), Frame: frame(body)}
+}
+
+// LicenceRejectError: the engine refused a batch's licence. The batch's
+// PutResults still say which records were stored.
+type LicenceRejectError struct {
+	Key    string
+	Reject *RejectError
+}
+
+func (e *LicenceRejectError) Error() string {
+	return fmt.Sprintf("format2: the batch licence %q was refused: %v", strings.ReplaceAll(e.Key, "\x1f", "/"), e.Reject)
+}
+
+func (e *LicenceRejectError) Unwrap() error { return e.Reject }
 
 // Reconcile keeps only batch `keep` of a (provider, source) lane in the
 // producer's partition: every other tag instance of the lane is retired and
@@ -194,7 +228,7 @@ func (s *Store) Reconcile(ctx context.Context, schema, peerID, provider, source,
 	if err != nil {
 		return err
 	}
-	return s.waitAck(ctx, p, rseq)
+	return s.waitOne(ctx, p, rseq)
 }
 
 // Delete kills a record by CID in the producer's partition (TOMB_CID).
@@ -215,7 +249,7 @@ func (s *Store) Delete(ctx context.Context, schema, peerID, cidText string) erro
 	if err != nil {
 		return err
 	}
-	return s.waitAck(ctx, p, rseq)
+	return s.waitOne(ctx, p, rseq)
 }
 
 // waitAck waits for rseq's ack and marks the partition however the wait
@@ -224,6 +258,17 @@ func (s *Store) Delete(ctx context.Context, schema, peerID, cidText string) erro
 func (s *Store) waitAck(ctx context.Context, p *Partition, rseq uint64) error {
 	err := p.WaitAck(ctx, rseq)
 	s.heads.Touch(p.PID)
+	return err
+}
+
+// waitOne is waitAck for a single entry: a wait that ends other than acked
+// or rejected gives the entry's reject up (Forget).
+func (s *Store) waitOne(ctx context.Context, p *Partition, rseq uint64) error {
+	err := s.waitAck(ctx, p, rseq)
+	var rej *RejectError
+	if err != nil && !errors.As(err, &rej) {
+		p.Forget([]uint64{rseq})
+	}
 	return err
 }
 
