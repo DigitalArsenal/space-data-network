@@ -237,7 +237,7 @@ var updateInstallCmd = &cobra.Command{
 			if err := update.WriteControlToken(paths, token); err != nil {
 				return err
 			}
-			helperPlan, err := prepareUpdateHelper(paths, staged.UpdateID, token)
+			helperPlan, err := prepareUpdateHelper(paths, staged.UpdateID, token, resolveUpdateStoreRoot(updateInstallStoreRoot, cmd.ErrOrStderr()))
 			if err != nil {
 				return err
 			}
@@ -258,6 +258,7 @@ var updateInstallCmd = &cobra.Command{
 			UpdateID:      staged.UpdateID,
 			DryRun:        updateInstallDryRun,
 			AllowRollback: updateInstallAllowRollback,
+			StoreRoot:     resolveUpdateStoreRoot(updateInstallStoreRoot, cmd.ErrOrStderr()),
 		})
 		if err != nil {
 			return err
@@ -289,7 +290,10 @@ var (
 	helperApplyAdminCA         string
 	helperApplySignalKeyID     string
 	helperApplyAllowRollback   bool
+	helperApplyStoreRoot       string
 	updateInstallHealthTimeout time.Duration
+	updateInstallStoreRoot     string
+	updateApplyStoreRoot       string
 )
 
 var updateHelperApplyCmd = &cobra.Command{
@@ -308,6 +312,18 @@ var updateHelperApplyCmd = &cobra.Command{
 			if err := json.Unmarshal([]byte(helperApplyRestartArgvJSON), &restartArgv); err != nil {
 				return fmt.Errorf("parse restart argv: %w", err)
 			}
+		}
+		// THE STORE-FORMAT GUARD, before the daemon is asked to stop: an
+		// update whose binary cannot open the store on disk is refused while
+		// the node keeps serving. Apply repeats the check below.
+		storeRoot := resolveUpdateStoreRoot(helperApplyStoreRoot, cmd.ErrOrStderr())
+		if err := update.CheckStagedStoreFormat(update.PathsFor(helperApplyBundleRoot), helperApplyUpdateID, storeRoot); err != nil {
+			var refusal *update.StoreFormatRefusal
+			if errors.As(err, &refusal) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "store_format_guard=refused update_id=%s slot_max_store_format=%d store_format=%d store_root=%s\n",
+					helperApplyUpdateID, refusal.SlotMaxStoreFormat, refusal.Store.Format, refusal.Store.Root)
+			}
+			return err
 		}
 		// Resolved ONCE, here, while the daemon is still up — see
 		// daemonLoopbackTransport for why this cannot be deferred to the health
@@ -332,6 +348,7 @@ var updateHelperApplyCmd = &cobra.Command{
 			AllowRollback: helperApplyAllowRollback,
 			Trigger:       strings.TrimSpace(helperApplyTrigger),
 			SignalKeyID:   strings.TrimSpace(helperApplySignalKeyID),
+			StoreRoot:     storeRoot,
 		})
 		if err != nil {
 			return err
@@ -343,6 +360,7 @@ var updateHelperApplyCmd = &cobra.Command{
 		fmt.Fprintf(out, "rollback_path=%s\n", result.RollbackPath)
 		return helperPostApplyRestart(cmd.Context(), helperPostApplyOptions{
 			Paths:       update.PathsFor(helperApplyBundleRoot),
+			StoreRoot:   storeRoot,
 			RestartArgv: restartArgv,
 			Supervised:  daemonSupervised,
 			AdminURL:    helperApplyAdminURL,
@@ -373,8 +391,9 @@ var updateApplyCmd = &cobra.Command{
 		}
 		paths := update.PathsFor(layout.Root)
 		result, err := update.Apply(paths, update.ApplyOptions{
-			UpdateID: strings.TrimSpace(updateApplyID),
-			DryRun:   updateApplyDryRun,
+			UpdateID:  strings.TrimSpace(updateApplyID),
+			DryRun:    updateApplyDryRun,
+			StoreRoot: resolveUpdateStoreRoot(updateApplyStoreRoot, cmd.ErrOrStderr()),
 		})
 		if err != nil {
 			return err
@@ -438,6 +457,9 @@ func init() {
 	updateHelperApplyCmd.Flags().StringVar(&helperApplySignalKeyID, "signal-key-id", "", "signing key of the signal that triggered this apply; recorded in the deploy ledger")
 	updateApplyCmd.Flags().StringVar(&updateApplyID, "update-id", "", "staged update id to apply (default: highest verified sequence)")
 	updateApplyCmd.Flags().BoolVar(&updateApplyDryRun, "dry-run", false, "verify and report without swapping files")
+	updateApplyCmd.Flags().StringVar(&updateApplyStoreRoot, "store-root", "", storeRootFlagUsage)
+	updateInstallCmd.Flags().StringVar(&updateInstallStoreRoot, "store-root", "", storeRootFlagUsage)
+	updateHelperApplyCmd.Flags().StringVar(&helperApplyStoreRoot, "store-root", "", storeRootFlagUsage)
 	updateCmd.AddCommand(updateCheckCmd)
 	updateCmd.AddCommand(updateStageCmd)
 	updateCmd.AddCommand(updateInstallCmd)
@@ -689,7 +711,7 @@ func localDaemonAvailable(rawAdminURL string) bool {
 	return resp.StatusCode >= 200 && resp.StatusCode < 500
 }
 
-func prepareUpdateHelper(paths update.Paths, updateID string, token string) (*update.HelperPlan, error) {
+func prepareUpdateHelper(paths update.Paths, updateID string, token string, storeRoot string) (*update.HelperPlan, error) {
 	source, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -707,7 +729,41 @@ func prepareUpdateHelper(paths update.Paths, updateID string, token string) (*up
 		RestartArgv:      nil,
 		HealthTimeout:    updateInstallHealthTimeout,
 		AllowRollback:    updateInstallAllowRollback,
+		StoreRoot:        storeRoot,
 	})
+}
+
+const storeRootFlagUsage = "the record store the daemon opens (default: storage.path of the resolved config); " +
+	"the store-format guard refuses a build whose binary does not open its on-disk format"
+
+// resolveUpdateStoreRoot names the record store the store-format guard checks:
+// the explicit flag, else storage.path of the config the CLI resolves (the
+// running daemon's, when one is up). When neither is available the guard
+// cannot check anything, and says so on errOut rather than refusing: an
+// operator's forward update must not fail because a config was unreadable.
+func resolveUpdateStoreRoot(explicit string, errOut io.Writer) string {
+	if root := strings.TrimSpace(explicit); root != "" {
+		if abs, err := filepath.Abs(root); err == nil {
+			return abs
+		}
+		return root
+	}
+	cfg, res, err := config.LoadResolved(configPath)
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.Storage.Path) == "" {
+		reason := "the resolved config names no storage.path"
+		if err != nil {
+			reason = err.Error()
+		}
+		if errOut != nil {
+			fmt.Fprintf(errOut, "store_format_guard=unchecked reason=%q config=%q\n", reason, res.Path)
+		}
+		return ""
+	}
+	root := strings.TrimSpace(cfg.Storage.Path)
+	if abs, err := filepath.Abs(root); err == nil {
+		return abs
+	}
+	return root
 }
 
 type helperStartedProcess interface {
@@ -734,7 +790,10 @@ func (p helperExecProcess) Kill() error {
 }
 
 type helperPostApplyOptions struct {
-	Paths       update.Paths
+	Paths update.Paths
+	// StoreRoot is handed to the health gate's rollback, which the
+	// store-format guard checks exactly as it checks an apply.
+	StoreRoot   string
 	RestartArgv []string
 	// Supervised, when true, means the DAEMON we are restarting reported it
 	// was started by systemd (INVOCATION_ID in its own environment — see
@@ -784,7 +843,7 @@ func helperPostApplyRestart(ctx context.Context, opts helperPostApplyOptions) er
 	rollback := opts.Rollback
 	if rollback == nil {
 		rollback = func(paths update.Paths) (*update.RollbackResult, error) {
-			return update.RollbackLast(paths, update.RollbackOptions{Reason: "daemon health failed after update"})
+			return update.RollbackLast(paths, update.RollbackOptions{Reason: "daemon health failed after update", StoreRoot: opts.StoreRoot})
 		}
 	}
 	client := opts.Client

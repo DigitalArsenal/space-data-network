@@ -308,6 +308,21 @@ func selectSlot(slots []StateSlot, selector string) (*StateSlot, error) {
 	return nil, fmt.Errorf("no rollback slot matches %q; the box holds: %s", selector, strings.Join(available, ", "))
 }
 
+// guardSlotStoreFormat is the Rollback side of the store-format guard
+// (store_format_guard.go): it reads the stamp of the binary the slot holds on
+// disk, so a slot recorded before the guard existed is judged by what it
+// actually contains.
+func guardSlotStoreFormat(storeRoot string, slot StateSlot) error {
+	store, check := storeToGuard("rollback", slot.Describe(), storeRoot)
+	if !check {
+		return nil
+	}
+	return guardStoreFormat("rollback", slot.Describe(), slot.Version, store, func() (slotStamp, bool, error) {
+		s, err := stampOfDir(slot.Path)
+		return s, true, err
+	})
+}
+
 // dropSlot removes the consumed slot from the retention list. Rollback
 // physically consumes the directory (the payload is moved back into the bundle
 // root), so the record must go with it or the next inventory reports a reverse

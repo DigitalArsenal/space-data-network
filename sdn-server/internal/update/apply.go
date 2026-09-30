@@ -52,6 +52,12 @@ type ApplyOptions struct {
 	Trigger     string
 	SignalKeyID string
 
+	// StoreRoot is the record store the daemon in this bundle opens
+	// (storage.path). The store-format guard reads its on-disk format and
+	// refuses a payload whose binary does not open it (store_format_guard.go).
+	// Empty leaves the store unchecked.
+	StoreRoot string
+
 	// testFault is an in-package-only fault-injection seam used by this
 	// package's own tests to exercise the phase-2-failure and crash-
 	// recovery paths through the real Apply entry point. It is unexported,
@@ -98,6 +104,10 @@ type RollbackOptions struct {
 	// a rollback path. Empty selects the immediately-previous verified build
 	// (Slots[0]) — see selectSlot for why older generations must be named.
 	Slot string
+	// StoreRoot is the record store the restored build would open; the
+	// store-format guard refuses a slot whose binary does not open it. Empty
+	// leaves the store unchecked.
+	StoreRoot string
 }
 
 type RollbackResult struct {
@@ -143,6 +153,13 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 	}
 	candidate, err := selectCandidate(staged, opts.UpdateID)
 	if err != nil {
+		return nil, err
+	}
+	// THE STORE-FORMAT GUARD (store_format_guard.go) runs before the dry run
+	// answers, before the ledger line and before anything is extracted: a
+	// payload whose binary cannot open the store on disk is refused with the
+	// install untouched.
+	if err := guardCandidateStoreFormat(opts.StoreRoot, candidate); err != nil {
 		return nil, err
 	}
 	if opts.DryRun {
@@ -355,6 +372,11 @@ func Rollback(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 		return nil, fmt.Errorf("stat rollback slot %s: %w", slot.UpdateID, err)
 	} else if !info.IsDir() {
 		return nil, fmt.Errorf("rollback slot %s is not a directory: %s", slot.UpdateID, previousRoot)
+	}
+	// A rollback is refused exactly as an apply is: the slot's binary must
+	// open the store on disk (store_format_guard.go).
+	if err := guardSlotStoreFormat(opts.StoreRoot, *slot); err != nil {
+		return nil, err
 	}
 
 	reason := strings.TrimSpace(opts.Reason)
