@@ -415,8 +415,12 @@ func (m *migrator) saveJournal() error {
 	return err
 }
 
-func (j *migrateJournal) write(path string) error {
-	raw, err := json.MarshalIndent(j, "", "  ")
+func (j *migrateJournal) write(path string) error { return writeDurableJSON(path, j) }
+
+// writeDurableJSON replaces path with v's JSON durably: a synced temporary
+// file renamed over it, then the directory synced.
+func writeDurableJSON(path string, v any) error {
+	raw, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -964,13 +968,7 @@ func (m *migrator) recordEntry(tbl storage.LegacyTable, r storage.LegacyRecord, 
 		// FTS rowids carry over.
 		attr.MigratedGseq = uint64(gseq)
 	}
-	if r.SignatureHex != "" {
-		if sig, err := hex.DecodeString(r.SignatureHex); err == nil {
-			attr.Signature = sig
-		} else {
-			attr.Signature = []byte(r.SignatureHex)
-		}
-	}
+	attr.Signature = legacySignature(r.SignatureHex)
 	if tag != nil {
 		attr.Tag = format2.SourceTag{ProviderID: tag.ProviderID, SourceName: tag.SourceName, SourceURL: tag.SourceURL,
 			BatchID: tag.BatchID, ContentKeyID: tag.ContentKeyID, ProducerPeerID: tag.ProducerPeerID,
@@ -990,6 +988,18 @@ func (m *migrator) recordEntry(tbl storage.LegacyTable, r storage.LegacyRecord, 
 		e.Sealed = r.Stored
 	}
 	return e, nil
+}
+
+// legacySignature is a legacy row's signature bytes: signature_hex decoded,
+// or its text verbatim when it is not hex; nil when the row has none.
+func legacySignature(signatureHex string) []byte {
+	if signatureHex == "" {
+		return nil
+	}
+	if sig, err := hex.DecodeString(signatureHex); err == nil {
+		return sig
+	}
+	return []byte(signatureHex)
 }
 
 // runCopy is a full or snapshot pass: phase A, phase B, then the snapshot
