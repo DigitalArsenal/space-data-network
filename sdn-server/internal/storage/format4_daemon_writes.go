@@ -83,8 +83,8 @@ func f4Ident(schemaName string, data []byte, tags *SourceTags) *[32]byte {
 // as a *RefusedRecordsError after the others are stored. An ingest-identity
 // repeat lands nowhere, and the record holding the identity takes the
 // write's tag (format 1's tagIdentityRepeats).
-func (b format4Backend) f4Put(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, identity bool) ([]string, []format4.Outcome, error) {
-	if err := b.s.requireWritable("store batch"); err != nil {
+func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, identity bool) ([]string, []format4.Outcome, error) {
+	if err := b.s.requireWritable(op); err != nil {
 		return nil, nil, err
 	}
 	if err := b.closed(); err != nil {
@@ -236,19 +236,15 @@ func (b format4Backend) f4HeldCID(typ, cid string, o format4.Outcome) (string, e
 
 func (b format4Backend) storeBatch(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
 	if len(records) == 0 {
-		if err := b.s.requireWritable("store batch"); err != nil {
-			return 0, err
-		}
-		_, err := f4Type(schemaName)
-		return 0, err
+		return 0, b.s.requireWritable("store batch")
 	}
-	_, outcomes, err := b.f4Put(schemaName, records, peerID, signature, tags, true)
+	_, outcomes, err := b.f4Put("store batch", schemaName, records, peerID, signature, tags, true)
 	return f4Inserted(outcomes), err
 }
 
 // storeOne is the single-record write (Store: no tag).
 func (b format4Backend) storeOne(schemaName string, data []byte, peerID string, signature []byte, tags *SourceTags) (string, error) {
-	cids, outcomes, err := b.f4Put(schemaName, [][]byte{data}, peerID, signature, tags, true)
+	cids, outcomes, err := b.f4Put("store record", schemaName, [][]byte{data}, peerID, signature, tags, true)
 	if err != nil {
 		return "", err
 	}
@@ -317,7 +313,7 @@ func (b format4Backend) importDatasetShardChunk(index *DatasetExportIndex, provi
 	imported := 0
 	for _, key := range order {
 		g := groups[key]
-		_, outcomes, err := b.f4Put(index.SchemaName, g.data, provider, nil, g.tags, false)
+		_, outcomes, err := b.f4Put("import dataset shard", index.SchemaName, g.data, provider, nil, g.tags, false)
 		imported += f4Inserted(outcomes)
 		if err != nil {
 			return imported, fmt.Errorf("store imported %s records: %w", index.SchemaName, err)
