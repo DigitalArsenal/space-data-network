@@ -14,7 +14,9 @@ package flatsqlrt
 //     thread's state word follows its doorbell) and the completion poller ->
 //     flatsql_p4_start;
 //   - stop: the stop word, notifies, flatsql_p4_stop(deadline ms), a wait
-//     for the service threads, then an executor stop for any that remain.
+//     for the service threads, then an executor stop for any that remain; a
+//     fenced (poisoned) instance cannot run flatsql_p4_stop, so it goes
+//     straight to the executor stop and OnFailure runs at once.
 //
 // Format 4 has ONE instance for writers, read lanes and maintenance (the
 // shared WAL index must live in one memory). The raw layout goes to
@@ -50,8 +52,6 @@ type P4Config struct {
 	// ControlBudget bounds each control call (default 5 min: init replays
 	// journals and recovers WALs, activation checkpoints every file).
 	ControlBudget time.Duration
-	// StopDeadline bounds a stop's cooperative phase (default 30 s).
-	StopDeadline time.Duration
 	// OnFailure runs once, on its own goroutine, when a service thread traps
 	// or hangs, or a control call poisons the instance. It is fenced by then.
 	OnFailure func(*P4Instance, error)
@@ -85,16 +85,13 @@ func OpenP4Instance(cfg P4Config) (*P4Instance, error) {
 	if cfg.ControlBudget <= 0 {
 		cfg.ControlBudget = 5 * time.Minute
 	}
-	if cfg.StopDeadline <= 0 {
-		cfg.StopDeadline = 30 * time.Second
-	}
 	p4 := &P4Instance{}
 	ps, err := OpenPSInstance(PSConfig{
 		// One instance does everything; its I/O runs at the writer class.
 		Role: PSRoleWriter, ABI: PSABIP4,
 		Wasm: cfg.Wasm, AOTCacheDir: cfg.AOTCacheDir, AOTPrefix: P4ThreadsAOTPrefix, CompileOnMiss: cfg.CompileOnMiss,
 		Store: cfg.Store, StoreRoot: cfg.StoreRoot, FDBudget: cfg.FDBudget, MaxThreads: cfg.MaxThreads,
-		InitConfig: cfg.InitConfig, ControlBudget: cfg.ControlBudget, StopDeadline: cfg.StopDeadline,
+		InitConfig: cfg.InitConfig, ControlBudget: cfg.ControlBudget,
 		HeartbeatStale: -1, // the engine has no heartbeat words: a hang is a control-call budget or a trap
 		OnFailure: func(_ *PSInstance, cause error) {
 			if cfg.OnFailure != nil {
