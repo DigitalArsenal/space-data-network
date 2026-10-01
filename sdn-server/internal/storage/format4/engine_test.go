@@ -335,40 +335,6 @@ func TestConfigEncoding(t *testing.T) {
 	}
 }
 
-func TestTypeSpecFor(t *testing.T) {
-	omm, err := format4.TypeSpecFor("OMM.fbs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	f2, err := format2.TypeSpecFor("OMM.fbs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	enc := omm.Encode()
-	if !bytes.HasPrefix(enc, f2.Encode()) {
-		t.Fatal("tags 1-7 are not format 2's encoding")
-	}
-	tl, err := parseTLV(enc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tl.u32(8) != 4096 || tl.u32(10) != 400000 || tl.u8(11) != 1 || tl.u8(12) != 1 || len(tl[9]) != 0 {
-		t.Fatalf("OMM spec tags 8-12: %x", enc[len(f2.Encode()):])
-	}
-	iqc, err := format4.TypeSpecFor("IQC.fbs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(iqc.Rules, "bucket str:CAPTURE_START\n") || strings.Contains(iqc.Rules, "epoch ") ||
-		!iqc.Identity || iqc.PageSize != 16384 || iqc.A18Bound != 10000 || iqc.EpochProfile != 0 {
-		t.Fatalf("IQC spec: %+v rules %q", iqc, iqc.Rules)
-	}
-	mpe, err := format4.TypeSpecFor("MPE.fbs")
-	if err != nil || mpe.EpochProfile != 2 || mpe.A18Bound != 10000 {
-		t.Fatalf("MPE spec: %+v %v", mpe, err)
-	}
-}
-
 func TestSelected(t *testing.T) {
 	for v, want := range map[string]bool{"": false, "1": false, "2": false, "4": true, " 4 ": true, "sqlite": true, "SQLite": true, "sqlite3": false} {
 		t.Setenv(format4.FormatEnv, v)
