@@ -28,6 +28,8 @@
 //
 // The engine runs AOT (prewarmed into the daemon's cache first, as the
 // `prewarm-aot` command does); SDN_STORE_FORMAT=2 is set for the store.
+// Formats 1 and 4, fixture-derived seeds and the count-scaled growth steps
+// of the format-4 evidence harness: growth.go.
 package main
 
 import (
@@ -50,6 +52,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4proof"
 )
 
 type config struct {
@@ -60,6 +63,8 @@ type config struct {
 	supersedePct                     float64
 	prewarm                          bool
 	cpuProfile                       string
+	format, seeds, steps, results    string // growth.go
+	zipf, minFreeGiB                 float64
 }
 
 type stats struct {
@@ -73,6 +78,8 @@ type stats struct {
 	nPartitions                   atomic.Int64
 	cidMu                         sync.Mutex
 	cids                          map[string][]string // schema -> recent CIDs
+	stepLat                       []float64           // since the last growth step, ms (under mu)
+	stepInserted, inserted        int64               // records stored (under mu)
 }
 
 // std is one standard the writers write: its share of the calls, its
@@ -113,6 +120,12 @@ func main() {
 	flag.Float64Var(&c.supersedePct, "supersede-pct", 15, "share of a supersede standard's records that supersede the previous clone")
 	flag.BoolVar(&c.prewarm, "prewarm", true, "AOT-compile the engines into the daemon's cache first")
 	flag.StringVar(&c.cpuProfile, "cpuprofile", "", "write a CPU profile of the run here")
+	flag.StringVar(&c.format, "format", "2", "store format: 1, 2 or 4 (\"sqlite\")")
+	flag.StringVar(&c.seeds, "seeds", "", "format4proof work directory whose prepared inputs seed the records (instead of -corpus)")
+	flag.Float64Var(&c.zipf, "zipf", 0, "draw producer peers Zipf(s), s > 1 (0: in turn)")
+	flag.StringVar(&c.steps, "steps", "", "growth steps ID=records,… (records in the store, its start included): measure at each")
+	flag.StringVar(&c.results, "results", "", "format4proof results directory for the growth steps")
+	flag.Float64Var(&c.minFreeGiB, "min-free-gib", 0, "stop when the store's volume has less free space, GiB (0: no floor; the Mac runs keep 120)")
 	flag.Parse()
 	if err := run(c); err != nil {
 		fmt.Fprintln(os.Stderr, "sds-tb-gen:", err)
@@ -149,14 +162,30 @@ func pct(v []float64, q float64) float64 {
 }
 
 func run(c config) error {
-	if c.store == "" || c.corpus == "" {
-		return fmt.Errorf("-store and -corpus are required")
+	if c.store == "" || (c.corpus == "" && c.seeds == "") {
+		return fmt.Errorf("-store and -corpus (or -seeds) are required")
+	}
+	arm, err := armOf(c.format)
+	if err != nil {
+		return err
+	}
+	steps, err := parseSteps(c.steps)
+	if err != nil {
+		return err
+	}
+	if len(steps) > 0 && c.results == "" {
+		return fmt.Errorf("-steps needs -results")
 	}
 	if c.csv == "" {
 		c.csv = filepath.Join(filepath.Dir(c.store), "sds-tb-gen")
 	}
 	fmt.Printf("# %s/%s, %d CPUs, %s\n", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), loadLine())
-	stds, err := loadStandards(c)
+	var stds []*std
+	if c.seeds != "" {
+		stds, err = loadSeedStandards(c)
+	} else {
+		stds, err = loadStandards(c)
+	}
 	if err != nil {
 		return err
 	}
@@ -165,9 +194,23 @@ func run(c config) error {
 		total += s.share
 	}
 
-	s, err := openStore(c)
+	s, err := openStore(c, arm)
 	if err != nil {
 		return err
+	}
+	ref := &storeRef{s: s}
+	var startRecords int64
+	if len(steps) > 0 {
+		if startRecords, err = storeRecordCount(s, stds); err != nil {
+			return err
+		}
+		fmt.Printf("# growth: %d records at start; steps %v\n", startRecords, steps)
+	}
+	zipfs := map[string]*zipfPeer{}
+	for i, sd := range stds {
+		if z := newZipfPeer(c.zipf, c.peersPerType, int64(0x21F+i)); z != nil {
+			zipfs[sd.name] = z
+		}
 	}
 
 	if c.cpuProfile != "" {
@@ -177,6 +220,14 @@ func run(c config) error {
 		}
 	}
 	st := &stats{inflight: map[int]time.Time{}, stalledReported: map[int]bool{}, cids: map[string][]string{}}
+	stepSince := time.Now()
+	storeTotal := func() int64 {
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		return startRecords + st.inserted
+	}
+	stepped := len(steps) > 0                                                 // the sampler stops the run after the last step
+	steps = runDueSteps(c, ref, arm, steps, storeTotal, stds, st, &stepSince) // a step at the starting size
 	var stop atomic.Bool
 	var wg sync.WaitGroup
 	start := time.Now()
@@ -199,8 +250,12 @@ func run(c config) error {
 				if sd == nil {
 					sd = stds[len(stds)-1]
 				}
-				// Peers in turn: every partition is written once before any twice.
+				// Peers in turn: every partition is written once before any
+				// twice; or Zipf-drawn (-zipf).
 				peer := int(sd.turn.Add(1)-1) % c.peersPerType
+				if z := zipfs[sd.name]; z != nil {
+					peer = z.next()
+				}
 				fetch := sd.fetch[peer].Add(1)
 				recs := make([][]byte, 0, c.batch)
 				var bytes int64
@@ -225,15 +280,25 @@ func run(c config) error {
 				if _, loaded := st.partitions.LoadOrStore(key, true); !loaded {
 					st.nPartitions.Add(1)
 				}
+				var n int
+				var err error
+				var ms float64
+				ref.use(func(s *storage.FlatSQLStore) {
+					st.mu.Lock()
+					st.inflight[w] = time.Now()
+					st.mu.Unlock()
+					t := time.Now()
+					n, err = s.StoreBatchWithSourceTags(sd.name, recs, pid, nil, tags)
+					ms = float64(time.Since(t).Microseconds()) / 1000
+					st.mu.Lock()
+					delete(st.inflight, w)
+					st.mu.Unlock()
+				})
 				st.mu.Lock()
-				st.inflight[w] = time.Now()
-				st.mu.Unlock()
-				t := time.Now()
-				_, err := s.StoreBatchWithSourceTags(sd.name, recs, pid, nil, tags)
-				ms := float64(time.Since(t).Microseconds()) / 1000
-				st.mu.Lock()
-				delete(st.inflight, w)
 				st.lat = append(st.lat, ms)
+				st.stepLat = append(st.stepLat, ms)
+				st.stepInserted += int64(n)
+				st.inserted += int64(n)
 				if err != nil && len(st.firstErr) < 10 {
 					st.firstErr = append(st.firstErr, fmt.Sprintf("%s %s: %v", sd.name, pid, err))
 				}
@@ -254,7 +319,7 @@ func run(c config) error {
 				}
 				st.cids[sd.name] = l
 				st.cidMu.Unlock()
-				if c.maxRecords > 0 && st.records.Load() >= c.maxRecords {
+				if c.maxRecords > 0 && st.records.Load() >= c.maxRecords && !stepped {
 					stop.Store(true)
 				}
 			}
@@ -280,30 +345,32 @@ func run(c config) error {
 		for !stop.Load() {
 			time.Sleep(c.readEvy)
 			var round []readStat
-			sd := stds[0]
-			st.cidMu.Lock()
-			l := st.cids[sd.name]
-			hit := ""
-			if len(l) > 0 {
-				hit = l[rng.Intn(len(l))]
-			}
-			st.cidMu.Unlock()
-			if hit != "" {
-				round = append(round, probe("get_hit", func() error { _, err := s.GetRecord(sd.name, hit); return err }))
-			}
-			round = append(round, probe("get_miss", func() error {
-				_, err := s.GetRecord(sd.name, cidOf([]byte(fmt.Sprintf("miss-%d", rng.Int63()))))
-				if err != nil && strings.Contains(strings.ToLower(err.Error()), "not found") {
-					return nil
+			ref.use(func(s *storage.FlatSQLStore) {
+				sd := stds[0]
+				st.cidMu.Lock()
+				l := st.cids[sd.name]
+				hit := ""
+				if len(l) > 0 {
+					hit = l[rng.Intn(len(l))]
 				}
-				return err
-			}))
-			round = append(round, probe("disk_usage", func() error { _, err := s.DiskUsageBytes(); return err }))
-			round = append(round, probe("peer_bytes", func() error {
-				_, err := s.PeerStorageBytes(peerID(sd.name, rng.Intn(c.peersPerType)))
-				return err
-			}))
-			round = append(round, probe("data_summary", func() error { _, err := s.DataSummary(); return err }))
+				st.cidMu.Unlock()
+				if hit != "" {
+					round = append(round, probe("get_hit", func() error { _, err := s.GetRecord(sd.name, hit); return err }))
+				}
+				round = append(round, probe("get_miss", func() error {
+					_, err := s.GetRecord(sd.name, cidOf([]byte(fmt.Sprintf("miss-%d", rng.Int63()))))
+					if err != nil && strings.Contains(strings.ToLower(err.Error()), "not found") {
+						return nil
+					}
+					return err
+				}))
+				round = append(round, probe("disk_usage", func() error { _, err := s.DiskUsageBytes(); return err }))
+				round = append(round, probe("peer_bytes", func() error {
+					_, err := s.PeerStorageBytes(peerID(sd.name, rng.Intn(c.peersPerType)))
+					return err
+				}))
+				round = append(round, probe("data_summary", func() error { _, err := s.DataSummary(); return err }))
+			})
 			readMu.Lock()
 			reads = round
 			readMu.Unlock()
@@ -385,6 +452,16 @@ func run(c config) error {
 		st.firstErr = nil
 		st.mu.Unlock()
 		lastRecs, lastBytes, last = recs, bytes, now
+		if len(steps) > 0 {
+			steps = runDueSteps(c, ref, arm, steps, storeTotal, stds, st, &stepSince)
+			if len(steps) == 0 {
+				stop.Store(true)
+			}
+		}
+		if free, err := format4proof.FreeBytes(c.store); err == nil && float64(free) < c.minFreeGiB*(1<<30) {
+			fmt.Printf("# stopping: %.1f GiB free on the store's volume, below -min-free-gib %.0f\n", float64(free)/(1<<30), c.minFreeGiB)
+			stop.Store(true)
+		}
 		if stop.Load() || now.Sub(start) >= c.duration {
 			break
 		}
@@ -419,7 +496,7 @@ func run(c config) error {
 	}
 	<-readDone
 	closed := make(chan error, 1)
-	go func() { closed <- s.Close() }()
+	go func() { closed <- ref.s.Close() }()
 	select {
 	case err := <-closed:
 		fmt.Printf("# store closed (%v); %d records, %d calls, %d errors, %d partitions in %.0f s\n", err,
@@ -477,10 +554,13 @@ func parseMix(mix string) map[string]float64 {
 }
 
 // openStore prewarms the engines (as `prewarm-aot` does) and opens the store
-// on format 2.
-func openStore(c config) (*storage.FlatSQLStore, error) {
-	if os.Getenv(format2.FormatEnv) == "" {
-		os.Setenv(format2.FormatEnv, "2")
+// in the arm's format (SDN_STORE_FORMAT; format 2 unless -format says
+// otherwise), as the daemon opens it.
+func openStore(c config, arm string) (*storage.FlatSQLStore, error) {
+	if f := format4proof.ArmFormat(arm); f == "" {
+		os.Unsetenv(format2.FormatEnv)
+	} else {
+		os.Setenv(format2.FormatEnv, f)
 	}
 	if c.prewarm {
 		cache := storage.EngineAOTCacheDir()
@@ -507,10 +587,14 @@ func openStore(c config) (*storage.FlatSQLStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	if !s.Format2() {
-		return nil, fmt.Errorf("the store opened as format 1")
+	f4 := format4proof.IsFormat4(s)
+	ok := map[string]bool{format4proof.ArmF1: !s.Format2() && !f4, format4proof.ArmF2: s.Format2(), format4proof.ArmS: f4}[arm]
+	if !ok {
+		_ = s.Close()
+		return nil, fmt.Errorf("the store did not open in format %s (format2=%v format4=%v)", c.format, s.Format2(), f4)
 	}
-	fmt.Printf("# store open %.1f s (format 2)\n", time.Since(t0).Seconds())
+	fmt.Printf("# store open %.1f s (format %s)\n", time.Since(t0).Seconds(), map[string]string{format4proof.ArmF1: "1",
+		format4proof.ArmF2: "2", format4proof.ArmS: "4"}[arm])
 	return s, nil
 }
 
