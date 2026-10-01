@@ -189,8 +189,13 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	if validator != nil {
 		d.ident = validator.FileIdentifier
 	}
+	dataRoot, err := filepath.Abs(basePath)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("format 4: %w", err)
+	}
 	d.opt = format4.Options{
-		DataRoot:      basePath,
+		DataRoot:      dataRoot,
 		Create:        mode,
 		GseqFloor:     1,
 		Cores:         runtime.NumCPU(),
