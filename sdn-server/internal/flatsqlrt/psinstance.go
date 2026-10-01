@@ -88,6 +88,19 @@ const (
 	PSABIEngine
 )
 
+// psExports names the guest exports an ABI's lifecycle calls outside init.
+type psExports struct {
+	malloc, free string // "" = wasmrt's malloc/free
+	stop         string // the guest's bounded stop, called with the deadline in ms
+}
+
+func (a PSABI) exports() psExports {
+	if a == PSABIEngine {
+		return psExports{malloc: "flatsql_ps_alloc", free: "flatsql_ps_free", stop: "flatsql_ps_stop"}
+	}
+	return psExports{stop: "flatsql_ps_stop"}
+}
+
 // Engine layout sizes (flatsql_ps.h: FlatsqlPsLayout, FlatsqlPsReaderLayout).
 const (
 	PSEngineLayoutBytes       = 624
@@ -317,8 +330,8 @@ func OpenPSInstance(cfg PSConfig) (*PSInstance, error) {
 		wasmrt.WithEnvInstaller(p.io.Install),
 		wasmrt.WithExecTimeout(cfg.ControlBudget),
 	}
-	if cfg.ABI == PSABIEngine {
-		opts = append(opts, wasmrt.WithMallocName("flatsql_ps_alloc"), wasmrt.WithFreeName("flatsql_ps_free"))
+	if ex := cfg.ABI.exports(); ex.malloc != "" {
+		opts = append(opts, wasmrt.WithMallocName(ex.malloc), wasmrt.WithFreeName(ex.free))
 	}
 	p.mod, err = wasmrt.NewModule(aot, opts...)
 	if err != nil {
@@ -820,24 +833,27 @@ func (p *PSInstance) shutdown() error {
 		p.watchdog.Stop()
 	}
 	deadline := p.cfg.StopDeadline
-	if p.cfg.ABI != PSABIEngine || p.layout.StopWord != 0 {
+	// The probe always has a stop word; an engine has one when its layout
+	// names it (a writer is stopped by its stop export alone).
+	hasStopWord := p.cfg.ABI == PSABIProbe || p.layout.StopWord != 0
+	if hasStopWord {
 		p.mem.Store32(p.layout.StopWord, 1)
 	}
 	// Threads parked in a revoked host call (A21) must come back to see the
 	// stop word; from here on a revoked call fails at once instead of parking.
 	p.io.ReleaseParked()
-	if p.cfg.ABI != PSABIEngine || p.layout.StopWord != 0 {
+	if hasStopWord {
 		_ = p.doorbell.NotifyAll(p.layout.StopWord)
 	}
 	for i := 0; i < int(p.layout.DoorbellCount); i++ {
-		if p.cfg.ABI == PSABIEngine {
+		if p.doorbellAddrs != nil {
 			_ = p.doorbell.NotifyAll(p.doorbellAddrs[i])
 		} else {
 			_ = p.doorbell.NotifyAll(p.layout.DoorbellBase + uint32(8*i))
 		}
 	}
 	if !p.mod.Poisoned() {
-		_, _ = p.control("flatsql_ps_stop", float64(deadline.Milliseconds()))
+		_, _ = p.control(p.cfg.ABI.exports().stop, float64(deadline.Milliseconds()))
 	}
 	left := p.mod.WaitThreads(time.Now().Add(deadline))
 	if left > 0 {
