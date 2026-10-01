@@ -387,7 +387,7 @@ func format4Dump(t *testing.T, api format4.API, root string) string {
 	fmt.Fprintf(&b, "M activated %v floor %d from %d legacy-dir %v legacy-file %v\n", mk.Activated(), mk.GseqFloor, mk.MigratedFrom,
 		mk.LegacyControlDir, mk.LegacyControlFile)
 	for _, name := range []string{filepath.Join(marker.PreFormat4Dir, "control.flatsqldb"), filepath.Join(marker.Dir, "control.db"),
-		migrate4ControlTmp, migrate4FTSTmp} {
+		migrate4ControlTmp} {
 		_, err := os.Stat(filepath.Join(root, name))
 		fmt.Fprintf(&b, "F %s %v\n", name, err == nil)
 	}

@@ -2,7 +2,8 @@ package main
 
 // store_migrate_format4.go: `spacedatanetwork store-migrate --to 4` (alias
 // sqlite). A format-1 store becomes store format 4 (one SQLite file per
-// partition and UTC month), offline and copy-based. Stack design
+// partition: per producer and record type, as format 1's producer tables),
+// offline and copy-based. Stack design
 // docs/architecture/flatsql-sqlite-partitions.md §11 (gate G7); the interfaces
 // are the build-out contract's (§2.3 activation, §5.6 this command).
 //
@@ -80,11 +81,9 @@ import (
 
 const (
 	migrate4JournalName = "fsql4-migrate.json"
-	// CopyControl writes into the source store's root under plain names; the
-	// control copy then moves to fsql4/control.db. Format 4 builds its own
-	// full-text indexes after activation, so the interim FTS copy is dropped.
+	// CopyControlFormat4 writes into the source store's root under a plain
+	// name; the copy then moves to fsql4/control.db.
 	migrate4ControlTmp = "fsql4-control.tmp"
-	migrate4FTSTmp     = "fsql4-fts.tmp"
 	migrate4ControlDB  = "control.db"
 	// migrate4SampleEvery: the records whose index rowid is a multiple of it
 	// have every structured column checked through the engine (the rest
@@ -1160,9 +1159,10 @@ func (m *migrator4) verifyOnly(ctx context.Context) error {
 // ---- control copy and activation ----------------------------------------------------
 
 // copyControl writes the control tables into fsql4/control.db (the format-1
-// engine's own copy, as format 2's interim control database).
+// engine's own copy). Format 4 keeps the ingest identities in the engine and
+// builds its full-text indexes after activation, so the copy has neither.
 func (m *migrator4) copyControl() error {
-	st, err := m.src.CopyControl(migrate4ControlTmp, migrate4FTSTmp)
+	st, err := m.src.CopyControlFormat4(migrate4ControlTmp)
 	if err != nil {
 		return fmt.Errorf("control copy: %w", err)
 	}
@@ -1173,16 +1173,10 @@ func (m *migrator4) copyControl() error {
 	if err := os.Rename(filepath.Join(m.root, migrate4ControlTmp), dst); err != nil {
 		return fmt.Errorf("move the control copy to %s: %w", dst, err)
 	}
-	// Leftovers: the interim full-text index (format 4 builds its own) and
-	// any journal file the attach left beside the copies.
-	for _, base := range []string{migrate4ControlTmp, migrate4FTSTmp} {
-		for _, suffix := range []string{"", "-journal", "-wal", "-shm"} {
-			if base == migrate4ControlTmp && suffix == "" {
-				continue
-			}
-			if err := os.Remove(filepath.Join(m.root, base+suffix)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
+	// Leftovers: any journal file the attach left beside the copy.
+	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+		if err := os.Remove(filepath.Join(m.root, migrate4ControlTmp+suffix)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 	}
 	f, err := os.OpenFile(dst, os.O_RDWR, 0)
@@ -1199,8 +1193,7 @@ func (m *migrator4) copyControl() error {
 			return err
 		}
 	}
-	m.note("control copy: %d tables, %d indexes, %d rows, %d bytes (FTS rebuilt by format 4 after activation)",
-		st.Tables, st.Indexes, st.Rows, st.Bytes)
+	m.note("control copy: %d tables, %d indexes, %d rows, %d bytes", st.Tables, st.Indexes, st.Rows, st.Bytes)
 	return nil
 }
 
