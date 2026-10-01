@@ -46,57 +46,75 @@ import (
 
 // ---- the target -----------------------------------------------------------------------
 
-// fakeEngines stands in for the format-4 engine: one Fake per data root,
-// shared by every open of the root, with format4test.Open's create-mode and
-// marker rules applied at each open.
+// fakeEngines opens format4test's Fake as the format-4 engine. The Fake
+// continues a data root's store across opens in this process (as an engine's
+// files do), so a run that stops at any step and a rerun see one durable
+// store. Until the Fake has them, this double also applies two contract
+// rules: C-20 (a migrate PUT supersedes nothing: CAT's supersede identity is
+// left out of the Fake's extraction) and C-22 (a torn STORE beside a valid
+// MIGRATED reopens as a migration target).
 type fakeEngines struct {
-	mu     sync.Mutex
-	byRoot map[string]*format4test.Fake
-	wrap   func(format4.API) format4.API
+	wrap func(format4.API) format4.API
 }
 
-func newFakeEngines() *fakeEngines { return &fakeEngines{byRoot: map[string]*format4test.Fake{}} }
+func newFakeEngines() *fakeEngines { return &fakeEngines{} }
 
-func (d *fakeEngines) open(ctx context.Context, opt format4.Options) (format4.API, func(), error) {
-	f, err := format4test.Open(ctx, opt)
+func (d *fakeEngines) open(ctx context.Context, opt format4.Options) (format4.API, error) {
+	f, err := openFake4(ctx, opt)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if held := d.byRoot[opt.DataRoot]; held != nil {
-		f = held
-	} else {
-		f.Extract = migrateExtract
-		d.byRoot[opt.DataRoot] = f
-	}
-	var api format4.API = durableFake{f}
+	var api format4.API = f
 	if d.wrap != nil {
 		api = d.wrap(api)
 	}
-	return api, func() {}, nil
+	return api, nil
 }
 
+// store reopens root's store (after a run closed it) for the test to read.
 func (d *fakeEngines) store(root string) format4.API {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return durableFake{d.byRoot[root]}
+	f, err := openFake4(context.Background(), format4.Options{DataRoot: root, Create: format4.OpenExisting})
+	if err != nil {
+		panic(fmt.Sprintf("reopen the Fake at %s: %v", root, err))
+	}
+	return f
 }
 
-// migrateExtract is the Fake's extraction without CAT's supersede identity:
-// a migrate-mode PUT supersedes nothing (contract §3.7 runs supersede on
-// ingest only), and the Fake would otherwise run it, by its first tag's
-// source, on every migrated CAT record.
+func openFake4(ctx context.Context, opt format4.Options) (*format4test.Fake, error) {
+	// A test's earlier reopen for reading is closed first (one opener a
+	// root).
+	if held, ok := readers.LoadAndDelete(filepath.Clean(opt.DataRoot)); ok {
+		_ = held.(*format4test.Fake).Close(ctx)
+	}
+	if opt.Create == format4.CreateForMigration {
+		if mk, err := marker.Read(opt.DataRoot); err == nil && mk.MigratedValid && mk.StorePresent && !mk.StoreValid {
+			torn := filepath.Join(opt.DataRoot, marker.Dir, marker.StoreFile)
+			if err := os.Rename(torn, torn+".torn"); err != nil {
+				return nil, err
+			}
+			defer os.Rename(torn+".torn", torn)
+		}
+	}
+	f, err := format4test.Open(ctx, opt)
+	if err != nil {
+		return nil, err
+	}
+	f.Extract = migrateExtract
+	if opt.Create == format4.OpenExisting {
+		readers.Store(filepath.Clean(opt.DataRoot), f)
+	}
+	return f, nil
+}
+
+var readers sync.Map // data root -> the Fake a test reopened to read
+
+// migrateExtract is the Fake's extraction without CAT's supersede identity
+// (C-20, until the Fake skips supersede in migrate mode).
 func migrateExtract(typ string, plain []byte) (format4test.Fields, error) {
 	f, err := format4test.DefaultExtract(typ, plain)
 	f.Supersede = ""
 	return f, err
 }
-
-// durableFake outlives a run's Close, as an engine's files do.
-type durableFake struct{ *format4test.Fake }
-
-func (durableFake) Close(context.Context) error { return nil }
 
 func migrate4TestOptions(store string, engines *fakeEngines) migrate4Options {
 	return migrate4Options{Store: store, PageRows: 64, open: engines.open, testJournalEvery: time.Nanosecond}
@@ -1011,34 +1029,49 @@ func migrate4AOTDir(t testing.TB) string {
 	return filepath.Join(base, "sdn-format4-test-aot")
 }
 
-// requireFormat4Engine skips unless format4.Open opens the engine here.
-func requireFormat4Engine(t *testing.T) {
-	t.Helper()
-	root := t.TempDir()
-	api, release, err := openFormat4Engine(context.Background(), format4.Options{DataRoot: root, Create: format4.CreateFresh,
-		AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true})
-	if err != nil {
-		t.Skipf("the format-4 engine does not open here: %v", err)
+// engineWasm is the format-4 engine under test: SDN_P4_WASM (a build of the
+// engine's task branch, during development), else the embedded release
+// (nil).
+func engineWasm(t testing.TB) []byte {
+	p := os.Getenv("SDN_P4_WASM")
+	if p == "" {
+		return nil
 	}
-	_ = api.Close(context.Background())
-	release()
-}
-
-func engineOptions(t testing.TB, store string) migrate4Options {
-	return migrate4Options{Store: store, PageRows: 64, AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true}
-}
-
-// engineDump opens a migrated store on the engine and dumps it.
-func engineDump(t *testing.T, root string) string {
-	t.Helper()
-	api, release, err := openFormat4Engine(context.Background(), format4.Options{DataRoot: root, Create: format4.OpenExisting,
-		AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true})
+	b, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer release()
-	defer api.Close(context.Background())
-	for _, schema := range []string{"OMM.fbs", "CAT.fbs", "IQC.fbs"} {
+	return b
+}
+
+// requireFormat4Engine skips unless format4.Open opens the engine here (it
+// needs the patched runtime and an engine: embedded, or SDN_P4_WASM).
+func requireFormat4Engine(t *testing.T) {
+	t.Helper()
+	api, err := openFormat4Engine(context.Background(), format4.Options{DataRoot: t.TempDir(), Create: format4.CreateFresh,
+		AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true, Wasm: engineWasm(t)})
+	if err != nil {
+		if os.Getenv("SDN_WASM_REQUIRE_PATCHED") == "1" && os.Getenv("SDN_P4_WASM") != "" {
+			t.Fatalf("the format-4 engine does not open: %v", err)
+		}
+		t.Skipf("the format-4 engine does not open here: %v", err)
+	}
+	_ = api.Close(context.Background())
+}
+
+func engineOptions(t testing.TB, store string) migrate4Options {
+	return migrate4Options{Store: store, PageRows: 64, AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true, Wasm: engineWasm(t)}
+}
+
+// openEngineAt opens a migrated store on the engine, its types registered.
+func openEngineAt(t *testing.T, root string, schemas ...string) format4.API {
+	t.Helper()
+	api, err := openFormat4Engine(context.Background(), format4.Options{DataRoot: root, Create: format4.OpenExisting,
+		AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true, Wasm: engineWasm(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, schema := range schemas {
 		spec, err := format4.TypeSpecFor(schema)
 		if err != nil {
 			t.Fatal(err)
@@ -1047,6 +1080,13 @@ func engineDump(t *testing.T, root string) string {
 			t.Fatal(err)
 		}
 	}
+	return api
+}
+
+// engineDump opens a migrated store on the engine and dumps it.
+func engineDump(t *testing.T, root string) string {
+	t.Helper()
+	api := openEngineAt(t, root, "OMM.fbs", "CAT.fbs", "IQC.fbs")
 	return format4Dump(t, api, root)
 }
 
@@ -1080,6 +1120,7 @@ func TestStoreMigrateFormat4Kill9(t *testing.T) {
 	}
 	want := engineDump(t, clean)
 	rng := uint64(time.Now().UnixNano())
+	var delays []time.Duration
 	for done := 0; done < kills; {
 		killed := cloneStore(t, legacy)
 		for i := 0; i < 6 && done < kills; i++ {
@@ -1090,6 +1131,7 @@ func TestStoreMigrateFormat4Kill9(t *testing.T) {
 			}
 			rng = rng*6364136223846793005 + 1442695040888963407
 			d := 200*time.Millisecond + time.Duration(rng>>33)%(2*time.Second)
+			delays = append(delays, d)
 			exited := make(chan error, 1)
 			go func() { exited <- cmd.Wait() }()
 			select {
@@ -1102,21 +1144,21 @@ func TestStoreMigrateFormat4Kill9(t *testing.T) {
 		}
 		rep, err := migrateStore4(context.Background(), engineOptions(t, killed), nil)
 		if err != nil || !rep.Activated {
-			t.Fatalf("resume after kill %d: %v %+v", done, err, rep)
+			if keep := os.Getenv("SDN_MIGRATE4_KEEP"); keep != "" {
+				// The killed store, as the failed resume left it, for the
+				// engine's maintainers.
+				_ = exec.Command("cp", "-cR", killed, filepath.Join(keep, fmt.Sprintf("killed-%d", time.Now().Unix()))).Run()
+			}
+			t.Fatalf("resume after kill %d (delays %v): %v %+v", done, delays, err, rep)
 		}
 		if got := engineDump(t, killed); got != want {
 			t.Fatalf("after kill %d the store differs from an uninterrupted migration:\n%s", done, firstDiff(want, got))
 		}
 	}
-	api, release, err := openFormat4Engine(context.Background(), format4.Options{DataRoot: clean, Create: format4.OpenExisting,
-		AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
+	api := openEngineAt(t, clean, "OMM.fbs", "CAT.fbs", "IQC.fbs")
 	defer api.Close(context.Background())
 	assertFormat4EqualsFormat1(t, api, pristine, 0)
-	t.Logf("MEASURED %d kill -9 points: resumed stores identical to an uninterrupted migration", kills)
+	t.Logf("MEASURED %d kill -9 points (delays %v): resumed stores identical to an uninterrupted migration", kills, delays)
 }
 
 // nullTarget accepts every PUT and holds nothing: it times the format-1 side
@@ -1166,7 +1208,7 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	if out, err := exec.Command("cp", "-cR", src, dst).CombinedOutput(); err != nil {
 		t.Fatalf("clone fixture: %v: %s", err, out)
 	}
-	opt := migrate4Options{Store: dst, AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true}
+	opt := migrate4Options{Store: dst, AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true, Wasm: engineWasm(t)}
 	engines := newFakeEngines()
 	switch target {
 	case "engine":
@@ -1175,9 +1217,7 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 		opt.open = engines.open
 		opt.testNoSamples = true // the Fake answers HEAD by sorting every seq
 	case "null":
-		opt.open = func(context.Context, format4.Options) (format4.API, func(), error) {
-			return nullTarget{}, func() {}, nil
-		}
+		opt.open = func(context.Context, format4.Options) (format4.API, error) { return nullTarget{}, nil }
 		opt.testStep = func(step string) error {
 			if step == "built" {
 				return errCopyTimed

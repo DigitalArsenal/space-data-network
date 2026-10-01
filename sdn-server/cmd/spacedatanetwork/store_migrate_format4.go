@@ -72,7 +72,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
@@ -158,22 +157,17 @@ func migrate4Inventory(store string) (*inventoryReport, error) {
 
 // ---- options, journal, report -------------------------------------------------------
 
-// format4Opener opens the format-4 engine; release runs after Close.
-type format4Opener func(ctx context.Context, opt format4.Options) (api format4.API, release func(), err error)
+// format4Opener opens the format-4 engine (tests substitute a double).
+type format4Opener func(ctx context.Context, opt format4.Options) (format4.API, error)
 
-// openFormat4Engine opens the real engine over the store's shared native I/O.
-func openFormat4Engine(ctx context.Context, opt format4.Options) (format4.API, func(), error) {
-	ns, err := flatsqlrt.OpenNativeStore(opt.DataRoot)
-	if err != nil {
-		return nil, nil, err
-	}
-	opt.Store = ns
+// openFormat4Engine opens the real engine (its own native I/O on the data
+// root: the migration is the store's only user).
+func openFormat4Engine(ctx context.Context, opt format4.Options) (format4.API, error) {
 	e, err := format4.Open(ctx, opt)
 	if err != nil {
-		ns.Release()
-		return nil, nil, err
+		return nil, err
 	}
-	return e, ns.Release, nil
+	return e, nil
 }
 
 type migrate4Options struct {
@@ -182,7 +176,8 @@ type migrate4Options struct {
 	VerifyOnly bool
 
 	AOTCacheDir   string
-	CompileOnMiss bool // tests only (the daemon never compiles)
+	CompileOnMiss bool   // tests only (the daemon never compiles)
+	Wasm          []byte // tests: an engine build before its release (nil = the embedded engine)
 	Tuning        format4.Tuning
 
 	open format4Opener // nil = openFormat4Engine
@@ -377,7 +372,6 @@ type migrator4 struct {
 
 	src      *storage.MigrationSource
 	api      format4.API
-	release  func()
 	tables   []storage.LegacyTable
 	bySchema map[string][]storage.LegacyTable
 	schemas  []string
@@ -495,7 +489,7 @@ func (m *migrator4) run(ctx context.Context) error {
 	if err := m.openJournal(mk); err != nil {
 		return err
 	}
-	if err := m.openTarget(ctx, format4.CreateForMigration, mk); err != nil {
+	if err := m.openTarget(ctx, format4.CreateForMigration); err != nil {
 		return err
 	}
 	if err := m.step("open"); err != nil {
@@ -649,23 +643,17 @@ func (m *migrator4) saveJournal() error {
 }
 
 // openTarget opens the format-4 engine and registers every schema's type.
-func (m *migrator4) openTarget(ctx context.Context, mode format4.CreateMode, mk marker.Markers) error {
-	if mode == format4.CreateForMigration && mk.MigratedValid && mk.StorePresent && !mk.StoreValid {
-		// A torn STORE beside a valid MIGRATED: the engine's activation was
-		// cut short before its commit point. A migration target has no
-		// STORE, so the torn one goes and the activation runs again.
-		if err := os.Remove(filepath.Join(m.root, marker.Dir, marker.StoreFile)); err != nil {
-			return err
-		}
-		m.note("removed a torn fsql4/STORE (an activation cut short before its commit point)")
-	}
+// A torn STORE beside a valid MIGRATED (an activation cut short before its
+// commit point) reopens as a migration target and the activation runs again:
+// the engine rewrites STORE (C-22; only the engine writes markers).
+func (m *migrator4) openTarget(ctx context.Context, mode format4.CreateMode) error {
 	opt := format4.Options{DataRoot: m.root, Create: mode, AOTCacheDir: m.opt.AOTCacheDir,
-		CompileOnMiss: m.opt.CompileOnMiss, Tuning: m.opt.Tuning}
+		CompileOnMiss: m.opt.CompileOnMiss, Wasm: m.opt.Wasm, Tuning: m.opt.Tuning}
 	if m.j != nil {
 		opt.GseqFloor = m.j.GseqFloor
 	}
 	var err error
-	if m.api, m.release, err = m.opt.open(ctx, opt); err != nil {
+	if m.api, err = m.opt.open(ctx, opt); err != nil {
 		return fmt.Errorf("open the format-4 engine (run prewarm-aot as this user first): %w", err)
 	}
 	for _, schema := range m.schemas {
@@ -685,10 +673,6 @@ func (m *migrator4) closeTarget(ctx context.Context) error {
 	}
 	err := m.api.Close(ctx)
 	m.api = nil
-	if m.release != nil {
-		m.release()
-		m.release = nil
-	}
 	return err
 }
 
@@ -1116,7 +1100,7 @@ func (m *migrator4) verifyOnly(ctx context.Context) error {
 		}
 	}
 	m.j = &migrate4Journal{Version: 1, Schemas: map[string]*migrate4Progress{}}
-	if err := m.openTarget(ctx, format4.OpenExisting, marker.Markers{}); err != nil {
+	if err := m.openTarget(ctx, format4.OpenExisting); err != nil {
 		return err
 	}
 	for _, schema := range m.schemas {
