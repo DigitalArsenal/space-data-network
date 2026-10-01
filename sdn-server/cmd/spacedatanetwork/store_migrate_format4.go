@@ -379,6 +379,7 @@ type migrator4 struct {
 	index    []storage.IndexStats
 
 	lastJournal time.Time
+	timesMu     sync.Mutex // the reader goroutine adds its time too
 	times       map[string]time.Duration
 }
 
@@ -414,9 +415,11 @@ func migrateStore4(ctx context.Context, opt migrate4Options, out io.Writer) (rep
 		m.rep.MaxRSS = maxRSSBytes()
 		m.rep.Load[1] = migrateLoadAverage()
 		m.rep.Time = map[string]string{}
+		m.timesMu.Lock()
 		for k, v := range m.times {
 			m.rep.Time[k] = v.Round(time.Millisecond).String()
 		}
+		m.timesMu.Unlock()
 	}()
 	return m.rep, m.run(ctx)
 }
@@ -441,7 +444,7 @@ func (m *migrator4) step(name string) error {
 func (m *migrator4) timed(name string, f func() error) error {
 	t := time.Now()
 	err := f()
-	m.times[name] += time.Since(t)
+	m.addTime(name, time.Since(t))
 	return err
 }
 
@@ -574,8 +577,10 @@ func (m *migrator4) openSourceAt(dir string) error {
 		m.bySchema[t.Schema] = append(m.bySchema[t.Schema], t)
 	}
 	sort.Strings(m.schemas)
-	m.index, err = m.src.IndexSchemas()
-	return err
+	return m.timed("index_schemas", func() error {
+		m.index, err = m.src.IndexSchemas()
+		return err
+	})
 }
 
 func (m *migrator4) openJournal(mk marker.Markers) error {
@@ -844,12 +849,10 @@ func (m *migrator4) readSchema(ctx context.Context, schema string, after int64) 
 	}
 }
 
-var timesMu sync.Mutex
-
 func (m *migrator4) addTime(name string, d time.Duration) {
-	timesMu.Lock()
+	m.timesMu.Lock()
 	m.times[name] += d
-	timesMu.Unlock()
+	m.timesMu.Unlock()
 }
 
 // pageBatches turns a page into one migrate-mode batch per producer table
