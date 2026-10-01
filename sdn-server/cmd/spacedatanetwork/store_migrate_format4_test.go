@@ -1188,6 +1188,7 @@ var errCopyTimed = errors.New("copy timed")
 // (format4test's in-memory Fake: the whole run, check and activation, on the
 // real data, without the engine's time and memory), or null (the copy pass
 // into a target that keeps nothing: the format-1 side alone).
+// SDN_MIGRATE4_RESUME=1 resumes the run already in SDN_MIGRATE_WORK.
 func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	src := strings.TrimSpace(os.Getenv("SDN_F1_FIXTURE"))
 	if src == "" {
@@ -1205,7 +1206,9 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 		work = t.TempDir()
 	}
 	dst := filepath.Join(work, "store")
-	if out, err := exec.Command("cp", "-cR", src, dst).CombinedOutput(); err != nil {
+	if _, err := os.Stat(dst); err == nil && os.Getenv("SDN_MIGRATE4_RESUME") == "1" {
+		t.Logf("resuming the migration in %s", dst)
+	} else if out, err := exec.Command("cp", "-cR", src, dst).CombinedOutput(); err != nil {
 		t.Fatalf("clone fixture: %v: %s", err, out)
 	}
 	opt := migrate4Options{Store: dst, AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true, Wasm: engineWasm(t)}
@@ -1232,8 +1235,8 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	if target == "null" && errors.Is(err, errCopyTimed) {
 		err = nil
 	}
-	if err != nil {
-		t.Fatalf("migrate: %v\n%s\ncheck %+v", err, log.String(), rep.Check)
+	if rep == nil {
+		t.Fatalf("migrate: %v", err)
 	}
 	t.Logf("MEASURED store-migrate --to 4 (%s target): %d records, %d copies, %d B of records, source %d B in %s (%.1f MB/s); max RSS %.0f MB; load %.1f -> %.1f; %s",
 		target, rep.Records, rep.Copies, rep.RecordBytes, rep.SourceBytes, rep.Took, rep.RecordMBps, float64(rep.MaxRSS)/1e6,
@@ -1242,8 +1245,14 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	if c := rep.Check; c != nil {
 		t.Logf("check: %d records, %d copies, %d re-hashed, %d field checks, %d column samples, %d tags, %d partitions, %d lanes, orphans %v, mismatches %d, %s",
 			c.Records, c.Copies, c.Rehashed, c.FieldChecks, c.ColumnSamples, c.TagInstances, c.Partitions, c.Lanes, c.Orphans, c.MismatchCount, c.Took)
+		for _, mm := range c.Mismatches {
+			t.Logf("mismatch: %s", mm)
+		}
 	}
 	t.Logf("notes %q; rejected %d; oversized %d", rep.Notes, len(rep.Rejected), len(rep.Oversized))
+	if err != nil {
+		t.Fatalf("migrate: %v\n%s", err, log.String())
+	}
 	if target == "fake" {
 		// A slice of the fixture, against format 1 (now in pre-format4/),
 		// with format 2's readers; every counter in full.
