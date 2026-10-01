@@ -87,6 +87,11 @@ const PAPERS = [
     description: 'An attributed orbital catalog for Space Data Network: evidence, provenance, uncertainty and reproducible selection for anthropogenic space objects.',
   },
   {
+    src: 'fast-conjunction-assessment.md',
+    title: 'Fast All-vs-All Conjunction Screening',
+    description: 'Screening every catalog object against every other in minutes, for any propagator, with or without a GPU.',
+  },
+  {
     src: 'adversarial-security.md',
     title: 'Persistent Adversarial Security',
     description: 'Cryptocurrency balances at deterministically derived addresses as continuous, publicly verifiable proof of key integrity.',
