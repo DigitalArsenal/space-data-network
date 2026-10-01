@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	IQCfb "github.com/DigitalArsenal/spacedatastandards.org/lib/go/IQC"
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -438,7 +439,9 @@ func TestClonesMakeNewCIDs(t *testing.T) {
 }
 
 func TestCrashRecordsAreDeterministicAndDistinct(t *testing.T) {
-	a, b := CrashRecords(3, 7, 32), CrashRecords(3, 7, 32)
+	a := CrashRecords(3, 7, 32)
+	time.Sleep(1100 * time.Millisecond) // a field taken from the clock would change
+	b := CrashRecords(3, 7, 32)
 	seen := map[string]bool{}
 	for i := range a {
 		if string(a[i]) != string(b[i]) {

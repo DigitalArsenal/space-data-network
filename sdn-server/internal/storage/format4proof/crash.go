@@ -76,7 +76,7 @@ func crashBatchID(scenario string, round, call int) string {
 }
 
 // CrashRecords is call `call` of round `round`: n distinct OMMs, the same
-// bytes on every run.
+// bytes in every process (every builder field is set; none takes the clock).
 func CrashRecords(round, call, n int) [][]byte {
 	out := make([][]byte, n)
 	for i := 0; i < n; i++ {
@@ -92,6 +92,7 @@ func CrashRecords(round, call, n int) [][]byte {
 			WithMeanMotion(15.5).
 			WithEccentricity(0.0001).
 			WithInclination(53.0).
+			WithCreationDate("2026-10-01T00:00:00Z"). // the builder's default is the wall clock
 			Build()
 		out[i] = b[4:] // the builders size-prefix; stores take bare buffers
 	}
@@ -503,7 +504,12 @@ type CrashLoopResult struct {
 func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any)) (CrashLoopResult, error) {
 	var res CrashLoopResult
 	if spec.MaxKillDelay <= 0 {
+		// After the writer's marker: inside a stream of 1,024-record calls,
+		// or inside a supersede of the previous round's 32,768 records.
 		spec.MaxKillDelay = 3 * time.Second
+		if spec.Scenario == ScenarioSupersede {
+			spec.MaxKillDelay = time.Second
+		}
 	}
 	logs := spec.Logs
 	if logs == "" {
@@ -519,7 +525,7 @@ func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any
 		mode = ModeCrashSupersede
 		calls = spec.SupersedeCalls
 		if calls <= 0 {
-			calls = 8
+			calls = 32 // a GP fetch's size: the previous batch it retires
 		}
 	}
 	for round := 1; round <= spec.Rounds; round++ {
