@@ -520,3 +520,46 @@ func TestFormatMs(t *testing.T) {
 		}
 	}
 }
+
+func TestDriveEquivalenceReadsAnswerFilesAndDigests(t *testing.T) {
+	out := t.TempDir()
+	shape := func(rows ...Row) []ShapeAnswers {
+		return []ShapeAnswers{{Class: "R01", Shape: "OMM.fbs", Schema: "OMM.fbs", Calls: []Answer{{Call: "c", Rows: rows}}}}
+	}
+	for _, f := range []*AnswerFile{
+		{Arm: ArmF1, Label: LabelFixture, Class: "R01", Shapes: shape(row("cid", "b1", "data", "d1"))},
+		{Arm: ArmS, Label: LabelFixture, Class: "R01", Shapes: shape(row("cid", "b1", "data", "d1"))},
+		{Arm: ArmF1, Label: LabelFixture, Class: "R10", Shapes: []ShapeAnswers{{Class: "R10", Shape: "Count", Calls: []Answer{{Call: "n", Rows: []Row{row("n", "3")}}}}}},
+		{Arm: ArmS, Label: LabelFixture, Class: "R10", Shapes: []ShapeAnswers{{Class: "R10", Shape: "Count", Calls: []Answer{{Call: "n", Rows: []Row{row("n", "4")}}}}}},
+	} {
+		if err := WriteAnswers(out, f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	digest := func(n int64) map[string]any {
+		return map[string]any{"OMM.fbs": TypeDigest{Schema: "OMM.fbs", Records: n}, "MPE.fbs": TypeDigest{}, "IQC.fbs": TypeDigest{}}
+	}
+	for _, r := range []*Run{
+		{Kind: KindWrites, Arm: ArmF1, Label: LabelFixture, Class: "W03", Extra: map[string]any{"digest": digest(5)}},
+		{Kind: KindWrites, Arm: ArmS, Label: LabelFixture, Class: "W03", Extra: map[string]any{"digest": digest(5)}},
+		{Kind: KindWrites, Arm: ArmF1, Label: LabelFixture, Class: "W09", Extra: map[string]any{"digest": digest(5)}},
+		{Kind: KindWrites, Arm: ArmS, Label: LabelFixture, Class: "W09", Extra: map[string]any{"digest": digest(6)}},
+	} {
+		if _, err := WriteRun(out, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rep, err := DriveEquivalence(Config{Out: out}, LabelFixture, ArmS, func(string, ...any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Reads) != 2 || rep.Reads[0].Status != EqEqual || rep.Reads[1].Status != EqDiffer {
+		t.Fatalf("reads: %+v", rep.Reads)
+	}
+	if len(rep.Writes) != 2 || rep.Writes[0].Status != EqEqual || rep.Writes[1].Status != EqDiffer {
+		t.Fatalf("writes: %+v", rep.Writes)
+	}
+	if md := EquivalenceMarkdown(rep); !strings.Contains(md, "| R10 | Count | DIFFER |") {
+		t.Fatalf("markdown:\n%s", md)
+	}
+}
