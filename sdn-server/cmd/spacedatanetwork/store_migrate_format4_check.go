@@ -26,6 +26,11 @@ import (
 
 // ---- check --------------------------------------------------------------------------
 
+// migrate4ReadCIDs is how many CIDs one GET or TAGS names: a read request
+// must fit a read slot's request area (64 KiB by default, C-6) at 36 bytes a
+// CID.
+const migrate4ReadCIDs = 1024
+
 // typeFields is what a type's rules (format 2's rule text, contract §2.3)
 // extract: the legacy index columns COL0..COL3, the epoch, the object key.
 type typeFields struct {
@@ -195,6 +200,7 @@ func (m *migrator4) checkSchema(ctx context.Context, schema string, c *migrate4C
 		return nil, fmt.Errorf("%s: %w", schema, err)
 	}
 	tables := m.bySchema[schema]
+	m.logf("checking %s", schema)
 	tableOf := make(map[string]int, len(tables)) // producer token -> table index (name order)
 	for i, t := range tables {
 		tableOf[t.Token] = i
@@ -217,13 +223,19 @@ func (m *migrator4) checkSchema(ctx context.Context, schema string, c *migrate4C
 				cids = append(cids, e.CID)
 			}
 		}
-		recs, err := m.api.Get(ctx, typ, cids, true, true)
-		if err != nil {
-			return nil, fmt.Errorf("%s get: %w", typ, err)
-		}
-		tags, err := m.api.Tags(ctx, typ, cids)
-		if err != nil {
-			return nil, fmt.Errorf("%s tags: %w", typ, err)
+		var recs []format4.Rec
+		var tags []format4.TagRow
+		for k := 0; k < len(cids); k += migrate4ReadCIDs {
+			chunk := cids[k:min(k+migrate4ReadCIDs, len(cids))]
+			r, err := m.api.Get(ctx, typ, chunk, true, true)
+			if err != nil {
+				return nil, fmt.Errorf("%s get: %w", typ, err)
+			}
+			tg, err := m.api.Tags(ctx, typ, chunk)
+			if err != nil {
+				return nil, fmt.Errorf("%s tags: %w", typ, err)
+			}
+			recs, tags = append(recs, r...), append(tags, tg...)
 		}
 		copies := map[string][]format4.Rec{}
 		for _, r := range recs {
@@ -401,7 +413,10 @@ func (m *migrator4) checkColumns(ctx context.Context, schema, typ string, f type
 		go func() {
 			defer wg.Done()
 			for p := range work {
-				h, err := m.api.Head(ctx, format4.Query{Type: typ, CID: p.e.CID, Preds: p.preds})
+				// The record by its seq (= the index rowid, checked per copy):
+				// a seq range is the engine's cursor path (0.16 ms a probe on
+				// the fixture; by CID a HEAD took 5 s, a type-wide scan).
+				h, err := m.api.Head(ctx, format4.Query{Type: typ, SeqAfter: p.e.RowID - 1, SeqThrough: p.e.RowID, Preds: p.preds})
 				mu.Lock()
 				switch {
 				case err != nil:
