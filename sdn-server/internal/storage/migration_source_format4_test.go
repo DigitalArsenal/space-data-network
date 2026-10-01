@@ -221,3 +221,77 @@ func TestMigrationSourceFormat4CopiesAcrossTableGroups(t *testing.T) {
 		r++
 	}
 }
+
+// SchemaTags returns exactly one schema's tag rows, whether they lie in dense
+// rowid runs (read as ranges, other schemas' rows skipped) or scattered (read
+// by rowid), with every value exact (text crosses the packed JSON cell as hex).
+func TestMigrationSourceFormat4SchemaTags(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewFlatSQLStore(dir, bootTestValidator(t), WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{}
+	tag := func(schema string, i int) {
+		t.Helper()
+		cid := fmt.Sprintf("c-%s-%d", schema, i)
+		url := fmt.Sprintf("https://example.test/ø/%d", i)
+		at := int64(1790000000 + i)
+		var created any = at
+		if i%7 == 0 {
+			created, at = nil, 0 // created_at NULL reads as 0
+		}
+		if _, err := tx.Exec(`INSERT INTO sdn_record_source_tags (schema_name, cid, provider_id, source_name, source_url, batch_id,
+			content_key_id, producer_peer_id, producer_public_key, created_at) VALUES (?, ?, 'p', 's', ?, ?, 'ck', 'pp', 'pk', ?)`,
+			schema, cid, url, fmt.Sprintf("b%d", i%3), created); err != nil {
+			t.Fatal(err)
+		}
+		if schema == "OMM.fbs" {
+			want[fmt.Sprintf("%s|p|s|%s|b%d|ck|pp|pk|%d", cid, url, i%3, at)] = true
+		}
+	}
+	// A dense run, an interleaved stretch, scattered rows among another
+	// schema's.
+	for i := 0; i < 300; i++ {
+		tag("OMM.fbs", i)
+	}
+	for i := 300; i < 600; i++ {
+		tag("OMM.fbs", i)
+		tag("CAT.fbs", i)
+	}
+	for i := 600; i < 2000; i++ {
+		if i%37 == 0 {
+			tag("OMM.fbs", i)
+		}
+		tag("CAT.fbs", i)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	src := &MigrationSource{s: s, base: dir}
+	got := map[string]bool{}
+	if err := src.SchemaTags("OMM.fbs", func(cid string, lt LegacyTag) error {
+		k := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%d", cid, lt.ProviderID, lt.SourceName, lt.SourceURL, lt.BatchID,
+			lt.ContentKeyID, lt.ProducerPeerID, lt.ProducerPublicKey, lt.CreatedAt)
+		if got[k] {
+			t.Fatalf("%s twice", k)
+		}
+		got[k] = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%d OMM tags, want %d", len(got), len(want))
+	}
+	for k := range want {
+		if !got[k] {
+			t.Fatalf("missing %s", k)
+		}
+	}
+}

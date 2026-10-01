@@ -10,16 +10,23 @@ package storage
 //     the record read are the same seek). The copy walks these rows (their
 //     rowid is the record's format-4 seq); the check compares the columns
 //     with what the format-4 engine extracts from the same bytes;
+//   - a schema's tag rows in one ordered pass (SchemaTags);
 //   - the IQC ingest identities format 1 holds, which the engine keeps so a
 //     re-fetch of the same capture stays a duplicate after the migration.
 //
 // Everything is read through the format-1 engine (MigrationSource); nothing is
-// written.
+// written. Scalar columns come back packed in one JSON cell per row
+// (packedRow): the engine's driver costs about 3 µs a cell, which made a
+// nine-column tag row 31 µs and a packed one 6.6 µs on the host-02-sized
+// fixture.
 
 import (
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
@@ -57,10 +64,11 @@ func (c IndexCopies) Orphan() bool {
 	return true
 }
 
-// copyJoinGroup is how many producer tables one page query joins (SQLite
-// joins at most 64 tables); a schema with more is read in groups over the
-// same rowid range.
-const copyJoinGroup = 32
+// copyJoinGroup is how many producer tables one page query joins: its packed
+// row holds 9 + 6 values per table, and a SQLite function takes at most 127
+// arguments. A schema with more tables is read in groups over the same rowid
+// range.
+const copyJoinGroup = 16
 
 // IndexPageCopies returns up to limit index rows of schema with rowid >
 // after, in rowid order, held and orphan alike, each with which of tables
@@ -76,16 +84,19 @@ func (m *MigrationSource) IndexPageCopies(schema string, tables []LegacyTable, a
 	hi := int64(-1) // the page's last rowid, once the first group has read it
 	for g := 0; g == 0 || g < len(tables); g += copyJoinGroup {
 		group := tables[min(g, len(tables)):min(g+copyJoinGroup, len(tables))]
-		var cols, joins strings.Builder
+		var cols, data, joins strings.Builder
 		for i, t := range group {
 			fmt.Fprintf(&cols, ", t%d.cid IS NOT NULL", i)
 			if withRecords {
-				fmt.Fprintf(&cols, ", t%[1]d.peer_id, t%[1]d.timestamp, t%[1]d.data, t%[1]d.record_length, t%[1]d.signature_hex, t%[1]d.created_at", i)
+				fmt.Fprintf(&cols, ", %s, t%[2]d.timestamp, t%[2]d.record_length, %s, t%[2]d.created_at",
+					packText(fmt.Sprintf("t%d.peer_id", i)), i, packText(fmt.Sprintf("t%d.signature_hex", i)))
+				fmt.Fprintf(&data, ", t%d.data", i)
 			}
 			fmt.Fprintf(&joins, " LEFT JOIN %s t%d ON t%d.cid = idx.cid", t.Name, i, i)
 		}
-		q := `SELECT idx.rowid, idx.cid, idx.norad_cat_id, idx.entity_id, idx.object_type, idx.ops_status_code, idx.epoch_unix,
-			idx.epoch_day, idx.source_timestamp` + cols.String() + ` FROM sdn_record_index idx ` + scan + joins.String() + `
+		q := `SELECT json_array(idx.rowid, ` + packText("idx.cid") + `, idx.norad_cat_id, ` + packText("idx.entity_id") + `, ` +
+			packText("idx.object_type") + `, ` + packText("idx.ops_status_code") + `, idx.epoch_unix, ` + packText("idx.epoch_day") +
+			`, idx.source_timestamp` + cols.String() + `)` + data.String() + ` FROM sdn_record_index idx ` + scan + joins.String() + `
 			WHERE idx.schema_name = ? AND idx.rowid > ?`
 		args := []any{schema, after}
 		if hi < 0 {
@@ -100,28 +111,38 @@ func (m *MigrationSource) IndexPageCopies(schema string, tables []LegacyTable, a
 			return nil, err
 		}
 		k := 0
+		per := 1
+		if withRecords {
+			per = 6
+		}
 		for rows.Next() {
-			var e IndexEntry
-			dst := []any{&e.RowID, &e.CID, &e.NoradCatID, &e.EntityID, &e.ObjectType, &e.OpsStatusCode, &e.EpochUnix,
-				&e.EpochDay, &e.SourceTimestamp}
-			held := make([]bool, len(group))
-			type cells struct {
-				peer      sql.NullString
-				ts, n, at sql.NullInt64
-				data      []byte
-				sig       sql.NullString
-			}
-			cs := make([]cells, len(group))
-			for i := range group {
-				dst = append(dst, &held[i])
-				if withRecords {
-					dst = append(dst, &cs[i].peer, &cs[i].ts, &cs[i].data, &cs[i].n, &cs[i].sig, &cs[i].at)
+			var packed string
+			blobs := make([][]byte, len(group))
+			dst := []any{&packed}
+			if withRecords {
+				for i := range blobs {
+					dst = append(dst, &blobs[i])
 				}
 			}
 			if err := rows.Scan(dst...); err != nil {
 				rows.Close()
 				return nil, err
 			}
+			r, err := decodePacked(packed, 9+per*len(group))
+			if err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("%s index page: %w", schema, err)
+			}
+			var e IndexEntry
+			var rowid, ts sql.NullInt64
+			var cidText sql.NullString
+			if err := errors.Join(r.num(0, &rowid), r.text(1, &cidText), r.num(2, &e.NoradCatID), r.text(3, &e.EntityID),
+				r.text(4, &e.ObjectType), r.text(5, &e.OpsStatusCode), r.num(6, &e.EpochUnix), r.text(7, &e.EpochDay),
+				r.num(8, &ts)); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("%s index page: %w", schema, err)
+			}
+			e.RowID, e.CID, e.SourceTimestamp = rowid.Int64, cidText.String, ts.Int64
 			if g == 0 {
 				out = append(out, IndexCopies{IndexEntry: e, Held: make([]bool, len(tables))})
 				if withRecords {
@@ -134,18 +155,31 @@ func (m *MigrationSource) IndexPageCopies(schema string, tables []LegacyTable, a
 			c := &out[k]
 			k++
 			for i := range group {
-				c.Held[g+i] = held[i]
-				if !withRecords || !held[i] {
+				base := 9 + per*i
+				var held sql.NullInt64
+				if err := r.num(base, &held); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("%s index page: %w", schema, err)
+				}
+				c.Held[g+i] = held.Int64 != 0
+				if !withRecords || !c.Held[g+i] {
 					continue
 				}
-				r := LegacyRecord{RowID: e.RowID, CID: e.CID, PeerID: cs[i].peer.String, Timestamp: cs[i].ts.Int64, Stored: cs[i].data,
-					RecordLength: cs[i].n.Int64, SignatureHex: cs[i].sig.String, CreatedAt: cs[i].at.Int64}
-				if r.Plain, err = m.s.openStoredRecordBytes(schema, r.Stored); err != nil {
+				var peer, sig sql.NullString
+				var stamp, n, at sql.NullInt64
+				if err := errors.Join(r.text(base+1, &peer), r.num(base+2, &stamp), r.num(base+3, &n), r.text(base+4, &sig),
+					r.num(base+5, &at)); err != nil {
 					rows.Close()
-					return nil, fmt.Errorf("record %s: %w", r.CID, err)
+					return nil, fmt.Errorf("%s index page: %w", schema, err)
 				}
-				r.Sealed = encfield.IsSealed(r.Stored)
-				c.Copies[g+i] = r
+				rec := LegacyRecord{RowID: e.RowID, CID: e.CID, PeerID: peer.String, Timestamp: stamp.Int64, Stored: blobs[i],
+					RecordLength: n.Int64, SignatureHex: sig.String, CreatedAt: at.Int64}
+				if rec.Plain, err = m.s.openStoredRecordBytes(schema, rec.Stored); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("record %s: %w", rec.CID, err)
+				}
+				rec.Sealed = encfield.IsSealed(rec.Stored)
+				c.Copies[g+i] = rec
 			}
 		}
 		rows.Close()
@@ -162,6 +196,115 @@ func (m *MigrationSource) IndexPageCopies(schema string, tables []LegacyTable, a
 		}
 	}
 	return out, nil
+}
+
+// SchemaTags reads in runs: a run of at least schemaTagRunMin sorted rowids
+// whose span is at most twice its length is one rowid range (other schemas'
+// rows inside it are skipped); the rest are named, schemaTagBatch at a time.
+const (
+	schemaTagRunMin = 64
+	schemaTagRunMax = 8192
+	schemaTagBatch  = 500
+)
+
+var schemaTagColumns = `json_array(` + packText("cid") + `, ` + packText("provider_id") + `, ` + packText("source_name") + `, ` +
+	packText("source_url") + `, ` + packText("batch_id") + `, ` + packText("content_key_id") + `, ` + packText("producer_peer_id") +
+	`, ` + packText("producer_public_key") + `, created_at)`
+
+// SchemaTags calls fn for every sdn_record_source_tags row of schema, in no
+// particular order, in one pass over the schema's rows: their rowids come
+// from an index on schema_name (covering, a range scan), sorted, then the rows
+// are read in rowid ranges and sorted batches, so table pages are visited in
+// order. A probe per CID visits the CID-keyed index and the table at random
+// instead, which on a cold store is most of a page-at-a-time copy's time.
+func (m *MigrationSource) SchemaTags(schema string, fn func(cid string, t LegacyTag) error) error {
+	ids, err := m.int64s(`SELECT rowid FROM sdn_record_source_tags WHERE schema_name = ?`, schema)
+	if err != nil {
+		return err
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	read := func(where string, args ...any) error {
+		rows, err := m.s.db.Query(`SELECT `+schemaTagColumns+` FROM sdn_record_source_tags WHERE `+where, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var packed string
+			if err := rows.Scan(&packed); err != nil {
+				return err
+			}
+			r, err := decodePacked(packed, 9)
+			if err != nil {
+				return fmt.Errorf("%s tags: %w", schema, err)
+			}
+			var v [8]sql.NullString
+			var at sql.NullInt64
+			for i := range v {
+				if err := r.text(i, &v[i]); err != nil {
+					return fmt.Errorf("%s tags: %w", schema, err)
+				}
+			}
+			if err := r.num(8, &at); err != nil {
+				return fmt.Errorf("%s tags: %w", schema, err)
+			}
+			t := LegacyTag{CreatedAt: at.Int64}
+			t.ProviderID, t.SourceName, t.SourceURL, t.BatchID = v[1].String, v[2].String, v[3].String, v[4].String
+			t.ContentKeyID, t.ProducerPeerID, t.ProducerPublicKey = v[5].String, v[6].String, v[7].String
+			if err := fn(v[0].String, t); err != nil {
+				return err
+			}
+		}
+		return rows.Err()
+	}
+	var named []any
+	flush := func() error {
+		if len(named) == 0 {
+			return nil
+		}
+		err := read(`rowid IN (`+migratePlaceholders(len(named))+`)`, named...)
+		named = named[:0]
+		return err
+	}
+	for i := 0; i < len(ids); {
+		j := i
+		for j+1 < len(ids) && j+1-i < schemaTagRunMax && ids[j+1]-ids[i] < 2*int64(j+2-i) {
+			j++
+		}
+		if j-i+1 >= schemaTagRunMin {
+			if err := read(`rowid >= ? AND rowid <= ? AND schema_name = ?`, ids[i], ids[j], schema); err != nil {
+				return err
+			}
+		} else {
+			for _, id := range ids[i : j+1] {
+				named = append(named, id)
+				if len(named) == schemaTagBatch {
+					if err := flush(); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		i = j + 1
+	}
+	return flush()
+}
+
+func (m *MigrationSource) int64s(q string, args ...any) ([]int64, error) {
+	rows, err := m.s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // IngestIdentities returns the ingest identity format 1 holds for each CID of
@@ -210,4 +353,58 @@ func ingestIdentityDigest(identity string) ([32]byte, error) {
 	}
 	copy(d[:], raw)
 	return d, nil
+}
+
+// packedRow is one row's scalar columns, packed by SQLite into one JSON array
+// cell: integers as numbers, text as the hex of its bytes (exact whatever its
+// encoding; JSON text would pass through encoding/json's UTF-8 repair), NULL
+// as null.
+type packedRow []any
+
+// packText packs a TEXT column for a packedRow.
+func packText(expr string) string { return "iif(" + expr + " IS NULL, NULL, hex(" + expr + "))" }
+
+func decodePacked(cell string, n int) (packedRow, error) {
+	dec := json.NewDecoder(strings.NewReader(cell))
+	dec.UseNumber()
+	var r packedRow
+	if err := dec.Decode(&r); err != nil {
+		return nil, fmt.Errorf("packed row: %w", err)
+	}
+	if len(r) != n {
+		return nil, fmt.Errorf("packed row of %d values, want %d", len(r), n)
+	}
+	return r, nil
+}
+
+func (r packedRow) num(i int, dst *sql.NullInt64) error {
+	switch v := r[i].(type) {
+	case nil:
+		*dst = sql.NullInt64{}
+	case json.Number:
+		n, err := v.Int64()
+		if err != nil {
+			return fmt.Errorf("packed value %d: %w", i, err)
+		}
+		*dst = sql.NullInt64{Int64: n, Valid: true}
+	default:
+		return fmt.Errorf("packed value %d is %T, not an integer", i, r[i])
+	}
+	return nil
+}
+
+func (r packedRow) text(i int, dst *sql.NullString) error {
+	switch v := r[i].(type) {
+	case nil:
+		*dst = sql.NullString{}
+	case string:
+		b, err := hex.DecodeString(v)
+		if err != nil {
+			return fmt.Errorf("packed value %d: %w", i, err)
+		}
+		*dst = sql.NullString{String: string(b), Valid: true}
+	default:
+		return fmt.Errorf("packed value %d is %T, not text", i, r[i])
+	}
+	return nil
 }
