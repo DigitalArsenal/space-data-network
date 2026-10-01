@@ -686,6 +686,12 @@ type ControlCopyStats struct {
 // store. It runs on the legacy engine's own connection (ATTACH through its
 // file root), holding the store lock.
 func (m *MigrationSource) CopyControl(dstName, ftsName string) (ControlCopyStats, error) {
+	return m.copyControl(dstName, ftsName, nil)
+}
+
+// copyControl is the control copy: the control tables less leaveOut, and
+// the interim full-text index into ftsName.
+func (m *MigrationSource) copyControl(dstName, ftsName string, leaveOut map[string]bool) (ControlCopyStats, error) {
 	var st ControlCopyStats
 	for _, name := range []string{dstName, ftsName} {
 		if strings.ContainsAny(name, "/\\'") || name == "" {
@@ -717,7 +723,7 @@ func (m *MigrationSource) CopyControl(dstName, ftsName string) (ControlCopyStats
 	}
 	isControl := func(table string) bool {
 		switch {
-		case strings.HasPrefix(table, "sqlite_"), strings.HasPrefix(table, "sds_p_"), legacyRecordTables[table]:
+		case strings.HasPrefix(table, "sqlite_"), strings.HasPrefix(table, "sds_p_"), legacyRecordTables[table], leaveOut[table]:
 			return false
 		case strings.HasPrefix(table, "sdn_record_fts"):
 			return false // copied as the FTS virtual table below
