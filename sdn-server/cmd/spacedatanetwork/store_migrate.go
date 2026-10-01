@@ -91,18 +91,20 @@ const (
 )
 
 var (
-	storeMigrateStore     string
-	storeMigrateOut       string
-	storeMigrateInventory bool
-	storeMigrateSnapshot  string
-	storeMigrateDelta     bool
-	storeMigrateNoActive  bool
-	storeMigratePageRows  int
+	storeMigrateStore      string
+	storeMigrateOut        string
+	storeMigrateInventory  bool
+	storeMigrateSnapshot   string
+	storeMigrateDelta      bool
+	storeMigrateNoActive   bool
+	storeMigratePageRows   int
+	storeMigrateTo         string
+	storeMigrateVerifyOnly bool
 )
 
 var storeMigrateCmd = &cobra.Command{
 	Use:   "store-migrate",
-	Short: "Migrate a legacy record store to the FlatSQL partition store (format 2), offline",
+	Short: "Migrate a legacy record store to the FlatSQL partition store (format 2, or format 4 with --to 4), offline",
 	Long: `Copy the record store named by --config (or --store) into the FlatSQL
 partition store (store format 2), verify it against the legacy store, and
 activate it. The daemon must be stopped: the command takes the store lock.
@@ -119,7 +121,14 @@ activate it. The daemon must be stopped: the command takes the store lock.
   --no-activate     verify but leave the legacy store active
 
 Progress is journalled; rerun the same command to resume after a failure.
-Format 2 runs only with SDN_STORE_FORMAT=2, and only on an activated store.`,
+Format 2 runs only with SDN_STORE_FORMAT=2, and only on an activated store.
+
+  --to 4            migrate to store format 4 (alias: sqlite) instead, in
+                    place (store_migrate_format4.go); with --inventory,
+                    --page-rows and --verify-only
+  --verify-only     (--to 4) re-check an activated format-4 store against the
+                    format-1 store kept in pre-format4/; change nothing
+Format 4 runs only with SDN_STORE_FORMAT=4 (or sqlite).`,
 	RunE: runStoreMigrate,
 }
 
@@ -131,6 +140,8 @@ func init() {
 	storeMigrateCmd.Flags().BoolVar(&storeMigrateDelta, "delta", false, "copy what changed since the snapshot pass (daemon stopped), verify, activate")
 	storeMigrateCmd.Flags().BoolVar(&storeMigrateNoActive, "no-activate", false, "verify, but do not activate format 2")
 	storeMigrateCmd.Flags().IntVar(&storeMigratePageRows, "page-rows", 2000, "records per read page")
+	storeMigrateCmd.Flags().StringVar(&storeMigrateTo, "to", "", "target store format: 2 (default) or 4 (alias sqlite)")
+	storeMigrateCmd.Flags().BoolVar(&storeMigrateVerifyOnly, "verify-only", false, "with --to 4: re-check an activated format-4 store, change nothing")
 	rootCmd.AddCommand(storeMigrateCmd)
 }
 
@@ -148,6 +159,16 @@ func runStoreMigrate(cmd *cobra.Command, args []string) error {
 		if store == "" {
 			return errors.New("config has no storage.path")
 		}
+	}
+	target, err := migrateTargetFormat(storeMigrateTo)
+	if err != nil {
+		return err
+	}
+	if target == 4 {
+		return runStoreMigrate4(cmd, store)
+	}
+	if storeMigrateVerifyOnly {
+		return errors.New("--verify-only needs --to 4")
 	}
 	opts := migrateOptions{
 		Store: store, Out: storeMigrateOut, Snapshot: storeMigrateSnapshot, Delta: storeMigrateDelta,
