@@ -27,6 +27,10 @@ type ReadSpec struct {
 	Arm, Label, Class, Store, Out string
 	Warm                          int // -1 = per-shape default
 	CallLimit                     time.Duration
+	// Round > 1 is a further cold round (another fresh process on another
+	// fresh clone): its samples add cold samples per shape; its answers are
+	// not kept (round 1's are).
+	Round int
 }
 
 // hydrateClasses are the classes format 1 serves from its engine hot window
@@ -38,7 +42,11 @@ var hydrateClasses = map[string]bool{"R17": true, "R18": true, "R19": true}
 // RunReads measures shapes (all of spec.Class) on one arm and writes the run
 // and the cold answers into spec.Out.
 func RunReads(spec ReadSpec, shapes []Shape) (*Run, error) {
-	r := &Run{Kind: KindReads, Arm: spec.Arm, Format: ArmFormat(spec.Arm), Label: spec.Label, Class: spec.Class,
+	runClass := spec.Class
+	if spec.Round > 1 {
+		runClass = fmt.Sprintf("%s-r%d", spec.Class, spec.Round)
+	}
+	r := &Run{Kind: KindReads, Arm: spec.Arm, Format: ArmFormat(spec.Arm), Label: spec.Label, Class: runClass,
 		Started: time.Now().UTC().Format(time.RFC3339), Machine: ThisMachine(), LoadStart: Load(), Extra: map[string]any{}}
 	r.Mem = append(r.Mem, Snapshot("start", ""))
 	s, openMs, err := OpenArm(spec.Arm, spec.Store)
@@ -167,8 +175,10 @@ func RunReads(spec ReadSpec, shapes []Shape) (*Run, error) {
 		if _, err := WriteRun(spec.Out, r); err != nil {
 			return r, err
 		}
-		if err := WriteAnswers(spec.Out, answers); err != nil {
-			return r, err
+		if spec.Round <= 1 {
+			if err := WriteAnswers(spec.Out, answers); err != nil {
+				return r, err
+			}
 		}
 	}
 	return r, nil
