@@ -70,10 +70,20 @@ func New() *Fake {
 	return &Fake{opt: format4.Options{Create: format4.CreateFresh, GseqFloor: 1}, activated: true, types: map[string]*ftype{}}
 }
 
+// opened is every data root a Fake has opened in this process, with the
+// last Fake on it: a reopen after Close continues its state, as a daemon
+// restart continues the engine's files (§4: acked writes survive).
+var opened = struct {
+	sync.Mutex
+	m map[string]*Fake
+}{m: map[string]*Fake{}}
+
 // Open emulates format4.Open's create modes (§3.3 config tag 2) and, with a
 // DataRoot, the markers the engine writes (§2.2): MIGRATED then STORE at a
 // fresh create, and at Activate for a migration target. Records live in
-// memory only: a reopen starts empty.
+// memory, for the life of the process: reopening a root after Close
+// continues where the closed Fake stopped, and a root that is open refuses a
+// second opener (one engine per store).
 func Open(ctx context.Context, opt format4.Options) (*Fake, error) {
 	f := New()
 	f.opt = opt
@@ -109,6 +119,19 @@ func Open(ctx context.Context, opt format4.Options) (*Fake, error) {
 	default:
 		return nil, &format4.StatusError{Op: "init", Status: format4.StatusArg, Msg: "create mode"}
 	}
+	key := filepath.Clean(opt.DataRoot)
+	opened.Lock()
+	defer opened.Unlock()
+	if prev := opened.m[key]; prev != nil {
+		prev.mu.Lock()
+		closed := prev.closed
+		f.types, f.stats, f.quota = prev.types, prev.stats, prev.quota
+		prev.mu.Unlock()
+		if !closed {
+			return nil, &format4.StatusError{Op: "init", Status: format4.StatusBusy, Msg: "the store is open"}
+		}
+	}
+	opened.m[key] = f
 	return f, nil
 }
 
