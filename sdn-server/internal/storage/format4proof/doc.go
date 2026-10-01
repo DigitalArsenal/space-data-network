@@ -28,4 +28,10 @@
 // cp -c); P4PROOF_OUT the results. Fixture paths are only ever cloned, never
 // opened or written. Without them every entry point skips, so the package's
 // unit tests are all that CI runs.
+//
+// run.sh runs every phase in order on the integration tree (build, prepare,
+// migrate, bytes, reads, ingest, grown reads, M01, writes, crash, LazyFS,
+// growth, equivalence, report); lazyfs.sh runs the power-loss rounds in a
+// Linux container. P4PROOF_EQ_ARM=f2 compares format 2 with format 1
+// through the same comparator, which checks the harness on a known engine.
 package format4proof
