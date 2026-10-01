@@ -22,9 +22,10 @@ const (
 	EnvOut        = "P4PROOF_OUT"     // results: run JSON, answers, tables, the gate report
 	EnvArms       = "P4PROOF_ARMS"    // comma list, default "s,f1,f2"
 	EnvClasses    = "P4PROOF_CLASSES" // comma list of benchset ids, default every read the fixture covers
-	EnvWarm       = "P4PROOF_WARM"    // warm passes per shape (overrides the per-class default)
+	EnvWarm       = "P4PROOF_WARM"    // warm passes per shape (default 3)
 	EnvCallLimit  = "P4PROOF_CALL_LIMIT_S"
 	EnvColdRounds = "P4PROOF_COLD_ROUNDS" // cold rounds per (arm, class), each a fresh process on a fresh clone (1)
+	EnvShape      = "P4PROOF_SHAPE"       // a regular expression: re-run only the shapes it names (samples pooled, answers kept from the first run)
 	EnvSDNBin     = "P4PROOF_SDN_BIN"     // a spacedatanetwork binary (store-migrate kill loops)
 	EnvChild      = "P4PROOF_CHILD"       // set by the driver for a measurement child
 	// The real host-02 copy (benchset h2copy: R21 PNM, R22, R24), per arm.
@@ -41,7 +42,8 @@ type Config struct {
 	Work, Out  string
 	Arms       []string
 	Classes    []string
-	Warm       int // -1 = per-class default
+	Shape      string // EnvShape
+	Warm       int    // -1 = the default (3)
 	ColdRounds int
 	CallLimit  int // seconds
 	SDNBin     string
@@ -57,6 +59,7 @@ func ConfigFromEnv() Config {
 		Out:        os.Getenv(EnvOut),
 		Arms:       splitList(os.Getenv(EnvArms)),
 		Classes:    splitList(os.Getenv(EnvClasses)),
+		Shape:      os.Getenv(EnvShape),
 		Warm:       envInt(EnvWarm, -1),
 		ColdRounds: envInt(EnvColdRounds, 1),
 		CallLimit:  envInt(EnvCallLimit, 330),

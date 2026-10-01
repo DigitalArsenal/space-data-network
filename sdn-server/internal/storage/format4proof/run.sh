@@ -16,13 +16,19 @@
 #   reads      every benchset read, cold and warm, s / f1 / f2 back to back
 #   ingest     phases A+B (the +28% store) and C (same-type producers)
 #   grown      the reads again on the +28% stores
-#   m01        reads during W01 + W06 (P4PROOF_M01_MINUTES for the long run)
+#   m01        reads during W01 + W06, writes repeated for 10 minutes
+#              (P4PROOF_M01_MINUTES)
 #   writes     W01-W10 with record-set digests
-#   crash      kill -9 loops (ingest, supersede) on format 4
-#   lazyfs     the power-loss rounds in a Linux container (lazyfs.sh)
-#   growth     sds-tb-gen count-scaled steps: f2 to G1 (P4PROOF_GROWTH_STEPS_F2),
-#              s to G2 (P4PROOF_GROWTH_STEPS_S); the 120 GiB floor stops either
-#              early (it reports where)
+#   crash      kill -9 loops (ingest, supersede) on format 4, 100 rounds each
+#   lazyfs     the power-loss rounds in a Linux container (lazyfs.sh), 100 each
+#   growth     sds-tb-gen count-scaled steps to G1, about 17.5M records
+#              (P4PROOF_GROWTH_STEPS_F2, P4PROOF_GROWTH_STEPS_S); the 120 GiB
+#              floor stops either early (it reports where)
+#
+# Sample sizes are the owner's (2026-10-01 evening, "fewer runs please"):
+# one cold and three warm passes per read shape, ingest and supersede once
+# per arm. A shape within 10% of a bar (gates.md lists it) is re-run alone:
+#   P4PROOF_CLASSES=<class> P4PROOF_SHAPE='<regexp>' run.sh <dir> reads
 #   equivalence, report
 #
 # Environment: SDN_F1_FIXTURE, SDN_F2_FIXTURE (P4_FIXTURE optional: the
@@ -60,12 +66,12 @@ for phase in "${PHASES[@]}"; do
     m01) tst TestProofM01 ;;
     writes) tst TestProofWrites ;;
     crash) P4PROOF_CRASH=1 tst TestProofCrash ;;
-    lazyfs) bash "$HERE/lazyfs.sh" "$DIR/lazyfs" "${P4PROOF_LAZYFS_ROUNDS:-25}" s | tee -a "$DIR/out/run.log" ;;
+    lazyfs) bash "$HERE/lazyfs.sh" "$DIR/lazyfs" "${P4PROOF_LAZYFS_ROUNDS:-100}" s | tee -a "$DIR/out/run.log" ;;
     growth)
       # Count-scaled (MPE-sized records), Zipf producers, from a fixture
       # clone; the volume keeps 120 GiB free.
       for arm in s f2; do
-        fmt=4; steps="${P4PROOF_GROWTH_STEPS_S:-G0=1,G1=17459492,G2=69837968}"
+        fmt=4; steps="${P4PROOF_GROWTH_STEPS_S:-G0=1,G1=17459492}"
         [[ $arm == f2 ]] && { fmt=2; steps="${P4PROOF_GROWTH_STEPS_F2:-G0=1,G1=17459492}"; }
         src="${P4_FIXTURE:-$DIR/work/p4-fixture}"; [[ $arm == f2 ]] && src="$SDN_F2_FIXTURE"
         st="$DIR/work/growth-$arm"; rm -rf "$st"; cp -c -R "$src" "$st" 2>/dev/null || cp -a --reflink=auto "$src" "$st"

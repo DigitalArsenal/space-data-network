@@ -20,7 +20,7 @@ set -euo pipefail
 
 if [[ "${1:-}" != "--inner" ]]; then
   WORK="${1:?usage: lazyfs.sh <work dir> [rounds] [arm]}"
-  ROUNDS="${2:-25}"
+  ROUNDS="${2:-100}"
   ARM="${3:-s}"
   HERE="$(cd "$(dirname "$0")" && pwd)"
   REPO="$(cd "$HERE/../../../.." && pwd)"

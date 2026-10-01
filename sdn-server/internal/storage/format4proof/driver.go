@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,6 +62,18 @@ func (c Config) withClone(src, name string, fn func(clone string) error) error {
 	return fn(clone)
 }
 
+// shapeFilter compiles EnvShape (nil when unset).
+func shapeFilter(expr string) (*regexp.Regexp, error) {
+	if expr == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", EnvShape, err)
+	}
+	return re, nil
+}
+
 func (c Config) logPath(name string) string {
 	return filepath.Join(c.Out, "logs", safeName(name)+".log")
 }
@@ -101,14 +114,24 @@ func DriveReads(ctx context.Context, c Config, label string, logf Logf) error {
 	if label == FixtureH2Copy {
 		fixture = FixtureH2Copy
 	}
+	only, err := shapeFilter(c.Shape)
+	if err != nil {
+		return err
+	}
 	classes := c.Classes
 	if len(classes) == 0 {
-		for _, cl := range ClassesOf(shapes) {
-			if len(ShapesOf(shapes, cl, fixture)) > 0 {
-				classes = append(classes, cl)
-			}
+		classes = ClassesOf(shapes)
+	}
+	var have []string
+	for _, cl := range classes {
+		if len(ShapesOf(shapes, cl, fixture, only)) > 0 {
+			have = append(have, cl)
 		}
 	}
+	if len(have) == 0 {
+		return fmt.Errorf("no %s shapes in classes %v match %s %q", fixture, classes, EnvShape, c.Shape)
+	}
+	classes = have
 	var firstErr error
 	rounds := c.ColdRounds
 	if rounds < 1 {
@@ -125,7 +148,7 @@ func DriveReads(ctx context.Context, c Config, label string, logf Logf) error {
 				name := fmt.Sprintf("reads-%s-%s-%s-r%d", label, arm, class, round)
 				err := c.withClone(src, name, func(clone string) error {
 					spec := ReadSpec{Arm: arm, Label: label, Class: class, Store: clone, Out: c.Out, Warm: c.Warm,
-						CallLimit: time.Duration(c.CallLimit) * time.Second, Round: round}
+						CallLimit: time.Duration(c.CallLimit) * time.Second, Round: round, Shape: c.Shape}
 					if round > 1 {
 						spec.Warm = 0 // further rounds add cold samples only
 					}
