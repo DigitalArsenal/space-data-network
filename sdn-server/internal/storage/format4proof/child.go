@@ -142,7 +142,11 @@ func ExecChild(spec *ChildSpec) error {
 		if spec.Read.Label == FixtureH2Copy {
 			fixture = FixtureH2Copy
 		}
-		sh := ShapesOf(shapes, spec.Read.Class, fixture)
+		only, err := shapeFilter(spec.Read.Shape)
+		if err != nil {
+			return err
+		}
+		sh := ShapesOf(shapes, spec.Read.Class, fixture, only)
 		if len(sh) == 0 {
 			return fmt.Errorf("no %s shapes for class %s", fixture, spec.Read.Class)
 		}

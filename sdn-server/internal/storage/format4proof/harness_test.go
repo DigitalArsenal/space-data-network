@@ -9,7 +9,9 @@ package format4proof
 //	go test -c -o /tmp/p4proof.test ./internal/storage/format4proof   (through scripts/go-with-wasmedge.sh)
 //	/tmp/p4proof.test -test.run 'TestProof(Prepare|Bytes|Ingest|Reads|M01|Writes|Equivalence|Report)$' -test.v -test.timeout 24h
 //
-// P4PROOF_LABEL=grown re-runs the reads on the stores the ingest left.
+// P4PROOF_LABEL=grown re-runs the reads on the stores the ingest left;
+// P4PROOF_CLASSES and P4PROOF_SHAPE re-run one shape (gates.md lists the
+// shapes within 10% of a bar with the values to set).
 
 import (
 	"context"
@@ -97,7 +99,7 @@ func TestProofReads(t *testing.T) {
 
 func TestProofM01(t *testing.T) {
 	c := requireEnv(t, EnvBenchset, EnvWork, EnvOut)
-	if err := DriveM01(context.Background(), c, envInt("P4PROOF_M01_IDLE_S", 30), envInt("P4PROOF_M01_MINUTES", 0), logfOf(t)); err != nil {
+	if err := DriveM01(context.Background(), c, envInt("P4PROOF_M01_IDLE_S", 30), envInt("P4PROOF_M01_MINUTES", 10), logfOf(t)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -110,14 +112,15 @@ func TestProofWrites(t *testing.T) {
 }
 
 // TestProofCrash runs the kill -9 loops (P4PROOF_CRASH=1) on fresh stores:
-// P4PROOF_CRASH_ARMS (default s), P4PROOF_CRASH_ROUNDS per scenario (25).
+// P4PROOF_CRASH_ARMS (default s), P4PROOF_CRASH_ROUNDS per scenario (100;
+// owner, 2026-10-01).
 func TestProofCrash(t *testing.T) {
 	c := requireEnv(t, "P4PROOF_CRASH", EnvWork, EnvOut)
 	arms := splitList(os.Getenv("P4PROOF_CRASH_ARMS"))
 	if len(arms) == 0 {
 		arms = []string{ArmS}
 	}
-	rounds := envInt("P4PROOF_CRASH_ROUNDS", 25)
+	rounds := envInt("P4PROOF_CRASH_ROUNDS", 100)
 	for _, arm := range arms {
 		for _, sc := range []string{ScenarioIngest, ScenarioSupersede} {
 			arm, sc := arm, sc

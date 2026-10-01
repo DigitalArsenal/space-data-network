@@ -37,7 +37,7 @@ func TestProofLazyFSPowerLoss(t *testing.T) {
 		t.Skip("run through lazyfs.sh (Linux, FUSE, LazyFS)")
 	}
 	c := requireEnv(t, EnvWork, EnvOut)
-	rounds := envInt("P4PROOF_LAZYFS_ROUNDS", 25)
+	rounds := envInt("P4PROOF_LAZYFS_ROUNDS", 100)
 	negative := os.Getenv("P4PROOF_LAZYFS_NEGATIVE")
 	arm := os.Getenv("P4PROOF_LAZYFS_ARM")
 	if arm == "" {

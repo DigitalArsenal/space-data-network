@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,7 +62,6 @@ type Shape struct {
 	Fixture string
 	Policy  Policy
 	Calls   []Call
-	Warm    int // warm passes; 0 = the class default
 }
 
 // Inputs are the fixture-derived lists some shapes need (taken once from a
@@ -273,7 +273,7 @@ func getShapes(class string, lists map[string][]string) []Shape {
 		if len(cids) == 0 {
 			continue
 		}
-		sh := Shape{Class: class, Name: schema, Schema: schema, Warm: 3}
+		sh := Shape{Class: class, Name: schema, Schema: schema}
 		for _, cid := range cids {
 			sh.Calls = append(sh.Calls, getCall(schema, cid))
 		}
@@ -1170,7 +1170,7 @@ func h2GetShapes(op BenchOp) ([]Shape, error) {
 	if err := json.Unmarshal(ps[0].CIDs, &cids); err != nil {
 		return nil, fmt.Errorf("R24 cids: %w", err)
 	}
-	sh := Shape{Class: op.ID, Name: "PNM.fbs", Schema: "PNM.fbs", Fixture: FixtureH2Copy, Warm: 3}
+	sh := Shape{Class: op.ID, Name: "PNM.fbs", Schema: "PNM.fbs", Fixture: FixtureH2Copy}
 	for _, cid := range cids {
 		sh.Calls = append(sh.Calls, getCall("PNM.fbs", cid))
 	}
@@ -1190,11 +1190,11 @@ func ClassesOf(shapes []Shape) []string {
 	return out
 }
 
-// ShapesOf filters shapes by class and fixture.
-func ShapesOf(shapes []Shape, class, fixture string) []Shape {
+// ShapesOf filters shapes by class and fixture, and by name when only is set.
+func ShapesOf(shapes []Shape, class, fixture string, only *regexp.Regexp) []Shape {
 	var out []Shape
 	for _, s := range shapes {
-		if s.Class == class && s.Fixture == fixture {
+		if s.Class == class && s.Fixture == fixture && (only == nil || only.MatchString(s.Name)) {
 			out = append(out, s)
 		}
 	}

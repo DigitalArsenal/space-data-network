@@ -33,6 +33,9 @@ type Check struct {
 	Info   bool    `json:"info,omitempty"`   // reported, not part of the gate
 	Pass   bool    `json:"pass"`
 	Note   string  `json:"note,omitempty"`
+	// Class and Shape name a read check's shape (EnvShape re-runs it).
+	Class string `json:"class,omitempty"`
+	Shape string `json:"shape,omitempty"`
 }
 
 // MarshalJSON writes an unmeasured number (NaN) as null and an errored one
@@ -97,6 +100,16 @@ func (g *Gate) noteLoads(runs []*Run) {
 			}
 		}
 	}
+}
+
+// nearBar reports a gated read check whose S lies within 10% of its bar,
+// either side. The owner's rule (2026-10-01): re-run only that shape before
+// calling it.
+func nearBar(c Check) bool {
+	if c.Info || c.Shape == "" || math.IsNaN(c.S) || math.IsInf(c.S, 0) || math.IsNaN(c.Bar) || math.IsInf(c.Bar, 0) || c.Bar <= 0 {
+		return false
+	}
+	return math.Abs(c.S-c.Bar) <= 0.1*c.Bar
 }
 
 // lowerOrEqual reports s <= bar with +Inf for errors; NaN (not measured) never passes.
@@ -233,7 +246,8 @@ func readsGate(runs []*Run) Gate {
 			continue // no baseline answers this shape; reported in the shape table
 		}
 		for _, m := range readMetrics {
-			c := Check{Item: k.Class + " " + k.Shape + " " + m.name, Unit: "ms", S: math.NaN(), F1: math.NaN(), F2: math.NaN()}
+			c := Check{Item: k.Class + " " + k.Shape + " " + m.name, Unit: "ms", S: math.NaN(), F1: math.NaN(), F2: math.NaN(),
+				Class: k.Class, Shape: k.Shape}
 			if a != nil {
 				c.F1 = m.get(a)
 			}

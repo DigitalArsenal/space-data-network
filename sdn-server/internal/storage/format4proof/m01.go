@@ -15,7 +15,8 @@ import (
 // (epoch.nearest, limit 200) each run at 20 calls a second. The reads are
 // timed idle first, then during the writes; the WAL is sampled every second.
 // With Minutes > 0 the write cycle repeats (a new OMM batch, then a
-// supersede keeping it) until the time is up: the 30-minute WAL-bounded run.
+// supersede keeping it) until the time is up: the sustained WAL-bounded run
+// (10 minutes by default; owner, 2026-10-01).
 
 // M01Spec is one M01 run.
 type M01Spec struct {
