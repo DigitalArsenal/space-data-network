@@ -2046,12 +2046,16 @@ func (b format4Backend) sandboxedSelect(ctx context.Context, stmt string, maxRow
 	return out, nil
 }
 
-// PublicQuerySurface lists the queryable record relations: every routed
-// standard (a view when it has live sources) with its records, and one
-// <TYPE>@<source> relation per live source of a standard that holds
-// records.
+// PublicQuerySurface is the engine's SQL surface (SURFACE: the relations,
+// their columns and placeholder columns, as format 1 lists them), each with
+// the records it serves: its type's or source's records, at most its A18
+// bound.
 func (b format4Backend) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 	if err := b.closed(); err != nil {
+		return nil, err
+	}
+	rels, err := b.d.api().Surface(b.d.ctx)
+	if err != nil {
 		return nil, err
 	}
 	types, err := b.f4TypeSummaries()
@@ -2062,47 +2066,24 @@ func (b format4Backend) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 	if err != nil {
 		return nil, err
 	}
-	sources := map[string]map[string]int64{}
+	sources := map[[2]string]int64{}
 	for _, l := range lanes {
-		if l.Records <= 0 || l.Source == "" {
-			continue
+		if l.Records > 0 {
+			sources[[2]string{l.Type, l.Source}] += l.Records
 		}
-		if sources[l.Type] == nil {
-			sources[l.Type] = map[string]int64{}
-		}
-		sources[l.Type][l.Source] += l.Records
 	}
-	routed := engineRoutedSchemaNames()
-	surface := make([]QuerySurfaceTable, 0, len(routed))
-	for _, schemaName := range routed {
-		base := engineRoutedSchemas[schemaName].Table
-		columns, ok := engineRelationColumns(base)
-		if !ok {
-			return nil, fmt.Errorf("engine schema declares no table %q for routed standard %s", base, schemaName)
-		}
-		var placeholders []string
-		if field, junk := engineUnprojectableFirstFields[schemaName]; junk {
-			placeholders = []string{field}
-		}
-		typ := strings.TrimSuffix(schemaName, ".fbs")
-		kind := "table"
-		if len(sources[typ]) > 0 {
-			kind = "view"
-		}
+	surface := make([]QuerySurfaceTable, 0, len(rels))
+	for _, r := range rels {
+		typ, _, _ := strings.Cut(r.Name, "@")
 		records := types[typ].Records
-		surface = append(surface, QuerySurfaceTable{Name: base, Kind: kind, Columns: columns, PlaceholderColumns: placeholders, Records: records})
-		if records == 0 {
-			continue
+		if r.Source != "" {
+			records = sources[[2]string{typ, r.Source}]
 		}
-		var names []string
-		for src := range sources[typ] {
-			names = append(names, src)
+		if r.Bound > 0 && records > r.Bound {
+			records = r.Bound
 		}
-		sort.Strings(names)
-		for _, src := range names {
-			surface = append(surface, QuerySurfaceTable{Name: base + "@" + src, Kind: "table", Source: src, Columns: columns,
-				PlaceholderColumns: placeholders, Records: sources[typ][src]})
-		}
+		surface = append(surface, QuerySurfaceTable{Name: r.Name, Kind: r.Kind, Source: r.Source, Columns: r.Columns,
+			PlaceholderColumns: r.Placeholder, Records: records})
 	}
 	return surface, nil
 }
