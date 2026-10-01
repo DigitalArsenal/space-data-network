@@ -214,6 +214,7 @@ type migrate4Progress struct {
 	After      int64                    `json:"after"` // the last index rowid copied
 	Done       bool                     `json:"done"`
 	Held       int64                    `json:"held"`    // held index rows copied (records)
+	Orphans    int64                    `json:"orphans"` // index rows no producer table holds (not copied)
 	MaxSeq     int64                    `json:"max_seq"` // the last held row's rowid
 	Copies     map[string]migrate4Tally `json:"copies"`  // producer table -> copies sent, Σ stored bytes
 	Tags       int64                    `json:"tags"`
@@ -749,8 +750,7 @@ func (m *migrator4) checkJournalAgainstHeads(ctx context.Context) error {
 // migrate4Page is one page of a schema's held index rows with every copy of
 // their records, their tags and identities, read one page ahead.
 type migrate4Page struct {
-	entries []storage.IndexEntry
-	recs    []map[string]storage.LegacyRecord // per table of the schema (name order)
+	entries []storage.IndexCopies // copies per table of the schema (name order)
 	tags    map[string][]storage.LegacyTag
 	last    int64
 	short   bool
@@ -789,23 +789,19 @@ func (m *migrator4) readSchema(ctx context.Context, schema string, after int64) 
 	ch := readPages4(ctx, func() *migrate4Page {
 		t0 := time.Now()
 		defer func() { m.addTime("read", time.Since(t0)) }()
-		entries, err := m.src.HeldIndexEntries(schema, tables, after, m.opt.PageRows)
+		entries, err := m.src.IndexPageCopies(schema, tables, after, m.opt.PageRows, true)
 		if err != nil {
 			return &migrate4Page{err: err}
 		}
 		if len(entries) == 0 {
 			return nil
 		}
-		pg := &migrate4Page{entries: entries, last: entries[len(entries)-1].RowID, short: len(entries) < m.opt.PageRows,
-			recs: make([]map[string]storage.LegacyRecord, len(tables))}
+		pg := &migrate4Page{entries: entries, last: entries[len(entries)-1].RowID, short: len(entries) < m.opt.PageRows}
 		after = pg.last
-		cids := make([]string, len(entries))
-		for i, e := range entries {
-			cids[i] = e.CID
-		}
-		for i, t := range tables {
-			if pg.recs[i], err = m.src.RecordsByCID(t, cids); err != nil {
-				return &migrate4Page{err: err}
+		cids := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if !e.Orphan() {
+				cids = append(cids, e.CID)
 			}
 		}
 		if pg.tags, err = m.src.TagsFor(schema, cids); err != nil {
@@ -839,12 +835,16 @@ func (m *migrator4) pageBatches(schema string, pg *migrate4Page, idents map[stri
 	batches := make([]*format4.Batch, len(tables))
 	tagIndex := make([]map[format4.Tag]int, len(tables))
 	for _, e := range pg.entries {
+		if e.Orphan() {
+			p.Orphans++ // its record is gone: format 1 never serves it
+			continue
+		}
 		var first *storage.LegacyRecord
 		for ti, t := range tables {
-			r, ok := pg.recs[ti][e.CID]
-			if !ok {
+			if !e.Held[ti] {
 				continue
 			}
+			r := e.Copies[ti]
 			isFirst := first == nil
 			if isFirst {
 				first = &r
@@ -896,9 +896,6 @@ func (m *migrator4) pageBatches(schema string, pg *migrate4Page, idents map[stri
 			c.SourceBytes += int64(len(r.Stored))
 			p.Copies[t.Name] = c
 			p.CopyDigest.add(copyDigestOf(e.RowID, t.Token, peer, first.Timestamp, in.Sig, first.Stored))
-		}
-		if first == nil {
-			return nil, fmt.Errorf("%s: index row %d (%s) is held, but no producer table returned its record", schema, e.RowID, e.CID)
 		}
 		p.Held++
 		p.MaxSeq = e.RowID
@@ -1127,20 +1124,25 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 	}()
 	m.logf("checking the format-4 store against format 1")
 	lanes := map[laneKey5]laneCount{}
-	held := map[string]int64{}
 	for _, schema := range m.schemas {
 		got, err := m.checkSchema(ctx, schema, c, lanes)
 		if err != nil {
 			return c, err
 		}
 		c.Schemas++
-		held[schema] = got.Held
 		w := want[schema]
 		if w == nil {
 			w = &migrate4Progress{}
 		}
-		if got.Held != w.Held {
-			c.bad("%s: %d held records, the copy sent %d", schema, got.Held, w.Held)
+		if got.Held != w.Held || got.Orphans != w.Orphans {
+			c.bad("%s: %d held records and %d orphans; the copy sent %d and skipped %d", schema, got.Held, got.Orphans, w.Held, w.Orphans)
+		}
+		if got.Orphans > 0 {
+			if c.Orphans == nil {
+				c.Orphans = map[string]int64{}
+			}
+			c.Orphans[schema] = got.Orphans
+			m.note("%s: %d index rows are orphans (no producer table holds the record); not migrated", schema, got.Orphans)
 		}
 		if got.CopyDigest != w.CopyDigest {
 			c.bad("%s: the copies (bytes, ts, signature, peer, producer, seq) differ from what the copy sent", schema)
@@ -1149,14 +1151,14 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 			c.bad("%s: the tag instances (%d) differ from what the copy sent (%d)", schema, got.Tags, w.Tags)
 		}
 	}
-	// Orphans: index rows no producer table holds.
+	// Index rows of a schema no producer table holds are orphans too.
 	for _, s := range m.index {
-		if n := s.Rows - held[s.Schema]; n > 0 {
+		if _, ok := m.bySchema[s.Schema]; !ok && s.Rows > 0 {
 			if c.Orphans == nil {
 				c.Orphans = map[string]int64{}
 			}
-			c.Orphans[s.Schema] = n
-			m.note("%s: %d of %d index rows are orphans (no producer table holds the record); not migrated", s.Schema, n, s.Rows)
+			c.Orphans[s.Schema] = s.Rows
+			m.note("%s: %d index rows and no producer table: orphans, not migrated", s.Schema, s.Rows)
 		}
 	}
 	if err := m.checkCounters(ctx, c, want, lanes); err != nil {
@@ -1207,7 +1209,7 @@ func (m *migrator4) checkSchema(ctx context.Context, schema string, c *migrate4C
 	}
 	var after int64
 	for {
-		entries, err := m.src.HeldIndexEntries(schema, tables, after, m.opt.PageRows)
+		entries, err := m.src.IndexPageCopies(schema, tables, after, m.opt.PageRows, false)
 		if err != nil {
 			return nil, err
 		}
@@ -1215,9 +1217,13 @@ func (m *migrator4) checkSchema(ctx context.Context, schema string, c *migrate4C
 			break
 		}
 		after = entries[len(entries)-1].RowID
-		cids := make([]string, len(entries))
-		for i, e := range entries {
-			cids[i] = e.CID
+		cids := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if e.Orphan() {
+				got.Orphans++
+			} else {
+				cids = append(cids, e.CID)
+			}
 		}
 		recs, err := m.api.Get(ctx, typ, cids, true, true)
 		if err != nil {
@@ -1234,29 +1240,36 @@ func (m *migrator4) checkSchema(ctx context.Context, schema string, c *migrate4C
 		firstLen := map[string]int64{}
 		var samples []storage.IndexEntry
 		for _, e := range entries {
-			got.Held++
-			cs := copies[e.CID]
-			if len(cs) == 0 {
-				c.bad("%s %s (index rowid %d): not in format 4", schema, e.CID, e.RowID)
+			if e.Orphan() {
+				if len(copies[e.CID]) > 0 {
+					c.bad("%s %s (index rowid %d): an orphan in format 1, %d copies in format 4", schema, e.CID, e.RowID, len(copies[e.CID]))
+				}
 				continue
 			}
+			got.Held++
+			cs := copies[e.CID]
 			want, err := cidDigest(e.CID)
 			if err != nil {
 				c.bad("%s %s: %v", schema, e.CID, err)
 				continue
 			}
 			c.Records++
-			first, firstTable := -1, 0
-			for i, r := range cs {
+			// Exactly the tables holding the record hold a copy.
+			byTable := make([]*format4.Rec, len(tables))
+			for i := range cs {
+				r := &cs[i]
 				c.Copies++
 				ti, ok := tableOf[r.Producer]
-				if !ok {
+				switch {
+				case !ok:
 					c.bad("%s %s: a copy in partition %q, which no format-1 table names", schema, e.CID, r.Producer)
 					continue
+				case !e.Held[ti]:
+					c.bad("%s %s: a copy in partition %q; format 1's %s does not hold the record", schema, e.CID, r.Producer, tables[ti].Name)
+				case byTable[ti] != nil:
+					c.bad("%s %s: two copies in partition %q", schema, e.CID, r.Producer)
 				}
-				if first < 0 || ti < firstTable {
-					first, firstTable = i, ti
-				}
+				byTable[ti] = r
 				if r.Seq != e.RowID {
 					c.bad("%s %s (%s): seq %d, format-1 index rowid %d", schema, e.CID, r.Producer, r.Seq, e.RowID)
 				}
@@ -1273,12 +1286,21 @@ func (m *migrator4) checkSchema(ctx context.Context, schema string, c *migrate4C
 				}
 				got.CopyDigest.add(copyDigestOf(r.Seq, r.Producer, r.Peer, r.TS, r.Sig, r.Data))
 			}
-			if first >= 0 {
-				firstLen[e.CID] = cs[first].Len
-				m.checkFields(schema, fields, e, cs[first], c)
+			var first *format4.Rec
+			for ti, held := range e.Held {
+				if held && byTable[ti] == nil {
+					c.bad("%s %s: format 1's %s holds the record, format 4 has no copy in partition %q", schema, e.CID, tables[ti].Name, tables[ti].Token)
+				}
+				if first == nil && byTable[ti] != nil {
+					first = byTable[ti]
+				}
+			}
+			if first != nil {
+				firstLen[e.CID] = first.Len
+				m.checkFields(schema, fields, e.IndexEntry, *first, c)
 			}
 			if e.RowID%migrate4SampleEvery == 0 {
-				samples = append(samples, e)
+				samples = append(samples, e.IndexEntry)
 			}
 		}
 		for _, t := range tags {

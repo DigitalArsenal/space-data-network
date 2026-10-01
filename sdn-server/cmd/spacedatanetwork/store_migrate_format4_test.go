@@ -179,7 +179,8 @@ func cloneStore(t *testing.T, src string) string {
 // ---- the oracle: format 4 equals format 1 -----------------------------------------------
 
 // assertFormat4EqualsFormat1 reads the format-1 store at legacy through the
-// format-1 engine and the format-4 store through api, and compares every
+// format-1 engine (with format 2's readers, not the migrator's) and the
+// format-4 store through api, and compares every
 // held record copy (seq = index rowid, bytes, ts, signature, peer,
 // producer), every tag (identity, source_url, content key, at), and every
 // counter (partitions against a recount of each table, lanes against
@@ -214,7 +215,8 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string) {
 	}
 	for _, schema := range schemas {
 		typ, _ := format4.TypeOf(schema)
-		entries, err := src.HeldIndexEntries(schema, bySchema[schema], 0, 1<<30)
+		// format2_source.go's readers: independent of the migrator's.
+		entries, err := src.HeldIndexPage(schema, bySchema[schema], 0, 1<<30)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -436,6 +438,37 @@ func TestStoreMigrateFormat4TargetFlag(t *testing.T) {
 		if _, err := migrateTargetFormat(in); err == nil {
 			t.Fatalf("--to %q accepted", in)
 		}
+	}
+}
+
+// The CLI: format-2-only options and --verify-only with --inventory are
+// refused with --to 4; --verify-only without --to 4 is refused.
+func TestStoreMigrateFormat4CommandLine(t *testing.T) {
+	reset := func() {
+		storeMigrateOut, storeMigrateSnapshot, storeMigrateDelta, storeMigrateNoActive = "", "", false, false
+		storeMigrateInventory, storeMigrateVerifyOnly, storeMigrateTo, storeMigrateStore = false, false, "", ""
+	}
+	defer reset()
+	for name, set := range map[string]func(){
+		"--out":           func() { storeMigrateOut = "/elsewhere" },
+		"--from-snapshot": func() { storeMigrateSnapshot = "/snap" },
+		"--delta":         func() { storeMigrateDelta = true },
+		"--no-activate":   func() { storeMigrateNoActive = true },
+		"--inventory and --verify-only": func() {
+			storeMigrateInventory, storeMigrateVerifyOnly = true, true
+		},
+	} {
+		reset()
+		storeMigrateTo, storeMigrateStore = "sqlite", t.TempDir()
+		set()
+		if err := runStoreMigrate(storeMigrateCmd, nil); err == nil {
+			t.Fatalf("--to sqlite with %s was accepted", name)
+		}
+	}
+	reset()
+	storeMigrateVerifyOnly, storeMigrateStore = true, t.TempDir()
+	if err := runStoreMigrate(storeMigrateCmd, nil); err == nil || !strings.Contains(err.Error(), "--to 4") {
+		t.Fatalf("--verify-only without --to 4: %v", err)
 	}
 }
 
