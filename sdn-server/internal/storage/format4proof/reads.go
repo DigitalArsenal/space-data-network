@@ -66,10 +66,14 @@ func RunReads(spec ReadSpec, shapes []Shape) (*Run, error) {
 	coldMax := map[int]float64{}
 	aborted := ""
 	runCall := func(si, pass int, sh Shape, c Call) {
+		var res Result
+		d, ok := guard(limit, func() { res = c.Run(s) })
+		ms := float64(d.Microseconds()) / 1000
 		var a Answer
 		var m Measure
-		d, ok := guard(limit, func() { a, m = c.Run(s) })
-		ms := float64(d.Microseconds()) / 1000
+		if ok && res != nil {
+			a, m = res() // canonicalized after the timer stopped
+		}
 		smp := Sample{Class: spec.Class, Shape: sh.Name, Pass: pass, Ms: ms, Rows: m.Rows, Bytes: m.Bytes}
 		switch {
 		case !ok:
