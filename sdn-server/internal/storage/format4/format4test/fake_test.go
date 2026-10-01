@@ -32,6 +32,9 @@ func TestFakeOpenMarkers(t *testing.T) {
 	if err := mig.Activate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := mig.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
 	m, err := marker.Read(root)
 	if err != nil || !m.Activated() || m.GseqFloor != 1060922 || m.MigratedFrom != 1 {
 		t.Fatalf("after Activate: %+v %v", m, err)
@@ -57,5 +60,34 @@ func TestProducerToken(t *testing.T) {
 		if got := ProducerToken(in); got != want {
 			t.Fatalf("ProducerToken(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A reopen after Close continues the store; a second opener is refused.
+func TestFakeReopenContinues(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	f, err := Open(ctx, format4.Options{DataRoot: root, Create: format4.CreateFresh})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx := loadFixture(t, f)
+	if _, err := Open(ctx, format4.Options{DataRoot: root, Create: format4.OpenExisting}); err == nil {
+		t.Fatal("a second opener of an open store succeeded")
+	}
+	if err := f.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	g, err := Open(ctx, format4.Options{DataRoot: root, Create: format4.OpenExisting})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, err := g.Get(ctx, "OMM", fx.cids, false, false)
+	if err != nil || len(recs) != 3 {
+		t.Fatalf("after reopen: %+v %v", recs, err)
+	}
+	out := mustPut(t, g, format4.Batch{Type: "OMM", Peer: peerA, Records: []format4.In{In(OMMRecord(7, "x", "2026-09-05T00:00:00Z"), at0)}})
+	if out[0].Seq <= fx.seqs[2] {
+		t.Fatalf("a seq after reopen reused the range: %+v", out)
 	}
 }
