@@ -1,6 +1,10 @@
 package format4
 
-import "time"
+import (
+	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+)
 
 // Test hooks for the external test package (format4_test), which may import
 // format4test (an internal test may not: format4test imports format4).
@@ -25,3 +29,14 @@ func SetAbandonGrace(d time.Duration) func() {
 
 // EncodeConfigForTest exposes flatsql_p4_init's config encoding.
 func EncodeConfigForTest(engineRoot string, opt Options) []byte { return encodeConfig(engineRoot, opt) }
+
+// FenceForTest fences the engine's instance as a trap does; false when the
+// engine runs over a double.
+func FenceForTest(e *Engine, cause error) bool {
+	inst, ok := e.ctl.(*flatsqlrt.P4Instance)
+	if !ok {
+		return false
+	}
+	inst.Fence(cause)
+	return true
+}
