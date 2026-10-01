@@ -13,24 +13,26 @@ import (
 // order. Answers are kept from the cold pass; every warm answer is checked
 // against it.
 
-// Default warm passes (benchset protocol: windows and pages ≥ 31 calls per
-// parameter set, heavy shapes over 1 s ≥ 7, point gets 4 rounds).
+// Warm passes per shape: the owner's smallest sample that still gives a p50
+// and a p99 (2026-10-01 evening: one cold pass and three warm passes; the
+// report says p99 rests on few samples). P4PROOF_WARM overrides it.
 const (
-	defaultWarm     = 30
-	heavyWarm       = 6
-	heavyColdMs     = 1000.0
+	defaultWarm     = 3
 	classBudgetWarm = 25 * time.Minute // warm passes stop past this (reported)
 )
 
 // ReadSpec is one read run.
 type ReadSpec struct {
 	Arm, Label, Class, Store, Out string
-	Warm                          int // -1 = per-shape default
+	Warm                          int // -1 = defaultWarm
 	CallLimit                     time.Duration
 	// Round > 1 is a further cold round (another fresh process on another
 	// fresh clone): its samples add cold samples per shape; its answers are
 	// not kept (round 1's are).
 	Round int
+	// Shape (EnvShape) re-runs only the shapes it names: its samples add to
+	// theirs, its answers are not kept.
+	Shape string
 }
 
 // hydrateClasses are the classes format 1 serves from its engine hot window
@@ -45,6 +47,9 @@ func RunReads(spec ReadSpec, shapes []Shape) (*Run, error) {
 	runClass := spec.Class
 	if spec.Round > 1 {
 		runClass = fmt.Sprintf("%s-r%d", spec.Class, spec.Round)
+	}
+	if spec.Shape != "" {
+		runClass = fmt.Sprintf("%s-rerun-%d", runClass, time.Now().Unix())
 	}
 	r := &Run{Kind: KindReads, Arm: spec.Arm, Format: ArmFormat(spec.Arm), Label: spec.Label, Class: runClass,
 		Started: time.Now().UTC().Format(time.RFC3339), Machine: ThisMachine(), LoadStart: Load(), Extra: map[string]any{}}
@@ -71,7 +76,6 @@ func RunReads(spec ReadSpec, shapes []Shape) (*Run, error) {
 	}
 	answers := &AnswerFile{Arm: spec.Arm, Label: spec.Label, Class: spec.Class}
 	coldHash := map[string]string{}
-	coldMax := map[int]float64{}
 	aborted := ""
 	runCall := func(si, pass int, sh Shape, c Call) {
 		var res Result
@@ -93,9 +97,6 @@ func RunReads(spec ReadSpec, shapes []Shape) (*Run, error) {
 		r.Samples = append(r.Samples, smp)
 		key := sh.Name + "\x00" + c.Name
 		if pass == 0 {
-			if ms > coldMax[si] {
-				coldMax[si] = ms
-			}
 			coldHash[key] = a.Hash()
 			a.Call = c.Name
 			answers.Shapes[si].Calls = append(answers.Shapes[si].Calls, a)
@@ -119,33 +120,19 @@ func RunReads(spec ReadSpec, shapes []Shape) (*Run, error) {
 		}
 	}
 	// Warm passes.
-	warm := make([]int, len(shapes))
-	maxWarm := 0
-	for i, sh := range shapes {
-		w := sh.Warm
-		if w == 0 {
-			w = defaultWarm
-		}
-		if coldMax[i] > heavyColdMs && w > heavyWarm {
-			w = heavyWarm
-		}
-		if spec.Warm >= 0 {
-			w = spec.Warm
-		}
-		warm[i] = w
-		if w > maxWarm {
-			maxWarm = w
-		}
+	warm := defaultWarm
+	if spec.Warm >= 0 {
+		warm = spec.Warm
 	}
 	warmStart := time.Now()
-	for pass := 1; pass <= maxWarm && aborted == ""; pass++ {
+	for pass := 1; pass <= warm && aborted == ""; pass++ {
 		if time.Since(warmStart) > classBudgetWarm {
 			r.Extra["warm_truncated_at_pass"] = pass
 			break
 		}
 		order := rand.New(rand.NewSource(int64(pass))).Perm(len(shapes))
 		for _, si := range order {
-			if warm[si] < pass || aborted != "" {
+			if aborted != "" {
 				continue
 			}
 			for _, c := range shapes[si].Calls {
@@ -175,7 +162,7 @@ func RunReads(spec ReadSpec, shapes []Shape) (*Run, error) {
 		if _, err := WriteRun(spec.Out, r); err != nil {
 			return r, err
 		}
-		if spec.Round <= 1 {
+		if spec.Round <= 1 && spec.Shape == "" {
 			if err := WriteAnswers(spec.Out, answers); err != nil {
 				return r, err
 			}

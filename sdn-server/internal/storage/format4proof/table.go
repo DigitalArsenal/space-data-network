@@ -3,6 +3,7 @@ package format4proof
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -66,6 +67,7 @@ func esc(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
 func GateMarkdown(r Report, all bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Format 4 gate report\n\nGenerated %s. A gate passes only when every check passes and nothing it needs is missing.\n\n", r.Generated)
+	b.WriteString("Samples: by default one cold pass and three warm passes per read shape (owner, 2026-10-01), so every p99 rests on few samples. A shape within 10% of its bar is listed under its gate: re-run only that shape before calling it.\n\n")
 	b.WriteString("| Gate | Status | Checks passed | Missing |\n|---|---|---|---|\n")
 	for _, g := range r.Gates {
 		pass, n := 0, 0
@@ -119,8 +121,36 @@ func GateMarkdown(r Report, all bool) string {
 		if !all && passed > 0 {
 			fmt.Fprintf(&b, "\n%d further checks pass (the full list: the shape table, or the report with all checks).\n", passed)
 		}
+		writeNearBar(&b, g)
 	}
 	return b.String()
+}
+
+// writeNearBar lists a gate's shapes within 10% of a bar, each with the
+// environment that re-runs it alone (TestProofReads).
+func writeNearBar(b *strings.Builder, g Gate) {
+	type key struct{ class, shape string }
+	var order []key
+	why := map[key][]string{}
+	for _, c := range g.Checks {
+		if !nearBar(c) {
+			continue
+		}
+		k := key{c.Class, c.Shape}
+		if why[k] == nil {
+			order = append(order, k)
+		}
+		why[k] = append(why[k], fmt.Sprintf("%s %s vs %s", strings.TrimPrefix(c.Item, c.Class+" "+c.Shape+" "),
+			formatValue(c.S, c.Unit), formatValue(c.Bar, c.Unit)))
+	}
+	if len(order) == 0 {
+		return
+	}
+	b.WriteString("\nWithin 10% of the bar: re-run only these before calling them.\n\n")
+	for _, k := range order {
+		fmt.Fprintf(b, "- %s %s (%s): `%s=%s %s='^%s$'`\n", k.class, esc(k.shape), strings.Join(why[k], "; "), EnvClasses, k.class,
+			EnvShape, regexp.QuoteMeta(k.shape))
+	}
 }
 
 // ReadsMarkdown renders every read shape of a label: rows, cold and warm p50
