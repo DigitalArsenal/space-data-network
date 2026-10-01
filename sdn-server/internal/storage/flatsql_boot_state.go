@@ -1247,8 +1247,8 @@ func (s *FlatSQLStore) checkpointEngine() error {
 // the next boot (engine_residency.go reconciles the duplicates away), never a
 // missing record. Requires the store write lock.
 func (s *FlatSQLStore) checkpointEngineLocked() error {
-	if s.ps != nil {
-		return nil // format 2: the control instance has no record state to flush
+	if s.rb != nil {
+		return nil // a partitioned store: the control instance has no record state to flush
 	}
 	if !s.controlDBDurable || s.engineDB == nil || s.closedErr() != nil {
 		return nil

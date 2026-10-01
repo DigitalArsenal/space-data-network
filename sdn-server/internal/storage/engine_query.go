@@ -25,8 +25,8 @@ func (s *FlatSQLStore) readGate() error {
 }
 
 func (s *FlatSQLStore) QueryRawStream(sql string, params ...interface{}) (*flatsqlrt.RawStream, error) {
-	if s.ps != nil {
-		return s.f2QueryRawStream(sql, params...)
+	if s.rb != nil {
+		return s.rb.QueryRawStream(sql, params...)
 	}
 	if err := s.readGate(); err != nil {
 		return nil, err
@@ -63,8 +63,8 @@ func (s *FlatSQLStore) ResponseArtifactCacheKey(schemaName, schemaVersion, sql s
 // structurally impossible (typed *flatsqlrt.SandboxError), no second store
 // open, no cache interaction.
 func (s *FlatSQLStore) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (*flatsqlrt.RawStream, error) {
-	if s.ps != nil {
-		return s.f2QuerySandboxedStream(sql, caps, params...)
+	if s.rb != nil {
+		return s.rb.QuerySandboxedStream(sql, caps, params...)
 	}
 	if err := s.readGate(); err != nil {
 		return nil, err
@@ -133,8 +133,8 @@ func (s *FlatSQLStore) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxCa
 // three, so the body is at most 3x the cap and only for input that was already
 // hostile.
 func (s *FlatSQLStore) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (payload []byte, rows, cols int, err error) {
-	if s.ps != nil {
-		return s.f2QuerySandboxedJSON(sql, caps, params...)
+	if s.rb != nil {
+		return s.rb.QuerySandboxedJSON(sql, caps, params...)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -224,8 +224,8 @@ type QuerySurfaceTable struct {
 //     "<STANDARD>@<source>" — and the populated partitions are exactly the ones
 //     a caller can get rows out of.
 func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
-	if s.ps != nil {
-		return s.f2PublicQuerySurface()
+	if s.rb != nil {
+		return s.rb.PublicQuerySurface()
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
