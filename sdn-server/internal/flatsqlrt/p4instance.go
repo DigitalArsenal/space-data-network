@@ -12,7 +12,7 @@ package flatsqlrt
 //   - boot: _initialize -> flatsql_p4_init(config TLV) -> flatsql_p4_layout
 //     (640 bytes, version 1) -> the doorbell over doorbell[0..nThreads) (each
 //     thread's state word follows its doorbell) and the completion poller ->
-//     flatsql_p4_start;
+//     the heap grown to the memory's maximum (growHeap) -> flatsql_p4_start;
 //   - stop: the stop word, notifies, flatsql_p4_stop(deadline ms), a wait
 //     for the service threads, then an executor stop for any that remain; a
 //     fenced (poisoned) instance cannot run flatsql_p4_stop, so it goes
@@ -170,6 +170,7 @@ func (p *PSInstance) initP4() error {
 		return err
 	}
 	p.poller = wasmrt.StartCompletionPoller(p.mem, p.cfg.PollInterval)
+	p.growHeap()
 	v, err = p.control("flatsql_p4_start")
 	if err == nil && wasmrt.ToInt32(v[0]) < 0 {
 		err = &P4CallError{Export: "flatsql_p4_start", Status: wasmrt.ToInt32(v[0])}
@@ -181,6 +182,32 @@ func (p *PSInstance) initP4() error {
 	}
 	p.started = int(wasmrt.ToInt32(v[0]))
 	return nil
+}
+
+// growHeap grows the shared memory to its maximum before the engine's
+// threads start (flatsql docs/STORE-FORMAT-4.md, host: "grow the shared heap
+// before flatsql_p4_start"). A sandbox lane makes its heap arena (config tag
+// 48, 64 MiB by default) at its first untrusted statement, while every
+// thread runs; with the heap grown first, the arenas and every later
+// allocation come from space the guest allocator already holds, and the
+// memory never grows under running threads. Blocks taken through
+// flatsql_p4_alloc halve from 1 GiB to 1 MiB until each size fails, then
+// are all freed: the allocator keeps the space (wasm memory never shrinks),
+// and pages nothing touches cost no resident memory.
+func (p *PSInstance) growHeap() {
+	var held []uint32
+	for n := uint32(1 << 30); n >= 1<<20; n >>= 1 {
+		for {
+			ptr, err := p.mod.AllocateSize(n)
+			if err != nil {
+				break
+			}
+			held = append(held, ptr)
+		}
+	}
+	for _, ptr := range held {
+		p.mod.Deallocate(ptr)
+	}
 }
 
 // EngineLayout returns the raw flatsql_p4_layout block.

@@ -189,7 +189,7 @@ the legacy engine below.
 ## The format-4 engine (store format 4)
 
 `flatsql-p4-threads.wasm` is the format-4 engine: one SQLite file per
-partition and UTC month, SQLite 3.53.4 unmodified (stack design
+partition (producer x record type), SQLite 3.53.4 unmodified (stack design
 `docs/architecture/flatsql-sqlite-partitions.md`; build-out contract §1,
 §5.3). It is embedded by `p4artifact.go` and run by `p4instance.go` as ONE
 threaded instance (`PSABIP4` on the partition-store substrate): writer
@@ -210,9 +210,14 @@ WAL index of every file must live in one linear memory.
 Boot: `_initialize`, `flatsql_p4_init(config TLV)` (journal replay and WAL
 recovery happen inside it), `flatsql_p4_layout` (640 bytes, version 1), the
 doorbell over `doorbell[0..nThreads)` (each thread's state word follows its
-doorbell), the completion poller, `flatsql_p4_start`. Stop: the stop word,
-notifies, `flatsql_p4_stop(deadline ms)` (`P4_OK`, or `P4_E_BUSY` when it did
-not drain in time), a wait for the service threads, then an executor stop.
+doorbell), the completion poller, the heap grown to the memory's maximum
+(blocks through `flatsql_p4_alloc`, then freed: the sandbox lanes' heap
+arenas and later allocations never grow memory under running threads), then
+`flatsql_p4_start`. Stop: the stop word, notifies, `flatsql_p4_stop(deadline
+ms)` (`P4_OK`, or `P4_E_BUSY` when it did not drain in time), a wait for the
+service threads, then an executor stop. A fenced instance cannot run
+`flatsql_p4_stop`, so it goes straight to the executor stop and `OnFailure`
+runs at once.
 `storage/format4` programs the mailbox from the layout; Go never calls a
 guest export on a request.
 
