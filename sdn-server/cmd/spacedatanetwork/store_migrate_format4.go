@@ -157,10 +157,7 @@ func migrate4Inventory(store string) (*inventoryReport, error) {
 
 // ---- options, journal, report -------------------------------------------------------
 
-// format4Opener opens the format-4 engine (tests substitute a double).
-type format4Opener func(ctx context.Context, opt format4.Options) (format4.API, error)
-
-// openFormat4Engine opens the real engine (its own native I/O on the data
+// openFormat4Engine opens the engine (its own native I/O on the data
 // root: the migration is the store's only user).
 func openFormat4Engine(ctx context.Context, opt format4.Options) (format4.API, error) {
 	e, err := format4.Open(ctx, opt)
@@ -180,13 +177,11 @@ type migrate4Options struct {
 	Wasm          []byte // tests: an engine build before its release (nil = the embedded engine)
 	Tuning        format4.Tuning
 
-	open format4Opener // nil = openFormat4Engine
 	// testStep runs at every named step and may fail it (tests: a clean
 	// stand-in for a kill at that point); testJournalEvery overrides
 	// journalEvery.
 	testStep         func(step string) error
 	testJournalEvery time.Duration
-	testNoSamples    bool // no per-column samples (a test target that answers HEAD slowly)
 }
 
 // migrate4Journal is the durable progress of a run.
@@ -389,9 +384,6 @@ func migrateStore4(ctx context.Context, opt migrate4Options, out io.Writer) (rep
 	}
 	if opt.PageRows <= 0 {
 		opt.PageRows = 2000
-	}
-	if opt.open == nil {
-		opt.open = openFormat4Engine
 	}
 	root := strings.TrimSpace(opt.Store)
 	if root == "" {
@@ -656,7 +648,7 @@ func (m *migrator4) openTarget(ctx context.Context, mode format4.CreateMode) err
 		opt.GseqFloor = m.j.GseqFloor
 	}
 	var err error
-	if m.api, err = m.opt.open(ctx, opt); err != nil {
+	if m.api, err = openFormat4Engine(ctx, opt); err != nil {
 		return fmt.Errorf("open the format-4 engine (run prewarm-aot as this user first): %w", err)
 	}
 	for _, schema := range m.schemas {
