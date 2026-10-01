@@ -268,11 +268,12 @@ func f4LocalEPMs(filter RawRecordQuery, q format4.Query) bool {
 	return !f4Indexed(q) && filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter)
 }
 
-// f4Window reads a w-ordered page in ascending window_at, then CID: format
-// 1's order for an index-filtered raw page. The engine orders windows
-// newest first, so the matches' keys are read (no payload), ordered here,
-// and the page's payloads read by CID.
-func (b format4Backend) f4AscendingPage(schemaName string, q format4.Query, limit, offset int) ([]format4.Rec, error) {
+// f4AscendingPage reads a page in ascending window_at, then CID: format 1's
+// order for an index-filtered raw page off the cursor (a UI page; datasync
+// pages by seq). The engine orders windows newest first and takes no search
+// in a window, so the matches' keys are read (no payload), ordered here, and
+// the page's payloads read by CID.
+func (b format4Backend) f4AscendingPage(q format4.Query, limit, offset int) ([]format4.Rec, error) {
 	api, ctx := b.d.api(), b.d.ctx
 	keys := q
 	keys.Order, keys.Limit, keys.Offset, keys.Hydrate = format4.OrderSeqAsc, 0, 0, false
@@ -573,7 +574,7 @@ func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]
 			q.Order, q.Limit = format4.OrderSeqAsc, int64(filter.Limit)
 			recs, err = b.d.api().Scan(b.d.ctx, q)
 		case f4Indexed(q):
-			recs, err = b.f4AscendingPage(filter.SchemaName, q, filter.Limit, filter.Offset)
+			recs, err = b.f4AscendingPage(q, filter.Limit, filter.Offset)
 		default:
 			// Newest first.
 			q.Order, q.Limit, q.Offset = format4.OrderSeqDesc, int64(filter.Limit), int64(filter.Offset)
