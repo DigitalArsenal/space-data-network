@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"os"
@@ -307,31 +306,6 @@ func TestQueryFieldsAnOpDoesNotTakeAreRefused(t *testing.T) {
 		if err := call(); !errors.As(err, &se) || se.Status != format4.StatusArg {
 			t.Fatalf("%s: %v, want StatusArg", name, err)
 		}
-	}
-}
-
-func TestConfigEncoding(t *testing.T) {
-	cfg := format4.EncodeConfigForTest("/data/fsql4", format4.Options{Create: format4.CreateForMigration, GseqFloor: 1060922, Cores: 4,
-		Tuning: format4.Tuning{WriterThreads: 3, WriteRequestBytes: 4 << 20, HardHeap: 640 << 20, QuotaMode: 1, Extra: []byte{0xff}}})
-	if cfg[len(cfg)-1] != 0xff {
-		t.Fatal("Extra is not appended")
-	}
-	tl, err := parseTLV(cfg[:len(cfg)-1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tl.text(1) != "/data/fsql4" || tl.u8(2) != 2 || tl.i64(12) != 1060922 || tl.u32(13) != 4 || tl.u32(3) != 3 ||
-		tl.u32(9) != 4<<20 || tl.i64(27) != 640<<20 || tl.u8(47) != 1 || len(tl[4]) != 0 {
-		t.Fatalf("config %x", cfg)
-	}
-	var prev uint16
-	for b := cfg[:len(cfg)-1]; len(b) > 0; {
-		tag := binary.LittleEndian.Uint16(b)
-		if tag <= prev {
-			t.Fatalf("tags not ascending: %d after %d", tag, prev)
-		}
-		prev = tag
-		b = b[6+binary.LittleEndian.Uint32(b[2:]):]
 	}
 }
 

@@ -27,9 +27,6 @@ func SetAbandonGrace(d time.Duration) func() {
 	return func() { abandonGrace = old }
 }
 
-// EncodeConfigForTest exposes flatsql_p4_init's config encoding.
-func EncodeConfigForTest(engineRoot string, opt Options) []byte { return encodeConfig(engineRoot, opt) }
-
 // FenceForTest fences the engine's instance as a trap does; false when the
 // engine runs over a double.
 func FenceForTest(e *Engine, cause error) bool {

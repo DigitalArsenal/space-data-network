@@ -38,14 +38,14 @@ const (
 )
 
 // Tuning is the engine's sizing. Zero is the engine default; fields map 1:1
-// onto config tags (contract §3.3).
+// onto config tags (contract §3.3). Quota has one mode, the oldest records by
+// arrival (v11: config tag 47 is ignored), so there is no field for it.
 type Tuning struct {
 	WriterThreads, ReaderLanes, BulkLanes, SandboxLanes, WriteSlots, ReadSlots uint32
 	WriteRequestBytes, ReadRequestBytes, RingBytes                             uint32
 	EngineBytes, PendingMapBytes, SoftHeap, HardHeap                           uint64
 	WriterConns, WriterCacheKiB, ReaderConns, ReaderCacheKiB                   uint32
 	GroupCommitRecords, GroupCommitMs                                          uint32
-	QuotaMode                                                                  uint8
 	Extra                                                                      []byte // raw TLV appended (tests)
 }
 
