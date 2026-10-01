@@ -253,6 +253,7 @@ func newFormat2Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		return fail(fmt.Errorf("format 2: open the partition store: %w", err))
 	}
 	store.ps = ps
+	store.rb = format2Backend{store}
 	log.Infof("format 2: partition store open in %s (writer + interactive + bulk instances, %s)",
 		time.Since(psStart).Round(time.Millisecond), describeFormat2Topology(format2Topology()))
 
@@ -382,18 +383,14 @@ func (s *FlatSQLStore) recoverFormat2ControlInstanceLocked() (uint64, error) {
 	return s.engineEpoch, nil
 }
 
-// closeFormat2 stops the format-2 daemon state and the partition store.
-// Called by Close after the background loops have stopped, holding s.mu.
+// closeFormat2Locked stops the format-2 daemon state and the partition
+// store (the backend's close: the partition store is open).
 func (s *FlatSQLStore) closeFormat2Locked() error {
 	if s.f2 != nil && s.f2.cancel != nil {
 		s.f2.cancel()
 		s.f2.counts.wait()
 	}
-	if s.ps == nil {
-		return nil
-	}
-	err := s.ps.Close()
-	return err
+	return s.ps.Close()
 }
 
 // Format2 reports whether this store runs store format 2.

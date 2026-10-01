@@ -145,17 +145,8 @@ func (s *FlatSQLStore) laneHasOtherUnledgeredBatch(schemaName, providerID, sourc
 	for _, state := range ledger {
 		known[state.id] = true
 	}
-	if s.ps != nil {
-		batches, err := s.f2DistinctBatches(strings.TrimSpace(schemaName), strings.TrimSpace(providerID), strings.TrimSpace(sourceName))
-		if err != nil {
-			return false, fmt.Errorf("list lane batches: %w", err)
-		}
-		for _, id := range batches {
-			if !known[strings.TrimSpace(id)] {
-				return true, nil
-			}
-		}
-		return false, nil
+	if s.rb != nil {
+		return s.rb.laneHasOtherUnledgeredBatch(schemaName, providerID, sourceName, known)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()

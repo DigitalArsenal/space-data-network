@@ -66,8 +66,8 @@ func (s *FlatSQLStore) SandboxedSelect(ctx context.Context, sql string, caps San
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	if s.ps != nil {
-		return s.f2SandboxedSelect(ctx, stmt, maxRows, maxBytes, timeout)
+	if s.rb != nil {
+		return s.rb.sandboxedSelect(ctx, stmt, maxRows, maxBytes, timeout)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
