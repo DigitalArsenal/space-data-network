@@ -508,11 +508,14 @@ func countShapes(op BenchOp) ([]Shape, error) {
 			}))
 		if p.SourceName == "" && p.BatchID == "" && p.SyncFilter == "" {
 			schema := p.Schema
-			out = append(out,
-				mk("EngineRecordCount", func(s *storage.FlatSQLStore) (Row, error) {
-					n, err := s.EngineRecordCount(schema)
-					return ValueRow("n", i64(n)), err
-				}),
+			engine := mk("EngineRecordCount", func(s *storage.FlatSQLStore) (Row, error) {
+				n, err := s.EngineRecordCount(schema)
+				return ValueRow("n", i64(n)), err
+			})
+			// Format 1 counts its engine hot window (unhydrated: 0); format 4
+			// has none and counts the type (contract §5.4: W-m does not run).
+			engine.Policy.Accepted = "W-m: format 4 has no engine hot window; EngineRecordCount counts the type"
+			out = append(out, engine,
 				mk("Count", func(s *storage.FlatSQLStore) (Row, error) {
 					n, err := s.Count(schema)
 					return ValueRow("n", i64(n)), err
