@@ -18,9 +18,17 @@
 // plus equivalence with format 1 (every read's answer, field by field, and
 // the record and tag sets after each write W01–W10; DriveEquivalence) and
 // crash coverage (kill -9 loops during ingest and supersede, CrashLoop;
-// LazyFS power loss, lazyfs_linux_test.go). Every number carries the load
-// average and RSS of its process. A failed gate is reported with its numbers
+// LazyFS power loss, lazyfs_linux_test.go; integrity_check on every file
+// through REBUILD what=8, C-27). Every number carries the load average and
+// RSS of its process. A failed gate is reported with its numbers
 // (WriteReport: gates.md); nothing here relaxes a bar.
+//
+// Two answers differ from format 1 by design (contract v11) and are listed
+// as intended differences, each checked by its own rule: `<TYPE>@<source>`
+// (R17) is the source's newest N records (C-31: format 1's rows must all be
+// among format 4's, at most N), and W10's quota GC deletes each type's
+// oldest records by arrival (C-32: checked against the untouched store).
+// R16 adds EPOCH nearest, as_of and forward for every OMM and MPE object.
 //
 // Environment (env.go): SDN_F1_FIXTURE, SDN_F2_FIXTURE and P4_FIXTURE name
 // the three stores of the same fixture; P4PROOF_BENCHSET the benchset;
