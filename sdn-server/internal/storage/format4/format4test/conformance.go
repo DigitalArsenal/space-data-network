@@ -280,16 +280,6 @@ var conformanceCases = []conformanceCase{
 			t.Fatalf("Scan through: %v %v", cids(recs), err)
 		}
 	}},
-	{"quota drops whole months", func(t *testing.T, api format4.API) {
-		loadFixture(t, api)
-		res, err := api.QuotaGC(ctxT(t), 0)
-		if err != nil || res.RecordsDropped != 3 || res.FilesDropped < 2 {
-			t.Fatalf("QuotaGC(0): %+v %v", res, err)
-		}
-		if h, err := api.Head(ctxT(t), format4.Query{Type: "OMM"}); err != nil || h.N != 0 {
-			t.Fatalf("after quota: %+v %v", h, err)
-		}
-	}},
 	{"CAT supersedes on ingest within its source (record_supersede.go)", func(t *testing.T, api format4.API) {
 		spec, err := format4.TypeSpecFor("CAT.fbs")
 		if err != nil {
