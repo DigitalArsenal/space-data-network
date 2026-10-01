@@ -30,7 +30,8 @@ func Version() string {
 func IsRelease() bool { return strings.TrimSpace(ReleaseTag) != "" }
 
 // STORE FORMAT STAMP (design A5 in docs/architecture/flatsql-partition-store.md;
-// flatsql-ps-terabyte §3 "SDN Apply guard", task TB03s).
+// flatsql-ps-terabyte §3 "SDN Apply guard", task TB03s; format 4:
+// flatsql-sqlite-partitions.md §11 "Format guard").
 //
 // A rollback, or an install of an older build, must never start a binary whose
 // engines cannot open the record store on disk. A partition-store engine
@@ -62,9 +63,20 @@ const (
 	// engine refuses a store one level above it.
 	PSEngineStoreFormatMax = 3
 
+	// P4EngineSHA256 names the format-4 engine (store format 4, one SQLite
+	// file per partition): the sha256 of the embedded flatsql-p4-threads.wasm
+	// (flatsqlrt.P4ThreadsSHA256). TestP4EngineIsTheBuildStamp
+	// (internal/storage/format4) pins the two equal, so repinning the engine
+	// fails until this is re-derived from it.
+	P4EngineSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+	// P4StoreFormat is format 4's fsql4/STORE format: the format a format-4
+	// store is at, and the one the format-4 engine opens.
+	P4StoreFormat = 4
+
 	// MaxStoreFormat is the highest on-disk store format this build opens: the
-	// higher of its two embedded engines.
-	MaxStoreFormat = max(Format1StoreFormat, PSEngineStoreFormatMax)
+	// highest of its embedded engines.
+	MaxStoreFormat = max(Format1StoreFormat, PSEngineStoreFormatMax, P4StoreFormat)
 )
 
 const (
