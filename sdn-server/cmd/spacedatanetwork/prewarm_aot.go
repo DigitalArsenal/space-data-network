@@ -21,6 +21,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 	"github.com/spf13/cobra"
 )
 
@@ -176,6 +177,21 @@ func prewarmAOTArtifacts(out io.Writer, cacheDir string) error {
 		fmt.Fprintf(out, "  partition-store engine (%s): SKIPPED (%v)\n", flatsqlrt.PSThreadsPackage, psErr)
 	} else {
 		reportPrewarm(out, "partition-store engine ("+flatsqlrt.PSThreadsPackage+")", psPath, psPresent)
+	}
+
+	// The format-4 engine (store format 4, flatsql-p4-threads.wasm): its one
+	// threaded instance, like format 2's, loads ONLY this THREADS +
+	// Interruptible artifact. Compiled on every host so format 4 can be
+	// selected without another prewarm; a failure fails the command only on
+	// a node that has selected format 4.
+	p4Path, p4Present, p4Err := flatsqlrt.PrewarmP4ThreadsAOT(cacheDir)
+	if p4Err != nil {
+		if format4.Selected() {
+			return fmt.Errorf("prewarm the format-4 engine (%s): %w", flatsqlrt.P4ThreadsPackage, p4Err)
+		}
+		fmt.Fprintf(out, "  format-4 engine (%s): SKIPPED (%v)\n", flatsqlrt.P4ThreadsPackage, p4Err)
+	} else {
+		reportPrewarm(out, "format-4 engine ("+flatsqlrt.P4ThreadsPackage+")", p4Path, p4Present)
 	}
 	return nil
 }
