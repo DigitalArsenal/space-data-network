@@ -110,23 +110,33 @@ func DriveReads(ctx context.Context, c Config, label string, logf Logf) error {
 		}
 	}
 	var firstErr error
+	rounds := c.ColdRounds
+	if rounds < 1 {
+		rounds = 1
+	}
 	for _, class := range classes {
-		for _, arm := range c.Arms {
-			src := c.SourceStore(arm, label)
-			if src == "" {
-				logf("reads %s %s %s: no store, skipped", label, arm, class)
-				continue
-			}
-			name := fmt.Sprintf("reads-%s-%s-%s", label, arm, class)
-			err := c.withClone(src, name, func(clone string) error {
-				spec := ReadSpec{Arm: arm, Label: label, Class: class, Store: clone, Out: c.Out, Warm: c.Warm,
-					CallLimit: time.Duration(c.CallLimit) * time.Second}
-				cr, err := RunChild(ctx, ChildSpec{Mode: ModeReads, Benchset: c.Benchset, Work: c.Work, Read: &spec}, c.logPath(name))
-				logf("reads %s %s %s: %s, max RSS %.0f MB, load %s, err %v", label, arm, class, cr.Wall.Round(time.Second), cr.MaxRSSMB, Load(), err)
-				return err
-			})
-			if err != nil && firstErr == nil {
-				firstErr = err
+		for round := 1; round <= rounds; round++ {
+			for _, arm := range c.Arms {
+				src := c.SourceStore(arm, label)
+				if src == "" {
+					logf("reads %s %s %s: no store, skipped", label, arm, class)
+					continue
+				}
+				name := fmt.Sprintf("reads-%s-%s-%s-r%d", label, arm, class, round)
+				err := c.withClone(src, name, func(clone string) error {
+					spec := ReadSpec{Arm: arm, Label: label, Class: class, Store: clone, Out: c.Out, Warm: c.Warm,
+						CallLimit: time.Duration(c.CallLimit) * time.Second, Round: round}
+					if round > 1 {
+						spec.Warm = 0 // further rounds add cold samples only
+					}
+					cr, err := RunChild(ctx, ChildSpec{Mode: ModeReads, Benchset: c.Benchset, Work: c.Work, Read: &spec}, c.logPath(name))
+					logf("reads %s %s %s round %d: %s, max RSS %.0f MB, load %s, err %v", label, arm, class, round, cr.Wall.Round(time.Second),
+						cr.MaxRSSMB, Load(), err)
+					return err
+				})
+				if err != nil && firstErr == nil {
+					firstErr = err
+				}
 			}
 		}
 	}
