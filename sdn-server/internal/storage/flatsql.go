@@ -44,6 +44,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 )
 
 var log = logging.Logger("storage")
@@ -312,6 +313,8 @@ type FlatSQLStore struct {
 	ps *format2.Store
 	// f2 is the format-2 daemon state (nil on format 1).
 	f2 *format2Daemon
+	// f4 is the format-4 daemon state (format4_daemon.go; nil otherwise).
+	f4 *format4Daemon
 	// rb is the record backend of a partitioned store (record_backend.go):
 	// every record read and write goes to it. Nil on format 1.
 	rb recordBackend
@@ -435,9 +438,12 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 	for _, o := range opts {
 		o(&cfg)
 	}
-	// STORE FORMAT 2 (format2_daemon.go) runs only when selected; a format-1
-	// open of a store store-migrate activated is refused before it touches a
-	// file (A5).
+	// STORE FORMATS 4 (format4_daemon.go) and 2 (format2_daemon.go) run only
+	// when selected; a format-1 open of a store store-migrate activated is
+	// refused before it touches a file (A5).
+	if format4.Selected() {
+		return newFormat4Store(basePath, validator, cfg)
+	}
 	if format2.Selected() {
 		return newFormat2Store(basePath, validator, cfg)
 	}
