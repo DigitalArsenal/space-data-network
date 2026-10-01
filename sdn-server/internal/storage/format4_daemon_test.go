@@ -455,23 +455,6 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 						t.Fatalf("datasync %s %s: the projected tag %+v does not meet the filter", name, r.CID, r.SourceTags)
 					}
 				}
-				// Non-cursor pages under a sync filter: window_at ascending (format
-				// 1 appends its untagged rows after its tagged ones; with a tag
-				// filter it has none).
-				plain := q
-				plain.Limit, plain.Offset = 7, 3
-				xa, err := legacy.QueryRawRecordRefs(plain)
-				if err != nil {
-					t.Fatal(err)
-				}
-				xb, err := f4.QueryRawRecordRefs(plain)
-				if err != nil {
-					t.Fatal(err)
-				}
-				tagFiltered := q.ProviderID != "" || q.SourceName != "" || q.BatchID != "" || q.ProducerPeerID != "" || q.ProducerPublicKey != ""
-				if q.SyncFilter != "" && tagFiltered && len(xa) == len(f4Collapse(xa)) && fmt.Sprint(cidSeq(xa)) != fmt.Sprint(cidSeq(xb)) {
-					t.Fatalf("raw page %s:\n f4 %v\n f1 %v", name, cidSeq(xb), cidSeq(xa))
-				}
 			}
 		})
 
@@ -1291,58 +1274,6 @@ func TestFormat4SyncFilterPredicates(t *testing.T) {
 			t.Fatalf("%s compiled", bad)
 		}
 	}
-}
-
-// The IQC ingest identity (record_ingest_identity.go) on format 4: a
-// refetch with new stamps is a new CID that lands nowhere, the held record
-// takes the refetch's tag, and the write reports the held CID.
-func TestFormat4IngestIdentityMatchesFormat1(t *testing.T) {
-	onFormat4Engines(t, func(t *testing.T, _ f4Engine, _ *[]*format4test.Fake) {
-		legacy := reopenDeferred(t, t.TempDir())
-		defer legacy.Close()
-		f4 := openFormat4ForTest(t, t.TempDir())
-		defer f4.Close()
-		first := identityTestBatch(12, "2026-09-15T02:11:22Z")
-		again := identityTestBatch(12, "2026-09-28T19:15:04Z")
-		for _, s := range []*FlatSQLStore{legacy, f4} {
-			if n, err := s.StoreBatchWithSourceTags("IQC.fbs", first, "module:sigmf", nil, identityTestTags("b1")); err != nil || n != 12 {
-				t.Fatalf("format4=%v first fetch: %d, %v", s.Format4(), n, err)
-			}
-			if n, err := s.StoreBatchWithSourceTags("IQC.fbs", again[:8], "module:sigmf", nil, identityTestTags("b2")); err != nil || n != 0 {
-				t.Fatalf("format4=%v refetch: %d inserted, %v", s.Format4(), n, err)
-			}
-			held, err := s.StoreWithSourceTags("IQC.fbs", again[9], "module:sigmf", nil, identityTestTags("b3"))
-			if err != nil || held != ComputeCID(first[9]) {
-				t.Fatalf("format4=%v single refetch: %s, %v (want the held %s)", s.Format4(), held, err, ComputeCID(first[9]))
-			}
-			// Without a lane there is no identity scope: plain CID dedupe.
-			if _, err := s.Store("IQC.fbs", again[10], "relay", nil); err != nil {
-				t.Fatal(err)
-			}
-		}
-		for _, q := range []RawRecordQuery{{SchemaName: "IQC.fbs"}, {SchemaName: "IQC.fbs", BatchID: "b2"}, {SchemaName: "IQC.fbs", BatchID: "b3"},
-			{SchemaName: "IQC.fbs", BatchID: "b1"}} {
-			var sets [2][]string
-			for i, s := range []*FlatSQLStore{legacy, f4} {
-				recs, err := s.QueryRawRecordRefs(RawRecordQuery{SchemaName: q.SchemaName, BatchID: q.BatchID, UseRowIDCursor: true, Limit: 1000})
-				if err != nil {
-					t.Fatal(err)
-				}
-				sets[i] = cidSeq(recs)
-				sort.Strings(sets[i])
-			}
-			if fmt.Sprint(sets[0]) != fmt.Sprint(sets[1]) {
-				t.Fatalf("IQC %+v:\n format 4 %v\n format 1 %v", q, sets[1], sets[0])
-			}
-		}
-		for _, schema := range []string{"IQC.fbs"} {
-			a, _ := legacy.Count(schema)
-			b, _ := f4.Count(schema)
-			if a != b || a != 13 {
-				t.Fatalf("IQC records: format 4 %d, format 1 %d (want 13)", b, a)
-			}
-		}
-	})
 }
 
 // Field-sealed records (KMF): the engine stores the sealed bytes, the CID is

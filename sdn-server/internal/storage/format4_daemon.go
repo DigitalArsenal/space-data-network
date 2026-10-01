@@ -1,9 +1,9 @@
 package storage
 
 // format4_daemon.go — the daemon on store format 4, "p4": one SQLite file per
-// partition and UTC month, in the FlatSQL engine (stack design
+// partition (producer x record type), in the FlatSQL engine (stack design
 // docs/architecture/flatsql-sqlite-partitions.md §10, G7; build-out contract
-// §5.4, §5.5).
+// §5.4, §5.5, C-32).
 //
 // SDN_STORE_FORMAT=4 (or "sqlite", any case) selects it; unset is format 1
 // and "2" is format 2, both unchanged. NewFlatSQLStore then opens:

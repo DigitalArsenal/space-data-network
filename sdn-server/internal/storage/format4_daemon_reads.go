@@ -12,6 +12,11 @@ package storage
 //   - a record's projected tag is the matched tag (§3.6): with a tag filter,
 //     an instance that meets it, else the record's earliest; format 1
 //     projected one of its rows;
+//   - a sync-filtered or searched raw page off the cursor is in arrival
+//     order, paged by the engine (format 2's search order; format 1
+//     ordered it by window_at, then CID, which the engine's windows give
+//     newest first only and without a search), so an offset walk sees no
+//     record twice while records arrive;
 //   - GetRecord returns the lowest-pid copy (C-12);
 //   - a supersede is per partition (A2): a copy loses its last tag and goes
 //     while another producer's copy keeps the record live.
@@ -44,11 +49,19 @@ import (
 
 // ---- records and filters ---------------------------------------------------------------
 
-// f4CIDStored reports a CID of the one form the engine stores: CIDv1, raw,
-// sha2-256 (bafkrei…). Any other names no record.
+// f4CIDStored reports a CID text of the one form the engine stores: the
+// canonical text (lower-case base32, zero pad bits) of a CIDv1, raw,
+// sha2-256 (bafkrei…). Any other text names no record, and a by-CID read
+// answers format 1's "not found" for it, as format 1 does for a CID it does
+// not hold (benchset R02: a text whose last character differs only in its
+// pad bits decodes to a held CID's bytes, but is not that CID).
 func f4CIDStored(text string) bool {
-	c, err := cid.Decode(strings.TrimSpace(text))
-	return err == nil && c.Version() == 1 && c.Type() == cid.Raw && c.Prefix().MhType == mh.SHA2_256
+	c, err := cid.Decode(text)
+	if err != nil || c.Version() != 1 || c.Type() != cid.Raw {
+		return false
+	}
+	p := c.Prefix()
+	return p.MhType == mh.SHA2_256 && p.MhLength == 32 && c.String() == text
 }
 
 // f4SourceTags is an engine tag as source tags.
@@ -259,66 +272,13 @@ func f4RawQuery(typ string, filter RawRecordQuery, cursor bool) (q format4.Query
 }
 
 // f4Indexed reports a raw filter format 1 ran over its record index (a sync
-// filter or a search): its pages order by window_at, and local EPMs stay out.
+// filter or a search): its pages leave local EPMs out.
 func f4Indexed(q format4.Query) bool { return len(q.Preds) > 0 || q.Search != "" }
 
 // f4LocalEPMs reports a read local EPMs merge into (EPM.fbs, no index
 // filter, a tag filter local EPMs meet).
 func f4LocalEPMs(filter RawRecordQuery, q format4.Query) bool {
 	return !f4Indexed(q) && filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter)
-}
-
-// f4AscendingPage reads a page in ascending window_at, then CID: format 1's
-// order for an index-filtered raw page off the cursor (a UI page; datasync
-// pages by seq). The engine orders windows newest first and takes no search
-// in a window, so the matches' keys are read (no payload), ordered here, and
-// the page's payloads read by CID.
-func (b format4Backend) f4AscendingPage(q format4.Query, limit, offset int) ([]format4.Rec, error) {
-	api, ctx := b.d.api(), b.d.ctx
-	keys := q
-	keys.Order, keys.Limit, keys.Offset, keys.Hydrate = format4.OrderSeqAsc, 0, 0, false
-	all, err := api.Scan(ctx, keys)
-	if err != nil {
-		return nil, err
-	}
-	w := func(r format4.Rec) int64 {
-		if r.HasEpoch {
-			return r.Epoch
-		}
-		return r.TS
-	}
-	sort.SliceStable(all, func(i, j int) bool {
-		if wi, wj := w(all[i]), w(all[j]); wi != wj {
-			return wi < wj
-		}
-		return all[i].CID < all[j].CID
-	})
-	if offset >= len(all) {
-		return nil, nil
-	}
-	page := all[offset:min(offset+limit, len(all))]
-	cids := make([]string, len(page))
-	for i, r := range page {
-		cids[i] = r.CID
-	}
-	got, err := api.Get(ctx, q.Type, cids, false, true)
-	if err != nil {
-		return nil, err
-	}
-	data := make(map[string][]byte, len(got))
-	for _, g := range got {
-		data[g.CID] = g.Data
-	}
-	out := make([]format4.Rec, 0, len(page))
-	for _, r := range page {
-		d, ok := data[r.CID]
-		if !ok {
-			continue // deleted since
-		}
-		r.Data = d
-		out = append(out, r)
-	}
-	return out, nil
 }
 
 // ---- point reads -----------------------------------------------------------------------
@@ -574,7 +534,9 @@ func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]
 			q.Order, q.Limit = format4.OrderSeqAsc, int64(filter.Limit)
 			recs, err = b.d.api().Scan(b.d.ctx, q)
 		case f4Indexed(q):
-			recs, err = b.f4AscendingPage(q, filter.Limit, filter.Offset)
+			// Off the cursor: arrival order, paged by the engine.
+			q.Order, q.Limit, q.Offset = format4.OrderSeqAsc, int64(filter.Limit), int64(filter.Offset)
+			recs, err = b.d.api().Scan(b.d.ctx, q)
 		default:
 			// Newest first.
 			q.Order, q.Limit, q.Offset = format4.OrderSeqDesc, int64(filter.Limit), int64(filter.Offset)

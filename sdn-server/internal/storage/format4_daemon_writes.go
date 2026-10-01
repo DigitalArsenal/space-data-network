@@ -81,8 +81,9 @@ func f4Ident(schemaName string, data []byte, tags *SourceTags) *[32]byte {
 // f4Put is one write's records into the engine, chunked. It returns each
 // record's outcome in input order. Records the engine refused are returned
 // as a *RefusedRecordsError after the others are stored. An ingest-identity
-// repeat lands nowhere, and the record holding the identity takes the
-// write's tag (format 1's tagIdentityRepeats).
+// repeat lands nowhere: the engine gives the record holding the identity
+// the write's tag in the same transaction (C-26; format 1's
+// tagIdentityRepeats).
 func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, identity bool) ([]string, []format4.Outcome, error) {
 	if err := b.s.requireWritable(op); err != nil {
 		return nil, nil, err
@@ -110,7 +111,6 @@ func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID st
 	cids := make([]string, len(records))
 	outcomes := make([]format4.Outcome, 0, len(records))
 	refused := &RefusedRecordsError{Schema: schemaName, Records: len(records)}
-	var heldSeqs []int64
 	for start := 0; start < len(records); start += format4PutChunk {
 		chunk := records[start:min(start+format4PutChunk, len(records))]
 		batch := format4.Batch{Type: typ, Peer: peerID, Tags: batchTags, Mode: format4.ModeIngest, Records: make([]format4.In, len(chunk))}
@@ -138,30 +138,11 @@ func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID st
 			return cids, outcomes, fmt.Errorf("store %s records: the engine answered %d outcomes for %d records", schemaName, len(got), len(chunk))
 		}
 		for i, o := range got {
-			switch o.Action {
-			case format4.ActRejected:
+			if o.Action == format4.ActRejected {
 				refused.refuse(cids[start+i], fmt.Errorf("%s (%d)", format4.RejectReason(o.Reject), o.Reject))
-			case format4.ActIdentDup:
-				heldSeqs = append(heldSeqs, o.Seq)
 			}
 		}
 		outcomes = append(outcomes, got...)
-	}
-	if len(batchTags) > 0 {
-		seen := map[int64]bool{}
-		for _, seq := range heldSeqs {
-			if seen[seq] {
-				continue
-			}
-			seen[seq] = true
-			held, err := b.f4CIDAt(typ, seq)
-			if err != nil {
-				return cids, outcomes, err
-			}
-			if err := b.f4Retag(schemaName, typ, held, batchTags[0]); err != nil {
-				return cids, outcomes, err
-			}
-		}
 	}
 	if len(refused.Order) > 0 {
 		return cids, outcomes, refused
@@ -185,6 +166,9 @@ func (b format4Backend) f4CIDAt(typ string, seq int64) (string, error) {
 // peer of the copy holding it, with the tag. The engine retags that copy, or
 // updates the instance's source URL when it holds the tag (DUP).
 func (b format4Backend) f4Retag(schemaName, typ, cid string, tag format4.Tag) error {
+	if !f4CIDStored(cid) {
+		return fmt.Errorf("source-tagged record not found: %s/%s", schemaName, cid)
+	}
 	recs, err := b.d.api().Get(b.d.ctx, typ, []string{cid}, false, true)
 	if err != nil && !errors.Is(err, format4.ErrNoType) {
 		return err
@@ -225,7 +209,7 @@ func f4Inserted(outcomes []format4.Outcome) int {
 }
 
 // f4HeldCID is the CID a record's outcome leaves the caller to report: an
-// ingest-identity repeat lands nowhere and the held record (its seq) takes
+// ingest-identity repeat lands nowhere and the held record (its seq) took
 // the write's tag, so the held CID is the one the write stored.
 func (b format4Backend) f4HeldCID(typ, cid string, o format4.Outcome) (string, error) {
 	if o.Action != format4.ActIdentDup {
@@ -350,6 +334,9 @@ func (b format4Backend) Delete(schemaName, cid string) error {
 	if err != nil {
 		return err
 	}
+	if !f4CIDStored(cid) {
+		return fmt.Errorf("not found: %s", cid)
+	}
 	n, err := b.d.api().Delete(b.d.ctx, typ, []string{cid})
 	if errors.Is(err, format4.ErrNoType) {
 		n, err = 0, nil
@@ -426,11 +413,12 @@ func (b format4Backend) supersedeSourceBatches(result DatasetSupersedeResult, st
 
 // GarbageCollect: the engine evicts by quota (C-11).
 func (b format4Backend) GarbageCollect(time.Duration) (int64, error) {
-	return 0, f4Unsupported("age-based garbage collection (the engine evicts by quota, oldest content month first)")
+	return 0, f4Unsupported("age-based garbage collection (the engine evicts by quota, oldest arrivals first)")
 }
 
-// GarbageCollectToQuota drops the oldest content months until the store is
-// under maxBytes (QUOTA_GC); it returns the records dropped.
+// GarbageCollectToQuota deletes the oldest records by arrival until the
+// store is under maxBytes (QUOTA_GC, §3.8.11); it returns the records
+// dropped.
 func (b format4Backend) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 	if err := b.s.requireWritable("garbage collect to quota"); err != nil {
 		return 0, err
@@ -443,8 +431,8 @@ func (b format4Backend) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 		return 0, fmt.Errorf("garbage collect to quota: %w", err)
 	}
 	if r.RecordsDropped > 0 {
-		log.Infof("GarbageCollectToQuota (format 4) dropped %d file(s), %d record(s), %d bytes (cap %d)", r.FilesDropped, r.RecordsDropped,
-			r.BytesFreed, maxBytes)
+		log.Infof("GarbageCollectToQuota (format 4) dropped the %d oldest record(s) by arrival, %d bytes, %d file(s) (cap %d)",
+			r.RecordsDropped, r.BytesFreed, r.FilesDropped, maxBytes)
 	}
 	return r.RecordsDropped, nil
 }
