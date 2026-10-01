@@ -735,6 +735,10 @@ func epochShapes(op BenchOp) ([]Shape, error) {
 	if err != nil {
 		return nil, err
 	}
+	return epochShapesOf(op.ID, ps)
+}
+
+func epochShapesOf(class string, ps []bp) ([]Shape, error) {
 	var out []Shape
 	for _, p := range ps {
 		from, err := parseTime(p.From)
@@ -774,7 +778,7 @@ func epochShapes(op BenchOp) ([]Shape, error) {
 		if coverage && p.SourceName != "" {
 			pol.Collapse = true
 		}
-		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: pol, Calls: []Call{{Name: name,
+		out = append(out, Shape{Class: class, Name: name, Schema: p.Schema, Policy: pol, Calls: []Call{{Name: name,
 			Run: func(s *storage.FlatSQLStore) Result {
 				if coverage {
 					bs, err := s.QueryEpochCoverage(q)
