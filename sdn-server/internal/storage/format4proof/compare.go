@@ -18,6 +18,21 @@ type Policy struct {
 	// decision). A shape that differs under it is reported as accepted, never
 	// as equal.
 	Accepted string `json:"accepted,omitempty"`
+	// AcceptedFields limits Accepted to these fields: a difference in any
+	// other field is still DIFFER. Empty = every field.
+	AcceptedFields []string `json:"accepted_fields,omitempty"`
+}
+
+func (p Policy) accepts(field string) bool {
+	if len(p.AcceptedFields) == 0 {
+		return true
+	}
+	for _, f := range p.AcceptedFields {
+		if f == field {
+			return true
+		}
+	}
+	return false
 }
 
 // Equivalence statuses.
@@ -147,6 +162,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 	}
 	extra := map[string]bool{}
 	variantCache := map[string][]Row{}
+	unaccepted := false // a difference outside the policy's accepted fields
 	for _, a := range f1.Calls {
 		v.Calls++
 		b, ok := sCalls[a.Call]
@@ -182,6 +198,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 		v.SRows += len(rb)
 		if len(ra) != len(rb) {
 			bump(EqDiffer)
+			unaccepted = unaccepted || !pol.accepts("rows")
 			v.Diffs = appendDiff(v.Diffs, Diff{Call: a.Call, Row: -1, Field: "rows", F1: fmt.Sprint(len(ra)), S: fmt.Sprint(len(rb))})
 			continue
 		}
@@ -204,6 +221,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 					callDiffers = true
 					for _, d := range diffs {
 						d.Call, d.Row = a.Call, i
+						unaccepted = unaccepted || !pol.accepts(d.Field)
 						v.Diffs = appendDiff(v.Diffs, d)
 					}
 				}
@@ -212,6 +230,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 				callDiffers = true
 				for _, d := range diffs {
 					d.Call, d.Row = a.Call, i
+					unaccepted = unaccepted || !pol.accepts(d.Field)
 					v.Diffs = appendDiff(v.Diffs, d)
 				}
 			}
@@ -231,7 +250,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 	}
 	sort.Strings(v.Extra)
 	v.Status = worst
-	if pol.Accepted != "" && !v.Passed() {
+	if pol.Accepted != "" && worst == EqDiffer && !unaccepted {
 		v.Status = EqAccepted
 	}
 	return v
