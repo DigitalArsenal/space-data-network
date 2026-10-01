@@ -48,23 +48,21 @@ func (t TypeSpec) Encode() []byte {
 	return out
 }
 
-// A18 bounds (contract §3.3 tag 10): the newest-N window of a type's SQL
-// relations, as format 1's engine hot windows.
+// A18 bounds (contract §3.3 tag 10; C-24): the newest-N window of a type's
+// SQL relations, as format 1's engine hot windows (engineWindowFor): 400000
+// for the decorated standards OMM and TBS, 10000 for every other type.
 const (
-	a18BoundOMM     = 400_000
-	a18BoundDefault = 10_000
+	a18BoundDecorated = 400_000
+	a18BoundDefault   = 10_000
 )
-
-// iqcBucketRule is C-1: IQC's content month is its CAPTURE_START, and IQC
-// keeps no epoch (its epoch_unix, windows and index pages stay format 1's).
-const iqcBucketRule = "bucket str:CAPTURE_START\n"
 
 // TypeSpecFor builds the registration of an embedded SDS standard: format
 // 2's (rules, BFBS, file identifier, flags; read-only reuse) plus IQC's
-// bucket rule (C-1), identity dedupe and 16 KiB pages, the A18 bound (OMM
-// 400000, else 10000), the epoch profile (OMM 1, MPE 2) and full text for
-// every type format 1 indexes: every routed standard whose records are not
-// field-sealed (a sealed record's stored bytes are not its text).
+// identity dedupe and 16 KiB pages, the A18 bound (OMM and TBS 400000, else
+// 10000), the epoch profile (OMM 1, MPE 2) and full text for every type
+// format 1 indexes: every routed standard whose records are not field-sealed
+// (a sealed record's stored bytes are not its text). The rules are format
+// 2's, unchanged (contract v11: one file per partition, no bucket rule).
 func TypeSpecFor(schemaName string) (TypeSpec, error) {
 	base, err := format2.TypeSpecFor(schemaName)
 	if err != nil {
@@ -74,12 +72,13 @@ func TypeSpecFor(schemaName string) (TypeSpec, error) {
 	spec := TypeSpec{TypeSpec: base, PageSize: 4096, A18Bound: a18BoundDefault, FullText: !encfield.HasEncryptedFields(typ)}
 	switch typ {
 	case "OMM":
-		spec.A18Bound = a18BoundOMM
+		spec.A18Bound = a18BoundDecorated
 		spec.EpochProfile = epochProfileOMM
+	case "TBS":
+		spec.A18Bound = a18BoundDecorated
 	case "MPE":
 		spec.EpochProfile = epochProfileMPE
 	case "IQC":
-		spec.Rules += iqcBucketRule
 		spec.Identity = true
 		spec.PageSize = 16384
 	}

@@ -1,6 +1,8 @@
 // Package format4 is SDN's binding to store format 4, "p4": one SQLite file
-// per partition and UTC month, in the FlatSQL engine (stack design
-// docs/architecture/flatsql-sqlite-partitions.md; build-out contract §5.2).
+// per partition (producer x record type) in the FlatSQL engine, indexed by
+// arrival, source, object + epoch, epoch and CID (stack design
+// docs/architecture/flatsql-sqlite-partitions.md; build-out contract §5.2,
+// v11).
 //
 // The engine is the published flatsql-p4-threads.wasm
 // (flatsqlrt/p4artifact.go): ONE threaded WasmEdge instance holds the writer
