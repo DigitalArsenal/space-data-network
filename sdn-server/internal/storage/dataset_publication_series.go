@@ -55,6 +55,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"os"
 	"path/filepath"
 	"sort"
@@ -205,8 +206,7 @@ func (s *FlatSQLStore) DatasetPublicationSetFingerprint(schemaName, providerID, 
 		return "", 0, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 	}
 	defer rows.Close()
-	hash := sha256.New()
-	fmt.Fprintf(hash, "sdn-dataset-publication-set-v1\x00%s\x00%s\x00%s\x00%s\n", schemaName, providerID, sourceName, batchID)
+	hash := newPublicationSetHash(schemaName, providerID, sourceName, batchID)
 	count := 0
 	for rows.Next() {
 		var cid string
@@ -221,6 +221,14 @@ func (s *FlatSQLStore) DatasetPublicationSetFingerprint(schemaName, providerID, 
 		return "", 0, err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), count, nil
+}
+
+// newPublicationSetHash starts a publication set fingerprint: the lane; the
+// caller writes each CID of the set, in text order, with a newline.
+func newPublicationSetHash(schemaName, providerID, sourceName, batchID string) hash.Hash {
+	h := sha256.New()
+	fmt.Fprintf(h, "sdn-dataset-publication-set-v1\x00%s\x00%s\x00%s\x00%s\n", schemaName, providerID, sourceName, batchID)
+	return h
 }
 
 // LatestDatasetPublicationSeries returns the newest recorded series of a lane
