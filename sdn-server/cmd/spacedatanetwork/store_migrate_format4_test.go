@@ -16,11 +16,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -265,9 +262,19 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string, sl
 				t.Fatal(err)
 			}
 		}
-		recs, err := api.Get(ctx, typ, cids, true, true)
-		if err != nil {
-			t.Fatal(err)
+		var recs []format4.Rec
+		var gotTags []format4.TagRow
+		for k := 0; k < len(cids); k += migrate4ReadCIDs { // within a read slot
+			chunk := cids[k:min(k+migrate4ReadCIDs, len(cids))]
+			r, err := api.Get(ctx, typ, chunk, true, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tg, err := api.Tags(ctx, typ, chunk)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recs, gotTags = append(recs, r...), append(gotTags, tg...)
 		}
 		got := map[string]map[string]format4.Rec{} // cid -> producer -> copy
 		for _, r := range recs {
@@ -320,10 +327,6 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string, sl
 		}
 		// Tags: one row per (cid, identity) on both sides.
 		want, err := src.TagsFor(schema, cids)
-		if err != nil {
-			t.Fatal(err)
-		}
-		gotTags, err := api.Tags(ctx, typ, cids)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -654,19 +657,53 @@ var errTestCrash = errors.New("test crash")
 // A run that stops at any step (every PUT, page, journal write, the index
 // build, the check, the control copy, the engine's activation) and a rerun
 // leave the same store as an uninterrupted run. So does a torn STORE (the
-// engine cut short inside its activation), and a crash inside the final
+// engine cut short inside its activation, C-22), and a crash inside the final
 // file moves. Every step is stopped at in the patched-substrate CI lane
 // (SDN_WASM_REQUIRE_PATCHED=1) or with SDN_MIGRATE4_EVERY_STEP=1; elsewhere
 // the first stop of each kind, and the middle journal write.
 func TestStoreMigrateFormat4ResumesAfterEveryStep(t *testing.T) {
+	testResumeAfterEveryStep(t, fakeTarget())
+}
+
+// The same on the engine (embedded, or SDN_P4_WASM).
+func TestStoreMigrateFormat4ResumesAfterEveryStepOnTheEngine(t *testing.T) {
+	requireFormat4Engine(t)
+	testResumeAfterEveryStep(t, engineTarget(t))
+}
+
+// migrate4Target is what a test migrates into.
+type migrate4Target struct {
+	options func(root string) migrate4Options
+	dump    func(t *testing.T, root string) string // an activated store's content
+}
+
+func fakeTarget() migrate4Target {
+	engines := newFakeEngines()
+	return migrate4Target{
+		options: func(root string) migrate4Options { return migrate4TestOptions(root, engines) },
+		dump:    func(t *testing.T, root string) string { return format4Dump(t, engines.store(root), root) },
+	}
+}
+
+func engineTarget(t *testing.T) migrate4Target {
+	return migrate4Target{
+		options: func(root string) migrate4Options {
+			o := engineOptions(t, root)
+			o.testJournalEvery = time.Nanosecond
+			return o
+		},
+		dump: engineDump,
+	}
+}
+
+func testResumeAfterEveryStep(t *testing.T, target migrate4Target) {
 	legacy := t.TempDir()
 	buildLegacyStore4(t, legacy)
 	ctx := context.Background()
 
 	clean := cloneStore(t, legacy)
-	engines := newFakeEngines()
 	var steps []string
-	opt := migrate4TestOptions(clean, engines)
+	opt := target.options(clean)
 	opt.testStep = func(step string) error {
 		steps = append(steps, step)
 		return nil
@@ -674,16 +711,15 @@ func TestStoreMigrateFormat4ResumesAfterEveryStep(t *testing.T) {
 	if _, err := migrateStore4(ctx, opt, nil); err != nil {
 		t.Fatalf("clean migration: %v", err)
 	}
-	want := format4Dump(t, engines.store(clean), clean)
+	want := target.dump(t, clean)
 	t.Logf("a clean migration passes %d steps", len(steps))
 
 	resume := func(name string, fail func(step string, n int) bool, between func(root string)) {
 		t.Helper()
 		root := cloneStore(t, legacy)
-		engines := newFakeEngines()
 		var mu sync.Mutex
 		n := 0
-		o := migrate4TestOptions(root, engines)
+		o := target.options(root)
 		o.testStep = func(step string) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -699,14 +735,14 @@ func TestStoreMigrateFormat4ResumesAfterEveryStep(t *testing.T) {
 		if between != nil {
 			between(root)
 		}
-		rep, err := migrateStore4(ctx, migrate4TestOptions(root, engines), nil)
+		rep, err := migrateStore4(ctx, target.options(root), nil)
 		if err != nil {
 			t.Fatalf("%s: resume: %v\n%+v", name, err, rep.Check)
 		}
 		if !rep.Activated {
 			t.Fatalf("%s: the resumed run did not activate", name)
 		}
-		if got := format4Dump(t, engines.store(root), root); got != want {
+		if got := target.dump(t, root); got != want {
 			t.Fatalf("%s: the resumed store differs from an uninterrupted migration:\n%s", name, firstDiff(want, got))
 		}
 	}
@@ -722,10 +758,15 @@ func TestStoreMigrateFormat4ResumesAfterEveryStep(t *testing.T) {
 		resume(fmt.Sprintf("stop at step %d (%s)", k+1, steps[k]), func(_ string, n int) bool { return n == k+1 }, nil)
 	}
 	t.Logf("stopped at %d of %d steps, then a torn STORE and cut-short file moves", len(picks), len(steps))
-	// The engine's activation cut short: MIGRATED written, STORE torn.
-	resume("torn STORE", func(step string, _ int) bool { return step == "control" }, func(root string) {
-		writeTestMarker(t, root, marker.MigratedFile, testMigratedBytes([16]byte{1}, time.Now().UnixMilli()))
-		writeTestMarker(t, root, marker.StoreFile, []byte("FSQ4"))
+	// The engine's activation cut short inside STORE's write: its MIGRATED
+	// whole, STORE torn.
+	resume("torn STORE", func(step string, _ int) bool { return step == "activated" }, func(root string) {
+		if err := os.Truncate(filepath.Join(root, marker.Dir, marker.StoreFile), 4); err != nil {
+			t.Fatal(err)
+		}
+		if mk, err := marker.Read(root); err != nil || !mk.MigratedValid || mk.StoreValid || !mk.StorePresent {
+			t.Fatalf("not a torn STORE beside a whole MIGRATED: %+v %v", mk, err)
+		}
 	})
 	// The file moves cut short: control.flatsqldb in pre-format4/, no
 	// directory in its place yet.
@@ -777,39 +818,6 @@ func firstDiff(a, b string) string {
 		}
 	}
 	return ""
-}
-
-var castagnoli = crc32.MakeTable(crc32.Castagnoli)
-
-// testMigratedBytes is the contract's MIGRATED layout (§2.2).
-func testMigratedBytes(uuid [16]byte, writtenMs int64) []byte {
-	b := make([]byte, 40)
-	binary.LittleEndian.PutUint32(b[0:], 0x4D515346)
-	binary.LittleEndian.PutUint16(b[4:], 4)
-	copy(b[8:], uuid[:])
-	binary.LittleEndian.PutUint64(b[24:], uint64(writtenMs))
-	binary.LittleEndian.PutUint32(b[32:], crc32.Checksum(b[:32], castagnoli))
-	return b
-}
-
-func TestStoreMigrateFormat4MarkerLayout(t *testing.T) {
-	var uuid [16]byte
-	for i := range uuid {
-		uuid[i] = byte(i)
-	}
-	if got := hex.EncodeToString(testMigratedBytes(uuid, 1790000000123)); got != "4653514d04000000000102030405060708090a0b0c0d0e0f7b6c50c4a001000086bbeba000000000" {
-		t.Fatalf("MIGRATED %s differs from the contract's golden vector", got)
-	}
-}
-
-func writeTestMarker(t *testing.T, root, name string, b []byte) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Join(root, marker.Dir), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, marker.Dir, name), b, 0o600); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // Orphan index rows (no producer table holds the record) are reported per
@@ -1276,11 +1284,19 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate: %v\n%s", err, log.String())
 	}
-	if target == "fake" {
+	if target != "null" {
 		// A slice of the fixture, against format 1 (now in pre-format4/),
 		// with format 2's readers; every counter in full.
 		t0 := time.Now()
-		assertFormat4EqualsFormat1(t, engines.store(dst), filepath.Join(dst, marker.PreFormat4Dir), 5000)
+		var api format4.API
+		if target == "fake" {
+			api = engines.store(dst)
+		} else {
+			e := openEngineAt(t, dst, "CAT.fbs", "IQC.fbs", "MPE.fbs", "OMM.fbs")
+			defer e.Close(context.Background())
+			api = e
+		}
+		assertFormat4EqualsFormat1(t, api, filepath.Join(dst, marker.PreFormat4Dir), 5000)
 		t.Logf("the first 5,000 held records of each schema and every counter equal format 1 (%s)", time.Since(t0).Round(time.Second))
 	}
 }
