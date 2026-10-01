@@ -75,6 +75,20 @@ type stats struct {
 	cids                          map[string][]string // schema -> recent CIDs
 }
 
+// std is one standard the writers write: its share of the calls, its
+// counters, and gen, record k of the standard (keep: reuse the previous
+// clone's identity, a supersede).
+type std struct {
+	name       string
+	share      float64
+	counter    atomic.Uint64
+	turn       atomic.Uint64
+	supersedes bool
+	fetch      []atomic.Uint64
+	seedSource string
+	gen        func(k uint64, keep bool) []byte
+}
+
 type readStat struct {
 	name string
 	ms   float64
@@ -142,87 +156,19 @@ func run(c config) error {
 		c.csv = filepath.Join(filepath.Dir(c.store), "sds-tb-gen")
 	}
 	fmt.Printf("# %s/%s, %d CPUs, %s\n", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), loadLine())
-	cor, err := loadCorpus(c.corpus)
+	stds, err := loadStandards(c)
 	if err != nil {
-		return fmt.Errorf("corpus: %w", err)
-	}
-	type std struct {
-		name        string
-		seeds       []*seed
-		share       float64
-		counter     atomic.Uint64
-		turn        atomic.Uint64
-		supersedes  bool
-		fetch       []atomic.Uint64
-		seedSource  string
-		seedProvide string
-	}
-	var stds []*std
-	shares := map[string]float64{}
-	for _, kv := range strings.Split(c.mix, ",") {
-		var name string
-		var w float64
-		if i := strings.IndexByte(kv, '='); i > 0 {
-			name = kv[:i]
-			fmt.Sscanf(kv[i+1:], "%g", &w)
-			shares[name] = w
-		}
-	}
-	for _, s := range strings.Split(c.schemas, ",") {
-		s = strings.TrimSpace(s)
-		name := strings.TrimSuffix(s, ".fbs")
-		seeds := cor.byFID["$"+name]
-		if len(seeds) == 0 {
-			return fmt.Errorf("corpus has no %s record", name)
-		}
-		st := &std{name: s, seeds: seeds, share: shares[name], supersedes: name == "CAT",
-			fetch: make([]atomic.Uint64, c.peersPerType), seedSource: seeds[0].source, seedProvide: seeds[0].provider}
-		if st.seedSource == "" {
-			st.seedSource = strings.ToLower(name) + "-source"
-		}
-		if st.share <= 0 {
-			st.share = 1
-		}
-		stds = append(stds, st)
-		fmt.Printf("# %s: %d seed records (source %q)\n", s, len(seeds), st.seedSource)
+		return err
 	}
 	var total float64
 	for _, s := range stds {
 		total += s.share
 	}
 
-	if os.Getenv(format2.FormatEnv) == "" {
-		os.Setenv(format2.FormatEnv, "2")
-	}
-	if c.prewarm {
-		cache := storage.EngineAOTCacheDir()
-		if p, present, err := flatsqlrt.PrewarmEngineAOT(cache); err != nil {
-			return fmt.Errorf("prewarm the FlatSQL engine: %w", err)
-		} else {
-			fmt.Printf("# engine AOT %s (present before: %v)\n", p, present)
-		}
-		if p, present, err := flatsqlrt.PrewarmPSThreadsAOT(cache); err != nil {
-			return fmt.Errorf("prewarm the partition-store engine: %w", err)
-		} else {
-			fmt.Printf("# partition-store engine AOT %s (%s, present before: %v)\n", p, flatsqlrt.PSThreadsPackage, present)
-		}
-	}
-	v, err := sds.NewValidator(nil)
+	s, err := openStore(c)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(c.store, 0o700); err != nil {
-		return err
-	}
-	t0 := time.Now()
-	s, err := storage.NewFlatSQLStore(c.store, v)
-	if err != nil {
-		return fmt.Errorf("open store: %w", err)
-	}
-	if !s.Format2() {
-		return fmt.Errorf("the store opened as format 1")
-	}
-	fmt.Printf("# store open %.1f s (format 2)\n", time.Since(t0).Seconds())
 
 	if c.cpuProfile != "" {
 		if f, err := os.Create(c.cpuProfile); err == nil {
@@ -262,7 +208,7 @@ func run(c config) error {
 				for i := 0; i < c.batch; i++ {
 					k := sd.counter.Add(1) - 1
 					keep := sd.supersedes && rng.Float64()*100 < c.supersedePct
-					_, fb := clone(sd.seeds, k, keep)
+					fb := sd.gen(k, keep)
 					recs = append(recs, fb)
 					bytes += int64(len(fb))
 					if i == c.batch/2 {
@@ -484,6 +430,88 @@ func run(c config) error {
 		os.Exit(3)
 	}
 	return nil
+}
+
+// loadStandards reads the TBC2 corpus and builds the standards the writers
+// write, with their shares of the calls.
+func loadStandards(c config) ([]*std, error) {
+	cor, err := loadCorpus(c.corpus)
+	if err != nil {
+		return nil, fmt.Errorf("corpus: %w", err)
+	}
+	shares := parseMix(c.mix)
+	var stds []*std
+	for _, s := range strings.Split(c.schemas, ",") {
+		s = strings.TrimSpace(s)
+		name := strings.TrimSuffix(s, ".fbs")
+		seeds := cor.byFID["$"+name]
+		if len(seeds) == 0 {
+			return nil, fmt.Errorf("corpus has no %s record", name)
+		}
+		st := &std{name: s, share: shares[name], supersedes: name == "CAT",
+			fetch: make([]atomic.Uint64, c.peersPerType), seedSource: seeds[0].source,
+			gen: func(k uint64, keep bool) []byte { _, fb := clone(seeds, k, keep); return fb }}
+		if st.seedSource == "" {
+			st.seedSource = strings.ToLower(name) + "-source"
+		}
+		if st.share <= 0 {
+			st.share = 1
+		}
+		stds = append(stds, st)
+		fmt.Printf("# %s: %d seed records (source %q)\n", s, len(seeds), st.seedSource)
+	}
+	return stds, nil
+}
+
+// parseMix reads "OMM=0.6,CAT=0.2" into shares by standard.
+func parseMix(mix string) map[string]float64 {
+	shares := map[string]float64{}
+	for _, kv := range strings.Split(mix, ",") {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			var w float64
+			fmt.Sscanf(kv[i+1:], "%g", &w)
+			shares[kv[:i]] = w
+		}
+	}
+	return shares
+}
+
+// openStore prewarms the engines (as `prewarm-aot` does) and opens the store
+// on format 2.
+func openStore(c config) (*storage.FlatSQLStore, error) {
+	if os.Getenv(format2.FormatEnv) == "" {
+		os.Setenv(format2.FormatEnv, "2")
+	}
+	if c.prewarm {
+		cache := storage.EngineAOTCacheDir()
+		if p, present, err := flatsqlrt.PrewarmEngineAOT(cache); err != nil {
+			return nil, fmt.Errorf("prewarm the FlatSQL engine: %w", err)
+		} else {
+			fmt.Printf("# engine AOT %s (present before: %v)\n", p, present)
+		}
+		if p, present, err := flatsqlrt.PrewarmPSThreadsAOT(cache); err != nil {
+			return nil, fmt.Errorf("prewarm the partition-store engine: %w", err)
+		} else {
+			fmt.Printf("# partition-store engine AOT %s (%s, present before: %v)\n", p, flatsqlrt.PSThreadsPackage, present)
+		}
+	}
+	v, err := sds.NewValidator(nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(c.store, 0o700); err != nil {
+		return nil, err
+	}
+	t0 := time.Now()
+	s, err := storage.NewFlatSQLStore(c.store, v)
+	if err != nil {
+		return nil, fmt.Errorf("open store: %w", err)
+	}
+	if !s.Format2() {
+		return nil, fmt.Errorf("the store opened as format 1")
+	}
+	fmt.Printf("# store open %.1f s (format 2)\n", time.Since(t0).Seconds())
+	return s, nil
 }
 
 // dumpStacks writes every goroutine's stack (where the stuck calls wait).
