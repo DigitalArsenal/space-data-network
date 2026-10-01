@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4proof"
 )
 
 // rssBytes: the resident set now on Linux (/proc/self/status), the peak
@@ -36,18 +38,9 @@ func rssBytes() int64 {
 	return int64(ru.Maxrss) * 1024
 }
 
-// openFDs counts the process's file descriptors.
-func openFDs() int {
-	dir := "/dev/fd"
-	if runtime.GOOS == "linux" {
-		dir = "/proc/self/fd"
-	}
-	e, err := os.ReadDir(dir)
-	if err != nil {
-		return 0
-	}
-	return len(e)
-}
+// openFDs counts the process's file descriptors (macOS's /dev/fd cannot be
+// listed, so the harness's fstat sweep counts them there).
+func openFDs() int { return format4proof.OpenFDs() }
 
 func loadLine() string {
 	b, err := os.ReadFile("/proc/loadavg")
