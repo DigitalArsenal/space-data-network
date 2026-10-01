@@ -25,6 +25,7 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 
+	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
@@ -215,7 +216,7 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 			if string(a.Data) != string(b.Data) || a.CID != b.CID || a.RecordLength != b.RecordLength || a.RowID != b.RowID {
 				t.Fatalf("GetRecord %s: record differs:\n f4 %+v\n f1 %+v", cid, b, a)
 			}
-			if !f4Near(a.Timestamp, b.Timestamp) {
+			if !f4Near(a.Timestamp, b.Timestamp) || a.Timestamp.Location().String() != b.Timestamp.Location().String() {
 				t.Fatalf("GetRecord %s: timestamp %v, format 1 %v", cid, b.Timestamp, a.Timestamp)
 			}
 		}
@@ -279,7 +280,8 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 				t.Fatalf("window %s:\n f4 %v\n f1 %v", name, cidSeq(b), cidSeq(a))
 			}
 			for i := range b {
-				if a[i].RecordLength != b[i].RecordLength || a[i].RowID != b[i].RowID || !a[i].MaterializedAt.Equal(b[i].MaterializedAt) {
+				if a[i].RecordLength != b[i].RecordLength || a[i].RowID != b[i].RowID || !a[i].MaterializedAt.Equal(b[i].MaterializedAt) ||
+					a[i].Timestamp.Location().String() != b[i].Timestamp.Location().String() {
 					t.Fatalf("window %s row %d: f4 %+v, f1 %+v", name, i, b[i], a[i])
 				}
 			}
@@ -760,6 +762,7 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 			if fmt.Sprint(as) != fmt.Sprint(bs) {
 				t.Fatalf("QuerySourceTaggedRecords %+v: format 4 %d, format 1 %d", q, len(bs), len(as))
 			}
+			f4SameRecords(t, "QuerySourceTaggedRecords", a, b)
 		}
 		for _, schema := range []string{"OMM.fbs", "CAT.fbs"} {
 			a, err := legacy.QueryRecentRecords(schema, 1000)
@@ -776,6 +779,7 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 			if fmt.Sprint(as) != fmt.Sprint(bs) {
 				t.Fatalf("QueryRecentRecords %s: format 4 %d, format 1 %d", schema, len(bs), len(as))
 			}
+			f4SameRecords(t, "QueryRecentRecords "+schema, a, b)
 		}
 		if _, err := f4.GetRecord("OMM.fbs", scF.deleted); err == nil {
 			t.Fatal("a deleted record is still served")
@@ -915,6 +919,34 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 			}
 		}
 	})
+}
+
+func encfieldIsSealed(b []byte) bool { return encfield.IsSealed(b) }
+
+// f4SameRecords checks each format-4 record against format 1's record of the
+// same CID: the bytes, stored length, RowID, the timestamp's zone (format 1
+// reports some reads in local time, some in UTC) and, when format 1 carries
+// one tag row for the record, that tag.
+func f4SameRecords(t *testing.T, what string, f1, f4 []*Record) {
+	t.Helper()
+	byCID := map[string][]*Record{}
+	for _, r := range f1 {
+		byCID[r.CID] = append(byCID[r.CID], r)
+	}
+	for _, r := range f4 {
+		rows := byCID[r.CID]
+		if len(rows) == 0 {
+			t.Fatalf("%s: format 4 returned %s, format 1 did not", what, r.CID)
+		}
+		a := rows[0]
+		if string(a.Data) != string(r.Data) || a.RecordLength != r.RecordLength || a.RowID != r.RowID ||
+			a.Timestamp.Location().String() != r.Timestamp.Location().String() || !f4Near(a.Timestamp, r.Timestamp) {
+			t.Fatalf("%s %s:\n f4 %+v\n f1 %+v", what, r.CID, *r, *a)
+		}
+		if len(rows) == 1 && (a.SourceTags != r.SourceTags || !f4Near(a.MaterializedAt, r.MaterializedAt) || a.MaterializedAt.IsZero() != r.MaterializedAt.IsZero()) {
+			t.Fatalf("%s %s tag:\n f4 %+v %v\n f1 %+v %v", what, r.CID, r.SourceTags, r.MaterializedAt, a.SourceTags, a.MaterializedAt)
+		}
+	}
 }
 
 func pbMaxRowID(recs []*Record) int64 {
@@ -1219,6 +1251,118 @@ func TestFormat4SyncFilterPredicates(t *testing.T) {
 	for _, bad := range []string{"OBJECT_ID > 'a'", "OBJECT_TYPE BETWEEN 'A' AND 'B'", "NORAD_CAT_ID LIKE '1%'", "FOO = 1", "EPOCH = 'nope'"} {
 		if _, err := f4SyncPreds(bad); err == nil {
 			t.Fatalf("%s compiled", bad)
+		}
+	}
+}
+
+// The IQC ingest identity (record_ingest_identity.go) on format 4: a
+// refetch with new stamps is a new CID that lands nowhere, the held record
+// takes the refetch's tag, and the write reports the held CID.
+func TestFormat4IngestIdentityMatchesFormat1(t *testing.T) {
+	useFormat4Fake(t)
+	legacy := reopenDeferred(t, t.TempDir())
+	defer legacy.Close()
+	f4 := openFormat4ForTest(t, t.TempDir())
+	defer f4.Close()
+	first := identityTestBatch(12, "2026-09-15T02:11:22Z")
+	again := identityTestBatch(12, "2026-09-28T19:15:04Z")
+	for _, s := range []*FlatSQLStore{legacy, f4} {
+		if n, err := s.StoreBatchWithSourceTags("IQC.fbs", first, "module:sigmf", nil, identityTestTags("b1")); err != nil || n != 12 {
+			t.Fatalf("format4=%v first fetch: %d, %v", s.Format4(), n, err)
+		}
+		if n, err := s.StoreBatchWithSourceTags("IQC.fbs", again[:8], "module:sigmf", nil, identityTestTags("b2")); err != nil || n != 0 {
+			t.Fatalf("format4=%v refetch: %d inserted, %v", s.Format4(), n, err)
+		}
+		held, err := s.StoreWithSourceTags("IQC.fbs", again[9], "module:sigmf", nil, identityTestTags("b3"))
+		if err != nil || held != ComputeCID(first[9]) {
+			t.Fatalf("format4=%v single refetch: %s, %v (want the held %s)", s.Format4(), held, err, ComputeCID(first[9]))
+		}
+		// Without a lane there is no identity scope: plain CID dedupe.
+		if _, err := s.Store("IQC.fbs", again[10], "relay", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range []RawRecordQuery{{SchemaName: "IQC.fbs"}, {SchemaName: "IQC.fbs", BatchID: "b2"}, {SchemaName: "IQC.fbs", BatchID: "b3"},
+		{SchemaName: "IQC.fbs", BatchID: "b1"}} {
+		var sets [2][]string
+		for i, s := range []*FlatSQLStore{legacy, f4} {
+			recs, err := s.QueryRawRecordRefs(RawRecordQuery{SchemaName: q.SchemaName, BatchID: q.BatchID, UseRowIDCursor: true, Limit: 1000})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sets[i] = cidSeq(recs)
+			sort.Strings(sets[i])
+		}
+		if fmt.Sprint(sets[0]) != fmt.Sprint(sets[1]) {
+			t.Fatalf("IQC %+v:\n format 4 %v\n format 1 %v", q, sets[1], sets[0])
+		}
+	}
+	for _, schema := range []string{"IQC.fbs"} {
+		a, _ := legacy.Count(schema)
+		b, _ := f4.Count(schema)
+		if a != b || a != 13 {
+			t.Fatalf("IQC records: format 4 %d, format 1 %d (want 13)", b, a)
+		}
+	}
+}
+
+// Field-sealed records (KMF): the engine stores the sealed bytes, the CID is
+// the plaintext's, and reads open them as format 1 does.
+func TestFormat4SealedRecordsMatchFormat1(t *testing.T) {
+	fakes := useFormat4Fake(t)
+	legacy := reopenDeferred(t, t.TempDir())
+	defer legacy.Close()
+	f4 := openFormat4ForTest(t, t.TempDir())
+	defer f4.Close()
+	var recs [][]byte
+	for i := 0; i < 24; i++ {
+		key := make([]byte, 32)
+		for j := range key {
+			key[j] = byte(0x5a ^ (i*31 + j*7))
+		}
+		recs = append(recs, buildKMFRecordForTest(t, fmt.Sprintf("kmf-key-%02d", i), key, uint32(i+1)))
+	}
+	for _, s := range []*FlatSQLStore{legacy, f4} {
+		n, err := s.StoreBatchWithSourceTags("KMF.fbs", recs, "source:keys", nil, SourceTags{ProviderID: "local", SourceName: "keys", BatchID: "k-1"})
+		if err != nil || n != len(recs) {
+			t.Fatalf("KMF ingest format4=%v: %d inserted, %v", s.Format4(), n, err)
+		}
+	}
+	for _, q := range []IndexedRecordQuery{{SchemaName: "KMF.fbs", Limit: 1000}, {SchemaName: "KMF.fbs", Limit: 7, Offset: 5}, {SchemaName: "KMF.fbs", Limit: 50, OrderByCID: true}} {
+		a, err := legacy.QueryIndexedRecords(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := f4.QueryIndexedRecords(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprint(f4Rows(a)) != fmt.Sprint(f4Rows(b)) {
+			t.Fatalf("KMF window %+v:\n format 4 %v\n format 1 %v", q, cidSeq(b), cidSeq(a))
+		}
+	}
+	refs := make([]RawRecordRef, len(recs))
+	for i, d := range recs {
+		got, err := f4.GetRecord("KMF.fbs", ComputeCID(d))
+		if err != nil || string(got.Data) != string(d) {
+			t.Fatalf("KMF GetRecord: %v", err)
+		}
+		refs[i] = RawRecordRef{CID: ComputeCID(d)}
+	}
+	// Datasync reads carry the STORED (sealed) bytes.
+	stored, err := f4.QueryRawRecordRefsByRefs("KMF.fbs", refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range stored {
+		if string(r.Data) == string(recs[i]) || !encfieldIsSealed(r.Data) {
+			t.Fatalf("KMF ref %d: the stored bytes are not sealed", i)
+		}
+	}
+	if !format4RealEngine() {
+		got, err := (*fakes)[0].Get(context.Background(), "KMF", []string{ComputeCID(recs[0])}, false, true)
+		if err != nil || len(got) != 1 || !encfieldIsSealed(got[0].Data) {
+			t.Fatalf("the engine holds %d unsealed copies (%v)", len(got), err)
 		}
 	}
 }
