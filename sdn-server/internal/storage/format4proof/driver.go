@@ -40,6 +40,8 @@ func (c Config) SourceStore(arm, label string) string {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
+	case FixtureH2Copy:
+		return c.H2[arm]
 	}
 	return ""
 }
@@ -96,6 +98,9 @@ func DriveReads(ctx context.Context, c Config, label string, logf Logf) error {
 		return err
 	}
 	fixture := FixtureT6W
+	if label == FixtureH2Copy {
+		fixture = FixtureH2Copy
+	}
 	classes := c.Classes
 	if len(classes) == 0 {
 		for _, cl := range ClassesOf(shapes) {
