@@ -224,7 +224,10 @@ func (m *MigrationSource) SchemaTags(schema string, fn func(cid string, t Legacy
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	read := func(where string, args ...any) error {
-		rows, err := m.s.db.Query(`SELECT `+schemaTagColumns+` FROM sdn_record_source_tags WHERE `+where, args...)
+		// NOT INDEXED: the rows are found by rowid. Left to itself the
+		// planner takes an index on schema_name and walks every row of the
+		// schema for each range (155 ms against 50 ms per 8,192 rows).
+		rows, err := m.s.db.Query(`SELECT `+schemaTagColumns+` FROM sdn_record_source_tags NOT INDEXED WHERE `+where, args...)
 		if err != nil {
 			return err
 		}
