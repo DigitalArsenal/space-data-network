@@ -450,11 +450,12 @@ func CrashVerify(spec CrashSpec) (*Run, error) {
 	if err := s.Close(); err != nil {
 		fail("close after verification: %v", err)
 	}
-	// 4. Format 4: derived state equals a rebuild; integrity_check.
+	// 4. Format 4: the derived state equals a rebuild from the files.
 	if spec.Arm == ArmS {
 		for _, v := range VerifyFormat4Store(spec.Store) {
 			fail("%s", v)
 		}
+		r.Extra["integrity"] = IntegrityNote
 	}
 	r.Extra["acked_records_checked"] = float64(checked)
 	r.Extra["follower_seqs_checked"] = float64(seen)
@@ -480,6 +481,15 @@ type CrashLoopSpec struct {
 	Batch                           int
 	SupersedeCalls                  int // calls ingested per supersede round before the supersede
 	MaxKillDelay                    time.Duration
+	// AfterKill runs between the kill and the verifier: the LazyFS power
+	// loss (unsynced bytes dropped).
+	AfterKill func() error
+	// WriterEnv is added to the writer's environment (the negative
+	// control's LD_PRELOAD that turns fsync into a no-op).
+	WriterEnv []string
+	// Logs is where the ack and follower logs go (default under Work); they
+	// must not live on the file system that loses power.
+	Logs string
 }
 
 // CrashLoopResult sums a loop.
@@ -495,7 +505,10 @@ func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any
 	if spec.MaxKillDelay <= 0 {
 		spec.MaxKillDelay = 3 * time.Second
 	}
-	logs := filepath.Join(spec.Work, "crash-logs-"+spec.Arm+"-"+spec.Scenario)
+	logs := spec.Logs
+	if logs == "" {
+		logs = filepath.Join(spec.Work, "crash-logs-"+spec.Arm+"-"+spec.Scenario)
+	}
 	if err := os.MkdirAll(logs, 0o755); err != nil {
 		return res, err
 	}
@@ -516,7 +529,7 @@ func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any
 		cs := CrashSpec{Arm: spec.Arm, Scenario: spec.Scenario, Store: spec.Store, Logs: logs, Out: spec.Out, Round: round,
 			Calls: calls, Batch: spec.Batch}
 		before := countLines(ackPath(logs))
-		cmd, log, err := StartChild(ChildSpec{Mode: mode, Crash: &cs}, filepath.Join(logs, fmt.Sprintf("writer-%04d.log", round)))
+		cmd, log, err := StartChild(ChildSpec{Mode: mode, Crash: &cs}, filepath.Join(logs, fmt.Sprintf("writer-%04d.log", round)), spec.WriterEnv...)
 		if err != nil {
 			return res, err
 		}
@@ -546,6 +559,11 @@ func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any
 			res.Killed++
 		}
 		log.Close()
+		if spec.AfterKill != nil {
+			if err := spec.AfterKill(); err != nil {
+				return res, fmt.Errorf("round %d: after the kill: %w", round, err)
+			}
+		}
 		vr, verr := RunChild(ctx, ChildSpec{Mode: ModeCrashVerify, Crash: &cs}, filepath.Join(logs, fmt.Sprintf("verify-%04d.log", round)))
 		res.Rounds++
 		if verr != nil {
