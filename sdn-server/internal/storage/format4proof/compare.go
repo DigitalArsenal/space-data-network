@@ -21,6 +21,14 @@ type Policy struct {
 	// AcceptedFields limits Accepted to these fields: a difference in any
 	// other field is still DIFFER. Empty = every field.
 	AcceptedFields []string `json:"accepted_fields,omitempty"`
+	// Superset (contract C-31, `<TYPE>@<source>`): format 1 answers the
+	// type's newest N records that carry the source, format 4 the source's
+	// newest N records. The first set always lies inside the second, so
+	// every row of format 1's must be among the candidate's, which may hold
+	// more, up to MaxRows (N). More rows is the accepted difference; a
+	// missing row or a row past N is DIFFER.
+	Superset bool `json:"superset,omitempty"`
+	MaxRows  int  `json:"max_rows,omitempty"`
 }
 
 func (p Policy) accepts(field string) bool {
@@ -196,6 +204,17 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 		}
 		v.F1Rows += len(ra)
 		v.SRows += len(rb)
+		if pol.Superset {
+			if d, ok := supersetDiff(a.Call, ra, rb, pol.MaxRows); !ok {
+				bump(EqDiffer)
+				unaccepted = true
+				v.Diffs = appendDiff(v.Diffs, d)
+			} else if len(rb) > len(ra) {
+				bump(EqDiffer) // accepted below
+				v.Notes = append(v.Notes, fmt.Sprintf("%s: C-31: %d rows, format 1's %d all among them", a.Call, len(rb), len(ra)))
+			}
+			continue
+		}
 		if len(ra) != len(rb) {
 			bump(EqDiffer)
 			unaccepted = unaccepted || !pol.accepts("rows")
@@ -367,6 +386,26 @@ func variantMatchesCopy(row Row, schema string, oracle CopyOracle, cache map[str
 		}
 	}
 	return false
+}
+
+// supersetDiff checks Policy.Superset: every row of a (format 1) is in b,
+// and b has at most max rows (0 = no bound).
+func supersetDiff(call string, a, b []Row, max int) (Diff, bool) {
+	if max > 0 && len(b) > max {
+		return Diff{Call: call, Row: -1, Field: "rows", F1: fmt.Sprint(len(a)), S: fmt.Sprintf("%d, above the bound %d", len(b), max)}, false
+	}
+	have := map[string]int{}
+	for _, r := range b {
+		have[strictText(r)]++
+	}
+	for i, r := range a {
+		k := strictText(r)
+		if have[k] == 0 {
+			return Diff{Call: call, Row: i, Field: "row", F1: r.text(), S: "absent"}, false
+		}
+		have[k]--
+	}
+	return Diff{}, true
 }
 
 func sameMultiset(a, b []Row) bool {

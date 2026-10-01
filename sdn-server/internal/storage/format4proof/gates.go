@@ -206,7 +206,9 @@ var readMetrics = []struct {
 // Gate 2a: every read shape at least equal to both engines, at p50 and p99,
 // cold and warm. The bar is the better of F1 and F2 for that number (an arm
 // that errors is infinitely slow; an arm that did not run the shape is left
-// out of the bar and named in the check's note).
+// out of the bar and named in the check's note). The EPOCH shapes over every
+// object (AllObjects; not in the benchset) are reported beside the bar, as
+// the owner asked (p50 and p99), not held to it.
 func readsGate(runs []*Run) Gate {
 	g := Gate{ID: "2a", Title: "Faster: every read shape at least equal to both engines (p50 and p99, cold and warm)"}
 	used := RunsOf(runs, KindReads, LabelFixture)
@@ -253,7 +255,11 @@ func readsGate(runs []*Run) Gate {
 				if ss.Errors > 0 {
 					notes = append(notes, fmt.Sprintf("s errors %d", ss.Errors))
 				}
+				if a != nil && a.Rows != ss.Rows {
+					notes = append(notes, fmt.Sprintf("rows s %d, f1 %d", ss.Rows, a.Rows)) // C-31 shapes answer more
+				}
 			}
+			c.Info = strings.HasSuffix(k.Shape, " "+AllObjects)
 			c.Pass = lowerOrEqual(c.S, c.Bar)
 			c.Note = strings.Join(notes, "; ")
 			g.Checks = append(g.Checks, c)

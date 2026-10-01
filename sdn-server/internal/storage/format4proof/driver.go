@@ -324,10 +324,16 @@ func DriveWrites(ctx context.Context, c Config, ops []string, logf Logf) error {
 					logf("write %s %s: %s, max RSS %.0f MB, err %v", op, arm, cr.Wall.Round(time.Second), cr.MaxRSSMB, err)
 					return err
 				}
-				if op != "W07" {
+				var second string // W07's import target; W10's untouched store (format 4's arrival check)
+				switch {
+				case op == "W07":
+					second = name + "-import"
+				case op == "W10" && arm == ArmS:
+					second = name + "-before"
+				default:
 					return run()
 				}
-				return c.withClone(src, name+"-import", func(clone2 string) error {
+				return c.withClone(src, second, func(clone2 string) error {
 					spec.Store2 = clone2
 					return run()
 				})
@@ -480,10 +486,10 @@ func digestsOf(r *Run) (map[string]TypeDigest, error) {
 	return d, json.Unmarshal(b, &d)
 }
 
-// writeAccepted are the writes whose record sets differ by an owner decision.
-var writeAccepted = map[string]string{
-	"W10": "D1: format 4 evicts by content month, format 1 by arrival",
-}
+// w10Accepted is W10's intended difference: format 4's record sets after
+// the quota GC differ from format 1's by design; format 4's own rule is
+// checked instead (QuotaByArrival, the run's arrival_violations).
+const w10Accepted = "C-32: format 4 deletes each type's oldest records by arrival; format 1 evicts by source timestamp across types"
 
 func compareWriteDigests(op string, f1, s *Run) WriteVerdict {
 	v := WriteVerdict{Op: op, Status: EqEqual}
@@ -501,8 +507,20 @@ func compareWriteDigests(op string, f1, s *Run) WriteVerdict {
 	}
 	if len(v.Diffs) > 0 {
 		v.Status = EqDiffer
-		if why, ok := writeAccepted[op]; ok {
-			v.Status = EqAccepted + " (" + why + ")"
+	}
+	if op == "W10" && s.Arm == ArmS {
+		probs, ok := s.Extra["arrival_violations"].([]any)
+		switch {
+		case !ok:
+			v.Status = EqMissing
+			v.Diffs = append(v.Diffs, "format 4's arrival check did not run")
+		case len(probs) > 0:
+			v.Status = EqDiffer
+			for _, p := range probs {
+				v.Diffs = append(v.Diffs, fmt.Sprint(p))
+			}
+		case len(v.Diffs) > 0:
+			v.Status = EqAccepted + " (" + w10Accepted + "; arrival order checked)"
 		}
 	}
 	return v
