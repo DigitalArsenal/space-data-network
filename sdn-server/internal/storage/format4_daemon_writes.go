@@ -80,7 +80,9 @@ func f4Ident(schemaName string, data []byte, tags *SourceTags) *[32]byte {
 
 // f4Put is one write's records into the engine, chunked. It returns each
 // record's outcome in input order. Records the engine refused are returned
-// as a *RefusedRecordsError after the others are stored.
+// as a *RefusedRecordsError after the others are stored. An ingest-identity
+// repeat lands nowhere, and the record holding the identity takes the
+// write's tag (format 1's tagIdentityRepeats).
 func (b format4Backend) f4Put(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, identity bool) ([]string, []format4.Outcome, error) {
 	if err := b.s.requireWritable("store batch"); err != nil {
 		return nil, nil, err
@@ -108,6 +110,7 @@ func (b format4Backend) f4Put(schemaName string, records [][]byte, peerID string
 	cids := make([]string, len(records))
 	outcomes := make([]format4.Outcome, 0, len(records))
 	refused := &RefusedRecordsError{Schema: schemaName, Records: len(records)}
+	var heldSeqs []int64
 	for start := 0; start < len(records); start += format4PutChunk {
 		chunk := records[start:min(start+format4PutChunk, len(records))]
 		batch := format4.Batch{Type: typ, Peer: peerID, Tags: batchTags, Mode: format4.ModeIngest, Records: make([]format4.In, len(chunk))}
@@ -135,16 +138,78 @@ func (b format4Backend) f4Put(schemaName string, records [][]byte, peerID string
 			return cids, outcomes, fmt.Errorf("store %s records: the engine answered %d outcomes for %d records", schemaName, len(got), len(chunk))
 		}
 		for i, o := range got {
-			if o.Action == format4.ActRejected {
+			switch o.Action {
+			case format4.ActRejected:
 				refused.refuse(cids[start+i], fmt.Errorf("%s (%d)", format4.RejectReason(o.Reject), o.Reject))
+			case format4.ActIdentDup:
+				heldSeqs = append(heldSeqs, o.Seq)
 			}
 		}
 		outcomes = append(outcomes, got...)
+	}
+	if len(batchTags) > 0 {
+		seen := map[int64]bool{}
+		for _, seq := range heldSeqs {
+			if seen[seq] {
+				continue
+			}
+			seen[seq] = true
+			held, err := b.f4CIDAt(typ, seq)
+			if err != nil {
+				return cids, outcomes, err
+			}
+			if err := b.f4Retag(schemaName, typ, held, batchTags[0]); err != nil {
+				return cids, outcomes, err
+			}
+		}
 	}
 	if len(refused.Order) > 0 {
 		return cids, outcomes, refused
 	}
 	return cids, outcomes, nil
+}
+
+// f4CIDAt is the CID of a type's record at seq.
+func (b format4Backend) f4CIDAt(typ string, seq int64) (string, error) {
+	recs, err := b.d.api().Scan(b.d.ctx, format4.Query{Type: typ, SeqAfter: seq - 1, SeqThrough: seq, Limit: 1})
+	if err != nil {
+		return "", err
+	}
+	if len(recs) != 1 || recs[0].Seq != seq {
+		return "", fmt.Errorf("no %s record at seq %d", typ, seq)
+	}
+	return recs[0].CID, nil
+}
+
+// f4Retag attaches a tag to a held record: its stored bytes again, by the
+// peer of the copy holding it, with the tag. The engine retags that copy, or
+// updates the instance's source URL when it holds the tag (DUP).
+func (b format4Backend) f4Retag(schemaName, typ, cid string, tag format4.Tag) error {
+	recs, err := b.d.api().Get(b.d.ctx, typ, []string{cid}, false, true)
+	if err != nil && !errors.Is(err, format4.ErrNoType) {
+		return err
+	}
+	if len(recs) == 0 {
+		return fmt.Errorf("source-tagged record not found: %s/%s", schemaName, cid)
+	}
+	rec := recs[0]
+	plain, err := b.s.openStoredRecordBytes(schemaName, rec.Data)
+	if err != nil {
+		return err
+	}
+	in := format4.In{CID: cid, Plain: plain, TS: rec.TS, Sig: rec.Sig}
+	if encfield.IsSealed(rec.Data) {
+		in.Sealed = rec.Data
+	}
+	got, err := b.d.api().Put(b.d.ctx, format4.Batch{Type: typ, Peer: rec.Peer, Tags: []format4.Tag{tag}, Mode: format4.ModeIngest,
+		Records: []format4.In{in}})
+	if err != nil {
+		return fmt.Errorf("retag %s: %w", cid, err)
+	}
+	if len(got) == 1 && got[0].Action == format4.ActRejected {
+		return fmt.Errorf("retag %s: %s (%d)", cid, format4.RejectReason(got[0].Reject), got[0].Reject)
+	}
+	return nil
 }
 
 // f4Inserted counts the records new to the type (format 1's count: a CID
@@ -166,14 +231,7 @@ func (b format4Backend) f4HeldCID(typ, cid string, o format4.Outcome) (string, e
 	if o.Action != format4.ActIdentDup {
 		return cid, nil
 	}
-	recs, err := b.d.api().Scan(b.d.ctx, format4.Query{Type: typ, SeqAfter: o.Seq - 1, SeqThrough: o.Seq, Limit: 1})
-	if err != nil {
-		return "", err
-	}
-	if len(recs) != 1 {
-		return "", fmt.Errorf("the record holding %s's ingest identity (seq %d) is gone", cid, o.Seq)
-	}
-	return recs[0].CID, nil
+	return b.f4CIDAt(typ, o.Seq)
 }
 
 func (b format4Backend) storeBatch(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
@@ -268,9 +326,7 @@ func (b format4Backend) importDatasetShardChunk(index *DatasetExportIndex, provi
 	return imported, nil
 }
 
-// UpsertSourceTags attaches a tag to a held record: its stored bytes again,
-// by the peer of the copy holding it, with the tag (the engine retags that
-// copy, or updates the instance's source URL: DUP).
+// UpsertSourceTags attaches a tag to a held record (f4Retag).
 func (b format4Backend) UpsertSourceTags(schemaName, cid string, tags SourceTags) error {
 	if err := b.closed(); err != nil {
 		return err
@@ -283,31 +339,7 @@ func (b format4Backend) UpsertSourceTags(schemaName, cid string, tags SourceTags
 	if err != nil {
 		return err
 	}
-	recs, err := b.d.api().Get(b.d.ctx, typ, []string{cid}, false, true)
-	if err != nil && !errors.Is(err, format4.ErrNoType) {
-		return err
-	}
-	if len(recs) == 0 {
-		return fmt.Errorf("source-tagged record not found: %s/%s", schemaName, cid)
-	}
-	rec := recs[0]
-	plain, err := b.s.openStoredRecordBytes(schemaName, rec.Data)
-	if err != nil {
-		return err
-	}
-	in := format4.In{CID: cid, Plain: plain, TS: rec.TS, Sig: rec.Sig}
-	if encfield.IsSealed(rec.Data) {
-		in.Sealed = rec.Data
-	}
-	got, err := b.d.api().Put(b.d.ctx, format4.Batch{Type: typ, Peer: rec.Peer, Tags: []format4.Tag{f4Tag(tags)}, Mode: format4.ModeIngest,
-		Records: []format4.In{in}})
-	if err != nil {
-		return fmt.Errorf("retag %s: %w", cid, err)
-	}
-	if len(got) == 1 && got[0].Action == format4.ActRejected {
-		return fmt.Errorf("retag %s: %s (%d)", cid, format4.RejectReason(got[0].Reject), got[0].Reject)
-	}
-	return nil
+	return b.f4Retag(schemaName, typ, cid, f4Tag(tags))
 }
 
 // Delete removes every copy of a CID.

@@ -710,7 +710,8 @@ func (b format4Backend) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Recor
 			if err != nil {
 				return nil, err
 			}
-			rec.SourceTags, rec.RowID, rec.MaterializedAt = SourceTags{}, 0, time.Time{}
+			// Format 1's row: no tag, no RowID, the local-time timestamp.
+			rec.SourceTags, rec.RowID, rec.MaterializedAt, rec.Timestamp = SourceTags{}, 0, time.Time{}, time.Unix(r.TS, 0)
 			out = append(out, rec)
 			if len(out) == query.Limit {
 				break
@@ -752,7 +753,7 @@ func (b format4Backend) QueryRecentRecords(schemaName string, limit int) ([]*Rec
 		return nil, err
 	}
 	for _, r := range out {
-		r.RowID, r.RecordLength = 0, 0
+		r.RowID = 0
 	}
 	return out, nil
 }
