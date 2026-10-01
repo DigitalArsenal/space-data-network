@@ -73,6 +73,9 @@ type recordBackend interface {
 	// IndexedRecordWindowLimitForBytes takes maxBytes > 0.
 	IndexedRecordWindowLimitForBytes(filter IndexedRecordQuery, maxBytes int64) (int, bool, error)
 	DatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batchID string) (string, int, error)
+	// QueryLogEntries takes the clamped limit; the log index is a control
+	// table, the entries are PLOG records.
+	QueryLogEntries(publisherPeerID, schemaType string, sinceSequence uint64, limit int) ([][]byte, error)
 
 	// ── counts, heads and index pages ───────────────────────────────────
 	CountRawRecords(filter RawRecordQuery) (int64, error)
