@@ -326,7 +326,7 @@ func (b format2Backend) WarmFullTextIndexes() (scheduled, skipped []string, err 
 // recoverControlLocked replaces only the control instance; the partition
 // store's instances are their own poison domains (§15).
 func (b format2Backend) recoverControlLocked() (uint64, error) {
-	return b.s.recoverFormat2ControlInstanceLocked()
+	return b.s.recoverControlInstanceLocked()
 }
 
 func (b format2Backend) close() error { return b.s.closeFormat2Locked() }
