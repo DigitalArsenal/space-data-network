@@ -62,15 +62,21 @@ func openControlInstance(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlr
 }
 
 // initControlTables creates the control tables only (initTables less
-// every record table, the engine rows and the partition counters).
+// every record table, the engine rows and the partition counters). Format 4
+// keeps the ingest identities in the engine (C-21), so its control database
+// has no identity table.
 func (s *FlatSQLStore) initControlTables() error {
+	identities := s.initRecordIngestIdentityTable
+	if s.Format4() {
+		identities = func() error { return nil }
+	}
 	steps := []struct {
 		what string
 		fn   func() error
 	}{
 		{"metadata", s.initMetadataTable},
 		{"source batch licences", s.initSourceBatchLicenseTable},
-		{"ingest identities", s.initRecordIngestIdentityTable},
+		{"ingest identities", identities},
 		{"dataset publication series", s.initDatasetPublicationSeriesTables},
 		{"dataset shard publications", s.initDatasetShardPublicationTable},
 		{"pin ledger", s.initPinLedgerTable},
