@@ -1,8 +1,8 @@
 package format4proof
 
 // The harness's entry points. Each skips cleanly unless its environment is
-// set (doc.go lists it), so `go test` of this package in CI runs only the
-// unit tests. A typical full run, from sdn-server/:
+// set (doc.go lists it), so `go test` of this package in CI builds it and
+// skips. A typical full run, from sdn-server/:
 //
 //	export SDN_F1_FIXTURE=… SDN_F2_FIXTURE=… P4_FIXTURE=… P4PROOF_BENCHSET=…/benchset.json \
 //	       P4PROOF_WORK=… P4PROOF_OUT=…

@@ -10,8 +10,7 @@ import (
 )
 
 // The format-4 side of the digests and the crash checks, through the
-// engine's own API (contract §5.2): format4.Engine on a store, or
-// format4test.Fake in the unit tests.
+// engine's own API (contract §5.2) on a closed store.
 
 // IntegrityNote says how integrity_check is covered: the engine's REBUILD
 // verify (what=8) compares the derived state with the files; integrity_check
