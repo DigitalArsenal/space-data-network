@@ -237,9 +237,10 @@ jobs:
           # Store format 2 on the published partition-store engine (T6): the
           # writer and reader instances, rings, mailboxes, RB1, store-migrate.
           ../scripts/go-with-wasmedge.sh test ./internal/storage/format2/ -count=1 -timeout 30m -v
-          # The daemon on format 2: the storage API against format 1 on the
-          # same writes, and the dashboard lane through the API under ingest.
-          ../scripts/go-with-wasmedge.sh test ./internal/storage/ -count=1 -timeout 30m -v -run 'TestFormat2'
+          # The daemon on formats 2 and 4: the storage API against format 1
+          # on the same writes (format 4 on its Fake and, once embedded, on
+          # its engine), and the dashboard lane through the API under ingest.
+          ../scripts/go-with-wasmedge.sh test ./internal/storage/ -count=1 -timeout 30m -v -run 'TestFormat2|TestFormat4'
           ../scripts/go-with-wasmedge.sh test ./internal/api/ -count=1 -timeout 20m -v -run 'TestFormat2'
           ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 30m -v -run 'TestFormat2|TestStoreMigrate'
 
