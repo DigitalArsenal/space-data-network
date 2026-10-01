@@ -685,11 +685,11 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 	// Pre-ingest duplicate reconcile: replaying the SAME source batch (same
 	// batch_id) must not double records — mirror the runner's
 	// reconcile-before-ingest step.
-	// Store format 2 dedupes by CID in the partition's writer and keeps no
-	// legacy record index to rank logical duplicates by: the index-key
-	// duplicate reconcile is a format-1 maintenance pass (see
-	// storage.FlatSQLStore.Format2).
-	dupReconcile := reconcile != "none" && !s.store.Format2()
+	// A partitioned store (formats 2 and 4) dedupes by CID in the
+	// partition's writer and keeps no legacy record index to rank logical
+	// duplicates by: the index-key duplicate reconcile is a format-1
+	// maintenance pass (see storage.FlatSQLStore.PartitionedRecords).
+	dupReconcile := reconcile != "none" && !s.store.PartitionedRecords()
 	if dupReconcile {
 		if _, err := s.store.ReconcileSourceBatchIndexedDuplicates(schema, tags.ProviderID, tags.SourceName, tags.BatchID, true); err != nil {
 			return errCapJSON("pre-ingest reconcile failed: " + err.Error())
