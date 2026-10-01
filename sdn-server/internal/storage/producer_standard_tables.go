@@ -238,10 +238,8 @@ func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schem
 // routedProducerID normalisation Store applies. It is Store without the engine
 // mirror; a repeat CID in the producer's own table is a no-op.
 func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
-	if s.ps != nil {
-		// Keyed by the raw peer id: the engine derives the partition token
-		// from it (A3), exactly as this path named its table.
-		return s.f2StoreOne(schemaName, data, peerID, signature, nil)
+	if s.rb != nil {
+		return s.rb.StoreRoutedByProducer(schemaName, data, peerID, signature)
 	}
 	defer s.lockWrite("StoreRoutedByProducer")()
 
@@ -364,8 +362,8 @@ type RoutedRecord struct {
 // newest first — e.g. "all OMM across producers". A zero/negative limit means no
 // limit. This is the cross-table query the (producer, standard) layout enables.
 func (s *FlatSQLStore) QueryRoutedByStandard(schemaName string, limit int) ([]RoutedRecord, error) {
-	if s.ps != nil {
-		return nil, f2Unsupported("routed-table listings (the (producer, standard) tables are partitions)")
+	if s.rb != nil {
+		return s.rb.QueryRoutedByStandard(schemaName, limit)
 	}
 	standard, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
@@ -380,8 +378,8 @@ func (s *FlatSQLStore) QueryRoutedByStandard(schemaName string, limit int) ([]Ro
 // QueryRoutedByProducer returns records from one producer across ALL standards,
 // newest first — e.g. "all records from producer X".
 func (s *FlatSQLStore) QueryRoutedByProducer(producerID string, limit int) ([]RoutedRecord, error) {
-	if s.ps != nil {
-		return nil, f2Unsupported("routed-table listings (the (producer, standard) tables are partitions)")
+	if s.rb != nil {
+		return s.rb.QueryRoutedByProducer(producerID, limit)
 	}
 	producer := sanitizeProducerID(producerID)
 	if producer == "" {
@@ -393,8 +391,8 @@ func (s *FlatSQLStore) QueryRoutedByProducer(producerID string, limit int) ([]Ro
 // QueryRoutedAll returns records across every (producer, standard) table,
 // newest first.
 func (s *FlatSQLStore) QueryRoutedAll(limit int) ([]RoutedRecord, error) {
-	if s.ps != nil {
-		return nil, f2Unsupported("routed-table listings (the (producer, standard) tables are partitions)")
+	if s.rb != nil {
+		return s.rb.QueryRoutedAll(limit)
 	}
 	return s.queryRoutedTables(func(ProducerStandardTable) bool { return true }, limit)
 }

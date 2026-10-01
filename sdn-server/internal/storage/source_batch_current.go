@@ -131,8 +131,8 @@ func (s *FlatSQLStore) reconcileSourceBatch(schemaName, providerID, sourceName, 
 	if err != nil {
 		return result, stats, fmt.Errorf("invalid schema name: %w", err)
 	}
-	if s.ps != nil {
-		result, err := s.f2ReconcileSourceBatch(result)
+	if s.rb != nil {
+		result, err := s.rb.reconcileSourceBatch(result)
 		return result, stats, err
 	}
 

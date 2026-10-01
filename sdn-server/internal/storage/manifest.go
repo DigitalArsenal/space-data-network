@@ -996,8 +996,8 @@ func (s *FlatSQLStore) importDatasetShardChunkWithin(ctx context.Context, index 
 // lock and one control transaction (the pre-chunking
 // importDatasetShardRecords body).
 func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, providerPeerID string, records []DatasetExportIndexRecord, readRecord datasetShardRecordReader) (int, error) {
-	if s.ps != nil {
-		return s.f2ImportDatasetShardChunk(index, providerPeerID, records, readRecord)
+	if s.rb != nil {
+		return s.rb.importDatasetShardChunk(index, providerPeerID, records, readRecord)
 	}
 	defer s.lockWrite("importDatasetShardChunk")()
 	if hook := importDatasetShardChunkHook.Load(); hook != nil {

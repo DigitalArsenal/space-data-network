@@ -85,8 +85,8 @@ type fullTextIndexState struct {
 // CheckFullTextSearch starts/resumes one dataset's derived index. Call before
 // taking s.mu: the background worker needs the write lock in bounded windows.
 func (s *FlatSQLStore) CheckFullTextSearch(schema, search string) error {
-	if s != nil && s.ps != nil {
-		return s.f2CheckFullTextSearch(schema, search)
+	if s != nil && s.rb != nil {
+		return s.rb.CheckFullTextSearch(schema, search)
 	}
 	if strings.TrimSpace(search) == "" {
 		return nil
@@ -366,8 +366,8 @@ func upsertFullTextExec(exec sqlExecer, state *fullTextIndexState, schema, cid s
 // FullTextIndexState reports the derived search index for schema: "ready",
 // "building", "failed", or "cold" when nothing has requested it since boot.
 func (s *FlatSQLStore) FullTextIndexState(schema string) string {
-	if s != nil && s.ps != nil {
-		return s.f2FullTextIndexState(schema)
+	if s != nil && s.rb != nil {
+		return s.rb.FullTextIndexState(schema)
 	}
 	if s == nil {
 		return "unavailable"
@@ -416,8 +416,8 @@ func (s *FlatSQLStore) schemasWithRecords() ([]string, error) {
 // 2026-09-10, required change 5). Builds share the single existing slot and
 // run in the background; the return names what was scheduled versus skipped.
 func (s *FlatSQLStore) WarmFullTextIndexes() (scheduled, skipped []string, err error) {
-	if s.ps != nil {
-		return s.f2WarmFullTextIndexes()
+	if s.rb != nil {
+		return s.rb.WarmFullTextIndexes()
 	}
 	schemas, err := s.schemasWithRecords()
 	if err != nil {
