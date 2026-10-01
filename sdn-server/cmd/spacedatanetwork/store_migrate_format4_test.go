@@ -1,17 +1,16 @@
 package main
 
-// store-migrate --to 4 (store_migrate_format4.go) against real format-1
-// stores, read through the format-1 engine.
-//
-// The target is format4test's Fake until the format-4 engine lands: one Fake
-// per data root, shared by every open of that root (as an engine's files
-// are), so a run that stops at any step and a rerun see one durable store.
-// The engine runs:
+// store-migrate --to 4 (store_migrate_format4.go) end to end: real format-1
+// stores, read through the format-1 engine, migrated into the format-4 engine
+// (embedded, or SDN_P4_WASM; these tests skip where it does not open). Tests
+// are end to end and few (contract C-33); beside the command-line checks:
 //   - TestStoreMigrateFormat4Kill9: kill -9 of a real migration at random
-//     points (skipped until format4.Open opens the engine);
+//     points, then a rerun: identical to an uninterrupted migration, which
+//     equals format 1;
+//   - TestStoreMigrateFormat4ResumesAfterEveryStep: a run stopped at each
+//     step, a torn STORE and cut-short file moves, then a rerun;
 //   - TestStoreMigrateFormat4Fixture: the host-02-sized fixture
-//     (SDN_F1_FIXTURE=<format-1 store dir>; SDN_MIGRATE4_TARGET=engine, the
-//     default, or null to time the format-1 side alone).
+//     (SDN_F1_FIXTURE=<format-1 store dir>).
 
 import (
 	"bytes"
@@ -35,87 +34,9 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
-	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
-	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/format4test"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
-
-// ---- the target -----------------------------------------------------------------------
-
-// fakeEngines opens format4test's Fake as the format-4 engine. The Fake
-// continues a data root's store across opens in this process (as an engine's
-// files do), so a run that stops at any step and a rerun see one durable
-// store. Until the Fake has them, this double also applies two contract
-// rules: C-20 (a migrate PUT supersedes nothing: CAT's supersede identity is
-// left out of the Fake's extraction) and C-22 (a torn STORE beside a valid
-// MIGRATED reopens as a migration target).
-type fakeEngines struct {
-	wrap func(format4.API) format4.API
-}
-
-func newFakeEngines() *fakeEngines { return &fakeEngines{} }
-
-func (d *fakeEngines) open(ctx context.Context, opt format4.Options) (format4.API, error) {
-	f, err := openFake4(ctx, opt)
-	if err != nil {
-		return nil, err
-	}
-	var api format4.API = f
-	if d.wrap != nil {
-		api = d.wrap(api)
-	}
-	return api, nil
-}
-
-// store reopens root's store (after a run closed it) for the test to read.
-func (d *fakeEngines) store(root string) format4.API {
-	f, err := openFake4(context.Background(), format4.Options{DataRoot: root, Create: format4.OpenExisting})
-	if err != nil {
-		panic(fmt.Sprintf("reopen the Fake at %s: %v", root, err))
-	}
-	return f
-}
-
-func openFake4(ctx context.Context, opt format4.Options) (*format4test.Fake, error) {
-	// A test's earlier reopen for reading is closed first (one opener a
-	// root).
-	if held, ok := readers.LoadAndDelete(filepath.Clean(opt.DataRoot)); ok {
-		_ = held.(*format4test.Fake).Close(ctx)
-	}
-	if opt.Create == format4.CreateForMigration {
-		if mk, err := marker.Read(opt.DataRoot); err == nil && mk.MigratedValid && mk.StorePresent && !mk.StoreValid {
-			torn := filepath.Join(opt.DataRoot, marker.Dir, marker.StoreFile)
-			if err := os.Rename(torn, torn+".torn"); err != nil {
-				return nil, err
-			}
-			defer os.Rename(torn+".torn", torn)
-		}
-	}
-	f, err := format4test.Open(ctx, opt)
-	if err != nil {
-		return nil, err
-	}
-	f.Extract = migrateExtract
-	if opt.Create == format4.OpenExisting {
-		readers.Store(filepath.Clean(opt.DataRoot), f)
-	}
-	return f, nil
-}
-
-var readers sync.Map // data root -> the Fake a test reopened to read
-
-// migrateExtract is the Fake's extraction without CAT's supersede identity
-// (C-20, until the Fake skips supersede in migrate mode).
-func migrateExtract(typ string, plain []byte) (format4test.Fields, error) {
-	f, err := format4test.DefaultExtract(typ, plain)
-	f.Supersede = ""
-	return f, err
-}
-
-func migrate4TestOptions(store string, engines *fakeEngines) migrate4Options {
-	return migrate4Options{Store: store, PageRows: 64, open: engines.open, testJournalEvery: time.Nanosecond}
-}
 
 // ---- legacy stores --------------------------------------------------------------------
 
@@ -542,116 +463,6 @@ func TestStoreMigrateFormat4Inventory(t *testing.T) {
 	}
 }
 
-// The migrated store equals format 1 on every record copy, tag and counter;
-// it is activated; a rerun is a no-op; --verify-only passes; a format-1 open
-// of the activated store fails.
-func TestStoreMigrateFormat4EqualsFormat1(t *testing.T) {
-	legacy := t.TempDir()
-	buildLegacyStore4(t, legacy)
-	pristine := cloneStore(t, legacy)
-	engines := newFakeEngines()
-	var mu sync.Mutex
-	var puts []format4.Batch
-	engines.wrap = func(api format4.API) format4.API { return &recordingAPI{API: api, mu: &mu, puts: &puts} }
-	var log bytes.Buffer
-	rep, err := migrateStore4(context.Background(), migrate4TestOptions(legacy, engines), &log)
-	if err != nil {
-		t.Fatalf("migrate: %v\n%s\n%+v\ncheck %+v", err, log.String(), rep, rep.Check)
-	}
-	c := rep.Check
-	// 300 OMM + 5 signed OMM + 40 CAT + 70 IQC records; 100 OMM and 20 IQC
-	// held by a second producer.
-	if c == nil || c.MismatchCount != 0 || c.Records != 415 || c.Copies != 535 || rep.Records != 415 || rep.Copies != 535 {
-		t.Fatalf("check %+v; report records %d copies %d", c, rep.Records, rep.Copies)
-	}
-	if c.Rehashed != 535 || c.FieldChecks != 415 || c.ColumnSamples == 0 || c.TagInstances != 450+5+40+70 || c.Partitions != 5 {
-		t.Fatalf("check coverage %+v", c)
-	}
-	if !rep.Activated || len(rep.Rejected) != 0 || rep.MaxRSS <= 0 || rep.Took == "" {
-		t.Fatalf("report %+v", rep)
-	}
-	assertFormat4EqualsFormat1(t, engines.store(legacy), pristine, 0)
-
-	// Every PUT was migrate mode, seq = the index rowid; IQC records carried
-	// format 1's ingest identity (on their tagged first copy).
-	identities := 0
-	for _, b := range puts {
-		if b.Mode != format4.ModeMigrate {
-			t.Fatalf("a %s PUT in mode %d", b.Type, b.Mode)
-		}
-		for _, in := range b.Records {
-			if in.Seq <= 0 {
-				t.Fatalf("%s %s without a seq", b.Type, in.CID)
-			}
-			if in.Ident != nil {
-				if b.Type != "IQC" || len(in.Tags) == 0 {
-					t.Fatalf("an identity on %s %s (tags %v)", b.Type, in.CID, in.Tags)
-				}
-				identities++
-			}
-		}
-	}
-	if identities != 70 {
-		t.Fatalf("%d IQC records carried an identity, want 70", identities)
-	}
-
-	// Activation (contract §2.3).
-	mk, err := marker.Read(legacy)
-	if err != nil || !mk.Activated() || mk.MigratedFrom != 1 || mk.GseqFloor != rep.GseqFloor || !mk.LegacyControlDir {
-		t.Fatalf("markers %+v %v", mk, err)
-	}
-	if _, err := os.Stat(filepath.Join(legacy, marker.PreFormat4Dir, "control.flatsqldb")); err != nil {
-		t.Fatalf("format 1's control database is not in pre-format4/: %v", err)
-	}
-	if fi, err := os.Stat(filepath.Join(legacy, marker.Dir, "control.db")); err != nil || fi.Size() == 0 {
-		t.Fatalf("fsql4/control.db: %v", err)
-	}
-	for _, name := range []string{migrate4ControlTmp, migrate4FTSTmp} {
-		if _, err := os.Stat(filepath.Join(legacy, name)); err == nil {
-			t.Fatalf("%s left behind", name)
-		}
-	}
-	t.Logf("migrated %d records (%d copies) in %s, max RSS %d B, load %v; notes %q; time %v",
-		rep.Records, rep.Copies, rep.Took, rep.MaxRSS, rep.Load, rep.Notes, rep.Time)
-
-	// A format-1 open of the activated store fails.
-	sv, _ := sds.NewValidator(nil)
-	if s, err := storage.NewFlatSQLStore(legacy, sv, storage.WithDeferredBootRebuilds()); err == nil {
-		s.Close()
-		t.Fatal("a format-1 open of the activated store succeeded")
-	}
-	// A rerun is a no-op.
-	before := format4Dump(t, engines.store(legacy), legacy)
-	rep2, err := migrateStore4(context.Background(), migrate4TestOptions(legacy, engines), nil)
-	if err != nil || !rep2.Activated {
-		t.Fatalf("rerun on an activated store: %v %+v", err, rep2)
-	}
-	if after := format4Dump(t, engines.store(legacy), legacy); after != before {
-		t.Fatal("a rerun on an activated store changed it")
-	}
-	// --verify-only re-reads pre-format4/ and passes.
-	vo := migrate4TestOptions(legacy, engines)
-	vo.VerifyOnly = true
-	rep3, err := migrateStore4(context.Background(), vo, nil)
-	if err != nil || rep3.Check == nil || rep3.Check.MismatchCount != 0 || rep3.Check.Records != 415 || rep3.Records != 415 {
-		t.Fatalf("--verify-only: %v %+v", err, rep3.Check)
-	}
-}
-
-// recordingAPI records the PUTs it forwards.
-type recordingAPI struct {
-	format4.API
-	mu   *sync.Mutex
-	puts *[]format4.Batch
-}
-
-func (r *recordingAPI) Put(ctx context.Context, b format4.Batch) ([]format4.Outcome, error) {
-	r.mu.Lock()
-	*r.puts = append(*r.puts, b)
-	r.mu.Unlock()
-	return r.API.Put(ctx, b)
-}
-
 var errTestCrash = errors.New("test crash")
 
 // A run that stops at any step (every PUT, page, journal write, the index
@@ -662,48 +473,14 @@ var errTestCrash = errors.New("test crash")
 // (SDN_WASM_REQUIRE_PATCHED=1) or with SDN_MIGRATE4_EVERY_STEP=1; elsewhere
 // the first stop of each kind, and the middle journal write.
 func TestStoreMigrateFormat4ResumesAfterEveryStep(t *testing.T) {
-	testResumeAfterEveryStep(t, fakeTarget())
-}
-
-// The same on the engine (embedded, or SDN_P4_WASM).
-func TestStoreMigrateFormat4ResumesAfterEveryStepOnTheEngine(t *testing.T) {
 	requireFormat4Engine(t)
-	testResumeAfterEveryStep(t, engineTarget(t))
-}
-
-// migrate4Target is what a test migrates into.
-type migrate4Target struct {
-	options func(root string) migrate4Options
-	dump    func(t *testing.T, root string) string // an activated store's content
-}
-
-func fakeTarget() migrate4Target {
-	engines := newFakeEngines()
-	return migrate4Target{
-		options: func(root string) migrate4Options { return migrate4TestOptions(root, engines) },
-		dump:    func(t *testing.T, root string) string { return format4Dump(t, engines.store(root), root) },
-	}
-}
-
-func engineTarget(t *testing.T) migrate4Target {
-	return migrate4Target{
-		options: func(root string) migrate4Options {
-			o := engineOptions(t, root)
-			o.testJournalEvery = time.Nanosecond
-			return o
-		},
-		dump: engineDump,
-	}
-}
-
-func testResumeAfterEveryStep(t *testing.T, target migrate4Target) {
 	legacy := t.TempDir()
 	buildLegacyStore4(t, legacy)
 	ctx := context.Background()
 
 	clean := cloneStore(t, legacy)
 	var steps []string
-	opt := target.options(clean)
+	opt := resumeOptions(t, clean)
 	opt.testStep = func(step string) error {
 		steps = append(steps, step)
 		return nil
@@ -711,7 +488,7 @@ func testResumeAfterEveryStep(t *testing.T, target migrate4Target) {
 	if _, err := migrateStore4(ctx, opt, nil); err != nil {
 		t.Fatalf("clean migration: %v", err)
 	}
-	want := target.dump(t, clean)
+	want := engineDump(t, clean)
 	t.Logf("a clean migration passes %d steps", len(steps))
 
 	resume := func(name string, fail func(step string, n int) bool, between func(root string)) {
@@ -719,7 +496,7 @@ func testResumeAfterEveryStep(t *testing.T, target migrate4Target) {
 		root := cloneStore(t, legacy)
 		var mu sync.Mutex
 		n := 0
-		o := target.options(root)
+		o := resumeOptions(t, root)
 		o.testStep = func(step string) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -735,14 +512,14 @@ func testResumeAfterEveryStep(t *testing.T, target migrate4Target) {
 		if between != nil {
 			between(root)
 		}
-		rep, err := migrateStore4(ctx, target.options(root), nil)
+		rep, err := migrateStore4(ctx, resumeOptions(t, root), nil)
 		if err != nil {
 			t.Fatalf("%s: resume: %v\n%+v", name, err, rep.Check)
 		}
 		if !rep.Activated {
 			t.Fatalf("%s: the resumed run did not activate", name)
 		}
-		if got := target.dump(t, root); got != want {
+		if got := engineDump(t, root); got != want {
 			t.Fatalf("%s: the resumed store differs from an uninterrupted migration:\n%s", name, firstDiff(want, got))
 		}
 	}
@@ -778,6 +555,13 @@ func testResumeAfterEveryStep(t *testing.T, target migrate4Target) {
 			t.Fatal(err)
 		}
 	})
+}
+
+// resumeOptions journals after every page, so a stop resumes mid-copy.
+func resumeOptions(t *testing.T, root string) migrate4Options {
+	o := engineOptions(t, root)
+	o.testJournalEvery = time.Nanosecond
+	return o
 }
 
 // migrate4StepSample is the first step of each kind ("put:<table>" is one
@@ -818,236 +602,6 @@ func firstDiff(a, b string) string {
 		}
 	}
 	return ""
-}
-
-// Orphan index rows (no producer table holds the record) are reported per
-// schema and not migrated; a record whose FIRST copy is gone moves its tags to
-// the next copy. The check passes and the store equals format 1.
-func TestStoreMigrateFormat4ReportsOrphans(t *testing.T) {
-	legacy := t.TempDir()
-	buildLegacyStore(t, legacy)
-	orphans := orphanLegacyIndexRows(t, legacy)
-	pristine := cloneStore(t, legacy)
-	engines := newFakeEngines()
-	rep, err := migrateStore4(context.Background(), migrate4TestOptions(legacy, engines), nil)
-	if err != nil {
-		t.Fatalf("migrate: %v\n%+v", err, rep.Check)
-	}
-	c := rep.Check
-	if c.MismatchCount != 0 || len(c.Orphans) != 1 || c.Orphans["OMM.fbs"] != int64(len(orphans)) || c.Records != 340-int64(len(orphans)) {
-		t.Fatalf("check %+v, want %d OMM orphans", c, len(orphans))
-	}
-	assertFormat4EqualsFormat1(t, engines.store(legacy), pristine, 0)
-	got, err := engines.store(legacy).Get(context.Background(), "OMM", mapKeys(orphans), true, false)
-	if err != nil || len(got) != 0 {
-		t.Fatalf("orphans in format 4: %d (%v)", len(got), err)
-	}
-}
-
-func mapKeys(m map[string]int64) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
-// The check is not vacuous: a target that lost or changed anything fails the
-// run before activation, naming the difference.
-func TestStoreMigrateFormat4CheckFailsOnMismatch(t *testing.T) {
-	legacy := t.TempDir()
-	buildLegacyStore4(t, legacy)
-	for _, tc := range []struct {
-		name string
-		wrap func(format4.API) format4.API
-		want string
-	}{
-		{"changed bytes", func(a format4.API) format4.API { return &tamperAPI{API: a, get: flipData} }, "do not hash to the CID"},
-		{"changed epoch", func(a format4.API) format4.API { return &tamperAPI{API: a, get: shiftEpoch} }, "epoch"},
-		{"changed key", func(a format4.API) format4.API { return &tamperAPI{API: a, get: changeKey} }, "object key"},
-		{"changed seq", func(a format4.API) format4.API { return &tamperAPI{API: a, get: shiftSeq} }, "seq"},
-		{"changed signature", func(a format4.API) format4.API { return &tamperAPI{API: a, get: changeSig} }, "the copies"},
-		{"lost tag", func(a format4.API) format4.API { return &tamperAPI{API: a, tags: dropTag} }, "tag instances"},
-		{"lost copy", func(a format4.API) format4.API { return &tamperAPI{API: a, get: dropCopy} }, "copies"},
-		{"column", func(a format4.API) format4.API { return &tamperAPI{API: a, head: true} }, "every present column"},
-		{"verify rebuild", func(a format4.API) format4.API { return &tamperAPI{API: a, rebuild: true} }, "verify rebuild"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := cloneStore(t, legacy)
-			engines := newFakeEngines()
-			engines.wrap = tc.wrap
-			rep, err := migrateStore4(context.Background(), migrate4TestOptions(root, engines), nil)
-			if err == nil || rep.Activated || rep.Check == nil || rep.Check.MismatchCount == 0 {
-				t.Fatalf("a %s passed: %v %+v", tc.name, err, rep.Check)
-			}
-			if !strings.Contains(strings.Join(rep.Check.Mismatches, "\n"), tc.want) {
-				t.Fatalf("mismatches do not name %q: %v", tc.want, rep.Check.Mismatches)
-			}
-			if mk, _ := marker.Read(root); mk.Format4() || !mk.LegacyControlFile {
-				t.Fatalf("a failed check activated or moved something: %+v", mk)
-			}
-		})
-	}
-}
-
-// tamperAPI changes what the target answers (after the copy wrote it right).
-type tamperAPI struct {
-	format4.API
-	get     func([]format4.Rec) []format4.Rec
-	tags    func([]format4.TagRow) []format4.TagRow
-	head    bool
-	rebuild bool
-}
-
-func (a *tamperAPI) Get(ctx context.Context, typ string, cids []string, all, hydrate bool) ([]format4.Rec, error) {
-	r, err := a.API.Get(ctx, typ, cids, all, hydrate)
-	if err == nil && a.get != nil && typ == "OMM" {
-		r = a.get(r)
-	}
-	return r, err
-}
-
-func (a *tamperAPI) Tags(ctx context.Context, typ string, cids []string) ([]format4.TagRow, error) {
-	r, err := a.API.Tags(ctx, typ, cids)
-	if err == nil && a.tags != nil && typ == "OMM" {
-		r = a.tags(r)
-	}
-	return r, err
-}
-
-func (a *tamperAPI) Head(ctx context.Context, q format4.Query) (format4.Head, error) {
-	h, err := a.API.Head(ctx, q)
-	if a.head && q.Type == "OMM" && len(q.Preds) > 0 && q.Preds[0].Op == format4.OpEq {
-		h.N = 0
-	}
-	return h, err
-}
-
-func (a *tamperAPI) Rebuild(ctx context.Context, typ string, what format4.RebuildWhat) ([]format4.RebuildRow, error) {
-	rows, err := a.API.Rebuild(ctx, typ, what)
-	if a.rebuild && what == format4.RebuildVerify && len(rows) > 0 {
-		rows[0].Mismatches = 1
-	}
-	return rows, err
-}
-
-func flipData(r []format4.Rec) []format4.Rec {
-	if len(r) > 0 && len(r[0].Data) > 0 {
-		r[0].Data = append([]byte(nil), r[0].Data...)
-		r[0].Data[len(r[0].Data)-1] ^= 1
-	}
-	return r
-}
-
-func shiftEpoch(r []format4.Rec) []format4.Rec {
-	if len(r) > 0 {
-		r[0].Epoch++
-	}
-	return r
-}
-
-func changeKey(r []format4.Rec) []format4.Rec {
-	if len(r) > 0 {
-		r[0].Key += "0"
-	}
-	return r
-}
-
-func shiftSeq(r []format4.Rec) []format4.Rec {
-	if len(r) > 0 {
-		r[0].Seq++
-	}
-	return r
-}
-
-func changeSig(r []format4.Rec) []format4.Rec {
-	if len(r) > 0 {
-		r[0].Sig = []byte{1}
-	}
-	return r
-}
-
-func dropCopy(r []format4.Rec) []format4.Rec {
-	if len(r) > 1 {
-		return r[1:]
-	}
-	return r
-}
-
-func dropTag(r []format4.TagRow) []format4.TagRow {
-	if len(r) > 1 {
-		return r[1:]
-	}
-	return r
-}
-
-// Formats 2 and 3 are refused; so are a root with no format-1 store,
-// --verify-only before activation, and a source that changed under a
-// half-done migration.
-func TestStoreMigrateFormat4Refusals(t *testing.T) {
-	ctx := context.Background()
-	legacy := t.TempDir()
-	buildLegacyStore(t, legacy)
-	for _, level := range []uint16{2, 3} {
-		root := cloneStore(t, legacy)
-		sf, err := format2.NewStoreFile(1, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		sf.Format = level
-		if err := os.MkdirAll(filepath.Join(root, format2.Dir), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := format2.WriteStoreFile(root, sf); err != nil {
-			t.Fatal(err)
-		}
-		if err := format2.WriteMigrated(root, sf.UUID); err != nil {
-			t.Fatal(err)
-		}
-		_, err = migrateStore4(ctx, migrate4TestOptions(root, newFakeEngines()), nil)
-		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("format %d", level)) {
-			t.Fatalf("a format-%d store: %v", level, err)
-		}
-		if _, err := os.Stat(filepath.Join(root, marker.Dir)); err == nil {
-			t.Fatalf("a refused format-%d store got an fsql4 directory", level)
-		}
-	}
-	if _, err := migrateStore4(ctx, migrate4TestOptions(t.TempDir(), newFakeEngines()), nil); err == nil ||
-		!strings.Contains(err.Error(), "no format-1 store") {
-		t.Fatalf("an empty root: %v", err)
-	}
-	vo := migrate4TestOptions(legacy, newFakeEngines())
-	vo.VerifyOnly = true
-	if _, err := migrateStore4(ctx, vo, nil); err == nil || !strings.Contains(err.Error(), "not") {
-		t.Fatalf("--verify-only before activation: %v", err)
-	}
-	// A half-done migration, then the daemon (format 1) took writes.
-	engines := newFakeEngines()
-	o := migrate4TestOptions(legacy, engines)
-	o.testStep = func(step string) error {
-		if step == "page" {
-			return errTestCrash
-		}
-		return nil
-	}
-	if _, err := migrateStore4(ctx, o, nil); !errors.Is(err, errTestCrash) {
-		t.Fatalf("first run: %v", err)
-	}
-	v, _ := sds.NewValidator(nil)
-	s, err := storage.NewFlatSQLStore(legacy, v, storage.WithDeferredBootRebuilds())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.StoreWithSourceTags("OMM.fbs", migrateTestOMM(29999, time.Now(), "LATE"), "source:celestrak", nil,
-		storage.SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "late"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := migrateStore4(ctx, migrate4TestOptions(legacy, engines), nil); err == nil || !strings.Contains(err.Error(), "changed since") {
-		t.Fatalf("a source that changed under the migration: %v", err)
-	}
 }
 
 // ---- the real engine ---------------------------------------------------------------------
@@ -1192,35 +746,11 @@ func TestStoreMigrateFormat4Kill9(t *testing.T) {
 	t.Logf("MEASURED %d kill -9 points (delays %v): resumed stores identical to an uninterrupted migration", kills, delays)
 }
 
-// nullTarget accepts every PUT and holds nothing: it times the format-1 side
-// of a migration (reads, page building, journalling) alone.
-type nullTarget struct{ format4.API }
-
-func (nullTarget) RegisterType(format4.TypeSpec) error { return nil }
-func (nullTarget) Put(_ context.Context, b format4.Batch) ([]format4.Outcome, error) {
-	out := make([]format4.Outcome, len(b.Records))
-	for i, in := range b.Records {
-		out[i] = format4.Outcome{Action: format4.ActMigrated, Seq: in.Seq}
-	}
-	return out, nil
-}
-func (nullTarget) Partitions(context.Context) ([]format4.PartitionSummary, error) { return nil, nil }
-func (nullTarget) Rebuild(context.Context, string, format4.RebuildWhat) ([]format4.RebuildRow, error) {
-	return nil, nil
-}
-func (nullTarget) Stats() ([]uint64, error)    { return nil, nil }
-func (nullTarget) Close(context.Context) error { return nil }
-
-var errCopyTimed = errors.New("copy timed")
-
 // TestStoreMigrateFormat4Fixture migrates a clone of a host-02-sized
-// format-1 store (SDN_F1_FIXTURE=<store dir>) and reports time, RSS and the
-// load. SDN_MIGRATE4_TARGET picks the target: engine (the default), fake
-// (format4test's in-memory Fake: the whole run, check and activation, on the
-// real data, without the engine's time and memory), or null (the copy pass
-// into a target that keeps nothing: the format-1 side alone).
-// SDN_MIGRATE4_RESUME=1 resumes the run already in SDN_MIGRATE_WORK, and with
-// SDN_MIGRATE4_VERIFY_ONLY=1 re-checks it (--verify-only) once activated.
+// format-1 store (SDN_F1_FIXTURE=<store dir>) on the engine and reports time,
+// RSS and the load. SDN_MIGRATE4_RESUME=1 resumes the run already in
+// SDN_MIGRATE_WORK, and with SDN_MIGRATE4_VERIFY_ONLY=1 re-checks it
+// (--verify-only) once activated.
 func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	src := strings.TrimSpace(os.Getenv("SDN_F1_FIXTURE"))
 	if src == "" {
@@ -1229,10 +759,7 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	if src == "" {
 		t.Skip("SDN_F1_FIXTURE names a format-1 store directory")
 	}
-	target := os.Getenv("SDN_MIGRATE4_TARGET")
-	if target == "" {
-		target = "engine"
-	}
+	requireFormat4Engine(t)
 	work := os.Getenv("SDN_MIGRATE_WORK")
 	if work == "" {
 		work = t.TempDir()
@@ -1245,34 +772,13 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	}
 	opt := migrate4Options{Store: dst, AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true, Wasm: engineWasm(t),
 		VerifyOnly: os.Getenv("SDN_MIGRATE4_VERIFY_ONLY") == "1"}
-	engines := newFakeEngines()
-	switch target {
-	case "engine":
-		requireFormat4Engine(t)
-	case "fake":
-		opt.open = engines.open
-		opt.testNoSamples = true // the Fake answers HEAD by sorting every seq
-	case "null":
-		opt.open = func(context.Context, format4.Options) (format4.API, error) { return nullTarget{}, nil }
-		opt.testStep = func(step string) error {
-			if step == "built" {
-				return errCopyTimed
-			}
-			return nil
-		}
-	default:
-		t.Fatalf("SDN_MIGRATE4_TARGET=%q: engine, fake or null", target)
-	}
 	var log bytes.Buffer
 	rep, err := migrateStore4(context.Background(), opt, &log)
-	if target == "null" && errors.Is(err, errCopyTimed) {
-		err = nil
-	}
 	if rep == nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	t.Logf("MEASURED store-migrate --to 4 (%s target): %d records, %d copies, %d B of records, source %d B in %s (%.1f MB/s); max RSS %.0f MB; load %.1f -> %.1f; %s",
-		target, rep.Records, rep.Copies, rep.RecordBytes, rep.SourceBytes, rep.Took, rep.RecordMBps, float64(rep.MaxRSS)/1e6,
+	t.Logf("MEASURED store-migrate --to 4: %d records, %d copies, %d B of records, source %d B in %s (%.1f MB/s); max RSS %.0f MB; load %.1f -> %.1f; %s",
+		rep.Records, rep.Copies, rep.RecordBytes, rep.SourceBytes, rep.Took, rep.RecordMBps, float64(rep.MaxRSS)/1e6,
 		rep.Load[0], rep.Load[1], rep.Machine)
 	t.Logf("time by phase: %v", rep.Time)
 	if c := rep.Check; c != nil {
@@ -1286,19 +792,11 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate: %v\n%s", err, log.String())
 	}
-	if target != "null" {
-		// A slice of the fixture, against format 1 (now in pre-format4/),
-		// with format 2's readers; every counter in full.
-		t0 := time.Now()
-		var api format4.API
-		if target == "fake" {
-			api = engines.store(dst)
-		} else {
-			e := openEngineAt(t, dst, "CAT.fbs", "IQC.fbs", "MPE.fbs", "OMM.fbs")
-			defer e.Close(context.Background())
-			api = e
-		}
-		assertFormat4EqualsFormat1(t, api, filepath.Join(dst, marker.PreFormat4Dir), 5000)
-		t.Logf("the first 5,000 held records of each schema and every counter equal format 1 (%s)", time.Since(t0).Round(time.Second))
-	}
+	// A slice of the fixture, against format 1 (now in pre-format4/), with
+	// format 2's readers; every counter in full.
+	t0 := time.Now()
+	api := openEngineAt(t, dst, "CAT.fbs", "IQC.fbs", "MPE.fbs", "OMM.fbs")
+	defer api.Close(context.Background())
+	assertFormat4EqualsFormat1(t, api, filepath.Join(dst, marker.PreFormat4Dir), 5000)
+	t.Logf("the first 5,000 held records of each schema and every counter equal format 1 (%s)", time.Since(t0).Round(time.Second))
 }

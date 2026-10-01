@@ -301,7 +301,7 @@ func (m *migrator4) checkPage(ctx context.Context, sc *schemaCheck, entries []st
 			firstLen[e.CID] = first.Len
 			m.checkFields(schema, sc.fields, e.IndexEntry, *first, c)
 		}
-		if e.RowID%migrate4SampleEvery == 0 && !m.opt.testNoSamples {
+		if e.RowID%migrate4SampleEvery == 0 {
 			samples = append(samples, e.IndexEntry)
 		}
 	}
