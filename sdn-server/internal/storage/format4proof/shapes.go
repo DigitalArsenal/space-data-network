@@ -23,10 +23,27 @@ type Measure struct {
 	Rows, Bytes int64
 }
 
-// Call is one storage call of a shape.
+// Call is one storage call of a shape. Run makes the call (the timed part)
+// and returns a Result that canonicalizes what it got (untimed), so hashing
+// the answer never counts against an arm.
 type Call struct {
 	Name string
-	Run  func(s *storage.FlatSQLStore) (Answer, Measure)
+	Run  func(s *storage.FlatSQLStore) Result
+}
+
+// Result builds a call's answer after the timer stops.
+type Result func() (Answer, Measure)
+
+func answered(a Answer, m Measure) Result { return func() (Answer, Measure) { return a, m } }
+
+func errResult(call string, err error) Result { return answered(errAnswer(call, err)) }
+
+func recordsResult(call string, recs []*storage.Record, err error) Result {
+	return func() (Answer, Measure) { return recordsAnswer(call, recs, err) }
+}
+
+func framesResult(call string, st *flatsqlrt.RawStream, err error) Result {
+	return func() (Answer, Measure) { return framesAnswer(call, st, err) }
 }
 
 // Fixtures a shape runs on.
@@ -266,15 +283,17 @@ func getShapes(class string, lists map[string][]string) []Shape {
 }
 
 func getCall(schema, cid string) Call {
-	return Call{Name: cid, Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+	return Call{Name: cid, Run: func(s *storage.FlatSQLStore) Result {
 		r, err := s.GetRecord(schema, cid)
-		if isNotFound(err) {
-			return Answer{Call: cid, Rows: []Row{ValueRow("miss", "1")}}, Measure{}
+		return func() (Answer, Measure) {
+			if isNotFound(err) {
+				return Answer{Call: cid, Rows: []Row{ValueRow("miss", "1")}}, Measure{}
+			}
+			if err != nil {
+				return errAnswer(cid, err)
+			}
+			return Answer{Call: cid, Rows: []Row{RecordRow(r)}}, Measure{Rows: 1, Bytes: int64(len(r.Data))}
 		}
-		if err != nil {
-			return errAnswer(cid, err)
-		}
-		return Answer{Call: cid, Rows: []Row{RecordRow(r)}}, Measure{Rows: 1, Bytes: int64(len(r.Data))}
 	}}
 }
 
@@ -302,9 +321,9 @@ func refsShapes(op BenchOp, hits map[string][]string) ([]Shape, error) {
 			}
 			schema, name := schema, fmt.Sprintf("%s refs=%d", schema, size)
 			out = append(out, Shape{Class: op.ID, Name: name, Schema: schema, Calls: []Call{{Name: name,
-				Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				Run: func(s *storage.FlatSQLStore) Result {
 					recs, err := s.QueryRawRecordRefsByRefs(schema, refs)
-					return recordsAnswer(name, recs, err)
+					return recordsResult(name, recs, err)
 				}}}})
 		}
 	}
@@ -338,24 +357,31 @@ func tagShapes(op BenchOp, hits map[string][]string, in *Inputs) ([]Shape, error
 		cids := roundRobin(list, size)
 		name := fmt.Sprintf("GetSourceTags x%d", size)
 		out = append(out, Shape{Class: op.ID, Name: name, Policy: Policy{}, Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
-				var rows []Row
-				for _, cid := range cids {
+			Run: func(s *storage.FlatSQLStore) Result {
+				tags := make([]storage.SourceTags, len(cids))
+				found := make([]bool, len(cids))
+				for i, cid := range cids {
 					schema := schemaOf[cid]
 					if schema == "" {
 						schema = "OMM.fbs" // b052's CIDs
 					}
 					t, err := s.GetSourceTags(schema, cid)
-					if err != nil {
-						rows = append(rows, ValueRow("cid", cid, "err", "not found"))
-						if !isNotFound(err) {
-							return errAnswer(name, err)
-						}
-						continue
+					if err != nil && !isNotFound(err) {
+						return errResult(name, err)
 					}
-					rows = append(rows, TagsRow(cid, t))
+					tags[i], found[i] = t, err == nil
 				}
-				return Answer{Call: name, Rows: rows}, Measure{Rows: int64(len(rows))}
+				return func() (Answer, Measure) {
+					rows := make([]Row, 0, len(cids))
+					for i, cid := range cids {
+						if !found[i] {
+							rows = append(rows, ValueRow("cid", cid, "err", "not found"))
+							continue
+						}
+						rows = append(rows, TagsRow(cid, tags[i]))
+					}
+					return Answer{Call: name, Rows: rows}, Measure{Rows: int64(len(rows))}
+				}
 			}}}})
 	}
 	return out, nil
@@ -380,25 +406,29 @@ func scanFirstPageShapes(op BenchOp) ([]Shape, error) {
 // scanCall runs datasync.Scan; cursor (when set) chains pages: the call
 // takes *cursor and stores the next one.
 func scanCall(name string, req datasync.QueryRequest, cursor *string) Call {
-	return Call{Name: name, Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+	return Call{Name: name, Run: func(s *storage.FlatSQLStore) Result {
 		r := req
 		if cursor != nil {
 			r.Cursor = *cursor
 		}
 		resp, recs, err := datasync.Scan(s, r, datasync.MaxSyncChunkLimit)
 		if err != nil {
-			return errAnswer(name, err)
+			return errResult(name, err)
 		}
 		if cursor != nil {
 			*cursor = resp.NextCursor
 		}
-		a, m := recordsAnswer(name, recs, nil)
-		head := ValueRow("total", i64(resp.TotalCount), "count", strconv.Itoa(resp.Count), "next_cursor", resp.NextCursor,
-			"snapshot", resp.SnapshotID, "head", resp.Head, "hwm", resp.HighWaterMark, "~scan_hash", resp.ScanHash,
-			"~chunk_hash", resp.ChunkHash)
-		a.Rows = append([]Row{head}, a.Rows...)
-		return a, m
+		return func() (Answer, Measure) { return scanAnswer(name, resp, recs) }
 	}}
+}
+
+func scanAnswer(name string, resp *datasync.ScanResponse, recs []*storage.Record) (Answer, Measure) {
+	a, m := recordsAnswer(name, recs, nil)
+	head := ValueRow("total", i64(resp.TotalCount), "count", strconv.Itoa(resp.Count), "next_cursor", resp.NextCursor,
+		"snapshot", resp.SnapshotID, "head", resp.Head, "hwm", resp.HighWaterMark, "~scan_hash", resp.ScanHash,
+		"~chunk_hash", resp.ChunkHash)
+	a.Rows = append([]Row{head}, a.Rows...)
+	return a, m
 }
 
 // R06, R08, R09: QueryRawRecordRefs on the datasync rowid cursor.
@@ -420,9 +450,9 @@ func rawRefsShapes(op BenchOp) ([]Shape, error) {
 		parts = append(parts, "limit="+strconv.Itoa(p.Limit))
 		name := strings.Join(parts, " ")
 		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: Policy{Collapse: true}, Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			Run: func(s *storage.FlatSQLStore) Result {
 				recs, err := s.QueryRawRecordRefs(q)
-				return recordsAnswer(name, recs, err)
+				return recordsResult(name, recs, err)
 			}}}})
 	}
 	return out, nil
@@ -441,7 +471,7 @@ func chainedSourceShapes(op BenchOp) ([]Shape, error) {
 		Policy: Policy{Collapse: true}}
 	for page := 0; page < p.Pages; page++ {
 		page, name := page, fmt.Sprintf("page%d", page)
-		sh.Calls = append(sh.Calls, Call{Name: name, Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+		sh.Calls = append(sh.Calls, Call{Name: name, Run: func(s *storage.FlatSQLStore) Result {
 			if page == 0 {
 				*after = 0
 			}
@@ -450,7 +480,7 @@ func chainedSourceShapes(op BenchOp) ([]Shape, error) {
 			if err == nil && len(recs) > 0 {
 				*after = recs[len(recs)-1].RowID
 			}
-			return recordsAnswer(name, recs, err)
+			return recordsResult(name, recs, err)
 		}})
 	}
 	return []Shape{sh}, nil
@@ -485,12 +515,12 @@ func countShapes(op BenchOp) ([]Shape, error) {
 				pol.Accepted = "C-10: format 4 counts a record once where format 1 counts its matching tag rows"
 			}
 			return Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: pol, Calls: []Call{{Name: name,
-				Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				Run: func(s *storage.FlatSQLStore) Result {
 					row, err := run(s)
 					if err != nil {
-						return errAnswer(name, err)
+						return errResult(name, err)
 					}
-					return Answer{Call: name, Rows: []Row{row}}, Measure{Rows: 1}
+					return answered(Answer{Call: name, Rows: []Row{row}}, Measure{Rows: 1})
 				}}}}
 		}
 		out = append(out,
@@ -554,16 +584,18 @@ func indexPageShapes(op BenchOp) ([]Shape, error) {
 
 func indexPageShape(class, name string, q storage.RecordIndexPageQuery) Shape {
 	return Shape{Class: class, Name: name, Schema: q.SchemaName, Calls: []Call{{Name: name,
-		Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+		Run: func(s *storage.FlatSQLStore) Result {
 			rows, total, err := s.RecordIndexPage(q)
 			if err != nil {
-				return errAnswer(name, err)
+				return errResult(name, err)
 			}
-			out := []Row{ValueRow("total", i64(total))}
-			for _, r := range rows {
-				out = append(out, ValueRow("cid", r.CID, "norad", i64p(r.NoradCatID), "epoch", i64p(r.EpochUnix)))
+			return func() (Answer, Measure) {
+				out := []Row{ValueRow("total", i64(total))}
+				for _, r := range rows {
+					out = append(out, ValueRow("cid", r.CID, "norad", i64p(r.NoradCatID), "epoch", i64p(r.EpochUnix)))
+				}
+				return Answer{Call: name, Rows: out}, Measure{Rows: int64(len(rows))}
 			}
-			return Answer{Call: name, Rows: out}, Measure{Rows: int64(len(rows))}
 		}}}}
 }
 
@@ -621,9 +653,9 @@ func windowName(q storage.IndexedRecordQuery) string {
 
 func windowShape(class, name string, q storage.IndexedRecordQuery) Shape {
 	return Shape{Class: class, Name: name, Schema: q.SchemaName, Calls: []Call{{Name: name,
-		Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+		Run: func(s *storage.FlatSQLStore) Result {
 			recs, err := s.QueryIndexedRecords(q)
-			return recordsAnswer(name, recs, err)
+			return recordsResult(name, recs, err)
 		}}}}
 }
 
@@ -667,12 +699,12 @@ func byteProbeShapes(op BenchOp) ([]Shape, error) {
 		maxBytes := p.MaxBytes
 		name := fmt.Sprintf("%s source=%s batch=%s max=%d", p.Schema, p.SourceName, p.BatchID, maxBytes)
 		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			Run: func(s *storage.FlatSQLStore) Result {
 				n, more, err := s.IndexedRecordWindowLimitForBytes(q, maxBytes)
 				if err != nil {
-					return errAnswer(name, err)
+					return errResult(name, err)
 				}
-				return Answer{Call: name, Rows: []Row{ValueRow("n", strconv.Itoa(n), "more", strconv.FormatBool(more))}}, Measure{Rows: 1}
+				return answered(Answer{Call: name, Rows: []Row{ValueRow("n", strconv.Itoa(n), "more", strconv.FormatBool(more))}}, Measure{Rows: 1})
 			}}}})
 	}
 	return out, nil
@@ -741,27 +773,29 @@ func epochShapes(op BenchOp) ([]Shape, error) {
 			pol.Collapse = true
 		}
 		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: pol, Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			Run: func(s *storage.FlatSQLStore) Result {
 				if coverage {
 					bs, err := s.QueryEpochCoverage(q)
 					if err != nil {
-						return errAnswer(name, err)
+						return errResult(name, err)
 					}
-					rows := make([]Row, 0, len(bs))
-					for _, b := range bs {
-						rows = append(rows, ValueRow("day", b.Day, "n", i64(b.Count), "oldest", unixOf(b.OldestEpoch), "newest", unixOf(b.NewestEpoch)))
+					return func() (Answer, Measure) {
+						rows := make([]Row, 0, len(bs))
+						for _, b := range bs {
+							rows = append(rows, ValueRow("day", b.Day, "n", i64(b.Count), "oldest", unixOf(b.OldestEpoch), "newest", unixOf(b.NewestEpoch)))
+						}
+						return Answer{Call: name, Rows: rows}, Measure{Rows: int64(len(rows))}
 					}
-					return Answer{Call: name, Rows: rows}, Measure{Rows: int64(len(rows))}
 				}
 				n, err := s.CountEpochRecords(q)
 				if err != nil {
-					return errAnswer(name, err)
+					return errResult(name, err)
 				}
 				ms, err := s.QueryEpochRecords(q)
 				if err != nil {
-					return errAnswer(name, err)
+					return errResult(name, err)
 				}
-				return matchesAnswer(name, ms, n)
+				return func() (Answer, Measure) { return matchesAnswer(name, ms, n) }
 			}}}})
 	}
 	return out, nil
@@ -782,9 +816,9 @@ func a18Shapes(op BenchOp) ([]Shape, error) {
 	for _, p := range ps {
 		sql, name := p.SQL, strings.TrimPrefix(p.SQL, "SELECT _data FROM ")
 		out = append(out, Shape{Class: op.ID, Name: name, Policy: Policy{Unordered: true}, Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			Run: func(s *storage.FlatSQLStore) Result {
 				st, err := s.QuerySandboxedStream(sql, sandboxCaps)
-				return framesAnswer(name, st, err)
+				return framesResult(name, st, err)
 			}}}})
 	}
 	return out, nil
@@ -801,9 +835,9 @@ func epochStreamShapes(op BenchOp) ([]Shape, error) {
 		p := p
 		name := fmt.Sprintf("OMM.fbs@%s %s epoch=%.0f limit=%d", p.Source, p.Profile, p.Epoch, p.Limit)
 		out = append(out, Shape{Class: op.ID, Name: name, Schema: "OMM.fbs", Policy: Policy{Unordered: true}, Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			Run: func(s *storage.FlatSQLStore) Result {
 				st, err := s.QueryEpochRawStream("OMM.fbs", p.Source, p.Profile, p.Epoch, p.Limit)
-				return framesAnswer(name, st, err)
+				return framesResult(name, st, err)
 			}}}})
 	}
 	return out, nil
@@ -825,20 +859,22 @@ func sqlShapes(op BenchOp) ([]Shape, error) {
 		}
 		pol := Policy{Unordered: !strings.Contains(strings.ToUpper(sql), "ORDER BY")}
 		out = append(out, Shape{Class: op.ID, Name: name, Policy: pol, Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			Run: func(s *storage.FlatSQLStore) Result {
 				if want == "stream" {
 					st, err := s.QuerySandboxedStream(sql, sandboxCaps, params...)
-					return framesAnswer(name, st, err)
+					return framesResult(name, st, err)
 				}
 				payload, rows, _, err := s.QuerySandboxedJSON(sql, sandboxCaps, params...)
 				if err != nil {
-					return errAnswer(name, err)
+					return errResult(name, err)
 				}
-				rs, err := JSONRows(payload)
-				if err != nil {
-					return errAnswer(name, err)
+				return func() (Answer, Measure) {
+					rs, err := JSONRows(payload)
+					if err != nil {
+						return errAnswer(name, err)
+					}
+					return Answer{Call: name, Rows: rs}, Measure{Rows: int64(rows), Bytes: int64(len(payload))}
 				}
-				return Answer{Call: name, Rows: rs}, Measure{Rows: int64(rows), Bytes: int64(len(payload))}
 			}}}})
 	}
 	return out, nil
@@ -876,82 +912,98 @@ func summaryShapes(op BenchOp) ([]Shape, error) {
 			pol.Accepted = "gate 1: format 4 holds the same records in fewer bytes"
 		}
 		out = append(out, Shape{Class: op.ID, Name: name, Policy: pol, Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
-				rows, err := summaryRows(s, fn, peer)
+			Run: func(s *storage.FlatSQLStore) Result {
+				v, err := summaryFetch(s, fn, peer)
 				if err != nil {
-					return errAnswer(name, err)
+					return errResult(name, err)
 				}
-				return Answer{Call: name, Rows: rows}, Measure{Rows: int64(len(rows))}
+				return func() (Answer, Measure) {
+					rows, err := summaryRows(v)
+					if err != nil {
+						return errAnswer(name, err)
+					}
+					return Answer{Call: name, Rows: rows}, Measure{Rows: int64(len(rows))}
+				}
 			}}}})
 	}
 	return out, nil
 }
 
-func summaryRows(s *storage.FlatSQLStore, fn, peer string) ([]Row, error) {
+// summaryFetch makes a summary call (the timed part).
+func summaryFetch(s *storage.FlatSQLStore, fn, peer string) (any, error) {
 	switch fn {
 	case "DataSummary":
-		d, err := s.DataSummary()
-		if err != nil || d == nil {
-			return nil, err
+		return s.DataSummary()
+	case "SourceBatchProgress":
+		return s.SourceBatchProgress()
+	case "ProducerSourceProgress":
+		return s.ProducerSourceProgress()
+	case "SourceRecordCounts":
+		return s.SourceRecordCounts()
+	case "SchemaDateRanges":
+		return s.SchemaDateRanges()
+	case "LiveRecordBytes":
+		n, err := s.LiveRecordBytes()
+		return byteCount(n), err
+	case "DiskUsageBytes":
+		n, err := s.DiskUsageBytes()
+		return byteCount(n), err
+	case "PeerStorageBytes":
+		n, err := s.PeerStorageBytes(peer)
+		return byteCount(n), err
+	}
+	return nil, fmt.Errorf("unknown summary %q", fn)
+}
+
+// byteCount is a summary that is one byte total.
+type byteCount int64
+
+// summaryRows canonicalizes a summary.
+func summaryRows(v any) ([]Row, error) {
+	switch x := v.(type) {
+	case *storage.DataSummary:
+		if x == nil {
+			return nil, nil
 		}
-		rows := []Row{ValueRow("total_records", i64(d.TotalRecords), "total_bytes", i64(d.TotalBytes))}
-		for _, x := range d.Schemas {
-			rows = append(rows, ValueRow("schema", x.SchemaName, "n", i64(x.Count), "bytes", i64(x.TotalBytes)))
+		rows := []Row{ValueRow("total_records", i64(x.TotalRecords), "total_bytes", i64(x.TotalBytes))}
+		for _, sc := range x.Schemas {
+			rows = append(rows, ValueRow("schema", sc.SchemaName, "n", i64(sc.Count), "bytes", i64(sc.TotalBytes)))
 		}
-		for _, x := range d.Sources {
-			b, _ := json.Marshal(x)
-			rows = append(rows, append(ValueRow("source_row", x.SchemaName), flatJSON(jsonObject(b))...))
+		for _, src := range x.Sources {
+			b, _ := json.Marshal(src)
+			rows = append(rows, append(ValueRow("source_row", src.SchemaName), flatJSON(jsonObject(b))...))
 		}
 		return rows, nil
-	case "SourceBatchProgress":
-		v, err := s.SourceBatchProgress()
-		return jsonListRows(v, err)
-	case "ProducerSourceProgress":
-		v, err := s.ProducerSourceProgress()
-		return jsonListRows(v, err)
-	case "SourceRecordCounts":
-		m, err := s.SourceRecordCounts()
-		if err != nil {
-			return nil, err
-		}
-		keys := make([]string, 0, len(m))
-		for k := range m {
+	case []storage.SourceBatchProgress, []storage.ProducerSourceProgress:
+		return jsonListRows(x, nil)
+	case map[string]int64:
+		keys := make([]string, 0, len(x))
+		for k := range x {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		rows := make([]Row, 0, len(keys))
 		for _, k := range keys {
-			rows = append(rows, ValueRow("source", k, "n", i64(m[k])))
+			rows = append(rows, ValueRow("source", k, "n", i64(x[k])))
 		}
 		return rows, nil
-	case "SchemaDateRanges":
-		v, err := s.SchemaDateRanges()
-		if err != nil {
-			return nil, err
-		}
-		rows := make([]Row, 0, len(v))
-		for _, x := range v {
+	case []storage.SchemaDateRange:
+		rows := make([]Row, 0, len(x))
+		for _, d := range x {
 			var o, n string
-			if x.OldestEpoch != nil {
-				o = unixOf(*x.OldestEpoch)
+			if d.OldestEpoch != nil {
+				o = unixOf(*d.OldestEpoch)
 			}
-			if x.NewestEpoch != nil {
-				n = unixOf(*x.NewestEpoch)
+			if d.NewestEpoch != nil {
+				n = unixOf(*d.NewestEpoch)
 			}
-			rows = append(rows, ValueRow("schema", x.Schema, "n", i64(x.RecordCount), "oldest", o, "newest", n, "bytes", i64(x.TotalBytes)))
+			rows = append(rows, ValueRow("schema", d.Schema, "n", i64(d.RecordCount), "oldest", o, "newest", n, "bytes", i64(d.TotalBytes)))
 		}
 		return rows, nil
-	case "LiveRecordBytes":
-		n, err := s.LiveRecordBytes()
-		return []Row{ValueRow("bytes", i64(n))}, err
-	case "DiskUsageBytes":
-		n, err := s.DiskUsageBytes()
-		return []Row{ValueRow("bytes", i64(n))}, err
-	case "PeerStorageBytes":
-		n, err := s.PeerStorageBytes(peer)
-		return []Row{ValueRow("bytes", i64(n))}, err
+	case byteCount:
+		return []Row{ValueRow("bytes", i64(int64(x)))}, nil
 	}
-	return nil, fmt.Errorf("unknown summary %q", fn)
+	return nil, fmt.Errorf("summary of type %T", v)
 }
 
 func jsonObject(b []byte) any {
@@ -982,9 +1034,9 @@ func recentShapes(op BenchOp) ([]Shape, error) {
 		schema, limit := p.Schema, p.Limit
 		name := fmt.Sprintf("%s limit=%d", schema, limit)
 		out = append(out, Shape{Class: op.ID, Name: name, Schema: schema, Fixture: fixtureOf(p), Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			Run: func(s *storage.FlatSQLStore) Result {
 				recs, err := s.QueryRecentRecords(schema, limit)
-				return recordsAnswer(name, recs, err)
+				return recordsResult(name, recs, err)
 			}}}})
 	}
 	return out, nil
@@ -1008,9 +1060,9 @@ func searchShapes(op BenchOp) ([]Shape, error) {
 		q := storage.RawRecordQuery{SchemaName: p.Schema, Search: p.Search, Limit: p.Limit, UseRowIDCursor: true}
 		name := fmt.Sprintf("%s search=%s limit=%d", p.Schema, p.Search, p.Limit)
 		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Fixture: fixtureOf(p), Policy: Policy{Collapse: true},
-			Calls: []Call{{Name: name, Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			Calls: []Call{{Name: name, Run: func(s *storage.FlatSQLStore) Result {
 				recs, err := s.QueryRawRecordRefs(q)
-				return recordsAnswer(name, recs, err)
+				return recordsResult(name, recs, err)
 			}}}})
 	}
 	return out, nil
@@ -1028,9 +1080,9 @@ func tablePageShapes(op BenchOp) ([]Shape, error) {
 		q := storage.FullTablePageQuery{SchemaName: p.Schema, Limit: p.Limit}
 		name := fmt.Sprintf("%s limit=%d", p.Schema, p.Limit)
 		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Calls: []Call{{Name: name,
-			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			Run: func(s *storage.FlatSQLStore) Result {
 				page, err := s.FullTablePageWithCursor(q)
-				return recordsAnswer(name, page.Records, err)
+				return recordsResult(name, page.Records, err)
 			}}}})
 	}
 	return out, nil
