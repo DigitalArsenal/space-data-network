@@ -800,10 +800,11 @@ func (x *migrate4Tags) of(cidText string) []migrate4TagRow {
 // engine's writes.
 const migrate4ReadAhead = 4
 
-// migrate4Item is one step of the copy's reader: a schema's start (what
-// travels with its records), one of its pages, or its end.
+// migrate4Item is one step of a format-1 reader: a schema's start (with
+// records, what travels with them), one of its pages, or its end.
 type migrate4Item struct {
 	schema string
+	start  bool
 	side   *migrate4Side
 	page   *migrate4Page
 	end    bool
@@ -817,13 +818,15 @@ type migrate4Side struct {
 	idents map[string][32]byte
 }
 
-// readCopy reads schemas from format 1 on one goroutine, migrate4ReadAhead
-// pages ahead of the caller: each schema's tags and identities, then its
-// pages after starts[schema], then its end. The format-1 engine serves one
-// query at a time, so its reads overlap the engine's writes, not each other.
-// stop ends the reader and waits for it, so no read is in flight when the
-// source closes.
-func (m *migrator4) readCopy(ctx context.Context, schemas []string, starts map[string]int64) (items <-chan migrate4Item, stop func()) {
+// readFormat1 reads schemas from format 1 on one goroutine, migrate4ReadAhead
+// pages ahead of the caller: each schema's start, then its pages after
+// starts[schema], then its end. With records, a start carries the schema's
+// tags and identities and a page every copy's bytes (the copy); without,
+// which tables hold each record (the check). The format-1 engine serves one
+// query at a time, so its reads overlap the format-4 engine's work, not each
+// other. stop ends the reader and waits for it, so no read is in flight when
+// the source closes.
+func (m *migrator4) readFormat1(ctx context.Context, schemas []string, starts map[string]int64, records bool) (items <-chan migrate4Item, stop func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	ch := make(chan migrate4Item, migrate4ReadAhead)
 	go func() {
@@ -837,15 +840,22 @@ func (m *migrator4) readCopy(ctx context.Context, schemas []string, starts map[s
 			}
 		}
 		for _, schema := range schemas {
-			side, err := m.readSide(schema)
-			if !send(migrate4Item{schema: schema, side: side, err: err}) {
+			start := migrate4Item{schema: schema, start: true}
+			if records {
+				start.side, start.err = m.readSide(schema)
+			}
+			if !send(start) {
 				return
 			}
 			tables := m.bySchema[schema]
 			for after := starts[schema]; ; {
 				t0 := time.Now()
-				entries, err := m.src.IndexPageCopies(schema, tables, after, m.opt.PageRows, true)
-				m.addTime("read", time.Since(t0))
+				entries, err := m.src.IndexPageCopies(schema, tables, after, m.opt.PageRows, records)
+				if records {
+					m.addTime("read", time.Since(t0))
+				} else {
+					m.addTime("check_read", time.Since(t0))
+				}
 				if err != nil {
 					send(migrate4Item{schema: schema, err: err})
 					return
@@ -999,7 +1009,7 @@ func (m *migrator4) copyAll(ctx context.Context, write bool) error {
 			starts[schema] = p.After
 		}
 	}
-	items, stop := m.readCopy(ctx, schemas, starts)
+	items, stop := m.readFormat1(ctx, schemas, starts, true)
 	defer stop()
 	var p *migrate4Progress
 	var side *migrate4Side
@@ -1007,7 +1017,7 @@ func (m *migrator4) copyAll(ctx context.Context, write bool) error {
 		switch {
 		case it.err != nil:
 			return it.err
-		case it.side != nil:
+		case it.start:
 			p, side = m.progress(it.schema), it.side
 			m.logf("copying %s (%d producer tables, %d tag rows) from index rowid %d", it.schema, len(m.bySchema[it.schema]),
 				len(side.tags.rows), p.After)

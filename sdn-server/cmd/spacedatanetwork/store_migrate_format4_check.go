@@ -121,32 +121,28 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 	}()
 	m.logf("checking the format-4 store against format 1")
 	lanes := map[laneKey5]laneCount{}
-	for _, schema := range m.schemas {
-		got, err := m.checkSchema(ctx, schema, c, lanes)
+	items, stop := m.readFormat1(ctx, m.schemas, nil, false)
+	defer stop()
+	var sc *schemaCheck
+	for it := range items {
+		var err error
+		switch {
+		case it.err != nil:
+			err = it.err
+		case it.start:
+			sc, err = m.newSchemaCheck(it.schema)
+		case it.page != nil:
+			err = m.checkPage(ctx, sc, it.page.entries, c, lanes)
+		case it.end:
+			c.Schemas++
+			m.endSchemaCheck(sc, want[sc.schema], c)
+		}
 		if err != nil {
 			return c, err
 		}
-		c.Schemas++
-		w := want[schema]
-		if w == nil {
-			w = &migrate4Progress{}
-		}
-		if got.Held != w.Held || got.Orphans != w.Orphans {
-			c.bad("%s: %d held records and %d orphans; the copy sent %d and skipped %d", schema, got.Held, got.Orphans, w.Held, w.Orphans)
-		}
-		if got.Orphans > 0 {
-			if c.Orphans == nil {
-				c.Orphans = map[string]int64{}
-			}
-			c.Orphans[schema] = got.Orphans
-			m.note("%s: %d index rows are orphans (no producer table holds the record); not migrated", schema, got.Orphans)
-		}
-		if got.CopyDigest != w.CopyDigest {
-			c.bad("%s: the copies (bytes, ts, signature, peer, producer, seq) differ from what the copy sent", schema)
-		}
-		if got.TagDigest != w.TagDigest || got.Tags != w.Tags {
-			c.bad("%s: the tag instances (%d) differ from what the copy sent (%d)", schema, got.Tags, w.Tags)
-		}
+	}
+	if err := ctx.Err(); err != nil {
+		return c, err
 	}
 	// Index rows of a schema no producer table holds are orphans too.
 	for _, s := range m.index {
@@ -186,11 +182,17 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 	return c, nil
 }
 
-// checkSchema reads schema's held index rows from format 1 and their records
-// from format 4, compares them, and returns the digests of what format 4
-// holds. lanes accumulates the recount of the schema's lanes.
-func (m *migrator4) checkSchema(ctx context.Context, schema string, c *migrate4Check, lanes map[laneKey5]laneCount) (*migrate4Progress, error) {
-	got := &migrate4Progress{}
+// schemaCheck is the check of one schema in progress: what format 4 holds,
+// accumulated page by page (got), to compare with what the copy sent.
+type schemaCheck struct {
+	schema, typ string
+	fields      typeFields
+	tables      []storage.LegacyTable
+	tableOf     map[string]int // producer token -> table index (name order)
+	got         migrate4Progress
+}
+
+func (m *migrator4) newSchemaCheck(schema string) (*schemaCheck, error) {
 	typ, err := format4.TypeOf(schema)
 	if err != nil {
 		return nil, err
@@ -199,132 +201,146 @@ func (m *migrator4) checkSchema(ctx context.Context, schema string, c *migrate4C
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", schema, err)
 	}
-	tables := m.bySchema[schema]
 	m.logf("checking %s", schema)
-	tableOf := make(map[string]int, len(tables)) // producer token -> table index (name order)
-	for i, t := range tables {
-		tableOf[t.Token] = i
+	sc := &schemaCheck{schema: schema, typ: typ, fields: fields, tables: m.bySchema[schema], tableOf: map[string]int{}}
+	for i, t := range sc.tables {
+		sc.tableOf[t.Token] = i
 	}
-	var after int64
-	for {
-		entries, err := m.src.IndexPageCopies(schema, tables, after, m.opt.PageRows, false)
+	return sc, nil
+}
+
+// checkPage reads a page's records from format 4 and compares them with
+// format 1's index rows; lanes accumulates the recount of the lanes.
+func (m *migrator4) checkPage(ctx context.Context, sc *schemaCheck, entries []storage.IndexCopies, c *migrate4Check, lanes map[laneKey5]laneCount) error {
+	schema, tables := sc.schema, sc.tables
+	cids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.Orphan() {
+			sc.got.Orphans++
+		} else {
+			cids = append(cids, e.CID)
+		}
+	}
+	var recs []format4.Rec
+	var tags []format4.TagRow
+	for k := 0; k < len(cids); k += migrate4ReadCIDs {
+		chunk := cids[k:min(k+migrate4ReadCIDs, len(cids))]
+		r, err := m.api.Get(ctx, sc.typ, chunk, true, true)
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("%s get: %w", sc.typ, err)
 		}
-		if len(entries) == 0 {
-			break
+		tg, err := m.api.Tags(ctx, sc.typ, chunk)
+		if err != nil {
+			return fmt.Errorf("%s tags: %w", sc.typ, err)
 		}
-		after = entries[len(entries)-1].RowID
-		cids := make([]string, 0, len(entries))
-		for _, e := range entries {
-			if e.Orphan() {
-				got.Orphans++
+		recs, tags = append(recs, r...), append(tags, tg...)
+	}
+	copies := map[string][]format4.Rec{}
+	for _, r := range recs {
+		copies[r.CID] = append(copies[r.CID], r)
+	}
+	firstLen := map[string]int64{}
+	var samples []storage.IndexEntry
+	for _, e := range entries {
+		if e.Orphan() {
+			if len(copies[e.CID]) > 0 {
+				c.bad("%s %s (index rowid %d): an orphan in format 1, %d copies in format 4", schema, e.CID, e.RowID, len(copies[e.CID]))
+			}
+			continue
+		}
+		sc.got.Held++
+		cs := copies[e.CID]
+		want, err := cidDigest(e.CID)
+		if err != nil {
+			c.bad("%s %s: %v", schema, e.CID, err)
+			continue
+		}
+		c.Records++
+		// Exactly the tables holding the record hold a copy.
+		byTable := make([]*format4.Rec, len(tables))
+		for i := range cs {
+			r := &cs[i]
+			c.Copies++
+			ti, ok := sc.tableOf[r.Producer]
+			switch {
+			case !ok:
+				c.bad("%s %s: a copy in partition %q, which no format-1 table names", schema, e.CID, r.Producer)
+				continue
+			case !e.Held[ti]:
+				c.bad("%s %s: a copy in partition %q; format 1's %s does not hold the record", schema, e.CID, r.Producer, tables[ti].Name)
+			case byTable[ti] != nil:
+				c.bad("%s %s: two copies in partition %q", schema, e.CID, r.Producer)
+			}
+			byTable[ti] = r
+			if r.Seq != e.RowID {
+				c.bad("%s %s (%s): seq %d, format-1 index rowid %d", schema, e.CID, r.Producer, r.Seq, e.RowID)
+			}
+			if encfield.IsSealed(r.Data) {
+				c.Sealed++
 			} else {
-				cids = append(cids, e.CID)
+				c.Rehashed++
+				if sha256.Sum256(r.Data) != want {
+					c.bad("%s %s (%s): the stored bytes do not hash to the CID", schema, e.CID, r.Producer)
+				}
+			}
+			if int64(len(r.Data)) != r.Len {
+				c.bad("%s %s (%s): len %d, %d bytes", schema, e.CID, r.Producer, r.Len, len(r.Data))
+			}
+			sc.got.CopyDigest.add(copyDigestOf(r.Seq, r.Producer, r.Peer, r.TS, r.Sig, r.Data))
+		}
+		var first *format4.Rec
+		for ti, held := range e.Held {
+			if held && byTable[ti] == nil {
+				c.bad("%s %s: format 1's %s holds the record, format 4 has no copy in partition %q", schema, e.CID, tables[ti].Name, tables[ti].Token)
+			}
+			if first == nil && byTable[ti] != nil {
+				first = byTable[ti]
 			}
 		}
-		var recs []format4.Rec
-		var tags []format4.TagRow
-		for k := 0; k < len(cids); k += migrate4ReadCIDs {
-			chunk := cids[k:min(k+migrate4ReadCIDs, len(cids))]
-			r, err := m.api.Get(ctx, typ, chunk, true, true)
-			if err != nil {
-				return nil, fmt.Errorf("%s get: %w", typ, err)
-			}
-			tg, err := m.api.Tags(ctx, typ, chunk)
-			if err != nil {
-				return nil, fmt.Errorf("%s tags: %w", typ, err)
-			}
-			recs, tags = append(recs, r...), append(tags, tg...)
+		if first != nil {
+			firstLen[e.CID] = first.Len
+			m.checkFields(schema, sc.fields, e.IndexEntry, *first, c)
 		}
-		copies := map[string][]format4.Rec{}
-		for _, r := range recs {
-			copies[r.CID] = append(copies[r.CID], r)
-		}
-		firstLen := map[string]int64{}
-		var samples []storage.IndexEntry
-		for _, e := range entries {
-			if e.Orphan() {
-				if len(copies[e.CID]) > 0 {
-					c.bad("%s %s (index rowid %d): an orphan in format 1, %d copies in format 4", schema, e.CID, e.RowID, len(copies[e.CID]))
-				}
-				continue
-			}
-			got.Held++
-			cs := copies[e.CID]
-			want, err := cidDigest(e.CID)
-			if err != nil {
-				c.bad("%s %s: %v", schema, e.CID, err)
-				continue
-			}
-			c.Records++
-			// Exactly the tables holding the record hold a copy.
-			byTable := make([]*format4.Rec, len(tables))
-			for i := range cs {
-				r := &cs[i]
-				c.Copies++
-				ti, ok := tableOf[r.Producer]
-				switch {
-				case !ok:
-					c.bad("%s %s: a copy in partition %q, which no format-1 table names", schema, e.CID, r.Producer)
-					continue
-				case !e.Held[ti]:
-					c.bad("%s %s: a copy in partition %q; format 1's %s does not hold the record", schema, e.CID, r.Producer, tables[ti].Name)
-				case byTable[ti] != nil:
-					c.bad("%s %s: two copies in partition %q", schema, e.CID, r.Producer)
-				}
-				byTable[ti] = r
-				if r.Seq != e.RowID {
-					c.bad("%s %s (%s): seq %d, format-1 index rowid %d", schema, e.CID, r.Producer, r.Seq, e.RowID)
-				}
-				if encfield.IsSealed(r.Data) {
-					c.Sealed++
-				} else {
-					c.Rehashed++
-					if sha256.Sum256(r.Data) != want {
-						c.bad("%s %s (%s): the stored bytes do not hash to the CID", schema, e.CID, r.Producer)
-					}
-				}
-				if int64(len(r.Data)) != r.Len {
-					c.bad("%s %s (%s): len %d, %d bytes", schema, e.CID, r.Producer, r.Len, len(r.Data))
-				}
-				got.CopyDigest.add(copyDigestOf(r.Seq, r.Producer, r.Peer, r.TS, r.Sig, r.Data))
-			}
-			var first *format4.Rec
-			for ti, held := range e.Held {
-				if held && byTable[ti] == nil {
-					c.bad("%s %s: format 1's %s holds the record, format 4 has no copy in partition %q", schema, e.CID, tables[ti].Name, tables[ti].Token)
-				}
-				if first == nil && byTable[ti] != nil {
-					first = byTable[ti]
-				}
-			}
-			if first != nil {
-				firstLen[e.CID] = first.Len
-				m.checkFields(schema, fields, e.IndexEntry, *first, c)
-			}
-			if e.RowID%migrate4SampleEvery == 0 && !m.opt.testNoSamples {
-				samples = append(samples, e.IndexEntry)
-			}
-		}
-		for _, t := range tags {
-			got.Tags++
-			got.TagDigest.add(tagDigestOf(t.CID, t.Tag, t.At))
-			k := laneKey5{typ, t.Provider, t.Source, t.Batch, t.ProducerPeer, t.ProducerPubkey}
-			lc := lanes[k]
-			lc.n++
-			lc.bytes += firstLen[t.CID]
-			lanes[k] = lc
-		}
-		c.TagInstances += int64(len(tags))
-		if err := m.checkColumns(ctx, schema, typ, fields, samples, c); err != nil {
-			return nil, err
-		}
-		if len(entries) < m.opt.PageRows {
-			break
+		if e.RowID%migrate4SampleEvery == 0 && !m.opt.testNoSamples {
+			samples = append(samples, e.IndexEntry)
 		}
 	}
-	return got, nil
+	for _, t := range tags {
+		sc.got.Tags++
+		sc.got.TagDigest.add(tagDigestOf(t.CID, t.Tag, t.At))
+		k := laneKey5{sc.typ, t.Provider, t.Source, t.Batch, t.ProducerPeer, t.ProducerPubkey}
+		lc := lanes[k]
+		lc.n++
+		lc.bytes += firstLen[t.CID]
+		lanes[k] = lc
+	}
+	c.TagInstances += int64(len(tags))
+	return m.checkColumns(ctx, schema, sc.typ, sc.fields, samples, c)
+}
+
+// endSchemaCheck compares a schema's totals and digests with what the copy
+// sent (w).
+func (m *migrator4) endSchemaCheck(sc *schemaCheck, w *migrate4Progress, c *migrate4Check) {
+	schema, got := sc.schema, &sc.got
+	if w == nil {
+		w = &migrate4Progress{}
+	}
+	if got.Held != w.Held || got.Orphans != w.Orphans {
+		c.bad("%s: %d held records and %d orphans; the copy sent %d and skipped %d", schema, got.Held, got.Orphans, w.Held, w.Orphans)
+	}
+	if got.Orphans > 0 {
+		if c.Orphans == nil {
+			c.Orphans = map[string]int64{}
+		}
+		c.Orphans[schema] = got.Orphans
+		m.note("%s: %d index rows are orphans (no producer table holds the record); not migrated", schema, got.Orphans)
+	}
+	if got.CopyDigest != w.CopyDigest {
+		c.bad("%s: the copies (bytes, ts, signature, peer, producer, seq) differ from what the copy sent", schema)
+	}
+	if got.TagDigest != w.TagDigest || got.Tags != w.Tags {
+		c.bad("%s: the tag instances (%d) differ from what the copy sent (%d)", schema, got.Tags, w.Tags)
+	}
 }
 
 func cidDigest(text string) ([32]byte, error) {
