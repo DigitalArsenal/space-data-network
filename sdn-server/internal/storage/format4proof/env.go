@@ -14,18 +14,19 @@ import (
 // store a run opens is a clone (cp -c, an APFS clone; a reflink copy on
 // Linux) in the work directory.
 const (
-	EnvF1Fixture = "SDN_F1_FIXTURE" // format-1 store directory (holds control.flatsqldb)
-	EnvF2Fixture = "SDN_F2_FIXTURE" // the same fixture after store-migrate --to 2
-	EnvP4Fixture = "P4_FIXTURE"     // the same fixture after store-migrate --to 4
-	EnvBenchset  = "P4PROOF_BENCHSET"
-	EnvWork      = "P4PROOF_WORK"    // clones and grown stores (same volume as the fixtures)
-	EnvOut       = "P4PROOF_OUT"     // results: run JSON, answers, tables, the gate report
-	EnvArms      = "P4PROOF_ARMS"    // comma list, default "s,f1,f2"
-	EnvClasses   = "P4PROOF_CLASSES" // comma list of benchset ids, default every read the fixture covers
-	EnvWarm      = "P4PROOF_WARM"    // warm passes per shape (overrides the per-class default)
-	EnvCallLimit = "P4PROOF_CALL_LIMIT_S"
-	EnvSDNBin    = "P4PROOF_SDN_BIN" // a spacedatanetwork binary (store-migrate kill loops)
-	EnvChild     = "P4PROOF_CHILD"   // set by the driver for a measurement child
+	EnvF1Fixture  = "SDN_F1_FIXTURE" // format-1 store directory (holds control.flatsqldb)
+	EnvF2Fixture  = "SDN_F2_FIXTURE" // the same fixture after store-migrate --to 2
+	EnvP4Fixture  = "P4_FIXTURE"     // the same fixture after store-migrate --to 4
+	EnvBenchset   = "P4PROOF_BENCHSET"
+	EnvWork       = "P4PROOF_WORK"    // clones and grown stores (same volume as the fixtures)
+	EnvOut        = "P4PROOF_OUT"     // results: run JSON, answers, tables, the gate report
+	EnvArms       = "P4PROOF_ARMS"    // comma list, default "s,f1,f2"
+	EnvClasses    = "P4PROOF_CLASSES" // comma list of benchset ids, default every read the fixture covers
+	EnvWarm       = "P4PROOF_WARM"    // warm passes per shape (overrides the per-class default)
+	EnvCallLimit  = "P4PROOF_CALL_LIMIT_S"
+	EnvColdRounds = "P4PROOF_COLD_ROUNDS" // cold rounds per (arm, class), each a fresh process on a fresh clone (1)
+	EnvSDNBin     = "P4PROOF_SDN_BIN"     // a spacedatanetwork binary (store-migrate kill loops)
+	EnvChild      = "P4PROOF_CHILD"       // set by the driver for a measurement child
 	// The real host-02 copy (benchset h2copy: R21 PNM, R22, R24), per arm.
 	EnvH2F1 = "P4PROOF_H2_F1"
 	EnvH2F2 = "P4PROOF_H2_F2"
@@ -34,30 +35,32 @@ const (
 
 // Config is the harness environment.
 type Config struct {
-	Fixtures  map[string]string // arm -> fixture store directory
-	H2        map[string]string // arm -> h2copy store directory
-	Benchset  string
-	Work, Out string
-	Arms      []string
-	Classes   []string
-	Warm      int // -1 = per-class default
-	CallLimit int // seconds
-	SDNBin    string
+	Fixtures   map[string]string // arm -> fixture store directory
+	H2         map[string]string // arm -> h2copy store directory
+	Benchset   string
+	Work, Out  string
+	Arms       []string
+	Classes    []string
+	Warm       int // -1 = per-class default
+	ColdRounds int
+	CallLimit  int // seconds
+	SDNBin     string
 }
 
 // ConfigFromEnv reads the environment.
 func ConfigFromEnv() Config {
 	c := Config{
-		Fixtures:  map[string]string{},
-		H2:        map[string]string{},
-		Benchset:  os.Getenv(EnvBenchset),
-		Work:      os.Getenv(EnvWork),
-		Out:       os.Getenv(EnvOut),
-		Arms:      splitList(os.Getenv(EnvArms)),
-		Classes:   splitList(os.Getenv(EnvClasses)),
-		Warm:      envInt(EnvWarm, -1),
-		CallLimit: envInt(EnvCallLimit, 330),
-		SDNBin:    os.Getenv(EnvSDNBin),
+		Fixtures:   map[string]string{},
+		H2:         map[string]string{},
+		Benchset:   os.Getenv(EnvBenchset),
+		Work:       os.Getenv(EnvWork),
+		Out:        os.Getenv(EnvOut),
+		Arms:       splitList(os.Getenv(EnvArms)),
+		Classes:    splitList(os.Getenv(EnvClasses)),
+		Warm:       envInt(EnvWarm, -1),
+		ColdRounds: envInt(EnvColdRounds, 1),
+		CallLimit:  envInt(EnvCallLimit, 330),
+		SDNBin:     os.Getenv(EnvSDNBin),
 	}
 	for arm, env := range map[string]string{ArmF1: EnvF1Fixture, ArmF2: EnvF2Fixture, ArmS: EnvP4Fixture} {
 		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
