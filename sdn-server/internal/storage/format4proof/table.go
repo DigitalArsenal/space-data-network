@@ -259,31 +259,35 @@ func BytesMarkdown(runs []*Run) string {
 			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", arm, label,
 				formatValue(extraFloat(r, "store_bytes"), ""), formatValue(extraFloat(r, "allocated_bytes"), ""),
 				formatValue(extraFloat(r, "files"), ""), formatValue(extraFloat(r, "unique_records"), ""),
-				formatValue(extraFloat(r, "copies"), ""), formatValue(extraFloat(r, "bytes_per_record"), "x"),
-				formatValue(extraFloat(r, "bytes_per_copy"), "x"), formatValue(extraFloat(r, "bytes_per_added_record"), "x"))
+				formatValue(extraFloat(r, "copies"), ""), formatValue(extraFloat(r, "bytes_per_record"), "B"),
+				formatValue(extraFloat(r, "bytes_per_copy"), "B"), formatValue(extraFloat(r, "bytes_per_added_record"), "B"))
 		}
 	}
 	return b.String()
 }
 
 // M01Markdown renders the reads-never-wait runs: per arm, the read latency
-// idle and during the writes, and the WAL high water.
+// idle and during the writes, the WAL high water (Σ SQLite -wal files), and
+// the write operations' durations.
 func M01Markdown(runs []*Run) string {
 	var b strings.Builder
-	b.WriteString("# M01: reads during writes\n\n| Arm | Read | idle p50 / p99 / max | during writes p50 / p99 / max | reads over 50 ms | errors | WAL max | load start / end |\n")
+	b.WriteString("# M01: reads during writes\n\n| Arm | Read | idle p50 / p99 / max | during writes p50 / p99 / max | reads over 50 ms during writes | errors | WAL max | load start / end |\n")
 	b.WriteString("|---|---|---|---|---|---|---|---|\n")
+	var writes strings.Builder
 	for _, arm := range Arms {
 		for _, r := range RunsOf(runs, KindM01, "") {
 			if r.Arm != arm {
 				continue
 			}
-			type acc struct{ idle, busy []float64 }
+			type acc struct {
+				idle, busy []float64
+				errs       int
+			}
 			per := map[string]*acc{}
 			var names []string
-			errs := 0
 			for _, s := range r.Samples {
-				if s.Err != "" {
-					errs++
+				if s.Class != M01Idle && s.Class != M01Busy {
+					fmt.Fprintf(&writes, "| %s | %s | %s | %d | %s |\n", arm, esc(s.Shape), FormatMs(s.Ms), s.Rows, esc(s.Err))
 					continue
 				}
 				a := per[s.Shape]
@@ -292,9 +296,12 @@ func M01Markdown(runs []*Run) string {
 					per[s.Shape] = a
 					names = append(names, s.Shape)
 				}
-				if s.Class == M01Idle {
+				switch {
+				case s.Err != "":
+					a.errs++
+				case s.Class == M01Idle:
 					a.idle = append(a.idle, s.Ms)
-				} else {
+				default:
 					a.busy = append(a.busy, s.Ms)
 				}
 			}
@@ -310,10 +317,14 @@ func M01Markdown(runs []*Run) string {
 				tri := func(v []float64) string {
 					return FormatMs(Percentile(v, 0.5)) + " / " + FormatMs(Percentile(v, 0.99)) + " / " + FormatMs(Percentile(v, 1))
 				}
-				fmt.Fprintf(&b, "| %s | %s | %s | %s | %d | %d | %s | %s / %s |\n", arm, esc(n), tri(a.idle), tri(a.busy), over, errs,
-					formatValue(extraFloat(r, "wal_max_bytes"), "B"), r.LoadStart, r.LoadEnd)
+				fmt.Fprintf(&b, "| %s | %s | %s | %s | %d of %d | %d | %s | %s / %s |\n", arm, esc(n), tri(a.idle), tri(a.busy), over,
+					len(a.busy), a.errs, formatValue(extraFloat(r, "wal_max_bytes"), "B"), r.LoadStart, r.LoadEnd)
 			}
 		}
+	}
+	if writes.Len() > 0 {
+		b.WriteString("\n| Arm | Write | Duration | Records | Error |\n|---|---|---|---|---|\n")
+		b.WriteString(writes.String())
 	}
 	return b.String()
 }
