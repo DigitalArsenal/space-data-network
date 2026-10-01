@@ -22,9 +22,17 @@ package update
 // swapped, the ledger records nothing, and the running build stays.
 //
 // A FORWARD UPDATE ON TODAY'S FLEET IS NEVER REFUSED. Every store that is not
-// an activated format-2 store reads as format 1, every binary opens at least
-// format 1, and for those stores the guard returns before it reads a single
-// byte of the payload. The binary scan only runs on an activated format-2 store.
+// an activated format-2 store or a format-4 store reads as format 1, every
+// binary opens at least format 1, and for those stores the guard returns
+// before it reads a single byte of the payload. The binary scan only runs on
+// a format-2 or format-4 store.
+//
+// FORMAT 4 (stack design flatsql-sqlite-partitions.md §11 "Format guard";
+// build-out contract §2.4) is read FIRST, through storage/format4/marker,
+// which links no engine: any fsql4/MIGRATED or fsql4/STORE, whatever its
+// content, makes the store format 4, so a format-4 store refuses every build
+// stamped below 4 and every unstamped build from the moment its migration
+// writes its first marker.
 
 import (
 	"archive/tar"
@@ -46,6 +54,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/spacedatanetwork/sdn-server/internal/metrics"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
@@ -92,6 +101,10 @@ type StoreFormat struct {
 
 // ReadStoreFormat reads the format of the record store rooted at root.
 //
+// Format 4 comes first: fsql4/MIGRATED or fsql4/STORE present (in any state:
+// a migration in progress, an activation a crash cut short, a finished store)
+// is format 4. The rules below do not run for it.
+//
 // A store is format 2 or above once it is ACTIVATED: fsql2/MIGRATED exists
 // (store-migrate's last step, and a fresh format-2 store is created with it),
 // or control.flatsqldb has been turned into a directory (activation step 2,
@@ -105,6 +118,13 @@ func ReadStoreFormat(root string) (StoreFormat, error) {
 		return StoreFormat{}, errors.New("no store root")
 	}
 	sf := StoreFormat{Root: root, Format: versioninfo.Format1StoreFormat}
+	if m, err := marker.Read(root); err != nil {
+		return sf, err
+	} else if m.Format4() {
+		sf.Format = versioninfo.P4StoreFormat
+		sf.Evidence = format4Evidence(m)
+		return sf, nil
+	}
 	migrated, err := pathExists(filepath.Join(root, storeEngineDir, storeMigratedFile))
 	if err != nil {
 		return sf, err
@@ -145,6 +165,25 @@ func ReadStoreFormat(root string) (StoreFormat, error) {
 	sf.Format = format
 	sf.Evidence = fmt.Sprintf("fsql2/STORE format %d, %s", format, activated)
 	return sf, nil
+}
+
+// format4Evidence names the fsql4 markers that made a store format 4.
+func format4Evidence(m marker.Markers) string {
+	var present []string
+	if m.MigratedPresent {
+		present = append(present, marker.Dir+"/"+marker.MigratedFile)
+	}
+	if m.StorePresent {
+		present = append(present, marker.Dir+"/"+marker.StoreFile)
+	}
+	state := "migration or activation in progress"
+	switch {
+	case m.Activated() && m.LegacyControlDir:
+		state = "activated"
+	case m.Activated():
+		state = "activated, legacy control database not yet retired"
+	}
+	return strings.Join(present, " and ") + " present (" + state + ")"
 }
 
 // readStoreFileFormat reads the format field of fsql2/STORE: u32 magic "FSQ2",
