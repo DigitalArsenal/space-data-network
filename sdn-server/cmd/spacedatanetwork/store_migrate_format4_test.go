@@ -67,6 +67,7 @@ func (d *fakeEngines) open(ctx context.Context, opt format4.Options) (format4.AP
 	if held := d.byRoot[opt.DataRoot]; held != nil {
 		f = held
 	} else {
+		f.Extract = migrateExtract
 		d.byRoot[opt.DataRoot] = f
 	}
 	var api format4.API = durableFake{f}
@@ -80,6 +81,16 @@ func (d *fakeEngines) store(root string) format4.API {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return durableFake{d.byRoot[root]}
+}
+
+// migrateExtract is the Fake's extraction without CAT's supersede identity:
+// a migrate-mode PUT supersedes nothing (contract §3.7 runs supersede on
+// ingest only), and the Fake would otherwise run it, by its first tag's
+// source, on every migrated CAT record.
+func migrateExtract(typ string, plain []byte) (format4test.Fields, error) {
+	f, err := format4test.DefaultExtract(typ, plain)
+	f.Supersede = ""
+	return f, err
 }
 
 // durableFake outlives a run's Close, as an engine's files do.
@@ -184,8 +195,10 @@ func cloneStore(t *testing.T, src string) string {
 // held record copy (seq = index rowid, bytes, ts, signature, peer,
 // producer), every tag (identity, source_url, content key, at), and every
 // counter (partitions against a recount of each table, lanes against
-// format 1's own lane recount, types).
-func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string) {
+// format 1's own lane recount, types). slice > 0 compares the records and
+// tags of each schema's first slice held rows only (the counters always
+// cover everything).
+func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string, slice int) {
 	t.Helper()
 	ctx := context.Background()
 	src, err := storage.OpenMigrationSource(legacy)
@@ -216,7 +229,11 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string) {
 	for _, schema := range schemas {
 		typ, _ := format4.TypeOf(schema)
 		// format2_source.go's readers: independent of the migrator's.
-		entries, err := src.HeldIndexPage(schema, bySchema[schema], 0, 1<<30)
+		limit := 1 << 30
+		if slice > 0 {
+			limit = slice
+		}
+		entries, err := src.HeldIndexPage(schema, bySchema[schema], 0, limit)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -275,6 +292,14 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string) {
 		if int64(len(recs)) != copies {
 			t.Fatalf("%s: %d copies in format 4, %d in format 1", schema, len(recs), copies)
 		}
+		var typeCopies int64 // every copy of the schema, sliced or not
+		for _, tb := range bySchema[schema] {
+			c, err := src.TableCounter(tb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			typeCopies += c.Count
+		}
 		// Tags: one row per (cid, identity) on both sides.
 		want, err := src.TagsFor(schema, cids)
 		if err != nil {
@@ -300,8 +325,9 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string) {
 				strings.Join(wantRows, "\n"), len(gotRows), strings.Join(gotRows, "\n"))
 		}
 		ts := typeSummary[typ]
-		if ts.Records != int64(len(entries)) || ts.Copies != copies || (len(entries) > 0 && ts.MaxSeq != entries[len(entries)-1].RowID) {
-			t.Fatalf("type %s: %+v; format 1 holds %d records, %d copies", typ, ts, len(entries), copies)
+		if ts.Copies != typeCopies || (slice == 0 && (ts.Records != int64(len(entries)) ||
+			(len(entries) > 0 && ts.MaxSeq != entries[len(entries)-1].RowID))) {
+			t.Fatalf("type %s: %+v; format 1 holds %d records (slice %d), %d copies", typ, ts, len(entries), slice, typeCopies)
 		}
 		// Lanes: summed over partitions and content keys, format 1's recount.
 		wantLanes, err := src.LaneRecount(schema, bySchema[schema])
@@ -500,7 +526,7 @@ func TestStoreMigrateFormat4EqualsFormat1(t *testing.T) {
 	if !rep.Activated || len(rep.Rejected) != 0 || rep.MaxRSS <= 0 || rep.Took == "" {
 		t.Fatalf("report %+v", rep)
 	}
-	assertFormat4EqualsFormat1(t, engines.store(legacy), pristine)
+	assertFormat4EqualsFormat1(t, engines.store(legacy), pristine, 0)
 
 	// Every PUT was migrate mode, seq = the index rowid; IQC records carried
 	// format 1's ingest identity (on their tagged first copy).
@@ -762,7 +788,7 @@ func TestStoreMigrateFormat4ReportsOrphans(t *testing.T) {
 	if c.MismatchCount != 0 || len(c.Orphans) != 1 || c.Orphans["OMM.fbs"] != int64(len(orphans)) || c.Records != 340-int64(len(orphans)) {
 		t.Fatalf("check %+v, want %d OMM orphans", c, len(orphans))
 	}
-	assertFormat4EqualsFormat1(t, engines.store(legacy), pristine)
+	assertFormat4EqualsFormat1(t, engines.store(legacy), pristine, 0)
 	got, err := engines.store(legacy).Get(context.Background(), "OMM", mapKeys(orphans), true, false)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("orphans in format 4: %d (%v)", len(got), err)
@@ -1089,7 +1115,7 @@ func TestStoreMigrateFormat4Kill9(t *testing.T) {
 	}
 	defer release()
 	defer api.Close(context.Background())
-	assertFormat4EqualsFormat1(t, api, pristine)
+	assertFormat4EqualsFormat1(t, api, pristine, 0)
 	t.Logf("MEASURED %d kill -9 points: resumed stores identical to an uninterrupted migration", kills)
 }
 
@@ -1141,11 +1167,13 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 		t.Fatalf("clone fixture: %v: %s", err, out)
 	}
 	opt := migrate4Options{Store: dst, AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true}
+	engines := newFakeEngines()
 	switch target {
 	case "engine":
 		requireFormat4Engine(t)
 	case "fake":
-		opt.open = newFakeEngines().open
+		opt.open = engines.open
+		opt.testNoSamples = true // the Fake answers HEAD by sorting every seq
 	case "null":
 		opt.open = func(context.Context, format4.Options) (format4.API, func(), error) {
 			return nullTarget{}, func() {}, nil
@@ -1176,4 +1204,11 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 			c.Records, c.Copies, c.Rehashed, c.FieldChecks, c.ColumnSamples, c.TagInstances, c.Partitions, c.Lanes, c.Orphans, c.MismatchCount, c.Took)
 	}
 	t.Logf("notes %q; rejected %d; oversized %d", rep.Notes, len(rep.Rejected), len(rep.Oversized))
+	if target == "fake" {
+		// A slice of the fixture, against format 1 (now in pre-format4/),
+		// with format 2's readers; every counter in full.
+		t0 := time.Now()
+		assertFormat4EqualsFormat1(t, engines.store(dst), filepath.Join(dst, marker.PreFormat4Dir), 5000)
+		t.Logf("the first 5,000 held records of each schema and every counter equal format 1 (%s)", time.Since(t0).Round(time.Second))
+	}
 }
