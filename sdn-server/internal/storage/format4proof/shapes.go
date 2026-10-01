@@ -12,6 +12,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 )
 
 // The read shapes: every benchset read R01–R24, as calls into SDN's storage
@@ -101,7 +102,6 @@ type bp struct {
 	SQL             string          `json:"sql"`
 	Want            string          `json:"want"`
 	Params          []any           `json:"params"`
-	ExpectedFrames  *int            `json:"expected_frames"`
 	Fn              string          `json:"fn"`
 	Peer            string          `json:"peer"`
 	Search          string          `json:"search"`
@@ -729,13 +729,49 @@ func matchesAnswer(call string, ms []storage.EpochRecordMatch, count int64) (Ans
 }
 
 // R16: epoch profiles, as the /api/v1/data/epoch handler runs them
-// (CountEpochRecords then QueryEpochRecords; coverage alone).
+// (CountEpochRecords then QueryEpochRecords; coverage alone), plus the
+// profiles for every object (allObjectsEpoch).
 func epochShapes(op BenchOp) ([]Shape, error) {
 	ps, err := decodeParams(op)
 	if err != nil {
 		return nil, err
 	}
-	return epochShapesOf(op.ID, ps)
+	return epochShapesOf(op.ID, append(ps, allObjectsEpoch(ps)...))
+}
+
+// AllObjects ends the name of an EPOCH shape that answers every object of
+// its type. The gate report lists these (p50 and p99) beside the gated
+// shapes rather than as a bar of their own.
+const AllObjects = "all objects"
+
+// epochAllObjects is the limit that makes a point profile answer every
+// object: the storage layer's cap on an epoch page (epochQueryLimit), above
+// the fixture's OMM and MPE object counts. The answer's count row is the
+// number of objects.
+const epochAllObjects = 250000
+
+// allObjectsEpoch is EPOCH nearest, as_of (on or before) and forward (on or
+// after) for every OMM and every MPE object at the benchset's instant
+// (owner, 2026-10-01: one index seek per object per partition, equal to
+// format 1, fast).
+func allObjectsEpoch(ps []bp) []bp {
+	var at int64
+	for _, p := range ps {
+		if p.At != 0 {
+			at = p.At
+			break
+		}
+	}
+	if at == 0 {
+		return nil
+	}
+	var out []bp
+	for _, schema := range []string{"OMM.fbs", "MPE.fbs"} {
+		for _, profile := range []string{storage.EpochProfileNearest, storage.EpochProfileAsOf, storage.EpochProfileForward} {
+			out = append(out, bp{Schema: schema, Profile: profile, At: at, Limit: epochAllObjects})
+		}
+	}
+	return out
 }
 
 func epochShapesOf(class string, ps []bp) ([]Shape, error) {
@@ -769,7 +805,10 @@ func epochShapesOf(class string, ps []bp) ([]Shape, error) {
 		if p.MaxDeltaSeconds != 0 {
 			parts = append(parts, "max_delta="+i64(p.MaxDeltaSeconds))
 		}
-		if p.Limit != 0 {
+		switch {
+		case p.Limit == epochAllObjects:
+			parts = append(parts, AllObjects)
+		case p.Limit != 0:
 			parts = append(parts, "limit="+strconv.Itoa(p.Limit))
 		}
 		name := strings.Join(parts, " ")
@@ -811,8 +850,12 @@ func epochShapesOf(class string, ps []bp) ([]Shape, error) {
 // earlier baselines' 5-minute guard).
 var sandboxCaps = flatsqlrt.SandboxCaps{Timeout: 5 * time.Minute}
 
+// c31Accepted names the intended difference of every `<TYPE>@<source>` shape.
+const c31Accepted = "C-31: <TYPE>@<source> is the source's newest N records (format 1: the type's newest N, then the source)"
+
 // R17: A18 TYPE@source relations through the sandbox. The relation has no
-// ORDER BY, so frames compare as a multiset.
+// ORDER BY, so frames compare as a multiset; a `<TYPE>@<source>` relation
+// compares under C-31 (Policy.Superset) with N = the type's A18 bound.
 func a18Shapes(op BenchOp) ([]Shape, error) {
 	ps, err := decodeParams(op)
 	if err != nil {
@@ -821,13 +864,35 @@ func a18Shapes(op BenchOp) ([]Shape, error) {
 	var out []Shape
 	for _, p := range ps {
 		sql, name := p.SQL, strings.TrimPrefix(p.SQL, "SELECT _data FROM ")
-		out = append(out, Shape{Class: op.ID, Name: name, Policy: Policy{Unordered: true}, Calls: []Call{{Name: name,
+		pol := Policy{Unordered: true}
+		if typ, _, ok := strings.Cut(a18Relation(sql), "@"); ok {
+			spec, err := format4.TypeSpecFor(typ + ".fbs")
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", sql, err)
+			}
+			pol.Superset, pol.MaxRows, pol.Accepted = true, int(spec.A18Bound), c31Accepted
+		}
+		out = append(out, Shape{Class: op.ID, Name: name, Policy: pol, Calls: []Call{{Name: name,
 			Run: func(s *storage.FlatSQLStore) Result {
 				st, err := s.QuerySandboxedStream(sql, sandboxCaps)
 				return framesResult(name, st, err)
 			}}}})
 	}
 	return out, nil
+}
+
+// a18Relation is the first double-quoted relation a statement names
+// ("CAT@celestrak-satcat"), or "".
+func a18Relation(sql string) string {
+	_, rest, ok := strings.Cut(sql, `"`)
+	if !ok {
+		return ""
+	}
+	rel, _, ok := strings.Cut(rest, `"`)
+	if !ok {
+		return ""
+	}
+	return rel
 }
 
 // R18: the engine epoch stream (module flatsql_epoch_stream).

@@ -19,7 +19,7 @@ import (
 // WriteSpec is one write run.
 type WriteSpec struct {
 	Arm, Op, Store, Out, Work string
-	Store2                    string // W07: the import target (a second fresh clone)
+	Store2                    string // W07: the import target; W10 on format 4: the untouched store (a second fresh clone)
 }
 
 // touched is what each write changes, and so what its digest covers.
@@ -204,11 +204,16 @@ func (e *writeEnv) op(op string) error {
 		}
 		max := live * 9 / 10
 		e.result["live_bytes_before"], e.result["quota_bytes"] = live, max
-		return e.timed(op, "GarbageCollectToQuota", func() (int64, error) {
+		if err := e.timed(op, "GarbageCollectToQuota", func() (int64, error) {
 			n, err := e.s.GarbageCollectToQuota(max)
 			e.result["evicted"] = n
 			return n, err
-		})
+		}); err != nil {
+			return err
+		}
+		after, err := e.s.LiveRecordBytes()
+		e.result["live_bytes_after"] = after
+		return err
 	}
 	return fmt.Errorf("unknown write %s", op)
 }
@@ -293,6 +298,15 @@ func RunWrite(spec WriteSpec, hits map[string][]string) (*Run, error) {
 			r.Extra["digest_error"] = err.Error()
 		} else if d != nil {
 			r.Extra["digest"] = d
+		}
+		// W10 on format 4 evicts by arrival (C-32), not as format 1 does:
+		// its own rule is checked against the untouched store instead.
+		if spec.Op == "W10" && spec.Arm == ArmS {
+			probs, err := QuotaByArrival(spec.Store2, spec.Store, touched[spec.Op])
+			if err != nil {
+				probs = append(probs, "arrival check: "+err.Error())
+			}
+			r.Extra["arrival_violations"] = append([]string{}, probs...)
 		}
 	}
 	r.LoadEnd = Load()
