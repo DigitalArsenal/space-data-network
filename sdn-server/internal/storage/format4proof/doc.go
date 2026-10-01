@@ -26,8 +26,8 @@
 // the three stores of the same fixture; P4PROOF_BENCHSET the benchset;
 // P4PROOF_WORK the clone directory (on the fixtures' volume: clones are
 // cp -c); P4PROOF_OUT the results. Fixture paths are only ever cloned, never
-// opened or written. Without them every entry point skips, so the package's
-// unit tests are all that CI runs.
+// opened or written. Without them every entry point skips. This harness is
+// the test suite (contract C-33: end to end only); it has no unit tests.
 //
 // run.sh runs every phase in order on the integration tree (build, prepare,
 // migrate, bytes, reads, ingest, grown reads, M01, writes, crash, LazyFS,
