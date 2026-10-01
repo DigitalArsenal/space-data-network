@@ -172,6 +172,12 @@ func (b format2Backend) DatasetPublicationSetFingerprint(schemaName, providerID,
 	return b.s.f2PublicationSetFingerprint(schemaName, providerID, sourceName, batchID)
 }
 
+// QueryLogEntries is format 1's join, which cannot see the partition store's
+// PLOG records: format 2 answers no entries, as it did before the seam.
+func (b format2Backend) QueryLogEntries(publisherPeerID, schemaType string, sinceSequence uint64, limit int) ([][]byte, error) {
+	return b.s.queryLogEntriesJoined(publisherPeerID, schemaType, sinceSequence, limit)
+}
+
 // ── counts, heads and index pages ───────────────────────────────────────
 
 func (b format2Backend) CountRawRecords(filter RawRecordQuery) (int64, error) {

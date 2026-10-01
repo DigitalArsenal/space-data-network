@@ -1036,6 +1036,66 @@ func (b format4Backend) DatasetPublicationSetFingerprint(schemaName, providerID,
 	return hex.EncodeToString(h.Sum(nil)), len(recs), nil
 }
 
+// QueryLogEntries is a publisher's log after sinceSequence: the log index (a
+// control table) in sequence order, each entry's PLOG record from the
+// engine; an entry whose record is gone is left out, as format 1's join
+// leaves it.
+func (b format4Backend) QueryLogEntries(publisherPeerID, schemaType string, sinceSequence uint64, limit int) ([][]byte, error) {
+	if err := b.closed(); err != nil {
+		return nil, err
+	}
+	rows, err := b.s.db.Query(`
+		SELECT plg_cid FROM sdn_log_index
+		WHERE publisher_peer_id = ? AND schema_type = ? AND sequence > ?
+		ORDER BY sequence ASC
+		LIMIT ?`, publisherPeerID, schemaType, sinceSequence, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query log entries: %w", err)
+	}
+	var cids []string
+	for rows.Next() {
+		var cid string
+		if err := rows.Scan(&cid); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("failed to query log entries: %w", err)
+		}
+		cids = append(cids, cid)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to query log entries: %w", err)
+	}
+	var stored []string
+	for _, c := range cids {
+		if f4CIDStored(c) {
+			stored = append(stored, c)
+		}
+	}
+	recs, err := b.d.api().Get(b.d.ctx, "PLOG", dedupeStrings(stored), false, true)
+	if err != nil && !errors.Is(err, format4.ErrNoType) {
+		return nil, fmt.Errorf("failed to query log entries: %w", err)
+	}
+	data := make(map[string][]byte, len(recs))
+	for _, r := range recs {
+		data[r.CID] = r.Data
+	}
+	var out [][]byte
+	for _, c := range cids {
+		d, ok := data[c]
+		if !ok {
+			continue
+		}
+		opened, err := b.s.openStoredRecordBytes("PLOG.fbs", d)
+		if err != nil {
+			log.Warnf("Failed to open log entry record: %v", err)
+			continue
+		}
+		out = append(out, opened)
+	}
+	return out, nil
+}
+
 // ---- counts and index pages --------------------------------------------------------------
 
 // f4TypeSummaries are the engine's per-type summaries by type name.

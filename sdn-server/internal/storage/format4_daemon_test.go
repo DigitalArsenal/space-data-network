@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -1404,4 +1405,74 @@ func TestFormat4SealedRecordsMatchFormat1(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The publication log (QueryLogEntries): the log index is a control table
+// and its entries are PLOG records, which format 4 reads from the engine.
+func TestFormat4LogEntriesMatchFormat1(t *testing.T) {
+	onFormat4Engines(t, func(t *testing.T, _ f4Engine, _ *[]*format4test.Fake) {
+		legacy := reopenDeferred(t, t.TempDir())
+		defer legacy.Close()
+		f4 := openFormat4ForTest(t, t.TempDir())
+		defer f4.Close()
+		spec, err := format4.TypeSpecFor("PLOG.fbs")
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry := func(seq int) []byte {
+			b := flatbuffers.NewBuilder(128)
+			s := b.CreateString(fmt.Sprintf("entry-%d", seq))
+			b.StartObject(2)
+			b.PrependUint64Slot(0, uint64(seq), 0)
+			b.PrependUOffsetTSlot(1, s, 0)
+			b.FinishWithFileIdentifier(b.EndObject(), spec.FID[:])
+			return append([]byte(nil), b.FinishedBytes()...)
+		}
+		for _, s := range []*FlatSQLStore{legacy, f4} {
+			for seq := 1; seq <= 6; seq++ {
+				cid, err := s.Store("PLOG.fbs", entry(seq), "12D3KooWPublisher", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.UpsertLogIndex("12D3KooWPublisher", "OMM.fbs", uint64(seq), fmt.Sprintf("h%d", seq), "bafkreirecord", cid, "2026-09-01", int64(1000+seq)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// An index row whose entry was never stored is left out.
+			if err := s.UpsertLogIndex("12D3KooWPublisher", "OMM.fbs", 7, "h7", "bafkreirecord", ComputeCID(entry(99)), "2026-09-01", 1007); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, q := range [][2]int{{0, 100}, {2, 3}, {6, 10}} {
+			a, err := legacy.QueryLogEntries("12D3KooWPublisher", "OMM.fbs", uint64(q[0]), q[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := f4.QueryLogEntries("12D3KooWPublisher", "OMM.fbs", uint64(q[0]), q[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fmt.Sprintf("%x", a) != fmt.Sprintf("%x", b) || (q[0] == 0 && len(b) != 6) {
+				t.Fatalf("log entries after %d (limit %d): format 4 %d, format 1 %d", q[0], q[1], len(b), len(a))
+			}
+		}
+	})
+}
+
+// TestMain: SDN_FORMAT4_SUITE=fake opens every format-4 store of the run
+// (SDN_STORE_FORMAT=4 set for the whole suite) on format4test's Fake, so
+// the package's suite can run against store format 4 before the engine is
+// embedded.
+func TestMain(m *testing.M) {
+	if os.Getenv("SDN_FORMAT4_SUITE") == "fake" {
+		format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
+			f, err := format4test.Open(ctx, opt)
+			if err != nil {
+				return nil, err
+			}
+			f.Extract = format1Extract
+			return f, nil
+		}
+	}
+	os.Exit(m.Run())
 }
