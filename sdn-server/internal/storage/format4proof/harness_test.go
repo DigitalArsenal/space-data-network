@@ -141,6 +141,22 @@ func TestProofCrash(t *testing.T) {
 	}
 }
 
+// TestProofMigrate migrates the format-1 fixture with store-migrate --to 4
+// (P4PROOF_SDN_BIN): a clean run kept as the format-4 fixture, checked
+// against format 1, then a run under kill -9 (P4PROOF_MIGRATE_KILLS, 5)
+// resumed to the same record and tag sets.
+func TestProofMigrate(t *testing.T) {
+	c := requireEnv(t, EnvSDNBin, EnvF1Fixture, EnvWork, EnvOut)
+	r, err := MigrateCrashLoop(context.Background(), MigrateLoopSpec{Bin: c.SDNBin, Source: c.Fixtures[ArmF1], Work: c.Work, Out: c.Out,
+		Kills: envInt("P4PROOF_MIGRATE_KILLS", 5)}, logfOf(t))
+	if r != nil {
+		t.Logf("MIGRATE: reference %.0f s, max RSS %.0f MB, %v kills", r.Extra["reference_seconds"], r.Extra["reference_max_rss_mb"], r.Extra["kills"])
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProofEquivalence(t *testing.T) {
 	c := requireEnv(t, EnvOut)
 	label := os.Getenv("P4PROOF_LABEL")

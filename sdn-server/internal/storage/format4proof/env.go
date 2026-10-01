@@ -61,6 +61,13 @@ func ConfigFromEnv() Config {
 	if len(c.Arms) == 0 {
 		c.Arms = append([]string(nil), Arms...)
 	}
+	// Without P4_FIXTURE, the format-4 fixture is the reference migration
+	// TestProofMigrate keeps in the work directory.
+	if c.Fixtures[ArmS] == "" && c.Work != "" {
+		if _, err := os.Stat(filepath.Join(ReferenceStore(c.Work), "fsql4", "STORE")); err == nil {
+			c.Fixtures[ArmS] = ReferenceStore(c.Work)
+		}
+	}
 	return c
 }
 
