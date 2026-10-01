@@ -33,7 +33,6 @@ import (
 // Fields are a record's extracted fields (the engine's typecfg rules).
 type Fields struct {
 	Epoch            *int64  // content time e, Unix s
-	Bucket           *int64  // C-1 bucket time; nil = Epoch
 	Col0             *int64  // NORAD
 	Col1, Col2, Col3 *string // OBJECT_ID/ENTITY_ID/FILE_ID, OBJECT_TYPE, OPS_STATUS_CODE
 	Key              string  // object key, text ("" = none)
@@ -61,6 +60,7 @@ type Fake struct {
 	quota     int64
 	types     map[string]*ftype
 	stats     [40]uint64
+	arrivals  int64 // the store-wide arrival order of new records (quota)
 }
 
 var _ format4.API = (*Fake)(nil)
@@ -125,7 +125,7 @@ func Open(ctx context.Context, opt format4.Options) (*Fake, error) {
 	if prev := opened.m[key]; prev != nil {
 		prev.mu.Lock()
 		closed := prev.closed
-		f.types, f.stats, f.quota = prev.types, prev.stats, prev.quota
+		f.types, f.stats, f.quota, f.arrivals = prev.types, prev.stats, prev.quota, prev.arrivals
 		prev.mu.Unlock()
 		if !closed {
 			return nil, &format4.StatusError{Op: "init", Status: format4.StatusBusy, Msg: "the store is open"}
@@ -218,7 +218,7 @@ type frec struct {
 	d      []byte
 	ts     int64
 	f      Fields
-	tb     int64 // bucket month YYYYMM, 0 without a bucket time
+	arr    int64 // arrival order across the store (quota deletes the oldest)
 	copies map[int]*fcopy
 }
 
@@ -319,14 +319,6 @@ func ProducerToken(peer string) string {
 	return b.String()
 }
 
-func bucketMonth(t *int64) int64 {
-	if t == nil {
-		return 0
-	}
-	u := time.Unix(*t, 0).UTC()
-	return int64(u.Year()*100 + int(u.Month()))
-}
-
 func (f *Fake) now() int64 {
 	if f.Now != nil {
 		return f.Now()
@@ -380,15 +372,15 @@ func (f *Fake) typ(op, name string) (*ftype, error) {
 
 // ---- control --------------------------------------------------------------
 
-// bucketRule is a spec's month-mapping rule (C-5): its bucket and epoch lines.
-var bucketRuleLine = regexp.MustCompile(`(?m)^(bucket|epoch)\s.*$`)
+// epochRule is a spec's epoch lines (C-5: the indexed content time).
+var epochRuleLine = regexp.MustCompile(`(?m)^epoch\s.*$`)
 
-func bucketRule(spec format4.TypeSpec) string {
-	return strings.Join(bucketRuleLine.FindAllString(spec.Rules, -1), "\n")
+func epochRule(spec format4.TypeSpec) string {
+	return strings.Join(epochRuleLine.FindAllString(spec.Rules, -1), "\n")
 }
 
 // RegisterType registers a type; identical bytes are a no-op, and a changed
-// bucket or epoch rule of a type that holds data is refused (C-5).
+// epoch rule of a type that holds data is refused (C-5).
 func (f *Fake) RegisterType(spec format4.TypeSpec) error {
 	if err := f.begin(nil, "register_type"); err != nil {
 		return err
@@ -403,8 +395,8 @@ func (f *Fake) RegisterType(spec format4.TypeSpec) error {
 		if string(t.specBytes) == string(enc) {
 			return nil
 		}
-		if len(t.recs) > 0 && bucketRule(t.spec) != bucketRule(spec) {
-			return statusErr("register_type", format4.StatusFormat, "the bucket/epoch rule of a type with data cannot change")
+		if len(t.recs) > 0 && epochRule(t.spec) != epochRule(spec) {
+			return statusErr("register_type", format4.StatusFormat, "the epoch rule of a type with data cannot change")
 		}
 		t.spec, t.specBytes = spec, enc
 		return nil
@@ -623,12 +615,9 @@ func (f *Fake) putOne(t *ftype, b format4.Batch, in format4.In, token string, at
 			t.next++
 			action = format4.ActNew
 		}
-		bucket := fields.Bucket
-		if bucket == nil {
-			bucket = fields.Epoch
-		}
+		f.arrivals++
 		t.recs[seq] = &frec{seq: seq, cid: in.CID, d: append([]byte(nil), stored...), ts: in.TS, f: fields,
-			tb: bucketMonth(bucket), copies: map[int]*fcopy{}}
+			arr: f.arrivals, copies: map[int]*fcopy{}}
 		t.byCID[in.CID] = seq
 		if seq > t.through {
 			t.through = seq
@@ -775,7 +764,7 @@ func (f *Fake) Supersede(ctx context.Context, typ, provider, source, keepBatch s
 				res.TagsDeleted += int64(dropped)
 				if len(keep) == 0 {
 					res.RecordsDeleted++
-					after[[2]int64{int64(pid), r.tb}]--
+					after[pid]--
 				}
 				plans = append(plans, plan{r, pid, keep})
 			}
@@ -800,12 +789,13 @@ func (f *Fake) Supersede(ctx context.Context, typ, provider, source, keepBatch s
 	return res, nil
 }
 
-// fileCopies counts the copies in each (pid, bucket month) partition file.
-func (t *ftype) fileCopies() map[[2]int64]int64 {
-	out := map[[2]int64]int64{}
+// fileCopies counts the copies in each partition's file (v11, C-32: one
+// file per partition), by pid.
+func (t *ftype) fileCopies() map[int]int64 {
+	out := map[int]int64{}
 	for _, r := range t.recs {
 		for pid := range r.copies {
-			out[[2]int64{int64(pid), r.tb}]++
+			out[pid]++
 		}
 	}
 	return out
@@ -837,52 +827,50 @@ func (f *Fake) Delete(ctx context.Context, typ string, cids []string) (int64, er
 	return n, nil
 }
 
-// QuotaGC drops whole bucket months, oldest first across the types, until
-// the stored bytes are at most maxBytes (§3.8 item 11, quota mode 1). Types
-// without a bucket time are never dropped by month.
+// QuotaGC deletes the oldest records by arrival, across the types, until
+// the stored bytes are at most maxBytes (§3.8 item 11, v11). Records and
+// bytes count copies; a partition left without a copy is a file dropped.
 func (f *Fake) QuotaGC(ctx context.Context, maxBytes int64) (format4.QuotaResult, error) {
 	var res format4.QuotaResult
 	if err := f.begin(ctx, "QUOTA_GC"); err != nil {
 		return res, err
 	}
 	defer f.mu.Unlock()
-	total := func() (n int64) {
-		for _, t := range f.types {
-			for _, r := range t.recs {
-				n += int64(len(r.d) * len(r.copies))
-			}
-		}
-		return n
+	type held struct {
+		t *ftype
+		r *frec
 	}
-	for total() > maxBytes {
-		var oldest int64
-		var victim *ftype
-		names := f.typeNames()
-		for _, name := range names {
-			t := f.types[name]
-			for _, r := range t.recs {
-				if r.tb != 0 && (oldest == 0 || r.tb < oldest) {
-					oldest, victim = r.tb, t
-				}
-			}
+	var all []held
+	var total int64
+	for _, t := range f.types {
+		for _, r := range t.recs {
+			all = append(all, held{t, r})
+			total += int64(len(r.d) * len(r.copies))
 		}
-		if victim == nil {
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].r.arr < all[j].r.arr })
+	before := map[*ftype]map[int]int64{}
+	for _, h := range all {
+		if total <= maxBytes {
 			break
 		}
-		files := map[int]bool{}
-		for _, seq := range victim.sortedSeqs() {
-			r := victim.recs[seq]
-			if r.tb != oldest {
-				continue
-			}
-			for _, pid := range r.pids() {
-				files[pid] = true
-				res.RecordsDropped++
-				res.BytesFreed += int64(len(r.d))
-				f.removeCopy(victim, r, pid)
+		if before[h.t] == nil {
+			before[h.t] = h.t.fileCopies()
+		}
+		for _, pid := range h.r.pids() {
+			res.RecordsDropped++
+			res.BytesFreed += int64(len(h.r.d))
+			total -= int64(len(h.r.d))
+			f.removeCopy(h.t, h.r, pid)
+		}
+	}
+	for t, b := range before {
+		after := t.fileCopies()
+		for pid, n := range b {
+			if n > 0 && after[pid] == 0 {
+				res.FilesDropped++
 			}
 		}
-		res.FilesDropped += int64(len(files))
 	}
 	f.stats[22] += uint64(res.FilesDropped)
 	return res, nil
@@ -1520,7 +1508,6 @@ func (f *Fake) Partitions(ctx context.Context) ([]format4.PartitionSummary, erro
 		t := f.types[name]
 		for _, p := range t.parts {
 			s := format4.PartitionSummary{Type: name, Producer: p.token, Peer: p.peer}
-			files := map[int64]bool{}
 			first := true
 			for _, r := range t.recs {
 				if r.copies[p.pid] == nil {
@@ -1534,9 +1521,8 @@ func (f *Fake) Partitions(ctx context.Context) ([]format4.PartitionSummary, erro
 				first = false
 				s.MaxTS = max(s.MaxTS, r.ts)
 				s.MaxSeq = max(s.MaxSeq, r.seq)
-				files[r.tb] = true
+				s.Files = 1
 			}
-			s.Files = int64(len(files))
 			out = append(out, s)
 		}
 	}
