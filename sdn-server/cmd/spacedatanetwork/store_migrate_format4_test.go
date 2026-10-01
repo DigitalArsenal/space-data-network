@@ -1219,7 +1219,8 @@ var errCopyTimed = errors.New("copy timed")
 // (format4test's in-memory Fake: the whole run, check and activation, on the
 // real data, without the engine's time and memory), or null (the copy pass
 // into a target that keeps nothing: the format-1 side alone).
-// SDN_MIGRATE4_RESUME=1 resumes the run already in SDN_MIGRATE_WORK.
+// SDN_MIGRATE4_RESUME=1 resumes the run already in SDN_MIGRATE_WORK, and with
+// SDN_MIGRATE4_VERIFY_ONLY=1 re-checks it (--verify-only) once activated.
 func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	src := strings.TrimSpace(os.Getenv("SDN_F1_FIXTURE"))
 	if src == "" {
@@ -1242,7 +1243,8 @@ func TestStoreMigrateFormat4Fixture(t *testing.T) {
 	} else if out, err := exec.Command("cp", "-cR", src, dst).CombinedOutput(); err != nil {
 		t.Fatalf("clone fixture: %v: %s", err, out)
 	}
-	opt := migrate4Options{Store: dst, AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true, Wasm: engineWasm(t)}
+	opt := migrate4Options{Store: dst, AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true, Wasm: engineWasm(t),
+		VerifyOnly: os.Getenv("SDN_MIGRATE4_VERIFY_ONLY") == "1"}
 	engines := newFakeEngines()
 	switch target {
 	case "engine":
