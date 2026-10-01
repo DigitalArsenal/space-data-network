@@ -7560,15 +7560,24 @@ func (s *FlatSQLStore) GetLogHead(publisherPeerID, schemaType string) (uint64, s
 
 // QueryLogEntries returns PLG FlatBuffer data for entries after sinceSequence.
 func (s *FlatSQLStore) QueryLogEntries(publisherPeerID, schemaType string, sinceSequence uint64, limit int) ([][]byte, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if limit <= 0 {
 		limit = 100
 	}
 	if limit > 1000 {
 		limit = 1000
 	}
+	if s.rb != nil {
+		return s.rb.QueryLogEntries(publisherPeerID, schemaType, sinceSequence, limit)
+	}
+	return s.queryLogEntriesJoined(publisherPeerID, schemaType, sinceSequence, limit)
+}
+
+// queryLogEntriesJoined is format 1's QueryLogEntries: the log index joined
+// to the PLOG records' tables.
+func (s *FlatSQLStore) queryLogEntriesJoined(publisherPeerID, schemaType string, sinceSequence uint64, limit int) ([][]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	// Publication log entries live under PLOG.fbs (PLG.fbs is the Plugin
 	// Manifest standard — joining it here returned zero entries for every
 	// log sync).
