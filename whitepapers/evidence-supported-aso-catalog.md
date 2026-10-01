@@ -6,7 +6,7 @@ Anthony "TJ" Koury III and Dr. Moriba Jah
 
 Koury: Edgesource, Space Data Network. Jah: The University of Texas at Austin; GaiaVerse Ltd.
 
-Technical whitepaper 1.8 | Revised 28 September 2026
+Technical whitepaper 1.8.1 | Revised 1 October 2026 (reference attribution corrected; content of 1.8, 28 September 2026)
 
 Numerical evidence cutoff: 21 September 2026
 
@@ -704,15 +704,15 @@ R1–R15 retain the sources and evidence roles of the 21 September 2026 baseline
 
 ### R1
 
-Digital Arsenal. Epoch-state conversion, validation and refinement, with aggregate verification record. Modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c. [Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/epoch-fitting.md) · [Verification record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/verification-vimpel-epoch-fit-20260921.json)
+Edgesource. Epoch-state conversion, validation and refinement, with aggregate verification record. Modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c. [Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/epoch-fitting.md) · [Verification record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/verification-vimpel-epoch-fit-20260921.json)
 
 ### R2
 
-Digital Arsenal. Catalog Editor module: composition, coverage and matching contracts. Same baseline commit. [Module documentation](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/README.md)
+Edgesource. Catalog Editor module: composition, coverage and matching contracts. Same baseline commit. [Module documentation](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/README.md)
 
 ### R3
 
-Digital Arsenal. Vimpel epoch normalization and catalog matching; 64-object diagnostic audit. Same baseline commit. [Normalization](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-normalization.md) · [Audit record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-epoch-audit-20260921.json)
+Edgesource. Vimpel epoch normalization and catalog matching; 64-object diagnostic audit. Same baseline commit. [Normalization](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-normalization.md) · [Audit record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-epoch-audit-20260921.json)
 
 ### R4
 
@@ -728,7 +728,7 @@ Space Mapper. Orbit-list API documentation. Channels, formats, and metadata exam
 
 ### R7
 
-Digital Arsenal. Ephemeris provider test fleet. Historical development verification at stack snapshot 43f5506457; transport evidence and acquisition limitations. [Provider-fleet report](https://github.com/DigitalArsenal/spacedatanetwork-stack/blob/43f5506457/studies/orbital-console-data/deployment/EPHEMERIS-PROVIDERS.md)
+Edgesource. Ephemeris provider test fleet. Historical development verification at stack snapshot 43f5506457; transport evidence and acquisition limitations. [Provider-fleet report](https://github.com/DigitalArsenal/spacedatanetwork-stack/blob/43f5506457/studies/orbital-console-data/deployment/EPHEMERIS-PROVIDERS.md)
 
 ### R8
 
