@@ -1,6 +1,6 @@
 # Fast All-vs-All Conjunction Screening
 
-Screening every catalog object against every other in minutes, for any propagator
+Screening every catalog object against every other in seconds to minutes, for any propagator
 
 Anthony "TJ" Koury III
 
@@ -14,16 +14,17 @@ Numerical evidence cutoff: 1 October 2026
 
 ## Executive summary
 
-Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 132 s with SGP4 and in 338 s with numerical high-precision orbit propagation (HPOP), propagation included. The measurements were taken on one 28-core workstation in a standard web browser. Without a GPU, the same three-day SGP4 screen takes 131 s in Node.js and 161 s in WasmEdge, the runtime SDN nodes use, and finds the same 292,516 conjunctions. The screen finds every pair that comes within 5 km. It reports each close approach's time (TCA), miss distance, relative speed, and maximum collision probability.
+Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) it takes 6 to 7 minutes, almost all of it propagation. The screen finds every pair that comes within 5 km, and reports each close approach's time (TCA), miss distance, relative speed and maximum collision probability. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.
 
-Four design choices produce that speed:
+Five design choices produce that speed:
 
-1. **The pair search proposes; the module decides.** A WebGPU compute kernel tests all 528.6 million pairs at every 60 s step in f32 with a safety margin, and returns candidates. Without a GPU, the WebAssembly (WASM) conjunction module finds the candidates itself with a spatial grid. Either way, the module re-tests each candidate in f64 and refines it. Every reported number comes from the module.
+1. **A spatial grid proposes pairs; the module decides.** At every 60 s step, a uniform grid finds the pairs that could be close among the 528.6 million, on a GPU (WebGPU) or in the WebAssembly (WASM) conjunction module on CPU threads. The module re-tests each candidate in f64 and refines it. Every reported number comes from the module.
 2. **Each trajectory bounds its own motion.** Between two samples, an object cannot stray from a straight line by more than a bound its trajectory source computes. A pair whose straight-line approach stays farther apart than the threshold plus both bounds cannot close, and is discarded without further work. The bound holds for any force model, maneuvers included.
 3. **One propagator per run, in time windows.** A run screens either SGP4 element sets or one numerical propagator's trajectories, never a mix. Long screens run as consecutive windows, so memory stays at one window's trajectories while the next window is propagated.
 4. **Load once, move records unchanged.** The catalog loads into the module once. A propagator's output passes into the conjunction module as the records it emitted, without re-encoding.
+5. **Refinement proves, then solves.** Where the range of a pair provably has one minimum, Newton's method on the range rate finds it in about ten evaluations, instead of a dense scan.
 
-The screen reproduces the module's single-call screen exactly where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 7 mm; the single call takes 220.9 s and the new path 4.7 s. Reported probability is the covariance-free maximum. No calibrated covariance or covariance-based probability of collision is claimed (section 7, [R1](#r1)).
+The screen reproduces the module's single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s. Reported probability is the covariance-free maximum. No calibrated covariance or covariance-based probability of collision is claimed (section 7, [R1](#r1)).
 
 ## 1 The problem
 
@@ -33,13 +34,9 @@ The module's existing single-call screen (`screen_catalog`) uses a perigee/apoge
 
 ## 2 Pipeline
 
-```
-load index      module: the catalog, once (SGP4 element sets) or per window (trajectories)
-coarse grid     module: every source sampled at a block of 60 s steps, with its deviation bound
-pair search     WebGPU, or the module's grid on CPU threads: proposes (pair, step) candidates
-refine          module: f64 re-test, encounter joining, TCA, miss distance, probability, exclusions
-merge windows   host: TCA ownership, shared-edge duplicates, whole-span exclusion
-```
+<p align="center">
+  <img src="assets/ca-pipeline.svg" alt="Pipeline: load index, coarse grid, pair search on the GPU or in the module, refine, and merge windows; SGP4 element sets load once, a propagator's trajectories load per window" width="720"/>
+</p>
 
 The host code (JavaScript) moves records between the module and the GPU and contains no physics. The conjunction module, the SGP4 implementation, the HPOP propagator and the epoch-state converter are WASM modules. They are built with the SDN Module SDK and run unchanged in a browser, in the WasmEdge runtime and in its Docker image ([R3](#r3)).
 
@@ -72,23 +69,38 @@ Each source kind computes D from what it knows:
 
 The trajectory bound uses only the coefficients, so it holds for any force model and for impulsive maneuvers that appear as interval jumps. A native test checks it against the trajectory itself every 0.1 s around samples taken every 7 s. The trajectory is a 7,000 km orbit interpolated as a propagator would export it, with a 5 m/s maneuver at an interval boundary. Tested at h = 30 s and h = 90 s, the bound was never exceeded, and away from the maneuver it was at most 1.34 times the true deviation ([R2](#r2)).
 
-### Radius gate
+### Spatial grid
 
-Before the straight-line test, the GPU skips pairs whose radius ranges over the block differ by more than the threshold. Each step contributes the range of \|r + vτ\| over \|τ\| ≤ h, widened by D. A first version used the sampled radius range ±50 km; an eccentric object can move farther than that between samples, so that gate was replaced.
+Testing all 528.6 million pairs at every step is wasted work: almost all pairs are thousands of kilometres apart. At each step, an object's straight-line segment over [−h, h], widened by d/2 + D, gives an axis-aligned box. Two objects can pass the straight-line test only if their boxes overlap, so a search over overlapping boxes drops nothing the test would pass.
 
-### Two precisions, one decision
+The boxes go into a uniform grid whose cell is the 99th-percentile box edge. Each overlapping pair is counted once, in the cell holding the low corner of the two boxes' overlap. The few boxes that span four or more cells on an axis, such as fast perigee passes, are tested against every object. The same grid runs in two places:
 
-The GPU kernel evaluates the test in f32. Positions near 7,000 km round to about 0.5 m in f32, so the kernel adds 0.01 km of slack and proposes a superset. The module repeats the test in f64 for every candidate. Over one day of the full catalog the GPU proposed 829,990 candidates and 828,910 passed the f64 test. The same f64 test run on the CPU over the same samples, on 28 threads, found the identical 828,910 candidates in 159.9 s; the GPU took 3.2–3.3 s.
+- **On a GPU**, in three WebGPU compute passes per step. The first inserts each box into its cells, hashed into one lock-free list per slot. The second has each object walk its cells' lists. The third tests the large boxes.
+- **Without a GPU**, in the WASM module on CPU threads: in a browser without WebGPU, in Node.js, or in WasmEdge on an SDN node or in Docker.
 
-### Without a GPU
-
-The module finds candidates itself when the host has no GPU: a browser without WebGPU, Node.js, or WasmEdge on an SDN node or in Docker. At each step, an object's straight-line segment over [−h, h], widened by d/2 + D, gives an axis-aligned box. Two objects can close only if their boxes overlap, so the search drops nothing the straight-line test would pass. The boxes go into a uniform grid whose cell is the 99th-percentile box edge. Each overlapping pair is counted once, in the cell holding the low corner of the overlap, and the few larger boxes are paired with every object. Overlapping pairs then take the same f64 test. The candidates go to the same refinement, so windows and merging are shared with the GPU path.
+Either way, the grid proposes exactly the pairs an all-pairs test would. On the full catalog over three days, the GPU grid proposed the same 2,678,533 candidates as an all-pairs GPU kernel did.
 
 SDN nodes run modules in WasmEdge compiled ahead of time. That needs SDN's patched WasmEdge 0.16.4: the stock compiler mishandles offsets on atomic memory instructions, and with it the full-catalog search hung in its second window. Interpreted WasmEdge is about 75 times slower.
 
+### Two precisions, one decision
+
+The GPU evaluates the test in f32. Positions near 7,000 km round to about 0.5 m in f32, so the GPU adds 0.01 km of slack and proposes a superset. The module repeats the test in f64 for every candidate. Over one day of the full catalog the GPU proposed 829,990 candidates and 828,910 passed the f64 test. Over three days the GPU proposed 2,678,533 and the CPU grid, which applies the f64 test directly, 2,675,123; both refine to the same conjunctions.
+
 ### Refinement
 
-Passing steps of a pair join into encounters, which are refined exactly as the single-call screen refines its own: a range scan at 5 s, then golden-section search to the refinement tolerance. Probability uses the Alfano maximum ([R4](#r4)). When a refine call would stage more than the module's 16,384-event output limit, the host splits it in two.
+Passing steps of a pair join into encounters. Each encounter is refined by the same TCA search the single-call screen uses, so both report the same TCA.
+
+For most encounters the search first proves that the range has one minimum in its window, then solves for it directly. Let A bound both objects' accelerations over the window; for SGP4 this is 1.05 μ / r²_min, the bound of the candidate test. With T the window's half-width and Δr, Δv the relative state at its middle:
+
+$$
+\lvert \Delta\dot{\mathbf r} \rvert \ge \lvert \Delta\mathbf v \rvert - \varepsilon - A T, \qquad \lvert \Delta\mathbf r \rvert \le \lvert \Delta\mathbf r_{\mathrm{mid}} \rvert + \lvert \Delta\mathbf v \rvert T + \tfrac12 A T^2 .
+$$
+
+ε (1 m/s) allows for a source's velocity differing from the rate of its position. If q = |Δr|max A / |Δṙ|min² < 1, the squared range is convex on the window. Its one minimum is then the root of the range rate f = Δr · Δv, and Newton steps of −f / |Δv|² converge by a factor q or better per step. About ten state evaluations reach the root to the resolution of a Julian date, about 47 µs.
+
+Where the proof fails, for example a slow pair that stays close for minutes, the search samples the range every 5 s and refines each minimum it brackets with golden-section search. The earlier version used that path for every encounter. It also rescanned ±60 s at 0.05 s around each candidate minimum, tens of thousands of SGP4 evaluations per conjunction. Section 6 measures the change.
+
+Probability uses the Alfano maximum ([R4](#r4)). When a refine call would stage more than the module's 16,384-event output limit, the host splits it in two.
 
 ## 4 One propagator per run
 
@@ -118,46 +130,61 @@ HPOP integrates each object from its element epoch, so the first window carries 
 
 ## 6 Results
 
-All runs used the Space-Track GP catalog of 30 September 2026, 32,514 objects ([R6](#r6)). Screens started 2026-10-01T00:00Z, with a 5 km threshold and 60 s coarse steps, on a Mac Studio with 28 cores, in headless Chrome using Metal for WebGPU.
+All runs used the Space-Track GP catalog of 30 September 2026, 32,514 objects ([R6](#r6)). Screens started 2026-10-01T00:00Z, with a 5 km threshold and 60 s coarse steps, on a Mac Studio with 28 cores and 27 module threads. GPU runs used headless Chrome with Metal for WebGPU. The workstation was shared with other work (1-minute load average 15–65 on 28 cores), so times are upper bounds.
 
 ### Full catalog, three days
 
-| Propagator | Windows | End to end | Propagation | Grid | GPU | Refine | Candidates | Conjunctions |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| SGP4 | 12 × 6 h | 132 s | within grid and refine | 8.9 s | 8.3 s | 107.6 s | 2,678,533 | 292,516 |
-| HPOP | 36 × 2 h | 338 s | 320 s, overlapped | 4.2 s | 8.6 s | 16.7 s | 3,080,922 | 301,396 |
+| Propagator | Pair search | End to end | Sampling and search | Refine | Conjunctions |
+| --- | --- | ---: | ---: | ---: | ---: |
+| SGP4, 12 × 6 h | CPU, Node.js | 19.1 s | 9.7 s | 6.6 s | 292,516 |
+| SGP4 | CPU, WasmEdge (AOT, SDN patches) | 22.9 s | 11.9 s | 8.7 s | 292,516 |
+| SGP4 | GPU | 21.3 s | 6.1 + 2.3 s | 7.2 s | 292,516 |
+| HPOP, 36 × 2 h | GPU | 382.1 s | 4.7 + 1.8 s | 8.3 s | 301,396 |
+| HPOP | CPU, Node.js | 437.8 s | 15.2 s | 8.7 s | 301,396 |
 
-- SGP4 excluded 25 objects it could not propagate in the span; HPOP excluded none.
-- **SGP4's** time is refinement: each TCA solve re-evaluates SGP4.
-- **HPOP's** time is propagation: 123 s of catch-up from element epochs in the first window, then about 5.6 s per 2-hour window across 26 workers and 52 instances. Screening each window takes under a second, and refining on trajectories took 16.7 s against SGP4's 107.6 s.
-- The two runs report different conjunctions because they are different propagators. Neither result is a measure of accuracy (section 7).
+- For each propagator, every run reports the same conjunctions with the same TCA and miss distance. SGP4 excluded 25 objects it could not propagate in the span; HPOP excluded none.
+- **SGP4's** remaining time is sampling: 4,321 steps × 32,514 SGP4 evaluations. On the GPU path the module samples (6.1 s) and the GPU searches (2.3 s).
+- **HPOP's** time is propagation: the screen waits 350–400 s for the propagation farm, including about 120 s of catch-up from element epochs in the first window. Screening and refining take under 30 s.
+- The two propagators report different conjunctions. Neither result is a measure of accuracy (section 7).
 
-### Full catalog, three days, without a GPU
+### Step size
 
-| Runtime | End to end | Pair search | Refine | Candidates | Conjunctions |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Node.js (V8) | 131.4 s | 14.4 s | 114.3 s | 2,675,123 | 292,516 |
-| WasmEdge, compiled ahead of time, SDN patches | 161.4 s | 17.4 s | 141.8 s | 2,675,123 | 292,516 |
+The candidate test is exhaustive at any step, so the step size trades sampling against candidates. SGP4, three days:
 
-SGP4, 12 × 6-hour windows, 27 module threads. Every conjunction is identical to the GPU run's, with the same TCA and miss distance. The GPU proposes a few more candidates because its f32 test carries slack; the f64 test removes them. Refinement dominates SGP4 either way, so the GPU saves little here. HPOP without a GPU was not measured; its time is propagation, which runs on the CPU in both cases.
+| Step | Candidates | CPU search | CPU end to end | GPU end to end | Conjunctions |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 s | 4,748,277 | 92.1 s | 102.0 s | 98.6 s | 292,516 |
+| 30 s | 1,414,694 | 17.8 s | 29.9 s | | 292,516 |
+| 60 s | 2,675,123 | 9.7 s | 19.1 s | 21.3 s | 292,516 |
+| 120 s | 17,116,089 | 10.0 s | 39.4 s | | 292,516 |
 
-### Full catalog, one day
+Every step size reports the same conjunctions, with miss distances within 2 mm. TCAs differ by up to 173 ms, but only on flat minima, where the miss distance is the same. A 5 s screen samples 12 times as often and finds nothing more. Shorter steps cost sampling; longer steps give larger bounds and more candidates. 60 s is near the optimum.
 
-| Version | End to end | Load | Coarse grid | GPU | Refine |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| First, catalog sent with every call | 266.7 s | — | 113.8 s | 3.2 s | 148.3 s |
-| Resident index | 55.4 s | 1.5 s | 3.3 s | 3.3 s | 46.7 s |
+### How the time came down
 
-Both versions found the same 829,990 candidates and 77,667 conjunctions.
+Three days, SGP4, CPU search in Node.js, same host:
+
+| Change | End to end | Refine |
+| --- | ---: | ---: |
+| Dense TCA scan around every minimum | 131.4 s | 114.3 s |
+| Unimodal proof, golden-section search | 63.9 s | 45.6 s |
+| Newton steps on the range rate | 55.3 s | 38.4 s |
+| The same solve for each fast encounter's first pass | 34.7 s | 17.6 s |
+| SGP4 state read without a lock; element sets converted once | 25.2 s | 12.7 s |
+| Refinement work shared in small chunks; events built in parallel | 19.1 s | 6.6 s |
+
+Every row reports the same 292,516 conjunctions. On the GPU path, replacing the all-pairs kernel with the grid cut the GPU search from 8.5 s to 2.3 s.
+
+The first version also sent the whole catalog with every call. Loading it once into the module cut one day of the full catalog from 266.7 s to 55.4 s, with the same 77,667 conjunctions.
 
 ### Agreement with the single-call screen
 
-| Objects, window | Single call | GPU path | Conjunctions | Largest difference |
+| Objects, window | Single call | Windowed, CPU search | Conjunctions | Largest difference |
 | --- | ---: | ---: | --- | --- |
-| 2,000, 0.1 day | 2.3 s | 0.3 s | 23 of 23 | TCA 0.3 ms, miss 2 mm |
-| 4,000, 1 day | 220.9 s | 4.7 s | 1,068 of 1,068 | TCA 0.64 ms, miss 7 mm |
+| 2,000, 0.1 day | 1.1 s | 0.08 s | 23 of 23 | TCA 0.16 ms, miss 0.6 mm |
+| 4,000, 1 day | 32.9 s | 0.44 s | 1,068 of 1,068 | TCA 0.64 ms, miss 5 mm |
 
-On the 2,000-object case the CPU search found the same 424 candidates and 23 conjunctions as the GPU in Node.js, WasmEdge and a browser without WebGPU. Differences from the single call come from refinement starting from different coarse brackets, and sit inside the module's parity tolerances of 10 ms and 10 cm.
+On the 2,000-object case the CPU search and the GPU found the same 424 candidates and 23 conjunctions, in Node.js, WasmEdge and a browser. Differences from the single call come from refinement starting from different coarse brackets, and sit inside the module's parity tolerances of 10 ms and 10 cm. Against the earlier dense scan, Newton's method found a deeper minimum for 225,968 of the 292,516 conjunctions. No TCA moved more than 5.4 ms and no miss distance more than 24 cm.
 
 ### Validation findings
 
@@ -185,11 +212,11 @@ Admissible-set screening with TEAG and the ESPF is a separate path. It reports p
 
 | Limit | Effect | Next step |
 | --- | --- | --- |
-| SGP4 refinement | 108 s of 132 s | Cheaper TCA search inside encounters, held to the same parity tolerances |
-| HPOP propagation | 320 s of 338 s | Force-model choices and initial states nearer the screen start; both are modeling decisions with accuracy consequences |
+| SGP4 sampling | About half of a 19 s screen: 140 million SGP4 evaluations | Fewer evaluations per step only with a bound that stays exhaustive |
+| HPOP propagation | Over 90 % of the HPOP screen | Force-model choices and initial states nearer the screen start; both are modeling decisions with accuracy consequences |
 | Catch-up from element epochs | 123 s before the first HPOP window | Persistent propagation across screens |
 | Memory per window | About 400 MB per 2-hour HPOP window | Window length chosen per host |
-| One host | All timings from one 28-core workstation | Repeat on other hosts, GPUs and Docker containers |
+| One host | All timings from one shared 28-core workstation | Repeat on other hosts, GPUs and Docker containers ([R2](#r2) includes the procedure) |
 | Accuracy | Not assessed here | The companion paper's validation baselines ([R1](#r1), section 12) |
 
 This paper reports computation speed and agreement between implementations. It does not establish operational readiness, catalog accuracy, conjunction accuracy against independent truth, or agreement with SOCRATES ([R7](#r7)).
@@ -202,7 +229,7 @@ Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network tech
 
 ### R2
 
-Edgesource. Conjunction assessment module: all-vs-all screening with and without a GPU, time windows, parity and bound tests. Modules commit dc51690999a2bd1964fdc5f38feeb6ea003b1785. [Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/dc51690999a2bd1964fdc5f38feeb6ea003b1785/analysis/conjunction-assessment/docs/gpu-all-vs-all.md)
+Edgesource. Conjunction assessment module: all-vs-all screening on a GPU or on CPU threads, time windows, TCA solve, parity and bound tests, and the benchmark procedure. Modules commit c592acb618c287f1c12f2c3bb28f59e6c556fd34. [Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/c592acb618c287f1c12f2c3bb28f59e6c556fd34/analysis/conjunction-assessment/docs/gpu-all-vs-all.md) · [Benchmark](https://github.com/DigitalArsenal/space-data-network-modules/blob/c592acb618c287f1c12f2c3bb28f59e6c556fd34/analysis/conjunction-assessment/docs/benchmark.md)
 
 ### R3
 
