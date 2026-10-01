@@ -109,9 +109,13 @@ type format2Daemon struct {
 	producers   map[string]string
 }
 
-// newFormat1RefusesMigratedStore is the format-1 guard: an activated store
-// (fsql2/MIGRATED for its own STORE) never opens as format 1.
+// newFormat1RefusesMigratedStore is the format-1 guard: a format-4 store, or
+// an activated format-2 store (fsql2/MIGRATED for its own STORE), never opens
+// as format 1.
 func newFormat1RefusesMigratedStore(basePath string) error {
+	if err := format4RefusedByOtherFormats(basePath); err != nil {
+		return err
+	}
 	migrated, err := format2.Migrated(basePath)
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", filepath.Join(basePath, format2.Dir), err)
@@ -124,6 +128,10 @@ func newFormat1RefusesMigratedStore(basePath string) error {
 
 // newFormat2Store is NewFlatSQLStore for SDN_STORE_FORMAT=2.
 func newFormat2Store(basePath string, validator *sds.Validator, cfg storeConfig) (*FlatSQLStore, error) {
+	// A format-4 store is refused before any file is touched.
+	if err := format4RefusedByOtherFormats(basePath); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(basePath, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
