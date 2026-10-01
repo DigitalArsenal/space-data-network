@@ -293,6 +293,16 @@ func TestCompareShape(t *testing.T) {
 	if v.Status != EqAccepted || v.Passed() {
 		t.Fatalf("accepted: %+v", v)
 	}
+	// Accepted for the count only: another field differing is still DIFFER.
+	pol := Policy{Accepted: "C-10", AcceptedFields: []string{"n"}}
+	v = CompareShape(sa(pol, Answer{Call: "n", Rows: []Row{row("n", "2", "max_ts", "5")}}), sa(pol, Answer{Call: "n", Rows: []Row{row("n", "1", "max_ts", "5")}}), nil)
+	if v.Status != EqAccepted {
+		t.Fatalf("count only: %+v", v)
+	}
+	v = CompareShape(sa(pol, Answer{Call: "n", Rows: []Row{row("n", "2", "max_ts", "5")}}), sa(pol, Answer{Call: "n", Rows: []Row{row("n", "2", "max_ts", "6")}}), nil)
+	if v.Status != EqDiffer {
+		t.Fatalf("a head field outside the accepted ones: %+v", v)
+	}
 }
 
 func TestFrameRows(t *testing.T) {

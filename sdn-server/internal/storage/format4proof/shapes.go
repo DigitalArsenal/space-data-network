@@ -513,6 +513,7 @@ func countShapes(op BenchOp) ([]Shape, error) {
 			pol := Policy{}
 			if tagged {
 				pol.Accepted = "C-10: format 4 counts a record once where format 1 counts its matching tag rows"
+				pol.AcceptedFields = []string{"n"}
 			}
 			return Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: pol, Calls: []Call{{Name: name,
 				Run: func(s *storage.FlatSQLStore) Result {
@@ -545,6 +546,7 @@ func countShapes(op BenchOp) ([]Shape, error) {
 			// Format 1 counts its engine hot window (unhydrated: 0); format 4
 			// has none and counts the type (contract §5.4: W-m does not run).
 			engine.Policy.Accepted = "W-m: format 4 has no engine hot window; EngineRecordCount counts the type"
+			engine.Policy.AcceptedFields = []string{"n"}
 			out = append(out, engine,
 				mk("Count", func(s *storage.FlatSQLStore) (Row, error) {
 					n, err := s.Count(schema)
@@ -910,6 +912,7 @@ func summaryShapes(op BenchOp) ([]Shape, error) {
 		pol := Policy{Unordered: true}
 		if fn == "DiskUsageBytes" {
 			pol.Accepted = "gate 1: format 4 holds the same records in fewer bytes"
+			pol.AcceptedFields = []string{"bytes"}
 		}
 		out = append(out, Shape{Class: op.ID, Name: name, Policy: pol, Calls: []Call{{Name: name,
 			Run: func(s *storage.FlatSQLStore) Result {
