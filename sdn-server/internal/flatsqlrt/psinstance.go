@@ -872,6 +872,13 @@ func (p *PSInstance) shutdown(deadline time.Duration) error {
 			p.stopStatus.Store(wasmrt.ToInt32(v[0]))
 		}
 	}
+	if p.mod.Poisoned() && p.cfg.ABI == PSABIP4 {
+		// The format-4 engine's threads leave only through flatsql_p4_stop,
+		// which a poisoned instance never runs: nothing can drain, so a
+		// fenced instance goes straight to the executor stop and its owner
+		// hears of the failure at once.
+		deadline = 0
+	}
 	left := p.mod.WaitThreads(time.Now().Add(deadline))
 	if left > 0 {
 		left = p.mod.InterruptThreads(time.Now().Add(time.Second))
