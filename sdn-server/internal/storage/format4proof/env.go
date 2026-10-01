@@ -26,11 +26,16 @@ const (
 	EnvCallLimit = "P4PROOF_CALL_LIMIT_S"
 	EnvSDNBin    = "P4PROOF_SDN_BIN" // a spacedatanetwork binary (store-migrate kill loops)
 	EnvChild     = "P4PROOF_CHILD"   // set by the driver for a measurement child
+	// The real host-02 copy (benchset h2copy: R21 PNM, R22, R24), per arm.
+	EnvH2F1 = "P4PROOF_H2_F1"
+	EnvH2F2 = "P4PROOF_H2_F2"
+	EnvH2S  = "P4PROOF_H2_S"
 )
 
 // Config is the harness environment.
 type Config struct {
 	Fixtures  map[string]string // arm -> fixture store directory
+	H2        map[string]string // arm -> h2copy store directory
 	Benchset  string
 	Work, Out string
 	Arms      []string
@@ -44,6 +49,7 @@ type Config struct {
 func ConfigFromEnv() Config {
 	c := Config{
 		Fixtures:  map[string]string{},
+		H2:        map[string]string{},
 		Benchset:  os.Getenv(EnvBenchset),
 		Work:      os.Getenv(EnvWork),
 		Out:       os.Getenv(EnvOut),
@@ -56,6 +62,11 @@ func ConfigFromEnv() Config {
 	for arm, env := range map[string]string{ArmF1: EnvF1Fixture, ArmF2: EnvF2Fixture, ArmS: EnvP4Fixture} {
 		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
 			c.Fixtures[arm] = v
+		}
+	}
+	for arm, env := range map[string]string{ArmF1: EnvH2F1, ArmF2: EnvH2F2, ArmS: EnvH2S} {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			c.H2[arm] = v
 		}
 	}
 	if len(c.Arms) == 0 {
@@ -108,7 +119,14 @@ func (c Config) IsFixturePath(p string) bool {
 	if err != nil {
 		return true
 	}
+	all := []string{}
 	for _, f := range c.Fixtures {
+		all = append(all, f)
+	}
+	for _, f := range c.H2 {
+		all = append(all, f)
+	}
+	for _, f := range all {
 		af, err := filepath.Abs(f)
 		if err != nil {
 			continue
