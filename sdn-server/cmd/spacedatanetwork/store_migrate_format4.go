@@ -502,10 +502,8 @@ func (m *migrator4) run(ctx context.Context) error {
 		return err
 	}
 	if !m.j.Built {
-		for _, schema := range m.schemas {
-			if err := m.copySchema(ctx, schema); err != nil {
-				return err
-			}
+		if err := m.copyAll(ctx, true); err != nil {
+			return err
 		}
 		m.logf("copied; building the partition and type indexes")
 		if err := m.timed("build", func() error {
@@ -731,13 +729,12 @@ func (m *migrator4) checkJournalAgainstHeads(ctx context.Context) error {
 
 // ---- copy ---------------------------------------------------------------------------
 
-// migrate4Page is one page of a schema's held index rows with every copy of
-// their records, their tags and identities, read one page ahead.
+// migrate4Page is one page of a schema's index rows with every copy of their
+// records.
 type migrate4Page struct {
 	entries []storage.IndexCopies // copies per table of the schema (name order)
 	last    int64
 	short   bool
-	err     error
 }
 
 // migrate4Tags is one schema's format-1 tag rows (MigrationSource.SchemaTags)
@@ -799,49 +796,77 @@ func (x *migrate4Tags) of(cidText string) []migrate4TagRow {
 	return x.rows[i:j]
 }
 
-// readPages4 runs next on its own goroutine, one page ahead of the caller.
-func readPages4(ctx context.Context, next func() *migrate4Page) <-chan *migrate4Page {
-	ch := make(chan *migrate4Page, 1)
+// migrate4ReadAhead is how many pages the format-1 reader runs ahead of the
+// engine's writes.
+const migrate4ReadAhead = 4
+
+// migrate4Item is one step of the copy's reader: a schema's start (what
+// travels with its records), one of its pages, or its end.
+type migrate4Item struct {
+	schema string
+	side   *migrate4Side
+	page   *migrate4Page
+	end    bool
+	err    error
+}
+
+// migrate4Side is what travels with a schema's records: its tag rows and,
+// for a type with identity dedupe (IQC), format 1's ingest identities.
+type migrate4Side struct {
+	tags   *migrate4Tags
+	idents map[string][32]byte
+}
+
+// readCopy reads schemas from format 1 on one goroutine, migrate4ReadAhead
+// pages ahead of the caller: each schema's tags and identities, then its
+// pages after starts[schema], then its end. The format-1 engine serves one
+// query at a time, so its reads overlap the engine's writes, not each other.
+// stop ends the reader and waits for it, so no read is in flight when the
+// source closes.
+func (m *migrator4) readCopy(ctx context.Context, schemas []string, starts map[string]int64) (items <-chan migrate4Item, stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	ch := make(chan migrate4Item, migrate4ReadAhead)
 	go func() {
 		defer close(ch)
-		for {
-			pg := next()
-			if pg == nil {
-				return
-			}
+		send := func(it migrate4Item) bool {
 			select {
-			case ch <- pg:
+			case ch <- it:
+				return it.err == nil
 			case <-ctx.Done():
+				return false
+			}
+		}
+		for _, schema := range schemas {
+			side, err := m.readSide(schema)
+			if !send(migrate4Item{schema: schema, side: side, err: err}) {
 				return
 			}
-			if pg.err != nil || pg.short {
+			tables := m.bySchema[schema]
+			for after := starts[schema]; ; {
+				t0 := time.Now()
+				entries, err := m.src.IndexPageCopies(schema, tables, after, m.opt.PageRows, true)
+				m.addTime("read", time.Since(t0))
+				if err != nil {
+					send(migrate4Item{schema: schema, err: err})
+					return
+				}
+				if len(entries) == 0 {
+					break
+				}
+				pg := &migrate4Page{entries: entries, last: entries[len(entries)-1].RowID, short: len(entries) < m.opt.PageRows}
+				if !send(migrate4Item{schema: schema, page: pg}) {
+					return
+				}
+				if pg.short {
+					break
+				}
+				after = pg.last
+			}
+			if !send(migrate4Item{schema: schema, end: true}) {
 				return
 			}
 		}
 	}()
-	return ch
-}
-
-// readSchema reads schema's pages after `after`: the index rows and every
-// table's copies. stop ends the reader and waits for it, so no read is in
-// flight when the source closes.
-func (m *migrator4) readSchema(ctx context.Context, schema string, after int64) (pages <-chan *migrate4Page, stop func()) {
-	tables := m.bySchema[schema]
-	ctx, cancel := context.WithCancel(ctx)
-	ch := readPages4(ctx, func() *migrate4Page {
-		t0 := time.Now()
-		defer func() { m.addTime("read", time.Since(t0)) }()
-		entries, err := m.src.IndexPageCopies(schema, tables, after, m.opt.PageRows, true)
-		if err != nil {
-			return &migrate4Page{err: err}
-		}
-		if len(entries) == 0 {
-			return nil
-		}
-		pg := &migrate4Page{entries: entries, last: entries[len(entries)-1].RowID, short: len(entries) < m.opt.PageRows}
-		after = pg.last
-		return pg
-	})
 	return ch, func() {
 		cancel()
 		for range ch {
@@ -944,80 +969,95 @@ func partitionPeer(t storage.LegacyTable, peer string) string {
 	return t.Token
 }
 
-// schemaSide reads what travels with a schema's records: its tag rows and, for
-// a type with identity dedupe (IQC), format 1's ingest identities.
-func (m *migrator4) schemaSide(schema string) (*migrate4Tags, map[string][32]byte, error) {
-	var tags *migrate4Tags
-	var idents map[string][32]byte
+// readSide reads what travels with a schema's records (the reader's
+// goroutine).
+func (m *migrator4) readSide(schema string) (*migrate4Side, error) {
+	side := &migrate4Side{}
 	err := m.timed("read_tags", func() error {
 		var err error
-		if tags, err = loadMigrate4Tags(m.src, schema); err != nil {
+		if side.tags, err = loadMigrate4Tags(m.src, schema); err != nil {
 			return err
 		}
 		if m.specs[schema].Identity {
-			idents, err = m.src.IngestIdentities(schema)
+			side.idents, err = m.src.IngestIdentities(schema)
 		}
 		return err
 	})
-	if err == nil && tags.skipped > 0 {
-		m.note("%s: %d tag rows name a CID that is not a CIDv1 raw sha2-256; no record carries them", schema, tags.skipped)
-	}
-	return tags, idents, err
+	return side, err
 }
 
-func (m *migrator4) copySchema(ctx context.Context, schema string) error {
-	p := m.progress(schema)
-	if p.Done {
-		return nil
+// copyAll copies every schema not yet done: each page's copies go to the
+// engine (write), or, for --verify-only, only rebuild what the copy sent
+// (!write). The progress of a page is committed only once its PUTs are
+// durable.
+func (m *migrator4) copyAll(ctx context.Context, write bool) error {
+	var schemas []string
+	starts := map[string]int64{}
+	for _, schema := range m.schemas {
+		if p := m.progress(schema); !p.Done {
+			schemas = append(schemas, schema)
+			starts[schema] = p.After
+		}
 	}
-	tags, idents, err := m.schemaSide(schema)
-	if err != nil {
-		return err
-	}
-	tables := m.bySchema[schema]
-	m.logf("copying %s (%d producer tables, %d tag rows) from index rowid %d", schema, len(tables), len(tags.rows), p.After)
-	pages, stop := m.readSchema(ctx, schema, p.After)
+	items, stop := m.readCopy(ctx, schemas, starts)
 	defer stop()
-	for pg := range pages {
-		if pg.err != nil {
-			return pg.err
-		}
-		// The page's progress is staged and committed only once its PUTs
-		// are durable.
-		staged := *p
-		staged.Copies = make(map[string]migrate4Tally, len(p.Copies))
-		for k, v := range p.Copies {
-			staged.Copies[k] = v
-		}
-		batches, err := m.pageBatches(schema, pg, tags, idents, &staged)
-		if err != nil {
-			return err
-		}
-		rejected, err := m.put(ctx, tables, batches)
-		if err != nil {
-			return err
-		}
-		if err := m.step("page"); err != nil {
-			return err
-		}
-		staged.After = pg.last
-		*p = staged
-		m.j.Rejected = append(m.j.Rejected, rejected...)
-		every := journalEvery
-		if m.opt.testJournalEvery > 0 {
-			every = m.opt.testJournalEvery
-		}
-		if time.Since(m.lastJournal) >= every {
-			if err := m.saveJournal(); err != nil {
+	var p *migrate4Progress
+	var side *migrate4Side
+	for it := range items {
+		switch {
+		case it.err != nil:
+			return it.err
+		case it.side != nil:
+			p, side = m.progress(it.schema), it.side
+			m.logf("copying %s (%d producer tables, %d tag rows) from index rowid %d", it.schema, len(m.bySchema[it.schema]),
+				len(side.tags.rows), p.After)
+			if side.tags.skipped > 0 {
+				m.note("%s: %d tag rows name a CID that is not a CIDv1 raw sha2-256; no record carries them", it.schema, side.tags.skipped)
+			}
+		case it.page != nil && !write:
+			if _, err := m.pageBatches(it.schema, it.page, side.tags, side.idents, p); err != nil {
 				return err
+			}
+			p.After = it.page.last
+		case it.page != nil:
+			staged := *p
+			staged.Copies = make(map[string]migrate4Tally, len(p.Copies))
+			for k, v := range p.Copies {
+				staged.Copies[k] = v
+			}
+			batches, err := m.pageBatches(it.schema, it.page, side.tags, side.idents, &staged)
+			if err != nil {
+				return err
+			}
+			rejected, err := m.put(ctx, m.bySchema[it.schema], batches)
+			if err != nil {
+				return err
+			}
+			if err := m.step("page"); err != nil {
+				return err
+			}
+			staged.After = it.page.last
+			*p = staged
+			m.j.Rejected = append(m.j.Rejected, rejected...)
+			every := journalEvery
+			if m.opt.testJournalEvery > 0 {
+				every = m.opt.testJournalEvery
+			}
+			if time.Since(m.lastJournal) >= every {
+				if err := m.saveJournal(); err != nil {
+					return err
+				}
+			}
+		case it.end:
+			p.Done = true
+			if write {
+				if err := m.saveJournal(); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	p.Done = true
-	return m.saveJournal()
+	return ctx.Err()
 }
 
 // put sends a page's batches, one per producer table, in table-name order
@@ -1106,38 +1146,13 @@ func (m *migrator4) verifyOnly(ctx context.Context) error {
 	if err := m.openTarget(ctx, format4.OpenExisting); err != nil {
 		return err
 	}
-	for _, schema := range m.schemas {
-		if err := m.scanSchema(ctx, schema); err != nil {
-			return err
-		}
+	if err := m.copyAll(ctx, false); err != nil {
+		return err
 	}
 	m.tallyReport()
 	c, err := m.check(ctx, m.j.Schemas)
 	m.rep.Check = c
 	return err
-}
-
-// scanSchema is the copy pass without the PUTs: it rebuilds what the copy
-// sent from the format-1 store.
-func (m *migrator4) scanSchema(ctx context.Context, schema string) error {
-	p := m.progress(schema)
-	tags, idents, err := m.schemaSide(schema)
-	if err != nil {
-		return err
-	}
-	pages, stop := m.readSchema(ctx, schema, 0)
-	defer stop()
-	for pg := range pages {
-		if pg.err != nil {
-			return pg.err
-		}
-		if _, err := m.pageBatches(schema, pg, tags, idents, p); err != nil {
-			return err
-		}
-		p.After = pg.last
-	}
-	p.Done = true
-	return ctx.Err()
 }
 
 // ---- control copy and activation ----------------------------------------------------
