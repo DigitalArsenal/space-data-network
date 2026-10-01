@@ -52,9 +52,10 @@ type ChildRun struct {
 	Log      string
 }
 
-// StartChild starts a child of the running test binary; its output goes to
-// logPath. The caller waits (or kills) through the returned command.
-func StartChild(spec ChildSpec, logPath string) (*exec.Cmd, *os.File, error) {
+// StartChild starts a child of the running test binary (env added to its
+// environment); its output goes to logPath. The caller waits (or kills)
+// through the returned command.
+func StartChild(spec ChildSpec, logPath string, env ...string) (*exec.Cmd, *os.File, error) {
 	b, err := json.Marshal(spec)
 	if err != nil {
 		return nil, nil, err
@@ -67,7 +68,7 @@ func StartChild(spec ChildSpec, logPath string) (*exec.Cmd, *os.File, error) {
 		return nil, nil, err
 	}
 	cmd := exec.Command(os.Args[0], "-test.run", "^TestProofChild$", "-test.v", "-test.count=1", "-test.timeout", "12h")
-	cmd.Env = append(os.Environ(), EnvChild+"="+string(b))
+	cmd.Env = append(append(os.Environ(), env...), EnvChild+"="+string(b))
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		log.Close()
