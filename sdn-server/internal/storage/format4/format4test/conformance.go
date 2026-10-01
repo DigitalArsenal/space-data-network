@@ -7,6 +7,10 @@ import (
 	"testing"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
+
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
@@ -50,6 +54,18 @@ var (
 func OMMRecord(norad uint32, objectID, epoch string) []byte {
 	return sds.NewOMMBuilder().WithNoradCatID(norad).WithObjectID(objectID).WithObjectName(fmt.Sprintf("SAT-%d", norad)).
 		WithEpoch(epoch).WithCreationDate("2026-09-30T00:00:00Z").Build()
+}
+
+// CATRecord builds a deterministic CAT record (file identifier "$CAT").
+func CATRecord(norad uint32, objectID, name string) []byte {
+	b := flatbuffers.NewBuilder(256)
+	n, id := b.CreateString(name), b.CreateString(objectID)
+	CAT.CATStart(b)
+	CAT.CATAddOBJECT_NAME(b, n)
+	CAT.CATAddOBJECT_ID(b, id)
+	CAT.CATAddNORAD_CAT_ID(b, norad)
+	CAT.FinishCATBuffer(b, CAT.CATEnd(b))
+	return append([]byte(nil), b.FinishedBytes()...)
 }
 
 // In returns a PUT record of plain at source time ts.
@@ -272,6 +288,29 @@ var conformanceCases = []conformanceCase{
 		}
 		if h, err := api.Head(ctxT(t), format4.Query{Type: "OMM"}); err != nil || h.N != 0 {
 			t.Fatalf("after quota: %+v %v", h, err)
+		}
+	}},
+	{"CAT supersedes on ingest within its source (record_supersede.go)", func(t *testing.T, api format4.API) {
+		spec, err := format4.TypeSpecFor("CAT.fbs")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := api.RegisterType(spec); err != nil {
+			t.Fatal(err)
+		}
+		satcat := format4.Tag{Provider: "celestrak", Source: "satcat-txt", Batch: "e1"}
+		csv := format4.Tag{Provider: "celestrak", Source: "satcat-csv", Batch: "e1"}
+		v1, v2 := In(CATRecord(25544, "1998-067A", "ISS v1"), at0), In(CATRecord(25544, "1998-067A", "ISS v2"), at0+1)
+		other := In(CATRecord(25544, "1998-067A", "ISS csv"), at0+2)
+		mustPut(t, api, format4.Batch{Type: "CAT", Peer: peerA, Tags: []format4.Tag{satcat}, At: at0, Records: []format4.In{v1}})
+		mustPut(t, api, format4.Batch{Type: "CAT", Peer: peerA, Tags: []format4.Tag{csv}, At: at0, Records: []format4.In{other}})
+		out := mustPut(t, api, format4.Batch{Type: "CAT", Peer: peerA, Tags: []format4.Tag{satcat}, At: at0 + 1, Records: []format4.In{v2}})
+		if out[0].Action != format4.ActNew {
+			t.Fatalf("v2: %+v", out[0])
+		}
+		recs, err := api.Get(ctxT(t), "CAT", []string{v1.CID, v2.CID, other.CID}, true, false)
+		if err != nil || !eqStrings(cids(recs), []string{v2.CID, other.CID}) {
+			t.Fatalf("after v2 in the same source: %v %v (v1 superseded, the other source's copy kept)", cids(recs), err)
 		}
 	}},
 	{"rebuild verifies clean", func(t *testing.T, api format4.API) {
