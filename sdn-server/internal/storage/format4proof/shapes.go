@@ -1,0 +1,1075 @@
+package format4proof
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/datasync"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
+)
+
+// The read shapes: every benchset read R01–R24, as calls into SDN's storage
+// functions (the layer the HTTP handlers and modules call). The same closures
+// run on every arm; only the store under them differs.
+
+// Measure is what a call returned, for the sample.
+type Measure struct {
+	Rows, Bytes int64
+}
+
+// Call is one storage call of a shape.
+type Call struct {
+	Name string
+	Run  func(s *storage.FlatSQLStore) (Answer, Measure)
+}
+
+// Fixtures a shape runs on.
+const (
+	FixtureT6W    = "t6w"    // the host-02-sized fixture (every op)
+	FixtureH2Copy = "h2copy" // the real host-02 copy (PNM, FTS, many partitions)
+)
+
+// Shape is one benchset parameter set.
+type Shape struct {
+	Class   string
+	Name    string
+	Schema  string
+	Fixture string
+	Policy  Policy
+	Calls   []Call
+	Warm    int // warm passes; 0 = the class default
+}
+
+// Inputs are the fixture-derived lists some shapes need (taken once from a
+// format-1 clone by the prepare step; nil fields fall back as documented).
+type Inputs struct {
+	// B052CIDs: the CIDs of OMM batch OMM-celestrak-gp-b052 in CID order (R04).
+	B052CIDs []string `json:"b052_cids,omitempty"`
+	// B052Tags: that batch's tag, so a repeat (W03) and a retag (W04) carry
+	// exactly the original's provenance.
+	B052Tags storage.SourceTags `json:"b052_tags"`
+}
+
+// bp is the union of the benchset reads' parameter keys.
+type bp struct {
+	Schema          string          `json:"schema"`
+	Limit           int             `json:"limit"`
+	Offset          int             `json:"offset"`
+	Page            int             `json:"page"`
+	AfterRowID      int64           `json:"after_rowid"`
+	MaxRowID        int64           `json:"max_rowid"`
+	SourceName      string          `json:"source_name"`
+	ProviderID      string          `json:"provider_id"`
+	BatchID         string          `json:"batch_id"`
+	SyncFilter      string          `json:"sync_filter"`
+	ExpectedTotal   *int64          `json:"expected_total"`
+	Norad           string          `json:"norad"`
+	NoradCatID      *uint32         `json:"norad_cat_id"`
+	EntityID        string          `json:"entity_id"`
+	Day             string          `json:"day"`
+	From            string          `json:"from"`
+	To              string          `json:"to"`
+	Profile         string          `json:"profile"`
+	At              int64           `json:"at"`
+	Epoch           float64         `json:"epoch"`
+	Source          string          `json:"source"`
+	MaxDeltaSeconds int64           `json:"max_delta_seconds"`
+	MaxBytes        int64           `json:"max_bytes"`
+	SQL             string          `json:"sql"`
+	Want            string          `json:"want"`
+	Params          []any           `json:"params"`
+	ExpectedFrames  *int            `json:"expected_frames"`
+	Fn              string          `json:"fn"`
+	Peer            string          `json:"peer"`
+	Search          string          `json:"search"`
+	Fixture         string          `json:"fixture"`
+	Pages           int             `json:"pages"`
+	Sizes           []int           `json:"sizes"`
+	CIDs            json.RawMessage `json:"cids"` // a list (R24) or a description (R04)
+}
+
+func decodeParams(op BenchOp) ([]bp, error) {
+	var list []bp
+	if err := json.Unmarshal(op.Params, &list); err == nil {
+		return list, nil
+	}
+	var one bp
+	if err := json.Unmarshal(op.Params, &one); err != nil {
+		return nil, fmt.Errorf("%s params: %w", op.ID, err)
+	}
+	return []bp{one}, nil
+}
+
+// hitLists decodes R01/R02's {schema: [cid...]} params.
+func hitLists(op BenchOp) (map[string][]string, error) {
+	var m map[string][]string
+	if err := json.Unmarshal(op.Params, &m); err != nil {
+		return nil, fmt.Errorf("%s params: %w", op.ID, err)
+	}
+	return m, nil
+}
+
+var pointSchemas = []string{"OMM.fbs", "MPE.fbs", "CAT.fbs", "IQC.fbs"}
+
+func errAnswer(call string, err error) (Answer, Measure) {
+	msg := err.Error()
+	if len(msg) > 400 {
+		msg = msg[:400]
+	}
+	return Answer{Call: call, Err: msg}, Measure{}
+}
+
+func recordsAnswer(call string, recs []*storage.Record, err error) (Answer, Measure) {
+	if err != nil {
+		return errAnswer(call, err)
+	}
+	var m Measure
+	for _, r := range recs {
+		m.Bytes += int64(len(r.Data))
+	}
+	m.Rows = int64(len(recs))
+	return Answer{Call: call, Rows: RecordRows(recs)}, m
+}
+
+func framesAnswer(call string, st *flatsqlrt.RawStream, err error) (Answer, Measure) {
+	if err != nil {
+		return errAnswer(call, err)
+	}
+	if st == nil {
+		return Answer{Call: call}, Measure{}
+	}
+	rows, ferr := FrameRows(st.Bytes)
+	if ferr != nil {
+		return errAnswer(call, ferr)
+	}
+	return Answer{Call: call, Rows: rows}, Measure{Rows: int64(len(rows)), Bytes: int64(len(st.Bytes))}
+}
+
+func parseTime(s string) (*time.Time, error) {
+	if s == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func atUnix(v int64) time.Time { return time.Unix(v, 0).UTC() }
+
+// isNotFound is format 1's miss: GetRecord's "not found: <cid>".
+func isNotFound(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
+}
+
+// BuildShapes turns the benchset's reads into shapes. inputs may be nil.
+func BuildShapes(bs *Benchset, inputs *Inputs) ([]Shape, error) {
+	if inputs == nil {
+		inputs = &Inputs{}
+	}
+	var out []Shape
+	add := func(sh ...Shape) { out = append(out, sh...) }
+	r01, ok := bs.Read("R01")
+	if !ok {
+		return nil, errors.New("benchset has no R01")
+	}
+	hits, err := hitLists(r01)
+	if err != nil {
+		return nil, err
+	}
+	for _, op := range bs.Reads {
+		var sh []Shape
+		var err error
+		switch op.ID {
+		case "R01":
+			sh = getShapes(op.ID, hits)
+		case "R02":
+			var miss map[string][]string
+			if miss, err = hitLists(op); err == nil {
+				sh = getShapes(op.ID, miss)
+			}
+		case "R03":
+			sh, err = refsShapes(op, hits)
+		case "R04":
+			sh, err = tagShapes(op, hits, inputs)
+		case "R05":
+			sh, err = scanFirstPageShapes(op)
+		case "R06", "R08", "R09":
+			sh, err = rawRefsShapes(op)
+		case "R07":
+			sh, err = chainedSourceShapes(op)
+		case "R10":
+			sh, err = countShapes(op)
+		case "R11":
+			sh, err = indexPageShapes(op)
+		case "R12", "R13", "R14":
+			sh, err = windowShapes(op)
+		case "R15":
+			sh, err = byteProbeShapes(op)
+		case "R16":
+			sh, err = epochShapes(op)
+		case "R17":
+			sh, err = a18Shapes(op)
+		case "R18":
+			sh, err = epochStreamShapes(op)
+		case "R19":
+			sh, err = sqlShapes(op)
+		case "R20":
+			sh, err = summaryShapes(op)
+		case "R21":
+			sh, err = recentShapes(op)
+		case "R22":
+			sh, err = searchShapes(op)
+		case "R23":
+			sh, err = tablePageShapes(op)
+		case "R24":
+			sh, err = h2GetShapes(op)
+		default:
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", op.ID, err)
+		}
+		for i := range sh {
+			if sh[i].Fixture == "" {
+				sh[i].Fixture = FixtureT6W
+			}
+		}
+		add(sh...)
+	}
+	add(zzWindowShapes()...)
+	return out, nil
+}
+
+// R01, R02: one shape per type, one call per CID (a miss answers "miss").
+func getShapes(class string, lists map[string][]string) []Shape {
+	var out []Shape
+	for _, schema := range pointSchemas {
+		cids := lists[schema]
+		if len(cids) == 0 {
+			continue
+		}
+		sh := Shape{Class: class, Name: schema, Schema: schema, Warm: 3}
+		for _, cid := range cids {
+			sh.Calls = append(sh.Calls, getCall(schema, cid))
+		}
+		out = append(out, sh)
+	}
+	return out
+}
+
+func getCall(schema, cid string) Call {
+	return Call{Name: cid, Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+		r, err := s.GetRecord(schema, cid)
+		if isNotFound(err) {
+			return Answer{Call: cid, Rows: []Row{ValueRow("miss", "1")}}, Measure{}
+		}
+		if err != nil {
+			return errAnswer(cid, err)
+		}
+		return Answer{Call: cid, Rows: []Row{RecordRow(r)}}, Measure{Rows: 1, Bytes: int64(len(r.Data))}
+	}}
+}
+
+func roundRobin(list []string, n int) []string {
+	out := make([]string, 0, n)
+	for i := 0; i < n && len(list) > 0; i++ {
+		out = append(out, list[i%len(list)])
+	}
+	return out
+}
+
+// R03: QueryRawRecordRefsByRefs with the first N of R01's CIDs per type,
+// repeated round-robin, tag fields empty.
+func refsShapes(op BenchOp, hits map[string][]string) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, size := range ps[0].Sizes {
+		for _, schema := range pointSchemas {
+			refs := make([]storage.RawRecordRef, 0, size)
+			for _, cid := range roundRobin(hits[schema], size) {
+				refs = append(refs, storage.RawRecordRef{CID: cid})
+			}
+			schema, name := schema, fmt.Sprintf("%s refs=%d", schema, size)
+			out = append(out, Shape{Class: op.ID, Name: name, Schema: schema, Calls: []Call{{Name: name,
+				Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+					recs, err := s.QueryRawRecordRefsByRefs(schema, refs)
+					return recordsAnswer(name, recs, err)
+				}}}})
+		}
+	}
+	return out, nil
+}
+
+// R04: tags for a CID list. The engine's IN-list helper (sourceTagsForCIDs) is
+// unexported; its exported callers are measured instead: GetSourceTags over
+// the list in one timed call, and ExportDatasetWindow of batch b052 (the
+// publication export that dominates host-02's slow-statement log).
+func tagShapes(op BenchOp, hits map[string][]string, in *Inputs) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var pool []string
+	schemaOf := map[string]string{}
+	for _, schema := range pointSchemas {
+		pool = append(pool, hits[schema]...)
+		for _, c := range hits[schema] {
+			schemaOf[c] = schema
+		}
+	}
+	var out []Shape
+	for _, size := range ps[0].Sizes {
+		list := append([]string(nil), pool...)
+		list = append(list, in.B052CIDs...)
+		if len(list) > size {
+			list = list[:size]
+		}
+		cids := roundRobin(list, size)
+		name := fmt.Sprintf("GetSourceTags x%d", size)
+		out = append(out, Shape{Class: op.ID, Name: name, Policy: Policy{}, Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				var rows []Row
+				for _, cid := range cids {
+					schema := schemaOf[cid]
+					if schema == "" {
+						schema = "OMM.fbs" // b052's CIDs
+					}
+					t, err := s.GetSourceTags(schema, cid)
+					if err != nil {
+						rows = append(rows, ValueRow("cid", cid, "err", "not found"))
+						if !isNotFound(err) {
+							return errAnswer(name, err)
+						}
+						continue
+					}
+					rows = append(rows, TagsRow(cid, t))
+				}
+				return Answer{Call: name, Rows: rows}, Measure{Rows: int64(len(rows))}
+			}}}})
+	}
+	return out, nil
+}
+
+// R05: datasync.Scan, first page.
+func scanFirstPageShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		req := datasync.QueryRequest{Schema: p.Schema, SourceName: p.SourceName, Limit: p.Limit}
+		name := fmt.Sprintf("%s limit=%d", p.Schema, p.Limit)
+		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: Policy{Collapse: true},
+			Calls: []Call{scanCall(name, req, nil)}})
+	}
+	return out, nil
+}
+
+// scanCall runs datasync.Scan; cursor (when set) chains pages: the call
+// takes *cursor and stores the next one.
+func scanCall(name string, req datasync.QueryRequest, cursor *string) Call {
+	return Call{Name: name, Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+		r := req
+		if cursor != nil {
+			r.Cursor = *cursor
+		}
+		resp, recs, err := datasync.Scan(s, r, datasync.MaxSyncChunkLimit)
+		if err != nil {
+			return errAnswer(name, err)
+		}
+		if cursor != nil {
+			*cursor = resp.NextCursor
+		}
+		a, m := recordsAnswer(name, recs, nil)
+		head := ValueRow("total", i64(resp.TotalCount), "count", strconv.Itoa(resp.Count), "next_cursor", resp.NextCursor,
+			"snapshot", resp.SnapshotID, "head", resp.Head, "hwm", resp.HighWaterMark, "~scan_hash", resp.ScanHash,
+			"~chunk_hash", resp.ChunkHash)
+		a.Rows = append([]Row{head}, a.Rows...)
+		return a, m
+	}}
+}
+
+// R06, R08, R09: QueryRawRecordRefs on the datasync rowid cursor.
+func rawRefsShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		q := storage.RawRecordQuery{SchemaName: p.Schema, ProviderID: p.ProviderID, SourceName: p.SourceName, BatchID: p.BatchID,
+			SyncFilter: p.SyncFilter, Limit: p.Limit, UseRowIDCursor: true, AfterRowID: p.AfterRowID, MaxRowID: p.MaxRowID}
+		parts := []string{p.Schema}
+		for _, kv := range [][2]string{{"after", i64(p.AfterRowID)}, {"filter", p.SyncFilter}, {"batch", p.BatchID}} {
+			if kv[1] != "" && kv[1] != "0" {
+				parts = append(parts, kv[0]+"="+kv[1])
+			}
+		}
+		parts = append(parts, "limit="+strconv.Itoa(p.Limit))
+		name := strings.Join(parts, " ")
+		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: Policy{Collapse: true}, Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				recs, err := s.QueryRawRecordRefs(q)
+				return recordsAnswer(name, recs, err)
+			}}}})
+	}
+	return out, nil
+}
+
+// R07: datasync by source, chained pages; each page is its own call and the
+// chain restarts at page 0 every pass.
+func chainedSourceShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	p := ps[0]
+	after := new(int64)
+	sh := Shape{Class: op.ID, Name: fmt.Sprintf("%s@%s %dx%d", p.Schema, p.SourceName, p.Pages, p.Limit), Schema: p.Schema,
+		Policy: Policy{Collapse: true}}
+	for page := 0; page < p.Pages; page++ {
+		page, name := page, fmt.Sprintf("page%d", page)
+		sh.Calls = append(sh.Calls, Call{Name: name, Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			if page == 0 {
+				*after = 0
+			}
+			recs, err := s.QueryRawRecordRefs(storage.RawRecordQuery{SchemaName: p.Schema, SourceName: p.SourceName,
+				Limit: p.Limit, UseRowIDCursor: true, AfterRowID: *after})
+			if err == nil && len(recs) > 0 {
+				*after = recs[len(recs)-1].RowID
+			}
+			return recordsAnswer(name, recs, err)
+		}})
+	}
+	return []Shape{sh}, nil
+}
+
+func headRow(h storage.RawRecordHead) Row {
+	return ValueRow("bytes", i64(h.TotalBytes), "max_ts", i64(h.MaxRecordTimestampUnix), "max_updated", i64(h.MaxSourceUpdatedAtUnix),
+		"max_created", i64(h.MaxCreatedAtUnix), "max_rowid", i64(h.MaxRowID))
+}
+
+// R10: counts and heads.
+func countShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		q := storage.RawRecordQuery{SchemaName: p.Schema, SourceName: p.SourceName, BatchID: p.BatchID, SyncFilter: p.SyncFilter}
+		base := p.Schema
+		for _, kv := range [][2]string{{"source", p.SourceName}, {"batch", p.BatchID}, {"filter", p.SyncFilter}} {
+			if kv[1] != "" {
+				base += " " + kv[0] + "=" + kv[1]
+			}
+		}
+		// C-10: a tag-filtered count counts records, not format 1's tag rows.
+		tagged := p.SourceName != "" || p.BatchID != ""
+		mk := func(fn string, run func(s *storage.FlatSQLStore) (Row, error)) Shape {
+			name := fn + " " + base
+			pol := Policy{}
+			if tagged {
+				pol.Accepted = "C-10: format 4 counts a record once where format 1 counts its matching tag rows"
+			}
+			return Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: pol, Calls: []Call{{Name: name,
+				Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+					row, err := run(s)
+					if err != nil {
+						return errAnswer(name, err)
+					}
+					return Answer{Call: name, Rows: []Row{row}}, Measure{Rows: 1}
+				}}}}
+		}
+		out = append(out,
+			mk("CountRawRecords", func(s *storage.FlatSQLStore) (Row, error) {
+				n, err := s.CountRawRecords(q)
+				return ValueRow("n", i64(n)), err
+			}),
+			mk("RawRecordHead", func(s *storage.FlatSQLStore) (Row, error) {
+				h, err := s.RawRecordHead(q)
+				return headRow(h), err
+			}),
+			mk("RawRecordSnapshot", func(s *storage.FlatSQLStore) (Row, error) {
+				n, h, err := s.RawRecordSnapshot(q)
+				return append(ValueRow("n", i64(n)), headRow(h)...), err
+			}))
+		if p.SourceName == "" && p.BatchID == "" && p.SyncFilter == "" {
+			schema := p.Schema
+			out = append(out,
+				mk("EngineRecordCount", func(s *storage.FlatSQLStore) (Row, error) {
+					n, err := s.EngineRecordCount(schema)
+					return ValueRow("n", i64(n)), err
+				}),
+				mk("Count", func(s *storage.FlatSQLStore) (Row, error) {
+					n, err := s.Count(schema)
+					return ValueRow("n", i64(n)), err
+				}))
+		}
+	}
+	return out, nil
+}
+
+func i64p(p *int64) string {
+	if p == nil {
+		return "null"
+	}
+	return i64(*p)
+}
+
+// R11: RecordIndexPage (rows and total).
+func indexPageShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		page := p.Page
+		if page < 1 {
+			page = 1
+		}
+		q := storage.RecordIndexPageQuery{SchemaName: p.Schema, SourceName: p.SourceName, NoradLike: p.Norad, Limit: p.Limit,
+			Offset: (page - 1) * p.Limit}
+		name := fmt.Sprintf("%s src=%s norad=%s page=%d", p.Schema, p.SourceName, p.Norad, page)
+		out = append(out, indexPageShape(op.ID, name, q))
+	}
+	return out, nil
+}
+
+func indexPageShape(class, name string, q storage.RecordIndexPageQuery) Shape {
+	return Shape{Class: class, Name: name, Schema: q.SchemaName, Calls: []Call{{Name: name,
+		Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			rows, total, err := s.RecordIndexPage(q)
+			if err != nil {
+				return errAnswer(name, err)
+			}
+			out := []Row{ValueRow("total", i64(total))}
+			for _, r := range rows {
+				out = append(out, ValueRow("cid", r.CID, "norad", i64p(r.NoradCatID), "epoch", i64p(r.EpochUnix)))
+			}
+			return Answer{Call: name, Rows: out}, Measure{Rows: int64(len(rows))}
+		}}}}
+}
+
+// R12, R13, R14: QueryIndexedRecords windows.
+func windowShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		from, err := parseTime(p.From)
+		if err != nil {
+			return nil, err
+		}
+		to, err := parseTime(p.To)
+		if err != nil {
+			return nil, err
+		}
+		q := storage.IndexedRecordQuery{SchemaName: p.Schema, Day: p.Day, NoradCatID: p.NoradCatID, EntityID: p.EntityID,
+			From: from, To: to, ProviderID: p.ProviderID, SourceName: p.SourceName, BatchID: p.BatchID, Limit: p.Limit,
+			Offset: p.Offset, OrderByCID: op.ID == "R13", AllowLargeResultSet: p.Limit > 1000}
+		out = append(out, windowShape(op.ID, windowName(q), q))
+	}
+	return out, nil
+}
+
+func windowName(q storage.IndexedRecordQuery) string {
+	parts := []string{q.SchemaName}
+	add := func(k, v string) {
+		if v != "" {
+			parts = append(parts, k+"="+v)
+		}
+	}
+	add("day", q.Day)
+	if q.From != nil {
+		add("from", q.From.UTC().Format(time.RFC3339))
+	}
+	if q.To != nil {
+		add("to", q.To.UTC().Format(time.RFC3339))
+	}
+	if q.NoradCatID != nil {
+		add("norad", strconv.FormatUint(uint64(*q.NoradCatID), 10))
+	}
+	add("entity", q.EntityID)
+	add("source", q.SourceName)
+	add("batch", q.BatchID)
+	if q.OrderByCID {
+		add("order", "cid")
+	}
+	add("off", strconv.Itoa(q.Offset))
+	add("lim", strconv.Itoa(q.Limit))
+	return strings.Join(parts, " ")
+}
+
+func windowShape(class, name string, q storage.IndexedRecordQuery) Shape {
+	return Shape{Class: class, Name: name, Schema: q.SchemaName, Calls: []Call{{Name: name,
+		Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+			recs, err := s.QueryIndexedRecords(q)
+			return recordsAnswer(name, recs, err)
+		}}}}
+}
+
+// zzWindowShapes are the earlier baselines' type windows (newest first, 100
+// rows at three offsets per type; in R12) and source pages (100 rows by
+// source at three offsets; in R14), so this harness's numbers continue them.
+func zzWindowShapes() []Shape {
+	var out []Shape
+	for _, schema := range pointSchemas {
+		for _, off := range []int{0, 1000, 20000} {
+			q := storage.IndexedRecordQuery{SchemaName: schema, Limit: 100, Offset: off}
+			out = append(out, windowShape("R12", "type window "+windowName(q), q))
+		}
+	}
+	for _, p := range [][2]string{{"OMM.fbs", "celestrak-gp"}, {"MPE.fbs", "celestrak-gp"}, {"CAT.fbs", "celestrak-satcat"},
+		{"CAT.fbs", "celestrak-satcat-csv"}, {"IQC.fbs", "IQEngine"}} {
+		offs := []int{0, 1000, 50000}
+		if p[0] == "CAT.fbs" {
+			offs = []int{0, 1000, 30000}
+		}
+		for _, off := range offs {
+			q := storage.IndexedRecordQuery{SchemaName: p[0], SourceName: p[1], Limit: 100, Offset: off}
+			out = append(out, windowShape("R14", "source page "+windowName(q), q))
+		}
+	}
+	for i := range out {
+		out[i].Fixture = FixtureT6W
+	}
+	return out
+}
+
+// R15: IndexedRecordWindowLimitForBytes.
+func byteProbeShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		q := storage.IndexedRecordQuery{SchemaName: p.Schema, SourceName: p.SourceName, BatchID: p.BatchID}
+		maxBytes := p.MaxBytes
+		name := fmt.Sprintf("%s source=%s batch=%s max=%d", p.Schema, p.SourceName, p.BatchID, maxBytes)
+		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				n, more, err := s.IndexedRecordWindowLimitForBytes(q, maxBytes)
+				if err != nil {
+					return errAnswer(name, err)
+				}
+				return Answer{Call: name, Rows: []Row{ValueRow("n", strconv.Itoa(n), "more", strconv.FormatBool(more))}}, Measure{Rows: 1}
+			}}}})
+	}
+	return out, nil
+}
+
+func matchesAnswer(call string, ms []storage.EpochRecordMatch, count int64) (Answer, Measure) {
+	rows := []Row{ValueRow("count", i64(count))}
+	var m Measure
+	for _, x := range ms {
+		r := RecordRow(x.Record)
+		r = append(r, Field{"entity", x.EntityKey}, Field{"matched", unixOf(x.MatchedEpoch)}, Field{"requested", unixOf(x.RequestedEpoch)},
+			Field{"delta", i64(x.DeltaSeconds)}, Field{"match", x.MatchType})
+		rows = append(rows, r)
+		if x.Record != nil {
+			m.Bytes += int64(len(x.Record.Data))
+		}
+	}
+	m.Rows = int64(len(ms))
+	return Answer{Call: call, Rows: rows}, m
+}
+
+// R16: epoch profiles, as the /api/v1/data/epoch handler runs them
+// (CountEpochRecords then QueryEpochRecords; coverage alone).
+func epochShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		from, err := parseTime(p.From)
+		if err != nil {
+			return nil, err
+		}
+		to, err := parseTime(p.To)
+		if err != nil {
+			return nil, err
+		}
+		q := storage.EpochRecordQuery{SchemaName: p.Schema, Profile: p.Profile, Day: p.Day, From: from, To: to,
+			SourceName: p.SourceName, NoradCatID: p.NoradCatID, EntityID: p.EntityID, Limit: p.Limit, MaxDeltaSeconds: p.MaxDeltaSeconds}
+		if p.At != 0 {
+			q.At = atUnix(p.At)
+		}
+		parts := []string{p.Schema, p.Profile}
+		if p.At != 0 {
+			parts = append(parts, "at="+i64(p.At))
+		}
+		for _, kv := range [][2]string{{"day", p.Day}, {"from", p.From}, {"source", p.SourceName}} {
+			if kv[1] != "" {
+				parts = append(parts, kv[0]+"="+kv[1])
+			}
+		}
+		if p.NoradCatID != nil {
+			parts = append(parts, fmt.Sprintf("norad=%d", *p.NoradCatID))
+		}
+		if p.MaxDeltaSeconds != 0 {
+			parts = append(parts, "max_delta="+i64(p.MaxDeltaSeconds))
+		}
+		if p.Limit != 0 {
+			parts = append(parts, "limit="+strconv.Itoa(p.Limit))
+		}
+		name := strings.Join(parts, " ")
+		coverage := p.Profile == storage.EpochProfileCoverage
+		pol := Policy{}
+		if coverage && p.SourceName != "" {
+			pol.Collapse = true
+		}
+		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: pol, Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				if coverage {
+					bs, err := s.QueryEpochCoverage(q)
+					if err != nil {
+						return errAnswer(name, err)
+					}
+					rows := make([]Row, 0, len(bs))
+					for _, b := range bs {
+						rows = append(rows, ValueRow("day", b.Day, "n", i64(b.Count), "oldest", unixOf(b.OldestEpoch), "newest", unixOf(b.NewestEpoch)))
+					}
+					return Answer{Call: name, Rows: rows}, Measure{Rows: int64(len(rows))}
+				}
+				n, err := s.CountEpochRecords(q)
+				if err != nil {
+					return errAnswer(name, err)
+				}
+				ms, err := s.QueryEpochRecords(q)
+				if err != nil {
+					return errAnswer(name, err)
+				}
+				return matchesAnswer(name, ms, n)
+			}}}})
+	}
+	return out, nil
+}
+
+// sandboxCaps are the module-facing limits a long query runs under (the
+// earlier baselines' 5-minute guard).
+var sandboxCaps = flatsqlrt.SandboxCaps{Timeout: 5 * time.Minute}
+
+// R17: A18 TYPE@source relations through the sandbox. The relation has no
+// ORDER BY, so frames compare as a multiset.
+func a18Shapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		sql, name := p.SQL, strings.TrimPrefix(p.SQL, "SELECT _data FROM ")
+		out = append(out, Shape{Class: op.ID, Name: name, Policy: Policy{Unordered: true}, Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				st, err := s.QuerySandboxedStream(sql, sandboxCaps)
+				return framesAnswer(name, st, err)
+			}}}})
+	}
+	return out, nil
+}
+
+// R18: the engine epoch stream (module flatsql_epoch_stream).
+func epochStreamShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		p := p
+		name := fmt.Sprintf("OMM.fbs@%s %s epoch=%.0f limit=%d", p.Source, p.Profile, p.Epoch, p.Limit)
+		out = append(out, Shape{Class: op.ID, Name: name, Schema: "OMM.fbs", Policy: Policy{Unordered: true}, Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				st, err := s.QueryEpochRawStream("OMM.fbs", p.Source, p.Profile, p.Epoch, p.Limit)
+				return framesAnswer(name, st, err)
+			}}}})
+	}
+	return out, nil
+}
+
+// R19: sandboxed and module SQL. "rows" runs QuerySandboxedJSON, "stream"
+// QuerySandboxedStream. A statement without ORDER BY compares unordered.
+func sqlShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		sql, params, want := p.SQL, normalizeParams(p.Params), p.Want
+		name := sql
+		if len(params) > 0 {
+			name += fmt.Sprintf(" %v", params)
+		}
+		pol := Policy{Unordered: !strings.Contains(strings.ToUpper(sql), "ORDER BY")}
+		out = append(out, Shape{Class: op.ID, Name: name, Policy: pol, Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				if want == "stream" {
+					st, err := s.QuerySandboxedStream(sql, sandboxCaps, params...)
+					return framesAnswer(name, st, err)
+				}
+				payload, rows, _, err := s.QuerySandboxedJSON(sql, sandboxCaps, params...)
+				if err != nil {
+					return errAnswer(name, err)
+				}
+				rs, err := JSONRows(payload)
+				if err != nil {
+					return errAnswer(name, err)
+				}
+				return Answer{Call: name, Rows: rs}, Measure{Rows: int64(rows), Bytes: int64(len(payload))}
+			}}}})
+	}
+	return out, nil
+}
+
+// normalizeParams turns JSON numbers that are integers into int64 (a NORAD
+// id binds as an integer, as the HTTP handler binds it).
+func normalizeParams(in []any) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		if f, ok := v.(float64); ok && f == float64(int64(f)) {
+			out[i] = int64(f)
+			continue
+		}
+		out[i] = v
+	}
+	return out
+}
+
+// R20: summaries and storage accounting.
+func summaryShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		fn, peer := p.Fn, p.Peer
+		name := fn
+		if peer != "" {
+			name += " " + peer
+		}
+		pol := Policy{Unordered: true}
+		if fn == "DiskUsageBytes" {
+			pol.Accepted = "gate 1: format 4 holds the same records in fewer bytes"
+		}
+		out = append(out, Shape{Class: op.ID, Name: name, Policy: pol, Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				rows, err := summaryRows(s, fn, peer)
+				if err != nil {
+					return errAnswer(name, err)
+				}
+				return Answer{Call: name, Rows: rows}, Measure{Rows: int64(len(rows))}
+			}}}})
+	}
+	return out, nil
+}
+
+func summaryRows(s *storage.FlatSQLStore, fn, peer string) ([]Row, error) {
+	switch fn {
+	case "DataSummary":
+		d, err := s.DataSummary()
+		if err != nil || d == nil {
+			return nil, err
+		}
+		rows := []Row{ValueRow("total_records", i64(d.TotalRecords), "total_bytes", i64(d.TotalBytes))}
+		for _, x := range d.Schemas {
+			rows = append(rows, ValueRow("schema", x.SchemaName, "n", i64(x.Count), "bytes", i64(x.TotalBytes)))
+		}
+		for _, x := range d.Sources {
+			b, _ := json.Marshal(x)
+			rows = append(rows, append(ValueRow("source_row", x.SchemaName), flatJSON(jsonObject(b))...))
+		}
+		return rows, nil
+	case "SourceBatchProgress":
+		v, err := s.SourceBatchProgress()
+		return jsonListRows(v, err)
+	case "ProducerSourceProgress":
+		v, err := s.ProducerSourceProgress()
+		return jsonListRows(v, err)
+	case "SourceRecordCounts":
+		m, err := s.SourceRecordCounts()
+		if err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		rows := make([]Row, 0, len(keys))
+		for _, k := range keys {
+			rows = append(rows, ValueRow("source", k, "n", i64(m[k])))
+		}
+		return rows, nil
+	case "SchemaDateRanges":
+		v, err := s.SchemaDateRanges()
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]Row, 0, len(v))
+		for _, x := range v {
+			var o, n string
+			if x.OldestEpoch != nil {
+				o = unixOf(*x.OldestEpoch)
+			}
+			if x.NewestEpoch != nil {
+				n = unixOf(*x.NewestEpoch)
+			}
+			rows = append(rows, ValueRow("schema", x.Schema, "n", i64(x.RecordCount), "oldest", o, "newest", n, "bytes", i64(x.TotalBytes)))
+		}
+		return rows, nil
+	case "LiveRecordBytes":
+		n, err := s.LiveRecordBytes()
+		return []Row{ValueRow("bytes", i64(n))}, err
+	case "DiskUsageBytes":
+		n, err := s.DiskUsageBytes()
+		return []Row{ValueRow("bytes", i64(n))}, err
+	case "PeerStorageBytes":
+		n, err := s.PeerStorageBytes(peer)
+		return []Row{ValueRow("bytes", i64(n))}, err
+	}
+	return nil, fmt.Errorf("unknown summary %q", fn)
+}
+
+func jsonObject(b []byte) any {
+	var v any
+	_ = json.Unmarshal(b, &v)
+	return v
+}
+
+func jsonListRows(v any, err error) ([]Row, error) {
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return JSONRows(b)
+}
+
+// R21: recent records.
+func recentShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		schema, limit := p.Schema, p.Limit
+		name := fmt.Sprintf("%s limit=%d", schema, limit)
+		out = append(out, Shape{Class: op.ID, Name: name, Schema: schema, Fixture: fixtureOf(p), Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				recs, err := s.QueryRecentRecords(schema, limit)
+				return recordsAnswer(name, recs, err)
+			}}}})
+	}
+	return out, nil
+}
+
+func fixtureOf(p bp) string {
+	if p.Fixture == FixtureH2Copy {
+		return FixtureH2Copy
+	}
+	return FixtureT6W
+}
+
+// R22: full-text search (h2copy).
+func searchShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		q := storage.RawRecordQuery{SchemaName: p.Schema, Search: p.Search, Limit: p.Limit, UseRowIDCursor: true}
+		name := fmt.Sprintf("%s search=%s limit=%d", p.Schema, p.Search, p.Limit)
+		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Fixture: fixtureOf(p), Policy: Policy{Collapse: true},
+			Calls: []Call{{Name: name, Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				recs, err := s.QueryRawRecordRefs(q)
+				return recordsAnswer(name, recs, err)
+			}}}})
+	}
+	return out, nil
+}
+
+// R23: the admin full-table page (records; the per-table cursor is format
+// specific and is not compared).
+func tablePageShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var out []Shape
+	for _, p := range ps {
+		q := storage.FullTablePageQuery{SchemaName: p.Schema, Limit: p.Limit}
+		name := fmt.Sprintf("%s limit=%d", p.Schema, p.Limit)
+		out = append(out, Shape{Class: op.ID, Name: name, Schema: p.Schema, Calls: []Call{{Name: name,
+			Run: func(s *storage.FlatSQLStore) (Answer, Measure) {
+				page, err := s.FullTablePageWithCursor(q)
+				return recordsAnswer(name, page.Records, err)
+			}}}})
+	}
+	return out, nil
+}
+
+// R24: many-partition point gets (h2copy, PNM).
+func h2GetShapes(op BenchOp) ([]Shape, error) {
+	ps, err := decodeParams(op)
+	if err != nil {
+		return nil, err
+	}
+	var cids []string
+	if err := json.Unmarshal(ps[0].CIDs, &cids); err != nil {
+		return nil, fmt.Errorf("R24 cids: %w", err)
+	}
+	sh := Shape{Class: op.ID, Name: "PNM.fbs", Schema: "PNM.fbs", Fixture: FixtureH2Copy, Warm: 3}
+	for _, cid := range cids {
+		sh.Calls = append(sh.Calls, getCall("PNM.fbs", cid))
+	}
+	return []Shape{sh}, nil
+}
+
+// ClassesOf lists the classes of shapes in benchset order.
+func ClassesOf(shapes []Shape) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, s := range shapes {
+		if !seen[s.Class] {
+			seen[s.Class] = true
+			out = append(out, s.Class)
+		}
+	}
+	return out
+}
+
+// ShapesOf filters shapes by class and fixture.
+func ShapesOf(shapes []Shape, class, fixture string) []Shape {
+	var out []Shape
+	for _, s := range shapes {
+		if s.Class == class && s.Fixture == fixture {
+			out = append(out, s)
+		}
+	}
+	return out
+}
