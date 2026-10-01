@@ -361,6 +361,7 @@ func Format1CopyOracle(src *storage.MigrationSource) (CopyOracle, error) {
 type EquivalenceReport struct {
 	Generated string         `json:"generated"`
 	Label     string         `json:"label"`
+	Candidate string         `json:"candidate"` // the arm compared with format 1
 	Reads     []Verdict      `json:"reads"`
 	Writes    []WriteVerdict `json:"writes"`
 	Missing   []string       `json:"missing,omitempty"`
@@ -373,12 +374,13 @@ type WriteVerdict struct {
 	Diffs  []string `json:"diffs,omitempty"`
 }
 
-// DriveEquivalence compares format 4's answers with format 1's for every
-// class answered by both, and the write runs' digests; format 1's copies
-// resolve C-12 differences.
-func DriveEquivalence(c Config, label string, logf Logf) (*EquivalenceReport, error) {
-	rep := &EquivalenceReport{Generated: time.Now().UTC().Format(time.RFC3339), Label: label}
-	paths, err := filepath.Glob(filepath.Join(c.Out, AnswerFileName(ArmF1, label, "*")))
+// DriveEquivalence compares a candidate arm's answers (format 4, ArmS; or
+// format 2, which checks the harness against a known engine) with format
+// 1's for every class answered by both, and the write runs' digests; format
+// 1's copies resolve C-12 differences.
+func DriveEquivalence(c Config, label, candidate string, logf Logf) (*EquivalenceReport, error) {
+	rep := &EquivalenceReport{Generated: time.Now().UTC().Format(time.RFC3339), Label: label, Candidate: candidate}
+	paths, err := filepath.Glob(filepath.Join(c.Out, "answers-"+safeName(ArmF1+"-"+label)+"-*.json.gz"))
 	if err != nil {
 		return nil, err
 	}
@@ -406,12 +408,12 @@ func DriveEquivalence(c Config, label string, logf Logf) (*EquivalenceReport, er
 		if err != nil {
 			return nil, err
 		}
-		s, err := ReadAnswers(c.Out, ArmS, label, class)
+		s, err := ReadAnswers(c.Out, candidate, label, class)
 		if err != nil {
 			return nil, err
 		}
 		if s == nil {
-			rep.Missing = append(rep.Missing, "s has no answers for "+class)
+			rep.Missing = append(rep.Missing, candidate+" has no answers for "+class)
 			continue
 		}
 		byShape := map[string]*ShapeAnswers{}
@@ -429,7 +431,7 @@ func DriveEquivalence(c Config, label string, logf Logf) (*EquivalenceReport, er
 		return nil, err
 	}
 	for _, op := range WriteOps {
-		f1, s := writeRun(runs, ArmF1, op), writeRun(runs, ArmS, op)
+		f1, s := writeRun(runs, ArmF1, op), writeRun(runs, candidate, op)
 		if f1 == nil || s == nil {
 			if f1 != nil || s != nil {
 				rep.Missing = append(rep.Missing, op+": run on one arm only")
@@ -494,7 +496,7 @@ func compareWriteDigests(op string, f1, s *Run) WriteVerdict {
 // EquivalenceMarkdown renders the report.
 func EquivalenceMarkdown(rep *EquivalenceReport) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Equivalence with format 1 (%s)\n\nGenerated %s. Byte-identical frames, CIDs and provenance; C-10 collapses format 1's repeated rows per record; C-12 accepts the peer, signature and source timestamp of any of format 1's copies; a field format 1 leaves empty and format 4 fills is listed as extra.\n\n", rep.Label, rep.Generated)
+	fmt.Fprintf(&b, "# Equivalence of arm %s with format 1 (%s)\n\nGenerated %s. Byte-identical frames, CIDs and provenance; C-10 collapses format 1's repeated rows per record; C-12 accepts the peer, signature and source timestamp of any of format 1's copies; a field format 1 leaves empty and the candidate fills is listed as extra.\n\n", rep.Candidate, rep.Label, rep.Generated)
 	counts := map[string]int{}
 	for _, v := range rep.Reads {
 		counts[v.Status]++

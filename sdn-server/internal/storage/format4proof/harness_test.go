@@ -147,14 +147,19 @@ func TestProofEquivalence(t *testing.T) {
 	if label == "" {
 		label = LabelFixture
 	}
-	rep, err := DriveEquivalence(c, label, logfOf(t))
+	candidate := os.Getenv("P4PROOF_EQ_ARM") // default s; f2 checks the harness against a known engine
+	if candidate == "" {
+		candidate = ArmS
+	}
+	rep, err := DriveEquivalence(c, label, candidate, logfOf(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSON(filepath.Join(c.Out, "equivalence-"+label+".json"), rep); err != nil {
+	name := "equivalence-" + candidate + "-" + label
+	if err := writeJSON(filepath.Join(c.Out, name+".json"), rep); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(c.Out, "equivalence-"+label+".md"), []byte(EquivalenceMarkdown(rep)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(c.Out, name+".md"), []byte(EquivalenceMarkdown(rep)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, v := range rep.Reads {

@@ -46,17 +46,13 @@ func RSSMB() float64 {
 	return kb / 1024
 }
 
-// OpenFDs counts the process's open file descriptors.
+// OpenFDs counts the process's open file descriptors (/proc/self/fd on
+// Linux; an fstat sweep elsewhere: macOS's /dev/fd cannot be listed).
 func OpenFDs() int {
-	dir := "/dev/fd"
-	if runtime.GOOS == "linux" {
-		dir = "/proc/self/fd"
+	if e, err := os.ReadDir("/proc/self/fd"); err == nil {
+		return len(e)
 	}
-	e, err := os.ReadDir(dir)
-	if err != nil {
-		return 0
-	}
-	return len(e)
+	return countFDs()
 }
 
 // Tree is what a directory holds on disk.
