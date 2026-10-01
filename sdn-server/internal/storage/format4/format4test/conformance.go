@@ -7,6 +7,10 @@ import (
 	"testing"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
+
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
@@ -50,6 +54,18 @@ var (
 func OMMRecord(norad uint32, objectID, epoch string) []byte {
 	return sds.NewOMMBuilder().WithNoradCatID(norad).WithObjectID(objectID).WithObjectName(fmt.Sprintf("SAT-%d", norad)).
 		WithEpoch(epoch).WithCreationDate("2026-09-30T00:00:00Z").Build()
+}
+
+// CATRecord builds a deterministic CAT record (file identifier "$CAT").
+func CATRecord(norad uint32, objectID, name string) []byte {
+	b := flatbuffers.NewBuilder(256)
+	n, id := b.CreateString(name), b.CreateString(objectID)
+	CAT.CATStart(b)
+	CAT.CATAddOBJECT_NAME(b, n)
+	CAT.CATAddOBJECT_ID(b, id)
+	CAT.CATAddNORAD_CAT_ID(b, norad)
+	CAT.FinishCATBuffer(b, CAT.CATEnd(b))
+	return append([]byte(nil), b.FinishedBytes()...)
 }
 
 // In returns a PUT record of plain at source time ts.
@@ -137,6 +153,173 @@ func eqStrings(a, b []string) bool {
 }
 
 var conformanceCases = []conformanceCase{
+	{"migrate mode", func(t *testing.T, api format4.API) {
+		registerOMM(t, api)
+		a := OMMRecord(25544, "1998-067A", "2026-09-01T00:00:00Z")
+		b := OMMRecord(43013, "2017-073A", "2026-08-15T12:00:00Z")
+		ia, ib := In(a, at0-30), In(b, at0-10)
+		ia.Seq, ib.Seq = 100, 200
+		ia.Tags = []format4.TagAt{{Tag: 0, At: at0 - 500}, {Tag: 1, At: at0 - 400}}
+		ib.Tags = []format4.TagAt{{Tag: 0, At: at0 - 300}}
+		ib.Peer = peerA + " " // same token as the batch peer, another peer string (C-2)
+		tags := []format4.Tag{laneGP, laneGP2}
+		out := mustPut(t, api, format4.Batch{Type: "OMM", Peer: peerA, Mode: format4.ModeMigrate, Tags: tags,
+			Records: []format4.In{ia, ib}})
+		if out[0] != (format4.Outcome{Action: format4.ActMigrated, Seq: 100}) || out[1] != (format4.Outcome{Action: format4.ActMigrated, Seq: 200}) {
+			t.Fatalf("migrated: %+v", out)
+		}
+		// A second copy keeps the seq; a seq held by another CID, a missing
+		// seq and a tag index out of range are refused per record.
+		copyA := In(a, at0-30)
+		copyA.Seq = 100
+		clash := In(OMMRecord(1, "x", "2026-09-03T00:00:00Z"), at0)
+		clash.Seq = 200
+		noSeq := In(OMMRecord(2, "y", "2026-09-03T00:00:00Z"), at0)
+		badTag := In(OMMRecord(3, "z", "2026-09-03T00:00:00Z"), at0)
+		badTag.Seq = 300
+		badTag.Tags = []format4.TagAt{{Tag: 5, At: at0}}
+		out = mustPut(t, api, format4.Batch{Type: "OMM", Peer: peerB, Mode: format4.ModeMigrate, Tags: tags,
+			Records: []format4.In{copyA, clash, noSeq, badTag}})
+		if out[0] != (format4.Outcome{Action: format4.ActCopy, Seq: 100}) {
+			t.Fatalf("migrated copy: %+v", out[0])
+		}
+		for i, want := range []int32{format4.RejectSeq, format4.RejectSeq, format4.RejectTag} {
+			if o := out[i+1]; o.Action != format4.ActRejected || o.Reject != want {
+				t.Fatalf("record %d: %+v, want reject %d", i+1, o, want)
+			}
+		}
+		if _, err := api.Rebuild(ctxT(t), "", format4.RebuildPartitionIndexes|format4.RebuildTypeIndex); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := api.Tags(ctxT(t), "OMM", []string{ia.CID})
+		if err != nil || len(rows) != 2 || rows[0].At != at0-500 || rows[1].At != at0-400 || rows[0].Seq != 100 {
+			t.Fatalf("migrated tags keep their at: %+v %v", rows, err)
+		}
+		recs, err := api.Get(ctxT(t), "OMM", []string{ib.CID}, false, false)
+		if err != nil || len(recs) != 1 || recs[0].Peer != ib.Peer || recs[0].Producer != ProducerToken(peerA) {
+			t.Fatalf("a row's own peer (C-2): %+v %v", recs, err)
+		}
+		n := mustPut(t, api, format4.Batch{Type: "OMM", Peer: peerA, Records: []format4.In{In(OMMRecord(4, "w", "2026-09-04T00:00:00Z"), at0)}})
+		if n[0].Action != format4.ActNew || n[0].Seq <= 200 {
+			t.Fatalf("a new seq after migrated ones: %+v", n)
+		}
+	}},
+	{"lane filter returns a record once (A16)", func(t *testing.T, api format4.API) {
+		fx := loadFixture(t, api)
+		mustPut(t, api, format4.Batch{Type: "OMM", Peer: peerA, Tags: []format4.Tag{laneGP2}, At: at0 + 7,
+			Records: []format4.In{In(fx.iss1, at0)}})
+		lane := format4.LaneFilter{Provider: "celestrak", Source: "celestrak-gp"}
+		recs, err := api.Scan(ctxT(t), format4.Query{Type: "OMM", Lane: lane})
+		if err != nil || !eqStrings(cids(recs), fx.cids) {
+			t.Fatalf("Scan by source: %v %v", cids(recs), err)
+		}
+		if recs[0].Tag == nil || recs[0].Tag.Batch != "b1" {
+			t.Fatalf("the matched tag is the earliest: %+v", recs[0].Tag)
+		}
+		recs, err = api.Scan(ctxT(t), format4.Query{Type: "OMM", Lane: format4.LaneFilter{Batch: "b2"}})
+		if err != nil || !eqStrings(cids(recs), fx.cids[:1]) || recs[0].Tag.Batch != "b2" || recs[0].Tag.At != at0+7 {
+			t.Fatalf("Scan by batch: %+v %v", recs, err)
+		}
+		h, err := api.Head(ctxT(t), format4.Query{Type: "OMM", Lane: lane})
+		if err != nil || h.N != 3 || h.MaxAt != at0+7 {
+			t.Fatalf("Head by source: %+v %v", h, err)
+		}
+		recs, err = api.Window(ctxT(t), format4.Query{Type: "OMM", Lane: lane})
+		if err != nil || len(recs) != 3 {
+			t.Fatalf("Window by source: %v %v", cids(recs), err)
+		}
+	}},
+	{"peer and producer filters", func(t *testing.T, api format4.API) {
+		fx := loadFixture(t, api)
+		mustPut(t, api, format4.Batch{Type: "OMM", Peer: peerB, Tags: []format4.Tag{laneSup}, At: at0 + 1,
+			Records: []format4.In{In(fx.sat, at0)}})
+		recs, err := api.Scan(ctxT(t), format4.Query{Type: "OMM", Producer: ProducerToken(peerB)})
+		if err != nil || !eqStrings(cids(recs), fx.cids[2:]) || recs[0].Producer != ProducerToken(peerB) || recs[0].Peer != peerB {
+			t.Fatalf("Scan by producer: %+v %v", recs, err)
+		}
+		recs, err = api.Window(ctxT(t), format4.Query{Type: "OMM", Peer: peerA})
+		if err != nil || len(recs) != 3 {
+			t.Fatalf("Window by peer: %v %v", cids(recs), err)
+		}
+		h, err := api.Head(ctxT(t), format4.Query{Type: "OMM", CID: fx.cids[2]})
+		if err != nil || h.N != 1 || h.MaxSeq != fx.seqs[2] {
+			t.Fatalf("Head of one CID: %+v %v", h, err)
+		}
+	}},
+	{"epoch max delta", func(t *testing.T, api format4.API) {
+		fx := loadFixture(t, api)
+		at := time.Date(2026, 9, 1, 1, 0, 0, 0, time.UTC).Unix()
+		recs, err := api.Epoch(ctxT(t), format4.EpochQuery{Query: format4.Query{Type: "OMM"}, Profile: format4.EpochNearest,
+			At: at, MaxDelta: 7200})
+		if err != nil || !eqStrings(cids(recs), fx.cids[:1]) {
+			t.Fatalf("nearest within 2 h: %v %v", cids(recs), err)
+		}
+		n, err := api.EpochCount(ctxT(t), format4.EpochQuery{Query: format4.Query{Type: "OMM"}, Profile: format4.EpochAsOf, At: at})
+		if err != nil || n != 2 {
+			t.Fatalf("as_of entities: %d %v", n, err)
+		}
+	}},
+	{"seqs are never reused", func(t *testing.T, api format4.API) {
+		fx := loadFixture(t, api)
+		if n, err := api.Delete(ctxT(t), "OMM", fx.cids[2:]); err != nil || n != 1 {
+			t.Fatalf("Delete: %d %v", n, err)
+		}
+		out := mustPut(t, api, format4.Batch{Type: "OMM", Peer: peerA, Records: []format4.In{In(fx.sat, at0)}})
+		if out[0].Action != format4.ActNew || out[0].Seq <= fx.seqs[2] {
+			t.Fatalf("a deleted CID stored again: %+v (old seq %d)", out, fx.seqs[2])
+		}
+	}},
+	{"visible-through covers every ack (C-4)", func(t *testing.T, api format4.API) {
+		fx := loadFixture(t, api)
+		h, err := api.Head(ctxT(t), format4.Query{Type: "OMM"})
+		if err != nil || h.Through < fx.seqs[2] {
+			t.Fatalf("through %d below an acked seq %d: %v", h.Through, fx.seqs[2], err)
+		}
+		recs, err := api.Scan(ctxT(t), format4.Query{Type: "OMM", SeqThrough: fx.seqs[1]})
+		if err != nil || !eqStrings(cids(recs), fx.cids[:2]) {
+			t.Fatalf("Scan through: %v %v", cids(recs), err)
+		}
+	}},
+	{"quota drops whole months", func(t *testing.T, api format4.API) {
+		loadFixture(t, api)
+		res, err := api.QuotaGC(ctxT(t), 0)
+		if err != nil || res.RecordsDropped != 3 || res.FilesDropped < 2 {
+			t.Fatalf("QuotaGC(0): %+v %v", res, err)
+		}
+		if h, err := api.Head(ctxT(t), format4.Query{Type: "OMM"}); err != nil || h.N != 0 {
+			t.Fatalf("after quota: %+v %v", h, err)
+		}
+	}},
+	{"CAT supersedes on ingest within its source (record_supersede.go)", func(t *testing.T, api format4.API) {
+		spec, err := format4.TypeSpecFor("CAT.fbs")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := api.RegisterType(spec); err != nil {
+			t.Fatal(err)
+		}
+		satcat := format4.Tag{Provider: "celestrak", Source: "satcat-txt", Batch: "e1"}
+		csv := format4.Tag{Provider: "celestrak", Source: "satcat-csv", Batch: "e1"}
+		v1, v2 := In(CATRecord(25544, "1998-067A", "ISS v1"), at0), In(CATRecord(25544, "1998-067A", "ISS v2"), at0+1)
+		other := In(CATRecord(25544, "1998-067A", "ISS csv"), at0+2)
+		mustPut(t, api, format4.Batch{Type: "CAT", Peer: peerA, Tags: []format4.Tag{satcat}, At: at0, Records: []format4.In{v1}})
+		mustPut(t, api, format4.Batch{Type: "CAT", Peer: peerA, Tags: []format4.Tag{csv}, At: at0, Records: []format4.In{other}})
+		out := mustPut(t, api, format4.Batch{Type: "CAT", Peer: peerA, Tags: []format4.Tag{satcat}, At: at0 + 1, Records: []format4.In{v2}})
+		if out[0].Action != format4.ActNew {
+			t.Fatalf("v2: %+v", out[0])
+		}
+		recs, err := api.Get(ctxT(t), "CAT", []string{v1.CID, v2.CID, other.CID}, true, false)
+		if err != nil || !eqStrings(cids(recs), []string{v2.CID, other.CID}) {
+			t.Fatalf("after v2 in the same source: %v %v (v1 superseded, the other source's copy kept)", cids(recs), err)
+		}
+	}},
+	{"rebuild verifies clean", func(t *testing.T, api format4.API) {
+		loadFixture(t, api)
+		rows, err := api.Rebuild(ctxT(t), "OMM", format4.RebuildVerify)
+		if err != nil || len(rows) != 1 || rows[0].Type != "OMM" || rows[0].Mismatches != 0 {
+			t.Fatalf("Rebuild verify: %+v %v", rows, err)
+		}
+	}},
 	{"unregistered type", func(t *testing.T, api format4.API) {
 		_, err := api.Get(ctxT(t), "OMM", []string{cidv1.Of([]byte("x"))}, false, false)
 		if !errors.Is(err, format4.ErrNoType) {
