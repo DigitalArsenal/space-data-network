@@ -4,10 +4,12 @@ package storage
 // (store format 4, stack design docs/architecture/flatsql-sqlite-partitions.md
 // §11) reads from a format-1 store beyond what the format-2 migration reads
 // (format2_source.go):
-//   - each held datasync index row WITH the structured columns format 1
-//     extracted from its record. The copy walks these rows (their rowid is the
-//     record's format-4 seq); the check compares the columns with what the
-//     format-4 engine extracts from the same bytes;
+//   - each datasync index row WITH the structured columns format 1 extracted
+//     from its record and every producer table's copy of that record, in one
+//     query per page (each table is probed once per row: the held check and
+//     the record read are the same seek). The copy walks these rows (their
+//     rowid is the record's format-4 seq); the check compares the columns
+//     with what the format-4 engine extracts from the same bytes;
 //   - the IQC ingest identities format 1 holds, which the engine keeps so a
 //     re-fetch of the same capture stays a duplicate after the migration.
 //
@@ -19,10 +21,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 )
 
-// IndexEntry is one held sdn_record_index row: the datasync cursor position
-// and the structured columns (NULL = the record does not carry the field).
+// IndexEntry is one sdn_record_index row: the datasync cursor position and
+// the structured columns (NULL = the record does not carry the field).
 type IndexEntry struct {
 	RowID           int64
 	CID             string
@@ -35,35 +39,129 @@ type IndexEntry struct {
 	SourceTimestamp int64
 }
 
-// HeldIndexEntries is HeldIndexPage with the structured columns: up to limit
-// index rows of schema with rowid > after, in rowid order, whose record one of
-// tables holds. Orphans (no table holds the record) are left out.
-func (m *MigrationSource) HeldIndexEntries(schema string, tables []LegacyTable, after int64, limit int) ([]IndexEntry, error) {
-	if len(tables) == 0 {
-		return nil, nil
+// IndexCopies is an index row with the producer tables holding its record.
+// No table holds an orphan's record.
+type IndexCopies struct {
+	IndexEntry
+	Held   []bool         // per table of the request: the table holds the record
+	Copies []LegacyRecord // per table, where Held (with records only); SupersedeKey is not read
+}
+
+// Orphan reports whether no producer table holds the row's record.
+func (c IndexCopies) Orphan() bool {
+	for _, h := range c.Held {
+		if h {
+			return false
+		}
 	}
+	return true
+}
+
+// copyJoinGroup is how many producer tables one page query joins (SQLite
+// joins at most 64 tables); a schema with more is read in groups over the
+// same rowid range.
+const copyJoinGroup = 32
+
+// IndexPageCopies returns up to limit index rows of schema with rowid >
+// after, in rowid order, held and orphan alike, each with which of tables
+// hold its record and, withRecords, their copies. One query per group of
+// tables: the index is walked in rowid order and each table probed once per
+// row by its cid key.
+func (m *MigrationSource) IndexPageCopies(schema string, tables []LegacyTable, after int64, limit int, withRecords bool) ([]IndexCopies, error) {
 	scan, err := m.indexScan()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := m.s.db.Query(`SELECT idx.rowid, idx.cid, idx.norad_cat_id, idx.entity_id, idx.object_type, idx.ops_status_code,
-		idx.epoch_unix, idx.epoch_day, idx.source_timestamp FROM sdn_record_index idx `+scan+`
-		WHERE idx.schema_name = ? AND idx.rowid > ? AND `+migrateHeldSQL(tables, "idx.cid")+`
-		ORDER BY idx.rowid LIMIT ?`, schema, after, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []IndexEntry
-	for rows.Next() {
-		var e IndexEntry
-		if err := rows.Scan(&e.RowID, &e.CID, &e.NoradCatID, &e.EntityID, &e.ObjectType, &e.OpsStatusCode,
-			&e.EpochUnix, &e.EpochDay, &e.SourceTimestamp); err != nil {
+	var out []IndexCopies
+	hi := int64(-1) // the page's last rowid, once the first group has read it
+	for g := 0; g == 0 || g < len(tables); g += copyJoinGroup {
+		group := tables[min(g, len(tables)):min(g+copyJoinGroup, len(tables))]
+		var cols, joins strings.Builder
+		for i, t := range group {
+			fmt.Fprintf(&cols, ", t%d.cid IS NOT NULL", i)
+			if withRecords {
+				fmt.Fprintf(&cols, ", t%[1]d.peer_id, t%[1]d.timestamp, t%[1]d.data, t%[1]d.record_length, t%[1]d.signature_hex, t%[1]d.created_at", i)
+			}
+			fmt.Fprintf(&joins, " LEFT JOIN %s t%d ON t%d.cid = idx.cid", t.Name, i, i)
+		}
+		q := `SELECT idx.rowid, idx.cid, idx.norad_cat_id, idx.entity_id, idx.object_type, idx.ops_status_code, idx.epoch_unix,
+			idx.epoch_day, idx.source_timestamp` + cols.String() + ` FROM sdn_record_index idx ` + scan + joins.String() + `
+			WHERE idx.schema_name = ? AND idx.rowid > ?`
+		args := []any{schema, after}
+		if hi < 0 {
+			q += ` ORDER BY idx.rowid LIMIT ?`
+			args = append(args, limit)
+		} else {
+			q += ` AND idx.rowid <= ? ORDER BY idx.rowid`
+			args = append(args, hi)
+		}
+		rows, err := m.s.db.Query(q, args...)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, e)
+		k := 0
+		for rows.Next() {
+			var e IndexEntry
+			dst := []any{&e.RowID, &e.CID, &e.NoradCatID, &e.EntityID, &e.ObjectType, &e.OpsStatusCode, &e.EpochUnix,
+				&e.EpochDay, &e.SourceTimestamp}
+			held := make([]bool, len(group))
+			type cells struct {
+				peer      sql.NullString
+				ts, n, at sql.NullInt64
+				data      []byte
+				sig       sql.NullString
+			}
+			cs := make([]cells, len(group))
+			for i := range group {
+				dst = append(dst, &held[i])
+				if withRecords {
+					dst = append(dst, &cs[i].peer, &cs[i].ts, &cs[i].data, &cs[i].n, &cs[i].sig, &cs[i].at)
+				}
+			}
+			if err := rows.Scan(dst...); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if g == 0 {
+				out = append(out, IndexCopies{IndexEntry: e, Held: make([]bool, len(tables))})
+				if withRecords {
+					out[len(out)-1].Copies = make([]LegacyRecord, len(tables))
+				}
+			} else if k >= len(out) || out[k].RowID != e.RowID {
+				rows.Close()
+				return nil, fmt.Errorf("%s: index row %d moved between two reads of one page", schema, e.RowID)
+			}
+			c := &out[k]
+			k++
+			for i := range group {
+				c.Held[g+i] = held[i]
+				if !withRecords || !held[i] {
+					continue
+				}
+				r := LegacyRecord{RowID: e.RowID, CID: e.CID, PeerID: cs[i].peer.String, Timestamp: cs[i].ts.Int64, Stored: cs[i].data,
+					RecordLength: cs[i].n.Int64, SignatureHex: cs[i].sig.String, CreatedAt: cs[i].at.Int64}
+				if r.Plain, err = m.s.openStoredRecordBytes(schema, r.Stored); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("record %s: %w", r.CID, err)
+				}
+				r.Sealed = encfield.IsSealed(r.Stored)
+				c.Copies[g+i] = r
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if g == 0 {
+			if len(out) == 0 {
+				return nil, nil
+			}
+			hi = out[len(out)-1].RowID
+		} else if k != len(out) {
+			return nil, fmt.Errorf("%s: %d index rows in one read of a page, %d in another", schema, len(out), k)
+		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // IngestIdentities returns the ingest identity format 1 holds for each CID of
