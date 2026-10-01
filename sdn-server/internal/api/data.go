@@ -189,10 +189,10 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 	// behind it. Measured on host-01 mid-ingest 2026-07-28, this endpoint did
 	// not answer within 30 s. It now answers from the last page it served for
 	// this exact query, and refreshes off the hot path. See boundedread.go.
-	// Store format 2 answers the page from reader lanes that wait on no
-	// writer: read directly (T6 scope 6).
+	// A partitioned store (formats 2 and 4) answers the page from readers
+	// that wait on no writer: read directly (T6 scope 6).
 	indexCache := h.indexCache
-	if h.store.Format2() {
+	if h.store.PartitionedRecords() {
 		indexCache = nil
 	}
 	res := indexCache.read(recordIndexCacheKey(query), storeReadBudget, storeReadMinRefresh, func() (interface{}, error) {

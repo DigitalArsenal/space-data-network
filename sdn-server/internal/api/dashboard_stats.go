@@ -152,12 +152,12 @@ func (h *CoreAPIHandler) readStoreStats() storeStats {
 	out.StorageFreeBytes, out.StorageCapacityBytes = storeFilesystemBytes(h.store.Path())
 
 	// ONE budget for the whole snapshot: the three reads are independent and
-	// wait together (see boundedread.go readAll). On store format 2 they are
-	// counter reads on the partition heads and lanes that wait on no writer
+	// wait together (see boundedread.go readAll). On a partitioned store
+	// (formats 2 and 4) they are counter reads that wait on no writer
 	// (reads-never-wait law), so they run directly: no budget, no
 	// last-known-good, every answer this cycle's (T6 scope 6, A32).
 	cache := h.statsCache
-	if h.store.Format2() {
+	if h.store.PartitionedRecords() {
 		cache = nil
 	}
 	results := cache.readAll(storeReadBudget, storeReadMinRefresh,
