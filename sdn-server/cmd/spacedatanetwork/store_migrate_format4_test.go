@@ -516,6 +516,29 @@ func TestStoreMigrateFormat4CommandLine(t *testing.T) {
 	}
 }
 
+// --inventory --to 4 is the format-2 inventory with format 4's record limit
+// (C-6) and changes nothing.
+func TestStoreMigrateFormat4Inventory(t *testing.T) {
+	legacy := t.TempDir()
+	buildLegacyStore4(t, legacy)
+	inv, err := migrate4Inventory(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.Extra["target_format"] != 4 || inv.Extra["max_record_bytes"] != migrate4MaxRecord || len(inv.OverEntry) != 0 {
+		t.Fatalf("inventory %+v", inv)
+	}
+	if len(inv.Partitions) != 5 || inv.GseqFloor == 0 {
+		t.Fatalf("inventory partitions %d, floor %d", len(inv.Partitions), inv.GseqFloor)
+	}
+	if mk, _ := marker.Read(legacy); mk.Format4() || !mk.LegacyControlFile {
+		t.Fatalf("the inventory changed the store: %+v", mk)
+	}
+	if _, err := os.Stat(filepath.Join(legacy, migrate4JournalName)); err == nil {
+		t.Fatal("the inventory wrote a migration journal")
+	}
+}
+
 // The migrated store equals format 1 on every record copy, tag and counter;
 // it is activated; a rerun is a no-op; --verify-only passes; a format-1 open
 // of the activated store fails.
