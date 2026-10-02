@@ -31,8 +31,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -626,8 +628,20 @@ func (b format4Backend) RawRecordHead(filter RawRecordQuery) (RawRecordHead, err
 	return head, err
 }
 
+// f4Snapshot is a raw filter's count and head from the engine, before the
+// local EPMs.
+type f4Snapshot struct {
+	n    int64
+	head RawRecordHead
+	q    format4.Query
+}
+
+// f4SnapKey keeps a raw filter's f4Snapshot (f4Keep).
+type f4SnapKey RawRecordQuery
+
 // RawRecordSnapshot is the count and the head from one HEAD: one committed
-// state (the seq bound and the count of what lies under it).
+// state (the seq bound and the count of what lies under it). Without a
+// search it is kept while the engine's counters stand (f4Keep).
 func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawRecordHead, error) {
 	if err := b.closed(); err != nil {
 		return 0, RawRecordHead{}, err
@@ -635,28 +649,17 @@ func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawReco
 	if err := b.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
 		return 0, RawRecordHead{}, err
 	}
-	h, q, _, err := b.f4Head(filter)
+	var snap f4Snapshot
+	var err error
+	if strings.TrimSpace(filter.Search) == "" {
+		snap, err = f4Keep(b.d, f4SnapKey(filter), nil, func() (f4Snapshot, error) { return b.f4Snapshot(filter) })
+	} else {
+		snap, err = b.f4Snapshot(filter)
+	}
 	if err != nil {
-		return 0, RawRecordHead{}, fmt.Errorf("raw record head failed: %w", err)
+		return 0, RawRecordHead{}, err
 	}
-	head := RawRecordHead{TotalBytes: h.Bytes, MaxRecordTimestampUnix: h.MaxTS, MaxRowID: h.MaxSeq, MaxCreatedAtUnix: h.MaxTS}
-	if !f4LaneEmpty(q.Lane) {
-		// A tag filter's times are its tag instances' (format 1's created_at).
-		head.MaxCreatedAtUnix, head.MaxSourceUpdatedAtUnix = h.MaxAt, h.MaxAt
-	}
-	if f4SourceSummaryHead(q) {
-		// Format 1's source summary has no record timestamp, and a cursor's
-		// boundary is the type's newest seq, the one its pages run under.
-		head.MaxRecordTimestampUnix = 0
-		if filter.UseRowIDCursor {
-			th, err := b.f4TypeHead(q.Type)
-			if err != nil {
-				return 0, RawRecordHead{}, fmt.Errorf("raw record head failed: %w", err)
-			}
-			head.MaxRowID = th.MaxSeq
-		}
-	}
-	count := h.N
+	count, head, q := snap.n, snap.head, snap.q
 	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
 	if f4LocalEPMs(filter, q) {
 		b.s.mu.RLock()
@@ -674,6 +677,32 @@ func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawReco
 		}
 	}
 	return count, head, nil
+}
+
+// f4Snapshot is RawRecordSnapshot's engine part.
+func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
+	h, q, _, err := b.f4Head(filter)
+	if err != nil {
+		return f4Snapshot{}, fmt.Errorf("raw record head failed: %w", err)
+	}
+	head := RawRecordHead{TotalBytes: h.Bytes, MaxRecordTimestampUnix: h.MaxTS, MaxRowID: h.MaxSeq, MaxCreatedAtUnix: h.MaxTS}
+	if !f4LaneEmpty(q.Lane) {
+		// A tag filter's times are its tag instances' (format 1's created_at).
+		head.MaxCreatedAtUnix, head.MaxSourceUpdatedAtUnix = h.MaxAt, h.MaxAt
+	}
+	if f4SourceSummaryHead(q) {
+		// Format 1's source summary has no record timestamp, and a cursor's
+		// boundary is the type's newest seq, the one its pages run under.
+		head.MaxRecordTimestampUnix = 0
+		if filter.UseRowIDCursor {
+			th, err := b.f4TypeHead(q.Type)
+			if err != nil {
+				return f4Snapshot{}, fmt.Errorf("raw record head failed: %w", err)
+			}
+			head.MaxRowID = th.MaxSeq
+		}
+	}
+	return f4Snapshot{n: h.N, head: head, q: q}, nil
 }
 
 // QuerySourceTaggedRecords is the newest tagged records meeting the tag
@@ -1164,17 +1193,48 @@ func (b format4Backend) QueryLogEntries(publisherPeerID, schemaType string, sinc
 
 // ---- counts and index pages --------------------------------------------------------------
 
-// f4TypeSummaries are the engine's per-type summaries by type name.
+// Keys of what the reads derive from the engine's counters (f4Keep).
+type f4Key uint8
+
+const (
+	f4KeyTypes f4Key = iota + 1
+	f4KeyLiveBytes
+	f4KeyDateRanges
+	f4KeyPeerBytes
+	f4KeySourceCounts
+	f4KeyBatchProgress
+	f4KeyProducerProgress
+	f4KeyDataSummary
+)
+
+// warmCounters derives every total and summary once at open, so the first
+// count or summary after an open answers from memory, as format 2's do from
+// the heads it loads at open. A failure only leaves it to the first read.
+func (b format4Backend) warmCounters() {
+	_, _ = b.LiveRecordBytes()
+	_, _ = b.SchemaDateRanges()
+	_, _ = b.f4PeerBytes()
+	_, _ = b.SourceRecordCounts()
+	_, _ = b.SourceBatchProgress()
+	_, _ = b.ProducerSourceProgress()
+	_, _ = b.DataSummary()
+	_, _ = b.DiskUsageBytes()
+}
+
+// f4TypeSummaries are the engine's per-type summaries by type name, shared:
+// callers only read the map.
 func (b format4Backend) f4TypeSummaries() (map[string]format4.TypeSummary, error) {
-	types, err := b.d.api().Types(b.d.ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]format4.TypeSummary, len(types))
-	for _, t := range types {
-		out[t.Type] = t
-	}
-	return out, nil
+	return f4Keep(b.d, f4KeyTypes, nil, func() (map[string]format4.TypeSummary, error) {
+		types, err := b.d.api().Types(b.d.ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]format4.TypeSummary, len(types))
+		for _, t := range types {
+			out[t.Type] = t
+		}
+		return out, nil
+	})
 }
 
 // f4TypeRecords is a type's records (unique CIDs).
@@ -1448,6 +1508,30 @@ func (b format4Backend) DataSummary() (*DataSummary, error) {
 	if err := b.closed(); err != nil {
 		return nil, err
 	}
+	kept, err := f4Keep(b.d, f4KeyDataSummary, nil, b.f4DataSummary)
+	if err != nil {
+		return nil, err
+	}
+	summary := *kept
+	summary.Schemas, summary.Sources = slices.Clone(kept.Schemas), slices.Clone(kept.Sources)
+	b.s.mu.RLock()
+	localCount, localBytes, err := b.s.localEPMSummaryLocked()
+	b.s.mu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	if localCount > 0 {
+		summary.Schemas = appendOrAddSchemaSummary(summary.Schemas, DataSchemaSummary{SchemaName: "EPM.fbs", Count: localCount, TotalBytes: localBytes})
+		summary.Sources = append(summary.Sources, DataSourceSummary{SchemaName: "EPM.fbs", ProviderID: "local-node", SourceName: "local-epm",
+			BatchID: "local", ProducerPeerID: "local-node", ProducerPublicKey: "local-node", Count: localCount, TotalBytes: localBytes})
+		summary.TotalRecords += localCount
+		summary.TotalBytes += localBytes
+	}
+	return &summary, nil
+}
+
+// f4DataSummary is DataSummary's engine part (no local EPMs).
+func (b format4Backend) f4DataSummary() (*DataSummary, error) {
 	summary := &DataSummary{Schemas: make([]DataSchemaSummary, 0), Sources: make([]DataSourceSummary, 0)}
 	lanes, err := b.f4Lanes("")
 	if err != nil {
@@ -1518,19 +1602,6 @@ func (b format4Backend) DataSummary() (*DataSummary, error) {
 			summary.Sources = append(summary.Sources, *sources[k])
 		}
 	}
-	b.s.mu.RLock()
-	localCount, localBytes, err := b.s.localEPMSummaryLocked()
-	b.s.mu.RUnlock()
-	if err != nil {
-		return nil, err
-	}
-	if localCount > 0 {
-		summary.Schemas = appendOrAddSchemaSummary(summary.Schemas, DataSchemaSummary{SchemaName: "EPM.fbs", Count: localCount, TotalBytes: localBytes})
-		summary.Sources = append(summary.Sources, DataSourceSummary{SchemaName: "EPM.fbs", ProviderID: "local-node", SourceName: "local-epm",
-			BatchID: "local", ProducerPeerID: "local-node", ProducerPublicKey: "local-node", Count: localCount, TotalBytes: localBytes})
-		summary.TotalRecords += localCount
-		summary.TotalBytes += localBytes
-	}
 	return summary, nil
 }
 
@@ -1538,6 +1609,10 @@ func (b format4Backend) SourceBatchProgress() ([]SourceBatchProgress, error) {
 	if err := b.closed(); err != nil {
 		return nil, err
 	}
+	return f4Keep(b.d, f4KeyBatchProgress, slices.Clone, b.f4SourceBatchProgress)
+}
+
+func (b format4Backend) f4SourceBatchProgress() ([]SourceBatchProgress, error) {
 	lanes, err := b.f4Lanes("")
 	if err != nil {
 		return nil, fmt.Errorf("query source batch progress: %w", err)
@@ -1587,6 +1662,10 @@ func (b format4Backend) ProducerSourceProgress() ([]ProducerSourceProgress, erro
 	if err := b.closed(); err != nil {
 		return nil, err
 	}
+	return f4Keep(b.d, f4KeyProducerProgress, slices.Clone, b.f4ProducerSourceProgress)
+}
+
+func (b format4Backend) f4ProducerSourceProgress() ([]ProducerSourceProgress, error) {
 	lanes, err := b.f4Lanes("")
 	if err != nil {
 		return nil, fmt.Errorf("query producer source progress: %w", err)
@@ -1651,6 +1730,10 @@ func (b format4Backend) SourceRecordCounts() (map[string]int64, error) {
 	if err := b.closed(); err != nil {
 		return nil, err
 	}
+	return f4Keep(b.d, f4KeySourceCounts, maps.Clone, b.f4SourceRecordCounts)
+}
+
+func (b format4Backend) f4SourceRecordCounts() (map[string]int64, error) {
 	lanes, err := b.f4Lanes("")
 	if err != nil {
 		return nil, fmt.Errorf("count records per source: %w", err)
@@ -1720,15 +1803,17 @@ func (b format4Backend) LiveRecordBytes() (int64, error) {
 	if err := b.closed(); err != nil {
 		return 0, err
 	}
-	types, err := b.f4TypeSummaries()
-	if err != nil {
-		return 0, err
-	}
-	var total int64
-	for _, t := range types {
-		total += t.CopyBytes
-	}
-	return total, nil
+	return f4Keep(b.d, f4KeyLiveBytes, nil, func() (int64, error) {
+		types, err := b.f4TypeSummaries()
+		if err != nil {
+			return 0, err
+		}
+		var total int64
+		for _, t := range types {
+			total += t.CopyBytes
+		}
+		return total, nil
+	})
 }
 
 // liveRecordBytesReconciled: the counters are the writer's from the first
@@ -1741,6 +1826,10 @@ func (b format4Backend) SchemaDateRanges() ([]SchemaDateRange, error) {
 	if err := b.closed(); err != nil {
 		return nil, err
 	}
+	return f4Keep(b.d, f4KeyDateRanges, slices.Clone, b.f4SchemaDateRanges)
+}
+
+func (b format4Backend) f4SchemaDateRanges() ([]SchemaDateRange, error) {
 	types, err := b.f4TypeSummaries()
 	if err != nil {
 		return nil, err
@@ -1771,18 +1860,27 @@ func (b format4Backend) PeerStorageBytes(peerID string) (int64, error) {
 	if err := b.closed(); err != nil {
 		return 0, err
 	}
-	parts, err := b.d.api().Partitions(b.d.ctx)
+	peers, err := b.f4PeerBytes()
 	if err != nil {
 		return 0, err
 	}
-	token := sanitizeProducerID(routedProducerID(peerID))
-	var total int64
-	for _, p := range parts {
-		if p.Producer == token {
-			total += p.Bytes
+	return peers[sanitizeProducerID(routedProducerID(peerID))], nil
+}
+
+// f4PeerBytes is the stored bytes per partition producer token, shared:
+// callers only read the map.
+func (b format4Backend) f4PeerBytes() (map[string]int64, error) {
+	return f4Keep(b.d, f4KeyPeerBytes, nil, func() (map[string]int64, error) {
+		parts, err := b.d.api().Partitions(b.d.ctx)
+		if err != nil {
+			return nil, err
 		}
-	}
-	return total, nil
+		out := map[string]int64{}
+		for _, p := range parts {
+			out[p.Producer] += p.Bytes
+		}
+		return out, nil
+	})
 }
 
 // DiskUsageBytes is the engine's files plus the control instance's and the
