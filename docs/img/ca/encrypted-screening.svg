@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 310" role="img" aria-labelledby="t d">
+  <title id="t">How encrypted screening works</title>
+  <desc id="d">Illustration. A government with a classified orbit and an operator with a planned maneuver each encrypt their trajectory before it leaves their own systems. An assessor running open software computes how close the two get at each time step on the encrypted values. The only result anyone reads is SAFE or ALERT.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8e8e93"/></marker>
+    <g id="lock"><path d="M-3.6 -1V-3.8a3.6 3.6 0 0 1 7.2 0V-1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="-5.6" y="-1.2" width="11.2" height="9" rx="2.2" fill="currentColor"/></g>
+  </defs>
+  <rect width="900" height="310" rx="18" fill="#0b0b0c"/>
+  <g fill="none" stroke="#8e8e93" stroke-width="1.5">
+    <path d="M220 78H258" marker-end="url(#a)"/><path d="M220 252H258" marker-end="url(#a)"/>
+    <path d="M448 78C480 78 478 140 500 140" marker-end="url(#a)"/><path d="M448 252C480 252 478 200 500 200" marker-end="url(#a)"/>
+    <path d="M726 165H760" marker-end="url(#a)"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#f5f5f7">
+    <g fill="#1c1c1e" stroke="#ffffff" stroke-opacity=".18"><rect x="24" y="40" width="196" height="76" rx="14"/><rect x="24" y="214" width="196" height="76" rx="14"/></g>
+    <g font-size="15" font-weight="700"><text x="44" y="73">Government X</text><text x="44" y="247">Operator B</text></g>
+    <g font-size="13" fill-opacity=".6"><text x="44" y="95">Classified orbit</text><text x="44" y="269">Planned maneuver</text></g>
+    <g color="#8e8e93"><use href="#lock" x="198" y="62"/><use href="#lock" x="198" y="236"/></g>
+
+    <g fill="#1c1c1e" stroke="#f5a524" stroke-opacity=".55"><rect x="264" y="54" width="184" height="48" rx="12"/><rect x="264" y="228" width="184" height="48" rx="12"/></g>
+    <g color="#f5a524"><use href="#lock" x="286" y="77"/><use href="#lock" x="286" y="251"/></g>
+    <g font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="13" fill-opacity=".7"><text x="302" y="83">9f2c 41e7 b0d3 &#8230;</text><text x="302" y="257">c81a 07fe 5d92 &#8230;</text></g>
+    <text x="356" y="170" text-anchor="middle" font-size="13" fill-opacity=".6">Encrypted before it leaves its owner</text>
+
+    <rect x="506" y="60" width="220" height="210" rx="16" fill="#1a1407" stroke="#f5a524" stroke-opacity=".8"/>
+    <text x="616" y="94" text-anchor="middle" font-size="17" font-weight="700">Assessor</text>
+    <g font-size="13.5" text-anchor="middle" fill-opacity=".8"><text x="616" y="126">Computes how close the</text><text x="616" y="146">two get at each time step,</text><text x="616" y="166">on the encrypted values</text></g>
+    <path d="M526 186H706" stroke="#ffffff" stroke-opacity=".15"/>
+    <text x="616" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#f5a524">Open software</text>
+    <text x="616" y="232" text-anchor="middle" font-size="13" fill-opacity=".8">Anyone can check the math</text>
+
+    <rect x="766" y="112" width="110" height="34" rx="17" fill="#ffffff" fill-opacity=".08" stroke="#ffffff" stroke-opacity=".5"/>
+    <text x="821" y="134" text-anchor="middle" font-size="14" font-weight="700">SAFE</text>
+    <text x="821" y="170" text-anchor="middle" font-size="13" fill-opacity=".6">or</text>
+    <rect x="766" y="184" width="110" height="34" rx="17" fill="#ff3b30" fill-opacity=".18" stroke="#ff3b30"/>
+    <text x="821" y="206" text-anchor="middle" font-size="14" font-weight="700" fill="#ff3b30">ALERT</text>
+    <g font-size="13" text-anchor="middle" fill-opacity=".6"><text x="821" y="244">The only result</text><text x="821" y="262">anyone reads</text></g>
+  </g>
+</svg>

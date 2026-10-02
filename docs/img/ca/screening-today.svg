@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 380" role="img" aria-labelledby="t d">
+  <title id="t">Today: the pairs between private orbits go unscreened</title>
+  <desc id="d">Illustration. Two governments each hold a classified orbit and two operators each hold a planned maneuver. Each holds only its own piece, so none of the six pairs between them can be screened: nobody holds both orbits of any pair.</desc>
+  <defs>
+    <g id="lock"><path d="M-3.6 -1V-3.8a3.6 3.6 0 0 1 7.2 0V-1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="-5.6" y="-1.2" width="11.2" height="9" rx="2.2" fill="currentColor"/></g>
+    <g id="x"><circle r="11" fill="#0b0b0c" stroke="#ff3b30" stroke-width="1.7"/><path d="M-4 -4L4 4M4 -4L-4 4" stroke="#ff3b30" stroke-width="1.7" stroke-linecap="round"/></g>
+  </defs>
+  <rect width="440" height="380" rx="18" fill="#0b0b0c"/>
+  <g fill="none" stroke="#ff3b30" stroke-opacity=".75" stroke-width="1.6" stroke-dasharray="5 5">
+    <path d="M170 56H270M170 300H270M95 88V268M345 88V268M170 88L270 268M270 88L170 268"/>
+  </g>
+  <use href="#x" x="220" y="56"/><use href="#x" x="220" y="300"/><use href="#x" x="95" y="178"/><use href="#x" x="345" y="178"/><use href="#x" x="220" y="178"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#f5f5f7">
+    <g fill="#1c1c1e" stroke="#ffffff" stroke-opacity=".18">
+      <rect x="20" y="24" width="150" height="64" rx="14"/><rect x="270" y="24" width="150" height="64" rx="14"/>
+      <rect x="20" y="268" width="150" height="64" rx="14"/><rect x="270" y="268" width="150" height="64" rx="14"/>
+    </g>
+    <g font-size="14" font-weight="700">
+      <text x="36" y="51">Government X</text><text x="286" y="51">Government Y</text>
+      <text x="36" y="295">Operator A</text><text x="286" y="295">Operator B</text>
+    </g>
+    <g font-size="13" fill-opacity=".6">
+      <text x="36" y="72">Classified orbit</text><text x="286" y="72">Classified orbit</text>
+      <text x="36" y="316">Planned maneuver</text><text x="286" y="316">Planned maneuver</text>
+    </g>
+    <g color="#8e8e93"><use href="#lock" x="156" y="45"/><use href="#lock" x="406" y="45"/><use href="#lock" x="156" y="289"/><use href="#lock" x="406" y="289"/></g>
+    <text x="220" y="364" text-anchor="middle" font-size="14" fill-opacity=".8">Six pairs. Nobody holds both orbits of any of them.</text>
+  </g>
+</svg>
