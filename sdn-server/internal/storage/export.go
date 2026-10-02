@@ -132,9 +132,8 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		cids = append(cids, record.CID)
 	}
 	var sourceTags map[string]SourceTags
-	if s.ps != nil {
-		sourceTags, err = s.f2SourceTagsForCIDs(filter.SchemaName, cids, f2TagSpec{provider: strings.TrimSpace(filter.ProviderID),
-			source: strings.TrimSpace(filter.SourceName), batch: strings.TrimSpace(filter.BatchID)})
+	if s.rb != nil {
+		sourceTags, err = s.rb.exportSourceTags(filter, cids)
 	} else {
 		sourceTags, err = s.sourceTagsForCIDs(filter.SchemaName, cids)
 	}

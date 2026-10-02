@@ -686,8 +686,34 @@ type ControlCopyStats struct {
 // store. It runs on the legacy engine's own connection (ATTACH through its
 // file root), holding the store lock.
 func (m *MigrationSource) CopyControl(dstName, ftsName string) (ControlCopyStats, error) {
+	if ftsName == "" {
+		return ControlCopyStats{}, errors.New("control copy names must be plain file names")
+	}
+	return m.copyControl(dstName, ftsName, nil)
+}
+
+// format4EngineTables are the control tables format 4 keeps as engine data:
+// the IQC ingest identities (C-21). A copy of them in fsql4/control.db
+// would be a second, dead representation.
+var format4EngineTables = map[string]bool{"sdn_record_ingest_identity": true}
+
+// CopyControlFormat4 writes format 4's control database as dstName inside
+// the store: the control tables, as CopyControl, less the ingest identities
+// (engine data on format 4). It writes no full-text file: format 4 builds
+// its full-text indexes itself after activation.
+func (m *MigrationSource) CopyControlFormat4(dstName string) (ControlCopyStats, error) {
+	return m.copyControl(dstName, "", format4EngineTables)
+}
+
+// copyControl is the control copy: the control tables less leaveOut, and,
+// when ftsName is set, the interim full-text index into it.
+func (m *MigrationSource) copyControl(dstName, ftsName string, leaveOut map[string]bool) (ControlCopyStats, error) {
 	var st ControlCopyStats
-	for _, name := range []string{dstName, ftsName} {
+	names := []string{dstName}
+	if ftsName != "" {
+		names = append(names, ftsName)
+	}
+	for _, name := range names {
 		if strings.ContainsAny(name, "/\\'") || name == "" {
 			return st, errors.New("control copy names must be plain file names")
 		}
@@ -717,7 +743,7 @@ func (m *MigrationSource) CopyControl(dstName, ftsName string) (ControlCopyStats
 	}
 	isControl := func(table string) bool {
 		switch {
-		case strings.HasPrefix(table, "sqlite_"), strings.HasPrefix(table, "sds_p_"), legacyRecordTables[table]:
+		case strings.HasPrefix(table, "sqlite_"), strings.HasPrefix(table, "sds_p_"), legacyRecordTables[table], leaveOut[table]:
 			return false
 		case strings.HasPrefix(table, "sdn_record_fts"):
 			return false // copied as the FTS virtual table below
@@ -760,7 +786,7 @@ func (m *MigrationSource) CopyControl(dstName, ftsName string) (ControlCopyStats
 		}
 		st.Indexes++
 	}
-	if exists, err := m.s.tableExists("sdn_record_fts_progress"); err == nil && exists {
+	if exists, err := m.s.tableExists("sdn_record_fts_progress"); err == nil && exists && ftsName != "" {
 		if _, err := m.s.db.Exec(fmt.Sprintf(`ATTACH DATABASE '%s' AS migrate_fts`, ftsName)); err != nil {
 			return st, fmt.Errorf("attach %s: %w", ftsName, err)
 		}
@@ -807,7 +833,7 @@ func (m *MigrationSource) CopyControl(dstName, ftsName string) (ControlCopyStats
 			return st, fmt.Errorf("copy the FTS progress: %w", err)
 		}
 	}
-	for _, name := range []string{dstName, ftsName} {
+	for _, name := range names {
 		if fi, err := os.Stat(filepath.Join(m.base, name)); err == nil {
 			st.Bytes += fi.Size()
 		}

@@ -144,7 +144,7 @@ func engineArenaCompactionDue(stats flatsqlrt.ArenaStats) bool {
 // due. Cheap below the mark: the Go-side arena measure answers without a
 // guest call. Caller holds s.mu (either mode).
 func (s *FlatSQLStore) maybeCompactEngineArenaLocked(reason string) {
-	if !engineArenaRuntimeCompaction || s.ps != nil || s.engineDB == nil || s.engine == nil || s.closedErr() != nil {
+	if !engineArenaRuntimeCompaction || s.rb != nil || s.engineDB == nil || s.engine == nil || s.closedErr() != nil {
 		return
 	}
 	if s.engineArenaBytes.Load() <= engineArenaCompactBytes {
@@ -298,7 +298,7 @@ func (s *FlatSQLStore) compactEngineArena(reason string) (engineArenaCompactionA
 // holds. It runs only when the engine says something is dead, and reports
 // whether `need` more bytes now fit. Caller holds s.mu for writing.
 func (s *FlatSQLStore) compactEngineArenaBeforeRefusalLocked(need int64) bool {
-	if !engineArenaRuntimeCompaction || s.ps != nil || s.engineDB == nil || s.engine == nil || !s.engine.HasArenaCompaction() || s.engine.Poisoned() {
+	if !engineArenaRuntimeCompaction || s.rb != nil || s.engineDB == nil || s.engine == nil || !s.engine.HasArenaCompaction() || s.engine.Poisoned() {
 		return false
 	}
 	stats, err := s.engineDB.ArenaStats()

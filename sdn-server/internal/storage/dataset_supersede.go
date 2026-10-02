@@ -216,25 +216,13 @@ func (s *FlatSQLStore) SupersedeSourceBatches(schemaName, providerID, sourceName
 	}
 
 	started := time.Now()
-	if s.ps != nil {
-		// Format 2: RECONCILE(keep) in the lane's partitions (A2); the
-		// engine retires the tag instances and tombstones the records left
-		// without one, and keeps the lane counters itself.
-		r, err := s.f2ReconcileSourceBatch(SourceBatchReconcileResult{SchemaName: result.SchemaName, ProviderID: result.ProviderID,
-			SourceName: result.SourceName, KeepBatch: result.KeepBatch, Apply: true})
-		if err != nil {
+	if s.rb != nil {
+		if result, err = s.rb.supersedeSourceBatches(result, started); err != nil {
 			return result, err
-		}
-		result.TagsDeleted, result.RecordsDeleted = r.Matched, r.Deleted
-		if r.Matched > 0 {
-			result.Chunks = 1
-			log.Infof("Dataset supersede %s %s/%s keep %s: retired %d tag instances and %d records in %s (format 2)",
-				result.SchemaName, result.ProviderID, result.SourceName, result.KeepBatch, r.Matched, r.Deleted,
-				time.Since(started).Round(time.Millisecond))
 		}
 	}
 	chunk := nextSupersedeChunk(0, 0)
-	for s.ps == nil {
+	for s.rb == nil {
 		got, err := s.supersedeSourceBatchChunk(result, tableName, chunk)
 		if err != nil {
 			return result, err
@@ -249,7 +237,7 @@ func (s *FlatSQLStore) SupersedeSourceBatches(schemaName, providerID, sourceName
 		chunk = nextSupersedeChunk(chunk, got.held)
 	}
 
-	if result.Chunks > 0 && s.ps == nil {
+	if result.Chunks > 0 && s.rb == nil {
 		// The whole-schema residency sweep every old chunk ran after its
 		// commit, once and in pages: it tombstones residency rows orphaned by
 		// anything, not only by this supersede.

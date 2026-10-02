@@ -43,7 +43,6 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
-	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 )
@@ -110,9 +109,13 @@ type format2Daemon struct {
 	producers   map[string]string
 }
 
-// newFormat1RefusesMigratedStore is the format-1 guard: an activated store
-// (fsql2/MIGRATED for its own STORE) never opens as format 1.
+// newFormat1RefusesMigratedStore is the format-1 guard: a format-4 store, or
+// an activated format-2 store (fsql2/MIGRATED for its own STORE), never opens
+// as format 1.
 func newFormat1RefusesMigratedStore(basePath string) error {
+	if err := format4RefusedByOtherFormats(basePath); err != nil {
+		return err
+	}
 	migrated, err := format2.Migrated(basePath)
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", filepath.Join(basePath, format2.Dir), err)
@@ -125,6 +128,10 @@ func newFormat1RefusesMigratedStore(basePath string) error {
 
 // newFormat2Store is NewFlatSQLStore for SDN_STORE_FORMAT=2.
 func newFormat2Store(basePath string, validator *sds.Validator, cfg storeConfig) (*FlatSQLStore, error) {
+	// A format-4 store is refused before any file is touched.
+	if err := format4RefusedByOtherFormats(basePath); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(basePath, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
@@ -167,7 +174,7 @@ func newFormat2Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	}()
 
 	start := time.Now()
-	engine, engineDB, mark, err := openFormat2ControlInstance(basePath, controlDBPath)
+	engine, engineDB, mark, err := openControlInstance(basePath, controlDBPath)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +230,7 @@ func newFormat2Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	store.auxCheckpointedOffset.Store(auxResume)
 	store.auxAppliedOffset.Store(auxResume)
 
-	if err := store.initFormat2ControlTables(); err != nil {
+	if err := store.initControlTables(); err != nil {
 		return fail(fmt.Errorf("failed to initialize control tables: %w", err))
 	}
 	auxApplied, auxThrough, err := auxiliaryMetadata.ReplayFrom(store, auxResume)
@@ -253,6 +260,7 @@ func newFormat2Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		return fail(fmt.Errorf("format 2: open the partition store: %w", err))
 	}
 	store.ps = ps
+	store.rb = format2Backend{store}
 	log.Infof("format 2: partition store open in %s (writer + interactive + bulk instances, %s)",
 		time.Since(psStart).Round(time.Millisecond), describeFormat2Topology(format2Topology()))
 
@@ -277,123 +285,14 @@ func describeFormat2Topology(t format2.Topology) string {
 	return fmt.Sprintf("%d writer threads, %d interactive lanes, %d bulk lanes, %d point lanes, 1 sandbox lane", t.Writers, t.InteractiveLanes, t.BulkLanes, point)
 }
 
-// openFormat2ControlInstance opens the control instance: the legacy engine
-// on control2.flatsqldb, TRUNCATE, no record sources, no record state.
-func openFormat2ControlInstance(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.Database, bootMark, error) {
-	if err := checkDatabaseFile(dbPath); err != nil {
-		return nil, nil, bootMark{}, err
-	}
-	engine, err := flatsqlrt.New(
-		flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()),
-		flatsqlrt.WithFileIORoot(basePath),
-	)
-	if err != nil {
-		return nil, nil, bootMark{}, fmt.Errorf("failed to start the control instance: %w", err)
-	}
-	if mode := engine.Mode(); !mode.AOT {
-		log.Warnf("format 2: control instance INTERPRETED — no AOT artifact in %s (%s); run `spacedatanetwork prewarm-aot`", mode.CacheDir, mode.MissReason)
-	}
-	engineDB, err := engine.OpenDatabase(engineDatabaseSchema, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
-	if err != nil {
-		engine.Close()
-		return nil, nil, bootMark{}, fmt.Errorf("%w: %s: %v", errControlDatabaseUnusable, dbPath, err)
-	}
-	if err := registerEngineFileIDs(engineDB, nil); err != nil {
-		engineDB.Destroy()
-		engine.Close()
-		return nil, nil, bootMark{}, fmt.Errorf("control instance: register file identifiers: %w", err)
-	}
-	disk, err := engineDB.IsDiskBacked()
-	if err != nil || !disk {
-		engineDB.Destroy()
-		engine.Close()
-		if err == nil {
-			err = errors.New("engine opened a real path but reports NOT disk-backed")
-		}
-		return nil, nil, bootMark{}, err
-	}
-	if err := verifyControlDatabase(engineDB); err != nil {
-		engineDB.Destroy()
-		engine.Close()
-		return nil, nil, bootMark{}, fmt.Errorf("%w: %s: %v", errControlDatabaseUnusable, dbPath, err)
-	}
-	return engine, engineDB, readBootMark(engineDB), nil
-}
-
-// initFormat2ControlTables creates the control tables only (initTables less
-// every record table, the engine rows and the partition counters).
-func (s *FlatSQLStore) initFormat2ControlTables() error {
-	steps := []struct {
-		what string
-		fn   func() error
-	}{
-		{"metadata", s.initMetadataTable},
-		{"source batch licences", s.initSourceBatchLicenseTable},
-		{"ingest identities", s.initRecordIngestIdentityTable},
-		{"dataset publication series", s.initDatasetPublicationSeriesTables},
-		{"dataset shard publications", s.initDatasetShardPublicationTable},
-		{"pin ledger", s.initPinLedgerTable},
-		{"asset pin ledger", s.initAssetPinLedgerTables},
-		{"publication replay state", s.initDatasetPublicationReplayStateTable},
-		{"directory", s.initDirectoryTable},
-		{"local EPM", s.initLocalEPMTable},
-		{"log index", s.initLogIndexTable},
-	}
-	for _, st := range steps {
-		if err := st.fn(); err != nil {
-			return fmt.Errorf("%s: %w", st.what, err)
-		}
-	}
-	return nil
-}
-
-// recoverFormat2ControlInstance replaces a poisoned control instance
-// (RecoverPoisonedEngine on format 2): the same control database on a fresh
-// runtime. The partition store is unaffected: its instances are their own
-// poison domains (§15). Caller holds s.mu.
-func (s *FlatSQLStore) recoverFormat2ControlInstanceLocked() (uint64, error) {
-	s.engine.FileIO().CloseAll()
-	engine, engineDB, _, err := openFormat2ControlInstance(s.basePath, s.controlDBPath)
-	if err != nil {
-		return s.engineEpoch, fmt.Errorf("recover the control instance: %w", err)
-	}
-	db := flatsqldrv.Open(engineDB)
-	if mib := resolveEnginePageCacheMiB(); mib > 0 {
-		_, _ = db.Exec(fmt.Sprintf("PRAGMA cache_size = -%d", mib*1024))
-	}
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		engine.Close()
-		return s.engineEpoch, fmt.Errorf("recover the control instance: foreign keys: %w", err)
-	}
-	oldDB := s.db
-	s.retiredEngines = append(s.retiredEngines, s.engine)
-	s.db = db
-	s.engine = engine
-	s.engineDB = engineDB
-	s.assetPinTransactions = sqlAssetPinTransactionBeginner{db: db}
-	s.engineEpoch++
-	if oldDB != nil {
-		_ = oldDB.Close()
-	}
-	if err := s.initFormat2ControlTables(); err != nil {
-		return s.engineEpoch, fmt.Errorf("recover the control instance: control tables: %w", err)
-	}
-	return s.engineEpoch, nil
-}
-
-// closeFormat2 stops the format-2 daemon state and the partition store.
-// Called by Close after the background loops have stopped, holding s.mu.
+// closeFormat2Locked stops the format-2 daemon state and the partition
+// store (the backend's close: the partition store is open).
 func (s *FlatSQLStore) closeFormat2Locked() error {
 	if s.f2 != nil && s.f2.cancel != nil {
 		s.f2.cancel()
 		s.f2.counts.wait()
 	}
-	if s.ps == nil {
-		return nil
-	}
-	err := s.ps.Close()
-	return err
+	return s.ps.Close()
 }
 
 // Format2 reports whether this store runs store format 2.

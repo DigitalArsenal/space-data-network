@@ -55,6 +55,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"os"
 	"path/filepath"
 	"sort"
@@ -187,8 +188,8 @@ func (s *FlatSQLStore) DatasetPublicationSetFingerprint(schemaName, providerID, 
 	if schemaName == "" || providerID == "" || sourceName == "" {
 		return "", 0, errors.New("schema, provider and source are required for a publication fingerprint")
 	}
-	if s.ps != nil {
-		return s.f2PublicationSetFingerprint(schemaName, providerID, sourceName, batchID)
+	if s.rb != nil {
+		return s.rb.DatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batchID)
 	}
 	query := `SELECT DISTINCT cid FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ?`
 	args := []any{schemaName, providerID, sourceName}
@@ -205,8 +206,7 @@ func (s *FlatSQLStore) DatasetPublicationSetFingerprint(schemaName, providerID, 
 		return "", 0, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 	}
 	defer rows.Close()
-	hash := sha256.New()
-	fmt.Fprintf(hash, "sdn-dataset-publication-set-v1\x00%s\x00%s\x00%s\x00%s\n", schemaName, providerID, sourceName, batchID)
+	hash := newPublicationSetHash(schemaName, providerID, sourceName, batchID)
 	count := 0
 	for rows.Next() {
 		var cid string
@@ -221,6 +221,14 @@ func (s *FlatSQLStore) DatasetPublicationSetFingerprint(schemaName, providerID, 
 		return "", 0, err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), count, nil
+}
+
+// newPublicationSetHash starts a publication set fingerprint: the lane; the
+// caller writes each CID of the set, in text order, with a newline.
+func newPublicationSetHash(schemaName, providerID, sourceName, batchID string) hash.Hash {
+	h := sha256.New()
+	fmt.Fprintf(h, "sdn-dataset-publication-set-v1\x00%s\x00%s\x00%s\x00%s\n", schemaName, providerID, sourceName, batchID)
+	return h
 }
 
 // LatestDatasetPublicationSeries returns the newest recorded series of a lane
@@ -496,17 +504,8 @@ func (s *FlatSQLStore) unrecordedDatasetPublicationSeries(lane DatasetPublicatio
 // laneBatchHoldsRecords reports whether the store still holds any record of
 // the lane under batchID.
 func (s *FlatSQLStore) laneBatchHoldsRecords(lane DatasetPublicationLane, batchID string) (bool, error) {
-	if s.ps != nil {
-		batches, err := s.f2DistinctBatches(lane.SchemaName, lane.ProviderID, lane.SourceName)
-		if err != nil {
-			return false, fmt.Errorf("probe %s batch %s: %w", lane.SchemaName, batchID, err)
-		}
-		for _, b := range batches {
-			if b == strings.TrimSpace(batchID) {
-				return true, nil
-			}
-		}
-		return false, nil
+	if s.rb != nil {
+		return s.rb.laneBatchHoldsRecords(lane, batchID)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
