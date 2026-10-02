@@ -176,6 +176,10 @@ func (sc *scen) canonValue(name, v, schema string) string {
 func errKind(err error) string {
 	m := strings.ToLower(err.Error())
 	switch {
+	case strings.Contains(m, "poisoned"):
+		return "engine poisoned"
+	case strings.Contains(m, "wall-clock timeout") || strings.Contains(m, "deadline exceeded"):
+		return "timeout"
 	case strings.Contains(m, "not found"):
 		return "not found"
 	case strings.Contains(m, "unsupported") || strings.Contains(m, "not supported"):
@@ -198,6 +202,17 @@ func errKind(err error) string {
 		return "search"
 	}
 	return "error"
+}
+
+// answerTimedOut reports an answer whose call ran past an engine budget or
+// found the engine poisoned.
+func answerTimedOut(a Answer) bool {
+	for _, r := range a.Rows {
+		if k := r.Get("err"); k == "timeout" || k == "engine poisoned" {
+			return true
+		}
+	}
+	return false
 }
 
 // errRow is an error as a row: its kind (compared) only; the text is logged.
@@ -451,6 +466,7 @@ func RunCoverage(spec CoverageSpec, shapes []Shape, sc *scen) (*Run, error) {
 		}
 	}
 	answers := &AnswerFile{Arm: spec.Arm, Label: LabelFixture, Class: spec.Class}
+	var poisoned []string
 	st := time.Now()
 	for _, sh := range shapes {
 		sa := ShapeAnswers{Class: sh.Class, Shape: sh.Name, Schema: sh.Schema, Policy: sh.Policy}
@@ -468,6 +484,15 @@ func RunCoverage(spec CoverageSpec, shapes []Shape, sc *scen) (*Run, error) {
 			}
 			a.Call = call.Name
 			fmt.Printf("coverage: call %s / %s: %s, %d rows\n", sh.Name, call.Name, time.Since(cs).Round(time.Millisecond), len(a.Rows))
+			// A call that ran its engine past its budget poisons it (format
+			// 1's control engine): replace it, as the node does, so the
+			// class's other calls are answered; the call is named in the run.
+			if !ok || answerTimedOut(a) {
+				poisoned = append(poisoned, sh.Name+" / "+call.Name)
+				if _, err := s.RecoverPoisonedEngine(); err != nil {
+					r.Extra["recover_error"] = err.Error()
+				}
+			}
 			r.Samples = append(r.Samples, Sample{Class: spec.Class, Shape: sh.Name, Ms: float64(time.Since(cs).Microseconds()) / 1000,
 				Rows: m.Rows, Bytes: m.Bytes, Err: a.Err})
 			sa.Calls = append(sa.Calls, a)
@@ -478,6 +503,7 @@ func RunCoverage(spec CoverageSpec, shapes []Shape, sc *scen) (*Run, error) {
 		answers.Shapes = append(answers.Shapes, sa)
 	}
 	r.Extra["calls_s"] = time.Since(st).Seconds()
+	r.Extra["timed_out_calls"] = append([]string{}, poisoned...)
 	if err := s.Close(); err != nil {
 		r.Extra["close_error"] = err.Error()
 	}

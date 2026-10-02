@@ -435,12 +435,19 @@ func (c *cov) x01(omm [][]byte) []Shape {
 	fresh := clonesOf("OMM", omm, 0, 5, 901)
 	held := omm[10:13]
 	fresh2 := clonesOf("OMM", omm, 20, 23, 902)
-	all := append(append(cidsOf(fresh), cidsOf(held)...), cidsOf(fresh2)...)
+	// Peers whose producer token is another peer's (C-2: format 1 keeps the
+	// row's own peer_id; "source_celestrak" is source:celestrak's table) and
+	// no peer at all (format 1's "unattributed" table).
+	sameToken := clonesOf("OMM", omm, 25, 27, 914)
+	noPeer := clonesOf("OMM", omm, 27, 29, 915)
+	all := append(append(append(append(cidsOf(fresh), cidsOf(held)...), cidsOf(fresh2)...), cidsOf(sameToken)...), cidsOf(noPeer)...)
 	writes := []Call{
 		c.storeBatch("StoreBatch OMM 5 new", "OMM.fbs", fresh, gpPeer, nil, nil),
 		c.storeBatch("StoreBatch OMM 5 again", "OMM.fbs", fresh, gpPeer, nil, nil),
 		c.storeBatch("StoreBatch OMM 3 held, second producer, signed", "OMM.fbs", held, covPeer, covSig, nil),
 		c.storeBatch("StoreBatch OMM 3 new, second producer, signed", "OMM.fbs", fresh2, covPeer, covSig, nil),
+		c.storeBatch("StoreBatch OMM 2 new, a peer sharing source:celestrak's token", "OMM.fbs", sameToken, "source_celestrak", nil, nil),
+		c.storeBatch("StoreBatch OMM 2 new, no peer", "OMM.fbs", noPeer, "", nil, nil),
 		c.storeBatch("StoreBatch OMM empty", "OMM.fbs", nil, gpPeer, nil, nil),
 		c.storeBatch("StoreBatchWithSourceTags OMM empty", "OMM.fbs", [][]byte{}, gpPeer, nil, &storage.SourceTags{ProviderID: FixtureProvider, SourceName: "celestrak-gp", BatchID: "OMM-cov-empty"}),
 		c.storeBatch("StoreBatch unknown type", "XYZ.fbs", fresh[:1], gpPeer, nil, nil),
@@ -450,6 +457,13 @@ func (c *cov) x01(omm [][]byte) []Shape {
 		c.tagsOf("GetSourceTags written", "OMM.fbs", all),
 		c.refsOf("refs untagged", "OMM.fbs", cidsOf(fresh), nil),
 		c.refsOf("refs second producer's copies", "OMM.fbs", append(cidsOf(held), cidsOf(fresh2)...), func(r *storage.RawRecordRef) { r.PeerID = covPeer }),
+		c.refsOf("refs the token-sharing peer's records", "OMM.fbs", cidsOf(sameToken), func(r *storage.RawRecordRef) { r.PeerID = "source_celestrak" }),
+		c.refsOf("refs the records with no peer", "OMM.fbs", cidsOf(noPeer), nil),
+		c.rawQuery("cursor the token-sharing peer", storage.RawRecordQuery{SchemaName: "OMM.fbs", PeerID: "source_celestrak", UseRowIDCursor: true, Limit: 20}, false),
+		c.valueCall("PeerStorageBytes the token-sharing peer", "", func(s *storage.FlatSQLStore) (Row, error) {
+			n, err := s.PeerStorageBytes("source_celestrak")
+			return ValueRow("bytes", i64(n)), err
+		}),
 		c.rawQuery("cursor second producer", storage.RawRecordQuery{SchemaName: "OMM.fbs", PeerID: covPeer, UseRowIDCursor: true, Limit: 50}, false),
 		c.rawQuery("cursor after the fixture", storage.RawRecordQuery{SchemaName: "OMM.fbs", UseRowIDCursor: true, AfterRowID: 2115808, Limit: 50}, true),
 		c.rawQuery("cursor norad of a new record", storage.RawRecordQuery{SchemaName: "OMM.fbs", UseRowIDCursor: true, AfterRowID: 2100000, Limit: 50,
@@ -834,7 +848,10 @@ func (c *cov) x07(omm [][]byte) []Shape {
 		n, _, err := s.ImportDatasetShard(sb, ib, covPeer2)
 		return []Row{ValueRow("n", strconv.Itoa(n))}, err
 	})
-	all := append(append(append(append(cidsOf(a), cidsOf(bb)...), cidsOf(u)...), cidsOf(held)...), storage.ComputeCID(hexRec))
+	all := append(append(append(cidsOf(a), cidsOf(bb)...), cidsOf(u)...), cidsOf(held)...)
+	// The sha256-hex record keeps the identity its index names (format 1
+	// stores it under that text, manifest.go): read by both names.
+	hexIDs := []string{hex.EncodeToString(hexCID[:]), storage.ComputeCID(hexRec)}
 	calls := []Call{
 		build,
 		imp("import", covProvider, &index),
@@ -844,6 +861,9 @@ func (c *cov) x07(omm [][]byte) []Shape {
 		c.tagsOf("tags imported", "OMM.fbs", all),
 		c.refsOf("refs imported, the provider's copies", "OMM.fbs", all, func(r *storage.RawRecordRef) { r.PeerID = covProvider }),
 		c.refsOf("refs imported, by their tags", "OMM.fbs", cidsOf(bb), func(r *storage.RawRecordRef) { r.BatchID, r.ProducerPeerID = tb.BatchID, covRelay }),
+		c.gets("GetRecord the sha256-hex record", "OMM.fbs", hexIDs),
+		c.tagsOf("tags the sha256-hex record", "OMM.fbs", hexIDs),
+		c.refsOf("refs the sha256-hex record", "OMM.fbs", hexIDs[:1], nil),
 		c.rawQuery("cursor provider peer", storage.RawRecordQuery{SchemaName: "OMM.fbs", PeerID: covProvider, UseRowIDCursor: true, Limit: 50}, false),
 		imp("import with a CID that does not match its bytes", covProvider, &badIndex),
 	}
@@ -1287,21 +1307,35 @@ func (c *cov) x13() []Shape {
 			return ValueRow("evicted", i64(n), "unchanged", strconv.FormatBool(after == live)), err
 		})
 	}
-	calls := []Call{
+	quotaCalls := []Call{
 		quota("GarbageCollectToQuota above the store's bytes", func(live int64) int64 { return live * 8 }),
 		quota("GarbageCollectToQuota no quota", func(int64) int64 { return 0 }),
+	}
+	quotaCalls = append(quotaCalls, c.summaries(gpPeer, iqcPeer, iqcSigmfPeer)...)
+	for _, schema := range pointSchemas {
+		quotaCalls = append(quotaCalls, c.typeReads(schema)[:2]...)
+	}
+	// The summary verbs, then the summaries. Format 1 recomputes a lane's
+	// summary row and stamps its last-seen and updated times with the clock
+	// (all lanes for RebuildSourceSummaries); format 4's counters are
+	// transactional and the verbs are no-ops, so its times stay the lanes'
+	// own. These shapes report it as format 1 answers it.
+	refresh := []Call{
 		c.errOnly("RefreshSourceBatchSummary OMM b052", func(s *storage.FlatSQLStore) error {
 			return s.RefreshSourceBatchSummary("OMM.fbs", FixtureProvider, "celestrak-gp", OMMLatestBatch)
 		}),
 		c.errOnly("RefreshSourceBatchSummary unknown type", func(s *storage.FlatSQLStore) error {
 			return s.RefreshSourceBatchSummary("XYZ.fbs", FixtureProvider, "celestrak-gp", OMMLatestBatch)
 		}),
+	}
+	refresh = append(refresh, c.summaries()...)
+	rebuild := []Call{
 		c.errOnly("RebuildSourceSummaries", func(s *storage.FlatSQLStore) error { return s.RebuildSourceSummaries() }),
 		c.errOnly("RebuildDerivedState", func(s *storage.FlatSQLStore) error { return s.RebuildDerivedState() }),
 	}
-	calls = append(calls, c.summaries(gpPeer, iqcPeer, iqcSigmfPeer)...)
+	rebuild = append(rebuild, c.summaries(gpPeer, iqcPeer, iqcSigmfPeer)...)
 	for _, schema := range pointSchemas {
-		calls = append(calls, c.typeReads(schema)[:2]...)
+		rebuild = append(rebuild, c.typeReads(schema)[:2]...)
 	}
 	// RebuildIndex: format 1's answer is taken by its definition
 	// (rebuildIndexBaseline); every other arm runs it.
@@ -1319,7 +1353,9 @@ func (c *cov) x13() []Shape {
 	ri.Arms = []string{ArmS, ArmF2}
 	riF1 := covShape(class, "RebuildIndex", "", c.rowsCall("RebuildIndex", "", rebuildIndexBaseline))
 	riF1.Arms = []string{ArmF1}
-	return []Shape{gc, covShape(class, "maintenance verbs", "", calls...), ri, riF1}
+	return []Shape{gc, covShape(class, "GarbageCollectToQuota no-op", "", quotaCalls...),
+		covShape(class, "RefreshSourceBatchSummary", "", refresh...),
+		covShape(class, "RebuildSourceSummaries and RebuildDerivedState", "", rebuild...), ri, riF1}
 }
 
 // X14: the publication log (logservice: PLOG entries by untagged StoreBatch,
