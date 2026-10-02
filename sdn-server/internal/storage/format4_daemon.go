@@ -84,6 +84,63 @@ type format4Daemon struct {
 	typesMu sync.Mutex
 	types   map[string]bool
 	ident   func(schema string) (string, bool)
+
+	// derived is what the reads derive from the engine's counters, kept
+	// under its counter-state stamp (f4Keep).
+	derived f4Derived
+}
+
+// f4Derived holds the totals and summaries the daemon derives from the
+// engine's counters (format4_daemon_reads.go), for one engine and one
+// counter-state stamp (format4.API State: no write started or ended since).
+// Formats 1 and 2 answer the same reads from counters they keep in host
+// memory; this is that for format 4, with the engine's counters as the one
+// source.
+type f4Derived struct {
+	mu    sync.Mutex
+	eng   *format4Engine
+	stamp uint64
+	vals  map[any]any
+}
+
+// f4DerivedKeys bounds the kept answers (heads are kept per filter).
+const f4DerivedKeys = 1024
+
+// f4Keep answers key from what the daemon keeps, or from load, keeping its
+// answer while the engine's counter state stands. clone copies an answer
+// out, so a caller owns what it gets (nil: the value is immutable).
+func f4Keep[T any](d *format4Daemon, key any, clone func(T) T, load func() (T, error)) (T, error) {
+	out := func(v T) T {
+		if clone == nil {
+			return v
+		}
+		return clone(v)
+	}
+	eng := d.engine.Load()
+	stamp, ok := eng.State()
+	if ok {
+		d.derived.mu.Lock()
+		v, hit := d.derived.vals[key]
+		hit = hit && d.derived.eng == eng && d.derived.stamp == stamp
+		d.derived.mu.Unlock()
+		if hit {
+			return out(v.(T)), nil
+		}
+	}
+	v, err := load()
+	if err != nil || !ok {
+		return v, err
+	}
+	if now, still := eng.State(); still && now == stamp {
+		d.derived.mu.Lock()
+		if d.derived.eng != eng || d.derived.stamp != stamp || len(d.derived.vals) >= f4DerivedKeys {
+			d.derived.eng, d.derived.stamp, d.derived.vals = eng, stamp, map[any]any{}
+		}
+		d.derived.vals[key] = v
+		d.derived.mu.Unlock()
+		return out(v), nil
+	}
+	return v, nil
 }
 
 // format4Engine boxes the API for the atomic pointer.
@@ -310,7 +367,7 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 			return fail(fmt.Errorf("format 4: set the quota: %w", err))
 		}
 	}
-	d.warmCounters()
+	format4Backend{s: store, d: d}.warmCounters()
 
 	if err := store.Checkpoint(); err != nil {
 		log.Warnf("format 4: initial checkpoint failed (nothing is lost): %v", err)
@@ -404,18 +461,6 @@ func (d *format4Daemon) ensureType(schema string) error {
 	return nil
 }
 
-// warmCounters reads the engine's summaries once, so the first count,
-// head or summary after an open answers from what the engine keeps between
-// writes (format4/memo.go), as format 2 answers from the heads it loads at
-// open. A failure here only leaves them to the first read.
-func (d *format4Daemon) warmCounters() {
-	api := d.api()
-	_, _ = api.Types(d.ctx)
-	_, _ = api.Partitions(d.ctx)
-	_, _ = api.Lanes(d.ctx, "")
-	_, _ = api.Disk(d.ctx)
-}
-
 // onFailure is the engine's OnFailure: a trap or hang fenced it. The daemon
 // reopens it (init replays the journal); calls meanwhile answer ErrStopped.
 func (d *format4Daemon) onFailure(err error) {
@@ -436,7 +481,6 @@ func (d *format4Daemon) onFailure(err error) {
 				d.types = map[string]bool{} // re-registered on use (a no-op for persisted specs)
 				d.typesMu.Unlock()
 				log.Infof("format 4: engine reopened after %d attempt(s)", attempt)
-				d.warmCounters()
 				return
 			}
 			log.Errorf("format 4: reopen attempt %d failed: %v", attempt, err)
