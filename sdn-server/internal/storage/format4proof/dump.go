@@ -65,6 +65,9 @@ type TypeDigest struct {
 	Tags       string                    `json:"tags"`
 	TagsAt     string                    `json:"tags_at"`
 	Partitions map[string]PartitionCount `json:"partitions"`
+	// Oversized (format 1, DigestFormat1Limit): copies left out as larger
+	// than format 4 stores (C-6).
+	Oversized int64 `json:"oversized,omitempty"`
 }
 
 // DigestDiff lists the fields where two digests of a type differ.
@@ -114,6 +117,13 @@ func cidKey(cid string) [16]byte {
 // DigestFormat1 digests the given schemas of a closed format-1 store through
 // its own engine (storage.OpenMigrationSource, never native SQLite).
 func DigestFormat1(storeDir string, schemas []string) (map[string]TypeDigest, error) {
+	return DigestFormat1Limit(storeDir, schemas, 0)
+}
+
+// DigestFormat1Limit is DigestFormat1 leaving out the copies whose stored
+// bytes exceed maxBytes (> 0): the records format 4 cannot hold (C-6),
+// counted in Oversized instead.
+func DigestFormat1Limit(storeDir string, schemas []string, maxBytes int64) (map[string]TypeDigest, error) {
 	src, err := storage.OpenMigrationSource(storeDir)
 	if err != nil {
 		return nil, err
@@ -144,6 +154,10 @@ func DigestFormat1(storeDir string, schemas []string) (map[string]TypeDigest, er
 				}
 				for _, r := range recs {
 					after = r.RowID
+					if maxBytes > 0 && int64(len(r.Stored)) > maxBytes {
+						d.Oversized++
+						continue
+					}
 					pc.Records++
 					pc.Bytes += int64(len(r.Stored))
 					copies.Add(t.Token, r.CID)

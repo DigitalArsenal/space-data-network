@@ -457,6 +457,10 @@ type WriteVerdict struct {
 func DriveEquivalence(c Config, label, candidate string, logf Logf) (*EquivalenceReport, error) {
 	rep := &EquivalenceReport{Generated: time.Now().UTC().Format(time.RFC3339), Label: label, Candidate: candidate}
 	policies := map[ShapeKey]Policy{}
+	// A coverage shape some arm does not run (the XM writes on format 4,
+	// which reads the migrated store; a shape restricted to format 1's
+	// baseline) is compared only on the arms that run a shape of its name.
+	armsOf, everyArm := map[ShapeKey][]string{}, map[ShapeKey]bool{}
 	if c.Benchset != "" {
 		bs, err := LoadBenchset(c.Benchset)
 		var shapes []Shape
@@ -469,6 +473,21 @@ func DriveEquivalence(c Config, label, candidate string, logf Logf) (*Equivalenc
 		}
 		for _, sh := range shapes {
 			policies[ShapeKey{sh.Class, sh.Name}] = sh.Policy
+		}
+		if bs != nil {
+			in, sets, _ := LoadInputs(c.Work)
+			if cs, _, err := CoverageShapes(bs, in, sets); err == nil {
+				for _, sh := range cs {
+					k := ShapeKey{sh.Class, sh.Name}
+					policies[k] = sh.Policy
+					if len(sh.Arms) == 0 {
+						everyArm[k] = true
+					}
+					for _, a := range sh.Arms {
+						armsOf[k] = append(armsOf[k], a)
+					}
+				}
+			}
 		}
 	}
 	paths, err := filepath.Glob(filepath.Join(c.Out, "answers-"+safeName(ArmF1+"-"+label)+"-*.json.gz"))
@@ -513,6 +532,9 @@ func DriveEquivalence(c Config, label, candidate string, logf Logf) (*Equivalenc
 		}
 		for i := range f1.Shapes {
 			name := f1.Shapes[i].Shape
+			if k := (ShapeKey{f1.Shapes[i].Class, name}); !everyArm[k] && len(armsOf[k]) > 0 && !contains(armsOf[k], candidate) {
+				continue
+			}
 			if pol, ok := policies[ShapeKey{f1.Shapes[i].Class, name}]; ok {
 				f1.Shapes[i].Policy = pol
 			}
@@ -533,7 +555,7 @@ func DriveEquivalence(c Config, label, candidate string, logf Logf) (*Equivalenc
 	if err != nil {
 		return nil, err
 	}
-	for _, op := range WriteOps {
+	for _, op := range append(append([]string{}, WriteOps...), ClassXM) {
 		f1, s := writeRun(runs, ArmF1, op), writeRun(runs, candidate, op)
 		if f1 == nil || s == nil {
 			if f1 != nil || s != nil {
@@ -582,10 +604,32 @@ func compareWriteDigests(op string, f1, s *Run) WriteVerdict {
 		v.Diffs = append(v.Diffs, fmt.Sprintf("f1: %v; s: %v", errA, errB))
 		return v
 	}
-	for _, schema := range touched[op] {
+	schemas := touched[op]
+	if op == ClassXM {
+		schemas = xmTypes
+	}
+	for _, schema := range schemas {
 		for _, d := range DigestDiff(a[schema], b[schema]) {
 			v.Diffs = append(v.Diffs, schema+" "+d)
 		}
+	}
+	if op == ClassXM {
+		// The migration of the coverage store: tag times too (migrated tags
+		// keep format 1's created_at), and the migration's own checks.
+		for _, schema := range xmTypes {
+			if a[schema].TagsAt != b[schema].TagsAt {
+				v.Diffs = append(v.Diffs, fmt.Sprintf("%s tag times: f1 %s, s %s", schema, a[schema].TagsAt, b[schema].TagsAt))
+			}
+		}
+		if probs, ok := s.Extra["migrate_problems"].([]any); ok {
+			for _, p := range probs {
+				v.Diffs = append(v.Diffs, "migration: "+fmt.Sprint(p))
+			}
+		}
+	}
+	results := compareWriteResults(op, f1, s)
+	if op != "W10" {
+		v.Diffs = append(v.Diffs, results...)
 	}
 	if len(v.Diffs) > 0 {
 		v.Status = EqDiffer
@@ -605,7 +649,54 @@ func compareWriteDigests(op string, f1, s *Run) WriteVerdict {
 			v.Status = EqAccepted + " (" + w10Accepted + "; arrival order checked)"
 		}
 	}
+	if op == "W10" && len(results) > 0 {
+		// The quota bound holds on every arm, whatever was evicted.
+		v.Status = EqDiffer
+		v.Diffs = append(v.Diffs, results...)
+	}
 	return v
+}
+
+// compareWriteResults compares what the operation returned (inserted
+// counts, the supersede's tag, record and file counts, the restamp count)
+// with format 1's. W10's eviction differs by design (C-32): each arm's live
+// bytes after it must be within its quota instead.
+func compareWriteResults(op string, f1, s *Run) []string {
+	ra, _ := f1.Extra["result"].(map[string]any)
+	rb, _ := s.Extra["result"].(map[string]any)
+	var out []string
+	if op == "W10" {
+		for _, r := range []*Run{f1, s} {
+			res, _ := r.Extra["result"].(map[string]any)
+			after, okA := res["live_bytes_after"].(float64)
+			quota, okQ := res["quota_bytes"].(float64)
+			switch {
+			case !okA || !okQ:
+				out = append(out, fmt.Sprintf("%s: W10 recorded no live bytes after the GC or no quota", r.Arm))
+			case after > quota:
+				out = append(out, fmt.Sprintf("%s: live bytes after the GC %.0f exceed the quota %.0f", r.Arm, after, quota))
+			}
+		}
+		return out
+	}
+	keys := map[string]bool{}
+	for k := range ra {
+		keys[k] = true
+	}
+	for k := range rb {
+		keys[k] = true
+	}
+	var ks []string
+	for k := range keys {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	for _, k := range ks {
+		if fmt.Sprint(ra[k]) != fmt.Sprint(rb[k]) {
+			out = append(out, fmt.Sprintf("result %s: f1 %v, s %v", k, ra[k], rb[k]))
+		}
+	}
+	return out
 }
 
 // EquivalenceMarkdown renders the report.

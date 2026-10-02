@@ -29,6 +29,11 @@ type Policy struct {
 	// missing row or a row past N is DIFFER.
 	Superset bool `json:"superset,omitempty"`
 	MaxRows  int  `json:"max_rows,omitempty"`
+	// Strict (the coverage classes, coverage.go): a field the candidate
+	// fills where format 1 leaves it empty is a difference, not an extra
+	// field (optionalFields does not apply). Every field of every row must be
+	// identical, the copy variants aside (C-12).
+	Strict bool `json:"strict,omitempty"`
 }
 
 func (p Policy) accepts(field string) bool {
@@ -224,7 +229,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 		orderOnly := !pol.Unordered
 		callDiffers := false
 		for i := range ra {
-			st, diffs, ex := compareRow(ra[i], rb[i])
+			st, diffs, ex := compareRow(ra[i], rb[i], pol.Strict)
 			for _, f := range ex {
 				extra[f] = true
 			}
@@ -233,7 +238,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			case EqExtra:
 				bump(EqExtra)
 			case EqEqualC12:
-				if variantMatchesCopy(rb[i], f1.Schema, oracle, variantCache) {
+				if variantMatchesCopy(rb[i], f1.Schema, shapeOracle(f1, oracle), variantCache) {
 					bump(EqEqualC12)
 				} else {
 					bump(EqDiffer)
@@ -285,7 +290,7 @@ func appendDiff(d []Diff, x Diff) []Diff {
 // compareRow: EqEqual; EqExtra (S fills fields format 1 leaves empty);
 // EqEqualC12 (only copy variants differ; the caller checks the copies); or
 // EqDiffer with the differing fields.
-func compareRow(a, b Row) (string, []Diff, []string) {
+func compareRow(a, b Row, strict bool) (string, []Diff, []string) {
 	bv := map[string]string{}
 	for _, f := range b {
 		bv[f.N] = f.V
@@ -301,7 +306,7 @@ func compareRow(a, b Row) (string, []Diff, []string) {
 			continue
 		}
 		switch {
-		case ok && optionalFields[f.N] && isEmptyValue(f.V):
+		case ok && !strict && optionalFields[f.N] && isEmptyValue(f.V):
 			extra = append(extra, f.N)
 			if status == EqEqual {
 				status = EqExtra
@@ -317,7 +322,12 @@ func compareRow(a, b Row) (string, []Diff, []string) {
 		}
 	}
 	for _, f := range b {
-		if !seen[f.N] && optionalFields[f.N] && !isEmptyValue(f.V) {
+		if !seen[f.N] && (strict || optionalFields[f.N]) && !isEmptyValue(f.V) {
+			if strict {
+				status = EqDiffer
+				diffs = append(diffs, Diff{Field: f.N, S: f.V})
+				continue
+			}
 			extra = append(extra, f.N)
 			if status == EqEqual {
 				status = EqExtra
@@ -330,13 +340,13 @@ func compareRow(a, b Row) (string, []Diff, []string) {
 		return status, diffs, extra
 	}
 	if status == EqDiffer {
-		var strict []Diff
+		var kept []Diff
 		for _, d := range diffs {
 			if !isVariant(d.Field) {
-				strict = append(strict, d)
+				kept = append(kept, d)
 			}
 		}
-		return status, strict, extra
+		return status, kept, extra
 	}
 	return status, nil, extra
 }
@@ -352,6 +362,24 @@ var optionalFields = map[string]bool{
 	"provider": true, "source": true, "url": true, "batch": true, "ckey": true, "ppeer": true, "ppk": true,
 	"license": true, "license_url": true, "citation": true, "share_alike": true,
 	"~sig": true,
+}
+
+// shapeOracle is the copy oracle a shape's variants are checked against: the
+// copies format 1 held when the shape ran (ShapeAnswers.Copies, recorded by a
+// coverage class after its writes), else the fixture's.
+func shapeOracle(f1 *ShapeAnswers, fixture CopyOracle) CopyOracle {
+	if len(f1.Copies) == 0 {
+		return fixture
+	}
+	return func(schema, cid string) ([]Row, error) {
+		if rows, ok := f1.Copies[cid]; ok {
+			return rows, nil
+		}
+		if fixture == nil {
+			return nil, nil
+		}
+		return fixture(schema, cid)
+	}
 }
 
 // variantMatchesCopy reports whether row's copy variant equals one of format

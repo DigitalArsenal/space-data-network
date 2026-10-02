@@ -17,7 +17,11 @@
 //     count-scaled growth step (cmd/sds-tb-gen), as per-doubling slopes;
 //
 // plus equivalence with format 1 (every read's answer, field by field, and
-// the record and tag sets after each write W01–W10; DriveEquivalence) and
+// the record and tag sets after each write W01–W10, with what each write
+// returned; DriveEquivalence), the coverage classes (coverage.go: every
+// recordBackend method and parameter axis the benchset leaves out, writes
+// read back, the migration of a store holding them; untimed, compared
+// strictly; the method × axis table is COVERAGE.md beside the contract) and
 // crash coverage (kill -9 loops during ingest and supersede, CrashLoop;
 // LazyFS power loss, lazyfs_linux_test.go; integrity_check on every file
 // through REBUILD what=8, C-27). Every number carries the load average and
@@ -39,8 +43,8 @@
 // the test suite (contract C-33: end to end only); it has no unit tests.
 //
 // run.sh runs every phase in order on the integration tree (build, prepare,
-// migrate, bytes, reads, ingest, grown reads, M01, writes, crash, LazyFS,
-// growth, equivalence, report); lazyfs.sh runs the power-loss rounds in a
+// migrate, bytes, reads, ingest, grown reads, M01, writes, coverage, crash,
+// LazyFS, growth, equivalence, report); lazyfs.sh runs the power-loss rounds in a
 // Linux container. P4PROOF_EQ_ARM=f2 compares format 2 with format 1
 // through the same comparator, which checks the harness on a known engine.
 package format4proof
