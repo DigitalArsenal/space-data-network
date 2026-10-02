@@ -336,7 +336,7 @@ func (m *migrator4) endSchemaCheck(sc *schemaCheck, w *migrate4Progress, c *migr
 		m.note("%s: %d index rows are orphans (no producer table holds the record); not migrated", schema, got.Orphans)
 	}
 	if got.CopyDigest != w.CopyDigest {
-		c.bad("%s: the copies (bytes, ts, signature, peer, producer, seq) differ from what the copy sent", schema)
+		c.bad("%s: the copies (bytes, ts, signature, peer, producer, seq) differ from what the copy sent (%d copies keep bytes that differ from their record's first copy)", schema, w.OwnBytes)
 	}
 	if got.TagDigest != w.TagDigest || got.Tags != w.Tags {
 		c.bad("%s: the tag instances (%d) differ from what the copy sent (%d)", schema, got.Tags, w.Tags)
@@ -486,7 +486,7 @@ func (m *migrator4) checkCounters(ctx context.Context, c *migrate4Check, want ma
 		}
 		// Every row of the table was copied: format 1's counter, or a
 		// recount where the counter drifted, holds exactly what was read.
-		if o, ok := oracle[t.Name]; ok && o.Count == sent.Rows && o.Bytes == sent.SourceBytes {
+		if o, ok := oracle[t.Name]; ok && o.Count == sent.Rows && o.Bytes == sent.Bytes {
 			continue
 		}
 		rc, err := m.src.TableCounter(t)
@@ -497,9 +497,9 @@ func (m *migrator4) checkCounters(ctx context.Context, c *migrate4Check, want ma
 			m.note("format 1's counter of %s (%d, %d B) differs from a recount (%d, %d B); the recount is the oracle",
 				t.Name, o.Count, o.Bytes, rc.Count, rc.Bytes)
 		}
-		if rc.Count != sent.Rows || rc.Bytes != sent.SourceBytes {
+		if rc.Count != sent.Rows || rc.Bytes != sent.Bytes {
 			c.bad("table %s holds %d rows (%d B), %d (%d B) were migrated: rows without a datasync index row are not migrated",
-				t.Name, rc.Count, rc.Bytes, sent.Rows, sent.SourceBytes)
+				t.Name, rc.Count, rc.Bytes, sent.Rows, sent.Bytes)
 		}
 	}
 	for k, g := range got {

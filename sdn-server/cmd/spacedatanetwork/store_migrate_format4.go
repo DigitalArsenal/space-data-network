@@ -17,7 +17,8 @@ package main
 // COPY, per schema, in sdn_record_index rowid order: one format-1 query per
 // page returns the index rows with every producer table's copy. Every copy of
 // a record is a migrate-mode PUT into its producer's partition, with the index
-// rowid as the seq. The record's tag rows (read once per schema, in table
+// rowid as the seq and the copy's OWN stored bytes: stored bytes never change,
+// and copies of one CID may differ (sealed envelopes do). The record's tag rows (read once per schema, in table
 // order) go with its FIRST copy (the first producer table by name), the copy
 // format 1's lane counters attribute them to; each keeps its source_url,
 // content_key_id and created_at (as the instance's at). An IQC record carries
@@ -31,9 +32,10 @@ package main
 //   - every unsealed copy re-hashes to its CID;
 //   - the fields the engine extracted equal format 1's index columns: epoch
 //     and object key on every record, every structured column on a sample;
-//   - every copy's bytes, ts, signature, peer and producer, and every tag
-//     instance (identity, source_url, at), equal what the copy sent
-//     (order-free digests, so format 1's record bytes are read once);
+//   - every copy's bytes (its own, as its format-1 table holds them), ts,
+//     signature, peer and producer, and every tag instance (identity,
+//     source_url, at), equal what the copy sent (order-free digests, so
+//     format 1's record bytes are read once);
 //   - partition, type and lane counters equal a recount (lanes from the
 //     tags); format 1's own counters are reported where they drifted;
 //   - the engine's verify rebuild reports 0 mismatches.
@@ -209,18 +211,17 @@ type migrate4Progress struct {
 	Copies     map[string]migrate4Tally `json:"copies"`  // producer table -> copies sent, Σ stored bytes
 	Tags       int64                    `json:"tags"`
 	Identities int64                    `json:"identities"`
-	Unified    int64                    `json:"unified,omitempty"` // copies stored with their record's first copy's ts and bytes
+	OwnBytes   int64                    `json:"own_bytes"` // copies whose bytes differ from their record's first copy (each keeps its own)
+	RecordTS   int64                    `json:"record_ts"` // copies whose ts differs from their record's first copy (stored with the record's, C-22)
 	CopyDigest migrateDigest            `json:"copy_digest"`
 	TagDigest  migrateDigest            `json:"tag_digest"`
 }
 
-// migrate4Tally counts one producer table's copies: Bytes as format 4
-// stores them, SourceBytes as the table held them (they differ only where
-// format 1's copies of a record differed, see pageBatches).
+// migrate4Tally counts one producer table's copies and their stored bytes
+// (the table's own, which format 4 keeps).
 type migrate4Tally struct {
-	Rows        int64 `json:"rows"`
-	Bytes       int64 `json:"bytes"`
-	SourceBytes int64 `json:"source_bytes"`
+	Rows  int64 `json:"rows"`
+	Bytes int64 `json:"bytes"`
 }
 
 // migrate4Reject is a record copy the engine did not store.
@@ -240,6 +241,8 @@ type migrate4Report struct {
 	Copies      int64             `json:"copies"`
 	RecordBytes int64             `json:"record_bytes"`
 	SourceBytes int64             `json:"source_bytes"`
+	OwnBytes    int64             `json:"own_bytes"` // copies whose bytes differ from their record's first copy (kept)
+	RecordTS    int64             `json:"record_ts"` // copies whose ts differs from their record's first copy
 	GseqFloor   uint64            `json:"gseq_floor"`
 	Took        string            `json:"took"`
 	RecordMBps  float64           `json:"record_mb_per_s"`
@@ -905,8 +908,13 @@ func (m *migrator4) pageBatches(schema string, pg *migrate4Page, tags *migrate4T
 			isFirst := first == nil
 			if isFirst {
 				first = &r
-			} else if r.Timestamp != first.Timestamp || string(r.Stored) != string(first.Stored) {
-				p.Unified++
+			} else {
+				if string(r.Stored) != string(first.Stored) {
+					p.OwnBytes++
+				}
+				if r.Timestamp != first.Timestamp {
+					p.RecordTS++
+				}
 			}
 			b := batches[ti]
 			if b == nil {
@@ -914,13 +922,13 @@ func (m *migrator4) pageBatches(schema string, pg *migrate4Page, tags *migrate4T
 				batches[ti] = b
 				tagIndex[ti] = map[format4.Tag]int{}
 			}
-			// Every copy carries its record's FIRST copy's bytes and ts: format
-			// 4 keeps one record per seq (a copy holds the holder's bytes and
-			// ts, as format 1's repeat-copy mirror wrote them), and the
+			// Every copy keeps its OWN stored bytes (stored bytes never change;
+			// sealed envelopes of one CID legitimately differ). The ts is the
+			// record's, its first copy's (C-22: one record per seq). The
 			// partition, peer and signature stay the copy's own.
-			in := format4.In{CID: r.CID, Plain: first.Plain, TS: first.Timestamp, Sig: legacySignature(r.SignatureHex), Seq: e.RowID}
-			if first.Sealed {
-				in.Sealed = first.Stored
+			in := format4.In{CID: r.CID, Plain: r.Plain, TS: first.Timestamp, Sig: legacySignature(r.SignatureHex), Seq: e.RowID}
+			if r.Sealed {
+				in.Sealed = r.Stored
 			}
 			peer := b.Peer
 			if r.PeerID != b.Peer && r.PeerID != "" {
@@ -949,10 +957,9 @@ func (m *migrator4) pageBatches(schema string, pg *migrate4Page, tags *migrate4T
 			b.Records = append(b.Records, in)
 			c := p.Copies[t.Name]
 			c.Rows++
-			c.Bytes += int64(len(first.Stored))
-			c.SourceBytes += int64(len(r.Stored))
+			c.Bytes += int64(len(r.Stored))
 			p.Copies[t.Name] = c
-			p.CopyDigest.add(copyDigestOf(e.RowID, t.Token, peer, first.Timestamp, in.Sig, first.Stored))
+			p.CopyDigest.add(copyDigestOf(e.RowID, t.Token, peer, first.Timestamp, in.Sig, r.Stored))
 		}
 		p.Held++
 		p.MaxSeq = e.RowID
@@ -1105,12 +1112,16 @@ func (m *migrator4) tallyReport() {
 			m.rep.RecordBytes += t.Bytes
 		}
 	}
-	var unified int64
+	m.rep.OwnBytes, m.rep.RecordTS = 0, 0
 	for _, p := range m.j.Schemas {
-		unified += p.Unified
+		m.rep.OwnBytes += p.OwnBytes
+		m.rep.RecordTS += p.RecordTS
 	}
-	if unified > 0 {
-		m.note("%d copies differed from their record's first copy in ts or bytes in format 1; format 4 stores the first copy's (C-12)", unified)
+	if m.rep.OwnBytes > 0 {
+		m.note("%d copies hold bytes that differ from their record's first copy; each was sent with its own, and the check fails if format 4 stored other bytes", m.rep.OwnBytes)
+	}
+	if m.rep.RecordTS > 0 {
+		m.note("%d copies hold a ts that differs from their record's first copy; format 4 stores the record's ts (C-22)", m.rep.RecordTS)
 	}
 	m.rep.Rejected, m.rep.Oversized = nil, nil
 	for _, r := range m.j.Rejected {
