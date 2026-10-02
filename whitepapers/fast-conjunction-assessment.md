@@ -6,7 +6,7 @@ Anthony "TJ" Koury III
 
 Edgesource, Space Data Network · tj@edgesource.com
 
-Technical whitepaper 1.2 | 2 October 2026
+Technical whitepaper 1.3 | 2 October 2026
 
 Numerical evidence cutoff: 2 October 2026
 
@@ -27,6 +27,12 @@ Five design choices produce that speed:
 The screen reproduces the module's single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s.
 
 Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the covariance-free maximum probability. With an empirical model of element-set prediction error, events also carry a covariance-based probability. It is labeled calibrated only where held-out precise orbits confirm the covariance: LEO 600 to 800 km, 13,088 of the 292,516 three-day conjunctions. The model adds 1.1 s to the 19 s screen (section 7, [R1](#r1)).
+
+Operators keep their most precise orbits and planned maneuvers private. Section 8 specifies **private screening**: two operators learn when their objects come close without exchanging trajectories, by computing distances on homomorphically encrypted positions.
+- **Cost.** Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.
+- **What it reveals.** The paper shows how a naive design leaks distances, how invented trajectories can locate a hidden satellite, and which defenses stop that.
+- **What it cannot hide.** Real close approaches reveal what safety requires.
+- **Status.** The protocol is not yet built.
 
 ## 1 The problem
 
@@ -320,7 +326,163 @@ The results, in the calibrated strata (10,000 cases a row):
 - **Possibility.** It missed none in calibrated strata, at the cost of the most false alerts. In uncalibrated strata it missed up to 8 %, so it is only as sound as its declared uncertainty.
 - **Disclosure.** The baselines and cases were chosen independently of the TEAG and ESPF authors' implementations, and no TEAG or ESPF code was run.
 
-## 8 Limits and next work
+## 8 Private screening
+
+Operators hold back their best data:
+- **National security.** Classified orbits reveal capability and coverage.
+- **Commercial value.** Constellation geometry and station-keeping are trade
+  secrets.
+- **Maneuver intent.** A planned burn tells competitors and adversaries that
+  something is changing.
+- **Liability.** Sharing creates obligations.
+
+Without that data, the screen in this paper sees catalog estimates where
+precise trajectories exist. Private screening lets two operators learn when
+their objects come close without either seeing the other's trajectory.
+
+This section specifies the protocol, measures its arithmetic, and analyses
+what it reveals and how it can be abused ([R14](#r14)). **It is not yet
+built.** SDN's encrypted-screening endpoint accepts requests and returns no
+result.
+
+### What is computed on ciphertext
+
+A (the requester) and B (the responder) each hold a trajectory, sampled on a
+common time grid. A wants to know when B's object passes within R of its own.
+The protocol uses homomorphic encryption: B computes on A's encrypted
+positions without being able to read them ([R11](#r11), [R12](#r12)).
+
+1. **A encrypts its trajectory under its own key.**
+   - The quantities are x, y, z and |a|², in integer metres.
+   - 8,192 time steps are packed per ciphertext (BFV, n = 8192, 128-bit
+     security).
+   - Three 60-bit plaintext moduli, recombined by the Chinese remainder
+     theorem, hold the range, so no value wraps.
+2. **B computes on ciphertext.** Since |a − b|² = |a|² − 2a·b + |b|², B forms
+   Enc(|a − b|² − R′²) using only products of its own plaintext with A's
+   ciphertext. It never multiplies two ciphertexts.
+3. **A decrypts.** It learns, for each step, whether B is within R′.
+
+A pair can come within R between two samples. Testing against
+R′ = √(R² + (v_max Δt / 2)²) catches every such approach. With
+v_max = 15.5 km/s, R′ is 9.2 km at 1 s steps and 77.7 km at 10 s steps.
+
+**Key custody.**
+- Only A ever decrypts, and no key leaves A.
+- No third-party assessor is involved. A party holding the key that decrypts
+  the result can also decrypt every input it receives under that key, so an
+  assessor that decrypts adds trust without adding privacy.
+
+### What it costs
+
+Measured with Microsoft SEAL 4.1.1 on one core of the shared workstation
+([R14](#r14)):
+
+| Step | R′ | A: encrypt and upload, per object-day | B: compute, per pair-day | B: response, per pair-day | A: decrypt, per pair-day |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 s | 9.2 km | 179 ms, 34.6 MB | 169 ms | 8.7 MB | 163 ms |
+| 10 s | 77.7 km | 22 ms, 4.2 MB | 21 ms | 1.0 MB | 20 ms |
+
+- **Correctness.** Over 86,400 one-second steps for eight pairs, every step
+  matched the plaintext distance.
+- **Detection.** Each designed 2 km encounter raised three to six alert steps.
+  A control pair 60 km apart raised none at 1 s steps.
+- **Scale.** One private object screened against 1,000 objects for three days
+  at 1 s steps costs B about 510 core-seconds and 26 GB of responses. Private
+  screening suits operator-to-operator subsets; the open screen covers the
+  catalog.
+
+### What the result reveals
+
+The intended output is the set of steps at which B is within R′, and nothing
+more.
+
+**A naive design leaks the distance.**
+- The obvious way to hide the distance is to multiply each step's value by a
+  fresh random factor and let A read only its sign. One step's value then
+  bounds the distance only loosely.
+- Neighbouring steps, however, have almost the same distance. Intersecting
+  the bounds of 64 neighbouring steps, A recovered the distance within a
+  factor of 2 at 87 % of steps (1 s grid). That is enough for range-only
+  orbit determination of B's object.
+- The output must therefore be one bit per step: B adds a random additive
+  mask, and A and B run a two-party secure comparison that reveals only the
+  sign ([R13](#r13)).
+- B's response must also be noise-flooded, so that its ciphertext noise
+  carries nothing about b.
+- Neither step is built or measured here.
+
+**Real conjunctions reveal what safety requires.** Each alert places the
+other object within R′ of a known object at a known time. In this paper's
+3-day SGP4 screen, 2,532 objects outside Starlink came within 5 km of a
+Starlink satellite:
+- 1,304 of them did so three or more times;
+- 668 did so ten or more times.
+
+Kuiper, OneWeb and Qianfan had 857, 452 and 571 such objects, mostly with one
+to four conjunctions each. A private object in a crowded shell therefore
+gives its densest neighbour enough position fixes for a coarse orbit within
+days. Private screening hides an orbit from operators it does not approach.
+It cannot hide it from those it does.
+
+### Orbit guessing
+
+The probing attack:
+- **The query.** A requester submits invented trajectories, rather than its
+  real object, to find B's object. Each step then answers whether B is
+  within R′ of a chosen point at a chosen time.
+- **The cost.** Low Earth orbit (200–2,000 km altitude) holds about
+  1.27 × 10¹² km³, and a 9.2 km ball is about 3,300 km³. A first hit with no
+  prior takes about 3.9 × 10⁸ steps: 47,000 one-window queries. At the
+  measured rates, B pays about 760 core-seconds and 39 GB of responses.
+- **With a prior.** If the prober knows the shell (±25 km at 700 km), it
+  needs about 1,200 queries, costing B 20 core-seconds and 1 GB.
+- **After a first hit,** orbital dynamics narrow the search quickly.
+- **In reverse.** The responder can probe the requester through its
+  reactions. A disclosure request or a maneuver after an alert reveals
+  proximity to an invented trajectory.
+
+Unbounded querying is therefore cheap enough for a determined adversary. The
+defenses, strongest first:
+
+1. **Bind every query to a real object.**
+   - Each query commits to its plaintext trajectory (a hash).
+   - After the window has passed, the requester reveals the trajectory: past
+     positions are far less sensitive than planned maneuvers.
+   - An auditor checks the revealed trajectory against independent tracking
+     of the declared object, with the reference-orbit comparisons of
+     section 7.
+   - An invented trajectory is caught after the fact. The responder is bound
+     the same way.
+2. **Identity cost.** Only identities with stake or reputation may query. A
+   failed audit forfeits the stake and suspends screening.
+3. **Rate limits.** Per window, an identity may query no more than its
+   registered objects.
+4. **Plausibility.** At audit, a committed trajectory must obey orbital
+   dynamics. Grid-like or non-Keplerian ephemerides are flagged.
+5. **One-sided noise.** Noise may add false alerts but must never remove a
+   true one. It slows a prober by a constant factor.
+   - Two-sided noise, such as random noise added to the distance before the
+     comparison, would drop real conjunctions near the threshold.
+   - Independent noise averages away over repeated queries.
+
+Direct authenticated streams protect integrity and metadata. The ciphertexts
+are protected by the requester's key either way: anyone can compute on them,
+but only their owner can decrypt.
+
+With binding in place, a prober learns only what its real objects' real close
+approaches reveal.
+
+### What exists
+
+| Piece | State |
+| --- | --- |
+| Homomorphic fields in FlatBuffers (SEAL BFV/BGV, `he_encrypted`) ([R15](#r15)) | Built. Each ciphertext holds one value under a 20-bit plaintext modulus, so metre-scale coordinates wrap silently. It needs batched vectors and multiple moduli, as in the benchmark, to carry this protocol. |
+| SDN encrypted-screening request (`/api/v1/conjunction/screen`) | Built. It returns no result. |
+| The protocol's arithmetic | Measured ([R14](#r14)). |
+| Screening module, bit-only comparison, noise flooding, commitments and audit, staking, rate limits, plausibility checks | Not built. |
+
+## 9 Limits and next work
 
 | Limit | Effect | Next step |
 | --- | --- | --- |
@@ -331,6 +493,7 @@ The results, in the calibrated strata (10,000 cases a row):
 | One host | All timings from one shared 28-core workstation | Repeat on other hosts, GPUs and Docker containers ([R2](#r2) includes the procedure) |
 | Calibration coverage | Covariance calibrated only in LEO 600 to 800 km (empirical model; HPOP to 3 days), for 48 reference objects in one week | More precise-orbit missions, object-class strata, HPOP with the Sun and Moon, and orbit-determination covariance |
 | Probability inputs | Combined radius and covariance shape differ from SOCRATES's unpublished ones | Published per-object radii with their basis |
+| Private screening | Designed and measured, not built | A screening module with a bit-only comparison, noise flooding, and committed trajectories audited against tracking (section 8) |
 
 This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness, or accuracy for objects and regimes without independent reference orbits.
 
@@ -375,3 +538,23 @@ Foster, J. L. and Estes, H. S. A Parametric Analysis of Orbital Debris Collision
 ### R10
 
 Precise orbit products: IGS final orbits ([IGS](https://igs.org/products/)), ILRS analysis-centre orbits ([ILRS](https://ilrs.gsfc.nasa.gov/)), Copernicus Sentinel-1 precise orbit ephemerides ([ESA](https://sentinels.copernicus.eu/)), Swarm precise orbits ([ESA](https://earth.esa.int/eogateway/missions/swarm)), and IERS EOP 20 C04 ([IERS](https://www.iers.org/)).
+
+### R11
+
+Microsoft Research. Microsoft SEAL 4.1.1, homomorphic encryption library. [Repository](https://github.com/microsoft/SEAL)
+
+### R12
+
+Fan, J. and Vercauteren, F. Somewhat Practical Fully Homomorphic Encryption. IACR Cryptology ePrint Archive 2012/144. [Paper](https://eprint.iacr.org/2012/144)
+
+### R13
+
+Damgård, I., Geisler, M. and Krøigaard, M. Efficient and Secure Comparison for On-Line Auctions. ACISP 2007, LNCS 4586.
+
+### R14
+
+Edgesource. Private screening: protocol, SEAL benchmark, leakage and exposure measurements. Modules commit a7d6b38155e5139ea3100643ef8fc7ff5749bd46. [Note](https://github.com/DigitalArsenal/space-data-network-modules/blob/a7d6b38155e5139ea3100643ef8fc7ff5749bd46/analysis/conjunction-assessment/docs/private-screening.md) · [Benchmark](https://github.com/DigitalArsenal/space-data-network-modules/tree/a7d6b38155e5139ea3100643ef8fc7ff5749bd46/analysis/conjunction-assessment/bench/private-screening)
+
+### R15
+
+Edgesource. FlatBuffers homomorphic encryption. [Documentation](https://github.com/DigitalArsenal/flatbuffers/blob/master/docs/source/homomorphic_encryption.md)
