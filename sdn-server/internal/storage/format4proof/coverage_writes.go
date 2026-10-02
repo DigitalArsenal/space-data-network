@@ -103,11 +103,11 @@ func (c *cov) store(name, schema string, rec []byte, peer string, sig []byte, ta
 
 // writeValue and writeRows are valueCall and rowsCall marked as writes.
 func (c *cov) writeValue(name, schema string, fn func(s *storage.FlatSQLStore) (Row, error)) Call {
-	return writing(c.valueCall(name, schema, fn))
+	return c.writing(c.valueCall(name, schema, fn))
 }
 
 func (c *cov) writeRows(name, schema string, fn func(s *storage.FlatSQLStore) ([]Row, error)) Call {
-	return writing(c.rowsCall(name, schema, fn))
+	return c.writing(c.rowsCall(name, schema, fn))
 }
 
 // ---- read-back calls ---------------------------------------------------------

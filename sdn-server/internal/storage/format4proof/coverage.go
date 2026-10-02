@@ -90,8 +90,9 @@ var coverageSchemas = []string{"OMM.fbs", "MPE.fbs", "IQC.fbs", "CAT.fbs", "PNM.
 // scen is a coverage class's run context: when it started, and each type's
 // highest datasync cursor before it.
 type scen struct {
-	t0   int64
-	base map[string]int64
+	t0        int64
+	base      map[string]int64
+	lastWrite int64 // the second the class's last write ended in (nextSecond)
 }
 
 func newScen() *scen { return &scen{base: map[string]int64{}} }
@@ -344,7 +345,7 @@ func (c *cov) recordsCall(name, schema string, fn func(s *storage.FlatSQLStore) 
 // errOnly is a call made for its effect (a write, or a step a later write
 // needs): its answer is "ok" or its error.
 func (c *cov) errOnly(name string, fn func(s *storage.FlatSQLStore) error) Call {
-	return writing(c.valueCall(name, "", func(s *storage.FlatSQLStore) (Row, error) {
+	return c.writing(c.valueCall(name, "", func(s *storage.FlatSQLStore) (Row, error) {
 		if err := fn(s); err != nil {
 			return nil, err
 		}
@@ -352,10 +353,30 @@ func (c *cov) errOnly(name string, fn func(s *storage.FlatSQLStore) error) Call 
 	}))
 }
 
-// writing marks a call as a write (Call.Write).
-func writing(c Call) Call {
-	c.Write = true
-	return c
+// writing marks a call as a write (Call.Write) and starts it in a later
+// second than the class's previous write ended in (scen.nextSecond).
+func (c *cov) writing(call Call) Call {
+	run := call.Run
+	call.Run = func(s *storage.FlatSQLStore) Result {
+		c.sc.nextSecond()
+		res := run(s)
+		c.sc.lastWrite = time.Now().Unix()
+		return res
+	}
+	call.Write = true
+	return call
+}
+
+// nextSecond waits until the clock has passed the second the previous write
+// ended in. Stores stamp a tag's time in whole seconds; two tags of one
+// record written in the same second tie, and which is "newest" (the tag
+// GetSourceTags returns, an export prefers, a producer's last batch) is then
+// arbitrary on format 1 (two format-1 runs of X02 disagreed). One second
+// apart, the newest is defined on every format.
+func (sc *scen) nextSecond() {
+	for time.Now().Unix() <= sc.lastWrite {
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // c12Copy names the intended difference of a ref that names a copy format 1
