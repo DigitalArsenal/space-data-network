@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
@@ -43,6 +45,9 @@ func migrateRun(ctx context.Context, bin, store, logPath string, kill time.Durat
 	defer log.Close()
 	cmd := exec.CommandContext(ctx, bin, "store-migrate", "--to", "4", "--store", store)
 	cmd.Stdout, cmd.Stderr = log, log
+	// OpenArm (SettleStore, the digests) sets SDN_STORE_FORMAT in this
+	// process; store-migrate opens format 1 and must not inherit it.
+	cmd.Env = envWithout(format2.FormatEnv)
 	st := time.Now()
 	if err := cmd.Start(); err != nil {
 		return ChildRun{}, false, err
@@ -104,54 +109,25 @@ func MigrateCrashLoop(ctx context.Context, spec MigrateLoopSpec, logf Logf) (*Ru
 	logs := filepath.Join(spec.Out, "logs")
 
 	// 1. The reference: a clean migration (its time, RSS and load are the
-	// migration evidence), digested and checked.
+	// migration evidence), digested and checked against format 1, then
+	// settled. P4PROOF_MIGRATE_REUSE_REF=1 reuses a settled reference a
+	// previous run left (its clean run's seconds in P4PROOF_MIGRATE_REF_S)
+	// and digests a clone of it, so a kill-loop re-run skips the reference.
 	ref := ReferenceStore(spec.Work)
-	_ = os.RemoveAll(ref)
-	if err := CloneStore(spec.Source, ref); err != nil {
-		return r, err
-	}
-	cr, _, err := migrateRun(ctx, spec.Bin, ref, filepath.Join(logs, "migrate-reference.log"), 0)
-	if err != nil {
-		return r, err
-	}
-	r.Extra["reference_seconds"], r.Extra["reference_max_rss_mb"], r.Extra["reference_load_end"] = cr.Wall.Seconds(), cr.MaxRSSMB, Load()
-	logf("migrate: reference in %s, max RSS %.0f MB, load %s", cr.Wall.Round(time.Second), cr.MaxRSSMB, Load())
-	for _, p := range checkMigrated(ref) {
-		fail("reference: %s", p)
-	}
-	refDigest, err := DigestStore(ArmS, ref, spec.Schemas)
-	if err != nil {
-		return r, fmt.Errorf("digest the reference: %w", err)
-	}
-	// The reference against format 1 itself.
-	f1 := filepath.Join(spec.Work, "migrate-f1-digest")
-	_ = os.RemoveAll(f1)
-	if err := CloneStore(spec.Source, f1); err != nil {
-		return r, err
-	}
-	f1Digest, err := DigestFormat1(f1, spec.Schemas)
-	_ = os.RemoveAll(f1)
-	if err != nil {
-		return r, fmt.Errorf("digest format 1: %w", err)
-	}
-	for _, schema := range spec.Schemas {
-		for _, d := range DigestDiff(f1Digest[schema], refDigest[schema]) {
-			fail("format 1 vs migrated %s: %s", schema, d)
+	var refWall time.Duration
+	var refDigest map[string]TypeDigest
+	var err error
+	if os.Getenv("P4PROOF_MIGRATE_REUSE_REF") == "1" {
+		refWall = time.Duration(envInt("P4PROOF_MIGRATE_REF_S", 501)) * time.Second
+		refDigest, err = digestClone(ref, spec.Work, spec.Schemas)
+		if err != nil {
+			return r, fmt.Errorf("digest the reference: %w", err)
 		}
-		if f1Digest[schema].TagsAt != refDigest[schema].TagsAt {
-			fail("format 1 vs migrated %s: tag times differ (f1 %s, s %s)", schema, f1Digest[schema].TagsAt, refDigest[schema].TagsAt)
-		}
+		r.Extra["reference_reused"] = ref
+		logf("migrate: reusing the settled reference %s (clean run %s)", ref, refWall)
+	} else if refWall, refDigest, err = migrateReference(ctx, spec, ref, logs, r, fail, logf); err != nil {
+		return r, err
 	}
-
-	// The reference becomes the store a daemon leaves after its first start
-	// (every full-text index SDN enables built, WAL at rest), so reads time
-	// no background build and bytes count every file.
-	states, took, err := SettleStore(ref)
-	r.Extra["reference_fts_states"], r.Extra["reference_settle_s"] = states, took.Seconds()
-	if err != nil {
-		return r, fmt.Errorf("settle the reference: %w", err)
-	}
-	logf("migrate: reference settled in %s (full text %v)", took.Round(time.Second), states)
 
 	// 2. The killed migration, resumed until a run completes.
 	crash := filepath.Join(spec.Work, "migrate-crash")
@@ -162,7 +138,7 @@ func MigrateCrashLoop(ctx context.Context, spec MigrateLoopSpec, logf Logf) (*Ru
 	defer os.RemoveAll(crash)
 	maxDelay := spec.MaxKillDelay
 	if maxDelay <= 0 {
-		maxDelay = time.Duration(float64(cr.Wall) * 0.9)
+		maxDelay = time.Duration(float64(refWall) * 0.9)
 	}
 	if maxDelay < 2*time.Second {
 		maxDelay = 2 * time.Second
@@ -215,6 +191,81 @@ func MigrateCrashLoop(ctx context.Context, spec MigrateLoopSpec, logf Logf) (*Ru
 		return r, fmt.Errorf("%d violations, first: %s", len(violations), violations[0])
 	}
 	return r, nil
+}
+
+// migrateReference migrates a clone of spec.Source into ref, checks it,
+// compares it with format 1 (tag times included) and settles it. It returns
+// the clean run's wall time and the reference digest.
+func migrateReference(ctx context.Context, spec MigrateLoopSpec, ref, logs string, r *Run, fail func(string, ...any), logf Logf) (time.Duration, map[string]TypeDigest, error) {
+	_ = os.RemoveAll(ref)
+	if err := CloneStore(spec.Source, ref); err != nil {
+		return 0, nil, err
+	}
+	cr, _, err := migrateRun(ctx, spec.Bin, ref, filepath.Join(logs, "migrate-reference.log"), 0)
+	if err != nil {
+		return 0, nil, err
+	}
+	r.Extra["reference_seconds"], r.Extra["reference_max_rss_mb"], r.Extra["reference_load_end"] = cr.Wall.Seconds(), cr.MaxRSSMB, Load()
+	logf("migrate: reference in %s, max RSS %.0f MB, load %s", cr.Wall.Round(time.Second), cr.MaxRSSMB, Load())
+	for _, p := range checkMigrated(ref) {
+		fail("reference: %s", p)
+	}
+	refDigest, err := DigestStore(ArmS, ref, spec.Schemas)
+	if err != nil {
+		return 0, nil, fmt.Errorf("digest the reference: %w", err)
+	}
+	// The reference against format 1 itself.
+	f1 := filepath.Join(spec.Work, "migrate-f1-digest")
+	_ = os.RemoveAll(f1)
+	if err := CloneStore(spec.Source, f1); err != nil {
+		return 0, nil, err
+	}
+	f1Digest, err := DigestFormat1(f1, spec.Schemas)
+	_ = os.RemoveAll(f1)
+	if err != nil {
+		return 0, nil, fmt.Errorf("digest format 1: %w", err)
+	}
+	for _, schema := range spec.Schemas {
+		for _, d := range DigestDiff(f1Digest[schema], refDigest[schema]) {
+			fail("format 1 vs migrated %s: %s", schema, d)
+		}
+		if f1Digest[schema].TagsAt != refDigest[schema].TagsAt {
+			fail("format 1 vs migrated %s: tag times differ (f1 %s, s %s)", schema, f1Digest[schema].TagsAt, refDigest[schema].TagsAt)
+		}
+	}
+	// The reference becomes the store a daemon leaves after its first start
+	// (every full-text index SDN enables built, WAL at rest), so reads time
+	// no background build and bytes count every file.
+	states, took, err := SettleStore(ref)
+	r.Extra["reference_fts_states"], r.Extra["reference_settle_s"] = states, took.Seconds()
+	if err != nil {
+		return 0, nil, fmt.Errorf("settle the reference: %w", err)
+	}
+	logf("migrate: reference settled in %s (full text %v)", took.Round(time.Second), states)
+	return cr.Wall, refDigest, nil
+}
+
+// digestClone digests a clone of store (a digest opens the store, which
+// must stay as it is).
+func digestClone(store, work string, schemas []string) (map[string]TypeDigest, error) {
+	tmp := filepath.Join(work, "migrate-ref-digest")
+	_ = os.RemoveAll(tmp)
+	if err := CloneStore(store, tmp); err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+	return DigestStore(ArmS, tmp, schemas)
+}
+
+// envWithout is this process's environment without key.
+func envWithout(key string) []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, key+"=") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // ReferenceStore is where the clean migration is kept: the format-4 fixture

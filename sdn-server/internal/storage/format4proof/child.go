@@ -134,6 +134,11 @@ func ExecChild(spec *ChildSpec) error {
 		if err != nil {
 			return err
 		}
+		if spec.Read.Label == LabelGrown {
+			if in.R01Held, err = LoadHeldHits(HeldHitsPath(spec.Work, spec.Read.Arm)); err != nil {
+				return err
+			}
+		}
 		shapes, err := BuildShapes(bs, in)
 		if err != nil {
 			return err
@@ -153,7 +158,14 @@ func ExecChild(spec *ChildSpec) error {
 		_, err = RunReads(*spec.Read, sh)
 		return err
 	case ModeIngest:
-		_, err := RunIngest(*spec.Ingest)
+		var hits map[string][]string
+		if spec.Ingest.HeldOut != "" {
+			var err error
+			if hits, err = benchsetHits(spec.Benchset); err != nil {
+				return err
+			}
+		}
+		_, err := RunIngest(*spec.Ingest, hits)
 		return err
 	case ModeM01:
 		hits, err := benchsetHits(spec.Benchset)
