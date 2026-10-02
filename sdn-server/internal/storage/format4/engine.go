@@ -63,6 +63,8 @@ type Engine struct {
 	once    sync.Once
 	stopErr error
 	memo    memo // counter answers kept between writes (memo.go)
+
+	prefetchStop chan struct{} // closed by Close: prefetchIndexes stops
 }
 
 var _ API = (*Engine)(nil)
@@ -93,14 +95,16 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 			return nil, fmt.Errorf("format4: %w", err)
 		}
 	}
-	prefetched := make(chan struct{})
-	go func() {
-		defer close(prefetched)
-		if opt.Create == OpenExisting {
-			prefetchIndexes(engineRoot)
+	e := &Engine{prefetchStop: make(chan struct{})}
+	if opt.Create == OpenExisting {
+		go prefetchIndexes(engineRoot, e.prefetchStop)
+	}
+	opened := false
+	defer func() {
+		if !opened {
+			close(e.prefetchStop)
 		}
 	}()
-	e := &Engine{}
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
 		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
 		Store: opt.Store, StoreRoot: root, InitConfig: encodeConfig(engineRoot, opt),
@@ -122,7 +126,7 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 		_, _ = inst.StopWithin(10 * time.Second)
 		return nil, err
 	}
-	<-prefetched
+	opened = true
 	return e, nil
 }
 
@@ -284,6 +288,9 @@ func (e *Engine) Stats() ([]uint64, error) {
 func (e *Engine) Close(ctx context.Context) error {
 	e.once.Do(func() {
 		e.closing.Store(true)
+		if e.prefetchStop != nil {
+			close(e.prefetchStop)
+		}
 		deadline := 30 * time.Second
 		if d, ok := ctx.Deadline(); ok {
 			deadline = max(time.Until(d), 0)
