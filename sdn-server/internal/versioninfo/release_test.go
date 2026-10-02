@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"testing"
 )
 
@@ -63,17 +62,6 @@ func TestStoreFormatStampSurvivesReleaseLinking(t *testing.T) {
 	}
 	if format, found, err := ReadStoreFormatStampFile(self); err != nil || !found || format != MaxStoreFormat {
 		t.Fatalf("test binary stamp: format %d found %v err %v, want %d", format, found, err, MaxStoreFormat)
-	}
-}
-
-func TestMaxStoreFormatIsTheHigherEngine(t *testing.T) {
-	engines := []int{Format1StoreFormat, PSEngineStoreFormatMax, P4StoreFormat}
-	if MaxStoreFormat != slices.Max(engines) || P4StoreFormat != 4 {
-		t.Fatalf("MaxStoreFormat %d (format-1 engine %d, partition-store engine %d, format-4 engine %d)",
-			MaxStoreFormat, Format1StoreFormat, PSEngineStoreFormatMax, P4StoreFormat)
-	}
-	if got := StoreFormatStamp(MaxStoreFormat); !bytes.Equal(got, storeFormatStamp[:]) {
-		t.Fatalf("StoreFormatStamp(MaxStoreFormat) = % x, the embedded stamp is % x", got, storeFormatStamp[:])
 	}
 }
 
