@@ -424,6 +424,7 @@ func (b format4Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRe
 		return nil, nil
 	}
 	normalized := make([]RawRecordRef, 0, len(refs))
+	checked := map[string]bool{}
 	var cids []string
 	for _, ref := range refs {
 		ref = normalizeRawRecordRef(ref)
@@ -431,11 +432,13 @@ func (b format4Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRe
 			return nil, errors.New("record cid is required")
 		}
 		normalized = append(normalized, ref)
-		if f4CIDStored(ref.CID) {
-			cids = append(cids, ref.CID)
+		if !checked[ref.CID] {
+			checked[ref.CID] = true
+			if f4CIDStored(ref.CID) {
+				cids = append(cids, ref.CID)
+			}
 		}
 	}
-	cids = dedupeStrings(cids)
 	// The copies (GET) and their tags (TAGS) are two reads: run them at once.
 	var (
 		tags    map[string][]format4.TagRow
@@ -461,8 +464,16 @@ func (b format4Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRe
 	if err := errors.Join(getErr, tagsErr); err != nil {
 		return nil, fmt.Errorf("raw record ref query failed: %w", err)
 	}
+	// A ref repeated in the request matches the same record: it is matched
+	// once, and each repeat gets its own copy.
 	ordered := make([]*Record, 0, len(normalized))
+	built := make(map[RawRecordRef]*Record, len(cids))
 	for _, ref := range normalized {
+		if m, ok := built[ref]; ok {
+			cp := *m
+			ordered = append(ordered, &cp)
+			continue
+		}
 		var matched *Record
 		for _, c := range copies[ref.CID] {
 			if ref.PeerID != "" && c.Peer != ref.PeerID {
@@ -503,6 +514,7 @@ func (b format4Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRe
 		if matched == nil {
 			return nil, fmt.Errorf("raw record ref not found: %s", ref.CID)
 		}
+		built[ref] = matched
 		ordered = append(ordered, matched)
 	}
 	return ordered, nil
