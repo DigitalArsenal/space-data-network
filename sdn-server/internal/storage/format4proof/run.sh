@@ -11,9 +11,12 @@
 #   build      the harness test binary, sds-tb-gen and spacedatanetwork
 #   prepare    inputs from a clone of the format-1 fixture
 #   migrate    store-migrate --to 4: the reference (kept as the format-4
-#              fixture) checked against format 1, then a run under kill -9
-#   bytes      bytes on disk per record, every arm
+#              fixture, settled: full text built for every type SDN enables)
+#              checked against format 1, then a run under kill -9
+#   bytes      bytes on disk per record, every arm, every file at rest
 #   reads      every benchset read, cold and warm, s / f1 / f2 back to back
+#              (a `<TYPE>@<source>` relation is held to format 1 answering
+#              the same question by SQL, measured on f1)
 #   ingest     phases A+B (the +28% store) and C (same-type producers)
 #   grown      the reads again on the +28% stores
 #   m01        reads during W01 + W06, writes repeated for 10 minutes
