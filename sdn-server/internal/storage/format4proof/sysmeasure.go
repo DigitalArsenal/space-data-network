@@ -60,7 +60,25 @@ type Tree struct {
 	Apparent  int64 // Σ file sizes
 	Allocated int64 // Σ allocated blocks × 512
 	Files     int64
-	WAL       int64 // Σ sizes of "*-wal" files
+	WAL       int64            // Σ sizes of "*-wal" files
+	Parts     map[string]int64 // Σ file sizes by part (partOf)
+}
+
+// partOf names the part of a store a file belongs to, from its path below
+// the store root: format 4's partition files ("fsql4/P"), each kind of type
+// file ("fsql4/T *.fts": index, journal, full text, spec), and any other
+// file by its top-level entry ("fsql4/control.db", "control.flatsqldb").
+func partOf(rel string) string {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	switch {
+	case len(parts) >= 3 && parts[0] == "fsql4" && parts[1] == "P":
+		return "fsql4/P"
+	case len(parts) == 3 && parts[0] == "fsql4" && parts[1] == "T":
+		return "fsql4/T *" + filepath.Ext(parts[2])
+	case len(parts) >= 2 && parts[0] == "fsql4":
+		return "fsql4/" + parts[1]
+	}
+	return parts[0]
 }
 
 // DiskTree walks dir. skip names top-level entries left out (a migrated
@@ -99,6 +117,12 @@ func DiskTree(dir string, skip ...string) (Tree, error) {
 		}
 		t.Files++
 		t.Apparent += info.Size()
+		if rel, err := filepath.Rel(dir, p); err == nil {
+			if t.Parts == nil {
+				t.Parts = map[string]int64{}
+			}
+			t.Parts[partOf(rel)] += info.Size()
+		}
 		t.Allocated += allocatedBytes(info)
 		if strings.HasSuffix(p, "-wal") {
 			t.WAL += info.Size()

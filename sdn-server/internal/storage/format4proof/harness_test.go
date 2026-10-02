@@ -65,7 +65,7 @@ func TestProofPrepare(t *testing.T) {
 }
 
 func TestProofBytes(t *testing.T) {
-	c := requireEnv(t, EnvBenchset, EnvOut)
+	c := requireEnv(t, EnvBenchset, EnvWork, EnvOut)
 	bs, err := LoadBenchset(c.Benchset)
 	if err != nil {
 		t.Fatal(err)

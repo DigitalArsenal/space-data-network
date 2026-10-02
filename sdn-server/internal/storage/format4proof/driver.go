@@ -289,15 +289,42 @@ func DriveBytes(c Config, uniqueRecords, copies int64) error {
 		if src == "" {
 			continue
 		}
-		t, err := DiskTree(src, notStoreBytes...)
-		if err != nil {
-			return err
-		}
 		r := &Run{Kind: KindBytes, Arm: arm, Format: ArmFormat(arm), Label: LabelFixture, Records: uniqueRecords,
-			Started: time.Now().UTC().Format(time.RFC3339), Machine: ThisMachine(), LoadStart: Load(), LoadEnd: Load(),
-			Extra: map[string]any{"store_bytes": float64(t.Apparent), "allocated_bytes": float64(t.Allocated), "files": float64(t.Files),
-				"wal_bytes": float64(t.WAL), "unique_records": float64(uniqueRecords), "copies": float64(copies),
-				"bytes_per_record": float64(t.Apparent) / float64(uniqueRecords), "bytes_per_copy": float64(t.Apparent) / float64(copies)}}
+			Started: time.Now().UTC().Format(time.RFC3339), Machine: ThisMachine(), LoadStart: Load(), Extra: map[string]any{}}
+		measure := func(dir string) error {
+			t, err := DiskTree(dir, notStoreBytes...)
+			if err != nil {
+				return err
+			}
+			for k, v := range map[string]any{"store_bytes": float64(t.Apparent), "allocated_bytes": float64(t.Allocated),
+				"files": float64(t.Files), "wal_bytes": float64(t.WAL), "parts": t.Parts, "unique_records": float64(uniqueRecords),
+				"copies": float64(copies), "bytes_per_record": float64(t.Apparent) / float64(uniqueRecords),
+				"bytes_per_copy": float64(t.Apparent) / float64(copies)} {
+				r.Extra[k] = v
+			}
+			return nil
+		}
+		var err error
+		if arm == ArmS {
+			// Every file at rest: partitions, type index, journal and full
+			// text for every type SDN enables, control.db, WAL. A clone is
+			// settled (the fixture itself is never opened).
+			err = c.withClone(src, "bytes-s", func(clone string) error {
+				states, took, err := SettleStore(clone)
+				r.Extra["fts_states"], r.Extra["settle_s"] = states, took.Seconds()
+				if err != nil {
+					return err
+				}
+				return measure(clone)
+			})
+		} else {
+			r.Extra["note"] = "the fixture as its daemon left it"
+			err = measure(src)
+		}
+		if err != nil {
+			return fmt.Errorf("bytes %s: %w", arm, err)
+		}
+		r.LoadEnd = Load()
 		if _, err := WriteRun(c.Out, r); err != nil {
 			return err
 		}
