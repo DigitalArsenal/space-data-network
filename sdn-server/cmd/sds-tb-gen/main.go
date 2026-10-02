@@ -25,7 +25,8 @@
 // (M7), DiskUsageBytes and PeerStorageBytes (B8), DataSummary (B7). It stops
 // at -duration or -max-records, then waits two -stall periods for calls in
 // flight and reports the ones still stuck. When no call returns for -hang
-// while calls are in flight, it stops at once (exit 3) with the stacks.
+// while calls are in flight (a growth step's pause does not count), it stops
+// at once (exit 3) with the stacks.
 //
 // The engine runs AOT (prewarmed into the daemon's cache first, as the
 // `prewarm-aot` command does); SDN_STORE_FORMAT=2 is set for the store.
@@ -335,13 +336,27 @@ func run(c config) error {
 	// The hang watchdog reads only in-memory counters, so it fires even when
 	// the sampler waits on the store (a growth step's write lock waits for
 	// the calls in flight). A store that never returns a write is a FAIL
-	// with evidence, not a run that sits for hours.
+	// with evidence, not a run that sits for hours. The idle time runs from
+	// the later of the last returned call and the oldest call in flight: a
+	// growth step holds the writers before their calls start (they wait on
+	// the store's lock, not in the store), so the calls that resume after a
+	// long step are not hung for the step's length.
 	go func() {
 		for range time.Tick(c.sample) {
 			st.mu.Lock()
 			inflight := len(st.inflight)
+			since := time.Unix(0, st.lastDone.Load())
+			var oldest time.Time
+			for _, t0 := range st.inflight {
+				if oldest.IsZero() || t0.Before(oldest) {
+					oldest = t0
+				}
+			}
 			st.mu.Unlock()
-			idle := time.Since(time.Unix(0, st.lastDone.Load()))
+			if oldest.After(since) {
+				since = oldest
+			}
+			idle := time.Since(since)
 			if inflight == 0 || idle < c.hang {
 				continue
 			}
