@@ -19,6 +19,10 @@
 #              the same question by SQL, measured on f1)
 #   ingest     phases A+B (the +28% store) and C (same-type producers)
 #   grown      the reads again on the +28% stores
+#   grown-c31  format 1's R17/R18 on its +28% store only: the same-question
+#              bars of the `<TYPE>@<source>` slopes (gate 3), for a grown
+#              pass run without f1 (P4PROOF_ARMS=s,f2: f1's full grown
+#              pass takes about an hour); about 10 minutes
 #   m01        reads during W01 + W06, writes repeated for 10 minutes
 #              (P4PROOF_M01_MINUTES)
 #   writes     W01-W10 with record-set digests
@@ -66,6 +70,7 @@ for phase in "${PHASES[@]}"; do
     reads) P4PROOF_LABEL=fixture tst TestProofReads ;;
     ingest) tst TestProofIngest ;;
     grown) P4PROOF_LABEL=grown tst TestProofReads ;;
+    grown-c31) P4PROOF_ARMS=f1 P4PROOF_CLASSES=R17,R18 P4PROOF_LABEL=grown tst TestProofReads ;;
     m01) tst TestProofM01 ;;
     writes) tst TestProofWrites ;;
     crash) P4PROOF_CRASH=1 tst TestProofCrash ;;

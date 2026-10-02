@@ -306,11 +306,12 @@ func isC31Shape(k ShapeKey) bool {
 	return k.Class == "R18" || (k.Class == "R17" && strings.Contains(a18Relation("SELECT _data FROM "+k.Shape), "@"))
 }
 
-// replacedBySameQuestion reports a `<TYPE>@<source>` shape whose arm also
-// ran the same-question baseline, which then stands for it in that arm's
-// slopes (format 1's relation answers another question).
-func replacedBySameQuestion(st map[ShapeKey]*ShapeStats, k ShapeKey) bool {
-	return isC31Shape(k) && st[ShapeKey{k.Class, k.Shape + SameQuestionSuffix}] != nil
+// otherQuestion reports a `<TYPE>@<source>` shape (C-31) as a baseline arm
+// answers it: another question (formats 1 and 2 keep the type's per-type
+// window), so it is never a bar. Format 1's same-question baseline (its own
+// shape key) stands for it in format 1's slopes; format 2 has none.
+func otherQuestion(arm string, k ShapeKey) bool {
+	return arm != ArmS && isC31Shape(k)
 }
 
 // c31Checks holds a `<TYPE>@<source>` shape to format 1 answering the same
@@ -351,6 +352,13 @@ func c31Checks(k ShapeKey, ss, a, b, same *ShapeStats) []Check {
 		out = append(out, c)
 	}
 	return out
+}
+
+// growthC31 reports a count-scaled growth probe that asks a
+// `<TYPE>@<source>` question ("probe R17 A18 MPE@celestrak-gp").
+func growthC31(shape string) bool {
+	x := strings.TrimPrefix(shape, "probe ")
+	return !strings.HasSuffix(x, SameQuestionSuffix) && strings.HasPrefix(x, "R17 A18 ") && strings.Contains(x, "@")
 }
 
 func sortedKeys(m map[ShapeKey]bool) []ShapeKey {
@@ -584,6 +592,10 @@ func degradeGate(runs []*Run) Gate {
 				}
 				if math.IsNaN(bar) {
 					ck.Note = "no baseline slope"
+					if c == "R17" || c == "R18" {
+						ck.Note = "no baseline slope: C-31 shapes are held to format 1's same-question baseline at both sizes " +
+							"(run.sh grown-c31); format 2's relations answer another question"
+					}
 				}
 				g.Checks = append(g.Checks, ck)
 			}
@@ -637,7 +649,7 @@ func classSlopes(fix, grown []*Run, arm string, n0, n1 int64) map[string]map[str
 	per := map[string]map[string][]float64{}
 	for k, s0 := range a {
 		s1 := b[k]
-		if s1 == nil || replacedBySameQuestion(a, k) {
+		if s1 == nil || otherQuestion(arm, k) {
 			continue
 		}
 		for _, m := range readMetrics {
@@ -661,7 +673,7 @@ func classSlopes(fix, grown []*Run, arm string, n0, n1 int64) map[string]map[str
 		var v []float64
 		for _, r := range runs {
 			for _, s := range r.Samples {
-				if s.Class != class || (s.Pass == 0) != cold || replacedBySameQuestion(a, ShapeKey{s.Class, s.Shape}) {
+				if s.Class != class || (s.Pass == 0) != cold || otherQuestion(arm, ShapeKey{s.Class, s.Shape}) {
 					continue
 				}
 				if s.Err != "" {
@@ -692,7 +704,11 @@ func classSlopes(fix, grown []*Run, arm string, n0, n1 int64) map[string]map[str
 // growthChecks: the count-scaled growth tier (KindGrowth runs, one per arm
 // and step, Records = the store's records at the step). Every probe shape's
 // p50 and p99 per-doubling factor over the steps an arm ran, s against each
-// baseline that ran at least two steps.
+// baseline that ran at least two steps. A `<TYPE>@<source>` probe (C-31) is
+// held to format 1 answering the same question by SQL (its
+// SameQuestionSuffix probe, run on format 1 only), as in gate 2a; the
+// relations of formats 1 and 2 answer another question and are noted. With
+// no same-question baseline at two steps it is reported, not gated.
 func growthChecks(g *Gate, runs []*Run) {
 	if len(runs) == 0 {
 		g.Missing = append(g.Missing, "count-scaled growth step (sds-tb-gen) not run")
@@ -739,9 +755,31 @@ func growthChecks(g *Gate, runs []*Run) {
 		}
 		return keys[i].metric < keys[j].metric
 	})
+	slope := func(arm string, k key) float64 {
+		v, ok := PerDoubling(points[arm][k])
+		if !ok {
+			return math.NaN()
+		}
+		return v
+	}
 	for _, k := range keys {
 		s, ok := PerDoubling(points[ArmS][k])
-		if !ok {
+		if !ok || strings.HasSuffix(k.shape, SameQuestionSuffix) {
+			continue
+		}
+		if growthC31(k.shape) {
+			same := slope(ArmF1, key{k.shape + SameQuestionSuffix, k.metric})
+			ck := Check{Item: "growth " + k.shape + " " + k.metric + " per doubling", S: s, F1: same, F2: math.NaN(), Bar: same,
+				Unit: "x", Pass: !math.IsNaN(same) && s < same}
+			ck.Note = fmt.Sprintf("C-31: as formats 1 and 2 answer the relation (another question): f1 %.2f, f2 %.2f per doubling",
+				slope(ArmF1, k), slope(ArmF2, k))
+			if math.IsNaN(same) {
+				ck.Info = true
+				ck.Note += "; no same-question baseline (format 1 by SQL) ran two growth steps: reported, not gated"
+			} else {
+				ck.Note += "; bar = format 1 answering the same question by SQL"
+			}
+			g.Checks = append(g.Checks, ck)
 			continue
 		}
 		f1, ok1 := PerDoubling(points[ArmF1][k])
