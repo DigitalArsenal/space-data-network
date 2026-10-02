@@ -14,6 +14,10 @@ type Policy struct {
 	// record once per matching tag row, format 4 returns it once; format 1's
 	// rows collapse to the first row of each CID before comparing.
 	Collapse bool `json:"collapse,omitempty"`
+	// CollapseSkip exempts the calls whose name contains it from Collapse
+	// (a coverage shape's refs reads: a repeated ref returns its record once
+	// per ref, on every format).
+	CollapseSkip string `json:"collapse_skip,omitempty"`
 	// Accepted names a documented difference (a contract clause or an owner
 	// decision). A shape that differs under it is reported as accepted, never
 	// as equal.
@@ -198,7 +202,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			continue
 		}
 		ra, rb := a.Rows, b.Rows
-		if pol.Collapse {
+		if pol.Collapse && (pol.CollapseSkip == "" || !strings.Contains(a.Call, pol.CollapseSkip)) {
 			if c := collapseByCID(ra); len(c) != len(ra) {
 				v.Notes = append(v.Notes, fmt.Sprintf("%s: C-10 collapsed format 1's %d rows to %d", a.Call, len(ra), len(c)))
 				ra = c
