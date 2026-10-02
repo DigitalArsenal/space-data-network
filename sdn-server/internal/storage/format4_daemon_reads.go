@@ -940,9 +940,13 @@ func (b format4Backend) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Recor
 	return out, nil
 }
 
-// IndexedRecordWindowLimitForBytes is the shard byte probe over the window's
-// stored lengths (no payload read): the longest prefix whose frames fit,
-// always at least one record, and whether the budget cut it.
+// IndexedRecordWindowLimitForBytes is the shard byte probe: the longest
+// prefix of the window whose frames (stored length plus the size prefix)
+// fit maxBytes, always at least one record, and whether the budget cut it.
+// The engine's HEAD walks the window with a byte cap over stored lengths
+// (contract §3.6: no payload read, nothing in Go memory). The cap knows no
+// frame overhead, so each step reserves it: one overhead for an upper bound
+// on what fits, then every candidate's for a prefix that surely fits.
 func (b format4Backend) IndexedRecordWindowLimitForBytes(filter IndexedRecordQuery, maxBytes int64) (int, bool, error) {
 	if err := b.closed(); err != nil {
 		return 0, false, err
@@ -954,25 +958,84 @@ func (b format4Backend) IndexedRecordWindowLimitForBytes(filter IndexedRecordQue
 	if filter, err = normalizeIndexedRecordWindow(filter); err != nil {
 		return 0, false, err
 	}
-	recs, err := b.d.api().Window(b.d.ctx, f4WindowQuery(typ, filter))
+	n, cut, err := b.f4WindowFit(f4WindowQuery(typ, filter), maxBytes)
 	if errors.Is(err, format4.ErrNoType) {
 		return 0, false, nil
 	}
 	if err != nil {
 		return 0, false, fmt.Errorf("shard byte probe failed: %w", err)
 	}
-	var total int64
-	count, truncated := 0, false
-	for _, r := range recs {
-		frame := r.Len + DatasetShardFrameOverheadBytes
-		if count > 0 && total+frame > maxBytes {
-			truncated = true
-			break
+	return int(n), cut, nil
+}
+
+// f4WindowFit is IndexedRecordWindowLimitForBytes over the engine window q.
+func (b format4Backend) f4WindowFit(q format4.Query, maxBytes int64) (int64, bool, error) {
+	const frame = DatasetShardFrameOverheadBytes
+	api, ctx := b.d.api(), b.d.ctx
+	// head is HEAD over the window's records after the first skip, at most
+	// limit of them (0 = to the window's end), their stored lengths capped
+	// (0 = no cap).
+	head := func(skip, limit, byteCap int64) (format4.Head, error) {
+		h := q
+		h.Offset, h.Limit, h.ByteCap = q.Offset+skip, limit, byteCap
+		if q.Limit > 0 {
+			if skip >= q.Limit {
+				return format4.Head{}, nil
+			}
+			if limit == 0 || limit > q.Limit-skip {
+				h.Limit = q.Limit - skip
+			}
 		}
-		total += frame
-		count++
+		return api.Head(ctx, h)
 	}
-	return count, truncated, nil
+	var n, used int64 // records taken, their frame bytes
+	for q.Limit == 0 || n < q.Limit {
+		budget := maxBytes - used
+		if budget <= frame {
+			next, err := head(n, 1, 0)
+			return b.f4FitAtLeastOne(head, n, next.N > 0, err)
+		}
+		up, err := head(n, 0, budget-frame)
+		if err != nil {
+			return 0, false, err
+		}
+		if up.N == 0 {
+			// The next record does not fit (up.More), or none is left.
+			return b.f4FitAtLeastOne(head, n, up.More, nil)
+		}
+		if up.Bytes+up.N*frame <= budget {
+			// All fit; the next one's length alone passed budget-frame.
+			return n + up.N, up.More, nil
+		}
+		var fit format4.Head
+		if c := budget - up.N*frame; c > 0 {
+			if fit, err = head(n, up.N, c); err != nil {
+				return 0, false, err
+			}
+		}
+		if fit.N == 0 {
+			// The next record alone fits: up.N >= 1.
+			if fit, err = head(n, 1, budget-frame); err != nil {
+				return 0, false, err
+			}
+		}
+		n, used = n+fit.N, used+fit.Bytes+fit.N*frame
+	}
+	return n, false, nil
+}
+
+// f4FitAtLeastOne ends a byte probe that took n records with a next one
+// pending (more) or not: a window whose first record alone passes the budget
+// is a one-record shard, cut when a second record follows.
+func (b format4Backend) f4FitAtLeastOne(head func(skip, limit, byteCap int64) (format4.Head, error), n int64, more bool, err error) (int64, bool, error) {
+	if err != nil || n > 0 || !more {
+		return n, more, err
+	}
+	second, err := head(1, 1, 0)
+	if err != nil {
+		return 0, false, err
+	}
+	return 1, second.N > 0, nil
 }
 
 // DatasetPublicationSetFingerprint is the sorted text CIDs of the records a
