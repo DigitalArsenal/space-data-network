@@ -201,9 +201,14 @@ WAL index of every file must live in one linear memory.
   `P4ThreadsPackage` is `flatsql@unreleased`, `format4.Open` and `prewarm-aot`
   refuse it, and nothing selects format 4 (`SDN_STORE_FORMAT` unset is
   format 1). The release replaces this entry with the package, gitHead,
-  sha256 (the package's `wasm/integrity.json`; `TestEmbeddedP4ThreadsArtifact`)
-  and size, and `versioninfo.P4EngineSHA256` follows it
-  (`TestP4EngineIsTheBuildStamp`).
+  sha256 (the package's `wasm/integrity.json`) and size, and sets
+  `versioninfo.P4EngineSHA256`, the one pin, to that sha256.
+- Store-format stamp: the build stamps `max_store_format` 4 only when it pins
+  a format-4 engine (`versioninfo.P4EngineSHA256` non-empty); otherwise the
+  stamp stays at the format-2 engine's level (3), so the update guard refuses
+  such a build on a format-4 store. `flatsqlrt`'s init refuses to start a
+  binary whose embedded bytes are not the pinned engine (bytes with no pin,
+  or bytes whose sha256 differs from the pin, or no bytes with a pin).
 - Development: the p4 and format4 tests also run on `SDN_P4_WASM=<path>`, a
   build of the engine's task branch, without embedding it.
 

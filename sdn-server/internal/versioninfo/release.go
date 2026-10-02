@@ -63,20 +63,28 @@ const (
 	// engine refuses a store one level above it.
 	PSEngineStoreFormatMax = 3
 
-	// P4EngineSHA256 names the format-4 engine (store format 4, one SQLite
-	// file per partition): the sha256 of the embedded flatsql-p4-threads.wasm
-	// (flatsqlrt.P4ThreadsSHA256). TestP4EngineIsTheBuildStamp
-	// (internal/storage/format4) pins the two equal, so repinning the engine
-	// fails until this is re-derived from it.
-	P4EngineSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	// P4EngineSHA256 is the release pin of the format-4 engine (store format
+	// 4, one SQLite file per partition): the sha256 of the published
+	// flatsql-p4-threads.wasm (its package's wasm/integrity.json), which
+	// flatsqlrt embeds. It is EMPTY until a release is embedded. flatsqlrt
+	// refuses to start a binary whose embedded bytes are not this engine
+	// (empty bytes with no pin, else bytes with exactly this sha256).
+	P4EngineSHA256 = ""
 
 	// P4StoreFormat is format 4's fsql4/STORE format: the format a format-4
 	// store is at, and the one the format-4 engine opens.
 	P4StoreFormat = 4
 
+	// p4Pinned is 1 when this build pins (and so embeds) a format-4 engine,
+	// else 0.
+	p4Pinned = min(len(P4EngineSHA256), 1)
+
 	// MaxStoreFormat is the highest on-disk store format this build opens: the
-	// highest of its embedded engines.
-	MaxStoreFormat = max(Format1StoreFormat, PSEngineStoreFormatMax, P4StoreFormat)
+	// highest of its embedded engines. Format 4 counts only when the build
+	// pins a format-4 engine; without one the stamp stays at the format-2
+	// engine's level, so the update guard refuses this build on a format-4
+	// store instead of letting it fail at open (rollback, review 2).
+	MaxStoreFormat = max(Format1StoreFormat, PSEngineStoreFormatMax, P4StoreFormat*p4Pinned)
 )
 
 const (
@@ -95,7 +103,7 @@ const (
 var storeFormatStamp = [...]byte{
 	0x00, 'S', 'D', 'N', '.', 'M', 'A', 'X', '_', 'S', 'T', 'O', 'R', 'E', '_', 'F', 'O', 'R', 'M', 'A', 'T', 0x00,
 	storeFormatStampVersion,
-	MaxStoreFormat,
+	byte(MaxStoreFormat),
 	^byte(MaxStoreFormat),
 }
 

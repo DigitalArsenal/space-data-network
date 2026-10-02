@@ -78,18 +78,18 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	if err := checkDataRoot(root, opt.Create); err != nil {
 		return nil, err
 	}
-	engineRoot := filepath.Join(root, marker.Dir)
-	if opt.Create != OpenExisting {
-		if err := os.MkdirAll(engineRoot, 0o700); err != nil {
-			return nil, fmt.Errorf("format4: %w", err)
-		}
-	}
 	wasm := opt.Wasm
 	if wasm == nil {
 		wasm = flatsqlrt.P4ThreadsWasm()
 	}
 	if len(wasm) == 0 {
-		return nil, errors.New("format4: this build embeds no format-4 engine (flatsql-p4-threads.wasm)")
+		return nil, flatsqlrt.ErrNoP4Artifact
+	}
+	engineRoot := filepath.Join(root, marker.Dir)
+	if opt.Create != OpenExisting {
+		if err := os.MkdirAll(engineRoot, 0o700); err != nil {
+			return nil, fmt.Errorf("format4: %w", err)
+		}
 	}
 	e := &Engine{}
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
