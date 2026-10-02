@@ -344,7 +344,7 @@ type API interface {
 	SetQuota(bytes int64) error
 	Activate(ctx context.Context) error // CreateForMigration only: engine step 1 of §2.3 (Go then calls marker.FinishActivation)
 	Stats() ([]uint64, error)           // §3.10 order
-	// writes (durable when they return; P4_E_BUSY retried with backoff until ctx is done)
+	// writes (durable when they return; P4_E_BUSY retried with backoff until ctx is done, or ErrBusy after 2 minutes of refusals)
 	Put(ctx context.Context, b Batch) ([]Outcome, error) // len == len(b.Records), input order; the client splits by request size
 	Supersede(ctx context.Context, typ, provider, source, keepBatch string, apply bool) (SupersedeResult, error)
 	Delete(ctx context.Context, typ string, cids []string) (int64, error)
