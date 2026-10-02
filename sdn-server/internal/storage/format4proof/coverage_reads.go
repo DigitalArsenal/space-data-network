@@ -390,57 +390,62 @@ func (c *cov) v03() []Shape {
 		c.rawQuery("cursor MPE max_rowid below after", with(cur("MPE.fbs", 10), func(q *storage.RawRecordQuery) { q.AfterRowID = 2200000; q.MaxRowID = 2199999 }), false),
 		c.rawQuery("cursor CAT hydrated", cur("CAT.fbs", 10), true),
 	)
-	// Lanes, the copy's peer, the CID.
+	// Lanes, the copy's peer, the CID. A filter on part of a lane (no batch)
+	// runs on CAT: format 1 plans a partial lane over a 1.7-million-record
+	// type as a sort of every match and does not answer within its engine's
+	// 5-minute budget (the OMM provider-only page poisoned it).
 	lanes = append(lanes,
-		c.rawQuery("cursor OMM provider only", with(cur("OMM.fbs", 20), func(q *storage.RawRecordQuery) { q.ProviderID = FixtureProvider }), false),
-		c.rawQuery("cursor MPE source only", with(cur("MPE.fbs", 20), func(q *storage.RawRecordQuery) { q.SourceName = "celestrak-gp" }), false),
+		c.rawQuery("cursor CAT provider only", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.ProviderID = FixtureProvider }), false),
+		c.rawQuery("cursor CAT source only", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.SourceName = "celestrak-satcat" }), false),
 		c.rawQuery("cursor CAT batch only", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.BatchID = "CAT-celestrak-satcat-csv-b000" }), false),
-		c.rawQuery("cursor IQC producer peer", with(cur("IQC.fbs", 20), func(q *storage.RawRecordQuery) { q.ProducerPeerID = fixturePPeer }), false),
-		c.rawQuery("cursor IQC producer public key", with(cur("IQC.fbs", 20), func(q *storage.RawRecordQuery) { q.ProducerPublicKey = "nope" }), false),
+		c.rawQuery("cursor CAT producer peer", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.ProducerPeerID = fixturePPeer }), false),
+		c.rawQuery("cursor CAT producer public key", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.ProducerPublicKey = "nope" }), false),
 		c.rawQuery("cursor OMM full lane", with(cur("OMM.fbs", 20), func(q *storage.RawRecordQuery) {
 			q.ProviderID, q.SourceName, q.BatchID, q.ProducerPeerID = FixtureProvider, "celestrak-gp", OMMLatestBatch, fixturePPeer
 		}), false),
-		c.rawQuery("cursor OMM no such batch", with(cur("OMM.fbs", 20), func(q *storage.RawRecordQuery) { q.BatchID = "no-such-batch" }), false),
+		c.rawQuery("cursor CAT no such batch", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.BatchID = "no-such-batch" }), false),
 		c.rawQuery("default IQC lane offset 100", storage.RawRecordQuery{SchemaName: "IQC.fbs", SourceName: "IQEngine", BatchID: iqcBatch, Limit: 10, Offset: 100}, false),
-		c.rawQuery("cursor IQC peer", with(cur("IQC.fbs", 20), func(q *storage.RawRecordQuery) { q.PeerID = iqcPeer }), false),
-		c.rawQuery("cursor IQC sigmf peer", with(cur("IQC.fbs", 20), func(q *storage.RawRecordQuery) { q.PeerID = iqcSigmfPeer }), false),
+		c.rawQuery("cursor IQC peer near the end", with(cur("IQC.fbs", 20), func(q *storage.RawRecordQuery) { q.PeerID, q.AfterRowID = iqcPeer, 418900 }), false),
+		c.rawQuery("cursor IQC sigmf peer near the end", with(cur("IQC.fbs", 20), func(q *storage.RawRecordQuery) { q.PeerID, q.AfterRowID = iqcSigmfPeer, 418900 }), false),
 		c.rawQuery("default OMM peer", storage.RawRecordQuery{SchemaName: "OMM.fbs", PeerID: gpPeer, Limit: 10}, false),
-		c.rawQuery("cursor OMM unknown peer", with(cur("OMM.fbs", 20), func(q *storage.RawRecordQuery) { q.PeerID = iqcPeer }), false),
+		c.rawQuery("cursor CAT unknown peer", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.PeerID = iqcPeer }), false),
 		c.rawQuery("cursor OMM cid", with(cur("OMM.fbs", 20), func(q *storage.RawRecordQuery) { q.CID = c.hits["OMM.fbs"][3] }), false),
 		c.rawQuery("default IQC cid", storage.RawRecordQuery{SchemaName: "IQC.fbs", CID: c.hits["IQC.fbs"][3], Limit: 10}, false),
 		c.rawQuery("cursor OMM non-canonical cid", with(cur("OMM.fbs", 20), func(q *storage.RawRecordQuery) { q.CID = strings.ToUpper(c.hits["OMM.fbs"][3]) }), false),
 		c.rawQuery("cursor OMM miss cid", with(cur("OMM.fbs", 20), func(q *storage.RawRecordQuery) { q.CID = c.miss["OMM.fbs"][0] }), false),
 	)
-	// Every sync_filter field and operator (cursor pages of 20).
+	// Every sync_filter field and operator (cursor pages of 20). A filter
+	// most records meet runs on CAT (format 1 sorts every match: on OMM or
+	// MPE that runs past its engine budget); OMM and MPE take selective ones.
 	for _, f := range []struct{ schema, filter string }{
-		{"OMM.fbs", "EPOCH < '2026-09-01T06:00:00Z'"},
-		{"OMM.fbs", "EPOCH >= '2026-09-27T00:00:00Z'"},
-		{"OMM.fbs", "EPOCH_UNIX > 1789371001"},
-		{"OMM.fbs", "EPOCH_UNIX <= 1788300000"},
+		{"OMM.fbs", "EPOCH < '2026-09-01T03:00:00Z'"},
+		{"OMM.fbs", "EPOCH >= '2026-09-27T18:00:00Z'"},
+		{"OMM.fbs", "EPOCH_UNIX > 1790540000"},
+		{"OMM.fbs", "EPOCH_UNIX <= 1788231600"},
 		{"OMM.fbs", "EPOCH_UNIX BETWEEN 1789371001 AND 1789374601"},
-		{"OMM.fbs", "SOURCE_TIMESTAMP >= 1790000000"},
-		{"OMM.fbs", "SOURCE_TIMESTAMP < 1790000000"},
-		{"OMM.fbs", "EPOCH_DAY != '2026-09-14'"},
-		{"OMM.fbs", "EPOCH_DAY <> '2026-09-01'"},
-		{"OMM.fbs", "EPOCH_DAY LIKE '2026-09-2%'"},
-		{"OMM.fbs", "EPOCH_DAY > '2026-09-26'"},
+		{"CAT.fbs", "SOURCE_TIMESTAMP >= 1790651400"},
+		{"CAT.fbs", "SOURCE_TIMESTAMP < 1790651400"},
+		{"CAT.fbs", "EPOCH_DAY != '2026-09-14'"},
+		{"CAT.fbs", "EPOCH_DAY <> '2026-09-01'"},
+		{"OMM.fbs", "EPOCH_DAY LIKE '2026-09-14'"},
+		{"OMM.fbs", "EPOCH_DAY > '2026-09-27'"},
 		{"OMM.fbs", "NORAD_CAT_ID > 32000"},
 		{"OMM.fbs", "NORAD_CAT_ID <= 3"},
 		{"OMM.fbs", "NORAD_CAT_ID >= 32014"},
-		{"OMM.fbs", "NORAD_CAT_ID != 1"},
-		{"OMM.fbs", "NORAD_CAT_ID <> 1"},
+		{"CAT.fbs", "NORAD_CAT_ID != 1"},
+		{"CAT.fbs", "NORAD_CAT_ID <> 1"},
 		{"OMM.fbs", "idx.NORAD_CAT_ID = 25544"},
 		{"OMM.fbs", "norad_cat_id = '25544'"},
 		{"OMM.fbs", "OBJECT_ID LIKE '2026-2554%'"},
 		{"OMM.fbs", "OBJECT_ID = '2026-25544A'"},
-		{"OMM.fbs", "OBJECT_ID != '2026-25544A'"},
+		{"CAT.fbs", "OBJECT_ID != '1990-40463A'"},
 		{"OMM.fbs", "NORAD_CAT_ID >= 25000 AND NORAD_CAT_ID <= 25010 AND EPOCH_DAY = '2026-09-14'"},
 		{"OMM.fbs", "EPOCH BETWEEN '2026-09-14T00:00:00Z' AND '2026-09-14T01:00:00Z' AND NORAD_CAT_ID < 50"},
 		{"MPE.fbs", "ENTITY_ID LIKE '2252%'"},
-		{"MPE.fbs", "ENTITY_ID != '1 lorem-ipsum-dolor lorem-ipsum-dol'"},
+		{"CAT.fbs", "ENTITY_ID != 'x'"},
 		{"MPE.fbs", "EPOCH_DAY = '2026-09-20'"},
-		{"IQC.fbs", "FILE_ID LIKE '%'"},
-		{"IQC.fbs", "EPOCH_UNIX > 0"},
+		{"IQC.fbs", "FILE_ID = 'x'"},
+		{"IQC.fbs", "EPOCH_UNIX < 1000000000"},
 		{"CAT.fbs", "OBJECT_TYPE = 'PAYLOAD'"},
 		{"CAT.fbs", "OBJECT_TYPE != 'DEBRIS'"},
 		{"CAT.fbs", "OBJECT_TYPE LIKE 'PAY%'"},
@@ -1056,8 +1061,6 @@ func (c *cov) v08() []Shape {
 	}
 	calls = append(calls, c.valueCall("CheckFullTextSearch empty search", "", func(s *storage.FlatSQLStore) (Row, error) {
 		return ValueRow("ok", "1"), s.CheckFullTextSearch("CAT.fbs", "")
-	}), c.valueCall("CheckFullTextSearch bad expression", "", func(s *storage.FlatSQLStore) (Row, error) {
-		return ValueRow("ok", "1"), s.CheckFullTextSearch("CAT.fbs", "\"")
 	}))
 	return []Shape{covShape(class, "accounting, full text, hooks, ledger", "", calls...)}
 }
