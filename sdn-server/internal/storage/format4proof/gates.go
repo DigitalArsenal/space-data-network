@@ -296,10 +296,21 @@ func readsGate(runs []*Run) Gate {
 	return g
 }
 
-// isC31Shape reports a `<TYPE>@<source>` relation shape (R17's names are
-// the relation and its WHERE).
+// isC31Shape reports a `<TYPE>@<source>` shape: an R17 relation (its name
+// is the relation and its WHERE) or an R18 epoch stream (every one names a
+// source).
 func isC31Shape(k ShapeKey) bool {
-	return k.Class == "R17" && strings.Contains(a18Relation("SELECT _data FROM "+k.Shape), "@")
+	if strings.HasSuffix(k.Shape, SameQuestionSuffix) {
+		return false
+	}
+	return k.Class == "R18" || (k.Class == "R17" && strings.Contains(a18Relation("SELECT _data FROM "+k.Shape), "@"))
+}
+
+// replacedBySameQuestion reports a `<TYPE>@<source>` shape whose arm also
+// ran the same-question baseline, which then stands for it in that arm's
+// slopes (format 1's relation answers another question).
+func replacedBySameQuestion(st map[ShapeKey]*ShapeStats, k ShapeKey) bool {
+	return isC31Shape(k) && st[ShapeKey{k.Class, k.Shape + SameQuestionSuffix}] != nil
 }
 
 // c31Checks holds a `<TYPE>@<source>` shape to format 1 answering the same
@@ -316,7 +327,7 @@ func c31Checks(k ShapeKey, ss, a, b, same *ShapeStats) []Check {
 			}
 			return fmt.Sprintf("%.3f ms", m.get(st))
 		}
-		notes := []string{fmt.Sprintf("C-31: the relations answer another question (f1 %s, f2 %s)", rel(a), rel(b))}
+		notes := []string{fmt.Sprintf("C-31: as formats 1 and 2 answer the shape (another question, or a cache): f1 %s, f2 %s", rel(a), rel(b))}
 		if ss != nil {
 			c.S = m.get(ss)
 			if ss.Errors > 0 {
@@ -626,7 +637,7 @@ func classSlopes(fix, grown []*Run, arm string, n0, n1 int64) map[string]map[str
 	per := map[string]map[string][]float64{}
 	for k, s0 := range a {
 		s1 := b[k]
-		if s1 == nil {
+		if s1 == nil || replacedBySameQuestion(a, k) {
 			continue
 		}
 		for _, m := range readMetrics {
@@ -650,7 +661,7 @@ func classSlopes(fix, grown []*Run, arm string, n0, n1 int64) map[string]map[str
 		var v []float64
 		for _, r := range runs {
 			for _, s := range r.Samples {
-				if s.Class != class || (s.Pass == 0) != cold {
+				if s.Class != class || (s.Pass == 0) != cold || replacedBySameQuestion(a, ShapeKey{s.Class, s.Shape}) {
 					continue
 				}
 				if s.Err != "" {
