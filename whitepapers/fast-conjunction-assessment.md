@@ -6,7 +6,7 @@ Anthony "TJ" Koury III
 
 Edgesource, Space Data Network · tj@edgesource.com
 
-Technical whitepaper 1.4 | 2 October 2026
+Technical whitepaper 1.5 | 2 October 2026
 
 Numerical evidence cutoff: 2 October 2026
 
@@ -32,6 +32,7 @@ Operators keep their most precise orbits and planned maneuvers private. Section 
 - **Cost.** Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.
 - **What it reveals.** The paper shows how a naive design leaks distances, how invented trajectories can locate a hidden satellite, and which defenses stop that.
 - **What it cannot hide.** Real close approaches reveal what safety requires.
+- **Decoys.** Hiding a real orbit among N decoys bounds a prober's chance at e^(2ε)/N, but no decoy generator we measured is ready: the best hid a real orbit among about 4 of 100 candidates.
 - **Status.** The protocol is not yet built.
 
 ## 1 The problem
@@ -341,7 +342,8 @@ precise trajectories exist. Private screening lets two operators learn when
 their objects come close without either seeing the other's trajectory.
 
 This section specifies the protocol, measures its arithmetic, and analyses
-what it reveals and how it can be abused ([R14](#r14)). **It is not yet
+what it reveals and how it can be abused ([R14](#r14)). It also measures
+whether decoy orbits can hide a satellite ([R16](#r16)). **It is not yet
 built.** SDN's encrypted-screening endpoint accepts requests and returns no
 result.
 
@@ -372,6 +374,47 @@ v_max = 15.5 km/s, R′ is 9.2 km at 1 s steps and 77.7 km at 10 s steps.
 - No third-party assessor is involved. A party holding the key that decrypts
   the result can also decrypt every input it receives under that key, so an
   assessor that decrypts adds trust without adding privacy.
+
+### Rules of the exchange
+
+**Fixed grid.**
+- Every encrypted trajectory uses a grid set by the protocol: UTC-aligned
+  windows, a fixed step Δt, and 8,192 steps per encrypted block.
+- Slot j always means t₀ + jΔt, so a requester cannot choose its own sample
+  times.
+
+**One answer per pair and window.**
+- B answers once per (counterpart object, window).
+- It checks every step of the window, never a subset.
+- A accepts one digitally signed response per pair, so it cannot ask twice
+  and keep the better answer.
+
+**Completeness audit.** Two stages:
+1. **Structure, before answering, without decrypting.** B checks:
+   - the window identifier and start epoch;
+   - the step;
+   - the number of encrypted blocks per coordinate (steps ÷ 8,192);
+   - the encryption parameters.
+
+   A short or malformed submission is refused.
+2. **Content, under encryption.** A missing or zero-filled step is still a
+   valid ciphertext, so structure alone cannot reveal it. The tube check
+   (defense 1 below) tests every step, and a blank or invented step is not
+   near the declared object's track.
+
+**What can be verified under encryption.**
+- **Before answering:**
+  - the structure;
+  - whether every step lies inside the tube around the declared object's
+    public track.
+
+  The tube test is the screening arithmetic against that track, followed by
+  the comparison. B learns only pass or fail.
+- **Not in real time:** whether the path obeys the equations of motion.
+  Gravity (μr/|r|³) is not a polynomial, and homomorphic arithmetic only adds
+  and multiplies. Zero-knowledge proofs of orbital dynamics remain research.
+- **After the window:** everything, by opening the ciphertexts that were
+  answered (defense 2 below).
 
 ### What it costs
 
@@ -471,16 +514,20 @@ The defenses, strongest first:
      computed.
    - Probing with its real fleet, a requester reaches at most D + R′ around
      each of its satellites.
-2. **Check it again afterwards.**
-   - Each query commits to its plaintext trajectory (a hash).
-   - After the window has passed, the requester reveals the trajectory: past
-     positions are far less sensitive than planned maneuvers.
-   - The responder checks it against independent tracking of the declared
-     object, using the reference-orbit comparisons of section 7. It also
-     checks it against orbital dynamics, flagging grids, sweeps and
-     non-Keplerian paths.
-   - Queries and commitments are digitally signed, so a failure is
-     attributable evidence.
+2. **Open the window afterwards.**
+   - Each window is encrypted under a fresh key. The responder keeps the
+     ciphertexts it answered (34.6 MB per object-day at 1 s steps).
+   - After the window has passed, the requester hands over that window's
+     key. The responder decrypts exactly what it answered: past positions,
+     far less sensitive than planned maneuvers.
+   - The ciphertext is the commitment: it cannot be swapped afterwards, and
+     no separate hash is needed.
+   - The responder checks every step and orbital dynamics, flagging grids,
+     sweeps and non-Keplerian paths. It also checks agreement with
+     independent tracking of the declared object, using the reference-orbit
+     comparisons of section 7.
+   - Queries and responses are digitally signed, so a failure is
+     attributable evidence. Withholding the key counts as a failure.
 3. **Stake and identity.** Only identities with stake or reputation may ask.
    A failed check forfeits the stake and ends screening for that identity.
 4. **Per-window budget.**
@@ -519,6 +566,84 @@ With these defenses in place, a prober learns what its real objects' real
 close approaches reveal. If it is willing to lose its identity, it learns at
 most one more window of answers, within its own fleet's tubes.
 
+### Decoys
+
+The owner of a satellite missing from the public catalog can submit N
+candidate orbits: one real and N − 1 decoys. Only its key says which answers
+matter, so a prober's positives are mostly decoys.
+
+**What decoys add:**
+- **They don't depend on the gate.** If the checks above are ever bypassed, a
+  prober maps a cloud of N orbits, not one.
+- **They hide whether a hidden satellite exists.** An owner that always
+  submits about N candidates reveals neither whether it has hidden
+  satellites nor how many.
+
+**The bound.**
+- Let p be the prober's belief about real orbits and q the decoy
+  distribution. If e^(−ε) ≤ p/q ≤ e^(ε) everywhere, no prober finds the real
+  orbit with probability above e^(2ε)/N.
+- With q = p, the probability is exactly 1/N.
+- The bound holds only when three conditions are met:
+  - **Persistence.** Decoys are drawn once and then evolve like real orbits.
+    Redrawn each window, they leak up to e^(Tε) over T windows.
+  - **No observations.** A prober that tracks the satellite itself finds it.
+  - **Gated confirmation.** Honest neighbours must learn which alerts are
+    real, so confirmation goes through the checks above.
+
+**Cost.** Screening work grows N-fold on the side that uses decoys. From the
+measured cost per pair-day:
+
+| Decoys (N) | 1 s steps | 10 s steps |
+| --- | --- | --- |
+| 1,000 | about 3 core-minutes, 9 GB | about 21 core-seconds, 1 GB |
+| 10,000 | about 28 core-minutes, 87 GB | about 3.5 core-minutes, 10 GB |
+
+Decoys on both sides of a pair multiply to N².
+
+**Measured ([R16](#r16)).**
+- **Setup.** Five decoy generators on 3,000 LEO payload histories (14 days,
+  August 2026), one decoy per real orbit per generator. A cross-validated
+  classifier tried to tell real from decoy. Its searches included the
+  nearest public object and replayed public sequences.
+- **Views.**
+  - Element sets.
+  - Published ephemeris: daily windows propagated by HPOP, 251,770 windows.
+- **Metric.** The number of candidates out of 100 that the real orbit
+  effectively hides among. 100 is ideal.
+
+| Generator | Element sets | Published ephemeris |
+| --- | ---: | ---: |
+| Random orbits | 1.0 | 1.1 |
+| Rotated copies of public objects | 1.0 | 5.2 |
+| Resampled noise | 1.0 | 1.6 |
+| Real changes replayed from a random start | 4.3 | 3.3 |
+| Real changes replayed in their own time | 2.9 | 4.2 |
+
+- **Invented noise is recognised by its statistics.** Real element sets drift
+  from SGP4's node rate, and consecutive sets agree more closely than
+  independent noise allows.
+- **Copied noise is recognised in two ways:**
+  - by correlation with the public histories it came from;
+  - by sitting farther from any public object than real satellites, which
+    share tight shells. The median catalog distance was 2.8 against 0.56 in
+    the published ephemeris.
+- **The worst case decides.** Even at an AUC of 0.90, 7 % of real histories
+  scored above a threshold that no held-out decoy reached. Those are found
+  whatever N is (ε ≥ 3.4 at 95 %).
+- **The published ephemeris hides more than element sets,** and it is the
+  only view the protocol exposes.
+
+**What a working generator needs:** pipeline equivalence.
+- Decoy ephemerides must come from the owner's own pipeline: simulated
+  tracking with fresh noise, the same orbit determination and the same
+  propagator.
+- Decoys must sit inside real shells.
+- The generator must be measured this way before use.
+
+Until then, decoys dilute what leaks behind the checks above; they do not
+replace them.
+
 ### What exists
 
 | Piece | State |
@@ -526,7 +651,8 @@ most one more window of answers, within its own fleet's tubes.
 | Homomorphic fields in FlatBuffers (SEAL BFV/BGV, `he_encrypted`) ([R15](#r15)) | Built. Each ciphertext holds one value under a 20-bit plaintext modulus, so metre-scale coordinates wrap silently. It needs batched vectors and multiple moduli, as in the benchmark, to carry this protocol. |
 | SDN encrypted-screening request (`/api/v1/conjunction/screen`) | Built. It returns no result. |
 | The protocol's arithmetic | Measured ([R14](#r14)). |
-| Screening module, bit-only comparison, pre-answer tube check, noise flooding, Laplace noise, commitments and audit, staking, budgets, plausibility checks | Not built. |
+| Decoy generators and their measurement ([R16](#r16)) | Measured. No generator is ready. |
+| Screening module, bit-only comparison, pre-answer tube check, completeness audit, noise flooding, Laplace noise, per-window keys and audit, staking, budgets | Not built. |
 
 ## 9 Limits and next work
 
@@ -539,7 +665,7 @@ most one more window of answers, within its own fleet's tubes.
 | One host | All timings from one shared 28-core workstation | Repeat on other hosts, GPUs and Docker containers ([R2](#r2) includes the procedure) |
 | Calibration coverage | Covariance calibrated only in LEO 600 to 800 km (empirical model; HPOP to 3 days), for 48 reference objects in one week | More precise-orbit missions, object-class strata, HPOP with the Sun and Moon, and orbit-determination covariance |
 | Probability inputs | Combined radius and covariance shape differ from SOCRATES's unpublished ones | Published per-object radii with their basis |
-| Private screening | Designed and measured, not built | A screening module with a bit-only comparison, noise flooding, and committed trajectories audited against tracking (section 8) |
+| Private screening | Designed and measured, not built | A screening module with a bit-only comparison, noise flooding, a pre-answer tube check, and per-window keys opened and audited against tracking; a pipeline-equivalent decoy generator (section 8) |
 
 This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness, or accuracy for objects and regimes without independent reference orbits.
 
@@ -599,8 +725,12 @@ Damgård, I., Geisler, M. and Krøigaard, M. Efficient and Secure Comparison for
 
 ### R14
 
-Edgesource. Private screening: protocol, SEAL benchmark, leakage and exposure measurements. Modules commit a7d6b38155e5139ea3100643ef8fc7ff5749bd46. [Note](https://github.com/DigitalArsenal/space-data-network-modules/blob/a7d6b38155e5139ea3100643ef8fc7ff5749bd46/analysis/conjunction-assessment/docs/private-screening.md) · [Benchmark](https://github.com/DigitalArsenal/space-data-network-modules/tree/a7d6b38155e5139ea3100643ef8fc7ff5749bd46/analysis/conjunction-assessment/bench/private-screening)
+Edgesource. Private screening: protocol, SEAL benchmark, leakage and exposure measurements, exchange rules and defenses. Modules commit 4705b77424a4f169971f856dac220a0bf4809cc5. [Note](https://github.com/DigitalArsenal/space-data-network-modules/blob/4705b77424a4f169971f856dac220a0bf4809cc5/analysis/conjunction-assessment/docs/private-screening.md) · [Benchmark](https://github.com/DigitalArsenal/space-data-network-modules/tree/a7d6b38155e5139ea3100643ef8fc7ff5749bd46/analysis/conjunction-assessment/bench/private-screening)
 
 ### R15
 
 Edgesource. FlatBuffers homomorphic encryption. [Documentation](https://github.com/DigitalArsenal/flatbuffers/blob/master/docs/source/homomorphic_encryption.md)
+
+### R16
+
+Edgesource. Decoys for private screening: principle and measurement. Modules commit e87cb5d4d2f6f33b2dde9463fbd10506d6414f02. [Note](https://github.com/DigitalArsenal/space-data-network-modules/blob/e87cb5d4d2f6f33b2dde9463fbd10506d6414f02/analysis/private-screening/docs/decoy-study-2026-08.md) · [Module](https://github.com/DigitalArsenal/space-data-network-modules/tree/e87cb5d4d2f6f33b2dde9463fbd10506d6414f02/analysis/private-screening)
