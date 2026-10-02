@@ -6,7 +6,7 @@ Anthony "TJ" Koury III
 
 Edgesource, Space Data Network · tj@edgesource.com
 
-Technical whitepaper 1.1 | 2 October 2026
+Technical whitepaper 1.2 | 2 October 2026
 
 Numerical evidence cutoff: 2 October 2026
 
@@ -14,7 +14,7 @@ Numerical evidence cutoff: 2 October 2026
 
 ## Executive summary
 
-Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) it takes 6 to 7 minutes, almost all of it propagation. The screen finds every pair that comes within 5 km, and reports each close approach's time (TCA), miss distance, relative speed and maximum collision probability. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.
+Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) it takes about 8 minutes, almost all of it propagation. The screen finds every pair that comes within 5 km, and reports each close approach's time (TCA), miss distance, relative speed and maximum collision probability. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.
 
 Five design choices produce that speed:
 
@@ -125,7 +125,7 @@ Tests check four windows against a single screen for both propagators. The SGP4 
 ### The HPOP propagation farm
 
 1. The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA. This is the TLE-to-numerical handoff of the companion paper, section 5 ([R1](#r1)).
-2. HPOP resident instances, at most 1,024 objects each, integrate those states on worker threads. Objects are dealt round-robin into about two instances per worker, so element sets of every age spread evenly.
+2. HPOP resident instances, at most 1,024 objects each, integrate those states on worker threads. The force model is the Earth's point mass and the EGM2008 degree/order 20 field, in Earth-fixed axes; there is no Sun, Moon, drag or radiation pressure. Objects are dealt round-robin into about two instances per worker, so element sets of every age spread evenly.
 3. Each window, every instance exports the window and the records go to the browser unchanged. The next window is exported while the current one is screened.
 
 HPOP integrates each object from its element epoch, so the first window carries that catch-up. HPOP drops cached intervals that end before the requested window, so an instance holds about one window per object.
@@ -141,12 +141,12 @@ All runs used the Space-Track GP catalog of 30 September 2026, 32,514 objects ([
 | SGP4, 12 × 6 h | CPU, Node.js | 19.1 s | 9.7 s | 6.6 s | 292,516 |
 | SGP4 | CPU, WasmEdge (AOT, SDN patches) | 22.9 s | 11.9 s | 8.7 s | 292,516 |
 | SGP4 | GPU | 21.3 s | 6.1 + 2.3 s | 7.2 s | 292,516 |
-| HPOP, 36 × 2 h | GPU | 382.1 s | 4.7 + 1.8 s | 8.3 s | 301,396 |
-| HPOP | CPU, Node.js | 437.8 s | 15.2 s | 8.7 s | 301,396 |
+| HPOP, 36 × 2 h | GPU | 482.5 s | 4.4 + 1.7 s | 7.5 s | 285,060 |
+| HPOP | CPU, Node.js | 493.4 s | 16.8 s | 9.9 s | 285,060 |
 
 - For each propagator, every run reports the same conjunctions with the same TCA and miss distance. SGP4 excluded 25 objects it could not propagate in the span; HPOP excluded none.
 - **SGP4's** remaining time is sampling: 4,321 steps × 32,514 SGP4 evaluations. On the GPU path the module samples (6.1 s) and the GPU searches (2.3 s).
-- **HPOP's** time is propagation: the screen waits 350–400 s for the propagation farm, including about 120 s of catch-up from element epochs in the first window. Screening and refining take under 30 s.
+- **HPOP's** time is propagation: the screen waits about 454 s for the propagation farm, including the catch-up from element epochs in the first window. Screening and refining take under 30 s.
 - The two propagators report different conjunctions. Neither result is a measure of accuracy (section 7).
 
 ### Step size
@@ -190,10 +190,16 @@ On the 2,000-object case the CPU search and the GPU found the same 424 candidate
 
 ### Validation findings
 
-The work found two defects in existing code, both fixed:
+The work found these defects in existing code, all fixed:
 
 - The module's generic pair search, used for tabulated and polynomial trajectories, sampled the range at the coarse step. It missed fast crossings: for one pair it reported a 41.9 km approach and missed a 500 m meeting. It now uses the same 5 s search as the SGP4 path.
 - HPOP could not export a window starting on one of its 10-minute interval boundaries after the first. A Julian date resolves to about 4.7e-10 day, and the interval lookup's 1e-12-day check refused the boundary.
+- HPOP's gravity was wrong in three ways, found by calibrating its covariance against reference orbits (section 7):
+  - **Inertial axes.** The field was evaluated in inertial axes: the tesserals did not turn with the Earth, and the pole was off by the precession since 2000.
+  - **A partial field.** The built-in "degree/order 20" field held only J2–J6 and the tesserals through degree 4, with J5 and J6 wrong.
+  - **Frames and clock.** Its nutation and Earth-fixed rotation were 0.74° off, and an unset force clock read Julian date 0.
+
+  Now the field is EGM2008 to degree and order 20, in Earth-fixed axes that match ERFA to 0.2 arcsec. Six days from an element-set epoch, an LEO arc's error against reference orbits fell from 5.9 km to 0.2 km radially and from 10.9 km to 0.2 km out of plane. The HPOP rows above are from the corrected propagator; before the fix the same screen reported 301,396 conjunctions.
 
 ## 7 Uncertainty and probability of collision
 
@@ -266,7 +272,12 @@ Events outside the model keep the Alfano maximum. These are a negative or too-ol
 
 - **Propagation.** HPOP resident instances now accept an initial covariance P₀ per object and return P(t) = Φ P₀ Φᵀ + Q. Q is a declared white-acceleration process noise, inertial or radial-transverse-normal, given as a spectral density and discretization interval. It is recorded in the trajectory (SDS 1.232.0). The state transition matrix matches finite differences, and Q matches its closed form.
 - **Orbit determination.** Fits publish their formal covariance as an OCM. The OCM lists the noise models, weighting, observations used, process noise, a priori and convergence criteria, with biases neither estimated nor considered and no consider parameters. It is marked Uncalibrated.
-- **Not yet calibrated.** Neither covariance has passed a calibration gate. Covariance supplied in an OEM or OCM enters conjunction assessment as supplied covariance and keeps the source's calibration label.
+- **HPOP covariance, calibrated in part.** It was checked the same way as the empirical model, for this paper's HPOP screen product: an element-set epoch state with P₀ measured at the epoch, then HPOP's resident force model. A white-acceleration Q was fitted by maximum likelihood on the fit week; a regime kept Q = 0 where P₀ alone passed more fit-week strata ([R8](#r8)).
+  - **LEO 600 to 800 km, 0 to 3 days: CALIBRATED with P₀ alone.** P₀ carried through HPOP's state transition matrix predicts the along-track growth, 1.3 to 17 km, within 10 %.
+  - **LEO 600 to 800 km beyond 3 days: FAILED.**
+  - **GPS: FAILED.** The resident model has no Sun or Moon, which drive GPS errors.
+  - **Other bands: INSUFFICIENT.**
+- **Orbit-determination covariance is not calibrated.** Covariance supplied in an OEM or OCM enters conjunction assessment as supplied covariance and keeps the source's calibration label.
 
 ### Agreement with SOCRATES
 
@@ -315,10 +326,10 @@ The results, in the calibrated strata (10,000 cases a row):
 | --- | --- | --- |
 | SGP4 sampling | About half of a 19 s screen: 140 million SGP4 evaluations | Fewer evaluations per step only with a bound that stays exhaustive |
 | HPOP propagation | Over 90 % of the HPOP screen | Force-model choices and initial states nearer the screen start; both are modeling decisions with accuracy consequences |
-| Catch-up from element epochs | 123 s before the first HPOP window | Persistent propagation across screens |
+| Catch-up from element epochs | The first HPOP window waits for every object to reach the screen start | Persistent propagation across screens |
 | Memory per window | About 400 MB per 2-hour HPOP window | Window length chosen per host |
 | One host | All timings from one shared 28-core workstation | Repeat on other hosts, GPUs and Docker containers ([R2](#r2) includes the procedure) |
-| Calibration coverage | Covariance calibrated only in LEO 600 to 800 km, for 48 reference objects in one week | More precise-orbit missions, object-class strata, and calibration of HPOP and orbit-determination covariance |
+| Calibration coverage | Covariance calibrated only in LEO 600 to 800 km (empirical model; HPOP to 3 days), for 48 reference objects in one week | More precise-orbit missions, object-class strata, HPOP with the Sun and Moon, and orbit-determination covariance |
 | Probability inputs | Combined radius and covariance shape differ from SOCRATES's unpublished ones | Published per-object radii with their basis |
 
 This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness, or accuracy for objects and regimes without independent reference orbits.
@@ -331,7 +342,7 @@ Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network tech
 
 ### R2
 
-Edgesource. Conjunction assessment module: all-vs-all screening on a GPU or on CPU threads, time windows, TCA solve, parity and bound tests, and the benchmark procedure. Modules commit c592acb618c287f1c12f2c3bb28f59e6c556fd34. [Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/c592acb618c287f1c12f2c3bb28f59e6c556fd34/analysis/conjunction-assessment/docs/gpu-all-vs-all.md) · [Benchmark](https://github.com/DigitalArsenal/space-data-network-modules/blob/c592acb618c287f1c12f2c3bb28f59e6c556fd34/analysis/conjunction-assessment/docs/benchmark.md)
+Edgesource. Conjunction assessment module: all-vs-all screening on a GPU or on CPU threads, time windows, TCA solve, parity and bound tests, and the benchmark procedure. Modules commit e1e9b6b8b9a9c5257eab5d447a668e1886a4fa71. [Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/e1e9b6b8b9a9c5257eab5d447a668e1886a4fa71/analysis/conjunction-assessment/docs/gpu-all-vs-all.md) · [Benchmark](https://github.com/DigitalArsenal/space-data-network-modules/blob/e1e9b6b8b9a9c5257eab5d447a668e1886a4fa71/analysis/conjunction-assessment/docs/benchmark.md)
 
 ### R3
 
@@ -355,7 +366,7 @@ CelesTrak. SOCRATES conjunction screening service. [Service](https://celestrak.o
 
 ### R8
 
-Edgesource. Conjunction uncertainty program: reference states, GP prediction-error model, calibration gate, covariance probability on screened events, HPOP process noise, orbit-determination covariance, SOCRATES replay and screening evaluation. Modules commit cbdf54b67fcc5ee58046c8f962660b4590b7af17. [Reference states](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/reference-states/README.md) · [Validation](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/gp-error-model/docs/validation-2026-08.md) · [Calibration](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/gp-error-model/docs/calibration-2026-08.md) · [Conjunction module](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/conjunction-assessment/README.md) · [HPOP](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/propagator/hpop/README.md) · [SOCRATES replay](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/conjunction-assessment/docs/socrates-replay-2026-10-02.md) · [Screening evaluation](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/gp-error-model/docs/screening-evaluation-2026-08.md)
+Edgesource. Conjunction uncertainty program: reference states, GP prediction-error model, calibration gate, covariance probability on screened events, HPOP process noise, orbit-determination covariance, SOCRATES replay, screening evaluation and HPOP covariance calibration. Modules commit 82a566fd2cafc062a43643c8855cc7fd371155cd. [Reference states](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/reference-states/README.md) · [Validation](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/gp-error-model/docs/validation-2026-08.md) · [Calibration](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/gp-error-model/docs/calibration-2026-08.md) · [Conjunction module](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/conjunction-assessment/README.md) · [HPOP](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/propagator/hpop/README.md) · [SOCRATES replay](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/conjunction-assessment/docs/socrates-replay-2026-10-02.md) · [Screening evaluation](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/gp-error-model/docs/screening-evaluation-2026-08.md) · [HPOP calibration](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/gp-error-model/docs/hpop-calibration-2026-08.md)
 
 ### R9
 
