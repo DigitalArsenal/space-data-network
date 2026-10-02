@@ -289,6 +289,9 @@ func (e *Engine) Close(ctx context.Context) error {
 	return e.stopErr
 }
 
+// State is the stamp of the engine's counter state (memo.go).
+func (e *Engine) State() (uint64, bool) { return e.memo.state() }
+
 // ---- requests ---------------------------------------------------------------
 
 // busyLimit bounds the BUSY retry of one request. An engine that refuses a

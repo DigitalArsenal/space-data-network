@@ -20,6 +20,10 @@ package format4
 //     engine deletes on its own once a second, so an answer is then kept for
 //     at most memoQuotaAge; disk sizes move with checkpoints and are kept for
 //     memoDiskAge (format 2's DiskUsageBytes lags by its sweep the same way).
+//
+// Engine.State hands out the same generation as a stamp, so a caller can
+// keep what it derives from these answers (the daemon's totals and
+// summaries) under the same rule.
 
 import (
 	"sync"
@@ -76,6 +80,19 @@ func (m *memo) setQuota(on bool) {
 	m.quota = on
 	m.gen++
 	m.mu.Unlock()
+}
+
+// state is the counter state's stamp: it moves when a write starts or ends
+// and, with a quota set, every memoQuotaAge. ok is false while a write runs
+// or once keeping is off: nothing read now may be kept.
+func (m *memo) state() (uint64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stamp := m.gen
+	if m.quota {
+		stamp = m.gen<<32 | uint64(time.Now().UnixNano()/int64(memoQuotaAge))&(1<<32-1)
+	}
+	return stamp, !m.off && m.writing == 0
 }
 
 // get returns key's kept answer; else the generation a fresh answer is read
