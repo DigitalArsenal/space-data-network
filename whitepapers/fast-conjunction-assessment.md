@@ -32,7 +32,7 @@ Operators keep their most precise orbits and planned maneuvers private. Section 
 - **Cost.** Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.
 - **What it reveals.** The paper shows how a naive design leaks distances, how invented trajectories can locate a hidden satellite, and which defenses stop that.
 - **What it cannot hide.** Real close approaches reveal what safety requires.
-- **Decoys.** Hiding a real orbit among N decoys bounds a prober's chance at e^(2ε)/N, but no decoy generator we measured is ready: the best hid a real orbit among about 4 of 100 candidates.
+- **Decoys.** Hiding a real orbit among N decoys bounds a prober's chance at e^(2ε)/N. No decoy generator we measured reaches 1 in 10,000 yet: copies of the hidden satellite itself came closest (about 94 of 1,000).
 - **Status.** The protocol is not yet built.
 
 ## 1 The problem
@@ -634,12 +634,38 @@ Decoys on both sides of a pair multiply to N².
 - **The published ephemeris hides more than element sets,** and it is the
   only view the protocol exposes.
 
-**What a working generator needs:** pipeline equivalence.
-- Decoy ephemerides must come from the owner's own pipeline: simulated
-  tracking with fresh noise, the same orbit determination and the same
-  propagator.
+**Copies of the hidden satellite itself.**
+- A hidden satellite's own history is not public, so copies of it cannot be
+  matched against the catalog.
+- **Setup.**
+  - We rotated each real history's node and shifted it in time by up to
+    half a period, 50 copies for each of 1,000 satellites.
+  - Each copy was published through the same HPOP pipeline: 713,847
+    windows.
+  - The adversary compared each set's members with each other.
+
+| Candidates (N) | 10 | 100 | 1,000 | 10,000 |
+| --- | ---: | ---: | ---: | ---: |
+| Effective number hiding the real orbit | 2.6 | 12 | 94 | about 3,500 |
+
+Beyond 50 candidates, the numbers are extrapolated from scores standardized
+within each set.
+
+- **The real orbit still stands out.** It ranked in the top tenth of its own
+  copies for 48 % of satellites. Its daily mean semi-major axis and its
+  distance to neighbouring public objects give it away.
+- **Why.** A real orbit is consistent with Earth's gravity field at its own
+  positions. A rotated copy of its history is not.
+
+**What 1 in 10,000 needs:** pipeline equivalence.
+- Decoy truths must be simulated with the full force model at their own
+  positions, not copied from a real history.
+- Every candidate, the real one included, must be published through the
+  owner's pipeline: simulated tracking with fresh noise, the same orbit
+  determination and the same propagator.
 - Decoys must sit inside real shells.
-- The generator must be measured this way before use.
+- The test is to rank real precise orbits (for example Swarm and Sentinel-1)
+  among their simulated siblings.
 
 Until then, decoys dilute what leaks behind the checks above; they do not
 replace them.
@@ -651,7 +677,7 @@ replace them.
 | Homomorphic fields in FlatBuffers (SEAL BFV/BGV, `he_encrypted`) ([R15](#r15)) | Built. Each ciphertext holds one value under a 20-bit plaintext modulus, so metre-scale coordinates wrap silently. It needs batched vectors and multiple moduli, as in the benchmark, to carry this protocol. |
 | SDN encrypted-screening request (`/api/v1/conjunction/screen`) | Built. It returns no result. |
 | The protocol's arithmetic | Measured ([R14](#r14)). |
-| Decoy generators and their measurement ([R16](#r16)) | Measured. No generator is ready. |
+| Decoy generators and their measurement ([R16](#r16)) | Measured. None reaches 1 in 10,000 yet. |
 | Screening module, bit-only comparison, pre-answer tube check, completeness audit, noise flooding, Laplace noise, per-window keys and audit, staking, budgets | Not built. |
 
 ## 9 Limits and next work
@@ -677,7 +703,7 @@ Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network tech
 
 ### R2
 
-Edgesource. Conjunction assessment module: all-vs-all screening on a GPU or on CPU threads, time windows, TCA solve, parity and bound tests, and the benchmark procedure. Modules commit e1e9b6b8b9a9c5257eab5d447a668e1886a4fa71. [Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/e1e9b6b8b9a9c5257eab5d447a668e1886a4fa71/analysis/conjunction-assessment/docs/gpu-all-vs-all.md) · [Benchmark](https://github.com/DigitalArsenal/space-data-network-modules/blob/e1e9b6b8b9a9c5257eab5d447a668e1886a4fa71/analysis/conjunction-assessment/docs/benchmark.md)
+Edgesource. Conjunction assessment module: all-vs-all screening on a GPU or on CPU threads, time windows, TCA solve, parity and bound tests, and the benchmark procedure. Modules commit e1e9b6b8b9a9c5257eab5d447a668e1886a4fa71. Files: `analysis/conjunction-assessment/docs/gpu-all-vs-all.md`, `analysis/conjunction-assessment/docs/benchmark.md`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
 
 ### R3
 
@@ -701,7 +727,7 @@ CelesTrak. SOCRATES conjunction screening service. [Service](https://celestrak.o
 
 ### R8
 
-Edgesource. Conjunction uncertainty program: reference states, GP prediction-error model, calibration gate, covariance probability on screened events, HPOP process noise, orbit-determination covariance, SOCRATES replay, screening evaluation and HPOP covariance calibration. Modules commit 82a566fd2cafc062a43643c8855cc7fd371155cd. [Reference states](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/reference-states/README.md) · [Validation](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/gp-error-model/docs/validation-2026-08.md) · [Calibration](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/gp-error-model/docs/calibration-2026-08.md) · [Conjunction module](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/conjunction-assessment/README.md) · [HPOP](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/propagator/hpop/README.md) · [SOCRATES replay](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/conjunction-assessment/docs/socrates-replay-2026-10-02.md) · [Screening evaluation](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/gp-error-model/docs/screening-evaluation-2026-08.md) · [HPOP calibration](https://github.com/DigitalArsenal/space-data-network-modules/blob/82a566fd2cafc062a43643c8855cc7fd371155cd/analysis/gp-error-model/docs/hpop-calibration-2026-08.md)
+Edgesource. Conjunction uncertainty program: reference states, GP prediction-error model, calibration gate, covariance probability on screened events, HPOP process noise, orbit-determination covariance, SOCRATES replay, screening evaluation and HPOP covariance calibration. Modules commit 82a566fd2cafc062a43643c8855cc7fd371155cd. Files: `analysis/reference-states/README.md`, `analysis/gp-error-model/docs/validation-2026-08.md`, `analysis/gp-error-model/docs/calibration-2026-08.md`, `analysis/conjunction-assessment/README.md`, `propagator/hpop/README.md`, `analysis/conjunction-assessment/docs/socrates-replay-2026-10-02.md`, `analysis/gp-error-model/docs/screening-evaluation-2026-08.md`, `analysis/gp-error-model/docs/hpop-calibration-2026-08.md`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
 
 ### R9
 
@@ -725,7 +751,7 @@ Damgård, I., Geisler, M. and Krøigaard, M. Efficient and Secure Comparison for
 
 ### R14
 
-Edgesource. Private screening: protocol, SEAL benchmark, leakage and exposure measurements, exchange rules and defenses. Modules commit 4705b77424a4f169971f856dac220a0bf4809cc5. [Note](https://github.com/DigitalArsenal/space-data-network-modules/blob/4705b77424a4f169971f856dac220a0bf4809cc5/analysis/conjunction-assessment/docs/private-screening.md) · [Benchmark](https://github.com/DigitalArsenal/space-data-network-modules/tree/a7d6b38155e5139ea3100643ef8fc7ff5749bd46/analysis/conjunction-assessment/bench/private-screening)
+Edgesource. Private screening: protocol, SEAL benchmark, leakage and exposure measurements, exchange rules and defenses. Modules commit 22db2691620599403885cd1353677011e08f3d22. Files: `analysis/conjunction-assessment/docs/private-screening.md`, `analysis/conjunction-assessment/bench/private-screening`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
 
 ### R15
 
@@ -733,4 +759,4 @@ Edgesource. FlatBuffers homomorphic encryption. [Documentation](https://github.c
 
 ### R16
 
-Edgesource. Decoys for private screening: principle and measurement. Modules commit e87cb5d4d2f6f33b2dde9463fbd10506d6414f02. [Note](https://github.com/DigitalArsenal/space-data-network-modules/blob/e87cb5d4d2f6f33b2dde9463fbd10506d6414f02/analysis/private-screening/docs/decoy-study-2026-08.md) · [Module](https://github.com/DigitalArsenal/space-data-network-modules/tree/e87cb5d4d2f6f33b2dde9463fbd10506d6414f02/analysis/private-screening)
+Edgesource. Decoys for private screening: principle and measurement. Modules commit 22db2691620599403885cd1353677011e08f3d22. Files: `analysis/private-screening/docs/decoy-study-2026-08.md`, `analysis/private-screening`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).

@@ -704,15 +704,15 @@ R1–R15 retain the sources and evidence roles of the 21 September 2026 baseline
 
 ### R1
 
-Edgesource. Epoch-state conversion, validation and refinement, with aggregate verification record. Modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c. [Method](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/epoch-fitting.md) · [Verification record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/verification-vimpel-epoch-fit-20260921.json)
+Edgesource. Epoch-state conversion, validation and refinement, with aggregate verification record. Modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c. Files: `analysis/catalog-composer/docs/epoch-fitting.md`, `analysis/catalog-composer/docs/verification-vimpel-epoch-fit-20260921.json`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
 
 ### R2
 
-Edgesource. Catalog Editor module: composition, coverage and matching contracts. Same baseline commit. [Module documentation](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/README.md)
+Edgesource. Catalog Editor module: composition, coverage and matching contracts. Same baseline commit. Files: `analysis/catalog-composer/README.md`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
 
 ### R3
 
-Edgesource. Vimpel epoch normalization and catalog matching; 64-object diagnostic audit. Same baseline commit. [Normalization](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-normalization.md) · [Audit record](https://github.com/DigitalArsenal/space-data-network-modules/blob/49e159d7003cac3d3e65b03170f11909fa86dd2c/analysis/catalog-composer/docs/vimpel-epoch-audit-20260921.json)
+Edgesource. Vimpel epoch normalization and catalog matching; 64-object diagnostic audit. Same baseline commit. Files: `analysis/catalog-composer/docs/vimpel-normalization.md`, `analysis/catalog-composer/docs/vimpel-epoch-audit-20260921.json`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
 
 ### R4
 
