@@ -38,6 +38,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -1238,6 +1239,63 @@ func (b format4Backend) warmCounters() {
 	_, _ = b.ProducerSourceProgress()
 	_, _ = b.DataSummary()
 	_, _ = b.DiskUsageBytes()
+	b.warmReaders()
+}
+
+// warmBudget bounds warmReaders: a store with hundreds of partitions warms
+// what fits and leaves the rest to the first reads.
+const warmBudget = 2 * time.Second
+
+// warmReaders runs one small read of each kind on every type with records,
+// a few types at once, so the engine opens the type's index and partition
+// readers and prepares their statements at open rather than in a reader's
+// first call (a first index page took 4-36 ms, a warm one 0.6-1.4 ms). GET
+// and TAGS go at once, as a refs read sends them. A failure only leaves the
+// open to the first read.
+func (b format4Backend) warmReaders() {
+	types, err := b.f4TypeSummaries()
+	if err != nil {
+		return
+	}
+	api, ctx := b.d.api(), b.d.ctx
+	miss := []string{computeCID([]byte("format 4 warm-up: no record has these bytes"))}
+	deadline := time.Now().Add(warmBudget)
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+	for typ, t := range types {
+		if t.Records == 0 {
+			continue
+		}
+		wg.Add(1)
+		go func(typ string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			reads := []func(){
+				func() {
+					var tags sync.WaitGroup
+					tags.Add(1)
+					go func() { defer tags.Done(); _, _ = api.Tags(ctx, typ, miss) }()
+					_, _ = api.Get(ctx, typ, miss, false, true)
+					tags.Wait()
+				},
+				func() { _, _ = api.IndexPage(ctx, format4.Query{Type: typ, Limit: 1}) },
+				func() {
+					_, _ = api.Scan(ctx, format4.Query{Type: typ, Order: format4.OrderSeqDesc, Limit: 1, Hydrate: true})
+				},
+				func() {
+					_, _ = api.Window(ctx, format4.Query{Type: typ, Order: format4.OrderWDesc, Limit: 1, Hydrate: true})
+				},
+			}
+			for _, read := range reads {
+				if time.Now().After(deadline) {
+					return
+				}
+				read()
+			}
+		}(typ)
+	}
+	wg.Wait()
 }
 
 // f4TypeSummaries are the engine's per-type summaries by type name, shared:
