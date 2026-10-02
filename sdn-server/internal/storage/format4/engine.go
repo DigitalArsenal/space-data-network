@@ -93,6 +93,13 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 			return nil, fmt.Errorf("format4: %w", err)
 		}
 	}
+	prefetched := make(chan struct{})
+	go func() {
+		defer close(prefetched)
+		if opt.Create == OpenExisting {
+			prefetchIndexes(engineRoot)
+		}
+	}()
 	e := &Engine{}
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
 		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
@@ -115,6 +122,7 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 		_, _ = inst.StopWithin(10 * time.Second)
 		return nil, err
 	}
+	<-prefetched
 	return e, nil
 }
 
