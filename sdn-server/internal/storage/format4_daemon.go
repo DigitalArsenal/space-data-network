@@ -310,6 +310,7 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 			return fail(fmt.Errorf("format 4: set the quota: %w", err))
 		}
 	}
+	d.warmCounters()
 
 	if err := store.Checkpoint(); err != nil {
 		log.Warnf("format 4: initial checkpoint failed (nothing is lost): %v", err)
@@ -403,6 +404,18 @@ func (d *format4Daemon) ensureType(schema string) error {
 	return nil
 }
 
+// warmCounters reads the engine's summaries once, so the first count,
+// head or summary after an open answers from what the engine keeps between
+// writes (format4/memo.go), as format 2 answers from the heads it loads at
+// open. A failure here only leaves them to the first read.
+func (d *format4Daemon) warmCounters() {
+	api := d.api()
+	_, _ = api.Types(d.ctx)
+	_, _ = api.Partitions(d.ctx)
+	_, _ = api.Lanes(d.ctx, "")
+	_, _ = api.Disk(d.ctx)
+}
+
 // onFailure is the engine's OnFailure: a trap or hang fenced it. The daemon
 // reopens it (init replays the journal); calls meanwhile answer ErrStopped.
 func (d *format4Daemon) onFailure(err error) {
@@ -423,6 +436,7 @@ func (d *format4Daemon) onFailure(err error) {
 				d.types = map[string]bool{} // re-registered on use (a no-op for persisted specs)
 				d.typesMu.Unlock()
 				log.Infof("format 4: engine reopened after %d attempt(s)", attempt)
+				d.warmCounters()
 				return
 			}
 			log.Errorf("format 4: reopen attempt %d failed: %v", attempt, err)

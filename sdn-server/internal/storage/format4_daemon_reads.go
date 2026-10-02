@@ -564,6 +564,31 @@ func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]
 	return records, nil
 }
 
+// f4Plain reports a query of a whole type: no tag, copy, CID, sync filter,
+// search or seq bound.
+func f4Plain(q format4.Query) bool {
+	return f4LaneEmpty(q.Lane) && q.CID == "" && q.Peer == "" && q.Producer == "" && len(q.Preds) == 0 &&
+		q.Search == "" && q.SeqAfter == 0 && q.SeqThrough == 0
+}
+
+// f4SourceSummaryHead reports a head format 1 reads from its source summary
+// (a tag filter and nothing else): it carries no record timestamp, and its
+// cursor boundary is the type's (rawRecordHeadLocked).
+func f4SourceSummaryHead(q format4.Query) bool {
+	return !f4LaneEmpty(q.Lane) && q.CID == "" && q.Peer == "" && len(q.Preds) == 0 && q.Search == ""
+}
+
+// f4TypeHead is a whole type's head: the type counters of SUMMARY 1, the
+// ones HEAD answers a plain query from.
+func (b format4Backend) f4TypeHead(typ string) (format4.Head, error) {
+	types, err := b.f4TypeSummaries()
+	if err != nil {
+		return format4.Head{}, err
+	}
+	t := types[typ]
+	return format4.Head{N: t.Records, Bytes: t.Bytes, MaxSeq: t.MaxSeq, MaxTS: t.MaxTS, Through: t.Through}, nil
+}
+
 // f4Head is a raw filter's HEAD (n, bytes, newest seq, ts and tag time).
 func (b format4Backend) f4Head(filter RawRecordQuery) (format4.Head, format4.Query, bool, error) {
 	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
@@ -577,6 +602,10 @@ func (b format4Backend) f4Head(filter RawRecordQuery) (format4.Head, format4.Que
 	q, nothing, err := f4RawQuery(typ, filter, false)
 	if err != nil || nothing {
 		return format4.Head{}, q, nothing, err
+	}
+	if f4Plain(q) {
+		h, err := b.f4TypeHead(typ)
+		return h, q, false, err
 	}
 	h, err := b.d.api().Head(b.d.ctx, q)
 	if errors.Is(err, format4.ErrNoType) {
@@ -614,6 +643,18 @@ func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawReco
 	if !f4LaneEmpty(q.Lane) {
 		// A tag filter's times are its tag instances' (format 1's created_at).
 		head.MaxCreatedAtUnix, head.MaxSourceUpdatedAtUnix = h.MaxAt, h.MaxAt
+	}
+	if f4SourceSummaryHead(q) {
+		// Format 1's source summary has no record timestamp, and a cursor's
+		// boundary is the type's newest seq, the one its pages run under.
+		head.MaxRecordTimestampUnix = 0
+		if filter.UseRowIDCursor {
+			th, err := b.f4TypeHead(q.Type)
+			if err != nil {
+				return 0, RawRecordHead{}, fmt.Errorf("raw record head failed: %w", err)
+			}
+			head.MaxRowID = th.MaxSeq
+		}
 	}
 	count := h.N
 	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
