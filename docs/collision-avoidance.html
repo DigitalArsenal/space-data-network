@@ -354,15 +354,16 @@
         <div class="chapter">
           <h3>Computing on data nobody else can read</h3>
           <p>Homomorphic encryption lets a computer do arithmetic on locked numbers. It adds and multiplies them without unlocking them, and the answer comes out locked too.</p>
-          <p>Screening needs one narrow calculation: how close do these two objects get? Each side encrypts its trajectory before it leaves its own systems. The assessor computes the distance between them at each time step on the encrypted values and checks it against a safety distance. The only result anyone reads is SAFE or ALERT.</p>
+          <p>Screening needs one narrow calculation: how close do these two objects get? One operator locks its trajectory with its own key and sends it. The other works out, on the locked values, how close its own object comes at each moment, and sends the locked answer back. Only the first operator can open it, and it learns only whether the two come too close. Each operator runs it to protect its own satellite. No third party takes part.</p>
+          <p>Private screening is specified and measured. It is not yet available on the network.</p>
           <p>The screening software is open, so both sides can check exactly what was computed, even though neither can see the other&rsquo;s data.</p>
         </div>
         <figure class="figure figure-wide">
           <picture>
-            <source media="(max-width: 620px)" srcset="img/ca/encrypted-screening-tall.svg" width="440" height="540">
-            <img src="img/ca/encrypted-screening.svg" width="900" height="310" alt="A government with a classified orbit and an operator with a planned maneuver each encrypt their trajectory. An assessor running open software computes how close they get on the encrypted values and returns only SAFE or ALERT." loading="lazy">
+            <source media="(max-width: 620px)" srcset="img/ca/encrypted-screening-tall.svg" width="440" height="590">
+            <img src="img/ca/encrypted-screening.svg" width="900" height="310" alt="Government X locks its classified orbit with its own key and sends it to Operator B. Operator B computes, on the locked values, how close its own object comes at each moment, and sends a locked answer back. Only Government X can open it: SAFE or ALERT." loading="lazy">
           </picture>
-          <figcaption>Both trajectories stay encrypted from the moment they leave their owners. Only the verdict is opened.</figcaption>
+          <figcaption>Neither orbit is ever readable by the other side. Only the owner of the key opens the answer, and both operators run it to protect both satellites.</figcaption>
         </figure>
 
         <div class="table-wrap narrow">
@@ -371,12 +372,12 @@
             <tbody>
               <tr><td>A government with a classified satellite</td><td>Whether anything will come too close. Never another party&rsquo;s orbit or plans.</td></tr>
               <tr><td>An operator planning a burn</td><td>Whether the new trajectory is clear, before the burn.</td></tr>
-              <tr><td>The assessor</td><td>Whether a pair comes too close. Not where either object is.</td></tr>
+              <tr><td>The operator doing the computing</td><td>Nothing. It works only on locked values.</td></tr>
               <tr><td>Everyone else</td><td>Nothing. After an alert, the two parties can choose to share more to coordinate.</td></tr>
             </tbody>
           </table>
         </div>
-        <p class="note">Could someone submit fake orbits to find a hidden satellite? Results are SAFE or ALERT only, submissions are limited per identity, noise is added before each comparison, and sweep-like patterns are flagged. <a href="encrypted-ca.html">The defenses in detail</a>.</p>
+        <p class="note">Could someone submit invented orbits to find a hidden satellite? Without defenses, yes. The design ties every question to a real satellite and checks it afterwards against independent tracking, limits questions per identity, and never hides a real alarm. <a href="encrypted-ca.html">The defenses in detail</a>.</p>
       </div>
     </section>
 
@@ -390,7 +391,7 @@
         <div class="grid grid-3">
           <div class="card"><h3>One open catalog</h3><p>Every source, digitally signed, with its uncertainty attached and the recipe that combined them. Two operators looking at the same event see the same inputs.</p></div>
           <div class="card"><h3>Open algorithms</h3><p>Propagation and conjunction assessment run as open WebAssembly modules. Same inputs, same modules, same answer, on any node.</p></div>
-          <div class="card"><h3>Encrypted conjunction assessment</h3><p>Operators submit encrypted ephemeris for a classified satellite or a planned maneuver. The assessor computes on ciphertext and returns SAFE or ALERT. Nobody sees the orbit.</p></div>
+          <div class="card"><h3>Encrypted conjunction assessment</h3><p>Two operators check whether a classified satellite or a planned maneuver comes too close, without exchanging orbits. Specified and measured, not yet available on the network.</p></div>
         </div>
         <div class="actions" style="margin-top:28px">
           <a href="encrypted-ca.html" class="btn btn-primary">How encrypted screening works &rarr;</a>
