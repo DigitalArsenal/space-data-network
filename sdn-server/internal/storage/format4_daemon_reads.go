@@ -435,18 +435,29 @@ func (b format4Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRe
 		}
 	}
 	cids = dedupeStrings(cids)
+	// The copies (GET) and their tags (TAGS) are two reads: run them at once.
+	var (
+		tags    map[string][]format4.TagRow
+		tagsErr error
+		tagsRan = make(chan struct{})
+	)
+	go func() {
+		defer close(tagsRan)
+		tags, tagsErr = b.f4TagRows(schemaName, cids)
+	}()
 	copies := map[string][]format4.Rec{}
-	for start := 0; start < len(cids); start += 1024 {
+	var getErr error
+	for start := 0; start < len(cids) && getErr == nil; start += 1024 {
 		got, err := b.d.api().Get(b.d.ctx, typ, cids[start:min(start+1024, len(cids))], true, true)
 		if err != nil && !errors.Is(err, format4.ErrNoType) {
-			return nil, fmt.Errorf("raw record ref query failed: %w", err)
+			getErr = err
 		}
 		for _, r := range got {
 			copies[r.CID] = append(copies[r.CID], r)
 		}
 	}
-	tags, err := b.f4TagRows(schemaName, cids)
-	if err != nil {
+	<-tagsRan
+	if err := errors.Join(getErr, tagsErr); err != nil {
 		return nil, fmt.Errorf("raw record ref query failed: %w", err)
 	}
 	ordered := make([]*Record, 0, len(normalized))
@@ -1207,10 +1218,18 @@ const (
 	f4KeyDataSummary
 )
 
-// warmCounters derives every total and summary once at open, so the first
-// count or summary after an open answers from memory, as format 2's do from
-// the heads it loads at open. A failure only leaves it to the first read.
+// warmCounters derives every total and summary, and each type's head, once
+// at open, so the first count, head or summary after an open answers from
+// memory, as format 2's do from the heads it loads at open. A failure only
+// leaves it to the first read.
 func (b format4Backend) warmCounters() {
+	if types, err := b.f4TypeSummaries(); err == nil {
+		for typ, t := range types {
+			if t.Records > 0 {
+				_, _, _ = b.RawRecordSnapshot(RawRecordQuery{SchemaName: typ + ".fbs"})
+			}
+		}
+	}
 	_, _ = b.LiveRecordBytes()
 	_, _ = b.SchemaDateRanges()
 	_, _ = b.f4PeerBytes()
@@ -1284,14 +1303,29 @@ func (b format4Backend) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRo
 		eq.Preds = append(eq.Preds, f4Pred(format4.FieldCol0, format4.OpLike, format2.Text("%"+q.NoradLike+"%")))
 	}
 	api, ctx := b.d.api(), b.d.ctx
-	head, err := api.Head(ctx, format4.Query{Type: eq.Type, Lane: eq.Lane, Preds: eq.Preds})
-	if errors.Is(err, format4.ErrNoType) {
+	// The total (HEAD; a whole type's from the type counters) and the page
+	// are two reads: run them at once.
+	var (
+		head    format4.Head
+		headErr error
+		counted = make(chan struct{})
+	)
+	go func() {
+		defer close(counted)
+		if hq := (format4.Query{Type: eq.Type, Lane: eq.Lane, Preds: eq.Preds}); f4Plain(hq) {
+			head, headErr = b.f4TypeHead(typ)
+		} else {
+			head, headErr = api.Head(ctx, hq)
+		}
+	}()
+	rows, err := api.IndexPage(ctx, eq)
+	<-counted
+	if errors.Is(headErr, format4.ErrNoType) || errors.Is(err, format4.ErrNoType) {
 		return []RecordIndexRow{}, 0, nil
 	}
-	if err != nil {
-		return nil, 0, fmt.Errorf("count record index page: %w", err)
+	if headErr != nil {
+		return nil, 0, fmt.Errorf("count record index page: %w", headErr)
 	}
-	rows, err := api.IndexPage(ctx, eq)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query record index page: %w", err)
 	}
