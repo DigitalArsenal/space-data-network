@@ -153,7 +153,7 @@ func TestProofMigrate(t *testing.T) {
 	r, err := MigrateCrashLoop(context.Background(), MigrateLoopSpec{Bin: c.SDNBin, Source: c.Fixtures[ArmF1], Work: c.Work, Out: c.Out,
 		Kills: envInt("P4PROOF_MIGRATE_KILLS", 5)}, logfOf(t))
 	if r != nil {
-		t.Logf("MIGRATE: reference %.0f s, max RSS %.0f MB, %v kills", r.Extra["reference_seconds"], r.Extra["reference_max_rss_mb"], r.Extra["kills"])
+		t.Logf("MIGRATE: reference %v s, max RSS %v MB, %v kills", r.Extra["reference_seconds"], r.Extra["reference_max_rss_mb"], r.Extra["kills"])
 	}
 	if err != nil {
 		t.Fatal(err)

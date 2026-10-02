@@ -123,7 +123,7 @@ func MigrateCrashLoop(ctx context.Context, spec MigrateLoopSpec, logf Logf) (*Ru
 		if err != nil {
 			return r, fmt.Errorf("digest the reference: %w", err)
 		}
-		r.Extra["reference_reused"] = ref
+		r.Extra["reference_reused"], r.Extra["reference_seconds"] = ref, refWall.Seconds()
 		logf("migrate: reusing the settled reference %s (clean run %s)", ref, refWall)
 	} else if refWall, refDigest, err = migrateReference(ctx, spec, ref, logs, r, fail, logf); err != nil {
 		return r, err
