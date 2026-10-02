@@ -6,9 +6,9 @@ Anthony "TJ" Koury III
 
 Edgesource, Space Data Network · tj@edgesource.com
 
-Technical whitepaper 1.0 | 1 October 2026
+Technical whitepaper 1.1 | 2 October 2026
 
-Numerical evidence cutoff: 1 October 2026
+Numerical evidence cutoff: 2 October 2026
 
 © Edgesource Corporation
 
@@ -24,7 +24,9 @@ Five design choices produce that speed:
 4. **Load once, move records unchanged.** The catalog loads into the module once. A propagator's output passes into the conjunction module as the records it emitted, without re-encoding.
 5. **Refinement proves, then solves.** Where the range of a pair provably has one minimum, Newton's method on the range rate finds it in about ten evaluations, instead of a dense scan.
 
-The screen reproduces the module's single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s. Reported probability is the covariance-free maximum. No calibrated covariance or covariance-based probability of collision is claimed (section 7, [R1](#r1)).
+The screen reproduces the module's single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s.
+
+Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the covariance-free maximum probability. With an empirical model of element-set prediction error, events also carry a covariance-based probability. It is labeled calibrated only where held-out precise orbits confirm the covariance: LEO 600 to 800 km, 13,088 of the 292,516 three-day conjunctions. The model adds 1.1 s to the 19 s screen (section 7, [R1](#r1)).
 
 ## 1 The problem
 
@@ -195,18 +197,117 @@ The work found two defects in existing code, both fixed:
 
 ## 7 Uncertainty and probability of collision
 
-The reported probability is the Alfano maximum: the largest probability any covariance size could give for the reported miss distance and a 10 m combined hard-body radius ([R4](#r4)). It needs no covariance and serves as an upper bound. The companion paper sets the conditions this screen respects ([R1](#r1), sections 5, 9, 12 and 16.2):
+The companion paper sets the conditions this screen respects ([R1](#r1), sections 5, 9, 12 and 16.2):
 
 - A TLE supplies no covariance. The initial uncertainty of a TLE-seeded HPOP trajectory, including this paper's HPOP runs, is unknown until a validated representation exists.
-- A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions. This paper claims no calibrated covariance and no covariance-based probability.
+- A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.
 
-The planned path follows the companion paper's three tasks:
+Every event reports the Alfano maximum: the largest probability any covariance size could give for the reported miss distance and combined hard-body radius ([R4](#r4)). It needs no covariance and serves as an upper bound. Each object's radius comes with its basis: supplied, half the catalog size, from the radar cross section, or the request default. No uncertainty is invented: an event carries covariance, and a covariance-based probability, only when a source supplied covariance or the empirical model below applies, and it states which. The work below follows the companion paper's three parts: initial covariance, propagation, and calibration on held-out evidence ([R8](#r8)).
 
-1. **Initial covariance P₀** from operator products and conjunction messages that carry covariance, from SDN orbit-determination fits (formal covariance, marked uncalibrated), or from an empirical model built from element-set history and checked against independent reference orbits.
-2. **Propagation** P(t) = Φ P₀ Φᵀ + Q with a declared process noise Q, exported with each window's trajectories. The conjunction module already implements covariance-based probability methods (Foster, Patera, Chan, Alfriend, Alfano 2005, Laas 2015), and only reported conjunctions need them.
-3. **Calibration gates** that measure coverage against held-out evidence before any covariance-based probability is published as more than conditional on its assumptions.
+### Independent truth
 
-Admissible-set screening with TEAG and the ESPF is a separate path. It reports possibility and necessity, which are not collision probabilities ([R1](#r1), section 9).
+Calibration needs reference orbits that SGP4 did not produce. SDN's reference-states module turns precise orbits into GCRF states at stated times, each with its stated uncertainty as covariance and its provenance ([R10](#r10)):
+
+- IGS final GPS orbits;
+- ILRS orbits for LAGEOS-1/2, ETALON-1/2, Ajisai, Starlette, Stella, LARETS, WESTPAC, LARES and LARES-2;
+- Sentinel-1C/1D precise orbits;
+- Swarm A/B/C precise orbits.
+
+Their frames are converted with IERS Earth orientation parameters. For 2026-08-02 to 15, this gives 48 objects. The conversion matches an independent pyerfa computation within 1 mm, and a Vallado textbook case within its printed precision.
+
+### An empirical error model, and its calibration
+
+A model of SGP4 prediction error was built from 1.89 million element sets (2026-07-12 to 08-08), stratified by orbit regime and prediction age. It uses differences between consecutive element sets of the same object. Those differences are not truth, and the reference orbits show by how much:
+
+- From 600 km up, under half a day, they understate the true along-track error 4 to 11 times, because consecutive fits share their error.
+- Below 600 km they overstate it, by 10 to 90 times beyond a day.
+
+The calibration gate scales each stratum's covariance on one week of reference orbits (08-02 to 08), then tests it on the next (08-09 to 15). It compares each error's Mahalanobis distance with χ² on 3 degrees of freedom, and every sample counts. A stratum is CALIBRATED only when all of these hold:
+
+- its 1σ and 2σ containment are within 5 points of nominal;
+- no more than 1 % falls outside 3σ;
+- it has at least 30 samples from at least 3 objects.
+
+| LEO 600 to 800 km, prediction age | Samples (objects) | Inside 1σ / 2σ / 3σ | Label |
+| --- | ---: | --- | --- |
+| 0 to 0.5 day | 14,968 (4) | 0.642 / 0.954 / 0.997 | CALIBRATED |
+| 0.5 to 1 day | 14,876 (4) | 0.627 / 0.947 / 0.996 | FAILED |
+| 1 to 2 days | 31,327 (4) | 0.647 / 0.943 / 0.997 | CALIBRATED |
+| 2 to 3 days | 31,805 (4) | 0.636 / 0.922 / 0.994 | CALIBRATED |
+| 3 to 5 days | 58,981 (4) | 0.701 / 0.960 / 0.997 | CALIBRATED |
+| 5 to 7 days | 49,187 (4) | 0.728 / 0.965 / 0.991 | CALIBRATED |
+| Nominal | | 0.683 / 0.954 / 0.997 | |
+
+Every other stratum is UNCALIBRATED:
+
+- **GPS and the other MEO strata fail**, for example 0.37 / 0.70 / 0.89 for LAGEOS-1/2 and LARES-2 within half a day. GPS element sets carry per-satellite along-track offsets of −1.6 to +3.8 km.
+- **The other LEO bands have only one or two reference objects.**
+- **GEO, eccentric and beyond-GEO orbits have no independent truth here.**
+
+The labels hold for these objects in this week.
+
+### Covariance probability on screened events
+
+With the scaled model, element-set screens give each event's objects the covariance of their stratum at the TCA's prediction age. The event then reports the selected method's probability, Foster's by default ([R9](#r9)). Each event is labeled:
+
+- the covariance as synthesized from the empirical model;
+- the two objects' errors as independent;
+- calibrated only when both objects' strata passed the gate.
+
+On the three-day full catalog the screen found the same 292,516 conjunctions:
+
+- 288,105 received a covariance probability;
+- 13,088 of those are calibrated;
+- refinement took 7.8 s instead of 7.0 s, and the run 19.6 s instead of 18.5 s.
+
+Events outside the model keep the Alfano maximum. These are a negative or too-old prediction age, or a stratum the model lacks.
+
+### Propagated and fitted covariance
+
+- **Propagation.** HPOP resident instances now accept an initial covariance P₀ per object and return P(t) = Φ P₀ Φᵀ + Q. Q is a declared white-acceleration process noise, inertial or radial-transverse-normal, given as a spectral density and discretization interval. It is recorded in the trajectory (SDS 1.232.0). The state transition matrix matches finite differences, and Q matches its closed form.
+- **Orbit determination.** Fits publish their formal covariance as an OCM. The OCM lists the noise models, weighting, observations used, process noise, a priori and convergence criteria, with biases neither estimated nor considered and no consider parameters. It is marked Uncalibrated.
+- **Not yet calibrated.** Neither covariance has passed a calibration gate. Covariance supplied in an OEM or OCM enters conjunction assessment as supplied covariance and keeps the source's calibration label.
+
+### Agreement with SOCRATES
+
+SOCRATES is CelesTrak's public conjunction screen ([R7](#r7)). The replay used the top 300 rows of its 2 October 2026 maximum-probability report, from 179,398 rows. Each pair was reassessed from the element sets SOCRATES used for it, and the report and every input are hashed. The days since epoch agree to SOCRATES's printed precision, which confirms the inputs are identical.
+
+| Group | Rows | TCA median / p95 / max | Miss distance median / p95 / max |
+| --- | ---: | --- | --- |
+| Cataloged pairs, faster than 10 m/s | 112 | 0.4 / 0.5 / 24 ms | 0.38 / 2.4 / 6.6 m |
+| Pairs with an object numbered 100000 or above | 126 | 0.4 / 4.2 / 7.6 ms | 0.58 / 20.8 / 61 m |
+| One formation pair, 0 to 5 m/s | 62 | 19 / 69 / 363 ms | 0.26 / 0.47 / 0.51 m |
+
+SOCRATES prints range to 1 m and speed to 1 m/s, so the cataloged pairs agree to its reported precision. Every fast miss difference over 20 m involves an object numbered 100000 or above, mostly Starlink, and the published inputs do not show why.
+
+Maximum probability is about nine times lower here at a 10 m combined radius. That matches SOCRATES using larger, object-specific radii, which it does not publish: a combined radius of 30 m (median) would reproduce its values. For the formation pair, a short-term encounter does not hold for either computation, so the probabilities are not comparable.
+
+### Screening rules compared
+
+The companion paper's section 12 compares probabilistic, bounded-set and admissible-set screening ([R1](#r1)). Cases were built from real SGP4 errors against the held-out reference orbits:
+
+- two different objects' errors in one stratum make one encounter;
+- each encounter is placed head-on and at a 90° crossing;
+- synthetic true misses are added from 0 to 5 km;
+- a collision is a true miss within 20 m.
+
+The three rules alert as follows:
+
+- **Probabilistic:** Foster's probability ≥ 1e-4.
+- **Bounded set:** the 99.73 % relative ellipse comes within 20 m.
+- **Possibility:** min-joined χ² possibility per object, alerting unless the necessity of no collision reaches 0.9973. Possibility and necessity are not probabilities ([R1](#r1), section 9).
+
+The results, in the calibrated strata (10,000 cases a row):
+
+| Rule | Missed collisions, head-on | Missed collisions, crossing | False alerts at 1 km miss | False alerts at 2 km miss |
+| --- | ---: | ---: | ---: | ---: |
+| Probabilistic | 2.7 % | 16 % | 6 to 7 % | 0 % |
+| Bounded set | 0.2 % | 0.4 % | 21 to 45 % | 0 to 4.5 % |
+| Possibility | 0 % | 0 % | 69 to 89 % | 4 to 24 % |
+
+- **Probabilistic.** Along-track uncertainty here is 0.6 to 3 km, so a true collision's probability averages only 0.002 head-on and 0.0006 crossing. This is dilution, and it is what hides the collisions the probability rule misses.
+- **Possibility.** It missed none in calibrated strata, at the cost of the most false alerts. In uncalibrated strata it missed up to 8 %, so it is only as sound as its declared uncertainty.
+- **Disclosure.** The baselines and cases were chosen independently of the TEAG and ESPF authors' implementations, and no TEAG or ESPF code was run.
 
 ## 8 Limits and next work
 
@@ -217,9 +318,10 @@ Admissible-set screening with TEAG and the ESPF is a separate path. It reports p
 | Catch-up from element epochs | 123 s before the first HPOP window | Persistent propagation across screens |
 | Memory per window | About 400 MB per 2-hour HPOP window | Window length chosen per host |
 | One host | All timings from one shared 28-core workstation | Repeat on other hosts, GPUs and Docker containers ([R2](#r2) includes the procedure) |
-| Accuracy | Not assessed here | The companion paper's validation baselines ([R1](#r1), section 12) |
+| Calibration coverage | Covariance calibrated only in LEO 600 to 800 km, for 48 reference objects in one week | More precise-orbit missions, object-class strata, and calibration of HPOP and orbit-determination covariance |
+| Probability inputs | Combined radius and covariance shape differ from SOCRATES's unpublished ones | Published per-object radii with their basis |
 
-This paper reports computation speed and agreement between implementations. It does not establish operational readiness, catalog accuracy, conjunction accuracy against independent truth, or agreement with SOCRATES ([R7](#r7)).
+This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness, or accuracy for objects and regimes without independent reference orbits.
 
 ## References
 
@@ -250,3 +352,15 @@ Space-Track.org. General perturbations element sets, catalog snapshot of 30 Sept
 ### R7
 
 CelesTrak. SOCRATES conjunction screening service. [Service](https://celestrak.org/SOCRATES/)
+
+### R8
+
+Edgesource. Conjunction uncertainty program: reference states, GP prediction-error model, calibration gate, covariance probability on screened events, HPOP process noise, orbit-determination covariance, SOCRATES replay and screening evaluation. Modules commit cbdf54b67fcc5ee58046c8f962660b4590b7af17. [Reference states](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/reference-states/README.md) · [Validation](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/gp-error-model/docs/validation-2026-08.md) · [Calibration](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/gp-error-model/docs/calibration-2026-08.md) · [Conjunction module](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/conjunction-assessment/README.md) · [HPOP](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/propagator/hpop/README.md) · [SOCRATES replay](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/conjunction-assessment/docs/socrates-replay-2026-10-02.md) · [Screening evaluation](https://github.com/DigitalArsenal/space-data-network-modules/blob/cbdf54b67fcc5ee58046c8f962660b4590b7af17/analysis/gp-error-model/docs/screening-evaluation-2026-08.md)
+
+### R9
+
+Foster, J. L. and Estes, H. S. A Parametric Analysis of Orbital Debris Collision Probability and Maneuver Rate for Space Vehicles. NASA JSC-25898, 1992.
+
+### R10
+
+Precise orbit products: IGS final orbits ([IGS](https://igs.org/products/)), ILRS analysis-centre orbits ([ILRS](https://ilrs.gsfc.nasa.gov/)), Copernicus Sentinel-1 precise orbit ephemerides ([ESA](https://sentinels.copernicus.eu/)), Swarm precise orbits ([ESA](https://earth.esa.int/eogateway/missions/swarm)), and IERS EOP 20 C04 ([IERS](https://www.iers.org/)).
