@@ -105,7 +105,7 @@ echo "machine: $(uname -m), $(nproc) CPUs; LazyFS fa7d32e; arm $ARM; $ROUNDS rou
 run() { # run <label> <negative so or empty>
   P4PROOF_WORK="$W/$1-work" P4PROOF_OUT="$W/$1-out" P4PROOF_LAZYFS_MOUNT="$MNT" P4PROOF_LAZYFS_FIFO="$FIFO" \
     P4PROOF_LAZYFS_FIFO_DONE="$DONE" P4PROOF_LAZYFS_ROUNDS="$ROUNDS" P4PROOF_LAZYFS_ARM="$ARM" P4PROOF_LAZYFS_NEGATIVE="$2" \
-    "$L/p4proof.test" -test.run '^TestProofLazyFSPowerLoss$' -test.v -test.count=1 -test.timeout 6h 2>&1 | grep -E 'RESULT|harness|FAIL|PASS|ok|panic' || true
+    "$L/p4proof.test" -test.run '^TestProofLazyFSPowerLoss$' -test.v -test.count=1 -test.timeout 6h 2>&1 | grep -E 'RESULT|harness:|FAIL|PASS|ok|panic' || true
 }
 mkdir -p "$W/trials-work" "$W/trials-out" "$W/negative-work" "$W/negative-out"
 run trials ""
