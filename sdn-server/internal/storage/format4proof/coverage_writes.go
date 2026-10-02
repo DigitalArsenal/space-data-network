@@ -173,15 +173,15 @@ func (c *cov) laneReads(schema, provider, source, batch string) []Call {
 		c.rawQuery("lane page "+tag, cur, false),
 		c.valueCall("lane snapshot "+tag, schema, func(s *storage.FlatSQLStore) (Row, error) {
 			n, h, err := s.RawRecordSnapshot(q)
-			return append(ValueRow("n", i64(n)), headRow(h)...), err
+			return covHead(q, n, &h), err
 		}),
 		c.valueCall("lane count "+tag, schema, func(s *storage.FlatSQLStore) (Row, error) {
 			n, err := s.CountRawRecords(q)
-			return ValueRow("n", i64(n)), err
+			return covHead(q, n, nil), err
 		}),
 		c.valueCall("lane head "+tag, schema, func(s *storage.FlatSQLStore) (Row, error) {
 			h, err := s.RawRecordHead(q)
-			return headRow(h), err
+			return covHead(q, -1, &h), err
 		}),
 		c.recordsCall("lane window "+tag, schema, func(s *storage.FlatSQLStore) ([]*storage.Record, error) { return s.QueryIndexedRecords(w) }),
 		c.rowsCall("lane index page "+tag, schema, func(s *storage.FlatSQLStore) ([]Row, error) {
@@ -214,8 +214,9 @@ func (c *cov) typeReads(schema string) []Call {
 			return ValueRow("n", i64(n)), err
 		}),
 		c.valueCall("type head "+schema, schema, func(s *storage.FlatSQLStore) (Row, error) {
-			n, h, err := s.RawRecordSnapshot(storage.RawRecordQuery{SchemaName: schema})
-			return append(ValueRow("n", i64(n)), headRow(h)...), err
+			q := storage.RawRecordQuery{SchemaName: schema}
+			n, h, err := s.RawRecordSnapshot(q)
+			return covHead(q, n, &h), err
 		}),
 		c.rawQuery("newest "+schema, storage.RawRecordQuery{SchemaName: schema, Limit: 10}, true),
 		c.recordsCall("recent "+schema, schema, func(s *storage.FlatSQLStore) ([]*storage.Record, error) { return s.QueryRecentRecords(schema, 10) }),
@@ -381,7 +382,12 @@ func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 	coverageNeedsSQL[ClassXM] = true
 	scenarios := [][]Shape{c.x01(omm), c.x02(omm, mpe, iqc, cat), c.x03(omm, iqc), c.x04(), c.x05(omm), c.x06(omm), c.x07(omm),
 		c.x08(), c.x09(), c.x10(omm), c.x11(mpe), c.x12(omm), c.x14()}
-	var writes, reads []Call
+	// The writes in order; the reads after all of them, one shape per
+	// policy of the shapes they came from (strict; C-6; C-12).
+	var writes []Call
+	reads := map[string][]Call{}
+	policy := map[string]Policy{}
+	var order []string
 	for _, shapes := range scenarios {
 		for _, sh := range shapes {
 			for _, call := range sh.Calls {
@@ -391,18 +397,32 @@ func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 				call.Name = sh.Class + ": " + call.Name
 				if call.Write {
 					writes = append(writes, call)
-				} else {
-					reads = append(reads, call)
+					continue
 				}
+				k := sh.Policy.Accepted
+				if _, ok := policy[k]; !ok {
+					policy[k], order = sh.Policy, append(order, k)
+				}
+				reads[k] = append(reads[k], call)
 			}
 		}
 	}
 	w := covShape(ClassXM, "XM writes", "", writes...)
 	w.Arms = []string{ArmF1, ArmF2}
-	r := covShape(ClassXM, "XM reads (format 4: on the migrated store)", "", reads...)
-	r.Policy.Accepted = "C-6: format 4 rejects (and migration cannot carry) a record above the write slot's request area − 64 KiB; format 1 stores it"
-	r.Policy.AcceptedFields = []string{"big_value", "big_err"}
-	return []Shape{w, r}
+	out := []Shape{w}
+	for _, k := range order {
+		name := "XM reads (format 4: on the migrated store)"
+		switch {
+		case strings.Contains(k, "C-12"):
+			name += " C-12"
+		case strings.Contains(k, "C-6"):
+			name += " C-6"
+		}
+		sh := covShape(ClassXM, name, "", reads[k]...)
+		sh.Policy = policy[k]
+		out = append(out, sh)
+	}
+	return out
 }
 
 // X01: storeBatch untagged (api/publish, logservice PLG, archive imports):
@@ -430,7 +450,6 @@ func (c *cov) x01(omm [][]byte) []Shape {
 		c.tagsOf("GetSourceTags written", "OMM.fbs", all),
 		c.refsOf("refs untagged", "OMM.fbs", cidsOf(fresh), nil),
 		c.refsOf("refs second producer's copies", "OMM.fbs", append(cidsOf(held), cidsOf(fresh2)...), func(r *storage.RawRecordRef) { r.PeerID = covPeer }),
-		c.refsOf("refs first producer's copies", "OMM.fbs", cidsOf(held), func(r *storage.RawRecordRef) { r.PeerID = gpPeer }),
 		c.rawQuery("cursor second producer", storage.RawRecordQuery{SchemaName: "OMM.fbs", PeerID: covPeer, UseRowIDCursor: true, Limit: 50}, false),
 		c.rawQuery("cursor after the fixture", storage.RawRecordQuery{SchemaName: "OMM.fbs", UseRowIDCursor: true, AfterRowID: 2115808, Limit: 50}, true),
 		c.rawQuery("cursor norad of a new record", storage.RawRecordQuery{SchemaName: "OMM.fbs", UseRowIDCursor: true, AfterRowID: 2100000, Limit: 50,
@@ -443,7 +462,9 @@ func (c *cov) x01(omm [][]byte) []Shape {
 	reads = append(reads, c.typeReads("OMM.fbs")...)
 	reads = append(reads, c.summaries(gpPeer, covPeer)...)
 	return []Shape{covShape(class, "storeBatch untagged: writes", "OMM.fbs", writes...),
-		covShape(class, "storeBatch untagged: read back", "OMM.fbs", reads...)}
+		covShape(class, "storeBatch untagged: read back", "OMM.fbs", reads...),
+		c12Shape(class, "storeBatch untagged: the copy format 1 does not serve", "OMM.fbs",
+			c.refsOf("refs first producer's copies", "OMM.fbs", cidsOf(held), func(r *storage.RawRecordRef) { r.PeerID = gpPeer }))}
 }
 
 // noradOf reads an OMM record's NORAD_CAT_ID through the fixture's own index
@@ -706,8 +727,8 @@ func (c *cov) x05(omm [][]byte) []Shape {
 		c.refsOf("refs the batch's other records", "OMM.fbs", cidsOf([][]byte{a, b}), nil),
 	}
 	sh := covShape(class, "oversized record (C-6)", "OMM.fbs", calls...)
-	sh.Policy.Accepted = "C-6: format 4 rejects a record above the write slot's request area − 64 KiB (P4_REJ_TOO_LARGE); format 1 stores it"
-	sh.Policy.AcceptedFields = []string{"big_value", "big_err"}
+	accept(&sh, "C-6: format 4 rejects a record above the write slot's request area − 64 KiB (P4_REJ_TOO_LARGE); format 1 stores it",
+		"big_value", "big_err")
 	return []Shape{sh}
 }
 
@@ -822,7 +843,6 @@ func (c *cov) x07(omm [][]byte) []Shape {
 		c.gets("GetRecord imported", "OMM.fbs", all),
 		c.tagsOf("tags imported", "OMM.fbs", all),
 		c.refsOf("refs imported, the provider's copies", "OMM.fbs", all, func(r *storage.RawRecordRef) { r.PeerID = covProvider }),
-		c.refsOf("refs imported, the second import's copies", "OMM.fbs", all, func(r *storage.RawRecordRef) { r.PeerID = covPeer2 }),
 		c.refsOf("refs imported, by their tags", "OMM.fbs", cidsOf(bb), func(r *storage.RawRecordRef) { r.BatchID, r.ProducerPeerID = tb.BatchID, covRelay }),
 		c.rawQuery("cursor provider peer", storage.RawRecordQuery{SchemaName: "OMM.fbs", PeerID: covProvider, UseRowIDCursor: true, Limit: 50}, false),
 		imp("import with a CID that does not match its bytes", covProvider, &badIndex),
@@ -830,7 +850,9 @@ func (c *cov) x07(omm [][]byte) []Shape {
 	calls = append(calls, c.laneReads("OMM.fbs", FixtureProvider, "celestrak-gp", ta.BatchID)...)
 	calls = append(calls, c.laneReads("OMM.fbs", covProvider, "celestrak-gp", tb.BatchID)...)
 	calls = append(calls, c.summaries(covProvider, covPeer2)...)
-	return []Shape{covShape(class, "dataset shard import", "OMM.fbs", calls...)}
+	return []Shape{covShape(class, "dataset shard import", "OMM.fbs", calls...),
+		c12Shape(class, "dataset shard import: the copy format 1 does not serve", "OMM.fbs",
+			c.refsOf("refs imported, the second import's copies", "OMM.fbs", all, func(r *storage.RawRecordRef) { r.PeerID = covPeer2 }))}
 }
 
 // buildImportShard writes the shard and its index (ExportDatasetRecords) in
@@ -1250,8 +1272,7 @@ func (c *cov) x13() []Shape {
 		n, err := s.GarbageCollect(200 * 365 * 24 * time.Hour)
 		return ValueRow("n", i64(n)), err
 	}))
-	gc.Policy.Accepted = "C-11: GarbageCollect(maxAge) returns an unsupported error on format 4, as on format 2"
-	gc.Policy.AcceptedFields = []string{"n", "err"}
+	accept(&gc, "C-11: GarbageCollect(maxAge) returns an unsupported error on format 4, as on format 2", "n", "err")
 	quota := func(name string, of func(live int64) int64) Call {
 		return c.writeValue(name, "", func(s *storage.FlatSQLStore) (Row, error) {
 			live, err := s.LiveRecordBytes()
