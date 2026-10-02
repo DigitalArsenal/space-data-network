@@ -51,6 +51,8 @@ export type {
   ModuleGrantResult,
   RequesterIdentity,
 } from './module-delivery';
+export { buildModuleDeliveryRequesterEpm } from './module-delivery-epm';
+export type { ModuleDeliveryKeyProof } from './module-delivery-epm';
 export {
   buildFieldStreamGrantSignaturePayload,
   buildFieldStreamProviderSignaturePayload,

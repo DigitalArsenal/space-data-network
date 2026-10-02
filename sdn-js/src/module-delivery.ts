@@ -21,6 +21,10 @@ import type {
 import { sha256, sign, verify } from './crypto/hd-wallet';
 import { discoverProvider } from './discovery';
 import {
+  buildModuleDeliveryRequesterEpm,
+  type ModuleDeliveryKeyProof,
+} from './module-delivery-epm';
+import {
   normalizeServerDescriptor,
   type NormalizedServerDescriptor,
   type ServerDescriptorInput,
@@ -87,12 +91,23 @@ export interface RequesterIdentity {
   xpub?: string;
   signingKey: Pick<KeyPair, 'privateKey' | 'publicKey'>;
   encryptionKey: Pick<EncryptionKeyPair, 'privateKey' | 'publicKey'>;
+  /**
+   * The wallet account key's proof that `signingKey` may fetch paid modules
+   * for this account (hd-wallet `signModuleDeliveryKey`). When present the
+   * request names its account xpub and carries the requester $EPM that an
+   * allowlisted module requires.
+   */
+  moduleDeliveryKeyProof?: ModuleDeliveryKeyProof;
 }
 
 export interface ModuleGrantRequestOptions {
   serverDescriptor: ServerDescriptorInput;
   descriptorResolver?: ServerDescriptorResolver;
-  requesterIdentity: Pick<DerivedIdentity, 'peerId' | 'xpub' | 'signingKey' | 'encryptionKey'> | RequesterIdentity;
+  requesterIdentity:
+    | (Pick<DerivedIdentity, 'peerId' | 'xpub' | 'signingKey' | 'encryptionKey'> & {
+        moduleDeliveryKeyProof?: ModuleDeliveryKeyProof;
+      })
+    | RequesterIdentity;
   moduleId: string;
   moduleVersion?: string;
   moduleVariant?: string;
@@ -232,12 +247,19 @@ export async function requestModuleGrant(
     detail: provider.relayAddresses.length > 0 ? 'descriptor-relays' : 'dht-discovery',
   });
 
+  const requesterEpm = requesterIdentity.moduleDeliveryKeyProof
+    ? await buildModuleDeliveryRequesterEpm({
+        signingKey: requesterIdentity.signingKey,
+        proof: requesterIdentity.moduleDeliveryKeyProof,
+      })
+    : undefined;
   const challengeRequestBytes = encodeChallengeRequest({
     reqId,
     moduleId,
     moduleVersion,
     requesterPeerId: requesterIdentity.peerId,
     requesterXpub: trimOptional(requesterIdentity.xpub),
+    requesterEpm,
     requesterSigningPublicKey: requesterIdentity.signingKey.publicKey,
     requesterEphemeralPublicKey: requesterIdentity.encryptionKey.publicKey,
     requesterDomain,
@@ -465,6 +487,7 @@ function encodeChallengeRequest(options: {
   requestedTimeoutMs: number;
   requestedAtMs: number;
   providerPeerId: string;
+  requesterEpm?: Uint8Array;
 }): Uint8Array {
   return encodeLicensingChallengeRequest(options);
 }
@@ -688,11 +711,14 @@ async function resolveCandidateAddresses(
 }
 
 function normalizeRequesterIdentity(
-  identity: Pick<DerivedIdentity, 'peerId' | 'xpub' | 'signingKey' | 'encryptionKey'> | RequesterIdentity,
+  identity: ModuleGrantRequestOptions['requesterIdentity'],
 ): RequesterIdentity {
+  const proof = identity.moduleDeliveryKeyProof;
   return {
     peerId: normalizeRequiredString(identity.peerId, 'requesterIdentity.peerId'),
-    xpub: trimOptional(identity.xpub),
+    // With an account key proof the request speaks for that account.
+    xpub: proof ? normalizeRequiredString(proof.accountXpub, 'moduleDeliveryKeyProof.accountXpub') : trimOptional(identity.xpub),
+    moduleDeliveryKeyProof: proof ? { ...proof } : undefined,
     signingKey: {
       privateKey: cloneBytes(identity.signingKey.privateKey),
       publicKey: cloneBytes(identity.signingKey.publicKey),
