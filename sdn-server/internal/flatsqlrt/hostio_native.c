@@ -149,16 +149,27 @@ static uint32_t hash_str(const char *s) {
   return h;
 }
 
-// Registers one holder of rel. Returns 0, or NOENT while rel is being unlinked.
+// Returns rel's entry once no unlink of rel is in flight (or NULL), waiting
+// under reg_lock for one that is. An unlink is one syscall, so the wait is
+// short. Open, close and unlink are then ordered as POSIX orders them: an open
+// that meets an unlink runs after it (an O_CREAT open creates the file again,
+// a plain open finds it gone), and a second unlink of the path sees the first
+// one's result instead of failing BUSY. SQLite deletes a WAL when its last
+// connection closes while another connection may be opening that file.
+static reg_entry *reg_settled_locked(sdn_hio_store *st, uint32_t b, const char *rel) {
+  for (;;) {
+    reg_entry *e = st->buckets[b];
+    while (e && strcmp(e->rel, rel) != 0) e = e->next;
+    if (!e || !e->unlinking) return e;
+    ilock_wait(&st->reg_lock, &st->reg_cond, 0);
+  }
+}
+
+// Registers one holder of rel. Returns 0 (after any unlink of rel in flight).
 static int reg_acquire(sdn_hio_store *st, const char *rel, int cls) {
   uint32_t b = hash_str(rel) % REG_BUCKETS;
   ilock_lock(&st->reg_lock, cls);
-  reg_entry *e = st->buckets[b];
-  while (e && strcmp(e->rel, rel) != 0) e = e->next;
-  if (e && e->unlinking) {
-    ilock_unlock(&st->reg_lock);
-    return SDN_IO_ERR_NOENT;
-  }
+  reg_entry *e = reg_settled_locked(st, b, rel);
   if (!e) {
     e = calloc(1, sizeof *e);
     if (!e || !(e->rel = strdup(rel))) {
@@ -193,13 +204,13 @@ static void reg_release(sdn_hio_store *st, const char *rel, int cls) {
   ilock_unlock(&st->reg_lock);
 }
 
-// Claims rel for an unlink. if_unused: BUSY when any instance holds it.
+// Claims rel for an unlink (after any unlink of rel in flight). if_unused:
+// BUSY when any instance holds it.
 static int reg_begin_unlink(sdn_hio_store *st, const char *rel, int if_unused, int cls, reg_entry **out) {
   uint32_t b = hash_str(rel) % REG_BUCKETS;
   ilock_lock(&st->reg_lock, cls);
-  reg_entry *e = st->buckets[b];
-  while (e && strcmp(e->rel, rel) != 0) e = e->next;
-  if (e && (e->unlinking || (if_unused && e->refs > 0))) {
+  reg_entry *e = reg_settled_locked(st, b, rel);
+  if (e && if_unused && e->refs > 0) {
     ilock_unlock(&st->reg_lock);
     return SDN_IO_ERR_BUSY;
   }
@@ -225,6 +236,7 @@ static void reg_end_unlink(sdn_hio_store *st, reg_entry *e, int cls) {
   ilock_lock(&st->reg_lock, cls);
   e->unlinking = 0;
   if (e->refs == 0) reg_remove_locked(st, b, e);
+  pthread_cond_broadcast(&st->reg_cond);
   ilock_unlock(&st->reg_lock);
 }
 
@@ -401,6 +413,43 @@ static int walk_parent(sdn_hio_store *st, const char *rel, int create, uint64_t 
   return dirfd;
 }
 
+// Opens leaf in dirfd (O_NOFOLLOW). Returns an fd or -errno; *made (when
+// asked) reports a file this call created.
+//
+// A non-exclusive create is made the way POSIX defines it: create the file
+// exclusively, else open the one that exists, again while it vanishes between
+// the two. macOS (APFS, 26.x) fails every loser of concurrent open(O_CREAT)
+// calls on a name that does not exist yet with ENOENT, where POSIX opens the
+// file the winner made (its O_EXCL losers get EEXIST, as they should). Two
+// connections opening the same partition at once both create its -wal, and
+// SQLite reports the ENOENT as SQLITE_CANTOPEN. Without *made, the common
+// case (the file exists) stays one call.
+static int open_leaf(int dirfd, const char *leaf, int oflags, int *made) {
+  const int base = O_NOFOLLOW | O_CLOEXEC;
+  if (made) *made = 0;
+  if (!(oflags & O_CREAT) || (oflags & O_EXCL)) {
+    int fd = openat(dirfd, leaf, oflags | base, 0600);
+    if (fd < 0) return -errno;
+    if (made) *made = (oflags & O_CREAT) != 0;
+    return fd;
+  }
+  if (!made) {
+    int fd = openat(dirfd, leaf, oflags | base, 0600);
+    if (fd >= 0 || errno != ENOENT) return fd >= 0 ? fd : -errno;
+  }
+  for (int i = 0; i < 64; i++) {
+    int fd = openat(dirfd, leaf, oflags | O_EXCL | base, 0600);
+    if (fd >= 0) {
+      if (made) *made = 1;
+      return fd;
+    }
+    if (errno != EEXIST) return -errno;
+    fd = openat(dirfd, leaf, (oflags & ~O_CREAT) | base, 0600);
+    if (fd >= 0 || errno != ENOENT) return fd >= 0 ? fd : -errno;
+  }
+  return -ENOENT;
+}
+
 #if defined(__linux__)
 #ifndef SYS_openat2
 #define SYS_openat2 437
@@ -430,10 +479,9 @@ static int confined_open(sdn_hio_store *st, const char *rel, int oflags) {
   const char *leaf = NULL;
   int dirfd = walk_parent(st, rel, 0, &created, &syncs, &leaf);
   if (dirfd < 0) return dirfd;
-  int fd = openat(dirfd, leaf, oflags | O_NOFOLLOW | O_CLOEXEC, 0600);
-  int e = errno;
+  int fd = open_leaf(dirfd, leaf, oflags, NULL);
   close(dirfd);
-  return fd >= 0 ? fd : -e;
+  return fd;
 }
 
 // ---- instance --------------------------------------------------------------------------
@@ -815,19 +863,7 @@ int32_t sdn_hio_open(sdn_hio_inst *in, const char *path, int32_t len, int32_t fl
       fd = dirfd;
     } else {
       int made = 0;
-      fd = -1;
-      if ((oflags & O_CREAT) && !(oflags & O_EXCL)) {
-        fd = openat(dirfd, leaf, (oflags | O_EXCL | O_NOFOLLOW | O_CLOEXEC), 0600);
-        if (fd >= 0) {
-          made = 1;
-        } else if (errno == EEXIST) {
-          fd = openat(dirfd, leaf, ((oflags & ~O_CREAT) | O_NOFOLLOW | O_CLOEXEC), 0600);
-        }
-      } else {
-        fd = openat(dirfd, leaf, oflags | O_NOFOLLOW | O_CLOEXEC, 0600);
-        made = fd >= 0 && (oflags & O_CREAT) && (oflags & O_EXCL);
-      }
-      if (fd < 0) fd = -errno;
+      fd = open_leaf(dirfd, leaf, oflags, &made);
       if (fd >= 0 && made) {
         if (dir_sync(dirfd) != 0) {
           int e = errno;
