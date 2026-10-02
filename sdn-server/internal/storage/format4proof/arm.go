@@ -1,6 +1,7 @@
 package format4proof
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -28,7 +29,9 @@ func IsFormat4(s *storage.FlatSQLStore) bool {
 
 // PrewarmAOT compiles the engines an arm runs into the daemon's AOT cache
 // (what `spacedatanetwork prewarm-aot` does), so no measurement includes a
-// compile. Format 4's artifact is prewarmed by the backend's open path.
+// compile and no store open misses its artifact: the daemon's format-4 open
+// never compiles. A build without a format-4 engine skips it (arm s then
+// fails at its open, naming ErrNoP4Artifact).
 func PrewarmAOT() error {
 	cache := storage.EngineAOTCacheDir()
 	if _, _, err := flatsqlrt.PrewarmEngineAOT(cache); err != nil {
@@ -36,6 +39,9 @@ func PrewarmAOT() error {
 	}
 	if _, _, err := flatsqlrt.PrewarmPSThreadsAOT(cache); err != nil {
 		return fmt.Errorf("prewarm the format-2 engine: %w", err)
+	}
+	if _, _, err := flatsqlrt.PrewarmP4ThreadsAOT(cache); err != nil && !errors.Is(err, flatsqlrt.ErrNoP4Artifact) {
+		return fmt.Errorf("prewarm the format-4 engine: %w", err)
 	}
 	return nil
 }

@@ -518,6 +518,11 @@ func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any
 	if err := os.MkdirAll(logs, 0o755); err != nil {
 		return res, err
 	}
+	// Every child opens a store; none may miss an AOT artifact or compile
+	// one while it can be killed (the LazyFS container starts with none).
+	if err := PrewarmAOT(); err != nil {
+		return res, fmt.Errorf("harness: %w", err)
+	}
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	mode := ModeCrashIngest
 	calls := crashCallsMax
@@ -535,7 +540,8 @@ func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any
 		cs := CrashSpec{Arm: spec.Arm, Scenario: spec.Scenario, Store: spec.Store, Logs: logs, Out: spec.Out, Round: round,
 			Calls: calls, Batch: spec.Batch}
 		before := countLines(ackPath(logs))
-		cmd, log, err := StartChild(ChildSpec{Mode: mode, Crash: &cs}, filepath.Join(logs, fmt.Sprintf("writer-%04d.log", round)), spec.WriterEnv...)
+		writerLog := filepath.Join(logs, fmt.Sprintf("writer-%04d.log", round))
+		cmd, log, err := StartChild(ChildSpec{Mode: mode, Crash: &cs}, writerLog, spec.WriterEnv...)
 		if err != nil {
 			return res, err
 		}
@@ -565,6 +571,12 @@ func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any
 			res.Killed++
 		}
 		log.Close()
+		if !killed && !cmd.ProcessState.Success() {
+			// The writer failed on its own (it could not open the store, or a
+			// write failed): nothing was crashed, so this round tests nothing.
+			// A harness error stops the loop; it is never a store violation.
+			return res, fmt.Errorf("harness: round %d: the writer exited %d before the kill (log %s)", round, cmd.ProcessState.ExitCode(), writerLog)
+		}
 		if spec.AfterKill != nil {
 			if err := spec.AfterKill(); err != nil {
 				return res, fmt.Errorf("round %d: after the kill: %w", round, err)
