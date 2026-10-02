@@ -880,10 +880,10 @@ var sandboxCaps = flatsqlrt.SandboxCaps{Timeout: 5 * time.Minute}
 const c31Accepted = "C-31: <TYPE>@<source> is the source's newest N records (format 1: the type's newest N, then the source)"
 
 // SameQuestionSuffix names the format-1 baseline of a `<TYPE>@<source>`
-// shape: format 1 answering the SAME question (the newest N records of the
-// type from the source) by SQL over its own tables and indexes. The read
-// gate holds the relation to it (coordinator ruling on review 1, item 1);
-// the equivalence driver compares format 4's relation with it exactly.
+// shape (R17 relations, R18 epoch streams): format 1 answering the SAME
+// question by SQL, every call executed. The read gate holds the shape to
+// it (coordinator rulings on review 1, item 1, and on GATES-r2, item 2);
+// the equivalence driver compares format 4's answer with it exactly.
 const SameQuestionSuffix = " [f1: same question, by SQL]"
 
 // R17: A18 TYPE@source relations through the sandbox. The relation has no
@@ -1045,7 +1045,9 @@ func a18Relation(sql string) string {
 	return rel
 }
 
-// R18: the engine epoch stream (module flatsql_epoch_stream).
+// R18: the engine epoch stream (module flatsql_epoch_stream). Each shape is
+// a `<TYPE>@<source>` question (C-31: per object, among the source's
+// records), and has a format-1 same-question baseline (epochSameQuestion).
 func epochStreamShapes(op BenchOp) ([]Shape, error) {
 	ps, err := decodeParams(op)
 	if err != nil {
@@ -1055,13 +1057,53 @@ func epochStreamShapes(op BenchOp) ([]Shape, error) {
 	for _, p := range ps {
 		p := p
 		name := fmt.Sprintf("OMM.fbs@%s %s epoch=%.0f limit=%d", p.Source, p.Profile, p.Epoch, p.Limit)
-		out = append(out, Shape{Class: op.ID, Name: name, Schema: "OMM.fbs", Policy: Policy{Unordered: true}, Calls: []Call{{Name: name,
+		same, err := epochSameQuestion(op.ID, name, p)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, same, Shape{Class: op.ID, Name: name, Schema: "OMM.fbs", Policy: Policy{Unordered: true}, Calls: []Call{{Name: name,
 			Run: func(s *storage.FlatSQLStore) Result {
 				st, err := s.QueryEpochRawStream("OMM.fbs", p.Source, p.Profile, p.Epoch, p.Limit)
 				return framesResult(name, st, err)
 			}}}})
 	}
 	return out, nil
+}
+
+// epochFormat1SQL is format 1's epoch-stream statement per profile
+// (storage/engine_records.go engineEpoch*SQL, run by QueryEpochRawStream on
+// format 1's engine) with one more parameter, ?4, that every call changes.
+var epochFormat1SQL = map[string]string{
+	"nearest": `SELECT _data FROM (SELECT _data, ROW_NUMBER() OVER (PARTITION BY NORAD_CAT_ID ORDER BY ABS(USER_DEFINED_EPOCH_TIMESTAMP - ?2)) rn FROM OMM WHERE (?1 = '' OR _source = ?1) AND ?4 IS NOT NULL) WHERE rn = 1 LIMIT ?3`,
+	"as_of":   `SELECT _data FROM (SELECT _data, ROW_NUMBER() OVER (PARTITION BY NORAD_CAT_ID ORDER BY USER_DEFINED_EPOCH_TIMESTAMP DESC) rn FROM OMM WHERE (?1 = '' OR _source = ?1) AND USER_DEFINED_EPOCH_TIMESTAMP <= ?2 AND ?4 IS NOT NULL) WHERE rn = 1 LIMIT ?3`,
+	"forward": `SELECT _data FROM (SELECT _data, ROW_NUMBER() OVER (PARTITION BY NORAD_CAT_ID ORDER BY USER_DEFINED_EPOCH_TIMESTAMP ASC) rn FROM OMM WHERE (?1 = '' OR _source = ?1) AND USER_DEFINED_EPOCH_TIMESTAMP >= ?2 AND ?4 IS NOT NULL) WHERE rn = 1 LIMIT ?3`,
+}
+
+// epochSameQuestion is format 1 answering an R18 shape's question with every
+// call executed: QueryEpochRawStream's own statement on format 1's engine,
+// plus a per-call parameter. Format 1's R18 relation repeats are answers of
+// its response cache (warm 0.06-0.09 ms against a cold 1.4-2.1 s), so they
+// time a cache, not the question. The OMM field the profiles order by
+// (USER_DEFINED_EPOCH_TIMESTAMP) exists only inside the records, so format
+// 1 answers it only through its engine's view; the equivalence driver holds
+// format 4's answer equal to this one.
+func epochSameQuestion(class, name string, p bp) (Shape, error) {
+	sql, ok := epochFormat1SQL[strings.TrimPrefix(p.Profile, "epoch.")]
+	if !ok {
+		return Shape{}, fmt.Errorf("R18: no format-1 statement for profile %q", p.Profile)
+	}
+	limit := int64(p.Limit)
+	if limit <= 0 {
+		limit = -1
+	}
+	var calls int64
+	return Shape{Class: class, Name: name + SameQuestionSuffix, Schema: "OMM.fbs", Fixture: FixtureT6W, Arms: []string{ArmF1},
+		Policy: Policy{Unordered: true},
+		Calls: []Call{{Name: name, Run: func(s *storage.FlatSQLStore) Result {
+			calls++
+			st, err := s.QueryRawStream(sql, "OMM@"+p.Source, p.Epoch, limit, calls)
+			return framesResult(name, st, err)
+		}}}}, nil
 }
 
 // R19: sandboxed and module SQL. "rows" runs QuerySandboxedJSON, "stream"
