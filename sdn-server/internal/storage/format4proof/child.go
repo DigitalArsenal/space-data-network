@@ -29,15 +29,16 @@ const (
 
 // ChildSpec is what a child does.
 type ChildSpec struct {
-	Mode     string       `json:"mode"`
-	Benchset string       `json:"benchset,omitempty"`
-	Work     string       `json:"work,omitempty"`
-	Read     *ReadSpec    `json:"read,omitempty"`
-	Ingest   *IngestSpec  `json:"ingest,omitempty"`
-	M01      *M01Spec     `json:"m01,omitempty"`
-	Write    *WriteSpec   `json:"write,omitempty"`
-	Crash    *CrashSpec   `json:"crash,omitempty"`
-	Prepare  *PrepareSpec `json:"prepare,omitempty"`
+	Mode     string        `json:"mode"`
+	Benchset string        `json:"benchset,omitempty"`
+	Work     string        `json:"work,omitempty"`
+	Read     *ReadSpec     `json:"read,omitempty"`
+	Ingest   *IngestSpec   `json:"ingest,omitempty"`
+	M01      *M01Spec      `json:"m01,omitempty"`
+	Write    *WriteSpec    `json:"write,omitempty"`
+	Crash    *CrashSpec    `json:"crash,omitempty"`
+	Prepare  *PrepareSpec  `json:"prepare,omitempty"`
+	Coverage *CoverageSpec `json:"coverage,omitempty"`
 }
 
 // PrepareSpec extracts the inputs from a format-1 clone.
@@ -186,6 +187,8 @@ func ExecChild(spec *ChildSpec) error {
 	case ModeCrashVerify:
 		_, err := CrashVerify(*spec.Crash)
 		return err
+	case ModeCoverage:
+		return execCoverage(spec)
 	}
 	return fmt.Errorf("unknown child mode %q", spec.Mode)
 }

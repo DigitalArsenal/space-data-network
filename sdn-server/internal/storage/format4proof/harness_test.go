@@ -160,6 +160,17 @@ func TestProofMigrate(t *testing.T) {
 	}
 }
 
+// TestProofCoverage runs the coverage classes (coverage.go: every
+// recordBackend method and parameter axis the benchset leaves out; COVERAGE.md)
+// on every arm, untimed; P4PROOF_CLASSES narrows them. Their answers are
+// compared by TestProofEquivalence with the reads'.
+func TestProofCoverage(t *testing.T) {
+	c := requireEnv(t, EnvBenchset, EnvWork, EnvOut)
+	if err := DriveCoverage(context.Background(), c, logfOf(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProofEquivalence(t *testing.T) {
 	c := requireEnv(t, EnvOut)
 	label := os.Getenv("P4PROOF_LABEL")
