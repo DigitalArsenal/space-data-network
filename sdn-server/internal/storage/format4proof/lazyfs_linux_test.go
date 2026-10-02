@@ -10,9 +10,11 @@ package format4proof
 //	P4PROOF_LAZYFS_FIFO       LazyFS's fault FIFO ("lazyfs::clear-cache")
 //	P4PROOF_LAZYFS_FIFO_DONE  its completion FIFO ("finished::clear-cache")
 //	P4PROOF_LAZYFS_ROUNDS     rounds per scenario
+//	P4PROOF_LAZYFS_SCENARIOS  comma list of scenarios (default ingest,supersede)
 //	P4PROOF_LAZYFS_NEGATIVE   a shared object to LD_PRELOAD into the writer
 //	                          (fsync a no-op): the loop must then report
-//	                          losses, which proves it can see them
+//	                          losses, which proves it can see them; a
+//	                          scenario's loop ends at its first loss
 //
 // Each round is a crash round (crash.go) with a power loss between the
 // kill -9 and the verifier: LazyFS drops every byte not synced. Acked
@@ -70,14 +72,18 @@ func TestProofLazyFSPowerLoss(t *testing.T) {
 		label = "lazyfs-negative"
 		env = []string{"LD_PRELOAD=" + negative}
 	}
-	for _, sc := range []string{ScenarioIngest, ScenarioSupersede} {
+	scenarios := []string{ScenarioIngest, ScenarioSupersede}
+	if v := splitList(os.Getenv("P4PROOF_LAZYFS_SCENARIOS")); len(v) > 0 {
+		scenarios = v
+	}
+	for _, sc := range scenarios {
 		store := filepath.Join(mount, label+"-"+arm+"-"+sc)
 		_ = os.RemoveAll(store)
 		if err := os.MkdirAll(store, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		res, err := CrashLoop(context.Background(), CrashLoopSpec{Arm: arm, Scenario: sc, Store: store, Work: c.Work, Out: c.Out,
-			Rounds: rounds, Batch: 1024, AfterKill: powerLoss, WriterEnv: env,
+			Rounds: rounds, Batch: 1024, AfterKill: powerLoss, WriterEnv: env, StopAtLoss: negative != "",
 			Logs: filepath.Join(c.Work, label+"-logs-"+arm+"-"+sc)}, logfOf(t))
 		if err != nil {
 			t.Fatal(err)

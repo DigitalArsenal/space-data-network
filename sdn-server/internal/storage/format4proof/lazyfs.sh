@@ -14,7 +14,10 @@
 # 1 of the first build found none in the container and every round failed to
 # open), runs the rounds, then the NEGATIVE CONTROL (fsync and fdatasync are no-ops
 # in the writer through LD_PRELOAD; the engine's host I/O is C and calls
-# them through libc), which must report a loss.
+# them through libc), which must report a loss (a scenario's negative loop
+# ends at its first loss: a lost store cannot be written again).
+# P4PROOF_LAZYFS_SCENARIOS / P4PROOF_LAZYFS_NEG_SCENARIOS (comma lists) and
+# P4PROOF_LAZYFS_NEG_ROUNDS (0 skips the negative control) narrow a run.
 #
 # LIMIT (as scripts/lazyfs-dir-durability.sh): LazyFS caches only file data,
 # so a lost un-fsynced directory entry is not exercised.
@@ -36,6 +39,8 @@ if [[ "${1:-}" != "--inner" ]]; then
     --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
     -v "$REPO":/src:ro -v "$WORK":/work -v "$MODCACHE":/gomod -v "$WORK/aot-cache":/root/.cache/flatsql-aot \
     -e GOMODCACHE=/gomod -e GOFLAGS=-mod=mod -e ROUNDS="$ROUNDS" -e ARM="$ARM" \
+    -e NEG_ROUNDS="${P4PROOF_LAZYFS_NEG_ROUNDS:-$ROUNDS}" -e TRIAL_SCENARIOS="${P4PROOF_LAZYFS_SCENARIOS:-}" \
+    -e NEG_SCENARIOS="${P4PROOF_LAZYFS_NEG_SCENARIOS:-}" \
     "${SDN_LAZYFS_IMAGE:-sdn-wasmedge-static:74db37e14}" \
     bash /src/sdn-server/internal/storage/format4proof/lazyfs.sh --inner
 fi
@@ -102,11 +107,13 @@ for _ in $(seq 1 100); do mountpoint -q "$MNT" && break; sleep 0.1; done
 mountpoint -q "$MNT" || { cat "$W/lazyfs.log"; echo "LazyFS did not mount"; exit 1; }
 
 echo "machine: $(uname -m), $(nproc) CPUs; LazyFS fa7d32e; arm $ARM; $ROUNDS rounds per scenario"
-run() { # run <label> <negative so or empty>
-  P4PROOF_WORK="$W/$1-work" P4PROOF_OUT="$W/$1-out" P4PROOF_LAZYFS_MOUNT="$MNT" P4PROOF_LAZYFS_FIFO="$FIFO" \
-    P4PROOF_LAZYFS_FIFO_DONE="$DONE" P4PROOF_LAZYFS_ROUNDS="$ROUNDS" P4PROOF_LAZYFS_ARM="$ARM" P4PROOF_LAZYFS_NEGATIVE="$2" \
+run() { # run <label> <negative so or empty> <rounds> <scenarios or empty>
+  P4PROOF_LAZYFS_SCENARIOS="$4" P4PROOF_WORK="$W/$1-work" P4PROOF_OUT="$W/$1-out" P4PROOF_LAZYFS_MOUNT="$MNT" P4PROOF_LAZYFS_FIFO="$FIFO" \
+    P4PROOF_LAZYFS_FIFO_DONE="$DONE" P4PROOF_LAZYFS_ROUNDS="$3" P4PROOF_LAZYFS_ARM="$ARM" P4PROOF_LAZYFS_NEGATIVE="$2" \
     "$L/p4proof.test" -test.run '^TestProofLazyFSPowerLoss$' -test.v -test.count=1 -test.timeout 6h 2>&1 | grep -E 'RESULT|harness:|FAIL|PASS|ok|panic' || true
 }
 mkdir -p "$W/trials-work" "$W/trials-out" "$W/negative-work" "$W/negative-out"
-run trials ""
-run negative "$L/nosync.so"
+run trials "" "$ROUNDS" "${TRIAL_SCENARIOS:-}"
+# The negative control ends a scenario at its first loss (P4PROOF_LAZYFS_NEG_ROUNDS
+# caps it; 0 skips it).
+[[ "${NEG_ROUNDS:-$ROUNDS}" == 0 ]] || run negative "$L/nosync.so" "${NEG_ROUNDS:-$ROUNDS}" "${NEG_SCENARIOS:-}"

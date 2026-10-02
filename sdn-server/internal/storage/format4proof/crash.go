@@ -491,6 +491,10 @@ type CrashLoopSpec struct {
 	// Logs is where the ack and follower logs go (default under Work); they
 	// must not live on the file system that loses power.
 	Logs string
+	// StopAtLoss ends the loop at the first violating round (the negative
+	// control: the expected loss is seen, and a lost store cannot be
+	// written again).
+	StopAtLoss bool
 }
 
 // CrashLoopResult sums a loop.
@@ -591,6 +595,10 @@ func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any
 			}
 		}
 		logf("crash %s %s round %d: killed=%v verify exit %d (%s)", spec.Arm, spec.Scenario, round, killed, vr.ExitCode, vr.Wall.Round(time.Millisecond))
+		if verr != nil && spec.StopAtLoss {
+			logf("crash %s %s: loss seen in round %d, the loop ends (negative control)", spec.Arm, spec.Scenario, round)
+			break
+		}
 	}
 	return res, nil
 }

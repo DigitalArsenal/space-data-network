@@ -89,6 +89,9 @@ type Inputs struct {
 	// B052Tags: that batch's tag, so a repeat (W03) and a retag (W04) carry
 	// exactly the original's provenance.
 	B052Tags storage.SourceTags `json:"b052_tags"`
+	// R01Held: on a grown store, R01's CIDs per type that the store still
+	// holds (the ingest wrote the list, HeldHitsPath); nil on the fixture.
+	R01Held map[string][]string `json:"-"`
 }
 
 // bp is the union of the benchset reads' parameter keys.
@@ -230,7 +233,7 @@ func BuildShapes(bs *Benchset, inputs *Inputs) ([]Shape, error) {
 				sh = getShapes(op.ID, miss)
 			}
 		case "R03":
-			sh, err = refsShapes(op, hits)
+			sh, err = refsShapes(op, hits, inputs)
 		case "R04":
 			sh, err = tagShapes(op, hits, inputs)
 		case "R05":
@@ -322,12 +325,18 @@ func roundRobin(list []string, n int) []string {
 	return out
 }
 
-// R03: QueryRawRecordRefsByRefs with the first N of R01's CIDs per type,
-// repeated round-robin, tag fields empty.
-func refsShapes(op BenchOp, hits map[string][]string) ([]Shape, error) {
+// R03: QueryRawRecordRefsByRefs with R01's CIDs per type, repeated
+// round-robin to N, tag fields empty. On a grown store the list is R01's
+// CIDs that store still holds (Inputs.R01Held): the ingest supersedes some
+// CAT ones, and one ref the store no longer holds fails the whole call on
+// every arm, which would time an error.
+func refsShapes(op BenchOp, hits map[string][]string, in *Inputs) ([]Shape, error) {
 	ps, err := decodeParams(op)
 	if err != nil {
 		return nil, err
+	}
+	if in.R01Held != nil {
+		hits = in.R01Held
 	}
 	var out []Shape
 	for _, size := range ps[0].Sizes {

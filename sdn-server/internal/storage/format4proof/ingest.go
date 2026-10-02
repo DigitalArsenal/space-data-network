@@ -1,9 +1,13 @@
 package format4proof
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -27,6 +31,46 @@ type IngestSpec struct {
 	A, B                   int    // calls in phase A; calls per writer in phase B
 	C, CWriters            int    // calls per writer and writers in phase C
 	Batch                  int    // records per call (4,096)
+	// HeldOut, when set, receives R01's CIDs the store still holds after
+	// the phases (the grown store's R03 list; HeldHitsPath).
+	HeldOut string `json:"held_out,omitempty"`
+}
+
+// HeldHitsPath is where the A+B ingest leaves an arm's held R01 CIDs.
+func HeldHitsPath(work, arm string) string { return filepath.Join(work, "r01-held-"+arm+".json") }
+
+// LoadHeldHits reads a HeldHitsPath file; a missing file is nil.
+func LoadHeldHits(path string) (map[string][]string, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var held map[string][]string
+	return held, json.Unmarshal(b, &held)
+}
+
+// writeHeldHits keeps, per type, the hits the store still holds (a ref it
+// no longer holds answers not found) and writes them to path. Untimed.
+func writeHeldHits(s *storage.FlatSQLStore, hits map[string][]string, path string) (map[string]any, error) {
+	held := map[string][]string{}
+	counts := map[string]any{}
+	for _, schema := range pointSchemas {
+		held[schema] = []string{}
+		for _, cid := range hits[schema] {
+			if _, err := s.QueryRawRecordRefsByRefs(schema, []storage.RawRecordRef{{CID: cid}}); !isNotFound(err) {
+				held[schema] = append(held[schema], cid)
+			}
+		}
+		counts[schema] = fmt.Sprintf("%d of %d", len(held[schema]), len(hits[schema]))
+	}
+	b, err := json.Marshal(held)
+	if err != nil {
+		return counts, err
+	}
+	return counts, os.WriteFile(path, b, 0o644)
 }
 
 // phases names the phases a spec runs ("AB", "C"): the run's class.
@@ -75,7 +119,7 @@ func ingestLanes(sets map[string][][]byte) (map[string]*ingestLane, error) {
 }
 
 // RunIngest runs the phases on spec.Store and writes the run.
-func RunIngest(spec IngestSpec) (*Run, error) {
+func RunIngest(spec IngestSpec, hits map[string][]string) (*Run, error) {
 	if spec.Batch <= 0 {
 		spec.Batch = 4096
 	}
@@ -209,6 +253,13 @@ func RunIngest(spec IngestSpec) (*Run, error) {
 			}
 			wg.Wait()
 		})
+	}
+	if spec.HeldOut != "" {
+		counts, err := writeHeldHits(s, hits, spec.HeldOut)
+		r.Extra["r01_held"] = counts
+		if err != nil {
+			r.Extra["r01_held_error"] = err.Error()
+		}
 	}
 	cs := time.Now()
 	if err := s.Close(); err != nil {
