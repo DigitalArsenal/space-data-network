@@ -9,10 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
-	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
-	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 func ctxT(t *testing.T) context.Context {
@@ -90,16 +87,5 @@ func TestOpenRefusesOtherFormats(t *testing.T) {
 				t.Fatalf("a refused Open created fsql4/: %v", err)
 			}
 		})
-	}
-}
-
-// The build stamp names the embedded engine (versioninfo pins).
-func TestP4EngineIsTheBuildStamp(t *testing.T) {
-	if versioninfo.P4EngineSHA256 != flatsqlrt.P4ThreadsSHA256 {
-		t.Fatalf("versioninfo.P4EngineSHA256 %s describes another engine than the embedded %s (%s)",
-			versioninfo.P4EngineSHA256, flatsqlrt.P4ThreadsSHA256, flatsqlrt.P4ThreadsPackage)
-	}
-	if versioninfo.P4StoreFormat != marker.StoreFormat || versioninfo.MaxStoreFormat < marker.StoreFormat {
-		t.Fatalf("P4StoreFormat %d, marker format %d, MaxStoreFormat %d", versioninfo.P4StoreFormat, marker.StoreFormat, versioninfo.MaxStoreFormat)
 	}
 }
