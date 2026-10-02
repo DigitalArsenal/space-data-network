@@ -344,6 +344,13 @@ type API interface {
 	SetQuota(bytes int64) error
 	Activate(ctx context.Context) error // CreateForMigration only: engine step 1 of §2.3 (Go then calls marker.FinishActivation)
 	Stats() ([]uint64, error)           // §3.10 order
+	// State stamps the counter state: while it returns the same stamp with
+	// ok, no write started or ended, so every count, head and summary
+	// (Types, Partitions, Lanes, Head without a search) answers the same, and
+	// what a caller derives from them may be kept under the stamp. ok is
+	// false while a write runs. With a quota set it moves every second (the
+	// engine's own quota pass).
+	State() (stamp uint64, ok bool)
 	// writes (durable when they return; P4_E_BUSY retried with backoff until ctx is done, or ErrBusy after 2 minutes of refusals)
 	Put(ctx context.Context, b Batch) ([]Outcome, error) // len == len(b.Records), input order; the client splits by request size
 	Supersede(ctx context.Context, typ, provider, source, keepBatch string, apply bool) (SupersedeResult, error)
