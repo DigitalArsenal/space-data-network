@@ -70,6 +70,11 @@ func RunReads(spec ReadSpec, shapes []Shape) (*Run, error) {
 		}
 		r.Mem = append(r.Mem, Snapshot("hydrated", ""))
 	}
+	for _, sh := range shapes {
+		if sh.Setup != nil {
+			sh.Setup(s) // untimed; a failure is the shape's calls' error
+		}
+	}
 	limit := spec.CallLimit
 	if limit <= 0 {
 		limit = 330 * time.Second

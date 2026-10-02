@@ -146,7 +146,7 @@ func ExecChild(spec *ChildSpec) error {
 		if err != nil {
 			return err
 		}
-		sh := ShapesOf(shapes, spec.Read.Class, fixture, only)
+		sh := ShapesForArm(ShapesOf(shapes, spec.Read.Class, fixture, only), spec.Read.Arm)
 		if len(sh) == 0 {
 			return fmt.Errorf("no %s shapes for class %s", fixture, spec.Read.Class)
 		}

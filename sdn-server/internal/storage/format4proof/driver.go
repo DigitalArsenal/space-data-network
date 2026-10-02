@@ -465,7 +465,16 @@ func DriveEquivalence(c Config, label, candidate string, logf Logf) (*Equivalenc
 			byShape[s.Shapes[i].Shape] = &s.Shapes[i]
 		}
 		for i := range f1.Shapes {
-			v := CompareShape(&f1.Shapes[i], byShape[f1.Shapes[i].Shape], oracle)
+			name := f1.Shapes[i].Shape
+			if rel, ok := strings.CutSuffix(name, SameQuestionSuffix); ok {
+				if candidate != ArmS {
+					continue // format 2 answers the relation as format 1 does (C-17)
+				}
+				// Format 1 answering the relation's own question: format 4's
+				// relation must equal it exactly (C-31).
+				name = rel
+			}
+			v := CompareShape(&f1.Shapes[i], byShape[name], oracle)
 			rep.Reads = append(rep.Reads, v)
 		}
 		logf("equivalence %s: %d shapes compared", class, len(f1.Shapes))
