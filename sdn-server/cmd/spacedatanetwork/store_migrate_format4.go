@@ -466,7 +466,9 @@ func (m *migrator4) run(ctx context.Context) error {
 		return nil
 	case m.opt.VerifyOnly:
 		return errors.New("--verify-only checks an activated format-4 store; this one is not")
-	case !mk.Format4():
+	case mk.Format4():
+		return m.resumeActivation(ctx)
+	default:
 		// Formats 2 and 3 are refused (format 4 opens formats 1 and 4).
 		sf, err := update.ReadStoreFormat(m.root)
 		if err != nil {
@@ -476,14 +478,14 @@ func (m *migrator4) run(ctx context.Context) error {
 			return fmt.Errorf("%s is a store of format %d (%s): format 4 migrates only format-1 stores", m.root, sf.Format, sf.Evidence)
 		}
 	}
-	// Format 1, or a format-4 activation a crash cut short before STORE.
+	// Format 1, before any activation.
 	if !mk.LegacyControlFile {
 		return fmt.Errorf("%s holds no format-1 store (%s is not a file)", m.root, marker.LegacyControl)
 	}
 	if err := m.openSource(); err != nil {
 		return err
 	}
-	if err := m.openJournal(mk); err != nil {
+	if err := m.openJournal(); err != nil {
 		return err
 	}
 	if err := m.openTarget(ctx, format4.CreateForMigration); err != nil {
@@ -540,6 +542,41 @@ func (m *migrator4) run(ctx context.Context) error {
 	return m.activate(ctx)
 }
 
+// resumeActivation finishes an activation a crash cut short before its
+// commit point (MIGRATED written, STORE torn or missing). The engine writes
+// MIGRATED only after the copy, the check and the control copy, so none of
+// them runs again, and format 1 is not opened (a store with format-4 markers
+// never opens as format 1). The target reopens as a migration target and
+// Activate runs again: the engine rewrites STORE (C-22).
+func (m *migrator4) resumeActivation(ctx context.Context) error {
+	j, err := readMigrate4Journal(m.jpath)
+	if err != nil {
+		return fmt.Errorf("%s holds format-4 markers without a finished migration journal (%v): not a migration this command can resume",
+			m.root, err)
+	}
+	if !j.Verified {
+		return fmt.Errorf("%s holds format-4 markers but its migration journal %s was never verified: not a migration this command can resume",
+			m.root, m.jpath)
+	}
+	m.j, m.rep.Resumed, m.rep.GseqFloor = j, true, j.GseqFloor
+	m.specs = map[string]format4.TypeSpec{}
+	for schema := range j.Schemas {
+		spec, err := format4.TypeSpecFor(schema)
+		if err != nil {
+			return err
+		}
+		m.schemas = append(m.schemas, schema)
+		m.specs[schema] = spec
+	}
+	sort.Strings(m.schemas)
+	if err := m.openTarget(ctx, format4.CreateForMigration); err != nil {
+		return err
+	}
+	m.tallyReport()
+	m.note("resumed an activation cut short before its commit point")
+	return m.activate(ctx)
+}
+
 // openSource opens the format-1 store (it takes the store lock) and reads
 // its shape.
 func (m *migrator4) openSource() error {
@@ -575,7 +612,7 @@ func (m *migrator4) openSourceAt(dir string) error {
 	})
 }
 
-func (m *migrator4) openJournal(mk marker.Markers) error {
+func (m *migrator4) openJournal() error {
 	maxRow, err := m.src.MaxIndexRowID()
 	if err != nil {
 		return err
@@ -584,30 +621,17 @@ func (m *migrator4) openJournal(mk marker.Markers) error {
 	if err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(m.jpath)
+	j, err := readMigrate4Journal(m.jpath)
 	switch {
 	case err == nil:
-		var j migrate4Journal
-		if err := json.Unmarshal(raw, &j); err != nil {
-			return fmt.Errorf("migration journal %s: %w", m.jpath, err)
-		}
-		if j.Version != 1 {
-			return fmt.Errorf("migration journal %s: version %d", m.jpath, j.Version)
-		}
 		if j.MaxIndexRowID != maxRow || j.MaxTagRowID != maxTag {
 			return fmt.Errorf("the format-1 store changed since this migration began (index max rowid %d -> %d, tag max rowid %d -> %d): remove %s and %s, then migrate again",
 				j.MaxIndexRowID, maxRow, j.MaxTagRowID, maxTag, filepath.Join(m.root, marker.Dir), m.jpath)
 		}
-		if j.Schemas == nil {
-			j.Schemas = map[string]*migrate4Progress{}
-		}
-		m.j = &j
+		m.j = j
 		m.rep.Resumed = true
 		m.logf("resuming from %s", m.jpath)
 	case errors.Is(err, os.ErrNotExist):
-		if mk.Format4() {
-			return fmt.Errorf("%s holds format-4 markers but %s is missing: not a migration this command can resume", m.root, m.jpath)
-		}
 		if ents, err := os.ReadDir(filepath.Join(m.root, marker.Dir)); err == nil && len(ents) > 0 {
 			return fmt.Errorf("%s exists without a migration journal: it is not a migration this command started; remove it",
 				filepath.Join(m.root, marker.Dir))
@@ -627,6 +651,26 @@ func (m *migrator4) openJournal(mk marker.Markers) error {
 	}
 	m.rep.GseqFloor = m.j.GseqFloor
 	return nil
+}
+
+// readMigrate4Journal reads a migration journal (os.ErrNotExist when there
+// is none).
+func readMigrate4Journal(path string) (*migrate4Journal, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var j migrate4Journal
+	if err := json.Unmarshal(raw, &j); err != nil {
+		return nil, fmt.Errorf("migration journal %s: %w", path, err)
+	}
+	if j.Version != 1 {
+		return nil, fmt.Errorf("migration journal %s: version %d", path, j.Version)
+	}
+	if j.Schemas == nil {
+		j.Schemas = map[string]*migrate4Progress{}
+	}
+	return &j, nil
 }
 
 func (m *migrator4) saveJournal() error {
@@ -1221,10 +1265,12 @@ func (m *migrator4) activate(ctx context.Context) error {
 	if err := m.closeTarget(ctx); err != nil {
 		return err
 	}
-	if err := m.src.Close(); err != nil {
-		return err
+	if m.src != nil {
+		if err := m.src.Close(); err != nil {
+			return err
+		}
+		m.src = nil
 	}
-	m.src = nil
 	if err := m.finishActivation(); err != nil {
 		return err
 	}
