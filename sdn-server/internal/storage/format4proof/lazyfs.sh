@@ -10,7 +10,9 @@
 # image (SDN_LAZYFS_IMAGE, default sdn-wasmedge-static:74db37e14, linux/amd64;
 # its prefix carries the runtime patches the threaded engines need). Inside,
 # it builds LazyFS (pinned), builds this package's test binary, mounts LazyFS,
-# runs the rounds, then the NEGATIVE CONTROL (fsync and fdatasync are no-ops
+# prewarms every engine's AOT artifact (a store open never compiles; round
+# 1 of the first build found none in the container and every round failed to
+# open), runs the rounds, then the NEGATIVE CONTROL (fsync and fdatasync are no-ops
 # in the writer through LD_PRELOAD; the engine's host I/O is C and calls
 # them through libc), which must report a loss.
 #
@@ -24,12 +26,15 @@ if [[ "${1:-}" != "--inner" ]]; then
   ARM="${3:-s}"
   HERE="$(cd "$(dirname "$0")" && pwd)"
   REPO="$(cd "$HERE/../../../.." && pwd)"
-  mkdir -p "$WORK"
+  mkdir -p "$WORK/aot-cache"
   WORK="$(cd "$WORK" && pwd)"
   MODCACHE="$(cd "$REPO/sdn-server" && go env GOMODCACHE)"
+  # The engines' AOT artifacts persist in <work dir>/aot-cache (the daemon's
+  # cache directory inside): the harness prewarms them before any round, and
+  # a rerun reuses them.
   exec docker run --rm --platform linux/amd64 \
     --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
-    -v "$REPO":/src:ro -v "$WORK":/work -v "$MODCACHE":/gomod \
+    -v "$REPO":/src:ro -v "$WORK":/work -v "$MODCACHE":/gomod -v "$WORK/aot-cache":/root/.cache/flatsql-aot \
     -e GOMODCACHE=/gomod -e GOFLAGS=-mod=mod -e ROUNDS="$ROUNDS" -e ARM="$ARM" \
     "${SDN_LAZYFS_IMAGE:-sdn-wasmedge-static:74db37e14}" \
     bash /src/sdn-server/internal/storage/format4proof/lazyfs.sh --inner
