@@ -395,7 +395,6 @@ func (c *cov) v03() []Shape {
 	// type as a sort of every match and does not answer within its engine's
 	// 5-minute budget (the OMM provider-only page poisoned it).
 	lanes = append(lanes,
-		c.rawQuery("cursor CAT provider only", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.ProviderID = FixtureProvider }), false),
 		c.rawQuery("cursor CAT source only", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.SourceName = "celestrak-satcat" }), false),
 		c.rawQuery("cursor CAT batch only", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.BatchID = "CAT-celestrak-satcat-csv-b000" }), false),
 		c.rawQuery("cursor CAT producer peer", with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.ProducerPeerID = fixturePPeer }), false),
@@ -494,7 +493,34 @@ func (c *cov) v03() []Shape {
 		scan("Scan CAT filter", datasync.QueryRequest{Schema: "CAT.fbs", SyncFilter: "NORAD_CAT_ID < 100", Limit: 20}, 2),
 		scan("Scan MPE offset", datasync.QueryRequest{Schema: "MPE.fbs", Limit: 20, Offset: 40}, 1),
 	}
-	return []Shape{covShape(class, "raw records: branches", "OMM.fbs", branch...),
+	// A cursor page by provider alone: format 1 does not answer it within
+	// its engine's budget on any fixture type (it poisoned the engine on OMM
+	// and on CAT), so its baseline is format 1 answering the same question
+	// (as R17/R18's): the provider's CAT records are those of its two CAT
+	// sources, whose provider+source pages it answers; their first 20 by
+	// cursor, merged. Every other arm calls the provider alone.
+	provQ := with(cur("CAT.fbs", 20), func(q *storage.RawRecordQuery) { q.ProviderID = FixtureProvider })
+	prov := covShape(class, "raw records: provider only", "CAT.fbs", c.rawQuery("cursor CAT provider only", provQ, false))
+	prov.Arms = []string{ArmS, ArmF2}
+	provF1 := covShape(class, "raw records: provider only", "CAT.fbs", c.rowsCall("cursor CAT provider only", "CAT.fbs", func(s *storage.FlatSQLStore) ([]Row, error) {
+		var recs []*storage.Record
+		for _, src := range []string{"celestrak-satcat", "celestrak-satcat-csv"} {
+			q := provQ
+			q.SourceName = src
+			got, err := s.QueryRawRecordRefs(q)
+			if err != nil {
+				return nil, err
+			}
+			recs = append(recs, got...)
+		}
+		sort.SliceStable(recs, func(i, j int) bool { return recs[i].RowID < recs[j].RowID })
+		if len(recs) > provQ.Limit {
+			recs = recs[:provQ.Limit]
+		}
+		return recordRows(recs), nil
+	}))
+	provF1.Arms = []string{ArmF1}
+	return []Shape{prov, provF1, covShape(class, "raw records: branches", "OMM.fbs", branch...),
 		covShape(class, "raw records: lanes, peer, cid", "OMM.fbs", lanes...),
 		covShape(class, "raw records: sync_filter fields and operators", "OMM.fbs", filters...),
 		covShape(class, "raw records: errors and search", "OMM.fbs", errs...),
