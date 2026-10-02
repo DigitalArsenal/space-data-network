@@ -77,6 +77,11 @@ type ShapeAnswers struct {
 	Calls  []Answer `json:"calls"`
 	// Unstable names calls whose warm answers differed from the cold one.
 	Unstable []string `json:"unstable,omitempty"`
+	// Copies (format 1, coverage classes): the copy variants format 1 held,
+	// after the class's writes, of every CID whose row carries them, so a
+	// C-12 variant of a record the class wrote is checked against the copies
+	// it really has (CompareShape; shapeOracle).
+	Copies map[string][]Row `json:"copies,omitempty"`
 }
 
 // AnswerFile holds an arm's answers for one class.

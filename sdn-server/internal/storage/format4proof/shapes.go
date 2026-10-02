@@ -31,6 +31,10 @@ type Measure struct {
 type Call struct {
 	Name string
 	Run  func(s *storage.FlatSQLStore) Result
+	// Write marks a coverage call that changes the store (or prepares a
+	// later write): the migration class XM runs only the other calls on the
+	// migrated store (coverage.go).
+	Write bool
 }
 
 // Result builds a call's answer after the timer stops.
