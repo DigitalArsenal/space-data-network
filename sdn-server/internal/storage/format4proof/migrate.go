@@ -143,6 +143,16 @@ func MigrateCrashLoop(ctx context.Context, spec MigrateLoopSpec, logf Logf) (*Ru
 		}
 	}
 
+	// The reference becomes the store a daemon leaves after its first start
+	// (every full-text index SDN enables built, WAL at rest), so reads time
+	// no background build and bytes count every file.
+	states, took, err := SettleStore(ref)
+	r.Extra["reference_fts_states"], r.Extra["reference_settle_s"] = states, took.Seconds()
+	if err != nil {
+		return r, fmt.Errorf("settle the reference: %w", err)
+	}
+	logf("migrate: reference settled in %s (full text %v)", took.Round(time.Second), states)
+
 	// 2. The killed migration, resumed until a run completes.
 	crash := filepath.Join(spec.Work, "migrate-crash")
 	_ = os.RemoveAll(crash)

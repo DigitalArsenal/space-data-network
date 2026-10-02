@@ -10,6 +10,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 )
 
 // host02QuotaBytes is host-02's storage.max_size (25 GB), the quota format 2
@@ -86,6 +87,54 @@ func OpenArm(arm, dir string, opts ...storage.StoreOption) (*storage.FlatSQLStor
 			arm, s.Format2(), IsFormat4(s))
 	}
 	return s, ms, nil
+}
+
+// settleLimit bounds SettleStore's wait for the full-text builds (the
+// fixture's four types build in about 5 minutes).
+const settleLimit = 45 * time.Minute
+
+// SettleStore brings a format-4 store to the state a daemon leaves it in
+// once its background work is done: it opens dir through SDN as the daemon
+// does, waits until the full-text index of every fixture type whose spec
+// enables full text (format4.TypeSpecFor) is ready, and closes the store
+// (WAL at rest). It returns each type's full-text state and the time taken.
+func SettleStore(dir string) (map[string]string, time.Duration, error) {
+	st := time.Now()
+	if err := PrewarmAOT(); err != nil {
+		return nil, 0, err
+	}
+	s, _, err := OpenArm(ArmS, dir)
+	if err != nil {
+		return nil, time.Since(st), err
+	}
+	if _, _, err := s.WarmFullTextIndexes(); err != nil {
+		_ = s.Close()
+		return nil, time.Since(st), fmt.Errorf("settle %s: %w", dir, err)
+	}
+	states := map[string]string{}
+	for {
+		pending := 0
+		for _, schema := range pointSchemas {
+			spec, err := format4.TypeSpecFor(schema)
+			if err != nil {
+				_ = s.Close()
+				return states, time.Since(st), err
+			}
+			states[schema] = s.FullTextIndexState(schema)
+			if spec.FullText && states[schema] != "ready" {
+				pending++
+			}
+		}
+		if pending == 0 {
+			break
+		}
+		if time.Since(st) > settleLimit {
+			_ = s.Close()
+			return states, time.Since(st), fmt.Errorf("settle %s: full text not ready after %s: %v", dir, settleLimit, states)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return states, time.Since(st), s.Close()
 }
 
 // StoreRecords is the store's unique live records over the fixture's four
