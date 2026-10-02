@@ -916,31 +916,39 @@ func a18Shapes(op BenchOp) ([]Shape, error) {
 // format 4's seq) that carry a tag of the source and that a producer table
 // holds, each record's bytes from its first producer table by name (C-12),
 // then the relation's WHERE. The call carries the relation's call name, so
-// the equivalence driver pairs it with format 4's answer.
+// the equivalence driver pairs it with format 4's answer. Every call runs
+// the statement: a per-call parameter keeps the host mirror and the
+// engine's response cache from answering a repeat (the relations a warm pass
+// times execute too).
 func c31SameQuestion(class, name, sql, schema, source string, n int64) (Shape, error) {
 	where := strings.TrimSpace(sql[strings.Index(sql, `"`+a18Relation(sql)+`"`)+len(a18Relation(sql))+2:])
-	params := []any{schema, source, n}
-	filter := ""
+	filter, norad := " WHERE ?4 IS NOT NULL", int64(-1)
 	if where != "" {
-		var norad int64
 		if _, err := fmt.Sscanf(where, "WHERE NORAD_CAT_ID = %d", &norad); err != nil || where != fmt.Sprintf("WHERE NORAD_CAT_ID = %d", norad) {
 			return Shape{}, fmt.Errorf("%s: no format-1 same-question SQL for %q (only a NORAD_CAT_ID equality)", sql, where)
 		}
-		filter, params = " WHERE w.norad_cat_id = ?4", append(params, norad)
+		filter += " AND w.norad_cat_id = ?5"
 	}
 	var query string
 	var setupErr error
+	var calls int64
 	return Shape{Class: class, Name: name + SameQuestionSuffix, Schema: schema, Fixture: FixtureT6W, Arms: []string{ArmF1},
 		Policy: Policy{Unordered: true},
 		Setup: func(s *storage.FlatSQLStore) {
+			var walk string
 			var tables []string
-			if tables, setupErr = format1ProducerTables(s, schema); setupErr == nil {
-				query = c31Format1SQL(tables) + filter
+			if walk, tables, setupErr = format1IndexWalk(s, schema); setupErr == nil {
+				query = c31Format1SQL(walk, tables) + filter
 			}
 		},
 		Calls: []Call{{Name: name, Run: func(s *storage.FlatSQLStore) Result {
 			if setupErr != nil {
 				return errResult(name, setupErr)
+			}
+			calls++
+			params := []any{schema, source, n, calls}
+			if norad >= 0 {
+				params = append(params, norad)
 			}
 			st, err := s.QueryRawStream(query, params...)
 			return framesResult(name, st, err)
@@ -948,9 +956,11 @@ func c31SameQuestion(class, name, sql, schema, source string, n int64) (Shape, e
 }
 
 // c31Format1SQL selects ?3 newest records of schema ?1 tagged with source ?2
-// from format 1's control tables: sdn_record_index in rowid order, the
-// source-name tag index, and the producer tables' cid keys.
-func c31Format1SQL(tables []string) string {
+// from format 1's control tables: sdn_record_index walked newest-first by
+// rowid (walk: format 1's (schema_name, rowid) full-text scan index when the
+// store has one, else the table itself; the planner's choice sorts the whole
+// type), the source-name tag index, and the producer tables' cid keys.
+func c31Format1SQL(walk string, tables []string) string {
 	held := make([]string, len(tables))
 	pick := make([]string, len(tables))
 	for i, t := range tables {
@@ -961,39 +971,55 @@ func c31Format1SQL(tables []string) string {
 	if len(pick) > 1 {
 		data = "COALESCE(" + strings.Join(pick, ", ") + ")"
 	}
-	return `SELECT ` + data + ` FROM (SELECT i.cid, i.norad_cat_id FROM sdn_record_index i
+	return `SELECT ` + data + ` FROM (SELECT i.cid, i.norad_cat_id FROM sdn_record_index i ` + walk + `
 		WHERE i.schema_name = ?1
 		  AND EXISTS (SELECT 1 FROM sdn_record_source_tags t WHERE t.schema_name = ?1 AND t.source_name = ?2 AND t.cid = i.cid)
 		  AND (` + strings.Join(held, " OR ") + `)
 		ORDER BY i.rowid DESC LIMIT ?3) w`
 }
 
-// format1ProducerTables lists a schema's producer tables
-// (sds_p_<token>__<STD>) in name order, read from format 1's sqlite_master.
-func format1ProducerTables(s *storage.FlatSQLStore, schema string) ([]string, error) {
-	st, err := s.QueryRawStream(`SELECT CAST(name AS BLOB) FROM sqlite_master WHERE type = 'table' AND name GLOB ?1 ORDER BY name`,
+// format1IndexWalk reads from format 1's sqlite_master how its index rows
+// are walked newest-first (as storage.MigrationSource does: INDEXED BY the
+// full-text scan index when the store has it, else NOT INDEXED) and the
+// schema's producer tables (sds_p_<token>__<STD>) in name order.
+func format1IndexWalk(s *storage.FlatSQLStore, schema string) (string, []string, error) {
+	names := func(sql string, args ...any) ([]string, error) {
+		st, err := s.QueryRawStream(sql, args...)
+		if err != nil {
+			return nil, err
+		}
+		var out []string
+		for b := st.Bytes; len(b) > 0; {
+			if len(b) < 4 {
+				return nil, fmt.Errorf("%d trailing bytes", len(b))
+			}
+			n := int(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
+			if len(b) < 4+n {
+				return nil, fmt.Errorf("a frame past the stream end")
+			}
+			if n > 0 {
+				out = append(out, string(b[4:4+n]))
+			}
+			b = b[4+n:]
+		}
+		return out, nil
+	}
+	tables, err := names(`SELECT CAST(name AS BLOB) FROM sqlite_master WHERE type = 'table' AND name GLOB ?1 ORDER BY name`,
 		"sds_p_*__"+strings.TrimSuffix(schema, ".fbs"))
 	if err != nil {
-		return nil, fmt.Errorf("list %s producer tables: %w", schema, err)
+		return "", nil, fmt.Errorf("list %s producer tables: %w", schema, err)
 	}
-	var out []string
-	for b := st.Bytes; len(b) > 0; {
-		if len(b) < 4 {
-			return nil, fmt.Errorf("list %s producer tables: %d trailing bytes", schema, len(b))
-		}
-		n := int(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
-		if len(b) < 4+n {
-			return nil, fmt.Errorf("list %s producer tables: a frame past the stream end", schema)
-		}
-		if name := string(b[4 : 4+n]); n > 0 {
-			out = append(out, name)
-		}
-		b = b[4+n:]
+	if len(tables) == 0 {
+		return "", nil, fmt.Errorf("format 1 holds no %s producer table", schema)
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("format 1 holds no %s producer table", schema)
+	scan, err := names(`SELECT CAST(name AS BLOB) FROM sqlite_master WHERE type = 'index' AND name = 'idx_sdn_record_fts_scan' AND tbl_name = 'sdn_record_index'`)
+	if err != nil {
+		return "", nil, fmt.Errorf("format 1's index walk: %w", err)
 	}
-	return out, nil
+	if len(scan) > 0 {
+		return "INDEXED BY idx_sdn_record_fts_scan", tables, nil
+	}
+	return "NOT INDEXED", tables, nil
 }
 
 // a18Relation is the first double-quoted relation a statement names
