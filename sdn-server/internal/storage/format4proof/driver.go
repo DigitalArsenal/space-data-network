@@ -450,9 +450,27 @@ type WriteVerdict struct {
 // DriveEquivalence compares a candidate arm's answers (format 4, ArmS; or
 // format 2, which checks the harness against a known engine) with format
 // 1's for every class answered by both, and the write runs' digests; format
-// 1's copies resolve C-12 differences.
+// 1's copies resolve C-12 differences. A shape compares under the harness's
+// current policy (its accepted differences: contract clauses and rulings)
+// when the benchset still names it, else under the policy its answers were
+// recorded with.
 func DriveEquivalence(c Config, label, candidate string, logf Logf) (*EquivalenceReport, error) {
 	rep := &EquivalenceReport{Generated: time.Now().UTC().Format(time.RFC3339), Label: label, Candidate: candidate}
+	policies := map[ShapeKey]Policy{}
+	if c.Benchset != "" {
+		bs, err := LoadBenchset(c.Benchset)
+		var shapes []Shape
+		if err == nil {
+			in, _, _ := LoadInputs(c.Work) // the policies do not depend on the inputs
+			shapes, err = BuildShapes(bs, in)
+		}
+		if err != nil {
+			logf("equivalence: the recorded policies (the benchset's shapes: %v)", err)
+		}
+		for _, sh := range shapes {
+			policies[ShapeKey{sh.Class, sh.Name}] = sh.Policy
+		}
+	}
 	paths, err := filepath.Glob(filepath.Join(c.Out, "answers-"+safeName(ArmF1+"-"+label)+"-*.json.gz"))
 	if err != nil {
 		return nil, err
@@ -495,6 +513,9 @@ func DriveEquivalence(c Config, label, candidate string, logf Logf) (*Equivalenc
 		}
 		for i := range f1.Shapes {
 			name := f1.Shapes[i].Shape
+			if pol, ok := policies[ShapeKey{f1.Shapes[i].Class, name}]; ok {
+				f1.Shapes[i].Policy = pol
+			}
 			if rel, ok := strings.CutSuffix(name, SameQuestionSuffix); ok {
 				if candidate != ArmS {
 					continue // format 2 answers the relation as format 1 does (C-17)
