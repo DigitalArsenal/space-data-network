@@ -203,7 +203,8 @@ func TagsRow(cid string, t storage.SourceTags) Row {
 }
 
 // FrameRows splits a size-prefixed frame stream ([u32le size][bytes]...) into
-// one row per frame: its index, length and digest.
+// one row per record frame (frameRow). A zero-length frame is alignment
+// padding, not a record (flatsqlrt.RawStream.FrameCount skips it too).
 func FrameRows(b []byte) ([]Row, error) {
 	var out []Row
 	for i := 0; len(b) > 0; i++ {
@@ -214,11 +215,16 @@ func FrameRows(b []byte) ([]Row, error) {
 		if len(b) < 4+n {
 			return out, fmt.Errorf("frame %d: size %d past the stream end", i, n)
 		}
-		out = append(out, Row{{"len", strconv.Itoa(n)}, {"frame", digest(b[4 : 4+n])}})
+		if n > 0 {
+			out = append(out, frameRow(b[4:4+n]))
+		}
 		b = b[4+n:]
 	}
 	return out, nil
 }
+
+// frameRow is one record's bytes as a row: their length and digest.
+func frameRow(b []byte) Row { return Row{{"len", strconv.Itoa(len(b))}, {"frame", digest(b)}} }
 
 // ValueRow is a row of named scalar values.
 func ValueRow(kv ...string) Row {
