@@ -223,8 +223,10 @@ func DriveIngest(ctx context.Context, c Config, plan IngestPlan, logf Logf) erro
 		if err := CloneStore(src, grown); err != nil {
 			return err
 		}
-		spec := IngestSpec{Arm: arm, Label: LabelFixture, Store: grown, Out: c.Out, Work: c.Work, A: plan.A, B: plan.B, Batch: plan.Batch}
-		cr, err := RunChild(ctx, ChildSpec{Mode: ModeIngest, Ingest: &spec}, c.logPath("ingest-AB-"+arm))
+		spec := IngestSpec{Arm: arm, Label: LabelFixture, Store: grown, Out: c.Out, Work: c.Work, A: plan.A, B: plan.B, Batch: plan.Batch,
+			HeldOut: HeldHitsPath(c.Work, arm)}
+		_ = os.Remove(spec.HeldOut)
+		cr, err := RunChild(ctx, ChildSpec{Mode: ModeIngest, Benchset: c.Benchset, Ingest: &spec}, c.logPath("ingest-AB-"+arm))
 		logf("ingest A+B %s: %s, max RSS %.0f MB, err %v", arm, cr.Wall.Round(time.Second), cr.MaxRSSMB, err)
 		note(err)
 		if err == nil {
