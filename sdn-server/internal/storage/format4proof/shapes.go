@@ -62,6 +62,23 @@ type Shape struct {
 	Fixture string
 	Policy  Policy
 	Calls   []Call
+	// Arms, when set, are the only arms that run the shape (a baseline
+	// phrased for one format).
+	Arms []string
+	// Setup, when set, runs once after the store opens, untimed (what a
+	// call needs from the store before it is timed).
+	Setup func(s *storage.FlatSQLStore)
+}
+
+// ShapesForArm drops the shapes another arm alone runs.
+func ShapesForArm(shapes []Shape, arm string) []Shape {
+	var out []Shape
+	for _, sh := range shapes {
+		if len(sh.Arms) == 0 || contains(sh.Arms, arm) {
+			out = append(out, sh)
+		}
+	}
+	return out
 }
 
 // Inputs are the fixture-derived lists some shapes need (taken once from a
@@ -853,9 +870,17 @@ var sandboxCaps = flatsqlrt.SandboxCaps{Timeout: 5 * time.Minute}
 // c31Accepted names the intended difference of every `<TYPE>@<source>` shape.
 const c31Accepted = "C-31: <TYPE>@<source> is the source's newest N records (format 1: the type's newest N, then the source)"
 
+// SameQuestionSuffix names the format-1 baseline of a `<TYPE>@<source>`
+// shape: format 1 answering the SAME question (the newest N records of the
+// type from the source) by SQL over its own tables and indexes. The read
+// gate holds the relation to it (coordinator ruling on review 1, item 1);
+// the equivalence driver compares format 4's relation with it exactly.
+const SameQuestionSuffix = " [f1: same question, by SQL]"
+
 // R17: A18 TYPE@source relations through the sandbox. The relation has no
 // ORDER BY, so frames compare as a multiset; a `<TYPE>@<source>` relation
-// compares under C-31 (Policy.Superset) with N = the type's A18 bound.
+// compares under C-31 (Policy.Superset) with N = the type's A18 bound, and
+// has a format-1 same-question baseline (c31SameQuestion).
 func a18Shapes(op BenchOp) ([]Shape, error) {
 	ps, err := decodeParams(op)
 	if err != nil {
@@ -865,18 +890,108 @@ func a18Shapes(op BenchOp) ([]Shape, error) {
 	for _, p := range ps {
 		sql, name := p.SQL, strings.TrimPrefix(p.SQL, "SELECT _data FROM ")
 		pol := Policy{Unordered: true}
-		if typ, _, ok := strings.Cut(a18Relation(sql), "@"); ok {
+		if typ, source, ok := strings.Cut(a18Relation(sql), "@"); ok {
 			spec, err := format4.TypeSpecFor(typ + ".fbs")
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", sql, err)
 			}
 			pol.Superset, pol.MaxRows, pol.Accepted = true, int(spec.A18Bound), c31Accepted
+			same, err := c31SameQuestion(op.ID, name, sql, typ+".fbs", source, int64(spec.A18Bound))
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, same)
 		}
 		out = append(out, Shape{Class: op.ID, Name: name, Policy: pol, Calls: []Call{{Name: name,
 			Run: func(s *storage.FlatSQLStore) Result {
 				st, err := s.QuerySandboxedStream(sql, sandboxCaps)
 				return framesResult(name, st, err)
 			}}}})
+	}
+	return out, nil
+}
+
+// c31SameQuestion is format 1 answering a `<TYPE>@<source>` relation's own
+// question: the type's newest N records (arrival order: the index rowid,
+// format 4's seq) that carry a tag of the source and that a producer table
+// holds, each record's bytes from its first producer table by name (C-12),
+// then the relation's WHERE. The call carries the relation's call name, so
+// the equivalence driver pairs it with format 4's answer.
+func c31SameQuestion(class, name, sql, schema, source string, n int64) (Shape, error) {
+	where := strings.TrimSpace(sql[strings.Index(sql, `"`+a18Relation(sql)+`"`)+len(a18Relation(sql))+2:])
+	params := []any{schema, source, n}
+	filter := ""
+	if where != "" {
+		var norad int64
+		if _, err := fmt.Sscanf(where, "WHERE NORAD_CAT_ID = %d", &norad); err != nil || where != fmt.Sprintf("WHERE NORAD_CAT_ID = %d", norad) {
+			return Shape{}, fmt.Errorf("%s: no format-1 same-question SQL for %q (only a NORAD_CAT_ID equality)", sql, where)
+		}
+		filter, params = " WHERE w.norad_cat_id = ?4", append(params, norad)
+	}
+	var query string
+	var setupErr error
+	return Shape{Class: class, Name: name + SameQuestionSuffix, Schema: schema, Fixture: FixtureT6W, Arms: []string{ArmF1},
+		Policy: Policy{Unordered: true},
+		Setup: func(s *storage.FlatSQLStore) {
+			var tables []string
+			if tables, setupErr = format1ProducerTables(s, schema); setupErr == nil {
+				query = c31Format1SQL(tables) + filter
+			}
+		},
+		Calls: []Call{{Name: name, Run: func(s *storage.FlatSQLStore) Result {
+			if setupErr != nil {
+				return errResult(name, setupErr)
+			}
+			st, err := s.QueryRawStream(query, params...)
+			return framesResult(name, st, err)
+		}}}}, nil
+}
+
+// c31Format1SQL selects ?3 newest records of schema ?1 tagged with source ?2
+// from format 1's control tables: sdn_record_index in rowid order, the
+// source-name tag index, and the producer tables' cid keys.
+func c31Format1SQL(tables []string) string {
+	held := make([]string, len(tables))
+	pick := make([]string, len(tables))
+	for i, t := range tables {
+		held[i] = fmt.Sprintf(`EXISTS (SELECT 1 FROM "%s" h WHERE h.cid = i.cid)`, t)
+		pick[i] = fmt.Sprintf(`(SELECT data FROM "%s" WHERE cid = w.cid)`, t)
+	}
+	data := pick[0]
+	if len(pick) > 1 {
+		data = "COALESCE(" + strings.Join(pick, ", ") + ")"
+	}
+	return `SELECT ` + data + ` FROM (SELECT i.cid, i.norad_cat_id FROM sdn_record_index i
+		WHERE i.schema_name = ?1
+		  AND EXISTS (SELECT 1 FROM sdn_record_source_tags t WHERE t.schema_name = ?1 AND t.source_name = ?2 AND t.cid = i.cid)
+		  AND (` + strings.Join(held, " OR ") + `)
+		ORDER BY i.rowid DESC LIMIT ?3) w`
+}
+
+// format1ProducerTables lists a schema's producer tables
+// (sds_p_<token>__<STD>) in name order, read from format 1's sqlite_master.
+func format1ProducerTables(s *storage.FlatSQLStore, schema string) ([]string, error) {
+	st, err := s.QueryRawStream(`SELECT CAST(name AS BLOB) FROM sqlite_master WHERE type = 'table' AND name GLOB ?1 ORDER BY name`,
+		"sds_p_*__"+strings.TrimSuffix(schema, ".fbs"))
+	if err != nil {
+		return nil, fmt.Errorf("list %s producer tables: %w", schema, err)
+	}
+	var out []string
+	for b := st.Bytes; len(b) > 0; {
+		if len(b) < 4 {
+			return nil, fmt.Errorf("list %s producer tables: %d trailing bytes", schema, len(b))
+		}
+		n := int(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
+		if len(b) < 4+n {
+			return nil, fmt.Errorf("list %s producer tables: a frame past the stream end", schema)
+		}
+		if name := string(b[4 : 4+n]); n > 0 {
+			out = append(out, name)
+		}
+		b = b[4+n:]
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("format 1 holds no %s producer table", schema)
 	}
 	return out, nil
 }

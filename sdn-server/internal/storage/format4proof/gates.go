@@ -222,6 +222,12 @@ var readMetrics = []struct {
 // out of the bar and named in the check's note). The EPOCH shapes over every
 // object (AllObjects; not in the benchset) are reported beside the bar, as
 // the owner asked (p50 and p99), not held to it.
+//
+// A `<TYPE>@<source>` shape (C-31) answers another question than formats 1
+// and 2 answer for the same relation, so its bar is format 1 answering the
+// SAME question by SQL (its SameQuestionSuffix baseline); the relations'
+// own numbers are in the note. Without that baseline the shape is reported,
+// not gated.
 func readsGate(runs []*Run) Gate {
 	g := Gate{ID: "2a", Title: "Faster: every read shape at least equal to both engines (p50 and p99, cold and warm)"}
 	used := RunsOf(runs, KindReads, LabelFixture)
@@ -241,9 +247,16 @@ func readsGate(runs []*Run) Gate {
 		}
 	}
 	for _, k := range sortedKeys(keys) {
+		if strings.HasSuffix(k.Shape, SameQuestionSuffix) {
+			continue // a C-31 shape's bar (below)
+		}
 		ss, a, b := s[k], f1[k], f2[k]
 		if a == nil && b == nil {
 			continue // no baseline answers this shape; reported in the shape table
+		}
+		if isC31Shape(k) {
+			g.Checks = append(g.Checks, c31Checks(k, ss, a, b, f1[ShapeKey{k.Class, k.Shape + SameQuestionSuffix}])...)
+			continue
 		}
 		for _, m := range readMetrics {
 			c := Check{Item: k.Class + " " + k.Shape + " " + m.name, Unit: "ms", S: math.NaN(), F1: math.NaN(), F2: math.NaN(),
@@ -281,6 +294,52 @@ func readsGate(runs []*Run) Gate {
 	}
 	g.finish()
 	return g
+}
+
+// isC31Shape reports a `<TYPE>@<source>` relation shape (R17's names are
+// the relation and its WHERE).
+func isC31Shape(k ShapeKey) bool {
+	return k.Class == "R17" && strings.Contains(a18Relation("SELECT _data FROM "+k.Shape), "@")
+}
+
+// c31Checks holds a `<TYPE>@<source>` shape to format 1 answering the same
+// question (same); the relations of formats 1 and 2 (a, b) are reported in
+// the note.
+func c31Checks(k ShapeKey, ss, a, b, same *ShapeStats) []Check {
+	var out []Check
+	for _, m := range readMetrics {
+		c := Check{Item: k.Class + " " + k.Shape + " " + m.name, Unit: "ms", S: math.NaN(), F1: math.NaN(), F2: math.NaN(),
+			Bar: math.NaN(), Class: k.Class, Shape: k.Shape}
+		rel := func(st *ShapeStats) string {
+			if st == nil {
+				return "not run"
+			}
+			return fmt.Sprintf("%.3f ms", m.get(st))
+		}
+		notes := []string{fmt.Sprintf("C-31: the relations answer another question (f1 %s, f2 %s)", rel(a), rel(b))}
+		if ss != nil {
+			c.S = m.get(ss)
+			if ss.Errors > 0 {
+				notes = append(notes, fmt.Sprintf("s errors %d", ss.Errors))
+			}
+		} else {
+			notes = append(notes, "s did not run it")
+		}
+		if same == nil {
+			c.Info = true
+			notes = append(notes, "no same-question baseline (format 1 by SQL) was measured: reported, not gated")
+		} else {
+			c.F1, c.Bar = m.get(same), m.get(same)
+			notes = append(notes, "bar = format 1 answering the same question by SQL")
+			if ss != nil && same.Rows != ss.Rows {
+				notes = append(notes, fmt.Sprintf("rows s %d, f1 same question %d", ss.Rows, same.Rows))
+			}
+		}
+		c.Pass = lowerOrEqual(c.S, c.Bar)
+		c.Note = strings.Join(notes, "; ")
+		out = append(out, c)
+	}
+	return out
 }
 
 func sortedKeys(m map[ShapeKey]bool) []ShapeKey {
