@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -467,14 +468,31 @@ func (s *slot) abandon() {
 	}()
 }
 
-// run executes a request to completion, handing each output chunk to sink.
-// A ctx that ends cancels the request (abandon) and returns ctx.Err().
-func (m *mailbox) run(ctx context.Context, c call, sink func([]byte) error) (outcome, error) {
+// readBufBytes is the size of the buffer a response is drained through.
+const readBufBytes = 256 << 10
+
+// readBufs recycles the drain buffers of requests whose sink copies what it
+// is handed (Engine.do): a fresh 256 KiB buffer per call was most of a
+// small read's time.
+var readBufs = sync.Pool{New: func() any { b := make([]byte, readBufBytes); return &b }}
+
+// run executes a request to completion, handing each output chunk to sink
+// (each chunk is valid only during the call; pooled: sink copies it, so the
+// drain buffer is recycled). A ctx that ends cancels the request (abandon)
+// and returns ctx.Err().
+func (m *mailbox) run(ctx context.Context, c call, pooled bool, sink func([]byte) error) (outcome, error) {
 	s, err := m.submit(ctx, c)
 	if err != nil {
 		return outcome{}, err
 	}
-	buf := make([]byte, 256<<10)
+	var buf []byte
+	if pooled {
+		p := readBufs.Get().(*[]byte)
+		defer readBufs.Put(p)
+		buf = *p
+	} else {
+		buf = make([]byte, readBufBytes)
+	}
 	for {
 		n, err := s.read(ctx, buf)
 		if n > 0 && sink != nil {
@@ -498,15 +516,21 @@ func (m *mailbox) run(ctx context.Context, c call, sink func([]byte) error) (out
 	return s.finish(), nil
 }
 
-// backoff polls shared-memory words: a short spin of yields, then sleeps
-// doubling from 20 us to limit (format 2's writer.go backoff). The guest's
-// waits notify inside WasmEdge, which Go cannot join, so the host polls.
+// backoff polls shared-memory words. The guest's waits notify inside
+// WasmEdge, which Go cannot join, so the host polls: it yields for the first
+// backoffSpin (most point reads finish inside it), then sleeps an eighth of
+// the time waited so far, at least 20 us and at most limit. A reply is seen
+// at most about 12% after it lands; the doubling sleeps of format 2's
+// writer.go backoff saw it up to twice as late (a 310 us read answered at
+// 625 us).
 type backoff struct {
-	n     int
 	start time.Time
 }
 
-func (b *backoff) reset() { b.n = 0; b.start = time.Time{} }
+// backoffSpin is how long a wait yields before it sleeps.
+const backoffSpin = 50 * time.Microsecond
+
+func (b *backoff) reset() { b.start = time.Time{} }
 
 func (b *backoff) elapsed() time.Duration {
 	if b.start.IsZero() {
@@ -519,12 +543,12 @@ func (b *backoff) sleep(ctx context.Context, stop <-chan struct{}, limit time.Du
 	if b.start.IsZero() {
 		b.start = time.Now()
 	}
-	b.n++
-	if b.n <= 32 {
+	waited := time.Since(b.start)
+	if waited < backoffSpin {
 		runtime.Gosched()
 		return ctx.Err()
 	}
-	d := min(20*time.Microsecond<<uint(min(b.n-33, 13)), limit)
+	d := min(max(waited/8, 20*time.Microsecond), limit)
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {

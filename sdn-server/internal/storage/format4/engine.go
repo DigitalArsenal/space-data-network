@@ -343,7 +343,7 @@ func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, wan
 			return nil, err
 		}
 		var body []byte
-		o, err := e.mb.run(ctx, call{op: op, class: class, req: req}, func(b []byte) error {
+		o, err := e.mb.run(ctx, call{op: op, class: class, req: req}, true, func(b []byte) error {
 			body = append(body, b...)
 			return nil
 		})
@@ -802,7 +802,7 @@ func (e *Engine) SQL(ctx context.Context, req SQLRequest, sink func(chunk []byte
 			return SQLStats{}, err
 		}
 		sent := false
-		o, err := e.mb.run(ctx, call{op: opSQL, class: class, flags: flags, req: body, caps: req.Caps}, func(b []byte) error {
+		o, err := e.mb.run(ctx, call{op: opSQL, class: class, flags: flags, req: body, caps: req.Caps}, false, func(b []byte) error {
 			sent = true
 			if sink == nil {
 				return nil
