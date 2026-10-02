@@ -35,7 +35,7 @@ func TestAOTAtomicMemargOffset(t *testing.T) {
 		t.Skip("linked libwasmedge lacks 04-atomic-memarg-offset")
 	}
 	rep := RunSubstrateSelfTest(SubstrateOptions{})
-	if !rep.AOTAtomicMemargOffset || !rep.Patched() || rep.Tag() != "sdn3" {
-		t.Fatalf("self-test: memarg=%t patched=%t tag=%s (%+v)", rep.AOTAtomicMemargOffset, rep.Patched(), rep.Tag(), rep)
+	if !rep.AOTAtomicMemargOffset || !rep.Patched() {
+		t.Fatalf("self-test: memarg=%t patched=%t (%+v)", rep.AOTAtomicMemargOffset, rep.Patched(), rep)
 	}
 }

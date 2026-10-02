@@ -80,6 +80,19 @@ fi
 #                   address 0, so thread exit and join hung (a plain
 #                   spawn/join guest hung 11 of 20 runs), and flatsql's
 #                   sleepNs waited on the wrong stack word and never slept.
+#   05-loop-stop-checks
+#                   Interruptible AOT code checks the stop token at each loop
+#                   header and function entry, not at every block. Only a loop
+#                   or a call can run code again, so a stop still reaches every
+#                   thread; the check at each block put 182 checks in front of
+#                   every SQLite VDBE opcode dispatch and made the engine 2-3x
+#                   slower than with no checks.
+#   06-call-indirect
+#                   AOT call_indirect reads the calling module's type list
+#                   without its shared_mutex, and a function of the same module
+#                   with the expected type index matches without the type
+#                   matcher (16-19 ns -> ~5 ns per call; SQLite calls through
+#                   function pointers in every B-tree seek and page fetch).
 #
 # THE PATCH TEXT LIVES IN THIS FILE, deliberately. The CI prefix cache key and
 # the Dockerfile's static layer are both keyed on this file's bytes, so a patch
@@ -414,6 +427,72 @@ index f765db6..5b1bfc3 100644
 SDN_WASMEDGE_PATCH_EOF
 }
 
+write_sdn_patch_05_loop_stop_checks() {
+  cat <<'SDN_WASMEDGE_PATCH_EOF'
+diff --git a/lib/llvm/compiler.cpp b/lib/llvm/compiler.cpp
+index 5b1bfc3..4350f7a 100644
+--- a/lib/llvm/compiler.cpp
++++ b/lib/llvm/compiler.cpp
+@@ -581,6 +581,9 @@ public:
+     auto RetBB = LLVM::BasicBlock::create(LLContext, F.Fn, "ret");
+     Type.first.clear();
+     enterBlock(RetBB, {}, {}, {}, std::move(Type));
++    // SDN patch (loop-stop-checks): every function entry checks the stop
++    // token, so deep recursion stops as a loop does.
++    checkStop();
+     EXPECTED_TRY(compile(Code.getExpr().getInstrs()));
+     assuming(ControlStack.empty());
+     compileReturn();
+@@ -622,7 +625,11 @@ public:
+           }
+         }
+         enterBlock(EndBlock, {}, {}, std::move(Args), std::move(Type));
+-        checkStop();
++        // SDN patch (loop-stop-checks): no stop check at a block entry. Only a
++        // loop can run code again, and a loop header and every function entry
++        // still check, so a stop reaches any guest that keeps running. The
++        // check at every block made a run of 182 checks in front of each
++        // SQLite VDBE opcode dispatch (181 nested blocks before its br_table).
+         updateGas();
+         return {};
+       }
+SDN_WASMEDGE_PATCH_EOF
+}
+
+write_sdn_patch_06_call_indirect() {
+  cat <<'SDN_WASMEDGE_PATCH_EOF'
+diff --git a/lib/executor/engine/proxy.cpp b/lib/executor/engine/proxy.cpp
+index b67238b..d77b063 100644
+--- a/lib/executor/engine/proxy.cpp
++++ b/lib/executor/engine/proxy.cpp
+@@ -600,9 +600,23 @@ Expect<void *> Executor::proxyTableGetFuncSymbol(
+ 
+   const auto *ModInst = StackMgr.getModule();
+   assuming(ModInst);
+-  const auto &ExpDefType = **ModInst->getType(FuncTypeIdx);
++  // SDN patch (call-indirect): a module's type list is fixed once it is
++  // instantiated, and validation bounded FuncTypeIdx, so it is read without
++  // the module's shared_mutex, as getTabInstByIdx reads the table list. The
++  // lock cost four pthread mutex operations on every AOT call_indirect.
++  const auto &ExpDefType = *ModInst->unsafeGetType(FuncTypeIdx);
+   const auto *FuncInst = retrieveFuncRef(*Ref);
+   assuming(FuncInst);
++  // SDN patch (call-indirect): a function of the calling module with the
++  // expected type index matches; the matcher below would compare that type
++  // with itself.
++  if (likely(FuncInst->getModule() == ModInst &&
++             FuncInst->getTypeIndex() == *ExpDefType.getTypeIndex())) {
++    if (unlikely(!FuncInst->isCompiledFunction())) {
++      return nullptr;
++    }
++    return FuncInst->getSymbol().get();
++  }
+   bool IsMatch = false;
+   if (FuncInst->getModule()) {
+     IsMatch = AST::TypeMatcher::matchType(
+SDN_WASMEDGE_PATCH_EOF
+}
+
 SDN_PATCH_DIR="${WORK}/sdn-patches"
 SDN_PATCH_STAMP=""
 if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
@@ -429,6 +508,8 @@ if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
   write_sdn_patch_02_stop_token > "$SDN_PATCH_DIR/02-stop-token.patch"
   write_sdn_patch_03_fault_jmp > "$SDN_PATCH_DIR/03-fault-jmp.patch"
   write_sdn_patch_04_atomic_memarg_offset > "$SDN_PATCH_DIR/04-atomic-memarg-offset.patch"
+  write_sdn_patch_05_loop_stop_checks > "$SDN_PATCH_DIR/05-loop-stop-checks.patch"
+  write_sdn_patch_06_call_indirect > "$SDN_PATCH_DIR/06-call-indirect.patch"
   for sdn_patch in "$SDN_PATCH_DIR"/*.patch; do
     if git -C "$SRC" apply --reverse --check "$sdn_patch" >/dev/null 2>&1; then
       echo "WasmEdge patch already applied: $(basename "$sdn_patch")"

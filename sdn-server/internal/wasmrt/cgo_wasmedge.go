@@ -70,8 +70,9 @@ func ModuleInstanceContext(m *wasmedge.Module) (unsafe.Pointer, error) {
 }
 
 // SetCompilerInterruptible makes AOT code compiled with conf check the stop
-// token at every block and loop, so a cancel can stop a guest that never
-// calls out.
+// token at every loop header and function entry (block entries too on a
+// runtime without 05-loop-stop-checks), so a cancel can stop a guest that
+// never calls out.
 func SetCompilerInterruptible(conf *wasmedge.Configure, on bool) error {
 	p, err := innerHandle(conf, "WasmEdge_ConfigureContext")
 	if err != nil {

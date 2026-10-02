@@ -112,6 +112,20 @@ copies in `testdata/` feed the tests (`TestStaticBuildCarriesTheRuntimePatches`)
   returned at once (100 x 10 ms took 0.000 s). The fix computes the effective
   address (operand + offset, bounds-checked against 4 GiB) before the
   notify/wait call, in `lib/llvm/compiler.cpp`.
+- `05-loop-stop-checks`: Interruptible AOT code checked the stop token at
+  every `block` entry as well as at every `loop` header. SQLite's
+  `sqlite3VdbeExec` opens 181 nested blocks in front of its 188-way
+  `br_table`, so every VDBE opcode dispatch ran 182 checks (72,958 checks,
+  13% of the format-4 engine's AOT instructions). The patch checks at loop
+  headers and function entries only: only a loop or a call runs code again,
+  so a stop still reaches every thread. Index pages ran 0.49 -> 0.27 ms
+  (OMM page 1) and 0.93 -> 0.30 ms (CAT page 20) in the engine alone.
+- `06-call-indirect`: an AOT `call_indirect` resolved its target through
+  `proxyTableGetFuncSymbol`, which took the module's `shared_mutex` to read
+  the type list and ran the type matcher: 16-19 ns against 1.5 ns native.
+  The type list is read without the lock (it is fixed once the module is
+  instantiated, as the table list already is), and a function of the calling
+  module with the expected type index matches without the matcher (~5 ns).
 
 **The substrate probe** (`substrate/substrate-probe.wat`, embedded as
 `substrate-probe.wasm`) exercises 04 directly: `memarg_offset_notify` spawns a
@@ -126,6 +140,14 @@ AOT-compiled probe and sets `SubstrateReport.AOTAtomicMemargOffset`.
 `InterruptibleAOT`, and `Tag()` returns `"sdn3"` (instead of `"sdn2"`) once it
 holds — every threaded AOT artifact an unpatched-04 host had cached recompiles
 under the new key, because it does not carry the offset fix.
+
+`AOTLoopStopChecks` (05) is measured from compiled code: the probe compiles a
+function of 256 empty blocks and the same function without them; with 05 the
+two artifacts differ by the blocks' wasm bytes alone, without it by a stop
+check per block on top (about 8 bytes each on arm64). `Patched()` requires it
+whenever the AOT check ran, and `Tag()` returns `"sdn4"` once it holds, so
+artifacts compiled with a check at every block are recompiled. 06 changes the
+runtime only, not compiled code, and has no key.
 
 `spacedatanetwork substrate-selftest [--require-patched]` measures them in the
 running binary (notify without store, one stop ending every thread,

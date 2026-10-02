@@ -20,6 +20,13 @@ package wasmrt
 //                             offset=<lock>`) went to address 0 and thread
 //                             exit/join hung; a wait on a stack local compared
 //                             another word and returned at once.
+//   AOTLoopStopChecks         Interruptible AOT code checks the stop token at
+//                             loop headers and function entries only
+//                             (05-loop-stop-checks): a function of empty
+//                             blocks compiles to no more code than one
+//                             without them. The unpatched compiler put a check
+//                             at every block, 182 of them in front of each
+//                             SQLite VDBE opcode dispatch.
 //
 // AOTSpeedup is reported, not judged: on an unpatched runtime Interruptible
 // AOT code exchanges the shared stop token at every loop iteration, and the
@@ -56,6 +63,7 @@ type SubstrateReport struct {
 	StopReachesEveryThread   bool          `json:"stop_reaches_every_thread"`
 	InterruptibleAOT         bool          `json:"interruptible_aot"`
 	AOTAtomicMemargOffset    bool          `json:"aot_atomic_memarg_offset"`
+	AOTLoopStopChecks        bool          `json:"aot_loop_stop_checks"`
 	AOTChecked               bool          `json:"aot_checked"`
 	ThreadsStoppedBySingle   int           `json:"threads_stopped_by_one_stop"`
 	ThreadsSpawned           int           `json:"threads_spawned"`
@@ -68,7 +76,7 @@ type SubstrateReport struct {
 // Patched reports whether the runtime behaves like the patched build.
 func (r SubstrateReport) Patched() bool {
 	return r.AtomicNotifyWithoutStore && r.StopReachesEveryThread &&
-		(!r.AOTChecked || (r.InterruptibleAOT && r.AOTAtomicMemargOffset))
+		(!r.AOTChecked || (r.InterruptibleAOT && r.AOTAtomicMemargOffset && r.AOTLoopStopChecks))
 }
 
 // Tag names the runtime behaviour for AOT cache keys of Interruptible
@@ -78,8 +86,15 @@ func (r SubstrateReport) Patched() bool {
 // "sdn3" adds AOTAtomicMemargOffset: artifacts compiled before the
 // atomic-memarg-offset patch carry the broken wait/notify addressing, so the
 // key changes and every host recompiles them.
+//
+// "sdn4" adds AOTLoopStopChecks: artifacts compiled before 05-loop-stop-checks
+// carry a stop check at every block and run the engine 2-3x slower, so the key
+// changes and every host recompiles them.
 func (r SubstrateReport) Tag() string {
 	if r.AtomicNotifyWithoutStore && r.StopReachesEveryThread {
+		if r.AOTAtomicMemargOffset && r.AOTLoopStopChecks {
+			return "sdn4"
+		}
 		if r.AOTAtomicMemargOffset {
 			return "sdn3"
 		}
@@ -152,6 +167,11 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 				rep.AOTAtomicMemargOffset = ok
 			}
 		}
+		if ok, err := probeLoopStopChecks(); err != nil {
+			fail("AOT loop stop checks: %v", err)
+		} else {
+			rep.AOTLoopStopChecks = ok
+		}
 	}
 	rep.Elapsed = time.Since(start)
 	return rep
@@ -171,10 +191,11 @@ func SubstrateStatus() SubstrateReport {
 		if !substrateReport.Patched() {
 			level = "WARN"
 		}
-		fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t in %s %v\n",
+		fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t in %s %v\n",
 			level, substrateReport.RuntimeVersion, substrateReport.AtomicNotifyWithoutStore,
 			substrateReport.StopReachesEveryThread, substrateReport.InterruptibleAOT, substrateReport.AOTSpeedup,
-			substrateReport.AOTAtomicMemargOffset, substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Errors)
+			substrateReport.AOTAtomicMemargOffset, substrateReport.AOTLoopStopChecks,
+			substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Errors)
 	})
 	return substrateReport
 }
@@ -314,6 +335,63 @@ func probeStop(wasm []byte, n int, countInstructions bool) (stopProbe, error) {
 }
 
 func compileProbeAOT() ([]byte, error) {
+	return compileThreadedAOT(substrateProbeWasm)
+}
+
+// probeBlocks is how many empty blocks the loop-stop-check probe compiles. A
+// stop check is a load and a branch: at least 6 bytes of code per block on
+// arm64 and x86-64.
+const probeBlocks = 256
+
+// probeLoopStopChecks compiles one function of probeBlocks empty blocks and the
+// same function without them. With 05-loop-stop-checks a block compiles to no
+// code, so the two artifacts differ by the blocks' wasm bytes alone; without
+// it, by a stop check per block on top.
+func probeLoopStopChecks() (bool, error) {
+	withWasm, withoutWasm := blocksProbeWasm(probeBlocks), blocksProbeWasm(0)
+	with, err := compileThreadedAOT(withWasm)
+	if err != nil {
+		return false, err
+	}
+	without, err := compileThreadedAOT(withoutWasm)
+	if err != nil {
+		return false, err
+	}
+	code := (len(with) - len(without)) - (len(withWasm) - len(withoutWasm))
+	return code < probeBlocks, nil
+}
+
+// blocksProbeWasm is a module with one function, () -> (), whose body is n
+// empty blocks.
+func blocksProbeWasm(n int) []byte {
+	leb := func(b []byte, v int) []byte {
+		for {
+			c := byte(v & 0x7f)
+			v >>= 7
+			if v == 0 {
+				return append(b, c)
+			}
+			b = append(b, c|0x80)
+		}
+	}
+	section := func(b []byte, id byte, content []byte) []byte {
+		return append(leb(append(b, id), len(content)), content...)
+	}
+	body := []byte{0x00} // no locals
+	for i := 0; i < n; i++ {
+		body = append(body, 0x02, 0x40, 0x0b) // block (empty type) end
+	}
+	body = append(body, 0x0b)
+	code := append(leb([]byte{0x01}, len(body)), body...)
+	m := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+	m = section(m, 0x01, []byte{0x01, 0x60, 0x00, 0x00}) // type 0: () -> ()
+	m = section(m, 0x03, []byte{0x01, 0x00})             // func 0: type 0
+	return section(m, 0x0a, code)
+}
+
+// compileThreadedAOT compiles wasm with the threaded Interruptible
+// configuration into a temporary file and returns the artifact.
+func compileThreadedAOT(wasm []byte) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "sdn-substrate-aot-")
 	if err != nil {
 		return nil, err
@@ -330,7 +408,7 @@ func compileProbeAOT() ([]byte, error) {
 		return nil, errors.New("WasmEdge AOT compiler unavailable")
 	}
 	defer compiler.Release()
-	if err := compiler.CompileBuffer(substrateProbeWasm, path); err != nil {
+	if err := compiler.CompileBuffer(wasm, path); err != nil {
 		return nil, err
 	}
 	return os.ReadFile(path)
