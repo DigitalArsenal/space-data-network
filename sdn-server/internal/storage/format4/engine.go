@@ -281,9 +281,29 @@ func (e *Engine) Close(ctx context.Context) error {
 
 // ---- requests ---------------------------------------------------------------
 
-// busyBackoff is the BUSY retry: 1 ms doubling to 100 ms (§5.2 rules).
-func busyBackoff(ctx context.Context, attempt int) error {
-	d := min(time.Millisecond<<uint(min(attempt, 7)), 100*time.Millisecond)
+// busyLimit bounds the BUSY retry of one request. An engine that refuses a
+// request this long in a row is stuck, not busy: the request returns its
+// BUSY error instead of retrying for as long as ctx lives (a caller without
+// a deadline would otherwise hang without a word; GATES-r2 count-scaled
+// growth).
+const busyLimit = 2 * time.Minute
+
+// busyRetry is one request's BUSY retry: 1 ms doubling to 100 ms (§5.2
+// rules), until ctx ends or busyLimit has passed since the first refusal.
+type busyRetry struct {
+	n     int
+	since time.Time
+}
+
+func (b *busyRetry) wait(ctx context.Context, op, msg string) error {
+	if b.since.IsZero() {
+		b.since = time.Now()
+	} else if waited := time.Since(b.since); waited >= busyLimit {
+		return &StatusError{Op: op, Status: StatusBusy,
+			Msg: fmt.Sprintf("the engine refused the request for %s (%s)", waited.Round(time.Second), msg)}
+	}
+	d := min(time.Millisecond<<uint(min(b.n, 7)), 100*time.Millisecond)
+	b.n++
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
@@ -295,11 +315,12 @@ func busyBackoff(ctx context.Context, attempt int) error {
 }
 
 // do runs one request and decodes its RB1 response. P4_E_BUSY means nothing
-// was done: it is retried until ctx ends, for writes and reads alike (reads
+// was done: it is retried (busyRetry), for writes and reads alike (reads
 // never return ErrBusy).
 func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, want []string) (*rows, error) {
 	name := opNames[op]
-	for attempt := 0; ; attempt++ {
+	var busy busyRetry
+	for {
 		if err := e.live(name); err != nil {
 			return nil, err
 		}
@@ -312,7 +333,7 @@ func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, wan
 			return nil, e.stopped(name, err)
 		}
 		if o.status == StatusBusy {
-			if err := busyBackoff(ctx, attempt); err != nil {
+			if err := busy.wait(ctx, name, o.err); err != nil {
 				return nil, err
 			}
 			continue
@@ -721,7 +742,8 @@ func (e *Engine) SQL(ctx context.Context, req SQLRequest, sink func(chunk []byte
 	if p := format2.EncodeParams(req.Params); p != nil {
 		body = body.raw(tagParams, p)
 	}
-	for attempt := 0; ; attempt++ {
+	var busy busyRetry
+	for {
 		if err := e.live("SQL"); err != nil {
 			return SQLStats{}, err
 		}
@@ -738,7 +760,7 @@ func (e *Engine) SQL(ctx context.Context, req SQLRequest, sink func(chunk []byte
 		}
 		st := SQLStats{Rows: o.rows, RowsExamined: o.rowsExamined, BytesRead: o.bytesRead, Queue: o.queue, Run: o.run}
 		if o.status == StatusBusy && !sent {
-			if err := busyBackoff(ctx, attempt); err != nil {
+			if err := busy.wait(ctx, "SQL", o.err); err != nil {
 				return st, err
 			}
 			continue
