@@ -52,8 +52,8 @@ const format4CloseDeadline = 30 * time.Second
 // may recreate record tables beside it.
 var ErrFormat4Store = errors.New("the store is format 4; start the daemon with SDN_STORE_FORMAT=4")
 
-// Test hooks: the daemon never compiles an artifact; tests do, and the
-// backend tests run on format4test's Fake.
+// Test hooks: the daemon never compiles an artifact; tests do, and they name
+// the engine build they run on (SDN_P4_WASM).
 var (
 	format4CompileOnMiss = false
 	format4AOTCacheDir   = func() string { return engineAOTCacheDir() }

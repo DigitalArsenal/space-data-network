@@ -7,10 +7,8 @@ package storage
 // one row per record; C-12: the lowest-pid copy; A2: supersede per
 // partition) normalized as format 2's parity test normalizes them.
 //
-// Each test runs on format4test's Fake (the contract's executable
-// reference, extracting fields with format 1's own extraction: the
-// comparison is of the backend's mapping) and, when this build has one, on
-// the real engine (embedded, or SDN_P4_WASM; the patched runtime).
+// Each test runs on the real engine (embedded, or SDN_P4_WASM; the patched
+// runtime), the one implementation (C-33), and skips without one.
 
 import (
 	"context"
@@ -31,70 +29,22 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
-	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/format4test"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
-// format1Extract is the Fake's field extraction: format 1's own index columns
-// (extractIndexedFields) and supersede identity (recordSupersedeKey).
-func format1Extract(typ string, plain []byte) (format4test.Fields, error) {
-	schema := typ + ".fbs"
-	var out format4test.Fields
-	out.Supersede = recordSupersedeKey(schema, plain)
-	f, err := extractIndexedFields(schema, plain)
-	if err != nil || f == nil {
-		return out, nil // format 1 indexes a bare row
-	}
-	out.Epoch = f.epochUnix
-	if f.noradCatID != nil {
-		v := int64(*f.noradCatID)
-		out.Col0 = &v
-	}
-	str := func(s string) *string {
-		if s == "" {
-			return nil
-		}
-		return &s
-	}
-	out.Col1, out.Col2, out.Col3 = str(f.entityID), str(f.objectType), str(f.opsStatusCode)
-	switch typ {
-	case "MPE":
-		if out.Col1 != nil {
-			out.Key = *out.Col1
-		}
-	default:
-		switch {
-		case out.Col0 != nil:
-			out.Key = fmt.Sprint(*out.Col0)
-		case out.Col1 != nil:
-			out.Key = *out.Col1
-		}
-	}
-	return out, nil
-}
-
-// f4Engine is an engine the format-4 tests run on: format4test's Fake (with
-// format 1's own field extraction), and the real engine when this build has
-// one (embedded, or SDN_P4_WASM names an artifact) on the patched runtime.
-type f4Engine struct {
-	name string
-	wasm []byte // the real engine's artifact; nil for the Fake
-}
-
-func (e f4Engine) real() bool { return e.wasm != nil }
-
-func format4TestEngines(t *testing.T) []f4Engine {
+// format4TestWasm is the engine the format-4 tests run on (embedded, or
+// SDN_P4_WASM names an artifact) on the patched runtime, or a skip.
+func format4TestWasm(t *testing.T) []byte {
 	t.Helper()
-	out := []f4Engine{{name: "fake"}}
 	if !flatsqlrt.NativeHostIOSupported() {
-		return out
+		t.Skip("the C host I/O module is not available on this platform")
 	}
 	if rep := wasmrt.SubstrateStatus(); !rep.Patched() {
 		if os.Getenv("SDN_WASM_REQUIRE_PATCHED") == "1" {
 			t.Fatalf("runtime is not patched: %+v", rep)
 		}
-		return out
+		t.Skipf("linked libwasmedge lacks the SDN runtime patches (%+v)", rep)
 	}
 	wasm := flatsqlrt.P4ThreadsWasm()
 	if p := os.Getenv("SDN_P4_WASM"); p != "" {
@@ -104,40 +54,26 @@ func format4TestEngines(t *testing.T) []f4Engine {
 		}
 		wasm = b
 	}
-	if len(wasm) > 0 {
-		out = append(out, f4Engine{name: "engine", wasm: wasm})
+	if len(wasm) == 0 {
+		t.Skip("no format-4 engine: none is embedded and SDN_P4_WASM is unset")
 	}
-	return out
+	return wasm
 }
 
-// onFormat4Engines runs body once per engine, with format-4 opens on that
-// engine; fakes holds each Fake the body's opens made (none on the engine).
-func onFormat4Engines(t *testing.T, body func(t *testing.T, e f4Engine, fakes *[]*format4test.Fake)) {
-	for _, e := range format4TestEngines(t) {
-		t.Run(e.name, func(t *testing.T) {
-			fakes := &[]*format4test.Fake{}
-			prev := format4OpenEngine
-			format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
-				if e.real() {
-					base, err := os.UserCacheDir()
-					if err != nil {
-						base = os.TempDir()
-					}
-					opt.Wasm, opt.CompileOnMiss, opt.AOTCacheDir = e.wasm, true, filepath.Join(base, "sdn-format4-test-aot")
-					return prev(ctx, opt)
-				}
-				f, err := format4test.Open(ctx, opt)
-				if err != nil {
-					return nil, err
-				}
-				f.Extract = format1Extract
-				*fakes = append(*fakes, f)
-				return f, nil
-			}
-			t.Cleanup(func() { format4OpenEngine = prev })
-			body(t, e, fakes)
-		})
+// onFormat4Engine runs body with every format-4 open on the real engine.
+func onFormat4Engine(t *testing.T, body func(t *testing.T)) {
+	wasm := format4TestWasm(t)
+	prev := format4OpenEngine
+	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
+		base, err := os.UserCacheDir()
+		if err != nil {
+			base = os.TempDir()
+		}
+		opt.Wasm, opt.CompileOnMiss, opt.AOTCacheDir = wasm, true, filepath.Join(base, "sdn-format4-test-aot")
+		return prev(ctx, opt)
 	}
+	t.Cleanup(func() { format4OpenEngine = prev })
+	body(t)
 }
 
 // openFormat4ForTest opens (creating) a format-4 store at dir.
@@ -210,7 +146,7 @@ func f4Near(a, b time.Time) bool {
 }
 
 func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
-	onFormat4Engines(t, func(t *testing.T, _ f4Engine, _ *[]*format4test.Fake) {
+	onFormat4Engine(t, func(t *testing.T) {
 		legacy := reopenDeferred(t, t.TempDir())
 		defer legacy.Close()
 		f4 := openFormat4ForTest(t, t.TempDir())
@@ -978,7 +914,7 @@ func pbMaxRowID(recs []*Record) int64 {
 // The writes keep format 1's answers: new counts, copies, retags, the
 // ingest identity, the licence row, the supersede counts and the refusals.
 func TestFormat4WritesMatchFormat1(t *testing.T) {
-	onFormat4Engines(t, func(t *testing.T, _ f4Engine, _ *[]*format4test.Fake) {
+	onFormat4Engine(t, func(t *testing.T) {
 		legacy := reopenDeferred(t, t.TempDir())
 		defer legacy.Close()
 		f4 := openFormat4ForTest(t, t.TempDir())
@@ -1053,7 +989,7 @@ func TestFormat4WritesMatchFormat1(t *testing.T) {
 // §5.5 and §2.4: which store each selector opens, and every refusal before
 // a file is touched.
 func TestFormat4StoreSelectionAndRefusals(t *testing.T) {
-	onFormat4Engines(t, func(t *testing.T, _ f4Engine, _ *[]*format4test.Fake) {
+	onFormat4Engine(t, func(t *testing.T) {
 		t.Setenv(checkpointIntervalEnv, "0")
 		v, err := sds.NewValidator(nil)
 		if err != nil {
@@ -1168,7 +1104,7 @@ func TestFormat4StoreSelectionAndRefusals(t *testing.T) {
 // No record path takes s.mu (contract §5.4): with the store write lock held,
 // every record read and write still completes.
 func TestFormat4RecordPathsTakeNoStoreLock(t *testing.T) {
-	onFormat4Engines(t, func(t *testing.T, _ f4Engine, _ *[]*format4test.Fake) {
+	onFormat4Engine(t, func(t *testing.T) {
 		s := openFormat4ForTest(t, t.TempDir())
 		defer s.Close()
 		sc := newF2Script()
@@ -1279,7 +1215,7 @@ func TestFormat4SyncFilterPredicates(t *testing.T) {
 // Field-sealed records (KMF): the engine stores the sealed bytes, the CID is
 // the plaintext's, and reads open them as format 1 does.
 func TestFormat4SealedRecordsMatchFormat1(t *testing.T) {
-	onFormat4Engines(t, func(t *testing.T, e f4Engine, fakes *[]*format4test.Fake) {
+	onFormat4Engine(t, func(t *testing.T) {
 		legacy := reopenDeferred(t, t.TempDir())
 		defer legacy.Close()
 		f4 := openFormat4ForTest(t, t.TempDir())
@@ -1329,19 +1265,13 @@ func TestFormat4SealedRecordsMatchFormat1(t *testing.T) {
 				t.Fatalf("KMF ref %d: the stored bytes are not sealed", i)
 			}
 		}
-		if !e.real() {
-			got, err := (*fakes)[0].Get(context.Background(), "KMF", []string{ComputeCID(recs[0])}, false, true)
-			if err != nil || len(got) != 1 || !encfieldIsSealed(got[0].Data) {
-				t.Fatalf("the engine holds %d unsealed copies (%v)", len(got), err)
-			}
-		}
 	})
 }
 
 // The publication log (QueryLogEntries): the log index is a control table
 // and its entries are PLOG records, which format 4 reads from the engine.
 func TestFormat4LogEntriesMatchFormat1(t *testing.T) {
-	onFormat4Engines(t, func(t *testing.T, _ f4Engine, _ *[]*format4test.Fake) {
+	onFormat4Engine(t, func(t *testing.T) {
 		legacy := reopenDeferred(t, t.TempDir())
 		defer legacy.Close()
 		f4 := openFormat4ForTest(t, t.TempDir())
@@ -1388,22 +1318,4 @@ func TestFormat4LogEntriesMatchFormat1(t *testing.T) {
 			}
 		}
 	})
-}
-
-// TestMain: SDN_FORMAT4_SUITE=fake opens every format-4 store of the run
-// (SDN_STORE_FORMAT=4 set for the whole suite) on format4test's Fake, so
-// the package's suite can run against store format 4 before the engine is
-// embedded.
-func TestMain(m *testing.M) {
-	if os.Getenv("SDN_FORMAT4_SUITE") == "fake" {
-		format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
-			f, err := format4test.Open(ctx, opt)
-			if err != nil {
-				return nil, err
-			}
-			f.Extract = format1Extract
-			return f, nil
-		}
-	}
-	os.Exit(m.Run())
 }
