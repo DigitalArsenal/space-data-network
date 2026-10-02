@@ -438,7 +438,7 @@ func (s *slot) drain(ctx context.Context) error {
 
 // abandonGrace is how long a cancelled request may take to reach DONE
 // before its caller returns (§5.2 rules: one second).
-var abandonGrace = time.Second
+const abandonGrace = time.Second
 
 // abandon ends a request whose caller is leaving: cancel, wait up to
 // abandonGrace for DONE (draining the ring), free the slot. A request that

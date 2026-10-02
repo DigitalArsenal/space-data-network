@@ -16,9 +16,8 @@
 // Everything here is behind SDN_STORE_FORMAT=4 (or "sqlite"): format 1 stays
 // the default, and format 2 is unchanged.
 //
-// API is the whole surface. Engine implements it over the real engine;
-// format4test.Fake implements it in memory and is the executable reference
-// of the contract.
+// API is the whole surface; Engine implements it over the real engine, the
+// one implementation (C-33).
 package format4
 
 import (
