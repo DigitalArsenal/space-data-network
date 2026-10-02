@@ -6,7 +6,7 @@ Anthony "TJ" Koury III
 
 Edgesource, Space Data Network · tj@edgesource.com
 
-Technical whitepaper 1.3 | 2 October 2026
+Technical whitepaper 1.4 | 2 October 2026
 
 Numerical evidence cutoff: 2 October 2026
 
@@ -442,36 +442,82 @@ The probing attack:
   reactions. A disclosure request or a maneuver after an alert reveals
   proximity to an invented trajectory.
 
-Unbounded querying is therefore cheap enough for a determined adversary. The
-defenses, strongest first:
+Unbounded querying is therefore cheap enough for a determined adversary. In
+mutual screening both operators can attempt it: each is a requester for its
+own object and a responder for the other's.
 
-1. **Bind every query to a real object.**
+**Who enforces the defenses.**
+- Every answer about an object comes from its owner's node, computed with
+  its owner's plaintext trajectory. Nothing that could reveal the object
+  exists anywhere else.
+- The requester's software, modified or not, holds only its own data and
+  results locked under its own key.
+- The defenses below therefore run on the node of the party being probed.
+  Open source does not weaken them; it lets each party check what its
+  counterpart's node computes.
+- A central service computing on everyone's encrypted orbits would reverse
+  this, which is one more reason the protocol has none.
+
+The defenses, strongest first:
+
+1. **Check the question before answering.**
+   - Each query must name a declared object that the requester operates.
+   - Under encryption, the responder tests that the submitted trajectory
+     stays within a tube around that object's public track. The tube is D₀
+     wide at the start and widens by Δv_max·(t − t_b) after a burn declared
+     at t_b, so planned maneuvers pass.
+   - The test uses the two-party comparison above, and the responder learns
+     only pass or fail. An invented sweep is refused before any answer is
+     computed.
+   - Probing with its real fleet, a requester reaches at most D + R′ around
+     each of its satellites.
+2. **Check it again afterwards.**
    - Each query commits to its plaintext trajectory (a hash).
    - After the window has passed, the requester reveals the trajectory: past
      positions are far less sensitive than planned maneuvers.
-   - An auditor checks the revealed trajectory against independent tracking
-     of the declared object, with the reference-orbit comparisons of
-     section 7.
-   - An invented trajectory is caught after the fact. The responder is bound
-     the same way.
-2. **Identity cost.** Only identities with stake or reputation may query. A
-   failed audit forfeits the stake and suspends screening.
-3. **Rate limits.** Per window, an identity may query no more than its
-   registered objects.
-4. **Plausibility.** At audit, a committed trajectory must obey orbital
-   dynamics. Grid-like or non-Keplerian ephemerides are flagged.
-5. **One-sided noise.** Noise may add false alerts but must never remove a
-   true one. It slows a prober by a constant factor.
-   - Two-sided noise, such as random noise added to the distance before the
-     comparison, would drop real conjunctions near the threshold.
-   - Independent noise averages away over repeated queries.
+   - The responder checks it against independent tracking of the declared
+     object, using the reference-orbit comparisons of section 7. It also
+     checks it against orbital dynamics, flagging grids, sweeps and
+     non-Keplerian paths.
+   - Queries and commitments are digitally signed, so a failure is
+     attributable evidence.
+3. **Stake and identity.** Only identities with stake or reputation may ask.
+   A failed check forfeits the stake and ends screening for that identity.
+4. **Per-window budget.**
+   - An identity may ask no more questions per window than it has
+     registered objects.
+   - That bounds what a requester willing to lose its identity can extract
+     before the later check catches it: one window of questions, inside the
+     tubes of its own fleet.
+5. **Laplace noise with a safety offset.** Before the comparison, the
+   responder adds noise drawn from a Laplace distribution of scale b to each
+   step's distance. The noise is truncated at ±s, and the test threshold is
+   raised by s, so noise can add false alerts but never removes a real one.
+   - **It hides the precise position.** Two placements of the hidden object
+     whose distances to the probe differ by Δ change the odds of each answer
+     by at most e^(Δ/b), and of k answers by e^(kΔ/b). This is differential
+     privacy. With b = 250 m, ten answers barely separate positions 25 m
+     apart.
+   - **Finding the boundary is expensive.** Locating the alert boundary to
+     within δ takes about (b/δ)² answers, more than the budget allows.
+   - **It does not hide coarse location.** An object 1,000 km away is never
+     "close". The noise complements the checks above; it does not replace
+     them.
+   - **Repeats don't help.** The noise is fixed per requester, object and
+     step, so asking again does not average it away. Because of the
+     truncation, the guarantee is approximate ((ε, δ)) differential privacy.
+   - **Cost.** The alert radius grows by s. With s = 1.25 km at R = 5 km,
+     there are about 1.6 times as many alerts to resolve.
+6. **Partners for untracked objects.** An object missing from the public
+   catalog cannot pass a public-track check. Its owner screens only with
+   counterparties it agrees to work with, and they with it.
 
 Direct authenticated streams protect integrity and metadata. The ciphertexts
-are protected by the requester's key either way: anyone can compute on them,
-but only their owner can decrypt.
+are protected by their owner's key either way.
 
-With binding in place, a prober learns only what its real objects' real close
-approaches reveal.
+With these defenses in place, a prober learns what its real objects' real
+close approaches reveal. If it is willing to lose its identity, it learns at
+most one more window of answers, within its own fleet's tubes.
 
 ### What exists
 
@@ -480,7 +526,7 @@ approaches reveal.
 | Homomorphic fields in FlatBuffers (SEAL BFV/BGV, `he_encrypted`) ([R15](#r15)) | Built. Each ciphertext holds one value under a 20-bit plaintext modulus, so metre-scale coordinates wrap silently. It needs batched vectors and multiple moduli, as in the benchmark, to carry this protocol. |
 | SDN encrypted-screening request (`/api/v1/conjunction/screen`) | Built. It returns no result. |
 | The protocol's arithmetic | Measured ([R14](#r14)). |
-| Screening module, bit-only comparison, noise flooding, commitments and audit, staking, rate limits, plausibility checks | Not built. |
+| Screening module, bit-only comparison, pre-answer tube check, noise flooding, Laplace noise, commitments and audit, staking, budgets, plausibility checks | Not built. |
 
 ## 9 Limits and next work
 
