@@ -30,7 +30,8 @@ func Version() string {
 func IsRelease() bool { return strings.TrimSpace(ReleaseTag) != "" }
 
 // STORE FORMAT STAMP (design A5 in docs/architecture/flatsql-partition-store.md;
-// flatsql-ps-terabyte §3 "SDN Apply guard", task TB03s).
+// flatsql-ps-terabyte §3 "SDN Apply guard", task TB03s; format 4:
+// flatsql-sqlite-partitions.md §11 "Format guard").
 //
 // A rollback, or an install of an older build, must never start a binary whose
 // engines cannot open the record store on disk. A partition-store engine
@@ -62,9 +63,28 @@ const (
 	// engine refuses a store one level above it.
 	PSEngineStoreFormatMax = 3
 
+	// P4EngineSHA256 is the release pin of the format-4 engine (store format
+	// 4, one SQLite file per partition): the sha256 of the published
+	// flatsql-p4-threads.wasm (its package's wasm/integrity.json), which
+	// flatsqlrt embeds. It is EMPTY until a release is embedded. flatsqlrt
+	// refuses to start a binary whose embedded bytes are not this engine
+	// (empty bytes with no pin, else bytes with exactly this sha256).
+	P4EngineSHA256 = ""
+
+	// P4StoreFormat is format 4's fsql4/STORE format: the format a format-4
+	// store is at, and the one the format-4 engine opens.
+	P4StoreFormat = 4
+
+	// p4Pinned is 1 when this build pins (and so embeds) a format-4 engine,
+	// else 0.
+	p4Pinned = min(len(P4EngineSHA256), 1)
+
 	// MaxStoreFormat is the highest on-disk store format this build opens: the
-	// higher of its two embedded engines.
-	MaxStoreFormat = max(Format1StoreFormat, PSEngineStoreFormatMax)
+	// highest of its embedded engines. Format 4 counts only when the build
+	// pins a format-4 engine; without one the stamp stays at the format-2
+	// engine's level, so the update guard refuses this build on a format-4
+	// store instead of letting it fail at open (rollback, review 2).
+	MaxStoreFormat = max(Format1StoreFormat, PSEngineStoreFormatMax, P4StoreFormat*p4Pinned)
 )
 
 const (
@@ -83,7 +103,7 @@ const (
 var storeFormatStamp = [...]byte{
 	0x00, 'S', 'D', 'N', '.', 'M', 'A', 'X', '_', 'S', 'T', 'O', 'R', 'E', '_', 'F', 'O', 'R', 'M', 'A', 'T', 0x00,
 	storeFormatStampVersion,
-	MaxStoreFormat,
+	byte(MaxStoreFormat),
 	^byte(MaxStoreFormat),
 }
 

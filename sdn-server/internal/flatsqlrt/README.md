@@ -186,6 +186,52 @@ prewarm-aot` compiles it on every host (a failure fails the command only when
 path. Bumping the artifact therefore needs a `prewarm-aot` run, exactly like
 the legacy engine below.
 
+## The format-4 engine (store format 4)
+
+`flatsql-p4-threads.wasm` is the format-4 engine: one SQLite file per
+partition (producer x record type), SQLite 3.53.4 unmodified (stack design
+`docs/architecture/flatsql-sqlite-partitions.md`; build-out contract §1,
+§5.3). It is embedded by `p4artifact.go` and run by `p4instance.go` as ONE
+threaded instance (`PSABIP4` on the partition-store substrate): writer
+threads, read lanes and the maintenance thread share its memory, because the
+WAL index of every file must live in one linear memory.
+
+- npm package: not released yet. Until flatsql's `npm-publish.yml` publishes
+  the engine (build-out landing step 3), the embedded file is EMPTY,
+  `P4ThreadsPackage` is `flatsql@unreleased`, `format4.Open` and `prewarm-aot`
+  refuse it, and nothing selects format 4 (`SDN_STORE_FORMAT` unset is
+  format 1). The release replaces this entry with the package, gitHead,
+  sha256 (the package's `wasm/integrity.json`) and size, and sets
+  `versioninfo.P4EngineSHA256`, the one pin, to that sha256.
+- Store-format stamp: the build stamps `max_store_format` 4 only when it pins
+  a format-4 engine (`versioninfo.P4EngineSHA256` non-empty); otherwise the
+  stamp stays at the format-2 engine's level (3), so the update guard refuses
+  such a build on a format-4 store. `flatsqlrt`'s init refuses to start a
+  binary whose embedded bytes are not the pinned engine (bytes with no pin,
+  or bytes whose sha256 differs from the pin, or no bytes with a pin).
+- Development: the p4 and format4 tests also run on `SDN_P4_WASM=<path>`, a
+  build of the engine's task branch, without embedding it.
+
+Boot: `_initialize`, `flatsql_p4_init(config TLV)` (journal replay and WAL
+recovery happen inside it), `flatsql_p4_layout` (640 bytes, version 1), the
+doorbell over `doorbell[0..nThreads)` (each thread's state word follows its
+doorbell), the completion poller, the heap grown to the memory's maximum
+(blocks through `flatsql_p4_alloc`, then freed: the sandbox lanes' heap
+arenas and later allocations never grow memory under running threads), then
+`flatsql_p4_start`. Stop: the stop word, notifies, `flatsql_p4_stop(deadline
+ms)` (`P4_OK`, or `P4_E_BUSY` when it did not drain in time), a wait for the
+service threads, then an executor stop. A fenced instance cannot run
+`flatsql_p4_stop`, so it goes straight to the executor stop and `OnFailure`
+runs at once.
+`storage/format4` programs the mailbox from the layout; Go never calls a
+guest export on a request.
+
+It loads only as a THREADS + Interruptible AOT artifact under the prefix
+`fsqlp4`. `spacedatanetwork prewarm-aot` compiles it on every host (a failure
+fails the command only when `SDN_STORE_FORMAT=4` or `sqlite` is set); a
+format-4 daemon never compiles on the service path. Bumping the artifact
+needs a `prewarm-aot` run.
+
 ## ABI conventions (mirrors `flatsql/wasm/standalone.js`)
 
 - WASI reactor: instantiate with WASI + the exception-handling proposal

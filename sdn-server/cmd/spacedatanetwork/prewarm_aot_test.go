@@ -95,6 +95,16 @@ func TestRunPrewarmAOTWritesEngineArtifactAndIsIdempotent(t *testing.T) {
 	if !strings.Contains(out2.String(), psPath) || !strings.Contains(out2.String(), "partition-store engine ("+flatsqlrt.PSThreadsPackage+"): "+psPath+" (already present)") {
 		t.Fatalf("run 2 did not report the partition-store engine artifact %s as present:\n%s", psPath, out2.String())
 	}
+	// The format-4 engine is prewarmed beside them once a release is
+	// embedded; a build without one says so and still succeeds.
+	if len(flatsqlrt.P4ThreadsWasm()) > 0 {
+		p4Path := flatsqlrt.P4ThreadsAOTPath(dir)
+		if !strings.Contains(out2.String(), "format-4 engine ("+flatsqlrt.P4ThreadsPackage+"): "+p4Path+" (already present)") {
+			t.Fatalf("run 2 did not report the format-4 engine artifact %s as present:\n%s", p4Path, out2.String())
+		}
+	} else if !strings.Contains(out2.String(), "format-4 engine ("+flatsqlrt.P4ThreadsPackage+"): SKIPPED") {
+		t.Fatalf("run 2 did not report the missing format-4 engine:\n%s", out2.String())
+	}
 	info2, err := os.Stat(enginePath)
 	if err != nil {
 		t.Fatalf("engine artifact vanished after run 2: %v", err)

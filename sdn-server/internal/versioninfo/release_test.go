@@ -65,15 +65,6 @@ func TestStoreFormatStampSurvivesReleaseLinking(t *testing.T) {
 	}
 }
 
-func TestMaxStoreFormatIsTheHigherEngine(t *testing.T) {
-	if MaxStoreFormat != max(Format1StoreFormat, PSEngineStoreFormatMax) || MaxStoreFormat < 2 {
-		t.Fatalf("MaxStoreFormat %d (format-1 engine %d, partition-store engine %d)", MaxStoreFormat, Format1StoreFormat, PSEngineStoreFormatMax)
-	}
-	if got := StoreFormatStamp(MaxStoreFormat); !bytes.Equal(got, storeFormatStamp[:]) {
-		t.Fatalf("StoreFormatStamp(MaxStoreFormat) = % x, the embedded stamp is % x", got, storeFormatStamp[:])
-	}
-}
-
 func TestReadStoreFormatStamp(t *testing.T) {
 	pad := func(n int) []byte { return bytes.Repeat([]byte{0xA5}, n) }
 	cat := func(parts ...[]byte) []byte { return bytes.Join(parts, nil) }

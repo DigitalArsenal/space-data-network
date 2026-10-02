@@ -86,7 +86,26 @@ const (
 	PSABIProbe PSABI = iota
 	// PSABIEngine is the FlatSQL engine's own ABI (see the note above).
 	PSABIEngine
+	// PSABIP4 is the format-4 engine's ABI (p4instance.go): one instance,
+	// flatsql_p4_init(config), a 640-byte layout, a doorbell per thread.
+	PSABIP4
 )
+
+// psExports names the guest exports an ABI's lifecycle calls outside init.
+type psExports struct {
+	malloc, free string // "" = wasmrt's malloc/free
+	stop         string // the guest's bounded stop, called with the deadline in ms
+}
+
+func (a PSABI) exports() psExports {
+	switch a {
+	case PSABIEngine:
+		return psExports{malloc: "flatsql_ps_alloc", free: "flatsql_ps_free", stop: "flatsql_ps_stop"}
+	case PSABIP4:
+		return psExports{malloc: "flatsql_p4_alloc", free: "flatsql_p4_free", stop: "flatsql_p4_stop"}
+	}
+	return psExports{stop: "flatsql_ps_stop"}
+}
 
 // Engine layout sizes (flatsql_ps.h: FlatsqlPsLayout, FlatsqlPsReaderLayout).
 const (
@@ -253,14 +272,17 @@ type PSInstance struct {
 	accessors atomic.Int64
 	ctlMu     sync.Mutex
 
-	failOnce  sync.Once
-	failure   atomic.Value // error
-	fencedIn  atomic.Int64 // ns from failure detection to revoke done
-	fencedAt  atomic.Int64 // unix ns when the revoke finished
-	stopOnce  sync.Once
-	stopErr   error
-	stopped   chan struct{}
-	superDone chan struct{}
+	failOnce sync.Once
+	failure  atomic.Value // error
+	fencedIn atomic.Int64 // ns from failure detection to revoke done
+	fencedAt atomic.Int64 // unix ns when the revoke finished
+	stopOnce sync.Once
+	stopErr  error
+	// stopStatus is the guest stop export's result (format 4: P4_OK, or
+	// P4_E_BUSY when it did not drain within the deadline).
+	stopStatus atomic.Int32
+	stopped    chan struct{}
+	superDone  chan struct{}
 }
 
 var nofileOnce sync.Once
@@ -317,8 +339,8 @@ func OpenPSInstance(cfg PSConfig) (*PSInstance, error) {
 		wasmrt.WithEnvInstaller(p.io.Install),
 		wasmrt.WithExecTimeout(cfg.ControlBudget),
 	}
-	if cfg.ABI == PSABIEngine {
-		opts = append(opts, wasmrt.WithMallocName("flatsql_ps_alloc"), wasmrt.WithFreeName("flatsql_ps_free"))
+	if ex := cfg.ABI.exports(); ex.malloc != "" {
+		opts = append(opts, wasmrt.WithMallocName(ex.malloc), wasmrt.WithFreeName(ex.free))
 	}
 	p.mod, err = wasmrt.NewModule(aot, opts...)
 	if err != nil {
@@ -421,8 +443,11 @@ func (p *PSInstance) control(name string, params ...interface{}) ([]interface{},
 }
 
 func (p *PSInstance) init() error {
-	if p.cfg.ABI == PSABIEngine {
+	switch p.cfg.ABI {
+	case PSABIEngine:
 		return p.initEngine()
+	case PSABIP4:
+		return p.initP4()
 	}
 	if _, err := p.control("_initialize"); err != nil {
 		return fmt.Errorf("flatsqlrt: ps _initialize: %w", err)
@@ -808,36 +833,51 @@ func (p *PSInstance) Stats() PSStats {
 // and the VM is released. An instance whose threads outlive all of that is
 // retained, never freed beneath them: Stop then returns ErrPSRetained, or
 // ErrPSRestartRequired past PSRetentionLimit.
-func (p *PSInstance) Stop() error {
-	p.stopOnce.Do(func() { p.stopErr = p.shutdown() })
+func (p *PSInstance) Stop() error { return p.StopWithin(p.cfg.StopDeadline) }
+
+// StopWithin is Stop with its cooperative phase bounded by deadline. The
+// first stop decides; a later one returns its answer.
+func (p *PSInstance) StopWithin(deadline time.Duration) error {
+	p.stopOnce.Do(func() { p.stopErr = p.shutdown(deadline) })
 	return p.stopErr
 }
 
-func (p *PSInstance) shutdown() error {
+func (p *PSInstance) shutdown(deadline time.Duration) error {
 	p.state.Store(psDraining)
 	close(p.stopped)
 	if p.watchdog != nil {
 		p.watchdog.Stop()
 	}
-	deadline := p.cfg.StopDeadline
-	if p.cfg.ABI != PSABIEngine || p.layout.StopWord != 0 {
+	// The probe always has a stop word; an engine has one when its layout
+	// names it (a writer is stopped by its stop export alone).
+	hasStopWord := p.cfg.ABI == PSABIProbe || p.layout.StopWord != 0
+	if hasStopWord {
 		p.mem.Store32(p.layout.StopWord, 1)
 	}
 	// Threads parked in a revoked host call (A21) must come back to see the
 	// stop word; from here on a revoked call fails at once instead of parking.
 	p.io.ReleaseParked()
-	if p.cfg.ABI != PSABIEngine || p.layout.StopWord != 0 {
+	if hasStopWord {
 		_ = p.doorbell.NotifyAll(p.layout.StopWord)
 	}
 	for i := 0; i < int(p.layout.DoorbellCount); i++ {
-		if p.cfg.ABI == PSABIEngine {
+		if p.doorbellAddrs != nil {
 			_ = p.doorbell.NotifyAll(p.doorbellAddrs[i])
 		} else {
 			_ = p.doorbell.NotifyAll(p.layout.DoorbellBase + uint32(8*i))
 		}
 	}
 	if !p.mod.Poisoned() {
-		_, _ = p.control("flatsql_ps_stop", float64(deadline.Milliseconds()))
+		if v, err := p.control(p.cfg.ABI.exports().stop, float64(deadline.Milliseconds())); err == nil && len(v) > 0 {
+			p.stopStatus.Store(wasmrt.ToInt32(v[0]))
+		}
+	}
+	if p.mod.Poisoned() && p.cfg.ABI == PSABIP4 {
+		// The format-4 engine's threads leave only through flatsql_p4_stop,
+		// which a poisoned instance never runs: nothing can drain, so a
+		// fenced instance goes straight to the executor stop and its owner
+		// hears of the failure at once.
+		deadline = 0
 	}
 	left := p.mod.WaitThreads(time.Now().Add(deadline))
 	if left > 0 {
