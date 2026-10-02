@@ -192,6 +192,11 @@ type probe struct {
 	run  func(s *storage.FlatSQLStore) (int64, error)
 }
 
+// probeSetup runs once after a step reopens the store, untimed (what a
+// probe's read needs from the store before it is timed); its error fails
+// every sample of that probe.
+type probeSetup func(s *storage.FlatSQLStore) error
+
 func randomCID() string {
 	var b [32]byte
 	_, _ = rand.Read(b[:])
@@ -200,9 +205,12 @@ func randomCID() string {
 
 // stepProbes is the benchset's per-step read set over what the run wrote:
 // R01 hit and miss, R05, R11 page 1 and 400, R12 type windows, R14 source
-// page, R16 nearest, R17 A18, R20 DataSummary.
-func stepProbes(stds []*std, hits map[string][]string) []probe {
-	var out []probe
+// page, R16 nearest, R17 A18, R20 DataSummary. On format 1 the R17 A18
+// `<TYPE>@<source>` probe also runs as format 1 answering the same question
+// by SQL (contract C-31): the bar the growth gate holds it to. setups maps
+// a probe's name to its untimed setup.
+func stepProbes(arm string, stds []*std, hits map[string][]string) (out []probe, setups map[string]probeSetup) {
+	setups = map[string]probeSetup{}
 	for _, sd := range stds {
 		schema, typ := sd.name, strings.TrimSuffix(sd.name, ".fbs")
 		list := hits[schema]
@@ -268,6 +276,17 @@ func stepProbes(stds []*std, hits map[string][]string) []probe {
 				}
 				return int64(st.FrameCount), nil
 			}})
+		if arm == format4proof.ArmF1 {
+			prepare, run, err := format4proof.SameQuestionA18(schema, sd.seedSource)
+			if err != nil {
+				run = func(*storage.FlatSQLStore) (int64, error) { return 0, err }
+			}
+			name := "R17 A18 " + typ + "@" + sd.seedSource + format4proof.SameQuestionSuffix
+			out = append(out, probe{name, run})
+			if prepare != nil {
+				setups[name] = prepare
+			}
+		}
 		if schema == "OMM.fbs" || schema == "MPE.fbs" {
 			at := time.Unix(1789371001, 0).UTC()
 			out = append(out, probe{"R16 nearest " + schema + " limit=200", func(s *storage.FlatSQLStore) (int64, error) {
@@ -287,7 +306,7 @@ func stepProbes(stds []*std, hits map[string][]string) []probe {
 		}
 		return d.TotalRecords, nil
 	}})
-	return out
+	return out, setups
 }
 
 // probeWarm is the warm passes per probe at a step.
@@ -332,9 +351,19 @@ func growthStep(c config, ref *storeRef, arm string, sp step, records int64, std
 		hits[k] = append([]string(nil), v...)
 	}
 	st.cidMu.Unlock()
-	probes := stepProbes(stds, hits)
+	probes, setups := stepProbes(arm, stds, hits)
+	setupErr := map[string]error{}
+	for name, setup := range setups {
+		if err := setup(s); err != nil {
+			setupErr[name] = err
+		}
+	}
 	for pass := 0; pass <= probeWarm; pass++ {
 		for _, p := range probes {
+			if err := setupErr[p.name]; err != nil {
+				r.Samples = append(r.Samples, format4proof.Sample{Class: "probe", Shape: probeShape(p.name), Pass: pass, Err: "setup: " + err.Error()})
+				continue
+			}
 			t := time.Now()
 			n, err := p.run(s)
 			smp := format4proof.Sample{Class: "probe", Shape: probeShape(p.name), Pass: pass,

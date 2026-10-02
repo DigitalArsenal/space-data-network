@@ -533,13 +533,18 @@ func countShapes(op BenchOp) ([]Shape, error) {
 			}
 		}
 		// C-10: a tag-filtered count counts records, not format 1's tag rows.
+		// Coordinator ruling 2026-10-02 ~05:10: a tag-filtered head with no
+		// cursor (every R10 shape) reports format 4's per-type seq as
+		// max_rowid, the datasync cursor domain; format 1's per-producer
+		// legacy row id is not kept.
 		tagged := p.SourceName != "" || p.BatchID != ""
 		mk := func(fn string, run func(s *storage.FlatSQLStore) (Row, error)) Shape {
 			name := fn + " " + base
 			pol := Policy{}
 			if tagged {
-				pol.Accepted = "C-10: format 4 counts a record once where format 1 counts its matching tag rows"
-				pol.AcceptedFields = []string{"n"}
+				pol.Accepted = "C-10: format 4 counts a record once where format 1 counts its matching tag rows; " +
+					"ruling 2026-10-02 ~05:10: with a tag filter and no cursor, max_rowid is format 4's per-type seq (format 1's per-producer row id is not kept)"
+				pol.AcceptedFields = []string{"n", "max_rowid"}
 			}
 			return Shape{Class: op.ID, Name: name, Schema: p.Schema, Policy: pol, Calls: []Call{{Name: name,
 				Run: func(s *storage.FlatSQLStore) Result {
@@ -962,6 +967,44 @@ func c31SameQuestion(class, name, sql, schema, source string, n int64) (Shape, e
 			st, err := s.QueryRawStream(query, params...)
 			return framesResult(name, st, err)
 		}}}}, nil
+}
+
+// SameQuestionA18 is format 1 answering `SELECT _data FROM "<TYPE>@<source>"`
+// (no WHERE) by SQL, as c31SameQuestion does, for a probe outside the read
+// harness (sds-tb-gen's count-scaled growth steps, format 1 only). prepare
+// reads format 1's index walk and producer tables once per opened store
+// (untimed); run executes the statement with a per-call parameter, so no
+// cache answers a repeat, and returns the frames.
+func SameQuestionA18(schema, source string) (prepare func(s *storage.FlatSQLStore) error,
+	run func(s *storage.FlatSQLStore) (int64, error), err error) {
+	spec, err := format4.TypeSpecFor(schema)
+	if err != nil {
+		return nil, nil, err
+	}
+	n := int64(spec.A18Bound)
+	var query string
+	var calls int64
+	prepare = func(s *storage.FlatSQLStore) error {
+		walk, tables, err := format1IndexWalk(s, schema)
+		if err != nil {
+			query = ""
+			return err
+		}
+		query = c31Format1SQL(walk, tables) + " WHERE ?4 IS NOT NULL"
+		return nil
+	}
+	run = func(s *storage.FlatSQLStore) (int64, error) {
+		if query == "" {
+			return 0, fmt.Errorf("format 1's same-question statement for %s@%s is not prepared", schema, source)
+		}
+		calls++
+		st, err := s.QueryRawStream(query, schema, source, n, calls)
+		if err != nil {
+			return 0, err
+		}
+		return int64(st.FrameCount), nil
+	}
+	return prepare, run, nil
 }
 
 // c31Format1SQL selects ?3 newest records of schema ?1 tagged with source ?2
