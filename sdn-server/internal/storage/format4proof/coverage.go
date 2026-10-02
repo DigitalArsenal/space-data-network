@@ -318,8 +318,7 @@ func (c *cov) recordsCall(name, schema string, fn func(s *storage.FlatSQLStore) 
 		if err != nil {
 			return nil, err
 		}
-		rows := make([]Row, 0, len(recs)+1)
-		rows = append(rows, ValueRow("n", strconv.Itoa(len(recs))))
+		rows := make([]Row, 0, len(recs))
 		for _, r := range recs {
 			rows = append(rows, covRecordRow(r))
 		}
@@ -344,8 +343,72 @@ func writing(c Call) Call {
 	return c
 }
 
-// covShape is one coverage shape: strict, ordered. A call name that repeats
-// within the shape (the same read before and after a write) gets " #n".
+// c12Copy names the intended difference of a ref that names a copy format 1
+// does not serve: format 1 reads a CID through a GROUP BY cid over every
+// producer's table and so finds one copy per CID (C-12: "format 1's GROUP BY
+// cid returns an arbitrary copy"); a ref whose PeerID names another
+// producer's copy is "not found" there. Format 4 serves the named copy. The
+// copies each producer holds are compared by the record-set digests (copy
+// set), not here.
+const c12Copy = "C-12: format 1 serves one copy per CID (GROUP BY cid over the producers' tables); a ref naming another producer's copy finds nothing there"
+
+// c12Shape is a coverage shape of refs that name a copy format 1 does not
+// serve (c12Copy): every field accepted, reported as such.
+func c12Shape(class, name, schema string, calls ...Call) Shape {
+	sh := covShape(class, name, schema, calls...)
+	sh.Policy.Accepted, sh.Policy.AcceptedFields = c12Copy, nil // every field
+	return sh
+}
+
+// r10Ruling is R10's intended difference, carried to every tag-filtered
+// count and head without a cursor (C-10, coordinator ruling 2026-10-02
+// ~05:10): format 4 counts a record once where format 1 counts its matching
+// tag rows, and reports its per-type seq as max_rowid where format 1 reports
+// a per-producer row id. covHead names those two fields lane_n and
+// lane_max_rowid; every other head field is compared.
+const r10Ruling = "C-10 and the R10 ruling (2026-10-02 ~05:10): with a tag filter and no cursor, format 4 counts a record once and reports its per-type seq as max_rowid"
+
+// tagHead reports a raw query whose count and head fall under r10Ruling.
+func tagHead(q storage.RawRecordQuery) bool {
+	return !q.UseRowIDCursor && (q.ProviderID != "" || q.SourceName != "" || q.BatchID != "" || q.ProducerPeerID != "" || q.ProducerPublicKey != "")
+}
+
+// covHead is a count and/or head row (n < 0: no count), with r10Ruling's
+// field names for a tag-filtered query.
+func covHead(q storage.RawRecordQuery, n int64, h *storage.RawRecordHead) Row {
+	nName, rowidName := "n", "max_rowid"
+	if tagHead(q) {
+		nName, rowidName = "lane_n", "lane_max_rowid"
+	}
+	var r Row
+	if n >= 0 {
+		r = append(r, Field{nName, i64(n)})
+	}
+	if h != nil {
+		for _, f := range headRow(*h) {
+			if f.N == "max_rowid" {
+				f.N = rowidName
+			}
+			r = append(r, f)
+		}
+	}
+	return r
+}
+
+// accept adds an intended difference (a contract row and its fields) to a
+// shape's policy.
+func accept(sh *Shape, why string, fields ...string) {
+	if sh.Policy.Accepted != "" {
+		why = sh.Policy.Accepted + "; " + why
+	}
+	sh.Policy.Accepted = why
+	sh.Policy.AcceptedFields = append(sh.Policy.AcceptedFields, fields...)
+}
+
+// covShape is one coverage shape: strict, ordered, with r10Ruling on the
+// lane_ fields and C-10's collapse of format 1's rows per record (every call
+// but the refs reads, whose repeated refs return a record per ref). A call name that repeats within the shape (the same read
+// before and after a write) gets " #n".
 func covShape(class, name, schema string, calls ...Call) Shape {
 	seen := map[string]int{}
 	for i := range calls {
@@ -354,7 +417,8 @@ func covShape(class, name, schema string, calls ...Call) Shape {
 			calls[i].Name = fmt.Sprintf("%s #%d", calls[i].Name, n)
 		}
 	}
-	return Shape{Class: class, Name: name, Schema: schema, Fixture: FixtureT6W, Policy: Policy{Strict: true}, Calls: calls}
+	return Shape{Class: class, Name: name, Schema: schema, Fixture: FixtureT6W, Calls: calls,
+		Policy: Policy{Strict: true, Collapse: true, CollapseSkip: "refs ", Accepted: r10Ruling, AcceptedFields: []string{"lane_n", "lane_max_rowid"}}}
 }
 
 // RunCoverage runs one coverage class on one arm: open, record the class's

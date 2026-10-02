@@ -65,12 +65,12 @@ func nonCanonicalCIDs(text string) []string {
 	return out
 }
 
-// orderedDigest reduces a long ordered answer to its count and one row per
-// row: its CID (when it has one) and a digest of every other field but the
-// copy variants (C-12), in order, so a difference names its row.
+// orderedDigest reduces a long ordered answer to one row per row: its CID
+// (when it has one) and a digest of every other field but the copy variants
+// (C-12), in order, so a difference names its row (and C-10's collapse still
+// applies per CID).
 func orderedDigest(rows []Row) []Row {
-	out := make([]Row, 0, len(rows)+1)
-	out = append(out, ValueRow("n", strconv.Itoa(len(rows))))
+	out := make([]Row, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, digestRow(r))
 	}
@@ -93,7 +93,7 @@ func unorderedDigest(rows []Row) []Row {
 	for _, r := range rows {
 		ds = append(ds, digestRow(r))
 	}
-	return append([]Row{ValueRow("n", strconv.Itoa(len(rows)))}, sortRows(ds)...)
+	return sortRows(ds)
 }
 
 func recordRows(recs []*storage.Record) []Row {
@@ -183,7 +183,7 @@ func (c *cov) v09() []Shape {
 	counts := func(name string, r storage.RawRecordQuery) Call {
 		return c.valueCall("search snapshot "+name, "CAT.fbs", func(s *storage.FlatSQLStore) (Row, error) {
 			n, h, err := s.RawRecordSnapshot(r)
-			return append(ValueRow("n", i64(n)), headRow(h)...), err
+			return covHead(r, n, &h), err
 		})
 	}
 	scan := c.rowsCall("search Scan 60815 2 pages", "CAT.fbs", func(s *storage.FlatSQLStore) ([]Row, error) {
@@ -286,9 +286,13 @@ func (c *cov) v02() []Shape {
 		})
 	}
 	iqc := c.hits["IQC.fbs"]
-	var peers []storage.RawRecordRef
+	// Every IQC record is held by both producers; format 1 serves the
+	// 16Uiu2HAm1Lbv… copy (R01), so a ref naming the source:sigmf copy is
+	// compared under c12Copy.
+	var served, other []storage.RawRecordRef
 	for _, id := range iqc[:4] {
-		peers = append(peers, storage.RawRecordRef{CID: id, PeerID: iqcPeer}, storage.RawRecordRef{CID: id, PeerID: iqcSigmfPeer})
+		served = append(served, storage.RawRecordRef{CID: id, PeerID: iqcPeer}, storage.RawRecordRef{CID: id, PeerID: iqcPeer})
+		other = append(other, storage.RawRecordRef{CID: id, PeerID: iqcSigmfPeer})
 	}
 	b052 := c.in.B052CIDs
 	tagged := func(n int, mod func(*storage.RawRecordRef)) []storage.RawRecordRef {
@@ -316,20 +320,22 @@ func (c *cov) v02() []Shape {
 		}
 		return orderedDigest(recordRows(recs)), nil
 	})
-	return []Shape{covShape(class, "QueryRawRecordRefsByRefs axes", "OMM.fbs",
-		refs("refs IQC by copy peer", "IQC.fbs", peers),
-		refs("refs IQC unknown peer", "IQC.fbs", []storage.RawRecordRef{{CID: iqc[0], PeerID: "16Uiu2HAmNoSuchPeer"}}),
-		refs("refs OMM tag fields", "OMM.fbs", tagged(8, nil)),
-		refs("refs OMM tag fields, other batch", "OMM.fbs", tagged(2, func(r *storage.RawRecordRef) { r.BatchID = "OMM-celestrak-gp-b000" })),
-		refs("refs OMM producer public key", "OMM.fbs", tagged(2, func(r *storage.RawRecordRef) { r.ProducerPublicKey = "nope" })),
-		refs("refs OMM provider only", "OMM.fbs", tagged(2, func(r *storage.RawRecordRef) { r.SourceName, r.BatchID, r.ProducerPeerID = "", "", "" })),
-		refs("refs one missing", "OMM.fbs", missing),
-		refs("refs non-canonical CID", "OMM.fbs", noncanon),
-		bigCall,
-		refs("refs none", "OMM.fbs", nil),
-		refs("refs unknown type", "XYZ.fbs", missing[:1]),
-		refs("refs empty CID", "OMM.fbs", []storage.RawRecordRef{{CID: ""}}),
-	)}
+	return []Shape{c12Shape(class, "QueryRawRecordRefsByRefs, the copy format 1 does not serve", "IQC.fbs",
+		refs("refs IQC, the source:sigmf copies", "IQC.fbs", other)),
+		covShape(class, "QueryRawRecordRefsByRefs axes", "OMM.fbs",
+			refs("refs IQC, the copies format 1 serves (repeated)", "IQC.fbs", served),
+			refs("refs IQC unknown peer", "IQC.fbs", []storage.RawRecordRef{{CID: iqc[0], PeerID: "16Uiu2HAmNoSuchPeer"}}),
+			refs("refs OMM tag fields", "OMM.fbs", tagged(8, nil)),
+			refs("refs OMM tag fields, other batch", "OMM.fbs", tagged(2, func(r *storage.RawRecordRef) { r.BatchID = "OMM-celestrak-gp-b000" })),
+			refs("refs OMM producer public key", "OMM.fbs", tagged(2, func(r *storage.RawRecordRef) { r.ProducerPublicKey = "nope" })),
+			refs("refs OMM provider only", "OMM.fbs", tagged(2, func(r *storage.RawRecordRef) { r.SourceName, r.BatchID, r.ProducerPeerID = "", "", "" })),
+			refs("refs one missing", "OMM.fbs", missing),
+			refs("refs non-canonical CID", "OMM.fbs", noncanon),
+			bigCall,
+			refs("refs none", "OMM.fbs", nil),
+			refs("refs unknown type", "XYZ.fbs", missing[:1]),
+			refs("refs empty CID", "OMM.fbs", []storage.RawRecordRef{{CID: ""}}),
+		)}
 }
 
 // rawQuery is a QueryRawRecordRefs (refs=true) or QueryRawRecords (hydrated,
@@ -350,7 +356,7 @@ func (c *cov) rawQuery(name string, q storage.RawRecordQuery, hydrate bool) Call
 		if len(rows) > 200 {
 			return orderedDigest(rows), nil
 		}
-		return append([]Row{ValueRow("n", strconv.Itoa(len(rows)))}, rows...), nil
+		return rows, nil
 	})
 }
 
@@ -633,7 +639,7 @@ func (c *cov) v05() []Shape {
 			if len(rows) > 200 {
 				return orderedDigest(rows), nil
 			}
-			return append([]Row{ValueRow("n", strconv.Itoa(len(rows)))}, rows...), nil
+			return rows, nil
 		})
 	}
 	probe := func(q storage.IndexedRecordQuery, max int64) Call {
@@ -666,15 +672,15 @@ func (c *cov) v05() []Shape {
 		return []Call{
 			c.valueCall("CountRawRecords "+name, q.SchemaName, func(s *storage.FlatSQLStore) (Row, error) {
 				n, err := s.CountRawRecords(q)
-				return ValueRow("n", i64(n)), err
+				return covHead(q, n, nil), err
 			}),
 			c.valueCall("RawRecordHead "+name, q.SchemaName, func(s *storage.FlatSQLStore) (Row, error) {
 				h, err := s.RawRecordHead(q)
-				return headRow(h), err
+				return covHead(q, -1, &h), err
 			}),
 			c.valueCall("RawRecordSnapshot "+name, q.SchemaName, func(s *storage.FlatSQLStore) (Row, error) {
 				n, h, err := s.RawRecordSnapshot(q)
-				return append(ValueRow("n", i64(n)), headRow(h)...), err
+				return covHead(q, n, &h), err
 			}),
 		}
 	}
