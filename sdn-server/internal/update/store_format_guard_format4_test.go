@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
-	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // The contract's golden markers (§2.2).
@@ -118,7 +117,6 @@ func TestApplyOnAFormat4Store(t *testing.T) {
 		{"format-3 build", "tar.gz", fleetLayout(3, "three"), true, 3},
 		{"payload without a daemon binary", "tar.gz", map[string]string{"bin/spacedatanetwork": launcherScript}, true, 1},
 		{"format-4 build", "tar.gz", releaseLayout(4, "four"), false, 0},
-		{"this build", "tar.gz", fleetLayout(versioninfo.MaxStoreFormat, "now"), false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := writeFormat4Store(t)

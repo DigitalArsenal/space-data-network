@@ -56,6 +56,7 @@ type Engine struct {
 	ctl     control
 	mb      *mailbox
 	reqCap  int // the write pool's request bytes
+	readCap int // the read pool's request bytes (C-6: 64 KiB by default)
 	fenced  atomic.Pointer[error]
 	closing atomic.Bool
 	once    sync.Once
@@ -77,18 +78,18 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	if err := checkDataRoot(root, opt.Create); err != nil {
 		return nil, err
 	}
-	engineRoot := filepath.Join(root, marker.Dir)
-	if opt.Create != OpenExisting {
-		if err := os.MkdirAll(engineRoot, 0o700); err != nil {
-			return nil, fmt.Errorf("format4: %w", err)
-		}
-	}
 	wasm := opt.Wasm
 	if wasm == nil {
 		wasm = flatsqlrt.P4ThreadsWasm()
 	}
 	if len(wasm) == 0 {
-		return nil, errors.New("format4: this build embeds no format-4 engine (flatsql-p4-threads.wasm)")
+		return nil, flatsqlrt.ErrNoP4Artifact
+	}
+	engineRoot := filepath.Join(root, marker.Dir)
+	if opt.Create != OpenExisting {
+		if err := os.MkdirAll(engineRoot, 0o700); err != nil {
+			return nil, fmt.Errorf("format4: %w", err)
+		}
 	}
 	e := &Engine{}
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
@@ -149,7 +150,7 @@ func (e *Engine) attach(mem memory, h host, ctl control, raw []byte) error {
 	if err != nil {
 		return err
 	}
-	e.ctl, e.mb, e.reqCap = ctl, mb, int(lay.reqBytes[0])
+	e.ctl, e.mb, e.reqCap, e.readCap = ctl, mb, int(lay.reqBytes[0]), int(lay.reqBytes[1])
 	return nil
 }
 
@@ -168,7 +169,7 @@ func encodeConfig(engineRoot string, opt Options) []byte {
 		u32(11, t.RingBytes).u64(12, opt.GseqFloor).u32(13, uint32(cores)).u64(20, t.EngineBytes).
 		u32(21, t.WriterConns).u32(22, t.WriterCacheKiB).u32(23, t.ReaderConns).u32(24, t.ReaderCacheKiB).
 		u64(25, t.PendingMapBytes).u64(26, t.SoftHeap).u64(27, t.HardHeap).u32(40, t.GroupCommitRecords).
-		u32(41, t.GroupCommitMs).u8(47, t.QuotaMode)
+		u32(41, t.GroupCommitMs)
 	return append(c, t.Extra...)
 }
 
@@ -412,22 +413,47 @@ func (e *Engine) Supersede(ctx context.Context, typ, provider, source, keepBatch
 }
 
 func (e *Engine) Delete(ctx context.Context, typ string, cids []string) (int64, error) {
-	if len(cids) == 0 {
-		return 0, nil
+	var n int64
+	err := e.byCIDs(ctx, opDelete, ClassWrite, e.reqCap, tlv(nil).text(tagType, typ), nil, cids, colsDelete,
+		func(rs *rows) error {
+			r, err := rs.one()
+			if err == nil {
+				n += cellInt(r[0])
+			}
+			return err
+		})
+	return n, err
+}
+
+// byCIDs runs op over cids in as many requests as the slot's request area
+// (capacity bytes) needs: each request is head, a share of the CID list
+// (tag 40: u32 n, then 36 bytes a CID), then tail. A GET of thousands of
+// CIDs does not fit a 64 KiB read slot in one request (C-6). Every CID is
+// parsed before the first request is sent; each response goes to each, in
+// request order.
+func (e *Engine) byCIDs(ctx context.Context, op uint32, class Class, capacity int, head, tail tlv, cids []string,
+	want []string, each func(*rows) error) error {
+	per := max((capacity-len(head)-len(tail)-6-4)/cidv1.Len, 1)
+	var reqs []tlv
+	for len(cids) > 0 {
+		chunk := cids[:min(per, len(cids))]
+		cids = cids[len(chunk):]
+		req, err := tlv(append([]byte(nil), head...)).cids(chunk)
+		if err != nil {
+			return &StatusError{Op: opNames[op], Status: StatusArg, Msg: err.Error()}
+		}
+		reqs = append(reqs, append(req, tail...))
 	}
-	req, err := tlv(nil).text(tagType, typ).cids(cids)
-	if err != nil {
-		return 0, &StatusError{Op: "DELETE", Status: StatusArg, Msg: err.Error()}
+	for _, req := range reqs {
+		rs, err := e.do(ctx, op, class, req, want)
+		if err != nil {
+			return err
+		}
+		if err := each(rs); err != nil {
+			return err
+		}
 	}
-	rs, err := e.do(ctx, opDelete, ClassWrite, req, colsDelete)
-	if err != nil {
-		return 0, err
-	}
-	r, err := rs.one()
-	if err != nil {
-		return 0, err
-	}
-	return cellInt(r[0]), nil
+	return nil
 }
 
 func (e *Engine) QuotaGC(ctx context.Context, maxBytes int64) (QuotaResult, error) {
@@ -466,37 +492,31 @@ func (e *Engine) Get(ctx context.Context, typ string, cids []string, allCopies, 
 	if len(cids) == 0 {
 		return nil, nil
 	}
-	req, err := tlv(nil).text(tagType, typ).flag(tagHydrate, hydrate).cids(cids)
-	if err != nil {
-		return nil, &StatusError{Op: "GET", Status: StatusArg, Msg: err.Error()}
-	}
-	rs, err := e.do(ctx, opGet, ClassInteractive, tlv(req).flag(tagEveryCopy, allCopies), colsRec)
-	if err != nil {
-		return nil, err
-	}
-	return rs.recs(), nil
+	out := []Rec{}
+	err := e.byCIDs(ctx, opGet, ClassInteractive, e.readCap, tlv(nil).text(tagType, typ).flag(tagHydrate, hydrate),
+		tlv(nil).flag(tagEveryCopy, allCopies), cids, colsRec, func(rs *rows) error {
+			out = append(out, rs.recs()...)
+			return nil
+		})
+	return out, err
 }
 
 func (e *Engine) Tags(ctx context.Context, typ string, cids []string) ([]TagRow, error) {
 	if len(cids) == 0 {
 		return nil, nil
 	}
-	req, err := tlv(nil).text(tagType, typ).cids(cids)
-	if err != nil {
-		return nil, &StatusError{Op: "TAGS", Status: StatusArg, Msg: err.Error()}
-	}
-	rs, err := e.do(ctx, opTags, ClassInteractive, req, colsTags)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]TagRow, 0, len(rs.cells))
-	for _, r := range rs.cells {
-		out = append(out, TagRow{CID: cellStr(r[0]), Seq: cellInt(r[1]), Producer: cellStr(r[2]),
-			TagInstance: TagInstance{Tag: Tag{Provider: cellStr(r[3]), Source: cellStr(r[4]), SourceURL: cellStr(r[5]),
-				Batch: cellStr(r[6]), ContentKeyID: cellStr(r[7]), ProducerPeer: cellStr(r[8]), ProducerPubkey: cellStr(r[9])},
-				At: cellInt(r[10])}})
-	}
-	return out, nil
+	out := []TagRow{}
+	err := e.byCIDs(ctx, opTags, ClassInteractive, e.readCap, tlv(nil).text(tagType, typ), nil, cids, colsTags,
+		func(rs *rows) error {
+			for _, r := range rs.cells {
+				out = append(out, TagRow{CID: cellStr(r[0]), Seq: cellInt(r[1]), Producer: cellStr(r[2]),
+					TagInstance: TagInstance{Tag: Tag{Provider: cellStr(r[3]), Source: cellStr(r[4]), SourceURL: cellStr(r[5]),
+						Batch: cellStr(r[6]), ContentKeyID: cellStr(r[7]), ProducerPeer: cellStr(r[8]), ProducerPubkey: cellStr(r[9])},
+						At: cellInt(r[10])}})
+			}
+			return nil
+		})
+	return out, err
 }
 
 func (e *Engine) query(ctx context.Context, op uint32, q Query, want []string) (*rows, error) {

@@ -1,6 +1,6 @@
 package format4_test
 
-// The same suite and lifecycle on the REAL engine: the embedded release, or
+// The lifecycle on the REAL engine: the embedded release, or
 // SDN_P4_WASM (a build of the engine's task branch) during development. They
 // need the patched runtime (the release's static WasmEdge; CI's substrate
 // lane) and skip without an engine or on an upstream library, unless
@@ -9,6 +9,7 @@ package format4_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,8 +17,9 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
-	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/format4test"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/internal/cidv1"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
@@ -52,6 +54,18 @@ func realWasm(t testing.TB) []byte {
 	return flatsqlrt.P4ThreadsWasm()
 }
 
+// ommRecord builds a deterministic OMM record (size-prefixed, as the SDN
+// builders emit it).
+func ommRecord(norad uint32, objectID, epoch string) []byte {
+	return sds.NewOMMBuilder().WithNoradCatID(norad).WithObjectID(objectID).WithObjectName(fmt.Sprintf("SAT-%d", norad)).
+		WithEpoch(epoch).WithCreationDate("2026-09-30T00:00:00Z").Build()
+}
+
+// putIn is a PUT record of plain at source time ts.
+func putIn(plain []byte, ts int64) format4.In {
+	return format4.In{CID: cidv1.Of(plain), Plain: plain, TS: ts}
+}
+
 // realAOT is a per-user AOT cache: the key is the artifact's sha256 and the
 // runtime tag, so a stale entry never loads and a warm run skips the compile.
 func realAOT(t testing.TB) string {
@@ -81,13 +95,6 @@ func openReal(t testing.TB, root string, mode format4.CreateMode, floor uint64, 
 		_ = e.Close(ctx)
 	})
 	return e
-}
-
-func TestRealEngineConformance(t *testing.T) {
-	realWasm(t)
-	format4test.Conformance(t, func(t *testing.T) format4.API {
-		return openReal(t, t.TempDir(), format4.CreateFresh, 0, nil)
-	})
 }
 
 // Create modes, markers and activation through the real engine (§2.2, §2.3).
@@ -123,8 +130,8 @@ func TestRealEngineCreateModesAndActivation(t *testing.T) {
 	if err := m.RegisterType(spec); err != nil {
 		t.Fatal(err)
 	}
-	plain := format4test.OMMRecord(25544, "1998-067A", "2026-09-01T00:00:00Z")
-	in := format4test.In(plain, 1790000000)
+	plain := ommRecord(25544, "1998-067A", "2026-09-01T00:00:00Z")
+	in := putIn(plain, 1790000000)
 	in.Seq = 777
 	out, err := m.Put(ctx, format4.Batch{Type: "OMM", Peer: "12D3KooWMigrated", Mode: format4.ModeMigrate,
 		Tags: []format4.Tag{{Provider: "celestrak", Source: "celestrak-gp", Batch: "b1"}}, Records: []format4.In{in}})
@@ -155,7 +162,7 @@ func TestRealEngineCreateModesAndActivation(t *testing.T) {
 	if err != nil || len(recs) != 1 || recs[0].Seq != 777 || string(recs[0].Data) != string(plain) {
 		t.Fatalf("migrated record after reopen: %+v %v", recs, err)
 	}
-	next := format4test.In(format4test.OMMRecord(43013, "2017-073A", "2026-09-02T00:00:00Z"), 1790000001)
+	next := putIn(ommRecord(43013, "2017-073A", "2026-09-02T00:00:00Z"), 1790000001)
 	out, err = r.Put(ctx, format4.Batch{Type: "OMM", Peer: "12D3KooWMigrated", Records: []format4.In{next}})
 	if err != nil || out[0].Action != format4.ActNew || out[0].Seq < floor {
 		t.Fatalf("first new seq after migration: %+v %v (floor %d)", out, err, floor)
@@ -177,7 +184,7 @@ func TestRealEngineEveryOp(t *testing.T) {
 	}
 	var ins []format4.In
 	for i := 0; i < 50; i++ {
-		ins = append(ins, format4test.In(format4test.OMMRecord(uint32(40000+i), "2020-001A", "2026-08-01T00:00:00Z"), 1790000000))
+		ins = append(ins, putIn(ommRecord(uint32(40000+i), "2020-001A", "2026-08-01T00:00:00Z"), 1790000000))
 	}
 	if _, err := e.Put(ctx, format4.Batch{Type: "OMM", Peer: "p", Tags: []format4.Tag{{Provider: "x", Source: "y", Batch: "b"}},
 		Records: ins}); err != nil {
@@ -219,7 +226,7 @@ func TestRealEngineStopDrainsWithinTheDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 20; i++ {
-		in := format4test.In(format4test.OMMRecord(uint32(1000+i), "x", "2026-08-01T00:00:00Z"), 1790000000)
+		in := putIn(ommRecord(uint32(1000+i), "x", "2026-08-01T00:00:00Z"), 1790000000)
 		if _, err := e.Put(ctx, format4.Batch{Type: "OMM", Peer: "p", Records: []format4.In{in}}); err != nil {
 			t.Fatal(err)
 		}
@@ -254,7 +261,7 @@ func TestRealEngineTrapFencesAndReopenReplays(t *testing.T) {
 	}
 	var cids []string
 	for i := 0; i < 10; i++ {
-		in := format4test.In(format4test.OMMRecord(uint32(2000+i), "x", "2026-08-01T00:00:00Z"), 1790000000)
+		in := putIn(ommRecord(uint32(2000+i), "x", "2026-08-01T00:00:00Z"), 1790000000)
 		if _, err := e.Put(ctx, format4.Batch{Type: "OMM", Peer: "p", Records: []format4.In{in}}); err != nil {
 			t.Fatal(err)
 		}

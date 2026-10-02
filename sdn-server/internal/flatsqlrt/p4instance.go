@@ -12,9 +12,11 @@ package flatsqlrt
 //   - boot: _initialize -> flatsql_p4_init(config TLV) -> flatsql_p4_layout
 //     (640 bytes, version 1) -> the doorbell over doorbell[0..nThreads) (each
 //     thread's state word follows its doorbell) and the completion poller ->
-//     flatsql_p4_start;
+//     the heap grown to the memory's maximum (growHeap) -> flatsql_p4_start;
 //   - stop: the stop word, notifies, flatsql_p4_stop(deadline ms), a wait
-//     for the service threads, then an executor stop for any that remain.
+//     for the service threads, then an executor stop for any that remain; a
+//     fenced (poisoned) instance cannot run flatsql_p4_stop, so it goes
+//     straight to the executor stop and OnFailure runs at once.
 //
 // Format 4 has ONE instance for writers, read lanes and maintenance (the
 // shared WAL index must live in one memory). The raw layout goes to
@@ -50,8 +52,6 @@ type P4Config struct {
 	// ControlBudget bounds each control call (default 5 min: init replays
 	// journals and recovers WALs, activation checkpoints every file).
 	ControlBudget time.Duration
-	// StopDeadline bounds a stop's cooperative phase (default 30 s).
-	StopDeadline time.Duration
 	// OnFailure runs once, on its own goroutine, when a service thread traps
 	// or hangs, or a control call poisons the instance. It is fenced by then.
 	OnFailure func(*P4Instance, error)
@@ -85,16 +85,13 @@ func OpenP4Instance(cfg P4Config) (*P4Instance, error) {
 	if cfg.ControlBudget <= 0 {
 		cfg.ControlBudget = 5 * time.Minute
 	}
-	if cfg.StopDeadline <= 0 {
-		cfg.StopDeadline = 30 * time.Second
-	}
 	p4 := &P4Instance{}
 	ps, err := OpenPSInstance(PSConfig{
 		// One instance does everything; its I/O runs at the writer class.
 		Role: PSRoleWriter, ABI: PSABIP4,
 		Wasm: cfg.Wasm, AOTCacheDir: cfg.AOTCacheDir, AOTPrefix: P4ThreadsAOTPrefix, CompileOnMiss: cfg.CompileOnMiss,
 		Store: cfg.Store, StoreRoot: cfg.StoreRoot, FDBudget: cfg.FDBudget, MaxThreads: cfg.MaxThreads,
-		InitConfig: cfg.InitConfig, ControlBudget: cfg.ControlBudget, StopDeadline: cfg.StopDeadline,
+		InitConfig: cfg.InitConfig, ControlBudget: cfg.ControlBudget,
 		HeartbeatStale: -1, // the engine has no heartbeat words: a hang is a control-call budget or a trap
 		OnFailure: func(_ *PSInstance, cause error) {
 			if cfg.OnFailure != nil {
@@ -173,6 +170,7 @@ func (p *PSInstance) initP4() error {
 		return err
 	}
 	p.poller = wasmrt.StartCompletionPoller(p.mem, p.cfg.PollInterval)
+	p.growHeap()
 	v, err = p.control("flatsql_p4_start")
 	if err == nil && wasmrt.ToInt32(v[0]) < 0 {
 		err = &P4CallError{Export: "flatsql_p4_start", Status: wasmrt.ToInt32(v[0])}
@@ -184,6 +182,32 @@ func (p *PSInstance) initP4() error {
 	}
 	p.started = int(wasmrt.ToInt32(v[0]))
 	return nil
+}
+
+// growHeap grows the shared memory to its maximum before the engine's
+// threads start (flatsql docs/STORE-FORMAT-4.md, host: "grow the shared heap
+// before flatsql_p4_start"). A sandbox lane makes its heap arena (config tag
+// 48, 64 MiB by default) at its first untrusted statement, while every
+// thread runs; with the heap grown first, the arenas and every later
+// allocation come from space the guest allocator already holds, and the
+// memory never grows under running threads. Blocks taken through
+// flatsql_p4_alloc halve from 1 GiB to 1 MiB until each size fails, then
+// are all freed: the allocator keeps the space (wasm memory never shrinks),
+// and pages nothing touches cost no resident memory.
+func (p *PSInstance) growHeap() {
+	var held []uint32
+	for n := uint32(1 << 30); n >= 1<<20; n >>= 1 {
+		for {
+			ptr, err := p.mod.AllocateSize(n)
+			if err != nil {
+				break
+			}
+			held = append(held, ptr)
+		}
+	}
+	for _, ptr := range held {
+		p.mod.Deallocate(ptr)
+	}
 }
 
 // EngineLayout returns the raw flatsql_p4_layout block.

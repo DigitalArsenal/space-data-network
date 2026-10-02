@@ -1,6 +1,8 @@
 // Package format4 is SDN's binding to store format 4, "p4": one SQLite file
-// per partition and UTC month, in the FlatSQL engine (stack design
-// docs/architecture/flatsql-sqlite-partitions.md; build-out contract §5.2).
+// per partition (producer x record type) in the FlatSQL engine, indexed by
+// arrival, source, object + epoch, epoch and CID (stack design
+// docs/architecture/flatsql-sqlite-partitions.md; build-out contract §5.2,
+// v11).
 //
 // The engine is the published flatsql-p4-threads.wasm
 // (flatsqlrt/p4artifact.go): ONE threaded WasmEdge instance holds the writer
@@ -14,9 +16,8 @@
 // Everything here is behind SDN_STORE_FORMAT=4 (or "sqlite"): format 1 stays
 // the default, and format 2 is unchanged.
 //
-// API is the whole surface. Engine implements it over the real engine;
-// format4test.Fake implements it in memory and is the executable reference
-// of the contract.
+// API is the whole surface; Engine implements it over the real engine, the
+// one implementation (C-33).
 package format4
 
 import (
@@ -36,14 +37,14 @@ const (
 )
 
 // Tuning is the engine's sizing. Zero is the engine default; fields map 1:1
-// onto config tags (contract §3.3).
+// onto config tags (contract §3.3). Quota has one mode, the oldest records by
+// arrival (v11: config tag 47 is ignored), so there is no field for it.
 type Tuning struct {
 	WriterThreads, ReaderLanes, BulkLanes, SandboxLanes, WriteSlots, ReadSlots uint32
 	WriteRequestBytes, ReadRequestBytes, RingBytes                             uint32
 	EngineBytes, PendingMapBytes, SoftHeap, HardHeap                           uint64
 	WriterConns, WriterCacheKiB, ReaderConns, ReaderCacheKiB                   uint32
 	GroupCommitRecords, GroupCommitMs                                          uint32
-	QuotaMode                                                                  uint8
 	Extra                                                                      []byte // raw TLV appended (tests)
 }
 
