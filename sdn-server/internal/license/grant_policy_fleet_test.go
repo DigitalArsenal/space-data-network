@@ -78,25 +78,39 @@ func loadFleetPolicy(t *testing.T) *GrantPolicyConfig {
 	return cfg
 }
 
-func TestFleetPolicyClosesHpopAndOnlyHpop(t *testing.T) {
+// Owner 2026-10-02: a paid module is key-protected on SDN (or shipped inside the
+// Sandcastle gallery, which never asks SDN), so with an EMPTY allowlist the
+// fleet policy refuses hpop and every paid module, and nothing else.
+func TestFleetPolicyClosesHpopAndThePaidModules(t *testing.T) {
 	cfg := loadFleetPolicy(t)
 
-	refused := make([]string, 0, 4)
+	want := map[string]bool{
+		"com.orbpro.hpop":                       true,
+		"com.orbpro.fastest-path":               true,
+		"com.orbpro.sensor-shaders":             true,
+		"com.orbpro.sensor-shaders.glsl-bundle": true,
+		"com.orbpro.rf-antenna-pattern":         true,
+		"com.orbpro.rf-atmospheric-gaseous":     true,
+		"com.orbpro.rf-ber-modulation":          true,
+		"com.orbpro.rf-cloud-fog":               true,
+		"com.orbpro.rf-diffraction":             true,
+		"com.orbpro.rf-doppler-fresnel":         true,
+		"com.orbpro.rf-empirical":               true,
+		"com.orbpro.rf-fspl":                    true,
+		"com.orbpro.rf-link-budget":             true,
+		"com.orbpro.rf-longley-rice":            true,
+		"com.orbpro.rf-rain":                    true,
+	}
 	for _, id := range liveCatalogModuleIDs {
 		// Every live entry has an EMPTY allowlist — that is the audited fact.
 		decision := EvaluatePublication(&PluginAsset{ID: id, Version: "1.0.0"}, cfg)
-		if !decision.Publish {
-			refused = append(refused, id)
+		if decision.Publish == want[id] {
+			t.Fatalf("%s: publish=%v with an empty allowlist; want %v", id, decision.Publish, !want[id])
 		}
-	}
-
-	if len(refused) != 1 || refused[0] != "com.orbpro.hpop" {
-		t.Fatalf("the fleet policy refuses %v; want exactly [com.orbpro.hpop] — anything else means the roll "+
-			"stops serving a module that is in use today", refused)
 	}
 }
 
-func TestFleetPolicyKeepsEveryRFGalleryModuleOpen(t *testing.T) {
+func TestFleetPolicyKeyProtectsEveryRFModule(t *testing.T) {
 	cfg := loadFleetPolicy(t)
 
 	for _, id := range liveCatalogModuleIDs {
@@ -104,9 +118,9 @@ func TestFleetPolicyKeepsEveryRFGalleryModuleOpen(t *testing.T) {
 			continue
 		}
 		resolved := cfg.Resolve(id, "")
-		if resolved.Policy != GrantPolicyLinkKey {
-			t.Fatalf("%s resolved to %q, want %q — the owner's private gallery link derives its identity from "+
-				"the URL UUID and cannot be on an allowlist", id, resolved.Policy, GrantPolicyLinkKey)
+		if resolved.Policy != GrantPolicyAllowlist {
+			t.Fatalf("%s resolved to %q, want %q — a paid module is never open on SDN", id, resolved.Policy,
+				GrantPolicyAllowlist)
 		}
 	}
 }

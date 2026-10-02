@@ -27,13 +27,29 @@ A module the host refuses has no key inside the guest, so no grant for it is
 reachable by any path, and the key server answers `module_not_found` — a refusal
 distinguishable from a transport failure.
 
+## Where paid modules live (owner 2026-10-02)
+
+A paid module (`ENTITLED` in the provider's `modules.pmm`) lives in exactly one
+of two places:
+
+- **The Sandcastle gallery**, for gallery use. The gallery host
+  (orbpro.edgesource.dev, behind Cloudflare Access) ships the module files and
+  the gallery loads them from there. It never asks SDN.
+- **This node, protected by key.** The module's rule is `allowlist` and its
+  catalog entry lists the entitled wallets in `allowed_xpubs`. A grant also
+  needs the wallet's proof that it holds that account key (the requester `$EPM`
+  ChainProof, verified by the licensing key server).
+
+A paid module is never `open` on SDN. Free modules and the test fixtures the SDN
+test page loads are `open`.
+
 ## Policies
 
 | policy | meaning |
 | --- | --- |
 | `allowlist` | **Default, fail-closed.** Only `ALLOWED_XPUBS` members. An allowlist policy with an *empty* list publishes nothing. |
 | `open` | Any identity that passes the licensing challenge. Explicit, never inferred. |
-| `link-key` | `open`, with its reason recorded: the credential is a capability URL whose UUID derives the requester's key. Behaves identically on the wire; exists so the "for now" is greppable and listed on every boot. |
+| `link-key` | Legacy label for `open` (the private-gallery capability URL). Unused since 2026-10-02: the gallery no longer asks SDN. |
 
 Precedence, highest first:
 
@@ -47,7 +63,7 @@ A module declared `open`/`link-key` that *also* carries a non-empty allowlist is
 **narrowed** to `allowlist`: a declared list is a restriction, and the
 restriction wins.
 
-## Ending a "for now"
+## Lockdown
 
 ```json
 { "enforce_allowlist_only": true }
@@ -59,11 +75,16 @@ To close a single module instead, delete its rule or set its policy to
 
 ## Entitling a module
 
+Edit `allowed_xpubs` on the module's `catalog.json` entry and restart (both
+files are read only at boot), or publish it with the list:
+
 ```
 spacedatanetwork plugins publish-orbpro --allowed-xpub <xpub> --grant-policy allowlist ...
 ```
 
-or edit `allowed_xpubs` on the catalog entry.
+The xpub is the wallet's account xpub (`m/44'/0'/0'`). The wallet must also sign
+the session key's proof for the requesting origin, so a copied xpub is not
+enough.
 
 ## Audit
 
