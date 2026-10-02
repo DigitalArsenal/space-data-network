@@ -224,10 +224,11 @@ var readMetrics = []struct {
 // the owner asked (p50 and p99), not held to it.
 //
 // A `<TYPE>@<source>` shape (C-31) answers another question than formats 1
-// and 2 answer for the same relation, so its bar is format 1 answering the
-// SAME question by SQL (its SameQuestionSuffix baseline); the relations'
-// own numbers are in the note. Without that baseline the shape is reported,
-// not gated.
+// and 2 answer for the same relation, so its bar is the faster of formats 1
+// and 2 answering the SAME question (its SameQuestionSuffix baseline: R17
+// format 1 by SQL, R18 both through their EPOCH API); the relations' own
+// numbers are in the note. Without a baseline the shape is reported, not
+// gated.
 func readsGate(runs []*Run) Gate {
 	g := Gate{ID: "2a", Title: "Faster: every read shape at least equal to both engines (p50 and p99, cold and warm)"}
 	used := RunsOf(runs, KindReads, LabelFixture)
@@ -255,7 +256,8 @@ func readsGate(runs []*Run) Gate {
 			continue // no baseline answers this shape; reported in the shape table
 		}
 		if isC31Shape(k) {
-			g.Checks = append(g.Checks, c31Checks(k, ss, a, b, f1[ShapeKey{k.Class, k.Shape + SameQuestionSuffix}])...)
+			same := ShapeKey{k.Class, k.Shape + SameQuestionSuffix}
+			g.Checks = append(g.Checks, c31Checks(k, ss, a, b, f1[same], f2[same])...)
 			continue
 		}
 		for _, m := range readMetrics {
@@ -314,10 +316,11 @@ func otherQuestion(arm string, k ShapeKey) bool {
 	return arm != ArmS && isC31Shape(k)
 }
 
-// c31Checks holds a `<TYPE>@<source>` shape to format 1 answering the same
-// question (same); the relations of formats 1 and 2 (a, b) are reported in
-// the note.
-func c31Checks(k ShapeKey, ss, a, b, same *ShapeStats) []Check {
+// c31Checks holds a `<TYPE>@<source>` shape to the faster of formats 1 and 2
+// answering the same question (same1, same2: nil when that arm has no
+// baseline); the relations of formats 1 and 2 (a, b) are reported in the
+// note.
+func c31Checks(k ShapeKey, ss, a, b, same1, same2 *ShapeStats) []Check {
 	var out []Check
 	for _, m := range readMetrics {
 		c := Check{Item: k.Class + " " + k.Shape + " " + m.name, Unit: "ms", S: math.NaN(), F1: math.NaN(), F2: math.NaN(),
@@ -337,15 +340,25 @@ func c31Checks(k ShapeKey, ss, a, b, same *ShapeStats) []Check {
 		} else {
 			notes = append(notes, "s did not run it")
 		}
-		if same == nil {
+		if same1 == nil && same2 == nil {
 			c.Info = true
-			notes = append(notes, "no same-question baseline (format 1 by SQL) was measured: reported, not gated")
+			notes = append(notes, "no same-question baseline was measured: reported, not gated")
 		} else {
-			c.F1, c.Bar = m.get(same), m.get(same)
-			notes = append(notes, "bar = format 1 answering the same question by SQL")
-			if ss != nil && same.Rows != ss.Rows {
-				notes = append(notes, fmt.Sprintf("rows s %d, f1 same question %d", ss.Rows, same.Rows))
+			for _, x := range []struct {
+				arm  string
+				st   *ShapeStats
+				dest *float64
+			}{{ArmF1, same1, &c.F1}, {ArmF2, same2, &c.F2}} {
+				if x.st == nil {
+					continue
+				}
+				*x.dest = m.get(x.st)
+				if ss != nil && x.st.Rows != ss.Rows {
+					notes = append(notes, fmt.Sprintf("rows s %d, %s same question %d", ss.Rows, x.arm, x.st.Rows))
+				}
 			}
+			c.Bar = minMeasured(c.F1, c.F2)
+			notes = append(notes, "bar = the faster of formats 1 and 2 answering the same question (f1/f2 columns)")
 		}
 		c.Pass = lowerOrEqual(c.S, c.Bar)
 		c.Note = strings.Join(notes, "; ")
@@ -706,7 +719,7 @@ func classSlopes(fix, grown []*Run, arm string, n0, n1 int64) map[string]map[str
 // p50 and p99 per-doubling factor over the steps an arm ran, s against each
 // baseline that ran at least two steps. A `<TYPE>@<source>` probe (C-31) is
 // held to format 1 answering the same question by SQL (its
-// SameQuestionSuffix probe, run on format 1 only), as in gate 2a; the
+// SameQuestionSuffix probe, run on format 1 only), as R17 in gate 2a; the
 // relations of formats 1 and 2 answer another question and are noted. With
 // no same-question baseline at two steps it is reported, not gated.
 func growthChecks(g *Gate, runs []*Run) {

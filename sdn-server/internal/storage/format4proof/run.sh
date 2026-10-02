@@ -15,8 +15,9 @@
 #              checked against format 1, then a run under kill -9
 #   bytes      bytes on disk per record, every arm, every file at rest
 #   reads      every benchset read, cold and warm, s / f1 / f2 back to back
-#              (a `<TYPE>@<source>` relation is held to format 1 answering
-#              the same question by SQL, measured on f1)
+#              (a `<TYPE>@<source>` shape is held to the baselines answering
+#              the same question: R17 format 1 by SQL, R18 formats 1 and 2
+#              through their EPOCH API with the source filter)
 #   ingest     phases A+B (the +28% store) and C (same-type producers)
 #   grown      the reads again on the +28% stores
 #   grown-c31  format 1's R17/R18 on its +28% store only: the same-question
