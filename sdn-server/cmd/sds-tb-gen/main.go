@@ -24,7 +24,8 @@
 // the latency of the node's reads on the same store: GetRecord hit and miss
 // (M7), DiskUsageBytes and PeerStorageBytes (B8), DataSummary (B7). It stops
 // at -duration or -max-records, then waits two -stall periods for calls in
-// flight and reports the ones still stuck.
+// flight and reports the ones still stuck. When no call returns for -hang
+// while calls are in flight, it stops at once (exit 3) with the stacks.
 //
 // The engine runs AOT (prewarmed into the daemon's cache first, as the
 // `prewarm-aot` command does); SDN_STORE_FORMAT=2 is set for the store.
@@ -59,6 +60,7 @@ type config struct {
 	store, corpus, csv, schemas, mix string
 	producers, peersPerType, batch   int
 	duration, sample, stall, readEvy time.Duration
+	hang                             time.Duration
 	maxRecords                       int64
 	supersedePct                     float64
 	prewarm                          bool
@@ -69,6 +71,7 @@ type config struct {
 
 type stats struct {
 	records, calls, errors, bytes atomic.Int64
+	lastDone                      atomic.Int64 // unix ns of the last write call that returned
 	mu                            sync.Mutex
 	lat                           []float64 // this window, ms
 	inflight                      map[int]time.Time
@@ -116,6 +119,7 @@ func main() {
 	flag.Int64Var(&c.maxRecords, "max-records", 0, "stop after this many records (0: none)")
 	flag.DurationVar(&c.sample, "sample", 10*time.Second, "sample interval")
 	flag.DurationVar(&c.stall, "stall", 60*time.Second, "a call in flight longer than this is stalled")
+	flag.DurationVar(&c.hang, "hang", 10*time.Minute, "no write call returned for this long with calls in flight: the run stops (exit 3) with the goroutine stacks")
 	flag.DurationVar(&c.readEvy, "read-every", 10*time.Second, "read probe interval")
 	flag.Float64Var(&c.supersedePct, "supersede-pct", 15, "share of a supersede standard's records that supersede the previous clone")
 	flag.BoolVar(&c.prewarm, "prewarm", true, "AOT-compile the engines into the daemon's cache first")
@@ -231,6 +235,7 @@ func run(c config) error {
 	var stop atomic.Bool
 	var wg sync.WaitGroup
 	start := time.Now()
+	st.lastDone.Store(start.UnixNano())
 	for w := 0; w < c.producers; w++ {
 		wg.Add(1)
 		go func(w int) {
@@ -290,6 +295,7 @@ func run(c config) error {
 					t := time.Now()
 					n, err = s.StoreBatchWithSourceTags(sd.name, recs, pid, nil, tags)
 					ms = float64(time.Since(t).Microseconds()) / 1000
+					st.lastDone.Store(time.Now().UnixNano())
 					st.mu.Lock()
 					delete(st.inflight, w)
 					st.mu.Unlock()
@@ -325,6 +331,27 @@ func run(c config) error {
 			}
 		}(w)
 	}
+
+	// The hang watchdog reads only in-memory counters, so it fires even when
+	// the sampler waits on the store (a growth step's write lock waits for
+	// the calls in flight). A store that never returns a write is a FAIL
+	// with evidence, not a run that sits for hours.
+	go func() {
+		for range time.Tick(c.sample) {
+			st.mu.Lock()
+			inflight := len(st.inflight)
+			st.mu.Unlock()
+			idle := time.Since(time.Unix(0, st.lastDone.Load()))
+			if inflight == 0 || idle < c.hang {
+				continue
+			}
+			fmt.Printf("# HUNG: no write call returned for %s with %d in flight (records %d, partitions %d, run %.0f s)\n",
+				idle.Round(time.Second), inflight, st.records.Load(), st.nPartitions.Load(), time.Since(start).Seconds())
+			dumpStacks(c.csv + ".hung-stacks.txt")
+			pprof.StopCPUProfile()
+			os.Exit(3)
+		}
+	}()
 
 	// Read probes, on their own goroutine (a slow read never delays a sample).
 	var readMu sync.Mutex
