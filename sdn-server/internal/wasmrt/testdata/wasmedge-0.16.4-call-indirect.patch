@@ -1,0 +1,29 @@
+diff --git a/lib/executor/engine/proxy.cpp b/lib/executor/engine/proxy.cpp
+index b67238b..d77b063 100644
+--- a/lib/executor/engine/proxy.cpp
++++ b/lib/executor/engine/proxy.cpp
+@@ -600,9 +600,23 @@ Expect<void *> Executor::proxyTableGetFuncSymbol(
+ 
+   const auto *ModInst = StackMgr.getModule();
+   assuming(ModInst);
+-  const auto &ExpDefType = **ModInst->getType(FuncTypeIdx);
++  // SDN patch (call-indirect): a module's type list is fixed once it is
++  // instantiated, and validation bounded FuncTypeIdx, so it is read without
++  // the module's shared_mutex, as getTabInstByIdx reads the table list. The
++  // lock cost four pthread mutex operations on every AOT call_indirect.
++  const auto &ExpDefType = *ModInst->unsafeGetType(FuncTypeIdx);
+   const auto *FuncInst = retrieveFuncRef(*Ref);
+   assuming(FuncInst);
++  // SDN patch (call-indirect): a function of the calling module with the
++  // expected type index matches; the matcher below would compare that type
++  // with itself.
++  if (likely(FuncInst->getModule() == ModInst &&
++             FuncInst->getTypeIndex() == *ExpDefType.getTypeIndex())) {
++    if (unlikely(!FuncInst->isCompiledFunction())) {
++      return nullptr;
++    }
++    return FuncInst->getSymbol().get();
++  }
+   bool IsMatch = false;
+   if (FuncInst->getModule()) {
+     IsMatch = AST::TypeMatcher::matchType(
