@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 330" role="img" aria-labelledby="t d">
+  <title id="t">A maneuver opens a blind window</title>
+  <desc id="d">Illustration. Timeline of one satellite maneuver. The operator knows where its satellite is going from the moment the burn is planned. Everyone else screens against the old orbit from the plan, through the burn, until sensors detect the change and a new orbit is published hours to days later. A close approach inside that window is screened against the old orbit.</desc>
+  <rect width="900" height="330" rx="18" fill="#0b0b0c"/>
+  <rect x="220" y="36" width="560" height="190" rx="12" fill="#ff3b30" fill-opacity=".06" stroke="#ff3b30" stroke-opacity=".4" stroke-dasharray="4 4"/>
+  <path d="M220 36V246M430 36V246M610 36V246M780 36V246" stroke="#ffffff" stroke-opacity=".14" stroke-dasharray="2 4"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#f5f5f7">
+    <text x="500" y="61" text-anchor="middle" font-size="14" font-weight="700" fill="#ff3b30">Blind window for everyone else</text>
+
+    <text x="28" y="97" font-size="15" font-weight="700">The operator</text>
+    <text x="28" y="116" font-size="13" fill-opacity=".6">planning the burn</text>
+    <rect x="220" y="82" width="650" height="36" rx="10" fill="#f5a524" fill-opacity=".16" stroke="#f5a524"/>
+    <text x="238" y="105" font-size="14" font-weight="600" fill="#f5a524">Knows where its satellite is going</text>
+
+    <text x="28" y="165" font-size="15" font-weight="700">Everyone else</text>
+    <text x="28" y="184" font-size="13" fill-opacity=".6">screening against it</text>
+    <rect x="220" y="150" width="556" height="36" rx="10" fill="#1c1c1e" stroke="#ffffff" stroke-opacity=".22"/>
+    <text x="238" y="173" font-size="14" fill-opacity=".8">Screens against the old orbit</text>
+    <rect x="784" y="150" width="86" height="36" rx="10" fill="#f5a524" fill-opacity=".16" stroke="#f5a524"/>
+    <text x="827" y="173" text-anchor="middle" font-size="14" font-weight="600" fill="#f5a524">Updated</text>
+
+    <path d="M520 156L533 179H507Z" fill="#ff3b30" stroke="#ff3b30" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M520 163V171" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="520" cy="175.4" r="1.4" fill="#fff"/>
+    <text x="520" y="210" text-anchor="middle" font-size="13" font-weight="600" fill="#ff3b30">Close approach screened against the old orbit</text>
+
+    <path d="M200 246H870" stroke="#ffffff" stroke-opacity=".35"/>
+    <circle cx="220" cy="246" r="5" fill="#f5f5f7"/><circle cx="430" cy="246" r="6" fill="#f5a524"/><circle cx="610" cy="246" r="5" fill="#f5f5f7"/><circle cx="780" cy="246" r="5" fill="#f5f5f7"/>
+    <g font-size="14" font-weight="700" text-anchor="middle">
+      <text x="220" y="272">Burn planned</text><text x="430" y="272" fill="#f5a524">Burn</text><text x="610" y="272">Change detected</text><text x="780" y="272">New orbit published</text>
+    </g>
+    <g font-size="13" text-anchor="middle" fill-opacity=".6">
+      <text x="220" y="291">hours to days ahead</text><text x="610" y="291">after new tracking</text><text x="780" y="291">hours to days later</text>
+    </g>
+    <text x="872" y="318" text-anchor="end" font-size="12" fill-opacity=".5">Illustration</text>
+  </g>
+</svg>

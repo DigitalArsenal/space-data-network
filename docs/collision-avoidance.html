@@ -43,6 +43,10 @@
     .emblems img { width: 68px; height: 68px; object-fit: contain; background: #f5f5f7; border-radius: 50%; padding: 8px; }
     .emblem-card h3 { font-size: 16px; margin: 0; }
     .emblem-card p { color: var(--text-2); font-size: 13px; line-height: 1.45; }
+    .figure-pair { max-width: 980px; margin: 12px auto; gap: 20px; }
+    .figure-pair .figure { max-width: none; margin: 0; }
+    .figure picture { display: block; }
+    .figure figcaption b { color: var(--text); }
     @media (max-width: 620px) { .programs td:first-child { white-space: normal; } }
   </style>
 </head>
@@ -91,6 +95,7 @@
       <div class="actions">
         <a href="#routine" class="btn btn-primary">The routine</a>
         <a href="#problem" class="btn">The problem</a>
+        <a href="#disclosure" class="btn">Why it can&rsquo;t wait</a>
       </div>
     </section>
 
@@ -296,17 +301,89 @@
           <div class="emblem-card"><div class="emblems"><img src="img/emblems/ae.webp" alt="" width="64" height="64" loading="lazy"></div><h3>United Arab Emirates</h3><p>Falcon Eye reconnaissance satellites</p></div>
         </div>
         <p class="note">Emblems identify each government for reference only. No affiliation or endorsement is implied. Credits are in the notes.<sup><a href="#n5">5</a></sup></p>
-        <div class="chapter">
-          <h3>Why this can&rsquo;t wait for disclosure</h3>
-          <p>No government will publish a classified orbit, and no operator will announce a maneuver to its competitors in advance. Screening has to work without either. That requires computing on data nobody else can read.</p>
+      </div>
+    </section>
+
+    <section class="block" id="disclosure" data-earth="2.9 -40 -12 -1.05 0.05 210 8">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Part seven</p>
+          <h2>Why Screening Can&rsquo;t Wait For Disclosure</h2>
+          <p class="lede">No government will publish a classified orbit, and no operator will announce a maneuver to its competitors in advance. Screening has to work without either. That requires computing on data nobody else can read.</p>
         </div>
+
+        <div class="chapter">
+          <h3>Every close approach needs both orbits</h3>
+          <p>To screen two objects against each other, something has to compare where both will be at the same moment. For most pairs, the public catalog is enough. For a pair that includes a classified satellite or a planned maneuver, one of the two orbits belongs to someone who will not hand it over.</p>
+          <p>Each government screens its own hidden satellites against what it can see. Each operator screens its own plans against the public catalog. Nobody can screen one government&rsquo;s hidden satellite against another&rsquo;s, or a company&rsquo;s planned burn against a classified orbit, because nobody holds both.</p>
+        </div>
+        <div class="grid grid-2 figure-pair">
+          <figure class="figure">
+            <img src="img/ca/screening-today.svg" width="440" height="380" alt="Two governments with classified orbits and two operators with planned maneuvers. All six pairs between them are marked unscreened, because nobody holds both orbits of any pair." loading="lazy">
+            <figcaption><b>Today.</b> Everyone shares the public catalog. The pairs between private orbits go unscreened.</figcaption>
+          </figure>
+          <figure class="figure">
+            <img src="img/ca/screening-encrypted.svg" width="440" height="380" alt="The same four parties each send their orbit, encrypted, to one screening service, which returns only SAFE or ALERT." loading="lazy">
+            <figcaption><b>On the network.</b> Each party submits its orbit encrypted. Every pair is screened, and no orbit is revealed.</figcaption>
+          </figure>
+        </div>
+
+        <div class="chapter">
+          <h3>A maneuver opens a blind window</h3>
+          <p>An operator plans a burn hours or days ahead. Screening looks days ahead too, so from the moment the plan exists, everyone else&rsquo;s prediction for that satellite is wrong. After the burn, radars and telescopes have to notice the change, gather enough new tracking, and solve for the new orbit before any catalog shows it. That takes hours to days more.</p>
+          <p>For that whole window, every other operator plans around a trajectory that is no longer true, and a close approach inside it is screened against the wrong orbit. Large constellations now maneuver every day, so a window like this is always open somewhere.</p>
+        </div>
+        <figure class="figure figure-wide">
+          <picture>
+            <source media="(max-width: 620px)" srcset="img/ca/maneuver-window-tall.svg" width="440" height="590">
+            <img src="img/ca/maneuver-window.svg" width="900" height="330" alt="Timeline of one maneuver. The operator knows where its satellite is going from the moment the burn is planned. Everyone else screens against the old orbit until the change is detected and a new orbit is published, hours to days after the burn. A close approach inside that window is screened against the old orbit." loading="lazy">
+          </picture>
+          <figcaption>Between the plan and the catalog update, only the operator knows where its satellite is going.</figcaption>
+        </figure>
+
+        <div class="chapter">
+          <h3>Three ways to close the gap, and their limits</h3>
+          <p>Each of the obvious answers asks someone to give up the thing they cannot give up, or to wait until it is too late to matter.</p>
+        </div>
+        <div class="grid grid-3">
+          <div class="card"><h3>Publication</h3><p>A classified orbit shows what a satellite can watch and when. A planned maneuver shows strategy to competitors. Neither will be published, and no authority can require every government to publish.</p></div>
+          <div class="card"><h3>One trusted screener</h3><p>Every party would have to hand its most sensitive data to the same organization, and every government would have to trust it. One place holding every hidden orbit would also be the most valuable target in space safety.</p></div>
+          <div class="card"><h3>Waiting for tracking</h3><p>Sensors see a new orbit only after the burn, and only after hours to days of tracking. By then the close approach has already been screened against the old orbit.</p></div>
+        </div>
+
+        <div class="chapter">
+          <h3>Computing on data nobody else can read</h3>
+          <p>Homomorphic encryption lets a computer do arithmetic on locked numbers. It adds and multiplies them without unlocking them, and the answer comes out locked too.</p>
+          <p>Screening needs one narrow calculation: how close do these two objects get? Each side encrypts its trajectory before it leaves its own systems. The assessor computes the distance between them at each time step on the encrypted values and checks it against a safety distance. The only result anyone reads is SAFE or ALERT.</p>
+          <p>The screening software is open, so both sides can check exactly what was computed, even though neither can see the other&rsquo;s data.</p>
+        </div>
+        <figure class="figure figure-wide">
+          <picture>
+            <source media="(max-width: 620px)" srcset="img/ca/encrypted-screening-tall.svg" width="440" height="540">
+            <img src="img/ca/encrypted-screening.svg" width="900" height="310" alt="A government with a classified orbit and an operator with a planned maneuver each encrypt their trajectory. An assessor running open software computes how close they get on the encrypted values and returns only SAFE or ALERT." loading="lazy">
+          </picture>
+          <figcaption>Both trajectories stay encrypted from the moment they leave their owners. Only the verdict is opened.</figcaption>
+        </figure>
+
+        <div class="table-wrap narrow">
+          <table class="programs">
+            <thead><tr><th>Who</th><th>What they learn</th></tr></thead>
+            <tbody>
+              <tr><td>A government with a classified satellite</td><td>Whether anything will come too close. Never another party&rsquo;s orbit or plans.</td></tr>
+              <tr><td>An operator planning a burn</td><td>Whether the new trajectory is clear, before the burn.</td></tr>
+              <tr><td>The assessor</td><td>Whether a pair comes too close. Not where either object is.</td></tr>
+              <tr><td>Everyone else</td><td>Nothing. After an alert, the two parties can choose to share more to coordinate.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Could someone submit fake orbits to find a hidden satellite? Results are SAFE or ALERT only, submissions are limited per identity, noise is added before each comparison, and sweep-like patterns are flagged. <a href="encrypted-ca.html">The defenses in detail</a>.</p>
       </div>
     </section>
 
     <section class="block" id="baseline" data-earth="5.5 40 15 0.75 0 55 12">
       <div class="wrap">
         <div class="head">
-          <p class="eyebrow">Part seven</p>
+          <p class="eyebrow">Part eight</p>
           <h2>An Open Baseline With Encrypted Screening</h2>
           <p class="lede">Services can keep competing on sensors, speed and analysis. What they need underneath is one baseline everyone can check, and a way to screen what can&rsquo;t be shared.</p>
         </div>

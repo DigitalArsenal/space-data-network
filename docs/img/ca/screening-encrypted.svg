@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 380" role="img" aria-labelledby="t d">
+  <title id="t">On the network: every pair screened, no orbit revealed</title>
+  <desc id="d">Illustration. The same two governments and two operators each send their orbit, encrypted, to one screening service. It screens every pair on the encrypted values and returns only SAFE or ALERT.</desc>
+  <defs>
+    <g id="lock"><path d="M-3.6 -1V-3.8a3.6 3.6 0 0 1 7.2 0V-1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="-5.6" y="-1.2" width="11.2" height="9" rx="2.2" fill="currentColor"/></g>
+    <g id="badge"><circle r="12" fill="#0b0b0c" stroke="#f5a524" stroke-width="1.6"/><use href="#lock" y="-1" color="#f5a524"/></g>
+  </defs>
+  <rect width="440" height="380" rx="18" fill="#0b0b0c"/>
+  <path d="M170 88L220 178M270 88L220 178M170 268L220 178M270 268L220 178" fill="none" stroke="#f5a524" stroke-width="1.8"/>
+  <use href="#badge" x="186" y="117"/><use href="#badge" x="254" y="117"/><use href="#badge" x="186" y="239"/><use href="#badge" x="254" y="239"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#f5f5f7">
+    <g fill="#1c1c1e" stroke="#ffffff" stroke-opacity=".18">
+      <rect x="20" y="24" width="150" height="64" rx="14"/><rect x="270" y="24" width="150" height="64" rx="14"/>
+      <rect x="20" y="268" width="150" height="64" rx="14"/><rect x="270" y="268" width="150" height="64" rx="14"/>
+    </g>
+    <g font-size="14" font-weight="700">
+      <text x="36" y="51">Government X</text><text x="286" y="51">Government Y</text>
+      <text x="36" y="295">Operator A</text><text x="286" y="295">Operator B</text>
+    </g>
+    <g font-size="13" fill-opacity=".6">
+      <text x="36" y="72">Classified orbit</text><text x="286" y="72">Classified orbit</text>
+      <text x="36" y="316">Planned maneuver</text><text x="286" y="316">Planned maneuver</text>
+    </g>
+    <g color="#8e8e93"><use href="#lock" x="156" y="45"/><use href="#lock" x="406" y="45"/><use href="#lock" x="156" y="289"/><use href="#lock" x="406" y="289"/></g>
+    <rect x="128" y="146" width="184" height="64" rx="14" fill="#1a1407" stroke="#f5a524" stroke-opacity=".8"/>
+    <text x="220" y="173" text-anchor="middle" font-size="15" font-weight="700">Encrypted screening</text>
+    <text x="220" y="195" text-anchor="middle" font-size="13" font-weight="700" fill="#f5a524">SAFE or ALERT</text>
+    <text x="220" y="364" text-anchor="middle" font-size="14" fill-opacity=".8">Every pair screened. No orbit revealed.</text>
+  </g>
+</svg>
