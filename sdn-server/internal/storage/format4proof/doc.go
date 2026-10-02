@@ -6,8 +6,9 @@
 // handlers and modules call) in the deployed runtime (WasmEdge, AOT), and
 // reports the owner's gates:
 //
-//   - slimmer: bytes on disk per record (DriveBytes; the grown store's bytes
-//     per added record);
+//   - slimmer: bytes on disk per record, every file of the store at rest
+//     (DriveBytes: format 4 settled by SettleStore, its full text built for
+//     every type SDN enables; the grown store's bytes per added record);
 //   - faster: every benchset read R01–R24 cold and warm at p50 and p99
 //     (DriveReads), ingest rate and call p99 for one writer, four writers and
 //     same-type producers (DriveIngest), reads during writes with the WAL
