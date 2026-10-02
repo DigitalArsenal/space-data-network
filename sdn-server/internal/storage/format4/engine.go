@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -61,6 +62,7 @@ type Engine struct {
 	closing atomic.Bool
 	once    sync.Once
 	stopErr error
+	memo    memo // counter answers kept between writes (memo.go)
 }
 
 var _ API = (*Engine)(nil)
@@ -217,6 +219,8 @@ func (e *Engine) RegisterType(spec TypeSpec) error {
 	if err := e.live("register_type"); err != nil {
 		return err
 	}
+	e.memo.begin()
+	defer e.memo.end(false)
 	rc, err := e.ctl.ControlBytes(exportRegisterType, spec.Encode())
 	return statusOf("register_type "+spec.TypeName(), rc, err)
 }
@@ -229,7 +233,11 @@ func (e *Engine) SetQuota(bytes int64) error {
 		return &StatusError{Op: "set_quota", Status: StatusArg, Msg: "negative quota"}
 	}
 	rc, err := e.ctl.ControlCall(exportSetQuota, float64(bytes))
-	return statusOf("set_quota", rc, err)
+	if err := statusOf("set_quota", rc, err); err != nil {
+		return err
+	}
+	e.memo.setQuota(bytes > 0)
+	return nil
 }
 
 func (e *Engine) Activate(ctx context.Context) error {
@@ -239,6 +247,8 @@ func (e *Engine) Activate(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	e.memo.begin()
+	defer e.memo.end(false)
 	rc, err := e.ctl.ControlCall(exportActivate)
 	return statusOf("activate", rc, err)
 }
@@ -316,9 +326,14 @@ func (b *busyRetry) wait(ctx context.Context, op, msg string) error {
 
 // do runs one request and decodes its RB1 response. P4_E_BUSY means nothing
 // was done: it is retried (busyRetry), for writes and reads alike (reads
-// never return ErrBusy).
+// never return ErrBusy). A write brackets the memo.
 func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, want []string) (*rows, error) {
 	name := opNames[op]
+	abandoned := false
+	if class == ClassWrite {
+		e.memo.begin()
+		defer func() { e.memo.end(abandoned) }()
+	}
 	var busy busyRetry
 	for {
 		if err := e.live(name); err != nil {
@@ -330,6 +345,8 @@ func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, wan
 			return nil
 		})
 		if err != nil {
+			// A write whose caller leaves may still commit (abandon).
+			abandoned = class == ClassWrite && !errors.Is(err, ErrStopped)
 			return nil, e.stopped(name, err)
 		}
 		if o.status == StatusBusy {
@@ -556,8 +573,20 @@ func (e *Engine) Scan(ctx context.Context, q Query) ([]Rec, error) {
 	return rs.recs(), nil
 }
 
+// Head is kept between writes (memo.go) unless it searches the full text.
 func (e *Engine) Head(ctx context.Context, q Query) (Head, error) {
-	rs, err := e.query(ctx, opHead, q, colsHead)
+	req, err := encodeQuery(opHead, q)
+	if err != nil {
+		return Head{}, err
+	}
+	if q.Search != "" {
+		return e.head(ctx, readClass(q.Bulk), req)
+	}
+	return kept(&e.memo, "H\x00"+string(req), true, 0, func() (Head, error) { return e.head(ctx, readClass(q.Bulk), req) })
+}
+
+func (e *Engine) head(ctx context.Context, class Class, req []byte) (Head, error) {
+	rs, err := e.do(ctx, opHead, class, req, colsHead)
 	if err != nil {
 		return Head{}, err
 	}
@@ -649,7 +678,14 @@ func (e *Engine) summary(ctx context.Context, kind uint8, typ string, want []str
 	return e.do(ctx, opSummary, ClassInteractive, tlv(nil).text(tagType, typ).u8(tagKind, kind), want)
 }
 
+// Types, Partitions and Lanes are kept between writes, Disk for
+// memoDiskAge (memo.go).
 func (e *Engine) Types(ctx context.Context) ([]TypeSummary, error) {
+	v, err := kept(&e.memo, "T", true, 0, func() ([]TypeSummary, error) { return e.types(ctx) })
+	return slices.Clone(v), err
+}
+
+func (e *Engine) types(ctx context.Context) ([]TypeSummary, error) {
 	rs, err := e.summary(ctx, summaryTypes, "", colsTypes)
 	if err != nil {
 		return nil, err
@@ -664,6 +700,11 @@ func (e *Engine) Types(ctx context.Context) ([]TypeSummary, error) {
 }
 
 func (e *Engine) Partitions(ctx context.Context) ([]PartitionSummary, error) {
+	v, err := kept(&e.memo, "P", true, 0, func() ([]PartitionSummary, error) { return e.partitions(ctx) })
+	return slices.Clone(v), err
+}
+
+func (e *Engine) partitions(ctx context.Context) ([]PartitionSummary, error) {
 	rs, err := e.summary(ctx, summaryPartitions, "", colsParts)
 	if err != nil {
 		return nil, err
@@ -678,6 +719,11 @@ func (e *Engine) Partitions(ctx context.Context) ([]PartitionSummary, error) {
 }
 
 func (e *Engine) Lanes(ctx context.Context, typ string) ([]Lane, error) {
+	v, err := kept(&e.memo, "L\x00"+typ, true, 0, func() ([]Lane, error) { return e.lanes(ctx, typ) })
+	return slices.Clone(v), err
+}
+
+func (e *Engine) lanes(ctx context.Context, typ string) ([]Lane, error) {
 	rs, err := e.summary(ctx, summaryLanes, typ, colsLanes)
 	if err != nil {
 		return nil, err
@@ -694,6 +740,11 @@ func (e *Engine) Lanes(ctx context.Context, typ string) ([]Lane, error) {
 }
 
 func (e *Engine) Disk(ctx context.Context) ([]DiskSummary, error) {
+	v, err := kept(&e.memo, "D", false, memoDiskAge, func() ([]DiskSummary, error) { return e.disk(ctx) })
+	return slices.Clone(v), err
+}
+
+func (e *Engine) disk(ctx context.Context) ([]DiskSummary, error) {
 	rs, err := e.summary(ctx, summaryDisk, "", colsDisk)
 	if err != nil {
 		return nil, err
