@@ -1491,6 +1491,10 @@ func (s *FlatSQLStore) QueryEpochRawStream(schemaName string, sourceName string,
 		limitParam = -1 // SQLite: LIMIT -1 = unlimited
 	}
 
+	if f4, ok := s.rb.(format4Backend); ok {
+		// Format 4 answers from its epoch index (the EPOCH op, source filter).
+		return f4.queryEpochRawStream(schemaName, sourceName, profile, epochUnix, limit)
+	}
 	if s.rb != nil {
 		// A partitioned store runs the same statement (A18: the relation,
 		// its fields and _source keep their names).

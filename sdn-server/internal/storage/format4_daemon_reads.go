@@ -1569,6 +1569,60 @@ func (b format4Backend) countPointEpochEntities(query EpochRecordQuery) (int64, 
 	return n, nil
 }
 
+// queryEpochRawStream is QueryEpochRawStream (R18: an epoch profile of one
+// source as a record stream) answered by the engine's EPOCH op with the source
+// filter. It ranks by the type's epoch rule, as every other epoch read does
+// and as format 1's EPOCH API answers (ruling 2026-10-02 ~10:00; format 1's
+// statement ranked by USER_DEFINED_EPOCH_TIMESTAMP: an intended difference).
+// One record per object in object order, framed [u32le size][stored bytes].
+func (b format4Backend) queryEpochRawStream(schemaName, sourceName, profile string, epochUnix float64, limit int) (*flatsqlrt.RawStream, error) {
+	if err := b.closed(); err != nil {
+		return nil, err
+	}
+	typ, err := f4Type(schemaName)
+	if err != nil {
+		return nil, err
+	}
+	q := format4.EpochQuery{Query: format4.Query{Type: typ, Lane: f4Lane("", strings.TrimSpace(sourceName), "", "", ""),
+		Hydrate: true}}
+	// The engine's epochs are whole seconds: as_of takes e <= at, forward
+	// e >= at.
+	switch strings.TrimPrefix(strings.TrimSpace(profile), "epoch.") {
+	case "nearest":
+		q.Profile, q.At = format4.EpochNearest, int64(math.Round(epochUnix))
+	case "as_of":
+		q.Profile, q.At = format4.EpochAsOf, int64(math.Floor(epochUnix))
+	case "forward":
+		q.Profile, q.At = format4.EpochForward, int64(math.Ceil(epochUnix))
+	default:
+		return nil, fmt.Errorf("unsupported engine epoch profile %q (want nearest, as_of, or forward)", profile)
+	}
+	if limit > 0 {
+		q.Limit = int64(limit)
+	}
+	recs, err := b.d.api().Epoch(b.d.ctx, q)
+	if errors.Is(err, format4.ErrNoType) {
+		return &flatsqlrt.RawStream{Bytes: []byte{}}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("epoch stream query failed: %w", err)
+	}
+	size := 0
+	for _, r := range recs {
+		size += 4 + len(r.Data)
+	}
+	payload, frames := make([]byte, 0, size), 0
+	for _, r := range recs {
+		payload = binary.LittleEndian.AppendUint32(payload, uint32(len(r.Data)))
+		payload = append(payload, r.Data...)
+		if len(r.Data) > 0 {
+			frames++
+		}
+	}
+	return &flatsqlrt.RawStream{Bytes: payload, Rows: len(recs), Columns: 1, FNV1a64: flatsqlrt.FNV1a64WordFolded(payload),
+		FrameCount: frames}, nil
+}
+
 func (b format4Backend) QueryEpochCoverage(query EpochRecordQuery) ([]EpochCoverageBucket, error) {
 	if err := b.closed(); err != nil {
 		return nil, err
