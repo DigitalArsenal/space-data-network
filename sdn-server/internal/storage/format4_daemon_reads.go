@@ -2409,15 +2409,16 @@ func f4SandboxError(err error) error {
 }
 
 // f4SandboxErr is f4SandboxError with format 1's answer to a statement that
-// names one of the node's control tables: the table exists in the node's
-// database and the sandbox does not authorize it (format 4's SQL surface
-// holds the record relations only, so its engine knows no such table).
+// names one of the node's own tables (a control table, or a table of format
+// 1's record catalog: the sdn_ and sds_ namespaces): format 1's sandbox
+// refuses it as outside the public query surface. Format 4's SQL surface
+// holds the record relations only, so its engine knows no such table.
 func (b format4Backend) f4SandboxErr(err error) error {
 	var se *format4.StatusError
 	if errors.As(err, &se) {
-		if name, ok := f4NoSuchTable(se.Msg); ok && b.f4ControlTable(name) {
+		if name, ok := f4NoSuchTable(se.Msg); ok && (strings.HasPrefix(name, "sdn_") || strings.HasPrefix(name, "sds_") || b.f4ControlTable(name)) {
 			return &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeNotAuthorized,
-				Message: "sandbox: not-authorized: " + name + " is not a record relation"}
+				Message: fmt.Sprintf("sandbox: not-authorized: table %q is outside the public query surface", name)}
 		}
 	}
 	return f4SandboxError(err)
