@@ -455,7 +455,14 @@ func xmSetAside(sh Shape) Shape {
 		CallRuling{Call: "DataSummary", Why: c6SetAside, Fields: []string{"n", "bytes", "total_records", "total_bytes"}, Standard: "OMM.fbs"},
 		CallRuling{Call: "SchemaDateRanges", Why: c6SetAside, Fields: []string{"n", "bytes"}, Standard: "OMM.fbs"},
 		CallRuling{Call: "LiveRecordBytes", Why: c6SetAside, Fields: []string{"bytes"}},
-		CallRuling{Call: "PeerStorageBytes source:celestrak", Why: c6SetAside, Fields: []string{"bytes"}})
+		CallRuling{Call: "PeerStorageBytes source:celestrak", Why: c6SetAside, Fields: []string{"bytes"}},
+		// source_celestrak shares source:celestrak's token, so its partition (C-2).
+		CallRuling{Call: "PeerStorageBytes the token-sharing peer", Why: c6SetAside, Fields: []string{"bytes"}})
+	// The OMM type's count and head: the set-aside record is missing, and
+	// X07's two records held by two feeds count once per feed (C-38 (5)).
+	for _, call := range []string{"Count OMM.fbs", "type head OMM.fbs"} {
+		sh.Policy.Calls = append(sh.Policy.Calls, CallRuling{Call: call, Why: c6SetAside + "; " + c38PerFeed, Fields: []string{"n", "bytes"}})
+	}
 	return sh
 }
 
