@@ -197,8 +197,10 @@ func (b format4Backend) f4Retag(schemaName, typ, cid string, tag format4.Tag) er
 	return nil
 }
 
-// f4Inserted counts the records new to the type (format 1's count: a CID
-// some producer already held, and an ingest-identity repeat, are not).
+// f4Inserted counts the records new to their feed: a CID the feed already
+// held, and an ingest-identity repeat, are not (format 1's count). A record
+// another feed holds is a new row set in this feed's file (C-38 (3)) and
+// counts, once per feed (C-38 (5)).
 func f4Inserted(outcomes []format4.Outcome) int {
 	n := 0
 	for _, o := range outcomes {
@@ -352,10 +354,12 @@ func (b format4Backend) Delete(schemaName, cid string) error {
 }
 
 // f4Supersede is SUPERSEDE(keep) on a (provider, source) feed: the rows of
-// every other batch in that feed's file go, then every record left with no
-// row in any feed file. Matched counts those tag instances; Deleted counts the records
-// that left the type (format 1's count: a record another producer's copy
-// keeps stays).
+// every other batch in that feed's file go. Matched counts those tag
+// instances; Deleted counts the records left with no row in the feed's file
+// (the engine's records_deleted). A record another feed holds is a row set
+// of that feed (C-38 (3)) and stays there; it left this feed, so it counts
+// here, once per feed (C-38 (5); format 1 counted only records that left the
+// store).
 func (b format4Backend) f4Supersede(result SourceBatchReconcileResult) (SourceBatchReconcileResult, error) {
 	if err := b.closed(); err != nil {
 		return result, err
@@ -364,14 +368,7 @@ func (b format4Backend) f4Supersede(result SourceBatchReconcileResult) (SourceBa
 	if err != nil {
 		return result, err
 	}
-	api, ctx := b.d.api(), b.d.ctx
-	var before int64
-	if result.Apply {
-		if before, err = b.f4TypeRecords(typ); err != nil {
-			return result, err
-		}
-	}
-	r, err := api.Supersede(ctx, typ, result.ProviderID, result.SourceName, result.KeepBatch, result.Apply)
+	r, err := b.d.api().Supersede(b.d.ctx, typ, result.ProviderID, result.SourceName, result.KeepBatch, result.Apply)
 	if errors.Is(err, format4.ErrNoType) {
 		return result, nil
 	}
@@ -379,15 +376,8 @@ func (b format4Backend) f4Supersede(result SourceBatchReconcileResult) (SourceBa
 		return result, err
 	}
 	result.Matched = r.TagsDeleted
-	if !result.Apply || r.TagsDeleted == 0 {
-		return result, nil
-	}
-	after, err := b.f4TypeRecords(typ)
-	if err != nil {
-		return result, err
-	}
-	if d := before - after; d > 0 {
-		result.Deleted = d
+	if result.Apply {
+		result.Deleted = r.RecordsDeleted
 	}
 	return result, nil
 }

@@ -380,19 +380,27 @@ func (b format4Backend) sourceTagsForCIDs(schemaName string, cids []string) (map
 }
 
 // exportSourceTags is each exported record's newest tag, as format 1's
-// export takes it (sourceTagsForCIDs), whatever lane the export selects.
+// export takes it (sourceTagsForCIDs), whatever lane the export selects:
+// the newest of the record's own feed (the window row's provider and
+// source), since a record held by N feeds is exported once per feed with
+// that feed's provenance (C-38 (5)).
 func (b format4Backend) exportSourceTags(filter IndexedRecordQuery, records []*Record) ([]SourceTags, error) {
 	cids := make([]string, len(records))
 	for i, r := range records {
 		cids[i] = r.CID
 	}
-	byCID, err := b.sourceTagsForCIDs(filter.SchemaName, cids)
+	rows, err := b.f4TagRows(filter.SchemaName, cids)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query source tags: %w", err)
 	}
 	out := make([]SourceTags, len(records))
-	for i, c := range cids {
-		out[i] = byCID[c]
+	for i, r := range records {
+		for _, t := range rows[r.CID] { // newest first
+			if t.Provider == r.SourceTags.ProviderID && t.Source == r.SourceTags.SourceName {
+				out[i] = f4SourceTags(t.Tag)
+				break
+			}
+		}
 	}
 	return out, nil
 }
@@ -492,7 +500,9 @@ func (b format4Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRe
 				break
 			}
 			for _, t := range ts {
-				rec.SourceTags, rec.MaterializedAt = f4SourceTags(t.Tag), time.Unix(t.At, 0).UTC()
+				// The tag's feed file holds the record under its own seq (C-38
+				// (3)): the ref's cursor is that feed's.
+				rec.SourceTags, rec.MaterializedAt, rec.RowID = f4SourceTags(t.Tag), time.Unix(t.At, 0).UTC(), t.Seq
 				if rawRecordMatchesRef(rec, ref) {
 					matched = rec
 					break
@@ -1207,35 +1217,29 @@ func (b format4Backend) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Recor
 	}
 	// Format 1's window projects (provider, source, batch) of the record's
 	// newest tag (its last written tag row), whatever tag filter chose the
-	// window: the record's tags come from TAGS.
+	// window. A row here is the record in one feed file (C-38 (5)): its
+	// provider and source are that feed's, and its batch the newest of the
+	// feed's instances (TAGS lists every feed file's).
 	cids := make([]string, len(out))
 	for i, r := range out {
 		cids[i] = r.CID
 	}
-	newest, err := b.f4NewestTags(filter.SchemaName, cids)
+	tags, err := b.f4TagRows(filter.SchemaName, cids)
 	if err != nil {
 		return nil, fmt.Errorf("indexed query tags: %w", err)
 	}
-	for _, r := range out {
-		t := newest[r.CID]
+	for i, r := range out {
+		var t SourceTags
+		if feed := recs[i].Tag; feed != nil {
+			for _, row := range tags[r.CID] { // newest first
+				if row.Provider == feed.Provider && row.Source == feed.Source {
+					t = f4SourceTags(row.Tag)
+					break
+				}
+			}
+		}
 		r.SourceTags = SourceTags{ProviderID: t.ProviderID, SourceName: t.SourceName, BatchID: t.BatchID}
 		r.RowID, r.MaterializedAt = 0, time.Time{}
-	}
-	return out, nil
-}
-
-// f4NewestTags is each record's newest tag (the latest at; format 1's last
-// written tag row), absent for a record with none.
-func (b format4Backend) f4NewestTags(schemaName string, cids []string) (map[string]SourceTags, error) {
-	rows, err := b.f4TagRows(schemaName, cids)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]SourceTags, len(rows))
-	for c, rs := range rows {
-		if len(rs) > 0 {
-			out[c] = f4SourceTags(rs[0].Tag)
-		}
 	}
 	return out, nil
 }
@@ -1475,7 +1479,8 @@ func (b format4Backend) f4TypeSummaries() (map[string]format4.TypeSummary, error
 	})
 }
 
-// f4TypeRecords is a type's records (unique CIDs).
+// f4TypeRecords is a type's records, summed over its feed files (a record
+// held by N feeds counts N times, C-38 (5)).
 func (b format4Backend) f4TypeRecords(typ string) (int64, error) {
 	types, err := b.f4TypeSummaries()
 	if err != nil {
