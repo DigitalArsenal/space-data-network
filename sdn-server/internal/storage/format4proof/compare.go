@@ -212,6 +212,9 @@ type CallRuling struct {
 	// Standard limits the ruling to the rows (format 1's) that name this
 	// standard or none (a store total): rowStandard.
 	Standard string `json:"standard,omitempty"`
+	// Source limits it likewise to the rows that name this source or none
+	// (rowSource).
+	Source string `json:"source,omitempty"`
 	// SameSet accepts the fields only when the call's rows are equal as a
 	// multiset: their order alone differs.
 	SameSet bool `json:"same_set,omitempty"`
@@ -230,11 +233,14 @@ func (p Policy) ruling(call, field string, row Row, setEq bool) *CallRuling {
 		if !strings.Contains(call, r.Call) || r.Absent != "" || (r.SameSet && !setEq) {
 			continue
 		}
-		if r.Standard != "" {
+		if r.Standard != "" || r.Source != "" {
 			if row == nil {
 				continue
 			}
-			if std := rowStandard(row); std != "" && std != r.Standard {
+			if std := rowStandard(row); r.Standard != "" && std != "" && std != r.Standard {
+				continue
+			}
+			if src := rowSource(row); r.Source != "" && src != "" && src != r.Source {
 				continue
 			}
 		}
@@ -261,6 +267,13 @@ func rowStandard(r Row) string {
 		}
 	}
 	return ""
+}
+
+// rowSource is the source a summary row names (SourceName, JSON-quoted or
+// bare), or "".
+func rowSource(r Row) string {
+	v, _ := r.lookup("SourceName")
+	return strings.Trim(v, `"`)
 }
 
 // absentRows drops format 1's rows that name a standard an Absent ruling of
