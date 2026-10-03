@@ -146,6 +146,9 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 	}
 	// Index rows of a schema no producer table holds are orphans too.
 	for _, s := range m.index {
+		if _, skipped := m.unregistered[s.Schema]; skipped {
+			continue // its tables are listed in the report, not migrated
+		}
 		if _, ok := m.bySchema[s.Schema]; !ok && s.Rows > 0 {
 			if c.Orphans == nil {
 				c.Orphans = map[string]int64{}
