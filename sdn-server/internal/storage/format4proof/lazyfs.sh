@@ -112,6 +112,9 @@ run() { # run <label> <negative so or empty> <rounds> <scenarios or empty>
     P4PROOF_LAZYFS_FIFO_DONE="$DONE" P4PROOF_LAZYFS_ROUNDS="$3" P4PROOF_LAZYFS_ARM="$ARM" P4PROOF_LAZYFS_NEGATIVE="$2" \
     "$L/p4proof.test" -test.run '^TestProofLazyFSPowerLoss$' -test.v -test.count=1 -test.timeout 6h 2>&1 | grep -E 'RESULT|harness:|FAIL|PASS|ok|panic' || true
 }
+# Each run starts from empty work and result directories: a verifier reads
+# its run's acks.log, and a previous run's left there reads as a loss.
+rm -rf "$W/trials-work" "$W/trials-out" "$W/negative-work" "$W/negative-out"
 mkdir -p "$W/trials-work" "$W/trials-out" "$W/negative-work" "$W/negative-out"
 run trials "" "$ROUNDS" "${TRIAL_SCENARIOS:-}"
 # The negative control ends a scenario at its first loss (P4PROOF_LAZYFS_NEG_ROUNDS
