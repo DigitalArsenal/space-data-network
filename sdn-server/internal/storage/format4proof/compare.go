@@ -231,8 +231,11 @@ type CallRuling struct {
 	AbsentCID string `json:"absent_cid,omitempty"`
 	// TaggedFirst (a record listing; C-41 N3): format 1 lists its tagged
 	// records before its untagged ones, the candidate every record by seq
-	// (taggedFirstOrder).
+	// (taggedFirstOrder). Cut is the call's limit: when both pages are cut
+	// at it, format 1's order also changes which records its cut keeps
+	// (C-43 G3, taggedFirstCut).
 	TaggedFirst bool `json:"tagged_first,omitempty"`
+	Cut         int  `json:"cut,omitempty"`
 	// PerFeed (a record listing; C-38 (5), C-41 N8): the candidate lists a
 	// record once per feed that holds it, format 1 once (perFeedRows).
 	PerFeed bool `json:"per_feed,omitempty"`
@@ -240,15 +243,34 @@ type CallRuling struct {
 	// the timestamp of the copy it serves, an arbitrary one (C-12), so the
 	// records a limit keeps may differ (sameLanePage).
 	SameLane *LaneKey `json:"same_lane,omitempty"`
+	// F1Empty (C-43 G4): format 1 answers the call with no rows, a format-1
+	// artifact; the ruling applies only then (a format-1 answer with rows is
+	// compared as any).
+	F1Empty bool `json:"f1_empty,omitempty"`
+	// CaseTwin (C-43 B3 residual): the call reads a "<TYPE>@<source>"
+	// relation whose source equals another feed's but for case, and format
+	// 1's answer is its own arbitrary choice between the twins. The
+	// candidate's answer must be Want (the named feed's own) when Want is
+	// set, else empty, a zero count or an error (twins with no exact
+	// spelling): never another feed's records (caseTwinAnswer).
+	CaseTwin bool  `json:"case_twin,omitempty"`
+	Want     []Row `json:"want,omitempty"`
 }
 
 // LaneKey names a lane: the provider, source and batch its records carry.
-type LaneKey struct{ Provider, Source, Batch string }
+// Members are the lane's records (CIDs) where the rows carry no provenance
+// on either format (C-43 G1); nil when not known (never serialized: the
+// policy is rebuilt from the inputs).
+type LaneKey struct {
+	Provider, Source, Batch string
+	Members                 map[string]bool `json:"-"`
+}
 
 // rowRuling reports a ruling that rewrites the rows compared (Absent,
-// AbsentCID, TaggedFirst, PerFeed) rather than accepting fields.
+// AbsentCID, TaggedFirst, PerFeed, SameLane) or decides a whole call
+// (F1Empty, CaseTwin) rather than accepting fields.
 func (r *CallRuling) rowRuling() bool {
-	return r.Absent != "" || r.AbsentCID != "" || r.TaggedFirst || r.PerFeed || r.SameLane != nil
+	return r.Absent != "" || r.AbsentCID != "" || r.TaggedFirst || r.PerFeed || r.SameLane != nil || r.F1Empty || r.CaseTwin
 }
 
 // ruling is the call ruling that accepts field of row (format 1's; nil for
@@ -439,6 +461,59 @@ const (
 // c42 is C-42's ruling (contract v20, coordinator 2026-10-03 ~13:10).
 const c42 = "C-42: format 1 orders the lane page by the timestamp of the copy it happens to serve (an arbitrary one, C-12); format 4 pages the lane's records by its own order"
 
+// The C-43 rulings (contract v21, coordinator 2026-10-03 ~19:00) the
+// comparator accepts. C-43's must-fix items (B2: "<TYPE>@local" answers the
+// type's untagged records; B3: a relation never reads another feed) are
+// never accepted. G1 is C-42 (c42) on rows whose provenance is blank on both
+// formats (LaneKey.Members); G2 is N7 (c41N7) on X15's odd-named feed.
+const (
+	c43G3 = "C-43 G3: N3 on a cursor page cut at its limit: format 1's tagged-first order changes which records its cut page keeps; format 4's page is the seq-ordered prefix"
+	c43G4 = "C-43 G4: format 1 answers the SQL stream with no rows once odd-named feeds exist (its SQLite table names break on those characters), a format-1 artifact"
+	c43B3 = "C-43 B3 residual: format 1 answers a relation whose source equals another feed's but for case with its own order-dependent choice between the twins; format 4 reads the exact spelling's feed, else none"
+)
+
+// wholeCallRuling is call's F1Empty or CaseTwin ruling (nil: none).
+func (p Policy) wholeCallRuling(call string) *CallRuling {
+	for i := range p.Calls {
+		if r := &p.Calls[i]; (r.F1Empty || r.CaseTwin) && strings.Contains(call, r.Call) {
+			return r
+		}
+	}
+	return nil
+}
+
+// caseTwinAnswer reports a candidate answer CallRuling.CaseTwin accepts:
+// equal to want when want is set, else no rows, one error row, or one row
+// whose every value is 0 (a count of nothing).
+func caseTwinAnswer(rb, want []Row) bool {
+	if len(want) > 0 {
+		if len(rb) != len(want) {
+			return false
+		}
+		for i := range rb {
+			if strictText(rb[i]) != strictText(want[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(rb) == 0 {
+		return true
+	}
+	if len(rb) != 1 {
+		return false
+	}
+	if _, isErr := rb[0].lookup("err"); isErr {
+		return true
+	}
+	for _, f := range rb[0] {
+		if f.V != "0" {
+			return false
+		}
+	}
+	return len(rb[0]) > 0
+}
+
 // sameLaneRuling is call's SameLane ruling (nil: none).
 func (p Policy) sameLaneRuling(call string) *CallRuling {
 	for i := range p.Calls {
@@ -474,10 +549,18 @@ func tsRank(v string) (int64, bool) {
 // every one of format 1's rows above it the candidate lacks is ranked by a
 // copy the class wrote (a store-clock timestamp: format 4 serves another
 // copy of that record); a row of a record both pages hold is format 1's row
-// but for the copy. It returns "" when the page is such a page, else why not.
+// but for the copy. A row is a record of the lane by its provenance, or,
+// where the rows carry none on either format (C-43 G1: every row of both
+// pages blank), by its CID among the lane's records (lane.Members). It
+// returns "" when the page is such a page, else why not.
 func sameLanePage(ra, rb []Row, lane LaneKey, key string, member func(Row) bool) string {
 	if len(ra) == 0 || len(ra) != len(rb) {
 		return fmt.Sprintf("%d rows, format 1 %d", len(rb), len(ra))
+	}
+	blank := func(r Row) bool { return r.Get("provider") == "" && r.Get("source") == "" && r.Get("batch") == "" }
+	byCID := lane.Members != nil
+	for _, r := range append(append([]Row(nil), ra...), rb...) {
+		byCID = byCID && blank(r)
 	}
 	cut, ok := tsRank(ra[len(ra)-1].Get(key))
 	if !ok {
@@ -491,7 +574,12 @@ func sameLanePage(ra, rb []Row, lane LaneKey, key string, member func(Row) bool)
 	for i, r := range rb {
 		cid := r.Get("cid")
 		in[cid] = true
-		if r.Get("provider") != lane.Provider || r.Get("source") != lane.Source || r.Get("batch") != lane.Batch {
+		switch {
+		case byCID:
+			if !lane.Members[cid] {
+				return fmt.Sprintf("row %d (%s) is not among the lane's records", i, cid)
+			}
+		case r.Get("provider") != lane.Provider || r.Get("source") != lane.Source || r.Get("batch") != lane.Batch:
 			return fmt.Sprintf("row %d (%s) is not a record of the lane", i, cid)
 		}
 		if !member(r) {
@@ -671,6 +759,100 @@ func taggedFirstOrder(ra, rb []Row) (out []Row, moved, ok bool) {
 		moved = moved || pos != k
 	}
 	return out, moved, true
+}
+
+// taggedFirstCut is CallRuling.TaggedFirst with Cut on a page both formats
+// cut at the call's limit (C-43 G3). Format 1's page is its tagged records
+// by rowid, then its untagged ones in the rows the limit leaves; format 4's
+// is the records by seq up to the limit. So each page may hold records the
+// other cut: format 4's are untagged records format 1's tagged rows crowded
+// out (after every untagged record format 1 lists), or tagged records past
+// all of format 1's (then format 1 lists no record format 4 lacks); format
+// 1's are tagged records past format 4's cut (the tail of its tagged part).
+// The records both hold must come in an interleaving of format 1's tagged
+// and untagged orders (taggedFirstOrder). rawA and rawB are the answers' row
+// counts before the collapse and the per-feed alignment. It returns both
+// pages' common records, the candidate's in format 1's order, to be compared
+// field by field; ok is false when the pages are not such pages.
+func taggedFirstCut(ra, rb []Row, rawA, rawB, limit int) (fa, fb []Row, note string, ok bool) {
+	if limit <= 0 || rawA != limit || rawB != limit {
+		return nil, nil, "", false
+	}
+	tagged := func(r Row) bool { return r.Get("provider") != "" || r.Get("source") != "" || r.Get("batch") != "" }
+	inA, inB := map[string]int{}, map[string]bool{}
+	for i, r := range ra {
+		c := r.Get("cid")
+		if _, dup := inA[c]; c == "" || dup {
+			return nil, nil, "", false
+		}
+		inA[c] = i
+	}
+	for _, r := range rb {
+		c := r.Get("cid")
+		if c == "" || inB[c] {
+			return nil, nil, "", false
+		}
+		inB[c] = true
+	}
+	// Format 1's records both pages hold, in its tagged and untagged orders;
+	// what only format 1 holds must be the tail of its tagged part.
+	var tc, uc []int
+	onlyA, tail := 0, false
+	for i, r := range ra {
+		common := inB[r.Get("cid")]
+		switch {
+		case !common && !tagged(r):
+			return nil, nil, "", false // an untagged record format 4 lacks
+		case !common:
+			onlyA, tail = onlyA+1, true
+		case tagged(r) && tail:
+			return nil, nil, "", false // a common tagged record after one format 4 lacks
+		case tagged(r):
+			tc = append(tc, i)
+		default:
+			uc = append(uc, i)
+		}
+	}
+	pos := make([]int, 0, len(tc)+len(uc)) // format 1's index of each candidate common row
+	ti, ui, onlyB := 0, 0, 0
+	sawOnlyUntagged, sawOnlyTagged := false, false
+	for _, r := range rb {
+		i, common := inA[r.Get("cid")]
+		switch {
+		case !common && !tagged(r):
+			onlyB++
+			sawOnlyUntagged = true
+		case !common:
+			onlyB++
+			sawOnlyTagged = true
+		case ti < len(tc) && tc[ti] == i:
+			if sawOnlyTagged {
+				return nil, nil, "", false // format 4's own tagged record before format 1's
+			}
+			pos, ti = append(pos, i), ti+1
+		case ui < len(uc) && uc[ui] == i:
+			if sawOnlyUntagged {
+				return nil, nil, "", false // format 4's own untagged record before format 1's
+			}
+			pos, ui = append(pos, i), ui+1
+		default:
+			return nil, nil, "", false // not an interleaving of format 1's two orders
+		}
+	}
+	if sawOnlyTagged && onlyA > 0 {
+		return nil, nil, "", false
+	}
+	sort.Ints(pos)
+	byCID := map[string]Row{}
+	for _, r := range rb {
+		byCID[r.Get("cid")] = r
+	}
+	for _, i := range pos {
+		fa = append(fa, ra[i])
+		fb = append(fb, byCID[ra[i].Get("cid")])
+	}
+	return fa, fb, fmt.Sprintf("both pages cut at %d rows: %d records in both, %d only format 4 lists (records format 1's tagged rows crowded out), %d only format 1 lists (tagged records past format 4's cut)",
+		limit, len(pos), onlyB, onlyA), true
 }
 
 // laneField is a head field's name under C-10: a tag-filtered count or head
@@ -919,6 +1101,20 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			continue
 		}
 		ra, rb := aliased(a.Rows, pol.CIDAliases), b.Rows
+		if wr := pol.wholeCallRuling(a.Call); wr != nil {
+			switch {
+			case wr.F1Empty && len(ra) == 0 && len(rb) > 0:
+				v.F1Rows, v.SRows = v.F1Rows+len(ra), v.SRows+len(rb)
+				forced, rulings[wr.Why] = true, true
+				v.Notes = append(v.Notes, fmt.Sprintf("%s: format 1 answers no rows, format 4 %d: %s", a.Call, len(rb), wr.Why))
+				continue
+			case wr.CaseTwin && !sameMultiset(ra, rb) && caseTwinAnswer(rb, wr.Want):
+				v.F1Rows, v.SRows = v.F1Rows+len(ra), v.SRows+len(rb)
+				forced, rulings[wr.Why] = true, true
+				v.Notes = append(v.Notes, fmt.Sprintf("%s: format 1 answers another case twin's rows; format 4's answer is the exact spelling's (or none): %s", a.Call, wr.Why))
+				continue
+			}
+		}
 		if kept, why := pol.absentRows(a.Call, ra); len(why) > 0 {
 			v.Notes = append(v.Notes, fmt.Sprintf("%s: %d of format 1's rows name a standard or a record format 4 holds nothing of", a.Call, len(ra)-len(kept)))
 			ra, forced = kept, true
@@ -967,9 +1163,17 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 				}
 			}
 			if tf != nil {
-				if out, moved, ok := taggedFirstOrder(ra, rb); ok && moved {
+				out, moved, ok := taggedFirstOrder(ra, rb)
+				switch {
+				case ok && moved:
 					rb, forced, rulings[tf.Why] = out, true, true
 					v.Notes = append(v.Notes, a.Call+": format 4's seq order interleaves format 1's tagged and untagged parts, each in format 1's order")
+				case !ok && tf.Cut > 0:
+					if fa, fb, note, cut := taggedFirstCut(ra, rb, len(a.Rows), len(b.Rows), tf.Cut); cut {
+						ra, rb, forced = fa, fb, true
+						rulings[tf.Why], rulings[c43G3] = true, true
+						v.Notes = append(v.Notes, a.Call+": "+note)
+					}
 				}
 			}
 		}

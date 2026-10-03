@@ -3,12 +3,14 @@ package format4proof
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -206,6 +208,110 @@ func (c *cov) laneReads(schema, provider, source, batch string) []Call {
 			return ValueRow("n", strconv.Itoa(n), "more", strconv.FormatBool(more)), err
 		}),
 	}
+}
+
+// localReads are a type's "<TYPE>@local" reads (C-43 B2: its untagged
+// records, format 1's "local" partition): the relation's count and its
+// sandboxed and raw streams (every frame compared) and, for OMM, the epoch
+// stream of source "local" for each profile (localEpochTimes): the objects
+// it answers. The class reads through format 1's engine hot window
+// (coverageNeedsSQL).
+func (c *cov) localReads(typ string, nearest float64) []Call {
+	rel := fmt.Sprintf(`"%s@local"`, typ)
+	count, data := "SELECT COUNT(*) FROM "+rel, "SELECT _data FROM "+rel
+	frames := func(b []byte) ([]Row, error) {
+		rows, err := FrameRows(b)
+		if err != nil {
+			return nil, err
+		}
+		return unorderedDigest(rows), nil
+	}
+	calls := []Call{
+		c.rowsCall("SQL "+count, "", func(s *storage.FlatSQLStore) ([]Row, error) {
+			payload, _, _, err := s.QuerySandboxedJSON(count, flatsqlrt5m)
+			if err != nil {
+				return nil, err
+			}
+			return JSONRows(payload)
+		}),
+		c.rowsCall("SQL stream "+data, "", func(s *storage.FlatSQLStore) ([]Row, error) {
+			st, err := s.QuerySandboxedStream(data, flatsqlrt5m)
+			if err != nil {
+				return nil, err
+			}
+			return frames(st.Bytes)
+		}),
+		c.rowsCall("QueryRawStream "+data, "", func(s *storage.FlatSQLStore) ([]Row, error) {
+			st, err := s.QueryRawStream(data)
+			if err != nil {
+				return nil, err
+			}
+			return frames(st.Bytes)
+		}),
+	}
+	if typ != "OMM" {
+		return calls
+	}
+	for _, p := range localEpochTimes(nearest) {
+		calls = append(calls, c.rowsCall(fmt.Sprintf("QueryEpochRawStream %s.fbs@local %s %.1f limit=0 (objects)", typ, p.profile, p.at), typ+".fbs",
+			func(s *storage.FlatSQLStore) ([]Row, error) {
+				st, err := s.QueryEpochRawStream(typ+".fbs", "local", p.profile, p.at, 0)
+				if err != nil {
+					return nil, err
+				}
+				return ommFrameObjects(st.Bytes)
+			}))
+	}
+	return calls
+}
+
+// localEpochTimes are the local epoch streams' profiles and times: nearest
+// at the given time, as_of after and forward before every record. Format 1
+// ranks and filters its epoch stream by USER_DEFINED_EPOCH_TIMESTAMP, format
+// 4 by the type's epoch rule (R18, r18Accepted), and a clone keeps its
+// seed's USER_DEFINED_EPOCH_TIMESTAMP (CloneOf shifts the ISO times only),
+// so at these times every local record qualifies on both formats and the
+// objects answered are the local file's (one record each), whichever record
+// of an object each format ranks first.
+func localEpochTimes(nearest float64) []struct {
+	profile string
+	at      float64
+} {
+	return []struct {
+		profile string
+		at      float64
+	}{{"nearest", nearest}, {"as_of", 4102444800.5}, {"forward", 1.5}}
+}
+
+// ommFrameObjects is an OMM frame stream ([u32le size][record]...) as the
+// frame count and the records' NORAD_CAT_IDs, sorted.
+func ommFrameObjects(b []byte) ([]Row, error) {
+	var ids []int
+	for n := 0; len(b) > 0; n++ {
+		if len(b) < 4 {
+			return nil, fmt.Errorf("frame %d: %d trailing bytes", n, len(b))
+		}
+		size := int(binary.LittleEndian.Uint32(b))
+		if len(b) < 4+size {
+			return nil, fmt.Errorf("frame %d: size %d past the stream end", n, size)
+		}
+		rec := b[4 : 4+size]
+		b = b[4+size:]
+		if len(rec) > 8 && int(binary.LittleEndian.Uint32(rec)) == len(rec)-4 {
+			rec = rec[4:] // a size-prefixed buffer
+		}
+		id, ok := ommNorad(rec)
+		if !ok {
+			return nil, fmt.Errorf("frame %d: not an OMM record", n)
+		}
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+	out := []Row{ValueRow("frames", strconv.Itoa(len(ids)))}
+	for _, id := range ids {
+		out = append(out, ValueRow("norad", strconv.Itoa(id)))
+	}
+	return out, nil
 }
 
 // typeReads are a type's counts and head, its newest records and its first
@@ -434,7 +540,7 @@ func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 		// theirs: the XYZ table (U1, X01), the dangling tags (U2, X08), the
 		// KMF lane bytes (U5, X04) and the CAT lane bytes (U6, X02).
 		sh = xmSetAside(laneBytes(laneBytes(u2Rows(u1Rows(sh, ""), ""), "", c39U5, "KMF.fbs"), "", c39U6, "CAT.fbs"))
-		out = append(out, xmC41(sh, storage.ComputeCID(x05Oversized(omm))))
+		out = append(out, xmC43(xmC41(sh, storage.ComputeCID(x05Oversized(omm))), c.in))
 	}
 	return out
 }
@@ -483,7 +589,42 @@ func xmC41(sh Shape, bigCID string) Shape {
 	// C-42: X08's page of the fixture's newest OMM lane, which X06's routed
 	// copy of one of its records ranks on format 1.
 	add(CallRuling{Call: fmt.Sprintf("X08: lane tagged OMM.fbs %s/celestrak-gp/%s", FixtureProvider, OMMLatestBatch), Why: c42,
-		SameLane: &LaneKey{FixtureProvider, "celestrak-gp", OMMLatestBatch}})
+		SameLane: &LaneKey{Provider: FixtureProvider, Source: "celestrak-gp", Batch: OMMLatestBatch}})
+	return sh
+}
+
+// xmC43 is C-43's accepted items on the migrated store's reads:
+//   - G1: C-42's X08 page (xmC41) where its rows carry no provenance on
+//     either format: lane membership by CID, among the fixture's b052
+//     records (the inputs);
+//   - G2: N7 on X15's "x/../local" feed, whose Delete restamped the lane on
+//     format 1 (the migration carries the tag time);
+//   - G3: N3 on the X01 cursor pages that both formats cut at their limit;
+//   - G4: format 1's empty answer to X09's SQL stream once X15's feeds exist.
+func xmC43(sh Shape, in *Inputs) Shape {
+	for i := range sh.Policy.Calls {
+		r := &sh.Policy.Calls[i]
+		if r.SameLane != nil && in != nil && r.SameLane.Batch == OMMLatestBatch {
+			members := make(map[string]bool, len(in.B052CIDs))
+			for _, id := range in.B052CIDs {
+				members[id] = true
+			}
+			lane := *r.SameLane
+			lane.Members = members
+			r.SameLane = &lane
+		}
+		if r.TaggedFirst && strings.HasPrefix(r.Call, "X01: cursor ") {
+			r.Cut = 50 // the X01 cursor reads' limit
+		}
+	}
+	odd := feedNameCases[2] // "x/../local"
+	add := func(rs ...CallRuling) { sh.Policy.Calls = append(sh.Policy.Calls, rs...) }
+	add(CallRuling{Call: "SourceBatchProgress", Why: c41N7, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: "OMM.fbs", Source: odd.Source, Batch: x15BatchA},
+		CallRuling{Call: "ProducerSourceProgress", Why: c41N7, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: "OMM.fbs", Source: odd.Source})
+	for _, read := range []string{"X15: lane snapshot ", "X15: lane head "} {
+		add(CallRuling{Call: fmt.Sprintf("%sOMM.fbs %s/%s/", read, odd.Provider, odd.Source), Why: c41N7, Fields: []string{"max_updated", "max_created"}})
+	}
+	add(CallRuling{Call: "X09: SQL stream SELECT _data FROM OMM WHERE NORAD_CAT_ID = ?1", Why: c43G4, F1Empty: true})
 	return sh
 }
 
@@ -554,6 +695,7 @@ func mergePolicy(a, b Policy) Policy {
 // and cursors read back.
 func (c *cov) x01(omm [][]byte) []Shape {
 	const class = "X01"
+	coverageNeedsSQL[class] = true // the "OMM@local" reads
 	fresh := clonesOf("OMM", omm, 0, 5, 901)
 	held := omm[10:13]
 	fresh2 := clonesOf("OMM", omm, 20, 23, 902)
@@ -596,6 +738,12 @@ func (c *cov) x01(omm [][]byte) []Shape {
 		}),
 	}
 	reads = append(reads, c.typeReads("OMM.fbs")...)
+	// The untagged records as "OMM@local" (C-43 B2), the epoch stream's
+	// nearest half a minute after one of them. The fixture holds no
+	// untagged record and the class's records are its objects later, so a
+	// type-wide answer (every fixture object) cannot pass for the local one.
+	at, _ := ommEpoch(fresh[2])
+	reads = append(reads, c.localReads("OMM", float64(at)+30.5)...)
 	reads = append(reads, c.summaries(gpPeer, covPeer)...)
 	return []Shape{rule(covShape(class, "storeBatch untagged: writes", "OMM.fbs", writes...), "StoreBatch unknown type", c39U1, "n", "err"),
 		u1Rows(covShape(class, "storeBatch untagged: read back", "OMM.fbs", reads...), ""),
@@ -1636,13 +1784,26 @@ func (c *cov) x14() []Shape {
 // again. Format 4 keeps each feed in the file the engine names for it
 // (feednames.go proves the files); every answer must equal format 1's. XM
 // carries these feeds through store-migrate --to 4.
+// x15BatchA is X15's first batch of every feed.
+const x15BatchA = "OMM-cov-names-a"
+
 func (c *cov) x15(omm [][]byte) []Shape {
 	const class = "X15"
 	coverageNeedsSQL[class] = true
-	const batchA, batchB = "OMM-cov-names-a", "OMM-cov-names-b"
+	const batchA, batchB = x15BatchA, "OMM-cov-names-b"
 	var writes, reads []Call
 	var all []string
 	ids := make([][]string, len(feedNameCases))
+	count := func(source string) Call {
+		q := fmt.Sprintf(`SELECT COUNT(*) FROM "OMM@%s"`, source)
+		return c.rowsCall("SQL "+q, "", func(s *storage.FlatSQLStore) ([]Row, error) {
+			payload, _, _, err := s.QuerySandboxedJSON(q, flatsqlrt5m)
+			if err != nil {
+				return nil, err
+			}
+			return JSONRows(payload)
+		})
+	}
 	for i, f := range feedNameCases {
 		recs := clonesOf("OMM", omm, 140+3*i, 143+3*i, 920)
 		ids[i] = cidsOf(recs)
@@ -1651,15 +1812,13 @@ func (c *cov) x15(omm [][]byte) []Shape {
 		t.ProviderID = f.Provider
 		writes = append(writes, c.storeBatch("store "+f.Why, "OMM.fbs", recs, gpPeer, nil, &t))
 		reads = append(reads, c.laneReads("OMM.fbs", f.Provider, f.Source, "")...)
-		q := fmt.Sprintf(`SELECT COUNT(*) FROM "OMM@%s"`, f.Source)
-		reads = append(reads, c.rowsCall("SQL "+q, "", func(s *storage.FlatSQLStore) ([]Row, error) {
-			payload, _, _, err := s.QuerySandboxedJSON(q, flatsqlrt5m)
-			if err != nil {
-				return nil, err
-			}
-			return JSONRows(payload)
-		}))
+		reads = append(reads, count(f.Source))
 	}
+	// C-43 B3: a relation's source matches a feed's by its exact spelling
+	// first, then by a unique case-insensitive match (the spaces feed in
+	// capitals), else none: "CELESTRAK-GP" spells neither twin (the
+	// fixture's celestrak-gp, the class's Celestrak-GP) exactly.
+	reads = append(reads, count(strings.ToUpper(feedNameCases[0].Source)), count(strings.ToUpper(caseTwinSource)))
 	// The second batch of the first feed, its supersede, and a delete in the
 	// "/../" feed.
 	sup, del := feedNameCases[0], feedNameCases[2]
@@ -1686,5 +1845,12 @@ func (c *cov) x15(omm [][]byte) []Shape {
 	calls = append(calls, c.laneReads("OMM.fbs", sup.Provider, sup.Source, batchB)...)
 	calls = append(calls, c.laneReads("OMM.fbs", del.Provider, del.Source, "")...)
 	calls = append(calls, c.summaries(gpPeer)...)
-	return []Shape{covShape(class, "feed names that need escaping", "OMM.fbs", calls...)}
+	sh := covShape(class, "feed names that need escaping", "OMM.fbs", calls...)
+	// The B3 residual: format 1 answers a case twin's relation with its own
+	// order-dependent choice between the twins; format 4 answers the exact
+	// spelling's feed (its 3 records), and none for a spelling of neither.
+	sh.Policy.Calls = append(sh.Policy.Calls,
+		CallRuling{Call: fmt.Sprintf(`SQL SELECT COUNT(*) FROM "OMM@%s"`, caseTwinSource), Why: c43B3, CaseTwin: true, Want: []Row{ValueRow("COUNT(*)", "3")}},
+		CallRuling{Call: fmt.Sprintf(`SQL SELECT COUNT(*) FROM "OMM@%s"`, strings.ToUpper(caseTwinSource)), Why: c43B3, CaseTwin: true})
+	return []Shape{sh}
 }
