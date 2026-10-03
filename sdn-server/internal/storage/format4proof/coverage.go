@@ -904,23 +904,34 @@ func (c Config) driveXM(ctx context.Context, logf Logf) error {
 	if code, err := migrateVerb(ctx, c.SDNBin, store, invLog, "--inventory"); err != nil {
 		probs = append(probs, fmt.Sprintf("store-migrate --to 4 --inventory exited %d: %v", code, err))
 	}
-	// C-39 U1: XM writes a record of a schema with no standard (X01); the
-	// inventory lists its table, the migration refuses to run without
-	// --drop-unregistered and changes nothing, then runs naming it.
+	// C-39 U1: XM writes a record of a schema with no standard (X01) and a
+	// record above format 4's largest storable record (X05, C-6). The
+	// inventory lists both; the migration refuses to run without
+	// --drop-unregistered, then without --drop-oversized, each time changing
+	// nothing, then runs naming them.
 	var drop []string
-	if unregistered, err := inventoryUnregistered(invLog); err != nil {
+	if inv, err := inventoryDrops(invLog); err != nil {
 		probs = append(probs, err.Error())
-	} else if len(unregistered) == 0 {
-		probs = append(probs, "C-39 U1: the inventory lists no table of a schema with no standard (XM writes one: X01 StoreBatch unknown type)")
+	} else if len(inv.Unregistered) == 0 || len(inv.Oversized) == 0 {
+		probs = append(probs, fmt.Sprintf("C-39 U1: the inventory lists %d tables of a schema with no standard and %d oversized records (XM writes one of each: X01 StoreBatch unknown type, X05's 9 MiB record)",
+			len(inv.Unregistered), len(inv.Oversized)))
 	} else {
-		ws.Extra["unregistered_tables"] = unregistered
-		probs = append(probs, xmRefusal(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-refused.log"))...)
-		names := make([]string, 0, len(unregistered))
-		for t := range unregistered {
+		ws.Extra["unregistered_tables"], ws.Extra["oversized_records"] = inv.Unregistered, inv.Oversized
+		names := make([]string, 0, len(inv.Unregistered))
+		for t := range inv.Unregistered {
 			names = append(names, t)
 		}
 		sort.Strings(names)
-		drop = []string{"--drop-unregistered", strings.Join(names, ",")}
+		var cids []string
+		for _, o := range inv.Oversized {
+			if !contains(cids, o.CID) {
+				cids = append(cids, o.CID)
+			}
+		}
+		unreg := []string{"--drop-unregistered", strings.Join(names, ",")}
+		probs = append(probs, xmRefusal(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-refused.log"), "--drop-unregistered")...)
+		probs = append(probs, xmRefusal(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-refused-oversized.log"), "--drop-oversized", unreg...)...)
+		drop = append(unreg, "--drop-oversized", strings.Join(cids, ","))
 	}
 	mr, _, err := migrateRun(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-migrate.log"), 0, drop...)
 	ws.Extra["migrate_s"] = mr.Wall.Seconds()
@@ -948,39 +959,48 @@ func (c Config) driveXM(ctx context.Context, logf Logf) error {
 	return firstErr
 }
 
-// inventoryUnregistered reads store-migrate --to 4 --inventory's
-// unregistered_tables (table -> records) from its log.
-func inventoryUnregistered(logPath string) (map[string]int64, error) {
+// xmInventory is what store-migrate --to 4 --inventory lists that the
+// migration does not carry: tables of a schema with no standard (table ->
+// records) and records above the largest storable record.
+type xmInventory struct {
+	Unregistered map[string]int64 `json:"unregistered_tables"`
+	Oversized    []struct {
+		CID   string `json:"cid"`
+		Table string `json:"table"`
+		Bytes int64  `json:"bytes"`
+	} `json:"oversized_records"`
+}
+
+// inventoryDrops reads xmInventory from the inventory's log.
+func inventoryDrops(logPath string) (xmInventory, error) {
+	var inv struct {
+		Extra xmInventory `json:"extra"`
+	}
 	b, err := os.ReadFile(logPath)
 	if err != nil {
-		return nil, err
+		return inv.Extra, err
 	}
 	i := strings.IndexByte(string(b), '{')
 	if i < 0 {
-		return nil, fmt.Errorf("C-39 U1: no inventory in %s", logPath)
-	}
-	var inv struct {
-		Extra struct {
-			Unregistered map[string]int64 `json:"unregistered_tables"`
-		} `json:"extra"`
+		return inv.Extra, fmt.Errorf("C-39 U1: no inventory in %s", logPath)
 	}
 	if err := json.NewDecoder(strings.NewReader(string(b[i:]))).Decode(&inv); err != nil {
-		return nil, fmt.Errorf("C-39 U1: the inventory in %s: %w", logPath, err)
+		return inv.Extra, fmt.Errorf("C-39 U1: the inventory in %s: %w", logPath, err)
 	}
-	return inv.Extra.Unregistered, nil
+	return inv.Extra, nil
 }
 
-// xmRefusal runs store-migrate --to 4 without --drop-unregistered on a
-// store whose inventory lists unregistered tables: it must fail, name the
-// flag, and leave the store a format-1 store with no migration journal and
-// no fsql4/ (C-39 U1). It returns the problems.
-func xmRefusal(ctx context.Context, bin, store, logPath string) []string {
+// xmRefusal runs store-migrate --to 4 with args but without flag on a store
+// whose inventory lists what flag must name: it must fail, name the flag,
+// and leave the store a format-1 store with no migration journal and no
+// fsql4/ (C-39 U1). It returns the problems.
+func xmRefusal(ctx context.Context, bin, store, logPath, flag string, args ...string) []string {
 	var probs []string
-	if _, _, err := migrateRun(ctx, bin, store, logPath, 0); err == nil {
-		return []string{"C-39 U1: store-migrate --to 4 ran without --drop-unregistered on a store holding records of a schema with no standard"}
+	if _, _, err := migrateRun(ctx, bin, store, logPath, 0, args...); err == nil {
+		return []string{fmt.Sprintf("C-39 U1: store-migrate --to 4 %v ran without %s", args, flag)}
 	}
-	if b, err := os.ReadFile(logPath); err != nil || !strings.Contains(string(b), "--drop-unregistered") {
-		probs = append(probs, fmt.Sprintf("C-39 U1: the refusal does not name --drop-unregistered (log %s)", logPath))
+	if b, err := os.ReadFile(logPath); err != nil || !strings.Contains(string(b), flag) {
+		probs = append(probs, fmt.Sprintf("C-39 U1: the refusal does not name %s (log %s)", flag, logPath))
 	}
 	if m, err := marker.Read(store); err != nil || m.Format4() || !m.LegacyControlFile {
 		probs = append(probs, fmt.Sprintf("C-39 U1: the refused migration changed the store's markers: %+v %v", m, err))
