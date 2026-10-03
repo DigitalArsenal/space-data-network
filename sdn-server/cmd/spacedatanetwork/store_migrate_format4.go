@@ -240,7 +240,7 @@ type migrate4Progress struct {
 	Tags       int64                    `json:"tags"`
 	Identities int64                    `json:"identities"`
 	OwnBytes   int64                    `json:"own_bytes"` // copies whose bytes differ from their record's first copy (each keeps its own)
-	RecordTS   int64                    `json:"record_ts"` // copies whose ts differs from their record's first copy (stored with the record's, C-22)
+	RecordTS   int64                    `json:"record_ts"` // copies whose ts differs from their record's first copy (each keeps its own, C-39 E6)
 	CopyDigest migrateDigest            `json:"copy_digest"`
 	TagDigest  migrateDigest            `json:"tag_digest"`
 }
@@ -1125,10 +1125,11 @@ func (m *migrator4) pageBatches(schema string, pg *migrate4Page, tags *migrate4T
 				tagIndex[ti] = map[format4.Tag]int{}
 			}
 			// Every copy keeps its OWN stored bytes (stored bytes never change;
-			// sealed envelopes of one CID legitimately differ). The ts is the
-			// record's, its first copy's (C-22: one record per seq). The
-			// partition, peer and signature stay the copy's own.
-			in := format4.In{CID: r.CID, Plain: r.Plain, TS: first.Timestamp, Sig: legacySignature(r.SignatureHex), Seq: e.RowID}
+			// sealed envelopes of one CID legitimately differ) and its own ts
+			// (format 1's routed copies hold their writer's clock, C-39 E6;
+			// every other copy mirrors its record's). The partition, peer and
+			// signature stay the copy's own.
+			in := format4.In{CID: r.CID, Plain: r.Plain, TS: r.Timestamp, Sig: legacySignature(r.SignatureHex), Seq: e.RowID}
 			if r.Sealed {
 				in.Sealed = r.Stored
 			}
@@ -1161,7 +1162,7 @@ func (m *migrator4) pageBatches(schema string, pg *migrate4Page, tags *migrate4T
 			c.Rows++
 			c.Bytes += int64(len(r.Stored))
 			p.Copies[t.Name] = c
-			p.CopyDigest.add(copyDigestOf(e.RowID, t.Token, peer, first.Timestamp, in.Sig, r.Stored))
+			p.CopyDigest.add(copyDigestOf(e.RowID, t.Token, peer, r.Timestamp, in.Sig, r.Stored))
 		}
 		p.Held++
 		p.MaxSeq = e.RowID
@@ -1330,7 +1331,7 @@ func (m *migrator4) tallyReport() {
 		m.note("%d copies hold bytes that differ from their record's first copy; each was sent with its own, and the check fails if format 4 stored other bytes", m.rep.OwnBytes)
 	}
 	if m.rep.RecordTS > 0 {
-		m.note("%d copies hold a ts that differs from their record's first copy; format 4 stores the record's ts (C-22)", m.rep.RecordTS)
+		m.note("%d copies hold a ts that differs from their record's first copy; each keeps its own (C-39 E6)", m.rep.RecordTS)
 	}
 	m.rep.Rejected, m.rep.Oversized = nil, nil
 	for _, r := range m.j.Rejected {

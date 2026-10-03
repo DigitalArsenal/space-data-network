@@ -227,10 +227,10 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string, sl
 					wantPeer = tb.Token
 				}
 				if r.Seq != e.RowID || r.Peer != wantPeer || !bytes.Equal(r.Sig, legacySignature(lr.SignatureHex)) ||
-					r.TS != first.Timestamp || !bytes.Equal(r.Data, first.Stored) || r.Len != int64(len(first.Stored)) {
+					r.TS != lr.Timestamp || !bytes.Equal(r.Data, first.Stored) || r.Len != int64(len(first.Stored)) {
 					t.Fatalf("%s %s copy %s: format 4 seq %d peer %q sig %x ts %d len %d; format 1 rowid %d peer %q sig %q ts %d len %d",
 						schema, e.CID, tb.Token, r.Seq, r.Peer, r.Sig, r.TS, r.Len, e.RowID, lr.PeerID, lr.SignatureHex,
-						first.Timestamp, len(first.Stored))
+						lr.Timestamp, len(first.Stored))
 				}
 			}
 			if len(got[e.CID]) != countCopies(perTable, e.CID) {
