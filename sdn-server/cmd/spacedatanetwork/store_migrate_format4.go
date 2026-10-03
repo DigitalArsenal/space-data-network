@@ -718,12 +718,14 @@ func (m *migrator4) resumeActivation(ctx context.Context) error {
 // openSource opens the format-1 store (it takes the store lock) and reads
 // its shape.
 func (m *migrator4) openSource() error {
-	return m.openSourceAt(m.root)
+	return m.openSourceAt(m.root, m.root)
 }
 
-func (m *migrator4) openSourceAt(dir string) error {
+// openSourceAt opens the format-1 store in dir with the field-encryption
+// identity in identityDir (the data root: --verify-only reads pre-format4/).
+func (m *migrator4) openSourceAt(dir, identityDir string) error {
 	var err error
-	if m.src, err = storage.OpenMigrationSource(dir); err != nil {
+	if m.src, err = storage.OpenMigrationSourceWithIdentity(dir, identityDir); err != nil {
 		return fmt.Errorf("open the format-1 store (stop the daemon first): %w", err)
 	}
 	m.rep.SourceBytes = sourceBytes(dir)
@@ -1067,7 +1069,11 @@ func loadMigrate4Tags(src *storage.MigrationSource, schema string) (*migrate4Tag
 	ids := map[format4.Tag]uint32{}
 	err := src.SchemaTags(schema, func(cidText string, lt storage.LegacyTag) error {
 		d, err := cidDigest(cidText)
-		if err != nil {
+		if err != nil || !migrate4IdentityText(cidText) {
+			// Format 1 joins a tag to a record by the CID text: a text no
+			// record is keyed by (not a CIDv1 raw sha2-256 in its canonical
+			// form, nor a legacy sha256-hex identity; e.g. an upper-case CID
+			// UpsertSourceTags took) names no record.
 			x.skipped++
 			return nil
 		}
@@ -1311,10 +1317,11 @@ func (m *migrator4) pageBatches(schema string, pg *migrate4Page, tags *migrate4T
 }
 
 // partitionPeer is the peer a table's PUTs carry: the record's own peer when
-// it routes to the table (the engine derives the partition token from it, and
-// stores a row's peer only when it differs), else the table's token.
+// format 1 routes it to the table, no peer included (its "unattributed"
+// table; the engine derives the partition token from the peer, and stores a
+// row's peer only when it differs), else the table's token.
 func partitionPeer(t storage.LegacyTable, peer string) string {
-	if name, err := storage.ProducerStandardTableName(peer, t.Schema); err == nil && name == t.Name {
+	if name, err := storage.RoutedTableName(peer, t.Schema); err == nil && name == t.Name {
 		return peer
 	}
 	return t.Token
@@ -1370,7 +1377,7 @@ func (m *migrator4) copyAll(ctx context.Context, write bool) error {
 			m.logf("copying %s (%d producer tables, %d tag rows) from index rowid %d", it.schema, len(m.bySchema[it.schema]),
 				len(side.tags.rows), p.After)
 			if side.tags.skipped > 0 {
-				m.note("%s: %d tag rows name a CID that is not a CIDv1 raw sha2-256; no record carries them", it.schema, side.tags.skipped)
+				m.note("%s: %d tag rows name no record (a CID text that is not a canonical CIDv1 raw sha2-256 nor a sha256-hex identity); not migrated", it.schema, side.tags.skipped)
 			}
 		case it.page != nil && !write:
 			if _, err := m.pageBatches(it.schema, it.page, side.tags, side.idents, p); err != nil {
@@ -1495,7 +1502,7 @@ func (m *migrator4) verifyOnly(ctx context.Context) error {
 		return fmt.Errorf("--verify-only needs the store lock (stop the daemon): %w", err)
 	}
 	defer lock.Release()
-	if err := m.openSourceAt(filepath.Join(m.root, marker.PreFormat4Dir)); err != nil {
+	if err := m.openSourceAt(filepath.Join(m.root, marker.PreFormat4Dir), m.root); err != nil {
 		return err
 	}
 	if raw, err := os.ReadFile(m.jpath); err == nil {
