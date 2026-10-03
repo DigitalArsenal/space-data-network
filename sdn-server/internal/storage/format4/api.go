@@ -1,8 +1,17 @@
-// Package format4 is SDN's binding to store format 4, "p4": one SQLite file
-// per partition (producer x record type) in the FlatSQL engine, indexed by
-// arrival, source, object + epoch, epoch and CID (stack design
-// docs/architecture/flatsql-sqlite-partitions.md; build-out contract §5.2,
-// v11).
+// Package format4 is SDN's binding to store format 4, "p4": one SQLite table
+// file per source feed x standard in the FlatSQL engine (P/<TYPE>/<feed>.db,
+// the feed being the record's (provider, source); untagged records in
+// local.db), each indexed by arrival, object + epoch, epoch and CID (stack
+// design docs/architecture/flatsql-sqlite-partitions.md; build-out contract
+// §5.2, C-37, C-38). A row holds no provider or source string: they are the
+// file's feed, and the batch and publishing node are small per-file ids. A
+// feed file's CID index is the only one (C-38): a type has no per-record
+// index across its feeds, only a small registry of its feed files and their
+// counters, and nothing ties a record in one feed file to a record in
+// another. A record held by N feeds is a row set in each of them and answers
+// once per feed in type-wide reads, datasync pages and counts (C-38 (5)).
+// The C ABI and this API are unchanged by the feed layout: a tag still names
+// its (provider, source, batch, ...) and the engine files it by its feed.
 //
 // The engine is the published flatsql-p4-threads.wasm
 // (flatsqlrt/p4artifact.go): ONE threaded WasmEdge instance holds the writer
@@ -94,6 +103,9 @@ type Batch struct {
 	At      int64 // ingest tag instances' at; 0 = engine clock
 	Mode    Mode
 	Records []In
+	// OwnTS (tag 55): a COPY of a held record stores this write's TS, not
+	// the holder's (format 1's StoreRoutedByProducer, C-39 E6).
+	OwnTS bool
 }
 
 // Action is what a PUT did with one record.
@@ -166,6 +178,13 @@ const (
 	OrderSeqDesc Order = 2
 	OrderWDesc   Order = 3
 	OrderCID     Order = 4
+	// SCAN only (C-39 E2, E3): format 1's two-part pages, the tagged
+	// records (the feed files) in the order with the offset, then, without
+	// a lane filter, the untagged (local) records from the start, as many
+	// as the limit leaves.
+	OrderNewest Order = 5 // delivery time desc, CID asc; local: ts desc, CID asc (the raw default page)
+	OrderRecent Order = 6 // delivery time desc, seq desc; local: seq desc (QueryRecentRecords)
+	OrderWAsc   Order = 7 // w asc, CID asc (a raw page with a sync filter or a search)
 )
 
 // Class is a request's service class.
@@ -225,7 +244,9 @@ type Rec struct {
 	Tag                 *TagInstance // matched tag (§3.6); nil when none
 }
 
-// TagRow is a TAGS row: one per (cid, tag identity), merged over copies.
+// TagRow is a TAGS row: one per (cid, tag identity), merged over copies. A
+// record held by several feed files lists each file's instances, each with
+// that file's seq (C-38).
 type TagRow struct {
 	CID      string
 	Seq      int64
@@ -251,7 +272,8 @@ type CoverageBucket struct {
 	N, MinEpoch, MaxEpoch int64
 }
 
-// TypeSummary is a SUMMARY kind 1 row.
+// TypeSummary is a SUMMARY kind 1 row: sums over the type's feed files, so a
+// record held by N feeds counts N times (C-38 (5)).
 type TypeSummary struct {
 	Type                              string
 	Records, Copies, Bytes, CopyBytes int64
@@ -259,13 +281,18 @@ type TypeSummary struct {
 	MinTS, MaxTS, MaxSeq, Through     int64
 }
 
-// PartitionSummary is a SUMMARY kind 2 row.
+// PartitionSummary is a SUMMARY kind 2 row: one producer token of a type
+// (its copies summed over the type's feed files, a copy in N feed files N
+// times; Files counts those files).
 type PartitionSummary struct {
 	Type, Producer, Peer                        string
 	Records, Bytes, MinTS, MaxTS, MaxSeq, Files int64
 }
 
-// Lane is a SUMMARY kind 3 row: one live lane of one partition.
+// Lane is a SUMMARY kind 3 row: one live tag instance of one feed file
+// (provider and source from the file's feed; batch, content key, producer
+// peer and key from the instance). Producer is "" (C-37: a feed file holds
+// every producer's copies).
 type Lane struct {
 	Type, Producer string
 	Tag
