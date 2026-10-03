@@ -1,15 +1,18 @@
 package storage
 
-// format4_daemon.go — the daemon on store format 4, "p4": one SQLite file per
-// partition (producer x record type), in the FlatSQL engine (stack design
+// format4_daemon.go — the daemon on store format 4, "p4": one SQLite table
+// file per source feed x standard (P/<TYPE>/<provider@source>.db, untagged
+// records in P/<TYPE>/local.db), in the FlatSQL engine (stack design
 // docs/architecture/flatsql-sqlite-partitions.md §10, G7; build-out contract
-// §5.4, §5.5, C-32).
+// §5.4, §5.5, C-37). A row holds no provider or source string: the file is
+// the feed, and a row's batch and publishing node are small per-file ids.
 //
 // SDN_STORE_FORMAT=4 (or "sqlite", any case) selects it; unset is format 1
 // and "2" is format 2, both unchanged. NewFlatSQLStore then opens:
 //
 //   - THE ENGINE (internal/storage/format4): one threaded instance holding
-//     every record, its tags, the lane counters, the type indexes and the
+//     every record in its feed files, the per-file batch counters, the type
+//     indexes and the
 //     full-text index under <data>/fsql4/. Every record read and write of the
 //     node goes there through format4Backend (format4_daemon_writes.go,
 //     format4_daemon_reads.go). No record path takes s.mu or the control
@@ -277,7 +280,7 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		ccancel()
 	}
 
-	// The control instance lives beside the partitions.
+	// The control instance lives beside the feed files.
 	controlDir := filepath.Join(basePath, marker.Dir)
 	if err := os.MkdirAll(controlDir, 0o700); err != nil {
 		closeEngine()
