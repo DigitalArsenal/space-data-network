@@ -53,9 +53,9 @@ type recordBackend interface {
 	GetRecord(schemaName, cid string) (*Record, error)
 	GetSourceTags(schemaName, cid string) (SourceTags, error)
 	sourceTagsForCIDs(schemaName string, cids []string) (map[string]SourceTags, error)
-	// exportSourceTags is the tag of each exported record (format 1: its
-	// newest; format 2 prefers the export's own lane).
-	exportSourceTags(filter IndexedRecordQuery, cids []string) (map[string]SourceTags, error)
+	// exportSourceTags is the tag of each exported record, in order (format
+	// 1: its newest; format 2 prefers the export's own lane).
+	exportSourceTags(filter IndexedRecordQuery, records []*Record) ([]SourceTags, error)
 	QueryRawRecordRefsByRefs(schemaName string, refs []RawRecordRef) ([]*Record, error)
 	queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error)
 	QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record, error)

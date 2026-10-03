@@ -127,26 +127,30 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		return nil, fmt.Errorf("no records match export query")
 	}
 
-	cids := make([]string, 0, len(records))
-	for _, record := range records {
-		cids = append(cids, record.CID)
-	}
-	var sourceTags map[string]SourceTags
+	sourceTags := make([]SourceTags, len(records))
 	if s.rb != nil {
-		sourceTags, err = s.rb.exportSourceTags(filter, cids)
+		sourceTags, err = s.rb.exportSourceTags(filter, records)
 	} else {
-		sourceTags, err = s.sourceTagsForCIDs(filter.SchemaName, cids)
+		cids := make([]string, 0, len(records))
+		for _, record := range records {
+			cids = append(cids, record.CID)
+		}
+		var byCID map[string]SourceTags
+		byCID, err = s.sourceTagsForCIDs(filter.SchemaName, cids)
+		for i, c := range cids {
+			sourceTags[i] = byCID[c]
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load source tags: %w", err)
 	}
 
 	exportRecords := make([]DatasetExportRecord, 0, len(records))
-	for _, record := range records {
+	for i, record := range records {
 		exportRecords = append(exportRecords, DatasetExportRecord{
 			CID:        record.CID,
 			Data:       record.Data,
-			SourceTags: sourceTags[record.CID],
+			SourceTags: sourceTags[i],
 		})
 	}
 	export, err := ExportDatasetRecords(outputDir, filter, exportRecords)
