@@ -9,17 +9,17 @@ package storage
 //     with a lane filter carry each record once (format 1 repeated it once per
 //     matching tag row, A16); RowID is the record's seq, which for a migrated
 //     record IS format 1's sdn_record_index rowid;
-//   - a record's projected tag is the matched tag (§3.6): with a tag filter,
+//   - a raw page projects the record's matched tag (§3.6): with a tag filter,
 //     an instance that meets it, else the record's earliest; format 1
-//     projected one of its rows;
+//     repeated the record once per tag row (C-10). A window projects the
+//     record's newest tag and a ref meets the first tag in identity order,
+//     as format 1 does;
 //   - a sync-filtered or searched raw page off the cursor is in arrival
 //     order, paged by the engine (format 2's search order; format 1
 //     ordered it by window_at, then CID, which the engine's windows give
 //     newest first only and without a search), so an offset walk sees no
 //     record twice while records arrive;
-//   - GetRecord returns the lowest-pid copy (C-12);
-//   - a supersede is per partition (A2): a copy loses its last tag and goes
-//     while another producer's copy keeps the record live.
+//   - GetRecord returns the engine's first copy (C-12).
 // Everything else is format 1's answer: the stored bytes, CIDs, signatures,
 // source URLs, content keys and tag times; counts, windows (window_at DESC
 // then CID, or CID order), index pages and epoch rankings.
@@ -286,7 +286,7 @@ func f4LocalEPMs(filter RawRecordQuery, q format4.Query) bool {
 
 // ---- point reads -----------------------------------------------------------------------
 
-// GetRecord is the lowest-pid copy (C-12), its bytes opened.
+// GetRecord is the engine's first copy (C-12), its bytes opened.
 func (b format4Backend) GetRecord(schemaName, cid string) (*Record, error) {
 	if err := b.closed(); err != nil {
 		return nil, err
@@ -464,6 +464,15 @@ func (b format4Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRe
 	if err := errors.Join(getErr, tagsErr); err != nil {
 		return nil, fmt.Errorf("raw record ref query failed: %w", err)
 	}
+	// Format 1 meets a ref with the first of the record's tag rows that
+	// satisfies it, in its unique tag index's order: (provider, source, batch,
+	// content key, producer peer, producer key).
+	byIdentity := make(map[string][]format4.TagRow, len(tags))
+	for c, rs := range tags {
+		rs = slices.Clone(rs)
+		sort.SliceStable(rs, func(i, j int) bool { return f4IdentityLess(rs[i].Tag, rs[j].Tag) })
+		byIdentity[c] = rs
+	}
 	// A ref repeated in the request matches the same record: it is matched
 	// once, and each repeat gets its own copy.
 	ordered := make([]*Record, 0, len(normalized))
@@ -483,7 +492,7 @@ func (b format4Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRe
 			if err != nil {
 				return nil, err
 			}
-			ts := tags[ref.CID]
+			ts := byIdentity[ref.CID]
 			if len(ts) == 0 {
 				if rawRecordMatchesRef(rec, ref) {
 					matched = rec
@@ -518,6 +527,17 @@ func (b format4Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRe
 		ordered = append(ordered, matched)
 	}
 	return ordered, nil
+}
+
+// f4IdentityLess orders tags by their identity (format 1's unique tag index).
+func f4IdentityLess(a, c format4.Tag) bool {
+	for _, p := range [][2]string{{a.Provider, c.Provider}, {a.Source, c.Source}, {a.Batch, c.Batch}, {a.ContentKeyID, c.ContentKeyID},
+		{a.ProducerPeer, c.ProducerPeer}, {a.ProducerPubkey, c.ProducerPubkey}} {
+		if p[0] != p[1] {
+			return p[0] < p[1]
+		}
+	}
+	return false
 }
 
 // ---- raw records (datasync v1, /api/v1/data) -------------------------------------------
@@ -877,10 +897,36 @@ func (b format4Backend) FullTablePageWithCursor(query FullTablePageQuery) (FullT
 	return FullTablePageResult{Records: out, NextCursor: next}, nil
 }
 
-// f4QueryData is the newest records' opened bytes (Query, QueryAll,
-// QueryAllBounded). A SQL WHERE over format 1's record table has no
-// equivalent here.
-func (b format4Backend) f4QueryData(schemaName, whereClause string, limit, maxTotalBytes int) ([][]byte, error) {
+// f4QueryWhere is the engine query of one of the WHERE clauses the store's
+// own Query callers pass over format 1's record table (QueryWithPeerID,
+// QuerySince); any other SQL WHERE has no equivalent here.
+func f4QueryWhere(typ, whereClause string, args []interface{}) (format4.Query, error) {
+	q := format4.Query{Type: typ, Order: format4.OrderSeqAsc, Hydrate: true, Bulk: true}
+	switch strings.TrimSpace(whereClause) {
+	case "":
+		return q, nil
+	case "peer_id = ?":
+		if len(args) == 1 {
+			if peer, ok := args[0].(string); ok {
+				q.Peer = peer
+				return q, nil
+			}
+		}
+	case "timestamp > ?":
+		if len(args) == 1 {
+			if ts, ok := args[0].(int64); ok {
+				q.Preds = []format4.Pred{f4Pred(format4.FieldTS, format4.OpGt, format2.Int(ts))}
+				return q, nil
+			}
+		}
+	}
+	return q, fmt.Errorf("%w: a SQL WHERE over the legacy record table (%q)", ErrFormat4Unsupported, whereClause)
+}
+
+// f4QueryData is the newest records' opened bytes (QueryAll,
+// QueryAllBounded), or a Query WHERE's records (f4QueryWhere: format 1
+// answers those in no defined order).
+func (b format4Backend) f4QueryData(schemaName, whereClause string, args []interface{}, limit, maxTotalBytes int) ([][]byte, error) {
 	if err := b.closed(); err != nil {
 		return nil, err
 	}
@@ -888,10 +934,13 @@ func (b format4Backend) f4QueryData(schemaName, whereClause string, limit, maxTo
 	if err != nil {
 		return nil, err
 	}
+	q := format4.Query{Type: typ, Order: format4.OrderSeqDesc, Limit: int64(max(limit, 0)), Hydrate: true}
 	if strings.TrimSpace(whereClause) != "" {
-		return nil, fmt.Errorf("%w: a SQL WHERE over the legacy record table (%q)", ErrFormat4Unsupported, whereClause)
+		if q, err = f4QueryWhere(typ, whereClause, args); err != nil {
+			return nil, err
+		}
 	}
-	recs, err := b.d.api().Scan(b.d.ctx, format4.Query{Type: typ, Order: format4.OrderSeqDesc, Limit: int64(max(limit, 0)), Hydrate: true})
+	recs, err := b.d.api().Scan(b.d.ctx, q)
 	if errors.Is(err, format4.ErrNoType) {
 		return nil, nil
 	}
@@ -920,31 +969,170 @@ func (b format4Backend) f4QueryData(schemaName, whereClause string, limit, maxTo
 	return out, nil
 }
 
-func (b format4Backend) Query(schemaName, whereClause string, _ ...interface{}) ([][]byte, error) {
-	return b.f4QueryData(schemaName, whereClause, 0, 0)
+func (b format4Backend) Query(schemaName, whereClause string, args ...interface{}) ([][]byte, error) {
+	return b.f4QueryData(schemaName, whereClause, args, 0, 0)
 }
 
+// QueryAll is the newest records, at most 10,000 (format 1's cap).
 func (b format4Backend) QueryAll(schemaName string, limit int) ([][]byte, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	return b.f4QueryData(schemaName, "", limit, 0)
+	if limit > 10000 {
+		limit = 10000
+	}
+	return b.f4QueryData(schemaName, "", nil, limit, 0)
 }
 
 func (b format4Backend) QueryAllBounded(schemaName string, limit int, maxTotalBytes int) ([][]byte, error) {
-	return b.f4QueryData(schemaName, "", limit, maxTotalBytes)
+	return b.f4QueryData(schemaName, "", nil, limit, maxTotalBytes)
 }
 
-func (b format4Backend) QueryRoutedByStandard(string, int) ([]RoutedRecord, error) {
-	return nil, f4Unsupported("routed-table listings (the (producer, standard) tables are partitions)")
+// The routed listings: format 1 listed the rows of its (producer, standard)
+// tables, one per stored copy, newest source timestamp first. Format 4
+// keeps the copies in the feed files; the engine lists each type's newest
+// records (SCAN) and their copies (GET, every copy), a producer's own copies
+// by its token (SCAN with the producer filter). Rows are ordered by source
+// timestamp, newest first, then standard, newest arrival and producer.
+
+// f4RoutedRow is one copy as a routed row, with its record's seq.
+type f4RoutedRow struct {
+	RoutedRecord
+	seq int64
 }
 
-func (b format4Backend) QueryRoutedByProducer(string, int) ([]RoutedRecord, error) {
-	return nil, f4Unsupported("routed-table listings (the (producer, standard) tables are partitions)")
+// f4RoutedCopies is every copy of a type's newest limit records (0 = all),
+// or, with producer, that producer's copies of them.
+func (b format4Backend) f4RoutedCopies(typ, producer string, limit int) ([]f4RoutedRow, error) {
+	api, ctx := b.d.api(), b.d.ctx
+	recs, err := api.Scan(ctx, format4.Query{Type: typ, Producer: producer, Order: format4.OrderSeqDesc, Limit: int64(max(limit, 0)), Bulk: true})
+	if errors.Is(err, format4.ErrNoType) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []f4RoutedRow
+	if producer != "" {
+		for _, r := range recs {
+			out = append(out, f4RoutedRow{RoutedRecord{CID: r.CID, ProducerID: r.Producer, Standard: typ, PeerID: r.Peer, Timestamp: r.TS}, r.Seq})
+		}
+		return out, nil
+	}
+	cids := make([]string, len(recs))
+	for i, r := range recs {
+		cids[i] = r.CID
+	}
+	for start := 0; start < len(cids); start += 1024 {
+		copies, err := api.Get(ctx, typ, cids[start:min(start+1024, len(cids))], true, false)
+		if err != nil && !errors.Is(err, format4.ErrNoType) {
+			return nil, err
+		}
+		for _, c := range copies {
+			out = append(out, f4RoutedRow{RoutedRecord{CID: c.CID, ProducerID: c.Producer, Standard: typ, PeerID: c.Peer, Timestamp: c.TS}, c.Seq})
+		}
+	}
+	return out, nil
 }
 
-func (b format4Backend) QueryRoutedAll(int) ([]RoutedRecord, error) {
-	return nil, f4Unsupported("routed-table listings (the (producer, standard) tables are partitions)")
+// f4Routed orders routed rows and cuts them to limit (0 = all).
+func f4Routed(rows []f4RoutedRow, limit int) []RoutedRecord {
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, c := rows[i], rows[j]
+		switch {
+		case a.Timestamp != c.Timestamp:
+			return a.Timestamp > c.Timestamp
+		case a.Standard != c.Standard:
+			return a.Standard < c.Standard
+		case a.seq != c.seq:
+			return a.seq > c.seq
+		}
+		return a.ProducerID < c.ProducerID
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]RoutedRecord, len(rows))
+	for i, r := range rows {
+		out[i] = r.RoutedRecord
+	}
+	return out
+}
+
+// f4RoutedTypes are the types holding records, by name.
+func (b format4Backend) f4RoutedTypes() ([]string, error) {
+	types, err := b.f4TypeSummaries()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for typ, t := range types {
+		if t.Records > 0 {
+			out = append(out, typ)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (b format4Backend) QueryRoutedByStandard(schemaName string, limit int) ([]RoutedRecord, error) {
+	if err := b.closed(); err != nil {
+		return nil, err
+	}
+	typ, err := f4Type(schemaName)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := b.f4RoutedCopies(typ, "", limit)
+	if err != nil {
+		return nil, err
+	}
+	return f4Routed(rows, limit), nil
+}
+
+func (b format4Backend) QueryRoutedByProducer(producerID string, limit int) ([]RoutedRecord, error) {
+	if err := b.closed(); err != nil {
+		return nil, err
+	}
+	producer := sanitizeProducerID(producerID)
+	if producer == "" {
+		return nil, fmt.Errorf("producer id is required")
+	}
+	types, err := b.f4RoutedTypes()
+	if err != nil {
+		return nil, err
+	}
+	var rows []f4RoutedRow
+	for _, typ := range types {
+		got, err := b.f4RoutedCopies(typ, producer, limit)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, got...)
+	}
+	return f4Routed(rows, limit), nil
+}
+
+func (b format4Backend) QueryRoutedAll(limit int) ([]RoutedRecord, error) {
+	if err := b.closed(); err != nil {
+		return nil, err
+	}
+	types, err := b.f4RoutedTypes()
+	if err != nil {
+		return nil, err
+	}
+	var rows []f4RoutedRow
+	for _, typ := range types {
+		got, err := b.f4RoutedCopies(typ, "", limit)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, got...)
+	}
+	return f4Routed(rows, limit), nil
 }
 
 // ---- indexed windows (/api/v1/data, exports) --------------------------------------------
@@ -1025,11 +1213,37 @@ func (b format4Backend) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Recor
 	if err != nil {
 		return nil, fmt.Errorf("failed reading indexed record data: %w", err)
 	}
+	// Format 1's window projects (provider, source, batch) of the record's
+	// newest tag (its last written tag row), whatever tag filter chose the
+	// window: the record's tags come from TAGS.
+	cids := make([]string, len(out))
+	for i, r := range out {
+		cids[i] = r.CID
+	}
+	newest, err := b.f4NewestTags(filter.SchemaName, cids)
+	if err != nil {
+		return nil, fmt.Errorf("indexed query tags: %w", err)
+	}
 	for _, r := range out {
-		// Format 1's window projects (provider, source, batch) only.
-		t := r.SourceTags
+		t := newest[r.CID]
 		r.SourceTags = SourceTags{ProviderID: t.ProviderID, SourceName: t.SourceName, BatchID: t.BatchID}
 		r.RowID, r.MaterializedAt = 0, time.Time{}
+	}
+	return out, nil
+}
+
+// f4NewestTags is each record's newest tag (the latest at; format 1's last
+// written tag row), absent for a record with none.
+func (b format4Backend) f4NewestTags(schemaName string, cids []string) (map[string]SourceTags, error) {
+	rows, err := b.f4TagRows(schemaName, cids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]SourceTags, len(rows))
+	for c, rs := range rows {
+		if len(rs) > 0 {
+			out[c] = f4SourceTags(rs[0].Tag)
+		}
 	}
 	return out, nil
 }
@@ -1254,12 +1468,12 @@ func (b format4Backend) warmCounters() {
 	b.warmReaders()
 }
 
-// warmBudget bounds warmReaders: a store with hundreds of partitions warms
+// warmBudget bounds warmReaders: a store with hundreds of feed files warms
 // what fits and leaves the rest to the first reads.
 const warmBudget = 2 * time.Second
 
 // warmReaders runs one small read of each kind on every type with records,
-// a few types at once, so the engine opens the type's index and partition
+// a few types at once, so the engine opens the type's index and feed file
 // readers and prepares their statements at open rather than in a reader's
 // first call (a first index page took 4-36 ms, a warm one 0.6-1.4 ms). GET
 // and TAGS go at once, as a refs read sends them. A failure only leaves the
@@ -2110,12 +2324,19 @@ func (b format4Backend) CheckFullTextSearch(schema, search string) error {
 	return errors.New("Full-text search is unavailable for this schema")
 }
 
+// FullTextIndexState is the engine's state of the type's index; a type with
+// no records has none to build ("cold", as format 1 answers a schema nothing
+// has requested).
 func (b format4Backend) FullTextIndexState(schema string) string {
 	states, err := b.f4FTSStates()
 	if err != nil {
 		return "unavailable"
 	}
-	switch st := states[strings.TrimSuffix(normalizeSchemaNameForEpoch(schema), ".fbs")].State; st {
+	typ := strings.TrimSuffix(normalizeSchemaNameForEpoch(schema), ".fbs")
+	if n, err := b.f4TypeRecords(typ); err == nil && n == 0 {
+		return "cold"
+	}
+	switch st := states[typ].State; st {
 	case "ready", "building":
 		return st
 	}
@@ -2206,6 +2427,44 @@ func f4SandboxError(err error) error {
 	return fmt.Errorf("SQL error: %s", se.Msg)
 }
 
+// f4SandboxErr is f4SandboxError with format 1's answer to a statement that
+// names one of the node's control tables: the table exists in the node's
+// database and the sandbox does not authorize it (format 4's SQL surface
+// holds the record relations only, so its engine knows no such table).
+func (b format4Backend) f4SandboxErr(err error) error {
+	var se *format4.StatusError
+	if errors.As(err, &se) {
+		if name, ok := f4NoSuchTable(se.Msg); ok && b.f4ControlTable(name) {
+			return &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeNotAuthorized,
+				Message: "sandbox: not-authorized: " + name + " is not a record relation"}
+		}
+	}
+	return f4SandboxError(err)
+}
+
+// f4NoSuchTable is the table a SQLite "no such table" error names.
+func f4NoSuchTable(msg string) (string, bool) {
+	_, rest, ok := strings.Cut(msg, "no such table: ")
+	if !ok {
+		return "", false
+	}
+	name := strings.TrimSpace(rest)
+	if i := strings.IndexAny(name, " \t\n"); i >= 0 {
+		name = name[:i]
+	}
+	if _, after, found := strings.Cut(name, "."); found {
+		name = after
+	}
+	return name, name != ""
+}
+
+// f4ControlTable reports a table or view of the control instance.
+func (b format4Backend) f4ControlTable(name string) bool {
+	var one int
+	err := b.s.db.QueryRow(`SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?`, name).Scan(&one)
+	return err == nil
+}
+
 var errF4NotStream = &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeNotRecordStream,
 	Message: "sandbox: not-a-record-stream: raw response stream queries must return only BLOB cells (projection results are JSON-only — request format=json)"}
 
@@ -2289,7 +2548,7 @@ func (b format4Backend) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxC
 		return nil, errF4NotStream
 	}
 	if err != nil {
-		return nil, f4SandboxError(err)
+		return nil, b.f4SandboxErr(err)
 	}
 	if caps.MaxRows > 0 && uint64(st.Rows) > caps.MaxRows {
 		return nil, &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeRowCap, Message: fmt.Sprintf("sandbox: row-cap: result exceeds %d rows", caps.MaxRows)}
@@ -2370,7 +2629,7 @@ func (b format4Backend) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCap
 		return nil, rows, cols, errByteCap
 	}
 	if err != nil {
-		return nil, rows, cols, f4SandboxError(err)
+		return nil, rows, cols, b.f4SandboxErr(err)
 	}
 	if caps.MaxRows > 0 && uint64(rows) > caps.MaxRows {
 		return nil, rows, cols, &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeRowCap, Message: fmt.Sprintf("sandbox: row-cap: result exceeds %d rows", caps.MaxRows)}
@@ -2424,7 +2683,7 @@ func (b format4Backend) sandboxedSelect(ctx context.Context, stmt string, maxRow
 		out.Columns = names
 	}
 	if err != nil && !errors.Is(err, errDone) {
-		return nil, fmt.Errorf("sandboxed select: %w", f4SandboxError(err))
+		return nil, fmt.Errorf("sandboxed select: %w", b.f4SandboxErr(err))
 	}
 	return out, nil
 }
