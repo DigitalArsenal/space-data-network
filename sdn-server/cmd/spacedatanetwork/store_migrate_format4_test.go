@@ -10,7 +10,9 @@ package main
 //   - TestStoreMigrateFormat4ResumesAfterEveryStep: a run stopped at each
 //     step, a torn STORE and cut-short file moves, then a rerun;
 //   - TestStoreMigrateFormat4Fixture: the host-02-sized fixture
-//     (SDN_F1_FIXTURE=<format-1 store dir>).
+//     (SDN_F1_FIXTURE=<format-1 store dir>);
+//   - TestStoreMigrateFormat4UnregisteredTables: records of a schema with no
+//     standard are never dropped without --drop-unregistered (C-39 U1).
 
 import (
 	"bytes"
@@ -460,6 +462,80 @@ func TestStoreMigrateFormat4Inventory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(legacy, migrate4JournalName)); err == nil {
 		t.Fatal("the inventory wrote a migration journal")
+	}
+}
+
+// C-39 U1: a format-1 table of a schema SDN has no standard for (StoreBatch
+// to an unknown name writes one) is listed by --inventory, and the migration
+// refuses, changing nothing, until --drop-unregistered names exactly such
+// tables; then it migrates everything else and activates.
+func TestStoreMigrateFormat4UnregisteredTables(t *testing.T) {
+	requireFormat4Engine(t)
+	legacy := t.TempDir()
+	buildLegacyStore4(t, legacy)
+	v, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := storage.NewFlatSQLStore(legacy, v, storage.WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := migrateTestOMM(31000, time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC), "UNKNOWN-SCHEMA")
+	if _, err := s.StoreBatch("XYZ.fbs", [][]byte{rec}, "source:celestrak", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := migrate4Inventory(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unregistered, _ := inv.Extra["unregistered_tables"].(map[string]int64)
+	var table, registered string
+	for name, n := range unregistered {
+		table = name
+		if n != 1 || !strings.HasSuffix(name, "XYZ") {
+			t.Fatalf("inventory unregistered_tables %v", unregistered)
+		}
+	}
+	for _, p := range inv.Partitions {
+		if p.Schema == "OMM.fbs" {
+			registered = p.Table
+		}
+	}
+	if len(unregistered) != 1 || registered == "" {
+		t.Fatalf("inventory unregistered_tables %v, an OMM table %q", unregistered, registered)
+	}
+	ctx := context.Background()
+	root := cloneStore(t, legacy)
+	for name, drop := range map[string][]string{"no --drop-unregistered": nil, "--drop-unregistered naming an OMM table": {registered},
+		"--drop-unregistered naming the table and an OMM table": {table, registered}} {
+		o := engineOptions(t, root)
+		o.DropUnregistered = drop
+		if rep, err := migrateStore4(ctx, o, nil); err == nil || rep.Activated {
+			t.Fatalf("%s: the migration ran: %v", name, err)
+		} else {
+			t.Logf("%s: %v", name, err)
+		}
+		if mk, err := marker.Read(root); err != nil || mk.Format4() || !mk.LegacyControlFile {
+			t.Fatalf("%s: the refused migration changed the store: %+v %v", name, mk, err)
+		}
+		for _, p := range []string{migrate4JournalName, marker.Dir} {
+			if _, err := os.Stat(filepath.Join(root, p)); err == nil {
+				t.Fatalf("%s: the refused migration wrote %s", name, p)
+			}
+		}
+	}
+	o := engineOptions(t, root)
+	o.DropUnregistered = []string{table}
+	rep, err := migrateStore4(ctx, o, nil)
+	if err != nil {
+		t.Fatalf("--drop-unregistered %s: %v", table, err)
+	}
+	if !rep.Activated || rep.Unregistered[table] != 1 {
+		t.Fatalf("--drop-unregistered %s: activated %v, unregistered %v", table, rep.Activated, rep.Unregistered)
 	}
 }
 
