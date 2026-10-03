@@ -1,13 +1,17 @@
 // Package format4 is SDN's binding to store format 4, "p4": one SQLite table
 // file per source feed x standard in the FlatSQL engine (P/<TYPE>/<feed>.db,
 // the feed being the record's (provider, source); untagged records in
-// local.db), each indexed by arrival, object + epoch, epoch and CID, and one
-// small type index per standard (stack design
-// docs/architecture/flatsql-sqlite-partitions.md; build-out contract §5.2,
-// v15 C-37). A row holds no provider or source string: they are the file's
-// feed, and the batch and publishing node are small per-file ids. The C ABI
-// and this API are unchanged by the feed layout: a tag still names its
-// (provider, source, batch, ...) and the engine files it by its feed.
+// local.db), each indexed by arrival, object + epoch, epoch and CID (stack
+// design docs/architecture/flatsql-sqlite-partitions.md; build-out contract
+// §5.2, C-37, C-38). A row holds no provider or source string: they are the
+// file's feed, and the batch and publishing node are small per-file ids. A
+// feed file's CID index is the only one (C-38): a type has no per-record
+// index across its feeds, only a small registry of its feed files and their
+// counters, and nothing ties a record in one feed file to a record in
+// another. A record held by N feeds is a row set in each of them and answers
+// once per feed in type-wide reads, datasync pages and counts (C-38 (5)).
+// The C ABI and this API are unchanged by the feed layout: a tag still names
+// its (provider, source, batch, ...) and the engine files it by its feed.
 //
 // The engine is the published flatsql-p4-threads.wasm
 // (flatsqlrt/p4artifact.go): ONE threaded WasmEdge instance holds the writer
@@ -230,7 +234,9 @@ type Rec struct {
 	Tag                 *TagInstance // matched tag (§3.6); nil when none
 }
 
-// TagRow is a TAGS row: one per (cid, tag identity), merged over copies.
+// TagRow is a TAGS row: one per (cid, tag identity), merged over copies. A
+// record held by several feed files lists each file's instances, each with
+// that file's seq (C-38).
 type TagRow struct {
 	CID      string
 	Seq      int64
@@ -256,7 +262,8 @@ type CoverageBucket struct {
 	N, MinEpoch, MaxEpoch int64
 }
 
-// TypeSummary is a SUMMARY kind 1 row.
+// TypeSummary is a SUMMARY kind 1 row: sums over the type's feed files, so a
+// record held by N feeds counts N times (C-38 (5)).
 type TypeSummary struct {
 	Type                              string
 	Records, Copies, Bytes, CopyBytes int64
@@ -265,7 +272,8 @@ type TypeSummary struct {
 }
 
 // PartitionSummary is a SUMMARY kind 2 row: one producer token of a type
-// (its copies across the type's feed files; Files counts those files).
+// (its copies summed over the type's feed files, a copy in N feed files N
+// times; Files counts those files).
 type PartitionSummary struct {
 	Type, Producer, Peer                        string
 	Records, Bytes, MinTS, MaxTS, MaxSeq, Files int64
