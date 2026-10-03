@@ -13,6 +13,8 @@
 #   migrate    store-migrate --to 4: the reference (kept as the format-4
 #              fixture, settled: full text built for every type SDN enables)
 #              checked against format 1, then a run under kill -9
+#   layout     the format-4 fixture's feed files against format 1 (C-37: one
+#              file per source feed x standard, no provider or source column)
 #   bytes      bytes on disk per record, every arm, every file at rest
 #   reads      every benchset read, cold and warm, s / f1 / f2 back to back
 #              (a `<TYPE>@<source>` shape is held to the baselines answering
@@ -32,7 +34,9 @@
 #   crash      kill -9 loops (ingest, supersede) on format 4, 100 rounds each
 #   lazyfs     the power-loss rounds in a Linux container (lazyfs.sh), 100 each
 #   growth     sds-tb-gen count-scaled steps to G1, about 17.5M records
-#              (P4PROOF_GROWTH_STEPS_F2, P4PROOF_GROWTH_STEPS_S); the 120 GiB
+#              (P4PROOF_GROWTH_STEPS_F2, P4PROOF_GROWTH_STEPS_S), one source
+#              feed per producer peer, so format 4 passes 1,000 feed files
+#              (P4PROOF_GROWTH_FEED_PER_PEER, P4PROOF_GROWTH_ZIPF); the 120 GiB
 #              floor stops either early (it reports where)
 #
 # Sample sizes are the owner's (2026-10-01 evening, "fewer runs please"):
@@ -69,6 +73,7 @@ for phase in "${PHASES[@]}"; do
       "$DIR/spacedatanetwork" prewarm-aot >/dev/null ;;
     prepare) tst TestProofPrepare ;;
     migrate) tst TestProofMigrate ;;
+    layout) tst TestProofLayout ;;
     bytes) tst TestProofBytes ;;
     reads) P4PROOF_LABEL=fixture tst TestProofReads ;;
     ingest) tst TestProofIngest ;;
@@ -87,8 +92,11 @@ for phase in "${PHASES[@]}"; do
         [[ $arm == f2 ]] && { fmt=2; steps="${P4PROOF_GROWTH_STEPS_F2:-G0=1,G1=17459492}"; }
         src="${P4_FIXTURE:-$DIR/work/p4-fixture}"; [[ $arm == f2 ]] && src="$SDN_F2_FIXTURE"
         st="$DIR/work/growth-$arm"; rm -rf "$st"; cp -c -R "$src" "$st" 2>/dev/null || cp -a --reflink=auto "$src" "$st"
-        "$DIR/sds-tb-gen" -store "$st" -seeds "$DIR/work" -format "$fmt" -schemas MPE.fbs -mix MPE=1 -producers 8 \
-          -peers-per-type "${P4PROOF_GROWTH_PEERS:-1024}" -zipf 1.1 -batch 4096 -duration 6h -min-free-gib 120 \
+        # Every peer its own source feed (P4PROOF_GROWTH_FEED_PER_PEER=0:
+        # the shared 64 x 16): format 4 grows a feed file per peer (C-37).
+        feeds=(); [[ "${P4PROOF_GROWTH_FEED_PER_PEER:-1}" == 1 ]] && feeds=(-feed-per-peer)
+        "$DIR/sds-tb-gen" -store "$st" -seeds "$DIR/work" -format "$fmt" -schemas MPE.fbs -mix MPE=1 -producers 8 ${feeds[@]+"${feeds[@]}"} \
+          -peers-per-type "${P4PROOF_GROWTH_PEERS:-1024}" -zipf "${P4PROOF_GROWTH_ZIPF:-1.1}" -batch 4096 -duration 6h -min-free-gib 120 \
           -steps "$steps" -results "$DIR/out" -csv "$DIR/out/growth-$arm" \
           | grep -v '^\[' | grep -E '^#|ERROR|STALL|STUCK' | tee -a "$DIR/out/run.log"
         rm -rf "$st"

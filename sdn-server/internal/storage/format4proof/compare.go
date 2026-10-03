@@ -38,6 +38,52 @@ type Policy struct {
 	// field (optionalFields does not apply). Every field of every row must be
 	// identical, the copy variants aside (C-12).
 	Strict bool `json:"strict,omitempty"`
+	// Calls are documented differences of single calls (a contract row or a
+	// ruling that covers that call only): a difference in one of a ruling's
+	// fields, in a call whose name contains the ruling's Call, is accepted.
+	Calls []CallRuling `json:"calls,omitempty"`
+}
+
+// CallRuling is an intended difference of the calls whose name contains
+// Call, on Fields (empty = every field, the row count included).
+type CallRuling struct {
+	Call   string   `json:"call"`
+	Why    string   `json:"why"`
+	Fields []string `json:"fields,omitempty"`
+}
+
+// ruling is the call ruling that accepts field in call, or nil.
+func (p Policy) ruling(call, field string) *CallRuling {
+	for i := range p.Calls {
+		r := &p.Calls[i]
+		if !strings.Contains(call, r.Call) {
+			continue
+		}
+		if len(r.Fields) == 0 {
+			return r
+		}
+		for _, f := range r.Fields {
+			if f == field {
+				return r
+			}
+		}
+	}
+	return nil
+}
+
+// laneField is a head field's name under C-10: a tag-filtered count or head
+// (a row carrying lane_n or lane_max_rowid, covHead) sums its bytes over the
+// rows format 1 repeats per matching tag, so its bytes compare as lane_bytes.
+func laneField(row Row, field string) string {
+	if field != "bytes" {
+		return field
+	}
+	for _, f := range row {
+		if strings.HasPrefix(f.N, "lane_") {
+			return "lane_bytes"
+		}
+	}
+	return field
 }
 
 func (p Policy) accepts(field string) bool {
@@ -88,6 +134,48 @@ type Verdict struct {
 	Extra    []string `json:"extra_fields,omitempty"`
 	Diffs    []Diff   `json:"diffs,omitempty"`
 	Accepted string   `json:"accepted,omitempty"`
+	// Prov counts the provenance cells (provider, source, batch) of the
+	// rows compared: format 4's must never be blank where format 1's are not
+	// (C-37: they come from the feed file and the row's batch).
+	Prov Provenance `json:"provenance"`
+}
+
+// Provenance counts provenance cells: Cells compared, blank on format 1,
+// blank on the candidate, and blank on the candidate where format 1 has a
+// value (must be 0).
+type Provenance struct {
+	Cells, F1Blank, SBlank, SBlankF1Set int
+}
+
+func (p *Provenance) add(o Provenance) {
+	p.Cells += o.Cells
+	p.F1Blank += o.F1Blank
+	p.SBlank += o.SBlank
+	p.SBlankF1Set += o.SBlankF1Set
+}
+
+// provFields are the provenance fields of a record row.
+var provFields = []string{"provider", "source", "batch"}
+
+// countProv counts one aligned row pair's provenance cells.
+func (p *Provenance) countRow(a, b Row) {
+	for _, f := range provFields {
+		av, ok := a.lookup(f)
+		if !ok {
+			continue
+		}
+		bv := b.Get(f)
+		p.Cells++
+		if av == "" {
+			p.F1Blank++
+		}
+		if bv == "" {
+			p.SBlank++
+			if av != "" {
+				p.SBlankF1Set++
+			}
+		}
+	}
 }
 
 // Passed reports whether the verdict is an equivalence (accepted differences
@@ -180,6 +268,17 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 	extra := map[string]bool{}
 	variantCache := map[string][]Row{}
 	unaccepted := false // a difference outside the policy's accepted fields
+	rulings := map[string]bool{}
+	accepts := func(call, field string) bool {
+		if pol.accepts(field) && pol.Accepted != "" {
+			return true
+		}
+		if r := pol.ruling(call, field); r != nil {
+			rulings[r.Why] = true
+			return true
+		}
+		return false
+	}
 	for _, a := range f1.Calls {
 		v.Calls++
 		b, ok := sCalls[a.Call]
@@ -202,9 +301,13 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			continue
 		}
 		ra, rb := a.Rows, b.Rows
+		// repeated: format 1's rows of each CID it repeated (C-10). The
+		// record appears once on format 4, with one of those rows' tags.
+		var repeated map[string][]Row
 		if pol.Collapse && (pol.CollapseSkip == "" || !strings.Contains(a.Call, pol.CollapseSkip)) {
 			if c := collapseByCID(ra); len(c) != len(ra) {
 				v.Notes = append(v.Notes, fmt.Sprintf("%s: C-10 collapsed format 1's %d rows to %d", a.Call, len(ra), len(c)))
+				repeated = rowsByCID(ra)
 				ra = c
 			}
 		}
@@ -226,14 +329,20 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 		}
 		if len(ra) != len(rb) {
 			bump(EqDiffer)
-			unaccepted = unaccepted || !pol.accepts("rows")
+			unaccepted = unaccepted || !accepts(a.Call, "rows")
 			v.Diffs = appendDiff(v.Diffs, Diff{Call: a.Call, Row: -1, Field: "rows", F1: fmt.Sprint(len(ra)), S: fmt.Sprint(len(rb))})
 			continue
 		}
 		orderOnly := !pol.Unordered
 		callDiffers := false
 		for i := range ra {
+			v.Prov.countRow(ra[i], rb[i])
 			st, diffs, ex := compareRow(ra[i], rb[i], pol.Strict)
+			if st == EqDiffer {
+				if alt, ok := matchRepeated(repeated[ra[i].Get("cid")], rb[i], pol.Strict); ok {
+					st, diffs, ex = alt, nil, nil
+				}
+			}
 			for _, f := range ex {
 				extra[f] = true
 			}
@@ -249,7 +358,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 					callDiffers = true
 					for _, d := range diffs {
 						d.Call, d.Row = a.Call, i
-						unaccepted = unaccepted || !pol.accepts(d.Field)
+						unaccepted = unaccepted || !accepts(a.Call, laneField(ra[i], d.Field))
 						v.Diffs = appendDiff(v.Diffs, d)
 					}
 				}
@@ -258,7 +367,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 				callDiffers = true
 				for _, d := range diffs {
 					d.Call, d.Row = a.Call, i
-					unaccepted = unaccepted || !pol.accepts(d.Field)
+					unaccepted = unaccepted || !accepts(a.Call, laneField(ra[i], d.Field))
 					v.Diffs = appendDiff(v.Diffs, d)
 				}
 			}
@@ -278,10 +387,43 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 	}
 	sort.Strings(v.Extra)
 	v.Status = worst
-	if pol.Accepted != "" && worst == EqDiffer && !unaccepted {
+	if worst == EqDiffer && !unaccepted && (pol.Accepted != "" || len(rulings) > 0) {
 		v.Status = EqAccepted
+		for why := range rulings {
+			if !strings.Contains(v.Accepted, why) {
+				if v.Accepted != "" {
+					v.Accepted += "; "
+				}
+				v.Accepted += why
+			}
+		}
 	}
 	return v
+}
+
+// rowsByCID groups rows by their CID.
+func rowsByCID(rows []Row) map[string][]Row {
+	out := map[string][]Row{}
+	for _, r := range rows {
+		if c := r.Get("cid"); c != "" {
+			out[c] = append(out[c], r)
+		}
+	}
+	return out
+}
+
+// matchRepeated reports a candidate row equal to one of format 1's repeated
+// rows of its CID (C-10: the record once, with one of its matching tags).
+func matchRepeated(alts []Row, row Row, strict bool) (string, bool) {
+	if len(alts) < 2 {
+		return "", false
+	}
+	for _, alt := range alts {
+		if st, _, _ := compareRow(alt, row, strict); st == EqEqual || st == EqExtra {
+			return st, true
+		}
+	}
+	return "", false
 }
 
 func appendDiff(d []Diff, x Diff) []Diff {

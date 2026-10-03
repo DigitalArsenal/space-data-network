@@ -160,6 +160,41 @@ func TestProofMigrate(t *testing.T) {
 	}
 }
 
+// TestProofLayout checks the format-4 fixture (P4_FIXTURE) against the
+// format-1 fixture it was migrated from (contract C-37): one feed file per
+// source feed x standard, no provider or source column in any feed file.
+// It writes layout-s-fixture.json; the migrate phase runs the same check on
+// its reference.
+func TestProofLayout(t *testing.T) {
+	c := requireEnv(t, EnvF1Fixture, EnvWork, EnvOut)
+	p4 := c.Fixtures[ArmS]
+	if p4 == "" {
+		t.Skip("P4_FIXTURE not set")
+	}
+	f1 := c.workPath("layout-f1")
+	_ = os.RemoveAll(f1)
+	if err := CloneStore(c.Fixtures[ArmF1], f1); err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(f1)
+	lay, err := CheckFeedLayout(f1, p4, c.Work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(c.Out, "layout-s-fixture.json"), lay); err != nil {
+		t.Fatal(err)
+	}
+	for typ, files := range lay.Files {
+		t.Logf("LAYOUT %s: %v", typ, files)
+	}
+	for table, cols := range lay.Columns {
+		t.Logf("LAYOUT table %s: %v", table, cols)
+	}
+	for _, p := range lay.Problems {
+		t.Error(p)
+	}
+}
+
 // TestProofCoverage runs the coverage classes (coverage.go: every
 // recordBackend method and parameter axis the benchset leaves out; COVERAGE.md)
 // on every arm, untimed; P4PROOF_CLASSES narrows them. Their answers are
@@ -192,10 +227,17 @@ func TestProofEquivalence(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(c.Out, name+".md"), []byte(EquivalenceMarkdown(rep)), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	var prov Provenance
 	for _, v := range rep.Reads {
+		prov.add(v.Prov)
 		if !v.Passed() && v.Status != EqAccepted {
 			t.Errorf("%s %s: %s", v.Class, v.Shape, v.Status)
 		}
+	}
+	t.Logf("PROVENANCE: %d cells; blank on format 1 %d, on %s %d; blank on %s where format 1 has a value %d",
+		prov.Cells, prov.F1Blank, candidate, prov.SBlank, candidate, prov.SBlankF1Set)
+	if prov.SBlankF1Set > 0 {
+		t.Errorf("provenance: %d cells blank on %s where format 1 has a value", prov.SBlankF1Set, candidate)
 	}
 	for _, w := range rep.Writes {
 		if w.Status == EqDiffer {

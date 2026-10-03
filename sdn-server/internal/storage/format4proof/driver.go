@@ -713,6 +713,12 @@ func EquivalenceMarkdown(rep *EquivalenceReport) string {
 	}
 	sort.Strings(st)
 	fmt.Fprintf(&b, "Reads: %d shapes: %s.\n\n", len(rep.Reads), strings.Join(st, ", "))
+	var prov Provenance
+	for _, v := range rep.Reads {
+		prov.add(v.Prov)
+	}
+	fmt.Fprintf(&b, "Provenance (provider, source, batch) over every compared row: %d cells; blank on format 1 %d, on %s %d; blank on %s where format 1 has a value: %d.\n\n",
+		prov.Cells, prov.F1Blank, rep.Candidate, prov.SBlank, rep.Candidate, prov.SBlankF1Set)
 	for _, m := range rep.Missing {
 		fmt.Fprintf(&b, "- Missing: %s\n", m)
 	}
