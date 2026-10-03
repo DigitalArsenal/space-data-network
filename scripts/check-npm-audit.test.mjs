@@ -158,8 +158,15 @@ test('every LIVE allowlist entry carries a reason, a review date and an expiry',
 
 test('CLI scores a captured report and exits non-zero on an unreviewed high', (t) => {
   // The CLI scores against the LIVE allowlist, so "clean" here means a report
-  // with nothing in it that the live list has to excuse.
+  // carrying exactly what the live list defers: nothing unreviewed, nothing
+  // stale.
   const liveClean = { vulnerabilities: {}, metadata: { vulnerabilities: {} } };
+  for (const entry of ALLOWLIST) {
+    liveClean.vulnerabilities[entry.package] = {
+      severity: 'high',
+      via: entry.advisories.length > 0 ? entry.advisories.map((url) => ({ url })) : ['carrier'],
+    };
+  }
   const clean = writeReport(t, liveClean);
   const ok = spawnSync(process.execPath, [checkerPath, '--report', clean], { encoding: 'utf8' });
   assert.equal(ok.status, 0, ok.stderr);
