@@ -803,6 +803,9 @@ func (c *cov) x07(omm [][]byte) []Shape {
 	hexRec := CloneOf("OMM", omm[79], 907, nil)
 	ta := plainTags("celestrak-gp", "OMM-cov-import-a")
 	tb := storage.SourceTags{SourceName: "celestrak-gp", BatchID: "OMM-cov-import-b", ProducerPeerID: covRelay}
+	// The sha256-hex record has a batch of its own: format 4 keeps it under
+	// its CIDv1 (§3.8 (1)), so the lane reads of batch a stay free of it.
+	th := plainTags("celestrak-gp", "OMM-cov-import-hex")
 	var recs []storage.DatasetExportRecord
 	add := func(list [][]byte, t storage.SourceTags) {
 		for _, r := range list {
@@ -813,7 +816,7 @@ func (c *cov) x07(omm [][]byte) []Shape {
 	add(bb, tb)
 	add(u, storage.SourceTags{})
 	add(held, b052Tags(c.in))
-	add([][]byte{hexRec}, ta)
+	add([][]byte{hexRec}, th)
 	hexCID := sha256.Sum256(hexRec)
 	var shard, index, badIndex string
 	build := c.errOnly("build the shard", func(s *storage.FlatSQLStore) error {
@@ -870,7 +873,17 @@ func (c *cov) x07(omm [][]byte) []Shape {
 	calls = append(calls, c.laneReads("OMM.fbs", FixtureProvider, "celestrak-gp", ta.BatchID)...)
 	calls = append(calls, c.laneReads("OMM.fbs", covProvider, "celestrak-gp", tb.BatchID)...)
 	calls = append(calls, c.summaries(covProvider, covPeer2)...)
-	return []Shape{covShape(class, "dataset shard import", "OMM.fbs", calls...),
+	sh := covShape(class, "dataset shard import", "OMM.fbs", calls...)
+	// A read naming the record by either text compares its CIDv1 (format
+	// 1's rows read the hex text as its alias); the reads by each name answer
+	// on the other format by the other name (§3.8 (1)).
+	sh.Policy.CIDAliases = map[string]string{hexIDs[0]: hexIDs[1]}
+	for _, call := range []string{"GetRecord the sha256-hex record", "tags the sha256-hex record", "refs the sha256-hex record"} {
+		sh = rule(sh, call, c38Hex)
+	}
+	// The second provider's import is new to its feed (C-38 (3)).
+	sh = rule(sh, "ImportDatasetShard (bytes) again", c38PerFeed, "n")
+	return []Shape{sh,
 		c12Shape(class, "dataset shard import: the copy format 1 does not serve", "OMM.fbs",
 			c.refsOf("refs imported, the second import's copies", "OMM.fbs", all, func(r *storage.RawRecordRef) { r.PeerID = covPeer2 }))}
 }
@@ -1103,7 +1116,10 @@ func (c *cov) x10(omm [][]byte) []Shape {
 	calls = append(calls, c.laneReads("OMM.fbs", FixtureProvider, src, tb.BatchID)...)
 	calls = append(calls, c.laneReads("OMM.fbs", FixtureProvider, src, "")...)
 	calls = append(calls, c.summaries(gpPeer, covPeer)...)
-	return []Shape{covShape(class, "ReconcileSourceBatch", "OMM.fbs", calls...)}
+	// recs[0], also tagged in celestrak-gp, is new to that feed (C-38 (3)),
+	// and leaves the reconciled feed while celestrak-gp keeps it.
+	sh := rule(covShape(class, "ReconcileSourceBatch", "OMM.fbs", calls...), "another lane", c38PerFeed, "n")
+	return []Shape{rule(sh, "ReconcileSourceBatch apply", c38PerFeed, "deleted")}
 }
 
 // X11: SupersedeSourceBatches (MPE, two producers, one record surviving
@@ -1156,7 +1172,10 @@ func (c *cov) x11(mpe [][]byte) []Shape {
 	calls = append(calls, c.laneReads("MPE.fbs", FixtureProvider, "celestrak-gp", other.BatchID)...)
 	calls = append(calls, c.laneReads("CAT.fbs", FixtureProvider, catSrc, "")...)
 	calls = append(calls, c.summaries(gpPeer, covPeer)...)
-	return []Shape{covShape(class, "SupersedeSourceBatches and RetainNewestSourceBatch", "MPE.fbs", calls...)}
+	// recs[1], also tagged in celestrak-gp, is new to that feed (C-38 (3)),
+	// and leaves the superseded feed while celestrak-gp keeps it.
+	sh := rule(covShape(class, "SupersedeSourceBatches and RetainNewestSourceBatch", "MPE.fbs", calls...), "another lane", c38PerFeed, "n")
+	return []Shape{rule(sh, "SupersedeSourceBatches keep b", c38PerFeed, "records")}
 }
 
 // X12: the lane ledger: a servable publication (its shard at the canonical

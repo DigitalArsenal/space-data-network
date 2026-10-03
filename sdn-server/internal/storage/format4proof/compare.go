@@ -42,6 +42,34 @@ type Policy struct {
 	// ruling that covers that call only): a difference in one of a ruling's
 	// fields, in a call whose name contains the ruling's Call, is accepted.
 	Calls []CallRuling `json:"calls,omitempty"`
+	// CIDAliases names records format 1 holds under another text of their
+	// CID (contract §3.8 (1): format 4 keeps only the CIDv1 raw sha2-256 of
+	// the bytes; format 1 keeps an imported index's sha256-hex identity):
+	// format 1's cid values are read as their alias before comparing.
+	CIDAliases map[string]string `json:"cid_aliases,omitempty"`
+}
+
+// aliased is rows with every cid value that names an alias replaced by it.
+func aliased(rows []Row, aliases map[string]string) []Row {
+	if len(aliases) == 0 {
+		return rows
+	}
+	out := make([]Row, len(rows))
+	for i, r := range rows {
+		out[i] = r
+		copied := false
+		for j, f := range r {
+			a, ok := aliases[f.V]
+			if !ok || f.N != "cid" {
+				continue
+			}
+			if !copied {
+				out[i], copied = append(Row(nil), r...), true
+			}
+			out[i][j].V = a
+		}
+	}
+	return out
 }
 
 // CallRuling is an intended difference of the calls whose name contains
@@ -304,7 +332,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			v.Notes = append(v.Notes, fmt.Sprintf("%s: format 4 error: %s", a.Call, b.Err))
 			continue
 		}
-		ra, rb := a.Rows, b.Rows
+		ra, rb := aliased(a.Rows, pol.CIDAliases), b.Rows
 		// repeated: format 1's rows of each CID it repeated (C-10). The
 		// record appears once on format 4, with one of those rows' tags.
 		var repeated map[string][]Row
