@@ -223,9 +223,11 @@ func (m *migrator4) checkPage(ctx context.Context, sc *schemaCheck, entries []st
 	schema, tables := sc.schema, sc.tables
 	cids := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.Orphan() {
+		switch {
+		case e.Orphan():
 			sc.got.Orphans++
-		} else {
+		default:
+			// A set-aside record is read too: format 4 must hold no copy.
 			cids = append(cids, e.CID)
 		}
 	}
@@ -265,6 +267,13 @@ func (m *migrator4) checkPage(ctx context.Context, sc *schemaCheck, entries []st
 		if e.Orphan() {
 			if len(copies[e.CID]) > 0 {
 				c.bad("%s %s (index rowid %d): an orphan in format 1, %d copies in format 4", schema, e.CID, e.RowID, len(copies[e.CID]))
+			}
+			continue
+		}
+		if m.setAside[e.CID] {
+			sc.got.SetAside++
+			if len(copies[e.CID]) > 0 {
+				c.bad("%s %s (index rowid %d): set aside (--drop-oversized), %d copies in format 4", schema, e.CID, e.RowID, len(copies[e.CID]))
 			}
 			continue
 		}
@@ -368,8 +377,9 @@ func (m *migrator4) endSchemaCheck(sc *schemaCheck, w *migrate4Progress, c *migr
 	if w == nil {
 		w = &migrate4Progress{}
 	}
-	if got.Held != w.Held || got.Orphans != w.Orphans {
-		c.bad("%s: %d held records and %d orphans; the copy sent %d and skipped %d", schema, got.Held, got.Orphans, w.Held, w.Orphans)
+	if got.Held != w.Held || got.Orphans != w.Orphans || got.SetAside != w.SetAside {
+		c.bad("%s: %d held records, %d orphans and %d set aside; the copy sent %d, skipped %d and set aside %d",
+			schema, got.Held, got.Orphans, got.SetAside, w.Held, w.Orphans, w.SetAside)
 	}
 	if got.Orphans > 0 {
 		if c.Orphans == nil {
@@ -549,18 +559,19 @@ func (m *migrator4) checkCounters(ctx context.Context, c *migrate4Check, want ma
 		k := pk{typ, t.Token}
 		seen[k] = true
 		c.Partitions++
-		var sent migrate4Tally
+		var sent, aside migrate4Tally
 		if w := want[t.Schema]; w != nil {
-			sent = w.Copies[t.Name]
+			sent, aside = w.Copies[t.Name], w.SetAsideCopies[t.Name]
 		}
 		extra := c.partExtra[[2]string{typ, t.Token}]
 		if g := got[k]; g.Records != sent.Rows+extra.Rows || g.Bytes != sent.Bytes+extra.Bytes {
 			c.bad("partition %s/%s: %d records, %d B; the copy sent %d, %d B, and %d, %d B more in further feed files",
 				typ, t.Token, g.Records, g.Bytes, sent.Rows, sent.Bytes, extra.Rows, extra.Bytes)
 		}
-		// Every row of the table was copied: format 1's counter, or a
-		// recount where the counter drifted, holds exactly what was read.
-		if o, ok := oracle[t.Name]; ok && o.Count == sent.Rows && o.Bytes == sent.Bytes {
+		// Every row of the table was copied or set aside: format 1's
+		// counter, or a recount where the counter drifted, holds exactly
+		// what was read.
+		if o, ok := oracle[t.Name]; ok && o.Count == sent.Rows+aside.Rows && o.Bytes == sent.Bytes+aside.Bytes {
 			continue
 		}
 		rc, err := m.src.TableCounter(t)
@@ -571,9 +582,9 @@ func (m *migrator4) checkCounters(ctx context.Context, c *migrate4Check, want ma
 			m.note("format 1's counter of %s (%d, %d B) differs from a recount (%d, %d B); the recount is the oracle",
 				t.Name, o.Count, o.Bytes, rc.Count, rc.Bytes)
 		}
-		if rc.Count != sent.Rows || rc.Bytes != sent.Bytes {
-			c.bad("table %s holds %d rows (%d B), %d (%d B) were migrated: rows without a datasync index row are not migrated",
-				t.Name, rc.Count, rc.Bytes, sent.Rows, sent.Bytes)
+		if rc.Count != sent.Rows+aside.Rows || rc.Bytes != sent.Bytes+aside.Bytes {
+			c.bad("table %s holds %d rows (%d B), %d (%d B) were migrated and %d (%d B) set aside: rows without a datasync index row are not migrated",
+				t.Name, rc.Count, rc.Bytes, sent.Rows, sent.Bytes, aside.Rows, aside.Bytes)
 		}
 	}
 	for k, g := range got {

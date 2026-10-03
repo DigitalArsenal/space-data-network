@@ -293,6 +293,33 @@ func (m *MigrationSource) SchemaTags(schema string, fn func(cid string, t Legacy
 	return flush()
 }
 
+// RecordSize is one stored record of a producer table and its stored
+// length.
+type RecordSize struct {
+	RowID int64
+	CID   string
+	Bytes int64
+}
+
+// OversizedRecords lists t's records whose stored length is above limit, in
+// rowid order (store-migrate --to 4: records format 4 cannot store, C-6).
+func (m *MigrationSource) OversizedRecords(t LegacyTable, limit int64) ([]RecordSize, error) {
+	rows, err := m.s.db.Query(fmt.Sprintf(`SELECT rowid, cid, record_length FROM %s WHERE record_length > ? ORDER BY rowid`, t.Name), limit)
+	if err != nil {
+		return nil, fmt.Errorf("%s: oversized records: %w", t.Name, err)
+	}
+	defer rows.Close()
+	var out []RecordSize
+	for rows.Next() {
+		var r RecordSize
+		if err := rows.Scan(&r.RowID, &r.CID, &r.Bytes); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (m *MigrationSource) int64s(q string, args ...any) ([]int64, error) {
 	rows, err := m.s.db.Query(q, args...)
 	if err != nil {
