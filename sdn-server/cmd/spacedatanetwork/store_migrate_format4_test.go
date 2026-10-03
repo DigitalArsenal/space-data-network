@@ -108,6 +108,16 @@ func buildLegacyStore4(t *testing.T, dir string) {
 	if _, err := s.StoreBatch("IQC.fbs", iqc[50:], "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45", nil); err != nil {
 		t.Fatal(err)
 	}
+	// A record with no peer (format 1's "unattributed" table keeps its empty
+	// peer), and a tag UpsertSourceTags took for the upper-case text of a
+	// held CID: format 1 joins tags by the CID text, so it names no record.
+	nopeer := migrateTestOMM(30100, base, "NO-PEER")
+	if _, err := s.StoreBatch("OMM.fbs", [][]byte{nopeer}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSourceTags("OMM.fbs", strings.ToUpper(storage.ComputeCID(nopeer)), signed); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -228,8 +238,11 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string, sl
 				if !ok {
 					t.Fatalf("%s %s: format 4 has no copy in partition %s", schema, e.CID, tb.Token)
 				}
+				// A copy keeps its own peer, none included, where format 1
+				// routes it to its table; elsewhere an empty peer is the
+				// table's token (partitionPeer).
 				wantPeer := lr.PeerID
-				if wantPeer == "" {
+				if name, err := storage.RoutedTableName(wantPeer, schema); wantPeer == "" && (err != nil || name != tb.Name) {
 					wantPeer = tb.Token
 				}
 				if r.Seq != e.RowID || r.Peer != wantPeer || !bytes.Equal(r.Sig, legacySignature(lr.SignatureHex)) ||
@@ -497,7 +510,7 @@ func TestStoreMigrateFormat4Inventory(t *testing.T) {
 	if inv.Extra["target_format"] != 4 || inv.Extra["max_record_bytes"] != migrate4MaxRecord || len(inv.OverEntry) != 0 {
 		t.Fatalf("inventory %+v", inv)
 	}
-	if len(inv.Partitions) != 5 || inv.GseqFloor == 0 {
+	if len(inv.Partitions) != 6 || inv.GseqFloor == 0 {
 		t.Fatalf("inventory partitions %d, floor %d", len(inv.Partitions), inv.GseqFloor)
 	}
 	if mk, _ := marker.Read(legacy); mk.Format4() || !mk.LegacyControlFile {

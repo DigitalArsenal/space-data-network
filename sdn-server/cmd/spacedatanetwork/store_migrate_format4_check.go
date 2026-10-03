@@ -438,6 +438,19 @@ func migrate4CID(text string) (string, bool) {
 	return c.String(), c.String() != text
 }
 
+// migrate4IdentityText reports a CID text a format-1 record can be keyed
+// by: a CIDv1 raw sha2-256 in its canonical (lower-case base32) form, or a
+// legacy sha256-hex identity.
+func migrate4IdentityText(text string) bool {
+	if len(text) == 64 {
+		if _, err := hex.DecodeString(text); err == nil {
+			return true
+		}
+	}
+	c, err := cid.Decode(text)
+	return err == nil && c.String() == text
+}
+
 // checkFields compares the epoch and object key the engine extracted with
 // format 1's index columns, and the columns the type's rules cannot serve.
 func (m *migrator4) checkFields(schema string, f typeFields, e storage.IndexEntry, r format4.Rec, c *migrate4Check) {

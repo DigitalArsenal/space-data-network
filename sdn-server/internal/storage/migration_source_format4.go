@@ -26,6 +26,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -291,6 +293,47 @@ func (m *MigrationSource) SchemaTags(schema string, fn func(cid string, t Legacy
 		i = j + 1
 	}
 	return flush()
+}
+
+// RoutedTableName is the producer table format 1 routes a write by peer to
+// (routedProducerID: a write with no peer goes to "unattributed").
+func RoutedTableName(peer, schemaName string) (string, error) {
+	return ProducerStandardTableName(routedProducerID(peer), schemaName)
+}
+
+// OpenMigrationSourceWithIdentity opens the format-1 store at basePath with
+// the field-encryption identity kept in identityDir (store-migrate --to 4
+// --verify-only: after activation the format-1 store sits in pre-format4/
+// while its identity stays at the data root, where format 4 keeps using it).
+// It never creates an identity: without one there, none was ever written.
+func OpenMigrationSourceWithIdentity(basePath, identityDir string) (*MigrationSource, error) {
+	m, err := OpenMigrationSource(basePath)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(filepath.Join(identityDir, fieldEncryptionIdentityFileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return m, nil
+	}
+	if err != nil {
+		m.Close()
+		return nil, err
+	}
+	var id fieldEncryptionIdentity
+	if err := json.Unmarshal(raw, &id); err != nil {
+		m.Close()
+		return nil, fmt.Errorf("parse field-encryption identity: %w", err)
+	}
+	priv, err1 := hex.DecodeString(id.PrivateKey)
+	pub, err2 := hex.DecodeString(id.PublicKey)
+	if err1 != nil || err2 != nil || len(priv) != 32 || len(pub) != 32 {
+		m.Close()
+		return nil, errors.New("field-encryption identity: malformed key")
+	}
+	m.s.fieldEncMu.Lock()
+	m.s.fieldEncPriv, m.s.fieldEncPub = priv, pub
+	m.s.fieldEncMu.Unlock()
+	return m, nil
 }
 
 // RecordSize is one stored record of a producer table and its stored
