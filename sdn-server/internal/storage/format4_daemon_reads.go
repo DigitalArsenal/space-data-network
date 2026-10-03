@@ -1764,7 +1764,10 @@ func (b format4Backend) countPointEpochEntities(query EpochRecordQuery) (int64, 
 // filter. It ranks by the type's epoch rule, as every other epoch read does
 // and as format 1's EPOCH API answers (ruling 2026-10-02 ~10:00; format 1's
 // statement ranked by USER_DEFINED_EPOCH_TIMESTAMP: an intended difference).
-// One record per object in object order, framed [u32le size][stored bytes].
+// The source "local" is format 1's "local" partition (C-43 B2): the type's
+// untagged records (its local file) and any feed whose source is "local",
+// as the "<TYPE>@local" relation reads. One record per object in object
+// order, framed [u32le size][stored bytes].
 func (b format4Backend) queryEpochRawStream(schemaName, sourceName, profile string, epochUnix float64, limit int) (*flatsqlrt.RawStream, error) {
 	if err := b.closed(); err != nil {
 		return nil, err
@@ -1773,8 +1776,11 @@ func (b format4Backend) queryEpochRawStream(schemaName, sourceName, profile stri
 	if err != nil {
 		return nil, err
 	}
-	q := format4.EpochQuery{Query: format4.Query{Type: typ, Lane: f4Lane("", strings.TrimSpace(sourceName), "", "", ""),
-		Hydrate: true}}
+	source := strings.TrimSpace(sourceName)
+	q := format4.EpochQuery{Query: format4.Query{Type: typ, Lane: f4Lane("", source, "", "", ""), Hydrate: true}}
+	if source == engineDefaultSource {
+		q.Part = format4.PartLocalLane
+	}
 	// The engine's epochs are whole seconds: as_of takes e <= at, forward
 	// e >= at.
 	switch strings.TrimPrefix(strings.TrimSpace(profile), "epoch.") {
