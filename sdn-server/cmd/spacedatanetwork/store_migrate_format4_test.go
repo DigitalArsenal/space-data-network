@@ -15,6 +15,10 @@ package main
 //     standard are never dropped without --drop-unregistered (C-39 U1);
 //   - TestStoreMigrateFormat4OversizedRecords: nor records above the largest
 //     storable record without --drop-oversized (C-6, by U1's rule).
+//
+// The test store holds feeds whose names need escaping in a file name
+// (migrate4OddFeeds); every migrated store's feed files are checked
+// (assertFeedFiles, C-37 (1)).
 
 import (
 	"bytes"
@@ -118,8 +122,84 @@ func buildLegacyStore4(t *testing.T, dir string) {
 	if err := s.UpsertSourceTags("OMM.fbs", strings.ToUpper(storage.ComputeCID(nopeer)), signed); err != nil {
 		t.Fatal(err)
 	}
+	// Feeds whose provider or source needs escaping in a file name (C-37
+	// (1)), two records each; the first record of each is also in the
+	// signed feed (a record in two feeds' files).
+	for i, f := range migrate4OddFeeds {
+		recs := [][]byte{
+			migrateTestOMM(uint32(30200+2*i), base.Add(time.Duration(i)*time.Minute), fmt.Sprintf("ODD-%d-A", i)),
+			migrateTestOMM(uint32(30201+2*i), base.Add(time.Duration(i)*time.Minute), fmt.Sprintf("ODD-%d-B", i)),
+		}
+		tags := storage.SourceTags{ProviderID: f[0], SourceName: f[1], BatchID: "odd-1"}
+		if _, err := s.StoreBatchWithSourceTags("OMM.fbs", recs, "source:celestrak", nil, tags); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.StoreWithSourceTags("OMM.fbs", recs[0], "source:celestrak", nil, signed); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// migrate4OddFeeds are (provider, source) feeds whose names need escaping in
+// a file name: a space, '/', "/../", '%', '?', '#', non-ASCII bytes.
+var migrate4OddFeeds = [][2]string{
+	{"space-data-network-02", "feed name with spaces"},
+	{"other provider", "other source/x"},
+	{"space-data-network-02", "x/../local"},
+	{"space-data-network-02", "50%25 off %zz"},
+	{"space-data-network-02", "gp?share=0&mode=ro#frag"},
+	{"prövider-ü", "源-é/ñ"},
+}
+
+// assertFeedFiles checks a migrated store's feed files (C-37 (1): one file
+// per source feed x standard, its name a safe encoding of the feed): no
+// directory under fsql4/P/<TYPE> (a name is one path element), no empty
+// database file (the records are in the file the engine named), and as many
+// feed files as the type has feeds (local.db aside).
+func assertFeedFiles(t *testing.T, root string, schemas ...string) {
+	t.Helper()
+	api := openEngineAt(t, root, schemas...)
+	lanes, err := api.Lanes(context.Background(), "")
+	_ = api.Close(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	feeds := map[string]map[[2]string]bool{}
+	for _, l := range lanes {
+		if l.Records > 0 && (l.Provider != "" || l.Source != "") {
+			if feeds[l.Type] == nil {
+				feeds[l.Type] = map[[2]string]bool{}
+			}
+			feeds[l.Type][[2]string{l.Provider, l.Source}] = true
+		}
+	}
+	for typ, fs := range feeds {
+		dir := filepath.Join(root, marker.Dir, "P", typ)
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := 0
+		for _, e := range ents {
+			name := e.Name()
+			if e.IsDir() {
+				t.Errorf("%s: P/%s/%s is a directory: a feed file name is one path element", root, typ, name)
+				continue
+			}
+			if !strings.HasSuffix(name, ".db") || name == "local.db" {
+				continue
+			}
+			files++
+			if fi, err := e.Info(); err != nil || fi.Size() == 0 {
+				t.Errorf("%s: P/%s/%s is empty: the feed's records are not in the file the engine named", root, typ, name)
+			}
+		}
+		if files != len(fs) {
+			t.Errorf("%s: P/%s holds %d feed files for %d feeds", root, typ, files, len(fs))
+		}
 	}
 }
 
@@ -688,6 +768,7 @@ func TestStoreMigrateFormat4ResumesAfterEveryStep(t *testing.T) {
 		t.Fatalf("clean migration: %v", err)
 	}
 	want := engineDump(t, clean)
+	assertFeedFiles(t, clean, "OMM.fbs", "CAT.fbs", "IQC.fbs")
 	t.Logf("a clean migration passes %d steps", len(steps))
 
 	resume := func(name string, fail func(step string, n int) bool, between func(root string)) {
@@ -721,6 +802,7 @@ func TestStoreMigrateFormat4ResumesAfterEveryStep(t *testing.T) {
 		if got := engineDump(t, root); got != want {
 			t.Fatalf("%s: the resumed store differs from an uninterrupted migration:\n%s", name, firstDiff(want, got))
 		}
+		assertFeedFiles(t, root, "OMM.fbs", "CAT.fbs", "IQC.fbs")
 	}
 	picks := migrate4StepSample(steps)
 	if os.Getenv("SDN_MIGRATE4_EVERY_STEP") == "1" || os.Getenv("SDN_WASM_REQUIRE_PATCHED") == "1" {
@@ -903,6 +985,7 @@ func TestStoreMigrateFormat4Kill9(t *testing.T) {
 		t.Fatalf("clean migration: %v", err)
 	}
 	want := engineDump(t, clean)
+	assertFeedFiles(t, clean, "OMM.fbs", "CAT.fbs", "IQC.fbs")
 	rng := uint64(time.Now().UnixNano())
 	var delays []time.Duration
 	for done := 0; done < kills; {
@@ -938,6 +1021,7 @@ func TestStoreMigrateFormat4Kill9(t *testing.T) {
 		if got := engineDump(t, killed); got != want {
 			t.Fatalf("after kill %d the store differs from an uninterrupted migration:\n%s", done, firstDiff(want, got))
 		}
+		assertFeedFiles(t, killed, "OMM.fbs", "CAT.fbs", "IQC.fbs")
 	}
 	api := openEngineAt(t, clean, "OMM.fbs", "CAT.fbs", "IQC.fbs")
 	defer api.Close(context.Background())
