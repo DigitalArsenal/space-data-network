@@ -361,6 +361,7 @@ func (c *cov) writeCoverage() []Shape {
 	out = append(out, c.x12(omm)...)
 	out = append(out, c.x13()...)
 	out = append(out, c.x14()...)
+	out = append(out, c.x15(omm)...)
 	out = append(out, c.xm(omm, mpe, iqc, cat)...)
 	return out
 }
@@ -384,7 +385,7 @@ var xmTypes = []string{"OMM.fbs", "MPE.fbs", "IQC.fbs", "CAT.fbs", "PNM.fbs", "K
 func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 	coverageNeedsSQL[ClassXM] = true
 	scenarios := [][]Shape{c.x01(omm), c.x02(omm, mpe, iqc, cat), c.x03(omm, iqc), c.x04(), c.x05(omm), c.x06(omm), c.x07(omm),
-		c.x08(), c.x09(), c.x10(omm), c.x11(mpe), c.x12(omm), c.x14()}
+		c.x08(), c.x09(), c.x10(omm), c.x11(mpe), c.x12(omm), c.x14(), c.x15(omm)}
 	// The writes in order; the reads after all of them, one shape per
 	// policy of the shapes they came from (strict; C-6; C-12).
 	var writes []Call
@@ -1619,4 +1620,67 @@ func (c *cov) x14() []Shape {
 	}))
 	calls = append(calls, c.summaries(covPeer, covPeer2)...)
 	return []Shape{covShape(class, "publication log and local EPM", "PLOG.fbs", calls...)}
+}
+
+// X15: feeds whose provider or source needs escaping in a file name
+// (feedNameCases, feednames.go; contract C-37 (1): a space, '/', "/../",
+// '%', '?', '#', non-ASCII bytes, a leading '.', a name equal to the
+// fixture's celestrak-gp but for case, a name longer than a file name may
+// be): records of each such feed, read back by feed (the lane reads and its
+// `<TYPE>@<source>` relation), by record and in the summaries; then a second
+// batch and a supersede in one such feed and a delete in another, read
+// again. Format 4 keeps each feed in the file the engine names for it
+// (feednames.go proves the files); every answer must equal format 1's. XM
+// carries these feeds through store-migrate --to 4.
+func (c *cov) x15(omm [][]byte) []Shape {
+	const class = "X15"
+	coverageNeedsSQL[class] = true
+	const batchA, batchB = "OMM-cov-names-a", "OMM-cov-names-b"
+	var writes, reads []Call
+	var all []string
+	ids := make([][]string, len(feedNameCases))
+	for i, f := range feedNameCases {
+		recs := clonesOf("OMM", omm, 140+3*i, 143+3*i, 920)
+		ids[i] = cidsOf(recs)
+		all = append(all, ids[i]...)
+		t := plainTags(f.Source, batchA)
+		t.ProviderID = f.Provider
+		writes = append(writes, c.storeBatch("store "+f.Why, "OMM.fbs", recs, gpPeer, nil, &t))
+		reads = append(reads, c.laneReads("OMM.fbs", f.Provider, f.Source, "")...)
+		q := fmt.Sprintf(`SELECT COUNT(*) FROM "OMM@%s"`, f.Source)
+		reads = append(reads, c.rowsCall("SQL "+q, "", func(s *storage.FlatSQLStore) ([]Row, error) {
+			payload, _, _, err := s.QuerySandboxedJSON(q, flatsqlrt5m)
+			if err != nil {
+				return nil, err
+			}
+			return JSONRows(payload)
+		}))
+	}
+	// The second batch of the first feed, its supersede, and a delete in the
+	// "/../" feed.
+	sup, del := feedNameCases[0], feedNameCases[2]
+	recsB := clonesOf("OMM", omm, 140+3*len(feedNameCases), 143+3*len(feedNameCases), 920)
+	tb := plainTags(sup.Source, batchB)
+	tb.ProviderID = sup.Provider
+	all = append(all, cidsOf(recsB)...)
+	calls := append([]Call(nil), writes...)
+	calls = append(calls, c.gets("GetRecord names", "OMM.fbs", all[:len(all)-len(recsB)]),
+		c.tagsOf("tags names", "OMM.fbs", all[:len(all)-len(recsB)]),
+		c.refsOf("refs names", "OMM.fbs", all[:len(all)-len(recsB)], nil))
+	calls = append(calls, reads...)
+	calls = append(calls, c.summaries(gpPeer)...)
+	calls = append(calls,
+		c.storeBatch("store a second batch: "+sup.Why, "OMM.fbs", recsB, gpPeer, nil, &tb),
+		c.writeValue("SupersedeSourceBatches: "+sup.Why, "OMM.fbs", func(s *storage.FlatSQLStore) (Row, error) {
+			r, err := s.SupersedeSourceBatches("OMM.fbs", sup.Provider, sup.Source, batchB)
+			return ValueRow("tags", i64(r.TagsDeleted), "records", i64(r.RecordsDeleted), "files", strconv.Itoa(r.FilesDeleted), "keep", r.KeepBatch), err
+		}),
+		c.errOnly("Delete: "+del.Why, func(s *storage.FlatSQLStore) error { return s.Delete("OMM.fbs", ids[2][0]) }),
+		c.gets("GetRecord names after", "OMM.fbs", all),
+		c.tagsOf("tags names after", "OMM.fbs", all))
+	calls = append(calls, c.laneReads("OMM.fbs", sup.Provider, sup.Source, "")...)
+	calls = append(calls, c.laneReads("OMM.fbs", sup.Provider, sup.Source, batchB)...)
+	calls = append(calls, c.laneReads("OMM.fbs", del.Provider, del.Source, "")...)
+	calls = append(calls, c.summaries(gpPeer)...)
+	return []Shape{covShape(class, "feed names that need escaping", "OMM.fbs", calls...)}
 }

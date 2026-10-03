@@ -29,7 +29,10 @@ import (
 //  3. new writes after recovery get seqs above every seq on disk and every
 //     seq a follower saw;
 //  4. format 4: the engine's derived state rebuilds equal to the live state
-//     (REBUILD verify, 0 mismatches) and every file passes integrity_check.
+//     (REBUILD verify, 0 mismatches) and every file passes integrity_check;
+//  5. format 4: the type directory holds the crash and verify feeds' files
+//     only, under the engine's names (feedFileName), and the crash feed's
+//     records are in its file (CrashSpec.Source may be any feed name).
 //
 // Records are synthetic OMMs (sds.NewOMMBuilder), so the loops need no
 // fixture and run on a fresh store of any format.
@@ -459,6 +462,10 @@ func CrashVerify(spec CrashSpec) (*Run, error) {
 		}
 		writeFloor(spec.Logs, top)
 	}
+	held, err := s.CountRawRecords(storage.RawRecordQuery{SchemaName: crashSchema, SourceName: spec.source()})
+	if err != nil {
+		fail("count the lane after verification: %v", err)
+	}
 	if err := s.Close(); err != nil {
 		fail("close after verification: %v", err)
 	}
@@ -468,6 +475,18 @@ func CrashVerify(spec CrashSpec) (*Run, error) {
 			fail("%s", v)
 		}
 		r.Extra["integrity"] = IntegrityNote
+		// 5. The feeds' files (C-37 (1)): the type directory holds the files
+		// of the crash and verify feeds only, under the engine's names, and
+		// the crash feed's records are in its file.
+		feed := feedFileName(FixtureProvider, spec.source())
+		var nonEmpty []string
+		if held > 0 {
+			nonEmpty = []string{feed}
+		}
+		for _, v := range feedDirProblems(spec.Store, strings.TrimSuffix(crashSchema, ".fbs"),
+			[]string{feed, feedFileName(FixtureProvider, verifySource)}, nonEmpty) {
+			fail("%s", v)
+		}
 	}
 	r.Extra["acked_records_checked"] = float64(checked)
 	r.Extra["follower_seqs_checked"] = float64(seen)

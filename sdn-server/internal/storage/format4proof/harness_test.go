@@ -113,7 +113,8 @@ func TestProofWrites(t *testing.T) {
 
 // TestProofCrash runs the kill -9 loops (P4PROOF_CRASH=1) on fresh stores:
 // P4PROOF_CRASH_ARMS (default s), P4PROOF_CRASH_ROUNDS per scenario (100;
-// owner, 2026-10-01).
+// owner, 2026-10-01), P4PROOF_CRASH_SOURCE the feed's source (default
+// proof-crash; any string, feednames.go).
 func TestProofCrash(t *testing.T) {
 	c := requireEnv(t, "P4PROOF_CRASH", EnvWork, EnvOut)
 	arms := splitList(os.Getenv("P4PROOF_CRASH_ARMS"))
@@ -131,7 +132,7 @@ func TestProofCrash(t *testing.T) {
 				}
 				defer os.RemoveAll(store)
 				res, err := CrashLoop(context.Background(), CrashLoopSpec{Arm: arm, Scenario: sc, Store: store, Work: c.Work,
-					Out: c.Out, Rounds: rounds, Batch: 1024}, logfOf(t))
+					Out: c.Out, Rounds: rounds, Batch: 1024, Source: os.Getenv("P4PROOF_CRASH_SOURCE")}, logfOf(t))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -141,6 +142,21 @@ func TestProofCrash(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestProofFeedNames is the feed-name proof (feednames.go, contract C-37
+// (1)) on fresh stores: the file set, the reads against format 1, a reopen,
+// store-migrate --to 4 (P4PROOF_SDN_BIN), the quota, and
+// P4PROOF_FEEDNAMES_CRASH_ROUNDS kill -9 rounds per scenario (30).
+func TestProofFeedNames(t *testing.T) {
+	c := requireEnv(t, EnvWork, EnvOut)
+	r, err := DriveFeedNames(context.Background(), c, envInt("P4PROOF_FEEDNAMES_CRASH_ROUNDS", 30), logfOf(t))
+	if r != nil {
+		t.Logf("FEEDNAMES: %d answer rows, quota %v, files %v", r.Extra["rows"], r.Extra["quota"], r.Extra["files_reopened"])
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

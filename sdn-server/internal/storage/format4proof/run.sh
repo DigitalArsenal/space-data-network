@@ -32,6 +32,10 @@
 #   coverage   the coverage classes (every recordBackend method and axis the
 #              benchset leaves out, COVERAGE.md), untimed, every arm
 #   crash      kill -9 loops (ingest, supersede) on format 4, 100 rounds each
+#   feednames  feed names that need escaping (space, '/', '/../', '%', '?',
+#              '#', non-ASCII, case, length) on fresh stores: the file set,
+#              the reads against format 1, a reopen, store-migrate --to 4,
+#              the quota, kill -9 rounds (P4PROOF_FEEDNAMES_CRASH_ROUNDS, 30)
 #   lazyfs     the power-loss rounds in a Linux container (lazyfs.sh), 100 each
 #   growth     sds-tb-gen count-scaled steps to G1, about 17.5M records
 #              (P4PROOF_GROWTH_STEPS_F2, P4PROOF_GROWTH_STEPS_S), one source
@@ -59,7 +63,7 @@ export P4PROOF_WORK="$DIR/work" P4PROOF_OUT="$DIR/out" P4PROOF_SDN_BIN="$DIR/spa
 export GOMAXPROCS="${GOMAXPROCS:-8}"
 : "${SDN_F1_FIXTURE:?}" "${SDN_F2_FIXTURE:?}" "${P4PROOF_BENCHSET:?}" "${WASMEDGE_DIR:?}"
 PHASES=("$@")
-[[ ${#PHASES[@]} -gt 0 ]] || PHASES=(build prepare migrate bytes reads ingest grown m01 writes coverage crash lazyfs growth equivalence report)
+[[ ${#PHASES[@]} -gt 0 ]] || PHASES=(build prepare migrate bytes reads ingest grown m01 writes coverage crash feednames lazyfs growth equivalence report)
 T="$DIR/p4proof.test"
 say() { echo "=== $(date -u +%FT%TZ) $* (load $(sysctl -n vm.loadavg 2>/dev/null || cut -d' ' -f1-3 /proc/loadavg))"; }
 tst() { "$T" -test.run "^$1\$" -test.v -test.count=1 -test.timeout 24h 2>&1 | grep -v '^\[' | tee -a "$DIR/out/run.log"; }
@@ -83,6 +87,7 @@ for phase in "${PHASES[@]}"; do
     writes) tst TestProofWrites ;;
     coverage) tst TestProofCoverage ;;
     crash) P4PROOF_CRASH=1 tst TestProofCrash ;;
+    feednames) tst TestProofFeedNames ;;
     lazyfs) bash "$HERE/lazyfs.sh" "$DIR/lazyfs" "${P4PROOF_LAZYFS_ROUNDS:-100}" s | tee -a "$DIR/out/run.log" ;;
     growth)
       # Count-scaled (MPE-sized records), Zipf producers, from a fixture
