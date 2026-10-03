@@ -465,6 +465,21 @@ func covShape(class, name, schema string, calls ...Call) Shape {
 // finds none of them; format 4 filters every copy.
 const c12PeerFilter = "C-12: format 1 reads a raw page through the one copy it serves per CID; a peer filter naming another producer's copy finds nothing there"
 
+// c38PerFeed names C-38 (5)'s intended difference (owner model, contract
+// v16): there is no cross-feed identity, so a record that arrives through a
+// second source feed is a new row set in that feed's file (C-38 (3)), and a
+// record held by N feeds counts once per feed: a write counts it new to its
+// feed, a supersede counts it as leaving its feed. Format 1 kept one record
+// with N tags and counted it once.
+const c38PerFeed = "C-38 (5): a record held by N feeds counts once per feed (new to a second feed; leaving one feed while another keeps it)"
+
+// c38Hex names the contract's CID form (§3.8 (1), §3.7: a record is keyed by
+// the CIDv1 raw sha2-256 of its bytes; non-bafkrei CIDs are refused): an
+// imported index that names a record by its sha256-hex text keeps that text
+// as the record's identity on format 1, and the CIDv1 on format 4, so a read
+// by one name finds it on one format and not the other.
+const c38Hex = "§3.8 (1): format 4 keys a record by the CIDv1 of its bytes; format 1 keeps an imported index's sha256-hex identity"
+
 // c9Rowid names C-9's intended difference: a relation's _rowid is the
 // record's seq (format 1's is its position in the engine hot window).
 const c9Rowid = "C-9: a relation's _rowid is the record's seq (format 1: the row's position in its engine hot window)"
