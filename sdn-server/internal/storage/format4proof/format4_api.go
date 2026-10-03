@@ -39,7 +39,8 @@ func openFormat4(ctx context.Context, store string) (*format4.Engine, error) {
 // file in a SCAN (C-38 (5)); it is digested once, as format 1 holds it: its
 // copies from GET (the first feed file holding it; a migrated record has
 // the same copies in each), its tag instances from TAGS (every feed file's).
-func DigestAPI(ctx context.Context, api format4.API, schemas []string) (map[string]TypeDigest, error) {
+// skip names CIDs left out entirely (DigestFormat1Limit).
+func DigestAPI(ctx context.Context, api format4.API, schemas []string, skip map[string]bool) (map[string]TypeDigest, error) {
 	out := map[string]TypeDigest{}
 	for _, schema := range schemas {
 		typ, err := format4.TypeOf(schema)
@@ -61,6 +62,9 @@ func DigestAPI(ctx context.Context, api format4.API, schemas []string) (map[stri
 			cids := make([]string, 0, len(recs))
 			for _, r := range recs {
 				after = r.Seq
+				if skip[r.CID] {
+					continue
+				}
 				if k := cidKey(r.CID); !held[k] {
 					held[k] = true
 					cids = append(cids, r.CID)
@@ -108,14 +112,14 @@ func DigestAPI(ctx context.Context, api format4.API, schemas []string) (map[stri
 	return out, nil
 }
 
-func digestFormat4(store string, schemas []string) (map[string]TypeDigest, error) {
+func digestFormat4(store string, schemas []string, skip map[string]bool) (map[string]TypeDigest, error) {
 	ctx := context.Background()
 	e, err := openFormat4(ctx, store)
 	if err != nil {
 		return nil, err
 	}
 	defer e.Close(ctx)
-	return DigestAPI(ctx, e, schemas)
+	return DigestAPI(ctx, e, schemas, skip)
 }
 
 // VerifyAPI runs REBUILD verify (what=8) over every type: the derived state

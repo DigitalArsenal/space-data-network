@@ -117,13 +117,17 @@ func cidKey(cid string) [16]byte {
 // DigestFormat1 digests the given schemas of a closed format-1 store through
 // its own engine (storage.OpenMigrationSource, never native SQLite).
 func DigestFormat1(storeDir string, schemas []string) (map[string]TypeDigest, error) {
-	return DigestFormat1Limit(storeDir, schemas, 0)
+	return DigestFormat1Limit(storeDir, schemas, 0, nil)
 }
 
 // DigestFormat1Limit is DigestFormat1 leaving out the copies whose stored
 // bytes exceed maxBytes (> 0): the records format 4 cannot hold (C-6),
 // counted in Oversized instead.
-func DigestFormat1Limit(storeDir string, schemas []string, maxBytes int64) (map[string]TypeDigest, error) {
+//
+// skip names CIDs (format 1's texts) left out entirely: XM's records format 1
+// keeps under another identity text than format 4 (§3.8 (1); their reads
+// compare under c38Hex).
+func DigestFormat1Limit(storeDir string, schemas []string, maxBytes int64, skip map[string]bool) (map[string]TypeDigest, error) {
 	src, err := storage.OpenMigrationSource(storeDir)
 	if err != nil {
 		return nil, err
@@ -154,6 +158,9 @@ func DigestFormat1Limit(storeDir string, schemas []string, maxBytes int64) (map[
 				}
 				for _, r := range recs {
 					after = r.RowID
+					if skip[r.CID] {
+						continue
+					}
 					if maxBytes > 0 && int64(len(r.Stored)) > maxBytes {
 						d.Oversized++
 						continue
@@ -204,7 +211,7 @@ func DigestStore(arm, dir string, schemas []string) (map[string]TypeDigest, erro
 	case ArmF1:
 		return DigestFormat1(dir, schemas)
 	case ArmS:
-		return digestFormat4(dir, schemas)
+		return digestFormat4(dir, schemas, nil)
 	}
 	return nil, nil
 }

@@ -793,7 +793,7 @@ func DriveCoverage(ctx context.Context, c Config, logf Logf) error {
 	var firstErr error
 	for _, class := range classes {
 		if class == ClassXM {
-			if err := c.driveXM(ctx, logf); err != nil && firstErr == nil {
+			if err := c.driveXM(ctx, logf, xmAliases(shapes)); err != nil && firstErr == nil {
 				firstErr = err
 			}
 			continue
@@ -824,7 +824,11 @@ func DriveCoverage(ctx context.Context, c Config, logf Logf) error {
 // SDN binary) that clone's record sets digested, store-migrate --to 4
 // --inventory, the migration, its checks and --verify-only, the format-4
 // digests, and the class's reads on the migrated store.
-func (c Config) driveXM(ctx context.Context, logf Logf) error {
+//
+// aliases are the CIDs format 1 keeps under another identity text (hex ->
+// CIDv1, §3.8 (1)): both digests leave those records out (their reads
+// compare under c38Hex, and the migrator re-hashes each against its CIDv1).
+func (c Config) driveXM(ctx context.Context, logf Logf, aliases map[string]string) error {
 	var firstErr error
 	note := func(err error) {
 		if err != nil && firstErr == nil {
@@ -884,13 +888,20 @@ func (c Config) driveXM(ctx context.Context, logf Logf) error {
 		}
 	}
 	// Format 1's record sets, oversized records aside (C-6).
-	d1, err := DigestFormat1Limit(store, xmTypes, maxStorableRecord)
+	skip1, skip4 := map[string]bool{}, map[string]bool{}
+	for hexText, v1 := range aliases {
+		skip1[hexText], skip4[v1] = true, true
+	}
+	d1, err := DigestFormat1Limit(store, xmTypes, maxStorableRecord, skip1)
 	w1 := &Run{Kind: KindWrites, Arm: ArmF1, Format: "", Label: LabelFixture, Class: ClassXM, Started: time.Now().UTC().Format(time.RFC3339),
 		Machine: ThisMachine(), LoadStart: Load(), Extra: map[string]any{}}
 	if err != nil {
 		w1.Extra["digest_error"] = err.Error()
 	} else {
 		w1.Extra["digest"] = d1
+	}
+	if len(aliases) > 0 {
+		w1.Extra["digest_skips_aliased_cids"] = len(aliases)
 	}
 	w1.LoadEnd = Load()
 	if _, err := WriteRun(c.Out, w1); err != nil {
@@ -942,7 +953,7 @@ func (c Config) driveXM(ctx context.Context, logf Logf) error {
 		if code, err := migrateVerb(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-verify-only.log"), "--verify-only"); err != nil {
 			probs = append(probs, fmt.Sprintf("store-migrate --to 4 --verify-only exited %d: %v", code, err))
 		}
-		if d4, err := digestFormat4(store, xmTypes); err != nil {
+		if d4, err := digestFormat4(store, xmTypes, skip4); err != nil {
 			ws.Extra["digest_error"] = err.Error()
 		} else {
 			ws.Extra["digest"] = d4
@@ -1011,6 +1022,21 @@ func xmRefusal(ctx context.Context, bin, store, logPath, flag string, args ...st
 		}
 	}
 	return probs
+}
+
+// xmAliases are the CID aliases of XM's read shapes (X07's sha256-hex
+// record).
+func xmAliases(shapes []Shape) map[string]string {
+	out := map[string]string{}
+	for _, sh := range shapes {
+		if sh.Class != ClassXM {
+			continue
+		}
+		for k, v := range sh.Policy.CIDAliases {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // maxStorableRecord is the largest record format 4 stores: the write slot's

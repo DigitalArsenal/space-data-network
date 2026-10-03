@@ -213,8 +213,10 @@ type CallRuling struct {
 	// standard or none (a store total): rowStandard.
 	Standard string `json:"standard,omitempty"`
 	// Source limits it likewise to the rows that name this source or none
-	// (rowSource).
+	// (rowSource), and Batch to the rows of this batch or none (rowBatch);
+	// with Absent, Batch narrows the rows dropped to that batch's.
 	Source string `json:"source,omitempty"`
+	Batch  string `json:"batch,omitempty"`
 	// SameSet accepts the fields only when the call's rows are equal as a
 	// multiset: their order alone differs.
 	SameSet bool `json:"same_set,omitempty"`
@@ -233,7 +235,7 @@ func (p Policy) ruling(call, field string, row Row, setEq bool) *CallRuling {
 		if !strings.Contains(call, r.Call) || r.Absent != "" || (r.SameSet && !setEq) {
 			continue
 		}
-		if r.Standard != "" || r.Source != "" {
+		if r.Standard != "" || r.Source != "" || r.Batch != "" {
 			if row == nil {
 				continue
 			}
@@ -241,6 +243,9 @@ func (p Policy) ruling(call, field string, row Row, setEq bool) *CallRuling {
 				continue
 			}
 			if src := rowSource(row); r.Source != "" && src != "" && src != r.Source {
+				continue
+			}
+			if b := rowBatch(row); r.Batch != "" && b != "" && b != r.Batch {
 				continue
 			}
 		}
@@ -276,6 +281,13 @@ func rowSource(r Row) string {
 	return strings.Trim(v, `"`)
 }
 
+// rowBatch is the batch a summary row names (BatchID, JSON-quoted or bare),
+// or "".
+func rowBatch(r Row) string {
+	v, _ := r.lookup("BatchID")
+	return strings.Trim(v, `"`)
+}
+
 // absentRows drops format 1's rows that name a standard an Absent ruling of
 // call names; it returns the rows kept and the rulings that dropped any.
 func (p Policy) absentRows(call string, rows []Row) ([]Row, []string) {
@@ -286,7 +298,7 @@ func (p Policy) absentRows(call string, rows []Row) ([]Row, []string) {
 		}
 		kept := rows[:0:0]
 		for _, row := range rows {
-			if rowStandard(row) != r.Absent {
+			if rowStandard(row) != r.Absent || (r.Batch != "" && rowBatch(row) != r.Batch) {
 				kept = append(kept, row)
 			}
 		}
@@ -376,6 +388,10 @@ const (
 	c39U4        = "C-39 U4: the table cursor is the type's seq; format 1 compared a producer table's own rowid (as the R10 ruling)"
 	c39U5        = "C-39 U5: lane bytes are the exact stored length; format 1 counted a retagged sealed record's plaintext length"
 	c39U6        = "C-39 U6: lane counters are the records the feed holds; format 1's incremental counters drifted after CAT supersede-on-ingest"
+	// c6SetAside is C-6 on a migrated store: the record above format 4's
+	// largest storable record is set aside (store-migrate --drop-oversized),
+	// so format 4's summaries lack it.
+	c6SetAside = "C-6: the migration sets aside the record above format 4's largest storable record (--drop-oversized); format 4's summaries do not count it"
 	// c38PerFeedSurface is C-38 (5) on the surface listing.
 	c38PerFeedSurface = "C-38 (5): a \"<TYPE>@<source>\" relation counts the feed's records (a record in N feeds counts in each); format 1 counts its resident rows, one per record in its first source's partition"
 )
