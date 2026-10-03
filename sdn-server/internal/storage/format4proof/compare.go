@@ -143,6 +143,17 @@ func alignTies(ra, rb []Row, key string, limit int, member func(Row) bool) (out 
 	return out, cut, true
 }
 
+// schemaOfCall is the standard a call's name names (its first "<TYPE>.fbs"
+// word), else def.
+func schemaOfCall(call, def string) string {
+	for _, w := range strings.Fields(call) {
+		if strings.HasSuffix(w, ".fbs") {
+			return w
+		}
+	}
+	return def
+}
+
 // tieMember reports a row a copy format 1 holds: a record row's copy
 // variant (~peer, ~ts, ~sig), or a routed row's peer and ts in its standard.
 func tieMember(row Row, schema string, oracle CopyOracle, cache map[string][]Row) bool {
@@ -469,9 +480,9 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			ra, rb = sortRows(ra), sortRows(rb)
 		}
 		if tr := pol.tieRule(a.Call); tr != nil {
-			schema := f1.Schema
-			if tr.Schema != "" {
-				schema = tr.Schema
+			schema := tr.Schema
+			if schema == "" {
+				schema = schemaOfCall(a.Call, f1.Schema)
 			}
 			if aligned, cut, ok := alignTies(ra, rb, tr.Key, tr.Limit, func(r Row) bool {
 				return tieMember(r, schema, shapeOracle(f1, oracle), map[string][]Row{})
