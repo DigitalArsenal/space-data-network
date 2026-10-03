@@ -4,22 +4,23 @@ package storage
 // (design §5.4, §10; contract §3.5, §3.6, §5.4). Each legacy read is one or
 // two engine ops on the read lanes; none takes s.mu or waits on a writer.
 //
-// SEMANTICS THAT CHANGE WITH THE FORMAT (accepted with format 2, C-10, C-12):
+// SEMANTICS THE CONTRACT CHANGES (C-10, C-12, C-38 (5)):
 //   - a datasync page, a tag-filtered count or head, and an epoch coverage
-//     with a lane filter carry each record once (format 1 repeated it once per
-//     matching tag row, A16); RowID is the record's seq, which for a migrated
-//     record IS format 1's sdn_record_index rowid;
-//   - a raw page projects the record's matched tag (§3.6): with a tag filter,
-//     an instance that meets it, else the record's earliest; format 1
-//     repeated the record once per tag row (C-10). A window projects the
-//     record's newest tag and a ref meets the first tag in identity order,
-//     as format 1 does;
-//   - a sync-filtered or searched raw page off the cursor is in arrival
-//     order, paged by the engine (format 2's search order; format 1
-//     ordered it by window_at, then CID, which the engine's windows give
-//     newest first only and without a search), so an offset walk sees no
-//     record twice while records arrive;
+//     with a lane filter carry each record once per feed file (format 1
+//     repeated it once per matching tag row, A16, C-10); RowID is the row's
+//     seq, which for a migrated record IS format 1's sdn_record_index rowid;
+//   - a record held by N source feeds is a row set in each feed's file (no
+//     cross-feed identity, C-38 (3)) and answers once per feed in type-wide
+//     reads and counts, each row with its own feed's provenance (C-38 (5));
+//   - a raw page projects the row's matched tag (§3.6): with a tag filter, an
+//     instance of its feed that meets it, else its feed's earliest. A window
+//     projects the newest tag of the row's feed, and a ref meets the first
+//     tag in format 1's identity order, as format 1 does;
 //   - GetRecord returns the engine's first copy (C-12).
+// WHERE THE ENGINE'S ORDERS DIFFER FROM FORMAT 1 (no ruling yet; the proof
+// harness lists them): a newest-first raw page is seq DESC (format 1: tag
+// time DESC then CID, tagged records first), and a sync-filtered or
+// searched page off the cursor is seq ASC (format 1: window_at, then CID).
 // Everything else is format 1's answer: the stored bytes, CIDs, signatures,
 // source URLs, content keys and tag times; counts, windows (window_at DESC
 // then CID, or CID order), index pages and epoch rankings.
