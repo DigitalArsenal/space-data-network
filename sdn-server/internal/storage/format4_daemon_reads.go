@@ -17,10 +17,11 @@ package storage
 //     projects the newest tag of the row's feed, and a ref meets the first
 //     tag in format 1's identity order, as format 1 does;
 //   - GetRecord returns the engine's first copy (C-12).
-// WHERE THE ENGINE'S ORDERS DIFFER FROM FORMAT 1 (no ruling yet; the proof
-// harness lists them): a newest-first raw page is seq DESC (format 1: tag
-// time DESC then CID, tagged records first), and a sync-filtered or
-// searched page off the cursor is seq ASC (format 1: window_at, then CID).
+// PAGE ORDERS (C-39 E2, E3): the engine's SCAN orders 5-7 are format 1's
+// two-part pages: a newest-first raw page is the tagged records by delivery
+// time desc then CID, then the untagged ones by ts; QueryRecentRecords is
+// delivery time desc then seq; a sync-filtered or searched page off the
+// cursor is w asc then CID (format 1's window_at order).
 // Everything else is format 1's answer: the stored bytes, CIDs, signatures,
 // source URLs, content keys and tag times; counts, windows (window_at DESC
 // then CID, or CID order), index pages and epoch rankings.
@@ -583,12 +584,15 @@ func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]
 			q.Order, q.Limit = format4.OrderSeqAsc, int64(filter.Limit)
 			recs, err = b.d.api().Scan(b.d.ctx, q)
 		case f4Indexed(q):
-			// Off the cursor: arrival order, paged by the engine.
-			q.Order, q.Limit, q.Offset = format4.OrderSeqAsc, int64(filter.Limit), int64(filter.Offset)
+			// Off the cursor, with a sync filter or a search: format 1's
+			// w order (COALESCE(epoch, ts) asc, CID asc), its tagged
+			// records then its untagged ones, paged by the engine (C-39 E3).
+			q.Order, q.Limit, q.Offset = format4.OrderWAsc, int64(filter.Limit), int64(filter.Offset)
 			recs, err = b.d.api().Scan(b.d.ctx, q)
 		default:
-			// Newest first.
-			q.Order, q.Limit, q.Offset = format4.OrderSeqDesc, int64(filter.Limit), int64(filter.Offset)
+			// Newest first as format 1: the tagged records by delivery time
+			// desc, CID asc, then the untagged ones by ts (C-39 E2).
+			q.Order, q.Limit, q.Offset = format4.OrderNewest, int64(filter.Limit), int64(filter.Offset)
 			recs, err = b.d.api().Scan(b.d.ctx, q)
 		}
 		if errors.Is(err, format4.ErrNoType) {
@@ -821,7 +825,9 @@ func (b format4Backend) QueryRecentRecords(schemaName string, limit int) ([]*Rec
 	if limit > 250000 {
 		limit = 250000
 	}
-	recs, err := b.d.api().Scan(b.d.ctx, format4.Query{Type: typ, Order: format4.OrderSeqDesc, Limit: int64(limit), Hydrate: true})
+	// Format 1's order: the tagged records by delivery time desc, seq desc,
+	// then the untagged ones by seq desc (C-39 E2).
+	recs, err := b.d.api().Scan(b.d.ctx, format4.Query{Type: typ, Order: format4.OrderRecent, Limit: int64(limit), Hydrate: true})
 	if errors.Is(err, format4.ErrNoType) {
 		return nil, nil
 	}

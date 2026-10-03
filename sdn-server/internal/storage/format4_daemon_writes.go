@@ -83,6 +83,9 @@ func f4Ident(schemaName string, data []byte, tags *SourceTags) *[32]byte {
 type f4PutOpt struct {
 	// identity sends each record's ingest identity (IQC, C-26).
 	identity bool
+	// ownTS: a COPY of a held record keeps this write's ts (format 1's
+	// StoreRoutedByProducer, C-39 E6).
+	ownTS bool
 }
 
 // f4Put is one write's records into the engine, chunked. It returns each
@@ -120,7 +123,8 @@ func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID st
 	refused := &RefusedRecordsError{Schema: schemaName, Records: len(records)}
 	for start := 0; start < len(records); start += format4PutChunk {
 		chunk := records[start:min(start+format4PutChunk, len(records))]
-		batch := format4.Batch{Type: typ, Peer: peerID, Tags: batchTags, Mode: format4.ModeIngest, Records: make([]format4.In, len(chunk))}
+		batch := format4.Batch{Type: typ, Peer: peerID, Tags: batchTags, Mode: format4.ModeIngest, Records: make([]format4.In, len(chunk)),
+			OwnTS: opt.ownTS}
 		for i, data := range chunk {
 			cid := computeCID(data)
 			cids[start+i] = cid
@@ -237,7 +241,11 @@ func (b format4Backend) storeBatch(schemaName string, records [][]byte, peerID s
 
 // storeOne is the single-record write (Store: no tag).
 func (b format4Backend) storeOne(schemaName string, data []byte, peerID string, signature []byte, tags *SourceTags) (string, error) {
-	cids, outcomes, err := b.f4Put("store record", schemaName, [][]byte{data}, peerID, signature, tags, f4PutOpt{identity: true})
+	return b.storeOneOpt(schemaName, data, peerID, signature, tags, f4PutOpt{identity: true})
+}
+
+func (b format4Backend) storeOneOpt(schemaName string, data []byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) (string, error) {
+	cids, outcomes, err := b.f4Put("store record", schemaName, [][]byte{data}, peerID, signature, tags, opt)
 	if err != nil {
 		return "", err
 	}
@@ -252,9 +260,11 @@ func (b format4Backend) StoreWithSourceTags(schemaName string, data []byte, peer
 }
 
 // StoreRoutedByProducer is keyed by the raw peer id: the engine derives the
-// copy's producer token from it (C-13), as format 1 named the table.
+// copy's producer token from it (C-13), as format 1 named the table. A copy
+// of a held record keeps this write's clock as its ts, as format 1's
+// StoreRoutedByProducer stores its own (C-39 E6).
 func (b format4Backend) StoreRoutedByProducer(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
-	return b.storeOne(schemaName, data, peerID, signature, nil)
+	return b.storeOneOpt(schemaName, data, peerID, signature, nil, f4PutOpt{identity: true, ownTS: true})
 }
 
 // importDatasetShardChunk stores a shard chunk as the serving peer's copies,
