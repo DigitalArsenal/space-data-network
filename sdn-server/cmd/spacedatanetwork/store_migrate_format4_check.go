@@ -242,6 +242,18 @@ func (m *migrator4) checkPage(ctx context.Context, sc *schemaCheck, entries []st
 	for _, r := range recs {
 		copies[r.CID] = append(copies[r.CID], r)
 	}
+	// A record is a row set in each feed file its tags name (C-38: no
+	// cross-feed identity; a migrated record keeps its seq in each), or in
+	// local with none. GET answers from its first feed file; HEAD and the
+	// counters count it once per file.
+	feedSet := map[string]map[[2]string]bool{}
+	for _, t := range tags {
+		if feedSet[t.CID] == nil {
+			feedSet[t.CID] = map[[2]string]bool{}
+		}
+		feedSet[t.CID][[2]string{t.Provider, t.Source}] = true
+	}
+	feeds := func(cid string) int64 { return max(int64(len(feedSet[cid])), 1) }
 	firstLen := map[string]int64{}
 	var samples []storage.IndexEntry
 	for _, e := range entries {
@@ -304,6 +316,10 @@ func (m *migrator4) checkPage(ctx context.Context, sc *schemaCheck, entries []st
 			firstLen[e.CID] = first.Len
 			m.checkFields(schema, sc.fields, e.IndexEntry, *first, c)
 		}
+		if f := feeds(e.CID); f > 1 {
+			c.MultiFeed++
+			c.addFeedExtra(sc.typ, cs, f-1)
+		}
 		if e.RowID%migrate4SampleEvery == 0 {
 			samples = append(samples, e.IndexEntry)
 		}
@@ -318,7 +334,26 @@ func (m *migrator4) checkPage(ctx context.Context, sc *schemaCheck, entries []st
 		lanes[k] = lc
 	}
 	c.TagInstances += int64(len(tags))
-	return m.checkColumns(ctx, schema, sc.typ, sc.fields, samples, c)
+	return m.checkColumns(ctx, schema, sc.typ, sc.fields, samples, feeds, c)
+}
+
+// addFeedExtra adds a record's copies held in extra more feed files to what
+// the type and partition counters hold beyond one row set per record.
+func (c *migrate4Check) addFeedExtra(typ string, copies []format4.Rec, extra int64) {
+	if c.typeExtra == nil {
+		c.typeExtra, c.partExtra = map[string]migrate4FeedExtra{}, map[[2]string]migrate4Tally{}
+	}
+	x := c.typeExtra[typ]
+	x.records += extra
+	for _, r := range copies {
+		x.copies += extra
+		x.copyBytes += extra * int64(len(r.Data))
+		p := c.partExtra[[2]string{typ, r.Producer}]
+		p.Rows += extra
+		p.Bytes += extra * int64(len(r.Data))
+		c.partExtra[[2]string{typ, r.Producer}] = p
+	}
+	c.typeExtra[typ] = x
 }
 
 // endSchemaCheck compares a schema's totals and digests with what the copy
@@ -391,7 +426,7 @@ func (m *migrator4) checkFields(schema string, f typeFields, e storage.IndexEntr
 // checkColumns asks the engine, for each sampled record, whether its
 // extracted columns equal format 1's: every present column at once (exactly
 // the record matches), then each absent column (NOTNULL matches nothing).
-func (m *migrator4) checkColumns(ctx context.Context, schema, typ string, f typeFields, samples []storage.IndexEntry, c *migrate4Check) error {
+func (m *migrator4) checkColumns(ctx context.Context, schema, typ string, f typeFields, samples []storage.IndexEntry, feeds func(cid string) int64, c *migrate4Check) error {
 	if len(samples) == 0 {
 		return nil
 	}
@@ -417,7 +452,8 @@ func (m *migrator4) checkColumns(ctx context.Context, schema, typ string, f type
 			}
 		}
 		if len(eq) > 0 {
-			probes = append(probes, probe{e: e, preds: eq, want: 1, what: "every present column"})
+			// The record matches once in each feed file holding it.
+			probes = append(probes, probe{e: e, preds: eq, want: feeds(e.CID), what: "every present column"})
 		}
 		c.ColumnSamples++
 	}
@@ -484,8 +520,10 @@ func (m *migrator4) checkCounters(ctx context.Context, c *migrate4Check, want ma
 		if w := want[t.Schema]; w != nil {
 			sent = w.Copies[t.Name]
 		}
-		if g := got[k]; g.Records != sent.Rows || g.Bytes != sent.Bytes {
-			c.bad("partition %s/%s: %d records, %d B; the copy sent %d, %d B", typ, t.Token, g.Records, g.Bytes, sent.Rows, sent.Bytes)
+		extra := c.partExtra[[2]string{typ, t.Token}]
+		if g := got[k]; g.Records != sent.Rows+extra.Rows || g.Bytes != sent.Bytes+extra.Bytes {
+			c.bad("partition %s/%s: %d records, %d B; the copy sent %d, %d B, and %d, %d B more in further feed files",
+				typ, t.Token, g.Records, g.Bytes, sent.Rows, sent.Bytes, extra.Rows, extra.Bytes)
 		}
 		// Every row of the table was copied: format 1's counter, or a
 		// recount where the counter drifted, holds exactly what was read.
@@ -530,10 +568,10 @@ func (m *migrator4) checkCounters(ctx context.Context, c *migrate4Check, want ma
 			copies += t.Rows
 			bytes += t.Bytes
 		}
-		g := byType[typ]
-		if g.Records != w.Held || g.Copies != copies || g.CopyBytes != bytes || g.MaxSeq != w.MaxSeq {
-			c.bad("type %s: %d records, %d copies, %d B, max seq %d; the copy sent %d, %d, %d B, %d",
-				typ, g.Records, g.Copies, g.CopyBytes, g.MaxSeq, w.Held, copies, bytes, w.MaxSeq)
+		g, x := byType[typ], c.typeExtra[typ]
+		if g.Records != w.Held+x.records || g.Copies != copies+x.copies || g.CopyBytes != bytes+x.copyBytes || g.MaxSeq != w.MaxSeq {
+			c.bad("type %s: %d records, %d copies, %d B, max seq %d; the copy sent %d, %d, %d B, %d, and %d, %d, %d B more in further feed files",
+				typ, g.Records, g.Copies, g.CopyBytes, g.MaxSeq, w.Held, copies, bytes, w.MaxSeq, x.records, x.copies, x.copyBytes)
 		}
 	}
 	// Lanes: per format-1 lane, summed over partitions and content keys, the

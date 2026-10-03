@@ -277,10 +277,22 @@ type migrate4Check struct {
 	Lanes         int                  `json:"lanes"`
 	Orphans       map[string]int64     `json:"orphan_index_rows,omitempty"`
 	Rebuild       []format4.RebuildRow `json:"rebuild_verify,omitempty"`
-	Mismatches    []string             `json:"mismatches,omitempty"` // the first 50
-	MismatchCount int64                `json:"mismatch_count"`
-	Took          string               `json:"took"`
+	// MultiFeed counts records held by more than one feed file (tags of
+	// several sources): each is a row set in every one of them (C-38 (3)).
+	MultiFeed     int64    `json:"multi_feed_records,omitempty"`
+	Mismatches    []string `json:"mismatches,omitempty"` // the first 50
+	MismatchCount int64    `json:"mismatch_count"`
+	Took          string   `json:"took"`
+
+	// feedExtra is what the type and partition counters hold beyond one
+	// copy of each record: a record in N feed files counts N times there
+	// (C-38 (5)). By type, and by type and producer token.
+	typeExtra map[string]migrate4FeedExtra
+	partExtra map[[2]string]migrate4Tally
 }
+
+// migrate4FeedExtra is a type's counters beyond one row set per record.
+type migrate4FeedExtra struct{ records, copies, copyBytes int64 }
 
 func (c *migrate4Check) bad(format string, args ...interface{}) {
 	c.MismatchCount++
