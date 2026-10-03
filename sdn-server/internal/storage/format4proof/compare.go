@@ -54,10 +54,13 @@ type Policy struct {
 }
 
 // TieRule is a partial order: the calls whose name contains Call are
-// ordered by Key alone.
+// ordered by Key alone. Limit is the call's row limit as format 1 applies
+// it (0: none): only an answer of exactly Limit rows can have its last tie
+// cut.
 type TieRule struct {
-	Call string `json:"call"`
-	Key  string `json:"key"`
+	Call  string `json:"call"`
+	Key   string `json:"key"`
+	Limit int    `json:"limit,omitempty"`
 }
 
 func (p Policy) tieRule(call string) *TieRule {
@@ -75,14 +78,15 @@ const tieCut = "format 1 orders by the timestamp alone: a limit cutting a tie ke
 // alignTies puts the candidate's rows in format 1's order where format 1's
 // order leaves them free: the key of every position must be equal on both
 // sides (the defined part of the order); within each run of one key, the
-// candidate's rows match format 1's as a multiset; in the last run, which a
-// limit may cut, a row format 1 did not return is taken when member(row)
-// proves it a member of the tie (a copy format 1 holds with that key). A key
+// candidate's rows match format 1's as a multiset; when the answer holds
+// exactly limit rows, the last run may be cut by the limit, and a row of it
+// format 1 did not return is taken when member(row) proves it a member of
+// the tie (a copy format 1 holds with that key). A key
 // that is a canonical stand-in ("now", the store's own clock) or empty is
 // no tie: those rows keep their positions. It returns the rows in format 1's
 // order and the number of rows taken by member; ok is false when a key
 // differs.
-func alignTies(ra, rb []Row, key string, member func(Row) bool) (out []Row, cut int, ok bool) {
+func alignTies(ra, rb []Row, key string, limit int, member func(Row) bool) (out []Row, cut int, ok bool) {
 	if len(ra) != len(rb) {
 		return rb, 0, false
 	}
@@ -119,7 +123,7 @@ func alignTies(ra, rb []Row, key string, member func(Row) bool) (out []Row, cut 
 			rest = append(rest, rb[i])
 		}
 		for _, r := range rest {
-			if end != len(ra) || !member(r) {
+			if end != len(ra) || limit <= 0 || len(ra) != limit || !member(r) {
 				return rb, 0, true // compared position by position
 			}
 			for j := range placed {
@@ -462,7 +466,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			ra, rb = sortRows(ra), sortRows(rb)
 		}
 		if tr := pol.tieRule(a.Call); tr != nil {
-			if aligned, cut, ok := alignTies(ra, rb, tr.Key, func(r Row) bool {
+			if aligned, cut, ok := alignTies(ra, rb, tr.Key, tr.Limit, func(r Row) bool {
 				return tieMember(r, f1.Schema, shapeOracle(f1, oracle), variantCache)
 			}); ok {
 				rb = aligned
