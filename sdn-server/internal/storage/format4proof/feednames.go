@@ -48,9 +48,13 @@ var feedNameCases = []feedNameCase{
 	{FixtureProvider, "gp#frag", "'#': a URI fragment"},
 	{"prövider-ü", "源-é/ñ", "non-ASCII bytes and a '/'"},
 	{".hidden", "dot-led", "a name that starts with '.'"},
-	{FixtureProvider, "Celestrak-GP", "a name equal to another feed's but for case (case-insensitive file systems)"},
+	{FixtureProvider, caseTwinSource, "a name equal to another feed's but for case (case-insensitive file systems)"},
 	{FixtureProvider, strings.Repeat("long-source-name/", 12), "a name longer than a file name may be, escaped"},
 }
+
+// caseTwinSource is the feedNameCases source equal to the fixture's
+// celestrak-gp but for case.
+const caseTwinSource = "Celestrak-GP"
 
 // feedNameCrashSource is the kill -9 rounds' source: every character of
 // feedNameCases in one name.
@@ -63,13 +67,17 @@ const (
 	feedNamesBatch  = "names-b1"
 	feedNamesBatch2 = "names-b2"
 	feedNamesPeer   = "source:feed-names"
-	feedNamesPer    = 5 // records per feed
+	feedNamesPer    = 5 // records of the first feed and of the untagged write; feed i holds feedNamesPer+i
 )
 
-// feedNameFeeds are the feeds DriveFeedNames writes: every case, and the
-// feed whose name "Celestrak-GP" equals but for case.
+// feedNameFeeds are the feeds DriveFeedNames writes: every case, the feed
+// whose name caseTwinSource equals but for case, and a feed whose source is
+// literally "local" (format 1's "local" partition holds it beside the
+// untagged records: "<TYPE>@local" reads both, GATES-feed-r2 N-B).
 func feedNameFeeds() []feedNameCase {
-	return append(append([]feedNameCase(nil), feedNameCases...), feedNameCase{FixtureProvider, "celestrak-gp", "the feed the case-collision case collides with"})
+	return append(append([]feedNameCase(nil), feedNameCases...),
+		feedNameCase{FixtureProvider, "celestrak-gp", "the feed the case-collision case collides with"},
+		feedNameCase{FixtureProvider, "local", "a source spelled as the untagged records' partition"})
 }
 
 // feedNameWrite is one write of DriveFeedNames: its records and tags (nil:
@@ -79,13 +87,14 @@ type feedNameWrite struct {
 	tags *storage.SourceTags
 }
 
-// feedNameWrites are DriveFeedNames' writes, in order: each feed's records,
-// untagged records, then the first feed's second batch.
+// feedNameWrites are DriveFeedNames' writes, in order: each feed's records
+// (a distinct count per feed, so a read of the wrong feed shows: GATES-feed-r2
+// N-C), untagged records, then the first feed's second batch.
 func feedNameWrites() []feedNameWrite {
 	var out []feedNameWrite
 	for i, f := range feedNameFeeds() {
 		t := storage.SourceTags{ProviderID: f.Provider, SourceName: f.Source, BatchID: feedNamesBatch}
-		out = append(out, feedNameWrite{CrashRecords(9100+i, 0, feedNamesPer), &t})
+		out = append(out, feedNameWrite{CrashRecords(9100+i, 0, feedNamesPer+i), &t})
 	}
 	out = append(out, feedNameWrite{CrashRecords(9099, 0, feedNamesPer), nil})
 	f := feedNameFeeds()[0]
@@ -132,9 +141,42 @@ func feedNameWant() map[string]map[string]bool {
 	return map[string]map[string]bool{strings.TrimSuffix(crashSchema, ".fbs"): files}
 }
 
+// relationCount is `SELECT COUNT(*) AS n FROM "OMM@<source>"` as rows that
+// start with key: its count, or its error kind.
+func relationCount(s *storage.FlatSQLStore, key Row, source string) ([]Row, error) {
+	sql := fmt.Sprintf(`SELECT COUNT(*) AS n FROM "OMM@%s"`, source)
+	payload, _, _, err := s.QuerySandboxedJSON(sql, sandboxCaps)
+	if err != nil {
+		return []Row{append(append(Row(nil), key...), Field{"sql", errKind(err)})}, nil
+	}
+	rs, err := JSONRows(payload)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", sql, err)
+	}
+	out := make([]Row, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, append(append(append(Row(nil), key...), Field{"sql", "count"}), r...))
+	}
+	return out, nil
+}
+
+// Relations feedNameAnswers reads beside each feed's own (C-43): the
+// untagged records' (B2: format 1's "local" partition, which also holds the
+// feed whose source is "local"), the first feed's in capitals (B3: a unique
+// case-insensitive match) and the case twins' in capitals (B3: a spelling of
+// neither twin answers none, never another feed).
+func feedNameRelations() []string {
+	return []string{"local", strings.ToUpper(feedNameCases[0].Source), strings.ToUpper(caseTwinSource)}
+}
+
+// feedNamesEpochAt is the time feedNameAnswers' epoch streams ask for: half
+// a second after the third record's epoch of every write (CrashRecords).
+const feedNamesEpochAt = float64(crashEpoch0+2*37) + 0.5
+
 // feedNameAnswers reads what writeFeedNames left, as clock-free rows that
 // compare across formats: per feed its count, its tagged records (CID,
-// provider, source, batch, bytes) and its `<TYPE>@<source>` SQL count; per
+// provider, source, batch, bytes) and its `<TYPE>@<source>` SQL count; the
+// counts of feedNameRelations and the epoch streams of source "local"; per
 // record written its tags and bytes; the type's count and the store's
 // source record counts.
 func feedNameAnswers(s *storage.FlatSQLStore) ([]Row, error) {
@@ -156,18 +198,33 @@ func feedNameAnswers(s *storage.FlatSQLStore) ([]Row, error) {
 				"source", r.SourceTags.SourceName, "batch", r.SourceTags.BatchID, "data", digest(r.Data)))
 		}
 		out = append(out, sortRows(rows)...)
-		sql := fmt.Sprintf(`SELECT COUNT(*) AS n FROM "OMM@%s"`, f.Source)
-		payload, _, _, err := s.QuerySandboxedJSON(sql, sandboxCaps)
+		rs, err := relationCount(s, ValueRow("feed", f.Provider+"/"+f.Source), f.Source)
 		if err != nil {
-			out = append(out, ValueRow("feed", f.Provider+"/"+f.Source, "sql", errKind(err)))
+			return nil, err
+		}
+		out = append(out, rs...)
+	}
+	for _, rel := range feedNameRelations() {
+		rs, err := relationCount(s, ValueRow("relation", "OMM@"+rel), rel)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rs...)
+	}
+	for _, profile := range []string{"nearest", "as_of", "forward"} {
+		key := ValueRow("epoch stream", "local "+profile)
+		st, err := s.QueryEpochRawStream(crashSchema, "local", profile, feedNamesEpochAt, 0)
+		if err != nil {
+			out = append(out, append(key, Field{"err", errKind(err)}))
 			continue
 		}
-		rs, err := JSONRows(payload)
+		frames, err := FrameRows(st.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", sql, err)
+			return nil, fmt.Errorf("epoch stream local %s: %w", profile, err)
 		}
-		for _, r := range rs {
-			out = append(out, append(Row{{"feed", f.Provider + "/" + f.Source}, {"sql", "count"}}, r...))
+		out = append(out, append(key, Field{"frames", strconv.Itoa(len(frames))}))
+		for _, r := range unorderedDigest(frames) {
+			out = append(out, append(append(Row(nil), key...), r...))
 		}
 	}
 	for _, w := range feedNameWrites() {
@@ -201,6 +258,48 @@ func feedNameAnswers(s *storage.FlatSQLStore) ([]Row, error) {
 		rows = append(rows, ValueRow("feed", k, "records", i64(n)))
 	}
 	return append(out, sortRows(rows)...), nil
+}
+
+// caseTwinResidual is the C-43 B3 residual on the feed-name answers: format
+// 1 answers a case twin's relation (caseTwinSource or celestrak-gp, and
+// the twins' spelling in capitals, which is neither's) with its own
+// order-dependent choice between the twins. Format 4's answer must be the
+// named feed's own count (CountRawRecords' row), and none (a count of 0 or
+// an error) for the spelling of neither. It returns format 1's rows with
+// each such row format 4 answers so replaced by format 4's (so diffRows
+// compares the rest), and what format 4 answered wrong.
+func caseTwinResidual(a1, a4 []Row) ([]Row, []string) {
+	if len(a1) != len(a4) {
+		return a1, nil // diffRows reports it
+	}
+	twin := map[string]bool{FixtureProvider + "/" + caseTwinSource: true, FixtureProvider + "/celestrak-gp": true}
+	own := map[string]string{}
+	for _, r := range a4 {
+		if f, n := r.Get("feed"), r.Get("count"); f != "" && n != "" && r.Get("cid") == "" {
+			own[f] = n
+		}
+	}
+	neither := "OMM@" + strings.ToUpper(caseTwinSource)
+	out := append([]Row(nil), a1...)
+	var probs []string
+	for i, r := range a4 {
+		switch {
+		case twin[r.Get("feed")] && r.Get("sql") != "":
+			if r.Get("sql") != "count" || r.Get("n") != own[r.Get("feed")] {
+				probs = append(probs, fmt.Sprintf("format 4 counts OMM@%s as %s; the feed holds %s", strings.TrimPrefix(r.Get("feed"), FixtureProvider+"/"), r.text(), own[r.Get("feed")]))
+				continue
+			}
+		case r.Get("relation") == neither:
+			if r.Get("sql") == "count" && r.Get("n") != "0" {
+				probs = append(probs, fmt.Sprintf("format 4 reads %s, which spells neither twin: %s", neither, r.text()))
+				continue
+			}
+		default:
+			continue
+		}
+		out[i] = r
+	}
+	return out, probs
 }
 
 // diffRows lists where two answers differ (at most a few rows).
@@ -278,7 +377,11 @@ func DriveFeedNames(ctx context.Context, c Config, crashRounds int, logf Logf) (
 		return r, err
 	}
 	r.Extra["rows"] = len(a1)
-	for _, d := range diffRows("format 1 vs format 4", a1, a4) {
+	a1r, twinProbs := caseTwinResidual(a1, a4)
+	for _, p := range twinProbs {
+		fail("%s", p)
+	}
+	for _, d := range diffRows("format 1 vs format 4", a1r, a4) {
 		fail("%s", d)
 	}
 	layout := func(step string) {
@@ -354,7 +457,11 @@ func DriveFeedNames(ctx context.Context, c Config, crashRounds int, logf Logf) (
 				if err != nil {
 					fail("migrated: %v", err)
 				} else {
-					for _, d := range diffRows("format 1 vs migrated", a1, am) {
+					a1m, twinProbs := caseTwinResidual(a1, am)
+					for _, p := range twinProbs {
+						fail("migrated: %s", p)
+					}
+					for _, d := range diffRows("format 1 vs migrated", a1m, am) {
 						fail("%s", d)
 					}
 				}
