@@ -44,6 +44,17 @@ type CrashSpec struct {
 	Round    int    `json:"round"`
 	Calls    int    `json:"calls"` // writer calls per round (the kill usually comes first)
 	Batch    int    `json:"batch"` // records per call
+	// Source is the feed's source name ("" = crashSource): the writer's
+	// lane, the follower's cursor filter and the verifier's reads.
+	Source string `json:"source,omitempty"`
+}
+
+// source is the round's feed source (crashSource unless Source is set).
+func (spec CrashSpec) source() string {
+	if spec.Source != "" {
+		return spec.Source
+	}
+	return crashSource
 }
 
 // Crash scenarios.
@@ -151,7 +162,7 @@ func CrashWriter(spec CrashSpec, mode string) error {
 	for call := 0; call < spec.Calls; call++ {
 		recs := CrashRecords(spec.Round, call, spec.Batch)
 		n, err := s.StoreBatchWithSourceTags(crashSchema, recs, crashPeer, nil,
-			crashTags(crashSource, crashBatchID(spec.Scenario, spec.Round, call)))
+			crashTags(spec.source(), crashBatchID(spec.Scenario, spec.Round, call)))
 		if err != nil {
 			_ = acks.line(fmt.Sprintf("ERR %d %d %s", spec.Round, call, strings.ReplaceAll(err.Error(), "\n", " ")))
 			continue
@@ -162,7 +173,7 @@ func CrashWriter(spec CrashSpec, mode string) error {
 	}
 	if mode == ModeCrashSupersede {
 		_ = acks.line(fmt.Sprintf("SUPSTART %d", spec.Round))
-		res, err := s.SupersedeSourceBatches(crashSchema, FixtureProvider, crashSource, crashBatchID(spec.Scenario, spec.Round, 0))
+		res, err := s.SupersedeSourceBatches(crashSchema, FixtureProvider, spec.source(), crashBatchID(spec.Scenario, spec.Round, 0))
 		if err != nil {
 			_ = acks.line(fmt.Sprintf("ERR %d supersede %s", spec.Round, err))
 		} else {
@@ -189,7 +200,7 @@ func follow(s *storage.FlatSQLStore, spec CrashSpec, stop <-chan struct{}, done 
 			return
 		default:
 		}
-		recs, err := s.QueryRawRecordRefs(storage.RawRecordQuery{SchemaName: crashSchema, SourceName: crashSource,
+		recs, err := s.QueryRawRecordRefs(storage.RawRecordQuery{SchemaName: crashSchema, SourceName: spec.source(),
 			Limit: 1000, UseRowIDCursor: true, AfterRowID: after})
 		if err != nil || len(recs) == 0 {
 			time.Sleep(20 * time.Millisecond)
@@ -312,7 +323,7 @@ func CrashVerify(spec CrashSpec) (*Run, error) {
 	if err != nil {
 		return r, err
 	}
-	all, err := laneRecords(s, crashSource, "")
+	all, err := laneRecords(s, spec.source(), "")
 	if err != nil {
 		return r, err
 	}
@@ -384,17 +395,17 @@ func CrashVerify(spec CrashSpec) (*Run, error) {
 	// exactly the kept batch, every acked record of it included.
 	if spec.Scenario == ScenarioSupersede && lastSupRound > 0 {
 		keep := crashBatchID(spec.Scenario, lastSupRound, 0)
-		res, err := s.SupersedeSourceBatches(crashSchema, FixtureProvider, crashSource, keep)
+		res, err := s.SupersedeSourceBatches(crashSchema, FixtureProvider, spec.source(), keep)
 		if err != nil {
 			fail("finishing the supersede keeping %s: %v", keep, err)
 		} else {
 			r.Extra["finish_records_deleted"] = float64(res.RecordsDeleted)
 		}
-		lane, err := laneRecords(s, crashSource, "")
+		lane, err := laneRecords(s, spec.source(), "")
 		if err != nil {
 			return r, err
 		}
-		n, err := s.CountRawRecords(storage.RawRecordQuery{SchemaName: crashSchema, SourceName: crashSource})
+		n, err := s.CountRawRecords(storage.RawRecordQuery{SchemaName: crashSchema, SourceName: spec.source()})
 		if err != nil {
 			fail("count after the supersede: %v", err)
 		} else if n != int64(len(lane)) {
@@ -495,6 +506,8 @@ type CrashLoopSpec struct {
 	// control: the expected loss is seen, and a lost store cannot be
 	// written again).
 	StopAtLoss bool
+	// Source is the rounds' feed source (CrashSpec.Source).
+	Source string
 }
 
 // CrashLoopResult sums a loop.
@@ -542,7 +555,7 @@ func CrashLoop(ctx context.Context, spec CrashLoopSpec, logf func(string, ...any
 			return res, ctx.Err()
 		}
 		cs := CrashSpec{Arm: spec.Arm, Scenario: spec.Scenario, Store: spec.Store, Logs: logs, Out: spec.Out, Round: round,
-			Calls: calls, Batch: spec.Batch}
+			Calls: calls, Batch: spec.Batch, Source: spec.Source}
 		before := countLines(ackPath(logs))
 		writerLog := filepath.Join(logs, fmt.Sprintf("writer-%04d.log", round))
 		cmd, log, err := StartChild(ChildSpec{Mode: mode, Crash: &cs}, writerLog, spec.WriterEnv...)
