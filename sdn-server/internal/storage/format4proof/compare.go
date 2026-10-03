@@ -51,6 +51,9 @@ type Policy struct {
 	// the bytes; format 1 keeps an imported index's sha256-hex identity):
 	// format 1's cid values are read as their alias before comparing.
 	CIDAliases map[string]string `json:"cid_aliases,omitempty"`
+	// Surface names the call that answers the public SQL surface listing
+	// (PublicQuerySurface): it compares relation by relation (surfaceDiff).
+	Surface string `json:"surface,omitempty"`
 }
 
 // TieRule is a partial order: the calls whose name contains Call are
@@ -75,8 +78,9 @@ func (p Policy) tieRule(call string) *TieRule {
 	return nil
 }
 
-// tieCut names what alignTies accepts beyond format 1's own rows.
-const tieCut = "format 1 orders by the timestamp alone: a limit cutting a tie keeps any of its members (each one checked against format 1's copies: CID, peer, timestamp)"
+// tieCut names what alignTies accepts beyond format 1's own rows (C-39 E7:
+// format 1's choice among rows tied on a timestamp is arbitrary).
+const tieCut = "C-39 E7: format 1 orders by the timestamp alone: a limit cutting a tie keeps any of its members (each one checked against format 1's copies: CID, peer, timestamp)"
 
 // alignTies puts the candidate's rows in format 1's order where format 1's
 // order leaves them free: the key of every position must be equal on both
@@ -204,14 +208,34 @@ type CallRuling struct {
 	Call   string   `json:"call"`
 	Why    string   `json:"why"`
 	Fields []string `json:"fields,omitempty"`
+	// Standard limits the ruling to the rows (format 1's) that name this
+	// standard or none (a store total): rowStandard.
+	Standard string `json:"standard,omitempty"`
+	// SameSet accepts the fields only when the call's rows are equal as a
+	// multiset: their order alone differs.
+	SameSet bool `json:"same_set,omitempty"`
+	// Absent names a standard format 4 holds nothing of: format 1's rows
+	// that name it are not compared (they are the difference); a row of it
+	// on format 4 is compared as any row (and differs).
+	Absent string `json:"absent,omitempty"`
 }
 
-// ruling is the call ruling that accepts field in call, or nil.
-func (p Policy) ruling(call, field string) *CallRuling {
+// ruling is the call ruling that accepts field of row (format 1's; nil for
+// the row count) in call, or nil. setEq reports the call's rows equal as a
+// multiset (CallRuling.SameSet).
+func (p Policy) ruling(call, field string, row Row, setEq bool) *CallRuling {
 	for i := range p.Calls {
 		r := &p.Calls[i]
-		if !strings.Contains(call, r.Call) {
+		if !strings.Contains(call, r.Call) || r.Absent != "" || (r.SameSet && !setEq) {
 			continue
+		}
+		if r.Standard != "" {
+			if row == nil {
+				continue
+			}
+			if std := rowStandard(row); std != "" && std != r.Standard {
+				continue
+			}
 		}
 		if len(r.Fields) == 0 {
 			return r
@@ -224,6 +248,123 @@ func (p Policy) ruling(call, field string) *CallRuling {
 	}
 	return nil
 }
+
+// rowStandard is the standard a summary row names (schema, SchemaName or
+// source_row; JSON-quoted or bare), or "".
+func rowStandard(r Row) string {
+	for _, k := range []string{"schema", "SchemaName", "source_row"} {
+		if v, ok := r.lookup(k); ok {
+			if v = strings.Trim(v, `"`); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// absentRows drops format 1's rows that name a standard an Absent ruling of
+// call names; it returns the rows kept and the rulings that dropped any.
+func (p Policy) absentRows(call string, rows []Row) ([]Row, []string) {
+	var why []string
+	for _, r := range p.Calls {
+		if r.Absent == "" || !strings.Contains(call, r.Call) {
+			continue
+		}
+		kept := rows[:0:0]
+		for _, row := range rows {
+			if rowStandard(row) != r.Absent {
+				kept = append(kept, row)
+			}
+		}
+		if len(kept) != len(rows) {
+			why = append(why, r.Why)
+		}
+		rows = kept
+	}
+	return rows, why
+}
+
+// surfaceDiff compares the public SQL surface listing (one row per
+// relation: name, kind, source, columns, placeholders, records) relation by
+// relation. Every relation format 4 lists must be format 1's, with the same
+// source, columns and placeholder columns, and a type relation's record
+// count must be equal. The intended differences (C-39 S1 listing and S2;
+// C-38 (5)) are a type relation's kind (format 1 lists every routed
+// standard as a view once the node knows a source), the "<TYPE>@<source>"
+// relations format 4 has no feed table for, CLM (no relation: no embedded
+// binary schema) and a "<TYPE>@<source>" relation's record count (format 4
+// counts the feed's records; format 1 its resident rows, one per record in
+// its first source's partition).
+func surfaceDiff(call string, ra, rb []Row) (diffs []Diff, accepted map[string]bool, unaccepted bool) {
+	accepted = map[string]bool{}
+	byName := map[string]Row{}
+	for _, r := range ra {
+		byName[r.Get("name")] = r
+	}
+	seen := map[string]bool{}
+	for i, b := range rb {
+		name := b.Get("name")
+		seen[name] = true
+		a, ok := byName[name]
+		if !ok {
+			unaccepted = true
+			diffs = append(diffs, Diff{Call: call, Row: i, Field: "name", S: name})
+			continue
+		}
+		rel := strings.Contains(name, "@")
+		for _, f := range a {
+			bv := b.Get(f.N)
+			if bv == f.V {
+				continue
+			}
+			d := Diff{Call: call, Row: i, Field: name + " " + f.N, F1: f.V, S: bv}
+			diffs = append(diffs, d)
+			switch {
+			case f.N == "kind" && !rel:
+				accepted[c39S1Listing] = true
+			case f.N == "records" && rel:
+				accepted[c38PerFeedSurface] = true
+			default:
+				unaccepted = true
+			}
+		}
+	}
+	for i, a := range ra {
+		name := a.Get("name")
+		if seen[name] {
+			continue
+		}
+		diffs = append(diffs, Diff{Call: call, Row: i, Field: "name", F1: name})
+		switch {
+		case name == "CLM" || strings.HasPrefix(name, "CLM@"):
+			accepted[c39S2] = true
+		case strings.Contains(name, "@"):
+			accepted[c39S1Listing] = true
+		default:
+			unaccepted = true
+		}
+	}
+	return diffs, accepted, unaccepted
+}
+
+// The C-39 rulings (contract v17, coordinator 2026-10-03) the comparator
+// accepts, and C-38 (5) as the surface listing shows it. C-39's must-fix
+// items (B1, E1-E6, S1's empty relation, U1's migration refusal) are never
+// accepted.
+const (
+	c39E7 = "C-39 E7: format 1 orders QueryAll/QueryAllBounded by the source timestamp alone; its choice among records tied on it is arbitrary"
+	// c39S1Listing and c39S2: surfaceDiff.
+	c39S1Listing = "C-39 S1 listing: the SQL surface lists only a type's real feed tables; format 1 lists every routed standard as a view and a relation for every source the node knows"
+	c39S2        = "C-39 S2: CLM, a published-binding standard with no embedded binary schema, has no SQL relation"
+	c39U1        = "C-39 U1: format 4 stores SDS standards only; a record of a schema with no standard is refused (format 1 stored it)"
+	c39U2        = "C-39 U2: UpsertSourceTags of a CID not held answers not found; format 1 wrote a dangling tag and counted it in its summaries"
+	c39U3        = "C-39 U3: the summary-maintenance verbs are no-ops on format 4; format 1 restamped the lane times with its clock"
+	c39U4        = "C-39 U4: the table cursor is the type's seq; format 1 compared a producer table's own rowid (as the R10 ruling)"
+	c39U5        = "C-39 U5: lane bytes are the exact stored length; format 1 counted a retagged sealed record's plaintext length"
+	c39U6        = "C-39 U6: lane counters are the records the feed holds; format 1's incremental counters drifted after CAT supersede-on-ingest"
+	// c38PerFeedSurface is C-38 (5) on the surface listing.
+	c38PerFeedSurface = "C-38 (5): a \"<TYPE>@<source>\" relation counts the feed's records (a record in N feeds counts in each); format 1 counts its resident rows, one per record in its first source's partition"
+)
 
 // laneField is a head field's name under C-10: a tag-filtered count or head
 // (a row carrying lane_n or lane_max_rowid, covHead) sums its bytes over the
@@ -434,11 +575,15 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 	variantCache := map[string][]Row{}
 	unaccepted := false // a difference outside the policy's accepted fields
 	rulings := map[string]bool{}
-	accepts := func(call, field string) bool {
+	// forced: an accepted difference that leaves no differing field (a cut
+	// tie compared other members' rows; format 1's rows of an absent
+	// standard dropped): never reported as equal.
+	forced := false
+	accepts := func(call, field string, row Row, setEq bool) bool {
 		if pol.accepts(field) && pol.Accepted != "" {
 			return true
 		}
-		if r := pol.ruling(call, field); r != nil {
+		if r := pol.ruling(call, field, row, setEq); r != nil {
 			rulings[r.Why] = true
 			return true
 		}
@@ -466,6 +611,29 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			continue
 		}
 		ra, rb := aliased(a.Rows, pol.CIDAliases), b.Rows
+		if kept, why := pol.absentRows(a.Call, ra); len(why) > 0 {
+			v.Notes = append(v.Notes, fmt.Sprintf("%s: %d of format 1's rows name a standard format 4 holds nothing of", a.Call, len(ra)-len(kept)))
+			ra, forced = kept, true
+			for _, w := range why {
+				rulings[w] = true
+			}
+		}
+		if pol.Surface != "" && strings.Contains(a.Call, pol.Surface) {
+			v.F1Rows += len(ra)
+			v.SRows += len(rb)
+			diffs, why, bad := surfaceDiff(a.Call, ra, rb)
+			if len(diffs) > 0 {
+				bump(EqDiffer)
+				unaccepted = unaccepted || bad
+				for w := range why {
+					rulings[w] = true
+				}
+				for _, d := range diffs {
+					v.Diffs = appendDiff(v.Diffs, d)
+				}
+			}
+			continue
+		}
 		// repeated: format 1's rows of each CID it repeated (C-10). The
 		// record appears once on format 4, with one of those rows' tags.
 		var repeated map[string][]Row
@@ -509,11 +677,12 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 		}
 		if len(ra) != len(rb) {
 			bump(EqDiffer)
-			unaccepted = unaccepted || !accepts(a.Call, "rows")
+			unaccepted = unaccepted || !accepts(a.Call, "rows", nil, false)
 			v.Diffs = appendDiff(v.Diffs, Diff{Call: a.Call, Row: -1, Field: "rows", F1: fmt.Sprint(len(ra)), S: fmt.Sprint(len(rb))})
 			continue
 		}
 		orderOnly := !pol.Unordered
+		setEq := sameMultiset(ra, rb)
 		callDiffers := false
 		for i := range ra {
 			v.Prov.countRow(ra[i], rb[i])
@@ -538,7 +707,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 					callDiffers = true
 					for _, d := range diffs {
 						d.Call, d.Row = a.Call, i
-						unaccepted = unaccepted || !accepts(a.Call, laneField(ra[i], d.Field))
+						unaccepted = unaccepted || !accepts(a.Call, laneField(ra[i], d.Field), ra[i], setEq)
 						v.Diffs = appendDiff(v.Diffs, d)
 					}
 				}
@@ -547,12 +716,12 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 				callDiffers = true
 				for _, d := range diffs {
 					d.Call, d.Row = a.Call, i
-					unaccepted = unaccepted || !accepts(a.Call, laneField(ra[i], d.Field))
+					unaccepted = unaccepted || !accepts(a.Call, laneField(ra[i], d.Field), ra[i], setEq)
 					v.Diffs = appendDiff(v.Diffs, d)
 				}
 			}
 		}
-		if callDiffers && orderOnly && sameMultiset(ra, rb) {
+		if callDiffers && orderOnly && setEq {
 			v.Notes = append(v.Notes, a.Call+": the rows are equal as a set; only their order differs")
 		}
 	}
@@ -567,9 +736,10 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 	}
 	sort.Strings(v.Extra)
 	v.Status = worst
-	if rulings[tieCut] && (worst == EqEqual || worst == EqEqualC12 || worst == EqExtra) {
-		// A cut tie compared other members' rows: an answer format 1's order
-		// admits, reported as such rather than as equal.
+	if (forced || rulings[tieCut]) && (worst == EqEqual || worst == EqEqualC12 || worst == EqExtra) {
+		// A cut tie compared other members' rows, or format 1's rows of an
+		// absent standard were dropped: an intended difference, reported as
+		// such rather than as equal.
 		worst, v.Status = EqDiffer, EqDiffer
 	}
 	if worst == EqDiffer && !unaccepted && (pol.Accepted != "" || len(rulings) > 0) {

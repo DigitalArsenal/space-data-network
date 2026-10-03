@@ -32,9 +32,10 @@ type MigrateLoopSpec struct {
 	Schemas      []string      // digested types (default the fixture's four)
 }
 
-// migrateRun runs store-migrate --to 4 on store; kill > 0 kills it with
-// SIGKILL after that long. It returns whether it was killed.
-func migrateRun(ctx context.Context, bin, store, logPath string, kill time.Duration) (ChildRun, bool, error) {
+// migrateRun runs store-migrate --to 4 on store, with extra arguments;
+// kill > 0 kills it with SIGKILL after that long. It returns whether it was
+// killed.
+func migrateRun(ctx context.Context, bin, store, logPath string, kill time.Duration, extra ...string) (ChildRun, bool, error) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return ChildRun{}, false, err
 	}
@@ -43,7 +44,7 @@ func migrateRun(ctx context.Context, bin, store, logPath string, kill time.Durat
 		return ChildRun{}, false, err
 	}
 	defer log.Close()
-	cmd := exec.CommandContext(ctx, bin, "store-migrate", "--to", "4", "--store", store)
+	cmd := exec.CommandContext(ctx, bin, append([]string{"store-migrate", "--to", "4", "--store", store}, extra...)...)
 	cmd.Stdout, cmd.Stderr = log, log
 	// OpenArm (SettleStore, the digests) sets SDN_STORE_FORMAT in this
 	// process; store-migrate opens format 1 and must not inherit it.

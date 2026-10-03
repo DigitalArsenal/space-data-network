@@ -620,34 +620,45 @@ func (c *cov) v04() []Shape {
 		}),
 		routed("QueryRoutedAll 20", func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error) { return s.QueryRoutedAll(20) }))
 	routedShape = tieLimit(routedShape, "QueryRouted", "ts", 20, "")
+	tables := covShape(class, "FullTablePageWithCursor", "OMM.fbs",
+		table("table MPE 2 pages", storage.FullTablePageQuery{SchemaName: "MPE.fbs", Limit: 25}, 2),
+		table("table CAT source 2 pages", storage.FullTablePageQuery{SchemaName: "CAT.fbs", SourceName: "celestrak-satcat", Limit: 25}, 2),
+		table("table IQC offset", storage.FullTablePageQuery{SchemaName: "IQC.fbs", Limit: 10, Offset: 30}, 1),
+		table("table OMM before rowid", storage.FullTablePageQuery{SchemaName: "OMM.fbs", Limit: 10, BeforeRowID: 1000000}, 1),
+		table("table OMM include source", storage.FullTablePageQuery{SchemaName: "OMM.fbs", Limit: 10, IncludeSource: true}, 1),
+		table("table CAT ascending", storage.FullTablePageQuery{SchemaName: "CAT.fbs", Limit: 10, Descending: false, Sort: "rowid"}, 2),
+		table("table OMM limit 0", storage.FullTablePageQuery{SchemaName: "OMM.fbs"}, 1),
+		table("table PNM (no records)", storage.FullTablePageQuery{SchemaName: "PNM.fbs", Limit: 10}, 1),
+		table("table unknown type", storage.FullTablePageQuery{SchemaName: "XYZ.fbs", Limit: 10}, 1))
+	// C-39 U4: the page before a cursor is the records below that type seq
+	// (format 1: below that producer table's rowid), so its records differ;
+	// the page header (its row count) does not.
+	tables = rule(tables, "table OMM before rowid", c39U4, recordFields()...)
+	queries := covShape(class, "Query, QueryAll, QueryAllBounded", "CAT.fbs",
+		data("Query CAT (empty where)", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.Query("CAT.fbs", "") }),
+		data("QueryAll MPE 500", "MPE.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("MPE.fbs", 500) }),
+		data("QueryAll OMM 0", "OMM.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("OMM.fbs", 0) }),
+		data("QueryAll IQC 20000", "IQC.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("IQC.fbs", 20000) }),
+		data("QueryAllBounded OMM 100 64KiB", "OMM.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("OMM.fbs", 100, 64<<10) }),
+		data("QueryAllBounded CAT 0 0", "CAT.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("CAT.fbs", 0, 0) }),
+		data("QueryAllBounded IQC 5000 1MiB", "IQC.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("IQC.fbs", 5000, 1<<20) }),
+		data("QueryWithPeerID CAT source:celestrak", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryWithPeerID("CAT.fbs", gpPeer) }),
+		data("QuerySince CAT", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) {
+			return s.QuerySince("CAT.fbs", time.Unix(1790651000, 0))
+		}),
+		data("QueryAll unknown type", "XYZ.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("XYZ.fbs", 10) }))
+	// C-39 E7: every fixture IQC record carries the same source timestamp,
+	// so format 1's newest N by it is an arbitrary N of them; the row count
+	// is compared.
+	queries = rule(queries, "QueryAll IQC 20000", c39E7, "h")
+	queries = rule(queries, "QueryAllBounded IQC 5000 1MiB", c39E7, "h")
 	return []Shape{
 		taggedShape,
 		covShape(class, "QueryRecentRecords", "OMM.fbs",
 			recent("MPE.fbs", 20), recent("CAT.fbs", 20), recent("IQC.fbs", 0), recent("OMM.fbs", -1), recent("CAT.fbs", 300000),
 			recent("PNM.fbs", 10), recent("XYZ.fbs", 10)),
-		covShape(class, "FullTablePageWithCursor", "OMM.fbs",
-			table("table MPE 2 pages", storage.FullTablePageQuery{SchemaName: "MPE.fbs", Limit: 25}, 2),
-			table("table CAT source 2 pages", storage.FullTablePageQuery{SchemaName: "CAT.fbs", SourceName: "celestrak-satcat", Limit: 25}, 2),
-			table("table IQC offset", storage.FullTablePageQuery{SchemaName: "IQC.fbs", Limit: 10, Offset: 30}, 1),
-			table("table OMM before rowid", storage.FullTablePageQuery{SchemaName: "OMM.fbs", Limit: 10, BeforeRowID: 1000000}, 1),
-			table("table OMM include source", storage.FullTablePageQuery{SchemaName: "OMM.fbs", Limit: 10, IncludeSource: true}, 1),
-			table("table CAT ascending", storage.FullTablePageQuery{SchemaName: "CAT.fbs", Limit: 10, Descending: false, Sort: "rowid"}, 2),
-			table("table OMM limit 0", storage.FullTablePageQuery{SchemaName: "OMM.fbs"}, 1),
-			table("table PNM (no records)", storage.FullTablePageQuery{SchemaName: "PNM.fbs", Limit: 10}, 1),
-			table("table unknown type", storage.FullTablePageQuery{SchemaName: "XYZ.fbs", Limit: 10}, 1)),
-		covShape(class, "Query, QueryAll, QueryAllBounded", "CAT.fbs",
-			data("Query CAT (empty where)", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.Query("CAT.fbs", "") }),
-			data("QueryAll MPE 500", "MPE.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("MPE.fbs", 500) }),
-			data("QueryAll OMM 0", "OMM.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("OMM.fbs", 0) }),
-			data("QueryAll IQC 20000", "IQC.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("IQC.fbs", 20000) }),
-			data("QueryAllBounded OMM 100 64KiB", "OMM.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("OMM.fbs", 100, 64<<10) }),
-			data("QueryAllBounded CAT 0 0", "CAT.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("CAT.fbs", 0, 0) }),
-			data("QueryAllBounded IQC 5000 1MiB", "IQC.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("IQC.fbs", 5000, 1<<20) }),
-			data("QueryWithPeerID CAT source:celestrak", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryWithPeerID("CAT.fbs", gpPeer) }),
-			data("QuerySince CAT", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) {
-				return s.QuerySince("CAT.fbs", time.Unix(1790651000, 0))
-			}),
-			data("QueryAll unknown type", "XYZ.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("XYZ.fbs", 10) })),
+		tables,
+		queries,
 		routedShape,
 	}
 }
@@ -1049,6 +1060,13 @@ func (c *cov) v07() []Shape {
 		jsonRows("SELECT 1; SELECT 2", caps, false),
 		jsonRows("SELECT * FROM sdn_record_index LIMIT 1", caps, false),
 		jsonRows("SELECT * FROM NO_SUCH_TABLE", caps, false),
+		// C-39 S1: a "<TYPE>@<source>" relation for a source the node knows
+		// (another type's feed, or local) and the type has no table for
+		// answers empty; a source no type has stays "no such table".
+		jsonRows("SELECT COUNT(*) FROM \"OMM@IQEngine\"", caps, false),
+		jsonRows("SELECT COUNT(*) FROM \"OMM@no-such-source\"", caps, false),
+		streamCall("SELECT _data FROM \"MPE@local\"", caps),
+		raw("SELECT _data FROM \"CAT@celestrak-gp\""),
 		streamCall("SELECT _data FROM MPE WHERE NORAD_CAT_ID = ?1", caps, int64(22528)),
 		streamCall("SELECT _data FROM IQC LIMIT 10", caps),
 		streamCall("SELECT _data FROM \"CAT@celestrak-satcat-csv\" WHERE NORAD_CAT_ID = 40463", caps),
@@ -1062,7 +1080,9 @@ func (c *cov) v07() []Shape {
 		sel("DROP TABLE OMM", storage.SandboxSelectCaps{}),
 		surface,
 	}
-	return []Shape{rule(covShape(class, "SQL surface", "", calls...), "SELECT MIN(_rowid), MAX(_rowid) FROM OMM", c9Rowid, "MIN(_rowid)", "MAX(_rowid)")}
+	sh := rule(covShape(class, "SQL surface", "", calls...), "SELECT MIN(_rowid), MAX(_rowid) FROM OMM", c9Rowid, "MIN(_rowid)", "MAX(_rowid)")
+	sh.Policy.Surface = "PublicQuerySurface" // C-39 S1 listing and S2 (surfaceDiff)
+	return []Shape{sh}
 }
 
 // V08: summaries and accounting not in R20, full-text state, the engine
