@@ -120,6 +120,18 @@ func f4Lane(provider, source, batch, producerPeer, producerKey string) format4.L
 
 func f4LaneEmpty(l format4.LaneFilter) bool { return l == format4.LaneFilter{} }
 
+// f4LaneMeets reports a lane that meets a lane filter's fields (format 1's
+// source summary key: provider, source, batch, producer peer and key).
+func f4LaneMeets(l format4.Lane, f format4.LaneFilter) bool {
+	for _, p := range [][2]string{{f.Provider, l.Provider}, {f.Source, l.Source}, {f.Batch, l.Batch},
+		{f.ProducerPeer, l.ProducerPeer}, {f.ProducerPubkey, l.ProducerPubkey}} {
+		if p[0] != "" && p[0] != p[1] {
+			return false
+		}
+	}
+	return true
+}
+
 // f4Pred is one predicate.
 func f4Pred(field format4.Field, op format4.Op, values ...format2.Cell) format4.Pred {
 	return format4.Pred{Field: field, Op: op, Values: values}
@@ -742,9 +754,26 @@ func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
 		head.MaxCreatedAtUnix, head.MaxSourceUpdatedAtUnix = h.MaxAt, h.MaxAt
 	}
 	if f4SourceSummaryHead(q) {
-		// Format 1's source summary has no record timestamp, and a cursor's
-		// boundary is the type's newest seq, the one its pages run under.
+		// Format 1's source summary has no record timestamp, its times are
+		// its lanes' update times (MAX(updated_at): a DELETE or a CAT
+		// supersede-on-ingest restamps the lanes it leaves, C-39 E5), and a
+		// cursor's boundary is the type's newest seq, the one its pages run
+		// under.
 		head.MaxRecordTimestampUnix = 0
+		lanes, err := b.f4Lanes(q.Type)
+		if err != nil {
+			return f4Snapshot{}, fmt.Errorf("raw record head failed: %w", err)
+		}
+		var updated int64
+		met := false
+		for _, l := range lanes {
+			if l.Records > 0 && f4LaneMeets(l, q.Lane) {
+				met, updated = true, max(updated, l.Updated)
+			}
+		}
+		if met {
+			head.MaxCreatedAtUnix, head.MaxSourceUpdatedAtUnix = updated, updated
+		}
 		if filter.UseRowIDCursor {
 			th, err := b.f4TypeHead(q.Type)
 			if err != nil {
