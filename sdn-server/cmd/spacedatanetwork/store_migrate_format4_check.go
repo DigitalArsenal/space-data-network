@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -143,6 +144,10 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 	}
 	if err := ctx.Err(); err != nil {
 		return c, err
+	}
+	if n := m.hexIdentities.Load(); n > 0 {
+		m.rep.HexIdentities = n
+		m.note("%d records format 1 keeps under a legacy sha256-hex identity are keyed by the CIDv1 of the same digest (format 4 keys every record by its CIDv1, §3.8 (1))", n)
 	}
 	// Index rows of a schema no producer table holds are orphans too.
 	for _, s := range m.index {
@@ -381,8 +386,18 @@ func (m *migrator4) endSchemaCheck(sc *schemaCheck, w *migrate4Progress, c *migr
 	}
 }
 
+// cidDigest is the sha2-256 digest a record identity names: a CIDv1 raw
+// sha2-256, or format 1's legacy sha256-hex identity (64 hex digits; an
+// imported dataset shard's index may name a record so, and format 1 keeps
+// that text as the record's CID).
 func cidDigest(text string) ([32]byte, error) {
 	var d [32]byte
+	if len(text) == 64 {
+		if raw, err := hex.DecodeString(text); err == nil {
+			copy(d[:], raw)
+			return d, nil
+		}
+	}
 	c, err := cid.Decode(text)
 	if err != nil {
 		return d, err
@@ -393,6 +408,24 @@ func cidDigest(text string) ([32]byte, error) {
 	}
 	copy(d[:], b[4:])
 	return d, nil
+}
+
+// migrate4CID is the CID a format-1 record identity becomes on format 4,
+// which keys every record by the CIDv1 raw sha2-256 of its bytes (contract
+// §3.7, §3.8 (1)): the identity itself when it is one, or the CIDv1 of the
+// same digest for a legacy sha256-hex identity (the same hash of the same
+// bytes; the check re-hashes every unsealed copy against it). Any other text
+// is returned as it is, and the engine refuses it.
+func migrate4CID(text string) (string, bool) {
+	d, err := cidDigest(text)
+	if err != nil {
+		return text, false
+	}
+	c, err := cid.Cast(append([]byte{0x01, 0x55, 0x12, 0x20}, d[:]...))
+	if err != nil {
+		return text, false
+	}
+	return c.String(), c.String() != text
 }
 
 // checkFields compares the epoch and object key the engine extracted with
