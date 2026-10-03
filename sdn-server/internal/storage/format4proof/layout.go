@@ -13,19 +13,24 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
-// The owner's layout (contract C-37): one SQLite table file per source feed
-// x standard, P/<TYPE>/<provider@source>.db, untagged records in
+// The owner's layout (contract C-37, C-38): one SQLite table file per source
+// feed x standard, P/<TYPE>/<provider@source>.db, untagged records in
 // P/<TYPE>/local.db; no row holds a provider or source string (the file is
-// the feed). FeedLayout checks a migrated store against the format-1 store it
-// came from: the feed files of each type are exactly the (provider, source)
-// pairs format 1's source summary holds live records of (plus local), and no
-// table of any feed file has a provider or source column.
+// the feed); each feed file has exactly one CID index, and the type index
+// holds no per-record entry. FeedLayout checks a migrated store against the
+// format-1 store it came from: the feed files of each type are exactly the
+// (provider, source) pairs format 1's source summary holds live records of
+// (plus local); no table of any feed file has a provider or source column;
+// one index of each feed file covers the CID, on the CID alone; no table of a
+// type index T/<TYPE>.idx has a CID column.
 
 // FeedLayout is a store's feed files and the problems found.
 type FeedLayout struct {
-	Files    map[string][]string `json:"files"`   // type -> feed file names
-	Columns  map[string][]string `json:"columns"` // table -> columns, as one feed file holds them
-	Problems []string            `json:"problems,omitempty"`
+	Files      map[string][]string `json:"files"`       // type -> feed file names
+	Columns    map[string][]string `json:"columns"`     // table -> columns, as one feed file holds them
+	CIDIndexes map[string][]string `json:"cid_indexes"` // feed file -> its indexes on a cid column (name: columns)
+	TypeIndex  map[string][]string `json:"type_index"`  // type -> the tables of T/<TYPE>.idx
+	Problems   []string            `json:"problems,omitempty"`
 }
 
 // feedFileName is the engine's file name of a feed: provider and source,
@@ -86,7 +91,8 @@ func CheckFeedLayout(f1Store, f4Store, work string) (*FeedLayout, error) {
 	if err != nil {
 		return nil, fmt.Errorf("format 1 feeds: %w", err)
 	}
-	lay := &FeedLayout{Files: map[string][]string{}, Columns: map[string][]string{}}
+	lay := &FeedLayout{Files: map[string][]string{}, Columns: map[string][]string{}, CIDIndexes: map[string][]string{},
+		TypeIndex: map[string][]string{}}
 	fail := func(f string, a ...any) { lay.Problems = append(lay.Problems, fmt.Sprintf(f, a...)) }
 	root := filepath.Join(f4Store, marker.Dir, "P")
 	types, err := os.ReadDir(root)
@@ -155,27 +161,71 @@ func CheckFeedLayout(f1Store, f4Store, work string) (*FeedLayout, error) {
 				}
 			}
 		}
+		// C-38 (1): the feed file's one CID index, on the CID alone.
+		rel := strings.TrimPrefix(f, root+"/")
+		idx, err := cidIndexes(f, tmp)
+		if err != nil {
+			fail("%s: %v", rel, err)
+			continue
+		}
+		lay.CIDIndexes[rel] = idx
+		if len(idx) != 1 || !strings.HasSuffix(idx[0], ": cid") {
+			fail("%s: the CID indexes are %v; C-38 keeps exactly one, on the CID alone", rel, idx)
+		}
+	}
+	// C-38 (2): the type index holds no per-record entry (no CID column).
+	for typ := range have {
+		idxFile := filepath.Join(f4Store, marker.Dir, "T", typ+".idx")
+		if _, err := os.Stat(idxFile); err != nil {
+			fail("%s: no type index (%v)", typ, err)
+			continue
+		}
+		cols, err := tableColumns(idxFile, tmp)
+		if err != nil {
+			fail("T/%s.idx: %v", typ, err)
+			continue
+		}
+		for table, cs := range cols {
+			lay.TypeIndex[typ] = append(lay.TypeIndex[typ], table)
+			for _, c := range cs {
+				if strings.EqualFold(c, "cid") {
+					fail("T/%s.idx: table %s has a cid column (C-38: no per-record entry in the type index)", typ, table)
+				}
+			}
+		}
+		sort.Strings(lay.TypeIndex[typ])
 	}
 	return lay, nil
+}
+
+// cidIndexes lists a feed file's indexes that cover a cid column, each as
+// "name: col, col", read by the system sqlite3 from a clone of the file.
+func cidIndexes(file, tmp string) ([]string, error) {
+	if err := cloneForRead(file, tmp); err != nil {
+		return nil, err
+	}
+	out, err := exec.Command("sqlite3", filepath.Join(tmp, "feed.db"),
+		"SELECT i.name, group_concat(ii.name, ', ') FROM sqlite_master m, pragma_index_list(m.name) i, pragma_index_info(i.name) ii "+
+			"WHERE m.type = 'table' GROUP BY i.name HAVING sum(ii.name = 'cid') > 0 ORDER BY i.name").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("sqlite3: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	var idx []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if name, cols, ok := strings.Cut(line, "|"); ok {
+			idx = append(idx, name+": "+cols)
+		}
+	}
+	return idx, nil
 }
 
 // tableColumns lists each table's columns of a feed file, read by the
 // system sqlite3 from a clone of the file (and its WAL): the store is not touched.
 func tableColumns(file, tmp string) (map[string][]string, error) {
-	_ = os.RemoveAll(tmp)
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
+	if err := cloneForRead(file, tmp); err != nil {
 		return nil, err
 	}
 	dst := filepath.Join(tmp, "feed.db")
-	for _, sfx := range []string{"", "-wal"} {
-		if _, err := os.Stat(file + sfx); err == nil {
-			if out, err := exec.Command("cp", "-c", file+sfx, dst+sfx).CombinedOutput(); err != nil {
-				if out2, err2 := exec.Command("cp", file+sfx, dst+sfx).CombinedOutput(); err2 != nil {
-					return nil, fmt.Errorf("copy: %v %s %s", err2, out, out2)
-				}
-			}
-		}
-	}
 	out, err := exec.Command("sqlite3", dst,
 		"SELECT m.name || '|' || p.name FROM sqlite_master m, pragma_table_info(m.name) p WHERE m.type = 'table' ORDER BY m.name, p.cid").CombinedOutput()
 	if err != nil {
@@ -191,4 +241,24 @@ func tableColumns(file, tmp string) (map[string][]string, error) {
 		return nil, fmt.Errorf("no tables")
 	}
 	return cols, nil
+}
+
+// cloneForRead clones a store file (and its WAL) to tmp/feed.db for the
+// system sqlite3: the store is not touched.
+func cloneForRead(file, tmp string) error {
+	_ = os.RemoveAll(tmp)
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		return err
+	}
+	dst := filepath.Join(tmp, "feed.db")
+	for _, sfx := range []string{"", "-wal"} {
+		if _, err := os.Stat(file + sfx); err == nil {
+			if out, err := exec.Command("cp", "-c", file+sfx, dst+sfx).CombinedOutput(); err != nil {
+				if out2, err2 := exec.Command("cp", file+sfx, dst+sfx).CombinedOutput(); err2 != nil {
+					return fmt.Errorf("copy: %v %s %s", err2, out, out2)
+				}
+			}
+		}
+	}
+	return nil
 }
