@@ -521,10 +521,10 @@ func (c *cov) v03() []Shape {
 	}))
 	provF1.Arms = []string{ArmF1}
 	return []Shape{prov, provF1, covShape(class, "raw records: branches", "OMM.fbs", branch...),
-		covShape(class, "raw records: lanes, peer, cid", "OMM.fbs", lanes...),
+		rule(covShape(class, "raw records: lanes, peer, cid", "OMM.fbs", lanes...), "cursor IQC sigmf peer", c12PeerFilter),
 		covShape(class, "raw records: sync_filter fields and operators", "OMM.fbs", filters...),
 		covShape(class, "raw records: errors and search", "OMM.fbs", errs...),
-		covShape(class, "datasync.Scan lanes and cursors", "OMM.fbs", scans...)}
+		rule(covShape(class, "datasync.Scan lanes and cursors", "OMM.fbs", scans...), "Scan IQC peer", c12PeerFilter)}
 }
 
 // V04: QuerySourceTaggedRecords, QueryRecentRecords, FullTablePageWithCursor,
@@ -933,7 +933,7 @@ func (c *cov) v06() []Shape {
 		stream("OMM.fbs", "celestrak-gp", "bogus", float64(r16At), 50),
 	}
 	return []Shape{covShape(class, "epoch profiles", "OMM.fbs", calls...),
-		covShape(class, "epoch streams", "OMM.fbs", streams...)}
+		rule(covShape(class, "epoch streams", "OMM.fbs", streams...), "QueryEpochRawStream OMM.fbs@celestrak-gp", r18Accepted)}
 }
 
 // V07: the SQL surface: sandboxed rows and streams (every fixture type,
@@ -1049,7 +1049,7 @@ func (c *cov) v07() []Shape {
 		sel("DROP TABLE OMM", storage.SandboxSelectCaps{}),
 		surface,
 	}
-	return []Shape{covShape(class, "SQL surface", "", calls...)}
+	return []Shape{rule(covShape(class, "SQL surface", "", calls...), "SELECT MIN(_rowid), MAX(_rowid) FROM OMM", c9Rowid, "MIN(_rowid)", "MAX(_rowid)")}
 }
 
 // V08: summaries and accounting not in R20, full-text state, the engine

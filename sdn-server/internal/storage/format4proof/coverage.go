@@ -454,7 +454,25 @@ func covShape(class, name, schema string, calls ...Call) Shape {
 		}
 	}
 	return Shape{Class: class, Name: name, Schema: schema, Fixture: FixtureT6W, Calls: calls,
-		Policy: Policy{Strict: true, Collapse: true, CollapseSkip: "refs ", Accepted: r10Ruling, AcceptedFields: []string{"lane_n", "lane_max_rowid"}}}
+		Policy: Policy{Strict: true, Collapse: true, CollapseSkip: "refs ", Accepted: r10Ruling,
+			AcceptedFields: []string{"lane_n", "lane_bytes", "lane_max_rowid"}}}
+}
+
+// c12PeerFilter names the intended difference of a raw page filtered by a
+// copy's peer, for a record two producers hold: format 1 reads its records
+// through the copy it serves (C-12: one copy per CID, GROUP BY cid over the
+// producers' tables), so a peer filter naming the other producer's copy
+// finds none of them; format 4 filters every copy.
+const c12PeerFilter = "C-12: format 1 reads a raw page through the one copy it serves per CID; a peer filter naming another producer's copy finds nothing there"
+
+// c9Rowid names C-9's intended difference: a relation's _rowid is the
+// record's seq (format 1's is its position in the engine hot window).
+const c9Rowid = "C-9: a relation's _rowid is the record's seq (format 1: the row's position in its engine hot window)"
+
+// rule adds a call ruling to a shape's policy.
+func rule(sh Shape, call, why string, fields ...string) Shape {
+	sh.Policy.Calls = append(sh.Policy.Calls, CallRuling{Call: call, Why: why, Fields: fields})
+	return sh
 }
 
 // RunCoverage runs one coverage class on one arm: open, record the class's

@@ -39,6 +39,16 @@ func (r Row) Get(n string) string {
 	return ""
 }
 
+// lookup returns the value of field n and whether the row has it.
+func (r Row) lookup(n string) (string, bool) {
+	for _, f := range r {
+		if f.N == n {
+			return f.V, true
+		}
+	}
+	return "", false
+}
+
 func (r Row) text() string {
 	var b strings.Builder
 	for _, f := range r {

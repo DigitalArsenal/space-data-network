@@ -68,6 +68,10 @@ type config struct {
 	cpuProfile                       string
 	format, seeds, steps, results    string // growth.go
 	zipf, minFreeGiB                 float64
+	// feedPerPeer gives every producer peer its own source feed (provider
+	// and source), so a format-4 store grows one feed file per peer per
+	// standard (C-37) instead of the 64 x 16 feeds the peers share.
+	feedPerPeer bool
 }
 
 type stats struct {
@@ -131,6 +135,7 @@ func main() {
 	flag.StringVar(&c.steps, "steps", "", "growth steps ID=records,… (records in the store, its start included): measure at each")
 	flag.StringVar(&c.results, "results", "", "format4proof results directory for the growth steps")
 	flag.Float64Var(&c.minFreeGiB, "min-free-gib", 0, "stop when the store's volume has less free space, GiB (0: no floor; the Mac runs keep 120)")
+	flag.BoolVar(&c.feedPerPeer, "feed-per-peer", false, "one source feed (provider, source) per producer peer: format 4 grows a feed file per peer (C-37)")
 	flag.Parse()
 	if err := run(c); err != nil {
 		fmt.Fprintln(os.Stderr, "sds-tb-gen:", err)
@@ -277,9 +282,13 @@ func run(c config) error {
 					}
 				}
 				pid := peerID(sd.name, peer)
+				prov, src := fmt.Sprintf("provider-%d", peer%64), fmt.Sprintf("%s-%d", sd.seedSource, peer%16)
+				if c.feedPerPeer {
+					prov, src = fmt.Sprintf("provider-%d", peer), fmt.Sprintf("%s-%d", sd.seedSource, peer)
+				}
 				tags := storage.SourceTags{
-					ProviderID: fmt.Sprintf("provider-%d", peer%64),
-					SourceName: fmt.Sprintf("%s-%d", sd.seedSource, peer%16),
+					ProviderID: prov,
+					SourceName: src,
 					BatchID:    fmt.Sprintf("%s-p%d-f%d", strings.TrimSuffix(sd.name, ".fbs"), peer, fetch),
 				}
 				key := sd.name + "/" + pid
