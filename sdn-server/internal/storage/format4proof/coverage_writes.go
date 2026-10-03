@@ -926,6 +926,7 @@ func (c *cov) x07(omm [][]byte) []Shape {
 	// first provider's lane projects that feed's tag (C-38 (5)), where format
 	// 1 projects the second import's, the record's newest.
 	sh = rule(sh, "ImportDatasetShard (bytes) again", c38PerFeed, "n")
+	sh = rule(sh, "SchemaDateRanges", c38PerFeed, "n") // batch b's two records, once per feed
 	sh = rule(sh, "lane window OMM.fbs "+covProvider+"/celestrak-gp/"+tb.BatchID, c38OwnFeed, "provider")
 	return []Shape{sh,
 		c12Shape(class, "dataset shard import: the copy format 1 does not serve", "OMM.fbs",
