@@ -28,7 +28,7 @@ type MigrateLoopSpec struct {
 	Source       string // the format-1 store (cloned, never written)
 	Work, Out    string
 	Kills        int           // kill -9s before a run may finish (default 5)
-	MaxKillDelay time.Duration // kills land in [1 s, this); default 90% of the clean run
+	MaxKillDelay time.Duration // kills land in [1 s, this); default 90% of what the clean run has left (below)
 	Schemas      []string      // digested types (default the fixture's four)
 }
 
@@ -146,14 +146,30 @@ func MigrateCrashLoop(ctx context.Context, spec MigrateLoopSpec, logf Logf) (*Ru
 	}
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	kills := 0
+	// A resumed run only does what the killed ones left (progress is
+	// journalled), so a delay drawn against the whole clean run often lands
+	// after the resumed run is done (GATES-feed-r1 N6: 2 kills of 5). Each
+	// delay is drawn against what the clean run has left after the killed
+	// runs' time, at least 2 s (unless MaxKillDelay is set).
+	var killedFor time.Duration
 	for i := 1; ; i++ {
 		var delay time.Duration
 		if kills < spec.Kills {
-			delay = time.Second + time.Duration(rng.Int63n(int64(maxDelay-time.Second)))
+			bound := maxDelay
+			if spec.MaxKillDelay <= 0 {
+				if left := time.Duration(float64(refWall-killedFor) * 0.9); left < bound {
+					bound = left
+				}
+				if bound < 2*time.Second {
+					bound = 2 * time.Second
+				}
+			}
+			delay = time.Second + time.Duration(rng.Int63n(int64(bound-time.Second)))
 		}
 		run, killed, err := migrateRun(ctx, spec.Bin, crash, filepath.Join(logs, fmt.Sprintf("migrate-crash-%02d.log", i)), delay)
 		if killed {
 			kills++
+			killedFor += run.Wall
 			logf("migrate: run %d killed after %s", i, run.Wall.Round(time.Millisecond))
 			continue
 		}
