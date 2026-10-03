@@ -63,6 +63,8 @@ func format4TestWasm(t *testing.T) []byte {
 // onFormat4Engine runs body with every format-4 open on the real engine.
 func onFormat4Engine(t *testing.T, body func(t *testing.T)) {
 	wasm := format4TestWasm(t)
+	f4TestStart = time.Now()
+	t.Cleanup(func() { f4TestStart = time.Time{} })
 	prev := format4OpenEngine
 	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
 		base, err := os.UserCacheDir()
@@ -140,9 +142,18 @@ func f4Collapse(recs []*Record) []*Record {
 	return out
 }
 
+// f4TestStart is when the running format-4 test began: the two stores of a
+// test run the same script one after the other, so a time they stamp with
+// their clocks differs by at most the time the test has run.
+var f4TestStart time.Time
+
 func f4Near(a, b time.Time) bool {
+	tol := 3 * time.Second
+	if !f4TestStart.IsZero() {
+		tol += time.Since(f4TestStart)
+	}
 	d := a.Sub(b)
-	return d >= -3*time.Second && d <= 3*time.Second
+	return d >= -tol && d <= tol
 }
 
 func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
@@ -523,9 +534,21 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 			if progressKey(pa) != progressKey(pb) {
 				t.Fatalf("SourceBatchProgress:\n format 4 %s\n format 1 %s", progressKey(pb), progressKey(pa))
 			}
+			// The two stores ran the script one after the other: their lane
+			// times compare from each store's first lane time.
+			first := func(ps []SourceBatchProgress) int64 {
+				var m int64
+				for _, p := range ps {
+					if p.FirstSeenUnix > 0 && (m == 0 || p.FirstSeenUnix < m) {
+						m = p.FirstSeenUnix
+					}
+				}
+				return m
+			}
+			fa, fb := first(pa), first(pb)
 			for i := range pb {
-				if !f4Near(time.Unix(pa[i].FirstSeenUnix, 0), time.Unix(pb[i].FirstSeenUnix, 0)) ||
-					!f4Near(time.Unix(pa[i].LastSeenUnix, 0), time.Unix(pb[i].LastSeenUnix, 0)) {
+				if !f4Near(time.Unix(pa[i].FirstSeenUnix-fa, 0), time.Unix(pb[i].FirstSeenUnix-fb, 0)) ||
+					!f4Near(time.Unix(pa[i].LastSeenUnix-fa, 0), time.Unix(pb[i].LastSeenUnix-fb, 0)) {
 					t.Fatalf("SourceBatchProgress %d times: format 4 %+v, format 1 %+v", i, pb[i], pa[i])
 				}
 			}
@@ -563,14 +586,9 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 			if fmt.Sprint(rca) != fmt.Sprint(rcb) {
 				t.Fatalf("SourceRecordCounts: format 4 %v, format 1 %v", rcb, rca)
 			}
-			// RECONCILE is per partition (A2): the celestrak partition's copies of
-			// omm[120:160] lose their last celestrak tag and go, while the
-			// mirror's copies keep the records live; format 1 left them in the
-			// celestrak table untagged.
-			var keptByF1 int64
-			for _, d := range script.omm[120:160] {
-				keptByF1 += int64(len(d))
-			}
+			// RECONCILE keeps a record that another tag holds, with every copy
+			// (C-37: a record goes when no feed file holds a row of it), as
+			// format 1 keeps the celestrak table's copies of omm[120:160].
 			lra, err := legacy.LiveRecordBytes()
 			if err != nil {
 				t.Fatal(err)
@@ -579,8 +597,8 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if lra-keptByF1 != lrb {
-				t.Fatalf("LiveRecordBytes: format 4 %d, format 1 %d less %d kept untagged by its reconcile", lrb, lra, keptByF1)
+			if lra != lrb {
+				t.Fatalf("LiveRecordBytes: format 4 %d, format 1 %d", lrb, lra)
 			}
 			dra, err := legacy.SchemaDateRanges()
 			if err != nil {
@@ -589,11 +607,6 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 			drb, err := f4.SchemaDateRanges()
 			if err != nil {
 				t.Fatal(err)
-			}
-			for i := range dra {
-				if dra[i].Schema == "OMM.fbs" {
-					dra[i].TotalBytes -= keptByF1
-				}
 			}
 			rangeKey := func(rs []SchemaDateRange) []string {
 				var out []string
@@ -619,9 +632,6 @@ func TestFormat4StoreAPIMatchesFormat1(t *testing.T) {
 				b, err := f4.PeerStorageBytes(peer)
 				if err != nil {
 					t.Fatal(err)
-				}
-				if peer == "source:celestrak" {
-					a -= keptByF1
 				}
 				if a != b {
 					t.Fatalf("PeerStorageBytes %q: format 4 %d, format 1 %d", peer, b, a)
@@ -971,8 +981,32 @@ func TestFormat4WritesMatchFormat1(t *testing.T) {
 		if _, err := f4.GarbageCollect(time.Hour); !errors.Is(err, ErrFormat4Unsupported) {
 			t.Fatalf("GarbageCollect: %v", err)
 		}
-		if _, err := f4.QueryRoutedAll(10); !errors.Is(err, ErrFormat4Unsupported) {
-			t.Fatalf("QueryRoutedAll: %v", err)
+		// The routed listings: every stored copy, as format 1 lists its
+		// (producer, standard) table rows (the copies' source timestamps
+		// aside: a copy keeps its holder's, C-12).
+		routed := func(s *FlatSQLStore) []string {
+			rs, err := s.QueryRoutedByStandard("OMM.fbs", 0)
+			if err != nil {
+				t.Fatalf("QueryRoutedByStandard format4=%v: %v", s.Format4(), err)
+			}
+			var out []string
+			for _, r := range rs {
+				out = append(out, r.CID+"/"+r.ProducerID+"/"+r.Standard+"/"+r.PeerID)
+			}
+			sort.Strings(out)
+			return out
+		}
+		// Format 1 stored omm[50] before refusing its tag (a tag without a
+		// provider); format 4 refuses the whole write.
+		refused := ComputeCID(sc.omm[50]) + "/"
+		var f1Routed []string
+		for _, r := range routed(legacy) {
+			if !strings.HasPrefix(r, refused) {
+				f1Routed = append(f1Routed, r)
+			}
+		}
+		if a, b := f1Routed, routed(f4); fmt.Sprint(a) != fmt.Sprint(b) {
+			t.Fatalf("QueryRoutedByStandard: format 4 %d rows, format 1 %d (the sets differ):\n format 4 %v\n format 1 %v", len(b), len(a), b, a)
 		}
 		if _, err := f4.Query("OMM.fbs", "1=1"); !errors.Is(err, ErrFormat4Unsupported) {
 			t.Fatalf("Query with a WHERE: %v", err)
