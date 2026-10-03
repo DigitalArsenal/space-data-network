@@ -103,6 +103,9 @@ type Batch struct {
 	At      int64 // ingest tag instances' at; 0 = engine clock
 	Mode    Mode
 	Records []In
+	// OwnTS (tag 55): a COPY of a held record stores this write's TS, not
+	// the holder's (format 1's StoreRoutedByProducer, C-39 E6).
+	OwnTS bool
 }
 
 // Action is what a PUT did with one record.
@@ -175,6 +178,13 @@ const (
 	OrderSeqDesc Order = 2
 	OrderWDesc   Order = 3
 	OrderCID     Order = 4
+	// SCAN only (C-39 E2, E3): format 1's two-part pages, the tagged
+	// records (the feed files) in the order with the offset, then, without
+	// a lane filter, the untagged (local) records from the start, as many
+	// as the limit leaves.
+	OrderNewest Order = 5 // delivery time desc, CID asc; local: ts desc, CID asc (the raw default page)
+	OrderRecent Order = 6 // delivery time desc, seq desc; local: seq desc (QueryRecentRecords)
+	OrderWAsc   Order = 7 // w asc, CID asc (a raw page with a sync filter or a search)
 )
 
 // Class is a request's service class.

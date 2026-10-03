@@ -64,6 +64,7 @@ const (
 	tagMode       uint16 = 52
 	tagRecords    uint16 = 53
 	tagPutAt      uint16 = 54
+	tagPutOwnTS   uint16 = 55
 	tagKeepBatch  uint16 = 60
 	tagApply      uint16 = 61
 	tagMaxBytes   uint16 = 62
@@ -346,5 +347,5 @@ func encodePut(b Batch, n int, records []byte) []byte {
 	t = tlvU8(t, tagMode, uint8(b.Mode)) // always present (the golden vector carries mode 0)
 	recs := binary.LittleEndian.AppendUint32(make([]byte, 0, 4+len(records)), uint32(n))
 	t = t.raw(tagRecords, append(recs, records...))
-	return t.i64(tagPutAt, b.At)
+	return t.i64(tagPutAt, b.At).flag(tagPutOwnTS, b.OwnTS)
 }
