@@ -36,6 +36,23 @@ func ommNorad(rec []byte) (uint32, bool) {
 	return OMMfb.GetRootAsOMM(rec, 0).NORAD_CAT_ID(), true
 }
 
+// ommEpoch is an OMM record's EPOCH in whole seconds (its
+// "YYYY-MM-DDTHH:MM:SS" part, UTC).
+func ommEpoch(rec []byte) (int64, bool) {
+	if len(rec) < 8 {
+		return 0, false
+	}
+	e := OMMfb.GetRootAsOMM(rec, 0).EPOCH()
+	loc := isoRe.FindIndex(e)
+	if loc == nil {
+		return 0, false
+	}
+	b := append([]byte(nil), e[loc[0]:loc[1]]...)
+	b[10] = 'T'
+	t, err := time.Parse("2006-01-02T15:04:05", string(b))
+	return t.Unix(), err == nil
+}
+
 // catNorad is a CAT record's NORAD_CAT_ID.
 func catNorad(rec []byte) uint32 { return CATfb.GetRootAsCAT(rec, 0).NORAD_CAT_ID() }
 
