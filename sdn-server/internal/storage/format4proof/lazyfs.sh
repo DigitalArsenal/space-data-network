@@ -17,7 +17,8 @@
 # them through libc), which must report a loss (a scenario's negative loop
 # ends at its first loss: a lost store cannot be written again).
 # P4PROOF_LAZYFS_SCENARIOS / P4PROOF_LAZYFS_NEG_SCENARIOS (comma lists) and
-# P4PROOF_LAZYFS_NEG_ROUNDS (0 skips the negative control) narrow a run.
+# P4PROOF_LAZYFS_NEG_ROUNDS (0 skips the negative control) narrow a run;
+# P4PROOF_LAZYFS_MOUNT_WAIT_S bounds the wait for the mount (3600).
 #
 # LIMIT (as scripts/lazyfs-dir-durability.sh): LazyFS caches only file data,
 # so a lost un-fsynced directory entry is not exercised.
@@ -40,7 +41,7 @@ if [[ "${1:-}" != "--inner" ]]; then
     -v "$REPO":/src:ro -v "$WORK":/work -v "$MODCACHE":/gomod -v "$WORK/aot-cache":/root/.cache/flatsql-aot \
     -e GOMODCACHE=/gomod -e GOFLAGS=-mod=mod -e ROUNDS="$ROUNDS" -e ARM="$ARM" \
     -e NEG_ROUNDS="${P4PROOF_LAZYFS_NEG_ROUNDS:-$ROUNDS}" -e TRIAL_SCENARIOS="${P4PROOF_LAZYFS_SCENARIOS:-}" \
-    -e NEG_SCENARIOS="${P4PROOF_LAZYFS_NEG_SCENARIOS:-}" \
+    -e NEG_SCENARIOS="${P4PROOF_LAZYFS_NEG_SCENARIOS:-}" -e MOUNT_WAIT_S="${P4PROOF_LAZYFS_MOUNT_WAIT_S:-3600}" \
     "${SDN_LAZYFS_IMAGE:-sdn-wasmedge-static:74db37e14}" \
     bash /src/sdn-server/internal/storage/format4proof/lazyfs.sh --inner
 fi
@@ -103,8 +104,18 @@ cleanup() {
   wait "$LPID" 2>/dev/null || true
 }
 trap cleanup EXIT
-for _ in $(seq 1 100); do mountpoint -q "$MNT" && break; sleep 0.1; done
-mountpoint -q "$MNT" || { cat "$W/lazyfs.log"; echo "LazyFS did not mount"; exit 1; }
+# LazyFS pre-allocates its 4 GiB cache before it mounts: 17.5 minutes in the
+# emulated linux/amd64 container on a loaded Mac (GATES-feed-r1 N3). Wait
+# while the process lives, up to P4PROOF_LAZYFS_MOUNT_WAIT_S (3600).
+WAIT_S="${MOUNT_WAIT_S:-3600}"
+st=$(date +%s)
+until mountpoint -q "$MNT"; do
+  kill -0 "$LPID" 2>/dev/null || break
+  (( $(date +%s) - st < WAIT_S )) || break
+  sleep 1
+done
+mountpoint -q "$MNT" || { cat "$W/lazyfs.log"; echo "LazyFS did not mount (waited $(( $(date +%s) - st )) s)"; exit 1; }
+echo "LazyFS mounted after $(( $(date +%s) - st )) s"
 
 echo "machine: $(uname -m), $(nproc) CPUs; LazyFS fa7d32e; arm $ARM; $ROUNDS rounds per scenario"
 run() { # run <label> <negative so or empty> <rounds> <scenarios or empty>
