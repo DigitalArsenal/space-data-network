@@ -949,15 +949,45 @@ func (c *cov) v06() []Shape {
 		q(storage.EpochRecordQuery{SchemaName: "PNM.fbs", Profile: storage.EpochProfileNearest, At: at, Limit: 5}),
 		q(storage.EpochRecordQuery{SchemaName: "XYZ.fbs", Profile: storage.EpochProfileNearest, At: at, Limit: 5}),
 	}
-	streams := []Call{
-		stream("MPE.fbs", "celestrak-gp", "nearest", float64(r16At), 100),
-		stream("OMM.fbs", "celestrak-gp", "as_of", float64(r16At)+0.5, 0),
-		stream("CAT.fbs", "celestrak-satcat", "nearest", float64(r16At), 50),
-		stream("OMM.fbs", "no-such-source", "forward", float64(r16At), 50),
-		stream("OMM.fbs", "celestrak-gp", "bogus", float64(r16At), 50),
+	// The same question (R18's ruling): the OMM as_of stream is the source's
+	// record per object on or before the epoch, ranked by the type's epoch
+	// rule, which format 1's EPOCH API answers with the source filter (whole
+	// seconds: the epochs are whole seconds); format 1's own stream ranks by
+	// USER_DEFINED_EPOCH_TIMESTAMP (r18Accepted).
+	asOf := float64(r16At) + 0.5
+	asOfName := fmt.Sprintf("QueryEpochRawStream %s@%s %s %.0f limit=%d", "OMM.fbs", "celestrak-gp", "as_of", asOf, 0)
+	sameAsOf := c.rowsCall(asOfName, "OMM.fbs", func(s *storage.FlatSQLStore) ([]Row, error) {
+		ms, err := s.QueryEpochRecords(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileAsOf,
+			At: time.Unix(int64(asOf), 0).UTC(), SourceName: "celestrak-gp", Limit: epochAllObjects})
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]Row, 0, len(ms))
+		for _, x := range ms {
+			if x.Record == nil {
+				return nil, fmt.Errorf("epoch match %s without its record", x.EntityKey)
+			}
+			rows = append(rows, frameRow(x.Record.Data))
+		}
+		return unorderedDigest(rows), nil
+	})
+	streams := func(same bool) []Call {
+		omm := stream("OMM.fbs", "celestrak-gp", "as_of", asOf, 0)
+		if same {
+			omm = sameAsOf
+		}
+		return []Call{
+			stream("MPE.fbs", "celestrak-gp", "nearest", float64(r16At), 100),
+			omm,
+			stream("CAT.fbs", "celestrak-satcat", "nearest", float64(r16At), 50),
+			stream("OMM.fbs", "no-such-source", "forward", float64(r16At), 50),
+			stream("OMM.fbs", "celestrak-gp", "bogus", float64(r16At), 50),
+		}
 	}
+	same := covShape(class, "epoch streams"+SameQuestionSuffix, "OMM.fbs", streams(true)...)
+	same.Arms = []string{ArmF1}
 	return []Shape{covShape(class, "epoch profiles", "OMM.fbs", calls...),
-		rule(covShape(class, "epoch streams", "OMM.fbs", streams...), "QueryEpochRawStream OMM.fbs@celestrak-gp", r18Accepted)}
+		rule(covShape(class, "epoch streams", "OMM.fbs", streams(false)...), "QueryEpochRawStream OMM.fbs@celestrak-gp", r18Accepted), same}
 }
 
 // V07: the SQL surface: sandboxed rows and streams (every fixture type,

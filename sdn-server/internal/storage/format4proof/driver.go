@@ -532,7 +532,10 @@ func DriveEquivalence(c Config, label, candidate string, logf Logf) (*Equivalenc
 		}
 		for i := range f1.Shapes {
 			name := f1.Shapes[i].Shape
-			if k := (ShapeKey{f1.Shapes[i].Class, name}); !everyArm[k] && len(armsOf[k]) > 0 && !contains(armsOf[k], candidate) {
+			// A same-question baseline runs on format 1 only and is compared
+			// wherever the shape it answers for runs.
+			k := ShapeKey{f1.Shapes[i].Class, strings.TrimSuffix(name, SameQuestionSuffix)}
+			if !everyArm[k] && len(armsOf[k]) > 0 && !contains(armsOf[k], candidate) {
 				continue
 			}
 			if pol, ok := policies[ShapeKey{f1.Shapes[i].Class, name}]; ok {
