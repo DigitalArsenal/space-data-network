@@ -42,11 +42,119 @@ type Policy struct {
 	// ruling that covers that call only): a difference in one of a ruling's
 	// fields, in a call whose name contains the ruling's Call, is accepted.
 	Calls []CallRuling `json:"calls,omitempty"`
+	// TieOrdered names calls whose format-1 order is by one field only (ORDER
+	// BY timestamp DESC, no tiebreak): rows tied on it may come in any order,
+	// and a limit that cuts a tie may keep any of its members (alignTies).
+	TieOrdered []TieRule `json:"tie_ordered,omitempty"`
 	// CIDAliases names records format 1 holds under another text of their
 	// CID (contract §3.8 (1): format 4 keeps only the CIDv1 raw sha2-256 of
 	// the bytes; format 1 keeps an imported index's sha256-hex identity):
 	// format 1's cid values are read as their alias before comparing.
 	CIDAliases map[string]string `json:"cid_aliases,omitempty"`
+}
+
+// TieRule is a partial order: the calls whose name contains Call are
+// ordered by Key alone.
+type TieRule struct {
+	Call string `json:"call"`
+	Key  string `json:"key"`
+}
+
+func (p Policy) tieRule(call string) *TieRule {
+	for i := range p.TieOrdered {
+		if strings.Contains(call, p.TieOrdered[i].Call) {
+			return &p.TieOrdered[i]
+		}
+	}
+	return nil
+}
+
+// tieCut names what alignTies accepts beyond format 1's own rows.
+const tieCut = "format 1 orders by the timestamp alone: a limit cutting a tie keeps any of its members (each one checked against format 1's copies: CID, peer, timestamp)"
+
+// alignTies puts the candidate's rows in format 1's order where format 1's
+// order leaves them free: the key of every position must be equal on both
+// sides (the defined part of the order); within each run of one key, the
+// candidate's rows match format 1's as a multiset; in the last run, which a
+// limit may cut, a row format 1 did not return is taken when member(row)
+// proves it a member of the tie (a copy format 1 holds with that key). A key
+// that is a canonical stand-in ("now", the store's own clock) or empty is
+// no tie: those rows keep their positions. It returns the rows in format 1's
+// order and the number of rows taken by member; ok is false when a key
+// differs.
+func alignTies(ra, rb []Row, key string, member func(Row) bool) (out []Row, cut int, ok bool) {
+	if len(ra) != len(rb) {
+		return rb, 0, false
+	}
+	for i := range ra {
+		if ra[i].Get(key) != rb[i].Get(key) {
+			return rb, 0, false
+		}
+	}
+	out = append([]Row(nil), rb...)
+	for start := 0; start < len(ra); {
+		k := ra[start].Get(key)
+		end := start + 1
+		for end < len(ra) && ra[end].Get(key) == k {
+			end++
+		}
+		if k == "" || k == "now" || end-start < 2 {
+			start = end
+			continue
+		}
+		free := map[string][]int{} // format 1's rows of the run by content
+		for i := start; i < end; i++ {
+			t := strictText(ra[i])
+			free[t] = append(free[t], i)
+		}
+		placed := make([]bool, end-start)
+		var rest []Row
+		for i := start; i < end; i++ {
+			t := strictText(rb[i])
+			if idx := free[t]; len(idx) > 0 {
+				out[idx[0]], placed[idx[0]-start] = rb[i], true
+				free[t] = idx[1:]
+				continue
+			}
+			rest = append(rest, rb[i])
+		}
+		for _, r := range rest {
+			if end != len(ra) || !member(r) {
+				return rb, 0, true // compared position by position
+			}
+			for j := range placed {
+				if !placed[j] {
+					// Format 1's row there is another member of the cut tie.
+					out[start+j], placed[j] = ra[start+j], true
+					cut++
+					break
+				}
+			}
+		}
+		start = end
+	}
+	return out, cut, true
+}
+
+// tieMember reports a row a copy format 1 holds: a record row's copy
+// variant (~peer, ~ts, ~sig), or a routed row's peer and ts in its standard.
+func tieMember(row Row, schema string, oracle CopyOracle, cache map[string][]Row) bool {
+	if std, ok := row.lookup("standard"); ok {
+		if oracle == nil {
+			return false
+		}
+		copies, err := oracle(std+".fbs", row.Get("cid"))
+		if err != nil {
+			return false
+		}
+		for _, c := range copies {
+			if c.Get("~peer") == row.Get("peer") && c.Get("~ts") == row.Get("ts") {
+				return true
+			}
+		}
+		return false
+	}
+	return variantMatchesCopy(row, schema, oracle, cache)
 }
 
 // aliased is rows with every cid value that names an alias replaced by it.
@@ -353,6 +461,17 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 		if pol.Unordered {
 			ra, rb = sortRows(ra), sortRows(rb)
 		}
+		if tr := pol.tieRule(a.Call); tr != nil {
+			if aligned, cut, ok := alignTies(ra, rb, tr.Key, func(r Row) bool {
+				return tieMember(r, f1.Schema, shapeOracle(f1, oracle), variantCache)
+			}); ok {
+				rb = aligned
+				if cut > 0 {
+					rulings[tieCut] = true
+					v.Notes = append(v.Notes, fmt.Sprintf("%s: %d rows are other members of a tie the limit cut (checked against format 1's copies)", a.Call, cut))
+				}
+			}
+		}
 		v.F1Rows += len(ra)
 		v.SRows += len(rb)
 		if pol.Superset {
@@ -426,6 +545,11 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 	}
 	sort.Strings(v.Extra)
 	v.Status = worst
+	if rulings[tieCut] && (worst == EqEqual || worst == EqEqualC12 || worst == EqExtra) {
+		// A cut tie compared other members' rows: an answer format 1's order
+		// admits, reported as such rather than as equal.
+		worst, v.Status = EqDiffer, EqDiffer
+	}
 	if worst == EqDiffer && !unaccepted && (pol.Accepted != "" || len(rulings) > 0) {
 		v.Status = EqAccepted
 		for why := range rulings {
