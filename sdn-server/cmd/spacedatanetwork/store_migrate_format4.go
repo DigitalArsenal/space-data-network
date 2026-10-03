@@ -235,29 +235,33 @@ type migrate4Reject struct {
 }
 
 type migrate4Report struct {
-	Store       string            `json:"store"`
-	Format      int               `json:"format"`
-	Mode        string            `json:"mode"` // "migrate" or "verify-only"
-	Records     int64             `json:"records"`
-	Copies      int64             `json:"copies"`
-	RecordBytes int64             `json:"record_bytes"`
-	SourceBytes int64             `json:"source_bytes"`
-	OwnBytes    int64             `json:"own_bytes"` // copies whose bytes differ from their record's first copy (kept)
-	RecordTS    int64             `json:"record_ts"` // copies whose ts differs from their record's first copy
-	GseqFloor   uint64            `json:"gseq_floor"`
-	Took        string            `json:"took"`
-	RecordMBps  float64           `json:"record_mb_per_s"`
-	MaxRSS      int64             `json:"max_rss_bytes"`
-	Load        [2]float64        `json:"load"` // 1-minute load average at the start and the end
-	Machine     string            `json:"machine"`
-	Resumed     bool              `json:"resumed"`
-	Rejected    []migrate4Reject  `json:"rejected,omitempty"`
-	Oversized   []migrate4Reject  `json:"oversized,omitempty"` // refused as above the record limit (C-6)
-	Check       *migrate4Check    `json:"check,omitempty"`
-	Activated   bool              `json:"activated"`
-	Notes       []string          `json:"notes,omitempty"`
-	Time        map[string]string `json:"time,omitempty"`
-	EngineStats []uint64          `json:"engine_stats,omitempty"`
+	Store       string           `json:"store"`
+	Format      int              `json:"format"`
+	Mode        string           `json:"mode"` // "migrate" or "verify-only"
+	Records     int64            `json:"records"`
+	Copies      int64            `json:"copies"`
+	RecordBytes int64            `json:"record_bytes"`
+	SourceBytes int64            `json:"source_bytes"`
+	OwnBytes    int64            `json:"own_bytes"` // copies whose bytes differ from their record's first copy (kept)
+	RecordTS    int64            `json:"record_ts"` // copies whose ts differs from their record's first copy
+	GseqFloor   uint64           `json:"gseq_floor"`
+	Took        string           `json:"took"`
+	RecordMBps  float64          `json:"record_mb_per_s"`
+	MaxRSS      int64            `json:"max_rss_bytes"`
+	Load        [2]float64       `json:"load"` // 1-minute load average at the start and the end
+	Machine     string           `json:"machine"`
+	Resumed     bool             `json:"resumed"`
+	Rejected    []migrate4Reject `json:"rejected,omitempty"`
+	Oversized   []migrate4Reject `json:"oversized,omitempty"` // refused as above the record limit (C-6)
+	// Unregistered are the producer tables of a schema with no standard
+	// (no embedded schema, no file identifier): table -> records, not
+	// migrated.
+	Unregistered map[string]int64  `json:"unregistered_tables,omitempty"`
+	Check        *migrate4Check    `json:"check,omitempty"`
+	Activated    bool              `json:"activated"`
+	Notes        []string          `json:"notes,omitempty"`
+	Time         map[string]string `json:"time,omitempty"`
+	EngineStats  []uint64          `json:"engine_stats,omitempty"`
 }
 
 type migrate4Check struct {
@@ -374,7 +378,10 @@ type migrator4 struct {
 	bySchema map[string][]storage.LegacyTable
 	schemas  []string
 	specs    map[string]format4.TypeSpec
-	index    []storage.IndexStats
+	// unregistered are the schemas whose tables are not migrated (no
+	// standard): schema -> why.
+	unregistered map[string]error
+	index        []storage.IndexStats
 
 	lastJournal time.Time
 	timesMu     sync.Mutex // the reader goroutine adds its time too
@@ -607,22 +614,45 @@ func (m *migrator4) openSourceAt(dir string) error {
 		return fmt.Errorf("open the format-1 store (stop the daemon first): %w", err)
 	}
 	m.rep.SourceBytes = sourceBytes(dir)
-	if m.tables, err = m.src.ProducerTables(); err != nil {
+	all, err := m.src.ProducerTables()
+	if err != nil {
 		return err
 	}
+	m.tables = nil
 	m.bySchema = map[string][]storage.LegacyTable{}
 	m.specs = map[string]format4.TypeSpec{}
-	for _, t := range m.tables {
-		if _, ok := m.bySchema[t.Schema]; !ok {
-			m.schemas = append(m.schemas, t.Schema)
-			spec, err := migrate4TypeSpec(t.Schema)
-			if err != nil {
-				return fmt.Errorf("table %s: %w", t.Name, err)
+	unregistered := map[string]error{}
+	for _, t := range all {
+		if _, bad := unregistered[t.Schema]; !bad {
+			if _, ok := m.bySchema[t.Schema]; !ok {
+				spec, err := migrate4TypeSpec(t.Schema)
+				if err != nil {
+					unregistered[t.Schema] = err
+				} else {
+					m.schemas = append(m.schemas, t.Schema)
+					m.specs[t.Schema] = spec
+				}
 			}
-			m.specs[t.Schema] = spec
 		}
+		if err, bad := unregistered[t.Schema]; bad {
+			// A schema SDN embeds no standard for (only StoreBatch to an
+			// unknown name writes one; format 1 serves none of its records)
+			// has no engine type: its table is listed, not migrated.
+			c, cerr := m.src.TableCounter(t)
+			if cerr != nil {
+				return cerr
+			}
+			if m.rep.Unregistered == nil {
+				m.rep.Unregistered = map[string]int64{}
+			}
+			m.rep.Unregistered[t.Name] = c.Count
+			m.note("table %s (%d records): %v; not migrated (no standard of that name; format 1 serves none of its records)", t.Name, c.Count, err)
+			continue
+		}
+		m.tables = append(m.tables, t)
 		m.bySchema[t.Schema] = append(m.bySchema[t.Schema], t)
 	}
+	m.unregistered = unregistered
 	sort.Strings(m.schemas)
 	return m.timed("index_schemas", func() error {
 		m.index, err = m.src.IndexSchemas()
