@@ -186,9 +186,16 @@ func (p *Provenance) add(o Provenance) {
 var provFields = []string{"provider", "source", "batch"}
 
 // countRow counts one row pair's provenance cells: the same record's rows
-// (a pair whose CIDs differ is another difference, not a blank cell).
+// (a pair whose CIDs differ is another difference, not a blank cell; an
+// error row is no record).
 func (p *Provenance) countRow(a, b Row) {
 	if c := a.Get("cid"); c != "" && c != b.Get("cid") {
+		return
+	}
+	if _, isErr := b.lookup("err"); isErr {
+		return
+	}
+	if _, isErr := a.lookup("err"); isErr {
 		return
 	}
 	for _, f := range provFields {
