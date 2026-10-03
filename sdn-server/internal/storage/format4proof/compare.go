@@ -3,6 +3,7 @@ package format4proof
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -220,10 +221,27 @@ type CallRuling struct {
 	// SameSet accepts the fields only when the call's rows are equal as a
 	// multiset: their order alone differs.
 	SameSet bool `json:"same_set,omitempty"`
+	// CID limits the ruling to the rows (format 1's) of this record.
+	CID string `json:"cid,omitempty"`
 	// Absent names a standard format 4 holds nothing of: format 1's rows
 	// that name it are not compared (they are the difference); a row of it
-	// on format 4 is compared as any row (and differs).
-	Absent string `json:"absent,omitempty"`
+	// on format 4 is compared as any row (and differs). AbsentCID names a
+	// record likewise (C-6: the record the migration sets aside).
+	Absent    string `json:"absent,omitempty"`
+	AbsentCID string `json:"absent_cid,omitempty"`
+	// TaggedFirst (a record listing; C-41 N3): format 1 lists its tagged
+	// records before its untagged ones, the candidate every record by seq
+	// (taggedFirstOrder).
+	TaggedFirst bool `json:"tagged_first,omitempty"`
+	// PerFeed (a record listing; C-38 (5), C-41 N8): the candidate lists a
+	// record once per feed that holds it, format 1 once (perFeedRows).
+	PerFeed bool `json:"per_feed,omitempty"`
+}
+
+// rowRuling reports a ruling that rewrites the rows compared (Absent,
+// AbsentCID, TaggedFirst, PerFeed) rather than accepting fields.
+func (r *CallRuling) rowRuling() bool {
+	return r.Absent != "" || r.AbsentCID != "" || r.TaggedFirst || r.PerFeed
 }
 
 // ruling is the call ruling that accepts field of row (format 1's; nil for
@@ -232,11 +250,11 @@ type CallRuling struct {
 func (p Policy) ruling(call, field string, row Row, setEq bool) *CallRuling {
 	for i := range p.Calls {
 		r := &p.Calls[i]
-		if !strings.Contains(call, r.Call) || r.Absent != "" || (r.SameSet && !setEq) {
+		if !strings.Contains(call, r.Call) || r.rowRuling() || (r.SameSet && !setEq) {
 			continue
 		}
-		if r.Standard != "" || r.Source != "" || r.Batch != "" {
-			if row == nil {
+		if r.Standard != "" || r.Source != "" || r.Batch != "" || r.CID != "" {
+			if row == nil || (r.CID != "" && row.Get("cid") != r.CID) {
 				continue
 			}
 			if std := rowStandard(row); r.Standard != "" && std != "" && std != r.Standard {
@@ -289,16 +307,18 @@ func rowBatch(r Row) string {
 }
 
 // absentRows drops format 1's rows that name a standard an Absent ruling of
-// call names; it returns the rows kept and the rulings that dropped any.
+// call names, or the record an AbsentCID ruling names; it returns the rows
+// kept and the rulings that dropped any.
 func (p Policy) absentRows(call string, rows []Row) ([]Row, []string) {
 	var why []string
 	for _, r := range p.Calls {
-		if r.Absent == "" || !strings.Contains(call, r.Call) {
+		if (r.Absent == "" && r.AbsentCID == "") || !strings.Contains(call, r.Call) {
 			continue
 		}
 		kept := rows[:0:0]
 		for _, row := range rows {
-			if rowStandard(row) != r.Absent || (r.Batch != "" && rowBatch(row) != r.Batch) {
+			absent := r.Absent != "" && rowStandard(row) == r.Absent && (r.Batch == "" || rowBatch(row) == r.Batch)
+			if !absent && (r.AbsentCID == "" || row.Get("cid") != r.AbsentCID) {
 				kept = append(kept, row)
 			}
 		}
@@ -395,6 +415,175 @@ const (
 	// c38PerFeedSurface is C-38 (5) on the surface listing.
 	c38PerFeedSurface = "C-38 (5): a \"<TYPE>@<source>\" relation counts the feed's records (a record in N feeds counts in each); format 1 counts its resident rows, one per record in its first source's partition"
 )
+
+// The C-41 rulings (contract v19, coordinator 2026-10-03 ~10:30) the
+// comparator accepts, each on the calls, fields and rows it names. C-41's
+// must-fix item N9 (NEWEST/RECENT pages project the delivery the record is
+// ordered by) is never accepted.
+const (
+	c41N3 = "C-41 N3: format 1's cursor page lists its tagged records before its untagged ones (a format-1 bug that can skip records in datasync); format 4 pages strictly by seq"
+	c41N4 = "C-41 N4: a url re-delivery restamps the lane's time on format 4 (lane metadata only); format 1's DUP leaves its summary alone"
+	c41N5 = "C-41 N5: a record new to a second feed takes that delivery's ts (C-38: one row per feed); format 1 keeps the record's first ts"
+	c41N6 = "C-41 N6: format 1's SQL relation is its engine hot window, which a delete shrinks; format 4 counts the true newest N"
+	c41N7 = "C-41 N7: the migration does not carry the lane times format 1 restamped by its delete verbs (as U3)"
+	c41N8 = "C-41 N8: a migrated record's copies go into every feed file of the record (format 1 never recorded which copy came with which tag)"
+)
+
+// listingRulings are call's TaggedFirst and PerFeed rulings (nil: none).
+func (p Policy) listingRulings(call string) (taggedFirst, perFeed *CallRuling) {
+	for i := range p.Calls {
+		r := &p.Calls[i]
+		if !strings.Contains(call, r.Call) {
+			continue
+		}
+		if r.TaggedFirst && taggedFirst == nil {
+			taggedFirst = r
+		}
+		if r.PerFeed && perFeed == nil {
+			perFeed = r
+		}
+	}
+	return taggedFirst, perFeed
+}
+
+// perFeedRows is CallRuling.PerFeed on a record listing: the candidate lists
+// a record once per feed that holds it (C-38 (5); C-41 N8: a migrated
+// record's copies sit in every feed file of the record), format 1 once
+// (C-10's collapse of its tag rows). Each listing of a record the candidate
+// repeats must be a different one of format 1's tag rows of that record
+// (alts: format 1's rows by CID before the collapse). It returns the
+// candidate's rows with each such record once, at its first listing's
+// position (the listing equal to format 1's collapsed row, else the first),
+// and the number of listings dropped; ok is false when a repeated record's
+// listings are not distinct tag rows format 1 holds for it (the rows are
+// then compared as they are).
+func perFeedRows(ra []Row, alts map[string][]Row, rb []Row, strict bool) (out []Row, dropped int, ok bool) {
+	same := func(a, b Row) bool {
+		st, _, _ := compareRow(a, b, strict)
+		return st == EqEqual || st == EqExtra
+	}
+	first := map[string]Row{} // format 1's collapsed row of each CID
+	for _, r := range ra {
+		if c := r.Get("cid"); c != "" {
+			first[c] = r
+		}
+	}
+	listings := map[string][]int{}
+	for i, r := range rb {
+		if c := r.Get("cid"); c != "" {
+			listings[c] = append(listings[c], i)
+		}
+	}
+	keep := map[string]int{} // a repeated record's kept listing
+	for c, idx := range listings {
+		if len(idx) < 2 {
+			continue
+		}
+		cand := alts[c]
+		if len(cand) < len(idx) {
+			return rb, 0, false
+		}
+		used := make([]bool, len(cand))
+		for _, i := range idx {
+			matched := false
+			for j := range cand {
+				if !used[j] && same(cand[j], rb[i]) {
+					used[j], matched = true, true
+					break
+				}
+			}
+			if !matched {
+				return rb, 0, false
+			}
+		}
+		keep[c] = idx[0]
+		if f, ok := first[c]; ok {
+			for _, i := range idx {
+				if same(f, rb[i]) {
+					keep[c] = i
+					break
+				}
+			}
+		}
+		dropped += len(idx) - 1
+	}
+	if dropped == 0 {
+		return rb, 0, true
+	}
+	out = make([]Row, 0, len(rb)-dropped)
+	placed := map[string]bool{}
+	for _, r := range rb {
+		c := r.Get("cid")
+		k, repeated := keep[c]
+		switch {
+		case !repeated:
+			out = append(out, r)
+		case !placed[c]:
+			out, placed[c] = append(out, rb[k]), true
+		}
+	}
+	return out, dropped, true
+}
+
+// taggedFirstOrder is CallRuling.TaggedFirst on a record listing (C-41 N3):
+// format 1's cursor page is two queries, its tagged records by rowid, then
+// its untagged ones by rowid; format 4 lists every record by seq. The
+// candidate's rows may come in any order that keeps format 1's tagged rows
+// in their order and its untagged rows in theirs (an interleaving of the
+// two, records matched by CID) and that ascends by cursor (rowid: a number,
+// or "new", above every number). It returns the candidate's rows in format
+// 1's order and whether any moved; ok is false when the candidate's order
+// is no such interleaving (the rows are then compared as they are). The
+// rows themselves are compared afterwards, field by field.
+func taggedFirstOrder(ra, rb []Row) (out []Row, moved, ok bool) {
+	if len(ra) != len(rb) {
+		return rb, false, false
+	}
+	var tagged, untagged []int
+	seen := map[string]bool{}
+	for i, r := range ra {
+		c := r.Get("cid")
+		if c == "" || seen[c] {
+			return rb, false, false
+		}
+		seen[c] = true
+		if r.Get("provider") != "" || r.Get("source") != "" || r.Get("batch") != "" {
+			tagged = append(tagged, i)
+		} else {
+			untagged = append(untagged, i)
+		}
+	}
+	out = make([]Row, len(rb))
+	ti, ui := 0, 0
+	prev, prevNew := int64(-1), false
+	for k, r := range rb {
+		switch id := r.Get("rowid"); {
+		case id == "new":
+			prevNew = true
+		case prevNew:
+			return rb, false, false
+		default:
+			n, err := strconv.ParseInt(id, 10, 64)
+			if err != nil || n < prev {
+				return rb, false, false
+			}
+			prev = n
+		}
+		c := r.Get("cid")
+		var pos int
+		switch {
+		case ti < len(tagged) && ra[tagged[ti]].Get("cid") == c:
+			pos, ti = tagged[ti], ti+1
+		case ui < len(untagged) && ra[untagged[ui]].Get("cid") == c:
+			pos, ui = untagged[ui], ui+1
+		default:
+			return rb, false, false
+		}
+		out[pos] = r
+		moved = moved || pos != k
+	}
+	return out, moved, true
+}
 
 // laneField is a head field's name under C-10: a tag-filtered count or head
 // (a row carrying lane_n or lane_max_rowid, covHead) sums its bytes over the
@@ -607,7 +796,8 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 	rulings := map[string]bool{}
 	// forced: an accepted difference that leaves no differing field (a cut
 	// tie compared other members' rows; format 1's rows of an absent
-	// standard dropped): never reported as equal.
+	// standard or record dropped; a record listing aligned): never reported
+	// as equal.
 	forced := false
 	accepts := func(call, field string, row Row, setEq bool) bool {
 		if pol.accepts(field) && pol.Accepted != "" {
@@ -642,7 +832,7 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 		}
 		ra, rb := aliased(a.Rows, pol.CIDAliases), b.Rows
 		if kept, why := pol.absentRows(a.Call, ra); len(why) > 0 {
-			v.Notes = append(v.Notes, fmt.Sprintf("%s: %d of format 1's rows name a standard format 4 holds nothing of", a.Call, len(ra)-len(kept)))
+			v.Notes = append(v.Notes, fmt.Sprintf("%s: %d of format 1's rows name a standard or a record format 4 holds nothing of", a.Call, len(ra)-len(kept)))
 			ra, forced = kept, true
 			for _, w := range why {
 				rulings[w] = true
@@ -672,6 +862,27 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 				v.Notes = append(v.Notes, fmt.Sprintf("%s: C-10 collapsed format 1's %d rows to %d", a.Call, len(ra), len(c)))
 				repeated = rowsByCID(ra)
 				ra = c
+			}
+		}
+		// A record listing's rulings (C-38 (5), C-41 N8: a record once per
+		// feed; C-41 N3: format 1's tagged records first): the candidate's
+		// rows aligned to format 1's, then compared field by field.
+		if tf, pf := pol.listingRulings(a.Call); tf != nil || pf != nil {
+			if pf != nil {
+				alts := repeated
+				if alts == nil {
+					alts = rowsByCID(ra)
+				}
+				if out, n, ok := perFeedRows(ra, alts, rb, pol.Strict); ok && n > 0 {
+					rb, forced, rulings[pf.Why] = out, true, true
+					v.Notes = append(v.Notes, fmt.Sprintf("%s: %d more listings of records held by several feeds, each another of format 1's tag rows of the record", a.Call, n))
+				}
+			}
+			if tf != nil {
+				if out, moved, ok := taggedFirstOrder(ra, rb); ok && moved {
+					rb, forced, rulings[tf.Why] = out, true, true
+					v.Notes = append(v.Notes, a.Call+": format 4's seq order interleaves format 1's tagged and untagged parts, each in format 1's order")
+				}
 			}
 		}
 		if pol.Unordered {
@@ -767,9 +978,10 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 	sort.Strings(v.Extra)
 	v.Status = worst
 	if (forced || rulings[tieCut]) && (worst == EqEqual || worst == EqEqualC12 || worst == EqExtra) {
-		// A cut tie compared other members' rows, or format 1's rows of an
-		// absent standard were dropped: an intended difference, reported as
-		// such rather than as equal.
+		// A cut tie compared other members' rows, format 1's rows of an
+		// absent standard or record were dropped, or a record listing was
+		// aligned: an intended difference, reported as such rather than as
+		// equal.
 		worst, v.Status = EqDiffer, EqDiffer
 	}
 	if worst == EqDiffer && !unaccepted && (pol.Accepted != "" || len(rulings) > 0) {
