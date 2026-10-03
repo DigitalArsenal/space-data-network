@@ -111,9 +111,21 @@ func (b format2Backend) sourceTagsForCIDs(schemaName string, cids []string) (map
 	return b.s.f2SourceTagsForCIDs(schemaName, cids, f2TagSpec{})
 }
 
-func (b format2Backend) exportSourceTags(filter IndexedRecordQuery, cids []string) (map[string]SourceTags, error) {
-	return b.s.f2SourceTagsForCIDs(filter.SchemaName, cids, f2TagSpec{provider: strings.TrimSpace(filter.ProviderID),
+func (b format2Backend) exportSourceTags(filter IndexedRecordQuery, records []*Record) ([]SourceTags, error) {
+	cids := make([]string, len(records))
+	for i, r := range records {
+		cids[i] = r.CID
+	}
+	byCID, err := b.s.f2SourceTagsForCIDs(filter.SchemaName, cids, f2TagSpec{provider: strings.TrimSpace(filter.ProviderID),
 		source: strings.TrimSpace(filter.SourceName), batch: strings.TrimSpace(filter.BatchID)})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SourceTags, len(records))
+	for i, c := range cids {
+		out[i] = byCID[c]
+	}
+	return out, nil
 }
 
 func (b format2Backend) QueryRawRecordRefsByRefs(schemaName string, refs []RawRecordRef) ([]*Record, error) {

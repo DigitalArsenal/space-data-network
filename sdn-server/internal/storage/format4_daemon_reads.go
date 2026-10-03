@@ -381,8 +381,20 @@ func (b format4Backend) sourceTagsForCIDs(schemaName string, cids []string) (map
 
 // exportSourceTags is each exported record's newest tag, as format 1's
 // export takes it (sourceTagsForCIDs), whatever lane the export selects.
-func (b format4Backend) exportSourceTags(filter IndexedRecordQuery, cids []string) (map[string]SourceTags, error) {
-	return b.sourceTagsForCIDs(filter.SchemaName, cids)
+func (b format4Backend) exportSourceTags(filter IndexedRecordQuery, records []*Record) ([]SourceTags, error) {
+	cids := make([]string, len(records))
+	for i, r := range records {
+		cids[i] = r.CID
+	}
+	byCID, err := b.sourceTagsForCIDs(filter.SchemaName, cids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SourceTags, len(records))
+	for i, c := range cids {
+		out[i] = byCID[c]
+	}
+	return out, nil
 }
 
 // QueryRawRecordRefsByRefs resolves scan-bound refs in order: each ref's
