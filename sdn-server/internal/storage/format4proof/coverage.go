@@ -464,7 +464,7 @@ func covShape(class, name, schema string, calls ...Call) Shape {
 // ORDER BY timestamp DESC). Rows tied on it have no order (alignTies); a
 // shape whose call a limit may cut inside a tie names the call's limit
 // (tieLimit).
-var timestampOrdered = []TieRule{{Call: "QuerySourceTaggedRecords", Key: "~ts"}, {Call: "lane tagged ", Key: "~ts"},
+var timestampOrdered = []TieRule{{Call: "QuerySourceTaggedRecords", Key: "~ts"}, {Call: "lane tagged ", Key: "~ts", Limit: laneReadLimit},
 	{Call: "QueryRouted", Key: "ts"}}
 
 // tieLimit is sh with call's tie rule given its limit (format 1's

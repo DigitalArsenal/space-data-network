@@ -163,12 +163,15 @@ func (c *cov) refsOf(name, schema string, cids []string, mod func(*storage.RawRe
 // laneReads are the reads of one lane (any field may be empty): its
 // datasync page, counts and head, its CID-ordered window, its index page,
 // its tagged records and its byte probe.
+// laneReadLimit is the row limit of a lane read's pages (laneReads).
+const laneReadLimit = 200
+
 func (c *cov) laneReads(schema, provider, source, batch string) []Call {
 	tag := fmt.Sprintf("%s %s/%s/%s", schema, provider, source, batch)
 	q := storage.RawRecordQuery{SchemaName: schema, ProviderID: provider, SourceName: source, BatchID: batch}
 	cur := q
-	cur.UseRowIDCursor, cur.Limit = true, 200
-	w := storage.IndexedRecordQuery{SchemaName: schema, ProviderID: provider, SourceName: source, BatchID: batch, Limit: 200, OrderByCID: true}
+	cur.UseRowIDCursor, cur.Limit = true, laneReadLimit
+	w := storage.IndexedRecordQuery{SchemaName: schema, ProviderID: provider, SourceName: source, BatchID: batch, Limit: laneReadLimit, OrderByCID: true}
 	return []Call{
 		c.rawQuery("lane page "+tag, cur, false),
 		c.valueCall("lane snapshot "+tag, schema, func(s *storage.FlatSQLStore) (Row, error) {
@@ -196,7 +199,7 @@ func (c *cov) laneReads(schema, provider, source, batch string) []Call {
 			return out, nil
 		}),
 		c.recordsCall("lane tagged "+tag, schema, func(s *storage.FlatSQLStore) ([]*storage.Record, error) {
-			return s.QuerySourceTaggedRecords(storage.SourceTagQuery{SchemaName: schema, ProviderID: provider, SourceName: source, BatchID: batch, Limit: 200})
+			return s.QuerySourceTaggedRecords(storage.SourceTagQuery{SchemaName: schema, ProviderID: provider, SourceName: source, BatchID: batch, Limit: laneReadLimit})
 		}),
 		c.valueCall("lane bytes probe "+tag, schema, func(s *storage.FlatSQLStore) (Row, error) {
 			n, more, err := s.IndexedRecordWindowLimitForBytes(storage.IndexedRecordQuery{SchemaName: schema, ProviderID: provider, SourceName: source, BatchID: batch}, 1<<20)
