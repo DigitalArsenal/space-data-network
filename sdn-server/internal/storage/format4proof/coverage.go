@@ -461,9 +461,18 @@ func covShape(class, name, schema string, calls ...Call) Shape {
 // timestampOrdered are the calls format 1 orders by a timestamp alone:
 // QuerySourceTaggedRecords (ORDER BY records.timestamp DESC; the lane reads'
 // "lane tagged") and the routed listings (a UNION of the producer tables
-// ORDER BY timestamp DESC). Rows tied on it have no order (alignTies).
+// ORDER BY timestamp DESC). Rows tied on it have no order (alignTies); a
+// shape whose call a limit may cut inside a tie names the call's limit
+// (tieLimit).
 var timestampOrdered = []TieRule{{Call: "QuerySourceTaggedRecords", Key: "~ts"}, {Call: "lane tagged ", Key: "~ts"},
 	{Call: "QueryRouted", Key: "ts"}}
+
+// tieLimit is sh with call's tie rule given its limit (format 1's
+// effective row limit for that call).
+func tieLimit(sh Shape, call, key string, limit int) Shape {
+	sh.Policy.TieOrdered = append([]TieRule{{Call: call, Key: key, Limit: limit}}, sh.Policy.TieOrdered...)
+	return sh
+}
 
 // c12PeerFilter names the intended difference of a raw page filtered by a
 // copy's peer, for a record two producers hold: format 1 reads its records

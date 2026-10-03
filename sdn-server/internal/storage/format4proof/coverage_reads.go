@@ -594,14 +594,32 @@ func (c *cov) v04() []Shape {
 			return rows, nil
 		})
 	}
+	// Format 1's limits: 0 is 100, at most 1000 (QuerySourceTaggedRecords);
+	// the routed listings take theirs as given.
+	taggedShape := covShape(class, "QuerySourceTaggedRecords", "OMM.fbs",
+		tagged(storage.SourceTagQuery{SchemaName: "OMM.fbs", ProviderID: FixtureProvider, SourceName: "celestrak-gp", BatchID: OMMLatestBatch, Limit: 20}),
+		tagged(storage.SourceTagQuery{SchemaName: "IQC.fbs", SourceName: "IQEngine", Limit: 10}),
+		tagged(storage.SourceTagQuery{SchemaName: "CAT.fbs", ProviderID: FixtureProvider, Limit: 0}),
+		tagged(storage.SourceTagQuery{SchemaName: "MPE.fbs", BatchID: MPELatestBatch, Limit: 5000}),
+		tagged(storage.SourceTagQuery{SchemaName: "OMM.fbs", BatchID: "no-such-batch", Limit: 10}),
+		tagged(storage.SourceTagQuery{SchemaName: "XYZ.fbs", Limit: 10}))
+	for _, l := range []struct {
+		call  string
+		limit int
+	}{{"limit=20", 20}, {"limit=10", 10}, {"limit=0", 100}, {"limit=5000", 1000}} {
+		taggedShape = tieLimit(taggedShape, l.call, "~ts", l.limit)
+	}
+	routedShape := covShape(class, "routed listings", "",
+		routed("QueryRoutedByStandard IQC 20", func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error) {
+			return s.QueryRoutedByStandard("IQC.fbs", 20)
+		}),
+		routed("QueryRoutedByProducer source:sigmf 20", func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error) {
+			return s.QueryRoutedByProducer(iqcSigmfPeer, 20)
+		}),
+		routed("QueryRoutedAll 20", func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error) { return s.QueryRoutedAll(20) }))
+	routedShape = tieLimit(routedShape, "QueryRouted", "ts", 20)
 	return []Shape{
-		covShape(class, "QuerySourceTaggedRecords", "OMM.fbs",
-			tagged(storage.SourceTagQuery{SchemaName: "OMM.fbs", ProviderID: FixtureProvider, SourceName: "celestrak-gp", BatchID: OMMLatestBatch, Limit: 20}),
-			tagged(storage.SourceTagQuery{SchemaName: "IQC.fbs", SourceName: "IQEngine", Limit: 10}),
-			tagged(storage.SourceTagQuery{SchemaName: "CAT.fbs", ProviderID: FixtureProvider, Limit: 0}),
-			tagged(storage.SourceTagQuery{SchemaName: "MPE.fbs", BatchID: MPELatestBatch, Limit: 5000}),
-			tagged(storage.SourceTagQuery{SchemaName: "OMM.fbs", BatchID: "no-such-batch", Limit: 10}),
-			tagged(storage.SourceTagQuery{SchemaName: "XYZ.fbs", Limit: 10})),
+		taggedShape,
 		covShape(class, "QueryRecentRecords", "OMM.fbs",
 			recent("MPE.fbs", 20), recent("CAT.fbs", 20), recent("IQC.fbs", 0), recent("OMM.fbs", -1), recent("CAT.fbs", 300000),
 			recent("PNM.fbs", 10), recent("XYZ.fbs", 10)),
@@ -628,14 +646,7 @@ func (c *cov) v04() []Shape {
 				return s.QuerySince("CAT.fbs", time.Unix(1790651000, 0))
 			}),
 			data("QueryAll unknown type", "XYZ.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("XYZ.fbs", 10) })),
-		covShape(class, "routed listings", "",
-			routed("QueryRoutedByStandard IQC 20", func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error) {
-				return s.QueryRoutedByStandard("IQC.fbs", 20)
-			}),
-			routed("QueryRoutedByProducer source:sigmf 20", func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error) {
-				return s.QueryRoutedByProducer(iqcSigmfPeer, 20)
-			}),
-			routed("QueryRoutedAll 20", func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error) { return s.QueryRoutedAll(20) })),
+		routedShape,
 	}
 }
 
