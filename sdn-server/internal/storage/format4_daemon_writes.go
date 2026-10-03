@@ -79,13 +79,19 @@ func f4Ident(schemaName string, data []byte, tags *SourceTags) *[32]byte {
 	return &out
 }
 
+// f4PutOpt is how a write's PUT treats its records.
+type f4PutOpt struct {
+	// identity sends each record's ingest identity (IQC, C-26).
+	identity bool
+}
+
 // f4Put is one write's records into the engine, chunked. It returns each
 // record's outcome in input order. Records the engine refused are returned
 // as a *RefusedRecordsError after the others are stored. An ingest-identity
 // repeat lands nowhere: the engine gives the record holding the identity
 // the write's tag in the same transaction (C-26; format 1's
 // tagIdentityRepeats).
-func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, identity bool) ([]string, []format4.Outcome, error) {
+func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
 	if err := b.s.requireWritable(op); err != nil {
 		return nil, nil, err
 	}
@@ -126,7 +132,7 @@ func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID st
 				}
 				in.Sealed = stored
 			}
-			if identity {
+			if opt.identity {
 				in.Ident = f4Ident(schemaName, data, tags)
 			}
 			batch.Records[i] = in
@@ -225,13 +231,13 @@ func (b format4Backend) storeBatch(schemaName string, records [][]byte, peerID s
 	if len(records) == 0 {
 		return 0, b.s.requireWritable("store batch")
 	}
-	_, outcomes, err := b.f4Put("store batch", schemaName, records, peerID, signature, tags, true)
+	_, outcomes, err := b.f4Put("store batch", schemaName, records, peerID, signature, tags, f4PutOpt{identity: true})
 	return f4Inserted(outcomes), err
 }
 
 // storeOne is the single-record write (Store: no tag).
 func (b format4Backend) storeOne(schemaName string, data []byte, peerID string, signature []byte, tags *SourceTags) (string, error) {
-	cids, outcomes, err := b.f4Put("store record", schemaName, [][]byte{data}, peerID, signature, tags, true)
+	cids, outcomes, err := b.f4Put("store record", schemaName, [][]byte{data}, peerID, signature, tags, f4PutOpt{identity: true})
 	if err != nil {
 		return "", err
 	}
@@ -300,7 +306,7 @@ func (b format4Backend) importDatasetShardChunk(index *DatasetExportIndex, provi
 	imported := 0
 	for _, key := range order {
 		g := groups[key]
-		_, outcomes, err := b.f4Put("import dataset shard", index.SchemaName, g.data, provider, nil, g.tags, false)
+		_, outcomes, err := b.f4Put("import dataset shard", index.SchemaName, g.data, provider, nil, g.tags, f4PutOpt{})
 		imported += f4Inserted(outcomes)
 		if err != nil {
 			return imported, fmt.Errorf("store imported %s records: %w", index.SchemaName, err)
