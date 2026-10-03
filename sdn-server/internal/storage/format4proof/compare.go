@@ -236,12 +236,19 @@ type CallRuling struct {
 	// PerFeed (a record listing; C-38 (5), C-41 N8): the candidate lists a
 	// record once per feed that holds it, format 1 once (perFeedRows).
 	PerFeed bool `json:"per_feed,omitempty"`
+	// SameLane (a lane's record listing; C-42): format 1 orders the page by
+	// the timestamp of the copy it serves, an arbitrary one (C-12), so the
+	// records a limit keeps may differ (sameLanePage).
+	SameLane *LaneKey `json:"same_lane,omitempty"`
 }
+
+// LaneKey names a lane: the provider, source and batch its records carry.
+type LaneKey struct{ Provider, Source, Batch string }
 
 // rowRuling reports a ruling that rewrites the rows compared (Absent,
 // AbsentCID, TaggedFirst, PerFeed) rather than accepting fields.
 func (r *CallRuling) rowRuling() bool {
-	return r.Absent != "" || r.AbsentCID != "" || r.TaggedFirst || r.PerFeed
+	return r.Absent != "" || r.AbsentCID != "" || r.TaggedFirst || r.PerFeed || r.SameLane != nil
 }
 
 // ruling is the call ruling that accepts field of row (format 1's; nil for
@@ -428,6 +435,87 @@ const (
 	c41N7 = "C-41 N7: the migration does not carry the lane times format 1 restamped by its delete verbs (as U3)"
 	c41N8 = "C-41 N8: a migrated record's copies go into every feed file of the record (format 1 never recorded which copy came with which tag)"
 )
+
+// c42 is C-42's ruling (contract v20, coordinator 2026-10-03 ~13:10).
+const c42 = "C-42: format 1 orders the lane page by the timestamp of the copy it happens to serve (an arbitrary one, C-12); format 4 pages the lane's records by its own order"
+
+// sameLaneRuling is call's SameLane ruling (nil: none).
+func (p Policy) sameLaneRuling(call string) *CallRuling {
+	for i := range p.Calls {
+		if r := &p.Calls[i]; r.SameLane != nil && strings.Contains(call, r.Call) {
+			return r
+		}
+	}
+	return nil
+}
+
+// tsRank orders canonical timestamps: a number is its value; a store-clock
+// time ("now", "now@<j>": stamped during the class, after every fixture
+// time) ranks above every number, in write order.
+func tsRank(v string) (int64, bool) {
+	if v == "now" {
+		return 1 << 62, true
+	}
+	if j, ok := strings.CutPrefix(v, "now@"); ok {
+		n, err := strconv.ParseInt(j, 10, 64)
+		return 1<<62 + 1 + n, err == nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	return n, err == nil
+}
+
+// sameLanePage is CallRuling.SameLane on one call (C-42): format 1 orders a
+// lane's page by the timestamp of the copy it serves (key, "~ts"), and that
+// copy is arbitrary (C-12). The candidate's page holds the same number of
+// rows (the call's limit); each is a record of the lane (its provenance),
+// carries one of format 1's copies of it (member: the copy oracle), and is
+// at or after the timestamp format 1's page ends at (a tie the limit cut);
+// every candidate row above that timestamp is one of format 1's rows, and
+// every one of format 1's rows above it the candidate lacks is ranked by a
+// copy the class wrote (a store-clock timestamp: format 4 serves another
+// copy of that record); a row of a record both pages hold is format 1's row
+// but for the copy. It returns "" when the page is such a page, else why not.
+func sameLanePage(ra, rb []Row, lane LaneKey, key string, member func(Row) bool) string {
+	if len(ra) == 0 || len(ra) != len(rb) {
+		return fmt.Sprintf("%d rows, format 1 %d", len(rb), len(ra))
+	}
+	cut, ok := tsRank(ra[len(ra)-1].Get(key))
+	if !ok {
+		return "format 1's last row has no timestamp"
+	}
+	f1 := map[string]Row{}
+	for _, r := range ra {
+		f1[r.Get("cid")] = r
+	}
+	in := map[string]bool{}
+	for i, r := range rb {
+		cid := r.Get("cid")
+		in[cid] = true
+		if r.Get("provider") != lane.Provider || r.Get("source") != lane.Source || r.Get("batch") != lane.Batch {
+			return fmt.Sprintf("row %d (%s) is not a record of the lane", i, cid)
+		}
+		if !member(r) {
+			return fmt.Sprintf("row %d (%s) carries no copy format 1 holds", i, cid)
+		}
+		ts, ok := tsRank(r.Get(key))
+		if !ok || ts < cut {
+			return fmt.Sprintf("row %d (%s) is older than format 1's page", i, cid)
+		}
+		a, held := f1[cid]
+		if ts > cut && !held {
+			return fmt.Sprintf("row %d (%s) is above format 1's last timestamp and not among its rows", i, cid)
+		}
+		if held && strictText(a) != strictText(r) {
+			return fmt.Sprintf("row %d (%s) differs from format 1's row of the record", i, cid)
+		}
+	}
+	for i, r := range ra {
+		if ts, _ := tsRank(r.Get(key)); ts > cut && !in[r.Get("cid")] && !strings.HasPrefix(r.Get(key), "now") {
+			return fmt.Sprintf("format 1's row %d (%s) is above its last timestamp, ranked by a fixture copy, and missing", i, r.Get("cid"))
+		}
+	}
+	return ""
+}
 
 // listingRulings are call's TaggedFirst and PerFeed rulings (nil: none).
 func (p Policy) listingRulings(call string) (taggedFirst, perFeed *CallRuling) {
@@ -884,6 +972,20 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 					v.Notes = append(v.Notes, a.Call+": format 4's seq order interleaves format 1's tagged and untagged parts, each in format 1's order")
 				}
 			}
+		}
+		if sl := pol.sameLaneRuling(a.Call); sl != nil {
+			schema := schemaOfCall(a.Call, f1.Schema)
+			why := sameLanePage(ra, rb, *sl.SameLane, "~ts", func(r Row) bool {
+				return variantMatchesCopy(r, schema, shapeOracle(f1, oracle), variantCache)
+			})
+			if why == "" {
+				v.F1Rows += len(ra)
+				v.SRows += len(rb)
+				forced, rulings[sl.Why] = true, true
+				v.Notes = append(v.Notes, a.Call+": "+sl.Why+" (each row a record of the lane with one of format 1's copies; the pages differ within the cut tie and by the copy format 1 ranked a record by)")
+				continue
+			}
+			v.Notes = append(v.Notes, a.Call+": not a C-42 page: "+why)
 		}
 		if pol.Unordered {
 			ra, rb = sortRows(ra), sortRows(rb)

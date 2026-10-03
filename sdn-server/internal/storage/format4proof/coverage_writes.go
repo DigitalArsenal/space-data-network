@@ -480,6 +480,10 @@ func xmC41(sh Shape, bigCID string) Shape {
 	for _, p := range []string{covProvider, covPeer2} {
 		add(CallRuling{Call: "PeerStorageBytes " + p, Why: c41N8, Fields: []string{"bytes"}})
 	}
+	// C-42: X08's page of the fixture's newest OMM lane, which X06's routed
+	// copy of one of its records ranks on format 1.
+	add(CallRuling{Call: fmt.Sprintf("X08: lane tagged OMM.fbs %s/celestrak-gp/%s", FixtureProvider, OMMLatestBatch), Why: c42,
+		SameLane: &LaneKey{FixtureProvider, "celestrak-gp", OMMLatestBatch}})
 	return sh
 }
 
