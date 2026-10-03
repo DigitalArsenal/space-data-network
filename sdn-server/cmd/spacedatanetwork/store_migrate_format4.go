@@ -50,6 +50,12 @@ package main
 // interrupted activation refuses to finish, unless --drop-unregistered names
 // every one of them.
 //
+// OVERSIZED RECORDS (C-6, by U1's rule). A record above the engine's largest
+// storable record cannot be migrated either. --inventory lists them
+// (oversized_records), and the migration refuses likewise unless
+// --drop-oversized names each (its CID); a named record is set aside: none of
+// its copies or tags is sent, and the check expects exactly that.
+//
 // ACTIVATION (crash-safe, contract §2.3): the control tables are copied into
 // fsql4/control.db; the engine writes MIGRATED, then STORE (the commit
 // point); marker.FinishActivation moves control.flatsqldb* into pre-format4/
@@ -125,8 +131,8 @@ func runStoreMigrate4(cmd *cobra.Command, store string) error {
 		return errors.New("--out, --from-snapshot, --delta and --no-activate are format-2 options; --to 4 migrates in place")
 	case storeMigrateInventory && storeMigrateVerifyOnly:
 		return errors.New("--inventory and --verify-only are separate runs")
-	case len(storeMigrateDropUnregistered) > 0 && (storeMigrateInventory || storeMigrateVerifyOnly):
-		return errors.New("--drop-unregistered applies to a migration, not to --inventory or --verify-only")
+	case (len(storeMigrateDropUnregistered) > 0 || len(storeMigrateDropOversized) > 0) && (storeMigrateInventory || storeMigrateVerifyOnly):
+		return errors.New("--drop-unregistered and --drop-oversized apply to a migration, not to --inventory or --verify-only")
 	}
 	out := cmd.OutOrStdout()
 	enc := json.NewEncoder(out)
@@ -139,7 +145,7 @@ func runStoreMigrate4(cmd *cobra.Command, store string) error {
 		return enc.Encode(inv)
 	}
 	rep, err := migrateStore4(cmd.Context(), migrate4Options{Store: store, PageRows: storeMigratePageRows,
-		VerifyOnly: storeMigrateVerifyOnly, DropUnregistered: storeMigrateDropUnregistered,
+		VerifyOnly: storeMigrateVerifyOnly, DropUnregistered: storeMigrateDropUnregistered, DropOversized: storeMigrateDropOversized,
 		AOTCacheDir: storage.EngineAOTCacheDir()}, out)
 	if rep != nil {
 		_ = enc.Encode(rep)
@@ -149,9 +155,9 @@ func runStoreMigrate4(cmd *cobra.Command, store string) error {
 
 // migrate4Inventory is the format-2 inventory with format 4's record limit:
 // partitions holding a record above it are listed (their records would be
-// refused, C-6). So are the tables of a schema with no standard
-// (unregistered_tables: table -> records), which format 4 does not carry
-// (C-39 U1).
+// refused, C-6), with each such record (oversized_records). So are the
+// tables of a schema with no standard (unregistered_tables: table ->
+// records), which format 4 does not carry (C-39 U1).
 func migrate4Inventory(store string) (*inventoryReport, error) {
 	inv, err := migrateInventory(store)
 	if err != nil {
@@ -159,13 +165,33 @@ func migrate4Inventory(store string) (*inventoryReport, error) {
 	}
 	inv.OverEntry = nil
 	unregistered := map[string]int64{}
+	var over []storage.LegacyTable
 	for _, p := range inv.Partitions {
-		if p.Max > migrate4MaxRecord {
-			inv.OverEntry = append(inv.OverEntry, p)
-		}
-		if _, err := migrate4TypeSpec(p.Schema); err != nil {
+		_, err := migrate4TypeSpec(p.Schema)
+		if err != nil {
 			unregistered[p.Table] = p.Rows
 		}
+		if p.Max > migrate4MaxRecord {
+			inv.OverEntry = append(inv.OverEntry, p)
+			if err == nil {
+				over = append(over, storage.LegacyTable{Name: p.Table, Token: p.Token, Schema: p.Schema})
+			}
+		}
+	}
+	if len(over) > 0 {
+		src, err := storage.OpenMigrationSource(store)
+		if err != nil {
+			return nil, err
+		}
+		recs, err := migrate4OversizedOf(src, over)
+		src.Close()
+		if err != nil {
+			return nil, err
+		}
+		if inv.Extra == nil {
+			inv.Extra = map[string]interface{}{}
+		}
+		inv.Extra["oversized_records"] = recs
 	}
 	if inv.Extra == nil {
 		inv.Extra = map[string]interface{}{}
@@ -197,6 +223,9 @@ type migrate4Options struct {
 	// DropUnregistered names the unregistered tables (schemas with no
 	// standard) the operator agrees to leave behind (refuseUnregistered).
 	DropUnregistered []string
+	// DropOversized names (by CID) the records above the largest storable
+	// record the operator agrees to leave behind (refuseOversized).
+	DropOversized []string
 
 	AOTCacheDir   string
 	CompileOnMiss bool   // tests only (the daemon never compiles)
@@ -224,9 +253,11 @@ type migrate4Journal struct {
 	// Unregistered are the source's unregistered tables (table -> records):
 	// an activation resumed without the source refuses by them too.
 	Unregistered map[string]int64 `json:"unregistered_tables,omitempty"`
-	Built        bool             `json:"built"`
-	Verified     bool             `json:"verified"`
-	Activated    bool             `json:"activated"`
+	// SetAside are the oversized records the run sets aside (refuseOversized).
+	SetAside  []migrate4Oversized `json:"set_aside_oversized,omitempty"`
+	Built     bool                `json:"built"`
+	Verified  bool                `json:"verified"`
+	Activated bool                `json:"activated"`
 }
 
 // migrate4Progress is one schema's copy: everything up to After is durable.
@@ -243,6 +274,20 @@ type migrate4Progress struct {
 	RecordTS   int64                    `json:"record_ts"` // copies whose ts differs from their record's first copy (each keeps its own, C-39 E6)
 	CopyDigest migrateDigest            `json:"copy_digest"`
 	TagDigest  migrateDigest            `json:"tag_digest"`
+	// SetAside counts the held records set aside (oversized, named by
+	// --drop-oversized), and SetAsideCopies their copies per producer table.
+	SetAside       int64                    `json:"set_aside,omitempty"`
+	SetAsideCopies map[string]migrate4Tally `json:"set_aside_copies,omitempty"`
+}
+
+// migrate4Oversized is a format-1 record above the largest storable record:
+// its CID (the identity format 4 would key it by) and each table holding a
+// copy above the limit.
+type migrate4Oversized struct {
+	CID   string `json:"cid"`
+	Table string `json:"table"`
+	RowID int64  `json:"rowid"`
+	Bytes int64  `json:"bytes"`
 }
 
 // migrate4Tally counts one producer table's copies and their stored bytes
@@ -284,6 +329,9 @@ type migrate4Report struct {
 	// (no embedded schema, no file identifier): table -> records, not
 	// migrated.
 	Unregistered map[string]int64 `json:"unregistered_tables,omitempty"`
+	// SetAside are the oversized records --drop-oversized named, not
+	// migrated (C-6).
+	SetAside []migrate4Oversized `json:"set_aside_oversized,omitempty"`
 	// HexIdentities counts records format 1 keeps under a legacy sha256-hex
 	// identity (an imported shard's index named them so): format 4 keys each
 	// by the CIDv1 of the same digest (migrate4CID).
@@ -424,7 +472,9 @@ type migrator4 struct {
 	// unregistered are the schemas whose tables are not migrated (no
 	// standard): schema -> why.
 	unregistered map[string]error
-	index        []storage.IndexStats
+	// setAside are the CIDs of the oversized records the run leaves behind.
+	setAside map[string]bool
+	index    []storage.IndexStats
 
 	lastJournal time.Time
 	timesMu     sync.Mutex // the reader goroutine adds its time too
@@ -559,6 +609,13 @@ func (m *migrator4) run(ctx context.Context) error {
 	if err := m.refuseUnregistered(); err != nil {
 		return err
 	}
+	over, err := migrate4OversizedOf(m.src, m.tables)
+	if err != nil {
+		return err
+	}
+	if err := m.refuseOversized(over); err != nil {
+		return err
+	}
 	if err := m.openJournal(); err != nil {
 		return err
 	}
@@ -635,6 +692,9 @@ func (m *migrator4) resumeActivation(ctx context.Context) error {
 	m.j, m.rep.Resumed, m.rep.GseqFloor = j, true, j.GseqFloor
 	m.rep.Unregistered = j.Unregistered
 	if err := m.refuseUnregistered(); err != nil {
+		return err
+	}
+	if err := m.refuseOversized(j.SetAside); err != nil {
 		return err
 	}
 	m.specs = map[string]format4.TypeSpec{}
@@ -750,8 +810,71 @@ func (m *migrator4) openJournal() error {
 	default:
 		return err
 	}
-	m.j.Unregistered = m.rep.Unregistered
+	m.j.Unregistered, m.j.SetAside = m.rep.Unregistered, m.rep.SetAside
 	m.rep.GseqFloor = m.j.GseqFloor
+	return nil
+}
+
+// migrate4OversizedOf lists the records of tables above the largest storable
+// record, each keyed by the CID format 4 would store it under.
+func migrate4OversizedOf(src *storage.MigrationSource, tables []storage.LegacyTable) ([]migrate4Oversized, error) {
+	var out []migrate4Oversized
+	for _, t := range tables {
+		recs, err := src.OversizedRecords(t, migrate4MaxRecord)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range recs {
+			c, _ := migrate4CID(r.CID)
+			out = append(out, migrate4Oversized{CID: c, Table: t.Name, RowID: r.RowID, Bytes: r.Bytes})
+		}
+	}
+	return out, nil
+}
+
+// refuseOversized is C-6 under C-39 U1's rule: a record above the engine's
+// largest storable record cannot be migrated, and the migration never drops
+// one silently. Every such record (over) must be named by --drop-oversized
+// (its CID), and every CID it names must be one of them; the named records
+// are then set aside (m.setAside): none of their copies or tags is sent.
+func (m *migrator4) refuseOversized(over []migrate4Oversized) error {
+	named := map[string]bool{}
+	for _, c := range m.opt.DropOversized {
+		if c = strings.TrimSpace(c); c != "" {
+			named[c] = true
+		}
+	}
+	found := map[string]bool{}
+	var missing, cids []string
+	for _, o := range over {
+		if !found[o.CID] {
+			cids = append(cids, o.CID)
+		}
+		found[o.CID] = true
+		if !named[o.CID] {
+			missing = append(missing, fmt.Sprintf("%s in %s (%d B)", o.CID, o.Table, o.Bytes))
+		}
+	}
+	var unknown []string
+	for c := range named {
+		if !found[c] {
+			unknown = append(unknown, c)
+		}
+	}
+	sort.Strings(unknown)
+	switch {
+	case len(unknown) > 0:
+		return fmt.Errorf("--drop-oversized names %s: not a record above format 4's largest storable record (%d B; store-migrate --to 4 --inventory lists those as oversized_records)",
+			strings.Join(unknown, ", "), migrate4MaxRecord)
+	case len(missing) > 0:
+		return fmt.Errorf("format-1 records above format 4's largest storable record (%d B, C-6): %s. Format 4 cannot store them, so the migration would not carry them; nothing was changed. To migrate without them, rerun with --drop-oversized %s",
+			migrate4MaxRecord, strings.Join(missing, ", "), strings.Join(cids, ","))
+	}
+	m.setAside = found
+	m.rep.SetAside = over
+	for _, o := range over {
+		m.note("record %s in %s (%d B): above format 4's largest storable record; not migrated, as --drop-oversized names it", o.CID, o.Table, o.Bytes)
+	}
 	return nil
 }
 
@@ -1101,6 +1224,23 @@ func (m *migrator4) pageBatches(schema string, pg *migrate4Page, tags *migrate4T
 			p.Orphans++ // its record is gone: format 1 never serves it
 			continue
 		}
+		if m.setAside[e.CID] {
+			// Above the largest storable record, named by --drop-oversized:
+			// none of its copies or tags is sent (refuseOversized).
+			p.SetAside++
+			if p.SetAsideCopies == nil {
+				p.SetAsideCopies = map[string]migrate4Tally{}
+			}
+			for ti, t := range tables {
+				if e.Held[ti] {
+					c := p.SetAsideCopies[t.Name]
+					c.Rows++
+					c.Bytes += int64(len(e.Copies[ti].Stored))
+					p.SetAsideCopies[t.Name] = c
+				}
+			}
+			continue
+		}
 		var first *storage.LegacyRecord
 		for ti, t := range tables {
 			if !e.Held[ti] {
@@ -1362,6 +1502,11 @@ func (m *migrator4) verifyOnly(ctx context.Context) error {
 		var j migrate4Journal
 		if json.Unmarshal(raw, &j) == nil {
 			m.rep.GseqFloor = j.GseqFloor
+			m.setAside = map[string]bool{}
+			for _, o := range j.SetAside {
+				m.setAside[o.CID] = true
+			}
+			m.rep.SetAside = j.SetAside
 		}
 	}
 	m.j = &migrate4Journal{Version: 1, Schemas: map[string]*migrate4Progress{}}

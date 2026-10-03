@@ -104,6 +104,9 @@ var (
 	// schemas SDN has no standard for that the operator agrees to leave
 	// behind (C-39 U1).
 	storeMigrateDropUnregistered []string
+	// storeMigrateDropOversized (--to 4) names the records above format 4's
+	// largest storable record the operator agrees to leave behind (C-6).
+	storeMigrateDropOversized []string
 )
 
 var storeMigrateCmd = &cobra.Command{
@@ -138,6 +141,11 @@ Format 2 runs only with SDN_STORE_FORMAT=2, and only on an activated store.
                     lists them as unregistered_tables) is not carried, and the
                     migration refuses to run while such a table holds records
                     unless this flag names every one of them
+  --drop-oversized CID1,CID2
+                    (--to 4) a record above format 4's largest storable
+                    record (C-6; --inventory lists them as oversized_records)
+                    is not carried either, and the migration refuses likewise
+                    unless this flag names every one of them
 Format 4 runs only with SDN_STORE_FORMAT=4 (or sqlite).`,
 	RunE: runStoreMigrate,
 }
@@ -154,6 +162,8 @@ func init() {
 	storeMigrateCmd.Flags().BoolVar(&storeMigrateVerifyOnly, "verify-only", false, "with --to 4: re-check an activated format-4 store, change nothing")
 	storeMigrateCmd.Flags().StringSliceVar(&storeMigrateDropUnregistered, "drop-unregistered", nil,
 		"with --to 4: migrate without these format-1 tables of schemas SDN has no standard for (the inventory's unregistered_tables); their records are not carried")
+	storeMigrateCmd.Flags().StringSliceVar(&storeMigrateDropOversized, "drop-oversized", nil,
+		"with --to 4: migrate without these records above format 4's largest storable record (the inventory's oversized_records, by CID)")
 	rootCmd.AddCommand(storeMigrateCmd)
 }
 
@@ -182,8 +192,8 @@ func runStoreMigrate(cmd *cobra.Command, args []string) error {
 	if storeMigrateVerifyOnly {
 		return errors.New("--verify-only needs --to 4")
 	}
-	if len(storeMigrateDropUnregistered) > 0 {
-		return errors.New("--drop-unregistered needs --to 4")
+	if len(storeMigrateDropUnregistered) > 0 || len(storeMigrateDropOversized) > 0 {
+		return errors.New("--drop-unregistered and --drop-oversized need --to 4")
 	}
 	opts := migrateOptions{
 		Store: store, Out: storeMigrateOut, Snapshot: storeMigrateSnapshot, Delta: storeMigrateDelta,

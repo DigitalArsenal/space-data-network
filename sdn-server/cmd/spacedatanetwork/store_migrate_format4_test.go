@@ -12,7 +12,9 @@ package main
 //   - TestStoreMigrateFormat4Fixture: the host-02-sized fixture
 //     (SDN_F1_FIXTURE=<format-1 store dir>);
 //   - TestStoreMigrateFormat4UnregisteredTables: records of a schema with no
-//     standard are never dropped without --drop-unregistered (C-39 U1).
+//     standard are never dropped without --drop-unregistered (C-39 U1);
+//   - TestStoreMigrateFormat4OversizedRecords: nor records above the largest
+//     storable record without --drop-oversized (C-6, by U1's rule).
 
 import (
 	"bytes"
@@ -164,6 +166,10 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string, sl
 	for _, ts := range types {
 		typeSummary[ts.Type] = ts
 	}
+	// C-38 (5): a record whose tags name N feeds (distinct provider and
+	// source) is a row set in each feed file, so the type and partition
+	// counters count it, its copies and their bytes N times.
+	partExtra := map[string][2]int64{} // table -> rows, bytes beyond one row set per record
 	for _, schema := range schemas {
 		typ, _ := format4.TypeOf(schema)
 		// format2_source.go's readers: independent of the migrator's.
@@ -248,6 +254,40 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string, sl
 			}
 			typeCopies += c.Count
 		}
+		feeds := map[string]map[[2]string]bool{}
+		if err := src.SchemaTags(schema, func(cid string, lt storage.LegacyTag) error {
+			if feeds[cid] == nil {
+				feeds[cid] = map[[2]string]bool{}
+			}
+			feeds[cid][[2]string{lt.ProviderID, lt.SourceName}] = true
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var multi []string
+		for cid, f := range feeds {
+			if len(f) > 1 {
+				multi = append(multi, cid)
+			}
+		}
+		var extraRecords, extraCopies int64
+		heldMulti := map[string]bool{}
+		for _, tb := range bySchema[schema] {
+			held, err := src.RecordsByCID(tb, multi)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for cid, r := range held {
+				x := int64(len(feeds[cid]) - 1)
+				extraCopies += x
+				pe := partExtra[tb.Name]
+				partExtra[tb.Name] = [2]int64{pe[0] + x, pe[1] + x*int64(len(r.Stored))}
+				if !heldMulti[cid] {
+					heldMulti[cid] = true
+					extraRecords += x
+				}
+			}
+		}
 		// Tags: one row per (cid, identity) on both sides.
 		want, err := src.TagsFor(schema, cids)
 		if err != nil {
@@ -269,9 +309,10 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string, sl
 				strings.Join(wantRows, "\n"), len(gotRows), strings.Join(gotRows, "\n"))
 		}
 		ts := typeSummary[typ]
-		if ts.Copies != typeCopies || (slice == 0 && (ts.Records != int64(len(entries)) ||
+		if ts.Copies != typeCopies+extraCopies || (slice == 0 && (ts.Records != int64(len(entries))+extraRecords ||
 			(len(entries) > 0 && ts.MaxSeq != entries[len(entries)-1].RowID))) {
-			t.Fatalf("type %s: %+v; format 1 holds %d records (slice %d), %d copies", typ, ts, len(entries), slice, typeCopies)
+			t.Fatalf("type %s: %+v; format 1 holds %d records (slice %d), %d copies, and %d records, %d copies more in further feed files",
+				typ, ts, len(entries), slice, typeCopies, extraRecords, extraCopies)
 		}
 		// Lanes: summed over partitions and content keys, format 1's recount.
 		wantLanes, err := src.LaneRecount(schema, bySchema[schema])
@@ -316,8 +357,10 @@ func assertFormat4EqualsFormat1(t *testing.T, api format4.API, legacy string, sl
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p := gotParts[typ+"/"+tb.Token]; p.Records != c.Count || p.Bytes != c.Bytes {
-			t.Fatalf("partition %s: format 4 (%d, %d B), format 1 table (%d, %d B)", tb.Name, p.Records, p.Bytes, c.Count, c.Bytes)
+		x := partExtra[tb.Name]
+		if p := gotParts[typ+"/"+tb.Token]; p.Records != c.Count+x[0] || p.Bytes != c.Bytes+x[1] {
+			t.Fatalf("partition %s: format 4 (%d, %d B), format 1 table (%d, %d B) and (%d, %d B) more in further feed files",
+				tb.Name, p.Records, p.Bytes, c.Count, c.Bytes, x[0], x[1])
 		}
 	}
 }
@@ -536,6 +579,73 @@ func TestStoreMigrateFormat4UnregisteredTables(t *testing.T) {
 	}
 	if !rep.Activated || rep.Unregistered[table] != 1 {
 		t.Fatalf("--drop-unregistered %s: activated %v, unregistered %v", table, rep.Activated, rep.Unregistered)
+	}
+}
+
+// C-6 by C-39 U1's rule: a record above format 4's largest storable record
+// is listed by --inventory, and the migration refuses, changing nothing,
+// until --drop-oversized names it; then the record is set aside (format 4
+// holds none of it) and everything else migrates and activates.
+func TestStoreMigrateFormat4OversizedRecords(t *testing.T) {
+	requireFormat4Engine(t)
+	legacy := t.TempDir()
+	buildLegacyStore4(t, legacy)
+	v, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := storage.NewFlatSQLStore(legacy, v, storage.WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := append(migrateTestOMM(31001, time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC), "OVERSIZED"), make([]byte, 9<<20)...)
+	tag := storage.SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "big-1"}
+	if _, err := s.StoreBatchWithSourceTags("OMM.fbs", [][]byte{big}, "source:celestrak", nil, tag); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := migrate4Inventory(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	over, _ := inv.Extra["oversized_records"].([]migrate4Oversized)
+	if len(over) != 1 || over[0].CID != storage.ComputeCID(big) || over[0].Bytes != int64(len(big)) {
+		t.Fatalf("inventory oversized_records %+v", inv.Extra["oversized_records"])
+	}
+	ctx := context.Background()
+	root := cloneStore(t, legacy)
+	for name, drop := range map[string][]string{"no --drop-oversized": nil, "--drop-oversized naming a stored record": {storage.ComputeCID(migrate4TestIQC(1, "2026-09-15T02:11:22Z"))}} {
+		o := engineOptions(t, root)
+		o.DropOversized = drop
+		if rep, err := migrateStore4(ctx, o, nil); err == nil || rep.Activated {
+			t.Fatalf("%s: the migration ran: %v", name, err)
+		} else {
+			t.Logf("%s: %v", name, err)
+		}
+		if mk, err := marker.Read(root); err != nil || mk.Format4() || !mk.LegacyControlFile {
+			t.Fatalf("%s: the refused migration changed the store: %+v %v", name, mk, err)
+		}
+		for _, p := range []string{migrate4JournalName, marker.Dir} {
+			if _, err := os.Stat(filepath.Join(root, p)); err == nil {
+				t.Fatalf("%s: the refused migration wrote %s", name, p)
+			}
+		}
+	}
+	o := engineOptions(t, root)
+	o.DropOversized = []string{over[0].CID}
+	rep, err := migrateStore4(ctx, o, nil)
+	if err != nil {
+		t.Fatalf("--drop-oversized %s: %v\n%+v", over[0].CID, err, rep.Check)
+	}
+	if !rep.Activated || len(rep.SetAside) != 1 || len(rep.Oversized) != 0 {
+		t.Fatalf("--drop-oversized: activated %v, set aside %+v, refused by the engine %+v", rep.Activated, rep.SetAside, rep.Oversized)
+	}
+	api := openEngineAt(t, root, "OMM.fbs")
+	defer api.Close(ctx)
+	if recs, err := api.Get(ctx, "OMM", []string{over[0].CID}, false, false); err != nil || len(recs) != 0 {
+		t.Fatalf("format 4 holds the set-aside record: %d copies, %v", len(recs), err)
 	}
 }
 
