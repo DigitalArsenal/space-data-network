@@ -1983,9 +1983,10 @@ func (b format4Backend) f4ProducerSourceProgress() ([]ProducerSourceProgress, er
 		return nil, fmt.Errorf("query producer source progress: %w", err)
 	}
 	type key struct{ peer, schema, provider, source string }
+	type batchAt struct{ updated, maxSeq int64 }
 	type acc struct {
 		p        ProducerSourceProgress
-		batches  map[string]int64 // batch -> updated
+		batches  map[string]batchAt // batch -> its newest update and seq
 		batchCnt map[string]int64
 	}
 	agg := map[key]*acc{}
@@ -1994,7 +1995,7 @@ func (b format4Backend) f4ProducerSourceProgress() ([]ProducerSourceProgress, er
 		a := agg[k]
 		if a == nil {
 			a = &acc{p: ProducerSourceProgress{ProducerPeerID: k.peer, SchemaName: k.schema, ProviderID: k.provider, SourceName: k.source},
-				batches: map[string]int64{}, batchCnt: map[string]int64{}}
+				batches: map[string]batchAt{}, batchCnt: map[string]int64{}}
 			agg[k] = a
 		}
 		a.p.Count += l.Records
@@ -2004,7 +2005,8 @@ func (b format4Backend) f4ProducerSourceProgress() ([]ProducerSourceProgress, er
 		}
 		a.p.UpdatedAtUnix = max(a.p.UpdatedAtUnix, l.Updated)
 		a.p.LastSeenUnix = a.p.UpdatedAtUnix
-		a.batches[l.Batch] = max(a.batches[l.Batch], l.Updated)
+		b := a.batches[l.Batch]
+		a.batches[l.Batch] = batchAt{max(b.updated, l.Updated), max(b.maxSeq, l.MaxSeq)}
 		a.batchCnt[l.Batch] += l.Records
 	}
 	out := make([]ProducerSourceProgress, 0, len(agg))
@@ -2012,14 +2014,18 @@ func (b format4Backend) f4ProducerSourceProgress() ([]ProducerSourceProgress, er
 		if a.p.Count <= 0 {
 			continue
 		}
+		// The last batch is format 1's: the newest update, then the newest
+		// seq (ORDER BY updated_at DESC, max_rowid DESC), then the name.
 		var best string
-		var bestAt int64 = -1
+		bestAt := batchAt{-1, -1}
 		for batch, at := range a.batches {
 			if a.batchCnt[batch] <= 0 {
 				continue
 			}
 			a.p.BatchCount++
-			if at > bestAt || (at == bestAt && batch > best) {
+			newer := at.updated > bestAt.updated || (at.updated == bestAt.updated && (at.maxSeq > bestAt.maxSeq ||
+				(at.maxSeq == bestAt.maxSeq && batch > best)))
+			if newer {
 				best, bestAt = batch, at
 			}
 		}
