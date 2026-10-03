@@ -157,8 +157,12 @@ func (p *Provenance) add(o Provenance) {
 // provFields are the provenance fields of a record row.
 var provFields = []string{"provider", "source", "batch"}
 
-// countProv counts one aligned row pair's provenance cells.
+// countRow counts one row pair's provenance cells: the same record's rows
+// (a pair whose CIDs differ is another difference, not a blank cell).
 func (p *Provenance) countRow(a, b Row) {
+	if c := a.Get("cid"); c != "" && c != b.Get("cid") {
+		return
+	}
 	for _, f := range provFields {
 		av, ok := a.lookup(f)
 		if !ok {
