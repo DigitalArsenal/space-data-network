@@ -70,6 +70,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -256,12 +257,16 @@ type migrate4Report struct {
 	// Unregistered are the producer tables of a schema with no standard
 	// (no embedded schema, no file identifier): table -> records, not
 	// migrated.
-	Unregistered map[string]int64  `json:"unregistered_tables,omitempty"`
-	Check        *migrate4Check    `json:"check,omitempty"`
-	Activated    bool              `json:"activated"`
-	Notes        []string          `json:"notes,omitempty"`
-	Time         map[string]string `json:"time,omitempty"`
-	EngineStats  []uint64          `json:"engine_stats,omitempty"`
+	Unregistered map[string]int64 `json:"unregistered_tables,omitempty"`
+	// HexIdentities counts records format 1 keeps under a legacy sha256-hex
+	// identity (an imported shard's index named them so): format 4 keys each
+	// by the CIDv1 of the same digest (migrate4CID).
+	HexIdentities int64             `json:"hex_identities,omitempty"`
+	Check         *migrate4Check    `json:"check,omitempty"`
+	Activated     bool              `json:"activated"`
+	Notes         []string          `json:"notes,omitempty"`
+	Time          map[string]string `json:"time,omitempty"`
+	EngineStats   []uint64          `json:"engine_stats,omitempty"`
 }
 
 type migrate4Check struct {
@@ -398,6 +403,9 @@ type migrator4 struct {
 	lastJournal time.Time
 	timesMu     sync.Mutex // the reader goroutine adds its time too
 	times       map[string]time.Duration
+	// hexIdentities counts the check pass's records format 1 keeps under a
+	// legacy sha256-hex identity (migrate4CID).
+	hexIdentities atomic.Int64
 }
 
 // migrate4Idents is the embedded validator's file identifiers, which a
@@ -961,6 +969,17 @@ func (m *migrator4) readFormat1(ctx context.Context, schemas []string, starts ma
 				if len(entries) == 0 {
 					break
 				}
+				// A legacy sha256-hex identity is keyed by its CIDv1 here
+				// (migrate4CID), in the copy and in the check alike.
+				for i := range entries {
+					var hexID bool
+					if entries[i].CID, hexID = migrate4CID(entries[i].CID); hexID && !records {
+						m.hexIdentities.Add(1) // counted by the check's pass, which every run makes
+					}
+					for j := range entries[i].Copies {
+						entries[i].Copies[j].CID, _ = migrate4CID(entries[i].Copies[j].CID)
+					}
+				}
 				pg := &migrate4Page{entries: entries, last: entries[len(entries)-1].RowID, short: len(entries) < m.opt.PageRows}
 				if !send(migrate4Item{schema: schema, page: pg}) {
 					return
@@ -1091,7 +1110,14 @@ func (m *migrator4) readSide(schema string) (*migrate4Side, error) {
 			return err
 		}
 		if m.specs[schema].Identity {
-			side.idents, err = m.src.IngestIdentities(schema)
+			var byText map[string][32]byte
+			if byText, err = m.src.IngestIdentities(schema); err == nil {
+				side.idents = make(map[string][32]byte, len(byText))
+				for text, id := range byText {
+					c, _ := migrate4CID(text)
+					side.idents[c] = id
+				}
+			}
 		}
 		return err
 	})
