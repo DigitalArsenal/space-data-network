@@ -455,8 +455,15 @@ func covShape(class, name, schema string, calls ...Call) Shape {
 	}
 	return Shape{Class: class, Name: name, Schema: schema, Fixture: FixtureT6W, Calls: calls,
 		Policy: Policy{Strict: true, Collapse: true, CollapseSkip: "refs ", Accepted: r10Ruling,
-			AcceptedFields: []string{"lane_n", "lane_bytes", "lane_max_rowid"}}}
+			AcceptedFields: []string{"lane_n", "lane_bytes", "lane_max_rowid"}, TieOrdered: timestampOrdered}}
 }
+
+// timestampOrdered are the calls format 1 orders by a timestamp alone:
+// QuerySourceTaggedRecords (ORDER BY records.timestamp DESC; the lane reads'
+// "lane tagged") and the routed listings (a UNION of the producer tables
+// ORDER BY timestamp DESC). Rows tied on it have no order (alignTies).
+var timestampOrdered = []TieRule{{Call: "QuerySourceTaggedRecords", Key: "~ts"}, {Call: "lane tagged ", Key: "~ts"},
+	{Call: "QueryRouted", Key: "ts"}}
 
 // c12PeerFilter names the intended difference of a raw page filtered by a
 // copy's peer, for a record two producers hold: format 1 reads its records
