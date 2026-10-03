@@ -604,10 +604,12 @@ func (c *cov) v04() []Shape {
 		tagged(storage.SourceTagQuery{SchemaName: "OMM.fbs", BatchID: "no-such-batch", Limit: 10}),
 		tagged(storage.SourceTagQuery{SchemaName: "XYZ.fbs", Limit: 10}))
 	for _, l := range []struct {
-		call  string
-		limit int
-	}{{"limit=20", 20}, {"limit=10", 10}, {"limit=0", 100}, {"limit=5000", 1000}} {
-		taggedShape = tieLimit(taggedShape, l.call, "~ts", l.limit)
+		call, schema string
+		limit        int
+	}{{"OMM.fbs space-data-network-02/celestrak-gp/" + OMMLatestBatch + " limit=20", "OMM.fbs", 20},
+		{"IQC.fbs /IQEngine/ limit=10", "IQC.fbs", 10}, {"CAT.fbs space-data-network-02// limit=0", "CAT.fbs", 100},
+		{"MPE.fbs //" + MPELatestBatch + " limit=5000", "MPE.fbs", 1000}} {
+		taggedShape = tieLimit(taggedShape, l.call, "~ts", l.limit, l.schema)
 	}
 	routedShape := covShape(class, "routed listings", "",
 		routed("QueryRoutedByStandard IQC 20", func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error) {
@@ -617,7 +619,7 @@ func (c *cov) v04() []Shape {
 			return s.QueryRoutedByProducer(iqcSigmfPeer, 20)
 		}),
 		routed("QueryRoutedAll 20", func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error) { return s.QueryRoutedAll(20) }))
-	routedShape = tieLimit(routedShape, "QueryRouted", "ts", 20)
+	routedShape = tieLimit(routedShape, "QueryRouted", "ts", 20, "")
 	return []Shape{
 		taggedShape,
 		covShape(class, "QueryRecentRecords", "OMM.fbs",
