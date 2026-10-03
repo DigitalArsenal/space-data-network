@@ -1,13 +1,14 @@
 package storage
 
 // format4_daemon_writes.go — the node's record writes on store format 4
-// (design §4, §10; contract §3.7, §5.4). Every write is one engine PUT per
-// chunk into the writer's (producer, type) partition, acked after a durable
-// commit and the watermark publish (C-4: the writer reads its own writes).
-// Dedupe, copies, retags, the IQC ingest identity, CAT supersede-on-ingest,
-// lane counters and supersede are the engine's; nothing here takes s.mu or
-// writes a control row for a record. The batch licence is a control row,
-// written by the store before the PUT (W-e).
+// (design §4, §10; contract §3.7, §5.4, C-37). Every write is one engine PUT
+// per chunk; the engine writes each record into the file of its tag's source
+// feed (provider, source) of the type, or local when it carries no tag, and
+// acks after a durable commit and the watermark publish (C-4: the writer
+// reads its own writes). Dedupe, copies, retags, the IQC ingest identity,
+// CAT supersede-on-ingest, the per-file batch counters and supersede are the
+// engine's; nothing here takes s.mu or writes a control row for a record. The
+// batch licence is a control row, written by the store before the PUT (W-e).
 
 import (
 	"encoding/hex"
@@ -243,13 +244,13 @@ func (b format4Backend) StoreWithSourceTags(schemaName string, data []byte, peer
 }
 
 // StoreRoutedByProducer is keyed by the raw peer id: the engine derives the
-// partition token from it (C-13), as format 1 named the table.
+// copy's producer token from it (C-13), as format 1 named the table.
 func (b format4Backend) StoreRoutedByProducer(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
 	return b.storeOne(schemaName, data, peerID, signature, nil)
 }
 
-// importDatasetShardChunk stores a shard chunk into the serving peer's
-// partition, grouped by the source tag each record carries in the (signed)
+// importDatasetShardChunk stores a shard chunk as the serving peer's copies,
+// grouped by the source tag each record carries in the (signed)
 // index, with format 1's tag normalization. A record lands under the CIDv1 of
 // its bytes (the engine verifies it); no ingest identity applies (format 1's
 // import stored what the peer holds).
@@ -350,9 +351,9 @@ func (b format4Backend) Delete(schemaName, cid string) error {
 	return nil
 }
 
-// f4Supersede is SUPERSEDE(keep) on a (provider, source) lane: every tag
-// instance of another batch goes, then every copy left with no tag (A2: per
-// partition). Matched counts those tag instances; Deleted counts the records
+// f4Supersede is SUPERSEDE(keep) on a (provider, source) feed: the rows of
+// every other batch in that feed's file go, then every record left with no
+// row in any feed file. Matched counts those tag instances; Deleted counts the records
 // that left the type (format 1's count: a record another producer's copy
 // keeps stays).
 func (b format4Backend) f4Supersede(result SourceBatchReconcileResult) (SourceBatchReconcileResult, error) {
@@ -438,8 +439,20 @@ func (b format4Backend) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 }
 
 // RefreshSourceBatchSummary: the lane counters are the writer's,
-// transactional with the rows.
-func (b format4Backend) RefreshSourceBatchSummary(string, string, string, string) error { return nil }
+// transactional with the rows, so nothing is recomputed. The request is
+// checked as format 1 checks it (every field required, a valid schema name).
+func (b format4Backend) RefreshSourceBatchSummary(schemaName, providerID, sourceName, batchID string) error {
+	for _, f := range []struct{ v, name string }{{schemaName, "schema name"}, {providerID, "provider id"}, {sourceName, "source name"},
+		{batchID, "batch id"}} {
+		if strings.TrimSpace(f.v) == "" {
+			return errors.New(f.name + " is required")
+		}
+	}
+	if _, err := f4Type(strings.TrimSpace(schemaName)); err != nil {
+		return err
+	}
+	return nil
+}
 
 // RebuildSourceSummaries: the lane counters are the writer's.
 func (b format4Backend) RebuildSourceSummaries() error { return nil }
@@ -448,7 +461,7 @@ func (b format4Backend) RebuildSourceSummaries() error { return nil }
 func (b format4Backend) RebuildDerivedState() error { return nil }
 
 // RebuildIndex rebuilds the derived type indexes and full-text indexes
-// from the partition files; it returns the entries per schema.
+// from the feed files; it returns the entries per schema.
 func (b format4Backend) RebuildIndex() (map[string]int64, error) {
 	if err := b.s.requireWritable("reindex"); err != nil {
 		return nil, err
@@ -460,9 +473,19 @@ func (b format4Backend) RebuildIndex() (map[string]int64, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reindex: %w", err)
 	}
-	out := make(map[string]int64, len(rows))
+	entries := make(map[string]int64, len(rows))
 	for _, r := range rows {
-		out[r.Type+".fbs"] = r.Entries
+		entries[r.Type+".fbs"] = r.Entries
+	}
+	// Format 1 answers every schema the validator embeds, 0 for one with no
+	// records (a standard the engine could not register holds none).
+	v := b.s.validator
+	if v == nil {
+		return entries, nil
+	}
+	out := make(map[string]int64, len(entries))
+	for _, schema := range v.Schemas() {
+		out[schema] = entries[schema]
 	}
 	return out, nil
 }
