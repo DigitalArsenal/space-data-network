@@ -394,8 +394,11 @@ func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 	for _, shapes := range scenarios {
 		for _, sh := range shapes {
 			for _, call := range sh.Calls {
-				if call.Name == "remove the placed shard" {
+				switch call.Name {
+				case "remove the placed shard":
 					continue // the migrated store serves the publication too
+				case "RepairDatasetPublicationIndexFromShard batch a":
+					continue // its argument is the publication X12's write returned; XM's format-4 reads run no writes
 				}
 				call.Name = sh.Class + ": " + call.Name
 				if call.Write {
@@ -429,10 +432,31 @@ func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 		// read shows the C-39 items the scenarios' own reads scope to
 		// theirs: the XYZ table (U1, X01), the dangling tags (U2, X08), the
 		// KMF lane bytes (U5, X04) and the CAT lane bytes (U6, X02).
-		sh = laneBytes(laneBytes(u2Rows(u1Rows(sh, ""), ""), "", c39U5, "KMF.fbs"), "", c39U6, "CAT.fbs")
+		sh = xmSetAside(laneBytes(laneBytes(u2Rows(u1Rows(sh, ""), ""), "", c39U5, "KMF.fbs"), "", c39U6, "CAT.fbs"))
 		out = append(out, sh)
 	}
 	return out
+}
+
+// xmSetAside is C-6 on the migrated store: X05's 9 MiB record (lanes
+// celestrak-gp OMM-cov-big and OMM-cov-big-single, stored by source:celestrak)
+// is set aside by the migration, so format 4's summaries lack it: format 1's
+// OMM-cov-big-single rows, the counts and bytes of the OMM-cov-big lane, of
+// the OMM celestrak-gp producer lane, of the OMM type and of the store, and
+// source:celestrak's partition bytes.
+func xmSetAside(sh Shape) Shape {
+	for _, call := range summaryCalls {
+		sh.Policy.Calls = append(sh.Policy.Calls,
+			CallRuling{Call: call, Why: c6SetAside, Absent: "OMM.fbs", Batch: "OMM-cov-big-single"},
+			CallRuling{Call: call, Why: c6SetAside, Fields: []string{"Count", "TotalBytes"}, Standard: "OMM.fbs", Source: "celestrak-gp", Batch: "OMM-cov-big"})
+	}
+	sh.Policy.Calls = append(sh.Policy.Calls,
+		CallRuling{Call: "ProducerSourceProgress", Why: c6SetAside, Fields: []string{"Count", "TotalBytes"}, Standard: "OMM.fbs", Source: "celestrak-gp"},
+		CallRuling{Call: "DataSummary", Why: c6SetAside, Fields: []string{"n", "bytes", "total_records", "total_bytes"}, Standard: "OMM.fbs"},
+		CallRuling{Call: "SchemaDateRanges", Why: c6SetAside, Fields: []string{"n", "bytes"}, Standard: "OMM.fbs"},
+		CallRuling{Call: "LiveRecordBytes", Why: c6SetAside, Fields: []string{"bytes"}},
+		CallRuling{Call: "PeerStorageBytes source:celestrak", Why: c6SetAside, Fields: []string{"bytes"}})
+	return sh
 }
 
 // mergePolicy is a's policy with b's call rulings, tie rules and CID
