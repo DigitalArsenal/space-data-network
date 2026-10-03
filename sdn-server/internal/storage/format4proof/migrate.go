@@ -210,6 +210,23 @@ func migrateReference(ctx context.Context, spec MigrateLoopSpec, ref, logs strin
 	for _, p := range checkMigrated(ref) {
 		fail("reference: %s", p)
 	}
+	// The owner's layout (C-37): one file per source feed x standard, no
+	// provider or source column in any feed file.
+	f1Layout := filepath.Join(spec.Work, "migrate-f1-layout")
+	_ = os.RemoveAll(f1Layout)
+	if err := CloneStore(spec.Source, f1Layout); err != nil {
+		return 0, nil, err
+	}
+	lay, err := CheckFeedLayout(f1Layout, ref, spec.Work)
+	_ = os.RemoveAll(f1Layout)
+	if err != nil {
+		return 0, nil, fmt.Errorf("check the feed layout: %w", err)
+	}
+	r.Extra["layout"] = lay
+	for _, p := range lay.Problems {
+		fail("layout: %s", p)
+	}
+	logf("migrate: layout %v; %d problems", lay.Files, len(lay.Problems))
 	refDigest, err := DigestStore(ArmS, ref, spec.Schemas)
 	if err != nil {
 		return 0, nil, fmt.Errorf("digest the reference: %w", err)
