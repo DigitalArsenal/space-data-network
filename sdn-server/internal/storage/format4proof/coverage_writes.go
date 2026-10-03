@@ -881,8 +881,12 @@ func (c *cov) x07(omm [][]byte) []Shape {
 	for _, call := range []string{"GetRecord the sha256-hex record", "tags the sha256-hex record", "refs the sha256-hex record"} {
 		sh = rule(sh, call, c38Hex)
 	}
-	// The second provider's import is new to its feed (C-38 (3)).
+	// The second provider's import is new to its feed (C-38 (3)); batch b's
+	// records are then held by both providers' feeds, and a window of the
+	// first provider's lane projects that feed's tag (C-38 (5)), where format
+	// 1 projects the second import's, the record's newest.
 	sh = rule(sh, "ImportDatasetShard (bytes) again", c38PerFeed, "n")
+	sh = rule(sh, "lane window OMM.fbs "+covProvider+"/celestrak-gp/"+tb.BatchID, c38OwnFeed, "provider")
 	return []Shape{sh,
 		c12Shape(class, "dataset shard import: the copy format 1 does not serve", "OMM.fbs",
 			c.refsOf("refs imported, the second import's copies", "OMM.fbs", all, func(r *storage.RawRecordRef) { r.PeerID = covPeer2 }))}

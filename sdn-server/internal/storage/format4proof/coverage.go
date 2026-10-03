@@ -473,6 +473,13 @@ const c12PeerFilter = "C-12: format 1 reads a raw page through the one copy it s
 // with N tags and counted it once.
 const c38PerFeed = "C-38 (5): a record held by N feeds counts once per feed (new to a second feed; leaving one feed while another keeps it)"
 
+// c38OwnFeed names C-38 (5)'s provenance rule: a row is the record in one
+// feed file, and every provenance field of it is that feed's ("all
+// provenance fields of each row are its own feed's"). A window projects the
+// newest tag of the row's own feed; format 1 projected the record's newest
+// tag of any feed, which for a record held by two feeds may be the other's.
+const c38OwnFeed = "C-38 (5): a row's provenance is its own feed's; format 1 projects the record's newest tag of any feed"
+
 // c38Hex names the contract's CID form (§3.8 (1), §3.7: a record is keyed by
 // the CIDv1 raw sha2-256 of its bytes; non-bafkrei CIDs are refused): an
 // imported index that names a record by its sha256-hex text keeps that text
