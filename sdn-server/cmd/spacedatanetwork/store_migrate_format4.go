@@ -75,6 +75,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
@@ -380,6 +381,23 @@ type migrator4 struct {
 	times       map[string]time.Duration
 }
 
+// migrate4Idents is the embedded validator's file identifiers, which a
+// standard with no embedded binary schema registers by (C-25).
+var migrate4Idents = sync.OnceValue(func() func(string) (string, bool) {
+	v, err := sds.NewValidator(nil)
+	if err != nil {
+		return nil
+	}
+	return v.FileIdentifier
+})
+
+// migrate4TypeSpec is a type's registration, by the daemon's rule
+// (storage.Format4TypeSpec): format 1's tables of an encrypted standard
+// (KMF and the like) migrate too.
+func migrate4TypeSpec(schema string) (format4.TypeSpec, error) {
+	return storage.Format4TypeSpec(schema, migrate4Idents())
+}
+
 func migrateStore4(ctx context.Context, opt migrate4Options, out io.Writer) (rep *migrate4Report, err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -561,7 +579,7 @@ func (m *migrator4) resumeActivation(ctx context.Context) error {
 	m.j, m.rep.Resumed, m.rep.GseqFloor = j, true, j.GseqFloor
 	m.specs = map[string]format4.TypeSpec{}
 	for schema := range j.Schemas {
-		spec, err := format4.TypeSpecFor(schema)
+		spec, err := migrate4TypeSpec(schema)
 		if err != nil {
 			return err
 		}
@@ -597,7 +615,7 @@ func (m *migrator4) openSourceAt(dir string) error {
 	for _, t := range m.tables {
 		if _, ok := m.bySchema[t.Schema]; !ok {
 			m.schemas = append(m.schemas, t.Schema)
-			spec, err := format4.TypeSpecFor(t.Schema)
+			spec, err := migrate4TypeSpec(t.Schema)
 			if err != nil {
 				return fmt.Errorf("table %s: %w", t.Name, err)
 			}
