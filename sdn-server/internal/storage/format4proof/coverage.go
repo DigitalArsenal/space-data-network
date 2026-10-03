@@ -468,9 +468,9 @@ var timestampOrdered = []TieRule{{Call: "QuerySourceTaggedRecords", Key: "~ts"},
 	{Call: "QueryRouted", Key: "ts"}}
 
 // tieLimit is sh with call's tie rule given its limit (format 1's
-// effective row limit for that call).
-func tieLimit(sh Shape, call, key string, limit int) Shape {
-	sh.Policy.TieOrdered = append([]TieRule{{Call: call, Key: key, Limit: limit}}, sh.Policy.TieOrdered...)
+// effective row limit for that call) and its standard ("" = the shape's).
+func tieLimit(sh Shape, call, key string, limit int, schema string) Shape {
+	sh.Policy.TieOrdered = append([]TieRule{{Call: call, Key: key, Limit: limit, Schema: schema}}, sh.Policy.TieOrdered...)
 	return sh
 }
 

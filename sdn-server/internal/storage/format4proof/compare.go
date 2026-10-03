@@ -61,6 +61,9 @@ type TieRule struct {
 	Call  string `json:"call"`
 	Key   string `json:"key"`
 	Limit int    `json:"limit,omitempty"`
+	// Schema is the call's standard when it is not the shape's (the copy
+	// oracle's lookup).
+	Schema string `json:"schema,omitempty"`
 }
 
 func (p Policy) tieRule(call string) *TieRule {
@@ -466,8 +469,12 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			ra, rb = sortRows(ra), sortRows(rb)
 		}
 		if tr := pol.tieRule(a.Call); tr != nil {
+			schema := f1.Schema
+			if tr.Schema != "" {
+				schema = tr.Schema
+			}
 			if aligned, cut, ok := alignTies(ra, rb, tr.Key, tr.Limit, func(r Row) bool {
-				return tieMember(r, f1.Schema, shapeOracle(f1, oracle), variantCache)
+				return tieMember(r, schema, shapeOracle(f1, oracle), map[string][]Row{})
 			}); ok {
 				rb = aligned
 				if cut > 0 {
