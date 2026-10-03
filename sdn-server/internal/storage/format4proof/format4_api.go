@@ -34,8 +34,11 @@ func openFormat4(ctx context.Context, store string) (*format4.Engine, error) {
 }
 
 // DigestAPI digests the given schemas of a format-4 store through its API:
-// every seq (SCAN), every copy with its bytes (GET, all copies), every tag
-// instance (TAGS).
+// every record once (SCAN), every copy with its bytes (GET, all copies),
+// every tag instance (TAGS). A record held by N feed files answers once per
+// file in a SCAN (C-38 (5)); it is digested once, as format 1 holds it: its
+// copies from GET (the first feed file holding it; a migrated record has
+// the same copies in each), its tag instances from TAGS (every feed file's).
 func DigestAPI(ctx context.Context, api format4.API, schemas []string) (map[string]TypeDigest, error) {
 	out := map[string]TypeDigest{}
 	for _, schema := range schemas {
@@ -45,6 +48,7 @@ func DigestAPI(ctx context.Context, api format4.API, schemas []string) (map[stri
 		}
 		d := TypeDigest{Schema: schema, Partitions: map[string]PartitionCount{}}
 		var data, copies, tags, tagsAt Multiset
+		held := map[[16]byte]bool{}
 		var after int64
 		for {
 			recs, err := api.Scan(ctx, format4.Query{Type: typ, Order: format4.OrderSeqAsc, SeqAfter: after, Limit: digestPage, Bulk: true})
@@ -56,8 +60,14 @@ func DigestAPI(ctx context.Context, api format4.API, schemas []string) (map[stri
 			}
 			cids := make([]string, 0, len(recs))
 			for _, r := range recs {
-				cids = append(cids, r.CID)
 				after = r.Seq
+				if k := cidKey(r.CID); !held[k] {
+					held[k] = true
+					cids = append(cids, r.CID)
+				}
+			}
+			if len(cids) == 0 {
+				continue
 			}
 			all, err := api.Get(ctx, typ, cids, true, true)
 			if err != nil {
