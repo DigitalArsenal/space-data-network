@@ -433,16 +433,65 @@ func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 		// theirs: the XYZ table (U1, X01), the dangling tags (U2, X08), the
 		// KMF lane bytes (U5, X04) and the CAT lane bytes (U6, X02).
 		sh = xmSetAside(laneBytes(laneBytes(u2Rows(u1Rows(sh, ""), ""), "", c39U5, "KMF.fbs"), "", c39U6, "CAT.fbs"))
-		out = append(out, sh)
+		out = append(out, xmC41(sh, storage.ComputeCID(x05Oversized(omm))))
 	}
 	return out
 }
+
+// xmC41 is C-41's accepted items on the migrated store's reads (the
+// scenarios' own shapes carry N3, N4 and N5 where their reads show them):
+//   - N3: the X01 cursor pages list format 1's tagged records first;
+//   - N6: X09's SQL count of CAT (format 1's hot window lost the records
+//     the scenarios deleted);
+//   - N7: the lane times format 1's deletes restamped (X04's KMF delete;
+//     X09's IQC, CAT and OMM deletes), and the producer lanes whose newest
+//     batch that restamp made the deleted record's;
+//   - N8: the copies of X07's two records held by two feeds, in both feed
+//     files: the import provider's cursor page lists them once per feed,
+//     and both importers' bytes count them twice.
+//
+// X01's cursor after the fixture also shows two earlier rulings: X07's two
+// records once per feed (C-38 (5)) and the record the migration sets aside
+// (C-6, bigCID).
+func xmC41(sh Shape, bigCID string) Shape {
+	add := func(rs ...CallRuling) { sh.Policy.Calls = append(sh.Policy.Calls, rs...) }
+	add(CallRuling{Call: "X01: cursor second producer", Why: c41N3, TaggedFirst: true},
+		CallRuling{Call: "X01: cursor after the fixture", Why: c41N3, TaggedFirst: true},
+		CallRuling{Call: "X01: cursor after the fixture", Why: c38PerFeed, PerFeed: true},
+		CallRuling{Call: "X01: cursor after the fixture", Why: c6SetAside, AbsentCID: bigCID},
+		CallRuling{Call: "X07: cursor provider peer", Why: c41N8, PerFeed: true},
+		CallRuling{Call: "X09: SQL SELECT COUNT(*) FROM CAT", Why: c41N6, Fields: []string{"COUNT(*)"}})
+	iqcLane := fmt.Sprintf("IQC.fbs %s/IQEngine/%s", FixtureProvider, iqcBatch)
+	for _, read := range []string{"X09: lane snapshot ", "X09: lane head "} {
+		add(CallRuling{Call: read + iqcLane, Why: c41N7, Fields: []string{"max_updated", "max_created"}})
+	}
+	for _, l := range []struct{ std, src, batch string }{
+		{"KMF.fbs", "coverage-kmf", "kmf-1"},
+		{"IQC.fbs", "IQEngine", iqcBatch},
+		{"CAT.fbs", "celestrak-satcat-csv", "CAT-celestrak-satcat-csv-b000"},
+		{"OMM.fbs", "celestrak-gp", x09NearestBatch},
+	} {
+		add(CallRuling{Call: "SourceBatchProgress", Why: c41N7, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: l.std, Source: l.src, Batch: l.batch})
+		if l.std != "OMM.fbs" { // celestrak-gp's newest batch is a later write's
+			add(CallRuling{Call: "ProducerSourceProgress", Why: c41N7, Fields: []string{"LastBatchID", "LastSeenUnix", "UpdatedAtUnix"}, Standard: l.std, Source: l.src})
+		}
+	}
+	for _, p := range []string{covProvider, covPeer2} {
+		add(CallRuling{Call: "PeerStorageBytes " + p, Why: c41N8, Fields: []string{"bytes"}})
+	}
+	return sh
+}
+
+// x09NearestBatch is the fixture batch of the OMM record X09 deletes (the
+// record an EPOCH nearest read answers for NORAD 25544 at r16At).
+const x09NearestBatch = "OMM-celestrak-gp-b026"
 
 // xmSetAside is C-6 on the migrated store: X05's 9 MiB record (lanes
 // celestrak-gp OMM-cov-big and OMM-cov-big-single, stored by source:celestrak)
 // is set aside by the migration, so format 4's summaries lack it: format 1's
 // OMM-cov-big-single rows, the counts and bytes of the OMM-cov-big lane, of
-// the OMM celestrak-gp producer lane, of the OMM type and of the store, and
+// the OMM celestrak-gp producer lane (and its batch count: OMM-cov-big-single
+// holds only that record), of the OMM type and of the store, and
 // source:celestrak's partition bytes.
 func xmSetAside(sh Shape) Shape {
 	for _, call := range summaryCalls {
@@ -451,7 +500,7 @@ func xmSetAside(sh Shape) Shape {
 			CallRuling{Call: call, Why: c6SetAside, Fields: []string{"Count", "TotalBytes"}, Standard: "OMM.fbs", Source: "celestrak-gp", Batch: "OMM-cov-big"})
 	}
 	sh.Policy.Calls = append(sh.Policy.Calls,
-		CallRuling{Call: "ProducerSourceProgress", Why: c6SetAside, Fields: []string{"Count", "TotalBytes"}, Standard: "OMM.fbs", Source: "celestrak-gp"},
+		CallRuling{Call: "ProducerSourceProgress", Why: c6SetAside, Fields: []string{"Count", "TotalBytes", "BatchCount"}, Standard: "OMM.fbs", Source: "celestrak-gp"},
 		CallRuling{Call: "DataSummary", Why: c6SetAside, Fields: []string{"n", "bytes", "total_records", "total_bytes"}, Standard: "OMM.fbs"},
 		CallRuling{Call: "SchemaDateRanges", Why: c6SetAside, Fields: []string{"n", "bytes"}, Standard: "OMM.fbs"},
 		CallRuling{Call: "LiveRecordBytes", Why: c6SetAside, Fields: []string{"bytes"}},
@@ -647,8 +696,16 @@ func (c *cov) x02(omm, mpe, iqc, cat [][]byte) []Shape {
 	reads = append(reads, c.laneReads("CAT.fbs", FixtureProvider, "celestrak-satcat-csv", tc.BatchID)...)
 	reads = append(reads, c.laneReads("IQC.fbs", FixtureProvider, "IQEngine", ti.BatchID)...)
 	reads = append(reads, c.summaries(gpPeer, iqcSigmfPeer)...)
-	return []Shape{covShape(class, "storeBatch tagged: writes", "OMM.fbs", writes...),
-		laneBytes(covShape(class, "storeBatch tagged: read back", "OMM.fbs", reads...), "", c39U6, "CAT.fbs")}
+	back := laneBytes(covShape(class, "storeBatch tagged: read back", "OMM.fbs", reads...), "", c39U6, "CAT.fbs")
+	// C-41 N4: "OMM 5 again, new url" restamps the b053 lane on format 4;
+	// format 1's DUP leaves the lane at its first delivery.
+	lane := fmt.Sprintf("OMM.fbs %s/celestrak-gp/%s", FixtureProvider, t1.BatchID)
+	for _, read := range []string{"lane snapshot ", "lane head "} {
+		back = rule(back, read+lane, c41N4, "max_updated", "max_created")
+	}
+	back.Policy.Calls = append(back.Policy.Calls, CallRuling{Call: "SourceBatchProgress", Why: c41N4, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"},
+		Standard: "OMM.fbs", Source: "celestrak-gp", Batch: t1.BatchID})
+	return []Shape{covShape(class, "storeBatch tagged: writes", "OMM.fbs", writes...), back}
 }
 
 // exportOf exports a window into the class's scratch directory.
@@ -778,7 +835,7 @@ func (c *cov) x05(omm [][]byte) []Shape {
 	const class = "X05"
 	a := CloneOf("OMM", omm[50], 905, nil)
 	b := CloneOf("OMM", omm[51], 905, nil)
-	big := append(CloneOf("OMM", omm[52], 905, nil), make([]byte, 9<<20)...)
+	big := x05Oversized(omm)
 	t := plainTags("celestrak-gp", "OMM-cov-big")
 	tb := plainTags("celestrak-gp", "OMM-cov-big-single")
 	bigCall := func(name string, fn func(s *storage.FlatSQLStore) (string, error)) Call {
@@ -815,6 +872,12 @@ func (c *cov) x05(omm [][]byte) []Shape {
 	accept(&sh, "C-6: format 4 rejects a record above the write slot's request area − 64 KiB (P4_REJ_TOO_LARGE); format 1 stores it",
 		"big_value", "big_err")
 	return []Shape{sh}
+}
+
+// x05Oversized is X05's record above the largest storable record: an OMM
+// clone with 9 MiB appended.
+func x05Oversized(omm [][]byte) []byte {
+	return append(CloneOf("OMM", omm[52], 905, nil), make([]byte, 9<<20)...)
 }
 
 // X06: StoreRoutedByProducer (the storefront's DPM/PNM publication path: a
@@ -959,6 +1022,9 @@ func (c *cov) x07(omm [][]byte) []Shape {
 	sh = rule(sh, "ImportDatasetShard (bytes) again", c38PerFeed, "n")
 	sh = rule(sh, "SchemaDateRanges", c38PerFeed, "n") // batch b's two records, once per feed
 	sh = rule(sh, "lane window OMM.fbs "+covProvider+"/celestrak-gp/"+tb.BatchID, c38OwnFeed, "provider")
+	// C-41 N3: format 1's page lists the tagged hex record before the
+	// untagged records; format 4 lists by seq.
+	sh.Policy.Calls = append(sh.Policy.Calls, CallRuling{Call: "cursor provider peer", Why: c41N3, TaggedFirst: true})
 	return []Shape{sh,
 		c12Shape(class, "dataset shard import: the copy format 1 does not serve", "OMM.fbs",
 			c.refsOf("refs imported, the second import's copies", "OMM.fbs", all, func(r *storage.RawRecordRef) { r.PeerID = covPeer2 }))}
@@ -1206,7 +1272,13 @@ func (c *cov) x10(omm [][]byte) []Shape {
 	// recs[0], also tagged in celestrak-gp, is new to that feed (C-38 (3)),
 	// and leaves the reconciled feed while celestrak-gp keeps it.
 	sh := rule(covShape(class, "ReconcileSourceBatch", "OMM.fbs", calls...), "another lane", c38PerFeed, "n")
-	return []Shape{rule(sh, "ReconcileSourceBatch apply", c38PerFeed, "deleted")}
+	sh = rule(sh, "ReconcileSourceBatch apply", c38PerFeed, "deleted")
+	// C-41 N5: recs[0]'s celestrak-gp row took that delivery's ts (write
+	// 2); once the reconciled feed's row is gone, it is the record's ts.
+	for _, call := range []string{"GetRecord lane records", "refs lane records"} {
+		sh.Policy.Calls = append(sh.Policy.Calls, CallRuling{Call: call, Why: c41N5, Fields: []string{"~ts"}, CID: ids[0]})
+	}
+	return []Shape{sh}
 }
 
 // X11: SupersedeSourceBatches (MPE, two producers, one record surviving
@@ -1271,6 +1343,12 @@ func (c *cov) x11(mpe [][]byte) []Shape {
 	for _, call := range []string{"SourceBatchProgress", "ProducerSourceProgress"} {
 		sh.Policy.Calls = append(sh.Policy.Calls,
 			CallRuling{Call: call, Why: c39U3, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: "MPE.fbs", Source: src})
+	}
+	// C-41 N5: recs[1]'s celestrak-gp row took that delivery's ts (write
+	// 3); once the superseded feed's row is gone, it is the record's ts.
+	otherLane := fmt.Sprintf("MPE.fbs %s/celestrak-gp/%s", FixtureProvider, other.BatchID)
+	for _, call := range []string{"GetRecord lane records", "lane page " + otherLane, "lane window " + otherLane, "lane tagged " + otherLane} {
+		sh.Policy.Calls = append(sh.Policy.Calls, CallRuling{Call: call, Why: c41N5, Fields: []string{"~ts"}, CID: ids[1]})
 	}
 	return []Shape{sh}
 }
