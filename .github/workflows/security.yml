@@ -247,8 +247,13 @@ jobs:
 
       - name: Build IPFS WebUI assets
         working-directory: webui
+        # --ignore-scripts: the kubo devDependency's postinstall downloads a kubo
+        # binary from dist.ipfs.tech that only the e2e tests use, and that host's
+        # outage failed this job (2026-10-02/03). The build needs only the
+        # repo's own postinstall, patch-package.
         run: |
-          npm ci
+          npm ci --ignore-scripts
+          npx patch-package
           npm run build
 
       - name: Check if Dockerfile exists
