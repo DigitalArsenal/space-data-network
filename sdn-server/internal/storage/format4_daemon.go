@@ -404,26 +404,34 @@ func createLegacyControlDir(basePath string) error {
 	return dir.Sync()
 }
 
-// format4TypeSpec is a schema's engine registration. A routed standard with
-// no embedded binary schema (an encrypted one) still stores and serves its
-// frames by CID, arrival and tags; the engine extracts nothing from it.
-func (d *format4Daemon) format4TypeSpec(schema string) (format4.TypeSpec, error) {
+// Format4TypeSpec is a schema's engine registration, the one rule the daemon
+// and store-migrate --to 4 both register by: format4.TypeSpecFor, or, for a
+// routed standard with no embedded binary schema (an encrypted one, C-25),
+// a spec with its file identifier (ident, the validator's) and no BFBS. Such
+// a type still stores and serves its frames by CID, arrival and tags; the
+// engine extracts nothing from it.
+func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (format4.TypeSpec, error) {
 	spec, err := format4.TypeSpecFor(schema)
-	if err == nil || d.ident == nil {
+	if err == nil || ident == nil {
 		return spec, err
 	}
 	typ, terr := sds.SchemaNameToTable(schema)
 	if terr != nil {
 		return spec, err
 	}
-	ident, ok := d.ident(typ + ".fbs")
-	if !ok || len(ident) != 4 {
+	id, ok := ident(typ + ".fbs")
+	if !ok || len(id) != 4 {
 		return spec, err
 	}
 	fallback := format4.TypeSpec{TypeSpec: format2.TypeSpec{SchemaName: typ + ".fbs", Flags: format2.TypeVerifyCID}, PageSize: 4096,
 		A18Bound: 10000}
-	copy(fallback.FID[:], ident)
+	copy(fallback.FID[:], id)
 	return fallback, nil
+}
+
+// format4TypeSpec is Format4TypeSpec with the daemon's validator.
+func (d *format4Daemon) format4TypeSpec(schema string) (format4.TypeSpec, error) {
+	return Format4TypeSpec(schema, d.ident)
 }
 
 // registerTypes registers every standard the validator embeds (§5.5 step 7).
