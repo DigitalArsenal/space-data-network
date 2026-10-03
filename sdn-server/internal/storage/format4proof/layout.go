@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
@@ -33,8 +34,11 @@ type FeedLayout struct {
 	Problems   []string            `json:"problems,omitempty"`
 }
 
-// feedFileName is the engine's file name of a feed: provider and source,
-// URL-escaped outside [A-Za-z0-9._-], joined by '@' (local for neither).
+// feedFileName is the engine's file name of a feed (store.cpp
+// feedFileName): provider and source, URL-escaped outside [A-Za-z0-9._-],
+// joined by '@' (local for neither). A name longer than 160 bytes keeps its
+// first 140, and a long, case-colliding or dot-led name carries "~<feed id>"
+// (feedIDSuffix), which a file name is compared without.
 func feedFileName(provider, source string) string {
 	if provider == "" && source == "" {
 		return "local"
@@ -52,7 +56,11 @@ func feedFileName(provider, source string) string {
 		}
 		return b.String()
 	}
-	return enc(provider) + "@" + enc(source)
+	name := enc(provider) + "@" + enc(source)
+	if len(name) > 160 {
+		name = name[:140]
+	}
+	return name
 }
 
 // feedIDSuffix is the "~<feed id>" a long or case-colliding name carries.
@@ -61,6 +69,9 @@ var feedIDSuffix = regexp.MustCompile(`~[0-9]+$`)
 // format1Feeds are the (provider, source) feeds of each type with live
 // records in format 1's source summary, as feed file names.
 func format1Feeds(f1Store string) (map[string]map[string]bool, error) {
+	// A format-1 store opens only without the format selector, which OpenArm
+	// sets in this process for a format-4 arm (every open sets its own).
+	os.Unsetenv(format2.FormatEnv)
 	src, err := storage.OpenMigrationSource(f1Store)
 	if err != nil {
 		return nil, err
@@ -121,6 +132,11 @@ func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*Fee
 		have[t.Name()] = map[string]bool{}
 		for _, e := range ents {
 			name := e.Name()
+			if e.IsDir() {
+				// A '/' of a provider or source reached the file system.
+				fail("P/%s/%s is a directory: a feed file name is one path element", t.Name(), name)
+				continue
+			}
 			feed, ok := strings.CutSuffix(name, ".db")
 			if !ok {
 				if strings.HasSuffix(name, ".db-wal") || strings.HasSuffix(name, ".db-shm") || strings.HasSuffix(name, ".db-journal") {
@@ -128,6 +144,11 @@ func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*Fee
 				}
 				fail("P/%s/%s is not a feed file", t.Name(), name)
 				continue
+			}
+			if fi, err := e.Info(); err == nil && fi.Size() == 0 {
+				// The engine created and measures this name, and SQLite wrote
+				// another (a URI decoded the name's escapes).
+				fail("P/%s/%s is empty: no SQLite database was written at the feed's file name", t.Name(), name)
 			}
 			lay.Files[t.Name()] = append(lay.Files[t.Name()], feed)
 			have[t.Name()][feedIDSuffix.ReplaceAllString(feed, "")] = true
@@ -138,14 +159,14 @@ func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*Fee
 	for typ, feeds := range want {
 		for feed := range feeds {
 			if !have[typ][feed] {
-				fail("%s: format 1 holds records of feed %s; format 4 has no file P/%s/%s.db", typ, feed, typ, feed)
+				fail("%s: feed %s holds records; format 4 has no file P/%s/%s.db", typ, feed, typ, feed)
 			}
 		}
 	}
 	for typ, feeds := range have {
 		for feed := range feeds {
 			if feed != "local" && !want[typ][feed] {
-				fail("%s: feed file %s.db names no feed format 1 holds records of", typ, feed)
+				fail("%s: feed file %s.db names no feed that holds records", typ, feed)
 			}
 		}
 	}
@@ -269,4 +290,44 @@ func cloneForRead(file, tmp string) error {
 		}
 	}
 	return nil
+}
+
+// feedDirProblems checks one type directory P/<typ> of a format-4 store: it
+// holds no directory and no file but the feed files of feeds (feedFileName
+// names; "~<feed id>" aside) and their SQLite sidecars, and the files of the
+// feeds in nonEmpty exist and are not empty (a feed's records are in the
+// file the engine named, not in one a URI decoded the name to).
+func feedDirProblems(store, typ string, feeds, nonEmpty []string) []string {
+	var out []string
+	dir := filepath.Join(store, marker.Dir, "P", typ)
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return []string{fmt.Sprintf("P/%s: %v", typ, err)}
+	}
+	size := map[string]int64{}
+	for _, e := range ents {
+		name := e.Name()
+		if e.IsDir() {
+			out = append(out, fmt.Sprintf("P/%s/%s is a directory: a feed file name is one path element", typ, name))
+			continue
+		}
+		base := name
+		for _, sfx := range []string{"-wal", "-shm", "-journal"} {
+			base = strings.TrimSuffix(base, sfx)
+		}
+		feed, ok := strings.CutSuffix(base, ".db")
+		if feed = feedIDSuffix.ReplaceAllString(feed, ""); !ok || !contains(feeds, feed) {
+			out = append(out, fmt.Sprintf("P/%s/%s names no feed of this store", typ, name))
+			continue
+		}
+		if fi, err := e.Info(); err == nil && !strings.HasSuffix(name, "-shm") {
+			size[feed] += fi.Size()
+		}
+	}
+	for _, f := range nonEmpty {
+		if n, ok := size[f]; !ok || n == 0 {
+			out = append(out, fmt.Sprintf("P/%s/%s.db is missing or empty, and the feed holds records", typ, f))
+		}
+	}
+	return out
 }

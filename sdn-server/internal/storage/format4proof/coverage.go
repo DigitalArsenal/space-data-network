@@ -914,6 +914,23 @@ func (c Config) driveXM(ctx context.Context, logf Logf, aliases map[string]strin
 	ws := &Run{Kind: KindWrites, Arm: ArmS, Format: "4", Label: LabelFixture, Class: ClassXM, Started: time.Now().UTC().Format(time.RFC3339),
 		Machine: ThisMachine(), LoadStart: Load(), Extra: map[string]any{}}
 	var probs []string
+	// Format 1's feeds, for the migrated store's feed files (C-37), read from
+	// a clone taken before the migration moves format 1's control files.
+	xmF1 := c.workPath("coverage-xm-f1-feeds")
+	_ = os.RemoveAll(xmF1)
+	if err := CloneStore(store, xmF1); err != nil {
+		return err
+	}
+	feeds, ferr := format1Feeds(xmF1)
+	_ = os.RemoveAll(xmF1)
+	if ferr != nil {
+		probs = append(probs, "format 1 feeds: "+ferr.Error())
+	}
+	for typ := range feeds {
+		if !contains(xmTypes, typ+".fbs") {
+			delete(feeds, typ) // C-39 U1: format 4 stores SDS standards only (X01's XYZ.fbs)
+		}
+	}
 	logs := filepath.Join(c.Out, "logs")
 	invLog := filepath.Join(logs, "coverage-xm-inventory.log")
 	if code, err := migrateVerb(ctx, c.SDNBin, store, invLog, "--inventory"); err != nil {
@@ -954,6 +971,18 @@ func (c Config) driveXM(ctx context.Context, logf Logf, aliases map[string]strin
 		probs = append(probs, err.Error())
 	} else {
 		probs = append(probs, checkMigrated(store)...)
+		// One file per feed format 1 holds records of, under the engine's
+		// names: X15's feeds of names that need escaping among them.
+		if ferr == nil {
+			if lay, err := checkFeedFiles(feeds, store, c.Work); err != nil {
+				probs = append(probs, "layout: "+err.Error())
+			} else {
+				ws.Extra["layout"] = lay.Files
+				for _, p := range lay.Problems {
+					probs = append(probs, "layout: "+p)
+				}
+			}
+		}
 		if code, err := migrateVerb(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-verify-only.log"), "--verify-only"); err != nil {
 			probs = append(probs, fmt.Sprintf("store-migrate --to 4 --verify-only exited %d: %v", code, err))
 		}

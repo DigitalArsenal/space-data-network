@@ -24,7 +24,10 @@
 // strictly; the method × axis table is COVERAGE.md beside the contract) and
 // crash coverage (kill -9 loops during ingest and supersede, CrashLoop;
 // LazyFS power loss, lazyfs_linux_test.go; integrity_check on every file
-// through REBUILD what=8, C-27). Every number carries the load average and
+// through REBUILD what=8, C-27) and the feed-name proof (feednames.go,
+// C-37 (1): a provider or source of any characters lives in the one file
+// the engine names for it: the file set, reads, a reopen, the quota,
+// store-migrate --to 4 and kill -9). Every number carries the load average and
 // RSS of its process. A failed gate is reported with its numbers
 // (WriteReport: gates.md); nothing here relaxes a bar.
 //
@@ -44,7 +47,7 @@
 //
 // run.sh runs every phase in order on the integration tree (build, prepare,
 // migrate, bytes, reads, ingest, grown reads, M01, writes, coverage, crash,
-// LazyFS, growth, equivalence, report); lazyfs.sh runs the power-loss rounds in a
+// feed names, LazyFS, growth, equivalence, report); lazyfs.sh runs the power-loss rounds in a
 // Linux container. P4PROOF_EQ_ARM=f2 compares format 2 with format 1
 // through the same comparator, which checks the harness on a known engine.
 package format4proof
