@@ -91,6 +91,14 @@ func CheckFeedLayout(f1Store, f4Store, work string) (*FeedLayout, error) {
 	if err != nil {
 		return nil, fmt.Errorf("format 1 feeds: %w", err)
 	}
+	return checkFeedFiles(want, f4Store, work)
+}
+
+// checkFeedFiles checks the feed files of the format-4 store f4Store against
+// want (type -> feed file names, feedFileName): every wanted feed has its
+// file, every file names a wanted feed (or local), and the schema rules of
+// C-37 and C-38 hold in every file.
+func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*FeedLayout, error) {
 	lay := &FeedLayout{Files: map[string][]string{}, Columns: map[string][]string{}, CIDIndexes: map[string][]string{},
 		TypeIndex: map[string][]string{}}
 	fail := func(f string, a ...any) { lay.Problems = append(lay.Problems, fmt.Sprintf(f, a...)) }
