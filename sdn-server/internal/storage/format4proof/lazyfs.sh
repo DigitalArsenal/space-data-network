@@ -18,7 +18,10 @@
 # ends at its first loss: a lost store cannot be written again).
 # P4PROOF_LAZYFS_SCENARIOS / P4PROOF_LAZYFS_NEG_SCENARIOS (comma lists) and
 # P4PROOF_LAZYFS_NEG_ROUNDS (0 skips the negative control) narrow a run;
-# P4PROOF_LAZYFS_MOUNT_WAIT_S bounds the wait for the mount (3600).
+# P4PROOF_LAZYFS_MOUNT_WAIT_S bounds the wait for the mount (3600), and
+# P4PROOF_LAZYFS_CACHE sets LazyFS's page cache (4gb; it is pre-allocated
+# before the mount, so a smaller cache mounts sooner; the rounds' unsynced
+# bytes must fit it).
 #
 # LIMIT (as scripts/lazyfs-dir-durability.sh): LazyFS caches only file data,
 # so a lost un-fsynced directory entry is not exercised.
@@ -42,6 +45,7 @@ if [[ "${1:-}" != "--inner" ]]; then
     -e GOMODCACHE=/gomod -e GOFLAGS=-mod=mod -e ROUNDS="$ROUNDS" -e ARM="$ARM" \
     -e NEG_ROUNDS="${P4PROOF_LAZYFS_NEG_ROUNDS:-$ROUNDS}" -e TRIAL_SCENARIOS="${P4PROOF_LAZYFS_SCENARIOS:-}" \
     -e NEG_SCENARIOS="${P4PROOF_LAZYFS_NEG_SCENARIOS:-}" -e MOUNT_WAIT_S="${P4PROOF_LAZYFS_MOUNT_WAIT_S:-3600}" \
+    -e CACHE_SIZE="${P4PROOF_LAZYFS_CACHE:-4gb}" \
     "${SDN_LAZYFS_IMAGE:-sdn-wasmedge-static:74db37e14}" \
     bash /src/sdn-server/internal/storage/format4proof/lazyfs.sh --inner
 fi
@@ -90,7 +94,7 @@ fifo_path_completed="$DONE"
 [cache]
 apply_eviction=false
 [cache.simple]
-custom_size="4gb"
+custom_size="${CACHE_SIZE:-4gb}"
 blocks_per_page=1
 [filesystem]
 log_all_operations=false
@@ -117,7 +121,7 @@ done
 mountpoint -q "$MNT" || { cat "$W/lazyfs.log"; echo "LazyFS did not mount (waited $(( $(date +%s) - st )) s)"; exit 1; }
 echo "LazyFS mounted after $(( $(date +%s) - st )) s"
 
-echo "machine: $(uname -m), $(nproc) CPUs; LazyFS fa7d32e; arm $ARM; $ROUNDS rounds per scenario"
+echo "machine: $(uname -m), $(nproc) CPUs; LazyFS fa7d32e, cache ${CACHE_SIZE:-4gb}; arm $ARM; $ROUNDS rounds per scenario"
 run() { # run <label> <negative so or empty> <rounds> <scenarios or empty>
   P4PROOF_LAZYFS_SCENARIOS="$4" P4PROOF_WORK="$W/$1-work" P4PROOF_OUT="$W/$1-out" P4PROOF_LAZYFS_MOUNT="$MNT" P4PROOF_LAZYFS_FIFO="$FIFO" \
     P4PROOF_LAZYFS_FIFO_DONE="$DONE" P4PROOF_LAZYFS_ROUNDS="$3" P4PROOF_LAZYFS_ARM="$ARM" P4PROOF_LAZYFS_NEGATIVE="$2" \
