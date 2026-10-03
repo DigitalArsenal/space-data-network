@@ -1,8 +1,13 @@
-// Package format4 is SDN's binding to store format 4, "p4": one SQLite file
-// per partition (producer x record type) in the FlatSQL engine, indexed by
-// arrival, source, object + epoch, epoch and CID (stack design
+// Package format4 is SDN's binding to store format 4, "p4": one SQLite table
+// file per source feed x standard in the FlatSQL engine (P/<TYPE>/<feed>.db,
+// the feed being the record's (provider, source); untagged records in
+// local.db), each indexed by arrival, object + epoch, epoch and CID, and one
+// small type index per standard (stack design
 // docs/architecture/flatsql-sqlite-partitions.md; build-out contract §5.2,
-// v11).
+// v15 C-37). A row holds no provider or source string: they are the file's
+// feed, and the batch and publishing node are small per-file ids. The C ABI
+// and this API are unchanged by the feed layout: a tag still names its
+// (provider, source, batch, ...) and the engine files it by its feed.
 //
 // The engine is the published flatsql-p4-threads.wasm
 // (flatsqlrt/p4artifact.go): ONE threaded WasmEdge instance holds the writer
@@ -259,13 +264,17 @@ type TypeSummary struct {
 	MinTS, MaxTS, MaxSeq, Through     int64
 }
 
-// PartitionSummary is a SUMMARY kind 2 row.
+// PartitionSummary is a SUMMARY kind 2 row: one producer token of a type
+// (its copies across the type's feed files; Files counts those files).
 type PartitionSummary struct {
 	Type, Producer, Peer                        string
 	Records, Bytes, MinTS, MaxTS, MaxSeq, Files int64
 }
 
-// Lane is a SUMMARY kind 3 row: one live lane of one partition.
+// Lane is a SUMMARY kind 3 row: one live tag instance of one feed file
+// (provider and source from the file's feed; batch, content key, producer
+// peer and key from the instance). Producer is "" (C-37: a feed file holds
+// every producer's copies).
 type Lane struct {
 	Type, Producer string
 	Tag

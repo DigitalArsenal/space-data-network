@@ -62,7 +62,8 @@ const (
 // 10000), the epoch profile (OMM 1, MPE 2) and full text for every type
 // format 1 indexes: every routed standard whose records are not field-sealed
 // (a sealed record's stored bytes are not its text). The rules are format
-// 2's, unchanged (contract v11: one file per partition, no bucket rule).
+// 2's, unchanged (contract v15: one file per source feed x standard, no
+// bucket rule).
 func TypeSpecFor(schemaName string) (TypeSpec, error) {
 	base, err := format2.TypeSpecFor(schemaName)
 	if err != nil {
