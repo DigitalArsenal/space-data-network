@@ -281,25 +281,29 @@ func u1Rows(sh Shape, suffix string) Shape {
 	return sh
 }
 
-// u2Lane is the lane X08's dangling tags name (covTags celestrak-gp
-// OMM-cov-retag; X08's t1).
-const u2Lane = "OMM.fbs " + FixtureProvider + "/celestrak-gp/OMM-cov-retag"
+// u2Batch is the batch X08's dangling tags name (covTags celestrak-gp
+// OMM-cov-retag; X08's t1), and u2Lane its lane.
+const (
+	u2Batch = "OMM-cov-retag"
+	u2Lane  = "OMM.fbs " + FixtureProvider + "/celestrak-gp/" + u2Batch
+)
 
 // u2Rows is C-39 U2 on the summaries read after UpsertSourceTags of CIDs
 // not held (an OMM miss, a non-canonical OMM CID, a held CID under the
 // unknown XYZ.fbs): format 1's dangling tags are its XYZ.fbs rows, one more
-// in the counts of the OMM-cov-retag lane, of the type and of the store
-// (their bytes are 0, so no byte field may differ), and the lane's time,
-// restamped by format 1's dangling write (incrementSourceSummary).
+// in the counts of the OMM-cov-retag lane, of its producer lane, of the
+// type and of the store (their bytes are 0, so no byte field may differ),
+// and those lanes' times, restamped by format 1's dangling write
+// (incrementSourceSummary).
 func u2Rows(sh Shape, suffix string) Shape {
 	for _, call := range summaryCalls {
 		sh.Policy.Calls = append(sh.Policy.Calls,
 			CallRuling{Call: call + suffix, Why: c39U2, Absent: "XYZ.fbs"},
-			CallRuling{Call: call + suffix, Why: c39U2, Fields: []string{"n", "Count", "total_records"}, Standard: "OMM.fbs"})
+			CallRuling{Call: call + suffix, Why: c39U2, Fields: []string{"n", "Count", "total_records"}, Standard: "OMM.fbs", Source: "celestrak-gp", Batch: u2Batch})
 	}
 	for _, call := range []string{"SourceBatchProgress", "ProducerSourceProgress"} {
 		sh.Policy.Calls = append(sh.Policy.Calls,
-			CallRuling{Call: call + suffix, Why: c39U2, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: "OMM.fbs", Source: "celestrak-gp"})
+			CallRuling{Call: call + suffix, Why: c39U2, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: "OMM.fbs", Source: "celestrak-gp", Batch: u2Batch})
 	}
 	for _, read := range []string{"lane snapshot ", "lane head "} {
 		sh.Policy.Calls = append(sh.Policy.Calls, CallRuling{Call: read + u2Lane + suffix, Why: c39U2, Fields: []string{"max_updated", "max_created"}})
