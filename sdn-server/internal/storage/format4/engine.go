@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -61,6 +62,9 @@ type Engine struct {
 	closing atomic.Bool
 	once    sync.Once
 	stopErr error
+	memo    memo // counter answers kept between writes (memo.go)
+
+	prefetchStop chan struct{} // closed by Close: prefetchIndexes stops
 }
 
 var _ API = (*Engine)(nil)
@@ -91,7 +95,16 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 			return nil, fmt.Errorf("format4: %w", err)
 		}
 	}
-	e := &Engine{}
+	e := &Engine{prefetchStop: make(chan struct{})}
+	if opt.Create == OpenExisting {
+		go prefetchIndexes(engineRoot, e.prefetchStop)
+	}
+	opened := false
+	defer func() {
+		if !opened {
+			close(e.prefetchStop)
+		}
+	}()
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
 		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
 		Store: opt.Store, StoreRoot: root, InitConfig: encodeConfig(engineRoot, opt),
@@ -113,6 +126,7 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 		_, _ = inst.StopWithin(10 * time.Second)
 		return nil, err
 	}
+	opened = true
 	return e, nil
 }
 
@@ -217,6 +231,8 @@ func (e *Engine) RegisterType(spec TypeSpec) error {
 	if err := e.live("register_type"); err != nil {
 		return err
 	}
+	e.memo.begin()
+	defer e.memo.end(false)
 	rc, err := e.ctl.ControlBytes(exportRegisterType, spec.Encode())
 	return statusOf("register_type "+spec.TypeName(), rc, err)
 }
@@ -229,7 +245,11 @@ func (e *Engine) SetQuota(bytes int64) error {
 		return &StatusError{Op: "set_quota", Status: StatusArg, Msg: "negative quota"}
 	}
 	rc, err := e.ctl.ControlCall(exportSetQuota, float64(bytes))
-	return statusOf("set_quota", rc, err)
+	if err := statusOf("set_quota", rc, err); err != nil {
+		return err
+	}
+	e.memo.setQuota(bytes > 0)
+	return nil
 }
 
 func (e *Engine) Activate(ctx context.Context) error {
@@ -239,6 +259,8 @@ func (e *Engine) Activate(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	e.memo.begin()
+	defer e.memo.end(false)
 	rc, err := e.ctl.ControlCall(exportActivate)
 	return statusOf("activate", rc, err)
 }
@@ -266,6 +288,9 @@ func (e *Engine) Stats() ([]uint64, error) {
 func (e *Engine) Close(ctx context.Context) error {
 	e.once.Do(func() {
 		e.closing.Store(true)
+		if e.prefetchStop != nil {
+			close(e.prefetchStop)
+		}
 		deadline := 30 * time.Second
 		if d, ok := ctx.Deadline(); ok {
 			deadline = max(time.Until(d), 0)
@@ -279,11 +304,34 @@ func (e *Engine) Close(ctx context.Context) error {
 	return e.stopErr
 }
 
+// State is the stamp of the engine's counter state (memo.go).
+func (e *Engine) State() (uint64, bool) { return e.memo.state() }
+
 // ---- requests ---------------------------------------------------------------
 
-// busyBackoff is the BUSY retry: 1 ms doubling to 100 ms (§5.2 rules).
-func busyBackoff(ctx context.Context, attempt int) error {
-	d := min(time.Millisecond<<uint(min(attempt, 7)), 100*time.Millisecond)
+// busyLimit bounds the BUSY retry of one request. An engine that refuses a
+// request this long in a row is stuck, not busy: the request returns its
+// BUSY error instead of retrying for as long as ctx lives (a caller without
+// a deadline would otherwise hang without a word; GATES-r2 count-scaled
+// growth).
+const busyLimit = 2 * time.Minute
+
+// busyRetry is one request's BUSY retry: 1 ms doubling to 100 ms (§5.2
+// rules), until ctx ends or busyLimit has passed since the first refusal.
+type busyRetry struct {
+	n     int
+	since time.Time
+}
+
+func (b *busyRetry) wait(ctx context.Context, op, msg string) error {
+	if b.since.IsZero() {
+		b.since = time.Now()
+	} else if waited := time.Since(b.since); waited >= busyLimit {
+		return &StatusError{Op: op, Status: StatusBusy,
+			Msg: fmt.Sprintf("the engine refused the request for %s (%s)", waited.Round(time.Second), msg)}
+	}
+	d := min(time.Millisecond<<uint(min(b.n, 7)), 100*time.Millisecond)
+	b.n++
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
@@ -295,24 +343,32 @@ func busyBackoff(ctx context.Context, attempt int) error {
 }
 
 // do runs one request and decodes its RB1 response. P4_E_BUSY means nothing
-// was done: it is retried until ctx ends, for writes and reads alike (reads
-// never return ErrBusy).
+// was done: it is retried (busyRetry), for writes and reads alike (reads
+// never return ErrBusy). A write brackets the memo.
 func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, want []string) (*rows, error) {
 	name := opNames[op]
-	for attempt := 0; ; attempt++ {
+	abandoned := false
+	if class == ClassWrite {
+		e.memo.begin()
+		defer func() { e.memo.end(abandoned) }()
+	}
+	var busy busyRetry
+	for {
 		if err := e.live(name); err != nil {
 			return nil, err
 		}
 		var body []byte
-		o, err := e.mb.run(ctx, call{op: op, class: class, req: req}, func(b []byte) error {
+		o, err := e.mb.run(ctx, call{op: op, class: class, req: req}, true, func(b []byte) error {
 			body = append(body, b...)
 			return nil
 		})
 		if err != nil {
+			// A write whose caller leaves may still commit (abandon).
+			abandoned = class == ClassWrite && !errors.Is(err, ErrStopped)
 			return nil, e.stopped(name, err)
 		}
 		if o.status == StatusBusy {
-			if err := busyBackoff(ctx, attempt); err != nil {
+			if err := busy.wait(ctx, name, o.err); err != nil {
 				return nil, err
 			}
 			continue
@@ -535,8 +591,20 @@ func (e *Engine) Scan(ctx context.Context, q Query) ([]Rec, error) {
 	return rs.recs(), nil
 }
 
+// Head is kept between writes (memo.go) unless it searches the full text.
 func (e *Engine) Head(ctx context.Context, q Query) (Head, error) {
-	rs, err := e.query(ctx, opHead, q, colsHead)
+	req, err := encodeQuery(opHead, q)
+	if err != nil {
+		return Head{}, err
+	}
+	if q.Search != "" {
+		return e.head(ctx, readClass(q.Bulk), req)
+	}
+	return kept(&e.memo, "H\x00"+string(req), true, 0, func() (Head, error) { return e.head(ctx, readClass(q.Bulk), req) })
+}
+
+func (e *Engine) head(ctx context.Context, class Class, req []byte) (Head, error) {
+	rs, err := e.do(ctx, opHead, class, req, colsHead)
 	if err != nil {
 		return Head{}, err
 	}
@@ -628,7 +696,14 @@ func (e *Engine) summary(ctx context.Context, kind uint8, typ string, want []str
 	return e.do(ctx, opSummary, ClassInteractive, tlv(nil).text(tagType, typ).u8(tagKind, kind), want)
 }
 
+// Types, Partitions and Lanes are kept between writes, Disk for
+// memoDiskAge (memo.go).
 func (e *Engine) Types(ctx context.Context) ([]TypeSummary, error) {
+	v, err := kept(&e.memo, "T", true, 0, func() ([]TypeSummary, error) { return e.types(ctx) })
+	return slices.Clone(v), err
+}
+
+func (e *Engine) types(ctx context.Context) ([]TypeSummary, error) {
 	rs, err := e.summary(ctx, summaryTypes, "", colsTypes)
 	if err != nil {
 		return nil, err
@@ -643,6 +718,11 @@ func (e *Engine) Types(ctx context.Context) ([]TypeSummary, error) {
 }
 
 func (e *Engine) Partitions(ctx context.Context) ([]PartitionSummary, error) {
+	v, err := kept(&e.memo, "P", true, 0, func() ([]PartitionSummary, error) { return e.partitions(ctx) })
+	return slices.Clone(v), err
+}
+
+func (e *Engine) partitions(ctx context.Context) ([]PartitionSummary, error) {
 	rs, err := e.summary(ctx, summaryPartitions, "", colsParts)
 	if err != nil {
 		return nil, err
@@ -657,6 +737,11 @@ func (e *Engine) Partitions(ctx context.Context) ([]PartitionSummary, error) {
 }
 
 func (e *Engine) Lanes(ctx context.Context, typ string) ([]Lane, error) {
+	v, err := kept(&e.memo, "L\x00"+typ, true, 0, func() ([]Lane, error) { return e.lanes(ctx, typ) })
+	return slices.Clone(v), err
+}
+
+func (e *Engine) lanes(ctx context.Context, typ string) ([]Lane, error) {
 	rs, err := e.summary(ctx, summaryLanes, typ, colsLanes)
 	if err != nil {
 		return nil, err
@@ -673,6 +758,11 @@ func (e *Engine) Lanes(ctx context.Context, typ string) ([]Lane, error) {
 }
 
 func (e *Engine) Disk(ctx context.Context) ([]DiskSummary, error) {
+	v, err := kept(&e.memo, "D", false, memoDiskAge, func() ([]DiskSummary, error) { return e.disk(ctx) })
+	return slices.Clone(v), err
+}
+
+func (e *Engine) disk(ctx context.Context) ([]DiskSummary, error) {
 	rs, err := e.summary(ctx, summaryDisk, "", colsDisk)
 	if err != nil {
 		return nil, err
@@ -721,12 +811,13 @@ func (e *Engine) SQL(ctx context.Context, req SQLRequest, sink func(chunk []byte
 	if p := format2.EncodeParams(req.Params); p != nil {
 		body = body.raw(tagParams, p)
 	}
-	for attempt := 0; ; attempt++ {
+	var busy busyRetry
+	for {
 		if err := e.live("SQL"); err != nil {
 			return SQLStats{}, err
 		}
 		sent := false
-		o, err := e.mb.run(ctx, call{op: opSQL, class: class, flags: flags, req: body, caps: req.Caps}, func(b []byte) error {
+		o, err := e.mb.run(ctx, call{op: opSQL, class: class, flags: flags, req: body, caps: req.Caps}, false, func(b []byte) error {
 			sent = true
 			if sink == nil {
 				return nil
@@ -738,7 +829,7 @@ func (e *Engine) SQL(ctx context.Context, req SQLRequest, sink func(chunk []byte
 		}
 		st := SQLStats{Rows: o.rows, RowsExamined: o.rowsExamined, BytesRead: o.bytesRead, Queue: o.queue, Run: o.run}
 		if o.status == StatusBusy && !sent {
-			if err := busyBackoff(ctx, attempt); err != nil {
+			if err := busy.wait(ctx, "SQL", o.err); err != nil {
 				return st, err
 			}
 			continue

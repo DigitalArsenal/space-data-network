@@ -1,0 +1,27 @@
+diff --git a/lib/llvm/compiler.cpp b/lib/llvm/compiler.cpp
+index 5b1bfc3..4350f7a 100644
+--- a/lib/llvm/compiler.cpp
++++ b/lib/llvm/compiler.cpp
+@@ -581,6 +581,9 @@ public:
+     auto RetBB = LLVM::BasicBlock::create(LLContext, F.Fn, "ret");
+     Type.first.clear();
+     enterBlock(RetBB, {}, {}, {}, std::move(Type));
++    // SDN patch (loop-stop-checks): every function entry checks the stop
++    // token, so deep recursion stops as a loop does.
++    checkStop();
+     EXPECTED_TRY(compile(Code.getExpr().getInstrs()));
+     assuming(ControlStack.empty());
+     compileReturn();
+@@ -622,7 +625,11 @@ public:
+           }
+         }
+         enterBlock(EndBlock, {}, {}, std::move(Args), std::move(Type));
+-        checkStop();
++        // SDN patch (loop-stop-checks): no stop check at a block entry. Only a
++        // loop can run code again, and a loop header and every function entry
++        // still check, so a stop reaches any guest that keeps running. The
++        // check at every block made a run of 182 checks in front of each
++        // SQLite VDBE opcode dispatch (181 nested blocks before its br_table).
+         updateGas();
+         return {};
+       }
