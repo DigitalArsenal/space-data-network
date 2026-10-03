@@ -187,6 +187,21 @@ const (
 	OrderWAsc   Order = 7 // w asc, CID asc (a raw page with a sync filter or a search)
 )
 
+// Part is which of a type's files a read covers (request tag 20, C-43
+// B2): every file, or the local file (the untagged records) with or
+// without the feed files the lane filter selects.
+type Part uint8
+
+const (
+	PartAll Part = 0 // every file (the lane filter picks feed files; untagged records only without one)
+	// PartLocal is the type's local file only.
+	PartLocal Part = 2
+	// PartLocalLane is the local file plus the feed files the lane filter
+	// selects: with lane source "local", format 1's "local" partition (its
+	// untagged records and any feed whose source is "local").
+	PartLocalLane Part = 3
+)
+
 // Class is a request's service class.
 type Class uint8
 
@@ -209,6 +224,7 @@ type Query struct {
 	Limit, Offset        int64
 	Hydrate              bool
 	ByteCap              int64 // Head only
+	Part                 Part  // Epoch only
 	Bulk                 bool  // run on the bulk class
 }
 

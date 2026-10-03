@@ -52,6 +52,7 @@ const (
 	tagPred       uint16 = 17
 	tagSearch     uint16 = 18
 	tagByteCap    uint16 = 19
+	tagPart       uint16 = 20
 	tagProfile    uint16 = 30
 	tagAt         uint16 = 31
 	tagMaxDelta   uint16 = 32
@@ -185,14 +186,15 @@ const (
 	qfOffset
 	qfHydrate
 	qfByteCap
+	qfPart
 )
 
 func (q Query) check(op uint32, allowed queryFields) error {
 	set := map[queryFields]bool{qfCID: q.CID != "", qfPeer: q.Peer != "", qfProducer: q.Producer != "",
 		qfSeq: q.SeqAfter != 0 || q.SeqThrough != 0, qfSearch: q.Search != "", qfOrder: q.Order != 0,
-		qfLimit: q.Limit != 0, qfOffset: q.Offset != 0, qfHydrate: q.Hydrate, qfByteCap: q.ByteCap != 0}
+		qfLimit: q.Limit != 0, qfOffset: q.Offset != 0, qfHydrate: q.Hydrate, qfByteCap: q.ByteCap != 0, qfPart: q.Part != PartAll}
 	names := map[queryFields]string{qfCID: "CID", qfPeer: "Peer", qfProducer: "Producer", qfSeq: "SeqAfter/SeqThrough",
-		qfSearch: "Search", qfOrder: "Order", qfLimit: "Limit", qfOffset: "Offset", qfHydrate: "Hydrate", qfByteCap: "ByteCap"}
+		qfSearch: "Search", qfOrder: "Order", qfLimit: "Limit", qfOffset: "Offset", qfHydrate: "Hydrate", qfByteCap: "ByteCap", qfPart: "Part"}
 	for f, on := range set {
 		if on && allowed&f == 0 {
 			return &StatusError{Op: opNames[op], Status: StatusArg, Msg: names[f] + " does not apply"}
@@ -203,6 +205,9 @@ func (q Query) check(op uint32, allowed queryFields) error {
 	}
 	if q.Limit < 0 || q.Offset < 0 || q.ByteCap < 0 {
 		return &StatusError{Op: opNames[op], Status: StatusArg, Msg: "negative limit, offset or byte cap"}
+	}
+	if q.Part != PartAll && q.Part != PartLocal && q.Part != PartLocalLane {
+		return &StatusError{Op: opNames[op], Status: StatusArg, Msg: fmt.Sprintf("part %d", q.Part)}
 	}
 	return nil
 }
@@ -238,13 +243,14 @@ func encodeQuery(op uint32, q Query) ([]byte, error) {
 
 // encodeEpoch encodes an EPOCH request.
 func encodeEpoch(q EpochQuery, countOnly bool) ([]byte, error) {
-	if err := q.Query.check(opEpoch, qfLimit|qfHydrate); err != nil {
+	if err := q.Query.check(opEpoch, qfLimit|qfHydrate|qfPart); err != nil {
 		return nil, err
 	}
 	if q.Profile < EpochWindow || q.Profile > EpochCoverage {
 		return nil, &StatusError{Op: "EPOCH", Status: StatusArg, Msg: fmt.Sprintf("profile %d", q.Profile)}
 	}
-	t := tlv(nil).text(tagType, q.Type).flag(tagHydrate, q.Hydrate).u64(tagLimit, uint64(q.Limit)).lane(q.Lane)
+	t := tlv(nil).text(tagType, q.Type).flag(tagHydrate, q.Hydrate).u64(tagLimit, uint64(q.Limit)).lane(q.Lane).
+		u8(tagPart, uint8(q.Part))
 	t, err := t.preds(q.Preds)
 	if err != nil {
 		return nil, &StatusError{Op: "EPOCH", Status: StatusArg, Msg: err.Error()}
