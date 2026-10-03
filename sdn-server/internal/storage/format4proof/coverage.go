@@ -60,8 +60,12 @@ func catNorad(rec []byte) uint32 { return CATfb.GetRootAsCAT(rec, 0).NORAD_CAT_I
 //
 // Two values of a written record carry the arm's own clock or cursor, and
 // are canonicalized identically on every arm (scen): a time at or after the
-// class's start reads "now" (the store's clock: format 1's created_at and
-// timestamp, format 4's at and ts), and a datasync cursor (rowid) above the
+// class's start reads "now@<j>", j the class's last write that began at or
+// before it (the store's clock: format 1's created_at and timestamp, format
+// 4's at and ts; every write begins in a later second than the previous one
+// ended in, so values stamped by different writes stay apart and the rows
+// one write stamped tie), "now" before the first write; and a datasync
+// cursor (rowid) above the
 // type's highest before the class reads "new" (C-14: format 4 numbers new
 // records from the migration's seq floor). Everything else, the order of
 // rows by cursor included, must be identical. Sealed stored bytes (C-25,
@@ -77,11 +81,12 @@ const ModeCoverage = "coverage"
 // CoverageSpec is one coverage class on one arm.
 type CoverageSpec struct {
 	Arm, Class, Store, Out, Work string
-	// T0 and Base, when set, are the scen of the run whose writes the store
-	// holds (XM on format 4: the migrated format-1 store), so its answers
-	// canonicalize as that run's did.
-	T0   int64            `json:"t0,omitempty"`
-	Base map[string]int64 `json:"base,omitempty"`
+	// T0, Base and Writes, when set, are the scen of the run whose writes
+	// the store holds (XM on format 4: the migrated format-1 store), so its
+	// answers canonicalize as that run's did.
+	T0     int64            `json:"t0,omitempty"`
+	Base   map[string]int64 `json:"base,omitempty"`
+	Writes []int64          `json:"writes,omitempty"`
 }
 
 // coverageSchemas are the types a coverage class takes its cursor base of:
@@ -93,7 +98,8 @@ var coverageSchemas = []string{"OMM.fbs", "MPE.fbs", "IQC.fbs", "CAT.fbs", "PNM.
 type scen struct {
 	t0        int64
 	base      map[string]int64
-	lastWrite int64 // the second the class's last write ended in (nextSecond)
+	lastWrite int64   // the second the class's last write ended in (nextSecond)
+	writes    []int64 // the second each of the class's writes began in, in order
 }
 
 func newScen() *scen { return &scen{base: map[string]int64{}} }
@@ -125,7 +131,7 @@ func (sc *scen) baseOf(schema string) int64 {
 // timeField names the fields that may carry the store's clock.
 func timeField(name string) bool {
 	n := strings.ToLower(name)
-	if n == "~ts" || n == "materialized" || n == "max_ts" || n == "max_updated" || n == "max_created" {
+	if n == "~ts" || n == "ts" || n == "materialized" || n == "max_ts" || n == "max_updated" || n == "max_created" {
 		return true
 	}
 	for _, k := range []string{"seen", "updated", "created", "timestamp", "published", "time"} {
@@ -168,10 +174,25 @@ func (sc *scen) canonValue(name, v, schema string) string {
 	}
 	if sc.t0 > 0 && timeField(n) {
 		if x, ok := unixValue(v); ok && x >= sc.t0 {
-			return "now"
+			return sc.nowOf(x)
 		}
 	}
 	return v
+}
+
+// nowOf is a store-clock time's canonical value: "now@<j>", j the last write
+// that began at or before x, or "now" before the first write.
+func (sc *scen) nowOf(x int64) string {
+	j := -1
+	for i, w := range sc.writes {
+		if w <= x {
+			j = i
+		}
+	}
+	if j < 0 {
+		return "now"
+	}
+	return "now@" + strconv.Itoa(j)
 }
 
 // errKind is an error's kind, the part two formats' texts share.
@@ -408,6 +429,7 @@ func (c *cov) writing(call Call) Call {
 	run := call.Run
 	call.Run = func(s *storage.FlatSQLStore) Result {
 		c.sc.nextSecond()
+		c.sc.writes = append(c.sc.writes, time.Now().Unix())
 		res := run(s)
 		c.sc.lastWrite = time.Now().Unix()
 		return res
@@ -583,7 +605,7 @@ func RunCoverage(spec CoverageSpec, shapes []Shape, sc *scen) (*Run, error) {
 	}
 	sc.start(s)
 	if spec.T0 > 0 {
-		sc.t0, sc.base = spec.T0, spec.Base
+		sc.t0, sc.base, sc.writes = spec.T0, spec.Base, spec.Writes
 	}
 	r.Extra["t0"], r.Extra["base"] = sc.t0, sc.base
 	for _, sh := range shapes {
@@ -629,6 +651,7 @@ func RunCoverage(spec CoverageSpec, shapes []Shape, sc *scen) (*Run, error) {
 		answers.Shapes = append(answers.Shapes, sa)
 	}
 	r.Extra["calls_s"] = time.Since(st).Seconds()
+	r.Extra["writes"] = append([]int64{}, sc.writes...)
 	r.Extra["timed_out_calls"] = append([]string{}, poisoned...)
 	if err := s.Close(); err != nil {
 		r.Extra["close_error"] = err.Error()
@@ -832,6 +855,13 @@ func (c Config) driveXM(ctx context.Context, logf Logf) error {
 	spec := CoverageSpec{Arm: ArmS, Class: ClassXM, Store: store, Out: c.Out, Work: c.Work}
 	if v, ok := f1Run.Extra["t0"].(float64); ok {
 		spec.T0 = int64(v)
+	}
+	if ws, ok := f1Run.Extra["writes"].([]any); ok {
+		for _, w := range ws {
+			if f, ok := w.(float64); ok {
+				spec.Writes = append(spec.Writes, int64(f))
+			}
+		}
 	}
 	if m, ok := f1Run.Extra["base"].(map[string]any); ok {
 		spec.Base = map[string]int64{}

@@ -89,8 +89,9 @@ const tieCut = "C-39 E7: format 1 orders by the timestamp alone: a limit cutting
 // exactly limit rows, the last run may be cut by the limit, and a row of it
 // format 1 did not return is taken when member(row) proves it a member of
 // the tie (a copy format 1 holds with that key). A key
-// that is a canonical stand-in ("now", the store's own clock) or empty is
-// no tie: those rows keep their positions. It returns the rows in format 1's
+// that is empty, or "now" (the store's clock before the class's first write,
+// which may conflate different seconds), is no tie: those rows keep their
+// positions. "now@<j>" (stamped during write j) is a key like any other. It returns the rows in format 1's
 // order and the number of rows taken by member; ok is false when a key
 // differs.
 func alignTies(ra, rb []Row, key string, limit int, member func(Row) bool) (out []Row, cut int, ok bool) {
