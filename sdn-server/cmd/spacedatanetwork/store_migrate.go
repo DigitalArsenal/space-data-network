@@ -100,6 +100,10 @@ var (
 	storeMigratePageRows   int
 	storeMigrateTo         string
 	storeMigrateVerifyOnly bool
+	// storeMigrateDropUnregistered (--to 4) names the format-1 tables of
+	// schemas SDN has no standard for that the operator agrees to leave
+	// behind (C-39 U1).
+	storeMigrateDropUnregistered []string
 )
 
 var storeMigrateCmd = &cobra.Command{
@@ -128,6 +132,12 @@ Format 2 runs only with SDN_STORE_FORMAT=2, and only on an activated store.
                     --page-rows and --verify-only
   --verify-only     (--to 4) re-check an activated format-4 store against the
                     format-1 store kept in pre-format4/; change nothing
+  --drop-unregistered T1,T2
+                    (--to 4) format 4 stores SDS standards only: a format-1
+                    table of a schema SDN has no standard for (--inventory
+                    lists them as unregistered_tables) is not carried, and the
+                    migration refuses to run while such a table holds records
+                    unless this flag names every one of them
 Format 4 runs only with SDN_STORE_FORMAT=4 (or sqlite).`,
 	RunE: runStoreMigrate,
 }
@@ -142,6 +152,8 @@ func init() {
 	storeMigrateCmd.Flags().IntVar(&storeMigratePageRows, "page-rows", 2000, "records per read page")
 	storeMigrateCmd.Flags().StringVar(&storeMigrateTo, "to", "", "target store format: 2 (default) or 4 (alias sqlite)")
 	storeMigrateCmd.Flags().BoolVar(&storeMigrateVerifyOnly, "verify-only", false, "with --to 4: re-check an activated format-4 store, change nothing")
+	storeMigrateCmd.Flags().StringSliceVar(&storeMigrateDropUnregistered, "drop-unregistered", nil,
+		"with --to 4: migrate without these format-1 tables of schemas SDN has no standard for (the inventory's unregistered_tables); their records are not carried")
 	rootCmd.AddCommand(storeMigrateCmd)
 }
 
@@ -169,6 +181,9 @@ func runStoreMigrate(cmd *cobra.Command, args []string) error {
 	}
 	if storeMigrateVerifyOnly {
 		return errors.New("--verify-only needs --to 4")
+	}
+	if len(storeMigrateDropUnregistered) > 0 {
+		return errors.New("--drop-unregistered needs --to 4")
 	}
 	opts := migrateOptions{
 		Store: store, Out: storeMigrateOut, Snapshot: storeMigrateSnapshot, Delta: storeMigrateDelta,

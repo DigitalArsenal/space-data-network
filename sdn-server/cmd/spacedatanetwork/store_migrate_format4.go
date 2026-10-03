@@ -42,6 +42,14 @@ package main
 // Orphan index rows (no producer table holds the record) are not migrated;
 // they are counted per schema and reported.
 //
+// UNKNOWN SCHEMAS (C-39 U1). Format 4 stores SDS standards only: a format-1
+// producer table of a schema SDN has no standard for (StoreBatch to an
+// unknown name writes one) has no engine type and is not carried. Nothing is
+// dropped silently: --inventory lists such tables (unregistered_tables), and
+// while any of them holds records the migration refuses to run, and an
+// interrupted activation refuses to finish, unless --drop-unregistered names
+// every one of them.
+//
 // ACTIVATION (crash-safe, contract §2.3): the control tables are copied into
 // fsql4/control.db; the engine writes MIGRATED, then STORE (the commit
 // point); marker.FinishActivation moves control.flatsqldb* into pre-format4/
@@ -117,6 +125,8 @@ func runStoreMigrate4(cmd *cobra.Command, store string) error {
 		return errors.New("--out, --from-snapshot, --delta and --no-activate are format-2 options; --to 4 migrates in place")
 	case storeMigrateInventory && storeMigrateVerifyOnly:
 		return errors.New("--inventory and --verify-only are separate runs")
+	case len(storeMigrateDropUnregistered) > 0 && (storeMigrateInventory || storeMigrateVerifyOnly):
+		return errors.New("--drop-unregistered applies to a migration, not to --inventory or --verify-only")
 	}
 	out := cmd.OutOrStdout()
 	enc := json.NewEncoder(out)
@@ -129,7 +139,8 @@ func runStoreMigrate4(cmd *cobra.Command, store string) error {
 		return enc.Encode(inv)
 	}
 	rep, err := migrateStore4(cmd.Context(), migrate4Options{Store: store, PageRows: storeMigratePageRows,
-		VerifyOnly: storeMigrateVerifyOnly, AOTCacheDir: storage.EngineAOTCacheDir()}, out)
+		VerifyOnly: storeMigrateVerifyOnly, DropUnregistered: storeMigrateDropUnregistered,
+		AOTCacheDir: storage.EngineAOTCacheDir()}, out)
 	if rep != nil {
 		_ = enc.Encode(rep)
 	}
@@ -138,16 +149,22 @@ func runStoreMigrate4(cmd *cobra.Command, store string) error {
 
 // migrate4Inventory is the format-2 inventory with format 4's record limit:
 // partitions holding a record above it are listed (their records would be
-// refused, C-6).
+// refused, C-6). So are the tables of a schema with no standard
+// (unregistered_tables: table -> records), which format 4 does not carry
+// (C-39 U1).
 func migrate4Inventory(store string) (*inventoryReport, error) {
 	inv, err := migrateInventory(store)
 	if err != nil {
 		return nil, err
 	}
 	inv.OverEntry = nil
+	unregistered := map[string]int64{}
 	for _, p := range inv.Partitions {
 		if p.Max > migrate4MaxRecord {
 			inv.OverEntry = append(inv.OverEntry, p)
+		}
+		if _, err := migrate4TypeSpec(p.Schema); err != nil {
+			unregistered[p.Table] = p.Rows
 		}
 	}
 	if inv.Extra == nil {
@@ -155,6 +172,9 @@ func migrate4Inventory(store string) (*inventoryReport, error) {
 	}
 	inv.Extra["target_format"] = 4
 	inv.Extra["max_record_bytes"] = migrate4MaxRecord
+	if len(unregistered) > 0 {
+		inv.Extra["unregistered_tables"] = unregistered
+	}
 	return inv, nil
 }
 
@@ -174,6 +194,9 @@ type migrate4Options struct {
 	Store      string // the data root: the format-1 store, migrated in place
 	PageRows   int
 	VerifyOnly bool
+	// DropUnregistered names the unregistered tables (schemas with no
+	// standard) the operator agrees to leave behind (refuseUnregistered).
+	DropUnregistered []string
 
 	AOTCacheDir   string
 	CompileOnMiss bool   // tests only (the daemon never compiles)
@@ -198,9 +221,12 @@ type migrate4Journal struct {
 	MaxTagRowID   int64                        `json:"max_tag_rowid"`
 	Schemas       map[string]*migrate4Progress `json:"schemas"`
 	Rejected      []migrate4Reject             `json:"rejected,omitempty"`
-	Built         bool                         `json:"built"`
-	Verified      bool                         `json:"verified"`
-	Activated     bool                         `json:"activated"`
+	// Unregistered are the source's unregistered tables (table -> records):
+	// an activation resumed without the source refuses by them too.
+	Unregistered map[string]int64 `json:"unregistered_tables,omitempty"`
+	Built        bool             `json:"built"`
+	Verified     bool             `json:"verified"`
+	Activated    bool             `json:"activated"`
 }
 
 // migrate4Progress is one schema's copy: everything up to After is durable.
@@ -530,6 +556,9 @@ func (m *migrator4) run(ctx context.Context) error {
 	if err := m.openSource(); err != nil {
 		return err
 	}
+	if err := m.refuseUnregistered(); err != nil {
+		return err
+	}
 	if err := m.openJournal(); err != nil {
 		return err
 	}
@@ -604,6 +633,10 @@ func (m *migrator4) resumeActivation(ctx context.Context) error {
 			m.root, m.jpath)
 	}
 	m.j, m.rep.Resumed, m.rep.GseqFloor = j, true, j.GseqFloor
+	m.rep.Unregistered = j.Unregistered
+	if err := m.refuseUnregistered(); err != nil {
+		return err
+	}
 	m.specs = map[string]format4.TypeSpec{}
 	for schema := range j.Schemas {
 		spec, err := migrate4TypeSpec(schema)
@@ -666,7 +699,7 @@ func (m *migrator4) openSourceAt(dir string) error {
 				m.rep.Unregistered = map[string]int64{}
 			}
 			m.rep.Unregistered[t.Name] = c.Count
-			m.note("table %s (%d records): %v; not migrated (no standard of that name; format 1 serves none of its records)", t.Name, c.Count, err)
+			m.logf("table %s (%d records): %v: format 4 has no type for it", t.Name, c.Count, err)
 			continue
 		}
 		m.tables = append(m.tables, t)
@@ -717,7 +750,53 @@ func (m *migrator4) openJournal() error {
 	default:
 		return err
 	}
+	m.j.Unregistered = m.rep.Unregistered
 	m.rep.GseqFloor = m.j.GseqFloor
+	return nil
+}
+
+// refuseUnregistered is C-39 U1: the migration never drops records
+// silently. The unregistered tables (m.rep.Unregistered: schemas with no
+// standard, which format 4 does not store) that hold records must all be
+// named by --drop-unregistered, and every name it gives must be one of them.
+func (m *migrator4) refuseUnregistered() error {
+	named := map[string]bool{}
+	for _, t := range m.opt.DropUnregistered {
+		if t = strings.TrimSpace(t); t != "" {
+			named[t] = true
+		}
+	}
+	var unknown, held []string
+	for t := range named {
+		if _, ok := m.rep.Unregistered[t]; !ok {
+			unknown = append(unknown, t)
+		}
+	}
+	for t, n := range m.rep.Unregistered {
+		if n > 0 && !named[t] {
+			held = append(held, fmt.Sprintf("%s (%d records)", t, n))
+		}
+	}
+	sort.Strings(unknown)
+	sort.Strings(held)
+	switch {
+	case len(unknown) > 0:
+		return fmt.Errorf("--drop-unregistered names %s: not a format-1 table of a schema SDN has no standard for (store-migrate --to 4 --inventory lists those as unregistered_tables)",
+			strings.Join(unknown, ", "))
+	case len(held) > 0:
+		tables := make([]string, 0, len(m.rep.Unregistered))
+		for t := range m.rep.Unregistered {
+			tables = append(tables, t)
+		}
+		sort.Strings(tables)
+		return fmt.Errorf("format-1 tables of schemas SDN has no standard for hold records: %s. Format 4 stores SDS standards only, so the migration would not carry them; nothing was changed. To migrate without them, rerun with --drop-unregistered %s",
+			strings.Join(held, ", "), strings.Join(tables, ","))
+	}
+	for t, n := range m.rep.Unregistered {
+		if named[t] {
+			m.note("table %s (%d records): not migrated (no standard of that name), as --drop-unregistered names it", t, n)
+		}
+	}
 	return nil
 }
 
