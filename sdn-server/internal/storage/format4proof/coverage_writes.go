@@ -1231,7 +1231,17 @@ func (c *cov) x11(mpe [][]byte) []Shape {
 	// recs[1], also tagged in celestrak-gp, is new to that feed (C-38 (3)),
 	// and leaves the superseded feed while celestrak-gp keeps it.
 	sh := rule(covShape(class, "SupersedeSourceBatches and RetainNewestSourceBatch", "MPE.fbs", calls...), "another lane", c38PerFeed, "n")
-	return []Shape{rule(sh, "SupersedeSourceBatches keep b", c38PerFeed, "records")}
+	sh = rule(sh, "SupersedeSourceBatches keep b", c38PerFeed, "records")
+	// C-39 U3: format 1's RefreshSourceBatchSummary of the kept batch
+	// restamps the supersede lane's times; format 4's verb is a no-op.
+	for _, read := range []string{"lane snapshot ", "lane head "} {
+		sh = rule(sh, read+"MPE.fbs "+FixtureProvider+"/"+src+"/", c39U3, "max_updated", "max_created")
+	}
+	for _, call := range []string{"SourceBatchProgress", "ProducerSourceProgress"} {
+		sh.Policy.Calls = append(sh.Policy.Calls,
+			CallRuling{Call: call, Why: c39U3, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: "MPE.fbs", Source: src})
+	}
+	return []Shape{sh}
 }
 
 // X12: the lane ledger: a servable publication (its shard at the canonical
