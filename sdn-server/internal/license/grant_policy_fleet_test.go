@@ -80,12 +80,11 @@ func loadFleetPolicy(t *testing.T) *GrantPolicyConfig {
 
 // Owner 2026-10-02: a paid module is key-protected on SDN (or shipped inside the
 // Sandcastle gallery, which never asks SDN), so with an EMPTY allowlist the
-// fleet policy refuses hpop and every paid module, and nothing else.
-func TestFleetPolicyClosesHpopAndThePaidModules(t *testing.T) {
+// fleet policy refuses every paid module and nothing else (hpop is free).
+func TestFleetPolicyClosesThePaidModules(t *testing.T) {
 	cfg := loadFleetPolicy(t)
 
 	want := map[string]bool{
-		"com.orbpro.hpop":                       true,
 		"com.orbpro.fastest-path":               true,
 		"com.orbpro.sensor-shaders":             true,
 		"com.orbpro.sensor-shaders.glsl-bundle": true,

@@ -14,11 +14,7 @@
     { "match": "com.orbpro.fastest-path", "policy": "allowlist", "note": "Paid. Key-protected." },
     { "match": "com.orbpro.sensor-coverage", "policy": "allowlist", "note": "Paid. Key-protected. Its catalog entry must declare allowlist too: a catalog grant_policy outranks this rule." },
 
-    {
-      "match": "com.orbpro.hpop",
-      "policy": "allowlist",
-      "note": "THE REPORTED DEFECT. Paid propagator tier. Restricted to allowed_xpubs; with none set it publishes NOTHING and can issue no grant. Entitle customers with `spacedatanetwork plugins publish-orbpro --allowed-xpub <xpub>`."
-    },
+    { "match": "com.orbpro.hpop", "policy": "open", "note": "Free (owner 2026-10-02)." },
     { "match": "com.orbpro.viewshed-shader*", "policy": "open", "note": "Free." },
     { "match": "com.orbpro.access", "policy": "open", "note": "Free." },
     { "match": "com.orbpro.analysis.orbit-determination", "policy": "open", "note": "Free." },
