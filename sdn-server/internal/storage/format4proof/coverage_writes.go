@@ -405,6 +405,8 @@ func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 				k := sh.Policy.Accepted
 				if _, ok := policy[k]; !ok {
 					policy[k], order = sh.Policy, append(order, k)
+				} else {
+					policy[k] = mergePolicy(policy[k], sh.Policy)
 				}
 				reads[k] = append(reads[k], call)
 			}
@@ -423,9 +425,41 @@ func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 		}
 		sh := covShape(ClassXM, name, "", reads[k]...)
 		sh.Policy = policy[k]
+		// Every XM read follows every scenario's writes, so each summary
+		// read shows the C-39 items the scenarios' own reads scope to
+		// theirs: the XYZ table (U1, X01), the dangling tags (U2, X08), the
+		// KMF lane bytes (U5, X04) and the CAT lane bytes (U6, X02).
+		sh = laneBytes(laneBytes(u2Rows(u1Rows(sh, ""), ""), "", c39U5, "KMF.fbs"), "", c39U6, "CAT.fbs")
 		out = append(out, sh)
 	}
 	return out
+}
+
+// mergePolicy is a's policy with b's call rulings, tie rules and CID
+// aliases added (XM: one read shape takes the calls of several scenario
+// shapes of one accepted difference, each with its own rulings).
+func mergePolicy(a, b Policy) Policy {
+	a.Calls = append(append([]CallRuling(nil), a.Calls...), b.Calls...)
+	seen := map[TieRule]bool{}
+	var ties []TieRule
+	for _, t := range append(append([]TieRule(nil), a.TieOrdered...), b.TieOrdered...) {
+		if !seen[t] {
+			seen[t] = true
+			ties = append(ties, t)
+		}
+	}
+	a.TieOrdered = ties
+	if len(b.CIDAliases) > 0 {
+		m := map[string]string{}
+		for k, v := range a.CIDAliases {
+			m[k] = v
+		}
+		for k, v := range b.CIDAliases {
+			m[k] = v
+		}
+		a.CIDAliases = m
+	}
+	return a
 }
 
 // X01: storeBatch untagged (api/publish, logservice PLG, archive imports):
@@ -478,8 +512,8 @@ func (c *cov) x01(omm [][]byte) []Shape {
 	}
 	reads = append(reads, c.typeReads("OMM.fbs")...)
 	reads = append(reads, c.summaries(gpPeer, covPeer)...)
-	return []Shape{covShape(class, "storeBatch untagged: writes", "OMM.fbs", writes...),
-		covShape(class, "storeBatch untagged: read back", "OMM.fbs", reads...),
+	return []Shape{rule(covShape(class, "storeBatch untagged: writes", "OMM.fbs", writes...), "StoreBatch unknown type", c39U1, "n", "err"),
+		u1Rows(covShape(class, "storeBatch untagged: read back", "OMM.fbs", reads...), ""),
 		c12Shape(class, "storeBatch untagged: the copy format 1 does not serve", "OMM.fbs",
 			c.refsOf("refs first producer's copies", "OMM.fbs", cidsOf(held), func(r *storage.RawRecordRef) { r.PeerID = gpPeer }))}
 }
@@ -583,7 +617,7 @@ func (c *cov) x02(omm, mpe, iqc, cat [][]byte) []Shape {
 	reads = append(reads, c.laneReads("IQC.fbs", FixtureProvider, "IQEngine", ti.BatchID)...)
 	reads = append(reads, c.summaries(gpPeer, iqcSigmfPeer)...)
 	return []Shape{covShape(class, "storeBatch tagged: writes", "OMM.fbs", writes...),
-		covShape(class, "storeBatch tagged: read back", "OMM.fbs", reads...)}
+		laneBytes(covShape(class, "storeBatch tagged: read back", "OMM.fbs", reads...), "", c39U6, "CAT.fbs")}
 }
 
 // exportOf exports a window into the class's scratch directory.
@@ -698,8 +732,11 @@ func (c *cov) x04() []Shape {
 		c.gets("GetRecord KMF after the delete", "KMF.fbs", kc))
 	reads = append(reads, c.typeReads("KMF.fbs")...)
 	reads = append(reads, c.summaries(covPeer)...)
-	return []Shape{covShape(class, "sealed standard: writes", "KMF.fbs", writes...),
-		covShape(class, "sealed standard: read back", "KMF.fbs", reads...)}
+	back := laneBytes(covShape(class, "sealed standard: read back", "KMF.fbs", reads...), "", c39U5, "KMF.fbs")
+	// C-39 E7: the two records of one batch share a source timestamp, so
+	// format 1's order between them is arbitrary; the rows are the same.
+	back.Policy.Calls = append(back.Policy.Calls, CallRuling{Call: "QueryAllBounded KMF", Why: c39E7, Fields: []string{"frame"}, SameSet: true})
+	return []Shape{covShape(class, "sealed standard: writes", "KMF.fbs", writes...), back}
 }
 
 // X05: a record above the largest storable size (C-6: write request area −
@@ -961,9 +998,6 @@ func (c *cov) x08() []Shape {
 		up("UpsertSourceTags IQC held twice", "IQC.fbs", iqcHit, ti),
 		up("UpsertSourceTags OMM no source", "OMM.fbs", b052[2], storage.SourceTags{ProviderID: FixtureProvider, BatchID: "x"}),
 		up("UpsertSourceTags OMM fixture's own tag", "OMM.fbs", b052[3], b052Tags(c.in)),
-		up("UpsertSourceTags OMM miss", "OMM.fbs", c.miss["OMM.fbs"][0], t1),
-		up("UpsertSourceTags OMM non-canonical", "OMM.fbs", strings.ToUpper(b052[4]), t1),
-		up("UpsertSourceTags unknown type", "XYZ.fbs", b052[4], t1),
 		c.tagsOf("tags OMM", "OMM.fbs", b052[:5]),
 		c.tagsOf("tags IQC", "IQC.fbs", []string{iqcHit}),
 		c.refsOf("refs OMM new batch", "OMM.fbs", b052[:2], func(r *storage.RawRecordRef) { r.BatchID = t1.BatchID }),
@@ -976,7 +1010,21 @@ func (c *cov) x08() []Shape {
 	calls = append(calls, c.laneReads("OMM.fbs", FixtureProvider, "celestrak-gp", OMMLatestBatch)...)
 	calls = append(calls, c.laneReads("IQC.fbs", FixtureProvider, "IQEngine", ti.BatchID)...)
 	calls = append(calls, c.summaries()...)
-	return []Shape{covShape(class, "UpsertSourceTags", "OMM.fbs", calls...)}
+	// Then CIDs not held (C-39 U2: format 4 answers not found; format 1
+	// writes a dangling tag): the reads above compare strictly, these after
+	// them (" #2") show only the dangling tags' effect.
+	calls = append(calls,
+		up("UpsertSourceTags OMM miss", "OMM.fbs", c.miss["OMM.fbs"][0], t1),
+		up("UpsertSourceTags OMM non-canonical", "OMM.fbs", strings.ToUpper(b052[4]), t1),
+		up("UpsertSourceTags unknown type", "XYZ.fbs", b052[4], t1))
+	calls = append(calls, c.tagsOf("tags OMM", "OMM.fbs", b052[:5]))
+	calls = append(calls, c.laneReads("OMM.fbs", FixtureProvider, "celestrak-gp", t1.BatchID)...)
+	calls = append(calls, c.summaries()...)
+	sh := covShape(class, "UpsertSourceTags", "OMM.fbs", calls...)
+	for _, call := range []string{"UpsertSourceTags OMM miss", "UpsertSourceTags OMM non-canonical", "UpsertSourceTags unknown type"} {
+		sh = rule(sh, call, c39U2, "ok", "err")
+	}
+	return []Shape{u2Rows(sh, " #2")}
 }
 
 // X09: Delete: a CID two producers hold (every copy goes), a single-copy
@@ -1379,9 +1427,16 @@ func (c *cov) x13() []Shape {
 	ri.Arms = []string{ArmS, ArmF2}
 	riF1 := covShape(class, "RebuildIndex", "", c.rowsCall("RebuildIndex", "", rebuildIndexBaseline))
 	riF1.Arms = []string{ArmF1}
-	return []Shape{gc, covShape(class, "GarbageCollectToQuota no-op", "", quotaCalls...),
-		covShape(class, "RefreshSourceBatchSummary", "", refresh...),
-		covShape(class, "RebuildSourceSummaries and RebuildDerivedState", "", rebuild...), ri, riF1}
+	// C-39 U3: the verbs restamp format 1's lane times (one OMM lane;
+	// every lane), not format 4's; every other field compares.
+	refreshShape := covShape(class, "RefreshSourceBatchSummary", "", refresh...)
+	rebuildShape := covShape(class, "RebuildSourceSummaries and RebuildDerivedState", "", rebuild...)
+	for _, call := range []string{"SourceBatchProgress", "ProducerSourceProgress"} {
+		refreshShape.Policy.Calls = append(refreshShape.Policy.Calls,
+			CallRuling{Call: call, Why: c39U3, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: "OMM.fbs"})
+		rebuildShape = rule(rebuildShape, call, c39U3, "LastSeenUnix", "UpdatedAtUnix")
+	}
+	return []Shape{gc, covShape(class, "GarbageCollectToQuota no-op", "", quotaCalls...), refreshShape, rebuildShape, ri, riF1}
 }
 
 // X14: the publication log (logservice: PLOG entries by untagged StoreBatch,

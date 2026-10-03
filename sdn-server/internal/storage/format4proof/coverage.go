@@ -21,6 +21,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
 // flatsqlrt5m are the module-facing SQL limits the coverage classes read
@@ -234,6 +235,54 @@ func covRecordRow(r *storage.Record) Row {
 		}
 	}
 	return row
+}
+
+// recordFields are a record row's compared fields (RecordRow's; the copy
+// variants are checked against format 1's copies, C-12).
+func recordFields() []string {
+	var out []string
+	for _, f := range RecordRow(&storage.Record{}) {
+		if !isVariant(f.N) {
+			out = append(out, f.N)
+		}
+	}
+	return out
+}
+
+// summaryCalls are summaries' calls whose rows carry the lanes' counts,
+// bytes and times.
+var summaryCalls = []string{"DataSummary", "SourceBatchProgress", "ProducerSourceProgress"}
+
+// u1Rows is C-39 U1 on the summaries read after a write of a schema with
+// no standard: format 1's rows of it (SchemaDateRanges) are the difference.
+func u1Rows(sh Shape, suffix string) Shape {
+	sh.Policy.Calls = append(sh.Policy.Calls, CallRuling{Call: "SchemaDateRanges" + suffix, Why: c39U1, Absent: "XYZ.fbs"})
+	return sh
+}
+
+// u2Rows is C-39 U2 on the summaries read after UpsertSourceTags of CIDs
+// not held (an OMM miss, a non-canonical OMM CID, a held CID under the
+// unknown XYZ.fbs): format 1's dangling tags are its XYZ.fbs rows and one
+// more in the counts of the OMM lane, of the type and of the store (their
+// bytes are 0, so no byte field may differ).
+func u2Rows(sh Shape, suffix string) Shape {
+	for _, call := range summaryCalls {
+		sh.Policy.Calls = append(sh.Policy.Calls,
+			CallRuling{Call: call + suffix, Why: c39U2, Absent: "XYZ.fbs"},
+			CallRuling{Call: call + suffix, Why: c39U2, Fields: []string{"n", "Count", "total_records"}, Standard: "OMM.fbs"})
+	}
+	sh.Policy.Calls = append(sh.Policy.Calls, CallRuling{Call: "SourceRecordCounts" + suffix, Why: c39U2, Fields: []string{"n"}})
+	return sh
+}
+
+// laneBytes is a C-39 ruling on the byte fields of std's lane rows and the
+// store totals in the summaries (U5: KMF, U6: CAT).
+func laneBytes(sh Shape, suffix, why, std string) Shape {
+	for _, call := range summaryCalls {
+		sh.Policy.Calls = append(sh.Policy.Calls,
+			CallRuling{Call: call + suffix, Why: why, Fields: []string{"bytes", "TotalBytes", "total_bytes"}, Standard: std})
+	}
+	return sh
 }
 
 // getRow is GetRecord's answer: the bytes and the copy served. Format 1's
@@ -809,10 +858,29 @@ func (c Config) driveXM(ctx context.Context, logf Logf) error {
 		Machine: ThisMachine(), LoadStart: Load(), Extra: map[string]any{}}
 	var probs []string
 	logs := filepath.Join(c.Out, "logs")
-	if code, err := migrateVerb(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-inventory.log"), "--inventory"); err != nil {
+	invLog := filepath.Join(logs, "coverage-xm-inventory.log")
+	if code, err := migrateVerb(ctx, c.SDNBin, store, invLog, "--inventory"); err != nil {
 		probs = append(probs, fmt.Sprintf("store-migrate --to 4 --inventory exited %d: %v", code, err))
 	}
-	mr, _, err := migrateRun(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-migrate.log"), 0)
+	// C-39 U1: XM writes a record of a schema with no standard (X01); the
+	// inventory lists its table, the migration refuses to run without
+	// --drop-unregistered and changes nothing, then runs naming it.
+	var drop []string
+	if unregistered, err := inventoryUnregistered(invLog); err != nil {
+		probs = append(probs, err.Error())
+	} else if len(unregistered) == 0 {
+		probs = append(probs, "C-39 U1: the inventory lists no table of a schema with no standard (XM writes one: X01 StoreBatch unknown type)")
+	} else {
+		ws.Extra["unregistered_tables"] = unregistered
+		probs = append(probs, xmRefusal(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-refused.log"))...)
+		names := make([]string, 0, len(unregistered))
+		for t := range unregistered {
+			names = append(names, t)
+		}
+		sort.Strings(names)
+		drop = []string{"--drop-unregistered", strings.Join(names, ",")}
+	}
+	mr, _, err := migrateRun(ctx, c.SDNBin, store, filepath.Join(logs, "coverage-xm-migrate.log"), 0, drop...)
 	ws.Extra["migrate_s"] = mr.Wall.Seconds()
 	if err != nil {
 		probs = append(probs, err.Error())
@@ -836,6 +904,51 @@ func (c Config) driveXM(ctx context.Context, logf Logf) error {
 		note(child(spec, "coverage-s-XM"))
 	}
 	return firstErr
+}
+
+// inventoryUnregistered reads store-migrate --to 4 --inventory's
+// unregistered_tables (table -> records) from its log.
+func inventoryUnregistered(logPath string) (map[string]int64, error) {
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		return nil, err
+	}
+	i := strings.IndexByte(string(b), '{')
+	if i < 0 {
+		return nil, fmt.Errorf("C-39 U1: no inventory in %s", logPath)
+	}
+	var inv struct {
+		Extra struct {
+			Unregistered map[string]int64 `json:"unregistered_tables"`
+		} `json:"extra"`
+	}
+	if err := json.NewDecoder(strings.NewReader(string(b[i:]))).Decode(&inv); err != nil {
+		return nil, fmt.Errorf("C-39 U1: the inventory in %s: %w", logPath, err)
+	}
+	return inv.Extra.Unregistered, nil
+}
+
+// xmRefusal runs store-migrate --to 4 without --drop-unregistered on a
+// store whose inventory lists unregistered tables: it must fail, name the
+// flag, and leave the store a format-1 store with no migration journal and
+// no fsql4/ (C-39 U1). It returns the problems.
+func xmRefusal(ctx context.Context, bin, store, logPath string) []string {
+	var probs []string
+	if _, _, err := migrateRun(ctx, bin, store, logPath, 0); err == nil {
+		return []string{"C-39 U1: store-migrate --to 4 ran without --drop-unregistered on a store holding records of a schema with no standard"}
+	}
+	if b, err := os.ReadFile(logPath); err != nil || !strings.Contains(string(b), "--drop-unregistered") {
+		probs = append(probs, fmt.Sprintf("C-39 U1: the refusal does not name --drop-unregistered (log %s)", logPath))
+	}
+	if m, err := marker.Read(store); err != nil || m.Format4() || !m.LegacyControlFile {
+		probs = append(probs, fmt.Sprintf("C-39 U1: the refused migration changed the store's markers: %+v %v", m, err))
+	}
+	for _, p := range []string{"fsql4-migrate.json", marker.Dir} {
+		if _, err := os.Stat(filepath.Join(store, p)); err == nil {
+			probs = append(probs, "C-39 U1: the refused migration wrote "+p)
+		}
+	}
+	return probs
 }
 
 // maxStorableRecord is the largest record format 4 stores: the write slot's
