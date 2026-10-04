@@ -161,6 +161,10 @@ export function orbitCamera(lat, lon, dist, { off = [0, 0], zoom = 1, spin = 0 }
   const pos = mul(geoDir(lat, lon, 0), dist);
   return { ...lookAt(pos, [0, 0, 0], [0, 1, 0]), spin, off, zoom, dist };
 }
+// A backdrop: the Earth's limb low in the frame, as on the site heroes.
+export function limbCamera(t, lon = -40, lat = 30) {
+  return orbitCamera(lat, lon + 1.2 * t, 1.62, { off: [0, -2.25], spin: 0.02 * t });
+}
 // World → screen, matching the ray tracer's projection exactly.
 export function project(cam, p) {
   const d = sub(p, cam.pos);
@@ -848,8 +852,8 @@ export async function createStudio({ base = "", hudTitle = "SPACE DATA NETWORK",
   function shiftBlock(sh, t) {
     const ys = lineYs(sh.before.length);
     const eyeY = ys[0] - 112;
-    maskText(sx, "TODAY", LX + 2, eyeY, EYE, 600, MUTED, sh.tIn, sh.tMorph + 0.1, t, { tracking: 3.5, outDur: 0.2 });
-    maskText(sx, "ON THE NETWORK", LX + 2, eyeY, EYE, 600, AMBER, sh.tMorph + 0.3, sh.tOut, t, { tracking: 3.5, outDur: 0.28 });
+    maskText(sx, sh.now ?? "TODAY", LX + 2, eyeY, EYE, 600, MUTED, sh.tIn, sh.tMorph + 0.1, t, { tracking: 3.5, outDur: 0.2 });
+    maskText(sx, sh.next ?? "ON THE NETWORK", LX + 2, eyeY, EYE, 600, AMBER, sh.tMorph + 0.3, sh.tOut, t, { tracking: 3.5, outDur: 0.28 });
     sh.before.forEach((b, i) => {
       const a = sh.after[i];
       const y = ys[i];
@@ -960,7 +964,8 @@ export async function createStudio({ base = "", hudTitle = "SPACE DATA NETWORK",
 
   // Closing card: the mark (optional), a title, a subtitle and the address,
   // revealed from t0 and held. The group is centered on the frame.
-  function lockup({ title, subtitle, url, t0, mark = true }, t) {
+  // icon(cx, cy, R, k) draws a project's own symbol in the mark's place.
+  function lockup({ title, subtitle, url, t0, mark = true, icon = null }, t) {
     if (t < t0) return;
     const TP = 78;
     sx.save();
@@ -974,10 +979,12 @@ export async function createStudio({ base = "", hudTitle = "SPACE DATA NETWORK",
     const R = 118;
     const gap = 102;
     const textW = Math.max(tw, sw);
-    const total = mark ? 2 * R + gap + textW : textW;
+    const glyph = mark || icon;
+    const total = glyph ? 2 * R + gap + textW : textW;
     const x0 = (W - total) / 2;
-    const tx = mark ? x0 + 2 * R + gap : x0;
-    if (mark) {
+    const tx = glyph ? x0 + 2 * R + gap : x0;
+    if (icon) icon(x0 + R, H / 2, R, easeOutBack(seg(t, t0, t0 + 0.6)));
+    else if (mark) {
       drawMark(x0 + R, H / 2, R, t, {
         head: easeInOutExpo(seg(t, t0, t0 + 0.5)),
         ring: seg(t, t0 - 0.1, t0 + 0.2),

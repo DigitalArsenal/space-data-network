@@ -52,6 +52,7 @@
   function init(stage) {
     var video = stage.querySelector('video');
     if (!video) return;
+    stage.setAttribute('data-reel-ready', '');
     stage.insertAdjacentHTML('beforeend', CHROME);
     var big = stage.querySelector('.reel-big-play');
     var again = stage.querySelector('.reel-again');
@@ -261,6 +262,11 @@
     tick();
   }
 
-  var stages = document.querySelectorAll('.reel-stage');
-  for (var i = 0; i < stages.length; i++) init(stages[i]);
+  function scan() {
+    var stages = document.querySelectorAll('.reel-stage:not([data-reel-ready])');
+    for (var i = 0; i < stages.length; i++) init(stages[i]);
+  }
+  scan();
+  // Pages that render their content later (single-page apps) get their reels too.
+  if ('MutationObserver' in window) new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
 })();
