@@ -244,21 +244,6 @@ export async function createReel(base = "") {
     }
   }
 
-  function icon(cx, cy, R, k) {
-    if (k <= 0) return;
-    sx.save();
-    sx.translate(cx, cy);
-    sx.rotate(Math.PI / 4);
-    sx.scale(k, k);
-    sx.strokeStyle = "rgba(245,245,247,0.6)";
-    sx.lineWidth = 3;
-    sx.strokeRect(-48, -48, 96, 96);
-    sx.fillStyle = AMBER;
-    [[-30, 20], [-6, 36], [18, 28]].forEach(([x, h]) => sx.fillRect(x, 34 - h, 16, h));
-    sx.restore();
-    dotGlow(cx, cy, R * 0.8, AMBER, 0.15 * k);
-  }
-
   // ------------------------------------------------------------ subframe
   const ca = studio.cutPulses([[T_CHECK, 1], [T_LIGHT, 1], [T_MAP, 1], [T_END + 0.2, 1]]);
   const fade = (t) => seg(t, 0, 0.4);
@@ -307,7 +292,7 @@ export async function createReel(base = "") {
     if (t > T_MAP - 0.05 && t < T_END + 0.1) {
       block([["On the map,", INK], ["in the right shape.", AMBER]], "THE NETWORK'S 3D VIEWS SHOW THE REAL SPACECRAFT", T_MAP + 0.1, T_END - 0.4, t, 88);
     }
-    lockup({ title: "Space Data Network Models", subtitle: "3D models of what is in orbit", url: "DIGITALARSENAL.GITHUB.IO/ASSET-MODELS", t0: T_END + 0.3, mark: false, icon }, t);
+    lockup({ title: "Space Data Network Models", subtitle: "3D models of what is in orbit", url: "DIGITALARSENAL.GITHUB.IO/ASSET-MODELS", t0: T_END + 0.3 }, t);
     bloom();
     hud(t, frameIndex, T_END + 0.1);
   }

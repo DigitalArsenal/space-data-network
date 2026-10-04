@@ -82,27 +82,7 @@ code, pre { font-family: var(--font-mono); }
 .bg-shade { position: fixed; inset: 0; z-index: -1; background: var(--shade); }
 @media (prefers-reduced-motion: reduce) { .bg-video { display: none; } }
 
-/* Header (height, link size and the shared header tokens are inline in each page) */
-.site-nav {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
-  background: var(--nav-bg);
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border);
-  -webkit-user-select: none; user-select: none;
-}
-.site-nav .inner { max-width: var(--max); height: 100%; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; font-size: var(--sdn-stack-header-brand-size, 15px); white-space: nowrap; }
-.brand svg { width: 22px; height: 22px; }
-.nav-links { display: flex; align-items: center; gap: 22px; }
-.nav-links a { text-decoration: none; color: var(--text-2); transition: color .15s; }
-.nav-links a:hover, .nav-links a[aria-current="page"] { color: var(--text); }
-.nav-menu { display: none; position: relative; }
-.nav-menu summary { list-style: none; cursor: pointer; padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: var(--sdn-stack-header-action-size, 13px); }
-.nav-menu summary::-webkit-details-marker { display: none; }
-.nav-menu .menu-panel { position: absolute; right: 0; top: calc(100% + 10px); min-width: 200px; background: var(--panel-solid); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px; display: grid; }
-.nav-menu .menu-panel a { padding: 10px 12px; text-decoration: none; font-size: var(--sdn-stack-header-mobile-link-size, 16px); border-radius: 8px; }
-.nav-menu .menu-panel a:hover { background: var(--wash); }
-@media (max-width: 760px) { .nav-links { display: none; } .nav-menu { display: block; } }
+/* The top bar and footer are the shared sdn-chrome kit (assets/sdn-chrome/). */
 
 /* Layout */
 main { padding-top: var(--sdn-stack-header-height, 52px); }
@@ -167,12 +147,6 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 th { color: var(--text); font-weight: 600; }
 
-/* Footer */
-footer { border-top: 1px solid var(--border); padding: 32px 0 48px; margin-top: 40px; }
-footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; font-size: 14px; color: var(--muted); }
-footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
-footer a { text-decoration: none; }
-footer a:hover { color: var(--text); }
 
 /* Card header: icon inline with the title */
 .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
@@ -183,15 +157,12 @@ a.card:hover { border-color: var(--border-strong); background: var(--card-hover)
 .card .more-link { margin-top: auto; padding-top: 14px; font-size: 14px; font-weight: 600; color: var(--accent); }
 
 /* Centered pages */
-body.centered .site-nav .inner { justify-content: center; gap: 36px; }
 body.centered .hero, body.centered .page-hero { align-items: center; text-align: center; }
 body.centered .lede { margin-left: auto; margin-right: auto; }
 body.centered .actions { justify-content: center; }
 body.centered .card { text-align: center; }
 body.centered .card-head { justify-content: center; }
 body.centered .head { text-align: center; margin: 0 auto 32px; max-width: 760px; display: grid; gap: 12px; }
-body.centered footer .wrap { justify-content: center; text-align: center; flex-direction: column; align-items: center; }
-body.centered footer nav { justify-content: center; }
 .cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; }
 .cards > .card { flex: 1 1 300px; max-width: 360px; }
 .page-hero { display: flex; flex-direction: column; gap: 18px; padding: 72px 20px 24px; }
@@ -294,6 +265,8 @@ body.centered .figure figcaption { text-align: center; }
 .paper pre { background: #000; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 16px; overflow-x: auto; }
 .paper pre code { background: none; padding: 0; }
 .paper table { display: block; overflow-x: auto; font-size: 15px; }
+.paper .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.paper p, .paper li { overflow-wrap: anywhere; }
 .paper img { display: inline-block; max-width: 100%; height: auto; background: #fafafa; border-radius: 10px; padding: 12px; }
 .paper p[align="center"], .paper h1[align="center"] { text-align: center; }
 .paper blockquote { border-left: 3px solid var(--accent); padding-left: 16px; }
@@ -315,14 +288,6 @@ body.centered .papers .card { text-align: left; }
 .actions .btn:hover, .has-earth .actions .btn:hover { background: var(--hi-bg); color: var(--hi-fg); border-color: var(--hi-bg); }
 .actions:hover .btn-primary:not(:hover) { background: var(--dim-bg); color: var(--text); border-color: var(--border-strong); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 
-/* Theme switcher button in the site header */
-.theme-toggle { flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border-strong); background: transparent; color: var(--text); cursor: pointer; transition: background .15s; }
-.theme-toggle:hover { background: var(--wash); }
-.theme-toggle svg { width: 17px; height: 17px; }
-.theme-toggle .moon { display: none; }
-:root[data-theme="light"] .theme-toggle .moon { display: block; }
-:root[data-theme="light"] .theme-toggle .sun { display: none; }
-.site-nav .inner .theme-toggle { margin-left: 4px; }
 :root[data-theme="light"] .figure img[src$=".svg"], :root[data-theme="light"] .chart { box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06); }
 :root[data-theme="light"] .bg-video { display: none; }
 

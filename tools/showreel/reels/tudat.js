@@ -304,30 +304,6 @@ export async function createReel(base = "") {
     sx.restore();
   }
 
-  // The Tudat mark: a planet with three crossed orbits.
-  function icon(cx, cy, R, k) {
-    if (k <= 0) return;
-    sx.save();
-    sx.translate(cx, cy);
-    sx.scale(k, k);
-    sx.lineWidth = 3;
-    [[-25, AMBER], [35, CYAN], [80, "rgba(245,245,247,0.7)"]].forEach(([rot, col]) => {
-      sx.save();
-      sx.rotate((rot * Math.PI) / 180);
-      sx.strokeStyle = col;
-      sx.beginPath();
-      sx.ellipse(0, 0, R * 0.78, R * 0.3, 0, 0, Math.PI * 2);
-      sx.stroke();
-      sx.restore();
-    });
-    sx.fillStyle = AMBER;
-    sx.beginPath();
-    sx.arc(0, 0, R * 0.18, 0, Math.PI * 2);
-    sx.fill();
-    sx.restore();
-    dotGlow(cx, cy, R * 0.6, AMBER, 0.2 * k);
-  }
-
   // ------------------------------------------------------------ subframe
   const ca = studio.cutPulses([[T_MODEL, 0.8], [T_MOON, 1], [T_TEST, 1], [T_END + 0.2, 1]]);
   const fade = (t) => seg(t, 0, 0.4);
@@ -366,7 +342,7 @@ export async function createReel(base = "") {
     if (t > T_TEST - 0.05 && t < T_END + 0.1) {
       block([["Every result,", INK], ["checked in the page.", AMBER]], "A FULL TEST SUITE RUNS AS YOU WATCH", T_TEST + 0.1, T_END - 0.4, t, 88);
     }
-    lockup({ title: "Tudat WASM", subtitle: "The TU Delft Astrodynamics Toolbox, in your browser", url: "DIGITALARSENAL.GITHUB.IO/TUDAT-WASM", t0: T_END + 0.3, mark: false, icon }, t);
+    lockup({ title: "Tudat WASM", subtitle: "The TU Delft Astrodynamics Toolbox, in your browser", url: "DIGITALARSENAL.GITHUB.IO/TUDAT-WASM", t0: T_END + 0.3 }, t);
     bloom();
     hud(t, frameIndex, T_END + 0.1);
   }
