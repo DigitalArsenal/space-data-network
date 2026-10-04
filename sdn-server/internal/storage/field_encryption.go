@@ -12,6 +12,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/ecies"
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 )
 
 // fieldEncryptionContext is the encfield/ecies domain separator for storage's
@@ -53,7 +54,9 @@ func init() {
 	// path (Append/readFlatSQLStreamRecord below) instead of remaining the
 	// one-off internal/ecies wrap used only by the module-license-grant path.
 	// Adding a future schema's encrypted field only requires one more
-	// RegisterSchema call; no other storage code changes.
+	// RegisterSchema call; no other storage code changes. A sealed standard
+	// stays off every engine's SQL surface, and one whose sealed field an
+	// extraction rule reads is refused (format2.SealedRuleField, C-46 (7)).
 	encfield.RegisterSchema("KMF", []encfield.FieldSpec{{Name: "KEY_BYTES", FieldID: 4}})
 }
 
@@ -139,9 +142,18 @@ func (s *FlatSQLStore) fieldEncryptionKeys() (priv, pub []byte, err error) {
 // registered encrypted fields it returns a copy of data unchanged and never
 // touches the field-encryption identity (no on-disk key material is
 // provisioned unless a record actually needs it).
+//
+// Every format seals here before any index sees the record (CID, rules and
+// full text read the plaintext), so a standard whose sealed field an
+// extraction rule reads is refused here on every format
+// (format2.ErrSealedRuleField, contract C-46 (7)): its rows would carry that
+// field's plaintext. Formats 2 and 4 also refuse its type registration.
 func (s *FlatSQLStore) sealRecordFields(schemaName string, data []byte) ([]byte, error) {
 	if !encfield.HasEncryptedFields(schemaName) {
 		return data, nil
+	}
+	if err := format2.SealedRuleField(schemaName); err != nil {
+		return nil, err
 	}
 	_, pub, err := s.fieldEncryptionKeys()
 	if err != nil {
