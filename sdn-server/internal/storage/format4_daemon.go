@@ -426,10 +426,9 @@ func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (f
 	if !ok || len(id) != 4 {
 		return spec, err
 	}
-	fallback := format4.TypeSpec{TypeSpec: format2.TypeSpec{SchemaName: typ + ".fbs", Flags: format2.TypeVerifyCID}, PageSize: 4096,
-		A18Bound: 10000}
-	copy(fallback.FID[:], id)
-	return fallback, nil
+	var fid [4]byte
+	copy(fid[:], id)
+	return format4.CIDOnlyTypeSpec(typ, fid), nil
 }
 
 // format4TypeSpec is Format4TypeSpec with the daemon's validator.
