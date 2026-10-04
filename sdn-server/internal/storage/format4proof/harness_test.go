@@ -177,8 +177,9 @@ func TestProofMigrate(t *testing.T) {
 }
 
 // TestProofLayout checks the format-4 fixture (P4_FIXTURE) against the
-// format-1 fixture it was migrated from (contract C-37): one feed file per
-// source feed x standard, no provider or source column in any feed file.
+// format-1 fixture it was migrated from (contract C-37, BRIEF4): one stream
+// and one index file per source feed x standard, no provider or source
+// column and no record bytes in any index file.
 // It writes layout-s-fixture.json; the migrate phase runs the same check on
 // its reference.
 func TestProofLayout(t *testing.T) {
@@ -202,6 +203,9 @@ func TestProofLayout(t *testing.T) {
 	}
 	for typ, files := range lay.Files {
 		t.Logf("LAYOUT %s: %v", typ, files)
+	}
+	for typ, streams := range lay.Streams {
+		t.Logf("LAYOUT %s streams: %v", typ, streams)
 	}
 	for table, cols := range lay.Columns {
 		t.Logf("LAYOUT table %s: %v", table, cols)
